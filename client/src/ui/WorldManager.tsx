@@ -28,6 +28,7 @@ import {
   type WorldAdminRequestMessage,
 } from '@terrace/shared';
 import { WorldThumbnail } from './WorldThumbnail.tsx';
+import { refusalText } from './worldAdminCopy.ts';
 import {
   activeWorldId,
   archivedWorlds,
@@ -77,52 +78,6 @@ function formatWhen(epochMs: number | null | undefined, nowMs: number): string {
   if (elapsed < MS_PER_HOUR) return `${Math.round(elapsed / MS_PER_MINUTE)}m ago`;
   if (elapsed < MS_PER_DAY) return `${Math.round(elapsed / MS_PER_HOUR)}h ago`;
   return `${Math.round(elapsed / MS_PER_DAY)}d ago`;
-}
-
-/** Plain-language reason, so the server never composes player-facing prose. */
-function refusalText(reason: WorldAdminRefusal): string {
-  switch (reason) {
-    case 'disabled':
-      return 'This server has no world-admin key set. Set WORLD_ADMIN_KEY in its environment and restart it.';
-    case 'badKey':
-      return 'That key does not match this server’s WORLD_ADMIN_KEY.';
-    case 'throttled':
-      return 'Too many wrong keys. Wait a minute, then try again.';
-    case 'unknownWorld':
-      return 'That world is not on this server any more. Refresh the list.';
-    case 'alreadyActive':
-      return 'That world is already the one you are in.';
-    case 'nameInUse':
-      return 'A world of that name already exists. Nothing was overwritten — pick another name.';
-    case 'invalidName':
-      return 'That name has no usable letters or digits in it. Try another.';
-    case 'invalidSize':
-      return 'That world size is outside what this server allows, or is not a whole number of chunks.';
-    case 'notArchived':
-      return 'That world is not in the trash. Archive it first.';
-    case 'confirmationMismatch':
-      return 'The name you typed does not match the world’s name. Nothing was deleted.';
-    case 'switchInProgress':
-      return 'A world switch is already counting down. Cancel it first.';
-    case 'restartInProgress':
-      return 'A restart is already under way. There is nothing to cancel — wait for the server to come back.';
-    case 'unknownPlugin':
-      return 'This server has no plugin by that name any more. Reopen the plugin list.';
-    case 'reloadFailed':
-      return 'That plugin’s new code was rejected — the build that was running still is. The server log says which step failed.';
-    case 'reloadLeftNoWorld':
-      return 'That plugin’s new code was rejected, and the world could not be reopened over the old one either — no world is loaded now. Load one again; the server log says what failed.';
-    case 'unknownSetting':
-      return 'That plugin does not offer that setting, or does not accept that value. Reopen the plugin list.';
-    case 'worldIsActive':
-      return 'That world is loaded right now. Switch to another world (or unload) first.';
-    case 'noWorldLoaded':
-      return 'No world is loaded, so there was nothing to do.';
-    case 'noSwitchPending':
-      return 'There was no switch counting down.';
-    case 'failed':
-      return 'The server could not complete that. Nothing was destroyed — check the server log.';
-  }
 }
 
 export function WorldManager(props: { actions: WorldActions }): JSX.Element {
@@ -772,6 +727,10 @@ function doneText(done: Extract<WorldFeedback, { kind: 'done' }>): string {
       return `Re-imported “${done.plugin ?? 'the plugin'}”. The version beside its toggle is the build that is now live.`;
     case 'restart':
       return 'The server is restarting. It will come back on the code that is on disk now.';
+    case 'actPlugin':
+      // The plugin's own account is the receipt (AdminPanel.tsx shows it in
+      // full); this panel only ever sees one if both are open at once.
+      return done.detail ?? `“${done.plugin ?? 'the plugin'}” did that.`;
     default: {
       // Exhaustiveness check: a new WorldAdminAction with no wording here is
       // now a compile error — the omission this switch shipped with (#211).

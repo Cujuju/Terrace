@@ -71,11 +71,13 @@ import type { CellDiff, SculptIntent } from '@terrace/shared';
 import type {
   IntentVerdict,
   PersistenceSlice,
+  PluginActionOutcome,
   SliceLoadOutcome,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
 import {
+  MONSTER_KINDS,
   MONSTERS_PLUGIN_NAME,
   MONSTERS_STATE_MESSAGE,
   isMonsterKind,
@@ -96,6 +98,7 @@ import {
   livingMonsterOfKind,
   livingMonsters,
   resetSummoning,
+  summonNow,
 } from './summoning.ts';
 
 /**
@@ -331,6 +334,26 @@ const persistence: PersistenceSlice = {
 
 export const plugin: TerracePlugin = {
   name: MONSTERS_PLUGIN_NAME,
+
+  // THE ADMIN PANEL'S DEBUG SPAWNS (server plugins/types.ts,
+  // PluginActionDeclaration): one per kind, generated from MONSTER_KINDS so a
+  // new kind is summonable the day it exists. A summon lands in the kind's
+  // best lair, wherever that is — the operator's view is not consulted,
+  // because a monster's whereabouts is the habitat's decision, not a camera's.
+  actions: MONSTER_KINDS.map((kind) => ({
+    key: kind,
+    label: `Summon the ${kind}`,
+    description: `The ${kind} surfaces in its best lair now, cooldown or no cooldown; the arrival is announced as any other.`,
+  })),
+
+  onAction(world: WorldApi, key: string): PluginActionOutcome {
+    if (!isMonsterKind(key)) return { ok: false, detail: `no such action "${key}"` };
+    const { monster, detail } = summonNow(key, world);
+    if (monster === null) return { ok: false, detail };
+    // The arrival transition and the position ride the next tick's emit and
+    // broadcast (simulate), 100 ms away — no separate send is needed.
+    return { ok: true, detail };
+  },
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);

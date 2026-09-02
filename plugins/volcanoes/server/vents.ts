@@ -631,6 +631,39 @@ function beginEruption(vent: Vent, world: WorldApi): void {
   });
 }
 
+/**
+ * The vent nearest a cell, or null when the world has none. Squared distance,
+ * integer, so the answer is the same on every machine — the admin panel's
+ * "erupt the nearest volcano" must pick the one the operator is looking at.
+ */
+export function nearestVent(x: number, y: number): Vent | null {
+  let best: Vent | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const vent of vents) {
+    const dx = vent.x - x;
+    const dy = vent.y - y;
+    const distance = dx * dx + dy * dy;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = vent;
+    }
+  }
+  return best;
+}
+
+/**
+ * Starts this vent's eruption NOW, instead of when its dormancy clock says —
+ * the admin panel's debug spawn (2026-09-01). The same `beginEruption` the tick
+ * runs, so a forced eruption is an ordinary one in every respect but its
+ * timing: cone growth, front, lava, and the ERUPTION_SECONDS it lasts. False
+ * when the vent is already erupting; nothing changes then.
+ */
+export function forceEruption(vent: Vent, world: WorldApi): boolean {
+  if (vent.erupting) return false;
+  beginEruption(vent, world);
+  return true;
+}
+
 function endEruption(vent: Vent, world: WorldApi): void {
   vent.erupting = false;
   vent.phaseSeconds = exponentialWaitSeconds(rng, dormantMeanSeconds(world));

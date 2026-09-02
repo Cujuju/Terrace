@@ -824,6 +824,42 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
 }
 
 /**
+ * Summons one monster of `kind` NOW — the admin panel's debug spawn
+ * (2026-09-01) — into the same lair the arrival gate would have chosen, by
+ * the same `summonCellIn` re-check and the same `summon`. Skips only the
+ * cooldown and the roll: everything about WHERE it may stand is enforced,
+ * because a kraken on a hilltop teaches the developer nothing.
+ *
+ * Returns the monster, or null with the reason no summon happened. The lair
+ * survey is the tick's (LAIR_SURVEY_INTERVAL_SECONDS), so within the first
+ * seconds of a world there may be no region named yet — the detail says so.
+ */
+export function summonNow(
+  kind: MonsterKind,
+  world: LairWorld,
+): { readonly monster: Monster | null; readonly detail: string } {
+  const profile = profileOf(kind);
+  if (livingCountOfKind(kind) >= MAX_LIVING_MONSTERS_PER_KIND) {
+    return { monster: null, detail: `a ${kind} is already in the world` };
+  }
+  const cell = bestLairFor(kind);
+  if (cell === null) {
+    return {
+      monster: null,
+      detail: `no lair for a ${kind}: the last survey found no region big and deep enough (it re-runs every ${LAIR_SURVEY_INTERVAL_SECONDS}s)`,
+    };
+  }
+  const spot = summonCellIn(profile, world, cell, habitatKindIndex(kind));
+  if (spot === null) {
+    invalidateSurvey();
+    return { monster: null, detail: `the ${kind}'s lair no longer qualifies — re-surveying; try again` };
+  }
+  const monster = summon(profile, spot.x, spot.y);
+  if (monster === null) return { monster: null, detail: `a ${kind} is already in the world` };
+  return { monster, detail: `${kind} ${monster.id} surfaced at (${spot.x}, ${spot.y})` };
+}
+
+/**
  * THE LIFECYCLE STEP. Once per host tick, before movement.
  *
  * Fixed order:

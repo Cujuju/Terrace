@@ -103,6 +103,8 @@
 
 import { logInfo } from '../../../server/src/log.ts';
 import type {
+  PluginActionOutcome,
+  PluginActionSite,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -110,18 +112,23 @@ import type {
 // into server/src because core publishes no plugin-API entry point yet — the
 // same arrangement the mana, reveal, relics, wildlife and monsters plugins use.
 import {
+  MAX_ACTIVE_SYSTEMS,
+  WEATHER_KINDS,
   WEATHER_PLUGIN_NAME,
   WEATHER_STRIKES_MESSAGE,
   WEATHER_SYSTEMS_MESSAGE,
   packStrikes,
+  type WeatherKind,
 } from '../protocol.ts';
 import { WEATHER_DEV_FORCE_ENV, readForcedWeatherKind } from './dev.ts';
 import { rollStrikes } from './lightning.ts';
 import {
-  MAX_ACTIVE_SYSTEMS,
   advanceWeather,
   forceWeather,
+  isWeatherForced,
+  livingSystems,
   resetWeather,
+  spawnSystemOfKind,
   systemStates,
   type WeatherWorld,
 } from './systems.ts';
@@ -198,6 +205,35 @@ export const plugin: TerracePlugin = {
     if (forced !== null) {
       logInfo(`[weather] ${WEATHER_DEV_FORCE_ENV}=${forced} — one ${forced} system parked over the world centre`);
     }
+  },
+
+  // THE ADMIN PANEL'S DEBUG SPAWNS (server plugins/types.ts,
+  // PluginActionDeclaration): one action per kind, generated from
+  // WEATHER_KINDS so a new kind is spawnable the day it exists — the same
+  // rule ./dev.ts keeps for the environment override.
+  actions: WEATHER_KINDS.map((kind) => ({
+    key: kind,
+    label: `Bring ${kind}`,
+    description: `A ${kind} system gathers over where you are looking, then drifts on the wind like any other.`,
+  })),
+
+  onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
+    const kind = WEATHER_KINDS.find((candidate): candidate is WeatherKind => candidate === key);
+    if (kind === undefined) return { ok: false, detail: `no such action "${key}"` };
+    // Under the environment override the sky holds exactly one parked system
+    // and `advanceWeather` never looks at any other; a second one would sit
+    // there forever, ungathered.
+    if (isWeatherForced()) {
+      return { ok: false, detail: `${WEATHER_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart` };
+    }
+    if (livingSystems().length >= MAX_ACTIVE_SYSTEMS) {
+      return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} systems are already in the sky` };
+    }
+    const system = spawnSystemOfKind(world, kind, site.x, site.y);
+    // Told now rather than at the 1 Hz cadence, so the gather starts on screen
+    // the moment the button is pressed.
+    world.broadcast(WEATHER_SYSTEMS_MESSAGE, { systems: systemStates() });
+    return { ok: true, detail: `${kind} system ${system.id} gathering at (${site.x}, ${site.y})` };
   },
 
   onTick(world: WorldApi, dt: number): void {

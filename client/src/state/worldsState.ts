@@ -23,6 +23,7 @@ import { createSignal } from 'solid-js';
 import type {
   WorldAdminAction,
   WorldAdminRefusal,
+  WorldPluginAction,
   WorldPluginSetting,
   WorldSummary,
   WorldSwitchStatus,
@@ -40,18 +41,35 @@ export type WorldFeedback =
   | { kind: 'working' }
   /** A listing arrived; `worlds` and `archivedWorlds` hold it. */
   | { kind: 'listed' }
-  /** An action succeeded. `plugin` is carried only by reloadPlugin (#211). */
+  /**
+   * An action succeeded. `plugin` is carried by reloadPlugin (#211) and
+   * actPlugin; `detail` is the plugin's own account of an actPlugin (the
+   * admin panel, 2026-09-01) and null for every other action.
+   */
   | {
       kind: 'done';
       action: WorldAdminAction;
       id: string | null;
       archivedPath: string | null;
       plugin: string | null;
+      detail: string | null;
     }
-  /** The server said no. */
-  | { kind: 'refused'; action: WorldAdminAction; reason: WorldAdminRefusal };
+  /** The server said no. `detail` accompanies only an 'actionDeclined'. */
+  | {
+      kind: 'refused';
+      action: WorldAdminAction;
+      reason: WorldAdminRefusal;
+      detail: string | null;
+    };
 
 const [worldPanelOpen, setWorldPanelOpen] = createSignal(false);
+
+/**
+ * Whether the admin panel — the debug spawn dialog (ui/AdminPanel.tsx) — is
+ * open. Beside `worldPanelOpen` because the two share everything else here:
+ * the key, the plugin listing, the feedback line.
+ */
+const [adminPanelOpen, setAdminPanelOpen] = createSignal(false);
 
 const [worlds, setWorlds] = createSignal<readonly WorldSummary[]>([]);
 const [archivedWorlds, setArchivedWorlds] = createSignal<readonly WorldSummary[]>([]);
@@ -116,6 +134,12 @@ export interface WorldPlugins {
    */
   readonly settings: readonly WorldPluginSetting[];
   /**
+   * Every action the installed plugins DECLARE (the admin panel's spawn
+   * list). Rendered generically, on `settings`' rule: a card per row, named
+   * by its label, and nothing here knows what any key means.
+   */
+  readonly actions: readonly WorldPluginAction[];
+  /**
    * Which build of each installed plugin the server loaded, by name.
    *
    * Shown beside each toggle so an operator who updated a plugin and restarted
@@ -134,11 +158,13 @@ const [worldAdminKey, setWorldAdminKey] = createSignal('');
 
 export {
   activeWorldId,
+  adminPanelOpen,
   archivedWorlds,
   pendingRestartSeconds,
   setPendingRestartSeconds,
   pendingSwitch,
   setPendingSwitch,
+  setAdminPanelOpen,
   setWorldAdminKey,
   setWorldFeedback,
   setWorldLoaded,
@@ -165,7 +191,7 @@ export function applyWorldListing(message: {
     // on worlds this server has not confirmed it still has.
     setWorlds([]);
     setArchivedWorlds([]);
-    setWorldFeedback({ kind: 'refused', action: 'load', reason: message.refused });
+    setWorldFeedback({ kind: 'refused', action: 'load', reason: message.refused, detail: null });
     return;
   }
 
@@ -192,12 +218,13 @@ export function applyWorldPluginListing(message: {
   installed: string[];
   disabled: string[];
   settings: WorldPluginSetting[];
+  actions?: WorldPluginAction[];
   versions?: Record<string, string>;
   refused?: WorldAdminRefusal;
 }): void {
   if (message.refused !== undefined) {
     setWorldPlugins(null);
-    setWorldFeedback({ kind: 'refused', action: 'setPlugin', reason: message.refused });
+    setWorldFeedback({ kind: 'refused', action: 'setPlugin', reason: message.refused, detail: null });
     return;
   }
   setWorldPlugins({
@@ -205,6 +232,9 @@ export function applyWorldPluginListing(message: {
     installed: message.installed,
     disabled: message.disabled,
     settings: message.settings,
+    // Absent from a server built before plugin actions existed (2026-09-01);
+    // empty means "none offered", which the admin panel says in words.
+    actions: message.actions ?? [],
     // Absent from a server built before per-plugin stamps existed; empty means
     // "not stated", which the panel shows as nothing at all.
     versions: message.versions ?? {},
@@ -218,6 +248,7 @@ export function applyWorldAdminResult(message: {
   id?: string;
   archivedPath?: string;
   plugin?: string;
+  detail?: string;
   refused?: WorldAdminRefusal;
 }): void {
   if (!message.ok) {
@@ -227,6 +258,7 @@ export function applyWorldAdminResult(message: {
       // A result with ok:false always carries a reason; 'failed' is the
       // honest fallback for a server that somehow did not send one.
       reason: message.refused ?? 'failed',
+      detail: message.detail ?? null,
     });
     return;
   }
@@ -238,6 +270,7 @@ export function applyWorldAdminResult(message: {
     id: message.id ?? null,
     archivedPath: message.archivedPath ?? null,
     plugin: message.plugin ?? null,
+    detail: message.detail ?? null,
   });
 }
 

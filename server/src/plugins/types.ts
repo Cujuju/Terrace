@@ -449,12 +449,76 @@ export interface PluginSettingDeclaration {
   readonly defaultValue: string;
 }
 
+/**
+ * One thing an operator can make this plugin do on demand, from the admin
+ * panel (2026-09-01): erupt a volcano, start a slide, put a cyclone in the sky.
+ *
+ * WHY A DECLARATION AND NOT A MESSAGE. Every event plugin already had a
+ * boot-time environment variable that forced one of its events for a
+ * developer to look at (storms/server/dev.ts explains why waiting out a
+ * Poisson clock is not verification). Those were the right tool for a
+ * headless screenshot rig and the wrong one for a person at a keyboard, who
+ * wants the event NOW, HERE, and again in a minute. A plugin message would
+ * give that to every player; a declaration lets core gate it behind the
+ * world-admin key and render the list without knowing what any entry means —
+ * exactly the arrangement PluginSettingDeclaration already established.
+ *
+ * NOT A SETTING, and the difference is the one dev.ts draws: a setting is a
+ * choice about how a world plays, persisted with it; an action is a thing
+ * that happens once, when asked, and leaves no row behind.
+ */
+export interface PluginActionDeclaration {
+  /** Stable, lowercase, dash-separated — the same shape a setting key has. */
+  readonly key: string;
+  /** Button text: an imperative verb phrase ("Erupt the nearest volcano"). */
+  readonly label: string;
+  /** One sentence: what happens, and where, in the operator's terms. */
+  readonly description: string;
+}
+
+/** Where the operator was looking when they asked — the event's site. */
+export interface PluginActionSite {
+  /** Clamped to the live world by the host; a plugin may trust the bounds. */
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * What an action did. `detail` is the plugin's one-line account, shown to
+ * the operator verbatim — the site it chose, or why nothing qualified. It is
+ * the whole point of the receipt: an action that silently does nothing is
+ * what sends a developer off to debug a renderer that was fine.
+ */
+export type PluginActionOutcome =
+  | { readonly ok: true; readonly detail: string }
+  | { readonly ok: false; readonly detail: string };
+
 export interface TerracePlugin {
   /**
    * Unique, stable identifier. Also the message namespace, so it is restricted
    * to lowercase alphanumerics and dashes (see PLUGIN_NAME_PATTERN).
    */
   readonly name: string;
+
+  /**
+   * The on-demand actions this plugin offers the admin panel, if any
+   * (2026-09-01). Read by the host to validate an operator's request and to
+   * tell the panel what to render; the request itself arrives at `onAction`.
+   */
+  readonly actions?: readonly PluginActionDeclaration[];
+
+  /**
+   * Performs one declared action, now, on the live world. Called only for a
+   * key in `actions` and only while this plugin is enabled for the world —
+   * the host refuses everything else before this is reached — so a plugin
+   * need not defend against an unknown key beyond returning `ok: false`.
+   *
+   * RUNS BETWEEN TICKS, on the operator's message, not inside `onTick`: a
+   * plugin whose event is normally born inside its tick (a spawn roll) must
+   * broadcast the birth itself here, or the clients learn of it only on the
+   * next cadence tick — which for a one-second cadence is a visible lag.
+   */
+  onAction?(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome;
 
   /**
    * The per-world settings this plugin offers, if any (2026-08-25). Read by
@@ -521,6 +585,16 @@ export interface TerracePlugin {
    * against. Mutating state that would need to be undone on a later veto is
    * what this contract forbids, not telling the client why THIS plugin said
    * no.
+   *
+   * MAY BE CALLED TWICE FOR ONE INTENT (issue #278). If a later plugin in the
+   * chain returns `modify`, every plugin that allowed is asked again with the
+   * EFFECTIVE intent, so its verdict binds to what will actually be applied
+   * and charged (mana approving radius 2 and being billed for the radius 3
+   * relics widened it to was the bug). Modifiers are never re-asked, so a
+   * modifier need not recognise its own rewrite. On that second look a
+   * plugin may allow or deny; returning `modify` is a contract violation and
+   * is refused as a deny. The "no side effects" rule above already makes a
+   * second call harmless for any compliant plugin.
    */
   onIntent?(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void;
 

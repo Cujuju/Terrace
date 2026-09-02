@@ -52,6 +52,8 @@
 
 import type {
   PersistenceSlice,
+  PluginActionOutcome,
+  PluginActionSite,
   Player,
   TerracePlugin,
   WorldApi,
@@ -75,8 +77,10 @@ import { loadVolcanoes, saveVolcanoes, VOLCANOES_SLICE_VERSION } from './persist
 import {
   advanceVolcanoes,
   drainPendingConeSculpts,
+  forceEruption,
   GENESIS_CONE_BANDS,
   lavaStates,
+  nearestVent,
   openVent,
   resetVolcanoes,
   rollSpontaneousBirth,
@@ -97,6 +101,10 @@ import {
  * instead of holding a wrong flow until the next eruption.
  */
 export const KEEPALIVE_TICK_INTERVAL = 600;
+
+/** The admin panel's action keys (PluginActionDeclaration). */
+const ERUPT_ACTION = 'erupt';
+const VENT_ACTION = 'vent';
 
 /** Events this plugin emits. Namespaced `volcanoes:` by the host. */
 export const ERUPTION_EVENT = 'eruption';
@@ -298,6 +306,58 @@ export const plugin: TerracePlugin = {
       defaultValue: DEFAULT_VOLCANIC_ACTIVITY,
     },
   ],
+
+  // THE ADMIN PANEL'S DEBUG SPAWNS (server plugins/types.ts,
+  // PluginActionDeclaration). Both go through the same functions the tick
+  // uses — `forceEruption` is `beginEruption` with the clock skipped, `openVent`
+  // is what a player's digging opens — so a forced event is an ordinary one
+  // in everything but its timing, and what the operator sees is what a
+  // player would.
+  actions: [
+    {
+      key: ERUPT_ACTION,
+      label: 'Erupt the nearest volcano',
+      description: 'The vent closest to where you are looking erupts now: the cone grows and a lava front runs downhill for a minute.',
+    },
+    {
+      key: VENT_ACTION,
+      label: 'Open a vent here',
+      description: 'Raises a new cone with a dormant vent at the cell you are looking at, on revealed ground clear of other vents.',
+    },
+  ],
+
+  onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
+    if (key === ERUPT_ACTION) {
+      const vent = nearestVent(site.x, site.y);
+      if (vent === null) return { ok: false, detail: 'this world has no vent — open one first' };
+      if (!forceEruption(vent, world)) {
+        return { ok: false, detail: `vent ${vent.id} at (${vent.x}, ${vent.y}) is already erupting` };
+      }
+      // What the tick does for a vent whose clock ran out (simulate): the
+      // event for sibling plugins, and the delta for the clients — sent now
+      // rather than left to the keepalive a minute away.
+      world.emitEvent(ERUPTION_EVENT, { ventId: vent.id, x: vent.x, y: vent.y });
+      broadcastChanges(world, ventStates(), [], []);
+      return { ok: true, detail: `vent ${vent.id} at (${vent.x}, ${vent.y}) is erupting` };
+    }
+    if (key === VENT_ACTION) {
+      if (!world.isCellUnlocked(site.x, site.y)) {
+        return { ok: false, detail: `(${site.x}, ${site.y}) is not revealed — nothing may sculpt fog` };
+      }
+      if (ventCount() >= MAX_VENTS_PER_WORLD) {
+        return { ok: false, detail: `this world already has its ${MAX_VENTS_PER_WORLD} vents` };
+      }
+      // 'deferred', as a dug vent's is: this runs between ticks, and the cone's
+      // ring steps are queued for the ticks that follow (./vents.ts).
+      const vent = openVent(world, site.x, site.y, GENESIS_CONE_BANDS, 'deferred');
+      if (vent === null) {
+        return { ok: false, detail: `(${site.x}, ${site.y}) is too close to another vent` };
+      }
+      broadcastChanges(world, ventStates(), [], []);
+      return { ok: true, detail: `vent ${vent.id} opened at (${site.x}, ${site.y}); its cone rises over the next ticks` };
+    }
+    return { ok: false, detail: `no such action "${key}"` };
+  },
 
   onWorldCreate(world: WorldApi): void {
     resetSessionState();

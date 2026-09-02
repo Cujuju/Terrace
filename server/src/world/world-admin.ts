@@ -200,6 +200,7 @@ export class WorldAdminService {
       installed: [...manager.installedPluginNames],
       disabled: [...disabled],
       settings,
+      actions: manager.pluginActions,
       versions: manager.installedPluginVersions,
     };
   }
@@ -266,6 +267,9 @@ export class WorldAdminService {
           request.setting,
           request.value,
         );
+
+      case 'worldPluginAct':
+        return this.actPlugin(request.plugin, request.action, { x: request.x, y: request.y });
 
       case 'serverRestart':
         return this.restartServer();
@@ -474,6 +478,30 @@ export class WorldAdminService {
   }
 
   /**
+   * Performs one plugin's declared action on the live world (the admin
+   * panel, 2026-09-01).
+   *
+   * THE MANAGER OWNS THE WHOLE ACT, as for a setting; this method widens its
+   * refusal into the operator's vocabulary and carries the plugin's own
+   * account through on the receipt — on success AND on a decline, because
+   * "no hillside near you was steep enough" is the answer the operator
+   * needs either way, and only the plugin can compose it.
+   */
+  private actPlugin(
+    plugin: string,
+    action: string,
+    site: { readonly x: number; readonly y: number },
+  ): WorldAdminResultMessage {
+    const outcome = this.deps.manager.actPlugin(plugin, action, site);
+    if (typeof outcome === 'string') return fail('actPlugin', outcome);
+    logInfo(`plugin "${plugin}" action "${action}": ${outcome.detail}`);
+    if (!outcome.ok) {
+      return { ...fail('actPlugin', 'actionDeclined'), plugin, detail: outcome.detail };
+    }
+    return { type: 'worldAdminResult', action: 'actPlugin', ok: true, plugin, detail: outcome.detail };
+  }
+
+  /**
    * Restarts the server process, so code that changed on disk becomes live.
    *
    * THE SERVICE OWNS THE WHOLE ACT, for `setPlugin`'s reason: the exit sequence
@@ -538,6 +566,8 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
       return 'reloadPlugin';
     case 'worldPluginConfigure':
       return 'configurePlugin';
+    case 'worldPluginAct':
+      return 'actPlugin';
     case 'serverRestart':
       return 'restart';
     case 'worldSwitchCancel':
@@ -564,6 +594,7 @@ function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPlugi
     installed: [],
     disabled: [],
     settings: [],
+    actions: [],
     versions: {},
     refused,
   };

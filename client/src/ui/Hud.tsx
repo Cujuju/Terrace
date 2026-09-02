@@ -56,8 +56,14 @@ import { VersionWatermark } from './VersionWatermark.tsx';
 import { RestorePoints, type RollbackActions } from './RestorePoints.tsx';
 import { restorePanelOpen, setRestorePanelOpen } from '../state/rollbackState.ts';
 import { WorldManager, type WorldActions } from './WorldManager.tsx';
+import { AdminPanel, type FocusCell } from './AdminPanel.tsx';
 import { WorldSwitchBanner } from './WorldSwitchBanner.tsx';
-import { worldPanelOpen, setWorldPanelOpen } from '../state/worldsState.ts';
+import {
+  adminPanelOpen,
+  setAdminPanelOpen,
+  worldPanelOpen,
+  setWorldPanelOpen,
+} from '../state/worldsState.ts';
 import {
   BRUSH_PROFILES,
   BRUSH_RADII,
@@ -199,6 +205,12 @@ export function Hud(props: {
    * connection — the same arrangement as chartSource above.
    */
   rollback: RollbackActions;
+  /**
+   * The cell under the camera's orbit target, for the admin panel's debug
+   * spawns; null until a world has arrived. Passed in for chartSource's
+   * reason: the HUD holds no reference to the viewport.
+   */
+  focusCell: () => FocusCell | null;
 }): JSX.Element {
   // The button column's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
@@ -546,6 +558,28 @@ export function Hud(props: {
           >
             ⚙
           </button>
+          {/* ADMIN MODE (owner, 2026-09-01): the debug spawn panel's door, at
+              the very bottom of the column — the corner of the screen — so
+              it is the last thing in the row and the first thing under the
+              thumb. An operator tool like the restore points above it, so
+              it gets the same 40px square and no more prominence. A flask:
+              this is where experiments are run. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            classList={{ open: adminPanelOpen() }}
+            aria-expanded={adminPanelOpen()}
+            aria-haspopup="dialog"
+            aria-label="Admin: world events"
+            title="Admin: fire volcanoes, mudslides, storms and the rest on demand, for debugging."
+            onClick={() => setAdminPanelOpen(!adminPanelOpen())}
+          >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 3h6" />
+              <path d="M10 3v6.5L4.6 18.2A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.7-2.8L14 9.5V3" />
+              <path d="M7.5 15h9" />
+            </svg>
+          </button>
         </div>
         </div>
       </div>
@@ -629,6 +663,12 @@ export function Hud(props: {
           server for nothing until the operator types a key and presses List. */}
       <Show when={worldPanelOpen()}>
         <WorldManager actions={props.worlds} />
+      </Show>
+
+      {/* The admin panel, mounted only while open — it asks the server for
+          nothing until a key is in hand, and then only for the listing. */}
+      <Show when={adminPanelOpen()}>
+        <AdminPanel actions={props.worlds} focusCell={props.focusCell} />
       </Show>
 
       {/* Not gated on the panel: a switch countdown and "no world loaded" are

@@ -19,6 +19,8 @@ import {
   ALLOW,
   type IntentVerdict,
   type LoadedPlugin,
+  type PluginActionOutcome,
+  type PluginActionSite,
   type SiblingModule,
   type TerracePlugin,
   type WorldApi,
@@ -51,6 +53,13 @@ export const MAX_TERRAIN_CHANGE_DEPTH = 4;
  * would take the tick down with it.
  */
 export const MAX_WORLD_EVENT_DEPTH = 4;
+
+/**
+ * Deny reason when a plugin that allowed an intent answers the second look
+ * (issue #278) with `modify` instead of allow/deny. Surfaces in the pipeline's
+ * `plugin-denied` outcome so a broken plugin is diagnosable from the log.
+ */
+export const SECOND_LOOK_MODIFY_REASON = 'plugin-modified-on-second-look';
 
 interface PluginEntry {
   readonly loaded: LoadedPlugin;
@@ -311,6 +320,10 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    *   - modify → the replacement intent flows on to the next plugin;
    *   - allow / no hook / a throw → intent passes through unchanged.
    *
+   * If any plugin modified, every plugin that allowed is asked ONCE MORE,
+   * against the effective intent (issue #278) — see the second pass inside
+   * for why only the allowers, and why a modify there is a deny.
+   *
    * A plugin that throws is treated as ALLOW rather than DENY: a buggy
    * extension must not be able to silently make the world unsculptable. The
    * failure is logged loudly instead.
@@ -325,15 +338,23 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   runIntent(intent: SculptIntent, player: Player): IntentVerdict {
     let current = intent;
     let modified = false;
+    // Every plugin that allowed (or abstained) in the first pass. Kept so that,
+    // if a LATER plugin rewrites the intent, these can be asked again about
+    // the intent they will actually be bound to — see the second pass below.
+    const allowed: PluginEntry[] = [];
 
-    for (const { loaded, api } of this.entries) {
+    for (const entry of this.entries) {
+      const { loaded, api } = entry;
       const { plugin } = loaded;
       if (!plugin.onIntent) continue;
 
       const verdict = this.safely(plugin, 'onIntent', () =>
         plugin.onIntent?.(current, { player, world: api }),
       );
-      if (!verdict || verdict.kind === 'allow') continue;
+      if (!verdict || verdict.kind === 'allow') {
+        allowed.push(entry);
+        continue;
+      }
 
       if (verdict.kind === 'deny') return verdict;
 
@@ -341,7 +362,42 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
       modified = true;
     }
 
-    return modified ? { kind: 'modify', intent: current } : ALLOW;
+    if (!modified) return ALLOW;
+
+    // SECOND PASS (issue #278): a plugin that allowed the ORIGINAL intent was
+    // judging a stroke that no longer exists. mana priced radius 2, relics
+    // widened it to 3, and mana — which sorts first — was then billed for 3
+    // in the effect phase: an overdraft caused by a check that had passed.
+    // The plugins that allowed are re-asked against the EFFECTIVE intent so a
+    // verdict always refers to what will be applied and charged.
+    //
+    // Only the allowers are re-asked. The modifiers already spoke — their
+    // rewrite IS the effective intent — and re-running them would compound an
+    // unconditional widener (2→3→4) unless every modifier were rewritten to
+    // recognise its own work. Skipping them keeps the guarantee in this one
+    // place instead of in a convention every plugin author must remember.
+    //
+    // A `modify` on the second look is refused, not applied: there is no
+    // third pass, and a plugin whose verdict depends on the very field it
+    // rewrites could otherwise keep the chain from ever settling. It is booked
+    // as a fault, exactly like a throw, because it is a plugin bug.
+    for (const { loaded, api } of allowed) {
+      const { plugin } = loaded;
+      const verdict = this.safely(plugin, 'onIntent', () =>
+        plugin.onIntent?.(current, { player, world: api }),
+      );
+      if (!verdict || verdict.kind === 'allow') continue;
+      if (verdict.kind === 'deny') return verdict;
+
+      this.recordFault(
+        plugin,
+        'onIntent',
+        new Error(`returned modify on the second look at an already-modified intent`),
+      );
+      return { kind: 'deny', reason: SECOND_LOOK_MODIFY_REASON };
+    }
+
+    return { kind: 'modify', intent: current };
   }
 
   /**
@@ -496,6 +552,45 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     // during a host's lifetime.
     this.handlersByType ??= new Map(this.messageHandlers());
     return this.handlersByType.get(type);
+  }
+
+  /**
+   * Performs one plugin's declared action on this world (the admin panel,
+   * 2026-09-01). See TerracePlugin.onAction for the contract the plugin sees.
+   *
+   * OVER THE ENABLED SET ONLY: a plugin the operator switched off for this
+   * world has no running instance, and its `onAction` would be acting on a
+   * world it never `onWorldCreate`d into. Told apart from "nobody declares
+   * that" because the operator's fix is different (the world panel's toggle,
+   * not the code).
+   *
+   * The site is clamped HERE, once, so no plugin has to remember to: the
+   * client sends the cell its camera looks at, which can be off the map when
+   * the view is dollied out past the edge.
+   */
+  invokeAction(
+    pluginName: string,
+    key: string,
+    site: PluginActionSite,
+  ): PluginActionOutcome | 'unknownPlugin' | 'unknownAction' | 'pluginDisabled' | 'failed' {
+    const installed = this.installed.find((entry) => entry.loaded.plugin.name === pluginName);
+    if (installed === undefined) return 'unknownPlugin';
+    const { plugin } = installed.loaded;
+    if (!plugin.actions?.some((declaration) => declaration.key === key)) return 'unknownAction';
+    if (!this.entries.includes(installed)) return 'pluginDisabled';
+    if (plugin.onAction === undefined) return 'unknownAction';
+
+    const last = this.world.size - 1;
+    const clamped: PluginActionSite = {
+      x: Math.min(last, Math.max(0, site.x)),
+      y: Math.min(last, Math.max(0, site.y)),
+    };
+    // `safely` turns a throw into undefined; to the operator that is a
+    // 'failed' receipt, and the log line `safely` wrote says why.
+    const outcome = this.safely(plugin, `onAction.${key}`, () =>
+      plugin.onAction!(installed.api, key, clamped),
+    );
+    return outcome ?? 'failed';
   }
 
   messageHandlers(): Array<[string, (player: Player, payload: unknown) => void]> {

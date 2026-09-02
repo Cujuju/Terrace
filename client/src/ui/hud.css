@@ -977,9 +977,13 @@ button.world-header {
 /* The plugin list is a two-column grid: every label shares the widest
    label's width (max-content), so the control groups line up down the panel.
    Names are short enough to never need wrapping; the version stamp trails. */
+/* CONTROLS ON THE RIGHT (owner, 2026-09-01): the label column takes the slack
+   and the toggle group sits against the sheet's right edge, so every toggle
+   down the panel lands in one column under the thumb — and the settings'
+   selects below (.plugin-setting) line up with them. */
 .plugin-list {
   display: grid;
-  grid-template-columns: max-content auto;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   column-gap: 10px;
   row-gap: 6px;
@@ -994,7 +998,7 @@ button.world-header {
    glyph everywhere, so it needs no width for a word. */
 .plugin-controls {
   display: inline-flex;
-  justify-self: start;
+  justify-self: end;
 }
 
 .plugin-controls .plugin-toggle {
@@ -1038,7 +1042,17 @@ button.world-header {
    key; the panel knows nothing else about either. */
 .plugin-setting {
   align-items: baseline;
+  justify-content: space-between;
   gap: 0.5rem;
+}
+
+/* The select itself hugs the right edge under the toggles above it, whatever
+   the label's width — belt and suspenders with the space-between. One shared
+   minimum width, so a column of selects has one left edge as well as one
+   right edge instead of each sizing to its longest option. */
+.plugin-setting .chart-button {
+  margin-left: auto;
+  min-width: 8rem;
 }
 
 .restore-refusal {
@@ -1149,4 +1163,298 @@ button.world-header {
    the text side has to stop demanding the full width. */
 .restore-row .world-thumb + .restore-row-main {
   flex: 1 1 12rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ADMIN — the debug spawn dialog (AdminPanel.tsx, owner 2026-09-01). The
+   restore sheet's scrim and shell, because it is the same kind of thing (an
+   operator's document laid over the world); its own typography and a card
+   grid inside, because a list of events to FIRE wants to read as a set of
+   buttons, not a table. Every accent is derived from one hue per plugin
+   (--admin-hue, set inline from the plugin's name) so the palette follows
+   the installed plugins rather than a list kept here.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.admin-sheet {
+  width: min(720px, 94vw);
+  gap: 14px;
+  padding: 18px 20px 20px;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(111, 191, 115, 0.08), transparent 60%),
+    var(--hud-bg);
+}
+
+.admin-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The eyebrow: small, tracked, accent-coloured — the mode you are in. */
+.admin-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hud-accent);
+}
+
+.admin-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+/* The aim readout: a quiet pill with the cell in tabular figures, so the
+   digits do not jitter as the camera drifts. */
+.admin-aim {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--hud-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+.admin-aim-label {
+  font-size: 11px;
+  color: var(--hud-muted);
+}
+
+.admin-aim-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  min-width: 7ch;
+}
+
+.admin-close {
+  padding: 6px 10px;
+}
+
+.admin-lede {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--hud-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px dashed var(--hud-border);
+  border-radius: 10px;
+}
+
+.admin-unlock {
+  border-color: var(--hud-accent);
+}
+
+/* The receipt: a strip whose colour IS the outcome, carrying the plugin's
+   own sentence. Three tones — it happened, the plugin found nothing to do,
+   the server refused — because they ask three different things of the
+   operator (look, aim elsewhere, fix the request). */
+.admin-receipt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid;
+  font-size: 13px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-receipt-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.admin-receipt-ok {
+  color: rgb(170, 225, 180);
+  border-color: rgba(90, 196, 122, 0.45);
+  background: rgba(90, 196, 122, 0.12);
+}
+
+.admin-receipt-declined {
+  color: rgb(240, 205, 140);
+  border-color: rgba(224, 182, 74, 0.45);
+  background: rgba(224, 182, 74, 0.12);
+}
+
+.admin-receipt-refused {
+  color: rgb(240, 170, 160);
+  border-color: rgba(200, 80, 70, 0.5);
+  background: rgba(200, 80, 70, 0.12);
+}
+
+.admin-empty {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  color: var(--hud-muted);
+  border: 1px dashed var(--hud-border);
+  border-radius: 10px;
+}
+
+.admin-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The group name: the plugin, in small caps, with its swatch — a section
+   label, not a heading, so the cards stay the loudest thing on the sheet. */
+.admin-group-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hud-muted);
+}
+
+.admin-group-name::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hud-border);
+}
+
+.admin-group-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: hsl(var(--admin-hue) 70% 62%);
+  box-shadow: 0 0 10px hsl(var(--admin-hue) 70% 55% / 0.6);
+}
+
+.admin-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+/* A card is one button: label, one line of what it does, and an arrow that
+   brightens on hover. The plugin's hue lives in a left rule and the hover
+   glow, so a row of cards reads as a set without any of them shouting. */
+.admin-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: start;
+  padding: 12px 14px 12px 16px;
+  text-align: left;
+  font: inherit;
+  color: var(--hud-text);
+  border: 1px solid var(--hud-border);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.admin-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: hsl(var(--admin-hue) 70% 62%);
+  opacity: 0.85;
+}
+
+.admin-card:hover:not(:disabled),
+.admin-card:focus-visible {
+  border-color: hsl(var(--admin-hue) 70% 62% / 0.7);
+  box-shadow: 0 6px 24px hsl(var(--admin-hue) 70% 50% / 0.22);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.admin-card:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.admin-card.working {
+  border-color: hsl(var(--admin-hue) 70% 62% / 0.7);
+}
+
+.admin-card-label {
+  grid-column: 1;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.admin-card-description {
+  grid-column: 1;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--hud-muted);
+}
+
+.admin-card-go {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 18px;
+  color: hsl(var(--admin-hue) 70% 66%);
+  opacity: 0.6;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.admin-card:hover:not(:disabled) .admin-card-go {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+/* Phone width: the header stacks and the aim pill goes under the title. */
+@media (max-width: 520px) {
+  .admin-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .admin-aim {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }

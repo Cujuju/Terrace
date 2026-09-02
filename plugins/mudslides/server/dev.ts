@@ -154,21 +154,28 @@ function dryRunLength(world: MudslideWorld, x: number, y: number): number {
  * 512-cell test world; the scan looks at every fourth cell of the revealed
  * square instead. It runs once, at boot, on a fixture world.
  */
-function findSteepestSite(world: MudslideWorld): { x: number; y: number } | null {
-  // ANCHORED TO THE FIRST SITE THIS WORLD FOUND, once it has found one. Without
-  // it a periodic force wanders the whole revealed square — every re-force picks
-  // the best remaining hillside, which is somewhere else — and a camera pointed
-  // at the last one photographs nothing. Anchoring keeps the whole sequence in
-  // one frame, which is the entire point of the period. The anchor is dropped
-  // when its neighbourhood has nothing left to collapse.
-  const anchored = forcedAnchor !== null;
-  const centre = anchored ? forcedAnchor! : { x: Math.floor(world.worldSize / 2), y: Math.floor(world.worldSize / 2) };
-  const reach = anchored ? DEV_ANCHOR_RADIUS_CELLS : DEV_SEARCH_RADIUS_CELLS;
+/** What `scanForSite` found: the best site, and the numbers to report if none. */
+interface SiteScan {
+  readonly best: { x: number; y: number } | null;
+  readonly bestRun: number;
+  readonly bestDrop: number;
+  /** Kept for the diagnostic: "no site" and "no steep ground at all" are
+   *  different failures and a developer needs to be told which happened. */
+  readonly steepestSeen: number;
+  readonly longestSeen: number;
+}
+
+/**
+ * The grid scan itself, around any centre: the boot-time force scans the
+ * revealed square's middle (or its anchor), the admin panel's action scans
+ * around where the operator is looking (`forceSlideNear`). One scan, two
+ * callers, so the siting rules — footprint revealed, longest run wins,
+ * steepest breaks the tie — cannot drift apart.
+ */
+function scanForSite(world: MudslideWorld, centre: { x: number; y: number }, reach: number): SiteScan {
   let best: { x: number; y: number } | null = null;
   let bestRun = 0;
   let bestDrop = 0;
-  // Kept only for the diagnostic below: "no site" and "no steep ground at all"
-  // are different failures and a developer needs to be told which one happened.
   let steepestSeen = 0;
   let longestSeen = 0;
 
@@ -199,6 +206,20 @@ function findSteepestSite(world: MudslideWorld): { x: number; y: number } | null
       best = { x, y };
     }
   }
+  return { best, bestRun, bestDrop, steepestSeen, longestSeen };
+}
+
+function findSteepestSite(world: MudslideWorld): { x: number; y: number } | null {
+  // ANCHORED TO THE FIRST SITE THIS WORLD FOUND, once it has found one. Without
+  // it a periodic force wanders the whole revealed square — every re-force picks
+  // the best remaining hillside, which is somewhere else — and a camera pointed
+  // at the last one photographs nothing. Anchoring keeps the whole sequence in
+  // one frame, which is the entire point of the period. The anchor is dropped
+  // when its neighbourhood has nothing left to collapse.
+  const anchored = forcedAnchor !== null;
+  const centre = anchored ? forcedAnchor! : { x: Math.floor(world.worldSize / 2), y: Math.floor(world.worldSize / 2) };
+  const reach = anchored ? DEV_ANCHOR_RADIUS_CELLS : DEV_SEARCH_RADIUS_CELLS;
+  const { best, bestRun, bestDrop, steepestSeen, longestSeen } = scanForSite(world, centre, reach);
 
   if (best === null && anchored) {
     // The anchored neighbourhood is spent. Drop the anchor and look at the whole
@@ -327,4 +348,41 @@ function forceOne(world: MudslideWorld): Slide | null {
   );
   lastForced = slide;
   return slide;
+}
+
+/**
+ * THE ADMIN PANEL'S SLIDE (2026-09-01): collapses the best hillside within
+ * DEV_ANCHOR_RADIUS_CELLS of `centre` — the cell the operator is looking at —
+ * and says what it did in one line.
+ *
+ * NOT `forceSlideFromEnv`, and the difference is everything the env var does
+ * BESIDES sliding: it freezes the ordinary trigger, slows the sim and anchors
+ * a period, because it is building a photographic fixture. This is a person
+ * asking for one slide, now, in a world that goes on being a world.
+ */
+export function forceSlideNear(
+  world: MudslideWorld,
+  centre: { x: number; y: number },
+): { readonly slide: Slide | null; readonly detail: string } {
+  const { best, bestRun, bestDrop, steepestSeen, longestSeen } = scanForSite(
+    world,
+    centre,
+    DEV_ANCHOR_RADIUS_CELLS,
+  );
+  if (best === null) {
+    return {
+      slide: null,
+      detail:
+        `no hillside with anywhere to run within ${DEV_ANCHOR_RADIUS_CELLS} cells of ` +
+        `(${centre.x}, ${centre.y}); steepest slope seen ${steepestSeen}, longest run ${longestSeen} cells`,
+    };
+  }
+  const slide = startSlide(world, best.x, best.y);
+  if (slide === null) {
+    return { slide: null, detail: `(${best.x}, ${best.y}) is steep but has nowhere downhill to go` };
+  }
+  return {
+    slide,
+    detail: `slide ${slide.id} started at (${best.x}, ${best.y}): drop ${bestDrop}, run ${bestRun} cells`,
+  };
 }
