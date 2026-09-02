@@ -783,50 +783,48 @@ button.world-header {
   overflow: visible;
 }
 
-/* Text inside the strip. Sizes are in the strip's own units so they scale with
-   it. Tabular figures on the time so 1:01 and 11:11 are the same width. The
-   day and time are a step larger than the weekday (owner ask, 2026-09-01):
-   they are what the player reads, the weekday is a caption. */
+/* The words over the painting. All three are HTML spans floated over the SVG
+   at the top/left AlmanacClock.tsx sets inline from the strip's geometry, so
+   they render like the title (same font engine, same hinting) rather than as
+   SVG text. Tabular figures on the time so 1:01 and 11:11 are the same width.
+   The day and time are a step larger than the weekday (owner ask,
+   2026-09-01): they are what the player reads, the weekday is a caption. */
+.almanac__weekday,
+.almanac__day,
+.almanac__time {
+  position: absolute;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .almanac__weekday,
 .almanac__day {
   letter-spacing: 0.08em;
-  font-family: inherit;
 }
 
 .almanac__weekday {
   font-size: 6.5px;
-}
-
-.almanac__day {
-  font-size: 8px;
-}
-
-.almanac__weekday {
-  fill: var(--hud-text);
+  color: var(--hud-text);
   opacity: 0.8;
 }
 
 .almanac__day {
-  fill: var(--hud-muted);
+  font-size: 8px;
+  color: var(--hud-muted);
 }
 
 .almanac__time {
-  /* Floated over the painting at the top AlmanacClock.tsx sets inline, so the
-     tag's place lives with the rest of the strip's geometry. */
-  position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
   padding: 0 5px;
   border-radius: 2px;
   font-size: 8.5px;
-  line-height: 1;
   font-weight: 600;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
   color: var(--hud-text);
 }
 
