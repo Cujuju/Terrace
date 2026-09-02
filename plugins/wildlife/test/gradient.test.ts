@@ -46,6 +46,10 @@ function grazer(x: number, y: number, overrides: Partial<WildlifeEntity> = {}): 
     species: 'grazer',
     schoolId: 1,
     size: 'medium',
+    // Born moving, like every spawned creature (population.ts). Required on
+    // WildlifeEntity since the idle bouts landed (2026-09-02); the grazer
+    // declares no bouts, so nothing can ever set it.
+    idle: false,
     x,
     y,
     heading: 0,
@@ -144,6 +148,7 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
       species: 'fish',
       schoolId: 1,
       size: 'small',
+      idle: false,
       x: 9.5,
       y: 20,
       heading: 0,
@@ -202,6 +207,7 @@ describe('contour-following instead of reversal (2026-08-19, "go around, not ove
       species: 'fish',
       schoolId: 9,
       size: 'medium',
+      idle: false,
       x: 5.5,
       y: 5.5,
       heading: 1.23,

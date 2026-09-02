@@ -279,14 +279,41 @@ function totalTarget(): number {
 }
 
 function countsBySpecies(): Record<WildlifeHabitatSpecies, number> {
-  const counts: Record<WildlifeHabitatSpecies, number> = {
-    fish: 0,
-    whale: 0,
-    deepsea: 0,
-    grazer: 0,
-  };
+  // Built from the species list rather than typed out (2026-09-02, when four
+  // species arrived at once): a literal here has to be edited every time the
+  // table grows, and the edit is in a file nothing about the new species
+  // otherwise touches.
+  const counts = Object.fromEntries(
+    WILDLIFE_HABITAT_SPECIES.map((species) => [species, 0]),
+  ) as Record<WildlifeHabitatSpecies, number>;
   for (const entity of livingEntities()) counts[entity.species]++;
   return counts;
+}
+
+/**
+ * The fields a snapshot actually carries (server/persistence.ts's
+ * PersistedEntity). `fleeSecondsRemaining` and `idle` are deliberately NOT
+ * among them — a panic and an idle bout are moments, not facts about the
+ * animal, and a restored world starts calm and in motion.
+ *
+ * The round-trip assertions used to compare the WHOLE live entity, which
+ * happened to pass only because nothing in those fixtures was ever fleeing or
+ * idling at snapshot time. Both became false on 2026-09-02: the shark startles
+ * its prey every tick it is near them, and three species take idle bouts. The
+ * assertion that matters — every persisted field survives — is stated directly
+ * now, with the transient fields asserted to come back at rest beside it.
+ */
+function persistedShapeOf(entity: WildlifeEntity) {
+  const { id, species, schoolId, size, x, y, heading } = entity;
+  return { id, species, schoolId, size, x, y, heading };
+}
+
+/** Every restored creature is calm and moving, whatever it was doing before. */
+function expectRestoredAtRest(): void {
+  for (const entity of livingEntities()) {
+    expect(entity.fleeSecondsRemaining).toBe(0);
+    expect(entity.idle).toBe(false);
+  }
 }
 
 describe('habitat classification', () => {
@@ -476,22 +503,35 @@ describe('population targets', () => {
     });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // The documented ecosystem after the 2026-08-23 grazer cut and the cap
-    // raise that paid for it: 1 532 asked for (1 310 grazer / 131 fish / 52
-    // deepsea / 39 whale), the cap scaling that by 850/1 532 and flooring to
-    // 847. Asserted exactly, because this table is the arithmetic the
-    // species.ts header claims and a silent drift in it is how that header
-    // becomes a lie.
-    expect(targets).toEqual({ fish: 72, deepsea: 28, grazer: 726, whale: 21 });
-    expect(total).toBe(847);
+    // RESTATED FOR THE FOUR SPECIES ADDED 2026-09-02. The demand this nominal
+    // world makes went from 1 532 to 2 000 —
+    //
+    //   fish  131   whale  39   deepsea 52   grazer 1 310
+    //   ibex  187   bison 218   ray     43   shark     20
+    //
+    // — and WILDLIFE_POPULATION_CAP (850, unchanged: it is a bandwidth budget)
+    // scales every species by 850/2 000 = 0.425 and floors, giving 846.
+    //
+    // WHAT IT COSTS, STATED RATHER THAN DISCOVERED. The sea thins: fish 72 → 55,
+    // deepsea 28 → 22, whale 21 → 16. That is the honest price of four more
+    // species under a fixed cap, it falls on every species proportionally
+    // (nothing is distorted, the ecosystem is smaller), and it only binds on a
+    // world of this shape — a fully revealed, half-land 512² world, which no
+    // world on this machine is. Every world that exists is far below the cap.
+    // Asserted exactly, because this table is the arithmetic the species.ts
+    // header claims and a silent drift in it is how that header becomes a lie.
+    expect(targets).toEqual({
+      fish: 55,
+      whale: 16,
+      deepsea: 22,
+      grazer: 556,
+      ibex: 79,
+      bison: 92,
+      ray: 18,
+      shark: 8,
+    });
+    expect(total).toBe(846);
 
-    // THE THREE SEA SPECIES ARE EXACTLY WHERE THEY WERE before the grazer
-    // density was cut 27-fold — 72 / 28 / 21, the counts this table held on
-    // 2026-08-22. That is what the cap raise was for (owner, 2026-08-23:
-    // "restore the numbers for fish, deep sea, and whales"), and asserting it as
-    // its own line means a future cap or density edit that quietly re-taxes the
-    // sea fails here rather than in someone's ocean.
-    expect([targets.fish, targets.deepsea, targets.whale]).toEqual([72, 28, 21]);
     expect(total).toBeGreaterThan(WILDLIFE_POPULATION_CAP / 2);
     expect(targets.fish).toBeGreaterThan(targets.whale);
     expect(targets.whale).toBeGreaterThan(0);
@@ -826,16 +866,19 @@ describe('credit removal after a spawn honours ripeness, not recency', () => {
   // probability to exactly 1 and the spawn roll is certain — no seeded RNG
   // needed, and none used.
   it('never removes a not-yet-ripe habitat-loss credit to pay for a ripe one’s spawn', () => {
-    // Uniform shallow water, fully unlocked: only fish have habitat here, so
-    // every credit in play is unambiguously fish and nothing else competes for
-    // WILDLIFE_POPULATION_CAP.
+    // Uniform shallow water, fully unlocked. Since 2026-09-02 that is habitat
+    // for THREE species (fish, ray, shark) rather than one, so the credit
+    // arithmetic below is stated over the whole shallow demand and the race
+    // itself is run on whichever species the despawn below happens to hit —
+    // nothing about the bug was ever fish-specific.
     const world = habitatView(worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL));
     let simSeconds = 0;
 
     // First census: the whole deficit becomes ripe credits in one shot (this
     // plugin's "how a brand new world fills up").
     advancePopulation(world, 0);
-    const target = populationTargets().fish;
+    const allTargets = populationTargets();
+    const target = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + allTargets[s], 0);
     expect(target).toBeGreaterThan(0);
     expect(pendingCreditCount()).toBe(target);
 
@@ -855,9 +898,12 @@ describe('credit removal after a spawn honours ripeness, not recency', () => {
     // credits from event 1. despawnWithCredit always PUSHES, so this credit is
     // now the last element of the array — exactly the position the old bug's
     // end-scanning removal always hit first.
+    // Whichever species is first in the population — the credit the despawn
+    // pushes is for THAT species, and it is that species' queue the race is on.
+    const raced = livingEntities()[0].species;
     despawnWithCredit(0);
     const delayedReadyAt = simSeconds + HABITAT_LOSS_RESPAWN_DELAY_SECONDS;
-    const fishCreditsBeforeEvent2 = pendingCreditsSnapshot().filter((c) => c.species === 'fish');
+    const fishCreditsBeforeEvent2 = pendingCreditsSnapshot().filter((c) => c.species === raced);
     expect(fishCreditsBeforeEvent2.some((c) => c.readyAt === delayedReadyAt)).toBe(true);
 
     const ripeBeforeEvent2 = fishCreditsBeforeEvent2.filter((c) => c.readyAt <= simSeconds).length;
@@ -880,7 +926,7 @@ describe('credit removal after a spawn honours ripeness, not recency', () => {
     // removal untouched. Under the bug this fails deterministically — the
     // credit sat last in the array, and the old removal always consumed from
     // the end.
-    const fishCreditsAfterEvent2 = pendingCreditsSnapshot().filter((c) => c.species === 'fish');
+    const fishCreditsAfterEvent2 = pendingCreditsSnapshot().filter((c) => c.species === raced);
     expect(fishCreditsAfterEvent2.some((c) => c.readyAt === delayedReadyAt)).toBe(true);
   });
 });
@@ -1013,7 +1059,7 @@ describe('wildlife persistence', () => {
 
   it('round-trips the population through a snapshot', () => {
     fillPopulation(harness);
-    const before = livingEntities().map((entity) => ({ ...entity }));
+    const before = livingEntities().map(persistedShapeOf);
     expect(before.length).toBeGreaterThan(0);
 
     const slices = harness.host.collectPersistence();
@@ -1024,7 +1070,8 @@ describe('wildlife persistence', () => {
     expect(livingEntities()).toHaveLength(0);
     restored.host.restorePersistence(slices);
 
-    expect(livingEntities().map((entity) => ({ ...entity }))).toEqual(before);
+    expect(livingEntities().map(persistedShapeOf)).toEqual(before);
+    expectRestoredAtRest();
   });
 
   it('does not reuse ids after a restore', () => {
@@ -1496,7 +1543,17 @@ describe('creatures keep out of each other (the 2026-08-21 migration)', () => {
 describe('the cohesion blend', () => {
   /** A fish with an explicit pose, for steering arithmetic. */
   function fishAt(x: number, y: number, heading: number, size: WildlifeSizeClass): WildlifeEntity {
-    return { id: 1, species: 'fish', schoolId: 1, size, x, y, heading, fleeSecondsRemaining: 0 };
+    return {
+      id: 1,
+      species: 'fish',
+      schoolId: 1,
+      size,
+      x,
+      y,
+      heading,
+      fleeSecondsRemaining: 0,
+      idle: false,
+    };
   }
 
   it('applies no pull at all inside the comfort radius', () => {
@@ -1744,6 +1801,7 @@ describe('a vetoed step leaves both position and heading alone', () => {
       species: 'fish',
       schoolId: 1,
       size: 'small',
+      idle: false,
       x: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
       y: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
       heading: WEDGED_HEADING,
@@ -2091,7 +2149,7 @@ describe('fish size classes drive schooling', () => {
     // every school as permanent singletons.
     const harness = bootOn(openShallowWorld());
     tick(harness, ticksFor(SETTLE_SECONDS));
-    const before = livingEntities().map((entity) => ({ ...entity }));
+    const before = livingEntities().map(persistedShapeOf);
     expect(before.length).toBeGreaterThan(0);
     expect(new Set(before.map((entity) => entity.schoolId)).size).toBeLessThan(before.length);
 
@@ -2099,7 +2157,8 @@ describe('fish size classes drive schooling', () => {
     const restored = bootOn(openShallowWorld());
     restored.host.restorePersistence(slices);
 
-    expect(livingEntities().map((entity) => ({ ...entity }))).toEqual(before);
+    expect(livingEntities().map(persistedShapeOf)).toEqual(before);
+    expectRestoredAtRest();
   });
 
   it('restores a pre-schooling snapshot as independent wanderers', () => {
