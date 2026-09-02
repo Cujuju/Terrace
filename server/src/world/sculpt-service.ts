@@ -7,7 +7,7 @@
 // audit, and it is in this file.
 
 import type { CellDiff, SculptOptions } from '@terrace/shared';
-import { filterDiffToUnlocked } from './mask-filter.ts';
+import { partitionDiffByViewer } from './mask-filter.ts';
 import type { World } from './world.ts';
 
 /**
@@ -32,15 +32,16 @@ export interface TerrainChangeListener {
  *    library's compatibility default, smooth+soft, which is exactly what the
  *    plugin WorldApi path wants (world-api.ts). Player intents arrive here
  *    already resolved by the pipeline's single call to `sculptOptionsOf`.
- * 2. ANTI-CHEAT: filter the resulting diff down to unlocked chunks only.
- *    Smooth-tool relaxation spills across chunk borders, so this is a real,
- *    routinely-hit filter, not a formality.
- * 3. Broadcast the filtered diff — skipped entirely when nothing visible
- *    changed, so an edit whose whole cascade lands in locked terrain generates
- *    no traffic at all (and leaks nothing by its mere existence). Still
- *    filtered against the UNION mask and still ONE broadcast — see the doc
- *    comment on World.isCellUnlocked for why issue #17 deliberately leaves
- *    this step alone.
+ * 2. ANTI-CHEAT: filter the resulting diff down to what each connected player
+ *    has PERSONALLY unlocked (issue #280; per-player since 2026-09-01, the
+ *    union mask before that). Smooth-tool relaxation spills across chunk
+ *    borders, so this is a real, routinely-hit filter, not a formality.
+ * 3. Send each player their share — nothing at all to a player who may see
+ *    none of it, so an edit whose whole cascade lands in terrain a player has
+ *    not earned generates no traffic to them (and leaks nothing by its mere
+ *    existence). Formerly ONE broadcast filtered against the UNION mask,
+ *    which handed every client the heights of every chunk ANYONE had earned;
+ *    see partitionDiffByViewer for why that was the last per-omission leak.
  * 4. Notify plugins with the FULL diff: plugins are trusted server-side code
  *    and need the true world state (a mana plugin charging per changed cell
  *    must not be fooled by the mask). `sculptorToken` rides along unchanged
@@ -63,9 +64,8 @@ export function applyServerSculpt(
   const diff = world.applySculpt(x, y, radius, amount, options);
   if (diff.length === 0) return diff;
 
-  const visible = filterDiffToUnlocked(world, diff);
-  if (visible.length > 0) {
-    world.broadcast({ type: 'terrainDiff', cells: visible });
+  for (const { playerId, cells } of partitionDiffByViewer(world, diff)) {
+    world.sendTo(playerId, { type: 'terrainDiff', cells });
   }
 
   listener.notifyTerrainChanged(diff, sculptorToken);

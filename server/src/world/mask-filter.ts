@@ -64,6 +64,62 @@ export function filterDiffToUnlocked(
 }
 
 /**
+ * What a per-viewer filter needs: who is connected, and which cells each of
+ * them may see. Structural, like MaskedTerrain, for the same no-cycle reason.
+ * World satisfies it directly (players / isCellVisibleTo, both from issue #17).
+ */
+export interface ViewedTerrain {
+  players(): readonly { readonly id: string }[];
+  isCellVisibleTo(playerId: string, x: number, y: number): boolean;
+}
+
+/** One connected player's share of a diff — only the cells their own mask holds. */
+export interface ViewerDiff {
+  readonly playerId: string;
+  readonly cells: CellDiff[];
+}
+
+/**
+ * THE PER-PLAYER OUTGOING FILTER (issue #280). Splits one authoritative diff
+ * into what each connected player may see, judged against THAT player's own
+ * token mask — never the union. Players who may see none of it are omitted,
+ * so a caller sending each entry sends nothing to them at all (an empty
+ * message would still confirm that something happened somewhere).
+ *
+ * Why not the union (filterDiffToUnlocked above): the union is the SIMULATION
+ * mask — a chunk any one player has earned. Streaming a diff filtered by it
+ * to everyone hands a modified client the heights of chunks it was never
+ * sent, which is exactly the "protected by omission" guarantee this file
+ * exists to keep. The join snapshot and chunkUnlock have been per-token since
+ * issue #17 and entity broadcasts since #18; this closes the last stream.
+ *
+ * Nothing is lost by the narrowing: when a chunk is later unlocked for a
+ * token, unlockChunkForToken sends that token's sessions the chunk's CURRENT
+ * heights, so cells withheld here arrive then.
+ *
+ * Per cell rather than per chunk on purpose: a diff is at most a few hundred
+ * cells and a mask read is an index into a byte array, so this is a rounding
+ * error beside the sculpt that produced the diff — and one loop with no
+ * grouping step is the version whose correctness is visible at a glance.
+ * Iteration order is the players() snapshot order, then diff order, so the
+ * per-player payload is deterministic for a given world state.
+ */
+export function partitionDiffByViewer(
+  terrain: ViewedTerrain,
+  diff: readonly CellDiff[],
+): ViewerDiff[] {
+  const shares: ViewerDiff[] = [];
+  for (const player of terrain.players()) {
+    const cells: CellDiff[] = [];
+    for (const cell of diff) {
+      if (terrain.isCellVisibleTo(player.id, cell.x, cell.y)) cells.push(cell);
+    }
+    if (cells.length > 0) shares.push({ playerId: player.id, cells });
+  }
+  return shares;
+}
+
+/**
  * One chunk's terrain in wire shape — heights plus any layered columns.
  * Callers must check the mask first.
  */
