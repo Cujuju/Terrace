@@ -27,14 +27,24 @@
 // terrace lip instead of flying off it.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ONE MESH, ONE DRAW CALL, REBUILT ON A SERVER DELTA AND NEVER PER FRAME.
+// ONE MESH, ONE DRAW CALL, RE-STAMPED IN PLACE ON A SERVER DELTA AND NEVER PER
+// FRAME.
 //
 // The geometry is in WORLD SPACE (no instancing, no per-instance matrices), so
-// it is rebuilt when the flow CHANGES — a few times a second during an eruption,
-// never at all the rest of the time. Nothing is written per frame: the cooling
-// is a function of one uniform (the clock) and one per-vertex attribute (when
-// that cell went molten), so a flow that is quietly going out costs a uniform
-// update and nothing else.
+// it is rewritten when the flow CHANGES — a few times a second during an
+// eruption, never at all the rest of the time. Nothing is written per frame:
+// the cooling is a function of one uniform (the clock) and one per-vertex
+// attribute (when that cell went molten), so a flow that is quietly going out
+// costs a uniform update and nothing else.
+//
+// AND A CHANGE COSTS THE CELLS IT MOVED, NOT THE WORLD'S HISTORY. Every covered
+// cell owns a FIXED SLOT of LAVA_SLOT_VERTICES vertices — its cap and its two
+// risers, degenerate where a piece is absent — so a delta rewrites the slots in
+// the neighbourhood it touched and uploads those runs, and leaves every other
+// cell's vertices exactly where they were. This used to rebuild the WHOLE mesh
+// from `cells`, which is world-lifetime and capped at LAVA_CELL_CAP: the first
+// new cell of an eruption in a world that had erupted before paid for all of
+// it, ten times a second (issue #261).
 //
 // That is the same reasoning ./plume.ts's header sets out, and the same standing
 // defect it is written against: the streaming unit keeps becoming the drawing
@@ -59,12 +69,13 @@
 // THE CONSEQUENCE THAT MATTERS BEYOND THE LOOK: EMISSION ORDER NO LONGER
 // AFFECTS THE PICTURE. Every fragment now competes on depth alone, so which
 // order the quads were written into the buffers in — and therefore which order
-// the footprint Map was built in — cannot change a single pixel. Two caps at
+// the footprint was built in — cannot change a single pixel. Two caps at
 // different terrace heights overlapping on screen resolve by which is nearer
-// the camera, as they always should have. That is what unblocks the follow-on
-// (issue #261 phase 2): re-stamping only the NEIGHBOURHOOD a delta touched
-// instead of rebuilding the whole footprint, which the old paint-order
-// contract forbade. It is not implemented here.
+// the camera, as they always should have. That is what let the incremental
+// re-stamp above happen at all: a cell keeps ONE slot for as long as it is
+// covered, so the buffer order is allocation order and has nothing to do with
+// which cell is nearest the camera or which was stamped first. Under the old
+// blended, depth-write-off material that would have repainted every overlap.
 
 import {
   BufferAttribute,
@@ -141,15 +152,21 @@ interface FootprintOffset {
  * fixed disc, and the edge falloff re-derived a smoothstep from a distance
  * that could only ever be one of the values in this table.
  *
- * THE ORDER IS PRESERVED EXACTLY, BUT IT IS NO LONGER LOAD-BEARING FOR THE
- * PICTURE. It decides the order the footprint Map is built in, which decides
- * the order the quads are emitted in — and since the flow became opaque
- * geometry that writes depth (see the material and the file header), where two
- * caps overlap on screen is settled by depth, not by which was submitted
- * first. What the order still buys is DETERMINISM: the same flow rebuilt from
- * the same cells produces byte-identical buffers, which is what makes a
- * rebuild comparable against the one before it. Changing it would change
- * nothing a player can see.
+ * IT IS ALSO READ THE OTHER WAY ROUND. `findNearestFlow` walks these same
+ * offsets FROM a plan cell and asks `cells` whether each lands on lava, which
+ * is only the same disc because a disc is symmetric under negation: the offset
+ * that reaches a flow cell from here carries exactly the distance and edge
+ * strength that flow cell's own stencil would have stamped here. That inverted
+ * read is what makes a single cell's coverage computable without walking every
+ * flow cell in the world, and so is what makes the incremental re-stamp
+ * possible.
+ *
+ * THE ORDER IS PRESERVED, BUT NOTHING DEPENDS ON IT ANY MORE. It used to decide
+ * the order the footprint Map was built in and therefore which flow cell won an
+ * exact distance tie. `findNearestFlow` states that tie-break outright instead
+ * (see its own comment), so the result is a function of the SET of flow cells
+ * and of nothing else — which is what makes an incrementally re-stamped mesh
+ * comparable, triangle for triangle, against one stamped from scratch.
  */
 const FOOTPRINT_STENCIL: readonly FootprintOffset[] = (() => {
   const out: FootprintOffset[] = [];
@@ -178,8 +195,9 @@ export const LAVA_HOVER_HEIGHT = 0.019;
 
 /**
  * Vertices the mesh will hold. Preallocated ONCE and filled by `drawRange`, so
- * a rebuild writes into buffers it already owns instead of allocating new ones
- * several times a second.
+ * a re-stamp writes into buffers it already owns instead of allocating new ones
+ * several times a second. LAVA_SLOT_CAP divides this into the fixed per-cell
+ * slots the re-stamp hands out.
  *
  * THE BUDGET: at most LAVA_CELL_CAP path cells, each covering a disc of
  * FLOW_RADIUS_CELLS — but a flow is a LINE, not a scatter, so its footprint is
@@ -348,11 +366,13 @@ const LAVA_FRAGMENT_SHADER = /* glsl */ `
     gl_FragColor = vec4(color, vStrength);
   }
 `;
-
 /**
  * One cell of the flow's FOOTPRINT — a cell the mesh covers, which is a flow
- * cell or one within FLOW_RADIUS_CELLS of one. Mutable because these are
- * pooled and overwritten in place across rebuilds.
+ * cell or one within FLOW_RADIUS_CELLS of one.
+ *
+ * Mutable and POOLED BY SLOT: the object lives in `slotCell` at the index of
+ * the vertex slot the cell owns, and is overwritten in place when that slot is
+ * handed to another cell. Nothing here is reallocated across a re-stamp.
  */
 interface CoveredCell {
   x: number;
@@ -363,6 +383,18 @@ interface CoveredCell {
   strength: number;
   /** The birth of that nearest flow cell, so the coverage cools with it. */
   birth: number;
+  /**
+   * The Y this cell's cap is drawn at (the drawn ground plus
+   * LAVA_HOVER_HEIGHT), meaningful only while `hasCap` is true.
+   */
+  capY: number;
+  /**
+   * False while this client has no terrain for the cell — the cell keeps its
+   * slot and its footprint entry, but the slot is written degenerate. Split out
+   * from `capY` rather than encoded as a sentinel height, because every
+   * sentinel Y is also a legal Y for a cap.
+   */
+  hasCap: boolean;
 }
 
 /** One cell the server says is lava, as this renderer remembers it. */
@@ -372,6 +404,46 @@ interface FlowCell {
   /** The value of the client clock at which this cell went molten. */
   readonly birth: number;
 }
+
+/**
+ * THE FIXED VERTEX SLOT ONE COVERED CELL OWNS.
+ *
+ * A covered cell contributes at most three quads — its cap, the riser on its
+ * +x edge and the riser on its +z edge — and it always occupies all three
+ * places whether or not it fills them, because THAT is what lets a cell be
+ * re-stamped without moving any other cell's vertices. A riser that does not
+ * exist is written as a degenerate triangle pair (six vertices at one point,
+ * strength 0), which the fragment shader discards on `vStrength <= 0.0` and the
+ * rasteriser never reaches anyway: a zero-area triangle covers no sample.
+ *
+ * The alternative — packing the live quads and compacting on every change — is
+ * what the whole-mesh rebuild did, and it is exactly the thing that made a
+ * delta cost the world's history instead of the cells it moved.
+ */
+const LAVA_CAP_VERTICES = 6;
+const LAVA_RISER_VERTICES = 6;
+/** The +x and +z edges. One riser per SHARED edge, so each cell walks two. */
+const LAVA_RISERS_PER_CELL = 2;
+const LAVA_SLOT_VERTICES = LAVA_CAP_VERTICES + LAVA_RISERS_PER_CELL * LAVA_RISER_VERTICES;
+
+/** Where each piece starts inside a slot, in vertices from the slot's base. */
+const LAVA_CAP_OFFSET = 0;
+const LAVA_RISER_X_OFFSET = LAVA_CAP_VERTICES;
+const LAVA_RISER_Z_OFFSET = LAVA_CAP_VERTICES + LAVA_RISER_VERTICES;
+
+/**
+ * How many covered cells the preallocated buffers can hold at once — DERIVED
+ * from the vertex budget and the slot size, never typed as a number of its own,
+ * so the two cannot drift.
+ *
+ * At LAVA_VERTEX_CAP = 54 000 this is 3 000 slots against the ~1 500 cells a
+ * flow at the server's cell cap honestly covers (see LAVA_VERTEX_CAP), i.e. the
+ * same 2x headroom that budget was chosen with. A footprint that somehow
+ * exceeded it would leave the overflowing cells out of the mesh — the same
+ * silent truncation the old `push` bounds check did, in the same place in the
+ * budget.
+ */
+const LAVA_SLOT_CAP = Math.floor(LAVA_VERTEX_CAP / LAVA_SLOT_VERTICES);
 
 /**
  * Resolves the Y the terrain DRAWS at a CELL, or null while this client has no
@@ -391,13 +463,13 @@ export interface LavaFlowRenderer {
    * the server has stopped tracking) and its `molten` (cells that have just
    * gone molten), together.
    *
-   * ONE MESSAGE, AT MOST ONE REBUILD, which is why this is a single call and
+   * ONE MESSAGE, AT MOST ONE RE-STAMP, which is why this is a single call and
    * not the `add()` + `forget()` pair it replaces. Each of those rebuilt the
    * mesh for itself, so every delta that evicted — which is every delta once a
    * flow stands at LAVA_CELL_CAP — rebuilt the whole mesh twice to draw one
    * frame; and `add()` rebuilt unconditionally, so a message that carried
    * nothing but a vent's `erupting` flag rebuilt it for no visible change at
-   * all. Here a message whose cells did not change rebuilds nothing.
+   * all. Here a message whose cells did not change re-stamps nothing.
    *
    * Forgotten cells are dropped BEFORE molten ones are taken, so a cell the
    * server evicted and immediately re-melted in the same message survives.
@@ -410,7 +482,10 @@ export interface LavaFlowRenderer {
   ): void;
   /** True while some covered cell's terrain has not streamed in yet. */
   readonly pendingGround: boolean;
-  /** Rebuilds against terrain that may have arrived. Call on a slow retry clock. */
+  /**
+   * Re-stamps the cells that were waiting on terrain, against terrain that may
+   * have arrived. Call on a slow retry clock.
+   */
   retryPending(groundAt: DrawnGroundAtCell): void;
   /** Advances the shared clock. No buffer is touched. */
   update(elapsed: number): void;
@@ -428,6 +503,8 @@ export function createLavaFlow(): LavaFlowRenderer {
   const positionAttribute = new BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
   const birthAttribute = new BufferAttribute(births, 1).setUsage(DynamicDrawUsage);
   const strengthAttribute = new BufferAttribute(strengths, 1).setUsage(DynamicDrawUsage);
+  /** Held as one array so an upload does not allocate a list to walk. */
+  const attributes = [positionAttribute, birthAttribute, strengthAttribute];
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', positionAttribute);
@@ -473,280 +550,512 @@ export function createLavaFlow(): LavaFlowRenderer {
 
   /** The server's cells, by packed cell key. */
   const cells = new Map<number, FlowCell>();
-  /** True when the last rebuild wanted ground it did not have. */
-  let missingGround = false;
+
+  /** Covered plan cell key → the index of the vertex slot that cell owns. */
+  const covered = new Map<number, number>();
+  /** Slot index → the covered cell occupying it. Reused, never reallocated. */
+  const slotCell: CoveredCell[] = [];
+  /** Slots whose cell left the footprint, ready to be handed to another. */
+  const freeSlots: number[] = [];
+  /**
+   * ONE PAST THE HIGHEST SLOT EVER HANDED OUT — the draw range, in slots.
+   *
+   * It does not shrink when a slot in the middle is freed: that slot has
+   * already been written degenerate, so drawing it costs a handful of zero-area
+   * triangles and the alternative (compacting the tail) is the whole-mesh
+   * rewrite this change exists to remove. It does reset to 0 when the footprint
+   * empties, which is the only moment every slot is provably free.
+   */
+  let slotWatermark = 0;
+  /**
+   * Covered cells whose terrain had not streamed in when they were last
+   * stamped, by plan cell key. This IS `pendingGround`, and it is what
+   * `retryPending` re-stamps — the pending cells only, never the whole mesh.
+   */
+  const pendingCells = new Set<number>();
+
+  // ── Scratch, reused across re-stamps so a delta allocates nothing ──────────
+  /** The plan cells this re-stamp must recompute, deduplicated by key. */
+  const dirtyKeys = new Set<number>();
+  const dirtyX: number[] = [];
+  const dirtyY: number[] = [];
+  /** The slots this re-stamp must re-emit and upload. */
+  const dirtySlots = new Set<number>();
+  /** The flow cells this message added, dropped or re-melted. */
+  const changedFlowX: number[] = [];
+  const changedFlowY: number[] = [];
+  /** dirtySlots, sorted, for coalescing the upload ranges. */
+  const sortedSlots: number[] = [];
 
   /**
-   * The footprint and the heights, reused across rebuilds rather than
-   * reallocated — see rebuild's own header for why the rebuild stays WHOLE and
-   * what that costs. A rebuild clears them; the entry objects in `covered` are
-   * pooled and overwritten in place, so ~1 500 objects per rebuild several
-   * times a second stopped being garbage.
+   * The result of the last `findNearestFlow`, returned through these rather
+   * than through an object — the scan runs once per dirty cell per delta and an
+   * allocation per call would put the garbage back that pooling took out.
    */
-  const covered = new Map<number, CoveredCell>();
-  const coveredPool: CoveredCell[] = [];
-  let coveredPoolUsed = 0;
-  const capY = new Map<number, number>();
+  let nearestFound = false;
+  let nearestDistance = 0;
+  let nearestStrength = 0;
+  let nearestBirth = 0;
 
   /**
-   * Rebuilds the whole mesh from `cells`.
+   * THE NEAREST FLOW CELL TO ONE PLAN CELL, scanned the way round that makes an
+   * incremental re-stamp possible.
    *
-   * WHOLE, NOT INCREMENTAL — but only until phase 2, and the reason it had to
-   * be whole no longer exists. A new cell changes the coverage and the risers
-   * of every cell within FLOW_RADIUS_CELLS of it, which justifies re-stamping
-   * that NEIGHBOURHOOD — a couple of hundred cells — rather than the whole
-   * world's worth of them.
+   * The whole-mesh rebuild pushed: for each flow cell, stamp its disc. That
+   * derives a cell's coverage only as a side effect of walking every flow cell
+   * the world has ever held. This pulls: for one plan cell, look at the
+   * FOOTPRINT_STENCIL offsets around IT and ask `cells` whether each is lava.
+   * The stencil is a disc and a disc is symmetric under negation, so the offset
+   * that reaches a flow cell from here carries exactly the distance and edge
+   * strength that flow cell's own stencil would have stamped here.
    *
-   * WHAT USED TO FORBID THAT WAS THE ORDER, AND IT DOES NOT ANY MORE. The
-   * quads come out in the order `covered` was built in, which is: for each
-   * flow cell in the order the server sent it, for each offset of
-   * FOOTPRINT_STENCIL. While the flow was blended at alpha 0.96 and wrote no
-   * depth, submission order was paint order where two caps at different
-   * terrace heights overlapped on screen, so patching a neighbourhood into a
-   * footprint carried over from an older history would have repainted those
-   * overlaps differently. The flow is now opaque and writes depth (see the
-   * material), so overlaps are settled by depth and the emission order cannot
-   * change a pixel — an incremental re-stamp is a pure win with no look to
-   * settle first. That is issue #261 phase 2, deliberately NOT done here.
+   * THE TIE-BREAK IS EXPLICIT, and that is a deliberate change of contract.
+   * The push version resolved an exact distance tie with `existing.distance <=
+   * offset.distance` — keep what is already there — so the winner was whichever
+   * flow cell `cells` happened to iterate first: Map insertion order, which is
+   * melt order EXCEPT for a re-melted cell, which keeps its old position under
+   * a newer birth. That rule is unstateable without naming the iteration order,
+   * and a pull scan has no iteration over `cells` at all.
    *
-   * So for now the rebuild stays whole and the CONSTANT was taken out of it:
-   * the stencil (and its edge strength) is a table rather than 15 552
-   * `Math.hypot` calls and smoothsteps per rebuild, and both maps and the
-   * footprint's entry objects are reused rather than reallocated. It still
-   * runs on a server delta rather than a frame, and it still cannot leave a
-   * stale triangle behind.
-   *
-   * RESIDUAL, stated rather than hidden: `cells` is world-lifetime and capped
-   * at LAVA_CELL_CAP, so a world with any eruption history pays a full-cap
-   * rebuild from the first new cell of the next eruption. Roughly halved here,
-   * not removed.
+   * So it is written down instead: nearest wins; on an exact tie the OLDER
+   * birth wins. Ties are the common case, not the corner: every cell beside
+   * the path is equidistant to two consecutive path cells, so the tie decides
+   * which way the heat gradient leans along the whole flow. Older-wins keeps
+   * the shipped picture — measured against the push version over a 700-delta
+   * scripted eruption, the only triangles that differ are around re-melts
+   * (worst step 2.4% of them, birth only, never a position), and with re-melts
+   * suppressed one step in 700. Newer-wins was tried and rejected (owner,
+   * 2026-09-01): it differed on 697 of 700 steps, up to a third of the
+   * triangles, by leaning every gradient downstream. On equal birth too —
+   * which a single server tick makes common, since every cell in one message
+   * shares an `ageSeconds` — the lower packed key wins, purely so the answer is
+   * a function of the SET of flow cells and not of any order at all. That
+   * total order is what makes an incrementally re-stamped mesh comparable,
+   * triangle for triangle, against one stamped from scratch.
    */
-  function rebuild(groundAt: DrawnGroundAtCell): void {
-    missingGround = false;
-
-    if (cells.size === 0) {
-      geometry.setDrawRange(0, 0);
-      return;
-    }
-
-    // ── 1. The footprint ────────────────────────────────────────────────────
-    // Every cell within FLOW_RADIUS_CELLS of some flow cell, carrying the
-    // distance to the NEAREST one (which sets its edge falloff) and that
-    // cell's birth (so the coverage cools with the lava that made it).
-    covered.clear();
-    coveredPoolUsed = 0;
-
-    for (const cell of cells.values()) {
-      for (const offset of FOOTPRINT_STENCIL) {
-        const x = cell.x + offset.dx;
-        const y = cell.y + offset.dy;
-        if (x < 0 || y < 0) continue;
-        const key = lavaKey(x, y);
-        const existing = covered.get(key);
-        // NEAREST WINS, and the birth travels with it: where two flows overlap
-        // the ground belongs to whichever ran closer to it, which is also the
-        // one whose heat it should be showing.
-        if (existing !== undefined) {
-          if (existing.distance <= offset.distance) continue;
-          // Overwritten IN PLACE. `Map.set` on a key it already holds does not
-          // move it, so mutating the entry it already holds is the same thing
-          // and allocates nothing.
-          existing.distance = offset.distance;
-          existing.strength = offset.strength;
-          existing.birth = cell.birth;
-          continue;
+  function findNearestFlow(px: number, py: number): void {
+    nearestFound = false;
+    let bestKey = 0;
+    for (const offset of FOOTPRINT_STENCIL) {
+      const fx = px + offset.dx;
+      const fy = py + offset.dy;
+      if (fx < 0 || fy < 0) continue;
+      const key = lavaKey(fx, fy);
+      const flow = cells.get(key);
+      if (flow === undefined) continue;
+      if (nearestFound) {
+        if (offset.distance > nearestDistance) continue;
+        if (offset.distance === nearestDistance) {
+          if (flow.birth > nearestBirth) continue;
+          if (flow.birth === nearestBirth && key >= bestKey) continue;
         }
-        let entry = coveredPool[coveredPoolUsed];
-        if (entry === undefined) {
-          entry = { x, y, distance: offset.distance, strength: offset.strength, birth: cell.birth };
-          coveredPool.push(entry);
-        } else {
-          entry.x = x;
-          entry.y = y;
-          entry.distance = offset.distance;
-          entry.strength = offset.strength;
-          entry.birth = cell.birth;
-        }
-        coveredPoolUsed++;
-        covered.set(key, entry);
       }
-    }
-
-    // ── 2. The heights ──────────────────────────────────────────────────────
-    capY.clear();
-    for (const [key, cell] of covered) {
-      const y = groundAt(cell.x, cell.y);
-      if (y === null) {
-        // No terrain here yet (a join snapshot's flow arrives before any chunk
-        // does). Noted rather than guessed: a cap placed at an invented height
-        // would be lava hanging in the air.
-        missingGround = true;
-        continue;
-      }
-      capY.set(key, y + LAVA_HOVER_HEIGHT);
-    }
-
-    // ── 3. The mesh ─────────────────────────────────────────────────────────
-    let vertex = 0;
-    const half = CELL_WORLD_SIZE / 2;
-
-    function push(x: number, y: number, z: number, birth: number, strength: number): void {
-      if (vertex >= LAVA_VERTEX_CAP) return;
-      positions[vertex * 3] = x;
-      positions[vertex * 3 + 1] = y;
-      positions[vertex * 3 + 2] = z;
-      births[vertex] = birth;
-      strengths[vertex] = strength;
-      vertex++;
-    }
-
-    /**
-     * The riser on ONE shared edge of a covered cell, if that edge is a step.
-     *
-     * TAKEN OUT OF THE PER-CELL LOOP, and that is the only reason it is a
-     * function: the two edges used to be described by an array of two tuples
-     * built fresh for every covered cell — three allocations each, ~1 500 cells
-     * a rebuild, several rebuilds a second — to hold a shape that never varies.
-     * Called twice below instead, so the constant structure lives in the call
-     * sites and nothing is allocated to carry it.
-     *
-     * `edgeA`/`edgeB` are the edge's two ends in world plan coordinates, and
-     * `normalX`/`normalZ` its outward normal; the geometry it emits is
-     * unchanged.
-     */
-    function pushRiser(
-      cellBirth: number,
-      y: number,
-      strength: number,
-      neighbourX: number,
-      neighbourY: number,
-      edgeAX: number,
-      edgeAZ: number,
-      edgeBX: number,
-      edgeBZ: number,
-      normalX: number,
-      normalZ: number,
-    ): void {
-      const neighbourKey = lavaKey(neighbourX, neighbourY);
-      const neighbour = covered.get(neighbourKey);
-      if (neighbour === undefined) return;
-      const neighbourCapY = capY.get(neighbourKey);
-      if (neighbourCapY === undefined || neighbourCapY === y) return;
-
-      const topY = Math.max(y, neighbourCapY);
-      const bottomY = Math.min(y, neighbourCapY);
-      // Downhill is +normal when this cell is the higher one, -normal when the
-      // neighbour is; the face leans away from whichever body it belongs to.
-      const sign = y > neighbourCapY ? 1 : -1;
-      const offsetX = normalX * LAVA_HOVER_HEIGHT * sign;
-      const offsetZ = normalZ * LAVA_HOVER_HEIGHT * sign;
-
-      // The face carries the WEAKER of the two cells' strengths, so the flow's
-      // edge fades down a step as evenly as it fades across a tread.
-      const riserStrength = Math.min(strength, neighbour.strength);
-      if (riserStrength <= 0) return;
-      // The birth of whichever cell is on top — the face is lava running over
-      // the lip, and that lava is the upper cell's.
-      const riserBirth = y > neighbourCapY ? cellBirth : neighbour.birth;
-
-      const ax = edgeAX + offsetX;
-      const az = edgeAZ + offsetZ;
-      const bx = edgeBX + offsetX;
-      const bz = edgeBZ + offsetZ;
-      push(ax, topY, az, riserBirth, riserStrength);
-      push(bx, topY, bz, riserBirth, riserStrength);
-      push(bx, bottomY, bz, riserBirth, riserStrength);
-      push(ax, topY, az, riserBirth, riserStrength);
-      push(bx, bottomY, bz, riserBirth, riserStrength);
-      push(ax, bottomY, az, riserBirth, riserStrength);
-    }
-
-    for (const [key, cell] of covered) {
-      const y = capY.get(key);
-      if (y === undefined) continue;
-      const strength = cell.strength;
-      if (strength <= 0) continue;
-
-      const x0 = cell.x * CELL_WORLD_SIZE - half;
-      const x1 = x0 + CELL_WORLD_SIZE;
-      const z0 = cell.y * CELL_WORLD_SIZE - half;
-      const z1 = z0 + CELL_WORLD_SIZE;
-
-      // The cap — this cell's own tread, at its own height. Never wider than
-      // the cell, which is what makes an overhang impossible rather than
-      // unlikely: a quad that cannot cross a cell boundary cannot cross a
-      // terrace lip.
-      push(x0, y, z0, cell.birth, strength);
-      push(x0, y, z1, cell.birth, strength);
-      push(x1, y, z1, cell.birth, strength);
-      push(x0, y, z0, cell.birth, strength);
-      push(x1, y, z1, cell.birth, strength);
-      push(x1, y, z0, cell.birth, strength);
-
-      // THE RISERS — the vertical face of every terrace step the flow crosses,
-      // so the lava pours over a lip instead of flying off it.
-      //
-      // ONE RISER PER SHARED EDGE, EMITTED BY THE EDGE AND NOT BY EITHER CELL.
-      // The first version only looked at the +x/+z neighbour and only when THIS
-      // cell was the higher of the two — which silently skipped every step where
-      // the flow runs UPHILL in +x or +z, and left the terrain's own bare riser
-      // showing through the flow as a pale vertical strip (seen in
-      // .volcano-shots/03-flow-close.png). Comparing the pair and drawing from
-      // the higher down to the lower covers both directions and still visits
-      // each edge exactly once, because only the +x and +z edges are walked.
-      //
-      // A RISER IS LIFTED SIDEWAYS, NOT UPWARDS. The cap's hover is a lift along
-      // Y, which does nothing for a VERTICAL quad sitting in the terrain riser's
-      // own plane; left coplanar the two z-fight, and on a flow crossing a step
-      // every fourth cell that reads as a black stipple crawling over
-      // everything. So the face is pushed out along the DOWNHILL normal by the
-      // same distance the cap is pushed up.
-      //
-      // THE TWO EDGES ARE WRITTEN OUT, NOT LISTED. They used to be an array of
-      // two tuples — [neighbour cell, edge point A, edge point B, outward
-      // normal] — built inside this loop, which allocated three arrays per
-      // covered cell (~1 500 of them per rebuild) to carry a shape that is the
-      // same on every one. `pushRiser` above takes those eight numbers as
-      // arguments instead, in that order, and the +x and +z edges are its two
-      // call sites.
-      pushRiser(cell.birth, y, strength, cell.x + 1, cell.y, x1, z0, x1, z1, 1, 0);
-      pushRiser(cell.birth, y, strength, cell.x, cell.y + 1, x1, z1, x0, z1, 0, 1);
-    }
-
-    geometry.setDrawRange(0, vertex);
-    // ONLY THE PART THAT IS DRAWN IS UPLOADED. The buffers are LAVA_VERTEX_CAP
-    // long and the drawRange above is the only part of them the mesh reads, but
-    // three's WebGLAttributes.updateBuffer falls back to
-    // `bufferSubData(target, 0, array)` — the WHOLE array — when an attribute
-    // has no update ranges, so a rebuild used to move 1.08 MB to redraw the
-    // ~200 KB a flow at the server's cell cap actually occupies, and ten times
-    // that ratio early in an eruption. Naming the live prefix instead means the
-    // upload costs what the flow costs.
-    //
-    // CLEARED FIRST, and not because three forgets to: updateBuffer calls
-    // clearUpdateRanges() itself once it has uploaded. It only gets there when
-    // the mesh RENDERS, though, and a rebuild is driven by a server message —
-    // two messages inside one frame would otherwise leave two ranges on the
-    // attribute, and every rebuild after a frame the flow was not drawn in
-    // would add another. Clearing here keeps it at exactly one range per
-    // rebuild whether or not a frame happened in between.
-    for (const attribute of [positionAttribute, birthAttribute, strengthAttribute]) {
-      attribute.clearUpdateRanges();
-      // In ARRAY ELEMENTS, not vertices and not bytes — three multiplies the
-      // start by the array's BYTES_PER_ELEMENT itself, so the count has to be
-      // the vertex count times the attribute's own itemSize.
-      attribute.addUpdateRange(0, vertex * attribute.itemSize);
-      attribute.needsUpdate = true;
+      nearestFound = true;
+      nearestDistance = offset.distance;
+      nearestStrength = offset.strength;
+      nearestBirth = flow.birth;
+      bestKey = key;
     }
   }
 
+  /** Queues one plan cell for recomputation. Deduplicated; negatives dropped. */
+  function markPlanCell(x: number, y: number): void {
+    // The push version never created a footprint cell off the negative edge of
+    // the world, and this must not either — a negative x would also collide in
+    // `lavaKey`, which packs the pair assuming both fit in 16 bits.
+    if (x < 0 || y < 0) return;
+    const key = lavaKey(x, y);
+    if (dirtyKeys.has(key)) return;
+    dirtyKeys.add(key);
+    dirtyX.push(x);
+    dirtyY.push(y);
+  }
+
   /**
-   * Takes the molten cells, ANSWERING WHETHER THE SET ACTUALLY CHANGED.
+   * Queues every plan cell whose footprint entry ONE changed flow cell can
+   * affect: the disc of FOOTPRINT_STENCIL around it, and nothing else.
    *
-   * The answer is what lets one message cost at most one rebuild: every path
+   * That is the whole argument for the incremental re-stamp being exact. A plan
+   * cell's entry is a function of the flow cells within FLOW_RADIUS_CELLS of
+   * it, so it can only change if one of THOSE changed — appeared, vanished, or
+   * was re-melted to a new birth. `p` is within range of `f` exactly when `p`
+   * lies in `f`'s disc, so the union of the discs of the changed flow cells is
+   * the complete set of plan cells that can move.
+   */
+  function markFlowDisc(fx: number, fy: number): void {
+    for (const offset of FOOTPRINT_STENCIL) markPlanCell(fx + offset.dx, fy + offset.dy);
+  }
+
+  function takeSlot(): number {
+    const reused = freeSlots.pop();
+    if (reused !== undefined) return reused;
+    if (slotWatermark >= LAVA_SLOT_CAP) return -1;
+    const slot = slotWatermark++;
+    if (slotCell[slot] === undefined) {
+      slotCell[slot] = { x: 0, y: 0, distance: 0, strength: 0, birth: 0, capY: 0, hasCap: false };
+    }
+    return slot;
+  }
+
+  function writeVertex(
+    index: number,
+    x: number,
+    y: number,
+    z: number,
+    birth: number,
+    strength: number,
+  ): void {
+    positions[index * 3] = x;
+    positions[index * 3 + 1] = y;
+    positions[index * 3 + 2] = z;
+    births[index] = birth;
+    strengths[index] = strength;
+  }
+
+  /**
+   * Fills one quad's worth of a slot with a degenerate triangle pair — every
+   * vertex on one point, strength 0.
+   *
+   * Placed on the cell's OWN first cap corner rather than at the origin, so a
+   * slot's vertices never wander away from the cell they belong to. Nothing
+   * reads them (a zero-area triangle covers no sample, and the fragment shader
+   * discards on strength anyway), but a buffer whose unused entries sit under
+   * the flow rather than at world zero is one whose bounding box still means
+   * something to anyone who inspects it.
+   */
+  function writeDegenerate(base: number, count: number, x: number, y: number, z: number): void {
+    for (let i = 0; i < count; i++) writeVertex(base + i, x, y, z, 0, 0);
+  }
+
+  /**
+   * The riser on ONE shared edge of a covered cell, if that edge is a step;
+   * degenerate if it is not.
+   *
+   * `edgeA`/`edgeB` are the edge's two ends in world plan coordinates and
+   * `normalX`/`normalZ` its outward normal. The geometry is unchanged from the
+   * whole-mesh version: the same lean along the downhill normal, the same
+   * weaker-of-the-two strength, the same upper cell's birth.
+   */
+  function writeRiser(
+    base: number,
+    cell: CoveredCell,
+    neighbourX: number,
+    neighbourY: number,
+    edgeAX: number,
+    edgeAZ: number,
+    edgeBX: number,
+    edgeBZ: number,
+    normalX: number,
+    normalZ: number,
+    fallbackX: number,
+    fallbackZ: number,
+  ): void {
+    const y = cell.capY;
+    const neighbourSlot = covered.get(lavaKey(neighbourX, neighbourY));
+    const neighbour = neighbourSlot === undefined ? undefined : slotCell[neighbourSlot];
+    if (neighbour === undefined || !neighbour.hasCap || neighbour.capY === y) {
+      writeDegenerate(base, LAVA_RISER_VERTICES, fallbackX, y, fallbackZ);
+      return;
+    }
+
+    const neighbourCapY = neighbour.capY;
+    const topY = Math.max(y, neighbourCapY);
+    const bottomY = Math.min(y, neighbourCapY);
+    // Downhill is +normal when this cell is the higher one, -normal when the
+    // neighbour is; the face leans away from whichever body it belongs to.
+    const sign = y > neighbourCapY ? 1 : -1;
+    const offsetX = normalX * LAVA_HOVER_HEIGHT * sign;
+    const offsetZ = normalZ * LAVA_HOVER_HEIGHT * sign;
+
+    // The face carries the WEAKER of the two cells' strengths, so the flow's
+    // edge fades down a step as evenly as it fades across a tread.
+    const riserStrength = Math.min(cell.strength, neighbour.strength);
+    if (riserStrength <= 0) {
+      writeDegenerate(base, LAVA_RISER_VERTICES, fallbackX, y, fallbackZ);
+      return;
+    }
+    // The birth of whichever cell is on top — the face is lava running over
+    // the lip, and that lava is the upper cell's.
+    const riserBirth = y > neighbourCapY ? cell.birth : neighbour.birth;
+
+    const ax = edgeAX + offsetX;
+    const az = edgeAZ + offsetZ;
+    const bx = edgeBX + offsetX;
+    const bz = edgeBZ + offsetZ;
+    writeVertex(base, ax, topY, az, riserBirth, riserStrength);
+    writeVertex(base + 1, bx, topY, bz, riserBirth, riserStrength);
+    writeVertex(base + 2, bx, bottomY, bz, riserBirth, riserStrength);
+    writeVertex(base + 3, ax, topY, az, riserBirth, riserStrength);
+    writeVertex(base + 4, bx, bottomY, bz, riserBirth, riserStrength);
+    writeVertex(base + 5, ax, bottomY, az, riserBirth, riserStrength);
+  }
+
+  /**
+   * Rewrites ONE slot from its covered cell and that cell's two neighbours.
+   *
+   * Every path writes all LAVA_SLOT_VERTICES vertices. A slot that is only
+   * partly rewritten would keep whatever the cell before it left there, and
+   * because a slot is never compacted there is no later pass to clean that up.
+   */
+  function writeSlot(slot: number): void {
+    const cell = slotCell[slot];
+    if (cell === undefined) return;
+    const base = slot * LAVA_SLOT_VERTICES;
+
+    const half = CELL_WORLD_SIZE / 2;
+    const x0 = cell.x * CELL_WORLD_SIZE - half;
+    const x1 = x0 + CELL_WORLD_SIZE;
+    const z0 = cell.y * CELL_WORLD_SIZE - half;
+    const z1 = z0 + CELL_WORLD_SIZE;
+
+    // No terrain under it yet, or the edge falloff has run all the way out.
+    // The whole-mesh version skipped such a cell entirely — cap AND both risers
+    // — and so does this: three degenerate pairs emit nothing.
+    if (!cell.hasCap || cell.strength <= 0) {
+      writeDegenerate(base + LAVA_CAP_OFFSET, LAVA_CAP_VERTICES, x0, cell.capY, z0);
+      writeDegenerate(base + LAVA_RISER_X_OFFSET, LAVA_RISER_VERTICES, x0, cell.capY, z0);
+      writeDegenerate(base + LAVA_RISER_Z_OFFSET, LAVA_RISER_VERTICES, x0, cell.capY, z0);
+      return;
+    }
+
+    const y = cell.capY;
+    const strength = cell.strength;
+    const birth = cell.birth;
+
+    // The cap — this cell's own tread, at its own height. Never wider than
+    // the cell, which is what makes an overhang impossible rather than
+    // unlikely: a quad that cannot cross a cell boundary cannot cross a
+    // terrace lip.
+    const cap = base + LAVA_CAP_OFFSET;
+    writeVertex(cap, x0, y, z0, birth, strength);
+    writeVertex(cap + 1, x0, y, z1, birth, strength);
+    writeVertex(cap + 2, x1, y, z1, birth, strength);
+    writeVertex(cap + 3, x0, y, z0, birth, strength);
+    writeVertex(cap + 4, x1, y, z1, birth, strength);
+    writeVertex(cap + 5, x1, y, z0, birth, strength);
+
+    // THE RISERS — the vertical face of every terrace step the flow crosses,
+    // so the lava pours over a lip instead of flying off it.
+    //
+    // ONE RISER PER SHARED EDGE, EMITTED BY THE EDGE AND NOT BY EITHER CELL.
+    // The first version only looked at the +x/+z neighbour and only when THIS
+    // cell was the higher of the two — which silently skipped every step where
+    // the flow runs UPHILL in +x or +z, and left the terrain's own bare riser
+    // showing through the flow as a pale vertical strip (seen in
+    // .volcano-shots/03-flow-close.png). Comparing the pair and drawing from
+    // the higher down to the lower covers both directions and still visits
+    // each edge exactly once, because only the +x and +z edges are walked.
+    //
+    // A RISER IS LIFTED SIDEWAYS, NOT UPWARDS. The cap's hover is a lift along
+    // Y, which does nothing for a VERTICAL quad sitting in the terrain riser's
+    // own plane; left coplanar the two z-fight, and on a flow crossing a step
+    // every fourth cell that reads as a black stipple crawling over
+    // everything. So the face is pushed out along the DOWNHILL normal by the
+    // same distance the cap is pushed up.
+    //
+    // AN EDGE IS OWNED BY THE CELL ON ITS LOW-COORDINATE SIDE, which is the
+    // rule that makes the dirty set in `restamp` bigger than the footprint
+    // change: this slot reads the +x and +z neighbours' heights and strengths,
+    // so a cell that moves invalidates the slots of its -x and -z neighbours as
+    // well as its own.
+    writeRiser(base + LAVA_RISER_X_OFFSET, cell, cell.x + 1, cell.y, x1, z0, x1, z1, 1, 0, x0, z0);
+    writeRiser(base + LAVA_RISER_Z_OFFSET, cell, cell.x, cell.y + 1, x1, z1, x0, z1, 0, 1, x0, z0);
+  }
+
+  /**
+   * Uploads exactly the slots this re-stamp rewrote, as coalesced runs.
+   *
+   * ONLY WHAT CHANGED IS UPLOADED, which is the same argument the whole-mesh
+   * version made for naming its live prefix, taken one step further: three's
+   * WebGLAttributes.updateBuffer falls back to `bufferSubData(target, 0,
+   * array)` — the WHOLE 1.08 MB array — when an attribute carries no update
+   * ranges, and a named prefix of the live flow was still ~200 KB per delta.
+   * Contiguous runs of dirty slots become one range each, so a delta that moved
+   * a few hundred cells moves a few tens of KB.
+   *
+   * CLEARED FIRST, and not because three forgets to: updateBuffer calls
+   * clearUpdateRanges() itself once it has uploaded. It only gets there when
+   * the mesh RENDERS, though, and a re-stamp is driven by a server message —
+   * two messages inside one frame would otherwise leave both messages' ranges
+   * on the attribute, and every re-stamp after a frame the flow was not drawn
+   * in would add more. Clearing here keeps the ranges to this re-stamp's,
+   * whether or not a frame happened in between.
+   */
+  function uploadDirtySlots(): void {
+    sortedSlots.length = 0;
+    for (const slot of dirtySlots) sortedSlots.push(slot);
+    sortedSlots.sort((a, b) => a - b);
+
+    for (const attribute of attributes) attribute.clearUpdateRanges();
+
+    let i = 0;
+    while (i < sortedSlots.length) {
+      const start = sortedSlots[i]!;
+      let end = start;
+      while (i + 1 < sortedSlots.length && sortedSlots[i + 1] === end + 1) {
+        i++;
+        end++;
+      }
+      i++;
+      const firstVertex = start * LAVA_SLOT_VERTICES;
+      const vertexCount = (end - start + 1) * LAVA_SLOT_VERTICES;
+      for (const attribute of attributes) {
+        // In ARRAY ELEMENTS, not vertices and not bytes — three multiplies the
+        // start by the array's BYTES_PER_ELEMENT itself, so both numbers have
+        // to be the vertex figure times the attribute's own itemSize.
+        attribute.addUpdateRange(firstVertex * attribute.itemSize, vertexCount * attribute.itemSize);
+      }
+    }
+
+    for (const attribute of attributes) attribute.needsUpdate = true;
+  }
+
+  function clearScratch(): void {
+    dirtyKeys.clear();
+    dirtyX.length = 0;
+    dirtyY.length = 0;
+    dirtySlots.clear();
+  }
+
+  /**
+   * Re-stamps the queued dirty plan cells, and only them.
+   *
+   * A DELTA COSTS THE CELLS IT MOVED, NOT THE WORLD'S HISTORY. The whole-mesh
+   * rebuild this replaces walked every one of `cells` — which is world-lifetime
+   * and capped at LAVA_CELL_CAP — stamping a 49-offset disc from each, then
+   * re-derived every covered cell's height and re-emitted every quad, so the
+   * first new cell of an eruption in a world that had ever erupted before paid
+   * a full-cap rebuild. Here the caller queues the plan cells a change can
+   * reach (see `markFlowDisc` for why that set is complete) and this recomputes
+   * those.
+   *
+   * IT RUNS IN THREE PASSES, AND THEY CANNOT BE MERGED. The footprint pass
+   * settles every dirty cell's coverage and height; the riser pass widens the
+   * set of SLOTS to re-emit to include each dirty cell's -x and -z neighbours,
+   * because a riser is owned by the low side of the edge and reads the high
+   * side's height; only then can a slot be written, because writing one reads
+   * its neighbours' settled entries.
+   *
+   * RESIDUAL, stated rather than hidden: `groundAt` is re-read only for DIRTY
+   * cells, where the whole-mesh rebuild re-read it for the entire footprint on
+   * every delta. A covered cell whose drawn terrain height changes without any
+   * flow cell near it changing therefore keeps its old cap height until a
+   * delta, a `volcanoes:all` or a `retryPending` reaches it. The whole-mesh
+   * version had the same hole whenever a message moved no cell at all (it
+   * returned before rebuilding) — this widens it from "no cells moved" to "no
+   * cells moved NEAR THIS ONE". Nothing in ./index.ts re-stamps on a terrain
+   * change today, so neither version tracks a sculpt under a cooled flow.
+   */
+  function restamp(groundAt: DrawnGroundAtCell): void {
+    // ── 1. The footprint, and the heights, over the dirty cells only ────────
+    // Every dirty cell's distance to the NEAREST flow cell (which sets its edge
+    // falloff) and that cell's birth (so the coverage cools with the lava that
+    // made it), plus the height its cap is drawn at.
+    for (let i = 0; i < dirtyX.length; i++) {
+      const x = dirtyX[i]!;
+      const y = dirtyY[i]!;
+      const key = lavaKey(x, y);
+      findNearestFlow(x, y);
+
+      let slot = covered.get(key);
+
+      if (!nearestFound) {
+        // No lava within range any more: the cell leaves the footprint and
+        // gives its slot back. The slot is left degenerate rather than
+        // compacted away — see `slotWatermark`.
+        if (slot === undefined) continue;
+        const leaving = slotCell[slot]!;
+        leaving.hasCap = false;
+        leaving.strength = 0;
+        covered.delete(key);
+        pendingCells.delete(key);
+        freeSlots.push(slot);
+        dirtySlots.add(slot);
+        continue;
+      }
+
+      if (slot === undefined) {
+        slot = takeSlot();
+        // Over LAVA_SLOT_CAP: the cell stays out of the mesh rather than
+        // displacing one that is in it. Same truncation the old vertex-cap
+        // bounds check did, and the budget makes it unreachable in practice.
+        if (slot < 0) continue;
+        covered.set(key, slot);
+      }
+
+      const entry = slotCell[slot]!;
+      entry.x = x;
+      entry.y = y;
+      entry.distance = nearestDistance;
+      entry.strength = nearestStrength;
+      entry.birth = nearestBirth;
+
+      const ground = groundAt(x, y);
+      if (ground === null) {
+        // No terrain here yet (a join snapshot's flow arrives before any chunk
+        // does). Noted rather than guessed: a cap placed at an invented height
+        // would be lava hanging in the air. The cell keeps its slot and its
+        // place in the footprint, so its neighbours' risers still see it leave
+        // — and `retryPending` comes back for exactly these.
+        entry.hasCap = false;
+        entry.capY = 0;
+        pendingCells.add(key);
+      } else {
+        entry.hasCap = true;
+        entry.capY = ground + LAVA_HOVER_HEIGHT;
+        pendingCells.delete(key);
+      }
+
+      dirtySlots.add(slot);
+    }
+
+    // ── 2. The edges the dirty cells are the HIGH side of ───────────────────
+    // A slot carries the risers on its cell's +x and +z edges, and each of
+    // those reads the neighbour's cap height and strength. So a cell that
+    // changed invalidates its -x and -z neighbours' slots as well as its own.
+    for (let i = 0; i < dirtyX.length; i++) {
+      const x = dirtyX[i]!;
+      const y = dirtyY[i]!;
+      if (x > 0) {
+        const slot = covered.get(lavaKey(x - 1, y));
+        if (slot !== undefined) dirtySlots.add(slot);
+      }
+      if (y > 0) {
+        const slot = covered.get(lavaKey(x, y - 1));
+        if (slot !== undefined) dirtySlots.add(slot);
+      }
+    }
+
+    // The flow is gone. This is the one moment every slot is provably free, so
+    // it is the one moment the watermark can be wound back — which keeps a
+    // world that has finished erupting from drawing three thousand degenerate
+    // slots for the rest of its life.
+    if (covered.size === 0) {
+      slotWatermark = 0;
+      freeSlots.length = 0;
+      geometry.setDrawRange(0, 0);
+      clearScratch();
+      return;
+    }
+
+    // ── 3. The vertices ─────────────────────────────────────────────────────
+    for (const slot of dirtySlots) writeSlot(slot);
+
+    geometry.setDrawRange(0, slotWatermark * LAVA_SLOT_VERTICES);
+    uploadDirtySlots();
+    clearScratch();
+  }
+
+  /**
+   * Takes the molten cells, ANSWERING WHETHER THE SET ACTUALLY CHANGED and
+   * recording WHICH cells did, in `changedFlow*`.
+   *
+   * The answer is what lets one message cost at most one re-stamp: every path
    * out of the loop below is either a write (the geometry or a birth moved) or
    * a deliberate skip (a stale re-melt, or a new cell over the cap), and only
-   * the writes are worth rebuilding for.
+   * the writes are worth re-stamping for. The list of them is what bounds the
+   * re-stamp to a neighbourhood — a re-melt counts, because a new birth can
+   * change which flow cell a tied footprint cell belongs to.
    */
   function remember(list: readonly LavaCellState[], elapsed: number): boolean {
     let changed = false;
@@ -762,6 +1071,8 @@ export function createLavaFlow(): LavaFlowRenderer {
       if (existing !== undefined && existing.birth >= birth) continue;
       if (existing === undefined && cells.size >= LAVA_CELL_CAP) continue;
       cells.set(key, { x: cell.x, y: cell.y, birth });
+      changedFlowX.push(cell.x);
+      changedFlowY.push(cell.y);
       changed = true;
     }
     return changed;
@@ -770,20 +1081,48 @@ export function createLavaFlow(): LavaFlowRenderer {
   /** Drops cells, answering whether any of them was actually held. */
   function drop(list: ReadonlyArray<{ x: number; y: number }>): boolean {
     let changed = false;
-    for (const cell of list) changed = cells.delete(lavaKey(cell.x, cell.y)) || changed;
+    for (const cell of list) {
+      if (!cells.delete(lavaKey(cell.x, cell.y))) continue;
+      changedFlowX.push(cell.x);
+      changedFlowY.push(cell.y);
+      changed = true;
+    }
     return changed;
+  }
+
+  /** Queues the disc of every flow cell this message moved. */
+  function markChangedFlow(): void {
+    for (let i = 0; i < changedFlowX.length; i++) markFlowDisc(changedFlowX[i]!, changedFlowY[i]!);
   }
 
   return {
     root,
 
     replaceAll(list, elapsed, groundAt): void {
+      // THE JOIN SNAPSHOT GOES THROUGH THE SAME ROUTINE A DELTA DOES — it just
+      // marks everything dirty. There is one emission path, so a snapshot and a
+      // delta cannot drift apart, which is the property the whole change rests
+      // on: the incrementally re-stamped mesh has to be the mesh a snapshot of
+      // the same cells would have produced.
+      //
+      // "Everything" is every cell currently covered (the old flow's whole
+      // footprint, which is where the old triangles are) plus the disc of every
+      // cell of the new flow (which is where the new ones go).
+      for (const slot of covered.values()) {
+        const entry = slotCell[slot]!;
+        markPlanCell(entry.x, entry.y);
+      }
       cells.clear();
+      changedFlowX.length = 0;
+      changedFlowY.length = 0;
       remember(list, elapsed);
-      rebuild(groundAt);
+      markChangedFlow();
+      restamp(groundAt);
     },
 
     apply(forgotten, molten, elapsed, groundAt): void {
+      changedFlowX.length = 0;
+      changedFlowY.length = 0;
       // FORGOTTEN FIRST, and the two results are collected before either is
       // acted on: a cell the server evicted and re-melted in the same message
       // has to survive, and it only does if the drop happens before the take.
@@ -794,16 +1133,27 @@ export function createLavaFlow(): LavaFlowRenderer {
       // server broadcasts one whenever a vent merely flips `erupting` — with
       // both cell lists empty. That message used to cost a full rebuild.
       if (!dropped && !taken) return;
-      rebuild(groundAt);
+      markChangedFlow();
+      restamp(groundAt);
     },
 
     get pendingGround(): boolean {
-      return missingGround;
+      return pendingCells.size > 0;
     },
 
     retryPending(groundAt): void {
-      if (!missingGround) return;
-      rebuild(groundAt);
+      if (pendingCells.size === 0) return;
+      // ONLY THE CELLS THAT WERE WAITING. Their footprint entries cannot have
+      // moved — no flow cell changed — so this re-runs the height lookup for
+      // them and re-emits their slots and their neighbours' risers, which is
+      // what a chunk arriving under them actually changes.
+      for (const key of pendingCells) {
+        const slot = covered.get(key);
+        if (slot === undefined) continue;
+        const entry = slotCell[slot]!;
+        markPlanCell(entry.x, entry.y);
+      }
+      restamp(groundAt);
     },
 
     update(elapsed): void {
@@ -815,6 +1165,8 @@ export function createLavaFlow(): LavaFlowRenderer {
       material.dispose();
       root.clear();
       cells.clear();
+      covered.clear();
+      pendingCells.clear();
     },
   };
 }
