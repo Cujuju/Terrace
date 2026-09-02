@@ -57,7 +57,7 @@ CONFIG = {
     # fine on anything reachable. The server warns at boot when either is on
     # its default. Set them here (or export them) to silence that honestly.
     "ROLLBACK_KEY": None,         # None -> "terrace"        (rewinds the world)
-    "WORLD_ADMIN_KEY": None,      # None -> "terrace-worlds"  (creates/archives worlds)
+    "WORLD_ADMIN_KEY": None,      # None -> "terrace"        (creates/archives worlds)
     # Seconds a world switch is announced for when somebody other than the
     # operator is connected; skipped entirely when they are alone. 0 = never.
     "WORLD_SWITCH_COUNTDOWN_S": None,  # None -> server default (10)
