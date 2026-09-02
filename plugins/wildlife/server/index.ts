@@ -109,7 +109,7 @@ import {
   panicIndividuals,
   startleNear,
 } from './movement.ts';
-import { SPECIES_PROFILES } from './species.ts';
+import { SLOWEST_LAND_CRUISE_SPEED_CELLS_PER_SECOND } from './species.ts';
 import { FIRE_IGNITED_EVENT_NAME, parseIgnitedPositions } from './fire-event.ts';
 import { WILDLIFE_SLICE_VERSION, loadPopulation, savePopulation } from './persistence.ts';
 import {
@@ -173,19 +173,32 @@ export const FLEE_RADIUS_CELLS = MAX_BRUSH_RADIUS * 3;
  * visible reason and stopping still inside the danger; a narrower one would
  * leave animals standing calmly within a run of the flames.
  *
- * Measured on the GRAZER, the slowest thing that walks on the ground fire burns
- * (fish flee three times as far, and are not going to be near a fire in the
- * first place), so the invariant holds for every land animal rather than for
- * the average one: 6.4 cells/s × 3 × 2.5 s = 48 cells, twelve world units.
+ * Measured on the SLOWEST LAND SPECIES — the one that walks on the ground fire
+ * burns and can put the least distance behind it (fish flee three times as far,
+ * and are not going to be near a fire in the first place) — so the invariant
+ * holds for every land animal rather than for the average one.
  *
- * It lands on the same 48 cells FLEE_RADIUS_CELLS does. That is an arithmetic
- * coincidence of two unrelated derivations, and writing this as that constant
- * would tie a fire's reach to the brush's — so the day the brush grows, the
- * animals would start noticing fires further off for no reason anybody could
- * name.
+ * IT IS DERIVED, NOT CITED (2026-09-02). This used to read
+ * `SPECIES_PROFILES.grazer.cruiseSpeedCellsPerSecond` under a comment calling
+ * the grazer "the slowest thing that walks", which was true of a table with one
+ * land species in it and became false twice on the same day: the grazer's speed
+ * was halved (owner: "Grazers move too fast") and the bison arrived slower
+ * still. Neither edit would have failed to compile. The figure now comes from
+ * SLOWEST_LAND_CRUISE_SPEED_CELLS_PER_SECOND (./species.ts), which is a minimum
+ * over the table, so the claim above is true by construction.
+ *
+ * At the shipped table that is the bison's 0.6 world units/s: 2.4 cells/s × 3 ×
+ * 2.5 s = 18 cells, four and a half world units. It USED to be 48 cells, on the
+ * grazer's pre-cut 1.6 — the alarm shrank because the animals it is sized
+ * against got slower, which is exactly what it is supposed to do.
+ *
+ * It no longer coincides with FLEE_RADIUS_CELLS (48), and the two were never
+ * related: that one is three times the sculpt brush's reach. The old note here
+ * observed the coincidence in order to refuse to write one as the other; the
+ * refusal is what kept this correct through the change.
  */
 export const FIRE_STARTLE_RADIUS_CELLS = Math.round(
-  SPECIES_PROFILES.grazer.cruiseSpeedCellsPerSecond * FLEE_SPEED_MULTIPLIER * FLEE_DURATION_SECONDS,
+  SLOWEST_LAND_CRUISE_SPEED_CELLS_PER_SECOND * FLEE_SPEED_MULTIPLIER * FLEE_DURATION_SECONDS,
 );
 
 /** Ticks since boot, for the broadcast cadence. */
