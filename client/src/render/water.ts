@@ -61,6 +61,7 @@ import {
   writeWaterCurveTexels,
 } from '../terrain/waterDepth.ts';
 import { spliceShader } from './shaderSplice.ts';
+import { applyGroundShade } from './groundShade.ts';
 import { makeBanded } from './water/waterBands.ts';
 
 /**
@@ -479,6 +480,13 @@ export function createWater(
     side: DoubleSide,
   });
   makeDepthAware(material, curveTexture, worldSizeUniform);
+  // The sea darkens under a cloud too (#284). AFTER makeDepthAware and
+  // CHAINING onto it, never replacing: makeDepthAware ASSIGNS
+  // onBeforeCompile, so the reverse order would silently drop the whole depth
+  // treatment. Its own <opaque_fragment> splice has already run by the time
+  // this one looks for that anchor, so the shade multiplies an outgoingLight
+  // that already carries the depth alpha.
+  applyGroundShade(material, 'water');
   // The sea gets the same painted bands the rivers do — one rule, in
   // water/waterBands.ts, precisely so the ocean cannot be left behind when the
   // rivers get a treatment. Applied AFTER makeDepthAware because makeBanded

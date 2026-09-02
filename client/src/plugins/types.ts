@@ -11,9 +11,17 @@
 // directions, so a plugin cannot collide with core messages or another plugin.
 
 import type { SculptIntent } from '@terrace/shared';
-import type { Group, Object3D } from 'three';
+import type { Group, Material, Object3D } from 'three';
 import type { Component } from 'solid-js';
 import type { CellOccupancy } from '../terrain/occupancy.ts';
+/**
+ * TYPE-ONLY, AND SAFE TO REACH FROM HERE — verified rather than assumed.
+ * render/revealMask.ts imports only three, @terrace/shared, terrain/mirror.ts
+ * (itself deliberately free of three and the DOM) and render/shaderSplice.ts
+ * (no imports at all), so none of the `import.meta.env` chain SkyRigState's
+ * comment below warns about is reachable through it.
+ */
+import type { RevealClipUniforms } from '../render/revealMask.ts';
 
 /**
  * RE-EXPORTED so a plugin declaring an occupancy lookup imports one module —
@@ -89,6 +97,32 @@ export interface SkyRigState {
  * the body sits on its origin (decision record, fire: "the position is not on
  * the wire" — neither is the size, for the same reason).
  */
+/**
+ * One shade in the sky that the terrain and water darken themselves under —
+ * `ClientPluginCtx.publishGroundShade`, plan §2.2 of #284. World units;
+ * `darkness` and `inner` are fractions in [0, 1].
+ *
+ * `y` is THIS disc's own height, not a shared cloud base: the decks in this
+ * world sit at different heights and a shadow must fall from where the cloud
+ * IS. `inner` is where the falloff starts as a fraction of `radius` — 0 fades
+ * from the very centre, a larger value holds a flat core and fades only the
+ * rim, the same meaning kit/puffDeck.ts's `innerEdge` carries.
+ *
+ * DEFINED HERE rather than in render/groundShade.ts for the reason
+ * SkyRigState above is: a plugin CONSTRUCTS these, so the type must sit on the
+ * side of the boundary a plugin's standalone tsc run can reach. groundShade.ts
+ * imports it back.
+ */
+export interface GroundShadeDisc {
+  readonly x: number;
+  readonly z: number;
+  /** The disc's own height in world units — the deck it belongs to. */
+  readonly y: number;
+  readonly radius: number;
+  readonly darkness: number;
+  readonly inner: number;
+}
+
 export interface MoverPose {
   readonly x: number;
   readonly y: number;
@@ -343,6 +377,79 @@ export interface ClientPluginCtx {
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
 
   /**
+   * Is cell (x, y) in a chunk this client has been SENT, and inside the world?
+   *
+   * `mirror.received` is the client's whole notion of what exists (design doc:
+   * locked chunks are never on the wire, so "what have we received" IS "what
+   * is there"), and this is core's single definition of it — the same
+   * predicate the reveal mask texture is built from, so a plugin's CPU answer
+   * and its clipped geometry cannot disagree.
+   *
+   * OUTSIDE THE WORLD IS FALSE, unlike `terrainHeightAt`, which answers band 0
+   * for a cell it was never sent. A height must answer something; "is this
+   * revealed" must not, or the infinite margin past the border would read as
+   * revealed ground.
+   *
+   * False before the first snapshot. One `Set` lookup — cheap per frame, but
+   * not per particle: for geometry, clip on the GPU with `applyRevealClip`.
+   */
+  revealedAt(x: number, y: number): boolean;
+
+  /**
+   * CLIPS A STOCK MATERIAL to the received map and the world's edge: its
+   * fragments are discarded wherever `revealedAt` would be false.
+   *
+   * WHY THIS IS CORE'S AND NOT THE PLUGIN'S. Three of the six weather plugins
+   * draw with stock materials they never wrote a line of GLSL for (a `Points`
+   * column, `MeshBasicMaterial` haze sheets), and every one of them wants the
+   * same clip. A splice each would be six copies of one contract; this is the
+   * contract.
+   *
+   * `label` names the material in the exception `spliceShader` throws if a
+   * future three upgrade moves an anchor — make it recognisable
+   * (`'rain haze'`, not `'material'`).
+   *
+   * CHAINS onto an `onBeforeCompile` the material already has. A
+   * `ShaderMaterial` cannot be spliced and does not need to be: paste
+   * kit/revealClip.ts's snippets and merge `revealClipUniforms()`.
+   *
+   * Call it ONCE PER MATERIAL, not per mesh — a pooled material shared by
+   * every rig is patched once and every rig is clipped.
+   */
+  applyRevealClip(material: Material, label: string): void;
+
+  /**
+   * The shared uniform object a `ShaderMaterial` merges into its own — see
+   * kit/revealClip.ts for the whole pattern. Shared, not copied: one mask
+   * upload reaches every material holding it.
+   */
+  revealClipUniforms(): RevealClipUniforms;
+
+  /**
+   * Publishes the shades THIS plugin's sky things cast on the ground, so the
+   * terrain and the water darken themselves under them. Returns an unpublish
+   * function.
+   *
+   * NO SHADOW MAP (plan §6, owner's decision): each disc is projected along
+   * the sun by the ground's own shaders, which costs a handful of arithmetic
+   * per fragment, no depth pass, and no second render of anything.
+   *
+   * A LOOKUP, NOT A LIST, for the same reason `publishMovers` takes one: core
+   * reads it during the frame it is drawn, so the discs it gets are this
+   * frame's interpolated ones rather than a copy that has drifted from the
+   * cloud it belongs to.
+   *
+   * PUBLISHING MOVES THIS PLUGIN EARLIER IN THE FRAME, exactly as
+   * `publishMovers` does and with the same consequence: the plugin's frame
+   * callbacks go into the pose phase, ahead of core's gather.
+   *
+   * BOUNDED BY `TerraceClientPlugin.groundShadeBudget`. Publishing more than
+   * that is a logged breach and the excess is dropped — the draw budget's
+   * stance, never a throw. A plugin that declares no budget publishes nothing.
+   */
+  publishGroundShade(lookup: () => readonly GroundShadeDisc[]): () => void;
+
+  /**
    * Publishes where THIS plugin's movable things are drawn, so that another
    * plugin can draw something ON one of them. Returns an unpublish function.
    *
@@ -498,6 +605,24 @@ export interface TerraceClientPlugin {
    * one.
    */
   readonly drawBudget: number;
+
+  /**
+   * The most ground-shade discs this plugin may publish through
+   * `ClientPluginCtx.publishGroundShade` — its share of the shaders' shade
+   * array. Absent means it publishes none.
+   *
+   * WRITTEN AS AN EXPRESSION OF THE PLUGIN'S OWN CAPS, exactly as `drawBudget`
+   * above is: one disc per living mass means the budget IS the mass cap
+   * (`MAX_ACTIVE`, `MAX_SPIRALS`), never a number taken from a measurement. The
+   * shaders' `GROUND_SHADE_MAX` is the SUM of these, compiled in before the
+   * first frame, so a budget invented from one instant would breach by
+   * construction the next time the population was larger — and a plugin whose
+   * sky population has no cap needs the cap first.
+   *
+   * Over-publishing is a logged breach and the excess is dropped (see
+   * publishGroundShade), never a throw and never a frame taken down.
+   */
+  readonly groundShadeBudget?: number;
 
   /** Called once at boot with the plugin's context. */
   attach(ctx: ClientPluginCtx): void;

@@ -33,7 +33,7 @@ import type {
   SculptIntent,
   TerrainDiffMessage,
 } from '@terrace/shared';
-import type { Mesh } from 'three';
+import type { Material, Mesh } from 'three';
 import {
   applyChunkUnlock,
   applySnapshot,
@@ -64,6 +64,12 @@ import { createWorkerRiverNetworkSource } from './render/water/riverNetworkSourc
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, WATER_DRAW_OBJECTS, type Water } from './render/water.ts';
+import {
+  createRevealMask,
+  revealedAtCell,
+  type RevealClipUniforms,
+  type RevealMask,
+} from './render/revealMask.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
   pickPointedCellByRay,
@@ -121,6 +127,24 @@ export interface World extends TerrainSink {
   /** 0 until the first snapshot arrives. */
   worldSize(): number;
   pickables(): Mesh[];
+  /**
+   * Is cell (x, y) in a chunk the server has sent us, and inside the world?
+   *
+   * PROMOTED FROM `chartSource`'s CLOSURE (2026-09-02, #284): the chart was
+   * not the only caller any more — every plugin that draws over the ground
+   * wants the same question answered, and the GPU reveal mask below is built
+   * from the same predicate. One definition (render/revealMask.ts's
+   * `revealedAtCell`) is what makes the chart, the mask and a plugin's own CPU
+   * test incapable of disagreeing. False before the first snapshot.
+   */
+  revealedAt(x: number, y: number): boolean;
+  /**
+   * Clips a stock material to the received map and the world edge — the
+   * backing for `ClientPluginCtx.applyRevealClip`; see its doc comment.
+   */
+  applyRevealClip(material: Material, label: string): void;
+  /** The shared reveal-clip uniform object, for a plugin's ShaderMaterial. */
+  revealClipUniforms(): RevealClipUniforms;
   /**
    * The first terrain cell a world-space ray meets, or null. THE pick: both
    * the sculpt brush (input/sculptInput.ts) and plugin clicks
@@ -332,6 +356,13 @@ export function createWorld(viewport: Viewport): World {
   // synced (added/disposed) against whatever mirror currently exists rather
   // than being torn down and recreated on every rejoin.
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
+  // THE REVEAL MASK, and it belongs beside the fog rather than anywhere else
+  // because it is the SAME fact: the frontier mist and the mask are both
+  // derived from `received`, they are synced at the same two call sites, and a
+  // mask that disagreed with the mist would draw a plugin's cloud over the
+  // very seam the mist exists to cover. One for the whole session, like water
+  // and fog, resized in place on a rejoin into a different world.
+  const revealMask: RevealMask = createRevealMask(DEFAULT_WORLD_SIZE);
   // Rivers, pools and waterfalls (mechanics cards 27 & 40) — a third derived
   // layer alongside water and fog, same lifetime, same "one instance for the
   // whole session" shape. Its own refresh() is throttled internally, so
@@ -728,6 +759,9 @@ export function createWorld(viewport: Viewport): World {
       // -> starter footprint) or a rejoin (old world's segments dropped, this
       // session's rebuilt).
       fog.sync(fresh.mirror);
+      // Derived from the same `received` the mist above is, at the same call
+      // site, so the two can never describe different frontiers.
+      revealMask.sync(fresh.mirror);
       // The sea is drawn over the received chunks and nowhere else (see
       // render/water.ts's header), so it answers to `received` exactly as the
       // mist above does — same call site, same reason.
@@ -799,6 +833,8 @@ export function createWorld(viewport: Viewport): World {
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);
+      // ...and the mask creeps outward with it, same as on the snapshot path.
+      revealMask.sync(mirror);
       // ...and the sea creeps outward with it, same as on the snapshot path.
       water.sync(mirror);
       // Newly-unlocked chunks need their depth-alpha texels painted in too —
@@ -997,19 +1033,29 @@ export function createWorld(viewport: Viewport): World {
         // "Revealed" for the chart is exactly the renderer's own notion of
         // what exists: the cell's owning chunk is in `received` (mirror.ts
         // invariant 1). No reveal-plugin knowledge leaks in here.
-        revealedAt: (x: number, y: number): boolean =>
-          m.received.has(
-            chunkIndex(
-              m.map.size,
-              Math.floor(x / CHUNK_SIZE),
-              Math.floor(y / CHUNK_SIZE),
-            ),
-          ),
+        //
+        // IT USED TO RE-DERIVE THAT INLINE, which was the only copy of the
+        // predicate until #284 needed it on the GPU as well; it now calls the
+        // one definition, so the chart and the reveal mask cannot drift apart.
+        revealedAt: (x: number, y: number): boolean => revealedAtCell(m, x, y),
       };
     },
 
     pickables(): Mesh[] {
       return meshes?.pickables() ?? [];
+    },
+
+    revealedAt(x: number, y: number): boolean {
+      const m = mirror;
+      return m === null ? false : revealedAtCell(m, x, y);
+    },
+
+    applyRevealClip(material: Material, label: string): void {
+      revealMask.applyRevealClip(material, label);
+    },
+
+    revealClipUniforms(): RevealClipUniforms {
+      return revealMask.uniforms();
     },
 
     dispose(): void {
@@ -1021,6 +1067,7 @@ export function createWorld(viewport: Viewport): World {
       predictions = null;
       water.dispose();
       fog.dispose();
+      revealMask.dispose();
       rivers.dispose();
       // The pool outlives every mesh set in the session, so this is the only
       // place it is terminated.
