@@ -56,11 +56,14 @@ import { VersionWatermark } from './VersionWatermark.tsx';
 import { RestorePoints, type RollbackActions } from './RestorePoints.tsx';
 import { restorePanelOpen, setRestorePanelOpen } from '../state/rollbackState.ts';
 import { WorldManager, type WorldActions } from './WorldManager.tsx';
-import { AdminPanel, type FocusCell } from './AdminPanel.tsx';
+import { AdminPanel } from './AdminPanel.tsx';
+import { AdminAim } from './AdminAim.tsx';
 import { WorldSwitchBanner } from './WorldSwitchBanner.tsx';
 import {
   adminPanelOpen,
+  armedAction,
   setAdminPanelOpen,
+  setArmedAction,
   worldPanelOpen,
   setWorldPanelOpen,
 } from '../state/worldsState.ts';
@@ -205,12 +208,6 @@ export function Hud(props: {
    * connection — the same arrangement as chartSource above.
    */
   rollback: RollbackActions;
-  /**
-   * The cell under the camera's orbit target, for the admin panel's debug
-   * spawns; null until a world has arrived. Passed in for chartSource's
-   * reason: the HUD holds no reference to the viewport.
-   */
-  focusCell: () => FocusCell | null;
 }): JSX.Element {
   // The button column's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
@@ -248,6 +245,12 @@ export function Hud(props: {
     // own listener); one press must close one layer, not both.
     if (chartOpen()) return;
     if (event.key !== 'Escape') return;
+    // An armed admin action is put down first, alone: the operator who
+    // pressed Escape mid-aim wants out of the aim, not out of every popup.
+    if (armedAction() !== null) {
+      setArmedAction(null);
+      return;
+    }
     if (showControls()) setShowControls(false);
     if (showConnection()) setShowConnection(false);
   };
@@ -668,8 +671,13 @@ export function Hud(props: {
       {/* The admin panel, mounted only while open — it asks the server for
           nothing until a key is in hand, and then only for the listing. */}
       <Show when={adminPanelOpen()}>
-        <AdminPanel actions={props.worlds} focusCell={props.focusCell} />
+        <AdminPanel actions={props.worlds} />
       </Show>
+
+      {/* The aim strip: what is armed and where to click, then the receipt.
+          Never gated on the panel — it exists precisely while the panel is
+          closed. */}
+      <AdminAim />
 
       {/* Not gated on the panel: a switch countdown and "no world loaded" are
           shown to every player, whether or not they hold a key. */}
