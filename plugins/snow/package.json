@@ -1,0 +1,21 @@
+{
+  "name": "@terrace/plugin-snow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@terrace/shared": "workspace:*",
+    "solid-js": "^1.9.14",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/three": "^0.185.4",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}
