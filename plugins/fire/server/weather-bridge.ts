@@ -20,6 +20,7 @@
 // day. One warning is logged, once. That is the right failure mode: a
 // self-hoster who removed the weather plugin removed weather, not fire.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /**
@@ -60,9 +61,6 @@ export const WEATHER_UNAVAILABLE_WARNING =
  */
 export const CALM: { readonly heading: number; readonly speed: number } = { heading: 0, speed: 0 };
 
-let weatherApi: WeatherWindApi | null = null;
-let warned = false;
-
 /** Duck-types the sibling's module namespace into the API we need (rule 4). */
 function asWeatherApi(module: SiblingModule | null): WeatherWindApi | null {
   if (module === null) return null;
@@ -70,11 +68,21 @@ function asWeatherApi(module: SiblingModule | null): WeatherWindApi | null {
   return module as unknown as WeatherWindApi;
 }
 
-function warnOnce(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(WEATHER_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<WeatherWindApi>({
+  pluginName: WEATHER_PLUGIN_NAME,
+  duckType: asWeatherApi,
+  unavailableWarning: WEATHER_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves weather through the host, from onWorldCreate.
@@ -82,11 +90,10 @@ function warnOnce(): void {
  * NOTHING IS IN FLIGHT ANY MORE: the old rule 2 (start the import, do not await
  * it) existed because module resolution is asynchronous, and the host's lookup
  * is not. Re-resolved on every call, so a weather the operator has just enabled
- * is picked up on the reopen; `warnOnce` keeps an absent one to a single line.
+ * is picked up on the reopen; the bridge's warn-once keeps an absent one to a single line.
  */
 export function loadWeatherBridge(world: WorldApi): void {
-  weatherApi = asWeatherApi(world.sibling(WEATHER_PLUGIN_NAME));
-  if (weatherApi === null) warnOnce();
+  bridge.load(world);
 }
 
 /**
@@ -99,8 +106,9 @@ export function loadWeatherBridge(world: WorldApi): void {
  * think to look for.
  */
 export function currentWind(): { readonly heading: number; readonly speed: number } {
-  if (weatherApi === null) return CALM;
-  const wind = weatherApi.currentWind();
+  const api = bridge.api();
+  if (api === null) return CALM;
+  const wind = api.currentWind();
   // A weather that answered with something malformed is treated as calm rather
   // than trusted into the spread arithmetic, where a NaN heading would silently
   // zero every neighbour's chance and stop fire spreading at all.
@@ -114,8 +122,9 @@ export function currentWind(): { readonly heading: number; readonly speed: numbe
  * never branch on any of that.
  */
 export function precipitationAt(x: number, y: number): number {
-  if (weatherApi === null || weatherApi.precipitationAt === undefined) return 0;
-  const wetness = weatherApi.precipitationAt(x, y);
+  const api = bridge.api();
+  if (api === null || api.precipitationAt === undefined) return 0;
+  const wetness = api.precipitationAt(x, y);
   // A malformed answer is treated as dry rather than trusted into the
   // suppression arithmetic, where a NaN would make every comparison false and
   // silently disable rain.
@@ -125,6 +134,5 @@ export function precipitationAt(x: number, y: number): number {
 
 /** Test seam: forgets the resolved sibling and the warning. */
 export function resetWeatherBridge(): void {
-  weatherApi = null;
-  warned = false;
+  bridge.reset();
 }

@@ -21,6 +21,7 @@
 // once. A self-hoster who removed the structures plugin removed towns, not a
 // working pilgrims plugin.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** One standing structure, structurally typed (never imported). */
@@ -77,9 +78,6 @@ const STRUCTURES_PLUGIN_NAME = 'structures';
 export const STRUCTURES_UNAVAILABLE_WARNING =
   '[pilgrims] structures plugin not available — no settlements means no pilgrimages';
 
-let structuresApi: StructuresApi | null = null;
-let warned = false;
-
 /**
  * The desired blessed set — rule 3 (buffer, don't drop): re-asserted into a
  * structures module that finishes loading after routes already formed.
@@ -93,11 +91,26 @@ function asStructuresApi(module: SiblingModule | null): StructuresApi | null {
   return module as unknown as StructuresApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(STRUCTURES_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<StructuresApi>({
+  pluginName: STRUCTURES_PLUGIN_NAME,
+  duckType: asStructuresApi,
+  unavailableWarning: STRUCTURES_UNAVAILABLE_WARNING,
+  // Rule 3, buffer-don't-drop: what this plugin already wanted said,
+  // replayed into a sibling that has only just started running.
+  onResolved: (api): void => {
+    api.setBlessedStructureCells(desiredBlessedKeys);
+  },
+});
 
 /**
  * Resolves structures through the host, from onWorldCreate.
@@ -113,22 +126,12 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadStructuresBridge(world: WorldApi): void {
-  const resolved = asStructuresApi(world.sibling(STRUCTURES_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    structuresApi = null;
-    warnUnavailable();
-    return;
-  }
-  structuresApi = resolved;
-  resolved.setBlessedStructureCells(desiredBlessedKeys);
+  bridge.load(world);
 }
 
 /** The standing towns, or an empty world when structures is not running here. */
 export function bridgedStructures(): BridgedStructureCell[] {
-  return structuresApi?.standingStructures() ?? [];
+  return bridge.api()?.standingStructures() ?? [];
 }
 
 /**
@@ -141,7 +144,7 @@ export function bridgedStructures(): BridgedStructureCell[] {
  * from the world's point of view they ARE the same thing.
  */
 export function foundStructureAt(world: unknown, x: number, y: number): boolean {
-  return structuresApi?.foundStructure?.(world, x, y) ?? false;
+  return bridge.api()?.foundStructure?.(world, x, y) ?? false;
 }
 
 /**
@@ -160,18 +163,17 @@ export function foundStructureAt(world: unknown, x: number, y: number): boolean 
  * appears, which `foundStructureAt` already reports honestly.
  */
 export function canFoundStructureAt(world: unknown, x: number, y: number): boolean {
-  return structuresApi?.canFoundStructure?.(world, x, y) ?? true;
+  return bridge.api()?.canFoundStructure?.(world, x, y) ?? true;
 }
 
 /** Records and forwards the total blessed set (structures' replace semantics). */
 export function applyBlessedCells(keys: readonly number[]): void {
   desiredBlessedKeys = keys;
-  structuresApi?.setBlessedStructureCells(keys);
+  bridge.api()?.setBlessedStructureCells(keys);
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetStructuresBridge(): void {
-  structuresApi = null;
-  warned = false;
+  bridge.reset();
   desiredBlessedKeys = [];
 }

@@ -25,6 +25,7 @@
 // is the honest degradation: a self-hoster who removed weather removed the rain,
 // and a plugin that invented rain anyway would be overriding their choice.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /**
@@ -46,9 +47,6 @@ export const WEATHER_UNAVAILABLE_WARNING =
   '[mudslides] weather plugin not available — no rain trigger; ' +
   'slides will only start on freshwater-adjacent ground';
 
-let weatherApi: WeatherRainApi | null = null;
-let warned = false;
-
 /** Duck-types the sibling's module namespace into the API we need. */
 function asWeatherApi(module: SiblingModule | null): WeatherRainApi | null {
   if (module === null) return null;
@@ -56,11 +54,21 @@ function asWeatherApi(module: SiblingModule | null): WeatherRainApi | null {
   return module as unknown as WeatherRainApi;
 }
 
-function warnOnce(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(WEATHER_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<WeatherRainApi>({
+  pluginName: WEATHER_PLUGIN_NAME,
+  duckType: asWeatherApi,
+  unavailableWarning: WEATHER_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves weather through the host, from onWorldCreate.
@@ -72,8 +80,7 @@ function warnOnce(): void {
  * picked up on the reopen.
  */
 export function loadWeatherBridge(world: WorldApi): void {
-  weatherApi = asWeatherApi(world.sibling(WEATHER_PLUGIN_NAME));
-  if (weatherApi === null) warnOnce();
+  bridge.load(world);
 }
 
 /**
@@ -86,14 +93,14 @@ export function loadWeatherBridge(world: WorldApi): void {
  * stopped working" three hours later.
  */
 export function rainAt(x: number, y: number): number {
-  if (weatherApi === null) return 0;
-  const value = weatherApi.precipitationAt(x, y);
+  const api = bridge.api();
+  if (api === null) return 0;
+  const value = api.precipitationAt(x, y);
   if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
 }
 
 /** Test seam: forgets the resolved sibling and the warning. */
 export function resetWeatherBridge(): void {
-  weatherApi = null;
-  warned = false;
+  bridge.reset();
 }

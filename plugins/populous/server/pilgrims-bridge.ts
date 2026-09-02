@@ -19,6 +19,7 @@
 // again. Replaying it later would put somebody on the road on behalf of a
 // house that may no longer be standing.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of pilgrims this plugin uses — deliberately one function. */
@@ -39,20 +40,27 @@ const PILGRIMS_PLUGIN_NAME = 'pilgrims';
 export const PILGRIMS_UNAVAILABLE_WARNING =
   '[populous] pilgrims plugin not available — houses will fill up but nobody walks out';
 
-let pilgrimsApi: PilgrimsApi | null = null;
-let warned = false;
-
 function asPilgrimsApi(module: SiblingModule | null): PilgrimsApi | null {
   if (module === null) return null;
   if (typeof module.emitSettlerFrom !== 'function') return null;
   return module as unknown as PilgrimsApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(PILGRIMS_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<PilgrimsApi>({
+  pluginName: PILGRIMS_PLUGIN_NAME,
+  duckType: asPilgrimsApi,
+  unavailableWarning: PILGRIMS_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves pilgrims through the host, from onWorldCreate.
@@ -68,16 +76,7 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadPilgrimsBridge(world: WorldApi): void {
-  const resolved = asPilgrimsApi(world.sibling(PILGRIMS_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    pilgrimsApi = null;
-    warnUnavailable();
-    return;
-  }
-  pilgrimsApi = resolved;
+  bridge.load(world);
 }
 
 /**
@@ -89,11 +88,10 @@ export function loadPilgrimsBridge(world: WorldApi): void {
  * treats every one of those the same way — nobody left the house this step.
  */
 export function emitSettlerFrom(x: number, y: number): boolean {
-  return pilgrimsApi?.emitSettlerFrom(x, y) ?? false;
+  return bridge.api()?.emitSettlerFrom(x, y) ?? false;
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetPilgrimsBridge(): void {
-  pilgrimsApi = null;
-  warned = false;
+  bridge.reset();
 }

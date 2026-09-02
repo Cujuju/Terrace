@@ -11,6 +11,7 @@
 // DEGRADED BEHAVIOUR when fire is absent: lava does not set anything alight. It
 // still flows, still cools, still rewrites the ground. One warning, once.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of fire this plugin uses — one function, deliberately. */
@@ -29,9 +30,6 @@ const FIRE_PLUGIN_NAME = 'fire';
 export const FIRE_UNAVAILABLE_WARNING =
   '[volcanoes] fire plugin not available — lava will not set anything alight';
 
-let fireApi: FireIgnitionApi | null = null;
-let warned = false;
-
 /** Duck-types the sibling's module namespace into the API we need (rule 4). */
 function asFireApi(module: SiblingModule | null): FireIgnitionApi | null {
   if (module === null) return null;
@@ -39,11 +37,21 @@ function asFireApi(module: SiblingModule | null): FireIgnitionApi | null {
   return module as unknown as FireIgnitionApi;
 }
 
-function warnOnce(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(FIRE_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<FireIgnitionApi>({
+  pluginName: FIRE_PLUGIN_NAME,
+  duckType: asFireApi,
+  unavailableWarning: FIRE_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves fire through the host, from onWorldCreate. RE-RESOLVED ON EVERY
@@ -51,8 +59,7 @@ function warnOnce(): void {
  * a fire the operator has just enabled for this world must be picked up then.
  */
 export function loadFireBridge(world: WorldApi): void {
-  fireApi = asFireApi(world.sibling(FIRE_PLUGIN_NAME));
-  if (fireApi === null) warnOnce();
+  bridge.load(world);
 }
 
 /**
@@ -67,12 +74,12 @@ export function loadFireBridge(world: WorldApi): void {
  * fire's cap to be correct.
  */
 export function igniteLavaCell(x: number, y: number): boolean {
-  if (fireApi === null) return false;
-  return fireApi.igniteAt(x, y);
+  const api = bridge.api();
+  if (api === null) return false;
+  return api.igniteAt(x, y);
 }
 
 /** Test seam: forgets the resolved sibling and the warning. */
 export function resetFireBridge(): void {
-  fireApi = null;
-  warned = false;
+  bridge.reset();
 }

@@ -27,6 +27,7 @@
 // The gate exists to stop a temple being inert in a world that HAS settlers.
 // One warning, once.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 import type { TempleWorld } from './suitability.ts';
 
@@ -63,20 +64,27 @@ const PILGRIMS_PLUGIN_NAME = 'pilgrims';
 export const PILGRIMS_UNAVAILABLE_WARNING =
   '[temples] pilgrims plugin not available — placements are not settler-checked';
 
-let pilgrimsApi: PilgrimsApi | null = null;
-let warned = false;
-
 function asPilgrimsApi(module: SiblingModule | null): PilgrimsApi | null {
   if (module === null) return null;
   if (typeof module.canDispatchSettler !== 'function') return null;
   return module as unknown as PilgrimsApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(PILGRIMS_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<PilgrimsApi>({
+  pluginName: PILGRIMS_PLUGIN_NAME,
+  duckType: asPilgrimsApi,
+  unavailableWarning: PILGRIMS_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves pilgrims through the host, from onWorldCreate.
@@ -92,16 +100,7 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadPilgrimsBridge(world: WorldApi): void {
-  const resolved = asPilgrimsApi(world.sibling(PILGRIMS_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    pilgrimsApi = null;
-    warnUnavailable();
-    return;
-  }
-  pilgrimsApi = resolved;
+  bridge.load(world);
 }
 
 /**
@@ -110,12 +109,12 @@ export function loadPilgrimsBridge(world: WorldApi): void {
  * player's favour rather than against the placement.
  */
 export function templeCanSettle(world: TempleWorld, temple: BridgedTempleSite): boolean {
-  if (pilgrimsApi === null) return true;
-  return pilgrimsApi.canDispatchSettler(world, temple);
+  const api = bridge.api();
+  if (api === null) return true;
+  return api.canDispatchSettler(world, temple);
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetPilgrimsBridge(): void {
-  pilgrimsApi = null;
-  warned = false;
+  bridge.reset();
 }

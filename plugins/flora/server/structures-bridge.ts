@@ -16,6 +16,7 @@
 // warning is logged, once. A self-hoster who removed the structures plugin
 // removed buildings, not a working flora plugin.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** One occupied cell, structurally typed (never imported). */
@@ -42,12 +43,6 @@ const STRUCTURES_PLUGIN_NAME = 'structures';
 export const STRUCTURES_UNAVAILABLE_WARNING =
   '[flora] structures plugin not available — no buildings means nothing excludes trees';
 
-/** The resolved API, or null when no usable structures runs in this world. */
-let structuresApi: StructuresApi | null = null;
-
-/** True once the "structures is missing" warning has been emitted. */
-let warned = false;
-
 /** Duck-types a loaded module into the API we need. Null if it does not fit. */
 function asStructuresApi(module: SiblingModule | null): StructuresApi | null {
   if (module === null) return null;
@@ -55,13 +50,21 @@ function asStructuresApi(module: SiblingModule | null): StructuresApi | null {
   return module as unknown as StructuresApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  // console rather than the server's logger — see mana-bridge.ts's identical
-  // note: plugins do not import server internals at runtime.
-  console.warn(STRUCTURES_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<StructuresApi>({
+  pluginName: STRUCTURES_PLUGIN_NAME,
+  duckType: asStructuresApi,
+  unavailableWarning: STRUCTURES_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves structures through the host, from onWorldCreate.
@@ -77,25 +80,15 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadStructuresBridge(world: WorldApi): void {
-  const resolved = asStructuresApi(world.sibling(STRUCTURES_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    structuresApi = null;
-    warnUnavailable();
-    return;
-  }
-  structuresApi = resolved;
+  bridge.load(world);
 }
 
 /** The occupied cells, or an empty world when structures is not running here. */
 export function bridgedStructures(): BridgedStructureCell[] {
-  return structuresApi?.standingStructures() ?? [];
+  return bridge.api()?.standingStructures() ?? [];
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetStructuresBridge(): void {
-  structuresApi = null;
-  warned = false;
+  bridge.reset();
 }

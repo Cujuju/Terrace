@@ -6,6 +6,7 @@
 // DEGRADED BEHAVIOUR when monsters is absent: nothing ever settles, so no
 // pilgrimages ever start — true by definition. One warning, once.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** One living monster, structurally typed (never imported). */
@@ -34,20 +35,27 @@ const MONSTERS_PLUGIN_NAME = 'monsters';
 export const MONSTERS_UNAVAILABLE_WARNING =
   '[pilgrims] monsters plugin not available — nothing to pilgrimage to';
 
-let monstersApi: MonstersApi | null = null;
-let warned = false;
-
 function asMonstersApi(module: SiblingModule | null): MonstersApi | null {
   if (module === null) return null;
   if (typeof module.monsterStates !== 'function') return null;
   return module as unknown as MonstersApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(MONSTERS_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<MonstersApi>({
+  pluginName: MONSTERS_PLUGIN_NAME,
+  duckType: asMonstersApi,
+  unavailableWarning: MONSTERS_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves monsters through the host, from onWorldCreate.
@@ -63,16 +71,7 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadMonstersBridge(world: WorldApi): void {
-  const resolved = asMonstersApi(world.sibling(MONSTERS_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    monstersApi = null;
-    warnUnavailable();
-    return;
-  }
-  monstersApi = resolved;
+  bridge.load(world);
 }
 
 /**
@@ -81,7 +80,7 @@ export function loadMonstersBridge(world: WorldApi): void {
  * module's SHAPE once, but a fork could still hand back malformed rows.
  */
 export function bridgedMonsters(): BridgedMonsterState[] {
-  const states = monstersApi?.monsterStates();
+  const states = bridge.api()?.monsterStates();
   if (!Array.isArray(states)) return [];
   const valid: BridgedMonsterState[] = [];
   for (const state of states) {
@@ -98,6 +97,5 @@ export function bridgedMonsters(): BridgedMonsterState[] {
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetMonstersBridge(): void {
-  monstersApi = null;
-  warned = false;
+  bridge.reset();
 }

@@ -16,6 +16,7 @@
 // alternative (refuse the action when there is no economy) would make deleting
 // mana silently delete a mechanic that has nothing to do with it.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of mana this plugin uses — one debit, and nothing else. */
@@ -36,9 +37,6 @@ const MANA_PLUGIN_NAME = 'mana';
 export const MANA_UNAVAILABLE_WARNING =
   '[fire] mana plugin not available — lighting a fire will cost nothing';
 
-let manaApi: ManaSpendApi | null = null;
-let warned = false;
-
 /** Duck-types the sibling's module namespace into the API we need (rule 4). */
 function asManaApi(module: SiblingModule | null): ManaSpendApi | null {
   if (module === null) return null;
@@ -46,11 +44,21 @@ function asManaApi(module: SiblingModule | null): ManaSpendApi | null {
   return module as unknown as ManaSpendApi;
 }
 
-function warnOnce(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(MANA_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<ManaSpendApi>({
+  pluginName: MANA_PLUGIN_NAME,
+  duckType: asManaApi,
+  unavailableWarning: MANA_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves mana through the host, from onWorldCreate.
@@ -58,11 +66,10 @@ function warnOnce(): void {
  * NOTHING IS IN FLIGHT ANY MORE: the old rule 2 (start the import, do not await
  * it) existed because module resolution is asynchronous, and the host's lookup
  * is not. Re-resolved on every call, so a mana the operator has just enabled is
- * picked up on the reopen; `warnOnce` keeps an absent one to a single line.
+ * picked up on the reopen; the bridge's warn-once keeps an absent one to a single line.
  */
 export function loadManaBridge(world: WorldApi): void {
-  manaApi = asManaApi(world.sibling(MANA_PLUGIN_NAME));
-  if (manaApi === null) warnOnce();
+  bridge.load(world);
 }
 
 /**
@@ -71,15 +78,15 @@ export function loadManaBridge(world: WorldApi): void {
  * world with no economy has no price to refuse.
  */
 export function chargeMana(world: WorldApi, playerId: string, amount: number): boolean {
-  if (manaApi === null) {
-    warnOnce();
+  const api = bridge.api();
+  if (api === null) {
+    bridge.warnUnavailable();
     return true;
   }
-  return manaApi.spendMana(world, playerId, amount);
+  return api.spendMana(world, playerId, amount);
 }
 
 /** Test seam: forgets the resolved sibling and the warning. */
 export function resetManaBridge(): void {
-  manaApi = null;
-  warned = false;
+  bridge.reset();
 }
