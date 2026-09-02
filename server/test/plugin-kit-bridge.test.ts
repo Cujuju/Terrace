@@ -101,6 +101,31 @@ describe('createSiblingBridge', () => {
     warn.mockRestore();
   });
 
+  it('clear() drops the sibling but LEAVES the warning stood', () => {
+    // What a bridge does when its world closes: a module-scope view must not
+    // outlive the world, but the warning is a property of the process, not of
+    // the world, and re-warning on every reopen would be a log flood.
+    const bridge = makeBridge();
+    bridge.load(worldWith({ doThing: () => 1 }));
+    bridge.clear();
+    expect(bridge.api()).toBe(null);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.load(worldWith(null));
+    bridge.load(worldWith(null));
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('warnUnavailable() emits the same once-only warning, for a caller that needs it', () => {
+    const bridge = makeBridge();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.warnUnavailable();
+    bridge.warnUnavailable();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(WARNING);
+    warn.mockRestore();
+  });
+
   it('reset() forgets both the sibling and the warning', () => {
     const bridge = makeBridge();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
