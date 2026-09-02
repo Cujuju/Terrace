@@ -14,6 +14,12 @@ import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
+import {
+  clearGroundShade,
+  configureGroundShade,
+  groundShadeMaxFor,
+  setGroundShade,
+} from '../render/groundShade.ts';
 import { setFrameDraw } from '../state/hudState.ts';
 import { pointerToNdc, worldPointToCell, type CellOccupancy } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
@@ -27,7 +33,12 @@ import {
   type PluginDrawRow,
 } from './hudPanels.ts';
 import { addPluginTool, removePluginTools } from './toolbar.ts';
-import type { ClientPluginCtx, MoverPose, TerraceClientPlugin } from './types.ts';
+import type {
+  ClientPluginCtx,
+  GroundShadeDisc,
+  MoverPose,
+  TerraceClientPlugin,
+} from './types.ts';
 
 /**
  * How many objects three would DRAW under `root`, before frustum culling —
@@ -442,6 +453,83 @@ export function createClientPluginHost(
    */
   const moverLookups = new Map<string, (id: number) => MoverPose | null>();
 
+  /**
+   * One shade lookup per publishing plugin (ClientPluginCtx.publishGroundShade),
+   * keyed by plugin name — the same by-name addressing moverLookups uses.
+   */
+  const groundShadeLookups = new Map<string, () => readonly GroundShadeDisc[]>();
+
+  /**
+   * Plugins already told they publish more shade discs than they declared.
+   *
+   * ONE LINE PER PLUGIN PER MOUNT, not per frame: a plugin over its budget is
+   * over it for as long as its population is large, and a message every frame
+   * would bury the console it is trying to be read in. Dropped on unmount with
+   * everything else that plugin owns, so a plugin that comes back is told
+   * again if it is still wrong. This needs no hysteresis of the kind the draw
+   * budget has (`stepDrawBudgetBreach`): that samples a count it walks the
+   * scene for, twice a second, where one frame's population noise could
+   * clear a real breach — this reads the plugin's OWN declaration against its
+   * OWN list, every frame, and a single over-publish is already the bug.
+   */
+  const groundShadeBreaches = new Set<string>();
+
+  /** This frame's gathered discs — reused, never reallocated per frame. */
+  const gatheredShade: GroundShadeDisc[] = [];
+
+  /**
+   * Gathers every publisher's discs into the shared uniforms.
+   *
+   * REGISTERED IN THE 'draw' PHASE, which is what "after the pose phase" means
+   * here: publishing moves a plugin's frame callbacks into 'pose'
+   * (render/scene.ts's FramePhase), so every publisher has already
+   * interpolated this frame's clouds by the time this runs, and the render
+   * itself follows every phase.
+   */
+  const gatherGroundShade = (): void => {
+    // THE ZERO-PUBLISHER COST OF THE WHOLE PRIMITIVE, and it is this line: one
+    // map-size test and one integer store. Nothing to gather also means nothing
+    // to read the sun for — a world running no sky plugin at all never touches
+    // the lighting rig from here.
+    if (groundShadeLookups.size === 0) {
+      clearGroundShade();
+      return;
+    }
+    gatheredShade.length = 0;
+    for (const [name, lookup] of groundShadeLookups) {
+      const entry = mounted.get(name);
+      if (entry === undefined) continue;
+      let discs: readonly GroundShadeDisc[];
+      try {
+        discs = lookup();
+      } catch (error) {
+        // A publisher that throws publishes nothing this frame rather than
+        // taking down the frame — the same degradation moverPose gives.
+        console.error(`[terrace] client plugin "${name}" threw publishing ground shade`, error);
+        continue;
+      }
+      const declared = entry.plugin.groundShadeBudget;
+      // A missing or non-finite budget is a budget of NOTHING, which is the
+      // safe direction: the shaders were compiled against a sum this plugin
+      // contributed nothing to, so honouring its discs would overrun the array.
+      const budget =
+        declared !== undefined && Number.isFinite(declared) && declared > 0 ? declared : 0;
+      if (discs.length > budget && !groundShadeBreaches.has(name)) {
+        groundShadeBreaches.add(name);
+        console.error(
+          `[terrace] client plugin "${name}" is over its ground-shade budget: ` +
+            `${String(discs.length)} discs against a budget of ${String(budget)}; ` +
+            `the excess is dropped`,
+        );
+      }
+      for (let i = 0; i < discs.length && i < budget; i++) gatheredShade.push(discs[i]);
+    }
+    // The sun as the ground shaders must see it: three's DirectionalLight
+    // position IS the direction the light comes from (render/skyRig.ts writes
+    // it that way), and setGroundShade normalises it.
+    setGroundShade(viewport.lighting.sun.position, gatheredShade);
+  };
+
   const moverPose = (pluginName: string, id: number): MoverPose | null => {
     const lookup = moverLookups.get(pluginName);
     if (lookup === undefined) return null;
@@ -570,6 +658,21 @@ export function createClientPluginHost(
       pickTerrainCell,
       pickWorldCell,
       moverPose,
+      revealedAt: (x, y) => world.revealedAt(x, y),
+      applyRevealClip: (material, label) => world.applyRevealClip(material, label),
+      revealClipUniforms: () => world.revealClipUniforms(),
+      publishGroundShade(lookup: () => readonly GroundShadeDisc[]): () => void {
+        // Last publisher wins, for the same reason publishMovers' does: a
+        // plugin publishes its OWN discs under its OWN name, so a second call
+        // is that plugin replacing its own lookup, never a rival claiming
+        // someone else's.
+        groundShadeLookups.set(plugin.name, lookup);
+        return track(() => {
+          if (groundShadeLookups.get(plugin.name) === lookup) {
+            groundShadeLookups.delete(plugin.name);
+          }
+        });
+      },
       publishMovers(lookup: (id: number) => MoverPose | null): () => void {
         // Last publisher wins rather than first: unlike the sky rig there is
         // nothing to arbitrate — a plugin publishes its OWN things under its
@@ -652,7 +755,14 @@ export function createClientPluginHost(
 
       // Now that attach() has run we know whether this plugin publishes poses,
       // so its frame callbacks can go into the phase that fact demands.
-      const phase: FramePhase = moverLookups.has(plugin.name) ? 'pose' : 'draw';
+      // PUBLISHING OF EITHER KIND moves the plugin to the pose phase: a pose
+      // is read by another plugin during the same frame it is written, and a
+      // shade disc is read by core's gather below during the same frame — both
+      // need this plugin's interpolation to have already run.
+      const phase: FramePhase =
+        moverLookups.has(plugin.name) || groundShadeLookups.has(plugin.name)
+          ? 'pose'
+          : 'draw';
       for (const deferred of deferredFrameHandlers) {
         if (deferred.cancelled) continue;
         deferred.unregister = viewport.onFrame(deferred.handler, phase);
@@ -688,6 +798,7 @@ export function createClientPluginHost(
     // rest of the sampling window.
     removePluginDrawRow(name);
     breachStates.delete(name);
+    groundShadeBreaches.delete(name);
     releaseWorldHeaderAction(name);
 
     try {
@@ -712,7 +823,14 @@ export function createClientPluginHost(
     skyRigRefusals.delete(name);
   };
 
+  // THE SHADE ARRAY'S LENGTH, fixed before the first frame — see
+  // configureGroundShade for why it is the compiled-in REGISTRY's sum rather
+  // than the mounted set's, and why it has to be settled here.
+  configureGroundShade(groundShadeMaxFor(plugins));
+
   for (const plugin of plugins) mountPlugin(plugin);
+
+  const stopGroundShade = viewport.onFrame(gatherGroundShade);
 
   const frameDrawBudget = (): number => {
     let budget = deps.coreDrawBudget();
@@ -826,6 +944,7 @@ export function createClientPluginHost(
 
     dispose(): void {
       stopSampling();
+      stopGroundShade();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,
