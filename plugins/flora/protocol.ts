@@ -812,10 +812,19 @@ export const FLORA_GRASS_MESSAGE = 'grass';
 export const FLORA_GRASS_CHANGES_MESSAGE = 'grassChanges';
 
 /**
- * How many green cells there are, on average, per tuft of grass — the density
- * dial, and the only one. Owner's choice, 2026-08-24: "abundant", which at a
- * quarter-world-unit cell means roughly one tuft per world unit rather than
+ * How many green cells there are, on average, per DRAWN tuft of grass — the
+ * density dial, and the only one. Owner's choice, 2026-08-24: "abundant", which
+ * at a quarter-world-unit cell means roughly one tuft per world unit rather than
  * one per cell (a carpet) or one per eight (scattered dots).
+ *
+ * A LOOK, NOT A FACT ABOUT THE WORLD (issue #289, owner 2026-09-01: the tuft
+ * roll decides "only what is drawn"). Every unoccupied green cell is meadow —
+ * it is fuel, it burns, and it scars — whether or not this roll put a blade on
+ * it (server/grass.ts's isMeadowCell, server/index.ts's floraFuelAt). So what
+ * this number buys is coverage on screen and the wire and GPU cost of it,
+ * nothing more. The paragraph below is kept because the measurement was real,
+ * but its conclusion is not: this constant no longer decides whether a meadow
+ * fire runs.
  *
  * Expressed as cells-per-tuft rather than as a probability so it reads as the
  * spacing it produces, matching FLORA_CELLS_PER_TREE's own framing.
@@ -826,7 +835,9 @@ export const FLORA_GRASS_CHANGES_MESSAGE = 'grassChanges';
  * asked for. Every step down here is paid for in the cap below and in the
  * wire, so it is a dial with a real price rather than a free one.
  *
- * TIGHTENED 2.5 → 1.78 (owner, 2026-08-29) so meadow fires can run. 1.78
+ * TIGHTENED 2.5 → 1.78 (owner, 2026-08-29), then, at the time, so meadow fires
+ * could run — superseded as a fire lever by #289, and kept at 1.78 because the
+ * cover it draws is what the owner has been looking at since. 1.78
  * rounds to FLORA_GRASS_SHARE_OF_256 = 144, a density of 0.5625 — the lowest
  * that, paired with FLORA_GRASS_BURN_SECONDS = 22, burns a 256² bed to the
  * step cap in 19 of 20 trials (0.50 managed only 6 of 20). Neither number does

@@ -1,6 +1,13 @@
 // GRASS — the meadow half of this plugin (owner, 2026-08-24: "spawn
-// abundantly on all of the green or green-like bands"). Every green cell that
-// the thinning roll picks, that no crop or building sits on, carries a tuft.
+// abundantly on all of the green or green-like bands").
+//
+// TWO QUESTIONS, NOT ONE (issue #289, owner 2026-09-01). WHICH GROUND IS
+// MEADOW is `isMeadowCell` below: green-band, and no crop, building or stump on
+// it. WHICH MEADOW CELLS CARRY A DRAWN TUFT is that AND the thinning roll,
+// `grassCoversCell` (../protocol.ts), which keeps ~56% of them. This file
+// surveys the second; ../server/index.ts's `floraFuelAt` answers the first, so
+// a meadow burns as the continuous bed it looks like instead of as the ~56% of
+// it that happens to have a blade rendered on it.
 //
 // PURE AND DETERMINISTIC, exactly like crops.ts and for the same reasons: no
 // RNG, no growth hazard, no spacing rule, and therefore NOTHING TO PERSIST.
@@ -24,18 +31,18 @@
 // look alike because a chunk-budgeted rolling cursor is the right shape for
 // any full-board scan, not because they are the same mechanism.
 //
-// COST. The per-cell test is: one occupancy Set lookup, one heightAt, one
-// bandOf, one integer hash. That is cheaper than crops' own isFarmlandPlot
+// COST. The per-cell test is: one integer hash, then three occupancy lookups,
+// one heightAt and one bandOf. That is cheaper than crops' own isFarmlandPlot
 // (which walks a tread ring and a shore ring) and cheaper than the forest's
 // (which additionally consults a 1 MB stability map), and the roll rejects
-// ~60% of green cells before anything is staged (FLORA_GRASS_SHARE_OF_256 is
-// 102 out of 256; this line said ~71% until 2026-08-25, which was never true of
-// the shipped threshold). The 2026-08-25 version of this note went on to say
-// the difference mattered because 0.398 sits just under the eight-neighbour
-// percolation threshold; it does not — see FLORA_GRASS_BURN_SECONDS's rewritten
-// table (issue #170), where a meadow fire is subcritical at EVERY density
-// including a solid bed, because grass's 3 s burn is what starves the bond
-// term. The share is a wire-and-GPU number here, not a fire number.
+// ~44% of green cells before anything else is asked (FLORA_GRASS_SHARE_OF_256
+// is 144 out of 256; this line said ~71% until 2026-08-25 and ~60% until
+// 2026-08-29, each true of a threshold that has since moved). Two earlier
+// versions of this note claimed the share mattered to FIRE — first because
+// 0.398 sits just under the eight-neighbour percolation threshold, then because
+// 0.5625 was the density that let a meadow run. Neither survives issue #289:
+// the roll no longer decides what is FUEL at all, only what is DRAWN, so the
+// share is once again a wire-and-GPU number here and nothing else.
 // UNMEASURED as of writing —
 // the honest statement is that it is bounded above by the crop sweep's
 // measured 2.43ms full-512² worst case, since it does strictly less work per
@@ -77,6 +84,45 @@ export type GrassWorld = FloraWorld & {
   readonly chunksPerEdge: number;
   isChunkUnlocked(cx: number, cy: number): boolean;
 };
+
+/**
+ * Is this cell MEADOW — ground the meadow covers, whether or not a tuft is
+ * drawn on it?
+ *
+ * TWO QUESTIONS USED TO BE ONE, and separating them is the whole of issue #289
+ * (owner, 2026-09-01: "make meadow regions count as fuel on every cell with the
+ * tuft roll deciding only what is drawn"). Membership of the meadow is this
+ * predicate; whether a BLADE is rendered on a member cell is `grassCoversCell`
+ * (../protocol.ts), a thinning roll that keeps ~56% of them. Before #289 the
+ * survey was the only asker, so the two were fused in `scanChunk` and the fuel
+ * answer (../server/index.ts's `floraFuelAt`) read the drawn set — which left
+ * ~44% of every meadow with no fuel in it and made a grass fire spread in
+ * splotches around the cells the roll had skipped.
+ *
+ * THE ONE PREDICATE, ASKED BY BOTH, is therefore the contract: `scanChunk`
+ * below asks it after the draw roll, and `floraFuelAt` asks it instead of
+ * consulting the drawn set. Neither can drift from the other about what ground
+ * is meadow, because there is only one statement of it.
+ *
+ * WHAT IT DOES NOT ASK. Not the chunk unlock state — that is the survey's own
+ * concern (`advance` hoists it out of 256 cells) and fire never reaches locked
+ * ground anyway, since nothing there can be torched, struck or spread to from
+ * unlocked land. Not the world bounds, for the same reason both callers already
+ * hold them: the survey walks chunks of this world, and fire's spread clamps to
+ * `world.worldSize` (plugins/fire/server/spread.ts's `spreadToCells`).
+ */
+export function isMeadowCell(
+  world: FloraWorld,
+  isOccupied: OccupancyPredicate,
+  x: number,
+  y: number,
+): boolean {
+  // Crops and buildings win; trees do not (owner, 2026-08-24: grass grows
+  // under trees). The caller composes that union — see ./index.ts's
+  // groundCoverOccupied.
+  if (isOccupied(x, y)) return false;
+  return isGreenBand(world.heightAt(x, y));
+}
 
 /**
  * The standing tufts, keyed by cell — CropField.standing's shape and for its
@@ -141,16 +187,13 @@ export class GrassField {
       for (let dx = 0; dx < CHUNK_SIZE; dx++) {
         const x = baseX + dx;
 
-        // The thinning roll FIRST: it is a pure integer hash with no memory
-        // traffic behind it and it rejects the large majority of cells, so
-        // every other test below runs on ~29% of the board rather than all of
-        // it (see GRASS_CELLS_PER_TUFT).
+        // The DRAW roll FIRST: it is a pure integer hash with no memory traffic
+        // behind it and it rejects ~44% of cells, so the meadow test below runs
+        // on the remainder rather than on all of it (see GRASS_CELLS_PER_TUFT).
+        // It is asked ONLY here, because since #289 it decides what is DRAWN
+        // and nothing else — the fuel answer skips it (see isMeadowCell).
         if (!grassCoversCell(x, y)) continue;
-        // Crops and buildings win; trees do not (owner, 2026-08-24: grass
-        // grows under trees). The caller composes that union — see
-        // ./index.ts's grassOccupiedCells.
-        if (isOccupied(x, y)) continue;
-        if (!isGreenBand(world.heightAt(x, y))) continue;
+        if (!isMeadowCell(world, isOccupied, x, y)) continue;
         if (this.staged.size >= FLORA_GRASS_CAP) continue; // never evict an already-staged cell for a later one in the same sweep
         this.staged.add(grassKey(x, y));
       }
