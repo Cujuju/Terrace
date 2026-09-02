@@ -1,292 +1,120 @@
-// weather — rain, storms, snow and fog as drifting masses, as a plugin.
-//
-// Core knows nothing about weather. This half owns the whole sim (./systems.ts:
-// one wind, a handful of discs, Poisson arrivals and deaths, snow siting) and
-// publishes it on one namespaced message; the client half under ../client draws
-// it. Core's lighting rig, its sky and its scene fog are never touched by either
-// half — clear weather is the absence of a system, so a world with no weather
-// looks exactly like a world without this plugin installed.
-//
-// It reads the world in ONE place (the snow siting test) and writes it nowhere:
-// no onIntent, no sculpt, no unlock. Weather is ambience, and ambience that can
-// change the ground would be a game mechanic wearing a hat.
+// weather — THE HUB. The world's wind, and the register every kind of weather
+// joins the sky through.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// SYNC: FULL STATE, ONCE A SECOND.
+// WHAT THIS PLUGIN IS AFTER 2026-09-02 (#283, #285).
 //
-// Every broadcast carries the ENTIRE system list, not a delta. The same v1
-// choice wildlife and monsters made, with the same three consequences:
+// It used to be the whole sky: one sim, four kinds drawn by weight, one
+// broadcast. It is now the two things about the sky that are facts of the WORLD
+// rather than of any one kind:
 //
-//   * self-healing — a dropped or reordered message costs one second of
-//     staleness and nothing else; there is no diff stream to desynchronise;
-//   * no join handshake — a joining client is caught up by the next broadcast,
-//     so this plugin needs no onPlayerJoin snapshot path at all;
-//   * bounded cost — MAX_ACTIVE_SYSTEMS is a hard ceiling, so the payload is a
-//     constant and not a function of how long the world has been running.
+//   * THE WIND. One heading and one speed for the whole map (./wind.ts). Every
+//     kind plugin reads it through a bridge and drifts on it, which is what
+//     keeps "the sky moves as a piece" true across four independent folders.
+//   * THE REGISTER. rain, thunderstorm, snow and fog each register inward
+//     (./registry.ts), and this plugin answers the union questions on their
+//     behalf: how wet a cell is, and what is in the sky.
 //
-// ALL PLAYERS SEE THE SAME WEATHER, and the broadcast is UNFILTERED: every
-// client gets every system. That is deliberate and it is safe for the same
-// reason the wildlife plugin's birds are — a system's position is a function of
-// RNG and the shared wind alone, so it leaks nothing about locked terrain. The
-// one place this sim reads heights (snow siting) refuses to look at locked
-// cells precisely so that this stays true; see SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA.
+// IT HAS NO WIRE AND NO CLIENT HALF. Nothing about a wind or a register is
+// something to draw — every pixel of weather belongs to a kind plugin and
+// travels on that plugin's own message — so this plugin is absent from
+// client/src/plugins/registry.ts entirely rather than registered there as a
+// no-op with a zero draw budget. A plugin with no client half is the ordinary
+// case here (`reveal` and `populous` have none either).
 //
-// BANDWIDTH. One system is eight keys — id, kind, x, y, radius, intensity, vx,
-// vy — which msgpack encodes in roughly 97 B (Colyseus re-sends key strings on
-// every message; there is no schema here):
+// IT HAS NO PERSISTENCE, DELIBERATELY, and there is no `persistence` slice at
+// all. A wind is a heading and a speed that will have wandered somewhere else in
+// a few minutes; restoring one resumes weather nobody was watching. It is the
+// birds precedent (docs/DESIGN.md, "Persistence: none, deliberately").
 //
-//   id         "id" 3 B + small int 1 B                        =  4 B
-//   kind       "kind" 5 B + "storm" 6 B                        = 11 B
-//   x, y       "x"/"y" 2 B + float64 9 B, twice                = 22 B
-//   radius     "radius" 7 B + float64 9 B                      = 16 B
-//   intensity  "intensity" 10 B + float64 9 B                  = 19 B
-//   vx, vy     "vx"/"vy" 3 B + float64 9 B, twice              = 24 B
-//   map header                                                 =  1 B
-//                                                                ─────
-//                                                                 97 B
-//
-// (Rounded coordinates are not exactly representable in binary, so msgpack
-// spends a full float64 on each rather than a short int — which is why the
-// rounding in protocol.ts buys assertability and payload determinism, not
-// bytes.) The message envelope — the `systems` key and the array header — is
-// ~10 B, call it 20 B with Colyseus's own framing:
-//
-//   3 systems × 97 B + 20 B    = 311 B per message
-//   every tick     (10 Hz)     = 3.1 KB/s ≈ 25 kbit/s per client
-//   every 10th tick (1 Hz)     = 311 B/s ≈ 2.5 kbit/s per client   ← chosen
-//   × ~10 players              ≈ 25 kbit/s of server upstream
-//   a clear sky (empty list)   = 20 B/s  ≈ 0.16 kbit/s per client
-//
-// Both cadences are rounding error next to the wildlife plugin's ~390 kbit/s
-// (this is 0.6% of it), so bandwidth is NOT what picks the cadence here — motion
-// is, and it points the same way:
-//
-//   * the wind's ceiling is 2 cells/s, so a system moves at most 2 cells between
-//     messages. Against the SMALLEST system's 24-cell radius that is 8% of the
-//     mass, and the client interpolates across the gap (client/interpolation.ts)
-//     — a player cannot tell it from 10 Hz, so the other 22 kbit/s buys nothing.
-//     Compare the wildlife plugin, which needed 5 Hz because a fleeing fish
-//     covers 1.8 cells against a body 0.7 cells long.
-//   * 1 Hz is also the FLOOR, not just the choice. The client clamps its
-//     interpolation window at MAX_INTERPOLATION_SECONDS (2 s), sized to ride out
-//     one dropped message at this cadence. Halving to 0.5 Hz would put the
-//     nominal window at the clamp with no headroom for jitter, and fronts would
-//     start snapping.
-//
-// The 2 cells/s ceiling and this cadence are two ends of one decision: if the
-// wind is ever allowed to blow harder, this interval is what has to move.
-//
-// RESTATED 2026-08-28. The arithmetic above is unchanged and so is every
-// conclusion; only the multiplier moved. The population is derived from the
-// world's size now (systems.ts, TARGET_SKY_COVERAGE_FRACTION), and the ceiling
-// it is capped at is MAX_ACTIVE_SYSTEMS = 14 rather than 3:
-//
-//   14 systems × 97 B + 20 B   = 1 378 B per message
-//   every 10th tick (1 Hz)     = 1.4 KB/s ≈ 11 kbit/s per client
-//   × ~10 players              ≈ 110 kbit/s of server upstream
-//
-// Still under 3% of the wildlife plugin's ~390 kbit/s, and still not what picks
-// the cadence — the motion argument below is, and it is untouched by how many
-// systems there are.
+// COMPATIBILITY: `currentWind` and `precipitationAt` are still exported from
+// this file under the same names and the same shapes, so fire's and mudslides'
+// bridges (plugins/*/server/weather-bridge.ts) resolve exactly as they did
+// before the split and were not edited.
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// PERSISTENCE: NONE, DELIBERATELY — and there is no `persistence` slice at all,
-// so this plugin contributes nothing to the snapshot. A system's entire state is
-// how far along a drift it will have finished in a few minutes; restoring one
-// resumes weather nobody was watching, and the spawner puts a fresh front up
-// within SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS anyway. It is the birds precedent
-// (docs/DESIGN.md, "Persistence: none, deliberately") applied to the same shape
-// of thing: transient ambience, where the cost of persisting is a snapshot
-// field, a validation branch and a schema-version question, and the benefit is a
-// difference no player can observe. A restarted server has a clear sky for a
-// minute or two; that is what a clear sky looks like the rest of the time too.
 
-import { logInfo } from '../../../server/src/log.ts';
-import type {
-  PluginActionOutcome,
-  PluginActionSite,
-  TerracePlugin,
-  WorldApi,
-} from '../../../server/src/plugins/types.ts';
+import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 // Type-only import of the plugin contract (fully erased at runtime). It reaches
 // into server/src because core publishes no plugin-API entry point yet — the
-// same arrangement the mana, reveal, relics, wildlife and monsters plugins use.
-import {
-  MAX_ACTIVE_SYSTEMS,
-  WEATHER_KINDS,
-  WEATHER_PLUGIN_NAME,
-  WEATHER_STRIKES_MESSAGE,
-  WEATHER_SYSTEMS_MESSAGE,
-  packStrikes,
-  type WeatherKind,
-} from '../protocol.ts';
-import { WEATHER_DEV_FORCE_ENV, readForcedWeatherKind } from './dev.ts';
-import { rollStrikes } from './lightning.ts';
-import {
-  advanceWeather,
-  forceWeather,
-  isWeatherForced,
-  livingSystems,
-  resetWeather,
-  spawnSystemOfKind,
-  systemStates,
-  type WeatherWorld,
-} from './systems.ts';
+// same arrangement every plugin in this repo uses.
+import { resetSkyRegistry } from './registry.ts';
+import { advanceWind, resetWind } from './wind.ts';
 
-/**
- * Ticks between broadcasts. 10 → 1 Hz at the shipped TICK_HZ of 10. See the
- * bandwidth and motion analysis in this file's header for why 10 and not 1.
- */
-export const BROADCAST_TICK_INTERVAL = 10;
-
-/**
- * Hard ceiling on systems in one broadcast — the number the bandwidth
- * arithmetic above multiplies by 97 B.
- *
- * It is MAX_ACTIVE_SYSTEMS re-exported under the name the budget uses, not a
- * second constant: unlike the wildlife plugin, which has two independent
- * subsystems putting entities on the wire and therefore has to add two ceilings
- * up, this plugin has exactly one source of payload.
- */
-export const BROADCAST_SYSTEM_CEILING = MAX_ACTIVE_SYSTEMS;
-
-/** Ticks since boot, for the broadcast cadence. */
-let tickCount = 0;
-
-/**
- * THE SIM STEP. One call into ./systems.ts, then the broadcast on its cadence.
- *
- * There is deliberately nothing else here: no reactive path (weather does not
- * care what the ground does, and onTerrainChanged would fire this plugin
- * thousands of times during a held stroke to no purpose) and no intent hook
- * (weather never vetoes a sculpt — rain that stopped you building would be a
- * game mechanic, and this is ambience).
- */
-function simulate(world: WorldApi, dt: number): void {
-  advanceWeather(world, dt);
-
-  // STRIKES, on the TICK they happen rather than on the broadcast cadence
-  // below (./lightning.ts). A bolt is an instant: holding one for up to a
-  // second so it could ride the next systems message would put the flash
-  // somewhere it visibly does not belong, and would delay the fire it starts
-  // by the same amount.
-  //
-  // Broadcast AND emitted as a world event, which is not redundancy — they
-  // have different audiences. The message is for the CLIENTS, which draw the
-  // bolt; the event is for other SERVER plugins (fire lights what was struck),
-  // by-name and with no import in either direction.
-  const strikes = rollStrikes(world, dt);
-  if (strikes.length > 0) {
-    const payload = { strikes: packStrikes(strikes) };
-    world.broadcast(WEATHER_STRIKES_MESSAGE, payload);
-    world.emitEvent(WEATHER_STRIKES_MESSAGE, payload);
-  }
-
-  tickCount++;
-  if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
-  world.broadcast(WEATHER_SYSTEMS_MESSAGE, { systems: systemStates() });
-}
+/** Plugin name on the server, and the key `WorldApi.sibling` answers to. */
+export const WEATHER_PLUGIN_NAME = 'weather';
 
 export const plugin: TerracePlugin = {
   name: WEATHER_PLUGIN_NAME,
 
   onWorldCreate(): void {
-    // A fresh sky on every boot, whatever a snapshot restored — this plugin has
+    // A fresh wind on every boot, whatever a snapshot restored — this plugin has
     // no persistence slice, so there is nothing to be consistent with, and
     // drawing the boot wind here rather than at module load means a host that
     // creates two worlds in one process does not have them share a wind.
-    resetWeather();
-
-    // THE DEV OVERRIDE, read here and nowhere else (./dev.ts). Applied AFTER
-    // the reset, because the reset is what clears the sky the override then
-    // parks its one system in.
-    const forced = readForcedWeatherKind(process.env);
-    forceWeather(forced);
-    if (forced !== null) {
-      logInfo(`[weather] ${WEATHER_DEV_FORCE_ENV}=${forced} — one ${forced} system parked over the world centre`);
-    }
+    //
+    // THE REGISTRY IS NOT CLEARED HERE. Plugins create in load order and this
+    // one sorts after every kind, so the four kinds have already registered by
+    // the time this runs; clearing here would empty the sky at every boot. It is
+    // cleared on close instead, below.
+    resetWind();
   },
 
-  // THE ADMIN PANEL'S DEBUG SPAWNS (server plugins/types.ts,
-  // PluginActionDeclaration): one action per kind, generated from
-  // WEATHER_KINDS so a new kind is spawnable the day it exists — the same
-  // rule ./dev.ts keeps for the environment override.
-  actions: WEATHER_KINDS.map((kind) => ({
-    key: kind,
-    label: `Bring ${kind}`,
-    description: `A ${kind} system gathers over where you are looking, then drifts on the wind like any other.`,
-  })),
-
-  onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
-    const kind = WEATHER_KINDS.find((candidate): candidate is WeatherKind => candidate === key);
-    if (kind === undefined) return { ok: false, detail: `no such action "${key}"` };
-    // Under the environment override the sky holds exactly one parked system
-    // and `advanceWeather` never looks at any other; a second one would sit
-    // there forever, ungathered.
-    if (isWeatherForced()) {
-      return { ok: false, detail: `${WEATHER_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart` };
-    }
-    if (livingSystems().length >= MAX_ACTIVE_SYSTEMS) {
-      return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} systems are already in the sky` };
-    }
-    const system = spawnSystemOfKind(world, kind, site.x, site.y);
-    // Told now rather than at the 1 Hz cadence, so the gather starts on screen
-    // the moment the button is pressed.
-    world.broadcast(WEATHER_SYSTEMS_MESSAGE, { systems: systemStates() });
-    return { ok: true, detail: `${kind} system ${system.id} gathering at (${site.x}, ${site.y})` };
+  onWorldClose(): void {
+    // Every kind unregisters itself on close as well; this is the backstop that
+    // makes the hub's own state unreachable from a world that has ended, per the
+    // 2026-08-25 revocation rule.
+    resetSkyRegistry();
   },
 
-  onTick(world: WorldApi, dt: number): void {
-    simulate(world, dt);
+  onTick(_world: WorldApi, dt: number): void {
+    // THE WHOLE TICK. The wind veers ONCE per tick and nothing else happens
+    // here, which is what makes "every system this tick is displaced by the same
+    // vector" a property of the code rather than a coincidence: each kind reads
+    // `currentWind()` and applies it to all of its own masses in one pass.
+    //
+    // ORDER, NAMED: plugins tick in load order and `weather` sorts last, so the
+    // kinds drift on the wind as it stood at the END of the previous tick — one
+    // tick (0.1 s at the shipped TICK_HZ) of lag against the pre-split sim,
+    // where the veer ran first. Coherence is untouched (every kind reads the
+    // same value within a tick), and the lag is four orders of magnitude below
+    // the ~20°-per-hour rate the wind actually veers at.
+    advanceWind(dt);
   },
 };
 
-/** Test seam: drops all accumulated state so a suite can start from zero. */
+/**
+ * THE WIND, for other plugins (2026-08-24, for fire's spread; unchanged by the
+ * decomposition).
+ *
+ * Through the entry point rather than ./wind.ts because a bridge duck-types the
+ * module it imports (plugins/fire/server/weather-bridge.ts), so what this file
+ * exports IS this plugin's compatibility surface. A consumer reaching into
+ * ./wind.ts would be coupling to a file layout instead of to an API.
+ *
+ * Read-only by construction — `currentWind` returns the live object as Readonly,
+ * and only advanceWind ever writes it.
+ */
+export { currentWind, windVelocity, type Wind } from './wind.ts';
+
+/**
+ * THE UNION QUESTIONS, for other plugins. `precipitationAt` is what fire and
+ * mudslides have always called; `livingSystems` is what phase 2's tornado will
+ * filter by kind. Both are answered out of the register rather than out of a sim
+ * this plugin no longer runs.
+ */
+export {
+  livingSystems,
+  precipitationAt,
+  registerSkyKind,
+  resetSkyRegistry,
+  spawnSkyKind,
+  type SkyCell,
+  type SkyKindEntry,
+  type SkyKindSystem,
+} from './registry.ts';
+
+/** Test seam: drops the wind and the register so a suite starts from zero. */
 export function resetWeatherState(): void {
-  tickCount = 0;
-  resetWeather();
+  resetSkyRegistry();
+  resetWind();
 }
-
-// Re-exported so tests and any future HUD can reach the tuning numbers through
-// the plugin's own entry point rather than by importing its internals.
-export { MAX_ACTIVE_SYSTEMS };
-
-/**
- * THE WIND, re-exported for other plugins (2026-08-24, for fire's spread).
- *
- * Through the entry point rather than ./systems.ts for the reason the line
- * above states, and it matters more for a cross-plugin reader than for a test:
- * a bridge duck-types the module it imports (plugins/fire/server/weather-
- * bridge.ts), so what this file exports IS this plugin's compatibility surface.
- * A consumer reaching into ./systems.ts would be coupling to a file layout
- * instead of to an API.
- *
- * Read-only by construction — `currentWind` returns the live object as
- * Readonly, and only advanceWind ever writes it.
- */
-export { currentWind } from './systems.ts';
-
-/**
- * HOW WET A CELL IS, re-exported for other plugins (2026-08-24, for fire's rain
- * suppression) — same entry-point-is-the-API argument as `currentWind` above.
- */
-export { precipitationAt } from './systems.ts';
-
-/**
- * THE LIVING SYSTEMS THEMSELVES, re-exported for other plugins (2026-08-27, for
- * the storms plugin's tornadoes) — same entry-point-is-the-API argument as
- * `currentWind` above.
- *
- * WHY THE WHOLE SYSTEM AND NOT A PREDICATE. `precipitationAt` answers "is this
- * cell wet", which is the question a fire asks; a tornado's question is "where
- * is there a storm cell, and how big is it" — it needs to pick a spawn site
- * INSIDE one, which no per-cell query can answer without scanning the map. The
- * list is at most MAX_ACTIVE_SYSTEMS long, so handing it over costs nothing.
- *
- * READ-ONLY BY CONSTRUCTION at the type level (`readonly WeatherSystem[]`), and
- * the objects in it are this plugin's live state: a consumer that wrote to one
- * would be steering the weather. Nothing enforces that beyond the type, which
- * is the same bargain `currentWind` already makes with its Readonly<Wind>.
- */
-export { livingSystems } from './systems.ts';
-export type { WeatherWorld };
