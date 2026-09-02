@@ -27,8 +27,9 @@
 
 import { Group } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import type { BufferGeometry } from 'three';
+import type { BufferGeometry, Material } from 'three';
 import { createHazeBank, type HazeBank } from './hazeBank.ts';
+import type { CumulusDeck } from './cumulusDeck.ts';
 import {
   createPrecipitationColumn,
   type PrecipitationColumn,
@@ -64,6 +65,16 @@ export interface DiscRig {
    * from that one fact, with no reduced-motion branch of its own.
    */
   update(disc: InterpolatedDisc, elapsed: number): boolean;
+  /**
+   * Puts out this rig's slot in the plugin's cloud deck.
+   *
+   * MUST BE CALLED WHEN THE RIG LEAVES THE SCENE — `createRigPool`'s
+   * `onRelease` is the place. The deck is drawn from uniforms and not from
+   * this rig's `root`, so unparenting the root does NOT stop the cloud: a
+   * retired mass whose slot was never parked leaves its deck hanging over
+   * ground the server says is clear.
+   */
+  park(): void;
   /** Frees everything this rig OWNS. Shared geometry belongs to its builder. */
   dispose(): void;
 }
@@ -77,6 +88,27 @@ export interface DiscRigSpec {
   readonly profile: PrecipitationProfile | null;
   /** Node name, for legibility in the three.js inspector. */
   readonly name: string;
+  /**
+   * The plugin's cloud deck, or null for a mass with no cloud over it.
+   *
+   * ONE DECK PER PLUGIN, and a rig holds only a SLOT in it — claimed here and
+   * written by `update` below. The deck is not a child of `root`: it is drawn
+   * in one instanced call for every mass at once, so it hangs off the plugin's
+   * layer and is placed entirely from the slot's uniforms.
+   */
+  readonly deck: CumulusDeck | null;
+  /**
+   * `ClientPluginCtx.applyRevealClip`, or null in a context that has none.
+   *
+   * A RIG'S MATERIALS ARE ITS OWN. `createHazeBank` and
+   * `createPrecipitationColumn` build a fresh material per rig rather than
+   * sharing a pooled one, so the clip is applied here, once per material, at
+   * the moment the rig is built — which is the "once per material, never per
+   * mesh" rule `applyRevealClip` states, applied to materials that happen to
+   * be per-rig. Applying it twice to one material would splice its
+   * declarations in twice and fail to compile.
+   */
+  readonly applyRevealClip: ((material: Material, label: string) => void) | null;
 }
 
 export function createDiscRig(spec: DiscRigSpec): DiscRig {
@@ -89,6 +121,21 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
 
   const haze: HazeBank = createHazeBank(spec.hazeGeometry, spec.hazeStrength, DISC_RENDER_ORDER);
   for (const sheet of haze.sheets) root.add(sheet);
+
+  if (spec.applyRevealClip !== null) {
+    if (column !== null) spec.applyRevealClip(column.material, `${spec.name} column`);
+    for (const sheet of haze.sheets) {
+      spec.applyRevealClip(sheet.material as Material, `${spec.name} haze`);
+    }
+  }
+
+  // CLAIMED ONCE, FOR THE RIG'S WHOLE POOLED LIFE. A rig outlives the mass it
+  // was built for — that is what the pool is — so a slot handed back and
+  // re-claimed per mass would be churn with no gain. -1 when the plugin has
+  // built more rigs than its own cap allows a deck for; such a rig draws its
+  // column and its haze and no cloud, which is a breach of the plugin's cap
+  // rather than a crash.
+  const deckSlot = spec.deck === null ? -1 : spec.deck.claimSlot();
 
   return {
     root,
@@ -103,7 +150,15 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
 
       const lit = disc.intensity > 0;
       root.visible = lit;
-      if (!lit) return false;
+      // THE DECK IS TOLD EITHER WAY. Its slot is a uniform, not a node under
+      // `root`, so hiding the root does not hide the cloud — parking the slot
+      // is what does, and a mass that has faded out must not leave its cloud
+      // hanging in the sky.
+      if (!lit) {
+        spec.deck?.park(deckSlot);
+        return false;
+      }
+      spec.deck?.update(deckSlot, disc);
 
       if (column !== null && spec.profile !== null) {
         column.material.opacity = spec.profile.opacity * disc.intensity;
@@ -119,10 +174,16 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
       return true;
     },
 
+    park(): void {
+      spec.deck?.park(deckSlot);
+    },
+
     dispose(): void {
       root.clear();
       column?.dispose();
       haze.dispose();
+      // The DECK is the plugin's, shared by every rig, and is freed by whoever
+      // built it — the same ownership rule the haze geometry above follows.
     },
   };
 }

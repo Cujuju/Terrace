@@ -28,7 +28,7 @@ import { createFogRigs, FOG_RIG_DRAW_OBJECTS } from './rig.ts';
 const view = createDiscSystemsView<DiscRig>({
   systemsMessage: FOG_SYSTEMS_MESSAGE,
   containerName: `${FOG_PLUGIN_NAME}:systems`,
-  createPool: () => createFogRigs(),
+  createPool: (ctx) => createFogRigs(ctx),
   update: (rig, disc, elapsed) => {
     rig.update(disc, elapsed);
   },

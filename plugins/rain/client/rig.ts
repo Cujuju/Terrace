@@ -17,11 +17,19 @@ import {
 import {
   createDiscRig,
   createRigPool,
+  DISC_RENDER_ORDER,
   type DiscRig,
   type RigPool,
 } from '../../../client/src/plugins/kit/discRig.ts';
+import {
+  createCumulusDeck,
+  CUMULUS_DECK_DRAW_OBJECTS,
+  puffsForCoverage,
+  type CumulusDeck,
+} from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
-import { RAIN_PLUGIN_NAME } from '../protocol.ts';
+import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
+import { MAX_ACTIVE_SYSTEMS, RAIN_PLUGIN_NAME } from '../protocol.ts';
 
 /**
  * Particles in one rain rig.
@@ -61,37 +69,99 @@ export const RAIN_PROFILE: PrecipitationProfile = {
 
 /**
  * Draw objects one rain rig costs: FIVE — the column, plus the four haze sheets
- * (client/src/plugins/kit/hazeBank.ts, HAZE_LAYERS).
+ * (client/src/plugins/kit/hazeBank.ts, HAZE_LAYERS). The DECK is not among
+ * them: it is one instanced draw for every mass at once, counted separately by
+ * CUMULUS_DECK_DRAW_OBJECTS.
  */
 export const RAIN_RIG_DRAW_OBJECTS = 5;
 
-/** The pool, and the one geometry every rig in it shares. */
+/**
+ * A rain puff's half-width, as a fraction of the mass's radius.
+ *
+ * 0.12 — about an eighth of the front across. Rain cloud is a broad even
+ * overcast rather than a few towering heads, so its puffs are small enough that
+ * the deck's texture reads at the camera's 80-cell orbit and no single puff
+ * spans the eye's whole disc. The COUNT follows from it and is not a second
+ * decision (`puffsForCoverage`): 139 puffs today.
+ */
+export const RAIN_PUFF_SIZE_FRACTION = 0.12;
+
+/** Puffs in one rain mass's deck — derived from the size, never chosen. */
+export const RAIN_PUFFS_PER_MASS = puffsForCoverage(RAIN_PUFF_SIZE_FRACTION);
+
+/**
+ * The rain cloud's own colour, before any of the scene's light reaches it.
+ *
+ * A neutral mid grey, a shade cooler than white. It is a DIFFUSE colour and not
+ * a finished pixel — the deck is Lambert-lit, so the sun, the gloom of a
+ * cyclone overhead and a thunderstorm's flash all still act on it. Authoring it
+ * near-white would leave nothing for the shading to take away.
+ */
+export const RAIN_DECK_COLOR = 0xb6bcc4;
+
+/**
+ * How much of the light a rain deck takes off the ground under it, at full
+ * intensity — `ClientPluginCtx.publishGroundShade`.
+ *
+ * A quarter. Rain cloud is thick enough to be plainly a shadow and thin enough
+ * that the terrain under it stays legible; the shade is multiplied by the
+ * mass's own interpolated intensity, so a gathering front darkens the ground
+ * as it arrives rather than switching it off.
+ */
+export const RAIN_SHADE_DARKNESS = 0.25;
+
+/** The pool, its shared geometry, and the plugin's one cloud deck. */
 export interface RainRigs extends RigPool<DiscRig> {
+  /** One instanced draw for every mass's cloud; parented at attach. */
+  readonly deck: CumulusDeck;
   dispose(): void;
 }
 
-export function createRainRigs(): RainRigs {
+export function createRainRigs(ctx: ClientPluginCtx): RainRigs {
   // ONE OWNER: the sheet geometry is built once here and freed once here;
   // freeing it inside a rig would tear the resource out from under every other.
   const hazeGeometry: BufferGeometry = buildHazeGeometry();
 
-  const pool = createRigPool<DiscRig>(() =>
-    createDiscRig({
-      hazeGeometry,
-      // A third of a full bank: precipitation without any haze under it reads as
-      // lines in a vacuum, and real rain greys the air it falls through.
-      hazeStrength: PRECIPITATION_HAZE_SCALE,
-      profile: RAIN_PROFILE,
-      name: `${RAIN_PLUGIN_NAME}:system`,
-    }),
+  const deck = createCumulusDeck({
+    // The deck's capacity is an expression of this plugin's OWN cap, exactly
+    // as its draw budget is — never a number picked to be big enough.
+    maxMasses: MAX_ACTIVE_SYSTEMS,
+    puffSizeFraction: RAIN_PUFF_SIZE_FRACTION,
+    color: RAIN_DECK_COLOR,
+    name: `${RAIN_PLUGIN_NAME}:deck`,
+    renderOrder: DISC_RENDER_ORDER,
+    applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
+  });
+
+  const pool = createRigPool<DiscRig>(
+    () =>
+      createDiscRig({
+        hazeGeometry,
+        // A third of a full bank: precipitation without any haze under it reads as
+        // lines in a vacuum, and real rain greys the air it falls through.
+        hazeStrength: PRECIPITATION_HAZE_SCALE,
+        profile: RAIN_PROFILE,
+        name: `${RAIN_PLUGIN_NAME}:system`,
+        deck,
+        applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
+      }),
+    // A RIG LEAVES THE SCENE WITHOUT A LAST FRAME. The deck is drawn from
+    // uniforms rather than from the rig's root, so unparenting the root does
+    // not take the cloud with it — parking the slot is what does.
+    (rig) => rig.park(),
   );
 
   return {
+    deck,
     acquire: pool.acquire,
     release: pool.release,
     dispose(): void {
       pool.dispose();
+      deck.dispose();
       hazeGeometry.dispose();
     },
   };
 }
+
+/** Draw objects the whole plugin costs beyond its rigs: the deck. */
+export const RAIN_DECK_DRAW_OBJECTS = CUMULUS_DECK_DRAW_OBJECTS;
