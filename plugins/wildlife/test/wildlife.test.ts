@@ -714,8 +714,21 @@ describe('wildlife plugin', () => {
 
   it('startles creatures within the flee radius of a terrain change, and no others', () => {
     fillPopulation(harness);
-    const subject = livingEntities()[0];
+
+    // WHO WAS ALREADY RUNNING, recorded before the sculpt (2026-09-02). A
+    // sculpt is no longer the only thing that startles an animal: a shark
+    // frightens the fish and rays it cruises past, every tick, anywhere on the
+    // map. The claim this test makes is about the DIFF's reach — "nothing far
+    // from the change was startled BY IT" — so the creatures already fleeing
+    // for their own reasons are excluded rather than the claim being weakened.
+    const fleeingBeforeSculpt = new Set(
+      livingEntities().filter(isFleeing).map((entity) => entity.id),
+    );
+    // And the subject has to be a calm animal, or the cruise-speed precondition
+    // below is asserting something a shark may already have falsified.
+    const subject = livingEntities().find((entity) => !isFleeing(entity));
     expect(subject).toBeDefined();
+    if (subject === undefined) return;
 
     const cruise = profileOf(subject.species).cruiseSpeedCellsPerSecond;
     expect(speedOf(subject)).toBe(cruise);
@@ -735,6 +748,7 @@ describe('wildlife plugin', () => {
       const dx = entity.x - subject.x;
       const dy = entity.y - subject.y;
       if (Math.hypot(dx, dy) <= FLEE_RADIUS_CELLS * 2) continue;
+      if (fleeingBeforeSculpt.has(entity.id)) continue; // a hunter's doing, not the sculpt's
       expect(isFleeing(entity)).toBe(false);
     }
   });
