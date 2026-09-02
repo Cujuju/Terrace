@@ -1404,6 +1404,25 @@ work.
   THIRD plugin's future side effect (a cooldown, a resource other than mana)
   gets the same one-hook answer, with no new pattern to invent.
 
+  **The verdict must bind to the effective intent (2026-09-01, issue #278).**
+  Charging the effective intent (above) exposed a gap on the verdict side: a
+  plugin that ALLOWED the original intent was never asked about the rewrite
+  a later plugin produced. mana approved radius 2, relics widened it to 3,
+  and mana — which sorts first — was billed for 3 with no floor on the pool,
+  so a check that had passed produced an overdraft and a lock-out until
+  regen repaid it. Fix, in `PluginHost.runIntent`: when any plugin modifies,
+  every plugin that allowed is asked once more against the effective intent
+  and may deny it. Modifiers are NOT re-asked — their rewrite is the
+  effective intent, and re-running an unconditional widener would compound
+  it (2→3→4) unless every modifier learned to recognise its own work, a
+  convention rather than a guarantee. A `modify` returned on that second
+  look is refused as a deny and booked as a plugin fault; there is no third
+  pass, so the chain always settles. Rejected: clamping the charge at zero
+  (makes the widened area free exactly when the player is broke, against the
+  "charge the effective intent" rule); a plugin idempotence contract with a
+  full re-run (buys nothing the allower-only re-ask does not, and costs a
+  rule every plugin author must remember).
+
   **What `onIntentApplied` hands a plugin, and why.** `intent` is the
   EFFECTIVE intent — after any earlier plugin's `modify` — not the one this
   plugin's own `onIntent` saw, because the hook describes what HAPPENED, and
