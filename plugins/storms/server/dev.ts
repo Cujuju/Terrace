@@ -35,27 +35,23 @@
 // Unset — which is every real deployment — this module does nothing at all.
 
 import { SEA_LEVEL } from '@terrace/shared';
+import {
+  DEV_SEARCH_RADIUS_CELLS,
+  DEV_SEARCH_STEP_CELLS,
+} from '../../../server/src/plugins/kit/devSite.ts';
 import { clearStorms, setDevFrozen, spawnStormAt, type Storm, type StormWorld } from './storms.ts';
 import type { StormKind } from '../protocol.ts';
 
 /** The variable, and the three values it accepts. */
 export const STORMS_DEV_FORCE_ENV = 'STORMS_DEV_FORCE';
 
-/**
- * How far from the centre a site is searched, in cells.
- *
- * 160 — half the edge of a fresh world's unlocked square (that square is
- * INITIAL_UNLOCK_CHUNK_SPAN × CHUNK_SIZE = 320 cells), so the search covers the
- * territory a new player can see and stops at its edge rather than wandering
- * into fog. Restated rather than imported: this is a plugin, and core's unlock
- * policy is not part of the plugin contract — if that policy changes, a forced
- * storm lands somewhere slightly less convenient, which is the correct blast
- * radius for a development aid.
- */
-export const DEV_SEARCH_RADIUS_CELLS = 160;
-
-/** Cells between rings of the outward search. Coarse: any site will do. */
-const DEV_SEARCH_STEP_CELLS = 4;
+// The reach — how far out a forced site may be looked for, and how coarsely —
+// is the plugin kit's (server/src/plugins/kit/devSite.ts), because mudslides'
+// force-spawn wanted exactly the same two numbers for exactly the same reason.
+// THE SEARCH ITSELF STAYED HERE: this one wants the NEAREST patch of the right
+// ground, so it walks outward in rings; mudslides' wants the BEST hillside, so
+// it scans a grid. See the kit module's header.
+export { DEV_SEARCH_RADIUS_CELLS, DEV_SEARCH_STEP_CELLS };
 
 /** Samples taken around each ring. */
 const DEV_SEARCH_SPOKES = 16;
