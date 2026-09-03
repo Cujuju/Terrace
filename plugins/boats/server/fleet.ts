@@ -271,19 +271,28 @@ let krakenWounds = 0;
 let sinceLastSinking = 0;
 
 /**
- * A wind-damage event this fleet has not been pushed by yet, or null.
+ * Wind-damage events this fleet has not been pushed by yet, oldest first.
  *
- * A QUEUE OF ONE, AND NOT A PER-TICK LATCH — the opposite of how the kraken
- * position is held (../server/index.ts's `krakenThisTick`), and the difference
- * is what the two things ARE. A kraken position is a STANDING FACT that is
- * re-announced every tick, so dropping it at the end of a tick is how "the
- * kraken left" reads. A damage event is a DISCRETE quantum of storm — it
- * arrives once a second and carries the seconds it accounts for — so it must be
- * applied exactly once. Clearing it unapplied would silently drop most of a
- * hurricane, and holding it across ticks would apply the same second of wind
- * ten times over.
+ * A QUEUE, AND NOT A PER-TICK LATCH — the opposite of how the kraken position is
+ * held (../server/index.ts's `krakenThisTick`), and the difference is what the
+ * two things ARE. A kraken position is a STANDING FACT re-announced every tick,
+ * so dropping it at the end of a tick is how "the kraken left" reads. A damage
+ * event is a DISCRETE quantum of storm — it arrives once a second and carries
+ * the seconds it accounts for — so it must be applied exactly once. Clearing one
+ * unapplied would silently drop part of a hurricane; holding one across ticks
+ * would apply the same second of wind ten times over.
  *
- * WHY IT IS HELD AT ALL, rather than pushing the boats from inside the event
+ * A LIST RATHER THAN ONE SLOT, and this is the CONTRACT rather than the
+ * situation. The engine emits one damage event per storm per interval, and how
+ * many storms there may be is the EMITTER's number (a RotatingStormProfile's
+ * `maxActive`), not this plugin's to know: two of them announcing between two
+ * advances is an ordinary tick, not a stall. A single slot would keep the last
+ * and silently drop the rest — a fleet pushed by one of the two cyclones over
+ * it, with nothing anywhere saying so. That the shipped cyclone allows exactly
+ * one storm today is precisely why a slot would have looked correct for as long
+ * as it took someone to raise that number.
+ *
+ * WHY THEY ARE HELD AT ALL, rather than pushing the boats from inside the event
  * handler. The host fans an emit out synchronously, inside the emitting
  * plugin's own onTick (server/src/plugins/host.ts's emit fan-out), and plugins
  * tick in LOAD ORDER — which is alphabetical by directory, so `boats` has
@@ -291,16 +300,16 @@ let sinceLastSinking = 0;
  * the handler would therefore move hulls in the middle of another plugin's
  * tick, after this one's own step, separation and station-keeping had all
  * been resolved against the old positions: a boat could be shoved onto a
- * berth another boat had just been given. Held here and consumed at the top of
+ * berth another boat had just been given. Held here and drained at the top of
  * advanceFleet, the push is simply where the fleet starts its next frame.
  *
- * ONE PENDING EVENT, NOT A LIST. Damage arrives at 1 Hz per storm and ticks run
- * at 10 Hz, so a second event before the first is consumed means the tick loop
- * has stalled for a whole second — in which case replaying a backlog of wind
- * onto a fleet in one frame is the wrong recovery. The newest event is kept,
- * because it describes where the storm IS.
+ * DRAINED IN ARRIVAL ORDER, which is the order the storms were announced in.
+ * Two winds on one hull compose the same way either way round — each is a
+ * displacement, and the only thing that is not commutative is which one gets
+ * stopped by a coastline first. Arrival order is the one order that is a fact
+ * about the world rather than about this array.
  */
-let pendingWind: ParsedStormDamage | null = null;
+const pendingWinds: ParsedStormDamage[] = [];
 
 const villageKey = (x: number, y: number): string => `${x},${y}`;
 
@@ -311,7 +320,7 @@ export function resetFleet(): void {
   nextBoatId = 1;
   krakenWounds = 0;
   sinceLastSinking = 0;
-  pendingWind = null;
+  pendingWinds.length = 0;
 }
 
 export function livingBoats(): readonly Boat[] {
@@ -795,12 +804,12 @@ function nearestCrowder(
  * frame — see `pendingWind` for why it is not applied here.
  */
 export function noteStormWind(damage: ParsedStormDamage): void {
-  pendingWind = damage;
+  pendingWinds.push(damage);
 }
 
 /**
- * Carries every boat inside the storm's disc along its tangential wind, and
- * clears the pending event.
+ * Carries every boat inside each pending storm's disc along that storm's
+ * tangential wind, and empties the queue.
  *
  * THE WHOLE FLEET IS TESTED, not the event's `cells` sample: the roster IS the
  * index, bounded by BOATS_PER_VILLAGE per settlement, so answering exactly
@@ -820,27 +829,30 @@ export function noteStormWind(damage: ParsedStormDamage): void {
  * not move, which is a hull holding its ground against the wind — not an error.
  */
 function applyStormWind(world: BoatWorld): void {
-  const wind = pendingWind;
-  pendingWind = null;
-  if (wind === null) return;
+  if (pendingWinds.length === 0) return;
+  // Spliced out before any of it is applied, so a push that somehow re-entered
+  // this function could not replay the same second of wind.
+  const winds = pendingWinds.splice(0, pendingWinds.length);
 
-  for (const boat of boats) {
-    const severity = severityAt(wind, boat.x, boat.y);
-    if (severity <= 0) continue;
-    const direction = tangentialWindAt(wind, boat.x, boat.y);
-    // Null only at the eye's exact centre, which is inside the calm middle
-    // anyway — severity is already zero there, so this is unreachable in
-    // practice and cheap to be right about.
-    if (direction === null) continue;
+  for (const wind of winds) {
+    for (const boat of boats) {
+      const severity = severityAt(wind, boat.x, boat.y);
+      if (severity <= 0) continue;
+      const direction = tangentialWindAt(wind, boat.x, boat.y);
+      // Null only at the eye's exact centre, which is inside the calm middle
+      // anyway — severity is already zero there, so this is unreachable in
+      // practice and cheap to be right about.
+      if (direction === null) continue;
 
-    const distance = severity * wind.durationSeconds * BOAT_WIND_PUSH_CELLS_PER_SEVERITY_SECOND;
-    let travelled = 0;
-    while (travelled < distance) {
-      const hop = Math.min(BOAT_WIND_PUSH_STEP_CELLS, distance - travelled);
-      if (!moveIfSailable(world, boat, boat.x + direction.x * hop, boat.y + direction.y * hop)) {
-        break;
+      const distance = severity * wind.durationSeconds * BOAT_WIND_PUSH_CELLS_PER_SEVERITY_SECOND;
+      let travelled = 0;
+      while (travelled < distance) {
+        const hop = Math.min(BOAT_WIND_PUSH_STEP_CELLS, distance - travelled);
+        if (!moveIfSailable(world, boat, boat.x + direction.x * hop, boat.y + direction.y * hop)) {
+          break;
+        }
+        travelled += hop;
       }
-      travelled += hop;
     }
   }
 }
