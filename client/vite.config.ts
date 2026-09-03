@@ -3,6 +3,8 @@
 import { defineConfig } from 'vitest/config';
 import solid from 'vite-plugin-solid';
 import { execSync, type ExecSyncOptions } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 /**
  * Build identity stamped into the bundle as `__CLIENT_VERSION__` (rendered by
@@ -44,8 +46,75 @@ function watchEnabled(): boolean {
   return raw !== undefined && raw.trim() !== '' && raw.trim() !== '0';
 }
 
+/**
+ * Environment variable naming the file the real-GPU benchmark's samples are
+ * appended to, one JSON object per line. REQUIRED to arm the sink, and required
+ * to name an ABSOLUTE path: this dev server runs with `client/` as its working
+ * directory while `scripts/gpu-bench.sh` polls the same file from the repo
+ * root, so a relative path would quietly be two different files.
+ */
+const PERF_SINK_ENV = 'TERRACE_PERF_SINK';
+
+/** URL the in-page probe POSTs to — client/src/perfProbe.ts's SINK_PATH. */
+const PERF_SINK_PATH = '/__perf';
+
+/**
+ * The real-GPU benchmark's sample sink (client/src/perfProbe.ts writes it, this
+ * receives it, scripts/gpu-bench.sh reads the file).
+ *
+ * IT EXISTS BECAUSE THE MEASURING BROWSER IS ON THE WINDOWS SIDE — only there
+ * is there a discrete GPU; every browser inside WSL2 renders on SwiftShader —
+ * and Windows → WSL localhost is the only direction of that NAT boundary open
+ * without firewall changes. So the page cannot be driven from here; it reports
+ * by POSTing back to the dev server that served it.
+ *
+ * UNSET MEANS OFF, LOUDLY: with no TERRACE_PERF_SINK the route answers 503 and
+ * names the variable, rather than defaulting to some path under /tmp that an
+ * operator would then poll forever without being told where the samples went.
+ */
+function perfSink() {
+  const configured = process.env[PERF_SINK_ENV]?.trim();
+  const target = configured === undefined || configured === '' ? null : configured;
+  if (target !== null && !isAbsolute(target)) {
+    throw new Error(`${PERF_SINK_ENV} must be an absolute path; got "${target}"`);
+  }
+  return {
+    name: 'terrace-perf-sink',
+    configureServer(server: {
+      middlewares: {
+        use(
+          fn: (
+            req: { url?: string; method?: string; on: (e: string, f: (c: Buffer) => void) => void },
+            res: { statusCode: number; end: (body?: string) => void },
+            next: () => void,
+          ) => void,
+        ): void;
+      };
+    }) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url !== PERF_SINK_PATH || req.method !== 'POST') {
+          next();
+          return;
+        }
+        if (target === null) {
+          res.statusCode = 503;
+          res.end(`${PERF_SINK_ENV} is not set: this dev server has no perf sink`);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => {
+          appendFileSync(target, `${Buffer.concat(chunks).toString()}\n`);
+          res.statusCode = 204;
+          res.end();
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [solid()],
+  plugins: [solid(), perfSink()],
   define: {
     __CLIENT_VERSION__: JSON.stringify(buildVersion()),
   },
