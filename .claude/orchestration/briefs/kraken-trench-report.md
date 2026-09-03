@@ -122,7 +122,7 @@ path. The fit pass itself is unchanged in cost.
 
 ---
 
-## 4. The constant I moved, and why — the headline finding
+## 4. The range bar is derived from the body, not set to the arrival bar
 
 Making the fit rule ask the range exposed something the brief anticipated, and
 the measurement made it much larger than expected.
@@ -130,87 +130,102 @@ the measurement made it much larger than expected.
 **The arrival bar cannot be reused as the movement bar.** `minLairReachBands` is
 a bar on ONE CELL: `summoning.ts:664` applies it to a region's single most
 extreme cell and `:776` to the cell the animal lands on. A trench is a V, so its
-deepest contour is a RIBBON whose width is fixed by the terrain's slope —
-terrain falls at most `MAX_STEP` per cell (`shared/src/constants.ts:361`), and
-genesis cuts trench walls at exactly one band per
-`GENESIS_TERRACE_WALL_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP` = 4 cells
-(`server/src/world/genesis.ts:150`, applied at `:1595`), to a floor of
-`GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA` = 32 bands (`genesis.ts:1064`). So the
-≥31-band contour of a genesis trench is about 15 cells wide, and the kraken's
-body is **28 cells across**.
+deepest contour is a RIBBON whose width is fixed by the wall slope — genesis
+cuts trench walls at `GENESIS_TERRACE_WALL_CELLS_PER_BAND = BAND_HEIGHT /
+MAX_STEP` = **4 cells per band** (`server/src/world/genesis.ts:150`, applied to
+the floor profile at `:1595`, against the floor depth of
+`GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA` = 32 bands at `:1064`). So the ≥31-band
+contour of a genesis trench is about 15 cells wide, and the kraken's body is
+**28 cells across**. A range bar its body fits on nowhere is not "anywhere
+inside that deep trench" — it is no kraken at all.
 
-Measured over 20 genesis seeds at 512², with the range bar set equal to the
-arrival bar (31 bands): **the kraken's body fit nowhere at all on 11 of the 20
-worlds** — it would simply never appear. Scanning each world for the deepest bar
-that still admits the body gave 28 on every one of them.
-
-**So `withRange` subtracts a derived relaxation** rather than using the arrival
-bar directly — `kinds.ts:980` `bodyReachBands`:
+**The contract.** `kinds.ts:1000` `bodyReachBands`, subtracted in `withRange`:
 
 ```
-range.thresholdBands = minLairReachBands − floor(bodyRadiusCells · MAX_STEP / BAND_HEIGHT)
+range.thresholdBands = minLairReachBands − ceil(bodyRadiusCells / TRENCH_WALL_CELLS_PER_BAND)
 ```
 
-This is a derivation, not a dial: it is the depth the animal's own body spans on
-the steepest wall the engine can produce. `floor`, not `ceil`, so the relaxation
-never exceeds what the geometry justifies. At today's numbers the kraken's is
-`floor(14 · 4 / 16) = 3`, giving **28 bands** — the exact value the scan found.
-Because Cthulhu and the yeti already sit at their habitat's threshold,
-subtracting takes them below the floor and `habitatRangeOf` clamps back, so
-their range stays the habitat object itself.
+A body on the contour reaches `bodyRadiusCells` out from its centre, and over
+that distance the wall has climbed that many bands. This is a derivation, not a
+dial, and the numbers on both sides of it come from the geometry:
+
+- `TRENCH_WALL_CELLS_PER_BAND` (`kinds.ts:980`) is `BAND_HEIGHT / MAX_STEP` —
+  **the same expression genesis cuts with**, not a restated number. Genesis's
+  own copy is module-private (a bare `const` at `genesis.ts:150`, not exported)
+  so it cannot be imported, and a plugin reaching into `server/src/world` for
+  terrain shape would be the wrong direction regardless; but both operands come
+  from `@terrace/shared`, the same module genesis takes them from, so the two
+  expressions cannot drift unless someone edits one by hand. The comment names
+  `genesis.ts:150` / `:1064` at the definition.
+- It is the STEEPEST wall the engine permits (`MAX_STEP` is the gradient limit),
+  so the subtraction is a worst case: a gentler trench only makes the relaxation
+  more generous than it had to be.
+- `ceil`, not `floor`. The rim probe furthest from the centre is a whole cell
+  out, so a fractional band of climb is a band the body genuinely needs; rounding
+  it down leaves the outermost probes on the wrong side of the range boundary on
+  the steepest walls — the failure the subtraction exists to prevent.
+
+At today's constants the kraken's is `ceil(14 / 4) = 4`, giving a range of **27
+bands**.
+
+**The floor clamp is in code, not in the arithmetic.** `habitatRangeOf`
+(`habitat.ts:246`) takes `Math.max(thresholdBands, regime.thresholdBands)`, so a
+range can never be shallower than its habitat's own floor. This is what makes
+Cthulhu and the yeti untouched: both already sit at that threshold
+(`kinds.ts:894`, `kinds.ts:635`), subtracting takes them below it, and the clamp
+returns the habitat regime OBJECT — verified as `true` in the output below.
 
 **No named constant was retuned.** `KRAKEN_LAIR_MIN_DEPTH_BANDS` still means what
 it meant — where the kraken must RISE — and is unchanged at 31.
 
-### What this does to admissions on a genesis world
+### Both bars, measured on genesis worlds
 
-Through the plugin's own survey and all four of `bestLairFor`'s gates
-(`summoning.ts:660-673`), same 20 seeds:
+Twenty seeds at 512², through the plugin's own survey and all four of
+`bestLairFor`'s gates (`summoning.ts:660-673`). The only difference between the
+two columns is the kraken's `rangeBands`.
 
 ```
-kraken: body 28 cells, arrival bar 31 bands, range 28 bands; needs 36864 region cells and 784 fitting cells
-seed 7919: admits kraken = true (best region fit 890, summonable 890)
-seed 15838: admits kraken = true (best region fit 1918, summonable 1841)
-seed 23757: admits kraken = true (best region fit 23228, summonable 23045)
-seed 31676: admits kraken = true (best region fit 47625, summonable 46038)
-seed 39595: admits kraken = true (best region fit 38492, summonable 30281)
-seed 47514: admits kraken = true (best region fit 4061, summonable 2947)
-seed 55433: admits kraken = true (best region fit 29988, summonable 29533)
-seed 63352: admits kraken = true (best region fit 51180, summonable 51174)
-seed 71271: admits kraken = true (best region fit 33450, summonable 32906)
-seed 79190: admits kraken = true (best region fit 3521, summonable 3192)
-seed 87109: admits kraken = false (best region fit 737, summonable 737)
-seed 95028: admits kraken = true (best region fit 2855, summonable 2640)
-seed 102947: admits kraken = true (best region fit 44673, summonable 44607)
-seed 110866: admits kraken = true (best region fit 4059, summonable 3723)
-seed 118785: admits kraken = true (best region fit 1496, summonable 1496)
-seed 126704: admits kraken = true (best region fit 2859, summonable 2859)
-seed 134623: admits kraken = true (best region fit 1636, summonable 1421)
-seed 142542: admits kraken = true (best region fit 38814, summonable 38783)
-seed 150461: admits kraken = true (best region fit 2463, summonable 1667)
-seed 158380: admits kraken = true (best region fit 4043, summonable 3404)
-admitted on 19/20 genesis worlds
+kraken: body 28 cells, arrival bar 31 bands, derived range 27 bands; needs 36864 region cells and 784 fitting cells
+seed 7919: at 31 bands false (fit 0) | at 27 bands true (fit 1521, summonable 1109)
+seed 15838: at 31 bands false (fit 0) | at 27 bands true (fit 3032, summonable 2324)
+seed 23757: at 31 bands true (fit 18162) | at 27 bands true (fit 25306, summonable 24341)
+seed 31676: at 31 bands true (fit 39253) | at 27 bands true (fit 50098, summonable 46984)
+seed 39595: at 31 bands true (fit 12854) | at 27 bands true (fit 49387, summonable 32388)
+seed 47514: at 31 bands false (fit 0) | at 27 bands true (fit 6194, summonable 3611)
+seed 55433: at 31 bands true (fit 23600) | at 27 bands true (fit 32409, summonable 30718)
+seed 63352: at 31 bands true (fit 45774) | at 27 bands true (fit 52996, summonable 52791)
+seed 71271: at 31 bands true (fit 27321) | at 27 bands true (fit 35228, summonable 33827)
+seed 79190: at 31 bands true (fit 861) | at 27 bands true (fit 4955, summonable 3442)
+seed 87109: at 31 bands false (fit 0) | at 27 bands true (fit 1306, summonable 1039)
+seed 95028: at 31 bands false (fit 7) | at 27 bands true (fit 4646, summonable 3486)
+seed 102947: at 31 bands true (fit 40893) | at 27 bands true (fit 45829, summonable 45496)
+seed 110866: at 31 bands false (fit 10) | at 27 bands true (fit 6367, summonable 4678)
+seed 118785: at 31 bands false (fit 0) | at 27 bands true (fit 2485, summonable 1906)
+seed 126704: at 31 bands false (fit 0) | at 27 bands true (fit 4804, summonable 3661)
+seed 134623: at 31 bands false (fit 0) | at 27 bands true (fit 3457, summonable 1816)
+seed 142542: at 31 bands true (fit 35281) | at 27 bands true (fit 40060, summonable 39693)
+seed 150461: at 31 bands false (fit 150) | at 27 bands true (fit 3666, summonable 1976)
+seed 158380: at 31 bands false (fit 15) | at 27 bands true (fit 5921, summonable 4136)
+admitted at the 31-band bar: 9/20
+admitted at the derived 27-band bar: 20/20
+cthulhu range === habitat: true; yeti range === habitat: true
 ```
+
+**Nine of twenty against twenty of twenty.** The naive contract — range bar at
+the admission reach — would have removed the kraken from more than half of all
+fresh worlds. The derived bar keeps every one of them, and the owner's
+2026-08-19 ruling that a natural ocean floor admits the kraken with no digging
+survives intact.
 
 `KRAKEN_MIN_LAIR_FITTING_CELLS` was NOT retuned. It is `ceil(28²) = 784`, one
-body's worth of room to roam, and it is still cleared on 19 of 20 worlds.
+body's worth of room to roam, and every seed clears it — the thinnest margin in
+the table is seed 7919's 1 521, roughly twice the bar.
 
-**The residual, named rather than papered over.** Seed 87109 reaches 737 fitting
-cells against the 784 bar and gets no kraken. Before this arc it would have got
-one, because the fit was measured over the whole basin. This is a real,
-deliberate behaviour change and it fails in the safe direction: the alternative
-is summoning a kraken into a trench it does not fit in, which is the pinched-yeti
-bug the fit bar exists to prevent. A player can still dig one.
-
-**One thing I believe should move, and it is not in this package.** The genesis
-guarantee (`genesis.ts:1050-1077`) promises a trench deep enough and a basin
-large enough; it promises nothing about the trench being WIDE enough for the
-animal it exists to house, and seed 87109 is that gap. If the owner wants the
-guarantee to be a guarantee again, the fix belongs in the trench pass — cut the
-floor run wider, or cut it one band deeper so its 28-band contour widens by four
-cells — not in the plugin's bars. I did not touch it: `server/` is outside this
-brief's allowed paths, and how wide a trench should look is the owner's call,
-not a number I should pick.
+**Residual, stated rather than papered over.** The relaxation is derived from the
+STEEPEST wall genesis can cut. A trench cut by a player with a shallower profile
+has a wider contour and is more permissive than this arithmetic assumes, which
+is the safe direction. The unsafe direction — a wall steeper than `MAX_STEP` —
+cannot exist: `MAX_STEP` is the gradient limit relaxation enforces.
 
 ---
 
@@ -238,8 +253,8 @@ with the plugin's own seeded RNG):
 
 ```
 BAND_HEIGHT=16 SEA_LEVEL=0
-habitat floor = 12 bands (h=-192); kraken bar = 31 bands (h=-496)
-kraken range threshold = 28 bands; cthulhu range === habitat: true; yeti range === habitat: true
+habitat floor = 12 bands (h=-192); kraken arrival bar = 31 bands (h=-496)
+kraken range threshold = 27 bands; cthulhu range === habitat: true; yeti range === habitat: true
 basin radius 12 cells, sea 96² cells, 12000 ticks @ 10 Hz
 restored-outside-range kraken: banished = false, still alive = true, moved = false, on shelf (habitat, not range) = true
 kraken: ticks outside basin = 0, max distance from centre = 3.07 cells, ticks that moved = 10871, final = (48.68, 48.68)
@@ -315,14 +330,18 @@ can grant permission for the ones worth keeping.
    kraken's range while leaving it deep water moves a range bit and NOT a habitat
    bit, which is a path nothing exercises.
 5. **The fit rule's two bars being two.** That `summonableCells < fittingCells`
-   for the kraken (measured 177 vs 981 on a natural-floor basin, and see the
-   genesis table) and that they are equal for the yeti.
+   for the kraken (every genesis row in the section 4 table shows the gap) and
+   that they are equal for the yeti.
 6. **The restored-outside-range kraken**: not banished, not crashed, held still.
    Verified live; the persistence tests cover the round trip but not this state.
-7. **Genesis admission.** That a fresh world still admits the kraken. Measured at
-   19/20 here; nothing in the suite would notice if it went to 0/20 — the
+7. **Genesis admission.** That a fresh world still admits the kraken. Measured
+   at 20/20 here; nothing in the suite would notice if it went to 0/20 — the
    existing `summons a kraken into a natural-floor trench` test uses a stubbed
-   cone, not the generator.
+   cone, not the generator. Given that the naive bar scored 9/20 and no test
+   moved, this is the gap that would have let the regression ship.
+8. **`bodyReachBands` itself** — that the range bar is the arrival bar minus the
+   bands of wall the body climbs, and that it tracks `BAND_HEIGHT` / `MAX_STEP`
+   rather than being pinned to 27.
 
 ---
 
