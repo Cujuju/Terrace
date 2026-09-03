@@ -342,14 +342,22 @@ export function cycloneRadiusFor(worldSize: number): number {
 export const CYCLONE_EYE_RADIUS_FRACTION = 0.125;
 
 /**
- * How high a cyclone's cloud deck sits, in world units.
+ * WHERE THE CLOUD DECK'S HEIGHT WENT (#299, 2026-09-03).
  *
- * TEN — above the tallest land the world can have (16 units of relief, and land
- * that high is a peak, not a plateau) so the spiral reads as overcast rather
- * than as fog on a hillside, and low enough that a player looking up sees it
- * fill the sky rather than a distant lid.
+ * `CYCLONE_DECK_HEIGHT_WORLD_UNITS = 10` stood here, and it was wrong on its
+ * own terms: its doc claimed ten world units was "above the tallest land the
+ * world can have (16 units of relief)", which it is not, so a maximum-height
+ * peak poked through the storm. The deck now stands on the client kit's one
+ * cloud base — client/src/plugins/kit/cumulusDeck.ts's DECK_BASE_WORLD_Y, taken
+ * as an import by ./client/spiral.ts's CYCLONE_DECK_BASE_WORLD_Y — which is
+ * also the height the kit's falling column births its drops at, so a cyclone's
+ * rain falls out of a cloud that is actually there.
+ *
+ * IT IS NOT RESTATED IN THIS FILE because it cannot be: the kit is client code
+ * that imports three, and this protocol is imported by the server. It never
+ * belonged on the wire — no server file ever read it — and a number both halves
+ * import is the only kind that belongs here.
  */
-export const CYCLONE_DECK_HEIGHT_WORLD_UNITS = 10;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE WIRE.

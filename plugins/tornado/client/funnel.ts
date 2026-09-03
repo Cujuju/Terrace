@@ -164,10 +164,11 @@ export const DEBRIS_LIFE_SECONDS = 1.4;
 
 /**
  * Where the funnel sits in the transparent pass — above the cyclone deck
- * (./spiral.ts's SPIRAL_RENDER_ORDER), so a tornado seen against an overcast is
- * painted over it. Both are depth-write-off transparent geometry, so submission
- * order IS composite order. The skirt goes above the cone for the same reason:
- * debris is in front of the wall it was torn from.
+ * (./spiral.ts's SPIRAL_RENDER_ORDER_CAMERA_ABOVE_BASE, which is the highest of
+ * that deck's two camera-dependent orders), so a tornado seen against an
+ * overcast is painted over it. Both are depth-write-off transparent geometry,
+ * so submission order IS composite order. The skirt goes above the cone for the
+ * same reason: debris is in front of the wall it was torn from.
  */
 export const FUNNEL_RENDER_ORDER = 2;
 export const DEBRIS_RENDER_ORDER = 3;
