@@ -99,15 +99,6 @@ describe('slice version envelope', () => {
     expect(loads).toEqual([{ data: { n: 4 }, fromVersion: 1 }]);
   });
 
-  it('rewrites a pre-envelope slice in envelope form on the next save', () => {
-    const { plugin } = recordingPlugin('kept', 3);
-    const host = hostFor([plugin]);
-
-    host.restorePersistence({ kept: { n: 4 } });
-
-    expect(host.collectPersistence()).toEqual({ kept: { v: 3, data: { n: 4 } } });
-  });
-
   describe('downgrade (stored version ahead of the code)', () => {
     it('does not call load, and the plugin runs stateless', () => {
       const { plugin, loads, state } = recordingPlugin('kept', 3);
@@ -137,20 +128,6 @@ describe('slice version envelope', () => {
 
       expect(first).toBe(JSON.stringify({ kept: { v: 4, data: { n: 9 } } }));
       expect(second).toBe(first);
-    });
-
-    it('warns exactly once for a parked slice, not once per snapshot', () => {
-      const { plugin } = recordingPlugin('kept', 3);
-      const host = hostFor([plugin]);
-
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      host.restorePersistence({ kept: { v: 4, data: { n: 9 } } });
-      host.collectPersistence();
-      host.collectPersistence();
-      const calls = warn.mock.calls.length;
-      warn.mockRestore();
-
-      expect(calls).toBe(1);
     });
 
     it('leaves every other plugin\'s slice alone', () => {

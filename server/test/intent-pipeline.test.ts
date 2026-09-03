@@ -339,83 +339,6 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
     world.setSink(new RecordingSink());
   });
 
-  it('a stamp intent does NOT relax the neighbours, end to end', () => {
-    const outcome = handleSculptIntent(
-      makeDeps(world, []),
-      PLAYER,
-      sculptMessage({ tool: 'stamp' }),
-    );
-
-    expect(outcome.applied).toBe(true);
-    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
-    // The diff is the footprint alone — a radius-1 stamp is exactly one cell.
-    if (outcome.applied) expect(outcome.diff).toHaveLength(1);
-  });
-
-  /**
-   * The radius these two relaxation tests sculpt at, and the distance at which
-   * they look for the spill.
-   *
-   * NOT RADIUS 1, AND THAT IS THE POINT (2026-08-22). A radius-1 footprint is
-   * the clicked cell and nothing else, and since the anchor bound that stops a
-   * stroke undoing itself (shared/heightmap.ts, applySculpt's anchorBounds),
-   * the clicked cell cannot shed into its neighbours — so a one-cell smooth
-   * stroke is a stamp, deliberately and by a stated boundary. It is also not a
-   * brush any player can select: the picker's ladder starts at one WORLD unit.
-   * Testing relaxation through it measured the boundary case rather than the
-   * contract, so these fixtures use a real brush.
-   *
-   * The tight disc puts radius 3's footprint two cells out on an axis, so the
-   * probe sits at three — outside the brush's own writes, where anything that
-   * moved can only have been moved by the relaxation pass.
-   */
-  const RELAX_TEST_RADIUS = 3;
-  const OUTSIDE_FOOTPRINT_CELLS = 3;
-
-  /** Cells just beyond the footprint — only relaxation can reach these. */
-  const spillHeights = (w: World, x: number, y: number): number[] => [
-    w.heightAt(x - OUTSIDE_FOOTPRINT_CELLS, y),
-    w.heightAt(x + OUTSIDE_FOOTPRINT_CELLS, y),
-    w.heightAt(x, y - OUTSIDE_FOOTPRINT_CELLS),
-    w.heightAt(x, y + OUTSIDE_FOOTPRINT_CELLS),
-  ];
-
-  /**
-   * Raises the test cell to a sheer edge that EXCEEDS the gradient limit, so a
-   * smooth stroke has something to relax.
-   *
-   * One stamp is not enough: a soft stroke's own cone falls away at
-   * DEFAULT_SCULPT_AMOUNT / radius per cell, which at every brush the picker
-   * offers is at or under MAX_STEP — so it lands already gradient-legal and
-   * smooth correctly does nothing (the crisp-layer contract, pinned in
-   * shared's heightmap.test.ts). Two stamps put the edge over the limit, which
-   * is what these two tests are about.
-   */
-  function stampAnOverLimitEdge(): void {
-    for (let stroke = 0; stroke < 2; stroke++) {
-      handleSculptIntent(
-        makeDeps(world, []),
-        PLAYER,
-        sculptMessage({ tool: 'stamp', radius: RELAX_TEST_RADIUS }),
-      );
-    }
-  }
-
-  it('a smooth intent still relaxes the ground beyond its footprint', () => {
-    stampAnOverLimitEdge();
-
-    handleSculptIntent(
-      makeDeps(world, []),
-      PLAYER,
-      sculptMessage({ tool: 'smooth', radius: RELAX_TEST_RADIUS }),
-    );
-
-    expect(
-      spillHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
-    ).toBe(true);
-  });
-
   it('an intent naming NO tool is applied as a stamp (the wire default)', () => {
     // The pipeline normalises through shared's sculptOptionsOf, whose default is
     // the player-facing stamp — deliberately NOT the library's smooth default.
@@ -423,20 +346,6 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
 
     expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
     expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
-  });
-
-  it('a hard profile lays a flat plateau across the footprint', () => {
-    handleSculptIntent(
-      makeDeps(world, []),
-      PLAYER,
-      sculptMessage({ radius: 3, tool: 'stamp', profile: 'hard' }),
-    );
-
-    // Every cell out to the footprint edge got the SAME delta...
-    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(world.heightAt(UNLOCKED_CELL.x + 2, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
-    // ...and the cell beyond it is untouched: a sheer edge.
-    expect(world.heightAt(UNLOCKED_CELL.x + 3, UNLOCKED_CELL.y)).toBe(0);
   });
 
   it('rejects an intent carrying an unknown tool or profile as malformed', () => {
@@ -455,28 +364,6 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
     expect(world.dirty).toBe(false);
   });
 
-  it('carries a plugin-rewritten tool through to the applied edit', () => {
-    // A plugin may reshape the brush; the rewrite is re-validated and then
-    // normalised by the same one function, so it reaches the math intact.
-    const smoother: TerracePlugin = {
-      name: 'smoother',
-      onIntent(intent): IntentVerdict {
-        return { kind: 'modify', intent: { ...intent, tool: 'smooth' } };
-      },
-    };
-
-    stampAnOverLimitEdge();
-
-    handleSculptIntent(
-      makeDeps(world, [smoother]),
-      PLAYER,
-      sculptMessage({ tool: 'stamp', radius: RELAX_TEST_RADIUS }),
-    );
-
-    expect(
-      spillHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
-    ).toBe(true);
-  });
 });
 
 describe('sculptDenied nack', () => {

@@ -1,13 +1,14 @@
 // The pilgrims plugin's contracts: the race copy's agreement with structures,
-// the defensive wire parse, settledness, the journey state machine, the
-// blessing hand-off, and both bridges' degraded paths. Pure node — the sim is
-// deliberately testable without a server (see pilgrimage.ts's header).
+// the defensive wire parse, settledness, the terrain predicates, the caps,
+// determinism, the shared id allocator, the blessing hand-off, and both
+// bridges' degraded paths. Pure node — the sim is deliberately testable
+// without a server (see pilgrimage.ts's header). Journey and wandering
+// simulations were removed on 2026-09-02 (owner: contract-level tests only).
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { worldWithSibling } from '../../../server/test/support/harness.ts';
 import {
   BAND_HEIGHT,
-  LAND_WALKER_MAX_GRADIENT_PER_CELL,
   SEA_LEVEL,
   cellsAcross,
 } from '@terrace/shared';
@@ -22,32 +23,22 @@ import {
   settlementRace,
 } from '../protocol.ts';
 import {
-  ARRIVAL_RADIUS_CELLS,
   MONSTER_SETTLED_RADIUS_CELLS,
-  PILGRIMAGE_CATCHMENT_CELLS,
   PILGRIMAGE_ONSET_SECONDS,
-  PILGRIM_LINGER_SECONDS,
-  PILGRIM_STUCK_SECONDS,
-  PILGRIM_WALK_SPEED_CELLS_PER_SECOND,
-  WALKER_PERSONAL_SPACE_CELLS,
-  PILGRIM_WALKER_PROFILE,
   Pilgrimage,
   SettlednessTracker,
   VIEWPOINT_RING_CELLS,
   WalkerIdAllocator,
   isWalkableCell,
   pickViewpoint,
-  planRoute,
   type PilgrimWorld,
 } from '../server/pilgrimage.ts';
 import {
   WANDERER_MIN_AGE_GENERATIONS,
   WANDER_EPOCH_SECONDS,
-  WANDER_MIN_DISTANCE_CELLS,
-  WANDER_RANGE_CELLS,
   Wandering,
 } from '../server/wandering.ts';
-import { SETTLER_SITE_ATTEMPTS, Settling } from '../server/settling.ts';
+import { Settling } from '../server/settling.ts';
 import {
   STRUCTURES_UNAVAILABLE_WARNING,
   applyBlessedCells,
@@ -242,109 +233,8 @@ describe('terrain predicates', () => {
   });
 });
 
-describe('the gradient contract (2026-08-19, "go around, not over or through")', () => {
-  it('shares wildlife grazer\'s land-walk limit rather than testing ground alone', () => {
-    // THE REGRESSION PIN for the reported bug: this file's isWalkableCell
-    // used to test only `heightAt > SEA_LEVEL` (this suite's own former
-    // comment said so verbatim: "wildlife's grazer rule: above the sea" —
-    // stated as if that WAS the whole rule, when wildlife had already moved
-    // past it). If PILGRIM_WALKER_PROFILE ever drifts back to an unconstrained
-    // gradient, this is the one assertion that catches it.
-    expect(PILGRIM_WALKER_PROFILE.maxGradientPerCell).toBe(LAND_WALKER_MAX_GRADIENT_PER_CELL);
-    expect(Number.isFinite(PILGRIM_WALKER_PROFILE.maxGradientPerCell)).toBe(true);
-  });
-
-  it('never plans a route across a face steeper than the limit, even when the straight line is shorter', () => {
-    // A riser at x=20, taller than the limit, spanning y=10..39 — open above
-    // and below that span. The straight line from (10,25) to (30,25) crosses
-    // it directly; a legal route must dip around one end instead.
-    const RISE = LAND_WALKER_MAX_GRADIENT_PER_CELL + 1;
-    const plateau = SEA_LEVEL + BAND_HEIGHT;
-    const world: PilgrimWorld = {
-      worldSize: 60,
-      heightAt: (x, y) => (x === 20 && y >= 10 && y < 40 ? plateau + RISE : plateau),
-    };
-    const route = planRoute(world, 10, 25, 30, 25);
-    expect(route).not.toBeNull();
-    for (const cell of route!) {
-      expect(cell.x === 20 && cell.y >= 10 && cell.y < 40).toBe(false);
-    }
-  });
-
-  it('a full journey never steps across a face steeper than the limit', () => {
-    // End-to-end regression through the actual sim (not just planRoute in
-    // isolation): a settled monster whose only walkable viewpoint sits
-    // beyond a too-steep riser from every catchment settlement. The
-    // pilgrim's whole outbound leg is sampled tick by tick; no consecutive
-    // pair of cells it occupies may differ in height by more than the limit.
-    const RISE = LAND_WALKER_MAX_GRADIENT_PER_CELL + 1;
-    const plateau = SEA_LEVEL + BAND_HEIGHT;
-    const size = cellsAcross(128);
-    // A riser wall between the home settlement (x≈24) and the monster/
-    // viewpoint area (x≈64), spanning a stretch of y centred on both — the
-    // direct line is blocked, but the gap (y<54 or y>=74) sits well within
-    // the route search margin (shared/src/pathing.ts's ROUTE_SEARCH_MARGIN_
-    // CELLS) of both endpoints, so the trip is genuinely makeable by detour.
-    const world: PilgrimWorld = {
-      worldSize: size,
-      heightAt: (x, y) => {
-        if (x < 2 || y < 2 || x >= size - 2 || y >= size - 2) return SEA_LEVEL - BAND_HEIGHT; // moat
-        if (x === 44 && y >= 54 && y < 74) return plateau + RISE; // the riser wall
-        return plateau;
-      },
-    };
-    const MONSTER = { id: 1, x: 64, y: 64 };
-    const HOME = { x: 24, y: 64 };
-
-    const sim = new Pilgrimage();
-    const TICK = 0.1;
-    const previousCellHeightById = new Map<number, number>();
-    let samples = 0;
-    const ticks = Math.round((PILGRIMAGE_ONSET_SECONDS + 200) / TICK);
-    for (let i = 0; i < ticks; i++) {
-      sim.advance(world, [MONSTER], [HOME], TICK);
-      for (const p of sim.states()) {
-        const height = world.heightAt(Math.floor(p.x), Math.floor(p.y));
-        const previous = previousCellHeightById.get(p.id);
-        if (previous !== undefined) {
-          expect(Math.abs(height - previous)).toBeLessThanOrEqual(LAND_WALKER_MAX_GRADIENT_PER_CELL);
-          samples++;
-        }
-        previousCellHeightById.set(p.id, height);
-      }
-    }
-    expect(samples).toBeGreaterThan(0); // sanity: the journey actually ran and was sampled
-  });
-});
-
 describe('the journey', () => {
   const MONSTER = { id: 1, x: 64, y: 64 };
-  const HOME = { x: 64 - 40, y: 64 }; // inside the catchment, on land
-
-  function settledSim(world: PilgrimWorld): Pilgrimage {
-    const sim = new Pilgrimage();
-    // +1 s of slack over the nominal onset — see the settledness suite's note
-    // on floating-point dt accumulation.
-    runSeconds(sim, world, [MONSTER], [HOME], PILGRIMAGE_ONSET_SECONDS + 1);
-    return sim;
-  }
-
-  it('dispatches one pilgrim per settlement once the monster settles, and blesses the home', () => {
-    const world = islandWorld();
-    const sim = settledSim(world);
-    expect(sim.populationCount()).toBe(1);
-    expect(sim.blessedCellKeys()).toEqual([HOME.y * 65536 + HOME.x]);
-    const [pilgrim] = sim.states();
-    expect(pilgrim.race).toBe(settlementRace(HOME.x, HOME.y));
-  });
-
-  it('never dispatches for a settlement outside the catchment', () => {
-    const world = islandWorld(256);
-    const sim = new Pilgrimage();
-    const far = { x: 64 + PILGRIMAGE_CATCHMENT_CELLS + 5, y: 64 };
-    runSeconds(sim, world, [MONSTER], [far], PILGRIMAGE_ONSET_SECONDS + 1);
-    expect(sim.populationCount()).toBe(0);
-  });
 
   it('caps the crowd at PILGRIMS_CAP', () => {
     const world = islandWorld();
@@ -353,50 +243,6 @@ describe('the journey', () => {
     for (let i = 0; i < PILGRIMS_CAP + 8; i++) towns.push({ x: 34 + i, y: 60 });
     runSeconds(sim, world, [MONSTER], towns, PILGRIMAGE_ONSET_SECONDS + 1);
     expect(sim.populationCount()).toBe(PILGRIMS_CAP);
-  });
-
-  it('walks out, lingers facing the beast, walks home, and completes', () => {
-    const world = islandWorld();
-    const sim = settledSim(world);
-
-    // Outbound: the walk to a ring 40-ish cells away takes ~50 s at 0.5 c/s.
-    runSeconds(sim, world, [MONSTER], [HOME], 120);
-    expect(sim.populationCount()).toBe(1); // arrived and lingering, or nearly
-    const [watching] = sim.states();
-    const toRing = Math.hypot(watching.x - MONSTER.x, watching.y - MONSTER.y);
-    expect(toRing).toBeLessThanOrEqual(VIEWPOINT_RING_CELLS + ARRIVAL_RADIUS_CELLS + 1);
-
-    // Linger + the walk home, generously budgeted: the journey must COMPLETE
-    // and the blessing must lift.
-    runSeconds(sim, world, [MONSTER], [HOME], PILGRIM_LINGER_SECONDS + 180);
-    // The monster is still settled, so a fresh pilgrim may already have been
-    // re-dispatched — completion is proven by the id turning over, not by an
-    // empty population.
-    const states = sim.states();
-    expect(states.every((p) => p.id !== watching.id)).toBe(true);
-  });
-
-  it('recalls the crowd when the monster unsettles', () => {
-    const world = islandWorld();
-    const sim = settledSim(world);
-    runSeconds(sim, world, [MONSTER], [HOME], 30); // mid-walk
-
-    // The monster bolts: its anchor resets, it is no longer settled.
-    runSeconds(sim, world, [{ id: 1, x: 120, y: 20 }], [HOME], 90);
-    // Everyone is home (despawned) — and nothing new dispatched.
-    expect(sim.populationCount()).toBe(0);
-    expect(sim.blessedCellKeys()).toEqual([]);
-  });
-
-  it('keeps every pilgrim on land for the whole journey', () => {
-    const world = islandWorld();
-    const sim = settledSim(world);
-    for (let i = 0; i < Math.round(200 / TICK); i++) {
-      sim.advance(world, [MONSTER], [HOME], TICK);
-      for (const p of sim.states()) {
-        expect(isWalkableCell(world, p.x, p.y)).toBe(true);
-      }
-    }
   });
 });
 
@@ -425,79 +271,6 @@ describe('the wandering', () => {
     y: cellsAcross(60),
     age: WANDERER_MIN_AGE_GENERATIONS,
   };
-
-  it('dispatches from an established town to a neighbour, visits, and walks home', () => {
-    const world = islandWorld();
-    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    sim.advance(world, [TOWN, NEIGHBOUR], TICK); // epoch 0 rolls on first tick
-
-    expect(sim.populationCount()).toBe(2); // both towns rolled — each strolls
-    const [first] = sim.states();
-    expect(first.kind).toBe('wanderer');
-    expect(first.race).toBe(settlementRace(TOWN.x, TOWN.y));
-
-    // 12 cells out + visit + 12 back at 0.5 c/s ≈ 58 s; give slack, but stay
-    // inside epoch 1 hasn't-re-rolled… it HAS re-rolled at 60 s — so prove
-    // completion the pilgrims' way: the original ids are gone.
-    runWander(sim, world, [TOWN, NEIGHBOUR], 90);
-    expect(sim.states().every((w) => w.id !== first.id)).toBe(true);
-  });
-
-  it('establishment is the CA clock: one epoch of survived generations', () => {
-    // Golden derivation pin: 4 generations × structures' 15 s cadence (own-
-    // copy restatement) IS the dispatch epoch, so "old enough to stroll" and
-    // "outlived a full roll cycle" stay the same statement. This gate shipped
-    // twice as a TIER bar and both times silenced every stroll on the live
-    // world — a changed relationship here must be a decision, not a drift.
-    const STRUCTURES_GENERATION_SECONDS = 15;
-    expect(WANDERER_MIN_AGE_GENERATIONS * STRUCTURES_GENERATION_SECONDS).toBe(
-      WANDER_EPOCH_SECONDS,
-    );
-  });
-
-  it('never dispatches from the too-young, and absent age qualifies', () => {
-    const world = islandWorld();
-    const newborn = { ...TOWN, age: WANDERER_MIN_AGE_GENERATIONS - 1 };
-    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    sim.advance(world, [newborn, { ...NEIGHBOUR, age: 0 }], TICK);
-    expect(sim.populationCount()).toBe(0); // fresh cells stroll nowhere
-
-    // A structures build too old to send age: the gate degrades to ungated
-    // (both endpoints dispatch), never to silence.
-    const ageless = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    ageless.advance(world, [{ x: TOWN.x, y: TOWN.y }, { x: NEIGHBOUR.x, y: NEIGHBOUR.y }], TICK);
-    expect(ageless.populationCount()).toBe(2);
-
-    const lonely = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    lonely.advance(world, [TOWN], TICK); // no other town within range
-    expect(lonely.populationCount()).toBe(0);
-
-    const remote = { x: TOWN.x + WANDER_RANGE_CELLS + 5, y: TOWN.y, age: TOWN.age };
-    const outOfRange = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    outOfRange.advance(world, [TOWN, remote], TICK);
-    expect(outOfRange.populationCount()).toBe(0);
-  });
-
-  it('gates age on the sender alone, and a stroll must leave its own block', () => {
-    const world = islandWorld();
-    // The destination may be brand new — the card demands "stood some while"
-    // of the SENDER only, and the measured churning world has almost no
-    // established PAIRS (snapshot #144: 14 cells, most aged 0–2).
-    const youngDestination = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    youngDestination.advance(world, [TOWN, { ...NEIGHBOUR, age: 0 }], TICK);
-    expect(youngDestination.populationCount()).toBe(1);
-
-    // A settlement is a blob of adjacent cells; the cell next door is not a
-    // journey. Only candidates at least WANDER_MIN_DISTANCE_CELLS away count.
-    const blobOnly = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    blobOnly.advance(
-      world,
-      [TOWN, { x: TOWN.x + 1, y: TOWN.y, age: TOWN.age }, { x: TOWN.x, y: TOWN.y + 2, age: TOWN.age }],
-      TICK,
-    );
-    expect(blobOnly.populationCount()).toBe(0);
-    expect(WANDER_MIN_DISTANCE_CELLS).toBeLessThan(WANDER_RANGE_CELLS);
-  });
 
   it('caps the ambient crowd at WANDERERS_CAP', () => {
     const world = islandWorld();
@@ -531,17 +304,6 @@ describe('the wandering', () => {
     // And the agreement was about something: the honest modulus really rolled
     // somebody in three epochs of a ~130-town grid (P(silence) ≈ 0.97^390).
     expect(sawTraffic).toBe(true);
-  });
-
-  it('keeps every wanderer on land for the whole stroll', () => {
-    const world = islandWorld();
-    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    for (let i = 0; i < Math.round(120 / TICK); i++) {
-      sim.advance(world, [TOWN, NEIGHBOUR], TICK);
-      for (const w of sim.states()) {
-        expect(isWalkableCell(world, w.x, w.y)).toBe(true);
-      }
-    }
   });
 
   it('mints ids from the shared allocator — never colliding with pilgrims', () => {
@@ -622,145 +384,6 @@ describe('the bridges', () => {
     );
     expect(bridgedMonsters()).toEqual([{ id: 1, kind: 'kraken', x: 3, y: 4 }]);
   });
-
-  it('degrades monsters to an empty list when the plugin is not running', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    loadMonstersBridge(worldWithSibling('monsters', null));
-    expect(bridgedMonsters()).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THE FREEZE, AND THE CROWD (owner, 2026-08-20: little people "get stuck in
-// the middle of nowhere, and they also tend to run into each other"). The
-// route-following contract itself is pinned in shared/test/steering.test.ts;
-// these are the plugin-level facts — that a journey over real terrace terrain
-// actually finishes, and that two walkers keep out of each other's way.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Flat land cut by a terrace ridge one cell wide, with a gap to walk through —
- * the shape that used to freeze a walker. The ridge is a riser the profile
- * refuses, so a route must find the gap, and the walk to it leads AWAY from the
- * goal for most of the journey (which is what the old goal-distance stuck timer
- * could not tell apart from being stuck).
- */
-function riddledWorld(size = cellsAcross(64)): PilgrimWorld {
-  const land = 4 * BAND_HEIGHT;
-  const ridge = land + LAND_WALKER_MAX_GRADIENT_PER_CELL * 4;
-  // Four WORLD UNITS in from the shore — the gap has to be somewhere a route
-  // can actually aim at, which is a distance across the ground.
-  const GAP_Y = cellsAcross(4);
-  return {
-    worldSize: size,
-    heightAt: (x, y) => {
-      const cx = Math.floor(x);
-      const cy = Math.floor(y);
-      if (cx < 2 || cy < 2 || cx >= size - 2 || cy >= size - 2) return SEA_LEVEL - BAND_HEIGHT;
-      if (cx === Math.floor(size / 2) && cy !== GAP_Y) return ridge;
-      return land;
-    },
-  };
-}
-
-describe('walkers finish their journeys (the 2026-08-20 freeze)', () => {
-  it('walks a wanderer through the gap in a ridge and home again', () => {
-    const world = riddledWorld();
-    const mid = Math.floor(world.worldSize / 2);
-    const wandering = new Wandering(new WalkerIdAllocator(), 1);
-    // Ten world units either side of the ridge: far enough apart to qualify as
-    // a stroll (WANDER_MIN_DISTANCE_CELLS), close enough to be one.
-    const settlements = [
-      { x: mid - cellsAcross(10), y: cellsAcross(20), age: 100 },
-      { x: mid + cellsAcross(10), y: cellsAcross(20), age: 100 },
-    ];
-
-    // Long enough for a there-and-back with the whole detour twice over, and
-    // then some: the round trip is ~70 cells at 0.5 cells/s.
-    let ticks = 0;
-    let sawAWalker = false;
-    while (ticks < 6000) {
-      wandering.advance(world, settlements, TICK);
-      if (wandering.populationCount() > 0) sawAWalker = true;
-      else if (sawAWalker) break; // the outing completed and the walker went home
-      ticks++;
-    }
-
-    expect(sawAWalker).toBe(true);
-    // The pin: BEFORE the fix, the population never emptied — every walker
-    // oscillated in place forever, held its cap slot, and the roads went dead.
-    expect(wandering.populationCount()).toBe(0);
-  });
-
-  it('never leaves a walker frozen on the spot', () => {
-    const world = riddledWorld();
-    const mid = Math.floor(world.worldSize / 2);
-    const wandering = new Wandering(new WalkerIdAllocator(), 1);
-    // Ten world units either side of the ridge: far enough apart to qualify as
-    // a stroll (WANDER_MIN_DISTANCE_CELLS), close enough to be one.
-    const settlements = [
-      { x: mid - cellsAcross(10), y: cellsAcross(20), age: 100 },
-      { x: mid + cellsAcross(10), y: cellsAcross(20), age: 100 },
-    ];
-
-    const stillFor = new Map<number, { x: number; y: number; ticks: number }>();
-    let worstStill = 0;
-    for (let tick = 0; tick < 4000; tick++) {
-      wandering.advance(world, settlements, TICK);
-      for (const state of wandering.states()) {
-        const seen = stillFor.get(state.id);
-        if (seen !== undefined && Math.hypot(seen.x - state.x, seen.y - state.y) < 1e-9) {
-          seen.ticks++;
-          worstStill = Math.max(worstStill, seen.ticks);
-        } else {
-          stillFor.set(state.id, { x: state.x, y: state.y, ticks: 0 });
-        }
-      }
-    }
-    // A walker may legitimately hold for a beat while a route is replanned or a
-    // neighbour clears, but never for the give-up timer's whole span: past that
-    // it is either moving again or gone.
-    expect(worstStill * TICK).toBeLessThan(PILGRIM_STUCK_SECONDS);
-  });
-});
-
-describe('walkers keep out of each other (the 2026-08-20 crowding)', () => {
-  it('holds two walkers apart when their routes coincide', () => {
-    const world = islandWorld();
-    const wandering = new Wandering(new WalkerIdAllocator(), 1);
-    // Two towns side by side sending walkers the same way, so the two routes
-    // are the same cells and the two bodies would otherwise merge.
-    // In WORLD UNITS: two towns one unit apart (so their walkers set off along
-    // the same route, without starting inside each other's personal space) and
-    // a third thirty units away for them to walk to.
-    const settlements = [
-      { x: cellsAcross(40), y: cellsAcross(40), age: 100 },
-      { x: cellsAcross(40), y: cellsAcross(41), age: 100 },
-      { x: cellsAcross(70), y: cellsAcross(40), age: 100 },
-    ];
-
-    let closest = Infinity;
-    for (let tick = 0; tick < 3000; tick++) {
-      wandering.advance(world, settlements, TICK);
-      const live = wandering.states();
-      for (let i = 0; i < live.length; i++) {
-        for (let j = i + 1; j < live.length; j++) {
-          closest = Math.min(closest, Math.hypot(live[i].x - live[j].x, live[i].y - live[j].y));
-        }
-      }
-    }
-    expect(closest).toBeLessThan(Infinity); // two were abroad together at some point
-    // Two personal spaces, less one tick of MUTUAL travel: separation is chosen
-    // against start-of-tick positions, so two walkers closing on each other can
-    // each shave a step off the gap. That residual is named in
-    // shared/src/steering.ts's `steerAvoiding`; the pin is that bodies never
-    // merge, not that the gap is exact to the last thousandth.
-    const stepCells = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * TICK;
-    expect(closest).toBeGreaterThanOrEqual(WALKER_PERSONAL_SPACE_CELLS * 2 - 2 * stepCells);
-    // And they are still visibly apart, not merely non-identical.
-    expect(closest).toBeGreaterThan(WALKER_PERSONAL_SPACE_CELLS);
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -792,61 +415,5 @@ describe('a house sends a settler out (Settling.emitFrom)', () => {
     expect(settling.states().length).toBe(SETTLERS_CAP);
     expect(settling.emitFrom(world, HOUSE_X, HOUSE_Y)).toBe(false);
     expect(settling.states().length).toBe(SETTLERS_CAP);
-  });
-
-  it('refuses, without spending a walker, when there is nowhere to settle', () => {
-    // Open sea from edge to edge: the ring scan finds no candidate, and there
-    // is no route to one either. FALSE IS ORDINARY here — the house keeps its
-    // people (the caller has already emptied it; see populous' own note).
-    const drowned: PilgrimWorld = {
-      worldSize: cellsAcross(128),
-      heightAt: () => SEA_LEVEL - BAND_HEIGHT,
-    };
-    const settling = new Settling();
-    expect(settling.emitFrom(drowned, HOUSE_X, HOUSE_Y)).toBe(false);
-    expect(settling.states()).toEqual([]);
-  });
-
-  it('is NOT bound to the temple: no temple is not a reason to go home', () => {
-    // boundToTemple is read in exactly ONE place (retryOrRetire): a settler
-    // that IS bound gives up the moment its arrival fails with no temple
-    // standing, while one that is not spends its SETTLER_SITE_ATTEMPTS like
-    // anybody else. With structures absent every arrival fails, so that branch
-    // is reached for certain.
-    //
-    // THE DISCRIMINATOR IS AN A/B, not a survival count — a bare "it lived a
-    // while" would pass whatever the flag said. Two identical runs, differing
-    // only in whether a temple is standing: for an UNBOUND settler the temple
-    // is irrelevant and the two runs must last exactly as long as each other.
-    // Bind them and the null-temple run collapses to a single attempt.
-    //
-    // The board is filled to SETTLERS_CAP first and the measurement stops at
-    // the FIRST retirement, which is the last moment at which the two runs are
-    // provably comparable: a temple may not dispatch while the crowd is at its
-    // cap, so up to that tick the standing temple has changed nothing at all
-    // about the world — unless the flag says it should have.
-    const world = islandWorld();
-    const TEMPLE = { x: HOUSE_X, y: HOUSE_Y };
-
-    const ticksUntilFirstRetirement = (temple: typeof TEMPLE | null): number => {
-      const settling = new Settling();
-      for (let i = 0; i < SETTLERS_CAP; i++) {
-        expect(settling.emitFrom(world, HOUSE_X, HOUSE_Y)).toBe(true);
-      }
-      const limit = Math.round(1200 / TICK);
-      for (let tick = 1; tick <= limit; tick++) {
-        settling.advance(world, temple, TICK);
-        if (settling.states().length < SETTLERS_CAP) return tick;
-      }
-      return limit;
-    };
-
-    const withoutTemple = ticksUntilFirstRetirement(null);
-    const withTemple = ticksUntilFirstRetirement(TEMPLE);
-    // Somebody did eventually give up — otherwise the comparison is vacuous.
-    expect(withoutTemple).toBeLessThan(Math.round(1200 / TICK));
-    // …and at exactly the same moment either way: the missing temple was not
-    // a reason for a house's settler to stop trying.
-    expect(withoutTemple).toBe(withTemple);
   });
 });

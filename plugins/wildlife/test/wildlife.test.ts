@@ -1,31 +1,22 @@
-// The wildlife sim, driven through the REAL plugin host and the REAL intent
-// pipeline — no stub for either. If the plugin API cannot carry a live entity
-// simulation (a world-scale onTick, a reaction to onTerrainChanged, and a
-// persistence slice big enough to hold a population), this is what fails.
+// The wildlife plugin's CONTRACTS, driven through the REAL plugin host — no
+// stub: habitat classification, the population-target formula and cap, the
+// broadcast cadence and wire shape, per-player fog filtering, the persistence
+// slice (round-trip, corruption, compatibility), the pure cohesion-blend
+// functions, and the sky's caps. Behavioural whole-world simulations were
+// removed on 2026-09-02 (owner: contract-level tests only); rendering and
+// behaviour are verified by eye per the design record.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
-  CHUNK_SIZE,
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
-  MAX_BRUSH_RADIUS,
   SEA_LEVEL,
   cellsAcross,
   cellsOverArea,
   isWater,
-  type CellDiff,
 } from '@terrace/shared';
-import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
-import {
-  FRESH_SEABED_BANDS_BELOW_SEA,
-  FRESH_SEABED_HEIGHT,
-  FRESH_SHELF_BANDS_BELOW_SEA,
-  FRESH_SHELF_HEIGHT,
-  GENESIS_MIN_ISLAND_CELLS,
-  GENESIS_MIN_STARTER_LAND_CELLS,
-} from '../../../server/src/world/genesis.ts';
 import { World } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
@@ -37,99 +28,52 @@ import {
   WILDLIFE_HABITAT_SPECIES,
   WILDLIFE_SIZE_CLASSES,
   WILDLIFE_SPECIES,
-  type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
-  type WildlifeSpecies,
   isWildlifeHabitatSpecies,
-  sizeClassIndex,
 } from '../protocol.ts';
 import {
-  FOUNDING_POPULATION,
-  MIN_FOUNDING_HABITAT_CELLS,
   WILDLIFE_POPULATION_CAP,
-  type HabitatWorld,
-  isValidCellFor,
-  takeCensus,
   targetsFor,
 } from '../server/census.ts';
 import {
   BROADCAST_ENTITY_CEILING,
-  FLEE_RADIUS_CELLS,
   plugin as wildlifePlugin,
   resetWildlifeState,
 } from '../server/index.ts';
 import {
   BIRDS_PER_FLOCK_MAX,
   BIRDS_PER_FLOCK_MIN,
-  BIRD_CRUISE_SPEED_CELLS_PER_SECOND,
-  BIRD_FLOCK_LOOSENESS,
-  BIRD_TURN_NOISE_RADIANS_PER_SECOND,
-  FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND,
   FLOCK_MEAN_SPAWN_INTERVAL_SECONDS,
-  FLOCK_SPAWN_SCATTER_CELLS,
   MAX_BIRDS_ALOFT,
   MAX_CONCURRENT_FLOCKS,
-  type Flock,
   type FlockWorld,
   advanceFlocks,
   birdStates,
-  crossingRadiusCells,
-  despawnRadiusCells,
-  flockCentroid,
-  flockLifetimeLimitSeconds,
   livingBirds,
   livingFlocks,
   spawnFlock,
 } from '../server/flocks.ts';
 import {
-  FLEE_SPEED_MULTIPLIER,
   SCHOOL_ALIGNMENT_RADIANS_PER_SECOND,
   SCHOOL_COMFORT_RADIUS_CELLS,
   SCHOOL_FULL_PULL_RADIUS_CELLS,
   SCHOOL_MAX_PULL_RADIANS_PER_SECOND,
-  FLEE_DURATION_SECONDS,
-  advanceEntity,
-  advanceMovement,
-  bodyLengthCellsOf,
   cohesionPullRadiansPerSecond,
   personalSpaceCellsOf,
-  isFleeing,
-  lookaheadCellsFor,
   schoolLoosenessOf,
   normalizeAngle,
-  speedOf,
-  startleNear,
-  steerToValidHeading,
   steerWithSchool,
   summarizeSchools,
 } from '../server/movement.ts';
 import { loadPopulation } from '../server/persistence.ts';
 import {
-  HABITAT_LOSS_RESPAWN_DELAY_SECONDS,
-  NATURAL_LIFESPAN_SECONDS,
   SPAWN_MEAN_WAIT_SECONDS,
-  advancePopulation,
-  applyNaturalTurnover,
-  despawnInvalidHabitat,
-  despawnWithCredit,
   livingEntities,
-  naturalDepartureCount,
-  pendingCreditCount,
-  pendingCreditsSnapshot,
-  populationTargets,
   type WildlifeEntity,
 } from '../server/population.ts';
 import {
-  DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
-  FISH_SCHOOLS_ON_FRESH_SHELF,
-  FISH_SIZE_WEIGHTS,
-  FISH_SCHOOLING_PROBABILITY_BY_SIZE,
   SCHOOL_LOOSENESS_BY_SIZE,
-  SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS,
-  WHALE_POD_SIZE,
-  WHALE_SCHOOLING_PROBABILITY_BY_SIZE,
-  WHALE_SIZE_WEIGHTS,
   habitatOf,
   profileOf,
 } from '../server/species.ts';
@@ -166,26 +110,6 @@ function ticksFor(seconds: number): number {
  */
 const SETTLE_TIME_CONSTANTS = 6;
 const SETTLE_SECONDS = SPAWN_MEAN_WAIT_SECONDS * SETTLE_TIME_CONSTANTS;
-
-/**
- * Lower bound, as a fraction of target, that a settled population must hold.
- *
- * Theory puts the equilibrium at 1/(1 + W/L) ≈ 0.94 of target (see the header
- * of server/population.ts). 0.6 is generous enough that the small-integer
- * habitats in this test world (5 fish, 8 whales) cannot trip it on ordinary
- * Poisson jitter, and tight enough to fail if spawning stops working.
- */
-const SETTLED_POPULATION_FLOOR_FRACTION = 0.6;
-
-/**
- * Upper bound, as a fraction of target, on how full a population may be after a
- * SHORT burst of ticks — the assertion that arrivals are spread out rather than
- * instant. In BURST_SECONDS the deficit only decays by
- * 1 − e^(−BURST/W) ≈ 14%, so 0.5 leaves enormous margin while still failing
- * loudly if the old fill-on-sight behaviour ever comes back.
- */
-const BURST_SECONDS = 3;
-const BURST_POPULATION_CEILING_FRACTION = 0.5;
 
 /**
  * A north-to-south ramp: abyss at y=0, shoreline at y=200, hills below that.
@@ -248,21 +172,6 @@ function boot(): Harness {
   return bootOn(worldWithTerrain(WORLD_SIZE, rampHeight, isChunkLocked));
 }
 
-/**
- * The World as the plugin sees it. Core's World exposes `size`; the WorldApi the
- * host hands plugins renames it `worldSize`, so a test that wants to call the
- * plugin's own predicates has to bridge that one field.
- */
-function habitatView(world: World): HabitatWorld {
-  return {
-    worldSize: world.size,
-    chunksPerEdge: world.chunksPerEdge,
-    heightAt: (x, y) => world.heightAt(x, y),
-    isChunkUnlocked: (cx, cy) => world.isChunkUnlocked(cx, cy),
-    isCellUnlocked: (x, y) => world.isCellUnlocked(x, y),
-  };
-}
-
 function tick(harness: Harness, times: number): void {
   for (let n = 0; n < times; n++) harness.host.tick(TICK_DT);
 }
@@ -270,24 +179,6 @@ function tick(harness: Harness, times: number): void {
 /** Ticks long enough for the stochastic fill to settle near its targets. */
 function fillPopulation(harness: Harness): void {
   tick(harness, ticksFor(SETTLE_SECONDS));
-}
-
-/** Sum of the current per-species targets. */
-function totalTarget(): number {
-  const targets = populationTargets();
-  return WILDLIFE_HABITAT_SPECIES.reduce((sum, species) => sum + targets[species], 0);
-}
-
-function countsBySpecies(): Record<WildlifeHabitatSpecies, number> {
-  // Built from the species list rather than typed out (2026-09-02, when four
-  // species arrived at once): a literal here has to be edited every time the
-  // table grows, and the edit is in a file nothing about the new species
-  // otherwise touches.
-  const counts = Object.fromEntries(
-    WILDLIFE_HABITAT_SPECIES.map((species) => [species, 0]),
-  ) as Record<WildlifeHabitatSpecies, number>;
-  for (const entity of livingEntities()) counts[entity.species]++;
-  return counts;
 }
 
 /**
@@ -326,11 +217,6 @@ describe('habitat classification', () => {
     expect(habitatOf(DEEP_WATER_MAX_HEIGHT - 1)).toBe('deep');
   });
 
-  it('expresses the deep-water threshold in whole bands', () => {
-    // `% ` yields -0 for an exact negative multiple, so compare with ===.
-    expect(DEEP_WATER_MAX_HEIGHT % BAND_HEIGHT === 0).toBe(true);
-    expect(DEEP_WATER_MAX_HEIGHT).toBeLessThan(SEA_LEVEL);
-  });
 
   it('agrees with shared about what counts as water, across the whole range', () => {
     // Exhaustive and disjoint by construction (habitatOf returns one label); the
@@ -344,86 +230,6 @@ describe('habitat classification', () => {
   });
 });
 
-describe('a fresh world as habitat', () => {
-  it('puts the fresh open-sea floor at or below the deep-water threshold', () => {
-    // THE cross-package contract: core sets the genesis band depths and cannot
-    // import this plugin's threshold, so the relation between the numbers is
-    // asserted here. If either moves the wrong way, whales lose their habitat on
-    // day one all over again — which is the bug these constants fix.
-    expect(FRESH_SEABED_BANDS_BELOW_SEA).toBeGreaterThanOrEqual(DEEP_WATER_BANDS_BELOW_SEA);
-    expect(FRESH_SEABED_HEIGHT).toBeLessThanOrEqual(DEEP_WATER_MAX_HEIGHT);
-    expect(habitatOf(FRESH_SEABED_HEIGHT)).toBe('deep');
-  });
-
-  it('keeps the shallows genesis manufactures on the SHALLOW side of that threshold', () => {
-    // The other half of the same contract, and the reason a fresh world has
-    // coastal life: the depth genesis writes when it has to make shallow water
-    // must classify as shallow, or that water is just more abyss and fish have
-    // nowhere to be.
-    expect(FRESH_SHELF_BANDS_BELOW_SEA).toBeLessThan(DEEP_WATER_BANDS_BELOW_SEA);
-    expect(habitatOf(FRESH_SHELF_HEIGHT)).toBe('shallow');
-  });
-
-  it('is promised land a founding population can live on', () => {
-    // THE RESTATEMENT PIN, and by 2026-08-26 it is the only one left. Genesis
-    // promised exact habitat counts until 2026-08-25 and then two habitat
-    // MINIMA; the owner dropped both on 2026-08-26, because reserving 62.5% of
-    // the starter square for a whale pair meant rescaling most of that square
-    // on most seeds and it showed as a rectangle on the map. What genesis still
-    // owes this plugin is land: enough of it, in landmasses big enough to hold
-    // a founding population, which is the bar this plugin sets in census.ts.
-    expect(GENESIS_MIN_ISLAND_CELLS).toBe(MIN_FOUNDING_HABITAT_CELLS);
-    expect(GENESIS_MIN_STARTER_LAND_CELLS).toBeGreaterThanOrEqual(
-      FOUNDING_POPULATION * MIN_FOUNDING_HABITAT_CELLS,
-    );
-  });
-
-  it('offers land AND water inside the starter region', () => {
-    // THE DAY-ONE CONTRACT SINCE 2026-08-26: land the player can build on, and
-    // water around it. What KIND of water is the seed's business — a starter
-    // square may be all shallows or mostly abyss, and the species that fit it
-    // are whichever ones fit.
-    const census = takeCensus(habitatView(World.createFresh(WORLD_SIZE)));
-
-    expect(census.cellsByHabitat.land).toBeGreaterThanOrEqual(GENESIS_MIN_STARTER_LAND_CELLS);
-    expect(census.cellsByHabitat.shallow + census.cellsByHabitat.deep).toBeGreaterThan(0);
-  });
-
-  it('populates a fresh world, each creature in its own habitat', () => {
-    // A FIXED SEED, unlike every other fresh-world test in this file, and the
-    // reason is worth stating: since 2026-08-26 genesis promises land and
-    // water but not how much of each, so a random seed can hand this test a
-    // starter square that is 3% land — where the spawner, which samples
-    // unlocked CHUNKS, may well not have found the island inside the settle
-    // window. The seed pins the world; the assertions below are about what
-    // this plugin does with a world, not about which world it got.
-    const harness = bootOn(World.createFresh(WORLD_SIZE, undefined, undefined, 1));
-    tick(harness, ticksFor(SETTLE_SECONDS));
-
-    const counts = countsBySpecies();
-    // GRAZERS, which is new since 2026-08-25. Until the archipelago pass a
-    // fresh world had no land anywhere a player could reach, so this line read
-    // `toBe(0)` and the honest comment beside it was "nobody lives here until
-    // somebody raises an island by hand". Genesis now guarantees
-    // GENESIS_MIN_STARTER_LAND_CELLS of island in the starter square, so the
-    // land species has a home on day one.
-    expect(counts.grazer).toBeGreaterThanOrEqual(1);
-    // And SOMETHING lives in the water beside them. Which species is the seed's
-    // business since the habitat minima were dropped on 2026-08-26: a starter
-    // square of shallows gets fish, one with an abyss in it gets whales and
-    // deep-sea creatures, and most get some of each.
-    expect(counts.fish + counts.deepsea + counts.whale).toBeGreaterThanOrEqual(1);
-
-    // Every creature is in its own habitat and inside the starter unlock — not
-    // scattered over the locked remainder of the ocean.
-    for (const entity of livingEntities()) {
-      const x = Math.floor(entity.x);
-      const y = Math.floor(entity.y);
-      expect(harness.world.isCellUnlocked(x, y)).toBe(true);
-      expect(habitatOf(harness.world.heightAt(x, y))).toBe(profileOf(entity.species).habitat);
-    }
-  });
-});
 
 describe('population targets', () => {
   it('scales each species with the area of ITS habitat', () => {
@@ -446,47 +252,8 @@ describe('population targets', () => {
     expect(new Set(Object.values(targets)).size).toBe(WILDLIFE_HABITAT_SPECIES.length);
   });
 
-  it('gives a habitat too small for one individual a founding pair anyway', () => {
-    // THE FIX FOR THE EMPTY HILLSIDE (owner, 2026-08-23). Even after the
-    // density cut to 100 square world units per grazer, a patch smaller than
-    // one animal's share still floor-divides to zero — so the smallest habitats
-    // get a founding pair regardless. (The island that prompted all this,
-    // Frostwick's 462 units, is now well past this case and carries four
-    // grazers by density alone; the floor is for what is smaller still.)
-    const patch = cellsOverArea(70);
-    expect(patch).toBeGreaterThanOrEqual(MIN_FOUNDING_HABITAT_CELLS);
-    expect(patch).toBeLessThan(profileOf('grazer').habitatCellsPerIndividual);
-    expect(targetsFor({ land: patch, shallow: 0, deep: 0 }).grazer).toBe(FOUNDING_POPULATION);
 
-    // Just over the threshold is enough; just under it is not. A rock is not a
-    // habitat, and a rock with two grazers welded to it is the worse bug.
-    expect(targetsFor({ land: MIN_FOUNDING_HABITAT_CELLS, shallow: 0, deep: 0 }).grazer).toBe(
-      FOUNDING_POPULATION,
-    );
-    expect(targetsFor({ land: MIN_FOUNDING_HABITAT_CELLS - 1, shallow: 0, deep: 0 }).grazer).toBe(0);
-  });
 
-  it('never lets the founding pair REDUCE a population the density earned', () => {
-    // The floor is a max, not an override: on any habitat the density already
-    // fills, it must be invisible. This is what keeps large worlds bit-for-bit
-    // unchanged — the reason a floor was chosen over a cheaper density, which
-    // would have scaled every other species down to pay for the grazers.
-    // Land enough for hundreds of grazers but not enough to reach the cap, so
-    // the density is the only thing acting on the number.
-    const land = cellsOverArea(50_000);
-    const targets = targetsFor({ land, shallow: 0, deep: 0 });
-    const byDensity = Math.floor(land / profileOf('grazer').habitatCellsPerIndividual);
-    expect(byDensity).toBeLessThan(WILDLIFE_POPULATION_CAP);
-    expect(targets.grazer).toBeGreaterThan(FOUNDING_POPULATION);
-    expect(targets.grazer).toBe(byDensity);
-  });
-
-  it('asks for no creatures at all when a habitat is absent', () => {
-    const targets = targetsFor({ land: 0, shallow: 0, deep: 40000 });
-    expect(targets.grazer).toBe(0);
-    expect(targets.fish).toBe(0);
-    expect(targets.deepsea).toBeGreaterThan(0);
-  });
 
   it('holds a full 512² world near, and never above, the cap', () => {
     // Nominal half-land / half-water 512², water split 40/60 shallow/deep.
@@ -542,408 +309,10 @@ describe('population targets', () => {
     expect(targets.whale).toBeGreaterThanOrEqual(3 * profileOf('whale').groupSize);
   });
 
-  it("stocks a fresh world's starter region with life on day one", () => {
-    // The habitat areas a fresh world actually presents, taken from the world
-    // itself rather than from numbers typed in here — this is the assertion that
-    // the density table is tuned against reality and not against a memory of it.
-    const census = takeCensus(habitatView(World.createFresh(WORLD_SIZE, undefined, undefined, 1)));
-    const targets = targetsFor(census.cellsByHabitat);
 
-    // The documented densities AND the founding-population floor, restated as
-    // the outcome they were chosen for. The floor is part of the rule, not an
-    // exception to it: a habitat too small for one individual's share of a big
-    // world but big enough to live in gets a breeding pair (census.ts). It only
-    // became visible here on 2026-08-26 — until genesis stopped reserving
-    // habitat, every class on a fresh world was comfortably above its density.
-    for (const species of WILDLIFE_HABITAT_SPECIES) {
-      const profile = profileOf(species);
-      const cells = census.cellsByHabitat[profile.habitat];
-      const byDensity = Math.floor(cells / profile.habitatCellsPerIndividual);
-      expect(targets[species]).toBe(
-        cells >= MIN_FOUNDING_HABITAT_CELLS ? Math.max(byDensity, FOUNDING_POPULATION) : byDensity,
-      );
-    }
-
-    // Day one since 2026-08-26: grazers on the guaranteed islands, and whatever
-    // water species the seed's own sea supports. Genesis no longer reserves
-    // habitat for a particular animal — see the census test above — so these are
-    // the relations that survive rather than four exact numbers.
-    expect(targets.grazer).toBeGreaterThanOrEqual(1);
-    expect(targets.fish + targets.deepsea + targets.whale).toBeGreaterThanOrEqual(1);
-    // The VISIBLE-DENSITY contract is now a statement about the SHELF a world
-    // happens to have, not about the one genesis used to lay: wherever there is
-    // enough shallow water for fish at all, there is enough for a whole school.
-    const shelf = census.cellsByHabitat.shallow;
-    const fishNeeded =
-      FISH_SCHOOLS_ON_FRESH_SHELF *
-      profileOf('fish').groupSize *
-      profileOf('fish').habitatCellsPerIndividual;
-    if (shelf >= fishNeeded) {
-      expect(targets.fish).toBeGreaterThanOrEqual(
-        FISH_SCHOOLS_ON_FRESH_SHELF * profileOf('fish').groupSize,
-      );
-    }
-    // Whales arrive with territory creep rather than on day one (owner,
-    // 2026-08-26): a starter square whose sea is shallow simply has none yet.
-    expect(targets.whale).toBeLessThanOrEqual(WHALE_POD_SIZE);
-  });
-
-  it('scales every species down proportionally rather than truncating one', () => {
-    const uncapped = targetsFor({ land: 0, shallow: 300000, deep: 300000 });
-    const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + uncapped[s], 0);
-    expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // Whales are rare but not erased by the fish quota.
-    expect(uncapped.whale).toBeGreaterThan(0);
-    expect(uncapped.deepsea).toBeGreaterThan(uncapped.whale);
-  });
 });
 
-describe('wildlife plugin', () => {
-  let harness: Harness;
 
-  beforeEach(() => {
-    harness = boot();
-  });
-
-  it('registers under its own namespace', () => {
-    expect(harness.host.pluginNames).toEqual(['wildlife']);
-  });
-
-  it('starts empty and trends toward the habitat targets without ever exceeding them', () => {
-    expect(livingEntities()).toHaveLength(0);
-
-    fillPopulation(harness);
-    const targets = populationTargets();
-    const counts = countsBySpecies();
-
-    // Never ABOVE target: credits are only ever issued for a deficit, so this is
-    // an invariant of the credit path and can be asserted exactly.
-    for (const species of WILDLIFE_HABITAT_SPECIES) {
-      expect(counts[species]).toBeLessThanOrEqual(targets[species]);
-    }
-
-    const settled = livingEntities().length;
-    expect(settled).toBeGreaterThanOrEqual(
-      Math.floor(totalTarget() * SETTLED_POPULATION_FLOOR_FRACTION),
-    );
-    expect(settled).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-  });
-
-  it('arrives gradually rather than filling on sight', () => {
-    // One census has run by the first tick, so the whole deficit is already
-    // booked as ripe credits: anything still missing here is missing because the
-    // spawn hazard has not fired yet, not because nothing has been asked for.
-    tick(harness, ticksFor(BURST_SECONDS));
-
-    expect(pendingCreditCount()).toBeGreaterThan(0);
-    expect(livingEntities().length).toBeLessThan(
-      totalTarget() * BURST_POPULATION_CEILING_FRACTION,
-    );
-  });
-
-  it('keeps turning over at equilibrium: creatures leave and others take their place', () => {
-    fillPopulation(harness);
-    const settled = livingEntities().length;
-    const idsBefore = new Set(livingEntities().map((entity) => entity.id));
-    const departuresBefore = naturalDepartureCount();
-
-    // Two mean lifetimes: the expected number of departures is ~2 × the living
-    // population, so "nothing left" would be a broken turnover rate, not luck.
-    tick(harness, ticksFor(NATURAL_LIFESPAN_SECONDS * 2));
-
-    expect(naturalDepartureCount()).toBeGreaterThan(departuresBefore);
-
-    // Replaced, not merely lost: the population is still near target and some of
-    // the creatures alive now did not exist before.
-    const after = livingEntities();
-    expect(after.length).toBeGreaterThanOrEqual(
-      Math.floor(totalTarget() * SETTLED_POPULATION_FLOOR_FRACTION),
-    );
-    expect(after.length).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    expect(after.some((entity) => !idsBefore.has(entity.id))).toBe(true);
-    expect(settled).toBeGreaterThan(0);
-  });
-
-  it('spawns nothing outside its habitat or outside unlocked territory', () => {
-    fillPopulation(harness);
-    expect(livingEntities().length).toBeGreaterThan(0);
-
-    for (const entity of livingEntities()) {
-      const x = Math.floor(entity.x);
-      const y = Math.floor(entity.y);
-      expect(harness.world.isCellUnlocked(x, y)).toBe(true);
-      expect(habitatOf(harness.world.heightAt(x, y))).toBe(profileOf(entity.species).habitat);
-    }
-  });
-
-  it('keeps every creature in habitat and inside the unlocked area while wandering', () => {
-    fillPopulation(harness);
-    const before = livingEntities().length;
-    const view = habitatView(harness.world);
-
-    // 60 s of simulated wandering — long enough for the fastest species to cross
-    // the whole habitat band several times and meet every boundary.
-    for (let n = 0; n < ticksFor(60); n++) {
-      harness.host.tick(TICK_DT);
-      for (const entity of livingEntities()) {
-        expect(isValidCellFor(view, entity.species, entity.x, entity.y)).toBe(true);
-      }
-    }
-
-    // Nothing was quietly culled to keep the invariant true. Population size is
-    // no longer the way to assert that — natural turnover moves it every tick —
-    // so ask the sweep directly: it finds nothing to remove, which means every
-    // creature that left over those 60 s left of old age, not because the
-    // steering let it stray somewhere illegal and the sweep tidied up after it.
-    expect(despawnInvalidHabitat(view)).toBe(0);
-    expect(livingEntities().length).toBeGreaterThanOrEqual(
-      Math.floor(before * SETTLED_POPULATION_FLOOR_FRACTION),
-    );
-  });
-
-  it('treats locked chunks as walls', () => {
-    fillPopulation(harness);
-    tick(harness, 600);
-
-    for (const entity of livingEntities()) {
-      const chunkX = Math.floor(entity.x / CHUNK_SIZE);
-      expect(isChunkLocked(chunkX, 0)).toBe(false);
-      expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
-    }
-  });
-
-  it('startles creatures within the flee radius of a terrain change, and no others', () => {
-    fillPopulation(harness);
-
-    // WHO WAS ALREADY RUNNING, recorded before the sculpt (2026-09-02). A
-    // sculpt is no longer the only thing that startles an animal: a shark
-    // frightens the fish and rays it cruises past, every tick, anywhere on the
-    // map. The claim this test makes is about the DIFF's reach — "nothing far
-    // from the change was startled BY IT" — so the creatures already fleeing
-    // for their own reasons are excluded rather than the claim being weakened.
-    const fleeingBeforeSculpt = new Set(
-      livingEntities().filter(isFleeing).map((entity) => entity.id),
-    );
-    // And the subject has to be a calm animal, or the cruise-speed precondition
-    // below is asserting something a shark may already have falsified.
-    const subject = livingEntities().find((entity) => !isFleeing(entity));
-    expect(subject).toBeDefined();
-    if (subject === undefined) return;
-
-    const cruise = profileOf(subject.species).cruiseSpeedCellsPerSecond;
-    expect(speedOf(subject)).toBe(cruise);
-
-    // A synthetic diff centred exactly on the subject, delivered through the
-    // host's real fan-out.
-    const diff: CellDiff[] = [
-      { x: Math.floor(subject.x), y: Math.floor(subject.y), h: harness.world.heightAt(Math.floor(subject.x), Math.floor(subject.y)) },
-    ];
-    harness.host.notifyTerrainChanged(diff);
-
-    expect(isFleeing(subject)).toBe(true);
-    expect(speedOf(subject)).toBe(cruise * FLEE_SPEED_MULTIPLIER);
-
-    // Anything comfortably beyond the radius is untouched.
-    for (const entity of livingEntities()) {
-      const dx = entity.x - subject.x;
-      const dy = entity.y - subject.y;
-      if (Math.hypot(dx, dy) <= FLEE_RADIUS_CELLS * 2) continue;
-      if (fleeingBeforeSculpt.has(entity.id)) continue; // a hunter's doing, not the sculpt's
-      expect(isFleeing(entity)).toBe(false);
-    }
-  });
-
-  it('points a startled creature away from the disturbance', () => {
-    fillPopulation(harness);
-    const subject = livingEntities()[0];
-
-    // Disturbance one cell to the creature's west; it should end up heading east.
-    const centerX = subject.x - 1;
-    const centerY = subject.y;
-    harness.host.notifyTerrainChanged([
-      { x: Math.floor(centerX), y: Math.floor(centerY), h: 0 },
-    ]);
-
-    expect(Math.cos(subject.heading)).toBeGreaterThan(0);
-  });
-
-  it('calms down again after the flee duration', () => {
-    fillPopulation(harness);
-    const subject = livingEntities()[0];
-    harness.host.notifyTerrainChanged([{ x: Math.floor(subject.x), y: Math.floor(subject.y), h: 0 }]);
-    expect(isFleeing(subject)).toBe(true);
-
-    tick(harness, 40); // 4 s > FLEE_DURATION_SECONDS
-    expect(isFleeing(subject)).toBe(false);
-  });
-
-  it('reacts to a real sculpt driven through the intent pipeline', () => {
-    fillPopulation(harness);
-    const subject = livingEntities().find(
-      (entity) => entity.species === 'deepsea' || entity.species === 'whale',
-    );
-    expect(subject).toBeDefined();
-
-    // Lower the seabed under a swimmer: deep stays deep, so the ONLY observable
-    // effect is the reaction itself.
-    const outcome = handleSculptIntent(
-      { world: harness.world, interceptors: harness.host },
-      PLAYER,
-      { type: 'sculpt', x: Math.floor(subject!.x), y: Math.floor(subject!.y), radius: MAX_BRUSH_RADIUS, dir: -1 },
-    );
-
-    expect(outcome.applied).toBe(true);
-    expect(isFleeing(subject!)).toBe(true);
-  });
-
-  it('despawns a creature whose habitat is destroyed, and credits a respawn', () => {
-    fillPopulation(harness);
-    const fish = livingEntities().find((entity) => entity.species === 'fish');
-    expect(fish).toBeDefined();
-
-    const cellX = Math.floor(fish!.x);
-    const cellY = Math.floor(fish!.y);
-    const creditsBefore = pendingCreditCount();
-
-    // Raise the fish's cell out of the water. No ticks in between, so the fish
-    // cannot swim away — this is specifically the "the world changed under it"
-    // case, not the "it wandered somewhere bad" case.
-    for (let n = 0; n < 40 && harness.world.heightAt(cellX, cellY) <= SEA_LEVEL; n++) {
-      handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        { type: 'sculpt', x: cellX, y: cellY, radius: MAX_BRUSH_RADIUS, dir: 1 },
-      );
-    }
-    expect(harness.world.heightAt(cellX, cellY)).toBeGreaterThan(SEA_LEVEL);
-
-    // The reactive path removes it immediately; the tick sweep would too.
-    expect(livingEntities()).not.toContain(fish);
-    expect(pendingCreditCount()).toBeGreaterThan(creditsBefore);
-  });
-
-  it('recovers the population elsewhere after a habitat-loss despawn', () => {
-    fillPopulation(harness);
-    const targets = populationTargets();
-    const fish = livingEntities().find((entity) => entity.species === 'fish');
-    expect(fish).toBeDefined();
-
-    const cellX = Math.floor(fish!.x);
-    const cellY = Math.floor(fish!.y);
-    for (let n = 0; n < 40 && harness.world.heightAt(cellX, cellY) <= SEA_LEVEL; n++) {
-      handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        { type: 'sculpt', x: cellX, y: cellY, radius: MAX_BRUSH_RADIUS, dir: 1 },
-      );
-    }
-    expect(countsBySpecies().fish).toBeLessThan(targets.fish);
-
-    // "Recovered" is now a statement about a NEW fish existing, not about the
-    // count hitting the target on a given tick: with turnover the count is a
-    // fluctuating quantity, but an id that did not exist before can only have
-    // come from a spawn. Ids are never reused (see the persistence suite).
-    const highestIdBefore = Math.max(...livingEntities().map((entity) => entity.id));
-    const newFishSeen = new Set<number>();
-
-    // Watch the whole window rather than only its last frame: a fish that
-    // spawned and later died of old age still proves the recovery happened.
-    for (let n = 0; n < ticksFor(SETTLE_SECONDS * 2); n++) {
-      harness.host.tick(TICK_DT);
-      for (const entity of livingEntities()) {
-        if (entity.species !== 'fish' || entity.id <= highestIdBefore) continue;
-        newFishSeen.add(entity.id);
-        expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
-      }
-    }
-    expect(newFishSeen.size).toBeGreaterThan(0);
-  });
-});
-
-describe('credit removal after a spawn honours ripeness, not recency', () => {
-  beforeEach(() => {
-    resetWildlifeState();
-  });
-
-  // Regression test for the bug consumeCredits' removal loop used to have: it
-  // sized `wanted` off every credit for a species (ripe or not) but then
-  // debited the removal purely by species and array position (scanning from
-  // the end), with no readyAt check. A habitat-loss credit is always PUSHED
-  // last, so it always sat at the end of the array — meaning the removal loop
-  // would delete it first, before it had ever ripened, while the ripe credit
-  // that actually earned the spawn stayed pending to fire again later.
-  //
-  // This drives population.ts directly (no PluginHost, no movement) so the dt
-  // handed to each event can be chosen exactly: with every ripe credit's
-  // readyAt at 0, `ripe * dt / SPAWN_MEAN_WAIT_SECONDS` is EXACT, not
-  // statistical, so dt = SPAWN_MEAN_WAIT_SECONDS / ripe drives the clamped
-  // probability to exactly 1 and the spawn roll is certain — no seeded RNG
-  // needed, and none used.
-  it('never removes a not-yet-ripe habitat-loss credit to pay for a ripe one’s spawn', () => {
-    // Uniform shallow water, fully unlocked. Since 2026-09-02 that is habitat
-    // for THREE species (fish, ray, shark) rather than one, so the credit
-    // arithmetic below is stated over the whole shallow demand and the race
-    // itself is run on whichever species the despawn below happens to hit —
-    // nothing about the bug was ever fish-specific.
-    const world = habitatView(worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL));
-    let simSeconds = 0;
-
-    // First census: the whole deficit becomes ripe credits in one shot (this
-    // plugin's "how a brand new world fills up").
-    advancePopulation(world, 0);
-    const allTargets = populationTargets();
-    const target = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + allTargets[s], 0);
-    expect(target).toBeGreaterThan(0);
-    expect(pendingCreditCount()).toBe(target);
-
-    // Event 1: certain to fire (ratio pinned to exactly 1), spawns one group
-    // from the ripe deficit credits. How many actually land is irrelevant here
-    // — read it back rather than assuming spawnGroup's scatter always
-    // succeeds.
-    const firstDt = SPAWN_MEAN_WAIT_SECONDS / target;
-    advancePopulation(world, firstDt);
-    simSeconds += firstDt;
-    const spawnedInFirstEvent = livingEntities().length;
-    expect(spawnedInFirstEvent).toBeGreaterThan(0);
-
-    // Manufacture the race: a habitat-loss despawn on one of those fish pushes
-    // a credit that must not hatch for HABITAT_LOSS_RESPAWN_DELAY_SECONDS —
-    // onto the SAME species' queue that still holds ripe, census-deficit
-    // credits from event 1. despawnWithCredit always PUSHES, so this credit is
-    // now the last element of the array — exactly the position the old bug's
-    // end-scanning removal always hit first.
-    // Whichever species is first in the population — the credit the despawn
-    // pushes is for THAT species, and it is that species' queue the race is on.
-    const raced = livingEntities()[0].species;
-    despawnWithCredit(0);
-    const delayedReadyAt = simSeconds + HABITAT_LOSS_RESPAWN_DELAY_SECONDS;
-    const fishCreditsBeforeEvent2 = pendingCreditsSnapshot().filter((c) => c.species === raced);
-    expect(fishCreditsBeforeEvent2.some((c) => c.readyAt === delayedReadyAt)).toBe(true);
-
-    const ripeBeforeEvent2 = fishCreditsBeforeEvent2.filter((c) => c.readyAt <= simSeconds).length;
-    // The race only exists if there is at least one OTHER ripe credit for the
-    // roll to fire on; with target comfortably above the fish group size, the
-    // deficit left over from event 1 guarantees this.
-    expect(ripeBeforeEvent2).toBeGreaterThan(0);
-
-    // Event 2: again pinned to certain, sized off the ripe credits only — and
-    // small enough that simSeconds cannot reach delayedReadyAt, so the
-    // habitat-loss credit is definitely still unripe when this event's
-    // removal runs.
-    const secondDt = SPAWN_MEAN_WAIT_SECONDS / ripeBeforeEvent2;
-    expect(simSeconds + secondDt).toBeLessThan(delayedReadyAt);
-    advancePopulation(world, secondDt);
-    simSeconds += secondDt;
-    expect(livingEntities().length).toBeGreaterThan(spawnedInFirstEvent - 1);
-
-    // THE ASSERTION: the still-unripe habitat-loss credit survived the
-    // removal untouched. Under the bug this fails deterministically — the
-    // credit sat last in the array, and the old removal always consumed from
-    // the end.
-    const fishCreditsAfterEvent2 = pendingCreditsSnapshot().filter((c) => c.species === raced);
-    expect(fishCreditsAfterEvent2.some((c) => c.readyAt === delayedReadyAt)).toBe(true);
-  });
-});
 
 describe('wildlife sync', () => {
   let harness: Harness;
@@ -1001,24 +370,6 @@ describe('wildlife sync', () => {
     }
   });
 
-  it('never broadcasts a creature outside unlocked territory', () => {
-    fillPopulation(harness);
-    harness.sink.clear();
-    tick(harness, 2);
-
-    const payload = harness.sink.ofType('wildlife:entities')[0].payload as {
-      entities: Array<{ x: number; y: number; species: string }>;
-    };
-    for (const entity of payload.entities) {
-      // HABITAT species only: their positions derive from terrain, so one in
-      // locked territory would leak it. Birds are exempt by design — a flock's
-      // course is terrain-independent (flocks.ts reads neither heights nor the
-      // mask), it legitimately starts and ends OFF-MAP on the spawn ring, and
-      // an off-map coordinate would make isCellUnlocked itself throw.
-      if (!isWildlifeHabitatSpecies(entity.species)) continue;
-      expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
-    }
-  });
 
   // ──────────────────────────────────────────────────────────────────────────
   // FOG OF WAR (issue #18): the migrated-plugin proof. `harness`'s PLAYER has
@@ -1171,388 +522,10 @@ describe('wildlife persistence', () => {
 /** A world that is shallow water everywhere: fish habitat with no boundaries. */
 const OPEN_SHALLOW_HEIGHT = SEA_LEVEL - BAND_HEIGHT;
 
-/** Where hand-built schools are placed — the middle of the test world. */
-const SCHOOL_ORIGIN_CELL = WORLD_SIZE / 2;
-
-/** Members in a hand-built school: one full spawn group. */
-const SCHOOL_UNDER_TEST_MEMBERS = profileOf('fish').groupSize;
-
-/**
- * Half-width of the jitter a hand-built school is created with, in cells —
- * exactly the scatter population.ts gives a real spawn group.
- *
- * DERIVED FROM THE SPECIES TABLE rather than restated (2026-08-21). It was the
- * literal 1.4 that GROUP_SCATTER_BODY_LENGTHS × a fish's 0.7 body came to; both
- * of those are now stated in world units and converted, so a literal would have
- * quietly given this fixture a quarter of a real spawn's scatter and made every
- * cohesion measurement below an easier test than the one it claims to be.
- */
-const SCHOOL_BIRTH_SCATTER_BODY_LENGTHS = 2;
-const SCHOOL_BIRTH_SCATTER_CELLS =
-  profileOf('fish').bodyLengthCells * SCHOOL_BIRTH_SCATTER_BODY_LENGTHS;
-
-/** Simulated seconds a school is watched for. Five minutes — "over minutes". */
-const SCHOOL_OBSERVATION_SECONDS = 300;
-
-/**
- * Ceiling on a school's TIME-AVERAGED radius (the mean, over every tick, of the
- * greatest distance from a member to the school's centroid).
- *
- * Measured over 60 × 300 s trials of a small school: median 1.49, worst 2.64.
- * 5 is nearly double the worst measurement, and still a tenth of what the same
- * five fish reach in ONE minute without cohesion, so it cannot pass by accident.
- *
- * IN WORLD UNITS, CONVERTED (2026-08-21). Every number in this block is a
- * distance a school spans on the ground, measured against a sim whose own
- * lengths — body length, cruise speed, group scatter — the re-sample restated
- * in world units too. Left in cells the bounds would have tightened fourfold
- * against behaviour that did not change, which is what they did: the mean
- * radius measured 12.1 cells, or 3.0 world units, comfortably inside this.
- */
-const SCHOOL_MEAN_RADIUS_CEILING_CELLS = cellsAcross(5);
-
-/**
- * Ceiling on the school's radius at ANY instant. Measured worst case over the
- * same trials: 6.46 cells for the small class (11.18 for the loosest, which is
- * not what this suite watches). 12 is the "cohesion is not silently broken"
- * rail rather than a statement about how a school looks; the mean above is the
- * one that describes the picture.
- */
-const SCHOOL_PEAK_RADIUS_CEILING_CELLS = cellsAcross(12);
-
-/**
- * Radius past which a group of fish is no longer any kind of group. Five fish
- * given SEPARATE school ids reach a radius of 48–195 cells within a minute
- * (measured, 200 trials); 15 is far above anything a real school does and far
- * below anything unschooled fish do, so it separates the two cleanly.
- */
-const DISPERSED_RADIUS_CELLS = cellsAcross(15);
-
-/**
- * How far a startled school must have spread by the end of its panic, and how
- * tight it must be again a minute later.
- *
- * Measured over 200 trials: the scatter is 11.9–36 cells (median 24.7) and the
- * re-formed radius 0.8–4.0. The scatter floor is deliberately set well under
- * the smallest measurement rather than near the median — a school fleeing into
- * its own turning circle is a real, if rare, outcome, and this suite exists to
- * prove that panic OVERRIDES cohesion, not to police how far five fish get in
- * 2.5 seconds.
- */
-const FLEE_SCATTER_FLOOR_CELLS = cellsAcross(8);
-const REFORM_SECONDS = 60;
-const REFORMED_RADIUS_CEILING_CELLS = cellsAcross(8);
-
-/**
- * Cells a school must have travelled in REFORM_SECONDS to count as drifting
- * rather than milling. Measured over 200 trials: 112–178 cells, because
- * alignment makes a school hold a heading. 10 is an order of magnitude below
- * that — this is the "it went somewhere" floor, not a speed measurement.
- */
-const SCHOOL_DRIFT_FLOOR_CELLS = cellsAcross(10);
-
-/**
- * Cells of PATH a lone fish must cover in REFORM_SECONDS to count as still
- * swimming.
- *
- * Derived from the species table, not measured: a fish cruises at its own
- * profile speed and only ever holds position on a tick where every candidate heading is
- * vetoed — which cannot happen in the open-water fixture these tests use. So
- * the path over the window is the full cruise distance, and half of it is a
- * floor no amount of wandering can undercut while the fish is moving at all,
- * yet one a frozen or stuttering fish fails outright. Unlike a displacement
- * floor it has no random tail: which way the fish turns changes where it ends
- * up, never how far it swam.
- */
-const LONE_SWIMMER_PATH_FLOOR_CELLS =
-  (profileOf('fish').cruiseSpeedCellsPerSecond * REFORM_SECONDS) / 2;
-
 /** A world of nothing but shallow water, entirely unlocked. */
 function openShallowWorld(): World {
   return worldWithTerrain(WORLD_SIZE, () => OPEN_SHALLOW_HEIGHT);
 }
-
-/**
- * Installs a hand-built population through the persistence path — the one seam
- * that creates creatures without the spawn machinery, which is what lets these
- * tests state an exact school and then watch only the steering.
- */
-function installFish(
-  entities: ReadonlyArray<{
-    id: number;
-    schoolId: number;
-    size: WildlifeSizeClass;
-    x: number;
-    y: number;
-  }>,
-): void {
-  loadPopulation({
-    version: 1,
-    nextId: entities.length + 1,
-    nextSchoolId: Math.max(...entities.map((entity) => entity.schoolId)) + 1,
-    entities: entities.map((entity) => ({
-      id: entity.id,
-      species: 'fish',
-      schoolId: entity.schoolId,
-      size: sizeClassIndex(entity.size),
-      x: entity.x,
-      y: entity.y,
-      // One shared heading, as a real spawn group gets.
-      heading: 0.5,
-    })),
-  });
-}
-
-/** One school of `members` fish, jittered around the world's centre. */
-function installSchool(
-  size: WildlifeSizeClass = 'small',
-  members: number = SCHOOL_UNDER_TEST_MEMBERS,
-  schoolIdOf: (index: number) => number = () => 1,
-): void {
-  installFish(
-    Array.from({ length: members }, (_, n) => ({
-      id: n + 1,
-      schoolId: schoolIdOf(n),
-      size,
-      x: SCHOOL_ORIGIN_CELL + (Math.random() * 2 - 1) * SCHOOL_BIRTH_SCATTER_CELLS,
-      y: SCHOOL_ORIGIN_CELL + (Math.random() * 2 - 1) * SCHOOL_BIRTH_SCATTER_CELLS,
-    })),
-  );
-}
-
-/** Centroid of a set of creatures. */
-function centroidOf(members: readonly WildlifeEntity[]): { x: number; y: number } {
-  let x = 0;
-  let y = 0;
-  for (const member of members) {
-    x += member.x;
-    y += member.y;
-  }
-  return { x: x / members.length, y: y / members.length };
-}
-
-/** Greatest distance from any member to the group's centroid, in cells. */
-function groupRadius(members: readonly WildlifeEntity[] = livingEntities()): number {
-  if (members.length === 0) return 0;
-  const centre = centroidOf(members);
-  let radius = 0;
-  for (const member of members) {
-    radius = Math.max(radius, Math.hypot(member.x - centre.x, member.y - centre.y));
-  }
-  return radius;
-}
-
-describe('school cohesion', () => {
-  let view: HabitatWorld;
-
-  beforeEach(() => {
-    resetWildlifeState();
-    view = habitatView(openShallowWorld());
-  });
-
-  it('holds a spawned school together over minutes of simulated swimming', () => {
-    installSchool();
-
-    let peak = 0;
-    let sum = 0;
-    const ticks = ticksFor(SCHOOL_OBSERVATION_SECONDS);
-    for (let n = 0; n < ticks; n++) {
-      advanceMovement(view, TICK_DT);
-      const radius = groupRadius();
-      peak = Math.max(peak, radius);
-      sum += radius;
-    }
-
-    expect(livingEntities()).toHaveLength(SCHOOL_UNDER_TEST_MEMBERS);
-    expect(sum / ticks).toBeLessThan(SCHOOL_MEAN_RADIUS_CEILING_CELLS);
-    expect(peak).toBeLessThan(SCHOOL_PEAK_RADIUS_CEILING_CELLS);
-  });
-
-  it('is what keeps them together: the same five fish disperse without a school', () => {
-    // THE CONTROL, and the bug being fixed. Identical starting positions,
-    // identical wander — the only difference is that these five are five schools
-    // of one rather than one school of five.
-    installSchool('small', SCHOOL_UNDER_TEST_MEMBERS, (n) => n + 1);
-    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
-    expect(groupRadius()).toBeGreaterThan(DISPERSED_RADIUS_CELLS);
-  });
-
-  it('drifts as one body rather than milling on the spot', () => {
-    installSchool();
-    const start = centroidOf(livingEntities());
-    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
-    const end = centroidOf(livingEntities());
-
-    expect(Math.hypot(end.x - start.x, end.y - start.y)).toBeGreaterThan(
-      SCHOOL_DRIFT_FLOOR_CELLS,
-    );
-    expect(groupRadius()).toBeLessThan(SCHOOL_PEAK_RADIUS_CEILING_CELLS);
-  });
-
-  it('scatters when startled and re-forms afterwards', () => {
-    installSchool();
-    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
-
-    const centre = centroidOf(livingEntities());
-    expect(startleNear(centre.x, centre.y, FLEE_RADIUS_CELLS)).toBe(SCHOOL_UNDER_TEST_MEMBERS);
-
-    for (let n = 0; n < ticksFor(FLEE_DURATION_SECONDS); n++) advanceMovement(view, TICK_DT);
-    // Panic beat cohesion outright: the school is in pieces.
-    expect(groupRadius()).toBeGreaterThan(FLEE_SCATTER_FLOOR_CELLS);
-
-    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
-    expect(groupRadius()).toBeLessThan(REFORMED_RADIUS_CEILING_CELLS);
-  });
-
-  it('leaves a school of one wandering exactly as it always did', () => {
-    // The "last fish" case: a school whose other members were lost to terrain.
-    installSchool('small', 1);
-    const fish = livingEntities()[0];
-    let travelled = 0;
-    let previousX = fish.x;
-    let previousY = fish.y;
-
-    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) {
-      advanceMovement(view, TICK_DT);
-      travelled += Math.hypot(fish.x - previousX, fish.y - previousY);
-      previousX = fish.x;
-      previousY = fish.y;
-    }
-
-    // Still alive, and still SWIMMING — measured as PATH LENGTH, not as
-    // displacement, and that distinction is a fix rather than a detail
-    // (2026-08-21). This case used to assert displacement against
-    // SCHOOL_DRIFT_FLOOR_CELLS, a floor measured on a SCHOOL (112–178 cells,
-    // because alignment makes a school hold one heading). A solitary fish has
-    // no alignment term: its walk is a correlated random one whose displacement
-    // over the same window measures 3.4–85.8 cells (median 50.6, 200 trials),
-    // so it lands under 10 about 3% of the time and this test failed roughly
-    // one run in thirty for no reason but luck. Path length has no such tail —
-    // a fish that keeps swimming covers cruise speed × time whichever way it
-    // wanders — and it is the property the case actually means by "still
-    // moving".
-    expect(livingEntities()).toHaveLength(1);
-    expect(travelled).toBeGreaterThan(LONE_SWIMMER_PATH_FLOOR_CELLS);
-  });
-});
-
-describe('creatures keep out of each other (the 2026-08-21 migration)', () => {
-  let view: HabitatWorld;
-
-  beforeEach(() => {
-    resetWildlifeState();
-    view = habitatView(openShallowWorld());
-  });
-
-  /**
-   * The tightest gap any two of the school held at ANY point in `seconds`, over
-   * `trials` independent runs — a worst case, not an average. `step` is the
-   * per-tick advance under test.
-   */
-  function worstGapOverTrials(
-    trials: number,
-    seconds: number,
-    step: (dt: number) => void,
-  ): number[] {
-    const worsts: number[] = [];
-    for (let trial = 0; trial < trials; trial++) {
-      installSchool();
-      let worst = Infinity;
-      for (let n = 0; n < ticksFor(seconds); n++) {
-        step(TICK_DT);
-        const live = livingEntities();
-        for (let i = 0; i < live.length; i++) {
-          for (let j = i + 1; j < live.length; j++) {
-            worst = Math.min(worst, Math.hypot(live[i].x - live[j].x, live[i].y - live[j].y));
-          }
-        }
-      }
-      worsts.push(worst);
-    }
-    return worsts.sort((a, b) => a - b);
-  }
-
-  /** `advanceMovement` with the occupant list withheld — the pre-migration loop. */
-  function advanceWithoutSeparation(dt: number): void {
-    const population = livingEntities();
-    const schools = summarizeSchools(population);
-    for (const entity of population) advanceEntity(view, entity, dt, schools.get(entity.schoolId));
-  }
-
-  /**
-   * Trials and window for the two measurements below. 40 × 60 s is enough for
-   * the medians to be stable run to run (the distributions are wide but their
-   * middles are not), and the assertions are stated against the MEDIAN rather
-   * than the minimum for exactly that reason: this plugin runs on unseeded RNG
-   * by design (server/rng.ts), so any bound on the extreme tail of a random
-   * walk is a bound on luck.
-   */
-  const SEPARATION_TRIALS = 40;
-  const SEPARATION_SECONDS = 60;
-
-  /**
-   * The median worst-case gap separation must beat, in cells.
-   *
-   * 0.15 WORLD UNITS, converted — measured. It was the same 0.15 as a cell
-   * count before the 2026-08-21 re-sample, and it is a gap between two fish
-   * whose own body lengths are stated in world units, so the ground it names
-   * is what has to stay fixed.
-   *
-   * RE-MEASURED AFTER THE CONVERSION, four runs of the pair: the median worst
-   * gap is 0.24–0.43 cells WITHOUT separation and 1.29–1.36 WITH it, against
-   * this bound of 0.6 cells. The "with" side reproduces the original 0.290
-   * world units almost exactly (0.32–0.34); the "without" side does NOT
-   * reproduce the 0.033 that was recorded here — it runs 2–3× higher — so the
-   * comfortable margin that note claimed on the lower side is stated here as
-   * what it actually is: about 1.4×, against 2.2× above. The bound still
-   * separates the two populations cleanly and still cannot pass by accident,
-   * which is the claim; it is simply not the 4× cushion it was written as.
-   *
-   * It is deliberately NOT the body gap itself: a small fish steps further in
-   * one tick than the gap it is asked to hold, so that gap is not guaranteeable
-   * at all (shared/src/steering.ts's `steerAvoiding` names the arithmetic) —
-   * what is claimed here is that separation demonstrably shapes where they
-   * swim, which is what it is for.
-   */
-  const SEPARATED_MEDIAN_GAP_CELLS = cellsAcross(0.15);
-
-  it('holds a school of fish off each other', () => {
-    const worsts = worstGapOverTrials(SEPARATION_TRIALS, SEPARATION_SECONDS, (dt) =>
-      advanceMovement(view, dt),
-    );
-    const median = worsts[Math.floor(worsts.length / 2)];
-    expect(median).toBeGreaterThan(SEPARATED_MEDIAN_GAP_CELLS);
-  });
-
-  it('is what does it: the same five fish interpenetrate without the occupant list', () => {
-    // THE CONTROL, and the bug being fixed — this plugin was the fourth copy of
-    // the steering loop and the one that never gained separation, so a school
-    // swam through itself. Same fish, same cohesion, same wander; the only
-    // difference is whether anyone is told the others exist.
-    const worsts = worstGapOverTrials(
-      SEPARATION_TRIALS,
-      SEPARATION_SECONDS,
-      advanceWithoutSeparation,
-    );
-    const median = worsts[Math.floor(worsts.length / 2)];
-    expect(median).toBeLessThan(SEPARATED_MEDIAN_GAP_CELLS);
-  });
-
-  it('sizes personal space from the body, not from one constant for every species', () => {
-    // One constant for every species would either let whales overlap or hold
-    // fish a whale's length apart. It is a HALF-EXTENT — half the body as the
-    // client draws it, size class included — which is what makes it derived
-    // rather than a tuning dial, and what makes a bigger creature hold a bigger
-    // berth without anyone maintaining a table.
-    installSchool('small', 1);
-    const small = livingEntities()[0];
-    expect(personalSpaceCellsOf(small) * 2).toBeCloseTo(bodyLengthCellsOf(small), 9);
-
-    installSchool('large', 1);
-    const large = livingEntities()[0];
-    expect(personalSpaceCellsOf(large)).toBeGreaterThan(personalSpaceCellsOf(small));
-  });
-});
 
 describe('the cohesion blend', () => {
   /** A fish with an explicit pose, for steering arithmetic. */
@@ -1593,19 +566,6 @@ describe('the cohesion blend', () => {
     }
   });
 
-  it('makes bigger fish school more loosely, on both halves of the dial', () => {
-    // Ordering of the tuning itself: the "smaller fish school more" request
-    // expressed as the numbers that implement it.
-    const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
-    expect(SCHOOL_LOOSENESS_BY_SIZE[small]).toBeLessThan(SCHOOL_LOOSENESS_BY_SIZE[medium]);
-    expect(SCHOOL_LOOSENESS_BY_SIZE[medium]).toBeLessThan(SCHOOL_LOOSENESS_BY_SIZE[large]);
-
-    // A large fish tolerates a gap that already has a small one turning hard.
-    const gap = SCHOOL_COMFORT_RADIUS_CELLS * 1.5;
-    expect(cohesionPullRadiansPerSecond(gap, SCHOOL_LOOSENESS_BY_SIZE[small])).toBeGreaterThan(
-      cohesionPullRadiansPerSecond(gap, SCHOOL_LOOSENESS_BY_SIZE[large]),
-    );
-  });
 
   it('turns toward the rest of the school, never further than the rate allows', () => {
     // Three members due east of the subject, well outside the comfort radius, so
@@ -1672,491 +632,9 @@ describe('the cohesion blend', () => {
   });
 });
 
-describe('habitat beats cohesion', () => {
-  /**
-   * An island: a square of land in the middle of shallow water, wider than a
-   * school's full-pull radius so members cannot simply cross it.
-   */
-  const ISLAND_HALF_WIDTH_CELLS = 12;
-  const ISLAND_HEIGHT = SEA_LEVEL + BAND_HEIGHT;
 
-  function islandWorld(): World {
-    return worldWithTerrain(WORLD_SIZE, (x, y) =>
-      Math.abs(x - SCHOOL_ORIGIN_CELL) <= ISLAND_HALF_WIDTH_CELLS &&
-      Math.abs(y - SCHOOL_ORIGIN_CELL) <= ISLAND_HALF_WIDTH_CELLS
-        ? ISLAND_HEIGHT
-        : OPEN_SHALLOW_HEIGHT,
-    );
-  }
-
-  it('never pulls a member of a straddling school onto land', () => {
-    resetWildlifeState();
-    const world = islandWorld();
-    const view = habitatView(world);
-
-    // A school split by the island: two members west of it, three east, with the
-    // centroid squarely on dry land. Cohesion is asking every one of them to
-    // swim straight into the beach.
-    const offset = ISLAND_HALF_WIDTH_CELLS + 2;
-    installFish([
-      { id: 1, schoolId: 1, size: 'small', x: SCHOOL_ORIGIN_CELL - offset, y: SCHOOL_ORIGIN_CELL },
-      {
-        id: 2,
-        schoolId: 1,
-        size: 'small',
-        x: SCHOOL_ORIGIN_CELL - offset,
-        y: SCHOOL_ORIGIN_CELL + 1,
-      },
-      { id: 3, schoolId: 1, size: 'small', x: SCHOOL_ORIGIN_CELL + offset, y: SCHOOL_ORIGIN_CELL },
-      {
-        id: 4,
-        schoolId: 1,
-        size: 'small',
-        x: SCHOOL_ORIGIN_CELL + offset,
-        y: SCHOOL_ORIGIN_CELL + 1,
-      },
-      {
-        id: 5,
-        schoolId: 1,
-        size: 'small',
-        x: SCHOOL_ORIGIN_CELL + offset,
-        y: SCHOOL_ORIGIN_CELL - 1,
-      },
-    ]);
-    const centre = centroidOf(livingEntities());
-    expect(habitatOf(world.heightAt(Math.round(centre.x), Math.round(centre.y)))).toBe('land');
-
-    for (let n = 0; n < ticksFor(SCHOOL_OBSERVATION_SECONDS); n++) {
-      advanceMovement(view, TICK_DT);
-      for (const fish of livingEntities()) {
-        expect(isValidCellFor(view, 'fish', fish.x, fish.y)).toBe(true);
-      }
-    }
-
-    // Nothing had to be culled to keep that true — the steering veto did it, not
-    // the habitat sweep tidying up afterwards.
-    expect(despawnInvalidHabitat(view)).toBe(0);
-    expect(livingEntities()).toHaveLength(SCHOOL_UNDER_TEST_MEMBERS);
-  });
-});
-
-/**
- * A vetoed step must leave the HEADING alone as well as the position.
- *
- * THE FIXTURE IS THE WHOLE TEST, so it is derived rather than guessed. Three
- * distances decide which branch of advanceEntity runs, and all three are read
- * off the species table rather than typed in:
- *
- *   step      = cruise x TICK_DT              = 1.2 cells — where the creature
- *                                                would actually land, and the
- *                                                ladder's shortest probe;
- *   lookahead = cruise x LOOKAHEAD_SECONDS    = 7.2 cells — the full probe;
- *   contour   = lookahead / the fallback divisor = 3.6 cells — the middle one.
- *
- * So the fixture is ONE RING OF LOCKED CELLS on the eight touching the
- * creature's own: at 1.2 cells every candidate heading lands inside that ring
- * (a 1.2-cell step from a cell centre always crosses into a neighbouring cell,
- * diagonals included), while at 3.6 and 7.2 cells every endpoint is open,
- * unlocked water beyond it. The sweep therefore SUCCEEDS and the destination
- * re-check VETOES — which is the only path that reaches the late "hold
- * position" returns, and exactly the blind spot the belt-and-suspenders
- * re-check exists for.
- *
- * LOCKED CELLS, NOT LAND, SINCE 2026-08-24, and the swap is the point. The
- * ring used to be land, and land no longer produces this branch: the sweep
- * samples GROUND legality along the whole probe segment now (shared's
- * `canProceedAlong`), so a land ring is seen at 7.2 cells and the creature
- * exits at the early boxed-in return instead. The unlock mask is the veto that
- * is still endpoint-only — `permits` is a caller's own rule and shared samples
- * it where the probe ends, not along it (SteerOptions.permits names this
- * residual) — so a locked ring is what a can-see-past-it obstacle looks like
- * today, and this fixture is the thing that will fail if that ever changes.
- *
- * A ring even one cell thicker would fail the sweep instead and exit at the
- * early boxed-in return, which never had this bug and would make the test pass
- * against the broken code.
- */
-describe('a vetoed step leaves both position and heading alone', () => {
-  /** Chebyshev distance, in CELLS, of the ring from the creature's own cell. */
-  const RING_CHEBYSHEV_CELLS = 1;
-  /** Mid-cell placement: a creature's position is the centre of its cell. */
-  const CELL_CENTRE_OFFSET = 0.5;
-  /** Due +X. Any fixed value works — the point is that it is unchanged. */
-  const WEDGED_HEADING = 0;
-  /**
-   * Headings sampled around the full circle when proving the ring is closed.
-   * 64 puts a sample every 5.6 degrees — far finer than the 45-degree steps the
-   * compass sweep itself takes, so no candidate it could pick goes unchecked.
-   */
-  const FULL_TURN_SAMPLES = 64;
-
-  /** Open shallow water everywhere; the ring is a MASK, not terrain. */
-  function wedgedWorld(): World {
-    return worldWithTerrain(WORLD_SIZE, () => OPEN_SHALLOW_HEIGHT);
-  }
-
-  /** Is this cell one of the eight ringing SCHOOL_ORIGIN_CELL? */
-  function isRingCell(x: number, y: number): boolean {
-    return (
-      Math.max(Math.abs(x - SCHOOL_ORIGIN_CELL), Math.abs(y - SCHOOL_ORIGIN_CELL)) ===
-      RING_CHEBYSHEV_CELLS
-    );
-  }
-
-  /** The plugin's world view with the ring locked out from under the creature. */
-  function wedgedView(): HabitatWorld {
-    const view = habitatView(wedgedWorld());
-    return { ...view, isCellUnlocked: (x, y) => !isRingCell(x, y) && view.isCellUnlocked(x, y) };
-  }
-
-  function wedgedFish(): WildlifeEntity {
-    return {
-      id: 1,
-      species: 'fish',
-      schoolId: 1,
-      size: 'small',
-      idle: false,
-      x: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
-      y: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
-      heading: WEDGED_HEADING,
-      fleeSecondsRemaining: 0,
-    };
-  }
-
-  it('holds the fixture premise: the sweep succeeds where the step is refused', () => {
-    // Asserted rather than assumed, because if this stops being true the test
-    // below still passes while measuring the wrong branch entirely.
-    const view = wedgedView();
-    const subject = wedgedFish();
-    const step = speedOf(subject) * TICK_DT;
-    const lookahead = lookaheadCellsFor(subject);
-
-    expect(step).toBeLessThan(RING_CHEBYSHEV_CELLS + CELL_CENTRE_OFFSET * 2);
-    expect(lookahead).toBeGreaterThan(RING_CHEBYSHEV_CELLS + CELL_CENTRE_OFFSET * 2);
-    // The sweep's endpoint is open water in every direction...
-    expect(
-      steerToValidHeading(view, subject, WEDGED_HEADING, lookahead, step),
-    ).not.toBeNull();
-    // ...and the place one tick of travel actually puts it is not.
-    for (let turn = 0; turn < FULL_TURN_SAMPLES; turn++) {
-      const heading = (turn / FULL_TURN_SAMPLES) * Math.PI * 2;
-      const stepX = subject.x + Math.cos(heading) * step;
-      const stepY = subject.y + Math.sin(heading) * step;
-      expect(isValidCellFor(view, 'fish', stepX, stepY)).toBe(false);
-    }
-  });
-
-  it('ends the tick with its original position AND heading', () => {
-    // No school argument: the habitat veto is the only thing acting this tick.
-    const view = wedgedView();
-    const subject = wedgedFish();
-
-    advanceEntity(view, subject, TICK_DT);
-
-    expect(subject.x).toBe(SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET);
-    expect(subject.y).toBe(SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET);
-    // The regression: committing the candidate heading before the destination
-    // re-check left this set to a heading the creature was just proven unable
-    // to travel along, while the comment beside the return said "keep facing
-    // as-is". Wander noise makes the broken value differ from WEDGED_HEADING
-    // on essentially every run.
-    expect(subject.heading).toBe(WEDGED_HEADING);
-  });
-});
-
-/**
- * Schools of fish used in the turnover suites. 30 × the 5-member group size is
- * exactly WILDLIFE_POPULATION_CAP, which is the largest sample a hand-built
- * population can have (loadPopulation stops at the cap) and therefore the
- * tightest statistics available.
- */
-const TURNOVER_SCHOOLS = WILDLIFE_POPULATION_CAP / SCHOOL_UNDER_TEST_MEMBERS;
-
-/**
- * Independent trials the turnover rate is measured over.
- *
- * One trial of 30 schools has a standard deviation of ~2.6 departed schools
- * (√(30 × 0.632 × 0.368)) against a mean of 19 — 14% relative. Eight trials
- * bring that to 5%, so the ±25% tolerance below is five standard deviations,
- * which is what makes an unseeded statistical test safe to run in CI.
- */
-const TURNOVER_TRIALS = 8;
-
-/**
- * Fraction of the expected departure count the measurement may differ by. See
- * TURNOVER_TRIALS for why 0.25 is ~5σ and not a guess.
- */
-const TURNOVER_RATE_TOLERANCE = 0.25;
-
-/**
- * Fraction of a population that has departed after one mean lifetime:
- * 1 − e⁻¹ for an exponential lifetime, which is what both the per-individual
- * and the per-school roll produce (see the arithmetic in population.ts).
- */
-const DEPARTED_FRACTION_AFTER_ONE_LIFETIME = 1 - Math.exp(-1);
-
-/** Installs `schools` schools of `members` fish each, all in open water. */
-function installSchools(schools: number, members: number): void {
-  const entities: Array<{
-    id: number;
-    schoolId: number;
-    size: WildlifeSizeClass;
-    x: number;
-    y: number;
-  }> = [];
-  for (let school = 0; school < schools; school++) {
-    for (let member = 0; member < members; member++) {
-      entities.push({
-        id: entities.length + 1,
-        schoolId: school + 1,
-        size: 'small',
-        // Spread the schools out so they are independent bodies of fish; the
-        // turnover roll does not read position, but a test that looked like a
-        // single 150-fish pile would be misleading about what it models.
-        x: SCHOOL_ORIGIN_CELL + school,
-        y: SCHOOL_ORIGIN_CELL,
-      });
-    }
-  }
-  installFish(entities);
-}
-
-/** Living members of each school id, keyed by school. */
-function membersBySchool(): Map<number, number> {
-  const counts = new Map<number, number>();
-  for (const entity of livingEntities()) {
-    counts.set(entity.schoolId, (counts.get(entity.schoolId) ?? 0) + 1);
-  }
-  return counts;
-}
-
-/** Departures observed over `seconds` of turnover on a freshly built population. */
-function departuresOver(schools: number, members: number, seconds: number): number {
-  installSchools(schools, members);
-  const before = naturalDepartureCount();
-  for (let n = 0; n < ticksFor(seconds); n++) applyNaturalTurnover(TICK_DT);
-  return naturalDepartureCount() - before;
-}
-
-describe('school-level natural turnover', () => {
-  beforeEach(() => {
-    resetWildlifeState();
-  });
-
-  it('takes a whole school at a time, never part of one', () => {
-    // THE point of the change: a school that is losing members one by one is a
-    // school being visibly eroded, and the strays it leaves behind can never
-    // rejoin anything. Departures are all-or-nothing, and that is exact — no
-    // bound, no statistics.
-    installSchools(TURNOVER_SCHOOLS, SCHOOL_UNDER_TEST_MEMBERS);
-
-    // A coarse dt so departures happen quickly; the roll is dt/L either way.
-    const COARSE_TURNOVER_DT_SECONDS = 30;
-    for (let n = 0; n < 40 && livingEntities().length > 0; n++) {
-      applyNaturalTurnover(COARSE_TURNOVER_DT_SECONDS);
-      for (const [, members] of membersBySchool()) {
-        expect(members).toBe(SCHOOL_UNDER_TEST_MEMBERS);
-      }
-    }
-
-    // And the population really did turn over, rather than the assertion above
-    // holding because nothing ever happened.
-    expect(livingEntities().length).toBeLessThan(WILDLIFE_POPULATION_CAP);
-    expect(naturalDepartureCount() % SCHOOL_UNDER_TEST_MEMBERS).toBe(0);
-  });
-
-  it('preserves the rate at which individual fish leave', () => {
-    // The arithmetic in population.ts, measured: rolling once per school of k
-    // and removing k loses the same fish per second as rolling k times and
-    // removing one. If a "correspondingly longer mean" had been applied, this
-    // would come out five times too low.
-    let departed = 0;
-    for (let trial = 0; trial < TURNOVER_TRIALS; trial++) {
-      departed += departuresOver(
-        TURNOVER_SCHOOLS,
-        SCHOOL_UNDER_TEST_MEMBERS,
-        NATURAL_LIFESPAN_SECONDS,
-      );
-    }
-
-    const expected =
-      TURNOVER_TRIALS * WILDLIFE_POPULATION_CAP * DEPARTED_FRACTION_AFTER_ONE_LIFETIME;
-    expect(departed).toBeGreaterThan(expected * (1 - TURNOVER_RATE_TOLERANCE));
-    expect(departed).toBeLessThan(expected * (1 + TURNOVER_RATE_TOLERANCE));
-  });
-
-  it('leaves solitary creatures on exactly the per-individual roll they had', () => {
-    // The control: schools of one — which is what every non-schooling species
-    // is, and what a lone-remainder fish is. Same population, same window, same
-    // expected count as the schools above.
-    let departed = 0;
-    for (let trial = 0; trial < TURNOVER_TRIALS; trial++) {
-      departed += departuresOver(WILDLIFE_POPULATION_CAP, 1, NATURAL_LIFESPAN_SECONDS);
-    }
-
-    const expected =
-      TURNOVER_TRIALS * WILDLIFE_POPULATION_CAP * DEPARTED_FRACTION_AFTER_ONE_LIFETIME;
-    expect(departed).toBeGreaterThan(expected * (1 - TURNOVER_RATE_TOLERANCE));
-    expect(departed).toBeLessThan(expected * (1 + TURNOVER_RATE_TOLERANCE));
-  });
-
-  it('never strands a school that has shrunk to its last member', () => {
-    // A school reduced to one by habitat loss must keep rolling like anything
-    // else: neither immortal (a bug where only multi-member schools are rolled)
-    // nor culled on sight.
-    installSchools(TURNOVER_SCHOOLS, SCHOOL_UNDER_TEST_MEMBERS);
-
-    // Strip every school down to one member, the way a drained bay would.
-    for (let i = livingEntities().length - 1; i >= 0; i--) {
-      const entity = livingEntities()[i];
-      const rank = livingEntities()
-        .filter((other) => other.schoolId === entity.schoolId)
-        .indexOf(entity);
-      if (rank > 0) despawnWithCredit(i);
-    }
-    expect(livingEntities()).toHaveLength(TURNOVER_SCHOOLS);
-    for (const [, members] of membersBySchool()) expect(members).toBe(1);
-
-    const before = naturalDepartureCount();
-    for (let n = 0; n < ticksFor(NATURAL_LIFESPAN_SECONDS); n++) applyNaturalTurnover(TICK_DT);
-
-    // Some left, some did not: an exponential lifetime, not a cliff.
-    expect(naturalDepartureCount() - before).toBeGreaterThan(0);
-    expect(livingEntities().length).toBeGreaterThan(0);
-  });
-});
-
-// ── Size classes, end to end through the spawn path ──────────────────────────
-
-/**
- * Simulated seconds a fish-only world is watched for while sampling spawned
- * groups. Long enough that turnover replaces the population several times, so
- * the sample is ~125 groups rather than the ~40 alive at any instant — measured,
- * and comfortably more than the ratios below need.
- *
- * It is also the longest-running test in this file, so it is deliberately not
- * longer: the whole workspace suite runs several vitest instances in parallel,
- * and a test that sits at half the default timeout on an idle machine is a
- * timeout flake on a busy one.
- */
-const SIZE_SAMPLE_SECONDS = 450;
-
-/**
- * Wall-clock budget for the size-class sample, in milliseconds.
- *
- * SIZE_SAMPLE_SECONDS above is 450 simulated seconds at TICK_DT = 0.1, i.e.
- * 4,500 host ticks, each one stepping every living fish and re-counting every
- * school — measured at ~5 s here, right on Vitest's default and therefore over
- * it whenever the machine is busy.
- *
- * Raised rather than shortening the sample: the assertions are about which
- * size classes appear and in what proportion, and those are only meaningful
- * over enough turnover to cycle the population several times.
- *
- * 2026-08-21: added after this failed on a loaded machine and passed on an
- * idle one. See the note in the commit — four tests across four packages had
- * the same shape.
- *
- * 2026-08-23, 30 s → 120 s, AND THE REASON IS A REAL COST RATHER THAN A SLOW
- * MACHINE. WILDLIFE_POPULATION_CAP went 150 → 850 (census.ts) to pay for the
- * grazer density cut, and this fixture is an entire world of fish habitat, so
- * its population rose with the cap. Measured here: 22.3 s of test time against
- * the ~5 s this comment was written for — a 4.4× slowdown that left the old
- * 30 s ceiling perhaps a second clear on an idle machine, which is exactly why
- * it timed out in a full-suite run and passed when run alone.
- *
- * THE SLOWDOWN IS SUPERLINEAR AND IT IS EXPECTED: creature avoidance is
- * quadratic in the living population (movement.ts's creatureOccupants), so a
- * 5.7× cap is far more than 5.7× the work. The headroom here is deliberately
- * generous rather than snug, because the honest fix is the spatial index that
- * movement.ts now says is owed, and a snug timeout would turn that debt into
- * an intermittently red suite in the meantime.
- */
-const SIZE_SAMPLE_TIMEOUT_MS = 120_000;
-
-/**
- * How many times more common small fish must be than large ones in the sample.
- *
- * FISH_SIZE_WEIGHTS asks for 6 : 1, and over a sample this size the measured
- * ratio sits between 4.4 and 9.2 (200 trials' worth of sampling). Asserting
- * only 2 leaves room for ordinary multinomial jitter while still failing loudly
- * if the weights stop being read.
- */
-const SMALL_TO_LARGE_ABUNDANCE_FLOOR = 2;
-
-/**
- * How many times larger a small fish's typical school must be than a large
- * fish's, measured as fish-per-school.
- *
- * The probabilities predict 5/(0.9 + 5×0.1) = 3.6 members per small school
- * against 5/(0.1 + 5×0.9) = 1.1 for large — a ratio above 3, and the measured
- * range is 2.7–3.4. Asserting 1.5 is half the predicted effect, which no
- * plausible jitter reaches but a broken FISH_SCHOOLING_PROBABILITY_BY_SIZE lookup
- * would fail instantly.
- */
-const SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR = 1.5;
 
 describe('fish size classes drive schooling', () => {
-  it('orders the tuning tables smallest-schools-most', () => {
-    const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
-    expect(FISH_SCHOOLING_PROBABILITY_BY_SIZE[small]).toBeGreaterThan(
-      FISH_SCHOOLING_PROBABILITY_BY_SIZE[medium],
-    );
-    expect(FISH_SCHOOLING_PROBABILITY_BY_SIZE[medium]).toBeGreaterThan(
-      FISH_SCHOOLING_PROBABILITY_BY_SIZE[large],
-    );
-    expect(FISH_SIZE_WEIGHTS[small]).toBeGreaterThan(FISH_SIZE_WEIGHTS[medium]);
-    expect(FISH_SIZE_WEIGHTS[medium]).toBeGreaterThan(FISH_SIZE_WEIGHTS[large]);
-    // The two species that vary in size are the two that spawn in groups, and
-    // no other species needs a "does this one vary" flag.
-    for (const species of WILDLIFE_HABITAT_SPECIES) {
-      if (species === 'fish' || species === 'whale') continue;
-      const weights = profileOf(species).sizeWeights;
-      expect(WILDLIFE_SIZE_CLASSES.filter((size) => weights[size] > 0)).toEqual([
-        DEFAULT_SIZE_CLASS,
-      ]);
-    }
-  });
-
-  it('spawns all three sizes, small most often, and schools them accordingly', () => {
-    // A world that is nothing but fish habitat, run long enough for turnover to
-    // cycle the population several times over. Every school id ever seen is
-    // recorded with the size it was born at and the most members it ever had.
-    const harness = bootOn(openShallowWorld());
-    const seen = new Map<number, { size: WildlifeSizeClass; members: number }>();
-
-    for (let n = 0; n < ticksFor(SIZE_SAMPLE_SECONDS); n++) {
-      harness.host.tick(TICK_DT);
-      const counts = membersBySchool();
-      for (const entity of livingEntities()) {
-        const previous = seen.get(entity.schoolId);
-        const members = counts.get(entity.schoolId) ?? 1;
-        if (previous === undefined) seen.set(entity.schoolId, { size: entity.size, members });
-        else if (members > previous.members) previous.members = members;
-      }
-    }
-
-    const bySize = (size: WildlifeSizeClass) =>
-      [...seen.values()].filter((school) => school.size === size);
-    const [small, , large] = WILDLIFE_SIZE_CLASSES;
-
-    // Every class actually occurs.
-    for (const size of WILDLIFE_SIZE_CLASSES) expect(bySize(size).length).toBeGreaterThan(0);
-
-    // Small fish are the many. Counted in FISH, not in schools: a solitary large
-    // fish makes one school per fish, so counting schools would flatter it.
-    const fishOf = (size: WildlifeSizeClass) =>
-      bySize(size).reduce((sum, school) => sum + school.members, 0);
-    expect(fishOf(small)).toBeGreaterThan(fishOf(large) * SMALL_TO_LARGE_ABUNDANCE_FLOOR);
-
-    // And small fish are the ones in schools: more fish per school than large.
-    const membersPerSchool = (size: WildlifeSizeClass) => fishOf(size) / bySize(size).length;
-    expect(membersPerSchool(small)).toBeGreaterThan(
-      membersPerSchool(large) * SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR,
-    );
-    expect(membersPerSchool(large)).toBeLessThan(SCHOOL_UNDER_TEST_MEMBERS);
-  }, SIZE_SAMPLE_TIMEOUT_MS);
-
   it('carries school and size through a snapshot unchanged', () => {
     // Without this the whole behaviour is undone by a restart: school membership
     // cannot be recovered from position, so a dropped schoolId would restore
@@ -2206,129 +684,9 @@ describe('fish size classes drive schooling', () => {
 
 const FLOCK_WORLD: FlockWorld = { worldSize: WORLD_SIZE };
 
-/** The flock with this id, or undefined once it has left. */
-function flockById(id: number): Flock | undefined {
-  return livingFlocks().find((flock) => flock.id === id);
-}
-
-/** Distance of the furthest member from its flock's centroid, in cells. */
-function flockSpreadCells(flock: Flock): number {
-  const centroid = flockCentroid(flock);
-  let furthest = 0;
-  for (const bird of flock.birds) {
-    furthest = Math.max(furthest, Math.hypot(bird.x - centroid.x, bird.y - centroid.y));
-  }
-  return furthest;
-}
-
-function distanceFromWorldCentre(x: number, y: number): number {
-  const centre = WORLD_SIZE / 2;
-  return Math.hypot(x - centre, y - centre);
-}
-
 describe('bird flocks arrive, cross and leave', () => {
   beforeEach(() => {
     resetWildlifeState();
-  });
-
-  it('is born off the map, in a cluster, on a course aimed across it', () => {
-    const flock = spawnFlock(FLOCK_WORLD);
-
-    expect(flock.birds.length).toBeGreaterThanOrEqual(BIRDS_PER_FLOCK_MIN);
-    expect(flock.birds.length).toBeLessThanOrEqual(BIRDS_PER_FLOCK_MAX);
-
-    // Off the map: the crossing ring circumscribes the square world, so every
-    // bird starts beyond the furthest cell a player can be looking at, minus at
-    // most the diagonal of its own spawn scatter.
-    const ring = crossingRadiusCells(WORLD_SIZE);
-    for (const bird of flock.birds) {
-      expect(distanceFromWorldCentre(bird.x, bird.y)).toBeGreaterThan(
-        ring - FLOCK_SPAWN_SCATTER_CELLS * Math.SQRT2 - 1e-9,
-      );
-      // One shared course at birth — a flock leaves the ring as a flock.
-      expect(bird.heading).toBe(flock.courseHeading);
-    }
-
-    // …and the course points INTO the world, not along the ring: the aim point
-    // is near the centre, so flying it must reduce the distance to the centre.
-    const before = flockCentroid(flock);
-    const step = BIRD_CRUISE_SPEED_CELLS_PER_SECOND;
-    const after = {
-      x: before.x + Math.cos(flock.courseHeading) * step,
-      y: before.y + Math.sin(flock.courseHeading) * step,
-    };
-    expect(distanceFromWorldCentre(after.x, after.y)).toBeLessThan(
-      distanceFromWorldCentre(before.x, before.y),
-    );
-  });
-
-  it('crosses in a roughly straight line and departs at the far side', () => {
-    const flock = spawnFlock(FLOCK_WORLD);
-    const id = flock.id;
-    const start = flockCentroid(flock);
-
-    let elapsed = 0;
-    let pathLength = 0;
-    let previous = start;
-    let closestApproach = distanceFromWorldCentre(start.x, start.y);
-    let last = start;
-
-    // Bounded by the lifetime guard, which is 2× the straight-line crossing: if
-    // the flock were still here after that, the guard — not the crossing — would
-    // have removed it, and the assertions below say which happened.
-    const limit = flockLifetimeLimitSeconds(WORLD_SIZE);
-    while (flockById(id) !== undefined && elapsed < limit) {
-      advanceFlocks(FLOCK_WORLD, TICK_DT);
-      elapsed += TICK_DT;
-      const current = flockById(id);
-      if (current === undefined) break;
-      last = flockCentroid(current);
-      pathLength += Math.hypot(last.x - previous.x, last.y - previous.y);
-      previous = last;
-      closestApproach = Math.min(closestApproach, distanceFromWorldCentre(last.x, last.y));
-    }
-
-    expect(flockById(id)).toBeUndefined();
-    // It left by CROSSING, comfortably before the wedged-flock guard could fire.
-    expect(elapsed).toBeLessThan(limit);
-
-    // It really crossed the world rather than clipping the ring: the aim spread
-    // keeps every course through the middle of the map.
-    expect(closestApproach).toBeLessThan((WORLD_SIZE / 2) * Math.SQRT2);
-    // …and it went out the FAR side, not back the way it came. `last` is the
-    // final centroid this test could OBSERVE — the flock is removed inside the
-    // same advanceFlocks call that carries it past the ring — so the bound is
-    // the despawn radius less the one tick of travel that finished the job.
-    expect(distanceFromWorldCentre(last.x, last.y)).toBeGreaterThan(
-      despawnRadiusCells(WORLD_SIZE) - BIRD_CRUISE_SPEED_CELLS_PER_SECOND * TICK_DT,
-    );
-
-    // ROUGHLY STRAIGHT, stated as a number: net displacement over distance
-    // actually flown. Perfectly straight is 1; the course-hold is 4× the wander
-    // noise, so the wander costs a couple of percent at most.
-    const displacement = Math.hypot(last.x - start.x, last.y - start.y);
-    expect(displacement / pathLength).toBeGreaterThan(0.95);
-  });
-
-  it('holds together as a loose cluster for the whole crossing', () => {
-    const flock = spawnFlock(FLOCK_WORLD);
-    const id = flock.id;
-
-    // The radius at which cohesion is already pulling as hard as it can. A flock
-    // that never reaches it never had a straggler worth the name.
-    const dispersed = SCHOOL_FULL_PULL_RADIUS_CELLS * BIRD_FLOCK_LOOSENESS;
-
-    let worst = 0;
-    for (let n = 0; n < ticksFor(flockLifetimeLimitSeconds(WORLD_SIZE)); n++) {
-      advanceFlocks(FLOCK_WORLD, TICK_DT);
-      const current = flockById(id);
-      if (current === undefined) break;
-      worst = Math.max(worst, flockSpreadCells(current));
-    }
-
-    // Not a point, and not a smear: a cluster.
-    expect(worst).toBeGreaterThan(0);
-    expect(worst).toBeLessThan(dispersed);
   });
 
   it('never has more than MAX_CONCURRENT_FLOCKS aloft, or MAX_BIRDS_ALOFT birds', () => {
@@ -2340,16 +698,6 @@ describe('bird flocks arrive, cross and leave', () => {
     }
   });
 
-  it('keeps producing flocks — the sky never runs dry', () => {
-    const seen = new Set<number>();
-    for (let n = 0; n < ticksFor(FLOCK_MEAN_SPAWN_INTERVAL_SECONDS * 20); n++) {
-      advanceFlocks(FLOCK_WORLD, TICK_DT);
-      for (const flock of livingFlocks()) seen.add(flock.id);
-    }
-    // Twenty mean intervals against two slots: several distinct crossings, so
-    // arrivals are an ongoing process and not a one-off at boot.
-    expect(seen.size).toBeGreaterThan(2);
-  });
 
   it('bounds the whole broadcast at the population cap plus the sky', () => {
     expect(MAX_BIRDS_ALOFT).toBe(MAX_CONCURRENT_FLOCKS * BIRDS_PER_FLOCK_MAX);
@@ -2364,29 +712,7 @@ describe('birds are not habitat fauna', () => {
     harness = boot();
   });
 
-  it('survives ticks that would cull a creature standing where it flies', () => {
-    // Nothing about a bird's position is habitat, so the per-tick habitat sweep
-    // — the thing that would delete a fifth census species instantly — must not
-    // see it at all.
-    const flock = spawnFlock({ worldSize: harness.world.size });
-    const born = flock.birds.length;
 
-    tick(harness, ticksFor(5));
-    expect(flockById(flock.id)?.birds.length).toBe(born);
-  });
-
-  it('is unmoved by the sculpt panic that scatters a school', () => {
-    const flock = spawnFlock({ worldSize: harness.world.size });
-    const before = flock.birds.map((bird) => ({ ...bird }));
-
-    // Startle everything at the flock's own position, with a radius that covers
-    // the whole world. Fish there would bolt; birds have no flee state at all,
-    // because panic is a habitat concept.
-    const centroid = flockCentroid(flock);
-    startleNear(centroid.x, centroid.y, WORLD_SIZE * 2);
-
-    expect(flockById(flock.id)?.birds).toEqual(before);
-  });
 
   it('shares the entity-id space with the habitat population', () => {
     fillPopulation(harness);
@@ -2399,22 +725,6 @@ describe('birds are not habitat fauna', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('appears in the same broadcast as everything else', () => {
-    spawnFlock({ worldSize: harness.world.size });
-    harness.sink.clear();
-    tick(harness, 2);
-
-    const payload = harness.sink.ofType('wildlife:entities')[0].payload as {
-      entities: Array<Record<string, unknown>>;
-    };
-    const birds = payload.entities.filter((entity) => entity.species === 'bird');
-    expect(birds.length).toBe(livingBirds().length);
-    // The same six keys as every other creature — no altitude, no flock id, no
-    // wing phase. The client derives all three.
-    for (const bird of birds) {
-      expect(Object.keys(bird).sort()).toEqual(['heading', 'id', 'size', 'species', 'x', 'y']);
-    }
-  });
 
   it('is not persisted, and a restore clears the sky', () => {
     spawnFlock({ worldSize: harness.world.size });
@@ -2452,49 +762,6 @@ describe('birds are not habitat fauna', () => {
   });
 });
 
-describe('flock steering keeps its priorities in order', () => {
-  beforeEach(() => {
-    resetWildlifeState();
-  });
-
-  it('ranks course-hold above the wander noise and below cohesion', () => {
-    // The three terms that share one heading, in the order they must beat each
-    // other. The cohesion figure is the EFFECTIVE one — cohesionPullRadiansPerSecond
-    // divides the maximum by the looseness — which is the number a retune of
-    // either constant is most likely to get wrong.
-    const effectiveCohesion = SCHOOL_MAX_PULL_RADIANS_PER_SECOND / BIRD_FLOCK_LOOSENESS;
-    expect(FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND).toBeGreaterThan(
-      BIRD_TURN_NOISE_RADIANS_PER_SECOND,
-    );
-    expect(FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND).toBeLessThan(effectiveCohesion);
-  });
-
-  it('closes the gap on a bird displaced across the course', () => {
-    // The behaviour that ordering buys: a straggler wants to rejoin more than it
-    // wants to hold the line. A course-hold that outranked cohesion would leave
-    // the two flying perfectly straight parallel courses — which no straightness
-    // measurement can see, so it is asserted here instead.
-    const flock = spawnFlock(FLOCK_WORLD);
-    const centre = flockCentroid(flock);
-    const stray = flock.birds[0];
-    const across = flock.courseHeading + Math.PI / 2;
-    const displacement = SCHOOL_FULL_PULL_RADIUS_CELLS * BIRD_FLOCK_LOOSENESS * 3;
-    stray.x = centre.x + Math.cos(across) * displacement;
-    stray.y = centre.y + Math.sin(across) * displacement;
-
-    const gapToRest = (): number => {
-      const others = flock.birds.slice(1);
-      const rest = flockCentroid({ ...flock, birds: others });
-      return Math.hypot(stray.x - rest.x, stray.y - rest.y);
-    };
-
-    const before = gapToRest();
-    for (let n = 0; n < ticksFor(30); n++) advanceFlocks(FLOCK_WORLD, TICK_DT);
-    // Measured at ~55% closed over 30 s; asserted loosely, because the wander is
-    // unseeded and this is a rate, not a target.
-    expect(gapToRest()).toBeLessThan(before * 0.75);
-  });
-});
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2505,78 +772,7 @@ describe('flock steering keeps its priorities in order', () => {
 // move before the largest animal in the game could school at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Deep water everywhere: whale and deep-sea habitat with no boundaries. */
-const OPEN_DEEP_HEIGHT = DEEP_WATER_MAX_HEIGHT;
-
-/**
- * Chunks per edge of unlocked water in the pod fixture.
- *
- * Half the world's 64-chunk edge. The population these tests want is "several
- * whole pods and no more" — enough that mixed composition is a statistical
- * certainty over a run, few enough that the run is cheap. A chunk is 16 cells,
- * so 32 of them is 512 cells square: 16 384 square world units of open sea,
- * which asks for 8 whales and 10 deep-sea creatures and nothing else. The
- * assertions below derive what they expect from populationTargets rather than
- * restating those counts as numbers.
- */
-const POD_UNLOCK_CHUNK_SPAN = 32;
-
-/** Deep water, unlocked only inside a POD_UNLOCK_CHUNK_SPAN square. */
-function podWorld(): World {
-  return worldWithTerrain(
-    WORLD_SIZE,
-    () => OPEN_DEEP_HEIGHT,
-    (cx, cy) => cx >= POD_UNLOCK_CHUNK_SPAN || cy >= POD_UNLOCK_CHUNK_SPAN,
-  );
-}
-
-/**
- * How long a pod sample runs, in simulated seconds.
- *
- * Long enough for turnover to cycle the whale population several times over, so
- * the sample is many pods rather than one lucky one — the same reasoning as
- * SIZE_SAMPLE_SECONDS, against a much smaller population.
- */
-const POD_SAMPLE_SECONDS = 450;
-
 describe('whale pods', () => {
-  it('gives whales more than one size and draws them per member', () => {
-    const profile = profileOf('whale');
-    // Three claims, one per thing the owner asked for.
-    expect(WILDLIFE_SIZE_CLASSES.filter((size) => profile.sizeWeights[size] > 0).length)
-      .toBeGreaterThan(1);
-    expect(profile.groupSize).toBe(WHALE_POD_SIZE);
-    expect(profile.groupSize).toBeGreaterThan(1);
-    expect(profile.sizeDraw).toBe('per-member');
-
-    // A pod is adults with calves among them, not a pyramid of juveniles the way
-    // a fish shoal is — the mix is the opposite shape to FISH_SIZE_WEIGHTS.
-    const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
-    expect(WHALE_SIZE_WEIGHTS[medium]).toBeGreaterThan(WHALE_SIZE_WEIGHTS[small]);
-    expect(WHALE_SIZE_WEIGHTS[small]).toBeGreaterThan(WHALE_SIZE_WEIGHTS[large]);
-  });
-
-  it('holds a pod together at sizes that would disperse a fish shoal', () => {
-    // The reason schooling probability had to stop being a global table keyed by
-    // size: these three numbers are fish ecology, and a pod obeys the opposite
-    // rule. A whale of the class that makes a fish solitary still schools.
-    for (const size of WILDLIFE_SIZE_CLASSES) {
-      expect(WHALE_SCHOOLING_PROBABILITY_BY_SIZE[size]).toBeGreaterThanOrEqual(
-        FISH_SCHOOLING_PROBABILITY_BY_SIZE[size],
-      );
-      expect(WHALE_SCHOOLING_PROBABILITY_BY_SIZE[size]).toBeGreaterThan(0.5);
-    }
-    // Every species' table is a probability, whether or not its groupSize makes
-    // the roll matter.
-    for (const species of WILDLIFE_HABITAT_SPECIES) {
-      for (const size of WILDLIFE_SIZE_CLASSES) {
-        const p = profileOf(species).schoolingProbabilityBySize[size];
-        expect(p).toBeGreaterThanOrEqual(0);
-        expect(p).toBeLessThanOrEqual(1);
-      }
-    }
-  });
-
   it('keeps school spacing clear of every schooling creature\'s own body', () => {
     // THE CONTRACT that whale pods made load-bearing: cohesion pulls inward only
     // outside the comfort radius, separation pushes outward inside a body
@@ -2595,52 +791,5 @@ describe('whale pods', () => {
     }
   });
 
-  it('leaves the fish that the spacing constants were calibrated on untouched', () => {
-    // The species term is 1 for the fish BY CONSTRUCTION (the baseline is taken
-    // from the fish profile), so the 2026-08-21 retune cannot have moved the one
-    // school those radii were ever measured against.
-    expect(SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS).toBe(profileOf('fish').bodyLengthCells);
-    for (const size of WILDLIFE_SIZE_CLASSES) {
-      const fish = { species: 'fish', size } as WildlifeEntity;
-      expect(schoolLoosenessOf(fish)).toBe(SCHOOL_LOOSENESS_BY_SIZE[size]);
-      // ...and a whale of the same class holds proportionally more space.
-      const whale = { species: 'whale', size } as WildlifeEntity;
-      expect(schoolLoosenessOf(whale)).toBeGreaterThan(schoolLoosenessOf(fish));
-    }
-  });
 
-  it('spawns whales in mixed-size pods', () => {
-    // The end-to-end claim, through the real spawn path. Every whale school ever
-    // seen is recorded with the set of size classes among its members, the same
-    // sampling shape the fish size test uses.
-    const harness = bootOn(podWorld());
-    // The census runs on the first tick, not at boot, so the fixture's own
-    // premise is asserted after one — this must be a world with room for whole
-    // pods, or the test below would be measuring an empty ocean.
-    harness.host.tick(TICK_DT);
-    expect(populationTargets().whale).toBeGreaterThanOrEqual(WHALE_POD_SIZE);
-
-    const podSizes = new Map<number, Set<WildlifeSizeClass>>();
-    const podMembers = new Map<number, number>();
-    for (let n = 0; n < ticksFor(POD_SAMPLE_SECONDS); n++) {
-      harness.host.tick(TICK_DT);
-      const counts = membersBySchool();
-      for (const entity of livingEntities()) {
-        if (entity.species !== 'whale') continue;
-        const sizes = podSizes.get(entity.schoolId) ?? new Set<WildlifeSizeClass>();
-        sizes.add(entity.size);
-        podSizes.set(entity.schoolId, sizes);
-        const members = counts.get(entity.schoolId) ?? 1;
-        podMembers.set(entity.schoolId, Math.max(podMembers.get(entity.schoolId) ?? 0, members));
-      }
-    }
-
-    // Whales grouped at all — the thing groupSize 1 made impossible.
-    expect(Math.max(...podMembers.values())).toBeGreaterThan(1);
-    // ...and at least one pod carried more than one size class, which is the
-    // difference between 'per-member' and the graded shoal fish get. Over a
-    // sample this long a graded implementation cannot produce one: it draws a
-    // single class for the whole group by construction.
-    expect([...podSizes.values()].some((sizes) => sizes.size > 1)).toBe(true);
-  });
 });

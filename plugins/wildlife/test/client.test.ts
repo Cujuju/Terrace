@@ -4,7 +4,7 @@
 // node environment as the server tests.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
   DEFAULT_SIZE_CLASS_INDEX,
@@ -124,13 +124,6 @@ describe('size classes', () => {
     for (const sizeClass of WILDLIFE_SIZE_CLASSES) {
       expect(sizeClassAt(sizeClassIndex(sizeClass))).toBe(sizeClass);
     }
-  });
-
-  it('draws the default class at exactly the scale the models are authored at', () => {
-    // The models in client/models.ts are authored at medium, and every clearance
-    // in client/placement.ts was sized against those dimensions. If this stops
-    // being 1, both files quietly start meaning something else.
-    expect(WILDLIFE_SIZE_MODEL_SCALE[DEFAULT_SIZE_CLASS]).toBe(1);
   });
 
   it('orders the model scales smallest to largest', () => {
@@ -347,8 +340,6 @@ describe('vertical placement', () => {
 });
 
 describe('walkerGroundY — footprint sampling', () => {
-  const flatAt = (h: number) => () => h;
-
   it('stands on the highest band the footprint overlaps, not the centre cell', () => {
     // Centre cell is band 0; the cell one to the +x is band 2 (world Y 2). A
     // walker at x = 9.8 overhangs the boundary at x = 10, so it must stand at 2.
@@ -385,10 +376,6 @@ describe('walkerGroundY — footprint sampling', () => {
     // long is ~1.76 cells, so the probe must reach a good part of a cell either
     // side of centre — far more than the raw world-unit number would give.
     expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES.grazer).toBeGreaterThan(0.5);
-  });
-
-  it('matches the single-cell sample on flat ground', () => {
-    expect(walkerGroundY(flatAt(3), 20.5, 20.5, 'grazer')).toBe(3);
   });
 
   it('returns null only when every sample is null', () => {

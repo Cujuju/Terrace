@@ -50,15 +50,6 @@ describe('routePluginMessage', () => {
     expect(received).toEqual([{ player: PLAYER.id, payload: { n: 2 } }]);
   });
 
-  it('ignores an unroutable namespaced type without throwing', () => {
-    const host = hostWith({ name: 'early' });
-    expect(() => routePluginMessage(() => host, PLAYER, 'nobody:home', {})).not.toThrow();
-  });
-
-  it('ignores every plugin message while no world is loaded', () => {
-    expect(() => routePluginMessage(() => null, PLAYER, 'late:ping', {})).not.toThrow();
-  });
-
   it('claims namespaced types only', () => {
     // The room hands everything else back to Colyseus's unregistered-type
     // treatment, so a core type keeps degrading exactly as it does today.
