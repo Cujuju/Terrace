@@ -48,7 +48,7 @@ import {
 export const SHARK_ALARM_RADIUS_CELLS = cellsAcross(3);
 
 /**
- * What a shark frightens: the shelf's other two species.
+ * What a shark frightens: the shelf's other species.
  *
  * ITSELF EXCLUDED, and structurally so rather than by a self-check in the
  * engine — a hunter's alarm is applied through the ordinary `startleNear` with
@@ -61,9 +61,13 @@ export const SHARK_ALARM_RADIUS_CELLS = cellsAcross(3);
  * both live in `deep` and a shallow-water hunter never comes within its alarm
  * radius of one. Listing them would be a rule that can never fire, and a rule
  * that can never fire is a claim nobody can check.
+ *
+ * The eel and the angelfish ARE here (added 2026-09-03 with the species
+ * themselves): both live on the shelf, so a shark passing overhead should
+ * scatter them exactly the way it scatters a fish or a ray.
  */
 const SHARK_PREY: Predation = {
-  preySpecies: ['fish', 'ray'],
+  preySpecies: ['fish', 'ray', 'eel', 'angelfish'],
   alarmRadiusCells: SHARK_ALARM_RADIUS_CELLS,
 };
 

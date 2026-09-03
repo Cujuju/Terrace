@@ -45,6 +45,10 @@ export const WILDLIFE_HABITAT_SPECIES = [
   'bison',
   'ray',
   'shark',
+  // Added 2026-09-03 (owner: two new fish species). Appended, like the four
+  // above: this order is the order spawning considers species in.
+  'eel',
+  'angelfish',
 ] as const;
 
 export type WildlifeHabitatSpecies = (typeof WILDLIFE_HABITAT_SPECIES)[number];

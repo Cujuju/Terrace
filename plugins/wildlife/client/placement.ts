@@ -31,6 +31,8 @@ import {
 import { FISH_ENVELOPE } from './species/fish.ts';
 import { RAY_ENVELOPE } from './species/ray.ts';
 import { SHARK_ENVELOPE } from './species/shark.ts';
+import { EEL_ENVELOPE } from './species/eel.ts';
+import { ANGELFISH_ENVELOPE } from './species/angelfish.ts';
 import { GRAZER_ENVELOPE } from './species/grazer.ts';
 import { IBEX_ENVELOPE } from './species/ibex.ts';
 import { BISON_ENVELOPE } from './species/bison.ts';
@@ -58,7 +60,8 @@ const WATER_MARGIN_WORLD_UNITS = 0.12;
  * again at use, so a figure taken at `large` submerges a large creature by
  * WILDLIFE_SIZE_MODEL_SCALE.large² of its crown rather than once.
  *
- * RESIDUAL, NAMED RATHER THAN HIDDEN (2026-09-02): the fish, ray and shark
+ * RESIDUAL, NAMED RATHER THAN HIDDEN (2026-09-02): the fish, ray, shark, eel
+ * and angelfish insist on
  * rows therefore ask for more water than their bodies strictly need — a large
  * shark insists on 0.68 x 1.4 = 0.95 of water above its 0.56 crown. The effect
  * is never a body out of the water; it is that in a column shallower than
@@ -104,8 +107,9 @@ export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
  * fraction of the water column and means the same thing at every size.
  *
  * WHAT GOES IN THE FIELD is not the same for every row. The whale and the
- * deep-sea creature are hand-set half-extents at scale 1; the fish, ray and
- * shark are derived from their model files' envelopes at CLEARANCE_SIZE_CLASS,
+ * deep-sea creature are hand-set half-extents at scale 1; the fish, ray,
+ * shark, eel and angelfish are derived from their model files' envelopes at
+ * CLEARANCE_SIZE_CLASS,
  * which is a class scale larger. See that constant for the named residual — it
  * is why those three rows read high against their own crowns.
  */
@@ -197,6 +201,24 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
     halfLength: SHARK_ENVELOPE.halfLength, // snout to caudal tip, envelope halfLength
     halfWidth: SHARK_ENVELOPE.halfWidth, // pectoral tips, envelope halfWidth
   },
+  // The eel hugs the bottom it rests on (server/species/eel.ts's idle
+  // bouts) without quite touching it; the angelfish cruises mid-water with
+  // the shark, a little higher for its tall dorsal. Both bodies are MEASURED
+  // — derived from their model files' envelopes like the three rows above.
+  eel: {
+    depthFraction: 0.8,
+    minClearance: clearanceFor(-EEL_ENVELOPE.bellyY), // belly line, envelope bellyY
+    minSubmergence: clearanceFor(EEL_ENVELOPE.crownY), // ridge tip, envelope crownY
+    halfLength: EEL_ENVELOPE.halfLength, // nose to paddle tip, envelope halfLength
+    halfWidth: EEL_ENVELOPE.halfWidth, // widest station, envelope halfWidth
+  },
+  angelfish: {
+    depthFraction: 0.3,
+    minClearance: clearanceFor(-ANGELFISH_ENVELOPE.bellyY), // anal tip, envelope bellyY
+    minSubmergence: clearanceFor(ANGELFISH_ENVELOPE.crownY), // dorsal tip, envelope crownY
+    halfLength: ANGELFISH_ENVELOPE.halfLength, // nose to caudal tip, envelope halfLength
+    halfWidth: ANGELFISH_ENVELOPE.halfWidth, // bar faces, envelope halfWidth
+  },
   // Flyers have no water column either — see FLIGHT_ALTITUDES.
   bird: null,
 };
@@ -280,6 +302,8 @@ export const FLIGHT_ALTITUDES: Readonly<Record<WildlifeSpecies, number | null>> 
   bison: null,
   ray: null,
   shark: null,
+  eel: null,
+  angelfish: null,
   bird: BIRD_FLIGHT_WORLD_Y,
 };
 
@@ -308,6 +332,8 @@ export const BODY_COLUMNS: Readonly<Record<WildlifeSpecies, BodyColumn>> = {
   bison: { bellyY: 0, crownY: BISON_ENVELOPE.height },
   ray: { bellyY: RAY_ENVELOPE.bellyY, crownY: RAY_ENVELOPE.crownY },
   shark: { bellyY: SHARK_ENVELOPE.bellyY, crownY: SHARK_ENVELOPE.crownY },
+  eel: { bellyY: EEL_ENVELOPE.bellyY, crownY: EEL_ENVELOPE.crownY },
+  angelfish: { bellyY: ANGELFISH_ENVELOPE.bellyY, crownY: ANGELFISH_ENVELOPE.crownY },
   bird: { bellyY: BIRD_ENVELOPE.bellyY, crownY: BIRD_ENVELOPE.crownY },
 };
 
@@ -622,6 +648,8 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES: Readonly<
   bison: BISON_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
   ray: null,
   shark: null,
+  eel: null,
+  angelfish: null,
   bird: null,
 };
 

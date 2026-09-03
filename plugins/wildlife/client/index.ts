@@ -288,7 +288,7 @@ function drawnPoseOf(id: number): MoverPose | null {
  * a species that quietly gains a surface fails at boot rather than showing up
  * as a budget breach half a second into the first frame.
  */
-const SINGLE_SURFACE_SPECIES = 7; // fish, grazer, ibex, bison, ray, shark, bird
+const SINGLE_SURFACE_SPECIES = 9; // fish, grazer, ibex, bison, ray, shark, eel, angelfish, bird
 const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
 const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECIES * 2;
 
