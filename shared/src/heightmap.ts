@@ -198,6 +198,30 @@ export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', '
 export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['drag', 'carve'];
 
 /**
+ * THE TOOLS THAT HAVE NO RAISE/LOWER DIRECTION AT ALL (owner report,
+ * 2026-09-02). Not "tools whose raise chord happens to be refused" — a
+ * direction the tool cannot have:
+ *
+ * - `carve` only ever removes. "Add material to the underside of a roof" is
+ *   not a gesture this game has, which is why `sculptOptionsOf`'s validator
+ *   rejects a carve intent carrying `dir: 1` outright (protocol.ts) rather
+ *   than reinterpreting it. A tool with exactly one direction does not have
+ *   one to choose.
+ *
+ * ONE STATEMENT, TWO READERS, the same way TOOLS_WITHOUT_EDGE_PROFILE has
+ * two: the pointer layer forces such a stroke to `lower` regardless of the
+ * modifier held (or the sticky touch mode), and the HUD hides its Mode row
+ * for them so the UI cannot offer a direction that provably does nothing.
+ * Adding a tool here changes both at once — which is the whole point of it
+ * being a list rather than an `=== 'carve'` at each site.
+ *
+ * IT DOES NOT INCLUDE `drag`: a pull genuinely has both directions (the
+ * lower chord pulls a lip inward, see applyDragRegion/retreatHeightAt), so
+ * its Mode row and its modifier both still mean something.
+ */
+export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
+
+/**
  * How many terrace bands ONE carve stroke removes from each footprint cell.
  *
  * DERIVED FROM `isGapDrawn`, NOT CHOSEN. The value is the SMALLEST band count
@@ -2559,27 +2583,44 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
 
 /**
  * THE CARVE (plan D6, issue #129 step 4.7): every footprint cell loses the
- * range `[spanBand · BAND_HEIGHT, (spanBand + CARVE_BANDS_PER_STROKE) ·
- * BAND_HEIGHT)`, and whatever stood above it stays standing as a roof.
+ * range `[(spanBand − 1) · BAND_HEIGHT, (spanBand + CARVE_BANDS_PER_STROKE −
+ * 1) · BAND_HEIGHT)`, and whatever stood above it stays standing as a roof.
+ *
+ * THE CUT OPENS THE BAND THE PICK NAMES — the fix for "carving stops after one
+ * cell" (owner report, 2026-09-02). It used to leave the grasped band solid
+ * and open `spanBand + 1` instead, and that one-band offset is what made the
+ * tool stop: `bandOfPick` (client/src/world.ts) names the band whose DRAWN
+ * SLAB the ray struck, and band k's slab is `[(k−1) · BAND_HEIGHT, k ·
+ * BAND_HEIGHT]` (`spanUndersideHeight`, columns.ts). So the back wall inside
+ * the opening a cut had just left named the band that cut had OPENED, the
+ * next intent asked to open the band ABOVE that one, no neighbour was open
+ * there, and the neighbour rule refused it. Every tunnel was exactly one cell
+ * deep, forever. Opening band k means removing from `(k − 1) · BAND_HEIGHT`
+ * upward, which is where the `− 1` in both bounds comes from and the only
+ * thing it means.
  *
  * WHAT THE CUT LEAVES, stated once because every rule below refers to it. The
- * lower piece keeps its ceiling at `spanBand · BAND_HEIGHT`, so the cell is
- * STILL SOLID at the grasped band — that band's cap becomes the tunnel FLOOR,
- * level with the lip the player pointed at. The upper piece floors at
- * `(spanBand + CARVE_BANDS_PER_STROKE) · BAND_HEIGHT`, so it is solid again
- * from there up. The bands that change hands are therefore the ones STRICTLY
- * BETWEEN the two — `spanBand + 1 … spanBand + CARVE_BANDS_PER_STROKE − 1`,
- * which at the shipped constant is the single band `spanBand + 1`.
+ * lower piece keeps its ceiling at `(spanBand − 1) · BAND_HEIGHT`, so the cell
+ * is OPEN at the grasped band and the tunnel FLOOR is level with the foot of
+ * the lip the player pointed at — the ground he was standing on outside it.
+ * The upper piece floors at `(spanBand + CARVE_BANDS_PER_STROKE − 1) ·
+ * BAND_HEIGHT`, so it is solid again from there up. The bands that change
+ * hands are therefore `spanBand … spanBand + CARVE_BANDS_PER_STROKE − 2`,
+ * which at the shipped constant is the single band `spanBand`. The DEPTH is
+ * unchanged — still `CARVE_BANDS_PER_STROKE` bands of material, so
+ * `sculptDisplacementUnits` prices it exactly as before; only where the block
+ * sits relative to the grasp has moved.
  *
  * THE ANTI-CHEAT RULE IS `canCarveBandAt`, ASKED OF EXACTLY THOSE BANDS. Air
  * spreads the way material does: a cell may be opened at a band only where a
  * neighbour is already open at it (columns.ts). Asking it of the bands the cut
- * actually opens — rather than of the grasped band, which the cut leaves solid
- * — is what makes the tunnel walk inward: the low ground outside a cliff is
- * open at the face's opened band, which admits the face cell; the cut makes
- * THAT cell open at the same band, which admits the next one in. All of the
- * opened bands must be admitted, not merely one: the tighter direction, and
- * the one that stays right if CARVE_BANDS_PER_STROKE ever moves.
+ * actually opens is what makes the tunnel walk inward: the low ground outside
+ * a cliff is open at the grasped band, which admits the face cell; the cut
+ * makes THAT cell open at the same band, and the next pick — on the back wall
+ * the cut just exposed — names that same band again, which admits the next
+ * cell in. All of the opened bands must be admitted, not merely one: the
+ * tighter direction, and the one that stays right if CARVE_BANDS_PER_STROKE
+ * ever moves.
  *
  * The same rule is where "on flat ground a carve is refused" comes from, and
  * it is a consequence rather than a special case: on flat ground capped at
@@ -2602,7 +2643,7 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
  * nothing: a column the storage cannot encode (`setColumn`), i.e. a RangeError
  * out of the server's message handler and the client's prediction alike.
  * `canCarveBandAt` does not catch it, and cannot be asked to: it is asked of
- * the bands the cut OPENS (`spanBand + 1` upward), and a neighbour dug to the
+ * the bands the cut OPENS (`spanBand` upward), and a neighbour dug to the
  * floor is genuinely open at those — the BEDROCK_REMNANT it keeps caps below
  * the world's bottom band. So the grasped band's own footing is a separate
  * question, asked here, once, before any cell is judged. `spanBand` reaches
@@ -2610,6 +2651,12 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
  * validateSculptIntent admits MIN_BAND because it is a band this world holds;
  * "this world has no material to take from under it" is terrain, and terrain
  * is re-derived here on both replicas rather than trusted off the wire.
+ *
+ * SINCE THE CUT MOVED DOWN A BAND, THIS REFUSES `spanBand === MIN_BAND + 1`
+ * TOO, and correctly: its lower piece would be `[BEDROCK_FLOOR,
+ * BEDROCK_FLOOR)`, i.e. no footing at all — the same column the storage
+ * cannot encode. Nothing about the test changed; `lo` did, and the test is
+ * written against `lo` precisely so it follows.
  */
 function applyCarve(
   map: Heightmap,
@@ -2619,8 +2666,24 @@ function applyCarve(
   spanBand: number,
   changed: Set<number>,
 ): void {
-  const lo = spanBand * BAND_HEIGHT;
-  const hi = (spanBand + CARVE_BANDS_PER_STROKE) * BAND_HEIGHT;
+  // THE BANDS THIS CUT OPENS, named rather than arithmetic-in-place, because
+  // the bounds below and the anti-cheat loop must be derived from the SAME
+  // pair — that they disagreed by one band is the whole of the "carving stops
+  // after one cell" bug (see the doc block above).
+  const lowestOpenedBand = spanBand;
+  const highestOpenedBand = spanBand + CARVE_BANDS_PER_STROKE - 2;
+  // A piece is SOLID at band k when it spans the boundary height `k ·
+  // BAND_HEIGHT` (`spanIndexCoveringBand`, columns.ts). So a lower piece
+  // capped at `(k − 1) · BAND_HEIGHT` is open at band k and solid below it,
+  // and a roof floored at `k · BAND_HEIGHT` is solid from band k up. That is
+  // the whole of the arithmetic: cap the floor one band boundary below the
+  // lowest band to open, floor the roof at the first band to leave alone.
+  //
+  // Equivalently, in the terms `bandOfPick` (client/src/world.ts) uses: band
+  // k's drawn slab is `[(k − 1) · BAND_HEIGHT, k · BAND_HEIGHT]`, so the range
+  // removed is exactly the slabs of the bands being opened.
+  const lo = (lowestOpenedBand - 1) * BAND_HEIGHT;
+  const hi = (highestOpenedBand + 1) * BAND_HEIGHT;
 
   // No footing would be left under the cut — see the paragraph above. `<=`
   // rather than `===` because a lower band would take even more away; both are
@@ -2645,7 +2708,7 @@ function applyCarve(
       }
     }
     if (!overlaps) return;
-    for (let band = spanBand + 1; band < spanBand + CARVE_BANDS_PER_STROKE; band++) {
+    for (let band = lowestOpenedBand; band <= highestOpenedBand; band++) {
       if (!canCarveBandAt(map, x, y, band)) return;
     }
     admitted.push(i);

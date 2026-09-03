@@ -97,7 +97,7 @@ import { Toolbar } from './Toolbar.tsx';
 import { Cartographer, chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { ChartSource } from '../terrain/chart.ts';
 import type { ConnectionStatus } from '../net/connection.ts';
-import { TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
+import { TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
 import type { SculptProfile, SculptTool } from '@terrace/shared';
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -393,23 +393,36 @@ export function Hud(props: {
             </div>
           </Show>
 
-          <div class="hud-row">
-            <span class="hud-label">Mode</span>
-            {/* A button, not a label: on touch there are no modifier keys, so
-                tapping this is how one-finger sculpting switches direction. */}
-            <button
-              type="button"
-              class="mode-value"
-              classList={{ lower: sculptMode() === 'lower' }}
-              aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
-              title={modeTitle(sculptMode(), controlBindings())}
-              onClick={() =>
-                setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
-              }
-            >
-              {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
-            </button>
-          </div>
+          {/* MODE, ONLY FOR THE TOOLS THAT HAVE A DIRECTION (owner report,
+              2026-09-02: "Mode should also not be displayed in the HUD, much
+              as we do not show hard or smooth for the pull tool"). The carve
+              only ever removes — shared says which tools those are, and the
+              input layer pins their strokes to Lower — so the row would offer
+              a choice that provably does nothing, and a toggle that did
+              nothing would be read as the tool being broken. REMOVED rather
+              than disabled, for the reason the Edge row above gives; the
+              stored mode is untouched, so Stamp comes back to whatever the
+              player last chose. `brushTool()` is called inside the JSX, per
+              the file header. */}
+          <Show when={!TOOLS_WITHOUT_DIRECTION.includes(brushTool())}>
+            <div class="hud-row">
+              <span class="hud-label">Mode</span>
+              {/* A button, not a label: on touch there are no modifier keys, so
+                  tapping this is how one-finger sculpting switches direction. */}
+              <button
+                type="button"
+                class="mode-value"
+                classList={{ lower: sculptMode() === 'lower' }}
+                aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
+                title={modeTitle(sculptMode(), controlBindings())}
+                onClick={() =>
+                  setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
+                }
+              >
+                {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
+              </button>
+            </div>
+          </Show>
         </div>
 
         {/* Bottom centre: the tool bar, alone in its cell now that the
