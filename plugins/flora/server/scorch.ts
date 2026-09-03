@@ -75,19 +75,18 @@ import { grassKey, grassCellOf, type GrassCell } from '../protocol.ts';
  *     stand, and only then do the stumps rot and the tree line return. The
  *     smallest thing heals first, which is what a burn actually looks like.
  *
- * RESIDUAL — NOT PERSISTED, and it cannot be without inventing persistence
- * this plugin does not have. Only the forest survives a restart
- * (./persistence.ts: trees and the RNG state, nothing else); the stump list is
- * explicitly not persisted (../protocol.ts's stump section) and neither are
- * the stability stamps. This record follows them. THE CONSEQUENCE, stated
- * plainly: a server restarted while a meadow is burning, or within
- * FLORA_SCORCH_REGROW_SECONDS of one having burned, comes back up with that
- * ground counting as fuel again immediately. That fires only when a restart
- * lands inside a 180-second window after a fire, and the worst it can do is let
- * one already-burned meadow burn a second time — the runaway needs the record
- * to be missing on EVERY cycle, and it is missing only on the boot. Persisting
- * it would mean adding a second field to FloraSlice and a version bump for a
- * 180-second window; the honest trade is to name the hole instead.
+ * PERSISTED (issue #297, 2026-09-02), unlike the stumps and the stability
+ * stamps, as REMAINING seconds per cell (./persistence.ts). It was the one
+ * countdown in this plugin worth carrying across a restart: a lost stump is a
+ * lost decoration, a lost stability stamp delays a tree, but a lost scorch
+ * record is FUEL — a server restarted inside the window came back with the
+ * whole burn scar counting as meadow, and a fire still alive at its edge took
+ * the scar again from the first tick. The residual that remains is the
+ * snapshot cadence (server/src/config.ts's DEFAULT_SNAPSHOT_INTERVAL_S, 60 s):
+ * a cell that burned after the last snapshot was written is not in the file,
+ * so a crash — not a clean stop, which snapshots on the way out — can hand
+ * back at most one snapshot interval's worth of burn as fuel. That is a bounded
+ * strip at the front's most recent position, not the whole scar.
  */
 export const FLORA_SCORCH_REGROW_SECONDS = 180;
 
@@ -122,6 +121,13 @@ export const FLORA_SCORCH_REGROW_SECONDS = 180;
  * SETS, or the re-dated entry would keep its old position and sit in front of
  * entries that are now due before it.
  */
+/** One scorched cell and the simulated seconds until it counts as meadow again. */
+export interface ScorchRemaining {
+  readonly x: number;
+  readonly y: number;
+  readonly seconds: number;
+}
+
 export class ScorchField {
   private readonly regrowsAt = new Map<number, number>();
 
@@ -137,6 +143,56 @@ export class ScorchField {
   /** Every scorched cell, in deadline order (see the class note). */
   cells(): GrassCell[] {
     return Array.from(this.regrowsAt.keys(), grassCellOf);
+  }
+
+  /**
+   * Every scorched cell with the simulated seconds it has left before it
+   * regrows, in deadline order — the persistence form (./persistence.ts).
+   *
+   * REMAINING, NOT THE DEADLINE, because the deadline is on this plugin's sim
+   * clock and that clock restarts from zero with the server (./index.ts's
+   * simSeconds). A deadline written at second 4000 and read at second 0 would
+   * keep the cell bare for over an hour; the remainder is the same on both
+   * sides of the restart. Downtime does not count against it, on the same rule
+   * the stability window keeps: the sim clock does not run while the server
+   * is down, so nothing regrows while nobody is simulating it.
+   *
+   * Never zero or negative: `advanceRegrowth` runs every tick and drops anything
+   * due, so what is left always has time to go — but the snapshot is taken
+   * between ticks, and a save that lands on a cell's exact deadline must not
+   * write a remainder a reader would reject. Clamped at one second.
+   */
+  remaining(nowSeconds: number): ScorchRemaining[] {
+    const out: ScorchRemaining[] = [];
+    for (const [key, deadline] of this.regrowsAt) {
+      const cell = grassCellOf(key);
+      out.push({ x: cell.x, y: cell.y, seconds: Math.max(1, deadline - nowSeconds) });
+    }
+    return out;
+  }
+
+  /**
+   * Installs a persisted record on top of whatever is here, dating every entry
+   * from `nowSeconds`.
+   *
+   * SORTED BY REMAINDER BEFORE INSERTING, because the class note's whole
+   * economy rests on insertion order being deadline order and a snapshot is
+   * the one input that arrives from outside the clock: it was written in
+   * deadline order, but a hand-edited file need not be, and `scorch` after a
+   * restore must still find the front of the map to be the earliest deadline.
+   * A stable sort on an already-ordered list is one pass.
+   *
+   * A cell already present is refreshed (delete-then-set, as `scorch` does), so
+   * restoring onto a live record can only lengthen a cell's bareness, never
+   * shorten it.
+   */
+  restore(entries: readonly ScorchRemaining[], nowSeconds: number): void {
+    const ordered = entries.slice().sort((a, b) => a.seconds - b.seconds);
+    for (const entry of ordered) {
+      const key = grassKey(entry.x, entry.y);
+      this.regrowsAt.delete(key);
+      this.regrowsAt.set(key, nowSeconds + entry.seconds);
+    }
   }
 
   /** Drops the whole record — the world-close and test seam. */
