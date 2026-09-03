@@ -168,10 +168,14 @@ describe('tier follows the flat, buildable ground around a house', () => {
   });
 
   it('never births a house from neighbour count alone', () => {
+    // Conway's B3 would fill in the fourth corner of this L. This model has no
+    // birth rule at all, so the board can only ever LOSE cells in a step —
+    // asserted as a subset rather than as a count, because the keep-clear rule
+    // does remove two of these three (see CLEARANCE below).
     const live = boardOf([[10, 10], [11, 10], [10, 11]]);
     const result = stepPopulous(world, live, contextExcept([]));
     expect(result.born).toEqual([]);
-    expect(result.nextLive.size).toBe(3);
+    for (const cellKey of result.nextLive.keys()) expect(live.has(cellKey)).toBe(true);
   });
 });
 
@@ -222,7 +226,9 @@ describe('population', () => {
   });
 });
 
-describe('houses die only from the terrain', () => {
+// The terrain half of the death rule. The other half — a building's keep-clear
+// disc claiming the ground — is asserted under CLEARANCE below.
+describe('houses die from the ground under them, never from their neighbour count', () => {
   it('removes a house whose own cell is no longer buildable', () => {
     const live = boardOf([[10, 10], [30, 30]]);
     const result = stepPopulous(world, live, contextExcept([[10, 10]]));
@@ -387,15 +393,22 @@ describe('the plugin', () => {
 // CLEARANCE (F2). structures' keep-clear rule is a property of the BOARD, not
 // of the Conway CA that happened to be enforcing it: under the CA, scanChunk
 // refuses the teepee→building step inside another building's square and
-// clearKeepClearSquare empties it. This model ran neither, so a pilgrims 2×2
-// homestead on open ground became four adjacent top-tier buildings standing
-// inside one another.
+// clearKeepClearSquare EMPTIES that square. This model ran neither, so a
+// pilgrims 2×2 homestead on open ground became four adjacent top-tier
+// buildings standing inside one another.
+//
+// BOTH HALVES OF THE RULE (owner, 2026-09-02: "it's okay if teepees spawn on
+// top of each other, but nothing else should share a space"). Refusing the
+// promotion is only the first half; a cell inside a building's disc is
+// DEMOLISHED — reported in `died`, absent from `nextLive` — because holding it
+// at tier 0 left camps standing under a house forever, still emitting settlers
+// (GH #183).
 
 describe('buildings never stand within the separation of one another', () => {
   /** Enough steps that every cell has long since climbed to its terrain tier. */
   const STEPS = Math.ceil(MAX_TIER / POPULOUS_TIER_CLIMB_PER_STEP) + 1;
 
-  it('promotes exactly one cell of a 2×2 homestead, and keeps all four alive', () => {
+  it('promotes one cell of a 2×2 homestead and demolishes the other three', () => {
     const ctx = contextExcept([]); // wide open flat ground: every cell earns the top tier
     let live: ReadonlyMap<number, PopulousCellRecord> = boardOf([
       [10, 10],
@@ -407,28 +420,30 @@ describe('buildings never stand within the separation of one another', () => {
       live = stepPopulous(world, live, ctx).nextLive;
     }
 
-    // NOBODY IS DEMOLISHED. Populous deaths are terrain-only by design, so the
-    // three that may not build are HELD at tier 0 — camps — not removed.
-    expect(live.size).toBe(4);
+    // THE BUILDING'S GROUND IS EMPTIED. The three cells that may not build sit
+    // inside the promoted cell's keep-clear disc, so they are demolished rather
+    // than left standing as camps under the house.
+    expect(live.size).toBe(1);
     const buildings = [...live.entries()].filter(([, record]) => record.tier > 0);
     expect(buildings.length).toBe(1);
-    // The FIRST cell in ascending key order wins; that is the whole tie-break.
+    // Among CAMPS climbing together the FIRST cell in ascending key order is
+    // promoted, and every later cell then sees it standing; that is the
+    // tie-break. (Among BUILDINGS it runs the other way — see the last case.)
     expect(buildings[0][0]).toBe(key(10, 10));
     expect(live.get(key(10, 10))!.tier).toBe(populousTierFor(8, MAX_TIER));
   });
 
-  it('still fills and emits from the cells it held at tier 0', () => {
+  it('reports the cell it clears in `died`, and emits nobody from it', () => {
+    // The demolition has to reach the wire: structures broadcasts `died` on the
+    // same delta path a terrain death takes (its advanceGrowthModel), so a cell
+    // merely dropped from the board would stay drawn on every client.
     const ctx = contextExcept([]);
-    let live: ReadonlyMap<number, PopulousCellRecord> = boardOf([[10, 10], [11, 10]]);
-    const emitters = new Set<number>();
-    // A camp's capacity is the slowest on the ladder, so run long enough that
-    // even the held cell has filled it.
-    for (let step = 0; step < POPULOUS_CAPACITY_BY_TIER[0] + 1; step++) {
-      const result = stepPopulous(world, live, ctx);
-      for (const cell of result.emitted) emitters.add(key(cell.x, cell.y));
-      live = result.nextLive;
-    }
-    expect(emitters.has(key(11, 10))).toBe(true);
+    const result = stepPopulous(world, boardOf([[10, 10], [11, 10]]), ctx);
+    expect(result.died).toContainEqual({ x: 11, y: 10 });
+    expect(result.nextLive.has(key(11, 10))).toBe(false);
+    // A demolished cell is never asked for a settler — that was the GH #183
+    // failure, a camp under a house going on emitting for the life of the world.
+    expect(result.emitted).not.toContainEqual({ x: 11, y: 10 });
   });
 
   it('is deterministic: insertion order of the board cannot change the outcome', () => {
@@ -443,23 +458,28 @@ describe('buildings never stand within the separation of one another', () => {
       [...b.nextLive.entries()].sort((l, r) => l[0] - r[0]),
     );
     expect(a.upgraded).toEqual(b.upgraded);
+    expect(a.died).toEqual(b.died);
     expect(a.emitted).toEqual(b.emitted);
   });
 
-  it('does not collapse an already-overlapping pair into two camps', () => {
+  it('collapses an already-overlapping pair to one building, not to two camps', () => {
     // Both cells arrive as buildings — a board written before this rule, or a
-    // save from one. Holding BOTH at 0 (checking against the previous board
-    // wholesale) would make them flip camp/building forever. The later cell in
-    // key order keeps its building; the earlier one yields.
+    // save from one. Demolishing BOTH (checking against the previous board
+    // wholesale) would empty the site; holding both at 0 would make them flip
+    // camp/building forever. Among BUILDINGS the LATER cell in key order keeps
+    // its house: the earlier one is reached first, still sees the later one
+    // undecided at its old tier, and goes.
     const ctx = contextExcept([]);
     const live = boardOf([[10, 10], [11, 10]], { age: 9, tier: MAX_TIER, population: 0 });
     const result = stepPopulous(world, live, ctx);
-    expect(result.nextLive.get(key(10, 10))!.tier).toBe(0);
+    expect(result.nextLive.has(key(10, 10))).toBe(false);
+    expect(result.died).toContainEqual({ x: 10, y: 10 });
     expect(result.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
 
-    // …and it STAYS that way, rather than oscillating.
+    // …and the survivor STAYS, rather than the pair oscillating.
     const again = stepPopulous(world, result.nextLive, ctx);
-    expect(again.nextLive.get(key(10, 10))!.tier).toBe(0);
+    expect(again.nextLive.size).toBe(1);
+    expect(again.died).toEqual([]);
     expect(again.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
   });
 });
