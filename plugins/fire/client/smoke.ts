@@ -123,6 +123,7 @@ import {
 } from 'three';
 import { FIRE_FLAME_INSTANCE_CAP } from '../protocol.ts';
 import { VALUE_NOISE_GLSL } from './valueNoiseGlsl.ts';
+import { evictFaintest } from './faintestEviction.ts';
 import type { FireInstance } from './flames/types.ts';
 
 // ── Lifetime ──────────────────────────────────────────────────────────────
@@ -751,24 +752,24 @@ export const createFireSmoke = (): FireSmoke => {
   const scale = new Vector3();
 
   /**
-   * Frees a slot when the cap binds, by dropping the FAINTEST column.
+   * Scratch, reused every frame: the fires that want a column and have none.
    *
-   * The faintest is the least visible thing on screen, so it is the cheapest
-   * thing to lose — and unlike "drop the oldest" it never sacrifices a column
-   * that is still climbing to full strength in order to keep one that is a
-   * second from retiring anyway.
+   * WHY THE FRAME'S INSERTS ARE GATHERED BEFORE ANY SLOT IS FREED. When the cap
+   * binds a slot is taken from the FAINTEST RETIRING column — the least visible
+   * memory of a fire that is already over is the cheapest thing to lose, and
+   * unlike "drop the oldest" it never sacrifices a column still climbing to full
+   * strength in order to keep one a second from retiring. That selection is
+   * ./faintestEviction.ts's (which is also where the reason a column whose fire
+   * is still ALIGHT is never a candidate is written down), and it takes a COUNT
+   * because freeing one slot at a time cost a full scan of the cap PER FIRE PER
+   * FRAME once the cache was full: 52 ms/frame in this renderer alone on the
+   * owner's live burn, measured 2026-09-02. Gathering first is the only way the
+   * count is knowable.
+   *
+   * Rebuilt in place rather than reallocated, ../client/index.ts's rule for the
+   * instance list it is fed.
    */
-  function evictFaintest(): void {
-    let faintestKey: number | null = null;
-    let faintestStrength = Infinity;
-    for (const [key, column] of columns) {
-      if (column.strength < faintestStrength) {
-        faintestStrength = column.strength;
-        faintestKey = key;
-      }
-    }
-    if (faintestKey !== null) columns.delete(faintestKey);
-  }
+  const pending: FireInstance[] = [];
 
   return {
     root,
@@ -784,6 +785,7 @@ export const createFireSmoke = (): FireSmoke => {
       // column's afterlife.
       for (const column of columns.values()) column.alive = false;
 
+      pending.length = 0;
       for (const fire of fires) {
         const existing = columns.get(fire.key);
         if (existing !== undefined) {
@@ -797,7 +799,20 @@ export const createFireSmoke = (): FireSmoke => {
           existing.alive = true;
           continue;
         }
-        if (columns.size >= SMOKE_COLUMN_CAP) evictFaintest();
+        pending.push(fire);
+      }
+      if (pending.length === 0) return;
+
+      // ONE selection for the whole frame, and only for the slots the frame is
+      // actually short of.
+      const shortfall = pending.length - (SMOKE_COLUMN_CAP - columns.size);
+      if (shortfall > 0) evictFaintest(columns, shortfall);
+
+      for (const fire of pending) {
+        // More fires alight than the cap can hold, with nothing retiring to make
+        // room: the surplus is REFUSED and asks again next frame, rather than
+        // taking a slot from a column that is currently on screen.
+        if (columns.size >= SMOKE_COLUMN_CAP) break;
         // The only allocation this renderer makes after construction, and it
         // happens on a server delta — a new fire — not on a frame.
         columns.set(fire.key, {

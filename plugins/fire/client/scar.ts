@@ -131,6 +131,7 @@ import {
   SMOKE_RISE_SECONDS,
   SMOKE_SILENT_DISTANCE,
 } from './smoke.ts';
+import { evictFaintest } from './faintestEviction.ts';
 import type { FireInstance } from './flames/types.ts';
 
 // ── Lifetime ──────────────────────────────────────────────────────────────
@@ -497,22 +498,28 @@ export const createFireScar = (): FireScar => {
   const scale = new Vector3();
 
   /**
-   * Frees a slot when the cap binds, by dropping the FAINTEST scar — ./smoke.ts's
-   * eviction and its reason: the least visible thing on screen is the cheapest
-   * thing to lose, and unlike "drop the oldest" it never sacrifices a mark that
-   * is still darkening in order to keep one that is about to fade out anyway.
+   * Scratch, reused every frame: the fires that want a scar and have none, with
+   * the drawn ground height each one was placed against in `pendingDrawnY`.
+   *
+   * ./smoke.ts's gather, for its reasons. When the cap binds a slot is taken
+   * from the FAINTEST FADING scar — the least visible mark left by a fire that
+   * is already over is the cheapest thing to lose, and unlike "drop the oldest"
+   * it never sacrifices a mark still darkening in order to keep one about to
+   * fade out. That selection is ./faintestEviction.ts's (which is also where the
+   * reason a scar whose fire is still ALIGHT is never a candidate is written
+   * down) and it takes a COUNT, because freeing one slot at a time cost a full
+   * scan of the cap PER FIRE PER FRAME once the cache was full: 40 ms/frame in
+   * this renderer alone on the owner's live burn, measured 2026-09-02.
+   * Gathering first is what makes the count knowable.
+   *
+   * THE GROUND HEIGHT IS CARRIED ALONGSIDE rather than re-resolved at insert
+   * time. It has to be resolved during the gather anyway — a fire whose ground
+   * is unknown is skipped, so it is not pending and must not be counted in the
+   * shortfall — and `groundAt` walks the drawn terrain, so asking it a second
+   * time for the same scar is the only work either loop does that is not free.
    */
-  function evictFaintest(): void {
-    let faintestKey: number | null = null;
-    let faintestStrength = Infinity;
-    for (const [key, scar] of scars) {
-      if (scar.strength < faintestStrength) {
-        faintestStrength = scar.strength;
-        faintestKey = key;
-      }
-    }
-    if (faintestKey !== null) scars.delete(faintestKey);
-  }
+  const pending: FireInstance[] = [];
+  const pendingDrawnY: number[] = [];
 
   return {
     root,
@@ -528,6 +535,8 @@ export const createFireScar = (): FireScar => {
       // start of a scar's afterlife.
       for (const scar of scars.values()) scar.alive = false;
 
+      pending.length = 0;
+      pendingDrawnY.length = 0;
       for (const fire of fires) {
         const existing = scars.get(fire.key);
         if (existing !== undefined) {
@@ -542,13 +551,28 @@ export const createFireScar = (): FireScar => {
         // fire is alight, so the next frame retries it for free, and a mark
         // placed at a guessed height would be a scar burned into the sea.
         if (drawnY === null) continue;
-        if (scars.size >= SCAR_CAP) evictFaintest();
+        pending.push(fire);
+        pendingDrawnY.push(drawnY);
+      }
+      if (pending.length === 0) return;
+
+      // ONE selection for the whole frame, and only for the slots the frame is
+      // actually short of.
+      const shortfall = pending.length - (SCAR_CAP - scars.size);
+      if (shortfall > 0) evictFaintest(scars, shortfall);
+
+      for (let i = 0; i < pending.length; i++) {
+        // More fires alight than the cap can hold, with nothing fading to make
+        // room: the surplus is REFUSED and asks again next frame, rather than
+        // taking a slot from a mark that is currently on screen.
+        if (scars.size >= SCAR_CAP) break;
+        const fire = pending[i]!;
         // The only allocation this renderer makes after construction, and it
         // happens on a server delta — a new fire — not on a frame.
         scars.set(fire.key, {
           x: fire.x,
           z: fire.z,
-          drawnY,
+          drawnY: pendingDrawnY[i]!,
           radius: SCAR_MINIMUM_RADIUS + fire.fuelHeight * SCAR_RADIUS_PER_FUEL,
           seed: fire.seed,
           strength: 0,

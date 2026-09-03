@@ -214,6 +214,37 @@ let elapsedSeconds = 0;
  */
 const instances: FireInstance[] = [];
 
+/**
+ * A FireInstance this module may write into, and the pool of them `instances`
+ * is filled from.
+ *
+ * THE ARRAY WAS REBUILT IN PLACE; ITS ELEMENTS WERE NOT. `instances.length = 0`
+ * followed by a fresh object literal per fire is one allocation per fire per
+ * frame — 2000 short-lived objects a frame on a full burn, which is precisely
+ * the churn ./flames/types.ts's allocation-free rule exists to forbid and which
+ * ./flames/ribbonsToPlume.ts already keeps a pool to avoid. So the objects are
+ * grown once here and written in place forever after, the same way.
+ *
+ * This is safe for exactly the reason stated in this file's header: an instance
+ * is worth nothing beyond the frame it was made in, so nothing holds one. Every
+ * consumer either draws it this frame (./flames), ranks it this frame
+ * (./fireLights.ts) or copies what it needs out by value against the stable
+ * `key` (./smoke.ts, ./scar.ts).
+ */
+type MutableFireInstance = { -readonly [K in keyof FireInstance]: FireInstance[K] };
+const instancePool: MutableFireInstance[] = [];
+
+/** Appends one pooled slot to `instances` and hands it back to be written. */
+function nextInstanceSlot(): MutableFireInstance {
+  let slot = instancePool[instances.length];
+  if (slot === undefined) {
+    slot = { key: 0, x: 0, z: 0, groundY: 0, fuelHeight: 0, intensity: 0, ageSeconds: 0, seed: 0 };
+    instancePool.push(slot);
+  }
+  instances.push(slot);
+  return slot;
+}
+
 function adoptGround(ctx: ClientPluginCtx, fire: LocalFire): void {
   if (fire.groundY !== null) return;
   const groundY = ctx.terrainHeightAt(fire.cell.x, fire.cell.y);
@@ -290,19 +321,18 @@ function buildInstances(): void {
     }
     if (fire.groundY === null) continue;
 
-    instances.push({
-      key: fire.drawKey,
-      x: fire.cell.x * CELL_WORLD_SIZE,
-      z: fire.cell.y * CELL_WORLD_SIZE,
-      groundY: fire.groundY,
-      fuelHeight: fire.cell.fuelHeight,
-      intensity: fireIntensity(fire.ageSeconds, fire.cell.burnSeconds),
-      ageSeconds: fire.ageSeconds,
-      // The cell key: stable, unique per fire, and identical on every client —
-      // which is what the renderers vary their phase and lean by instead of
-      // Math.random (./flames/types.ts).
-      seed: key,
-    });
+    const slot = nextInstanceSlot();
+    slot.key = fire.drawKey;
+    slot.x = fire.cell.x * CELL_WORLD_SIZE;
+    slot.z = fire.cell.y * CELL_WORLD_SIZE;
+    slot.groundY = fire.groundY;
+    slot.fuelHeight = fire.cell.fuelHeight;
+    slot.intensity = fireIntensity(fire.ageSeconds, fire.cell.burnSeconds);
+    slot.ageSeconds = fire.ageSeconds;
+    // The cell key: stable, unique per fire, and identical on every client —
+    // which is what the renderers vary their phase and lean by instead of
+    // Math.random (./flames/types.ts).
+    slot.seed = key;
   }
 }
 
@@ -334,19 +364,18 @@ function buildEntityInstances(ctx: ClientPluginCtx): void {
     const pose = ctx.moverPose(fire.entity.sourceName, fire.entity.id);
     if (pose === null) continue;
 
-    instances.push({
-      key: fire.drawKey,
-      x: pose.x,
-      z: pose.z,
-      groundY: pose.y,
-      fuelHeight: fire.entity.fuelHeight,
-      intensity: fireIntensity(fire.ageSeconds, fire.entity.burnSeconds),
-      ageSeconds: fire.ageSeconds,
-      // The id, not a cell key: two animals alight on the same cell are two
-      // fires and must not share a phase, and one animal's flame must not
-      // change character because it walked across a cell boundary.
-      seed: fire.entity.id,
-    });
+    const slot = nextInstanceSlot();
+    slot.key = fire.drawKey;
+    slot.x = pose.x;
+    slot.z = pose.z;
+    slot.groundY = pose.y;
+    slot.fuelHeight = fire.entity.fuelHeight;
+    slot.intensity = fireIntensity(fire.ageSeconds, fire.entity.burnSeconds);
+    slot.ageSeconds = fire.ageSeconds;
+    // The id, not a cell key: two animals alight on the same cell are two
+    // fires and must not share a phase, and one animal's flame must not
+    // change character because it walked across a cell boundary.
+    slot.seed = fire.entity.id;
   }
 }
 
