@@ -1,5 +1,12 @@
-// Low-poly procedural creatures: spheres, cones and boxes, flat-shaded, in five
-// silhouettes you can tell apart at fifty cells.
+// The shared pool and the per-species herds: nine silhouettes you can tell
+// apart at fifty cells.
+//
+// WHAT THIS FILE IS, SINCE 2026-09-02. It no longer AUTHORS most of the
+// creatures. Six species (fish, grazer, ibex, bison, ray, shark) are authored
+// one file each under ./species/, against the SpeciesModelPool contract in
+// ./species/speciesModel.ts; this file lends them the pool, bakes what they
+// return and herds it. The whale, the deep-sea angler and the bird are still
+// authored below, in the older spheres-and-cones idiom.
 //
 // Rules this file keeps:
 //   * NO textures, NO per-creature lights, NO external assets. Everything is
@@ -49,6 +56,17 @@ import {
   type WildlifeSizeClass,
   type WildlifeSpecies,
 } from '../protocol.ts';
+// One file per species (./species/), each the sole author of its own anatomy
+// and animation. This file no longer draws a fish or a grazer; it lends the
+// pool and bakes whatever the species file hands back. See
+// ./species/speciesModel.ts for the contract and for why it is a file each.
+import type { SpeciesModelBuilder, SpeciesModelPool } from './species/speciesModel.ts';
+import { buildFish } from './species/fish.ts';
+import { buildGrazer } from './species/grazer.ts';
+import { buildIbex } from './species/ibex.ts';
+import { buildBison } from './species/bison.ts';
+import { buildRay } from './species/ray.ts';
+import { buildShark } from './species/shark.ts';
 
 /**
  * Sphere tessellation. 6 segments around, 4 rings tall: the fewest that still
@@ -60,28 +78,16 @@ const SPHERE_RINGS = 4;
 /** Cones and the whale's flukes are 4-sided — pyramids, deliberately. */
 const CONE_SEGMENTS = 4;
 
-/** Distinct hues, each picked to sit against its own background. */
-const FISH_COLOR = 0xe8a13c; // warm orange against blue shallows
+/**
+ * Distinct hues, each picked to sit against its own background.
+ *
+ * Only the species AUTHORED HERE are listed: the fish's, the grazer's and the
+ * four new species' colours live in their own files (./species/), beside the
+ * geometry they paint.
+ */
 const WHALE_COLOR = 0x39506b; // dark slate; big, so it needs no help
 const DEEPSEA_COLOR = 0x161c26; // near-black, an abyssal silhouette
 const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
-/**
- * Uniform scale on the grazer's authored dimensions, applied at authoring time
- * so the geometry itself is the shipped size (nothing downstream has to know).
- *
- * Owner, 2026-08-24: grazers read as oversized beside the settlers. Authored at
- * 1.0 a grazer stands 0.93 world units tall against PILGRIM_HEIGHT 0.62, i.e.
- * half again as tall as a Rudy or an Uno; 0.4 puts it at ~0.37 — plainly a
- * smaller animal than the people who live beside it, without shrinking to the
- * rodent scale a literal one-fifth would give.
- *
- * WALKER_FOOTPRINT_HALF_EXTENT (client/placement.ts) is derived from the body
- * length this scales, and moves with it.
- */
-const GRAZER_SCALE = 0.4;
-
-const GRAZER_BODY_COLOR = 0xa8814f; // tan, warmer than any terrain band
-const GRAZER_LEG_COLOR = 0x6d5334;
 /**
  * Birds are read as SILHOUETTES, not as coloured objects: they are the only
  * creature seen against the sky (0x9fc7e8 in render/scene.ts) rather than
@@ -93,10 +99,8 @@ const GRAZER_LEG_COLOR = 0x6d5334;
 const BIRD_COLOR = 0x2e3646;
 
 /** Idle-animation rates, in cycles per second. Slower = larger, by convention. */
-const FISH_TAIL_HZ = 3.2;
 const WHALE_FLUKE_HZ = 0.45;
 const DEEPSEA_SWAY_HZ = 0.7;
-const GRAZER_BOB_HZ = 2.4;
 /**
  * Wing beats per second. The fastest animation here, which is the convention
  * this list follows (slower = larger) and also just true of small birds.
@@ -109,11 +113,8 @@ const GRAZER_BOB_HZ = 2.4;
  */
 const BIRD_WING_FLAP_HZ = 5.5;
 
-const FISH_TAIL_SWING_RADIANS = 0.55;
 const WHALE_FLUKE_SWING_RADIANS = 0.3;
 const DEEPSEA_SWAY_RADIANS = 0.22;
-/** Vertical travel of the walk bob, in world units (= cells). */
-const GRAZER_BOB_AMPLITUDE = 0.05 * GRAZER_SCALE;
 /** How far the lure bobs on its stalk, in world units. */
 const DEEPSEA_LURE_BOB = 0.05;
 /**
@@ -276,13 +277,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   // ── Shared resources, built once ───────────────────────────────────────────
 
-  const fishMaterial = lambert(FISH_COLOR);
-  const fishBody = ellipsoid(0.55, 0.26, 0.18);
-  // Cones are built pointing +Y; rotate once, in geometry space, so every
-  // instance inherits the orientation for free.
-  const fishTail = keepGeometry(new ConeGeometry(0.16, 0.3, CONE_SEGMENTS));
-  fishTail.rotateZ(Math.PI / 2);
-
   // Whales are smooth-shaded, unlike everything else in this pool: their bodies
   // are swept surfaces built in whaleSpecies.ts, where faceting would show as
   // banding on a body this large rather than as the deliberate chunky style the
@@ -313,16 +307,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const birdWing = keepGeometry(new BoxGeometry(0.32, 0.03, BIRD_WING_LENGTH));
   const birdTail = keepGeometry(new ConeGeometry(0.13, 0.26, CONE_SEGMENTS));
   birdTail.rotateZ(Math.PI / 2);
-
-  const grazerBodyMaterial = lambert(GRAZER_BODY_COLOR);
-  const grazerLegMaterial = lambert(GRAZER_LEG_COLOR);
-  const grazerBody = keepGeometry(
-    new BoxGeometry(0.85 * GRAZER_SCALE, 0.4 * GRAZER_SCALE, 0.45 * GRAZER_SCALE),
-  );
-  const grazerHead = ellipsoid(0.34 * GRAZER_SCALE, 0.3 * GRAZER_SCALE, 0.28 * GRAZER_SCALE);
-  const grazerLeg = keepGeometry(
-    new BoxGeometry(0.1 * GRAZER_SCALE, 0.42 * GRAZER_SCALE, 0.1 * GRAZER_SCALE),
-  );
 
   /** Mesh helper: shared geometry + material, positioned in the rig. */
   function part(
@@ -426,15 +410,33 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     herd.place(slot, x, y, z, yaw, scale);
   }
 
-  // ── The five rigs, authored once ───────────────────────────────────────────
+  /**
+   * The pool as a species file sees it: the same helpers this file uses, handed
+   * over through the ./species/speciesModel.ts interface rather than copied.
+   * There is exactly one implementation of each — a species file's geometry and
+   * materials land in the same two disposal lists as the whale's.
+   */
+  const speciesPool: SpeciesModelPool = { keepGeometry, lambert, unlit, part, rigged };
 
-  const fishRig = (() => {
-    const { root, rig } = rigged();
-    rig.add(part(fishBody, fishMaterial, 0, 0, 0));
-    const tail = part(fishTail, fishMaterial, -0.36, 0, 0);
-    rig.add(tail);
-    return bakeSpecies(root, { rig, tail });
-  })();
+  /**
+   * Builds one species from its own file: author, bake, herd, and wrap its
+   * `animate` in the `SpeciesDrawable` shape the draw path speaks.
+   *
+   * The species file names its own joints and drives them itself; nothing here
+   * knows what a fin or a hind leg is, which is the whole point of the split.
+   */
+  function speciesDrawable(build: SpeciesModelBuilder): SpeciesDrawable {
+    const authored = build(speciesPool);
+    const { herd, joints } = herdFor(bakeSpecies(authored.root, authored.joints));
+    return {
+      herd,
+      animate(seconds, phase) {
+        authored.animate(joints, seconds, phase);
+      },
+    };
+  }
+
+  // ── The rigs authored HERE, once ───────────────────────────────────────────
 
   /**
    * A whale, drawn as one of three real species (whaleSpecies.ts). Which one is
@@ -474,26 +476,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     return bakeSpecies(root, { rig, lure });
   })();
 
-  const grazerRig = (() => {
-    const { root, rig } = rigged();
-    // Origin at the feet: legs occupy y 0…0.42, body sits on top of them. Every
-    // offset here is an authored dimension, so it takes GRAZER_SCALE too — a
-    // scaled body on unscaled offsets is a floating head and detached legs.
-    const legY = 0.21 * GRAZER_SCALE;
-    const bodyY = 0.62 * GRAZER_SCALE;
-    rig.add(part(grazerBody, grazerBodyMaterial, 0, bodyY, 0));
-    rig.add(part(grazerHead, grazerBodyMaterial, 0.5 * GRAZER_SCALE, bodyY + 0.16 * GRAZER_SCALE, 0));
-    for (const [lx, lz] of [
-      [0.3, 0.16],
-      [0.3, -0.16],
-      [-0.3, 0.16],
-      [-0.3, -0.16],
-    ] as const) {
-      rig.add(part(grazerLeg, grazerLegMaterial, lx * GRAZER_SCALE, legY, lz * GRAZER_SCALE));
-    }
-    return bakeSpecies(root, { rig });
-  })();
-
   const birdRig = (() => {
     const { root, rig } = rigged();
     rig.add(part(birdBody, birdMaterial, 0, 0, 0));
@@ -521,21 +503,15 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   // animation bodies themselves are unchanged — they still say
   // `joint.rotation.z = …` against a Bone.
 
-  const fishDrawable = ((): SpeciesDrawable => {
-    const { herd, joints } = herdFor(fishRig);
-    const rig = joints.rig!;
-    const tail = joints.tail!;
-    return {
-      herd,
-      animate(seconds, phase) {
-        // Tail sweeps side to side; the body counter-rolls a little so the whole
-        // fish undulates instead of dragging a hinged flap.
-        const swing = Math.sin(seconds * FISH_TAIL_HZ * TWO_PI + phase);
-        tail.rotation.y = swing * FISH_TAIL_SWING_RADIANS;
-        rig.rotation.z = swing * FISH_TAIL_SWING_RADIANS * 0.15;
-      },
-    };
-  })();
+  // The six species authored in ./species/. Order fixes the order their
+  // surfaces appear in `objects`, which is what the draw-object table in
+  // ./index.ts is counted against.
+  const fishDrawable = speciesDrawable(buildFish);
+  const grazerDrawable = speciesDrawable(buildGrazer);
+  const ibexDrawable = speciesDrawable(buildIbex);
+  const bisonDrawable = speciesDrawable(buildBison);
+  const rayDrawable = speciesDrawable(buildRay);
+  const sharkDrawable = speciesDrawable(buildShark);
 
   const whaleDrawables: readonly SpeciesDrawable[] = whaleRigs.map((whaleRig) => {
     const { herd, joints } = herdFor(whaleRig);
@@ -565,18 +541,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         rig.rotation.y = sway * DEEPSEA_SWAY_RADIANS;
         // The lure lags the body, which is what sells it as dangling.
         lure.position.y = lureRestY + Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase - 1) * DEEPSEA_LURE_BOB;
-      },
-    };
-  })();
-
-  const grazerDrawable = ((): SpeciesDrawable => {
-    const { herd, joints } = herdFor(grazerRig);
-    const rig = joints.rig!;
-    return {
-      herd,
-      animate(seconds, phase) {
-        // A walk bob: |sin| gives two rises per stride, one per pair of legs.
-        rig.position.y = Math.abs(Math.sin(seconds * GRAZER_BOB_HZ * Math.PI + phase)) * GRAZER_BOB_AMPLITUDE;
       },
     };
   })();
@@ -611,17 +575,14 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         return deepseaDrawable;
       case 'grazer':
         return grazerDrawable;
-      // INTERIM until the species models land (wiring phase, same arc): the
-      // four species added on 2026-09-02 have server behaviour and no geometry
-      // yet, so each borrows the herd of the species it is a variant of. They
-      // are drawn — wrongly, but drawn — rather than silently absent, which is
-      // what a `default:` returning nothing would have given.
       case 'ibex':
+        return ibexDrawable;
       case 'bison':
-        return grazerDrawable;
+        return bisonDrawable;
       case 'ray':
+        return rayDrawable;
       case 'shark':
-        return fishDrawable;
+        return sharkDrawable;
       case 'bird':
         return birdDrawable;
     }
