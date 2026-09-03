@@ -32,8 +32,8 @@ import {
   UNKNOWN_TERRAIN_WORLD_Y,
   creatureWorldY,
   placementKindOf,
-  WALKER_FOOTPRINT_HALF_EXTENT,
-  WALKER_FOOTPRINT_HALF_EXTENT_CELLS,
+  WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES,
+  WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES,
   walkerGroundY,
 } from '../client/placement.ts';
 
@@ -353,7 +353,7 @@ describe('walkerGroundY — footprint sampling', () => {
     // Centre cell is band 0; the cell one to the +x is band 2 (world Y 2). A
     // walker at x = 9.8 overhangs the boundary at x = 10, so it must stand at 2.
     const sample = (cx: number) => (cx >= 10 ? 2 : 0);
-    expect(walkerGroundY(sample, 9.8, 5.5)).toBe(2);
+    expect(walkerGroundY(sample, 9.8, 5.5, 'grazer')).toBe(2);
     // Well clear of the boundary the centre cell rules. THE FIXTURE MOVED on
     // 2026-08-22, from x = 9.0 to x = 8.0, and the move is the bug: a grazer
     // then reached 1.8 CELLS either side of itself (0.45 world units), so at
@@ -362,8 +362,11 @@ describe('walkerGroundY — footprint sampling', () => {
     // passed only because the half-extent was being read as 0.45 cells — a
     // quarter of the creature. The grazer has since shrunk to 0.18 world units
     // (0.72 cells, GRAZER_SCALE), so x = 8.0 is clear by an even wider margin
-    // and the fixture stays where it is. See WALKER_FOOTPRINT_HALF_EXTENT.
-    expect(walkerGroundY(sample, 8.0, 5.5)).toBe(0);
+    // and the fixture stays where it is. See
+    // WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES, which since 2026-09-02 reads the
+    // grazer's own GRAZER_ENVELOPE.bodyHalfLength (0.19) rather than a single
+    // constant shared by every walker.
+    expect(walkerGroundY(sample, 8.0, 5.5, 'grazer')).toBe(0);
   });
 
   it('probes the ground in CELLS, not in the world units the model is built in', () => {
@@ -373,23 +376,25 @@ describe('walkerGroundY — footprint sampling', () => {
     // a CELL coordinate. A raw 0.45 therefore probed a quarter of the ground
     // the creature covers, which is a plausible-looking number and an invisible
     // failure — exactly why the conversion is pinned here rather than trusted.
-    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBe(
-      cellsAcross(WALKER_FOOTPRINT_HALF_EXTENT),
-    );
+    for (const species of WILDLIFE_SPECIES) {
+      const worldUnits = WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES[species];
+      const cells = WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES[species];
+      expect(cells).toBe(worldUnits === null ? null : cellsAcross(worldUnits));
+    }
     // A grazer still overhangs most of its own cell: a body ~0.44 world units
     // long is ~1.76 cells, so the probe must reach a good part of a cell either
     // side of centre — far more than the raw world-unit number would give.
-    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBeGreaterThan(0.5);
+    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES.grazer).toBeGreaterThan(0.5);
   });
 
   it('matches the single-cell sample on flat ground', () => {
-    expect(walkerGroundY(flatAt(3), 20.5, 20.5)).toBe(3);
+    expect(walkerGroundY(flatAt(3), 20.5, 20.5, 'grazer')).toBe(3);
   });
 
   it('returns null only when every sample is null', () => {
-    expect(walkerGroundY(() => null, 5, 5)).toBeNull();
+    expect(walkerGroundY(() => null, 5, 5, 'grazer')).toBeNull();
     const halfNull = (cx: number) => (cx >= 5 ? 1 : null);
-    expect(walkerGroundY(halfNull, 5.5, 5.5)).toBe(1);
+    expect(walkerGroundY(halfNull, 5.5, 5.5, 'grazer')).toBe(1);
   });
 });
 
@@ -419,8 +424,10 @@ describe('birds fly overhead', () => {
 
   it('classifies every species into exactly one placement kind', () => {
     expect(placementKindOf('bird')).toBe('flyer');
-    expect(placementKindOf('grazer')).toBe('walker');
-    for (const species of ['fish', 'whale', 'deepsea'] as const) {
+    for (const species of ['grazer', 'ibex', 'bison'] as const) {
+      expect(placementKindOf(species)).toBe('walker');
+    }
+    for (const species of ['fish', 'whale', 'deepsea', 'ray', 'shark'] as const) {
       expect(placementKindOf(species)).toBe('swimmer');
     }
     // A flyer has no swim profile and a swimmer no altitude: the two tables are

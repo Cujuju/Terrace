@@ -24,6 +24,55 @@ import {
   type WildlifeSizeClass,
   type WildlifeSpecies,
 } from '../protocol.ts';
+// The models' own measurements. Every figure below that describes a BODY is
+// read from here rather than restated: a model file that changes its anatomy
+// changes the water column it is fitted into, in the same commit, or the two
+// drift and nothing says so. See species/speciesModel.ts.
+import { FISH_ENVELOPE } from './species/fish.ts';
+import { RAY_ENVELOPE } from './species/ray.ts';
+import { SHARK_ENVELOPE } from './species/shark.ts';
+import { GRAZER_ENVELOPE } from './species/grazer.ts';
+import { IBEX_ENVELOPE } from './species/ibex.ts';
+import { BISON_ENVELOPE } from './species/bison.ts';
+
+/**
+ * Water a swimmer keeps between its own skin and the surface (or the seabed),
+ * in world units, on top of the half-extent the clearance is derived from.
+ *
+ * READ OFF THE ROW IT REPLACES. The fish shipped with minSubmergence 0.3
+ * against a body whose half-height was 0.13 at model scale 1 and 0.182 at the
+ * large class (the arithmetic swimmerWorldY's note walks through) — 0.118 of
+ * water above the crown. Rounded to 0.12, and used for the seabed side too:
+ * the old fish row's 0.25 minClearance left only 0.068 there, which is less
+ * visible water under a fish than above it for no reason anyone recorded.
+ */
+const WATER_MARGIN_WORLD_UNITS = 0.12;
+
+/**
+ * The size class every envelope-derived clearance below is measured at.
+ *
+ * THE BRIEF'S RULE, and it is deliberately conservative: a clearance is stated
+ * at model scale 1 (see SwimProfile) and then multiplied by the class scale
+ * again at use, so a figure taken at `large` submerges a large creature by
+ * WILDLIFE_SIZE_MODEL_SCALE.large² of its crown rather than once.
+ *
+ * RESIDUAL, NAMED RATHER THAN HIDDEN (2026-09-02): the fish, ray and shark
+ * rows therefore ask for more water than their bodies strictly need — a large
+ * shark insists on 0.68 x 1.4 = 0.95 of water above its 0.56 crown. The effect
+ * is never a body out of the water; it is that in a column shallower than
+ * `minClearance + minSubmergence` the two limits cross and
+ * swimmerColumnBounds' midpoint split takes over, which happens sooner for
+ * these three than the geometry alone requires. The whale and deep-sea rows
+ * are hand-set at scale 1 and are NOT changed here, so this constant is also
+ * the one place the two conventions can be reconciled.
+ */
+const CLEARANCE_SIZE_CLASS: WildlifeSizeClass = 'large';
+const CLEARANCE_MODEL_SCALE = WILDLIFE_SIZE_MODEL_SCALE[CLEARANCE_SIZE_CLASS];
+
+/** A body half-extent turned into the water it insists on keeping past it. */
+function clearanceFor(halfExtentAtScaleOne: number): number {
+  return halfExtentAtScaleOne * CLEARANCE_MODEL_SCALE + WATER_MARGIN_WORLD_UNITS;
+}
 
 /**
  * World-space Y of the sea surface.
@@ -43,11 +92,16 @@ export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
 /**
  * Where in the water column a species swims, and how much room it insists on.
  *
- * BOTH CLEARANCES ARE STATED AT SIZE CLASS `medium`, the class whose model scale
- * is 1 by definition (WILDLIFE_SIZE_MODEL_SCALE). They are half-extents of the
- * MODEL, and the model is uniformly scaled by its class, so they are scaled by
- * it too — see swimmerWorldY. `depthFraction` is a fraction of the water column
- * and means the same thing at every size.
+ * BOTH CLEARANCES ARE READ AT MODEL SCALE 1 — the `medium` class's scale by
+ * definition (WILDLIFE_SIZE_MODEL_SCALE) — and multiplied by the drawn
+ * creature's class scale at use (see swimmerWorldY). `depthFraction` is a
+ * fraction of the water column and means the same thing at every size.
+ *
+ * WHAT GOES IN THE FIELD is not the same for every row. The whale and the
+ * deep-sea creature are hand-set half-extents at scale 1; the fish, ray and
+ * shark are derived from their model files' envelopes at CLEARANCE_SIZE_CLASS,
+ * which is a class scale larger. See that constant for the named residual — it
+ * is why those three rows read high against their own crowns.
  */
 export interface SwimProfile {
   /** 0 = at the surface, 1 = on the seabed. */
@@ -60,7 +114,8 @@ export interface SwimProfile {
    * Half the model's length and half its width, in world units at model scale
    * 1 — the footprint `swimmerSeabedY` samples the seabed over.
    *
-   * A MODEL DIMENSION, exactly like WALKER_FOOTPRINT_HALF_EXTENT further down,
+   * A MODEL DIMENSION, exactly like WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES
+   * further down,
    * and read off the same place (./models.ts, ./whaleSpecies.ts) for the same
    * reason: this is a question about the hull the client draws, not about the
    * body the simulation steers. The server's own bodyLengthCells answers a
@@ -79,13 +134,14 @@ export interface SwimProfile {
  * creature never intersects the seabed or breaches the surface.
  */
 export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>> = {
-  // Body ellipsoid(0.55, 0.26, 0.18) with a tail sweeping back to ~0.7 overall.
+  // Every figure but the depth fraction is FISH_ENVELOPE (species/fish.ts).
   fish: {
+    // Unchanged: a fish sits just under the surface where the light is.
     depthFraction: 0.2,
-    minClearance: 0.25,
-    minSubmergence: 0.3,
-    halfLength: 0.35,
-    halfWidth: 0.09,
+    minClearance: clearanceFor(-FISH_ENVELOPE.bellyY), // anal fin, envelope bellyY
+    minSubmergence: clearanceFor(FISH_ENVELOPE.crownY), // dorsal tip, envelope crownY
+    halfLength: FISH_ENVELOPE.halfLength, // nose to caudal tip, envelope halfLength
+    halfWidth: FISH_ENVELOPE.halfWidth, // widest station, envelope halfWidth
   },
   // WHALE_ENVELOPE.length 5.05 (./whaleSpecies.ts); the widest hull of the
   // three is roughly a fifth of its length across.
@@ -115,29 +171,25 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
   grazer: null,
   ibex: null,
   bison: null,
-  // INTERIM ENVELOPES (2026-09-02). The ray and the shark have server
-  // behaviour but not yet a model — the two are being authored in parallel
-  // (client/species/), and the wiring phase of this arc replaces these figures
-  // with the ones measured off the finished geometry. They are the envelopes
-  // the models are being authored TO, so the drift they can carry is bounded
-  // by that agreement rather than being a guess.
-  //
-  // The ray sits deepest of the shelf species (0.85) because it rests on the
-  // seabed (server/species/ray.ts's idle bouts); the shark cruises the middle
-  // of the column (0.4) and is the longer, narrower body of the two.
+  // The ray sits deepest of the shelf species because it rests on the seabed
+  // (server/species/ray.ts's idle bouts); the shark cruises the middle of the
+  // column. Both bodies are now MEASURED — the interim figures these rows
+  // carried while the models were being authored in parallel are gone.
   ray: {
     depthFraction: 0.85,
-    minClearance: 0.2,
-    minSubmergence: 0.3,
-    halfLength: 0.5,
-    halfWidth: 0.5,
+    // A wing tip at the bottom of its beat, envelope bellyY.
+    minClearance: clearanceFor(-RAY_ENVELOPE.bellyY),
+    // A wing tip at the top of its beat plus the eyes, envelope crownY.
+    minSubmergence: clearanceFor(RAY_ENVELOPE.crownY),
+    halfLength: RAY_ENVELOPE.halfLength, // lobes to tail tip, envelope halfLength
+    halfWidth: RAY_ENVELOPE.halfWidth, // half the wingspan, envelope halfWidth
   },
   shark: {
     depthFraction: 0.4,
-    minClearance: 0.35,
-    minSubmergence: 0.35,
-    halfLength: 0.75,
-    halfWidth: 0.15,
+    minClearance: clearanceFor(-SHARK_ENVELOPE.bellyY), // pectoral tip, envelope bellyY
+    minSubmergence: clearanceFor(SHARK_ENVELOPE.crownY), // first dorsal, envelope crownY
+    halfLength: SHARK_ENVELOPE.halfLength, // snout to caudal tip, envelope halfLength
+    halfWidth: SHARK_ENVELOPE.halfWidth, // pectoral tips, envelope halfWidth
   },
   // Flyers have no water column either — see FLIGHT_ALTITUDES.
   bird: null,
@@ -492,19 +544,25 @@ export function creatureWorldY(
 }
 
 /**
- * Half-extent of a walker's ground footprint, in WORLD UNITS.
+ * Half-extent of each walker's ground footprint, in WORLD UNITS: half the
+ * BODY's length (not the nose-to-tail length — a muzzle and a tail hang past
+ * the feet and do not bear weight), read from the model file's envelope.
  *
- * A grazer's body is ~0.44 world units long (client/models.ts: an 0.85 box with
- * a head reaching 0.67 ahead of centre, all of it at GRAZER_SCALE 0.4), so its
- * geometry overhangs its centre by ~0.27 units ahead and ~0.17 behind. Slightly
- * under the smaller of those (0.18) keeps the sample inside the body's true
- * extent, so the creature never rides up on a band it does not actually
- * overlap.
+ * ONE NUMBER PER SPECIES, not one for every walker. Until 2026-09-02 there was
+ * a single WALKER_FOOTPRINT_HALF_EXTENT of 0.18, derived from the only walker
+ * there was; a bison is nearly twice a grazer's body and an ibex a little under
+ * it, so one constant would have had a bison probing a third of the ground it
+ * covers — the same class of error as the units bug below, in the same
+ * direction.
  *
- * IT MOVES WITH THE MODEL. It was 0.45 while the grazer was authored at 1.0
- * (owner shrank grazers to settler scale, 2026-08-24); left at 0.45 it would
- * have probed 2.5x the ground the animal covers, which is the same class of
- * error as the units bug below, only in the other direction.
+ * IT MOVES WITH THE MODEL, and now it cannot fail to: `bodyHalfLength` is
+ * measured in the file that draws the animal (species/grazer.ts and friends),
+ * scale included, so a body that is re-proportioned re-proportions its probe in
+ * the same commit.
+ *
+ * Null for anything that is not a walker. `walkerGroundY` is only ever reached
+ * for a `PlacementKind` of 'walker', and it throws rather than guessing if that
+ * ever stops being true.
  *
  * IT WAS NAMED `..._CELLS` AND IT WAS NOT CELLS, which is the whole bug (found
  * 2026-08-22, alongside the identical one in the monsters plugin). A model
@@ -515,15 +573,33 @@ export function creatureWorldY(
  * exact clipping bug walkerGroundY exists to prevent, reintroduced underneath
  * it by a units change three months later.
  *
- * The conversion now happens at the one boundary (`cellsAcross`, the conversion
- * every physical distance in this codebase is supposed to go through) and the
- * name says which side of it this number is on — which is the part that let it
- * hide, because 0.45 is a perfectly plausible number of cells.
+ * The conversion still happens at the one boundary (`cellsAcross`, the
+ * conversion every physical distance in this codebase is supposed to go
+ * through) and the name still says which side of it a number is on.
  */
-export const WALKER_FOOTPRINT_HALF_EXTENT = 0.18;
+export const WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES: Readonly<
+  Record<WildlifeSpecies, number | null>
+> = {
+  fish: null,
+  whale: null,
+  deepsea: null,
+  grazer: GRAZER_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
+  ibex: IBEX_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
+  bison: BISON_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
+  ray: null,
+  shark: null,
+  bird: null,
+};
 
-/** The same half-extent in the CELLS walkerGroundY steps in. Converted once. */
-export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS = cellsAcross(WALKER_FOOTPRINT_HALF_EXTENT);
+/** The same half-extents in the CELLS walkerGroundY steps in. Converted once. */
+export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES: Readonly<
+  Record<WildlifeSpecies, number | null>
+> = Object.fromEntries(
+  Object.entries(WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES).map(([species, halfExtent]) => [
+    species,
+    halfExtent === null ? null : cellsAcross(halfExtent),
+  ]),
+) as Readonly<Record<WildlifeSpecies, number | null>>;
 
 /**
  * Ground height for a land creature: the HIGHEST rendered cell under its
@@ -538,30 +614,34 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS = cellsAcross(WALKER_FOOTPRINT_H
  * terraced world walks.
  */
 /**
- * Where a walker's footprint is sampled, in cell offsets from its centre: the
+ * Where a walker's footprint is sampled, as multipliers of its half-extent: the
  * centre and the four corners. Module-level for the same reason as
- * HULL_SAMPLE_ALONG — this runs once per walker per frame.
+ * HULL_SAMPLE_ALONG — this runs once per walker per frame, and the half-extent
+ * is now per species, so the offsets are unit and the scale is applied inside.
  */
-const FOOTPRINT_SAMPLE_DX: readonly number[] = (() => {
-  const h = WALKER_FOOTPRINT_HALF_EXTENT_CELLS;
-  return [0, -h, -h, h, h];
-})();
-const FOOTPRINT_SAMPLE_DY: readonly number[] = (() => {
-  const h = WALKER_FOOTPRINT_HALF_EXTENT_CELLS;
-  return [0, -h, h, -h, h];
-})();
+const FOOTPRINT_SAMPLE_DX: readonly number[] = [0, -1, -1, 1, 1];
+const FOOTPRINT_SAMPLE_DY: readonly number[] = [0, -1, 1, -1, 1];
 const FOOTPRINT_SAMPLE_COUNT = FOOTPRINT_SAMPLE_DX.length;
 
 export function walkerGroundY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
+  species: WildlifeSpecies,
 ): number | null {
+  const halfExtent = WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES[species];
+  // Belt and suspenders: the render path only reaches here for a 'walker', and
+  // every walker has a footprint. A species that gains legs without gaining a
+  // row would otherwise silently probe a single cell — the clipping bug this
+  // whole function exists to prevent.
+  if (halfExtent === null) {
+    throw new Error(`walkerGroundY: "${species}" is not a walker and has no ground footprint`);
+  }
   let ground: number | null = null;
   for (let i = 0; i < FOOTPRINT_SAMPLE_COUNT; i++) {
     const sampled = sampleRenderedY(
-      Math.floor(x + FOOTPRINT_SAMPLE_DX[i]!),
-      Math.floor(y + FOOTPRINT_SAMPLE_DY[i]!),
+      Math.floor(x + FOOTPRINT_SAMPLE_DX[i]! * halfExtent),
+      Math.floor(y + FOOTPRINT_SAMPLE_DY[i]! * halfExtent),
     );
     if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
   }
