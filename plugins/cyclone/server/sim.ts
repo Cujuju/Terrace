@@ -8,7 +8,7 @@
 // cyclone: nine numbers, a wind field with an eye in it, a roster of names, and
 // a birth over open water.
 
-import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { SEA_LEVEL, cellsAcross, eyewallWindFalloff } from '@terrace/shared';
 import { interpolateByDifficulty } from '../../../server/src/plugins/kit/difficultyCurve.ts';
 import {
   createRotatingStorms,
@@ -85,11 +85,11 @@ const CYCLONE_PROFILE: RotatingStormProfile = {
   maxActive: 1,
   hostileTerrain: 'land',
   eyeRadiusFraction: CYCLONE_EYE_RADIUS_FRACTION,
-  windFalloff: (r: number) => {
-    const eye = CYCLONE_EYE_RADIUS_FRACTION;
-    if (r <= eye) return 0;
-    return (1 - r) / (1 - eye);
-  },
+  // THE RAMP ITSELF LIVES IN shared/ (eyewallWindFalloff), not here, because
+  // the consumers of this storm's damage events must evaluate the SAME curve
+  // at their own cells — see that function's own header. What is this
+  // plugin's is the eye fraction it is evaluated with.
+  windFalloff: (r: number) => eyewallWindFalloff(r, CYCLONE_EYE_RADIUS_FRACTION),
 };
 
 /**
