@@ -12,6 +12,8 @@
 | `0677659` | `feat(structures): a cyclone takes buildings, flimsiest first` |
 | `7f59888` | `feat(boats): a cyclone carries a fleet round with the spin` |
 | `b35aace` | `feat(cyclone): the wind scours the land it crosses, and a true header` |
+| `397a2be` | `fix(shared): one eyewall wind ramp, evaluated by emitter and consumer` (review) |
+| `c3c4b51` | `fix(boats): drain every pending storm wind, not just the last` (review) |
 
 Nothing under `docs/**`, `.claude/**` (except this report) or `plugins/cyclone/client/**` was
 touched. No new dependencies. No tests added (owner rule).
@@ -104,9 +106,13 @@ step, separation and station-keeping had all been resolved against the old posit
 event is latched and consumed at the top of the next `advanceFleet` — the push is where each
 hull actually is when the frame starts.
 
-It is a **queue of one, not a per-tick latch** (unlike `krakenThisTick`): a damage event is a
-discrete quantum of storm that must be applied exactly once, where a kraken position is a
-standing fact re-announced every tick.
+It is a **queue, not a per-tick latch** (unlike `krakenThisTick`): a damage event is a discrete
+quantum of storm that must be applied exactly once, where a kraken position is a standing fact
+re-announced every tick. A LIST rather than one slot (`c3c4b51`, review) because how many storms
+may announce in one interval is the emitter's number — a `RotatingStormProfile`'s `maxActive` —
+not this plugin's to know. The shipped cyclone allows one today, which is exactly why a single
+slot would have looked correct until someone raised it: it would have kept the newest event and
+dropped the rest silently. Drained in arrival order, and spliced out before any of it is applied.
 
 **Rotation sense** is `(-dy, dx)` about the eye, derived from what the client draws and written
 out at `server/src/plugins/kit/rotatingStormDamage.ts`'s `tangentialWindAt`: a spiral arm's
@@ -275,6 +281,14 @@ cfe02c99ed9dc09e506c82ba790d30ee  run1.txt
 cfe02c99ed9dc09e506c82ba790d30ee  run2.txt
 ```
 
+**Unchanged by the two review fixes** (`397a2be`, `c3c4b51`). The fixture output after both is
+byte-identical to the output before either — same `cfe02c99ed9dc09e506c82ba790d30ee` — and two
+runs of the fixed build are identical to each other. That is not a given for the falloff fix:
+`severityAt` used to compute `(radius - distance) / (radius - eyeRadius)` and now computes
+`eyewallWindFalloff(distance / radius, eyeRadius / radius)`, which is the same value in exact
+arithmetic but a different order of floating-point operations, so an ULP-level difference could
+in principle have flipped a roll that sat exactly on its threshold. None did.
+
 ### The push, isolated
 
 ```
@@ -350,10 +364,14 @@ unchanged.)
    over too.
 4. **No client work.** `plugins/cyclone/client/**` untouched, per the brief. Everything a player
    sees arrives through each consuming plugin's existing broadcasts, listed above with file:line.
-5. **The severity model is a straight ramp.** It is the coarsest curve consistent with the four
-   things the payload guarantees, and it happens to be *exactly* the shipped cyclone profile
-   (`(1 - r) / (1 - eye)`, `sim.ts:88-92`) — so today it is not an approximation at all. For a
-   future kit owner with a different falloff it stays bounded by those guarantees, and the error
-   would be in how hard a consumer reacts, never in where. Reasoned out in
-   `rotatingStormDamage.ts`'s header; the alternative (publishing the emitter's profile function
-   on the wire) is the import coupling the whole contract exists to avoid.
+5. **The severity model is the ramp of a storm with an EYE, and a tornado is not one.**
+   `severityAt` no longer restates a curve: since `397a2be` both ends evaluate the same
+   `eyewallWindFalloff` in `shared/src/rotatingStormWire.ts`, which the cyclone profile's own
+   `windFalloff` now *is* (`plugins/cyclone/server/sim.ts:88-92`). So there is no drift to have,
+   and no approximation, for a storm with an eye. There is a real limit past that: a tornado's
+   profile is `1 - r²` with `eyeRadiusFraction` 0 (`plugins/tornado/server/sim.ts:81`), and no
+   function of (radius, eyeRadius, intensity) can tell the two curves apart — a consumer of a
+   tornado's damage would need the payload to carry the falloff SHAPE. **Decision: not added.**
+   Nothing consumes a tornado's damage today, and a wire field for a consumer that does not exist
+   is a contract nobody can check. Both the shared function's header and the kit helper's say so,
+   and say that field is the change to make on the day something does.
