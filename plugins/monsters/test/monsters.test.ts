@@ -60,6 +60,7 @@ import {
   DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_DEPTH_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
+  habitatBoundaryHeight,
   HABITAT_REGIMES,
   LAND_HABITAT,
   SNOW_LINE_BANDS_ABOVE_SEA,
@@ -785,23 +786,51 @@ function cthulhuBasin(): BasinState {
   return announcedTerrain({ radius: cellsAcross(30), floorHeight: DEEP_WATER_MAX_HEIGHT - 30 });
 }
 
+/** The radius of every trench fixture below, in cells. */
+const KRAKEN_TRENCH_RADIUS_CELLS = cellsAcross(40);
+
+/**
+ * How wide the trench fixture's QUALIFYING pocket must be, in cells of radius.
+ *
+ * THREE BODY RADII (2026-09-02), and it is derived from the animal rather than
+ * chosen. Since the kraken was confined to its own depth bar the pocket is not
+ * merely where it may ARRIVE, it is the whole world it may move in, and the fit
+ * bar it must clear is `minLairFittingCells` = one body's area. A pocket of
+ * radius `p` has a fitting core of radius `p − bodyRadius`, so clearing
+ * `π·bodyRadius²` needs `p ≥ bodyRadius·(1 + √π) ≈ 2.8·bodyRadius`; three is
+ * that with the rounding taken outward, which leaves the fixture comfortably
+ * over the bar instead of balanced on it.
+ */
+const KRAKEN_TRENCH_POCKET_RADIUS_CELLS = Math.ceil(
+  3 * bodyRadiusCells(profileOf('kraken')),
+);
+
 /**
  * Extra depth this fixture's trench carries BELOW the kraken's demand, so its
- * qualifying floor is a pocket with area rather than a single cell.
+ * qualifying floor is a pocket the animal FITS in rather than a single cell.
  *
- * A DEPTH, not "one more band" (2026-08-20). The basin ramps linearly from its
- * floor to the deep-water line at the rim, so the margin is what decides how
- * WIDE the qualifying pocket is; expressed as a band it shrank to a quarter
- * when the world was re-terraced and the pocket collapsed to about five cells,
- * which is not enough distinct cells for the summon-spread test below to mean
- * anything. 64 units is what "one band" bought when it was written.
+ * SOLVED FROM THE POCKET, NOT CHOSEN (2026-09-02). The basin ramps linearly
+ * from its floor to the deep-water line at the rim, so a margin `m` over a
+ * radius `R` puts the kraken's admission contour at `R · m / (deepWaterDepth −
+ * demandDepth + m)` cells — invert that for the pocket radius wanted above and
+ * round up to a whole band, because every depth in this suite is stated in
+ * bands. It was the literal 64 until this date, and 64 buys a 28-cell pocket:
+ * enough distinct cells for the summon-spread test that first raised the margin
+ * in 2026-08-20, and NOT enough for a 28-cell body to fit inside once
+ * confinement made the pocket the animal's whole range.
  */
-const KRAKEN_TRENCH_DEPTH_MARGIN = 64;
+const KRAKEN_TRENCH_DEPTH_MARGIN = (() => {
+  const demandDepth = KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT;
+  const rimDepth = DEEP_WATER_BANDS_BELOW_SEA * BAND_HEIGHT;
+  const fraction = KRAKEN_TRENCH_POCKET_RADIUS_CELLS / KRAKEN_TRENCH_RADIUS_CELLS;
+  const exact = (fraction * (demandDepth - rimDepth)) / (1 - fraction);
+  return Math.ceil(exact / BAND_HEIGHT) * BAND_HEIGHT;
+})();
 
 /** A trench the kraken qualifies for: past its depth demand and its area. */
 function krakenTrench(): BasinState {
   return announcedTerrain({
-    radius: cellsAcross(40),
+    radius: KRAKEN_TRENCH_RADIUS_CELLS,
     floorHeight:
       SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT + KRAKEN_TRENCH_DEPTH_MARGIN),
   });
@@ -1065,6 +1094,26 @@ describe('summon cells are spread, not pinned to the deepest cell', () => {
 // than policy. See kinds.ts and summoning.ts for the amendment.
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * How much of its own arrival bar the "puddle" below may be and still prove the
+ * point — that a region far too small to have ADMITTED the kraken does not
+ * evict it.
+ *
+ * A QUARTER, and it was a tenth until 2026-09-02. The puddle is not a chosen
+ * size: it is the smallest pool guaranteed to still cover wherever in the summon
+ * pocket the draw put the animal (`krakenPocketRadiusCells`), and that pocket is
+ * now derived from the kraken's own body rather than from a 64-unit depth margin
+ * — it has to be, or the confined animal does not fit in its own fixture. The
+ * pool that follows from it is about 6 400 cells against a 36 864-cell bar, or
+ * 17 %. A quarter is the nearest round bound above that, which still fails
+ * loudly if a region-size eviction rule is ever reintroduced: such a rule would
+ * fire at the collapse threshold, and every collapse threshold this table has
+ * ever had is a QUARTER of an arrival bar (kinds.ts's
+ * LAIR_COLLAPSE_HYSTERESIS_DIVISOR = 4), so a pool at this bound is exactly at
+ * the size such a rule would evict on.
+ */
+const PUDDLE_MAX_SHARE_OF_ARRIVAL_BAR = 1 / 4;
+
 describe('the kraken is not evicted by terrain (owner ruling, 2026-08-19)', () => {
   it('stays when its region shrinks to a puddle around it', () => {
     const trench = krakenTrench();
@@ -1088,7 +1137,9 @@ describe('the kraken is not evicted by terrain (owner ruling, 2026-08-19)', () =
     // chose. The assertion below is what keeps it a puddle — it is a real pool
     // an order of magnitude short of the arrival bar, not a pool sized to pass.
     trench.radius = krakenPocketRadiusCells(trench) + 1;
-    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_MIN_LAIR_DEEP_CELLS / 10);
+    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(
+      KRAKEN_MIN_LAIR_DEEP_CELLS * PUDDLE_MAX_SHARE_OF_ARRIVAL_BAR,
+    );
     expect(isLairCell(WATER_HABITAT, world, kraken!.x, kraken!.y)).toBe(true);
 
     // Well past the survey cadence: if a region test were still running, this
@@ -2847,12 +2898,30 @@ describe('body-aware habitat poses', () => {
    * shores at a known, exact distance from the centre line, so "the body fits"
    * and "the body does not" are arithmetic rather than geometry.
    */
+  /**
+   * The channel's floor: the deepest cell of the KRAKEN'S OWN RANGE, not the
+   * habitat's shallowest.
+   *
+   * IT WAS DEEP_WATER_MAX_HEIGHT UNTIL 2026-09-02, and the change is what makes
+   * these tests still test what they say. Every case in this block steers a
+   * KRAKEN, and since confinement a kraken may only be in water 28 bands down
+   * (kinds.ts's `range`); a channel cut to the habitat's 12-band line is not a
+   * pinched kraken, it is a STRANDED one — it holds position by design, so the
+   * pinched-body escape below would have been asserting the wrong mechanism.
+   * Cutting the channel to the range floor keeps every pose answer in this block
+   * identical to what it was while making the animal genuinely in-range.
+   */
+  const CHANNEL_FLOOR_HEIGHT = habitatBoundaryHeight(
+    profileOf('kraken').range,
+    profileOf('kraken').range.thresholdBands,
+  );
+
   function channelWorld(halfWidth: number): LairWorld {
     return {
       worldSize: WORLD_SIZE,
       heightAt: (_x, y) =>
         Math.abs(y - WORLD_CENTER) <= halfWidth
-          ? DEEP_WATER_MAX_HEIGHT
+          ? CHANNEL_FLOOR_HEIGHT
           : NEUTRAL_GROUND_HEIGHT,
       isCellUnlocked: () => true,
     };
