@@ -363,7 +363,8 @@ def start_control_reader(state) -> threading.Thread:
                     return
                 if key == "r":
                     state["restart"] = True
-        except (OSError, ValueError):  # stdin closed under us
+        except Exception:  # noqa: BLE001 - stdin closed under us, or anything unexpected;
+            # keyboard control just ends (Ctrl-C still works); never fail the run from here
             return
     reader = threading.Thread(target=read_keys, name="control-keys", daemon=True)
     reader.start()
@@ -533,17 +534,33 @@ def main(watch: bool) -> int:
     # which left the shell with -ECHO -ICANON and invisible typing.
     termios_mod = None
     termios_saved = None
-    if sys.stdin.isatty():
-        try:
-            import termios
-            import tty
-            termios_mod = termios
-            termios_saved = termios.tcgetattr(sys.stdin.fileno())
-            tty.setcbreak(sys.stdin.fileno())
-        except (OSError, ValueError, ImportError):
-            termios_mod = None
-            termios_saved = None
-    start_control_reader(state)
+
+    def restore_terminal():
+        # Idempotent: restoring the same saved attrs twice is harmless, so
+        # the setup-failure path below and the main `finally` can share it.
+        if termios_saved is not None:
+            try:
+                termios_mod.tcsetattr(sys.stdin.fileno(), termios_mod.TCSADRAIN, termios_saved)
+            except Exception:  # noqa: BLE001 - terminal already gone
+                pass
+
+    try:
+        if sys.stdin.isatty():
+            try:
+                import termios
+                import tty
+                termios_mod = termios
+                termios_saved = termios.tcgetattr(sys.stdin.fileno())
+                tty.setcbreak(sys.stdin.fileno())
+            except (OSError, ValueError, ImportError):
+                termios_mod = None
+                termios_saved = None
+        start_control_reader(state)
+    except Exception:
+        # Thread-start itself threw: never leave cbreak behind without
+        # entering the main loop (and its restoring `finally`).
+        restore_terminal()
+        raise
 
     def launch_stack():
         """Bring up the client (dev mode) and the game server; append to children."""
@@ -674,11 +691,10 @@ def main(watch: bool) -> int:
         # Restore the terminal FIRST, so it is sane even if reaping hangs:
         # this is the authoritative (and only) restore - the reader thread
         # never touches terminal mode (see the cbreak comment above).
-        if termios_saved is not None:
-            try:
-                termios_mod.tcsetattr(sys.stdin.fileno(), termios_mod.TCSADRAIN, termios_saved)
-            except Exception:  # noqa: BLE001 - terminal already gone
-                pass
+        # Telling the reader to stop is best-effort: it may be blocked in
+        # read(), in which case teardown just leaves it behind (daemon).
+        state["stop"] = True
+        restore_terminal()
         for proc in reversed(children):
             reap(proc, signal_module.SIGINT)
 
