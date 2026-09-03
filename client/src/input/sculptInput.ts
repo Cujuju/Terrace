@@ -13,6 +13,13 @@
 //   one-finger touch drag      sculpt in the HUD's sticky raise/lower mode
 //   two-finger touch           pinch zoom + pan or orbit (configurable)
 //
+// THE DIRECTION IS THE TOOL'S WHEN THE TOOL HAS ONLY ONE (shared's
+// TOOLS_WITHOUT_DIRECTION). With Carve selected, every press above sculpts
+// DOWN: the modifier still decides who owns the press (so the camera stands
+// down exactly as before) but no longer decides the direction, and the HUD's
+// sticky mode is neither read nor written. Carving must not require a chord,
+// and there is no second direction for one to select.
+//
 // A press fires ONE intent immediately and then repeats on an ACCELERATING
 // schedule (repeatDelayMs, below): slow enough at the top that a click is a
 // click, ramping to full sculpting speed over the first second or so of a hold.
@@ -59,7 +66,7 @@ import {
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
-import { BAND_HEIGHT, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
+import { BAND_HEIGHT, TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
 import type { SculptIntent, SculptTool } from '@terrace/shared';
 
 
@@ -472,9 +479,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * If it resolves to a camera action or nothing (the user mashed a modifier
    * that unbinds the button), keep the last sculpt action rather than
    * stopping: a stroke never changes owner mid-flight.
+   *
+   * A TOOL WITH NO DIRECTION IS NEVER RE-RESOLVED (owner report, 2026-09-02).
+   * `startStroke` fixed such a stroke at `lower` because that is the only
+   * thing the tool does; re-reading the modifier here would let releasing
+   * shift mid-carve flip the stroke to `raise`, which `emitIntent` then drops
+   * — the carve silently dying halfway through a drag.
    */
   const currentStrokeAction = (): SculptAction => {
-    if (strokeButton !== null && !strokeIsTouch) {
+    if (strokeButton !== null && !strokeIsTouch && !TOOLS_WITHOUT_DIRECTION.includes(strokeTool)) {
       const resolved = resolvePress(strokeButton, mods);
       if (resolved === 'raise' || resolved === 'lower') {
         strokeAction = resolved;
@@ -506,7 +519,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // is raising, and reading it here is what made the pull stall a cell or
     // two in (see dragPlaneCell). setSculptMode still runs first for both, so
     // the HUD's raise/lower indicator is honest either way.
-    setSculptMode(action);
+    //
+    // EXCEPT FOR A TOOL WITH NO DIRECTION, which must not touch the sticky
+    // mode at all (owner report, 2026-09-02). `sculptMode` is PERSISTED and
+    // shared by every tool: a carve writing 'lower' into it would leave the
+    // next Stamp press digging, and on touch — where the sticky mode IS the
+    // direction — it would silently rewrite the player's choice. The carve's
+    // direction is the tool's, so it is nobody else's business.
+    if (!TOOLS_WITHOUT_DIRECTION.includes(strokeTool)) setSculptMode(action);
     // A Pull with nothing in its grasp emits nothing at all. Without this the
     // generic send below would put a `drag` intent with no band on the wire,
     // which the shared math treats as a no-op — a message, and a mana charge,
@@ -516,9 +536,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // upward", it is nothing at all: the shared validator rejects a carve
     // intent carrying `dir: 1` with the whole intent, so emitting one would
     // spend a seq and a mana gate on a message the server drops on the floor.
-    // Refused here so the HUD's mode indicator still reads honestly (setSculptMode
-    // above has already run) while nothing goes out.
-    if (strokeTool === 'carve' && sculptDirection(action) > 0) return;
+    //
+    // NOW UNREACHABLE, AND KEPT (owner report, 2026-09-02). Since a stroke
+    // with a direction-less tool is pinned to `lower` at the press and never
+    // re-resolved, `action` cannot be `raise` here. It stays as the last line
+    // of defence on the ONE function that puts a sculpt on the wire: the
+    // pinning lives in two places (`startStroke` and `currentStrokeAction`)
+    // and a third caller could yet be added, whereas nothing reaches the wire
+    // without passing this. Belt and suspenders, at the cost of one compare.
+    if (TOOLS_WITHOUT_DIRECTION.includes(strokeTool) && sculptDirection(action) > 0) return;
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
       // Too shallow a ray, or off the world: hold the pull where it was rather
@@ -820,18 +846,37 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokeButton = event.button;
     strokePointerId = event.pointerId;
     strokeIsTouch = event.pointerType === 'touch';
-    strokeAction = action;
     // Before takeHold below, which asks the HUD's tool what a press even means
-    // here, and before any intent this stroke emits.
+    // here, and before any intent this stroke emits — and now before the
+    // action too, because the tool can decide it.
     strokeTool = brushTool();
-    setSculptMode(action);
+    // A DIRECTION-LESS TOOL'S STROKE IS ITS OWN DIRECTION, not the modifier's
+    // and not the sticky mode's (owner report, 2026-09-02: "because there is
+    // no raise mode, only a lower... that should be the default mode, and
+    // holding shift should not be required"). The carve removes; an unmodified
+    // click carves, a shift-click carves the same, and touch carves without
+    // first tapping Mode. The modifier is not overridden so much as IRRELEVANT
+    // — the tool has one direction, so there is nothing for a chord to select.
+    //
+    // AND THE STICKY MODE IS LEFT ALONE for the reason emitIntent gives: it is
+    // persisted and shared with the tools that do have a direction.
+    if (TOOLS_WITHOUT_DIRECTION.includes(strokeTool)) {
+      strokeAction = 'lower';
+    } else {
+      strokeAction = action;
+      setSculptMode(action);
+    }
     pointerClientX = event.clientX;
     pointerClientY = event.clientY;
     havePointer = true;
     // GRAB, OR BRUSH — decided here, once, after the pointer position is
     // recorded, because the face query has to run against the ray THIS press
     // fires. A touch press defers it to armStroke instead: see there.
-    if (!strokeIsTouch) takeHold(action);
+    //
+    // `strokeAction`, NOT the resolved `action`: the tool may just have
+    // decided the direction itself, and takeHold's raise-only seeding rescue
+    // must see the direction this stroke will actually sculpt in.
+    if (!strokeIsTouch) takeHold(strokeAction);
 
     if (strokeIsTouch) {
       // Touch arms after a grace delay so the second finger of a camera
@@ -865,6 +910,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       altKey: state.altKey,
     };
     if (strokeButton !== null) return; // the active stroke owns the indicator
+    // NOT WHILE A DIRECTION-LESS TOOL IS SELECTED. The Mode row is not on
+    // screen then (Hud.tsx), so this would be a hidden control writing a
+    // PERSISTED setting: tap shift with Carve up, switch to Stamp, and the
+    // stamp digs. The indicator can only stay honest for a tool that has a
+    // direction to indicate.
+    if (TOOLS_WITHOUT_DIRECTION.includes(brushTool())) return;
     const modifier = modifierOf(mods);
     if (modifier === null) return;
     const bindings = controlBindings();
