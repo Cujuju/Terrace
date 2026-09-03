@@ -226,6 +226,9 @@ Shots, in `.verify-shots/rain-300/` (camera poses relative to the `rain:system` 
 | `2-side-cloud-height.png` | y = 26/28, 95 units out | **The money shot.** The column falls straight down out of the deck's footprint, centred under it — no downwind offset — and no streak is painted on the cloud's face. |
 | `3-below-base.png` | y = 3, 95 units out | Camera below the base → deck first, rig after: the streaks are correctly drawn IN FRONT of the cloud's underside, and land under it. |
 
+All three viewed and published as one Artifact contact sheet (owner rule on images):
+https://claude.ai/code/artifact/e07e35f9-7427-420b-b150-c27b41881a2b
+
 Renderer snapshot at each pose confirmed `decks.rain = {instances: 973, visible: true}`
 and no shader-compile line in the relayed page console. Stack torn down by pid
 (`stop.sh`), both ports confirmed free. Wall clock on stack + shots: ~11 minutes, inside
