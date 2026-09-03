@@ -41,10 +41,10 @@ import { grassKey, grassCellOf, type GrassCell } from '../protocol.ts';
  * How long burned meadow stays bare before it counts as meadow again, in
  * simulated seconds.
  *
- * 90 s — FLORA_STABILITY_SECONDS (./stability.ts), restated rather than
- * imported for the reason grass.ts restates its own survey interval: two
- * mechanisms that agree today must be free to disagree tomorrow without one
- * silently dragging the other. The derivation is what matters:
+ * 180 s — TWICE FLORA_STABILITY_SECONDS (./stability.ts, 90 s), restated
+ * rather than imported for the reason grass.ts restates its own survey
+ * interval: two mechanisms that relate today must be free to disagree tomorrow
+ * without one silently dragging the other. The derivation is what matters:
  *
  *   * IT MUST CLEAR THE LOOP. The bug it exists to kill re-ignited a cell a
  *     median of 26 s after the last burn — FLORA_GRASS_BURN_SECONDS (22,
@@ -52,16 +52,25 @@ import { grassKey, grassCellOf, type GrassCell } from '../protocol.ts';
  *     ./grass.ts). Any value above ~27 s breaks the cycle, so the floor is not
  *     the binding constraint and picking the smallest number that works would
  *     leave no margin for a longer-burning fuel later.
- *   * IT MUST MATCH WHAT A BURN COSTS THE REST OF THE PLUGIN. 90 s is the
- *     window a cell must sit undisturbed before this plugin will grow anything
- *     on it (FLORA_STABILITY_SECONDS). Fire changes no height, so it resets no
- *     stability clock (./index.ts's floraBurnedOut) — this constant is the
- *     GROUND COVER's equivalent of that clock, and giving it the same value
- *     says exactly one thing: a burn costs the meadow what a sculpt costs the
- *     forest.
+ *   * IT MUST OUTLAST A FRONT'S LAP OF THE BIGGEST FIRE. At 90 s (the value
+ *     until 2026-09-02, issue #297) a cap-sized meadow fire (~2000 cells,
+ *     FIRE_CELL_CAP) never ended: measured live over 300 s, 2006 of 2018 cells
+ *     re-ignited with a median gap of 96 s after burning out — the window plus
+ *     one survey — because the front laps the patch in about that long, so the
+ *     first-burned cells were fuel again while the far side still burned. The
+ *     window has to exceed that lap time with margin; doubling it is the
+ *     owner's first step, and the lap time is the number to re-measure if the
+ *     cap or the spread rate moves.
+ *   * IT IS DERIVED FROM WHAT A BURN COSTS THE REST OF THE PLUGIN. 90 s is
+ *     the window a cell must sit undisturbed before this plugin will grow
+ *     anything on it (FLORA_STABILITY_SECONDS). Fire changes no height, so it
+ *     resets no stability clock (./index.ts's floraBurnedOut) — this constant
+ *     is the GROUND COVER's equivalent of that clock, at twice the value: a
+ *     burn costs the meadow twice what a sculpt costs the forest, because the
+ *     lap-time point above showed the equal value does not end a fire.
  *   * IT MUST BE SHORTER THAN THE STUMP. FLORA_STUMP_ROT_SECONDS (./stumps.ts)
- *     is 180 s, deliberately TWICE the stability window, so this lands at
- *     exactly half of it — by construction, not coincidence. The order matters
+ *     is 360 s, deliberately TWICE this window, so this lands at exactly half
+ *     of it — by construction, not coincidence. The order matters
  *     visually: grass creeps back over a burn scar while the stumps still
  *     stand, and only then do the stumps rot and the tree line return. The
  *     smallest thing heals first, which is what a burn actually looks like.
@@ -74,13 +83,13 @@ import { grassKey, grassCellOf, type GrassCell } from '../protocol.ts';
  * plainly: a server restarted while a meadow is burning, or within
  * FLORA_SCORCH_REGROW_SECONDS of one having burned, comes back up with that
  * ground counting as fuel again immediately. That fires only when a restart
- * lands inside a 90-second window after a fire, and the worst it can do is let
+ * lands inside a 180-second window after a fire, and the worst it can do is let
  * one already-burned meadow burn a second time — the runaway needs the record
  * to be missing on EVERY cycle, and it is missing only on the boot. Persisting
  * it would mean adding a second field to FloraSlice and a version bump for a
- * 90-second window; the honest trade is to name the hole instead.
+ * 180-second window; the honest trade is to name the hole instead.
  */
-export const FLORA_SCORCH_REGROW_SECONDS = 90;
+export const FLORA_SCORCH_REGROW_SECONDS = 180;
 
 /**
  * The cells whose ground cover a fire has consumed, keyed by cell, VALUED BY
