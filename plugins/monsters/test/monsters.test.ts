@@ -149,27 +149,27 @@ const TICK_DT = 0.1;
  * seconds of wall clock even on a fast machine, and the default is not a
  * budget any of them were ever going to fit.
  *
- * Raised rather than trimmed because the length of the run is what makes the
- * assertion meaningful: the mean-wait trial's bound comes from its trial
- * count, and the single-arrival trial's "exactly once" comes from running far
- * past the mean wait. Shortening either would loosen what it checks.
+ * The length of the run is what makes the assertion meaningful: the mean-wait
+ * trial's bound comes from its trial count, and the single-arrival trial's
+ * "exactly once" comes from running far past the mean wait. Shortening either
+ * would loosen what it checks, so neither has been.
  *
  * 2026-08-21: the single-arrival trial was omitting this and running on the
  * 5 s default. It measured ~7 s on this machine under ordinary load, so it
  * failed whenever the machine was busy and passed when it was not — a flake
  * that looked like whichever commit happened to be in the tree at the time.
  *
- * RE-MEASURED THE SAME DAY, AFTER THE RE-SAMPLE, which is why the value is
- * 480 s and not the 30 s those measurements justified: the mean-wait trial
- * goes from ~5 s to ~81 s. The growth is the survey's and nothing else's — a
- * survey walks every cell of the world, WORLD_SIZE is a fixed 128 world units
- * (the shipped minimum), and a quarter-cell world samples that same ground
- * with sixteen times the cells. Neither the trial count nor the simulated
- * duration moved, so nothing either trial checks is weaker; the same work
- * simply costs sixteen times as much. 480 s keeps the 6× margin the pre-
- * re-sample value was chosen with.
+ * 20 s, FROM 480 s (2026-09-02, the suite-runtime decision). The old value was
+ * set on a measurement — the mean-wait trial at ~81 s — that had already
+ * stopped being true: re-measured with `vitest run --reporter=verbose` the
+ * same day it read 9.6 s, and it is now ~2 s because it re-arms one world per
+ * trial instead of rebuilding an identical one (see the trial itself). The
+ * single-arrival trial measures ~1.1 s. A timeout is a rail against a hung
+ * test rather than a budget, and 20 s is a ~10× margin over the slower of the
+ * two. Re-measure it here if either trial's shape changes; do not raise it to
+ * paper over a trial that got slower for a reason nobody wrote down.
  */
-const SEEDED_TRIAL_TIMEOUT_MS = 480_000;
+const SEEDED_TRIAL_TIMEOUT_MS = 20_000;
 
 /**
  * A conical bowl centred on the map: height rises linearly with distance from
@@ -619,14 +619,25 @@ describe('the summon roll', () => {
     // The rate is derived from SUMMON_MEAN_WAIT_SECONDS through the
     // exponential form in rollEvent; this is the test that the derivation is
     // real and not just a comment. Deterministic: one seed drives every trial.
+    //
+    // ONE WORLD, RE-ARMED PER TRIAL (2026-09-02, the suite-runtime decision).
+    // It used to call `boot()` inside the loop, which rebuilt an identical
+    // WORLD_SIZE² world and re-ran its first habitat survey 24 times over. The
+    // world never varied between trials — `boot()` takes the same default bowl
+    // every time — so the only thing a rebuild contributed was its cost; what
+    // varies from trial to trial is the position in the seeded RNG stream, and
+    // `resetMonstersState()` is precisely the seam that re-arms the summon
+    // without disturbing that. Trial count and bounds are unchanged, so the
+    // statistical claim below is exactly the one this test always made.
     const random = seededRandom(7);
     const TRIALS = 24;
     const CAP_SECONDS = SUMMON_MEAN_WAIT_SECONDS * 12;
 
+    const harness = boot();
     let total = 0;
     for (let trial = 0; trial < TRIALS; trial++) {
+      resetMonstersState();
       setMonsterRandomSource(random);
-      const harness = boot();
       let waited = 0;
       while (livingMonster() === null && waited < CAP_SECONDS) {
         tick(harness, 1);
@@ -1004,8 +1015,21 @@ describe('summon cells are spread, not pinned to the deepest cell', () => {
     return { x: kraken!.x, y: kraken!.y };
   }
 
-  /** A spread of ids wide enough that one repeated cell cannot hide in it. */
-  const PROBE_IDS = Array.from({ length: 32 }, (_, i) => i + 1);
+  /**
+   * A spread of ids wide enough that one repeated cell cannot hide in it.
+   *
+   * EIGHT, from 32 (2026-09-02, the suite-runtime decision). Every probe id
+   * costs one full habitat survey of a WORLD_SIZE² world — the stub world's
+   * `heightAt` is evaluated per cell — so this count is a direct multiplier on
+   * the four tests below, which together were 26 s of the suite.
+   *
+   * Eight is still a spread and not a pair: the defect all four guard against
+   * is the pick that returned the region's single extreme cell for every id,
+   * which scores exactly 1 distinct cell however many ids are thrown at it.
+   * Eight ids leave the "more than half distinct" bar at five, which that
+   * defect cannot reach and a working hash clears every time.
+   */
+  const PROBE_IDS = Array.from({ length: 8 }, (_, i) => i + 1);
 
   it('lands on many different cells across successive summons', () => {
     const world = basinWorld(krakenTrench());
@@ -1428,12 +1452,49 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
   // for FRESH_SEABED_BANDS_BELOW_SEA, and for the same reason: core cannot
   // import a plugin's constants, so the plugin owns the agreement.
 
+  /**
+   * How many seeds every probe in this block sweeps.
+   *
+   * EIGHT, and it was 48 until 2026-09-02. The owner's decision that day is
+   * that the whole monsters suite must run in well under a minute, and this
+   * block was 84 % of it: every probe below generates a world PER SEED and
+   * walks every cell of it, so the seed count multiplies the most expensive
+   * unit of work the suite has.
+   *
+   * Eight rather than four or two because two properties here are MIXTURES —
+   * the noise-alone sweep and the day-one unlock floor each need at least one
+   * qualifying and one non-qualifying seed to mean anything. Measured on this
+   * seed list (2026-09-02): the first non-qualifying seed is index 3 for both,
+   * so eight is the first round count that keeps a margin of spare seeds on
+   * either side of both flips rather than sitting exactly on one.
+   *
+   * Nothing else about the block weakened: the guarantee is still "every seed
+   * we look at", the mixtures are still mixtures, and the per-seed work is
+   * unchanged. Only the sample is smaller.
+   */
+  const GENESIS_PROBE_SEED_COUNT = 8;
+
   /** A fixed seed list: genesis is a pure function of it, so this is stable. */
-  const GENESIS_PROBE_SEEDS = Array.from({ length: 48 }, (_, i) => (i * 2654435761) >>> 0);
+  const GENESIS_PROBE_SEEDS = Array.from(
+    { length: GENESIS_PROBE_SEED_COUNT },
+    (_, i) => (i * 2654435761) >>> 0,
+  );
   const GENESIS_PROBE_SIZE = cellsAcross(128);
 
-  /** Deepest genesis cell of one world, whole-world and inside the unlock box. */
+  /**
+   * Deepest genesis cell of one world, whole-world and inside the unlock box.
+   *
+   * MEMOISED (2026-09-02), because three separate tests below ask for the same
+   * seeds and the answer is a pure function of the seed — genesis takes no
+   * other input. Un-memoised this generated and scanned each world three times
+   * over for no additional coverage, which was a third of this block's cost.
+   */
+  const genesisFloorCache = new Map<number, { world: number; unlocked: number }>();
+
   function genesisFloors(seed: number): { world: number; unlocked: number } {
+    const cached = genesisFloorCache.get(seed);
+    if (cached !== undefined) return cached;
+
     const terrain = buildFreshGenesisTerrain(GENESIS_PROBE_SIZE, seed);
     const { startChunk, spanChunks } = initialUnlockFootprint(GENESIS_PROBE_SIZE);
     const lo = startChunk * CHUNK_SIZE;
@@ -1448,7 +1509,9 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
         if (x >= lo && x <= hi && y >= lo && y <= hi && height < unlocked) unlocked = height;
       }
     }
-    return { world, unlocked };
+    const floors = { world, unlocked };
+    genesisFloorCache.set(seed, floors);
+    return floors;
   }
 
   it('reads a genesis floor as an exact band multiple — nothing smooths it', () => {
@@ -1468,7 +1531,7 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
   // WHAT THIS REPLACED, and why the replacement is not a weakening. Until
   // 2026-08-19 this block held a test called "does not promise every world a
   // dig-free kraken — only a deep-floored one". It asserted a MIXTURE over
-  // these same 48 seeds — some qualify, some do not — and it deliberately
+  // these same seeds — some qualify, some do not — and it deliberately
   // failed if ALL of them qualified, on the reading that a worldgen change
   // handing every world a kraken would be a silently different game. That
   // reading was correct AS A GUARD: it was written to force the question to an
@@ -1499,25 +1562,52 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
    * Left as literal cells they became a 32-world-unit map and a 128-world-unit
    * one, and the smaller of those has fewer cells IN TOTAL (16 384) than the
    * kraken's own area bar (KRAKEN_MIN_LAIR_DEEP_CELLS = 36 864) demands, so all
-   * 48 seeds failed a guarantee that no world of that size could ever meet.
+   * every seed failed a guarantee that no world of that size could ever meet.
+   *
+   * GENESIS_PROBE_SIZE above is the smallest shipped span; this is the default
+   * one. They are swept with different seed counts (see below), so they are two
+   * named constants rather than one list.
    */
-  const GENESIS_PROBE_SIZES = [GENESIS_PROBE_SIZE, cellsAcross(DEFAULT_WORLD_SPAN)];
+  const GENESIS_DEFAULT_PROBE_SIZE = cellsAcross(DEFAULT_WORLD_SPAN);
 
   /**
-   * A full-size-per-seed sweep, twice over, is a real amount of work: two full
-   * world generations and two full habitat surveys per seed.
+   * How many seeds the DEFAULT-SIZE arm of the guarantee sweeps.
    *
-     * RE-MEASURED AFTER THE 2026-08-21 RE-SAMPLE at ~76 s per test, from ~4 s: the
-   * default world is 2048² cells rather than 512², and both halves of the sweep
-   * walk every one of them. Held at the same 5x margin.
+   * ONE, and it was the full seed list until 2026-09-02 (owner decision: the
+   * suite must run in well under a minute). A 2048² world is sixteen times the
+   * cells of the 512² one and costs sixteen times as much to generate and
+   * survey, so this single number was the largest cost in the whole suite —
+   * measured at ~190 s per test against ~11 s for the smaller size.
    *
-   * The first number recorded here was 15 s and it was WRONG — taken from a
-   * standalone script that called the same functions, not from the test, which
-   * pays for vitest's module graph and the Int16Array allocation per world on
-   * top. It set a budget the test then sat 1% under, so it passed alone and
-   * failed under full-suite load. Measure a timeout by timing the TEST.
+   * ONE STILL MEANS SOMETHING, and this is why the arm was kept rather than
+   * deleted. The trench pass is not sampled per world: it runs on every world
+   * genesis builds, and the only way the DEFAULT SIZE can differ from the
+   * minimum is if the pass fails to scale with the map — a trench dug to a
+   * fixed cell count rather than a fixed share of the world, say, or one
+   * anchored to a coordinate the bigger map moves. That is a per-SIZE failure,
+   * not a per-SEED one, so one world at the default size catches it; the
+   * per-seed variation is what the minimum-size arm below still sweeps.
    */
-  const GENESIS_SWEEP_TIMEOUT_MS = 450_000;
+  const GENESIS_DEFAULT_SIZE_PROBE_SEEDS = GENESIS_PROBE_SEEDS.slice(0, 1);
+
+  /**
+   * A full-size-per-seed sweep is a real amount of work: a full world
+   * generation and a full habitat survey per seed.
+   *
+   * 30 s, from 450 s (2026-09-02). The old value was measured when the two
+   * sweeps below ran the whole seed list at both sizes and took ~195 s each;
+   * with the seed list at eight and the default-size arm at one they measure
+   * ~9 s and ~4 s on this machine. A timeout is a rail against a hung test,
+   * and 30 s is about a 3× margin over the slower of the two.
+   *
+   * The first number ever recorded here was 15 s and it was WRONG — taken from
+   * a standalone script that called the same functions, not from the test,
+   * which pays for vitest's module graph and the Int16Array allocation per
+   * world on top. It set a budget the test then sat 1% under, so it passed
+   * alone and failed under full-suite load. Measure a timeout by timing the
+   * TEST — the numbers above are from `vitest run --reporter=verbose`.
+   */
+  const GENESIS_SWEEP_TIMEOUT_MS = 30_000;
 
   /**
    * Does this heightmap contain a basin the kraken would take? Asked through
@@ -1562,11 +1652,19 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
   it(
     'promises EVERY fresh world a kraken-qualifying basin (owner-ratified 2026-08-19)',
     () => {
-      // THE GUARANTEE, at both shipped sizes, over the same 48 seeds the
-      // mixture test used. Not "most", not "the deep-floored ones": all of
-      // them, or the owner's decision has regressed.
-      for (const size of GENESIS_PROBE_SIZES) {
-        const missing = GENESIS_PROBE_SEEDS.filter(
+      // THE GUARANTEE, at both shipped sizes, over the same seeds the mixture
+      // test uses. Not "most", not "the deep-floored ones": all of them, or
+      // the owner's decision has regressed.
+      //
+      // The two arms sweep different seed counts on purpose — see
+      // GENESIS_DEFAULT_SIZE_PROBE_SEEDS for why one world is enough at the
+      // default size and eight are wanted at the minimum one.
+      const arms: ReadonlyArray<readonly [number, readonly number[]]> = [
+        [GENESIS_PROBE_SIZE, GENESIS_PROBE_SEEDS],
+        [GENESIS_DEFAULT_PROBE_SIZE, GENESIS_DEFAULT_SIZE_PROBE_SEEDS],
+      ];
+      for (const [size, seeds] of arms) {
+        const missing = seeds.filter(
           (seed) => !hasQualifyingBasin(freshWorldHeights(size, seed), size),
         );
         expect({ size, missing }).toEqual({ size, missing: [] });
@@ -1583,13 +1681,23 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
       // widened until every seed digs its own trench, the guarantee above would
       // still pass while meaning nothing. This fails in that case: the noise on
       // its own must go on producing BOTH kinds of world.
-      for (const size of GENESIS_PROBE_SIZES) {
-        const qualifies = GENESIS_PROBE_SEEDS.map((seed) =>
-          hasQualifyingBasin(untrenchedWorldHeights(size, seed), size),
-        );
-        expect(qualifies.some((ok) => ok)).toBe(true);
-        expect(qualifies.some((ok) => !ok)).toBe(true);
-      }
+      //
+      // AT THE MINIMUM SIZE ONLY, from 2026-09-02; it used to assert the same
+      // mixture at the default 2048² size as well. What it checked then: that
+      // the noise alone leaves some worlds without a kraken basin, at both
+      // shipped sizes. What it checks now: the same thing, at the smallest
+      // shipped size. Why: a mixture needs several seeds by definition, and a
+      // 2048² world costs sixteen times a 512² one to build and survey, so the
+      // second arm alone was ~180 s of a suite the owner has capped (decision,
+      // 2026-09-02). The property is about the NOISE's range, which is a
+      // per-seed fact rather than a per-size one, so the surviving arm is the
+      // one that actually exercises it — and the guarantee test above still
+      // covers the default size, which is the size-dependent half.
+      const qualifies = GENESIS_PROBE_SEEDS.map((seed) =>
+        hasQualifyingBasin(untrenchedWorldHeights(GENESIS_PROBE_SIZE, seed), GENESIS_PROBE_SIZE),
+      );
+      expect(qualifies.some((ok) => ok)).toBe(true);
+      expect(qualifies.some((ok) => !ok)).toBe(true);
     },
     GENESIS_SWEEP_TIMEOUT_MS,
   );
