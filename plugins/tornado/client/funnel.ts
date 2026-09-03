@@ -45,6 +45,12 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
+  REVEAL_CLIP_FRAGMENT_GLSL,
+  REVEAL_CLIP_UNIFORMS_GLSL,
+  REVEAL_CLIP_VERTEX_GLSL,
+  type RevealClipUniforms,
+} from '../../../client/src/plugins/kit/revealClip.ts';
+import {
   TORNADO_HEIGHT_WORLD_UNITS,
   TORNADO_RADIUS_CELLS,
   WORLD_UNITS_PER_BAND,
@@ -170,6 +176,8 @@ export const DEBRIS_RENDER_ORDER = 3;
 // THE VORTEX SHEET.
 
 const CONE_VERTEX_SHADER = /* glsl */ `
+  ${REVEAL_CLIP_UNIFORMS_GLSL}
+
   uniform float uElapsed;
 
   attribute float aSeed;
@@ -230,11 +238,20 @@ const CONE_VERTEX_SHADER = /* glsl */ `
       life * ${TORNADO_HEIGHT_WORLD_UNITS.toFixed(2)},
       sin(angle) * radius + axis.y);
 
+    // NOTHING IS DRAWN OFF THE RECEIVED MAP (#284). The funnel is one of the
+    // two kinds the server already filters on its CENTRE (broadcastVisible),
+    // and this is the other half of that: a funnel standing near the frontier
+    // is a 28-unit column, so its top can lean over ground this client has
+    // never been sent even when its foot is on ground it has.
+    ${REVEAL_CLIP_VERTEX_GLSL}
+
     gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
   }
 `;
 
 const CONE_FRAGMENT_SHADER = /* glsl */ `
+  ${REVEAL_CLIP_UNIFORMS_GLSL}
+
   // See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
   // own light has to reach it as a number, or a funnel under a cyclone stays
   // sunlit while the ground around it does not.
@@ -247,6 +264,9 @@ const CONE_FRAGMENT_SHADER = /* glsl */ `
   varying vec2 vSurface;
 
   void main() {
+    // The clip FIRST, so a discarded fragment does no other work.
+    ${REVEAL_CLIP_FRAGMENT_GLSL}
+
     // THE CHURN, painted rather than modelled. Two bands of streaks at
     // incommensurate frequencies scrolling in opposite directions: one is the
     // condensation spiralling up the wall, the other tears holes in it. Their
@@ -293,6 +313,8 @@ const CONE_FRAGMENT_SHADER = /* glsl */ `
 // THE DEBRIS SKIRT.
 
 const DEBRIS_VERTEX_SHADER = /* glsl */ `
+  ${REVEAL_CLIP_UNIFORMS_GLSL}
+
   uniform float uElapsed;
 
   attribute float aPhase;
@@ -323,6 +345,10 @@ const DEBRIS_VERTEX_SHADER = /* glsl */ `
 
     vec3 world = base + vec3(cos(angle) * radius, height, sin(angle) * radius);
 
+    // Clipped like the cone above: debris thrown across the frontier is
+    // geometry over floor this client was never sent.
+    ${REVEAL_CLIP_VERTEX_GLSL}
+
     // BILLBOARD IN VIEW SPACE — faces the camera exactly, for free, with no
     // rotation written from the CPU and no chance of lagging it by a frame.
     float size = ${(WORLD_UNITS_PER_BAND * 0.55).toFixed(4)} * (0.5 + fract(aSeed * 29.3));
@@ -333,6 +359,8 @@ const DEBRIS_VERTEX_SHADER = /* glsl */ `
 `;
 
 const DEBRIS_FRAGMENT_SHADER = /* glsl */ `
+  ${REVEAL_CLIP_UNIFORMS_GLSL}
+
   uniform float uDaylight;
 
   varying float vLife;
@@ -340,6 +368,8 @@ const DEBRIS_FRAGMENT_SHADER = /* glsl */ `
   varying vec2 vQuad;
 
   void main() {
+    ${REVEAL_CLIP_FRAGMENT_GLSL}
+
     // The quad is authored two units across, so vQuad is the offset from its
     // centre in half-widths. Harder-edged than the cloud puffs elsewhere in
     // this plugin: this is dirt and chaff, not vapour.
@@ -417,7 +447,13 @@ function unitFromId(id: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
 
-export function createFunnel(): FunnelRenderer {
+/**
+ * `revealClip` is `ClientPluginCtx.revealClipUniforms()`, SPREAD into both
+ * materials' own uniform objects — the same `{ value }` boxes in all three
+ * places, so one mask upload reaches every material at once. See
+ * client/src/plugins/kit/revealClip.ts for the whole pattern.
+ */
+export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
   const root = new Group();
   root.name = 'tornado:funnel';
 
@@ -434,7 +470,7 @@ export function createFunnel(): FunnelRenderer {
     true,
   );
   const coneMaterial = new ShaderMaterial({
-    uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
+    uniforms: { ...revealClip, uElapsed: { value: 0 }, uDaylight: { value: 1 } },
     vertexShader: CONE_VERTEX_SHADER,
     fragmentShader: CONE_FRAGMENT_SHADER,
     transparent: true,
@@ -467,7 +503,7 @@ export function createFunnel(): FunnelRenderer {
   const debrisCapacity = MAX_FUNNELS * DEBRIS_PER_FUNNEL;
   const debrisGeometry = new PlaneGeometry(2, 2, 1, 1);
   const debrisMaterial = new ShaderMaterial({
-    uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
+    uniforms: { ...revealClip, uElapsed: { value: 0 }, uDaylight: { value: 1 } },
     vertexShader: DEBRIS_VERTEX_SHADER,
     fragmentShader: DEBRIS_FRAGMENT_SHADER,
     transparent: true,
