@@ -522,9 +522,9 @@ export interface LairRegion {
    * TWO COUNTS, BECAUSE ARRIVING AND LIVING ARE DIFFERENT QUESTIONS, and the
    * kraken is still the kind that proves it — the two just moved closer together
    * on 2026-09-02. He must ARRIVE on a cell 31 bands down, the abyssal floor his
-   * bar was derived from; he LIVES in the 28-band contour around it, which is
-   * the same trench relaxed by the depth his own 28-cell body spans on a legal
-   * wall (kinds.ts's `bodyReachBands`). What CHANGED is the second half: it used
+   * bar was derived from; he LIVES in the 27-band contour around it, which is
+   * the same trench relaxed by the bands of wall his own 28-cell body climbs
+   * across its half-width (kinds.ts's `bodyReachBands`). What CHANGED is the second half: it used
    * to be the whole three-band basin, i.e. the open sea, which is the defect the
    * owner named ("it cannot move beyond the trench").
    *

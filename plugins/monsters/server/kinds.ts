@@ -945,9 +945,32 @@ export interface MonsterProfile {
 type MonsterProfileRow = Omit<MonsterProfile, 'range'>;
 
 /**
- * How many bands of its own habitat a body of this size SPANS on the steepest
- * ground the engine can produce — the relaxation between a kind's arrival bar
- * and the set it may then move in.
+ * How many CELLS of a trench wall it takes to climb one band.
+ *
+ * THE SAME EXPRESSION GENESIS CUTS ITS TRENCH WALLS WITH — `BAND_HEIGHT /
+ * MAX_STEP`, at server/src/world/genesis.ts:150
+ * (`GENESIS_TERRACE_WALL_CELLS_PER_BAND`), applied to the trench floor profile
+ * at genesis.ts:1595 and against the floor depth at genesis.ts:1064. Four cells
+ * per band at today's constants.
+ *
+ * DERIVED HERE, NOT IMPORTED, and not for the usual plugin-independence reason:
+ * genesis's copy is module-private (a bare `const`, not exported), so it cannot
+ * be imported at all, and a plugin reaching into `server/src/world` for terrain
+ * shape would be the wrong direction anyway. What makes this a restatement with
+ * no drift risk is that it is not a restated NUMBER: both operands come from
+ * `@terrace/shared`, the same module genesis takes them from, so the two
+ * expressions cannot disagree unless someone edits one of them by hand.
+ *
+ * It is the steepest wall the engine permits (MAX_STEP is the gradient limit),
+ * so using it below is a WORST CASE: a gentler trench only ever makes the
+ * relaxation more generous than it had to be.
+ */
+const TRENCH_WALL_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
+
+/**
+ * How many bands of trench wall a body of this size CLIMBS across its own
+ * half-width — the relaxation between a kind's arrival bar and the set it may
+ * then move in.
  *
  * WHY THE TWO CANNOT BE THE SAME NUMBER, which is the finding that shaped this
  * whole change and is measured rather than argued (see the report in
@@ -956,29 +979,31 @@ type MonsterProfileRow = Omit<MonsterProfile, 'range'>;
  * `minLairReachBands` is a bar on ONE CELL: `bestLairFor` applies it to a
  * region's single most extreme cell, and `summonCellIn` to the cell the animal
  * lands on. A trench is a V, so its deepest contour is a RIBBON, and the ribbon
- * is exactly as wide as the terrain's slope makes it — no wider. Terrain falls
- * at most MAX_STEP per cell (shared/src/constants.ts), so a contour cut to the
- * demand depth is guaranteed to be only `bodyRadiusCells · MAX_STEP` units
- * deeper anywhere within a body's radius of it. Reading the arrival bar back as
- * "where the whole body may be" therefore asks a 28-cell animal to fit inside
- * the one-band seam at the bottom of its own trench, which it cannot: measured
- * over twenty genesis seeds at 512², the kraken's body fit nowhere at all on
- * eleven of them, so it would simply never appear.
+ * is exactly as wide as the wall slope makes it — no wider. A body sitting on
+ * that contour reaches `bodyRadiusCells` out from its centre, and over that
+ * distance the wall has climbed `bodyRadiusCells / TRENCH_WALL_CELLS_PER_BAND`
+ * bands. Reading the arrival bar back as "where the whole body may be"
+ * therefore asks a 28-cell animal to fit inside the one-band seam at the bottom
+ * of its own trench, which it cannot: measured over twenty genesis seeds at
+ * 512², the kraken's body fit nowhere at all on eleven of them, so it would
+ * simply never appear. That is not "confined to the trench", it is no kraken.
  *
- * SUBTRACTING THIS IS THE FIX, and it is a derivation and not a tuning dial:
- * the range is the arrival bar relaxed by the depth the animal's own body spans
- * on the steepest legal wall. `floor`, not `ceil`, because the relaxation must
- * not exceed what the geometry actually justifies. At today's numbers the
- * kraken's is `floor(14 · 4 / 16) = 3`, giving a range of 28 bands — the exact
- * value at which all twenty of those seeds admit it again.
+ * `ceil`, NOT `floor`. The rim probe furthest from the centre is a whole cell
+ * out, so a fractional band of climb is a band the body genuinely needs; taking
+ * it down leaves the animal's outermost probes on the wrong side of its own
+ * range boundary on the steepest walls, which is the failure this subtraction
+ * exists to prevent. At today's numbers the kraken's is `ceil(14 / 4) = 4`,
+ * giving a range of 27 bands.
  *
  * IT CHANGES NOTHING FOR A KIND THAT MAKES NO EXTRA DEMAND. Cthulhu and the
  * yeti already sit at their habitat's own threshold, so subtracting anything
  * would take them BELOW the floor, and `habitatRangeOf` clamps back up to it —
- * their range stays the habitat regime object itself.
+ * their range stays the habitat regime object itself. That clamp is the
+ * invariant "nothing may be shallower than its habitat's floor", enforced in
+ * code rather than trusted to the arithmetic.
  */
 function bodyReachBands(row: MonsterProfileRow): number {
-  return Math.floor((bodyRadiusCells(row) * MAX_STEP) / BAND_HEIGHT);
+  return Math.ceil(bodyRadiusCells(row) / TRENCH_WALL_CELLS_PER_BAND);
 }
 
 /**
