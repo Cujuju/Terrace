@@ -16,9 +16,13 @@
 //     it can go DOWN: raise a mountain beside a castle and it is a hut again.
 //     That is the player's whole verb in Populous, so it must be live rather
 //     than a one-way ratchet.
-//   * A HOUSE DIES ONLY FROM THE TERRAIN. No loneliness, no overcrowding —
-//     those are Conway's rules, not Bullfrog's. A house goes when the ground
-//     under it stops being ground.
+//   * A HOUSE DIES FROM THE GROUND, IN THE TWO WAYS GROUND CAN BE TAKEN AWAY.
+//     No loneliness, no overcrowding — those are Conway's rules, not
+//     Bullfrog's. A house goes when the ground under it stops being ground,
+//     and it goes when that ground is claimed by a building's keep-clear disc
+//     (owner, 2026-09-02: "it's okay if teepees spawn on top of each other,
+//     but nothing else should share a space" — a building's square is EMPTIED,
+//     not merely closed to newcomers; see CLEARANCE on `stepPopulous`).
 //
 // PURE, AND IT EMITS NOBODY. `stepPopulous` REPORTS the cells that want to
 // send a settler out; ../server/index.ts is what actually asks pilgrims, over
@@ -183,27 +187,16 @@ export const POPULOUS_CAPACITY_BY_TIER: readonly number[] = [8, 7, 6, 5, 4, 3];
 export const POPULOUS_POPULATION_AFTER_EMIT = 0;
 
 /**
- * The tier a cell is held at when a building already stands within structures'
- * keep-clear separation of it.
- *
- * 0 — a camp, i.e. the bottom of the same ladder, rather than a separate
- * "refused" state. There is no such thing as a house with no tier on this
- * board, and inventing one would put a value on the wire that structures'
- * client has no model for. A camp is exactly what a plot that may not build
- * yet looks like.
- */
-const CLEARANCE_REFUSED_TIER = 0;
-
-/**
  * How many tiers a house may CLIMB in one generation.
  *
  * 1 — a house grows one size at a time toward the tier its ground earns,
  * rather than jumping straight there (owner, 2026-08-26, after watching a
  * fresh homestead go camp → top tier in a single 15-second generation: the
  * earned tier is a fact about the site, but the building on it is meant to be
- * seen going up). Upward only: losing ground or being refused clearance still
- * takes effect at once, because those are the ground and the board saying no,
- * not a house being built. With POPULOUS_TIER_BY_FLAT_NEIGHBORS six rungs
+ * seen going up). Upward only: losing ground takes effect at once, because
+ * that is the ground saying no rather than a house being built — and losing
+ * clearance is not a tier change at all any more, it is a demolition (see
+ * CLEARANCE on `stepPopulous`). With POPULOUS_TIER_BY_FLAT_NEIGHBORS six rungs
  * long, a perfect site tops out five generations after founding.
  */
 export const POPULOUS_TIER_CLIMB_PER_STEP = 1;
@@ -260,29 +253,54 @@ function flatNeighborsAround(
  * The board is walked in ascending key order — not the map's insertion order —
  * so `died`, `upgraded` and `emitted` come back in the same order on every
  * server regardless of the order houses happened to be founded in. That order
- * is also the CLEARANCE TIE-BREAK (below): when two cells both want to be
- * buildings and cannot both be, the lower key wins. It has to be decided by
- * SOMETHING, and the only tie-break available that is identical on every
- * server is the one the walk already imposes.
+ * is also the CLEARANCE TIE-BREAK (below): it has to be decided by SOMETHING,
+ * and the only tie-break available that is identical on every server is the
+ * one the walk already imposes.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * CLEARANCE. structures does not allow two buildings within
  * STRUCTURE_SEPARATION_CELLS of each other, and that is a rule about the
  * BOARD, not about the Conway CA that used to be the only thing enforcing it.
- * A cell may therefore hold `tier > 0` only if no OTHER building stands within
+ * A cell may therefore stand at all only if no OTHER building stands within
  * separation of it — asked of the board AS THIS STEP IS LEAVING IT: cells
  * already decided this step carry their new tier, cells not yet reached carry
  * the tier they came in with. That is the same half-decided view the CA's own
  * sweep reasons about, and it is what keeps two cells that arrive already
  * overlapping (an older save, or a board this rule never touched) from BOTH
- * yielding and flipping camp/building forever.
+ * yielding.
  *
- * HELD AT 0, NOT DEMOLISHED. A refused cell becomes a camp and keeps standing.
- * Deaths in this model are terrain-only by design — "a house goes when the
- * ground under it stops being ground" — so demolishing a house for being in
- * somebody's way would be a second, unrelated death rule, and it would delete
- * a settler's home for a reason the player cannot see in the landscape. A camp
- * still fills and still sends people out, at tier 0's capacity.
+ * DEMOLISHED, NOT HELD AT 0. An obstructed cell DIES this step: it goes into
+ * `died` and is absent from `nextLive`. The keep-clear rule has two halves and
+ * this is the second one — "a building's ground is emptied of everything but
+ * the building" (owner, 2026-09-02: "it's okay if teepees spawn on top of each
+ * other, but nothing else should share a space", after finding a house and a
+ * hut each standing on top of a teepee). The Conway model has always enforced
+ * both halves, the second inside its own sweep (structures' life.ts,
+ * clearKeepClearSquare); holding a camp at tier 0 instead satisfied only the
+ * first, so the camp stood inside the building's footprint forever and kept
+ * emitting settlers from it (GH #183).
+ *
+ * IT APPLIES EVERY STEP, TO EVERY OBSTRUCTED CELL, whatever its own tier: a
+ * camp inside a standing building's disc is demolished on the next
+ * generation, and an old save's overlapping building pair collapses to one
+ * building. That is not new retroactivity — this pass already re-asks the
+ * whole board's tier question every step, and this is the same question with a
+ * different answer. (structures' "never reconcile old saves" decision, 2026-08-26,
+ * belongs to the CA's SURVIVAL rule, which never consults clearance at all.)
+ *
+ * WHO SURVIVES, STATED HONESTLY. The tie-break is the ascending walk, and it
+ * cuts two ways depending on what the cells came in as:
+ *   * Two BUILDINGS arriving overlapping: the HIGHER key survives. The lower
+ *     key is reached first, sees the higher one still standing in `undecided`
+ *     at its old tier, and dies.
+ *   * CAMPS climbing together (a fresh 2×2 homestead): the LOWEST key is
+ *     promoted first, and every later cell then sees it in `nextLive` as a
+ *     building and dies.
+ * RESIDUAL: in a three-deep pile from an old save, a cell can die to an
+ * obstruction that itself dies later in the same step — the board still ends
+ * with no overlap, at the cost of one more demolition than strictly needed.
+ * Accepted: the alternative is a second, order-dependent reconciliation pass,
+ * and the extra loss is a cell that was standing illegally anyway.
  *
  * DEATHS ARE DECIDED FIRST, in their own pass, so a house that this very step
  * loses its ground cannot block a neighbour from building on the way past.
@@ -305,9 +323,9 @@ export function stepPopulous(
 
   const keys = [...live.keys()].sort((a, b) => a - b);
 
-  // PASS ONE — WHO IS STILL STANDING AT ALL.
+  // PASS ONE — WHOSE GROUND IS STILL GROUND.
   //
-  // THE ONLY WAY A HOUSE DIES. Its own ground stopped being ground —
+  // THE FIRST OF THE TWO WAYS A HOUSE DIES. Its own ground stopped being ground —
   // sculpted away, drowned, or claimed by another plugin's reservation (all of
   // which is structures' isBuildableCell, over the context). A house whose
   // NEIGHBOURS moved merely changes size.
@@ -338,13 +356,21 @@ export function stepPopulous(
     const { x, y } = cellOfKey(key);
     undecided.delete(key);
 
-    // A cell is never obstructed by its own ambition — the predicate excludes
-    // (x, y) itself — so this asks only about OTHER buildings.
-    const obstructed =
+    // THE SECOND OF THE TWO WAYS A HOUSE DIES — the ground is claimed by a
+    // building's keep-clear disc (see CLEARANCE above). A cell is never
+    // obstructed by its own ambition (the predicate excludes (x, y) itself),
+    // so this asks only about OTHER buildings; `undecided` no longer holds
+    // this cell, so a demolished cell obstructs nobody later in the walk.
+    if (
       ctx.hasBuildingWithinSeparation(nextLive, x, y) ||
-      ctx.hasBuildingWithinSeparation(undecided, x, y);
+      ctx.hasBuildingWithinSeparation(undecided, x, y)
+    ) {
+      died.push({ x, y });
+      continue;
+    }
+
     const earned = populousTierFor(flatNeighborsAround(world, ctx, x, y), ctx.maxTier);
-    const tier = obstructed ? CLEARANCE_REFUSED_TIER : rampedTier(record.tier, earned);
+    const tier = rampedTier(record.tier, earned);
     if (tier !== record.tier) upgraded.push({ x, y, tier });
 
     // GROW, THEN CHECK — so a house that has just been promoted into a
