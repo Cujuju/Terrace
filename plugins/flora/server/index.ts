@@ -144,6 +144,18 @@ import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.
 import { StabilityMap } from './stability.ts';
 import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
 import { parseStructuresOccupation } from './structures-event.ts';
+import {
+  parseStormDamage,
+  severityAt,
+} from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
+import {
+  CYCLONE_DAMAGE_EVENT_NAME,
+  FLORA_WIND_CROP_FLATTEN_CHANCE_PER_SEVERITY_SECOND,
+  FLORA_WIND_CROP_MIN_SEVERITY,
+  FLORA_WIND_MIN_SEVERITY,
+  FLORA_WIND_TREE_FELL_CHANCE_PER_SEVERITY_SECOND,
+  windEffectChance,
+} from './cyclone-event.ts';
 
 /**
  * Simulated seconds between unsolicited full-forest re-broadcasts.
@@ -1362,6 +1374,47 @@ function floraFuelAt(x: number, y: number): { burnSeconds: number; height: numbe
  * this is the one removal path of four that leaves a residue.
  */
 function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number }[]): void {
+  removeStanding(cells, 'fire');
+}
+
+/**
+ * WHAT TOOK THE PLANT DOWN. The removal below is the same either way; these are
+ * the two lines it differs by, and naming the cause is what keeps them from
+ * being a boolean nobody can read at the call site.
+ *
+ * `fire` — the tuft under the plant went with it, and the ground is SCORCHED:
+ * a burn bars every survey from this cell for FLORA_SCORCH_REGROW_SECONDS.
+ *
+ * `wind` — neither. A cyclone snaps a trunk and lays a field over; it does not
+ * take the grass, and it leaves ground that is perfectly able to grow the next
+ * thing. The forest coming back on its ordinary survey is what makes a storm
+ * something the world heals from, and stamping the scorch record here would
+ * silently give the wind a fire's burn scar (./scorch.ts, ./cyclone-event.ts).
+ */
+type FloraRemovalCause = 'fire' | 'wind';
+
+/**
+ * THE ONE REMOVAL PATH for anything of this plugin's that is taken down where
+ * it stands — extracted from floraBurnedOut for issue #299, unchanged in what
+ * it does for a fire.
+ *
+ * It is one function rather than two because everything a burn does to the
+ * BOARD, a cyclone does identically: the trunk goes, the stump is left, the
+ * grain withers, and each of the four wires carries the loss. The two lines
+ * that are genuinely about fire are gated on `cause` above, at the point where
+ * they happen, so a third caller cannot arrive and quietly inherit a burn's
+ * side effects.
+ *
+ * THE ONLY PLACE A STUMP IS EVER CREATED (GH #195) is still here, and still
+ * only where a TREE actually fell: `forest.fell` returning true is the proof
+ * that something with a trunk stood here. A wind-felled tree leaves the same
+ * stump a burned one does, on the same clock — the residue is the tree's, not
+ * the fire's.
+ */
+function removeStanding(
+  cells: readonly { readonly x: number; readonly y: number }[],
+  cause: FloraRemovalCause,
+): void {
   const world = fuelWorld;
   if (world === null) return;
 
@@ -1388,8 +1441,14 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
     // correct outcome and not a gap — the mark a fire leaves on bare meadow is
     // the client's burn scar (plugins/fire/client/scar.ts), which keys on the
     // FIRE and never asks flora whether a blade stood there.
-    const scorchedCell = grassField.reactToEdit(cell.x, cell.y);
-    if (scorchedCell !== null) scorched.push(scorchedCell);
+    //
+    // FIRE ONLY (issue #299). Wind is the other way round: a cyclone that
+    // snapped the trunk above did not take the tuft at its foot, and a meadow
+    // left standing under a flattened wood is what a real storm leaves.
+    if (cause === 'fire') {
+      const scorchedCell = grassField.reactToEdit(cell.x, cell.y);
+      if (scorchedCell !== null) scorched.push(scorchedCell);
+    }
 
     // THE FUEL BEING CONSUMED (issue #290) — the line whose absence made a
     // meadow fire eternal. It is keyed on the GROUND, not on the tuft removal
@@ -1404,13 +1463,81 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
     // finished here, whatever stood here; the ground remembers that. Stamping
     // a tree cell a second time (grass under it burned earlier) restarts the
     // clock, which is the refresh the old meadow-ground carve-out existed for.
-    scorchField.scorch(cell.x, cell.y, simSeconds);
+    //
+    // FIRE ONLY (issue #299), for the reason FloraRemovalCause states: the
+    // scorch record is a record of BURNING, and it is what bars every survey
+    // from a cell. Stamping it for wind would stop the wood the storm just
+    // flattened from growing back for as long as a burn scar lasts, which is
+    // the difference between a storm and a fire.
+    if (cause === 'fire') scorchField.scorch(cell.x, cell.y, simSeconds);
   }
 
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
   if (scorched.length > 0) broadcastGrassChanges(world, [], scorched);
   broadcastStumpChanges(world, stumps, []);
+}
+
+/**
+ * A CYCLONE PASSED OVER (issue #299): the wind fells trees and lays crops flat
+ * inside the storm's disc.
+ *
+ * THE WHOLE DISC, NOT THE EVENT'S SAMPLE. The emitter's `cells` list is a
+ * bounded sample "for consumers with no spatial index"
+ * (server/src/plugins/kit/rotatingStorms.ts, where it says so), and this plugin
+ * owns one: the standing forest and the crop field are the index, and both are
+ * capped (FLORA_TREE_CAP 4096, FLORA_CROP_CAP 2048), so answering exactly costs
+ * one distance test per plant per second of storm — against a survey that
+ * already visits thousands of cells every tick. Reacting to twelve sampled
+ * cells instead would fell perhaps one tree a minute out of a disc of forty
+ * thousand cells, which is not a hurricane.
+ *
+ * ONE ROLL PER PLANT PER EVENT, on this plugin's OWN seeded generator (`rng`,
+ * the one whose state persists with the forest), so a world replayed from the
+ * same seed loses the same trees. Never Math.random: the whole point of a
+ * single persisted sequence is that a storm is part of the history a save can
+ * reproduce. The forest's own map iterates in insertion order, so the order the
+ * rolls are drawn in is fixed too.
+ *
+ * TREES AND CROPS ARE ROLLED SEPARATELY, each against its own bar and its own
+ * rate (./cyclone-event.ts) — grain goes over in wind a trunk stands up to. The
+ * two lists are then removed through the ONE removal path, which is safe
+ * because flora never plants a crop under a tree: a cell is in at most one of
+ * them, so a plant is never rolled for on another population's terms.
+ */
+function reactToCycloneDamage(payload: unknown): void {
+  if (fuelWorld === null) return;
+  const damage = parseStormDamage(payload);
+  // A malformed event changes NOTHING, on the rule every consumer here keeps:
+  // half-applying it would fell trees under a storm that was never described.
+  if (damage === null) return;
+
+  const taken: TreeCell[] = [];
+
+  for (const tree of forest.cells()) {
+    const severity = severityAt(damage, tree.x, tree.y);
+    if (severity < FLORA_WIND_MIN_SEVERITY) continue;
+    const chance = windEffectChance(
+      severity,
+      damage.durationSeconds,
+      FLORA_WIND_TREE_FELL_CHANCE_PER_SEVERITY_SECOND,
+    );
+    if (rng.next() < chance) taken.push({ x: tree.x, y: tree.y });
+  }
+
+  for (const crop of cropField.cells()) {
+    const severity = severityAt(damage, crop.x, crop.y);
+    if (severity < FLORA_WIND_CROP_MIN_SEVERITY) continue;
+    const chance = windEffectChance(
+      severity,
+      damage.durationSeconds,
+      FLORA_WIND_CROP_FLATTEN_CHANCE_PER_SEVERITY_SECOND,
+    );
+    if (rng.next() < chance) taken.push({ x: crop.x, y: crop.y });
+  }
+
+  if (taken.length === 0) return;
+  removeStanding(taken, 'wind');
 }
 
 /**
@@ -1557,6 +1684,9 @@ export const plugin: TerracePlugin = {
     // comment): structures' plugin name is the coupling, exactly like a wire
     // message namespace — never an import of structures' code.
     if (event === 'structures:changes') onStructuresChanges(world, payload);
+    // The same rule, a second emitter (issue #299): a cyclone's wind damage.
+    // The name is in ./cyclone-event.ts beside the numbers that answer it.
+    if (event === CYCLONE_DAMAGE_EVENT_NAME) reactToCycloneDamage(payload);
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
