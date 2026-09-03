@@ -42,19 +42,22 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
+  MeshLambertMaterial,
   PlaneGeometry,
   Quaternion,
-  ShaderMaterial,
   Vector3,
+  type Material,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { CYCLONE_DECK_HEIGHT_WORLD_UNITS, CYCLONE_EYE_RADIUS_FRACTION } from '../protocol.ts';
 import {
   PUFF_ALPHA_DISCARD_GLSL,
-  PUFF_BILLBOARD_GLSL,
-  PUFF_INSTANCE_BASE_GLSL,
   puffMaskGlsl,
 } from '../../../client/src/plugins/kit/puffDeck.ts';
+import {
+  PUFF_NORMAL_FLATNESS,
+} from '../../../client/src/plugins/kit/cumulusDeck.ts';
+import { glslFloat, spliceShader } from '../../../client/src/render/shaderSplice.ts';
 
 /**
  * Puffs in one cyclone's deck.
@@ -126,20 +129,79 @@ export const PUFF_SIZE_RADIUS_FRACTION = 0.085;
 export const DECK_THICKNESS_FRACTION = 0.1;
 
 /**
- * How much the scene's own light reaches these puffs, in [0, 1] - the uniform
- * that keeps an UNLIT material honest.
+ * The deck's own colour, before any of the scene's light reaches it — the rim
+ * colour this shader used to author directly (0.86, 0.87, 0.92).
  *
- * WHY IT HAS TO EXIST. A ShaderMaterial reads none of the scene's lights, so a
- * cloud deck authored at a fixed brightness keeps that brightness however dark
- * the storm has made the world - and since the storm darkens the world through
- * ./gloom.ts, the deck ends up the BRIGHTEST thing in a scene it is supposed to
- * be the cause of the darkness in. The preview harness showed exactly that: a
- * white disc over a near-black coast.
- *
- * So the plugin's frame loop hands the renderers the same daylight factor it
- * hands the sky, and the puffs are multiplied by it. One number, driven from
- * the one place that knows how dark it is.
+ * WHY THERE IS NO LONGER A `uDaylight` (owner, 2026-09-02). A ShaderMaterial
+ * reads none of the scene's lights, so this deck used to be handed a daylight
+ * factor by ./index.ts and multiplied by it — the plugin re-deriving, badly and
+ * without a notion of night, arithmetic the renderer already does. The material
+ * is now `MeshLambertMaterial`, so the sun, the sky's fill, the time of day and
+ * this storm's OWN gloom (which reaches the deck through the sky rig, exactly
+ * as it reaches the ground) all act on it for free. `CLOUD_GLOOM_RESPONSE` went
+ * with the uniform: the asymmetry it encoded — a deck on the sunny side of its
+ * own shadow — is what a light and a normal produce on their own.
  */
+export const CYCLONE_DECK_COLOR = 0xdbdeeb;
+
+/**
+ * How dark the EYEWALL end of an arm is, as a fraction of the rim's colour.
+ *
+ * 0.28 — the ratio the two hand-authored colours this replaced already carried
+ * (0.24 against 0.86). DARKEST AT THE EYEWALL, THINNING TO THE RIM: that is
+ * where the weather actually is, and it is what gives the deck a centre to
+ * read. A uniformly bright disc is an overcast, not a cyclone. It is a
+ * MULTIPLIER ON THE ALBEDO and not a finished pixel, so the sun still moves
+ * across it.
+ */
+export const CYCLONE_EYEWALL_SHADE = 0.28;
+
+/**
+ * Peak alpha of a puff at full storm strength — the deck's own opacity.
+ *
+ * 0.55, unchanged from the value this shader carried inline. NORMAL BLENDING,
+ * NEVER ADDITIVE: an overcast's whole job is to DARKEN what is behind it, and
+ * additive blending can only lighten (fire's smoke.ts wrote this rule down; the
+ * volcano plume paid for relearning it).
+ */
+export const CYCLONE_DECK_PEAK_OPACITY = 0.55;
+
+/**
+ * Where an arm's outer fade begins, as a fraction of its length.
+ *
+ * The outer sixth fades out, so the deck has no edge — the one thing that would
+ * give away that this is a finite set of quads rather than a sky.
+ */
+export const SPIRAL_RIM_FADE_START = 0.85;
+
+/**
+ * How much of the light a cyclone's deck takes off the ground under it, at full
+ * intensity — `ClientPluginCtx.publishGroundShade`.
+ *
+ * THE LOWEST OF THE FOUR SHADE PUBLISHERS, and deliberately: this plugin
+ * already darkens the whole world through ./gloom.ts, which is a global dimming
+ * of up to MAX_GLOOM_LIGHT_LOSS. The disc is not there to make it dark — the
+ * gloom has done that — it is there to put an EDGE on the darkness, so a player
+ * outside the storm can see where its shadow stops. Stacking a deep disc on top
+ * of a deep gloom would take the coast away twice.
+ */
+export const CYCLONE_SHADE_DARKNESS = 0.15;
+
+/**
+ * How much of a cyclone's shade disc holds FULL darkness before the falloff
+ * starts, as a fraction of its radius.
+ *
+ * THE EYE'S OWN FRACTION — and it is a FLAT CORE, not a hole. `GroundShadeDisc`
+ * defines `inner` as where the falloff STARTS: everything inside it is at full
+ * darkness. A bright hole under the eye would be a different primitive and a
+ * different decision (core report item 1, owner 2026-09-02: no eye-hole term is
+ * added), and it would also be wrong here — the eye of a hurricane is calm, not
+ * sunlit, because the eyewall around it is what stands between it and the sun.
+ * Taking the eye's own radius as the flat core is what makes the shadow read as
+ * one body rather than as a soft blob.
+ */
+export const CYCLONE_SHADE_CORE_FRACTION = CYCLONE_EYE_RADIUS_FRACTION;
+
 /**
  * Where the deck sits in the transparent pass — BELOW the funnel
  * (funnel.ts's FUNNEL_RENDER_ORDER), so a tornado under an overcast is painted
@@ -148,28 +210,58 @@ export const DECK_THICKNESS_FRACTION = 0.1;
  */
 export const SPIRAL_RENDER_ORDER = 1;
 
-const SPIRAL_VERTEX_SHADER = /* glsl */ `
-  uniform float uElapsed;
+// ── The GLSL, spliced into a stock Lambert program ──────────────────────────
+//
+// THE LAYOUT IS UNCHANGED. The logarithmic spiral, the arm scatter, the deck
+// height and the billboard are line for line what this file has always
+// evaluated in its own `ShaderMaterial`; what changed is WHERE they are
+// evaluated — inside three's `meshlambert` program, so the scene's lights reach
+// the deck (owner, 2026-09-02; see CYCLONE_DECK_COLOR).
+//
+// The mechanism is `<begin_vertex>`'s `transformed`: the placement writes the
+// puff's offset FROM THE EYE into it, and `<project_vertex>` then applies the
+// instance matrix (which carries the eye) and the model matrix. So every stock
+// chunk downstream — and core's `applyRevealClip` splice with them — lands on
+// the puff rather than on the quad's own corner, with nothing restated.
 
-  attribute float aArm;
-  attribute float aAlong;
-  attribute float aSeed;
-  attribute float aRadius;
-  attribute float aStrength;
+/** The header, in both stages. */
+const SHADER_COMMON_ANCHOR = '#include <common>';
+/** Declares `vec3 transformed`, which the placement writes over. */
+const BEGIN_VERTEX_ANCHOR = '#include <begin_vertex>';
+/** Declares `vec4 mvPosition` and writes `gl_Position`; the billboard follows. */
+const PROJECT_VERTEX_ANCHOR = '#include <project_vertex>';
+/** The last chunk to touch `diffuseColor` before the lighting reads it. */
+const ALPHATEST_FRAGMENT_ANCHOR = '#include <alphatest_fragment>';
+/** Declares `vec3 normal` from `vNormal`; the sphere normal replaces it. */
+const NORMAL_FRAGMENT_ANCHOR = '#include <normal_fragment_begin>';
 
-  varying float vAlong;
-  varying float vStrength;
-  varying float vSeed;
-  varying vec2 vQuad;
+/**
+ * The varyings both stages need. ONE BLOCK FOR BOTH: a varying must be declared
+ * identically in the two stages or the program fails to link.
+ */
+const SPIRAL_SHARED_DECLARATIONS = /* glsl */ `
+varying float vAlong;
+varying float vStrength;
+varying vec2 vQuad;
+#define PUFF_NORMAL_FLATNESS ${glslFloat(PUFF_NORMAL_FLATNESS)}`;
 
-  void main() {
-    vAlong = aAlong;
+/**
+ * The vertex stage's own, and they CANNOT be shared: `attribute` is a
+ * vertex-only qualifier and three rewrites it to `in` in the vertex prefix
+ * only, so a fragment shader carrying these fails to compile — quietly, as far
+ * as the picture goes, since three logs it and the mesh draws nothing.
+ */
+const SPIRAL_VERTEX_DECLARATIONS = /* glsl */ `${SPIRAL_SHARED_DECLARATIONS}
+uniform float uElapsed;
+attribute float aArm;
+attribute float aAlong;
+attribute float aSeed;
+attribute float aRadius;
+attribute float aStrength;`;
+
+const SPIRAL_PLACEMENT = /* glsl */ `vAlong = aAlong;
     vStrength = aStrength;
-    vSeed = aSeed;
     vQuad = position.xy;
-
-    // The instance matrix carries ONLY the eye's world position.
-    ${PUFF_INSTANCE_BASE_GLSL}
 
     // THE LOGARITHMIC SPIRAL. aAlong runs 0 at the eyewall to 1 at the rim;
     // the radius interpolates from the eye's edge to the storm's, and the angle
@@ -193,64 +285,53 @@ const SPIRAL_VERTEX_SHADER = /* glsl */ `
     float height = ${CYCLONE_DECK_HEIGHT_WORLD_UNITS.toFixed(2)} *
       (1.0 + ${DECK_THICKNESS_FRACTION.toFixed(2)} * (fract(aSeed * 3.1) * 2.0 - 1.0));
 
-    vec3 world = base + vec3(
+    // THE OFFSET FROM THE EYE, not the world position: the instance matrix
+    // carries the eye and the project_vertex chunk applies it two lines later.
+    transformed = vec3(
       cos(angle) * radius + cos(scatterAngle) * scatter,
       height,
       sin(angle) * radius + sin(scatterAngle) * scatter);
 
-    // BILLBOARD IN VIEW SPACE — faces the camera exactly, for free, with no
-    // rotation written from the CPU and no chance of lagging it by a frame.
     // Puffs vary in size with their seed so the deck is not a grid of clones.
-    float size = aRadius * ${PUFF_SIZE_RADIUS_FRACTION.toFixed(3)} *
-      (0.7 + 0.6 * fract(aSeed * 5.7));
-    ${PUFF_BILLBOARD_GLSL}
-  }
-`;
+    float puffSize = aRadius * ${PUFF_SIZE_RADIUS_FRACTION.toFixed(3)} *
+      (0.7 + 0.6 * fract(aSeed * 5.7));`;
 
-const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
-  uniform float uDaylight;
+/**
+ * BILLBOARD IN VIEW SPACE — faces the camera exactly, for free, with no
+ * rotation written from the CPU and no chance of lagging it by a frame. The
+ * same mechanism kit/puffDeck.ts's PUFF_BILLBOARD_GLSL states; written out here
+ * because this one offsets an `mvPosition` three has already computed rather
+ * than building its own.
+ */
+const SPIRAL_BILLBOARD = /* glsl */ `mvPosition.xy += position.xy * puffSize;
+    gl_Position = projectionMatrix * mvPosition;`;
 
-  varying float vAlong;
-  varying float vStrength;
-  varying float vSeed;
-  varying vec2 vQuad;
+const SPIRAL_MASK = /* glsl */ `${puffMaskGlsl('0.0')}
 
-  void main() {
-    // A soft round puff. The quad is authored two units across, so vQuad is the
-    // offset from its centre in half-widths.
-    ${puffMaskGlsl('0.0')}
-
-    // DARKEST AT THE EYEWALL, THINNING TO THE RIM. That is where the weather
-    // actually is, and it is also what gives the deck a centre to read: a
-    // uniformly grey disc is an overcast, not a cyclone.
-    // A STORM TOP IS BRIGHT. Seen from above it is the brightest thing in the
-    // picture — white cloud over a sea the same storm has put in shadow — and
-    // that contrast is the only thing that makes the arms and the eye readable
-    // at all. The eyewall end stays dark so the spiral has structure and the
-    // eye reads as a hole.
-    //
-    // These were once authored dark, on the reasoning that an unlit material
-    // must not out-shine a gloomed scene. That reasoning produced a black
-    // square with a smear in it; the fix is not a darker cloud, it is
-    // uDaylight — which now dims the deck only a quarter as much as the ground
-    // (gloom.ts's CLOUD_GLOOM_RESPONSE), because the deck is on the sunny side
-    // of its own shadow.
-    vec3 wall = vec3(0.24, 0.25, 0.30);
-    vec3 rim = vec3(0.86, 0.87, 0.92);
-    vec3 color = mix(wall, rim, vAlong) * uDaylight;
+    // DARKEST AT THE EYEWALL, THINNING TO THE RIM — see CYCLONE_EYEWALL_SHADE.
+    // A multiplier on the ALBEDO: the deck is lit, so the sun still moves
+    // across it and the storm's own gloom still reaches it.
+    diffuseColor.rgb *= mix(${glslFloat(CYCLONE_EYEWALL_SHADE)}, 1.0, vAlong);
 
     // The outer tenth fades out, so the deck has no edge — the one thing that
     // would give away that this is a finite set of quads rather than a sky.
-    float edge = 1.0 - smoothstep(0.85, 1.0, vAlong);
+    float edge = 1.0 - smoothstep(${glslFloat(SPIRAL_RIM_FADE_START)}, 1.0, vAlong);
 
-    // NORMAL BLENDING, NEVER ADDITIVE: an overcast's whole job is to DARKEN
-    // what is behind it, and additive blending can only lighten (fire's
-    // smoke.ts wrote this rule down; the volcano plume paid for relearning it).
-    float alpha = puff * edge * vStrength * 0.55;
+    float alpha = puff * edge * vStrength;
     ${PUFF_ALPHA_DISCARD_GLSL}
-    gl_FragColor = vec4(color, alpha);
-  }
-`;
+    diffuseColor.a *= alpha;`;
+
+/**
+ * THE PUFF IS LIT AS A SPHERE — kit/cumulusDeck.ts's normal, and the same
+ * PUFF_NORMAL_FLATNESS, because these are the same kind of object and two
+ * flatness numbers would eventually disagree about what a cloud looks like.
+ * Per FRAGMENT: a quad's four corners all sit where the sphere's z is zero, so
+ * a per-vertex normal would interpolate to nothing through the middle.
+ */
+const SPIRAL_SPHERE_NORMAL = /* glsl */ `vec3 puffSphere =
+      vec3(vQuad, sqrt(max(0.0, 1.0 - dot(vQuad, vQuad))));
+    vec3 puffUp = (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
+    normal = normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS));`;
 
 /** One cyclone, as this renderer remembers it. */
 interface Spiral {
@@ -306,10 +387,11 @@ export interface SpiralRenderer {
   readonly root: Group;
   apply(live: readonly SpiralSource[]): void;
   /**
-   * Advances the deck. `daylight` is how much of the scene's light is reaching
-   * it, in [0, 1] - see this file's uDaylight note.
+   * Advances the deck. NO DAYLIGHT ARGUMENT: the material is lit by the scene,
+   * so the sky's light — including this storm's own gloom — reaches it without
+   * this plugin restating it (see CYCLONE_DECK_COLOR).
    */
-  update(dt: number, elapsed: number, daylight: number): void;
+  update(dt: number, elapsed: number): void;
   dispose(): void;
 }
 
@@ -321,21 +403,82 @@ function unitFromId(id: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
 
-export function createSpiral(): SpiralRenderer {
+/**
+ * `applyRevealClip` is `ClientPluginCtx.applyRevealClip`. The deck is now a
+ * STOCK material, so the clip is core's splice rather than pasted snippets —
+ * and it lands correctly because the placement above puts the puff's position
+ * in `transformed`, which is what core's world-position patch reads.
+ */
+export function createSpiral(
+  applyRevealClip: (material: Material, label: string) => void,
+): SpiralRenderer {
   const root = new Group();
   root.name = 'cyclone:spiral';
 
   const capacity = MAX_SPIRALS * PUFFS_PER_SPIRAL;
   const geometry = new PlaneGeometry(2, 2, 1, 1);
 
-  const material = new ShaderMaterial({
-    uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
-    vertexShader: SPIRAL_VERTEX_SHADER,
-    fragmentShader: SPIRAL_FRAGMENT_SHADER,
+  const material = new MeshLambertMaterial({
+    color: CYCLONE_DECK_COLOR,
+    opacity: CYCLONE_DECK_PEAK_OPACITY,
     transparent: true,
     depthWrite: false,
     side: DoubleSide,
   });
+
+  /**
+   * The deck's clock, held here because a stock material has no `uniforms` of
+   * its own to hang it on: the same `{ value }` box is put into every compiled
+   * program, so writing it once per frame reaches the shader.
+   */
+  const elapsedUniform = { value: 0 };
+
+  const label = 'cyclone spiral';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uElapsed = elapsedUniform;
+    shader.vertexShader = spliceShader(
+      spliceShader(
+        spliceShader(
+          shader.vertexShader,
+          SHADER_COMMON_ANCHOR,
+          `${SHADER_COMMON_ANCHOR}\n${SPIRAL_VERTEX_DECLARATIONS}`,
+          label,
+        ),
+        BEGIN_VERTEX_ANCHOR,
+        `${BEGIN_VERTEX_ANCHOR}\n    ${SPIRAL_PLACEMENT}`,
+        label,
+      ),
+      PROJECT_VERTEX_ANCHOR,
+      `${PROJECT_VERTEX_ANCHOR}\n    ${SPIRAL_BILLBOARD}`,
+      label,
+    );
+    shader.fragmentShader = spliceShader(
+      spliceShader(
+        spliceShader(
+          shader.fragmentShader,
+          SHADER_COMMON_ANCHOR,
+          `${SHADER_COMMON_ANCHOR}\n${SPIRAL_SHARED_DECLARATIONS}`,
+          label,
+        ),
+        ALPHATEST_FRAGMENT_ANCHOR,
+        `${ALPHATEST_FRAGMENT_ANCHOR}\n    ${SPIRAL_MASK}`,
+        label,
+      ),
+      NORMAL_FRAGMENT_ANCHOR,
+      `${NORMAL_FRAGMENT_ANCHOR}\n    ${SPIRAL_SPHERE_NORMAL}`,
+      label,
+    );
+  };
+  // three keys a compiled program by material type, parameters and this method
+  // — never by `onBeforeCompile` — so without a key of its own this deck could
+  // share a program with another Lambert material of the same parameters.
+  const stockCacheKey = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${stockCacheKey()}|cycloneSpiral`;
+
+  // AFTER our own patch is assigned: `applyRevealClip` chains onto whatever
+  // `onBeforeCompile` the material already has, so assigning ours second would
+  // drop it.
+  applyRevealClip(material, label);
 
   const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = 'cyclone:spiral:puffs';
@@ -494,9 +637,8 @@ export function createSpiral(): SpiralRenderer {
       }
     },
 
-    update(dt, elapsed, daylight): void {
-      material.uniforms.uElapsed!.value = elapsed;
-      material.uniforms.uDaylight!.value = daylight;
+    update(dt, elapsed): void {
+      elapsedUniform.value = elapsed;
 
       if (spirals.size === 0) {
         mesh.count = 0;
