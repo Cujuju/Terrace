@@ -5,34 +5,57 @@
 // fight arithmetic directly against a hand-built world, exactly the way
 // plugins/monsters/server/habitat.ts and lurk.ts are testable.
 //
-// THE STEERING CONTRACT now comes from `shared/` (steering.ts's
-// `steerAvoiding`), not from a restatement of monsters' copy of it. The rule a
-// boat needs is unchanged — only ever commit to a step whose DESTINATION is
-// water, so shorelines are walls rather than places it can be pushed through,
-// and a boat that finds no watery heading holds position rather than beaching
-// — but two things it did NOT have come with the shared version:
+// THE STEERING CONTRACT now comes from `shared/` (pathing.ts's `findRoute`
+// and steering.ts's `followRoute`), not from this file's own sweep. A boat is
+// a hull with a turning circle, not a dimensionless point: it plans a route
+// through water deep enough to float it (HULL_PROFILE over an eroded sampler),
+// follows that route at BOAT_TURN_RADIANS_PER_SECOND while aiming far enough
+// ahead to trace a smooth arc (BOAT_AIM_AHEAD_CELLS), and holds a station
+// SLOT — its own assigned point on the station circle — rather than the
+// circle itself. The rule a boat needs is unchanged — only ever commit to a
+// step whose DESTINATION a hull may occupy, so shorelines are walls rather
+// than places it can be pushed through, and a boat that finds no watery
+// heading holds position rather than beaching — but three things it did NOT
+// have come with the shared version:
 //
+//   - A HULL, not a point: every position write goes through `isHullPose`
+//     (centre, bow, stern, both beams on navigable water), so a hull can no
+//     longer centre on a cell whose seabed is above its own keel.
 //   - OTHER BOATS ARE OBSTACLES (owner, 2026-08-20: "they just kind of spin on
-//     top of each other"). Every boat in a fleet is sent to the same kraken and
-//     told to hold station at the same BOAT_ENGAGEMENT_RANGE_CELLS, so with no
-//     mutual awareness they all converged on one point of one circle and
-//     rotated there as the kraken drifted. That is not a fleet, it is a stack.
-//   - "Anywhere in the water" is now a PROFILE (OPEN_WATER_PROFILE), so what a
+//     top of each other"). Every boat in a fleet is sent to the same kraken
+//     and each is given its OWN slot on the station circle, so separation
+//     bends a boat around its neighbours without ever bending its range to
+//     the fight — which is what broke the rout arithmetic when the two were
+//     briefly both live (5.03 cells against a 5.00 station).
+//   - "Anywhere in the water" is now a PROFILE (HULL_PROFILE), so what a
 //     hull may cross is stated in the same vocabulary as what a yeti or a
 //     pilgrim may cross, rather than as this file's own isWater() call.
+//
+// A boat never turns in place: the only heading write on a hull carries
+// `followRoute`'s own commit, which turns only by moving. A boat at its slot
+// holds position facing whatever heading it arrived on.
 //
 // The plugin-boundary rule is untouched: `shared/` is not another plugin.
 
 import {
+  MAX_HEIGHT,
+  MAX_RELIEF_WORLD_UNITS,
   OPEN_WATER_PROFILE,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  createRouteBudget,
+  findRoute,
+  followRoute,
   isWalkableCell as sharedIsWalkableCell,
+  navigableWaterProfile,
   nearestWithinReach,
   normalizeAngle,
-  steerWithShorteningProbe,
-  turnToward,
+  withClearance,
+  withoutSelf,
   type Occupant,
+  type RouteBudget,
+  type RouteCell,
+  type TerrainSampler,
 } from '@terrace/shared';
 import {
   severityAt,
@@ -161,8 +184,301 @@ const BOAT_TURN_RADIUS_HULL_LENGTHS = 2;
  * typed out, so cutting BOAT_SPEED_CELLS_PER_SECOND widens the arc the hull
  * traces instead of silently tightening it.
  */
-const BOAT_TURN_RADIANS_PER_SECOND =
+export const BOAT_TURN_RADIANS_PER_SECOND =
   BOAT_SPEED_CELLS_PER_SECOND / (BOAT_TURN_RADIUS_HULL_LENGTHS * BOAT_HULL_LENGTH_CELLS);
+
+// ── the hull: draft, clearance, and the pose predicate ───────────────────────
+
+/**
+ * The hull's modelled depth, in world units — HULL_DEPTH in
+ * plugins/boats/client/models.ts.
+ *
+ * Restated for the same reason BOAT_HULL_LENGTH_CELLS restates HULL_LENGTH
+ * above: a server sim does not reach into a client model file, and the
+ * failure mode of drift is a fleet floating a unit too high or too low,
+ * never a crash.
+ */
+const BOAT_HULL_DEPTH = 0.2;
+
+/**
+ * How much of that depth sits below the waterline, as a fraction — the 0.55
+ * in BOAT_WATERLINE_LIFT (models.ts:113). Same restatement justification as
+ * BOAT_HULL_DEPTH.
+ */
+const BOAT_WATERLINE_BITE = 0.55;
+
+/**
+ * How far below the waterline the keel reaches, in HEIGHT UNITS — the draft
+ * HULL_PROFILE refuses to float over.
+ *
+ * 0.2 × 0.55 = 0.11 world units of keel, and a height unit is
+ * MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT = 16/1024 world units, so the keel
+ * needs 0.11 × 1024 / 16 = 7.04 height units of water under it — floored to
+ * the integer domain the determinism contract asks for. Derived, never typed.
+ */
+export const BOAT_DRAFT_HEIGHT_UNITS = Math.floor(
+  ((BOAT_HULL_DEPTH * BOAT_WATERLINE_BITE) * MAX_HEIGHT) / MAX_RELIEF_WORLD_UNITS,
+);
+
+/**
+ * Water deep enough to float this hull: OPEN_WATER_PROFILE with the ceiling
+ * the draft buys. A hull may centre only where the seabed sits at least its
+ * keel below the surface, so shoals a point-boat crossed freely now route
+ * around — planner, follower and pose test all read this one profile.
+ */
+export const HULL_PROFILE = navigableWaterProfile(BOAT_DRAFT_HEIGHT_UNITS);
+
+/**
+ * The hull's modelled beam, in world units — HULL_BEAM in
+ * plugins/boats/client/models.ts:52. Restated on the usual justification: a
+ * server sim does not reach into a client model file.
+ */
+const BOAT_HULL_BEAM = 0.34;
+
+/**
+ * Lateral half-extent of the rowed hull, in cells — ceil(0.17 × 4) = 1 at
+ * today's numbers, derived not typed. The eroded sampler below is built with
+ * this radius, so the beam is already dilated into the water the planner sees
+ * and the pose predicate only has to account for the hull's LENGTH explicitly.
+ */
+export const BOAT_BEAM_CLEARANCE_CELLS = Math.ceil((BOAT_HULL_BEAM / 2) * WORLD_UNIT_CELLS);
+
+/**
+ * Is this a pose a hull may occupy — centre, bow, stern and both midships
+ * beam points all on navigable water inside unlocked territory?
+ *
+ * THE PATTERN IS MONSTERS' `isLairPose` (plugins/monsters/server/habitat.ts):
+ * a centre test plus the body's extent, because a centre-only test lets the
+ * ends hang over a shore. The boats version is HEADING-RELATIVE where the
+ * monsters one is radial, and the difference is the bodies: a kraken is a
+ * crown of arms animated by yaw alone, so its swept footprint is a disc, but
+ * a hull is 3.6 cells long and 1.36 across — the same pose is legal bow-on to
+ * a channel and illegal across it, and a yaw-independent disc would have to
+ * refuse both.
+ *
+ * `world` answers the fog-of-war half (unlocked territory) and `eroded` the
+ * terrain half: the eroded sampler already dilates land by the beam, so the
+ * five probes read the water the planner planned on and the two cannot
+ * disagree about a wall. Half-length is BOAT_HULL_LENGTH_CELLS / 2, the
+ * constant already in this file.
+ */
+export function isHullPose(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  x: number,
+  y: number,
+  heading: number,
+): boolean {
+  const halfLength = BOAT_HULL_LENGTH_CELLS / 2;
+  const halfBeam = (BOAT_HULL_BEAM / 2) * WORLD_UNIT_CELLS;
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  const probes: ReadonlyArray<readonly [number, number]> = [
+    [x, y],
+    [x + cos * halfLength, y + sin * halfLength],
+    [x - cos * halfLength, y - sin * halfLength],
+    [x - sin * halfBeam, y + cos * halfBeam],
+    [x + sin * halfBeam, y - cos * halfBeam],
+  ];
+  for (const [probeX, probeY] of probes) {
+    if (!world.isCellUnlocked(Math.floor(probeX), Math.floor(probeY))) return false;
+    if (!sharedIsWalkableCell(eroded, HULL_PROFILE, probeX, probeY)) return false;
+  }
+  return true;
+}
+
+// ── stations, slots, and voyages ─────────────────────────────────────────────
+
+/**
+ * How many ticks of travel inside the engagement circle a station keeps.
+ *
+ * The station radius is BOAT_ENGAGEMENT_RANGE_CELLS minus this many ticks of
+ * the boat's own travel, derived from `dt` at call time because `dt` is the
+ * only tick rate this plugin ever sees. One tick: the measured failure it
+ * closes was boats settling at 5.03 cells against a 5.00 station and dropping
+ * out of engagement, so a margin of a whole step means arrival jitter and
+ * separation nudges smaller than one step can never push an engaged boat out
+ * of range.
+ */
+const STATION_MARGIN_TICKS = 1;
+
+/**
+ * The radius of the station circle this tick, in cells — engagement range
+ * less STATION_MARGIN_TICKS of travel. A function of `dt`, not a constant,
+ * for the reason STATION_MARGIN_TICKS states.
+ */
+export function boatStationRadiusCells(dt: number): number {
+  return BOAT_ENGAGEMENT_RANGE_CELLS - BOAT_SPEED_CELLS_PER_SECOND * dt * STATION_MARGIN_TICKS;
+}
+
+/**
+ * Angular spacing of station slots on a circle of this radius, in radians —
+ * SLOT_SPACING_RADIANS. Arc length THREE personal spaces.
+ *
+ * Three, not two, although two is exactly clear — measured: exactly clear
+ * keeps every arrival step vetoed. A boat stepping 0.36 cells toward a
+ * neighbour exactly 4.0 away lands at 3.64 < 4.0, so the sweep vetoes the
+ * step and deflects ±135°; the turn limit takes 47 ticks to honour that,
+ * by which time the goal pulls it back — a permanent limit cycle in which
+ * no boat ever seats (every voyage prog=false forever, routes replan every
+ * 8 s, the fleet orbits its own slots). Three personal spaces leaves a full
+ * step of working margin, so a seated neighbour is scenery, not an obstacle.
+ */
+function slotSpacingRadians(stationRadiusCells: number): number {
+  return (3 * BOAT_PERSONAL_SPACE_CELLS) / stationRadiusCells;
+}
+
+/**
+ * How many slots fit on the station circle — SLOT_COUNT, floor(2π / spacing).
+ * At today's numbers (station ≈ 19.64 cells, spacing ≈ 0.305 rad) that is 20:
+ * still several times the largest fleet, so a boat that cannot be seated is a
+ * boat whose kraken is parked against a coast, not a fleet that outgrew its
+ * circle.
+ */
+function slotCountFor(stationRadiusCells: number): number {
+  return Math.max(1, Math.floor((2 * Math.PI) / slotSpacingRadians(stationRadiusCells)));
+}
+
+/**
+ * Seconds stalled before a hull replans from open water beside itself
+ * instead of from under its own keel.
+ *
+ * A BALANCE-POINT escape, not a schedule. A hull can pin between a forward
+ * veto and an astern restore with net zero — measured: beam straddling the
+ * x=51 eroded shore off the C-spine, east-drift commits and west asterns
+ * cancelling exactly, heading pinned by the asterns so the turn that would
+ * escape never starts. Replanning from the same position replays the same
+ * route into the same balance. Planning from the most-open water 2.5 cells
+ * away instead forces a turn-and-move join (the offset is open, so the steps
+ * commit and the heading turns with them) onto a corridor that starts clear
+ * of the boundary. Six seconds is past honest slow legs (a quarter-stride
+ * cell takes ~1.1 s) and before the stuck clock, so it fires on traps, not
+ * traffic.
+ */
+const OFFSET_REPLAN_SECONDS = 6;
+
+/**
+ * The most-open water around a point, 2.5 cells out in fixed E/W/N/S order
+ * (deterministic), or null when walled in on all four. Eroded-walkable is
+ * enough for a planning fiction — the hull sails there first and the
+ * corridor it joins is certified cell by cell as usual.
+ */
+function reliefOffset(
+  eroded: TerrainSampler,
+  x: number,
+  y: number,
+): { x: number; y: number } | null {
+  const OFFSET_CELLS = 2.5;
+  const dirs: ReadonlyArray<readonly [number, number]> = [
+    [OFFSET_CELLS, 0],
+    [-OFFSET_CELLS, 0],
+    [0, OFFSET_CELLS],
+    [0, -OFFSET_CELLS],
+  ];
+  for (const [dx, dy] of dirs) {
+    if (sharedIsWalkableCell(eroded, HULL_PROFILE, x + dx, y + dy)) {
+      return { x: x + dx, y: y + dy };
+    }
+  }
+  return null;
+}
+
+/**
+ * How far the goal may drift before the route planned to it is stale, in
+ * cells — two personal spaces (one whole hull). A kraken wandering inside
+ * that does not change which way round a headland the fleet goes, so it
+ * should not spend the fleet's routing budget finding out.
+ */
+const REPLAN_GOAL_DRIFT_CELLS = 2 * BOAT_PERSONAL_SPACE_CELLS;
+
+/**
+ * Is the hull standing on its own route (index..index+window)?
+ *
+ * The window mirrors shared's private ROUTE_RESYNC_WINDOW_CELLS
+ * (= cellsAcross(2), steering.ts): if it ever changes there, this test only
+ * flips cruise/rejoin at the margin.
+ */
+function onRouteCorridor(route: RouteCell[], index: number, x: number, y: number): boolean {
+  const cellX = Math.floor(x);
+  const cellY = Math.floor(y);
+  const windowEnd = Math.min(
+    index + Math.max(cellsAcross(2), BOAT_AIM_AHEAD_CELLS),
+    route.length - 1,
+  );
+  for (let i = index; i <= windowEnd; i++) {
+    if (route[i].x === cellX && route[i].y === cellY) return true;
+  }
+  return false;
+}
+
+/**
+ * Seconds without entering a new route cell before a voyage is declared stuck
+ * and replanned.
+ *
+ * Sized against the coming-about time: a 180° turn at
+ * BOAT_TURN_RADIANS_PER_SECOND takes π / 0.5 ≈ 6.3 s at cruise, and a boat
+ * most of the way through that arc has made no ROUTE progress while doing
+ * exactly what it should. 8 s clears one full coming-about with margin, so
+ * the stuck clock fires on a hull that is genuinely wedged, never on one
+ * that is merely turning.
+ */
+const BOAT_STUCK_SECONDS = 8;
+
+/**
+ * How many route cells past the current one a follower may aim at directly —
+ * BOAT_AIM_AHEAD_CELLS.
+ *
+ * Derived from the turning circle: the chord a hull needs to trace a smooth
+ * arc through a 45° route bend is 2·R·sin(22.5°) ≈ 5.5 cells at R = 7.2, and
+ * two hull lengths (7.2 cells, ceiled to 8) covers that chord with margin —
+ * far enough to cut the corner, short enough to stay inside the corridor the
+ * eroded planner certified. Phase 1 measured that a turn limit ALONE orbits a
+ * 1-cell waypoint, so this is the option that lets the limit work.
+ */
+export const BOAT_AIM_AHEAD_CELLS = Math.ceil(2 * BOAT_HULL_LENGTH_CELLS);
+
+/**
+ * The kraken's body as an occupant, in cells — half of its 7-world-unit
+ * footprint (KRAKEN_FOOTPRINT_CELLS in plugins/monsters/server/kinds.ts:451,
+ * cellsAcross(7)).
+ *
+ * Restated on this file's usual ground: a server sim does not reach into
+ * another plugin's table, and the failure mode of drift is a fleet that
+ * stands off a little closer or further than the animal, never a crash.
+ */
+const KRAKEN_BODY_RADIUS_CELLS = cellsAcross(7) / 2;
+
+/**
+ * A boat's voyage: the route it is sailing, where along it stands, the goal
+ * that route was planned to, and how long since it entered a new route cell.
+ *
+ * A SIDE MAP KEYED BY BOAT ID, NOT FIELDS ON `Boat`, for the same reason the
+ * `shipyards` map keeps derived state off `Village`: persistence.ts validates
+ * the persisted shape exactly, and a route is rederivable — a stale copy
+ * restored from disk would send a hull down a channel that is no longer there.
+ */
+interface Voyage {
+  route: RouteCell[] | null;
+  routeIndex: number;
+  goalX: number;
+  goalY: number;
+  noProgressSeconds: number;
+  /**
+   * Last tick's slot index, or null. The ONLY memory the assignment keeps:
+   * preferring it is what stops two boats sharing a bearing boundary from
+   * swapping slots every tick. Module state, never persisted — a restored
+   * fleet replans from scratch, which is correct because the terrain may have
+   * changed under the save.
+   */
+  slot: number | null;
+}
+
+const voyages = new Map<number, Voyage>();
+
+/** Drops a voyage when its boat is gone — sunk, burned, or scuttled. */
+function dropVoyage(id: number): void {
+  voyages.delete(id);
+}
 
 // ── state ────────────────────────────────────────────────────────────────────
 
@@ -316,6 +632,7 @@ const villageKey = (x: number, y: number): string => `${x},${y}`;
 export function resetFleet(): void {
   villages.clear();
   shipyards.clear();
+  voyages.clear();
   boats = [];
   nextBoatId = 1;
   krakenWounds = 0;
@@ -354,7 +671,11 @@ export function rememberVillage(x: number, y: number): void {
 export function forgetVillage(x: number, y: number): void {
   if (!villages.delete(villageKey(x, y))) return;
   shipyards.delete(villageKey(x, y));
-  boats = boats.filter((boat) => boat.homeX !== x || boat.homeY !== y);
+  const scuttled = boats.filter((boat) => boat.homeX !== x || boat.homeY !== y);
+  for (const boat of boats) {
+    if (boat.homeX === x && boat.homeY === y) dropVoyage(boat.id);
+  }
+  boats = scuttled;
 }
 
 // ── water ────────────────────────────────────────────────────────────────────
@@ -427,63 +748,6 @@ export function launchCell(world: BoatWorld, village: Village): KrakenTarget | n
   return null;
 }
 
-/**
- * Picks a heading whose look-ahead cell is open water and inside unlocked
- * territory — preferring `desired` and then the smallest deviation from it.
- * Null when boxed in on every candidate, and the caller then holds position.
- *
- * A THIN ADAPTER over shared's `steerWithShorteningProbe` (shared/src/
- * steering.ts), which owns the sweep AND the ladder of shortening probes it is
- * run down. The one thing this plugin still says for itself is the
- * unlocked-territory rule, passed as the `permits` hook: a boat only ever
- * exists in territory clients can already see, which is a fog-of-war fact
- * rather than a terrain one and has no business in `shared/`.
- *
- * THE LADDER IS THE FIX FOR "CONSTANTLY GETTING STUCK" (owner, 2026-08-24).
- * A boat probes a full second of travel ahead, and a bay, a strait or a river
- * mouth is routinely narrower than that: every one of the eight candidates
- * failed at the full probe, the pre-ladder code returned null, and the caller
- * held position — forever, because nothing about the situation changed on the
- * next tick either. The shortest rung probes exactly one tick's travel, which
- * is the same distance the destination re-check in `advanceFleet` judges, so a
- * boat now holds still only when there is genuinely no water one step away in
- * any direction. Read the rungs and their reasoning at the shared function.
- *
- * WHAT IT RETURNS IS A DIRECTION TO WANT, not the heading the boat adopts:
- * `advanceFleet` turns toward it at BOAT_TURN_RADIANS_PER_SECOND.
- *
- * NO SEPARATION HERE, DELIBERATELY, AND IT IS A DIVISION OF LABOUR RATHER THAN
- * AN OMISSION (2026-08-21). This fleet keeps clear of itself in exactly one
- * place — `makeRoom` — and that function's whole design is that it moves a
- * boat TANGENTIALLY, rotating about the goal so the range to it is preserved
- * exactly (see its doc comment: a radial nudge pushes a boat out of
- * BOAT_ENGAGEMENT_RANGE_CELLS, and protocol.ts's rout arithmetic counts whole
- * seconds of engagement). Sailing is the opposite motion: it is the RADIAL
- * one, the closing of range, and a crowd-avoidance term inside it can only
- * express itself by bending that radius — which is the very thing makeRoom
- * exists to avoid. Measured when the two were briefly both live: boats settled
- * at 5.03 cells against a 5.00 station and stopped counting as engaged, and
- * the fleet no longer routed the kraken at the predicted time.
- *
- * So: closing on a station is this function's job and it ignores other boats;
- * holding one is makeRoom's job and it ignores everything else. The named cost
- * is that two boats converging on the same kraken from different villages may
- * pass through one another on the way — a second or two of overlap on open sea,
- * resolved by makeRoom the moment either arrives.
- */
-export function steerToWater(
-  world: BoatWorld,
-  boat: Boat,
-  desired: number,
-  lookahead: number,
-  stepCells: number,
-): number | null {
-  return steerWithShorteningProbe(world, OPEN_WATER_PROFILE, boat, desired, lookahead, {
-    stepCells,
-    permits: (x, y) => world.isCellUnlocked(Math.floor(x), Math.floor(y)),
-  });
-}
-
 function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
@@ -495,8 +759,8 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
  * null when every one of them is taken.
  *
  * THE OTHER HALF OF "SPAWNING ON TOP OF EACH OTHER" (owner, 2026-08-24).
- * `makeRoom` has kept a fighting fleet from stacking since 2026-08-21, but
- * nothing looked at the fleet on the way IN: every boat of a village was placed
+ * Station slots have kept a fighting fleet from stacking since 2026-09-03
+ * (before that, `makeRoom`, 2026-08-21), but nothing looked at the fleet on the way IN: every boat of a village was placed
  * on the single cell `launchCell` names, so BOATS_PER_VILLAGE hulls were drawn
  * through one another for as long as it took them to sort themselves out — and
  * a village at strength in peacetime never even sorts, because a boat at home
@@ -517,13 +781,25 @@ export function launchBerth(
   village: Village,
   occupied: readonly Occupant[],
 ): KrakenTarget | null {
+  // The eroded sampler is built per call, not per tick: launches are rare
+  // (one per BOAT_REBUILD_SECONDS per short village), so sharing
+  // advanceFleet's tick sampler would mean threading it through
+  // advanceShipyards' exported signature for no measurable gain.
+  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
   for (const [dx, dy] of COASTAL_DISC) {
     const x = village.x + dx;
     const y = village.y + dy;
     if (!isSailable(world, x, y)) continue;
+    // The pose the hull will actually be launched with: facing OUT of the
+    // harbour, away from the village that built it. A berth whose centre is
+    // water but whose bow or stern would already be aground is no berth — the
+    // sail step below would refuse to move it and the stuck clock would
+    // replan it forever.
+    const heading = Math.atan2(y - village.y, x - village.x);
+    if (!isHullPose(world, eroded, x, y, heading)) continue;
     // The cell CENTRE is what the boat is placed on, and it is what the
-    // clearance is measured from — the same point `makeRoom` will keep clear
-    // from the next tick onward.
+    // clearance is measured from — the same point the resolution pass will
+    // keep clear from the next tick onward.
     if (!isClearOfFleet(x, y, occupied)) continue;
     return { x, y };
   }
@@ -673,130 +949,144 @@ export interface FleetOutcome {
 const NOTHING_HAPPENED: FleetOutcome = { routed: false, sunk: [] };
 
 /**
- * The range below which a station has no direction — a boat sitting on its
- * goal rather than on a circle around one, which is what "holding at home"
- * is. Under it, `makeRoom` cannot shuffle AROUND anything and pushes straight
- * away from the crowd instead.
- *
- * One personal space (0.5 cells): inside that, the goal is closer than the
- * nearest boat may legally be, so there is no arc left to slide along.
+ * A boat's goal for this tick: the point it sails for, and how far short of
+ * that point counts as arrived.
  */
-const STATION_MIN_RANGE_CELLS = BOAT_PERSONAL_SPACE_CELLS;
-
-/**
- * Eases a station-keeping boat off a berth another boat already has.
- *
- * THIS IS WHERE THE FLEET USED TO STACK. Every boat is given the same goal and
- * the same hold radius, so "hold station" put all of them on one circle with
- * nothing to stop them occupying the same point of it — and then each turned
- * in place to face the drifting kraken, which is the owner's "they just kind
- * of spin on top of each other". Holding STATION is not holding POSITION.
- *
- * IT SHUFFLES ALONG THE STATION CIRCLE, NOT AWAY FROM THE GOAL, and that is
- * the whole design of it. The obvious move — step directly away from whoever
- * is crowding you — pushes a boat radially outward, straight out of
- * BOAT_ENGAGEMENT_RANGE_CELLS, so a fleet that made room would stop fighting;
- * the fight arithmetic in protocol.ts counts whole seconds of engagement, and
- * boats drifting in and out of range would make those numbers approximate
- * rather than exact. Rotating about the goal instead preserves the range
- * EXACTLY (it is a rotation, not a tangent step, so there is no outward creep
- * to accumulate) and turns a stack into an arc of boats around the beast —
- * which is also what a fleet engaging something would actually do.
- *
- * `heading` is deliberately left alone: a fighting boat faces what it is
- * fighting, which is what the caller set one line earlier. A boat sidling
- * along its station while still facing the kraken is right.
- *
- * Does NOTHING when the berth is already clear, so a fleet that has settled
- * into a line stays still rather than jittering — station-keeping is the state
- * a fighting fleet spends most of its time in.
- */
-function makeRoom(
-  world: BoatWorld,
-  boat: Boat,
-  goalX: number,
-  goalY: number,
-  berths: readonly Occupant[],
-  index: number,
-  dt: number,
-): void {
-  const crowded = nearestCrowder(boat, berths, index);
-  if (crowded === null) return;
-  const crowder = crowded.berth;
-  // WHICH OF THE PAIR GIVES WAY, when the two are stacked so exactly that
-  // "away" has no direction. Decided by comparing the two INDICES, not by this
-  // boat's own index parity: parity gives every even-indexed boat the same
-  // answer, so a third boat on the same spot picks the same side as the first
-  // and the two of them stay welded together for good. Comparing the pair is a
-  // strict total order, so the two always pick opposite sides and separate on
-  // the next tick — and it is deterministic, which a random jitter would not be.
-  const yieldsRight = index < crowded.index;
-
-  const step = BOAT_SPEED_CELLS_PER_SECOND * dt;
-  const range = distance(boat.x, boat.y, goalX, goalY);
-
-  if (range < STATION_MIN_RANGE_CELLS) {
-    // No circle to slide along (see STATION_MIN_RANGE_CELLS): shove apart.
-    // Two boats at EXACTLY one point have no "away" — the one case atan2
-    // cannot answer — so they take opposite fixed bearings off their own index
-    // parity, which is deterministic and breaks the tie in a single tick.
-    const awayX = boat.x - crowder.x;
-    const awayY = boat.y - crowder.y;
-    const bearing =
-      awayX === 0 && awayY === 0 ? (yieldsRight ? 0 : Math.PI) : Math.atan2(awayY, awayX);
-    moveIfSailable(world, boat, boat.x + Math.cos(bearing) * step, boat.y + Math.sin(bearing) * step);
-    return;
-  }
-
-  // Arc length → angle, so the boat travels one ordinary tick's distance along
-  // its own station circle rather than one tick's worth of ANGLE (which would
-  // move a close-in boat slowly and a far-out one at a sprint).
-  const turn = step / range;
-  const fromGoal = Math.atan2(boat.y - goalY, boat.x - goalX);
-  // Slide the way that opens the gap: whichever of the two arcs leaves the
-  // crowder behind. A crowder at the SAME bearing offers no such arc — rarer
-  // since boats stopped launching from one shared cell (`launchBerth`), but
-  // still reachable whenever two boats converge on one station from opposite
-  // sides — so the pair-order tie-break above is what breaks that case.
-  const crowderFromGoal = Math.atan2(crowder.y - goalY, crowder.x - goalX);
-  const separation = normalizeAngle(fromGoal - crowderFromGoal);
-  const direction = separation === 0 ? (yieldsRight ? 1 : -1) : Math.sign(separation);
-
-  for (const sign of [direction, -direction]) {
-    const angle = fromGoal + sign * turn;
-    if (moveIfSailable(world, boat, goalX + Math.cos(angle) * range, goalY + Math.sin(angle) * range)) {
-      return;
-    }
-  }
-  // Both arcs blocked by the coast: hold, and let the crowd sort itself out on
-  // a later tick as the goal moves.
+interface StationGoal {
+  readonly x: number;
+  readonly y: number;
+  /**
+   * How far short of the point the boat stops — 0 for a slot or home water
+   * (stop exactly on it), the station radius for a fallback run at the kraken
+   * itself (hold at arm's length, exactly as a slotted boat holds its slot).
+   */
+  readonly standoff: number;
+  /**
+   * The slot index this goal is the point of, or null for a fallback or home
+   * goal. Carried so the next tick's assignment can prefer it (stickiness) —
+   * it is an angle, not a point, so it tracks a drifting kraken automatically.
+   */
+  readonly slot: number | null;
 }
 
 /**
- * The closest boat inside `boat`'s personal space, with its index, or null when
- * the berth is clear. The index is what lets `makeRoom` break a dead-even tie
- * on pair order — see `yieldsRight` there.
+ * Every engaged boat's station slot for this tick, keyed by boat index.
+ *
+ * THIS IS THE FIX THAT LETS SEPARATION COME BACK ON. Every boat used to be
+ * aimed at the SAME circle with no assigned point on it, so any avoidance
+ * term could only express itself by bending the shared radius — measured
+ * 5.03 cells against a 5.00 station, which stopped counting as engaged and
+ * broke the rout arithmetic. Each boat is now given its OWN point on the
+ * station circle, so keeping clear of a neighbour never costs it the fight.
+ *
+ * In `boats` array order (id order, fixed): each boat takes the nearest FREE
+ * slot index to its own bearing from the kraken, searching outward
+ * alternating +1/−1. Slots are per-tick and never persisted. Deterministic
+ * by construction — no clock, no RNG, fixed order.
+ *
+ * A slot whose point is not a legal hull pose (the kraken is near a coast)
+ * is SKIPPED and claimed anyway: the pose test faces the kraken, which
+ * depends only on the slot, so a slot illegal for one boat is illegal for
+ * every boat and leaving it free would only make each boat trip over it in
+ * turn. A boat with no legal slot sails at the kraken itself and stops at
+ * the station radius.
  */
-function nearestCrowder(
-  boat: Boat,
-  berths: readonly Occupant[],
-  index: number,
-): { berth: Occupant; index: number } | null {
-  let nearest: { berth: Occupant; index: number } | null = null;
-  let nearestDistanceSq = Infinity;
-  for (let other = 0; other < berths.length; other++) {
-    if (other === index) continue;
-    const dx = boat.x - berths[other].x;
-    const dy = boat.y - berths[other].y;
-    const distanceSq = dx * dx + dy * dy;
-    const clearance = BOAT_PERSONAL_SPACE_CELLS + berths[other].radiusCells;
-    if (distanceSq >= clearance * clearance) continue;
-    if (distanceSq < nearestDistanceSq) {
-      nearestDistanceSq = distanceSq;
-      nearest = { berth: berths[other], index: other };
+function assignStationGoals(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  kraken: KrakenTarget | null,
+  stationRadius: number,
+): Map<number, StationGoal> {
+  const goals = new Map<number, StationGoal>();
+  if (kraken === null) return goals;
+  const slots = slotCountFor(stationRadius);
+  const taken = new Set<number>();
+  // Sails the point of a slot index on the station circle.
+  const pointOf = (slot: number): { x: number; y: number } => {
+    const angle = (slot / slots) * 2 * Math.PI;
+    return {
+      x: kraken.x + Math.cos(angle) * stationRadius,
+      y: kraken.y + Math.sin(angle) * stationRadius,
+    };
+  };
+  // A slot's pose test: facing the kraken, the pose a boat arrives in sailing
+  // radially onto its slot. It depends only on the slot, so a slot illegal
+  // for one boat is illegal for every boat.
+  const poseOf = (slot: number): { x: number; y: number } | null => {
+    const { x, y } = pointOf(slot);
+    const faceKraken = Math.atan2(kraken.y - y, kraken.x - x);
+    return isHullPose(world, eroded, x, y, faceKraken) ? { x, y } : null;
+  };
+  for (let index = 0; index < boats.length; index++) {
+    const boat = boats[index];
+    if (targetFor(boat, kraken) === null) continue;
+    // STICKINESS: a boat keeps last tick's slot while it is still free and
+    // still legal. Pure nearest-free FLAPS when two boats share a bearing
+    // boundary — measured: they swapped slots every tick, replanned every
+    // tick, and sailed nowhere, holding a full fleet 3 cells off station and
+    // slipping the rout from 21 s to 31 s against the test that pins it.
+    // Order-priority keeps it convergent: boats are seated in fixed array
+    // order, so an earlier boat never yields to a later one and no two boats
+    // can chase each other's slots. Still per-tick and still unpersisted —
+    // the preference is a tie-break inside the recomputation, not a saved
+    // berth — and the index is an angle, so a kept slot tracks a drifting
+    // kraken on its own.
+    const prev = voyages.get(boat.id)?.slot ?? null;
+    if (prev !== null && prev < slots && !taken.has(prev)) {
+      const pose = poseOf(prev);
+      taken.add(prev);
+      if (pose !== null) {
+        goals.set(index, { x: pose.x, y: pose.y, standoff: 0, slot: prev });
+        continue;
+      }
+    }
+    const bearing = Math.atan2(boat.y - kraken.y, boat.x - kraken.x);
+    const base = ((Math.round((bearing / (2 * Math.PI)) * slots) % slots) + slots) % slots;
+    let seated = false;
+    for (let k = 0; k < slots; k++) {
+      const off = k === 0 ? 0 : k % 2 === 1 ? (k + 1) / 2 : -(k / 2);
+      const slot = (((base + off) % slots) + slots) % slots;
+      if (taken.has(slot)) continue;
+      taken.add(slot);
+      const pose = poseOf(slot);
+      if (pose === null) continue;
+      goals.set(index, { x: pose.x, y: pose.y, standoff: 0, slot });
+      seated = true;
+      break;
+    }
+    if (!seated) {
+      goals.set(index, { x: kraken.x, y: kraken.y, standoff: stationRadius, slot: null });
     }
   }
-  return nearest;
+  return goals;
+}
+
+/**
+ * The water a home-bound boat sails for: the nearest hull-legal cell to its
+ * village, read WITHOUT re-walking the cached survey (advanceShipyards
+ * already advanced the clock this tick, and this must stay correct under a
+ * sculpt even when the village is at strength and no survey is running).
+ *
+ * Nearest-first disc order, like launchCell — but the gate is the HULL, not
+ * the centre. The launch cell is centre-water a hull length from a beach the
+ * planner (eroded, HULL_PROFILE) refuses to certify, so routing to it always
+ * fails and the boat falls back to dead reckoning — measured: 20-second
+ * coming-about tours for a 3-cell trip home, and an orbit that never lands.
+ * The mooring is tested on its arrival heading, facing the village it is
+ * coming home to. A village with no hull water at all — filled bay, or
+ * inland — yields the village itself: an unreachable goal the boat presses
+ * toward until hull law stops it, exactly as before.
+ */
+function homeWaterGoal(world: BoatWorld, eroded: TerrainSampler, boat: Boat): KrakenTarget {
+  for (const [dx, dy] of COASTAL_DISC) {
+    const x = boat.homeX + dx;
+    const y = boat.homeY + dy;
+    if (!isSailable(world, x, y)) continue;
+    const faceHome = Math.atan2(boat.homeY - y, boat.homeX - x);
+    if (!isHullPose(world, eroded, x, y, faceHome)) continue;
+    return { x, y };
+  }
+  return { x: boat.homeX, y: boat.homeY };
 }
 
 /**
@@ -828,7 +1118,7 @@ export function noteStormWind(damage: ParsedStormDamage): void {
  * it rather than through it. A boat with no water to be pushed into simply does
  * not move, which is a hull holding its ground against the wind — not an error.
  */
-function applyStormWind(world: BoatWorld): void {
+function applyStormWind(world: BoatWorld, eroded: TerrainSampler): void {
   if (pendingWinds.length === 0) return;
   // Spliced out before any of it is applied, so a push that somehow re-entered
   // this function could not replay the same second of wind.
@@ -848,21 +1138,19 @@ function applyStormWind(world: BoatWorld): void {
       let travelled = 0;
       while (travelled < distance) {
         const hop = Math.min(BOAT_WIND_PUSH_STEP_CELLS, distance - travelled);
-        if (!moveIfSailable(world, boat, boat.x + direction.x * hop, boat.y + direction.y * hop)) {
-          break;
-        }
+        // Hull law, not water law: the wind may shove a boat along a shore
+        // but never grind its bow or stern through one, and the push keeps
+        // the heading it found — a hull carried sideways still points where
+        // it pointed.
+        const nextX = boat.x + direction.x * hop;
+        const nextY = boat.y + direction.y * hop;
+        if (!isHullPose(world, eroded, nextX, nextY, boat.heading)) break;
+        boat.x = nextX;
+        boat.y = nextY;
         travelled += hop;
       }
     }
   }
-}
-
-/** Commits a position only if a hull may actually be there. */
-function moveIfSailable(world: BoatWorld, boat: Boat, x: number, y: number): boolean {
-  if (!isSailable(world, x, y)) return false;
-  boat.x = x;
-  boat.y = y;
-  return true;
 }
 
 /**
@@ -882,6 +1170,10 @@ export function advanceFleet(
 ): FleetOutcome {
   advanceShipyards(world, dt);
 
+  // The eroded sampler is built ONCE per tick: the world object is stable
+  // within a tick, and every hull test, plan and step below reads through it.
+  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
+
   // THE STORM MOVES THE FLEET BEFORE THE FLEET MOVES ITSELF (issue #299). It is
   // first because the push is where each hull ACTUALLY IS when this frame
   // starts — a boat is carried by the wind and then rows from wherever that
@@ -889,7 +1181,7 @@ export function advanceFleet(
   // separation decision below was made about a position the boat was about to
   // be shoved off, and a fleet at station would spend the whole storm giving
   // way to berths the wind had already emptied.
-  applyStormWind(world);
+  applyStormWind(world, eroded);
 
   // Start-of-tick berth snapshot, so every boat gives way to where the others
   // WERE rather than to where the ones already moved this tick now are — the
@@ -898,100 +1190,439 @@ export function advanceFleet(
   // an index test rather than a position test.
   const berths: readonly Occupant[] = fleetBerths();
 
+  const step = BOAT_SPEED_CELLS_PER_SECOND * dt;
+  const lookahead = BOAT_SPEED_CELLS_PER_SECOND * BOAT_LOOKAHEAD_SECONDS;
+  const maxTurnRadians = BOAT_TURN_RADIANS_PER_SECOND * dt;
+  const stationRadius = boatStationRadiusCells(dt);
+  // One routing pool for the whole fleet's tick: every search draws from the
+  // same allowance, so a headland the whole fleet must round cannot spend one
+  // budget per hull. See shared/src/pathing.ts's RouteBudget.
+  const budget: RouteBudget = createRouteBudget();
+  // The kraken is an occupant, not open water: a hull sails round its body,
+  // never through it. One snapshot, taken before anyone moves.
+  const krakenOccupant: Occupant | null =
+    kraken === null
+      ? null
+      : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
+  // Station slots, assigned from start-of-tick positions before anyone moves.
+  const goals = assignStationGoals(world, eroded, kraken, stationRadius);
+
   let engaged = 0;
   for (let index = 0; index < boats.length; index++) {
     const boat = boats[index];
     const target = targetFor(boat, kraken);
-    const goalX = target?.x ?? boat.homeX;
-    const goalY = target?.y ?? boat.homeY;
+    // An engaged boat sails for its slot; a slotless one for the kraken with
+    // a standoff; a peacetime boat for its home water, stopping on it.
+    // assignStationGoals seats every targeted boat (falling back to the
+    // kraken itself), so a missing entry can only mean a mid-tick roster
+    // change — sail at the animal rather than hold forever.
+    let goalX: number;
+    let goalY: number;
+    let standoff: number;
+    let slotIndex: number | null;
+    if (target === null) {
+      const home = homeWaterGoal(world, eroded, boat);
+      goalX = home.x;
+      goalY = home.y;
+      standoff = 0;
+      slotIndex = null;
+    } else {
+      const slot = goals.get(index);
+      goalX = slot?.x ?? target.x;
+      goalY = slot?.y ?? target.y;
+      standoff = slot?.standoff ?? stationRadius;
+      slotIndex = slot?.slot ?? null;
+    }
     const range = distance(boat.x, boat.y, goalX, goalY);
+    const krakenRange =
+      target === null ? Infinity : distance(boat.x, boat.y, target.x, target.y);
 
-    boat.fighting = target !== null && range <= BOAT_ENGAGEMENT_RANGE_CELLS;
+    boat.fighting = target !== null && krakenRange <= BOAT_ENGAGEMENT_RANGE_CELLS;
     if (boat.fighting) engaged++;
 
-    // Holding station: at the fight's edge, or home. Still points at its goal,
-    // so a fighting boat faces what it is fighting.
-    //
-    // THIS IS WHERE THE FLEET USED TO PILE UP. Every boat is given the same
-    // goal and the same hold radius, so "hold" put all of them on one circle
-    // with nothing to stop them occupying the same arc of it, all turning in
-    // place together as the kraken drifted — the owner's "they just kind of
-    // spin on top of each other". Holding station is not the same as holding
-    // POSITION: a boat whose berth is taken warps off it just far enough to be
-    // its own boat, and does it by the same rules it sails by (open water
-    // only, unlocked only, smallest turn first), so the line that forms is a
-    // line of boats at the fight's edge rather than a stack.
-    const holdAt = target === null ? 0 : BOAT_ENGAGEMENT_RANGE_CELLS;
-    if (range <= holdAt) {
-      // Comes ROUND to face its goal at its own turning circle rather than
-      // snapping to it (2026-08-24). A station-keeping boat is the one a player
-      // watches longest — it is stopped, at the edge of a fight, with a kraken
-      // drifting in front of it — so a heading that teleported here read as a
-      // hull spinning on the spot even though the boat was where it belonged.
-      if (range > 0) {
-        const faceGoal = Math.atan2(goalY - boat.y, goalX - boat.x);
-        boat.heading = turnToward(boat.heading, faceGoal, BOAT_TURN_RADIANS_PER_SECOND, dt);
+    // Holding: at standoff, or within one step of a point goal. A boat AT its
+    // slot holds position and does NOT turn while stationary — it faces
+    // whatever heading it arrived on (owner rule). There is deliberately no
+    // "come round to face the goal" here: turning without moving is the
+    // pivot the owner forbids.
+    let voyage = voyages.get(boat.id);
+    const settle = (holdX: number, holdY: number): void => {
+      if (voyage !== undefined) {
+        voyage.goalX = holdX;
+        voyage.goalY = holdY;
+        voyage.noProgressSeconds = 0;
+        voyage.slot = slotIndex;
       }
-      makeRoom(world, boat, goalX, goalY, berths, index, dt);
+    };
+    if (range <= standoff) {
+      settle(goalX, goalY);
+      continue;
+    }
+    if (standoff === 0 && range <= step) {
+      // Within one tick's travel of a point goal: stop exactly on it, hull
+      // permitting — else hold where it lies. Either way the heading is
+      // untouched, and either way this is not a sail tick, so a boat pressing
+      // an unreachable point never backs-and-fills against it.
+      if (isHullPose(world, eroded, goalX, goalY, boat.heading)) {
+        boat.x = goalX;
+        boat.y = goalY;
+      }
+      settle(goalX, goalY);
+      continue;
+    }
+    if (boat.fighting) {
+      // In the fight: hold water. Seeking the slot from here costs a
+      // coming-about arc that exits engagement — measured: a 150° turn at
+      // BOAT_TURN_RADIANS_PER_SECOND displaces a hull up to two turning
+      // diameters, straight out of a station one tick inside the circle — and
+      // the rout arithmetic counts whole seconds of engagement. The slot
+      // guides the approach (unengaged boats below still sail to theirs); the
+      // melee is held, and station-keeping clearance belongs to the
+      // resolution pass, as designed. Snapping (above) still seats a boat a
+      // nudge from its slot, for free.
+      settle(goalX, goalY);
       continue;
     }
 
-    const desired = Math.atan2(goalY - boat.y, goalX - boat.x);
-    // Never overshoot the goal: a boat one tick's travel from its station
-    // stops on it rather than sailing past and turning back forever. Hoisted
-    // ABOVE the steer (2026-08-21) because it is also the distance separation
-    // is tested at (shared's `SteerOptions.stepCells`) — a boat easing onto
-    // its station must be judged against the short step it is really taking,
-    // not against a full tick of travel it is not.
-    const step = Math.min(BOAT_SPEED_CELLS_PER_SECOND * dt, range - holdAt);
-    const wanted = steerToWater(
-      world,
-      boat,
-      desired,
-      BOAT_SPEED_CELLS_PER_SECOND * BOAT_LOOKAHEAD_SECONDS,
-      step,
-    );
-    if (wanted === null) continue;
-
-    // THE TURNING CIRCLE (owner, 2026-08-24: boats like the whales). `wanted`
-    // is a DIRECTION, freely up to 180° off; what the boat adopts is its
-    // current heading turned toward that direction by at most one tick's worth
-    // of BOAT_TURN_RADIANS_PER_SECOND. Nothing overrides it — a boat with no
-    // in-arc water holds still rather than pivoting, so it has to sail the arc
-    // to come about.
-    const steered = turnToward(boat.heading, wanted, BOAT_TURN_RADIANS_PER_SECOND, dt);
-
-    const nextX = boat.x + Math.cos(steered) * step;
-    const nextY = boat.y + Math.sin(steered) * step;
-    // Belt and suspenders, monsters' own: the look-ahead cleared a cell a
-    // second away, which says nothing about the cells in between — and the
-    // heading actually sailed is the turn-limited one, which the sweep never
-    // tested.
-    if (!isSailable(world, nextX, nextY)) {
-      // BLOCKED, AND THE TURN IS COMMITTED ANYWAY. This is the one place boats
-      // deliberately part company with wildlife's advanceEntity, which commits
-      // heading and position together and holds both when a step is vetoed.
-      // Committing both together DEADLOCKS a turn-limited mover: a boat lying a
-      // fraction of a cell off a beach with its bow toward it can only leave by
-      // turning, its turn is bounded to one tick's arc, and that first tick's
-      // arc still points at the beach — so the step is vetoed, the heading is
-      // rolled back with it, and the next tick is identical. Forever. That is
-      // the owner's "constantly getting stuck" in its purest form, and the
-      // shortening probe alone does not cure it: the ladder finds open water
-      // perfectly well, the hull just cannot swing round to it.
-      //
-      // A boat that cannot make way can still work its bow round — an oar
-      // backed against the water is exactly how a beached boat gets off. It is
-      // the SAME turning circle either way (BOAT_TURN_RADIANS_PER_SECOND), so
-      // what this shows is a hull taking a second or two to come about and then
-      // pulling away, never a hull snapping to a new heading: the pivot the
-      // owner objected to was an instant one.
-      boat.heading = steered;
-      continue;
+    // The voyage: plan when there is no route, the goal drifted further than
+    // REPLAN_GOAL_DRIFT_CELLS from the planned one, the stuck clock fired, or
+    // the balance-point escape below fired — never more than one plan per
+    // boat per tick, every plan drawing from the fleet's shared pool.
+    //
+    // OFFSET REPLANS do not count against the one-plan bound the way a
+    // same-position replan would: they replace it. When stalled past
+    // OFFSET_REPLAN_SECONDS with a route that goes nowhere, the fleet tries
+    // open water beside the hull first and falls back to planning from under
+    // its own keel — one findRoute either way (the branch below runs once).
+    let plannedHere = false;
+    if (
+      voyage !== undefined &&
+      voyage.route !== null &&
+      voyage.noProgressSeconds > OFFSET_REPLAN_SECONDS
+    ) {
+      const relief = reliefOffset(eroded, boat.x, boat.y);
+      if (relief !== null) {
+        const escape = findRoute(eroded, HULL_PROFILE, relief, { x: goalX, y: goalY }, budget);
+        if (escape !== null) {
+          voyage.route = [...escape.cells];
+          voyage.routeIndex = 0;
+          voyage.goalX = goalX;
+          voyage.goalY = goalY;
+          voyage.noProgressSeconds = 0;
+          plannedHere = true;
+        }
+      }
     }
-    boat.heading = steered;
-    boat.x = nextX;
-    boat.y = nextY;
+    if (voyage === undefined) {
+      voyage = { route: null, routeIndex: 0, goalX, goalY, noProgressSeconds: 0, slot: null };
+      voyages.set(boat.id, voyage);
+    }
+    if (
+      !plannedHere &&
+      (voyage.route === null ||
+        distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS ||
+        voyage.noProgressSeconds > BOAT_STUCK_SECONDS)
+    ) {
+      const plan = findRoute(
+        eroded,
+        HULL_PROFILE,
+        { x: boat.x, y: boat.y },
+        { x: goalX, y: goalY },
+        budget,
+      );
+      voyage.route = plan === null ? null : [...plan.cells];
+      voyage.routeIndex = 0;
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
+      voyage.noProgressSeconds = 0;
+    }
+    voyage.slot = slotIndex;
+
+    // Touch-advance the route index over cells the hull demonstrably reached:
+    // within TOUCH of route[index+1]'s centre, the window moves up by one,
+    // repeatedly. WITHOUT this, a hull that flies past route[index+1]
+    // laterally (aiming eight ahead) strands the index behind it: the aim
+    // never moves on, every correction aims at stale water, and shared's own
+    // resync — containment in a 1×1 cell — never fires (measured: 100+ ticks
+    // grinding a wall with the index pinned at 0). And when the resync DOES
+    // fire, it jumps up to eight cells at once and jerks the aim the same
+    // distance, which is what drives the ±11-cell S-turns down open corridors.
+    // Advancing one reached cell at a time keeps the aim gliding.
+    //
+    // This is NOT shared's condemned proximity advancement (steering.ts): that
+    // advanced on a 0.75 radius and then validated a SHORTCUT to the cell
+    // after — a diagonal the route never contained — which failed, replanned,
+    // and sent the mover back to its own cell in a 2-cycle. This advances
+    // only over the single next cell, only when the hull is practically on
+    // its centre, and the edge the follower then validates (current→next) is
+    // the adjacent, A*-certified one it would have checked anyway.
+    const ROUTE_TOUCH_RADIUS_CELLS = 0.6;
+    if (voyage.route !== null) {
+      while (
+        voyage.routeIndex + 1 < voyage.route.length &&
+        distance(
+          boat.x,
+          boat.y,
+          voyage.route[voyage.routeIndex + 1].x + 0.5,
+          voyage.route[voyage.routeIndex + 1].y + 0.5,
+        ) < ROUTE_TOUCH_RADIUS_CELLS
+      ) {
+        voyage.routeIndex++;
+      }
+    }
+
+    // Corridor check: is the hull standing on its own route? At cruise it aims
+    // BOAT_AIM_AHEAD_CELLS ahead to trace smooth arcs through bends — but the
+    // aim must ALSO be making progress. A hull stalled on-corridor (no new
+    // route cell for over two seconds — past the slowest honest cell crossing
+    // at quarter stride) is dithering against a sub-cell boundary the far aim
+    // drags it into — measured: beam straddling x=51 off the C-spine, forward
+    // steps vetoed, asterns restoring, net zero forever with the index pinned.
+    // Dropping a stalled cruiser to rejoin aim (nearest window cell) breaks
+    // the balance: it flies at water beside the boundary instead of along it,
+    // enters cells, and cruise resumes on progress.
+    // The check also yields the AIM DISTANCE the damping below steers by.
+    let onCorridor = false;
+    let aimDistance = 1;
+    if (voyage.route !== null) {
+      onCorridor =
+        onRouteCorridor(voyage.route, voyage.routeIndex, boat.x, boat.y) &&
+        voyage.noProgressSeconds <= 2;
+      if (onCorridor) {
+        aimDistance = BOAT_AIM_AHEAD_CELLS;
+      } else {
+        const windowEnd = Math.min(
+          voyage.routeIndex + Math.max(cellsAcross(2), BOAT_AIM_AHEAD_CELLS),
+          voyage.route.length - 1,
+        );
+        let best = voyage.routeIndex + 1;
+        let bestDist = Infinity;
+        for (let i = voyage.routeIndex + 1; i <= windowEnd; i++) {
+          const d = distance(
+            boat.x,
+            boat.y,
+            voyage.route[i].x + 0.5,
+            voyage.route[i].y + 0.5,
+          );
+          if (d < bestDist) {
+            bestDist = d;
+            best = i;
+          }
+        }
+        aimDistance = Math.max(1, best - voyage.routeIndex);
+      }
+    }
+
+    // Never overshoot the standoff: a boat closing on its station stops on it
+    // rather than sailing past and turning back forever. The cap is ALSO the
+    // distance separation is judged at (shared's stepCells) — a boat easing
+    // onto its station is judged against the short step it is really taking,
+    // not a full tick of travel it is not.
+    //
+    // BEAR OFF WAY TO COME ABOUT. The hull turns at a fixed rate, so the
+    // tighter it must turn the slower it must go: at full stride every bend
+    // becomes a turning-diameter excursion (measured solo: ±11-cell S-turns
+    // down a straight open-sea corridor, a 60-cell trip unfinished in 60 s).
+    // Full stride inside 45° of the AIM bearing, quarter stride past 135°,
+    // linear between. The aim is the cell the follower is actually steering
+    // for (shared picks the farthest legal of route[i+1..i+aim], so aiming by
+    // the same distance steers by the same water) — NOT the far goal, which
+    // stands abeam down every corridor leg and would halve speed for the
+    // whole leg. On the final cell, where the aim is the deck under its feet,
+    // damping switches off so the arrival keeps full way on. The turn itself
+    // is untouched (maxTurnRadians still caps every tick) — only the advance
+    // slows, which is backing water, never a pivot: the boat still moves
+    // every sail tick.
+    let advance = 1;
+    if (voyage.route !== null) {
+      const aimIndex = Math.min(
+        voyage.routeIndex + aimDistance,
+        voyage.route.length - 1,
+      );
+      if (aimIndex > voyage.routeIndex) {
+        const aimBearing = Math.atan2(
+          voyage.route[aimIndex].y + 0.5 - boat.y,
+          voyage.route[aimIndex].x + 0.5 - boat.x,
+        );
+        const misalignment = Math.abs(normalizeAngle(aimBearing - boat.heading));
+        advance =
+          misalignment <= Math.PI / 4
+            ? 1
+            : misalignment >= (3 * Math.PI) / 4
+              ? 0.25
+              : 1 - 0.75 * ((misalignment - Math.PI / 4) / (Math.PI / 2));
+      }
+    } else {
+      const goalBearing = Math.atan2(goalY - boat.y, goalX - boat.x);
+      const misalignment = Math.abs(normalizeAngle(goalBearing - boat.heading));
+      advance =
+        misalignment <= Math.PI / 4
+          ? 1
+          : misalignment >= (3 * Math.PI) / 4
+            ? 0.25
+            : 1 - 0.75 * ((misalignment - Math.PI / 4) / (Math.PI / 2));
+    }
+    const stride = Math.min(step, range - standoff) * advance;
+    // No certified path (illegal goal cell, exhausted pool, open-sea pocket):
+    // press on only while the first step toward the goal is hull water, else
+    // hold. Dead reckoning toward a point with a turning circle orbits it
+    // (Phase 1's finding) or backs-and-fills against the shore one step
+    // forward, one step astern, forever — the closest hull-legal approach is
+    // the seamanship, and this re-runs every tick so sailing resumes the
+    // moment the goal moves into reach.
+    if (voyage.route === null && range > 0) {
+      const probeX = boat.x + ((goalX - boat.x) / range) * stride;
+      const probeY = boat.y + ((goalY - boat.y) / range) * stride;
+      if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
+        settle(goalX, goalY);
+        continue;
+      }
+    }
+    // A helm is a boat-shaped view carrying the voyage's route: followRoute
+    // mutates the helm, and the commit below carries that — and only that —
+    // onto the hull.
+    const helm = {
+      x: boat.x,
+      y: boat.y,
+      heading: boat.heading,
+      route: voyage.route,
+      routeIndex: voyage.routeIndex,
+    };
+    const others = withoutSelf(berths, berths[index]);
+    const result = followRoute(eroded, HULL_PROFILE, helm, {
+      stepCells: stride,
+      lookaheadCells: lookahead,
+      goalX,
+      goalY,
+      occupants: krakenOccupant === null ? others : [...others, krakenOccupant],
+      selfRadiusCells: BOAT_PERSONAL_SPACE_CELLS,
+      // Hull law at the step point, on the heading the step is taken from: a
+      // step-length move cannot swing the bow far, so the current heading is
+      // the right approximation. (An earlier revision checked the whole
+      // one-tick turn envelope here; it flickered pass/fail on 0.03-cell
+      // margins at headings the hull never adopts and trapped boats against
+      // walls they were clearing — reverted. The exact adopted-heading check
+      // lives in the post-commit veto below.) The unlocked half is a
+      // fog-of-war fact with no business in shared/ — it rides inside
+      // isHullPose.
+      permits: (x, y) => isHullPose(world, eroded, x, y, helm.heading),
+      // BOTH turn options at cruise, per Phase 1's finding: a turn limit alone
+      // orbits a 1-cell waypoint, so the follower also aims ahead
+      // (BOAT_AIM_AHEAD_CELLS) to trace a smooth arc through the route's
+      // 8-direction jag. Off-corridor it aims at the nearest window cell
+      // (rejoin mode, see the corridor check above).
+      maxTurnRadians,
+      aimAheadCells: aimDistance,
+      // followRoute's own single-replan safety is capped at what the shared
+      // pool still holds: it can spend the remainder, never more.
+      replanNodeBudget: budget.remaining,
+    });
+    // followRoute's commit is the ONLY heading write on a hull: the turn only
+    // ever happens by moving (a blocked clamp holds or backs astern with the
+    // heading unchanged — it never pivots), so carrying all three fields
+    // across is carrying one certified decision, not three — subject to the
+    // hull's final veto below.
+    //
+    // THE SAIL STEP GOES THROUGH isHullPose. `permits` above certifies the
+    // step on the PRE-turn heading, but the commit turns first (up to
+    // maxTurnRadians) and swings the bow/stern probes by up to 0.09 cells —
+    // enough to clip a shore the hull was hugging. So the committed pose is
+    // re-tested on the ADOPTED heading.
+    //
+    // A vetoed commit backs astern instead of holding everything: vetoing the
+    // heading with the position would deadlock the hull nose-on — it could
+    // never turn its bow away, because every turn is vetoed with the move
+    // that carries it. Backing one stride along the CURRENT heading with the
+    // heading unchanged is followRoute's own backing maneuver one level up
+    // (position changes, heading does not: not a pivot), and it re-opens the
+    // forward arc on a later tick. When astern is hull-illegal too, everything
+    // holds.
+    //
+    // A vetoed commit is no progress, even when the helm moved or the stern
+    // went back: the hull is exactly as stuck as a refused step, so the stuck
+    // clock must see it. (A replan is progress of its own kind — a fresh route
+    // may unstick what the old one could not.)
+    const committed = isHullPose(world, eroded, helm.x, helm.y, helm.heading);
+    if (committed) {
+      boat.heading = helm.heading;
+      boat.x = helm.x;
+      boat.y = helm.y;
+    } else {
+      const backX = boat.x - Math.cos(boat.heading) * stride;
+      const backY = boat.y - Math.sin(boat.heading) * stride;
+      if (stride > 0 && isHullPose(world, eroded, backX, backY, boat.heading)) {
+        boat.x = backX;
+        boat.y = backY;
+      }
+    }
+    voyage.route = helm.route;
+    voyage.routeIndex = helm.routeIndex;
+    if (result.replanned || (result.progressed && committed)) voyage.noProgressSeconds = 0;
+    else voyage.noProgressSeconds += dt;
+  }
+
+  // RESOLUTION PASS — belt to the slots' suspenders. The slot spacing seats
+  // neighbours a full step beyond clear, so for a fleet at station this pass
+  // is a no-op by construction; it exists for transit crossings only, where
+  // two hulls closing head-on can end a tick nearer than their combined radii
+  // (shared's steering works from a start-of-tick snapshot, so it judges
+  // where the other boat WAS). One pass in index order over pairs (i < j):
+  // hulls closer than two personal spaces are pushed half the overlap each,
+  // directly apart. Headings never change here, and each boat's push is
+  // capped at one step per tick, so a resolution cannot teleport.
+  const pushLeft = boats.map(() => step);
+  // A push that would carry an engaged boat out of engagement is refused like
+  // a push into the coast: the station sits one step inside the circle, so an
+  // unguarded shove is exactly enough to break it (19.64 + 0.36 = 20.00, and
+  // floating point votes against us). The other boat still takes its half.
+  const keepsEngagement = (boat: Boat, x: number, y: number): boolean => {
+    if (kraken === null || !boat.fighting) return true;
+    return distance(x, y, kraken.x, kraken.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
+  };
+  for (let i = 0; i < boats.length; i++) {
+    for (let j = i + 1; j < boats.length; j++) {
+      const lower = boats[i];
+      const upper = boats[j];
+      const dx = upper.x - lower.x;
+      const dy = upper.y - lower.y;
+      const gap = Math.hypot(dx, dy);
+      const clearance = 2 * BOAT_PERSONAL_SPACE_CELLS;
+      if (gap >= clearance) continue;
+      // The lower index moves along −d, the higher along +d. An exactly
+      // coincident pair has no bearing, so it takes ±x off pair order —
+      // deterministic, opposite sides, broken in one tick.
+      const bearing = gap > 0 ? Math.atan2(dy, dx) : 0;
+      const overlap = clearance - gap;
+      const giveLower = Math.min(overlap / 2, pushLeft[i]);
+      if (giveLower > 0) {
+        const x = lower.x - Math.cos(bearing) * giveLower;
+        const y = lower.y - Math.sin(bearing) * giveLower;
+        // Each push commits only through the hull predicate, on the heading
+        // the boat already has: a boat the coast pins stays, and the other
+        // takes the whole separation. Same for engagement (keepsEngagement).
+        if (
+          isHullPose(world, eroded, x, y, lower.heading) &&
+          keepsEngagement(lower, x, y)
+        ) {
+          lower.x = x;
+          lower.y = y;
+          pushLeft[i] -= giveLower;
+        }
+      }
+      const giveUpper = Math.min(overlap / 2, pushLeft[j]);
+      if (giveUpper > 0) {
+        const x = upper.x + Math.cos(bearing) * giveUpper;
+        const y = upper.y + Math.sin(bearing) * giveUpper;
+        if (
+          isHullPose(world, eroded, x, y, upper.heading) &&
+          keepsEngagement(upper, x, y)
+        ) {
+          upper.x = x;
+          upper.y = y;
+          pushLeft[j] -= giveUpper;
+        }
+      }
+    }
   }
 
   if (kraken === null || engaged === 0) {
@@ -1022,6 +1653,7 @@ export function advanceFleet(
     }
     if (victim === null) break;
     sunk.push(victim.id);
+    dropVoyage(victim.id);
     boats = boats.filter((boat) => boat !== victim);
   }
 
@@ -1110,6 +1742,7 @@ export function boatPosition(id: number): { x: number; y: number } | null {
 export function burnBoats(ids: readonly number[]): number {
   const doomed = new Set(ids);
   const before = boats.length;
+  for (const id of doomed) dropVoyage(id);
   boats = boats.filter((boat) => !doomed.has(boat.id));
   return before - boats.length;
 }
