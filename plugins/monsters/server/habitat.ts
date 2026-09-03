@@ -197,6 +197,74 @@ export function habitatById(id: HabitatRegimeId): HabitatRegime {
   return id === 'water' ? WATER_HABITAT : LAND_HABITAT;
 }
 
+/**
+ * The cache behind `habitatRangeOf`, so one (regime, thresholdBands) pair is one
+ * OBJECT for the life of the process.
+ *
+ * Identity is load bearing rather than an optimisation: habitat-index.ts dedupes
+ * its per-rule range bitmaps by object identity (two kinds that demand the same
+ * depth share one bitmap and one repair pass), and the alias case below —
+ * `range === regime` — is what makes "this kind's range is behaviourally its
+ * habitat" a fact the type system can be shown rather than a claim in a comment.
+ *
+ * Keyed by regime id and not by the regime object because there are exactly two
+ * regimes and both are module constants; a `Map<HabitatRegime, …>` would say the
+ * same thing with an extra level.
+ */
+const rangeCache = new Map<string, HabitatRegime>();
+
+/**
+ * THE REGIME A KIND MAY BE IN — its habitat narrowed to its own reach demand.
+ *
+ * WHY THIS EXISTS (2026-09-02, the kraken's confinement). A kind used to carry
+ * TWO depth bars: the habitat's own `thresholdBands` (the floor, "no monster of
+ * this regime may ever be shallower than this") and `MonsterProfile
+ * .minLairReachBands` (its own demand, "and I want a trench"). Admission applied
+ * both; MOVEMENT applied only the floor, so a kraken summoned into a seven-band
+ * trench was free to swim out over any three-band water — the whole open sea.
+ * Two bars for one question is what let the movement code know about only one of
+ * them, so there is now ONE regime that answers "where may this animal BE", and
+ * `lurk.ts` reads nothing else.
+ *
+ * IT RETURNS THE REGIME ITSELF when the kind demands exactly the habitat's own
+ * threshold, which is the case for Cthulhu (`DEEP_WATER_BANDS_BELOW_SEA`) and
+ * for the yeti (`YETI_LAIR_MIN_HEIGHT_BANDS === SNOW_LINE_BANDS_ABOVE_SEA`).
+ * For those two kinds `profile.range === profile.habitat` by IDENTITY, so every
+ * predicate below is given the same object it was given before this change and
+ * their behaviour is not merely equivalent but the same code path.
+ *
+ * A RANGE IS NEVER A KEY. It keeps its habitat's `id` (a range is still water,
+ * or still land — it is a narrower part of the same half of the heightmap), so
+ * it must not be handed to anything that looks a regime up by id or by identity:
+ * `kinds.ts`'s `KINDS_BY_HABITAT` / `LAIR_FIT_RULES_BY_HABITAT` maps,
+ * `habitatById`, `HABITAT_REGIMES`, and `habitat-index.ts`'s
+ * `HabitatIndex.regimes` are all indexed by the HABITAT and always will be —
+ * there is one survey, one index and one summon slot list per habitat, and a
+ * range is a per-kind view inside one of them. Use `profile.habitat` for those;
+ * use `profile.range` for "may this body be here".
+ */
+export function habitatRangeOf(regime: HabitatRegime, thresholdBands: number): HabitatRegime {
+  // THE FLOOR IS A FLOOR, enforced here rather than trusted at the rows. Both
+  // thresholds count bands INTO the habitat (deeper for water, higher for land,
+  // which is what `inward` absorbs), so the stricter of the two is the larger,
+  // and a row that asked for less than its habitat's own threshold would
+  // otherwise WIDEN the habitat for that kind — the exact opposite of what the
+  // field means. Clamping makes `HabitatRegime.thresholdBands`'s "nothing may
+  // demand less" true by construction instead of by review.
+  const bands = Math.max(thresholdBands, regime.thresholdBands);
+  if (bands === regime.thresholdBands) return regime;
+  const key = `${regime.id}:${bands}`;
+  const held = rangeCache.get(key);
+  if (held !== undefined) return held;
+  const range: HabitatRegime = {
+    id: regime.id,
+    inward: regime.inward,
+    thresholdBands: bands,
+  };
+  rangeCache.set(key, range);
+  return range;
+}
+
 // ── The one primitive ────────────────────────────────────────────────────────
 
 /**
@@ -380,6 +448,12 @@ export const BODY_RIM_PROBE_OFFSETS: readonly (readonly [number, number])[] = Ar
  * `radiusCells` of 0 degenerates to exactly `isLairCell`, which is what makes
  * this a safe single predicate for callers that sometimes want the point test
  * (see lurk.ts's pinched-body escape).
+ *
+ * `regime` MAY BE A RANGE (`habitatRangeOf`) and for the kraken it is: every
+ * mover-side caller passes `profile.range`, not `profile.habitat`. Nothing in
+ * this predicate or in `isLairCell` reads the regime's `id`, so a range behaves
+ * here exactly as a habitat does — which is the whole reason confinement could
+ * be one derived value rather than a second predicate.
  */
 export function isLairPose(
   regime: HabitatRegime,
@@ -419,9 +493,10 @@ export interface LairRegion {
   readonly extremeHeight: number;
   /**
    * How many cells of this region each of the survey's `fitRules` FITS ON — its
-   * body, centred on the cell, entirely inside the habitat. Index-aligned with
-   * the rule list handed to `surveyLairs`, and empty for a survey that was asked
-   * for no rules at all.
+   * body, centred on the cell, entirely inside that rule's RANGE (the habitat
+   * narrowed to the kind's own reach demand; `habitatRangeOf`). Index-aligned
+   * with the rule list handed to `surveyLairs`, and empty for a survey that was
+   * asked for no rules at all.
    *
    * ADDED 2026-08-26, and it is the missing half of the admission test. A
    * region used to be admitted on `cells` alone, which counts CELLS and not
@@ -431,8 +506,13 @@ export interface LairRegion {
    * in the rock. `cells >= minLairCells` is a bar on AREA; this is the bar on
    * SHAPE, and a lair has to clear both.
    *
-   * IT IS THE ROOM TO ROAM, and deliberately ignores the rule's `minReachBands`
-   * — see `summonableCells` for the other count and why they are two.
+   * IT IS THE ROOM TO ROAM, and since 2026-09-02 that is measured in the room
+   * the animal is actually allowed to roam — its range. The clause that used to
+   * stand here said this count "deliberately ignores the rule's
+   * `minReachBands`", and it did, because until the same date lurk.ts's steering
+   * ignored it too: the count was built to match the movement rule, and it still
+   * is. What changed is the movement rule (the kraken is confined to its trench),
+   * so this count moved with it — see LairFitRule.
    */
   readonly fittingCells: readonly number[];
   /**
@@ -440,14 +520,19 @@ export interface LairRegion {
    * pose test, AND the rule's own `minReachBands`. Index-aligned the same way.
    *
    * TWO COUNTS, BECAUSE ARRIVING AND LIVING ARE DIFFERENT QUESTIONS, and the
-   * kraken is the kind that proves it. He must ARRIVE in a trench 31 bands down
-   * — a natural ocean floor shows perhaps 177 such cells — but he LIVES in deep
-   * water, which is the whole basin: lurk.ts steers him against `isLairPose`
-   * against the habitat and has never once read `minLairReachBands`. Counting
-   * one number for both would have forced a choice between two settled rules —
-   * either the yeti keeps being born in shapes he does not fit, or the owner's
-   * 2026-08-19 "the natural ocean floor admits the kraken, no manual dig"
-   * quietly stops being true.
+   * kraken is still the kind that proves it — the two just moved closer together
+   * on 2026-09-02. He must ARRIVE on a cell 31 bands down, the abyssal floor his
+   * bar was derived from; he LIVES in the 28-band contour around it, which is
+   * the same trench relaxed by the depth his own 28-cell body spans on a legal
+   * wall (kinds.ts's `bodyReachBands`). What CHANGED is the second half: it used
+   * to be the whole three-band basin, i.e. the open sea, which is the defect the
+   * owner named ("it cannot move beyond the trench").
+   *
+   * ONE NUMBER STILL COULD NOT SERVE BOTH. Collapse them onto the arrival bar
+   * and the animal's body fits nowhere in its own trench — measured, eleven of
+   * twenty genesis seeds admit no kraken at all. Collapse them onto the range
+   * and the kraken rises one body-depth up the trench wall rather than at its
+   * floor, which is not where the owner's 2026-08-19 bar put him.
    *
    * `summonableCells` is what stops a REFUSAL from becoming a LOOP: a region
    * with room to roam but no cell that also clears the depth bar would be
@@ -532,13 +617,24 @@ function candidateReservoirDraw(seedIndex: number, ruleIndex: number, ordinal: n
 
 /**
  * One kind's whole-body rule, as the survey must count it (2026-08-26): how wide
- * its body is, and how far into the habitat a cell must reach before that kind
- * may be summoned onto it.
+ * its body is, and how far into the habitat every cell under that body must
+ * reach.
  *
- * The two are asked of every cell of every region and feed the two counts on
- * LairRegion: the pose alone gives `fittingCells` (room to roam), the pose AND
- * the reach give `summonableCells` (somewhere to arrive). See those fields for
- * why one number could not have served both.
+ * THE POSE IS TESTED AGAINST THE KIND'S RANGE SINCE 2026-09-02, not against the
+ * habitat floor with the reach checked separately at the centre. It used to be
+ * the latter, and the consequence was the fit half of the same defect the
+ * kraken's confinement fixed: the survey would report that a kraken's seven-cell
+ * body "fits" on cells whose surroundings were three-band shallows, so a trench
+ * could be admitted for a body that never fits at trench depth anywhere in it —
+ * and the animal would then spend its life in lurk.ts's pinched clearance-0
+ * fallback, which is precisely the failure `fittingCells` was added to end for
+ * the yeti. "Can this body be here" is one question and it is now asked once,
+ * of `habitatRangeOf(regime, minReachBands)`.
+ *
+ * The two counts on LairRegion still exist and are still two: the pose gives
+ * `fittingCells` (room to roam) and the pose plus the centre's reach gives
+ * `summonableCells` (somewhere to arrive). See `summonableCells` for what that
+ * second clause is worth now that the pose already implies it.
  *
  * The centre offset the fit is measured at is +0.5 (CELL_CENTRE_OFFSET), because
  * that is where `summon` places the animal.
@@ -546,7 +642,19 @@ function candidateReservoirDraw(seedIndex: number, ruleIndex: number, ordinal: n
 export interface LairFitRule {
   /** Half the kind's footprint — kinds.ts's `bodyRadiusCells`. */
   readonly radiusCells: number;
-  /** The kind's own `minLairReachBands`. */
+  /**
+   * The threshold of the RANGE this rule's body is tested against — kinds.ts's
+   * `profile.range.thresholdBands`, which is `minReachBands` relaxed by the
+   * depth the body itself spans (`bodyReachBands`). `habitatRangeOf` clamps it
+   * up to the habitat's own floor, so a rule can never widen the habitat.
+   */
+  readonly rangeBands: number;
+  /**
+   * The kind's own `minLairReachBands` — the ARRIVAL bar, applied to a
+   * candidate cell's own height and nothing else. Deeper than `rangeBands` for
+   * a kind with a body (see `summonableCells`): it says where the animal must
+   * RISE, not where it may then be.
+   */
   readonly minReachBands: number;
 }
 
@@ -791,6 +899,10 @@ function walkComponent(
     for (let rule = 0; rule < rules.length; rule++) {
       if (fit[rule]![cellIndex] !== HABITAT_BIT_SET) continue;
       fittingCells[rule]!++;
+      // The ARRIVAL bar on top of the pose: strictly deeper than the pose's own
+      // range threshold for a kind with a body, so this clause still rejects —
+      // it is the difference between where the animal may rise and where it may
+      // then swim. See LairRegion.summonableCells.
       if (!reachesIntoHabitat(regime, height, rules[rule]!.minReachBands)) continue;
       // The ordinal of this cell among the region's summonable ones, which is
       // what Algorithm R draws against. Read before the increment so the first

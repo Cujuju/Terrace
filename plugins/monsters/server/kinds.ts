@@ -74,6 +74,7 @@ import {
   SNOW_LINE_BANDS_ABOVE_SEA,
   WATER_HABITAT,
   habitatBoundaryHeight,
+  habitatRangeOf,
   type HabitatRegime,
   type LairFitRule,
 } from './habitat.ts';
@@ -797,6 +798,42 @@ export interface MonsterProfile {
    */
   readonly habitat: HabitatRegime;
 
+  /**
+   * WHERE IT MAY BE — its habitat narrowed towards its own `minLairReachBands`,
+   * and the ONE regime every movement rule reads (lurk.ts). Owner ask,
+   * 2026-09-02:
+   * "The kraken should not be allowed to roam the map. It needs to be confined
+   * to deep trench areas. It can move anywhere inside of that deep trench, but
+   * cannot move beyond it."
+   *
+   * TOWARDS, NOT TO, and the gap is `bodyReachBands` — see it for the
+   * measurement. The reach demand is a bar on ONE cell (a region's extreme cell,
+   * and the cell the animal lands on); this is a bar on a whole BODY, and at the
+   * bottom of a V-shaped trench those are not the same contour.
+   *
+   * NOT WRITTEN BY A ROW. It is derived by `withRange` below from the fields
+   * above it, because the bug this field fixes was two fields stating one thing:
+   * a kind carried a habitat floor AND a reach demand, admission applied both
+   * and movement applied only the floor, so a kraken summoned in a seven-band
+   * trench swam out over the three-band open sea. A row that could state its
+   * range separately could state it inconsistently with its reach, which is the
+   * same defect one indirection later.
+   *
+   * IDENTICAL TO `habitat` FOR CTHULHU AND THE YETI, and by object identity
+   * rather than by equal contents: both demand exactly their habitat's own
+   * threshold (`DEEP_WATER_BANDS_BELOW_SEA` and `YETI_LAIR_MIN_HEIGHT_BANDS ===
+   * SNOW_LINE_BANDS_ABOVE_SEA`), and `habitatRangeOf` returns the regime itself
+   * in that case. Their movement therefore runs the same code over the same
+   * object as before this field existed — verified in test/monsters.test.ts.
+   *
+   * NEVER A LOOKUP KEY. See `habitatRangeOf`: `KINDS_BY_HABITAT`,
+   * `LAIR_FIT_RULES_BY_HABITAT`, the per-habitat survey, the summon slots and
+   * habitat-index's regime map are all keyed by `habitat`, and a range carries
+   * its habitat's `id`, so handing one to any of them would silently answer for
+   * the wrong regime.
+   */
+  readonly range: HabitatRegime;
+
   /** Habitat cells required in one connected region before this kind arrives. */
   readonly minLairCells: number;
   /**
@@ -804,14 +841,24 @@ export interface MonsterProfile {
    * this kind's whole body inside the habitat (habitat.ts's LairFitRule, counted
    * by the survey into LairRegion.fittingCells). Owner decision, 2026-08-26.
    *
-   * IT IS ROOM TO ROAM, NOT SOMEWHERE TO ARRIVE, and the distinction is load
-   * bearing: it counts poses anywhere in the region and pays no attention to
-   * `minLairReachBands`, exactly as lurk.ts's steering does. The arrival bar is
-   * a separate count (LairRegion.summonableCells) that gate 3 only requires to
-   * be non-zero. Folding the two together would have made a natural-floor ocean
-   * refuse the kraken — he arrives in 177 cells of trench and lives in eighty
-   * thousand cells of basin — and the owner settled on 2026-08-19 that the
-   * natural floor admits him with no digging.
+   * IT IS ROOM TO ROAM, and since 2026-09-02 it counts poses in the room the
+   * kind is allowed to roam — its `range` — because that is what lurk.ts steers
+   * against. The two have always had to agree: this bar exists to refuse a lair
+   * the animal would live pinched in, and "pinched" is defined by the movement
+   * predicate, so a count measured against a wider set than the animal may enter
+   * is not a weaker bar, it is a bar on the wrong thing.
+   *
+   * WHAT THAT COST, stated because it was a settled decision and this changes
+   * it: the clause here used to read "pays no attention to `minLairReachBands`,
+   * exactly as lurk.ts's steering does", and its justification was that the
+   * kraken "arrives in 177 cells of trench and lives in eighty thousand cells of
+   * basin" — the owner's 2026-08-19 ruling that a natural ocean floor admits him
+   * with no digging. He no longer lives in the basin (owner, 2026-09-02), so the
+   * roam count is now over the trench. The 2026-08-19 ruling survives on a
+   * GENESIS ocean because the trench pass cuts a floor at
+   * GENESIS_DEEP_OCEAN_REFERENCE_BAND, one band deeper than
+   * KRAKEN_LAIR_MIN_DEPTH_BANDS, so the qualifying set is the trench floor
+   * rather than a rim of it — see the report in .claude/orchestration/briefs.
    *
    * TWO BARS, BECAUSE THEY MEASURE DIFFERENT THINGS. `minLairCells` measures how
    * much habitat there is; this measures how much of it the ANIMAL can be in,
@@ -828,10 +875,17 @@ export interface MonsterProfile {
    */
   readonly minLairFittingCells: number;
   /**
-   * How far INTO its habitat the lair's most extreme cell must reach, in bands
-   * from sea level — deeper for a water kind, higher for a land one. The
-   * habitat's own threshold (habitat.ts) is the floor for every kind; a kind may
-   * demand more, and the kraken does.
+   * How far INTO its habitat this kind demands to be, in bands from sea level —
+   * deeper for a water kind, higher for a land one. The habitat's own threshold
+   * (habitat.ts) is the floor for every kind; a kind may demand more, and the
+   * kraken does.
+   *
+   * IT IS NOW THE THRESHOLD OF `range` (2026-09-02) and therefore of everything:
+   * where the lair may form, where the animal may arrive, and — the part that
+   * was missing — where it may go afterwards. It used to be read only at
+   * admission, which is the whole of the confinement bug; the field's own doc
+   * said "a kind may demand more, and the kraken does" while the movement code
+   * had no way to hear the demand.
    */
   readonly minLairReachBands: number;
 
@@ -884,8 +938,63 @@ export interface MonsterProfile {
   readonly traversal: TraversalProfile;
 }
 
+/**
+ * A row of the table as it is WRITTEN: everything a profile has except the one
+ * field derived from the others.
+ */
+type MonsterProfileRow = Omit<MonsterProfile, 'range'>;
+
+/**
+ * How many bands of its own habitat a body of this size SPANS on the steepest
+ * ground the engine can produce — the relaxation between a kind's arrival bar
+ * and the set it may then move in.
+ *
+ * WHY THE TWO CANNOT BE THE SAME NUMBER, which is the finding that shaped this
+ * whole change and is measured rather than argued (see the report in
+ * .claude/orchestration/briefs/kraken-trench-report.md).
+ *
+ * `minLairReachBands` is a bar on ONE CELL: `bestLairFor` applies it to a
+ * region's single most extreme cell, and `summonCellIn` to the cell the animal
+ * lands on. A trench is a V, so its deepest contour is a RIBBON, and the ribbon
+ * is exactly as wide as the terrain's slope makes it — no wider. Terrain falls
+ * at most MAX_STEP per cell (shared/src/constants.ts), so a contour cut to the
+ * demand depth is guaranteed to be only `bodyRadiusCells · MAX_STEP` units
+ * deeper anywhere within a body's radius of it. Reading the arrival bar back as
+ * "where the whole body may be" therefore asks a 28-cell animal to fit inside
+ * the one-band seam at the bottom of its own trench, which it cannot: measured
+ * over twenty genesis seeds at 512², the kraken's body fit nowhere at all on
+ * eleven of them, so it would simply never appear.
+ *
+ * SUBTRACTING THIS IS THE FIX, and it is a derivation and not a tuning dial:
+ * the range is the arrival bar relaxed by the depth the animal's own body spans
+ * on the steepest legal wall. `floor`, not `ceil`, because the relaxation must
+ * not exceed what the geometry actually justifies. At today's numbers the
+ * kraken's is `floor(14 · 4 / 16) = 3`, giving a range of 28 bands — the exact
+ * value at which all twenty of those seeds admit it again.
+ *
+ * IT CHANGES NOTHING FOR A KIND THAT MAKES NO EXTRA DEMAND. Cthulhu and the
+ * yeti already sit at their habitat's own threshold, so subtracting anything
+ * would take them BELOW the floor, and `habitatRangeOf` clamps back up to it —
+ * their range stays the habitat regime object itself.
+ */
+function bodyReachBands(row: MonsterProfileRow): number {
+  return Math.floor((bodyRadiusCells(row) * MAX_STEP) / BAND_HEIGHT);
+}
+
+/**
+ * The one place a kind's range is computed. See `MonsterProfile.range`: the
+ * whole point of the field is that no row may state it, so the table below is
+ * written as rows and finished here.
+ */
+function withRange(row: MonsterProfileRow): MonsterProfile {
+  return {
+    ...row,
+    range: habitatRangeOf(row.habitat, row.minLairReachBands - bodyReachBands(row)),
+  };
+}
+
 export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
-  cthulhu: {
+  cthulhu: withRange({
     kind: 'cthulhu',
     habitat: WATER_HABITAT,
     minLairCells: MIN_LAIR_DEEP_CELLS,
@@ -903,8 +1012,8 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     footprintCells: CTHULHU_FOOTPRINT_CELLS,
     // A sea kind is at home in the whole sea, and an estuary is still water.
     traversal: OPEN_WATER_PROFILE,
-  },
-  kraken: {
+  }),
+  kraken: withRange({
     kind: 'kraken',
     habitat: WATER_HABITAT,
     minLairCells: KRAKEN_MIN_LAIR_DEEP_CELLS,
@@ -927,8 +1036,8 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     idleEndPerSecond: KRAKEN_IDLE_END_PER_SECOND,
     footprintCells: KRAKEN_FOOTPRINT_CELLS,
     traversal: OPEN_WATER_PROFILE,
-  },
-  yeti: {
+  }),
+  yeti: withRange({
     kind: 'yeti',
     habitat: LAND_HABITAT,
     minLairCells: YETI_MIN_LAIR_SNOW_CELLS,
@@ -968,7 +1077,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     // yeti is simply not its subject, because the owner named him on the other
     // side of the line.
     traversal: AMPHIBIOUS_WALKER_PROFILE,
-  },
+  }),
 };
 
 /** Deterministic iteration order over kinds (see MONSTER_KINDS). */
@@ -1044,7 +1153,7 @@ export const MONSTER_GROUND_STANDOFF_CELLS = DEFAULT_SCULPT_AMOUNT / MAX_STEP - 
  * wants this one — holding a monster a standoff away from its own shoreline
  * would keep it a cell offshore of water it can legitimately occupy.
  */
-export function bodyRadiusCells(profile: MonsterProfile): number {
+export function bodyRadiusCells(profile: Pick<MonsterProfile, 'footprintCells'>): number {
   return profile.footprintCells / 2;
 }
 
@@ -1089,6 +1198,11 @@ const LAIR_FIT_RULES_BY_HABITAT: ReadonlyMap<HabitatRegime, readonly LairFitRule
     regime,
     kindsInHabitat(regime).map((kind) => ({
       radiusCells: bodyRadiusCells(MONSTER_PROFILES[kind]),
+      // The POSE is judged against the kind's range and the ARRIVAL against its
+      // reach demand — the two bars the survey's two counts exist to keep apart.
+      // Taking both off the profile is what stops this list from being a third
+      // place either number is stated.
+      rangeBands: MONSTER_PROFILES[kind].range.thresholdBands,
       minReachBands: MONSTER_PROFILES[kind].minLairReachBands,
     })),
   ]),
