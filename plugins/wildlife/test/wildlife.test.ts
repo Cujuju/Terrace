@@ -285,32 +285,36 @@ describe('population targets', () => {
     });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // RESTATED FOR THE FOUR SPECIES ADDED 2026-09-02. The demand this nominal
-    // world makes went from 1 532 to 2 000 —
+    // RESTATED FOR THE FOUR SPECIES ADDED 2026-09-02 AND THE TWO SHELF SPECIES
+    // ADDED 2026-09-03 (eel, angelfish). The demand this nominal world makes
+    // went 1 532 → 2 000 → 2 099 —
     //
-    //   fish  131   whale  39   deepsea 52   grazer 1 310
-    //   ibex  187   bison 218   ray     43   shark     20
+    //   fish  131   whale  39   deepsea 52   grazer 1 310   eel       34
+    //   ibex  187   bison 218   ray     43   shark     20   angelfish 65
     //
     // — and WILDLIFE_POPULATION_CAP (850, unchanged: it is a bandwidth budget)
-    // scales every species by 850/2 000 = 0.425 and floors, giving 846.
+    // scales every species by 850/2 099 ≈ 0.405 and floors, giving 846.
     //
-    // WHAT IT COSTS, STATED RATHER THAN DISCOVERED. The sea thins: fish 72 → 55,
-    // deepsea 28 → 22, whale 21 → 16. That is the honest price of four more
-    // species under a fixed cap, it falls on every species proportionally
-    // (nothing is distorted, the ecosystem is smaller), and it only binds on a
-    // world of this shape — a fully revealed, half-land 512² world, which no
-    // world on this machine is. Every world that exists is far below the cap.
-    // Asserted exactly, because this table is the arithmetic the species.ts
-    // header claims and a silent drift in it is how that header becomes a lie.
+    // WHAT IT COSTS, STATED RATHER THAN DISCOVERED. The sea thins again: fish
+    // 72 → 55 → 53, deepsea 28 → 22 → 21, whale 21 → 16 → 15. That is the
+    // honest price of more species under a fixed cap, it falls on every species
+    // proportionally (nothing is distorted, the ecosystem is smaller), and it
+    // only binds on a world of this shape — a fully revealed, half-land 512²
+    // world, which no world on this machine is. Every world that exists is far
+    // below the cap. Asserted exactly, because this table is the arithmetic the
+    // species.ts header claims and a silent drift in it is how that header
+    // becomes a lie.
     expect(targets).toEqual({
-      fish: 55,
-      whale: 16,
-      deepsea: 22,
-      grazer: 556,
-      ibex: 79,
-      bison: 92,
-      ray: 18,
+      fish: 53,
+      whale: 15,
+      deepsea: 21,
+      grazer: 530,
+      ibex: 75,
+      bison: 88,
+      ray: 17,
       shark: 8,
+      eel: 13,
+      angelfish: 26,
     });
     expect(total).toBe(846);
 
