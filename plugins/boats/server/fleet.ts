@@ -456,16 +456,29 @@ interface Voyage {
    * swapping slots every tick — and what keeps a boat on her mooring while a
    * sunk sister's replacement takes the free berth rather than hers. A berth
    * index IN WHICHEVER LIST the boat is currently assigned from (station
-   * circle in a fight, home moorings in peacetime): crossing the peace/war
-   * boundary carries the number over as a preference hint, and each half
-   * guards it against its own list before trusting it. Module state, never
-   * persisted — a restored fleet replans from scratch, which is correct
-   * because the terrain may have changed under the save.
+   * circle in a fight, home moorings in peacetime), and `slotList` names that
+   * list: an index is only a preference for the list it came from. Without
+   * the discriminator a boat leaving harbour from mooring 0 read that 0 as
+   * station slot 0 — the east side of the kraken whatever side it approached
+   * from — and sailed the long way round. Module state, never persisted — a
+   * restored fleet replans from scratch, which is correct because the terrain
+   * may have changed under the save.
    */
   slot: number | null;
+  slotList: BerthList | null;
 }
 
+/** Which berth list a sticky slot index belongs to. */
+type BerthList = 'station' | 'home';
+
 const voyages = new Map<number, Voyage>();
+
+/** Last tick's berth index for this boat, if it was taken from `list`. */
+function stickySlotIn(boatId: number, list: BerthList): number | null {
+  const voyage = voyages.get(boatId);
+  if (voyage === undefined || voyage.slotList !== list) return null;
+  return voyage.slot;
+}
 
 /** Drops a voyage when its boat is gone — sunk, burned, or scuttled. */
 function dropVoyage(id: number): void {
@@ -781,20 +794,17 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
  * idle on — so "where a boat is built", "where it idles" and "where it
  * returns to" are one fact. No disc walk: the survey already walked it, on
  * the survey's cadence, and a launch that re-walked it could choose water the
- * idle assignment will never offer. (`world` is unused for the same reason —
- * every mooring was certified sailable and hull-legal by the survey — and
- * stays in the signature so callers don't churn.)
+ * idle assignment will never offer. No `world` parameter for the same reason:
+ * every mooring was certified sailable and hull-legal by the survey.
  *
  * `occupied` is the live fleet, not a start-of-tick snapshot: two villages
  * sharing a bay may both launch on the same tick, and the second must see the
  * first one's new boat.
  */
 export function launchBerth(
-  world: BoatWorld,
   village: Village,
   occupied: readonly Occupant[],
 ): KrakenTarget | null {
-  void world;
   const moorings = shipyards.get(villageKey(village.x, village.y))?.moorings ?? [];
   for (const mooring of moorings) {
     // The cell CENTRE is what the boat is placed on, and it is what the
@@ -945,7 +955,7 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
     village.rebuildSeconds += dt;
     if (village.rebuildSeconds < BOAT_REBUILD_SECONDS) continue;
 
-    const berth = launchBerth(world, village, fleetBerths());
+    const berth = launchBerth(village, fleetBerths());
     // The harbour is full: every surveyed berth has a boat on it. The finished
     // build STAYS BANKED (no subtraction, no reset) and the boat slides down
     // the ways on the first tick a berth clears — which is a second or two
@@ -1083,7 +1093,7 @@ function assignStationGoals(
     // the preference is a tie-break inside the recomputation, not a saved
     // berth — and the index is an angle, so a kept slot tracks a drifting
     // kraken on its own.
-    const prev = voyages.get(boat.id)?.slot ?? null;
+    const prev = stickySlotIn(boat.id, 'station');
     if (prev !== null && prev < slots && !taken.has(prev)) {
       const pose = poseOf(prev);
       taken.add(prev);
@@ -1165,7 +1175,7 @@ function homeBerthFor(
   // STICKINESS. The guard matters across the peace/war boundary: a station
   // slot index can exceed this list, and a stale one must fall through to
   // the k-th berth rather than off the end of it.
-  const prev = voyages.get(boat.id)?.slot ?? null;
+  const prev = stickySlotIn(boat.id, 'home');
   if (prev !== null && prev >= 0 && prev < moorings.length && !claimed.has(prev)) {
     claimed.add(prev);
     const berth = moorings[prev];
@@ -1353,6 +1363,9 @@ function sailBoat(tick: SailTick, index: number): void {
   let goalY: number;
   let standoff: number;
   let slotIndex: number | null;
+  // Which list `slotIndex` indexes, so next tick's stickiness reads it against
+  // the right one (see Voyage.slotList).
+  const slotList: BerthList = target === null ? 'home' : 'station';
   if (target === null) {
     const home = homeGoals.get(index);
     goalX = home?.x ?? boat.homeX;
@@ -1384,6 +1397,7 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalY = holdY;
       voyage.noProgressSeconds = 0;
       voyage.slot = slotIndex;
+      voyage.slotList = slotList;
     }
   };
   if (range <= standoff) {
@@ -1429,7 +1443,15 @@ function sailBoat(tick: SailTick, index: number): void {
   // stalled hull reproduces on the C-bay, the fix goes back into the contract
   // — not here.
   if (voyage === undefined) {
-    voyage = { route: null, routeIndex: 0, goalX, goalY, noProgressSeconds: 0, slot: null };
+    voyage = {
+      route: null,
+      routeIndex: 0,
+      goalX,
+      goalY,
+      noProgressSeconds: 0,
+      slot: null,
+      slotList: null,
+    };
     voyages.set(boat.id, voyage);
   }
   if (
@@ -1451,6 +1473,7 @@ function sailBoat(tick: SailTick, index: number): void {
     voyage.noProgressSeconds = 0;
   }
   voyage.slot = slotIndex;
+  voyage.slotList = slotList;
 
   // STRIDE, not just heading: BEAR OFF WAY TO COME ABOUT. The hull turns at a
   // fixed rate, so the tighter it must turn the slower it must go: at full
