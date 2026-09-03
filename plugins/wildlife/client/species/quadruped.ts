@@ -45,7 +45,7 @@ export interface QuadrupedLegs {
 
 /** Radial segments a hoof needs: it is a stub seen from above, never close. */
 const HOOF_RADIAL_SEGMENTS = 8;
-const HAUNCH_SEGMENTS = 12;
+const HAUNCH_SEGMENTS = 8;
 /** How far up its own height a haunch's centre sits above the hinge. */
 const HAUNCH_SEAT_FRACTION = 0.25;
 

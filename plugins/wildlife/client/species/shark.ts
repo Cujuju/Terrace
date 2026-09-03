@@ -27,8 +27,10 @@ const SHARK_EYE_COLOR = 0x0f1114;
 const HULL_LENGTH = 1.40;
 const MAX_HALF_WIDTH = 0.13;
 const PEDUNCLE_X = -HULL_LENGTH / 2 + 0.02;
-const HULL_RINGS = 44;
-const HULL_SEGMENTS = 20;
+const HULL_RINGS = 32;
+const HULL_SEGMENTS = 16;
+/** See fish.ts FIN_SEAT_BITE; a bigger hull needs a deeper bite. */
+const FIN_SEAT_BITE = 0.05;
 const FIN_THICKNESS = 0.02;
 /** How much the belly is flattened relative to the back (1 = round). */
 const BELLY_FLATTEN = 0.82;
@@ -116,7 +118,7 @@ export const buildShark: SpeciesModelBuilder = (pool) => {
     shape.quadraticCurveTo(-0.10, DORSAL_HEIGHT * 0.5, -0.20, 0);
     shape.lineTo(0.22, 0);
   }, FIN_THICKNESS));
-  const dorsalSeatY = halfHeight(bodyT(DORSAL_X)) - 0.03;
+  const dorsalSeatY = halfHeight(bodyT(DORSAL_X)) - FIN_SEAT_BITE;
 
   const SECOND_DORSAL_X = -0.46;
   const secondDorsal = pool.keepGeometry(uprightFin((shape) => {
@@ -125,7 +127,7 @@ export const buildShark: SpeciesModelBuilder = (pool) => {
     shape.quadraticCurveTo(-0.05, 0.04, -0.08, 0);
     shape.lineTo(0.08, 0);
   }, FIN_THICKNESS));
-  const secondDorsalSeatY = halfHeight(bodyT(SECOND_DORSAL_X)) - 0.02;
+  const secondDorsalSeatY = halfHeight(bodyT(SECOND_DORSAL_X)) - FIN_SEAT_BITE;
 
   const ANAL_X = -0.50;
   const anal = pool.keepGeometry(uprightFin((shape) => {
@@ -134,7 +136,7 @@ export const buildShark: SpeciesModelBuilder = (pool) => {
     shape.quadraticCurveTo(-0.05, -0.03, -0.07, 0);
     shape.lineTo(0.07, 0);
   }, FIN_THICKNESS));
-  const analSeatY = -halfHeight(bodyT(ANAL_X)) * BELLY_FLATTEN + 0.02;
+  const analSeatY = -halfHeight(bodyT(ANAL_X)) * BELLY_FLATTEN + FIN_SEAT_BITE;
 
   // Heterocercal caudal, authored with x = 0 at the hinge: a long upper lobe
   // sweeping up and back, a short lower lobe, a notch between.

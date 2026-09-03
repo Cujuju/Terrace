@@ -46,11 +46,18 @@ const PEDUNCLE_X = HULL_CENTRE_X - HULL_LENGTH / 2;
 const CAUDAL_REACH = 0.16;
 const CAUDAL_HALF_SPAN = 0.13;
 
-const HULL_RINGS = 28;
-const HULL_SEGMENTS = 16;
+const HULL_RINGS = 24;
+const HULL_SEGMENTS = 14;
+/**
+ * How far a fin root is sunk into the hull. The hull is a swept surface, so
+ * its true top at a fin's station sits a little under the profile's value
+ * between rings; 0.04 is what closes the hairline of daylight the wiring
+ * review found at 0.02.
+ */
+const FIN_SEAT_BITE = 0.04;
 const FIN_THICKNESS = 0.012;
 const EYE_RADIUS = 0.016;
-const EYE_SEGMENTS = 8;
+const EYE_SEGMENTS = 6;
 
 /**
  * Tail beat, and how far the tail swings either side of the body line. 3.2 Hz
@@ -131,7 +138,7 @@ export const buildFish: SpeciesModelBuilder = (pool) => {
     shape.lineTo(-0.16, 0);
     shape.lineTo(0.14, 0);
   }, FIN_THICKNESS));
-  const dorsalSeatY = halfHeight(bodyT(DORSAL_X)) - 0.02;
+  const dorsalSeatY = halfHeight(bodyT(DORSAL_X)) - FIN_SEAT_BITE;
 
   const ANAL_X = -0.13;
   const anal = pool.keepGeometry(uprightFin((shape) => {
@@ -140,7 +147,7 @@ export const buildFish: SpeciesModelBuilder = (pool) => {
     shape.lineTo(-0.08, 0);
     shape.lineTo(0.06, 0);
   }, FIN_THICKNESS));
-  const analSeatY = -halfHeight(bodyT(ANAL_X)) + 0.02;
+  const analSeatY = -halfHeight(bodyT(ANAL_X)) + FIN_SEAT_BITE;
 
   // Forked caudal: two lobes and a notch, authored with x = 0 AT THE HINGE.
   const caudal = pool.keepGeometry(uprightFin((shape) => {

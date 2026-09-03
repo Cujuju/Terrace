@@ -31,8 +31,8 @@ const HIP_Y = 0.55;
 const FORE_X = 0.48;
 const HIND_X = -0.55;
 const HALF_STANCE = 0.17;
-const HULL_RINGS = 36;
-const HULL_SEGMENTS = 20;
+const HULL_RINGS = 26;
+const HULL_SEGMENTS = 14;
 
 /** The hump: where along the body it peaks (t from the nose), how high. */
 const HUMP_CENTRE_T = 0.20;
@@ -106,8 +106,8 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
     tubularSegments: 6,
     radialSegments: 12,
   }));
-  const head = pool.keepGeometry(smoothEllipsoid(0.44, 0.36, 0.32, 16, 12));
-  const muzzle = pool.keepGeometry(smoothEllipsoid(0.24, 0.20, 0.20, 12, 8));
+  const head = pool.keepGeometry(smoothEllipsoid(0.44, 0.36, 0.32, 10, 8));
+  const muzzle = pool.keepGeometry(smoothEllipsoid(0.24, 0.20, 0.20, 8, 6));
   const nose = pool.keepGeometry(smoothEllipsoid(0.08, 0.06, 0.09, 8, 6));
   const eyeGeometry = pool.keepGeometry(smoothEllipsoid(0.05, 0.05, 0.05, 8, 6));
   const beard = pool.keepGeometry(taperedTube({
@@ -166,8 +166,8 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
     halfStance: HALF_STANCE,
     rootRadius: 0.085,
     tipRadius: 0.045,
-    radialSegments: 8,
-    heightSegments: 3,
+    radialSegments: 6,
+    heightSegments: 1,
     hoofHeight: 0.06,
     haunch: [0.32, 0.36, 0.18],
   }, body, horn, body);
