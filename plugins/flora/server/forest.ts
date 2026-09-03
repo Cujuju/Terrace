@@ -245,6 +245,27 @@ export type OccupancyPredicate = (x: number, y: number) => boolean;
 const NEVER_OCCUPIED: OccupancyPredicate = () => false;
 
 /**
+ * Ground a survey may not put anything NEW on (issue #297): occupied ground
+ * PLUS ground that burned inside the last FLORA_SCORCH_REGROW_SECONDS
+ * (./scorch.ts). Composed exactly once, in ./index.ts's `barredGround`, and
+ * handed to every survey — crops, grass, the fringe and this one — and to the
+ * fuel answer, so no population can forget that a burn consumes the ground.
+ * The first version of the scorch record was consulted by the meadow predicate
+ * alone; crops kept planting on burned farmland and re-lighting the fire
+ * within a survey of its going out, which is the drift this type closes.
+ *
+ * DISTINCT FROM OccupancyPredicate IN ONE WAY: it never fells what already
+ * stands. A building on a cell evicts the tree (cull); a burn does not, because
+ * a burn that consumed the tree already felled it (floraBurnedOut) and a burn
+ * that did not — rain — leaves a scorched tree standing by design
+ * (plugins/fire/server/blaze.ts). So this survey takes both: `isOccupied` for
+ * area and cull, `isBarred` for candidates and planting. The default makes
+ * the bar the occupancy alone, which is the shape of a world with nothing
+ * burning and of every suite call that predates fire.
+ */
+export type BarredGround = (x: number, y: number) => boolean;
+
+/**
  * The standing trees, keyed by cell.
  *
  * A Set of packed cell keys rather than a per-cell byte grid: at the cap it
@@ -389,6 +410,7 @@ export class Forest {
     cx: number,
     cy: number,
     isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
   ): void {
     if (!world.isChunkUnlocked(cx, cy)) return;
 
@@ -410,6 +432,9 @@ export class Forest {
         this.sweepArea++;
         const key = treeKey(x, y);
         if (this.standing.has(key)) continue;
+        // Scorched ground counts toward the area — it is still meadow, it will
+        // be meadow again — but grows nothing until it regrows (BarredGround).
+        if (isBarred(x, y)) continue;
 
         this.sweepSeen++;
         if (this.candidates.length < FLORA_MAX_SPROUTS_PER_SURVEY) {
@@ -444,7 +469,7 @@ export class Forest {
     stability: StabilityMap,
     nowSeconds: number,
     rng: FloraRng,
-    isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
   ): TreeCell[] {
     const deficit = treeTargetFor(this.sweepArea) - this.standing.size;
     let quota = sproutCount(deficit, rng);
@@ -456,7 +481,7 @@ export class Forest {
       const cell = treeCellOf(key);
       if (!isPlantableCell(world, cell.x, cell.y)) continue;
       if (!stability.isStable(cell.x, cell.y, nowSeconds)) continue;
-      if (isOccupied(cell.x, cell.y)) continue;
+      if (isBarred(cell.x, cell.y)) continue;
       if (this.isCrowded(cell.x, cell.y)) continue;
       if (!this.plant(cell.x, cell.y)) continue;
       grown.push(cell);
@@ -507,6 +532,7 @@ export class Forest {
     rng: FloraRng,
     chunkBudget: number,
     isOccupied: OccupancyPredicate = NEVER_OCCUPIED,
+    isBarred: BarredGround = isOccupied,
   ): SurveyResult {
     const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
     if (totalChunks <= 0) return EMPTY_SURVEY;
@@ -523,6 +549,7 @@ export class Forest {
         this.cursor % world.chunksPerEdge,
         Math.floor(this.cursor / world.chunksPerEdge),
         isOccupied,
+        isBarred,
       );
       this.cursor++;
       budget--;
@@ -531,7 +558,7 @@ export class Forest {
     if (this.cursor < totalChunks) return EMPTY_SURVEY;
 
     const felled = this.cull(world, isOccupied);
-    const grown = this.grow(world, stability, nowSeconds, rng, isOccupied);
+    const grown = this.grow(world, stability, nowSeconds, rng, isBarred);
     this.resetSweep();
 
     return grown.length === 0 && felled.length === 0 ? EMPTY_SURVEY : { grown, felled };
@@ -549,6 +576,7 @@ export class Forest {
     nowSeconds: number,
     rng: FloraRng,
     isOccupied: OccupancyPredicate = NEVER_OCCUPIED,
+    isBarred: BarredGround = isOccupied,
   ): SurveyResult {
     return this.advanceSurvey(
       world,
@@ -557,6 +585,7 @@ export class Forest {
       rng,
       world.chunksPerEdge * world.chunksPerEdge,
       isOccupied,
+      isBarred,
     );
   }
 }

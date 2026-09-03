@@ -131,10 +131,11 @@ import {
   Forest,
   createFloraRng,
   type FloraRng,
+  type BarredGround,
   type OccupancyPredicate,
 } from './forest.ts';
 import { CropField, cropSurveyChunksPerTick } from './crops.ts';
-import { GrassField, grassSurveyChunksPerTick, isMeadowCell, isMeadowGround } from './grass.ts';
+import { GrassField, grassSurveyChunksPerTick, isMeadowCell } from './grass.ts';
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { closeFireBridge, loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { StumpField } from './stumps.ts';
@@ -866,6 +867,25 @@ function groundCoverOccupied(x: number, y: number): boolean {
 }
 
 /**
+ * THE ONE PLACE THE SCORCH RECORD MEETS AN OCCUPANCY (issue #297): ground a
+ * survey may not put anything new on is ground that is occupied OR burned
+ * inside the window (forest.ts's BarredGround). Every survey and the fuel
+ * answer get their bar from here, over whichever occupancy is theirs, so no
+ * population can consult the one and forget the other — the drift that had
+ * crops re-sowing a burned field while the fire stood at its edge.
+ */
+function barredGround(isOccupied: OccupancyPredicate): BarredGround {
+  return (x, y) => isOccupied(x, y) || scorchField.has(x, y);
+}
+
+/**
+ * The ground-cover bar, built once: `barredGround(groundCoverOccupied)` with no
+ * per-call closure, because `floraFuelAt` asks it from fire's tick once per
+ * ignition (groundCoverOccupied's "queried per cell" note).
+ */
+const groundCoverBarred: BarredGround = barredGround(groundCoverOccupied);
+
+/**
  * THE SIM STEP. Fixed order, once per host tick:
  *
  *   1. advance the clock — everything else reads simSeconds, nothing reads a
@@ -896,13 +916,15 @@ function simulate(world: WorldApi, dt: number): void {
   const budget = Math.floor(scanCredit);
   if (budget > 0) {
     scanCredit -= budget;
+    const treeOccupied = occupiedCells();
     const { grown, felled } = forest.advanceSurvey(
       world,
       stability,
       simSeconds,
       rng,
       budget,
-      occupiedCells(),
+      treeOccupied,
+      barredGround(treeOccupied),
     );
     broadcastChanges(world, grown, felled);
   }
@@ -918,7 +940,7 @@ function simulate(world: WorldApi, dt: number): void {
   const cropBudget = Math.floor(cropScanCredit);
   if (cropBudget > 0) {
     cropScanCredit -= cropBudget;
-    const outcome = cropField.advance(world, occupiedCells(), cropBudget);
+    const outcome = cropField.advance(world, barredGround(occupiedCells()), cropBudget);
     if (outcome !== null) broadcastCropChanges(world, outcome.sprouted, outcome.withered);
   }
 
@@ -931,7 +953,7 @@ function simulate(world: WorldApi, dt: number): void {
   const grassBudget = Math.floor(grassScanCredit);
   if (grassBudget > 0) {
     grassScanCredit -= grassBudget;
-    const outcome = grassField.advance(world, groundCoverOccupied, scorchField, grassBudget);
+    const outcome = grassField.advance(world, groundCoverBarred, grassBudget);
     if (outcome !== null) broadcastGrassChanges(world, outcome.sprouted, outcome.withered);
   }
 
@@ -943,7 +965,7 @@ function simulate(world: WorldApi, dt: number): void {
   const fringeBudget = Math.floor(fringeScanCredit);
   if (fringeBudget > 0) {
     fringeScanCredit -= fringeBudget;
-    const outcome = fringeField.advance(world, groundCoverOccupied, fringeBudget);
+    const outcome = fringeField.advance(world, groundCoverBarred, fringeBudget);
     if (outcome !== null) broadcastFringeChanges(world, outcome.sprouted, outcome.withered);
   }
 
@@ -1278,14 +1300,16 @@ export const FLORA_GRASS_FUEL_HEIGHT = 0.15;
  * since issue #290 it decides nothing of the kind — the burn record is keyed
  * on the ground, tuft or no tuft.
  *
- * AND THE MEADOW IS FUEL THAT RUNS OUT (issue #290). `isMeadowCell` now also
- * refuses ground that burned inside the last FLORA_SCORCH_REGROW_SECONDS
+ * AND THE MEADOW IS FUEL THAT RUNS OUT (issues #290, #297). `isMeadowCell`
+ * refuses barred ground, and the bar this passes it (`groundCoverBarred`)
+ * includes ground that burned inside the last FLORA_SCORCH_REGROW_SECONDS
  * (./scorch.ts), which is what stops this function handing the same cell back
  * as fuel a few seconds after it finished burning. #289 removed the old
  * consumption without noticing it was one: while the fuel answer read
  * `grassField`, floraBurnedOut's tuft removal WAS the bed being eaten. The
- * replacement is in the predicate rather than here, so the survey cannot go on
- * re-planting ground this refuses to burn.
+ * replacement is in the bar every survey receives rather than here, so no
+ * survey — grass, crops, fringe or forest — can go on planting ground this
+ * refuses to burn, and none can plant what this would then burn again.
  *
  * THE ORDER IS TALLEST FIRST, and here it carries meaning rather than being
  * arbitrary: grass GROWS UNDER TREES (../server/grass.ts), so a cell really can
@@ -1312,7 +1336,7 @@ function floraFuelAt(x: number, y: number): { burnSeconds: number; height: numbe
     return { burnSeconds: FLORA_CROP_BURN_SECONDS, height: FLORA_CROP_FUEL_HEIGHT };
   }
   const world = fuelWorld;
-  if (world !== null && isMeadowCell(world, groundCoverOccupied, scorchField, x, y)) {
+  if (world !== null && isMeadowCell(world, groundCoverBarred, x, y)) {
     return { burnSeconds: FLORA_GRASS_BURN_SECONDS, height: FLORA_GRASS_FUEL_HEIGHT };
   }
   return null;
@@ -1346,16 +1370,6 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
   const scorched: GrassCell[] = [];
   const stumps: StumpCell[] = [];
   for (const cell of cells) {
-    // BEFORE ANY OF THE REMOVALS BELOW (issue #290), because two of them change
-    // the answer: felling a tree leaves a stump, and a stump is ground cover,
-    // so a cell asked AFTER the fell would report "not meadow" and the ground
-    // it burned would never be recorded. `isMeadowGround` and not
-    // `isMeadowCell` for the reason grass.ts gives at its export: this must
-    // answer yes for ground that is ALREADY scorched, so that a tree finishing
-    // its burn on ground whose grass went 20 seconds ago restarts the clock
-    // instead of letting it run out under the fire.
-    const burnedMeadowGround = isMeadowGround(world, groundCoverOccupied, cell.x, cell.y);
-
     if (forest.fell(cell.x, cell.y)) {
       felled.push({ x: cell.x, y: cell.y });
       const stump = stumpField.leave(cell.x, cell.y, simSeconds);
@@ -1382,7 +1396,15 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
     // above: since #289 the whole meadow is fuel and only ~56% of it has a
     // blade on it, so recording only the cells `reactToEdit` answered for
     // would leave ~44% of every burn scar as fuel the moment it burned out.
-    if (burnedMeadowGround) scorchField.scorch(cell.x, cell.y, simSeconds);
+    //
+    // UNCONDITIONAL since #297. The first version stamped only meadow ground,
+    // so a burned crop cell was never recorded: the withered crop stopped
+    // counting as occupied, the meadow test handed the cell back as grass
+    // fuel a tick later, and the crop survey re-sowed it inside 5 s. A fire
+    // finished here, whatever stood here; the ground remembers that. Stamping
+    // a tree cell a second time (grass under it burned earlier) restarts the
+    // clock, which is the refresh the old meadow-ground carve-out existed for.
+    scorchField.scorch(cell.x, cell.y, simSeconds);
   }
 
   broadcastChanges(world, [], felled);

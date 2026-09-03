@@ -55,7 +55,7 @@ import {
   type FringeSpecies,
 } from '../protocol.ts';
 import { fringeSpeciesForHeight, type FloraWorld } from './bands.ts';
-import type { OccupancyPredicate } from './forest.ts';
+import type { BarredGround } from './forest.ts';
 
 /**
  * Simulated seconds between fringe surveys.
@@ -201,7 +201,7 @@ export class FringeField {
 
   private scanChunk(
     world: FringeWorld,
-    isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
     cx: number,
     cy: number,
   ): void {
@@ -214,7 +214,7 @@ export class FringeField {
         // Occupancy first: it is one Set lookup, where fringeCoversGround can
         // cost a 48-cell ring. Grass orders these the other way round because
         // its own predicate is cheaper than the Set — see grass.ts's note.
-        if (isOccupied(x, y)) continue;
+        if (isBarred(x, y)) continue;
         const species = fringeGrowthAt(world, x, y);
         if (species === null) continue;
         if (this.staged.size >= FLORA_FRINGE_CAP) continue; // never evict an already-staged cell for a later one in the same sweep
@@ -230,7 +230,7 @@ export class FringeField {
    */
   advance(
     world: FringeWorld,
-    isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
     chunkBudget: number,
   ): FringeSurveyResult | null {
     const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
@@ -244,7 +244,7 @@ export class FringeField {
       const cy = Math.floor(this.cursor / world.chunksPerEdge);
       // Hoisted out of 256 cells, exactly as the other three sweeps hoist it,
       // and exact for the same reason: a cell's unlock state IS its chunk's.
-      if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isOccupied, cx, cy);
+      if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isBarred, cx, cy);
       this.cursor++;
       budget--;
     }
@@ -271,9 +271,9 @@ export class FringeField {
   }
 
   /** One complete survey in a single call — the shape the tests reason in. */
-  survey(world: FringeWorld, isOccupied: OccupancyPredicate): FringeSurveyResult {
+  survey(world: FringeWorld, isBarred: BarredGround): FringeSurveyResult {
     return (
-      this.advance(world, isOccupied, world.chunksPerEdge * world.chunksPerEdge) ?? EMPTY_RESULT
+      this.advance(world, isBarred, world.chunksPerEdge * world.chunksPerEdge) ?? EMPTY_RESULT
     );
   }
 }
