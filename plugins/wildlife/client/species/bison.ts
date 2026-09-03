@@ -194,12 +194,14 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
     radialSegments: 8,
   }));
   // Short, thick horns: out from the sides of the crown, then up and in.
+  // Rooted INSIDE the skull (the crown is 0.185 half-wide, 0.20 half-tall
+  // there) so the root ring is buried and the horn grows out of bone.
   const horns = [1, -1].map((sign) => pool.keepGeometry(taperedTube({
     path: [
-      new Vector3(-0.02, 0.14, sign * 0.14),
-      new Vector3(-0.04, 0.22, sign * 0.24),
-      new Vector3(-0.02, 0.30, sign * 0.24),
-      new Vector3(0.02, 0.36, sign * 0.18),
+      new Vector3(0.06, 0.12, sign * 0.12),
+      new Vector3(0.02, 0.22, sign * 0.24),
+      new Vector3(0.02, 0.30, sign * 0.24),
+      new Vector3(0.05, 0.36, sign * 0.18),
     ],
     rootRadius: 0.05,
     tipRadius: 0.014,
@@ -248,7 +250,9 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   headPivot.add(pool.part(nose, horn, HEAD_CENTRE_X + HEAD_LENGTH * 0.5 + 0.04, -0.02, 0));
   headPivot.add(pool.part(beard, cape, 0, 0, 0));
   for (const sign of [1, -1]) {
-    headPivot.add(pool.part(eyeGeometry, eye, HEAD_CENTRE_X + 0.08, 0.05, sign * 0.16));
+    // Set into the skull: the wedge is 0.13 half-wide here, so a 0.05 eye at
+    // 0.12 is buried to its centre and shows as a bump, not a floating bead.
+    headPivot.add(pool.part(eyeGeometry, eye, HEAD_CENTRE_X + 0.08, 0.05, sign * 0.12));
     headPivot.add(pool.part(ear, cape, -0.06, 0.06, sign * 0.24));
     headPivot.add(pool.part(horns[sign === 1 ? 0 : 1]!, horn, 0, 0, 0));
   }
