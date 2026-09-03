@@ -65,6 +65,9 @@ const view = createDiscSystemsView<ThunderstormRig>({
   update: (rig, disc, elapsed, dt, reduced) => {
     rig.update(disc, elapsed, dt, reduced);
   },
+  // The view orders the deck against the camera once per frame — see
+  // DiscSystemsViewSpec.deck.
+  deck: () => rigs?.deck ?? null,
   attachExtras: (ctx: ClientPluginCtx) => {
     const pool = rigs;
     if (pool === null) return;

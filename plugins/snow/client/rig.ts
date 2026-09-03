@@ -15,7 +15,6 @@ import {
 import {
   createDiscRig,
   createRigPool,
-  DISC_RENDER_ORDER,
   type DiscRig,
   type RigPool,
 } from '../../../client/src/plugins/kit/discRig.ts';
@@ -116,7 +115,6 @@ export function createSnowRigs(ctx: ClientPluginCtx): SnowRigs {
     puffSizeFraction: SNOW_PUFF_SIZE_FRACTION,
     color: SNOW_DECK_COLOR,
     name: `${SNOW_PLUGIN_NAME}:deck`,
-    renderOrder: DISC_RENDER_ORDER,
     applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
   });
 

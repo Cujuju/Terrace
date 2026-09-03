@@ -19,6 +19,7 @@ import { Group } from 'three';
 import type { ClientPluginCtx } from '../types.ts';
 import { DiscInterpolator, type InterpolatedDisc } from './discInterpolator.ts';
 import type { RigPool } from './discRig.ts';
+import type { CumulusDeck } from './cumulusDeck.ts';
 import { reconcileById } from './viewReconcile.ts';
 import { watchReducedMotion } from './reducedMotion.ts';
 import { parseDiscSystemsPayload } from '@terrace/shared';
@@ -48,6 +49,21 @@ export interface DiscSystemsViewSpec<R extends { readonly root: Group }> {
   createPool(ctx: ClientPluginCtx): RigPool<R>;
   /** One frame of one rig. */
   update(rig: R, disc: InterpolatedDisc, elapsed: number, dt: number, reduced: boolean): void;
+  /**
+   * This plugin's ONE cloud deck, or undefined for a plugin that draws none.
+   *
+   * A LOOKUP RATHER THAN THE DECK ITSELF, because the deck is built inside
+   * `createPool` above — which runs at attach, long after this spec object is
+   * constructed — and every plugin that has one already keeps its pool in a
+   * module-level variable for exactly this reason.
+   *
+   * WHY THE VIEW OWNS THE CALL. A deck's draw order depends on which side of
+   * its own base plane the camera is (kit/cumulusDeck.ts's
+   * `orderAgainstCamera`), which is one boolean per frame for a whole plugin —
+   * so it is asked ONCE, here, for all three deck-using plugins, rather than
+   * copied into three `frameExtras`. Cyclone has no deck and passes nothing.
+   */
+  deck?(): CumulusDeck | null;
   /**
    * Anything else this plugin parents into its layer BESIDE the masses — a
    * fixed light bank, a loose bolt that belongs to no mass. Called once, after
@@ -95,6 +111,11 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
    */
   let animationSeconds = 0;
   let reducedMotion: { matches(): boolean; stop(): void } | null = null;
+  /**
+   * The context this view was attached with, so the frame can read the camera.
+   * Null outside attach…dispose, exactly like `pool` and `container`.
+   */
+  let context: ClientPluginCtx | null = null;
   let unsubscribeMessages: (() => void) | null = null;
   let unsubscribeFrames: (() => void) | null = null;
 
@@ -129,6 +150,14 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
     if (!reduced) animationSeconds += Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
 
     interpolator.advance(dt);
+
+    // BEFORE THE RIGS, and before anything a plugin draws of its own: the deck
+    // and the rigs are composited in submission order this frame, so the order
+    // has to be settled before either is submitted.
+    if (context !== null) {
+      spec.deck?.()?.orderAgainstCamera(context.cameraPosition().y);
+    }
+
     spec.frameExtras?.(dt, reduced);
 
     const sampled = interpolator.sample();
@@ -143,6 +172,7 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
 
   return {
     attach(ctx: ClientPluginCtx): void {
+      context = ctx;
       pool = spec.createPool(ctx);
       reducedMotion = watchReducedMotion();
 
@@ -181,6 +211,7 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
       spec.disposeExtras?.();
       pool?.dispose();
       pool = null;
+      context = null;
 
       reducedMotion?.stop();
       reducedMotion = null;

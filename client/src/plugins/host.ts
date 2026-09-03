@@ -38,6 +38,7 @@ import type {
   GroundShadeDisc,
   MoverPose,
   TerraceClientPlugin,
+  WorldPosition,
 } from './types.ts';
 
 /**
@@ -367,6 +368,26 @@ export function createClientPluginHost(
   const NO_OCCUPANTS: readonly CellOccupancy[] = [];
 
   /**
+   * The camera's world position, in a scratch object refilled per call —
+   * `ClientPluginCtx.cameraPosition`.
+   *
+   * ONE SCRATCH FOR EVERY PLUGIN, host-scoped rather than per-context: the
+   * contract the accessor's doc states is "read the numbers, never keep the
+   * reference", so a second holder is already out of contract and a per-plugin
+   * copy would only make the breach harder to notice. Read from
+   * `viewport.camera` at the moment of the call, so it is this frame's camera
+   * and not a value the host would have to remember to refresh.
+   */
+  const cameraScratch = { x: 0, y: 0, z: 0 };
+  const cameraPosition = (): WorldPosition => {
+    const position = viewport.camera.position;
+    cameraScratch.x = position.x;
+    cameraScratch.y = position.y;
+    cameraScratch.z = position.z;
+    return cameraScratch;
+  };
+
+  /**
    * Scratch for the object pick, allocated once.
    *
    * Both picks below used to build a fresh Raycaster and Vector2 per call, and
@@ -657,6 +678,7 @@ export function createClientPluginHost(
       },
       pickTerrainCell,
       pickWorldCell,
+      cameraPosition,
       moverPose,
       revealedAt: (x, y) => world.revealedAt(x, y),
       applyRevealClip: (material, label) => world.applyRevealClip(material, label),

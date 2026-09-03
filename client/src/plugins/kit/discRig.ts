@@ -46,6 +46,11 @@ import type { InterpolatedDisc } from './discInterpolator.ts';
  * the surface can therefore be drawn first and then painted over by the sea. A
  * positive render order puts every sheet after it, unconditionally. Same value
  * and same reasoning as the monsters plugin's DREAD_RENDER_ORDER.
+ *
+ * THE CLOUD DECK IS ORDERED AGAINST THIS, half a step either side of it, and
+ * which side depends on the camera — ./cumulusDeck.ts's
+ * DECK_RENDER_ORDER_CAMERA_ABOVE_BASE states the argument. So this number is
+ * the middle of the kit's three orders, not its top.
  */
 export const DISC_RENDER_ORDER = 1;
 
