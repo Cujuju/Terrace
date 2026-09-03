@@ -35,6 +35,15 @@ import {
   type Occupant,
 } from '@terrace/shared';
 import {
+  severityAt,
+  tangentialWindAt,
+  type ParsedStormDamage,
+} from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
+import {
+  BOAT_WIND_PUSH_CELLS_PER_SEVERITY_SECOND,
+  BOAT_WIND_PUSH_STEP_CELLS,
+} from './cyclone-event.ts';
+import {
   BOATS_PER_VILLAGE,
   BOAT_ENGAGEMENT_RANGE_CELLS,
   BOAT_REBUILD_SECONDS,
@@ -261,6 +270,38 @@ let krakenWounds = 0;
 /** Seconds since the kraken last sank a boat. */
 let sinceLastSinking = 0;
 
+/**
+ * A wind-damage event this fleet has not been pushed by yet, or null.
+ *
+ * A QUEUE OF ONE, AND NOT A PER-TICK LATCH — the opposite of how the kraken
+ * position is held (../server/index.ts's `krakenThisTick`), and the difference
+ * is what the two things ARE. A kraken position is a STANDING FACT that is
+ * re-announced every tick, so dropping it at the end of a tick is how "the
+ * kraken left" reads. A damage event is a DISCRETE quantum of storm — it
+ * arrives once a second and carries the seconds it accounts for — so it must be
+ * applied exactly once. Clearing it unapplied would silently drop most of a
+ * hurricane, and holding it across ticks would apply the same second of wind
+ * ten times over.
+ *
+ * WHY IT IS HELD AT ALL, rather than pushing the boats from inside the event
+ * handler. The host fans an emit out synchronously, inside the emitting
+ * plugin's own onTick (server/src/plugins/host.ts's emit fan-out), and plugins
+ * tick in LOAD ORDER — which is alphabetical by directory, so `boats` has
+ * already advanced its whole fleet by the time `cyclone` emits. Pushing from
+ * the handler would therefore move hulls in the middle of another plugin's
+ * tick, after this one's own step, separation and station-keeping had all
+ * been resolved against the old positions: a boat could be shoved onto a
+ * berth another boat had just been given. Held here and consumed at the top of
+ * advanceFleet, the push is simply where the fleet starts its next frame.
+ *
+ * ONE PENDING EVENT, NOT A LIST. Damage arrives at 1 Hz per storm and ticks run
+ * at 10 Hz, so a second event before the first is consumed means the tick loop
+ * has stalled for a whole second — in which case replaying a backlog of wind
+ * onto a fleet in one frame is the wrong recovery. The newest event is kept,
+ * because it describes where the storm IS.
+ */
+let pendingWind: ParsedStormDamage | null = null;
+
 const villageKey = (x: number, y: number): string => `${x},${y}`;
 
 export function resetFleet(): void {
@@ -270,6 +311,7 @@ export function resetFleet(): void {
   nextBoatId = 1;
   krakenWounds = 0;
   sinceLastSinking = 0;
+  pendingWind = null;
 }
 
 export function livingBoats(): readonly Boat[] {
@@ -748,6 +790,61 @@ function nearestCrowder(
   return nearest;
 }
 
+/**
+ * Records the wind a cyclone announced, to be applied at the top of the next
+ * frame — see `pendingWind` for why it is not applied here.
+ */
+export function noteStormWind(damage: ParsedStormDamage): void {
+  pendingWind = damage;
+}
+
+/**
+ * Carries every boat inside the storm's disc along its tangential wind, and
+ * clears the pending event.
+ *
+ * THE WHOLE FLEET IS TESTED, not the event's `cells` sample: the roster IS the
+ * index, bounded by BOATS_PER_VILLAGE per settlement, so answering exactly
+ * costs one distance test per hull per second of storm. The kit's own note on
+ * that sample ("a SAMPLE for consumers with no spatial index") is what makes
+ * this the intended reading rather than a shortcut.
+ *
+ * NO RANDOMNESS AT ALL — the displacement is a function of the boat's position
+ * and the event, so two runs from the same seed push the same hulls the same
+ * distance. This plugin has no generator of its own to reach for, and reaching
+ * for Math.random would be the one thing that made a fleet's history
+ * unreproducible.
+ *
+ * WALKED A CELL AT A TIME AND STOPPED AT THE FIRST WALL (see
+ * BOAT_WIND_PUSH_STEP_CELLS), so a boat driven onto a coast fetches up against
+ * it rather than through it. A boat with no water to be pushed into simply does
+ * not move, which is a hull holding its ground against the wind — not an error.
+ */
+function applyStormWind(world: BoatWorld): void {
+  const wind = pendingWind;
+  pendingWind = null;
+  if (wind === null) return;
+
+  for (const boat of boats) {
+    const severity = severityAt(wind, boat.x, boat.y);
+    if (severity <= 0) continue;
+    const direction = tangentialWindAt(wind, boat.x, boat.y);
+    // Null only at the eye's exact centre, which is inside the calm middle
+    // anyway — severity is already zero there, so this is unreachable in
+    // practice and cheap to be right about.
+    if (direction === null) continue;
+
+    const distance = severity * wind.durationSeconds * BOAT_WIND_PUSH_CELLS_PER_SEVERITY_SECOND;
+    let travelled = 0;
+    while (travelled < distance) {
+      const hop = Math.min(BOAT_WIND_PUSH_STEP_CELLS, distance - travelled);
+      if (!moveIfSailable(world, boat, boat.x + direction.x * hop, boat.y + direction.y * hop)) {
+        break;
+      }
+      travelled += hop;
+    }
+  }
+}
+
 /** Commits a position only if a hull may actually be there. */
 function moveIfSailable(world: BoatWorld, boat: Boat, x: number, y: number): boolean {
   if (!isSailable(world, x, y)) return false;
@@ -772,6 +869,15 @@ export function advanceFleet(
   dt: number,
 ): FleetOutcome {
   advanceShipyards(world, dt);
+
+  // THE STORM MOVES THE FLEET BEFORE THE FLEET MOVES ITSELF (issue #299). It is
+  // first because the push is where each hull ACTUALLY IS when this frame
+  // starts — a boat is carried by the wind and then rows from wherever that
+  // left it. Doing it after the sail step would mean every station-keeping and
+  // separation decision below was made about a position the boat was about to
+  // be shoved off, and a fleet at station would spend the whole storm giving
+  // way to berths the wind had already emptied.
+  applyStormWind(world);
 
   // Start-of-tick berth snapshot, so every boat gives way to where the others
   // WERE rather than to where the ones already moved this tick now are — the
