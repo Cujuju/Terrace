@@ -278,6 +278,18 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 /** Stable 0…1 from an instance index, for per-puff size and jitter. */
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887;
 
+/**
+ * Multipliers that turn one seed into two INDEPENDENT 0…1 values in the
+ * shader (`fract(aSeed * k)`): one for a puff's height jitter within its tier,
+ * one for its size. Irrational-looking and far apart, so the two derived
+ * values do not correlate — a puff that sits high in its band must not also
+ * be reliably the big one, or the deck's top tier reads as a row of same-size
+ * heads. Any two such constants work; these are named so the vertex source
+ * carries no bare numbers.
+ */
+const SEED_HASH_TIER_JITTER = 7.31;
+const SEED_HASH_PUFF_SIZE = 5.7;
+
 // ── The shade the deck throws ────────────────────────────────────────────────
 
 /**
@@ -437,7 +449,7 @@ attribute vec2 aPolar;`;
       return;
     }
 
-    float tierJitter = (fract(aSeed * 7.31) * 2.0 - 1.0) *
+    float tierJitter = (fract(aSeed * ${glslFloat(SEED_HASH_TIER_JITTER)}) * 2.0 - 1.0) *
       ${glslFloat(DECK_TIER_JITTER_WORLD_UNITS)};
 
     transformed = vec3(
@@ -450,7 +462,7 @@ attribute vec2 aPolar;`;
     float puffSize = massRadius * ${glslFloat(spec.puffSizeFraction)} *
       (1.0 + ${glslFloat(PUFF_SIZE_TOP_GROWTH)} * aTier) *
       (${glslFloat(1 - PUFF_SIZE_SEED_VARIATION)} +
-       ${glslFloat(2 * PUFF_SIZE_SEED_VARIATION)} * fract(aSeed * 5.7));`;
+       ${glslFloat(2 * PUFF_SIZE_SEED_VARIATION)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_SIZE)}));`;
 
   /**
    * The billboard, in VIEW space, after `<project_vertex>` has put the puff's
@@ -635,13 +647,19 @@ attribute vec2 aPolar;`;
 
     update(slot: number, disc: InterpolatedDisc): void {
       if (slot < 0) return;
+      // CLAMPED AT ZERO before it is stored. `live` is kept by comparing the
+      // stored intensity against exactly 0, so a negative value — which the
+      // interpolator's easing could hand over at the end of a fade — would
+      // count as "lit" on the way in and "dark" on every frame after, and the
+      // counter would walk below zero and never turn the mesh off again.
+      const intensity = Math.max(0, disc.intensity);
       const wasDark = massSize[slot * 2 + 1] === 0;
       massXZ[slot * 2] = disc.x * CELL_WORLD_SIZE;
       massXZ[slot * 2 + 1] = disc.y * CELL_WORLD_SIZE;
       massSize[slot * 2] = disc.radius * CELL_WORLD_SIZE;
-      massSize[slot * 2 + 1] = disc.intensity;
-      if (wasDark && disc.intensity > 0) live++;
-      if (!wasDark && disc.intensity <= 0) live--;
+      massSize[slot * 2 + 1] = intensity;
+      if (wasDark && intensity > 0) live++;
+      if (!wasDark && intensity === 0) live--;
       // ONE DRAW CALL FOR NOTHING IS STILL ONE DRAW CALL. A plugin with no
       // mass in the air submits no deck at all, which is the same promise
       // discSystemsView.ts makes for an empty list.
