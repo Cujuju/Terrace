@@ -64,6 +64,8 @@ export const RAIN_PROFILE: PrecipitationProfile = {
   color: 0xa8c4d8,
   swayCells: 0,
   swayHz: 0,
+  // A FULL DISC: rain falls out of the whole cloud, which has no hole in it.
+  innerRadiusFraction: 0,
 };
 
 /**

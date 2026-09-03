@@ -117,6 +117,41 @@ export interface PrecipitationProfile {
   /** Horizontal sway amplitude in cells, and its rate. Zero disables it. */
   readonly swayCells: number;
   readonly swayHz: number;
+  /**
+   * The HOLE in the middle of the seed disc, as a fraction of the mass's
+   * radius: particles are seeded over the annulus from here to the rim.
+   *
+   * ZERO IS A FULL DISC and is what every mass whose cloud has a middle passes.
+   * It is a first-class part of the contract rather than a caller's own
+   * post-filter because the seeding below is the only place that knows the
+   * disc's area law, and a caller rejecting samples would quietly change the
+   * density it produced (`seedRadius` states the law).
+   *
+   * A FRACTION, not a length, for the reason the eye's own radius is one
+   * (../../../../plugins/cyclone/protocol.ts's CYCLONE_EYE_RADIUS_FRACTION): it
+   * is a fact about the SHAPE of the cloud, and a shape scales with the thing
+   * it is the shape of.
+   */
+  readonly innerRadiusFraction: number;
+}
+
+/**
+ * Where one particle is seeded across the mass's disc, as a fraction of the
+ * radius, from a uniform sample `u` in [0, 1).
+ *
+ * UNIFORM AREA OVER THE ANNULUS between `innerRadiusFraction` and the rim.
+ * Area grows as r², so the sample has to be spread over r² and taken back to r
+ * — which is what the bare `sqrt(u)` of a full disc already is, and this is
+ * that same law with the hole's area removed from the bottom of the range. At
+ * `inner` 0 it IS `sqrt(u)`, to the last bit, which is why the three
+ * full-disc plugins are untouched by the annulus existing.
+ *
+ * Pure, and exported, so the density law can be checked without a GL context —
+ * the same reason `fallFraction` and `driftSeconds` live out here.
+ */
+export function seedRadius(u: number, innerRadiusFraction: number): number {
+  const innerArea = innerRadiusFraction * innerRadiusFraction;
+  return Math.sqrt(innerArea + u * (1 - innerArea));
 }
 
 /**
@@ -208,9 +243,10 @@ export function createPrecipitationColumn(
   const swayPhase = new Float32Array(profile.count);
 
   for (let i = 0; i < profile.count; i++) {
-    // sqrt of a uniform gives a UNIFORM AREA density over the disc; using the
-    // uniform directly would crowd every column into its own middle.
-    const r = Math.sqrt(Math.random());
+    // UNIFORM AREA over the profile's annulus — a full disc for every mass that
+    // passes `innerRadiusFraction` 0. Using the uniform sample directly would
+    // crowd every column into its own middle; see `seedRadius`.
+    const r = seedRadius(Math.random(), profile.innerRadiusFraction);
     const angle = Math.random() * TWO_PI;
     discX[i] = Math.cos(angle) * r;
     discZ[i] = Math.sin(angle) * r;

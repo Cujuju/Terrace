@@ -94,6 +94,8 @@ export const THUNDERSTORM_PROFILE: PrecipitationProfile = {
   color: 0x8fa8bd,
   swayCells: 0,
   swayHz: 0,
+  // A FULL DISC: the rain falls out of the whole cloud, which has no hole in it.
+  innerRadiusFraction: 0,
 };
 
 /**
