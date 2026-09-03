@@ -369,16 +369,34 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   // constant above, formatted through `glslFloat` because GLSL ES refuses to
   // mix an int literal into a float expression.
 
-  const declarations = /* glsl */ `
+  /**
+   * The varyings and the one tunable both stages need.
+   *
+   * ONE BLOCK FOR BOTH, because a varying must be declared identically in the
+   * two stages or the program fails to LINK — the same reasoning
+   * render/revealMask.ts states for its own shared block.
+   */
+  const sharedDeclarations = /* glsl */ `
+varying vec2 vQuad;
+varying float vPuffFade;
+#define PUFF_NORMAL_FLATNESS ${glslFloat(PUFF_NORMAL_FLATNESS)}`;
+
+  /**
+   * The vertex stage's own declarations, and they CANNOT be shared with the
+   * fragment stage: `attribute` is a vertex-only qualifier, and three rewrites
+   * it to `in` in the vertex prefix only, so a fragment shader carrying these
+   * fails to COMPILE. It fails QUIETLY as far as the picture goes — three logs
+   * the error and the mesh draws nothing — which is exactly what this deck did
+   * on its first in-world run (2026-09-02), 973 instances submitted and not one
+   * pixel on screen.
+   */
+  const vertexDeclarations = /* glsl */ `${sharedDeclarations}
 uniform vec2 uMassXZ[${spec.maxMasses}];
 uniform vec2 uMassSize[${spec.maxMasses}];
 attribute float aSlot;
 attribute float aSeed;
 attribute float aTier;
-attribute vec2 aPolar;
-varying vec2 vQuad;
-varying float vPuffFade;
-#define PUFF_NORMAL_FLATNESS ${glslFloat(PUFF_NORMAL_FLATNESS)}`;
+attribute vec2 aPolar;`;
 
   /**
    * The puff's own world position, written over `transformed` BEFORE
@@ -489,7 +507,7 @@ varying float vPuffFade;
       spliceShader(
         shader.vertexShader,
         SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${declarations}`,
+        `${SHADER_COMMON_ANCHOR}\n${vertexDeclarations}`,
         label,
       ),
       BEGIN_VERTEX_ANCHOR,
@@ -508,7 +526,7 @@ varying float vPuffFade;
         spliceShader(
           shader.fragmentShader,
           SHADER_COMMON_ANCHOR,
-          `${SHADER_COMMON_ANCHOR}\n${declarations}`,
+          `${SHADER_COMMON_ANCHOR}\n${sharedDeclarations}`,
           label,
         ),
         ALPHATEST_FRAGMENT_ANCHOR,
@@ -539,6 +557,10 @@ varying float vPuffFade;
   const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = `${spec.name}:puffs`;
   mesh.renderOrder = spec.renderOrder;
+  // BORN INVISIBLE. A plugin whose kind is not in the sky this session — snow
+  // in a temperate world, say — must submit no draw call at all, and `visible`
+  // is only ever turned on by a slot going live below.
+  mesh.visible = false;
   // Every vertex is placed in the shader from a uniform, so three's bounding
   // sphere — computed from the undisplaced quad at the origin — describes
   // nothing this draws.
