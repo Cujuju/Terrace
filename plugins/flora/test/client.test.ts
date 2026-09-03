@@ -30,7 +30,7 @@ function cells(...pairs: Array<readonly [number, number]>): TreeCell[] {
 }
 
 describe('cell keys', () => {
-  it('round-trips every corner of the largest world', () => {
+  it('round-trips every corner of the largest world, and tells transposed cells apart', () => {
     for (const [x, y] of [
       [0, 0],
       [511, 0],
@@ -40,9 +40,7 @@ describe('cell keys', () => {
     ] as const) {
       expect(treeCellOf(treeKey(x, y))).toEqual({ x, y });
     }
-  });
 
-  it('gives distinct keys to transposed cells', () => {
     expect(treeKey(3, 7)).not.toBe(treeKey(7, 3));
   });
 });
@@ -54,14 +52,12 @@ describe('the wire format', () => {
     expect(parseTreeCells(packTreeCells(trees))).toEqual(trees);
   });
 
-  it('drops malformed pairs individually and keeps the rest', () => {
+  it('drops malformed pairs individually, and a payload that is not a list at all entirely', () => {
     // Negative, fractional, non-numeric and out-of-range coordinates, plus a
     // trailing unpaired value.
     const parsed = parseTreeCells([1, 2, -1, 4, 5, 1.5, 'x', 7, 8, 9, 70000, 1, 11]);
     expect(parsed).toEqual(cells([1, 2], [8, 9]));
-  });
 
-  it('rejects a payload that is not a list at all', () => {
     expect(parseTreeCells(null)).toBeNull();
     expect(parseTreeCells('trees')).toBeNull();
     expect(parseForestPayload(null)).toBeNull();
@@ -88,7 +84,7 @@ describe('the wire format', () => {
 });
 
 describe('per-tree variation', () => {
-  it('is a pure function of the cell, so every client draws the same tree', () => {
+  it('is a pure function of the cell, so every client draws the same tree — but not the same tree across a diagonal', () => {
     for (const [x, y] of [
       [0, 0],
       [17, 4],
@@ -97,36 +93,27 @@ describe('per-tree variation', () => {
       expect(treeVariation(x, y)).toEqual(treeVariation(x, y));
       expect(hashCell(x, y)).toBe(hashCell(x, y));
     }
-  });
 
-  it('does not repeat itself across a diagonal', () => {
     // Two multipliers rather than one is what buys this; with a single one,
     // (3, 7) and (7, 3) would hash alike and a diagonal of clones would appear.
     expect(hashCell(3, 7)).not.toBe(hashCell(7, 3));
   });
 
-  it('stays inside its declared ranges', () => {
-    for (let x = 0; x < 40; x++) {
-      for (let y = 0; y < 40; y++) {
+  it('stays inside its declared ranges, and mixes the two silhouettes at roughly the declared share', () => {
+    const edge = 128;
+    let conifers = 0;
+    for (let x = 0; x < edge; x++) {
+      for (let y = 0; y < edge; y++) {
         const variation = treeVariation(x, y);
         expect(FLORA_TREE_KINDS).toContain(variation.kind);
         expect(variation.scale).toBeGreaterThanOrEqual(FLORA_TREE_SCALE_MIN);
         expect(variation.scale).toBeLessThanOrEqual(FLORA_TREE_SCALE_MAX);
         expect(variation.yaw).toBeGreaterThanOrEqual(0);
         expect(variation.yaw).toBeLessThan(TWO_PI);
+        if (variation.kind === 'conifer') conifers++;
       }
     }
-  });
-
-  it('mixes the two silhouettes at roughly the declared share', () => {
-    let conifers = 0;
-    const total = 128 * 128;
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        if (treeVariation(x, y).kind === 'conifer') conifers++;
-      }
-    }
-    const share = conifers / total;
+    const share = conifers / (edge * edge);
     const declared = FLORA_CONIFER_SHARE_OF_256 / 256;
     // Wide bounds on purpose: this asserts "a clear majority of firs with
     // broadleaves through it", which is the design intent, not a hash's exact
@@ -142,10 +129,14 @@ describe('placement', () => {
   ]);
   const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
 
-  it('puts a tree on the rendered surface at its own cell', () => {
-    const { placements, pendingGround } = placementsFor(cells([3, 4]), groundAt);
-    expect(pendingGround).toBe(0);
-    expect(placements).toHaveLength(1);
+  it('puts a tree on the rendered surface at its own cell, holds back one whose ground has not arrived, and never invents a floor', () => {
+    const { placements, pendingGround } = placementsFor(
+      cells([3, 4], [9, 9], [50, 50], [60, 1]),
+      groundAt,
+    );
+    // The two cells whose ground this client has not been sent are omitted.
+    expect(pendingGround).toBe(2);
+    expect(placements).toHaveLength(2);
 
     const variation = treeVariation(3, 4);
     expect(placements[0]).toEqual({
@@ -158,19 +149,11 @@ describe('placement', () => {
       scale: variation.scale,
       yaw: variation.yaw,
     });
-  });
 
-  it('omits a tree whose ground this client has not been sent', () => {
-    const { placements, pendingGround } = placementsFor(cells([3, 4], [50, 50], [60, 1]), groundAt);
-    expect(placements).toHaveLength(1);
-    expect(pendingGround).toBe(2);
-  });
-
-  it('places a tree below sea level exactly where the terrain says', () => {
-    // Not a case the server can produce (band 3 is 192 height units above the
-    // waterline) — but the client must not invent a floor of its own, because
-    // "the server said so" is the only rule it follows.
-    const { placements } = placementsFor(cells([9, 9]), groundAt);
-    expect(placements[0].groundY).toBe(-2);
+    // Below sea level, exactly where the terrain says. Not a case the server
+    // can produce (band 3 is 192 height units above the waterline) — but the
+    // client must not invent a floor of its own, because "the server said so"
+    // is the only rule it follows.
+    expect(placements[1].groundY).toBe(-2);
   });
 });
