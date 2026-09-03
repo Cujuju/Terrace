@@ -1,0 +1,232 @@
+// The angelfish, as anatomy: the striped disc.
+//
+// A tall swept hull — taller than long, thin across — with a triangular dorsal
+// sweeping up, a matching anal fin below, a small forked caudal, fluttering
+// pectorals, two dark bars painted across the flanks, and two eyes. Golden,
+// smooth-shaded like the fish.
+//
+// THE BARS are upright fins hung THROUGH the body: thin in Z, tall in Y,
+// standing proud of each flank by a hair. A second hull or a split sweep would
+// be the honest construction and a week of fiddling; a fin is already the
+// right orientation (an XY plane, thin across) and seats into the hull exactly
+// the way the dorsal does.
+//
+// MOTION: the tail sweeps side to side about the peduncle like the fish's
+// (fish.ts for why that is a yaw about a hinge), at a disc's tempo — slower
+// than the fish's 3.2 Hz, quicker than the eel's 1.6 — with the fish's own
+// counter-yaw fraction and fluttering pectorals. A shoaler moves like the
+// shoal it schools beside.
+//
+// ENVELOPE. ANGELFISH_ENVELOPE is what placement.ts reads. The dorsal tip is
+// the binding dimension above, the anal tip below.
+import { Group } from 'three';
+import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
+import { flatFin, smoothEllipsoid, uprightFin } from './bodyKit.ts';
+import { TWO_PI, type SpeciesModelBuilder } from './speciesModel.ts';
+
+const ANGEL_BODY_COLOR = 0xe8b83c; // golden against blue shallows
+const ANGEL_BAR_COLOR = 0x23232a; // near-black bars
+const ANGEL_FIN_COLOR = 0xdfa838; // fins a shade deeper than the body
+const ANGEL_EYE_COLOR = 0x141310;
+
+/** Nose-to-peduncle length of the hull. The caudal fin adds to it behind. */
+const HULL_LENGTH = 0.50;
+/** Centred: nose at +0.25, peduncle at -0.25. */
+const HULL_CENTRE_X = 0.0;
+const MAX_HALF_WIDTH = 0.07;
+/** Peduncle: the hinge the tail swings from. */
+const PEDUNCLE_X = HULL_CENTRE_X - HULL_LENGTH / 2;
+/** Behind the peduncle the caudal fin reaches this far back. */
+const CAUDAL_REACH = 0.13;
+const CAUDAL_HALF_SPAN = 0.10;
+
+const HULL_RINGS = 22;
+const HULL_SEGMENTS = 14;
+/** See fish.ts FIN_SEAT_BITE. */
+const FIN_SEAT_BITE = 0.035;
+const FIN_THICKNESS = 0.012;
+/**
+ * How far a bar stands proud of each flank. The hull is 0.07 across at its
+ * widest and less at the bars' stations; 0.085 half-thickness clears it by a
+ * hair without reading as a separate plate.
+ */
+const BAR_HALF_THICKNESS = 0.085;
+const EYE_RADIUS = 0.02;
+const EYE_SEGMENTS = 6;
+
+/**
+ * Tail beat: 2.2 Hz between the fish's dart and the eel's pour, 0.35 rad —
+ * the caudal tip travels ~0.05 either way, a crisp flick for a small disc.
+ */
+export const ANGELFISH_TAIL_HZ = 2.2;
+export const ANGELFISH_TAIL_SWING_RADIANS = 0.35;
+/** The head's counter-yaw as a fraction of the tail's swing (fish.ts). */
+const BODY_COUNTER_YAW_FRACTION = 0.18;
+/** Pectoral flutter, same character as the fish's. */
+const PECTORAL_DIHEDRAL_RADIANS = 0.55;
+const PECTORAL_FLUTTER_RADIANS = 0.14;
+const PECTORAL_LAG_RADIANS = 0.9;
+
+/**
+ * The hull's lines, module-level so the envelope below is derived from the
+ * same numbers the builder assembles rather than restated beside them.
+ * A disc: blunt snout, deepest just ahead of the middle, quick taper to a
+ * narrow peduncle — and TALL, two and a half times its own width at the
+ * crown of the curve.
+ */
+const angelWidth = profileFromPoints([
+  [0.00, 0.55], [0.10, 0.85], [0.25, 1.00], [0.45, 0.95], [0.65, 0.75],
+  [0.85, 0.45], [1.00, 0.28],
+]);
+const angelHeightRatio = profileFromPoints([
+  [0.00, 1.60], [0.15, 2.30], [0.35, 2.60], [0.55, 2.40], [0.75, 1.90],
+  [0.90, 1.40], [1.00, 1.10],
+]);
+const angelHalfWidth: BodyProfile = (t) => angelWidth(t) * MAX_HALF_WIDTH;
+const angelHalfHeight: BodyProfile = (t) => angelHalfWidth(t) * angelHeightRatio(t);
+/** Body t for a station x, on the authored hull. */
+const angelBodyT = (x: number): number => (HULL_CENTRE_X + HULL_LENGTH / 2 - x) / HULL_LENGTH;
+
+/** Where the dorsal and anal fins sit, and the water they stand in. */
+const DORSAL_X = -0.06;
+const dorsalSeatY = angelHalfHeight(angelBodyT(DORSAL_X)) - FIN_SEAT_BITE;
+/** Peak of the dorsal outline above its seat (an exact endpoint, not a guess). */
+const DORSAL_PEAK = 0.24;
+const ANAL_X = -0.05;
+const analSeatY = -angelHalfHeight(angelBodyT(ANAL_X)) + FIN_SEAT_BITE;
+/** Lowest point of the anal outline below its seat (likewise exact). */
+const ANAL_DEPTH = 0.22;
+
+/**
+ * What this body measures, in world units at model scale 1 — the numbers
+ * placement.ts fits the angelfish into its water column with. Read them; do
+ * not restate them there.
+ */
+export const ANGELFISH_ENVELOPE = {
+  /** Nose tip to caudal tip. */
+  length: 0.25 + -PEDUNCLE_X + CAUDAL_REACH,
+  halfLength: (0.25 + -PEDUNCLE_X + CAUDAL_REACH) / 2,
+  /** To a bar's outer face. */
+  halfWidth: BAR_HALF_THICKNESS,
+  /** Top of the dorsal fin above the origin. */
+  crownY: dorsalSeatY + DORSAL_PEAK,
+  /** Bottom of the anal fin below the origin. */
+  bellyY: analSeatY - ANAL_DEPTH,
+} as const;
+
+export const buildAngelfish: SpeciesModelBuilder = (pool) => {
+  const body = pool.lambert(ANGEL_BODY_COLOR, { flatShading: false });
+  const bar = pool.lambert(ANGEL_BAR_COLOR, { flatShading: false });
+  const fin = pool.lambert(ANGEL_FIN_COLOR, { flatShading: false });
+  const eye = pool.lambert(ANGEL_EYE_COLOR, { flatShading: false });
+
+  // The hull's lines live at module level (angelHalfWidth/angelHalfHeight/
+  // angelBodyT) so the envelope derives from them; the builder just sweeps them.
+  const hull = sweptHull({
+    length: HULL_LENGTH,
+    rings: HULL_RINGS,
+    segments: HULL_SEGMENTS,
+    halfWidth: angelHalfWidth,
+    halfHeight: angelHalfHeight,
+    noseCapReach: 0.7,
+    tailCapReach: 0.4,
+  });
+  hull.translate(HULL_CENTRE_X, 0, 0);
+  pool.keepGeometry(hull);
+
+  // Tall triangular dorsal, seated a bite into the back.
+  const dorsal = pool.keepGeometry(uprightFin((shape) => {
+    shape.moveTo(0.16, 0);
+    shape.quadraticCurveTo(0.05, 0.16, -0.08, 0.24);
+    shape.quadraticCurveTo(-0.11, 0.12, -0.16, 0);
+    shape.lineTo(0.16, 0);
+  }, FIN_THICKNESS));
+
+  // Matching anal fin below.
+  const anal = pool.keepGeometry(uprightFin((shape) => {
+    shape.moveTo(0.14, 0);
+    shape.quadraticCurveTo(0.04, -0.15, -0.07, -0.22);
+    shape.quadraticCurveTo(-0.10, -0.11, -0.14, 0);
+    shape.lineTo(0.14, 0);
+  }, FIN_THICKNESS));
+
+  // Small forked caudal, authored with x = 0 AT THE HINGE.
+  const caudal = pool.keepGeometry(uprightFin((shape) => {
+    shape.moveTo(0.02, 0);
+    shape.quadraticCurveTo(-0.04, 0.04, -CAUDAL_REACH, CAUDAL_HALF_SPAN);
+    shape.quadraticCurveTo(-0.08, 0.03, -0.07, 0);
+    shape.quadraticCurveTo(-0.08, -0.03, -CAUDAL_REACH, -CAUDAL_HALF_SPAN);
+    shape.quadraticCurveTo(-0.04, -0.04, 0.02, 0);
+  }, FIN_THICKNESS));
+
+  // The bars: lens-shaped upright fins through the flanks, shorter than the
+  // hull is tall at their stations so their crowns and heels stay buried and
+  // only the flat sides show.
+  const BAR_XS = [0.08, -0.10] as const;
+  const bars = BAR_XS.map((barX) => {
+    const barHalfHeight = angelHalfHeight(angelBodyT(barX)) * 0.88;
+    const geometry = pool.keepGeometry(uprightFin((shape) => {
+      shape.moveTo(0.035, 0);
+      shape.quadraticCurveTo(0.03, barHalfHeight * 0.7, 0, barHalfHeight);
+      shape.quadraticCurveTo(-0.03, barHalfHeight * 0.7, -0.035, 0);
+      shape.quadraticCurveTo(-0.03, -barHalfHeight * 0.7, 0, -barHalfHeight);
+      shape.quadraticCurveTo(0.03, -barHalfHeight * 0.7, 0.035, 0);
+    }, BAR_HALF_THICKNESS * 2));
+    return { geometry, barX };
+  });
+
+  const PECTORAL_X = 0.08;
+  const pectoralGeometries = [1, -1].map((sign) => pool.keepGeometry(flatFin((shape, s) => {
+    shape.moveTo(0.02, 0);
+    shape.quadraticCurveTo(-0.01, s * 0.04, -0.07, s * 0.07);
+    shape.quadraticCurveTo(-0.07, s * 0.03, -0.04, 0);
+    shape.lineTo(0.02, 0);
+  }, sign, FIN_THICKNESS * 0.8)));
+
+  const eyeGeometry = pool.keepGeometry(
+    smoothEllipsoid(EYE_RADIUS * 2, EYE_RADIUS * 2, EYE_RADIUS * 2, EYE_SEGMENTS, EYE_SEGMENTS),
+  );
+  const EYE_X = 0.16;
+  const eyeZ = angelHalfWidth(angelBodyT(EYE_X)) * 0.92;
+
+  // ── Assembly ──────────────────────────────────────────────────────────────
+  const { root, rig } = pool.rigged();
+  rig.add(pool.part(hull, body, 0, 0, 0));
+  rig.add(pool.part(dorsal, fin, DORSAL_X, dorsalSeatY, 0));
+  rig.add(pool.part(anal, fin, ANAL_X, analSeatY, 0));
+  for (const { geometry, barX } of bars) rig.add(pool.part(geometry, bar, barX, 0, 0));
+  rig.add(pool.part(eyeGeometry, eye, EYE_X, 0.03, eyeZ));
+  rig.add(pool.part(eyeGeometry, eye, EYE_X, 0.03, -eyeZ));
+
+  // THE HINGE at the peduncle, as in fish.ts.
+  const tailHinge = new Group();
+  tailHinge.position.set(PEDUNCLE_X, 0, 0);
+  tailHinge.add(pool.part(caudal, fin, 0, 0, 0));
+  rig.add(tailHinge);
+
+  const pectoralSeatZ = angelHalfWidth(angelBodyT(PECTORAL_X)) * 0.8;
+  const pectorals = pectoralGeometries.map((geometry, i) => {
+    const sign = i === 0 ? 1 : -1;
+    const hinge = new Group();
+    hinge.position.set(PECTORAL_X, -0.04, sign * pectoralSeatZ);
+    hinge.rotation.set(sign * PECTORAL_DIHEDRAL_RADIANS, 0, 0);
+    hinge.add(pool.part(geometry, fin, 0, 0, 0));
+    rig.add(hinge);
+    return hinge;
+  });
+
+  return {
+    root,
+    joints: { rig, tail: tailHinge, leftPectoral: pectorals[0]!, rightPectoral: pectorals[1]! },
+    animate(joints, seconds, phase) {
+      const beat = seconds * ANGELFISH_TAIL_HZ * TWO_PI + phase;
+      const swing = Math.sin(beat);
+      // Side to side about the peduncle. Nothing here touches pitch (Z).
+      joints.tail!.rotation.y = swing * ANGELFISH_TAIL_SWING_RADIANS;
+      joints.rig!.rotation.y = -swing * ANGELFISH_TAIL_SWING_RADIANS * BODY_COUNTER_YAW_FRACTION;
+      const flutter = Math.sin(beat - PECTORAL_LAG_RADIANS) * PECTORAL_FLUTTER_RADIANS;
+      joints.leftPectoral!.rotation.x = PECTORAL_DIHEDRAL_RADIANS + flutter;
+      joints.rightPectoral!.rotation.x = -PECTORAL_DIHEDRAL_RADIANS - flutter;
+    },
+  };
+};

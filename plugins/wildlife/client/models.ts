@@ -2,7 +2,8 @@
 // apart at fifty cells.
 //
 // WHAT THIS FILE IS, SINCE 2026-09-02. It no longer AUTHORS most of the
-// creatures. Six species (fish, grazer, ibex, bison, ray, shark) are authored
+// creatures. Eight species (fish, grazer, ibex, bison, ray, shark, eel,
+// angelfish) are authored
 // one file each under ./species/, against the SpeciesModelPool contract in
 // ./species/speciesModel.ts; this file lends them the pool, bakes what they
 // return and herds it. The whale, the deep-sea angler and the bird are still
@@ -67,6 +68,8 @@ import { buildIbex } from './species/ibex.ts';
 import { buildBison } from './species/bison.ts';
 import { buildRay } from './species/ray.ts';
 import { buildShark } from './species/shark.ts';
+import { buildEel } from './species/eel.ts';
+import { buildAngelfish } from './species/angelfish.ts';
 
 /**
  * Sphere tessellation. 6 segments around, 4 rings tall: the fewest that still
@@ -523,7 +526,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   // animation bodies themselves are unchanged — they still say
   // `joint.rotation.z = …` against a Bone.
 
-  // The six species authored in ./species/. Order fixes the order their
+  // The eight species authored in ./species/. Order fixes the order their
   // surfaces appear in `objects`, which is what the draw-object table in
   // ./index.ts is counted against.
   const fishDrawable = speciesDrawable(buildFish);
@@ -532,6 +535,8 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const bisonDrawable = speciesDrawable(buildBison);
   const rayDrawable = speciesDrawable(buildRay);
   const sharkDrawable = speciesDrawable(buildShark);
+  const eelDrawable = speciesDrawable(buildEel);
+  const angelfishDrawable = speciesDrawable(buildAngelfish);
 
   const whaleDrawables: readonly SpeciesDrawable[] = whaleRigs.map((whaleRig) => {
     const { herd, joints } = herdFor(whaleRig);
@@ -603,6 +608,10 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         return rayDrawable;
       case 'shark':
         return sharkDrawable;
+      case 'eel':
+        return eelDrawable;
+      case 'angelfish':
+        return angelfishDrawable;
       case 'bird':
         return birdDrawable;
     }
