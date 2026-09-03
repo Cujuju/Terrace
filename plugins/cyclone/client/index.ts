@@ -16,6 +16,7 @@
 
 import type {
   ClientPluginCtx,
+  GroundShadeDisc,
   SkyRigState,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
@@ -26,11 +27,17 @@ import {
   parseAllPayload,
   type CycloneState,
 } from '../protocol.ts';
-import { createSpiral, type SpiralRenderer, type SpiralSource } from './spiral.ts';
 import {
-  CLOUD_GLOOM_RESPONSE,
+  createSpiral,
+  CYCLONE_SHADE_CORE_FRACTION,
+  CYCLONE_SHADE_DARKNESS,
+  MAX_SPIRALS,
+  type SpiralRenderer,
+  type SpiralSource,
+} from './spiral.ts';
+import { CYCLONE_DECK_HEIGHT_WORLD_UNITS } from '../protocol.ts';
+import {
   GLOOM_RESPONSE_PER_SECOND,
-  MAX_GLOOM_LIGHT_LOSS,
   applyGloom,
   overheadFraction,
 } from './gloom.ts';
@@ -133,6 +140,37 @@ function refreshAim(ctx: ClientPluginCtx, dt: number): void {
 }
 
 /**
+ * The shade a cyclone's deck throws on the ground.
+ *
+ * AT THE DECK'S OWN HEIGHT, not at a shared cloud base: this deck sits at ten
+ * world units and the precipitating kinds' sit at twenty-four, and a shadow has
+ * to fall from where its cloud actually is. `GroundShadeDisc.y` is per disc for
+ * exactly this reason.
+ *
+ * REUSED, NEVER REALLOCATED — core reads it every frame. Read from the same
+ * EXTRAPOLATED positions the deck is drawn at (`at`), so the shadow cannot be a
+ * push behind its own cloud.
+ */
+const shade: GroundShadeDisc[] = [];
+
+function shadeDiscs(): readonly GroundShadeDisc[] {
+  shade.length = 0;
+  for (const storm of storms) {
+    if (storm.intensity <= 0) continue;
+    const centre = at(storm);
+    shade.push({
+      x: centre.x * CELL_WORLD_SIZE,
+      z: centre.y * CELL_WORLD_SIZE,
+      y: CYCLONE_DECK_HEIGHT_WORLD_UNITS,
+      radius: storm.radius * CELL_WORLD_SIZE,
+      darkness: CYCLONE_SHADE_DARKNESS * storm.intensity,
+      inner: CYCLONE_SHADE_CORE_FRACTION,
+    });
+  }
+  return shade;
+}
+
+/**
  * The spiral rig is one instanced pool shared by every live cyclone — MAX_SPIRALS
  * bounds the INSTANCES inside it, not the draw calls — so this is a fixed
  * number. Measured 2026-08-29: 1 surface. The gloom draws nothing at all: it
@@ -149,6 +187,14 @@ export const clientPlugin: TerraceClientPlugin = {
    */
   drawBudget: SPIRAL_DRAW_OBJECTS,
 
+  /**
+   * One shade disc per storm this renderer can hold, so the budget IS that cap
+   * — an expression of the plugin's own numbers, exactly as `drawBudget` is.
+   * MAX_SPIRALS rather than the server's cap because a dispersing storm is
+   * still drawing a deck and must still be casting its shadow.
+   */
+  groundShadeBudget: MAX_SPIRALS,
+
   attach(ctx: ClientPluginCtx): void {
     storms = [];
     receivedAtSeconds = 0;
@@ -158,7 +204,7 @@ export const clientPlugin: TerraceClientPlugin = {
     sinceAimSeconds = GLOOM_AIM_INTERVAL_SECONDS;
     reducedMotion = watchReducedMotion();
 
-    spiral = createSpiral();
+    spiral = createSpiral((material, label) => ctx.applyRevealClip(material, label));
     ctx.layer.add(spiral.root);
 
     unsubscribes = [
@@ -177,6 +223,8 @@ export const clientPlugin: TerraceClientPlugin = {
       // once and follows the storm for the session.
       ctx.modulateSkyRig((state: SkyRigState) => applyGloom(state, gloomDepth)),
 
+      ctx.publishGroundShade(shadeDiscs),
+
       ctx.onFrame((dt) => {
         // REDUCED MOTION (the design record's hard requirement): this plugin's
         // own animation clock FREEZES, which stops the deck rotating and the
@@ -185,20 +233,13 @@ export const clientPlugin: TerraceClientPlugin = {
         // come from the server and hiding them would be hiding the world.
         if (!(reducedMotion?.matches() ?? false)) elapsedSeconds += dt;
 
-        // THE CLOUDS TRACK THE LIGHT, BUT NOT AS FAR AS THE GROUND DOES.
-        //
-        // The renderer uses an unlit material, which reads none of the scene's
-        // lights, so the gloom has to reach it as a number or a storm would sit
-        // at full brightness in the darkness it is causing (spiral.ts's
-        // uDaylight note). The number is NOT the ground's, though: the deck is
-        // on the sunny side of the cloud that is doing the shading, so it keeps
-        // most of its light — see gloom.ts's CLOUD_GLOOM_RESPONSE. Derived from
-        // the same gloom depth as the sky, so the two can only ever disagree by
-        // a frame.
-        const daylight = 1 - gloomDepth * MAX_GLOOM_LIGHT_LOSS * CLOUD_GLOOM_RESPONSE;
-
+        // THE CLOUDS TRACK THE LIGHT AND NOBODY HAS TO SAY SO. The deck is
+        // Lambert-lit (spiral.ts's CYCLONE_DECK_COLOR), so the sky rig this
+        // plugin is already dimming through `modulateSkyRig` reaches it the
+        // same way it reaches the ground — no daylight number, and no second
+        // copy of the arithmetic to keep in step with the first.
         spiral?.apply(spiralSources());
-        spiral?.update(dt, elapsedSeconds, daylight);
+        spiral?.update(dt, elapsedSeconds);
 
         refreshAim(ctx, dt);
         // Eased rather than assigned, so a 5 Hz push and a re-aimed camera do
