@@ -17,6 +17,7 @@ import { createViewport } from './render/scene.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
+import { installPerfProbe, installPerfProbeEarly } from './perfProbe.ts';
 import {
   brushProfile,
   brushRadius,
@@ -55,6 +56,13 @@ if (canvas === null || hudRoot === null) {
 }
 
 const viewport = createViewport(canvas);
+// THE REAL-GPU BENCHMARK'S FIRST HALF (client/src/perfProbe.ts,
+// scripts/gpu-bench.md). Here, before createWorld, because this is what wraps
+// viewport.onFrame — every frame handler core and the plugins register below
+// has to go through it to be attributable. Inert without `?perfprobe=<scenario>`
+// on the page URL, and eliminated entirely from a production build: DEV is
+// statically false there, exactly as for the __terrace handle at the bottom.
+if (import.meta.env.DEV) installPerfProbeEarly(viewport);
 const world = createWorld(viewport);
 
 // THE PLACEMENT LISTENER — where an armed admin action lands (owner,
@@ -332,4 +340,8 @@ if (import.meta.env.DEV) {
     world,
     connection,
   };
+  // The benchmark's second half — the scenario runner, which needs the world,
+  // the connection and the plugin host, so it cannot be installed with the
+  // early wrappers above. Also inert without `?perfprobe=<scenario>`.
+  installPerfProbe({ viewport, world, connection, pluginHost });
 }
