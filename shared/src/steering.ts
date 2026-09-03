@@ -492,6 +492,21 @@ export interface FollowRouteOptions extends SteerOptions {
    * pathing.ts's own ROUTE_NODE_BUDGET; a test forces exhaustion with it.
    */
   readonly replanNodeBudget?: number;
+  /**
+   * Most the mover's heading may change THIS TICK, in radians (its turn rate × dt).
+   * When set, the sweep's answer is a direction to WANT and the heading adopted is
+   * turnToward(current, wanted, ...). Absent = unlimited, the previous behaviour.
+   */
+  readonly maxTurnRadians?: number;
+  /**
+   * How many route cells past the current one the follower may aim at directly.
+   * It aims at the FARTHEST of route[i+1 .. i+aimAheadCells] whose straight segment
+   * from the mover's position is legal (canProceedAlong + permits at the far end),
+   * falling back to i+1. Default 1 = the previous behaviour. A mover with a
+   * turning circle cannot track 1-cell waypoints and needs a far target to trace
+   * a smooth arc through a jagged 8-direction route.
+   */
+  readonly aimAheadCells?: number;
 }
 
 export interface FollowRouteResult {
@@ -600,9 +615,46 @@ export function followRoute(
     // Null now means a one-cell pocket, not near-sightedness: hold, and let
     // the give-up timer run.
     if (heading === null) return;
-    mover.heading = heading;
-    mover.x += Math.cos(heading) * options.stepCells;
-    mover.y += Math.sin(heading) * options.stepCells;
+    if (options.maxTurnRadians === undefined) {
+      mover.heading = heading;
+      mover.x += Math.cos(heading) * options.stepCells;
+      mover.y += Math.sin(heading) * options.stepCells;
+      return;
+    }
+    // TURN-LIMITED: the sweep's answer is a direction to WANT, and the heading
+    // adopted is the current one turned toward it by at most maxTurnRadians
+    // (turnToward with dt = 1, so the rate × dt product IS the per-tick cap).
+    // The step is then re-checked along the CLAMPED heading: the ladder
+    // certified `wanted`, never this, so committing it blind could walk into a
+    // wall the sweep refused — the re-check is required, not belt-and-braces.
+    const adopted = turnToward(mover.heading, heading, options.maxTurnRadians, 1);
+    const stepX = mover.x + Math.cos(adopted) * options.stepCells;
+    const stepY = mover.y + Math.sin(adopted) * options.stepCells;
+    if (
+      canProceedAlong(world, profile, mover.x, mover.y, stepX, stepY) &&
+      (options.permits === undefined || options.permits(stepX, stepY))
+    ) {
+      // Commit heading AND position together: the turn only happens by moving.
+      mover.heading = adopted;
+      mover.x = stepX;
+      mover.y = stepY;
+      return;
+    }
+    // The clamped heading is blocked: the heading DOES NOT CHANGE. A boat
+    // never pivots on the spot — committing the heading while holding position
+    // (the previous local fix in boats) IS a pivot, just a stationary one.
+    // Instead it backs astern one step along its CURRENT heading, which opens
+    // the forward arc on a later tick without one. Deterministic: no
+    // randomness in any branch; a mover that can back out of neither end holds.
+    const backX = mover.x - Math.cos(mover.heading) * options.stepCells;
+    const backY = mover.y - Math.sin(mover.heading) * options.stepCells;
+    if (
+      canProceedAlong(world, profile, mover.x, mover.y, backX, backY) &&
+      (options.permits === undefined || options.permits(backX, backY))
+    ) {
+      mover.x = backX;
+      mover.y = backY;
+    }
   };
 
   // ── Degraded: no route. Steer at the goal and report LEAVING THE CELL. ──
@@ -629,11 +681,22 @@ export function followRoute(
     return { progressed: moved, arrived: false, replanned: false };
   }
 
+  // How many route cells past the current one the follower may aim at
+  // directly (FollowRouteOptions.aimAheadCells; 1 = the previous behaviour).
+  // Needed BEFORE the re-sync below, because the window must cover the aim.
+  const aimAheadCount = Math.max(1, Math.floor(options.aimAheadCells ?? 1));
   // ── 1. Re-sync the index to the cell the mover is actually standing in. ──
   const cellX = Math.floor(mover.x);
   const cellY = Math.floor(mover.y);
   let progressed = false;
-  const limit = Math.min(mover.routeIndex + ROUTE_RESYNC_WINDOW_CELLS, mover.route.length - 1);
+  // The window covers at least aimAheadCount cells ahead: a mover aiming ahead
+  // legally leaves the route's cell corridor while cutting the corner and
+  // re-enters at the aimed cell, so a window narrower than the aim would lose
+  // a mover that did exactly what it was told.
+  const limit = Math.min(
+    mover.routeIndex + Math.max(ROUTE_RESYNC_WINDOW_CELLS, aimAheadCount),
+    mover.route.length - 1,
+  );
   for (let i = mover.routeIndex + 1; i <= limit; i++) {
     if (mover.route[i].x === cellX && mover.route[i].y === cellY) {
       mover.routeIndex = i;
@@ -674,7 +737,27 @@ export function followRoute(
     next = cellCentre(mover.route[1]);
   }
 
-  stepOnce(next.x, next.y);
+  // Aim at the FARTHEST cell within the aim window whose straight segment from
+  // the mover's position is legal (canProceedAlong + permits at the far end),
+  // falling back to routeIndex+1 — whose edge was just validated above, so it
+  // is always accepted without re-testing. A mover with a turning circle cannot
+  // track 1-cell waypoints and needs the far target to trace a smooth arc
+  // through a jagged 8-direction route. `progressed` still means "entered a
+  // new route cell": aiming farther changes WHERE the mover walks, not what
+  // counts as getting somewhere.
+  const aimLimit = Math.min(mover.routeIndex + aimAheadCount, mover.route.length - 1);
+  let aimX = next.x;
+  let aimY = next.y;
+  for (let k = aimLimit; k > mover.routeIndex + 1; k--) {
+    const candidate = cellCentre(mover.route[k]);
+    if (!canProceedAlong(world, profile, mover.x, mover.y, candidate.x, candidate.y)) continue;
+    if (options.permits !== undefined && !options.permits(candidate.x, candidate.y)) continue;
+    aimX = candidate.x;
+    aimY = candidate.y;
+    break;
+  }
+
+  stepOnce(aimX, aimY);
   return { progressed, arrived: false, replanned };
 }
 
