@@ -1,16 +1,28 @@
 // Lurking: the slow wander, the long stillnesses, and the refusal to leave the
-// habitat — deep water for the sea kinds, snow for the yeti.
+// RANGE — the trench for the kraken, deep water for Cthulhu, snow for the yeti.
 //
 // The steering contract, in one sentence — the same one the wildlife plugin
-// keeps, because it is the contract that makes "a monster is never outside its
-// habitat" true by construction: a monster only ever commits to a step whose
-// DESTINATION LOOK-AHEAD is unlocked ground of ITS OWN HABITAT, so shorelines,
-// snow lines and locked territory are all walls rather than places it can be
-// pushed out of afterwards. The probe asks the kind's own regime, so the same
-// three lines make a shore a wall to Cthulhu and a snow line a wall to the yeti.
+// keeps, because it is the contract that makes "a monster is never outside the
+// set it belongs to" true by construction: a monster only ever commits to a step
+// whose DESTINATION LOOK-AHEAD is unlocked ground of ITS OWN RANGE, so
+// shorelines, snow lines, trench walls and locked territory are all walls rather
+// than places it can be pushed out of afterwards. The probe asks the kind's own
+// regime, so the same three lines make a shore a wall to Cthulhu, a snow line a
+// wall to the yeti and the seven-band contour a wall to the kraken.
+//
+// RANGE AND NOT HABITAT, SINCE 2026-09-02, and this file is the whole of that
+// change. `MonsterProfile.habitat` is the FLOOR of a half of the heightmap —
+// three bands of water, or the snow line — and every rule in this file used to
+// read it. `MonsterProfile.range` (kinds.ts) is that floor narrowed by the
+// kind's own `minLairReachBands`, which admission had always applied and
+// movement never had: the kraken was summoned into a seven-band trench and then
+// steered against three-band water, so it swam the open sea. For Cthulhu and the
+// yeti the range IS the habitat — the same object, `habitatRangeOf` returns the
+// regime unchanged when the demand equals the threshold — so nothing about
+// either of them moved.
 //
 // The one case that contract does not cover is a monster that is ALREADY
-// outside its habitat because the world changed under it and its kind cannot be
+// outside its range because the world changed under it and its kind cannot be
 // banished for it (see isStranded below). It never MOVED there, so the contract
 // is intact; what it does about it is a separate rule.
 //
@@ -117,7 +129,7 @@ export function lookaheadCellsFor(profile: MonsterProfile): number {
 
 /**
  * Picks a heading whose look-ahead POSE — the whole body, not the centre point —
- * is unlocked ground of this monster's own habitat, preferring `desired` and
+ * is unlocked ground of this monster's own RANGE, preferring `desired` and
  * then the smallest deviation from it. Null when it is boxed in on all eight
  * candidates — the caller then holds position.
  *
@@ -153,7 +165,14 @@ export function steerToValidHeading(
   occupants: readonly Occupant[] = [],
 ): number | null {
   const profile = profileOf(monster.kind);
-  const regime = profile.habitat;
+  // THE RANGE, NOT THE HABITAT FLOOR (2026-09-02). This is the question "where
+  // may this animal GO", and the kind's range is the one value that answers it:
+  // the habitat narrowed to the kind's own depth demand (kinds.ts's `range`).
+  // Reading `profile.habitat` here is the confinement bug — a kraken admitted to
+  // a seven-band trench was steered against three-band water, so the open sea
+  // was a legal destination. For Cthulhu and the yeti this IS `profile.habitat`,
+  // the same object, so their steering is unchanged.
+  const regime = profile.range;
   return steerWithShorteningProbe(world, steeringProfileOf(profile), monster, desired, lookahead, {
     stepCells,
     occupants,
@@ -206,7 +225,7 @@ export function advanceIdleState(monster: Monster, profile: MonsterProfile, dt: 
 }
 
 /**
- * Is this monster standing somewhere that is no longer its habitat?
+ * Is this monster standing somewhere that is no longer its range?
  *
  * Only ever TRUE for a kind that cannot be banished (./kinds.ts): a banishable
  * one is removed by enforceHabitat in the same tick this becomes true, so it
@@ -222,7 +241,21 @@ export function advanceIdleState(monster: Monster, profile: MonsterProfile, dt: 
  * a thing to hold still in, which is this.
  */
 export function isStranded(world: LairWorld, monster: Monster): boolean {
-  return !isLairCell(profileOf(monster.kind).habitat, world, monster.x, monster.y);
+  // THE RANGE. "Out of its element" has to mean the same set movement is
+  // confined to, or the two disagree at exactly the cells that matter: a kraken
+  // standing in three-band water is inside its habitat and outside its range,
+  // and if this asked the habitat it would report "not stranded" while every
+  // candidate step failed — the steering ladder would run in full, every tick,
+  // for the rest of its life, and land on the identical hold. Same answer, and
+  // this is the cheap path to it (one lookup rather than a certain-to-fail
+  // ladder), which is the reason the early exit exists at all.
+  //
+  // It is also the path a RESTORED monster takes: persistence.ts trusts a
+  // snapshot's position, and a kraken saved mid-basin under the old rule
+  // restores outside its range, is left alone by enforceHabitat (which is the
+  // habitat floor, deliberately — see summoning.ts), and holds still here
+  // rather than crashing or teleporting.
+  return !isLairCell(profileOf(monster.kind).range, world, monster.x, monster.y);
 }
 
 /**
@@ -289,7 +322,11 @@ export function advanceMonster(
   // fix. So a pinched body falls back to the centre question for this tick and
   // simply swims out; the strict test resumes the moment its rim is clear.
   const bodyRadius = bodyRadiusCells(profile);
-  const clearance = isLairPose(profile.habitat, world, monster.x, monster.y, bodyRadius)
+  // The range again, and it must be the same set the steering probe uses: this
+  // asks "is my body already pinched", the probe asks "may my body be there",
+  // and two different sets would make a kraken whose rim laps the trench wall
+  // permanently pinched by one test and permanently fine by the other.
+  const clearance = isLairPose(profile.range, world, monster.x, monster.y, bodyRadius)
     ? bodyRadius
     : 0;
 
@@ -358,7 +395,11 @@ export function advanceMonster(
   // left rather than replaced by the hold above, because reaching this line at
   // all means the two distances HAVE disagreed and the heading is not one to
   // keep.
-  if (!isLairPose(profile.habitat, world, nextX, nextY, clearance)) {
+  // The range, for the reason this line exists: it is the suspenders on the
+  // invariant "a monster is never outside the set it is confined to", and an
+  // invariant checked against a wider set than the steering enforces is not a
+  // check.
+  if (!isLairPose(profile.range, world, nextX, nextY, clearance)) {
     monster.heading = normalizeAngle(monster.heading + Math.PI);
     return;
   }
