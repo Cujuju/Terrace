@@ -2695,6 +2695,41 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
   });
 });
 
+describe('applySculpt — a carve walks inward from a cliff face (2026-09-02)', () => {
+  const SIZE = 32;
+  const GROUND_BAND = 2;
+  const CLIFF_BAND = 10;
+  const FACE_X = 10;
+  const ROW = 16;
+  /** The lowest lip of the face — the band a riser pick names for its bottom slab. */
+  const LIP_BAND = GROUND_BAND + 1;
+  const CELLS_INWARD = 5;
+
+  it('opens the grasped band, so the next pick inside names the same band and the cut continues', () => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        map.cells[cellIndex(map, x, y)] = (x >= FACE_X ? CLIFF_BAND : GROUND_BAND) * BAND_HEIGHT;
+      }
+    }
+    for (let x = FACE_X; x < FACE_X + CELLS_INWARD; x++) {
+      const diff = applySculpt(map, x, ROW, 1, -DEFAULT_SCULPT_AMOUNT, {
+        tool: 'carve',
+        spanBand: LIP_BAND,
+      });
+      expect(diff.length, `cut at x=${x}`).toBe(1);
+      const [floor, roof] = readSpans(map, x, ROW);
+      // Floor level with the ground outside; the grasped band is the opening.
+      expect(floor!.ceiling).toBe(GROUND_BAND * BAND_HEIGHT);
+      expect(roof!.floor).toBe((LIP_BAND + 1) * BAND_HEIGHT);
+      // The back wall inside the opening is band LIP_BAND's slab, so the next
+      // riser pick (ceil of a height in it — client/src/world.ts bandOfPick)
+      // names LIP_BAND again. Anything else and the chain stalls.
+      expect(Math.ceil((roof!.floor - BAND_HEIGHT) / BAND_HEIGHT)).toBe(LIP_BAND);
+    }
+  });
+});
+
 describe('applySculpt — carve grasped at the bottom of the world', () => {
   const SIZE = 32;
   const PIT_X = 10;
