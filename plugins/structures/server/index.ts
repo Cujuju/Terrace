@@ -98,6 +98,15 @@ import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } 
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasBuildingWithinSeparation } from './clearance.ts';
 import { closeFireBridge, loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
+import {
+  parseStormDamage,
+  severityAt,
+} from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
+import {
+  CYCLONE_DAMAGE_EVENT_NAME,
+  STRUCTURES_WIND_MIN_SEVERITY,
+  windDemolishChance,
+} from './cyclone-event.ts';
 
 /**
  * Simulated seconds between unsolicited full re-broadcasts.
@@ -553,6 +562,64 @@ function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: n
 }
 
 /**
+ * A CYCLONE PASSED OVER (issue #299): the wind takes buildings inside the
+ * storm's disc, the flimsiest first.
+ *
+ * THE WHOLE BOARD, NOT THE EVENT'S SAMPLE, for the reason flora's counterpart
+ * gives: the emitter's `cells` list is a bounded sample "for consumers with no
+ * spatial index" (server/src/plugins/kit/rotatingStorms.ts, where it says so),
+ * and `live` IS an index — capped at STRUCTURES_CAP (512), so answering
+ * exactly is at most 512 distance tests per second of storm, against a
+ * generation sweep that surveys the whole world.
+ *
+ * ONE ROLL PER BUILDING PER EVENT, on this plugin's OWN seeded generator
+ * (./rng.ts's single persisted sequence), never Math.random — a world replayed
+ * from the same seed must lose the same houses. `live` iterates in insertion
+ * order, so the order the rolls are drawn in is fixed too.
+ *
+ * THE SAME DEMOLITION AS EVERY OTHER, exactly as structuresBurnedOut above:
+ * the board loses the cell, the in-flight sweep is told (or it would carry a
+ * flattened house into the next generation), the same delta goes out on the
+ * wire, and the world event carries a CAUSE — 'wind' here, because "the storm
+ * took the village" is a different story from "it burned" or "the ground was
+ * dug out from under it".
+ *
+ * RESIDUAL, NAMED: the chronicle reads only 'generation' and 'sculpt' from
+ * that event (plugins/chronicle/server/saga.ts refuses anything else), so a
+ * wind loss goes unchronicled — as a fire loss already does. That is a pinned
+ * contract on the chronicle's side, not a gap on this one, and widening it is
+ * the chronicle's call to make.
+ */
+function reactToCycloneDamage(world: WorldApi, payload: unknown): void {
+  const damage = parseStormDamage(payload);
+  // A malformed event demolishes NOTHING: half-applying it would take a town
+  // down under a storm that was never described.
+  if (damage === null) return;
+
+  const demolished: Array<{ x: number; y: number }> = [];
+  for (const [key, record] of live) {
+    const cell = cellOfKey(key);
+    const severity = severityAt(damage, cell.x, cell.y);
+    if (severity < STRUCTURES_WIND_MIN_SEVERITY) continue;
+    if (rng.next() >= windDemolishChance(severity, damage.durationSeconds, record.tier)) continue;
+    demolished.push(cell);
+  }
+  if (demolished.length === 0) return;
+
+  // Deleted in a second pass rather than inside the loop above: `live` is being
+  // iterated, and a Map deleted from mid-iteration is a rule this file should
+  // not have to depend on the exact wording of.
+  for (const cell of demolished) {
+    const key = structureKey(cell.x, cell.y);
+    live.delete(key);
+    survey.evict(key);
+  }
+
+  broadcastChanges(world, [], [], demolished);
+  world.emitEvent('changes', { cause: 'wind', died: demolished });
+}
+
+/**
  * The live world, stashed for structuresBurnedOut — which is called from fire's
  * tick rather than from one of this plugin's own hooks, and so is handed no
  * world of its own. flora keeps its own for the identical reason.
@@ -829,6 +896,14 @@ export const plugin: TerracePlugin = {
 
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     reactToTerrain(world, diff);
+  },
+
+  onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
+    // By-name subscription (see server/src/plugins/types.ts's emitEvent doc
+    // comment): the cyclone plugin's NAME is the coupling, exactly like a wire
+    // message namespace — never an import of its code. ./cyclone-event.ts
+    // holds the name and the numbers that answer it.
+    if (event === CYCLONE_DAMAGE_EVENT_NAME) reactToCycloneDamage(world, payload);
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
