@@ -367,6 +367,43 @@ export interface FireIgnitedPayload {
   readonly ignited: readonly number[];
 }
 
+/**
+ * Plugin → plugin (`fire:cellsBurnedOut`, via WorldApi.emitEvent), once per
+ * TICK IN WHICH ANYTHING BURNED OUT: every cell whose fire ran its full
+ * course this tick, regardless of which fuel source owned it.
+ *
+ * THE CLOSING BRACKET THE FUEL REGISTRY CANNOT BE. Each burned-out cell is
+ * already routed to the source that owned it through `onBurnedOut`
+ * (./server/fuel.ts) — but a source only ever sees its OWN cells, and some
+ * records are keyed on the GROUND rather than on what stood on it. Flora's
+ * scorch record is one: the cell a structure burned on is meadow the moment
+ * the building is demolished, and without this event nothing ever tells flora
+ * that ground burned (issue #297). The audience is any server plugin that
+ * keeps a per-cell record of ground that has burned — flora, today.
+ *
+ * Batched per tick, on `fire:ignited`'s precedent above: one event carrying
+ * every burned-out cell, skipped entirely when nothing burned out. Rained-out
+ * and dug-out cells are NOT in here — their fuel survived (./server/blaze.ts's
+ * three endings), so the ground did not burn either.
+ *
+ * NOT a client message. Every cell's own extinguishment already went out as a
+ * `fire:changes` delta; nothing on screen needs this.
+ */
+export const FIRE_CELLS_BURNED_OUT_EVENT = 'cellsBurnedOut';
+
+/**
+ * How many numbers one burned-out cell occupies in
+ * `FireCellsBurnedOutPayload.cells`: an x and a y, flat, as `packCells` packs
+ * them — INTEGER cell coordinates, unlike `fire:ignited`'s fractional ones,
+ * because a burnout is always a cell and never a creature.
+ */
+export const FIRE_CELLS_BURNED_OUT_STRIDE = 2;
+
+/** `fire:cellsBurnedOut` — flat `[x0, y0, x1, y1, …]`, in integer cell space. */
+export interface FireCellsBurnedOutPayload {
+  readonly cells: readonly number[];
+}
+
 /** `fire:fires` — the receiver's whole burning set. */
 export interface FireFiresPayload {
   readonly fires: readonly number[];
