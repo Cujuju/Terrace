@@ -38,6 +38,7 @@ import {
   applyChunkUnlock,
   applySnapshot,
   createTerrainMirror,
+  isCellReceived,
   sampleHeight,
   type TerrainMirror,
 } from './terrain/mirror.ts';
@@ -214,6 +215,10 @@ export interface World extends TerrainSink {
    * anything standing on the ground belongs. Cells in never-received chunks
    * read as band 0, exactly like the mesh renders them. Null before the first
    * snapshot. Consumed by the client plugin host (plugins/host.ts).
+   * — SUPERSEDED FOR NEVER-RECEIVED CELLS (2026-09-02): those now answer null
+   * too, for the reason given at the implementation. The mesh does not render
+   * them at all (mirror.ts, invariant 1), so "band 0" was never what the
+   * player saw there.
    */
   terrainHeightAt(x: number, y: number): number | null;
   /**
@@ -858,6 +863,14 @@ export function createWorld(viewport: Viewport): World {
 
     terrainHeightAt(x: number, y: number): number | null {
       if (mirror === null) return null;
+      // NULL FOR GROUND THIS CLIENT WAS NEVER SENT (2026-09-02), not band 0.
+      // The mirror stores a never-received cell as SEA_LEVEL, and band 0 is the
+      // plane the sea is drawn on — so a reader that took the highest sample
+      // under a body (wildlife's swimmerSeabedY, a whale's nose ten cells past
+      // the fog frontier) read "seabed at the waterline" and floated the whale
+      // on top of the sea. Every consumer already handles null (the
+      // pre-snapshot case); "I don't know this cell" is the same answer.
+      if (!isCellReceived(mirror, x, y)) return null;
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
@@ -881,7 +894,12 @@ export function createWorld(viewport: Viewport): World {
     },
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
-      if (drawnGround === null) return null;
+      if (drawnGround === null || mirror === null) return null;
+      // Same contract as terrainHeightAt: a never-received chunk has no drawn
+      // ground (the renderer draws only received chunks), so its cap is not a
+      // height, it is the mirror's storage zero. Null, like every other
+      // "no ground here yet" answer in this file.
+      if (!isCellReceived(mirror, cellX, cellZ)) return null;
       return drawnGround.capYAt(cellX, cellZ);
     },
 

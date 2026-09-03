@@ -30,6 +30,7 @@ import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts'
 import { createWildlifeModels, type WildlifeModels } from './models.ts';
 import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
+  BODY_COLUMNS,
   SWIM_PROFILES,
   creatureWorldY,
   placementKindOf,
@@ -77,6 +78,13 @@ interface CreatureView {
    * might have put it.
    */
   drawnY: number | null;
+  /**
+   * The body's vertical span as drawn this frame — BODY_COLUMNS at the size
+   * class this creature was born at, hung on `drawnY`. Committed with the pose
+   * for the same reason as the pose: it is what `drawnPoseOf` answers with.
+   */
+  drawnBodyBottomY: number;
+  drawnBodyHeight: number;
 }
 
 /**
@@ -106,7 +114,14 @@ let unsubscribeFrames: (() => void) | null = null;
  */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void {
   reconcileById(sampled, views, {
-    acquire: (id) => ({ phase: id * PHASE_RADIANS_PER_ID, drawnX: 0, drawnZ: 0, drawnY: null }),
+    acquire: (id) => ({
+      phase: id * PHASE_RADIANS_PER_ID,
+      drawnX: 0,
+      drawnZ: 0,
+      drawnY: null,
+      drawnBodyBottomY: 0,
+      drawnBodyHeight: 0,
+    }),
     // A creature's view is four numbers and no scene object of its own — the
     // instanced meshes are shared and rebuilt from the live set every frame —
     // so retiring one is dropping the entry, which the kit does.
@@ -170,12 +185,24 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
               swimProfile,
               WILDLIFE_SIZE_MODEL_SCALE[sizeClass],
             );
+    // NO GROUND, NO DRAW — the same answer every other plugin gives
+    // (pilgrims, relics, fire). A swimmer with no known seabed used to be
+    // placed against UNKNOWN_TERRAIN_WORLD_Y, which is the sea surface: the
+    // one frame it was meant to cover became a whale lying on top of the sea
+    // whenever its whole hull sampled ground this client had not been sent.
+    // Flyers never sample ground and are unaffected.
+    if (kind !== 'flyer' && terrainY === null) continue;
     const drawnY = creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt);
     view.drawnY = drawnY;
     // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
     // whose named residual this multiply is).
     view.drawnX = entity.x * CELL_WORLD_SIZE;
     view.drawnZ = entity.y * CELL_WORLD_SIZE;
+    // The body span, at the scale models.draw is about to apply to the rig.
+    const column = BODY_COLUMNS[entity.species];
+    const modelScale = WILDLIFE_SIZE_MODEL_SCALE[sizeClass];
+    view.drawnBodyBottomY = drawnY + column.bellyY * modelScale;
+    view.drawnBodyHeight = (column.crownY - column.bellyY) * modelScale;
     models.draw(
       entity.species,
       sizeClass,
@@ -202,8 +229,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
  * today (ClientPluginCtx.publishMovers).
  *
  * Read straight off what this frame committed to the herd's instance buffer, so
- * it is the pose actually on screen: interpolated, ground-sampled, eased —
- * scale and heading excluded, which no consumer asks for. That is the entire point
+ * it is the pose actually on screen: interpolated, ground-sampled, eased, and
+ * the body span at the drawn scale — heading excluded, which no consumer asks
+ * for. That is the entire point
  * of answering per id per frame instead of publishing positions — a second
  * consumer re-deriving this from the same wire messages would get a slightly
  * different answer every frame, and whatever it drew would crawl around the
@@ -217,7 +245,13 @@ function drawnPoseOf(id: number): MoverPose | null {
   // Null until the frame loop has drawn it once: `drawnY` is the flag, because
   // it is the one component that has no meaningful value before then.
   if (view === undefined || view.drawnY === null) return null;
-  return { x: view.drawnX, y: view.drawnY, z: view.drawnZ };
+  return {
+    x: view.drawnX,
+    y: view.drawnY,
+    z: view.drawnZ,
+    bodyBottomY: view.drawnBodyBottomY,
+    bodyHeight: view.drawnBodyHeight,
+  };
 }
 
 /**

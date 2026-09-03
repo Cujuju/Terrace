@@ -79,12 +79,24 @@ export interface SkyRigState {
  * coordinates `ClientPluginCtx.layer` is in, not cell space.
  *
  * `y` is the point the thing STANDS ON (its feet, a hull's waterline), not its
- * centre or its top: whatever is attached to it is attached at the ground.
+ * centre or its top: whatever is attached to it AT THE GROUND is attached here.
+ *
+ * `bodyBottomY` / `bodyHeight` describe the BODY itself — the span a flame
+ * drawn on the thing should cover, at the scale it is drawn at. For a walker
+ * the bottom is its feet and `bodyBottomY === y`; for a swimmer it is the belly
+ * line below a centre-origin hull; for a boat it is the deck, not the keel. The
+ * owner publishes these because only the owner knows the drawn scale and where
+ * the body sits on its origin (decision record, fire: "the position is not on
+ * the wire" — neither is the size, for the same reason).
  */
 export interface MoverPose {
   readonly x: number;
   readonly y: number;
   readonly z: number;
+  /** World Y of the lowest point of the drawn body. */
+  readonly bodyBottomY: number;
+  /** Drawn height of the body, world units, from `bodyBottomY` to its crown. */
+  readonly bodyHeight: number;
 }
 
 export interface ClientPluginCtx {
@@ -104,6 +116,14 @@ export interface ClientPluginCtx {
    * ground should stand. Cells in chunks this client was never sent read as
    * band 0 (sea floor), exactly like the terrain mesh would draw them. Null
    * until the first snapshot arrives.
+   *
+   * NULL FOR GROUND THIS CLIENT WAS NEVER SENT, too (2026-09-02) — the
+   * "band 0" sentence above is superseded. Band 0 is the sea-surface plane,
+   * and a plugin that samples a footprint and keeps the highest reading (a
+   * whale's hull, a walker's feet) was reading "ground at the waterline" one
+   * cell past the fog frontier and lifting its creature onto it. Treat null as
+   * "no ground here yet" whatever the reason; every existing consumer already
+   * hides or skips on it. `drawnGroundYAt` below answers the same way.
    */
   terrainHeightAt(x: number, y: number): number | null;
 

@@ -73,6 +73,26 @@ export function hasChunk(mirror: TerrainMirror, chunkIdx: number): boolean {
   return mirror.received.has(chunkIdx);
 }
 
+/**
+ * Whether `sampleHeight` at (x, y) would answer from a RECEIVED chunk — the
+ * same edge clamp, so the two agree about which cell is being asked about.
+ *
+ * THE COMPANION `sampleHeight` ALWAYS NEEDED (2026-09-02). Invariant 2 above
+ * says a never-received cell reads as SEA_LEVEL, which is band 0, which is the
+ * plane the sea surface is drawn on. Every plugin reader of the height that
+ * took a MAX over a footprint (a whale's hull, a walker's feet) therefore saw
+ * "ground at the waterline" one cell past the fog frontier and lifted its
+ * creature onto it — a whale patrolling the edge of revealed territory surfaced
+ * and swam along the top of the sea. The zero is a storage fact, not a
+ * terrain fact, and this is how a reader tells the two apart.
+ */
+export function isCellReceived(mirror: TerrainMirror, x: number, y: number): boolean {
+  const max = mirror.map.size - 1;
+  const cx = x < 0 ? 0 : x > max ? max : x;
+  const cy = y < 0 ? 0 : y > max ? max : y;
+  return cellChunkReceived(mirror, cx, cy);
+}
+
 /** Whether the chunk OWNING cell (x, y) has been received. In-bounds only. */
 function cellChunkReceived(mirror: TerrainMirror, x: number, y: number): boolean {
   return mirror.received.has(
