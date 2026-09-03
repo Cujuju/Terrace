@@ -226,17 +226,14 @@ function expectRestoredAtRest(): void {
 }
 
 describe('habitat classification', () => {
-  it('splits land, shallow and deep at sea level and the deep-water threshold', () => {
+  it('splits land, shallow and deep at sea level and the deep-water threshold, and agrees with shared about what counts as water', () => {
     expect(habitatOf(SEA_LEVEL + 1)).toBe('land');
     expect(habitatOf(BAND_HEIGHT)).toBe('land');
     expect(habitatOf(SEA_LEVEL)).toBe('shallow');
     expect(habitatOf(DEEP_WATER_MAX_HEIGHT + 1)).toBe('shallow');
     expect(habitatOf(DEEP_WATER_MAX_HEIGHT)).toBe('deep');
     expect(habitatOf(DEEP_WATER_MAX_HEIGHT - 1)).toBe('deep');
-  });
 
-
-  it('agrees with shared about what counts as water, across the whole range', () => {
     // Exhaustive and disjoint by construction (habitatOf returns one label); the
     // thing worth pinning is that the water/land split is SHARED's split, not a
     // second opinion about sea level living in this plugin.
@@ -339,20 +336,20 @@ describe('wildlife sync', () => {
     harness = boot();
   });
 
-  it('broadcasts the full entity list on every other tick', () => {
+  it('broadcasts id, species, cell position and heading, rounded to two decimals, on every other tick', () => {
+    restoreSettled(harness);
+    harness.sink.clear();
     tick(harness, 20);
     expect(harness.sink.ofType('wildlife:entities')).toHaveLength(10);
 
     harness.sink.clear();
     tick(harness, 7);
     expect(harness.sink.ofType('wildlife:entities')).toHaveLength(3);
-  });
 
-  it('sends id, species, cell position and heading, rounded to two decimals', () => {
-    restoreSettled(harness);
+    // The shape, read from the message that reflects the population as it
+    // stands now.
     harness.sink.clear();
     tick(harness, 2);
-
     const messages = harness.sink.ofType('wildlife:entities');
     expect(messages).toHaveLength(1);
     // Fog of war (issue #18): the fan-out is per connected player now, never
@@ -440,10 +437,14 @@ describe('wildlife persistence', () => {
     harness = boot();
   });
 
-  it('round-trips the population through a snapshot', () => {
+  it('round-trips the population through a snapshot, schools included, and does not reuse ids afterwards', () => {
     restoreSettled(harness);
     const before = livingEntities().map(persistedShapeOf);
     expect(before.length).toBeGreaterThan(0);
+    // Schools are in the slice: membership cannot be recovered from position,
+    // so a dropped schoolId would restore every school as permanent singletons
+    // and undo the whole schooling behaviour on restart.
+    expect(new Set(before.map((entity) => entity.schoolId)).size).toBeLessThan(before.length);
 
     const slices = harness.host.collectPersistence();
     expect(Object.keys(slices)).toEqual(['wildlife']);
@@ -455,16 +456,9 @@ describe('wildlife persistence', () => {
 
     expect(livingEntities().map(persistedShapeOf)).toEqual(before);
     expectRestoredAtRest();
-  });
 
-  it('does not reuse ids after a restore', () => {
-    restoreSettled(harness);
-    const maxId = Math.max(...livingEntities().map((entity) => entity.id));
-
-    const slices = harness.host.collectPersistence();
-    const restored = boot();
-    restored.host.restorePersistence(slices);
     // One mean spawn wait: long enough for a post-restore birth to be expected.
+    const maxId = Math.max(...before.map((entity) => entity.id));
     tick(restored, ticksFor(SPAWN_MEAN_WAIT_SECONDS));
 
     const ids = livingEntities().map((entity) => entity.id);
@@ -474,7 +468,7 @@ describe('wildlife persistence', () => {
     expect(Math.max(...ids)).toBeGreaterThanOrEqual(maxId);
   });
 
-  it('degrades to an empty population rather than throwing on a corrupt slice', () => {
+  it('degrades to an empty population rather than throwing on a corrupt slice, and drops duplicate ids from a hand-edited one', () => {
     const corrupt: unknown[] = [
       null,
       undefined,
@@ -493,9 +487,8 @@ describe('wildlife persistence', () => {
     }
     // The last case is the one valid entity in the list.
     expect(livingEntities()).toHaveLength(1);
-  });
 
-  it('drops duplicate ids from a hand-edited slice', () => {
+    // A duplicated id keeps the first row only.
     loadPopulation({
       version: 1,
       nextId: 3,
@@ -538,14 +531,6 @@ describe('wildlife persistence', () => {
 // that merely "usually" holds is a flake waiting for CI.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A world that is shallow water everywhere: fish habitat with no boundaries. */
-const OPEN_SHALLOW_HEIGHT = SEA_LEVEL - BAND_HEIGHT;
-
-/** A world of nothing but shallow water, entirely unlocked. */
-function openShallowWorld(): World {
-  return worldWithTerrain(WORLD_SIZE, () => OPEN_SHALLOW_HEIGHT);
-}
-
 describe('the cohesion blend', () => {
   /** A fish with an explicit pose, for steering arithmetic. */
   function fishAt(x: number, y: number, heading: number, size: WildlifeSizeClass): WildlifeEntity {
@@ -562,16 +547,14 @@ describe('the cohesion blend', () => {
     };
   }
 
-  it('applies no pull at all inside the comfort radius', () => {
+  it('applies no pull inside the comfort radius, ramps to the maximum at the full-pull radius, and saturates beyond it', () => {
     for (const looseness of Object.values(SCHOOL_LOOSENESS_BY_SIZE)) {
       expect(cohesionPullRadiansPerSecond(0, looseness)).toBe(0);
       expect(cohesionPullRadiansPerSecond(SCHOOL_COMFORT_RADIUS_CELLS * looseness, looseness)).toBe(
         0,
       );
     }
-  });
 
-  it('ramps to the maximum at the full-pull radius and saturates beyond it', () => {
     const pullAtFull = cohesionPullRadiansPerSecond(SCHOOL_FULL_PULL_RADIUS_CELLS, 1);
     expect(pullAtFull).toBeCloseTo(SCHOOL_MAX_PULL_RADIANS_PER_SECOND, 10);
     expect(cohesionPullRadiansPerSecond(SCHOOL_FULL_PULL_RADIUS_CELLS * 10, 1)).toBe(pullAtFull);
@@ -612,27 +595,13 @@ describe('the cohesion blend', () => {
     expect(Math.abs(steered)).toBeLessThan(Math.abs(subject.heading));
   });
 
-  it('leaves a lone member unsteered', () => {
-    const subject = fishAt(0, 0, 1.2, 'small');
-    const school = summarizeSchools([subject]).get(1)!;
-    expect(steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, 1.2, TICK_DT)).toBe(
+  it('leaves a lone member unsteered, and ignores the mean heading of a school that has just scattered', () => {
+    const loner = fishAt(0, 0, 1.2, 'small');
+    const lonerSchool = summarizeSchools([loner]).get(1)!;
+    expect(steerWithSchool(loner, lonerSchool, SCHOOL_LOOSENESS_BY_SIZE.small, 1.2, TICK_DT)).toBe(
       1.2,
     );
-  });
 
-  it('excludes the member itself from its own school centroid', () => {
-    // Two members, one at the origin and one 10 cells east. Including self would
-    // put the centroid 5 cells away and halve the pull; excluding it puts the
-    // target where the other fish actually is.
-    const subject = fishAt(0, 0, 0, 'small');
-    const school = summarizeSchools([subject, fishAt(10, 0, 0, 'small')]).get(1)!;
-    // Facing north, with the other fish due east: it turns clockwise, toward 0.
-    expect(
-      steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, Math.PI / 2, TICK_DT),
-    ).toBeLessThan(Math.PI / 2);
-  });
-
-  it('ignores the mean heading of a school that has just scattered', () => {
     // Members whose headings cancel exactly: their circular mean has no
     // direction, and alignment must not invent one out of the rounding error.
     const subject = fishAt(0, 0, 0, 'small');
@@ -649,42 +618,45 @@ describe('the cohesion blend', () => {
       steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, 0.75, TICK_DT),
     ).toBe(0.75);
   });
+
+  it('excludes the member itself from its own school centroid', () => {
+    // Two members, one at the origin and one 10 cells east. Including self would
+    // put the centroid 5 cells away and halve the pull; excluding it puts the
+    // target where the other fish actually is.
+    const subject = fishAt(0, 0, 0, 'small');
+    const school = summarizeSchools([subject, fishAt(10, 0, 0, 'small')]).get(1)!;
+    // Facing north, with the other fish due east: it turns clockwise, toward 0.
+    expect(
+      steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, Math.PI / 2, TICK_DT),
+    ).toBeLessThan(Math.PI / 2);
+  });
 });
 
 
 
 describe('fish size classes drive schooling', () => {
-  it('carries school and size through a snapshot unchanged', () => {
-    // Without this the whole behaviour is undone by a restart: school membership
-    // cannot be recovered from position, so a dropped schoolId would restore
-    // every school as permanent singletons.
-    const harness = bootOn(openShallowWorld());
-    tick(harness, ticksFor(SETTLE_SECONDS));
-    const before = livingEntities().map(persistedShapeOf);
-    expect(before.length).toBeGreaterThan(0);
-    expect(new Set(before.map((entity) => entity.schoolId)).size).toBeLessThan(before.length);
+  // A school's survival across a snapshot is asserted by the persistence
+  // round-trip above, on the settled population.
 
-    const slices = harness.host.collectPersistence();
-    const restored = bootOn(openShallowWorld());
-    restored.host.restorePersistence(slices);
-
-    expect(livingEntities().map(persistedShapeOf)).toEqual(before);
-    expectRestoredAtRest();
-  });
-
-  it('restores a pre-schooling snapshot as independent wanderers', () => {
+  it('restores a pre-schooling snapshot as independent wanderers, and refuses a bird someone wrote into it', () => {
     // Old slices carry no schoolId. The honest reading is "creatures whose
     // schools we no longer know" — one school each — not one giant school.
     resetWildlifeState();
     loadPopulation({
       version: 1,
-      nextId: 4,
+      nextId: 5,
       entities: [
         { id: 1, species: 'fish', x: 10, y: 10, heading: 0 },
         { id: 2, species: 'fish', x: 11, y: 10, heading: 0 },
         { id: 3, species: 'fish', x: 12, y: 10, heading: 0 },
+        // A bird in a slice is a hand-edited or forward-versioned file.
+        // Restoring it as a habitat creature would produce something with no
+        // habitat, which the sweep would then delete anyway — dropping the row
+        // is the honest read.
+        { id: 4, species: 'bird', x: 20, y: 20, heading: 0, schoolId: 2, size: 1 },
       ],
     });
+    expect(livingEntities().map((entity) => entity.species)).toEqual(['fish', 'fish', 'fish']);
 
     const schools = livingEntities().map((entity) => entity.schoolId);
     expect(new Set(schools).size).toBe(schools.length);
@@ -708,17 +680,14 @@ describe('bird flocks arrive, cross and leave', () => {
     resetWildlifeState();
   });
 
-  it('never has more than MAX_CONCURRENT_FLOCKS aloft, or MAX_BIRDS_ALOFT birds', () => {
+  it('never has more than MAX_CONCURRENT_FLOCKS aloft, or MAX_BIRDS_ALOFT birds, which bounds the whole broadcast at the population cap plus the sky', () => {
     // Long enough that the arrival hazard fires many times over.
     for (let n = 0; n < ticksFor(FLOCK_MEAN_SPAWN_INTERVAL_SECONDS * 20); n++) {
       advanceFlocks(FLOCK_WORLD, TICK_DT);
       expect(livingFlocks().length).toBeLessThanOrEqual(MAX_CONCURRENT_FLOCKS);
       expect(livingBirds().length).toBeLessThanOrEqual(MAX_BIRDS_ALOFT);
     }
-  });
 
-
-  it('bounds the whole broadcast at the population cap plus the sky', () => {
     expect(MAX_BIRDS_ALOFT).toBe(MAX_CONCURRENT_FLOCKS * BIRDS_PER_FLOCK_MAX);
     expect(BROADCAST_ENTITY_CEILING).toBe(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
   });
@@ -761,23 +730,6 @@ describe('birds are not habitat fauna', () => {
     // …and a restore resets the shared id counter, so the sky has to be cleared
     // with it or an airborne bird would hold an id about to be reissued.
     expect(livingBirds()).toHaveLength(0);
-  });
-
-  it('refuses to restore a bird someone wrote into a snapshot', () => {
-    resetWildlifeState();
-    loadPopulation({
-      version: 1,
-      nextId: 3,
-      entities: [
-        { id: 1, species: 'fish', x: 10, y: 10, heading: 0, schoolId: 1, size: 0 },
-        { id: 2, species: 'bird', x: 20, y: 20, heading: 0, schoolId: 2, size: 1 },
-      ],
-    });
-
-    // A bird in a slice is a hand-edited or forward-versioned file. Restoring it
-    // as a habitat creature would produce something with no habitat, which the
-    // sweep would then delete anyway — dropping the row is the honest read.
-    expect(livingEntities().map((entity) => entity.species)).toEqual(['fish']);
   });
 });
 

@@ -120,19 +120,16 @@ describe('a closed world leaves nothing of this plugin in fire', () => {
     clearEntityFuelRegistry();
   });
 
-  it('withdraws its fuel source when the world closes', () => {
-    const world = flatWorld();
-    const session = openOn(world, [FIRE_PLUGIN_NAME, WILDLIFE_PLUGIN_NAME]);
+  it('withdraws its fuel source when the world closes — through the host, and through its own hook alone', () => {
+    const closedByHost = openOn(flatWorld(), [FIRE_PLUGIN_NAME, WILDLIFE_PLUGIN_NAME]);
     expect(sourceNames()).toContain(WILDLIFE_PLUGIN_NAME);
 
-    closeOn(session);
+    closeOn(closedByHost);
 
     expect(sourceNames()).not.toContain(WILDLIFE_PLUGIN_NAME);
-  });
 
-  it('withdraws it even when fire’s own close hook never runs', () => {
-    const world = flatWorld();
-    const session = openOn(world, [FIRE_PLUGIN_NAME, WILDLIFE_PLUGIN_NAME]);
+    // Again, with fire's own close hook never running.
+    const session = openOn(flatWorld(), [FIRE_PLUGIN_NAME, WILDLIFE_PLUGIN_NAME]);
     expect(sourceNames()).toContain(WILDLIFE_PLUGIN_NAME);
 
     // This plugin's close hook ALONE: fire is never told the world is closing,

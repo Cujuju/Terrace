@@ -59,17 +59,15 @@ function grazer(x: number, y: number, overrides: Partial<WildlifeEntity> = {}): 
 }
 
 describe('gradient-limited traversal (canTraverse)', () => {
-  it('rejects a grazer riser step that exceeds GRAZER_MAX_GRADIENT_PER_CELL', () => {
+  it('rejects a grazer riser step that exceeds GRAZER_MAX_GRADIENT_PER_CELL, and accepts one at exactly the limit', () => {
     // A riser one unit steeper than the limit, concentrated in a single cell
     // step (x=9 → x=10) — exactly the "ten-plus terrace layers" shape from
     // the bug report, minimised to one.
     const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL + 1);
     expect(canTraverse(world, 'grazer', 9.5, 5, 10.5, 5)).toBe(false);
-  });
 
-  it('accepts a grazer ramp step at exactly the limit', () => {
-    const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL);
-    expect(canTraverse(world, 'grazer', 9.5, 5, 10.5, 5)).toBe(true);
+    const ramp = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL);
+    expect(canTraverse(ramp, 'grazer', 9.5, 5, 10.5, 5)).toBe(true);
   });
 
   it('rejects a mid-path riser even when both endpoints share a height (case e)', () => {
@@ -127,7 +125,7 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
     expect(Math.abs(Math.cos(heading!))).toBeLessThan(1e-9);
   });
 
-  it('lets a grazer cross a gentle ramp under the limit (case b)', () => {
+  it('lets a grazer cross a gentle ramp under the limit (case b), and does not constrain a fish crossing the same-shaped terrain (case c)', () => {
     const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL - 1);
     const entity = grazer(9.5, 20);
     const heading = steerToValidHeading(world, entity, 0, 2, speedOf(entity) * TICK_DT);
@@ -136,14 +134,12 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
     // Nothing blocks the desired heading, so the very first candidate (0°,
     // due east) is returned unchanged.
     expect(heading).toBeCloseTo(0, 9);
-  });
 
-  it('does not constrain a fish crossing the same-shaped terrain (case c)', () => {
     // Reuse the riser shape but classify it as water throughout by shifting
     // it below SEA_LEVEL and inside the shallow band on both sides.
     const shallowFloor = SEA_LEVEL - 10;
-    const world = fakeWorld((x) => (x < 10 ? shallowFloor : shallowFloor - 100));
-    const entity: WildlifeEntity = {
+    const seaWorld = fakeWorld((x) => (x < 10 ? shallowFloor : shallowFloor - 100));
+    const fish: WildlifeEntity = {
       id: 2,
       species: 'fish',
       schoolId: 1,
@@ -154,8 +150,8 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
       heading: 0,
       fleeSecondsRemaining: 0,
     };
-    const heading = steerToValidHeading(world, entity, 0, 2, speedOf(entity) * TICK_DT);
-    expect(heading).toBeCloseTo(0, 9);
+    const fishHeading = steerToValidHeading(seaWorld, fish, 0, 2, speedOf(fish) * TICK_DT);
+    expect(fishHeading).toBeCloseTo(0, 9);
   });
 });
 
