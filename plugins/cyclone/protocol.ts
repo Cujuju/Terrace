@@ -126,21 +126,48 @@ export const FREQUENCY_INTERVAL_MULTIPLIERS: Readonly<Record<'rare' | 'common', 
   common: 0.5,
 };
 
-/** Key of the storm-surge setting (WorldApi.setting). */
+/**
+ * Key of the setting that decides whether a cyclone may PERMANENTLY REWRITE
+ * TERRAIN in this world (WorldApi.setting).
+ *
+ * ONE SWITCH, TWO MECHANICS since issue #299: the storm surge at the shoreline
+ * (server/surge.ts) and the wind scour on struck land (server/wind-scour.ts).
+ * The question an operator is being asked is not "do you want surges" — it is
+ * "may weather edit my map", which is the only part of a cyclone that is not
+ * transient and the only part there is no undo for. Splitting it would offer a
+ * world where the sea may take the coast but the wind may not take the hill
+ * behind it, a distinction nobody has asked for, in exchange for a second row
+ * in the world panel and a second thing to reason about in every discussion of
+ * "is this world's terrain stable".
+ *
+ * THE KEY STILL SAYS `cyclone-surge`, and deliberately is not renamed. It is
+ * persisted per world (WorldApi.setting's doc comment: changing a setting
+ * writes the row and reopens the world), so renaming it would silently reset
+ * every world that has ever turned it off — the exact worlds whose owners care
+ * most about this answer — back to the shipped default of `on`. A historical
+ * name is a smaller cost than that, and this comment is where it is paid.
+ */
 export const CYCLONE_SURGE_SETTING_KEY = 'cyclone-surge';
 
 export const CYCLONE_SURGE_MODES = ['off', 'on'] as const;
 export type CycloneSurgeMode = (typeof CYCLONE_SURGE_MODES)[number];
 
 /**
- * Surge ships ON (owner, issue #230, 2026-09-01; it shipped off before that).
+ * Ground-changing ships ON (owner, issue #230, 2026-09-01; it shipped off
+ * before that).
  *
- * It is still the one thing this plugin does that is permanent — a `sculpt`, and
- * a sculpt is terrain a player did not ask for. What made defaulting it on
+ * It is still the only thing this plugin does that is permanent — a `sculpt`,
+ * and a sculpt is terrain a player did not ask for. What made defaulting it on
  * acceptable is the guard that came with the decision: a surge scours only a
  * shoreline whose whole brush footprint is REVEALED (server/surge.ts,
  * `footprintUnlocked`), so a coast nobody has seen is never quietly rewritten. A
  * self-hoster who wants an unchanging shoreline sets `off`.
+ *
+ * THE WIND SCOUR ADDED BY #299 SHIPS UNDER THE SAME DEFAULT AND THE SAME GUARD
+ * — it carries `footprintUnlocked` over the whole of its own (smaller) brush,
+ * for the same reason and through the same shared helper. What extends the
+ * owner's ruling to it is that the condition of that ruling is met, not that
+ * the two mechanics are alike.
  */
 export const DEFAULT_CYCLONE_SURGE_MODE: CycloneSurgeMode = 'on';
 
