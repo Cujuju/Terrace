@@ -2820,3 +2820,62 @@ describe('a pull carries the one level under it and no further', () => {
     expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS, CY))).toBe(TOP_BAND - 3);
   });
 });
+
+describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-02)', () => {
+  /** A stamped pole: one span, sheer from the plain to its cap. */
+  const CAP_BAND = 5;
+  const PLAIN_BAND = 0;
+  const RADIUS = 4;
+  const SIZE = 32;
+  const CX = 16;
+  const CY = 16;
+  const POLE_REACH = 3;
+  const DRAG_LOWER = { tool: 'drag', profile: 'hard', anchor: 'band' } as const;
+
+  const poleOnPlain = (): Heightmap => {
+    const map = createHeightmap(SIZE);
+    for (let y = CY - POLE_REACH; y <= CY + POLE_REACH; y++) {
+      for (let x = CX - POLE_REACH; x <= CX + POLE_REACH; x++) {
+        map.cells[cellIndex(map, x, y)] = CAP_BAND * BAND_HEIGHT;
+      }
+    }
+    return map;
+  };
+  /** Pull inward with the cursor on the pole's east edge, holding `band`. */
+  const pullIn = (map: Heightmap, band: number): void => {
+    applySculpt(map, CX + POLE_REACH, CY, RADIUS, -DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG_LOWER,
+      targetBand: band,
+    });
+  };
+  const eastEdgeBand = (map: Heightmap): number =>
+    bandOf(heightAt(map, CX + POLE_REACH, CY));
+
+  it('grabbing a band below the cap cuts the face back to the band beneath the grab', () => {
+    for (let grab = CAP_BAND - 1; grab > PLAIN_BAND; grab--) {
+      const map = poleOnPlain();
+      pullIn(map, grab);
+      expect(eastEdgeBand(map)).toBe(grab - 1);
+      // Exactly band-aligned, so a later stamp or drag sees an ordinary step.
+      expect(heightAt(map, CX + POLE_REACH, CY)).toBe((grab - 1) * BAND_HEIGHT);
+    }
+  });
+
+  it('grabbing the cap still falls to the exposed ground — the pull-out undo', () => {
+    const map = poleOnPlain();
+    pullIn(map, CAP_BAND);
+    expect(eastEdgeBand(map)).toBe(PLAIN_BAND);
+  });
+
+  it('the cut sweeps the footprint at the grabbed band and stops at its edge', () => {
+    const map = poleOnPlain();
+    const grab = 3;
+    pullIn(map, grab);
+    // Footprint reach at radius 4 is 3 cells west of the cursor on the edge.
+    for (let x = CX; x <= CX + POLE_REACH; x++) {
+      expect(bandOf(heightAt(map, x, CY))).toBe(grab - 1);
+    }
+    // Beyond the footprint the pole stands at its cap.
+    expect(bandOf(heightAt(map, CX - 1, CY))).toBe(CAP_BAND);
+  });
+});
