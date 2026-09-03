@@ -197,12 +197,20 @@ export const PUFF_NORMAL_FLATNESS = 0.45;
 /**
  * Where a puff's soft edge starts, as a fraction of its half-width.
  *
- * 0.35 — a broad solid middle and a soft outer two thirds. A puff that fades
- * from its very centre (spiral.ts's `0.0`) is a smear, which is right for an
- * arm of a hurricane seen from far above and wrong for cloud a player stands
- * under: the deck needs puffs with BODIES so they occlude each other.
+ * A puff that fades from its very centre (spiral.ts's `0.0`) is a smear, which
+ * is right for an arm of a hurricane seen from far above and wrong for cloud a
+ * player stands under: the deck needs puffs with BODIES so they occlude each
+ * other.
+ *
+ * RAISED FROM 0.35 TO 0.55 at the in-world gate (2026-09-02). At 0.35 two
+ * thirds of every puff was gradient, and 139 overlapping gradients average out:
+ * the deck read as a bank of fog with the seabed contours legible straight
+ * through it. Just over half puts a solid core in each puff and confines the
+ * blend to a rim, which is what makes the cauliflower silhouette read from
+ * above — and it is also the cheaper end, because the fragments it removes are
+ * the faint ones that cost fill and show nothing.
  */
-export const PUFF_SOFT_EDGE_FRACTION = 0.35;
+export const PUFF_SOFT_EDGE_FRACTION = 0.55;
 
 /**
  * Overlap factor in the puff-count arithmetic below.
