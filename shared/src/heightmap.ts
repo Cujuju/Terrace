@@ -1632,6 +1632,31 @@ function applyDragRegion(
   // ground stands beside the cell, which is why a retreat never eats inward
   // past the lip it was aimed at.
   //
+  // HOW FAR A CELL FALLS DEPENDS ON WHERE IT WAS GRABBED (owner report
+  // 2026-09-02: on a stamped five-band face, "refusing to do anything less
+  // than five bands when attempting to pull any of the bands in the top 5").
+  // Two rules that were each right alone had collided: `retreatHeightAt`
+  // exposes the NEIGHBOURING GROUND, however far down it is (so pulling a lip
+  // back in undoes a pull-out over a plain — its acid test), and #223 above
+  // selects every cell capping at OR ABOVE the grab. On a sheer face the
+  // neighbour is the ground at the bottom, so grabbing band 3 of a 0→5 face
+  // did exactly what grabbing band 5 did, and the fixpoint then ate the whole
+  // footprint down to the plain. The grab named WHERE and had no say in HOW
+  // FAR. The rule now:
+  //
+  //   - a cell capping AT the grabbed band falls to the exposed ground,
+  //     unchanged — grabbing the top lip still undoes a pull-out exactly;
+  //   - a cell capping ABOVE it falls no further than the band beneath the
+  //     grab, `(k − 1) · BAND_HEIGHT`, the same one-band-down target the
+  //     stamp's anchor uses (anchoredTargetHeight). The face is cut back at
+  //     band k and the bands below it stand; the wave carries that cut across
+  //     the footprint because each cut cell is now lower ground beside the next.
+  //
+  // On a one-band step both cases are the same height, so this is
+  // byte-identical wherever the old rule was already right. Since #217 the
+  // pointer names the slab under the ray, so the player chooses between the
+  // two by where on the face they take hold.
+  //
   // NO CASCADE, DELIBERATELY, and this is where the symmetry with the outward
   // pull is broken on purpose. `pushLowerLayers` exists because an ADVANCING
   // lip swallows the tread below it: the step is destroyed unless the level
@@ -1668,10 +1693,17 @@ function applyDragRegion(
         // relies on it: a span capping BELOW the grabbed band is not that
         // band's lip and must not be cut by a pull on it.
         if (bandOf(span.ceiling) < targetBand) continue;
-        const exposed = retreatHeightAt(map, x, y, targetBand);
+        const ground = retreatHeightAt(map, x, y, targetBand);
         // Interior of the plateau — nothing lower beside it, so the band does
         // not end here and there is no lip at this cell to pull in.
-        if (exposed === null) continue;
+        if (ground === null) continue;
+        // THE GRAB BOUNDS THE DROP ON A TALL FACE (owner report 2026-09-02, the
+        // block comment above): a cell capping ABOVE the grabbed band is cut
+        // back to the band beneath the grab, never further; a cell capping AT
+        // it falls to the exposed ground, which is the pull-out's undo.
+        const exposed = bandOf(span.ceiling) > targetBand
+          ? Math.max(ground, (targetBand - 1) * BAND_HEIGHT)
+          : ground;
         // A DRAG NEVER REMOVES A ROOF (plan D4). A span above the bottom one
         // that would fall below its own floor, or thin out past drawing, is
         // left standing: the ground beside it is under it, not beside it. The
