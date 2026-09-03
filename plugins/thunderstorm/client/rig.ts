@@ -522,7 +522,6 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
     puffSizeFraction: THUNDERSTORM_PUFF_SIZE_FRACTION,
     color: THUNDERSTORM_DECK_COLOR,
     name: `${THUNDERSTORM_PLUGIN_NAME}:deck`,
-    renderOrder: DISC_RENDER_ORDER,
     applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
   });
 

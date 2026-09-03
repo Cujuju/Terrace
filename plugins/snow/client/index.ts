@@ -47,6 +47,9 @@ const view = createDiscSystemsView<DiscRig>({
   update: (rig, disc, elapsed) => {
     rig.update(disc, elapsed);
   },
+  // The view orders the deck against the camera once per frame — see
+  // DiscSystemsViewSpec.deck.
+  deck: () => rigs?.deck ?? null,
   attachExtras: (ctx: ClientPluginCtx) => {
     const pool = rigs;
     if (pool === null) return;

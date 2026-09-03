@@ -65,6 +65,7 @@ import {
   puffMaskGlsl,
 } from './puffDeck.ts';
 import { CLOUD_BASE_WORLD_Y, CLOUD_HEADROOM_WORLD_UNITS } from './precipitation.ts';
+import { DISC_RENDER_ORDER } from './discRig.ts';
 import { glslFloat, spliceShader } from '../../render/shaderSplice.ts';
 import type { GroundShadeDisc } from '../types.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
@@ -82,6 +83,45 @@ const TWO_PI = Math.PI * 2;
  * so the two can never be moved apart.
  */
 export const DECK_BASE_WORLD_Y = CLOUD_BASE_WORLD_Y;
+
+/**
+ * HALF A STEP, which is what keeps the deck's two orders out of every other
+ * plugin's slot.
+ *
+ * Every `*_RENDER_ORDER` in this codebase is a whole number, and each one
+ * states a relation to another plugin's whole number (tornado's funnel above
+ * cyclone's spiral, and so on). The deck needs a place immediately either side
+ * of the rig it belongs to, and there is no whole number left between the sea
+ * at 0 and DISC_RENDER_ORDER at 1. So the deck steps by a half: both of its
+ * orders are strictly inside a gap no integer occupies, which means adding
+ * them cannot tie with — or reorder — anything outside this kit.
+ */
+const DECK_ORDER_HALF_STEP = 0.5;
+
+/**
+ * WHERE THE DECK IS DRAWN, AND WHY IT DEPENDS ON THE CAMERA (#300).
+ *
+ * The deck is one InstancedMesh for every mass at once, so its object POSITION
+ * is the world origin; the rig's column and haze sit at their mass. At equal
+ * `renderOrder` three sorts transparent objects by their object centre's view
+ * depth, so which of the two is drawn first came down to where the world
+ * origin happened to be relative to the mass — arbitrary, and it is what
+ * painted rain streaks across the face of the cloud they fall out of.
+ *
+ * The geometry settles it exactly, with no sort and no per-mass test. Every
+ * particle of a column is at or below DECK_BASE_WORLD_Y and every haze sheet
+ * is far below it; every puff of a deck is at or above that same plane. So for
+ * a camera ABOVE the plane, on any ray whatever, a puff is nearer than a
+ * column particle — the deck must therefore be drawn LAST, over the rig. For a
+ * camera BELOW it, the reverse holds on every ray, and the deck is drawn
+ * FIRST. One boolean per frame decides it for every mass in the plugin.
+ *
+ * Both are positive, so the deck still lands after the world-sized transparent
+ * sea whichever side of the plane the camera is on — the promise
+ * DISC_RENDER_ORDER's own doc makes.
+ */
+export const DECK_RENDER_ORDER_CAMERA_ABOVE_BASE = DISC_RENDER_ORDER + DECK_ORDER_HALF_STEP;
+export const DECK_RENDER_ORDER_CAMERA_BELOW_BASE = DISC_RENDER_ORDER - DECK_ORDER_HALF_STEP;
 
 /**
  * How deep the deck is, in world units, from its flat base to its domed top.
@@ -336,8 +376,6 @@ export interface CumulusDeckSpec {
   readonly color: number;
   /** Node name, for legibility in the three.js inspector. */
   readonly name: string;
-  /** Where in the transparent pass this deck sits. */
-  readonly renderOrder: number;
   /**
    * `ClientPluginCtx.applyRevealClip`, so the deck stops at the frontier and
    * at the world's edge like everything else the plugin draws. Passed in rather
@@ -361,6 +399,15 @@ export interface CumulusDeck {
   update(slot: number, disc: InterpolatedDisc): void;
   /** This slot's mass is gone or dark: draw nothing for it. */
   park(slot: number): void;
+  /**
+   * Puts the deck in front of or behind its plugin's rigs for this frame, from
+   * the camera's world Y — see DECK_RENDER_ORDER_CAMERA_ABOVE_BASE.
+   *
+   * CALLED ONCE PER FRAME FOR THE WHOLE PLUGIN, from
+   * ./discSystemsView.ts's frame — never from a rig's `update`. It is one
+   * property of one mesh, and the answer is the same for every mass under it.
+   */
+  orderAgainstCamera(cameraWorldY: number): void;
   dispose(): void;
 }
 
@@ -576,7 +623,10 @@ attribute vec2 aPolar;`;
   const geometry = new PlaneGeometry(2, 2, 1, 1);
   const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = `${spec.name}:puffs`;
-  mesh.renderOrder = spec.renderOrder;
+  // The ordinary case, and never left to chance: a deck that was built and
+  // then never told about the camera still draws over its rig rather than at
+  // three's default 0, which would put it under the sea.
+  mesh.renderOrder = DECK_RENDER_ORDER_CAMERA_ABOVE_BASE;
   // BORN INVISIBLE. A plugin whose kind is not in the sky this session — snow
   // in a temperate world, say — must submit no draw call at all, and `visible`
   // is only ever turned on by a slot going live below.
@@ -671,6 +721,13 @@ attribute vec2 aPolar;`;
       if (massSize[slot * 2 + 1] !== 0) live--;
       massSize[slot * 2 + 1] = 0;
       mesh.visible = live > 0;
+    },
+
+    orderAgainstCamera(cameraWorldY: number): void {
+      mesh.renderOrder =
+        cameraWorldY >= DECK_BASE_WORLD_Y
+          ? DECK_RENDER_ORDER_CAMERA_ABOVE_BASE
+          : DECK_RENDER_ORDER_CAMERA_BELOW_BASE;
     },
 
     dispose(): void {

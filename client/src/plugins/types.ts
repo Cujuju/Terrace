@@ -123,6 +123,20 @@ export interface GroundShadeDisc {
   readonly inner: number;
 }
 
+/**
+ * A point in WORLD units — three's own space, not cell space.
+ *
+ * Its own type rather than three's `Vector3` because a plugin reading one only
+ * ever reads three numbers out of it, and a readonly triple says that where a
+ * `Vector3` would offer `set`, `copy` and every other way to write into a
+ * scratch object it does not own.
+ */
+export interface WorldPosition {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
 export interface MoverPose {
   readonly x: number;
   readonly y: number;
@@ -375,6 +389,26 @@ export interface ClientPluginCtx {
    * (plugins/fire/client/index.ts's torch does exactly this).
    */
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
+
+  /**
+   * WHERE THE CAMERA IS, in WORLD units — three's own space, the same
+   * coordinates `layer` is in.
+   *
+   * WHY A PLUGIN GETS THIS AT ALL, when kit/discRig.ts's header says the sky is
+   * anchored to the mass and never to the viewer: nothing here is drawn from
+   * it. It answers ORDERING questions — which side of a horizontal plane the
+   * viewer is on, and therefore which of two transparent things is in front of
+   * the other on every ray at once (kit/cumulusDeck.ts's
+   * `orderAgainstCamera`). A camera-facing LAYOUT would still be the wrong
+   * shape for this codebase; a camera-dependent draw ORDER is the only thing
+   * that can settle a tie three would otherwise settle by an object's centre.
+   *
+   * THE RETURNED OBJECT IS SCRATCH, refilled by the next call and shared by
+   * every plugin — read the three numbers, never keep the reference. It is
+   * reused because this is asked once per frame by every plugin that has a
+   * deck, and a fresh object per frame per plugin is garbage for nothing.
+   */
+  cameraPosition(): WorldPosition;
 
   /**
    * Is cell (x, y) in a chunk this client has been SENT, and inside the world?

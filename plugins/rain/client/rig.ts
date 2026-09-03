@@ -17,7 +17,6 @@ import {
 import {
   createDiscRig,
   createRigPool,
-  DISC_RENDER_ORDER,
   type DiscRig,
   type RigPool,
 } from '../../../client/src/plugins/kit/discRig.ts';
@@ -129,7 +128,6 @@ export function createRainRigs(ctx: ClientPluginCtx): RainRigs {
     puffSizeFraction: RAIN_PUFF_SIZE_FRACTION,
     color: RAIN_DECK_COLOR,
     name: `${RAIN_PLUGIN_NAME}:deck`,
-    renderOrder: DISC_RENDER_ORDER,
     applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
   });
 
