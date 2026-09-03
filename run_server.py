@@ -672,8 +672,8 @@ def main(watch: bool) -> int:
         # holding a port. SIGINT for the server so its clean-shutdown snapshot
         # path runs; the same for vite, which exits on it just as readily.
         # Restore the terminal FIRST, so it is sane even if reaping hangs:
-        # this is the authoritative restore (see the cbreak comment above).
-        # The reader's own restore, if it runs, is a harmless second copy.
+        # this is the authoritative (and only) restore - the reader thread
+        # never touches terminal mode (see the cbreak comment above).
         if termios_saved is not None:
             try:
                 termios_mod.tcsetattr(sys.stdin.fileno(), termios_mod.TCSADRAIN, termios_saved)
