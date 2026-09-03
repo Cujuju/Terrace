@@ -37,21 +37,24 @@ import { FLORA_STUMP_CAP, stumpCellOf, stumpKey, type StumpCell } from '../proto
 /**
  * How long a stump stands before it rots away, in simulated seconds.
  *
- * 180 s — TWICE FLORA_STABILITY_SECONDS (stability.ts, 90 s), which is the
- * window a cell must sit undisturbed before this plugin will grow anything on
- * it. Deriving it from that number rather than picking a round one is the whole
- * point: a stump holds its cell against replanting while it stands
- * (./index.ts's occupiedCells), so if the two were equal the scar would rot at
+ * 360 s — TWICE FLORA_SCORCH_REGROW_SECONDS (./scorch.ts, 180 s), which is
+ * itself twice FLORA_STABILITY_SECONDS (stability.ts, 90 s), the window a cell
+ * must sit undisturbed before this plugin will grow anything on it. Deriving
+ * it from those numbers rather than picking a round one is the whole point: a
+ * stump holds its cell against replanting while it stands (./index.ts's
+ * occupiedCells), so if it matched the stability window the scar would rot at
  * roughly the moment the ground became eligible again and the burn would leave
- * no visible aftermath at all. At twice the window the sequence a player sees
- * is "it burned, it stayed burned for a while, then it grew back" — three
- * states instead of two.
+ * no visible aftermath at all; and it must outlast the scorch window so grass
+ * creeps back over the scar while the stumps still stand (scorch.ts's heal
+ * order). The sequence a player sees is "it burned, it stayed burned for a
+ * while, then it grew back" — three states instead of two. Doubled from 180 s
+ * on 2026-09-02 alongside the scorch window (issue #297) to keep that ratio.
  *
  * The ceiling on it is that a stump is scenery a player cannot clear except by
  * sculpting the cell: long enough to be a scar, short enough that a world heals
  * inside one play session.
  */
-export const FLORA_STUMP_ROT_SECONDS = 180;
+export const FLORA_STUMP_ROT_SECONDS = 360;
 
 /**
  * The standing stumps, keyed by cell, VALUED BY THE SIMULATED SECOND THEY ROT.
