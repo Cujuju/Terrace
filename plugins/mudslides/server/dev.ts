@@ -50,10 +50,7 @@
 //
 // Unset — which is every real deployment — this module does nothing at all.
 
-import {
-  DEV_SEARCH_RADIUS_CELLS,
-  DEV_SEARCH_STEP_CELLS,
-} from '../../../server/src/plugins/kit/devSite.ts';
+import { DEV_SEARCH_RADIUS_CELLS } from '../../../server/src/plugins/kit/devSite.ts';
 import { MUDSLIDE_MAX_PATH_CELLS } from '../protocol.ts';
 import {
   MUDSLIDE_BRUSH_RADIUS_CELLS,
@@ -84,12 +81,37 @@ export const MUDSLIDES_DEV_PERIOD_ENV = 'MUDSLIDES_DEV_FORCE_PERIOD_SECONDS';
  */
 export const MUDSLIDES_DEV_SLOW_ENV = 'MUDSLIDES_DEV_SLOW';
 
-// The reach — how far out a forced site may be looked for, and how coarsely —
-// is the plugin kit's (server/src/plugins/kit/devSite.ts), because the rotating-
-// storm plugins' force-spawn wanted exactly the same two numbers for exactly the
-// same reason. THE SCAN ITSELF STAYED HERE, and `scanForSite` below says why it
-// is a grid scan and not the kit's ring of spokes.
-export { DEV_SEARCH_RADIUS_CELLS, DEV_SEARCH_STEP_CELLS };
+// The reach — how far out a forced site may be looked for — is the plugin kit's
+// (server/src/plugins/kit/devSite.ts), because the rotating-storm plugins'
+// force-spawn wanted exactly the same number for exactly the same reason. THE
+// SCAN ITSELF STAYED HERE, and `scanForSite` below says why it is a grid scan
+// and not the kit's ring of spokes.
+//
+// THE KIT'S STEP NO LONGER APPLIES TO THIS SCAN (issue #301, 2026-09-02) — see
+// DEV_RIM_SCAN_STEP_CELLS below. It is still the right coarseness for the kit's
+// own ring search, which is looking for a REGION (open water, land) where this
+// one is looking for a one-cell feature.
+export { DEV_SEARCH_RADIUS_CELLS };
+
+/**
+ * Cells between samples of the site scan.
+ *
+ * ONE — a full-resolution scan, where every other force-spawn search in the repo
+ * steps by the kit's DEV_SEARCH_STEP_CELLS (4). A site is now a RIM (issue #301:
+ * `slopeAt` admits only a cell whose own one-cell step down is at least
+ * MUDSLIDE_RIM_DROP), and on genesis ground a rim is a contour line ONE CELL
+ * WIDE: measured on a default-size world, of the 2338 qualifying cells inside
+ * one search square only 7% sit on the 4-cell grid, and a rim that weaves
+ * between the samples is missed entirely — which is the whole failure this
+ * fixture exists to make visible. The kit's coarse step was right when a site
+ * was a span-scale measurement that a 4-cell grid could not step over.
+ *
+ * WHAT IT COSTS: one `slopeAt` per cell of a (2·DEV_SEARCH_RADIUS_CELLS + 1)²
+ * square — sixteen height reads, on a fixture world, once at boot and once per
+ * forced period. The expensive part of a candidate, `dryRunLength`, still runs
+ * only on cells that pass the site test, which the rim test made rarer.
+ */
+const DEV_RIM_SCAN_STEP_CELLS = 1;
 
 /**
  * The shortest run worth forcing, in cells.
@@ -146,8 +168,16 @@ function dryRunLength(world: MudslideWorld, x: number, y: number): number {
  * wrong. Storms' ring search is right for a cyclone, because any patch of open
  * water will do and the nearest one is the best one. Qualifying hillsides are
  * rare enough that a ring's few hundred samples missed every one of them on a
- * 512-cell test world; the scan looks at every fourth cell of the revealed
- * square instead. It runs once, at boot, on a fixture world.
+ * 512-cell test world; the scan looks at every cell of the revealed square
+ * instead (DEV_RIM_SCAN_STEP_CELLS). It runs once, at boot, on a fixture world.
+ *
+ * ONE DEFINITION OF "STEEP", NOT TWO (issue #301, 2026-09-02). The scan's whole
+ * site test is `slopeAt` — the survey's own — so the fixture cannot prefer a
+ * cell the sim would never pick. It used to: scoring by run length let a cell
+ * set back on a plateau's tread beat the rim in front of it, because the tread's
+ * dry run is the rim's plus the length of the tread. That preference is gone
+ * with the cells it preferred, since `slopeAt` no longer admits tread at all,
+ * and longest-run scoring now chooses BETWEEN RIMS, which is what it was for.
  */
 /** What `scanForSite` found: the best site, and the numbers to report if none. */
 interface SiteScan {
@@ -174,8 +204,8 @@ function scanForSite(world: MudslideWorld, centre: { x: number; y: number }, rea
   let steepestSeen = 0;
   let longestSeen = 0;
 
-  for (let dy = -reach; dy <= reach; dy += DEV_SEARCH_STEP_CELLS) {
-    for (let dx = -reach; dx <= reach; dx += DEV_SEARCH_STEP_CELLS) {
+  for (let dy = -reach; dy <= reach; dy += DEV_RIM_SCAN_STEP_CELLS) {
+    for (let dx = -reach; dx <= reach; dx += DEV_RIM_SCAN_STEP_CELLS) {
       const x = centre.x + dx;
       const y = centre.y + dy;
       const slope = slopeAt(world, x, y);
