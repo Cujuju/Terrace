@@ -35,7 +35,7 @@
 // wall clock, no RNG, fixed iteration order. Two callers running this against
 // the same heights get byte-identical answers.
 
-import { BAND_HEIGHT, MAX_STEP, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
 import { NO_FRESHWATER, type Freshwater, type FreshwaterMap } from './freshwater.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +206,15 @@ export const LAND_WALKER_MIN_GROUND_HEIGHT = BAND_HEIGHT;
  */
 export const UNCONSTRAINED_MIN_GROUND_HEIGHT = MIN_HEIGHT;
 
+/**
+ * "No maximum at all" — the vacuous value for a profile that may stand on
+ground of any height. MAX_HEIGHT rather than Infinity so the whole profile
+stays in the integer domain the determinism contract asks for (the same
+reason UNCONSTRAINED_MIN_GROUND_HEIGHT is MIN_HEIGHT, not -Infinity): no
+shipped terrain exceeds MAX_HEIGHT, so a ceiling there constrains nothing.
+ */
+export const UNCONSTRAINED_MAX_GROUND_HEIGHT = MAX_HEIGHT;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The walker profile and the two predicates every caller adapts onto.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,6 +252,15 @@ export interface TraversalProfile {
    * vacuous value for a mover whose ground is water anyway.
    */
   readonly minGroundHeight: number;
+  /**
+   * The highest stored height a cell may have and still count as this mover's
+   * ground — the axis that keeps a deep-hulled mover off water too shallow to
+   * float it. A cell whose height is ABOVE this is not ground this profile may
+   * stand on. Absent means unconstrained (UNCONSTRAINED_MAX_GROUND_HEIGHT),
+   * which is what keeps the axis ADDITIVE: every profile that predates it
+   * keeps its previous answers.
+   */
+  readonly maxGroundHeight?: number;
   /**
    * What this mover does about fresh water — the axis that separates "may
    * cross a river" from "may swim a lake" (owner, 2026-08-20: "terrestrial
@@ -297,6 +315,7 @@ export function isWalkableCell(
 
   const height = world.heightAt(cx, cy);
   if (height < profile.minGroundHeight) return false;
+  if (height > (profile.maxGroundHeight ?? UNCONSTRAINED_MAX_GROUND_HEIGHT)) return false;
   if (!profile.grounds.includes(groundOf(height))) return false;
 
   const freshwater = (world.freshwater ?? NO_FRESHWATER).at(cx, cy);
@@ -436,6 +455,7 @@ export function canProceedAlong(
     previousHeight = height;
 
     if (height < profile.minGroundHeight) return false;
+    if (height > (profile.maxGroundHeight ?? UNCONSTRAINED_MAX_GROUND_HEIGHT)) return false;
     if (!profile.grounds.includes(groundOf(height))) return false;
     const freshwater = (world.freshwater ?? NO_FRESHWATER).at(sampleX, sampleY);
     if (!admitsFreshwater(profile.freshwater, freshwater)) return false;
@@ -522,5 +542,77 @@ export function waterBandProfile(ground: 'shallow' | 'deep'): TraversalProfile {
     minGroundHeight: UNCONSTRAINED_MIN_GROUND_HEIGHT,
     freshwater: 'all',
     maxGradientPerCell: UNCONSTRAINED_GRADIENT_PER_CELL,
+  };
+}
+
+/**
+ * Water deep enough to float a hull that draws `draftHeightUnits` of water —
+ * the boats rule. The draft is the hull's depth below the waterline in height
+ * units, and the caller (boats) derives it from its own hull model: this file
+ * knows what "deep enough" MEANS, not how deep any particular hull goes.
+ *
+ * `maxGroundHeight = SEA_LEVEL - draftHeightUnits`: ground shallower than the
+ * keel is not ground this profile may stand on, so a deep-hulled mover routes
+ * around the shallows while a shallow one still crosses them. Identical to
+ * OPEN_WATER_PROFILE but for that one axis, written as a spread so the two
+ * can never drift on the axes they share (the RIVER_FORDING_WALKER_PROFILE
+ * precedent). A draft of 0 is allowed and equals OPEN_WATER_PROFILE: no water
+ * cell is above SEA_LEVEL, so the ceiling constrains nothing.
+ */
+export function navigableWaterProfile(draftHeightUnits: number): TraversalProfile {
+  return {
+    ...OPEN_WATER_PROFILE,
+    maxGroundHeight: SEA_LEVEL - draftHeightUnits,
+  };
+}
+
+/**
+ * An eroded view of `world` for a body with lateral half-extent `radiusCells`
+ * cells: `heightAt(x, y)` is the MAX of `world.heightAt` over the integer
+ * offsets (dx, dy) with dx² + dy² <= radiusCells², skipping offsets that fall
+ * outside [0, worldSize). `worldSize` and `freshwater` pass through unchanged.
+ *
+ * PURPOSE: a body with lateral half-extent `radiusCells` may only centre
+ * itself on a cell whose WHOLE neighbourhood is legal. Taking the max height
+ * dilates land and erodes water, so `isWalkableCell`, `canProceedAlong`,
+ * `findRoute` and the steering sweep all see the same eroded mask with no
+ * change to any of them — planner and follower cannot disagree about a wall.
+ *
+ * The offset list is precomputed once per call, in fixed sorted order (dy
+ * outer, dx inner), so every query scans the same offsets in the same order
+ * (determinism contract, above). `radiusCells <= 0` returns `world` itself.
+ *
+ * COST, named: A* on the eroded sampler multiplies height reads by the disc
+ * size (5 offsets at radius 1, 13 at radius 2). Callers plan on goal change,
+ * not per tick, which is where that multiplication belongs.
+ */
+export function withClearance<T extends TerrainSampler>(
+  world: T,
+  radiusCells: number,
+): TerrainSampler {
+  if (radiusCells <= 0) return world;
+  const radiusSquared = radiusCells * radiusCells;
+  const bound = Math.ceil(radiusCells);
+  const offsets: Array<readonly [dx: number, dy: number]> = [];
+  for (let dy = -bound; dy <= bound; dy++) {
+    for (let dx = -bound; dx <= bound; dx++) {
+      if (dx * dx + dy * dy <= radiusSquared) offsets.push([dx, dy]);
+    }
+  }
+  const size = world.worldSize;
+  return {
+    worldSize: size,
+    freshwater: world.freshwater,
+    heightAt(x: number, y: number): number {
+      let max = -Infinity;
+      for (const [dx, dy] of offsets) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        const height = world.heightAt(nx, ny);
+        if (height > max) max = height;
+      }
+      return max;
+    },
   };
 }
