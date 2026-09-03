@@ -140,7 +140,7 @@ export function packTreeCells(cells: Iterable<TreeCell>): number[] {
   return packed;
 }
 
-function isCellCoordinate(value: unknown): value is number {
+export function isCellCoordinate(value: unknown): value is number {
   return (
     typeof value === 'number' &&
     Number.isInteger(value) &&
@@ -1689,7 +1689,9 @@ if (
 // one would have to restore its remaining seconds too or silently reset every
 // scar in the world to a full lifetime. Losing them is honest — they were
 // going to rot anyway, and a fire nobody was connected to see is a fire that
-// left no impression.
+// left no impression. (The scorch record under them IS persisted, remaining
+// seconds and all — server/scorch.ts — because losing it is not a lost
+// decoration but fuel handed back to a fire; issue #297.)
 //
 // THE ARITHMETIC, at FLORA_STUMP_CAP on a 512² world, following the tree
 // arithmetic at the top of this file exactly:

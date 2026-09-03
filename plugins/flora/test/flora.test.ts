@@ -80,6 +80,7 @@ import {
   standingTrees,
 } from '../server/index.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from '../server/persistence.ts';
+import { ScorchField } from '../server/scorch.ts';
 import { FLORA_STABILITY_SECONDS, StabilityMap } from '../server/stability.ts';
 import { loadStructuresBridge, resetStructuresBridge } from '../server/structures-bridge.ts';
 import { worldWithTerrain } from './support/world.ts';
@@ -884,7 +885,7 @@ describe('persistence', () => {
     const rng = createFloraRng(99);
     rng.next();
 
-    const slice = saveForest(forest, rng);
+    const slice = saveForest(forest, rng, new ScorchField(), 0);
     expect(slice.version).toBe(FLORA_SLICE_VERSION);
 
     const restored = loadForestSlice(JSON.parse(JSON.stringify(slice)));

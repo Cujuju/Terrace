@@ -10,8 +10,8 @@
 // (@terrace/shared's farmland.ts — the predicate is shared terrain math, not
 // this plugin's), where crops currently stand (./crops.ts) and where grass
 // currently stands (./grass.ts), and what
-// survives a restart (./persistence.ts — only the forest does; see crops.ts's
-// header) — and publishes it on TEN namespaced messages (a snapshot and a
+// survives a restart (./persistence.ts — the forest and the scorch record;
+// see crops.ts's header for what does not) — and publishes it on TEN namespaced messages (a snapshot and a
 // delta per population); the client half under ../client draws all five.
 //
 // THE FIVE ARE INDEPENDENT POPULATIONS, not five views of one mechanism:
@@ -138,7 +138,7 @@ import { GrassField, grassSurveyChunksPerTick, isMeadowCell, isMeadowGround } fr
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { closeFireBridge, loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { StumpField } from './stumps.ts';
-import { ScorchField } from './scorch.ts';
+import { ScorchField, type ScorchRemaining } from './scorch.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
 import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
@@ -313,6 +313,14 @@ let fringeScanCredit = 0;
  * relying on a Forest that would have to tolerate being written to first.
  */
 let restoredCells: readonly TreeCell[] = [];
+
+/**
+ * The scorch record restored from a snapshot, held until onWorldCreate for
+ * restoredCells' reason — and one more: the remainders are dated from the sim
+ * clock at the moment they are installed, and that clock has not started when
+ * load() runs.
+ */
+let restoredScorch: readonly ScorchRemaining[] = [];
 
 // ────────────────────────────────────────────────────────────────────────────
 // Wire
@@ -1414,7 +1422,7 @@ function selfDescribedSliceVersion(data: unknown): number | undefined {
 
 const persistence: PersistenceSlice = {
   save(): unknown {
-    return saveForest(forest, rng);
+    return saveForest(forest, rng, scorchField, simSeconds);
   },
   version: FLORA_SLICE_VERSION,
   load(data: unknown, fromVersion: number): SliceLoadOutcome {
@@ -1427,6 +1435,7 @@ const persistence: PersistenceSlice = {
     }
     const restored = loadForestSlice(data);
     restoredCells = restored.cells;
+    restoredScorch = restored.scorch;
     rng = createFloraRng(restored.rngState);
     return undefined;
   },
@@ -1444,6 +1453,15 @@ export const plugin: TerracePlugin = {
     // by the first survey's cull sweep, which tests them against the real world.
     forest.replaceAll(restoredCells);
     restoredCells = [];
+
+    // The scorch record, dated from now (issue #297). Cells outside this world
+    // are dropped here rather than by a survey, because no survey ever visits
+    // them: the record is only ever asked about a cell, never walked.
+    scorchField.restore(
+      restoredScorch.filter((entry) => entry.x < world.worldSize && entry.y < world.worldSize),
+      simSeconds,
+    );
+    restoredScorch = [];
 
     // THE CROSS-PLUGIN DEPENDENCY PATTERN (structures-bridge.ts): one
     // synchronous question to the host — who is running as structures in this
