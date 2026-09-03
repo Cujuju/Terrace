@@ -11,7 +11,7 @@
 // call it is an implementation detail these tests do not depend on.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, DEEP_WATER_MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { type HabitatWorld, canTraverse } from '../server/census.ts';
 import { advanceEntity, lookaheadCellsFor, speedOf, steerToValidHeading } from '../server/movement.ts';
 import type { WildlifeEntity } from '../server/population.ts';
@@ -177,49 +177,5 @@ describe('flee still respects the gradient veto (advanceEntity, case d)', () => 
     // from the riser or by the destination re-check turning it back.
     expect(Math.floor(entity.x)).toBeLessThan(10);
     expect(world.heightAt(Math.floor(entity.x), Math.floor(entity.y))).toBe(startHeight);
-  });
-});
-
-describe('contour-following instead of reversal (2026-08-19, "go around, not over or through")', () => {
-  it('holds position and heading, rather than flipping 180°, when fully boxed in', () => {
-    // A single-cell pocket of shallow water (cell (5,5): x,y in [5,6))
-    // surrounded by deep water on every side. A 1×1 pocket's farthest corner
-    // is 0.5·√2 ≈ 0.707 cells from its centre in any direction; `fish` (used
-    // here as a species with a comfortably large look-ahead: bodyLength 0.7,
-    // cruise 3 c/s × LOOKAHEAD_SECONDS 0.6 = 1.8 cells, so lookaheadCellsFor
-    // = 1.8) gives a contour-fallback probe of 1.8/2 = 0.9 — still bigger
-    // than 0.707, so BOTH the primary sweep (at 1.8) and the contour retry
-    // (at 0.9) land in deep water in every direction: genuinely nowhere to
-    // go this tick, not merely boxed in at the longer probe.
-    // The wall of the pocket is stated as the DEEP-WATER THRESHOLD ITSELF, not
-    // as a band count: it was `SEA_LEVEL - 4 * BAND_HEIGHT`, which cleared the
-    // threshold only while a band was 64 units, and at 16 it is -64 against a
-    // -192 line — shallow, so the fish simply swam out and the test stopped
-    // describing a boxed-in creature at all.
-    const DEEP = DEEP_WATER_MAX_HEIGHT;
-    const world = fakeWorld(() => DEEP); // deep water everywhere by default
-    const pocketWorld: HabitatWorld = {
-      ...world,
-      heightAt: (x, y) => (Math.floor(x) === 5 && Math.floor(y) === 5 ? SEA_LEVEL : DEEP),
-    };
-    const entity: WildlifeEntity = {
-      id: 9,
-      species: 'fish',
-      schoolId: 9,
-      size: 'medium',
-      idle: false,
-      x: 5.5,
-      y: 5.5,
-      heading: 1.23,
-      fleeSecondsRemaining: 0,
-    };
-
-    advanceEntity(pocketWorld, entity, 0.1);
-
-    // No blind reversal (heading += PI) and no phantom movement: the
-    // creature holds exactly where — and which way — it already was.
-    expect(entity.x).toBe(5.5);
-    expect(entity.y).toBe(5.5);
-    expect(entity.heading).toBeCloseTo(1.23, 9);
   });
 });

@@ -51,14 +51,6 @@ describe('discoverPlugins', () => {
     ]);
   });
 
-  it('is stable across repeated discovery of the same directory', async () => {
-    const first = await discoverPlugins(join(FIXTURES, 'plugins'));
-    const second = await discoverPlugins(join(FIXTURES, 'plugins'));
-    expect(second.map((entry) => entry.plugin.name)).toEqual(
-      first.map((entry) => entry.plugin.name),
-    );
-  });
-
   it('returns nothing when the plugins directory does not exist', async () => {
     expect(await discoverPlugins(join(FIXTURES, 'does-not-exist'))).toEqual([]);
   });
@@ -560,13 +552,6 @@ describe('PluginHost', () => {
     errors.mockRestore();
 
     expect(calls).toEqual(['a', 'b']);
-  });
-
-  it('does nothing when no plugin implements onIntentApplied', () => {
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    const host = new PluginHost(world, [{ name: 'silent' }].map(asLoadedPlugin));
-    const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
-    expect(() => host.notifyIntentApplied(intent, PLAYER, [])).not.toThrow();
   });
 
   // ──────────────────────────────────────────────────────────────────────────

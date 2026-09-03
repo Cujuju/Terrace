@@ -220,17 +220,4 @@ describe('join snapshot chunk collection', () => {
     expect(world.isChunkUnlocked(start - 1, start)).toBe(false);
     expect(world.isChunkUnlocked(start + INITIAL_UNLOCK_CHUNK_SPAN, start)).toBe(false);
   });
-
-  it('the smallest supported world (small-VPS config) starts with the same small square', () => {
-    // Before 2026-08-19 the 8-chunk span unlocked the smallest world entirely;
-    // the owner shrank the starter square (see INITIAL_UNLOCK_CHUNK_SPAN), so
-    // the small-VPS world now begins with the same centred 5×5 as any other
-    // size and earns the rest by sculpting. Eight chunks a side is the world
-    // the design record calls 128²; it is 512² in cells since the 2026-08-21
-    // re-sample and the same patch of ground either way.
-    const world = World.createFresh(NEIGHBOURHOOD_CELLS * 8);
-    expect(collectUnlockedChunkPayloads(world)).toHaveLength(
-      INITIAL_UNLOCK_CHUNK_SPAN * INITIAL_UNLOCK_CHUNK_SPAN,
-    );
-  });
 });

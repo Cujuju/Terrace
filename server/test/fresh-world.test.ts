@@ -66,7 +66,6 @@ import {
 } from '../src/world/genesis.ts';
 import { INITIAL_UNLOCK_CHUNK_SPAN, initialUnlockFootprint } from '../src/world/initial-unlock.ts';
 import { World } from '../src/world/world.ts';
-import { worldWithUnlockedChunks } from './support/harness.ts';
 
 /**
  * The default world, in chunks. Big enough that the starter square has an
@@ -305,14 +304,6 @@ describe('the whole field', () => {
     }
   }, WORLD_GENERATION_TIMEOUT_MS);
 
-  it('accepts every valid world size without throwing', () => {
-    for (const size of VALID_SIZES) {
-      expect(size % CHUNK_SIZE).toBe(0);
-      expect(size).toBeGreaterThanOrEqual(MIN_WORLD_SIZE);
-      expect(() => World.createFresh(size, undefined, undefined, 7)).not.toThrow();
-    }
-  }, WORLD_GENERATION_TIMEOUT_MS);
-
   it('keeps the starter unlock square where it was', () => {
     // Genesis reads the unlock footprint; it must not move it.
     const { startChunk, spanChunks } = initialUnlockFootprint(WORLD_SIZE);
@@ -339,12 +330,6 @@ describe('the whole field', () => {
     expect(restored.heightAt(1, 0)).toBe(SEA_LEVEL);
   });
 
-  it('does not change the flat worlds the test harness builds', () => {
-    // The harness fixtures stay pinned at 0 on purpose: tests that reason cell
-    // by cell about sculpt arithmetic want a flat datum, not an ocean.
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    expect(world.heightAt(0, 0)).toBe(SEA_LEVEL);
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

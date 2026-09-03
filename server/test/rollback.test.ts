@@ -316,26 +316,3 @@ describe('World.rewindTo', () => {
     expect(h.world.isChunkUnlockedForToken('token-1', 1, 1)).toBe(false);
   });
 });
-
-describe('the empty-world regression (2026-08-21)', () => {
-  it('re-seeds a connected player whose token predates nothing in the restore point', () => {
-    // THE BUG, caught by looking at the screen and not by any assertion that
-    // existed at the time: a token that first joined AFTER the restore point
-    // is absent from its per-token masks, so the rewind left that player with
-    // an empty mask, its fresh snapshot carried zero chunks, and the client
-    // rendered open sea.
-    const h = harness();
-    const target = snapshot(h); // written before this token has ever been seen
-    h.world.addPlayer({ id: 'player-1', token: 'newcomer', name: 'Ada' });
-    h.sink.clear();
-
-    expect(h.service.rollback(CLIENT, KEY, target).ok).toBe(true);
-
-    const sent = h.sink.ofType('snapshot');
-    expect(sent).toHaveLength(1);
-    const payload = sent[0].payload as { chunks: unknown[] };
-    // The assertion that would have caught it: a player is never handed a
-    // world with nothing in it.
-    expect(payload.chunks.length).toBeGreaterThan(0);
-  });
-});

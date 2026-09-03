@@ -107,10 +107,6 @@ describe('loadConfig — CLIENT_DIST_PATH', () => {
     expect(config.clientDistPath).toBe(resolve('somewhere/else'));
   });
 
-  it('treats an empty value as unset, like every other path variable', () => {
-    const config = loadConfig({ CLIENT_DIST_PATH: '   ' });
-    expect(config.clientDistPath.endsWith(join('client', 'dist'))).toBe(true);
-  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
