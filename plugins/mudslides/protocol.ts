@@ -118,11 +118,11 @@ export const MUDSLIDE_SLOPE_SPAN_WORLD_UNITS = 2;
 export const MUDSLIDE_SLOPE_SPAN_CELLS = cellsAcross(MUDSLIDE_SLOPE_SPAN_WORLD_UNITS);
 
 /**
- * The steepest drop the terrain sim itself permits over that span, in height
- * units — the steepest LEGAL slope per cell, by definition (the relaxation will
- * not leave a neighbour pair steeper than this).
+ * The steepest drop the terrain sim itself permits between two NEIGHBOURING
+ * cells, in height units — the steepest LEGAL gradient, by definition (the
+ * relaxation will not leave an axial pair steeper than this).
  *
- * MAX_STEP + RELAX_SLACK PER CELL, NOT MAX_STEP (issue #108, 2026-08-29). The
+ * MAX_STEP + RELAX_SLACK, NOT MAX_STEP (issue #108, 2026-08-29). The
  * relaxation splits a pair's excess exactly in half now, which makes it
  * conserve height but leaves the odd unit standing in the pair: its trigger is
  * `|d| > MAX_STEP + RELAX_SLACK`, so a pair at MAX_STEP + 1 is AT REST and the
@@ -132,24 +132,37 @@ export const MUDSLIDE_SLOPE_SPAN_CELLS = cellsAcross(MUDSLIDE_SLOPE_SPAN_WORLD_U
  * MUDSLIDE_TRIGGER_DROP — a fraction of it — was therefore 20% low: ground the
  * relaxation itself considers settled qualified as "about to give way".
  *
- * DERIVED, so the trigger threshold below is a FRACTION OF WHAT IS POSSIBLE
- * rather than an absolute number that silently becomes unreachable the next time
+ * DERIVED, so the two thresholds below are FRACTIONS OF WHAT IS POSSIBLE rather
+ * than absolute numbers that silently become unreachable the next time
  * BAND_HEIGHT, WORLD_UNIT_CELLS or the relaxation rule moves. The 2026-08-20
  * re-terrace, the 2026-08-21 re-sample and the #108 split each changed one of
  * its inputs.
+ *
+ * NAMED SEPARATELY FROM THE SPAN FIGURE BELOW (issue #301, 2026-09-02) because
+ * both scales now have a threshold hung off them: the span says "there is relief
+ * to run into", the per-cell figure says "this cell is itself on a face".
  */
-export const MUDSLIDE_MAX_DROP_OVER_SPAN = (MAX_STEP + RELAX_SLACK) * MUDSLIDE_SLOPE_SPAN_CELLS;
+export const MUDSLIDE_MAX_DROP_PER_CELL = MAX_STEP + RELAX_SLACK;
+
+/** The steepest drop the sim permits over the whole slope span. */
+export const MUDSLIDE_MAX_DROP_OVER_SPAN = MUDSLIDE_MAX_DROP_PER_CELL * MUDSLIDE_SLOPE_SPAN_CELLS;
 
 /**
- * How steep is steep enough to give way, as a fraction of the steepest ground
- * the sim can hold.
+ * How much relief there must be BELOW a site, as a fraction of the steepest
+ * ground the sim can hold over the slope span.
  *
  * HALF. Below this the world is mostly ordinary rolling terrain and every
  * hillside in it would be a candidate; above about three quarters almost nothing
  * qualifies except a cliff a player cut deliberately, and the plugin would look
- * broken on a natural world. Measured on a default-seed world: at 0.5 roughly
- * one unlocked cell in forty is steep enough, which is enough sites for the
- * trigger to have a choice and few enough that the survey's sample finds them.
+ * broken on a natural world.
+ *
+ * THIS IS THE SECONDARY TEST NOW (issue #301, 2026-09-02): it says there is
+ * somewhere for the mud to GO, not that this cell is where the ground breaks.
+ * On its own it admitted every flat cell within a span of a rim — which is
+ * MUDSLIDE_SLOPE_SPAN_CELLS deep and far more numerous than the rim itself — so
+ * the survey's uniform draw put the head, and the scar, in the middle of a
+ * plateau's tread. MUDSLIDE_RIM_STEEPNESS below is what makes the measured cell
+ * the cell that breaks; see terrain.ts's `slopeAt`.
  */
 export const MUDSLIDE_TRIGGER_STEEPNESS = 0.5;
 
@@ -157,6 +170,35 @@ export const MUDSLIDE_TRIGGER_STEEPNESS = 0.5;
 export const MUDSLIDE_TRIGGER_DROP = Math.ceil(
   MUDSLIDE_MAX_DROP_OVER_SPAN * MUDSLIDE_TRIGGER_STEEPNESS,
 );
+
+/**
+ * How steep a site's OWN one-cell step down must be, as a fraction of the
+ * steepest gradient the sim can hold between neighbours — the test that makes a
+ * site A RIM (issue #301, 2026-09-02: "since it's a land slide, the edge falls
+ * off").
+ *
+ * THREE FIFTHS, which is 3 height units of the 5 a settled pair may stand at.
+ * The value only decides what counts as a rim on RELAXED ground, where every
+ * per-cell drop from 1 to 5 exists: 3 is the first drop past half the legal
+ * gradient, so a slope the relaxation has nearly finished flattening (1–2 per
+ * cell) is tread, and one still standing at or near the limit is a face. On
+ * ground nobody has sculpted the choice is not observable at all — measured on
+ * three default-size genesis worlds (2048², seeds 20260902 / 7 / 99991), every
+ * one-cell drop is 0, 16 or 32 height units, so every fraction in (0, 1] admits
+ * exactly the same 35–38% of the cells the span test admits.
+ *
+ * MEASURED, on the same population MUDSLIDE_TRIGGER_STEEPNESS's figure was
+ * measured over (the cells of a fresh world's revealed square): with both tests
+ * roughly one revealed cell in ninety to a hundred qualifies, against one in
+ * forty for the span test alone. The survey therefore admits about two fifths as
+ * many sites per pass; MAX_TRACKED_SITES still fills, and the arrival rate it
+ * feeds is unchanged in the steady state — see MUDSLIDE_SURVEY_SAMPLES in
+ * server/slides.ts for the fill-time consequence, which is the only one.
+ */
+export const MUDSLIDE_RIM_STEEPNESS = 0.6;
+
+/** The one-cell drop, in height units, a site must have of its own to qualify. */
+export const MUDSLIDE_RIM_DROP = Math.ceil(MUDSLIDE_MAX_DROP_PER_CELL * MUDSLIDE_RIM_STEEPNESS);
 
 /**
  * How far a slide may run, in world units.

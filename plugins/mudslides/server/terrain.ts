@@ -10,6 +10,7 @@
 import { SEA_LEVEL, type CellDiff, type FreshwaterMap } from '@terrace/shared';
 import { footprintUnlocked } from '../../../server/src/plugins/footprint.ts';
 import {
+  MUDSLIDE_RIM_DROP,
   MUDSLIDE_SLOPE_SPAN_CELLS,
   MUDSLIDE_TRIGGER_DROP,
   type MudslideStop,
@@ -158,24 +159,51 @@ export function sculptGuarded(
 }
 
 /**
- * The drop from (x, y) to the lowest cell MUDSLIDE_SLOPE_SPAN_CELLS away, in
- * height units, and the direction of it.
+ * Whether (x, y) is a site a slide may start at — and if it is, how far the
+ * ground falls away from it at both scales this plugin measures.
  *
- * MEASURED ALONG THE EIGHT BEARINGS AT ONE FIXED RADIUS, not over every cell in
- * a disc: a slope is a direction as well as a number, and the bearing that gives
- * the drop is the bearing the mud will take, so finding it here saves the caller
- * a second search. Diagonal bearings reach √2 further than axial ones, which
- * makes them very slightly easier to qualify — accepted, because correcting it
- * would mean either a non-integer span or a per-bearing threshold, and the
- * error is smaller than one terrace band over the span.
+ * TWO TESTS, AND THE LOCAL ONE IS THE ONE THAT DEFINES A SITE (issue #301,
+ * 2026-09-02). THE CELL THAT IS MEASURED IS THE CELL THAT IS CUT: `startSlide`
+ * freezes the head here and every head scour lands on it, so a test that
+ * qualified a cell by what the ground does A SPAN AWAY put the scar wherever the
+ * survey's uniform draw happened to fall — and a plateau's flat tread is
+ * MUDSLIDE_SLOPE_SPAN_CELLS deep in qualifying cells against a rim one cell
+ * wide, so the draw took the tread almost every time and bit a crater out of the
+ * middle of it. The site must therefore be ON a face:
  *
- * Null when the site is out of bounds, at or under the sea, or not steep enough.
+ *   1. ITS OWN one-cell step down is at least MUDSLIDE_RIM_DROP — the cell is
+ *      where the ground actually breaks, so the cut lands on the rim by
+ *      construction rather than by coincidence.
+ *   2. The drop over MUDSLIDE_SLOPE_SPAN_CELLS is at least MUDSLIDE_TRIGGER_DROP
+ *      — there is relief below to run into, so a one-band kerb in the middle of
+ *      otherwise level ground is not a mudslide site.
+ *
+ * BOTH MEASURED ALONG THE SAME EIGHT BEARINGS IN THE SAME FIXED ORDER, in one
+ * pass: a slope is a direction as well as a number, and `dx, dy` is the bearing
+ * of the LOCAL drop — which is exactly the cell `nextFlowCell` will pick (same
+ * offsets, same lowest-neighbour rule, same first-wins tie-break), so it really
+ * is the bearing the mud will take, minus that function's water/locked stop
+ * tests. Diagonal bearings reach √2 further than axial ones at both scales,
+ * which makes them very slightly easier to qualify — accepted, because
+ * correcting it would mean either a non-integer span or a per-bearing threshold,
+ * and the error is smaller than one terrace band over the span. (The relaxation
+ * binds axial pairs only, so a diagonal pair may legally stand steeper than
+ * MUDSLIDE_MAX_DROP_PER_CELL; the local test is a floor, so that only widens the
+ * set of cells it calls a face by ground that visibly is one.)
+ *
+ * Null when the site is out of bounds, at or under the sea, or fails either
+ * test.
  */
 export function slopeAt(
   world: MudslideWorld,
   x: number,
   y: number,
-): { readonly drop: number; readonly dx: number; readonly dy: number } | null {
+): {
+  readonly drop: number;
+  readonly localDrop: number;
+  readonly dx: number;
+  readonly dy: number;
+} | null {
   if (!inBounds(world, x, y)) return null;
   const here = world.heightAt(x, y);
   // Ground that is already under water does not slide; it is already where
@@ -184,21 +212,29 @@ export function slopeAt(
   if (here <= SEA_LEVEL) return null;
 
   let bestDrop = 0;
+  let bestLocalDrop = 0;
   let bestDx = 0;
   let bestDy = 0;
   for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
     const nx = x + dx * MUDSLIDE_SLOPE_SPAN_CELLS;
     const ny = y + dy * MUDSLIDE_SLOPE_SPAN_CELLS;
-    if (!inBounds(world, nx, ny)) continue;
-    const drop = here - world.heightAt(nx, ny);
-    if (drop <= bestDrop) continue;
-    bestDrop = drop;
+    if (inBounds(world, nx, ny)) {
+      const drop = here - world.heightAt(nx, ny);
+      if (drop > bestDrop) bestDrop = drop;
+    }
+    const lx = x + dx;
+    const ly = y + dy;
+    if (!inBounds(world, lx, ly)) continue;
+    const localDrop = here - world.heightAt(lx, ly);
+    if (localDrop <= bestLocalDrop) continue;
+    bestLocalDrop = localDrop;
     bestDx = dx;
     bestDy = dy;
   }
 
+  if (bestLocalDrop < MUDSLIDE_RIM_DROP) return null;
   if (bestDrop < MUDSLIDE_TRIGGER_DROP) return null;
-  return { drop: bestDrop, dx: bestDx, dy: bestDy };
+  return { drop: bestDrop, localDrop: bestLocalDrop, dx: bestDx, dy: bestDy };
 }
 
 /**

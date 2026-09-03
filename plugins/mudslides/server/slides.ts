@@ -93,10 +93,20 @@ export const MUDSLIDE_SURVEY_INTERVAL_SECONDS = 5;
  * Candidate cells drawn per survey.
  *
  * SIXTY-FOUR. Only a small share of revealed cells is steep enough to qualify
- * (protocol.ts's MUDSLIDE_TRIGGER_STEEPNESS), so a survey admits a handful of
- * sites and the table below fills over a few minutes of play rather than
- * instantly — which is what makes the site set follow the territory a player is
- * actually revealing instead of freezing at whatever the first survey saw.
+ * (protocol.ts's MUDSLIDE_TRIGGER_STEEPNESS and MUDSLIDE_RIM_STEEPNESS), so a
+ * survey admits a handful of sites and the table below fills over a few minutes
+ * of play rather than instantly — which is what makes the site set follow the
+ * territory a player is actually revealing instead of freezing at whatever the
+ * first survey saw.
+ *
+ * LEFT AT SIXTY-FOUR when #301 narrowed the site contract to rims (2026-09-02),
+ * which cut the qualifying share to about two fifths of what it was: measured,
+ * one revealed cell in ninety to a hundred rather than one in forty. What that
+ * changes is the FILL TIME of the table below — a few minutes becomes several —
+ * and not the arrival rate it feeds, because `saturatedFraction` is measured
+ * against MAX_TRACKED_SITES and the table still reaches it on any world with
+ * rims in the revealed square. Raising the sample count to hold the fill time
+ * constant would be tuning the survey to hide a change the owner asked for.
  */
 export const MUDSLIDE_SURVEY_SAMPLES = 64;
 
@@ -243,6 +253,13 @@ export const MUDSLIDE_HEAD_SCOUR_BANDS_PER_STEP = 1;
  * FRONT IS ALREADY RUNNING. A single sculpt at t=0 puts the whole hole there
  * before the mud has moved, which reads as the ground being deleted; three across
  * the first second reads as the hillside pulling away behind the flow.
+ *
+ * THE CELL IT DEEPENS REALLY IS THE SCARP (issue #301, 2026-09-02). Every one of
+ * these steps sculpts the frozen head, and until #301 the head was any cell the
+ * survey drew that had relief a span below it — so on a plateau this deepened the
+ * flat tread and the sentence above was true only by coincidence. `slopeAt` now
+ * admits a cell only where the ground itself steps down, which is what makes the
+ * head the scarp by construction.
  */
 export const MUDSLIDE_HEAD_SCOUR_STEPS = 3;
 
