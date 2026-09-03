@@ -2,9 +2,10 @@
 // abundantly on all of the green or green-like bands").
 //
 // TWO QUESTIONS, NOT ONE (issue #289, owner 2026-09-01). WHICH GROUND IS
-// MEADOW is `isMeadowCell` below: green-band, no crop, building or stump on
-// it, AND not scorched by a fire inside the last FLORA_SCORCH_REGROW_SECONDS
-// (./scorch.ts, issue #290). WHICH MEADOW CELLS CARRY A DRAWN TUFT is that AND
+// MEADOW is `isMeadowCell` below: green-band and not barred — no crop,
+// building or stump on it, and not scorched by a fire inside the last
+// FLORA_SCORCH_REGROW_SECONDS (./scorch.ts, issues #290 and #297; the bar is
+// forest.ts's BarredGround). WHICH MEADOW CELLS CARRY A DRAWN TUFT is that AND
 // the thinning roll `grassCoversCell` (../protocol.ts), which keeps ~56% of
 // them. This file surveys the second; ../server/index.ts's `floraFuelAt`
 // answers the first, so a meadow burns as the continuous bed it looks like
@@ -62,7 +63,7 @@ import {
   type GrassCell,
 } from '../protocol.ts';
 import { isGreenBand, type FloraWorld } from './bands.ts';
-import type { OccupancyPredicate } from './forest.ts';
+import type { BarredGround } from './forest.ts';
 
 /**
  * Simulated seconds between grass surveys.
@@ -128,68 +129,32 @@ export type GrassWorld = FloraWorld & {
  * them — the survey walks chunks of this world, and fire's spread clamps to
  * `world.worldSize`.
  *
- * AND IT ASKS WHETHER THE GROUND HAS BURNED (issue #290). The predicate above
- * has no memory of a fire, which was harmless while the fuel answer read the
- * drawn set — removing the tuft in floraBurnedOut WAS the fuel being consumed.
- * #289 stopped the fuel answer reading that set and did not replace the
- * consumption, so burned meadow became fuel again the instant it burned out
- * and a meadow fire never ended (./scorch.ts's header holds the measurement).
- * The scorch record is that consumption, and it belongs in THIS predicate
- * rather than at fire's door for the unlock term's reason: this is the single
- * statement of what ground is meadow, and a caller that could forget the rule
- * is the bug. Because it is here, the FUEL answer and the SURVEY come back
- * together — a burned cell stops being fuel and stops being re-planted at the
- * same instant, and regrows into both at the same instant, with no second
- * clock to keep them in step.
+ * AND, THROUGH THE BAR, WHETHER THE GROUND HAS BURNED (issues #290, #297). The
+ * terrain terms have no memory of a fire, which was harmless while the fuel
+ * answer read the drawn set — removing the tuft in floraBurnedOut WAS the fuel
+ * being consumed. #289 stopped the fuel answer reading that set and did not
+ * replace the consumption, so burned meadow became fuel again the instant it
+ * burned out and a meadow fire never ended (./scorch.ts's header holds the
+ * measurement). #290 put the scorch record in this predicate; #297 found that
+ * crops then ignored it and moved it into the bar every survey receives
+ * (forest.ts's BarredGround), which is the same anti-leak rule one level up:
+ * a population that could forget the rule is the bug. Because the fuel answer
+ * and the survey take the same bar, a burned cell stops being fuel and stops
+ * being re-planted at the same instant, and regrows into both at the same
+ * instant, with no second clock to keep them in step.
  */
 export function isMeadowCell(
   world: FloraWorld,
-  isOccupied: OccupancyPredicate,
-  scorched: ScorchedGround,
-  x: number,
-  y: number,
-): boolean {
-  if (!isMeadowGround(world, isOccupied, x, y)) return false;
-  return !scorched.has(x, y);
-}
-
-/**
- * The memory half of the meadow question: has a fire consumed the cover here
- * recently? ScorchField (./scorch.ts) is the implementation; this is the
- * narrow view of it the predicate needs, so that grass.ts stays a module about
- * meadows rather than one that knows how a burn clock is stored.
- */
-export interface ScorchedGround {
-  has(x: number, y: number): boolean;
-}
-
-/**
- * THE GROUND HALF of `isMeadowCell` — everything about the cell that is true of
- * the terrain and of what stands on it, with NO memory of fire.
- *
- * EXPORTED FOR EXACTLY ONE CALLER, and it is not a caller that answers "is
- * there meadow here": ./index.ts's `floraBurnedOut` asks it to decide whether
- * the ground a fire just finished on was meadow ground, which it must be able
- * to answer YES to for a cell that is ALREADY scorched — a tree finishing its
- * 22-second burn on ground whose grass burned 20 seconds ago has burned that
- * ground a second time, and the clock has to start again. `isMeadowCell` would
- * answer no there, and the refresh would be lost.
- *
- * NOTHING ELSE MAY USE IT. The fuel answer and the survey both go through
- * `isMeadowCell`; a third caller composing this one with its own idea of what
- * else to check is the drift #289 and #290 both are.
- */
-export function isMeadowGround(
-  world: FloraWorld,
-  isOccupied: OccupancyPredicate,
+  isBarred: BarredGround,
   x: number,
   y: number,
 ): boolean {
   if (!world.isCellUnlocked(x, y)) return false;
-  // Crops and buildings win; trees do not (owner, 2026-08-24: grass grows
-  // under trees). The caller composes that union — see ./index.ts's
-  // groundCoverOccupied.
-  if (isOccupied(x, y)) return false;
+  // Crops, buildings and stumps win; trees do not (owner, 2026-08-24: grass
+  // grows under trees). And burned ground is barred until it regrows (#297).
+  // The caller composes that union ONCE — see ./index.ts's barredGround over
+  // groundCoverOccupied — so the fuel answer and the survey can never disagree.
+  if (isBarred(x, y)) return false;
   return isGreenBand(world.heightAt(x, y));
 }
 
@@ -245,8 +210,7 @@ export class GrassField {
 
   private scanChunk(
     world: GrassWorld,
-    isOccupied: OccupancyPredicate,
-    scorched: ScorchedGround,
+    isBarred: BarredGround,
     cx: number,
     cy: number,
   ): void {
@@ -263,7 +227,7 @@ export class GrassField {
         // It is asked ONLY here, because since #289 it decides what is DRAWN
         // and nothing else — the fuel answer skips it (see isMeadowCell).
         if (!grassCoversCell(x, y)) continue;
-        if (!isMeadowCell(world, isOccupied, scorched, x, y)) continue;
+        if (!isMeadowCell(world, isBarred, x, y)) continue;
         if (this.staged.size >= FLORA_GRASS_CAP) continue; // never evict an already-staged cell for a later one in the same sweep
         this.staged.add(grassKey(x, y));
       }
@@ -277,8 +241,7 @@ export class GrassField {
    */
   advance(
     world: GrassWorld,
-    isOccupied: OccupancyPredicate,
-    scorched: ScorchedGround,
+    isBarred: BarredGround,
     chunkBudget: number,
   ): GrassSurveyResult | null {
     const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
@@ -299,7 +262,7 @@ export class GrassField {
       // only avoids walking 256 cells that would all answer false. Deleting it
       // would cost time and change no answer — deleting the one in isMeadowCell
       // would let fire spread onto locked ground.
-      if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isOccupied, scorched, cx, cy);
+      if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isBarred, cx, cy);
       this.cursor++;
       budget--;
     }
@@ -324,11 +287,10 @@ export class GrassField {
   /** One complete survey in a single call — the shape the tests reason in. */
   survey(
     world: GrassWorld,
-    isOccupied: OccupancyPredicate,
-    scorched: ScorchedGround,
+    isBarred: BarredGround,
   ): GrassSurveyResult {
     return (
-      this.advance(world, isOccupied, scorched, world.chunksPerEdge * world.chunksPerEdge) ??
+      this.advance(world, isBarred, world.chunksPerEdge * world.chunksPerEdge) ??
       EMPTY_RESULT
     );
   }

@@ -58,7 +58,7 @@ import {
   type CropCell,
 } from '../protocol.ts';
 import { isFarmlandPlot, type FarmlandWorld } from '@terrace/shared';
-import type { OccupancyPredicate } from './forest.ts';
+import type { BarredGround } from './forest.ts';
 
 /**
  * Simulated seconds between crop surveys.
@@ -149,7 +149,7 @@ export class CropField {
 
   private scanChunk(
     world: FarmlandWorld,
-    isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
     cx: number,
     cy: number,
   ): void {
@@ -162,8 +162,12 @@ export class CropField {
 
         // Buildings always win (the same rule Forest.scanChunk applies to
         // trees, owner 2026-08-19): an occupied cell shows no crop, whatever
-        // the ground beneath it would otherwise qualify as.
-        if (isOccupied(x, y)) continue;
+        // the ground beneath it would otherwise qualify as. And since #297 so
+        // does a burn: the bar is occupancy plus the scorch record
+        // (forest.ts's BarredGround), so a field that burned is not re-sown
+        // until the ground regrows — it used to be, 5 s after burning out,
+        // and re-lit from the fire still at its edge.
+        if (isBarred(x, y)) continue;
         // isFarmlandPlot, not isFarmlandCell: farmland promises a dry cell
         // CENTRE, and a terrace lip may run within an eighth of a cell of it,
         // so a plot sited on the lip hangs over the drop. The ring is derived
@@ -184,7 +188,7 @@ export class CropField {
    */
   advance(
     world: FarmlandWorld & { readonly chunksPerEdge: number; isChunkUnlocked(cx: number, cy: number): boolean },
-    isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
     chunkBudget: number,
   ): CropSurveyResult | null {
     const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
@@ -201,7 +205,7 @@ export class CropField {
       // than the predicate's own per-cell isCellUnlocked check because it
       // is hoisted out of 256 iterations (see forest.ts's scanChunk for the
       // identical exactness argument: a cell's unlock state IS its chunk's).
-      if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isOccupied, cx, cy);
+      if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isBarred, cx, cy);
       this.cursor++;
       budget--;
     }
@@ -229,9 +233,9 @@ export class CropField {
    */
   survey(
     world: FarmlandWorld & { readonly chunksPerEdge: number; isChunkUnlocked(cx: number, cy: number): boolean },
-    isOccupied: OccupancyPredicate,
+    isBarred: BarredGround,
   ): CropSurveyResult {
-    return this.advance(world, isOccupied, world.chunksPerEdge * world.chunksPerEdge) ?? EMPTY_RESULT;
+    return this.advance(world, isBarred, world.chunksPerEdge * world.chunksPerEdge) ?? EMPTY_RESULT;
   }
 }
 
