@@ -17,7 +17,12 @@ import {
   WALKERS_WIRE_CAP,
 } from '../protocol.ts';
 import { PilgrimInterpolator, type InterpolatedPilgrim } from './interpolation.ts';
-import { createPilgrimModels, type PilgrimModel, type PilgrimModels } from './models.ts';
+import {
+  PILGRIM_HEIGHT,
+  createPilgrimModels,
+  type PilgrimModel,
+  type PilgrimModels,
+} from './models.ts';
 
 /** Golden-angle phase spread — wildlife's trick, same constant, same reason. */
 const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
@@ -114,7 +119,8 @@ function drawnPoseOf(id: number): MoverPose | null {
   const view = views.get(id);
   if (view === undefined || !view.model.root.visible) return null;
   const at = view.model.root.position;
-  return { x: at.x, y: at.y, z: at.z };
+  // Baked with the feet at the origin (models.ts), so the body starts at `y`.
+  return { x: at.x, y: at.y, z: at.z, bodyBottomY: at.y, bodyHeight: PILGRIM_HEIGHT };
 }
 
 /**

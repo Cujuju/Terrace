@@ -164,7 +164,7 @@ export const plugin: TerracePlugin = {
         if (walker === null) return null;
         return {
           id: walker.id,
-          fuel: { burnSeconds: PILGRIMS_BURN_SECONDS, height: PILGRIMS_FUEL_HEIGHT },
+          fuel: { burnSeconds: PILGRIMS_BURN_SECONDS },
           distanceCells: walker.distanceCells,
         };
       },
@@ -176,7 +176,7 @@ export const plugin: TerracePlugin = {
           yield {
             sourceName: PILGRIMS_PLUGIN_NAME,
             id: walker.id,
-            fuel: { burnSeconds: PILGRIMS_BURN_SECONDS, height: PILGRIMS_FUEL_HEIGHT },
+            fuel: { burnSeconds: PILGRIMS_BURN_SECONDS },
             x: walker.x,
             y: walker.y,
             radiusCells: WALKER_BODY_RADIUS_CELLS,
@@ -262,15 +262,6 @@ export const plugin: TerracePlugin = {
  * cross-plugin number here is — plugins must build with the others deleted.
  */
 export const PILGRIMS_BURN_SECONDS = 8;
-
-/**
- * Flame size for a burning peep, in world units.
- *
- * A peep stands about half a world unit; 0.55 puts the flame at roughly their
- * own height, so it reads as a person alight rather than as a bonfire they
- * happen to be standing in.
- */
-export const PILGRIMS_FUEL_HEIGHT = 0.55;
 
 /**
  * How close a walker must be to a cell for that cell's fire to be ON them, in

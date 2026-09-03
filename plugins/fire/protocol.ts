@@ -453,8 +453,13 @@ export const FIRE_ENTITY_CAP = 48;
 export interface FireEntityState {
   readonly sourceName: string;
   readonly id: number;
-  /** Flame size in world units, as ./server/fuel.ts's CellFuel.height. */
-  readonly fuelHeight: number;
+  /**
+   * NO SIZE, for the reason there is no position: the flame is drawn at the
+   * pose the owner publishes (client/src/plugins/types.ts's MoverPose), and
+   * that pose carries the drawn body's height at the drawn scale — which the
+   * server never knows. A height sent from here was a second, size-class-blind
+   * opinion of the same body.
+   */
   /** Age at the moment of sending; the receiver advances it with its own clock. */
   readonly ageSeconds: number;
   /** The whole life of this fire, fixed when it caught. */
@@ -477,11 +482,11 @@ export function fireEntityKey(sourceName: string, id: number): string {
 }
 
 /** How many integers one burning entity occupies in the flat wire form. */
-export const FIRE_ENTITY_WIRE_STRIDE = 5;
+export const FIRE_ENTITY_WIRE_STRIDE = 4;
 
 /**
  * Packs the set as a SOURCE TABLE plus flat integers — `[sourceIndex, id,
- * height, age, burn, …]`.
+ * age, burn, …]`.
  *
  * The table exists because the one non-integer a burning entity carries is its
  * owner's name, and repeating "wildlife" once per animal would cost more than
@@ -497,13 +502,7 @@ export function packEntities(entities: Iterable<FireEntityState>): {
   for (const entity of entities) {
     let index = sources.indexOf(entity.sourceName);
     if (index === -1) index = sources.push(entity.sourceName) - 1;
-    packed.push(
-      index,
-      entity.id,
-      toFixed(entity.fuelHeight),
-      toFixed(entity.ageSeconds),
-      toFixed(entity.burnSeconds),
-    );
+    packed.push(index, entity.id, toFixed(entity.ageSeconds), toFixed(entity.burnSeconds));
   }
   return { sources, entities: packed };
 }
@@ -524,15 +523,14 @@ export function parseEntitiesPayload(payload: unknown): FireEntityState[] | null
   const parsed: FireEntityState[] = [];
   for (let i = 0; i + FIRE_ENTITY_WIRE_STRIDE - 1 < entities.length; i += FIRE_ENTITY_WIRE_STRIDE) {
     if (parsed.length >= FIRE_ENTITY_CAP) break;
-    const [sourceIndex, id, height, age, burn] = entities.slice(i, i + FIRE_ENTITY_WIRE_STRIDE);
+    const [sourceIndex, id, age, burn] = entities.slice(i, i + FIRE_ENTITY_WIRE_STRIDE);
     if (!isWireInteger(sourceIndex) || sourceIndex >= sources.length) continue;
     if (typeof id !== 'number' || !Number.isInteger(id) || id < 0) continue;
-    if (!isWireInteger(height) || !isWireInteger(age) || !isWireInteger(burn)) continue;
+    if (!isWireInteger(age) || !isWireInteger(burn)) continue;
     if (burn <= 0) continue;
     parsed.push({
       sourceName: sources[sourceIndex] as string,
       id,
-      fuelHeight: fromFixed(height),
       ageSeconds: fromFixed(age),
       burnSeconds: fromFixed(burn),
     });

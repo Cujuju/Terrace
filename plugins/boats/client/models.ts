@@ -112,6 +112,17 @@ const YARD_OVERHANG = 0.03;
  */
 export const BOAT_WATERLINE_LIFT = -HULL_DEPTH * 0.55;
 
+/**
+ * The span of a boat that BURNS, in root space (world units at the drawn scale
+ * of 1): from the deck, which sits on top of the hull, to the masthead. A flame
+ * seated on this covers deck, mast and sail and nothing under the waterline —
+ * the keel is wet. Published through MoverPose.bodyBottomY / bodyHeight.
+ */
+export const BOAT_FIRE_COLUMN = {
+  bottomY: HULL_DEPTH,
+  height: MAST_HEIGHT,
+} as const;
+
 const HULL_COLOR = 0x6b4a2f;
 const DECK_COLOR = 0x8a6a44;
 const MAST_COLOR = 0x53381f;

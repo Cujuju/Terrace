@@ -340,17 +340,6 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 export const WILDLIFE_BURN_SECONDS = 8;
 
 /**
- * Flame size for a burning animal, in world units.
- *
- * A grazer's body is 1.1 world units long (./species.ts's bodyLengthCells) and
- * it stands well under that; 0.6 puts the flame at roughly the animal's own
- * height, so it reads as the creature alight rather than as a bonfire it is
- * standing inside. Restated here rather than imported from a client model, for
- * flora's reason: the server must not load a THREE-dependent module.
- */
-export const WILDLIFE_FUEL_HEIGHT = 0.6;
-
-/**
  * A fire finished on these: they burned to death.
  *
  * Nothing else to do — the next full-state broadcast (this plugin sends one
@@ -473,7 +462,7 @@ export const plugin: TerracePlugin = {
         if (found === null) return null;
         return {
           id: found.entity.id,
-          fuel: { burnSeconds: WILDLIFE_BURN_SECONDS, height: WILDLIFE_FUEL_HEIGHT },
+          fuel: { burnSeconds: WILDLIFE_BURN_SECONDS },
           distanceCells: found.distanceCells,
         };
       },
@@ -485,7 +474,7 @@ export const plugin: TerracePlugin = {
           yield {
             sourceName: WILDLIFE_PLUGIN_NAME,
             id: creature.id,
-            fuel: { burnSeconds: WILDLIFE_BURN_SECONDS, height: WILDLIFE_FUEL_HEIGHT },
+            fuel: { burnSeconds: WILDLIFE_BURN_SECONDS },
             x: creature.x,
             y: creature.y,
             radiusCells: creature.radiusCells,

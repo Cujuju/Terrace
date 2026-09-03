@@ -24,7 +24,13 @@ import {
   parseBoatsPayload,
 } from '../protocol.ts';
 import { BoatInterpolator } from './interpolation.ts';
-import { BOAT_WATERLINE_LIFT, createBoatModels, type BoatModel, type BoatModels } from './models.ts';
+import {
+  BOAT_FIRE_COLUMN,
+  BOAT_WATERLINE_LIFT,
+  createBoatModels,
+  type BoatModel,
+  type BoatModels,
+} from './models.ts';
 
 /**
  * World-space Y of the sea surface.
@@ -150,7 +156,13 @@ function drawnPoseOf(id: number): MoverPose | null {
   const view = views.get(id);
   if (view === undefined) return null;
   const at = view.model.root.position;
-  return { x: at.x, y: at.y, z: at.z };
+  return {
+    x: at.x,
+    y: at.y,
+    z: at.z,
+    bodyBottomY: at.y + BOAT_FIRE_COLUMN.bottomY,
+    bodyHeight: BOAT_FIRE_COLUMN.height,
+  };
 }
 
 /**

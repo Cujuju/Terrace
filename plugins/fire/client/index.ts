@@ -368,8 +368,14 @@ function buildEntityInstances(ctx: ClientPluginCtx): void {
     slot.key = fire.drawKey;
     slot.x = pose.x;
     slot.z = pose.z;
-    slot.groundY = pose.y;
-    slot.fuelHeight = fire.entity.fuelHeight;
+    // THE BODY, NOT THE GROUND. The renderers plant a flame's foot at `groundY`
+    // and size it by `fuelHeight`; for a walking fire those are the bottom and
+    // height of the body the owner is drawing, at the scale it is drawing it —
+    // so the flame, the smoke above it and the light inside it all sit on the
+    // animal. Seating them at `pose.y` was a ground fire the creature happened
+    // to be standing in (owner, 2026-09-02).
+    slot.groundY = pose.bodyBottomY;
+    slot.fuelHeight = pose.bodyHeight;
     slot.intensity = fireIntensity(fire.ageSeconds, fire.entity.burnSeconds);
     slot.ageSeconds = fire.ageSeconds;
     // The id, not a cell key: two animals alight on the same cell are two
