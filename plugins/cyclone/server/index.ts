@@ -4,27 +4,49 @@
 // Core knows nothing about cyclones and must not: a rotating hazard that
 // flattens what a player built is as gamey as a mechanic gets, and the design
 // record's rule ("nothing gamey in core") puts the whole thing here. It reads
-// the world through `heightAt` and `worldSize` and writes the ground in exactly
-// one place — the storm surge, behind a setting.
+// the world through `heightAt` and `worldSize` and writes the ground in two
+// places — the storm surge at the shoreline and the wind scour on struck land
+// — both behind the one ground-changing setting.
 //
 // SHAPE OF THE TICK:
 //   1. the world rolls one spawn, under the frequency setting;
 //   2. every storm moves, ages, and is weakened by the land under it (the kit
 //      engine, ./sim.ts);
 //   3. landfall and wind damage go out as world events;
-//   4. surge, if the operator turned it on, scours a shoreline cell;
-//   5. clients are told, on the cadence, fog-of-war filtered.
+//   4. wind scour, if the operator turned ground-changing on, cuts up to
+//      WIND_SCOUR_MAX_CELLS_PER_EVENT struck land cells (./wind-scour.ts);
+//   5. surge, under the same setting, scours a shoreline cell;
+//   6. clients are told, on the cadence, fog-of-war filtered.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT REACTS TO A CYCLONE, AND WHAT THIS PLUGIN DOES ABOUT IT.
 //
-// Nothing, yet, and deliberately. Issue #213 lists structures, flora, boats,
-// wildlife and fire as the consumers of wind damage; every one of them is
-// reached the way plugins always reach each other — this plugin EMITS
-// `cyclone:damage` and `cyclone:landfall`, and a consumer subscribes BY NAME and
-// validates the payload structurally, with no import in either direction. No
-// consumer exists today; the events are the seam those follow-ups attach to, and
-// emitting them costs one fan-out per storm per second.
+// A CYCLONE HAS CONSEQUENCES ON LAND (owner, 2026-09-03; issue #299). Three
+// siblings react, and each reached this plugin the way plugins always reach
+// each other — this plugin EMITS `cyclone:damage` and `cyclone:landfall`, and a
+// consumer subscribes BY NAME and validates the payload structurally, with no
+// import in either direction. This plugin does not know their names, cannot
+// tell whether any of them is installed, and behaves identically when none is:
+//
+//   * FLORA fells trees and lays crops flat inside the disc, at a roll per
+//     plant per second scaled by severity — plugins/flora/server/
+//     cyclone-event.ts holds its bar and its rates. The wood grows back on
+//     flora's ordinary survey; the stumps outlive the storm.
+//   * STRUCTURES demolishes buildings on the same arithmetic with a higher bar
+//     and a much lower rate, divided again by each tier of standing, so a
+//     teepee never rides out an eyewall and a watchtower usually does —
+//     plugins/structures/server/cyclone-event.ts.
+//   * BOATS pushes every hull in the disc along the tangential wind, clamped
+//     cell by cell to water it may occupy — plugins/boats/server/
+//     cyclone-event.ts. A fleet is scattered, never sunk.
+//
+// The LAND is this plugin's own consequence rather than a sibling's, because
+// terrain is what this plugin already writes: ./wind-scour.ts, from the same
+// damage the events carry, and ./surge.ts at the waterline.
+//
+// STILL UNCLAIMED from issue #213's list: wildlife and fire. Nothing here waits
+// on them — the events are the seam, and emitting them costs one fan-out per
+// storm per second whether or not anyone is listening.
 //
 // THIS HALF DEPENDS ON NO SIBLING AT ALL. A cyclone rides its own track rather
 // than the sky's shared wind, and it is born over open water rather than under a
@@ -88,6 +110,7 @@ import {
 } from './sim.ts';
 import { forceCycloneNear, forceSpawnFromEnv } from './dev.ts';
 import { tickSurge } from './surge.ts';
+import { scourStruckGround } from './wind-scour.ts';
 
 /**
  * Ticks between client broadcasts. 2 → 5 Hz at the shipped TICK_HZ of 10. See
@@ -203,6 +226,15 @@ function simulate(world: WorldApi, dt: number): void {
 
   for (const event of tick.landfalls) world.emitEvent(CYCLONE_LANDFALL_EVENT, event);
   for (const event of tick.damage) world.emitEvent(CYCLONE_DAMAGE_EVENT, event);
+
+  // THE LAND ITSELF (issue #299), after the event has gone out, so a consumer
+  // reacting to the wind sees the ground the wind found rather than the ground
+  // this left. Gated on the SAME setting as the surge and not on a sibling of
+  // its own: see ./wind-scour.ts for what it does, and ../protocol.ts's
+  // CYCLONE_SURGE_SETTING_KEY for why one switch covers both.
+  if (surgeMode === 'on') {
+    for (const event of tick.damage) scourStruckGround(world, event);
+  }
 
   // SURGE, after the storms have moved, so a cyclone scours the shore it is over
   // now rather than the one it was over a tick ago. Gated on the setting here
