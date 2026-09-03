@@ -182,13 +182,14 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   const eyeGeometry = pool.keepGeometry(smoothEllipsoid(0.05, 0.05, 0.05, 8, 6));
   const ear = pool.keepGeometry(smoothEllipsoid(0.08, 0.07, 0.15, 8, 6));
   // The goatee: a short tuft at the very edge of the chin, just under the
-  // nose, hanging straight DOWN in the world. The pivot it lives in is
-  // drooped by HEAD_DROOP_RADIANS, so world-down in pivot space leans
-  // forward: (sin droop, -cos droop). The path follows that direction.
+  // nose, pointing FORWARD and down. Rooted inside the jaw (the skull's
+  // underside is ~0.1 below the axis there) so its root ring never shows.
+  // The head pivot is drooped by HEAD_DROOP_RADIANS, so this pivot-space
+  // direction (0.11, -0.05) is ~45 degrees forward-down in the world.
   const beard = pool.keepGeometry(taperedTube({
-    path: [new Vector3(0.36, -0.09, 0), new Vector3(0.39, -0.17, 0), new Vector3(0.415, -0.24, 0)],
-    rootRadius: 0.07,
-    tipRadius: 0.025,
+    path: [new Vector3(0.33, -0.06, 0), new Vector3(0.39, -0.095, 0), new Vector3(0.44, -0.12, 0)],
+    rootRadius: 0.06,
+    tipRadius: 0.022,
     tubularSegments: 5,
     radialSegments: 8,
   }));
@@ -222,9 +223,14 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   const tuft = pool.keepGeometry(smoothEllipsoid(0.08, 0.14, 0.08, 8, 6));
 
   // ── Legs ──────────────────────────────────────────────────────────────────
-  // The forelegs are feathered with cape hair down to the knee, which is what
-  // makes the front pair read heavier than the hind.
-  const foreShag = pool.keepGeometry(smoothEllipsoid(0.26, 0.42, 0.24, 8, 6));
+  // The shoulder: the forequarter's muscle and the cape hair feathering the
+  // foreleg down to the knee, as one mass hung on the fore hinge. It is
+  // narrower than the flank (a wider one shows as a lens-shaped patch where
+  // it cuts the flat barrel) and tall enough to fill the hull's rounded
+  // underside, so what shows is a thick upper leg growing out of the chest,
+  // twice the width of the leg column.
+  const shoulder = pool.keepGeometry(smoothEllipsoid(0.38, 0.60, 0.28, 12, 8));
+  const SHOULDER_SEAT_Y = -0.10;
 
   // ── Assembly ──────────────────────────────────────────────────────────────
   const { root, rig } = pool.rigged();
@@ -232,7 +238,7 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   rig.add(pool.part(hull, body, 0, 0, 0));
   rig.add(pool.part(neck, cape, 0, 0, 0));
   rig.add(pool.part(tail, body, 0, 0, 0));
-  rig.add(pool.part(tuft, cape, rumpX - 0.15, 0.46 * H, 0));
+  rig.add(pool.part(tuft, cape, rumpX - 0.15, 0.49 * H, 0));
 
   const headPivot = new Group();
   headPivot.position.copy(NECK_TOP);
@@ -262,7 +268,7 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
     haunch: [0.36, 0.50, 0.22],
   }, body, horn, body);
   for (const fore of [legs.foreLeft, legs.foreRight]) {
-    fore.add(pool.part(foreShag, cape, 0, -0.12, 0));
+    fore.add(pool.part(shoulder, cape, 0, SHOULDER_SEAT_Y, 0));
   }
 
   return {
