@@ -27,7 +27,10 @@
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
+  GRASSLAND_MAX_HEIGHT,
+  GRASSLAND_MIN_HEIGHT,
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
+  MOUNTAIN_MIN_HEIGHT,
   UNCONSTRAINED_GRADIENT_PER_CELL,
   WORLD_UNIT_CELLS,
   cellsAcross,
@@ -600,6 +603,16 @@ export interface SpeciesProfile {
    * a group cannot arrive with two on the meadow and one on the riser above it.
    */
   readonly spawnGround: SpawnGround;
+
+  /**
+   * The HEIGHTS this species may be born at — a window on the land ramp — or
+   * SPAWN_AT_ANY_HEIGHT for one that spawns anywhere its habitat allows. See
+   * SpawnHeights.
+   *
+   * Applied at the same gate as `spawnGround` (population.ts's `canSettleAt`),
+   * to the seed cell and to every scattered member of a group alike.
+   */
+  readonly spawnHeights: SpawnHeights | typeof SPAWN_AT_ANY_HEIGHT;
 }
 
 /**
@@ -682,6 +695,53 @@ export interface Predation {
 export type SpawnGround =
   | { readonly kind: 'open'; readonly minOpenDirections: number }
   | { readonly kind: 'broken'; readonly minSteepDirections: number };
+
+/**
+ * A window of terrain heights a species may be born in — its place on the
+ * land ramp (owner, 2026-09-02: "Bison should only spawn in grasslands. Ibex
+ * should only spawn in the mountains").
+ *
+ * A SECOND FIELD, NOT A THIRD `SpawnGround` KIND. SpawnGround asks what the
+ * ground around a cell is SHAPED like (open, broken); this asks what the cell
+ * is MADE of, read off the height the client paints its material from. The two
+ * are orthogonal and both bison and ibex need one of each — open ground on the
+ * meadow, broken ground on the crag — so folding height into the union would
+ * have needed every combination spelled out as its own kind.
+ *
+ * A SPAWN-TIME RULE ONLY, exactly like SpawnGround: it decides where an animal
+ * is placed, not where it may walk. A bison herd that grazes its way up onto
+ * the rock is a herd on the rock; it is not culled for it, and the habitat
+ * veto (census.ts's `isValidCellFor`) is still 'land'. RESIDUAL, NAMED: the
+ * population TARGET (habitatCellsPerIndividual) is still counted over every
+ * land cell, so a world that is mostly mountain asks for as many bison as one
+ * that is mostly meadow and fills them onto whatever meadow it has — the same
+ * relation the grazer's open-ground rule has always had to a world of risers.
+ *
+ * `maxHeightExclusive` is exclusive so a window can end exactly where the
+ * next material's anchor begins (GRASSLAND_MAX_HEIGHT is the rock anchor).
+ */
+export interface SpawnHeights {
+  readonly minHeight: number;
+  readonly maxHeightExclusive: number;
+}
+
+/** No height rule: the species spawns anywhere its habitat allows. */
+export const SPAWN_AT_ANY_HEIGHT = null;
+
+/** Grassland — the land ramp's green window, the same ground flora's meadow covers. */
+export const GRASSLAND_SPAWN_HEIGHTS: SpawnHeights = {
+  minHeight: GRASSLAND_MIN_HEIGHT,
+  maxHeightExclusive: GRASSLAND_MAX_HEIGHT,
+};
+
+/**
+ * Mountain — from the first rock anchor up, with NO CEILING: pale high rock
+ * and snow are still mountain, so the window runs to the top of the world.
+ */
+export const MOUNTAIN_SPAWN_HEIGHTS: SpawnHeights = {
+  minHeight: MOUNTAIN_MIN_HEIGHT,
+  maxHeightExclusive: Number.POSITIVE_INFINITY,
+};
 
 /** The rule every water species has: habitat validity and nothing else. */
 export const NO_SPAWN_GROUND_RULE: SpawnGround = {

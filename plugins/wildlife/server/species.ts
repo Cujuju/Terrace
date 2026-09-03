@@ -18,6 +18,7 @@ import {
   GRAZER_MAX_GRADIENT_PER_CELL,
   GRAZER_SPAWN_OPEN_DIRECTIONS,
   NO_SPAWN_GROUND_RULE,
+  SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
   SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
   TURN_RADIUS_BODY_LENGTHS,
@@ -102,6 +103,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     // shoal with holes in it is the bug the cohesion steering exists to fix.
     groupStartle: false,
     spawnGround: NO_SPAWN_GROUND_RULE,
+    spawnHeights: SPAWN_AT_ANY_HEIGHT,
   },
   whale: {
     species: 'whale',
@@ -144,6 +146,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     // than left to a default so this row has made the decision.
     groupStartle: false,
     spawnGround: NO_SPAWN_GROUND_RULE,
+    spawnHeights: SPAWN_AT_ANY_HEIGHT,
   },
   deepsea: {
     species: 'deepsea',
@@ -163,6 +166,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     turnRadiusBodyLengths: TURN_RADIUS_BODY_LENGTHS,
     groupStartle: false,
     spawnGround: NO_SPAWN_GROUND_RULE,
+    spawnHeights: SPAWN_AT_ANY_HEIGHT,
   },
   grazer: {
     species: 'grazer',
@@ -220,6 +224,10 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     // grazer types to avoid. The grazer keeps the behaviour it shipped with.
     groupStartle: false,
     spawnGround: { kind: 'open', minOpenDirections: GRAZER_SPAWN_OPEN_DIRECTIONS },
+    // The generalist: any land, from the beach to the snow. The bison and the
+    // ibex (species/bison.ts, species/ibex.ts) are the ones with a place on the
+    // ramp.
+    spawnHeights: SPAWN_AT_ANY_HEIGHT,
   },
   // The four species added 2026-09-02, each argued in its own file. They are
   // rows in this table like any other: the engine reads fields, and nothing in

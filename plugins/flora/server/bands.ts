@@ -50,29 +50,24 @@
 // below produce. Re-run that check if the ramp is ever re-authored.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, bandOf, isWater, quantizeToBand } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  GRASSLAND_MAX_HEIGHT,
+  GRASSLAND_MIN_HEIGHT,
+  LAND_RAMP_ANCHOR_SPACING,
+  bandOf,
+  isWater,
+  quantizeToBand,
+} from '@terrace/shared';
 import type { FringeSpecies } from '../protocol.ts';
 
-/**
- * Height at which the client's land ramp reaches snow — bandColors.ts's
- * SNOW_LINE_HEIGHT, restated here because the server may not import it.
- */
-const LAND_RAMP_SNOW_LINE_HEIGHT = 576;
-
-/** How many anchors the land ramp spends between the waterline and the snow line. */
-const LAND_RAMP_ANCHOR_COUNT = 10;
-
-/**
- * Height between two neighbouring ramp anchors. Derived rather than written as
- * 64, so it follows the ramp if the ramp gains or loses a material.
- */
-const LAND_RAMP_ANCHOR_SPACING = LAND_RAMP_SNOW_LINE_HEIGHT / (LAND_RAMP_ANCHOR_COUNT - 1);
-
-/** Index of the first green anchor (bright lowland grass) in the land ramp. */
-const FIRST_GREEN_ANCHOR = 3;
-
-/** Index of the first anchor ABOVE the green ones (dark exposed rock). */
-const FIRST_ROCK_ANCHOR = 6;
+// THE RAMP'S GEOMETRY MOVED TO @terrace/shared (2026-09-02). Until then this
+// file restated the snow line (576), the anchor count (10) and the two anchor
+// indices that bound the green (3 and 6) "because the server may not import
+// the client's bandColors.ts" — and so did the monsters plugin, and so would
+// the wildlife spawn rules have. A number three server modules and one client
+// palette must agree on is a world fact, and shared is where those live; the
+// derivation below is unchanged, it just has one author now.
 
 /**
  * Lowest height that reads as green.
@@ -82,9 +77,10 @@ const FIRST_ROCK_ANCHOR = 6;
  * grass, and the halfway point is where the mix stops being mostly soil. That
  * is the "green-LIKE" the owner asked grass to cover (2026-08-25), and the
  * measurement above confirms those transitional bands do render green-dominant.
+ *
+ * Shared's GRASSLAND_MIN_HEIGHT, under the name this plugin's readers know.
  */
-export const FLORA_GREEN_MIN_HEIGHT =
-  (FIRST_GREEN_ANCHOR - 0.5) * LAND_RAMP_ANCHOR_SPACING;
+export const FLORA_GREEN_MIN_HEIGHT = GRASSLAND_MIN_HEIGHT;
 
 /**
  * First height that no longer reads as green — EXCLUSIVE.
@@ -94,8 +90,10 @@ export const FLORA_GREEN_MIN_HEIGHT =
  * saturated dark green, so it stays green-dominant right up to the anchor where
  * rock takes over, where the soil → grass gap starts from a brown and does not.
  * Measured, not assumed — see the module header.
+ *
+ * Shared's GRASSLAND_MAX_HEIGHT, likewise.
  */
-export const FLORA_GREEN_MAX_HEIGHT = FIRST_ROCK_ANCHOR * LAND_RAMP_ANCHOR_SPACING;
+export const FLORA_GREEN_MAX_HEIGHT = GRASSLAND_MAX_HEIGHT;
 
 /**
  * Lowest terrace band a tree, crop or tuft will grow on. DERIVED from the

@@ -20,6 +20,7 @@ import {
 } from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type Habitat, habitatOf, profileOf, spawnGroundConstrains } from './species.ts';
+import { SPAWN_AT_ANY_HEIGHT } from './species/profile.ts';
 
 /**
  * Adapts one species onto a shared traversal archetype (shared/src/
@@ -332,6 +333,29 @@ export function satisfiesSpawnGround(
   return rule.kind === 'open'
     ? openDirectionCount(world, species, cellX, cellY) >= rule.minOpenDirections
     : steepDirectionCount(world, species, cellX, cellY) >= rule.minSteepDirections;
+}
+
+/**
+ * Is the cell's own height inside this species' spawn window (species/
+ * profile.ts's `SpawnHeights`)? Vacuously true for a species with none.
+ *
+ * THE ONE PLACE THE WINDOW IS INTERPRETED, for the same reason
+ * `satisfiesSpawnGround` is: both placement call sites go through
+ * population.ts's `canSettleAt`, which asks this and never reads the field
+ * itself. One cell read — the cell the animal would stand on, floored the way
+ * `isValidCellFor` floors it — where the ground-shape rule probes eight, which
+ * is why the settle gate asks this one first.
+ */
+export function withinSpawnHeights(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  cellX: number,
+  cellY: number,
+): boolean {
+  const heights = profileOf(species).spawnHeights;
+  if (heights === SPAWN_AT_ANY_HEIGHT) return true;
+  const height = world.heightAt(Math.floor(cellX), Math.floor(cellY));
+  return height >= heights.minHeight && height < heights.maxHeightExclusive;
 }
 
 export interface Census {

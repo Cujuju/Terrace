@@ -15,10 +15,12 @@ import {
   DEEP_OBSIDIAN_BANDS,
   DEEP_OBSIDIAN_DEPTH,
   DEEP_STRATA_BANDS,
+  LAND_RAMP_ANCHOR_COUNT,
   MAX_HEIGHT,
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
   SEA_LEVEL,
+  SNOW_LINE_HEIGHT as WORLD_SNOW_LINE_HEIGHT,
   bandOf,
   isWater,
 } from '@terrace/shared';
@@ -352,8 +354,14 @@ const LAVA_ANCHORS = evenlySpaced(OBSIDIAN_FLOOR, LAVA_FLOOR, [rgb(0xf25c1a)]);
  * before the change wears snow after it. It is also plainly a mountain top —
  * 576 units of relief above the sea — so nothing above it needs a colour of
  * its own.
+ *
+ * THE NUMBER LIVES IN @terrace/shared SINCE 2026-09-02 (see the land-ramp
+ * block in its constants.ts for why): flora, monsters and wildlife all need
+ * to know where the materials change, and each had restated it. This is the
+ * palette's alias of the world's snow line, kept so nothing that imported it
+ * here had to move.
  */
-export const SNOW_LINE_HEIGHT = 576;
+export const SNOW_LINE_HEIGHT = WORLD_SNOW_LINE_HEIGHT;
 
 /** Bands the land ramp colours explicitly, before snow clamping kicks in. */
 export const LAND_RAMP_BANDS = SNOW_LINE_HEIGHT / BAND_HEIGHT;
@@ -381,6 +389,18 @@ const LAND_RAMP_SHORELINE_UP: readonly Rgb[] = [
   rgb(0xb3aea2), // pale high rock
   rgb(0xf2f4f6), // snow
 ];
+
+// THE ANCHOR COUNT IS A SHARED FACT (LAND_RAMP_ANCHOR_COUNT): the server-side
+// readers of this ramp — flora's green window, the wildlife spawn windows —
+// derive the height of every material change from it. A colour added or
+// removed here without moving that constant would silently put grass on the
+// wrong band for every one of them, so the mismatch fails at load instead.
+if (LAND_RAMP_SHORELINE_UP.length !== LAND_RAMP_ANCHOR_COUNT) {
+  throw new Error(
+    `bandColors: the land ramp holds ${LAND_RAMP_SHORELINE_UP.length} anchors but ` +
+      `@terrace/shared's LAND_RAMP_ANCHOR_COUNT says ${LAND_RAMP_ANCHOR_COUNT}`,
+  );
+}
 
 /** The same ramp as anchors, stored top-down like every other list here. */
 export const LAND_RAMP_ANCHORS = evenlySpaced(SNOW_LINE_HEIGHT, SEA_LEVEL, [

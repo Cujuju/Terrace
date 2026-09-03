@@ -13,6 +13,7 @@ import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
   AQUATIC_MAX_GRADIENT_PER_CELL,
   NO_SPAWN_GROUND_RULE,
+  SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
   SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
   TURN_RADIUS_BODY_LENGTHS,
@@ -111,4 +112,5 @@ export const SHARK_PROFILE: SpeciesProfile = {
   groupStartle: false,
   hunts: SHARK_PREY,
   spawnGround: NO_SPAWN_GROUND_RULE,
+  spawnHeights: SPAWN_AT_ANY_HEIGHT,
 };
