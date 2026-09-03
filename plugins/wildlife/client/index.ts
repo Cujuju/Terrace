@@ -161,7 +161,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       kind === 'flyer'
         ? null
         : kind === 'walker' || swimProfile === null
-          ? walkerGroundY(sample, entity.x, entity.y)
+          ? walkerGroundY(sample, entity.x, entity.y, entity.species)
           : swimmerSeabedY(
               sample,
               entity.x,
@@ -223,18 +223,38 @@ function drawnPoseOf(id: number): MoverPose | null {
 /**
  * Draw objects the whole population costs, at any size: ONE INSTANCED MESH PER
  * BAKED SURFACE PER HERD, and a herd is a species (three of them, for the three
- * whale bodies — see models.ts). Most species bake to one merged surface; the
- * whale and the deep-sea creature carry a second, their eye/gloss material
- * being unable to share the body's surface (whaleSpecies.ts).
+ * whale bodies — see models.ts).
  *
- * NOT a per-creature cost any more, which is the point of the 2026-09-01
- * change: fish 1 + whale 2×3 + deepsea 2 + grazer 1 + bird 1. The host counts
- * an InstancedMesh as one object however many instances it carries
- * (`countDrawObjects` in client/src/plugins/host.ts), and asserts this number
- * against what the scene really holds, so a species gaining a surface shows up
- * as a budget breach rather than as silence.
+ * THE PER-SPECIES TABLE, measured off `models.objects` on 2026-09-02 and
+ * asserted below rather than trusted:
+ *
+ *   | herd                    | surfaces |
+ *   |-------------------------|----------|
+ *   | fish                    |        1 |
+ *   | grazer                  |        1 |
+ *   | ibex                    |        1 |
+ *   | bison                   |        1 |
+ *   | ray                     |        1 |
+ *   | shark                   |        1 |
+ *   | bird                    |        1 |
+ *   | deepsea                 |        2 |
+ *   | whale × WHALE_SPECIES   |        2 |
+ *
+ * The six species authored in models.ts's ./species/ directory each bake to
+ * ONE surface because their kit welds every extrusion (species/bodyKit.ts:
+ * rigSkin groups by material signature AND by indexed/non-indexed, and colour
+ * is not in the signature). The deep-sea creature's lure is UNLIT and each
+ * whale carries a second material its body cannot share — those are the only
+ * two-surface herds.
+ *
+ * WHY A CONSTANT AND NOT `models.objects.length`. `drawBudget` is a static
+ * field on the plugin object (client/src/plugins/types.ts), read by the host
+ * before `attach` ever runs and therefore before a pool exists. So the number
+ * is written down here and `attach` THROWS if the pool it builds disagrees —
+ * a species that quietly gains a surface fails at boot rather than showing up
+ * as a budget breach half a second into the first frame.
  */
-const SINGLE_SURFACE_SPECIES = 3; // fish, grazer, bird
+const SINGLE_SURFACE_SPECIES = 7; // fish, grazer, ibex, bison, ray, shark, bird
 const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
 const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECIES * 2;
 
@@ -251,6 +271,17 @@ export const clientPlugin: TerraceClientPlugin = {
     // Every herd sizes its instance buffers to the whole population: any one
     // species may, in principle, be all of it.
     models = createWildlifeModels(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
+    // The budget above is a promise about geometry this plugin does not own —
+    // nine species files, each free to add a material. Checked against the pool
+    // that was actually built, once, at boot: a mismatch is a wrong `drawBudget`
+    // for the whole session, so it throws rather than logging.
+    if (models.objects.length !== WILDLIFE_SPECIES_DRAW_OBJECTS) {
+      throw new Error(
+        `wildlife: draw budget is ${String(WILDLIFE_SPECIES_DRAW_OBJECTS)} objects but the ` +
+          `model pool baked ${String(models.objects.length)} — update the per-species surface ` +
+          'table in client/index.ts.',
+      );
+    }
 
     // One child Group of our own inside the host's layer: it keeps every
     // creature under a single named node, which makes the scene graph legible in
