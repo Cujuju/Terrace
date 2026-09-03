@@ -68,6 +68,7 @@ import type {
 import {
   FIRE_BURNED_EVENT,
   FIRE_CELL_CAP,
+  FIRE_CELLS_BURNED_OUT_EVENT,
   FIRE_CHANGES_MESSAGE,
   FIRE_ENTITY_CAP,
   FIRE_ENTITIES_MESSAGE,
@@ -1075,6 +1076,20 @@ function tick(world: WorldApi, dt: number): void {
       episodeConsumed += cells.length;
       episodeOrigin ??= cells[0]!;
     }
+    // EVERY BURNED-OUT CELL, REGARDLESS OF SOURCE (issue #297), for the
+    // consumers the per-source routing above cannot reach: a source's
+    // `onBurnedOut` names only its OWN cells, but flora's scorch record is
+    // keyed on the GROUND, so the cell a structure burned on needs scorching
+    // even though structures owned the burn. AFTER every onBurnedOut call,
+    // for the CONSUME-BEFORE-SPREAD block's own reason: the sources have
+    // destroyed what was there first, so a listener reads the world as it is
+    // now rather than as it was mid-tick. Skipped when nothing burned out —
+    // this whole block only runs then. Order is `burnedOut`'s own insertion
+    // order — the order `advance` retired the cells in — which is fixed, not
+    // incidental (design § determinism).
+    const burnedOutCells: FuelCell[] = [];
+    for (const cells of burnedOut.values()) burnedOutCells.push(...cells);
+    world.emitEvent(FIRE_CELLS_BURNED_OUT_EVENT, { cells: packCells(burnedOutCells) });
   }
 
   // THE WALKING FIRES, advanced on the same clock as the cells and routed the

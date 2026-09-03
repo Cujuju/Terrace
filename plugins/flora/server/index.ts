@@ -138,6 +138,10 @@ import { CropField, cropSurveyChunksPerTick } from './crops.ts';
 import { GrassField, grassSurveyChunksPerTick, isMeadowCell } from './grass.ts';
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { closeFireBridge, loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
+import {
+  FIRE_CELLS_BURNED_OUT_EVENT_NAME,
+  parseBurnedOutCells,
+} from './fire-event.ts';
 import { StumpField } from './stumps.ts';
 import { ScorchField, type ScorchRemaining } from './scorch.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.ts';
@@ -1469,6 +1473,12 @@ function removeStanding(
     // from a cell. Stamping it for wind would stop the wood the storm just
     // flattened from growing back for as long as a burn scar lasts, which is
     // the difference between a storm and a fire.
+    //
+    // DOUBLE-STAMPED WITH THE EVENT PATH, deliberately (issue #297):
+    // `reactToBurnedOutCells` stamps these same cells again when fire's
+    // `cellsBurnedOut` event arrives for this plugin's own burns. `scorch`
+    // restarts the regrow clock (./scorch.ts), so the second stamp is a
+    // refresh, not a corruption.
     if (cause === 'fire') scorchField.scorch(cell.x, cell.y, simSeconds);
   }
 
@@ -1476,6 +1486,36 @@ function removeStanding(
   broadcastCropChanges(world, [], withered);
   if (scorched.length > 0) broadcastGrassChanges(world, [], scorched);
   broadcastStumpChanges(world, stumps, []);
+}
+
+/**
+ * GROUND THAT FINISHED BURNING, whoever owned the burn (issue #297): every
+ * cell whose fire ran its full course this tick, as fire's `cellsBurnedOut`
+ * world event reports them (./fire-event.ts).
+ *
+ * THE CELLS `floraBurnedOut` NEVER SEES. Fire routes each burned-out cell to
+ * the fuel source that owned it, and this plugin's `onBurnedOut` stamps the
+ * scorch record only for cells IT owned. When a STRUCTURE burns out,
+ * structures demolishes the building, the cell stops being occupied, and this
+ * plugin's own fuel answer hands it back as grass a tick later — where the
+ * neighbours re-light it within seconds, forever. Stamping every reported
+ * cell here closes that hole: the ground remembers the burn no matter what
+ * stood on it.
+ *
+ * The stamp is the same `scorchField.scorch` the removal path above keeps,
+ * and stamping a cell twice — once here, once there for this plugin's own
+ * burns — is harmless: `scorch` restarts the regrow clock (./scorch.ts), so
+ * the second stamp is a refresh, not a corruption. Wind damage never arrives
+ * here (it has its own event and its own cause), so this stays a record of
+ * BURNING, for FloraRemovalCause's reason.
+ */
+function reactToBurnedOutCells(payload: unknown): void {
+  if (fuelWorld === null) return;
+  const cells = parseBurnedOutCells(payload);
+  // A malformed event scorches NOTHING, on the rule every consumer here keeps:
+  // half-applying it would bar surveys from ground no fire described.
+  if (cells === null) return;
+  for (const cell of cells) scorchField.scorch(cell.x, cell.y, simSeconds);
 }
 
 /**
@@ -1684,6 +1724,11 @@ export const plugin: TerracePlugin = {
     // comment): structures' plugin name is the coupling, exactly like a wire
     // message namespace — never an import of structures' code.
     if (event === 'structures:changes') onStructuresChanges(world, payload);
+    // The same rule, a second fire emission (issue #297): ground that finished
+    // burning under SOMEBODY ELSE's fuel — a structure's cell, today — which
+    // `floraBurnedOut` never sees. The name is in ./fire-event.ts beside the
+    // parser that answers it.
+    if (event === FIRE_CELLS_BURNED_OUT_EVENT_NAME) reactToBurnedOutCells(payload);
     // The same rule, a second emitter (issue #299): a cyclone's wind damage.
     // The name is in ./cyclone-event.ts beside the numbers that answer it.
     if (event === CYCLONE_DAMAGE_EVENT_NAME) reactToCycloneDamage(payload);
