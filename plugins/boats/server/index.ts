@@ -36,6 +36,8 @@ import {
   parseMonsterSightings,
   parseVillageChanges,
 } from './events.ts';
+import { parseStormDamage } from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
+import { CYCLONE_DAMAGE_EVENT_NAME } from './cyclone-event.ts';
 import {
   advanceFleet,
   boatPosition,
@@ -44,6 +46,7 @@ import {
   burnableBoatAt,
   flammableBoats,
   forgetVillage,
+  noteStormWind,
   rememberVillage,
   resetFleet,
   resurveyAllShipyards,
@@ -271,6 +274,17 @@ export const plugin: TerracePlugin = {
       // emitter does not permit.
       const kraken = sightings.find((seen) => seen.kind === KRAKEN_KIND);
       krakenThisTick = kraken === undefined ? null : { x: kraken.x, y: kraken.y };
+      return;
+    }
+
+    // A CYCLONE'S WIND (issue #299). The name and the tuning are in
+    // ./cyclone-event.ts; the payload shape is core's, parsed by core's kit.
+    // A malformed event pushes NOTHING — a fleet scattered by a storm that was
+    // never described is worse than a fleet that ignored one.
+    if (event === CYCLONE_DAMAGE_EVENT_NAME) {
+      const damage = parseStormDamage(payload);
+      if (damage === null) return;
+      noteStormWind(damage);
     }
   },
 
