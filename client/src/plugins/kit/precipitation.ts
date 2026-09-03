@@ -143,10 +143,20 @@ export function fallFraction(
 }
 
 /**
- * Seconds a particle at fall fraction `f` has been in the air. Multiplied by the
- * mass's velocity, this is how far downwind it has been carried — which is what
- * shears the column, and what makes a slow-falling particle visibly blow
- * sideways while a fast one barely leans.
+ * Seconds a particle at fall fraction `f` has been in the air.
+ *
+ * PURE FALL TIME, AND NOTHING ABOUT THE WIND. It used to be multiplied by the
+ * mass's velocity to displace a particle downwind inside the rig, and that was
+ * the bug fixed on 2026-09-02 (#300): the rig's root is ALREADY carried along
+ * by the mass (./discRig.ts), so a drop that drifted again in the rig's local
+ * space crossed the ground at twice the wind and the column's foot landed
+ * outside its own cloud. In the cloud's frame — which is the frame this
+ * column is drawn in — a drop falls straight down, so the only thing the wind
+ * does here is tilt the STREAK (see `advance` below).
+ *
+ * Kept because it is the honest answer to "how long has this particle been
+ * falling", which is what fixes the column's height against its fall speed and
+ * what plugins/rain/test/client.test.ts checks.
  */
 export function driftSeconds(fraction: number, fallSpeed: number): number {
   return (fraction * PRECIPITATION_COLUMN_WORLD_UNITS) / fallSpeed;
@@ -160,7 +170,11 @@ export interface PrecipitationColumn {
   readonly material: Material;
   /**
    * Rewrites every particle's position for this frame. `vx`/`vy` are the mass's
-   * velocity in WORLD UNITS per second and shear the column downwind.
+   * velocity in WORLD UNITS per second, and they TILT THE STREAK ONLY: the
+   * column is drawn in the rig's local space, which the mass carries with it,
+   * so a drop's position in here is the straight-down fall it makes in the
+   * cloud's own frame. Its ground-frame velocity — (vx, −fallSpeed, vy) — is
+   * what the streak shows.
    */
   advance(elapsed: number, radius: number, vx: number, vy: number): void;
   dispose(): void;
@@ -259,10 +273,13 @@ export function createPrecipitationColumn(
     material,
 
     advance(elapsed: number, radius: number, vx: number, vy: number): void {
-      // The streak points along the particle's actual velocity — down at
+      // The streak points along the particle's GROUND-FRAME velocity — down at
       // fallSpeed, sideways at the wind — so it leans into the wind instead of
-      // hanging vertically in a gale. One normalisation per frame, not per
-      // particle.
+      // hanging vertically in a gale. This is the ONLY place the wind enters
+      // the column: the drop's position is its straight-down fall in the
+      // cloud's frame (#300), and the lean is what a viewer standing on the
+      // ground sees of the two motions added together. One normalisation per
+      // frame, not per particle.
       const speed = Math.hypot(vx, profile.fallSpeed, vy);
       const streakX = (vx / speed) * profile.streakLength;
       const streakY = (-profile.fallSpeed / speed) * profile.streakLength;
@@ -271,19 +288,20 @@ export function createPrecipitationColumn(
       let write = 0;
       for (let i = 0; i < profile.count; i++) {
         const fraction = fallFraction(elapsed, birth[i]!, profile.fallSpeed);
-        const aloft = driftSeconds(fraction, profile.fallSpeed);
         const sway =
           profile.swayCells === 0
             ? 0
             : profile.swayCells * Math.sin(elapsed * profile.swayHz * TWO_PI + swayPhase[i]!);
 
-        const x = discX[i]! * radius + vx * aloft + sway;
+        // NO WIND TERM. The rig's root moves with the mass, so the drift is
+        // already applied to every one of these coordinates; adding it again
+        // here is what put the column's foot downwind of its own cloud (#300).
+        const x = discX[i]! * radius + sway;
         const y = CLOUD_BASE_WORLD_Y - fraction * PRECIPITATION_COLUMN_WORLD_UNITS;
         // The second sway axis is a quarter cycle out of phase with the first,
         // so a particle traces a slow ellipse rather than sliding along one line.
         const z =
           discZ[i]! * radius +
-          vy * aloft +
           (profile.swayCells === 0
             ? 0
             : profile.swayCells * Math.cos(elapsed * profile.swayHz * TWO_PI + swayPhase[i]!));
