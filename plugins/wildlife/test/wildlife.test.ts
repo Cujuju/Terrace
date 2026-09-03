@@ -6,7 +6,7 @@
 // removed on 2026-09-02 (owner: contract-level tests only); rendering and
 // behaviour are verified by eye per the design record.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
@@ -176,9 +176,27 @@ function tick(harness: Harness, times: number): void {
   for (let n = 0; n < times; n++) harness.host.tick(TICK_DT);
 }
 
-/** Ticks long enough for the stochastic fill to settle near its targets. */
-function fillPopulation(harness: Harness): void {
+/**
+ * ONE SETTLED POPULATION PER FILE (2026-09-03). Filling a world takes
+ * SETTLE_SECONDS of simulated time with every creature steering — about eight
+ * seconds of wall clock on the ramp world, and five tests used to pay it each.
+ * It is paid once here and captured as the plugin's own persistence slice;
+ * every test that needs a populated world restores it through the real host
+ * path instead. A restored population is calm and in motion (see
+ * expectRestoredAtRest), which is exactly the state a live server boots into.
+ */
+let settledSlices: Record<string, unknown>;
+
+beforeAll(() => {
+  const harness = boot();
   tick(harness, ticksFor(SETTLE_SECONDS));
+  expect(livingEntities().length).toBeGreaterThan(0);
+  settledSlices = harness.host.collectPersistence();
+});
+
+/** Installs the settled population into a freshly booted harness. */
+function restoreSettled(harness: Harness): void {
+  harness.host.restorePersistence(settledSlices);
 }
 
 /**
@@ -331,7 +349,7 @@ describe('wildlife sync', () => {
   });
 
   it('sends id, species, cell position and heading, rounded to two decimals', () => {
-    fillPopulation(harness);
+    restoreSettled(harness);
     harness.sink.clear();
     tick(harness, 2);
 
@@ -379,7 +397,7 @@ describe('wildlife sync', () => {
   // broadcastVisible), not a stub.
   // ──────────────────────────────────────────────────────────────────────────
   it('sends each connected player only the habitat population inside their own unlocked view', () => {
-    fillPopulation(harness);
+    restoreSettled(harness);
     expect(livingEntities().length).toBeGreaterThan(0);
 
     // A second connection whose token has never unlocked anything of its own
@@ -423,7 +441,7 @@ describe('wildlife persistence', () => {
   });
 
   it('round-trips the population through a snapshot', () => {
-    fillPopulation(harness);
+    restoreSettled(harness);
     const before = livingEntities().map(persistedShapeOf);
     expect(before.length).toBeGreaterThan(0);
 
@@ -440,13 +458,14 @@ describe('wildlife persistence', () => {
   });
 
   it('does not reuse ids after a restore', () => {
-    fillPopulation(harness);
+    restoreSettled(harness);
     const maxId = Math.max(...livingEntities().map((entity) => entity.id));
 
     const slices = harness.host.collectPersistence();
     const restored = boot();
     restored.host.restorePersistence(slices);
-    tick(restored, 400);
+    // One mean spawn wait: long enough for a post-restore birth to be expected.
+    tick(restored, ticksFor(SPAWN_MEAN_WAIT_SECONDS));
 
     const ids = livingEntities().map((entity) => entity.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -715,7 +734,7 @@ describe('birds are not habitat fauna', () => {
 
 
   it('shares the entity-id space with the habitat population', () => {
-    fillPopulation(harness);
+    restoreSettled(harness);
     spawnFlock({ worldSize: harness.world.size });
     spawnFlock({ worldSize: harness.world.size });
 
