@@ -48,6 +48,14 @@ const HOOF_RADIAL_SEGMENTS = 8;
 const HAUNCH_SEGMENTS = 8;
 /** How far up its own height a haunch's centre sits above the hinge. */
 const HAUNCH_SEAT_FRACTION = 0.25;
+/**
+ * How far up into the leg tip the hoof is seated, as a fraction of the hoof's
+ * height. Butted end to end, the leg's bottom cap and the hoof's top cap share
+ * one plane and z-fight; seated inside the (wider) tapering leg, the join is
+ * hidden and cannot open under float error. The hoof is lengthened by the same
+ * amount so its sole still meets the ground.
+ */
+const HOOF_SEAT_FRACTION = 0.1;
 
 /** Builds four legs under `rig` and returns their hinges. */
 export function addQuadrupedLegs(
@@ -70,7 +78,7 @@ export function addQuadrupedLegs(
     ? pool.keepGeometry(limb({
       rootRadius: spec.tipRadius,
       tipRadius: spec.tipRadius * 0.9,
-      length: spec.hoofHeight,
+      length: spec.hoofHeight * (1 + HOOF_SEAT_FRACTION),
       radialSegments: HOOF_RADIAL_SEGMENTS,
       heightSegments: 1,
     }))
@@ -87,7 +95,7 @@ export function addQuadrupedLegs(
     // body and only the lower curve of the thigh shows.
     if (haunchGeometry) hinge.add(pool.part(haunchGeometry, haunchMaterial, 0, spec.haunch![1] * HAUNCH_SEAT_FRACTION, 0));
     hinge.add(pool.part(legGeometry, legMaterial, 0, 0, 0));
-    if (hoofGeometry) hinge.add(pool.part(hoofGeometry, hoofMaterial, 0, -legLength, 0));
+    if (hoofGeometry) hinge.add(pool.part(hoofGeometry, hoofMaterial, 0, -legLength + spec.hoofHeight * HOOF_SEAT_FRACTION, 0));
     rig.add(hinge);
     return hinge;
   }
