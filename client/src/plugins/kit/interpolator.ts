@@ -129,7 +129,13 @@ export class PoseInterpolator<S extends { readonly id: number }, F extends PoseS
   private sinceLastMessage = 0;
   private hasReceived = false;
 
-  constructor(private readonly spec: PoseInterpolatorSpec<S, F, R>) {
+  // A plain field, not a constructor parameter property: that syntax is not
+  // erasable, and the test runner executes this file through Node's own
+  // type stripping (vitest.base.config.ts).
+  private readonly spec: PoseInterpolatorSpec<S, F, R>;
+
+  constructor(spec: PoseInterpolatorSpec<S, F, R>) {
+    this.spec = spec;
     this.window = spec.defaultWindowSeconds;
   }
 
