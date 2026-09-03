@@ -119,6 +119,18 @@ const DECK_ORDER_HALF_STEP = 0.5;
  * Both are positive, so the deck still lands after the world-sized transparent
  * sea whichever side of the plane the camera is on — the promise
  * DISC_RENDER_ORDER's own doc makes.
+ *
+ * A PUFF'S DEPTH IS ITS CENTRE'S. The billboard offsets `mvPosition.xy` only
+ * (see `billboard` below), so the quad spreads across the screen without ever
+ * moving toward or away from the camera — which is what lets the argument above
+ * be about puff CENTRES rather than about quad corners.
+ *
+ * THE ONE RESIDUAL, NAMED. DECK_TIER_JITTER_WORLD_UNITS can drop a
+ * bottom-tier puff that far below the base plane, so "every puff is at or above
+ * the base" holds to within one jitter and not exactly. What that can misorder
+ * is one low puff against the very top of the column at the same height —
+ * never the deck against the column as bodies, which is the defect this
+ * ordering exists to fix (#300).
  */
 export const DECK_RENDER_ORDER_CAMERA_ABOVE_BASE = DISC_RENDER_ORDER + DECK_ORDER_HALF_STEP;
 export const DECK_RENDER_ORDER_CAMERA_BELOW_BASE = DISC_RENDER_ORDER - DECK_ORDER_HALF_STEP;
