@@ -14,7 +14,13 @@
 //
 // Usage:
 //   node client/scripts/shootSpeciesPreview.mjs <outDir> [--url-base http://localhost:5173] \
-//        <name>=<preview-fire query string> ...
+//        [--page preview-species.html] <name>=<query string> ...
+//
+// `--page` picks WHICH preview harness is driven. Both wildlife harnesses raise
+// the same `__previewReady` / `__previewStats` flags, so one driver serves both:
+// preview-species.html bakes a species FILE directly, preview-wildlife.html
+// draws it through the real pool (createWildlifeModels) — which is the one that
+// proves the wiring rather than the model.
 //
 // Requires a server already serving preview-species.html at <url-base>; this
 // script never starts or stops one. Vite dev on /mnt/e does not watch files,
@@ -34,6 +40,7 @@ import { resolveChromeHeadlessShell } from './chromeHeadlessShell.mjs';
 const CHROME = resolveChromeHeadlessShell();
 
 const DEFAULT_URL_BASE = 'http://localhost:5173';
+const DEFAULT_PAGE = 'preview-species.html';
 const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 800;
 const READY_POLL_INTERVAL_MS = 500;
@@ -105,8 +112,8 @@ async function startChrome() {
   return { ws, cleanup };
 }
 
-async function shoot(ws, urlBase, name, query, outDir) {
-  const url = `${urlBase}/preview-species.html?${query}`;
+async function shoot(ws, urlBase, page, name, query, outDir) {
+  const url = `${urlBase}/${page}?${query}`;
   const { targetId } = await rpc(ws, 'Target.createTarget', {
     url: 'about:blank',
     width: VIEWPORT_WIDTH,
@@ -163,11 +170,14 @@ async function shoot(ws, urlBase, name, query, outDir) {
 
 const argv = process.argv.slice(2);
 let urlBase = DEFAULT_URL_BASE;
+let page = DEFAULT_PAGE;
 const shots = [];
 let outDir = null;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--url-base') {
     urlBase = argv[++i];
+  } else if (argv[i] === '--page') {
+    page = argv[++i];
   } else if (outDir === null) {
     outDir = argv[i];
   } else {
@@ -176,7 +186,9 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 if (outDir === null || shots.length === 0) {
-  console.error('usage: shootSpeciesPreview.mjs <outDir> [--url-base URL] <name>=<query> ...');
+  console.error(
+    'usage: shootSpeciesPreview.mjs <outDir> [--url-base URL] [--page FILE] <name>=<query> ...',
+  );
   process.exit(2);
 }
 mkdirSync(outDir, { recursive: true });
@@ -190,7 +202,7 @@ try {
 
 const { ws, cleanup } = await startChrome();
 try {
-  for (const { name, query } of shots) await shoot(ws, urlBase, name, query, outDir);
+  for (const { name, query } of shots) await shoot(ws, urlBase, page, name, query, outDir);
 } finally {
   ws.close();
   cleanup();
