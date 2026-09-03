@@ -250,6 +250,19 @@ export class FringeField {
     }
     if (this.cursor < totalChunks) return null;
 
+    // RE-VALIDATED AGAINST THE BAR AT COMMIT (issue #297). The staged set is a
+    // snapshot taken chunk by chunk over the whole survey interval, and a cell
+    // can burn AFTER its chunk was scanned: it was eligible then, it is
+    // scorched now, and installing the stale answer would put the plant back
+    // on ground that just burned — measured live as a plant re-placed one to two
+    // seconds after burning out, with the fire still at its edge. Forest.grow
+    // re-validates each candidate at planting time for the same reason; this
+    // is that rule for a survey that plants its whole staged set at once.
+    for (const key of this.staged.keys()) {
+      const cell = fringeCellOf(key);
+      if (isBarred(cell.x, cell.y)) this.staged.delete(key);
+    }
+
     const sprouted: FringePlant[] = [];
     const withered: FringeCell[] = [];
     for (const [key, species] of this.staged) {
