@@ -57,6 +57,8 @@ export const SNOW_PROFILE: PrecipitationProfile = {
   color: 0xf2f6ff,
   swayCells: 0.5,
   swayHz: 0.25,
+  // A FULL DISC: snow falls out of the whole cloud, which has no hole in it.
+  innerRadiusFraction: 0,
 };
 
 /**
