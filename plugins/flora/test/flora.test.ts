@@ -6,7 +6,7 @@
 // cap, felled by any sculpt, survives a restart) and asserts it against the
 // mechanism rather than against a call site.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
@@ -20,6 +20,7 @@ import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import {
+  type RecordedMessage,
   RecordingSink,
   asLoadedPlugin,
   grantTokenEveryUnlockedChunk,
@@ -389,33 +390,101 @@ describe('density maths', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ONE GROWTH RUN (2026-09-03). Every forest in this file used to be grown
+// from scratch — FLORA_STABILITY_SECONDS of simulated time before the first
+// tree, at ~2 ms a tick, paid twenty times over. It is paid ONCE here, on the
+// default world (locked chunk row 0, PLAYER joined and granted the rest), and
+// the run's checkpoints are what the growth and delta contracts assert on.
+// Its forest is captured as the plugin's own persistence slice, and every
+// later test that needs standing trees restores it through the real boot path
+// (bootGrown) instead of waiting the window out again.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Simulated time before the window, at which nothing may have grown yet. */
+const RUN_BEFORE_WINDOW_SECONDS = FLORA_STABILITY_SECONDS - FLORA_SURVEY_INTERVAL_SECONDS * 2;
+/**
+ * One sweep past the window, so exactly ONE fully-eligible survey has
+ * completed. (The sweep that finishes AT the window scanned most of its
+ * chunks before it elapsed, so it finds almost nothing — the survey is
+ * rolling, not instantaneous. See Forest.advanceSurvey.)
+ */
+const RUN_FIRST_SURVEY_SECONDS = FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS + 1;
+/** Survey intervals the run keeps growing for after that first survey. */
+const RUN_GROWTH_INTERVALS = 12;
+
+interface GrowthRun {
+  /** Standing trees and change messages at RUN_BEFORE_WINDOW_SECONDS. */
+  readonly treesBeforeWindow: number;
+  readonly changesBeforeWindow: number;
+  /** Standing trees and change messages at RUN_FIRST_SURVEY_SECONDS. */
+  readonly treesAfterFirstSurvey: number;
+  readonly changesAfterFirstSurvey: number;
+  /** The end of the run: RUN_GROWTH_INTERVALS surveys later. */
+  readonly trees: readonly TreeCell[];
+  readonly changes: readonly RecordedMessage[];
+  readonly world: FloraWorld;
+  readonly isCellUnlocked: (x: number, y: number) => boolean;
+  /** The forest, as the plugin persists it. */
+  readonly slice: unknown;
+}
+
+let run: GrowthRun;
+
+beforeAll(() => {
+  const harness = boot();
+  join(harness);
+
+  advance(harness, RUN_BEFORE_WINDOW_SECONDS);
+  const treesBeforeWindow = standingTrees().length;
+  const changesBeforeWindow = harness.sink.ofType(CHANGES_WIRE_TYPE).length;
+
+  advance(harness, RUN_FIRST_SURVEY_SECONDS - RUN_BEFORE_WINDOW_SECONDS);
+  const treesAfterFirstSurvey = standingTrees().length;
+  const changesAfterFirstSurvey = harness.sink.ofType(CHANGES_WIRE_TYPE).length;
+
+  advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * RUN_GROWTH_INTERVALS);
+  const trees = [...standingTrees()];
+  expect(trees.length).toBeGreaterThan(1);
+
+  run = {
+    treesBeforeWindow,
+    changesBeforeWindow,
+    treesAfterFirstSurvey,
+    changesAfterFirstSurvey,
+    trees,
+    changes: harness.sink.ofType(CHANGES_WIRE_TYPE),
+    world: floraView(harness.world),
+    isCellUnlocked: (x, y) => harness.world.isCellUnlocked(x, y),
+    slice: harness.host.collectPersistence()[FLORA_PLUGIN_NAME],
+  };
+});
+
+/**
+ * A fresh, fully-unlocked boot carrying the run's forest, restored through the
+ * real persistence path. No player has joined; nothing has ticked.
+ */
+function bootGrown(): Harness {
+  return bootOn(worldWithTerrain(WORLD_SIZE, stripedHeight, () => false), run.slice);
+}
+
+function grownOf(message: RecordedMessage): TreeCell[] {
+  return parseTreeCells((message.payload as { grown: number[] }).grown) ?? [];
+}
+
+function felledOf(message: RecordedMessage): TreeCell[] {
+  return parseTreeCells((message.payload as { felled: number[] }).felled) ?? [];
+}
+
 describe('growth', () => {
-  let harness: Harness;
-
-  beforeEach(() => {
-    harness = boot();
-  });
-
   it('grows nothing until the stability window has passed', () => {
-    advance(harness, FLORA_STABILITY_SECONDS - FLORA_SURVEY_INTERVAL_SECONDS * 2);
-    expect(standingTrees()).toHaveLength(0);
-
-    advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * 4);
-    expect(standingTrees().length).toBeGreaterThan(0);
+    expect(run.treesBeforeWindow).toBe(0);
+    expect(run.treesAfterFirstSurvey).toBeGreaterThan(0);
   });
 
   it('fills a meadow gradually rather than all at once', () => {
-    // One sweep past the window, so exactly ONE fully-eligible survey has
-    // completed. (The sweep that finishes AT the window scanned most of its
-    // chunks before it elapsed, so it finds almost nothing — the survey is
-    // rolling, not instantaneous. See Forest.advanceSurvey.)
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS + 1);
-    const firstSurvey = standingTrees().length;
-    expect(firstSurvey).toBeGreaterThan(0);
-    expect(firstSurvey).toBeLessThanOrEqual(FLORA_MAX_SPROUTS_PER_SURVEY);
-
-    advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * 10);
-    expect(standingTrees().length).toBeGreaterThan(firstSurvey);
+    expect(run.treesAfterFirstSurvey).toBeLessThanOrEqual(FLORA_MAX_SPROUTS_PER_SURVEY);
+    expect(run.trees.length).toBeGreaterThan(run.treesAfterFirstSurvey);
   });
 
   it('completes one survey per interval whatever the world size', () => {
@@ -426,35 +495,22 @@ describe('growth', () => {
     // forest several times too fast. (It did: the first cut of the budget
     // rounded up to whole chunks and this 64² world swept every 1.6 s.)
     //
-    // This test counts SURVEYS via the wire, so it needs a connected, fully
-    // visible player (issue #18 fog of war: broadcastVisible correctly sends
-    // nothing to nobody, and this suite's default boot() joins no one) —
-    // otherwise a sweep that legitimately grew something would still leave
-    // zero messages to count.
-    join(harness);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS);
-    harness.sink.clear();
-
-    const window = FLORA_SURVEY_INTERVAL_SECONDS * 12;
-    advance(harness, window);
-    const sweeps = harness.sink.ofType(CHANGES_WIRE_TYPE).length;
-    const expected = window / FLORA_SURVEY_INTERVAL_SECONDS;
+    // Surveys are counted via the wire, which needs the run's connected,
+    // fully visible player (issue #18 fog of war: broadcastVisible correctly
+    // sends nothing to nobody).
+    const sweeps = run.changes.length - run.changesAfterFirstSurvey;
 
     // A sweep that grows nothing sends nothing, so this is a bound, not an
     // equality — but the failure it guards (three sweeps where there should be
     // one) is nowhere near it.
-    expect(sweeps).toBeLessThanOrEqual(expected);
-    expect(sweeps).toBeGreaterThanOrEqual(expected - 2);
+    expect(sweeps).toBeLessThanOrEqual(RUN_GROWTH_INTERVALS);
+    expect(sweeps).toBeGreaterThanOrEqual(RUN_GROWTH_INTERVALS - 2);
   });
 
   it('only ever plants on unlocked green ground', () => {
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 40);
-    const world = floraView(harness.world);
-    expect(standingTrees().length).toBeGreaterThan(0);
-
-    for (const tree of standingTrees()) {
-      expect(isPlantableCell(world, tree.x, tree.y)).toBe(true);
-      expect(harness.world.isCellUnlocked(tree.x, tree.y)).toBe(true);
+    for (const tree of run.trees) {
+      expect(isPlantableCell(run.world, tree.x, tree.y)).toBe(true);
+      expect(run.isCellUnlocked(tree.x, tree.y)).toBe(true);
       // Nothing in the locked chunk row, which is the anti-leak rule: an
       // unfiltered broadcast can only ever mention revealed territory.
       expect(tree.y).toBeGreaterThanOrEqual(CHUNK_SIZE);
@@ -463,69 +519,35 @@ describe('growth', () => {
 });
 
 describe('felling', () => {
-  let harness: Harness;
-
-  /**
-   * Simulating 105 seconds of world synchronously, on a 256-cell board, to get
-   * trees to grow. Measured at ~11s of wall clock — over vitest's 10s default,
-   * which this hook has been close to for a while and crossed on 2026-08-23
-   * when the crop survey's per-cell predicate grew a tread ring
-   * (shared/farmland.ts's isFarmlandPlot). The extra work is real but small
-   * where it actually runs: ~2.7× the survey's per-cell cost, which crops.ts's
-   * own measurement puts at well under a millisecond per tick on a 512² board.
-   * It is only visible here because this fixture pays a hundred seconds of it
-   * up front, for trees, which have nothing to do with crops.
-   */
-  const FELLING_FIXTURE_TIMEOUT_MS = 30_000;
-
-  beforeEach(() => {
-    harness = boot(() => false);
+  it('fells every tree the diff touched, and broadcasts the removals as a delta', () => {
+    // A max-radius brush changes a disc of cells plus its relaxation spill;
+    // every tree inside it must go, or trees are left standing on ground that
+    // moved under them — not just the one under the brush.
+    const harness = bootGrown();
     join(harness);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
-    expect(standingTrees().length).toBeGreaterThan(0);
-  }, FELLING_FIXTURE_TIMEOUT_MS);
-
-  it('removes a tree the moment its cell is sculpted, and broadcasts it', () => {
     const victim = standingTrees()[0];
+    const before = standingTrees().length;
     harness.sink.clear();
 
     const outcome = handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      { type: 'sculpt', x: victim.x, y: victim.y, radius: MAX_BRUSH_RADIUS, dir: 1 },
+      { type: 'sculpt', x: victim.x, y: victim.y, radius: MAX_BRUSH_RADIUS, dir: -1 },
     );
     expect(outcome.applied).toBe(true);
 
     expect(currentForest().has(victim.x, victim.y)).toBe(false);
-
-    const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
-    expect(changes.length).toBeGreaterThan(0);
-    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
-    expect(felled).toContainEqual({ x: victim.x, y: victim.y });
-    // A fell message carries removals only — it is a delta, not a redraw.
-    const grown = parseTreeCells((changes[0].payload as { grown: number[] }).grown) ?? [];
-    expect(grown).toHaveLength(0);
-  });
-
-  it('fells every tree the diff touched, not just the one under the brush', () => {
-    // A max-radius smooth brush changes a disc of cells plus its relaxation
-    // spill; every tree inside it must go, or trees are left standing on ground
-    // that moved under them.
-    const victim = standingTrees()[0];
-    const before = new Set(standingTrees().map((tree) => `${tree.x},${tree.y}`));
-
-    handleSculptIntent(
-      { world: harness.world, interceptors: harness.host },
-      PLAYER,
-      { type: 'sculpt', x: victim.x, y: victim.y, radius: MAX_BRUSH_RADIUS, dir: -1 },
-    );
-
-    const after = new Set(standingTrees().map((tree) => `${tree.x},${tree.y}`));
-    expect(after.size).toBeLessThan(before.size);
+    expect(standingTrees().length).toBeLessThan(before);
     for (const tree of standingTrees()) {
       // Everything still standing is still on ground that can hold it.
       expect(isPlantableCell(floraView(harness.world), tree.x, tree.y)).toBe(true);
     }
+
+    const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
+    expect(changes.length).toBeGreaterThan(0);
+    expect(felledOf(changes[0])).toContainEqual({ x: victim.x, y: victim.y });
+    // A fell message carries removals only — it is a delta, not a redraw.
+    expect(grownOf(changes[0])).toHaveLength(0);
   });
 });
 
@@ -539,56 +561,32 @@ describe('structure occupancy — buildings always win', () => {
     resetStructuresBridge();
   });
 
-  it('fells a tree the instant its cell is named seeded, and broadcasts it', () => {
-    const harness = boot(() => false);
+  it('fells a tree the instant its cell is named seeded or upgraded, and broadcasts it', () => {
+    const harness = bootGrown();
     join(harness);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
-    const victim = standingTrees()[0];
-    expect(victim).toBeDefined();
+    const [seededVictim, upgradedVictim] = standingTrees();
+    expect(upgradedVictim).toBeDefined();
     harness.sink.clear();
 
     harness.host.notifyWorldEvent('structures:changes', {
       cause: 'generation',
-      seeded: [{ x: victim.x, y: victim.y, tier: 0 }],
-      upgraded: [],
+      seeded: [{ x: seededVictim.x, y: seededVictim.y, tier: 0 }],
+      upgraded: [{ x: upgradedVictim.x, y: upgradedVictim.y, tier: 1 }],
       died: [],
     });
 
-    expect(currentForest().has(victim.x, victim.y)).toBe(false);
+    expect(currentForest().has(seededVictim.x, seededVictim.y)).toBe(false);
+    expect(currentForest().has(upgradedVictim.x, upgradedVictim.y)).toBe(false);
     const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
     expect(changes.length).toBeGreaterThan(0);
-    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
-    expect(felled).toContainEqual({ x: victim.x, y: victim.y });
-  });
-
-  it('fells a tree the instant its cell is named upgraded, and broadcasts it', () => {
-    const harness = boot(() => false);
-    join(harness);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
-    const victim = standingTrees()[0];
-    expect(victim).toBeDefined();
-    harness.sink.clear();
-
-    harness.host.notifyWorldEvent('structures:changes', {
-      cause: 'generation',
-      seeded: [],
-      upgraded: [{ x: victim.x, y: victim.y, tier: 1 }],
-      died: [],
-    });
-
-    expect(currentForest().has(victim.x, victim.y)).toBe(false);
-    const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
-    expect(changes.length).toBeGreaterThan(0);
-    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
-    expect(felled).toContainEqual({ x: victim.x, y: victim.y });
+    expect(felledOf(changes[0])).toContainEqual({ x: seededVictim.x, y: seededVictim.y });
+    expect(felledOf(changes[0])).toContainEqual({ x: upgradedVictim.x, y: upgradedVictim.y });
   });
 
   it('does not replant when a structure dies — recolonization is left to ordinary growth', () => {
-    const harness = boot(() => false);
+    const harness = bootGrown();
     join(harness);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
     const victim = standingTrees()[0];
-    expect(victim).toBeDefined();
 
     harness.host.notifyWorldEvent('structures:changes', {
       cause: 'generation',
@@ -611,13 +609,11 @@ describe('structure occupancy — buildings always win', () => {
   });
 
   it('clears a pre-existing overlap on the first completed survey after structures resolves', () => {
-    const harness = boot(() => false);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 10);
+    const harness = bootGrown();
     const victim = standingTrees()[0];
-    expect(victim).toBeDefined();
 
     // Simulates a building that already stood over this tree before flora ever
-    // checked. boot() resolved the bridge against a host with no structures in
+    // checked. bootOn resolved the bridge against a host with no structures in
     // it; this re-resolves it against one that has a structures reporting a
     // building on the tree's cell, which is what a reopen with structures newly
     // enabled looks like.
@@ -636,10 +632,16 @@ describe('structure occupancy — buildings always win', () => {
   });
 
   it('is deterministic: the same growth, event and occupancy history produces the same forest twice', () => {
+    // The fewest surveys that still leave two trees to name in the event, and
+    // one more sweep afterwards; determinism is a property of every tick, so a
+    // long run proves nothing a short one does not.
+    const GROWTH_SURVEYS = 3;
+    const SURVEYS_AFTER_EVENT = 1;
+
     function run(): TreeCell[] {
       const harness = boot(() => false);
       join(harness);
-      advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 15);
+      advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * GROWTH_SURVEYS);
       const trees = standingTrees();
       expect(trees.length).toBeGreaterThan(1);
 
@@ -649,7 +651,7 @@ describe('structure occupancy — buildings always win', () => {
         upgraded: [{ x: trees[1].x, y: trees[1].y, tier: 1 }],
         died: [],
       });
-      advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * 10);
+      advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * SURVEYS_AFTER_EVENT);
       return [...standingTrees()];
     }
 
@@ -666,10 +668,7 @@ describe('structure occupancy — buildings always win', () => {
 
 describe('broadcast model', () => {
   it('sends the whole forest to a joining player, and only to them', () => {
-    const harness = boot(() => false);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
-    harness.sink.clear();
-
+    const harness = bootGrown();
     join(harness);
 
     const snapshots = harness.sink.ofType(FOREST_WIRE_TYPE);
@@ -680,43 +679,30 @@ describe('broadcast model', () => {
   });
 
   it('sends growth as a delta, and says nothing when nothing changed', () => {
-    const harness = boot(() => false);
-    join(harness);
-
     // Before the stability window nothing can grow, so nothing may be sent.
-    advance(harness, FLORA_STABILITY_SECONDS - FLORA_SURVEY_INTERVAL_SECONDS * 2);
-    expect(harness.sink.ofType(CHANGES_WIRE_TYPE)).toHaveLength(0);
+    expect(run.changesBeforeWindow).toBe(0);
 
-    harness.sink.clear();
-    advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * 4);
-    const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
-    expect(changes.length).toBeGreaterThan(0);
-
-    const grown = parseTreeCells((changes[0].payload as { grown: number[] }).grown) ?? [];
-    expect(grown.length).toBeGreaterThan(0);
-    expect(grown.length).toBeLessThanOrEqual(FLORA_MAX_SPROUTS_PER_SURVEY);
+    const firstGrown = grownOf(run.changes[0]);
+    expect(firstGrown.length).toBeGreaterThan(0);
+    expect(firstGrown.length).toBeLessThanOrEqual(FLORA_MAX_SPROUTS_PER_SURVEY);
 
     // THE DELTA CONTRACT: across every message, each tree was announced exactly
     // once. A full-state stream would announce the whole forest every time and
     // this sum would be several times the standing count.
     let announced = 0;
-    for (const message of changes) {
-      announced += (parseTreeCells((message.payload as { grown: number[] }).grown) ?? []).length;
-    }
-    expect(announced).toBe(standingTrees().length);
-    expect(changes.length).toBeGreaterThan(1);
+    for (const message of run.changes) announced += grownOf(message).length;
+    expect(announced).toBe(run.trees.length);
+    expect(run.changes.length).toBeGreaterThan(1);
   });
 
   it('repairs a drifted client with a keepalive snapshot', () => {
-    const harness = boot(() => false);
-    join(harness);
     // Some real content to repair: an empty forest's keepalive is legitimately
     // silent under fog of war (issue #18) — a recipient whose own visible
     // subset is empty is sent nothing at all (FLORA_SKIP_EMPTY), same as a
     // delta would be, so this test needs standing trees to prove the keepalive
     // actually carries them.
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
-    expect(standingTrees().length).toBeGreaterThan(0);
+    const harness = bootGrown();
+    join(harness);
     harness.sink.clear();
 
     advance(harness, FLORA_KEEPALIVE_SECONDS + 1);
@@ -726,10 +712,8 @@ describe('broadcast model', () => {
     // a single shared broadcast — with exactly one player joined here that
     // is still exactly one message, addressed to them.
     expect(snapshots[0].target).toBe(PLAYER.id);
-    // Non-empty and real content, not just a message: growth keeps happening
-    // during the keepalive window too, so this is a floor, not an equality.
     const cells = parseTreeCells((snapshots[0].payload as { trees: number[] }).trees) ?? [];
-    expect(cells.length).toBeGreaterThan(0);
+    expect(cells).toHaveLength(standingTrees().length);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -739,10 +723,8 @@ describe('broadcast model', () => {
   // earned it, not wait out FLORA_KEEPALIVE_SECONDS.
   // ──────────────────────────────────────────────────────────────────────────
   it('sends each connected player only the trees inside their own unlocked view', () => {
-    const harness = boot(() => false);
+    const harness = bootGrown();
     join(harness);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
-    expect(standingTrees().length).toBeGreaterThan(0);
 
     // A second connection whose token has never unlocked anything of its own.
     const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
@@ -760,12 +742,10 @@ describe('broadcast model', () => {
       .filter((m) => m.target === outsider.id);
 
     // PLAYER's token was granted the whole unlocked world (join()), so their
-    // keepalive carries real content — growth keeps happening during the
-    // keepalive window too, so this is a floor, not an equality (the same
-    // reasoning as the plain keepalive test above).
+    // keepalive carries the whole forest.
     expect(forPlayer.length).toBeGreaterThan(0);
     const playerCells = parseTreeCells((forPlayer[0].payload as { trees: number[] }).trees) ?? [];
-    expect(playerCells.length).toBeGreaterThan(0);
+    expect(playerCells).toHaveLength(standingTrees().length);
 
     // The outsider's token has unlocked nothing: skipEmpty means their
     // keepalive is silent rather than an empty message, which is the
@@ -775,10 +755,8 @@ describe('broadcast model', () => {
   });
 
   it('pushes a targeted refresh when a player creeps into a chunk that already has trees', () => {
-    const harness = boot(() => false);
-    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
+    const harness = bootGrown();
     const victim = standingTrees()[0];
-    expect(victim).toBeDefined();
     const cx = Math.floor(victim.x / CHUNK_SIZE);
     const cy = Math.floor(victim.y / CHUNK_SIZE);
 
@@ -798,17 +776,14 @@ describe('broadcast model', () => {
       .ofType(CHANGES_WIRE_TYPE)
       .filter((m) => m.target === outsider.id);
     expect(changes).toHaveLength(1);
-    const grown = parseTreeCells((changes[0].payload as { grown: number[] }).grown) ?? [];
-    expect(grown).toContainEqual({ x: victim.x, y: victim.y });
-    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
-    expect(felled).toHaveLength(0);
+    expect(grownOf(changes[0])).toContainEqual({ x: victim.x, y: victim.y });
+    expect(felledOf(changes[0])).toHaveLength(0);
   });
 });
 
 describe('persistence', () => {
   it('round-trips a forest across a restart', () => {
-    const first = boot(() => false);
-    advance(first, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 30);
+    const first = bootGrown();
     const before = standingTrees();
     expect(before.length).toBeGreaterThan(0);
 
@@ -861,15 +836,10 @@ describe('persistence', () => {
   });
 
   it('fells restored trees that no longer stand on green ground', () => {
-    // A forest saved on the striped world, restored onto a world of bare rock.
-    const first = boot(() => false);
-    advance(first, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 10);
-    const slice = first.host.collectPersistence()[FLORA_PLUGIN_NAME];
-    expect(standingTrees().length).toBeGreaterThan(0);
-
+    // The run's forest, saved on the striped world, restored onto bare rock.
     const rock = bootOn(
       worldWithTerrain(WORLD_SIZE, () => (FLORA_MAX_BAND + 2) * BAND_HEIGHT),
-      slice,
+      run.slice,
     );
     expect(standingTrees().length).toBeGreaterThan(0);
 
