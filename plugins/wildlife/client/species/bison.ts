@@ -15,7 +15,7 @@
 //   rump              rounded and SMALLER than the barrel: the hull tucks in
 //                     behind the hips and the thighs bulge past it — the
 //                     hind legs, not the hull, carry the mass back there;
-//                     the tail hangs to 0.50
+//                     the tail hangs to 0.50, draped down the rump, no tuft
 //
 // Every number below is one of those, scaled so the hump top sits at
 // HUMP_TOP_Y authoring units. The body is authored as two silhouette lines
@@ -210,19 +210,22 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   })));
 
   // ── Hindquarters and tail ─────────────────────────────────────────────────
+  // The tail: rooted inside the top of the rump, draped over its edge and
+  // hanging down AGAINST the rear of the body, curling back in at the tip.
+  // A plain taper, no lock of hair at the end.
   const rumpX = hullX(1);
   const tail = pool.keepGeometry(taperedTube({
     path: [
-      new Vector3(rumpX - 0.02, 0.73 * H, 0),
-      new Vector3(rumpX - 0.12, 0.65 * H, 0),
-      new Vector3(rumpX - 0.14, 0.50 * H, 0),
+      new Vector3(rumpX + 0.08, 0.72 * H, 0),
+      new Vector3(rumpX - 0.04, 0.68 * H, 0),
+      new Vector3(rumpX - 0.07, 0.59 * H, 0),
+      new Vector3(rumpX - 0.04, 0.50 * H, 0),
     ],
-    rootRadius: 0.035,
-    tipRadius: 0.02,
-    tubularSegments: 6,
+    rootRadius: 0.045,
+    tipRadius: 0.018,
+    tubularSegments: 8,
     radialSegments: 6,
   }));
-  const tuft = pool.keepGeometry(smoothEllipsoid(0.08, 0.14, 0.08, 8, 6));
 
   // ── Legs ──────────────────────────────────────────────────────────────────
   // The shoulder: the forequarter's muscle and the cape hair feathering the
@@ -240,7 +243,6 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   rig.add(pool.part(hull, body, 0, 0, 0));
   rig.add(pool.part(neck, cape, 0, 0, 0));
   rig.add(pool.part(tail, body, 0, 0, 0));
-  rig.add(pool.part(tuft, cape, rumpX - 0.15, 0.49 * H, 0));
 
   const headPivot = new Group();
   headPivot.position.copy(NECK_TOP);
