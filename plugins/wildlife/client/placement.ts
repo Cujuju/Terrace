@@ -66,7 +66,11 @@ const WATER_MARGIN_WORLD_UNITS = 0.12;
  * are hand-set at scale 1 and are NOT changed here, so this constant is also
  * the one place the two conventions can be reconciled.
  */
-const CLEARANCE_SIZE_CLASS: WildlifeSizeClass = 'large';
+// 'medium' IS scale 1 (WILDLIFE_SIZE_MODEL_SCALE): a SwimProfile clearance is a
+// scale-1 half-extent by contract, and swimmerColumnBounds applies the class
+// scale itself — deriving at 'large' scaled the crown twice (orchestrator,
+// 2026-09-02, on the wiring report's finding).
+const CLEARANCE_SIZE_CLASS: WildlifeSizeClass = 'medium';
 const CLEARANCE_MODEL_SCALE = WILDLIFE_SIZE_MODEL_SCALE[CLEARANCE_SIZE_CLASS];
 
 /** A body half-extent turned into the water it insists on keeping past it. */

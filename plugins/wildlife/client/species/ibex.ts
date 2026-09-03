@@ -32,13 +32,13 @@ const HIP_Y = 0.46;
 const FORE_X = 0.30;
 const HIND_X = -0.30;
 const HALF_STANCE = 0.12;
-const HULL_RINGS = 24;
-const HULL_SEGMENTS = 16;
+const HULL_RINGS = 18;
+const HULL_SEGMENTS = 12;
 
 /** Horn: root to tip, over the neck and back. */
 const HORN_ROOT_RADIUS = 0.04;
 const HORN_TIP_RADIUS = 0.012;
-const HORN_SEGMENTS = 14;
+const HORN_SEGMENTS = 10;
 
 const STRIDE_HZ = 2.2;
 const LEG_SWING_RADIANS = 0.40;
@@ -89,8 +89,8 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
     tubularSegments: 8,
     radialSegments: 10,
   }));
-  const head = pool.keepGeometry(smoothEllipsoid(0.30, 0.21, 0.17, 14, 10));
-  const muzzle = pool.keepGeometry(smoothEllipsoid(0.18, 0.13, 0.12, 10, 8));
+  const head = pool.keepGeometry(smoothEllipsoid(0.30, 0.21, 0.17, 10, 8));
+  const muzzle = pool.keepGeometry(smoothEllipsoid(0.18, 0.13, 0.12, 8, 6));
   const nose = pool.keepGeometry(smoothEllipsoid(0.05, 0.04, 0.05, 8, 6));
   const eyeGeometry = pool.keepGeometry(smoothEllipsoid(0.04, 0.04, 0.04, 8, 6));
   // The beard: a short tuft hanging from the chin.
@@ -160,8 +160,8 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
     halfStance: HALF_STANCE,
     rootRadius: 0.065,
     tipRadius: 0.035,
-    radialSegments: 8,
-    heightSegments: 3,
+    radialSegments: 6,
+    heightSegments: 1,
     hoofHeight: 0.05,
     haunch: [0.22, 0.24, 0.12],
   }, leg, horn, body);

@@ -20,7 +20,6 @@ import {
   Vector3,
 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { finGeometry } from '../whaleHull.ts';
 
 /**
  * Bevel proportions for a fin slab, as fractions of its thickness. A fin is a
@@ -31,7 +30,7 @@ const FIN_BEVEL_THICKNESS_RATIO = 0.3;
 const FIN_BEVEL_SIZE_RATIO = 0.42;
 const FIN_BEVEL_SEGMENTS = 1;
 /** Outline subdivision for the curved fin edges. */
-const FIN_CURVE_SEGMENTS = 10;
+const FIN_CURVE_SEGMENTS = 7;
 
 /** Welds coincident vertices so an extrusion joins the indexed surfaces. */
 export function indexed(geometry: BufferGeometry): BufferGeometry {
@@ -51,7 +50,23 @@ export function flatFin(
   sign: number,
   depth: number,
 ): BufferGeometry {
-  return indexed(finGeometry(buildOutline, sign, depth));
+  // The same construction as whaleHull's finGeometry, at this kit's leaner
+  // tessellation: a whale is one of ~20 on screen, a fish one of hundreds, and
+  // the 24-segment / 2-bevel flipper cost more than the hull it hung on.
+  const shape = new Shape();
+  buildOutline(shape, sign);
+  const geometry = new ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: depth * FIN_BEVEL_THICKNESS_RATIO,
+    bevelSize: depth * FIN_BEVEL_SIZE_RATIO,
+    bevelSegments: FIN_BEVEL_SEGMENTS,
+    curveSegments: FIN_CURVE_SEGMENTS,
+  });
+  // Outline in XY, extruded along +Z; lay it flat with thickness in Y.
+  geometry.rotateX(Math.PI / 2);
+  geometry.translate(0, -depth / 2, 0);
+  return indexed(geometry);
 }
 
 /**

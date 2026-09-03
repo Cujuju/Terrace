@@ -41,8 +41,8 @@ const HIP_Y = 0.52;
 const FORE_X = 0.32;
 const HIND_X = -0.32;
 const HALF_STANCE = 0.11;
-const HULL_RINGS = 24;
-const HULL_SEGMENTS = 16;
+const HULL_RINGS = 18;
+const HULL_SEGMENTS = 12;
 
 /**
  * Stride rate and swing. A grazer walks at 0.8 world units per second
@@ -103,8 +103,8 @@ export const buildGrazer: SpeciesModelBuilder = (pool) => {
   }));
   const HEAD_X = 0.70;
   const HEAD_Y = 1.04;
-  const head = pool.keepGeometry(smoothEllipsoid(0.30, 0.20, 0.16, 14, 10));
-  const muzzle = pool.keepGeometry(smoothEllipsoid(0.20, 0.13, 0.11, 10, 8));
+  const head = pool.keepGeometry(smoothEllipsoid(0.30, 0.20, 0.16, 10, 8));
+  const muzzle = pool.keepGeometry(smoothEllipsoid(0.20, 0.13, 0.11, 8, 6));
   const nose = pool.keepGeometry(smoothEllipsoid(0.05, 0.04, 0.05, 8, 6));
   const eyeGeometry = pool.keepGeometry(smoothEllipsoid(0.04, 0.04, 0.04, 8, 6));
   const ears = [1, -1].map((sign) => pool.keepGeometry(flatFin((shape, s) => {
@@ -149,8 +149,8 @@ export const buildGrazer: SpeciesModelBuilder = (pool) => {
     halfStance: HALF_STANCE,
     rootRadius: 0.055,
     tipRadius: 0.03,
-    radialSegments: 8,
-    heightSegments: 3,
+    radialSegments: 6,
+    heightSegments: 1,
     hoofHeight: 0.05,
     haunch: [0.20, 0.24, 0.10],
   }, leg, hoof, body);

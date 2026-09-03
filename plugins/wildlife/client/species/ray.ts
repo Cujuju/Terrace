@@ -25,8 +25,8 @@ const RAY_EYE_COLOR = 0x0f1114;
 const BODY_LENGTH = 0.55;
 const MAX_HALF_WIDTH = 0.14;
 const MAX_HALF_HEIGHT = 0.05;
-const HULL_RINGS = 20;
-const HULL_SEGMENTS = 16;
+const HULL_RINGS = 16;
+const HULL_SEGMENTS = 12;
 /** Where each wing hinges on the flank, and how far its tip reaches out. */
 const WING_ROOT_X = 0.04;
 const WING_ROOT_Z = 0.09;
