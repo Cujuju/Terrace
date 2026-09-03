@@ -646,3 +646,77 @@ export const MAX_RELIEF_WORLD_UNITS = 16;
  * terraces. Never write this ratio by hand.
  */
 export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE LAND RAMP — where the world stops being beach, becomes grass, becomes
+// rock, becomes snow. Stated ONCE, here, in HEIGHT UNITS (2026-09-02).
+//
+// WHY A SHARED CONSTANT AND NOT A PALETTE DETAIL. The client authors the ramp
+// as ten colour anchors (client/src/terrain/bandColors.ts) and the snow line
+// was written there. Every server-side reader that needed to know what ground
+// LOOKS LIKE restated it: flora's "grass grows on green ground"
+// (plugins/flora/server/bands.ts, with a "re-run the check if the ramp is ever
+// re-authored" note), the yeti's snow line (plugins/monsters/server/habitat.ts),
+// and the wildlife spawn windows below would have been the fourth copy of 576.
+// BAND_HEIGHT's own comment already lists "the snow line" among every physical
+// depth in the world that is stated in height units; this makes that true. The
+// palette still owns the COLOURS. The heights at which the materials change are
+// a fact about the world that both halves must agree on, which is what this
+// package holds.
+//
+// COUPLING, NAMED: bandColors.ts's anchor list must hold exactly
+// LAND_RAMP_ANCHOR_COUNT colours, in shoreline-up order, and it checks that at
+// load. The two anchor INDICES below are a reading of that list — which colour
+// is the first grass and which the first rock — and move only if it is
+// re-authored.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Height at which the land ramp reaches snow; bands at or above it render as
+ * snowcap. 576 is nine of the pre-2026-08-20 terrace bands, where the
+ * hand-authored ramp put its snow stop, and it is kept EXACTLY there so
+ * re-terracing the world never moves the treeline.
+ */
+export const SNOW_LINE_HEIGHT = 576;
+
+/** Colour anchors the land ramp spends between the waterline and the snow line. */
+export const LAND_RAMP_ANCHOR_COUNT = 10;
+
+/**
+ * Height between two neighbouring ramp anchors — 64 at today's ramp. Derived,
+ * so it follows the ramp if the ramp gains or loses a material.
+ */
+export const LAND_RAMP_ANCHOR_SPACING = SNOW_LINE_HEIGHT / (LAND_RAMP_ANCHOR_COUNT - 1);
+
+/** Index of the first green anchor in the ramp (bright lowland grass). */
+export const LAND_RAMP_FIRST_GRASS_ANCHOR = 3;
+
+/** Index of the first anchor ABOVE the grasses (dark exposed rock). */
+export const LAND_RAMP_FIRST_ROCK_ANCHOR = 6;
+
+/**
+ * Lowest height that reads as GRASSLAND.
+ *
+ * HALF AN ANCHOR BELOW the first grass anchor, not at it: the ramp interpolates
+ * between anchors, so the bands in the soil → grass gap are part soil and part
+ * grass, and the halfway point is where the mix stops being mostly soil.
+ * Measured on the client's own bandColorOf (plugins/flora/server/bands.ts's
+ * header): the green-dominant bands are exactly h = 160 up to but not
+ * including 384, which is the window these two constants produce.
+ */
+export const GRASSLAND_MIN_HEIGHT = (LAND_RAMP_FIRST_GRASS_ANCHOR - 0.5) * LAND_RAMP_ANCHOR_SPACING;
+
+/**
+ * First height that no longer reads as grassland — EXCLUSIVE. The rock anchor
+ * itself, with no half-anchor margin, because the asymmetry is real: the grass
+ * → rock gap interpolates from a saturated dark green and stays green-dominant
+ * right up to the anchor where rock takes over.
+ */
+export const GRASSLAND_MAX_HEIGHT = LAND_RAMP_FIRST_ROCK_ANCHOR * LAND_RAMP_ANCHOR_SPACING;
+
+/**
+ * Lowest height that reads as MOUNTAIN: the first rock anchor, where the
+ * grassland ends. There is no upper bound — rock, pale high rock and snow are
+ * all mountain, all the way to MAX_HEIGHT.
+ */
+export const MOUNTAIN_MIN_HEIGHT = GRASSLAND_MAX_HEIGHT;

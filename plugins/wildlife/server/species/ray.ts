@@ -12,6 +12,7 @@ import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
   AQUATIC_MAX_GRADIENT_PER_CELL,
   NO_SPAWN_GROUND_RULE,
+  SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
   SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
   type IdleBouts,
@@ -101,5 +102,6 @@ export const RAY_PROFILE: SpeciesProfile = {
   // Nothing to propagate through: a solitary species' school is one animal.
   groupStartle: false,
   spawnGround: NO_SPAWN_GROUND_RULE,
+  spawnHeights: SPAWN_AT_ANY_HEIGHT,
 };
 

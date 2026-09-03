@@ -88,6 +88,7 @@ import {
   isValidCellFor,
   openDirectionCount,
   satisfiesSpawnGround,
+  withinSpawnHeights,
   targetsFor,
 } from './census.ts';
 import { reconcileCensus } from './census-index.ts';
@@ -431,6 +432,10 @@ function canSettleAt(
   y: number,
 ): boolean {
   if (!isValidCellFor(world, species, x, y)) return false;
+  // Its place on the land ramp — grassland for the bison, mountain for the
+  // ibex, anywhere for the rest (SpawnHeights, species/profile.ts). One cell
+  // read, so it goes before the eight-direction probe below.
+  if (!withinSpawnHeights(world, species, x, y)) return false;
   // The species' own spawn-ground rule — "enough of the compass is walkable"
   // for the grazer and the bison, "enough of it is ground only I can cross" for
   // the ibex, nothing at all for every swimmer. census.ts interprets it; this

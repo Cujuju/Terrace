@@ -12,6 +12,7 @@
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  MOUNTAIN_SPAWN_HEIGHTS,
   SINGLE_SIZE_WEIGHTS,
   SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
   TURN_RADIUS_BODY_LENGTHS,
@@ -117,4 +118,10 @@ export const IBEX_PROFILE: SpeciesProfile = {
   // through, and the two of them are inside any radius that reaches either.
   groupStartle: false,
   spawnGround: { kind: 'broken', minSteepDirections: IBEX_SPAWN_STEEP_DIRECTIONS },
+  // MOUNTAIN ONLY (owner, 2026-09-02: "Ibex should only spawn in the
+  // mountains"). From the land ramp's first rock anchor up, snow included.
+  // The broken-ground rule above finds a LEDGE; this says the ledge must be on
+  // a mountain — a riser in a lowland meadow is a step, not a crag, and it was
+  // exactly where a pair could be born before this.
+  spawnHeights: MOUNTAIN_SPAWN_HEIGHTS,
 };

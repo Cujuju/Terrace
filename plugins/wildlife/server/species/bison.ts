@@ -12,6 +12,7 @@
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  GRASSLAND_SPAWN_HEIGHTS,
   GRAZER_SPAWN_OPEN_DIRECTIONS,
   SINGLE_SIZE_WEIGHTS,
   TURN_RADIUS_BODY_LENGTHS,
@@ -111,4 +112,10 @@ export const BISON_PROFILE: SpeciesProfile = {
   // than a second 5: "fairly flat areas" (owner, 2026-08-24) is a statement
   // about open country, and a herd of six needs it more than a triplet does.
   spawnGround: { kind: 'open', minOpenDirections: GRAZER_SPAWN_OPEN_DIRECTIONS },
+  // GRASSLAND ONLY (owner, 2026-09-02: "Bison should only spawn in
+  // grasslands"). The land ramp's green window — the same ground flora's
+  // meadow covers — so a herd is born on grass and nowhere else: not on the
+  // beach sand below it, not on the rock above. Open ground on the meadow is
+  // then both rules at once, which is what a prairie is.
+  spawnHeights: GRASSLAND_SPAWN_HEIGHTS,
 };
