@@ -217,3 +217,61 @@ it exists to carry an existing staircase and must never author new roofs.
 - *Carry the grasped span on the drag intent.* See "why no new field" above —
   the cursor cell is not the grabbed cell, so the field would be wrong exactly
   where it mattered.
+
+## Decisions made 2026-09-02 (the carve opens the band the player points at)
+
+Owner report: "It's not working consistently when I attempt to carve layers. It
+will just stop. It only goes so far when my expectation is I should be able to
+carve all the way through a band." Reproduced in the shared math: a cliff at
+band 10 over ground at band 2, grabbing the lowest lip (band 3), cuts ONE cell
+and every cut after it is refused.
+
+**The cause was an alignment mismatch between the pick and the cut, not the
+anti-cheat rule.** A riser pick names the band whose drawn slab contains the
+struck height — band k's face is `[(k−1)·BAND_HEIGHT, k·BAND_HEIGHT]`, and
+that is the band that applies (owner, 2026-08-26). The carve as shipped in D6
+removed `[spanBand·BH, (spanBand+2)·BH)`, which leaves band `spanBand` solid as
+the tunnel floor and opens band `spanBand+1`. The next pick, on the back wall
+inside that opening, therefore names `spanBand+1`, whose cut wants to open
+`spanBand+2` — a band no neighbour is open at. The plan's 2026-08 note that
+"the literal D6 rule stalls after one cell" moved the rule to the bands the cut
+opens; it fixed the first cut and left every later cut refused.
+
+**Decision (owner, 2026-09-02): the cut OPENS the grasped band.** A carve
+grasped at band S removes `[(S−1)·BH, (S−1+CARVE_BANDS_PER_STROKE)·BH)` and
+asks `canCarveBandAt` of bands `S … S+CARVE_BANDS_PER_STROKE−2`. The opening a
+cut leaves is exactly the band the next pick inside it names, so the tunnel
+walks inward one cell per intent without limit, and the floor of a cut grasped
+at the lowest lip of a face is level with the ground outside it. Verified by
+simulation against the shared library: five successive cuts inward, each
+leaving `[…,32), [64,…)` at band 3.
+
+**Two decisions beside it, from the same report.**
+
+- **A carve lowers by default, and only ever lowers.** The tool has one
+  direction, so the raise/lower chord does not apply to it: a plain click
+  carves, the modifier is ignored, the direction is not re-resolved
+  mid-stroke, and a carve stroke never writes the sticky HUD mode. The wire
+  contract is unchanged — `dir: -1`, and the validator still rejects `dir: 1`.
+- **The HUD hides the Mode row for the carve**, the same way it hides the Edge
+  row for the tools that have no edge (issue #225): a control whose setting
+  cannot change the stroke is removed, not disabled. Which tools have no
+  direction is one shared list beside `TOOLS_WITHOUT_EDGE_PROFILE`, read by
+  both the HUD and the input.
+
+**What does not change.** `bandOfPick` — the drag shares it and the owner's
+"that is the band that should apply" stands. `CARVE_BANDS_PER_STROKE` — still
+the smallest cut `isGapDrawn` keeps; the cut moved one band down, its depth
+did not. The bottom-of-world refusal in `applyCarve` — with the lower `lo` it
+also refuses a grasp one band above the floor, whose lower piece would be
+empty, which is the same column the storage cannot encode.
+
+**Rejected alternatives.**
+
+- *Have the carve's pick name the band below the struck slab.* Fixes the chain
+  by making the carve the one tool that reads a face differently from the
+  drag, and reintroduces the "grabbing the bottom half names the band below"
+  behaviour the 2026-08-26 decision removed.
+- *Ask `canCarveBandAt` of the grasped band as well as the opened one.* Widens
+  admission without moving the opening; the next pick still names a band the
+  cut never opened.
