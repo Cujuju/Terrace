@@ -40,5 +40,23 @@
 export default {
   test: {
     testTimeout: 30_000,
+    // NODE RUNS THE MODULES, NOT VITE (owner decision 2026-09-02). Vite's
+    // default pipeline re-transforms every file of the import graph and
+    // executes it through its module runner, once per test file: measured on
+    // the monsters suite at 11-26 s of import for a graph Node's own type
+    // stripping loads in 1.5 s. With the runner off, transform is zero and
+    // the tests themselves run faster too (8.7 s -> 3.3 s). The cost is the
+    // rule shared/ already lives under, now repo-wide: erasable syntax only
+    // (no enums, namespaces or constructor parameter properties), and no
+    // vite-only features in tests (aliases, import.meta.env, CSS imports).
+    // Experimental in vitest 4.1; verified per package on 2026-09-02.
+    experimental: {
+      viteModuleRunner: false,
+    },
+    // One module graph per worker rather than one per test file. Suites that
+    // hold module-level state reset it themselves (monsters'
+    // resetMonstersState); a suite that assumed a fresh module per file would
+    // show up as an order-dependent failure.
+    isolate: false,
   },
 };
