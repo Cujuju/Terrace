@@ -181,13 +181,12 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   const nose = pool.keepGeometry(smoothEllipsoid(0.08, 0.07, 0.13, 8, 6));
   const eyeGeometry = pool.keepGeometry(smoothEllipsoid(0.05, 0.05, 0.05, 8, 6));
   const ear = pool.keepGeometry(smoothEllipsoid(0.08, 0.07, 0.15, 8, 6));
-  // The goatee: a short tuft at the very edge of the chin, just under the
-  // nose, pointing FORWARD and down. Rooted inside the jaw (the skull's
-  // underside is ~0.1 below the axis there) so its root ring never shows.
-  // The head pivot is drooped by HEAD_DROOP_RADIANS, so this pivot-space
-  // direction (0.11, -0.05) is ~45 degrees forward-down in the world.
+  // The goatee: a short tuft at the END of the chin, rooted inside the
+  // muzzle under the nose and pointing FORWARD and down. The head pivot is
+  // drooped by HEAD_DROOP_RADIANS, so this pivot-space direction (0.07,
+  // -0.09) hangs a little forward of straight down in the world.
   const beard = pool.keepGeometry(taperedTube({
-    path: [new Vector3(0.33, -0.06, 0), new Vector3(0.39, -0.095, 0), new Vector3(0.44, -0.12, 0)],
+    path: [new Vector3(0.40, -0.04, 0), new Vector3(0.44, -0.09, 0), new Vector3(0.47, -0.13, 0)],
     rootRadius: 0.06,
     tipRadius: 0.022,
     tubularSegments: 5,
