@@ -32,8 +32,10 @@
 //
 // So the ranking no longer chooses the whole pool: it only fills slots that
 // have NOTHING WORTH KEEPING (see FIRE_LIGHT_HOLD_MIN_INTENSITY), ties break by
-// key so an all-equal meadow ranks identically every time, and every change of
-// fire is RAMPED (see FIRE_LIGHT_HANDOVER_SECONDS) rather than jumped.
+// key so an all-equal meadow ranks identically every time, no light is handed
+// out inside another's hot centre (see FIRE_LIGHT_MIN_SEPARATION_WORLD_UNITS),
+// and every change of fire is RAMPED (see FIRE_LIGHT_HANDOVER_SECONDS) rather
+// than jumped.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Group, PointLight } from 'three';
@@ -61,6 +63,53 @@ export const FIRE_LIGHT_POOL_SIZE = 4;
  * end.
  */
 export const FIRE_LIGHT_RANGE_WORLD_UNITS = 6;
+
+/**
+ * How far apart two lit fire lights must be, in world units, measured on the
+ * ground plane.
+ *
+ * THE WHITE BLOOM (issue #303, owner 2026-09-02). The ranking below picks the
+ * fiercest free fires, and on a burning meadow the fiercest are hundreds of
+ * equals (../protocol.ts's plateau) broken by key — a key that ./index.ts
+ * hands out in IGNITION ORDER, so the four winners are the four cells that
+ * caught one after another: neighbours. Measured live on the owner's stack:
+ * three of the four lights on one row of cells 0.25 apart, all four inside
+ * one world unit at times. Four lights on one spot are one light at four
+ * times the irradiance, and ACESFilmicToneMapping renders that white however
+ * warm FIRE_LIGHT_COLOR is — the same failure FIRE_LIGHT_MIN_HEIGHT_WORLD_UNITS
+ * closed for a single light, reopened by stacking.
+ *
+ * Half the range: two lights this far apart still share ground — which is
+ * what makes a front read as a BAND rather than four dots — but neither one's
+ * hot centre sits inside the other's, so the sum near either never exceeds
+ * about twice a single light. A full range apart would stop the band from
+ * joining up; a quarter still stacks the two hot centres.
+ *
+ * Enforced where lights are HANDED OUT, never afterwards: a held light does
+ * not move (FIRE_LIGHT_HOLD_MIN_INTENSITY), so two lights that were apart when
+ * assigned stay apart for cells. A walking fire (a burning animal) can still
+ * carry its light into another's — brief, and preferable to a light that lets
+ * go of the animal it is lighting.
+ */
+export const FIRE_LIGHT_MIN_SEPARATION_WORLD_UNITS = FIRE_LIGHT_RANGE_WORLD_UNITS / 2;
+
+/**
+ * How many ranked fires the pass keeps PER FREE SLOT, so the separation rule
+ * has something to choose from.
+ *
+ * With one candidate per slot, the four fiercest fires being neighbours would
+ * leave three slots dark rather than lit further along the front. Four gives
+ * the assignment sixteen fires to walk on a full refill — still one insertion
+ * pass over the field, at most sixteen comparisons per fire. It is not enough
+ * to fill every slot in ONE pass on the worst case (a front whose ignition
+ * order runs straight along a row: sixteen cells is four world units, room for
+ * two separated lights, not four), and that is accepted: a slot left dark is
+ * offered the next sixteen on the next pass, FIRE_LIGHT_REASSIGN_SECONDS
+ * later, so a band lights up over about a second rather than at once. Sizing
+ * for the worst case instead would mean sixty-four comparisons per fire on
+ * every pass, for a lag nobody can see.
+ */
+const CANDIDATES_PER_FREE_SLOT = 4;
 
 /** Peak intensity of one fire light, at intensity 1. Matched to a fire's scale. */
 export const FIRE_LIGHT_PEAK_INTENSITY = 2.5;
@@ -234,8 +283,32 @@ export function createFireLights(): FireLights {
   const heldFires: (FireInstance | null)[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(null);
 
   /** Scratch for the ranking: the best free fires found, best first. */
-  const candidates: (FireInstance | null)[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(null);
+  const candidates: (FireInstance | null)[] = new Array(
+    FIRE_LIGHT_POOL_SIZE * CANDIDATES_PER_FREE_SLOT,
+  ).fill(null);
   let candidateCount = 0;
+
+  /**
+   * Scratch: the ground positions of every fire that will be lit after this
+   * pass — the kept slots' fires, then each fire as it is handed out — so a
+   * candidate can be checked against all of them without a second walk.
+   */
+  const litX: number[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(0);
+  const litZ: number[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(0);
+  let litCount = 0;
+
+  const MIN_SEPARATION_SQUARED =
+    FIRE_LIGHT_MIN_SEPARATION_WORLD_UNITS * FIRE_LIGHT_MIN_SEPARATION_WORLD_UNITS;
+
+  /** True if this fire sits at least the separation from every light in `lit`. */
+  function isSeparated(fire: FireInstance): boolean {
+    for (let index = 0; index < litCount; index++) {
+      const dx = fire.x - litX[index]!;
+      const dz = fire.z - litZ[index]!;
+      if (dx * dx + dz * dz < MIN_SEPARATION_SQUARED) return false;
+    }
+    return true;
+  }
 
   /** Scratch: which slots the ranking is allowed to fill this pass. */
   const slotIsFree: boolean[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(false);
@@ -315,9 +388,10 @@ export function createFireLights(): FireLights {
    * about the fires themselves had changed. By key, the same field of equal
    * fires always ranks the same way.
    *
-   * An insertion into a list of at most FIRE_LIGHT_POOL_SIZE, not a sort of the
-   * whole field: this replaces a 2000-element sort (≈22 000 comparisons) with
-   * one pass and at most four comparisons per fire.
+   * An insertion into a list of at most FIRE_LIGHT_POOL_SIZE ×
+   * CANDIDATES_PER_FREE_SLOT, not a sort of the whole field: this replaces a
+   * 2000-element sort (≈22 000 comparisons) with one pass and at most sixteen
+   * comparisons per fire.
    */
   function offerCandidate(fire: FireInstance, wanted: number): void {
     let position = candidateCount;
@@ -345,6 +419,7 @@ export function createFireLights(): FireLights {
    */
   function reassign(fires: readonly FireInstance[]): void {
     let freeCount = 0;
+    litCount = 0;
     for (let slot = 0; slot < FIRE_LIGHT_POOL_SIZE; slot++) {
       const state = slots[slot]!;
       const held = heldFires[slot];
@@ -354,23 +429,50 @@ export function createFireLights(): FireLights {
         held.intensity >= FIRE_LIGHT_HOLD_MIN_INTENSITY;
       slotIsFree[slot] = !keeps;
       if (!keeps) freeCount++;
+      else {
+        // A kept light is a place no new light may land next to.
+        litX[litCount] = held.x;
+        litZ[litCount] = held.z;
+        litCount++;
+      }
     }
     if (freeCount === 0) return;
 
+    // Oversampled (CANDIDATES_PER_FREE_SLOT): the separation rule below will
+    // pass over candidates, and a list exactly as long as the free slots would
+    // leave slots dark whenever the fiercest fires happen to be neighbours —
+    // which on a front is always.
     candidateCount = 0;
+    const wanted = freeCount * CANDIDATES_PER_FREE_SLOT;
     for (const fire of fires) {
       if (fire.intensity <= 0) continue;
       if (isSpokenFor(fire.key)) continue;
-      offerCandidate(fire, freeCount);
+      if (!isSeparated(fire)) continue;
+      offerCandidate(fire, wanted);
     }
     if (candidateCount === 0) return;
 
+    // Fiercest first, skipping any fire inside the separation of one already
+    // lit — kept, or handed out earlier in this same pass. A slot for which no
+    // candidate is far enough from the rest stays as it was: dark, or fading
+    // out, rather than stacked (FIRE_LIGHT_MIN_SEPARATION_WORLD_UNITS).
     let next = 0;
     for (let slot = 0; slot < FIRE_LIGHT_POOL_SIZE && next < candidateCount; slot++) {
       if (!slotIsFree[slot]) continue;
+      let fire: FireInstance | null = null;
+      while (next < candidateCount) {
+        const candidate = candidates[next]!;
+        next++;
+        if (isSeparated(candidate)) {
+          fire = candidate;
+          break;
+        }
+      }
+      if (fire === null) break;
+      litX[litCount] = fire.x;
+      litZ[litCount] = fire.z;
+      litCount++;
       const state = slots[slot]!;
-      const fire = candidates[next]!;
-      next++;
       if (state.envelope <= 0) {
         // Already dark: nothing to fade out of, so take the fire now and ramp
         // up from black.
