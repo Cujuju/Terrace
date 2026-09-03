@@ -343,21 +343,16 @@ def start_control_reader(state) -> threading.Thread:
     main returns; EOF (stdin closed, e.g. nohup) just ends the thread and
     leaves keyboard control off, exactly as before this existed.
 
-    When stdin is a terminal it is put in cbreak mode for the duration, so a
-    single keypress registers immediately instead of waiting for Enter. The
-    original settings are restored in the same thread's `finally` - which runs
-    on quit, EOF, or an exception, since this thread never outlives main().
+    Terminal mode belongs to main(), not this thread: main puts stdin in
+    cbreak mode (single keypress, no Enter) before starting this reader and
+    restores it in its own `finally`, which runs on every exit path.
+    Restoring here instead misses whenever main returns while this thread is
+    still blocked in read() - Ctrl-C, a server crash, SIGTERM - because the
+    interpreter kills a daemon thread abruptly without running its `finally`,
+    leaving the shell with -ECHO -ICANON. This thread only reads.
     """
     def read_keys():
-        termios_mod = None
-        saved = None
         try:
-            if sys.stdin.isatty():
-                import termios
-                import tty
-                termios_mod = termios
-                saved = termios.tcgetattr(sys.stdin.fileno())
-                tty.setcbreak(sys.stdin.fileno())
             while not state["stop"]:
                 key = sys.stdin.read(1)
                 if not key:  # EOF - no more input is coming
@@ -370,12 +365,6 @@ def start_control_reader(state) -> threading.Thread:
                     state["restart"] = True
         except (OSError, ValueError):  # stdin closed under us
             return
-        finally:
-            if saved is not None:
-                try:
-                    termios_mod.tcsetattr(sys.stdin.fileno(), termios_mod.TCSADRAIN, saved)
-                except Exception:  # noqa: BLE001 - terminal already gone
-                    pass
     reader = threading.Thread(target=read_keys, name="control-keys", daemon=True)
     reader.start()
     return reader
@@ -537,6 +526,23 @@ def main(watch: bool) -> int:
     state = {"stop": False, "restart": False}
     print("[run_server] keys     : q/K quit | r restart client+server | Ctrl-C also works",
           flush=True)
+    # CBREAK LIVES HERE, IN MAIN. Single-keypress control needs ECHO|ICANON
+    # off for the duration, and only main's `finally` runs on every exit path:
+    # a daemon reader blocked in read() is killed abruptly at shutdown without
+    # its `finally` (Ctrl-C, server crash, SIGTERM all exited this way),
+    # which left the shell with -ECHO -ICANON and invisible typing.
+    termios_mod = None
+    termios_saved = None
+    if sys.stdin.isatty():
+        try:
+            import termios
+            import tty
+            termios_mod = termios
+            termios_saved = termios.tcgetattr(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
+        except (OSError, ValueError, ImportError):
+            termios_mod = None
+            termios_saved = None
     start_control_reader(state)
 
     def launch_stack():
@@ -665,6 +671,14 @@ def main(watch: bool) -> int:
         # exit) also ends every child it started - never leave an orphan
         # holding a port. SIGINT for the server so its clean-shutdown snapshot
         # path runs; the same for vite, which exits on it just as readily.
+        # Restore the terminal FIRST, so it is sane even if reaping hangs:
+        # this is the authoritative restore (see the cbreak comment above).
+        # The reader's own restore, if it runs, is a harmless second copy.
+        if termios_saved is not None:
+            try:
+                termios_mod.tcsetattr(sys.stdin.fileno(), termios_mod.TCSADRAIN, termios_saved)
+            except Exception:  # noqa: BLE001 - terminal already gone
+                pass
         for proc in reversed(children):
             reap(proc, signal_module.SIGINT)
 
