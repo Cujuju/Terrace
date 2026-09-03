@@ -7,10 +7,16 @@
 // any species' model can be screenshotted in isolation against a neutral
 // backdrop, one per page load, driven by this page's own query string:
 //
-//   ?species=<fish|whale|deepsea|grazer|bird>   — defaults to "whale"
-//   ?class=<small|medium|large>                 — defaults to "medium"
-//   ?view=<iso|side|top>                        — defaults to "iso"
-//   ?variant=<n>                                — whale body to draw (0-2)
+//   ?species=<any WildlifeSpecies>   — defaults to "whale"; validated through
+//                                      isWildlifeSpecies, so it accepts every
+//                                      row of WILDLIFE_SPECIES with no list
+//                                      of its own to fall out of date
+//   ?class=<small|medium|large>      — defaults to "medium"
+//   ?view=<iso|side|top>             — defaults to "iso"
+//   ?variant=<n>                     — whale body to draw (0-2)
+//   ?t=<seconds>                     — animation clock, default 0 (the rest
+//                                      pose). A limb only proves it is hinged
+//                                      correctly off the rest pose.
 //
 // The lighting rig (hemisphere + directional + ambient, ACES tone mapping)
 // and the ground-disc/backdrop/camera-framing choices are copied verbatim
@@ -31,12 +37,13 @@ import {
   DirectionalLight,
   Group,
   HemisphereLight,
+  InstancedMesh,
   Mesh,
-  type Object3D,
   MeshLambertMaterial,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
+  type Object3D,
   Vector3,
   WebGLRenderer,
 } from 'three';
@@ -68,6 +75,12 @@ const BACKDROP_COLOR = 0x808080;
 /** A slightly darker neutral disc under the model, purely as a scale reference. */
 const GROUND_COLOR = 0x6c6c6c;
 const GROUND_RADIUS = 4;
+/**
+ * How far UNDER the drawn model's lowest point the ground disc is dropped, in
+ * world units. A hair, so the disc still reads as a floor rather than as a
+ * second object floating away below the animal.
+ */
+const GROUND_DROP_WORLD_UNITS = 0.02;
 /** Same framing padding previewStructures.ts uses — "framed close" with a hair of margin. */
 const CAMERA_FRAMING_PADDING = 1.25;
 /** Frames rendered before the screenshot flag is raised — same rationale as previewStructures.ts. */
@@ -119,7 +132,17 @@ function readVariant(query: URLSearchParams): number {
   return Number.isFinite(requested) ? requested : 0;
 }
 
-function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer } {
+/** `?t=<seconds>` — the animation clock the single frame is drawn at. */
+function readSeconds(query: URLSearchParams): number {
+  return Number.parseFloat(query.get('t') ?? '0') || 0;
+}
+
+function buildScene(): {
+  scene: Scene;
+  camera: PerspectiveCamera;
+  renderer: WebGLRenderer;
+  ground: Mesh;
+} {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
   const scene = new Scene();
@@ -147,12 +170,35 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
   renderer.outputColorSpace = SRGBColorSpace;
 
-  return { scene, camera, renderer };
+  return { scene, camera, renderer, ground };
+}
+
+/**
+ * The bounds of the creature actually DRAWN this frame.
+ *
+ * NOT `Box3.setFromObject(group)`, which is wrong here and was wrong before
+ * (found 2026-09-02, wiring phase): the pool is one InstancedMesh per species
+ * surface and exactly one of them has a non-zero `count`, but three caches
+ * `InstancedMesh.boundingBox` on first use and computes it over `count`
+ * instances — so the empty herds contribute nothing, the first herd ever
+ * measured keeps a box from whenever it was measured, and every species framed
+ * as if it were the fish. Recomputing over the herds that are drawn is the
+ * whole fix, and it is also what lets the ground disc find the model's belly.
+ */
+function drawnBounds(objects: readonly Object3D[]): Box3 {
+  const box = new Box3();
+  for (const object of objects) {
+    if (!(object instanceof InstancedMesh) || object.count === 0) continue;
+    // Discard the cache before reading it: `count` changed since three built it.
+    object.boundingBox = null;
+    object.computeBoundingBox();
+    box.union(object.boundingBox!);
+  }
+  return box;
 }
 
 /** Points `camera` at the drawn creature, filling the frame with `CAMERA_FRAMING_PADDING` of headroom. */
-function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraView): void {
-  const box = new Box3().setFromObject(drawn);
+function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): void {
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
@@ -172,7 +218,7 @@ function main(): void {
   const sizeClass = readSizeClass(query);
   const view = readView(query);
 
-  const { scene, camera, renderer } = buildScene();
+  const { scene, camera, renderer, ground } = buildScene();
 
   const models = createWildlifeModels(PREVIEW_POPULATION);
   const group = new Group();
@@ -184,11 +230,36 @@ function main(): void {
   // documented rather than incidental. The variant seed picks between whale
   // bodies (models.ts); exposing it lets a screenshot driver ask for a specific
   // one instead of taking whatever id 0 happens to select.
-  models.beginFrame(0);
+  models.beginFrame(readSeconds(query));
   models.draw(species, sizeClass, readVariant(query), 0, 0, 0, 0, 0);
   models.endFrame();
 
-  frameCameraOn(camera, group, view);
+  // A SWIMMER'S ORIGIN IS ITS BODY CENTRE, so a disc at y = 0 cuts the animal
+  // in half and hides exactly the anal fin, pelvic fins and pectoral tips a
+  // wiring screenshot is taken to check. Drop the disc under the drawn bounds
+  // — never above y = 0, so a walker still stands on it. previewSpecies.ts does
+  // the same thing for the same reason.
+  const drawnBox = drawnBounds(models.objects);
+  ground.position.y = Math.min(0, drawnBox.min.y - GROUND_DROP_WORLD_UNITS);
+
+  frameCameraOn(camera, drawnBox, view);
+
+  // What the REAL pool baked, for the screenshot driver to print beside the
+  // image: surfaces are what ../plugins/wildlife/client/index.ts budgets, and
+  // triangles are read off the buffers rather than estimated.
+  let triangles = 0;
+  for (const object of models.objects) {
+    const geometry = (object as Mesh).geometry;
+    const index = geometry.getIndex();
+    triangles += (index ? index.count : geometry.getAttribute('position').count) / 3;
+  }
+  (window as unknown as { __previewStats: unknown }).__previewStats = {
+    species,
+    sizeClass,
+    poolSurfaces: models.objects.length,
+    poolTriangles: triangles,
+    bounds: { min: drawnBox.min.toArray(), max: drawnBox.max.toArray() },
+  };
 
   let framesRendered = 0;
   function renderFrame(): void {
