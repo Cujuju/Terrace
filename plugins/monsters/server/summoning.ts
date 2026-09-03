@@ -600,6 +600,16 @@ export function banish(monster: Monster): boolean {
  * For an unbanishable kind this is a no-op by construction (`banish` refuses),
  * and the monster is left standing on whatever the ground has become.
  *
+ * THE HABITAT FLOOR, NOT THE KIND'S RANGE, AND DELIBERATELY SO (2026-09-02).
+ * Confinement made `profile.range` the set a monster may MOVE in; this is the
+ * set it may EXIST in, and they are not the same rule. Asking the range here
+ * would make "a player raised the trench floor by one band" an eviction of the
+ * kraken — a departure rule the owner explicitly does not want (2026-08-19: "For
+ * now, no eviction. Later, if we do boats, they can attack the kraken"), reached
+ * by a side door. A kraken whose trench has been filled in around it is not
+ * banished; it is STRANDED (lurk.ts's `isStranded`, which does ask the range)
+ * and holds still until the trench comes back or something fights it.
+ *
  * Returns true if anything left.
  */
 export function enforceHabitat(world: LairWorld): boolean {
@@ -776,9 +786,17 @@ function summonCellIn(
     if (!reachesIntoHabitat(profile.habitat, world.heightAt(x, y), profile.minLairReachBands)) {
       continue;
     }
+    // THE POSE IS ASKED OF THE RANGE (2026-09-02), which is what the survey's
+    // fit bitmap now counts (habitat.ts's LairFitRule). It has to be the same
+    // question, or this live re-check would admit a cell the count refused, or
+    // refuse every cell the count found — and its answer to "no candidate
+    // qualifies" is `invalidateSurvey()`, so a disagreement here is a re-survey
+    // on every roll, forever. The two clauses above are the range's own centre
+    // test spelled out, and they are kept because they are the cheap half and
+    // because they name the two facts a reader of a refusal wants separated.
     if (
       !isLairPose(
-        profile.habitat,
+        profile.range,
         world,
         x + CELL_CENTRE_OFFSET,
         y + CELL_CENTRE_OFFSET,
