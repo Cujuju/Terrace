@@ -12,7 +12,10 @@
 //   legs              the lowest 0.35, thick and short; the forelegs feathered
 //   head              0.31 long, 0.38 tall with the beard — a third of the
 //                     animal's height; the crown 0.15 below the hump
-//   rump              rounded, ends at 95%; the tail hangs to 0.50
+//   rump              rounded and SMALLER than the barrel: the hull tucks in
+//                     behind the hips and the thighs bulge past it — the
+//                     hind legs, not the hull, carry the mass back there;
+//                     the tail hangs to 0.50
 //
 // Every number below is one of those, scaled so the hump top sits at
 // HUMP_TOP_Y authoring units. The body is authored as two silhouette lines
@@ -51,13 +54,13 @@ const HULL_SEGMENTS = 14;
  */
 const BACK_LINE = profileFromPoints([
   [0.00, 0.90 * H], [0.07, 0.98 * H], [0.21, 1.00 * H], [0.36, 0.98 * H],
-  [0.50, 0.95 * H], [0.64, 0.92 * H], [0.79, 0.91 * H], [0.86, 0.90 * H],
-  [0.93, 0.87 * H], [1.00, 0.80 * H],
+  [0.50, 0.95 * H], [0.64, 0.92 * H], [0.79, 0.91 * H], [0.86, 0.88 * H],
+  [0.93, 0.83 * H], [1.00, 0.70 * H],
 ]);
 const BELLY_LINE = profileFromPoints([
   [0.00, 0.42 * H], [0.07, 0.35 * H], [0.21, 0.31 * H], [0.36, 0.31 * H],
-  [0.50, 0.35 * H], [0.64, 0.35 * H], [0.79, 0.40 * H], [0.93, 0.48 * H],
-  [1.00, 0.55 * H],
+  [0.50, 0.35 * H], [0.64, 0.35 * H], [0.79, 0.40 * H], [0.93, 0.52 * H],
+  [1.00, 0.62 * H],
 ]);
 
 /** The cape: a loft over the forequarters, stepping down to the hind coat. */
@@ -78,9 +81,13 @@ const HEAD_LENGTH = 0.31 * H;
 
 /** Legs hinge inside the body; the photo's leg column is the lowest 0.35. */
 const HIP_Y = 0.53 * H;
-/** Fore and hind leg stations, as t along the hull (photo 40–52%, 76–90%). */
+/**
+ * Fore and hind leg stations, as t along the hull (photo 40–52%, 76–90%).
+ * The hind column stands at the BACK of its band: a straight leg has no hock
+ * to carry the thigh rearward, so the column itself sits under the rump.
+ */
 const FORE_T = 0.30;
-const HIND_T = 0.83;
+const HIND_T = 0.87;
 const HALF_STANCE = 0.16;
 
 const STRIDE_HZ = 1.3;
@@ -120,9 +127,10 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   const eye = pool.lambert(BISON_EYE_COLOR, { flatShading: false });
 
   // ── Body ──────────────────────────────────────────────────────────────────
-  // Widest through the cape and shoulders, narrowing steadily to the hips.
+  // Widest through the cape and shoulders, narrowing steadily to the hips,
+  // where it is narrower than the haunches that hang beside it.
   const width = profileFromPoints([
-    [0.00, 0.85], [0.20, 1.00], [0.50, 0.85], [0.80, 0.72], [1.00, 0.55],
+    [0.00, 0.85], [0.20, 1.00], [0.50, 0.85], [0.80, 0.62], [1.00, 0.45],
   ]);
   const halfWidth: BodyProfile = (t) => width(t) * MAX_HALF_WIDTH;
   const halfHeight: BodyProfile = (t) => (BACK_LINE(t) - BELLY_LINE(t)) / 2;
@@ -135,7 +143,7 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
     halfWidth,
     halfHeight,
     noseCapReach: 0.7,
-    tailCapReach: 0.6,
+    tailCapReach: 0.4,
     boxiness: () => BARREL_BOXINESS,
     displace: (t) => CAPE_LOFT * (1 - smoothstep(CAPE_END_T - CAPE_STEP_WIDTH_T, CAPE_END_T + CAPE_STEP_WIDTH_T, t)),
   }), (v) => {
@@ -173,12 +181,14 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   const nose = pool.keepGeometry(smoothEllipsoid(0.08, 0.07, 0.13, 8, 6));
   const eyeGeometry = pool.keepGeometry(smoothEllipsoid(0.05, 0.05, 0.05, 8, 6));
   const ear = pool.keepGeometry(smoothEllipsoid(0.08, 0.07, 0.15, 8, 6));
-  // The beard: a broad wedge of hair hanging from the jaw, the photo's 0.08
-  // of height, rooted inside the skull so it grows out of the chin.
+  // The goatee: a short tuft at the very edge of the chin, just under the
+  // nose, hanging straight DOWN in the world. The pivot it lives in is
+  // drooped by HEAD_DROOP_RADIANS, so world-down in pivot space leans
+  // forward: (sin droop, -cos droop). The path follows that direction.
   const beard = pool.keepGeometry(taperedTube({
-    path: [new Vector3(0.26, -0.08, 0), new Vector3(0.23, -0.24, 0), new Vector3(0.19, -0.36, 0)],
-    rootRadius: 0.11,
-    tipRadius: 0.035,
+    path: [new Vector3(0.36, -0.09, 0), new Vector3(0.39, -0.17, 0), new Vector3(0.415, -0.24, 0)],
+    rootRadius: 0.07,
+    tipRadius: 0.025,
     tubularSegments: 5,
     radialSegments: 8,
   }));
@@ -200,7 +210,7 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   const rumpX = hullX(1);
   const tail = pool.keepGeometry(taperedTube({
     path: [
-      new Vector3(rumpX - 0.02, 0.80 * H, 0),
+      new Vector3(rumpX - 0.02, 0.73 * H, 0),
       new Vector3(rumpX - 0.12, 0.65 * H, 0),
       new Vector3(rumpX - 0.14, 0.50 * H, 0),
     ],
@@ -248,7 +258,8 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
     radialSegments: 7,
     heightSegments: 1,
     hoofHeight: 0.07,
-    haunch: [0.30, 0.36, 0.12],
+    // Bigger than the hull's hip section: the thighs stand proud of the flank.
+    haunch: [0.36, 0.50, 0.22],
   }, body, horn, body);
   for (const fore of [legs.foreLeft, legs.foreRight]) {
     fore.add(pool.part(foreShag, cape, 0, -0.12, 0));
