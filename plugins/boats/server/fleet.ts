@@ -377,6 +377,20 @@ function slotCountFor(stationRadiusCells: number): number {
 }
 
 /**
+ * How far apart two home berths lie, in cells — two personal spaces (one
+ * whole hull) — and how far off the last berth a surplus boat holds.
+ *
+ * Two is exactly clear: hulls clear, oars clear, and the resolution pass
+ * (which restores exactly this gap) finds nothing to do. Berths need no more
+ * than that, where station slots need three: a berth's last step SNAPS
+ * (sailBoat seats a boat within one step with no separation check), so
+ * exactly clear never vetoes an arrival the way it did on the station circle.
+ * A surplus boat holding this far off neither fights its berth's owner for
+ * the point nor drifts out of the harbour.
+ */
+const HOME_BERTH_CLEARANCE_CELLS = 2 * BOAT_PERSONAL_SPACE_CELLS;
+
+/**
  * How far the goal may drift before the route planned to it is stale, in
  * cells — two personal spaces (one whole hull). A kraken wandering inside
  * that does not change which way round a headland the fleet goes, so it
@@ -437,11 +451,16 @@ interface Voyage {
   goalY: number;
   noProgressSeconds: number;
   /**
-   * Last tick's slot index, or null. The ONLY memory the assignment keeps:
+   * Last tick's berth index, or null. The ONLY memory either assignment keeps:
    * preferring it is what stops two boats sharing a bearing boundary from
-   * swapping slots every tick. Module state, never persisted — a restored
-   * fleet replans from scratch, which is correct because the terrain may have
-   * changed under the save.
+   * swapping slots every tick — and what keeps a boat on her mooring while a
+   * sunk sister's replacement takes the free berth rather than hers. A berth
+   * index IN WHICHEVER LIST the boat is currently assigned from (station
+   * circle in a fight, home moorings in peacetime): crossing the peace/war
+   * boundary carries the number over as a preference hint, and each half
+   * guards it against its own list before trusting it. Module state, never
+   * persisted — a restored fleet replans from scratch, which is correct
+   * because the terrain may have changed under the save.
    */
   slot: number | null;
 }
@@ -492,14 +511,22 @@ interface Shipyard {
    */
   launch: KrakenTarget | null;
   /**
-   * The cached answer from the survey's mooring half: the nearest hull-legal
-   * water to the village, on the face-home heading — what home-bound boats
-   * sail for. Null with `launch` (inland), or when no hull water exists.
-   * Set in the SAME disc walk as `launch`, invalidated by the same three
-   * paths (sculpt, chunk unlock, COASTAL_RESURVEY_SECONDS), because both
-   * halves read the same water through the same clock.
+   * The cached answer from the survey's mooring half: one berth per boat, up
+   * to BOATS_PER_VILLAGE, nearest-first over the SAME disc walk as `launch` —
+   * each a hull-legal cell on the face-home heading, spaced
+   * HOME_BERTH_CLEARANCE_CELLS from every berth already taken. "Where a boat
+   * is built" (launchBerth launches onto the first free one), "where it
+   * idles" and "where it returns to" (homeBerthFor assigns the k-th to the
+   * k-th boat) are one fact. Empty with `launch` (inland), or when no hull
+   * water exists. Invalidated by the same three paths as `launch` (sculpt,
+   * chunk unlock, COASTAL_RESURVEY_SECONDS), because both halves read the same
+   * water through the same clock.
+   *
+   * COST: the existing survey walk with one more predicate per candidate — a
+   * hull pose plus a spacing check against at most BOATS_PER_VILLAGE taken
+   * berths — on the survey's cadence. Never per boat per tick.
    */
-  mooring: KrakenTarget | null;
+  moorings: readonly KrakenTarget[];
   /** Seconds since the disc was last walked, or null when it never has been. */
   surveyedSeconds: number | null;
   /** Boats homed here, retallied once per tick from the fleet. */
@@ -514,7 +541,7 @@ const shipyards = new Map<string, Shipyard>();
 
 /** A village with no survey yet — the state every new or restored one starts in. */
 function unsurveyedShipyard(): Shipyard {
-  return { launch: null, mooring: null, surveyedSeconds: null, afloat: 0 };
+  return { launch: null, moorings: [], surveyedSeconds: null, afloat: 0 };
 }
 
 /**
@@ -737,8 +764,8 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
 // ── dispatch ─────────────────────────────────────────────────────────────────
 
 /**
- * The nearest sailable cell to `village` that no boat is already sitting in, or
- * null when every one of them is taken.
+ * The first surveyed mooring of `village` that no boat is already sitting in,
+ * or null when every one of them is taken.
  *
  * THE OTHER HALF OF "SPAWNING ON TOP OF EACH OTHER" (owner, 2026-08-24).
  * Station slots have kept a fighting fleet from stacking since 2026-09-03
@@ -750,9 +777,13 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
  * and more honest than separation-by-recovery: the boats are simply never
  * placed on top of each other in the first place.
  *
- * Scans the same COASTAL_DISC in the same nearest-first order as `launchCell`,
- * so a village's boats still put out from the same side of it — just from
- * adjacent berths rather than from one.
+ * The berths are the surveyed `moorings` — the SAME list home-bound boats
+ * idle on — so "where a boat is built", "where it idles" and "where it
+ * returns to" are one fact. No disc walk: the survey already walked it, on
+ * the survey's cadence, and a launch that re-walked it could choose water the
+ * idle assignment will never offer. (`world` is unused for the same reason —
+ * every mooring was certified sailable and hull-legal by the survey — and
+ * stays in the signature so callers don't churn.)
  *
  * `occupied` is the live fleet, not a start-of-tick snapshot: two villages
  * sharing a bay may both launch on the same tick, and the second must see the
@@ -763,27 +794,14 @@ export function launchBerth(
   village: Village,
   occupied: readonly Occupant[],
 ): KrakenTarget | null {
-  // The eroded sampler is built per call, not per tick: launches are rare
-  // (one per BOAT_REBUILD_SECONDS per short village), so sharing
-  // advanceFleet's tick sampler would mean threading it through
-  // advanceShipyards' exported signature for no measurable gain.
-  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
-  for (const [dx, dy] of COASTAL_DISC) {
-    const x = village.x + dx;
-    const y = village.y + dy;
-    if (!isSailable(world, x, y)) continue;
-    // The pose the hull will actually be launched with: facing OUT of the
-    // harbour, away from the village that built it. A berth whose centre is
-    // water but whose bow or stern would already be aground is no berth — the
-    // sail step below would refuse to move it and the stuck clock would
-    // replan it forever.
-    const heading = Math.atan2(y - village.y, x - village.x);
-    if (!isHullPose(world, eroded, x, y, heading)) continue;
+  void world;
+  const moorings = shipyards.get(villageKey(village.x, village.y))?.moorings ?? [];
+  for (const mooring of moorings) {
     // The cell CENTRE is what the boat is placed on, and it is what the
     // clearance is measured from — the same point the resolution pass will
     // keep clear from the next tick onward.
-    if (!isClearOfFleet(x, y, occupied)) continue;
-    return { x, y };
+    if (!isClearOfFleet(mooring.x, mooring.y, occupied)) continue;
+    return { x: mooring.x, y: mooring.y };
   }
   return null;
 }
@@ -839,16 +857,18 @@ function tallyFleetHomes(): void {
  *
  * ONE WALK FOR BOTH HALVES, nearest-first over COASTAL_DISC like `launchCell`:
  * the launch half keeps that function's bar (nearest sailable cell, valid once
- * COASTAL_MIN_WATER_CELLS of them exist) and the mooring half takes the first
+ * COASTAL_MIN_WATER_CELLS of them exist) and the mooring half takes every
  * hull-legal cell met in the same walk, on the face-home heading — the arrival
- * heading a boat comes home on. The gate differs (centre-water versus hull),
- * because the launch cell is centre-water a hull length from a beach the
- * planner refuses to certify, so routing to it always fails — measured:
- * 20-second coming-about tours for a 3-cell trip home, and an orbit that
- * never lands. The eroded sampler is built inside this call, as `launchBerth`
- * does: surveys are rare (one per COASTAL_RESURVEY_SECONDS per village at
- * most), so sharing the tick sampler would mean threading it through
- * `advanceShipyards`' exported signature for no measurable gain.
+ * heading a boat comes home on — that lies HOME_BERTH_CLEARANCE_CELLS from
+ * every berth already taken, until BOATS_PER_VILLAGE are found or the disc is
+ * exhausted. The gate differs (centre-water versus hull), because the launch
+ * cell is centre-water a hull length from a beach the planner refuses to
+ * certify, so routing to it always fails — measured: 20-second coming-about
+ * tours for a 3-cell trip home, and an orbit that never lands. The eroded
+ * sampler is built inside this call: surveys are rare (one per
+ * COASTAL_RESURVEY_SECONDS per village at most), so sharing the tick sampler
+ * would mean threading it through `advanceShipyards`' exported signature for
+ * no measurable gain.
  */
 function surveyedLaunch(
   world: BoatWorld,
@@ -862,7 +882,7 @@ function surveyedLaunch(
   }
   const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
   let launch: KrakenTarget | null = null;
-  let mooring: KrakenTarget | null = null;
+  const moorings: KrakenTarget[] = [];
   let found = 0;
   for (const [dx, dy] of COASTAL_DISC) {
     const x = village.x + dx;
@@ -871,17 +891,24 @@ function surveyedLaunch(
     found++;
     // COASTAL_DISC is sorted nearest-first, so the first hit is the closest.
     if (launch === null) launch = { x, y };
-    if (mooring === null) {
+    if (moorings.length < BOATS_PER_VILLAGE) {
       const faceHome = Math.atan2(village.y - y, village.x - x);
-      if (isHullPose(world, eroded, x, y, faceHome)) mooring = { x, y };
+      const clearOfTaken = moorings.every((berth) => {
+        const dxb = x - berth.x;
+        const dyb = y - berth.y;
+        return dxb * dxb + dyb * dyb >= HOME_BERTH_CLEARANCE_CELLS * HOME_BERTH_CLEARANCE_CELLS;
+      });
+      if (clearOfTaken && isHullPose(world, eroded, x, y, faceHome)) {
+        moorings.push({ x, y });
+      }
     }
     // Stop as soon as NEITHER half can change its answer: the launch bar is
-    // met and the mooring is taken. An inland village walks the whole disc,
+    // met and the berths are full. An inland village walks the whole disc,
     // but only on survey ticks — never per boat per tick.
-    if (found >= COASTAL_MIN_WATER_CELLS && mooring !== null) break;
+    if (found >= COASTAL_MIN_WATER_CELLS && moorings.length >= BOATS_PER_VILLAGE) break;
   }
   shipyard.launch = found >= COASTAL_MIN_WATER_CELLS ? launch : null;
-  shipyard.mooring = mooring;
+  shipyard.moorings = moorings;
   shipyard.surveyedSeconds = 0;
   return shipyard.launch;
 }
@@ -899,7 +926,7 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
     if (shipyard === undefined) continue;
 
     // THE CACHED SURVEY, for every village every tick — not only the short
-    // ones. Peacetime boats read their mooring from it (see `homeWaterGoal`),
+    // ones. Peacetime boats read their berths from it (see `assignHomeBerths`),
     // so it must stay warm even at strength; between re-walks it is a field
     // read. `launchCell` early-returns only once it has found
     // COASTAL_MIN_WATER_CELLS, so an INLAND village used to walk all of
@@ -919,11 +946,11 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
     if (village.rebuildSeconds < BOAT_REBUILD_SECONDS) continue;
 
     const berth = launchBerth(world, village, fleetBerths());
-    // The harbour is full: every water cell within the coastal disc has a boat
-    // in it. The finished build STAYS BANKED (no subtraction, no reset) and the
-    // boat slides down the ways on the first tick a berth clears — which is a
-    // second or two later, as soon as the fleet ahead of it puts out. Launching
-    // anyway is what put two hulls on one cell.
+    // The harbour is full: every surveyed berth has a boat on it. The finished
+    // build STAYS BANKED (no subtraction, no reset) and the boat slides down
+    // the ways on the first tick a berth clears — which is a second or two
+    // later, as soon as the fleet ahead of it puts out. Launching anyway is
+    // what put two hulls on one cell.
     if (berth === null) continue;
 
     village.rebuildSeconds -= BOAT_REBUILD_SECONDS;
@@ -985,9 +1012,11 @@ interface StationGoal {
    */
   readonly standoff: number;
   /**
-   * The slot index this goal is the point of, or null for a fallback or home
-   * goal. Carried so the next tick's assignment can prefer it (stickiness) —
-   * it is an angle, not a point, so it tracks a drifting kraken automatically.
+   * The slot index this goal is the point of, or null for a fallback, a
+   * surplus hold, or a berthless (village-cell) goal. Carried so the next
+   * tick's assignment can prefer it (stickiness) — on the station circle it
+   * is an angle, not a point, so it tracks a drifting kraken automatically;
+   * on the mooring list it is the berth that is hers.
    */
   readonly slot: number | null;
 }
@@ -1085,17 +1114,117 @@ function assignStationGoals(
 }
 
 /**
- * The water a home-bound boat sails for: its village's surveyed mooring — a
- * field read, never a disc walk (see `surveyedLaunch`).
+ * This boat's home berth for this tick: the k-th mooring for the k-th boat of
+ * its village in `boats` array order — the home-water twin of the station
+ * rule, and the fix for the peacetime roam.
  *
- * A village with no hull water at all — filled bay, or inland — yields the
- * village itself: an unreachable goal the boat presses toward until hull law
- * stops it, exactly as before.
+ * EVERY BOAT OF A VILLAGE USED TO BE GIVEN THE SAME GOAL — the one surveyed
+ * mooring cell. The first boat to arrive held it and every heading that would
+ * land the others there was vetoed by separation against her, so they
+ * deflected, replanned, and circled the mooring for the life of the world:
+ * the identical shape to the station-circle stacking the slots fixed, a
+ * shared goal point for several hulls, with the same fix. Each boat is now
+ * given her OWN point, so keeping clear of a neighbour never costs her home.
+ *
+ * In `boats` array order (fixed): each boat takes the k-th mooring for her
+ * village-order position k, preferring last tick's berth while it is still a
+ * berth of her village and still free (`voyage.slot`, the same sticky field
+ * the station path keeps — a berth index in whichever list she is currently
+ * assigned from). A village with fewer moorings than boats gives the surplus
+ * boats the LAST mooring with a HOME_BERTH_CLEARANCE_CELLS standoff: they
+ * hold off it rather than fight its owner for it. Order-priority keeps every
+ * branch convergent: boats are seated in fixed array order, so an earlier
+ * boat never yields to a later one. Deterministic by construction — no clock,
+ * no RNG, fixed order — per-tick and never persisted.
+ *
+ * Returns null for an engaged boat: she sails under station rules, not home
+ * ones, and the station path owns her goal AND her slot memory for the whole
+ * fight. `taken` carries the berths earlier boats of each village claimed
+ * this tick, keyed by village — two villages sharing a bay assign from their
+ * own lists independently.
  */
-function homeWaterGoal(boat: Boat): KrakenTarget {
-  const mooring = shipyards.get(villageKey(boat.homeX, boat.homeY))?.mooring ?? null;
-  if (mooring !== null) return mooring;
-  return { x: boat.homeX, y: boat.homeY };
+function homeBerthFor(
+  index: number,
+  kraken: KrakenTarget | null,
+  taken: Map<string, Set<number>>,
+): StationGoal | null {
+  const boat = boats[index];
+  if (targetFor(boat, kraken) !== null) return null;
+  const key = villageKey(boat.homeX, boat.homeY);
+  const moorings = shipyards.get(key)?.moorings ?? [];
+  // No berths at all — filled bay, or inland: the village itself, an
+  // unreachable goal the boat presses toward until hull law stops it.
+  if (moorings.length === 0) {
+    return { x: boat.homeX, y: boat.homeY, standoff: 0, slot: null };
+  }
+  let claimed = taken.get(key);
+  if (claimed === undefined) {
+    claimed = new Set<number>();
+    taken.set(key, claimed);
+  }
+  // STICKINESS. The guard matters across the peace/war boundary: a station
+  // slot index can exceed this list, and a stale one must fall through to
+  // the k-th berth rather than off the end of it.
+  const prev = voyages.get(boat.id)?.slot ?? null;
+  if (prev !== null && prev >= 0 && prev < moorings.length && !claimed.has(prev)) {
+    claimed.add(prev);
+    const berth = moorings[prev];
+    return { x: berth.x, y: berth.y, standoff: 0, slot: prev };
+  }
+  // Otherwise the k-th berth for the k-th boat of this village: `k` counts
+  // only earlier boats of the SAME village.
+  let k = 0;
+  for (let j = 0; j < index; j++) {
+    if (boats[j].homeX === boat.homeX && boats[j].homeY === boat.homeY) k++;
+  }
+  // More boats than berths: hold off the last one at exactly clear.
+  // Unclaimed and slotless, so every surplus boat recomputes the same hold
+  // every tick instead of queuing on a berth that will never free.
+  if (k >= moorings.length) {
+    const berth = moorings[moorings.length - 1];
+    return { x: berth.x, y: berth.y, standoff: HOME_BERTH_CLEARANCE_CELLS, slot: null };
+  }
+  // The k-th berth may be sticky-held by an earlier boat (a sunk boat's
+  // replacement arrives with no memory while the survivors keep theirs):
+  // search outward from k alternating +1/−1, the same spiral the station
+  // path searches from its base bearing, and take the nearest free berth.
+  for (let n = 0; n < moorings.length; n++) {
+    const off = n === 0 ? 0 : n % 2 === 1 ? (n + 1) / 2 : -(n / 2);
+    const slot = k + off;
+    if (slot < 0 || slot >= moorings.length || claimed.has(slot)) continue;
+    claimed.add(slot);
+    const berth = moorings[slot];
+    return { x: berth.x, y: berth.y, standoff: 0, slot };
+  }
+  // Every berth sticky-held by earlier boats (a harbour fuller than its
+  // survey): hold off the last one like any other surplus boat.
+  const berth = moorings[moorings.length - 1];
+  return { x: berth.x, y: berth.y, standoff: HOME_BERTH_CLEARANCE_CELLS, slot: null };
+}
+
+/**
+ * Every peacetime boat's home berth for this tick, keyed by boat index —
+ * assigned from start-of-tick state before anyone moves, the way station
+ * slots are. Engaged boats are absent (the station map seats them); a missing
+ * entry at sail time can only mean a mid-tick roster change.
+ */
+function assignHomeBerths(kraken: KrakenTarget | null): Map<number, StationGoal> {
+  const goals = new Map<number, StationGoal>();
+  const taken = new Map<string, Set<number>>();
+  for (let index = 0; index < boats.length; index++) {
+    const goal = homeBerthFor(index, kraken, taken);
+    if (goal !== null) goals.set(index, goal);
+  }
+  return goals;
+}
+
+/**
+ * This village's surveyed berths, nearest-first — a read of the survey cache
+ * for tooling that reasons about where boats idle (the peacetime trace).
+ * Empty before the first survey or when no hull water exists.
+ */
+export function villageMoorings(homeX: number, homeY: number): readonly KrakenTarget[] {
+  return shipyards.get(villageKey(homeX, homeY))?.moorings ?? [];
 }
 
 /**
@@ -1181,6 +1310,7 @@ interface SailTick {
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
+  homeGoals: Map<number, StationGoal>;
 }
 
 /**
@@ -1189,7 +1319,7 @@ interface SailTick {
  *
  * One loop body, extracted so `advanceFleet` reads as the tick's shape — no
  * behaviour change in the split. Goal selection (slot, fallback, or home
- * water), the holding branches, the voyage's single plan per tick, the stride
+ * berth), the holding branches, the voyage's single plan per tick, the stride
  * cap, and the followRoute sail-and-commit all live here. `index` is into
  * `boats` (and parallel `tick.berths`), stable for the whole sail pass — the
  * roster only changes in the fight, after.
@@ -1208,24 +1338,27 @@ function sailBoat(tick: SailTick, index: number): void {
     berths,
     krakenOccupant,
     goals,
+    homeGoals,
   } = tick;
   const boat = boats[index];
   const target = targetFor(boat, kraken);
   // An engaged boat sails for its slot; a slotless one for the kraken with
-  // a standoff; a peacetime boat for its home water, stopping on it.
+  // a standoff; a peacetime boat for her OWN berth, stopping on it.
   // assignStationGoals seats every targeted boat (falling back to the
-  // kraken itself), so a missing entry can only mean a mid-tick roster
-  // change — sail at the animal rather than hold forever.
+  // kraken itself), and assignHomeBerths seats every peacetime one (falling
+  // back to the village itself), so a missing entry can only mean a mid-tick
+  // roster change — sail at the animal, or hold the village, rather than hold
+  // forever.
   let goalX: number;
   let goalY: number;
   let standoff: number;
   let slotIndex: number | null;
   if (target === null) {
-    const home = homeWaterGoal(boat);
-    goalX = home.x;
-    goalY = home.y;
-    standoff = 0;
-    slotIndex = null;
+    const home = homeGoals.get(index);
+    goalX = home?.x ?? boat.homeX;
+    goalY = home?.y ?? boat.homeY;
+    standoff = home?.standoff ?? 0;
+    slotIndex = home?.slot ?? null;
   } else {
     const slot = goals.get(index);
     goalX = slot?.x ?? target.x;
@@ -1558,6 +1691,8 @@ export function advanceFleet(
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
   // Station slots, assigned from start-of-tick positions before anyone moves.
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
+  // Home berths, assigned the same way from each village's own surveyed list.
+  const homeGoals = assignHomeBerths(kraken);
 
   // One tick's shared sailing state: every boat sails from the same snapshots.
   const tick: SailTick = {
@@ -1573,6 +1708,7 @@ export function advanceFleet(
     berths,
     krakenOccupant,
     goals,
+    homeGoals,
   };
 
   let engaged = 0;
