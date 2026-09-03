@@ -34,6 +34,8 @@ import { SHARK_ENVELOPE } from './species/shark.ts';
 import { GRAZER_ENVELOPE } from './species/grazer.ts';
 import { IBEX_ENVELOPE } from './species/ibex.ts';
 import { BISON_ENVELOPE } from './species/bison.ts';
+import { WHALE_ENVELOPE } from './whaleSpecies.ts';
+import { BIRD_ENVELOPE, DEEPSEA_ENVELOPE } from './models.ts';
 
 /**
  * Water a swimmer keeps between its own skin and the surface (or the seabed),
@@ -279,6 +281,34 @@ export const FLIGHT_ALTITUDES: Readonly<Record<WildlifeSpecies, number | null>> 
   ray: null,
   shark: null,
   bird: BIRD_FLIGHT_WORLD_Y,
+};
+
+/**
+ * The vertical span of a species' BODY about its model origin, in WORLD units
+ * at model scale 1 — what anything drawn ON the creature (a flame, today:
+ * MoverPose.bodyBottomY / bodyHeight) should cover.
+ *
+ * Two origin conventions, one table. Land species are authored with the origin
+ * at their feet (creatureWorldY), so their belly line IS the origin and the
+ * crown is the envelope height; swimmers and the bird are centre-origin, so
+ * their envelopes already state both sides. Read from the model files, never
+ * restated here, for the reason the SWIM_PROFILES header gives.
+ */
+export interface BodyColumn {
+  readonly bellyY: number;
+  readonly crownY: number;
+}
+
+export const BODY_COLUMNS: Readonly<Record<WildlifeSpecies, BodyColumn>> = {
+  fish: { bellyY: FISH_ENVELOPE.bellyY, crownY: FISH_ENVELOPE.crownY },
+  whale: { bellyY: WHALE_ENVELOPE.bellyY, crownY: WHALE_ENVELOPE.crownY },
+  deepsea: { bellyY: DEEPSEA_ENVELOPE.bellyY, crownY: DEEPSEA_ENVELOPE.crownY },
+  grazer: { bellyY: 0, crownY: GRAZER_ENVELOPE.height },
+  ibex: { bellyY: 0, crownY: IBEX_ENVELOPE.height },
+  bison: { bellyY: 0, crownY: BISON_ENVELOPE.height },
+  ray: { bellyY: RAY_ENVELOPE.bellyY, crownY: RAY_ENVELOPE.crownY },
+  shark: { bellyY: SHARK_ENVELOPE.bellyY, crownY: SHARK_ENVELOPE.crownY },
+  bird: { bellyY: BIRD_ENVELOPE.bellyY, crownY: BIRD_ENVELOPE.crownY },
 };
 
 /**

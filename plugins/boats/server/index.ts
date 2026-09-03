@@ -154,15 +154,6 @@ const persistence: PersistenceSlice = {
  */
 export const BOATS_BURN_SECONDS = 16;
 
-/**
- * Flame size for a burning boat, in world units.
- *
- * A hull is 0.9 world units long (fleet.ts's BOAT_PERSONAL_SPACE_CELLS note)
- * with a mast above it; 1.2 makes the fire read from the shore, which is where
- * whoever lit it is standing.
- */
-export const BOATS_FUEL_HEIGHT = 1.2;
-
 /** These burned to the waterline. */
 function boatsBurnedOut(ids: readonly number[]): void {
   burnBoats(ids);
@@ -184,7 +175,7 @@ export const plugin: TerracePlugin = {
         if (boat === null) return null;
         return {
           id: boat.id,
-          fuel: { burnSeconds: BOATS_BURN_SECONDS, height: BOATS_FUEL_HEIGHT },
+          fuel: { burnSeconds: BOATS_BURN_SECONDS },
           distanceCells: boat.distanceCells,
         };
       },
@@ -197,7 +188,7 @@ export const plugin: TerracePlugin = {
           yield {
             sourceName: BOATS_PLUGIN_NAME,
             id: boat.id,
-            fuel: { burnSeconds: BOATS_BURN_SECONDS, height: BOATS_FUEL_HEIGHT },
+            fuel: { burnSeconds: BOATS_BURN_SECONDS },
             x: boat.x,
             y: boat.y,
             radiusCells: boat.radiusCells,

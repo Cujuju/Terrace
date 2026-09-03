@@ -98,6 +98,26 @@ const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
  */
 const BIRD_COLOR = 0x2e3646;
 
+/**
+ * What the two bodies still authored in this file measure in WORLD units at
+ * model scale 1, above and below their origin — the same shape the species
+ * files' envelopes state (species/fish.ts's crownY/bellyY), read by
+ * placement.ts's BODY_COLUMNS so a flame on one of these covers the body that
+ * is actually drawn. Both are centre-origin ellipsoids, so crown and belly are
+ * half the full height each way; the geometry below is built FROM these.
+ */
+export const DEEPSEA_ENVELOPE = {
+  /** Body ellipsoid full height 0.7 (the jaw and lure hang inside it). */
+  crownY: 0.35,
+  bellyY: -0.35,
+} as const;
+
+export const BIRD_ENVELOPE = {
+  /** Body ellipsoid full height 0.18; the wings are thinner than the body. */
+  crownY: 0.09,
+  bellyY: -0.09,
+} as const;
+
 /** Idle-animation rates, in cycles per second. Slower = larger, by convention. */
 const WHALE_FLUKE_HZ = 0.45;
 const DEEPSEA_SWAY_HZ = 0.7;
@@ -290,7 +310,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   const deepseaMaterial = lambert(DEEPSEA_COLOR);
   const deepseaLureMaterial = unlit(DEEPSEA_LURE_COLOR);
-  const deepseaBody = ellipsoid(1, 0.7, 0.55);
+  const deepseaBody = ellipsoid(1, DEEPSEA_ENVELOPE.crownY - DEEPSEA_ENVELOPE.bellyY, 0.55);
   const deepseaJaw = keepGeometry(new ConeGeometry(0.3, 0.45, CONE_SEGMENTS));
   deepseaJaw.rotateZ(-Math.PI / 2);
   const deepseaStalk = keepGeometry(new BoxGeometry(0.5, 0.04, 0.04));
@@ -302,7 +322,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   // (0.55 long) on purpose: it is seen from BIRD_FLIGHT_WORLD_Y further away
   // than anything else in this file.
   const birdMaterial = lambert(BIRD_COLOR);
-  const birdBody = ellipsoid(0.6, 0.18, 0.18);
+  const birdBody = ellipsoid(0.6, BIRD_ENVELOPE.crownY - BIRD_ENVELOPE.bellyY, 0.18);
   /** One wing panel. Its LENGTH runs along Z, so it hinges about the X axis. */
   const birdWing = keepGeometry(new BoxGeometry(0.32, 0.03, BIRD_WING_LENGTH));
   const birdTail = keepGeometry(new ConeGeometry(0.13, 0.26, CONE_SEGMENTS));

@@ -24,9 +24,13 @@
  * — they pass when run alone and fail only under full-suite parallel load, and
  * they surfaced one package at a time as each earlier one went green.
  *
- * 300 s is a rail against a hung test, not a budget anything is expected to
+ * 30 s is a rail against a hung test, not a budget anything is expected to
  * approach; what a suite actually costs is its reported duration, which this
  * does not change. Tests whose own measurement needs more say so inline.
+ *
+ * Owner, 2026-09-02: 30 s, down from 300 s, after a workspace run sat for
+ * 26 minutes on a hung package. A test that legitimately needs longer states
+ * its own `{ timeout }` inline, where the reader can see why.
  *
  * Raised rather than shrunk, every time: the ground these tests cover IS the
  * contract — a smaller world stops being a lair, stops having a coastline,
@@ -35,6 +39,6 @@
  */
 export default {
   test: {
-    testTimeout: 300_000,
+    testTimeout: 30_000,
   },
 };

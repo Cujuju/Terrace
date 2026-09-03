@@ -811,11 +811,13 @@ const persistence: PersistenceSlice = {
     if (!Array.isArray(entities)) return;
     for (const entry of entities) {
       if (typeof entry !== 'object' || entry === null) continue;
+      // A world saved before 2026-09-02 also carries a `fuelHeight` per entity;
+      // it is ignored rather than rejected — the size now comes from the
+      // client that draws the body (../protocol.ts's FireEntityState).
       const entity = entry as Partial<FireEntityState>;
       if (
         typeof entity.sourceName !== 'string' ||
         typeof entity.id !== 'number' ||
-        typeof entity.fuelHeight !== 'number' ||
         typeof entity.ageSeconds !== 'number' ||
         typeof entity.burnSeconds !== 'number'
       ) {
@@ -824,7 +826,6 @@ const persistence: PersistenceSlice = {
       restoredEntities.push({
         sourceName: entity.sourceName,
         id: entity.id,
-        fuelHeight: entity.fuelHeight,
         ageSeconds: entity.ageSeconds,
         burnSeconds: entity.burnSeconds,
       });

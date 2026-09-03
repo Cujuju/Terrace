@@ -32,7 +32,6 @@ import {
 interface BurningEntity {
   readonly sourceName: string;
   readonly id: number;
-  readonly fuelHeight: number;
   readonly burnSeconds: number;
   /** The only mutable field. */
   ageSeconds: number;
@@ -139,7 +138,6 @@ export class EntityBlaze {
     const entity: BurningEntity = {
       sourceName: found.source.name,
       id: found.id,
-      fuelHeight: found.fuel.height,
       burnSeconds: found.fuel.burnSeconds,
       ageSeconds: 0,
     };
@@ -194,7 +192,6 @@ export class EntityBlaze {
     const entity: BurningEntity = {
       sourceName,
       id,
-      fuelHeight: fuel.height,
       burnSeconds: fuel.burnSeconds,
       ageSeconds: 0,
     };
@@ -366,7 +363,6 @@ export class EntityBlaze {
       this.burning.set(fireEntityKey(entity.sourceName, entity.id), {
         sourceName: entity.sourceName,
         id: entity.id,
-        fuelHeight: entity.fuelHeight,
         burnSeconds: entity.burnSeconds,
         ageSeconds: entity.ageSeconds,
         awaitingIdentityCheck: true,
@@ -398,7 +394,6 @@ function toState(entity: BurningEntity): FireEntityState {
   return {
     sourceName: entity.sourceName,
     id: entity.id,
-    fuelHeight: entity.fuelHeight,
     ageSeconds: entity.ageSeconds,
     burnSeconds: entity.burnSeconds,
   };

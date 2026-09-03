@@ -24,8 +24,9 @@
 export interface EntityFuel {
   /** How long it burns, in simulated seconds, from catching to dead. */
   readonly burnSeconds: number;
-  /** Flame size in world units — ./fuel.ts's CellFuel.height, same meaning. */
-  readonly height: number;
+  // No `height`, unlike ./fuel.ts's CellFuel: the flame on a moving thing is
+  // sized by the plugin that DRAWS it, at the scale it draws it
+  // (../protocol.ts's FireEntityState says why).
 }
 
 /**
