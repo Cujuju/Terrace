@@ -106,3 +106,53 @@ export function parseRotatingStormsPayload(payload: unknown): RotatingStormsPayl
   }
   return { storms: parsed };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE WIND FIELD OF A STORM WITH AN EYE.
+//
+// ONE RAMP, TWO CALLERS, AND THAT IS WHY IT IS HERE. The shape below is
+// evaluated on both sides of the damage event and must agree exactly or the
+// mechanic is quietly wrong:
+//
+//   * the EMITTER runs it as its RotatingStormProfile's `windFalloff`, which is
+//     what decides the severity of every cell it samples
+//     (plugins/cyclone/server/sim.ts);
+//   * every CONSUMER runs it to answer "how hard is the wind at MY cell",
+//     because the event carries a bounded sample rather than an enumeration and
+//     a consumer with a spatial index is expected to answer exactly
+//     (server/src/plugins/kit/rotatingStormDamage.ts's `severityAt`).
+//
+// Written out by hand in both places it drifted the moment either was retuned,
+// and the failure is silent: trees fall at a severity the storm never had. The
+// wind field a payload describes is a property of the PROTOCOL between the two,
+// which is what this package is the single source of truth for — the same
+// argument the parser at the top of this file is here under.
+//
+// IT IS THE EYE SHAPE, NOT "THE" SHAPE. A rotating storm is not required to
+// have an eye: the kit's other owner is a tornado, whose profile is a solid
+// core falling off as 1 − r² (plugins/tornado/server/sim.ts) and which passes
+// eyeRadiusFraction 0. A consumer reacting to a tornado's damage would need the
+// payload to carry the falloff SHAPE as well as the eye radius, because no
+// function of (radius, eyeRadius, intensity) can tell the two curves apart.
+// Nothing consumes a tornado's damage today, so the payload does not carry it;
+// the day something does, that field is the change to make.
+
+/**
+ * The wind at `radiusFraction` of the way out from a storm's eye, in [0, 1].
+ *
+ * Zero inside the eye, one at the eyewall, falling LINEARLY to zero at the rim.
+ * Linear and deliberately not smoothed: the eyewall is the one place in a
+ * hurricane where the wind really does change over a short distance, and
+ * rounding it off would hide the only structure this shape has.
+ *
+ * Both arguments are fractions of the storm's own radius, which is what makes
+ * the shape a fact about a cyclone rather than about how big this one is.
+ * Guarded at both ends — a storm whose eye fills it blows nothing, and nothing
+ * outside the disc is struck — so no caller has to remember to check either.
+ */
+export function eyewallWindFalloff(radiusFraction: number, eyeRadiusFraction: number): number {
+  if (eyeRadiusFraction >= 1) return 0;
+  if (radiusFraction <= eyeRadiusFraction) return 0;
+  if (radiusFraction >= 1) return 0;
+  return (1 - radiusFraction) / (1 - eyeRadiusFraction);
+}

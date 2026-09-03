@@ -37,24 +37,26 @@
 // question exactly. To do that it needs a severity at an arbitrary cell, and
 // the emitter's own wind profile is private to the emitter.
 //
-// So this states the COARSEST model consistent with what the payload itself
-// guarantees, and nothing beyond it:
+// So `severityAt` evaluates the SAME FUNCTION THE EMITTER DOES —
+// `eyewallWindFalloff` in shared/, which the cyclone profile's own
+// `windFalloff` is (plugins/cyclone/server/sim.ts). Not a restatement of it:
+// two hand-written copies of one ramp drift the moment either is retuned, and
+// the failure is silent — trees fall at a severity the storm never had. See
+// that function's header in shared/src/rotatingStormWire.ts for why the wind
+// field a payload describes is a property of the protocol rather than of
+// either end of it.
 //
-//   * `intensity` is "the ceiling on any cell's severity" (the field's doc);
-//   * `eyeRadius` is "the calm middle the wind does NOT cover" — zero inside;
-//   * `radius` is "the disc the wind covers" — zero outside;
-//   * between them the wind falls off monotonically from the eyewall to the rim.
-//
-// A straight ramp is the only curve those four statements pin down. It happens
-// to be EXACTLY the shipped cyclone profile ((1 - r) / (1 - eye), sim.ts), so
-// today this is not an approximation at all; for a future owner whose falloff
-// curves differently it stays bounded by the invariants above and the error is
-// in how HARD a consumer reacts, never in WHERE. That is the honest trade
-// against the alternative — publishing the emitter's profile function on the
-// wire so consumers could evaluate a neighbour's curve, which is the import
-// coupling this whole contract exists to avoid.
+// IT IS THE RAMP OF A STORM WITH AN EYE, and that is a real limit rather than
+// a hedge. The kit's other owner is a tornado, whose profile is a solid core
+// falling off as 1 - r² and which passes eyeRadiusFraction 0: no function of
+// (radius, eyeRadius, intensity) can tell the two curves apart, so a consumer
+// of a tornado's damage would need the payload to carry the falloff SHAPE as
+// well as its extent. Nothing consumes a tornado's damage today, so the payload
+// does not carry it, and adding a field for a consumer that does not exist
+// would be a wire contract nobody could check. The day something does consume
+// one, that field is the change to make.
 
-import { isFiniteNumber } from '@terrace/shared';
+import { eyewallWindFalloff, isFiniteNumber } from '@terrace/shared';
 import { ROTATING_STORM_DAMAGE_SAMPLE_CELLS } from './rotatingStorms.ts';
 
 /**
@@ -161,22 +163,25 @@ export function parseStormDamage(payload: unknown): ParsedStormDamage | null {
 }
 
 /**
- * How hard the wind is blowing at one cell, in [0, `intensity`] — see this
- * file's header for what this model is and is not.
+ * How hard the wind is blowing at one cell, in [0, `intensity`] — the emitter's
+ * own ramp, evaluated here rather than restated; see this file's header for what
+ * that does and does not cover.
  *
  * Takes a cell rather than a distance so no caller has to remember to measure
- * from the EYE rather than from the storm's bounding box.
+ * from the EYE rather than from the storm's bounding box. The conversion to
+ * fractions of the radius is this function's whole job beyond the call:
+ * `eyewallWindFalloff` is stated in fractions because that is what makes the
+ * shape a fact about a cyclone rather than about how big this one is, and a
+ * payload is stated in cells because that is what a consumer's index is in.
+ * `radius > 0` is guaranteed by the parse, so neither division is by zero.
  */
 export function severityAt(damage: ParsedStormDamage, cellX: number, cellY: number): number {
   const dx = cellX - damage.x;
   const dy = cellY - damage.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
-  if (distance >= damage.radius) return 0;
-  if (distance <= damage.eyeRadius) return 0;
-  // The ramp: 1 at the eyewall, 0 at the rim. `radius > eyeRadius` is
-  // guaranteed by the parse, so the denominator is never zero.
-  const fallen = (damage.radius - distance) / (damage.radius - damage.eyeRadius);
-  return damage.intensity * fallen;
+  return (
+    damage.intensity * eyewallWindFalloff(distance / damage.radius, damage.eyeRadius / damage.radius)
+  );
 }
 
 /**
