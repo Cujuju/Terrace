@@ -23,8 +23,12 @@
 //   * `heights`   — one Int32 per cell, updated from the diff;
 //   * `unlocked`  — one byte per cell, the chunk mask flattened;
 //   * `habitat`   — one byte per cell per REGIME: the `isLairCell` answer;
+//   * `range`     — one byte per cell per FIT RULE: the same answer for that
+//                   rule's RANGE (its kind's own depth demand), aliasing
+//                   `habitat` for every kind that takes the habitat floor;
 //   * `fit`       — one byte per cell per FIT RULE: the `isLairPose` answer for
-//                   a body of that rule's radius centred on the cell.
+//                   a body of that rule's radius centred on the cell, read off
+//                   that rule's `range` bytes.
 //
 // and a diff repairs only the cells it touched (plus, for the fit bitmaps, the
 // window of centres whose body reaches one of them). The survey then floods
@@ -47,6 +51,7 @@ import {
   type HabitatRegimeId,
   type LairFitRule,
   type LairWorld,
+  habitatRangeOf,
   isHabitatHeight,
 } from './habitat.ts';
 
@@ -111,8 +116,29 @@ export interface RegimeIndex {
   readonly regime: HabitatRegime;
   readonly rules: readonly LairFitRule[];
   readonly probes: readonly FitProbe[];
-  /** The `isLairCell` answer per cell. */
+  /** The `isLairCell` answer per cell, for the habitat FLOOR. */
   readonly habitat: Uint8Array;
+  /**
+   * The `isLairCell` answer per cell for each rule's RANGE, index-aligned with
+   * `rules` (2026-09-02).
+   *
+   * A rule whose `minReachBands` is the habitat's own threshold — Cthulhu, the
+   * yeti — gets the `habitat` array ITSELF here, not a copy: `habitatRangeOf`
+   * returns the regime object unchanged in that case, so the alias is provable
+   * rather than assumed, and those kinds' fit bitmaps are computed from exactly
+   * the bytes they were computed from before ranges existed.
+   */
+  readonly range: readonly Uint8Array[];
+  /**
+   * The DISTINCT range bitmaps that are not the habitat array — what the two
+   * repair paths must recompute after `habitat` and before `fit`.
+   *
+   * Deduped by range object identity (`habitatRangeOf` caches), so two kinds
+   * demanding the same depth share one array and one repair pass; empty for a
+   * regime whose every kind takes the habitat floor, which is why the land
+   * regime pays nothing for the kraken's confinement.
+   */
+  readonly derivedRanges: readonly { readonly regime: HabitatRegime; readonly bits: Uint8Array }[];
   /** The `isLairPose` answer per cell, one array per rule (index-aligned). */
   readonly fit: readonly Uint8Array[];
   /**
@@ -253,7 +279,8 @@ function habitatBitAt(
 }
 
 /**
- * Recomputes one regime's fit bit for one centre cell from its habitat bits.
+ * Recomputes one rule's fit bit for one centre cell from that rule's RANGE bits
+ * (which are the regime's habitat bits for a kind that takes the habitat floor).
  *
  * Returns whether the bit actually MOVED, which is what the lair survey's
  * repair list is built out of: the fit windows a diff dirties are far wider
@@ -262,7 +289,7 @@ function habitatBitAt(
  */
 function recomputeFitBit(
   size: number,
-  habitat: Uint8Array,
+  range: Uint8Array,
   fit: Uint8Array,
   probe: FitProbe,
   x: number,
@@ -271,7 +298,7 @@ function recomputeFitBit(
   const index = y * size + x;
   const before = fit[index];
   let after = HABITAT_BIT_SET;
-  if (habitat[index] !== HABITAT_BIT_SET) {
+  if (range[index] !== HABITAT_BIT_SET) {
     after = HABITAT_BIT_CLEAR;
   } else {
     for (const [dx, dy] of probe.offsets) {
@@ -281,7 +308,7 @@ function recomputeFitBit(
         after = HABITAT_BIT_CLEAR;
         break;
       }
-      if (habitat[rimY * size + rimX] !== HABITAT_BIT_SET) {
+      if (range[rimY * size + rimX] !== HABITAT_BIT_SET) {
         after = HABITAT_BIT_CLEAR;
         break;
       }
@@ -323,21 +350,50 @@ export function buildHabitatIndex(
       habitat[index] = habitatBitAt(regime, unlocked, heights, index);
     }
 
-    const probes = fitRules.map(fitProbeFor);
-    const fit = probes.map((probe) => {
+    // One bitmap per DISTINCT range, and the habitat array itself for the rules
+    // whose range is the habitat — see RegimeIndex.range on why the alias is
+    // provable. Keyed by the range object because `habitatRangeOf` caches, so
+    // two kinds asking the same depth are the same key.
+    const rangeBits = new Map<HabitatRegime, Uint8Array>([[regime, habitat]]);
+    const derivedRanges: { regime: HabitatRegime; bits: Uint8Array }[] = [];
+    const range = fitRules.map((rule) => {
+      const ruleRange = habitatRangeOf(regime, rule.rangeBands);
+      const held = rangeBits.get(ruleRange);
+      if (held !== undefined) return held;
       const bits = new Uint8Array(cellCount);
+      for (let index = 0; index < cellCount; index++) {
+        bits[index] = habitatBitAt(ruleRange, unlocked, heights, index);
+      }
+      rangeBits.set(ruleRange, bits);
+      derivedRanges.push({ regime: ruleRange, bits });
+      return bits;
+    });
+
+    const probes = fitRules.map(fitProbeFor);
+    const fit = probes.map((probe, rule) => {
+      const bits = new Uint8Array(cellCount);
+      const ruleRange = range[rule]!;
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-          // Only habitat centres can fit anything, so the rim probes are read
-          // for the habitat cells alone — on a world that is mostly land the
-          // water pass never leaves the first branch.
-          recomputeFitBit(size, habitat, bits, probe, x, y);
+          // Only range centres can fit anything, so the rim probes are read for
+          // the in-range cells alone — on a world that is mostly land the water
+          // pass never leaves the first branch.
+          recomputeFitBit(size, ruleRange, bits, probe, x, y);
         }
       }
       return bits;
     });
 
-    regimes.set(regime.id, { regime, rules: fitRules, probes, habitat, fit, dirtyCells: [] });
+    regimes.set(regime.id, {
+      regime,
+      rules: fitRules,
+      probes,
+      habitat,
+      range,
+      derivedRanges,
+      fit,
+      dirtyCells: [],
+    });
   }
 
   const unlockedChunks = readUnlockedChunks(world);
@@ -375,6 +431,7 @@ export function indexAnswers(
     const held = regimeIndex.rules[rule]!;
     const wanted = fitRules[rule]!;
     if (held.radiusCells !== wanted.radiusCells) return false;
+    if (held.rangeBands !== wanted.rangeBands) return false;
     if (held.minReachBands !== wanted.minReachBands) return false;
   }
   return true;
@@ -494,10 +551,10 @@ function markDirtyCell(regimeIndex: RegimeIndex, cellIndex: number, cap: number)
  *
  * THREE PASSES, IN THIS ORDER, and the order is the same correctness argument
  * `noteTerrainChangedInIndex` makes one cell at a time: every `unlocked` and
- * `heights` byte the unlock moves has to be settled before any habitat bit is
- * derived from it, and every habitat bit has to be settled before any fit bit
- * reads its rim. Interleaving them would recompute a fit window against a rim
- * that is about to change.
+ * `heights` byte the unlock moves has to be settled before any habitat or range
+ * bit is derived from it, and every range bit has to be settled before any fit
+ * bit reads its rim. Interleaving them would recompute a fit window against a
+ * rim that is about to change.
  *
  * COST is bounded by the opened chunks, not by the world: one chunk is
  * (size / chunksPerEdge)² cells for the first two passes, and that square grown
@@ -532,7 +589,7 @@ function applyNewlyUnlockedChunks(
   }
 
   for (const regimeIndex of regimes.values()) {
-    const { regime, habitat } = regimeIndex;
+    const { regime, habitat, derivedRanges } = regimeIndex;
     for (const chunk of opened) {
       const cx = chunk % perEdge;
       const cy = (chunk - cx) / perEdge;
@@ -543,6 +600,13 @@ function applyNewlyUnlockedChunks(
         for (let x = x0; x < x0 + chunkCells; x++) {
           const cellIndex = row + x;
           habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
+          // The same pass for every range narrower than the habitat, because a
+          // fit bit reads its rule's RANGE bytes and they must be settled before
+          // the third pass reads them — the same ordering argument the habitat
+          // bits already made, one level down.
+          for (const derived of derivedRanges) {
+            derived.bits[cellIndex] = habitatBitAt(derived.regime, unlocked, heights, cellIndex);
+          }
           // Every cell of an opened chunk moved: it was locked, so it was not
           // habitat, and its height was never read against the live world.
           markDirtyCell(regimeIndex, cellIndex, cap);
@@ -570,7 +634,7 @@ function applyNewlyUnlockedChunks(
           for (let centreX = minX; centreX <= maxX; centreX++) {
             if (repairStamp[row + centreX] === generation) continue;
             repairStamp[row + centreX] = generation;
-            if (recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY)) {
+            if (recomputeFitBit(size, regimeIndex.range[rule]!, bits, probe, centreX, centreY)) {
               markDirtyCell(regimeIndex, row + centreX, cap);
             }
           }
@@ -586,10 +650,10 @@ function applyNewlyUnlockedChunks(
  * Repairs the maintained index for one applied terrain diff — the whole point
  * of the file, and the reason `onTerrainChanged` no longer costs a survey.
  *
- * TWO PASSES, and they cannot be one: a fit bit reads the habitat bits of its
- * rim, so every habitat bit the diff moves has to be settled before any fit
- * bit is recomputed. Doing both per cell would read a rim that is about to
- * change and leave the answer wrong until the next full rebuild.
+ * TWO PASSES, and they cannot be one: a fit bit reads the range bits of its
+ * rim, so every habitat and range bit the diff moves has to be settled before
+ * any fit bit is recomputed. Doing both per cell would read a rim that is about
+ * to change and leave the answer wrong until the next full rebuild.
  *
  * EACH DIRTY CENTRE IS RECOMPUTED ONCE (2026-08-26, measured). A diff is a
  * brush disc, and the fit windows of its ~37 cells overlap almost completely:
@@ -617,13 +681,21 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
 
   const cap = repairableDirtyCellCap(size * size);
   for (const regimeIndex of regimes.values()) {
-    const { regime, habitat } = regimeIndex;
+    const { regime, habitat, derivedRanges } = regimeIndex;
     for (const cell of diff) {
       const x = cell.x;
       const y = cell.y;
       if (x < 0 || y < 0 || x >= size || y >= size) continue;
       const cellIndex = y * size + x;
       habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
+      // And every narrower range, in the same pass and for the same reason the
+      // passes are ordered at all: the fit loop below reads its rule's range
+      // bytes across a window, so all of them must be settled first. A sculpt
+      // that raises a trench floor out of the kraken's range but leaves it deep
+      // water moves THIS bit and not the habitat one.
+      for (const derived of derivedRanges) {
+        derived.bits[cellIndex] = habitatBitAt(derived.regime, unlocked, heights, cellIndex);
+      }
       // The height moved whether or not the habitat bit did, and a region's
       // extreme cell and summonable count are both read off heights.
       markDirtyCell(regimeIndex, cellIndex, cap);
@@ -655,7 +727,7 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
           for (let centreX = minX; centreX <= maxX; centreX++) {
             if (repairStamp[row + centreX] === generation) continue;
             repairStamp[row + centreX] = generation;
-            if (recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY)) {
+            if (recomputeFitBit(size, regimeIndex.range[rule]!, bits, probe, centreX, centreY)) {
               markDirtyCell(regimeIndex, row + centreX, cap);
             }
           }
