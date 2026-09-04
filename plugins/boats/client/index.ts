@@ -24,10 +24,14 @@ import {
   parseBoatsPayload,
 } from '../protocol.ts';
 import { BoatInterpolator } from './interpolation.ts';
+import warBoatUrl from './assets/war-boat.glb?url';
 import {
+  BOAT_DRAW_OBJECTS,
   BOAT_FIRE_COLUMN,
   BOAT_WATERLINE_LIFT,
   createBoatModels,
+  disposeBoatKit,
+  preloadBoatModels,
   type BoatModel,
   type BoatModels,
 } from './models.ts';
@@ -165,21 +169,29 @@ function drawnPoseOf(id: number): MoverPose | null {
   };
 }
 
-/**
- * Draw objects one boat costs: TWO. Its rig is authored as ~7 parts and BAKED
- * into two merged surfaces by material (models.ts's bakeRig), which is why this
- * is 2 and not the part count.
- */
-const BOAT_DRAW_OBJECTS = 2;
-
 export const clientPlugin: TerraceClientPlugin = {
   name: BOATS_PLUGIN_NAME,
 
   /**
    * Its share of the frame's draw calls, from its own caps — see
-   * TerraceClientPlugin.drawBudget and the constants above.
+   * TerraceClientPlugin.drawBudget. A GETTER, not a value: the per-boat count
+   * is measured when the asset bakes (the textured hull costs its own surface
+   * beside the flat set, which is why this settles at 3 and not the hand-built
+   * 2), and the host reads the field every sample — so the budget follows the
+   * measurement instead of freezing the pre-load ceiling.
    */
-  drawBudget: BOATS_PAYLOAD_CAP * BOAT_DRAW_OBJECTS,
+  get drawBudget(): number {
+    return BOATS_PAYLOAD_CAP * BOAT_DRAW_OBJECTS;
+  },
+
+  /**
+   * Loads war-boat.glb before attach, so createBoatModels has an asset to
+   * bake from. A rejected load is a logged breach for this plugin only — the
+   * host never attaches afterwards, so the fleet simply stays ashore.
+   */
+  preload(): Promise<void> {
+    return preloadBoatModels(warBoatUrl);
+  },
 
   attach(ctx: ClientPluginCtx): void {
     models = createBoatModels();
@@ -223,6 +235,9 @@ export const clientPlugin: TerraceClientPlugin = {
 
     models?.dispose();
     models = null;
+    // After the blueprints: the baked surfaces sample the asset's textures,
+    // and freeing them first would pull the texels out from under a living rig.
+    disposeBoatKit();
     animationSeconds = 0;
   },
 };

@@ -9,25 +9,21 @@
 // needs its own oar swing and its own list against the swell. A handful of
 // small Groups is the cheaper answer at that count and a far simpler one.
 //
-// SHARED GEOMETRY AND MATERIALS, allocated once by createBoatModels and freed
-// once by its dispose. Only the Groups are per boat.
-//
-// PORTED TO RIGSKIN, 2026-08-23. The reasoning above survives — a war boat
-// still gets its own skeleton and its own sail — but what "a handful of small
-// Groups" meant changed: the hull, deck, mast, yard and all four oars are now
-// baked once into a RigBlueprint (client/src/render/rigSkin.ts) and drawn as
-// ONE skinned surface per boat, animated through Bones instead of scene-graph
-// nodes. The unit of AUTHORING stopped being the unit of DRAWING: this went
-// from 9 draw calls per boat to 2 (the rig surface plus the sail).
+// LOADED, NOT HAND-BUILT (2026-09). The hull below used to be assembled here
+// from three.js primitives; it is now authored in Blender, exported to
+// assets/war-boat.glb (tools/blender/build_war_boat.py), and loaded by
+// preloadBoatModels through client/src/render/rigAsset.ts. What "shared
+// geometry" means changed with it: the baked rig blueprint is rebuilt from the
+// installed asset on every createBoatModels call — a sub-millisecond bake of
+// ~1.5k triangles — so a factory owns its blueprint exactly the way it used to
+// own its geometry pool, and dispose frees it the same way.
 
 import {
-  BoxGeometry,
-  CylinderGeometry,
-  ExtrudeGeometry,
+  Box3,
   Group,
   Mesh,
   MeshStandardMaterial,
-  Shape,
+  Vector3,
   type BufferGeometry,
   type Material,
 } from 'three';
@@ -38,94 +34,49 @@ import {
   instantiateRig,
   type RigBlueprint,
 } from '../../../client/src/render/rigSkin.ts';
-
-/**
- * Hull length in cells (CELL_WORLD_SIZE is 1, so cells are world units).
- *
- * 0.9 — just under one cell. A boat has to read as a boat at the camera
- * distance a kraken fight is watched from while never looking like it occupies
- * more sea than it does: the fight's own geometry is measured in whole cells
- * (BOAT_ENGAGEMENT_RANGE_CELLS is 5), so a hull that spilled past a cell would
- * make "five cells away" look wrong.
- */
-const HULL_LENGTH = 0.9;
-const HULL_BEAM = 0.34;
-/**
- * Hull depth. 0.2 rather than the 0.16 this started at: the first eyes-on pass
- * (preview-boats.html) showed the boat reading as a flat plank with a card on
- * it, and freeboard is most of what makes a hull look like a hull from the
- * overhead-ish camera this game is played at.
- */
-const HULL_DEPTH = 0.2;
-/**
- * The hull's PLAN OUTLINE, in cells, as (fore-aft, athwart) pairs for the
- * starboard half — the port half is mirrored, so the boat cannot end up
- * asymmetric by a typo in one row.
- *
- * ONE EXTRUDED OUTLINE RATHER THAN A BOX PLUS A CONE, which is what this was
- * for two eyes-on passes and what neither of them could rescue. A 4-segment
- * cone laid on its side is a pyramid: from the front it read as a dark spike
- * hanging under the boat, and from above the join between it and the box was a
- * visible step. A hull's shape IS its plan outline — pointed forward, full
- * amidships, square across the stern — so stating that outline once and giving
- * it depth produces the silhouette directly instead of approximating it with
- * two solids that meet badly.
- */
-const HULL_OUTLINE: ReadonlyArray<readonly [number, number]> = [
-  [0.5, 0],
-  [0.34, 0.13],
-  [0.06, 0.17],
-  [-0.28, 0.16],
-  [-0.46, 0.12],
-];
-
-/** Mast height, from the deck. Two-thirds the hull's length — a working rig. */
-const MAST_HEIGHT = HULL_LENGTH * 0.66;
-const MAST_RADIUS = 0.022;
-
-/** Sail dimensions. Wide enough to catch the eye from above, which is the
- * camera angle this game is actually played at. */
-/**
- * Sail dimensions.
- *
- * Cut down from 1.5 × beam and 0.62 × mast after the first eyes-on pass: at
- * those numbers the sail was wider than the boat was long in silhouette and
- * read as a billboard rather than as canvas. A square sail is roughly as wide
- * as the hull's beam and about half the mast — that is what a working rig
- * looks like, and it leaves the hull visible underneath it, which is the part
- * that says "boat".
- */
-const SAIL_WIDTH = HULL_BEAM * 1.15;
-const SAIL_HEIGHT = MAST_HEIGHT * 0.5;
-const SAIL_THICKNESS = 0.015;
-/** The yard: the spar a square sail hangs from. Without it the sail floats. */
-const YARD_RADIUS = 0.014;
-const YARD_OVERHANG = 0.03;
+import { loadRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
  * How far the whole boat rides above the sea surface — the waterline bite.
  *
- * Half the hull depth puts the surface exactly through the middle of the hull,
- * so a boat sits IN the water rather than on it. The sea is translucent
- * (client/src/render/water.ts), so the submerged half really is visible and
- * getting this wrong reads immediately as a boat hovering.
+ * MEASURED, not hardcoded: `-waterline.y` of the installed asset, so the
+ * surface cuts the hull where the modeller put the waterline empty. The
+ * fallback is the hand-built value (half the old hull depth) and only stands
+ * until the first preload — importers read the live binding, so they see the
+ * measured number as soon as it exists.
  */
-export const BOAT_WATERLINE_LIFT = -HULL_DEPTH * 0.55;
+export let BOAT_WATERLINE_LIFT: number = -0.11;
 
 /**
- * The span of a boat that BURNS, in root space (world units at the drawn scale
- * of 1): from the deck, which sits on top of the hull, to the masthead. A flame
- * seated on this covers deck, mast and sail and nothing under the waterline —
- * the keel is wet. Published through MoverPose.bodyBottomY / bodyHeight.
+ * The span of a boat that BURNS, in root space: from the deck to the masthead.
+ * Measured from the `deck_top` and `fire_top` anchors the same way — a flame
+ * seated on this covers deck, mast and sail and nothing under the waterline.
+ * Published through MoverPose.bodyBottomY / bodyHeight.
  */
-export const BOAT_FIRE_COLUMN = {
-  bottomY: HULL_DEPTH,
-  height: MAST_HEIGHT,
-} as const;
+export let BOAT_FIRE_COLUMN: { readonly bottomY: number; readonly height: number } = {
+  bottomY: 0.165,
+  height: 0.614,
+};
 
-const HULL_COLOR = 0x6b4a2f;
-const DECK_COLOR = 0x8a6a44;
-const MAST_COLOR = 0x53381f;
+/**
+ * Draw objects one boat costs: the rig's baked surfaces plus the sail.
+ *
+ * MEASURED PER BAKE (`blueprint.surfaceCount + 1`), not assumed — a textured
+ * hull costs its own surface beside the flat set (map identity is in the merge
+ * key), and recounting here is what keeps the number truthful when the asset
+ * changes. Until the first bake it holds the conservative ceiling below, which
+ * is what drawBudget budgets against before any boat exists.
+ */
+const BOAT_DRAW_OBJECTS_MAX = 4;
+export let BOAT_DRAW_OBJECTS: number = BOAT_DRAW_OBJECTS_MAX;
+
+/**
+ * How far past one cell the rowed silhouette may reach before the asset is
+ * rejected at load. Two hundredths: the fit is authored, not fitted — the
+ * number only absorbs float dust in the bounding box, never a real overhang.
+ */
+const BOAT_FIT_TOLERANCE_CELLS = 0.02;
+
 /** Undyed canvas at rest. */
 const SAIL_COLOR = 0xe8e0cf;
 /**
@@ -141,21 +92,18 @@ const SAIL_COLOR = 0xe8e0cf;
 const SAIL_FIGHTING_COLOR = 0xb03a2e;
 
 /**
- * Oar length, measured OUTBOARD FROM THE GUNWALE — so the boat's widest extent
- * is HULL_BEAM/2 + OAR_LENGTH per side, and the whole rowed silhouette has to
- * fit the one-cell budget HULL_LENGTH is chosen against, not just the hull.
+ * The oar pivots by node name, with the side each pulls on.
  *
- * 0.9 × the beam puts that extent at 0.476 cells a side (0.95 across), just
- * inside a cell. It was 1.35 × the beam until a test measured the assembled
- * model at 1.26 cells across — real oars are longer than a beam, but a boat
- * that occupies more sea than its cell makes every distance in the fight read
- * wrong, and the fight's whole geometry is counted in cells.
+ * The sign is ONLY the opposition pairing — port yaws against starboard, which
+ * is what reads as rowing rather than as a shiver. Which physical side is -1
+ * is invisible (the hull is symmetric), so the names, not the z signs, decide.
  */
-const OAR_LENGTH = HULL_BEAM * 0.9;
-const OAR_RADIUS = 0.012;
-const OAR_COLOR = 0x53381f;
-/** Oars per side. Two is enough to read as rowing without modelling a crew. */
-const OARS_PER_SIDE = 2;
+const OAR_PIVOTS = [
+  { name: 'oar_port_1', side: -1 },
+  { name: 'oar_port_2', side: -1 },
+  { name: 'oar_starboard_1', side: 1 },
+  { name: 'oar_starboard_2', side: 1 },
+] as const;
 
 /**
  * Radians the oars sweep, and how fast.
@@ -163,32 +111,14 @@ const OARS_PER_SIDE = 2;
  * The swing is a YAW about the oar's own mount, never a lift, so no oar ever
  * leaves the water plane or enters the hull — the same "yaw only" constraint
  * the kraken's arms keep, for the same reason: it makes the animation
- * incapable of clipping through the thing it is attached to.
+ * incapable of clipping through the thing it is attached to. The dip is
+ * authored into the asset (OAR_DIP_RADIANS in tools/blender/build_war_boat.py);
+ * only the swing lives here.
  */
 const OAR_SWEEP_RADIANS = 0.45;
 const OAR_STROKE_HZ = 0.55;
-/**
- * How far the oars tilt DOWN toward the water, in radians.
- *
- * The first eyes-on pass had them dead level at deck height, where they read as
- * loose spars floating beside the boat rather than as oars — nothing connected
- * them to the sea. 0.38 rad drops the blade tips to about the waterline, which
- * is the whole visual point of an oar. It is a fixed tilt and not part of the
- * stroke: the swing stays a pure yaw (see OAR_SWEEP_RADIANS), so the animation
- * still cannot lift a blade out of the water or drive it through the hull.
- */
-const OAR_DIP_RADIANS = 0.38;
 /** Strokes quicken in a fight. A multiplier, so one constant sets the contrast. */
 const OAR_FIGHTING_RATE = 2.1;
-
-/**
- * Height of the sail's centre above the keel line.
- *
- * Lifted out of `create()` because the YARD is baked into the rig and must sit
- * at the sail's head even though the sail itself is NOT baked — see the sail
- * comment in `create()`. One constant keeps the two from drifting apart.
- */
-const SAIL_CENTRE_Y = HULL_DEPTH + MAST_HEIGHT * 0.62;
 
 /** Swell: how far a hull rolls and pitches at rest, and how fast. */
 const SWELL_ROLL_RADIANS = 0.07;
@@ -213,165 +143,147 @@ export interface BoatModels {
   dispose(): void;
 }
 
+/** Everything installBoatKit measures from the asset file, once per load. */
+interface BoatKit {
+  readonly asset: RigAsset;
+  readonly sailGeometry: BufferGeometry;
+  readonly sailMaterial: MeshStandardMaterial;
+  readonly sailPosition: Vector3;
+  readonly sailQuaternion: { x: number; y: number; z: number; w: number };
+  readonly sailScale: Vector3;
+}
+
+let kit: BoatKit | null = null;
+
 /**
- * Builds the shared geometry/material set and the factory over it.
+ * Loads war-boat.glb over HTTP and installs it: the browser path, called from
+ * the plugin's preload with a `.glb?url` import. Measuring, fit-checking and
+ * the bake all funnel through installBoatKit, so this and the test/node path
+ * (parse + install) cannot drift apart.
+ */
+export async function preloadBoatModels(url: string): Promise<void> {
+  installBoatKit(await loadRigAsset(url));
+}
+
+/**
+ * Installs an already-parsed asset: the test/node path (bytes off disk plus
+ * parseRigAsset). Replaces any previous kit — the host unmounts before it
+ * remounts, so the previous asset's blueprints are already disposed; and a
+ * stale mount's late install merely re-installs the same bytes, never a live
+ * rig out from under its factory.
+ */
+export function installBoatKit(asset: RigAsset): void {
+  asset.scene.updateMatrixWorld(true);
+
+  // The shape-derived constants, measured before anything is assigned: a
+  // rejected asset must leave the previous kit (or the fallbacks) untouched.
+  const waterline = asset.anchor('waterline');
+  const deckTop = asset.anchor('deck_top');
+  const fireTop = asset.anchor('fire_top');
+  if (!(fireTop.y > deckTop.y)) {
+    throw new Error(
+      `boat asset: fire_top (${fireTop.y}) is not above deck_top (${deckTop.y}) — ` +
+        `the fire column would burn downward`,
+    );
+  }
+  const size = new Box3().setFromObject(asset.scene).getSize(new Vector3());
+  if (
+    size.x > 1 + BOAT_FIT_TOLERANCE_CELLS ||
+    size.z > 1 + BOAT_FIT_TOLERANCE_CELLS
+  ) {
+    throw new Error(
+      `boat asset: rowed silhouette ${size.x.toFixed(3)} x ${size.z.toFixed(3)} cells ` +
+        `breaks the one-cell fit budget — the fight's geometry is counted in whole cells`,
+    );
+  }
+  const sailNode = asset.node('sail');
+  if (!(sailNode instanceof Mesh)) {
+    throw new Error('boat asset: the sail node is not a mesh');
+  }
+  const sailMaterial = (sailNode as Mesh).material as Material;
+  if (Array.isArray(sailMaterial) || !(sailMaterial instanceof MeshStandardMaterial)) {
+    throw new Error('boat asset: the sail needs one standard material to recolour per boat');
+  }
+  // Every pivot must be bakable NOW, at install — jointIndex throws for a node
+  // outside the baked tree, and finding that out on the first create (or the
+  // first frame) would be a runtime surprise for an authoring typo.
+  for (const pivot of OAR_PIVOTS) asset.node(pivot.name);
+
+  disposeBoatKit();
+  BOAT_WATERLINE_LIFT = -waterline.y;
+  BOAT_FIRE_COLUMN = { bottomY: deckTop.y, height: fireTop.y - deckTop.y };
+  kit = {
+    asset,
+    sailGeometry: (sailNode as Mesh).geometry as BufferGeometry,
+    sailMaterial,
+    sailPosition: sailNode.position.clone(),
+    sailQuaternion: {
+      x: sailNode.quaternion.x,
+      y: sailNode.quaternion.y,
+      z: sailNode.quaternion.z,
+      w: sailNode.quaternion.w,
+    },
+    sailScale: sailNode.scale.clone(),
+  };
+}
+
+/** Frees the installed asset. Blueprints built from it must go first. */
+export function disposeBoatKit(): void {
+  kit?.asset.dispose();
+  kit = null;
+}
+
+/**
+ * Builds the shared factory over the installed asset.
  *
- * Every geometry and material below is created ONCE here and handed to every
- * boat; `dispose` frees them once. A boat's own dispose only clears its Group.
+ * The sail is detached for the bake and re-attached afterwards (finally, so a
+ * bake failure cannot leave the asset dismembered for the next attempt):
+ *
+ * * rigSkin's materialSignature() does NOT include `color` — parts that differ
+ *   only in colour merge into ONE surface with the colour carried as VERTEX
+ *   DATA. A baked sail's canvas tint would therefore live in a buffer shared
+ *   by every boat in the world.
+ * * A blueprint holds ONE material per surface, shared by every instance.
+ *   There is no per-instance recolour left to be had.
+ *
+ * But the sail's colour IS the fighting state signal (SAIL_FIGHTING_COLOR
+ * above): one boat engaging must redden ITS sail alone. So the sail stays a
+ * plain Mesh with its own per-boat material, hung off the instance root at its
+ * authored transform. Do not "fix" this back into the rig without solving
+ * those two bullets first.
  */
 export function createBoatModels(): BoatModels {
-  const geometries: BufferGeometry[] = [];
-  const materials: Material[] = [];
-
-  const track = <T extends BufferGeometry>(geometry: T): T => {
-    geometries.push(geometry);
-    return geometry;
-  };
-  const trackMaterial = <T extends Material>(material: T): T => {
-    materials.push(material);
-    return material;
-  };
-
-  // The hull: HULL_OUTLINE swept to HULL_DEPTH. Built in the shape plane
-  // (x fore-aft, y athwart), extruded along +z, then stood upright so the
-  // extrusion becomes the hull's depth and the outline becomes its waterplane.
-  const hullShape = new Shape();
-  const starboard = HULL_OUTLINE.map(([along, across]) => [along * HULL_LENGTH, across * HULL_BEAM * 2] as const);
-  const port = [...starboard].reverse().slice(1).map(([along, across]) => [along, -across] as const);
-  const outline = [...starboard, ...port];
-  hullShape.moveTo(outline[0]![0], outline[0]![1]);
-  for (const [along, across] of outline.slice(1)) hullShape.lineTo(along, across);
-  hullShape.closePath();
-
-  // Every BAKED part below is flattened to NON-INDEXED (`toNonIndexed`). Why:
-  // bakeRig groups parts by materialSignature PLUS indexedness, because
-  // mergeGeometries refuses a mix — so an indexed cylinder beside a non-indexed
-  // extrusion would silently cost TWO surfaces instead of one. The hull and
-  // deck arrive non-indexed from ExtrudeGeometry; converting the turned parts
-  // (mast, yard, oars) to match puts the whole rig in ONE group, which is the
-  // entire point of the port. The vertex-count cost is a few hundred vertices
-  // on 4–5-segment primitives — nothing next to a second draw call per boat.
-  // The sail is not baked, so it stays indexed.
-  const toBakeable = (geometry: BufferGeometry): BufferGeometry => {
-    const flat = geometry.toNonIndexed();
-    geometry.dispose();
-    return track(flat);
-  };
-
-  const hullGeometry = track(
-    new ExtrudeGeometry(hullShape, { depth: HULL_DEPTH, bevelEnabled: false }),
-  );
-  // Stand it up (+z extrusion becomes +y) and centre it on its own depth, so
-  // the model's origin is the waterplane and BOAT_WATERLINE_LIFT means what it
-  // says.
-  hullGeometry.rotateX(-Math.PI / 2);
-  hullGeometry.translate(0, HULL_DEPTH / 2, 0);
-
-  // The deck: the same outline, slightly inset and thin, laid on top so the
-  // boat has a lighter surface than its flanks and does not read as one solid.
-  const deckShape = new Shape();
-  const deckOutline = outline.map(([along, across]) => [along * 0.88, across * 0.82] as const);
-  deckShape.moveTo(deckOutline[0]![0], deckOutline[0]![1]);
-  for (const [along, across] of deckOutline.slice(1)) deckShape.lineTo(along, across);
-  deckShape.closePath();
-  const deckGeometry = track(
-    new ExtrudeGeometry(deckShape, { depth: HULL_DEPTH * 0.16, bevelEnabled: false }),
-  );
-  deckGeometry.rotateX(-Math.PI / 2);
-  deckGeometry.translate(0, HULL_DEPTH, 0);
-  const mastGeometry = toBakeable(new CylinderGeometry(MAST_RADIUS, MAST_RADIUS, MAST_HEIGHT, 5));
-  const sailGeometry = track(new BoxGeometry(SAIL_THICKNESS, SAIL_HEIGHT, SAIL_WIDTH));
-  const yardGeometry = toBakeable(
-    new CylinderGeometry(YARD_RADIUS, YARD_RADIUS, SAIL_WIDTH + YARD_OVERHANG * 2, 5),
-  );
-  const oarGeometry = toBakeable(new CylinderGeometry(OAR_RADIUS, OAR_RADIUS, OAR_LENGTH, 4));
-
-  const hullMaterial = trackMaterial(new MeshStandardMaterial({ color: HULL_COLOR, flatShading: true }));
-  const deckMaterial = trackMaterial(new MeshStandardMaterial({ color: DECK_COLOR, flatShading: true }));
-  const mastMaterial = trackMaterial(new MeshStandardMaterial({ color: MAST_COLOR, flatShading: true }));
-  const oarMaterial = trackMaterial(new MeshStandardMaterial({ color: OAR_COLOR, flatShading: true }));
-  // The ONE material that is per boat rather than shared — a fighting boat's
-  // sail changes colour, and a shared material would redden every sail in the
-  // world the moment one boat engaged.
-  const makeSailMaterial = (): MeshStandardMaterial =>
-    new MeshStandardMaterial({ color: SAIL_COLOR, flatShading: true });
-
-  // ── THE BAKE ──────────────────────────────────────────────────────────
-  //
-  // The parts that are identical on every boat — hull, deck, mast, yard and
-  // all four oars — are authored ONCE here as a plain part-tree and handed to
-  // `bakeRig`, which turns them into one skinnable surface every boat then
-  // shares (see client/src/render/rigSkin.ts). What comes back per boat is a
-  // skeleton whose bones stand exactly where these nodes stood.
-  const authored = new Group();
-  // The model faces +X, the same convention monsters' models keep, so the
-  // render loop's heading-to-rotation rule is one rule for both plugins.
-  // Hull and deck are both baked at their final height by the geometry above,
-  // so neither needs positioning here.
-  const hull = new Mesh(hullGeometry, hullMaterial);
-  authored.add(hull);
-  const deck = new Mesh(deckGeometry, deckMaterial);
-  authored.add(deck);
-
-  const mast = new Mesh(mastGeometry, mastMaterial);
-  mast.position.y = HULL_DEPTH + MAST_HEIGHT / 2;
-  authored.add(mast);
-
-  // The yard the sail hangs from, across the beam at the sail's head.
-  const yard = new Mesh(yardGeometry, mastMaterial);
-  yard.rotation.x = Math.PI / 2;
-  yard.position.y = SAIL_CENTRE_Y + SAIL_HEIGHT / 2;
-  authored.add(yard);
-
-  // Oars, mounted along both gunwales. Each sits in its own pivot Group so
-  // `animate` can yaw it about its mount rather than about the hull.
-  //
-  // The inner `shaft` Group carries the static dip (rotation.x = side ×
-  // OAR_DIP_RADIANS) and is never animated. rigSkin makes EVERY node a bone —
-  // including static ones — and records its rest transform verbatim in the
-  // bone descriptor, so the dip survives the bake exactly; it costs one extra
-  // matrix per oar and buys not having to pre-multiply the dip into anything.
-  interface OarJoint {
-    /** The authored pivot node, for capturing its joint index after the bake. */
-    readonly node: Group;
-    /** -1 port or +1 starboard, as authored. */
-    readonly side: number;
+  const installed = kit;
+  if (installed === null) {
+    throw new Error(
+      'createBoatModels: no boat asset installed — preloadBoatModels (or installBoatKit) runs first',
+    );
   }
-  const oarJoints: OarJoint[] = [];
-  for (let side = -1; side <= 1; side += 2) {
-    for (let index = 0; index < OARS_PER_SIDE; index++) {
-      const pivot = new Group();
-      pivot.position.set(
-        HULL_LENGTH * (0.14 - index * 0.32),
-        HULL_DEPTH * 0.9,
-        (side * HULL_BEAM) / 2,
-      );
-      const oar = new Mesh(oarGeometry, oarMaterial);
-      // Lay the cylinder across the beam, reaching outboard, then dip the
-      // blade toward the water — a level oar reads as a loose spar.
-      oar.rotation.x = Math.PI / 2;
-      oar.position.z = (side * OAR_LENGTH) / 2;
-      const shaft = new Group();
-      shaft.rotation.x = side * OAR_DIP_RADIANS;
-      shaft.add(oar);
-      pivot.add(shaft);
-      oarJoints.push({ node: pivot, side });
-      authored.add(pivot);
-    }
+  const sailNode = installed.asset.node('sail');
+  const parent = sailNode.parent;
+  sailNode.removeFromParent();
+  let blueprint: RigBlueprint;
+  try {
+    blueprint = bakeRig(installed.asset.scene);
+  } finally {
+    // The asset stays whole: node() and anchor() keep working after the bake.
+    parent?.add(sailNode);
   }
 
-  const blueprint = bakeRig(authored);
-
-  // Capture the joint indices NOW, at author time — this is the handle
-  // `animate` will use to reach each oar pivot bone. It cannot be recovered
-  // later: the authored tree is consumed by the bake, and the instance bones
-  // are fresh objects with no link back to these nodes.
+  // Capture the joint indices NOW, at bake time — this is the handle `animate`
+  // will use to reach each oar pivot bone. It cannot be recovered later: the
+  // instance bones are fresh objects with no link back to the authored nodes.
+  const oarJoints: number[] = [];
   const oarSides: number[] = [];
-  const oarJointIndices: number[] = [];
-  for (const joint of oarJoints) {
-    oarJointIndices.push(blueprint.jointIndex(joint.node));
-    oarSides.push(joint.side);
+  for (const pivot of OAR_PIVOTS) {
+    oarJoints.push(blueprint.jointIndex(installed.asset.node(pivot.name)));
+    oarSides.push(pivot.side);
   }
+
+  // Measured, not assumed: the textured hull costs its own surface beside the
+  // flat set, and the sail (never baked) is the +1. Recount here is what keeps
+  // BOAT_DRAW_OBJECTS — and through it drawBudget — truthful per asset.
+  BOAT_DRAW_OBJECTS = blueprint.surfaceCount + 1;
 
   return {
     create(): BoatModel {
@@ -379,25 +291,17 @@ export function createBoatModels(): BoatModels {
       const instance = instantiateRig(blueprint);
       const root = instance.root;
 
-      // The sail is deliberately NOT part of the baked rig, though it would
-      // merge into its single surface. Two reasons, both about colour:
-      //
-      // * rigSkin's materialSignature() does NOT include `color` — parts that
-      //   differ only in colour merge into ONE surface with the colour carried
-      //   as VERTEX DATA. A baked sail's canvas tint would therefore live in a
-      //   buffer shared by every boat in the world.
-      // * A blueprint holds ONE material per surface, shared by every
-      //   instance. There is no per-instance recolour left to be had.
-      //
-      // But the sail's colour IS the fighting state signal
-      // (SAIL_FIGHTING_COLOR above): one boat engaging must redden ITS sail
-      // alone. So the sail stays a plain Mesh with its own per-boat material,
-      // hung off the instance root. Cost: 2 draw calls per boat instead of the
-      // rig's 1. Do not "fix" this back into the rig without solving those two
-      // bullets first.
-      const sailMaterial = makeSailMaterial();
-      const sail = new Mesh(sailGeometry, sailMaterial);
-      sail.position.y = SAIL_CENTRE_Y;
+      const sailMaterial = installed.sailMaterial.clone();
+      sailMaterial.color.setHex(SAIL_COLOR);
+      const sail = new Mesh(installed.sailGeometry, sailMaterial);
+      sail.position.copy(installed.sailPosition);
+      sail.quaternion.set(
+        installed.sailQuaternion.x,
+        installed.sailQuaternion.y,
+        installed.sailQuaternion.z,
+        installed.sailQuaternion.w,
+      );
+      sail.scale.copy(installed.sailScale);
       root.add(sail);
 
       let wasFighting = false;
@@ -414,13 +318,13 @@ export function createBoatModels(): BoatModels {
 
           const strokeRate = fighting ? OAR_STROKE_HZ * OAR_FIGHTING_RATE : OAR_STROKE_HZ;
           const swing = Math.sin(t * strokeRate * Math.PI * 2) * OAR_SWEEP_RADIANS;
-          for (let i = 0; i < oarJointIndices.length; i++) {
+          for (let i = 0; i < oarJoints.length; i++) {
             // Opposite sides pull in opposition, which is what reads as rowing
             // rather than as a shiver. The side comes from the parallel array
-            // captured at author time, NOT from userData: instantiateRig builds
+            // captured at bake time, NOT from userData: instantiateRig builds
             // fresh Bone objects from rest transforms and does not carry
             // userData across the bake.
-            instance.joints[oarJointIndices[i]!]!.rotation.y = swing * oarSides[i]!;
+            instance.joints[oarJoints[i]!]!.rotation.y = swing * oarSides[i]!;
           }
 
           // Only touched on the frame the state actually changes: assigning a
@@ -441,14 +345,11 @@ export function createBoatModels(): BoatModels {
     },
 
     dispose(): void {
-      // The blueprint first: it owns the merged rig geometry and the vertex-
-      // coloured material clone the instances draw with. Everything after it
-      // is the authoring pool this file has always tracked.
+      // The blueprint: merged rig geometry plus the vertex-coloured material
+      // clones the instances draw with. The installed asset (source geometry,
+      // the sail template, the file's textures) belongs to the kit and is
+      // freed by disposeBoatKit, not here.
       blueprint.dispose();
-      for (const geometry of geometries) geometry.dispose();
-      for (const material of materials) material.dispose();
-      geometries.length = 0;
-      materials.length = 0;
     },
   };
 }
