@@ -324,6 +324,57 @@ export function isHullPose(
   return true;
 }
 
+/**
+ * How far a hull is asked to be able to move, ahead or astern, for a pose to
+ * count as one it can manoeuvre from — a quarter of a hull length, in cells.
+ *
+ * Not one tick's travel: it must not depend on `dt`, and it should cover a few
+ * ticks of way so a hull is judged wedged while there is still room to do
+ * something about it rather than at the last step.
+ */
+const HULL_SEA_ROOM_CELLS = BOAT_HULL_LENGTH_CELLS / 4;
+
+/**
+ * A pose a hull can occupy AND leave without pivoting: legal where it lies,
+ * and legal one HULL_SEA_ROOM_CELLS ahead or one astern along its heading.
+ *
+ * WHY LEGALITY ALONE IS NOT ENOUGH (measured on the owner's world,
+ * 2026-09-03). A hull can lie in a pocket exactly its own length — legal where
+ * it is, illegal one step ahead AND one step astern. A boat that may not pivot
+ * (owner rule) can only begin a turn by moving, so such a hull is wedged for
+ * good: every restored boat sat in that pocket and none moved in three
+ * minutes. So the places a boat is SENT to rest — moorings, station slots, the
+ * cell a refloat kedges toward — are chosen with this predicate, and a hull
+ * found wedged is kedged out by `refloat` exactly as one found aground is.
+ *
+ * The per-step gate stays `isHullPose`: a moving hull only ever needs the pose
+ * it is about to take to be legal, and demanding sea room of every step made
+ * arrivals refuse berths one step short (measured: the C-bay fleet never
+ * engaged, and the rout slipped from 24 s to 29 s).
+ *
+ * `roomCells` is HULL_SEA_ROOM_CELLS for a place a boat is sent to REST, and
+ * the tick's own step for the wedge test on a boat that is trying to SAIL —
+ * the room a sailing hull needs is exactly the step it is about to take, and
+ * a probe further out can be legal while the step itself is not (measured:
+ * a hull judged roomy at a quarter length crawled 0.6 cells in a minute).
+ */
+function isManoeuvrablePose(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  x: number,
+  y: number,
+  heading: number,
+  roomCells: number = HULL_SEA_ROOM_CELLS,
+): boolean {
+  if (!isHullPose(world, eroded, x, y, heading)) return false;
+  const dx = Math.cos(heading) * roomCells;
+  const dy = Math.sin(heading) * roomCells;
+  return (
+    isHullPose(world, eroded, x + dx, y + dy, heading) ||
+    isHullPose(world, eroded, x - dx, y - dy, heading)
+  );
+}
+
 // ── stations, slots, and voyages ─────────────────────────────────────────────
 
 /**
@@ -466,7 +517,26 @@ interface Voyage {
    */
   slot: number | null;
   slotList: BerthList | null;
+  /**
+   * Consecutive sail ticks on which the follower moved the hull nowhere at all
+   * — forward vetoed, astern vetoed. See HELD_TICKS_BEFORE_KEDGE.
+   */
+  heldTicks: number;
 }
+
+/**
+ * Sail ticks a hull may be held motionless before it is treated as wedged and
+ * kedged out (`refloat`), whatever the pose predicates say about it.
+ *
+ * THE BELT TO isManoeuvrablePose's SUSPENDERS: that test asks about one step
+ * dead ahead and dead astern on the current heading, and the follower's step
+ * is taken on the ADOPTED heading, a turn-cap away — so a pose can pass the
+ * test and still have every step it actually tries refused. Five ticks (half
+ * a second at the shipped rate) is long enough that a hull merely waiting on a
+ * crowd to clear is not mistaken for one that is stuck, and short enough that
+ * a player never watches a boat sit against a shore.
+ */
+const HELD_TICKS_BEFORE_KEDGE = 5;
 
 /** Which berth list a sticky slot index belongs to. */
 type BerthList = 'station' | 'home';
@@ -908,7 +978,7 @@ function surveyedLaunch(
         const dyb = y - berth.y;
         return dxb * dxb + dyb * dyb >= HOME_BERTH_CLEARANCE_CELLS * HOME_BERTH_CLEARANCE_CELLS;
       });
-      if (clearOfTaken && isHullPose(world, eroded, x, y, faceHome)) {
+      if (clearOfTaken && isManoeuvrablePose(world, eroded, x, y, faceHome)) {
         moorings.push({ x, y });
       }
     }
@@ -1077,7 +1147,7 @@ function assignStationGoals(
   const poseOf = (slot: number): { x: number; y: number } | null => {
     const { x, y } = pointOf(slot);
     const faceKraken = Math.atan2(kraken.y - y, kraken.x - x);
-    return isHullPose(world, eroded, x, y, faceKraken) ? { x, y } : null;
+    return isManoeuvrablePose(world, eroded, x, y, faceKraken) ? { x, y } : null;
   };
   for (let index = 0; index < boats.length; index++) {
     const boat = boats[index];
@@ -1360,7 +1430,7 @@ function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: num
   for (const [dx, dy] of COASTAL_DISC) {
     const targetX = originX + dx + CELL_CENTRE_OFFSET;
     const targetY = originY + dy + CELL_CENTRE_OFFSET;
-    if (!isHullPose(world, eroded, targetX, targetY, boat.heading)) continue;
+    if (!isManoeuvrablePose(world, eroded, targetX, targetY, boat.heading)) continue;
     const range = distance(boat.x, boat.y, targetX, targetY);
     if (range <= step) {
       boat.x = targetX;
@@ -1393,12 +1463,19 @@ function sailBoat(tick: SailTick, index: number): void {
     homeGoals,
   } = tick;
   const boat = boats[index];
-  // A hull that may not be where it is does nothing else this tick: it kedges
-  // toward legal water (see `refloat`) and rejoins the ordinary sail path once
-  // it is somewhere a route can start from.
-  if (!isHullPose(world, eroded, boat.x, boat.y, boat.heading)) {
+  // A hull that may not be where it is — or that is legal but WEDGED, unable
+  // to move ahead or astern (isManoeuvrablePose) — does nothing else this tick:
+  // it kedges toward water it can manoeuvre in (see `refloat`) and rejoins the
+  // ordinary sail path once it is somewhere a route can start from.
+  const held = voyages.get(boat.id)?.heldTicks ?? 0;
+  if (
+    !isManoeuvrablePose(world, eroded, boat.x, boat.y, boat.heading, step) ||
+    held >= HELD_TICKS_BEFORE_KEDGE
+  ) {
     boat.fighting = false;
     refloat(world, eroded, boat, step);
+    const voyage = voyages.get(boat.id);
+    if (voyage !== undefined) voyage.heldTicks = 0;
     return;
   }
   const target = targetFor(boat, kraken);
@@ -1501,6 +1578,7 @@ function sailBoat(tick: SailTick, index: number): void {
       noProgressSeconds: 0,
       slot: null,
       slotList: null,
+      heldTicks: 0,
     };
     voyages.set(boat.id, voyage);
   }
@@ -1624,6 +1702,8 @@ function sailBoat(tick: SailTick, index: number): void {
   // at the heading the hull holds — adopted forward, current astern — so the
   // plugin-level second veto and its own astern are gone: followRoute's own
   // astern is the one backing manoeuvre.
+  // Motionless with somewhere to go is a held tick (see HELD_TICKS_BEFORE_KEDGE).
+  voyage.heldTicks = helm.x === boat.x && helm.y === boat.y ? voyage.heldTicks + 1 : 0;
   boat.heading = helm.heading;
   boat.x = helm.x;
   boat.y = helm.y;
