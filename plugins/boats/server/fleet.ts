@@ -184,6 +184,15 @@ const BOAT_TURN_RADIUS_HULL_LENGTHS = 2;
  * typed out, so cutting BOAT_SPEED_CELLS_PER_SECOND widens the arc the hull
  * traces instead of silently tightening it.
  */
+/**
+ * The tightest circle a hull may ever turn on, in cells — half a hull length,
+ * the radius a rowed boat can manage with one oar backed and way barely on.
+ * Bounds the turn per tick BY STRIDE (see `sailBoat`): a hull that has moved
+ * `d` may have turned at most `d / this`, whatever the per-second cap allows,
+ * which is what makes a pivot unproducible rather than merely avoided.
+ */
+const BOAT_TIGHTEST_TURN_RADIUS_CELLS = BOAT_HULL_LENGTH_CELLS / 2;
+
 export const BOAT_TURN_RADIANS_PER_SECOND =
   BOAT_SPEED_CELLS_PER_SECOND / (BOAT_TURN_RADIUS_HULL_LENGTHS * BOAT_HULL_LENGTH_CELLS);
 
@@ -1527,7 +1536,13 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.slotList = slotList;
     }
   };
-  if (range <= standoff) {
+  // WITHIN ONE STEP OF THE STANDOFF COUNTS AS ON IT. Creeping the last fraction
+  // of a cell onto a stand-off circle made a stride of a few thousandths, and a
+  // heading that turned the full per-tick cap over it — a pivot in every way a
+  // player can see (measured live, 2026-09-03: hulls turning 0.25 rad per
+  // broadcast with no visible displacement, all of them surplus boats holding
+  // off a shared mooring). A hull one step short of arm's length is there.
+  if (range <= standoff + (standoff > 0 ? step : 0)) {
     settle(goalX, goalY);
     return;
   }
@@ -1640,6 +1655,12 @@ function sailBoat(tick: SailTick, index: number): void {
   }
   const advance = strideFactorFor(Math.abs(normalizeAngle(aimBearing - boat.heading)));
   const stride = Math.min(step, range - standoff) * advance;
+  // THE TURN IS BOUGHT WITH THE STRIDE. The per-second cap is the turning circle
+  // at cruise; at a shorter stride the hull may still not swing more than its
+  // tightest circle allows over the distance actually travelled — so a stride
+  // of nothing turns nothing, and a pivot cannot be produced by any stride the
+  // arithmetic above can hand down. The belt to the hold above.
+  const turnThisTick = Math.min(maxTurnRadians, stride / BOAT_TIGHTEST_TURN_RADIUS_CELLS);
   // No certified path (illegal goal cell, exhausted pool, open-sea pocket):
   // press on only while the first step toward the goal is hull water, else
   // hold. Dead reckoning toward a point with a turning circle orbits it
@@ -1689,7 +1710,7 @@ function sailBoat(tick: SailTick, index: number): void {
     // (BOAT_AIM_AHEAD_CELLS) to trace a smooth arc through the route's
     // 8-direction jag. Rejoining a cut corner is the contract's own re-sync
     // (shared's ROUTE_REJOIN_RADIUS_CELLS) — not a callsite aim.
-    maxTurnRadians,
+    maxTurnRadians: turnThisTick,
     aimAheadCells: BOAT_AIM_AHEAD_CELLS,
     // followRoute's own single-replan safety is capped at what the shared
     // pool still holds: it can spend the remainder, never more.
