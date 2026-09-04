@@ -8,12 +8,15 @@ import {
   LAND_WALKER_PROFILE,
   OPEN_WATER_PROFILE,
   RIVER_FORDING_WALKER_PROFILE,
+  UNCONSTRAINED_MAX_GROUND_HEIGHT,
   findRoute,
+  navigableWaterProfile,
   SEA_LEVEL,
   UNCONSTRAINED_GRADIENT_PER_CELL,
   canTraverseSegment,
   groundOf,
   isWalkableCell,
+  withClearance,
   type TerrainSampler,
   type TraversalProfile,
   waterBandProfile,
@@ -177,5 +180,37 @@ describe('the archetypes', () => {
     const world = fakeWorld((x) => (x < 10 ? DEEP_WATER_MAX_HEIGHT : LAND_WALKER_MIN_GROUND_HEIGHT));
     expect(isWalkableCell(world, OPEN_WATER_PROFILE, 5, 5)).toBe(true);
     expect(isWalkableCell(world, OPEN_WATER_PROFILE, 15, 5)).toBe(false);
+  });
+});
+
+describe('navigableWaterProfile — hull draft as a ceiling on ground', () => {
+  it('rejects ground shallower than the keel and accepts ground at it, while open water accepts both', () => {
+    // Both heights are shallow water by class; only the ceiling separates them.
+    const DRAFT = 10;
+    const profile = navigableWaterProfile(DRAFT);
+    expect(UNCONSTRAINED_MAX_GROUND_HEIGHT).toBeGreaterThan(SEA_LEVEL);
+    const keel = SEA_LEVEL - DRAFT;
+    const world = fakeWorld((x) => (x < 10 ? keel + 1 : keel));
+    expect(isWalkableCell(world, profile, 5, 5)).toBe(false); // one unit above the keel
+    expect(isWalkableCell(world, profile, 15, 5)).toBe(true); // exactly at the keel
+    expect(isWalkableCell(world, OPEN_WATER_PROFILE, 5, 5)).toBe(true);
+    expect(isWalkableCell(world, OPEN_WATER_PROFILE, 15, 5)).toBe(true);
+  });
+});
+
+describe('withClearance — the eroded sampler', () => {
+  it('dilates one dry cell by its radius, and returns the world itself at radius 0', () => {
+    const world: TerrainSampler = {
+      worldSize: 16,
+      heightAt: (x, y) =>
+        Math.floor(x) === 5 && Math.floor(y) === 5 ? BAND_HEIGHT : DEEP_WATER_MAX_HEIGHT,
+    };
+    const eroded = withClearance(world, 1);
+    // The disc over an orthogonally adjacent water cell still covers the dry
+    // cell, so its max height reads dry ...
+    expect(groundOf(eroded.heightAt(6, 5))).toBe('dry');
+    // ... while a cell two away is outside the disc and stays deep water.
+    expect(groundOf(eroded.heightAt(7, 5))).toBe('deep');
+    expect(withClearance(world, 0)).toBe(world);
   });
 });

@@ -77,6 +77,14 @@ describe('the fight is the arithmetic protocol.ts claims', () => {
    * Fights a kraken parked within engagement range of the village and reports
    * how it went. The kraken never moves: this is a test of the attrition
    * numbers, and a moving target would fold steering into the measurement.
+   *
+   * THE FLEET STARTS AT STATION (2026-09-03), already inside engagement range,
+   * for the same reason the kraken never moves: this measures attrition, not
+   * transit. Until boats had hulls the sail-in was free — every boat launched
+   * on one point berth a cell inside the circle and pivoted to face the fight
+   * — so the pinned times held by accident. A hull berths a few cells out
+   * facing out of harbour and takes seconds to come about, and those seconds
+   * are steering, which is precisely what this fixture excludes.
    */
   function fightToTheEnd(startingBoats: number): {
     routed: boolean;
@@ -85,15 +93,24 @@ describe('the fight is the arithmetic protocol.ts claims', () => {
   } {
     const world = coastWorld();
     buildFullFleet(world);
-    // Trim to the fleet under test, so 1 and 2 boats are the same code path as 3.
-    const trimmed = livingBoats().slice(0, startingBoats);
+    const kraken = { x: VILLAGE_X + BOAT_ENGAGEMENT_RANGE_CELLS - 1, y: VILLAGE_Y };
+    // Trim to the fleet under test, so 1 and 2 boats are the same code path as 3,
+    // and moor each on the station circle south of the kraken, one boat length
+    // apart along the arc, facing it — the pose a fleet holds at the fight's edge.
+    const stationed = livingBoats()
+      .slice(0, startingBoats)
+      .map((boat, rank) => {
+        const bearing = Math.PI / 2 + rank * (2 * BOAT_PERSONAL_SPACE_CELLS * 2) / BOAT_ENGAGEMENT_RANGE_CELLS;
+        const x = kraken.x + Math.cos(bearing) * (BOAT_ENGAGEMENT_RANGE_CELLS - 1);
+        const y = kraken.y + Math.sin(bearing) * (BOAT_ENGAGEMENT_RANGE_CELLS - 1);
+        return { ...boat, x, y, heading: bearing + Math.PI };
+      });
     restoreFleet({
       villages: [{ x: VILLAGE_X, y: VILLAGE_Y, rebuildSeconds: 0 }],
-      boats: trimmed,
+      boats: stationed,
       nextBoatId: 99,
     });
 
-    const kraken = { x: VILLAGE_X + BOAT_ENGAGEMENT_RANGE_CELLS - 1, y: VILLAGE_Y };
     let seconds = 0;
     // Long enough for any outcome; a fleet is wiped by 36 s and a rout lands
     // at 24 s, so 120 s only runs on for a bug.
