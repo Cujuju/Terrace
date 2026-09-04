@@ -451,6 +451,19 @@ function slotCountFor(stationRadiusCells: number): number {
 const HOME_BERTH_CLEARANCE_CELLS = 2 * BOAT_PERSONAL_SPACE_CELLS;
 
 /**
+ * Berths a village's survey keeps — twice its own fleet.
+ *
+ * A village's berths are claimed CELL BY CELL across the whole fleet
+ * (`homeBerthFor`), and neighbouring villages on one bay survey the same
+ * water, so the nearest three are routinely a neighbour's by the time this
+ * village's boats come home. The spare three are what those boats fall back
+ * to instead of holding off a berth that will never free. Twice, not more:
+ * the survey walks nearest-first and stops when it has them, so the cost is
+ * a few more hull-pose tests per survey, on the survey's cadence.
+ */
+const MOORINGS_SURVEYED_PER_VILLAGE = 2 * BOATS_PER_VILLAGE;
+
+/**
  * How far the goal may drift before the route planned to it is stale, in
  * cells — two personal spaces (one whole hull). A kraken wandering inside
  * that does not change which way round a headland the fleet goes, so it
@@ -980,7 +993,7 @@ function surveyedLaunch(
     found++;
     // COASTAL_DISC is sorted nearest-first, so the first hit is the closest.
     if (launch === null) launch = { x, y };
-    if (moorings.length < BOATS_PER_VILLAGE) {
+    if (moorings.length < MOORINGS_SURVEYED_PER_VILLAGE) {
       const faceHome = Math.atan2(village.y - y, village.x - x);
       const clearOfTaken = moorings.every((berth) => {
         const dxb = x - berth.x;
@@ -994,7 +1007,7 @@ function surveyedLaunch(
     // Stop as soon as NEITHER half can change its answer: the launch bar is
     // met and the berths are full. An inland village walks the whole disc,
     // but only on survey ticks — never per boat per tick.
-    if (found >= COASTAL_MIN_WATER_CELLS && moorings.length >= BOATS_PER_VILLAGE) break;
+    if (found >= COASTAL_MIN_WATER_CELLS && moorings.length >= MOORINGS_SURVEYED_PER_VILLAGE) break;
   }
   shipyard.launch = found >= COASTAL_MIN_WATER_CELLS ? launch : null;
   shipyard.moorings = moorings;
@@ -1228,14 +1241,17 @@ function assignStationGoals(
  *
  * Returns null for an engaged boat: she sails under station rules, not home
  * ones, and the station path owns her goal AND her slot memory for the whole
- * fight. `taken` carries the berths earlier boats of each village claimed
- * this tick, keyed by village — two villages sharing a bay assign from their
- * own lists independently.
+ * fight. `taken` carries every berth CELL an earlier boat claimed this tick,
+ * across all villages: two villages sharing a bay survey overlapping mooring
+ * lists, and a cell claimed by either is claimed for both. Keyed per village
+ * it was not (measured live, 2026-09-03): boats of neighbouring villages were
+ * sent to the same cell, converged, were pushed apart by the resolution pass
+ * and converged again every tick — a jitter that read as a pivot.
  */
 function homeBerthFor(
   index: number,
   kraken: KrakenTarget | null,
-  taken: Map<string, Set<number>>,
+  taken: Set<string>,
 ): StationGoal | null {
   const boat = boats[index];
   if (targetFor(boat, kraken) !== null) return null;
@@ -1246,17 +1262,13 @@ function homeBerthFor(
   if (moorings.length === 0) {
     return { x: boat.homeX, y: boat.homeY, standoff: 0, slot: null };
   }
-  let claimed = taken.get(key);
-  if (claimed === undefined) {
-    claimed = new Set<number>();
-    taken.set(key, claimed);
-  }
+  const cellOf = (berth: KrakenTarget): string => villageKey(berth.x, berth.y);
   // STICKINESS. The guard matters across the peace/war boundary: a station
   // slot index can exceed this list, and a stale one must fall through to
   // the k-th berth rather than off the end of it.
   const prev = stickySlotIn(boat.id, 'home');
-  if (prev !== null && prev >= 0 && prev < moorings.length && !claimed.has(prev)) {
-    claimed.add(prev);
+  if (prev !== null && prev >= 0 && prev < moorings.length && !taken.has(cellOf(moorings[prev]))) {
+    taken.add(cellOf(moorings[prev]));
     const berth = moorings[prev];
     return { x: berth.x, y: berth.y, standoff: 0, slot: prev };
   }
@@ -1280,8 +1292,8 @@ function homeBerthFor(
   for (let n = 0; n < moorings.length; n++) {
     const off = n === 0 ? 0 : n % 2 === 1 ? (n + 1) / 2 : -(n / 2);
     const slot = k + off;
-    if (slot < 0 || slot >= moorings.length || claimed.has(slot)) continue;
-    claimed.add(slot);
+    if (slot < 0 || slot >= moorings.length || taken.has(cellOf(moorings[slot]))) continue;
+    taken.add(cellOf(moorings[slot]));
     const berth = moorings[slot];
     return { x: berth.x, y: berth.y, standoff: 0, slot };
   }
@@ -1299,7 +1311,7 @@ function homeBerthFor(
  */
 function assignHomeBerths(kraken: KrakenTarget | null): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
-  const taken = new Map<string, Set<number>>();
+  const taken = new Set<string>();
   for (let index = 0; index < boats.length; index++) {
     const goal = homeBerthFor(index, kraken, taken);
     if (goal !== null) goals.set(index, goal);
@@ -1542,7 +1554,13 @@ function sailBoat(tick: SailTick, index: number): void {
   // player can see (measured live, 2026-09-03: hulls turning 0.25 rad per
   // broadcast with no visible displacement, all of them surplus boats holding
   // off a shared mooring). A hull one step short of arm's length is there.
-  if (range <= standoff + (standoff > 0 ? step : 0)) {
+  //
+  // A SURPLUS BOAT'S HOLD IS A BAND, NOT A LINE: several boats holding off
+  // the same last berth would otherwise be pushed apart by the resolution pass
+  // and sail straight back to the line, every tick. Within one clearance of
+  // arm's length is close enough to be home.
+  const holdSlack = standoff === 0 ? 0 : target === null ? HOME_BERTH_CLEARANCE_CELLS : step;
+  if (range <= standoff + holdSlack) {
     settle(goalX, goalY);
     return;
   }
