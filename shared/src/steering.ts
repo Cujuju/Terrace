@@ -161,14 +161,26 @@ export interface SteerOptions {
   readonly stepRadians?: number;
   /**
    * An extra veto a plugin needs and this file has no business knowing about
-   * — boats' "only inside unlocked territory", monsters' whole-body lair
-   * pose. Called with the candidate LOOK-AHEAD point, which is the far END of
-   * the probe and not the path to it: ground legality IS sampled the whole way
+   * — boats' hull pose, monsters' whole-body lair pose. Called with the
+   * candidate LOOK-AHEAD point, which is the far END of the probe and not the
+   * path to it: ground legality IS sampled the whole way
    * (canProceedAlong), a caller's own extra rule is not. Stated because it is
    * a gap for any veto that can be true at both ends of a segment and false in
    * the middle — a chunk-granular unlock mask clipped by a corner, say.
+   *
+   * Called WITH THE HEADING the mover would hold at that point, because a
+   * heading-relative body (a hull) can only be judged at the heading it will
+   * actually hold. Judging it at the pre-turn heading is what made boats carry
+   * a second veto after the commit: the sweep certified the step on the old
+   * heading, the commit turned up to maxTurnRadians, and the bow swung into a
+   * shore the old pose had cleared. So the sweep passes each CANDIDATE heading
+   * here; the turn-limited commit passes the ADOPTED heading for the forward
+   * step and the CURRENT heading for the astern step (astern never turns); and
+   * the aim-ahead loop passes the bearing from the mover to the candidate cell,
+   * which is the heading a straight sail at it would hold. Additive: existing
+   * two-argument callers keep compiling.
    */
-  readonly permits?: (x: number, y: number) => boolean;
+  readonly permits?: (x: number, y: number, heading: number) => boolean;
 }
 
 /**
@@ -318,7 +330,7 @@ export function steerAvoiding(
     const aheadY = mover.y + Math.sin(heading) * lookaheadCells;
 
     if (!canProceedAlong(world, profile, mover.x, mover.y, aheadX, aheadY)) continue;
-    if (options.permits !== undefined && !options.permits(aheadX, aheadY)) continue;
+    if (options.permits !== undefined && !options.permits(aheadX, aheadY, heading)) continue;
     if (separates) {
       // Where this mover would STAND, not where it can see — see the two-
       // distances note above. Computed inside the branch so a caller with no
@@ -469,6 +481,25 @@ export interface RoutedMover extends Mover {
  */
 const ROUTE_RESYNC_WINDOW_CELLS = cellsAcross(2);
 
+/**
+ * How close to a route cell's centre a corner-cutting mover may be and still
+ * count as ON the route — one cell.
+ *
+ * Adjacent to the corridor counts as on it for a mover that is ALLOWED to cut
+ * corners (aimAheadCells > 1): cutting a bend, the chord it sails passes
+ * beside the bend cells' centres rather than through them, and containment
+ * never fires. One cell is the tightest radius that still covers that chord —
+ * the bend cell is a neighbour of the corridor, never far water.
+ *
+ * THIS IS NOT THE CONDEMNED 0.75-RADIUS PROXIMITY ADVANCE `followRoute`
+ * documents below: that one advanced the index and then validated an
+ * UNCERTIFIED shortcut to the cell after — a diagonal the route never
+ * contained — which failed, replanned, and 2-cycled the mover home. This one
+ * advances and then aims through the same `canProceedAlong`-validated
+ * aim-ahead loop as every other tick, so no uncertified segment is ever walked.
+ */
+const ROUTE_REJOIN_RADIUS_CELLS = 1;
+
 /** The centre of a route cell — where a follower actually aims. */
 function cellCentre(cell: RouteCell): { x: number; y: number } {
   return { x: cell.x + 0.5, y: cell.y + 0.5 };
@@ -492,6 +523,21 @@ export interface FollowRouteOptions extends SteerOptions {
    * pathing.ts's own ROUTE_NODE_BUDGET; a test forces exhaustion with it.
    */
   readonly replanNodeBudget?: number;
+  /**
+   * Most the mover's heading may change THIS TICK, in radians (its turn rate × dt).
+   * When set, the sweep's answer is a direction to WANT and the heading adopted is
+   * turnToward(current, wanted, ...). Absent = unlimited, the previous behaviour.
+   */
+  readonly maxTurnRadians?: number;
+  /**
+   * How many route cells past the current one the follower may aim at directly.
+   * It aims at the FARTHEST of route[i+1 .. i+aimAheadCells] whose straight segment
+   * from the mover's position is legal (canProceedAlong + permits at the far end),
+   * falling back to i+1. Default 1 = the previous behaviour. A mover with a
+   * turning circle cannot track 1-cell waypoints and needs a far target to trace
+   * a smooth arc through a jagged 8-direction route.
+   */
+  readonly aimAheadCells?: number;
 }
 
 export interface FollowRouteResult {
@@ -543,7 +589,12 @@ export interface FollowRouteResult {
  *
  *   1. RE-SYNC BY CONTAINMENT, not by proximity. The index advances when the
  *      mover's own floored cell IS the next route cell — it has to actually
- *      be there. `ROUTE_RESYNC_WINDOW_CELLS` bounds the search.
+ *      be there. `ROUTE_RESYNC_WINDOW_CELLS` bounds the search. ONE EXCEPTION:
+ *      a mover aiming aimAheadCells > 1 ahead legally leaves the corridor
+ *      cutting a bend, and containment then finds nothing for 100+ ticks
+ *      (measured). In that case only, the index rejoins to the FARTHEST window
+ *      cell within ROUTE_REJOIN_RADIUS_CELLS and counts it as progress — see
+ *      that constant for why this is not the condemned proximity advance.
  *   2. AIM AT THE NEXT CELL, never the current one. Aiming at the cell you
  *      are already in is a null instruction at best and, after a replan,
  *      a step backwards.
@@ -600,9 +651,52 @@ export function followRoute(
     // Null now means a one-cell pocket, not near-sightedness: hold, and let
     // the give-up timer run.
     if (heading === null) return;
-    mover.heading = heading;
-    mover.x += Math.cos(heading) * options.stepCells;
-    mover.y += Math.sin(heading) * options.stepCells;
+    if (options.maxTurnRadians === undefined) {
+      mover.heading = heading;
+      mover.x += Math.cos(heading) * options.stepCells;
+      mover.y += Math.sin(heading) * options.stepCells;
+      return;
+    }
+    // TURN-LIMITED: the sweep's answer is a direction to WANT, and the heading
+    // adopted is the current one turned toward it by at most maxTurnRadians
+    // (turnToward with dt = 1, so the rate × dt product IS the per-tick cap).
+    // The step is then re-checked along the CLAMPED heading: the ladder
+    // certified `wanted`, never this, so committing it blind could walk into a
+    // wall the sweep refused — the re-check is required, not belt-and-braces.
+    // The caller's own rule is judged at the ADOPTED heading, the one the hull
+    // will actually hold: judging it at the pre-turn heading certified steps
+    // whose bow swing clipped the shore, which is the second veto this
+    // replaces (the plugin-level post-commit check is gone — this IS it).
+    const adopted = turnToward(mover.heading, heading, options.maxTurnRadians, 1);
+    const stepX = mover.x + Math.cos(adopted) * options.stepCells;
+    const stepY = mover.y + Math.sin(adopted) * options.stepCells;
+    if (
+      canProceedAlong(world, profile, mover.x, mover.y, stepX, stepY) &&
+      (options.permits === undefined || options.permits(stepX, stepY, adopted))
+    ) {
+      // Commit heading AND position together: the turn only happens by moving.
+      mover.heading = adopted;
+      mover.x = stepX;
+      mover.y = stepY;
+      return;
+    }
+    // The clamped heading is blocked: the heading DOES NOT CHANGE. A boat
+    // never pivots on the spot — committing the heading while holding position
+    // (the previous local fix in boats) IS a pivot, just a stationary one.
+    // Instead it backs astern one step along its CURRENT heading, which opens
+    // the forward arc on a later tick without one. The caller's rule is judged
+    // at that same current heading — astern never turns, so it is the heading
+    // the hull holds for the whole manoeuvre. Deterministic: no
+    // randomness in any branch; a mover that can back out of neither end holds.
+    const backX = mover.x - Math.cos(mover.heading) * options.stepCells;
+    const backY = mover.y - Math.sin(mover.heading) * options.stepCells;
+    if (
+      canProceedAlong(world, profile, mover.x, mover.y, backX, backY) &&
+      (options.permits === undefined || options.permits(backX, backY, mover.heading))
+    ) {
+      mover.x = backX;
+      mover.y = backY;
+    }
   };
 
   // ── Degraded: no route. Steer at the goal and report LEAVING THE CELL. ──
@@ -629,16 +723,48 @@ export function followRoute(
     return { progressed: moved, arrived: false, replanned: false };
   }
 
+  // How many route cells past the current one the follower may aim at
+  // directly (FollowRouteOptions.aimAheadCells; 1 = the previous behaviour).
+  // Needed BEFORE the re-sync below, because the window must cover the aim.
+  const aimAheadCount = Math.max(1, Math.floor(options.aimAheadCells ?? 1));
   // ── 1. Re-sync the index to the cell the mover is actually standing in. ──
   const cellX = Math.floor(mover.x);
   const cellY = Math.floor(mover.y);
   let progressed = false;
-  const limit = Math.min(mover.routeIndex + ROUTE_RESYNC_WINDOW_CELLS, mover.route.length - 1);
+  // The window covers at least aimAheadCount cells ahead: a mover aiming ahead
+  // legally leaves the route's cell corridor while cutting the corner and
+  // re-enters at the aimed cell, so a window narrower than the aim would lose
+  // a mover that did exactly what it was told.
+  const limit = Math.min(
+    mover.routeIndex + Math.max(ROUTE_RESYNC_WINDOW_CELLS, aimAheadCount),
+    mover.route.length - 1,
+  );
+  let synced = false;
   for (let i = mover.routeIndex + 1; i <= limit; i++) {
     if (mover.route[i].x === cellX && mover.route[i].y === cellY) {
       mover.routeIndex = i;
       progressed = true;
+      synced = true;
       break;
+    }
+  }
+  if (!synced && aimAheadCount > 1) {
+    // REJOIN: the mover cut a bend and is flying beside the corridor, not on
+    // it. Take the FARTHEST window cell within ROUTE_REJOIN_RADIUS_CELLS —
+    // farthest, so the aim glides forward instead of snapping back — and count
+    // it as progress: the mover demonstrably got somewhere. Squared comparison
+    // throughout, so no square root enters the movement path (same reason as
+    // `isClearOfOccupants`).
+    const rejoinRadiusSquared = ROUTE_REJOIN_RADIUS_CELLS * ROUTE_REJOIN_RADIUS_CELLS;
+    for (let i = limit; i > mover.routeIndex; i--) {
+      const centre = cellCentre(mover.route[i]);
+      const dx = centre.x - mover.x;
+      const dy = centre.y - mover.y;
+      if (dx * dx + dy * dy <= rejoinRadiusSquared) {
+        mover.routeIndex = i;
+        progressed = true;
+        break;
+      }
     }
   }
 
@@ -674,7 +800,32 @@ export function followRoute(
     next = cellCentre(mover.route[1]);
   }
 
-  stepOnce(next.x, next.y);
+  // Aim at the FARTHEST cell within the aim window whose straight segment from
+  // the mover's position is legal (canProceedAlong + permits at the far end),
+  // falling back to routeIndex+1 — whose edge was just validated above, so it
+  // is always accepted without re-testing. A mover with a turning circle cannot
+  // track 1-cell waypoints and needs the far target to trace a smooth arc
+  // through a jagged 8-direction route. `progressed` still means "entered a
+  // new route cell": aiming farther changes WHERE the mover walks, not what
+  // counts as getting somewhere.
+  const aimLimit = Math.min(mover.routeIndex + aimAheadCount, mover.route.length - 1);
+  let aimX = next.x;
+  let aimY = next.y;
+  for (let k = aimLimit; k > mover.routeIndex + 1; k--) {
+    const candidate = cellCentre(mover.route[k]);
+    if (!canProceedAlong(world, profile, mover.x, mover.y, candidate.x, candidate.y)) continue;
+    if (options.permits !== undefined) {
+      // The bearing the mover would hold sailing straight at the candidate —
+      // the heading a hull would actually have there (see `permits`).
+      const bearing = Math.atan2(candidate.y - mover.y, candidate.x - mover.x);
+      if (!options.permits(candidate.x, candidate.y, bearing)) continue;
+    }
+    aimX = candidate.x;
+    aimY = candidate.y;
+    break;
+  }
+
+  stepOnce(aimX, aimY);
   return { progressed, arrived: false, replanned };
 }
 

@@ -14,6 +14,7 @@ import {
   LAND_WALKER_PROFILE,
   findRoute,
   followRoute,
+  normalizeAngle,
   steerAvoiding,
   withoutSelf,
   type Occupant,
@@ -415,5 +416,84 @@ describe('withoutSelf', () => {
     const a = { x: 1, y: 1, radiusCells: 0.2 };
     const b = { x: 1, y: 1, radiusCells: 0.2 }; // same place, different body
     expect(withoutSelf([a, b], a)).toEqual([b]);
+  });
+});
+
+describe('followRoute — turn-limited following', () => {
+  it('clamps every heading change to maxTurnRadians and never pivots on the spot', () => {
+    const TURN = 0.1;
+    const terrain = world(16);
+    // An L: east along y = 5, then north up x = 5 — a 90° corner the turn
+    // limit cannot take in one tick.
+    const route: RouteCell[] = [
+      { x: 2, y: 5 },
+      { x: 3, y: 5 },
+      { x: 4, y: 5 },
+      { x: 5, y: 5 },
+      { x: 5, y: 4 },
+      { x: 5, y: 3 },
+      { x: 5, y: 2 },
+    ];
+    const boat = mover(2.5, 5.5, [...route], 0);
+    for (let tick = 0; tick < 300; tick++) {
+      const beforeX = boat.x;
+      const beforeY = boat.y;
+      const beforeHeading = boat.heading;
+      followRoute(terrain, LAND_WALKER_PROFILE, boat, {
+        // The shipped walker step (0.5 cells/s at 10 Hz): against a 0.1
+        // rad/tick cap that is a half-cell turn radius — tight enough to bite
+        // on the 90° corner, fine enough to track 1-cell waypoints.
+        stepCells: 0.05,
+        lookaheadCells: 1,
+        goalX: 5.5,
+        goalY: 2.5,
+        maxTurnRadians: TURN,
+      });
+      expect(Math.abs(normalizeAngle(boat.heading - beforeHeading))).toBeLessThanOrEqual(
+        TURN + 1e-12,
+      );
+      // The never-pivot rule: a tick that moved nowhere changed no heading.
+      if (boat.x === beforeX && boat.y === beforeY) expect(boat.heading).toBe(beforeHeading);
+    }
+    // And the arcs still got it there rather than stalling before the corner.
+    expect(Math.hypot(boat.x - 5.5, boat.y - 2.5)).toBeLessThan(1);
+  });
+});
+
+describe('followRoute — aim-ahead', () => {
+  it('aims past the next cell and arrives sooner on an L-shaped route', () => {
+    const terrain = world(16);
+    const cells: RouteCell[] = [
+      { x: 2, y: 5 },
+      { x: 3, y: 5 },
+      { x: 4, y: 5 },
+      { x: 5, y: 5 },
+      { x: 6, y: 5 },
+      { x: 6, y: 4 },
+      { x: 6, y: 3 },
+      { x: 6, y: 2 },
+    ];
+    const goalX = 6.5;
+    const goalY = 2.5;
+    const ticksToArrival = (aimAheadCells: number | undefined): number => {
+      const walker = mover(2.5, 5.5, [...cells], 0);
+      for (let tick = 0; tick < 2000; tick++) {
+        if (
+          followRoute(terrain, LAND_WALKER_PROFILE, walker, {
+            stepCells: 0.2,
+            lookaheadCells: 1,
+            goalX,
+            goalY,
+            aimAheadCells,
+          }).arrived
+        ) {
+          return tick;
+        }
+      }
+      throw new Error('never arrived');
+    };
+    // Cutting the corner walks less ground at the same speed: strictly fewer
+    // ticks than hugging every 1-cell waypoint.
+    expect(ticksToArrival(6)).toBeLessThan(ticksToArrival(undefined));
   });
 });
