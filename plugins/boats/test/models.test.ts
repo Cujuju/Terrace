@@ -8,7 +8,61 @@
 
 import { describe, expect, it } from 'vitest';
 import { Box3, Mesh, Vector3, type MeshStandardMaterial } from 'three';
-import { BOAT_WATERLINE_LIFT, createBoatModels } from '../client/models.ts';
+import { readFile } from 'node:fs/promises';
+import { BOAT_WATERLINE_LIFT, createBoatModels, installBoatKit } from '../client/models.ts';
+import { parseRigAsset } from '../../../client/src/render/rigAsset.ts';
+
+/**
+ * three's ImageLoader decodes through the DOM `Image` API, which does not
+ * exist under Vitest's plain Node — so a stub that reports every image as
+ * loaded. The parsed texture's PIXELS are never read here (extents,
+ * waterline and sail behaviour only), which is what makes a stub honest
+ * instead of a lie.
+ */
+function stubImageLoading(): void {
+  const scope = globalThis as unknown as { document?: unknown; self?: unknown };
+  // `self` (the worker/global alias GLTFLoader reads its URL constructor
+  // from) does not exist in Node; the global object is the honest stand-in.
+  if (scope.self === undefined) scope.self = globalThis;
+  if (scope.document !== undefined) return;
+  scope.document = {
+    createElementNS: (): unknown => {
+      const listeners = new Map<string, Array<() => void>>();
+      const image = {
+        width: 256,
+        height: 256,
+        addEventListener(type: string, listener: (this: unknown) => void): void {
+          listeners.set(type, [...(listeners.get(type) ?? []), () => listener.call(image)]);
+        },
+        removeEventListener(type: string, listener: (this: unknown) => void): void {
+          listeners.set(
+            type,
+            (listeners.get(type) ?? []).filter((kept) => kept !== listener),
+          );
+        },
+        set src(_url: string) {
+          queueMicrotask(() => {
+            for (const listener of listeners.get('load') ?? []) listener();
+          });
+        },
+      };
+      return image;
+    },
+  };
+}
+
+// The boats are baked from the real asset file, read off disk: under Vitest
+// (plain Node, no Vite pipeline) there is no `.glb?url` import and no fetch,
+// so the bytes go through parseRigAsset — the SAME GLTFLoader class and the
+// SAME validation as the browser's loadRigAsset, transport aside.
+stubImageLoading();
+const assetUrl = new URL('../client/assets/war-boat.glb', import.meta.url);
+const assetBuffer = await readFile(assetUrl);
+const assetBytes = assetBuffer.buffer.slice(
+  assetBuffer.byteOffset,
+  assetBuffer.byteOffset + assetBuffer.byteLength,
+);
+installBoatKit(await parseRigAsset(assetBytes, 'war-boat.glb'));
 
 /** Every Mesh under a node, depth-first. */
 function meshesOf(root: { traverse(cb: (o: unknown) => void): void }): Mesh[] {
