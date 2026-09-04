@@ -927,7 +927,7 @@ export const plugin: TerracePlugin = {
     return {
       ok: false,
       detail:
-        `nothing caught at (${site.x}, ${site.y}) — bare rock, water, wet ground, ` +
+        `nothing caught at (${site.x}, ${site.y}) — nothing flammable there (bare rock, water), ` +
         `already burning, or ${FIRE_CELL_CAP} fires are already burning`,
     };
   },
