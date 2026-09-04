@@ -21,3 +21,15 @@ interface ImportMeta {
  * longer exists — the literal has been inlined.
  */
 declare const __CLIENT_VERSION__: string;
+
+/**
+ * Authored-model URL imports (`*.glb?url` — see docs/model-assets.md).
+ * vite/client declares the image/font asset patterns but not glb (Vite 8's
+ * known-asset list lacks it, hence `assetsInclude` in vite.config.ts), so
+ * the one model-loading callsite (previewBoats.ts; plugins carry their own
+ * declaration) needs it stated here.
+ */
+declare module '*.glb?url' {
+  const url: string;
+  export default url;
+}

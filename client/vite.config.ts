@@ -115,6 +115,11 @@ function perfSink() {
 
 export default defineConfig({
   plugins: [solid(), perfSink()],
+  // Vite 8's KNOWN_ASSET_TYPES does not include glb, so a `*.glb?url`
+  // import fails without this: authored models (docs/model-assets.md) would
+  // not resolve to a served URL. The pattern is extension-wide on purpose —
+  // every current and future model asset is a .glb by the same convention.
+  assetsInclude: ['**/*.glb'],
   define: {
     __CLIENT_VERSION__: JSON.stringify(buildVersion()),
   },
