@@ -437,18 +437,19 @@ function slotCountFor(stationRadiusCells: number): number {
 }
 
 /**
- * How far apart two home berths lie, in cells — two personal spaces (one
- * whole hull) — and how far off the last berth a surplus boat holds.
+ * How far apart two home berths lie, in cells — THREE personal spaces, the
+ * same margin station slots keep — and how far off the last berth a surplus
+ * boat holds.
  *
- * Two is exactly clear: hulls clear, oars clear, and the resolution pass
- * (which restores exactly this gap) finds nothing to do. Berths need no more
- * than that, where station slots need three: a berth's last step SNAPS
- * (sailBoat seats a boat within one step with no separation check), so
- * exactly clear never vetoes an arrival the way it did on the station circle.
- * A surplus boat holding this far off neither fights its berth's owner for
- * the point nor drifts out of the harbour.
+ * Two (exactly clear) was tried first and measured on the owner's world,
+ * 2026-09-03: two boats seated exactly one clearance apart sit ON the
+ * resolution pass's threshold, so floating point decides every tick whether
+ * they overlap, and the pass nudges them a few thousandths apart while their
+ * berths pull them back — 1 400 of 1 800 ticks of sub-hundredth jitter on
+ * one hull, with the heading wobbling to match. One clearance of slack beyond
+ * clear makes a seated neighbour scenery, exactly as it does on the circle.
  */
-const HOME_BERTH_CLEARANCE_CELLS = 2 * BOAT_PERSONAL_SPACE_CELLS;
+const HOME_BERTH_CLEARANCE_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
 
 /**
  * Berths a village's survey keeps — twice its own fleet.
@@ -544,7 +545,42 @@ interface Voyage {
    * — forward vetoed, astern vetoed. See HELD_TICKS_BEFORE_KEDGE.
    */
   heldTicks: number;
+  /** Where the hull stood at the top of its last SAIL tick, for the held test. */
+  sailedFrom: { x: number; y: number } | null;
+  /** Seconds left of a crowd rest — see CROWD_REST_SECONDS. */
+  restSeconds: number;
 }
+
+/**
+ * How little a sailing hull may have moved over a whole tick — its own sail
+ * step AND the resolution pass — before the tick counts as held: HALF the
+ * smallest stride the sail path ever takes (STRIDE_MIN_FRACTION of a step).
+ *
+ * Every honest sail tick moves at least a full smallest stride, so a hull
+ * under half of one has been put back where it started by the resolution
+ * pass. Half, and not the stride itself: at exactly the stride a hull
+ * bearing off at minimum way sits ON the threshold and floating point makes
+ * it rest mid-passage (measured: the C-bay fleet stopped engaging). Not a
+ * quarter either: that left a hull weaving 0.01–0.03 cells a tick in a crowd
+ * for 700 ticks (owner's world, 2026-09-03). Half is the midpoint that
+ * neither false-positives a slow honest tick nor misses a cancelled one.
+ */
+const HELD_DISPLACEMENT_FRACTION = STRIDE_MIN_FRACTION / 2;
+
+/**
+ * How long a hull held by a CROWD waits before trying again, in seconds.
+ *
+ * A hull that is on manoeuvrable water and still gets nowhere is being pushed
+ * back by the resolution pass as fast as it sails — a neighbour sits between
+ * it and its berth (measured on the owner's world, 2026-09-03: one hull
+ * dithered ±0.05 rad a tick for three minutes, 4.00 cells off a seated
+ * neighbour). Kedging cannot help — there is nothing wrong with the water —
+ * so it rests: holds position, heading untouched, and retries after this
+ * long. Five seconds is longer than a coming-about (~6 s is a full 180°;
+ * most jams clear in a fraction of that) is short, and short enough that a
+ * harbour that HAS cleared is not left with a boat idling for no reason.
+ */
+const CROWD_REST_SECONDS = 5;
 
 /**
  * Sail ticks a hull may be held motionless before it is treated as wedged and
@@ -1241,9 +1277,10 @@ function assignStationGoals(
  *
  * Returns null for an engaged boat: she sails under station rules, not home
  * ones, and the station path owns her goal AND her slot memory for the whole
- * fight. `taken` carries every berth CELL an earlier boat claimed this tick,
+ * fight. `taken` carries every berth an earlier boat claimed this tick,
  * across all villages: two villages sharing a bay survey overlapping mooring
- * lists, and a cell claimed by either is claimed for both. Keyed per village
+ * lists, and a berth within clearance of one claimed by either is claimed for
+ * both. Keyed per village
  * it was not (measured live, 2026-09-03): boats of neighbouring villages were
  * sent to the same cell, converged, were pushed apart by the resolution pass
  * and converged again every tick — a jitter that read as a pivot.
@@ -1251,7 +1288,7 @@ function assignStationGoals(
 function homeBerthFor(
   index: number,
   kraken: KrakenTarget | null,
-  taken: Set<string>,
+  taken: KrakenTarget[],
 ): StationGoal | null {
   const boat = boats[index];
   if (targetFor(boat, kraken) !== null) return null;
@@ -1262,13 +1299,24 @@ function homeBerthFor(
   if (moorings.length === 0) {
     return { x: boat.homeX, y: boat.homeY, standoff: 0, slot: null };
   }
-  const cellOf = (berth: KrakenTarget): string => villageKey(berth.x, berth.y);
+  // A berth is free only if it is a whole clearance from every berth already
+  // claimed this tick, by ANY village. Cell identity was not enough (measured
+  // live, 2026-09-03): two villages' lists held different cells three cells
+  // apart, both boats seated, and the resolution pass shoved them a hair apart
+  // every tick while their berths pulled them back — sub-hundredth jitter for
+  // the life of the world.
+  const isFree = (berth: KrakenTarget): boolean =>
+    taken.every((held) => {
+      const dx = berth.x - held.x;
+      const dy = berth.y - held.y;
+      return dx * dx + dy * dy >= HOME_BERTH_CLEARANCE_CELLS * HOME_BERTH_CLEARANCE_CELLS;
+    });
   // STICKINESS. The guard matters across the peace/war boundary: a station
   // slot index can exceed this list, and a stale one must fall through to
   // the k-th berth rather than off the end of it.
   const prev = stickySlotIn(boat.id, 'home');
-  if (prev !== null && prev >= 0 && prev < moorings.length && !taken.has(cellOf(moorings[prev]))) {
-    taken.add(cellOf(moorings[prev]));
+  if (prev !== null && prev >= 0 && prev < moorings.length && isFree(moorings[prev])) {
+    taken.push(moorings[prev]);
     const berth = moorings[prev];
     return { x: berth.x, y: berth.y, standoff: 0, slot: prev };
   }
@@ -1292,8 +1340,8 @@ function homeBerthFor(
   for (let n = 0; n < moorings.length; n++) {
     const off = n === 0 ? 0 : n % 2 === 1 ? (n + 1) / 2 : -(n / 2);
     const slot = k + off;
-    if (slot < 0 || slot >= moorings.length || taken.has(cellOf(moorings[slot]))) continue;
-    taken.add(cellOf(moorings[slot]));
+    if (slot < 0 || slot >= moorings.length || !isFree(moorings[slot])) continue;
+    taken.push(moorings[slot]);
     const berth = moorings[slot];
     return { x: berth.x, y: berth.y, standoff: 0, slot };
   }
@@ -1311,7 +1359,7 @@ function homeBerthFor(
  */
 function assignHomeBerths(kraken: KrakenTarget | null): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
-  const taken = new Set<string>();
+  const taken: KrakenTarget[] = [];
   for (let index = 0; index < boats.length; index++) {
     const goal = homeBerthFor(index, kraken, taken);
     if (goal !== null) goals.set(index, goal);
@@ -1488,15 +1536,30 @@ function sailBoat(tick: SailTick, index: number): void {
   // to move ahead or astern (isManoeuvrablePose) — does nothing else this tick:
   // it kedges toward water it can manoeuvre in (see `refloat`) and rejoins the
   // ordinary sail path once it is somewhere a route can start from.
-  const held = voyages.get(boat.id)?.heldTicks ?? 0;
-  if (
-    !isManoeuvrablePose(world, eroded, boat.x, boat.y, boat.heading, step) ||
-    held >= HELD_TICKS_BEFORE_KEDGE
-  ) {
+  const earlier = voyages.get(boat.id);
+  if (earlier !== undefined && earlier.sailedFrom !== null) {
+    // The held test covers the WHOLE last tick — sail step plus resolution
+    // pass — by measuring from where the hull stood at the top of it.
+    const moved = distance(boat.x, boat.y, earlier.sailedFrom.x, earlier.sailedFrom.y);
+    earlier.heldTicks = moved < step * HELD_DISPLACEMENT_FRACTION ? earlier.heldTicks + 1 : 0;
+    earlier.sailedFrom = null;
+  }
+  const manoeuvrable = isManoeuvrablePose(world, eroded, boat.x, boat.y, boat.heading, step);
+  if (!manoeuvrable) {
     boat.fighting = false;
     refloat(world, eroded, boat, step);
-    const voyage = voyages.get(boat.id);
-    if (voyage !== undefined) voyage.heldTicks = 0;
+    if (earlier !== undefined) earlier.heldTicks = 0;
+    return;
+  }
+  if (earlier !== undefined && earlier.heldTicks >= HELD_TICKS_BEFORE_KEDGE) {
+    // Held on good water: a crowd, not a shore. Rest (see CROWD_REST_SECONDS).
+    earlier.heldTicks = 0;
+    earlier.restSeconds = CROWD_REST_SECONDS;
+  }
+  if (earlier !== undefined && earlier.restSeconds > 0) {
+    earlier.restSeconds -= dt;
+    boat.fighting = targetFor(boat, kraken) !== null &&
+      distance(boat.x, boat.y, kraken!.x, kraken!.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
     return;
   }
   const target = targetFor(boat, kraken);
@@ -1612,6 +1675,8 @@ function sailBoat(tick: SailTick, index: number): void {
       slot: null,
       slotList: null,
       heldTicks: 0,
+      sailedFrom: null,
+      restSeconds: 0,
     };
     voyages.set(boat.id, voyage);
   }
@@ -1741,8 +1806,9 @@ function sailBoat(tick: SailTick, index: number): void {
   // at the heading the hull holds — adopted forward, current astern — so the
   // plugin-level second veto and its own astern are gone: followRoute's own
   // astern is the one backing manoeuvre.
-  // Motionless with somewhere to go is a held tick (see HELD_TICKS_BEFORE_KEDGE).
-  voyage.heldTicks = helm.x === boat.x && helm.y === boat.y ? voyage.heldTicks + 1 : 0;
+  // Where this sail tick started, for next tick's held test (the resolution
+  // pass has not run yet, so the test cannot be taken here).
+  voyage.sailedFrom = { x: boat.x, y: boat.y };
   boat.heading = helm.heading;
   boat.x = helm.x;
   boat.y = helm.y;
