@@ -255,6 +255,22 @@ export function createClientPluginHost(
   const mounted = new Map<string, MountedPlugin>();
 
   /**
+   * Mount generations, per plugin name — what makes "unmounted while its
+   * preload was still in flight" observable. Bumped on every mount AND every
+   * unmount (even of a name with no mounted entry, which is exactly the
+   * pending-preload case); the async continuation below proceeds only if the
+   * generation it captured is still current. See mountPlugin.
+   */
+  const mountGenerations = new Map<string, number>();
+
+  /**
+   * Names with a preload in flight: mounted neither yet nor (on failure)
+   * ever. syncLivePlugins must not mount these twice, and dispose must turn
+   * them stale rather than let them attach into a torn-down host.
+   */
+  const pendingMounts = new Set<string>();
+
+  /**
    * The draw-budget breach state machine's memory, per plugin. Dropped on
    * unmount with everything else that plugin owns, so a plugin that comes back
    * starts clean rather than inheriting a breach from a previous world.
@@ -575,6 +591,12 @@ export function createClientPluginHost(
    * Builds one plugin's ctx, runs its attach(), and records everything that
    * has to be undone if it is later unmounted.
    *
+   * A plugin WITH a preload takes the async path: the layer and ctx are built
+   * now, preload runs, and attach (with the frame-handler flush) happens only
+   * once it resolves — still before any frame handler registered here can run.
+   * A plugin WITHOUT one attaches synchronously, exactly as before, so the
+   * boot loop and every existing caller see no behaviour change.
+   *
    * Registration order is the order plugins are mounted in, which is what the
    * first-claim-wins hooks (canvas presses, the world-header action) arbitrate
    * by. A plugin mounted LATE by a live-set change therefore joins at the back
@@ -772,32 +794,89 @@ export function createClientPluginHost(
 
     // A plugin that throws in attach loses its own features, not the app:
     // same containment stance as the server host's `safely`.
-    try {
-      plugin.attach(ctx);
+    const finishMount = (): void => {
+      try {
+        plugin.attach(ctx);
 
-      // Now that attach() has run we know whether this plugin publishes poses,
-      // so its frame callbacks can go into the phase that fact demands.
-      // PUBLISHING OF EITHER KIND moves the plugin to the pose phase: a pose
-      // is read by another plugin during the same frame it is written, and a
-      // shade disc is read by core's gather below during the same frame — both
-      // need this plugin's interpolation to have already run.
-      const phase: FramePhase =
-        moverLookups.has(plugin.name) || groundShadeLookups.has(plugin.name)
-          ? 'pose'
-          : 'draw';
-      for (const deferred of deferredFrameHandlers) {
-        if (deferred.cancelled) continue;
-        deferred.unregister = viewport.onFrame(deferred.handler, phase);
+        // Now that attach() has run we know whether this plugin publishes poses,
+        // so its frame callbacks can go into the phase that fact demands.
+        // PUBLISHING OF EITHER KIND moves the plugin to the pose phase: a pose
+        // is read by another plugin during the same frame it is written, and a
+        // shade disc is read by core's gather below during the same frame — both
+        // need this plugin's interpolation to have already run.
+        const phase: FramePhase =
+          moverLookups.has(plugin.name) || groundShadeLookups.has(plugin.name)
+            ? 'pose'
+            : 'draw';
+        for (const deferred of deferredFrameHandlers) {
+          if (deferred.cancelled) continue;
+          deferred.unregister = viewport.onFrame(deferred.handler, phase);
+        }
+        deferredFrameHandlers.length = 0;
+      } catch (error) {
+        console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
       }
-      deferredFrameHandlers.length = 0;
-    } catch (error) {
-      console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
-    }
 
-    // Recorded even when attach threw: a plugin that failed half-way through
-    // may still have registered things, and those are exactly what an unmount
-    // has to be able to take back.
-    mounted.set(plugin.name, { plugin, layer, undo });
+      // Recorded even when attach threw: a plugin that failed half-way through
+      // may still have registered things, and those are exactly what an unmount
+      // has to be able to take back.
+      mounted.set(plugin.name, { plugin, layer, undo });
+    };
+
+    /**
+     * Drops a layer whose preload failed or went stale: the mirror of
+     * unmountPlugin's tail for something that never mounted. No tools, panels
+     * or dispose — attach never ran, so there is nothing they could own —
+     * just the registrations preload itself may have made, and the layer.
+     */
+    const dropUnattached = (): void => {
+      for (const unregister of undo) {
+        try {
+          unregister();
+        } catch (error) {
+          console.error(`[terrace] client plugin "${plugin.name}" threw unregistering`, error);
+        }
+      }
+      layer.clear();
+      viewport.scene.remove(layer);
+    };
+
+    const preload = plugin.preload;
+    if (preload === undefined) {
+      finishMount();
+      return;
+    }
+    // GENERATION CHECK, NOT A CANCEL TOKEN. preload's contract is
+    // `(ctx) => Promise<void>` — there is no token to hand it and no handle
+    // on the in-flight work for unmount to abort — so staleness is observed at
+    // the single point where it matters: after the promise settles, the mount
+    // proceeds only if no unmount (or remount) has bumped this plugin's
+    // generation since. unmountPlugin bumps unconditionally, even for a name
+    // with no mounted entry, which is exactly the pending-preload case.
+    const generation = (mountGenerations.get(plugin.name) ?? 0) + 1;
+    mountGenerations.set(plugin.name, generation);
+    pendingMounts.add(plugin.name);
+    // Through Promise.resolve().then so a preload that throws SYNCHRONOUSLY
+    // (its type promises a promise, but a runtime-loaded plugin owes the type
+    // nothing) becomes a rejection handled below rather than a throw out of
+    // the boot loop.
+    void Promise.resolve()
+      .then(() => preload(ctx))
+      .then(
+        () => {
+          pendingMounts.delete(plugin.name);
+          if (mountGenerations.get(plugin.name) !== generation) {
+            dropUnattached();
+            return;
+          }
+          finishMount();
+        },
+        (error: unknown) => {
+          pendingMounts.delete(plugin.name);
+          console.error(`[terrace] client plugin "${plugin.name}" threw in preload`, error);
+          dropUnattached();
+        },
+      );
   };
 
   /**
@@ -806,6 +885,11 @@ export function createClientPluginHost(
    * is not mounted, so the diff below can call it without checking twice.
    */
   const unmountPlugin = (name: string): void => {
+    // Bumped FIRST and unconditionally: a pending preload for this name (no
+    // mounted entry yet) goes stale HERE and is dropped unseen when it
+    // settles, so an unmount during a load never attaches afterwards.
+    mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
+    pendingMounts.delete(name);
     const entry = mounted.get(name);
     if (entry === undefined) return;
     mounted.delete(name);
@@ -960,7 +1044,10 @@ export function createClientPluginHost(
       // half runs without a client half — which is legitimate (see
       // routeMessage) and not an error.
       for (const plugin of plugins) {
-        if (live.has(plugin.name) && !mounted.has(plugin.name)) mountPlugin(plugin);
+        // Pending counts as mounted here: a preload in flight is a mount that
+        // has not finished yet, and mounting it twice would attach it twice.
+        if (live.has(plugin.name) && !mounted.has(plugin.name) && !pendingMounts.has(plugin.name))
+          mountPlugin(plugin);
       }
     },
 
@@ -968,6 +1055,12 @@ export function createClientPluginHost(
       stopSampling();
       stopGroundShade();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
+      // Whatever preloads are still in flight go stale rather than attaching
+      // into a disposed host; their continuations drop their layers unseen.
+      for (const name of [...pendingMounts]) {
+        mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
+      }
+      pendingMounts.clear();
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,
       });

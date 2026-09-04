@@ -661,6 +661,25 @@ export interface TerraceClientPlugin {
   /** Called once at boot with the plugin's context. */
   attach(ctx: ClientPluginCtx): void;
 
+  /**
+   * Optional async bootstrap the host awaits BEFORE attach().
+   *
+   * WHY A SECOND HOOK INSTEAD OF DOING IT IN attach(). Some setup is
+   * promise-based with no sync path — parsing a glTF file, the case this was
+   * added for — and attach() is synchronous, so a plugin that needs such a
+   * setup has nowhere to put it. The host runs preload first and only calls
+   * attach once it resolves, so by the time the plugin's registrations and
+   * frame handlers exist the asset they depend on does too.
+   *
+   * A preload that rejects is a logged breach for that plugin only — the
+   * plugin stays unmounted and the client runs without it — never a throw
+   * that takes the client down, exactly like every other plugin fault the
+   * host contains. A plugin unmounted while its preload is still in flight is
+   * never attached afterwards: its mount went stale and the layer it built is
+   * dropped unseen.
+   */
+  preload?(ctx: ClientPluginCtx): Promise<void>;
+
   /** Optional teardown; the host empties and removes the layer itself. */
   dispose?(): void;
 }

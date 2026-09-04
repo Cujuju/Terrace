@@ -62,6 +62,7 @@ import {
   type BufferGeometry,
   type Material,
   type Object3D,
+  type Texture,
 } from 'three';
 // Shipped inside the `three` package itself (see its package.json "exports"),
 // not a separate dependency.
@@ -142,6 +143,11 @@ function materialSignature(material: Material): string {
 function idOf(value: unknown): string {
   const withUuid = value as { uuid?: string };
   return typeof withUuid.uuid === 'string' ? withUuid.uuid : 'unknown';
+}
+
+/** A texture object, as opposed to an absent map slot. */
+function isTexture(value: unknown): value is Texture {
+  return value !== undefined && value !== null && (value as Texture).isTexture === true;
 }
 
 /** One drawable of a baked rig: a merged geometry and the material it draws with. */
@@ -257,7 +263,7 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
     piece.applyMatrix4(node.matrixWorld);
     paintVertexColor(piece, material);
     bindRigidly(piece, joint);
-    stripUnbakeableAttributes(piece);
+    stripUnbakeableAttributes(piece, material);
 
     // Indexing joins the signature, because `mergeGeometries` refuses a mix and
     // the only way to force one is to EXPAND the indexed parts to non-indexed —
@@ -309,10 +315,23 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      const maps = new Set<Texture>();
       for (const surface of surfaces) {
         surface.geometry.dispose();
+        const shaded = surface.material as Material & { map?: unknown; emissiveMap?: unknown };
+        if (isTexture(shaded.map)) maps.add(shaded.map);
+        if (isTexture(shaded.emissiveMap)) maps.add(shaded.emissiveMap);
         surface.material.dispose();
       }
+      // The textures a surface samples are freed WITH the blueprint. The clone
+      // shares the SOURCE asset's texture objects (see vertexColoured), so this
+      // is shared ownership: the asset's own dispose frees them too, and three
+      // tolerates the double dispose — dispose() only drops the GPU upload,
+      // which the second call finds already gone. What must never happen is the
+      // reverse: disposing the asset while a blueprint still samples it pulls
+      // the texels out from under a living rig, so callers free blueprints
+      // first (see RigAsset.dispose).
+      for (const map of maps) map.dispose();
     },
   };
 }
@@ -418,20 +437,47 @@ function bindRigidly(geometry: BufferGeometry, joint: number): void {
 /**
  * Drops attributes that would stop parts merging.
  *
- * `mergeGeometries` requires every input to carry the SAME attribute set, and
- * these rigs are untextured — a stray `uv` on one primitive (Three's sphere and
- * box builders always emit one) would otherwise force it into a draw of its
- * own. Nothing samples a texture here; the check for a `map` in
- * materialSignature is what keeps that assumption honest if one ever appears.
+ * `mergeGeometries` requires every input to carry the SAME attribute set, so
+ * `uv` is kept if and only if the part's material samples a texture (`map` or
+ * `emissiveMap`) and stripped otherwise: a stray `uv` on an untextured
+ * primitive (Three's sphere and box builders always emit one) would force it
+ * into a draw of its own, while a textured part without one cannot be drawn
+ * at all. Groups are keyed by map identity (see materialSignature), so every
+ * piece in a group agrees about `uv` BY CONSTRUCTION — a mapped group whose
+ * member lacked `uv` never reaches the merge, it throws below.
  */
-function stripUnbakeableAttributes(geometry: BufferGeometry): void {
-  for (const name of ['uv', 'uv1', 'uv2', 'uv3', 'tangent']) {
+function stripUnbakeableAttributes(geometry: BufferGeometry, material: Material): void {
+  const shaded = material as Material & { map?: unknown; emissiveMap?: unknown };
+  const mapped = shaded.map !== undefined && shaded.map !== null;
+  const emissiveMapped = shaded.emissiveMap !== undefined && shaded.emissiveMap !== null;
+  if ((mapped || emissiveMapped) && geometry.getAttribute('uv') === undefined) {
+    throw new Error(
+      'bakeRig: a part uses a textured material but carries no uv attribute — ' +
+        'a merge cannot invent coordinates, and drawing it unmapped would paint it one flat texel',
+    );
+  }
+  // `uv1` and friends are never kept: nothing the signature keys on samples
+  // past the first set, so they would only split merges that agree on `uv`.
+  for (const name of ['uv1', 'uv2', 'uv3', 'tangent']) {
     if (geometry.getAttribute(name) !== undefined) geometry.deleteAttribute(name);
   }
+  if (!mapped && !emissiveMapped) geometry.deleteAttribute('uv');
   geometry.morphAttributes = {};
 }
 
-/** A copy of the material that reads its colour per vertex. */
+/**
+ * A copy of the material that reads its colour per vertex.
+ *
+ * THE MAP SURVIVES THE CLONE BY REFERENCE (verified in three 0.185's
+ * MeshStandardMaterial.copy: `this.map = source.map`, and the same line for
+ * emissiveMap). Sharing the texture object rather than duplicating it is what
+ * lets the blueprint free what it draws with while the source asset owns the
+ * file's originals — and it makes the final shading the intended three-way
+ * multiply: vertex colour (the part's own tint, folded in by paintVertexColor)
+ * × map texel × material.color, whitened below so it contributes no fourth
+ * factor. An untextured part's texel is 1 everywhere, so the same shader
+ * draws both halves of a half-textured rig.
+ */
 function vertexColoured(material: Material): Material {
   const clone = material.clone();
   // THE SHADER HOOKS DO NOT SURVIVE A CLONE. Material.copy() copies the
