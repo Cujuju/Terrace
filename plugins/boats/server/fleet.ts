@@ -1334,6 +1334,48 @@ interface SailTick {
  * `boats` (and parallel `tick.berths`), stable for the whole sail pass — the
  * roster only changes in the fight, after.
  */
+/**
+ * Hauls a hull that is NOT on a legal pose toward the nearest cell where it
+ * would be — kedging off, in a sailor's word: no turn, no sail, one step of
+ * travel per tick straight at the nearest hull-legal water.
+ *
+ * WHY A HULL CAN BE SOMEWHERE IT MAY NOT BE. Two ways, and neither is a bug in
+ * the sail step: a fleet SAVED under the old point-boat rules sits on the old
+ * launch cells, which are the nearest water to each village and therefore
+ * shore-adjacent — illegal for a hull with a beam (measured on the owner's
+ * world, 2026-09-03: 78 of 78 restored boats); and a player can raise the
+ * seabed under a moored boat. Left to the ordinary sail path such a hull is
+ * held forever: no route plans from an illegal cell, and the one-step probe
+ * toward the goal is refused because the hull is refused where it already is.
+ *
+ * NEAREST-FIRST over COASTAL_DISC (already sorted by distance), tested on the
+ * hull's CURRENT heading so the pose it lands in is one it may hold without
+ * turning. Heading is untouched throughout — the hull slides, it does not
+ * pivot — and a hull with no legal water inside the disc holds where it is,
+ * which is the one honest answer for a boat in a filled-in bay.
+ */
+function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: number): void {
+  const originX = Math.floor(boat.x);
+  const originY = Math.floor(boat.y);
+  for (const [dx, dy] of COASTAL_DISC) {
+    const targetX = originX + dx + CELL_CENTRE_OFFSET;
+    const targetY = originY + dy + CELL_CENTRE_OFFSET;
+    if (!isHullPose(world, eroded, targetX, targetY, boat.heading)) continue;
+    const range = distance(boat.x, boat.y, targetX, targetY);
+    if (range <= step) {
+      boat.x = targetX;
+      boat.y = targetY;
+    } else {
+      boat.x += ((targetX - boat.x) / range) * step;
+      boat.y += ((targetY - boat.y) / range) * step;
+    }
+    return;
+  }
+}
+
+/** Half a cell: a cell's centre, where a refloated hull is placed. */
+const CELL_CENTRE_OFFSET = 0.5;
+
 function sailBoat(tick: SailTick, index: number): void {
   const {
     world,
@@ -1351,6 +1393,14 @@ function sailBoat(tick: SailTick, index: number): void {
     homeGoals,
   } = tick;
   const boat = boats[index];
+  // A hull that may not be where it is does nothing else this tick: it kedges
+  // toward legal water (see `refloat`) and rejoins the ordinary sail path once
+  // it is somewhere a route can start from.
+  if (!isHullPose(world, eroded, boat.x, boat.y, boat.heading)) {
+    boat.fighting = false;
+    refloat(world, eroded, boat, step);
+    return;
+  }
   const target = targetFor(boat, kraken);
   // An engaged boat sails for its slot; a slotless one for the kraken with
   // a standoff; a peacetime boat for her OWN berth, stopping on it.
