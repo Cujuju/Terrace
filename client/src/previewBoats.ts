@@ -33,7 +33,12 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { BOAT_WATERLINE_LIFT, createBoatModels } from '../../plugins/boats/client/models.ts';
+import warBoatUrl from '../../plugins/boats/client/assets/war-boat.glb?url';
+import {
+  BOAT_WATERLINE_LIFT,
+  createBoatModels,
+  preloadBoatModels,
+} from '../../plugins/boats/client/models.ts';
 
 // ── Lighting rig, copied from previewPilgrims.ts / render/scene.ts ────────
 const SKY_COLOR = 0x9fc7e8;
@@ -113,7 +118,7 @@ function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraVi
   camera.updateProjectionMatrix();
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   const stateParam = query.get('state');
   const states: boolean[] =
@@ -125,6 +130,8 @@ function main(): void {
 
   const { scene, camera, renderer } = buildScene();
 
+  // The asset first: createBoatModels bakes from the installed kit.
+  await preloadBoatModels(warBoatUrl);
   const models = createBoatModels();
   const subject = new Group();
   states.forEach((fighting, index) => {
@@ -154,4 +161,4 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+void main();
