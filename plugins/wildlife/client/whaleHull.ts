@@ -17,12 +17,7 @@
 // terminated their ring loop without a cap, leaving a hole you could see the
 // backdrop through; closing the surface is not something a caller should be
 // able to forget.
-import {
-  BufferGeometry,
-  ExtrudeGeometry,
-  Float32BufferAttribute,
-  Shape,
-} from 'three';
+import { BufferGeometry, Float32BufferAttribute } from 'three';
 
 /** Rings spent rounding each end closed. Four reads as rounded at any range. */
 const DEFAULT_CAP_RINGS = 4;
@@ -190,31 +185,4 @@ export function profileFromPoints(points: readonly (readonly [number, number])[]
       + (-p0 + 3 * p1 - 3 * p2 + p3) * u3
     );
   };
-}
-
-/**
- * A fin, flipper or fluke: a closed outline extruded to a thin slab and laid
- * into the XZ plane, so its span runs along ±Z and its thickness along Y.
- * `sign` mirrors the outline for the opposite side of the body.
- */
-export function finGeometry(
-  buildOutline: (shape: Shape, sign: number) => void,
-  sign: number,
-  depth: number,
-): BufferGeometry {
-  const shape = new Shape();
-  buildOutline(shape, sign);
-  const geometry = new ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: depth * 0.35,
-    bevelSize: depth * 0.5,
-    bevelSegments: 2,
-    curveSegments: 24,
-  });
-  // The outline lives in XY and extrusion runs along +Z; rotating about X lays
-  // it flat with thickness in Y, which is how a fin sits on a body facing +X.
-  geometry.rotateX(Math.PI / 2);
-  geometry.translate(0, -depth / 2, 0);
-  return geometry;
 }

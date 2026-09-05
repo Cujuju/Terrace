@@ -42,17 +42,17 @@ export function indexed(geometry: BufferGeometry): BufferGeometry {
 
 /**
  * A flat fin, flipper or wing lying in the XZ plane (span along ±Z, thickness
- * along Y) — whaleHull's `finGeometry`, indexed. `sign` mirrors it for the
- * other side of the body.
+ * along Y), indexed. `sign` mirrors it for the other side of the body.
  */
 export function flatFin(
   buildOutline: (shape: Shape, sign: number) => void,
   sign: number,
   depth: number,
 ): BufferGeometry {
-  // The same construction as whaleHull's finGeometry, at this kit's leaner
-  // tessellation: a whale is one of ~20 on screen, a fish one of hundreds, and
-  // the 24-segment / 2-bevel flipper cost more than the hull it hung on.
+  // The construction the procedural whale's finGeometry used (retired with
+  // pass 8), at this kit's leaner tessellation: a whale is one of ~20 on
+  // screen, a fish one of hundreds, and the 24-segment / 2-bevel flipper cost
+  // more than the hull it hung on.
   const shape = new Shape();
   buildOutline(shape, sign);
   const geometry = new ExtrudeGeometry(shape, {
