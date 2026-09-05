@@ -26,7 +26,7 @@ import {
   UNITY_GAIN,
 } from './audioGraph.ts';
 import { createAudioVoices, type AmbienceLayer, type AudioVoices } from './audioVoices.ts';
-import type { PluginAudio, SfxOptions } from '../plugins/types.ts';
+import type { MusicGenerator, MusicOutlet, PluginAudio, SfxOptions } from '../plugins/types.ts';
 import type { Viewport } from '../render/scene.ts';
 
 /** One plugin's whole audio state, released together when it detaches. */
@@ -129,6 +129,15 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     );
   }
 
+  /** ONE CLAIM FOR BOTH SETTERS: a file and a generator are the same bus. */
+  function claimMusic(name: string): boolean {
+    if (musicClaimant === null) musicClaimant = name;
+    if (musicClaimant === name) return true;
+    // Once per losing holder — plugins/host.ts:757's reasoning.
+    refuseMusic(name);
+    return false;
+  }
+
   /** `state` carries the identity that keys ambience and scopes the release. */
   function buildHandle(state: PluginAudioState): PluginAudio {
     return {
@@ -209,14 +218,14 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
 
       setMusic(url: string | null): void {
         if (state.released) return;
-        if (musicClaimant === null) musicClaimant = state.name;
-        if (musicClaimant !== state.name) {
-          // Once per losing holder — plugins/host.ts:757's reasoning.
-          refuseMusic(state.name);
-          return;
-        }
-        if (activeVoices.musicUrl() === url) return; // already playing (or stopped)
+        if (!claimMusic(state.name)) return;
         activeVoices.setMusic(url);
+      },
+
+      setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void {
+        if (state.released) return;
+        if (!claimMusic(state.name)) return;
+        activeVoices.setMusicGenerator(start);
       },
     };
   }
@@ -231,7 +240,7 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     if (musicClaimant === state.name) {
       musicClaimant = null;
       musicRefusals.clear();
-      if (activeVoices.musicUrl() !== null) activeVoices.setMusic(null);
+      activeVoices.releaseMusic();
     }
     plugins.delete(state.name);
   }
@@ -286,6 +295,15 @@ function createSilentAudioEngine(): AudioEngine {
   const musicRefusals = new Set<string>();
 
   function silentHandle(name: string): PluginAudio {
+    function claim(): void {
+      if (musicClaimant === null) musicClaimant = name;
+      if (musicClaimant === name) return;
+      if (musicRefusals.has(name)) return;
+      musicRefusals.add(name);
+      console.warn(
+        `music bus already claimed by "${String(musicClaimant)}"; ignoring updates from "${name}"`,
+      );
+    }
     return {
       preload(): void {
         /* nothing to decode into */
@@ -297,13 +315,11 @@ function createSilentAudioEngine(): AudioEngine {
         /* nothing to loop it on */
       },
       setMusic(): void {
-        if (musicClaimant === null) musicClaimant = name;
-        if (musicClaimant === name) return;
-        if (musicRefusals.has(name)) return;
-        musicRefusals.add(name);
-        console.warn(
-          `music bus already claimed by "${String(musicClaimant)}"; ignoring updates from "${name}"`,
-        );
+        claim();
+      },
+      // START IS NEVER CALLED: there is no context to run a generator on.
+      setMusicGenerator(): void {
+        claim();
       },
     };
   }

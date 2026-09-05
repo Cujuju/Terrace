@@ -171,6 +171,19 @@ export interface SfxOptions {
   readonly delaySeconds?: number;
 }
 
+/** What a music generator plugs into: core's context and a core-owned node on
+ * the music bus. */
+export interface MusicOutlet {
+  readonly context: AudioContext;
+  readonly destination: AudioNode;
+}
+
+/** The handle a generator hands back so core can end it. */
+export interface MusicGenerator {
+  /** Ramp to silence over `fadeSeconds`, then release every node. */
+  stop(fadeSeconds: number): void;
+}
+
 /**
  * Everything a plugin may do to the player's ears — one member for the whole
  * capability, as `layer` is for everything it draws.
@@ -225,6 +238,22 @@ export interface PluginAudio {
    * the claimant frees the bus.
    */
   setMusic(url: string | null): void;
+
+  /**
+   * Drives the music bus from code instead of a file. SAME CLAIMANT SLOT as
+   * `setMusic`: first caller of either owns the bus, and the two replace each
+   * other — a later `setMusic(url)` by the owner fades the generator out and
+   * the file in, and the reverse.
+   *
+   * `start` is called once, when core is ready to make sound; the handle it
+   * returns is stopped when the owner replaces it, passes null, or detaches.
+   * Passing null fades out. On a machine with no Web Audio `start` never runs.
+   *
+   * THE ONE PLACE A PLUGIN SEES WEB AUDIO, and it breaks none of the three
+   * rules above it: the outlet's context is core's own, the destination sits
+   * under the music bus and the master, and nothing about it is positional.
+   */
+  setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void;
 }
 
 export interface MoverPose {
