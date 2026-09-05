@@ -17,8 +17,8 @@
 // the same shape three's own skinning uses, four RGBA texels per bone matrix —
 // with ONE ROW PER POSE rather than one texture per creature, and a per-instance
 // attribute naming the row. The vertex shader reads the row the instance names
-// and the bone the vertex was rigidly bound to, which is exactly the product
-// `SkinnedMesh` would have computed, evaluated from shared data.
+// and blends the four bones the vertex is weighted to, which is exactly the
+// product `SkinnedMesh` would have computed, evaluated from shared data.
 //
 // WHY POSES ARE SHARED, and what that costs. A creature's animation here is a
 // LOOP driven by one scalar: elapsed time plus the individual's own phase
@@ -75,23 +75,45 @@ const POSE_PALETTE_UNIFORM = 'rigPosePalette';
  */
 const POSE_PROGRAM_KEY = 'rigHerd:posePalette';
 
-/** The declarations the patched vertex shader needs, and the palette read. */
+/**
+ * The declarations the patched vertex shader needs, and the palette read.
+ *
+ * FOUR INFLUENCES, BLENDED, the way three's own `<skinning_vertex>` and
+ * `<skinnormal_vertex>` do it (`skinMatrix += skinWeight.x * boneMatX; …`).
+ * Reading `skinIndex.x` alone was the rigid contract's shortcut; a downloaded
+ * animal's weights are real, and a vertex 60/40 across a shoulder drawn wholly
+ * on one side is the seam this file used to open. Rigid binding is now the
+ * 1/0/0/0 case of the same three lines, so there is ONE shader, not two.
+ */
 const POSE_SHADER_PARS = `
 attribute vec4 skinIndex;
+attribute vec4 skinWeight;
 attribute float ${POSE_SLOT_ATTRIBUTE};
 uniform highp sampler2D ${POSE_PALETTE_UNIFORM};
 
-// One bone matrix, from the row this instance names and the bone this vertex
-// was rigidly bound to. Four RGBA texels, column-major — exactly the layout
+// One bone matrix, from the row this instance names and the bone named by one
+// component of skinIndex. Four RGBA texels, column-major — exactly the layout
 // three's own <skinning_pars_vertex> reads its bone texture with.
-mat4 rigPoseMatrix() {
-\tint col = int( skinIndex.x ) * ${MATRIX_TEXELS};
-\tint row = int( ${POSE_SLOT_ATTRIBUTE} );
+mat4 rigPoseBone( const in float bone, const in int row ) {
+\tint col = int( bone ) * ${MATRIX_TEXELS};
 \treturn mat4(
 \t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col, row ), 0 ),
 \t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col + 1, row ), 0 ),
 \t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col + 2, row ), 0 ),
 \t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col + 3, row ), 0 ) );
+}
+
+// The weighted blend of this vertex's four influences, in the pose this
+// instance names. A zero weight still costs its four texel fetches: a branch
+// per influence would cost more than the fetch on every GPU this runs on, and
+// the fetch is from a row already resident.
+mat4 rigPoseMatrix() {
+\tint row = int( ${POSE_SLOT_ATTRIBUTE} );
+\tmat4 blended = rigPoseBone( skinIndex.x, row ) * skinWeight.x;
+\tblended += rigPoseBone( skinIndex.y, row ) * skinWeight.y;
+\tblended += rigPoseBone( skinIndex.z, row ) * skinWeight.z;
+\tblended += rigPoseBone( skinIndex.w, row ) * skinWeight.w;
+\treturn blended;
 }
 `;
 
