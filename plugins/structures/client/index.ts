@@ -80,6 +80,10 @@ function rebuild(ctx: ClientPluginCtx): void {
   const result = placementsFor(
     buildings.values(),
     (x, y) => ctx.terrainHeightAt(x, y),
+    // THE DRAWN CAP, for the mooring test only — see site.ts's banner. A
+    // structure's own vertical placement still comes from the lattice above:
+    // a building stands on the ground, a boat floats against it.
+    (x, y) => ctx.drawnGroundYAt(x, y),
     siteSurveys ?? undefined,
   );
   models.apply(result.placements);

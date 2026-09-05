@@ -31,6 +31,7 @@ import { DURANDS_SHARE_OF_256, isDurandsCell } from '../client/durands.ts';
 import {
   COASTAL_MIN_WATER_CELLS,
   COASTAL_SEARCH_RADIUS_CELLS,
+  SKIFF_MOORING_CLEARANCE_CELLS,
   surveySite,
 } from '../client/site.ts';
 import {
@@ -162,6 +163,7 @@ function nearestWaterCells(
   centreX: number,
   centreY: number,
   count: number,
+  keep?: (dx: number, dy: number) => boolean,
 ): Array<[number, number]> {
   const radius = COASTAL_SEARCH_RADIUS_CELLS;
   const threshold = radius * (radius - 1);
@@ -179,7 +181,50 @@ function nearestWaterCells(
   if (offsets.length < count) {
     throw new Error(`search disc holds ${offsets.length} cells, asked for ${count}`);
   }
-  return offsets.slice(0, count).map(([dx, dy]) => [centreX + dx, centreY + dy]);
+  return offsets
+    .filter(([dx, dy]) => keep === undefined || keep(dx, dy))
+    .slice(0, count)
+    .map(([dx, dy]) => [centreX + dx, centreY + dy]);
+}
+
+/**
+ * The DRAWN-cap lookup for a fixture whose drawn ground agrees with its
+ * lattice ground — the ordinary case away from a contour.
+ *
+ * site.ts samples the drawn cap at quarter-cell steps (drawnGroundStore's
+ * BAND_GRID_CELLS), so this rounds each sample onto the cell it falls in,
+ * which is what a per-cell fixture can answer about.
+ */
+function drawnAsLattice(groundAt: GroundLookup): GroundLookup {
+  return (x, y) => groundAt(Math.round(x), Math.round(y));
+}
+
+/**
+ * How far east of a site's own cell this file's coast fixture starts.
+ *
+ * A STRAIGHT COAST RATHER THAN A DISC OF WATER AROUND THE SITE, since
+ * 2026-09-04 (GH #327): a skiff moors only where its whole reachable square is
+ * water (site.ts's SKIFF_MOORING_CLEARANCE_CELLS), and a settlement's own cell
+ * is dry by construction, so the cells nearest a site can never be moorings.
+ * A fixture that only put water in the site's immediate neighbourhood would
+ * have a coastal verdict and no boats — true, but not what these tests are
+ * about. 3 is the smallest offset that leaves the site itself on dry land with
+ * a cell to spare.
+ */
+const COAST_WATER_MIN_DX = 3;
+
+/** A north-south coastline: everything `COAST_WATER_MIN_DX` cells or more east of the centre is confirmed water, everything west of it known dry. */
+function coastGroundAt(centreX: number): GroundLookup {
+  return (x) => (x - centreX >= COAST_WATER_MIN_DX ? -1 : 4);
+}
+
+/**
+ * Is a cell of that coast a MOORING? Its whole clearance square has to be
+ * water, and the square reaches SKIFF_MOORING_CLEARANCE_CELLS west, so the
+ * first moorable column is that much further out than the waterline.
+ */
+function isCoastMooring(dx: number): boolean {
+  return dx - SKIFF_MOORING_CLEARANCE_CELLS >= COAST_WATER_MIN_DX;
 }
 
 describe('tier table', () => {
@@ -197,7 +242,11 @@ describe('placement', () => {
   const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
 
   it('puts a building on the rendered surface at its own cell, carrying its tier', () => {
-    const { placements, pendingGround } = placementsFor(cells([3, 4, 2]), groundAt);
+    const { placements, pendingGround } = placementsFor(
+      cells([3, 4, 2]),
+      groundAt,
+      drawnAsLattice(groundAt),
+    );
     expect(pendingGround).toBe(0);
     expect(placements).toHaveLength(1);
 
@@ -232,36 +281,37 @@ describe('placement', () => {
     const { placements, pendingGround } = placementsFor(
       cells([3, 4, 0], [50, 50, 0], [60, 1, 0]),
       groundAt,
+      drawnAsLattice(groundAt),
     );
     expect(placements).toHaveLength(1);
     expect(pendingGround).toBe(2);
   });
 
   it('reports a coastal placement, seeded with skiffs, when its neighbourhood is confirmed water', () => {
-    // A tier-2 settlement at (100, 100) with COASTAL_MIN_WATER_CELLS confirmed
-    // water cells nearby (band <= -1) and everything else known and dry.
-    const ground = new Map<string, number>([['100,100', 3]]);
-    const water = nearestWaterCells(100, 100, COASTAL_MIN_WATER_CELLS);
-    for (const [wx, wy] of water) ground.set(`${wx},${wy}`, -1);
-    const dryGroundAt: GroundLookup = (x, y) => {
-      if (ground.has(`${x},${y}`)) return ground.get(`${x},${y}`)!;
-      // Every other cell in the search disc is KNOWN and dry, so the survey
-      // resolves definitively instead of coming back pending.
-      const dx = x - 100;
-      const dy = y - 100;
-      if (dx * dx + dy * dy < COASTAL_SEARCH_RADIUS_CELLS * (COASTAL_SEARCH_RADIUS_CELLS - 1)) return 4;
-      return null;
-    };
+    // A tier-2 settlement at (100, 100) on a straight coast: every cell
+    // COAST_WATER_MIN_DX or more east of it is confirmed water (band <= -1),
+    // everything west of that known dry. EVERY cell answers, inside the search
+    // disc and out: since 2026-09-04 a mooring is tested over a clearance
+    // square that can reach past the disc's edge, and an unknown sample there
+    // would make the survey pending rather than settled — which is the
+    // contract, not a fixture this test is trying to exercise.
+    const groundAt = coastGroundAt(100);
 
-    const { placements, skiffs, pendingSite } = placementsFor(cells([100, 100, 2]), dryGroundAt);
+    const { placements, skiffs, pendingSite } = placementsFor(
+      cells([100, 100, 2]),
+      groundAt,
+      drawnAsLattice(groundAt),
+    );
     expect(pendingSite).toBe(0);
     expect(placements).toHaveLength(1);
     expect(placements[0].site).toBe('coastal');
     expect(skiffs.length).toBeGreaterThan(0);
     expect(skiffs.length).toBeLessThanOrEqual(SKIFF_MAX_PER_SETTLEMENT);
     for (const skiff of skiffs) {
-      // Every skiff anchors on a cell this fixture actually marked as water.
-      expect(water).toContainEqual([skiff.x, skiff.z]);
+      // Every skiff anchors on a MOORING: water, and far enough offshore that
+      // its whole clearance square is water too.
+      expect(groundAt(skiff.x, skiff.z)).toBeLessThanOrEqual(-1);
+      expect(isCoastMooring(skiff.x - 100)).toBe(true);
     }
   });
 });
@@ -280,27 +330,29 @@ describe('site survey (card 33, coastal classification)', () => {
     // column of COASTAL_MIN_WATER_CELLS cells was inside it only while the bar
     // was smaller than the disc's radius; the bar is an area and the radius a
     // length, so they stopped fitting that way at the 2026-08-21 re-sample.
-    const waterCells = nearestWaterCells(CENTER.x, CENTER.y, COASTAL_MIN_WATER_CELLS);
-    const survey = surveySite(worldWithWater(waterCells), CENTER.x, CENTER.y);
+    const groundAt = coastGroundAt(CENTER.x);
+    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
     // A survey KEEPS only the anchors a fleet can use, not the whole shoreline
     // it counted (GH #258, site.ts's SURVEY_WATER_CELLS_RETAINED).
-    expect(survey.waterCells.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
+    expect(survey.moorings.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
   });
 
   it('classifies a fully dry, fully known neighbourhood inland — never pending', () => {
-    const survey = surveySite(worldWithWater([]), CENTER.x, CENTER.y);
+    const groundAt = worldWithWater([]);
+    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
     expect(survey.pending).toBe(false);
-    expect(survey.waterCells).toEqual([]);
+    expect(survey.moorings).toEqual([]);
   });
 
   it('a single stray deep cell (a borrow pit, not a coastline) does not qualify', () => {
     // Below COASTAL_MIN_WATER_CELLS by construction.
-    const survey = surveySite(worldWithWater([[CENTER.x + 1, CENTER.y]]), CENTER.x, CENTER.y);
+    const groundAt = worldWithWater([[CENTER.x + 1, CENTER.y]]);
+    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
-    expect(survey.waterCells).toEqual([]);
+    expect(survey.moorings).toEqual([]);
   });
 
   it('never counts a band-0 cell (world Y = 0) as water — the ambiguous case', () => {
@@ -309,7 +361,7 @@ describe('site survey (card 33, coastal classification)', () => {
     // returns 0 must never read as coastal however many such cells surround
     // the site.
     const groundAt: GroundLookup = () => 0;
-    const survey = surveySite(groundAt, CENTER.x, CENTER.y);
+    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
     expect(survey.pending).toBe(false);
   });
@@ -320,40 +372,49 @@ describe('site survey (card 33, coastal classification)', () => {
     // resolve — the caller (placement.ts) is expected to retry, not to
     // trust this 'inland' as final.
     const groundAt: GroundLookup = (x, y) => (x === CENTER.x + 1 && y === CENTER.y ? -1 : null);
-    const survey = surveySite(groundAt, CENTER.x, CENTER.y);
+    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland'); // conservative default while undecided
     expect(survey.pending).toBe(true);
   });
 
-  it('waterCells is sorted nearest first', () => {
-    // The site has to clear COASTAL_MIN_WATER_CELLS before it reports any water
-    // at all, so the ordering is asserted over a qualifying patch rather than a
-    // bare pair: the nearest cells of the disc, handed in FURTHEST first, must
-    // come back nearest first.
-    const nearestFirst = nearestWaterCells(CENTER.x, CENTER.y, COASTAL_MIN_WATER_CELLS);
-    const shuffled = [...nearestFirst].reverse();
-    const survey = surveySite(worldWithWater(shuffled), CENTER.x, CENTER.y);
+  it('moorings are sorted nearest first', () => {
+    // Over the coast fixture, whose moorable cells are a known, ordered set:
+    // the nearest disc offsets that clear COAST_WATER_MIN_DX by the mooring
+    // clearance. The survey must return the first SKIFF_MAX_PER_SETTLEMENT of
+    // them, in that order — the scan is distance-ordered, so nothing further
+    // out may displace a nearer mooring.
+    const nearestFirst = nearestWaterCells(
+      CENTER.x,
+      CENTER.y,
+      SKIFF_MAX_PER_SETTLEMENT,
+      (dx) => isCoastMooring(dx),
+    );
+    const groundAt = coastGroundAt(CENTER.x);
+    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
 
     const distanceOf = (cell: { x: number; y: number }): number =>
       (cell.x - CENTER.x) ** 2 + (cell.y - CENTER.y) ** 2;
-    expect(survey.waterCells.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
-    for (let i = 1; i < survey.waterCells.length; i++) {
-      expect(distanceOf(survey.waterCells[i]!)).toBeGreaterThanOrEqual(
-        distanceOf(survey.waterCells[i - 1]!),
+    expect(survey.moorings.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
+    for (let i = 1; i < survey.moorings.length; i++) {
+      expect(distanceOf(survey.moorings[i]!)).toBeGreaterThanOrEqual(
+        distanceOf(survey.moorings[i - 1]!),
       );
     }
-    expect(survey.waterCells[0]).toEqual({ x: nearestFirst[0]![0], y: nearestFirst[0]![1] });
+    expect(survey.moorings[0]).toEqual({ x: nearestFirst[0]![0], y: nearestFirst[0]![1] });
   });
 
   it('is a pure function of its ground lookup, so every client surveys the same cell identically', () => {
     const groundAt = worldWithWater([[CENTER.x + 1, CENTER.y], [CENTER.x + 1, CENTER.y + 1]]);
-    expect(surveySite(groundAt, CENTER.x, CENTER.y)).toEqual(surveySite(groundAt, CENTER.x, CENTER.y));
+    const drawnAt = drawnAsLattice(groundAt);
+    expect(surveySite(groundAt, drawnAt, CENTER.x, CENTER.y)).toEqual(
+      surveySite(groundAt, drawnAt, CENTER.x, CENTER.y),
+    );
   });
 });
 
 describe('skiffs (card 33)', () => {
-  const waterCells = [
+  const moorings = [
     { x: 10, y: 20 },
     { x: 11, y: 20 },
     { x: 12, y: 20 },
@@ -361,30 +422,30 @@ describe('skiffs (card 33)', () => {
   ];
 
   it('a tier-0 camp has not grown a boat yet', () => {
-    expect(skiffsForSettlement(0, waterCells)).toEqual([]);
+    expect(skiffsForSettlement(0, moorings)).toEqual([]);
     expect(SKIFF_MIN_TIER).toBeGreaterThan(0);
   });
 
   it('skiff count scales with tier, capped at SKIFF_MAX_PER_SETTLEMENT', () => {
-    expect(skiffsForSettlement(1, waterCells)).toHaveLength(1);
-    expect(skiffsForSettlement(2, waterCells)).toHaveLength(2);
-    expect(skiffsForSettlement(5, waterCells)).toHaveLength(SKIFF_MAX_PER_SETTLEMENT);
+    expect(skiffsForSettlement(1, moorings)).toHaveLength(1);
+    expect(skiffsForSettlement(2, moorings)).toHaveLength(2);
+    expect(skiffsForSettlement(5, moorings)).toHaveLength(SKIFF_MAX_PER_SETTLEMENT);
   });
 
   it('never asks for more skiffs than confirmed water cells exist', () => {
-    expect(skiffsForSettlement(5, waterCells.slice(0, 1))).toHaveLength(1);
+    expect(skiffsForSettlement(5, moorings.slice(0, 1))).toHaveLength(1);
     expect(skiffsForSettlement(5, [])).toEqual([]);
   });
 
   it('anchors every skiff on one of the water cells handed in', () => {
-    const placements = skiffsForSettlement(3, waterCells);
+    const placements = skiffsForSettlement(3, moorings);
     for (const placement of placements) {
-      expect(waterCells).toContainEqual({ x: placement.x, y: placement.z });
+      expect(moorings).toContainEqual({ x: placement.x, y: placement.z });
     }
   });
 
   it('is deterministic: the same water cells produce the same skiff parameters', () => {
-    expect(skiffsForSettlement(3, waterCells)).toEqual(skiffsForSettlement(3, waterCells));
+    expect(skiffsForSettlement(3, moorings)).toEqual(skiffsForSettlement(3, moorings));
   });
 });
 
@@ -535,7 +596,7 @@ describe('settler races', () => {
     const other: readonly [number, number] = [SETTLER_DISTRICT_CELLS, SETTLER_DISTRICT_CELLS];
     expect(settlementRace(0, 0)).not.toBe(settlementRace(other[0], other[1]));
 
-    const result = placementsFor(cells([0, 0, 0], [other[0], other[1], 2]), () => 5);
+    const result = placementsFor(cells([0, 0, 0], [other[0], other[1], 2]), () => 5, () => 5);
     expect(result.placements.map((p) => p.race)).toEqual([
       settlementRace(0, 0),
       settlementRace(other[0], other[1]),

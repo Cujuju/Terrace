@@ -219,6 +219,14 @@ export interface ClientPluginCtx {
    * a thing standing up is not seen against the surface under it, and the
    * lattice answer costs nothing.
    *
+   * NULL MEANS "NOT DRAWN YET", NOT ONLY "NOT RECEIVED YET". A chunk is meshed
+   * under a frame budget, so a cell whose chunk is received but still queued
+   * for its build answers null too, until the build lands. Treat it exactly as
+   * the pre-snapshot null: skip and retry. It is deliberately NOT a guess —
+   * `terrainRevisionAt` is bumped when a chunk is dirtied rather than when it
+   * is drawn, so a caller that cached a guess here would have nothing to
+   * invalidate it with.
+   *
    * COST. The answer is planned per CHUNK and memoised, so the first query in
    * a chunk pays for that chunk's contour plan and the rest are lookups; the
    * whole cache is dropped whenever the terrain changes. It is a query for
