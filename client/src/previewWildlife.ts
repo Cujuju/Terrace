@@ -57,10 +57,7 @@ import {
 import { createWildlifeModels } from '../../plugins/wildlife/client/models.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
-import { FISH_ASSET } from '../../plugins/wildlife/client/species/fish.ts';
-import { GRAZER_ASSET } from '../../plugins/wildlife/client/species/grazer.ts';
-import fishUrl from '../../plugins/wildlife/client/assets/fish.glb?url';
-import grazerUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
+import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
 
 /** Creatures this page ever draws at once. It is a portrait: exactly one. */
 const PREVIEW_POPULATION = 1;
@@ -226,12 +223,21 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): 
  * in its `preload` hook (../../plugins/wildlife/client/index.ts); this harness
  * has no host to give it one, so it awaits the same install function directly,
  * exactly as previewSpecies.ts does.
+ *
+ * OVER THE ONE LIST (2026-09-04), not over a list of its own. This used to name
+ * the fish and the grazer, which was every asset-sourced species when it was
+ * written and had been wrong since the ray: createWildlifeModels bakes EVERY
+ * species eagerly, so a harness missing one asset does not draw that species
+ * badly, it throws before it draws anything. `species/assets.ts` is the table
+ * both the plugin's preload and previewSpecies.ts already read, and it exists
+ * precisely so a new species is one row and nothing else.
  */
 async function installAssets(): Promise<void> {
   // Lamps-only (null environment), the same choice the plugin's own preload
   // makes: these are painted surfaces with nothing on them to reflect a sky.
-  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl, null));
-  installSpeciesAsset(GRAZER_ASSET, await loadRigAsset(grazerUrl, null));
+  for (const { spec, url } of SPECIES_ASSETS) {
+    installSpeciesAsset(spec, await loadRigAsset(url, null));
+  }
 }
 
 function main(): void {

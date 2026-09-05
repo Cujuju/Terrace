@@ -34,6 +34,7 @@ import { SHARK_ENVELOPE } from './species/shark.ts';
 import { EEL_ENVELOPE } from './species/eel.ts';
 import { ANGELFISH_ENVELOPE } from './species/angelfish.ts';
 import { GRAZER_ENVELOPE } from './species/grazer.ts';
+import { WOLF_ENVELOPE } from './species/wolf.ts';
 import { IBEX_ENVELOPE } from './species/ibex.ts';
 import { BISON_ENVELOPE } from './species/bison.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
@@ -179,6 +180,7 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
   },
   // Land species stand on the ground; they have no water column to sit in.
   grazer: null,
+  wolf: null,
   ibex: null,
   bison: null,
   // The ray sits deepest of the shelf species because it rests on the seabed
@@ -298,6 +300,7 @@ export const FLIGHT_ALTITUDES: Readonly<Record<WildlifeSpecies, number | null>> 
   whale: null,
   deepsea: null,
   grazer: null,
+  wolf: null,
   ibex: null,
   bison: null,
   ray: null,
@@ -328,6 +331,7 @@ export const BODY_COLUMNS: Readonly<Record<WildlifeSpecies, BodyColumn>> = {
   whale: { bellyY: WHALE_ENVELOPE.bellyY, crownY: WHALE_ENVELOPE.crownY },
   deepsea: { bellyY: DEEPSEA_ENVELOPE.bellyY, crownY: DEEPSEA_ENVELOPE.crownY },
   grazer: { bellyY: 0, crownY: GRAZER_ENVELOPE.height },
+  wolf: { bellyY: 0, crownY: WOLF_ENVELOPE.height },
   ibex: { bellyY: 0, crownY: IBEX_ENVELOPE.height },
   bison: { bellyY: 0, crownY: BISON_ENVELOPE.height },
   ray: { bellyY: RAY_ENVELOPE.bellyY, crownY: RAY_ENVELOPE.crownY },
@@ -667,6 +671,7 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES: Readonly<
   whale: null,
   deepsea: null,
   grazer: GRAZER_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
+  wolf: WOLF_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength: the PAWS, not the tail
   ibex: IBEX_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
   bison: BISON_ENVELOPE.bodyHalfLength, // envelope bodyHalfLength
   ray: null,

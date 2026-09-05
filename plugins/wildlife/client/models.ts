@@ -2,7 +2,7 @@
 // apart at fifty cells.
 //
 // WHAT THIS FILE IS, SINCE 2026-09-02. It no longer AUTHORS most of the
-// creatures. Eight species (fish, grazer, ibex, bison, ray, shark, eel,
+// creatures. Nine species (fish, grazer, wolf, ibex, bison, ray, shark, eel,
 // angelfish) are authored
 // one file each under ./species/, against the SpeciesModelPool contract in
 // ./species/speciesModel.ts; this file lends them the pool, bakes what they
@@ -80,6 +80,7 @@ import {
 import type { SpeciesModelBuilder, SpeciesModelPool } from './species/speciesModel.ts';
 import { buildFish } from './species/fish.ts';
 import { buildGrazer } from './species/grazer.ts';
+import { buildWolf } from './species/wolf.ts';
 import { buildIbex } from './species/ibex.ts';
 import { buildBison } from './species/bison.ts';
 import { buildRay } from './species/ray.ts';
@@ -549,11 +550,12 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   // animation bodies themselves are unchanged — they still say
   // `joint.rotation.z = …` against a Bone.
 
-  // The eight species authored in ./species/. Order fixes the order their
+  // The nine species authored in ./species/. Order fixes the order their
   // surfaces appear in `objects`, which is what the draw-object table in
   // ./index.ts is counted against.
   const fishDrawable = speciesDrawable(buildFish);
   const grazerDrawable = speciesDrawable(buildGrazer);
+  const wolfDrawable = speciesDrawable(buildWolf);
   const ibexDrawable = speciesDrawable(buildIbex);
   const bisonDrawable = speciesDrawable(buildBison);
   const rayDrawable = speciesDrawable(buildRay);
@@ -627,6 +629,8 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         return deepseaDrawable;
       case 'grazer':
         return grazerDrawable;
+      case 'wolf':
+        return wolfDrawable;
       case 'ibex':
         return ibexDrawable;
       case 'bison':

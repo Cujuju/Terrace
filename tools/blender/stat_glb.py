@@ -40,6 +40,36 @@ DEFAULT_FIT_TOLERANCE_WORLD_UNITS = 0.02
 # export_scene.gltf(export_yup=True) maps blender (x, y, z) -> gltf (x, z, -y).
 
 
+# The collection Blender's glTF IMPORTER parks the objects it fabricated in.
+#
+# WHY IT MATTERS HERE. Importing a skinned .glb builds a 42-vertex `Icosphere`
+# at the origin as the display shape for the file's bones. It is not in the
+# file — the exporter skips this collection, which is why the deer's own
+# re-export never carries one — but every measure below re-imports through that
+# same importer, so without this the sphere sets the bounding box and
+# `--footprint` fails on ANY skinned asset (found 2026-09-04 on the deer).
+#
+# THE COLLECTION IS THE MARKER, verified in Blender 5.2.1 rather than guessed:
+# the fabricated Icosphere carries no custom property, no distinguishing name
+# beyond "Icosphere", and no parent at all (so "a child of the armature" would
+# not have caught it) — its one distinguishing fact is that it, alone of every
+# object in the scene, is in `glTF_not_exported` rather than in `Collection`.
+GLTF_IMPORTER_SCAFFOLDING_COLLECTION = 'glTF_not_exported'
+
+
+def is_importer_scaffolding(obj):
+    """True for an object the glTF importer invented and will not export."""
+    return any(
+        collection.name == GLTF_IMPORTER_SCAFFOLDING_COLLECTION
+        for collection in obj.users_collection
+    )
+
+
+def model_objects():
+    """Every object that is really in the file, in Blender's own order."""
+    return [obj for obj in bpy.data.objects if not is_importer_scaffolding(obj)]
+
+
 def to_export_frame(vector):
     """Blender's Z-up vector as the Y-up vector the exported file will carry."""
     return (vector.x, vector.z, -vector.y)
@@ -85,7 +115,7 @@ def world_corners(obj):
 def world_bounds():
     """The (min, max) corner of every mesh's world bounding box, export frame."""
     lows, highs = None, None
-    for obj in bpy.data.objects:
+    for obj in model_objects():
         if obj.type != 'MESH':
             continue
         for corner in world_corners(obj):
@@ -169,9 +199,12 @@ def print_stats(label):
             )
         )
 
-    meshes = [o for o in bpy.data.objects if o.type == 'MESH']
-    empties = [o for o in bpy.data.objects if o.type == 'EMPTY']
-    armatures = [o for o in bpy.data.objects if o.type == 'ARMATURE']
+    # The same filter the box uses: a fabricated display sphere is not a mesh
+    # this file has, so it must not appear in the counts a reviewer reads either.
+    scene = model_objects()
+    meshes = [o for o in scene if o.type == 'MESH']
+    empties = [o for o in scene if o.type == 'EMPTY']
+    armatures = [o for o in scene if o.type == 'ARMATURE']
     skinned = [o for o in meshes if any(m.type == 'ARMATURE' for m in o.modifiers)]
 
     total_tris = 0
