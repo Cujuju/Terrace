@@ -108,8 +108,8 @@ export function gemGroundY(
  * GEM_BOB_AMPLITUDE_CELLS − GEM_RADIUS_CELLS = half a world unit, two bands,
  * above any ground it hangs over — one band to spare over a drawn cap that
  * sits a band above its lattice cell (ClientPluginCtx.drawnGroundYAt).
- * relicShapes.ts refuses any shape taller than GEM_RADIUS_CELLS, which is what
- * keeps that arithmetic true.
+ * relicShapes.ts scales every shape to stand no taller than GEM_RADIUS_CELLS,
+ * which is what keeps that arithmetic true.
  */
 export const GEM_HOVER_CELLS = 1.2;
 
