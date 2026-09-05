@@ -33,6 +33,7 @@ import {
   GEM_HOVER_CELLS,
   GEM_RADIUS_CELLS,
   gemBobOffset,
+  gemGroundY,
   gemPhaseFor,
   gemSpinAngle,
   relicUnderCell,
@@ -151,7 +152,8 @@ function syncGems(ctx: ClientPluginCtx, next: readonly RelicView[]): void {
  * The ground height is re-read every frame rather than cached: terrain under a
  * relic changes constantly (any player's sculpt, or a Quake), and a cached
  * height would leave gems buried in new hills or hanging over new craters. It
- * is a cheap array read per gem, and there are RELIC_COUNT of them.
+ * is a few dozen cheap array reads per gem — the whole footprint, gemGroundY —
+ * and there are RELIC_COUNT of them.
  *
  * A gem whose cell has no height yet — the join snapshot has not arrived, or
  * the relic sits in a chunk this client was never sent — is hidden rather than
@@ -161,8 +163,10 @@ function syncGems(ctx: ClientPluginCtx, next: readonly RelicView[]): void {
 function animateGems(ctx: ClientPluginCtx, dt: number): void {
   elapsedS += dt;
 
+  const sample = (cellX: number, cellY: number): number | null =>
+    ctx.terrainHeightAt(cellX, cellY);
   for (const entry of gems.values()) {
-    const ground = ctx.terrainHeightAt(entry.relic.x, entry.relic.y);
+    const ground = gemGroundY(sample, entry.relic.x, entry.relic.y);
     if (ground === null) {
       entry.mesh.visible = false;
       continue;
