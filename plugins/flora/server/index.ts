@@ -156,6 +156,7 @@ import {
   CYCLONE_DAMAGE_EVENT_NAME,
   FLORA_WIND_CROP_FLATTEN_CHANCE_PER_SEVERITY_SECOND,
   FLORA_WIND_CROP_MIN_SEVERITY,
+  FLORA_WIND_CROP_REGROW_SECONDS,
   FLORA_WIND_MIN_SEVERITY,
   FLORA_WIND_TREE_FELL_CHANCE_PER_SEVERITY_SECOND,
   windEffectChance,
@@ -222,6 +223,20 @@ const stumpField = new StumpField();
  * measurement of it.
  */
 const scorchField = new ScorchField();
+
+/**
+ * The crop plots a cyclone has laid over (issue #304). A SEVENTH object, and
+ * the third that is not a survey: nothing about a cell's terrain says a storm
+ * flattened the grain on it. The SAME CLASS as the scorch record on a shorter
+ * window (./cyclone-event.ts's FLORA_WIND_CROP_REGROW_SECONDS), because it is
+ * the same shape — event-sourced, emptied by the clock — and the same bug it
+ * closes: without it the crop survey re-sowed a flattened field inside 5 s,
+ * while the storm still stood on it. UNLIKE the scorch record it bars only the
+ * crop survey (`cropBarred` below), not the meadow, the forest or the fuel
+ * answer — wind takes the stalks, not the soil (FloraRemovalCause) — and it is
+ * not persisted (the constant's note says why).
+ */
+const flattenedField = new ScorchField(FLORA_WIND_CROP_REGROW_SECONDS);
 
 /**
  * Null until onWorldCreate: the record is sized from the world edge, which is
@@ -902,6 +917,19 @@ function barredGround(isOccupied: OccupancyPredicate): BarredGround {
 const groundCoverBarred: BarredGround = barredGround(groundCoverOccupied);
 
 /**
+ * The crop survey's bar (issue #304): everything `barredGround` bars, PLUS
+ * plots a cyclone flattened inside FLORA_WIND_CROP_REGROW_SECONDS. Composed
+ * here and not inside `barredGround`, because the flatten record is a CROP
+ * fact — stamped only where a crop withered to wind — and folding it into the
+ * shared bar would stop grass and trees from taking a flattened plot for a
+ * minute for no reason the ground has.
+ */
+function cropBarred(isOccupied: OccupancyPredicate): BarredGround {
+  const barred = barredGround(isOccupied);
+  return (x, y) => barred(x, y) || flattenedField.has(x, y);
+}
+
+/**
  * THE SIM STEP. Fixed order, once per host tick:
  *
  *   1. advance the clock — everything else reads simSeconds, nothing reads a
@@ -956,7 +984,7 @@ function simulate(world: WorldApi, dt: number): void {
   const cropBudget = Math.floor(cropScanCredit);
   if (cropBudget > 0) {
     cropScanCredit -= cropBudget;
-    const outcome = cropField.advance(world, barredGround(occupiedCells()), cropBudget);
+    const outcome = cropField.advance(world, cropBarred(occupiedCells()), cropBudget);
     if (outcome !== null) broadcastCropChanges(world, outcome.sprouted, outcome.withered);
   }
 
@@ -1001,6 +1029,10 @@ function simulate(world: WorldApi, dt: number): void {
   // and it costs one comparison on a world with nothing burning, because the
   // record doubles as its own expiry queue.
   scorchField.advanceRegrowth(simSeconds);
+  // And the flatten record's (issue #304), on the same clock for the same
+  // reason; the crop survey re-sows the plot on its own cadence once this
+  // has let go of it.
+  flattenedField.advanceRegrowth(simSeconds);
 
   if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) {
     broadcastForest(world);
@@ -1433,7 +1465,17 @@ function removeStanding(
       if (stump !== null) stumps.push(stump);
     }
     const witheredCell = cropField.reactToEdit(cell.x, cell.y);
-    if (witheredCell !== null) withered.push(witheredCell);
+    if (witheredCell !== null) {
+      withered.push(witheredCell);
+      // WIND ONLY, AND ONLY WHERE A CROP ACTUALLY STOOD (issue #304): the plot
+      // is laid over and stays unsown for FLORA_WIND_CROP_REGROW_SECONDS, or
+      // the survey would re-sow it inside 5 s with the storm still on it. A
+      // burned crop needs no second stamp — the scorch record below already
+      // bars the cell for longer. Keyed on the CROP withering, not on the cell
+      // being rolled, so a felled tree's cell is never barred to grain by a
+      // record that is about grain.
+      if (cause === 'wind') flattenedField.scorch(cell.x, cell.y, simSeconds);
+    }
     // ALL THREE ARE ASKED, not just the one that answered `floraFuelAt`: grass
     // shares its cell with a tree, so a burn that consumed the tree took the
     // tuft under it with it. Asking only the tallest would leave grass standing
@@ -1882,6 +1924,7 @@ export function resetFloraState(): void {
   fringeField.clear();
   stumpField.clear();
   scorchField.clear();
+  flattenedField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
   simSeconds = 0;
   simTick = 0;

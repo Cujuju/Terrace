@@ -60,6 +60,7 @@ import {
   Sphere,
   Vector3,
   type BufferGeometry,
+  type Vector2,
   type Material,
   type Object3D,
   type Texture,
@@ -67,6 +68,13 @@ import {
 // Shipped inside the `three` package itself (see its package.json "exports"),
 // not a separate dependency.
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { RIGIDIFY_INSTRUCTION } from './rigAsset.ts';
+import {
+  mapIdentitySignature,
+  texturesOf,
+  uvAttributeName,
+  uvChannelsUsed,
+} from './materialMaps.ts';
 
 /** Bones per vertex in three's skin attributes. Rigid binding uses only the first. */
 const SKIN_INFLUENCES = 4;
@@ -103,9 +111,7 @@ const RIGID_BIND_WEIGHT = 1;
 function materialSignature(material: Material): string {
   const shaded = material as Material & {
     flatShading?: boolean;
-    map?: unknown;
     emissive?: Color;
-    emissiveMap?: unknown;
     wireframe?: boolean;
   };
   return [
@@ -120,11 +126,17 @@ function materialSignature(material: Material): string {
     shaded.wireframe === true ? 'wire' : '-',
     // A texture is per-material state a vertex colour cannot stand in for, and
     // two parts with DIFFERENT maps have nothing to share. Identity, not
-    // presence, so two parts sampling the same atlas still merge.
-    shaded.map === undefined || shaded.map === null ? 'nomap' : idOf(shaded.map),
-    shaded.emissiveMap === undefined || shaded.emissiveMap === null
-      ? 'noemap'
-      : idOf(shaded.emissiveMap),
+    // presence, so two parts sampling the same atlas still merge. EVERY slot,
+    // not just the colour one: two parts that differ only in normal map are
+    // shaded differently, and merging them would draw both under whichever
+    // material reached the group first. See materialMaps.ts for the list.
+    mapIdentitySignature(material),
+    // The scalars that SCALE those maps, for the same reason and with the same
+    // failure if they are left out — a merged surface takes one material, so
+    // two parts that disagree about roughness (or about how deep their normal
+    // map bites) cannot be one draw. Absent fields are written as '-', so a
+    // material class that lacks the field never splits a group.
+    shadingScalarSignature(material),
     // Emissive is a uniform, not a vertex attribute, so two parts that glow
     // differently must stay apart. Black (the default) means "not emissive" and
     // merges freely.
@@ -140,14 +152,36 @@ function materialSignature(material: Material): string {
   ].join('|');
 }
 
-function idOf(value: unknown): string {
-  const withUuid = value as { uuid?: string };
-  return typeof withUuid.uuid === 'string' ? withUuid.uuid : 'unknown';
-}
+/**
+ * The scalar uniforms a merge must not average away, in a fixed order.
+ *
+ * Each one either IS the shading of a surface (roughness, metalness) or scales
+ * a map's contribution (the intensities, the displacement pair). None of them
+ * can be carried per vertex, which is exactly the test for belonging in the
+ * signature — unlike colour, which a vertex attribute does carry and which is
+ * therefore deliberately absent (see materialSignature).
+ */
+const SHADING_SCALAR_FIELDS = [
+  'roughness',
+  'metalness',
+  'aoMapIntensity',
+  'lightMapIntensity',
+  'emissiveIntensity',
+  'displacementScale',
+  'displacementBias',
+] as const;
 
-/** A texture object, as opposed to an absent map slot. */
-function isTexture(value: unknown): value is Texture {
-  return value !== undefined && value !== null && (value as Texture).isTexture === true;
+/** The scalar uniforms above plus normalScale, which is a Vector2 rather than a number. */
+function shadingScalarSignature(material: Material): string {
+  type ScalarField = (typeof SHADING_SCALAR_FIELDS)[number];
+  const scalars = material as Material & Partial<Record<ScalarField, number>>;
+  const parts = SHADING_SCALAR_FIELDS.map((field) => {
+    const value = scalars[field];
+    return value === undefined ? '-' : String(value);
+  });
+  const normalScale = (material as Material & { normalScale?: Vector2 }).normalScale;
+  parts.push(normalScale === undefined ? '-' : `${normalScale.x}:${normalScale.y}`);
+  return parts.join(',');
 }
 
 /** One drawable of a baked rig: a merged geometry and the material it draws with. */
@@ -318,9 +352,10 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
       const maps = new Set<Texture>();
       for (const surface of surfaces) {
         surface.geometry.dispose();
-        const shaded = surface.material as Material & { map?: unknown; emissiveMap?: unknown };
-        if (isTexture(shaded.map)) maps.add(shaded.map);
-        if (isTexture(shaded.emissiveMap)) maps.add(shaded.emissiveMap);
+        // EVERY slot the material samples, asked of materialMaps.ts rather than
+        // listed here: a hand-written pair of slots leaked a PBR asset's normal,
+        // roughness and occlusion textures on every blueprint disposal.
+        for (const texture of texturesOf(surface.material)) maps.add(texture);
         surface.material.dispose();
       }
       // The textures a surface samples are freed WITH the blueprint. The clone
@@ -384,6 +419,18 @@ export function instantiateRig(blueprint: RigBlueprint): RigInstance {
 
 /** A Mesh with a single material and geometry — the only shape a part can take. */
 function isDrawableMesh(node: Object3D): node is Mesh & { material: Material } {
+  // AN ARMATURE IS NOT BAKEABLE, and used to bake SILENTLY: a SkinnedMesh's
+  // geometry is stored at the bind pose, so it merged into a surface posed
+  // mid-T-pose with its joints discarded — the animation then drove bones this
+  // bake had invented from the node tree, which is not the tree the asset was
+  // weighted against. Rejected rather than approximated; the message names the
+  // tool that converts one (see RIGIDIFY_INSTRUCTION).
+  const skinned = node as Object3D & { isBone?: boolean; isSkinnedMesh?: boolean };
+  if (skinned.isBone === true || skinned.isSkinnedMesh === true) {
+    throw new Error(
+      `bakeRig: node "${node.name || '(unnamed)'}" is part of an armature — ${RIGIDIFY_INSTRUCTION}`,
+    );
+  }
   if (!(node as Mesh).isMesh) return false;
   const material = (node as Mesh).material;
   if (Array.isArray(material)) {
@@ -435,42 +482,66 @@ function bindRigidly(geometry: BufferGeometry, joint: number): void {
 }
 
 /**
+ * The uv channels three can read from a geometry: `uv`, `uv1`, `uv2`, `uv3`.
+ *
+ * FOUR IS THREE'S OWN LIMIT, not a budget chosen here — WebGLPrograms.js
+ * :388-390 derives `vertexUv1s`, `vertexUv2s` and `vertexUv3s` from the active
+ * channels and knows no fourth, so a texture asking for channel 4 is a file
+ * three could not draw whatever this function did.
+ */
+const BAKEABLE_UV_CHANNELS = [0, 1, 2, 3] as const;
+
+/**
  * Drops attributes that would stop parts merging.
  *
- * `mergeGeometries` requires every input to carry the SAME attribute set, so
- * `uv` is kept if and only if the part's material samples a texture (`map` or
- * `emissiveMap`) and stripped otherwise: a stray `uv` on an untextured
- * primitive (Three's sphere and box builders always emit one) would force it
- * into a draw of its own, while a textured part without one cannot be drawn
- * at all. Groups are keyed by map identity (see materialSignature), so every
- * piece in a group agrees about `uv` BY CONSTRUCTION — a mapped group whose
- * member lacked `uv` never reaches the merge, it throws below.
+ * `mergeGeometries` requires every input to carry the SAME attribute set, so a
+ * uv set is kept if and only if the part's material SAMPLES that channel, and
+ * stripped otherwise: a stray `uv` on an untextured primitive (Three's sphere
+ * and box builders always emit one) would force it into a draw of its own,
+ * while a textured part without one cannot be drawn at all. Which channels are
+ * sampled comes from materialMaps.ts, so a normal map on the second uv set
+ * keeps `uv1` alive exactly as a base colour map keeps `uv`. Groups are keyed
+ * by map identity AND channel (see materialSignature), so every piece in a
+ * group agrees about its uv sets BY CONSTRUCTION — a mapped group whose member
+ * lacked one never reaches the merge, it throws below.
+ *
+ * `tangent` is always dropped. three derives the tangent frame in the fragment
+ * shader when the attribute is absent (ShaderChunk/normal_fragment_begin.glsl.js
+ * :24-31: `#ifdef USE_TANGENT` reads vTangent, `#else` calls getTangentFrame
+ * from the view position and the normal-map uv), so a normal-mapped part is
+ * shaded correctly without it — and keeping it would split every merge between
+ * an exporter that wrote tangents and one that did not.
  */
 function stripUnbakeableAttributes(geometry: BufferGeometry, material: Material): void {
-  const shaded = material as Material & { map?: unknown; emissiveMap?: unknown };
-  const mapped = shaded.map !== undefined && shaded.map !== null;
-  const emissiveMapped = shaded.emissiveMap !== undefined && shaded.emissiveMap !== null;
-  if ((mapped || emissiveMapped) && geometry.getAttribute('uv') === undefined) {
-    throw new Error(
-      'bakeRig: a part uses a textured material but carries no uv attribute — ' +
-        'a merge cannot invent coordinates, and drawing it unmapped would paint it one flat texel',
-    );
+  const sampled = uvChannelsUsed(material);
+  for (const channel of sampled) {
+    const attribute = uvAttributeName(channel);
+    if (geometry.getAttribute(attribute) === undefined) {
+      throw new Error(
+        `bakeRig: a part's material samples uv channel ${channel} but the part carries no ` +
+          `${attribute} attribute — a merge cannot invent coordinates, and drawing it ` +
+          `unmapped would paint it one flat texel`,
+      );
+    }
   }
-  // `uv1` and friends are never kept: nothing the signature keys on samples
-  // past the first set, so they would only split merges that agree on `uv`.
-  for (const name of ['uv1', 'uv2', 'uv3', 'tangent']) {
-    if (geometry.getAttribute(name) !== undefined) geometry.deleteAttribute(name);
+  for (const channel of BAKEABLE_UV_CHANNELS) {
+    if (sampled.has(channel)) continue;
+    const attribute = uvAttributeName(channel);
+    if (geometry.getAttribute(attribute) !== undefined) geometry.deleteAttribute(attribute);
   }
-  if (!mapped && !emissiveMapped) geometry.deleteAttribute('uv');
+  if (geometry.getAttribute('tangent') !== undefined) geometry.deleteAttribute('tangent');
   geometry.morphAttributes = {};
 }
 
 /**
  * A copy of the material that reads its colour per vertex.
  *
- * THE MAP SURVIVES THE CLONE BY REFERENCE (verified in three 0.185's
- * MeshStandardMaterial.copy: `this.map = source.map`, and the same line for
- * emissiveMap). Sharing the texture object rather than duplicating it is what
+ * EVERY MAP SLOT SURVIVES THE CLONE BY REFERENCE (verified in three 0.185's
+ * MeshStandardMaterial.copy, client/node_modules/three/src/materials/
+ * MeshStandardMaterial.js:418-449 — `this.map = source.map` and one such line
+ * for lightMap, aoMap, emissiveMap, bumpMap, normalMap, displacementMap,
+ * roughnessMap, metalnessMap, alphaMap and envMap, with the intensities and
+ * normalScale beside them). Sharing the texture object rather than duplicating it is what
  * lets the blueprint free what it draws with while the source asset owns the
  * file's originals — and it makes the final shading the intended three-way
  * multiply: vertex colour (the part's own tint, folded in by paintVertexColor)

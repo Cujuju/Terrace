@@ -200,6 +200,12 @@ const sculptInput = createSculptInput({
   // already chose — see sculptInput's hoverTarget for why the cell is cached
   // and this is not.
   spanCapAt: (x, y, spanIndex) => world.spanCapAt(x, y, spanIndex),
+  // The column's live span count and the "does this span still draw that
+  // height" test — what tells a cached pick that its span index has gone stale
+  // (a carve split the column) rather than merely moved.
+  spanCountAt: (x, y) => world.spanCountAt(x, y),
+  spanContainsHeight: (x, y, spanIndex, worldY) =>
+    world.spanContainsHeight(x, y, spanIndex, worldY),
   worldSize: () => world.worldSize(),
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.

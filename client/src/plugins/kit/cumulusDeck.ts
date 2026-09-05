@@ -265,6 +265,29 @@ export const PUFF_NORMAL_FLATNESS = 0.45;
 export const PUFF_SOFT_EDGE_FRACTION = 0.55;
 
 /**
+ * How far a puff's rim wanders from a circle, as a fraction of its half-width
+ * (puffDeck.ts's `PuffLobing.amplitude`).
+ *
+ * ±18 % (#323, owner 2026-09-04: "they all look like spheres"). Enough that
+ * neighbouring puffs stop sharing one outline and the deck's edge reads as
+ * lumps rather than as a row of coins; not so much that a lobe can reach past
+ * the half-width the coverage arithmetic (`puffsForCoverage`) assumed, since
+ * the scale is applied INSIDE the quad — a rim at 1.18 half-widths is simply
+ * clipped by the quad's edge. Tune eyes-on, not from here.
+ */
+export const PUFF_LOBE_AMPLITUDE = 0.18;
+
+/**
+ * Per-seed aspect spread: a puff is stretched this far along one axis and
+ * squashed the same along the other, as a fraction either way.
+ *
+ * ±20 %. The lobing above bends the RIM; this bends the solid core too, so a
+ * puff seen against another is an oblong lump rather than a lumpy coin. Kept
+ * area-neutral (x × 1/x) so the coverage arithmetic still holds on average.
+ */
+export const PUFF_ASPECT_SEED_VARIATION = 0.2;
+
+/**
  * Overlap factor in the puff-count arithmetic below.
  *
  * TWO. One puff of half-width fraction `s` covers s² of the disc's area, so
@@ -341,6 +364,7 @@ const GOLDEN_RATIO_CONJUGATE = 0.6180339887;
  */
 const SEED_HASH_TIER_JITTER = 7.31;
 const SEED_HASH_PUFF_SIZE = 5.7;
+const SEED_HASH_PUFF_ASPECT = 3.37;
 
 // ── The shade the deck throws ────────────────────────────────────────────────
 
@@ -458,6 +482,7 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const sharedDeclarations = /* glsl */ `
 varying vec2 vQuad;
 varying float vPuffFade;
+varying float vSeed;
 #define PUFF_NORMAL_FLATNESS ${glslFloat(PUFF_NORMAL_FLATNESS)}`;
 
   /**
@@ -497,6 +522,7 @@ attribute vec2 aPolar;`;
     vPuffFade = massFade *
       (1.0 - smoothstep(${glslFloat(DECK_RIM_FADE_START)}, 1.0, aPolar.x));
     vQuad = position.xy;
+    vSeed = aSeed;
 
     // NOTHING IS DRAWN FOR A PARKED OR DARK SLOT. Every vertex of the quad
     // lands on the same point outside the clip volume, so the primitive is
@@ -521,7 +547,13 @@ attribute vec2 aPolar;`;
     float puffSize = massRadius * ${glslFloat(spec.puffSizeFraction)} *
       (1.0 + ${glslFloat(PUFF_SIZE_TOP_GROWTH)} * aTier) *
       (${glslFloat(1 - PUFF_SIZE_SEED_VARIATION)} +
-       ${glslFloat(2 * PUFF_SIZE_SEED_VARIATION)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_SIZE)}));`;
+       ${glslFloat(2 * PUFF_SIZE_SEED_VARIATION)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_SIZE)}));
+
+    // Oblong, per seed, and area-neutral: stretched along x by the aspect,
+    // squashed along y by the same — see PUFF_ASPECT_SEED_VARIATION.
+    float aspect = ${glslFloat(1 - PUFF_ASPECT_SEED_VARIATION)} +
+      ${glslFloat(2 * PUFF_ASPECT_SEED_VARIATION)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_ASPECT)});
+    vec2 puffExtent = puffSize * vec2(aspect, 1.0 / aspect);`;
 
   /**
    * The billboard, in VIEW space, after `<project_vertex>` has put the puff's
@@ -531,7 +563,7 @@ attribute vec2 aPolar;`;
    * here rather than pasted because this one offsets an mvPosition three has
    * already computed instead of building its own.
    */
-  const billboard = /* glsl */ `mvPosition.xy += position.xy * puffSize;
+  const billboard = /* glsl */ `mvPosition.xy += position.xy * puffExtent;
     gl_Position = projectionMatrix * mvPosition;`;
 
   /**
@@ -540,7 +572,10 @@ attribute vec2 aPolar;`;
    * Placed after `<alphatest_fragment>`, so a corner that is not part of the
    * round puff is discarded BEFORE the Lambert lighting is evaluated for it.
    */
-  const mask = /* glsl */ `${puffMaskGlsl(glslFloat(PUFF_SOFT_EDGE_FRACTION))}
+  const mask = /* glsl */ `${puffMaskGlsl(glslFloat(PUFF_SOFT_EDGE_FRACTION), {
+    amplitude: PUFF_LOBE_AMPLITUDE,
+    seedVarying: 'vSeed',
+  })}
     float alpha = puff * vPuffFade;
     ${PUFF_ALPHA_DISCARD_GLSL}
     diffuseColor.a *= alpha;`;
@@ -555,9 +590,14 @@ attribute vec2 aPolar;`;
    * Per FRAGMENT and not per vertex, deliberately: a quad's four corners all
    * sit at |vQuad| >= 1 where the sphere's z is zero, so a per-vertex normal
    * would interpolate to nothing through the middle of every puff.
+   *
+   * Divided by `lobeScale` (left in scope by the mask above): the sphere is
+   * the LOBED one the mask drew, so each lobe gets its own shaded flank rather
+   * than a bumpy outline lit as a smooth ball.
    */
-  const sphereNormal = /* glsl */ `vec3 puffSphere =
-      vec3(vQuad, sqrt(max(0.0, 1.0 - dot(vQuad, vQuad))));
+  const sphereNormal = /* glsl */ `vec2 lobedQuad = vQuad / lobeScale;
+    vec3 puffSphere =
+      vec3(lobedQuad, sqrt(max(0.0, 1.0 - dot(lobedQuad, lobedQuad))));
     vec3 puffUp = (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
     normal = normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS));`;
 

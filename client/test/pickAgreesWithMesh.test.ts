@@ -88,6 +88,29 @@ const MAX_CELL_DISAGREEMENT = cellsAcross(0.5);
 const MIN_EXACT_AGREEMENT = 0.95;
 
 /**
+ * This file's own timeout rail, because the shared 30 s one is under its cost.
+ *
+ * The reference side of this differential test is the brute-force
+ * `Raycaster.intersectObjects` that pickTerrainCellByRay REPLACED, so its cost
+ * is the O(triangles) cost the march exists to avoid, paid 3 744 times. The
+ * arena the sculpted sweep crosses is deliberately fragmented (see
+ * buildSculptedWorld), and holes sit inside the draw range rather than being
+ * skipped: measured on this fixture at 1 136 934 drawn vertices of which
+ * 809 880 are dead, 378 978 triangles per ray against the flat world's
+ * 131 072. Measured single-file: 15 s for the flat sweep, 42 s for the
+ * fragmented one; 45 s observed for the fragmented one under full-suite
+ * parallel load.
+ *
+ * vitest.base.config.ts dropped the workspace rail from 300 s to 30 s on
+ * 2026-09-02 (de874ec) and says there that a test needing longer states its
+ * own timeout inline — this is that statement. Set at ~3x the fragmented
+ * sweep's measured cost, which is a rail against a hang and not a budget the
+ * sweep is expected to approach; if this test ever nears it, the arena is
+ * drawing far more dead space than it was measured with.
+ */
+const SWEEP_TIMEOUT_MS = 120_000;
+
+/**
  * Rolling hills with a second, out-of-phase ripple: enough cliffs, caps and
  * saddles in 64² that the sweep meets every case, and no axis-aligned
  * regularity that could let a grid walk and a triangle test agree by accident.
@@ -309,24 +332,33 @@ function sweep(
 }
 
 describe('pickTerrainCellByRay vs the mesh raycast it replaced', () => {
-  it('agrees on the cell, and never disagrees about whether there is terrain at all', () => {
-    const { mirror, pickables } = buildWorld();
-    sweep(mirror, pickables);
-  });
+  it(
+    'agrees on the cell, and never disagrees about whether there is terrain at all',
+    { timeout: SWEEP_TIMEOUT_MS },
+    () => {
+      const { mirror, pickables } = buildWorld();
+      sweep(mirror, pickables);
+    },
+  );
 
-  it('still agrees when the arena the rays cross is fragmented', () => {
-    // THE ARENA IS INSIDE THE RAYCAST. Its dead space sits within the draw
-    // range — a hole is not skipped by the GPU or by the Raycaster, only zeroed
-    // — and its live runs are wherever placement and compaction put them. A
-    // `copyWithin` that moved a run by the wrong length, or a zeroing that ate
-    // one vertex too many, would show up here as rays hitting terrain that is
-    // not there, which is the same failure a player's clicks would show.
-    const { mirror, pickables, deadVertices, reordered } = buildSculptedWorld();
-    expect(reordered).toBe(true);
-    // The rays really do cross dead space: a hole is not skipped by anything,
-    // it is simply three zero positions per triangle, which is zero area and
-    // which `Ray.intersectTriangle` rejects for `DdN === 0`.
-    expect(deadVertices).toBeGreaterThan(0);
-    sweep(mirror, pickables);
-  });
+  it(
+    'still agrees when the arena the rays cross is fragmented',
+    { timeout: SWEEP_TIMEOUT_MS },
+    () => {
+      // THE ARENA IS INSIDE THE RAYCAST. Its dead space sits within the draw
+      // range — a hole is not skipped by the GPU or by the Raycaster, only
+      // zeroed — and its live runs are wherever placement and compaction put
+      // them. A `copyWithin` that moved a run by the wrong length, or a zeroing
+      // that ate one vertex too many, would show up here as rays hitting
+      // terrain that is not there, which is the same failure a player's clicks
+      // would show.
+      const { mirror, pickables, deadVertices, reordered } = buildSculptedWorld();
+      expect(reordered).toBe(true);
+      // The rays really do cross dead space: a hole is not skipped by anything,
+      // it is simply three zero positions per triangle, which is zero area and
+      // which `Ray.intersectTriangle` rejects for `DdN === 0`.
+      expect(deadVertices).toBeGreaterThan(0);
+      sweep(mirror, pickables);
+    },
+  );
 });

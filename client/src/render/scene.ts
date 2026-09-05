@@ -217,15 +217,25 @@ export interface Viewport {
  */
 const FRAME_DELTA_CAP_S = 0.1;
 
-/** TEMPORARY PERF PROBE — not for commit. */
+/**
+ * Dev-only handle onto the live Scene, filled once it exists below. Held in a
+ * holder rather than assigned to the global directly so the global exists (and
+ * a driver can wait on `.scene`) from the first line of createViewport.
+ */
 const scene0Holder: { scene: unknown } = { scene: null };
 
 export function createViewport(canvas: HTMLCanvasElement): Viewport {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
-  // TEMPORARY PERF PROBE — not for commit. Exposes the renderer so a CDP
-  // driver can read renderer.info (draw calls, triangles) per frame.
-  (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
-  (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
+  // Dev-only handles for the CDP perf drivers (scripts/gpu-bench.md and the
+  // .gpu-perf / .perf-run rigs): the renderer, so a driver can read
+  // renderer.info (draw calls, triangles) per frame, and the scene, so it can
+  // census instanced meshes and lights. Same gate as the `__terrace` handle in
+  // main.tsx — import.meta.env.DEV is statically false in production builds,
+  // so the block is eliminated there (issue #309).
+  if (import.meta.env.DEV) {
+    (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
+    (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
+  }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   // Per-material clipping planes are ignored until this is on. The brush
   // preview (render/brushPreview.ts) is the one user, cutting its outline at

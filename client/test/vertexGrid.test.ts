@@ -1104,9 +1104,13 @@ describe('the blocky fallback', () => {
       // Probed at the centroid: a wall's corners sit on the cell grid in the
       // axis it runs along, where rounding is a tie that says nothing about
       // which side of the wall is higher.
+      // Centroids are WORLD units and worldPointToCell takes world units — it
+      // does the divide itself since the 2026-08-21 re-sample (d99a455), so
+      // dividing here as well would name a cell four times too close to the
+      // origin, which clamps to (0, 0) for every wall in the chunk.
       const cell = worldPointToCell(
-        (skirt.a.x + skirt.b.x + skirt.c.x) / 3 / CELL_WORLD_SIZE,
-        (skirt.a.z + skirt.b.z + skirt.c.z) / 3 / CELL_WORLD_SIZE,
+        (skirt.a.x + skirt.b.x + skirt.c.x) / 3,
+        (skirt.a.z + skirt.b.z + skirt.c.z) / 3,
         WORLD,
       );
       if (cell === null) continue; // the world-rim half-cell, off the map

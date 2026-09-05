@@ -35,12 +35,13 @@ import {
 import { worldWithTerrain } from '../../../server/test/support/world.ts';
 import {
   DISC_FADE_SECONDS,
-  DISC_SYSTEM_MIN_RADIUS_CELLS,
-  DISC_SYSTEM_MAX_RADIUS_CELLS,
   DISC_MIN_PEAK_INTENSITY,
+  discMaxRadiusFor,
+  discMinRadiusFor,
 } from '../../../server/src/plugins/kit/discSystems.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
+  RAIN_FOOTPRINT_AREA_SCALE,
   RAIN_PLUGIN_NAME,
   RAIN_SYSTEMS_MESSAGE,
   parseDiscSystemsPayload,
@@ -138,6 +139,11 @@ describe('spawn and decay', () => {
     let overCap = 0;
     let outOfBand = 0;
     const cap = rainSystems.capFor(WORLD_SIZE);
+    // THE BAND THIS PLUGIN'S OWN POPULATION IS DRAWN FROM, not the kit's base
+    // band: rain asks for RAIN_FOOTPRINT_AREA_SCALE times the area, so its radii
+    // are the base ones times √3 (and the world's ceiling if that binds first).
+    const minRadius = discMinRadiusFor(RAIN_FOOTPRINT_AREA_SCALE);
+    const maxRadius = discMaxRadiusFor(WORLD_SIZE, RAIN_FOOTPRINT_AREA_SCALE);
     for (let tick = 0; tick < 72000; tick++) {
       host.tick(TICK_SECONDS);
       const alive = livingSystems();
@@ -145,8 +151,8 @@ describe('spawn and decay', () => {
       if (alive.length > mostAlive) mostAlive = alive.length;
       for (const system of alive) {
         if (
-          system.radius < DISC_SYSTEM_MIN_RADIUS_CELLS ||
-          system.radius > DISC_SYSTEM_MAX_RADIUS_CELLS
+          system.radius < minRadius ||
+          system.radius > maxRadius
         ) {
           outOfBand++;
         }
