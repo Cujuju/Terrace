@@ -13,7 +13,7 @@
 //
 // The GLSL below is a faithful port of the shaders the owner approved
 // (.claude/orchestration/refs/celestial-void-shaders.glsl), at that file's
-// REVISION 5 (owner, 2026-09-04). Cumulatively that revision line is: a 60
+// REVISION 6 (owner, 2026-09-04). Cumulatively that revision line is: a 60
 // degree default tilt, rotation reversed (clockwise seen from above), no
 // twinkle in either look, the nebula's drift 3x faster (NEBULA_RATE 0.15),
 // and the wheel rebuilt as a four-armed spiral galaxy — log-spiral arms with
@@ -22,7 +22,9 @@
 // has moved twice: revision 4 put it back to -0.008 because revision 3's 3x
 // was too fast, then revision 5 took it to -0.04 (~2.6 min per turn) on the
 // owner's "many times faster", with the arm count going from two to four at
-// the same time. The numbers in these shaders ARE the approved look; every
+// the same time. Revision 6 (owner, in-world, 2026-09-04) slowed it by a third
+// to -0.0267, removed the white core, dimmed the bulge, darkened the gas and
+// made the arms thicker and more tightly wound. The numbers in these shaders ARE the approved look; every
 // one that encodes a design decision is a named constant here or in the
 // shader's own `const` block.
 //
@@ -196,12 +198,15 @@ float dstars(vec2 p, float density, float minSize){
   float size = max(0.03 + 0.05*hash(i+9.2), minSize);
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
-const float WHEEL_RATE   = -0.04;  // rad/s (~2.6 min per turn); owner 2026-09-04: 'many times faster'; negative = clockwise from above
+const float WHEEL_RATE   = -0.0267; // rad/s (~3.9 min per turn); rev 6 owner 2026-09-04: 'slow by a third' from -0.04; negative = clockwise from above
 const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
 const float DISK_DIST    = 2.6;    // hub distance along the view axis
 const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
 const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
-const float WIND         = 3.2;    // how tightly the arms wind (log-spiral pitch)
+const float WIND         = 6.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0, 'more circular, less star-shaped'
+const float ARM_SHARPNESS= 1.2;    // arm cross-section exponent; rev 6: 2.2 -> 1.2, 'thicker arms, less dead space'
+const float GAS_GAIN     = 1.2;    // brightness of the gas arms; rev 6: 1.5 -> 1.2, 'bright sections a little darker'
+const float BULGE_GAIN   = 0.25;   // warm hub glow; rev 6: 0.55 -> 0.25 and the white core removed, 'get rid of the bright center'
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
 const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
@@ -228,7 +233,7 @@ void main(){
     // --- gas ---
     // ARMS log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
     float phase=th*ARMS-log(r+0.05)*WIND;
-    float arm=pow(0.5+0.5*cos(phase),2.2);
+    float arm=pow(0.5+0.5*cos(phase),ARM_SHARPNESS);
     vec2 wound=rot(rf,log(r+0.05)*WIND/ARMS);
     float grain=0.6*fbm(wound*2.2+vec2(4.0,1.0))+0.4*fbm(wound*5.0+vec2(1.0,7.0));
     float haze=fbm(rf*1.4+vec2(9.0,2.0));
@@ -236,10 +241,9 @@ void main(){
     float lanes=smoothstep(0.6,0.78,grain)*arm*0.6;          // dark dust lanes cut through the arms
     float gas=(arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
     float bulge=exp(-r*2.0);
-    float core=exp(-r*r*18.0);
-    vec3 outer=vec3(0.30,0.52,0.95), pink=vec3(0.92,0.50,0.80), warm=vec3(1.0,0.88,0.62), white=vec3(1.0,0.97,0.9);
+    vec3 outer=vec3(0.30,0.52,0.95), pink=vec3(0.92,0.50,0.80), warm=vec3(1.0,0.88,0.62);
     vec3 gasCol=mix(outer,pink,smoothstep(0.5,0.85,grain)*0.8);
-    col+=(gasCol*gas*1.5+warm*bulge*0.55+white*core*1.2)*depthFade;
+    col+=(gasCol*gas*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars in the disk, riding the rotation; denser and brighter inside the arms ---
     float pxPerUnit=FOCAL*u_res.y/sdist;
