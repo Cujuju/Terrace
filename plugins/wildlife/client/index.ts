@@ -29,13 +29,8 @@ import type { MoverPose } from '../../../client/src/plugins/types.ts';
 import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { createWildlifeModels, type WildlifeModels } from './models.ts';
 import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
-import {
-  disposeSpeciesAssets,
-  installSpeciesAsset,
-  type SpeciesAssetSpec,
-} from './species/assetSpecies.ts';
-import { FISH_ASSET } from './species/fish.ts';
-import fishUrl from './assets/fish.glb?url';
+import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
+import { SPECIES_ASSETS } from './species/assets.ts';
 import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
   BODY_COLUMNS,
@@ -299,20 +294,6 @@ function drawnPoseOf(id: number): MoverPose | null {
 const SINGLE_SURFACE_SPECIES = 9; // fish, grazer, ibex, bison, ray, shark, eel, angelfish, bird
 const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
 const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECIES * 2;
-
-/**
- * The species drawn from a Blender-built asset, and where each file is served
- * from. A `.glb?url` import, which is why client/vite.config.ts carries an
- * assetsInclude entry for .glb files (and why this directory carries its own
- * glb-url.d.ts).
- *
- * A TABLE, not a call per species: every pass of the model arc (shark, ray,
- * eel, angelfish, the three whales, deepsea) adds ONE row here and its own
- * SpeciesAssetSpec, and nothing about the preload changes.
- */
-const SPECIES_ASSETS: readonly { readonly spec: SpeciesAssetSpec; readonly url: string }[] = [
-  { spec: FISH_ASSET, url: fishUrl },
-];
 
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,

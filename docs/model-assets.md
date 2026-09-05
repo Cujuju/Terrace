@@ -184,10 +184,19 @@ declared envelope within `ENVELOPE_TOLERANCE_CELLS`:
 
 - `nose`, `tail_tip`: the length's two ends, and the model's own x extremes.
 - `crown`, `belly`: the highest and lowest points, and its y extremes.
-- `flank`: the BODY's widest half-width. Fins may reach further than this —
-  the fish's pectorals do — so it is checked against the declared `halfWidth`
-  and against the model's z extent as an upper bound, never taken from the
-  bounding box.
+- `flank`: the half-width the species' envelope DECLARES — the body for the
+  fish (its pectorals reach further), the angled pectoral tip for the shark
+  (placement.ts fits its column to the fins). It is checked against the
+  declared `halfWidth` and against the model's z extent as an upper bound,
+  never taken from the bounding box.
+
+**An envelope extreme is authored in its rest pose in the file.** The install
+measures the file AT REST, before any `animate` runs, so a part whose rest
+angle `animate` assigns (the fish's pectorals, flat in the file and rolled to
+their dihedral every frame) cannot be an envelope extreme. When it must be —
+the shark's angled pectoral tip is both its `bellyY` and its `halfWidth` — the
+angle is baked into the mesh under an identity hinge, and `animate` leaves
+that hinge alone.
 
 The envelope constants stay DECLARED in the species .ts, because
 `placement.ts` fits the creature's water column from them. The asset is
