@@ -2,12 +2,13 @@
 // apart at fifty cells.
 //
 // WHAT THIS FILE IS, SINCE 2026-09-02. It no longer AUTHORS most of the
-// creatures. Nine species (fish, grazer, wolf, ibex, bison, ray, shark, eel,
-// angelfish) are authored
+// creatures. Ten species (fish, grazer, wolf, ibex, bison, ray, shark, eel,
+// angelfish, deepsea) are authored
 // one file each under ./species/, against the SpeciesModelPool contract in
 // ./species/speciesModel.ts; this file lends them the pool, bakes what they
-// return and herds it. The deep-sea angler and the bird are still authored
-// below, in the older spheres-and-cones idiom; the three whale bodies are
+// return and herds it. Only the bird is still authored below, in the older
+// spheres-and-cones idiom; the deep-sea angler joined ./species/ as an asset
+// on 2026-09-05 (./species/deepsea.ts), and the three whale bodies are
 // ./species/humpback.ts, ./species/blueWhale.ts and ./species/spermWhale.ts
 // (assets since 2026-09-05; the procedural whale is gone).
 //
@@ -82,6 +83,7 @@ import { buildRay } from './species/ray.ts';
 import { buildShark } from './species/shark.ts';
 import { buildEel } from './species/eel.ts';
 import { buildAngelfish } from './species/angelfish.ts';
+import { buildDeepsea } from './species/deepsea.ts';
 
 /**
  * Sphere tessellation. 6 segments around, 4 rings tall: the fewest that still
@@ -99,10 +101,9 @@ const CONE_SEGMENTS = 4;
  * Only the species AUTHORED HERE are listed: every other species' colours
  * live in its own file (./species/), or in the Blender script that painted
  * its asset (the whales' 0x39506b slate is tools/blender/build_*.py's
- * BODY_COLOR).
+ * BODY_COLOR; the angler's 0x161c26 body and 0xa8fbff lure are
+ * build_deepsea.py's).
  */
-const DEEPSEA_COLOR = 0x161c26; // near-black, an abyssal silhouette
-const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
 /**
  * Birds are read as SILHOUETTES, not as coloured objects: they are the only
  * creature seen against the sky (0x9fc7e8 in render/scene.ts) rather than
@@ -114,19 +115,14 @@ const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
 const BIRD_COLOR = 0x2e3646;
 
 /**
- * What the two bodies still authored in this file measure in WORLD units at
- * model scale 1, above and below their origin — the same shape the species
+ * What the one body still authored in this file measures in WORLD units at
+ * model scale 1, above and below its origin — the same shape the species
  * files' envelopes state (species/fish.ts's crownY/bellyY), read by
- * placement.ts's BODY_COLUMNS so a flame on one of these covers the body that
- * is actually drawn. Both are centre-origin ellipsoids, so crown and belly are
- * half the full height each way; the geometry below is built FROM these.
+ * placement.ts's BODY_COLUMNS so a flame on it covers the body that is
+ * actually drawn. A centre-origin ellipsoid, so crown and belly are half the
+ * full height each way; the geometry below is built FROM these. (The
+ * angler's DEEPSEA_ENVELOPE moved to ./species/deepsea.ts with its body.)
  */
-export const DEEPSEA_ENVELOPE = {
-  /** Body ellipsoid full height 0.7 (the jaw and lure hang inside it). */
-  crownY: 0.35,
-  bellyY: -0.35,
-} as const;
-
 export const BIRD_ENVELOPE = {
   /** Body ellipsoid full height 0.18; the wings are thinner than the body. */
   crownY: 0.09,
@@ -136,9 +132,9 @@ export const BIRD_ENVELOPE = {
 /**
  * Idle-animation rates, in cycles per second. Slower = larger, by convention.
  * The whale's (WHALE_FLUKE_HZ) lives in ./species/whale.ts with the rest of
- * its animation, shared by its three asset bodies.
+ * its animation, shared by its three asset bodies; the angler's
+ * (DEEPSEA_SWAY_HZ) in ./species/deepsea.ts.
  */
-const DEEPSEA_SWAY_HZ = 0.7;
 /**
  * Wing beats per second. The fastest animation here, which is the convention
  * this list follows (slower = larger) and also just true of small birds.
@@ -151,9 +147,6 @@ const DEEPSEA_SWAY_HZ = 0.7;
  */
 const BIRD_WING_FLAP_HZ = 5.5;
 
-const DEEPSEA_SWAY_RADIANS = 0.22;
-/** How far the lure bobs on its stalk, in world units. */
-const DEEPSEA_LURE_BOB = 0.05;
 /**
  * Half the wing's travel, in radians. 0.7 is ~40° either side of level — a 80°
  * total stroke, which is the range at which a wing seen from above (this game's
@@ -298,7 +291,13 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     return material;
   }
 
-  /** Unlit — the lure must glow without costing a light. */
+  /**
+   * Unlit — for the one thing per model that has to glow without costing a
+   * light. Part of the SpeciesModelPool contract (./species/speciesModel.ts);
+   * no species authored here calls it since the angler became an asset
+   * (its lure is unlit IN THE FILE: KHR_materials_unlit), but the pool
+   * still lends it.
+   */
   function unlit(color: number): MeshBasicMaterial {
     const material = new MeshBasicMaterial({ color });
     materials.push(material);
@@ -313,14 +312,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   }
 
   // ── Shared resources, built once ───────────────────────────────────────────
-
-  const deepseaMaterial = lambert(DEEPSEA_COLOR);
-  const deepseaLureMaterial = unlit(DEEPSEA_LURE_COLOR);
-  const deepseaBody = ellipsoid(1, DEEPSEA_ENVELOPE.crownY - DEEPSEA_ENVELOPE.bellyY, 0.55);
-  const deepseaJaw = keepGeometry(new ConeGeometry(0.3, 0.45, CONE_SEGMENTS));
-  deepseaJaw.rotateZ(-Math.PI / 2);
-  const deepseaStalk = keepGeometry(new BoxGeometry(0.5, 0.04, 0.04));
-  const deepseaLure = ellipsoid(0.14, 0.14, 0.14);
 
   // A bird is authored roughly one cell across the wings — twice its body
   // length, which is what a bird's proportions are and what makes the silhouette
@@ -462,22 +453,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     };
   }
 
-  // ── The rigs authored HERE, once ───────────────────────────────────────────
-
-  const deepseaRig = (() => {
-    const { root, rig } = rigged();
-    rig.add(part(deepseaBody, deepseaMaterial, 0, 0, 0));
-    rig.add(part(deepseaJaw, deepseaMaterial, 0.5, -0.12, 0));
-    rig.add(part(deepseaStalk, deepseaMaterial, 0.42, 0.34, 0));
-    // The lure is a JOINT, not just a part: it bobs on its own, so it must be a
-    // bone the skinned surface can follow rather than a vertex block frozen
-    // into the body. It is also unlit, so it is its own draw either way.
-    const lure = new Group();
-    lure.position.set(0.68, 0.36, 0);
-    lure.add(part(deepseaLure, deepseaLureMaterial, 0, 0, 0));
-    rig.add(lure);
-    return bakeSpecies(root, { rig, lure });
-  })();
+  // ── The rig authored HERE, once ────────────────────────────────────────────
 
   const birdRig = (() => {
     const { root, rig } = rigged();
@@ -546,21 +522,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     (body): SpeciesDrawable => speciesDrawable(whaleBuilders[body]),
   );
 
-  const deepseaDrawable = ((): SpeciesDrawable => {
-    const { herd, joints } = herdFor(deepseaRig);
-    const rig = joints.rig!;
-    const lure = joints.lure!;
-    const lureRestY = lure.position.y;
-    return {
-      herd,
-      animate(seconds, phase) {
-        const sway = Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase);
-        rig.rotation.y = sway * DEEPSEA_SWAY_RADIANS;
-        // The lure lags the body, which is what sells it as dangling.
-        lure.position.y = lureRestY + Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase - 1) * DEEPSEA_LURE_BOB;
-      },
-    };
-  })();
+  const deepseaDrawable = speciesDrawable(buildDeepsea);
 
   const birdDrawable = ((): SpeciesDrawable => {
     const { herd, joints } = herdFor(birdRig);

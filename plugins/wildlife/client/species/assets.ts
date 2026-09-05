@@ -1,13 +1,13 @@
 // The species drawn from a file — Blender-built (fish, shark, ray, eel, angelfish, the humpback,
-// blue and sperm whale bodies) or downloaded and rigidified (the deer grazer, the wolf) — and where
-// each file is served from. THE ONE LIST.
+// blue and sperm whale bodies, the deep-sea angler) or downloaded and rigidified (the deer grazer,
+// the wolf) — and where each file is served from. THE ONE LIST.
 //
 // Two consumers install these: the shipped plugin's `preload` (../index.ts)
 // and the throwaway preview harness (client/src/previewSpecies.ts). Until the
 // shark, each kept its own list, and a species added to one and not the other
 // was a preview that threw "no asset installed" the first time someone looked
-// at it. One table, imported by both, is how a pass of the model arc (ray,
-// eel, angelfish, the three whales, deepsea) adds ONE row and nothing else.
+// at it. One table, imported by both, is how each pass of the model arc (ray,
+// eel, angelfish, the three whales, deepsea) added ONE row and nothing else.
 //
 // A `.glb?url` import, which is why client/vite.config.ts carries an
 // assetsInclude entry for .glb files; the ambient declaration for the import
@@ -30,6 +30,8 @@ import { BLUE_WHALE_ASSET } from './blueWhale.ts';
 import blueWhaleUrl from '../assets/blue-whale.glb?url';
 import { SPERM_WHALE_ASSET } from './spermWhale.ts';
 import spermWhaleUrl from '../assets/sperm-whale.glb?url';
+import { DEEPSEA_ASSET } from './deepsea.ts';
+import deepseaUrl from '../assets/deepsea.glb?url';
 import { GRAZER_ASSET } from './grazer.ts';
 import grazerUrl from '../assets/grazer-deer.glb?url';
 import { WOLF_ASSET } from './wolf.ts';
@@ -50,6 +52,7 @@ export const SPECIES_ASSETS: readonly SpeciesAssetEntry[] = [
   { spec: HUMPBACK_ASSET, url: humpbackUrl },
   { spec: BLUE_WHALE_ASSET, url: blueWhaleUrl },
   { spec: SPERM_WHALE_ASSET, url: spermWhaleUrl },
+  { spec: DEEPSEA_ASSET, url: deepseaUrl },
   { spec: GRAZER_ASSET, url: grazerUrl },
   { spec: WOLF_ASSET, url: wolfUrl },
 ];

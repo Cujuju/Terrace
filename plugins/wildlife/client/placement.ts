@@ -37,8 +37,9 @@ import { GRAZER_ENVELOPE } from './species/grazer.ts';
 import { WOLF_ENVELOPE } from './species/wolf.ts';
 import { IBEX_ENVELOPE } from './species/ibex.ts';
 import { BISON_ENVELOPE } from './species/bison.ts';
+import { DEEPSEA_ENVELOPE } from './species/deepsea.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
-import { BIRD_ENVELOPE, DEEPSEA_ENVELOPE } from './models.ts';
+import { BIRD_ENVELOPE } from './models.ts';
 
 /**
  * Water a swimmer keeps between its own skin and the surface (or the seabed),
