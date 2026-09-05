@@ -396,7 +396,7 @@ export function ManaGauge(): JSX.Element {
         class="mana-gauge"
         role="img"
         aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${currentBrushCost()}`}
-        title={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)} — the brush in your hand costs ${currentBrushCost()} a click, so one grain falls each time you have earned another.`}
+        title={`Mana: ${Math.floor(displayed())} of ${manaPool()!.capacity}`}
       >
         <style>{GAUGE_CSS}</style>
 
@@ -600,7 +600,7 @@ export function ManaGauge(): JSX.Element {
           </span>
           <span
             class="mana-gauge__rate"
-            title="Mana this world hands back every second, even while you do nothing."
+            title="Refill: mana earned every second"
           >
             {formatRegenRate(manaPool()!.regenPerSecond)}
           </span>
@@ -609,7 +609,7 @@ export function ManaGauge(): JSX.Element {
               that stamp cost so much more than the last one". */}
           <span
             class="mana-gauge__cost"
-            title="What one click of the current brush costs — bigger and harder brushes cost more."
+            title="Cost: one click of this brush"
           >
             {formatSculptCost(currentBrushCost())}
           </span>

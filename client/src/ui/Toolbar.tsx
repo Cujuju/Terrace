@@ -99,8 +99,7 @@ function SculptIcon(): JSX.Element {
   );
 }
 
-const SCULPT_TITLE =
-  'The sculpting brush: drag the ground to raise and lower it. The brush panel sets its size and shape.';
+const SCULPT_TITLE = 'Sculpt: drag to shape land';
 
 export function Toolbar(): JSX.Element {
   return (

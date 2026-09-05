@@ -486,7 +486,7 @@ export function Cartographer(props: {
             <button
               type="button"
               class="chart-button"
-              title="Download this chart as a PNG image."
+              title="Download: this chart as PNG"
               onClick={saveChart}
             >
               Save chart
@@ -494,7 +494,7 @@ export function Cartographer(props: {
             <button
               type="button"
               class="chart-button"
-              title="Close the chart."
+              title="Close: put the chart away"
               aria-label="Close the chart"
               onClick={() => setChartOpen(false)}
             >

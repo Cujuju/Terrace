@@ -26,7 +26,7 @@ export function InvitePanel(): JSX.Element {
       {/* One title for the label + URL; the button carries its own below. */}
       <div
         class="hud-row"
-        title="Anyone who opens this address joins the world you are sculpting."
+        title="Invite: this address joins your world"
       >
         <span class="hud-label">Invite</span>
         <span class="invite-url">{shareUrl()}</span>
@@ -34,7 +34,7 @@ export function InvitePanel(): JSX.Element {
           type="button"
           class="invite-copy"
           aria-label="Copy invite address"
-          title="Copies the address above, ready to paste to a friend."
+          title="Copy: address ready to paste"
           onClick={() => {
             const url = shareUrl();
             if (url !== null) copy(url);

@@ -64,7 +64,7 @@ export function AudioSettingsPanel(): JSX.Element {
     <div class="audio-panel">
       <SliderRow
         label="Volume"
-        title="How loud the world is. Mute silences it without forgetting this level."
+        title="Volume: how loud the world is"
         level={masterVolume}
         onLevel={(level) => {
           setMasterVolume(level);
@@ -79,8 +79,8 @@ export function AudioSettingsPanel(): JSX.Element {
             aria-pressed={audioMuted()}
             title={
               audioMuted()
-                ? 'Sound is off. Turn it back on at the volume the slider still shows.'
-                : 'Silence everything without losing the volume you set.'
+                ? 'Unmute: sound back at this level'
+                : 'Mute: silence, volume remembered'
             }
             onClick={() => {
               setAudioMuted(!audioMuted());
@@ -96,7 +96,7 @@ export function AudioSettingsPanel(): JSX.Element {
         {(bus) => (
           <SliderRow
             label={AUDIO_BUS_LABEL[bus]}
-            title={`How loud ${AUDIO_BUS_LABEL[bus].toLowerCase()} is against the rest of the world. The volume above scales all of it.`}
+            title={`${AUDIO_BUS_LABEL[bus]}: its share of the volume`}
             level={() => busLevel(bus)}
             onLevel={(level) => {
               setBusLevel(bus, level);

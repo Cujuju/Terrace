@@ -53,12 +53,9 @@ import { AlmanacClock } from './AlmanacClock.tsx';
  * the name and rating spans keep these titles, and the browser shows the
  * innermost one under the cursor — hovering the name still explains the name.
  */
-const NAME_TITLE =
-  'The world you are sculpting — it was named when the world was created and keeps that name forever.';
-const DIFFICULTY_TITLE =
-  'How harsh this world is rated, from 1 (forgiving) to 100 (punishing) — it is set by whoever hosts the world and never changes while you play.';
-const CLOCK_TITLE =
-  'The time in this world — the sun or moon shows where in the day you are, and the tag reads the clock.';
+const NAME_TITLE = 'World: named once, at creation';
+const DIFFICULTY_TITLE = 'Difficulty: 1 forgiving to 100 punishing';
+const CLOCK_TITLE = 'Clock: the time in this world';
 
 export function WorldHeader(): JSX.Element {
   // Nothing to show before the join snapshot arrives, and nothing to show on a

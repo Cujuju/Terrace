@@ -126,7 +126,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
             type="button"
             class="chart-button"
             aria-label="Close worlds"
-            title="Close this panel."
+            title="Close: put the panel away"
             onClick={() => setWorldPanelOpen(false)}
           >
             ✕
@@ -219,7 +219,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
               <button
                 type="button"
                 class="chart-button"
-                title="Restart the server process so new code becomes live."
+                title="Restart: make new code live"
                 disabled={worldAdminKey() === ''}
                 onClick={() => setArmedRestart(true)}
               >
@@ -290,7 +290,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                     <button
                       type="button"
                       class="chart-button"
-                      title="Save the world you are in, close it, and open this one."
+                      title="Open: save current, load this one"
                       onClick={() => send({ type: 'worldLoad', key: worldAdminKey(), id: world.id })}
                     >
                       Load
@@ -300,7 +300,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                   <button
                     type="button"
                     class="chart-button"
-                    title="Rename this world. Its file never moves."
+                    title="Rename: the file never moves"
                     onClick={() => {
                       setRenamingId(world.id);
                       setRenameTo(world.name);
@@ -312,7 +312,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                   <button
                     type="button"
                     class="chart-button"
-                    title="Copy this world, with its entire history, under a new name."
+                    title="Copy: whole history, new name"
                     onClick={() =>
                       send({ type: 'worldDuplicate', key: worldAdminKey(), id: world.id })
                     }
@@ -327,7 +327,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                   <button
                     type="button"
                     class="chart-button"
-                    title="Choose which plugins this world runs."
+                    title="Plugins: choose what this world runs"
                     onClick={() => {
                       if (pluginsForId() === world.id) {
                         setPluginsForId(null);
@@ -349,7 +349,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                         <button
                           type="button"
                           class="chart-button"
-                          title="Move this world to the trash. It is not deleted."
+                          title="Trash: moved aside, not deleted"
                           onClick={() => setArmedArchiveId(world.id)}
                         >
                           Archive
@@ -426,8 +426,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                               classList={{ on: !isDisabled(), off: isDisabled() }}
                               title={
                                 isDisabled()
-                                  ? `Run “${pluginName}” in this world.`
-                                  : `Stop running “${pluginName}” in this world.`
+                                  ? `On: “${pluginName}” runs in this world`
+                                  : `Off: “${pluginName}” stops in this world`
                               }
                               onClick={() =>
                                 send({
@@ -453,7 +453,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                               type="button"
                               class="chart-button plugin-reload"
                               aria-label={`Reload ${pluginName}`}
-                              title={`Re-import “${pluginName}”’s server code without restarting. If the new code fails, the build that is running stays.`}
+                              title={`Reload: re-import “${pluginName}” without restarting`}
                               onClick={() =>
                                 send({
                                   type: 'worldPluginReload',
@@ -563,7 +563,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
             <button
               type="button"
               class="chart-button"
-              title="Save the world you are in and close it, leaving none loaded."
+              title="Close world: save it, load none"
               onClick={() => send({ type: 'worldUnload', key: worldAdminKey() })}
             >
               Unload the current world
@@ -627,7 +627,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                   <button
                     type="button"
                     class="chart-button"
-                    title="Move this world back out of the trash."
+                    title="Restore: out of the trash"
                     onClick={() =>
                       send({ type: 'worldUnarchive', key: worldAdminKey(), id: world.id })
                     }
