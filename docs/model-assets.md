@@ -215,6 +215,11 @@ its beat, which a file authored with the wings flat never reaches, so
 `RAY_REST_ENVELOPE` is what `ray.glb` measures and `RAY_ENVELOPE` is
 `rest ± wingReach · sin(flap)`.
 
+**A body that bends is a chain of NESTED joint Empties** (the eel: `spine0`
+… `spine4`, each a child of the one before, positioned in its parent's frame)
+— `bakeRig` composes a child's rotation onto its parent's, so `animate` drives
+relative bends and the file must carry the nesting, not a flat row of hinges.
+
 A WALKER reads the same five envelope numbers differently, and the difference
 is the origin: a swimmer is authored about its body centre so `crownY` and
 `bellyY` straddle zero, while a walker is authored at its FEET, so `bellyY` is
