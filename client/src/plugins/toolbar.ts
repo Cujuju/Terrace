@@ -46,7 +46,13 @@ export interface PluginTool {
   readonly label: string;
   /** One sentence: what a press with this tool held will do. */
   readonly title: string;
-  /** Small inline stroke SVG, so it takes the HUD's colour like every other. */
+  /**
+   * A small inline SVG carrying `class="hud-tool__icon"`, which sizes it and
+   * lifts it off its tile. Shaded, full-colour art (owner, 2026-09-04), not a
+   * currentColor glyph — see client/src/ui/Toolbar.tsx's SculptIcon for the
+   * shape; prefix every gradient id with the tool's name, since SVG ids are
+   * document-global.
+   */
   readonly icon: Component;
   /**
    * Told on every change of selection — true when this tool becomes the held
