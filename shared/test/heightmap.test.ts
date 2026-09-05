@@ -2896,10 +2896,11 @@ describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-0
     }
   });
 
-  it('grabbing the cap still falls to the exposed ground — the pull-out undo', () => {
+  it('grabbing the cap takes off one band only — never the band below (owner 2026-09-05)', () => {
     const map = poleOnPlain();
     pullIn(map, CAP_BAND);
-    expect(eastEdgeBand(map)).toBe(PLAIN_BAND);
+    expect(eastEdgeBand(map)).toBe(CAP_BAND - 1);
+    expect(heightAt(map, CX + POLE_REACH, CY)).toBe((CAP_BAND - 1) * BAND_HEIGHT);
   });
 
   it('the cut sweeps the footprint at the grabbed band and stops at its edge', () => {

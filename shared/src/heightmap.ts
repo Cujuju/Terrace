@@ -1681,6 +1681,15 @@ function applyDragRegion(
   // pointer names the slab under the ray, so the player chooses between the
   // two by where on the face they take hold.
   //
+  // SUPERSEDED IN PART (owner decision 2026-09-05): "a shift pull should only
+  // do the current band and bands above, never the band below." The first
+  // bullet no longer holds — a cell capping AT the grab is bounded at
+  // `(k − 1) · BAND_HEIGHT` like every other, so a retreat removes band k's
+  // material and nothing beneath it. Undoing a pull-out over a plain several
+  // bands down is now one grab per band, the same walk the outward pull is.
+  // `retreatHeightAt` still decides WHERE the band ends (a lip needs lower
+  // ground beside it); it no longer decides how far the cell falls.
+  //
   // NO CASCADE, DELIBERATELY, and this is where the symmetry with the outward
   // pull is broken on purpose. `pushLowerLayers` exists because an ADVANCING
   // lip swallows the tread below it: the step is destroyed unless the level
@@ -1721,13 +1730,11 @@ function applyDragRegion(
         // Interior of the plateau — nothing lower beside it, so the band does
         // not end here and there is no lip at this cell to pull in.
         if (ground === null) continue;
-        // THE GRAB BOUNDS THE DROP ON A TALL FACE (owner report 2026-09-02, the
-        // block comment above): a cell capping ABOVE the grabbed band is cut
-        // back to the band beneath the grab, never further; a cell capping AT
-        // it falls to the exposed ground, which is the pull-out's undo.
-        const exposed = bandOf(span.ceiling) > targetBand
-          ? Math.max(ground, (targetBand - 1) * BAND_HEIGHT)
-          : ground;
+        // THE GRAB BOUNDS THE DROP (owner 2026-09-02 for a tall face, widened
+        // 2026-09-05 to every cell — the block comment above): the cell is cut
+        // back to the band beneath the grab and never further, so band k comes
+        // off and the bands below it stand.
+        const exposed = Math.max(ground, (targetBand - 1) * BAND_HEIGHT);
         // A DRAG NEVER REMOVES A ROOF (plan D4). A span above the bottom one
         // that would fall below its own floor, or thin out past drawing, is
         // left standing: the ground beside it is under it, not beside it. The
