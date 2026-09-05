@@ -103,11 +103,18 @@ cell (the launch cell is *inside* the strip by construction).
 ## Not verified
 
 - Eyes-on in the running app: never started the app (owner's standing rule).
-- The structures side of the partition. `HARBOUR_INSHORE_BAND_WORLD_UNITS` does
-  not yet exist in `plugins/structures/protocol.ts` (grepped at the time of this
-  commit — the parallel agent had not landed it). The boats constant is a
-  restatement and stands alone, but the zoning is only real once both halves are
-  in; the numbers must be checked against each other after that lands.
+- Live behaviour of the two halves together. The structures side landed while
+  this was being written: `plugins/structures/protocol.ts:518` now exports
+  `HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.5` with the mirrored comment, and its
+  derivation (2.7-3.2 cells of mooring offset + 1.84 cells of hull reach, rounded
+  up to 6) agrees term for term with this one — **the two constants are checked
+  against each other and match**. What is still unverified is the pair running
+  in the app.
+
+- NOTE ON THE COMMIT: this report file was swept into another agent's commit
+  `f9e7edf` (a broad `git add` on the shared checkout) rather than committed
+  under its own message. The file is in the tree; only the commit it rode in on
+  is wrong.
 - The offline check uses the raw heightmap. It approximates `isSailable`
   (band <= -1 vs. `sharedIsWalkableCell` over `OPEN_WATER_PROFILE`, which admits
   raw height 0) and `isManoeuvrablePose` (five hull probes on a 1-cell-eroded

@@ -260,11 +260,13 @@ export const COASTAL_MIN_WATER_CELLS = cellsOverArea(2);
  * restated on: the two plugins are independently installable, so this is not
  * imported, but the semantics MUST match or the partition it defines has a gap.
  *
- * WHY 1.5 (six cells). Structures moors a skiff about three cells past the
- * shore, and a moored skiff reaches 1.84 cells further still — up to 0.28 world
- * units of orbit round its mooring plus half of a 0.36-long hull, converted.
- * 3 + 1.84 rounds up to six cells, so 1.5 world units is the smallest band that
- * contains a skiff's whole reach.
+ * WHY 1.5 (six cells). Structures moors a skiff 2.7-3.2 cells past the shore
+ * (its mooring square must hold 2 cells of drawn water on every side), and a
+ * moored skiff reaches 1.84 cells further still — up to 0.28 world units of
+ * orbit round its anchor plus half of a 0.36-long hull, converted. 3.2 + 1.84
+ * rounds up to six cells, so 1.5 world units is the smallest band that contains
+ * a skiff's whole reach. Verified against the twin's own derivation
+ * (plugins/structures/protocol.ts:502-509): same terms, same number.
  *
  * WHAT IT PARTITIONS (owner defect, 2026-09-05: skiffs "collide with each other
  * and with the warboats"). Both plugins berth off the SAME village at the SAME
