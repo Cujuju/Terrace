@@ -1,6 +1,6 @@
 # Phase 1 report — audio host (`ctx.audio`), GH #325
 
-Branch `audio-host` in `.claude/worktrees/audio-host`, nine commits off main `7a6eced`.
+Branch `audio-host` in `.claude/worktrees/audio-host`, 17 commits off main `7a6eced`.
 Nothing merged, nothing pushed, no tests written.
 
 | # | Commit | Subject |
@@ -14,76 +14,85 @@ Nothing merged, nothing pushed, no tests written.
 | 7 | `d0ca65f` | `docs(audio): note the asset-url.d.ts rename for the merge` |
 | 8 | `d339094` | `feat(audio): per-bus volume sliders and distance-delayed thunder` |
 | 9 | `0408ab6` | `feat(audio): put each call's live bus gain in the debug trace` |
+| 10 | `0531959` | `docs(audio): report the per-bus and thunder-delay amendment` |
+| 11 | `965f813` | `feat(audio): preload on the contract so the first sound is never silent` |
+| 12 | `2fa229b` | `feat(audio): build the graph eagerly so assets decode before the first click` |
+| 13 | `f2a1b2a` | `feat(audio): safety limiter between the master and the destination` |
+| 14 | `5c7d22b` | `fix(audio): one unlock per gesture, not one per listener` |
+| 15 | `8fd8674` | `refactor(audio): split the engine along its three seams` |
+| 16 | `8ee8a44` | `docs(audio): review follow-ups, renumbered and repointed after the split` |
+| 17 | `6fe1ce5` | `style(audio): trim comments to the new 30-word cap` |
 
 ## 1. What shipped, with `file:line`
 
 ### Core — `client/src/audio/` (new)
 
-> **Line numbers below are POST-SPLIT** (review item 4, commit `8fd8674`), which moved most of this
-> code out of `audioEngine.ts` into `audioGraph.ts`, `audioVoices.ts`, `audioBuffers.ts` and
-> `audioDebug.ts`. §4's table says what now lives where.
+> **This section cites SYMBOLS, not line numbers.** The split (`8fd8674`) and the comment trim
+> (`6fe1ce5`) each moved every line in this directory, and a line number that is wrong is worse than no
+> line number. Every name below is greppable. Where a line reference is genuinely the clearest thing —
+> a spot in a file this branch did not create — it is still given.
 
 | Claim | Where |
 |---|---|
-| Lazy single `AudioContext` — built only inside `buildGraph`, which only `engineUnlock` calls | `audioGraph.ts:164` (`buildAudioGraph`), called unconditionally at `audioEngine.ts:74` |
-| `AudioListener` added to `viewport.camera` | `audioGraph.ts:218` |
-| Three bus `GainNode`s → master → `context.destination` | `audioGraph.ts:198` (master), `:200` (`master.connect(limiter)`), `:196` (limiter → destination), `:203-212` (bus loop, `bus.connect(master)` at `:210`) |
-| Master follows `audioPrefs` (volume × mute) via a ramp | `audioGraph.ts:261-280` (`followAudioPrefs`) — a `createRoot` + one `createEffect` per gain, ramped through `rampGain` (`:289`) |
-| Unlock on the host's capture-phase canvas `pointerdown` | `client/src/plugins/host.ts:333` (`audioEngine.unlock()` at the top of `onCanvasPointerDown`, registered `{ capture: true }` at `:348`); `unlock` itself at `audioEngine.ts:135` |
-| PLUS one-shot `window` `keydown`/`pointerdown` | `audioEngine.ts:162-163` (`{ once: true }` on both), removed on dispose at `:323-324` |
-| Ambience/music requested before unlock start on unlock | SUPERSEDED by review item 2 — the graph is eager, so a voice started while suspended is simply scheduled and becomes audible on resume; the pending bookkeeping was deleted. See §4 |
-| URL-keyed decode cache, one in-flight promise per URL | `audioBuffers.ts:30` (`createAudioBufferCache`), `:32-34` (`get` returns the existing promise), `:55` (`peek`) |
-| `MAX_SFX_VOICES = 32`, oldest stolen | `audioVoices.ts:43` (the constant), `:306` (`while (sfxVoices.length >= MAX_SFX_VOICES) retireSfx(sfxVoices[0])`); the reasoning at `:300-305` |
-| Positional voices: `PositionalAudio`, `'inverse'`, ref/max distance as named constants | `audioVoices.ts:313-320` |
-| …distances derived from `client/src/config.ts` scale constants | `SFX_REFERENCE_DISTANCE_WORLD_UNITS = CAMERA_MIN_DISTANCE` (`audioVoices.ts:55`), `SFX_MAX_DISTANCE_WORLD_UNITS = CAMERA_MAX_DISTANCE` (`:66`); both imported at `:14`. `CAMERA_MIN_DISTANCE` is itself derived in `config.ts:510-512` from `CAMERA_CLOSEST_VIEW_WORLD_UNITS` and the FOV |
-| …parented into a **core-owned** `Group` in the scene, never a plugin layer | `audioGraph.ts:220-222` (`positionalRoot`, added to `viewport.scene`), used at `audioVoices.ts:324`. Its doc at `audioGraph.ts:136-148` cites `host.ts:922` (a layer is cleared on unmount) and `three/src/audio/PositionalAudio.js:217` (the panner only moves for an object the renderer walks) |
-| Per-plugin handle factory the host calls | `audioEngine.ts:311-319` (`forPlugin` returns `{ audio, release }`); declared on the interface at `:69` |
-| …`release` wired into the plugin's teardown | `client/src/plugins/host.ts:641-642` — `forPlugin` then `track(audioHandle.release)`, i.e. the same `undo` list `host.ts:250` documents as idempotent-per-registration |
-| `?audioDebug=1`, matching `perfProbe.ts:576`'s query-flag convention | `audioDebug.ts:14-20` (`queryFlag`, same "null or empty is off" rule as `perfProbe.ts:577`), `AUDIO_DEBUG` at `:23` |
-| `?audioMusic=<url>` — core is a synthetic claimant | `audioEngine.ts:304-306`, claiming under `DEV_MUSIC_CLAIMANT` (`audioDebug.ts:51`); the URL is read at `audioDebug.ts:30` |
-| Both zero-cost when off | Every debug site is behind `if (!AUDIO_DEBUG) return;` (`audioDebug.ts:66`) and the weight-thinning branch at `audioEngine.ts:248` short-circuits on `AUDIO_DEBUG` first; the music switch is one `URLSearchParams` read at construction |
+| Single `AudioContext`, built eagerly and suspended | `audioGraph.ts` → `buildAudioGraph`, called unconditionally at the top of `createAudioEngine` |
+| `AudioListener` added to `viewport.camera` | `audioGraph.ts` → `buildAudioGraph`, the `viewport.camera.add(listener)` line |
+| Three bus `GainNode`s → master → limiter → destination | `audioGraph.ts` → `buildAudioGraph`; `master.connect(limiter)`, `limiter.connect(context.destination)`, and the `AUDIO_BUS_NAMES` loop's `bus.connect(master)` |
+| Master and each bus follow `audioPrefs` via a ramp | `audioGraph.ts` → `followAudioPrefs` (one `createEffect` per gain) and `rampGain` |
+| Unlock on the host's capture-phase canvas `pointerdown` | `client/src/plugins/host.ts:333`, inside `onCanvasPointerDown` (registered `{ capture: true }` at `:348`); the engine side is `audioEngine.ts` → `unlock` |
+| PLUS one-shot `window` `keydown`/`pointerdown` | `audioEngine.ts` → the `onWindowGesture` listeners, removed in `dispose` |
+| URL-keyed decode cache, one in-flight promise per URL | `audioBuffers.ts` → `createAudioBufferCache` (`get` shares the promise, `peek` does not start one) |
+| `MAX_SFX_VOICES = 32`, oldest stolen | `audioVoices.ts` → `MAX_SFX_VOICES` and the `while (…) retireSfx(sfxVoices[0])` at the top of `playSfx` |
+| Positional voices: `PositionalAudio`, `'inverse'`, named ref/max distances | `audioVoices.ts` → `playSfx`'s `at !== undefined` branch |
+| …distances derived from `client/src/config.ts` | `audioVoices.ts` → `SFX_REFERENCE_DISTANCE_WORLD_UNITS = CAMERA_MIN_DISTANCE`, `SFX_MAX_DISTANCE_WORLD_UNITS = CAMERA_MAX_DISTANCE`. `CAMERA_MIN_DISTANCE` is itself derived in `config.ts:510-512` from `CAMERA_CLOSEST_VIEW_WORLD_UNITS` and the FOV |
+| …parented into a **core-owned** `Group`, never a plugin layer | `audioGraph.ts` → `AudioGraph.positionalRoot`, built in `buildAudioGraph`, used by `audioVoices.ts` → `playSfx`. Its doc cites `host.ts:922` and `three/src/audio/PositionalAudio.js:217` |
+| Per-plugin handle factory the host calls | `audioEngine.ts` → `forPlugin`, returning `{ audio, release }` |
+| …`release` wired into the plugin's teardown | `client/src/plugins/host.ts:641-642` — `forPlugin` then `track(audioHandle.release)`, the `undo` list `host.ts:250` documents as idempotent |
+| `?audioDebug=1`, matching `perfProbe.ts:576`'s convention | `audioDebug.ts` → `queryFlag` (same "null or empty is off" rule as `perfProbe.ts:577`) and `AUDIO_DEBUG` |
+| `?audioMusic=<url>` — core is a synthetic claimant | `audioDebug.ts` → `AUDIO_MUSIC_URL` and `DEV_MUSIC_CLAIMANT`; used at the end of `createAudioEngine` |
+| Both zero-cost when off | `audioDebug.ts` → `createAudioDebugLog`'s first line is `if (!AUDIO_DEBUG) return`, and `audioEngine.ts` → `ambience`'s thinning branch tests `AUDIO_DEBUG` first |
 
 ### Contract — `client/src/plugins/types.ts`
 
 | Claim | Where |
 |---|---|
-| `readonly audio: PluginAudio` on `ClientPluginCtx` | `types.ts:323` (doc at `:315-322`) |
-| `PluginAudio` with the three methods | `types.ts:220-294` (`preload` `:244`, `playSfx` `:260`, `ambience` `:278`, `setMusic` `:293`); `SfxOptions` at `:141-194` |
-| Single-claimant music with the once-per-loser refusal | contract at `types.ts:280-292`; implementation `audioEngine.ts:265-278`, mirroring `host.ts:775-792`'s `setSkyRig` shape (claimant var `audioEngine.ts:111`, refusal set `:112`, `refuseMusic` at `:166`) |
-| Ambience keyed by (plugin, url), retarget-on-repeat, weight 0 fades out then releases | `audioEngine.ts:52` (`PluginAudioState.ambience: Map<url, …>`), `:224-263` (the keyed lookup and retarget path), `audioVoices.ts:237-258` (`retargetAmbience`; the release timer at `:251`) |
-| Every call safe pre-unlock / pre-snapshot / post-detach | each method opens with `if (state.released)` — `audioEngine.ts:182`, `:195`, `:225`, `:265`. The graph-null guards are gone: a browser without Web Audio gets `createSilentAudioEngine` (`:348`) instead, so the null case is decided once (see §4) |
-| Wired in `host.ts`, released on detach | `host.ts:641-642` (handle + `track`), `:646` (`audio: audioHandle.audio`), disposed at `:1091`; `releasePlugin` at `audioEngine.ts:280` |
+| `readonly audio: PluginAudio` on `ClientPluginCtx` | `types.ts` → `ClientPluginCtx.audio` |
+| `PluginAudio` with `preload` / `playSfx` / `ambience` / `setMusic` | `types.ts` → `PluginAudio`; options in `SfxOptions` |
+| Single-claimant music with the once-per-loser refusal | contract on `PluginAudio.setMusic`; implementation `audioEngine.ts` → `setMusic` + `refuseMusic`, mirroring `host.ts:775-792`'s `setSkyRig` |
+| Ambience keyed by (plugin, url), retarget-on-repeat, weight 0 releases | `audioEngine.ts` → `PluginAudioState.ambience` and the `ambience` handle; `audioVoices.ts` → `retargetAmbience` |
+| Every call safe pre-unlock / pre-snapshot / post-detach | every handle method opens `if (state.released) return`. Graph-null guards are gone — a browser without Web Audio gets `createSilentAudioEngine` (see §4) |
+| Wired in `host.ts`, released on detach | `host.ts:641-642` and `:646`, disposed at `:1091`; `audioEngine.ts` → `releasePlugin` |
 
 ### Prefs + UI
 
-- `client/src/state/audioPrefs.ts` (new): `DEFAULT_MASTER_VOLUME = 0.8` (`:33`), `DEFAULT_MUTED = false` (`:36`),
-  a versioned key (`:100`, now v2 — see §3), the same load/validate/fallback and best-effort-persist
-  shape as `controlPrefs.ts:57` / `:113-132` / `:145-149`. `effectiveMasterGain()` (`:246`) is the one
-  number the master follows, so mute cannot drift from the slider.
+- `client/src/state/audioPrefs.ts` (new): `DEFAULT_MASTER_VOLUME = 0.8`, `DEFAULT_MUTED = false`, a
+  versioned `STORAGE_KEY` (now v2 — see §3), and the same load/validate/fallback and
+  best-effort-persist shape as `controlPrefs.ts:57` / `:113-132` / `:145-149`. `effectiveMasterGain` is
+  the one number the master follows, so mute cannot drift from the slider.
 - `client/src/ui/AudioSettingsPanel.tsx` (new; superseded the one-row `AudioSettingsRow.tsx` when §3
   added the bus sliders). Rendered inside the existing settings popup at `client/src/ui/Hud.tsx:465`,
   *beside* `ControlsPanel` rather than inside it — that panel's reset button promises to reset "every setting on
   this panel" (`ControlsPanel.tsx:196`) and audio is not a control binding.
-- `client/src/ui/hud.css:418-455`: a handful of rules, no new visual language — every row reuses
-  `.hud-row`/`.controls-row`/`.controls-label`/`.controls-reset`; `.audio-slider` at `:431`.
+- `client/src/ui/hud.css`: `.audio-panel`, `.audio-row`, `.audio-slider`, `.audio-mute`,
+  `.audio-readout` — no new visual language; every row reuses
+  `.hud-row`/`.controls-row`/`.controls-label`/`.controls-reset`.
 - No reactive read is stored in a component-body const; every accessor is called at its use site.
-- `.tsx` files export only components (`AudioSettingsPanel`; `SliderRow` at `:59` is local);
-  `VOLUME_STEP`, `PERCENT_SCALE` and `percentLabel` stay unexported-local.
+- `.tsx` files export only components (`AudioSettingsPanel`; `SliderRow` is local); `VOLUME_STEP`,
+  `PERCENT_SCALE` and `percentLabel` stay unexported-local.
 
 ### Consumers
 
-- `plugins/thunderstorm/client/index.ts:182-207` — `playThunder` (`:195`) calls
+- `plugins/thunderstorm/client/index.ts` → `playThunder` calls
   `ctx.audio.playSfx(thunderSfxUrl, { at, delaySeconds })` at `(cellX·CELL_WORLD_SIZE, BOLT_BOTTOM_WORLD_Y, cellY·CELL_WORLD_SIZE)`,
   which is exactly where the plugin already puts the flash light (`rig.ts:476` for a loose bolt;
   `rig.ts:356-359` for a bolt inside a system, whose rig root sits at the system centre so root+offset is
-  the same point). Called at `index.ts:275` **before** the reduced-motion guard at `:280`, on that
+  the same point). Called **before** the reduced-motion guard in the same handler, on that
   handler's own stated reasoning ("a player who asked for less motion asked for less motion, not for a
   different world") — a clap is not motion.
-- `plugins/rain/client/index.ts:89-137` (`rainWeightUnderCamera` at `:120`) — the plugin did **not** have a camera-cell intensity, so
+- `plugins/rain/client/index.ts` → `rainWeightUnderCamera` — the plugin did **not** have a camera-cell intensity, so
   `rainWeightUnderCamera` derives one from `view.poses()` (the same interpolated map `shadeDiscs` reads)
   and `ctx.cameraPosition()`: linear falloff from each disc's centre, loudest system wins, clamped 0..1.
   Cells vs world units verified from `discInterpolator.ts:21-28` and `cumulusDeck.ts:383-390`.
-  Driven from `ctx.onFrame` at `index.ts:164-166`.
+  Driven from `ctx.onFrame` in `attach`.
 
 ### Placeholder assets
 
@@ -169,17 +178,17 @@ Both landed after the sections above; the trace in §2 was re-captured with them
 
 | Claim | Where |
 |---|---|
-| `audioPrefs.ts` persists master volume + mute AND one 0..1 level per bus | `audioPrefs.ts:113-117` (`StoredAudioPrefs`, now with `buses`), persisted at `:196-208` |
-| A named default constant per bus, all 1.0 | `DEFAULT_SFX_LEVEL` / `DEFAULT_AMBIENCE_LEVEL` / `DEFAULT_MUSIC_LEVEL` at `audioPrefs.ts:77-79`, collected at `:81-85`. Master default stays 0.8 (`:33`) |
-| Storage key bumped for the new shape | `terrace.audioPrefs.v1` → `terrace.audioPrefs.v2` (`audioPrefs.ts:100`), with the reasoning at `:102-110`; validated whole at `:145-149` |
-| Bus names declared once | `AudioBusName` `audioPrefs.ts:51`, `AUDIO_BUS_NAMES` `:53`; `audioEngine.ts:30-35` imports both and its own local copy is gone (`:41-44` says why the declaration sits at the imported end) |
-| Each bus `GainNode` follows its pref via a ramp, exactly like master | `audioEngine.ts:468-476` — one `createEffect` **per bus** inside the same `createRoot` as the master's (`:461-467`), both through `rampGain` at `MASTER_RAMP_SECONDS` |
-| …and is seeded from the pref at build time, not from unity | `audioEngine.ts:515` (`bus.gain.value = effectiveBusGain(name)`), matching the master's own seed |
-| One signal per bus, so one slider moves one node | `audioPrefs.ts:181-185`, with the reason at `:174-180`; `busLevel` `:190`, `setBusLevel` `:228`, `effectiveBusGain` `:261` |
-| Mute stays the master's business, so the mix survives it | `audioPrefs.ts:252-260` — `effectiveBusGain` is the level and nothing else |
+| `audioPrefs.ts` persists master volume + mute AND one 0..1 level per bus | `audioPrefs.ts` → `StoredAudioPrefs` (now with `buses`) and `persist` |
+| A named default constant per bus, all 1.0 | `audioPrefs.ts` → `DEFAULT_SFX_LEVEL` / `DEFAULT_AMBIENCE_LEVEL` / `DEFAULT_MUSIC_LEVEL`, collected in `DEFAULT_BUS_LEVELS`. Master default stays 0.8 |
+| Storage key bumped for the new shape | `audioPrefs.ts` → `STORAGE_KEY`, now `terrace.audioPrefs.v2`; `loadPrefs` validates the whole object |
+| Bus names declared once | `audioPrefs.ts` → `AudioBusName` and `AUDIO_BUS_NAMES`; `audioGraph.ts` imports both and holds no local copy (its header says why the declaration sits at the imported end) |
+| Each bus `GainNode` follows its pref via a ramp, exactly like master | `audioGraph.ts` → `followAudioPrefs`: one `createEffect` **per bus** inside the same `createRoot` as the master's, both through `rampGain` at `MASTER_RAMP_SECONDS` |
+| …and is seeded from the pref at build time, not from unity | `audioGraph.ts` → `buildAudioGraph`'s `bus.gain.value = effectiveBusGain(name)`, matching the master's own seed |
+| One signal per bus, so one slider moves one node | `audioPrefs.ts` → `busSignals`, `busLevel`, `setBusLevel`, `effectiveBusGain` |
+| Mute stays the master's business, so the mix survives it | `audioPrefs.ts` → `effectiveBusGain` is the level and nothing else |
 | One compact block in the existing settings popup | `client/src/ui/AudioSettingsPanel.tsx` (replaces `AudioSettingsRow.tsx`), rendered at `Hud.tsx:465` |
-| …same `hud.css` vocabulary, no new visual language | `hud.css:418-455`: the separating rule moves to the block (`.audio-panel`, `:418`) so it is drawn once rather than per row; `.audio-readout` (`:442`, `:452`) shares the mute button's fixed width so the four sliders line up |
-| Four rows, one row shape | `SliderRow` at `AudioSettingsPanel.tsx:59`, a `For` over `AUDIO_BUS_NAMES` at `:122`. Accessors are passed as props, never read into a component-body const |
+| …same `hud.css` vocabulary, no new visual language | `hud.css` → `.audio-panel` carries the separating rule so it is drawn once rather than per row; `.audio-readout` shares `.audio-mute`'s fixed width so the four sliders line up |
+| Four rows, one row shape | `AudioSettingsPanel.tsx` → `SliderRow`, then a `For` over `AUDIO_BUS_NAMES`. Accessors are passed as props, never read into a component-body const |
 
 Verified live in the trace: the four labels render `["Volume","Effects","Ambience","Music"]`, driving the
 Effects and Music sliders through real `input` events gives readouts `["42%","30%","100%","15%"]`, and
@@ -193,13 +202,13 @@ ambience lines stay at `busGain: 1`.
 
 | Claim | Where |
 |---|---|
-| `playSfx` gains an optional `delaySeconds` | `types.ts:193`, contract at `:169-192` |
-| Pure Web Audio scheduling — no timers, no per-frame work | `audioEngine.ts:608` (`voice.play(delay)`), which is three's `Audio.play(delay)` setting `_startedAt = context.currentTime + delay` and passing it to `source.start()` — verified at `three/src/audio/Audio.js:329-338`. Comment at `audioEngine.ts:580-586` |
-| Sanitised at the door (negative / non-finite → 0) | `audioEngine.ts:396-400`, called at `:598` |
-| A scheduled voice counts against the 32-voice pool from creation | `audioEngine.ts:614` — pushed immediately after `play`, before anything can be heard; the reason is at `:609-613`, and the steal at `:551` therefore reaches pending voices too |
-| Delay = distance(camera → strike) / speed of sound | `plugins/thunderstorm/client/index.ts:173-179` (`thunderDelaySeconds`), used at `:206` |
-| Speed derived from real 343 m/s and a config.ts scale constant | `index.ts:130-145`: `MAX_RELIEF_METRES / MAX_RELIEF_WORLD_UNITS` → `WORLD_UNIT_METRES` = 10, then `SPEED_OF_SOUND_METRES_PER_SECOND` (343, `:134`) / that = **34.3 world units per second** (`:144-145`) |
-| Capped, with justification | `MAX_THUNDER_DELAY_SECONDS = 4` at `index.ts:163`, reasoned at `:148-162` |
+| `playSfx` gains an optional `delaySeconds` | `types.ts` → `SfxOptions.delaySeconds` |
+| Pure Web Audio scheduling — no timers, no per-frame work | `audioVoices.ts` → `playSfx`'s `voice.play(delay)`, which is three's `Audio.play(delay)` setting `_startedAt = context.currentTime + delay` and passing it to `source.start()` — verified at `three/src/audio/Audio.js:329-338` |
+| Sanitised at the door (negative / non-finite → 0) | `audioVoices.ts` → `delaySecondsOf` |
+| A scheduled voice counts against the 32-voice pool from creation | `audioVoices.ts` → `playSfx` pushes immediately after `play`, before anything can be heard, so the steal reaches pending voices too |
+| Delay = distance(camera → strike) / speed of sound | `plugins/thunderstorm/client/index.ts` → `thunderDelaySeconds`, used by `playThunder` |
+| Speed derived from real 343 m/s and a config.ts scale constant | `index.ts` → `MAX_RELIEF_METRES / MAX_RELIEF_WORLD_UNITS` gives `WORLD_UNIT_METRES` = 10, then `SPEED_OF_SOUND_METRES_PER_SECOND` (343) / that = **34.3 world units per second** |
+| Capped, with justification | `index.ts` → `MAX_THUNDER_DELAY_SECONDS = 4`, reasoned in its own comment |
 
 **The scale constant, and why that one.** `MAX_RELIEF_WORLD_UNITS` is the only constant exported from
 `client/src/config.ts` (`:110`, re-exported from `@terrace/shared` so a plugin can reach it at all) that
@@ -220,8 +229,8 @@ firing.
 
 **Residuals added by these two.** (1) Past ~137 world units the delay is capped and no longer
 proportional, so two very distant strikes sound equally far *in time* — they are still separated by
-loudness, so the cue degrades rather than disappearing (named in place at `index.ts:158-162`). (2) The
-v2 storage-key bump discards a v1-stored master volume once, by design (`audioPrefs.ts:102-110`). (3) The
+loudness, so the cue degrades rather than disappearing (named in place on `MAX_THUNDER_DELAY_SECONDS`). (2) The
+v2 storage-key bump discards a v1-stored master volume once, by design (`audioPrefs.ts` → `STORAGE_KEY`). (3) The
 metre scale is a **judgement anchored on three agreeing readings, not a declared fact** — if the owner
 ever declares a real-world scale centrally, `WORLD_UNIT_METRES` should derive from that instead.
 
@@ -248,21 +257,21 @@ grew four sliders, so it was renamed.
 
 ### Item 2 — the silent first strike, fixed at the contract
 
-- `preload(url)` on `PluginAudio` — `types.ts:244`, doc at `:221-243`. Idempotent (the decode cache
-  makes it so for free), never throws (`audioEngine.ts:181-190` attaches the `catch` that keeps that
-  promise).
-- **The graph is now built eagerly**, at engine construction: `buildAudioGraph` at
-  `audioGraph.ts:164`, called unconditionally at `audioEngine.ts:74`. The reasoning is at
-  `audioGraph.ts:150-163`. `unlock()` is resume-only — `audioEngine.ts:135-149`.
+- `preload(url)` on `PluginAudio` — `types.ts` → `PluginAudio.preload`. Idempotent (the decode cache
+  makes it so for free), never throws (`audioEngine.ts` → the handle's `preload` attaches the
+  `catch` that keeps that promise).
+- **The graph is now built eagerly**, at engine construction: `audioGraph.ts` → `buildAudioGraph`,
+  called unconditionally at the top of `createAudioEngine`; the reasoning is its own doc comment.
+  `unlock()` is resume-only — `audioEngine.ts` → `unlock`.
 - The pending-request bookkeeping this replaced (`pendingMusicUrl`, `resumePendingAmbience`) is
   **deleted rather than left dead**: with a context from the start there is nothing to defer, because
   a voice started against a suspended context is already scheduled and simply becomes audible when
   the clock starts.
-- `playSfx` still never waits. `buffers.peek(url)` (`audioBuffers.ts:26`, `:55`) is what lets it ask
+- `playSfx` still never waits. `buffers.peek(url)` (`audioBuffers.ts` → `AudioBufferCache.peek`) is what lets it ask
   "is this ready?" without committing to play whatever arrives; the drop path is
-  `audioEngine.ts:196-206` and is now only reachable by a plugin that skipped `preload`.
-- Consumers preload in attach: `plugins/thunderstorm/client/index.ts:269`,
-  `plugins/rain/client/index.ts:160`.
+  `audioEngine.ts` → `playSfx`'s `cached === undefined` branch, now only reachable by a plugin that
+  skipped `preload`.
+- Consumers preload in attach: both plugins' `attach`.
 
 **Verified in the rig, and it needed a second run to be verified honestly.** The first attempt still
 carried `--autoplay-policy=no-user-gesture-required`, which lets a context auto-start and therefore
@@ -287,22 +296,23 @@ narrowed.
 The strict run exposed a real if cosmetic defect the eager graph made visible: a single press reaches
 `unlock` twice (the host's capture-phase canvas listener and the engine's own one-shot `window`
 pointerdown), and both run before the first `resume()` settles, so the `state !== 'suspended'` guard
-could not catch the second — two "unlocked" lines for one click. Guarded with an in-flight flag at
-`audioEngine.ts:125`, cleared on both settle paths (`:141`, `:146`). The re-run shows one line.
+could not catch the second — two "unlocked" lines for one click. Guarded with the `resuming` flag in
+`audioEngine.ts` → `unlock`, cleared on both settle paths. The re-run shows one line.
 
 ### Item 3 — the limiter
 
-`DynamicsCompressorNode` between master and destination: built at `audioGraph.ts:190-196`, master
-feeds it at `:200`. Constants and their justifications at `audioGraph.ts:81` (threshold −2 dBFS),
-`:91` (knee 0 — hard, because a soft knee is compression and would reshape the ordinary mix), `:101`
-(ratio 20, Web Audio's maximum, which is what makes it a limiter), `:112` (attack 3 ms — fast enough
-for a clap's transient, deliberately no faster, since an attack under one cycle tracks the waveform
-and distorts low frequency), `:122` (release 250 ms — long enough not to pump between claps).
+`DynamicsCompressorNode` between master and destination: built in `audioGraph.ts` →
+`buildAudioGraph`, fed by the master. Constants and their justifications sit together above it —
+`LIMITER_THRESHOLD_DB` (−2 dBFS), `LIMITER_KNEE_DB` (0, hard, because a soft knee is compression and
+would reshape the ordinary mix), `LIMITER_RATIO` (20, Web Audio's maximum, which is what makes it a
+limiter), `LIMITER_ATTACK_SECONDS` (3 ms — fast enough for a clap's transient, deliberately no faster,
+since an attack under one cycle tracks the waveform and distorts low frequency) and
+`LIMITER_RELEASE_SECONDS` (250 ms — long enough not to pump between claps).
 
 **It sits after the master, not before**, so a player pulling the master down can still bring the
 signal under the ceiling; a limiter ahead of the master could not be turned off that way.
 
-Observable in the trace: `limiterReductionDb` is on every log line (`audioDebug.ts:80`). It reads
+Observable in the trace: `limiterReductionDb` is on every log line (`audioDebug.ts` → `createAudioDebugLog`). It reads
 `-0.00012` — transparent — through the whole ordinary run, and `-9.2 dB` on the one line captured at
 `resume()`, when everything scheduled during suspension lands at once. That is the node doing exactly
 its job at the only moment there was a stack. **Unverified on hardware** — WSL has no audio device, so
@@ -324,17 +334,60 @@ client.
 
 Two structural consequences worth flagging, neither of which changes observable behaviour:
 
-1. **`createSilentAudioEngine`** (`audioEngine.ts:348`). With the graph built eagerly, "no Web Audio
+1. **`createSilentAudioEngine`**. With the graph built eagerly, "no Web Audio
    at all" is knowable at construction, so the whole engine degrades to a silent one rather than
    threading a null check through every voice and every handle. It **still arbitrates the music
    claim** — otherwise the single-claimant rule would depend on whether the machine has an audio
    stack, and a plugin refused the bus on one browser would be granted it on another.
-2. **`const active = graph`** (`audioEngine.ts:84`). This compiler does not carry a `const`'s
+2. **`const active = graph`** in `createAudioEngine`. This compiler does not carry a `const`'s
    narrowing into the closures below, and an aliased non-null binding is clearer than a `!` at thirty
    call sites.
 
 `AudioVoices`' ambience functions are plain hoisted functions referenced by the returned object, not
 methods — nothing in this directory depends on `this`, so a destructured reference behaves identically.
+
+### Item 4b — the comment trim (`6fe1ce5`)
+
+The owner's decision on §9: the new global rule (prefer none; hard cap 30 words) applies to everything
+this branch adds or touches, done as one pass with the split.
+
+**What was trimmed.** Every comment in the five `client/src/audio/` files, `state/audioPrefs.ts`,
+`ui/AudioSettingsPanel.tsx`, `ui/hud.css`, `scripts/audio-placeholders.py`, and — in the four files this
+branch only *touches* — the comments this branch itself added. `plugins/types.ts`'s audio block became
+one-line-ish summaries per member, as the review allowed.
+
+**What was deliberately NOT trimmed:** comments already on `main` in `plugins/host.ts`,
+`plugins/types.ts`, `ui/Hud.tsx` and `types/asset-url.d.ts`. Rewriting those would be scope this branch
+was not given and would turn a clean merge into a conflicted one. If the rule is meant to reach them,
+that is a separate repo-wide pass.
+
+**What was kept**, each ≤30 words — the five the review named, plus one line per constant that encodes a
+decision (the no-magic-numbers rule still applies, and a named constant whose value is a judgement needs
+its reason somewhere):
+
+| Kept | Where |
+|---|---|
+| single-claimant music | `audioEngine.ts` → `musicClaimant`; contract on `PluginAudio.setMusic` |
+| eager-suspended context | `audioGraph.ts` → `buildAudioGraph`'s doc |
+| equalpower over HRTF | `audioVoices.ts` → `SFX_PANNING_MODEL` |
+| pool stealing | `audioVoices.ts` → `MAX_SFX_VOICES` and the steal in `playSfx` |
+| metre-scale assumption | `plugins/thunderstorm/client/index.ts` → `WORLD_UNIT_METRES` |
+| limiter constants | `audioGraph.ts` → the five `LIMITER_*` constants, one line each |
+
+**Proof it is comment-only, not a rewrite.** A string-aware comment stripper
+(`scratchpad/codeonly.py` — it ignores `//` inside quotes and template literals) was run over all 12
+TS/TSX files before and after: **byte-identical output**, so no statement, expression or whitespace
+inside code changed. The WAV generator was re-run and both assets `md5sum -c` clean, so its own trim
+changed no output either. `pnpm typecheck` and all three test packages pass.
+
+**One paragraph is knowingly over.** `audioVoices.ts`'s header legend naming what separates
+the voice kinds; the checker counts its 31 words as prose. It is a table, and shortening it would delete
+content rather than words. Everything else is at or under the cap, checked mechanically
+(`scratchpad/wordcap.py`, which splits on blank comment lines so each paragraph counts as one comment).
+
+File sizes after the trim: `audioBuffers.ts` 51, `audioDebug.ts` 61, `audioGraph.ts` 174,
+`audioVoices.ts` 312, `audioEngine.ts` 330, `audioPrefs.ts` 182, `AudioSettingsPanel.tsx` 110 —
+roughly a third off the directory, all of it comment.
 
 ### Verification after every item
 
@@ -386,25 +439,24 @@ No tests were added (owner rule; no permission granted this session).
 2. **Panning model is `'equalpower'`, not three's `'HRTF'` default.** The plan says "distance model
    `'inverse'`" and is silent on panning. HRTF models cues relative to a *head*; this world is seen from an
    orbit camera that is not one, and equal-power is a fraction of the cost at up to 32 voices.
-   Justified in place at `audioEngine.ts:89-99` (the constant at `:100`).
+   Justified in place on `audioVoices.ts` → `SFX_PANNING_MODEL`.
 3. **The plan's §2.1 says the distances derive from `WORLD_UNITS_PER_BAND`.** They derive from
    `CAMERA_MIN_DISTANCE` / `CAMERA_MAX_DISTANCE` instead. `WORLD_UNITS_PER_BAND` is a *height* scale and
    says nothing about how far away a listener can be; the camera bounds are the only constants in
    `config.ts` that answer "nearest and farthest a listener can be from a sound". Both are still derived,
    not chosen, and `CAMERA_MIN_DISTANCE` is itself derived from the FOV and the closest-zoom framing.
-4. **The music bus is freed when its claimant detaches** (`audioEngine.ts:861-873`), where `setSkyRig`'s
+4. **The music bus is freed when its claimant detaches** (`audioEngine.ts` → `releasePlugin`), where `setSkyRig`'s
    claim is never released while the client lives. Silence is a valid resting state for audio and a track
    whose owner is gone has nobody to stop it; a sky, by contrast, has to keep looking like something.
 5. **The one-shot pool bounds live voices, not node objects.** The plan says the oldest voice is "stopped
    and reused". three builds a fresh `AudioBufferSourceNode` on every `play()`
    (`three/src/audio/Audio.js:329`), so reusing the wrapper would save one object allocation while forcing
    every stolen slot to match the new request's positional-ness. Same bound, none of that
-   (`audioEngine.ts:507-513`).
+   (`audioVoices.ts` → `playSfx`).
 6. **No `playbackRate`/`gain` passed by thunderstorm.** I wrote and then removed a deterministic
    playback-rate jitter: it was beyond what the brief asked for, and rate/level are sound-design dials
    with no sound design behind them yet.
-7. **`?audioDebug=1`'s ambience logging is thinned** to a 0.05 weight step (`AUDIO_DEBUG_WEIGHT_STEP`,
-   `audioEngine.ts:194-203`), with the 0 and 1 endpoints always printed. `ambience` is contracted to be
+7. **`?audioDebug=1`'s ambience logging is thinned** to a 0.05 weight step (`audioDebug.ts` → `AUDIO_DEBUG_WEIGHT_STEP`), with the 0 and 1 endpoints always printed. `ambience` is contracted to be
    called every frame; unthinned it wrote a console line at frame rate and buried the fade it exists to
    show.
 8. **Stage-hygiene slip, disclosed.** The `git mv` of `glb-url.d.ts` was already in the index when commit
@@ -443,7 +495,7 @@ entry, so the merge needs:
   destination is a two-line change and a real sound-design decision; not taken unilaterally.
 - **`?audioDebug=1` logs the URL of every call**, which for a Vite dev server is a long `/@fs/` path. It is
   a dev switch and the URL is the identifying field, so this is left as is.
-- **`audioEngine.ts` is ~990 lines** — heavily commented (the ratio the rest of this codebase keeps), but
+- ~~**`audioEngine.ts` is ~990 lines**~~ — CLOSED by review item 4; the directory is now five files, none over 240 code lines. Original note: — heavily commented (the ratio the rest of this codebase keeps), but
   long. It has three obvious seams (the graph and prefs; the three voice kinds; the per-plugin handles)
   and phase 2 should split it along them. Not split now: it would be a structural change with no
   behavioural content, on top of a diff the owner still has to read once.
