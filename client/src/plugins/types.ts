@@ -651,6 +651,28 @@ export interface ClientPluginCtx {
   moverPose(pluginName: string, id: number): MoverPose | null;
 
   /**
+   * Publishes a named scalar THIS plugin already knows — a phase, a weight — so
+   * another plugin can read it without importing anything.
+   *
+   * The same rules `publishMovers` has: published under this plugin's OWN name,
+   * last publisher wins, and the returned function unpublishes.
+   *
+   * NO FRAME-PHASE CONSEQUENCE, unlike `publishMovers`: a gauge is a scalar a
+   * reader samples off-frame, and a per-frame reader getting the last-drawn
+   * value is exactly what such a reading is for.
+   */
+  publishGauge(key: string, read: () => number): () => void;
+
+  /**
+   * Another plugin's gauge right now — the reading half of `publishGauge`. Null
+   * when that plugin publishes no such key, or is not mounted. The reader
+   * validates the range it expects; core knows nothing about the number.
+   *
+   * One map lookup plus the owner's own closure.
+   */
+  gauge(pluginName: string, key: string): number | null;
+
+  /**
    * The client-side mirror of the server's onIntent interceptor chain: lets a
    * plugin veto a local sculpt BEFORE it is sent or predicted. Return true to
    * allow, false to veto — a vetoed intent never leaves the machine, so there

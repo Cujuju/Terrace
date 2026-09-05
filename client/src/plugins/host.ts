@@ -499,6 +499,13 @@ export function createClientPluginHost(
   const moverLookups = new Map<string, (id: number) => MoverPose | null>();
 
   /**
+   * One scalar reading per published gauge (ClientPluginCtx.publishGauge), keyed
+   * "<plugin>:<key>" — the same by-name addressing moverLookups uses, with the
+   * key appended because one plugin may publish several.
+   */
+  const gaugeLookups = new Map<string, () => number>();
+
+  /**
    * One shade lookup per publishing plugin (ClientPluginCtx.publishGroundShade),
    * keyed by plugin name — the same by-name addressing moverLookups uses.
    */
@@ -583,6 +590,18 @@ export function createClientPluginHost(
     // plugin-supplied callback here gets.
     try {
       return lookup(id);
+    } catch {
+      return null;
+    }
+  };
+
+  const gauge = (pluginName: string, key: string): number | null => {
+    const read = gaugeLookups.get(`${pluginName}:${key}`);
+    if (read === undefined) return null;
+    // A publisher that throws reads as "not published", exactly as moverPose's
+    // does, rather than taking its reader down.
+    try {
+      return read();
     } catch {
       return null;
     }
@@ -728,6 +747,16 @@ export function createClientPluginHost(
           if (groundShadeLookups.get(plugin.name) === lookup) {
             groundShadeLookups.delete(plugin.name);
           }
+        });
+      },
+      gauge,
+      publishGauge(key: string, read: () => number): () => void {
+        // Last publisher wins, for publishMovers' reason: the key is under this
+        // plugin's own name, so a second call is it replacing its own reading.
+        const id = `${plugin.name}:${key}`;
+        gaugeLookups.set(id, read);
+        return track(() => {
+          if (gaugeLookups.get(id) === read) gaugeLookups.delete(id);
         });
       },
       publishMovers(lookup: (id: number) => MoverPose | null): () => void {
