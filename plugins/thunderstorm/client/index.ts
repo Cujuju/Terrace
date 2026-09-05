@@ -186,11 +186,9 @@ function applyStrike(systemId: number, cellX: number, cellY: number): void {
 const shade: GroundShadeDisc[] = [];
 
 /**
- * How hard it storms where the camera is, 0..1.
- *
- * A DOCUMENTED COPY of rain's rainWeightUnderCamera: plugins never import each
- * other (docs/decisions/plugin-host.md, 2026-09-01), so the disc math is
- * restated rather than shared. Loudest system wins, falloff to the disc edge.
+ * How hard it storms where the camera is, 0..1. A DOCUMENTED COPY of rain's
+ * rainWeightUnderCamera — plugins never import each other
+ * (docs/decisions/plugin-host.md, 2026-09-01). Loudest system wins.
  */
 function stormWeightUnderCamera(ctx: ClientPluginCtx): number {
   const camera = ctx.cameraPosition();

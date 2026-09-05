@@ -499,9 +499,8 @@ export function createClientPluginHost(
   const moverLookups = new Map<string, (id: number) => MoverPose | null>();
 
   /**
-   * One scalar reading per published gauge (ClientPluginCtx.publishGauge), keyed
-   * "<plugin>:<key>" — the same by-name addressing moverLookups uses, with the
-   * key appended because one plugin may publish several.
+   * One reading per published gauge (ClientPluginCtx.publishGauge), keyed
+   * "<plugin>:<key>" — moverLookups' by-name addressing, plus the key.
    */
   const gaugeLookups = new Map<string, () => number>();
 
@@ -598,8 +597,7 @@ export function createClientPluginHost(
   const gauge = (pluginName: string, key: string): number | null => {
     const read = gaugeLookups.get(`${pluginName}:${key}`);
     if (read === undefined) return null;
-    // A publisher that throws reads as "not published", exactly as moverPose's
-    // does, rather than taking its reader down.
+    // A publisher that throws reads as "not published", as moverPose's does.
     try {
       return read();
     } catch {
@@ -751,8 +749,8 @@ export function createClientPluginHost(
       },
       gauge,
       publishGauge(key: string, read: () => number): () => void {
-        // Last publisher wins, for publishMovers' reason: the key is under this
-        // plugin's own name, so a second call is it replacing its own reading.
+        // Last publisher wins, for publishMovers' reason: the key is under
+        // this plugin's own name, so a second call replaces its own reading.
         const id = `${plugin.name}:${key}`;
         gaugeLookups.set(id, read);
         return track(() => {
@@ -1087,8 +1085,7 @@ export function createClientPluginHost(
       // sky rig, the world-header banner) in the same pass that a plugin
       // arriving might want them.
       for (const [name, entry] of [...mounted]) {
-        // A CLIENT-ONLY PLUGIN IS NEVER IN THE SET, so absence says nothing
-        // about it — see TerraceClientPlugin.clientOnly.
+        // NEVER IN THE SET, so absence says nothing — see plugin.clientOnly.
         if (entry.plugin.clientOnly === true) continue;
         if (!live.has(name)) unmountPlugin(name);
       }
