@@ -16,15 +16,17 @@
 // mana gauge does. Colours come from the HUD's CSS custom properties, each
 // with a literal fallback, so the panel follows the core theme.
 //
-// THE SKILL ROWS ARE TILES (owner, 2026-09-04: "update the HUD for the relics
-// in the same style" as the modeler dock and the toolbar): each skill wears
-// its own shaded object (RelicIcons.tsx — the shape its relic takes in the
-// world) over the same isometric grass tile the tool icons stand on, lifted by
-// the same drop shadow, with its category's colour as the glow on the grass.
-// For an active skill that tile IS the cast button — it glows in the accent
-// while armed and dims while recharging — so the panel answers "what do I
-// hold, and what can I throw" the way the toolbar answers "what is in my
-// hand".
+// THE SKILLS ARE A GRID OF TILES (owner, 2026-09-04: "update the HUD for the
+// relics in the same style" as the modeler dock and the toolbar; 2026-09-05:
+// "a horizontal grid, not a vertical list, and only show their details on
+// hover"): each skill wears its own shaded object (RelicIcons.tsx — the shape
+// its relic takes in the world) on a tile like the tool icons', and the tiles
+// wrap left-to-right. Name and description live only in the hover tooltip.
+// Under each tile sits one word of state — Passive / Perk / Ready / Aiming —
+// or the live cooldown countdown. For an active skill the tile IS the cast
+// button — it glows in the accent while armed and dims while recharging — so
+// the panel answers "what do I hold, and what can I throw" the way the
+// toolbar answers "what is in my hand".
 
 import { For, Show, type Component, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
@@ -65,24 +67,30 @@ const SKILL_ICON: Readonly<Record<SkillId, Component>> = {
  * which core may restyle.
  */
 const RELICS_CSS = `
-.relics-skill {
+.relics-grid {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 8px;
 }
-.relics-skill__words {
+.relics-cell {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  align-items: center;
+  gap: 3px;
 }
-.relics-skill__name {
-  color: var(--hud-text, #e8edf2);
-}
-.relics-skill__state {
-  font-size: 11px;
+.relics-cell__state {
+  font-size: 10px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
   color: var(--hud-muted, #97a3b0);
+}
+.relics-cell__state.ready,
+.relics-cell__state.armed {
+  color: rgb(var(--hud-accent-rgb, 111, 191, 115));
+}
+.relics-cell__state.cooldown {
+  color: var(--hud-text, #e8edf2);
 }
 .relics-tile {
   flex: none;
@@ -136,23 +144,13 @@ button.relics-tile.armed {
     0 0 18px rgba(var(--hud-accent-rgb, 111, 191, 115), 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
-/* RECHARGING: the gem greys and the countdown rides the tile, since a
+/* RECHARGING: the gem greys; the countdown sits under the tile, since a
    disabled button raises no hover and so can never show a tooltip. */
 button.relics-tile:disabled {
   cursor: default;
-  position: relative;
 }
 button.relics-tile:disabled .relics-gem {
   filter: grayscale(0.7) brightness(0.6);
-}
-.relics-tile__cooldown {
-  position: absolute;
-  right: 2px;
-  bottom: 1px;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  color: var(--hud-text, #e8edf2);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 @media (pointer: coarse) {
   .relics-tile {
@@ -197,7 +195,10 @@ function castTitle(skill: SkillView, armed: boolean): string {
   return armed ? `${name}: click the ground to aim` : `${name}: click to ready it`;
 }
 
-function SkillRow(props: { skill: SkillView }): JSX.Element {
+/** The one-word state under a tile, doubling as its colour class. */
+type CellState = 'passive' | 'perk' | 'cooldown' | 'armed' | 'ready';
+
+function SkillCell(props: { skill: SkillView }): JSX.Element {
   // props.skill is already reactive (Solid wraps prop expressions in getters),
   // so reading props.skill.* inside JSX below is a live read. These helpers are
   // accessors for the same reason — never plain consts.
@@ -205,25 +206,41 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
   const onCooldown = (): boolean => props.skill.cooldownRemainingS > 0;
   const isArmed = (): boolean => armedSkill() === props.skill.id;
   /**
-   * The row explains the skill; while it is recharging it also carries the
-   * countdown, because a DISABLED button does not raise the hover events a
-   * native tooltip needs (Chrome and Safari both swallow them) — so the one
-   * state whose button tooltip can never appear is answered by its row.
+   * The cell's hover tooltip is the only place the name and description show.
+   * While recharging it also carries the countdown, because a DISABLED button
+   * does not raise the hover events a native tooltip needs (Chrome and Safari
+   * both swallow them) — so the one state whose button tooltip can never
+   * appear is answered by its cell.
    */
-  const rowTitle = (): string =>
+  const cellTitle = (): string =>
     onCooldown()
-      ? `${info().name}: ready in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s`
+      ? `${info().name}: ${info().description} Ready in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s.`
       : `${info().name}: ${info().description}`;
 
-  /** What the row says under the name: the kind, or the live cast state. */
+  const cellState = (): CellState => {
+    if (!isCastable(props.skill)) return props.skill.kind === 'perk' ? 'perk' : 'passive';
+    if (onCooldown()) return 'cooldown';
+    return isArmed() ? 'armed' : 'ready';
+  };
+
+  /** One word (or the countdown) under the tile. */
   const stateText = (): string => {
-    if (!isCastable(props.skill)) return props.skill.kind === 'perk' ? 'Perk' : 'Passive';
-    if (onCooldown()) return `Ready in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s`;
-    return isArmed() ? 'Click the ground to aim' : 'Click to ready';
+    switch (cellState()) {
+      case 'passive':
+        return 'Passive';
+      case 'perk':
+        return 'Perk';
+      case 'cooldown':
+        return `${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s`;
+      case 'armed':
+        return 'Aiming';
+      case 'ready':
+        return 'Ready';
+    }
   };
 
   return (
-    <div class="relics-skill" title={rowTitle()}>
+    <div class="relics-cell" title={cellTitle()}>
       <Show
         when={isCastable(props.skill)}
         fallback={
@@ -243,16 +260,10 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
           onClick={() => armSkill(isArmed() ? null : props.skill.id)}
         >
           <Dynamic component={SKILL_ICON[props.skill.id]} />
-          <Show when={onCooldown()}>
-            <span class="relics-tile__cooldown">
-              {cooldownLabelSeconds(props.skill.cooldownRemainingS)}s
-            </span>
-          </Show>
         </button>
       </Show>
-      <span class="relics-skill__words">
-        <span class="relics-skill__name">{info().name}</span>
-        <span class="relics-skill__state">{stateText()}</span>
+      <span class="relics-cell__state" classList={{ [cellState()]: true }}>
+        {stateText()}
       </span>
     </div>
   );
@@ -296,7 +307,9 @@ export function RelicsPanel(): JSX.Element {
           </p>
         }
       >
-        <For each={skills()}>{(skill) => <SkillRow skill={skill} />}</For>
+        <div class="relics-grid">
+          <For each={skills()}>{(skill) => <SkillCell skill={skill} />}</For>
+        </div>
       </Show>
 
       <Show when={armedSkill() !== null}>
