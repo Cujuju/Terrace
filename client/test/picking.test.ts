@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
+  BEDROCK_FLOOR,
   CHUNK_SIZE,
   MAX_HEIGHT,
   quantizeToBand,
+  setColumn,
   type ChunkPayload,
   type JoinSnapshotMessage,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 import {
   pickTerrainCellByRay,
+  pickTerrainInColumn,
   pointerToNdc,
   worldPointToCell,
   type Vec3,
@@ -404,5 +407,161 @@ describe('pickTerrainCellByRay', () => {
       ];
       expect(revealed.some(([cx, cy]) => cx === chunk[0] && cy === chunk[1])).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pickTerrainInColumn — the hover cache's contract (issue #324, 2026-09-04).
+// ---------------------------------------------------------------------------
+//
+// THE CONTRACT UNDER TEST: the pinned ray, re-asked of ONE pinned column of the
+// LIVE map, answers the same thing the full march would for that cell — and
+// when an edit drops that column's ground clear of the ray, it still answers
+// with the GROUND UNDER THE RAY rather than nothing, which is what keeps a
+// held stroke digging the cell the player aimed at.
+
+describe('pickTerrainInColumn', () => {
+  /** 64 cells = 4×4 chunks, matching the march's own fixture above. */
+  const WORLD = 64;
+  const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
+
+  function world(heightOf: (x: number, y: number) => number): TerrainMirror {
+    const mirror = createTerrainMirror(WORLD);
+    const perEdge = WORLD / CHUNK_SIZE;
+    const chunks: ChunkPayload[] = [];
+    for (let cy = 0; cy < perEdge; cy++) {
+      for (let cx = 0; cx < perEdge; cx++) {
+        const heights = new Array<number>(CELLS_PER_CHUNK);
+        for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+          for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+            heights[ly * CHUNK_SIZE + lx] = heightOf(cx * CHUNK_SIZE + lx, cy * CHUNK_SIZE + ly);
+          }
+        }
+        chunks.push({ cx, cy, heights });
+      }
+    }
+    applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks } as JoinSnapshotMessage);
+    return mirror;
+  }
+
+  const SKY_Y = MAX_HEIGHT * HEIGHT_WORLD_SCALE + 10;
+
+  it('answers exactly what the march answers, for the cell the march named', () => {
+    // THE AGREEMENT THAT MAKES THE CACHE SOUND: while nothing has changed, the
+    // per-column re-derivation and the full march must be the same pick, or
+    // the first frame after a re-pin would move the target on its own.
+    const mirror = world((x) => (x >= 32 ? BAND_HEIGHT * 10 : 0));
+    const origin = { x: 20 * CELL_WORLD_SIZE, y: BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE, z: 20 * CELL_WORLD_SIZE };
+    const direction = { x: 1, y: -0.05, z: 0 };
+    const marched = pickTerrainCellByRay(mirror, origin, direction);
+    expect(marched).not.toBeNull();
+    expect(pickTerrainInColumn(mirror, marched!.x, marched!.y, origin, direction)).toEqual(marched);
+  });
+
+  it('reports the tread of the ground still under the ray after the column is lowered', () => {
+    // The still-mouse LOWER: the cap the ray met has dropped clear below it, so
+    // there is no meeting left to report — and the pick must still be this
+    // cell's ground, or a held lower would walk away toward the camera.
+    const CELL_X = 30;
+    const CELL_Z = 30;
+    const HIGH = BAND_HEIGHT * 8;
+    const LOW = BAND_HEIGHT * 2;
+    const mirror = world((x, y) => (x === CELL_X && y === CELL_Z ? HIGH : LOW));
+    // Aimed at the tall column's cap from above and to one side.
+    const origin = {
+      x: (CELL_X - 4) * CELL_WORLD_SIZE,
+      y: SKY_Y,
+      z: CELL_Z * CELL_WORLD_SIZE,
+    };
+    const direction = {
+      x: 4 * CELL_WORLD_SIZE,
+      y: HIGH * HEIGHT_WORLD_SCALE - SKY_Y,
+      z: 0,
+    };
+    const before = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
+    expect(before).not.toBeNull();
+
+    // The edit: the aimed column drops to the level of its neighbours, so the
+    // ray now passes over it entirely.
+    setColumn(mirror.map, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: LOW }]);
+    const after = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
+    expect(after).not.toBeNull();
+    expect(after!.x).toBe(CELL_X);
+    expect(after!.y).toBe(CELL_Z);
+    // A TREAD, at the new cap: hitY === surfaceY is what marks a horizontal
+    // face at the span's own top (terrain/picking.ts's hitRiser doc).
+    expect(after!.hitRiser).toBe(false);
+    expect(after!.surfaceY).toBe(LOW * HEIGHT_WORLD_SCALE);
+    expect(after!.hitY).toBe(after!.surfaceY);
+    // The reported point lies inside the cell it names — the consumer measures
+    // lip distance from it.
+    expect(Math.abs(after!.hitX / CELL_WORLD_SIZE - CELL_X)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(after!.hitZ / CELL_WORLD_SIZE - CELL_Z)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('answers the FLOOR piece through a carved gap', () => {
+    // A tunnel under a roof: the ray enters the mouth level with the opening,
+    // meets neither piece on a face, and the ground under it is the floor.
+    const CELL_X = 30;
+    const CELL_Z = 30;
+    const FLOOR_TOP = BAND_HEIGHT * 3;
+    const ROOF_BASE = BAND_HEIGHT * 6;
+    const ROOF_TOP = BAND_HEIGHT * 9;
+    const mirror = world(() => ROOF_TOP);
+    setColumn(mirror.map, CELL_X, CELL_Z, [
+      { floor: BEDROCK_FLOOR, ceiling: FLOOR_TOP },
+      { floor: ROOF_BASE, ceiling: ROOF_TOP },
+    ]);
+    // A level ray through the middle of the opening: above the floor's cap,
+    // below the roof's underside, so it meets no drawn face at all.
+    const gapY = ((FLOOR_TOP + ROOF_BASE) / 2) * HEIGHT_WORLD_SCALE;
+    const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE };
+    const direction = { x: 1, y: 0, z: 0 };
+    const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
+    expect(pick).not.toBeNull();
+    expect(pick!.spanIndex).toBe(0);
+    expect(pick!.hitRiser).toBe(false);
+    expect(pick!.surfaceY).toBe(FLOOR_TOP * HEIGHT_WORLD_SCALE);
+    expect(pick!.hitY).toBe(pick!.surfaceY);
+  });
+
+  it('is null for a ray that misses the cell entirely', () => {
+    const mirror = world(() => 0);
+    // Straight down over cell (10, 10), asked about a cell far from it.
+    const origin = { x: 10 * CELL_WORLD_SIZE, y: SKY_Y, z: 10 * CELL_WORLD_SIZE };
+    expect(pickTerrainInColumn(mirror, 40, 40, origin, { x: 0, y: -1, z: 0 })).toBeNull();
+  });
+
+  it('is null off the world, and for a cell in a chunk that was never sent', () => {
+    const mirror = createTerrainMirror(WORLD);
+    const heights = new Array<number>(CELLS_PER_CHUNK).fill(0);
+    applySnapshot(mirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: [{ cx: 0, cy: 0, heights }],
+    } as JoinSnapshotMessage);
+    const origin = { x: 40 * CELL_WORLD_SIZE, y: SKY_Y, z: 40 * CELL_WORLD_SIZE };
+    const down = { x: 0, y: -1, z: 0 };
+    // In bounds, but its chunk never arrived: the mesh does not draw it, so
+    // there is nothing there to point at (mirror.ts invariant 1).
+    expect(pickTerrainInColumn(mirror, 40, 40, origin, down)).toBeNull();
+    expect(pickTerrainInColumn(mirror, -1, 0, origin, down)).toBeNull();
+    expect(pickTerrainInColumn(mirror, 0, WORLD, origin, down)).toBeNull();
+  });
+
+  it('still reports a riser hit when the ray meets the pinned column on its face', () => {
+    // The face kind is a fact about the ray and the map together, and it is
+    // re-decided every read — see hoverTarget's "the CELL is what is promised,
+    // not the face kind".
+    const mirror = world((x) => (x >= 32 ? BAND_HEIGHT * 10 : 0));
+    const origin = {
+      x: 30 * CELL_WORLD_SIZE,
+      y: BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE,
+      z: 20 * CELL_WORLD_SIZE,
+    };
+    const pick = pickTerrainInColumn(mirror, 32, 20, origin, { x: 1, y: 0, z: 0 });
+    expect(pick).not.toBeNull();
+    expect(pick!.hitRiser).toBe(true);
+    expect(pick!.hitY).toBe(BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE);
   });
 });
