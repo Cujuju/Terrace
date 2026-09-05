@@ -52,7 +52,8 @@ import {
   Vector3,
   type ColorRepresentation,
 } from 'three';
-import { loadRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
+import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
+import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
 import { CELL_WORLD_SIZE, SAUCER_VARIANT_COUNT } from '../protocol.ts';
 
 /**
@@ -208,7 +209,9 @@ let installed: readonly RigAsset[] | null = null;
  * BROKEN is reported on the console and falls back the same way: the alternative
  * is a client that shows nothing and says nothing.
  */
-export async function preloadSaucerModels(): Promise<void> {
+export async function preloadSaucerModels(
+  ctx: Pick<ClientPluginCtx, 'loadRigAsset'>,
+): Promise<void> {
   // Written so BOTH declarations of `glob` accept it — this package's own
   // (./vite-glob.d.ts) and vite/client's, which the client bundle's typecheck
   // uses. Assigning the result to a widened record is what makes the two agree;
@@ -237,7 +240,9 @@ export async function preloadSaucerModels(): Promise<void> {
     for (const loader of loaders) {
       const url = await loader();
       if (typeof url !== 'string') return;
-      assets.push(await loadRigAsset(url));
+      // 'sky-environment': the hulls are authored METAL (issue #314), and a
+      // metal is its reflection — see ClientPluginCtx.loadRigAsset.
+      assets.push(await ctx.loadRigAsset(url, 'sky-environment'));
     }
     const rejected = measureInstalled(assets);
     if (rejected !== null) {

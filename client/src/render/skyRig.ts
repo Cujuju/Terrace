@@ -60,4 +60,8 @@ export function applySkyRig(viewport: Viewport, state: SkyRigState): void {
   // became a Texture is simply left alone rather than fought over.
   const background = viewport.scene.background;
   if (background instanceof Color) background.setHex(state.backgroundColor);
+
+  // The reflection follows the lamps — see ./skyEnvironment.ts. A string
+  // compare when nothing changed; a throttled repaint when it did.
+  viewport.skyEnvironment.retint(state);
 }

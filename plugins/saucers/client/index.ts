@@ -375,8 +375,8 @@ export const clientPlugin: TerraceClientPlugin = {
    * plugin unmounted for the whole session, and "the art is not finished" must
    * not mean "the mechanic does not exist".
    */
-  preload(): Promise<void> {
-    return preloadSaucerModels();
+  preload(ctx: ClientPluginCtx): Promise<void> {
+    return preloadSaucerModels(ctx);
   },
 
   attach(ctx: ClientPluginCtx): void {
