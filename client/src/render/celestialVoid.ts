@@ -5,17 +5,20 @@
 // same painted nothing. The owner's ask: make it read as "a plot among the
 // stars". Two approved looks, chosen per player in the HUD's Controls panel:
 //
-//   'wheel'  (default) — a tilted galactic disk whose stars actually orbit a
-//                        hub on the view axis, with short motion trails.
+//   'wheel'  (default) — a tilted galactic haze disk with a full-screen star
+//                        field turning about a hub on the view axis, each star
+//                        drawing a short motion trail behind it.
 //   'nebula'           — domain-warped fbm clouds with two steady star layers.
 //
 // The GLSL below is a faithful port of the shaders the owner approved
 // (.claude/orchestration/refs/celestial-void-shaders.glsl), at that file's
-// REVISION 2 (owner, 2026-09-04: 60 degree default tilt, reversed rotation,
-// no twinkle in either look, and a screen-space size floor plus far-cell fade
-// on the wheel's stars so distant ones stop shimmering). The numbers in them
-// ARE the approved look; every one that encodes a design decision is a named
-// constant here or in the shader's own `const` block.
+// REVISION 3 (owner, 2026-09-04). Cumulatively that revision line is: a 60
+// degree default tilt, rotation reversed, no twinkle in either look, drift 3x
+// faster in both (NEBULA_RATE 0.15, WHEEL_RATE -0.018), and the wheel's stars
+// moved off the perspective disk plane onto the whole background — uniform
+// density edge to edge, turning about the same hub as the haze. The numbers
+// in them ARE the approved look; every one that encodes a design decision is
+// a named constant here or in the shader's own `const` block.
 //
 // TIME OF DAY MUST NOT TOUCH IT. The owner's second rule: day/night affects
 // the map's lighting only, never the void. That is enforced structurally
@@ -91,8 +94,11 @@ export const VOID_HAZE_COLOR = 0x0a0a1a;
  * The owner's first ask was "something like a thirty to forty five degree
  * angle"; revision 2 of the approved reference (2026-09-04) supersedes that
  * with 60°, which is what they signed off on after seeing both — the steeper
- * tilt opens the disk's ellipse enough that the stars' circular motion reads
- * as orbiting rather than as sideways drift.
+ * tilt opens the ellipse enough that the stars' circular motion reads as
+ * orbiting rather than as sideways drift.
+ *
+ * It is a constant and NOT a preference: the owner asked for the look to be
+ * switchable, not for its tilt or its speed to be dialled from the HUD.
  */
 const WHEEL_TILT_DEGREES = 60;
 
@@ -152,8 +158,10 @@ float stars(vec2 p, float density, float t){
 `;
 
 const NEBULA_GLSL = /* glsl */ `${COMMON_GLSL}
+const float NEBULA_RATE = 0.15;   // drift clock scale; owner set 3x the original 0.05
 void main(){
-  vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y; float t=u_time*0.05;
+  vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
+  float t=u_time*NEBULA_RATE;
   vec2 p=uv*2.2;
   vec2 q=vec2(fbm(p+t*0.3), fbm(p+vec2(5.2,1.3)-t*0.2));
   vec2 r=vec2(fbm(p+3.0*q+vec2(1.7,9.2)+t*0.15), fbm(p+3.0*q+vec2(8.3,2.8)-t*0.1));
@@ -171,23 +179,21 @@ void main(){
 const WHEEL_GLSL = /* glsl */ `${COMMON_GLSL}
 uniform float u_tilt;
 vec2 rot(vec2 p,float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y,s*p.x+c*p.y); }
-// Disk stars: steady points with a screen-space size floor so far stars never shrink below
-// a pixel and shimmer; minSize is in cell units, computed by the caller from the ray length.
-float wstars(vec2 p, float density, float minSize){
+// Wheel stars: steady points positioned on the tilted disk (orthographic, so screen density is
+// uniform edge to edge) but shaped in screen space so they stay round at any tilt.
+float wstars(vec2 p, float density, float aspect){
   vec2 i=floor(p), f=fract(p)-0.5; float h=hash(i);
   if(h>density) return 0.0;
-  vec2 o=vec2(hash(i+3.1),hash(i+7.7))-0.5; float d=length(f-o*0.8);
-  float size = max(0.03 + 0.06*hash(i+9.2), minSize);
+  vec2 o=vec2(hash(i+3.1),hash(i+7.7))-0.5; float d=length((f-o*0.8)*vec2(1.0,aspect));
+  float size = 0.03 + 0.06*hash(i+9.2);
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
-const float WHEEL_RATE   = -0.006; // rad/s at 1x (~17 min per revolution); negative = clockwise seen from above
-const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
+const float WHEEL_RATE   = -0.018; // rad/s (~6 min per revolution); owner set 3x the original; negative = clockwise from above
+const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the haze disk shows
 const float DISK_DIST    = 2.6;    // hub distance along the view axis
-const float FAR_FADE     = 14.0;   // ray length where the disk has fully dissolved into the void
+const float FAR_FADE     = 14.0;   // ray length where the haze has fully dissolved into the void
 const int   TRAIL_SAMPLES = 5;
 const float TRAIL_STEP   = 0.004;  // rad between trail samples
-const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
-const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
   float a=u_time*WHEEL_RATE;
@@ -212,20 +218,18 @@ void main(){
     float ring=smoothstep(0.35,0.9,r)*exp(-r*0.55);
     vec3 haze=mix(vec3(0.28,0.22,0.5),vec3(0.9,0.62,0.45),smoothstep(0.4,0.8,arms));
     col+=haze*ring*arms*1.3*depthFade;
-    // Stars in circular motion about the hub, short arcs trailing behind.
-    // Pixels per plane unit at this ray length, for the size floor and the far-cell fade.
-    float pxPerUnit=FOCAL*u_res.y/sdist;
-    float minA=STAR_MIN_PX*9.0/pxPerUnit, minB=STAR_MIN_PX*18.0/pxPerUnit;
-    float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/18.0);
-    float s=0.0;
-    for(int k=0;k<TRAIL_SAMPLES;k++){
-      float w=1.0-float(k)/float(TRAIL_SAMPLES);
-      vec2 sp=rot(pp,a-float(k)*TRAIL_STEP);
-      s+=w*w*(wstars(sp*9.0,0.12,minA)+0.6*wstars(sp*18.0+11.0,0.10,minB)*cellFade);
-    }
-    float disk=smoothstep(0.3,0.7,r)*(0.35+0.65*exp(-r*0.25));
-    col+=vec3(0.95,0.93,0.85)*s*disk*depthFade*depthFade*0.8;
   }
+  // Stars: the whole background, hub on the view axis, turning with the haze at the same rate.
+  // Orthographic tilted-disk coordinates: y stretched by 1/cos(tilt), so a rotation here is an
+  // ellipse on screen (the disk seen at an angle) while density stays uniform top to bottom.
+  vec2 sp0=vec2(uv.x, uv.y/ct);
+  float s=0.0;
+  for(int k=0;k<TRAIL_SAMPLES;k++){
+    float w=1.0-float(k)/float(TRAIL_SAMPLES);
+    vec2 sp=rot(sp0,a-float(k)*TRAIL_STEP);
+    s+=w*w*(wstars(sp*90.0,0.06,ct)+0.6*wstars(sp*180.0+31.0,0.04,ct));
+  }
+  col+=vec3(0.95,0.93,0.85)*s*0.8;
   gl_FragColor=vec4(col,1.0);
 }
 `;
