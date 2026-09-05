@@ -116,6 +116,9 @@ export const clientPlugin: TerraceClientPlugin = {
 
   drawBudget: MUSIC_DRAW_OBJECTS,
 
+  /** No server half, so the server's live set never names it. */
+  clientOnly: true,
+
   attach(ctx: ClientPluginCtx): void {
     audio = ctx.audio;
     // START IS CALLED BY CORE, once it is ready to make sound, and never at all
