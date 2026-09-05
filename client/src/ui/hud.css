@@ -91,6 +91,13 @@ body {
   position: absolute;
   top: 16px;
   left: 16px;
+  /* The same glass as the modeler dock, the toolbar and the mana gauge
+     (owner, 2026-09-04: the relics panel "should share the same look as the
+     other HUDs") — the corner is where the relics panel lives, so it wears
+     the chrome the other instruments wear, open and collapsed alike. */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
 }
 
 .hud-bottom-strip {
