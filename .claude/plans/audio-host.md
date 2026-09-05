@@ -1,6 +1,6 @@
 # Audio host — background music and sound effects as a plugin capability
 
-Status: PHASE 1 + 2a SHIPPED (main eda5419, b468d7c, 2026-09-04); comment-trim pending; phase 2b plan next. APPROVED by owner 2026-09-04 ("proceed with the audio host"; Fable orchestrates
+Status: PHASE 1 + 2a SHIPPED (main 713717e, 2026-09-04). PHASE 2b SHIPPED (main b3e5c29, 2026-09-05); deviations in .claude/orchestration/briefs/audio-music-p2b-report.md (clientOnly flag, env.d.ts shim). APPROVED by owner 2026-09-04 ("proceed with the audio host"; Fable orchestrates
 and reviews, Opus agents implement, one worktree per arc, fresh agent per phase).
 Owner-facing open decisions are listed in §7; the phase-1 agent proceeds under the
 stated defaults.
@@ -191,3 +191,177 @@ as a PLACEHOLDER to be replaced by an authored asset. Real assets later are a fi
 | Per-bus volume sliders in settings? | YES (owner 2026-09-04) — master + mute + sfx/ambience/music, folded into phase 1 |
 | Thunder delay by distance (speed of sound)? | YES (owner 2026-09-04) — `delaySeconds` on playSfx, scheduled on the audio clock, folded into phase 1 |
 | Tests? Owner rule: none without per-session permission. | none written |
+
+## 8. Phase 2b — the `music` plugin (planned 2026-09-04, main 713717e)
+
+### 8.1 Facts (verified from source this session)
+
+- `PluginAudio` (`client/src/plugins/types.ts` → `PluginAudio`) has `preload / playSfx /
+  ambience / setMusic(url|null)`. The claim lives in `client/src/audio/audioEngine.ts`
+  (`musicClaimant`, `refuseMusic`, `releasePlugin` frees the bus on detach); the voice in
+  `audioVoices.ts` → `setMusic` (one `Audio` on the `music` bus, `MUSIC_CROSSFADE_SECONDS` = 2).
+  `createSilentAudioEngine` arbitrates the claim with no graph.
+- The composer (`plugins/music/client/composer/composer.ts`) is host-independent:
+  `createComposer(context: AudioContext, destination: AudioNode, seed): Composer` with
+  `start / stop(fadeSeconds) / setMood(ComposerMood) / stats`. It needs the REAL context (it
+  creates oscillators and reads `currentTime`) and a destination node. It must not be
+  started against a context it did not get from core (one context per page).
+- `plugins/music/` is NOT a workspace package yet (no `package.json`, no `tsconfig.json`);
+  the composer is typechecked only through `client/src/previewMusic.ts`'s import. A
+  client-only plugin is legal: `server/src/plugins/discovery.ts` skips a directory with no
+  server entry with an info log.
+- Cross-plugin reads on the client have exactly one neutral primitive today:
+  `publishMovers` / `moverPose(pluginName, id)` (`types.ts`, `host.ts` → `moverLookups`):
+  a plugin publishes a lookup under its OWN name, a reader addresses it BY NAME and
+  validates structurally. `onMessage` is namespaced to the subscriber's own plugin, so a
+  plugin cannot read a sibling's wire messages. Plugins never import each other
+  (`docs/decisions/plugin-host.md`, 2026-09-01).
+- Mood inputs exist as derived client state: daynight's rendered phase is
+  `interpolator.samplePhase()` (`plugins/daynight/client/index.ts`, onFrame); rain's
+  under-camera weight is `rainWeightUnderCamera(ctx)` (`plugins/rain/client/index.ts`,
+  already called every frame for ambience); thunderstorm has the same disc view
+  (`view.poses()`, `disc.intensity`) but no under-camera weight function yet.
+- The dev switch `?audioMusic=<url>` makes core claim the bus as `(dev:audioMusic)` before
+  any plugin attaches (`audioEngine.ts`, `AUDIO_MUSIC_URL`).
+
+### 8.2 Design
+
+Two contract additions, one plugin, three one-line publishers.
+
+**(a) Generator lane on the music claim.** `PluginAudio` gains
+
+```ts
+/** What a music generator plugs into: core's context and a core-owned node on the music bus. */
+interface MusicOutlet { readonly context: AudioContext; readonly destination: AudioNode; }
+interface MusicGenerator { stop(fadeSeconds: number): void; }
+/**
+ * Drives the music bus from code instead of a file. SAME CLAIMANT SLOT as `setMusic`:
+ * first caller of either owns the bus; the two are mutually replacing (a later
+ * `setMusic(url)` by the owner fades the generator out and the file in, and vice versa).
+ * `start` is called once, when core is ready to make sound; the returned handle's
+ * `stop(fade)` is called when the owner replaces it, passes null, or detaches. On a
+ * machine with no Web Audio `start` is never called. Passing null fades out.
+ */
+setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void;
+```
+
+Core (`audioVoices.ts`) owns a per-claim lane `GainNode` → `buses.music`. On start: create
+lane at `SILENT_GAIN`, call `start({ context, destination: lane })`, ramp lane to
+`MUSIC_TRACK_GAIN` over `MUSIC_CROSSFADE_SECONDS`. On release: ramp lane to silent over
+`MUSIC_CROSSFADE_SECONDS`, call `handle.stop(MUSIC_CROSSFADE_SECONDS)`, disconnect the lane
+after `MUSIC_CROSSFADE_SECONDS + FADE_STOP_SLACK_SECONDS` (belt and suspenders: the lane
+ramp silences a generator that ignores `stop`). `setMusic(url)` and `setMusicGenerator`
+share one `currentMusicSource` so `musicUrl()`'s short-circuit and `stopAll` cover both.
+`?audioDebug=1` logs `setMusicGenerator` with `bus:'music'` like `setMusic`.
+
+WHY EXPOSE THE CONTEXT. The "plugin never touches Web Audio" rule exists for three
+reasons (one context per page, listener tracks one camera, master silences everything).
+Handing the plugin core's context and a core-owned node on the bus violates none of them:
+it cannot create a second context, it is not positional, and it is under the bus and
+master gains. The outlet is the narrowest thing a generator can run on.
+
+**(b) Gauges — scalar readings by name.** Generalising `publishMovers/moverPose`:
+
+```ts
+/** Publishes a named scalar this plugin knows (a phase, a weight). Same rules as
+ * publishMovers: own name, last publisher wins, unpublish on return. */
+publishGauge(key: string, read: () => number): () => void;
+/** A sibling's gauge right now, or null when unpublished. One map lookup plus the
+ * owner's own closure; the reader validates range. */
+gauge(pluginName: string, key: string): number | null;
+```
+
+Host: `gaugeLookups: Map<"<plugin>:<key>", () => number>`, mirroring `moverLookups`, torn
+down by `track()`. No frame-phase consequence (unlike `publishMovers`): a gauge is read
+off-frame by this consumer, and a per-frame reader gets the last-drawn value, which is
+what a scalar mood input wants.
+
+Publishers (one line each, the value the plugin already computes):
+- `daynight`: `publishGauge('phase', () => interpolator.samplePhase())`.
+- `rain`: `publishGauge('weightUnderCamera', () => rainWeightUnderCamera(ctx))`.
+- `thunderstorm`: `publishGauge('weightUnderCamera', …)` — needs the same ≤ 7-disc loop
+  rain has; written as a thunderstorm-local copy of the disc math (contract copy, not
+  import — plugin-host.md 2026-09-01). Both weather plugins' key names are a documented
+  copy in `plugins/music/client/index.ts` (`MOOD_GAUGES` table).
+
+**(c) The `music` plugin.** `plugins/music/{package.json,tsconfig.json}` (mirror rain's,
+no `solid-js`), `plugins/music/client/index.ts`, registered LAST in
+`client/src/plugins/registry.ts` (it reads gauges; order is irrelevant off-frame, last
+keeps the weather comment block intact). No `server/`, no `protocol.ts`.
+
+```
+attach: ctx.audio.setMusicGenerator(outlet => {
+          composer = createComposer(outlet.context, outlet.destination, MUSIC_SEED);
+          composer.start();
+          moodTimer = setInterval(sampleMood, MOOD_SAMPLE_MS);
+          return { stop: fade => { clearInterval(moodTimer); composer.stop(fade); } };
+        });
+sampleMood: composer.setMood({
+          dayPhase: ctx.gauge('daynight','phase') ?? DEFAULT_MOOD.dayPhase,
+          weather:  max(ctx.gauge('rain','weightUnderCamera') ?? 0,
+                        ctx.gauge('thunderstorm','weightUnderCamera') ?? 0),
+          tension:  ctx.gauge(TENSION_GAUGE.plugin, TENSION_GAUGE.key) ?? 0 });
+dispose: ctx.audio.setMusicGenerator(null)  (core fades; detach would do it anyway)
+```
+
+- `MOOD_SAMPLE_MS` = 1000: the composer's glide time constant is 1.5 s (~4.5 s to settle),
+  so anything faster than a second is inaudible; a wall-clock timer, never `onFrame`
+  (zero per-frame work — the plan's standing rule for audio).
+- `MUSIC_SEED` = 1, a constant: `ClientPluginCtx` exposes no world identity, and the
+  score is not meant to be recognisable per world. Named so a later per-world seed is
+  one edit.
+- Missing gauges fall back to the composer's `DEFAULT_MOOD` values (a world with rain
+  disabled is simply clear).
+- Tension: the plumbing ships (`TENSION_GAUGE` constant, read like the others) with NO
+  publisher — the source is a sound-design decision (§8.6). Default mood tension 0.
+- Refused claim (dev `?audioMusic` set): the plugin's `setMusicGenerator` is refused once
+  with the existing warning, `start` is never called, no composer exists. Correct: the
+  file drop-in path stays testable from the URL bar.
+- `client/src/previewMusic.ts` + `preview-music.html` are unchanged.
+
+### 8.3 Rejected alternatives
+
+- **Music plugin re-derives mood from sibling wire messages** (would need a cross-plugin
+  `onMessage`). Duplicates rain's disc math and daynight's interpolation in a third
+  place and reads un-interpolated state — the exact drift `moverPose` exists to prevent.
+- **Server half computes mood and pushes `music:mood`.** The server does not know each
+  client's camera, so weather-under-camera is lost; adds wire traffic for state the client
+  has; and daynight's phase would arrive un-interpolated.
+- **Composer moves into `client/src/audio/` as core.** Then the score is not a plugin
+  (cannot be disabled or swapped per world) and core grows sound design.
+- **Reuse `publishMovers` with a fake id for the mood scalar.** Wrong shape (a pose, not a
+  number) and misreports intent to every reader.
+- **Mood sampled in `onFrame`.** Three lookups plus rain's disc loop per frame for a
+  value that glides over 4.5 s — waste by construction.
+
+### 8.4 Residuals, named
+
+- Background tabs throttle `setInterval` to 1 Hz (Chrome: 1/min after 5 min hidden).
+  `SCHEDULE_AHEAD_SECONDS` = 1.5 covers the 1 Hz case; the intensive-throttling case
+  will gap. Not handled in 2b: the sensible fix (fade on `visibilitychange`) is a
+  behaviour decision for the owner, listed in §8.6.
+- Mono score, chord-tick 0.7 ms (p2a residuals) unchanged — sound-design, not wiring.
+- Adding a workspace package changes `pnpm-lock.yaml` (importers only; no new versions).
+- Nobody has listened. §8.5 verification is by trace, as in phase 1.
+
+### 8.5 Verification (orchestrator)
+
+- `pnpm typecheck` at the worktree root (music now typechecked as its own package too);
+  `vitest run` in `client`, `rain`, `thunderstorm`, `daynight` with `timeout 120`.
+- `?audioDebug=1` trace showing: `setMusicGenerator` claim; lane gain ramp; composer
+  `stats()` node count bounded over ≥ 60 s; mood values changing when the camera is moved
+  under a rain system (console line per `sampleMood` under the debug flag only).
+- `?audioMusic=<url>&audioDebug=1`: the plugin's claim refused once, file plays.
+- Detach path: the existing plugin-disable dev route (agent verifies what it is) fades
+  music out with no dangling interval (composer `stats()` no longer advancing, lane
+  disconnected).
+- Orchestrator checks every `file:line` claim in the report against the diff.
+
+### 8.6 Owner decisions (agent proceeds on the default)
+
+| Question | Default in 2b |
+|---|---|
+| Tension source? Candidates: `monsters` (a monster alive), `saucers` (raid in progress), `volcanoes` (erupting), thunderstorm strike recency | none — `tension` stays 0; publisher is one `publishGauge` line once chosen |
+| Fade music out when the tab is hidden? | no — documented residual |
+| Per-world seed later? | no — `MUSIC_SEED` constant |
+| Tests? | none (owner rule; not granted this session) |
