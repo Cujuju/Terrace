@@ -298,6 +298,26 @@ export const FLYBY_SECONDS = (2 * ENTRY_DISTANCE_CELLS) / APPROACH_SPEED_CELLS_P
 export const ARENA_RADIUS_CELLS = cellsAcross(8);
 
 /**
+ * The band of orbit radii the fight is flown in, as fractions of the arena
+ * radius, and how far off its orbit a saucer breathes. 0.55 to 1.0 keeps the
+ * tightest orbit wider than a hull and the widest on the rim the site was
+ * cleared for; 0.15 of breathing turns the ring into a rosette without
+ * sweeping every inner orbit through the centre (which was the clump).
+ *
+ * ON THE WIRE'S SIDE OF THE CONTRACT because the widest gap two fighters can
+ * have — the arena's diameter plus the breathing — is what a bolt's lifetime
+ * is derived from (LASER_BOLT_LIFETIME_SECONDS). The server flies the curves
+ * (server/encounter.ts); the client only needs to know how far a bolt can go.
+ */
+export const ORBIT_RADIUS_FRACTION_MIN = 0.55;
+export const ORBIT_RADIUS_FRACTION_MAX = 1;
+export const BREATHE_RADIUS_FRACTION = 0.15;
+
+/** The widest gap two fighters can have, in cells — derived, see above. */
+export const FIGHT_SPAN_CELLS =
+  2 * ARENA_RADIUS_CELLS * (ORBIT_RADIUS_FRACTION_MAX + BREATHE_RADIUS_FRACTION);
+
+/**
  * How high the saucers fly, in TERRACE BANDS above the highest ground inside the
  * arena. Bands rather than world units because relief is measured in bands here
  * and a saucer's clearance is a statement about the ground UNDER it.
@@ -346,8 +366,8 @@ export const LASER_HIT_DAMAGE = 1;
  * from the encounter's own generator, so a fight's rhythm is reproducible.
  *
  * THE REST IS 0.7–2.0 s since the second revision ("make the lasers burst
- * 0.7-2 seconds apart"); the hangar's 1.6–3.0 read as hesitant in-world. The
- * floor stays above LASER_BOLT_LIFETIME, which MAX_LASER_BOLTS relies on.
+ * 0.7-2 seconds apart"); the hangar's 1.6–3.0 read as hesitant in-world.
+ * Bursts can overlap in flight; MAX_LASER_BOLTS accounts for that.
  */
 export const LASER_BURST_SHOTS = 3;
 export const LASER_SHOT_GAP_SECONDS = 0.1;
@@ -363,33 +383,51 @@ export const LASER_HIT_CHANCE = 0.5;
 
 /**
  * A bolt is a PROJECTILE, not a beam: it leaves the muzzle and travels at
- * LASER_BOLT_SPEED for LASER_BOLT_LIFETIME, drawn LASER_BOLT_LENGTH long. The
- * hangar's numbers (60 cells/s, 2.4 cells), which the owner approved on sight.
- * The lifetime is what it takes to cross the widest gap two saucers in the
- * arena can have — a little over the arena's diameter — so a bolt reaches its
- * target and no bolt flies on past the fight.
+ * LASER_BOLT_SPEED for LASER_BOLT_LIFETIME, drawn LASER_BOLT_LENGTH long.
+ *
+ * SPEED 44 cells/s (owner, 2026-09-04: the hangar's 60 "might need to move
+ * just a little bit slower" — the bolt was a flicker between hulls at orbit
+ * camera distance). A quarter slower: the arena's diameter in about a second
+ * and a half, which the eye can follow from muzzle to hull.
+ *
+ * LENGTH 3.5 cells — most of a hull, up from the hangar's 2.4 for the same
+ * reason: a streak shorter than the thing it is fired from was lost against
+ * the ground from the camera's distance.
+ *
+ * THE LIFETIME IS DERIVED: what it takes to cross the widest gap two fighters
+ * can have (FIGHT_SPAN_CELLS), so a bolt always reaches its target. It was
+ * written as 0.4 s, which at 60 cells/s is 24 cells — a third of the span —
+ * so most bolts at a far target vanished mid-flight and the hit landed
+ * invisibly, which is the larger part of why the lasers were "extremely
+ * difficult to see". The client hides a bolt once it is past its target
+ * (client/effects.ts), so the lifetime being the LONGEST flight is not a bolt
+ * flying on past a near one.
  *
  * WHY THIS IS ON THE WIRE'S SIDE OF THE CONTRACT: the server decides the hit
  * the instant it fires and puts only `age` on the wire; the client draws the
  * bolt where a projectile of this speed would be at that age. Both halves need
  * the same speed for a bolt to arrive as the hit lands.
  */
-export const LASER_BOLT_SPEED_CELLS_PER_SECOND = cellsAcross(15);
-export const LASER_BOLT_LENGTH_CELLS = 2.4;
-export const LASER_BOLT_LIFETIME_SECONDS = 0.4;
+export const LASER_BOLT_SPEED_CELLS_PER_SECOND = cellsAcross(11);
+export const LASER_BOLT_LENGTH_CELLS = 3.5;
+export const LASER_BOLT_LIFETIME_SECONDS = FIGHT_SPAN_CELLS / LASER_BOLT_SPEED_CELLS_PER_SECOND;
 
 /**
  * The most bolts that can be on the wire at once — DERIVED, which is what makes
- * it an honest ceiling rather than a number from one measurement: a saucer's
- * burst is LASER_BURST_SHOTS bolts a gap apart, each living
- * LASER_BOLT_LIFETIME, so no more than the lesser of the burst and the
- * lifetimes-per-gap are in flight from one saucer, and the rest between bursts
- * is longer than a lifetime so bursts never overlap. The client's pool is sized
+ * it an honest ceiling rather than a number from one measurement. A saucer
+ * fires bursts of LASER_BURST_SHOTS spanning (shots − 1) gaps, no closer than
+ * the shortest rest apart; every bolt lives LASER_BOLT_LIFETIME. The bolts in
+ * flight from one saucer are therefore the shots of every burst that began
+ * inside the last lifetime — at most one more burst than lifetimes-per-period,
+ * because a burst can straddle the window's edge. The client's pool is sized
  * against this and so is the payload budget.
  */
+const BURST_SPAN_SECONDS = (LASER_BURST_SHOTS - 1) * LASER_SHOT_GAP_SECONDS;
+const BURST_PERIOD_MIN_SECONDS = BURST_SPAN_SECONDS + LASER_BURST_REST_MIN_SECONDS;
 export const MAX_LASER_BOLTS =
   MAX_SAUCERS_PER_ENCOUNTER *
-  Math.min(LASER_BURST_SHOTS, Math.ceil(LASER_BOLT_LIFETIME_SECONDS / LASER_SHOT_GAP_SECONDS));
+  LASER_BURST_SHOTS *
+  (Math.ceil(LASER_BOLT_LIFETIME_SECONDS / BURST_PERIOD_MIN_SECONDS) + 1);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE CRASH.
