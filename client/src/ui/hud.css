@@ -410,30 +410,48 @@ body {
   color: var(--hud-text);
 }
 
-/* The audio row (ui/AudioSettingsRow.tsx). It sits BESIDE .controls-panel in
-   the settings popup rather than inside it, so it needs the top rule the panel
-   would otherwise have given it, and nothing else: the label, the row and the
-   mute button all reuse the popup's existing classes. */
-.audio-row {
+/* The audio block (ui/AudioSettingsPanel.tsx). It sits BESIDE .controls-panel
+   in the settings popup rather than inside it, so the separating rule that the
+   panel would otherwise have given it goes on the block, ONCE — not on each of
+   its four rows, which is what a per-row border would have drawn. Everything
+   inside reuses the popup's existing classes. */
+.audio-panel {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--hud-border);
 }
 
-/* Let the slider take the row's slack; the label and the button are fixed. */
+/* The three bus rows sit tighter than the master above them, so the block reads
+   as "one control, then the mix under it" rather than as four equal settings. */
+.audio-panel .audio-row + .audio-row {
+  margin-top: 2px;
+}
+
+/* Let the slider take the row's slack; the label and the readout are fixed. */
 .audio-slider {
   flex: 1;
   min-width: 0;
   accent-color: var(--hud-accent);
 }
 
-/* The mute toggle doubles as the level readout, so its width must not jump
-   between "Muted" and "80%" — a control that moves under the pointer as you
-   click it is the thing .hud-bottom-right's own comment warns about. */
-.audio-mute {
-  margin-top: 0;
+/* The readout column. Every row's readout is the same width, so the four
+   sliders line up and none of them resizes as its number crosses 100% — and
+   the master's, which is also the mute BUTTON, does not move under the pointer
+   as you click it (the thing .hud-bottom-right's own comment warns about). */
+.audio-mute,
+.audio-readout {
   min-width: 52px;
   text-align: center;
+}
+
+.audio-mute {
+  margin-top: 0;
+}
+
+/* Not a button, so it takes the muted-label colour rather than the accent. */
+.audio-readout {
+  color: var(--hud-muted);
+  font-size: 11px;
 }
 
 /* Plugin HUD panels stack under the core controls, visually separated. */

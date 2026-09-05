@@ -91,7 +91,7 @@ import {
   controlBindings,
   type ControlBindings,
 } from '../state/controlPrefs.ts';
-import { AudioSettingsRow } from './AudioSettingsRow.tsx';
+import { AudioSettingsPanel } from './AudioSettingsPanel.tsx';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
 import { Toolbar } from './Toolbar.tsx';
@@ -461,8 +461,8 @@ export function Hud(props: {
               <ControlsPanel />
               {/* Beside the bindings panel, not inside it: its reset button
                   promises to reset "every setting on this panel", and audio is
-                  not a control binding (see AudioSettingsRow's header). */}
-              <AudioSettingsRow />
+                  not a control binding (see AudioSettingsPanel's header). */}
+              <AudioSettingsPanel />
             </div>
           </Show>
 
