@@ -370,7 +370,7 @@ const float GAS_BOTTOM_Z = -0.88*DISK_THICKNESS;  // deepest layer centre
 const float GAS_SCALE_H  = 0.12*DISK_THICKNESS;   // sech^2 scale height of each patch about its own level
 const float LEVEL_SCALE  = 5.0;    // level-field features per disk unit: patches change level on about the filament scale
 const float LIT_FROM_ABOVE=0.6;    // gas at the bottom of the slab is this much darker than at the top (a depth cue the eye reads)
-const float GAS_EXTINCTION=128.0;  // optical depth per unit density per disk unit; 160 read like the rev 10 sheet, rev 17 owner 2026-09-05: 'colors a little more transparent, maybe 20%' -> x0.8
+const float GAS_EXTINCTION=100.0;  // optical depth per unit density per disk unit; 160 read like the rev 10 sheet; rev 17 'colors a little more transparent, maybe 20%' 128; rev 18 owner 2026-09-05 'more transparent' 100
 const float PUFF_SCALE   = 12.0;   // 3-D puff noise features per disk unit across the disk
 const float PUFF_Z_SCALE = 3.0/DISK_THICKNESS;    // ... and about three through the thickness, so the puffs vary with depth
 const float PUFF_DEPTH   = 0.7;    // how much the puffs modulate the density (0 = columnar gas); rev 14: 0.35 -> 0.7
