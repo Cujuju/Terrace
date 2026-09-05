@@ -166,6 +166,14 @@ const DISK_THICKNESS_WORLD = 4;
 const DISK_THICKNESS = DISK_THICKNESS_WORLD / LOCKED_WORLD_UNITS_PER_DISK_UNIT;
 
 /**
+ * How far under the plane the star field reaches, world units. Owner,
+ * 2026-09-05: "substantially more Z variability for the stars" — the gas
+ * keeps to DISK_THICKNESS_WORLD, the stars go on below it, away from the map.
+ */
+const STAR_FIELD_DEPTH_WORLD = 120;
+const STAR_FIELD_DEPTH = STAR_FIELD_DEPTH_WORLD / LOCKED_WORLD_UNITS_PER_DISK_UNIT;
+
+/**
  * Clearance between the bottom of the map and the locked disk, world units.
  * Owner, 2026-09-04: "the map to sit just above the star rendering", then
  * "five world units from the lowest possible layer or band", then rev 10
@@ -337,9 +345,9 @@ const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane un
 // placed in three dimensions', and 'don't make the disk any thicker than four world units'). The
 // gas is a volume under the plane, ray-marched: the arm pattern runs through it as columns, a
 // vertical profile makes it diffuse about each patch's own level, and 3-D puff noise breaks it up through the
-// thickness. The stars are points at their own depth in the same slab, found by walking the plane
-// grid's cells along the ray and testing the ray against each star's 3-D position, each dimmed by
-// the gas in front of it. Nothing is above the plane, so the clearance to the map is unchanged.
+// thickness. The stars are points in 3-D voxel grids that the ray walks exactly: the in-arm stars
+// inside the gas, the field and fine grids on down to STAR_FIELD_DEPTH under it, each dimmed by the
+// gas in front of it. Nothing is above the plane, so the clearance to the map is unchanged.
 const float DISK_THICKNESS= ${DISK_THICKNESS.toFixed(3)}; // DISK_THICKNESS_WORLD in disk units; gas and stars both stay within it
 const int   GAS_STEPS    = 10;     // march samples through the thickness; the layers are ~0.12 T thick, so ~1 sample per layer at 60 deg
 // Rev 14 (owner: 'needs more 3-D variability, still a flat disk'): the depth of peak density is not one
@@ -354,38 +362,44 @@ const float GAS_EXTINCTION=160.0;  // optical depth per unit density per disk un
 const float PUFF_SCALE   = 12.0;   // 3-D puff noise features per disk unit across the disk
 const float PUFF_Z_SCALE = 3.0/DISK_THICKNESS;    // ... and about three through the thickness, so the puffs vary with depth
 const float PUFF_DEPTH   = 0.7;    // how much the puffs modulate the density (0 = columnar gas); rev 14: 0.35 -> 0.7
-const int   STAR_WALK    = 6;      // plane-grid cells visited per star grid per ray; covers the thickness in the finest grid at 60 deg
+const float STAR_FIELD_DEPTH=${STAR_FIELD_DEPTH.toFixed(3)}; // STAR_FIELD_DEPTH_WORLD in disk units: the coarse star grid reaches this far under the plane
+const float STAR_FINE_DEPTH=0.5*STAR_FIELD_DEPTH;  // the fine grid reaches half as deep (it has twice the cells per unit, so the same voxel budget)
+const float STAR_POINT_BOOST=3.0;  // a ray must pass within a star's radius in 3-D, not cross a disc: more stars per voxel to keep the count on screen
+const float STAR_GAS_SHADE=0.7;    // how much fully overlying gas dims a star (1 = hidden)
+const int   STAR_WALK    = 36;     // voxel visits per star grid per ray; covers STAR_FIELD_DEPTH in the coarse grid at 60 deg, flatter views lose the deepest stars
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
 const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
-// Stars as points in 3-D. The grid has scale cells per disk unit in the plane; each cell holds at
-// most one star at a hashed (x, y) in the cell and a hashed depth within the disk's thickness. The
-// ray is walked cell by cell across the plane grid from the plane hit down to the bottom of the
-// slab, and each star lights up by the ray's 3-D distance to it. minSizePerT is the screen-size
-// floor in disk units per unit ray length; tBase the ray length from the eye to o (on the plane).
-// above is the gas opacity along the ray, which dims the deeper stars.
-float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float minSizePerT, float seed, float above){
+// Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
+// (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
+// ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
+// column's voxels, so a deeper field is not a denser one. minSizePerT is the screen-size floor in
+// disk units per unit ray length; tBase the ray length from the eye to o (on the plane). above is
+// the gas opacity along the ray, which dims the stars under the gas by how much of it is over them.
+float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float depth, float minSizePerT, float seed, float above){
   vec3 p=o*scale;                        // grid units, plane at z = 0
-  vec2 cell=floor(p.xy);
-  vec2 stp=sign(d.xy);
-  vec2 tDelta=abs(1.0/d.xy);
-  vec2 tMax=(cell+max(stp,0.0)-p.xy)*tDelta*stp;   // grid-unit ray lengths to the next cell walls
-  float tExit=DISK_THICKNESS*scale/-d.z;            // ... and to the bottom of the slab
+  vec3 cell=floor(p-vec3(0.0,0.0,0.001)); // start in the voxel just under the plane
+  vec3 stp=sign(d);
+  vec3 tDelta=abs(1.0/d);
+  vec3 tMax=(cell+max(stp,0.0)-p)*tDelta*stp;   // grid-unit ray lengths to the next cell walls
+  float zBot=-depth*scale;
+  float perVoxel=density*STAR_POINT_BOOST/(depth*scale);
   float sum=0.0;
   for(int i=0;i<STAR_WALK;i++){
-    float h=hash3(vec3(cell,seed));
-    if(h<density){
-      vec3 P=vec3(cell+0.1+0.8*vec2(hash3(vec3(cell,seed+3.1)),hash3(vec3(cell,seed+7.7))), -DISK_THICKNESS*scale*hash3(vec3(cell,seed+5.3)));
+    if(cell.z<zBot) break;
+    float h=hash3(cell+seed);
+    if(h<perVoxel){
+      vec3 P=cell+0.1+0.8*vec3(hash3(cell+seed+3.1),hash3(cell+seed+7.7),hash3(cell+seed+5.3));
       vec3 rel=P-p;
       float along=dot(rel,d);
       float dist=length(rel-along*d);
       float t=tBase+along/scale;         // disk units along the ray from the eye
-      float size=max(0.03+0.05*hash3(vec3(cell,seed+9.2)), minSizePerT*t*scale);
-      float dim=pow(1.0-above,clamp(-P.z/(DISK_THICKNESS*scale),0.0,1.0)); // gas above this star
-      sum+=smoothstep(size,0.0,dist)*(0.5+0.5*h/density)*dim;
+      float size=max(0.03+0.05*hash3(cell+seed+9.2), minSizePerT*t*scale);
+      float dim=1.0-STAR_GAS_SHADE*above*clamp(-P.z/(DISK_THICKNESS*scale),0.0,1.0); // gas above this star
+      sum+=smoothstep(size,0.0,dist)*(0.5+0.5*h/perVoxel)*dim;
     }
-    float tNext=min(tMax.x,tMax.y);
-    if(tNext>tExit) break;
-    if(tMax.x<tMax.y){ cell.x+=stp.x; tMax.x+=tDelta.x; } else { cell.y+=stp.y; tMax.y+=tDelta.y; }
+    if(tMax.x<tMax.y && tMax.x<tMax.z){ cell.x+=stp.x; tMax.x+=tDelta.x; }
+    else if(tMax.y<tMax.z){ cell.y+=stp.y; tMax.y+=tDelta.y; }
+    else { cell.z+=stp.z; tMax.z+=tDelta.z; }
   }
   return sum;
 }
@@ -466,9 +480,9 @@ void main(){
     float minPerT=STAR_MIN_PX/(u_focal*u_res.y);               // disk units of star radius per unit ray length
     float pxPerUnit=u_focal*u_res.y/sdist;
     float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/32.0);
-    float field=stars3(ro,rd,sdist,16.0,0.07,minPerT,0.0,gas);
-    float fine=0.6*stars3(ro,rd,sdist,32.0,0.05,minPerT,11.0,gas)*cellFade;
-    float inArms=stars3(ro,rd,sdist,40.0,0.35,minPerT,23.0,0.0)*cellFade*gas*2.5;
+    float field=stars3(ro,rd,sdist,16.0,0.07,STAR_FIELD_DEPTH,minPerT,0.0,gas);
+    float fine=0.6*stars3(ro,rd,sdist,32.0,0.05,STAR_FINE_DEPTH,minPerT,11.0,gas)*cellFade;
+    float inArms=stars3(ro,rd,sdist,40.0,0.35,DISK_THICKNESS,minPerT,23.0,0.0)*cellFade*gas*2.5;
     col+=vec3(0.95,0.93,0.9)*((field+fine)*(0.45+0.9*gas)+inArms)*depthFade*depthFade;
   } else {
     // Above the plane's horizon (never in the view anchor at 60deg; the world anchor at a flat
