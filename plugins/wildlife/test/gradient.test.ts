@@ -50,6 +50,11 @@ function grazer(x: number, y: number, overrides: Partial<WildlifeEntity> = {}): 
     // WildlifeEntity since the idle bouts landed (2026-09-02); the grazer
     // declares no bouts, so nothing can ever set it.
     idle: false,
+    // Required on WildlifeEntity since the chase landed (2026-09-05); the
+    // grazer hunts nothing, so nothing can ever set these.
+    huntTargetId: null,
+    huntSecondsRemaining: 0,
+    huntRestSecondsRemaining: 0,
     x,
     y,
     heading: 0,
@@ -145,6 +150,9 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
       schoolId: 1,
       size: 'small',
       idle: false,
+      huntTargetId: null,
+      huntSecondsRemaining: 0,
+      huntRestSecondsRemaining: 0,
       x: 9.5,
       y: 20,
       heading: 0,
