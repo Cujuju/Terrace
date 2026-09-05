@@ -75,14 +75,26 @@ export const SKY_ENVIRONMENT_REFRESH_MS = 1000;
  * THE SKY IN A MIRROR IS THE SKY YOU SEE. scene.background is a plain Color,
  * which three clears the framebuffer to WITHOUT tone mapping
  * (WebGLBackground.setClear, verified in 0.185), while every reflection goes
- * through ACES at the renderer's exposure. So the zenith radiance is solved
- * for, per paint: the scalar that makes ACES(exposure × radiance) land on the
+ * through ACES at the renderer's exposure. So the sky radiance is solved for,
+ * per paint: the scalar that makes ACES(exposure × radiance) land on the
  * background colour's own value — a perfect mirror then shows exactly the sky
  * drawn behind it, and a first version that anchored the radiance to the
  * hemisphere lamp instead (radiance = intensity × colour / PI) mirrored a sky
  * about half as bright as the one on screen, which read as grey paint.
  * Bisection bounds and tolerance below; the search is a few dozen cheap
  * evaluations, once per repaint.
+ *
+ * THE MATCH IS AT THE HORIZON, NOT THE ZENITH. The drawn sky is one flat
+ * colour, but the map's sky is brightest at the horizon (HORIZON_BRIGHTENING)
+ * and darkest straight up, so only one band can equal the backdrop. It is the
+ * horizon: that is where a hull's silhouette meets the drawn sky, so the
+ * mirror never shows a sky brighter than the one beside it, and the zenith —
+ * what every top-down view of a flat deck reflects, which in this game is
+ * most views — sits 1/HORIZON_BRIGHTENING below it, as a real zenith does. A
+ * first version anchored the zenith instead, and from above every hull, dark
+ * gunmetal and green-black iron included, mirrored a sky 1.6× brighter than
+ * the backdrop and read as pale (owner, 2026-09-04: "1 and 3 don't look
+ * correct").
  */
 const RADIANCE_SEARCH_MAX = 64;
 const RADIANCE_SEARCH_STEPS = 40;
@@ -204,15 +216,17 @@ export function createSkyEnvironment(
       .set(state.sunDirection.x, state.sunDirection.y, state.sunDirection.z)
       .normalize();
 
-    // RADIANCE SCALE — see RADIANCE_SEARCH_MAX. The zenith is the background
-    // colour at the radiance that tone-maps back to itself; the ground keeps
-    // the rig's ground hue at the same scale, dimmed to what ground reflects.
-    // The hemisphere and ambient lamps are deliberately NOT encoded here: the
-    // ambient is an orientation-free floor, and a floor added to every
-    // direction is exactly the flatness this map must not have.
-    const scale = radianceMatchingDisplay(skyColor, renderer);
-    skyRadiance.copy(skyColor).multiplyScalar(scale);
-    groundRadiance.copy(groundColor).multiplyScalar(scale * GROUND_RADIANCE_FRACTION);
+    // RADIANCE SCALE — see RADIANCE_SEARCH_MAX. The HORIZON is the background
+    // colour at the radiance that tone-maps back to itself, so the zenith is
+    // that over HORIZON_BRIGHTENING (the sky gain below runs zenith 1 →
+    // horizon HORIZON_BRIGHTENING); the ground keeps the rig's ground hue at
+    // the zenith's scale, dimmed to what ground reflects. The hemisphere and
+    // ambient lamps are deliberately NOT encoded here: the ambient is an
+    // orientation-free floor, and a floor added to every direction is exactly
+    // the flatness this map must not have.
+    const zenithScale = radianceMatchingDisplay(skyColor, renderer) / HORIZON_BRIGHTENING;
+    skyRadiance.copy(skyColor).multiplyScalar(zenithScale);
+    groundRadiance.copy(groundColor).multiplyScalar(zenithScale * GROUND_RADIANCE_FRACTION);
 
     let i = 0;
     for (let row = 0; row < SKY_ENVIRONMENT_HEIGHT; row++) {

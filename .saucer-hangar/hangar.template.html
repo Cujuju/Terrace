@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Saucer Hangar</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -53,8 +54,7 @@
     <button data-k="lights" aria-pressed="true">Lights</button>
     <button data-k="lasers" aria-pressed="true">Lasers</button>
     <button data-k="orbit" aria-pressed="true">Auto-orbit</button>
-    <button data-k="env" aria-pressed="true" title="A/B: the sky environment map the game gives authored metals (#314). Off = lamps only, the old look.">Sky env</button>
-    <button data-k="sky" aria-pressed="false" title="Backdrop: the game's sky colour instead of the hangar's dark floor.">Sky backdrop</button>
+    <button data-k="env" aria-pressed="true" title="A/B: the sky environment map the game gives authored metals (#314). Off = lamps only, the old look. The hulls always mirror the GAME'S sky, as they do in-game over terrain; the hangar floor is only a backdrop.">Sky env</button>
   </div>
 </aside>
 <div class="hint">STAGE UNITS = CELLS</div>
@@ -270,6 +270,59 @@ function frame(){
   controls.autoRotateSpeed = 0.6;
   controls.update();
   renderer.render(scene, camera);
+  if (probe.afterRender) probe.afterRender();
+}
+
+// ---------- probe
+// ?probe=1: THE OWNER'S GPU IN NUMBERS. The hangar under SwiftShader and the
+// same hangar on a real GPU disagreed about how bright the hulls are from
+// above (2026-09-04), and a screenshot cannot say why. This puts two spheres
+// where the formation is — a perfect mirror (the centre must display the
+// game's sky colour, ACES-matched at the horizon) and a gunmetal one — looks
+// straight down at them, reads the two centre pixels back, and prints them
+// with the GL facts that could change the answer: the driver, and whether
+// float textures can be filtered and float targets rendered to.
+const PROBE_MIRROR = { color:0xffffff, metalness:1, roughness:0 };
+const PROBE_GUNMETAL = { color:0x6b6f78, metalness:0.9, roughness:0.4 }; // hull_a's mean base, linear (0.40, 0.42, 0.47)
+const PROBE_SETTLE_FRAMES = 30;   // let the PMREM and materials compile before reading
+function probe(){
+  for (const m of models) m.pivot.visible = false;
+  const spheres = [PROBE_MIRROR, PROBE_GUNMETAL].map((spec, i) => {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1.4, 64, 32), new THREE.MeshStandardMaterial({ ...spec, envMap: skyEnvironment.texture }));
+    mesh.position.set(-RAIL_OFFSET_X + (i - 0.5) * 4, HOVER_HEIGHT, 0); scene.add(mesh); return mesh;
+  });
+  state.orbit = false; controls.enabled = false; controls.maxPolarAngle = Math.PI;
+  controls.target.set(-RAIL_OFFSET_X, HOVER_HEIGHT, 0);
+  camera.position.set(-RAIL_OFFSET_X + 0.01, HOVER_HEIGHT + 12, 0.01); controls.update();
+  const gl = renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const facts = {
+    renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+    webgl2: renderer.capabilities.isWebGL2, precision: renderer.capabilities.precision,
+    float_linear: gl.getExtension('OES_texture_float_linear') !== null,
+    color_buffer_float: gl.getExtension('EXT_color_buffer_float') !== null,
+    color_buffer_half_float: gl.getExtension('EXT_color_buffer_half_float') !== null,
+    dpr: devicePixelRatio, toneMapping: renderer.toneMapping, exposure: renderer.toneMappingExposure,
+    expected_mirror_centre: '#' + new THREE.Color(NOON.backgroundColor).getHexString() + ' × (1/1.6 zenith, ACES)',
+  };
+  let frames = 0;
+  const px = new Uint8Array(4);
+  const read = mesh => {
+    const v = mesh.position.clone().project(camera);
+    const w = renderer.domElement.width, h = renderer.domElement.height;
+    gl.readPixels(Math.round((v.x + 1) / 2 * w), Math.round((v.y + 1) / 2 * h), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return `rgb(${px[0]}, ${px[1]}, ${px[2]})`;
+  };
+  const panel = document.createElement('pre');
+  panel.id = 'probe'; panel.style.cssText = 'position:fixed;right:16px;top:16px;background:var(--panel);border:1px solid var(--line);padding:12px 14px;font:12px/1.5 var(--mono);color:var(--text);max-width:520px;white-space:pre-wrap;user-select:text';
+  document.body.appendChild(panel);
+  renderer.domElement.addEventListener('webglcontextlost', () => { panel.textContent += '\nCONTEXT LOST'; });
+  probe.afterRender = () => {
+    if (++frames !== PROBE_SETTLE_FRAMES) return;
+    const out = { ...facts, mirror_centre: read(spheres[0]), gunmetal_centre: read(spheres[1]) };
+    panel.textContent = 'SKY-ENV PROBE — copy this to the session\n' + Object.entries(out).map(([k, v]) => `${k}: ${v}`).join('\n');
+    console.log('sky-env probe', out);
+  };
 }
 
 // ---------- ui
@@ -292,12 +345,15 @@ document.getElementById('toggles').addEventListener('click', e => {
   state[b.dataset.k] = !state[b.dataset.k];
   b.setAttribute('aria-pressed', String(state[b.dataset.k]));
   if (b.dataset.k === 'env') applyEnvToggle();
-  if (b.dataset.k === 'sky') applySkyToggle();
 });
 // The A/B the owner asked for: the same hulls with and without the environment.
 function applyEnvToggle(){
   for (const m of models) for (const mat of m.pbrMaterials) { mat.envMap = state.env ? skyEnvironment.texture : null; mat.needsUpdate = true; }
 }
+// ?sky=1 (shot.mjs only): clear to the game's sky colour so a mirror can be
+// checked against the sky it should show. Not a UI toggle — the backdrop
+// never changes what the hulls reflect, and a button that looks as if it
+// should confused the owner (2026-09-04).
 function applySkyToggle(){
   const bg = state.sky ? NOON.backgroundColor : HANGAR_BACKGROUND;
   scene.background.setHex(bg); scene.fog.color.setHex(bg);
@@ -310,13 +366,21 @@ try {
   // ?focus=a|b|c opens on one craft — for the screenshot rig (shot.mjs).
   const params = new URLSearchParams(location.search);
   if (params.get('env') === '0') { state.env = false; document.querySelector('[data-k="env"]').setAttribute('aria-pressed','false'); applyEnvToggle(); }
-  if (params.get('sky') === '1') { state.sky = true; document.querySelector('[data-k="sky"]').setAttribute('aria-pressed','true'); applySkyToggle(); }
+  if (params.get('sky') === '1') { state.sky = true; applySkyToggle(); }
   const wanted = params.get('focus');
   if (wanted && CRAFT.some(c => c.key === wanted)) {
     state.focus = wanted;
     for (const c of craftEl.children) c.setAttribute('aria-pressed', String(c.dataset.key === wanted));
   }
   layout();
+  // ?view=top looks straight down from above the formation, matching the
+  // owner's top-down screenshot (owner-topdown-2026-09-04.png).
+  if (params.get('view') === 'top') {
+    controls.maxPolarAngle = Math.PI;
+    camera.position.set(controls.target.x + 0.01, controls.target.y + (state.focus ? FOCUS_DISTANCE : FORMATION_DISTANCE), controls.target.z + 0.01);
+    controls.update();
+  }
+  if (params.get('probe') === '1') probe();
   frame();
 } catch (err) {
   const el = document.getElementById('err'); el.style.display = 'block'; el.textContent = 'Could not load a model: ' + (err && err.message || err);
