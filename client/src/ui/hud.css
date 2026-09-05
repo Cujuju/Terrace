@@ -111,9 +111,9 @@ body {
    immediately left of the buttons (owner move, 2026-08-25) and both ride the
    bottom edge together. Pointer-transparent like its sibling cells. */
 .hud-bottom-right {
-  /* NAMED, not auto-placed (owner move, 2026-09-04): the strip's LEFT cell is
-     empty now that the modeler docked in the centre, and grid auto-placement
-     would happily slide these two sections up into columns 1 and 2. */
+  /* NAMED, not auto-placed (2026-09-04): the strip's LEFT cell empties while a
+     plugin tool is held, and grid auto-placement would then slide these two
+     sections up into columns 1 and 2. */
   grid-column: 3;
   display: flex;
   align-items: end;
@@ -418,8 +418,8 @@ body {
      the largest detent swallowing the rail. */
   --brush-slider-detent: 6px;
   --brush-slider-detent-step: 3px;
-  /* The ladder's top index — kept in step with BRUSH_RUNG_MAX (Hud.tsx). */
-  --brush-slider-rungs: 4;
+  /* The ladder's top index; Hud.tsx sets it from BRUSH_RUNG_MAX. */
+  --brush-slider-rungs: 0;
   align-items: center;
   /* Room under the rail for the caption that rides with the thumb. */
   padding-bottom: 18px;

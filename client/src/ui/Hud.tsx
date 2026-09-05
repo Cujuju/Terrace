@@ -523,7 +523,10 @@ export function Hud(props: {
               </span>
               <div
                 class="brush-slider__track"
-                style={{ '--brush-rung': String(brushRungIndex()) }}
+                style={{
+                  '--brush-rung': String(brushRungIndex()),
+                  '--brush-slider-rungs': String(BRUSH_RUNG_MAX),
+                }}
               >
                 <span class="brush-slider__rail" />
                 <span class="brush-slider__fill" />
