@@ -22,6 +22,12 @@ import {
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 import {
+  FRONTIER_MIST_MODES,
+  frontierMistMode,
+  setFrontierMistMode,
+  type FrontierMistMode,
+} from '../state/frontierMistPrefs.ts';
+import {
   VOID_ANCHORS,
   VOID_STYLES,
   setVoidAnchor,
@@ -31,6 +37,12 @@ import {
   type VoidAnchor,
   type VoidStyle,
 } from '../state/voidPrefs.ts';
+
+/** Panel copy for each map-edge mist mode (state/frontierMistPrefs.ts owns the set). */
+const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
+  off: 'None',
+  waterline: 'Flat over the sea',
+};
 
 /** Panel copy for each celestial-void look (state/voidPrefs.ts owns the set). */
 const VOID_STYLE_LABEL: Record<VoidStyle, string> = {
@@ -218,6 +230,27 @@ export function ControlsPanel(): JSX.Element {
         >
           <For each={VOID_ANCHORS}>
             {(anchor) => <option value={anchor}>{VOID_ANCHOR_LABEL[anchor]}</option>}
+          </For>
+        </select>
+      </div>
+
+      {/* What marks the edge of revealed territory (render/frontierFog.ts).
+          Beside the void settings because it is the same question — what the
+          player sees where the map stops — and it is where the reset button
+          reaches. */}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Map edge</span>
+        <select
+          class="controls-select"
+          aria-label="What marks the edge of the revealed map"
+          title="None: the map simply stops. Flat over the sea: a low mist veils the cut edge where land meets the boundary, and lies flat on the water elsewhere."
+          value={frontierMistMode()}
+          onChange={(e) =>
+            setFrontierMistMode(e.currentTarget.value as FrontierMistMode)
+          }
+        >
+          <For each={FRONTIER_MIST_MODES}>
+            {(mode) => <option value={mode}>{FRONTIER_MIST_LABEL[mode]}</option>}
           </For>
         </select>
       </div>

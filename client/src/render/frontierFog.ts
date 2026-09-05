@@ -29,6 +29,24 @@
 // cross-section — a low haze over a beach, a taller veil where a plateau meets
 // the frontier — never to the world's full height range.
 //
+// NOTHING RISES OUT OF OPEN SEA (owner, 2026-09-05, from an in-world
+// screenshot: "eliminate the fog wall that's drawn at the edge of the map on
+// the water layer"). Where BOTH border cells of a column are at or below sea
+// level there is no terrain cross-section to veil — only the sea surface's own
+// cut edge, which the base row alone already hides — so such a column's knee
+// and top collapse onto the waterline and the bank draws no height there. The
+// blue band across the horizon was every one of those columns at once: a
+// water-coloured wall standing off the sea all the way round the received set.
+// A column with land on either side still gets the full bank, because that is
+// where an actual cross-section ends.
+//
+// AND IT IS OFF BY DEFAULT (same day, same owner: "I'm inclined to say no
+// boundary treatment at all"). state/frontierMistPrefs.ts holds the choice —
+// 'off' hides the layer outright, 'waterline' draws what the paragraph above
+// describes. Visibility only: the geometry is maintained either way, which
+// costs a few border samples per boundary chunk on join/unlock/boundary-sculpt
+// and buys a mode switch that needs no rebuild and no stored mirror.
+//
 // COLOUR. Every row is plain WATER_COLOR (imported from render/water.ts);
 // only alpha varies up the bank, so the mist is the sea's own colour thinning
 // out to nothing. Owner, 2026-09-04: "renders entirely to water".
@@ -304,11 +322,16 @@ function writeSegmentArrays(
   // reaches above whichever cap actually ends at that point of the boundary.
   // Underwater ground clamps to the WATERLINE — the bank hugs whichever
   // surface the player actually sees there (see FOG_BASE_DROP for why it must
-  // never chase the seabed down).
+  // never chase the seabed down). `cellDry` remembers which cells that clamp
+  // fired on, because a column with no dry cell beside it veils no terrain and
+  // so gets no height (see NOTHING RISES OUT OF OPEN SEA at the top).
   const cellHeights: number[] = [];
+  const cellDry: boolean[] = [];
   for (let t = 0; t < CHUNK_SIZE; t++) {
     const h = sampleHeight(mirror, s.cellX + t * s.cellStepX, s.cellY + t * s.cellStepY);
-    cellHeights.push(h > SEA_LEVEL ? h : SEA_LEVEL);
+    const dry = h > SEA_LEVEL;
+    cellDry.push(dry);
+    cellHeights.push(dry ? h : SEA_LEVEL);
   }
   const baseY = (SEA_LEVEL - FOG_BASE_DROP) * HEIGHT_WORLD_SCALE;
 
@@ -318,11 +341,14 @@ function writeSegmentArrays(
     const alpha = FOG_ROW_ALPHA[r];
     const color = rowColors[r];
     for (let k = 0; k < FOG_COLUMNS; k++) {
-      const left = cellHeights[k - 1 < 0 ? 0 : k - 1];
-      const right = cellHeights[k >= CHUNK_SIZE ? CHUNK_SIZE - 1 : k];
+      const leftCell = k - 1 < 0 ? 0 : k - 1;
+      const rightCell = k >= CHUNK_SIZE ? CHUNK_SIZE - 1 : k;
+      const left = cellHeights[leftCell];
+      const right = cellHeights[rightCell];
       const ground = left > right ? left : right;
+      const dry = cellDry[leftCell]! || cellDry[rightCell]!;
       const rise =
-        r === 0 ? 0 : r === 1 ? FOG_BANK_RISE * FOG_BANK_KNEE : FOG_BANK_RISE;
+        !dry || r === 0 ? 0 : r === 1 ? FOG_BANK_RISE * FOG_BANK_KNEE : FOG_BANK_RISE;
       const y = r === 0 ? baseY : (ground + rise) * HEIGHT_WORLD_SCALE;
       positions[p++] = (s.lineX + k * s.lineStepX) * CELL_WORLD_SIZE;
       positions[p++] = y;
@@ -407,7 +433,21 @@ interface FogSuperMesh {
   segmentCapacity: number;
 }
 
+/**
+ * What this player wants drawn at the boundary. 'off' is no boundary
+ * treatment at all; 'waterline' is the bank this module builds — which already
+ * lies flat wherever it stands on open sea. state/frontierMistPrefs.ts owns
+ * which one is chosen and persists it.
+ */
+export type FrontierMistMode = 'off' | 'waterline';
+
 export interface FrontierFog {
+  /**
+   * Shows or hides the whole layer. Visibility only — see the header's "AND IT
+   * IS OFF BY DEFAULT": the segments stay maintained while hidden, so this
+   * never has to rebuild geometry or hold a mirror of its own.
+   */
+  setMode(mode: FrontierMistMode): void;
   /**
    * Re-derives the frontier from the mirror's CURRENT received set: adds or
    * removes exactly the segments whose EDGE changed, and rewrites the heights
@@ -449,6 +489,13 @@ export function createFrontierFog(
   onFrame: (handler: (dt: number) => void) => () => void,
 ): FrontierFog {
   const group = new Group();
+  // Hidden until someone asks for the layer, because the stored default is
+  // 'off' (state/frontierMistPrefs.ts) and world.ts applies the pref through
+  // an effect, which Solid flushes a microtask after construction. Starting
+  // visible would leave a window in which the layer is on by default; it is
+  // an empty window today (no chunks are received that early, so there is no
+  // geometry to see) and this makes it not a window at all.
+  group.visible = false;
   parent.add(group);
 
   const material = new MeshBasicMaterial({
@@ -687,6 +734,10 @@ export function createFrontierFog(
   };
 
   return {
+    setMode(mode: FrontierMistMode): void {
+      group.visible = mode !== 'off';
+    },
+
     sync(mirror: TerrainMirror): void {
       const chunkCols = chunksPerEdge(mirror.map.size);
       const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
