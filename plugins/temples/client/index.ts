@@ -68,8 +68,7 @@ const TEMPLE_TOOL_ID = 'place';
 
 const TEMPLE_TOOL_LABEL = 'Temple';
 
-const TEMPLE_TOOL_TITLE =
-  'Put down the stone temple settlers come from — one per world. Press it again to knock it down and build elsewhere.';
+const TEMPLE_TOOL_TITLE = 'Temple: place the settlers’ temple';
 
 /**
  * The mouse button a placement press is made with. 0 — the primary button

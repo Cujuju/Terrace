@@ -145,27 +145,26 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 /**
  * Tooltip copy, in one place per control (native `title`, no tooltip widget).
  *
- * The standard every string below is held to: ONE sentence, plain language,
- * stating the CONSEQUENCE for the player rather than the implementation — the
- * relaxation pass is "drags neighbouring terrain along", not "relaxation".
- * The dock's tool and edge tiles are held shorter still (owner, 2026-09-05):
- * the tile's name first, then FIVE WORDS for what it does, so the tip fits
- * beside the dock instead of running off the screen edge.
+ * The standard every string below is held to (owner, 2026-09-05, for every
+ * HUD item): the control's NAME first, then at most FIVE WORDS for what it
+ * does, in plain language stating the CONSEQUENCE for the player rather than
+ * the implementation — so a tip fits beside its control instead of running
+ * off the screen edge.
  * Anything that depends on live state (the bound lower chord, the status) is
  * built from the same accessors the control itself reads, so a title can never
  * go stale against the control it explains.
  */
 const STATUS_TITLE: Record<ConnectionStatus, string> = {
-  offline: 'No link to the server — nothing you sculpt now is saved or shared.',
-  connecting: 'Opening the link to the server — the world arrives once it is up.',
-  connected: 'Live with the server — your edits are saved and everyone sees them.',
-  reconnecting: 'The link dropped and is being retried — edits made now may be lost.',
+  offline: 'Offline: nothing is saved or shared',
+  connecting: 'Connecting: waiting for the server',
+  connected: 'Connected: edits saved and shared',
+  reconnecting: 'Reconnecting: edits now may be lost',
 };
 
 const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Stamp: raise or lower brushed ground',
   smooth: 'Smooth: blend ground with its neighbours',
-  drag: 'Pull: push a terrace edge outward',
+  drag: 'Pull: pull a terrace edge outward',
   carve: 'Carve: cut a tunnel, roof intact',
 };
 
@@ -252,8 +251,8 @@ const HINT_MODIFIER: Record<string, string> = {
  * The Mode button's tooltip. It names the LIVE lower binding rather than a
  * hardcoded "Shift", because that binding is user-editable in the Controls
  * panel — a fixed "Shift lowers" would start lying the moment it is rebound.
- * Touch gets the same sentence: tapping is how a device with no modifier keys
- * switches direction.
+ * Tapping the button switches direction too, which is how a device with no
+ * modifier keys does it; that is the button's job, so the tip need not say so.
  */
 function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
   // The chord quoted is the one that does the OPPOSITE of the current mode —
@@ -261,8 +260,8 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
   const opposite = mode === 'lower' ? bindings.raise : bindings.lower;
   const chord = `${HINT_MODIFIER[opposite.modifier]}${HINT_BUTTON[opposite.button]}`;
   return mode === 'lower'
-    ? `Drags dig land down — click or tap to go back to raising, or ${chord}-drag to raise.`
-    : `Drags pile land up — click or tap to switch to lowering, or ${chord}-drag to lower.`;
+    ? `Lower: drag digs land (${chord}-drag raises)`
+    : `Raise: drag piles land (${chord}-drag lowers)`;
 }
 
 /**
@@ -550,7 +549,7 @@ export function Hud(props: {
                   value={brushRungIndex()}
                   aria-label="Brush width"
                   aria-valuetext={`${brushWidthWorldUnits(brushRadius())} world units`}
-                  title="Brush width in world units — a wider brush moves more land and costs more mana."
+                  title="Width: wider brush, more mana"
                   onInput={(event) =>
                     setBrushRadius(BRUSH_RADII[event.currentTarget.valueAsNumber])
                   }
@@ -670,7 +669,7 @@ export function Hud(props: {
             aria-expanded={chartOpen()}
             aria-haspopup="dialog"
             aria-label="Chart of the known world"
-            title="Open the chart: your known world as an inked map, exportable as an image."
+            title="Chart: your known world, inked"
             onClick={() => setChartOpen(!chartOpen())}
           >
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
@@ -692,7 +691,7 @@ export function Hud(props: {
             aria-expanded={worldPanelOpen()}
             aria-haspopup="dialog"
             aria-label="Worlds"
-            title="Worlds: create, load and archive the worlds on this server."
+            title="Worlds: create, load and archive"
             onClick={() => setWorldPanelOpen(!worldPanelOpen())}
           >
             {/* A stack of map layers: several worlds, one on top. */}
@@ -709,7 +708,7 @@ export function Hud(props: {
             aria-expanded={restorePanelOpen()}
             aria-haspopup="dialog"
             aria-label="Restore points"
-            title="Restore points: put the world back to an earlier moment."
+            title="Restore: put the world back"
             onClick={() => setRestorePanelOpen(!restorePanelOpen())}
           >
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -725,7 +724,7 @@ export function Hud(props: {
             aria-expanded={showControls()}
             aria-haspopup="dialog"
             aria-label="Control settings"
-            title="Show or hide the mouse, touch and scroll settings."
+            title="Settings: mouse, touch and scroll"
             onClick={() => openControls(!showControls())}
           >
             ⚙
@@ -744,7 +743,7 @@ export function Hud(props: {
             type="button"
             class="hud-panel hud-settings-button"
             aria-label="Restart client and server"
-            title="Restart the game server and the client dev server so code that changed on disk becomes live. The world is saved first; this page reloads itself."
+            title="Restart: make changed code live"
             onClick={() => props.restartStack()}
           >
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -765,7 +764,7 @@ export function Hud(props: {
             aria-expanded={adminPanelOpen()}
             aria-haspopup="dialog"
             aria-label="Admin: world events"
-            title="Admin: fire volcanoes, mudslides, storms and the rest on demand, for debugging."
+            title="Admin: fire disasters on demand"
             onClick={() => setAdminPanelOpen(!adminPanelOpen())}
           >
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -792,7 +791,7 @@ export function Hud(props: {
             type="button"
             class="hud-panel hud-anchor-top-left hud-panel-tab"
             aria-expanded={false}
-            title="Open the panel."
+            title={`${cornerTabName()}: open the panel`}
             onClick={() => setPanelOpen(true)}
           >
             {/* The tab is named by the panel's first plugin — "Relics", not a
@@ -812,7 +811,7 @@ export function Hud(props: {
             type="button"
             class="hud-row panel-header"
             aria-expanded={true}
-            title="Collapse this panel."
+            title={`${cornerTabName()}: collapse the panel`}
             onClick={() => setPanelOpen(false)}
           >
             <For

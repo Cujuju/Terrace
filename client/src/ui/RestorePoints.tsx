@@ -154,7 +154,7 @@ export function RestorePoints(props: { actions: RollbackActions }): JSX.Element 
             type="button"
             class="chart-button"
             aria-label="Close restore points"
-            title="Close this panel."
+            title="Close: put the panel away"
             onClick={() => setRestorePanelOpen(false)}
           >
             ✕
@@ -231,7 +231,7 @@ export function RestorePoints(props: { actions: RollbackActions }): JSX.Element 
                       <Show when={point.cellsChanged !== null} fallback="oldest kept">
                         {point.cellsChanged?.toLocaleString()} cells changed
                         <Show when={flagged()}>
-                          <span class="restore-flag" title="Far more than this world's usual minute.">
+                          <span class="restore-flag" title="Flag: far above the usual minute">
                             {' '}
                             ⚠ large change
                           </span>
@@ -247,8 +247,8 @@ export function RestorePoints(props: { actions: RollbackActions }): JSX.Element 
                           disabled={point.isCurrent}
                           title={
                             point.isCurrent
-                              ? 'This is the world you are already in.'
-                              : 'Arm this restore point.'
+                              ? 'Current: you are already here'
+                              : 'Arm: choose this restore point'
                           }
                           onClick={() => setArmedId(point.id)}
                         >
@@ -260,7 +260,7 @@ export function RestorePoints(props: { actions: RollbackActions }): JSX.Element 
                         <button
                           type="button"
                           class="chart-button danger"
-                          title="Roll the whole world back to this moment, for everyone."
+                          title="Restore: everyone goes back to this"
                           onClick={() => applyRollback(point.id)}
                         >
                           Roll back to {formatWhen(point.createdAt)}
@@ -268,7 +268,7 @@ export function RestorePoints(props: { actions: RollbackActions }): JSX.Element 
                         <button
                           type="button"
                           class="chart-button"
-                          title="Leave the world as it is."
+                          title="Cancel: leave the world as is"
                           onClick={() => setArmedId(null)}
                         >
                           Cancel

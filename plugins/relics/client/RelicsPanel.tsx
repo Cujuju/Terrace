@@ -190,13 +190,11 @@ function isCastable(skill: SkillView): boolean {
  * generic "it recharges" would be the one thing the player already knows.
  */
 function castTitle(skill: SkillView, armed: boolean): string {
-  if (skill.cooldownRemainingS > 0) {
-    return `Just used — ready to cast again in ${cooldownLabelSeconds(skill.cooldownRemainingS)}s.`;
-  }
   const name = skillInfo(skill.id).name;
-  return armed
-    ? `Now click the ground to aim it — or click here to put ${name} away.`
-    : `Ready ${name}, then click the ground to choose where it lands.`;
+  if (skill.cooldownRemainingS > 0) {
+    return `${name}: ready in ${cooldownLabelSeconds(skill.cooldownRemainingS)}s`;
+  }
+  return armed ? `${name}: click the ground to aim` : `${name}: click to ready it`;
 }
 
 function SkillRow(props: { skill: SkillView }): JSX.Element {
@@ -214,8 +212,8 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
    */
   const rowTitle = (): string =>
     onCooldown()
-      ? `${info().description} Ready again in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s.`
-      : info().description;
+      ? `${info().name}: ready in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s`
+      : `${info().name}: ${info().description}`;
 
   /** What the row says under the name: the kind, or the live cast state. */
   const stateText = (): string => {
@@ -269,7 +267,7 @@ export function RelicsHeaderLine(): JSX.Element {
   return (
     <div
       class="hud-row"
-      title="Gems hovering over the land right now — each one holds a skill to claim."
+      title="Relics: gems waiting on the land"
     >
       <span class="hud-label">Relics</span>
       <span>{relics().length} in the world</span>
@@ -292,7 +290,7 @@ export function RelicsPanel(): JSX.Element {
         fallback={
           <p
             class="hud-hint"
-            title="Click the ground under a floating gem and its skill is yours to keep."
+            title="Relics: click a gem to collect"
           >
             No skills yet — click a floating gem to collect one.
           </p>

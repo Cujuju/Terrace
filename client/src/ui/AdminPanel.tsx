@@ -207,7 +207,7 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
             type="button"
             class="chart-button admin-close"
             aria-label="Close admin panel"
-            title="Close this panel."
+            title="Close: put the panel away"
             onClick={() => setAdminPanelOpen(false)}
           >
             ✕
@@ -328,7 +328,7 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
                         <button
                           type="button"
                           class="admin-card"
-                          title={`${action.plugin} — ${action.description} Click, then click the ground.`}
+                          title={`${action.plugin}: ${action.description}`}
                           onClick={() => arm(action)}
                         >
                           <span class="admin-card-label">{action.label}</span>

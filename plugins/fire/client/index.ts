@@ -395,8 +395,7 @@ function buildEntityInstances(ctx: ClientPluginCtx): void {
  */
 const TORCH_TOOL_ID = 'ignite';
 const TORCH_TOOL_LABEL = 'Pyro';
-const TORCH_TOOL_TITLE =
-  'Set light to what grows on a cell you have unlocked. Costs mana; only living things catch, and rain will put it out.';
+const TORCH_TOOL_TITLE = 'Pyro: set unlocked growth alight';
 
 /**
  * The mouse button an ignite press is made with. 0 — the primary only, so a

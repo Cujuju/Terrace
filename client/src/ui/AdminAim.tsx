@@ -87,7 +87,7 @@ export function AdminAim(): JSX.Element {
             <button
               type="button"
               class="chart-button admin-aim-cancel"
-              title="Put the action down without firing it (Escape does the same)."
+              title="Cancel: drop it unfired (or Escape)"
               onClick={() => setArmedAction(null)}
             >
               Cancel

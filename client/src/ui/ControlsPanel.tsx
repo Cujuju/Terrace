@@ -132,7 +132,7 @@ export function ControlsPanel(): JSX.Element {
             <select
               class="controls-select"
               aria-label={`${ACTION_LABEL[action]}: modifier key`}
-              title={`Key to hold to ${ACTION_EFFECT[action]}; "—" means no key at all.`}
+              title={`${ACTION_LABEL[action]} key: hold it to ${ACTION_EFFECT[action]}`}
               value={controlBindings()[action].modifier}
               onChange={(e) =>
                 setBinding(action, {
@@ -148,7 +148,7 @@ export function ControlsPanel(): JSX.Element {
             <select
               class="controls-select"
               aria-label={`${ACTION_LABEL[action]}: mouse button`}
-              title={`Mouse button to drag to ${ACTION_EFFECT[action]}.`}
+              title={`${ACTION_LABEL[action]} button: drag it to ${ACTION_EFFECT[action]}`}
               value={controlBindings()[action].button}
               onChange={(e) =>
                 setBinding(action, {
@@ -171,7 +171,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="Two-finger drag gesture"
-          title="What dragging two fingers does; pinching them always zooms, either way."
+          title="Two fingers: drag does this, pinch zooms"
           value={twoFingerGesture()}
           onChange={(e) =>
             setTwoFingerGesture(e.currentTarget.value as TwoFingerGesture)
@@ -190,7 +190,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="Scroll wheel behaviour"
-          title="Whether scrolling slides the view or zooms it; a pinch always zooms and Alt+scroll always orbits."
+          title="Scroll: slide or zoom the view"
           value={wheelBehaviour()}
           onChange={(e) =>
             setWheelBehaviour(e.currentTarget.value as WheelBehaviour)
@@ -209,7 +209,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="Look of the space outside the map"
-          title="What fills the space outside the world. Purely a look — it never changes with the time of day."
+          title="Beyond the map: a look, nothing more"
           value={voidStyle()}
           onChange={(e) => setVoidStyle(e.currentTarget.value as VoidStyle)}
         >
@@ -224,7 +224,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="What the space outside the map is fixed to"
-          title="Follows the camera: the void stays put while you orbit and pan. Locked to the world: it lies in the world's plane under the map and moves with it."
+          title="Void position: fixed to camera or world"
           value={voidAnchor()}
           onChange={(e) => setVoidAnchor(e.currentTarget.value as VoidAnchor)}
         >
@@ -243,7 +243,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="What marks the edge of the revealed map"
-          title="None: the map simply stops. Flat over the sea: a low mist veils the cut edge where land meets the boundary, and lies flat on the water elsewhere."
+          title="Map edge: nothing, or mist over sea"
           value={frontierMistMode()}
           onChange={(e) =>
             setFrontierMistMode(e.currentTarget.value as FrontierMistMode)
@@ -286,7 +286,7 @@ export function ControlsPanel(): JSX.Element {
       <button
         type="button"
         class="controls-reset"
-        title="Puts every setting on this panel back to how it started."
+        title="Reset: every setting back to start"
         onClick={resetBindings}
       >
         Reset to defaults
