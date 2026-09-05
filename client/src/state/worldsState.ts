@@ -231,8 +231,15 @@ export function applyWorldPluginListing(message: {
   settings: WorldPluginSetting[];
   actions?: WorldPluginAction[];
   versions?: Record<string, string>;
+  activeId?: string | null;
   refused?: WorldAdminRefusal;
 }): void {
+  // WHICH WORLD IS LIVE, learned here as well as from a world listing. The
+  // admin panel asks only this one question, so without this it would have to
+  // fetch the whole worlds directory — every world file opened for its name,
+  // size and thumbnail — to discover an id it never shows. Absent from a
+  // server too old to say, and then the previous answer stands.
+  if (message.activeId !== undefined) setActiveWorldId(message.activeId);
   if (message.refused !== undefined) {
     setWorldPlugins(null);
     setWorldFeedback({ kind: 'refused', action: 'setPlugin', reason: message.refused, detail: null });

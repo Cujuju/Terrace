@@ -197,6 +197,8 @@ export const plugin: TerracePlugin = {
 
   // THE ADMIN PANEL'S DEBUG SPAWN (server plugins/types.ts,
   // PluginActionDeclaration).
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'weather',
   actions: [
     {
       key: RAIN_PLUGIN_NAME,
