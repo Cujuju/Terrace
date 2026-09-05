@@ -28,6 +28,8 @@ import { HUMPBACK_ASSET } from './humpback.ts';
 import humpbackUrl from '../assets/humpback.glb?url';
 import { GRAZER_ASSET } from './grazer.ts';
 import grazerUrl from '../assets/grazer-deer.glb?url';
+import { WOLF_ASSET } from './wolf.ts';
+import wolfUrl from '../assets/wolf.glb?url';
 
 /** One asset-sourced species: what it must measure, and where its file is. */
 export interface SpeciesAssetEntry {
@@ -43,4 +45,5 @@ export const SPECIES_ASSETS: readonly SpeciesAssetEntry[] = [
   { spec: ANGELFISH_ASSET, url: angelfishUrl },
   { spec: HUMPBACK_ASSET, url: humpbackUrl },
   { spec: GRAZER_ASSET, url: grazerUrl },
+  { spec: WOLF_ASSET, url: wolfUrl },
 ];

@@ -33,6 +33,7 @@ import { RAY_PROFILE } from './species/ray.ts';
 import { SHARK_PROFILE } from './species/shark.ts';
 import { EEL_PROFILE } from './species/eel.ts';
 import { ANGELFISH_PROFILE } from './species/angelfish.ts';
+import { WOLF_PROFILE } from './species/wolf.ts';
 
 // The whole vocabulary, re-exported from the one module every row reads it
 // from. `export *` rather than a hand-written list: a name added to the
@@ -50,6 +51,7 @@ export * from './species/ray.ts';
 export * from './species/shark.ts';
 export * from './species/eel.ts';
 export * from './species/angelfish.ts';
+export * from './species/wolf.ts';
 
 /**
  * Schools a brand-new world's shelf must be able to hold, and the reason the
@@ -243,6 +245,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   // The two shelf fish added 2026-09-03, each argued in its own file.
   eel: EEL_PROFILE,
   angelfish: ANGELFISH_PROFILE,
+  // The fourth land species, added 2026-09-04. See ./species/wolf.ts.
+  wolf: WOLF_PROFILE,
 };
 
 /** Deterministic iteration order over species (see WILDLIFE_HABITAT_SPECIES). */
