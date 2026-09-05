@@ -58,9 +58,32 @@ WATERLINE_Z = HULL_DEPTH * 0.55
 DECK_Z = HULL_DEPTH - 0.035
 TEX_SIZE = 256
 
-DECK_COLOR = (0x8A / 255, 0x6A / 255, 0x44 / 255, 1.0)
-WOOD_COLOR = (0x53 / 255, 0x38 / 255, 0x1F / 255, 1.0)
-SAIL_COLOR = (0xE8 / 255, 0xE0 / 255, 0xCF / 255, 1.0)
+
+
+def srgb(hex_color):
+    """An sRGB hex -> the LINEAR RGBA Blender's Base Color input expects.
+
+    WHY THIS IS NOT `hex / 255`. Every colour in this codebase is an sRGB hex
+    (what three.js reads `new MeshLambertMaterial({ color })` as); Blender's
+    Base Color socket and glTF's baseColorFactor are LINEAR. Feeding 0xE8/255
+    straight in asks for a colour whose sRGB encoding is brighter, so the deck,
+    spars and sail rendered paler than their hex (found on the fish, 2026-09-04;
+    same helper as build_fish.py). The transfer function is the sRGB standard's.
+
+    The hull TEXTURE does not go through this: `Image.pixels` on a byte image
+    are the raw byte values, and the image is tagged sRGB, so its bytes are
+    already what glTF expects of a baseColor texture.
+    """
+    def channel(byte):
+        c = byte / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    return (channel(hex_color >> 16 & 0xFF), channel(hex_color >> 8 & 0xFF),
+            channel(hex_color & 0xFF), 1.0)
+
+
+DECK_COLOR = srgb(0x8A6A44)
+WOOD_COLOR = srgb(0x53381F)
+SAIL_COLOR = srgb(0xE8E0CF)
 
 MAST_X = 0.05
 OAR_XS = (0.126, -0.162)

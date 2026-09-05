@@ -7,7 +7,6 @@
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -42,10 +41,15 @@ import {
 } from './cameraClearance.ts';
 
 /**
- * Sky/background, and the hemisphere light's sky colour. Exported so other
- * render modules that want to blend toward "the sky" — the frontier mist
- * curtain (render/frontierFog.ts) — derive it from this one definition
- * rather than picking a second sky colour that could drift out of sync.
+ * The hemisphere light's sky colour — the daylight falling on the map from
+ * above. Exported so other render modules that want to blend toward "the sky"
+ * derive it from this one definition rather than picking a second sky colour
+ * that could drift out of sync.
+ *
+ * NOT the background any more (issue #326). Outside the map is the celestial
+ * void (./celestialVoid.ts), so anything blending toward what is BEYOND the
+ * world — the frontier mist curtain's top row (./frontierFog.ts) — takes
+ * VOID_HAZE_COLOR from there instead. This constant is the map's own light.
  */
 export const SKY_COLOR = 0x9fc7e8;
 /**
@@ -244,7 +248,12 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
 
   const scene = new Scene();
   scene0Holder.scene = scene;
-  scene.background = new Color(SKY_COLOR);
+  // NO scene.background. What is drawn outside the map is the celestial void
+  // pass (./celestialVoid.ts, issue #326), a fullscreen mesh main.tsx adds to
+  // this scene — not a flat colour. Leaving `background` at its null default
+  // is also what keeps time of day off the void: ./skyRig.ts only writes a
+  // background that is a Color, so the day/night plugin's backgroundColor now
+  // has nothing to land on. See celestialVoid.ts's header.
 
   const camera = new PerspectiveCamera(
     CAMERA_FOV_DEGREES,

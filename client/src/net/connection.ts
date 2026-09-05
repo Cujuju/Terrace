@@ -73,6 +73,7 @@ import {
   MSG_SCULPT_APPLIED,
   MSG_SCULPT_DENIED,
   MSG_SERVER_RESTART_NOTICE,
+  MSG_STACK_RESTART,
   MSG_SNAPSHOT,
   MSG_TERRAIN_DIFF,
   MSG_WORLD_ADMIN_RESULT,
@@ -237,6 +238,13 @@ export interface Connection {
    * the panel, and its `type` IS the wire name (see messageNames.ts).
    */
   sendWorldAdmin(message: WorldAdminRequestMessage): void;
+  /**
+   * Asks the server to restart itself AND the client dev server beside it —
+   * the keyless dev-loop update button (StackRestartRequestMessage). Dropped
+   * while offline like every other send: a server that is not there cannot
+   * be asked to go away and come back.
+   */
+  sendStackRestart(): void;
   /** Leaves the room and stops retrying. */
   dispose(): void;
 }
@@ -450,6 +458,9 @@ export function connect(options: ConnectionOptions): Connection {
     },
     sendWorldAdmin(message: WorldAdminRequestMessage): void {
       live()?.send(message.type, message);
+    },
+    sendStackRestart(): void {
+      live()?.send(MSG_STACK_RESTART, { type: MSG_STACK_RESTART });
     },
     sendPlugin(type: string, payload: unknown): void {
       // Dropping while offline mirrors sendSculpt: plugin messages are

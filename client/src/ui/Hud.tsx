@@ -208,6 +208,12 @@ export function Hud(props: {
    * connection — the same arrangement as chartSource above.
    */
   rollback: RollbackActions;
+  /**
+   * The keyless "restart client + server" button's one action (owner,
+   * 2026-09-04). Passed in for the same reason as the two above: the HUD
+   * holds no reference to the connection.
+   */
+  restartStack: () => void;
 }): JSX.Element {
   // The button column's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
@@ -578,6 +584,28 @@ export function Hud(props: {
             onClick={() => openControls(!showControls())}
           >
             ⚙
+          </button>
+          {/* RESTART CLIENT + SERVER (owner, 2026-09-04): the development
+              loop's update button. ONE CLICK, NO KEY, NO ARMING — the owner's
+              ruling ("I just want it to be quick"): it destroys nothing (the
+              world is saved first and comes back, the page reloads itself
+              when the client dev server returns), and it is the only way new
+              CLIENT code arrives, because Vite on this disk does not watch
+              files. The keyed, armed "Restart server" in the Worlds panel
+              restarts the server half only. Same 40px square as its
+              neighbours; a circular arrow with a power-line, the conventional
+              "restart" glyph, as an inline stroke SVG like the rest. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            aria-label="Restart client and server"
+            title="Restart the game server and the client dev server so code that changed on disk becomes live. The world is saved first; this page reloads itself."
+            onClick={() => props.restartStack()}
+          >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18.4 6.6A9 9 0 1 1 5.6 6.6" />
+              <path d="M12 3v8" />
+            </svg>
           </button>
           {/* ADMIN MODE (owner, 2026-09-01): the debug spawn panel's door, at
               the very bottom of the column — the corner of the screen — so
