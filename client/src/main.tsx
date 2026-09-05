@@ -332,6 +332,7 @@ render(
       worlds={{
         send: (message) => connection.sendWorldAdmin(message),
       }}
+      restartStack={() => connection.sendStackRestart()}
     />
   ),
   hudRoot,
