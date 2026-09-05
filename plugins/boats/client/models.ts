@@ -75,7 +75,7 @@ export let BOAT_DRAW_OBJECTS: number = BOAT_DRAW_OBJECTS_MAX;
  * rejected at load. Two hundredths: the fit is authored, not fitted — the
  * number only absorbs float dust in the bounding box, never a real overhang.
  */
-const BOAT_FIT_TOLERANCE_CELLS = 0.02;
+export const BOAT_FIT_TOLERANCE_CELLS = 0.02;
 
 /** Undyed canvas at rest. */
 const SAIL_COLOR = 0xe8e0cf;
