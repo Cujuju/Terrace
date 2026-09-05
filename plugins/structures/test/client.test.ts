@@ -334,8 +334,11 @@ describe('site survey (card 33, coastal classification)', () => {
     const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
-    // A survey KEEPS only the anchors a fleet can use, not the whole shoreline
-    // it counted (GH #258, site.ts's SURVEY_WATER_CELLS_RETAINED).
+    // Three, and no longer because three is the cap (SURVEY_MOORINGS_RETAINED
+    // is six since 2026-09-05): on this straight coast the INSHORE BAND and the
+    // SKIFF_MOORING_SPACING between kept moorings are what run out first —
+    // moorable columns start at dx 5, the band closes past distance 7.16, and
+    // 3.68 cells of spacing leaves room for exactly (5, 0), (5, -4), (5, 4).
     expect(survey.moorings.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
   });
 
@@ -380,9 +383,11 @@ describe('site survey (card 33, coastal classification)', () => {
   it('moorings are sorted nearest first', () => {
     // Over the coast fixture, whose moorable cells are a known, ordered set:
     // the nearest disc offsets that clear COAST_WATER_MIN_DX by the mooring
-    // clearance. The survey must return the first SKIFF_MAX_PER_SETTLEMENT of
-    // them, in that order — the scan is distance-ordered, so nothing further
-    // out may displace a nearer mooring.
+    // clearance. Spacing and the inshore band thin that set out (see the
+    // coastal-classification test above for the count), but they can only
+    // REJECT candidates, never reorder them — the scan is distance-ordered, so
+    // nothing further out may displace a nearer mooring, and the nearest
+    // moorable cell of all is always kept because nothing precedes it.
     const nearestFirst = nearestWaterCells(
       CENTER.x,
       CENTER.y,

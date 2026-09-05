@@ -17,6 +17,14 @@
 // SAME neighbourhood survey site.ts already did to answer the site question
 // — one scan of the search disc, not two.
 //
+// TWO PASSES, NOT ONE (2026-09-05, GH #327). Buildings are placed settlement by
+// settlement in the loop; SKIFFS are assigned afterwards, in a second pass over
+// the coastal settlements sorted by cell key. A survey cannot see a NEIGHBOUR'S
+// moorings, so "no two villages anchor on the same water" is a fact only a pass
+// holding every survey at once can enforce — and it is what stopped two
+// neighbouring villages drawing two identical skiffs through each other. See the
+// pass's own comment for the ordering and cost arguments.
+//
 // TWO GROUND LOOKUPS, NOT ONE (2026-09-04, GH #327). A BUILDING stands on the
 // ground and takes the cheap lattice answer (`groundAt`); a moored SKIFF is
 // seen against the ground and has to be tested on the drawn cap (`drawnAt`),
@@ -29,9 +37,15 @@
 // structure otherwise pays for a survey of every structure (GH #258).
 
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { settlementRace, structureVariation, type StructureCell } from '../protocol.ts';
+import {
+  settlementRace,
+  structureKey,
+  structureVariation,
+  type StructureCell,
+  type StructureTier,
+} from '../protocol.ts';
 import type { StructurePlacement } from './models.ts';
-import { surveySite, type SiteSurveyCache } from './site.ts';
+import { SKIFF_MOORING_SPACING_CELLS_SQUARED, surveySite, type SiteSurveyCache } from './site.ts';
 import { skiffsForSettlement, type SkiffPlacement } from './skiffs.ts';
 
 /**
@@ -72,6 +86,12 @@ export function placementsFor(
 ): PlacementResult {
   const placements: StructurePlacement[] = [];
   const skiffs: SkiffPlacement[] = [];
+  /** Coastal settlements, collected for the claiming pass below. */
+  const harbours: Array<{
+    key: number;
+    tier: StructureTier;
+    moorings: ReadonlyArray<{ readonly x: number; readonly y: number }>;
+  }> = [];
   let pendingGround = 0;
   let pendingSite = 0;
 
@@ -115,10 +135,57 @@ export function placementsFor(
     });
 
     if (survey.kind === 'coastal') {
-      skiffs.push(...skiffsForSettlement(cell.tier, survey.moorings));
+      harbours.push({
+        key: structureKey(cell.x, cell.y),
+        tier: cell.tier,
+        moorings: survey.moorings,
+      });
     }
   }
 
   surveys?.endPass();
+
+  // SECOND PASS: CLAIMING MOORINGS ACROSS SETTLEMENTS (2026-09-05, GH #327).
+  //
+  // A survey only sees its OWN settlement, so it can space a village's moorings
+  // from each other but not from a NEIGHBOUR'S. On one bay two villages survey
+  // overlapping water and used to keep the same nearest cells — and because
+  // every skiff's animation is hashStructureCell of its ANCHOR CELL (skiffs.ts),
+  // the same cell gave the same roll: two hulls drawn through each other, in
+  // lockstep. Claiming is the only place that fact is visible, so it lives here
+  // rather than in site.ts, and it must run AFTER every survey is in hand.
+  //
+  // SORTED BY structureKey, NOT BY ARRIVAL. `cells` is iterated in the caller's
+  // Map insertion order, which is delta-arrival order — two clients that
+  // received the same world in a different order would otherwise hand the same
+  // mooring to different villages, and one client would re-shuffle its whole
+  // coastline whenever a structure was founded. A cell key is a property of the
+  // world, so the assignment is stable across clients and across rebuilds.
+  //
+  // COST: O(harbours x SURVEY_MOORINGS_RETAINED x claimed). `claimed` is bounded
+  // by STRUCTURES_CAP x SKIFF_MAX_PER_SETTLEMENT = 1 536 entries and `harbours`
+  // by STRUCTURES_CAP = 512, so the worst case is 512 x 6 x 1 536 = 4 718 592
+  // squared-distance tests — every structure in the world coastal and every one
+  // of them floating a full fleet, which is not a world anyone can build (a
+  // settlement needs buildable ground and 32 water cells within 16). The
+  // ordinary case is a few coastal villages against a claim list of tens.
+  harbours.sort((a, b) => a.key - b.key);
+  const claimed: Array<{ readonly x: number; readonly y: number }> = [];
+  for (const harbour of harbours) {
+    const free = harbour.moorings.filter((mooring) =>
+      claimed.every((taken) => {
+        const dx = mooring.x - taken.x;
+        const dy = mooring.y - taken.y;
+        return dx * dx + dy * dy >= SKIFF_MOORING_SPACING_CELLS_SQUARED;
+      }),
+    );
+    // skiffsForSettlement owns the tier → count rule (see its comment), so the
+    // claim is taken from what it actually placed rather than recomputed here:
+    // the two can never disagree about which moorings are spoken for.
+    const fleet = skiffsForSettlement(harbour.tier, free);
+    for (const skiff of fleet) claimed.push({ x: skiff.x, y: skiff.z });
+    skiffs.push(...fleet);
+  }
+
   return { placements, skiffs, pendingGround, pendingSite };
 }

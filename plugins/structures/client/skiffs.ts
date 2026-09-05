@@ -27,7 +27,25 @@
 // every point the hull can reach from it is DRAWN as water
 // (SKIFF_MOORING_CLEARANCE_WORLD_UNITS below). A skiff therefore never crosses
 // ground at any moment of its orbit — see that constant's comment for the
-// derivation, and site.ts's `isMoorable` for the enforcement.
+// derivation, and site.ts's `mooringVerdict` for the enforcement.
+//
+// AND NEVER SHARED WITH ANOTHER HULL (2026-09-05, GH #327 — owner: the skiffs
+// "collide with each other and with the warboats"). Three guarantees now stand
+// between a mooring and a collision, and NOT ONE of them is enforced in this
+// file — it only ever consumes the moorings it is handed:
+//
+//   * SPACED. Two moorings in one survey are at least
+//     SKIFF_MOORING_SPACING_WORLD_UNITS apart, so the two reach discs are
+//     disjoint. Enforced in site.ts's `surveySite`.
+//   * CLAIMED ONCE, WORLD-WIDE. The same spacing is required against every
+//     mooring any OTHER settlement has already taken this pass, so two villages
+//     on one bay can no longer both anchor on the same water — which used to
+//     hand hashStructureCell the identical cell and draw two identical orbits
+//     through each other. Enforced in placement.ts's second pass.
+//   * INSHORE. A mooring's whole reach stays within
+//     HARBOUR_INSHORE_BAND_WORLD_UNITS (protocol.ts) of the village's own
+//     nearest water, which is the half of the harbour war boats keep out of.
+//     Enforced in site.ts's `surveySite`.
 
 import { hashStructureCell, type StructureTier } from '../protocol.ts';
 
@@ -78,7 +96,7 @@ export const SKIFF_ORBIT_PERIOD_SECONDS = 14;
  * a change to the survey, not to a bound", and that is exactly what was done:
  * an anchor is no longer merely a water cell, it is a MOORING — a water cell
  * whose whole SKIFF_MOORING_CLEARANCE_WORLD_UNITS neighbourhood is DRAWN as
- * water (site.ts's isMoorable). The guarantee is structural again, and it is
+ * water (site.ts's mooringVerdict). The guarantee is structural again, and it is
  * enforced at survey time in site.ts rather than by any bound in this file:
  * nothing here needs to shrink, because the survey no longer offers anchors the
  * orbit could swing off the water from.
@@ -127,6 +145,28 @@ export const SKIFF_HULL_BEAM_WORLD_UNITS = 0.14;
 export const SKIFF_MOORING_CLEARANCE_WORLD_UNITS =
   SKIFF_ORBIT_RADIUS_MAX_WORLD_UNITS + SKIFF_HULL_LENGTH_WORLD_UNITS / 2;
 
+/**
+ * THE LEAST DISTANCE ALLOWED BETWEEN TWO MOORINGS, in world units — the rule
+ * that keeps two skiffs from ever occupying the same water.
+ *
+ * PROOF, one line: every point of a hull moored at A lies within
+ * SKIFF_MOORING_CLEARANCE_WORLD_UNITS of A (see above), so if |A − B| is at
+ * least TWICE that, the two reach discs are disjoint and no pose of one hull can
+ * ever meet any pose of the other.
+ *
+ * TWICE, NOT MORE. The clearance is already a worst case over every orbit angle
+ * and heading at once, so exactly two of them is genuine separation, not a
+ * threshold two boats can jitter across (contrast plugins/boats' HOME_BERTH_
+ * CLEARANCE_CELLS, which needs slack because its boats are STEERED to their
+ * berths by a resolution pass and can be pushed off them; a skiff is drawn at a
+ * closed-form offset from a fixed anchor and never moves against anything).
+ *
+ * ENFORCED IN TWO PLACES, both outside this file: site.ts's `surveySite` applies
+ * it within one settlement's survey, placement.ts's second pass applies it
+ * across every settlement's claims. See this file's banner.
+ */
+export const SKIFF_MOORING_SPACING_WORLD_UNITS = 2 * SKIFF_MOORING_CLEARANCE_WORLD_UNITS;
+
 export interface SkiffPlacement {
   /** Anchor mooring cell, in CELLS. skiffModels.ts converts it to world X/Z. */
   readonly x: number;
@@ -138,12 +178,20 @@ export interface SkiffPlacement {
 }
 
 /**
- * Skiffs for one coastal settlement. `moorings` is site.ts's
- * SiteSurvey.moorings for this settlement's own cell — nearest first — so a
- * settlement's boats cluster on the water closest to its own shore rather than
- * scattered across its whole search disc. It may be EMPTY on a coastal site
- * whose water is all too close to the shore to moor in, and this function then
- * returns no skiffs: that is the guarantee working, not a failure.
+ * Skiffs for one coastal settlement. `moorings` is the subset of this
+ * settlement's SiteSurvey.moorings that placement.ts's second pass found still
+ * UNCLAIMED by any other settlement — nearest first — so a settlement's boats
+ * cluster on the water closest to its own shore rather than scattered across its
+ * whole search disc. It may be EMPTY (a coastal site whose water is all too
+ * close to the shore to moor in, or whose whole inshore band a neighbouring
+ * village claimed first), and this function then returns no skiffs: that is the
+ * guarantee working, not a failure.
+ *
+ * THE COUNT RULE LIVES HERE AND NOWHERE ELSE, which is why the caller hands this
+ * the already-filtered pool rather than filtering to a count itself: the pass
+ * claims exactly the moorings this function returned placements for, so "how
+ * many boats does a tier-N village float" is asked once, in one place, and the
+ * claim can never drift from the placement.
  *
  * The orbit-radius roll below is unchanged by the mooring contract and needs no
  * clamp: SKIFF_MOORING_CLEARANCE_WORLD_UNITS is derived from the MAXIMUM roll,
