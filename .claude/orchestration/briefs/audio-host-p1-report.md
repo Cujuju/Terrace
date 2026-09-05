@@ -213,6 +213,19 @@ No tests were added (owner rule; no permission granted this session).
    `1885f4d` was made, so that rename rode into a commit that did not name it. Content-identical rename,
    no history rewrite.
 
+## 4b. Merge note for the orchestrator
+
+`main` has moved to `5f42021` since this branch's base `7a6eced`, and it now contains
+`plugins/wildlife/client/glb-url.d.ts` — a THIRD copy of the `*.glb?url` declaration, added after my
+base, which is exactly the duplication `types/glb-url.d.ts`'s own header argues against. My deviation 1
+renames `types/glb-url.d.ts` → `types/asset-url.d.ts` and updates `tsconfig.base.json`'s single `files`
+entry, so the merge needs:
+
+- the rename applied (git should follow it), and `tsconfig.base.json` reading `types/asset-url.d.ts`
+  afterwards; and
+- a decision about `plugins/wildlife/client/glb-url.d.ts` — it is redundant with the shared file either
+  way and it is not mine to delete. Flagging it, not touching it.
+
 ## 5. Residuals
 
 - **Plan §5, unchanged and inherent:** the world is silent before the first gesture; WAV placeholders are
