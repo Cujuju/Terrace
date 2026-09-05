@@ -34,6 +34,9 @@
 // comments), blended row to row, so the haze reads as weather between the sea
 // and what lies beyond the map rather than as a painted wall.
 //
+// The base row is no longer whitened either (FOG_COLOR_WHITEN 0, 2026-09-04):
+// it showed as a pale ring around the map against the void.
+//
 // The top row used to be a lightened SKY_COLOR, back when everything outside
 // the map was a flat sky-coloured background. Since issue #326 that is the
 // celestial void — a near-black star field — and a pale top row against it
@@ -169,8 +172,13 @@ const FOG_PLATEAU_ALPHA = 0.3;
 /**
   * How far toward white the water end is lightened before blending. Only the
   * water end: the top end is the void's own colour, unlightened (see COLOUR).
+  *
+  * ZERO since 2026-09-04: against the celestial void the lightened base row
+  * read as a pale ring drawn around the whole map (owner, in-world). The
+  * base row is now plain WATER_COLOR, so the bank is a darkening of the sea
+  * toward the void rather than a highlight standing on its edge.
   */
-const FOG_COLOR_WHITEN = 0.35;
+const FOG_COLOR_WHITEN = 0;
 
 /** Rows bottom-to-top: base, knee, top. */
 const FOG_ROW_COUNT = 3;
