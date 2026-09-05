@@ -33,6 +33,7 @@ import {
   PointsMaterial,
   Quaternion,
   SphereGeometry,
+  TorusGeometry,
   Vector3,
   type ColorRepresentation,
 } from 'three';
@@ -458,7 +459,161 @@ export function createCrashBursts(): CrashBursts {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SPLASHES.
+
+/**
+ * A wreck into the sea (owner, 2026-09-05: "a large splash animation").
+ * Drawn WITH the fireball — the hull still detonates — and instead of the
+ * fire ring, which the server does not light on water.
+ *
+ * 1.5 s: shorter than the fireball, which is a fire, and it must be over
+ * before CRASH_WIRE_SECONDS for BURST_SECONDS' reason.
+ */
+export const SPLASH_SECONDS = 1.5;
+
+/**
+ * The plume — a column of white water thrown up by the impact — at its
+ * tallest and widest, in cells. TWELVE tall, three hulls, so it stands over
+ * the fireball; FOUR wide at the base, a hull. It rises and falls under the
+ * same arc the shards fly (`t·(2 − 2t)`), which peaks at the burst's middle.
+ */
+const PLUME_HEIGHT_CELLS = 12;
+const PLUME_RADIUS_CELLS = 4;
+
+/**
+ * The ring — the wave the impact pushes out across the surface — at full
+ * spread, in cells: the fireball's radius, so the two read as one event.
+ * Grows like the fireball (`sqrt`, front-loaded) and thins as it spreads.
+ */
+const RING_MAX_RADIUS_CELLS = BURST_MAX_RADIUS_CELLS;
+const RING_TUBE_CELLS = 0.6;
+const RING_RADIAL_SEGMENTS = 6;
+const RING_TUBULAR_SEGMENTS = 32;
+
+/**
+ * Sea-foam white, drawn OPAQUE-ish (NormalBlending) and not additive: water
+ * is not light, and an additive plume over a bright sea vanishes exactly as
+ * the additive bolts did (BOLT_INTENSITY). The ring is the same white.
+ */
+const SPLASH_COLOUR = 0xe8f4ff;
+
+/** One pooled splash. */
+interface Splash {
+  readonly root: Group;
+  readonly plume: Mesh;
+  readonly plumeMaterial: MeshBasicMaterial;
+  readonly ring: Mesh;
+  readonly ringMaterial: MeshBasicMaterial;
+}
+
+export interface CrashSplashes {
+  readonly root: Group;
+  /** Hides every splash. Called at the top of each frame's apply pass. */
+  begin(): void;
+  /** Places and advances one splash at the sea surface. `age` as `CrashBursts.show`. */
+  show(x: number, surfaceY: number, z: number, age: number): void;
+  dispose(): void;
+}
+
+/** One per saucer the roster can hold, as the bursts: they can all go into the sea together. */
+const SPLASH_POOL_SIZE = MAX_SAUCERS_PER_ENCOUNTER;
+
+/** The plume and the ring. */
+const OBJECTS_PER_SPLASH = 2;
+
+export function createCrashSplashes(): CrashSplashes {
+  const root = new Group();
+  root.name = 'saucers:splashes';
+
+  // The plume is a unit sphere scaled tall and translated so its base sits at
+  // the origin — the surface — and it grows UP from there.
+  const sphere = new SphereGeometry(1, BURST_RADIAL_SEGMENTS, BURST_HEIGHT_SEGMENTS);
+  sphere.translate(0, 1, 0);
+  const ringGeometry = new TorusGeometry(1, worldUnitsAcross(RING_TUBE_CELLS), RING_RADIAL_SEGMENTS, RING_TUBULAR_SEGMENTS);
+  ringGeometry.rotateX(Math.PI / 2);
+
+  const splashes: Splash[] = [];
+  for (let index = 0; index < SPLASH_POOL_SIZE; index++) {
+    const splashRoot = new Group();
+    splashRoot.name = `saucers:splash:${index}`;
+    splashRoot.visible = false;
+
+    const plumeMaterial = new MeshBasicMaterial({
+      color: SPLASH_COLOUR,
+      transparent: true,
+      opacity: 1,
+      blending: NormalBlending,
+      depthWrite: false,
+    });
+    const plume = new Mesh(sphere, plumeMaterial);
+    splashRoot.add(plume);
+
+    const ringMaterial = new MeshBasicMaterial({
+      color: SPLASH_COLOUR,
+      transparent: true,
+      opacity: 1,
+      blending: NormalBlending,
+      depthWrite: false,
+    });
+    const ring = new Mesh(ringGeometry, ringMaterial);
+    splashRoot.add(ring);
+
+    root.add(splashRoot);
+    splashes.push({ root: splashRoot, plume, plumeMaterial, ring, ringMaterial });
+  }
+
+  let next = 0;
+
+  return {
+    root,
+    begin(): void {
+      for (const splash of splashes) splash.root.visible = false;
+      next = 0;
+    },
+    show(x: number, surfaceY: number, z: number, age: number): void {
+      const t = age / SPLASH_SECONDS;
+      if (t < 0 || t >= 1) return;
+      const splash = splashes[next];
+      if (splash === undefined) return;
+      next++;
+
+      splash.root.visible = true;
+      splash.root.position.set(x, surfaceY, z);
+
+      // Up and back down: the shards' arc, peaking mid-splash. The base
+      // widens as the column collapses.
+      const arc = t * (2 - 2 * t);
+      splash.plume.scale.set(
+        worldUnitsAcross(PLUME_RADIUS_CELLS) * (0.5 + 0.5 * t),
+        worldUnitsAcross(PLUME_HEIGHT_CELLS) * arc,
+        worldUnitsAcross(PLUME_RADIUS_CELLS) * (0.5 + 0.5 * t),
+      );
+      splash.plumeMaterial.opacity = 1 - t * t;
+
+      const spread = Math.sqrt(t);
+      splash.ring.scale.set(
+        worldUnitsAcross(RING_MAX_RADIUS_CELLS) * spread,
+        1,
+        worldUnitsAcross(RING_MAX_RADIUS_CELLS) * spread,
+      );
+      splash.ringMaterial.opacity = 1 - t;
+    },
+    dispose(): void {
+      for (const splash of splashes) {
+        splash.plumeMaterial.dispose();
+        splash.ringMaterial.dispose();
+      }
+      sphere.dispose();
+      ringGeometry.dispose();
+      root.clear();
+    },
+  };
+}
+
 /** Exposed so the plugin's draw budget is written from the rigs' own counts. */
 export const LASER_POOL_DRAW_OBJECTS = MAX_LASER_BOLTS;
 /** Every burst in the pool, fully drawn. */
 export const BURST_DRAW_OBJECTS = BURST_POOL_SIZE * OBJECTS_PER_BURST;
+/** Every splash in the pool, fully drawn. */
+export const SPLASH_DRAW_OBJECTS = SPLASH_POOL_SIZE * OBJECTS_PER_SPLASH;

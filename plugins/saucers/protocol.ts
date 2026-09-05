@@ -218,27 +218,35 @@ export function isSaucerPhase(value: unknown): value is SaucerPhase {
  * it off the map, so a player sees the factions cross the horizon and arrive
  * rather than blink into existence over their village.
  *
- * DOGFIGHT_HOLD_FIRE — 3 s, the owner's floor: nobody fires, so nobody can go
- * down, for the first three seconds of the fight. The factions close, cross and
- * pick targets before the first burst, which is also what makes the smallest
- * fight (three saucers, one of them alone) last long enough to be seen.
+ * THERE IS NO HOLD-FIRE FLOOR ANY MORE (owner, 2026-09-05: "the saucers take
+ * too long in the beginning of the dogfight to start shooting"; "allow them to
+ * start firing during the run in"). A saucer fires at any enemy within
+ * LASER_RANGE_CELLS from the moment it is in the world, run-in included —
+ * the factions converge on the arena from opposite bearings, so the first
+ * bursts cross as they close, just before the curves begin. The 3 s floor of
+ * the first revision was what made the fight look like it had not started.
  *
  * DOGFIGHT — 20 s, the CAP. A fight normally ends earlier, when one faction is
  * the last with anything flying (see SAUCER_MAX_HP); the cap exists so a fight
  * of two lucky misses does not orbit forever, and on it the faction with the
  * most hit points left wins.
  *
- * RESOLVE — 3 s: the climb-out. Shorter than the approach on purpose — a
- * winner that took as long to leave as it took to arrive would read as a
- * landing.
+ * RESOLVE — 1.5 s: the climb-out, and it is a LAUNCH (owner, 2026-09-05:
+ * "accelerate faster, like they're starting to take off at light speed"). A
+ * winner leaves its orbit at fight speed and its speed grows with the SQUARE
+ * of the time since — barely faster for the first few tenths, then away —
+ * reaching EXIT_SPEED_MAX as the clock runs out, by when it is far off the
+ * map. Half the first revision's 3 s, which at a flat exit speed read as a
+ * bank-away.
  *
- * DIVE — 1.2 s, SEPARATE from the climb-out since the second revision ("crash
- * into the ground at a higher speed"): the wreck falls from cruise altitude in
- * well under half the time the winners take to leave, so on the wire its speed
- * peaks at about the winners' EXIT speed. The speed is DERIVED from the
- * path (server/encounter.ts) rather than written here: the dive is a
- * fixed-duration fall, and a speed constant would be a second number that had
- * to agree with it.
+ * DIVE — 1.0 s, SEPARATE from the climb-out since the second revision ("crash
+ * into the ground at a higher speed"). The wreck keeps the speed it was
+ * flying at into the dive and accelerates from there (server/encounter.ts):
+ * the first revision's pure t² fall started from rest, so a wreck HUNG at
+ * altitude for the first third of a second before it visibly dropped
+ * (owner, 2026-09-05: "it looks like it is hanging"). The speed is DERIVED
+ * from the path rather than written here: the dive is a fixed-duration fall,
+ * and a speed constant would be a second number that had to agree with it.
  *
  * FLYBY — DERIVED: a straight line at approach speed from the entry distance on
  * one side of the arena to the entry distance on the other, twice the approach.
@@ -250,10 +258,9 @@ export function isSaucerPhase(value: unknown): value is SaucerPhase {
  * belong to other systems.
  */
 export const APPROACH_SECONDS = 2.5;
-export const DOGFIGHT_HOLD_FIRE_SECONDS = 3;
 export const DOGFIGHT_SECONDS = 20;
-export const RESOLVE_SECONDS = 3;
-export const DIVE_SECONDS = 1.2;
+export const RESOLVE_SECONDS = 1.5;
+export const DIVE_SECONDS = 1.0;
 export const CRASH_WIRE_SECONDS = 2.5;
 
 /**
@@ -271,12 +278,17 @@ export const CRASH_WIRE_SECONDS = 2.5;
  *   dots leaving the arena; at 20 over ARENA_RADIUS a saucer laps the arena
  *   about every two and a half seconds, which reads as a fight. It is the
  *   TANGENTIAL speed each saucer's own path is scaled to (server/encounter.ts).
- * EXIT 40 — a winner outruns everything else in the encounter on the way out.
- *   A loser's dive speed follows from DIVE_SECONDS (above), not from a constant.
+ * EXIT_MAX 240 — what a winner's launch (RESOLVE_SECONDS) is accelerating
+ *   toward: seven times the approach, two default worlds a second. Reached
+ *   only at the end of the climb-out, by which point the winner is a streak
+ *   leaving the frame — which is the "light speed" in the ask. The wire's
+ *   speed field carries the instantaneous value, so the bank and the
+ *   interpolation see the real thing. A loser's dive speed follows from
+ *   DIVE_SECONDS (above), not from a constant.
  */
 export const APPROACH_SPEED_CELLS_PER_SECOND = cellsAcross(34);
 export const DOGFIGHT_SPEED_CELLS_PER_SECOND = cellsAcross(20);
-export const EXIT_SPEED_CELLS_PER_SECOND = cellsAcross(40);
+export const EXIT_SPEED_MAX_CELLS_PER_SECOND = cellsAcross(240);
 
 /**
  * How far out an approaching saucer starts, in cells — DERIVED from the two
@@ -430,6 +442,17 @@ export const FIGHT_SPAN_CELLS = Math.hypot(
 );
 
 /**
+ * How far a saucer will take a shot, in cells, measured to the AIMED point
+ * before a miss is pushed aside: the longest shot in the fight less the miss
+ * offset, so that with the offset added the bolt is never longer than
+ * FIGHT_SPAN_CELLS — and its lifetime, derived from that span, never prunes
+ * it before it lands. Inside the arena range never withholds a burst; on the
+ * run-in, where the factions start ENTRY_DISTANCE apart (several times
+ * this), the first bursts fly as they close, not from the horizon.
+ */
+export const LASER_RANGE_CELLS = FIGHT_SPAN_CELLS - LASER_MISS_OFFSET_MAX_CELLS;
+
+/**
  * A bolt is a BALLISTIC PROJECTILE: it leaves the muzzle at the pose the
  * shooter held when it fired and flies a straight line, at LASER_BOLT_SPEED,
  * to the point it was aimed at — drawn LASER_BOLT_LENGTH long.
@@ -532,6 +555,16 @@ export const MAX_LASER_BOLTS =
  */
 export const CRASH_CRATER_RADIUS_CELLS = cellsAcross(2.5);
 export const CRASH_CRATER_DEPTH_BANDS = 2;
+
+/**
+ * A WRECK MAY GO INTO THE SEA (owner, 2026-09-05: "crashes are allowed in the
+ * water"). It lands on the surface with a splash and the same fireball, and
+ * NO FIRE — nothing burns on water. The crater is dug only where the seabed
+ * is within this many bands of the surface: FIVE (owner, same day, "only
+ * affect the terrain if the water they hit is less than or equal to five
+ * bands deep"). Deeper, the sea swallows it and the ground is untouched.
+ */
+export const CRASH_SEABED_CRATER_MAX_DEPTH_BANDS = 5;
 
 /**
  * Cells the fire ring stands off the impact point.
@@ -645,6 +678,8 @@ export interface CrashState {
   readonly id: number;
   readonly x: number;
   readonly y: number;
+  /** Into the sea: the client draws the impact on the surface, with a splash. */
+  readonly water: boolean;
   /** Seconds since impact. */
   readonly age: number;
 }
@@ -786,7 +821,8 @@ function parseCrash(entry: unknown): CrashState | null {
   if (!isFiniteNumber(raw.id)) return null;
   if (!isFiniteNumber(raw.x) || !isFiniteNumber(raw.y)) return null;
   if (!isFiniteNumber(raw.age)) return null;
-  return { id: raw.id, x: raw.x, y: raw.y, age: raw.age };
+  // A missing flag is a land crash — the only kind there was before the flag.
+  return { id: raw.id, x: raw.x, y: raw.y, water: raw.water === true, age: raw.age };
 }
 
 // Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts) —
