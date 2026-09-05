@@ -115,7 +115,6 @@ import {
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
 import { flattenAssetParts } from '../../../client/src/render/staticAsset.ts';
-import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
@@ -202,20 +201,6 @@ function lambert(color: number, options: { emissive?: number } = {}): MeshLamber
 const IMPORTED_STRUCTURE_TIER = 2;
 
 /**
- * The scale from an asset's own units to this plugin's model space.
- *
- * ASSETS ARE AUTHORED IN CELLS (docs/model-assets.md: "units are cells, 1 unit
- * = 1 cell") and every local matrix in this file is in WORLD UNITS — the frame
- * a building matrix is composed in, which is why STRUCTURE_FOOTPRINT_RADIUS
- * above is stated in world units. One cell is CELL_WORLD_SIZE world units, so
- * this is the whole of the conversion. Get it wrong and the error is a factor
- * of WORLD_UNIT_CELLS (four today): a cottage four times too big, or a doll's
- * house. Derived from shared rather than written as 0.25 because the world's
- * sampling density has already changed once (2026-08-21).
- */
-const ASSET_UNITS_TO_MODEL_UNITS = CELL_WORLD_SIZE;
-
-/**
  * How tall, in WORLD UNITS, the tallest procedural tier stands: the
  * watchtower's spire apex — tower 1.3 + parapet 0.14 + roof 0.4 (tier 5's own
  * constants, below).
@@ -230,20 +215,26 @@ const ASSET_UNITS_TO_MODEL_UNITS = CELL_WORLD_SIZE;
 const TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS = 1.84;
 
 /**
- * The budget an imported building must fit, in CELLS — the unit
- * assertAssetFits measures in (rigAsset.ts).
+ * The budget an imported building must fit, in WORLD UNITS.
+ *
+ * ASSETS ARE AUTHORED IN WORLD UNITS — the same frame every local matrix in
+ * this file is in, so an asset's parts are used exactly as they load, with no
+ * conversion step between the file and the model space (orchestrator decision
+ * 2026-09-04: the war boat and wildlife's deer are both authored this way and
+ * neither carries a runtime scale; this tier was the odd one out, and the
+ * render kit's own "…Cells" names are being corrected separately).
  *
  * x and z are the footprint contract restated for an asset: a tier may reach
  * STRUCTURE_FOOTPRINT_RADIUS from its origin in either direction, so the whole
- * model spans twice that, converted from world units to cells by cellsAcross()
- * — the same conversion the server's own suitability check uses, so the two
- * sides of the footprint contract still cannot drift apart. y is the height
- * ceiling above.
+ * model spans twice that — the same number the tiers below are measured
+ * against, in the same unit, which is what keeps an imported building and a
+ * procedural one under ONE bound rather than two that can drift. y is the
+ * height ceiling above.
  */
-const IMPORTED_STRUCTURE_FOOTPRINT_CELLS = {
-  x: cellsAcross(STRUCTURE_FOOTPRINT_RADIUS * 2),
-  z: cellsAcross(STRUCTURE_FOOTPRINT_RADIUS * 2),
-  y: cellsAcross(TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS),
+const IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS = {
+  x: STRUCTURE_FOOTPRINT_RADIUS * 2,
+  z: STRUCTURE_FOOTPRINT_RADIUS * 2,
+  y: TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS,
 };
 
 /**
@@ -282,11 +273,11 @@ export async function preloadStructureModels(url: string): Promise<void> {
  * different things.
  */
 export function installStructureAsset(asset: RigAsset): void {
-  // Measured BEFORE anything is assigned, so a model that overruns its plot
-  // cannot replace a good one. The shared error already names the axis and
-  // the number; what it cannot say is why this budget is the budget.
+  // Measured BEFORE anything is assigned or freed, so a model that overruns
+  // its plot cannot replace a good one. The shared error already names the
+  // axis and the number; what it cannot say is why this budget is the budget.
   try {
-    assertAssetFits(asset, IMPORTED_STRUCTURE_FOOTPRINT_CELLS);
+    assertAssetFits(asset, IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS);
   } catch (cause) {
     throw new Error(
       `structure asset: the model breaks the footprint contract — a building must stand ` +
@@ -294,6 +285,18 @@ export function installStructureAsset(asset: RigAsset): void {
       { cause },
     );
   }
+  // THE PREVIOUS ASSET IS FREED, NOT DROPPED. preload() runs on every mount,
+  // so without this each remount would leave the old file's geometries,
+  // materials and textures alive with nothing pointing at them — a leak that
+  // grows with the session rather than with the world.
+  //
+  // Safe for installBoatKit's reason: the host unmounts a plugin before it
+  // remounts it, so the merged clones that shared this asset's textures have
+  // already been disposed by createStructureModels' own dispose() — nothing
+  // live is sampling these texels. (Only the textures were ever shared; the
+  // geometries and materials the models hold are copies — see
+  // importedStructureParts.)
+  importedBuildingAsset?.dispose();
   importedBuildingAsset = asset;
 }
 
@@ -311,25 +314,24 @@ export function installStructureAsset(asset: RigAsset): void {
  *      rather than duplicating them, and three's Material.dispose() does not
  *      free a texture, so the texels stay owned by the asset exactly as
  *      staticAsset.ts requires;
- *   3. the asset's cell units become world units, and the result is passed
- *      through the same radial fit Durand's uses — a model may fit its
- *      axis-aligned footprint and still swing a corner over unsurveyed ground
- *      once the placement yaw turns it (parts.ts's partsRadialReach). A no-op
- *      for a model that already fits, which this one does.
+ *   3. the copies go through the same radial fit Durand's uses — a model may
+ *      fit its axis-aligned footprint and still swing a corner over unsurveyed
+ *      ground once the placement yaw turns it (parts.ts's partsRadialReach). A
+ *      no-op for a model that already fits, which this one does.
+ *
+ * NO SCALE STEP, AND THAT IS THE POINT: an asset is authored in the same WORLD
+ * UNITS this file's matrices are in (see
+ * IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS), so the local matrices load in
+ * already meaning what they say. A conversion here would be a second place for
+ * the model's size to be decided, and the one thing the assert at load could
+ * not catch.
  */
 function importedStructureParts(): StructurePart[] | null {
   if (importedBuildingAsset === null) return null;
-  const scale = new Matrix4().makeScale(
-    ASSET_UNITS_TO_MODEL_UNITS,
-    ASSET_UNITS_TO_MODEL_UNITS,
-    ASSET_UNITS_TO_MODEL_UNITS,
-  );
   const owned = flattenAssetParts(importedBuildingAsset).map((part) => ({
     geometry: part.geometry.clone(),
     material: part.material.clone(),
-    localMatrices: part.localMatrices.map((local) =>
-      new Matrix4().multiplyMatrices(scale, local),
-    ),
+    localMatrices: part.localMatrices.map((local) => local.clone()),
   }));
   return fitToRadius(owned, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX);
 }
