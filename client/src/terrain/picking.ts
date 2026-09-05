@@ -27,7 +27,7 @@ import {
   type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import { intersectRayWithWall } from './drawnFace.ts';
+import { crossRayWithWallPlan } from './drawnFace.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
 import type { CellOccupancy, CellRayChord } from './occupancy.ts';
 
@@ -620,17 +620,40 @@ const DRAWN_FACE_MARGIN_CELLS = 0.5;
  * front of and above the wall, the lit lip was the band above the one under
  * the pointer, and the carve cut that band.
  *
- * TWO ANSWERS, and which one applies is decided by whether any drawn face
- * stands inside this cell's chord:
+ * A STEP OF SEVERAL BANDS IS DRAWN AS A STAIRCASE, not as one wall, and that
+ * is the whole reason this is an event walk rather than a nearest-quad search.
+ * Marching squares interpolates each band's contour separately, so a three-band
+ * step between cells 23 and 24 puts band 6's riser at x = 23.375, band 7's at
+ * 23.625 and band 8's at 23.875 (measured on the fixture): between them the
+ * mesh draws band 6's and band 7's CAP as a quarter-cell LEDGE. A ray can meet
+ * either kind of surface first, so both are events on t:
  *
- *  - IT MEETS ONE → that meeting IS the hit point. Only `hitY`/`hitX`/`hitZ`
- *    move; the cell, the span and `surfaceY` are the lattice's answer and the
- *    lattice was never wrong about them.
- *  - IT MEETS NONE → the ray passed in FRONT of every face this box contains,
- *    which is visually the drawn TREAD of the cell it came from: the lower
- *    neighbour's cap extends the same fraction of a cell into this box. It is
- *    resolved as that neighbour's tread, so a click just below a wall carves
- *    the ground at its foot rather than the wall.
+ *  - RISER of band b, at `tc[b]` — where the ray crosses band b's contour in
+ *    plan — when the ray's height there is inside band b's slab.
+ *  - LEDGE of band b (only below the span's top band), at the crossing of the
+ *    plane y = b·slab, when the ray has already passed band b's contour and
+ *    has not yet reached band b+1's. That is exactly the stretch of that plane
+ *    the mesh draws as band b's cap.
+ *
+ * The earliest event wins. A LEDGE IS REPORTED AS A RISER HIT at
+ * `hitY = b·slab` exactly, and that is deliberate: `pickBand.ts`'s
+ * `resolvePick` reads a riser hit's band as `Math.ceil(hitY / slab)`, which is
+ * b — the band the ledge belongs to — while a horizontal hit below the span's
+ * cap is read as an UNDERSIDE (a cave roof), which a ledge is not. The pick
+ * contract has no "tread below the cap" face and this does not invent one.
+ *
+ * NO EVENT AT ALL, TWO CASES, and they are not the same:
+ *
+ *  - NO SEGMENTS ANYWHERE (`segmentsOf` undefined for every candidate band in
+ *    every nearby chunk — a chunk that is unreceived, frontier-adjacent,
+ *    blocky or not yet drawn, `layerEdgeOverlay.ts`'s `rebuild` early return):
+ *    nothing is known about where the faces are drawn, so the BOX hit stands
+ *    unchanged. Rewriting it would be inventing a face out of ignorance.
+ *  - SEGMENTS EXIST AND THE RAY PASSED IN FRONT OF THEM: it went by below the
+ *    foot of the wall, and what it met is the drawn TREAD of the cell it came
+ *    from, which extends into this box by the same fraction. Resolved as that
+ *    neighbour's tread — but only when the ray reaches that tread BEFORE the
+ *    foot contour, which is what "in front of" means.
  *
  * SEARCHED: the 3×3 chunk neighbourhood of (i, j) — the same reach
  * `layerEdgeOverlay.ts`'s `nearbyChunks` uses, because a contour bounding this
@@ -691,10 +714,12 @@ function refineRiserToDrawnFace(
   const firstBand = Math.max(lowestBand, Math.ceil(yMin / bandSlab));
   const lastBand = Math.min(highestBand, Math.floor(yMax / bandSlab) + 1);
 
-  let bestT = Infinity;
+  // PASS 1 — where the ray crosses each candidate band's contour IN PLAN.
+  // Both kinds of event are derived from these: a riser hit is one of them, a
+  // ledge hit lies between two consecutive ones.
+  if (lastBand < firstBand) return hit;
+  const contourT = new Float64Array(lastBand - firstBand + 1).fill(Infinity);
   for (let band = firstBand; band <= lastBand; band++) {
-    const yHi = band * bandSlab;
-    const yLo = (band - 1) * bandSlab;
     for (let dy = -1; dy <= 1; dy++) {
       const cy = chunkY + dy;
       if (cy < 0 || cy >= chunksPerEdge) continue;
@@ -708,29 +733,75 @@ function refineRiserToDrawnFace(
           s + FLOATS_PER_DRAWN_SEGMENT - 1 < flat.length;
           s += FLOATS_PER_DRAWN_SEGMENT
         ) {
-          const t = intersectRayWithWall(
+          const t = crossRayWithWallPlan(
             origin, direction,
             flat[s]!, flat[s + 1]!, flat[s + 2]!, flat[s + 3]!,
-            yLo, yHi,
           );
-          // A face outside the window is one no riser of this cell can
+          // A crossing outside the window is one no surface of this cell can
           // stand on — it belongs to a cell further along the ray.
-          if (t === null || t < fromT || t > toT || t >= bestT) continue;
-          bestT = t;
+          if (t === null || t < fromT || t > toT) continue;
+          if (t < contourT[band - firstBand]!) contourT[band - firstBand] = t;
         }
       }
     }
   }
 
+  // NOT ONE SEGMENT ANYWHERE: this chunk neighbourhood has published no
+  // contour, so the box answer is the only one there is evidence for.
+  let footT = Infinity;
+  for (let band = firstBand; band <= lastBand; band++) {
+    const t = contourT[band - firstBand]!;
+    if (t < footT) footT = t;
+  }
+  if (footT === Infinity) return hit;
+
+  // PASS 2 — the earliest event along the ray.
+  let bestT = Infinity;
+  let bestLedgeBand: number | null = null;
+  for (let band = firstBand; band <= lastBand; band++) {
+    const tc = contourT[band - firstBand]!;
+    if (tc === Infinity) continue;
+    const yHi = band * bandSlab;
+    const yLo = (band - 1) * bandSlab;
+    // (a) THE RISER: the crossing itself, if the ray is inside this band's
+    // slab when it gets there.
+    const yAt = origin.y + tc * direction.y;
+    if (yAt >= yLo && yAt <= yHi && tc < bestT) {
+      bestT = tc;
+      bestLedgeBand = null;
+    }
+    // (b) THE LEDGE: band b's cap, drawn between its own contour and the
+    // contour of the band above. The top band's cap is the span's tread and
+    // the march already handles it, so it is not an event here.
+    if (band >= highestBand || direction.y === 0) continue;
+    const tPlane = (yHi - origin.y) / direction.y;
+    if (!(tPlane > tc) || tPlane < fromT || tPlane > toT || tPlane >= bestT) continue;
+    const above = band + 1 <= lastBand ? contourT[band + 1 - firstBand]! : Infinity;
+    if (tPlane >= above) continue;
+    bestT = tPlane;
+    bestLedgeBand = band;
+  }
+
   if (bestT < Infinity) {
     return {
       ...hit,
-      hitY: origin.y + bestT * direction.y,
+      // A DRAWN FACE OR LEDGE IS A RISER HIT whichever face of the box the
+      // march happened to name: `resolvePick` reads the band off `hitY` for a
+      // riser and off the SPAN's cap for a tread, and the band that is right
+      // here is the one the ray actually met.
+      hitRiser: true,
+      // A LEDGE SITS EXACTLY ON ITS BAND'S PLANE. Taking the height from the
+      // ray instead would leave a rounding wobble either side of the boundary
+      // that `resolvePick`'s `Math.ceil` turns into a one-band flicker.
+      hitY: bestLedgeBand === null ? origin.y + bestT * direction.y : bestLedgeBand * bandSlab,
       hitX: origin.x + bestT * direction.x,
       hitZ: origin.z + bestT * direction.z,
     };
   }
-  return treadOfEnteredNeighbour(mirror, i, j, origin, direction, tEnter, tExit) ?? hit;
+  // Only a RISER hit can have passed in front of the wall; a cap hit that met
+  // no drawn surface met the tread the march already named.
+  if (!hit.hitRiser) return hit;
+  return treadOfEnteredNeighbour(mirror, i, j, origin, direction, tEnter, tExit, footT) ?? hit;
 }
 
 /**
@@ -748,6 +819,12 @@ function refineRiserToDrawnFace(
  * the server never sent (the `cellRevealed` rule, mirror.ts invariant 1), it
  * draws nothing below the entry height, or its cap plane is crossed beyond the
  * far side of this box.
+ *
+ * `footContourT` is where the ray crosses the LOWEST drawn contour of this
+ * cell, and the tread only wins if the ray reaches it FIRST. Without that
+ * ordering "the ray passed in front of the wall" is unproven, and a ray that
+ * actually went through the wall's foot would be answered with a point inside
+ * drawn solid.
  */
 function treadOfEnteredNeighbour(
   mirror: TerrainMirror,
@@ -757,6 +834,7 @@ function treadOfEnteredNeighbour(
   direction: Vec3,
   tEnter: number,
   tExit: number,
+  footContourT: number,
 ): TerrainRayPick | null {
   const dy = direction.y;
   if (!(dy < 0)) return null;
@@ -786,7 +864,7 @@ function treadOfEnteredNeighbour(
     const capY = spanCapHeight(nSpan) * HEIGHT_WORLD_SCALE;
     if (!(capY < entryY)) continue;
     const t = tEnter + (capY - entryY) / dy;
-    if (t > tExit) return null;
+    if (t > tExit || !(t < footContourT)) return null;
     return {
       x: ni,
       y: nj,
@@ -880,7 +958,14 @@ function terrainHitInCell(
     hitSpan = span;
   }
   // THE BOX FACE IS NOT THE DRAWN FACE — the whole of the refinement below.
-  if (hit === null || !hit.hitRiser || risers === null || hitSpan === null) return hit;
+  //
+  // A CAP HIT NEEDS IT TOO, not just a riser hit. The box cap is a full cell
+  // wide while the DRAWN cap starts only at the band's contour, so a steep ray
+  // can cross the box cap over ground the mesh draws as the staircase below —
+  // and that hit is horizontal, not a riser. An UNDERSIDE hit is excluded:
+  // it met the span from beneath, where none of this applies.
+  const refinable = hit !== null && (hit.hitRiser || hit.hitY === hit.surfaceY);
+  if (hit === null || !refinable || risers === null || hitSpan === null) return hit;
   return refineRiserToDrawnFace(
     mirror, i, j, origin, direction, tEnter, tExit, hit, hitSpan, risers,
   );
