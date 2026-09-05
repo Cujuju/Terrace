@@ -36,6 +36,20 @@ const PAD_WAVEFORM: OscillatorType = 'sawtooth';
  * strong under the melody; three tones now sum to 0.165, a bed, not a wall. */
 const PAD_TONE_PEAK_GAIN = 0.055;
 
+/** Shimmer waveform. Sine an octave up: a clean halo on each chord tone. */
+const SHIMMER_WAVEFORM: OscillatorType = 'sine';
+
+/** Shimmer pitch above its chord tone, in semitones: one octave. */
+const SHIMMER_OCTAVE_SEMITONES = 12;
+
+/** Shimmer level as a fraction of its tone's gain. 0.3 is heard as air on the
+ * pad, not as a second voice (owner 2026-09-05). */
+const SHIMMER_GAIN_FRACTION = 0.3;
+
+/** Shimmer detune, in cents. 4 cents against the tone's octave beats slowly
+ * — the glisten — without reading as out of tune. */
+const SHIMMER_DETUNE_CENTS = 4;
+
 /** Pad attack, in seconds. 3 s over a 7.5 s chord means a chord is never
  * "struck" — the strongest reason the pad reads as weather, not a keyboard. */
 const PAD_ATTACK_SECONDS = 3;
@@ -185,23 +199,39 @@ export function schedulePadChord(
       oscillator.stop(releaseEnd + VOICE_STOP_MARGIN_SECONDS);
       sources.push(oscillator);
     }
-    pool.adopt({ sources, others: [toneGain] });
+
+    const shimmerGain = context.createGain();
+    shimmerGain.gain.setValueAtTime(SHIMMER_GAIN_FRACTION, startTime);
+    shimmerGain.connect(toneGain);
+    const shimmer = context.createOscillator();
+    shimmer.type = SHIMMER_WAVEFORM;
+    shimmer.frequency.setValueAtTime(midiToFrequency(note + SHIMMER_OCTAVE_SEMITONES), startTime);
+    shimmer.detune.setValueAtTime(SHIMMER_DETUNE_CENTS, startTime);
+    shimmer.connect(shimmerGain);
+    shimmer.start(startTime);
+    shimmer.stop(releaseEnd + VOICE_STOP_MARGIN_SECONDS);
+    sources.push(shimmer);
+    pool.adopt({ sources, others: [toneGain, shimmerGain] });
   }
 }
 
-/** Schedules one melody note at `startTime` on the audio clock. */
+/** Schedules one melody note at `startTime`; `velocity` in (0, 1] scales it. */
 export function schedulePluck(
   context: BaseAudioContext,
   pool: VoicePool,
   destination: AudioNode,
   note: number,
+  velocity: number,
   startTime: number,
 ): void {
   const endTime = startTime + PLUCK_DURATION_SECONDS;
 
   const noteGain = context.createGain();
   noteGain.gain.setValueAtTime(SILENT_GAIN, startTime);
-  noteGain.gain.linearRampToValueAtTime(PLUCK_PEAK_GAIN, startTime + PLUCK_ATTACK_SECONDS);
+  noteGain.gain.linearRampToValueAtTime(
+    PLUCK_PEAK_GAIN * velocity,
+    startTime + PLUCK_ATTACK_SECONDS,
+  );
   noteGain.gain.exponentialRampToValueAtTime(SILENT_GAIN, endTime);
   noteGain.connect(destination);
 
