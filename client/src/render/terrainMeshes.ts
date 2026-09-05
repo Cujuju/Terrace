@@ -128,6 +128,7 @@
 // outside this file depends on the one-mesh-per-chunk choice.
 
 import {
+  Box3,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -920,6 +921,18 @@ export function createTerrainMeshes(
    * Hand-rolled rather than `geometry.computeBoundingSphere()` because that
    * reads the whole position attribute, and the tail past `liveEnd` is
    * whatever a previous, longer occupant left there.
+   *
+   * The BOX is set too, from the same extents. Frustum culling reads only the
+   * sphere, but `Mesh.raycast` (three/src/objects/Mesh.js) tests the sphere
+   * and then, only if the geometry HAS a box, rejects on the box before
+   * walking triangles. A super-mesh's sphere over-covers its box by the
+   * half-diagonal, so a null box lets every ray that clips the sphere but
+   * misses the terrain pay the full O(triangles) walk. Nothing in the shipped
+   * client raycasts the terrain today (picking marches cells instead), but the
+   * preview harnesses and the differential pick test do, and a plugin that
+   * registers the terrain as pickable would. The box is free here: it IS the
+   * extents the sphere is built from. Never `computeBoundingBox()` either —
+   * same dead-tail reason as the sphere.
    */
   const updateBounds = (sm: SuperMesh): void => {
     let minX = Infinity;
@@ -940,8 +953,13 @@ export function createTerrainMeshes(
     const geometry = sm.mesh.geometry;
     if (minX > maxX) {
       geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
+      geometry.boundingBox = new Box3(new Vector3(0, 0, 0), new Vector3(0, 0, 0));
       return;
     }
+    geometry.boundingBox = new Box3(
+      new Vector3(minX, minY, minZ),
+      new Vector3(maxX, maxY, maxZ),
+    );
     const centreX = (minX + maxX) / 2;
     const centreY = (minY + maxY) / 2;
     const centreZ = (minZ + maxZ) / 2;
