@@ -137,6 +137,109 @@ export interface WorldPosition {
   readonly z: number;
 }
 
+/** How a one-shot is placed and coloured — see `PluginAudio.playSfx`. */
+export interface SfxOptions {
+  /**
+   * WHERE the sound happens, in WORLD units (the same space `layer` and
+   * `cameraPosition` are in). Present makes the voice POSITIONAL: core parents
+   * a panner at this point and the listener on the camera does the rest, so a
+   * strike across the map is quiet and a strike underfoot is not. Absent makes
+   * it a flat, non-positional voice at full bus level — the right answer for a
+   * sound that belongs to the interface rather than to a place.
+   *
+   * READ AND COPIED DURING THE CALL, never kept: core does not hold the
+   * reference, so passing the scratch object `cameraPosition()` returns is
+   * safe here.
+   */
+  readonly at?: WorldPosition;
+  /**
+   * This voice's level relative to its bus, in [0, 1]. Defaults to 1. It is
+   * NOT an absolute loudness and must not be used as one — the player owns the
+   * master, and a plugin that "just needs to be louder" is asking for a louder
+   * ASSET, not a bigger number here. Out-of-range values are clamped.
+   */
+  readonly gain?: number;
+  /**
+   * Playback speed multiplier, 1 being the asset's own rate. Its use is
+   * VARIATION: the same clap at 0.94 and 1.07 stops a repeated one-shot
+   * reading as a loop. Pitch moves with it, because this is a sample rate and
+   * not a pitch shifter. Non-finite or non-positive values are ignored.
+   */
+  readonly playbackRate?: number;
+}
+
+/**
+ * Everything a plugin may do to the player's ears — `ClientPluginCtx.audio`,
+ * one member for the whole capability, exactly as `layer` is the one member
+ * for everything a plugin draws.
+ *
+ * WHY A PLUGIN NEVER TOUCHES WEB AUDIO ITSELF. Browsers cap the number of
+ * `AudioContext`s a page may hold, the listener has to track the ONE camera,
+ * and the player's master volume has to be able to silence everything — three
+ * facts that all say the graph has exactly one owner. So core owns the
+ * context, the listener, the three buses and every voice; a plugin says what
+ * it wants heard and core decides how loud that ends up being.
+ *
+ * EVERY METHOD IS SAFE TO CALL AT ANY TIME, and that is a deliberate part of
+ * the contract rather than a politeness: before the browser's autoplay unlock
+ * (there is no context yet), before the join snapshot (there is no world yet),
+ * and after this plugin has been detached (its voices are already gone). None
+ * of those is an error, none logs, and none throws — a plugin driving sound
+ * from a frame loop must never have to ask whether sound is available yet.
+ *
+ * NOTHING HERE IS ON THE FRAME'S CRITICAL PATH. Web Audio schedules and mixes
+ * on its own thread; the JS cost of a call is building a few nodes at trigger
+ * time, and a repeated `ambience` call at an unchanged weight is one float
+ * comparison (see below).
+ */
+export interface PluginAudio {
+  /**
+   * Fires a one-shot on the SFX bus and returns immediately. Nothing is
+   * awaited and nothing is returned: an impact sound that arrived late because
+   * a decode was still in flight is worse than no sound, so the FIRST call for
+   * a URL usually starts the decode and plays nothing, and later calls play.
+   *
+   * BOUNDED BY A VOICE CAP core owns. A plugin that fires more one-shots than
+   * the cap allows steals its own oldest voices rather than growing the graph
+   * — a hundred simultaneous claps is a bug in the caller, and the failure
+   * mode for it is "you hear the most recent ones", not "the tab stutters".
+   */
+  playSfx(url: string, opts?: SfxOptions): void;
+
+  /**
+   * A LOOPING LAYER this plugin fades toward `weight` (0..1) on the ambience
+   * bus. Call it every frame if that is convenient: an unchanged weight is a
+   * float comparison and does nothing else.
+   *
+   * ONE LOOP PER (PLUGIN, URL). Calling again with the same URL RETARGETS the
+   * existing fade rather than starting a second copy — which is what makes
+   * "call it every frame with the current weight" the intended usage rather
+   * than an abuse. Weight 0 fades the loop out and then releases its voice, so
+   * a plugin whose ambience is over holds no resources; the next non-zero
+   * weight starts it again from silence.
+   *
+   * NEVER POSITIONAL, by construction. Ambience answers "what does the world
+   * sound like from here", which is rain-under-the-camera, not rain-at-a-cell;
+   * a plugin that wants a sound to come from a PLACE wants `playSfx`.
+   */
+  ambience(url: string, weight: number): void;
+
+  /**
+   * Puts a looping track on the music bus, crossfading from whatever was
+   * there; `null` fades the current track out and leaves the bus empty.
+   *
+   * SINGLE-CLAIMANT, exactly like `setSkyRig` and for the same reason: two
+   * plugins writing the music bus would fight, and the one that happened to
+   * call last each time would win by accident of registration order. The FIRST
+   * plugin to call this owns the bus for the rest of the session; a later call
+   * from any OTHER plugin is refused ONCE with a console.warn and then ignored
+   * silently (once, not once per call — like the sky rig this may be driven
+   * from a loop, and a per-call warning would bury the console). There is no
+   * unclaim while the claimant is mounted; unmounting it frees the bus.
+   */
+  setMusic(url: string | null): void;
+}
+
 export interface MoverPose {
   readonly x: number;
   readonly y: number;
@@ -154,6 +257,17 @@ export interface ClientPluginCtx {
    * children are what the sculpt raycaster treats as terrain.
    */
   readonly layer: Group;
+
+  /**
+   * Everything this plugin may make the player hear — see PluginAudio above
+   * for the whole contract.
+   *
+   * PER-PLUGIN, NOT SHARED: the handle knows which plugin holds it, which is
+   * what lets ambience be keyed by (plugin, url), music be arbitrated between
+   * plugins, and a detach release exactly this plugin's voices and nobody
+   * else's — the same containment the layer has.
+   */
+  readonly audio: PluginAudio;
 
   /** Live world size in cells; 0 until the join snapshot arrives. */
   worldSize(): number;

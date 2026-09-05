@@ -11,6 +11,7 @@ import type { SculptIntent } from '@terrace/shared';
 import { Group, Raycaster, Vector2, type Intersection, type Object3D } from 'three';
 import type { Component } from 'solid-js';
 import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
+import { createAudioEngine } from '../audio/audioEngine.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
@@ -280,6 +281,13 @@ export function createClientPluginHost(
   const canvas = viewport.renderer.domElement;
 
   /**
+   * The client's one audio graph (../audio/audioEngine.ts), owned here because
+   * the host is what hands out `ClientPluginCtx.audio` and what knows when a
+   * plugin has gone away. It builds nothing until `unlock()` succeeds.
+   */
+  const audioEngine = createAudioEngine(viewport);
+
+  /**
    * Canvas-press claims, in plugin registration order; first claim wins. One
    * capture-phase listener serves every plugin: capture runs before the
    * sculpt brush's bubble-phase pointerdown AND before OrbitControls', so a
@@ -317,6 +325,12 @@ export function createClientPluginHost(
   const skyRigModifiers: ((state: SkyRigState) => SkyRigState)[] = [];
 
   const onCanvasPointerDown = (event: PointerEvent): void => {
+    // THE AUTOPLAY UNLOCK, and this listener is the natural place for it: it is
+    // capture-phase on the canvas, so it sees the first press on the world
+    // whoever ends up claiming it — including a press a plugin claims below and
+    // stops propagating. Idempotent and cheap once unlocked; the engine also
+    // installs one-shot window listeners for a keyboard-first player.
+    audioEngine.unlock();
     for (const handler of pressHandlers) {
       let claimed = false;
       try {
@@ -622,8 +636,14 @@ export function createClientPluginHost(
     // plugin's meshes as terrain (input/sculptInput.ts picks terrain only).
     viewport.scene.add(layer);
 
+    // Released through `track` like every other registration, so a plugin's
+    // voices cannot outlive it however it goes away (see MountedPlugin.undo).
+    const audioHandle = audioEngine.forPlugin(plugin.name);
+    track(audioHandle.release);
+
     const ctx: ClientPluginCtx = {
       layer,
+      audio: audioHandle.audio,
       worldSize: () => world.worldSize(),
       terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
       terrainRevisionAt: (x, y) => world.terrainRevisionAt(x, y),
@@ -1068,6 +1088,7 @@ export function createClientPluginHost(
       localIntentHandlers.length = 0;
       handlers.clear();
       skyRigClaimant = null;
+      audioEngine.dispose();
     },
   };
 }
