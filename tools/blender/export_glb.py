@@ -27,8 +27,15 @@ def bake_object_transforms():
     baker would have to undo. Location is kept — an anchor's position IS its
     location. One object at a time: the op applies to the selection, and a
     shared selection risks a double-apply.
+
+    AN ARMATURE-BOUND MESH IS SKIPPED. Its vertices are addressed by a skeleton
+    that this op does not touch, so rewriting them alone would leave the skin
+    rotated or resized away from the bones it is weighted to. A skinned model
+    carries its framing on the armature node instead, which glTF expresses
+    exactly (see import_model.py, scale_scene).
     """
-    for obj in [o for o in bpy.data.objects if o.type == 'MESH']:
+    for obj in [o for o in bpy.data.objects
+                if o.type == 'MESH' and not any(m.type == 'ARMATURE' for m in o.modifiers)]:
         bpy.ops.object.select_all(action='DESELECT')
         bpy.context.view_layer.objects.active = obj
         obj.select_set(True)
@@ -43,6 +50,12 @@ def export_scene_glb(out_path):
     will ship), and NO animation tracks: motion in this game is written in the
     plugin that owns the creature, never read from the file — see
     client/src/render/rigSkin.ts, which consumes a rest pose and nothing else.
+
+    SKINS ARE EXPORTED. A file that still has an armature ships it as a glTF
+    skin, capped at the four influences per vertex three.js reads and written
+    at the armature's REST pose, which is the pose the bake treats as the bind
+    pose. All three settings are stated rather than left to their defaults,
+    because each one is load-bearing for client/src/render/rigSkin.ts.
     """
     bpy.ops.export_scene.gltf(
         filepath=out_path,
@@ -52,6 +65,12 @@ def export_scene_glb(out_path):
         export_texcoords=True,
         export_normals=True,
         export_materials='EXPORT',
+        export_skins=True,
+        # False caps a vertex at four bones, which is what three's skinIndex /
+        # skinWeight attributes carry; True would write influences no renderer
+        # in this project reads.
+        export_all_influences=False,
+        export_rest_position_armature=True,
         # Embed: AUTO packs the images into the .glb's buffer views instead of
         # writing sidecar files nobody will ship.
         export_image_format='AUTO',

@@ -15,9 +15,12 @@
 #   "/mnt/e/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
 #     --background --python tools/blender/import_model.py -- \
 #     E:\in\Wolf.glb E:\out\wolf.glb \
-#     --forward -Y --footprint 0.8 0.8 --origin ground --rigidify \
+#     --forward -Y --footprint 0.8 0.8 --origin ground \
 #     --drop Icosphere \
 #     --rename Wolf=wolf_body --anchor mouth=0.35,0.25,0 --max-texture 512
+#
+# An armature in the source is KEPT and exported as a skin. Pass --rigidify to
+# flatten it into one Empty per bone instead — see docs/model-assets.md.
 #
 # Sources: .glb, .gltf, .fbx, .obj, .blend.
 
@@ -160,7 +163,20 @@ def scale_scene(factor):
     transform bake enforces for rotation. Under a uniform scale that is exactly
     two operations: multiply every mesh's vertices, and multiply every object's
     local translation (a parent-space offset scales with its parent).
+
+    A KEPT ARMATURE TAKES THE OTHER ROUTE, on the roots. Three things address a
+    skinned model's vertices at once — the mesh data, the bone rest transforms
+    in the armature datablock, and the bone-parented Empties a glTF skin's leaf
+    joints arrive as — and scaling them one at a time tore the model apart
+    (measured 2026-09-04: leaf Empties landed 200x out). One scale on the root
+    object moves all three together and costs a node scale in the exported
+    file, which is a transform glTF states exactly and bakeRig reads as one
+    more bone (client/src/render/rigSkin.ts, BoneDescriptor.scale).
     """
+    if armatures():
+        transform_model(Matrix.Scale(factor, 4))
+        return
+
     scale = Matrix.Scale(factor, 4)
     scaled_meshes = set()
     for obj in bpy.data.objects:
@@ -304,10 +320,11 @@ def armatures():
 def build_joint_empties(armature):
     """One Empty per bone, at the bone's head, oriented like the bone.
 
-    THE ONLY ANIMATION MODEL THIS GAME HAS is a node per joint with meshes
-    rigidly under it (client/src/render/rigSkin.ts binds every vertex weight
-    1.0 to exactly one node). An armature is not consumed at all, so it is
-    converted here, once, offline — rather than being half-honoured at runtime.
+    THE RIGID BINDING, which is one of the two the game draws: a node per joint
+    with meshes wholly under it (client/src/render/rigSkin.ts, `bindRigidly`).
+    It is the right binding for a body that HINGES, and it is a choice made
+    here, offline, rather than at runtime — where a smooth-skinned file now
+    keeps its own weights instead.
 
     bone.matrix_local is the bone's rest transform in armature space, with the
     head at its translation, so composing it with the armature's own world
@@ -424,6 +441,10 @@ def separate_by_bone_tag(obj, bone_indices):
 def rigidify():
     """Convert every armature into the Empty-per-joint convention.
 
+    OPT-IN (--rigidify). It costs the artist's weights: a vertex shared across a
+    joint is torn to whichever bone weighed most on it, which opened the seams
+    on a smooth-skinned deer's shoulder and hip (owner, 2026-09-04).
+
     Prints bone -> vertex count, because the only way to see that a split went
     somewhere sane is to see where the vertices landed.
     """
@@ -506,6 +527,15 @@ def _attach_to_joint(piece, empty, name):
 # --------------------------------------------------------- names and anchors
 
 
+def find_bone(name):
+    """The bone of that name in any armature still in the scene, or None."""
+    for armature in armatures():
+        bone = armature.data.bones.get(name)
+        if bone is not None:
+            return bone
+    return None
+
+
 def apply_renames(renames):
     """Rename authored nodes to the names the plugin will ask for.
 
@@ -513,15 +543,28 @@ def apply_renames(renames):
     OAR_PIVOTS, and every species file), so a downloaded model's "Bone.014" has
     to become "oar_port_1" somewhere. Here, where the change is recorded in the
     command line, rather than by hand in Blender.
+
+    OBJECTS FIRST, THEN BONES. Without --rigidify a joint is still a BONE, not
+    an Empty, and a bone is not an object — so the same flag has to reach both
+    or a smooth-skinned import would arrive with the artist's bone names and no
+    way to drive it. Blender renames the matching vertex groups with the bone,
+    so the skin stays bound.
     """
     for old, new in renames:
         obj = bpy.data.objects.get(old)
-        if obj is None:
-            raise SystemExit(f'import_model: --rename {old}={new}: no object named "{old}"')
-        obj.name = new
-        if obj.type == 'MESH':
-            obj.data.name = new
-        print(f'  renamed {old} -> {new}')
+        if obj is not None:
+            obj.name = new
+            if obj.type == 'MESH':
+                obj.data.name = new
+            print(f'  renamed {old} -> {new}')
+            continue
+        bone = find_bone(old)
+        if bone is None:
+            raise SystemExit(
+                f'import_model: --rename {old}={new}: no object or bone named "{old}"'
+            )
+        bone.name = new
+        print(f'  renamed bone {old} -> {new}')
 
 
 def add_anchors(anchors):
@@ -653,13 +696,13 @@ def main():
     # and the runtime would then reject a model the tool called a fit.
     split_by_material()
 
-    if armatures():
-        if not options['rigidify']:
-            raise SystemExit(
-                'import_model: the source has an armature, which this game does not '
-                'consume (pivots are Empties — see docs/model-assets.md). Pass '
-                '--rigidify to convert it, or remove it in the source.'
-            )
+    # AN ARMATURE IS KEPT BY DEFAULT and exported as a glTF skin, because the
+    # runtime bake reads real weights (client/src/render/rigSkin.ts). --rigidify
+    # is the OPT-IN for the other binding: it flattens the skeleton into one
+    # Empty per bone with the geometry split by dominant weight, which is right
+    # for a body that hinges and wrong for one that flexes. See
+    # docs/model-assets.md, "Rigid or smooth".
+    if armatures() and options['rigidify']:
         rigidify()
 
     apply_renames(options['renames'])
