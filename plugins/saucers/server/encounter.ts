@@ -61,10 +61,12 @@
 // fight, on any machine. Iteration over the roster is by index, always.
 
 import {
+  ALTITUDE_TIER_WORLD_UNITS,
   APPROACH_SECONDS,
   APPROACH_SPEED_CELLS_PER_SECOND,
   ARENA_RADIUS_CELLS,
   BREATHE_RADIUS_FRACTION,
+  CLIMB_WORLD_UNITS,
   CRASH_CRATER_DEPTH_BANDS,
   CRASH_CRATER_RADIUS_CELLS,
   CRASH_FIRE_RING_OFFSETS,
@@ -84,6 +86,9 @@ import {
   LASER_BURST_SHOTS,
   LASER_HIT_CHANCE,
   LASER_HIT_DAMAGE,
+  LASER_MISS_OFFSET_MAX_CELLS,
+  LASER_MISS_OFFSET_MIN_CELLS,
+  LASER_MUZZLE_DROP_WORLD_UNITS,
   LASER_SHOT_GAP_SECONDS,
   MAX_FACTIONS_PER_ENCOUNTER,
   MAX_SAUCERS_PER_FACTION,
@@ -143,15 +148,15 @@ const BREATHE_RADIANS_PER_SECOND_MAX = 1.6;
  * less than half the tier spacing — so two saucers whose curves cross in plan
  * are never closer in the air than the difference.
  *
- * A tier is ONE WORLD UNIT — one hull diameter (client/models.ts,
- * SAUCER_DIAMETER_CELLS = 4 cells). A porpoise of a quarter unit leaves
- * neighbours at least half a unit apart at the worst moment — two cells, which
- * a disc a hull wide is assumed thinner than (unverified against the GLBs).
- * The largest roster stacks eight units tall, centred six above the arena's
- * peak; a typical one is under four.
+ * A tier is ONE WORLD UNIT — one hull diameter (SAUCER_DIAMETER_CELLS) — and
+ * a porpoise a quarter of that: ALTITUDE_TIER_WORLD_UNITS and CLIMB_WORLD_UNITS
+ * in ../protocol.ts, on the wire's side because the stack's height is a leg of
+ * the longest shot. A porpoise of a quarter unit leaves neighbours at least
+ * half a unit apart at the worst moment — two cells, which a disc a hull wide
+ * is assumed thinner than (unverified against the GLBs). The largest roster
+ * stacks eight units tall, centred six above the arena's peak; a typical one
+ * is under four.
  */
-const ALTITUDE_TIER_WORLD_UNITS = 1;
-const CLIMB_WORLD_UNITS = 0.25;
 const CLIMB_RADIANS_PER_SECOND_MIN = 0.8;
 const CLIMB_RADIANS_PER_SECOND_MAX = 1.4;
 
@@ -276,10 +281,10 @@ interface Saucer {
  * A bolt in flight, ageing. Whether it will connect was rolled the instant it
  * was fired; the DAMAGE lands when the bolt does — `travelSeconds` after the
  * shot — so the hit on the wire and the bolt on the screen arrive together.
+ * The endpoints are the wire's (LaserBolt): fixed at the shot, the aim point
+ * being where the target was predicted to be at arrival — see `fireAt`.
  */
-interface Bolt {
-  readonly from: number;
-  readonly to: number;
+interface Bolt extends LaserBolt {
   readonly hit: boolean;
   readonly travelSeconds: number;
   age: number;
@@ -657,22 +662,41 @@ function parameterAtDistance(table: Float64Array, distance: number): number {
   return (low + fraction) * ARC_TABLE_STEP_SECONDS;
 }
 
+/** A pose on a fight curve. Scratch, reused — see `curvePoint`. */
+interface CurvePose {
+  x: number;
+  y: number;
+  alt: number;
+  heading: number;
+}
+
+const shooterPose: CurvePose = { x: 0, y: 0, alt: 0, heading: 0 };
+const targetPose: CurvePose = { x: 0, y: 0, alt: 0, heading: 0 };
+
 /**
  * Where a saucer's fight curve is at `t` seconds into the fight, and which way
  * it is going — flown by ARC LENGTH, so the speed on the wire is
  * DOGFIGHT_SPEED exactly wherever the curve is (the header's second revision).
+ * PURE in `t`: the fight aims by evaluating a target's curve at the moment a
+ * bolt will arrive, which is only possible because the path is a function of
+ * the clock and not an integration (file header).
  */
-function placeOnCurve(saucer: Saucer, site: ArenaSite, t: number): void {
+function poseOnCurve(saucer: Saucer, site: ArenaSite, t: number, out: CurvePose): void {
   const u = parameterAtDistance(saucer.arcLength, DOGFIGHT_SPEED_CELLS_PER_SECOND * t);
   curveAt(saucer, u, curvePoint);
-  saucer.x = site.centreX + curvePoint.x;
-  saucer.y = site.centreY + curvePoint.y;
-  saucer.heading = Math.atan2(curvePoint.vy, curvePoint.vx);
-  saucer.speed = DOGFIGHT_SPEED_CELLS_PER_SECOND;
-  saucer.alt =
+  out.x = site.centreX + curvePoint.x;
+  out.y = site.centreY + curvePoint.y;
+  out.heading = Math.atan2(curvePoint.vy, curvePoint.vx);
+  out.alt =
     site.altitude +
     saucer.altitudeOffset +
     CLIMB_WORLD_UNITS * Math.sin(saucer.climbRate * t + saucer.climbPhase);
+}
+
+/** Writes `poseOnCurve` into the saucer's own wire pose. */
+function placeOnCurve(saucer: Saucer, site: ArenaSite, t: number): void {
+  poseOnCurve(saucer, site, t, saucer);
+  saucer.speed = DOGFIGHT_SPEED_CELLS_PER_SECOND;
 }
 
 /**
@@ -867,16 +891,7 @@ function advanceFight(dt: number): void {
     }
     if (target === null) continue;
     shooter.lastTarget = target.id;
-
-    const distance = Math.hypot(target.x - shooter.x, target.y - shooter.y);
-    live.bolts.push({
-      from: shooter.id,
-      to: target.id,
-      hit: live.random() < LASER_HIT_CHANCE,
-      travelSeconds: distance / LASER_BOLT_SPEED_CELLS_PER_SECOND,
-      age: 0,
-      landed: false,
-    });
+    live.bolts.push(fireAt(live, shooter, target));
 
     shooter.shotsLeft--;
     if (shooter.shotsLeft > 0) {
@@ -887,6 +902,87 @@ function advanceFight(dt: number): void {
     shooter.burstTarget = null;
     shooter.fireIn += between(live.random, LASER_BURST_REST_MIN_SECONDS, LASER_BURST_REST_MAX_SECONDS);
   }
+}
+
+/**
+ * The distance a bolt flies between two points, in cells: plan in cells,
+ * altitude in world units brought to cells. The one length the travel time is
+ * taken from.
+ */
+function shotLengthCells(from: CurvePose, to: CurvePose): number {
+  return Math.hypot(to.x - from.x, to.y - from.y, (to.alt - from.alt) / CELL_WORLD_SIZE);
+}
+
+/**
+ * How many times the aim is refined. The arrival time depends on where the
+ * target will be, which depends on the arrival time: a fixed-point iteration,
+ * started from the target's current position. Each pass shrinks the error by
+ * the ratio of the hull's speed to the bolt's (DOGFIGHT_SPEED over
+ * LASER_BOLT_SPEED: 0.4) in the worst case, a target flying straight away.
+ * EIGHT passes take the longest shot in the fight (FIGHT_SPAN_CELLS, ~110)
+ * from a whole-fight error to under 0.1 cell, which is below wire precision;
+ * two — the first draft — left the aim nearly a hull off on a long receding
+ * shot (harness, 2026-09-05).
+ */
+const AIM_PASSES = 8;
+
+/**
+ * One shot: rolls the hit, aims, and returns the bolt with its endpoints
+ * fixed — the shooter's muzzle where it is NOW and, for a hit, the point the
+ * target's curve reaches when the bolt does; for a miss, that point pushed
+ * LASER_MISS_OFFSET to one side, so the bolt visibly passes the hull instead
+ * of flying through it for no effect.
+ *
+ * Poses are read off the curves at the fight clock rather than from the wire
+ * fields, because the fight advances BEFORE the poses are recomputed each tick
+ * (`advanceEncounter`) — the wire fields are a tick stale here — and because
+ * predicting the target needs the curve anyway. Both saucers are in
+ * `dogfight`, so both are on their curves.
+ *
+ * THE DRAW ORDER IS FIXED — hit, then (for a miss only) side and offset — so
+ * the same seed fires the same fight.
+ */
+function fireAt(live: Encounter, shooter: Saucer, target: Saucer): Bolt {
+  const now = live.stageSeconds;
+  poseOnCurve(shooter, live.site, now, shooterPose);
+  shooterPose.alt -= LASER_MUZZLE_DROP_WORLD_UNITS;
+
+  poseOnCurve(target, live.site, now, targetPose);
+  for (let pass = 0; pass < AIM_PASSES; pass++) {
+    const travel = shotLengthCells(shooterPose, targetPose) / LASER_BOLT_SPEED_CELLS_PER_SECOND;
+    poseOnCurve(target, live.site, now + travel, targetPose);
+  }
+
+  const hit = live.random() < LASER_HIT_CHANCE;
+  if (!hit) {
+    const side = live.random() < 0.5 ? -1 : 1;
+    const offset = between(live.random, LASER_MISS_OFFSET_MIN_CELLS, LASER_MISS_OFFSET_MAX_CELLS);
+    // Perpendicular, in plan, to the line of the shot.
+    const dx = targetPose.x - shooterPose.x;
+    const dy = targetPose.y - shooterPose.y;
+    const length = Math.hypot(dx, dy);
+    // Two saucers never share a plan position (distinct rungs and tiers), so
+    // this is belt and suspenders against a NaN direction, not a case.
+    if (length > 0) {
+      targetPose.x += (-dy / length) * side * offset;
+      targetPose.y += (dx / length) * side * offset;
+    }
+  }
+
+  return {
+    from: shooter.id,
+    to: target.id,
+    x: shooterPose.x,
+    y: shooterPose.y,
+    alt: shooterPose.alt,
+    aimX: targetPose.x,
+    aimY: targetPose.y,
+    aimAlt: targetPose.alt,
+    hit,
+    travelSeconds: shotLengthCells(shooterPose, targetPose) / LASER_BOLT_SPEED_CELLS_PER_SECOND,
+    age: 0,
+    landed: false,
+  };
 }
 
 /**
@@ -1107,7 +1203,17 @@ export function encounterSaucers(): readonly SaucerState[] {
 export function encounterBolts(): readonly LaserBolt[] {
   const live = encounter;
   if (live === null) return [];
-  return live.bolts.map((bolt) => ({ from: bolt.from, to: bolt.to, age: bolt.age }));
+  return live.bolts.map((bolt) => ({
+    from: bolt.from,
+    to: bolt.to,
+    x: bolt.x,
+    y: bolt.y,
+    alt: bolt.alt,
+    aimX: bolt.aimX,
+    aimY: bolt.aimY,
+    aimAlt: bolt.aimAlt,
+    age: bolt.age,
+  }));
 }
 
 /**

@@ -54,18 +54,16 @@ import {
 } from 'three';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
-import { CELL_WORLD_SIZE, SAUCER_VARIANT_COUNT } from '../protocol.ts';
+import {
+  CELL_WORLD_SIZE,
+  SAUCER_DIAMETER_CELLS,
+  SAUCER_MUZZLE_DROP_FRACTION,
+  SAUCER_VARIANT_COUNT,
+} from '../protocol.ts';
 import { factionColour } from './factions.ts';
 
-/**
- * The authored outer diameter, in cells.
- *
- * FOUR CELLS, from the brief. A war boat's silhouette fits one MODEL unit; a
- * saucer is four cells, which is big enough to read as a vehicle from an orbit
- * camera at the altitude these fly at, and small enough that two of them fit
- * inside the arena's weave without overlapping.
- */
-export const SAUCER_DIAMETER_CELLS = 4;
+/** The authored outer diameter, in cells — the protocol's, since the server launches bolts from the hull. */
+export { SAUCER_DIAMETER_CELLS };
 
 /**
  * The same diameter in MODEL units, which is what every geometry constant below
@@ -325,8 +323,6 @@ const RING_TUBE_FRACTION = 0.06;
 /** Lights: a second, slightly larger torus — the strip that flashes. */
 const RING_LIGHTS_RADIUS_FRACTION = 0.72;
 const RING_LIGHTS_TUBE_FRACTION = 0.035;
-/** How far under the hull's centre the muzzle sits, as a fraction of radius. */
-const MUZZLE_DROP_FRACTION = 0.18;
 
 /**
  * Segment counts for the fallback's primitives.
@@ -485,7 +481,7 @@ function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): Sauce
 
   const muzzle = new Object3D();
   muzzle.name = MUZZLE_NODE;
-  muzzle.position.set(0, -radius * MUZZLE_DROP_FRACTION, 0);
+  muzzle.position.set(0, -radius * SAUCER_MUZZLE_DROP_FRACTION, 0);
   const top = new Object3D();
   top.name = TOP_NODE;
   top.position.set(0, radius * HULL_FLATTEN * 2 + radius * DOME_RADIUS_FRACTION, 0);

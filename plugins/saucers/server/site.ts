@@ -53,14 +53,21 @@ const ARENA_SITE_ATTEMPTS = 24;
 const CRASH_SITE_ATTEMPTS_PER_CELL = 8;
 
 /**
- * How far around the arena centre must also be unlocked land, in cells.
+ * How far around the arena centre must also be unlocked ground, in cells.
  *
- * THE ARENA'S OWN RADIUS: the pair fly a circle of that radius about the centre,
- * so requiring the ground under the circle to be unlocked land is the same
- * statement as "the fight is over land the player can see". Without it the
- * centre could sit one cell inside a beach and half the dogfight would be flown
- * over fog, where the broadcast's fog-of-war filter hides it — the player would
- * watch two saucers vanish and reappear.
+ * THE ARENA'S OWN RADIUS: the saucers fly a circle of that radius about the
+ * centre, so requiring the ground under the circle to be unlocked is the same
+ * statement as "the fight is where the player can see". Without it the centre
+ * could sit one cell inside the revealed world and half the dogfight would be
+ * flown over fog, where the broadcast's fog-of-war filter hides it — the
+ * player would watch the saucers vanish and reappear.
+ *
+ * UNLOCKED, NOT DRY: the rim may be over water. The fight is in the air, and
+ * the one thing that needs dry ground — the wreck — is found cell by cell
+ * inside the arena (`findCrashCells`, its first rule). The first draft asked
+ * for dry land on the rim too, and on the island worlds the owner plays a
+ * 96-cell-wide disc of unbroken land is rare: a 512-cell world found a site
+ * on one roll in five at best, one in a hundred at worst (probe, 2026-09-05).
  */
 const ARENA_CLEARANCE_CELLS = ARENA_RADIUS_CELLS;
 
@@ -115,19 +122,23 @@ export interface ArenaSite {
   readonly altitude: number;
 }
 
-/** Unlocked, dry ground — the one terrain question this file asks. */
-function isOpenLand(world: SiteWorld, x: number, y: number): boolean {
+/** Inside the world and revealed — where a player can see. */
+function isRevealed(world: SiteWorld, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
-  if (!world.isCellUnlocked(x, y)) return false;
-  return world.heightAt(x, y) > SEA_LEVEL;
+  return world.isCellUnlocked(x, y);
 }
 
-/** Is the whole circle the pair will fly over open land? */
+/** Revealed, dry ground — where a wreck may go in. */
+function isOpenLand(world: SiteWorld, x: number, y: number): boolean {
+  return isRevealed(world, x, y) && world.heightAt(x, y) > SEA_LEVEL;
+}
+
+/** Is the whole circle the saucers will fly over revealed ground? */
 function hasArenaClearance(world: SiteWorld, x: number, y: number): boolean {
   for (const [dx, dy] of CLEARANCE_BEARINGS) {
     const sx = Math.round(x + dx * ARENA_CLEARANCE_CELLS);
     const sy = Math.round(y + dy * ARENA_CLEARANCE_CELLS);
-    if (!isOpenLand(world, sx, sy)) return false;
+    if (!isRevealed(world, sx, sy)) return false;
   }
   return true;
 }

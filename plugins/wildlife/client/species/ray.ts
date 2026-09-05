@@ -6,8 +6,8 @@
 // The body used to be built here out of a swept hull, extruded fins and a
 // tapered tube (../whaleHull.ts, ./bodyKit.ts). It is now ../assets/ray.glb,
 // authored by tools/blender/build_ray.py and loaded through ./assetSpecies.ts.
-// Those two helpers are NOT orphaned — ibex, bison, eel and angelfish still
-// build on bodyKit, the whale bodies on whaleHull, and quadruped.ts on both.
+// Those two helpers are NOT orphaned — ibex and bison still build on
+// bodyKit, the whale bodies on whaleHull, and quadruped.ts on bodyKit.
 //
 // WHAT DID NOT CHANGE, and must not:
 //   * RAY_ENVELOPE. It is the placement contract (../placement.ts's
