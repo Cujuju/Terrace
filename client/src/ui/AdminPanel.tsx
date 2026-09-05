@@ -73,41 +73,32 @@ function hueFor(name: string): number {
  */
 const UNDECLARED_ARCHETYPE = 'other';
 
-interface PluginGroup {
-  readonly plugin: string;
+interface ArchetypeGroup {
+  readonly archetype: string;
   readonly actions: WorldPluginAction[];
 }
 
-interface ArchetypeGroup {
-  readonly archetype: string;
-  readonly plugins: PluginGroup[];
-}
-
 /**
- * The declared actions, grouped by ARCHETYPE and then by plugin.
+ * The declared actions, grouped by ARCHETYPE — ONE HEADING, ONE GRID.
  *
- * TWO LEVELS, because the plugin is still the thing that answers for a card
- * (a receipt names it, and the Worlds panel toggles it) while the archetype is
- * what the eye is looking for — "the weather ones". Flattening the plugin away
- * would leave two cards reading "Bring rain" and "Bring snow" with nothing
- * saying which plugin to go and disable.
+ * The plugin is NOT a second heading (owner, 2026-09-04). It was, briefly, and
+ * it read as a stack of one- and two-card lists: a plugin usually declares a
+ * single action, so a sub-heading per plugin put "cyclone" directly above
+ * "Spawn a cyclone" and broke the archetype's grid into rows of one. The
+ * label already says which event this is, and the card's tooltip still names
+ * the plugin for the operator who needs to go and disable it.
  *
- * First-appearance order at both levels, i.e. the server's load order, so the
- * panel is stable across openings; `sort` is stable in ES2019 and later, so
- * moving the undeclared group last leaves the rest of that order intact.
+ * First-appearance order, i.e. the server's load order, so the panel is stable
+ * across openings; `sort` is stable in ES2019 and later, so moving the
+ * undeclared group last leaves the rest of that order intact.
  */
 function groupByArchetype(actions: readonly WorldPluginAction[]): ArchetypeGroup[] {
   const groups: ArchetypeGroup[] = [];
   for (const action of actions) {
     const archetype = action.archetype ?? UNDECLARED_ARCHETYPE;
-    let group = groups.find((candidate) => candidate.archetype === archetype);
-    if (group === undefined) {
-      group = { archetype, plugins: [] };
-      groups.push(group);
-    }
-    const byPlugin = group.plugins.find((candidate) => candidate.plugin === action.plugin);
-    if (byPlugin === undefined) group.plugins.push({ plugin: action.plugin, actions: [action] });
-    else byPlugin.actions.push(action);
+    const group = groups.find((candidate) => candidate.archetype === archetype);
+    if (group === undefined) groups.push({ archetype, actions: [action] });
+    else group.actions.push(action);
   }
   // "Other" last: a heading that means "unstated" must never lead the panel.
   return groups.sort(
@@ -169,6 +160,26 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
   window.addEventListener('keydown', onKeyDown);
   onCleanup(() => window.removeEventListener('keydown', onKeyDown));
 
+  // CLICKING OFF THE SHEET CLOSES IT (owner, 2026-09-04), the same dismissal
+  // Escape gives, for the hand rather than the keyboard.
+  //
+  // BOTH ENDS OF THE CLICK MUST LAND ON THE BACKDROP. Testing only the click
+  // would close the panel when a press that began inside the sheet — dragging
+  // to select the description text of a card, or releasing a fraction outside
+  // a button — happened to lift over the backdrop, which reads as the panel
+  // vanishing on its own. `event.target === event.currentTarget` is what
+  // distinguishes the backdrop from everything drawn on top of it; the sheet
+  // is a child, so any press within it fails that test and is remembered as
+  // such here.
+  let pressedBackdrop = false;
+  const onBackdropPointerDown = (event: PointerEvent & { currentTarget: HTMLDivElement }): void => {
+    pressedBackdrop = event.target === event.currentTarget;
+  };
+  const onBackdropClick = (event: MouseEvent & { currentTarget: HTMLDivElement }): void => {
+    if (pressedBackdrop && event.target === event.currentTarget) setAdminPanelOpen(false);
+    pressedBackdrop = false;
+  };
+
   const groups = createMemo(() => groupByArchetype(worldPlugins()?.actions ?? []));
 
   /** Arms the action and gets out of the way; the ground press does the rest. */
@@ -178,7 +189,13 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
   };
 
   return (
-    <div class="restore-overlay" role="dialog" aria-label="Admin: world events">
+    <div
+      class="restore-overlay"
+      role="dialog"
+      aria-label="Admin: world events"
+      onPointerDown={onBackdropPointerDown}
+      onClick={onBackdropClick}
+    >
       <div class="restore-sheet admin-sheet">
         {/* HEADER: an eyebrow naming the mode, the title, and the close. */}
         <header class="admin-header">
@@ -283,12 +300,13 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
           <p class="admin-empty">No installed plugin declares an action.</p>
         </Show>
 
-        {/* THE CARDS, grouped by ARCHETYPE and then by plugin. The hue comes
-            from the archetype's name (hueFor) rather than the plugin's, so all
-            of the weather shares one accent and the eye finds "the weather
-            ones" without reading — which is the whole point of the grouping.
-            Every card is one button: the whole surface fires, not a small
-            control inside it. */}
+        {/* THE CARDS: one heading per archetype, then one grid of every event
+            of that kind, whichever plugin declared it. The hue comes from the
+            archetype's name (hueFor) rather than the plugin's, so all of the
+            weather shares one accent and the eye finds "the weather ones"
+            without reading — which is the whole point of the grouping. Every
+            card is one button: the whole surface fires, not a small control
+            inside it. */}
         <Show when={listedForLiveWorld()}>
           <div class="admin-groups">
             <For each={groups()}>
@@ -301,32 +319,25 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
                     <span class="admin-group-swatch" aria-hidden="true" />
                     {group.archetype}
                   </h3>
-                  <For each={group.plugins}>
-                    {(byPlugin) => (
-                      <div class="admin-plugin">
-                        {/* The plugin still named, quieter than its archetype:
-                            it is what a receipt cites and what the Worlds panel
-                            toggles, so a card must never be anonymous. */}
-                        <h4 class="admin-plugin-name">{byPlugin.plugin}</h4>
-                        <div class="admin-cards">
-                          <For each={byPlugin.actions}>
-                            {(action) => (
-                              <button
-                                type="button"
-                                class="admin-card"
-                                title={`${action.description} Click, then click the ground.`}
-                                onClick={() => arm(action)}
-                              >
-                                <span class="admin-card-label">{action.label}</span>
-                                <span class="admin-card-description">{action.description}</span>
-                                <span class="admin-card-go" aria-hidden="true">→</span>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    )}
-                  </For>
+                  <div class="admin-cards">
+                    <For each={group.actions}>
+                      {(action) => (
+                        // The plugin lives in the tooltip rather than in a
+                        // heading: still there for the operator who has to go
+                        // and disable it, without splitting the grid.
+                        <button
+                          type="button"
+                          class="admin-card"
+                          title={`${action.plugin} — ${action.description} Click, then click the ground.`}
+                          onClick={() => arm(action)}
+                        >
+                          <span class="admin-card-label">{action.label}</span>
+                          <span class="admin-card-description">{action.description}</span>
+                          <span class="admin-card-go" aria-hidden="true">→</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
                 </section>
               )}
             </For>
