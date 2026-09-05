@@ -14,7 +14,7 @@ phase-1 kit open). The first pass lands that adapter alongside its model.
 | # | Model | Wire species | Procedural source (to replace) | Status |
 |---|-------|--------------|--------------------------------|--------|
 | 1 | Shallow fish | `fish` | plugins/wildlife/client/species/fish.ts | merged 36c9e41 (2026-09-04); in-game eyes-on pending |
-| 2 | Shark | `shark` | plugins/wildlife/client/species/shark.ts | todo |
+| 2 | Shark | `shark` | plugins/wildlife/client/species/shark.ts | merged (2026-09-05); brief `briefs/shark-glb-pass2.md`, one asset list `species/assets.ts` |
 | 3 | Ray | `ray` | plugins/wildlife/client/species/ray.ts | todo |
 | 4 | Eel | `eel` | plugins/wildlife/client/species/eel.ts (+ .fish-shots/eel.py concept) | todo |
 | 5 | Angelfish | `angelfish` | plugins/wildlife/client/species/angelfish.ts (+ .fish-shots/angelfish.py concept) | todo |
