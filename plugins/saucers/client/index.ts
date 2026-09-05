@@ -92,6 +92,19 @@ const LIGHTS_FLASHES_PER_SECOND = 2;
 const LIGHTS_FLASH_FRACTION = 0.4;
 
 /**
+ * THE MUZZLE FLASH (owner, 2026-09-04: "brighter like they are in the
+ * artifact"): the ring glows up to a multiple of its rest value on every shot
+ * and decays back — the hangar's own numbers (.saucer-hangar/
+ * hangar.template.html: ×2.5, decaying at 8/s). Evaluated from the youngest
+ * bolt's age rather than integrated, so a client that joins mid-burst shows
+ * the right glow and nothing has to remember a shot.
+ *
+ * A MULTIPLE OF THE MODEL'S REST VALUE, for LIGHTS_FLASH_FRACTION's reason.
+ */
+const MUZZLE_FLASH_GAIN = 2.5;
+const MUZZLE_FLASH_DECAY_PER_SECOND = 8;
+
+/**
  * How far the hull banks into a turn, in radians at full rate, and what "full
  * rate" is in radians of heading change per second.
  *
@@ -271,6 +284,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     if (view.model.ring !== null) {
       view.model.ring.rotation.y = animationSeconds * RING_RADIANS_PER_SECOND;
     }
+    if (view.model.ringGlow !== null) {
+      view.model.ringGlow.emissiveIntensity = view.model.ringBaseEmissive * muzzleGlow(id);
+    }
     if (view.model.lights !== null) {
       // Swung around the MODEL's own rest value — never around a number this
       // file chose. See LIGHTS_FLASH_FRACTION and SaucerModel.lightsBaseEmissive.
@@ -284,6 +300,17 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
   drawBolts(sampled);
   drawCrashes(ctx);
+}
+
+/**
+ * How far above rest the ring of saucer `id` glows right now: the hangar's
+ * flash-and-decay, keyed to its youngest bolt in flight. One when it has none.
+ */
+function muzzleGlow(id: number): number {
+  let youngest = Infinity;
+  for (const bolt of bolts) if (bolt.from === id && bolt.age < youngest) youngest = bolt.age;
+  if (youngest === Infinity) return 1;
+  return 1 + (MUZZLE_FLASH_GAIN - 1) * Math.exp(-MUZZLE_FLASH_DECAY_PER_SECOND * youngest);
 }
 
 /** Every bolt the payload still lists, between the hulls it belongs to. */

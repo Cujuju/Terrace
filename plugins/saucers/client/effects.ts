@@ -86,6 +86,20 @@ const CYLINDER_AXIS = new Vector3(0, 1, 0);
  */
 const BOLT_RADIUS_CELLS = 0.12;
 
+/**
+ * How far above 1.0 a bolt's colour is driven, so it reads as LIGHT under the
+ * scene's ACES tone mapping rather than as a tinted streak.
+ *
+ * THREE (owner, 2026-09-04: "make the laser bursts brighter like they are in
+ * the artifact"). The hangar draws the same additive material at 1.0 against a
+ * black floor, where anything additive reads as bright; in the world the bolt
+ * is drawn over daylit ground and sky, and at 1.0 it washes out. Three times
+ * the faction colour pushes the streak's centre through ACES to near white
+ * while the hue survives in its falloff — a hot bolt of THAT colour, which is
+ * what the hangar shows.
+ */
+const BOLT_INTENSITY = 3;
+
 /** Sides on the bolt cylinder. SIX: it is a lit streak seen edge-on at speed. */
 const BOLT_RADIAL_SEGMENTS = 6;
 
@@ -194,7 +208,7 @@ export function createLaserPool(): LaserPool {
         scratchQuaternion.setFromUnitVectors(CYLINDER_AXIS, scratchDirection),
       );
       const material = bolt.mesh.material as MeshBasicMaterial;
-      material.color.set(colour);
+      material.color.set(colour).multiplyScalar(BOLT_INTENSITY);
       // Linear fade over the bolt's whole life, so a bolt is brightest at the
       // muzzle-flash instant and gone exactly when the server stops sending it.
       material.opacity = 1 - Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));

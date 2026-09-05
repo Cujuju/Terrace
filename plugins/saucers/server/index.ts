@@ -96,15 +96,14 @@ import { ADMIN_SEARCH_RADIUS_CELLS } from './site.ts';
  * anything scales them.
  *
  * TWO ANCHORS AND A LERP, which is WorldApi.difficulty's own instruction and the
- * shape mana established. TWENTY MINUTES on the gentlest world and FOUR on the
- * harshest: at difficulty 1 a dogfight is something a player might see once in a
- * long session and talk about afterwards, and at 100 it is a recurring hazard
- * that keeps re-scarring their land. Both ends are deliberately rarer than the
- * tornado's (10 min / 90 s), because this event leaves a PERMANENT crater and
- * that one leaves nothing.
+ * shape mana established. FIVE MINUTES on the gentlest world and THREE on the
+ * harshest (owner, 2026-09-04: "spawn dog fights every three to five minutes"
+ * — the first cut's twenty-to-four made the event too rare to tune by eye).
+ * Difficulty still decides where in the owner's band a world sits, and the band
+ * is narrow because the owner named it, not the curve.
  */
-export const ENCOUNTER_MEAN_INTERVAL_AT_EASIEST_SECONDS = 1200;
-export const ENCOUNTER_MEAN_INTERVAL_AT_HARDEST_SECONDS = 240;
+export const ENCOUNTER_MEAN_INTERVAL_AT_EASIEST_SECONDS = 300;
+export const ENCOUNTER_MEAN_INTERVAL_AT_HARDEST_SECONDS = 180;
 
 /**
  * A FLY-BY's arrival, on its own roll and the same curve. ASSUMPTION (owner
@@ -367,6 +366,8 @@ export const plugin: TerracePlugin = {
    * behind the world-admin key). Implementing the brief's literal message would
    * have let any connected client crater someone else's land on demand.
    */
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'visitors',
   actions: [
     {
       key: 'dogfight',

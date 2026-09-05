@@ -255,6 +255,12 @@ interface Saucer {
   shotsLeft: number;
   /** Id of the saucer the current burst is aimed at, or null between bursts. */
   burstTarget: number | null;
+  /**
+   * Id of the saucer the LAST burst was aimed at, kept through the rest — what
+   * "is shooting at us" means to `nearestEnemy` between bursts, which is most
+   * of a fight. Null until the first burst.
+   */
+  lastTarget: number | null;
   /** Set on entering `resolve`. */
   resolution: Resolution;
   /** Seconds elapsed inside `resolve`. */
@@ -487,6 +493,7 @@ function begin(
         fireIn: next() * LASER_BURST_REST_MIN_SECONDS,
         shotsLeft: LASER_BURST_SHOTS,
         burstTarget: null,
+        lastTarget: null,
         resolution: 'exit',
         resolveSeconds: 0,
         crashCell: null,
@@ -773,12 +780,32 @@ function isFighting(saucer: Saucer): boolean {
 /**
  * The enemy this saucer should shoot at: the NEAREST one still fighting, ties
  * to the earlier index. Null when no enemy is left, which is the fight ending.
+ *
+ * PREFER AN ENEMY THAT IS NOT ALREADY SHOOTING AT US (owner, 2026-09-04: "if A
+ * is shooting at B, prefer that B is shooting at a different saucer. Not
+ * necessarily firing back at A"). Two saucers trading fire nose to nose read
+ * as a duel inside the fight; a chain — A on B, B on C — reads as a melee. It
+ * is a PREFERENCE and not a rule: when every enemy left is on us, the nearest
+ * of them will do, which is also the whole answer when only one is left.
  */
 function nearestEnemy(live: Encounter, shooter: Saucer): Saucer | null {
+  const unengaged = nearestEnemyWhere(
+    live,
+    shooter,
+    (other) => (other.burstTarget ?? other.lastTarget) !== shooter.id,
+  );
+  return unengaged ?? nearestEnemyWhere(live, shooter, () => true);
+}
+
+function nearestEnemyWhere(
+  live: Encounter,
+  shooter: Saucer,
+  accept: (other: Saucer) => boolean,
+): Saucer | null {
   let best: Saucer | null = null;
   let bestDistance = Infinity;
   for (const other of live.saucers) {
-    if (other.variant === shooter.variant || !isFighting(other)) continue;
+    if (other.variant === shooter.variant || !isFighting(other) || !accept(other)) continue;
     const dx = other.x - shooter.x;
     const dy = other.y - shooter.y;
     const distance = dx * dx + dy * dy;
@@ -848,6 +875,7 @@ function advanceFight(dt: number): void {
       shooter.burstTarget = target === null ? null : target.id;
     }
     if (target === null) continue;
+    shooter.lastTarget = target.id;
 
     const distance = Math.hypot(target.x - shooter.x, target.y - shooter.y);
     live.bolts.push({
