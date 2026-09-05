@@ -74,6 +74,7 @@ import {
   BOAT_WOUNDS_PER_SECOND,
   COASTAL_MIN_WATER_CELLS,
   COASTAL_SEARCH_RADIUS_CELLS,
+  HARBOUR_INSHORE_BAND_WORLD_UNITS,
   KRAKEN_ROUT_WOUNDS,
   KRAKEN_SINKS_BOAT_EVERY_SECONDS,
   KRAKEN_WOUND_HEAL_PER_SECOND,
@@ -465,6 +466,45 @@ const HOME_BERTH_CLEARANCE_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
 const MOORINGS_SURVEYED_PER_VILLAGE = 2 * BOATS_PER_VILLAGE;
 
 /**
+ * How far out from a village's own shoreline a war boat's berth must lie, in
+ * cells — the floor of the OUTER harbour zone.
+ *
+ * DERIVED, NEVER TYPED, from three terms that each answer a separate question:
+ *
+ *   * `cellsAcross(HARBOUR_INSHORE_BAND_WORLD_UNITS)` — the inshore strip the
+ *     skiffs own outright. See that constant in ../protocol.ts for the defect
+ *     this partitions and why the band is 1.5 world units.
+ *   * `BOAT_HULL_LENGTH_CELLS / 2` — a berthed boat lies on its face-home
+ *     heading, so half its hull sticks back TOWARD the shore from the cell the
+ *     survey picked. Without this term the strip is clear of berth CENTRES and
+ *     not of hulls.
+ *   * `BOAT_PERSONAL_SPACE_CELLS` — one margin, because the two plugins measure
+ *     "nearest water" slightly differently and are entitled to: `isSailable`
+ *     here admits raw height 0, structures' confirmed water needs band <= -1,
+ *     and the client's drawn contour can differ from both again. The margin is
+ *     what keeps a cell of disagreement from being a collision.
+ *
+ * Today that comes to 6 + 1.8 + 2 = 9.8 cells. It is a REAL distance and not a
+ * cell count, so it is not rounded here; only the disc radius below ceils it.
+ */
+const BERTH_STANDOFF_CELLS =
+  cellsAcross(HARBOUR_INSHORE_BAND_WORLD_UNITS) +
+  BOAT_HULL_LENGTH_CELLS / 2 +
+  BOAT_PERSONAL_SPACE_CELLS;
+
+/**
+ * How far the BERTH half of a survey walks, in cells.
+ *
+ * WIDER THAN THE COASTAL DISC, and it has to be: the coastal verdict looks
+ * COASTAL_SEARCH_RADIUS_CELLS (16) out, but a village whose shore is already 12
+ * cells away wants berths past 12 + 9.8 = 22 — outside that disc entirely, so
+ * on the old radius such a village would find no berth and fall back every
+ * time. The coastal/launch verdict itself is NOT widened (see `surveyedLaunch`):
+ * what makes a settlement a fishing village is unchanged by this.
+ */
+const BERTH_SEARCH_RADIUS_CELLS = COASTAL_SEARCH_RADIUS_CELLS + Math.ceil(BERTH_STANDOFF_CELLS);
+
+/**
  * How far the goal may drift before the route planned to it is stale, in
  * cells — two personal spaces (one whole hull). A kraken wandering inside
  * that does not change which way round a headland the fleet goes, so it
@@ -700,7 +740,7 @@ export function resurveyAllShipyards(): void {
 }
 
 /**
- * Throws away the cached survey of every village whose coastal disc contains a
+ * Throws away the cached survey of every village whose survey disc contains a
  * changed cell — the terrain half of `isSailable` moving.
  *
  * The diff is reduced to ITS BOUNDING BOX first, so the cost is O(diff) +
@@ -724,10 +764,12 @@ export function resurveyShipyardsNear(diff: readonly { readonly x: number; reado
   for (const [key, village] of villages) {
     const shipyard = shipyards.get(key);
     if (shipyard === undefined) continue;
-    if (village.x + COASTAL_SEARCH_RADIUS_CELLS < minX) continue;
-    if (village.x - COASTAL_SEARCH_RADIUS_CELLS > maxX) continue;
-    if (village.y + COASTAL_SEARCH_RADIUS_CELLS < minY) continue;
-    if (village.y - COASTAL_SEARCH_RADIUS_CELLS > maxY) continue;
+    // BERTH_SEARCH_RADIUS_CELLS and not the coastal radius: the survey's berth
+    // half walks the wider disc, so a sculpt out there changes its answer too.
+    if (village.x + BERTH_SEARCH_RADIUS_CELLS < minX) continue;
+    if (village.x - BERTH_SEARCH_RADIUS_CELLS > maxX) continue;
+    if (village.y + BERTH_SEARCH_RADIUS_CELLS < minY) continue;
+    if (village.y - BERTH_SEARCH_RADIUS_CELLS > maxY) continue;
     shipyard.surveyedSeconds = null;
   }
 }
@@ -871,6 +913,31 @@ const COASTAL_DISC: ReadonlyArray<readonly [number, number]> = (() => {
 })();
 
 /**
+ * Offsets of the BERTH search disc, nearest-first — the same tight-disc rule as
+ * COASTAL_DISC (`dx² + dy² < r·(r−1)`, centre excluded, sorted by distance) at
+ * BERTH_SEARCH_RADIUS_CELLS instead of COASTAL_SEARCH_RADIUS_CELLS.
+ *
+ * A SECOND DISC rather than a widened one, because the two halves of a survey
+ * answer different questions: the coastal verdict must stay the set of
+ * settlements structures gives a harbour to, and only the berth walk needs to
+ * reach past the standoff. COST: about 2.6x COASTAL_DISC's cells (radius 26
+ * against 16), walked on the survey cadence only — at most once per
+ * COASTAL_RESURVEY_SECONDS per village, never per boat per tick.
+ */
+const BERTH_DISC: ReadonlyArray<readonly [number, number]> = (() => {
+  const threshold = BERTH_SEARCH_RADIUS_CELLS * (BERTH_SEARCH_RADIUS_CELLS - 1);
+  const offsets: Array<readonly [number, number]> = [];
+  for (let dy = -BERTH_SEARCH_RADIUS_CELLS; dy <= BERTH_SEARCH_RADIUS_CELLS; dy++) {
+    for (let dx = -BERTH_SEARCH_RADIUS_CELLS; dx <= BERTH_SEARCH_RADIUS_CELLS; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      if (dx * dx + dy * dy < threshold) offsets.push([dx, dy]);
+    }
+  }
+  offsets.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
+  return offsets;
+})();
+
+/**
  * The water cell a village launches from, or null if it is INLAND.
  *
  * Coastal means what structures means by it: at least COASTAL_MIN_WATER_CELLS
@@ -993,13 +1060,15 @@ function tallyFleetHomes(): void {
  * disc (the same defect issue #276 closed for villages: a 748-cell scan per
  * peacetime boat per tick).
  *
- * ONE WALK FOR BOTH HALVES, nearest-first over COASTAL_DISC like `launchCell`:
- * the launch half keeps that function's bar (nearest sailable cell, valid once
- * COASTAL_MIN_WATER_CELLS of them exist) and the mooring half takes every
- * hull-legal cell met in the same walk, on the face-home heading — the arrival
- * heading a boat comes home on — that lies HOME_BERTH_CLEARANCE_CELLS from
- * every berth already taken, until BOATS_PER_VILLAGE are found or the disc is
- * exhausted. The gate differs (centre-water versus hull), because the launch
+ * TWO WALKS, both nearest-first. The launch half walks COASTAL_DISC and keeps
+ * `launchCell`'s bar (nearest sailable cell, valid once COASTAL_MIN_WATER_CELLS
+ * of them exist). The mooring half walks the wider BERTH_DISC and takes every
+ * hull-legal cell BEYOND BERTH_STANDOFF_CELLS from the shore, on the face-home
+ * heading — the arrival heading a boat comes home on — that lies
+ * HOME_BERTH_CLEARANCE_CELLS from every berth already taken, until
+ * MOORINGS_SURVEYED_PER_VILLAGE are found or the disc is exhausted. The
+ * standoff is what keeps war boats out of the skiffs' inshore strip; see
+ * BERTH_STANDOFF_CELLS. The gate differs (centre-water versus hull), because the launch
  * cell is centre-water a hull length from a beach the planner refuses to
  * certify, so routing to it always fails — measured: 20-second coming-about
  * tours for a 3-cell trip home, and an orbit that never lands. The eroded
@@ -1019,8 +1088,11 @@ function surveyedLaunch(
     if (shipyard.surveyedSeconds < COASTAL_RESURVEY_SECONDS) return shipyard.launch;
   }
   const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
+
+  // THE LAUNCH / COASTAL HALF, on COASTAL_DISC exactly as before: what makes a
+  // settlement a fishing village is not changed by where its boats berth.
   let launch: KrakenTarget | null = null;
-  const moorings: KrakenTarget[] = [];
+  let shoreCells = 0;
   let found = 0;
   for (const [dx, dy] of COASTAL_DISC) {
     const x = village.x + dx;
@@ -1028,25 +1100,51 @@ function surveyedLaunch(
     if (!isSailable(world, x, y)) continue;
     found++;
     // COASTAL_DISC is sorted nearest-first, so the first hit is the closest.
-    if (launch === null) launch = { x, y };
-    if (moorings.length < MOORINGS_SURVEYED_PER_VILLAGE) {
-      const faceHome = Math.atan2(village.y - y, village.x - x);
-      const clearOfTaken = moorings.every((berth) => {
-        const dxb = x - berth.x;
-        const dyb = y - berth.y;
-        return dxb * dxb + dyb * dyb >= HOME_BERTH_CLEARANCE_CELLS * HOME_BERTH_CLEARANCE_CELLS;
-      });
-      if (clearOfTaken && isManoeuvrablePose(world, eroded, x, y, faceHome)) {
-        moorings.push({ x, y });
-      }
+    if (launch === null) {
+      launch = { x, y };
+      shoreCells = Math.sqrt(dx * dx + dy * dy);
     }
-    // Stop as soon as NEITHER half can change its answer: the launch bar is
-    // met and the berths are full. An inland village walks the whole disc,
-    // but only on survey ticks — never per boat per tick.
-    if (found >= COASTAL_MIN_WATER_CELLS && moorings.length >= MOORINGS_SURVEYED_PER_VILLAGE) break;
+    // The remaining cells cannot change this half's answer.
+    if (found >= COASTAL_MIN_WATER_CELLS) break;
   }
+
+  // THE BERTH HALF, on the wider BERTH_DISC, zoned off this village's own
+  // shoreline: a berth must lie at least BERTH_STANDOFF_CELLS beyond the
+  // nearest water, which is the strip the skiffs orbit in. `shoreCells` is 0
+  // for a village with no water in its coastal disc at all — there is no shore
+  // to measure from, so the standoff is taken from the village itself.
+  const moorings: KrakenTarget[] = [];
+  const inshore: KrakenTarget[] = [];
+  const berthFloorCells = shoreCells + BERTH_STANDOFF_CELLS;
+  for (const [dx, dy] of BERTH_DISC) {
+    const x = village.x + dx;
+    const y = village.y + dy;
+    if (!isSailable(world, x, y)) continue;
+    const beyondStandoff = Math.sqrt(dx * dx + dy * dy) >= berthFloorCells;
+    const zone = beyondStandoff ? moorings : inshore;
+    if (zone.length >= MOORINGS_SURVEYED_PER_VILLAGE) continue;
+    const faceHome = Math.atan2(village.y - y, village.x - x);
+    const clearOfTaken = zone.every((berth) => {
+      const dxb = x - berth.x;
+      const dyb = y - berth.y;
+      return dxb * dxb + dyb * dyb >= HOME_BERTH_CLEARANCE_CELLS * HOME_BERTH_CLEARANCE_CELLS;
+    });
+    if (clearOfTaken && isManoeuvrablePose(world, eroded, x, y, faceHome)) {
+      zone.push({ x, y });
+    }
+    // Stop once the outer zone is full. The inshore list is only ever the
+    // fallback below, so it never keeps the walk going on its own.
+    if (moorings.length >= MOORINGS_SURVEYED_PER_VILLAGE) break;
+  }
+
+  // THE FALLBACK, named and bounded: a POCKET BAY — a village whose whole
+  // BERTH_DISC holds no hull-legal, manoeuvrable cell beyond the standoff —
+  // keeps berthing at the nearest legal cells, as it did before this rule. It
+  // must, or its boats have nowhere to launch from and nowhere to return to,
+  // which is a worse defect than crowding. THIS IS THE ONE PLACE war boats and
+  // skiffs can still share water, and it fires only under that condition.
   shipyard.launch = found >= COASTAL_MIN_WATER_CELLS ? launch : null;
-  shipyard.moorings = moorings;
+  shipyard.moorings = moorings.length > 0 ? moorings : inshore;
   shipyard.surveyedSeconds = 0;
   return shipyard.launch;
 }
