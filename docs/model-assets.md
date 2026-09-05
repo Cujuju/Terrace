@@ -51,12 +51,11 @@ offline and exits non-zero, which is how a reviewer knows before load time.
 - **Meshes** are the drawable parts. ONE material each: `bakeRig` draws one
   surface per material and cannot bake a mesh that carries several, so the
   loader rejects a multi-material mesh instead of showing the wrong one.
-- **Pivots are Empties**, never armatures. A joint is a named Empty; the meshes
-  that move with it are its children, positioned in its space. That is the only
-  animation model this game has: `client/src/render/rigSkin.ts` bakes the tree
-  into one skinned mesh by binding every vertex, weight 1.0, to the node it was
-  authored under. A file containing an armature or a `SkinnedMesh` is rejected
-  — `import_model.py --rigidify` converts one offline instead.
+- **Joints are Empties OR bones** — see "Rigid or smooth" below. A hand-built
+  asset names an Empty per joint and hangs the meshes that move with it
+  underneath, positioned in its space; a downloaded, smooth-skinned one keeps
+  its armature and its weights. `client/src/render/rigSkin.ts` bakes either into
+  one skinned mesh, and every node it walks becomes a bone whichever kind it is.
 - **Anchors are Empties too**: a named point a plugin measures a constant from,
   rather than guessing it. The boat's are `waterline` (sea-surface height),
   `deck_top` (deck plane) and `fire_top` (masthead).
@@ -87,10 +86,8 @@ in `client/src/render/materialMaps.ts`; nothing else keeps its own.
   fails the load naming the file, the mesh and the channel — never a
   silently untextured part. Unsampled uv sets and `tangent` are dropped at
   bake time (three derives the tangent frame in-shader).
-- **Armatures are rejected**, at load and again at bake. Skinning is the
-  baker's own job: it binds every vertex rigidly to the node it was
-  authored under, so a file's own skeleton has to be converted first —
-  `tools/blender/import_model.py --rigidify`.
+- **Armatures are accepted** (since 2026-09-04), and their weights are kept.
+  See "Rigid or smooth" below for which binding a file should ship.
 - **Merge rule.** Parts that differ ONLY in `color` merge into one draw
   (their colour is folded into vertex colours). Anything else that changes
   shading splits them: a different texture in any slot, the same texture on
@@ -132,11 +129,13 @@ passed INTO Blender must be Windows paths (`wslpath -w`):
    - `--origin {ground,centre}`: the family origins above.
    - `--drop NAME`: delete a stray mesh the author left in the file (a pivot
      ball, a collision proxy). It would otherwise set the bounding box.
-   - `--rigidify`: convert an armature to the Empty-per-joint convention — an
-     Empty per bone at the bone's head, each skinned mesh split by DOMINANT
-     vertex weight into one part per bone, parented under it, armature deleted.
-     Nothing the bake could use is lost, because the bake binds rigidly anyway.
-     Prints bone → vertex count. Without the flag an armature is a hard error.
+   - `--rigidify` (OPTIONAL): convert an armature to the Empty-per-joint
+     convention — an Empty per bone at the bone's head, each skinned mesh split
+     by DOMINANT vertex weight into one part per bone, parented under it,
+     armature deleted. Prints bone → vertex count. WITHOUT the flag the armature
+     is KEPT and exported as a glTF skin, which is the default and usually the
+     right one; see "Rigid or smooth". `--rename` reaches bones as well as
+     objects, so a joint can be renamed either way.
    - `--rename OLD=NEW` and `--anchor NAME=x,y,z` (both repeatable): give a
      joint the name the plugin asks for, and add measuring points. Anchor
      coordinates are in the OUTPUT frame.
@@ -151,7 +150,13 @@ passed INTO Blender must be Windows paths (`wslpath -w`):
    min-Y, per-mesh tri count / material / uv layers, each material's filled slots,
    each image's size and colour space, every Empty's position, and whether any
    armature or skinned mesh survived. With a footprint it exits non-zero on a
-   model that does not fit.
+   model that does not fit. Two things to know when reading it: it measures a
+   mesh's own box transformed corner by corner, which is what three's `Box3`
+   does for a plain Mesh but is CONSERVATIVE for a `SkinnedMesh` (three poses
+   every vertex there instead); and Blender's glTF importer builds an
+   80-triangle `Icosphere` as the display shape for zero-length bones, so a
+   skinned file re-imports with a stray sphere that is not in the file and will
+   fail the fit check on its own.
 
 3. **`render_glb.py <in.glb> <out_dir> [--views iso,side,front,top] [--ground|--water]`**
    — neutral studio PNGs, so the model can be judged by eye without opening
@@ -232,21 +237,22 @@ The envelope constants stay DECLARED in the species .ts, because
 `placement.ts` fits the creature's water column from them. The asset is
 checked against them; it never supplies them.
 
-### A DOWNLOADED species (`--rigidify`)
+### A DOWNLOADED species (a converted armature)
 
 A file built by a script in this repo arrives at the convention already. A file
 downloaded from an asset site is somebody else's armature put through
-`import_model.py --rigidify`, and a converted armature is not yet a set of
-hinges these animations can drive. `SpeciesAssetSpec.rigidified: true` says so,
-and the adapter then does two things at install — once, never per bake:
+`import_model.py`, and somebody else's skeleton is not yet a set of hinges these
+animations can drive — whether it kept its bones or `--rigidify` flattened them.
+`SpeciesAssetSpec.rigidified: true` says so, and the adapter then does two
+things at install — once, never per bake:
 
 - **Synthesises `rig`.** A converted armature has the bones the artist drew and
   nothing spare, so the whole-body node is wrapped around the file's scene
   rather than demanded of the import (which keeps `import_model.py` generic).
   `rig` is still listed in `joints`; it must NOT exist in the file.
-- **Gives every other declared joint a model-axis pivot.** `--rigidify` puts an
-  Empty at each bone's head carrying the BONE's rest rotation, and the
-  animations here drive MODEL axes (`rotation.z` is fore-and-aft because a model
+- **Gives every other declared joint a model-axis pivot.** A joint rests at the
+  orientation the ARTIST drew the bone at — the bone itself, or the Empty
+  `--rigidify` puts at its head — and the animations here drive MODEL axes (`rotation.z` is fore-and-aft because a model
   faces +X). Worse, `joint.rotation.z = swing` assigns an EULER, so three
   rebuilds the whole quaternion and any rest rotation the node had is gone —
   which is a model that comes apart on its first posed frame. The pivot is a
@@ -254,12 +260,53 @@ and the adapter then does two things at install — once, never per bake:
   unmoved. The cost: a driven joint inherits from `rig` only, not from the bones
   above it.
 
-`SpeciesAssetSpec.adopt` handles the third hazard: a source rig may hold bones
-that are not in the limb chain at all — IK targets, commonly at the armature
-ROOT — and `--rigidify`'s dominant-weight split honestly hands one of those the
-geometry that weighed most on it. Naming the node and the joint that must carry
-it moves it, unmoved, into the chain. Without it the deer's legs swing and its
-hooves stay standing on the ground.
+`SpeciesAssetSpec.adopt` handles the third hazard: a source rig may weight
+geometry onto bones that are not in the limb chain at all — IK targets, commonly
+at the armature ROOT. Naming the bone and the joint that must carry it moves it,
+unmoved, into the chain, and every vertex weighted to it follows. Without it the
+deer's legs swing and its hooves stay standing on the ground.
+
+Neither facility moves a vertex: both re-express a node's transform in a new
+parent's frame and leave its world transform alone, which is the transform
+`bakeRig` reads a weighted vertex's rest position from.
+
+### Rigid or smooth
+
+Two bindings, one bake. `bakeRig` produces the same thing either way — one
+skinned surface per material, four influences per vertex — so the choice is
+about the ART, not about the renderer, and nothing downstream has to know which
+it got.
+
+**Rigid** (weight 1.0 to one node). The binding for a body that HINGES: boats,
+hand-built creatures, mechs, armour, anything whose parts rotate about a joint
+without flesh stretching across it. It is what every part authored as a plain
+Mesh under a Group gets, automatically, and it reproduces the old scene-graph
+transform exactly. Use `import_model.py --rigidify` to force a downloaded
+armature into it.
+
+**Smooth** (the artist's own weights). The default for a downloaded model, and
+the binding for a body that FLEXES: any animal somebody skinned properly. The
+armature is exported as a glTF skin and `bakeRig` CPU-skins the vertices into
+rig space at the file's bind pose, keeps all four influences, and re-indexes
+them onto the bones it collected.
+
+**Choose smooth unless the model has no weights worth keeping.** `--rigidify`
+tears a vertex that was shared across a joint to whichever bone weighed most on
+it, which is invisible at rest and opens seams under animation — measured on the
+Quaternius deer, 3 457 of whose 4 316 vertices are shared, whose shoulder and hip
+split open mid-stride (`.model-import/shots/wildlife/grazer-stride.png` against
+`grazer-stride-smooth.png`). Rigidify is right only where the source's weights
+are already one-bone-per-vertex, or where a hard-surface model was skinned
+merely because its authoring tool had no other way to parent parts.
+
+**What a smooth file costs.** One node scale on the armature (the fit scale
+rides the root object, since bone rests, mesh data and bone-parented Empties
+cannot be scaled separately without tearing the three apart), and a bounding box
+that is measured tighter — three's `Box3.setFromObject` calls
+`SkinnedMesh.computeBoundingBox`, which poses every vertex, where a rigidified
+model is measured as the union of each rotated part's own box. The deer's
+envelope shrank from 0.505 x 0.464 x 0.175 to 0.477 x 0.464 x 0.158 on the same
+geometry for exactly that reason.
 
 Ownership: an asset-sourced species allocates nothing from `SpeciesModelPool`.
 The .glb's buffers belong to the `RigAsset` and are freed by

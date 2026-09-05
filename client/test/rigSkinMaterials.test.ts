@@ -3,7 +3,7 @@
 // The differential pose test lives in rigSkin.test.ts; this file guards the
 // three ways a textured asset could bake into something that still LOOKS
 // plausible: parts merged that must not be, a uv set stripped that a map needs,
-// and an armature consumed at its bind pose.
+// and an armature's own weights thrown away at its bind pose.
 //
 // Headless: real Three.js objects, no WebGLRenderer.
 
@@ -23,6 +23,12 @@ import { bakeRig } from '../src/render/rigSkin.ts';
 
 /** The uv channel an occlusion map on glTF `texCoord: 1` reads. */
 const SECOND_UV_CHANNEL = 1;
+
+/** Bones per vertex in three's skin attributes, as rigSkin.ts writes them. */
+const SKIN_INFLUENCES = 4;
+
+/** A weight split no dominant-weight rigidify could reproduce: the seam case. */
+const SHOULDER_SHARE = 0.6;
 /** Components per uv, for the second set copied below. */
 const UV_COMPONENTS = 2;
 
@@ -93,14 +99,37 @@ describe('bakeRig with PBR materials', () => {
     expect(() => bakeRig(root)).toThrow(/uv channel 1.*no uv1 attribute/s);
   });
 
-  it('refuses an armature, naming the rigidify tool', () => {
+  it('keeps an armature-bound part\u2019s own four weights, remapped onto the baked bones', () => {
+    // The seam fix (2026-09-04): a vertex shared 60/40 across a joint must bake
+    // as 60/40, on the two bones the bake collected, not wholly onto one.
     const geometry = new BoxGeometry(1, 1, 1);
-    const bone = new Bone();
+    const vertices = geometry.getAttribute('position').count;
+    const indices = new Uint16Array(vertices * SKIN_INFLUENCES);
+    const weights = new Float32Array(vertices * SKIN_INFLUENCES);
+    for (let v = 0; v < vertices; v++) {
+      indices[v * SKIN_INFLUENCES + 1] = 1;
+      weights[v * SKIN_INFLUENCES] = SHOULDER_SHARE;
+      weights[v * SKIN_INFLUENCES + 1] = 1 - SHOULDER_SHARE;
+    }
+    geometry.setAttribute('skinIndex', new BufferAttribute(indices, SKIN_INFLUENCES));
+    geometry.setAttribute('skinWeight', new BufferAttribute(weights, SKIN_INFLUENCES));
+
+    const upper = new Bone();
+    const lower = new Bone();
+    upper.add(lower);
     const skinned = new SkinnedMesh(geometry, new MeshStandardMaterial());
     const root = new Group();
-    root.add(bone);
+    root.add(upper);
     root.add(skinned);
-    skinned.bind(new Skeleton([bone]));
-    expect(() => bakeRig(root)).toThrow(/armature.*--rigidify/s);
+    skinned.bind(new Skeleton([upper, lower]));
+
+    const blueprint = bakeRig(root);
+    const baked = blueprint.surfaces[0]!.geometry;
+    // Depth-first from the root: root 0, upper 1, lower 2, skinned 3.
+    expect(baked.getAttribute('skinIndex').getX(0)).toBe(1);
+    expect(baked.getAttribute('skinIndex').getY(0)).toBe(2);
+    expect(baked.getAttribute('skinWeight').getX(0)).toBeCloseTo(SHOULDER_SHARE);
+    expect(baked.getAttribute('skinWeight').getY(0)).toBeCloseTo(1 - SHOULDER_SHARE);
+    blueprint.dispose();
   });
 });

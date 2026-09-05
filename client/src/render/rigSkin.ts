@@ -19,13 +19,25 @@
 //
 // SKINNING IS THE CONTRACT FIX, and it is what a character is drawn as
 // everywhere outside this file: one mesh, one skeleton, the hierarchy expressed
-// as bones instead of as scene-graph nodes. Every vertex here is bound RIGIDLY
-// — weight 1.0 to exactly one bone, the node it was authored under — which is
-// not an approximation of smooth skinning but the correct binding for bodies
-// that hinge rather than flex (the industry does the same for hard-surface
-// characters: mechs, armour, anything jointed). Rigid weights reproduce the old
-// scene-graph transform EXACTLY: both evaluate the same product of ancestor
-// matrices, one on the CPU per node, the other on the GPU per vertex.
+// as bones instead of as scene-graph nodes.
+//
+// TWO BINDINGS, ONE BAKE. A part authored as a plain Mesh under a Group is
+// bound RIGIDLY — weight 1.0 to exactly one bone, the node it was authored
+// under — which is not an approximation of smooth skinning but the correct
+// binding for bodies that hinge rather than flex (the industry does the same
+// for hard-surface characters: mechs, armour, anything jointed). Rigid weights
+// reproduce the old scene-graph transform EXACTLY: both evaluate the same
+// product of ancestor matrices, one on the CPU per node, the other on the GPU
+// per vertex.
+//
+// A part that arrives as a SkinnedMesh — a downloaded animal whose artist
+// painted real weights across every joint — keeps those weights instead. Its
+// vertices are CPU-skinned into rig space at the file's own bind pose (see
+// bakeSkinnedPiece) and its four influences are re-indexed onto the bones this
+// bake collected. Rigid binding is then the 1/0/0/0 special case of the same
+// data, so one shader draws both and no caller has to know which it got. This
+// exists because splitting a smooth-skinned deer by dominant weight tore its
+// shoulder and hip open mid-stride (owner, 2026-09-04).
 //
 // WHAT THE CALLER KEEPS. The authoring style does not change. A model file
 // still builds its Groups and Meshes exactly as before, notes which nodes it
@@ -53,6 +65,7 @@ import {
   BufferAttribute,
   Color,
   Group,
+  Matrix3,
   Matrix4,
   Mesh,
   Skeleton,
@@ -68,7 +81,6 @@ import {
 // Shipped inside the `three` package itself (see its package.json "exports"),
 // not a separate dependency.
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { RIGIDIFY_INSTRUCTION } from './rigAsset.ts';
 import {
   mapIdentitySignature,
   texturesOf,
@@ -78,6 +90,9 @@ import {
 
 /** Bones per vertex in three's skin attributes. Rigid binding uses only the first. */
 const SKIN_INFLUENCES = 4;
+
+/** Floats in a 4x4 matrix, in three's column-major element order. */
+const MATRIX_ELEMENTS = 16;
 
 /** RGB channels per vertex in a `color` attribute. */
 const COLOR_COMPONENTS = 3;
@@ -291,12 +306,19 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
     const joint = indexOf.get(node)!;
 
     const piece = node.geometry.clone();
-    // Into rig space: positions by the rest world matrix, normals by its normal
-    // matrix — applyMatrix4 does both, which is what keeps a smooth-shaded whale
-    // smooth and a rotated cone lit from the right side.
-    piece.applyMatrix4(node.matrixWorld);
+    const skinned = asSkinnedMesh(node);
+    let reach: number;
+    if (skinned === null) {
+      // Into rig space: positions by the rest world matrix, normals by its normal
+      // matrix — applyMatrix4 does both, which is what keeps a smooth-shaded whale
+      // smooth and a rotated cone lit from the right side.
+      piece.applyMatrix4(node.matrixWorld);
+      bindRigidly(piece, joint);
+      reach = poseInvariantReach(node);
+    } else {
+      reach = bakeSkinnedPiece(piece, skinned, indexOf);
+    }
     paintVertexColor(piece, material);
-    bindRigidly(piece, joint);
     stripUnbakeableAttributes(piece, material);
 
     // Indexing joins the signature, because `mergeGeometries` refuses a mix and
@@ -311,7 +333,7 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
     if (group === undefined) grouped.set(signature, { material, pieces: [piece] });
     else group.pieces.push(piece);
 
-    boundingRadius = Math.max(boundingRadius, poseInvariantReach(node));
+    boundingRadius = Math.max(boundingRadius, reach);
   }
 
   const surfaces: BakedSurface[] = [];
@@ -417,20 +439,15 @@ export function instantiateRig(blueprint: RigBlueprint): RigInstance {
   return { root, joints, meshes };
 }
 
-/** A Mesh with a single material and geometry — the only shape a part can take. */
+/**
+ * A Mesh with a single material and geometry — the only shape a part can take.
+ *
+ * A SkinnedMesh passes: it IS a Mesh (three sets both flags), and the bake
+ * takes its own weights rather than inventing one bone for it — see
+ * `bakeSkinnedPiece`. A Bone is not a Mesh and simply draws nothing, which is
+ * what it is for.
+ */
 function isDrawableMesh(node: Object3D): node is Mesh & { material: Material } {
-  // AN ARMATURE IS NOT BAKEABLE, and used to bake SILENTLY: a SkinnedMesh's
-  // geometry is stored at the bind pose, so it merged into a surface posed
-  // mid-T-pose with its joints discarded — the animation then drove bones this
-  // bake had invented from the node tree, which is not the tree the asset was
-  // weighted against. Rejected rather than approximated; the message names the
-  // tool that converts one (see RIGIDIFY_INSTRUCTION).
-  const skinned = node as Object3D & { isBone?: boolean; isSkinnedMesh?: boolean };
-  if (skinned.isBone === true || skinned.isSkinnedMesh === true) {
-    throw new Error(
-      `bakeRig: node "${node.name || '(unnamed)'}" is part of an armature — ${RIGIDIFY_INSTRUCTION}`,
-    );
-  }
   if (!(node as Mesh).isMesh) return false;
   const material = (node as Mesh).material;
   if (Array.isArray(material)) {
@@ -479,6 +496,168 @@ function bindRigidly(geometry: BufferGeometry, joint: number): void {
   }
   geometry.setAttribute('skinIndex', new BufferAttribute(indices, SKIN_INFLUENCES));
   geometry.setAttribute('skinWeight', new BufferAttribute(weights, SKIN_INFLUENCES));
+}
+
+/** The node, narrowed, if it arrived as an armature-bound mesh. */
+function asSkinnedMesh(node: Object3D): SkinnedMesh | null {
+  // three's own flag rather than `instanceof`, so a node that arrived through a
+  // second copy of three is still recognised.
+  return (node as Object3D & { isSkinnedMesh?: boolean }).isSkinnedMesh === true
+    ? (node as SkinnedMesh)
+    : null;
+}
+
+/**
+ * How far a per-vertex weight set may miss summing to 1 before it is rescaled.
+ *
+ * A thousandth. glTF stores weights as float32 or as normalised bytes/shorts,
+ * and both round trips leave dust an order of magnitude under this; anything
+ * larger is an exporter that did not normalise, and drawing it unnormalised
+ * shrinks or swells the surface by exactly the shortfall.
+ */
+const SKIN_WEIGHT_SUM_TOLERANCE = 1e-3;
+
+/**
+ * Bakes an armature-bound part into rig space, KEEPING the artist's weights.
+ *
+ * WHY CPU-SKINNING AND NOT `applyMatrix4`. A SkinnedMesh's positions are stored
+ * at the BIND pose, in the skin's own space, and the transform that puts them
+ * where the file draws them is per VERTEX, not per node. So each vertex goes
+ * through the same product three's shader would apply at rest — mirroring
+ * `SkinnedMesh.applyBoneTransform` (three 0.185, client/node_modules/three/src/
+ * objects/SkinnedMesh.js:319-366) and `<skinning_vertex>` exactly:
+ *
+ *     v_rig = matrixWorld . bindMatrixInverse . ( SUM wi . Bi.matrixWorld .
+ *             boneInverses[i] ) . bindMatrix . v
+ *
+ * The leading `matrixWorld . bindMatrixInverse` is what the scene graph applies
+ * around the shader's result; under three's default AttachedBindMode the two
+ * cancel (SkinnedMesh.updateMatrixWorld re-derives bindMatrixInverse from
+ * matrixWorld), and writing the product out means this is right whichever bind
+ * mode the file's loader chose. THE FILE'S REST POSE IS NOT ASSUMED TO BE ITS
+ * BIND POSE: `Bi.matrixWorld` is read as it stands, so a file posed away from
+ * its bind pose bakes at the pose it is in.
+ *
+ * AFTER THIS, REST IS BIND BY CONSTRUCTION. The bake's own inverse for a bone
+ * is `node.matrixWorld.invert()` (see bakeRig), the exact inverse of the matrix
+ * folded in here, so the two cancel at rest for a weighted vertex exactly as
+ * they do for a rigid one — one rule for both kinds of part.
+ *
+ * Returns the part's pose-invariant reach; see the loop below.
+ */
+function bakeSkinnedPiece(
+  piece: BufferGeometry,
+  mesh: SkinnedMesh,
+  indexOf: ReadonlyMap<Object3D, number>,
+): number {
+  const skeleton = mesh.skeleton;
+  const bones = skeleton.bones;
+
+  // THE REMAP. The file's skinIndex addresses `skeleton.bones`; the baked
+  // attributes must address the bake's own depth-first node list. A bone that
+  // is not in the baked tree cannot happen for the unparented scene bakeRig
+  // demands — every bone is a descendant of the root — so this throw is a
+  // guard, not a path, and it names the mesh because that is what a reader
+  // would go looking at.
+  const remap = new Uint16Array(bones.length);
+  const boneOffsets: Matrix4[] = [];
+  const boneReach: number[] = [];
+  const bonePositions: Vector3[] = [];
+  for (let b = 0; b < bones.length; b++) {
+    const bone = bones[b]!;
+    const index = indexOf.get(bone);
+    if (index === undefined) {
+      throw new Error(
+        `bakeRig: skinned mesh "${mesh.name || '(unnamed)'}" is weighted to bone ` +
+          `"${bone.name || '(unnamed)'}", which is not part of the baked tree`,
+      );
+    }
+    remap[b] = index;
+    boneOffsets.push(new Matrix4().multiplyMatrices(bone.matrixWorld, skeleton.boneInverses[b]!));
+    boneReach.push(chainReach(bone).reach);
+    bonePositions.push(new Vector3().setFromMatrixPosition(bone.matrixWorld));
+  }
+
+  const pre = mesh.bindMatrix;
+  const post = new Matrix4().multiplyMatrices(mesh.matrixWorld, mesh.bindMatrixInverse);
+
+  const positions = piece.getAttribute('position');
+  const normals = piece.getAttribute('normal');
+  const sourceIndex = piece.getAttribute('skinIndex');
+  const sourceWeight = piece.getAttribute('skinWeight');
+  if (sourceIndex === undefined || sourceWeight === undefined) {
+    throw new Error(
+      `bakeRig: skinned mesh "${mesh.name || '(unnamed)'}" carries no skinIndex/skinWeight`,
+    );
+  }
+
+  const count = positions.count;
+  const bakedIndices = new Uint16Array(count * SKIN_INFLUENCES);
+  const bakedWeights = new Float32Array(count * SKIN_INFLUENCES);
+  const blended = new Matrix4();
+  const normalMatrix = new Matrix3();
+  const vertex = new Vector3();
+  const weights = new Float32Array(SKIN_INFLUENCES);
+  let reach = 0;
+
+  for (let v = 0; v < count; v++) {
+    let sum = 0;
+    for (let i = 0; i < SKIN_INFLUENCES; i++) {
+      const weight = sourceWeight.getComponent(v, i);
+      weights[i] = weight;
+      sum += weight;
+    }
+    if (sum <= 0) {
+      // An unweighted vertex would collapse onto the origin under a zero
+      // matrix. The first influence takes all of it, which is the rigid
+      // binding — the same fallback import_model.py makes offline.
+      weights[0] = RIGID_BIND_WEIGHT;
+      sum = RIGID_BIND_WEIGHT;
+    }
+    if (Math.abs(sum - 1) > SKIN_WEIGHT_SUM_TOLERANCE) {
+      for (let i = 0; i < SKIN_INFLUENCES; i++) weights[i]! /= sum;
+    }
+
+    blended.elements.fill(0);
+    for (let i = 0; i < SKIN_INFLUENCES; i++) {
+      const weight = weights[i]!;
+      const bone = sourceIndex.getComponent(v, i);
+      bakedIndices[v * SKIN_INFLUENCES + i] = remap[bone]!;
+      bakedWeights[v * SKIN_INFLUENCES + i] = weight;
+      if (weight === 0) continue;
+      const offset = boneOffsets[bone]!.elements;
+      for (let e = 0; e < MATRIX_ELEMENTS; e++) blended.elements[e]! += offset[e]! * weight;
+    }
+    blended.premultiply(post).multiply(pre);
+
+    vertex.fromBufferAttribute(positions, v).applyMatrix4(blended);
+    positions.setXYZ(v, vertex.x, vertex.y, vertex.z);
+    if (normals !== undefined) {
+      normalMatrix.getNormalMatrix(blended);
+      vertex.fromBufferAttribute(normals, v).applyMatrix3(normalMatrix).normalize();
+      normals.setXYZ(v, vertex.x, vertex.y, vertex.z);
+    }
+
+    // POSE-INVARIANT REACH FOR A WEIGHTED VERTEX. Its posed position is a convex
+    // blend of what each influencing bone would put it at, so it never leaves
+    // the largest of those bones' reach balls: how far that bone's origin can
+    // travel (chainReach) plus how far the vertex sits from it at rest. The max
+    // over influences holds for every pose, which is what lets frustum culling
+    // stay on — the same property poseInvariantReach gives a rigid part.
+    vertex.fromBufferAttribute(positions, v);
+    for (let i = 0; i < SKIN_INFLUENCES; i++) {
+      if (weights[i] === 0) continue;
+      const bone = sourceIndex.getComponent(v, i);
+      const candidate = boneReach[bone]! + vertex.distanceTo(bonePositions[bone]!);
+      if (candidate > reach) reach = candidate;
+    }
+  }
+
+  positions.needsUpdate = true;
+  if (normals !== undefined) normals.needsUpdate = true;
+  piece.setAttribute('skinIndex', new BufferAttribute(bakedIndices, SKIN_INFLUENCES));
+  piece.setAttribute('skinWeight', new BufferAttribute(bakedWeights, SKIN_INFLUENCES));
+  return reach;
 }
 
 /**
@@ -569,6 +748,27 @@ function vertexColoured(material: Material): Material {
 }
 
 /**
+ * How far a node's ORIGIN can travel from the rig's origin over every pose, and
+ * the scale its children's own offsets are stretched by.
+ *
+ * Root-first, because a link's translation is stretched by the scales ABOVE it
+ * and those are the ones already walked past when the chain is read the other
+ * way round. Scale is folded in as the largest component of each link's scale:
+ * a non-uniform scale can only stretch a vector by its largest axis.
+ */
+function chainReach(node: Object3D): { reach: number; scale: number } {
+  const chain: Object3D[] = [];
+  for (let link: Object3D | null = node; link !== null; link = link.parent) chain.unshift(link);
+  let reach = 0;
+  let scale = 1;
+  for (const link of chain) {
+    reach += link.position.length() * scale;
+    scale *= Math.max(link.scale.x, link.scale.y, link.scale.z);
+  }
+  return { reach, scale };
+}
+
+/**
  * The furthest any vertex of this part can ever be from the rig's origin, over
  * EVERY pose the skeleton can take.
  *
@@ -583,19 +783,7 @@ function vertexColoured(material: Material): Material {
  * non-uniform scale can only stretch a vector by its largest axis.
  */
 function poseInvariantReach(mesh: Mesh): number {
-  // Root-first, because a link's translation is stretched by the scales ABOVE
-  // it and those are the ones already walked past when the chain is read the
-  // other way round.
-  const chain: Object3D[] = [];
-  for (let node: Object3D | null = mesh; node !== null; node = node.parent) chain.unshift(node);
-
-  let reach = 0;
-  let scale = 1;
-  for (const node of chain) {
-    reach += node.position.length() * scale;
-    scale *= Math.max(node.scale.x, node.scale.y, node.scale.z);
-  }
-
+  const { reach, scale } = chainReach(mesh);
   const positions = mesh.geometry.getAttribute('position');
   let furthest = 0;
   for (let v = 0; v < positions.count; v++) {
