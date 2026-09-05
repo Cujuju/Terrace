@@ -168,7 +168,9 @@ let kit: SkiffKit | null = null;
  * parse-from-bytes path cannot drift apart.
  */
 export async function preloadSkiffModels(url: string): Promise<void> {
-  installSkiffKit(await loadRigAsset(url));
+  // Lamps-only (null environment): wooden hulls and canvas have no sky to
+  // mirror — see ClientPluginCtx.loadRigAsset for the choice.
+  installSkiffKit(await loadRigAsset(url, null));
 }
 
 /**
