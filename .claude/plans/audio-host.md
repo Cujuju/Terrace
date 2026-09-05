@@ -1,6 +1,6 @@
 # Audio host — background music and sound effects as a plugin capability
 
-Status: APPROVED by owner 2026-09-04 ("proceed with the audio host"; Fable orchestrates
+Status: PHASE 1 + 2a SHIPPED (main eda5419, b468d7c, 2026-09-04); comment-trim pending; phase 2b plan next. APPROVED by owner 2026-09-04 ("proceed with the audio host"; Fable orchestrates
 and reviews, Opus agents implement, one worktree per arc, fresh agent per phase).
 Owner-facing open decisions are listed in §7; the phase-1 agent proceeds under the
 stated defaults.
