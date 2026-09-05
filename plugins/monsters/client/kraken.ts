@@ -2,7 +2,8 @@
 // a squat head and running down to fin-flanked tail at the waterline, ringed by
 // ten swept limbs that drape over the water and trail away under it.
 //
-// Same rules and same tools as the Cthulhu builder (./geometry.ts): no textures,
+// Same rules and same tools as the Cthulhu builder (./geometry.ts): textures and
+// external assets are allowed since 2026-09-04 and this builder simply uses neither;
 // no per-model lights, no Math.random anywhere in the geometry, shared resources
 // freed exactly once. ./kraken-anatomy.ts owns every number. This file owns the
 // CREATURE — which masses there are, how the ring is rigged, and how it moves.
