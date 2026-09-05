@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
 """Generate Terrace's PLACEHOLDER audio assets (audio-host plan §2.5).
 
-These are not sound design. They exist so the asset PATH is real — a plugin
-imports a file with `?url`, Vite fingerprints and serves it, the host fetches
-and decodes it, and a voice plays it — which is the part that must be right
-before an authored asset can simply be dropped in its place.
+Not sound design: they exist so the asset PATH is real end to end before an
+authored asset is dropped in. Reproducible from this file alone — fixed seed,
+no external tool. WAV because this box has no ffmpeg or sox.
 
-WHY A SCRIPT AND NOT COMMITTED-BY-HAND BINARIES. The two WAVs below are
-reproducible from this file alone: fixed seed, no randomness outside numpy's
-seeded generator, and no external tool. This box has python3 + numpy and
-neither ffmpeg nor sox, which is also why the format is WAV rather than the
-OGG/Opus a real asset should be (plan §5, named residual).
-
-Run from the repo root:
-
-    python3 scripts/audio-placeholders.py
+Run from the repo root:  python3 scripts/audio-placeholders.py
 """
 
 from __future__ import annotations
@@ -27,56 +18,40 @@ import numpy as np
 
 # --- Format ------------------------------------------------------------------
 
-# 22.05 kHz mono 16-bit. Half of CD rate: a WAV is uncompressed, these are
-# placeholders that get committed, and nothing here has content above ~10 kHz
-# worth paying double the bytes for. Mono because both sounds are positioned or
-# spread by the audio graph, never by the file.
+# Half CD rate: uncompressed, committed, and nothing here goes above ~10 kHz.
+# Mono because the graph positions these, never the file.
 SAMPLE_RATE_HZ = 22050
 SAMPLE_WIDTH_BYTES = 2
 CHANNELS = 1
 
-# Full-scale for signed 16-bit PCM, and the headroom every render is scaled to.
 INT16_PEAK = 32767
-# -3 dBFS of headroom: the host's own gains multiply on top of these, and a
-# file that already touches full scale clips the moment anything is layered.
+# -3 dBFS: the host's gains multiply on top, so full scale would clip on layering.
 PEAK_HEADROOM = 0.7
 
-# One deterministic generator for the whole script — the seed is what makes two
-# runs byte-identical, so a regenerated placeholder is not a spurious diff.
+# One seeded generator, so a regenerated placeholder is not a spurious diff.
 RANDOM_SEED = 20260904
 rng = np.random.default_rng(RANDOM_SEED)
 
 # --- Thunder -----------------------------------------------------------------
 
-# Under the 3 s cap the plan sets. A real thunderclap rolls for longer; this one
-# only has to be long enough to read as a clap rather than a click.
+# Under the plan's 3 s cap; long enough to read as a clap, not a click.
 THUNDER_SECONDS = 2.4
-# Exponential decay time constant. At 0.55 s the tail is ~1% of the peak by
-# 2.4 s, so the sound has ended before the file does and the end is silent —
-# which is what stops the one-shot from clicking when its buffer runs out.
+# Tail is ~1% of peak by 2.4 s, so the file ends silent and the voice cannot click.
 THUNDER_DECAY_TAU_SECONDS = 0.55
-# A one-pole low-pass coefficient, applied twice (12 dB/octave). 0.06 puts the
-# corner near 220 Hz at this sample rate, which is the band a distant clap keeps
-# once the air has taken the crack off it.
+# One-pole, applied twice (12 dB/oct); corner near 220 Hz — a distant clap's band.
 THUNDER_LOWPASS_ALPHA = 0.06
 THUNDER_LOWPASS_PASSES = 2
-# The initial crack: a short burst of un-filtered noise mixed over the rumble,
-# so the sound starts with an edge instead of swelling.
+# Unfiltered noise over the rumble, so it starts with an edge instead of swelling.
 THUNDER_CRACK_SECONDS = 0.05
 THUNDER_CRACK_LEVEL = 0.35
 
 # --- Rain loop ---------------------------------------------------------------
 
-# Under the 8 s cap. Long enough that the ear does not hear the loop point come
-# round; short enough to stay a small committed file.
+# Under the 8 s cap; long enough that the loop point is not heard coming round.
 RAIN_SECONDS = 6.0
-# Rain is high-passed noise: a one-pole high-pass with this coefficient puts the
-# corner near 1.6 kHz, which is where the hiss of rain lives once the low
-# rumble of everything else is out of it.
+# Corner near 1.6 kHz, where the hiss of rain lives.
 RAIN_HIGHPASS_ALPHA = 0.6
-# How much of the tail is crossfaded into the head to make the loop seamless.
-# 0.5 s of equal-power crossfade: long enough to hide the splice in broadband
-# noise, short enough not to eat a tenth of the loop.
+# Long enough to hide the splice in broadband noise, short enough not to eat the loop.
 RAIN_CROSSFADE_SECONDS = 0.5
 
 
@@ -137,18 +112,14 @@ def make_thunder() -> np.ndarray:
 def make_rain_loop() -> np.ndarray:
     fade_count = int(RAIN_CROSSFADE_SECONDS * SAMPLE_RATE_HZ)
     body_count = int(RAIN_SECONDS * SAMPLE_RATE_HZ)
-    # Render the crossfade's worth of EXTRA material, then fold it back over the
-    # head: the last `fade_count` samples and the first `fade_count` samples then
-    # come from one continuous stretch of noise, which is what makes the splice
-    # inaudible rather than merely quiet.
+    # Extra material folded back over the head, so head and tail come from one
+    # continuous stretch of noise and the splice is inaudible, not merely quiet.
     raw = rng.uniform(-1.0, 1.0, body_count + fade_count)
     hiss = one_pole_highpass(raw, RAIN_HIGHPASS_ALPHA)
 
     body = hiss[:body_count].copy()
     tail = hiss[body_count:]
-    # EQUAL POWER (sin/cos), not linear: two uncorrelated noise signals summed
-    # with linear gains dip by 3 dB in the middle of the fade, which is audible
-    # as a hole once per loop.
+    # EQUAL POWER: linear gains dip 3 dB mid-fade — a hole once per loop.
     angle = np.linspace(0.0, np.pi / 2, fade_count)
     body[:fade_count] = body[:fade_count] * np.sin(angle) + tail * np.cos(angle)
     return normalize(body)

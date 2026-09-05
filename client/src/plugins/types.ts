@@ -140,155 +140,82 @@ export interface WorldPosition {
 /** How a one-shot is placed and coloured — see `PluginAudio.playSfx`. */
 export interface SfxOptions {
   /**
-   * WHERE the sound happens, in WORLD units (the same space `layer` and
-   * `cameraPosition` are in). Present makes the voice POSITIONAL: core parents
-   * a panner at this point and the listener on the camera does the rest, so a
-   * strike across the map is quiet and a strike underfoot is not. Absent makes
-   * it a flat, non-positional voice at full bus level — the right answer for a
-   * sound that belongs to the interface rather than to a place.
-   *
-   * READ AND COPIED DURING THE CALL, never kept: core does not hold the
-   * reference, so passing the scratch object `cameraPosition()` returns is
-   * safe here.
+   * Where the sound happens, in WORLD units. Present makes the voice
+   * POSITIONAL; absent makes it a flat voice at full bus level. Read and copied
+   * during the call, so a scratch object is safe.
    */
   readonly at?: WorldPosition;
   /**
-   * This voice's level relative to its bus, in [0, 1]. Defaults to 1. It is
-   * NOT an absolute loudness and must not be used as one — the player owns the
-   * master, and a plugin that "just needs to be louder" is asking for a louder
-   * ASSET, not a bigger number here. Out-of-range values are clamped.
+   * Level relative to the bus, 0..1, default 1. NOT an absolute loudness — a
+   * plugin that needs to be louder needs a louder ASSET. Clamped.
    */
   readonly gain?: number;
-  /**
-   * Playback speed multiplier, 1 being the asset's own rate. Its use is
-   * VARIATION: the same clap at 0.94 and 1.07 stops a repeated one-shot
-   * reading as a loop. Pitch moves with it, because this is a sample rate and
-   * not a pitch shifter. Non-finite or non-positive values are ignored.
-   */
+  /** Speed multiplier for variation; pitch moves with it. Default 1. */
   readonly playbackRate?: number;
   /**
-   * How long from NOW until the sound is heard, in seconds. Defaults to 0.
+   * Seconds from now until the sound is heard, default 0 — the speed of sound,
+   * which is the strongest cue for how far away a storm is.
    *
-   * WHAT IT IS FOR: the speed of sound. A thunderclap reaches a listener after
-   * its flash reaches their eye, and how long after is the single strongest cue
-   * for how far away a storm is — stronger than loudness, because loudness is
-   * also what a quiet sound nearby looks like. A plugin that knows where its
-   * event happened and where the camera is can compute that, and only the
-   * plugin knows what the sound is travelling through.
-   *
-   * NO TIMER IS INVOLVED. The voice is handed to Web Audio's own scheduler
-   * (`source.start(currentTime + delaySeconds)`) on the audio thread, so a
-   * delayed one-shot costs exactly what an immediate one does and arrives
-   * sample-accurately rather than on the next frame after a `setTimeout`.
-   *
-   * IT COUNTS AGAINST THE VOICE CAP FROM THE MOMENT IT IS SCHEDULED, not from
-   * when it sounds — otherwise a caller could schedule any number of voices
-   * into the future and walk straight past a cap that only counted audible
-   * ones. A scheduled voice can therefore be stolen before it is ever heard,
-   * which is the correct outcome: the newest events win.
-   *
-   * Negative and non-finite values are treated as 0 — a delay is an arrival
-   * time, and "in the past" means "now".
+   * NO TIMER: the voice goes to Web Audio's own scheduler, so a delayed
+   * one-shot costs what an immediate one does. It occupies its pool slot from
+   * the moment it is scheduled, so it can be stolen before it is heard.
+   * Negative and non-finite are treated as 0.
    */
   readonly delaySeconds?: number;
 }
 
 /**
- * Everything a plugin may do to the player's ears — `ClientPluginCtx.audio`,
- * one member for the whole capability, exactly as `layer` is the one member
- * for everything a plugin draws.
+ * Everything a plugin may do to the player's ears — one member for the whole
+ * capability, as `layer` is for everything it draws.
  *
- * WHY A PLUGIN NEVER TOUCHES WEB AUDIO ITSELF. Browsers cap the number of
- * `AudioContext`s a page may hold, the listener has to track the ONE camera,
- * and the player's master volume has to be able to silence everything — three
- * facts that all say the graph has exactly one owner. So core owns the
- * context, the listener, the three buses and every voice; a plugin says what
- * it wants heard and core decides how loud that ends up being.
+ * A PLUGIN NEVER TOUCHES WEB AUDIO ITSELF: browsers cap contexts per page, the
+ * listener must track the one camera, and the master must be able to silence
+ * everything. Core owns the graph; a plugin says what it wants heard.
  *
- * EVERY METHOD IS SAFE TO CALL AT ANY TIME, and that is a deliberate part of
- * the contract rather than a politeness: before the browser's autoplay unlock
- * (there is no context yet), before the join snapshot (there is no world yet),
- * and after this plugin has been detached (its voices are already gone). None
- * of those is an error, none logs, and none throws — a plugin driving sound
- * from a frame loop must never have to ask whether sound is available yet.
+ * EVERY METHOD IS SAFE TO CALL AT ANY TIME — before the autoplay unlock, before
+ * the join snapshot, after detach. None is an error, none logs, none throws.
  *
- * NOTHING HERE IS ON THE FRAME'S CRITICAL PATH. Web Audio schedules and mixes
- * on its own thread; the JS cost of a call is building a few nodes at trigger
- * time, and a repeated `ambience` call at an unchanged weight is one float
- * comparison (see below).
+ * Nothing here is on the frame's critical path: Web Audio mixes on its own
+ * thread, and a repeated `ambience` at an unchanged weight is one comparison.
  */
 export interface PluginAudio {
   /**
-   * FETCHES AND DECODES an asset now, so that the first `playSfx` for it is
-   * heard. Call it from `attach` for every URL the plugin can go on to play.
+   * Fetches and decodes an asset now. Call it from `attach` for every URL the
+   * plugin can play — without it the FIRST event of every kind is silent, since
+   * `playSfx` drops rather than plays late.
    *
-   * WHY IT HAS TO EXIST. `playSfx` is fire-and-forget and never waits (see
-   * below), so a URL whose buffer is not decoded yet is dropped rather than
-   * played late — which, without this, made the FIRST event of every kind
-   * silent, once per page. That is a user-visible defect, not a quirk: the
-   * first thunderclap of a session is exactly the one a player notices. This is
-   * the fix, and it is on the contract rather than in each plugin because every
-   * plugin that plays a sound has the problem.
-   *
-   * IDEMPOTENT, and safe to call with the same URL from any number of plugins:
-   * decoding is keyed by URL and shared, so the second caller joins the first
-   * one's work rather than starting a second fetch. Never throws and never
-   * rejects — a missing asset is logged by core and costs this plugin its
-   * sound, nothing more.
-   *
-   * There is no "ready" signal on purpose. A plugin that waited for one would
-   * be building a loading screen for a sound effect; the honest degradation is
-   * that a sound not yet decoded does not play, and preloading at attach makes
-   * that window as small as the asset's own download.
+   * Idempotent and shared across plugins; never throws. There is no "ready"
+   * signal on purpose: a plugin waiting for one is a loading screen for a sound.
    */
   preload(url: string): void;
 
   /**
-   * Fires a one-shot on the SFX bus and returns immediately. Nothing is
-   * awaited and nothing is returned: an impact sound that arrived late because
-   * a decode was still in flight is worse than no sound, so a call for a URL
-   * whose buffer is not decoded yet starts the decode and plays nothing.
+   * Fires a one-shot on the SFX bus and returns immediately. A URL whose buffer
+   * is not decoded yet starts the decode and plays NOTHING — a late impact is
+   * worse than none, and `preload` above is how that is avoided.
    *
-   * WITH `preload` ABOVE CALLED IN `attach`, that path is only reachable by a
-   * plugin that skipped it, or in the moments before a slow asset has arrived.
-   *
-   * BOUNDED BY A VOICE CAP core owns. A plugin that fires more one-shots than
-   * the cap allows steals its own oldest voices rather than growing the graph
-   * — a hundred simultaneous claps is a bug in the caller, and the failure
-   * mode for it is "you hear the most recent ones", not "the tab stutters".
+   * Bounded by a voice cap core owns: too many one-shots steal the oldest
+   * rather than growing the graph.
    */
   playSfx(url: string, opts?: SfxOptions): void;
 
   /**
-   * A LOOPING LAYER this plugin fades toward `weight` (0..1) on the ambience
-   * bus. Call it every frame if that is convenient: an unchanged weight is a
-   * float comparison and does nothing else.
+   * A looping layer faded toward `weight` (0..1) on the ambience bus. Safe to
+   * call every frame: an unchanged weight is one comparison.
    *
-   * ONE LOOP PER (PLUGIN, URL). Calling again with the same URL RETARGETS the
-   * existing fade rather than starting a second copy — which is what makes
-   * "call it every frame with the current weight" the intended usage rather
-   * than an abuse. Weight 0 fades the loop out and then releases its voice, so
-   * a plugin whose ambience is over holds no resources; the next non-zero
-   * weight starts it again from silence.
-   *
-   * NEVER POSITIONAL, by construction. Ambience answers "what does the world
-   * sound like from here", which is rain-under-the-camera, not rain-at-a-cell;
-   * a plugin that wants a sound to come from a PLACE wants `playSfx`.
+   * ONE LOOP PER (PLUGIN, URL) — calling again RETARGETS rather than stacking a
+   * second copy. Weight 0 fades out and releases the voice. Never positional:
+   * ambience is rain-under-the-camera, not rain-at-a-cell.
    */
   ambience(url: string, weight: number): void;
 
   /**
-   * Puts a looping track on the music bus, crossfading from whatever was
-   * there; `null` fades the current track out and leaves the bus empty.
+   * Puts a looping track on the music bus, crossfading; `null` fades out.
    *
-   * SINGLE-CLAIMANT, exactly like `setSkyRig` and for the same reason: two
-   * plugins writing the music bus would fight, and the one that happened to
-   * call last each time would win by accident of registration order. The FIRST
-   * plugin to call this owns the bus for the rest of the session; a later call
-   * from any OTHER plugin is refused ONCE with a console.warn and then ignored
-   * silently (once, not once per call — like the sky rig this may be driven
-   * from a loop, and a per-call warning would bury the console). There is no
-   * unclaim while the claimant is mounted; unmounting it frees the bus.
+   * SINGLE-CLAIMANT like `setSkyRig`, and for the same reason: two plugins
+   * writing the bus would fight and registration order would decide. The first
+   * caller owns it; a later one is refused ONCE and then ignored. Unmounting
+   * the claimant frees the bus.
    */
   setMusic(url: string | null): void;
 }
@@ -312,13 +239,10 @@ export interface ClientPluginCtx {
   readonly layer: Group;
 
   /**
-   * Everything this plugin may make the player hear — see PluginAudio above
-   * for the whole contract.
+   * Everything this plugin may make the player hear (PluginAudio, above).
    *
-   * PER-PLUGIN, NOT SHARED: the handle knows which plugin holds it, which is
-   * what lets ambience be keyed by (plugin, url), music be arbitrated between
-   * plugins, and a detach release exactly this plugin's voices and nobody
-   * else's — the same containment the layer has.
+   * PER-PLUGIN: the handle knows who holds it, which is what keys ambience,
+   * arbitrates music, and lets a detach release exactly this plugin's voices.
    */
   readonly audio: PluginAudio;
 

@@ -280,11 +280,7 @@ export function createClientPluginHost(
 
   const canvas = viewport.renderer.domElement;
 
-  /**
-   * The client's one audio graph (../audio/audioEngine.ts), owned here because
-   * the host is what hands out `ClientPluginCtx.audio` and what knows when a
-   * plugin has gone away. It builds nothing until `unlock()` succeeds.
-   */
+  /** Owned here: the host hands out ctx.audio and knows when a plugin goes. */
   const audioEngine = createAudioEngine(viewport);
 
   /**
@@ -325,11 +321,8 @@ export function createClientPluginHost(
   const skyRigModifiers: ((state: SkyRigState) => SkyRigState)[] = [];
 
   const onCanvasPointerDown = (event: PointerEvent): void => {
-    // THE AUTOPLAY UNLOCK, and this listener is the natural place for it: it is
-    // capture-phase on the canvas, so it sees the first press on the world
-    // whoever ends up claiming it — including a press a plugin claims below and
-    // stops propagating. Idempotent and cheap once unlocked; the engine also
-    // installs one-shot window listeners for a keyboard-first player.
+    // THE AUTOPLAY UNLOCK: capture-phase, so it sees the first press whoever
+    // claims it — including one a plugin claims below and stops propagating.
     audioEngine.unlock();
     for (const handler of pressHandlers) {
       let claimed = false;
@@ -636,8 +629,7 @@ export function createClientPluginHost(
     // plugin's meshes as terrain (input/sculptInput.ts picks terrain only).
     viewport.scene.add(layer);
 
-    // Released through `track` like every other registration, so a plugin's
-    // voices cannot outlive it however it goes away (see MountedPlugin.undo).
+    // Through `track`, so a plugin's voices cannot outlive it.
     const audioHandle = audioEngine.forPlugin(plugin.name);
     track(audioHandle.release);
 

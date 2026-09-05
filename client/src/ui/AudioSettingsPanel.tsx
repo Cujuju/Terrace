@@ -1,25 +1,10 @@
-// The audio block in the settings popup: master volume + mute, then one level
-// per bus.
+// The audio block in the settings popup: master + mute, then one level per bus.
 //
-// SOLID REACTIVITY: reactive values are read by calling their accessor at the
-// point of use, never stored in a component-body const (project rule) — the
-// same discipline ControlsPanel.tsx states in its own header.
+// SOLID REACTIVITY: accessors are called at the point of use, never stored in a
+// component-body const (project rule).
 //
-// ITS OWN COMPONENT rather than rows inside ControlsPanel, because that panel
-// is the CONTROL BINDINGS editor and its "Reset to defaults" button promises to
-// reset "every setting on this panel". Audio is not a control binding and must
-// not be swept up by that button, so this sits beside the panel in the popup
-// rather than inside it.
-//
-// ONE ROW SHAPE FOR ALL FOUR SLIDERS. The master row and the three bus rows are
-// the same control — a label, a range over the same [0, 1], a readout — so they
-// are one `sliderRow` and a `For`, not four hand-written blocks. The master's
-// readout doubles as the mute toggle, which is the only difference and the only
-// thing written twice.
-//
-// No new visual language: `.hud-row`, `.controls-row` and `.controls-label` are
-// the popup's existing vocabulary (ui/hud.css); the block adds a handful of
-// rules there and nothing else.
+// BESIDE ControlsPanel, not inside it: that panel's reset button promises to
+// reset "every setting on this panel", and audio is not a control binding.
 
 import { For, type JSX } from 'solid-js';
 import {
@@ -35,13 +20,7 @@ import {
   setMasterVolume,
 } from '../state/audioPrefs.ts';
 
-/**
- * Slider granularity, as a fraction of full scale.
- *
- * A HUNDREDTH: the smallest step a listener can pick out on a linear gain
- * control is around a percent of full scale, and a finer step only makes the
- * keyboard arrow keys take longer to cross the range.
- */
+/** About the smallest step audible on a linear gain control. */
 const VOLUME_STEP = 0.01;
 
 /** 0..1 → the whole-percent readout beside each slider. */
@@ -51,11 +30,7 @@ function percentLabel(level: number): string {
   return `${String(Math.round(level * PERCENT_SCALE))}%`;
 }
 
-/**
- * One slider row. Takes ACCESSORS, not values: a value read here in the parent
- * body would be read once and frozen (project rule), and props are the seam
- * Solid wraps in getters.
- */
+/** Takes ACCESSORS: a value read in the parent body would freeze (project rule). */
 function SliderRow(props: {
   label: string;
   title: string;
@@ -93,10 +68,8 @@ export function AudioSettingsPanel(): JSX.Element {
         level={masterVolume}
         onLevel={(level) => {
           setMasterVolume(level);
-          // Dragging the master while muted would otherwise change nothing
-          // audible, so it also unmutes. The bus sliders below deliberately do
-          // NOT: they set the mix, which is a thing a player may well want to
-          // adjust while the world is silent.
+          // Dragging the master while muted would change nothing audible. The
+          // bus sliders do NOT unmute: the mix is adjustable while silent.
           if (audioMuted()) setAudioMuted(false);
         }}
         readout={() => (
@@ -118,9 +91,7 @@ export function AudioSettingsPanel(): JSX.Element {
         )}
       />
 
-      {/* The mix. Each of these is a level BEFORE the master, so they answer
-          "how loud is thunder against rain" and the master answers "how loud is
-          all of it" — see state/audioPrefs.ts's effectiveBusGain. */}
+      {/* Levels BEFORE the master: "thunder against rain", not "how loud". */}
       <For each={AUDIO_BUS_NAMES}>
         {(bus) => (
           <SliderRow

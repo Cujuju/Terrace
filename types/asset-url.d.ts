@@ -14,11 +14,9 @@
 // package inherits (they override `include`, never `files`), so a NEW plugin
 // gets it with no line of its own.
 //
-// WIDENED 2026-09-04 from models to assets in general (audio-host, GH #325):
-// plugins now ship placeholder .wav files too and import them exactly the same
-// way, so a second file declaring `*.wav?url` would have been the third copy
-// this file's whole existence is an argument against. Named `asset-url.d.ts`
-// rather than `glb-url.d.ts` since the day it stopped being about models.
+// WIDENED 2026-09-04 to assets in general (audio-host, GH #325): plugins ship
+// .wav placeholders too, and a second file declaring `*.wav?url` would be the
+// third copy this file exists to argue against. Renamed to match.
 //
 // This file must stay import/export free so the declaration below is GLOBAL
 // rather than module-scoped.

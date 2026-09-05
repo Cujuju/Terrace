@@ -459,9 +459,8 @@ export function Hud(props: {
               aria-label="Control settings"
             >
               <ControlsPanel />
-              {/* Beside the bindings panel, not inside it: its reset button
-                  promises to reset "every setting on this panel", and audio is
-                  not a control binding (see AudioSettingsPanel's header). */}
+              {/* Beside the bindings panel: its reset button promises to reset
+                  "every setting on this panel", and audio is not a binding. */}
               <AudioSettingsPanel />
             </div>
           </Show>
