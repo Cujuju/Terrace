@@ -269,6 +269,7 @@ function drawnPoseOf(id: number): MoverPose | null {
  *   |-------------------------|----------|
  *   | fish                    |        1 |
  *   | grazer (imported asset) |        1 |
+ *   | wolf   (imported asset) |        1 |
  *   | ibex                    |        1 |
  *   | bison                   |        1 |
  *   | ray                     |        1 |
@@ -284,10 +285,10 @@ function drawnPoseOf(id: number): MoverPose | null {
  * whale carries a second material its body cannot share — those are the only
  * two-surface herds.
  *
- * THE GRAZER IS NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04): it is a
- * downloaded file, so its surface count is a property of art this repo did not
- * write. It gets its own constant below rather than being folded into the
- * hand-built tally.
+ * THE GRAZER AND THE WOLF ARE NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04):
+ * they are downloaded files, so their surface counts are properties of art this
+ * repo did not write. They get their own constant below rather than being
+ * folded into the hand-built tally.
  *
  * WHY A CONSTANT AND NOT `models.objects.length`. `drawBudget` is a static
  * field on the plugin object (client/src/plugins/types.ts), read by the host
@@ -312,8 +313,22 @@ const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale
  * turns that into a boot failure rather than a budget breach.
  */
 const GRAZER_ASSET_DRAW_OBJECTS = 1;
+/**
+ * The DOWNLOADED wolf's surfaces, on its own line for the same reason.
+ *
+ * ONE, measured (`RigBlueprint.surfaceCount`, 2026-09-04) off ./assets/wolf.glb
+ * — not assumed from the deer. The file carries four glTF materials (two coat
+ * tones, the nose and the eyes) which differ ONLY in base colour, and
+ * rigSkin's materialSignature leaves colour out because a vertex colour
+ * attribute carries it. Same story as the deer, checked separately, because
+ * "the other imported animal bakes to one" is not evidence about this file.
+ */
+const WOLF_ASSET_DRAW_OBJECTS = 1;
 const WILDLIFE_SPECIES_DRAW_OBJECTS =
-  SINGLE_SURFACE_SPECIES + GRAZER_ASSET_DRAW_OBJECTS + TWO_SURFACE_SPECIES * 2;
+  SINGLE_SURFACE_SPECIES +
+  GRAZER_ASSET_DRAW_OBJECTS +
+  WOLF_ASSET_DRAW_OBJECTS +
+  TWO_SURFACE_SPECIES * 2;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,
@@ -350,7 +365,7 @@ export const clientPlugin: TerraceClientPlugin = {
     // species may, in principle, be all of it.
     models = createWildlifeModels(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
     // The budget above is a promise about geometry this plugin does not own —
-    // nine species files, each free to add a material. Checked against the pool
+    // ten species files, each free to add a material. Checked against the pool
     // that was actually built, once, at boot: a mismatch is a wrong `drawBudget`
     // for the whole session, so it throws rather than logging.
     if (models.objects.length !== WILDLIFE_SPECIES_DRAW_OBJECTS) {

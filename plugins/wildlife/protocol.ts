@@ -49,6 +49,11 @@ export const WILDLIFE_HABITAT_SPECIES = [
   // above: this order is the order spawning considers species in.
   'eel',
   'angelfish',
+  // Added 2026-09-04 (owner: "add the wolf in game"). Appended, like every
+  // species since the first four: this order is the order spawning considers
+  // species in, so a name inserted in the middle would quietly change which
+  // species a nearly-full habitat fills with.
+  'wolf',
 ] as const;
 
 export type WildlifeHabitatSpecies = (typeof WILDLIFE_HABITAT_SPECIES)[number];

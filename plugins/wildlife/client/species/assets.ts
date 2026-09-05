@@ -25,6 +25,8 @@ import { ANGELFISH_ASSET } from './angelfish.ts';
 import angelfishUrl from '../assets/angelfish.glb?url';
 import { GRAZER_ASSET } from './grazer.ts';
 import grazerUrl from '../assets/grazer-deer.glb?url';
+import { WOLF_ASSET } from './wolf.ts';
+import wolfUrl from '../assets/wolf.glb?url';
 
 /** One asset-sourced species: what it must measure, and where its file is. */
 export interface SpeciesAssetEntry {
@@ -39,4 +41,5 @@ export const SPECIES_ASSETS: readonly SpeciesAssetEntry[] = [
   { spec: EEL_ASSET, url: eelUrl },
   { spec: ANGELFISH_ASSET, url: angelfishUrl },
   { spec: GRAZER_ASSET, url: grazerUrl },
+  { spec: WOLF_ASSET, url: wolfUrl },
 ];
