@@ -90,9 +90,12 @@ export interface SpeciesAssetSpec {
   /** What the file must measure, within ENVELOPE_TOLERANCE_WORLD_UNITS. */
   readonly envelope: SpeciesEnvelope;
   /**
-   * The file came out of `tools/blender/import_model.py --rigidify` — a
-   * DOWNLOADED model whose skeleton was converted to this game's pivot
-   * convention — rather than being authored to it by a build script.
+   * The file is a CONVERTED ARMATURE: a DOWNLOADED model normalised by
+   * `tools/blender/import_model.py`, rather than authored to this game's
+   * conventions by a build script. It holds whether the import kept the
+   * skeleton as a glTF skin (the default) or flattened it with `--rigidify`;
+   * what makes a file need the preparation below is that somebody else drew
+   * the rig, not which of the two bindings it ships with.
    *
    * Two things are true of every such file and of no hand-built one, which is
    * why one flag covers both (see `prepareRigidified`):
@@ -102,20 +105,20 @@ export interface SpeciesAssetSpec {
    *     SYNTHESISED here rather than demanded of the import. `rig` therefore
    *     must still be listed in `joints`, and must NOT exist in the file.
    *   * ITS PIVOTS ARE ORIENTED LIKE THE BONES THEY CAME FROM. Every other
-   *     joint named in `joints` is a bone Empty and is driven through a
-   *     model-axis pivot instead of directly.
+   *     joint named in `joints` is the artist's own bone (a `Bone`, or an Empty
+   *     if `--rigidify` flattened it) and is driven through a model-axis pivot
+   *     instead of directly.
    */
   readonly rigidified?: boolean;
   /**
    * Nodes the source file hung OUTSIDE the driven skeleton, and the joint that
    * has to carry each one.
    *
-   * `--rigidify` splits a skinned mesh by dominant vertex weight and parents
-   * each piece under the bone that weighed most on it. That is the honest
-   * split, but a rig is free to contain bones that are not in the limb chain at
-   * all — IK targets, commonly at the armature ROOT — and geometry that lands
-   * on one is nailed to a node no animation reaches. Naming it here moves it,
-   * unmoved, under the joint it belongs to. Empty for a hand-built asset.
+   * A rig is free to weight geometry onto bones that are not in the limb chain
+   * at all — IK targets, commonly at the armature ROOT — and a vertex weighted
+   * to one of those is nailed to a node no animation reaches. Naming the bone
+   * here moves it, unmoved, under the joint it belongs to, and every vertex
+   * weighted to it follows. Empty for a hand-built asset.
    */
   readonly adopt?: readonly { readonly node: string; readonly under: string }[];
 }
@@ -302,6 +305,13 @@ function prepareAuthored(spec: SpeciesAssetSpec, asset: RigAsset): InstalledSpec
  *
  * THE PIVOTS. See `modelAxisPivot`; it is the half of this that is not
  * obvious, and the half that broke first.
+ *
+ * NO VERTEX MOVES. Both facilities re-express a node's transform in a new
+ * parent's frame and leave its world transform where it was, so a weighted
+ * vertex — whose rest position bakeRig reads from `bone.matrixWorld` — bakes
+ * to the same place either way. Inserting a Group above a Bone is also safe
+ * for the bake's flat walk: `collect` is depth-first, so a parent still
+ * precedes its children in the bone list (see rigHerd.ts's scratch rig).
  */
 function prepareRigidified(spec: SpeciesAssetSpec, asset: RigAsset): InstalledSpecies {
   const root = new Group();
@@ -361,11 +371,12 @@ export function assetSpeciesBuilder(
 
 // ── Driving a converted armature ─────────────────────────────────────────────
 //
-// Everything below exists because a `--rigidify` import is a real skeleton
-// flattened into Empties, and an Empty that came from a bone is not yet a hinge
-// this plugin's animations can drive. Both facilities are general: any
-// downloaded model normalised by tools/blender/import_model.py needs them, and
-// neither knows anything about any particular species.
+// Everything below exists because somebody else's skeleton is not yet a set of
+// hinges this plugin's animations can drive — a bone rests at the orientation
+// the artist drew it at, whether it arrives as a `Bone` or as the Empty
+// `--rigidify` flattens it into. Both facilities are general: any downloaded
+// model normalised by tools/blender/import_model.py needs them, and neither
+// knows anything about any particular species.
 
 /** Scratch for the one decompose per re-home. Never escapes this module. */
 const scratchMatrix = new Matrix4();
@@ -383,9 +394,10 @@ function localiseInto(node: Object3D, host: Object3D): void {
  * Hangs an identity-oriented pivot for `node` off `host`, and returns it. The
  * animation drives the PIVOT; the bone hangs under it, unmoved.
  *
- * WHY A PIVOT AND NOT THE BONE ITSELF. `--rigidify` puts an Empty at each
- * bone's head carrying the BONE's rest rotation (import_model.py,
- * build_joint_empties), because that is the only orientation the source states.
+ * WHY A PIVOT AND NOT THE BONE ITSELF. A joint here rests at the orientation
+ * the ARTIST drew the bone at — that is the only orientation the source states,
+ * and it is what both import paths preserve (the bone itself, or the Empty
+ * `--rigidify` puts at its head; import_model.py, build_joint_empties).
  * Two things break on that, and this fixes both:
  *
  *   * WRONG AXES. Every animation in this directory drives MODEL axes —
