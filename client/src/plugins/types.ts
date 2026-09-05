@@ -373,7 +373,8 @@ export interface ClientPluginCtx {
    * for at-a-glance status; 'bottom-center' floats it centred along the
    * bottom; 'bottom-right' seats it in the bottom-right strip cell, just left
    * of the settings icon-button column; 'connection' renders inside the
-   * connection popup, below its status row and hint.
+   * connection popup, below its status row and hint; 'settings' renders inside
+   * the settings popup, below the audio sliders.
    */
   registerHudPanel(
     component: Component,
@@ -383,7 +384,8 @@ export interface ClientPluginCtx {
         | 'top-center'
         | 'bottom-center'
         | 'bottom-right'
-        | 'connection';
+        | 'connection'
+        | 'settings';
       /**
        * A one-row summary rendered inside the corner panel's HEADER rather
        * than its body (owner move: the corner panel is named for its first

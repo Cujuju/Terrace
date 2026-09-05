@@ -599,6 +599,12 @@ export function Hud(props: {
               {/* Beside the bindings panel: its reset button promises to reset
                   "every setting on this panel", and audio is not a binding. */}
               <AudioSettingsPanel />
+              {/* Plugin panels registered with the 'settings' placement (the
+                  music plugin's tuning dials) render under the audio sliders
+                  — same filter pattern as the connection popup below. */}
+              <For each={pluginHudPanels().filter((p) => p.placement === 'settings')}>
+                {(panel) => <Dynamic component={panel.component} />}
+              </For>
             </div>
           </Show>
 
