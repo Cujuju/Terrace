@@ -13,9 +13,7 @@
 // The imperative half lives here; the maths it needs is in ./gems.ts (pure and
 // tested) and the reactive state it shares with the panel is in ./state.ts.
 
-import { Mesh, MeshStandardMaterial } from 'three';
-// Type-only import of the client plugin contract, mirroring how the server
-// halves type-import theirs from server/src. Erased at runtime.
+import { Mesh, type ShaderMaterial } from 'three';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
   CAST_DENIED_MESSAGE,
@@ -38,6 +36,7 @@ import {
   gemSpinAngle,
   relicUnderCell,
 } from './gems.ts';
+import { createGemMaterial } from './gemMaterial.ts';
 import { disposeRelicGeometries, relicGeometry } from './relicShapes.ts';
 import { RelicsHeaderLine, RelicsPanel } from './RelicsPanel.tsx';
 import {
@@ -49,49 +48,6 @@ import {
   setRelics,
   setSkills,
 } from './state.ts';
-
-/**
- * Emissive strength of a gem. High enough that a relic reads as lit from within
- * against shaded terrain (the scene has no point lights — see
- * client/src/render/scene.ts — so without emission a gem in shadow is a grey
- * lump), low enough that ACES tone mapping does not blow it out to white and
- * lose the paint that is the whole point.
- */
-const GEM_EMISSIVE_INTENSITY = 0.6;
-
-/**
- * The gem's material: white, so the PAINT written into the geometry's vertex
- * colours (relicShapes.ts) is the colour; and glowing in that same paint,
- * which three's own shader cannot do — its emissive term is one colour per
- * material — so the fragment shader is patched to scale the emissive by the
- * vertex colour. One cache key for every gem: the patch is the same string
- * each time, so the program compiles once.
- */
-const RELIC_PROGRAM_KEY = 'relic-emissive-by-vertex-colour';
-
-function createGemMaterial(): MeshStandardMaterial {
-  const material = new MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    emissive: 0xffffff,
-    emissiveIntensity: GEM_EMISSIVE_INTENSITY,
-    roughness: GEM_ROUGHNESS,
-    metalness: GEM_METALNESS,
-    flatShading: true,
-  });
-  material.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <emissivemap_fragment>',
-      '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;',
-    );
-  };
-  material.customProgramCacheKey = () => RELIC_PROGRAM_KEY;
-  return material;
-}
-
-/** Gem surface: matte and non-metallic so the flat-shaded facets read. */
-const GEM_ROUGHNESS = 0.35;
-const GEM_METALNESS = 0;
 
 /** Primary pointer button (mouse left / the only touch button). */
 const PRIMARY_BUTTON = 0;
@@ -114,11 +70,12 @@ function disposeGem(entry: GemEntry): void {
   entry.mesh.removeFromParent();
   // The geometry is shared per skill and outlives the gem (relicShapes.ts);
   // the material is per-relic.
-  (entry.mesh.material as MeshStandardMaterial).dispose();
+  (entry.mesh.material as ShaderMaterial).dispose();
 }
 
 function createGem(relic: RelicView): GemEntry {
-  const mesh = new Mesh(relicGeometry(relic.skill), createGemMaterial());
+  const geometry = relicGeometry(relic.skill);
+  const mesh = new Mesh(geometry, createGemMaterial(geometry.boundingSphere!.radius));
   mesh.name = `relic:${relic.id}`;
   return { mesh, phaseS: gemPhaseFor(relic.id), relic };
 }
