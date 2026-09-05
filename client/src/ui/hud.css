@@ -2,6 +2,18 @@
 
 :root {
   --hud-bg: rgba(18, 22, 28, 0.78);
+  /* The GLASS chrome the bottom instruments share (owner, 2026-09-04: "make
+     the modeler HUD gorgeous"): a top-lit gradient, a hairline of light
+     along the top edge and a soft drop shadow, so the panels sit ON the
+     world rather than being cut out of it. */
+  --hud-glass: linear-gradient(180deg, rgba(34, 41, 52, 0.86), rgba(14, 18, 24, 0.9));
+  --hud-glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --hud-glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --hud-accent-rgb: 111, 191, 115;
+  --hud-lower: #d98a5a;
+  --hud-lower-rgb: 217, 138, 90;
+  /* One easing for every hover/press on the instruments. */
+  --hud-motion: 160ms ease;
   --hud-border: rgba(255, 255, 255, 0.12);
   --hud-text: #e8edf2;
   --hud-muted: #97a3b0;
@@ -99,6 +111,10 @@ body {
    immediately left of the buttons (owner move, 2026-08-25) and both ride the
    bottom edge together. Pointer-transparent like its sibling cells. */
 .hud-bottom-right {
+  /* NAMED, not auto-placed (2026-09-04): the strip's LEFT cell empties while a
+     plugin tool is held, and grid auto-placement would then slide these two
+     sections up into columns 1 and 2. */
+  grid-column: 3;
   display: flex;
   align-items: end;
   justify-content: flex-end;
@@ -111,10 +127,32 @@ body {
 }
 
 .hud-anchor-bottom-left {
+  /* NAMED, not auto-placed: the modeler leaves the DOM whenever a plugin tool
+     is held, and grid auto-placement would then slide the centre cell into
+     this empty column and take the toolbar off centre. */
+  grid-column: 1;
   justify-self: start;
   pointer-events: auto;
-  /* The panel chrome's 210px min-width would defeat the shrinkable cell. */
+}
+
+/* THE MODELER (owner, 2026-09-04): the brush's settings, in the bottom-left
+   corner where they have always been. It wears the same glass as the toolbar
+   across the strip, so the two read as one instrument; it is icon-only, so it
+   needs neither the panel chrome's 210px min-width — which would defeat the
+   shrinkable cell — nor the row labels the old text panel wore. */
+.hud-modeler {
   min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
+}
+
+.hud-modeler .hud-row {
+  gap: 10px;
+  margin-bottom: 0;
 }
 
 .hud-anchor-bottom-right {
@@ -205,66 +243,334 @@ body {
   .status-reconnecting {
     animation: none;
   }
+
+  /* The instruments' hover lifts and glows settle instantly. */
+  .hud-tool,
+  .hud-tool__icon,
+  .brush-button,
+  .mode-value {
+    transition: none;
+  }
+
+  .hud-tool:hover .hud-tool__icon {
+    transform: none;
+  }
 }
 
 .status-label {
   color: var(--hud-muted);
 }
 
+/* A SEGMENTED control: one recessed well holding the choices, the chosen one
+   raised out of it in the accent. The well is what makes a row read as ONE
+   setting rather than a scatter of buttons. */
 .brush-picker {
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .brush-button {
   width: 26px;
   height: 26px;
-  border: 1px solid var(--hud-border);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--hud-text);
+  color: var(--hud-muted);
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
+  transition:
+    color var(--hud-motion),
+    background var(--hud-motion),
+    box-shadow var(--hud-motion);
 }
 
-/* Word-labelled variants of the same button (Tool / Edge rows): identical
-   chrome, sized to their text instead of the radius digits' square. */
-.brush-button-wide {
-  width: auto;
-  padding: 0 8px;
+/* The modeler's own tiles are the 34px square (owner mockup, 2026-09-04):
+   a 26px icon needs room around it that the 26px button the radius digits
+   used to sit in cannot give. Scoped to the dock rather than widened on
+   .brush-button itself, because the relics plugin reuses that class for a
+   word-labelled button and must keep the size it has. */
+.hud-modeler .brush-button {
+  width: 34px;
+  height: 34px;
+}
+
+/* The 32px toolbar face, shrunk to the 26px one a picker button holds
+   (owner, 2026-09-04: the modeler's rows are icons now). Reusing
+   .hud-tool__icon rather than a second class is what keeps the dock's tiles
+   and the toolbar's tiles the same drawing, drop shadow and reduced-motion
+   behaviour. */
+.brush-button .hud-tool__icon,
+.mode-value .hud-tool__icon {
+  width: 26px;
+  height: 26px;
 }
 
 .brush-button:hover {
-  border-color: var(--hud-accent);
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .brush-button.active {
-  border-color: var(--hud-accent);
-  background: rgba(111, 191, 115, 0.18);
+  color: #f4fff2;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.55),
+    rgba(var(--hud-accent-rgb), 0.28)
+  );
+  border-color: rgba(var(--hud-accent-rgb), 0.55);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* The mode indicator doubles as a toggle button (the only way to switch
-   raise/lower on touch), so it is a <button> with the chrome stripped. */
+   raise/lower on touch), so it is a <button> with the chrome stripped. A ROUND
+   ICON since 2026-09-04: it holds an arrow rather than the word "Raise", and
+   the pill shape a word needed became a disc the arrow sits in the middle of.
+   The two colour states are unchanged — accent green raising, --hud-lower
+   orange lowering — because the colour is the faster read of the two. */
 .mode-value {
-  border: 1px solid var(--hud-border);
-  border-radius: 6px;
-  background: transparent;
-  padding: 2px 10px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.55);
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.5),
+    rgba(var(--hud-accent-rgb), 0.22)
+  );
+  padding: 0;
   font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  color: var(--hud-accent);
+  color: #f4fff2;
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: box-shadow var(--hud-motion), transform var(--hud-motion);
 }
 
 .mode-value:hover {
-  border-color: var(--hud-accent);
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
+.mode-value:active {
+  transform: translateY(1px);
+}
+
+/* Lowering trades the accent for earth-orange: the same pill, a different
+   heat, so the direction is legible from the colour alone. */
 .mode-value.lower {
-  color: #d98a5a;
+  border-color: rgba(var(--hud-lower-rgb), 0.6);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-lower-rgb), 0.5),
+    rgba(var(--hud-lower-rgb), 0.22)
+  );
+  color: #fff4ea;
+  box-shadow:
+    0 0 12px rgba(var(--hud-lower-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .mode-value.lower:hover {
-  border-color: #d98a5a;
+  box-shadow:
+    0 0 18px rgba(var(--hud-lower-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+/* ── THE BRUSH-WIDTH SLIDER (owner, 2026-09-04: "turn it into a slider that
+   goes from least to most values with stops for the two center values") ─────
+   A native `input[type=range]` carrying the ladder's INDEX (Hud.tsx), styled
+   down to a hairline rail with the rungs drawn under it. The input itself is
+   transparent except for its thumb: the rail, the fill and the detents are
+   siblings beneath it, which is the only way to draw per-rung art that no
+   vendor track pseudo-element can express.
+
+   EVERY POSITION IS DERIVED FROM ONE NUMBER, --brush-rung, the index Hud.tsx
+   sets on the track. A native thumb travels between its own half-widths, so
+   the rung-to-x mapping used by the fill, the detents and the caption is that
+   same inset — anything drawn on a plain 0–100% scale would drift away from
+   the thumb by half its width at the ends. */
+.brush-slider {
+  /* The thumb's diameter, and therefore the track's travel inset. */
+  --brush-slider-thumb: 18px;
+  /* The rail the thumb rides on. */
+  --brush-slider-rail: 6px;
+  /* The smallest rung's detent ring, and how much each rung adds to it: the
+     ladder doubles in radius, so a linear ring growth reads as "wider" without
+     the largest detent swallowing the rail. */
+  --brush-slider-detent: 6px;
+  --brush-slider-detent-step: 3px;
+  /* The ladder's top index; Hud.tsx sets it from BRUSH_RUNG_MAX. */
+  --brush-slider-rungs: 0;
+  align-items: center;
+  /* Room under the rail for the caption that rides with the thumb. */
+  padding-bottom: 18px;
+}
+
+/* The ladder's first and last width, in world units, captioning the ends. */
+.brush-slider__end {
+  color: var(--hud-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.brush-slider__track {
+  position: relative;
+  flex: 1;
+  min-width: 132px;
+  height: var(--brush-slider-thumb);
+}
+
+.brush-slider__rail,
+.brush-slider__fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: var(--brush-slider-rail);
+  margin-top: calc(var(--brush-slider-rail) / -2);
+  border-radius: calc(var(--brush-slider-rail) / 2);
+}
+
+.brush-slider__rail {
+  right: 0;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.brush-slider__fill {
+  width: calc(
+    var(--brush-slider-thumb) / 2 + (100% - var(--brush-slider-thumb)) *
+      var(--brush-rung) / var(--brush-slider-rungs)
+  );
+  background: linear-gradient(
+    90deg,
+    rgba(var(--hud-accent-rgb), 0.35),
+    rgba(var(--hud-accent-rgb), 0.75)
+  );
+}
+
+/* One ring per rung, sized by the brush it stands for. */
+.brush-slider__detent {
+  position: absolute;
+  top: 50%;
+  left: calc(
+    var(--brush-slider-thumb) / 2 + (100% - var(--brush-slider-thumb)) *
+      var(--brush-detent) / var(--brush-slider-rungs)
+  );
+  width: calc(
+    var(--brush-slider-detent) + var(--brush-slider-detent-step) *
+      var(--brush-detent)
+  );
+  height: calc(
+    var(--brush-slider-detent) + var(--brush-slider-detent-step) *
+      var(--brush-detent)
+  );
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* Reached: every rung up to and including the held one lights, so the row of
+   rings reads as a level rather than as five equal marks. */
+.brush-slider__detent.on {
+  border-color: rgba(var(--hud-accent-rgb), 0.9);
+  background: rgba(var(--hud-accent-rgb), 0.35);
+}
+
+/* The live width, riding under the thumb on the same inset scale. */
+.brush-slider__value {
+  position: absolute;
+  top: calc(50% + var(--brush-slider-thumb) / 2 + 2px);
+  left: calc(
+    var(--brush-slider-thumb) / 2 + (100% - var(--brush-slider-thumb)) *
+      var(--brush-rung) / var(--brush-slider-rungs)
+  );
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--hud-text);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* Decoration: the caption must never swallow a drag aimed at the track. */
+  pointer-events: none;
+}
+
+/* The input lies over the art it labels, invisible but for its thumb. Both
+   vendor track pseudo-elements are transparent because .brush-slider__rail
+   below is the rail; both thumb pseudo-elements repeat the same disc, since
+   no shorthand spans them. */
+.brush-slider__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.brush-slider__input::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.brush-slider__input::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+
+.brush-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--brush-slider-thumb);
+  height: var(--brush-slider-thumb);
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.9);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f4fff2, #a9dca8);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.brush-slider__input::-moz-range-thumb {
+  width: var(--brush-slider-thumb);
+  height: var(--brush-slider-thumb);
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.9);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f4fff2, #a9dca8);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.brush-slider__input:focus-visible {
+  outline: 2px solid var(--hud-text);
+  outline-offset: 2px;
 }
 
 .hud-hint {
@@ -476,6 +782,8 @@ body {
 /* Bottom-centre plugin stack: the strip's middle cell (no longer its own
    absolute anchor — the grid centres it), still a column growing upward. */
 .hud-bottom-center {
+  /* Named for the reason .hud-bottom-right's rule gives. */
+  grid-column: 2;
   display: flex;
   flex-direction: column-reverse;
   align-items: center;
@@ -502,64 +810,88 @@ body {
   min-width: 0;
   /* Never wider than the strip it sits in, whatever the plugin count. */
   max-width: 100%;
+  /* The same glass as the modeler panel (owner, 2026-09-04). */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
 }
 
-/* One tool: icon over caption, sized like the brush buttons it sits beside so
-   the whole bottom edge reads as one instrument. */
+/* One tool: a shaded 3D icon alone on a raised glass tile (owner,
+   2026-09-04: "gorgeous 3D icons", then "remove the text" the same day). The
+   tile is the icon plus one ring of padding, so the bar reads as a row of
+   keys the same size as the modeler dock's. */
 .hud-tool {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  display: inline-grid;
+  place-items: center;
+  padding: 4px;
   border: 1px solid var(--hud-border);
-  border-radius: 6px;
-  background: transparent;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   color: var(--hud-text);
   font: inherit;
   line-height: 1;
   cursor: pointer;
+  transition:
+    border-color var(--hud-motion),
+    background var(--hud-motion),
+    box-shadow var(--hud-motion),
+    transform var(--hud-motion);
+}
+
+/* The icon is a full-colour shaded SVG, so it carries its own shadow to lift
+   it off the tile; the hover lifts it a little further. */
+.hud-tool__icon {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  transition: transform var(--hud-motion), filter var(--hud-motion);
 }
 
 .hud-tool:hover {
-  border-color: var(--hud-accent);
+  border-color: rgba(var(--hud-accent-rgb), 0.6);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
 }
 
-/* HELD, not merely hovered: the same accent fill the brush pickers use for
+.hud-tool:hover .hud-tool__icon {
+  transform: translateY(-2px) scale(1.08);
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.6));
+}
+
+.hud-tool:active {
+  transform: translateY(1px);
+}
+
+/* HELD, not merely hovered: the same accent glow the brush pickers give
    the selected radius, so "what am I holding" is answered the same way
    everywhere in the HUD. */
 .hud-tool.active {
-  border-color: var(--hud-accent);
-  background: rgba(111, 191, 115, 0.18);
-}
-
-.hud-tool__label {
-  white-space: nowrap;
+  border-color: rgba(var(--hud-accent-rgb), 0.7);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.32),
+    rgba(var(--hud-accent-rgb), 0.1)
+  );
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 /* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, toolbar
    and the right corner all usable at once on an iPhone). Below 640px the
-   brush rows drop
-   their text labels — every control keeps its title and aria-label — and the
-   chrome tightens, which brings the whole strip inside a 390px viewport. ── */
+   chrome tightens, which brings the whole strip inside a 390px viewport.
+   Neither the toolbar nor the modeler needs a collapse of its own since
+   2026-09-04: both are icon-only at every width, every control keeping its
+   title and aria-label. ── */
 @media (max-width: 640px) {
-  .hud-anchor-bottom-left .hud-label {
-    display: none;
+  /* The modeler's slider is the one part of it that can still give ground:
+     its rail shortens rather than pushing the toolbar off the screen. */
+  .hud-modeler {
+    padding: 6px 8px;
   }
 
-  /* Icon-only below 640px — the brush rows' own rule, applied to the bar for
-     the same reason: the whole strip must stay inside a 390px viewport. Every
-     button keeps its title and aria-label, so nothing becomes unreachable. */
-  .hud-tool__label {
-    display: none;
-  }
-
-  .hud-tool {
-    padding: 6px;
-  }
-
-  .hud-anchor-bottom-left {
-    padding: 8px;
+  .brush-slider__track {
+    min-width: 96px;
   }
 
   /* One row, asymmetric (owner follow-up, 2026-08-19): the brush cluster
@@ -585,7 +917,7 @@ body {
   }
 
   /* Seated flush in the corner: square the corner that touches it. */
-  .hud-anchor-bottom-left {
+  .hud-modeler {
     border-bottom-left-radius: 0;
   }
 
@@ -627,18 +959,20 @@ body {
     height: 34px;
   }
 
-  .brush-button-wide {
-    width: auto;
-    padding: 0 10px;
+  .mode-value {
+    width: 44px;
+    height: 44px;
   }
 
-  .mode-value {
-    padding: 6px 12px;
+  /* A finger needs a bigger thumb to catch, and the caption and detents ride
+     the thumb's own scale, so widening it moves all three together. */
+  .brush-slider {
+    --brush-slider-thumb: 22px;
   }
 
   .hud-tool {
+    min-width: 44px;
     min-height: 44px;
-    padding: 0 12px;
   }
 
   .hud-settings-button {
@@ -1289,6 +1623,21 @@ button.world-header {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
   z-index: 11;
   white-space: nowrap;
+}
+
+/* THE RESTART NOTICE sits in the MIDDLE of the screen, not at the top with
+   the other two (owner, 2026-09-04): a restart is the one banner the player
+   should not miss and cannot do anything about, and while it shows there is
+   no world to look at behind it. It keeps the banner chrome above and adds a
+   frosted backdrop, at the same blur the HUD panels use, so the frozen scene
+   under it reads as "paused" rather than "broken". */
+.world-banner-restart {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 14px 22px;
+  font-size: 1.05em;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import type { CellOccupancy } from '../terrain/occupancy.ts';
  * comment below warns about is reachable through it.
  */
 import type { RevealClipUniforms } from '../render/revealMask.ts';
+import type { RigAsset } from '../render/rigAsset.ts';
 
 /**
  * RE-EXPORTED so a plugin declaring an occupancy lookup imports one module —
@@ -55,6 +56,12 @@ export type { CellColumn, CellOccupancy, CellRayChord } from '../terrain/occupan
  * the same unitless scale DirectionalLight/HemisphereLight/AmbientLight
  * already use.
  */
+/**
+ * How an authored asset's PBR materials are lit — see
+ * ClientPluginCtx.loadRigAsset for why this is a required, explicit choice.
+ */
+export type RigLighting = 'sky-environment' | 'lamps-only';
+
 export interface SkyRigState {
   /**
    * Unit-ish direction the sun shines FROM, in the same convention
@@ -652,6 +659,27 @@ export interface ClientPluginCtx {
    * on each server broadcast.
    */
   setSkyRig(state: SkyRigState): void;
+
+  /**
+   * Loads an authored model file (a `.glb?url` import) the way every plugin
+   * must: through core, which owns the one thing a plugin cannot build for
+   * itself — the sky environment its PBR materials reflect (render/
+   * skyEnvironment.ts, issue #314).
+   *
+   * `lighting` IS REQUIRED, AND IS A DECISION, NOT A DEFAULT. three's lamps
+   * do not respect object layers, so an asset lit by the environment is lit by
+   * the lamps TOO: its diffuse term receives the sky's irradiance twice. For a
+   * metal — whose diffuse term is close to nothing and whose whole look is the
+   * reflection — that is the right trade and 'sky-environment' is the answer.
+   * For diffuse art authored and eyes-on-verified against the lamps alone
+   * (wood, sailcloth), 'lamps-only' keeps it looking exactly as it was
+   * verified. Making the choice explicit at every load is what stops a new
+   * asset from inheriting whichever default happened to be in force.
+   *
+   * Call from `preload`, where every asset load already lives; the returned
+   * asset is the plugin's to dispose.
+   */
+  loadRigAsset(url: string, lighting: RigLighting): Promise<RigAsset>;
 
   /**
    * DARKENS, TINTS OR OTHERWISE ADJUSTS THE SKY THE CLAIMANT PRODUCED, without

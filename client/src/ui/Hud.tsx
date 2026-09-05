@@ -5,8 +5,9 @@
 //   * TOP LEFT      the info panel: 'panel'-placed plugin panels (relics'
 //                    skills, the invite link) and the control hint text.
 //                    Collapsible to a tab, as the old all-in-one panel was.
-//   * BOTTOM LEFT   the brush panel: radius, tool, edge, mode — the things a
-//                    sculpting hand actually reaches for, always visible.
+//   * BOTTOM LEFT   the modeler: brush width, tool, edge, mode — the things a
+//                    sculpting hand actually reaches for, on screen whenever
+//                    the brush is the held tool.
 //   * BOTTOM RIGHT  the mana gauge (owner move, 2026-08-25, out of the
 //                    bottom-centre cell) beside a column of equal-sized icon
 //                    buttons, each opening one thing: connection status, the
@@ -32,16 +33,31 @@
 // content again, and the address sits next to the one thing it is about: the
 // link a friend joins through.
 //
-// THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): brush panel,
+// THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): the
 // bottom-centre instruments and the gear live in one grid row —
 // `minmax(0,1fr) auto minmax(0,1fr)` — so a desktop keeps the toolbar
 // dead-centre while a phone shrinks the side cells and everything flows along
-// the bottom instead of the three absolutely-anchored pieces colliding. (The
-// mana gauge left the centre cell for the right one, 2026-08-25.) On narrow
-// screens the brush rows drop their text labels (hud.css) — every button
-// keeps its title and aria-label — and coarse pointers get larger touch
-// targets. All three sections must stay visible AND operable at iPhone
-// portrait width; that is the requirement this strip exists to meet.
+// the bottom instead of the absolutely-anchored pieces colliding. (The mana
+// gauge left the centre cell for the right one, 2026-08-25.) Coarse pointers
+// get larger touch targets (hud.css). Every section must stay visible AND
+// operable at iPhone portrait width; that is the requirement this strip
+// exists to meet.
+//
+// THE MODELER IS ALL ICONS (owner, 2026-09-04: "instead of text, it uses an
+// icon … change the mode to be an icon"): the brush panel kept its corner —
+// "I want the center HUD to remain where it was and I want the tool HUD to
+// stay on the left", same day, after seeing it docked over the toolbar — but
+// every control in it became a picture. The four tools, the two edge profiles
+// and the raise/lower toggle wear the shaded art of BrushIcons.tsx, and the
+// five brush-width buttons became one slider snapped to the five rungs of the
+// ladder. Since the owner's inline mockup (same day) the tools, the edge
+// profiles and the direction disc share ONE row, with the slider alone
+// beneath them. Two consequences worth naming. The row labels ("Brush", "Tool",
+// "Edge", "Mode") are gone: with no words on the tiles there is nothing for a
+// word beside them to disambiguate, and each control's own title and
+// aria-label carries its name. And the panel is tied to the HELD TOOL rather
+// than being unconditionally visible: it configures the brush, so it is on
+// screen only while the brush is what the hand holds.
 //
 // SOLID REACTIVITY: every reactive value below is read by CALLING its accessor
 // at the point of use, inside JSX or inside an event handler. A component body
@@ -49,7 +65,14 @@
 // the dot on whatever the status happened to be at mount. There are no such
 // consts in this file, by construction.
 
-import { For, Show, createSignal, onCleanup, type JSX } from 'solid-js';
+import {
+  For,
+  Show,
+  createSignal,
+  onCleanup,
+  type Component,
+  type JSX,
+} from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import { VersionWatermark } from './VersionWatermark.tsx';
@@ -95,6 +118,17 @@ import { AudioSettingsPanel } from './AudioSettingsPanel.tsx';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
 import { Toolbar } from './Toolbar.tsx';
+import { SCULPT_TOOL_ID, activeToolId } from '../plugins/toolbar.ts';
+import {
+  CarveIcon,
+  HardIcon,
+  LowerIcon,
+  PullIcon,
+  RaiseIcon,
+  SmoothIcon,
+  SoftIcon,
+  StampIcon,
+} from './BrushIcons.tsx';
 import { Cartographer, chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { ChartSource } from '../terrain/chart.ts';
 import type { ConnectionStatus } from '../net/connection.ts';
@@ -148,7 +182,12 @@ const HINT_BUTTON: Record<string, string> = {
   right: 'Right',
 };
 
-/** Button captions for the brush-shape toggles (decision 2026-08-14). */
+/**
+ * The brush-shape toggles' words (decision 2026-08-14). No longer RENDERED —
+ * the dock's tiles are icon-only (owner, 2026-09-04) — but still the wording
+ * of every one of those tiles' `aria-label`, which is the only name a screen
+ * reader or a hover ever gets for them.
+ */
 const TOOL_LABEL: Record<SculptTool, string> = {
   stamp: 'Stamp',
   smooth: 'Smooth',
@@ -160,6 +199,43 @@ const PROFILE_LABEL: Record<SculptProfile, string> = {
   soft: 'Soft',
   hard: 'Hard',
 };
+
+/**
+ * The face each tool and each edge profile wears in the dock (BrushIcons.tsx).
+ * Keyed by the SAME shared unions the pickers iterate, so a tool added to
+ * shared without art here fails to typecheck rather than rendering a blank
+ * tile.
+ */
+const TOOL_ICON: Record<SculptTool, Component> = {
+  stamp: StampIcon,
+  smooth: SmoothIcon,
+  drag: PullIcon,
+  carve: CarveIcon,
+};
+
+const PROFILE_ICON: Record<SculptProfile, Component> = {
+  soft: SoftIcon,
+  hard: HardIcon,
+};
+
+/**
+ * The brush-width slider's top index: it spans the ladder by INDEX, not by
+ * radius, which is what makes a native range snap to exactly the five rungs
+ * BRUSH_RADII offers (hudState.ts) instead of to arithmetic in between them.
+ * Derived from the ladder, so a rung added there widens the slider by itself.
+ */
+const BRUSH_RUNG_MAX = BRUSH_RADII.length - 1;
+
+/**
+ * Where the current brush sits on the ladder. A FUNCTION, not a const: it
+ * reads `brushRadius()` at call time, per the file header. Clamped at 0
+ * because a radius off the ladder (which readRadius in hudState.ts already
+ * refuses to load) must still leave the slider on a real rung rather than at
+ * -1.
+ */
+function brushRungIndex(): number {
+  return Math.max(0, BRUSH_RADII.indexOf(brushRadius()));
+}
 
 const HINT_MODIFIER: Record<string, string> = {
   none: '',
@@ -209,6 +285,12 @@ export function Hud(props: {
    * connection — the same arrangement as chartSource above.
    */
   rollback: RollbackActions;
+  /**
+   * The keyless "restart client + server" button's one action (owner,
+   * 2026-09-04). Passed in for the same reason as the two above: the HUD
+   * holds no reference to the connection.
+   */
+  restartStack: () => void;
 }): JSX.Element {
   // The button column's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
@@ -294,142 +376,197 @@ export function Hud(props: {
           it exists to expose). */}
       <VersionWatermark />
 
-      {/* THE BOTTOM STRIP (owner refinement, 2026-08-19): brush panel, the
-          bottom-centre toolbar and the settings column share ONE grid row —
-          `minmax(0,1fr) auto minmax(0,1fr)` — so the toolbar stays
+      {/* THE BOTTOM STRIP (owner refinement, 2026-08-19): the bottom-centre
+          instruments and the settings column share ONE grid row —
+          `minmax(0,1fr) auto minmax(0,1fr)` — so the centre cell stays
           dead-centre on a desktop while a phone-width screen shrinks the side
-          cells and the three sections flow along the bottom edge instead of
+          cells and the sections flow along the bottom edge instead of
           colliding. The strip itself never takes pointer events; each section
-          does. */}
+          does. Each section NAMES its column in hud.css rather than relying on
+          auto-placement: the left cell empties whenever a plugin tool is held
+          (below), and auto-placement would then slide the centre cell into it
+          and take the toolbar off centre. */}
       <div class="hud-bottom-strip">
-        {/* BOTTOM LEFT — the BRUSH panel: what a playing hand reaches for.
-            Always visible; collapsing the info panel never takes the tools
-            away. On narrow screens its row labels hide (every button keeps
-            its title and aria-label) so the whole panel fits beside the
-            gauge and the gear. */}
-        <div class="hud-panel hud-anchor-bottom-left">
-          <div class="hud-row">
-            <span class="hud-label">Brush</span>
-            <div class="brush-picker">
-              <For each={BRUSH_RADII}>
-                {(radius) => {
-                  // The button shows the brush's WIDTH IN WORLD UNITS, not the
-                  // ladder's raw value — see brushWidthWorldUnits for why the
-                  // raw value was showing a quarter of what it appeared to
-                  // promise. Four characters wide at the largest, so these
-                  // carry the picker's wide variant rather than its 26px
-                  // square.
-                  const width = brushWidthWorldUnits(radius);
-                  return (
-                    <button
-                      type="button"
-                      class="brush-button brush-button-wide"
-                      classList={{ active: brushRadius() === radius }}
-                      aria-label={`Brush ${width} world units across`}
-                      title={`Brush ${width} world units across — a wider brush moves more land and costs more mana.`}
-                      onClick={() => setBrushRadius(radius)}
-                    >
-                      {width}
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-          </div>
+        {/* BOTTOM LEFT — the MODELER: what a playing hand reaches for, in the
+            corner it has always been in (owner, 2026-09-04: "I want the center
+            HUD to remain where it was and I want the tool HUD to stay on the
+            left"). Collapsing the info panel never takes the tools away.
 
-          {/* Brush SHAPE: which tool, and how its edge falls off. Orthogonal
-              by design — hard+smooth stamps a plateau and lets it slump.
-              Every reactive value is read by calling its accessor inline, per
-              the file header; the labels are static maps, so they need no
-              accessor. */}
-          <div class="hud-row">
-            <span class="hud-label">Tool</span>
-            <div class="brush-picker">
-              <For each={BRUSH_TOOLS}>
-                {(tool) => (
-                  <button
-                    type="button"
-                    class="brush-button brush-button-wide"
-                    classList={{ active: brushTool() === tool }}
-                    aria-label={`${TOOL_LABEL[tool]} tool`}
-                    title={TOOL_TITLE[tool]}
-                    onClick={() => setBrushTool(tool)}
-                  >
-                    {TOOL_LABEL[tool]}
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
+            THIS IS THE BRUSH'S SETTINGS, so it is on screen only while the
+            brush is what the hand is holding: `activeToolId()` is
+            SCULPT_TOOL_ID (plugins/toolbar.ts) exactly then. A plugin tool
+            (Pyro, Temple) configures nothing here, and leaving a brush width
+            and a sculpt direction up beside its toolbar would be offering
+            settings that provably do not touch the press about to be made —
+            the same argument the Edge and Mode rows below make for themselves.
 
-          {/* EDGE, ONLY FOR THE TOOLS THAT HAVE ONE (issue #225). The drag
-              and the carve have no edge profile at all — shared says which,
-              and its resolver normalises theirs away, so leaving the row up
-              would offer a choice that provably does nothing. The row is
-              REMOVED rather than disabled: a disabled control claims the
-              setting is unavailable right now, and this one does not apply.
-              The stored profile is untouched, so picking Stamp or Smooth
-              again comes back to whatever the player last chose.
-              `brushTool()` is called inside the JSX, per the file header —
-              a `const` here would freeze the row on the mount-time tool. */}
-          <Show when={!TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool())}>
+            EVERY CONTROL IS ICON-ONLY and carries its own `title` and
+            `aria-label`; the row labels the panel used to wear are gone with
+            the words on the tiles. */}
+        <Show when={activeToolId() === SCULPT_TOOL_ID}>
+          <div
+            class="hud-modeler hud-anchor-bottom-left"
+            role="group"
+            aria-label="Brush"
+          >
+            {/* ONE INLINE ROW (owner mockup, 2026-09-04: "give me this inline
+                version"): the tool picker, then the edge picker, then the
+                direction disc, side by side, with the width slider alone
+                beneath. Tool and edge are orthogonal by design — hard+smooth
+                stamps a plateau and lets it slump. Every reactive value is
+                read by calling its accessor inline, per the file header; the
+                label and icon maps are static, so they need no accessor. */}
             <div class="hud-row">
-              <span class="hud-label">Edge</span>
               <div class="brush-picker">
-                <For each={BRUSH_PROFILES}>
-                  {(profile) => (
+                <For each={BRUSH_TOOLS}>
+                  {(tool) => (
                     <button
                       type="button"
-                      class="brush-button brush-button-wide"
-                      classList={{ active: brushProfile() === profile }}
-                      aria-label={`${PROFILE_LABEL[profile]} edge`}
-                      title={PROFILE_TITLE[profile]}
-                      onClick={() => setBrushProfile(profile)}
+                      class="brush-button"
+                      classList={{ active: brushTool() === tool }}
+                      aria-label={`${TOOL_LABEL[tool]} tool`}
+                      title={TOOL_TITLE[tool]}
+                      onClick={() => setBrushTool(tool)}
                     >
-                      {PROFILE_LABEL[profile]}
+                      <Dynamic component={TOOL_ICON[tool]} />
                     </button>
                   )}
                 </For>
               </div>
-            </div>
-          </Show>
 
-          {/* MODE, ONLY FOR THE TOOLS THAT HAVE A DIRECTION (owner report,
-              2026-09-02: "Mode should also not be displayed in the HUD, much
-              as we do not show hard or smooth for the pull tool"). The carve
-              only ever removes — shared says which tools those are, and the
-              input layer pins their strokes to Lower — so the row would offer
-              a choice that provably does nothing, and a toggle that did
-              nothing would be read as the tool being broken. REMOVED rather
-              than disabled, for the reason the Edge row above gives; the
-              stored mode is untouched, so Stamp comes back to whatever the
-              player last chose. `brushTool()` is called inside the JSX, per
-              the file header. */}
-          <Show when={!TOOLS_WITHOUT_DIRECTION.includes(brushTool())}>
-            <div class="hud-row">
-              <span class="hud-label">Mode</span>
-              {/* A button, not a label: on touch there are no modifier keys, so
-                  tapping this is how one-finger sculpting switches direction. */}
-              <button
-                type="button"
-                class="mode-value"
-                classList={{ lower: sculptMode() === 'lower' }}
-                aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
-                title={modeTitle(sculptMode(), controlBindings())}
-                onClick={() =>
-                  setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
-                }
-              >
-                {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
-              </button>
+              {/* EDGE and MODE follow on the same row, and each is present
+                  ONLY FOR THE TOOLS THAT HAVE IT (issue #225; owner report,
+                  2026-09-02: "Mode should also not be displayed in the HUD,
+                  much as we do not show hard or smooth for the pull tool").
+                  The drag and the carve have no edge profile at all and the
+                  carve only ever removes — shared says which tools those are,
+                  and its resolver normalises theirs away, so leaving either
+                  control up would offer a choice that provably does nothing.
+                  They are REMOVED rather than disabled: a disabled control
+                  claims the setting is unavailable right now, and these do
+                  not apply. The stored profile and mode are untouched, so
+                  picking Stamp again comes back to whatever the player last
+                  chose. `brushTool()` is called inside the JSX, per the file
+                  header — a `const` here would freeze the row on the
+                  mount-time tool. */}
+              <Show when={!TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool())}>
+                <div class="brush-picker">
+                  <For each={BRUSH_PROFILES}>
+                    {(profile) => (
+                      <button
+                        type="button"
+                        class="brush-button"
+                        classList={{ active: brushProfile() === profile }}
+                        aria-label={`${PROFILE_LABEL[profile]} edge`}
+                        title={PROFILE_TITLE[profile]}
+                        onClick={() => setBrushProfile(profile)}
+                      >
+                        <Dynamic component={PROFILE_ICON[profile]} />
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <Show when={!TOOLS_WITHOUT_DIRECTION.includes(brushTool())}>
+                {/* A button, not a label: on touch there are no modifier
+                    keys, so tapping this is how one-finger sculpting
+                    switches direction. It keeps its two colour states —
+                    accent green raising, `--hud-lower` orange lowering —
+                    and now says the same thing twice, in the colour and in
+                    the arrow it wears. */}
+                <button
+                  type="button"
+                  class="mode-value"
+                  classList={{ lower: sculptMode() === 'lower' }}
+                  aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
+                  title={modeTitle(sculptMode(), controlBindings())}
+                  onClick={() =>
+                    setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
+                  }
+                >
+                  <Dynamic
+                    component={sculptMode() === 'lower' ? LowerIcon : RaiseIcon}
+                  />
+                </button>
+              </Show>
             </div>
-          </Show>
-        </div>
+
+            {/* BRUSH WIDTH as a slider (owner, 2026-09-04: "turn it into a
+                slider that goes from least to most values with stops for the
+                two center values"). A NATIVE `input[type=range]` carrying the
+                ladder's INDEX rather than its radius: the five rungs are the
+                only reachable values, so the control snaps to them and the
+                arrow keys, Home and End all step rung by rung for free —
+                which a div-and-pointer-handler slider would have had to
+                reimplement, badly.
+
+                The numbers on show are WIDTHS IN WORLD UNITS, not the
+                ladder's raw radii — see brushWidthWorldUnits (hudState.ts)
+                for why the raw value was showing a quarter of what it
+                appeared to promise. The ends caption the ladder's first and
+                last rung; the live width rides under the thumb, and is what
+                `aria-valuetext` says, because the raw index a screen reader
+                would otherwise read out ("3 of 4") means nothing to a
+                player.
+
+                --brush-rung is the index the track's fill, its detents and
+                the caption's position are all derived from in CSS, so there
+                is one number to keep true rather than three. */}
+            <div class="hud-row brush-slider">
+              <span class="brush-slider__end">
+                {brushWidthWorldUnits(BRUSH_RADII[0])}
+              </span>
+              <div
+                class="brush-slider__track"
+                style={{
+                  '--brush-rung': String(brushRungIndex()),
+                  '--brush-slider-rungs': String(BRUSH_RUNG_MAX),
+                }}
+              >
+                <span class="brush-slider__rail" />
+                <span class="brush-slider__fill" />
+                {/* One detent per rung, its ring growing with the brush it
+                    stands for, so the width reads before the number does. */}
+                <For each={BRUSH_RADII}>
+                  {(radius, index) => (
+                    <span
+                      class="brush-slider__detent"
+                      classList={{ on: brushRadius() >= radius }}
+                      style={{ '--brush-detent': String(index()) }}
+                    />
+                  )}
+                </For>
+                <input
+                  type="range"
+                  class="brush-slider__input"
+                  min="0"
+                  max={BRUSH_RUNG_MAX}
+                  step="1"
+                  value={brushRungIndex()}
+                  aria-label="Brush width"
+                  aria-valuetext={`${brushWidthWorldUnits(brushRadius())} world units`}
+                  title="Brush width in world units — a wider brush moves more land and costs more mana."
+                  onInput={(event) =>
+                    setBrushRadius(BRUSH_RADII[event.currentTarget.valueAsNumber])
+                  }
+                />
+                <span class="brush-slider__value">
+                  {brushWidthWorldUnits(brushRadius())}
+                </span>
+              </div>
+              <span class="brush-slider__end">
+                {brushWidthWorldUnits(BRUSH_RADII[BRUSH_RUNG_MAX])}
+              </span>
+            </div>
+          </div>
+        </Show>
 
         {/* Bottom centre: the tool bar, alone in its cell now that the
-            gauge has moved right (owner move, 2026-08-25). The container is
-            `column-reverse` (hud.css), so plugin 'bottom-center' panels
-            registered later stack above it. */}
+            gauge has moved right (owner move, 2026-08-25) and the modeler
+            stayed left (owner, 2026-09-04). The container is `column-reverse`
+            (hud.css), so plugin 'bottom-center' panels registered later stack
+            above it. */}
         <div class="hud-bottom-center">
           <Toolbar />
           <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
@@ -582,6 +719,28 @@ export function Hud(props: {
             onClick={() => openControls(!showControls())}
           >
             ⚙
+          </button>
+          {/* RESTART CLIENT + SERVER (owner, 2026-09-04): the development
+              loop's update button. ONE CLICK, NO KEY, NO ARMING — the owner's
+              ruling ("I just want it to be quick"): it destroys nothing (the
+              world is saved first and comes back, the page reloads itself
+              when the client dev server returns), and it is the only way new
+              CLIENT code arrives, because Vite on this disk does not watch
+              files. The keyed, armed "Restart server" in the Worlds panel
+              restarts the server half only. Same 40px square as its
+              neighbours; a circular arrow with a power-line, the conventional
+              "restart" glyph, as an inline stroke SVG like the rest. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            aria-label="Restart client and server"
+            title="Restart the game server and the client dev server so code that changed on disk becomes live. The world is saved first; this page reloads itself."
+            onClick={() => props.restartStack()}
+          >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18.4 6.6A9 9 0 1 1 5.6 6.6" />
+              <path d="M12 3v8" />
+            </svg>
           </button>
           {/* ADMIN MODE (owner, 2026-09-01): the debug spawn panel's door, at
               the very bottom of the column — the corner of the screen — so
