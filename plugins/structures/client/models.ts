@@ -260,7 +260,9 @@ let importedBuildingAsset: RigAsset | null = null;
  * procedural timber-house, so the settlement still stands.
  */
 export async function preloadStructureModels(url: string): Promise<void> {
-  installStructureAsset(await loadRigAsset(url));
+  // Lamps-only (null environment): timber and thatch have no sky to mirror —
+  // see ClientPluginCtx.loadRigAsset for the choice.
+  installStructureAsset(await loadRigAsset(url, null));
 }
 
 /**
