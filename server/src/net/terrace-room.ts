@@ -34,8 +34,10 @@
 
 import { CloseCode, ErrorCode, Room, isDevMode, type Client } from '@colyseus/core';
 import {
+  STACK_RESTART_MESSAGE_TYPE,
   validateRestorePointsRequest,
   validateRollbackRequest,
+  validateStackRestartRequest,
   validateWorldAdminRequest,
   type ChunkUnlockMessage,
   type JoinSnapshotMessage,
@@ -289,6 +291,19 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         'restorePointList',
         session.rollback.listRestorePoints(client.sessionId, request.key),
       );
+    });
+
+    // THE KEYLESS WHOLE-STACK RESTART of the development loop. Not in the
+    // world-admin union on purpose: that union's contract is "the key check is
+    // first and identical for every action", and this message has no key by
+    // the owner's ruling (see StackRestartRequestMessage in shared/). It goes
+    // straight to the restart service; a refusal ('restartInProgress') needs
+    // no answer, because the notice the service broadcast for the restart
+    // already under way has told this client everything there is to know.
+    this.onMessage(STACK_RESTART_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+      if (validateStackRestartRequest(message) === null) return;
+      logInfo(`stack restart requested by ${client.sessionId}`);
+      this.context.restart.request('stack');
     });
 
     this.onMessage(ROLLBACK_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {

@@ -21,6 +21,28 @@ import {
   type TwoFingerGesture,
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
+import {
+  VOID_ANCHORS,
+  VOID_STYLES,
+  setVoidAnchor,
+  setVoidStyle,
+  voidAnchor,
+  voidStyle,
+  type VoidAnchor,
+  type VoidStyle,
+} from '../state/voidPrefs.ts';
+
+/** Panel copy for each celestial-void look (state/voidPrefs.ts owns the set). */
+const VOID_STYLE_LABEL: Record<VoidStyle, string> = {
+  wheel: 'Star wheel',
+  nebula: 'Nebula',
+};
+
+/** Panel copy for each celestial-void anchor (state/voidPrefs.ts owns the set). */
+const VOID_ANCHOR_LABEL: Record<VoidAnchor, string> = {
+  view: 'Follows the camera',
+  world: 'Locked to the world',
+};
 
 const ACTION_LABEL: Record<ControlAction, string> = {
   raise: 'Raise land',
@@ -167,6 +189,39 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
+      {/* What is drawn outside the map (render/celestialVoid.ts, issue #326).
+          A look, not a control — but this is the panel a player already opens
+          to make the view theirs, and it is where the reset button reaches. */}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Beyond the map</span>
+        <select
+          class="controls-select"
+          aria-label="Look of the space outside the map"
+          title="What fills the space outside the world. Purely a look — it never changes with the time of day."
+          value={voidStyle()}
+          onChange={(e) => setVoidStyle(e.currentTarget.value as VoidStyle)}
+        >
+          <For each={VOID_STYLES}>
+            {(style) => <option value={style}>{VOID_STYLE_LABEL[style]}</option>}
+          </For>
+        </select>
+      </div>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Void position</span>
+        <select
+          class="controls-select"
+          aria-label="What the space outside the map is fixed to"
+          title="Follows the camera: the void stays put while you orbit and pan. Locked to the world: it lies in the world's plane under the map and moves with it."
+          value={voidAnchor()}
+          onChange={(e) => setVoidAnchor(e.currentTarget.value as VoidAnchor)}
+        >
+          <For each={VOID_ANCHORS}>
+            {(anchor) => <option value={anchor}>{VOID_ANCHOR_LABEL[anchor]}</option>}
+          </For>
+        </select>
+      </div>
+
       <Show when={shadowedActions(controlBindings()).length > 0}>
         <p class="controls-warning">
           {/* Same binding twice: only the first (by precedence) ever fires. */}
@@ -192,8 +247,9 @@ export function ControlsPanel(): JSX.Element {
         </p>
       </Show>
 
-      {/* resetBindings clears the buttons, the touch gesture AND the wheel —
-          every setting on this panel — so the tooltip promises exactly that. */}
+      {/* resetBindings clears the buttons, the touch gesture, the wheel AND
+          the celestial void's look — every setting on this panel — so the
+          tooltip promises exactly that. */}
       <button
         type="button"
         class="controls-reset"
