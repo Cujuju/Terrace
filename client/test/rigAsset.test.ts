@@ -14,7 +14,7 @@ import { BoxGeometry, SRGBColorSpace, Mesh, Vector3, type Texture } from 'three'
 import {
   assertAssetFits,
   parseRigAsset,
-  ASSET_FIT_TOLERANCE_CELLS,
+  ASSET_FIT_TOLERANCE_WORLD_UNITS,
   RIG_TEXTURE_ANISOTROPY,
   type RigAsset,
 } from '../src/render/rigAsset.ts';
@@ -227,14 +227,14 @@ describe('assertAssetFits', () => {
     // The tolerance absorbs float dust in a computed bounding box, so the
     // boundary itself must be inside — a loft that lands one ulp long is art
     // that fits.
-    const over = 1 + ASSET_FIT_TOLERANCE_CELLS;
+    const over = 1 + ASSET_FIT_TOLERANCE_WORLD_UNITS;
     expect(() =>
       assertAssetFits(assetOfSize(new Vector3(over, 3, over)), { x: 1, z: 1 }),
     ).not.toThrow();
   });
 
   it('rejects a model past the tolerance, naming the axis and the number', () => {
-    const past = 1 + ASSET_FIT_TOLERANCE_CELLS * 2;
+    const past = 1 + ASSET_FIT_TOLERANCE_WORLD_UNITS * 2;
     expect(() => assertAssetFits(assetOfSize(new Vector3(past, 1, 1)), { x: 1, z: 1 })).toThrow(
       /x 1\.040 > 1/,
     );

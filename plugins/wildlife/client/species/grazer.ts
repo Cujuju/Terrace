@@ -34,9 +34,9 @@
 import { Box3, Vector3 } from 'three';
 // Render kit, reached by path the same way ../models.ts reaches it.
 import {
-  ASSET_FIT_TOLERANCE_CELLS,
+  ASSET_FIT_TOLERANCE_WORLD_UNITS,
   assertAssetFits,
-  type AssetFootprintCells,
+  type AssetFootprint,
   type RigAsset,
 } from '../../../../client/src/render/rigAsset.ts';
 import { poseWalk } from './quadruped.ts';
@@ -80,16 +80,10 @@ const REPLACED_FIGURE_LENGTH_WORLD_UNITS = (0.95 + 0.6) * GRAZER_SCALE;
 /**
  * The ground square and the height the imported model must fit inside.
  *
- * IN WORLD UNITS, not cells, despite `AssetFootprintCells` — the type compares
- * a Box3 against three numbers and the caller chooses their unit. Every model
- * dimension in this plugin is world units (../placement.ts converts to cells at
- * one boundary, cellsAcross), and mixing the two here is the exact bug that
- * header records.
- *
  * The ground budget is SQUARE at the body's length because a creature yaws to
  * its heading: a footprint that fitted only along X would overrun it broadside.
  */
-export const GRAZER_ASSET_FOOTPRINT: AssetFootprintCells = {
+export const GRAZER_ASSET_FOOTPRINT: AssetFootprint = {
   x: REPLACED_FIGURE_LENGTH_WORLD_UNITS,
   z: REPLACED_FIGURE_LENGTH_WORLD_UNITS,
   y: GRAZER_HEIGHT_WORLD_UNITS,
@@ -228,7 +222,7 @@ export function assertGrazerAsset(asset: RigAsset): void {
 
   const mismatches: string[] = [];
   const check = (axis: string, measured: number, declared: number): void => {
-    if (Math.abs(measured - declared) > ASSET_FIT_TOLERANCE_CELLS) {
+    if (Math.abs(measured - declared) > ASSET_FIT_TOLERANCE_WORLD_UNITS) {
       mismatches.push(`${axis} ${measured.toFixed(4)} != ${String(declared)}`);
     }
   };
@@ -239,7 +233,7 @@ export function assertGrazerAsset(asset: RigAsset): void {
   if (mismatches.length > 0) {
     throw new Error(
       `grazer asset: it no longer measures what GRAZER_ENVELOPE says ` +
-        `(${mismatches.join('; ')}, tolerance ${String(ASSET_FIT_TOLERANCE_CELLS)}) — ` +
+        `(${mismatches.join('; ')}, tolerance ${String(ASSET_FIT_TOLERANCE_WORLD_UNITS)}) — ` +
         're-measure the envelope in species/grazer.ts against the new import',
     );
   }
