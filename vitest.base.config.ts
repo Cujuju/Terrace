@@ -40,6 +40,16 @@
 export default {
   test: {
     testTimeout: 30_000,
+    // THE SAME RAIL FOR A FIXTURE AS FOR AN ASSERTION (2026-09-04). Vitest's
+    // hook budget is a separate 10 s default, and everything the note above
+    // says about slow fixtures applies to the hooks that BUILD them — more so,
+    // since a `beforeAll` is where a suite puts the world it did not want to
+    // build five times. The wildlife suite's settled population is documented
+    // at "about eight seconds of wall clock" and was therefore one species away
+    // from failing on a rail nobody had set deliberately; adding the wolf
+    // spent that margin. Matching the two numbers is the fix: a suite that may
+    // spend 30 s proving something may spend 30 s setting it up.
+    hookTimeout: 30_000,
     // NODE RUNS THE MODULES, NOT VITE (owner decision 2026-09-02). Vite's
     // default pipeline re-transforms every file of the import graph and
     // executes it through its module runner, once per test file: measured on
