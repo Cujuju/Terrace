@@ -16,6 +16,7 @@ import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { createCelestialVoid } from './render/celestialVoid.ts';
 import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
+import { layerEdgeStyle } from './state/layerEdgePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
@@ -82,6 +83,13 @@ const celestialVoid = createCelestialVoid(
 );
 createEffect(() => celestialVoid.setStyle(voidStyle()));
 createEffect(() => celestialVoid.setAnchor(voidAnchor()));
+
+// THE TERRACE-LIP OVERLAY'S MODE (render/layerEdgeOverlay.ts). Wired the same
+// way and for the same reason as the void above: the choice is a player
+// preference (state/layerEdgePrefs.ts) and the renderer knows nothing about
+// the HUD's state. The effect runs once on boot, so the stored choice is in
+// force before the first chunk is drawn.
+createEffect(() => world.setLayerEdgesVisible(layerEdgeStyle() === 'debug'));
 
 // THE PLACEMENT LISTENER — where an armed admin action lands (owner,
 // 2026-09-01; ui/AdminPanel.tsx arms, ui/AdminAim.tsx explains). Capture

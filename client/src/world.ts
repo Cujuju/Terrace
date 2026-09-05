@@ -218,6 +218,16 @@ export interface World extends TerrainSink {
    */
   highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null;
   /**
+   * Draws the resting terrace lips, or leaves the terrain plain — the player's
+   * choice (state/layerEdgePrefs.ts, applied by main.tsx). The lip under the
+   * cursor lights either way; see that module for why.
+   *
+   * Remembered here rather than pushed at the overlay directly because a
+   * rejoin REPLACES the overlay (`resetWorld`), and a pref applied once to the
+   * old one would come back on at the next world switch.
+   */
+  setLayerEdgesVisible(visible: boolean): void;
+  /**
    * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored
    * height, in BAND units, not world units.
    *
@@ -452,6 +462,12 @@ export function createWorld(viewport: Viewport): World {
   let drawnGround: DrawnGround | null = null;
   let meshes: TerrainMeshes | null = null;
   let layerEdges: LayerEdgeOverlay | null = null;
+  /**
+   * The live value of `setLayerEdgesVisible`, kept so a rejoin's fresh overlay
+   * is created into the same choice. Defaults to the overlay's own resting
+   * state; main.tsx sets it from the stored pref before the first chunk lands.
+   */
+  let layerEdgesVisible = true;
   let predictions: PredictionStore | null = null;
 
   /**
@@ -662,6 +678,7 @@ export function createWorld(viewport: Viewport): World {
       worldSize,
       nextMeshes.drawnGround(),
     );
+    nextLayerEdges.setRestingVisible(layerEdgesVisible);
     mirror = nextMirror;
     // The oracle closes over the mirror it was built on AND over that mirror's
     // mesh store, so a replaced mirror takes both with it. This is the only
@@ -1041,6 +1058,10 @@ export function createWorld(viewport: Viewport): World {
       const atX = pick === null ? 0 : useHitPoint ? pick.hitX : pick.x * CELL_WORLD_SIZE;
       const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
       return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;
+    },
+    setLayerEdgesVisible(visible: boolean): void {
+      layerEdgesVisible = visible;
+      layerEdges?.setRestingVisible(visible);
     },
     bandAtCell(x: number, y: number): number | null {
       if (mirror === null) return null;

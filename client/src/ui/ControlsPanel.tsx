@@ -37,6 +37,12 @@ import {
   type VoidAnchor,
   type VoidStyle,
 } from '../state/voidPrefs.ts';
+import {
+  LAYER_EDGE_STYLES,
+  layerEdgeStyle,
+  setLayerEdgeStyle,
+  type LayerEdgeStyle,
+} from '../state/layerEdgePrefs.ts';
 
 /** Panel copy for each map-edge mist mode (state/frontierMistPrefs.ts owns the set). */
 const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
@@ -54,6 +60,12 @@ const VOID_STYLE_LABEL: Record<VoidStyle, string> = {
 const VOID_ANCHOR_LABEL: Record<VoidAnchor, string> = {
   view: 'Follows the camera',
   world: 'Locked to the world',
+};
+
+/** Panel copy for each lip-overlay mode (state/layerEdgePrefs.ts owns the set). */
+const LAYER_EDGE_STYLE_LABEL: Record<LayerEdgeStyle, string> = {
+  normal: 'Normal',
+  debug: 'Debug (cyan lines)',
 };
 
 const ACTION_LABEL: Record<ControlAction, string> = {
@@ -251,6 +263,25 @@ export function ControlsPanel(): JSX.Element {
         >
           <For each={FRONTIER_MIST_MODES}>
             {(mode) => <option value={mode}>{FRONTIER_MIST_LABEL[mode]}</option>}
+          </For>
+        </select>
+      </div>
+
+      {/* The terrace-lip overlay (render/layerEdgeOverlay.ts). Debug draws
+          every edge the map knows about; Normal leaves the terrain plain. The
+          lip under the cursor lights either way — it is the grab affordance,
+          not the debug picture. */}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Terrain edges</span>
+        <select
+          class="controls-select"
+          aria-label="How terrain layer edges are drawn"
+          title="Normal: the terrain draws its own terraces. Debug: every layer edge the map knows about is outlined in cyan. The edge under the cursor lights up either way."
+          value={layerEdgeStyle()}
+          onChange={(e) => setLayerEdgeStyle(e.currentTarget.value as LayerEdgeStyle)}
+        >
+          <For each={LAYER_EDGE_STYLES}>
+            {(style) => <option value={style}>{LAYER_EDGE_STYLE_LABEL[style]}</option>}
           </For>
         </select>
       </div>
