@@ -886,16 +886,30 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
    * suspended and is NOT an error — it is the normal answer to a call that did
    * not come from a gesture it accepted, and the next gesture tries again.
    */
+  /**
+   * True between calling `resume()` and hearing back.
+   *
+   * ONE PRESS REACHES THIS TWICE — the host's capture-phase canvas listener and
+   * the engine's own one-shot `window` pointerdown both fire for it — and both
+   * run before the first `resume()` settles, so the `state !== 'suspended'`
+   * guard below cannot catch the second. Two resumes are harmless, but two
+   * "unlocked" log lines for one click are a trace that misleads its reader.
+   */
+  let resuming = false;
+
   function engineUnlock(): void {
-    if (disposed) return;
+    if (disposed || resuming) return;
     const active = graph;
     if (active === null || active.context.state !== 'suspended') return;
+    resuming = true;
     void active.context.resume().then(
       () => {
+        resuming = false;
         debugLog('unlock', { url: null, bus: null, gain: active.master.gain.value });
       },
       () => {
-        /* Still locked; the next gesture will try again. */
+        // Still locked; cleared so the NEXT gesture may try again.
+        resuming = false;
       },
     );
   }
