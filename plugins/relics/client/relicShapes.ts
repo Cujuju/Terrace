@@ -18,12 +18,10 @@
 import {
   BoxGeometry,
   type BufferGeometry,
-  ConeGeometry,
   CylinderGeometry,
   ExtrudeGeometry,
   Shape,
   SphereGeometry,
-  TetrahedronGeometry,
   TorusGeometry,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -59,51 +57,55 @@ function place(
 }
 
 /**
- * Titan's Hand — a wider brush — is an OPEN HAND, palm down, as if pressing
- * the ground flat: a broad palm slab with four fingers ahead of it and a thumb
+ * Titan's Hand — a wider brush — is a RAISED HAND, palm toward the viewer
+ * and fingers pointing up (owner, 2026-09-04: "point upwards, not flat"): a
+ * wrist, a tall palm slab, four fingers of uneven length and a thumb splayed
  * out to the side.
  */
 function titansHand(): BufferGeometry[] {
-  const palm = new BoxGeometry(0.9, 0.22, 0.8);
-  const fingerWidth = 0.18;
-  const fingerLength = 0.55;
-  const fingerGap = 0.23;
-  const fingers = [-1.5, -0.5, 0.5, 1.5].map((slot) =>
-    place(
-      new BoxGeometry(fingerWidth, 0.2, fingerLength),
-      slot * fingerGap,
-      0,
-      0.4 + fingerLength / 2,
-    ),
+  const palm = new BoxGeometry(0.8, 0.9, 0.22);
+  const wrist = place(new BoxGeometry(0.44, 0.3, 0.22), 0, -0.6, 0);
+  const fingerWidth = 0.17;
+  const fingerGap = 0.21;
+  const fingerLengths = [0.42, 0.52, 0.5, 0.4];
+  const fingers = fingerLengths.map((length, i) =>
+    place(new BoxGeometry(fingerWidth, length, 0.2), (i - 1.5) * fingerGap, 0.45 + length / 2, 0),
   );
-  const thumb = place(new BoxGeometry(0.42, 0.2, 0.18), 0.62, 0, 0.1, 0, -0.5);
-  return [palm, ...fingers, thumb];
+  const thumb = place(new BoxGeometry(0.18, 0.46, 0.2), 0.58, 0.12, 0, 0, 0, -0.55);
+  return [wrist, palm, ...fingers, thumb];
 }
 
 /**
- * Quake — a collapsing crater — is SHATTERED ROCK: a low broken slab with
- * jagged shards standing out of it at odd angles.
+ * Quake — a collapsing crater — is RIPPLES IN THE GROUND (owner, 2026-09-04:
+ * "a series of ripples"): a flat disc with three concentric ridges standing
+ * on it and a small dome at the epicentre.
  */
 function quake(): BufferGeometry[] {
-  const slab = new CylinderGeometry(0.75, 0.9, 0.22, 6);
-  const shards = [
-    place(new TetrahedronGeometry(0.42), 0.25, 0.32, 0.1, 0.4, 0.3, 0.2),
-    place(new TetrahedronGeometry(0.34), -0.35, 0.28, -0.2, -0.3, 1.1, 0.5),
-    place(new TetrahedronGeometry(0.28), -0.1, 0.25, 0.4, 0.6, 2.2, -0.4),
-    place(new TetrahedronGeometry(0.24), 0.45, 0.22, -0.4, -0.5, 0.7, 0.9),
-  ];
-  return [slab, ...shards];
+  const slabHeight = 0.1;
+  const slab = new CylinderGeometry(1.0, 1.0, slabHeight, ROUND_SEGMENTS);
+  const top = slabHeight / 2;
+  const ripples = [
+    [0.32, 0.065],
+    [0.62, 0.055],
+    [0.92, 0.045],
+  ].map(([radius, tube]) =>
+    place(new TorusGeometry(radius, tube, 6, 12), 0, top + tube, 0, QUARTER_TURN),
+  );
+  const epicentre = place(new SphereGeometry(0.15, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, top + 0.06, 0);
+  return [slab, ...ripples, epicentre];
 }
 
 /**
- * Genesis — raising a small island — is an ISLAND: a mound with a single tree
- * on it, trunk and canopy.
+ * Genesis — raising a small island — is an ISLAND first (owner, 2026-09-04:
+ * "the arrow isn't as prominent"): a wide two-tier mound, beach then grass,
+ * with one small round-canopied tree on it.
  */
 function genesis(): BufferGeometry[] {
-  const mound = new CylinderGeometry(0.5, 0.9, 0.32, ROUND_SEGMENTS);
-  const trunk = place(new CylinderGeometry(0.07, 0.09, 0.4, 6), 0, 0.36, 0);
-  const canopy = place(new ConeGeometry(0.34, 0.6, 7), 0, 0.82, 0);
-  return [mound, trunk, canopy];
+  const beach = new CylinderGeometry(0.8, 1.0, 0.16, ROUND_SEGMENTS);
+  const mound = place(new CylinderGeometry(0.55, 0.8, 0.3, ROUND_SEGMENTS), 0, 0.23, 0);
+  const trunk = place(new CylinderGeometry(0.06, 0.08, 0.32, 6), 0, 0.54, 0);
+  const canopy = place(new SphereGeometry(0.3, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, 0.88, 0);
+  return [beach, mound, trunk, canopy];
 }
 
 /**
@@ -130,15 +132,22 @@ function azureHeart(): BufferGeometry[] {
 }
 
 /**
- * Spring of Aether — mana twice as fast — is a SPRING: a basin ring with a
- * column of water rising from it and a drop cresting at the top.
+ * Spring of Aether — mana twice as fast — is a NATURAL SPRING (owner,
+ * 2026-09-04: "like a water spring"): a rock outcrop with a rimmed pool sunk
+ * into its top, water welling up as a low dome in the middle and one ripple
+ * ring around it. No fountain column.
  */
 function springOfAether(): BufferGeometry[] {
-  const basin = place(new TorusGeometry(0.62, 0.16, 6, ROUND_SEGMENTS), 0, -0.4, 0, QUARTER_TURN);
-  const column = place(new CylinderGeometry(0.16, 0.26, 0.9, 8), 0, 0.05, 0);
-  const crest = place(new SphereGeometry(0.3, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, 0.6, 0);
-  const drop = place(new ConeGeometry(0.14, 0.32, 6), 0, 0.98, 0);
-  return [basin, column, crest, drop];
+  const rockHeight = 0.35;
+  const rock = new CylinderGeometry(0.75, 0.95, rockHeight, 7);
+  const rockTop = rockHeight / 2;
+  const rim = place(new TorusGeometry(0.58, 0.1, 6, ROUND_SEGMENTS), 0, rockTop, 0, QUARTER_TURN);
+  const poolDepth = 0.06;
+  const pool = place(new CylinderGeometry(0.52, 0.52, poolDepth, ROUND_SEGMENTS), 0, rockTop, 0);
+  const waterLevel = rockTop + poolDepth / 2;
+  const well = place(new SphereGeometry(0.28, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, waterLevel, 0);
+  const ripple = place(new TorusGeometry(0.38, 0.035, 5, ROUND_SEGMENTS), 0, waterLevel, 0, QUARTER_TURN);
+  return [rock, rim, pool, well, ripple];
 }
 
 const BUILDERS: Readonly<Record<SkillId, () => BufferGeometry[]>> = {

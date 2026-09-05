@@ -43,19 +43,11 @@ function Tile(props: { prefix: string; glow: string }): JSX.Element {
   );
 }
 
-/** Titan's Hand: an open stone hand pressing the ground flat and wide. */
+/** Titan's Hand: a stone hand raised palm-out, fingers up. */
 export function TitansHandIcon(): JSX.Element {
   return (
     <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
       <defs>
-        <linearGradient id="titan-pad-0" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#c8f0a8" />
-          <stop offset="1" stop-color="#a6d48e" />
-        </linearGradient>
-        <linearGradient id="titan-pad-2" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#84b873" />
-          <stop offset="1" stop-color="#619b58" />
-        </linearGradient>
         <linearGradient id="titan-stone-0" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#ffe2b0" />
           <stop offset="1" stop-color="#e2be88" />
@@ -64,50 +56,66 @@ export function TitansHandIcon(): JSX.Element {
           <stop offset="0" stop-color="#e2be88" />
           <stop offset="1" stop-color="#c49b60" />
         </linearGradient>
-        <linearGradient id="titan-stone-2" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#c49b60" />
-          <stop offset="1" stop-color="#a77838" />
-        </linearGradient>
         <linearGradient id="titan-stone-3" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#a77838" />
           <stop offset="1" stop-color="#8a5410" />
         </linearGradient>
       </defs>
       <Tile prefix="titan" glow="#ffb347" />
-      <ellipse cx="16" cy="19.2" rx="8.5" ry="3.6" fill="#2e5a2e" opacity="0.5" />
-      <polygon points="16.0,13.0 26.8,18.4 16.0,23.8 5.2,18.4" fill="url(#titan-pad-0)" />
-      <polygon points="16.7,11.2 24.0,14.8 18.3,17.7 11.0,14.0" fill="url(#titan-stone-0)" />
-      <polygon points="12.3,17.9 7.9,20.1 7.9,17.7 12.3,15.5" fill="url(#titan-stone-2)" />
-      <polygon points="11.0,14.8 12.3,15.5 7.9,17.7 6.6,17.0" fill="url(#titan-stone-0)" />
-      <polygon points="11.0,17.2 11.0,14.0 18.3,17.7 18.3,20.9" fill="url(#titan-stone-0)" />
-      <polygon points="24.0,18.0 18.3,20.9 18.3,17.7 24.0,14.8" fill="url(#titan-stone-2)" />
-      <polygon points="6.6,19.4 6.6,17.0 7.9,17.7 7.9,20.1" fill="url(#titan-stone-0)" />
-      <polygon points="14.3,18.9 9.9,21.1 9.9,18.7 14.3,16.5" fill="url(#titan-stone-2)" />
-      <polygon points="13.0,15.8 14.3,16.5 9.9,18.7 8.6,18.0" fill="url(#titan-stone-0)" />
-      <polygon points="24.3,18.8 22.7,21.5 22.7,19.1 24.3,16.4" fill="url(#titan-stone-3)" />
-      <polygon points="22.3,16.1 24.3,16.4 22.7,19.1 20.7,18.8" fill="url(#titan-stone-0)" />
-      <polygon points="26.8,19.0 16.0,24.4 16.0,23.8 26.8,18.4" fill="url(#titan-pad-2)" />
-      <polygon points="5.2,19.0 5.2,18.4 16.0,23.8 16.0,24.4" fill="url(#titan-pad-0)" />
-      <polygon points="8.6,20.4 8.6,18.0 9.9,18.7 9.9,21.1" fill="url(#titan-stone-0)" />
-      <polygon points="16.3,19.8 11.9,22.1 11.9,19.7 16.3,17.4" fill="url(#titan-stone-2)" />
-      <polygon points="15.0,16.8 16.3,17.4 11.9,19.7 10.6,19.0" fill="url(#titan-stone-0)" />
-      <polygon points="20.7,21.2 20.7,18.8 22.7,19.1 22.7,21.5" fill="url(#titan-stone-1)" />
-      <polygon points="10.6,21.4 10.6,19.0 11.9,19.7 11.9,22.1" fill="url(#titan-stone-0)" />
-      <polygon points="18.3,20.8 13.8,23.1 13.8,20.7 18.3,18.4" fill="url(#titan-stone-2)" />
-      <polygon points="17.0,17.8 18.3,18.4 13.8,20.7 12.5,20.0" fill="url(#titan-stone-0)" />
-      <polygon points="12.5,22.4 12.5,20.0 13.8,20.7 13.8,23.1" fill="url(#titan-stone-0)" />
+      <ellipse cx="16" cy="19.2" rx="5" ry="2.4" fill="#2e5a2e" opacity="0.5" />
+      <polygon points="18.1,18.9 17.4,19.8 17.4,17.4 18.1,16.5" fill="url(#titan-stone-3)" />
+      <polygon points="13.9,19.1 13.9,16.7 17.4,17.4 17.4,19.8" fill="url(#titan-stone-1)" />
+      <polygon points="14.6,15.8 18.1,16.5 17.4,17.4 13.9,16.7" fill="url(#titan-stone-0)" />
+      <polygon points="12.5,16.5 12.5,9.3 18.9,10.4 18.9,17.6" fill="url(#titan-stone-1)" />
+      <polygon points="19.5,16.7 18.9,17.6 18.9,10.4 19.5,9.5" fill="url(#titan-stone-3)" />
+      <polygon points="19.3,13.4 21.3,10.6 20.7,11.4 18.8,14.2" fill="url(#titan-stone-0)" />
+      <polygon points="13.1,8.4 19.5,9.5 18.9,10.4 12.5,9.3" fill="url(#titan-stone-0)" />
+      <polygon points="18.8,14.2 20.7,11.4 21.9,12.4 20.0,15.2" fill="url(#titan-stone-1)" />
+      <polygon points="14.5,8.7 13.9,9.5 13.9,6.1 14.5,5.3" fill="url(#titan-stone-3)" />
+      <polygon points="12.5,9.2 12.5,5.9 13.9,6.1 13.9,9.5" fill="url(#titan-stone-1)" />
+      <polygon points="21.3,10.6 22.5,11.6 21.9,12.4 20.7,11.4" fill="url(#titan-stone-1)" />
+      <polygon points="16.1,9.0 15.5,9.8 15.5,5.6 16.1,4.8" fill="url(#titan-stone-3)" />
+      <polygon points="13.1,5.1 14.5,5.3 13.9,6.1 12.5,5.9" fill="url(#titan-stone-0)" />
+      <polygon points="14.2,9.5 14.2,5.4 15.5,5.6 15.5,9.8" fill="url(#titan-stone-1)" />
+      <polygon points="17.8,9.3 17.2,10.1 17.2,6.1 17.8,5.3" fill="url(#titan-stone-3)" />
+      <polygon points="19.5,9.6 18.9,10.4 18.9,7.2 19.5,6.4" fill="url(#titan-stone-3)" />
+      <polygon points="15.9,9.8 15.9,5.8 17.2,6.1 17.2,10.1" fill="url(#titan-stone-1)" />
+      <polygon points="14.8,4.6 16.1,4.8 15.5,5.6 14.2,5.4" fill="url(#titan-stone-0)" />
+      <polygon points="17.5,10.1 17.5,6.9 18.9,7.2 18.9,10.4" fill="url(#titan-stone-1)" />
+      <polygon points="16.5,5.0 17.8,5.3 17.2,6.1 15.9,5.8" fill="url(#titan-stone-0)" />
+      <polygon points="18.1,6.1 19.5,6.4 18.9,7.2 17.5,6.9" fill="url(#titan-stone-0)" />
     </svg>
   );
 }
 
-/** Quake: a shattered slab of rock, shards standing out of it. */
+/** Quake: ripples rolling out through the ground from an epicentre. */
 export function QuakeIcon(): JSX.Element {
   return (
     <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
       <defs>
+        <linearGradient id="quake-ripple-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffc2b8" />
+          <stop offset="1" stop-color="#db9890" />
+        </linearGradient>
+        <linearGradient id="quake-ripple-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#db9890" />
+          <stop offset="1" stop-color="#b86d68" />
+        </linearGradient>
+        <linearGradient id="quake-ripple-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#b86d68" />
+          <stop offset="1" stop-color="#944240" />
+        </linearGradient>
+        <linearGradient id="quake-ripple-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#944240" />
+          <stop offset="1" stop-color="#701818" />
+        </linearGradient>
         <linearGradient id="quake-rock-0" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#7a6a5a" />
           <stop offset="1" stop-color="#66584a" />
+        </linearGradient>
+        <linearGradient id="quake-rock-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#66584a" />
+          <stop offset="1" stop-color="#524539" />
         </linearGradient>
         <linearGradient id="quake-rock-2" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#524539" />
@@ -117,43 +125,144 @@ export function QuakeIcon(): JSX.Element {
           <stop offset="0" stop-color="#3e3228" />
           <stop offset="1" stop-color="#2a2018" />
         </linearGradient>
-        <linearGradient id="quake-shard-0" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#ffc2b8" />
-          <stop offset="1" stop-color="#db9890" />
-        </linearGradient>
-        <linearGradient id="quake-shard-1" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#db9890" />
-          <stop offset="1" stop-color="#b86d68" />
-        </linearGradient>
-        <linearGradient id="quake-shard-2" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#b86d68" />
-          <stop offset="1" stop-color="#944240" />
-        </linearGradient>
-        <linearGradient id="quake-shard-3" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#944240" />
-          <stop offset="1" stop-color="#701818" />
-        </linearGradient>
       </defs>
       <Tile prefix="quake" glow="#ff5c5c" />
-      <ellipse cx="16" cy="19.2" rx="8" ry="3.4" fill="#2e5a2e" opacity="0.5" />
-      <polygon points="14.0,15.3 14.4,14.2 20.5,15.0 21.4,16.3" fill="url(#quake-rock-2)" />
-      <polygon points="8.6,18.0 9.9,16.4 14.4,14.2 14.0,15.3" fill="url(#quake-rock-3)" />
-      <polygon points="18.0,22.7 10.6,21.7 8.6,18.0 14.0,15.3 21.4,16.3 23.4,20.0" fill="url(#quake-rock-0)" />
-      <polygon points="16.4,9.5 17.8,15.8 13.8,16.4" fill="url(#quake-shard-2)" />
-      <polygon points="13.8,16.4 11.2,12.8 16.4,9.5" fill="url(#quake-shard-0)" />
-      <polygon points="20.0,17.9 20.5,17.0 21.6,12.9" fill="url(#quake-shard-0)" />
-      <polygon points="21.6,12.9 24.8,17.3 20.0,17.9" fill="url(#quake-shard-1)" />
-      <polygon points="12.6,16.0 10.1,14.7 16.1,16.0" fill="url(#quake-shard-0)" />
-      <polygon points="12.0,20.7 10.1,14.7 12.6,16.0" fill="url(#quake-shard-0)" />
-      <polygon points="12.0,20.7 12.6,16.0 16.1,16.0" fill="url(#quake-shard-3)" />
-      <polygon points="17.4,15.7 21.6,15.9 14.1,20.1" fill="url(#quake-shard-3)" />
-      <polygon points="14.5,10.9 21.6,15.9 17.4,15.7" fill="url(#quake-shard-1)" />
-      <polygon points="14.1,20.1 14.5,10.9 17.4,15.7" fill="url(#quake-shard-0)" />
+      <ellipse cx="16" cy="19.2" rx="9" ry="3.8" fill="#2e5a2e" opacity="0.5" />
+      <polygon points="14.7,14.8 14.7,14.0 19.9,14.4 19.9,15.2" fill="url(#quake-rock-1)" />
+      <polygon points="10.0,16.0 10.0,15.2 14.7,14.0 14.7,14.8" fill="url(#quake-rock-2)" />
+      <polygon points="12.0,14.7 11.9,14.3 16.0,13.7 16.0,14.2" fill="url(#quake-ripple-1)" />
+      <polygon points="16.0,14.2 16.0,13.7 20.1,14.3 20.0,14.7" fill="url(#quake-ripple-0)" />
+      <polygon points="12.2,14.9 12.0,14.7 16.0,14.2 16.0,14.3" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,14.3 16.0,14.2 20.0,14.7 19.8,14.9" fill="url(#quake-ripple-0)" />
+      <polygon points="11.9,14.3 12.0,14.1 16.0,13.5 16.0,13.7" fill="url(#quake-ripple-2)" />
+      <polygon points="16.0,13.7 16.0,13.5 20.0,14.1 20.1,14.3" fill="url(#quake-ripple-2)" />
+      <polygon points="19.9,15.2 19.9,14.4 23.6,16.3 23.6,17.1" fill="url(#quake-rock-0)" />
+      <polygon points="20.0,14.7 20.1,14.3 23.1,15.8 22.9,16.2" fill="url(#quake-ripple-0)" />
+      <polygon points="9.1,16.2 8.9,15.8 11.9,14.3 12.0,14.7" fill="url(#quake-ripple-1)" />
+      <polygon points="19.8,14.9 20.0,14.7 22.9,16.2 22.6,16.2" fill="url(#quake-ripple-0)" />
+      <polygon points="9.4,16.2 9.1,16.2 12.0,14.7 12.2,14.9" fill="url(#quake-ripple-0)" />
+      <polygon points="20.1,14.3 20.0,14.1 22.9,15.5 23.1,15.8" fill="url(#quake-ripple-1)" />
+      <polygon points="8.9,15.8 9.1,15.5 12.0,14.1 11.9,14.3" fill="url(#quake-ripple-3)" />
+      <polygon points="16.0,15.4 16.0,14.9 18.9,15.3 18.7,15.8" fill="url(#quake-ripple-0)" />
+      <polygon points="13.3,15.8 13.1,15.3 16.0,14.9 16.0,15.4" fill="url(#quake-ripple-1)" />
+      <polygon points="13.5,16.0 13.3,15.8 16.0,15.4 16.0,15.6" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,15.6 16.0,15.4 18.7,15.8 18.5,16.0" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,14.9 16.0,14.6 18.7,15.0 18.9,15.3" fill="url(#quake-ripple-2)" />
+      <polygon points="13.1,15.3 13.3,15.0 16.0,14.6 16.0,14.9" fill="url(#quake-ripple-2)" />
+      <polygon points="7.6,18.3 7.6,17.5 10.0,15.2 10.0,16.0" fill="url(#quake-rock-3)" />
+      <polygon points="18.7,15.8 18.9,15.3 21.0,16.3 20.8,16.8" fill="url(#quake-ripple-0)" />
+      <polygon points="11.2,16.8 11.0,16.3 13.1,15.3 13.3,15.8" fill="url(#quake-ripple-1)" />
+      <polygon points="18.5,16.0 18.7,15.8 20.8,16.8 20.4,16.9" fill="url(#quake-ripple-0)" />
+      <polygon points="11.6,16.9 11.2,16.8 13.3,15.8 13.5,16.0" fill="url(#quake-ripple-0)" />
+      <polygon points="18.9,15.3 18.7,15.0 20.8,16.0 21.0,16.3" fill="url(#quake-ripple-1)" />
+      <polygon points="11.0,16.3 11.2,16.0 13.3,15.0 13.1,15.3" fill="url(#quake-ripple-3)" />
+      <polygon points="16.0,16.6 16.0,16.0 17.6,16.3 17.5,16.8" fill="url(#quake-ripple-0)" />
+      <polygon points="14.5,16.8 14.4,16.3 16.0,16.0 16.0,16.6" fill="url(#quake-ripple-1)" />
+      <polygon points="16.0,16.9 16.0,16.6 17.5,16.8 17.2,17.1" fill="url(#quake-ripple-0)" />
+      <polygon points="14.8,17.1 14.5,16.8 16.0,16.6 16.0,16.9" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,16.0 16.0,15.7 17.5,15.9 17.6,16.3" fill="url(#quake-ripple-2)" />
+      <polygon points="14.4,16.3 14.5,15.9 16.0,15.7 16.0,16.0" fill="url(#quake-ripple-2)" />
+      <polygon points="17.5,16.8 17.6,16.3 18.8,16.9 18.6,17.4" fill="url(#quake-ripple-0)" />
+      <polygon points="13.4,17.4 13.2,16.9 14.4,16.3 14.5,16.8" fill="url(#quake-ripple-1)" />
+      <polygon points="22.6,16.2 22.9,16.2 24.0,18.2 23.6,18.2" fill="url(#quake-ripple-0)" />
+      <polygon points="8.4,18.2 8.0,18.2 9.1,16.2 9.4,16.2" fill="url(#quake-ripple-0)" />
+      <polygon points="22.9,16.2 23.1,15.8 24.2,17.8 24.0,18.2" fill="url(#quake-ripple-0)" />
+      <polygon points="8.0,18.2 7.8,17.8 8.9,15.8 9.1,16.2" fill="url(#quake-ripple-2)" />
+      <polygon points="17.2,17.1 17.5,16.8 18.6,17.4 18.1,17.5" fill="url(#quake-ripple-0)" />
+      <polygon points="13.9,17.5 13.4,17.4 14.5,16.8 14.8,17.1" fill="url(#quake-ripple-0)" />
+      <polygon points="22.4,16.0 22.6,16.2 23.6,18.2 23.4,17.8" fill="url(#quake-ripple-2)" />
+      <polygon points="8.6,17.8 8.4,18.2 9.4,16.2 9.6,16.0" fill="url(#quake-ripple-0)" />
+      <polygon points="17.6,16.3 17.5,15.9 18.6,16.5 18.8,16.9" fill="url(#quake-ripple-1)" />
+      <polygon points="13.2,16.9 13.4,16.5 14.5,15.9 14.4,16.3" fill="url(#quake-ripple-3)" />
+      <polygon points="23.6,17.1 23.6,16.3 24.4,18.9 24.4,19.7" fill="url(#quake-rock-0)" />
+      <polygon points="20.4,16.9 20.8,16.8 21.5,18.1 21.0,18.1" fill="url(#quake-ripple-0)" />
+      <polygon points="11.0,18.1 10.5,18.1 11.2,16.8 11.6,16.9" fill="url(#quake-ripple-0)" />
+      <polygon points="20.8,16.8 21.0,16.3 21.7,17.8 21.5,18.1" fill="url(#quake-ripple-0)" />
+      <polygon points="10.5,18.1 10.3,17.8 11.0,16.3 11.2,16.8" fill="url(#quake-ripple-2)" />
+      <polygon points="20.2,16.6 20.4,16.9 21.0,18.1 20.8,17.8" fill="url(#quake-ripple-2)" />
+      <polygon points="11.2,17.8 11.0,18.1 11.6,16.9 11.8,16.6" fill="url(#quake-ripple-0)" />
+      <polygon points="16.5,17.1 16.3,18.2 15.7,18.2 15.5,17.1" fill="url(#quake-ripple-1)" />
+      <polygon points="16.3,18.2 16.0,18.9 15.7,18.2" fill="url(#quake-ripple-0)" />
+      <polygon points="15.7,18.2 16.0,18.9 15.2,18.4" fill="url(#quake-ripple-0)" />
+      <polygon points="16.8,18.4 16.0,18.9 16.3,18.2" fill="url(#quake-ripple-0)" />
+      <polygon points="15.5,17.1 15.7,18.2 15.2,18.4 14.8,17.5" fill="url(#quake-ripple-2)" />
+      <polygon points="17.2,17.5 16.8,18.4 16.3,18.2 16.5,17.1" fill="url(#quake-ripple-0)" />
+      <polygon points="18.1,17.5 18.6,17.4 19.0,18.1 18.4,18.1" fill="url(#quake-ripple-0)" />
+      <polygon points="13.6,18.1 13.0,18.1 13.4,17.4 13.9,17.5" fill="url(#quake-ripple-0)" />
+      <polygon points="22.0,22.0 17.3,23.2 12.1,22.8 8.4,20.9 7.6,18.3 10.0,16.0 14.7,14.8 19.9,15.2 23.6,17.1 24.4,19.7" fill="url(#quake-rock-0)" />
+      <polygon points="18.6,17.4 18.8,16.9 19.3,17.7 19.0,18.1" fill="url(#quake-ripple-0)" />
+      <polygon points="13.0,18.1 12.7,17.7 13.2,16.9 13.4,17.4" fill="url(#quake-ripple-2)" />
+      <polygon points="16.8,18.7 16.0,18.9 16.8,18.4" fill="url(#quake-ripple-0)" />
+      <polygon points="15.2,18.4 16.0,18.9 15.2,18.7" fill="url(#quake-ripple-1)" />
+      <polygon points="17.9,17.1 18.1,17.5 18.4,18.1 18.2,17.7" fill="url(#quake-ripple-2)" />
+      <polygon points="13.8,17.7 13.6,18.1 13.9,17.5 14.1,17.1" fill="url(#quake-ripple-0)" />
+      <polygon points="16.3,16.5 16.5,17.1 15.5,17.1 15.7,16.5" fill="url(#quake-ripple-2)" />
+      <polygon points="16.8,16.7 17.2,17.5 16.5,17.1 16.3,16.5" fill="url(#quake-ripple-1)" />
+      <polygon points="15.7,16.5 15.5,17.1 14.8,17.5 15.2,16.7" fill="url(#quake-ripple-3)" />
+      <polygon points="16.3,19.0 16.0,18.9 16.8,18.7" fill="url(#quake-ripple-0)" />
+      <polygon points="15.2,18.7 16.0,18.9 15.7,19.0" fill="url(#quake-ripple-1)" />
+      <polygon points="17.2,18.0 16.8,18.7 16.8,18.4 17.2,17.5" fill="url(#quake-ripple-0)" />
+      <polygon points="14.8,17.5 15.2,18.4 15.2,18.7 14.8,18.0" fill="url(#quake-ripple-2)" />
+      <polygon points="15.7,19.0 16.0,18.9 16.3,19.0" fill="url(#quake-ripple-0)" />
+      <polygon points="18.4,18.1 19.0,18.1 18.6,18.9 18.1,18.7" fill="url(#quake-ripple-0)" />
+      <polygon points="13.9,18.7 13.4,18.9 13.0,18.1 13.6,18.1" fill="url(#quake-ripple-0)" />
+      <polygon points="18.2,17.7 18.4,18.1 18.1,18.7 17.9,18.2" fill="url(#quake-ripple-2)" />
+      <polygon points="14.1,18.2 13.9,18.7 13.6,18.1 13.8,17.7" fill="url(#quake-ripple-0)" />
+      <polygon points="19.0,18.1 19.3,17.7 18.8,18.5 18.6,18.9" fill="url(#quake-ripple-0)" />
+      <polygon points="13.4,18.9 13.2,18.5 12.7,17.7 13.0,18.1" fill="url(#quake-ripple-2)" />
+      <polygon points="21.0,18.1 21.5,18.1 20.8,19.5 20.4,19.4" fill="url(#quake-ripple-0)" />
+      <polygon points="11.6,19.4 11.2,19.5 10.5,18.1 11.0,18.1" fill="url(#quake-ripple-0)" />
+      <polygon points="20.8,17.8 21.0,18.1 20.4,19.4 20.2,19.0" fill="url(#quake-ripple-2)" />
+      <polygon points="11.8,19.0 11.6,19.4 11.0,18.1 11.2,17.8" fill="url(#quake-ripple-0)" />
+      <polygon points="21.5,18.1 21.7,17.8 21.0,19.2 20.8,19.5" fill="url(#quake-ripple-0)" />
+      <polygon points="11.2,19.5 11.0,19.2 10.3,17.8 10.5,18.1" fill="url(#quake-ripple-2)" />
+      <polygon points="17.9,18.2 18.1,18.7 17.2,19.2 17.1,18.6" fill="url(#quake-ripple-1)" />
+      <polygon points="14.9,18.6 14.8,19.2 13.9,18.7 14.1,18.2" fill="url(#quake-ripple-0)" />
+      <polygon points="18.1,18.7 18.6,18.9 17.5,19.4 17.2,19.2" fill="url(#quake-ripple-0)" />
+      <polygon points="14.8,19.2 14.5,19.4 13.4,18.9 13.9,18.7" fill="url(#quake-ripple-0)" />
+      <polygon points="23.6,18.2 24.0,18.2 22.9,20.2 22.6,20.1" fill="url(#quake-ripple-0)" />
+      <polygon points="9.4,20.1 9.1,20.2 8.0,18.2 8.4,18.2" fill="url(#quake-ripple-0)" />
+      <polygon points="23.4,17.8 23.6,18.2 22.6,20.1 22.4,19.7" fill="url(#quake-ripple-2)" />
+      <polygon points="9.6,19.7 9.4,20.1 8.4,18.2 8.6,17.8" fill="url(#quake-ripple-0)" />
+      <polygon points="18.1,17.8 17.9,18.2 17.1,18.6 17.2,18.3" fill="url(#quake-ripple-3)" />
+      <polygon points="14.8,18.3 14.9,18.6 14.1,18.2 13.9,17.8" fill="url(#quake-ripple-1)" />
+      <polygon points="24.0,18.2 24.2,17.8 23.1,19.9 22.9,20.2" fill="url(#quake-ripple-0)" />
+      <polygon points="9.1,20.2 8.9,19.9 7.8,17.8 8.0,18.2" fill="url(#quake-ripple-2)" />
+      <polygon points="17.1,18.6 17.2,19.2 16.0,19.4 16.0,18.8" fill="url(#quake-ripple-1)" />
+      <polygon points="16.0,18.8 16.0,19.4 14.8,19.2 14.9,18.6" fill="url(#quake-ripple-0)" />
+      <polygon points="17.2,19.2 17.5,19.4 16.0,19.6 16.0,19.4" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,19.4 16.0,19.6 14.5,19.4 14.8,19.2" fill="url(#quake-ripple-0)" />
+      <polygon points="17.2,18.3 17.1,18.6 16.0,18.8 16.0,18.4" fill="url(#quake-ripple-2)" />
+      <polygon points="16.0,18.4 16.0,18.8 14.9,18.6 14.8,18.3" fill="url(#quake-ripple-2)" />
+      <polygon points="20.2,19.0 20.4,19.4 18.5,20.3 18.4,19.8" fill="url(#quake-ripple-1)" />
+      <polygon points="13.6,19.8 13.5,20.3 11.6,19.4 11.8,19.0" fill="url(#quake-ripple-0)" />
+      <polygon points="20.4,19.4 20.8,19.5 18.7,20.5 18.5,20.3" fill="url(#quake-ripple-0)" />
+      <polygon points="13.5,20.3 13.3,20.5 11.2,19.5 11.6,19.4" fill="url(#quake-ripple-0)" />
+      <polygon points="20.4,18.6 20.2,19.0 18.4,19.8 18.5,19.6" fill="url(#quake-ripple-3)" />
+      <polygon points="13.5,19.6 13.6,19.8 11.8,19.0 11.6,18.6" fill="url(#quake-ripple-1)" />
+      <polygon points="18.4,19.8 18.5,20.3 16.0,20.7 16.0,20.2" fill="url(#quake-ripple-1)" />
+      <polygon points="16.0,20.2 16.0,20.7 13.5,20.3 13.6,19.8" fill="url(#quake-ripple-0)" />
+      <polygon points="18.5,20.3 18.7,20.5 16.0,20.9 16.0,20.7" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,20.7 16.0,20.9 13.3,20.5 13.5,20.3" fill="url(#quake-ripple-0)" />
+      <polygon points="18.5,19.6 18.4,19.8 16.0,20.2 16.0,19.9" fill="url(#quake-ripple-2)" />
+      <polygon points="16.0,19.9 16.0,20.2 13.6,19.8 13.5,19.6" fill="url(#quake-ripple-2)" />
+      <polygon points="22.4,19.7 22.6,20.1 19.8,21.4 19.7,21.1" fill="url(#quake-ripple-1)" />
+      <polygon points="12.3,21.1 12.2,21.4 9.4,20.1 9.6,19.7" fill="url(#quake-ripple-0)" />
+      <polygon points="22.6,20.1 22.9,20.2 20.0,21.6 19.8,21.4" fill="url(#quake-ripple-0)" />
+      <polygon points="12.2,21.4 12.0,21.6 9.1,20.2 9.4,20.1" fill="url(#quake-ripple-0)" />
+      <polygon points="22.6,19.4 22.4,19.7 19.7,21.1 19.8,20.8" fill="url(#quake-ripple-3)" />
+      <polygon points="12.2,20.8 12.3,21.1 9.6,19.7 9.4,19.4" fill="url(#quake-ripple-1)" />
+      <polygon points="19.7,21.1 19.8,21.4 16.0,22.0 16.0,21.6" fill="url(#quake-ripple-1)" />
+      <polygon points="16.0,21.6 16.0,22.0 12.2,21.4 12.3,21.1" fill="url(#quake-ripple-0)" />
+      <polygon points="19.8,21.4 20.0,21.6 16.0,22.2 16.0,22.0" fill="url(#quake-ripple-0)" />
+      <polygon points="16.0,22.0 16.0,22.2 12.0,21.6 12.2,21.4" fill="url(#quake-ripple-0)" />
+      <polygon points="19.8,20.8 19.7,21.1 16.0,21.6 16.0,21.3" fill="url(#quake-ripple-2)" />
+      <polygon points="16.0,21.3 16.0,21.6 12.3,21.1 12.2,20.8" fill="url(#quake-ripple-2)" />
     </svg>
   );
 }
 
-/** Genesis: an island risen out of the tile, one tree on it. */
+/** Genesis: an island risen out of the tile, beach, grass, one small tree. */
 export function GenesisIcon(): JSX.Element {
   return (
     <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
@@ -170,9 +279,25 @@ export function GenesisIcon(): JSX.Element {
           <stop offset="0" stop-color="#603c1e" />
           <stop offset="1" stop-color="#4a2c14" />
         </linearGradient>
+        <linearGradient id="genesis-beach-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e6dcc8" />
+          <stop offset="1" stop-color="#c7bca7" />
+        </linearGradient>
+        <linearGradient id="genesis-beach-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#a89b86" />
+          <stop offset="1" stop-color="#897a66" />
+        </linearGradient>
+        <linearGradient id="genesis-beach-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#897a66" />
+          <stop offset="1" stop-color="#6a5a45" />
+        </linearGradient>
         <linearGradient id="genesis-canopy-0" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#ffc2b8" />
           <stop offset="1" stop-color="#db9890" />
+        </linearGradient>
+        <linearGradient id="genesis-canopy-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#db9890" />
+          <stop offset="1" stop-color="#b86d68" />
         </linearGradient>
         <linearGradient id="genesis-canopy-2" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#b86d68" />
@@ -196,18 +321,34 @@ export function GenesisIcon(): JSX.Element {
         </linearGradient>
       </defs>
       <Tile prefix="genesis" glow="#ff5c5c" />
-      <ellipse cx="16" cy="19.2" rx="8" ry="3.4" fill="#2e5a2e" opacity="0.5" />
-      <polygon points="14.9,15.4 15.4,13.1 17.7,13.3 19.3,15.8" fill="url(#genesis-mound-2)" />
-      <polygon points="10.9,16.4 13.3,13.6 15.4,13.1 14.9,15.4" fill="url(#genesis-mound-3)" />
-      <polygon points="19.3,15.8 17.7,13.3 19.4,14.1 22.4,17.4" fill="url(#genesis-mound-2)" />
-      <polygon points="21.1,21.6 17.1,22.6 12.7,22.2 9.6,20.6 8.9,18.4 10.9,16.4 14.9,15.4 19.3,15.8 22.4,17.4 23.1,19.6" fill="url(#genesis-mound-0)" />
-      <polygon points="16.8,15.4 15.7,15.5 14.9,15.1 15.2,14.6 16.3,14.5 17.1,14.9" fill="url(#genesis-bark-0)" />
-      <polygon points="15.2,14.6 15.4,10.7 16.2,10.6 16.3,14.5" fill="url(#genesis-bark-2)" />
-      <polygon points="16.3,14.5 16.2,10.6 16.8,10.9 17.1,14.9" fill="url(#genesis-bark-0)" />
-      <polygon points="14.9,15.1 15.2,11.1 15.4,10.7 15.2,14.6" fill="url(#genesis-bark-3)" />
-      <polygon points="15.5,9.7 16.0,4.2 19.0,10.3" fill="url(#genesis-canopy-2)" />
-      <polygon points="12.4,10.7 16.0,4.2 15.5,9.7" fill="url(#genesis-canopy-3)" />
-      <polygon points="18.3,13.6 14.6,13.8 12.0,12.5 12.4,10.7 15.5,9.7 19.0,10.3 20.2,12.0" fill="url(#genesis-canopy-0)" />
+      <ellipse cx="16" cy="19.2" rx="9" ry="3.8" fill="#2e5a2e" opacity="0.5" />
+      <polygon points="14.7,14.8 14.9,14.4 19.1,14.7 19.9,15.2" fill="url(#genesis-beach-2)" />
+      <polygon points="10.0,16.0 11.2,15.3 14.9,14.4 14.7,14.8" fill="url(#genesis-beach-3)" />
+      <polygon points="14.9,14.4 15.3,13.0 18.1,13.2 19.1,14.7" fill="url(#genesis-mound-2)" />
+      <polygon points="11.2,15.3 12.7,13.7 15.3,13.0 14.9,14.4" fill="url(#genesis-mound-3)" />
+      <polygon points="19.1,14.7 18.1,13.2 20.2,14.3 22.0,16.2" fill="url(#genesis-mound-2)" />
+      <polygon points="22.0,22.0 17.3,23.2 12.1,22.8 8.4,20.9 7.6,18.3 10.0,16.0 14.7,14.8 19.9,15.2 23.6,17.1 24.4,19.7" fill="url(#genesis-beach-0)" />
+      <polygon points="20.8,20.1 17.1,21.1 12.9,20.7 10.0,19.3 9.3,17.2 11.2,15.3 14.9,14.4 19.1,14.7 22.0,16.2 22.7,18.3" fill="url(#genesis-mound-0)" />
+      <polygon points="16.5,15.6 15.8,15.6 15.3,15.4 15.5,15.1 16.2,15.0 16.7,15.2" fill="url(#genesis-bark-0)" />
+      <polygon points="17.0,10.1 16.7,12.2 15.3,12.2 15.0,10.1" fill="url(#genesis-canopy-1)" />
+      <polygon points="16.7,12.2 16.0,13.7 15.3,12.2" fill="url(#genesis-canopy-0)" />
+      <polygon points="15.5,15.1 15.6,12.6 16.1,12.5 16.2,15.0" fill="url(#genesis-bark-2)" />
+      <polygon points="16.2,15.0 16.1,12.5 16.5,12.7 16.7,15.2" fill="url(#genesis-bark-0)" />
+      <polygon points="15.3,12.2 16.0,13.7 14.3,12.7" fill="url(#genesis-canopy-0)" />
+      <polygon points="17.7,12.7 16.0,13.7 16.7,12.2" fill="url(#genesis-canopy-0)" />
+      <polygon points="15.3,15.4 15.5,12.8 15.6,12.6 15.5,15.1" fill="url(#genesis-bark-3)" />
+      <polygon points="15.0,10.1 15.3,12.2 14.3,12.7 13.6,10.8" fill="url(#genesis-canopy-2)" />
+      <polygon points="18.4,10.8 17.7,12.7 16.7,12.2 17.0,10.1" fill="url(#genesis-canopy-0)" />
+      <polygon points="17.7,13.4 16.0,13.7 17.7,12.7" fill="url(#genesis-canopy-0)" />
+      <polygon points="14.3,12.7 16.0,13.7 14.3,13.4" fill="url(#genesis-canopy-1)" />
+      <polygon points="16.7,8.8 17.0,10.1 15.0,10.1 15.3,8.8" fill="url(#genesis-canopy-2)" />
+      <polygon points="15.3,8.8 15.0,10.1 13.6,10.8 14.3,9.3" fill="url(#genesis-canopy-3)" />
+      <polygon points="17.7,9.3 18.4,10.8 17.0,10.1 16.7,8.8" fill="url(#genesis-canopy-1)" />
+      <polygon points="16.7,13.8 16.0,13.7 17.7,13.4" fill="url(#genesis-canopy-0)" />
+      <polygon points="14.3,13.4 16.0,13.7 15.3,13.8" fill="url(#genesis-canopy-1)" />
+      <polygon points="18.4,11.8 17.7,13.4 17.7,12.7 18.4,10.8" fill="url(#genesis-canopy-0)" />
+      <polygon points="13.6,10.8 14.3,12.7 14.3,13.4 13.6,11.8" fill="url(#genesis-canopy-2)" />
+      <polygon points="15.3,13.8 16.0,13.7 16.7,13.8" fill="url(#genesis-canopy-0)" />
     </svg>
   );
 }
@@ -247,7 +388,7 @@ export function AzureHeartIcon(): JSX.Element {
   );
 }
 
-/** Spring of Aether: a basin with a column of water welling up from it. */
+/** Spring of Aether: a pool in a rock, water welling up in its middle. */
 export function SpringOfAetherIcon(): JSX.Element {
   return (
     <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
@@ -286,61 +427,87 @@ export function SpringOfAetherIcon(): JSX.Element {
         </linearGradient>
       </defs>
       <Tile prefix="spring" glow="#4fc3f7" />
-      <ellipse cx="16" cy="19.2" rx="7" ry="3.2" fill="#2e5a2e" opacity="0.5" />
-      <polygon points="12.5,15.3 12.1,13.5 17.3,13.1 17.2,15.0" fill="url(#spring-stone-1)" />
-      <polygon points="13.3,16.1 12.5,15.3 17.2,15.0 16.9,15.8" fill="url(#spring-stone-0)" />
-      <polygon points="17.2,15.0 17.3,13.1 22.1,14.3 21.5,16.0" fill="url(#spring-stone-0)" />
-      <polygon points="12.1,13.5 12.5,12.5 17.2,12.1 17.3,13.1" fill="url(#spring-stone-2)" />
-      <polygon points="16.9,15.8 17.2,15.0 21.5,16.0 20.2,16.7" fill="url(#spring-stone-0)" />
-      <polygon points="17.3,13.1 17.2,12.1 21.5,13.2 22.1,14.3" fill="url(#spring-stone-1)" />
-      <polygon points="9.1,17.0 8.3,15.4 12.1,13.5 12.5,15.3" fill="url(#spring-stone-1)" />
-      <polygon points="10.7,17.4 9.1,17.0 12.5,15.3 13.3,16.1" fill="url(#spring-stone-0)" />
-      <polygon points="8.3,15.4 9.1,14.1 12.5,12.5 12.1,13.5" fill="url(#spring-stone-3)" />
-      <polygon points="21.5,16.0 22.1,14.3 24.5,16.7 23.6,18.2" fill="url(#spring-stone-0)" />
-      <polygon points="20.2,16.7 21.5,16.0 23.6,18.2 21.9,18.3" fill="url(#spring-stone-0)" />
-      <polygon points="22.1,14.3 21.5,13.2 23.6,15.3 24.5,16.7" fill="url(#spring-stone-1)" />
-      <polygon points="10.1,19.2 8.4,19.4 9.1,17.0 10.7,17.4" fill="url(#spring-stone-0)" />
-      <polygon points="8.4,19.4 7.5,18.0 8.3,15.4 9.1,17.0" fill="url(#spring-stone-2)" />
-      <polygon points="11.0,17.7 10.1,19.2 10.7,17.4 11.5,16.2" fill="url(#spring-stone-0)" />
-      <polygon points="21.9,18.3 23.6,18.2 22.9,20.5 21.3,20.1" fill="url(#spring-stone-0)" />
-      <polygon points="18.0,18.3 16.0,18.8 14.0,18.3 13.1,17.3 14.0,16.3 16.0,15.9 18.0,16.3 18.9,17.3" fill="url(#spring-water-0)" />
-      <polygon points="21.0,16.9 21.9,18.3 21.3,20.1 20.5,18.5" fill="url(#spring-stone-2)" />
-      <polygon points="23.6,18.2 24.5,16.7 23.7,19.3 22.9,20.5" fill="url(#spring-stone-0)" />
-      <polygon points="16.0,15.9 16.0,7.1 17.2,7.4 18.0,16.3" fill="url(#spring-water-1)" />
-      <polygon points="14.0,16.3 14.8,7.4 16.0,7.1 16.0,15.9" fill="url(#spring-water-2)" />
-      <polygon points="12.4,19.1 11.8,20.9 10.1,19.2 11.0,17.7" fill="url(#spring-stone-0)" />
-      <polygon points="11.8,20.9 10.5,21.5 8.4,19.4 10.1,19.2" fill="url(#spring-stone-0)" />
-      <polygon points="18.0,16.3 17.2,7.4 17.8,8.0 18.9,17.3" fill="url(#spring-water-0)" />
-      <polygon points="13.1,17.3 14.2,8.0 14.8,7.4 14.0,16.3" fill="url(#spring-water-3)" />
-      <polygon points="11.8,18.0 12.4,19.1 11.0,17.7 10.1,16.4" fill="url(#spring-stone-1)" />
-      <polygon points="20.5,18.5 21.3,20.1 18.7,21.4 18.3,19.6" fill="url(#spring-stone-1)" />
-      <polygon points="21.3,20.1 22.9,20.5 19.5,22.2 18.7,21.4" fill="url(#spring-stone-0)" />
-      <polygon points="15.2,19.8 15.1,21.7 11.8,20.9 12.4,19.1" fill="url(#spring-stone-0)" />
-      <polygon points="21.3,17.2 20.5,18.5 18.3,19.6 18.7,18.5" fill="url(#spring-stone-3)" />
-      <polygon points="17.3,5.5 16.9,8.2 15.1,8.2 14.7,5.5" fill="url(#spring-water-1)" />
-      <polygon points="16.9,8.2 16.0,10.2 15.1,8.2" fill="url(#spring-water-0)" />
-      <polygon points="18.3,19.6 18.7,21.4 15.1,21.7 15.2,19.8" fill="url(#spring-stone-1)" />
-      <polygon points="15.1,21.7 14.8,22.6 10.5,21.5 11.8,20.9" fill="url(#spring-stone-0)" />
-      <polygon points="15.1,8.2 16.0,10.2 13.8,8.8" fill="url(#spring-water-0)" />
-      <polygon points="18.2,8.8 16.0,10.2 16.9,8.2" fill="url(#spring-water-0)" />
-      <polygon points="14.7,5.5 15.1,8.2 13.8,8.8 12.9,6.4" fill="url(#spring-water-2)" />
-      <polygon points="19.1,6.4 18.2,8.8 16.9,8.2 17.3,5.5" fill="url(#spring-water-0)" />
-      <polygon points="15.1,18.8 15.2,19.8 12.4,19.1 11.8,18.0" fill="url(#spring-stone-1)" />
-      <polygon points="18.7,21.4 19.5,22.2 14.8,22.6 15.1,21.7" fill="url(#spring-stone-0)" />
-      <polygon points="18.7,18.5 18.3,19.6 15.2,19.8 15.1,18.8" fill="url(#spring-stone-2)" />
-      <polygon points="13.8,8.8 16.0,10.2 13.8,9.7" fill="url(#spring-water-1)" />
-      <polygon points="18.2,9.7 16.0,10.2 18.2,8.8" fill="url(#spring-water-0)" />
-      <polygon points="16.9,3.8 17.3,5.5 14.7,5.5 15.1,3.8" fill="url(#spring-water-2)" />
-      <polygon points="15.1,3.8 14.7,5.5 12.9,6.4 13.8,4.4" fill="url(#spring-water-3)" />
-      <polygon points="18.2,4.4 19.1,6.4 17.3,5.5 16.9,3.8" fill="url(#spring-water-1)" />
-      <polygon points="13.8,9.7 16.0,10.2 15.1,10.3" fill="url(#spring-water-1)" />
-      <polygon points="16.9,10.3 16.0,10.2 18.2,9.7" fill="url(#spring-water-0)" />
-      <polygon points="12.9,6.4 13.8,8.8 13.8,9.7 12.9,7.7" fill="url(#spring-water-2)" />
-      <polygon points="19.1,7.7 18.2,9.7 18.2,8.8 19.1,6.4" fill="url(#spring-water-0)" />
-      <polygon points="15.1,10.3 16.0,10.2 16.9,10.3" fill="url(#spring-water-0)" />
-      <polygon points="14.9,3.9 16.0,1.1 16.4,3.7" fill="url(#spring-water-2)" />
-      <polygon points="17.1,5.0 15.6,5.2 14.5,4.6 14.9,3.9 16.4,3.7 17.5,4.2" fill="url(#spring-water-0)" />
-      <polygon points="16.4,3.7 16.0,1.1 17.5,4.2" fill="url(#spring-water-1)" />
+      <ellipse cx="16" cy="19.2" rx="8.5" ry="3.6" fill="#2e5a2e" opacity="0.5" />
+      <polygon points="10.3,16.1 11.5,13.9 16.7,13.0 16.9,15.0" fill="url(#spring-stone-2)" />
+      <polygon points="16.9,15.0 16.7,13.0 21.4,14.5 22.8,16.9" fill="url(#spring-stone-1)" />
+      <polygon points="13.6,14.5 13.4,13.6 16.9,13.4 16.8,14.3" fill="url(#spring-stone-1)" />
+      <polygon points="14.0,14.9 13.6,14.5 16.8,14.3 16.7,14.7" fill="url(#spring-stone-0)" />
+      <polygon points="16.8,14.3 16.9,13.4 20.1,14.2 19.8,15.0" fill="url(#spring-stone-0)" />
+      <polygon points="13.4,13.6 13.6,13.1 16.8,12.9 16.9,13.4" fill="url(#spring-stone-2)" />
+      <polygon points="16.7,14.7 16.8,14.3 19.8,15.0 19.2,15.3" fill="url(#spring-stone-0)" />
+      <polygon points="16.9,13.4 16.8,12.9 19.8,13.6 20.1,14.2" fill="url(#spring-stone-1)" />
+      <polygon points="15.3,14.3 15.3,13.8 18.0,14.0 18.0,14.5" fill="url(#spring-water-1)" />
+      <polygon points="11.2,15.7 10.9,14.9 13.4,13.6 13.6,14.5" fill="url(#spring-stone-1)" />
+      <polygon points="12.0,15.9 11.2,15.7 13.6,14.5 14.0,14.9" fill="url(#spring-stone-0)" />
+      <polygon points="12.9,14.9 12.9,14.4 15.3,13.8 15.3,14.3" fill="url(#spring-water-2)" />
+      <polygon points="10.9,14.9 11.2,14.3 13.6,13.1 13.4,13.6" fill="url(#spring-stone-3)" />
+      <polygon points="14.5,14.7 14.4,14.4 16.6,14.2 16.5,14.6" fill="url(#spring-water-1)" />
+      <polygon points="18.0,14.5 18.0,14.0 19.9,15.0 19.9,15.4" fill="url(#spring-water-0)" />
+      <polygon points="14.6,14.8 14.5,14.7 16.5,14.6 16.5,14.7" fill="url(#spring-water-0)" />
+      <polygon points="14.4,14.4 14.5,14.2 16.5,14.1 16.6,14.2" fill="url(#spring-water-2)" />
+      <polygon points="16.5,14.6 16.6,14.2 18.5,14.7 18.3,15.1" fill="url(#spring-water-0)" />
+      <polygon points="19.8,15.0 20.1,14.2 21.7,15.7 21.3,16.5" fill="url(#spring-stone-0)" />
+      <polygon points="16.5,14.7 16.5,14.6 18.3,15.1 18.1,15.1" fill="url(#spring-water-0)" />
+      <polygon points="19.2,15.3 19.8,15.0 21.3,16.5 20.4,16.5" fill="url(#spring-stone-0)" />
+      <polygon points="16.6,14.2 16.5,14.1 18.3,14.5 18.5,14.7" fill="url(#spring-water-2)" />
+      <polygon points="16.9,14.9 16.6,16.8 15.4,16.8 15.1,14.9" fill="url(#spring-water-1)" />
+      <polygon points="13.0,15.5 12.9,15.2 14.4,14.4 14.5,14.7" fill="url(#spring-water-1)" />
+      <polygon points="16.6,16.8 16.0,18.2 15.4,16.8" fill="url(#spring-water-0)" />
+      <polygon points="20.1,14.2 19.8,13.6 21.3,15.1 21.7,15.7" fill="url(#spring-stone-1)" />
+      <polygon points="13.3,15.4 13.0,15.5 14.5,14.7 14.6,14.8" fill="url(#spring-water-0)" />
+      <polygon points="18.7,22.8 11.7,22.4 8.0,19.5 10.3,16.1 16.9,15.0 22.8,16.9 23.6,20.3" fill="url(#spring-stone-0)" />
+      <polygon points="12.9,15.2 13.0,14.9 14.5,14.2 14.4,14.4" fill="url(#spring-water-3)" />
+      <polygon points="11.6,16.1 11.6,15.6 12.9,14.4 12.9,14.9" fill="url(#spring-water-3)" />
+      <polygon points="17.6,17.2 16.0,18.2 16.6,16.8" fill="url(#spring-water-0)" />
+      <polygon points="15.4,16.8 16.0,18.2 14.4,17.2" fill="url(#spring-water-0)" />
+      <polygon points="18.2,15.5 17.6,17.2 16.6,16.8 16.9,14.9" fill="url(#spring-water-0)" />
+      <polygon points="15.1,14.9 15.4,16.8 14.4,17.2 13.8,15.5" fill="url(#spring-water-2)" />
+      <polygon points="18.3,15.1 18.5,14.7 19.5,15.7 19.3,16.0" fill="url(#spring-water-0)" />
+      <polygon points="18.1,15.1 18.3,15.1 19.3,16.0 18.9,15.9" fill="url(#spring-water-0)" />
+      <polygon points="11.6,17.2 10.7,17.3 11.2,15.7 12.0,15.9" fill="url(#spring-stone-0)" />
+      <polygon points="17.6,17.9 16.0,18.2 17.6,17.2" fill="url(#spring-water-0)" />
+      <polygon points="14.4,17.2 16.0,18.2 14.4,17.9" fill="url(#spring-water-1)" />
+      <polygon points="16.6,13.6 16.9,14.9 15.1,14.9 15.4,13.6" fill="url(#spring-water-2)" />
+      <polygon points="10.7,17.3 10.3,16.7 10.9,14.9 11.2,15.7" fill="url(#spring-stone-2)" />
+      <polygon points="12.0,16.5 11.6,17.2 12.0,15.9 12.4,15.3" fill="url(#spring-stone-0)" />
+      <polygon points="19.9,15.4 19.9,15.0 20.4,16.3 20.4,16.8" fill="url(#spring-water-0)" />
+      <polygon points="15.4,13.6 15.1,14.9 13.8,15.5 14.4,14.1" fill="url(#spring-water-3)" />
+      <polygon points="17.6,14.1 18.2,15.5 16.9,14.9 16.6,13.6" fill="url(#spring-water-1)" />
+      <polygon points="13.1,16.4 12.7,16.5 13.0,15.5 13.3,15.4" fill="url(#spring-water-0)" />
+      <polygon points="16.6,18.3 16.0,18.2 17.6,17.9" fill="url(#spring-water-0)" />
+      <polygon points="14.4,17.9 16.0,18.2 15.4,18.3" fill="url(#spring-water-1)" />
+      <polygon points="12.7,16.5 12.5,16.2 12.9,15.2 13.0,15.5" fill="url(#spring-water-2)" />
+      <polygon points="18.2,16.4 17.6,17.9 17.6,17.2 18.2,15.5" fill="url(#spring-water-0)" />
+      <polygon points="13.8,15.5 14.4,17.2 14.4,17.9 13.8,16.4" fill="url(#spring-water-2)" />
+      <polygon points="19.1,18.0 16.7,18.6 14.0,18.4 12.1,17.4 11.6,16.1 12.9,14.9 15.3,14.3 18.0,14.5 19.9,15.4 20.4,16.8" fill="url(#spring-water-0)" />
+      <polygon points="15.4,18.3 16.0,18.2 16.6,18.3" fill="url(#spring-water-0)" />
+      <polygon points="20.4,16.5 21.3,16.5 20.8,18.1 20.0,17.9" fill="url(#spring-stone-0)" />
+      <polygon points="20.0,15.9 20.4,16.5 20.0,17.9 19.6,17.1" fill="url(#spring-stone-2)" />
+      <polygon points="18.9,15.9 19.3,16.0 19.0,17.0 18.7,16.8" fill="url(#spring-water-0)" />
+      <polygon points="21.3,16.5 21.7,15.7 21.1,17.5 20.8,18.1" fill="url(#spring-stone-0)" />
+      <polygon points="19.3,16.0 19.5,15.7 19.1,16.8 19.0,17.0" fill="url(#spring-water-0)" />
+      <polygon points="18.9,15.6 18.9,15.9 18.7,16.8 18.7,16.5" fill="url(#spring-water-3)" />
+      <polygon points="13.9,17.2 13.7,17.4 12.7,16.5 13.1,16.4" fill="url(#spring-water-0)" />
+      <polygon points="13.9,16.9 13.9,17.2 13.1,16.4 13.1,16.0" fill="url(#spring-water-0)" />
+      <polygon points="13.7,17.4 13.5,17.2 12.5,16.2 12.7,16.5" fill="url(#spring-water-2)" />
+      <polygon points="13.1,17.6 12.8,18.5 11.6,17.2 12.0,16.5" fill="url(#spring-stone-0)" />
+      <polygon points="12.8,18.5 12.2,18.8 10.7,17.3 11.6,17.2" fill="url(#spring-stone-0)" />
+      <polygon points="12.8,17.1 13.1,17.6 12.0,16.5 11.6,15.9" fill="url(#spring-stone-1)" />
+      <polygon points="18.7,16.8 19.0,17.0 17.5,17.7 17.4,17.5" fill="url(#spring-water-0)" />
+      <polygon points="18.7,16.5 18.7,16.8 17.4,17.5 17.4,17.1" fill="url(#spring-water-2)" />
+      <polygon points="19.6,17.1 20.0,17.9 18.0,18.9 17.8,18.0" fill="url(#spring-stone-1)" />
+      <polygon points="15.5,17.6 15.5,17.9 13.7,17.4 13.9,17.2" fill="url(#spring-water-0)" />
+      <polygon points="15.5,17.3 15.5,17.6 13.9,17.2 13.9,16.9" fill="url(#spring-water-1)" />
+      <polygon points="20.0,17.9 20.8,18.1 18.4,19.3 18.0,18.9" fill="url(#spring-stone-0)" />
+      <polygon points="17.4,17.5 17.5,17.7 15.5,17.9 15.5,17.6" fill="url(#spring-water-0)" />
+      <polygon points="17.4,17.1 17.4,17.5 15.5,17.6 15.5,17.3" fill="url(#spring-water-1)" />
+      <polygon points="20.0,16.5 19.6,17.1 17.8,18.0 18.0,17.5" fill="url(#spring-stone-3)" />
+      <polygon points="15.4,18.2 15.3,19.1 12.8,18.5 13.1,17.6" fill="url(#spring-stone-0)" />
+      <polygon points="15.3,19.1 15.2,19.5 12.2,18.8 12.8,18.5" fill="url(#spring-stone-0)" />
+      <polygon points="17.8,18.0 18.0,18.9 15.3,19.1 15.4,18.2" fill="url(#spring-stone-1)" />
+      <polygon points="15.3,17.7 15.4,18.2 13.1,17.6 12.8,17.1" fill="url(#spring-stone-1)" />
+      <polygon points="18.0,18.9 18.4,19.3 15.2,19.5 15.3,19.1" fill="url(#spring-stone-0)" />
+      <polygon points="18.0,17.5 17.8,18.0 15.4,18.2 15.3,17.7" fill="url(#spring-stone-2)" />
     </svg>
   );
 }
