@@ -1,5 +1,8 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 10 (owner 2026-09-04): ARM_WOBBLE 2.0 -> 0.25 ('not random squiggly lines'),
+// ARM_BLEED 0.35 floor under the arm profile and softer lanes ('bleed into each other').
+// Client-side only: LOCKED_HUB_CLEARANCE_WORLD 5 -> 2.
 // REVISION 9 (owner 2026-09-04): arm CONTENT — grain streaks along each arm's curve
 // (periodic noise in (log r, wound angle)), ARM_WOBBLE phase wander, deeper palette.
 // The reference's wound frame rotated the wrong way, which is why its grain cut across.
@@ -125,7 +128,8 @@ const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitc
 const float ARM_SHARPNESS= 1.0;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0
 const float GAS_GAIN     = 1.0;    // brightness of the gas arms; rev 6: 1.5 -> 1.2 'a little darker', rev 7: 1.0
 const float BULGE_GAIN   = 0.25;   // warm hub glow; rev 6: 0.55 -> 0.25 and the white core removed, 'get rid of the bright center'
-const float ARM_WOBBLE   = 2.0;    // rad of low-frequency phase wander; rev 9 owner 2026-09-04: 'the swirls look too rigid'
+const float ARM_WOBBLE   = 0.25;   // rad of low-frequency phase wander; rev 9: 2.0 'too rigid', rev 10 owner 2026-09-04: 'not random squiggly lines' - arms follow the spiral again
+const float ARM_BLEED    = 0.35;   // floor under the arm profile so gas spills across the gaps; rev 10: 'bleed into each other so the divisions are not so obvious'
 const float WOBBLE_SCALE = 0.6;    // disk units per wobble feature: the arms bend on a scale near the disk radius
 const float STREAK_ALONG = 1.6;    // grain cells per e-fold of radius ALONG an arm (long filaments)
 const float STREAK_ACROSS= 40.0;   // grain cells around the full circle ACROSS the arms (fine filaments); integer, the y period
@@ -157,7 +161,7 @@ void main(){
     float s=log(r+0.05);
     float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
     float phase=th*ARMS-s*WIND+wobble;
-    float arm=pow(0.5+0.5*cos(phase),ARM_SHARPNESS);
+    float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
     // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS — constant along an
     // arm. (The reference rotated the other way, which is why its grain cut across the arms.)
     vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
@@ -166,7 +170,7 @@ void main(){
     float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
     float haze=fbm(rf*1.4+vec2(9.0,2.0));
     float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
-    float lanes=smoothstep(0.6,0.78,grain)*arm*0.6;          // dark dust lanes cut through the arms
+    float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms; rev 10: 0.6 -> 0.45, softer
     float gas=(arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
     float bulge=exp(-r*2.0);
     // Rev 9 palette: deeper and more saturated — a deep blue drifting into violet across the disk,
