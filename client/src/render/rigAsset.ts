@@ -26,6 +26,7 @@
 
 import {
   Box3,
+  MeshStandardMaterial,
   Vector3,
   type Material,
   type Mesh,
@@ -85,9 +86,9 @@ export interface RigAsset {
  * `url` is the asset's served URL — typically a `.glb?url` import, which is
  * why client/vite.config.ts carries an assetsInclude entry for .glb files.
  */
-export async function loadRigAsset(url: string): Promise<RigAsset> {
+export async function loadRigAsset(url: string, environment: Texture | null): Promise<RigAsset> {
   const gltf = await new GLTFLoader().loadAsync(url);
-  return createRigAsset(url, gltf.scene);
+  return createRigAsset(url, gltf.scene, environment);
 }
 
 /**
@@ -98,10 +99,18 @@ export async function loadRigAsset(url: string): Promise<RigAsset> {
  */
 export async function parseRigAsset(data: ArrayBuffer, label: string): Promise<RigAsset> {
   const gltf = await new GLTFLoader().parseAsync(data, '');
-  return createRigAsset(label, gltf.scene);
+  // No environment on the node path: there is no renderer to have built one,
+  // and nothing here is drawn.
+  return createRigAsset(label, gltf.scene, null);
 }
 
-function createRigAsset(label: string, scene: Object3D): RigAsset {
+/**
+ * `environment` — the prefiltered sky (render/skyEnvironment.ts) every
+ * PBR material in the file is pointed at, or null to leave the file lit by
+ * the lamps alone. Set HERE, on the source materials, so every clone and every
+ * bake made from the asset inherits it without a second wiring step.
+ */
+function createRigAsset(label: string, scene: Object3D, environment: Texture | null): RigAsset {
   scene.updateMatrixWorld(true);
 
   let meshes = 0;
@@ -136,6 +145,9 @@ function createRigAsset(label: string, scene: Object3D): RigAsset {
             `that samples uv channel ${channel} but carries no ${attribute} attribute`,
         );
       }
+    }
+    if (environment !== null && material instanceof MeshStandardMaterial) {
+      material.envMap = environment;
     }
     // GLTFLoader assigns the colour spaces itself for the files IT writes;
     // VERIFIED here, not assumed — a hand-edited file, or another exporter,

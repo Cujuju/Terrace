@@ -14,6 +14,7 @@ import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
 import { createAudioEngine } from '../audio/audioEngine.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
+import { loadRigAsset } from '../render/rigAsset.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import {
   clearGroundShade,
@@ -802,6 +803,14 @@ export function createClientPluginHost(
           }
         }
         applySkyRig(viewport, modulated);
+      },
+      loadRigAsset(url, lighting) {
+        // The policy names resolve to one texture or none — the whole reason
+        // this goes through core rather than the loader directly.
+        return loadRigAsset(
+          url,
+          lighting === 'sky-environment' ? viewport.skyEnvironment.texture : null,
+        );
       },
       modulateSkyRig(modify: (state: SkyRigState) => SkyRigState) {
         skyRigModifiers.push(modify);
