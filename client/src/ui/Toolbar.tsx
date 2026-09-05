@@ -17,6 +17,11 @@
 // lone "Sculpt" button is a control with one setting, so the bar renders
 // nothing at all and the gauge sits where it always did.
 //
+// ICON-ONLY (owner, 2026-09-04: "reduce the size of the sculpt, pyro, and
+// temple buttons by removing the text"): each tile is its icon alone, in the
+// modeler dock's idiom; the tool's label lives on in its aria-label and its
+// title, which are the only names a screen reader or a hover ever gets.
+//
 // SOLID REACTIVITY: every reactive value is read by CALLING its accessor
 // inside JSX, per Hud.tsx's own rule — there are no consts here holding a
 // reactive read.
@@ -111,7 +116,6 @@ export function Toolbar(): JSX.Element {
           onClick={() => selectTool(SCULPT_TOOL_ID)}
         >
           <SculptIcon />
-          <span class="hud-tool__label">Sculpt</span>
         </button>
 
         <For each={pluginTools()}>
@@ -131,7 +135,6 @@ export function Toolbar(): JSX.Element {
               }
             >
               <Dynamic component={tool.icon} />
-              <span class="hud-tool__label">{tool.label}</span>
             </button>
           )}
         </For>

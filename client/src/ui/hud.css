@@ -247,7 +247,6 @@ body {
   /* The instruments' hover lifts and glows settle instantly. */
   .hud-tool,
   .hud-tool__icon,
-  .hud-tool__label,
   .brush-button,
   .mode-value {
     transition: none;
@@ -823,16 +822,14 @@ body {
   box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
 }
 
-/* One tool: a shaded 3D icon over its caption, on a raised glass tile
-   (owner, 2026-09-04: "gorgeous 3D icons"). The tiles are equal-width so
-   the bar reads as a row of keys rather than a run of pills. */
+/* One tool: a shaded 3D icon alone on a raised glass tile (owner,
+   2026-09-04: "gorgeous 3D icons", then "remove the text" the same day). The
+   tile is the icon plus one ring of padding, so the bar reads as a row of
+   keys the same size as the modeler dock's. */
 .hud-tool {
-  min-width: 64px;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 6px 10px 5px;
+  display: inline-grid;
+  place-items: center;
+  padding: 4px;
   border: 1px solid var(--hud-border);
   border-radius: 10px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
@@ -886,39 +883,13 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-.hud-tool__label {
-  white-space: nowrap;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--hud-muted);
-  transition: color var(--hud-motion);
-}
-
-.hud-tool:hover .hud-tool__label,
-.hud-tool.active .hud-tool__label {
-  color: var(--hud-text);
-}
-
 /* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, toolbar
    and the right corner all usable at once on an iPhone). Below 640px the
-   toolbar drops its text captions — every control keeps its title and
-   aria-label — and the chrome tightens, which brings the whole strip inside a
-   390px viewport. The modeler needs no collapse of its own since 2026-09-04:
-   it is icon-only at every width. ── */
+   chrome tightens, which brings the whole strip inside a 390px viewport.
+   Neither the toolbar nor the modeler needs a collapse of its own since
+   2026-09-04: both are icon-only at every width, every control keeping its
+   title and aria-label. ── */
 @media (max-width: 640px) {
-  /* Icon-only below 640px — the modeler's own idiom, applied to the bar for
-     one reason: the whole strip must stay inside a 390px viewport. Every
-     button keeps its title and aria-label, so nothing becomes unreachable. */
-  .hud-tool__label {
-    display: none;
-  }
-
-  .hud-tool {
-    min-width: 0;
-    padding: 4px;
-  }
-
   /* The modeler's slider is the one part of it that can still give ground:
      its rail shortens rather than pushing the toolbar off the screen. */
   .hud-modeler {
@@ -1006,8 +977,8 @@ body {
   }
 
   .hud-tool {
+    min-width: 44px;
     min-height: 44px;
-    padding: 6px 12px 5px;
   }
 
   .hud-settings-button {

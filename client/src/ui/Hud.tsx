@@ -50,7 +50,9 @@
 // every control in it became a picture. The four tools, the two edge profiles
 // and the raise/lower toggle wear the shaded art of BrushIcons.tsx, and the
 // five brush-width buttons became one slider snapped to the five rungs of the
-// ladder. Two consequences worth naming. The row labels ("Brush", "Tool",
+// ladder. Since the owner's inline mockup (same day) the tools, the edge
+// profiles and the direction disc share ONE row, with the slider alone
+// beneath them. Two consequences worth naming. The row labels ("Brush", "Tool",
 // "Edge", "Mode") are gone: with no words on the tiles there is nothing for a
 // word beside them to disambiguate, and each control's own title and
 // aria-label carries its name. And the panel is tied to the HELD TOOL rather
@@ -407,11 +409,13 @@ export function Hud(props: {
             role="group"
             aria-label="Brush"
           >
-            {/* Brush SHAPE: which tool, and (below) how its edge falls off.
-                Orthogonal by design — hard+smooth stamps a plateau and lets
-                it slump. Every reactive value is read by calling its
-                accessor inline, per the file header; the label and icon maps
-                are static, so they need no accessor. */}
+            {/* ONE INLINE ROW (owner mockup, 2026-09-04: "give me this inline
+                version"): the tool picker, then the edge picker, then the
+                direction disc, side by side, with the width slider alone
+                beneath. Tool and edge are orthogonal by design — hard+smooth
+                stamps a plateau and lets it slump. Every reactive value is
+                read by calling its accessor inline, per the file header; the
+                label and icon maps are static, so they need no accessor. */}
             <div class="hud-row">
               <div class="brush-picker">
                 <For each={BRUSH_TOOLS}>
@@ -429,73 +433,64 @@ export function Hud(props: {
                   )}
                 </For>
               </div>
+
+              {/* EDGE and MODE follow on the same row, and each is present
+                  ONLY FOR THE TOOLS THAT HAVE IT (issue #225; owner report,
+                  2026-09-02: "Mode should also not be displayed in the HUD,
+                  much as we do not show hard or smooth for the pull tool").
+                  The drag and the carve have no edge profile at all and the
+                  carve only ever removes — shared says which tools those are,
+                  and its resolver normalises theirs away, so leaving either
+                  control up would offer a choice that provably does nothing.
+                  They are REMOVED rather than disabled: a disabled control
+                  claims the setting is unavailable right now, and these do
+                  not apply. The stored profile and mode are untouched, so
+                  picking Stamp again comes back to whatever the player last
+                  chose. `brushTool()` is called inside the JSX, per the file
+                  header — a `const` here would freeze the row on the
+                  mount-time tool. */}
+              <Show when={!TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool())}>
+                <div class="brush-picker">
+                  <For each={BRUSH_PROFILES}>
+                    {(profile) => (
+                      <button
+                        type="button"
+                        class="brush-button"
+                        classList={{ active: brushProfile() === profile }}
+                        aria-label={`${PROFILE_LABEL[profile]} edge`}
+                        title={PROFILE_TITLE[profile]}
+                        onClick={() => setBrushProfile(profile)}
+                      >
+                        <Dynamic component={PROFILE_ICON[profile]} />
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <Show when={!TOOLS_WITHOUT_DIRECTION.includes(brushTool())}>
+                {/* A button, not a label: on touch there are no modifier
+                    keys, so tapping this is how one-finger sculpting
+                    switches direction. It keeps its two colour states —
+                    accent green raising, `--hud-lower` orange lowering —
+                    and now says the same thing twice, in the colour and in
+                    the arrow it wears. */}
+                <button
+                  type="button"
+                  class="mode-value"
+                  classList={{ lower: sculptMode() === 'lower' }}
+                  aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
+                  title={modeTitle(sculptMode(), controlBindings())}
+                  onClick={() =>
+                    setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
+                  }
+                >
+                  <Dynamic
+                    component={sculptMode() === 'lower' ? LowerIcon : RaiseIcon}
+                  />
+                </button>
+              </Show>
             </div>
-
-            {/* EDGE and MODE share a row, and each is present ONLY FOR THE
-                TOOLS THAT HAVE IT (issue #225; owner report, 2026-09-02:
-                "Mode should also not be displayed in the HUD, much as we do
-                not show hard or smooth for the pull tool"). The drag and the
-                carve have no edge profile at all and the carve only ever
-                removes — shared says which tools those are, and its resolver
-                normalises theirs away, so leaving either control up would
-                offer a choice that provably does nothing. They are REMOVED
-                rather than disabled: a disabled control claims the setting is
-                unavailable right now, and these do not apply. The stored
-                profile and mode are untouched, so picking Stamp again comes
-                back to whatever the player last chose. The row itself goes
-                when both have gone, so the dock never keeps an empty line.
-                `brushTool()` is called inside the JSX, per the file header —
-                a `const` here would freeze the row on the mount-time tool. */}
-            <Show
-              when={
-                !TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool()) ||
-                !TOOLS_WITHOUT_DIRECTION.includes(brushTool())
-              }
-            >
-              <div class="hud-row">
-                <Show when={!TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool())}>
-                  <div class="brush-picker">
-                    <For each={BRUSH_PROFILES}>
-                      {(profile) => (
-                        <button
-                          type="button"
-                          class="brush-button"
-                          classList={{ active: brushProfile() === profile }}
-                          aria-label={`${PROFILE_LABEL[profile]} edge`}
-                          title={PROFILE_TITLE[profile]}
-                          onClick={() => setBrushProfile(profile)}
-                        >
-                          <Dynamic component={PROFILE_ICON[profile]} />
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-
-                <Show when={!TOOLS_WITHOUT_DIRECTION.includes(brushTool())}>
-                  {/* A button, not a label: on touch there are no modifier
-                      keys, so tapping this is how one-finger sculpting
-                      switches direction. It keeps its two colour states —
-                      accent green raising, `--hud-lower` orange lowering —
-                      and now says the same thing twice, in the colour and in
-                      the arrow it wears. */}
-                  <button
-                    type="button"
-                    class="mode-value"
-                    classList={{ lower: sculptMode() === 'lower' }}
-                    aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
-                    title={modeTitle(sculptMode(), controlBindings())}
-                    onClick={() =>
-                      setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
-                    }
-                  >
-                    <Dynamic
-                      component={sculptMode() === 'lower' ? LowerIcon : RaiseIcon}
-                    />
-                  </button>
-                </Show>
-              </div>
-            </Show>
 
             {/* BRUSH WIDTH as a slider (owner, 2026-09-04: "turn it into a
                 slider that goes from least to most values with stops for the
