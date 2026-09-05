@@ -66,27 +66,26 @@ export function midiToFrequency(midiNote: number): number {
 }
 
 /**
- * The bright progression, as semitone offsets from the root, one triad per
- * chord: I – vi – IV – V. The most-used loop in popular music precisely
- * because it resolves without ever surprising anyone, which is the goal.
+ * The bright progression I – vi – IV – V in OPEN voicing: root, fifth, third
+ * an octave up (owner 2026-09-05, "exploring the cosmos"). Chords whose top
+ * would reach the melody's register drop an octave, so the bass walks.
  */
 const BRIGHT_PROGRESSION: readonly (readonly number[])[] = [
-  [0, 4, 7], // I
-  [9, 12, 16], // vi
-  [5, 9, 12], // IV
-  [7, 11, 14], // V
+  [0, 7, 16], // I
+  [-3, 4, 12], // vi
+  [5, 12, 21], // IV
+  [-5, 2, 11], // V
 ];
 
 /**
- * The overcast progression: i – VI – III – VII in the natural minor (aeolian).
- * Same four-chord shape and the same root, so the crossfade from BRIGHT into
- * this one at a chord boundary is a change of colour, not of key.
+ * The overcast progression i – VI – III – VII (aeolian), same open voicing and
+ * the same root, so the switch at a chord boundary is colour, not key.
  */
 const OVERCAST_PROGRESSION: readonly (readonly number[])[] = [
-  [0, 3, 7], // i
-  [8, 12, 15], // VI
-  [3, 7, 10], // III
-  [10, 14, 17], // VII
+  [0, 7, 15], // i
+  [-4, 3, 12], // VI
+  [3, 10, 19], // III
+  [-2, 5, 14], // VII
 ];
 
 /** Chords in a progression loop. Both progressions are this long by design. */
@@ -126,8 +125,8 @@ const FILTER_DAY_CUTOFF_HZ = 2800;
 
 /**
  * Fraction of the cutoff that full weather removes. 0.45 is audible as "the
- * music is behind the rain" without muting the pad's fundamental (the lowest
- * chord tone here is 110 Hz, far below even the closed cutoff).
+ * music is behind the rain" without muting the pad's fundamentals (the lowest
+ * open-voicing tone is 82 Hz, far below even the closed cutoff).
  */
 const FILTER_WEATHER_CLOSE_FRACTION = 0.45;
 
@@ -148,16 +147,30 @@ const MELODY_TENSION_DENSITY = 0.18;
 const MELODY_MAX_DENSITY = 0.5;
 
 /**
- * Semitones above the root that the melody's lowest octave sits at. Two
- * octaves keeps it clear of the pad's triad (which spans the root to +17).
+ * Semitones above the root where the melody's range starts. Two octaves keeps
+ * it clear of the open voicings (which top out at +21).
  */
 const MELODY_BASE_OFFSET_SEMITONES = 2 * OCTAVE_SEMITONES;
 
+/** Octaves the melody ranges over. Two, so a phrase can leap and fall. */
+const MELODY_RANGE_OCTAVES = 2;
+
 /**
- * Daylight at or above which the melody may take the upper octave. 0.6 is
- * mid-morning onwards, so the octave lift reads as "the day opened up".
+ * How far full daylight skews note picks upward: the pick is raised to the
+ * power (1 - skew·daylight), so noon leans high and night sits low, both
+ * still spanning the whole range. 0.5 is a lean, not a transposition.
  */
-const MELODY_BRIGHT_OCTAVE_THRESHOLD = 0.6;
+const MELODY_BRIGHT_SKEW = 0.5;
+
+/** Quietest melody note, as a fraction of the loudest. Velocity variety. */
+const MELODY_MIN_VELOCITY = 0.55;
+
+/**
+ * Density multiplier for off-beat subdivisions. 0.55 makes the beat the place
+ * notes usually land and the off-beat the exception, which gives the line a
+ * pulse without a rhythm section.
+ */
+export const MELODY_OFFBEAT_DENSITY_FACTOR = 0.55;
 
 /** Peak gain of the tension drone, relative to the composer's own output. */
 const DRONE_MAX_GAIN = 0.18;
@@ -168,8 +181,10 @@ export interface MoodParameters {
   readonly filterCutoffHz: number;
   /** Probability in [0, 1] that any one melody subdivision sounds a note. */
   readonly melodyDensity: number;
-  /** Semitones added to every melody note (the octave lift). */
+  /** Semitones added to every melody note. */
   readonly melodyOffsetSemitones: number;
+  /** Exponent applied to the pick draw; below 1 leans the melody high. */
+  readonly melodyPickExponent: number;
   /** Gain of the low tension drone in [0, DRONE_MAX_GAIN]. */
   readonly droneGain: number;
   /** Whether chords and melody take their minor forms. */
@@ -210,9 +225,8 @@ export function moodParameters(mood: ComposerMood): MoodParameters {
   return {
     filterCutoffHz: openCutoffHz * (1 - FILTER_WEATHER_CLOSE_FRACTION * weather),
     melodyDensity: Math.min(density, MELODY_MAX_DENSITY),
-    melodyOffsetSemitones:
-      MELODY_BASE_OFFSET_SEMITONES +
-      (daylight >= MELODY_BRIGHT_OCTAVE_THRESHOLD ? OCTAVE_SEMITONES : 0),
+    melodyOffsetSemitones: MELODY_BASE_OFFSET_SEMITONES,
+    melodyPickExponent: 1 - MELODY_BRIGHT_SKEW * daylight,
     droneGain: DRONE_MAX_GAIN * tension,
     minor: weather >= MINOR_LEAN_WEATHER_THRESHOLD,
   };
@@ -234,19 +248,41 @@ export function chordNotes(chordIndex: number, minor: boolean): readonly number[
   return chord.map((semitones) => ROOT_MIDI_NOTE + semitones);
 }
 
+/** One melody note: pitch and how hard it is struck. */
+export interface MelodyEvent {
+  readonly note: number;
+  /** 0..1 gain multiplier for the pluck. */
+  readonly velocity: number;
+}
+
 /**
- * The melody note for a draw `pick` in [0, 1), as a MIDI note number.
- * Pentatonic, so no draw can produce a note that clashes with the triad under
- * it — which is the entire reason the melody may be random at all.
+ * The melody event for a draw `pick` in [0, 1). Pentatonic over two octaves,
+ * so no draw clashes with the chord under it; a pick that repeats `previous`
+ * steps one degree instead, so the line always moves. The fraction left over
+ * after choosing the degree is the velocity — still exactly one draw.
  */
-export function melodyNote(pick: number, parameters: MoodParameters): number {
+export function melodyEvent(
+  pick: number,
+  parameters: MoodParameters,
+  previous: number | null,
+): MelodyEvent {
   const scale = parameters.minor ? OVERCAST_SCALE_SEMITONES : BRIGHT_SCALE_SEMITONES;
-  const index = Math.min(scale.length - 1, Math.floor(pick * scale.length));
-  // `index` is clamped into range above, so the fallback is unreachable; it is
-  // here so a non-finite `pick` (which would make Math.floor produce NaN)
-  // degrades to the root rather than to a NaN frequency, which Web Audio
-  // rejects with a thrown RangeError inside the scheduler tick.
-  const degree = scale[index];
-  if (degree === undefined) return ROOT_MIDI_NOTE + parameters.melodyOffsetSemitones;
-  return ROOT_MIDI_NOTE + degree + parameters.melodyOffsetSemitones;
+  const degrees = scale.length * MELODY_RANGE_OCTAVES;
+  const skewed = Number.isFinite(pick) ? Math.pow(clampUnit(pick), parameters.melodyPickExponent) : 0;
+  const scaled = skewed * degrees;
+  let index = Math.min(degrees - 1, Math.floor(scaled));
+  const velocity = MELODY_MIN_VELOCITY + (1 - MELODY_MIN_VELOCITY) * (scaled - Math.floor(scaled));
+
+  const noteAt = (degreeIndex: number): number => {
+    const octave = Math.floor(degreeIndex / scale.length);
+    // Index is clamped into range above; the fallback only guards a non-finite
+    // pick, which would otherwise hand Web Audio a NaN frequency.
+    const degree = scale[degreeIndex % scale.length] ?? 0;
+    return ROOT_MIDI_NOTE + parameters.melodyOffsetSemitones + octave * OCTAVE_SEMITONES + degree;
+  };
+
+  if (previous !== null && noteAt(index) === previous) {
+    index = index < degrees - 1 ? index + 1 : index - 1;
+  }
+  return { note: noteAt(index), velocity };
 }

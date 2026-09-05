@@ -39,7 +39,8 @@ import { createPrng } from './prng.ts';
 import {
   BEATS_PER_CHORD,
   chordNotes,
-  melodyNote,
+  melodyEvent,
+  MELODY_OFFBEAT_DENSITY_FACTOR,
   MELODY_SUBDIVISIONS_PER_BEAT,
   moodParameters,
   ROOT_MIDI_NOTE,
@@ -157,6 +158,8 @@ function createEngine(
   /** Major or minor, sampled at the last chord boundary and held until the
    * next one so the melody's scale always agrees with the chord under it. */
   let activeMinor = false;
+  /** Last melody pitch, so the next pick never repeats it. */
+  let previousMelodyNote: number | null = null;
 
   /** Applies the continuous half of a mood. `glide` is false only at the very
    * first application, where there is no previous value to glide from. */
@@ -230,12 +233,17 @@ function createEngine(
           // of the same underlying sequence rather than a different one.
           const gate = prng.next();
           const pick = prng.next();
-          if (gate >= melodyParameters.melodyDensity) continue;
+          const density =
+            melodyParameters.melodyDensity * (sub === 0 ? 1 : MELODY_OFFBEAT_DENSITY_FACTOR);
+          if (gate >= density) continue;
+          const event = melodyEvent(pick, melodyParameters, previousMelodyNote);
+          previousMelodyNote = event.note;
           schedulePluck(
             context,
             pool,
             moodFilter,
-            melodyNote(pick, melodyParameters),
+            event.note,
+            event.velocity,
             beatTime + sub * subdivisionSeconds,
           );
         }
