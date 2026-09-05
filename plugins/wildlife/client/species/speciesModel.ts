@@ -51,8 +51,15 @@ export type SpeciesJoints = Readonly<Record<string, Bone>>;
 
 /** One species, authored: its tree, its named hinges, and its idle animation. */
 export interface AuthoredSpecies {
-  /** The unparented, identity-transform root `bakeRig` consumes. */
-  readonly root: Group;
+  /**
+   * The unparented, identity-transform root `bakeRig` consumes.
+   *
+   * Object3D, not Group: a procedural species hands over the Group
+   * `pool.rigged()` gave it, while an ASSET-sourced one (./assetSpecies.ts)
+   * hands over the .glb's own scene node, and bakeRig has never cared which —
+   * it walks children and reads transforms, both of which every Object3D has.
+   */
+  readonly root: Object3D;
   /**
    * Every node the animation will address, by name. MUST include `rig`, the
    * whole-body node under the root (counter-sway, walk bob, body roll all act
