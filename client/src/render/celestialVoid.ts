@@ -13,7 +13,7 @@
 //
 // The GLSL below is a faithful port of the shaders the owner approved
 // (.claude/orchestration/refs/celestial-void-shaders.glsl), at that file's
-// REVISION 6 (owner, 2026-09-04). Cumulatively that revision line is: a 60
+// REVISION 7 (owner, 2026-09-04). Cumulatively that revision line is: a 60
 // degree default tilt, rotation reversed (clockwise seen from above), no
 // twinkle in either look, the nebula's drift 3x faster (NEBULA_RATE 0.15),
 // and the wheel rebuilt as a four-armed spiral galaxy — log-spiral arms with
@@ -24,7 +24,9 @@
 // owner's "many times faster", with the arm count going from two to four at
 // the same time. Revision 6 (owner, in-world, 2026-09-04) slowed it by a third
 // to -0.0267, removed the white core, dimmed the bulge, darkened the gas and
-// made the arms thicker and more tightly wound. The numbers in these shaders ARE the approved look; every
+// made the arms thicker and more tightly wound; revision 7 (same day) pushed
+// further: -0.021 (five minutes per turn), gas gain 1.0, arm exponent 1.0,
+// winding 8.0. The numbers in these shaders ARE the approved look; every
 // one that encodes a design decision is a named constant here or in the
 // shader's own `const` block.
 //
@@ -198,14 +200,14 @@ float dstars(vec2 p, float density, float minSize){
   float size = max(0.03 + 0.05*hash(i+9.2), minSize);
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
-const float WHEEL_RATE   = -0.0267; // rad/s (~3.9 min per turn); rev 6 owner 2026-09-04: 'slow by a third' from -0.04; negative = clockwise from above
+const float WHEEL_RATE   = -0.021; // rad/s (2*pi/300 = ~5.0 min per turn); rev 7 owner 2026-09-04: 'about five minutes per turn'; negative = clockwise from above
 const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
 const float DISK_DIST    = 2.6;    // hub distance along the view axis
 const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
 const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
-const float WIND         = 6.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0, 'more circular, less star-shaped'
-const float ARM_SHARPNESS= 1.2;    // arm cross-section exponent; rev 6: 2.2 -> 1.2, 'thicker arms, less dead space'
-const float GAS_GAIN     = 1.2;    // brightness of the gas arms; rev 6: 1.5 -> 1.2, 'bright sections a little darker'
+const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0 'more circular', rev 7: 8.0
+const float ARM_SHARPNESS= 1.0;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0
+const float GAS_GAIN     = 1.0;    // brightness of the gas arms; rev 6: 1.5 -> 1.2 'a little darker', rev 7: 1.0
 const float BULGE_GAIN   = 0.25;   // warm hub glow; rev 6: 0.55 -> 0.25 and the white core removed, 'get rid of the bright center'
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
