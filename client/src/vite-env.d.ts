@@ -23,5 +23,5 @@ interface ImportMeta {
 declare const __CLIENT_VERSION__: string;
 
 // `*.glb?url` used to be declared here as well. It now lives ONCE, in the
-// repo's types/glb-url.d.ts, which tsconfig.base.json's `files` gives to every
+// repo's types/asset-url.d.ts, which tsconfig.base.json's `files` gives to every
 // package — see that file's header.
