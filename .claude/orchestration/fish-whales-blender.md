@@ -20,7 +20,7 @@ phase-1 kit open). The first pass lands that adapter alongside its model.
 | 5 | Angelfish | `angelfish` | plugins/wildlife/client/species/angelfish.ts (+ .fish-shots/angelfish.py concept) | merged (2026-09-05); sheet `briefs/angelfish-glb-pass5.md`; bars as a thickened section |
 | 6 | Humpback whale | `whale` variant 0 | plugins/wildlife/client/whaleSpecies.ts | merged (2026-09-05); sheet `briefs/humpback-glb-pass6.md`; `species/whale.ts` shared, fills the box |
 | 7 | Blue whale | `whale` variant 1 | plugins/wildlife/client/whaleSpecies.ts | merged (2026-09-05); sheet `briefs/blue-whale-glb-pass7.md` |
-| 8 | Sperm whale | `whale` variant 2 | plugins/wildlife/client/whaleSpecies.ts | todo |
+| 8 | Sperm whale | `whale` variant 2 | plugins/wildlife/client/species/spermWhale.ts | merged 5a753b2 (2026-09-05); sheet `briefs/sperm-whale-glb-pass8.md`; procedural whale retired, `whaleSpecies.ts` keeps only the contract |
 | 9 | Deep-sea anglerfish | `deepsea` | plugins/wildlife/client/models.ts (DEEPSEA_*) | todo |
 
 Owner 2026-09-04: anglerfish is in (#9). Kraken is a monster, excluded.
