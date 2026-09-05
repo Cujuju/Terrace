@@ -27,12 +27,17 @@ import {
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
 import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
-import { createWildlifeModels, type WildlifeAssets, type WildlifeModels } from './models.ts';
+import { createWildlifeModels, type WildlifeModels } from './models.ts';
 import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
-import { assertGrazerAsset } from './species/grazer.ts';
-// Served URL for the plugin's own model file. The `?url` form is declared for
-// the whole workspace in types/glb-url.d.ts.
-import grazerAssetUrl from './assets/grazer-deer.glb?url';
+import {
+  disposeSpeciesAssets,
+  installSpeciesAsset,
+  type SpeciesAssetSpec,
+} from './species/assetSpecies.ts';
+import { FISH_ASSET } from './species/fish.ts';
+import { GRAZER_ASSET } from './species/grazer.ts';
+import fishUrl from './assets/fish.glb?url';
+import grazerUrl from './assets/grazer-deer.glb?url';
 import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
   BODY_COLUMNS,
@@ -286,9 +291,10 @@ function drawnPoseOf(id: number): MoverPose | null {
  * whale carries a second material its body cannot share — those are the only
  * two-surface herds.
  *
- * THE GRAZER IS NO LONGER AUTHORED (2026-09-04): it is an imported file, so its
- * surface count is a property of art this repo did not write. It gets its own
- * constant below rather than being folded into the hand-built tally.
+ * THE GRAZER IS NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04): it is a
+ * downloaded file, so its surface count is a property of art this repo did not
+ * write. It gets its own constant below rather than being folded into the
+ * hand-built tally.
  *
  * WHY A CONSTANT AND NOT `models.objects.length`. `drawBudget` is a static
  * field on the plugin object (client/src/plugins/types.ts), read by the host
@@ -300,33 +306,37 @@ function drawnPoseOf(id: number): MoverPose | null {
 const SINGLE_SURFACE_SPECIES = 8; // fish, ibex, bison, ray, shark, eel, angelfish, bird
 const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
 /**
- * The IMPORTED grazer's surfaces, counted on its own line because it is the one
- * herd whose material set this repo does not write.
+ * The DOWNLOADED grazer's surfaces, on their own line because it is the one
+ * herd whose material set this repo did not write.
  *
  * ONE, measured (`RigBlueprint.surfaceCount`, 2026-09-04) off
  * ./assets/grazer-deer.glb. The file carries seven glTF materials — three coat
  * tones, hooves and three eye tones — and they differ ONLY in base colour,
  * which rigSkin's materialSignature deliberately leaves out because a vertex
- * colour attribute carries it. They therefore bake to a single surface. An
- * asset re-imported with a texture, or with a material that disagrees about
- * roughness or transparency, would bake to more, and the assert in `attach`
- * below is what turns that into a boot failure rather than a budget breach.
+ * colour attribute carries it. They therefore bake to a single surface. A
+ * re-import with a texture, or with a material that disagrees about roughness
+ * or transparency, would bake to more, and the assert in `attach` below is what
+ * turns that into a boot failure rather than a budget breach.
  */
 const GRAZER_ASSET_DRAW_OBJECTS = 1;
 const WILDLIFE_SPECIES_DRAW_OBJECTS =
   SINGLE_SURFACE_SPECIES + GRAZER_ASSET_DRAW_OBJECTS + TWO_SURFACE_SPECIES * 2;
 
 /**
- * The model files `preload` fetched, waiting for the `attach` that follows it.
+ * The species drawn from a Blender-built asset, and where each file is served
+ * from. A `.glb?url` import, which is why client/vite.config.ts carries an
+ * assetsInclude entry for .glb files. The declaration for the import itself is
+ * workspace-wide (types/glb-url.d.ts, named in tsconfig.base.json's `files`),
+ * so a plugin that ships a model needs no .d.ts of its own.
  *
- * The host runs preload before every attach and this plugin's dispose frees the
- * pool that owns them (client/src/plugins/types.ts, TerraceClientPlugin.preload),
- * so this binding hands one load to one mount and is cleared with it. It is the
- * ONLY module-level asset state: models.ts takes the assets as an argument and
- * keeps none, so a preview harness can build a second pool without touching
- * this one.
+ * A TABLE, not a call per species: every pass of the model arc (shark, ray,
+ * eel, angelfish, the three whales, deepsea) adds ONE row here and its own
+ * SpeciesAssetSpec, and nothing about the preload changes.
  */
-let preloadedAssets: WildlifeAssets | null = null;
+const SPECIES_ASSETS: readonly { readonly spec: SpeciesAssetSpec; readonly url: string }[] = [
+  { spec: FISH_ASSET, url: fishUrl },
+  { spec: GRAZER_ASSET, url: grazerUrl },
+];
 
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,
@@ -338,30 +348,28 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: WILDLIFE_SPECIES_DRAW_OBJECTS,
 
   /**
-   * Loads the grazer's model file before attach, so createWildlifeModels has an
-   * asset to bake from. The fit and envelope checks run HERE, where a bad file
-   * is still a load failure naming the asset: a rejected preload is a logged
-   * breach for this plugin alone and the host never attaches it, so the world
-   * simply comes up without wildlife rather than with a deer the size of a
-   * settler.
+   * Loads every asset-sourced species before attach, so createWildlifeModels
+   * has something to bake from. Parsing a glTF is promise-based and attach()
+   * is synchronous, which is the whole reason this hook exists (see
+   * TerraceClientPlugin.preload).
+   *
+   * SEQUENTIAL, not Promise.all: the installs are cheap and the failure a
+   * developer will actually hit is a bad asset, where being told WHICH file
+   * broke first — rather than being handed whichever rejection won a race —
+   * is what makes the message useful. A rejected preload is a logged breach
+   * for this plugin only: the host never attaches it, so the world simply has
+   * no wildlife in it rather than no client.
    */
   async preload(): Promise<void> {
-    const grazer = await loadRigAsset(grazerAssetUrl);
-    assertGrazerAsset(grazer);
-    preloadedAssets = { grazer };
+    for (const { spec, url } of SPECIES_ASSETS) {
+      installSpeciesAsset(spec, await loadRigAsset(url));
+    }
   },
 
   attach(ctx: ClientPluginCtx): void {
-    const assets = preloadedAssets;
-    if (assets === null) {
-      // Unreachable through the host, which awaits preload before attach; a
-      // throw rather than a silent skip so a future caller that wires the two
-      // up itself finds out here instead of on the first frame.
-      throw new Error('wildlife: attach ran before preload installed the model assets');
-    }
     // Every herd sizes its instance buffers to the whole population: any one
     // species may, in principle, be all of it.
-    models = createWildlifeModels(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT, assets);
+    models = createWildlifeModels(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
     // The budget above is a promise about geometry this plugin does not own —
     // nine species files, each free to add a material. Checked against the pool
     // that was actually built, once, at boot: a mismatch is a wrong `drawBudget`
@@ -415,11 +423,16 @@ export const clientPlugin: TerraceClientPlugin = {
     container?.clear();
     container = null;
 
-    // Shared geometries and materials are freed exactly once, here — and the
-    // pool frees the model assets it was handed, last of all (models.ts).
+    // Shared geometries and materials are freed exactly once, here.
     models?.dispose();
     models = null;
-    preloadedAssets = null;
+    // AND THE ASSETS AFTER THE BLUEPRINTS, never before. A baked surface holds
+    // the asset's own material clone, and a clone shares the source's texture
+    // objects by reference (client/src/render/rigSkin.ts, vertexColoured), so
+    // freeing a file while a rig baked from it is still drawn pulls the texels
+    // out from under it. models.dispose() above frees every blueprint; only
+    // then is there nothing left reading the files.
+    disposeSpeciesAssets();
     animationSeconds = 0;
   },
 };

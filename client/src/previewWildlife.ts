@@ -56,7 +56,11 @@ import {
 } from '../../plugins/wildlife/protocol.ts';
 import { createWildlifeModels } from '../../plugins/wildlife/client/models.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
-import grazerAssetUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
+import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
+import { FISH_ASSET } from '../../plugins/wildlife/client/species/fish.ts';
+import { GRAZER_ASSET } from '../../plugins/wildlife/client/species/grazer.ts';
+import fishUrl from '../../plugins/wildlife/client/assets/fish.glb?url';
+import grazerUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
 
 /** Creatures this page ever draws at once. It is a portrait: exactly one. */
 const PREVIEW_POPULATION = 1;
@@ -214,7 +218,21 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): 
   camera.updateProjectionMatrix();
 }
 
-async function main(): Promise<void> {
+/**
+ * Every asset-sourced species, installed before the pool is built.
+ *
+ * The pool bakes a species from whatever file was installed for it, so
+ * createWildlifeModels throws if one is missing — the shipped plugin does this
+ * in its `preload` hook (../../plugins/wildlife/client/index.ts); this harness
+ * has no host to give it one, so it awaits the same install function directly,
+ * exactly as previewSpecies.ts does.
+ */
+async function installAssets(): Promise<void> {
+  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl));
+  installSpeciesAsset(GRAZER_ASSET, await loadRigAsset(grazerUrl));
+}
+
+function main(): void {
   const query = readQuery();
   const species = readSpecies(query);
   const sizeClass = readSizeClass(query);
@@ -222,12 +240,7 @@ async function main(): Promise<void> {
 
   const { scene, camera, renderer, ground } = buildScene();
 
-  // The pool bakes one species from a file (plugins/wildlife/client/models.ts,
-  // WildlifeAssets), so the harness preloads it exactly as the plugin's own
-  // preload does. The asset is owned by the pool and freed with it.
-  const models = createWildlifeModels(PREVIEW_POPULATION, {
-    grazer: await loadRigAsset(grazerAssetUrl),
-  });
+  const models = createWildlifeModels(PREVIEW_POPULATION);
   const group = new Group();
   for (const object of models.objects) group.add(object);
   scene.add(group);
@@ -283,6 +296,7 @@ async function main(): Promise<void> {
   requestAnimationFrame(renderFrame);
 }
 
-// A rejected asset load leaves __previewReady unset, which is what the
-// screenshot driver already times out on.
-void main();
+// Nothing can be drawn until every .glb is installed, and parsing one is
+// promise-based — so the harness waits, exactly as the plugin host waits on
+// `preload` before `attach`.
+void installAssets().then(main);
