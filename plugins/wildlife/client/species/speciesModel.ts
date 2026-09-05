@@ -27,6 +27,9 @@ import type {
   MeshLambertMaterial,
   Object3D,
 } from 'three';
+// Render kit, reached by path the same way ../models.ts reaches it — see that
+// module's import and render/rigSkin.ts's header for why.
+import type { RigAsset } from '../../../../client/src/render/rigAsset.ts';
 
 /** What the shared pool lends a species file at authoring time. */
 export interface SpeciesModelPool {
@@ -71,5 +74,26 @@ export interface AuthoredSpecies {
 
 /** A species file exports exactly one of these. */
 export type SpeciesModelBuilder = (pool: SpeciesModelPool) => AuthoredSpecies;
+
+/**
+ * A species whose ANATOMY arrives in a file instead of being written out here
+ * (owner, 2026-09-04: every plugin may use textures and external model assets).
+ *
+ * The SAME `AuthoredSpecies` comes back, so nothing downstream changes: the
+ * pool bakes it, herds it and calls its `animate` exactly as for a hand-built
+ * one, and the animation still drives named joints. What differs is OWNERSHIP —
+ * an asset's geometries, materials and textures belong to the RigAsset, not to
+ * the pool, and are freed in a different order (see ../models.ts's asset list).
+ * The pool is still passed, because an asset-sourced species is free to ask for
+ * a geometry or a material of its own; the grazer does not.
+ *
+ * The two shape mismatches between a loaded file and this contract (no `rig`
+ * node, and pivots oriented like the bones they came from) are bridged by
+ * ./assetSpecies.ts, not by each species file.
+ */
+export type AssetSpeciesModelBuilder = (
+  asset: RigAsset,
+  pool: SpeciesModelPool,
+) => AuthoredSpecies;
 
 export const TWO_PI = Math.PI * 2;
