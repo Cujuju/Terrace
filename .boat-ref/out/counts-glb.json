@@ -1,0 +1,22 @@
+{
+ "hull-beamy.glb": {
+  "tris": 1828,
+  "verts": 1116,
+  "bytes": 42188
+ },
+ "hull-current.glb": {
+  "tris": 120,
+  "verts": 198,
+  "bytes": 9216
+ },
+ "hull-gamebox.glb": {
+  "tris": 1828,
+  "verts": 1116,
+  "bytes": 42188
+ },
+ "hull-true.glb": {
+  "tris": 1828,
+  "verts": 1116,
+  "bytes": 42188
+ }
+}

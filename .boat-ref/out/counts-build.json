@@ -1,0 +1,22 @@
+{
+ "hull-true": {
+  "tris_L1": 1828,
+  "verts_L1": 924,
+  "hull_tris_L2": 6512
+ },
+ "hull-beamy": {
+  "tris_L1": 1828,
+  "verts_L1": 924,
+  "hull_tris_L2": 6512
+ },
+ "hull-gamebox": {
+  "tris_L1": 1828,
+  "verts_L1": 924,
+  "hull_tris_L2": 6512
+ },
+ "hull-current": {
+  "tris_L1": 120,
+  "verts_L1": 66,
+  "hull_tris_L2": null
+ }
+}
