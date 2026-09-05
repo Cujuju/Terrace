@@ -15,7 +15,15 @@
 // rather than inside models.ts, which only ever consumes the answer. A
 // coastal placement also seeds this settlement's SKIFFS (skiffs.ts) from the
 // SAME neighbourhood survey site.ts already did to answer the site question
-// — one scan of the search disc, not two. That scan is MEMOISED across
+// — one scan of the search disc, not two.
+//
+// TWO GROUND LOOKUPS, NOT ONE (2026-09-04, GH #327). A BUILDING stands on the
+// ground and takes the cheap lattice answer (`groundAt`); a moored SKIFF is
+// seen against the ground and has to be tested on the drawn cap (`drawnAt`),
+// which is why both are passed through to site.ts. See its banner for why the
+// two disagree by a whole band at exactly the shoreline, and
+// ClientPluginCtx.drawnGroundYAt for the standing-versus-lying-on rule this
+// follows. That scan is MEMOISED across
 // rebuilds when the caller supplies a SiteSurveyCache (site.ts): the answer
 // only moves when the terrain under the disc does, and a delta of one
 // structure otherwise pays for a survey of every structure (GH #258).
@@ -59,6 +67,7 @@ export interface PlacementResult {
 export function placementsFor(
   cells: Iterable<StructureCell>,
   groundAt: GroundLookup,
+  drawnAt: GroundLookup,
   surveys?: SiteSurveyCache,
 ): PlacementResult {
   const placements: StructurePlacement[] = [];
@@ -81,8 +90,8 @@ export function placementsFor(
     // the identical call.
     const survey =
       surveys === undefined
-        ? surveySite(groundAt, cell.x, cell.y)
-        : surveys.surveyAt(groundAt, cell.x, cell.y);
+        ? surveySite(groundAt, drawnAt, cell.x, cell.y)
+        : surveys.surveyAt(groundAt, drawnAt, cell.x, cell.y);
     if (survey.pending) pendingSite++;
 
     const variation = structureVariation(cell.x, cell.y);
@@ -106,7 +115,7 @@ export function placementsFor(
     });
 
     if (survey.kind === 'coastal') {
-      skiffs.push(...skiffsForSettlement(cell.tier, survey.waterCells));
+      skiffs.push(...skiffsForSettlement(cell.tier, survey.moorings));
     }
   }
 

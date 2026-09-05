@@ -52,6 +52,7 @@
 // rock that has not been drawn yet is not.
 
 import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { BAND_GRID_CELLS } from './bandGrid.ts';
 import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
 import { planChunkCaps, type ChunkDrawnCaps, type ChunkPalettes } from './capEmission.ts';
 import {
@@ -66,18 +67,12 @@ import { type TerrainMirror } from './mirror.ts';
 import { type CapPolygon } from './triangulation.ts';
 
 /**
- * The band grid's step, in CELLS — the resolution at which "which level does
- * the terrain draw here" is precomputed.
- *
- * A QUARTER CELL, and the number is not free: it is the curtain's own probe
- * step (waterCurtain.ts re-exports it as `CURTAIN_PROBE_CELLS`, with the full
- * argument for the value), so the lattice this answers on is the lattice the
- * only sub-cell caller already reasons about. Halving it would quarter the
- * quantisation error and quadruple both the memory (4.2 KB per chunk today) and
- * the rasterisation cost; doubling it would let one grid sample straddle a
- * whole terrace face.
+ * The band grid's step, in CELLS — re-exported from ./bandGrid.ts, which owns
+ * it precisely so that a caller that only needs the STEP does not have to
+ * import this module (and, through capPlanFlat.ts, client/src/config.ts's
+ * `import.meta.env`) to get it. See that file for the value's reasoning.
  */
-export const BAND_GRID_CELLS = 1 / 4;
+export { BAND_GRID_CELLS } from './bandGrid.ts';
 
 /** Grid samples per cell edge — the reciprocal of the step, an integer by construction. */
 const BAND_GRID_SAMPLES_PER_CELL = Math.round(1 / BAND_GRID_CELLS);

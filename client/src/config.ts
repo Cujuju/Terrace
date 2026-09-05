@@ -5,7 +5,13 @@
 // (CHUNK_SIZE, BAND_HEIGHT, SEA_LEVEL, brush radius bounds…) live in
 // @terrace/shared and are never re-declared here.
 
-import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CELL_WORLD_SIZE,
+  MAX_HEIGHT,
+  MAX_RELIEF_WORLD_UNITS,
+  SEA_LEVEL,
+} from '@terrace/shared';
 
 /** 2567 is the Colyseus convention and the server's `PORT` default. */
 export const DEFAULT_SERVER_PORT = 2567;
@@ -246,6 +252,25 @@ export const WORLD_UNIT_HEIGHT_UNITS = 1 / HEIGHT_WORLD_SCALE;
  * and still leaves "raising land out of water" legible.
  */
 export const WATER_SURFACE_LIFT = 1 / 32;
+
+/**
+ * WORLD Y OF THE DRAWN SEA SURFACE — the plane render/water.ts actually writes
+ * into its vertex buffer, and therefore the only Y anything meaning "floating
+ * on the sea" may use.
+ *
+ * IT IS NOT `SEA_LEVEL * HEIGHT_WORLD_SCALE` (which is 0, SEA_LEVEL being 0 by
+ * definition): the surface is lifted clear of the band-0 plane by
+ * WATER_SURFACE_LIFT, for the z-fighting reason that constant states in full.
+ * A thirty-second of a world unit is negligible against terrain, and NOT
+ * negligible against a small floating prop — plugins/structures' skiff has
+ * 0.0113 world units of freeboard between its waterline and its sole, so a
+ * boat floated at 0 sits 0.031 UNDER the drawn sea and takes it aboard.
+ *
+ * OWNED HERE, WHERE ITS TWO INPUTS ALREADY LIVE, and consumed by water.ts
+ * itself (the drawing side) as well as by anything that floats on it, so the
+ * two cannot drift: there is no second copy of the expression to forget.
+ */
+export const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
 /**
  * THE FLOOR of the hold-repeat ramp: the shortest interval between repeated

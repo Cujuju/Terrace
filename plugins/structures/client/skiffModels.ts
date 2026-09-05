@@ -31,6 +31,21 @@
 // whole array's transforms to answer a question the anchors already answer
 // (see refreshBoundingSphere, which is why the sphere is an apply()-time
 // derivation and not a per-frame measurement).
+//
+// THE ASSET CONTRACT THIS FILE ENFORCES AT LOAD (installSkiffKit throws,
+// naming the file, on any of these — a silent fallback here shows up as bad
+// art rather than as an error):
+//   * exactly ONE mesh, because the fleet draws through one InstancedMesh;
+//   * a vertex-COLOUR attribute, because the hull's paint is its vertex
+//     colours and nothing else;
+//   * a measured envelope inside SKIFF_FOOTPRINT, to SKIFF_FIT_TOLERANCE;
+//   * an Empty named `waterline` — the height the sea plane must cut the hull
+//     at, which is what waterlineLift floats the boat by;
+//   * an Empty named `dryline` — the top of the sole (the boat's floor), which
+//     must stand at least SKIFF_BOB_AMPLITUDE_WORLD_UNITS above `waterline`.
+//     That last check is the ASSET'S dry-interior promise (build_skiff.py's
+//     SOLE_DRY_CLEARANCE_MIN) tested against the ANIMATION that could break it,
+//     at load, so neither side can silently regress the other (GH #327).
 
 import {
   Group,
@@ -41,7 +56,8 @@ import {
   Sphere,
   type BufferGeometry,
 } from 'three';
-import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/config.ts';
 import {
   assertAssetFits,
   loadRigAsset,
@@ -49,7 +65,13 @@ import {
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
 import { STRUCTURES_CAP } from '../protocol.ts';
-import { SKIFF_MAX_PER_SETTLEMENT, SKIFF_ORBIT_PERIOD_SECONDS, type SkiffPlacement } from './skiffs.ts';
+import {
+  SKIFF_HULL_BEAM_WORLD_UNITS,
+  SKIFF_HULL_LENGTH_WORLD_UNITS,
+  SKIFF_MAX_PER_SETTLEMENT,
+  SKIFF_ORBIT_PERIOD_SECONDS,
+  type SkiffPlacement,
+} from './skiffs.ts';
 
 const FULL_TURN_RADIANS = Math.PI * 2;
 /** Floats one instance matrix occupies in an InstancedMesh's instanceMatrix array. */
@@ -59,19 +81,41 @@ const MATRIX_ELEMENT_COUNT = 16;
  * World-space Y a skiff's WATERLINE floats at, before its own small bob
  * (SKIFF_BOB_AMPLITUDE_WORLD_UNITS below).
  *
- * Own copy of the reasoning plugins/wildlife/client/placement.ts's
- * SEA_SURFACE_WORLD_Y states in full (own copy per plugin — see this
- * plugin's protocol.ts header on why every plugin keeps its own): SEA_LEVEL
- * is 0 by definition, and the renderer draws the sea surface at
- * `SEA_LEVEL * scale + a lift far smaller than any clearance here`
- * (client/src/render/water.ts), so world Y = 0 is where the surface actually
- * sits. The `: 0` annotation stops this compiling the day SEA_LEVEL becomes
- * anything else, which is exactly when this reasoning stops holding.
+ * THE DRAWN SEA SURFACE, NOT SEA_LEVEL — and the difference is the whole of
+ * GH #327's "the water should not render inside of the boat" (owner,
+ * 2026-09-04). This was `SEA_LEVEL` (0), under a comment claiming the
+ * renderer's lift was "far smaller than any clearance here". It is not: the
+ * sea is drawn at SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE +
+ * WATER_SURFACE_LIFT (client/src/config.ts), and WATER_SURFACE_LIFT is 1/32 =
+ * 0.031 world units against a sole that clears the authored waterline by
+ * 0.0113 (tools/blender/build_skiff.py's SOLE_DRY_CLEARANCE_MIN, measured
+ * 0.0113 this build). Floating at 0 therefore sank the whole boat 0.031 under
+ * the sea it is seen against and put the sea a clear 0.02 above its floor.
+ *
+ * The constant is IMPORTED from the module that owns the expression, which
+ * water.ts itself also consumes, so the plane a skiff floats on and the plane
+ * the renderer draws cannot drift apart. The old `: 0` annotation is gone
+ * with the old reasoning: the value is no longer 0, and the thing it needs to
+ * track is the surface, not SEA_LEVEL.
  */
-const SKIFF_FLOAT_WORLD_Y: 0 = SEA_LEVEL;
+const SKIFF_FLOAT_WORLD_Y = SEA_SURFACE_WORLD_Y;
 
-/** How far a skiff bobs above/below its resting float line, in world units. Small: a ripple, not a swell. */
-const SKIFF_BOB_AMPLITUDE_WORLD_UNITS = 0.02;
+/**
+ * How far a skiff bobs above/below its resting float line, in world units.
+ *
+ * 0.006 — about 8 % of the hull's 0.074 midships side depth
+ * (build_skiff.py's HULL_DEPTH_MIDSHIPS), which is the ripple the previous
+ * value only claimed to be: 0.02 was 27 % of that depth, a swell that lifted
+ * and dropped the boat by a quarter of its own topsides.
+ *
+ * IT IS ALSO HALF THE ASSET'S DRY-INTERIOR BUDGET. build_skiff.py's
+ * SOLE_DRY_CLEARANCE_MIN (0.010) is derived from exactly this number plus
+ * 0.004 of float margin, so raising this without raising the sole floods the
+ * boat at the bottom of every cycle. installSkiffKit asserts the two against
+ * each other at load (see the `dryline` check there) rather than trusting
+ * either comment.
+ */
+const SKIFF_BOB_AMPLITUDE_WORLD_UNITS = 0.006;
 /** Seconds for one full bob cycle (down-up-down). Distinct from every skiff's own orbit period, so bobbing never lines up with orbiting into a repeating combined cycle a player could clock. */
 const SKIFF_BOB_PERIOD_SECONDS = 2.6;
 
@@ -82,8 +126,18 @@ const SKIFF_BOB_PERIOD_SECONDS = 2.6;
  * spacing were chosen so boats of that size never crowd each other or the
  * shore. An authored hull may be prettier; it may not be BIGGER, so the
  * placement cell it was fitted to still holds.
+ *
+ * THE TWO NUMBERS LIVE IN skiffs.ts (2026-09-04, GH #327), not here. The same
+ * length and beam are what bound how far a moored hull reaches from its anchor
+ * (SKIFF_MOORING_CLEARANCE_WORLD_UNITS), and the survey that picks a mooring
+ * cannot import this file — it is pure arithmetic that runs under node, and
+ * this one imports three. One source, consumed by both: the fit check here and
+ * the clearance there can never be tuned against different boats.
  */
-const SKIFF_FOOTPRINT: AssetFootprint = { x: 0.36, z: 0.14 };
+const SKIFF_FOOTPRINT: AssetFootprint = {
+  x: SKIFF_HULL_LENGTH_WORLD_UNITS,
+  z: SKIFF_HULL_BEAM_WORLD_UNITS,
+};
 
 /**
  * How far past that budget a measured hull may reach before the asset is
@@ -183,6 +237,29 @@ export function installSkiffKit(asset: RigAsset): void {
   asset.scene.updateMatrixWorld(true);
 
   const waterline = asset.anchor('waterline');
+  // THE ASSET'S DRY INTERIOR, CHECKED AGAINST THE ANIMATION THAT COULD FLOOD IT
+  // (GH #327). `dryline` is the top of the sole; `waterline` is where the sea
+  // cuts the hull. The bob moves the whole boat down by
+  // SKIFF_BOB_AMPLITUDE_WORLD_UNITS at the bottom of every cycle, which moves
+  // the sea that far UP the hull's own frame, so the sole is dry for the whole
+  // cycle exactly when the gap between the two anchors is at least the
+  // amplitude. build_skiff.py asserts the same relationship from its side
+  // (SOLE_DRY_CLEARANCE_MIN, which is this amplitude plus a float margin) — but
+  // it asserts it against a number COPIED into that file, and this is the side
+  // that owns the animation. Checking here is what makes a change to either the
+  // bob or the sole fail loudly instead of quietly putting the sea back inside
+  // the boat.
+  const dryline = asset.anchor('dryline');
+  const soleDryClearance = dryline.y - waterline.y;
+  if (soleDryClearance < SKIFF_BOB_AMPLITUDE_WORLD_UNITS) {
+    throw new Error(
+      `skiff asset: the sole clears the waterline by ${soleDryClearance.toFixed(4)} world ` +
+        `units, less than the bob amplitude ${SKIFF_BOB_AMPLITUDE_WORLD_UNITS} — the sea ` +
+        `would render inside the hull at the bottom of every bob cycle. Raise ` +
+        `tools/blender/build_skiff.py's FLOOR_HEIGHT_FRACTION (and its ` +
+        `SOLE_DRY_CLEARANCE_MIN) or lower SKIFF_BOB_AMPLITUDE_WORLD_UNITS.`,
+    );
+  }
 
   // ONE mesh, because the fleet draws through ONE InstancedMesh. A second
   // mesh would silently go undrawn.

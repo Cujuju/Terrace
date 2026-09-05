@@ -1,4 +1,4 @@
-# render_skiff.py — five Cycles checks of the exported skiff.
+# render_skiff.py — seven Cycles checks of the exported skiff.
 #
 # Run headless from WSL (paths INSIDE are Windows paths):
 #   "/mnt/e/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
@@ -8,14 +8,22 @@
 #     E:\...\.skiff-shots
 #
 # Views: `game` is the actual play camera (~55 deg down at six world units) and
-# is the only one that answers "does it read?"; side/top/bow34 are close checks
-# for shape, see-through walls and inverted normals; `scale` puts the war boat
-# alongside so the two boats can be compared as a fleet. CPU Cycles — the only
-# engine that renders headless without a GPU. The PNGs are eyes-on checks, not
-# artefacts: they are NOT committed.
+# is the only one that answers "does it read?"; side/top/bow34/stern34 are
+# close checks for shape, see-through walls and inverted normals; `scale` puts
+# the war boat alongside so the two boats can be compared as a fleet. CPU
+# Cycles — the only engine that renders headless without a GPU. The PNGs are
+# eyes-on checks, not artefacts: they are NOT committed.
 #
 # The sea is a plane at z = 0 and every boat is sunk by its own `waterline`
 # anchor, so these shots check the waterline bite as well as the shape.
+#
+# `stern34` and `top-bobcrest` exist for GH #327 (2026-09-04). The stern
+# three-quarter is the view the missing transom hid in — every other close view
+# looks at the boat from forward of amidships. `top-bobcrest` re-renders the
+# top view with the sea raised by BOB_CREST_LIFT, which is where the client's
+# float cycle actually puts the surface relative to the authored waterline: a
+# sole that is dry at rest but wet at the crest fails the same defect, so the
+# check has to be run at the crest and not only at rest.
 
 import math
 import os
@@ -58,6 +66,13 @@ SUN_ELEVATION_DEG = 50
 SUN_AZIMUTH_DEG = 30
 
 WATERLINE_ANCHOR_NAME = 'waterline'
+
+#: How far the sea plane is raised for the worst-case dryness check, in world
+#: units. The bob amplitude phase 5 contracts the client to (build_skiff.py
+#: SOLE_DRY_CLEARANCE_MIN derives its 0.010 from this 0.006 plus 0.004 of float
+#: margin), so this is the crest of the float cycle: the highest the surface
+#: ever reaches relative to the boat's authored waterline.
+BOB_CREST_LIFT = 0.006
 
 
 def setup():
@@ -146,6 +161,9 @@ def main():
         ('side', 90.0, 8.0, CLOSE_DISTANCE, TARGET),
         ('top', 90.0, 89.0, CLOSE_DISTANCE, TARGET),
         ('bow34', 45.0, 25.0, CLOSE_DISTANCE, TARGET),
+        # From abaft the port quarter: the only close view that sees the
+        # transom, and so the only one that can catch it being open.
+        ('stern34', 135.0, 25.0, CLOSE_DISTANCE, TARGET),
     ]
     for name, az, el, dist, target in views:
         aim(camera, target, az, el, dist)
@@ -153,7 +171,18 @@ def main():
         bpy.ops.render.render(write_still=True)
         print(f'rendered {scene.render.filepath}')
 
-    # Fifth view: the war boat alongside, so the skiff can be judged as the
+    # The top view again with the sea at the crest of the client's bob. The
+    # plane is raised rather than the boat lowered so the camera framing is
+    # identical to skiff-top.png and the two can be flicked between.
+    sea = bpy.data.objects['sea']
+    sea.location.z = BOB_CREST_LIFT
+    aim(camera, TARGET, 90.0, 89.0, CLOSE_DISTANCE)
+    scene.render.filepath = os.path.join(out_dir, 'skiff-top-bobcrest.png')
+    bpy.ops.render.render(write_still=True)
+    print(f'rendered {scene.render.filepath} (sea raised {BOB_CREST_LIFT})')
+    sea.location.z = 0.0
+
+    # Last view: the war boat alongside, so the skiff can be judged as the
     # smaller cousin it is meant to be rather than in isolation.
     import_boat(war_boat_path, SCALE_SEPARATION)
     scale_target = (0.0, SCALE_SEPARATION / 2, 0.05)
