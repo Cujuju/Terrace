@@ -1,5 +1,8 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 9 (owner 2026-09-04): arm CONTENT — grain streaks along each arm's curve
+// (periodic noise in (log r, wound angle)), ARM_WOBBLE phase wander, deeper palette.
+// The reference's wound frame rotated the wrong way, which is why its grain cut across.
 // REVISION 8 (owner 2026-09-04): plumbing only, no look change — both shaders
 // take an anchor frame (u_focal, u_toDisk mat3, u_origin vec3, disk space with
 // the plane at z=0) instead of u_tilt, so the client can lock the void to the
@@ -47,6 +50,12 @@ float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); retur
 float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
 float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*vnoise(p); p=p*2.03+vec2(17.3,9.1); a*=0.5; } return s; }
+// The same noise, periodic in y with period `per` cells: the lattice row wraps, so a domain
+// whose y is an angle has no seam. Lacunarity exactly 2 and no y offset keep every octave periodic.
+float pvnoise(vec2 p, float per){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  float y0=mod(i.y,per), y1=mod(i.y+1.0,per);
+  return mix(mix(hash(vec2(i.x,y0)),hash(vec2(i.x+1.0,y0)),f.x), mix(hash(vec2(i.x,y1)),hash(vec2(i.x+1.0,y1)),f.x), f.y); }
+float pfbm(vec2 p, float per){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*pvnoise(p,per); p=p*2.0+vec2(17.3,0.0); per*=2.0; a*=0.5; } return s; }
 // Star layer: one candidate per grid cell, soft falloff, steady (stars do not twinkle here).
 float stars(vec2 p, float density, float t){
   vec2 i=floor(p), f=fract(p)-0.5; float h=hash(i);
@@ -116,6 +125,11 @@ const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitc
 const float ARM_SHARPNESS= 1.0;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0
 const float GAS_GAIN     = 1.0;    // brightness of the gas arms; rev 6: 1.5 -> 1.2 'a little darker', rev 7: 1.0
 const float BULGE_GAIN   = 0.25;   // warm hub glow; rev 6: 0.55 -> 0.25 and the white core removed, 'get rid of the bright center'
+const float ARM_WOBBLE   = 2.0;    // rad of low-frequency phase wander; rev 9 owner 2026-09-04: 'the swirls look too rigid'
+const float WOBBLE_SCALE = 0.6;    // disk units per wobble feature: the arms bend on a scale near the disk radius
+const float STREAK_ALONG = 1.6;    // grain cells per e-fold of radius ALONG an arm (long filaments)
+const float STREAK_ACROSS= 40.0;   // grain cells around the full circle ACROSS the arms (fine filaments); integer, the y period
+const float HUE_SCALE    = 0.7;    // disk units per hue-drift feature between the deep blue and the violet
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
 const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
@@ -134,18 +148,34 @@ void main(){
     float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
 
     // --- gas ---
-    // ARMS log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
-    float phase=th*ARMS-log(r+0.05)*WIND;
+    // ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
+    // straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
+    // runs ACROSS it — an arm sits at a fixed thw. Rev 9 (owner 2026-09-04): the arms' phase wanders
+    // with low-frequency noise so the swirl is not rigid, and the grain is sampled in (s, thw) with
+    // long cells along and short cells across, so the filaments run along the curve of each arm
+    // instead of radiating from the hub.
+    float s=log(r+0.05);
+    float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
+    float phase=th*ARMS-s*WIND+wobble;
     float arm=pow(0.5+0.5*cos(phase),ARM_SHARPNESS);
-    vec2 wound=rot(rf,log(r+0.05)*WIND/ARMS);
-    float grain=0.6*fbm(wound*2.2+vec2(4.0,1.0))+0.4*fbm(wound*5.0+vec2(1.0,7.0));
+    // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS — constant along an
+    // arm. (The reference rotated the other way, which is why its grain cut across the arms.)
+    vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
+    float thw=atan(wound.y,wound.x);
+    vec2 aq=vec2(s*STREAK_ALONG, (thw/6.2831853+0.5)*STREAK_ACROSS);
+    float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
     float haze=fbm(rf*1.4+vec2(9.0,2.0));
     float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
     float lanes=smoothstep(0.6,0.78,grain)*arm*0.6;          // dark dust lanes cut through the arms
     float gas=(arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
     float bulge=exp(-r*2.0);
-    vec3 outer=vec3(0.30,0.52,0.95), pink=vec3(0.92,0.50,0.80), warm=vec3(1.0,0.88,0.62);
-    vec3 gasCol=mix(outer,pink,smoothstep(0.5,0.85,grain)*0.8);
+    // Rev 9 palette: deeper and more saturated — a deep blue drifting into violet across the disk,
+    // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
+    vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85), warm=vec3(1.0,0.88,0.62);
+    float hue=fbm(rf/HUE_SCALE+vec2(2.0,5.0));
+    vec3 gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
+    gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
+    gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
     col+=(gasCol*gas*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars in the disk, riding the rotation; denser and brighter inside the arms ---
