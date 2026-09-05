@@ -284,6 +284,30 @@ export interface World extends TerrainSink {
    */
   spanCapAt(x: number, y: number, spanIndex: number): number | null;
   /**
+   * How many spans the column at (x, y) holds right now — 0 off the world or
+   * before the first snapshot.
+   *
+   * THE LENGTH OF THE LIST A `spanIndex` INDEXES, which is state (columns.ts's
+   * `spanIndexCoveringBand`): a carve that splits a column, or a raise that
+   * welds two of its spans, renumbers every span above the change. A cached
+   * pick can only keep its index while this count is the one it was taken
+   * under; past that the index names a different span, not a moved one.
+   */
+  spanCountAt(x: number, y: number): number;
+  /**
+   * Whether the span `spanIndex` of the column at (x, y) still DRAWS the
+   * world-space height `worldY` — i.e. `worldY` lies in the slab the renderer
+   * fills for it, from its underside (columns.ts `spanUndersideHeight`) to its
+   * cap. False when the cell, the index or the height is outside that.
+   *
+   * The test a cached RISER hit has to survive: `bandOfPick` clamps a struck
+   * height into the span's drawn range, which is right for a hit that landed on
+   * a slab boundary but turns a hit at a height the span no longer reaches into
+   * a silent claim about the band at the end of the clamp. A pick that fails
+   * this is not refreshable — it must be re-picked.
+   */
+  spanContainsHeight(x: number, y: number, spanIndex: number, worldY: number): boolean;
+  /**
    * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
    * coordinate — terrain/drawnGround.ts's `capYAt`, read from the plan the
    * terrain meshes published when they last drew that chunk.
@@ -927,6 +951,27 @@ export function createWorld(viewport: Viewport): World {
       if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return null;
       if (spanIndex < 0 || spanIndex >= spanCount(mirror.map, x, y)) return null;
       return spanCapHeight(spanAt(mirror.map, x, y, spanIndex)) * HEIGHT_WORLD_SCALE;
+    },
+
+    spanCountAt(x: number, y: number): number {
+      if (mirror === null) return 0;
+      if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return 0;
+      return spanCount(mirror.map, x, y);
+    },
+
+    spanContainsHeight(x: number, y: number, spanIndex: number, worldY: number): boolean {
+      if (mirror === null) return false;
+      if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return false;
+      if (spanIndex < 0 || spanIndex >= spanCount(mirror.map, x, y)) return false;
+      // THE SAME BOUNDS `bandOfPick` CLAMPS INTO, in world units: the slab the
+      // renderer fills for this span runs from its underside to its cap, and
+      // those two heights are what the band range there is derived from. Read
+      // through the same helpers so the two can never disagree about how tall
+      // a span is drawn.
+      const span = spanAt(mirror.map, x, y, spanIndex);
+      const underside = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
+      const cap = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+      return worldY >= underside && worldY <= cap;
     },
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
