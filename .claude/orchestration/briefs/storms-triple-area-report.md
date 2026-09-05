@@ -7,9 +7,10 @@ cover three times as much area when they spawn."
 
 - Branch: `worktree-agent-a9ecd9a26353b96a1` (worktree
   `.claude/worktrees/agent-a9ecd9a26353b96a1`), off `517d051`.
-- Commit: `928db13` — `feat(storms): rain and snow fronts cover three times the
-  area`. (The report was staged in that commit; this one line, its own hash, was
-  written in immediately after and amended on top.)
+- Commit: `d73f7f6` — `feat(storms): rain and snow fronts cover three times the
+  area`. That commit carries the whole change and this report; the single
+  follow-up commit on the branch does nothing but write this hash into the line
+  you are reading, which the commit could not contain in advance.
 - Not merged into main. `ExitWorktree` called with `action: "keep"`.
 
 ## The contract change
