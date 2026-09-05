@@ -70,20 +70,24 @@ export const STRUCTURES_WIND_DEMOLISH_CHANCE_PER_SEVERITY_SECOND = 0.08;
  * What each tier of standing multiplies a building's survival odds by — i.e.
  * the factor its demolition chance is scaled DOWN by, once per tier.
  *
- * 0.6, chosen so that the top of the ladder is a real shelter without being
- * immunity. Over the same minute of eyewall as above (MAX_STRUCTURE_TIER = 5,
- * ../protocol.ts):
+ * 0.5, chosen so that the top of the ladder is a real shelter without being
+ * immunity — LOWERED from the 0.6 that shipped with #299 on the owner's ruling
+ * of 2026-09-04 (issue #304), after a 0.75-intensity fixture demolished tiers
+ * 1-3 outright and left only tier 4 standing. Over the same minute of eyewall
+ * as above (MAX_STRUCTURE_TIER = 5, ../protocol.ts):
  *
- *   tier 0  0.080/s → ~99% lost      tier 3  0.017/s → ~65% lost
- *   tier 1  0.048/s → ~95% lost      tier 4  0.010/s → ~46% lost
- *   tier 2  0.029/s → ~83% lost      tier 5  0.006/s → ~31% lost
+ *   tier 0  0.0800/s → ~99% lost     tier 3  0.0100/s → ~45% lost
+ *   tier 1  0.0400/s → ~91% lost     tier 4  0.0050/s → ~26% lost
+ *   tier 2  0.0200/s → ~70% lost     tier 5  0.0025/s → ~14% lost
  *
  * A watchtower usually rides a hurricane out and sometimes does not, which is
  * the reading "higher tiers resist more" has to have if the tier ladder is to
- * mean anything under weather. A HALF (0.5) puts tier 5 at ~1 in 6 and a
- * two-thirds (0.667) at ~2 in 5; 0.6 is between them and is the value that
- * lands the top tier either side of "probably survives" rather than making the
- * answer never or nearly always.
+ * mean anything under weather. At 0.6 the top tier was lost about a third of
+ * the time and tier 3 two times in three, which read as the ladder buying too
+ * little; a half puts tier 5 at about one in seven and leaves tier 3 a coin
+ * flip, so the camp is gone, the village is gutted and the town mostly stands.
+ * NOT LOWER: 0.4 would put tier 5 near 5%, which is shelter shading into
+ * immunity.
  *
  * GEOMETRIC RATHER THAN LINEAR, deliberately: a linear scale over six tiers
  * either bottoms out at zero (immunity, and a tier-5 town becomes a place
@@ -91,7 +95,7 @@ export const STRUCTURES_WIND_DEMOLISH_CHANCE_PER_SEVERITY_SECOND = 0.08;
  * same PROPORTION of survival is also the shape the tier ladder itself has —
  * every step costs the same three generations (./tiers.ts).
  */
-export const STRUCTURES_WIND_TIER_RESISTANCE = 0.6;
+export const STRUCTURES_WIND_TIER_RESISTANCE = 0.5;
 
 /**
  * The demolition chance for one building this event, clamped to a probability.
