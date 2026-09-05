@@ -38,6 +38,7 @@ import type {
   WorldPurgeRequestMessage,
   ServerRestartNoticeMessage,
   ServerRestartRequestMessage,
+  StackRestartRequestMessage,
   WorldRenameRequestMessage,
   WorldSwitchCancelRequestMessage,
   WorldSwitchNoticeMessage,
@@ -162,6 +163,12 @@ export const MSG_WORLD_PLUGIN_RELOAD: WorldPluginReloadRequestMessage['type'] =
 
 /** Client → server: restart the server process so new code becomes live. */
 export const MSG_SERVER_RESTART: ServerRestartRequestMessage['type'] = 'serverRestart';
+
+/**
+ * Client → server: restart the server AND the client dev server, keyless —
+ * the development loop's update button (see StackRestartRequestMessage).
+ */
+export const MSG_STACK_RESTART: StackRestartRequestMessage['type'] = 'stackRestart';
 
 /** Server → every client: the process is about to restart (0 = now). */
 export const MSG_SERVER_RESTART_NOTICE: ServerRestartNoticeMessage['type'] =

@@ -460,7 +460,10 @@ export type ClientMessage =
   // secret and are answered to their sender alone (see the WORLD ROLLBACK
   // section at the foot of this file).
   | RestorePointsRequestMessage
-  | RollbackRequestMessage;
+  | RollbackRequestMessage
+  // The keyless whole-stack restart of the development loop — see
+  // StackRestartRequestMessage for why it carries no key.
+  | StackRestartRequestMessage;
 export type ServerMessage =
   | TerrainDiffMessage
   | ChunkUnlockMessage
@@ -1270,6 +1273,50 @@ export interface WorldPluginReloadRequestMessage {
 export interface ServerRestartRequestMessage {
   type: 'serverRestart';
   key: string;
+}
+
+/**
+ * Client → server: "restart the WHOLE dev stack — this server AND the client
+ * dev server that serves me".
+ *
+ * THE OTHER UPDATE BUTTON, for the development loop (owner, 2026-09-04). The
+ * keyed `serverRestart` brings new SERVER code live and deliberately leaves
+ * the client dev server running; but Vite on this project's disk does not
+ * watch files, so new CLIENT code only arrives when Vite itself restarts, and
+ * until now that took a keypress at the supervisor's terminal. This message
+ * is that keypress, sent from the HUD.
+ *
+ * NOT KEYED, BY THE OWNER'S RULING (2026-09-04: "I don't want to have to
+ * re-enter the password every time"). It is a development convenience for a
+ * server on a developer's own machine: it destroys nothing (the shutdown path
+ * writes the final snapshot, the same world comes back, every client
+ * reconnects), and the supervisor's restart burst guard bounds what a
+ * misbehaving sender can do to it. RESIDUAL, stated: on a server reachable
+ * by strangers, anyone who can open the page can bounce it for a few seconds
+ * at a time. Do not ship this message on such a deployment without a key.
+ *
+ * Whether the CLIENT half actually restarts is the supervisor's business: the
+ * server exits with a second distinguished code (server/src/restart.ts) and
+ * run_server.py restarts both halves on it. Under docker or systemd there is
+ * no client half and the exit is just another restart.
+ */
+export interface StackRestartRequestMessage {
+  type: 'stackRestart';
+}
+
+/** The wire name of StackRestartRequestMessage. */
+export const STACK_RESTART_MESSAGE_TYPE: StackRestartRequestMessage['type'] = 'stackRestart';
+
+/**
+ * Validates an inbound stack-restart request; null if malformed. It carries
+ * nothing but its type — there is no key, no world and no option to check —
+ * so this is the shape check every inbound message gets and no more.
+ */
+export function validateStackRestartRequest(msg: unknown): StackRestartRequestMessage | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (m.type !== STACK_RESTART_MESSAGE_TYPE) return null;
+  return { type: STACK_RESTART_MESSAGE_TYPE };
 }
 
 /** Client → server: "call off the switch that is counting down". */
