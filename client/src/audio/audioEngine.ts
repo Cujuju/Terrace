@@ -3,8 +3,8 @@
 // client/src/plugins/types.ts's PluginAudio; design: .claude/plans/audio-host.md §2).
 //
 //   plugin voices ──► bus gain (sfx | ambience | music) ──► master ──► destination
-//                                                             ▲
-//                                     audioPrefs (volume × mute) ┘
+//                              ▲                               ▲
+//         audioPrefs, one level per bus ┘   audioPrefs (volume × mute) ┘
 //
 // WHY CORE OWNS ALL OF IT. A browser caps how many AudioContexts a page may
 // hold, the listener has to track the ONE camera, and the player's master
@@ -27,16 +27,21 @@
 import { Audio, AudioListener, Group, PositionalAudio } from 'three';
 import { createEffect, createRoot } from 'solid-js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE } from '../config.ts';
-import { effectiveMasterGain } from '../state/audioPrefs.ts';
+import {
+  AUDIO_BUS_NAMES,
+  effectiveBusGain,
+  effectiveMasterGain,
+  type AudioBusName,
+} from '../state/audioPrefs.ts';
 import type { PluginAudio, SfxOptions } from '../plugins/types.ts';
 import type { Viewport } from '../render/scene.ts';
 
 // ── Named constants ──────────────────────────────────────────────────────────
 
-/** The three buses. A plugin never names one; the method it calls does. */
-type AudioBusName = 'sfx' | 'ambience' | 'music';
-
-const AUDIO_BUS_NAMES: readonly AudioBusName[] = ['sfx', 'ambience', 'music'];
+// The bus names themselves live in state/audioPrefs.ts, imported above — see
+// that module's AudioBusName for why the declaration sits at the end this
+// module imports rather than at the end that builds the nodes. A plugin never
+// names a bus at all; the method it calls picks one.
 
 /**
  * Most one-shot voices alive at once, across every plugin.
@@ -135,10 +140,12 @@ const MUSIC_CROSSFADE_SECONDS = 2;
 /**
  * Level a music track plays at relative to its bus.
  *
- * ONE: the music bus exists so the PLAYER can hold music down relative to the
- * world, and per-bus levels are phase 2 (plan §7). Until then the track plays
- * at the level it was authored at and the master is the only control, which is
- * honest about there being exactly one control.
+ * ONE, and it stays a HOST constant rather than becoming a knob: the player's
+ * control over music is the music BUS (state/audioPrefs.ts's
+ * DEFAULT_MUSIC_LEVEL, its own slider in the settings popup), and a second
+ * multiplier in front of it would mean two numbers deciding one thing. A track
+ * plays at the level it was authored at; how loud that is against the rest of
+ * the world is the bus's business.
  */
 const MUSIC_TRACK_GAIN = 1;
 
@@ -368,6 +375,20 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     param.linearRampToValueAtTime(target, now + seconds);
   }
 
+  /**
+   * A caller's `delaySeconds`, sanitised to something `source.start` can take.
+   *
+   * NEGATIVE AND NON-FINITE BOTH BECOME ZERO rather than throwing: a delay is
+   * an ARRIVAL TIME, "in the past" means "now", and `playSfx` is contracted as
+   * fire-and-forget — a plugin computing a delay from a distance must not be
+   * able to take the frame down with a divide that went wrong.
+   */
+  function delaySecondsOf(opts: SfxOptions | undefined): number {
+    const requested = opts?.delaySeconds;
+    if (requested === undefined || !Number.isFinite(requested) || requested <= 0) return 0;
+    return requested;
+  }
+
   /** Clamps a caller-supplied relative level into [SILENT_GAIN, UNITY_GAIN]. */
   function clampGain(value: number | undefined, fallback: number): number {
     if (value === undefined || !Number.isFinite(value)) return fallback;
@@ -409,15 +430,22 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
   // ── The graph ──────────────────────────────────────────────────────────────
 
   /**
-   * The master's own gain, from the player's prefs.
+   * The master's gain and each bus's gain, from the player's prefs.
    *
-   * DRIVEN BY A SOLID EFFECT IN ITS OWN ROOT. The prefs are module-scope
+   * DRIVEN BY SOLID EFFECTS IN THEIR OWN ROOT. The prefs are module-scope
    * signals (state/audioPrefs.ts, the controlPrefs.ts shape) and this engine is
    * imperative code outside any component, so `createRoot` is how an imperative
    * owner subscribes to them — one mechanism for both readers rather than a
    * second callback list bolted onto the prefs module for us. The root's own
-   * dispose is kept and called from `dispose()` below, so the subscription does
+   * dispose is kept and called from `dispose()` below, so the subscriptions do
    * not outlive the engine.
+   *
+   * ONE EFFECT PER GAIN, not one effect writing four. An effect re-runs when
+   * ANY signal it read changes, so a single effect reading all four prefs would
+   * re-ramp all four nodes on every drag of any one slider — four scheduled
+   * ramps where one was asked for, and three of them on nodes that had not
+   * moved. Paired with one signal per bus in audioPrefs.ts, moving the music
+   * slider touches the music bus and nothing else.
    */
   const disposePrefsEffect = createRoot((disposeRoot) => {
     createEffect(() => {
@@ -427,6 +455,16 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
       if (graph === null) return;
       rampGain(graph.master.gain, gain, MASTER_RAMP_SECONDS, graph.context);
     });
+    for (const name of AUDIO_BUS_NAMES) {
+      createEffect(() => {
+        const gain = effectiveBusGain(name);
+        if (graph === null) return;
+        // THE SAME RAMP THE MASTER GETS. A bus is the same kind of node
+        // carrying the same kind of number, and a stepped gain clicks wherever
+        // it is applied — there is no reason for a second fade length here.
+        rampGain(graph.buses[name].gain, gain, MASTER_RAMP_SECONDS, graph.context);
+      });
+    }
     return disposeRoot;
   });
 
@@ -458,10 +496,13 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     const buses = {} as Record<AudioBusName, GainNode>;
     for (const name of AUDIO_BUS_NAMES) {
       const bus = context.createGain();
-      // Unity: the buses exist so a plugin sets a level RELATIVE to one and so
-      // phase 2 can give the player per-bus sliders. Until there are sliders,
-      // a bus that attenuated by default would be an invisible mix decision.
-      bus.gain.value = UNITY_GAIN;
+      // FROM THE PREF, not from unity. The graph is built lazily at the first
+      // gesture, long after the player's stored mix was loaded, so starting
+      // every bus at unity and waiting for the effects above to ramp it would
+      // play the first fraction of a second at the wrong level — the same
+      // reason `master.gain.value` is seeded from its pref two lines up rather
+      // than left at 1.
+      bus.gain.value = effectiveBusGain(name);
       bus.connect(master);
       buses[name] = bus;
     }
@@ -538,6 +579,13 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     voice.setVolume(gain);
     const rate = opts?.playbackRate;
     if (rate !== undefined && Number.isFinite(rate) && rate > 0) voice.setPlaybackRate(rate);
+    // SCHEDULED, NOT TIMED. three's `play(delay)` sets
+    // `_startedAt = context.currentTime + delay` and passes it to
+    // `source.start()` (three/src/audio/Audio.js:329-338) — the sample-accurate
+    // Web Audio scheduler on the audio thread. There is no setTimeout, no frame
+    // callback and no JS running between now and the sound: a delayed voice
+    // costs exactly what an undelayed one does.
+    const delay = delaySecondsOf(opts);
     // The pool is freed by the source's own `ended`, which is the only event
     // that knows a one-shot is over — three routes it through `onEnded`
     // (Audio.js:331). Chained, not replaced: three's own handler clears
@@ -547,7 +595,12 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
       threeOnEnded();
       retireSfx(voice);
     };
-    voice.play();
+    voice.play(delay);
+    // PUSHED AT CREATION, delayed or not, so a voice scheduled in the future
+    // counts against MAX_SFX_VOICES from the moment it exists. It has to: a
+    // cap that only counted AUDIBLE voices could be walked straight past by a
+    // caller scheduling a hundred claps two seconds out, and the graph would
+    // hold every one of them.
     sfxVoices.push(voice);
 
     // AFTER the push, so the `sfxVoices` count debugLog appends is the live
@@ -559,6 +612,7 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
       gain,
       at: at === undefined ? null : { x: at.x, y: at.y, z: at.z },
       playbackRate: rate ?? 1,
+      delaySeconds: delay,
     });
   }
 

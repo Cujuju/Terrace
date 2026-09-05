@@ -166,6 +166,31 @@ export interface SfxOptions {
    * not a pitch shifter. Non-finite or non-positive values are ignored.
    */
   readonly playbackRate?: number;
+  /**
+   * How long from NOW until the sound is heard, in seconds. Defaults to 0.
+   *
+   * WHAT IT IS FOR: the speed of sound. A thunderclap reaches a listener after
+   * its flash reaches their eye, and how long after is the single strongest cue
+   * for how far away a storm is — stronger than loudness, because loudness is
+   * also what a quiet sound nearby looks like. A plugin that knows where its
+   * event happened and where the camera is can compute that, and only the
+   * plugin knows what the sound is travelling through.
+   *
+   * NO TIMER IS INVOLVED. The voice is handed to Web Audio's own scheduler
+   * (`source.start(currentTime + delaySeconds)`) on the audio thread, so a
+   * delayed one-shot costs exactly what an immediate one does and arrives
+   * sample-accurately rather than on the next frame after a `setTimeout`.
+   *
+   * IT COUNTS AGAINST THE VOICE CAP FROM THE MOMENT IT IS SCHEDULED, not from
+   * when it sounds — otherwise a caller could schedule any number of voices
+   * into the future and walk straight past a cap that only counted audible
+   * ones. A scheduled voice can therefore be stolen before it is ever heard,
+   * which is the correct outcome: the newest events win.
+   *
+   * Negative and non-finite values are treated as 0 — a delay is an arrival
+   * time, and "in the past" means "now".
+   */
+  readonly delaySeconds?: number;
 }
 
 /**
