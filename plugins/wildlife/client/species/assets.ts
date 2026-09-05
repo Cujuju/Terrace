@@ -1,4 +1,4 @@
-// The species drawn from a file — Blender-built (fish, shark, ray, eel) or downloaded and
+// The species drawn from a file — Blender-built (fish, shark, ray, eel, angelfish) or downloaded and
 // rigidified (the deer grazer) — and where each file is served from. THE ONE LIST.
 //
 // Two consumers install these: the shipped plugin's `preload` (../index.ts)
@@ -21,6 +21,8 @@ import { RAY_ASSET } from './ray.ts';
 import rayUrl from '../assets/ray.glb?url';
 import { EEL_ASSET } from './eel.ts';
 import eelUrl from '../assets/eel.glb?url';
+import { ANGELFISH_ASSET } from './angelfish.ts';
+import angelfishUrl from '../assets/angelfish.glb?url';
 import { GRAZER_ASSET } from './grazer.ts';
 import grazerUrl from '../assets/grazer-deer.glb?url';
 
@@ -35,5 +37,6 @@ export const SPECIES_ASSETS: readonly SpeciesAssetEntry[] = [
   { spec: SHARK_ASSET, url: sharkUrl },
   { spec: RAY_ASSET, url: rayUrl },
   { spec: EEL_ASSET, url: eelUrl },
+  { spec: ANGELFISH_ASSET, url: angelfishUrl },
   { spec: GRAZER_ASSET, url: grazerUrl },
 ];

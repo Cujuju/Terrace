@@ -4,9 +4,9 @@
 // species per pass). The body used to be built here out of a swept hull and
 // extruded fins (../whaleHull.ts, ./bodyKit.ts). It is now
 // ../assets/fish.glb, authored by tools/blender/build_fish.py and loaded
-// through ./assetSpecies.ts. Those two helpers are NOT orphaned — grazer,
-// ibex, bison, ray, shark, eel and angelfish all still build on them, and the
-// whale bodies build on whaleHull too.
+// through ./assetSpecies.ts. Those two helpers are NOT orphaned — ibex and
+// bison still build on both, the whale bodies on whaleHull, and quadruped.ts
+// on bodyKit.
 //
 // WHAT DID NOT CHANGE, and must not:
 //   * FISH_ENVELOPE. It is the placement contract (../placement.ts's
