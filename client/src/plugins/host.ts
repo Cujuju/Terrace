@@ -700,7 +700,8 @@ export function createClientPluginHost(
             | 'top-center'
             | 'bottom-center'
             | 'bottom-right'
-            | 'connection';
+            | 'connection'
+            | 'settings';
           headerSummary?: Component;
           tabSummary?: () => string;
         },

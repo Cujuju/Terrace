@@ -14,14 +14,17 @@ import type { Component } from 'solid-js';
  * bottom-right strip cell, immediately left of the icon-button column (owner
  * move, 2026-08-25: the mana gauge left the centre for it); 'connection'
  * renders inside the bottom-right connection popup, under its status row and
- * hint sentence (owner move, 2026-08-21: the invite link lives there now).
+ * hint sentence (owner move, 2026-08-21: the invite link lives there now);
+ * 'settings' renders inside the settings popup, under the audio sliders, so a
+ * plugin that owns a sound owns the dials for it (GH #325).
  */
 export type HudPanelPlacement =
   | 'panel'
   | 'top-center'
   | 'bottom-center'
   | 'bottom-right'
-  | 'connection';
+  | 'connection'
+  | 'settings';
 
 export interface PluginHudPanel {
   /** Owning plugin — used as the render key and shown as the panel title. */
