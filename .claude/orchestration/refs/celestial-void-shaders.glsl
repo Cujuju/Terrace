@@ -1,5 +1,7 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 7 (owner 2026-09-04): WHEEL_RATE -0.021 (five minutes per turn),
+// GAS_GAIN 1.0, ARM_SHARPNESS 1.0, WIND 8.0.
 // REVISION 6 (owner 2026-09-04, in-world feedback): rate slowed by a third
 // (-0.0267), white core removed and bulge dimmed (0.25), gas gain 1.5 -> 1.2,
 // arms thicker (exponent 2.2 -> 1.2) and wound tighter (WIND 3.2 -> 6.0).
@@ -61,14 +63,14 @@ float dstars(vec2 p, float density, float minSize){
   float size = max(0.03 + 0.05*hash(i+9.2), minSize);
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
-const float WHEEL_RATE   = -0.0267; // rad/s (~3.9 min per turn); rev 6 owner 2026-09-04: 'slow by a third' from -0.04; negative = clockwise from above
+const float WHEEL_RATE   = -0.021; // rad/s (2*pi/300 = ~5.0 min per turn); rev 7 owner 2026-09-04: 'about five minutes per turn'; negative = clockwise from above
 const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
 const float DISK_DIST    = 2.6;    // hub distance along the view axis
 const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
 const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
-const float WIND         = 6.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0, 'more circular, less star-shaped'
-const float ARM_SHARPNESS= 1.2;    // arm cross-section exponent; rev 6: 2.2 -> 1.2, 'thicker arms, less dead space'
-const float GAS_GAIN     = 1.2;    // brightness of the gas arms; rev 6: 1.5 -> 1.2, 'bright sections a little darker'
+const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0 'more circular', rev 7: 8.0
+const float ARM_SHARPNESS= 1.0;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0
+const float GAS_GAIN     = 1.0;    // brightness of the gas arms; rev 6: 1.5 -> 1.2 'a little darker', rev 7: 1.0
 const float BULGE_GAIN   = 0.25;   // warm hub glow; rev 6: 0.55 -> 0.25 and the white core removed, 'get rid of the bright center'
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
