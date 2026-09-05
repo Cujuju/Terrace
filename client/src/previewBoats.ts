@@ -34,6 +34,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import warBoatUrl from '../../plugins/boats/client/assets/war-boat.glb?url';
+import { loadRigAsset } from './render/rigAsset.ts';
 import {
   BOAT_WATERLINE_LIFT,
   createBoatModels,
@@ -131,7 +132,14 @@ async function main(): Promise<void> {
   const { scene, camera, renderer } = buildScene();
 
   // The asset first: createBoatModels bakes from the installed kit.
-  await preloadBoatModels(warBoatUrl);
+  // The preview has no plugin host: it stands in for ctx.loadRigAsset with the
+  // loader itself, at the same 'lamps-only' policy the plugin's preload asks
+  // for (plugins/boats/client/models.ts) — the environment is a metals-only
+  // concern this page has no material for.
+  await preloadBoatModels(
+    { loadRigAsset: (url) => loadRigAsset(url, null) },
+    warBoatUrl,
+  );
   const models = createBoatModels();
   const subject = new Group();
   states.forEach((fighting, index) => {
