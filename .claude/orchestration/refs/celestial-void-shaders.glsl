@@ -1,5 +1,10 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 8 (owner 2026-09-04): plumbing only, no look change — both shaders
+// take an anchor frame (u_focal, u_toDisk mat3, u_origin vec3, disk space with
+// the plane at z=0) instead of u_tilt, so the client can lock the void to the
+// world's plane. The view anchor's frame reproduces revision 7 exactly; see
+// client/src/render/celestialVoid.ts viewAnchorFrame().
 // REVISION 7 (owner 2026-09-04): WHEEL_RATE -0.021 (five minutes per turn),
 // GAS_GAIN 1.0, ARM_SHARPNESS 1.0, WIND 8.0.
 // REVISION 6 (owner 2026-09-04, in-world feedback): rate slowed by a third
@@ -12,13 +17,32 @@
 // the disk plane rotating with the gas, still sparse field above the horizon,
 // no twinkle, no trails. Nebula unchanged (NEBULA_RATE 0.15).
 // GLSL ES 1.00 (WebGL1) as written; port to three's ShaderMaterial conventions.
-// Uniforms: u_res (vec2 px), u_time (s), u_tilt (rad, wheel only; default 60 deg).
+// Uniforms: u_res (vec2 px), u_time (s), u_focal, u_toDisk (mat3), u_origin (vec3), u_dome (0/1).
 // uv = (gl_FragCoord.xy - 0.5*u_res)/u_res.y  — i.e. screen-space, y up, height = 1.
 
-// ===== COMMON (both looks) =====
-
+// ===== common =====
 precision highp float;
-uniform vec2 u_res; uniform float u_time; 
+uniform vec2 u_res;
+uniform float u_time;
+// The anchor frame (see the header): focal length in screen heights, the
+// rotation taking a view-space direction into disk space, and the eye's
+// position in disk space (disk units, z up, plane at z = 0).
+uniform float u_focal;
+uniform mat3 u_toDisk;
+uniform vec3 u_origin;
+// 1.0 in the world anchor, 0.0 in the view anchor: whether a look that has no
+// plane to intersect (the nebula's clouds, the wheel's sky above its horizon)
+// maps the ray onto a dome around the world instead of the view's image plane.
+uniform float u_dome;
+vec3 viewRay(vec2 uv){ return u_toDisk*normalize(vec3(uv,-u_focal)); }
+// Lambert azimuthal equal-area projection of a direction, from the nadir: a
+// smooth 2-D domain over every direction but straight up (|p| = 2 there), with
+// no seam and no stretch at the horizon (|p| = sqrt 2). Near the nadir it is
+// d.xy to first order, so it matches the plane mapping where the two meet. The
+// zenith is the one singular point, and the orbit's polar cap
+// (CAMERA_MAX_POLAR_ANGLE_DEGREES) keeps it off screen.
+vec2 dome(vec3 d){ return d.xy*sqrt(2.0/(1.0-d.z)); }
+
 float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }
 float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
@@ -32,13 +56,31 @@ float stars(vec2 p, float density, float t){
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
 
-// ===== NEBULA main =====
-
+// ===== nebula =====
 const float NEBULA_RATE = 0.15;   // drift clock scale; owner set 3x the original 0.05
+const float NEBULA_ZOOM = 2.2; // reference: p = uv*2.2
+// World anchor only: how much of the eye's offset from the hub (disk units)
+// slides the clouds. A quarter: panning across the whole default map (±1.28
+// disk units) moves them by about a third of a screen, which reads as far
+// away but still attached to the world.
+const float NEBULA_PARALLAX = 0.25;
 void main(){
-  vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
+  vec2 suv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
+  vec3 d=viewRay(suv);
   float t=u_time*NEBULA_RATE;
-  vec2 p=uv*2.2;
+  vec2 p;
+  if(u_dome>0.5){
+    // World anchor: clouds on a dome around the world, so orbiting turns them
+    // with the terrain and no camera angle can see them stretch; panning
+    // slides them a little (NEBULA_PARALLAX).
+    p=NEBULA_ZOOM*dome(d)+u_origin.xy*NEBULA_PARALLAX;
+  } else {
+    // View anchor: the cloud plane is z = 0 in disk space with the eye
+    // u_origin.z = NEBULA_ZOOM*focal above it and u_toDisk the identity, which
+    // makes p exactly the reference's uv*NEBULA_ZOOM.
+    p=u_origin.xy+d.xy*(u_origin.z/-d.z);
+  }
+  vec2 uv=p/NEBULA_ZOOM;             // the reference's screen coordinate, for the star layers
   vec2 q=vec2(fbm(p+t*0.3), fbm(p+vec2(5.2,1.3)-t*0.2));
   vec2 r=vec2(fbm(p+3.0*q+vec2(1.7,9.2)+t*0.15), fbm(p+3.0*q+vec2(8.3,2.8)-t*0.1));
   float n=fbm(p+2.5*r);
@@ -50,9 +92,8 @@ void main(){
   col+=vec3(0.9,0.9,1.0)*s;
   gl_FragColor=vec4(col,1.0);
 }
-// ===== WHEEL main (+ its helpers) =====
 
-uniform float u_tilt;
+// ===== wheel =====
 vec2 rot(vec2 p,float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y,s*p.x+c*p.y); }
 // Disk stars: steady points in the disk plane with a screen-space size floor so far stars
 // never shrink below a pixel and shimmer. minSize is in cell units, from the ray length.
@@ -64,9 +105,12 @@ float dstars(vec2 p, float density, float minSize){
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
 const float WHEEL_RATE   = -0.021; // rad/s (2*pi/300 = ~5.0 min per turn); rev 7 owner 2026-09-04: 'about five minutes per turn'; negative = clockwise from above
-const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
-const float DISK_DIST    = 2.6;    // hub distance along the view axis
-const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
+// Depth fade, as multiples of the eye's height above the plane so it is the
+// same at every zoom in the world anchor: the reference faded between ray
+// lengths DISK_DIST (2.6) and FAR_FADE (12.0) with the eye 2.6*cos(60deg) = 1.3
+// above the plane, i.e. between 2.0 and ~9.23 heights.
+const float FADE_START_HEIGHTS = 2.0;
+const float FADE_END_HEIGHTS   = 12.0/1.3;
 const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
 const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0 'more circular', rev 7: 8.0
 const float ARM_SHARPNESS= 1.0;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0
@@ -80,23 +124,17 @@ void main(){
   float a=u_time*WHEEL_RATE;
   vec3 col=vec3(0.012,0.014,0.03);
 
-  vec3 d=normalize(vec3(uv,-FOCAL));
-  float ct=cos(u_tilt), st=sin(u_tilt);
-  vec3 n=vec3(0.0,st,ct);               // disk normal, tilted so the top edge leans away
-  vec3 hub=vec3(0.0,0.0,-DISK_DIST);
-  float dn=dot(d,n);
-  if(dn<0.0){
-    float sdist=dot(hub,n)/dn;           // ray length to the plane
-    vec3 X=d*sdist-hub;
-    vec3 e1=vec3(1.0,0.0,0.0), e2=vec3(0.0,ct,-st);
-    vec2 pp=vec2(dot(X,e1),dot(X,e2));   // disk coordinates, hub at the origin
+  vec3 d=viewRay(uv);                    // disk space: plane z = 0, hub at the origin
+  if(d.z<0.0){
+    float sdist=-u_origin.z/d.z;         // ray length to the plane
+    vec2 pp=u_origin.xy+d.xy*sdist;      // disk coordinates, hub at the origin
     vec2 rf=rot(pp,-a);                  // rotating frame: everything sampled here turns rigidly
     float r=length(rf);
     float th=atan(rf.y,rf.x);
-    float depthFade=1.0-smoothstep(DISK_DIST,FAR_FADE,sdist);
+    float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
 
     // --- gas ---
-    // Two log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
+    // ARMS log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
     float phase=th*ARMS-log(r+0.05)*WIND;
     float arm=pow(0.5+0.5*cos(phase),ARM_SHARPNESS);
     vec2 wound=rot(rf,log(r+0.05)*WIND/ARMS);
@@ -111,15 +149,16 @@ void main(){
     col+=(gasCol*gas*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars in the disk, riding the rotation; denser and brighter inside the arms ---
-    float pxPerUnit=FOCAL*u_res.y/sdist;
+    float pxPerUnit=u_focal*u_res.y/sdist;
     float minA=STAR_MIN_PX*16.0/pxPerUnit, minB=STAR_MIN_PX*32.0/pxPerUnit;
     float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/32.0);
     float field=dstars(rf*16.0,0.07,minA)+0.6*dstars(rf*32.0+11.0,0.05,minB)*cellFade;
     float inArms=dstars(rf*40.0+23.0,0.35,minB*1.25)*cellFade*gas*2.5;
     col+=vec3(0.95,0.93,0.9)*(field*(0.45+0.9*gas)+inArms)*depthFade*depthFade;
   } else {
-    // Above the plane's horizon (only at shallow tilts): a still, sparse field so the void is not empty.
-    col+=vec3(0.8,0.82,0.9)*0.4*stars(uv*110.0+5.0,0.03,0.0);
+    // Above the plane's horizon (never in the view anchor at 60deg; the world anchor at a flat
+    // orbit): a still, sparse field so the void is not empty, fixed to the sky direction.
+    col+=vec3(0.8,0.82,0.9)*0.4*stars(dome(d)*110.0+5.0,0.03,0.0);
   }
   gl_FragColor=vec4(col,1.0);
 }

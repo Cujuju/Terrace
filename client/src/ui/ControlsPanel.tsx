@@ -22,9 +22,13 @@ import {
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 import {
+  VOID_ANCHORS,
   VOID_STYLES,
+  setVoidAnchor,
   setVoidStyle,
+  voidAnchor,
   voidStyle,
+  type VoidAnchor,
   type VoidStyle,
 } from '../state/voidPrefs.ts';
 
@@ -32,6 +36,12 @@ import {
 const VOID_STYLE_LABEL: Record<VoidStyle, string> = {
   wheel: 'Star wheel',
   nebula: 'Nebula',
+};
+
+/** Panel copy for each celestial-void anchor (state/voidPrefs.ts owns the set). */
+const VOID_ANCHOR_LABEL: Record<VoidAnchor, string> = {
+  view: 'Follows the camera',
+  world: 'Locked to the world',
 };
 
 const ACTION_LABEL: Record<ControlAction, string> = {
@@ -193,6 +203,21 @@ export function ControlsPanel(): JSX.Element {
         >
           <For each={VOID_STYLES}>
             {(style) => <option value={style}>{VOID_STYLE_LABEL[style]}</option>}
+          </For>
+        </select>
+      </div>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Void position</span>
+        <select
+          class="controls-select"
+          aria-label="What the space outside the map is fixed to"
+          title="Follows the camera: the void stays put while you orbit and pan. Locked to the world: it lies in the world's plane under the map and moves with it."
+          value={voidAnchor()}
+          onChange={(e) => setVoidAnchor(e.currentTarget.value as VoidAnchor)}
+        >
+          <For each={VOID_ANCHORS}>
+            {(anchor) => <option value={anchor}>{VOID_ANCHOR_LABEL[anchor]}</option>}
           </For>
         </select>
       </div>

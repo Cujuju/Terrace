@@ -4,15 +4,15 @@
 # The build script's own counts are pre-export; this is the independent
 # re-import (what a downstream tool sees after a round trip).
 #
-# Printed: the bounding box in cells and its min-Y, one line per mesh (tris,
-# material, uv layers), the PBR slots each material actually fills, every
+# Printed: the bounding box in world units and its min-Y, one line per mesh
+# (tris, material, uv layers), the PBR slots each material actually fills, every
 # image's size and colour space, every Empty's position, and whether the file
 # carries an armature or a skinned mesh — which client/src/render/rigAsset.ts
 # does not consume (the pivot convention is Empties; see docs/model-assets.md).
 #
 # `--footprint X Z [--height H] [--tolerance T]` turns it into a CHECK: it
-# exits non-zero when the model overflows the cells it was budgeted, which is
-# the same rule the runtime applies at load.
+# exits non-zero when the model overflows the world units it was budgeted,
+# which is the same rule the runtime applies at load.
 #
 # Run headless from WSL (paths INSIDE are Windows paths):
 #   "/mnt/e/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
@@ -27,13 +27,13 @@ from mathutils import Vector
 
 # How far past its budget a model may reach before the fit check fails.
 #
-# THE SAME NUMBER THE RUNTIME USES: ASSET_FIT_TOLERANCE_CELLS in
+# THE SAME NUMBER THE RUNTIME USES: ASSET_FIT_TOLERANCE_WORLD_UNITS in
 # client/src/render/rigAsset.ts, which is where the decision lives (it began as
 # boats' BOAT_FIT_TOLERANCE_CELLS and moved when the fit check became shared).
 # The fit is authored, not fitted — the number only absorbs float dust in the
 # bounding box, never a real overhang. This is the offline copy of that
 # constant, and the two must move together.
-DEFAULT_FIT_TOLERANCE_CELLS = 0.02
+DEFAULT_FIT_TOLERANCE_WORLD_UNITS = 0.02
 
 # Blender is Z-up; the exported file is Y-up. Every number this tool prints is
 # in the EXPORTED frame, because that is the frame the game measures in.
@@ -162,7 +162,7 @@ def print_stats(label):
     else:
         size = [highs[axis] - lows[axis] for axis in range(3)]
         print(
-            '  bbox cells: x={:.3f} y={:.3f} z={:.3f}  min-y={:.3f}  '
+            '  bbox world units: x={:.3f} y={:.3f} z={:.3f}  min-y={:.3f}  '
             'centre-xz=({:.3f}, {:.3f})'.format(
                 size[0], size[1], size[2], lows[1],
                 (lows[0] + highs[0]) / 2, (lows[2] + highs[2]) / 2,
@@ -250,7 +250,7 @@ def check_fit(lows, highs, footprint, height, tolerance):
 def parse_args(args):
     """glb path plus the optional fit budget."""
     glb_path = args[0]
-    footprint, height, tolerance = None, None, DEFAULT_FIT_TOLERANCE_CELLS
+    footprint, height, tolerance = None, None, DEFAULT_FIT_TOLERANCE_WORLD_UNITS
     index = 1
     while index < len(args):
         flag = args[index]
