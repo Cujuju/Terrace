@@ -29,9 +29,19 @@
 // life of the plugin. `count` is then set to what is actually in use, so a world
 // with nine trees draws nine.
 //
-// The rules wildlife's models.ts keeps, kept here too: no textures, no per-object
-// lights, no external assets, everything generated in this file, flat shading so
-// a 6-segment cone reads as a deliberate faceted style rather than as low detail.
+// The rules wildlife's models.ts keeps, kept here too: no per-object lights, no
+// Math.random anywhere in the geometry, and flat shading so a 6-segment cone reads
+// as a deliberate faceted style rather than as low detail.
+//
+// TEXTURES AND EXTERNAL ASSETS ARE ALLOWED (owner, 2026-09-04). Until 2026-09-04
+// this file's rule also read "no textures, no external assets, everything generated
+// in this file"; it was superseded because the owner asked for real, attractive
+// models, and the render kit (client/src/render/{materialMaps,rigAsset,staticAsset}.ts)
+// now imports them. An authored .glb with its own PBR maps is the DEFAULT path for a
+// new model — see docs/model-assets.md — and a procedural builder is what you write
+// when no asset fits, or as the fallback when a preload fails. What stays banned is
+// unchanged: Math.random (or any other non-determinism) in procedural geometry,
+// per-object lights, and anything that changes shared/.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
