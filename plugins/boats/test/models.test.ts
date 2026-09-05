@@ -9,13 +9,12 @@
 import { describe, expect, it } from 'vitest';
 import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Vector3 } from 'three';
 import { readFile } from 'node:fs/promises';
+import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
 import {
-  BOAT_FIT_TOLERANCE_CELLS,
-  BOAT_SHAPE,
-  createBoatModels,
-  installBoatKit,
-} from '../client/models.ts';
-import { parseRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
+  ASSET_FIT_TOLERANCE_CELLS,
+  parseRigAsset,
+  type RigAsset,
+} from '../../../client/src/render/rigAsset.ts';
 
 /**
  * three's ImageLoader decodes through the DOM `Image` API, which does not
@@ -262,7 +261,7 @@ describe('installBoatKit', () => {
     // its own cell makes every distance in the fight read wrong. The tolerance
     // absorbs float dust in the bounding box, never a real overhang — so a
     // silhouette one whole tolerance past it is an overhang.
-    const overhang = 1 + BOAT_FIT_TOLERANCE_CELLS * 2;
+    const overhang = 1 + ASSET_FIT_TOLERANCE_CELLS * 2;
     expect(() =>
       installBoatKit(fakeBoatAsset({ silhouetteCells: overhang, fireTopY: VALID_FIRE_TOP_Y })),
     ).toThrow(/one-cell fit budget/);
