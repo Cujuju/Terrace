@@ -162,6 +162,86 @@ passed INTO Blender must be Windows paths (`wslpath -w`):
    by a script in this repo, and the home of the export settings both it and
    `import_model.py` use.
 
+## Wildlife species
+
+A creature asset is a body, not a creature: the .glb supplies the part tree and
+the joints, and the species file
+(`plugins/wildlife/client/species/<name>.ts`) supplies the envelope constants,
+the joint names it drives, and `animate`. The adapter is
+`species/assetSpecies.ts`; nothing in `models.ts` knows which species came
+from a file.
+
+Joint names for a SWIMMER — required, and the load fails naming the file and
+the joint if one is missing:
+
+- `rig`: an Empty at the origin. Everything hangs under it; the body's
+  counter-yaw acts on it.
+- `tail`: an Empty AT THE PEDUNCLE, the caudal mesh its child. A yaw on the
+  Empty sweeps the fin from its root; a yaw on the mesh spins it on a pin.
+- `pectoral_port`, `pectoral_starboard`: Empties at the flank root, authored
+  at REST IDENTITY. The fin's sweep is baked into its outline (rigid, so it
+  cannot swing the root out of the flank); the rest dihedral is animation and
+  lives in the species .ts, which assigns the hinge's rotation outright.
+
+**Port is −Z.** With +X forward and +Y up in a right-handed frame,
+left = up × forward = Y × X = −Z.
+
+Anchors (Empties), all measured at install and asserted against the species'
+declared envelope within `ENVELOPE_TOLERANCE_CELLS`:
+
+- `nose`, `tail_tip`: the length's two ends, and the model's own x extremes.
+- `crown`, `belly`: the highest and lowest points, and its y extremes.
+- `flank`: the BODY's widest half-width. Fins may reach further than this —
+  the fish's pectorals do — so it is checked against the declared `halfWidth`
+  and against the model's z extent as an upper bound, never taken from the
+  bounding box.
+
+A WALKER reads the same five envelope numbers differently, and the difference
+is the origin: a swimmer is authored about its body centre so `crownY` and
+`bellyY` straddle zero, while a walker is authored at its FEET, so `bellyY` is
+zero and `crownY` IS the standing height. `placement.ts` already knows this
+(`BODY_COLUMNS` gives a walker `{ bellyY: 0, crownY: height }`), so no new
+field exists for it. Its joints are its own — the grazer declares `rig` plus
+four leg hinges and a head, driven by `species/quadruped.ts`'s `poseWalk`.
+
+The envelope constants stay DECLARED in the species .ts, because
+`placement.ts` fits the creature's water column from them. The asset is
+checked against them; it never supplies them.
+
+### A DOWNLOADED species (`--rigidify`)
+
+A file built by a script in this repo arrives at the convention already. A file
+downloaded from an asset site is somebody else's armature put through
+`import_model.py --rigidify`, and a converted armature is not yet a set of
+hinges these animations can drive. `SpeciesAssetSpec.rigidified: true` says so,
+and the adapter then does two things at install — once, never per bake:
+
+- **Synthesises `rig`.** A converted armature has the bones the artist drew and
+  nothing spare, so the whole-body node is wrapped around the file's scene
+  rather than demanded of the import (which keeps `import_model.py` generic).
+  `rig` is still listed in `joints`; it must NOT exist in the file.
+- **Gives every other declared joint a model-axis pivot.** `--rigidify` puts an
+  Empty at each bone's head carrying the BONE's rest rotation, and the
+  animations here drive MODEL axes (`rotation.z` is fore-and-aft because a model
+  faces +X). Worse, `joint.rotation.z = swing` assigns an EULER, so three
+  rebuilds the whole quaternion and any rest rotation the node had is gone —
+  which is a model that comes apart on its first posed frame. The pivot is a
+  pure translation the animation drives instead; the bone hangs under it,
+  unmoved. The cost: a driven joint inherits from `rig` only, not from the bones
+  above it.
+
+`SpeciesAssetSpec.adopt` handles the third hazard: a source rig may hold bones
+that are not in the limb chain at all — IK targets, commonly at the armature
+ROOT — and `--rigidify`'s dominant-weight split honestly hands one of those the
+geometry that weighed most on it. Naming the node and the joint that must carry
+it moves it, unmoved, into the chain. Without it the deer's legs swing and its
+hooves stay standing on the ground.
+
+Ownership: an asset-sourced species allocates nothing from `SpeciesModelPool`.
+The .glb's buffers belong to the `RigAsset` and are freed by
+`disposeSpeciesAssets()`; the baked merged geometry and material belong to the
+`RigBlueprint` and are freed by `models.dispose()`. Blueprints first, always.
+
 ## Consuming one (plugin side)
 
 1. `preload()` loads via `loadRigAsset(url)` — a `.glb?url` import, which is

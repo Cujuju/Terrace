@@ -10,18 +10,10 @@
 // authored below, in the older spheres-and-cones idiom.
 //
 // Rules this file keeps:
-//   * NO per-creature lights. The scene's hemisphere + sun light
-//     (render/scene.ts) does all the lighting, and flat shading is what makes a
-//     6-segment sphere read as a deliberate faceted style rather than as a
-//     low-detail mistake.
-//
-//     THE "NO TEXTURES, NO EXTERNAL ASSETS" HALF OF THIS RULE IS GONE (owner,
-//     2026-09-04: every plugin may use textures and external model assets, and
-//     the game must be able to import real third-party models). A species may
-//     now arrive as a file instead of as code — the grazer does, from
-//     ./assets/grazer-deer.glb — and it is baked and herded through the same
-//     path as every hand-built one. What that changes here is OWNERSHIP, not
-//     drawing: see `assetsToDispose` below.
+//   * NO textures, NO per-creature lights, NO external assets. Everything is
+//     generated here; the scene's hemisphere + sun light (render/scene.ts) does
+//     all the lighting, and flat shading is what makes a 6-segment sphere read as
+//     a deliberate faceted style rather than as a low-detail mistake.
 //   * GEOMETRIES AND MATERIALS ARE SHARED across every instance of a species and
 //     built exactly once. Per-creature allocation would be a hundred BufferGeometry
 //     uploads that are all byte-identical. `dispose()` frees them once too.
@@ -69,13 +61,7 @@ import {
 // and animation. This file no longer draws a fish or a grazer; it lends the
 // pool and bakes whatever the species file hands back. See
 // ./species/speciesModel.ts for the contract and for why it is a file each.
-import type {
-  AssetSpeciesModelBuilder,
-  AuthoredSpecies,
-  SpeciesModelBuilder,
-  SpeciesModelPool,
-} from './species/speciesModel.ts';
-import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
+import type { SpeciesModelBuilder, SpeciesModelPool } from './species/speciesModel.ts';
 import { buildFish } from './species/fish.ts';
 import { buildGrazer } from './species/grazer.ts';
 import { buildIbex } from './species/ibex.ts';
@@ -272,32 +258,12 @@ export interface WildlifeModels {
 }
 
 /**
- * The loaded model files the asset-sourced species are baked from.
- *
- * PASSED IN, never fetched here and never held in a module-level binding: a
- * pool that reached for a global would be a pool whose second instance quietly
- * shared the first's textures, and there would be no way to build one for a
- * preview harness without also mutating the plugin's. The plugin's `preload`
- * owns the loading (client/src/plugins/types.ts, TerraceClientPlugin.preload)
- * and hands the result straight to `createWildlifeModels`.
- *
- * The pool takes OWNERSHIP: `dispose()` frees these last (see `assetsToDispose`).
- */
-export interface WildlifeAssets {
-  /** ./assets/grazer-deer.glb — see ./species/grazer.ts. */
-  readonly grazer: RigAsset;
-}
-
-/**
  * Builds the shared geometry/material pool and the per-species herds.
  *
  * `instanceCapacity` is the most creatures of ONE species that may be drawn in
  * a frame; the caller's population cap is the honest value.
  */
-export function createWildlifeModels(
-  instanceCapacity: number,
-  assets: WildlifeAssets,
-): WildlifeModels {
+export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
 
@@ -408,7 +374,7 @@ export function createWildlifeModels(
   const speciesRigs: SpeciesRig[] = [];
 
   /** Bakes one authored tree and registers it for disposal. */
-  function bakeSpecies(root: Group, joints: Readonly<Record<string, Object3D>>): SpeciesRig {
+  function bakeSpecies(root: Object3D, joints: Readonly<Record<string, Object3D>>): SpeciesRig {
     const blueprint = bakeRig(root);
     const jointIndices: Record<string, number> = {};
     for (const [name, node] of Object.entries(joints)) {
@@ -483,35 +449,7 @@ export function createWildlifeModels(
    * knows what a fin or a hind leg is, which is the whole point of the split.
    */
   function speciesDrawable(build: SpeciesModelBuilder): SpeciesDrawable {
-    return drawableFrom(build(speciesPool));
-  }
-
-  /**
-   * The asset files this pool baked from, in install order, and therefore the
-   * things it has to free LAST.
-   *
-   * A CONTRACT, NOT A COMMENT. An asset owns its geometries, materials and
-   * textures; the baked surfaces SAMPLE those same texture objects (a clone
-   * shares the map, it does not duplicate it), so freeing an asset before the
-   * blueprint built from it pulls the texels out from under a living rig —
-   * exactly the order client/src/render/rigAsset.ts's `dispose` doc states and
-   * plugins/boats/client/index.ts keeps. Registering the asset in this list is
-   * the only way a species gets into the pool, so the order cannot be forgotten
-   * by whoever adds the second one.
-   */
-  const assetsToDispose: RigAsset[] = [];
-
-  /** The same, for a species whose anatomy arrives in a file. */
-  function assetSpeciesDrawable(
-    build: AssetSpeciesModelBuilder,
-    asset: RigAsset,
-  ): SpeciesDrawable {
-    assetsToDispose.push(asset);
-    return drawableFrom(build(asset, speciesPool));
-  }
-
-  /** Bake, herd and wrap one authored species, however it was authored. */
-  function drawableFrom(authored: AuthoredSpecies): SpeciesDrawable {
+    const authored = build(speciesPool);
     const { herd, joints } = herdFor(bakeSpecies(authored.root, authored.joints));
     return {
       herd,
@@ -592,9 +530,7 @@ export function createWildlifeModels(
   // surfaces appear in `objects`, which is what the draw-object table in
   // ./index.ts is counted against.
   const fishDrawable = speciesDrawable(buildFish);
-  // The one species that arrives as a FILE. Same bake, same herd, same draw
-  // path; only the ownership of its buffers differs (assetsToDispose).
-  const grazerDrawable = assetSpeciesDrawable(buildGrazer, assets.grazer);
+  const grazerDrawable = speciesDrawable(buildGrazer);
   const ibexDrawable = speciesDrawable(buildIbex);
   const bisonDrawable = speciesDrawable(buildBison);
   const rayDrawable = speciesDrawable(buildRay);
@@ -722,11 +658,6 @@ export function createWildlifeModels(
       for (const material of materials) material.dispose();
       geometries.length = 0;
       materials.length = 0;
-      // LAST, and the order is the whole point: the surfaces baked above sample
-      // these assets' texture objects, so an asset freed before its blueprint
-      // would free texels a living rig is still reading. See assetsToDispose.
-      for (const asset of assetsToDispose) asset.dispose();
-      assetsToDispose.length = 0;
     },
   };
 }
