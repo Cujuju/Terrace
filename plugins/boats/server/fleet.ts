@@ -248,7 +248,7 @@ const BOAT_HULL_DEPTH = 0.2;
 
 /**
  * How much of that depth sits below the waterline, as a fraction — the 0.55
- * in BOAT_WATERLINE_LIFT (models.ts:113). Same restatement justification as
+ * in BOAT_SHAPE.waterlineLift (client/models.ts:94). Same restatement justification as
  * BOAT_HULL_DEPTH.
  */
 const BOAT_WATERLINE_BITE = 0.55;
