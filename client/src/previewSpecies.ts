@@ -31,9 +31,12 @@ import {
   type Object3D,
 } from 'three';
 import { bakeRig } from './render/rigSkin.ts';
+import { loadRigAsset } from './render/rigAsset.ts';
 import { createRigHerd } from './render/rigHerd.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
-import { buildFish } from '../../plugins/wildlife/client/species/fish.ts';
+import { FISH_ASSET, buildFish } from '../../plugins/wildlife/client/species/fish.ts';
+import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
+import fishUrl from '../../plugins/wildlife/client/assets/fish.glb?url';
 import { buildGrazer } from '../../plugins/wildlife/client/species/grazer.ts';
 import { buildIbex } from '../../plugins/wildlife/client/species/ibex.ts';
 import { buildBison } from '../../plugins/wildlife/client/species/bison.ts';
@@ -112,6 +115,15 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
   camera.position.copy(center).addScaledVector(direction, distance);
   camera.lookAt(center);
   camera.updateProjectionMatrix();
+}
+
+/**
+ * Installs the assets the asset-sourced species files need before any builder
+ * runs. The shipped plugin does this in its `preload` hook; this harness has
+ * no host to give it one, so it awaits the same install function directly.
+ */
+async function installAssets(): Promise<void> {
+  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl));
 }
 
 function main(): void {
@@ -200,4 +212,7 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+// Asset-sourced species (species/assetSpecies.ts) cannot be built before their
+// .glb is installed, and parsing one is promise-based — so the harness waits,
+// exactly as the plugin host waits on `preload` before `attach`.
+void installAssets().then(main);
