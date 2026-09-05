@@ -29,10 +29,18 @@
 // cross-section — a low haze over a beach, a taller veil where a plateau meets
 // the frontier — never to the world's full height range.
 //
-// COLOUR. Base row is a lightened WATER_COLOR, top row a lightened SKY_COLOR
+// COLOUR. Base row is a lightened WATER_COLOR; the top row is VOID_HAZE_COLOR
 // (both imported from where the scene already defines them — see their export
-// comments), blended row to row, so the haze reads as weather between sea and
-// sky rather than as a painted wall.
+// comments), blended row to row, so the haze reads as weather between the sea
+// and what lies beyond the map rather than as a painted wall.
+//
+// The top row used to be a lightened SKY_COLOR, back when everything outside
+// the map was a flat sky-coloured background. Since issue #326 that is the
+// celestial void — a near-black star field — and a pale top row against it
+// read as a white wall standing at the world's edge, which is the exact
+// failure this gradient exists to avoid. The top row is therefore NOT
+// whitened at all: FOG_COLOR_WHITEN lifts the water end so it stays visible
+// against the sea, while the top end matches the dark it dissolves into.
 //
 // LIFECYCLE. One shared, unlit MeshBasicMaterial (fog is atmospheric, not a
 // lit surface — matching why water.ts's own translucent plane needs no
@@ -95,7 +103,7 @@ import {
 } from '../terrain/frontier.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
-import { SKY_COLOR } from './scene.ts';
+import { VOID_HAZE_COLOR } from './celestialVoid.ts';
 import { WATER_COLOR } from './water.ts';
 
 // ---------------------------------------------------------------------------
@@ -158,7 +166,10 @@ const FOG_BASE_DROP = WORLD_UNIT_HEIGHT_UNITS / 2;
  */
 const FOG_PLATEAU_ALPHA = 0.3;
 
-/** How far toward white each end colour is lightened before blending. */
+/**
+  * How far toward white the water end is lightened before blending. Only the
+  * water end: the top end is the void's own colour, unlightened (see COLOUR).
+  */
 const FOG_COLOR_WHITEN = 0.35;
 
 /** Rows bottom-to-top: base, knee, top. */
@@ -178,10 +189,11 @@ const FOG_COLUMNS = CHUNK_SIZE + 1;
 
 function fogRowColors(): readonly Color[] {
   const water = new Color(WATER_COLOR).lerp(new Color(0xffffff), FOG_COLOR_WHITEN);
-  const sky = new Color(SKY_COLOR).lerp(new Color(0xffffff), FOG_COLOR_WHITEN);
+  // Not whitened — see the COLOUR note at the top of this file.
+  const beyond = new Color(VOID_HAZE_COLOR);
   const rows: Color[] = [];
   for (let r = 0; r < FOG_ROW_COUNT; r++) {
-    rows.push(water.clone().lerp(sky, r / (FOG_ROW_COUNT - 1)));
+    rows.push(water.clone().lerp(beyond, r / (FOG_ROW_COUNT - 1)));
   }
   return rows;
 }

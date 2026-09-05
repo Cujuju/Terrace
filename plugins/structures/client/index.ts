@@ -35,7 +35,13 @@ import {
 } from './models.ts';
 import { placementsFor } from './placement.ts';
 import { createSiteSurveyCache, type SiteSurveyCache } from './site.ts';
-import { createSkiffModels, type SkiffModels } from './skiffModels.ts';
+import skiffUrl from './assets/skiff.glb?url';
+import {
+  createSkiffModels,
+  disposeSkiffKit,
+  preloadSkiffModels,
+  type SkiffModels,
+} from './skiffModels.ts';
 
 /**
  * Seconds between retries while some structure's ground is still unknown.
@@ -129,8 +135,13 @@ function applyChanges(
  */
 const STRUCTURE_SURFACE_DRAW_OBJECTS = 35;
 
-/** The moored skiffs, merged the same way: TWO surfaces for the fleet. */
-const SKIFF_SURFACE_DRAW_OBJECTS = 2;
+/**
+ * The moored skiffs: ONE surface for the whole fleet, however many boats are
+ * afloat — skiff.glb is a single mesh with a single material (skiffModels.ts
+ * rejects an asset that is not), so one InstancedMesh draws every skiff in the
+ * world.
+ */
+const SKIFF_SURFACE_DRAW_OBJECTS = 1;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: STRUCTURES_PLUGIN_NAME,
@@ -142,14 +153,34 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: STRUCTURE_SURFACE_DRAW_OBJECTS + SKIFF_SURFACE_DRAW_OBJECTS,
 
   /**
-   * Loads the tier-2 building model before attach, so createStructureModels
-   * has an asset to draw that tier from (models.ts's IMPORTED_STRUCTURE_TIER).
-   * A rejected load is a logged breach for this plugin only, and it is not
-   * fatal here the way boats' is: the tier falls back to its procedural
-   * builder, so every settlement still stands, in primitives.
+   * Loads BOTH of this plugin's model files before attach — one preload is all
+   * the host offers, and this plugin now draws two assets.
+   *
+   * Loads skiff.glb, so createSkiffModels has a hull to draw. A rejected load
+   * is a logged breach for this plugin only — the host never attaches
+   * afterwards, so the whole plugin (buildings included) stays unmounted
+   * rather than drawing a village with no boats.
+   *
+   * Loads the tier-2 building model, so createStructureModels has an asset to
+   * draw that tier from (models.ts's IMPORTED_STRUCTURE_TIER). That one is NOT
+   * fatal in the same way on its own: the tier falls back to its procedural
+   * builder, so every settlement would still stand in primitives — but the
+   * host's contract is one promise per plugin, so a rejection here still keeps
+   * the plugin unmounted, and the fallback is what covers a build that ships
+   * without the file rather than a load that failed.
+   *
+   * IN PARALLEL, and each keeps its OWN fit check and its own error wording
+   * (skiffModels.ts's hull budget, models.ts's footprint contract): the two
+   * loads are independent HTTP fetches of unrelated files, and sequencing them
+   * would add one round trip to every mount for no ordering that matters.
+   * Promise.all rejects with the first failure, which is the behaviour the
+   * host already logs.
    */
   preload(): Promise<void> {
-    return preloadStructureModels(timberHouseUrl);
+    return Promise.all([
+      preloadSkiffModels(skiffUrl),
+      preloadStructureModels(timberHouseUrl),
+    ]).then(() => undefined);
   },
 
   attach(ctx: ClientPluginCtx): void {
@@ -214,5 +245,9 @@ export const clientPlugin: TerraceClientPlugin = {
     models = null;
     skiffModels?.dispose();
     skiffModels = null;
+    // AFTER the fleet: the InstancedMesh draws the asset's own geometry, and
+    // freeing it first would pull the buffers out from under a live mesh (see
+    // RigAsset.dispose's ordering contract).
+    disposeSkiffKit();
   },
 };
