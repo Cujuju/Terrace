@@ -320,8 +320,47 @@ const float STREAK_ALONG = 1.6;    // grain cells per e-fold of radius ALONG an 
 const float STREAK_ACROSS= 40.0;   // grain cells around the full circle ACROSS the arms (fine filaments); integer, the y period
 const float HUE_SCALE    = 0.7;    // disk units per hue-drift feature between the deep blue and the violet
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
+const int   GAS_SHEETS   = 3;      // stacked gas sheets, top one on the plane; rev 11 owner 2026-09-05: 'vertical depth'
+const float SHEET_GAP    = 0.18;   // disk units between sheets, downward only (36 world units in the world anchor) - never toward the map
+const float SHEET_FALLOFF= 0.55;   // brightness of each sheet relative to the one above
+const float SHEET_SEED   = 7.0;    // grain/haze domain shift per sheet so the sheets are not copies
+const float SHEET_NORM   = 1.0/(1.0+0.55+0.55*0.55); // 1/sum of the sheet weights: the stack is as bright as one sheet was
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
 const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
+// One gas sheet in the rotating frame: the arms, their grain, lanes and colour. gas (out) is the
+// scalar density the disk stars key off. seed shifts the grain and haze so stacked sheets differ.
+vec3 gasSheet(vec2 rf, float seed, out float gas){
+  float r=length(rf);
+  float th=atan(rf.y,rf.x);
+  // ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
+  // straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
+  // runs ACROSS it — an arm sits at a fixed thw. Rev 9 (owner 2026-09-04): the arms' phase wanders
+  // with low-frequency noise so the swirl is not rigid, and the grain is sampled in (s, thw) with
+  // long cells along and short cells across, so the filaments run along the curve of each arm
+  // instead of radiating from the hub.
+  float s=log(r+0.05);
+  float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
+  float phase=th*ARMS-s*WIND+wobble;
+  float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
+  // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS — constant along an
+  // arm. (The reference rotated the other way, which is why its grain cut across the arms.)
+  vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
+  float thw=atan(wound.y,wound.x);
+  vec2 aq=vec2(s*STREAK_ALONG+seed, (thw/6.2831853+0.5)*STREAK_ACROSS);
+  float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
+  float haze=fbm(rf*1.4+vec2(9.0+seed,2.0));
+  float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
+  float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms; rev 10: 0.6 -> 0.45, softer
+  gas=(arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
+  // Rev 9 palette: deeper and more saturated — a deep blue drifting into violet across the disk,
+  // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
+  vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
+  float hue=fbm(rf/HUE_SCALE+vec2(2.0,5.0));
+  vec3 gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
+  gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
+  gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
+  return gasCol*gas*GAS_GAIN;
+}
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
   float a=u_time*WHEEL_RATE;
@@ -329,43 +368,29 @@ void main(){
 
   vec3 d=viewRay(uv);                    // disk space: plane z = 0, hub at the origin
   if(d.z<0.0){
-    float sdist=-u_origin.z/d.z;         // ray length to the plane
+    float sdist=-u_origin.z/d.z;         // ray length to the top sheet
     vec2 pp=u_origin.xy+d.xy*sdist;      // disk coordinates, hub at the origin
     vec2 rf=rot(pp,-a);                  // rotating frame: everything sampled here turns rigidly
     float r=length(rf);
-    float th=atan(rf.y,rf.x);
     float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
 
-    // --- gas ---
-    // ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
-    // straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
-    // runs ACROSS it — an arm sits at a fixed thw. Rev 9 (owner 2026-09-04): the arms' phase wanders
-    // with low-frequency noise so the swirl is not rigid, and the grain is sampled in (s, thw) with
-    // long cells along and short cells across, so the filaments run along the curve of each arm
-    // instead of radiating from the hub.
-    float s=log(r+0.05);
-    float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
-    float phase=th*ARMS-s*WIND+wobble;
-    float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
-    // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS — constant along an
-    // arm. (The reference rotated the other way, which is why its grain cut across the arms.)
-    vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
-    float thw=atan(wound.y,wound.x);
-    vec2 aq=vec2(s*STREAK_ALONG, (thw/6.2831853+0.5)*STREAK_ACROSS);
-    float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
-    float haze=fbm(rf*1.4+vec2(9.0,2.0));
-    float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
-    float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms; rev 10: 0.6 -> 0.45, softer
-    float gas=(arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
+    // --- gas: GAS_SHEETS sheets stacked DOWN from the plane (rev 11, owner 2026-09-05: 'some vertical
+    // depth so it isn't a single flat disc'). The top sheet is the plane at z = 0, so the clearance to
+    // the map never changes; each lower sheet is SHEET_GAP further under it, dimmer by SHEET_FALLOFF,
+    // and hit by its own ray-plane intersection, which is what gives the parallax between them.
+    float gas;
+    col+=gasSheet(rf,0.0,gas)*SHEET_NORM*depthFade;
     float bulge=exp(-r*2.0);
-    // Rev 9 palette: deeper and more saturated — a deep blue drifting into violet across the disk,
-    // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
-    vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85), warm=vec3(1.0,0.88,0.62);
-    float hue=fbm(rf/HUE_SCALE+vec2(2.0,5.0));
-    vec3 gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
-    gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
-    gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
-    col+=(gasCol*gas*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
+    vec3 warm=vec3(1.0,0.88,0.62);
+    col+=warm*bulge*BULGE_GAIN*depthFade;
+    for(int i=1;i<GAS_SHEETS;i++){
+      float eyeH=u_origin.z+float(i)*SHEET_GAP;     // eye height above this sheet
+      float sd=eyeH/-d.z;
+      vec2 rfl=rot(u_origin.xy+d.xy*sd,-a);
+      float fade=1.0-smoothstep(FADE_START_HEIGHTS*eyeH,FADE_END_HEIGHTS*eyeH,sd);
+      float g;
+      col+=gasSheet(rfl,float(i)*SHEET_SEED,g)*pow(SHEET_FALLOFF,float(i))*SHEET_NORM*fade;
+    }
 
     // --- stars in the disk, riding the rotation; denser and brighter inside the arms ---
     float pxPerUnit=u_focal*u_res.y/sdist;
