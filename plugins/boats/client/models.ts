@@ -37,38 +37,94 @@ import {
 import { loadRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
- * How far the whole boat rides above the sea surface — the waterline bite.
- *
- * MEASURED, not hardcoded: `-waterline.y` of the installed asset, so the
- * surface cuts the hull where the modeller put the waterline empty. The
- * fallback is the hand-built value (half the old hull depth) and only stands
- * until the first preload — importers read the live binding, so they see the
- * measured number as soon as it exists.
- */
-export let BOAT_WATERLINE_LIFT: number = -0.11;
-
-/**
- * The span of a boat that BURNS, in root space: from the deck to the masthead.
- * Measured from the `deck_top` and `fire_top` anchors the same way — a flame
- * seated on this covers deck, mast and sail and nothing under the waterline.
- * Published through MoverPose.bodyBottomY / bodyHeight.
- */
-export let BOAT_FIRE_COLUMN: { readonly bottomY: number; readonly height: number } = {
-  bottomY: 0.165,
-  height: 0.614,
-};
-
-/**
- * Draw objects one boat costs: the rig's baked surfaces plus the sail.
- *
- * MEASURED PER BAKE (`blueprint.surfaceCount + 1`), not assumed — a textured
- * hull costs its own surface beside the flat set (map identity is in the merge
- * key), and recounting here is what keeps the number truthful when the asset
- * changes. Until the first bake it holds the conservative ceiling below, which
- * is what drawBudget budgets against before any boat exists.
+ * The conservative ceiling `drawObjects` reports until the first bake measures
+ * the real count: four is above the three a textured hull plus sail settles at,
+ * so budgeting against it can only ever over-reserve.
  */
 const BOAT_DRAW_OBJECTS_MAX = 4;
-export let BOAT_DRAW_OBJECTS: number = BOAT_DRAW_OBJECTS_MAX;
+
+/** Written only by createBoatModels, from the blueprint it just baked. */
+let drawObjects: number = BOAT_DRAW_OBJECTS_MAX;
+
+/** The shape numbers measured at install; null until installBoatKit runs. */
+let shape: {
+  readonly waterlineLift: number;
+  readonly fireColumn: { readonly bottomY: number; readonly height: number };
+} | null = null;
+
+function installedShape(): NonNullable<typeof shape> {
+  if (shape === null) {
+    throw new Error(
+      'BOAT_SHAPE: no boat asset installed — preloadBoatModels (or installBoatKit) runs first',
+    );
+  }
+  return shape;
+}
+
+/**
+ * The shape numbers the asset — not this file — decides, published READ-ONLY.
+ *
+ * These used to be three `export let` bindings with hand-built fallbacks, which
+ * gave every importer two ways to be wrong: read one before the asset is
+ * installed and get a number that describes a hull that no longer exists, or
+ * assign one from outside and silently move every boat in the world. A frozen
+ * object of getters removes both — the value is fetched from the installed kit
+ * at every read, and there is no writable binding left to reach.
+ */
+export const BOAT_SHAPE: {
+  /** How far the whole boat rides above the sea surface — the waterline bite. */
+  readonly waterlineLift: number;
+  /** The span of a boat that BURNS, in root space: from the deck to the masthead. */
+  readonly fireColumn: { readonly bottomY: number; readonly height: number };
+  /** Draw objects one boat costs: the rig's baked surfaces plus the sail. */
+  readonly drawObjects: number;
+} = Object.freeze({
+  /**
+   * MEASURED, not hardcoded: `-waterline.y` of the installed asset, so the sea
+   * surface cuts the hull where the modeller put the waterline empty.
+   *
+   * THROWS before install, because there is no honest answer to give: every
+   * read of this places a hull vertically, and a guessed number puts the boat
+   * at the wrong depth rather than reporting a fault. Nothing reads it that
+   * early — the only consumers are the frame loop and the mover pose, both
+   * reachable only from a plugin whose attach() succeeded, and attach()
+   * bakes the kit on its first line (plugins/boats/client/index.ts:195) —
+   * so the throw is a guard against a future caller, not a live path.
+   */
+  get waterlineLift(): number {
+    return installedShape().waterlineLift;
+  },
+
+  /**
+   * Measured from the `deck_top` and `fire_top` anchors the same way — a flame
+   * seated on this covers deck, mast and sail and nothing under the waterline.
+   * Published through MoverPose.bodyBottomY / bodyHeight. Throws before
+   * install for the same reason waterlineLift does.
+   */
+  get fireColumn(): { readonly bottomY: number; readonly height: number } {
+    return installedShape().fireColumn;
+  },
+
+  /**
+   * MEASURED PER BAKE (`blueprint.surfaceCount + 1`), not assumed — a textured
+   * hull costs its own surface beside the flat set (map identity is in the
+   * merge key), and recounting is what keeps the number truthful when the
+   * asset changes.
+   *
+   * ALONE AMONG THE THREE THIS DOES NOT THROW: it returns the conservative
+   * ceiling until the first bake. Two reasons, both from executed code rather
+   * than intent. It is read from `drawBudget`, which the host calls once per
+   * mounted plugin per HUD sample (client/src/plugins/host.ts:944, :965); and
+   * a plugin whose attach() THREW is still recorded as mounted
+   * (client/src/plugins/host.ts:816-823), so a failed bake leaves this getter
+   * on a per-frame path with no kit behind it. A ceiling that over-budgets is
+   * harmless there — a budget is an upper bound — while a throw would take
+   * out the whole frame's draw accounting for an unrelated plugin's HUD row.
+   */
+  get drawObjects(): number {
+    return drawObjects;
+  },
+});
 
 /**
  * How far past one cell the rowed silhouette may reach before the asset is
@@ -210,8 +266,10 @@ export function installBoatKit(asset: RigAsset): void {
   for (const pivot of OAR_PIVOTS) asset.node(pivot.name);
 
   disposeBoatKit();
-  BOAT_WATERLINE_LIFT = -waterline.y;
-  BOAT_FIRE_COLUMN = { bottomY: deckTop.y, height: fireTop.y - deckTop.y };
+  shape = {
+    waterlineLift: -waterline.y,
+    fireColumn: { bottomY: deckTop.y, height: fireTop.y - deckTop.y },
+  };
   kit = {
     asset,
     sailGeometry: (sailNode as Mesh).geometry as BufferGeometry,
@@ -231,6 +289,10 @@ export function installBoatKit(asset: RigAsset): void {
 export function disposeBoatKit(): void {
   kit?.asset.dispose();
   kit = null;
+  // The measured numbers go with it: a read after dispose must fault (or, for
+  // the budget, fall back to the ceiling) rather than describe a freed asset.
+  shape = null;
+  drawObjects = BOAT_DRAW_OBJECTS_MAX;
 }
 
 /**
@@ -282,8 +344,8 @@ export function createBoatModels(): BoatModels {
 
   // Measured, not assumed: the textured hull costs its own surface beside the
   // flat set, and the sail (never baked) is the +1. Recount here is what keeps
-  // BOAT_DRAW_OBJECTS — and through it drawBudget — truthful per asset.
-  BOAT_DRAW_OBJECTS = blueprint.surfaceCount + 1;
+  // BOAT_SHAPE.drawObjects — and through it drawBudget — truthful per asset.
+  drawObjects = blueprint.surfaceCount + 1;
 
   return {
     create(): BoatModel {

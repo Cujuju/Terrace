@@ -11,7 +11,7 @@ import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Vector3
 import { readFile } from 'node:fs/promises';
 import {
   BOAT_FIT_TOLERANCE_CELLS,
-  BOAT_WATERLINE_LIFT,
+  BOAT_SHAPE,
   createBoatModels,
   installBoatKit,
 } from '../client/models.ts';
@@ -102,11 +102,11 @@ describe('the boat model', () => {
     const models = createBoatModels();
     const boat = models.create();
     boat.animate(0, 0, false);
-    boat.root.position.y = BOAT_WATERLINE_LIFT;
+    boat.root.position.y = BOAT_SHAPE.waterlineLift;
     boat.root.updateMatrixWorld(true);
 
     const box = new Box3().setFromObject(boat.root);
-    expect(BOAT_WATERLINE_LIFT).toBeLessThan(0);
+    expect(BOAT_SHAPE.waterlineLift).toBeLessThan(0);
     // Sea level is world Y 0: some hull below it, and the mast well above.
     expect(box.min.y).toBeLessThan(0);
     expect(box.max.y).toBeGreaterThan(0);
