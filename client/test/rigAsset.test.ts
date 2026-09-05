@@ -213,12 +213,16 @@ describe('rigAsset', () => {
     asset.dispose();
   });
 
-  it('rejects an armature at load, naming the rigidify tool', async () => {
-    // At LOAD, not at bake: a skinned mesh baked anyway is consumed at its bind
-    // pose with the joints thrown away, which draws as art authored wrong.
-    await expect(parseRigAsset(skinnedTriangle(), 'rigged.glb')).rejects.toThrow(
-      /armature.*--rigidify/s,
-    );
+  it('accepts an armature and hands the skinned mesh through', async () => {
+    // Accepted since 2026-09-04: bakeRig keeps the file's own weights, so a
+    // downloaded animal no longer has to be split by dominant weight offline.
+    const asset = await parseRigAsset(skinnedTriangle(), 'rigged.glb');
+    let skinned = 0;
+    asset.scene.traverse((child) => {
+      if ((child as { isSkinnedMesh?: boolean }).isSkinnedMesh === true) skinned++;
+    });
+    expect(skinned).toBe(1);
+    asset.dispose();
   });
 });
 

@@ -13,9 +13,9 @@
 // IT IS THE FIRST *DOWNLOADED* ASSET SPECIES, where the fish (./fish.ts) is the
 // first BUILT one. Same contract, same ./assetSpecies.ts install and builder,
 // same declared-envelope assertion. The one difference is that its skeleton was
-// drawn by somebody else and converted by `--rigidify`, which is what
-// `SpeciesAssetSpec.rigidified` and `.adopt` below are for — read those two
-// fields and assetSpecies.ts's `modelAxisPivot` before changing anything here.
+// drawn by somebody else, which is what `SpeciesAssetSpec.rigidified` and
+// `.adopt` below are for — read those two fields and assetSpecies.ts's
+// `modelAxisPivot` before changing anything here.
 //
 // WHAT DID NOT CHANGE. The walk. ./quadruped.ts's poseWalk still swings four
 // named leg joints in diagonal pairs and bobs the body twice a stride, at the
@@ -31,11 +31,21 @@
 // once, at import, so the rig sits at scale 1 and the numbers this file states
 // are the numbers the file measures.
 //
+// IT IS SMOOTH-SKINNED, and that is the second thing to know about it. The
+// artist's weights ship in the file — 3 457 of its 4 316 vertices are shared
+// across two or more bones — and `bakeRig` keeps all four influences per
+// vertex (client/src/render/rigSkin.ts, `bakeSkinnedPiece`). Until 2026-09-04
+// the import ran through `--rigidify`, which splits a skinned mesh by DOMINANT
+// weight and nails each piece to one bone; a vertex that was 60/40 across the
+// shoulder went wholly to one side, and the deer opened seams at the shoulder
+// and hip mid-stride (.model-import/shots/wildlife/grazer-stride.png). The fix
+// was to stop throwing the weights away, not to move them.
+//
 // THE MODEL'S ANIMATION CLIPS ARE IGNORED. The source ships thirteen of them
 // (Walk, Gallop, Idle, …) and the export carries none: this game poses a
-// creature from poseWalk against rigid, one-bone-per-vertex skinning
-// (client/src/render/rigSkin.ts), so a clip would have nothing to play into.
-// Said here as well as in LICENSES.md so nobody goes hunting for them.
+// creature from poseWalk against the joints named below, so a clip would have
+// nothing to play into. Said here as well as in LICENSES.md so nobody goes
+// hunting for them.
 
 import { poseWalk } from './quadruped.ts';
 import {
@@ -84,23 +94,25 @@ const GRAZER_HEIGHT_WORLD_UNITS = REPLACED_FIGURE_HEIGHT * GRAZER_SCALE;
  * same five numbers serve both families with no new field.
  *
  * MEASURED WITH Box3, the same measure ./assetSpecies.ts checks them with and
- * the same one tools/blender/stat_glb.py prints. On a converted asset that box
- * is the union of each part's own axis-aligned box transformed into place, so
- * it sits a little outside the vertex hull for anything rotated — up to ~0.04
- * behind the rearmost vertex here. That is the conservative number, and
- * conservative is the right direction for a ground probe.
+ * the same one tools/blender/stat_glb.py prints. On a SKINNED asset that box is
+ * the vertex hull itself — three's Box3.setFromObject calls
+ * SkinnedMesh.computeBoundingBox, which poses every vertex — so the numbers
+ * below are the model, not a union of rotated part boxes. That is why they
+ * shrank when the import stopped splitting the deer into rigid parts (2026-09-04):
+ * length 0.505 -> 0.477 and halfWidth 0.0875 -> 0.0792 are the same animal,
+ * measured without the ~0.04 of slack the split used to add.
  */
 const GRAZER_ASSET_ENVELOPE: SpeciesEnvelope = {
   /** Nose to the rearmost point of the rump and hind legs. */
-  length: 0.505,
-  halfLength: 0.2525,
+  length: 0.4774,
+  halfLength: 0.2387,
   /**
    * Half the model's width. On a deer with its head up the widest points are
    * the EAR TIPS, not the ribs, which is where the `flank` anchor sits — the
    * number is the model's half-width, and nothing places by it (a walker is
    * placed by its footprint and its height).
    */
-  halfWidth: 0.0875,
+  halfWidth: 0.0792,
   /** The ear tips. A walker's origin is at its feet, so this is its height. */
   crownY: GRAZER_HEIGHT_WORLD_UNITS,
   /** The hooves, which are the origin. */
@@ -116,9 +128,12 @@ export const GRAZER_ENVELOPE = {
   length: GRAZER_ASSET_ENVELOPE.length,
   /**
    * Half the ground the FEET stand within, the half-extent placement.ts probes
-   * terrain over. It equals `halfLength` on this deer and that is measured, not
-   * assumed: the four leg joints' own subtrees (hooves included) reach x
-   * -0.2525 to 0.1214, so the legs set the model's own rearmost extent.
+   * terrain over. The whole half-length, which is the CONSERVATIVE reading and
+   * the right direction for a ground probe: a smooth-skinned mesh is one
+   * surface with no per-joint partition, so the feet's own extent cannot be
+   * measured off the tree the way it could when --rigidify cut the deer into a
+   * mesh per bone. The rearmost point is the rump, so this over-probes by at
+   * most the tail's overhang.
    */
   bodyHalfLength: GRAZER_ASSET_ENVELOPE.halfLength,
   height: GRAZER_ASSET_ENVELOPE.crownY,
@@ -126,8 +141,8 @@ export const GRAZER_ENVELOPE = {
 
 /**
  * The joints poseWalk drives, by the names the import gave the asset's bones.
- * `rig` is not in the file — assetSpecies.ts synthesises it for a rigidified
- * import; see `SpeciesAssetSpec.rigidified`.
+ * `rig` is not in the file — assetSpecies.ts synthesises it for a converted
+ * armature; see `SpeciesAssetSpec.rigidified`.
  *
  * WHICH PHYSICAL SIDE IS "LEFT" IS INVISIBLE and deliberately not chased: the
  * gait only needs the two DIAGONAL pairs (fore-left with hind-right), and the
@@ -140,13 +155,15 @@ const GRAZER_JOINTS = ['rig', 'foreLeft', 'foreRight', 'hindLeft', 'hindRight', 
  * The source rig's IK TARGETS, and the leg each one's geometry belongs under.
  *
  * Quaternius' animal rigs drive the legs through IK, and the target bones sit
- * at the ARMATURE ROOT rather than inside the limb chain — so after
- * --rigidify's dominant-weight split (which is honest about where the weights
- * were) each of these carries a hoof and a fetlock, ~170 vertices apiece, on a
- * node no animation reaches. Left alone the deer walks out of its own feet: the
- * legs swing and four hoof stubs stay standing on the ground (observed
- * 2026-09-04). Each is adopted by the leg it belongs to at install; its
- * children (FFL, FFBL and friends) come with it.
+ * at the ARMATURE ROOT rather than inside the limb chain — while carrying real
+ * weight: each of these four holds ~90 units of it, the hoof and the fetlock,
+ * on a node no animation reaches. Left alone the deer walks out of its own
+ * feet: the legs swing and four hoof stubs stay standing on the ground
+ * (observed 2026-09-04, and unchanged by smooth skinning — the weights were
+ * always on these bones; --rigidify only made it visible as whole meshes).
+ * Each is adopted by the leg it belongs to at install; its children (FFL, FFBL
+ * and friends) come with it, and every vertex weighted to any of them follows,
+ * because a weighted vertex goes wherever its bone goes.
  *
  * THE NAMES HAVE NO DOTS, and that is not a typo. The bones are `IKFrontLeg.L`
  * in Blender and in the .glb; three's GLTFLoader sanitises node names on the
