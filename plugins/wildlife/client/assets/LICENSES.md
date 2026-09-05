@@ -79,3 +79,74 @@ The pack ships thirteen (Walk, Gallop, Idle, …); this game poses a creature
 itself, from `poseWalk` against the renamed joints
 (`client/src/render/rigSkin.ts` bakes the pose, it never plays one), so a clip
 would have nothing to play into. Do not go looking for them.
+
+## wolf.glb — the wolf
+
+- Pack page: <https://quaternius.com/packs/ultimateanimatedanimals.html>
+  ("License CC0", linking <https://creativecommons.org/publicdomain/zero/1.0/>)
+- File fetched from the same mirror the deer came from, because the pack itself
+  downloads through a Google Drive folder no headless client can walk:
+  <https://raw.githubusercontent.com/trebeljahr/quaternius-showcase/main/public/glb/animals_pack/Wolf.glb>
+- Author: Quaternius
+- Licence: CC0 1.0
+- Size: 215 608 bytes (211 KB). 1 962 triangles, 4 materials, no textures — the
+  colour is a `COLOR_0` vertex attribute, as on the deer, so the four materials
+  bake to a single draw call (see `../index.ts`, `WOLF_ASSET_DRAW_OBJECTS`).
+  The file keeps the source's ARMATURE as a glTF skin: 51 joints, 4 influences
+  per vertex, 3 500 of 4 030 vertices shared across two bones or more (measured
+  2026-09-04 with a weight probe over the exported file).
+
+Import command (run from the repo root; the Blender binary is a Windows one, so
+its arguments are Windows paths):
+
+```
+"/mnt/e/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
+  --background --python tools/blender/import_model.py -- \
+  E:\Development\Projects\Terrace\.model-import\src\Wolf.glb \
+  E:\Development\Projects\Terrace\.model-import\out\wolf.glb \
+  --forward -Y --up +Z --drop Icosphere --origin ground \
+  --footprint 0.8 0.8 --height 0.348 \
+  --rename FrontUpperLeg.L=foreLeft --rename FrontUpperLeg.R=foreRight \
+  --rename BackLeg.L=hindLeft --rename BackLeg.R=hindRight \
+  --rename Head=head \
+  --anchor nose=0.3604,0.2747,0 --anchor tail_tip=-0.3604,0.2800,0 \
+  --anchor crown=0.3043,0.3480,0.0485 --anchor belly=-0.0643,0,-0.0376 \
+  --anchor flank=0.1663,0.1744,0.0691
+```
+
+Notes on the flags — the deer's entry above argues the ones the two share
+(`--forward -Y`, `--drop Icosphere`, no `--rigidify`, why the renames are made
+at import and not at runtime). What is different here:
+
+- `--height 0.348`, and the height is again the BINDING axis. It is derived
+  from the deer rather than picked: 0.75 x the grazer's 0.464. A grey wolf
+  stands about three quarters of a deer at the shoulder (~0.8 m against
+  ~1.05 m) and both models carry their crown at the ear tips, so the shoulder
+  ratio carries to the crown. That puts the wolf at 0.56 x PILGRIM_HEIGHT
+  (0.62) — the shortest land animal in the plugin, which is what a predator
+  seen beside a deer should be. See `../species/wolf.ts`.
+- `--footprint 0.8 0.8` is a ground BUDGET, not a target, and is deliberately
+  NOT binding: at the height above the model measures 0.721 along X, so 0.8 is
+  the next round number that clears it and leaves the height to bind. Fitting
+  to a footprint instead would make the stated height approximate.
+- `--rename BackLeg.L=hindLeft` (not `BackUpperLeg.L`) — the same choice the
+  deer made, for the same reason: `BackLeg` is the HIP, `BackUpperLeg` the
+  stifle below it, and `species/assetSpecies.ts`'s `modelAxisPivot` re-homes a
+  driven joint under `rig`, so driving the hip swings the whole leg and driving
+  the stifle would swing only the shank. The front chain has no such pair:
+  `FrontUpperLeg` IS the shoulder joint.
+- The `--anchor`s are the five envelope stations, at the model's MEASURED
+  extremes (a per-vertex probe of the fitted file, 2026-09-04): nose on
+  `Wolf_Nose` at x 0.3604, tail tip on `Wolf_Main` at x -0.3604, crown at an
+  ear tip y 0.3480, belly at a hind paw y 0.0000, flank at the ribs z 0.0691.
+  Box: 0.721 x 0.348 x 0.138.
+- The paws, measured the same way, span x -0.1066 to 0.2074 — which is where
+  `WOLF_ENVELOPE.bodyHalfLength` comes from; it is NOT the half-length, because
+  a wolf's tail is a third of its box and probing terrain under the tail would
+  float the animal. See `../species/wolf.ts`.
+- `PoleTarget.L/R` and `PoleTargetBack.L/R` carry NO weight (nothing above
+  1e-4 on any vertex, measured), so unlike the four IK bones they are not
+  adopted; they are pure IK scaffolding. The bones still ship, unweighted.
+
+**The source's animation clips are IGNORED and are not in the exported file**,
+exactly as for the deer above.
