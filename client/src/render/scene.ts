@@ -49,9 +49,9 @@ import type { SkyRigState } from '../plugins/types.ts';
  * that could drift out of sync.
  *
  * NOT the background any more (issue #326). Outside the map is the celestial
- * void (./celestialVoid.ts), so anything blending toward what is BEYOND the
- * world — the frontier mist curtain's top row (./frontierFog.ts) — takes
- * VOID_HAZE_COLOR from there instead. This constant is the map's own light.
+ * void (./celestialVoid.ts), and nothing blends toward it: the frontier mist
+ * (./frontierFog.ts) is water-coloured throughout. This constant is the map's
+ * own light.
  */
 export const SKY_COLOR = 0x9fc7e8;
 /**

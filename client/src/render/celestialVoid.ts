@@ -80,27 +80,6 @@ import type { Viewport } from './scene.ts';
 export type VoidStyle = 'nebula' | 'wheel';
 
 /**
- * The colour anything that must dissolve INTO the void should blend toward —
- * the frontier mist's top row (render/frontierFog.ts) is the one caller.
- *
- * The component-wise mean of the two looks' base colours: the nebula's `deep`
- * (0.05, 0.05, 0.14) and the wheel's void backdrop (0.012, 0.014, 0.03,
- * darkened by reference revision 4 when the wheel became a spiral galaxy),
- * giving (0.031, 0.032, 0.085) → 0x080816. Those two are what fills most of
- * the screen in each look — the arms, gas and stars are sparse highlights on
- * top of them — so the mean is the honest "average colour of the void", and
- * one value serves both styles without the fog having to know which is
- * showing.
- *
- * Not exact: the fog is a lit-pipeline material and so passes through ACES
- * tone mapping and sRGB conversion, while the void pass deliberately does
- * not (see the colour-pipeline note above). The mist's top row therefore
- * lands slightly lighter than the void behind it rather than identical to it,
- * which is the right direction for haze anyway.
- */
-export const VOID_HAZE_COLOR = 0x080816;
-
-/**
  * Tilt of the star wheel's disk from the view axis, in degrees.
  *
  * The owner's first ask was "something like a thirty to forty five degree
