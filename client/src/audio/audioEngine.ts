@@ -340,6 +340,12 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     console.log('[terrace audio]', call, {
       ...fields,
       sfxVoices: sfxVoices.length,
+      // THE MASTER'S LIVE VALUE, on every line. It is the answer to the first
+      // question anyone debugging silence asks — the player's own volume and
+      // mute reach the graph through exactly this number (see the prefs effect
+      // below) — and a trace that showed every voice's gain but not the one
+      // they all pass through would answer every question but that one.
+      master: graph === null ? null : graph.master.gain.value,
       contextState: graph === null ? 'locked' : graph.context.state,
     });
   }
@@ -544,6 +550,9 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     voice.play();
     sfxVoices.push(voice);
 
+    // AFTER the push, so the `sfxVoices` count debugLog appends is the live
+    // count INCLUDING this voice — logging it before would always be one short
+    // and the cap would look unreachable.
     debugLog('playSfx', {
       url,
       bus: 'sfx',
