@@ -1,29 +1,13 @@
-// The audio ENGINE: who is allowed to make a sound, and what happens when they
-// stop existing (contract: client/src/plugins/types.ts's PluginAudio; design:
-// .claude/plans/audio-host.md §2).
+// The audio POLICY: per-plugin handles, the music claim, unlock, teardown.
+// Plumbing is ./audioGraph.ts, decoding ./audioBuffers.ts, sound ./audioVoices.ts.
+// Contract: client/src/plugins/types.ts's PluginAudio. Design and the rejected
+// alternatives: .claude/plans/audio-host.md.
 //
-// This file owns the POLICY. The plumbing is ./audioGraph.ts, the decoding is
-// ./audioBuffers.ts, the sound-making is ./audioVoices.ts and the dev switches
-// are ./audioDebug.ts; what is here is the per-plugin handle, the music bus's
-// single-claimant rule, the autoplay unlock and the teardown.
+// CORE OWNS THE WHOLE GRAPH: browsers cap AudioContexts per page, the listener
+// must track one camera, the master must silence everything. One owner.
 //
-// WHY CORE OWNS ALL OF IT. A browser caps how many AudioContexts a page may
-// hold, the listener has to track the ONE camera, and the player's master
-// volume has to be able to silence everything — three facts that each say the
-// graph has exactly one owner. Plugins ask; core decides.
-//
-// WHY THREE'S WRAPPERS AND NOT A NEW DEPENDENCY. three is already here, and
-// AudioListener/PositionalAudio are exactly the two pieces that are annoying to
-// write by hand: the listener's pose is updated from the camera's world matrix
-// inside updateMatrixWorld (three/src/audio/AudioListener.js:175) and a
-// PositionalAudio's panner from its own (PositionalAudio.js:217-245), so
-// tracking costs no per-frame JS of ours at all. Howler/Tone would have brought
-// a SECOND graph owner for the one part we need core to own (plan §4).
-//
-// FRAME BUDGET (140 fps ≈ 7 ms, docs/DESIGN.md): nothing in this directory runs
-// per frame. Web Audio schedules, ramps and mixes on its own thread; our JS
-// cost is building a handful of nodes at trigger time and, for a repeated
-// ambience call at an unchanged weight, one float comparison.
+// Nothing in this directory runs per frame: Web Audio schedules and mixes on
+// its own thread, so the 7 ms budget (docs/DESIGN.md) is untouched.
 
 import { createAudioBufferCache, reportAssetFailure } from './audioBuffers.ts';
 import {
@@ -55,42 +39,29 @@ interface PluginAudioState {
 
 export interface AudioEngine {
   /**
-   * Resumes the context, which browsers only allow from a user gesture.
-   * Idempotent and cheap once running, so the host may call it from every
-   * canvas press. A refusal is the NORMAL state of a page before its first
-   * click — not an error, and never logged as one.
+   * Resumes the context, which browsers only allow from a gesture. Idempotent,
+   * so the host may call it from every press. A refusal is the normal
+   * pre-click state, not an error.
    */
   unlock(): void;
-  /**
-   * This plugin's handle and the release the host wires into its teardown.
-   * `release` is idempotent (the host's `undo` list may run it after a plugin
-   * already cleaned up — see plugins/host.ts:250).
-   */
+  /** `release` is idempotent — the host's `undo` list may run it twice. */
   forPlugin(name: string): { readonly audio: PluginAudio; readonly release: () => void };
   dispose(): void;
 }
 
 export function createAudioEngine(viewport: Viewport): AudioEngine {
   const graph = buildAudioGraph(viewport);
-  // NO WEB AUDIO IN THIS BROWSER. Everything below assumes a graph, so rather
-  // than thread a null check through every voice and every handle, the whole
-  // engine degrades to one that arbitrates but makes no sound — see that
-  // function's header for why the arbitration still has to happen.
+  // No Web Audio: degrade whole rather than null-check every voice and handle.
   if (graph === null) return createSilentAudioEngine();
-  // ALIASED after the guard. `graph` is a const and narrowed here, but a
-  // narrowing does not follow a const into the closures below on this
-  // compiler; a second binding that is non-null by construction is clearer
-  // than a `!` at every use site.
+  // Aliased because this compiler does not carry a const's narrowing into the
+  // closures below, and this beats a `!` at thirty call sites.
   const active = graph;
 
   const buffers = createAudioBufferCache(active.context);
 
   /**
-   * Assigned on the line after the logger; the logger closes over the VARIABLE
-   * rather than the value, so it can report the live voice count without the
-   * two modules having to be constructed in a cycle. `activeVoices` is the
-   * narrowed alias everything below uses, so no other call site pays for the
-   * `undefined` this is briefly allowed to be.
+   * The logger closes over the VARIABLE, not the value, so it can report the
+   * live voice count without the two modules being a construction cycle.
    */
   let voices: AudioVoices | undefined;
   const debugLog = createAudioDebugLog(active, () => voices?.voiceCount() ?? 0);
@@ -103,10 +74,8 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
   const plugins = new Map<string, PluginAudioState>();
 
   /**
-   * Who owns the music bus, or null while nobody does — the same
-   * single-claimant shape as plugins/host.ts:302's skyRigClaimant, with the
-   * same once-per-loser refusal set beside it, and for the same reason: this
-   * may be driven from a loop and a per-call warning would bury the console.
+   * SINGLE CLAIMANT, as plugins/host.ts:302's skyRigClaimant: first caller owns
+   * the bus, later ones refused ONCE — a loop would bury the console.
    */
   let musicClaimant: string | null = null;
   const musicRefusals = new Set<string>();
@@ -114,23 +83,15 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
   let disposed = false;
 
   /**
-   * True between calling `resume()` and hearing back.
-   *
-   * ONE PRESS REACHES `unlock` TWICE — the host's capture-phase canvas listener
-   * and this module's own one-shot `window` pointerdown both fire for it — and
-   * both run before the first `resume()` settles, so the `state !==
-   * 'suspended'` guard cannot catch the second. Two resumes are harmless, but
-   * two "unlocked" log lines for one click are a trace that misleads its reader.
+   * One press reaches `unlock` twice (canvas listener plus the window one-shot)
+   * and both run before the first resume settles, so the state guard cannot
+   * catch the second.
    */
   let resuming = false;
 
   /**
-   * RESUME-ONLY. The graph exists from engine construction (see
-   * `buildAudioGraph`), so there is nothing to build here and nothing to
-   * replay: a voice started while the context was suspended is already
-   * scheduled and simply becomes audible when the clock starts. A resume the
-   * browser still refuses leaves the context suspended and is NOT an error —
-   * the next gesture tries again.
+   * RESUME-ONLY: the graph exists from construction, and a voice started while
+   * suspended is already scheduled. A still-refused resume is not an error.
    */
   function unlock(): void {
     if (disposed || resuming) return;
@@ -149,11 +110,8 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
   }
 
   /**
-   * One-shot window listeners so a KEYBOARD-FIRST player unlocks too: the
-   * host's canvas pointerdown (plugins/host.ts:348) covers a click on the
-   * world, but a player who tabs to a control and presses a key has made a
-   * gesture the canvas never saw. `once` on both, and they are removed on
-   * dispose as well in case neither ever fired.
+   * For a KEYBOARD-FIRST player: the host's canvas pointerdown
+   * (plugins/host.ts:348) never sees a press that was a keystroke.
    */
   const onWindowGesture = (): void => {
     unlock();
@@ -171,20 +129,13 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     );
   }
 
-  /**
-   * Everything one holder may do, built once per holder. `state` carries the
-   * identity — which is what keys ambience, arbitrates music and scopes the
-   * release.
-   */
+  /** `state` carries the identity that keys ambience and scopes the release. */
   function buildHandle(state: PluginAudioState): PluginAudio {
     return {
       preload(url: string): void {
         if (state.released) return;
-        // The decode cache makes this idempotent for free: a second call for
-        // the same URL — from this plugin or any other — finds the in-flight
-        // promise and adds nothing. The `catch` is what keeps the contract's
-        // "never throws": without it a failed asset would surface as an
-        // unhandled rejection in a plugin that did everything right.
+        // The cache makes this idempotent for free. The catch is what keeps
+        // the contract's "never throws".
         void buffers.get(url).catch((error: unknown) => {
           reportAssetFailure(url, error);
         });
@@ -195,11 +146,9 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
         if (state.released) return;
         const cached = buffers.peek(url);
         if (cached === undefined) {
-          // NOT DECODED YET: START THE DECODE AND PLAY NOTHING. A one-shot is a
-          // moment; playing it whenever the fetch happened to finish would put
-          // a thunderclap a second after its flash. The contract says so
-          // (types.ts, PluginAudio.playSfx) — and a plugin that called
-          // `preload` in attach does not come through here at all.
+          // NOT DECODED YET: start the decode, play nothing. A clap whenever
+          // the fetch finished is worse than none. A plugin that called
+          // `preload` in attach never reaches here.
           void buffers.get(url).catch((error: unknown) => {
             reportAssetFailure(url, error);
           });
@@ -237,13 +186,10 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
           debugLog('ambience (layer opened)', { url, bus: 'ambience', gain: target });
           state.ambience.set(url, layer);
         } else {
-          // THE PER-FRAME SHORT-CIRCUIT the contract promises: one float
-          // comparison and nothing else when the weight has not moved.
+          // The per-frame short-circuit the contract promises.
           if (layer.weight === target) return;
           layer.weight = target;
-          // THINNED — see AUDIO_DEBUG_WEIGHT_STEP. The endpoints always print:
-          // "it reached silence" and "it reached full" are the two facts a fade
-          // trace has to contain.
+          // Thinned, but the endpoints always print: a fade trace needs them.
           if (
             AUDIO_DEBUG &&
             (target === SILENT_GAIN ||
@@ -265,9 +211,7 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
         if (state.released) return;
         if (musicClaimant === null) musicClaimant = state.name;
         if (musicClaimant !== state.name) {
-          // ONCE PER LOSING HOLDER, not once per call — the same reasoning
-          // plugins/host.ts:757 gives for setSkyRig: this may be driven from a
-          // frame loop, and a per-call warning would bury the console.
+          // Once per losing holder — plugins/host.ts:757's reasoning.
           refuseMusic(state.name);
           return;
         }
@@ -282,9 +226,8 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     state.released = true;
     for (const layer of state.ambience.values()) activeVoices.releaseAmbience(layer);
     state.ambience.clear();
-    // A DETACHED CLAIMANT FREES THE MUSIC BUS — unlike the sky rig, which keeps
-    // whatever look it was last given, silence is a perfectly good resting
-    // state and a track whose owner is gone has nobody to stop it.
+    // A DETACHED CLAIMANT FREES THE BUS — unlike the sky rig, silence is a fine
+    // resting state, and a track whose owner is gone has nobody to stop it.
     if (musicClaimant === state.name) {
       musicClaimant = null;
       musicRefusals.clear();
@@ -299,8 +242,7 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     return state;
   }
 
-  // ?audioMusic=<url>: core claims the bus on behalf of a synthetic holder, so
-  // the music path is exercised in a build with no music consumer (plan §2.4).
+  // Core claims the bus for the dev switch, since no plugin claims music yet.
   if (AUDIO_MUSIC_URL !== null) {
     buildHandle(registerPlugin(DEV_MUSIC_CLAIMANT)).setMusic(AUDIO_MUSIC_URL);
   }
@@ -336,14 +278,8 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
 }
 
 /**
- * The engine for a browser with no Web Audio at all.
- *
- * IT STILL ARBITRATES. Every method being a bare no-op would be simpler, but it
- * would make the music bus's single-claimant rule depend on whether the machine
- * has an audio stack — so a plugin refused the bus on one browser would be
- * granted it on another, and the bug that eventually surfaced would be about
- * arbitration rather than about sound. Silence is the only thing that should
- * differ here.
+ * IT STILL ARBITRATES: bare no-ops would make the claim depend on whether the
+ * machine has an audio stack. Only silence should differ.
  */
 function createSilentAudioEngine(): AudioEngine {
   let musicClaimant: string | null = null;
