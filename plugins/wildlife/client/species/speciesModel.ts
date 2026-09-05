@@ -69,8 +69,16 @@ export interface AuthoredSpecies {
   readonly joints: Readonly<Record<string, Object3D>>;
   /**
    * Poses the herd's scratch rig. `seconds` is the shared animation clock,
-   * `phase` the offset in radians of the pose slot being filled — every
-   * periodic term is `sin(seconds * HZ * TWO_PI + phase)`, which is what makes
+   * `phase` the phase in radians of the pose slot being filled.
+   *
+   * TWO PACINGS, BY PLACEMENT KIND (../placement.ts, 2026-09-05):
+   *   * a SWIMMER or FLYER loops on the clock — every periodic term is
+   *     `sin(seconds * HZ * TWO_PI + phase)`, and `phase` is a fixed offset;
+   *   * a WALKER loops on GROUND COVERED — `phase` is advanced by the engine
+   *     from the distance the creature was drawn moving (index.ts,
+   *     WALKER_STRIDE_WORLD_UNITS_BY_SPECIES), so its beat is `phase` alone
+   *     and it must add NO clock term, or its legs would run while it stood.
+   * Either way a term is a function of one unbounded angle, which is what makes
    * quantising the phase into slots safe (models.ts, POSE_SLOTS_PER_HERD).
    */
   animate(joints: SpeciesJoints, seconds: number, phase: number): void;

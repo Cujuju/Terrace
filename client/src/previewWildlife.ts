@@ -17,6 +17,10 @@
 //   ?t=<seconds>                     — animation clock, default 0 (the rest
 //                                      pose). A limb only proves it is hinged
 //                                      correctly off the rest pose.
+//   ?phase=<radians>                 — animation phase, default 0. A WALKER's
+//                                      legs are paced by ground covered, not
+//                                      the clock, so this is its whole stride
+//                                      beat: mid-stride is ?phase=1.5708.
 //
 // The lighting rig (hemisphere + directional + ambient, ACES tone mapping)
 // and the ground-disc/backdrop/camera-framing choices are copied verbatim
@@ -140,6 +144,15 @@ function readSeconds(query: URLSearchParams): number {
   return Number.parseFloat(query.get('t') ?? '0') || 0;
 }
 
+/**
+ * `?phase=<radians>` — the animation phase the creature is drawn at. A walker's
+ * legs are paced by ground covered, not the clock (plugin placement.ts), so for
+ * a walker this is the whole stride beat and `t` moves nothing.
+ */
+function readPhase(query: URLSearchParams): number {
+  return Number.parseFloat(query.get('phase') ?? '0') || 0;
+}
+
 function buildScene(): {
   scene: Scene;
   camera: PerspectiveCamera;
@@ -259,7 +272,7 @@ function main(): void {
   // bodies (models.ts); exposing it lets a screenshot driver ask for a specific
   // one instead of taking whatever id 0 happens to select.
   models.beginFrame(readSeconds(query));
-  models.draw(species, sizeClass, readVariant(query), 0, 0, 0, 0, 0);
+  models.draw(species, sizeClass, readVariant(query), readPhase(query), 0, 0, 0, 0);
   models.endFrame();
 
   // A SWIMMER'S ORIGIN IS ITS BODY CENTRE, so a disc at y = 0 cuts the animal

@@ -7,7 +7,11 @@
 //
 //   ?species=<fish|grazer|wolf|ibex|bison|ray|shark|eel|angelfish|whale-humpback|whale-blue|whale-sperm|deepsea> — defaults to "fish"
 //   ?view=<iso|side|top|front>                     — defaults to "iso"
-//   ?t=<seconds>                                   — animation clock, default 0
+//   ?t=<seconds>                                   — animation clock, default 0 (swimmers, flyers)
+//   ?phase=<radians>                               — animation phase, default 0. A WALKER's legs
+//                                                    are paced by ground covered, not the clock,
+//                                                    so this is its whole stride beat: a
+//                                                    mid-stride shot is ?phase=1.5708, not ?t=
 //   ?scale=<n>                                     — instance scale, default 1
 import {
   ACESFilmicToneMapping,
@@ -149,6 +153,7 @@ function main(): void {
   const viewName = query.get('view') ?? 'iso';
   const view: CameraView = viewName in CAMERA_VIEWS ? (viewName as CameraView) : 'iso';
   const seconds = Number.parseFloat(query.get('t') ?? '0') || 0;
+  const phase = Number.parseFloat(query.get('phase') ?? '0') || 0;
   const scale = Number.parseFloat(query.get('scale') ?? '1') || 1;
   const zoom = Number.parseFloat(query.get('zoom') ?? '1') || 1;
   const build = BUILDERS[species] ?? buildFish;
@@ -188,7 +193,7 @@ function main(): void {
   scene.add(group);
 
   herd.beginFrame();
-  const slot = herd.poseSlotOf(0);
+  const slot = herd.poseSlotOf(phase);
   authored.animate(joints, seconds, herd.poseSlotPhase(slot));
   herd.capturePose(slot);
   herd.place(slot, 0, 0, 0, 0, scale);

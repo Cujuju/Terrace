@@ -33,10 +33,11 @@ import { RAY_ENVELOPE } from './species/ray.ts';
 import { SHARK_ENVELOPE } from './species/shark.ts';
 import { EEL_ENVELOPE } from './species/eel.ts';
 import { ANGELFISH_ENVELOPE } from './species/angelfish.ts';
-import { GRAZER_ENVELOPE } from './species/grazer.ts';
-import { WOLF_ENVELOPE } from './species/wolf.ts';
-import { IBEX_ENVELOPE } from './species/ibex.ts';
-import { BISON_ENVELOPE } from './species/bison.ts';
+import { GRAZER_ENVELOPE, GRAZER_STRIDE_WORLD_UNITS } from './species/grazer.ts';
+import { WOLF_ENVELOPE, WOLF_STRIDE_WORLD_UNITS } from './species/wolf.ts';
+import { IBEX_ENVELOPE, IBEX_STRIDE_WORLD_UNITS } from './species/ibex.ts';
+import { BISON_ENVELOPE, BISON_STRIDE_WORLD_UNITS } from './species/bison.ts';
+import { TWO_PI } from './species/speciesModel.ts';
 import { DEEPSEA_ENVELOPE } from './species/deepsea.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
 import { BIRD_ENVELOPE } from './models.ts';
@@ -681,6 +682,59 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES: Readonly<
   angelfish: null,
   bird: null,
 };
+
+/**
+ * The ground one full leg cycle covers, in WORLD units, per walker — null for
+ * anything without legs.
+ *
+ * THE GAIT IS PACED OFF GROUND COVERED, NOT THE CLOCK (owner, 2026-09-05: "we
+ * seem to speed up the pace of the models as they move, but not the legs").
+ * Every walk cycle used to be `sin(seconds * STRIDE_HZ * TWO_PI + phase)`, a
+ * rate fixed per species whatever the body was doing — so a fleeing deer slid
+ * across the ground at three times cruise on cruise-speed legs, and a bison in
+ * an idle bout marched on the spot. index.ts now advances a walker's phase by
+ * `walkerStrideRadians` each frame, from the distance it was actually drawn
+ * moving, and a walker's `animate` reads its beat from that phase ALONE
+ * (species/speciesModel.ts): three times the speed is three times the steps,
+ * and no movement is no steps. Swimmers and flyers keep the clock — a fin beats
+ * whether or not the fish is getting anywhere.
+ *
+ * Each value lives in the file that draws the animal, beside its swing and bob,
+ * and is imported here the way the envelopes are: a re-proportioned model
+ * re-paces its own gait in the same commit.
+ */
+export const WALKER_STRIDE_WORLD_UNITS_BY_SPECIES: Readonly<Record<WildlifeSpecies, number | null>> =
+  {
+    fish: null,
+    whale: null,
+    deepsea: null,
+    grazer: GRAZER_STRIDE_WORLD_UNITS,
+    wolf: WOLF_STRIDE_WORLD_UNITS,
+    ibex: IBEX_STRIDE_WORLD_UNITS,
+    bison: BISON_STRIDE_WORLD_UNITS,
+    ray: null,
+    shark: null,
+    eel: null,
+    angelfish: null,
+    bird: null,
+  };
+
+/**
+ * How far a walker's animation phase advances for `distanceWorldUnits` of
+ * ground covered: one full turn per stride.
+ *
+ * Throws for a non-walker on the same belt-and-suspenders argument as
+ * `walkerGroundY`: the render path only reaches here for a 'walker', and a
+ * species that gained legs without gaining a row would otherwise walk on
+ * frozen legs with nothing saying so.
+ */
+export function walkerStrideRadians(species: WildlifeSpecies, distanceWorldUnits: number): number {
+  const stride = WALKER_STRIDE_WORLD_UNITS_BY_SPECIES[species];
+  if (stride === null) {
+    throw new Error(`walkerStrideRadians: "${species}" is not a walker and has no stride`);
+  }
+  return (distanceWorldUnits / stride) * TWO_PI;
+}
 
 /** The same half-extents in the CELLS walkerGroundY steps in. Converted once. */
 export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES: Readonly<

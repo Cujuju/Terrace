@@ -19,8 +19,9 @@
 //
 // WHAT DID NOT CHANGE. The walk. ./quadruped.ts's poseWalk still swings four
 // named leg joints in diagonal pairs and bobs the body twice a stride, at the
-// same rate and the same swing as before, and the head still nods on each
-// footfall pair. The asset's bones were RENAMED AT IMPORT to the names that
+// same swing as before (and, since 2026-09-05, paced by the ground covered
+// rather than the clock — GRAZER_STRIDE_WORLD_UNITS), and the head still nods
+// on each footfall pair. The asset's bones were RENAMED AT IMPORT to the names that
 // animation already speaks (--rename FrontUpperLeg.L=foreLeft and friends),
 // rather than mapped to them here: a rename is recorded in the import command
 // beside every other normalisation the file needed, while a runtime table
@@ -53,7 +54,6 @@ import {
   type SpeciesAssetSpec,
   type SpeciesEnvelope,
 } from './assetSpecies.ts';
-import { TWO_PI } from './speciesModel.ts';
 
 /**
  * Owner, 2026-08-24: grazers read oversized beside settlers. It is no longer a
@@ -193,22 +193,32 @@ export const GRAZER_ASSET: SpeciesAssetSpec = {
 };
 
 /**
- * Stride rate and swing, unchanged from the hand-built grazer.
+ * Stride length in WORLD units — the ground one full leg cycle covers — and the
+ * swing, unchanged from the hand-built grazer.
  *
- * A grazer walks at 0.8 world units per second (../../server/species.ts,
- * halved 2026-09-02) on a body 0.505 long; two strides a second covers that at
- * a stride of roughly a body length, which is a walk. 0.32 rad (~18°) either
+ * THE GAIT IS PACED OFF GROUND COVERED, NOT THE CLOCK (owner, 2026-09-05: the
+ * models sped up when they ran but the legs did not). ../index.ts advances a
+ * walker's phase by 2π × distance / this, and `beat` below is that phase alone,
+ * so a bolting deer at three times cruise takes three times the steps and a
+ * standing one takes none. See ../placement.ts's WALKER_STRIDE_WORLD_UNITS_BY_
+ * SPECIES.
+ *
+ * 0.40 is the stride the cruise gait was tuned to by eye before it was paced
+ * this way: 0.8 world units per second (../../server/species.ts, halved
+ * 2026-09-02) at two strides a second, on a body 0.505 long — roughly a body
+ * length, which is a walk. At cruise nothing moved. 0.32 rad (~18°) either
  * side of vertical is a walking swing, not a trot.
  */
-const STRIDE_HZ = 2.0;
+export const GRAZER_STRIDE_WORLD_UNITS = 0.4;
 const LEG_SWING_RADIANS = 0.32;
 /** In WORLD units — rig.position is in root space, and the rig is unscaled. */
 const WALK_BOB_WORLD_UNITS = 0.012;
 /** The head dips a little at each footfall pair. */
 const HEAD_NOD_RADIANS = 0.05;
 
-export const buildGrazer = assetSpeciesBuilder(GRAZER_ASSET, (joints, seconds, phase) => {
-  const beat = seconds * STRIDE_HZ * TWO_PI + phase;
+export const buildGrazer = assetSpeciesBuilder(GRAZER_ASSET, (joints, _seconds, phase) => {
+  // A walker's phase IS its stride beat (GRAZER_STRIDE_WORLD_UNITS): no clock term.
+  const beat = phase;
   poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
   joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
 });

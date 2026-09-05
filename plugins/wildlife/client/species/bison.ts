@@ -28,7 +28,7 @@ import { Group, Vector3 } from 'three';
 import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
 import { deform, smoothEllipsoid, taperedTube } from './bodyKit.ts';
 import { addQuadrupedLegs, legJoints, poseWalk } from './quadruped.ts';
-import { TWO_PI, type SpeciesModelBuilder } from './speciesModel.ts';
+import type { SpeciesModelBuilder } from './speciesModel.ts';
 
 export const BISON_SCALE = 0.4;
 
@@ -90,7 +90,15 @@ const FORE_T = 0.30;
 const HIND_T = 0.87;
 const HALF_STANCE = 0.16;
 
-const STRIDE_HZ = 1.3;
+/**
+ * Stride length in WORLD units, paced off ground covered rather than the clock
+ * (owner, 2026-09-05; ./grazer.ts's GRAZER_STRIDE_WORLD_UNITS states the rule).
+ * 0.46 is the stride the cruise gait was tuned to by eye: 0.6 world units per
+ * second (../../server/species/bison.ts) at 1.3 strides a second. At cruise
+ * nothing moved; a stampeding bison now takes three times the steps, and one
+ * stopped to graze takes none.
+ */
+export const BISON_STRIDE_WORLD_UNITS = 0.46;
 const LEG_SWING_RADIANS = 0.26;
 /** WORLD units (root space). A ton of animal does not bounce. */
 const WALK_BOB_WORLD_UNITS = 0.008;
@@ -279,8 +287,9 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   return {
     root,
     joints: { rig, head: headPivot, ...legJoints(legs) },
-    animate(joints, seconds, phase) {
-      const beat = seconds * STRIDE_HZ * TWO_PI + phase;
+    animate(joints, _seconds, phase) {
+      // A walker's phase IS its stride beat (BISON_STRIDE_WORLD_UNITS): no clock term.
+      const beat = phase;
       poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
       // The head swings with the stride, not the footfall: once per cycle.
       joints.head!.rotation.y = Math.sin(beat) * HEAD_SWAY_RADIANS;
