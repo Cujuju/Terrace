@@ -47,22 +47,27 @@ SPIN_FRAMES = 120  # one revolution per two seconds at SCENE_FPS
 # Emissive strength for the glowing parts. glTF carries it through
 # KHR_materials_emissive_strength; three.js reads it as emissiveIntensity.
 # AUTHORED FOR THE GAME'S RENDERER (client/src/render/scene.ts): ACES at
-# exposure 1.25, no bloom, no environment map. Values that need bloom to look
-# right are not allowed here — the viewer and the game must agree.
+# exposure 1.25, no bloom. Values that need bloom to look right are not
+# allowed here — the viewer and the game must agree.
 # Kept low enough that ACES does not clip a saturated glow to white.
 GLOW_STRENGTH = 1.3
 LIGHT_STRENGTH = 2.0
 
-# The game has NO environment map, and a metal with nothing to reflect is a
-# black shell under three's PBR. So metalness stays LOW and the metal look —
-# brushing, dents, oxide — is baked into the base-colour texture instead.
-HULL_METALNESS = 0.35
+# REAL METALS. The game lights authored assets with a sky environment map
+# (client/src/render/skyEnvironment.ts, issue #314), so metalness means what
+# it does in Blender: the hull's colour comes from what it reflects, and the
+# texture only carries the surface's own tint and its wear. Per craft, because
+# the three are different metals — and the difference is the point (owner,
+# 2026-09-04: "they all look the same colour").
+GUNMETAL_METALNESS = 0.90       # A: turned dark steel
+GUNMETAL_ROUGHNESS = 0.40
+ALUMINIUM_METALNESS = 0.95      # B: planished aluminium, the brightest mirror
+ALUMINIUM_ROUGHNESS = 0.30
+OXIDISED_IRON_METALNESS = 0.60  # C: patina is a dielectric skin over the iron
+OXIDISED_IRON_ROUGHNESS = 0.65
 
-# Rivet heads are geometry (mesh `rivets`), not paint: a texture dot vanishes
-# under mipmapping at the game's camera distance, a bump on the silhouette
-# does not. Radius in cells.
-RIVET_RADIUS_CELLS = 0.055
-RIVET_SINK_CELLS = 0.02      # how far the sphere is buried in the hull
+# NO RIVETS (owner, 2026-09-04: "No rivets, period."). Plating reads from the
+# panel seams baked into each texture and from the hull's own creases.
 
 # Hull textures are generated here (no sidecar files): one square image per
 # hull, UV-mapped as u = angle around the axis, v = arc length up the profile.
@@ -139,18 +144,6 @@ def _panel_seams(u, v, wedges, rings, width, dark):
     return (1.0 - dark * seam) * (1.0 + 0.06 * lift)
 
 
-def _rivet_shadows(u, v, count, rows, radius_uv):
-    """Soft contact shadow under each geometric rivet head, so the row still
-    reads from a distance where the head itself is a pixel."""
-    ru = ((u * count) % 1.0) - 0.5
-    du = ru / count
-    out = np.zeros_like(u * v)
-    for rv in rows:
-        r2 = (du ** 2 + (v - rv) ** 2) / (radius_uv * 1.5) ** 2
-        out = np.maximum(out, np.clip(1.0 - r2, 0.0, 1.0))
-    return 1.0 - 0.28 * out
-
-
 def _to_image(name, rgb):
     n = TEXTURE_SIZE
     rgb = np.clip(rgb, 0.0, 1.0)
@@ -161,7 +154,7 @@ def _to_image(name, rgb):
     return img
 
 
-def brushed_gunmetal(name, *, wedges, rings, rivet_count, rivet_rows, seed):
+def brushed_gunmetal(name, *, wedges, rings, seed):
     """Turned dark steel: dense circumferential hairlines whose contrast drifts
     in sheen bands, a few long bright scratches, cool blue-grey base."""
     n, u, v = _uv_grid()
@@ -175,13 +168,12 @@ def brushed_gunmetal(name, *, wedges, rings, rivet_count, rivet_rows, seed):
     drift = _smooth_noise(rng, 5, 5)
     shade = 1.0 + 0.16 * hair * (0.5 + 0.9 * sheen) + 0.14 * scratch + 0.08 * drift
     shade *= _panel_seams(u, v, wedges, rings, 0.0035, 0.55)
-    shade *= _rivet_shadows(u, v, rivet_count, rivet_rows, 0.009)
     base = np.array([0.40, 0.42, 0.47])
     tint = np.array([0.02, 0.01, -0.02]) * sheen[:, :, None]  # warm/cool sheen
     return _to_image(name, base[None, None, :] * shade[:, :, None] + tint)
 
 
-def hammered_aluminium(name, *, wedges, rings, rivet_count, rivet_rows, seed):
+def hammered_aluminium(name, *, wedges, rings, seed):
     """Bright planished aluminium: a field of overlapping shallow dimples, each
     lit from the upper left, over a faint fine grain and light plate seams."""
     n, u, v = _uv_grid()
@@ -207,32 +199,30 @@ def hammered_aluminium(name, *, wedges, rings, rivet_count, rivet_rows, seed):
     drift = _smooth_noise(rng, 4, 4)
     shade = 1.0 + 0.22 * light - 0.05 * dimples + 0.03 * grain + 0.05 * drift
     shade *= _panel_seams(u, v, wedges, rings, 0.0045, 0.5)
-    shade *= _rivet_shadows(u, v, rivet_count, rivet_rows, 0.010)
     base = np.array([0.80, 0.82, 0.85])
     return _to_image(name, base[None, None, :] * shade[:, :, None])
 
 
-def oxidised_iron(name, *, wedges, rings, rivet_count, rivet_rows, seed):
+def oxidised_iron(name, *, wedges, rings, seed):
     """Weathered cast iron with a green-black patina: pitted surface, rust
     blooms in low-frequency patches, rust streaks running DOWN the hull from
-    each rivet row, heavy dark weld seams between coarse plates."""
+    each plate seam, heavy dark weld seams between coarse plates."""
     n, u, v = _uv_grid()
     rng = np.random.default_rng(seed)
     pits = (rng.random((n, n)) < 0.035).astype(float)
     pits = np.maximum(pits, np.roll(pits, 1, axis=1) * 0.6)    # slightly elongated
     bloom = _smooth_noise(rng, 7, 7)
     rust = np.clip((bloom - 0.25) / 0.5, 0.0, 1.0)             # patches where noise is high
-    # Streaks: per-column intensity below each rivet row, decaying with distance.
+    # Streaks: per-column intensity below each plate seam, decaying with distance.
     col = np.clip(_smooth_noise(rng, 1, 90), 0.0, 1.0)
     streak = np.zeros((n, n))
-    for rv in rivet_rows:
+    for rv in rings:
         below = np.clip((v - rv) / 0.12, 0.0, None)
         streak = np.maximum(streak, col * np.exp(-below * 4.0) * (v >= rv))
     grain = rng.normal(0.0, 1.0, (n, 1)); grain /= np.abs(grain).max() + 1e-6
     drift = _smooth_noise(rng, 5, 5)
     shade = 1.0 + 0.05 * grain + 0.10 * drift - 0.45 * pits
     shade *= _panel_seams(u, v, wedges, rings, 0.006, 0.7)
-    shade *= _rivet_shadows(u, v, rivet_count, rivet_rows, 0.012)
     base = np.array([0.24, 0.29, 0.25])
     rust_col = np.array([0.46, 0.25, 0.12])
     mix = np.clip(rust * 0.7 + streak * 0.9, 0.0, 1.0)[:, :, None]
@@ -240,7 +230,7 @@ def oxidised_iron(name, *, wedges, rings, rivet_count, rivet_rows, seed):
     return _to_image(name, rgb)
 
 
-def textured_material(name, image, *, metallic=HULL_METALNESS, roughness):
+def textured_material(name, image, *, metallic, roughness):
     mat = bpy.data.materials.new(name)
     nodes = mat.node_tree.nodes
     bsdf = nodes['Principled BSDF']
@@ -345,7 +335,7 @@ def lathe(name, profile, mat, segments=LATHE_SEGMENTS, close_top=True,
 
 def profile_point(profile, t):
     """(r, z) at normalised arc length t along the profile, matching the v the
-    lathe writes into UVs — so a rivet row lands where the texture expects."""
+    lathe writes into UVs — so a plate seam lands where the texture expects."""
     arc = [0.0]
     for (r0, z0), (r1, z1) in zip(profile, profile[1:]):
         arc.append(arc[-1] + math.hypot(r1 - r0, z1 - z0))
@@ -356,27 +346,6 @@ def profile_point(profile, t):
             (r0, z0), (r1, z1) = profile[k], profile[k + 1]
             return (r0 + (r1 - r0) * f, z0 + (z1 - z0) * f)
     return profile[-1]
-
-
-def rivet_rows(name, profile, rows, count, mat):
-    """Rows of rivet heads sitting ON the hull: small spheres sunk a little
-    below the surface, merged into one mesh named `name`."""
-    bm = bmesh.new()
-    for t in rows:
-        r, z = profile_point(profile, t)
-        for i in range(count):
-            a = 2.0 * math.pi * i / count
-            centre = Vector(((r - RIVET_SINK_CELLS) * math.cos(a),
-                             (r - RIVET_SINK_CELLS) * math.sin(a), z))
-            geom = bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=6,
-                                             radius=RIVET_RADIUS_CELLS)
-            for vtx in geom['verts']:
-                vtx.co = vtx.co + centre
-    bm.normal_update()
-    mesh = bpy.data.meshes.new(name)
-    bm.to_mesh(mesh)
-    bm.free()
-    return finish_mesh(bpy.data.objects.new(name, mesh), mat)
 
 
 def torus(name, major, minor, z, mat, major_segments=LATHE_SEGMENTS,
@@ -494,12 +463,9 @@ def build_a():
     rim ring and a second seam ring under a low deck; twelve portholes."""
     clear_scene()
     A_RINGS = (0.20, 0.40, 0.60, 0.78)
-    A_RIVET_ROWS = (0.22, 0.38, 0.62, 0.76)
-    A_RIVETS = 48
-    hull_img = brushed_gunmetal('hull_a_tex', wedges=16, rings=A_RINGS,
-                                rivet_count=A_RIVETS, rivet_rows=A_RIVET_ROWS, seed=11)
-    hull_mat = textured_material('hull_a', hull_img, roughness=0.45)
-    rivet_mat = material('rivets_a', (0.55, 0.57, 0.62), metallic=HULL_METALNESS, roughness=0.4)
+    hull_img = brushed_gunmetal('hull_a_tex', wedges=16, rings=A_RINGS, seed=11)
+    hull_mat = textured_material('hull_a', hull_img,
+                                 metallic=GUNMETAL_METALNESS, roughness=GUNMETAL_ROUGHNESS)
     dome_mat = material('dome_a', (0.05, 0.08, 0.12), metallic=0.2, roughness=0.12)
     ring_mat = material('ring_a', (0.10, 0.35, 1.0), emission=(0.25, 0.55, 1.0),
                         emission_strength=GLOW_STRENGTH)
@@ -512,7 +478,6 @@ def build_a():
         (0.70, 0.775), (0.58, 0.815), (0.54, 0.83),
     ]
     hull = lathe('hull', hull_profile, hull_mat, close_top=False)
-    rivet_rows('rivets', hull_profile, A_RIVET_ROWS, A_RIVETS, rivet_mat)
     ring = torus('ring', 1.99, 0.045, 0.17, ring_mat, squash=1.4)
     # The deck seam is the same glowing material joined into the ring mesh,
     # so both bands spin as one part.
@@ -539,18 +504,15 @@ def build_b():
     glowing underside ring that spins."""
     clear_scene()
     B_RINGS = (0.24, 0.44, 0.62, 0.80)
-    B_RIVET_ROWS = (0.26, 0.42, 0.64, 0.78)
-    B_RIVETS = 40
-    hull_img = hammered_aluminium('hull_b_tex', wedges=12, rings=B_RINGS,
-                                  rivet_count=B_RIVETS, rivet_rows=B_RIVET_ROWS, seed=23)
-    hull_mat = textured_material('hull_b', hull_img, roughness=0.38)
-    rivet_mat = material('rivets_b', (0.62, 0.64, 0.68), metallic=HULL_METALNESS, roughness=0.35)
+    hull_img = hammered_aluminium('hull_b_tex', wedges=12, rings=B_RINGS, seed=23)
+    hull_mat = textured_material('hull_b', hull_img,
+                                 metallic=ALUMINIUM_METALNESS, roughness=ALUMINIUM_ROUGHNESS)
     dome_mat = material('dome_b', (0.08, 0.10, 0.13), metallic=0.2, roughness=0.10)
     ring_mat = material('ring_b', (1.0, 0.45, 0.1), emission=(1.0, 0.5, 0.15),
                         emission_strength=GLOW_STRENGTH)
     light_mat = material('lights_b', (1.0, 0.75, 0.35), emission=(1.0, 0.7, 0.3),
                          emission_strength=LIGHT_STRENGTH)
-    deck_mat = material('deck_b', (0.13, 0.14, 0.17), metallic=HULL_METALNESS, roughness=0.5)
+    deck_mat = material('deck_b', (0.13, 0.14, 0.17), metallic=ALUMINIUM_METALNESS, roughness=0.5)
     # Hull: panel grooves in the underside and a stepped upper body, so the
     # silver reads as plating rather than one smooth shell.
     hull_profile = [
@@ -562,7 +524,6 @@ def build_b():
         (1.10, 0.84), (1.10, 0.88), (0.98, 0.96), (0.90, 1.00),
     ]
     hull = lathe('hull', hull_profile, hull_mat)
-    rivet_rows('rivets', hull_profile, B_RIVET_ROWS, B_RIVETS, rivet_mat)
     # A dark deck band caps the silver: a low turret with the cockpit lens on it.
     deck = lathe('deck', [(0.0, 0.99), (0.84, 0.99), (0.88, 1.02), (0.88, 1.12),
                           (0.80, 1.16), (0.62, 1.19), (0.0, 1.20)], deck_mat)
@@ -588,12 +549,9 @@ def build_c():
     magenta vane ring that spins, a low elongated dome and eight red lights."""
     clear_scene()
     C_RINGS = (0.30, 0.55, 0.78)
-    C_RIVET_ROWS = (0.33, 0.52, 0.81)
-    C_RIVETS = 28
-    hull_img = oxidised_iron('hull_c_tex', wedges=8, rings=C_RINGS,
-                             rivet_count=C_RIVETS, rivet_rows=C_RIVET_ROWS, seed=37)
-    hull_mat = textured_material('hull_c', hull_img, roughness=0.62)
-    rivet_mat = material('rivets_c', (0.30, 0.33, 0.30), metallic=HULL_METALNESS, roughness=0.6)
+    hull_img = oxidised_iron('hull_c_tex', wedges=8, rings=C_RINGS, seed=37)
+    hull_mat = textured_material('hull_c', hull_img,
+                                 metallic=OXIDISED_IRON_METALNESS, roughness=OXIDISED_IRON_ROUGHNESS)
     dome_mat = material('dome_c', (0.10, 0.04, 0.10), metallic=0.2, roughness=0.15)
     ring_mat = material('ring_c', (0.9, 0.1, 0.8), emission=(1.0, 0.2, 0.9),
                         emission_strength=GLOW_STRENGTH)
@@ -605,7 +563,6 @@ def build_c():
         (0.82, 0.50), (0.66, 0.575), (0.54, 0.62), (0.50, 0.635),
     ]
     hull = lathe('hull', hull_profile, hull_mat, close_top=False)
-    rivet_rows('rivets', hull_profile, C_RIVET_ROWS, C_RIVETS, rivet_mat)
     ring = vane_ring('ring', 10, 1.30, 1.66, 0.355, 0.05, 0.09, ring_mat)
     # Lens continues the hull slope, as on A.
     dome = lathe('dome', [(0.50, 0.635), (0.42, 0.665), (0.32, 0.69),
