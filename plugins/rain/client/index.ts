@@ -155,6 +155,9 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
+    // Decode the loop now rather than on the first frame under a front, so the
+    // rain fades in from silence instead of starting a decode as it does.
+    ctx.audio.preload(rainLoopUrl);
     unpublishShade = ctx.publishGroundShade(shadeDiscs);
     // EVERY FRAME, deliberately. `ambience` is contracted to short-circuit an
     // unchanged weight to one float comparison (ClientPluginCtx's PluginAudio),

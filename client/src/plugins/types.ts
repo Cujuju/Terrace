@@ -219,10 +219,38 @@ export interface SfxOptions {
  */
 export interface PluginAudio {
   /**
+   * FETCHES AND DECODES an asset now, so that the first `playSfx` for it is
+   * heard. Call it from `attach` for every URL the plugin can go on to play.
+   *
+   * WHY IT HAS TO EXIST. `playSfx` is fire-and-forget and never waits (see
+   * below), so a URL whose buffer is not decoded yet is dropped rather than
+   * played late — which, without this, made the FIRST event of every kind
+   * silent, once per page. That is a user-visible defect, not a quirk: the
+   * first thunderclap of a session is exactly the one a player notices. This is
+   * the fix, and it is on the contract rather than in each plugin because every
+   * plugin that plays a sound has the problem.
+   *
+   * IDEMPOTENT, and safe to call with the same URL from any number of plugins:
+   * decoding is keyed by URL and shared, so the second caller joins the first
+   * one's work rather than starting a second fetch. Never throws and never
+   * rejects — a missing asset is logged by core and costs this plugin its
+   * sound, nothing more.
+   *
+   * There is no "ready" signal on purpose. A plugin that waited for one would
+   * be building a loading screen for a sound effect; the honest degradation is
+   * that a sound not yet decoded does not play, and preloading at attach makes
+   * that window as small as the asset's own download.
+   */
+  preload(url: string): void;
+
+  /**
    * Fires a one-shot on the SFX bus and returns immediately. Nothing is
    * awaited and nothing is returned: an impact sound that arrived late because
-   * a decode was still in flight is worse than no sound, so the FIRST call for
-   * a URL usually starts the decode and plays nothing, and later calls play.
+   * a decode was still in flight is worse than no sound, so a call for a URL
+   * whose buffer is not decoded yet starts the decode and plays nothing.
+   *
+   * WITH `preload` ABOVE CALLED IN `attach`, that path is only reachable by a
+   * plugin that skipped it, or in the moments before a slow asset has arrived.
    *
    * BOUNDED BY A VOICE CAP core owns. A plugin that fires more one-shots than
    * the cap allows steals its own oldest voices rather than growing the graph
