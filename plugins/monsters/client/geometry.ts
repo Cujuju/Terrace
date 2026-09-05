@@ -8,8 +8,8 @@
 // two animals are interleaved with the tools that make them.
 //
 // Rules this file keeps (the wildlife plugin's, for the same reasons):
-//   * NO EXTERNAL ASSETS and no per-model lights. Everything is generated here;
-//     the scene's hemisphere + sun light (render/scene.ts) does the lighting.
+//   * NO PER-MODEL LIGHTS. The creatures in THIS file are generated here; the
+//     scene's hemisphere + sun light (render/scene.ts) does the lighting.
 //     Surface interest comes from GEOMETRY (a deterministic wrinkle carved into
 //     the skin), from PER-VERTEX SHADE, and — since 2026-08-24 — from ONE
 //     generated texture. Emissive eyes emit rather than being lit.
@@ -22,8 +22,18 @@
 //     lumps, because carveWrinkles can only dent a surface it already has. A
 //     texel costs nothing and there are a million of them. See furShadeTexture()
 //     below — it is COMPUTED, from the same deterministic reasoning as the
-//     noise field, so "no asset files, same creature on every client" survives
-//     intact. What is banned is a texture that arrives over the network.
+//     noise field, so every client builds the same coat from the same seed.
+//
+//     UNTIL 2026-09-04 this rule also said "NO EXTERNAL ASSETS" and banned "a
+//     texture that arrives over the network". Both are superseded (owner,
+//     2026-09-04): external GLB assets and their embedded textures are allowed
+//     across every plugin, and an imported model is now the DEFAULT path for a
+//     new one — docs/model-assets.md, client/src/render/{rigAsset,rigSkin,
+//     materialMaps}.ts. An embedded GLB texture IS a texture that arrived over
+//     the network, and it is fine: what made the old ban matter was determinism,
+//     and a file every client loads is as identical as a computed texel. The
+//     procedural builders below stay procedural until someone imports a better
+//     creature; nothing here changes.
 //   * NO Math.random anywhere in the geometry. Every irregularity — the
 //     wrinkles, the mottle, the uneven curl of a tentacle fan — comes out of
 //     one deterministic noise field with a constant seed, so every client in the
