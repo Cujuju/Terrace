@@ -13,3 +13,8 @@ __pycache__/
 .mudslide-shots/
 .weather-verify/
 .gpu-perf/
+
+# Third-party model sources, the .glb the import tool writes from them, and its
+# render checks. Sources are downloaded, never committed (see LICENSES.md
+# inside it); an asset that ships gets copied into its plugin's assets/ dir.
+.model-import/
