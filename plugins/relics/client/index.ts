@@ -35,7 +35,6 @@ import {
   gemBobOffset,
   gemPhaseFor,
   gemSpinAngle,
-  relicColor,
   relicUnderCell,
 } from './gems.ts';
 import { disposeRelicGeometries, relicGeometry } from './relicShapes.ts';
@@ -55,9 +54,39 @@ import {
  * against shaded terrain (the scene has no point lights — see
  * client/src/render/scene.ts — so without emission a gem in shadow is a grey
  * lump), low enough that ACES tone mapping does not blow it out to white and
- * lose the per-category colour that is the whole point.
+ * lose the paint that is the whole point.
  */
 const GEM_EMISSIVE_INTENSITY = 0.6;
+
+/**
+ * The gem's material: white, so the PAINT written into the geometry's vertex
+ * colours (relicShapes.ts) is the colour; and glowing in that same paint,
+ * which three's own shader cannot do — its emissive term is one colour per
+ * material — so the fragment shader is patched to scale the emissive by the
+ * vertex colour. One cache key for every gem: the patch is the same string
+ * each time, so the program compiles once.
+ */
+const RELIC_PROGRAM_KEY = 'relic-emissive-by-vertex-colour';
+
+function createGemMaterial(): MeshStandardMaterial {
+  const material = new MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    emissive: 0xffffff,
+    emissiveIntensity: GEM_EMISSIVE_INTENSITY,
+    roughness: GEM_ROUGHNESS,
+    metalness: GEM_METALNESS,
+    flatShading: true,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;',
+    );
+  };
+  material.customProgramCacheKey = () => RELIC_PROGRAM_KEY;
+  return material;
+}
 
 /** Gem surface: matte and non-metallic so the flat-shaded facets read. */
 const GEM_ROUGHNESS = 0.35;
@@ -88,16 +117,7 @@ function disposeGem(entry: GemEntry): void {
 }
 
 function createGem(relic: RelicView): GemEntry {
-  const color = relicColor(relic.skill);
-  const material = new MeshStandardMaterial({
-    color,
-    emissive: color,
-    emissiveIntensity: GEM_EMISSIVE_INTENSITY,
-    roughness: GEM_ROUGHNESS,
-    metalness: GEM_METALNESS,
-    flatShading: true,
-  });
-  const mesh = new Mesh(relicGeometry(relic.skill), material);
+  const mesh = new Mesh(relicGeometry(relic.skill), createGemMaterial());
   mesh.name = `relic:${relic.id}`;
   return { mesh, phaseS: gemPhaseFor(relic.id), relic };
 }
