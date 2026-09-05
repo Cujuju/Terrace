@@ -7,10 +7,15 @@
 // shared.
 
 import { describe, expect, it } from 'vitest';
-import { Box3, Mesh, Vector3, type MeshStandardMaterial } from 'three';
+import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Vector3 } from 'three';
 import { readFile } from 'node:fs/promises';
-import { BOAT_WATERLINE_LIFT, createBoatModels, installBoatKit } from '../client/models.ts';
-import { parseRigAsset } from '../../../client/src/render/rigAsset.ts';
+import {
+  BOAT_FIT_TOLERANCE_CELLS,
+  BOAT_WATERLINE_LIFT,
+  createBoatModels,
+  installBoatKit,
+} from '../client/models.ts';
+import { parseRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
  * three's ImageLoader decodes through the DOM `Image` API, which does not
@@ -194,5 +199,80 @@ describe('the boat model', () => {
 
     boat.dispose();
     models.dispose();
+  });
+});
+
+// ─── what installBoatKit refuses to install ──────────────────────────────────
+//
+// Both rejections happen BEFORE the kit is replaced (client/models.ts:183-198,
+// all above the `disposeBoatKit()` at :212), so these leave the real asset
+// installed above still standing — which is itself the contract they rest on.
+
+/** The deck plane both anchor cases are measured against. */
+const DECK_TOP_Y = 0.165;
+/** A masthead the right way up, for the case where the fire column is fine. */
+const VALID_FIRE_TOP_Y = 0.779;
+
+/**
+ * A stand-in asset shaped exactly like what rigAsset hands back: a scene whose
+ * bounding box is the silhouette, plus the anchors and pivot nodes
+ * installBoatKit reads. Built here rather than loaded because the point is the
+ * install's own checks, not the parser's.
+ */
+function fakeBoatAsset(options: { silhouetteCells: number; fireTopY: number }): RigAsset {
+  const scene = new Group();
+  const hull = new Mesh(
+    new BoxGeometry(options.silhouetteCells, 0.3, options.silhouetteCells),
+    new MeshStandardMaterial(),
+  );
+  hull.name = 'hull';
+  scene.add(hull);
+  const sail = new Mesh(new BoxGeometry(0.1, 0.1, 0.1), new MeshStandardMaterial());
+  sail.name = 'sail';
+  scene.add(sail);
+  for (const name of ['oar_port_1', 'oar_port_2', 'oar_starboard_1', 'oar_starboard_2']) {
+    const pivot = new Object3D();
+    pivot.name = name;
+    scene.add(pivot);
+  }
+  const anchors = new Map<string, Vector3>([
+    ['waterline', new Vector3(0, -0.11, 0)],
+    ['deck_top', new Vector3(0, DECK_TOP_Y, 0)],
+    ['fire_top', new Vector3(0, options.fireTopY, 0)],
+  ]);
+  return {
+    scene,
+    node(name: string) {
+      const found = scene.getObjectByName(name);
+      if (found === undefined) throw new Error(`fake boat asset: node "${name}" not found`);
+      return found;
+    },
+    anchor(name: string) {
+      const found = anchors.get(name);
+      if (found === undefined) throw new Error(`fake boat asset: anchor "${name}" not found`);
+      return found.clone();
+    },
+    dispose(): void {},
+  };
+}
+
+describe('installBoatKit', () => {
+  it('refuses a silhouette wider than one cell plus the fit tolerance', () => {
+    // The fight's geometry is counted in whole cells, so a hull spilling past
+    // its own cell makes every distance in the fight read wrong. The tolerance
+    // absorbs float dust in the bounding box, never a real overhang — so a
+    // silhouette one whole tolerance past it is an overhang.
+    const overhang = 1 + BOAT_FIT_TOLERANCE_CELLS * 2;
+    expect(() =>
+      installBoatKit(fakeBoatAsset({ silhouetteCells: overhang, fireTopY: VALID_FIRE_TOP_Y })),
+    ).toThrow(/one-cell fit budget/);
+  });
+
+  it('refuses a fire_top that is not above deck_top', () => {
+    // BOAT_FIRE_COLUMN's height is fire_top.y - deck_top.y; inverted anchors
+    // give a negative height and the flame burns downward through the hull.
+    expect(() =>
+      installBoatKit(fakeBoatAsset({ silhouetteCells: 0.9, fireTopY: DECK_TOP_Y - 0.1 })),
+    ).toThrow(/is not above deck_top/);
   });
 });
