@@ -16,7 +16,7 @@
 // EVERY DRAW COMES FROM THE ENCOUNTER'S SEEDED GENERATOR, so the same seed sites
 // the same fight over the same ground on any machine.
 
-import { SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { ARENA_RADIUS_CELLS, CRUISE_ALTITUDE_WORLD_UNITS, HEIGHT_WORLD_SCALE } from '../protocol.ts';
 import { isClearOfSettlements } from './structures-bridge.ts';
 
@@ -104,8 +104,15 @@ const ALTITUDE_SAMPLE_RADII: readonly number[] = [0.5, 1];
 export interface CrashCell {
   readonly x: number;
   readonly y: number;
-  /** World-space Y of the ground there when the site was chosen — where the dive ends. */
+  /**
+   * World-space Y of the SURFACE there when the site was chosen — the ground,
+   * or the sea over it — where the dive ends.
+   */
   readonly groundY: number;
+  /** The cell is under the sea. */
+  readonly water: boolean;
+  /** How far under the sea the ground is, in bands. Zero on land. */
+  readonly depthBands: number;
 }
 
 /** Where one encounter is flown, and where it ends. Cells, integral. */
@@ -178,13 +185,12 @@ function arenaAltitude(world: SiteWorld, x: number, y: number): number {
  * Adjacent cells still overlap their craters, which is a deeper hole in the
  * overlap but never a doubled one at the centre.
  *
- * THE THREE RULES, and each one is a different kind of "no":
- *   * open land — a crater in the seabed is invisible and a fire in the sea is
- *     nothing, so a wreck that came down there would leave no trace of the
- *     event at all;
- *   * unlocked — the sculpt would otherwise rewrite ground nobody has revealed,
- *     which is terrain the player will one day meet already broken with no
- *     account of why;
+ * THE TWO RULES, and each one is a different kind of "no":
+ *   * revealed — the sculpt would otherwise rewrite ground nobody has
+ *     revealed, which is terrain the player will one day meet already broken
+ *     with no account of why. LAND OR SEA (owner, 2026-09-05): a wreck that
+ *     comes down in the water splashes instead of burning, and digs its
+ *     crater only in a shallow seabed — see CRASH_SEABED_CRATER_MAX_DEPTH_BANDS;
  *   * clear of settlements — see structures-bridge.ts for why this is asked of a
  *     sibling rather than enforced by core.
  *
@@ -208,10 +214,18 @@ function findCrashCells(
     const y = Math.round(centreY + Math.sin(angle) * distance);
     const key = y * world.worldSize + x;
     if (taken.has(key)) continue;
-    if (!isOpenLand(world, x, y)) continue;
+    if (!isRevealed(world, x, y)) continue;
     if (!isClearOfSettlements(x, y)) continue;
     taken.add(key);
-    cells.push({ x, y, groundY: world.heightAt(x, y) * HEIGHT_WORLD_SCALE });
+    const height = world.heightAt(x, y);
+    const water = height <= SEA_LEVEL;
+    cells.push({
+      x,
+      y,
+      groundY: Math.max(height, SEA_LEVEL) * HEIGHT_WORLD_SCALE,
+      water,
+      depthBands: water ? (SEA_LEVEL - height) / BAND_HEIGHT : 0,
+    });
   }
   return cells.length === wanted ? cells : null;
 }

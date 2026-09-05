@@ -21,7 +21,7 @@
 // opposite of the feature.
 
 import { Group, Vector3 } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
@@ -37,6 +37,9 @@ import {
 import {
   BURST_DRAW_OBJECTS,
   LASER_POOL_DRAW_OBJECTS,
+  SPLASH_DRAW_OBJECTS,
+  createCrashSplashes,
+  type CrashSplashes,
   createCrashBursts,
   createLaserPool,
   type CrashBursts,
@@ -150,9 +153,21 @@ let models: SaucerModels | null = null;
 let container: Group | null = null;
 let lasers: LaserPool | null = null;
 let bursts: CrashBursts | null = null;
+let splashes: CrashSplashes | null = null;
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 const views = new Map<number, SaucerView>();
 const interpolator = new SaucerInterpolator();
+/**
+ * World-space Y of the sea, where a wreck into the water bursts and splashes.
+ * SEA_LEVEL itself, as plugins/monsters reasons at length: the drawn surface
+ * sits a thirty-second of a unit above it (client config), which is nothing
+ * against a splash three hulls tall. The `: 0` annotation stops compiling the
+ * day SEA_LEVEL becomes anything else, which is when the reasoning stops
+ * holding — the client's own SEA_SURFACE_WORLD_Y is not importable here
+ * (it drags in Vite's env typings).
+ */
+const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
+
 /** The bolts and the crashes as last received — neither is interpolated. */
 let bolts: readonly LaserBolt[] = [];
 /**
@@ -348,19 +363,30 @@ function drawBolts(): void {
   }
 }
 
-/** A fireball on the ground wherever a wreck went in. */
+/** A fireball wherever a wreck went in — on the ground, or on the sea with a splash. */
 function drawCrashes(ctx: ClientPluginCtx): void {
   const rig = bursts;
-  if (rig === null) return;
+  const splashRig = splashes;
+  if (rig === null || splashRig === null) return;
   rig.begin();
+  splashRig.begin();
   for (const crash of crashes) {
+    const x = crash.x * CELL_WORLD_SIZE;
+    const z = crash.y * CELL_WORLD_SIZE;
+    if (crash.water) {
+      // ON THE SEA: the surface's own Y (client config, where the water is
+      // drawn), not the seabed under it.
+      rig.show(x, SEA_SURFACE_WORLD_Y, z, crash.age);
+      splashRig.show(x, SEA_SURFACE_WORLD_Y, z, crash.age);
+      continue;
+    }
     // A THING STANDING ON THE GROUND, so terrainHeightAt is the right oracle —
     // see this file's header. Null means the cell's chunk has not streamed in;
     // that burst is simply not drawn until it has, and this runs every frame so
     // the next one retries for free.
     const groundY = ctx.terrainHeightAt(crash.x, crash.y);
     if (groundY === null) continue;
-    rig.show(crash.x * CELL_WORLD_SIZE, groundY, crash.y * CELL_WORLD_SIZE, crash.age);
+    rig.show(x, groundY, z, crash.age);
   }
 }
 
@@ -398,7 +424,8 @@ export const clientPlugin: TerraceClientPlugin = {
     return (
       MAX_SAUCERS_PER_ENCOUNTER * SAUCER_MODEL_DRAW_OBJECTS +
       LASER_POOL_DRAW_OBJECTS +
-      BURST_DRAW_OBJECTS
+      BURST_DRAW_OBJECTS +
+      SPLASH_DRAW_OBJECTS
     );
   },
 
@@ -432,6 +459,8 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.layer.add(lasers.root);
     bursts = createCrashBursts();
     ctx.layer.add(bursts.root);
+    splashes = createCrashSplashes();
+    ctx.layer.add(splashes.root);
 
     unsubscribes = [
       ctx.onMessage(SAUCERS_STATE_MESSAGE, (payload) => {
@@ -465,6 +494,8 @@ export const clientPlugin: TerraceClientPlugin = {
     lasers = null;
     bursts?.dispose();
     bursts = null;
+    splashes?.dispose();
+    splashes = null;
 
     container?.clear();
     container = null;

@@ -69,14 +69,14 @@ import {
   CLIMB_WORLD_UNITS,
   CRASH_CRATER_DEPTH_BANDS,
   CRASH_CRATER_RADIUS_CELLS,
+  CRASH_SEABED_CRATER_MAX_DEPTH_BANDS,
   CRASH_FIRE_RING_OFFSETS,
   CRASH_WIRE_SECONDS,
   DIVE_SECONDS,
-  DOGFIGHT_HOLD_FIRE_SECONDS,
   DOGFIGHT_SECONDS,
   DOGFIGHT_SPEED_CELLS_PER_SECOND,
   ENTRY_DISTANCE_CELLS,
-  EXIT_SPEED_CELLS_PER_SECOND,
+  EXIT_SPEED_MAX_CELLS_PER_SECOND,
   FLYBY_SECONDS,
   HEIGHT_WORLD_SCALE,
   LASER_BOLT_LIFETIME_SECONDS,
@@ -89,6 +89,7 @@ import {
   LASER_MISS_OFFSET_MAX_CELLS,
   LASER_MISS_OFFSET_MIN_CELLS,
   LASER_MUZZLE_DROP_WORLD_UNITS,
+  LASER_RANGE_CELLS,
   LASER_SHOT_GAP_SECONDS,
   MAX_FACTIONS_PER_ENCOUNTER,
   MAX_SAUCERS_PER_FACTION,
@@ -267,6 +268,14 @@ interface Saucer {
   resolveFromX: number;
   resolveFromY: number;
   resolveFromAlt: number;
+  /** The speed it held then — the dive and the launch both start from it. */
+  resolveFromSpeed: number;
+  /**
+   * How long this saucer's dive takes: DIVE_SECONDS, or less when the crash
+   * cell is so close that its entry speed alone would get there sooner — a
+   * dive never flies slower than the saucer came in. Set on entering `resolve`.
+   */
+  diveSeconds: number;
   /** Set on the tick the dive lands or the climb-out finishes. */
   gone: boolean;
   /** Filled every tick; what goes on the wire. */
@@ -496,6 +505,8 @@ function begin(
         resolveFromX: 0,
         resolveFromY: 0,
         resolveFromAlt: 0,
+        resolveFromSpeed: 0,
+        diveSeconds: DIVE_SECONDS,
         gone: false,
         x: 0,
         y: 0,
@@ -699,6 +710,42 @@ function placeOnCurve(saucer: Saucer, site: ArenaSite, t: number): void {
   saucer.speed = DOGFIGHT_SPEED_CELLS_PER_SECOND;
 }
 
+const curveStartPose: CurvePose = { x: 0, y: 0, alt: 0, heading: 0 };
+
+/**
+ * The run-in at fraction `t` of APPROACH_SECONDS: inward along the saucer's
+ * own bearing, from the entry distance to where its curve begins, so it is
+ * exactly on its curve — where the dogfight begins — as the clock expires.
+ * Already on its tier, so the stack is in place when the curves begin and
+ * nobody has to climb through a neighbour. Pure in `t`, as `poseOnCurve`.
+ */
+function poseOnApproach(saucer: Saucer, site: ArenaSite, t: number, out: CurvePose): void {
+  poseOnCurve(saucer, site, 0, curveStartPose);
+  const curveStart = Math.hypot(curveStartPose.x - site.centreX, curveStartPose.y - site.centreY);
+  const distance = ENTRY_DISTANCE_CELLS + (curveStart - ENTRY_DISTANCE_CELLS) * t;
+  out.x = site.centreX + Math.cos(saucer.bearing) * distance;
+  out.y = site.centreY + Math.sin(saucer.bearing) * distance;
+  out.alt = site.altitude + saucer.altitudeOffset;
+  // Flying INWARD along its own bearing — the reciprocal of it.
+  out.heading = saucer.bearing + Math.PI;
+}
+
+/**
+ * Where a saucer that is still fighting will be `seconds` after the encounter
+ * began, across the run-in and the fight — the run-in until APPROACH_SECONDS,
+ * its curve after. What a shot is aimed with: a bolt fired on the run-in at a
+ * target about to start its curve is led onto the curve.
+ */
+function poseAtEncounterTime(saucer: Saucer, site: ArenaSite, seconds: number, out: CurvePose): void {
+  if (seconds < APPROACH_SECONDS) poseOnApproach(saucer, site, seconds / APPROACH_SECONDS, out);
+  else poseOnCurve(saucer, site, seconds - APPROACH_SECONDS, out);
+}
+
+/** Seconds since the encounter began, for a run-in or a fight — `poseAtEncounterTime`'s clock. */
+function encounterSeconds(live: Encounter): number {
+  return live.stage === 'approach' ? live.stageSeconds : APPROACH_SECONDS + live.stageSeconds;
+}
+
 /**
  * Recomputes every saucer's pose from the clocks. See this file's header for
  * why the whole path is a function of time rather than an integration.
@@ -710,20 +757,7 @@ function placeSaucers(): void {
 
   for (const saucer of live.saucers) {
     if (saucer.phase === 'approach') {
-      // Distance shrinks from the run-in start to where this saucer's own curve
-      // begins, so it is exactly on its curve — where the dogfight begins — as
-      // the clock expires.
-      const t = clamp01(live.stageSeconds / APPROACH_SECONDS);
-      placeOnCurve(saucer, site, 0);
-      const curveStart = Math.hypot(saucer.x - site.centreX, saucer.y - site.centreY);
-      const distance = ENTRY_DISTANCE_CELLS + (curveStart - ENTRY_DISTANCE_CELLS) * t;
-      saucer.x = site.centreX + Math.cos(saucer.bearing) * distance;
-      saucer.y = site.centreY + Math.sin(saucer.bearing) * distance;
-      // Coming in already on its tier, so the stack is in place when the
-      // curves begin and nobody has to climb through a neighbour.
-      saucer.alt = site.altitude + saucer.altitudeOffset;
-      // Flying INWARD along its own bearing — the reciprocal of it.
-      saucer.heading = saucer.bearing + Math.PI;
+      poseOnApproach(saucer, site, clamp01(live.stageSeconds / APPROACH_SECONDS), saucer);
       saucer.speed = APPROACH_SPEED_CELLS_PER_SECOND;
       continue;
     }
@@ -755,31 +789,42 @@ function placeSaucers(): void {
     // own bearing. Both start from the pose held when the phase began.
     const cell = saucer.crashCell;
     if (saucer.resolution === 'dive' && cell !== null) {
-      const t = clamp01(saucer.resolveSeconds / DIVE_SECONDS);
-      // t² rather than t: a wreck ACCELERATES into the ground. A straight lerp
-      // reads as a controlled descent, which is the one thing this must not look
-      // like.
-      const fall = t * t;
+      const t = clamp01(saucer.resolveSeconds / saucer.diveSeconds);
       const dx = cell.x - saucer.resolveFromX;
       const dy = cell.y - saucer.resolveFromY;
       const dAlt = cell.groundY - saucer.resolveFromAlt;
+      const length = Math.hypot(dx, dy, dAlt / CELL_WORLD_SIZE);
+      // A wreck KEEPS THE SPEED IT WAS FLYING AT into the dive and accelerates
+      // from there: the fraction of the path its entry speed would cover in
+      // the dive's time is flown linearly, the rest as t². A pure t² fall
+      // started from rest and hung in the air for the first third of a second
+      // (owner, 2026-09-05); a straight lerp reads as a controlled descent,
+      // which is the one thing this must not look like. `diveSeconds` is
+      // shortened so that a path the entry speed covers sooner is flown at
+      // that speed (entry = 1), never slower.
+      const entry =
+        length > 0 ? Math.min(1, (saucer.resolveFromSpeed * saucer.diveSeconds) / length) : 1;
+      const fall = entry * t + (1 - entry) * t * t;
       saucer.x = saucer.resolveFromX + dx * fall;
       saucer.y = saucer.resolveFromY + dy * fall;
       saucer.alt = saucer.resolveFromAlt + dAlt * fall;
       saucer.heading = Math.atan2(dy, dx);
-      // The path's own speed — d(t²)/dt times its length, the vertical leg in
-      // cells — so the wire says how fast it is really falling.
-      const length = Math.hypot(dx, dy, dAlt / CELL_WORLD_SIZE);
-      saucer.speed = (2 * t * length) / DIVE_SECONDS;
+      // The path's own speed — d(fall)/dt times its length, the vertical leg
+      // in cells — so the wire says how fast it is really falling.
+      saucer.speed = ((entry + 2 * (1 - entry) * t) * length) / saucer.diveSeconds;
       continue;
     }
+    // THE LAUNCH: speed grows from the speed it had with the SQUARE of the
+    // time since — v(t) = v0 + (vmax − v0)·t² — so the distance run is its
+    // integral, and the climb takes the same shape (RESOLVE_SECONDS, protocol).
     const t = clamp01(saucer.resolveSeconds / RESOLVE_SECONDS);
-    const run = EXIT_SPEED_CELLS_PER_SECOND * RESOLVE_SECONDS * t;
+    const gain = EXIT_SPEED_MAX_CELLS_PER_SECOND - saucer.resolveFromSpeed;
+    const run = RESOLVE_SECONDS * (saucer.resolveFromSpeed * t + (gain * t * t * t) / 3);
     saucer.x = saucer.resolveFromX + Math.cos(saucer.bearing) * run;
     saucer.y = saucer.resolveFromY + Math.sin(saucer.bearing) * run;
-    saucer.alt = saucer.resolveFromAlt + EXIT_CLIMB_WORLD_UNITS * t;
+    saucer.alt = saucer.resolveFromAlt + EXIT_CLIMB_WORLD_UNITS * t * t * t;
     saucer.heading = saucer.bearing;
-    saucer.speed = EXIT_SPEED_CELLS_PER_SECOND;
+    saucer.speed = saucer.resolveFromSpeed + gain * t * t;
   }
 }
 
@@ -787,9 +832,9 @@ function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value;
 }
 
-/** Still fighting: in the sky, taking and dealing shots. */
+/** Still fighting: in the sky, taking and dealing shots — on the run-in or on its curve. */
 function isFighting(saucer: Saucer): boolean {
-  return saucer.phase === 'dogfight';
+  return saucer.phase === 'dogfight' || saucer.phase === 'approach';
 }
 
 /**
@@ -890,8 +935,14 @@ function advanceFight(dt: number): void {
       shooter.burstTarget = target === null ? null : target.id;
     }
     if (target === null) continue;
+    const bolt = fireAt(live, shooter, target);
+    if (bolt === null) {
+      // OUT OF RANGE (the run-in, mostly): hold the burst, try again next tick.
+      shooter.fireIn = 0;
+      continue;
+    }
     shooter.lastTarget = target.id;
-    live.bolts.push(fireAt(live, shooter, target));
+    live.bolts.push(bolt);
 
     shooter.shotsLeft--;
     if (shooter.shotsLeft > 0) {
@@ -933,25 +984,31 @@ const AIM_PASSES = 8;
  * LASER_MISS_OFFSET to one side, so the bolt visibly passes the hull instead
  * of flying through it for no effect.
  *
- * Poses are read off the curves at the fight clock rather than from the wire
- * fields, because the fight advances BEFORE the poses are recomputed each tick
- * (`advanceEncounter`) — the wire fields are a tick stale here — and because
- * predicting the target needs the curve anyway. Both saucers are in
- * `dogfight`, so both are on their curves.
+ * Poses are read off the paths at the encounter clock rather than from the
+ * wire fields, because the fight advances BEFORE the poses are recomputed
+ * each tick (`advanceEncounter`) — the wire fields are a tick stale here —
+ * and because predicting the target needs the path anyway. Both saucers are
+ * fighting, so both are on their run-in or their curve.
+ *
+ * NULL WHEN THE SHOT WOULD BE LONGER THAN LASER_RANGE_CELLS — the aimed shot,
+ * so a target flying away is out of range a little sooner than one closing.
+ * Nothing is drawn from the generator for a shot not taken, so the range
+ * check leaves the fight's sequence of rolls exactly as it would have been.
  *
  * THE DRAW ORDER IS FIXED — hit, then (for a miss only) side and offset — so
  * the same seed fires the same fight.
  */
-function fireAt(live: Encounter, shooter: Saucer, target: Saucer): Bolt {
-  const now = live.stageSeconds;
-  poseOnCurve(shooter, live.site, now, shooterPose);
+function fireAt(live: Encounter, shooter: Saucer, target: Saucer): Bolt | null {
+  const now = encounterSeconds(live);
+  poseAtEncounterTime(shooter, live.site, now, shooterPose);
   shooterPose.alt -= LASER_MUZZLE_DROP_WORLD_UNITS;
 
-  poseOnCurve(target, live.site, now, targetPose);
+  poseAtEncounterTime(target, live.site, now, targetPose);
   for (let pass = 0; pass < AIM_PASSES; pass++) {
     const travel = shotLengthCells(shooterPose, targetPose) / LASER_BOLT_SPEED_CELLS_PER_SECOND;
-    poseOnCurve(target, live.site, now + travel, targetPose);
+    poseAtEncounterTime(target, live.site, now + travel, targetPose);
   }
+  if (shotLengthCells(shooterPose, targetPose) > LASER_RANGE_CELLS) return null;
 
   const hit = live.random() < LASER_HIT_CHANCE;
   if (!hit) {
@@ -1013,6 +1070,16 @@ function resolveAs(saucer: Saucer, resolution: Resolution, cell: CrashCell | nul
   saucer.resolveFromX = saucer.x;
   saucer.resolveFromY = saucer.y;
   saucer.resolveFromAlt = saucer.alt;
+  saucer.resolveFromSpeed = saucer.speed;
+  saucer.diveSeconds = DIVE_SECONDS;
+  if (cell !== null && saucer.speed > 0) {
+    const length = Math.hypot(
+      cell.x - saucer.x,
+      cell.y - saucer.y,
+      (cell.groundY - saucer.alt) / CELL_WORLD_SIZE,
+    );
+    saucer.diveSeconds = Math.min(DIVE_SECONDS, length / saucer.speed);
+  }
 }
 
 /** The distinct factions with a saucer still fighting, in roster order. */
@@ -1058,11 +1125,21 @@ function decideOnTime(live: Encounter): void {
  * sculpt moves the ground, and a fire lit before it would be lit on cells the
  * crater then swallows.
  *
+ * INTO THE SEA: no fire — nothing burns on water — and the crater only where
+ * the seabed is shallow (CRASH_SEABED_CRATER_MAX_DEPTH_BANDS). Deep water
+ * swallows the wreck and the world is unchanged; the splash is the client's.
+ *
  * NEITHER CAN BE VETOED, and the crash cell was therefore vetted at siting
  * rather than here — see structures-bridge.ts for the source reading behind
  * that.
  */
 function applyCrash(world: EncounterWorld, cell: CrashCell): void {
+  if (cell.water) {
+    if (cell.depthBands <= CRASH_SEABED_CRATER_MAX_DEPTH_BANDS) {
+      world.sculpt(cell.x, cell.y, CRASH_CRATER_RADIUS_CELLS, CRASH_CRATER_AMOUNT);
+    }
+    return;
+  }
   world.sculpt(cell.x, cell.y, CRASH_CRATER_RADIUS_CELLS, CRASH_CRATER_AMOUNT);
 
   // Fixed iteration order over a fixed table (../protocol.ts) — the same crash
@@ -1119,16 +1196,22 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
     return { changed: true, crashed: [], ended: false };
   }
 
-  if (live.stage === 'approach') {
-    if (live.stageSeconds >= APPROACH_SECONDS) {
-      for (const saucer of live.saucers) saucer.phase = 'dogfight';
-      enterStage(live, 'dogfight');
-    }
-  } else if (live.stage === 'dogfight') {
-    // THE HOLD-FIRE FLOOR: the curves are flown from the first second, but no
-    // shot is fired — and so nobody can go down — before it lifts.
-    if (live.stageSeconds >= DOGFIGHT_HOLD_FIRE_SECONDS) advanceFight(dt);
-    if (live.stageSeconds >= DOGFIGHT_SECONDS && fightingFactions(live).length > 1) {
+  if (live.stage === 'approach' && live.stageSeconds >= APPROACH_SECONDS) {
+    // Onto the curves — those still flying in; one shot down on the run-in is
+    // already diving.
+    for (const saucer of live.saucers) if (saucer.phase === 'approach') saucer.phase = 'dogfight';
+    enterStage(live, 'dogfight');
+  }
+  if (live.stage === 'approach' || live.stage === 'dogfight') {
+    // THE FIGHT RUNS FROM THE FIRST TICK, run-in included (protocol.ts, on the
+    // hold-fire floor that is no more); range is what keeps the first bursts
+    // for the moment the factions close.
+    advanceFight(dt);
+    if (
+      live.stage === 'dogfight' &&
+      live.stageSeconds >= DOGFIGHT_SECONDS &&
+      fightingFactions(live).length > 1
+    ) {
       decideOnTime(live);
     }
     if (fightingFactions(live).length <= 1) {
@@ -1145,14 +1228,14 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
   for (const saucer of live.saucers) {
     if (saucer.phase !== 'resolve') continue;
     saucer.resolveSeconds += dt;
-    if (saucer.resolveSeconds < (saucer.resolution === 'dive' ? DIVE_SECONDS : RESOLVE_SECONDS)) {
+    if (saucer.resolveSeconds < (saucer.resolution === 'dive' ? saucer.diveSeconds : RESOLVE_SECONDS)) {
       continue;
     }
     saucer.gone = true;
     const cell = saucer.crashCell;
     if (saucer.resolution !== 'dive' || cell === null) continue;
     applyCrash(world, cell);
-    live.crashes.push({ id: saucer.id, x: cell.x, y: cell.y, age: 0 });
+    live.crashes.push({ id: saucer.id, x: cell.x, y: cell.y, water: cell.water, age: 0 });
     crashed.push(cell);
   }
   if (live.saucers.some((saucer) => saucer.gone)) {
@@ -1224,5 +1307,11 @@ export function encounterBolts(): readonly LaserBolt[] {
 export function encounterCrashes(): readonly CrashState[] {
   const live = encounter;
   if (live === null) return [];
-  return live.crashes.map((crash) => ({ id: crash.id, x: crash.x, y: crash.y, age: crash.age }));
+  return live.crashes.map((crash) => ({
+    id: crash.id,
+    x: crash.x,
+    y: crash.y,
+    water: crash.water,
+    age: crash.age,
+  }));
 }

@@ -252,7 +252,13 @@ function visibleItems(): VisibleItem[] {
   for (const crash of encounterCrashes()) {
     items.push({
       kind: 'crash',
-      crash: { id: crash.id, x: crash.x, y: crash.y, age: roundBroadcastPosition(crash.age) },
+      crash: {
+        id: crash.id,
+        x: crash.x,
+        y: crash.y,
+        water: crash.water,
+        age: roundBroadcastPosition(crash.age),
+      },
       x: crash.x,
       y: crash.y,
     });
@@ -336,8 +342,10 @@ function simulate(world: WorldApi, dt: number): void {
     // THE CHRONICLE'S EAR, and anyone else's. Emitted on the tick of impact,
     // once per wreck, with the cell the crater is centred on — validated
     // structurally by whoever consumes it, as every world event is.
-    world.emitEvent(SAUCERS_CRASHED_EVENT, { x: crash.x, y: crash.y });
-    console.info(`[${SAUCERS_PLUGIN_NAME}] a saucer went down at (${crash.x}, ${crash.y})`);
+    world.emitEvent(SAUCERS_CRASHED_EVENT, { x: crash.x, y: crash.y, water: crash.water });
+    console.info(
+      `[${SAUCERS_PLUGIN_NAME}] a saucer went ${crash.water ? 'into the sea' : 'down'} at (${crash.x}, ${crash.y})`,
+    );
   }
 
   if (tick.changed) broadcastPending = true;
