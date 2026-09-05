@@ -5,7 +5,7 @@
 // wired into models.ts. Not part of the shipped app: reached only through
 // preview-species.html.
 //
-//   ?species=<fish|grazer|ibex|bison|ray|shark|eel|angelfish> — defaults to "fish"
+//   ?species=<fish|grazer|ibex|bison|ray|shark|eel|angelfish|whale-humpback> — defaults to "fish"
 //   ?view=<iso|side|top|front>                     — defaults to "iso"
 //   ?t=<seconds>                                   — animation clock, default 0
 //   ?scale=<n>                                     — instance scale, default 1
@@ -44,6 +44,7 @@ import { buildRay } from '../../plugins/wildlife/client/species/ray.ts';
 import { buildShark } from '../../plugins/wildlife/client/species/shark.ts';
 import { buildEel } from '../../plugins/wildlife/client/species/eel.ts';
 import { buildAngelfish } from '../../plugins/wildlife/client/species/angelfish.ts';
+import { buildHumpback } from '../../plugins/wildlife/client/species/humpback.ts';
 
 const BUILDERS: Readonly<Record<string, SpeciesModelBuilder>> = {
   fish: buildFish,
@@ -54,6 +55,7 @@ const BUILDERS: Readonly<Record<string, SpeciesModelBuilder>> = {
   shark: buildShark,
   eel: buildEel,
   angelfish: buildAngelfish,
+  'whale-humpback': buildHumpback,
 };
 
 const SKY_COLOR = 0x9fc7e8;
