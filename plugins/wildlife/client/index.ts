@@ -277,6 +277,7 @@ function drawnPoseOf(id: number): MoverPose | null {
  *   | eel                               |        1 |
  *   | angelfish                         |        1 |
  *   | whale-humpback (built asset)      |        1 |
+ *   | whale-blue (built asset)          |        1 |
  *   | bird                              |        1 |
  *   | deepsea                           |        2 |
  *   | whale × PROCEDURAL_WHALE_BODIES   |        2 |
@@ -285,13 +286,14 @@ function drawnPoseOf(id: number): MoverPose | null {
  * ONE surface because their kit welds every extrusion (species/bodyKit.ts:
  * rigSkin groups by material signature AND by indexed/non-indexed, and colour
  * is not in the signature). The deep-sea creature's lure is UNLIT, and each
- * PROCEDURAL whale body (whaleSpecies.ts: blue, sperm) bakes to two because
- * its swept hull is INDEXED while its extruded fins are not — rigSkin.ts
+ * PROCEDURAL whale body (whaleSpecies.ts: sperm) bakes to two because its
+ * swept hull is INDEXED while its extruded fins are not — rigSkin.ts
  * `bakeRig` appends the indexing to the material signature rather than
  * expand the hull (client/src/render/rigSkin.ts ~L302-309) — those are the
- * only two-surface herds. The humpback, a Blender-built file whose every
- * mesh is indexed under one roughness, bakes to ONE (measured under Node,
- * 2026-09-04, plugins/wildlife/.verify-humpback-asset.mts).
+ * only two-surface herds. The humpback and the blue whale, Blender-built
+ * files whose every mesh is indexed under one roughness, bake to ONE each
+ * (measured under Node, 2026-09-04/05, plugins/wildlife/
+ * .verify-humpback-asset.mts and .verify-blue-whale-asset.mts).
  *
  * THE GRAZER AND THE WOLF ARE NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04):
  * they are downloaded files, so their surface counts are properties of art this
@@ -305,7 +307,7 @@ function drawnPoseOf(id: number): MoverPose | null {
  * a species that quietly gains a surface fails at boot rather than showing up
  * as a budget breach half a second into the first frame.
  */
-const SINGLE_SURFACE_SPECIES = 9; // fish, ibex, bison, ray, shark, eel, angelfish, humpback, bird
+const SINGLE_SURFACE_SPECIES = 10; // fish, ibex, bison, ray, shark, eel, angelfish, humpback, blue whale, bird
 const TWO_SURFACE_SPECIES = 1 + PROCEDURAL_WHALE_BODIES; // deepsea, and each procedural whale body
 /**
  * The DOWNLOADED grazer's surfaces, on their own line because it is the one

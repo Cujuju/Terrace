@@ -1,4 +1,4 @@
-// The three whales, as anatomy — two of them still built here.
+// The three whales, as anatomy — one of them still built here.
 //
 // One "whale" on the wire is drawn as one of three real species, chosen from
 // the creature's id so an individual keeps the same body for its whole life.
@@ -7,14 +7,16 @@
 // point of drawing three is that you can tell which is which at a glance.
 //
 // SINCE 2026-09-04 (fish+whales arc, pass 6) the HUMPBACK is a Blender-built
-// asset — species/humpback.ts, ../assets/humpback.glb — and its procedural
-// set is gone from here (its profile numbers are the reference silhouette in
-// tools/blender/build_humpback.py's header). The blue and sperm bodies stay
-// procedural until their own passes; `buildWhaleGeometrySets` returns those
-// two, each tagged with its species, and models.ts looks a body up by that
-// tag, never by index. WHALE_SPECIES and WHALE_ENVELOPE are unchanged: the
-// order is a contract with every living whale, and the envelope is the
-// placement contract every body — asset or procedural — fills or fits.
+// asset — species/humpback.ts, ../assets/humpback.glb — and since pass 7
+// (2026-09-05) so is the BLUE WHALE — species/blueWhale.ts,
+// ../assets/blue-whale.glb; their procedural sets are gone from here (the
+// profile numbers are the reference silhouettes in tools/blender/
+// build_humpback.py's and build_blue_whale.py's headers). The sperm body
+// stays procedural until its own pass; `buildWhaleGeometrySets` returns that
+// one, tagged with its species, and models.ts looks a body up by that tag,
+// never by index. WHALE_SPECIES and WHALE_ENVELOPE are unchanged: the order
+// is a contract with every living whale, and the envelope is the placement
+// contract every body — asset or procedural — fills or fits.
 //
 // Sizing: whales draw their size class PER MEMBER (WHALE_SIZE_WEIGHTS with
 // sizeDraw 'per-member' on the server, and WILDLIFE_SIZE_MODEL_SCALE applied to
@@ -42,11 +44,11 @@ export const WHALE_SPECIES = ['humpback', 'blue', 'sperm'] as const;
 export type WhaleSpecies = (typeof WHALE_SPECIES)[number];
 
 /**
- * How many of those bodies are still built HERE (blue, sperm) rather than
- * loaded from a file: what index.ts's draw-object table counts as the
- * two-surface whale herds.
+ * How many of those bodies are still built HERE (sperm) rather than loaded
+ * from a file: what index.ts's draw-object table counts as the two-surface
+ * whale herds.
  */
-export const PROCEDURAL_WHALE_BODIES = 2;
+export const PROCEDURAL_WHALE_BODIES = 1;
 
 /**
  * The authored envelope every whale body is fitted into, in world units,
@@ -94,91 +96,6 @@ function part(
   rotation: readonly [number, number, number] = [0, 0, 0],
 ): WhalePart {
   return { geometry, position, rotation };
-}
-
-// ── Blue whale ──────────────────────────────────────────────────────────────
-// The opposite animal: long and slim, a flat spade of a rostrum with one ridge
-// down it, ventral pleats at the throat, and a nub of a dorsal set three
-// quarters of the way back.
-
-const BLUE_MAX_HALF_WIDTH = 0.46;
-const BLUE_PLEAT_START = 0.03;
-const BLUE_PLEAT_END = 0.34;
-const BLUE_PLEAT_COUNT = 11;
-const BLUE_PLEAT_DEPTH = 0.016;
-const BLUE_RIDGE_END = 0.16;
-const BLUE_RIDGE_HEIGHT = 0.022;
-
-function blueSet(): WhaleGeometrySet {
-  const width = profileFromPoints([
-    [0.00, 0.10], [0.03, 0.26], [0.08, 0.45], [0.14, 0.62], [0.22, 0.80],
-    [0.32, 0.93], [0.42, 1.00], [0.52, 0.98], [0.62, 0.89], [0.72, 0.73],
-    [0.80, 0.56], [0.87, 0.39], [0.93, 0.25], [0.97, 0.15], [1.00, 0.08],
-  ]);
-  // Wider than tall at the head, taller than wide at the tail. That inversion
-  // along one body is the species, and the reason this is a sweep and not a
-  // lathe.
-  const heightRatio = profileFromPoints([
-    [0.00, 0.62], [0.08, 0.66], [0.16, 0.78], [0.28, 0.98], [0.42, 1.06],
-    [0.58, 1.08], [0.72, 1.24], [0.84, 1.62], [0.93, 2.05], [1.00, 2.30],
-  ]);
-  const halfWidth: BodyProfile = (t) => Math.max(0.028, width(t) * BLUE_MAX_HALF_WIDTH);
-  const hull = sweptHull({
-    length: AUTHORED_LENGTH, rings: 130, segments: 56,
-    halfWidth,
-    halfHeight: (t) => halfWidth(t) * heightRatio(t),
-    displace: (t, theta) => {
-      let d = 0;
-      const up = Math.cos(theta - Math.PI / 2);
-      if (t < BLUE_RIDGE_END && up > 0.55) {
-        d += BLUE_RIDGE_HEIGHT * (1 - t / BLUE_RIDGE_END) * Math.pow((up - 0.55) / 0.45, 2);
-      }
-      if (t > BLUE_PLEAT_START && t < BLUE_PLEAT_END && up < -0.25) {
-        const along = Math.sin(Math.PI * (t - BLUE_PLEAT_START) / (BLUE_PLEAT_END - BLUE_PLEAT_START));
-        const across = Math.max(0, Math.cos(theta * BLUE_PLEAT_COUNT));
-        d -= BLUE_PLEAT_DEPTH * along * across * Math.min(1, (-up - 0.25) / 0.5);
-      }
-      return d;
-    },
-  });
-
-  const bodyParts: WhalePart[] = [part(hull)];
-  const PECTORAL_ROOT_X = 1.28;
-  for (const sign of [1, -1]) {
-    bodyParts.push(part(
-      finGeometry((shape, s) => {
-        shape.moveTo(0.26, 0);
-        shape.quadraticCurveTo(0.20, s * 0.34, 0.02, s * 0.78);
-        shape.quadraticCurveTo(-0.06, s * 0.92, -0.16, s * 0.86);
-        shape.quadraticCurveTo(-0.20, s * 0.50, -0.24, s * 0.20);
-        shape.quadraticCurveTo(-0.16, s * 0.06, 0.26, 0);
-      }, sign, 0.055),
-      [PECTORAL_ROOT_X, -0.10, sign * seatZ(halfWidth, PECTORAL_ROOT_X)],
-      [sign * 0.22, sign * -0.30, -0.10],
-    ));
-  }
-  // Seated INTO the back so there is no daylight under the fin, which is what
-  // made an earlier version read as a fin hovering above the animal.
-  const BLUE_DORSAL_X = -1.55; // three quarters back, where the species carries it
-  bodyParts.push(part(uprightFin((shape) => {
-    shape.moveTo(0.16, 0);
-    shape.quadraticCurveTo(0.08, 0.13, -0.10, 0.20);
-    shape.quadraticCurveTo(-0.17, 0.16, -0.15, 0.07);
-    shape.lineTo(-0.18, 0);
-    shape.lineTo(0.16, 0);
-  }, 0.055), [BLUE_DORSAL_X, seatY((t) => halfWidth(t) * heightRatio(t), BLUE_DORSAL_X), 0]));
-
-  const flukeParts = [1, -1].map((sign) => part(
-    finGeometry((shape, s) => {
-      shape.moveTo(0.28, 0);
-      shape.quadraticCurveTo(0.14, s * 0.60, -0.20, s * 1.34);
-      shape.lineTo(-0.42, s * 1.24);
-      shape.lineTo(-0.34, s * 0.10);
-      shape.quadraticCurveTo(-0.20, s * 0.03, 0.28, 0);
-    }, sign, 0.06),
-    [-2.80, 0, 0],
-  ));
-  return finish('blue', bodyParts, flukeParts);
 }
 
 // ── Sperm whale ─────────────────────────────────────────────────────────────
@@ -354,7 +271,7 @@ function finish(
  * the geometries are shared thereafter.
  */
 export function buildWhaleGeometrySets(): readonly WhaleGeometrySet[] {
-  const sets = [blueSet(), spermSet()];
+  const sets = [spermSet()];
   if (sets.length !== PROCEDURAL_WHALE_BODIES) {
     throw new Error(`whaleSpecies: ${String(sets.length)} procedural bodies built but PROCEDURAL_WHALE_BODIES says ${String(PROCEDURAL_WHALE_BODIES)}`);
   }

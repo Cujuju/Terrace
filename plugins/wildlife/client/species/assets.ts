@@ -1,5 +1,5 @@
 // The species drawn from a file — Blender-built (fish, shark, ray, eel, angelfish, the humpback
-// whale body) or downloaded and rigidified (the deer grazer) — and where each file is served
+// and blue whale bodies) or downloaded and rigidified (the deer grazer) — and where each file is served
 // from. THE ONE LIST.
 //
 // Two consumers install these: the shipped plugin's `preload` (../index.ts)
@@ -26,6 +26,8 @@ import { ANGELFISH_ASSET } from './angelfish.ts';
 import angelfishUrl from '../assets/angelfish.glb?url';
 import { HUMPBACK_ASSET } from './humpback.ts';
 import humpbackUrl from '../assets/humpback.glb?url';
+import { BLUE_WHALE_ASSET } from './blueWhale.ts';
+import blueWhaleUrl from '../assets/blue-whale.glb?url';
 import { GRAZER_ASSET } from './grazer.ts';
 import grazerUrl from '../assets/grazer-deer.glb?url';
 import { WOLF_ASSET } from './wolf.ts';
@@ -44,6 +46,7 @@ export const SPECIES_ASSETS: readonly SpeciesAssetEntry[] = [
   { spec: EEL_ASSET, url: eelUrl },
   { spec: ANGELFISH_ASSET, url: angelfishUrl },
   { spec: HUMPBACK_ASSET, url: humpbackUrl },
+  { spec: BLUE_WHALE_ASSET, url: blueWhaleUrl },
   { spec: GRAZER_ASSET, url: grazerUrl },
   { spec: WOLF_ASSET, url: wolfUrl },
 ];
