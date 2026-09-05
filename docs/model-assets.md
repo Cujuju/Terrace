@@ -9,8 +9,15 @@ broken; the rest is enforced offline by the tools below.
 
 ## Units, axes, origin
 
-Units are cells: 1 unit = 1 cell. Y up. Forward = +X — a model facing −X walks,
-sails or swims backwards, and nothing at runtime can tell.
+Units are WORLD units: 1 unit is one unit of the space three draws in, and a
+model carries no runtime scale, so the size it is authored at is the size it is
+drawn at. Y up. Forward = +X — a model facing −X walks, sails or swims
+backwards, and nothing at runtime can tell.
+
+A cell is `CELL_WORLD_SIZE` world units (`shared/src/constants.ts:50`), so a
+footprint that starts life on the server, stated in cells, is converted with
+`cellsAcross` before it becomes an asset footprint — at that one boundary, never
+inside the asset.
 
 The origin is where the game holds the model, and that differs by family:
 
@@ -26,10 +33,10 @@ the last.
 
 ## Footprint
 
-An asset is budgeted in whole cells, because the game's geometry is counted in
-cells: the war boat gets 1×1, a wolf-sized animal about 0.8×0.8. The whole
+An asset is budgeted in world units, the unit its bounding box is measured in:
+the war boat gets 1×1, a wolf-sized animal about 0.8×0.8. The whole
 silhouette — oars out, tail out, wings out — must fit inside that budget plus a
-small tolerance for float dust (`ASSET_FIT_TOLERANCE_CELLS`, 0.02, in
+small tolerance for float dust (`ASSET_FIT_TOLERANCE_WORLD_UNITS`, 0.02, in
 `client/src/render/rigAsset.ts`; the fit is authored, not fitted, so the
 tolerance never absorbs a real overhang).
 
@@ -140,8 +147,8 @@ passed INTO Blender must be Windows paths (`wslpath -w`):
    stats block `stat_glb.py` prints, so the two can be diffed.
 
 2. **`stat_glb.py <in.glb> [--footprint X Z] [--height H] [--tolerance T]`** —
-   an independent re-import of the finished file: bounding box in cells, min-Y,
-   per-mesh tri count / material / uv layers, each material's filled PBR slots,
+   an independent re-import of the finished file: bounding box in world units,
+   min-Y, per-mesh tri count / material / uv layers, each material's filled slots,
    each image's size and colour space, every Empty's position, and whether any
    armature or skinned mesh survived. With a footprint it exits non-zero on a
    model that does not fit.
