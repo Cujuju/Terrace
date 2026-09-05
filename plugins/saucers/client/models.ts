@@ -55,6 +55,7 @@ import {
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
 import { CELL_WORLD_SIZE, SAUCER_VARIANT_COUNT } from '../protocol.ts';
+import { factionColour } from './factions.ts';
 
 /**
  * The authored outer diameter, in cells.
@@ -334,12 +335,12 @@ const FALLBACK_TORUS_SEGMENTS = 24;
 const FALLBACK_TUBE_SEGMENTS = 8;
 
 /**
- * The three stand-in liveries, one per variant — so the fallback still tells the
- * two saucers in a fight apart, which is the one thing the renderer needs from a
- * body it did not author.
+ * The three stand-in hulls, one per variant — so the fallback still tells the
+ * factions in a fight apart, which is the one thing the renderer needs from a
+ * body it did not author. Its lights wear the faction colour (./factions.ts),
+ * the same one its bolts do.
  */
 const FALLBACK_HULL_COLOURS: readonly ColorRepresentation[] = [0x9aa4b2, 0xb0a08a, 0x8f9a86];
-const FALLBACK_LIGHT_COLOURS: readonly ColorRepresentation[] = [0x66ccff, 0xffaa44, 0x88ff99];
 
 /**
  * The FALLBACK strip's emissive intensity at rest.
@@ -425,7 +426,7 @@ function createFallbackWorkshop(): FallbackWorkshop {
 function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): SaucerModel {
   const radius = SAUCER_DIAMETER_WORLD_UNITS / 2;
   const hullColour = FALLBACK_HULL_COLOURS[variant] ?? FALLBACK_HULL_COLOURS[0]!;
-  const lightColour = FALLBACK_LIGHT_COLOURS[variant] ?? FALLBACK_LIGHT_COLOURS[0]!;
+  const lightColour = factionColour(variant);
 
   const hullMaterial = new MeshStandardMaterial({ color: hullColour, roughness: 0.35, metalness: 0.6 });
   const domeMaterial = new MeshStandardMaterial({

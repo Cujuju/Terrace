@@ -1,5 +1,5 @@
-// WHERE A DOGFIGHT HAPPENS: the arena, the altitude it is flown at, and the cell
-// the loser goes into.
+// WHERE A DOGFIGHT HAPPENS: the arena, the altitude it is flown at, and the
+// cells the losers go into — one per saucer that could be shot down.
 //
 // ALL THREE ARE CHOSEN ONCE, UP FRONT, AND AN ENCOUNTER THAT CANNOT GET ALL
 // THREE DOES NOT START. That is the load-bearing decision in this file.
@@ -44,8 +44,13 @@ export interface SiteWorld {
  */
 const ARENA_SITE_ATTEMPTS = 24;
 
-/** Attempts made to find a crash cell inside a chosen arena. Same reasoning. */
-const CRASH_SITE_ATTEMPTS = 24;
+/**
+ * Attempts made PER CRASH CELL WANTED inside a chosen arena. Same reasoning as
+ * the arena's, scaled: an encounter of fifteen needs fourteen DISTINCT cells
+ * out of the arena's ~200, and later draws are refused more often because
+ * earlier draws already took the cell.
+ */
+const CRASH_SITE_ATTEMPTS_PER_CELL = 8;
 
 /**
  * How far around the arena centre must also be unlocked land, in cells.
@@ -88,13 +93,25 @@ const ALTITUDE_SAMPLE_SPOKES = 16;
 /** Fractions of the arena radius each bearing is sampled at. */
 const ALTITUDE_SAMPLE_RADII: readonly number[] = [0.5, 1];
 
+/** A cell a wreck may go into. Integral. */
+export interface CrashCell {
+  readonly x: number;
+  readonly y: number;
+  /** World-space Y of the ground there when the site was chosen — where the dive ends. */
+  readonly groundY: number;
+}
+
 /** Where one encounter is flown, and where it ends. Cells, integral. */
 export interface ArenaSite {
   readonly centreX: number;
   readonly centreY: number;
-  readonly crashX: number;
-  readonly crashY: number;
-  /** World-space Y the pair cruise and fight at. */
+  /**
+   * One legal, DISTINCT cell per wreck the encounter might leave — exactly as
+   * many as were asked for, in the order they were drawn. Saucer N that goes
+   * down takes cell N; the order carries no meaning beyond being fixed.
+   */
+  readonly crashCells: readonly CrashCell[];
+  /** World-space Y the saucers cruise and fight at. */
   readonly altitude: number;
 }
 
@@ -142,7 +159,13 @@ function arenaAltitude(world: SiteWorld, x: number, y: number): number {
 }
 
 /**
- * A cell inside the arena the wreck may legally go into, or null.
+ * `wanted` distinct cells inside the arena a wreck may legally go into, or null
+ * if the arena cannot supply that many.
+ *
+ * DISTINCT, because the crater is two bands deep and two wrecks on one cell
+ * would dig the four-band hole CRASH_CRATER_DEPTH_BANDS was chosen to avoid.
+ * Adjacent cells still overlap their craters, which is a deeper hole in the
+ * overlap but never a doubled one at the centre.
  *
  * THE THREE RULES, and each one is a different kind of "no":
  *   * open land — a crater in the seabed is invisible and a fire in the sea is
@@ -157,22 +180,29 @@ function arenaAltitude(world: SiteWorld, x: number, y: number): number {
  * DRAWN UNIFORMLY OVER THE DISC'S AREA (the `sqrt`), not over its radius, which
  * is what stops every wreck landing near the middle of the arena.
  */
-function findCrashCell(
+function findCrashCells(
   world: SiteWorld,
   centreX: number,
   centreY: number,
   random: () => number,
-): { x: number; y: number } | null {
-  for (let attempt = 0; attempt < CRASH_SITE_ATTEMPTS; attempt++) {
+  wanted: number,
+): CrashCell[] | null {
+  const cells: CrashCell[] = [];
+  const taken = new Set<number>();
+  const attempts = CRASH_SITE_ATTEMPTS_PER_CELL * wanted;
+  for (let attempt = 0; attempt < attempts && cells.length < wanted; attempt++) {
     const angle = random() * Math.PI * 2;
     const distance = Math.sqrt(random()) * ARENA_RADIUS_CELLS;
     const x = Math.round(centreX + Math.cos(angle) * distance);
     const y = Math.round(centreY + Math.sin(angle) * distance);
+    const key = y * world.worldSize + x;
+    if (taken.has(key)) continue;
     if (!isOpenLand(world, x, y)) continue;
     if (!isClearOfSettlements(x, y)) continue;
-    return { x, y };
+    taken.add(key);
+    cells.push({ x, y, groundY: world.heightAt(x, y) * HEIGHT_WORLD_SCALE });
   }
-  return null;
+  return cells.length === wanted ? cells : null;
 }
 
 /**
@@ -184,23 +214,21 @@ function findCrashCell(
  * nothing this time, exactly as tornado's `trySpawnTornado` reports a cloud with
  * no land under it.
  */
-export function findArenaSite(world: SiteWorld, random: () => number): ArenaSite | null {
+export function findArenaSite(
+  world: SiteWorld,
+  random: () => number,
+  crashCellsWanted: number,
+): ArenaSite | null {
   for (let attempt = 0; attempt < ARENA_SITE_ATTEMPTS; attempt++) {
     const centreX = Math.floor(random() * world.worldSize);
     const centreY = Math.floor(random() * world.worldSize);
     if (!isOpenLand(world, centreX, centreY)) continue;
     if (!hasArenaClearance(world, centreX, centreY)) continue;
 
-    const crash = findCrashCell(world, centreX, centreY, random);
-    if (crash === null) continue;
+    const crashCells = findCrashCells(world, centreX, centreY, random, crashCellsWanted);
+    if (crashCells === null) continue;
 
-    return {
-      centreX,
-      centreY,
-      crashX: crash.x,
-      crashY: crash.y,
-      altitude: arenaAltitude(world, centreX, centreY),
-    };
+    return { centreX, centreY, crashCells, altitude: arenaAltitude(world, centreX, centreY) };
   }
   return null;
 }
@@ -211,8 +239,8 @@ export function findArenaSite(world: SiteWorld, random: () => number): ArenaSite
  *
  * IT IS NOT `searchOutwardFromCentre` (server/src/plugins/kit/devSite.ts), and
  * the difference is what has to be found: that kit finds ONE cell with clearance
- * around it, and an encounter needs a centre AND a crash cell inside the arena
- * around it that clears the towns. Running the kit and then failing the second
+ * around it, and an encounter needs a centre AND its crash cells inside the
+ * arena around it that clear the towns. Running the kit and then failing the second
  * test would give up on a site the ring search had already committed to. What is
  * shared is the SHAPE — rings outward from a point, coarse steps — and it is
  * restated here for that reason rather than bent to fit.
@@ -221,6 +249,7 @@ export function findArenaSiteNear(
   world: SiteWorld,
   near: { readonly x: number; readonly y: number },
   random: () => number,
+  crashCellsWanted: number,
 ): ArenaSite | null {
   for (let radius = 0; radius <= ADMIN_SEARCH_RADIUS_CELLS; radius += ADMIN_SEARCH_STEP_CELLS) {
     // The centre itself is one sample, not a ring of identical ones.
@@ -232,16 +261,10 @@ export function findArenaSiteNear(
       if (!isOpenLand(world, centreX, centreY)) continue;
       if (!hasArenaClearance(world, centreX, centreY)) continue;
 
-      const crash = findCrashCell(world, centreX, centreY, random);
-      if (crash === null) continue;
+      const crashCells = findCrashCells(world, centreX, centreY, random, crashCellsWanted);
+      if (crashCells === null) continue;
 
-      return {
-        centreX,
-        centreY,
-        crashX: crash.x,
-        crashY: crash.y,
-        altitude: arenaAltitude(world, centreX, centreY),
-      };
+      return { centreX, centreY, crashCells, altitude: arenaAltitude(world, centreX, centreY) };
     }
   }
   return null;

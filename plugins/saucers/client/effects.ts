@@ -1,13 +1,13 @@
 // THE TWO THINGS IN THIS PLUGIN THAT ARE NOT A SAUCER: the laser bolts, and the
-// fireball at the crash site.
+// fireballs at the crash sites.
 //
 // Both are PURE PRESENTATION invented here out of what the server sent plus the
 // frame clock. Nothing about either is on the wire beyond "a bolt was fired from
-// A at B, this many seconds ago" and "the wreck went in here, this many seconds
-// ago"; nothing in the world can observe them; and the FIRE and the CRATER are
-// not drawn here at all — the fire plugin draws the flames and the terrain shows
-// the hole, which is the whole reason the burst is allowed to be as short as it
-// is.
+// A at B, this many seconds ago" and "this wreck went in here, this many
+// seconds ago"; nothing in the world can observe them; and the FIRE and the
+// CRATER are not drawn here at all — the fire plugin draws the flames and the
+// terrain shows the hole, which is the whole reason the burst is allowed to be
+// as short as it is.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // EVERYTHING IS POOLED AND NOTHING IS ALLOCATED PER FRAME.
@@ -33,8 +33,16 @@ import {
   Quaternion,
   SphereGeometry,
   Vector3,
+  type ColorRepresentation,
 } from 'three';
-import { CELL_WORLD_SIZE, LASER_BOLT_LIFETIME_SECONDS, MAX_LASER_BOLTS } from '../protocol.ts';
+import {
+  CELL_WORLD_SIZE,
+  LASER_BOLT_LENGTH_CELLS,
+  LASER_BOLT_LIFETIME_SECONDS,
+  LASER_BOLT_SPEED_CELLS_PER_SECOND,
+  MAX_LASER_BOLTS,
+  MAX_SAUCERS_PER_ENCOUNTER,
+} from '../protocol.ts';
 
 /**
  * A LENGTH OF GROUND, IN THE UNITS THE SCENE IS DRAWN IN.
@@ -81,8 +89,14 @@ const BOLT_RADIUS_CELLS = 0.12;
 /** Sides on the bolt cylinder. SIX: it is a lit streak seen edge-on at speed. */
 const BOLT_RADIAL_SEGMENTS = 6;
 
-/** The bolt's colour. A hot cyan-white, unlit and additively blended. */
-const BOLT_COLOUR = 0x9ff0ff;
+/**
+ * How far past its target a bolt is drawn before it is hidden, in cells: its
+ * own length, so a bolt that has arrived reads as having struck through the
+ * hull rather than stopping short of it. A bolt that lands and one that misses
+ * look the same — the server does not say which — and that is the one thing
+ * about the fight a watching player cannot read off the screen.
+ */
+const BOLT_OVERSHOOT_CELLS = LASER_BOLT_LENGTH_CELLS;
 
 /**
  * One pooled bolt. `mesh.visible` is the only thing that changes when a bolt is
@@ -98,37 +112,42 @@ export interface LaserPool {
   /** Hides every bolt. Called at the top of each frame's apply pass. */
   begin(): void;
   /**
-   * Draws one bolt between two world-space points, faded by its age. Silently
-   * does nothing once the pool is exhausted — MAX_LASER_BOLTS is the server's
-   * own ceiling, so that is unreachable rather than a policy.
+   * Draws one bolt in flight from `from` toward `to`: a streak
+   * LASER_BOLT_LENGTH long whose head is where a projectile of
+   * LASER_BOLT_SPEED would be `age` seconds after leaving the muzzle, in the
+   * shooter's faction colour, faded by its age. Silently does nothing once the
+   * pool is exhausted — MAX_LASER_BOLTS is the server's own ceiling, so that is
+   * unreachable rather than a policy.
    */
-  draw(from: Vector3, to: Vector3, age: number): void;
+  draw(from: Vector3, to: Vector3, age: number, colour: ColorRepresentation): void;
   dispose(): void;
 }
 
 export function createLaserPool(): LaserPool {
-  // A UNIT-LENGTH cylinder, translated so its base sits at the origin: the draw
-  // below then scales Y by the distance and puts the base at the muzzle, which
-  // is one scale and one quaternion rather than a midpoint calculation.
+  // A BOLT-LENGTH cylinder, translated so its base sits at the origin: the draw
+  // below puts the base at the streak's tail and points it down the flight
+  // line, which is one position and one quaternion rather than a midpoint
+  // calculation.
   const boltRadius = worldUnitsAcross(BOLT_RADIUS_CELLS);
+  const boltLength = worldUnitsAcross(LASER_BOLT_LENGTH_CELLS);
   const geometry = new CylinderGeometry(
     boltRadius,
     boltRadius,
-    1,
+    boltLength,
     BOLT_RADIAL_SEGMENTS,
     1,
     true,
   );
-  geometry.translate(0, 0.5, 0);
+  geometry.translate(0, boltLength / 2, 0);
 
   const root = new Group();
   root.name = 'saucers:bolts';
   const bolts: Bolt[] = [];
   for (let index = 0; index < MAX_LASER_BOLTS; index++) {
-    // ONE MATERIAL PER BOLT, not one shared: the fade is written into the
-    // material's opacity, and bolts of different ages are on screen together.
+    // ONE MATERIAL PER BOLT, not one shared: the fade and the faction colour
+    // are written into the material, and bolts of different ages and factions
+    // are on screen together.
     const material = new MeshBasicMaterial({
-      color: BOLT_COLOUR,
       transparent: true,
       opacity: 1,
       blending: AdditiveBlending,
@@ -149,29 +168,36 @@ export function createLaserPool(): LaserPool {
       for (const bolt of bolts) bolt.mesh.visible = false;
       next = 0;
     },
-    draw(from: Vector3, to: Vector3, age: number): void {
+    draw(from: Vector3, to: Vector3, age: number, colour: ColorRepresentation): void {
       const bolt = bolts[next];
       if (bolt === undefined) return;
       next++;
 
       scratchDirection.subVectors(to, from);
-      const length = scratchDirection.length();
-      // A zero-length bolt would produce a NaN direction. It cannot happen while
-      // two saucers are half an arena apart, which is exactly why it is worth
-      // one comparison rather than a debugging session the day something moves
-      // them together.
-      if (length <= 0) return;
-      scratchDirection.divideScalar(length);
+      const distance = scratchDirection.length();
+      // A zero-length flight line would produce a NaN direction. It cannot
+      // happen while two saucers are apart, which is exactly why it is worth one
+      // comparison rather than a debugging session the day something moves them
+      // together.
+      if (distance <= 0) return;
+      scratchDirection.divideScalar(distance);
 
-      bolt.mesh.position.copy(from);
+      // The head travels at the wire's speed; once it is a bolt-length past the
+      // target the bolt has struck (or missed) and is hidden, so nothing flies on
+      // out of the fight.
+      const head = worldUnitsAcross(LASER_BOLT_SPEED_CELLS_PER_SECOND) * age;
+      if (head > distance + worldUnitsAcross(BOLT_OVERSHOOT_CELLS)) return;
+      const tail = Math.max(0, head - worldUnitsAcross(LASER_BOLT_LENGTH_CELLS));
+
+      bolt.mesh.position.copy(from).addScaledVector(scratchDirection, tail);
       bolt.mesh.quaternion.copy(
         scratchQuaternion.setFromUnitVectors(CYLINDER_AXIS, scratchDirection),
       );
-      bolt.mesh.scale.set(1, length, 1);
+      const material = bolt.mesh.material as MeshBasicMaterial;
+      material.color.set(colour);
       // Linear fade over the bolt's whole life, so a bolt is brightest at the
       // muzzle-flash instant and gone exactly when the server stops sending it.
-      const life = 1 - Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));
-      (bolt.mesh.material as MeshBasicMaterial).opacity = life;
+      material.opacity = 1 - Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));
       bolt.mesh.visible = true;
     },
     dispose(): void {
@@ -183,22 +209,35 @@ export function createLaserPool(): LaserPool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE FIREBALL.
+// THE FIREBALLS.
 
 /**
- * How long the burst lasts, in seconds.
+ * How long a burst lasts, in seconds.
  *
- * ONE SECOND, and it is deliberately SHORTER than the server's aftermath phase
- * (AFTERMATH_SECONDS is 1.5): the burst has to be over before the payload that
- * carries it stops arriving, or the last frames of the fireball would be cut off
- * by the encounter ending rather than by the effect finishing.
+ * 1.6 s (owner, 2026-09-04: "the explosion could be larger"), and it is
+ * deliberately SHORTER than CRASH_WIRE_SECONDS: the burst has to be over before
+ * the entry that carries it stops arriving, or the last frames of the fireball
+ * would be cut off by the wire rather than by the effect finishing.
  */
-export const BURST_SECONDS = 1;
+export const BURST_SECONDS = 1.6;
 
-/** The fireball's radius at full expansion, in cells. Three — a crater and a bit. */
-const BURST_MAX_RADIUS_CELLS = 3;
+/**
+ * The fireball at full expansion, in cells. FIVE — twice the crater's radius,
+ * so the ball rolls out over the fire ring and well past the wreck's own
+ * width; the previous three read as a puff against a hull four cells across.
+ */
+const BURST_MAX_RADIUS_CELLS = 5;
 
-/** Sphere tessellation. Low: it is on screen for a second, glowing, expanding. */
+/**
+ * A WHITE-HOT CORE inside the ball: smaller, brighter, gone in the first part
+ * of the burst. It is what makes the ball read as a detonation rather than as
+ * an orange balloon — the flash, then the fire.
+ */
+const CORE_MAX_RADIUS_CELLS = 2.2;
+const CORE_SECONDS_FRACTION = 0.35;
+const CORE_COLOUR = 0xfff2c8;
+
+/** Sphere tessellation. Low: it is on screen for under two seconds, glowing, expanding. */
 const BURST_RADIAL_SEGMENTS = 16;
 const BURST_HEIGHT_SEGMENTS = 12;
 
@@ -208,25 +247,25 @@ const BURST_COLOUR = 0xffa03c;
 /**
  * Shards thrown out of the impact.
  *
- * TWELVE — enough to read as debris, few enough that the whole cloud is ONE
- * draw call and its positions can be rewritten in place every frame without
- * showing up in a profile.
+ * TWENTY-FOUR — enough to read as debris from a whole hull, few enough that
+ * the cloud is ONE draw call and its positions can be rewritten in place every
+ * frame without showing up in a profile.
  */
-const BURST_SHARD_COUNT = 12;
+const BURST_SHARD_COUNT = 24;
 
 /** How far a shard travels over the burst, in cells, and how high it arcs. */
-const SHARD_REACH_CELLS = 5;
-const SHARD_RISE_CELLS = 2.5;
+const SHARD_REACH_CELLS = 8;
+const SHARD_RISE_CELLS = 4;
 
 /** Shard size in pixels, and their colour — the same fire as the ball. */
-const SHARD_SIZE_PIXELS = 4;
+const SHARD_SIZE_PIXELS = 5;
 
 /**
  * The shards' launch directions, FIXED rather than random.
  *
  * A crash looks the same on every client because it IS the same crash: two
  * players standing beside each other must not see debris fly two different ways.
- * Twelve evenly spaced bearings with alternating rise gives a spray that is
+ * Evenly spaced bearings with three heights of arc gives a spray that is
  * plainly a spray and is a function of nothing.
  */
 const SHARD_BEARINGS: readonly { readonly x: number; readonly z: number; readonly lift: number }[] =
@@ -235,81 +274,129 @@ const SHARD_BEARINGS: readonly { readonly x: number; readonly z: number; readonl
     return {
       x: Math.cos(angle),
       z: Math.sin(angle),
-      // Alternating high and low arcs, so the spray has a shape instead of being
-      // a flat ring.
-      lift: index % 2 === 0 ? 1 : 0.55,
+      // Three heights of arc, so the spray has a shape instead of being a flat
+      // ring.
+      lift: index % 3 === 0 ? 1 : index % 3 === 1 ? 0.7 : 0.45,
     };
   });
 
-export interface CrashBurst {
+/** One pooled fireball. */
+interface Burst {
   readonly root: Group;
+  readonly ball: Mesh;
+  readonly ballMaterial: MeshBasicMaterial;
+  readonly core: Mesh;
+  readonly coreMaterial: MeshBasicMaterial;
+  readonly shardGeometry: BufferGeometry;
+  readonly shardMaterial: PointsMaterial;
+}
+
+export interface CrashBursts {
+  readonly root: Group;
+  /** Hides every burst. Called at the top of each frame's apply pass. */
+  begin(): void;
   /**
-   * Places and advances the burst. `age` is seconds since impact, from the
-   * server. Hides itself once the burst is over, which is what makes a client
-   * that joined mid-aftermath show the right part of it rather than restarting
-   * it.
+   * Places and advances one burst. `age` is seconds since impact, from the
+   * server. A burst past BURST_SECONDS draws nothing, which is what makes a
+   * client that joined mid-burst show the right part of it rather than
+   * restarting it. Silently does nothing once the pool is exhausted — the pool
+   * holds one per saucer the roster can carry, so that is unreachable.
    */
   show(x: number, groundY: number, z: number, age: number): void;
-  /** Hides everything — the sky is empty. */
-  hide(): void;
   dispose(): void;
 }
 
-export function createCrashBurst(): CrashBurst {
+/** One burst per saucer the roster can hold: on the clock they can all go down together. */
+const BURST_POOL_SIZE = MAX_SAUCERS_PER_ENCOUNTER;
+
+/** The ball, the core and the shard cloud. */
+const OBJECTS_PER_BURST = 3;
+
+export function createCrashBursts(): CrashBursts {
   const root = new Group();
-  root.name = 'saucers:burst';
-  root.visible = false;
+  root.name = 'saucers:bursts';
 
-  const ballGeometry = new SphereGeometry(1, BURST_RADIAL_SEGMENTS, BURST_HEIGHT_SEGMENTS);
-  const ballMaterial = new MeshBasicMaterial({
-    color: BURST_COLOUR,
-    transparent: true,
-    opacity: 1,
-    blending: AdditiveBlending,
-    depthWrite: false,
-  });
-  const ball = new Mesh(ballGeometry, ballMaterial);
-  ball.name = 'saucers:burst:ball';
-  root.add(ball);
+  const sphere = new SphereGeometry(1, BURST_RADIAL_SEGMENTS, BURST_HEIGHT_SEGMENTS);
+  const bursts: Burst[] = [];
+  for (let index = 0; index < BURST_POOL_SIZE; index++) {
+    const burstRoot = new Group();
+    burstRoot.name = `saucers:burst:${index}`;
+    burstRoot.visible = false;
 
-  const shardPositions = new Float32Array(BURST_SHARD_COUNT * 3);
-  const shardGeometry = new BufferGeometry();
-  shardGeometry.setAttribute('position', new BufferAttribute(shardPositions, 3));
-  const shardMaterial = new PointsMaterial({
-    color: BURST_COLOUR,
-    size: SHARD_SIZE_PIXELS,
-    sizeAttenuation: false,
-    transparent: true,
-    opacity: 1,
-    blending: AdditiveBlending,
-    depthWrite: false,
-  });
-  const shards = new Points(shardGeometry, shardMaterial);
-  shards.name = 'saucers:burst:shards';
-  root.add(shards);
+    const ballMaterial = new MeshBasicMaterial({
+      color: BURST_COLOUR,
+      transparent: true,
+      opacity: 1,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    const ball = new Mesh(sphere, ballMaterial);
+    burstRoot.add(ball);
+
+    const coreMaterial = new MeshBasicMaterial({
+      color: CORE_COLOUR,
+      transparent: true,
+      opacity: 1,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    const core = new Mesh(sphere, coreMaterial);
+    burstRoot.add(core);
+
+    const shardGeometry = new BufferGeometry();
+    shardGeometry.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array(BURST_SHARD_COUNT * 3), 3),
+    );
+    const shardMaterial = new PointsMaterial({
+      color: BURST_COLOUR,
+      size: SHARD_SIZE_PIXELS,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 1,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    });
+    burstRoot.add(new Points(shardGeometry, shardMaterial));
+
+    root.add(burstRoot);
+    bursts.push({ root: burstRoot, ball, ballMaterial, core, coreMaterial, shardGeometry, shardMaterial });
+  }
+
+  let next = 0;
 
   return {
     root,
+    begin(): void {
+      for (const burst of bursts) burst.root.visible = false;
+      next = 0;
+    },
     show(x: number, groundY: number, z: number, age: number): void {
       const t = age / BURST_SECONDS;
-      if (t < 0 || t >= 1) {
-        root.visible = false;
-        return;
-      }
-      root.visible = true;
-      root.position.set(x, groundY, z);
+      if (t < 0 || t >= 1) return;
+      const burst = bursts[next];
+      if (burst === undefined) return;
+      next++;
+
+      burst.root.visible = true;
+      burst.root.position.set(x, groundY, z);
 
       // The ball expands fast and fades linearly: `sqrt` front-loads the growth,
       // which is what an explosion does and a balloon does not.
       const grow = Math.sqrt(t);
-      ball.scale.setScalar(worldUnitsAcross(BURST_MAX_RADIUS_CELLS) * grow);
-      ballMaterial.opacity = 1 - t;
+      burst.ball.scale.setScalar(worldUnitsAcross(BURST_MAX_RADIUS_CELLS) * grow);
+      burst.ballMaterial.opacity = 1 - t;
+
+      // The core is over in the first third: full size at once, fading out.
+      const coreT = Math.min(1, t / CORE_SECONDS_FRACTION);
+      burst.core.visible = coreT < 1;
+      burst.core.scale.setScalar(worldUnitsAcross(CORE_MAX_RADIUS_CELLS) * Math.sqrt(coreT));
+      burst.coreMaterial.opacity = 1 - coreT;
 
       // Shards fly out on their fixed bearings and fall back under a simple
       // parabola. Not physics — there is no gravity constant here and there does
-      // not need to be one; it is the arc a thrown thing makes, and it is over
-      // in a second.
-      const positions = shardGeometry.getAttribute('position') as BufferAttribute;
+      // not need to be one; it is the arc a thrown thing makes.
+      const positions = burst.shardGeometry.getAttribute('position') as BufferAttribute;
       for (let index = 0; index < SHARD_BEARINGS.length; index++) {
         const bearing = SHARD_BEARINGS[index]!;
         const reach = worldUnitsAcross(SHARD_REACH_CELLS) * t;
@@ -317,16 +404,16 @@ export function createCrashBurst(): CrashBurst {
         positions.setXYZ(index, bearing.x * reach, rise, bearing.z * reach);
       }
       positions.needsUpdate = true;
-      shardMaterial.opacity = 1 - t;
-    },
-    hide(): void {
-      root.visible = false;
+      burst.shardMaterial.opacity = 1 - t;
     },
     dispose(): void {
-      ballGeometry.dispose();
-      ballMaterial.dispose();
-      shardGeometry.dispose();
-      shardMaterial.dispose();
+      for (const burst of bursts) {
+        burst.ballMaterial.dispose();
+        burst.coreMaterial.dispose();
+        burst.shardGeometry.dispose();
+        burst.shardMaterial.dispose();
+      }
+      sphere.dispose();
       root.clear();
     },
   };
@@ -334,5 +421,5 @@ export function createCrashBurst(): CrashBurst {
 
 /** Exposed so the plugin's draw budget is written from the rigs' own counts. */
 export const LASER_POOL_DRAW_OBJECTS = MAX_LASER_BOLTS;
-/** The ball and the shard cloud. */
-export const BURST_DRAW_OBJECTS = 2;
+/** Every burst in the pool, fully drawn. */
+export const BURST_DRAW_OBJECTS = BURST_POOL_SIZE * OBJECTS_PER_BURST;

@@ -27,7 +27,7 @@ import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts'
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 import {
   MAX_LASER_BOLTS,
-  SAUCERS_PER_ENCOUNTER,
+  MAX_SAUCERS_PER_ENCOUNTER,
   SAUCERS_PLUGIN_NAME,
   SAUCERS_STATE_MESSAGE,
   parseSaucersPayload,
@@ -37,11 +37,12 @@ import {
 import {
   BURST_DRAW_OBJECTS,
   LASER_POOL_DRAW_OBJECTS,
-  createCrashBurst,
+  createCrashBursts,
   createLaserPool,
-  type CrashBurst,
+  type CrashBursts,
   type LaserPool,
 } from './effects.ts';
+import { factionColour } from './factions.ts';
 import { SaucerInterpolator, type InterpolatedSaucer } from './interpolation.ts';
 import {
   createSaucerModels,
@@ -94,11 +95,11 @@ const LIGHTS_FLASH_FRACTION = 0.4;
  * How far the hull banks into a turn, in radians at full rate, and what "full
  * rate" is in radians of heading change per second.
  *
- * BANK 0.6 rad (34°) AT 2 rad/s of turn. A saucer on the dogfight circle turns
- * at roughly DOGFIGHT_SPEED / ARENA_RADIUS ≈ 2.5 rad/s, so it flies the fight
- * banked hard over, and levels out on the straight run-in and the exit — which
- * is exactly the read the owner asked for: zooming in flat, wheeling in the
- * middle, zooming out flat.
+ * BANK 0.6 rad (34°) AT 2 rad/s of turn. A saucer on its fight curve turns at
+ * roughly DOGFIGHT_SPEED / its orbit radius ≈ 2.5–4.5 rad/s, so it flies the
+ * fight banked hard over, and levels out on the straight run-in and the exit —
+ * which is exactly the read the owner asked for: zooming in flat, wheeling in
+ * the middle, zooming out flat.
  */
 const MAX_BANK_RADIANS = 0.6;
 const BANK_FULL_TURN_RATE = 2;
@@ -135,13 +136,13 @@ interface SaucerView {
 let models: SaucerModels | null = null;
 let container: Group | null = null;
 let lasers: LaserPool | null = null;
-let burst: CrashBurst | null = null;
+let bursts: CrashBursts | null = null;
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 const views = new Map<number, SaucerView>();
 const interpolator = new SaucerInterpolator();
-/** The bolts and the crash as last received — neither is interpolated. */
+/** The bolts and the crashes as last received — neither is interpolated. */
 let bolts: readonly LaserBolt[] = [];
-let crash: CrashState | null = null;
+let crashes: readonly CrashState[] = [];
 let animationSeconds = 0;
 let unsubscribes: Array<() => void> = [];
 
@@ -156,9 +157,9 @@ const boltTo = new Vector3();
 /**
  * Adds/removes scene objects so `views` matches the sampled state.
  *
- * Written as a general reconcile over a map rather than as "if there are two,
- * show two": the wire format is a list, and a client that assumed its length
- * would be a client that breaks the day SAUCERS_PER_ENCOUNTER changes — while
+ * Written as a general reconcile over a map rather than against a fixed
+ * roster: the wire format is a list, and a client that assumed its length
+ * would be a client that breaks the day the roster bounds change — while
  * looking, until then, exactly correct.
  */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSaucer>): void {
@@ -282,7 +283,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   }
 
   drawBolts(sampled);
-  drawCrash(ctx);
+  drawCrashes(ctx);
 }
 
 /** Every bolt the payload still lists, between the hulls it belongs to. */
@@ -305,28 +306,25 @@ function drawBolts(sampled: ReadonlyMap<number, InterpolatedSaucer>): void {
       muzzleWorldPosition(shooter, boltFrom),
       target.model.root.getWorldPosition(boltTo),
       bolt.age,
+      factionColour(shooter.variant),
     );
   }
 }
 
-/** The fireball, on the ground where the wreck went in. */
-function drawCrash(ctx: ClientPluginCtx): void {
-  const rig = burst;
+/** A fireball on the ground wherever a wreck went in. */
+function drawCrashes(ctx: ClientPluginCtx): void {
+  const rig = bursts;
   if (rig === null) return;
-  if (crash === null) {
-    rig.hide();
-    return;
+  rig.begin();
+  for (const crash of crashes) {
+    // A THING STANDING ON THE GROUND, so terrainHeightAt is the right oracle —
+    // see this file's header. Null means the cell's chunk has not streamed in;
+    // that burst is simply not drawn until it has, and this runs every frame so
+    // the next one retries for free.
+    const groundY = ctx.terrainHeightAt(crash.x, crash.y);
+    if (groundY === null) continue;
+    rig.show(crash.x * CELL_WORLD_SIZE, groundY, crash.y * CELL_WORLD_SIZE, crash.age);
   }
-  // A THING STANDING ON THE GROUND, so terrainHeightAt is the right oracle — see
-  // this file's header. Null means the cell's chunk has not streamed in; the
-  // burst is simply not drawn until it has, and this runs every frame so the
-  // next one retries for free.
-  const groundY = ctx.terrainHeightAt(crash.x, crash.y);
-  if (groundY === null) {
-    rig.hide();
-    return;
-  }
-  rig.show(crash.x * CELL_WORLD_SIZE, groundY, crash.y * CELL_WORLD_SIZE, crash.age);
 }
 
 /** An angle folded into (-π, π] — the short way round. */
@@ -348,11 +346,11 @@ export const clientPlugin: TerraceClientPlugin = {
 
   /**
    * Its share of the frame's draw calls, written from this plugin's own caps —
-   * see TerraceClientPlugin.drawBudget. Two saucers of however many surfaces
-   * the installed hull actually has, the whole bolt pool, and the burst's two
-   * objects. Every population cap in it is a constant the SERVER enforces
-   * (SAUCERS_PER_ENCOUNTER, MAX_LASER_BOLTS), so this is the honest maximum
-   * rather than a number from one measurement.
+   * see TerraceClientPlugin.drawBudget. A full roster of however many surfaces
+   * the installed hull actually has, the whole bolt pool, and the whole burst
+   * pool. Every population cap in it is a constant the SERVER enforces
+   * (MAX_SAUCERS_PER_ENCOUNTER, MAX_LASER_BOLTS), so this is the honest
+   * maximum rather than a number from one measurement.
    *
    * A GETTER, for the reason boats' is one: the per-saucer figure is MEASURED at
    * preload and starts at a conservative ceiling, and the host reads this field
@@ -361,7 +359,7 @@ export const clientPlugin: TerraceClientPlugin = {
    */
   get drawBudget(): number {
     return (
-      SAUCERS_PER_ENCOUNTER * SAUCER_MODEL_DRAW_OBJECTS +
+      MAX_SAUCERS_PER_ENCOUNTER * SAUCER_MODEL_DRAW_OBJECTS +
       LASER_POOL_DRAW_OBJECTS +
       BURST_DRAW_OBJECTS
     );
@@ -384,7 +382,7 @@ export const clientPlugin: TerraceClientPlugin = {
     reducedMotion = watchReducedMotion();
     animationSeconds = 0;
     bolts = [];
-    crash = null;
+    crashes = [];
 
     // One child Group of our own inside the host's layer: it keeps the saucers
     // under a single named node, which makes the scene graph legible in the
@@ -395,8 +393,8 @@ export const clientPlugin: TerraceClientPlugin = {
 
     lasers = createLaserPool();
     ctx.layer.add(lasers.root);
-    burst = createCrashBurst();
-    ctx.layer.add(burst.root);
+    bursts = createCrashBursts();
+    ctx.layer.add(bursts.root);
 
     unsubscribes = [
       ctx.onMessage(SAUCERS_STATE_MESSAGE, (payload) => {
@@ -408,7 +406,7 @@ export const clientPlugin: TerraceClientPlugin = {
         if (state === null) return;
         interpolator.receive(state.saucers);
         bolts = state.lasers;
-        crash = state.crash;
+        crashes = state.crashes;
       }),
 
       ctx.onFrame((dt) => renderFrame(ctx, dt)),
@@ -423,12 +421,12 @@ export const clientPlugin: TerraceClientPlugin = {
     views.clear();
     interpolator.clear();
     bolts = [];
-    crash = null;
+    crashes = [];
 
     lasers?.dispose();
     lasers = null;
-    burst?.dispose();
-    burst = null;
+    bursts?.dispose();
+    bursts = null;
 
     container?.clear();
     container = null;

@@ -1,10 +1,10 @@
 // saucers — flying-saucer dogfights, as a plugin (owner, 2026-09-04).
 //
-// Core knows nothing about saucers and must not: two ships that arrive from
-// nowhere, shoot each other down and leave a burning crater is as gamey as a
+// Core knows nothing about saucers and must not: ships that arrive from
+// nowhere, shoot each other down and leave burning craters is as gamey as a
 // mechanic gets, and the design record's rule ("nothing gamey in core") puts the
 // whole thing here. It reads the world through `heightAt`, `isCellUnlocked` and
-// `worldSize`, writes exactly ONE sculpt per encounter, and reaches the fire
+// `worldSize`, writes exactly ONE sculpt per wreck, and reaches the fire
 // plugin and the structures plugin only through the host's sibling lookup.
 //
 // SHAPE OF THE TICK:
@@ -25,10 +25,11 @@
 // message, which the client's interpolator (kit/interpolator.ts) walks smoothly.
 //
 // BANDWIDTH — and this is why the fastest cadence in the repo is also nearly the
-// cheapest. Two saucers of nine keys each plus at most MAX_LASER_BOLTS bolts of
-// three is ~260 B of msgpack per message, so 2.6 kB/s ≈ 21 kbit/s per client
-// WHILE A FIGHT IS ON. Wildlife runs at ~210 kbit/s continuously, so this is a
-// tenth of one existing plugin's steady cost, for twenty seconds every few
+// cheapest. At the roster ceiling, fifteen saucers of nine keys each plus at
+// most MAX_LASER_BOLTS bolts of three is ~1.9 kB of msgpack per message, so
+// ~19 kB/s ≈ 150 kbit/s per client WHILE A FIGHT IS ON — and a typical roster
+// is a third of that. Wildlife runs at ~210 kbit/s continuously, so this is
+// under one existing plugin's steady cost, for twenty-odd seconds every few
 // minutes.
 //
 // AND ZERO WHEN NOTHING IS FLYING. `broadcastPending` (tornado's pattern, and
@@ -39,8 +40,8 @@
 //
 // FOG-OF-WAR FILTERED, and here the reasoning is stronger than tornado's. A
 // front's position says nothing about locked terrain, and a tornado's says it
-// only walks on land; a saucer's crash cell is a cell whose HEIGHT IS ABOUT TO
-// CHANGE, so telling a player where it is telling them about ground they have
+// only walks on land; a saucer's crash cell is a cell whose HEIGHT HAS JUST
+// CHANGED, so telling a player where it is telling them about ground they have
 // not revealed.
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ import {
 import {
   advanceEncounter,
   encounterBolts,
-  encounterCrash,
+  encounterCrashes,
   encounterSaucers,
   forceEncounterNear,
   hasEncounter,
@@ -150,7 +151,7 @@ let broadcastPending = false;
  *
  * WHY EVERY CATEGORY IS FILTERED AND NOT JUST THE SAUCERS: a bolt is drawn
  * between two hulls, so one whose endpoints a recipient cannot see is a line to
- * nowhere (the wire parse drops it anyway — ../protocol.ts), and the CRASH is
+ * nowhere (the wire parse drops it anyway — ../protocol.ts), and a CRASH is
  * the most sensitive item of the three, being a statement about ground whose
  * height has just changed.
  */
@@ -176,8 +177,8 @@ type VisibleItem =
  * they cross the edge of the world — so it is relied on deliberately rather than
  * worked around.
  *
- * THE CRASH IS THE EXCEPTION and needs no bounding at all: its cell came from
- * site.ts, which only ever returns a cell inside the world.
+ * THE CRASHES ARE THE EXCEPTION and need no bounding at all: their cells came
+ * from site.ts, which only ever returns cells inside the world.
  */
 function visibleItems(): VisibleItem[] {
   const items: VisibleItem[] = [];
@@ -218,11 +219,10 @@ function visibleItems(): VisibleItem[] {
     });
   }
 
-  const crash = encounterCrash();
-  if (crash !== null) {
+  for (const crash of encounterCrashes()) {
     items.push({
       kind: 'crash',
-      crash: { x: crash.x, y: crash.y, age: roundBroadcastPosition(crash.age) },
+      crash: { id: crash.id, x: crash.x, y: crash.y, age: roundBroadcastPosition(crash.age) },
       x: crash.x,
       y: crash.y,
     });
@@ -247,13 +247,13 @@ function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
     (visible) => {
       const saucers: SaucerState[] = [];
       const lasers: LaserBolt[] = [];
-      let crash: CrashState | null = null;
+      const crashes: CrashState[] = [];
       for (const item of visible) {
         if (item.kind === 'saucer') saucers.push(item.saucer);
         else if (item.kind === 'bolt') lasers.push(item.bolt);
-        else crash = item.crash;
+        else crashes.push(item.crash);
       }
-      return { saucers, lasers, crash };
+      return { saucers, lasers, crashes };
     },
     { skipEmpty: false, onlyPlayerId },
   );
@@ -269,14 +269,14 @@ function rollArrival(world: WorldApi, dt: number): void {
   const meanInterval = meanEncounterIntervalSeconds(world.difficulty);
   if (!rollEncounter(1 / meanInterval, dt)) return;
 
-  const seed = trySpawnEncounter(world);
+  const started = trySpawnEncounter(world);
   // Null is the ordinary answer on a world with nowhere legal to fly (all
   // ocean, all fog, all town) — the roll simply produced nothing. Not logged:
   // on such a world it would be a line every few minutes saying the same thing.
-  if (seed === null) return;
+  if (started === null) return;
   console.info(
-    `[${SAUCERS_PLUGIN_NAME}] two saucers came in over the map (encounter seed ` +
-      `0x${(seed >>> 0).toString(16)})`,
+    `[${SAUCERS_PLUGIN_NAME}] ${started.saucers} saucers in ${started.factions} factions came ` +
+      `in over the map (encounter seed 0x${(started.seed >>> 0).toString(16)})`,
   );
 }
 
@@ -286,14 +286,12 @@ function simulate(world: WorldApi, dt: number): void {
   rollArrival(world, dt);
 
   const tick = advanceEncounter(world, dt);
-  if (tick.crashed !== null) {
+  for (const crash of tick.crashed) {
     // THE CHRONICLE'S EAR, and anyone else's. Emitted on the tick of impact,
-    // once per encounter, with the cell the crater is centred on — validated
+    // once per wreck, with the cell the crater is centred on — validated
     // structurally by whoever consumes it, as every world event is.
-    world.emitEvent(SAUCERS_CRASHED_EVENT, { x: tick.crashed.x, y: tick.crashed.y });
-    console.info(
-      `[${SAUCERS_PLUGIN_NAME}] a saucer went down at (${tick.crashed.x}, ${tick.crashed.y})`,
-    );
+    world.emitEvent(SAUCERS_CRASHED_EVENT, { x: crash.x, y: crash.y });
+    console.info(`[${SAUCERS_PLUGIN_NAME}] a saucer went down at (${crash.x}, ${crash.y})`);
   }
 
   if (tick.changed) broadcastPending = true;
@@ -333,8 +331,8 @@ export const plugin: TerracePlugin = {
       key: 'dogfight',
       label: 'Start a saucer dogfight',
       description:
-        'Two saucers come in over the nearest open land to where you are looking, fight, ' +
-        'and one of them leaves a burning crater.',
+        'Rival saucer factions come in over the nearest open land to where you are looking, ' +
+        'fight, and every one shot down leaves a burning crater.',
     },
   ],
 
@@ -358,8 +356,8 @@ export const plugin: TerracePlugin = {
     return {
       ok: true,
       detail:
-        `two saucers are coming in over (${started.site.centreX}, ${started.site.centreY}); ` +
-        `the wreck will land at (${started.site.crashX}, ${started.site.crashY})`,
+        `${started.saucers} saucers in ${started.factions} factions are coming in over ` +
+        `(${started.site.centreX}, ${started.site.centreY})`,
     };
   },
 

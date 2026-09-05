@@ -17,15 +17,28 @@
 // should fly at high speed, like they're zooming in, battling, and then zooming
 // out."
 //
-// AN ENCOUNTER IS THE UNIT, not a saucer. Two saucers arrive together, fight
-// each other and nothing else, and the whole thing is over inside half a minute
-// leaving one crater behind. There is at most one encounter in the world at a
-// time (MAX_LIVING_ENCOUNTERS) — the drama is that it is an EVENT, the same
-// argument monsters' per-kind singleton makes.
+// REVISED (owner, 2026-09-04, after seeing the duel): "spawn varying sizes of
+// groups to fight each other" — at least two factions and three saucers, at
+// most five per faction — "they need to fly around each other at different
+// angles shooting", lasers "in bursts, just like the artifact design", coloured
+// to match the faction, "saucers die after five hits", a floor of three seconds
+// before anyone can go down, and a larger explosion.
+//
+// AN ENCOUNTER IS THE UNIT, not a saucer. Several factions arrive together,
+// fight each other and nothing else, and the whole thing is over inside half a
+// minute leaving one crater per shot-down saucer behind. There is at most one
+// encounter in the world at a time (MAX_LIVING_ENCOUNTERS) — the drama is that
+// it is an EVENT, the same argument monsters' per-kind singleton makes.
+//
+// A FACTION IS A HULL. The three authored bodies each carry their own livery
+// baked into the file — blue, amber and magenta rings and light strips — so the
+// wire's `variant` is the faction and there is no second field to keep in step
+// with it. Which hull a saucer wears says whose side it is on, and its bolts
+// wear the same colour (client/factions.ts).
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHAT TRAVELS. The two saucers' poses, the laser bolts in flight, and — for the
-// second after impact — where the wreck went in. Nothing else: the hull, the
+// WHAT TRAVELS. Every saucer's pose, the laser bolts in flight, and — for a
+// couple of seconds after each impact — where each wreck went in. Nothing else: the hull, the
 // spinning ring, the flashing lights, the bolt geometry and the fireball are all
 // invented on the client out of these numbers plus the frame clock, and nothing
 // in the world can observe any of them.
@@ -108,11 +121,18 @@ export const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 export const MAX_LIVING_ENCOUNTERS = 1;
 
 /**
- * Saucers in an encounter. TWO: a dogfight is a duel, and the whole resolution
- * ("the winner takes off while the loser crashes") is written against exactly
- * one winner and exactly one loser.
+ * THE ROSTER (owner, 2026-09-04): "minimum of three saucers total, minimum of
+ * two groups, maximum of five saucers per group".
+ *
+ * The faction ceiling is the hull count, because a faction IS a hull (see the
+ * header) and two factions in the same body would be a fight nobody could
+ * follow. The encounter floor of three is what makes the smallest roster a
+ * fight rather than a duel — one against two.
  */
-export const SAUCERS_PER_ENCOUNTER = 2;
+export const MIN_FACTIONS_PER_ENCOUNTER = 2;
+export const MIN_SAUCERS_PER_FACTION = 1;
+export const MAX_SAUCERS_PER_FACTION = 5;
+export const MIN_SAUCERS_PER_ENCOUNTER = 3;
 
 /**
  * The saucer bodies that exist — an index into the client's model table, not a
@@ -128,17 +148,30 @@ export const SAUCER_VARIANT_COUNT = 3;
 /** What a saucer is when the wire says something this build does not recognise. */
 export const DEFAULT_SAUCER_VARIANT = 0;
 
+/** One faction per hull, so this is the most factions an encounter can hold. */
+export const MAX_FACTIONS_PER_ENCOUNTER = SAUCER_VARIANT_COUNT;
+
 /**
- * The phases of an encounter, in the order they run. Ordered and exhaustive: the
- * client switches on this to decide what to draw, and a phase it does not know
- * is dropped with the entry rather than guessed at.
+ * The most saucers an encounter can hold — DERIVED from the roster bounds, so
+ * every pool and budget sized against it (the client's views, the bolt pool,
+ * the burst pool, the crash-cell search) follows a retune of the roster.
+ */
+export const MAX_SAUCERS_PER_ENCOUNTER = MAX_FACTIONS_PER_ENCOUNTER * MAX_SAUCERS_PER_FACTION;
+
+/**
+ * The phases of a SAUCER, in the order it runs through them. Ordered and
+ * exhaustive: a phase the client does not know is dropped with the entry rather
+ * than guessed at.
  *
- *   approach   — both saucers come in off opposite map edges at full speed;
- *   dogfight   — both weave the arena centre, firing in bursts;
- *   resolve    — the loser dives at the crash cell, the winner climbs and leaves;
- *   aftermath  — the sky is empty, the crater is in the ground and the client
- *                plays the fireball. No saucer is ever in this phase: it is the
- *                ENCOUNTER's phase, and it is carried on the payload's `crash`.
+ *   approach   — coming in off the map edge on its faction's bearing, at speed;
+ *   dogfight   — flying its own path over the arena, firing in bursts;
+ *   resolve    — either diving at its crash cell (shot down) or climbing away
+ *                (its faction won). The client cannot tell the two apart and
+ *                does not need to: both are a pose on the wire.
+ *
+ * PER SAUCER, NOT PER ENCOUNTER, since the 2026-09-04 revision: one saucer can
+ * be diving while its wingmates are still fighting. The crash itself is not a
+ * phase of anything — it is an entry in the payload's `crashes`.
  */
 export const SAUCER_PHASES = ['approach', 'dogfight', 'resolve'] as const;
 export type SaucerPhase = (typeof SAUCER_PHASES)[number];
@@ -155,26 +188,34 @@ export function isSaucerPhase(value: unknown): value is SaucerPhase {
  * retunes the arena.
  *
  * APPROACH — 2.5 s. At APPROACH_SPEED that is 85 world units of run-in, most of
- * it off the map, so a player sees the pair cross the horizon and arrive rather
- * than blink into existence over their village.
+ * it off the map, so a player sees the factions cross the horizon and arrive
+ * rather than blink into existence over their village.
  *
- * DOGFIGHT — 18 s. Long enough for LASER_BURST_INTERVAL to fire twenty bursts
- * (the outcome has to be earned, not decided in two shots) and short enough that
- * the whole encounter is under half a minute.
+ * DOGFIGHT_HOLD_FIRE — 3 s, the owner's floor: nobody fires, so nobody can go
+ * down, for the first three seconds of the fight. The factions close, cross and
+ * pick targets before the first burst, which is also what makes the smallest
+ * fight (three saucers, one of them alone) last long enough to be seen.
+ *
+ * DOGFIGHT — 20 s, the CAP. A fight normally ends earlier, when one faction is
+ * the last with anything flying (see SAUCER_MAX_HP); the cap exists so a fight
+ * of two lucky misses does not orbit forever, and on it the faction with the
+ * most hit points left wins.
  *
  * RESOLVE — 3 s: the dive and the climb-out. Shorter than the approach on
- * purpose — a loser that took as long to fall as the pair took to arrive would
- * read as a landing.
+ * purpose — a loser that took as long to fall as it took to arrive would read
+ * as a landing.
  *
- * AFTERMATH — 1.5 s. Nothing flies in it; it is exactly as long as the client's
- * fireball, and its only job is to keep `crash` on the wire long enough for a
- * client that joined a beat late to see the burst. The fire and the crater
- * outlive it by minutes because they belong to other systems.
+ * CRASH_WIRE — 2.5 s. How long each impact stays in `crashes` after it happens:
+ * longer than the client's fireball, so a client that joined a beat late still
+ * sees the burst and no client has its last frames cut off by the entry
+ * leaving the wire. The fire and the crater outlive it by minutes because they
+ * belong to other systems.
  */
 export const APPROACH_SECONDS = 2.5;
-export const DOGFIGHT_SECONDS = 18;
+export const DOGFIGHT_HOLD_FIRE_SECONDS = 3;
+export const DOGFIGHT_SECONDS = 20;
 export const RESOLVE_SECONDS = 3;
-export const AFTERMATH_SECONDS = 1.5;
+export const CRASH_WIRE_SECONDS = 2.5;
 
 /**
  * Speeds, in WORLD UNITS per second, written through `cellsAcross` because they
@@ -187,10 +228,11 @@ export const AFTERMATH_SECONDS = 1.5;
  * zooming in".
  *
  * APPROACH 34 — a default 128-unit world crossed in under four seconds.
- * DOGFIGHT 20 — slower, because a duel that kept approach speed would be two
- *   dots leaving the arena; at 20 over ARENA_RADIUS the pair lap each other
- *   about every two and a half seconds, which reads as a fight.
- * DIVE 26 and EXIT 40 — the loser accelerates into the ground and the winner
+ * DOGFIGHT 20 — slower, because a fight that kept approach speed would be
+ *   dots leaving the arena; at 20 over ARENA_RADIUS a saucer laps the arena
+ *   about every two and a half seconds, which reads as a fight. It is the
+ *   TANGENTIAL speed each saucer's own path is scaled to (server/encounter.ts).
+ * DIVE 26 and EXIT 40 — a loser accelerates into the ground and a winner
  *   outruns everything else in the encounter on the way out.
  */
 export const APPROACH_SPEED_CELLS_PER_SECOND = cellsAcross(34);
@@ -210,8 +252,8 @@ export const ENTRY_DISTANCE_CELLS = APPROACH_SPEED_CELLS_PER_SECOND * APPROACH_S
  *
  * EIGHT WORLD UNITS, so the fight is sixteen across — half a chunk, which is a
  * span a player watching from a normal orbit camera can hold in view at once.
- * Bigger and the two saucers stop being in the same shot; smaller and the weave
- * has nowhere to go.
+ * Bigger and the saucers stop being in the same shot; smaller and fifteen of
+ * them have nowhere to go.
  */
 export const ARENA_RADIUS_CELLS = cellsAcross(8);
 
@@ -229,7 +271,7 @@ export const ARENA_RADIUS_CELLS = cellsAcross(8);
  *
  * A SANITY CHECK ON THE UNITS, because this is the number a stale "1 unit = 1
  * cell" reading gets wrong: a saucer is SAUCER_DIAMETER_CELLS (4) cells across,
- * which is ONE world unit, so the pair fly six of their own diameters above the
+ * which is ONE world unit, so they fly six of their own diameters above the
  * peak. Six BANDS — the first draft of this constant — would have been 1.5 world
  * units, i.e. a saucer skimming the treetops.
  */
@@ -242,49 +284,68 @@ export const CRUISE_ALTITUDE_WORLD_UNITS = CRUISE_ALTITUDE_BANDS * WORLD_UNITS_P
 // THE FIGHT.
 
 /**
- * A saucer's hit points. EIGHT, against a burst that lands at most one hit:
- * the loser has to be shot down at least eight times over DOGFIGHT_SECONDS, so
- * the outcome is the sum of twenty-odd rolls rather than one, which is what
- * keeps a near-run fight the common case.
+ * A saucer's hit points. FIVE (owner, 2026-09-04: "saucers die after five
+ * hits"). Against a burst that lands a mean of one and a half, a saucer with
+ * one enemy on it lasts about three and a half bursts — eight or nine seconds
+ * after the hold-fire floor — and one with a whole faction on it goes down in
+ * one or two. The outcome is the sum of many rolls, which keeps a near-run
+ * fight the common case.
  */
-export const SAUCER_MAX_HP = 8;
+export const SAUCER_MAX_HP = 5;
 
-/** What one landed bolt takes off. One — see SAUCER_MAX_HP. */
+/** What one landed shot takes off. One — see SAUCER_MAX_HP. */
 export const LASER_HIT_DAMAGE = 1;
 
 /**
- * Seconds between one saucer's bursts. 0.8 s — over DOGFIGHT_SECONDS that is 22
- * bursts each, which at LASER_HIT_CHANCE is a mean of about 11 hits: comfortably
- * more than SAUCER_MAX_HP, so a fight normally ENDS in a kill rather than timing
- * out into the tie-break below.
+ * A BURST (owner, 2026-09-04: "lasers should fire in bursts, just like the
+ * artifact design" — .saucer-hangar/hangar.template.html fires three shots
+ * 0.09 s apart, then rests 1.6–3.0 s). THREE SHOTS, ONE TICK APART: the gap is
+ * one server tick at the shipped TICK_HZ because the fight advances once per
+ * tick and fires at most one shot per saucer per tick, so a gap shorter than
+ * that would only ever be rounded up to it. The rest between bursts is drawn
+ * from the encounter's own generator, so a fight's rhythm is reproducible.
  */
-export const LASER_BURST_INTERVAL_SECONDS = 0.8;
+export const LASER_BURST_SHOTS = 3;
+export const LASER_SHOT_GAP_SECONDS = 0.1;
+export const LASER_BURST_REST_MIN_SECONDS = 1.6;
+export const LASER_BURST_REST_MAX_SECONDS = 3.0;
 
 /**
- * Chance a burst connects. HALF: the honest coin. Anything higher and the first
- * saucer to fire wins nearly every time; anything much lower and the fight runs
- * out of clock.
+ * Chance one shot connects. HALF: the honest coin. Anything higher and the
+ * first faction to fire wins nearly every time; anything much lower and the
+ * fight runs out of clock.
  */
 export const LASER_HIT_CHANCE = 0.5;
 
 /**
- * How long a bolt is on the wire and on screen, in seconds. A quarter second —
- * long enough to read as a streak at 60 fps, short enough that at most a couple
- * are ever in flight at once (which is what MAX_LASER_BOLTS is sized from).
+ * A bolt is a PROJECTILE, not a beam: it leaves the muzzle and travels at
+ * LASER_BOLT_SPEED for LASER_BOLT_LIFETIME, drawn LASER_BOLT_LENGTH long. The
+ * hangar's numbers (60 cells/s, 2.4 cells), which the owner approved on sight.
+ * The lifetime is what it takes to cross the widest gap two saucers in the
+ * arena can have — a little over the arena's diameter — so a bolt reaches its
+ * target and no bolt flies on past the fight.
+ *
+ * WHY THIS IS ON THE WIRE'S SIDE OF THE CONTRACT: the server decides the hit
+ * the instant it fires and puts only `age` on the wire; the client draws the
+ * bolt where a projectile of this speed would be at that age. Both halves need
+ * the same speed for a bolt to arrive as the hit lands.
  */
-export const LASER_BOLT_LIFETIME_SECONDS = 0.25;
+export const LASER_BOLT_SPEED_CELLS_PER_SECOND = cellsAcross(15);
+export const LASER_BOLT_LENGTH_CELLS = 2.4;
+export const LASER_BOLT_LIFETIME_SECONDS = 0.4;
 
 /**
  * The most bolts that can be on the wire at once — DERIVED, which is what makes
- * it an honest ceiling rather than a number from one measurement: each saucer
- * fires one bolt every LASER_BURST_INTERVAL_SECONDS and each lives
- * LASER_BOLT_LIFETIME_SECONDS, so the count is bounded by how many lifetimes fit
- * in an interval, rounded up, times the saucers. The client's pool is sized
+ * it an honest ceiling rather than a number from one measurement: a saucer's
+ * burst is LASER_BURST_SHOTS bolts a gap apart, each living
+ * LASER_BOLT_LIFETIME, so no more than the lesser of the burst and the
+ * lifetimes-per-gap are in flight from one saucer, and the rest between bursts
+ * is longer than a lifetime so bursts never overlap. The client's pool is sized
  * against this and so is the payload budget.
  */
 export const MAX_LASER_BOLTS =
-  SAUCERS_PER_ENCOUNTER *
-  Math.max(1, Math.ceil(LASER_BOLT_LIFETIME_SECONDS / LASER_BURST_INTERVAL_SECONDS));
+  MAX_SAUCERS_PER_ENCOUNTER *
+  Math.min(LASER_BURST_SHOTS, Math.ceil(LASER_BOLT_LIFETIME_SECONDS / LASER_SHOT_GAP_SECONDS));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE CRASH.
@@ -295,7 +356,8 @@ export const MAX_LASER_BOLTS =
  * RADIUS 2.5 world units, DEPTH two terrace bands. A wreck coming in at DIVE
  * speed leaves a hole a player notices from the ground and can walk out of;
  * three bands would punch through to the water table on ordinary land, which is
- * a different, permanent kind of damage than the owner asked for.
+ * a different, permanent kind of damage than the owner asked for. EVERY WRECK
+ * HAS ITS OWN CELL (site.ts), so two craters never stack into that.
  *
  * The depth is written in BANDS and converted, because that is the unit the
  * terrain is quantised in — a crater specified in raw height units would be a
@@ -388,13 +450,17 @@ export interface LaserBolt {
 }
 
 /**
- * Where the loser went in, present only during the aftermath.
+ * Where a wreck went in, present for CRASH_WIRE_SECONDS after the impact.
  *
  * `age` for LaserBolt's reason, and here it is what the client keys the fireball
- * to: a client that joins mid-aftermath starts the burst part-way through rather
- * than replaying it from zero over a crater that is already cold.
+ * to: a client that joins mid-burst starts it part-way through rather than
+ * replaying it from zero over a crater that is already cold. `id` is the saucer
+ * that went in — the client keys its burst pool by it, so two wrecks a second
+ * apart each get their own fireball.
  */
 export interface CrashState {
+  /** Id of the saucer that crashed here. */
+  readonly id: number;
   readonly x: number;
   readonly y: number;
   /** Seconds since impact. */
@@ -404,8 +470,8 @@ export interface CrashState {
 export interface SaucersStatePayload {
   readonly saucers: readonly SaucerState[];
   readonly lasers: readonly LaserBolt[];
-  /** Null outside the aftermath, and null for a player who cannot see the site. */
-  readonly crash: CrashState | null;
+  /** Every impact still burning, minus those on ground the player cannot see. */
+  readonly crashes: readonly CrashState[];
 }
 
 /**
@@ -450,10 +516,11 @@ export function parseSaucersPayload(payload: unknown): SaucersStatePayload | nul
   const raw = payload as {
     saucers?: unknown;
     lasers?: unknown;
-    crash?: unknown;
+    crashes?: unknown;
   };
   if (!Array.isArray(raw.saucers)) return null;
   if (!Array.isArray(raw.lasers)) return null;
+  if (!Array.isArray(raw.crashes)) return null;
 
   const saucers: SaucerState[] = [];
   const ids = new Set<number>();
@@ -471,7 +538,14 @@ export function parseSaucersPayload(payload: unknown): SaucersStatePayload | nul
     lasers.push(parsed);
   }
 
-  return { saucers, lasers, crash: parseCrash(raw.crash) };
+  const crashes: CrashState[] = [];
+  for (const entry of raw.crashes) {
+    const parsed = parseCrash(entry);
+    if (parsed === null) continue;
+    crashes.push(parsed);
+  }
+
+  return { saucers, lasers, crashes };
 }
 
 function parseSaucer(entry: unknown): SaucerState | null {
@@ -512,9 +586,10 @@ function parseBolt(entry: unknown, ids: ReadonlySet<number>): LaserBolt | null {
 function parseCrash(entry: unknown): CrashState | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const raw = entry as Partial<CrashState>;
+  if (!isFiniteNumber(raw.id)) return null;
   if (!isFiniteNumber(raw.x) || !isFiniteNumber(raw.y)) return null;
   if (!isFiniteNumber(raw.age)) return null;
-  return { x: raw.x, y: raw.y, age: raw.age };
+  return { id: raw.id, x: raw.x, y: raw.y, age: raw.age };
 }
 
 // Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts) —
