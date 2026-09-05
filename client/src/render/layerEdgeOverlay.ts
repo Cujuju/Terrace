@@ -223,6 +223,20 @@ export interface LayerEdgeOverlay {
    */
   lipNear(cell: { x: number; y: number } | null, band: number | null, atX: number, atZ: number): boolean;
   /**
+   * The retained contour of ONE band in ONE chunk — world-space flat
+   * [ax, az, bx, bz, ...] — or undefined when that chunk publishes none.
+   *
+   * WHY PICKING ASKS THE OVERLAY (2026-09-05). A riser is drawn on the band's
+   * marching-squares contour, and the march that answers "which band did the
+   * player point at" walks the cell lattice, whose box faces are somewhere
+   * else. Only one of the two knows where the face really is, and it is this
+   * one — it has held the contour since the chunk was built precisely so the
+   * hover query need not march it again. Publishing it satisfies
+   * `terrain/picking.ts`'s `DrawnRisers`, so the pick and the highlight are
+   * reading the SAME segments rather than two derivations of them.
+   */
+  segmentsOf(chunkIdx: number, band: number): Float32Array | undefined;
+  /**
    * Lights up ONE NAMED BAND's lip beside `(atX, atZ)` and reports whether that
    * band has a lip there at all — a segment bounding `cell` or one of its eight
    * neighbours (GRAB_RADIUS_WORLD_UNITS), which is `lipNear` above.
@@ -678,6 +692,10 @@ export function createLayerEdgeOverlay(
     },
 
     lipNear,
+
+    segmentsOf(chunkIdx, band) {
+      return segmentsByChunk.get(chunkIdx)?.get(band);
+    },
 
     lightBand(cell, band, atX, atZ, litSpanWorldUnits) {
       clearGrabbed();

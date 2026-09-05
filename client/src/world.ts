@@ -1036,11 +1036,16 @@ export function createWorld(viewport: Viewport): World {
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
-      return pickTerrainCellByRay(mirror, origin, direction);
+      // THE DRAWN FACES, so a riser pick names the band the player can see
+      // rather than the band the cell's box face happens to cross first
+      // (terrain/picking.ts's `DrawnRisers`). Null until the overlay exists —
+      // and for every chunk it has not published a contour for — which is the
+      // lattice-only behaviour this had before.
+      return pickTerrainCellByRay(mirror, origin, direction, layerEdges);
     },
     pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
-      return pickTerrainInColumn(mirror, x, y, origin, direction);
+      return pickTerrainInColumn(mirror, x, y, origin, direction, layerEdges);
     },
     pickPointedCell(
       origin: Vec3,
@@ -1048,7 +1053,7 @@ export function createWorld(viewport: Viewport): World {
       occupants: readonly CellOccupancy[],
     ): PointedCellPick | null {
       if (mirror === null) return null;
-      return pickPointedCellByRay(mirror, origin, direction, occupants);
+      return pickPointedCellByRay(mirror, origin, direction, occupants, layerEdges);
     },
 
     drawBudget(): number {
