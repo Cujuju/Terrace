@@ -6,9 +6,10 @@
 // angelfish) are authored
 // one file each under ./species/, against the SpeciesModelPool contract in
 // ./species/speciesModel.ts; this file lends them the pool, bakes what they
-// return and herds it. Two whale bodies (blue, sperm — whaleSpecies.ts), the
+// return and herds it. One whale body (sperm — whaleSpecies.ts), the
 // deep-sea angler and the bird are still authored below, in the older
-// spheres-and-cones idiom; the humpback whale body is ./species/humpback.ts.
+// spheres-and-cones idiom; the humpback and blue whale bodies are
+// ./species/humpback.ts and ./species/blueWhale.ts.
 //
 // Rules this file keeps:
 //   * NO per-creature lights, and NO Math.random in any geometry. What is
@@ -68,6 +69,7 @@ import {
 } from './whaleSpecies.ts';
 import { animateWhale } from './species/whale.ts';
 import { buildHumpback } from './species/humpback.ts';
+import { buildBlueWhale } from './species/blueWhale.ts';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
   type WildlifeSizeClass,
@@ -323,9 +325,10 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   // banding on a body this large rather than as the deliberate chunky style the
   // other four keep.
   const whaleMaterial = lambert(WHALE_COLOR, { flatShading: false });
-  // The whale bodies still built procedurally (blue, sperm), built once and
-  // shared by every whale of that body in the world. The humpback is an asset
-  // (./species/humpback.ts) and comes through speciesDrawable below.
+  // The whale body still built procedurally (sperm), built once and shared by
+  // every whale of that body in the world. The humpback and the blue whale
+  // are assets (./species/humpback.ts, ./species/blueWhale.ts) and come
+  // through speciesDrawable below.
   const whaleSets: readonly WhaleGeometrySet[] = buildWhaleGeometrySets();
   for (const set of whaleSets) {
     for (const geometry of geometriesOf(set)) keepGeometry(geometry);
@@ -564,12 +567,13 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   /**
    * One drawable per whale body, in WHALE_SPECIES order — the order
    * `drawableOf` indexes with the creature's seed, so it must never change.
-   * The humpback is an asset-sourced species like any in ./species/; the two
-   * procedural bodies are herded here and run the SAME animation
-   * (./species/whale.ts's animateWhale), so the motion exists once.
+   * The humpback and the blue whale are asset-sourced species like any in
+   * ./species/; the procedural body is herded here and runs the SAME
+   * animation (./species/whale.ts's animateWhale), so the motion exists once.
    */
   const whaleDrawables: readonly SpeciesDrawable[] = WHALE_SPECIES.map((body): SpeciesDrawable => {
     if (body === 'humpback') return speciesDrawable(buildHumpback);
+    if (body === 'blue') return speciesDrawable(buildBlueWhale);
     const whaleRig = proceduralWhaleRigs.get(body);
     if (whaleRig === undefined) throw new Error(`wildlife: no whale body built for "${body}"`);
     const { herd, joints } = herdFor(whaleRig);
