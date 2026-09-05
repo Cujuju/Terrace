@@ -142,6 +142,15 @@ CONTROL_POLL_INTERVAL_S = 0.25
 # 1 boot failure, 2 shell misuse, 128+N a signalled death.
 TERRACE_RESTART_EXIT_CODE = 75
 
+# THE EXIT CODE THAT MEANS "RESTART ME AND THE CLIENT DEV SERVER TOO".
+#
+# The keyless in-game "Restart client + server" HUD button (protocol
+# `stackRestart`, owner 2026-09-04). Vite on this project's disk does not
+# watch files, so new CLIENT code only arrives when Vite itself restarts -
+# this code asks for exactly what the `r` key below does, from the browser.
+# Source of truth: server/src/restart.ts's TERRACE_STACK_RESTART_EXIT_CODE.
+TERRACE_STACK_RESTART_EXIT_CODE = 76
+
 # LOOP GUARD for the branch above. A plugin that throws at import exits 1, not
 # 75, so it does not spin here - but a plugin that throws AFTER the restart
 # service is reachable, or an operator holding the button, can. Three restarts
@@ -600,7 +609,15 @@ def main(watch: bool) -> int:
                 return 0
             try:
                 code = server.wait(timeout=CONTROL_POLL_INTERVAL_S)
-                if code == TERRACE_RESTART_EXIT_CODE:
+                if code == TERRACE_STACK_RESTART_EXIT_CODE:
+                    # ASKED FOR, from the browser: the same thing as the `r`
+                    # key, so it takes the same branch below. The server is
+                    # already gone (it exited to say this); the branch's reap
+                    # of it is a no-op on a dead process.
+                    print("[run_server] server asked to restart the whole stack "
+                          f"(exit {TERRACE_STACK_RESTART_EXIT_CODE})", flush=True)
+                    state["restart"] = True
+                elif code == TERRACE_RESTART_EXIT_CODE:
                     # ASKED FOR, not a crash. The server has already written
                     # its final snapshot and released the port; relaunch it and
                     # leave the client alone - Vite is a separate process whose
@@ -629,9 +646,10 @@ def main(watch: bool) -> int:
                     server = spawn_server(env)
                     children.append(server)
                     continue
-                # The server exited on its own (crash, pnpm failure). Do not
-                # outlive it pretending nothing happened.
-                return code
+                else:
+                    # The server exited on its own (crash, pnpm failure). Do
+                    # not outlive it pretending nothing happened.
+                    return code
             except subprocess.TimeoutExpired:
                 pass  # still running - that is the normal path
 
