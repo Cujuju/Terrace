@@ -155,6 +155,14 @@ const views = new Map<number, SaucerView>();
 const interpolator = new SaucerInterpolator();
 /** The bolts and the crashes as last received — neither is interpolated. */
 let bolts: readonly LaserBolt[] = [];
+/**
+ * Seconds since the bolts were received. A bolt's wire `age` is its age at the
+ * message; the bolt keeps flying between messages — at LASER_BOLT_SPEED a
+ * tenth of a second is twenty cells, five hulls, which a bolt that only moved
+ * when a message arrived would cover in one jump — so its age on screen is
+ * the wire's plus this. See `boltRenderAge`.
+ */
+let sinceBolts = 0;
 let crashes: readonly CrashState[] = [];
 let animationSeconds = 0;
 let unsubscribes: Array<() => void> = [];
@@ -165,7 +173,7 @@ let unsubscribes: Array<() => void> = [];
  * the collector pays for inside the 7.1 ms frame budget.
  */
 const boltFrom = new Vector3();
-const boltTo = new Vector3();
+const boltAim = new Vector3();
 
 /**
  * Adds/removes scene objects so `views` matches the sampled state.
@@ -215,23 +223,12 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSaucer>): void 
   });
 }
 
-/** World-space position of a saucer's muzzle — where its bolts leave from. */
-function muzzleWorldPosition(view: SaucerView, into: Vector3): Vector3 {
-  // The model's matrices were updated by the renderer's last pass over the
-  // scene, and the root's own transform was written earlier THIS frame, so the
-  // muzzle's world matrix is stale by one frame unless it is refreshed. One
-  // update per saucer per frame, over a two-node chain.
-  view.model.root.updateMatrixWorld(true);
-  return into.setFromMatrixPosition(view.model.muzzle.matrixWorld);
-}
-
 /**
  * THE RENDER PATH. Runs once per animation frame.
  *
- * ORDER MATTERS: the saucers are placed first, then the bolts are drawn between
- * the positions they were just placed at. Drawing the bolts from last frame's
- * matrices would leave every beam trailing its own muzzle by one frame, which at
- * this speed is a third of a world unit.
+ * The bolts are drawn on the same delayed clock the saucers are shown on —
+ * see `boltRenderAge` — so a bolt leaves the muzzle as the hull passes the
+ * pose it was fired from.
  */
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const step = Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
@@ -243,6 +240,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   if (!(reducedMotion?.matches() ?? false)) animationSeconds += step;
 
   interpolator.advance(dt);
+  sinceBolts += dt;
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
@@ -298,7 +296,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     }
   }
 
-  drawBolts(sampled);
+  drawBolts();
   drawCrashes(ctx);
 }
 
@@ -308,13 +306,28 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
  */
 function muzzleGlow(id: number): number {
   let youngest = Infinity;
-  for (const bolt of bolts) if (bolt.from === id && bolt.age < youngest) youngest = bolt.age;
+  for (const bolt of bolts) {
+    if (bolt.from !== id) continue;
+    const age = boltRenderAge(bolt);
+    if (age < youngest) youngest = age;
+  }
   if (youngest === Infinity) return 1;
   return 1 + (MUZZLE_FLASH_GAIN - 1) * Math.exp(-MUZZLE_FLASH_DECAY_PER_SECOND * youngest);
 }
 
-/** Every bolt the payload still lists, between the hulls it belongs to. */
-function drawBolts(sampled: ReadonlyMap<number, InterpolatedSaucer>): void {
+/**
+ * A bolt's age on THIS frame's clock: the wire's age, plus the time since the
+ * message, minus how far behind that message the saucers are being shown
+ * (the interpolator walks toward each message over the following window).
+ * Negative before the hull has reached the pose the bolt was fired from —
+ * the bolt is not shown yet.
+ */
+function boltRenderAge(bolt: LaserBolt): number {
+  return bolt.age + sinceBolts - interpolator.lagSeconds();
+}
+
+/** Every bolt the payload still lists, along the line it was fired on. */
+function drawBolts(): void {
   const pool = lasers;
   if (pool === null) return;
   pool.begin();
@@ -322,19 +335,16 @@ function drawBolts(sampled: ReadonlyMap<number, InterpolatedSaucer>): void {
 
   for (const bolt of bolts) {
     const shooter = views.get(bolt.from);
-    const target = views.get(bolt.to);
-    // Both endpoints must be in the scene. The wire parse already drops a bolt
-    // whose ids are not both in the same payload (../protocol.ts), so this is
-    // the one-frame window where a payload has arrived and the reconcile has
-    // not caught up — not a case the parse can cover.
-    if (shooter === undefined || target === undefined) continue;
-    if (!sampled.has(bolt.from) || !sampled.has(bolt.to)) continue;
-    pool.draw(
-      muzzleWorldPosition(shooter, boltFrom),
-      target.model.root.getWorldPosition(boltTo),
-      bolt.age,
-      factionColour(shooter.variant),
-    );
+    // The shooter must be in the scene for its colour. The wire parse already
+    // drops a bolt whose shooter is not in the same payload (../protocol.ts),
+    // so this is the one-frame window where a payload has arrived and the
+    // reconcile has not caught up — not a case the parse can cover.
+    if (shooter === undefined) continue;
+    const age = boltRenderAge(bolt);
+    if (age < 0) continue;
+    boltFrom.set(bolt.x * CELL_WORLD_SIZE, bolt.alt, bolt.y * CELL_WORLD_SIZE);
+    boltAim.set(bolt.aimX * CELL_WORLD_SIZE, bolt.aimAlt, bolt.aimY * CELL_WORLD_SIZE);
+    pool.draw(boltFrom, boltAim, age, factionColour(shooter.variant));
   }
 }
 
@@ -433,6 +443,7 @@ export const clientPlugin: TerraceClientPlugin = {
         if (state === null) return;
         interpolator.receive(state.saucers);
         bolts = state.lasers;
+        sinceBolts = 0;
         crashes = state.crashes;
       }),
 

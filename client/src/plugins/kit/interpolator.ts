@@ -194,6 +194,17 @@ export class PoseInterpolator<S extends { readonly id: number }, F extends PoseS
   }
 
   /**
+   * How far behind the newest message the rendered poses are, in seconds:
+   * the rest of the current segment. Zero once the segment is walked. For a
+   * plugin whose OTHER state is stamped with server-side ages (a projectile,
+   * a burst): shown at `age − lagSeconds()`, it lands on the pose that
+   * `sample()` shows rather than a segment ahead of it.
+   */
+  lagSeconds(): number {
+    return Math.max(0, this.window - this.elapsed);
+  }
+
+  /**
    * The pose of everything live this frame, keyed by id.
    *
    * CLAMPED AT 1 RATHER THAN EXTRAPOLATED: overshooting the last known pose of
