@@ -64,6 +64,7 @@ import {
   APPROACH_SECONDS,
   APPROACH_SPEED_CELLS_PER_SECOND,
   ARENA_RADIUS_CELLS,
+  BREATHE_RADIUS_FRACTION,
   CRASH_CRATER_DEPTH_BANDS,
   CRASH_CRATER_RADIUS_CELLS,
   CRASH_FIRE_RING_OFFSETS,
@@ -91,6 +92,8 @@ import {
   MIN_SAUCERS_PER_ENCOUNTER,
   MIN_SAUCERS_PER_FACTION,
   MIN_SAUCERS_PER_FLYBY,
+  ORBIT_RADIUS_FRACTION_MAX,
+  ORBIT_RADIUS_FRACTION_MIN,
   RESOLVE_SECONDS,
   SAUCER_MAX_HP,
   SAUCER_VARIANT_COUNT,
@@ -119,30 +122,18 @@ export interface EncounterWorld extends SiteWorld {
 }
 
 /**
- * The band of orbit radii the saucers' curves sit in, as fractions of the
- * arena radius. 0.55 to 1.0: the inner edge keeps the tightest orbit wider
- * than a hull, so a saucer never wheels about its own length, and the outer
- * edge is the arena's own rim, which the site was cleared for.
+ * The orbit band and the breathing amplitude live in ../protocol.ts (the
+ * bolt lifetime is derived from them). EACH SAUCER OWNS ONE RUNG of the band —
+ * the band divided evenly by the roster, dealt by a seeded shuffle — rather
+ * than a draw from it, so no two fly the same orbit (the header's second
+ * revision).
  *
- * EACH SAUCER OWNS ONE RUNG of the band — the band divided evenly by the
- * roster, dealt by a seeded shuffle — rather than a draw from it, so no two
- * fly the same orbit (see the header's second revision).
+ * The band of rates the breathing runs at: 0.9–1.6 rad/s. The breathing is
+ * what turns a ring into a rosette: two saucers on nearby orbits, going
+ * opposite ways and breathing out of phase, cross at a different angle every
+ * time. The band is chosen not to contain a whole multiple of any orbit rate,
+ * so no path closes inside DOGFIGHT_SECONDS.
  */
-const ORBIT_RADIUS_FRACTION_MIN = 0.55;
-const ORBIT_RADIUS_FRACTION_MAX = 1;
-
-/**
- * How far off its own orbit each saucer breathes, as a fraction of the arena
- * radius, and the band of rates it breathes at.
- *
- * 0.15, at 0.9–1.6 rad/s. The breathing is what turns a ring into a rosette:
- * two saucers on nearby orbits, going opposite ways and breathing out of
- * phase, cross at a different angle every time. It was a third; that swept
- * every inner orbit through the centre together, which is the clump the owner
- * saw. The rate band is chosen not to contain a whole multiple of any orbit
- * rate, so no path closes inside DOGFIGHT_SECONDS.
- */
-const BREATHE_RADIUS_FRACTION = 0.15;
 const BREATHE_RADIANS_PER_SECOND_MIN = 0.9;
 const BREATHE_RADIANS_PER_SECOND_MAX = 1.6;
 

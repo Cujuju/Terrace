@@ -22,6 +22,7 @@
 
 import {
   AdditiveBlending,
+  NormalBlending,
   BufferAttribute,
   BufferGeometry,
   CylinderGeometry,
@@ -78,27 +79,39 @@ const CYLINDER_AXIS = new Vector3(0, 1, 0);
 /**
  * A bolt's radius, in cells.
  *
- * 0.12 — three hundredths of a world unit, against a hull that is one world unit
- * across (SAUCER_DIAMETER_CELLS is four cells). Thin enough to read as a beam
- * rather than as a pipe, thick enough to survive being seen end-on at
- * dogfight speed. It is a length of the WORLD, not of the model, so it does not
- * change if the hull is re-authored at another size.
+ * 0.35 — a twelfth of a hull (SAUCER_DIAMETER_CELLS is four cells). It was
+ * 0.12, the hangar's proportion, which from the orbit camera the owner watches
+ * from is under a pixel wide: "extremely difficult to see" (2026-09-04). It is
+ * a length of the WORLD, not of the model, so it does not change if the hull
+ * is re-authored at another size.
  */
-const BOLT_RADIUS_CELLS = 0.12;
+const BOLT_RADIUS_CELLS = 0.35;
+
+/**
+ * The fraction of a bolt's lifetime it stays at full brightness before it
+ * fades. 0.7: a bolt that fades from the muzzle (the first cut) was half
+ * gone by the middle of its flight, where it is furthest from either hull and
+ * most needs to be seen.
+ */
+const BOLT_FADE_START_FRACTION = 0.7;
 
 /**
  * How far above 1.0 a bolt's colour is driven, so it reads as LIGHT under the
  * scene's ACES tone mapping rather than as a tinted streak.
  *
- * THREE (owner, 2026-09-04: "make the laser bursts brighter like they are in
- * the artifact"). The hangar draws the same additive material at 1.0 against a
- * black floor, where anything additive reads as bright; in the world the bolt
- * is drawn over daylit ground and sky, and at 1.0 it washes out. Three times
- * the faction colour pushes the streak's centre through ACES to near white
- * while the hue survives in its falloff — a hot bolt of THAT colour, which is
- * what the hangar shows.
+ * TWO (owner, 2026-09-04: "make the laser bursts brighter like they are in
+ * the artifact"). The hangar draws its bolt against a black floor, where
+ * anything bright reads; in the world the bolt is drawn over daylit ground
+ * and sky. Twice the faction colour pushes the streak's centre through ACES
+ * toward white while the hue survives — a hot bolt of THAT colour.
+ *
+ * DRAWN OPAQUE (NormalBlending), NOT ADDITIVE, since the same day: additive
+ * light cannot darken anything, so over a bright sky or pale ground an
+ * additive bolt is invisible by construction. An opaque streak occludes what
+ * is behind it and is seen against everything. Three times, additive, was the
+ * first cut and was still "extremely difficult to see".
  */
-const BOLT_INTENSITY = 3;
+const BOLT_INTENSITY = 2;
 
 /** Sides on the bolt cylinder. SIX: it is a lit streak seen edge-on at speed. */
 const BOLT_RADIAL_SEGMENTS = 6;
@@ -164,7 +177,7 @@ export function createLaserPool(): LaserPool {
     const material = new MeshBasicMaterial({
       transparent: true,
       opacity: 1,
-      blending: AdditiveBlending,
+      blending: NormalBlending,
       depthWrite: false,
     });
     const mesh = new Mesh(geometry, material);
@@ -209,9 +222,11 @@ export function createLaserPool(): LaserPool {
       );
       const material = bolt.mesh.material as MeshBasicMaterial;
       material.color.set(colour).multiplyScalar(BOLT_INTENSITY);
-      // Linear fade over the bolt's whole life, so a bolt is brightest at the
-      // muzzle-flash instant and gone exactly when the server stops sending it.
-      material.opacity = 1 - Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));
+      // Full brightness for most of the flight, then a linear fade that ends
+      // exactly when the server stops sending it.
+      const life = Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));
+      material.opacity =
+        life < BOLT_FADE_START_FRACTION ? 1 : (1 - life) / (1 - BOLT_FADE_START_FRACTION);
       bolt.mesh.visible = true;
     },
     dispose(): void {

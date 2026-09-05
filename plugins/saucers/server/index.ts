@@ -26,10 +26,10 @@
 //
 // BANDWIDTH — and this is why the fastest cadence in the repo is also nearly the
 // cheapest. At the roster ceiling (nine, since the 1-3 revision) saucers of nine keys each plus at
-// most MAX_LASER_BOLTS bolts of three is ~1.9 kB of msgpack per message, so
-// ~19 kB/s ≈ 150 kbit/s per client WHILE A FIGHT IS ON — and a typical roster
+// most MAX_LASER_BOLTS bolts of three (81, now bursts overlap in flight) is ~3 kB of msgpack per message, so
+// ~30 kB/s ≈ 240 kbit/s per client WHILE A FIGHT IS ON — and a typical roster
 // is a third of that. Wildlife runs at ~210 kbit/s continuously, so this is
-// under one existing plugin's steady cost, for twenty-odd seconds every few
+// about one existing plugin's steady cost, for twenty-odd seconds every few
 // minutes.
 //
 // AND ZERO WHEN NOTHING IS FLYING. `broadcastPending` (tornado's pattern, and
