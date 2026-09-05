@@ -1,5 +1,10 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 16 (owner 2026-09-05): disk 15% smaller (DISK_SCALE 0.85: 170 world units per disk
+// unit, view eye at 2.6/0.85; DISK_THICKNESS 0.024, STAR_FIELD_DEPTH 0.706 in disk units) and
+// the cost measured on the owner's RTX 3090 at 1440p (.void-bench/bench.html, Windows Chrome
+// headless): rev 10 1.7 ms, rev 15 6.1 ms, rev 16 2.1 ms - gasPattern hoisted out of the march
+// (columnar), GAS_STEPS 10 -> 6, STAR_WALK 36 -> 24.
 // REVISION 15 (owner 2026-09-05): 'substantially more Z variability for the stars' - the star
 // field is a 3-D voxel walk (stars3, Amanatides-Woo) down to STAR_FIELD_DEPTH 0.600 disk units
 // (120 world units) under the plane, the fine grid to half that, the in-arm stars inside the gas.
@@ -158,13 +163,13 @@ const float HUE_SCALE    = 0.7;    // disk units per hue-drift feature between t
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
 // Rev 13 (owner 2026-09-05: 'the gas should look diffuse in three dimensions, and the stars should be
 // placed in three dimensions', and 'don't make the disk any thicker than four world units'). The
-// gas is a volume under the plane, ray-marched: the arm pattern runs through it as columns, a
-// vertical profile makes it diffuse about each patch's own level, and 3-D puff noise breaks it up through the
-// thickness. The stars are points in 3-D voxel grids that the ray walks exactly: the in-arm stars
+// gas is a volume under the plane, ray-marched: the arm pattern runs through it as columns
+// (gasPattern, once per ray), a vertical profile makes it diffuse about each patch's own level,
+// and 3-D puff noise breaks it up through the thickness (gasDepthProfile, per sample). The stars are points in 3-D voxel grids that the ray walks exactly: the in-arm stars
 // inside the gas, the field and fine grids on down to STAR_FIELD_DEPTH under it, each dimmed by the
 // gas in front of it. Nothing is above the plane, so the clearance to the map is unchanged.
-const float DISK_THICKNESS= 0.020; // DISK_THICKNESS_WORLD in disk units; gas and stars both stay within it
-const int   GAS_STEPS    = 10;     // march samples through the thickness; the layers are ~0.12 T thick, so ~1 sample per layer at 60 deg
+const float DISK_THICKNESS= 0.024; // DISK_THICKNESS_WORLD in disk units; gas and stars both stay within it
+const int   GAS_STEPS    = 6;      // march samples through the thickness; rev 16 bench: 10 -> 6 saves ~0.5 ms at 1440p, no visible banding
 // Rev 14 (owner: 'needs more 3-D variability, still a flat disk'): the depth of peak density is not one
 // number but a field - each patch of gas sits at its own level between GAS_TOP_Z and GAS_BOTTOM_Z, in
 // a thin layer, so patches above hide and shade the patches below.
@@ -177,11 +182,11 @@ const float GAS_EXTINCTION=160.0;  // optical depth per unit density per disk un
 const float PUFF_SCALE   = 12.0;   // 3-D puff noise features per disk unit across the disk
 const float PUFF_Z_SCALE = 3.0/DISK_THICKNESS;    // ... and about three through the thickness, so the puffs vary with depth
 const float PUFF_DEPTH   = 0.7;    // how much the puffs modulate the density (0 = columnar gas); rev 14: 0.35 -> 0.7
-const float STAR_FIELD_DEPTH=0.600; // STAR_FIELD_DEPTH_WORLD in disk units: the coarse star grid reaches this far under the plane
+const float STAR_FIELD_DEPTH=0.706; // STAR_FIELD_DEPTH_WORLD in disk units: the coarse star grid reaches this far under the plane
 const float STAR_FINE_DEPTH=0.5*STAR_FIELD_DEPTH;  // the fine grid reaches half as deep (it has twice the cells per unit, so the same voxel budget)
 const float STAR_POINT_BOOST=3.0;  // a ray must pass within a star's radius in 3-D, not cross a disc: more stars per voxel to keep the count on screen
 const float STAR_GAS_SHADE=0.7;    // how much fully overlying gas dims a star (1 = hidden)
-const int   STAR_WALK    = 36;     // voxel visits per star grid per ray; covers STAR_FIELD_DEPTH in the coarse grid at 60 deg, flatter views lose the deepest stars
+const int   STAR_WALK    = 24;     // voxel visits per star grid per ray; reaches ~80% of STAR_FIELD_DEPTH in the coarse grid at 60 deg (bench: 36 -> 24 saves ~0.4 ms), flatter views lose the deepest stars
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
 const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
 // Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
@@ -218,34 +223,48 @@ float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float dept
   }
   return sum;
 }
-// Gas density at a point of the volume: rf the rotating-frame xy, z <= 0 the depth, q the point in
-// the fixed frame for the puff noise. The arm pattern is columnar (the same at every z) and the
-// filaments' grain with it; the vertical profile and the 3-D puffs give the volume its depth.
+// The gas pattern on the plane in the rotating frame: the arms, their grain, lanes and colour.
+// It is columnar - the same at every depth of the four-unit slab, whose parallax across the
+// thickness is under a filament wide - so it is evaluated ONCE per ray, and the march below only
+// varies the vertical profile and the 3-D puffs (rev 16: 6.1 ms -> see the bench in .void-bench).
 // ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
 // straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
 // runs ACROSS it - an arm sits at a fixed thw. The grain is sampled in (s, thw) with long cells
 // along and short cells across, so the filaments run along the curve of each arm.
-float gasDensity(vec2 rf, float z, vec3 q, float wobble, float level, out float grain, out float haze){
+float gasPattern(vec2 rf, out vec3 gasCol){
   float r=length(rf);
   float th=atan(rf.y,rf.x);
   float s=log(r+0.05);
+  float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
   float phase=th*ARMS-s*WIND+wobble;
   float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
   // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
   vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
   float thw=atan(wound.y,wound.x);
   vec2 aq=vec2(s*STREAK_ALONG, (thw/6.2831853+0.5)*STREAK_ACROSS);
-  grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
-  haze=fbm(rf*1.4+vec2(9.0,2.0));
+  float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
+  float haze=fbm(rf*1.4+vec2(9.0,2.0));
   float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
   float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms
+  // Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
+  // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
+  vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
+  float hue=fbm(rf/HUE_SCALE+vec2(2.0,5.0));
+  gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
+  gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
+  gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
+  return (arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
+}
+// The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
+// broken up by 3-D puffs. Multiplies gasPattern.
+float gasDepthProfile(vec2 rf, float z, float level){
   float dz=(z-level)/GAS_SCALE_H;
   float ch=exp(dz)+exp(-dz);
-  float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the mid depth
+  float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
   vec3 pq=vec3(rf*PUFF_SCALE,z*PUFF_Z_SCALE);
   float puff=0.6*vnoise3(pq)+0.4*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
   float puffMod=1.0-PUFF_DEPTH+2.0*PUFF_DEPTH*puff;          // mean 1
-  return (arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes)*vert*puffMod;
+  return vert*puffMod;
 }
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
@@ -260,33 +279,27 @@ void main(){
     float r=length(rf);
     float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
 
-    // --- gas: march the volume from the plane down through DISK_THICKNESS, front to back ---
-    // The arm wobble and the hue drift are low-frequency and evaluated once at the plane hit; the
-    // density, grain, haze and puffs are evaluated at every sample.
-    float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
-    float hue=fbm(rf/HUE_SCALE+vec2(2.0,5.0));
+    // --- gas: the plane pattern once, then march the thickness front to back ---
+    vec3 gasCol;
+    float pattern=gasPattern(rf,gasCol);
     float level=mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbm(rf*LEVEL_SCALE+vec2(6.0,13.0)));  // this patch's depth
-    vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85), warm=vec3(1.0,0.88,0.62);
-    vec3 baseCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
     float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
     float dt=(tBottom-sdist)/float(GAS_STEPS);
-    vec3 gasAcc=vec3(0.0);
+    float gasAcc=0.0;                     // lit weight so far
     float T=1.0;                          // transmittance so far
     for(int i=0;i<GAS_STEPS;i++){
       float t=sdist+(float(i)+0.5)*dt;
       vec3 q=u_origin+d*t;
-      float grain,haze;
-      float dens=gasDensity(rot(q.xy,-a),q.z,q,wobble,level,grain,haze);
-      vec3 c=mix(baseCol,rose,smoothstep(0.55,0.9,grain)*0.7);
-      c=mix(c,teal,smoothstep(0.6,0.85,haze)*0.35);
-      c*=1.0-LIT_FROM_ABOVE*clamp(-q.z/DISK_THICKNESS,0.0,1.0);   // deeper gas is darker
+      float dens=pattern*gasDepthProfile(rot(q.xy,-a),q.z,level);
+      float lit=1.0-LIT_FROM_ABOVE*clamp(-q.z/DISK_THICKNESS,0.0,1.0);   // deeper gas is darker
       float alpha=1.0-exp(-dens*GAS_EXTINCTION*dt);
-      gasAcc+=T*alpha*c;
+      gasAcc+=T*alpha*lit;
       T*=1.0-alpha;
     }
     float gas=1.0-T;                      // total gas opacity along the ray
     float bulge=exp(-r*2.0);
-    col+=(gasAcc*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
+    vec3 warm=vec3(1.0,0.88,0.62);
+    col+=(gasCol*gasAcc*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars: points in three voxel grids under the plane, rotating with the gas ---
     // The grids are walked in the rotating frame: rotate the plane hit and the ray into it once.
