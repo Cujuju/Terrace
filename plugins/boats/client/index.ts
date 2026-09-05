@@ -187,8 +187,8 @@ export const clientPlugin: TerraceClientPlugin = {
    * bake from. A rejected load is a logged breach for this plugin only — the
    * host never attaches afterwards, so the fleet simply stays ashore.
    */
-  preload(): Promise<void> {
-    return preloadBoatModels(warBoatUrl);
+  preload(ctx: ClientPluginCtx): Promise<void> {
+    return preloadBoatModels(ctx, warBoatUrl);
   },
 
   attach(ctx: ClientPluginCtx): void {

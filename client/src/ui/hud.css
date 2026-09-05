@@ -2,6 +2,18 @@
 
 :root {
   --hud-bg: rgba(18, 22, 28, 0.78);
+  /* The GLASS chrome the bottom instruments share (owner, 2026-09-04: "make
+     the modeler HUD gorgeous"): a top-lit gradient, a hairline of light
+     along the top edge and a soft drop shadow, so the panels sit ON the
+     world rather than being cut out of it. */
+  --hud-glass: linear-gradient(180deg, rgba(34, 41, 52, 0.86), rgba(14, 18, 24, 0.9));
+  --hud-glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --hud-glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --hud-accent-rgb: 111, 191, 115;
+  --hud-lower: #d98a5a;
+  --hud-lower-rgb: 217, 138, 90;
+  /* One easing for every hover/press on the instruments. */
+  --hud-motion: 160ms ease;
   --hud-border: rgba(255, 255, 255, 0.12);
   --hud-text: #e8edf2;
   --hud-muted: #97a3b0;
@@ -115,6 +127,21 @@ body {
   pointer-events: auto;
   /* The panel chrome's 210px min-width would defeat the shrinkable cell. */
   min-width: 0;
+  /* The modeler wears the same glass as the toolbar beside it. */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
+}
+
+.hud-anchor-bottom-left .hud-row {
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.hud-anchor-bottom-left .hud-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .hud-anchor-bottom-right {
@@ -205,26 +232,51 @@ body {
   .status-reconnecting {
     animation: none;
   }
+
+  /* The instruments' hover lifts and glows settle instantly. */
+  .hud-tool,
+  .hud-tool__icon,
+  .hud-tool__label,
+  .brush-button,
+  .mode-value {
+    transition: none;
+  }
+
+  .hud-tool:hover .hud-tool__icon {
+    transform: none;
+  }
 }
 
 .status-label {
   color: var(--hud-muted);
 }
 
+/* A SEGMENTED control: one recessed well holding the choices, the chosen one
+   raised out of it in the accent. The well is what makes a row read as ONE
+   setting rather than a scatter of buttons. */
 .brush-picker {
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .brush-button {
   width: 26px;
   height: 26px;
-  border: 1px solid var(--hud-border);
+  border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--hud-text);
+  color: var(--hud-muted);
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
+  transition:
+    color var(--hud-motion),
+    background var(--hud-motion),
+    box-shadow var(--hud-motion);
 }
 
 /* Word-labelled variants of the same button (Tool / Edge rows): identical
@@ -235,36 +287,76 @@ body {
 }
 
 .brush-button:hover {
-  border-color: var(--hud-accent);
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .brush-button.active {
-  border-color: var(--hud-accent);
-  background: rgba(111, 191, 115, 0.18);
+  color: #f4fff2;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.55),
+    rgba(var(--hud-accent-rgb), 0.28)
+  );
+  border-color: rgba(var(--hud-accent-rgb), 0.55);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* The mode indicator doubles as a toggle button (the only way to switch
    raise/lower on touch), so it is a <button> with the chrome stripped. */
 .mode-value {
-  border: 1px solid var(--hud-border);
-  border-radius: 6px;
-  background: transparent;
-  padding: 2px 10px;
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.55);
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.5),
+    rgba(var(--hud-accent-rgb), 0.22)
+  );
+  padding: 3px 14px;
   font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  color: var(--hud-accent);
+  color: #f4fff2;
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: box-shadow var(--hud-motion), transform var(--hud-motion);
 }
 
 .mode-value:hover {
-  border-color: var(--hud-accent);
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
+.mode-value:active {
+  transform: translateY(1px);
+}
+
+/* Lowering trades the accent for earth-orange: the same pill, a different
+   heat, so the direction is legible from the colour alone. */
 .mode-value.lower {
-  color: #d98a5a;
+  border-color: rgba(var(--hud-lower-rgb), 0.6);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-lower-rgb), 0.5),
+    rgba(var(--hud-lower-rgb), 0.22)
+  );
+  color: #fff4ea;
+  box-shadow:
+    0 0 12px rgba(var(--hud-lower-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .mode-value.lower:hover {
-  border-color: #d98a5a;
+  box-shadow:
+    0 0 18px rgba(var(--hud-lower-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .hud-hint {
@@ -464,39 +556,87 @@ body {
   min-width: 0;
   /* Never wider than the strip it sits in, whatever the plugin count. */
   max-width: 100%;
+  /* The same glass as the modeler panel (owner, 2026-09-04). */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
 }
 
-/* One tool: icon over caption, sized like the brush buttons it sits beside so
-   the whole bottom edge reads as one instrument. */
+/* One tool: a shaded 3D icon over its caption, on a raised glass tile
+   (owner, 2026-09-04: "gorgeous 3D icons"). The tiles are equal-width so
+   the bar reads as a row of keys rather than a run of pills. */
 .hud-tool {
-  min-width: 0;
+  min-width: 64px;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: 3px;
+  padding: 6px 10px 5px;
   border: 1px solid var(--hud-border);
-  border-radius: 6px;
-  background: transparent;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   color: var(--hud-text);
   font: inherit;
   line-height: 1;
   cursor: pointer;
+  transition:
+    border-color var(--hud-motion),
+    background var(--hud-motion),
+    box-shadow var(--hud-motion),
+    transform var(--hud-motion);
+}
+
+/* The icon is a full-colour shaded SVG, so it carries its own shadow to lift
+   it off the tile; the hover lifts it a little further. */
+.hud-tool__icon {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  transition: transform var(--hud-motion), filter var(--hud-motion);
 }
 
 .hud-tool:hover {
-  border-color: var(--hud-accent);
+  border-color: rgba(var(--hud-accent-rgb), 0.6);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
 }
 
-/* HELD, not merely hovered: the same accent fill the brush pickers use for
+.hud-tool:hover .hud-tool__icon {
+  transform: translateY(-2px) scale(1.08);
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.6));
+}
+
+.hud-tool:active {
+  transform: translateY(1px);
+}
+
+/* HELD, not merely hovered: the same accent glow the brush pickers give
    the selected radius, so "what am I holding" is answered the same way
    everywhere in the HUD. */
 .hud-tool.active {
-  border-color: var(--hud-accent);
-  background: rgba(111, 191, 115, 0.18);
+  border-color: rgba(var(--hud-accent-rgb), 0.7);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.32),
+    rgba(var(--hud-accent-rgb), 0.1)
+  );
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 .hud-tool__label {
   white-space: nowrap;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hud-muted);
+  transition: color var(--hud-motion);
+}
+
+.hud-tool:hover .hud-tool__label,
+.hud-tool.active .hud-tool__label {
+  color: var(--hud-text);
 }
 
 /* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, toolbar
@@ -517,7 +657,8 @@ body {
   }
 
   .hud-tool {
-    padding: 6px;
+    min-width: 0;
+    padding: 4px;
   }
 
   .hud-anchor-bottom-left {
@@ -600,7 +741,7 @@ body {
 
   .hud-tool {
     min-height: 44px;
-    padding: 0 12px;
+    padding: 6px 12px 5px;
   }
 
   .hud-settings-button {

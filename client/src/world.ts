@@ -11,7 +11,6 @@
 // previous session's terrain.
 
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
   bandOf,
@@ -20,10 +19,7 @@ import {
   chunkIndexOfCell,
   chunksPerEdge,
   quantizeToBand,
-  spanAt,
-  spanCapHeight,
   spanCount,
-  spanUndersideHeight,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -31,6 +27,7 @@ import type {
   SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
+  SculptTool,
   TerrainDiffMessage,
 } from '@terrace/shared';
 import type { Material, Mesh } from 'three';
@@ -72,8 +69,13 @@ import {
 } from './render/revealMask.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
+  bandOfPick as bandOfPickIn,
+  carveBandOfPick as carveBandOfPickIn,
+} from './terrain/pickBand.ts';
+import {
   pickPointedCellByRay,
   pickTerrainCellByRay,
+  pickTerrainInColumn,
   type CellOccupancy,
   type PointedCellPick,
   type TerrainRayPick,
@@ -115,6 +117,19 @@ export interface LayerEdgeLight {
    * then there is no nearby segment to light in the first place.
    */
   readonly heldBand?: number | null;
+  /**
+   * The tool a press would use RIGHT NOW (state/hudState.ts's `brushTool`).
+   *
+   * WHY THE HIGHLIGHT NEEDS IT (D1, owner 2026-09-04: the carve "should work
+   * on either the corner edge or the side face"). The pull grabs risers only,
+   * so a tread under its cursor lights nothing and means "seed". The carve
+   * also cuts from a TREAD near a lip, so on the same pixel the two tools
+   * genuinely have different answers — and the lit lip has to be the one the
+   * press will actually take, or the highlight is advertising the wrong edit.
+   *
+   * Absent means the pull's rule, which is what every non-carve tool wants.
+   */
+  readonly tool?: SculptTool;
 }
 
 export interface World extends TerrainSink {
@@ -156,6 +171,21 @@ export interface World extends TerrainSink {
    * snapshot, and for a ray that meets no revealed terrain.
    */
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
+  /**
+   * THE SAME RAY, RE-ASKED OF ONE PINNED COLUMN — `pickCell` with the march
+   * removed, for the hover cache (input/sculptInput.ts's `hoverTarget`).
+   *
+   * The cell a player aimed at is a fact about the RAY and must survive the
+   * edits they make with it; everything the pick says about the MAP must not.
+   * So the cache pins (x, y) and the ray, and re-derives the pick here every
+   * read, rather than keeping a `spanIndex` that a carve or a weld has since
+   * renumbered (issue #324). Null when the ray meets nothing in that column at
+   * all, which is the caller's signal to march again.
+   *
+   * See terrain/picking.ts's `pickTerrainInColumn` for the ground-under-the-ray
+   * fallback that keeps a held lower digging the same cell.
+   */
+  pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
    * The first cell a ray meets that has either something STANDING on it or
    * terrain under it — `pickCell`'s question with the world's contents
@@ -219,18 +249,30 @@ export interface World extends TerrainSink {
    * The band a CARVE starting at this pick cuts from — `SculptIntent`'s
    * `spanBand` for the one tool that needs it on ordinary ground too.
    *
-   * THE SAME DERIVATION AS `graspSpanBand`, WITHOUT ITS ONE-SPAN SHORTCUT, and
-   * that difference is the whole reason it is a second method. `graspSpanBand`
-   * says nothing about a column of one span because every other tool moves
-   * that column's only surface whatever band is named. A carve does not move a
-   * surface: it removes a range, and the range has to start SOMEWHERE, so a
-   * carve into a virgin cliff face — the very first cut of any tunnel, when no
-   * layered column exists anywhere in the world — needs the band the ray
-   * actually struck. Folding this into `graspSpanBand` instead would put a
-   * `spanBand` on every stamp and smooth intent over ordinary ground, which is
-   * exactly the byte-identity step 4.3 was built to keep.
+   * NO ONE-SPAN SHORTCUT, unlike `graspSpanBand`, and that is the whole reason
+   * it is a second method. `graspSpanBand` says nothing about a column of one
+   * span because every other tool moves that column's only surface whatever
+   * band is named. A carve does not move a surface: it removes a range, and the
+   * range has to start SOMEWHERE, so a carve into a virgin cliff face — the
+   * very first cut of any tunnel, when no layered column exists anywhere in the
+   * world — needs the band the ray actually struck. Folding this into
+   * `graspSpanBand` instead would put a `spanBand` on every stamp and smooth
+   * intent over ordinary ground, which is exactly the byte-identity step 4.3
+   * was built to keep.
    *
-   * Null only when there is no pick or no world yet.
+   * THE CORNER EDGE OR THE SIDE FACE (D1, owner 2026-09-04). A riser hit
+   * carves the band of the face, as the pull grabs it. A TREAD hit carves the
+   * struck span's cap band, but only when that band's lip lies within reach of
+   * the point the ray met the tread — a flat tread far from any lip is not an
+   * edge and carves nothing. An underside hit carves the lowest band the span
+   * draws.
+   *
+   * AND THE BAND IS RE-CHECKED against `spanIndexCoveringBand` — the exact test
+   * the server applies before it acts on a `spanBand` — so the client can never
+   * send a band the server would silently no-op.
+   *
+   * Null when there is no pick, no world yet, the pick does not fit the live
+   * column, or no band survives the two tests above.
    */
   carveBand(pick: TerrainRayPick | null): number | null;
   /**
@@ -272,41 +314,6 @@ export interface World extends TerrainSink {
    * the contract. 0 before the first snapshot.
    */
   terrainRevisionAt(x: number, y: number): number;
-  /**
-   * World-space Y of the cap of ONE span — the `spanIndex` a pick reported —
-   * at cell (x, y), or null when that span no longer exists (the column was
-   * carved, welded or the chunk left). The surface a cached pick must be
-   * refreshed against on a LAYERED column: `terrainHeightAt` is the TOPMOST
-   * span's cap, and reading it for a pick that struck a lower span lifted the
-   * pointer onto the roof (owner report 2026-08-27, "it jumps up several
-   * bands" — a tread hit at 1.5 wu on the floor of a carved notch was rewritten
-   * to the roof's 2.75 wu).
-   */
-  spanCapAt(x: number, y: number, spanIndex: number): number | null;
-  /**
-   * How many spans the column at (x, y) holds right now — 0 off the world or
-   * before the first snapshot.
-   *
-   * THE LENGTH OF THE LIST A `spanIndex` INDEXES, which is state (columns.ts's
-   * `spanIndexCoveringBand`): a carve that splits a column, or a raise that
-   * welds two of its spans, renumbers every span above the change. A cached
-   * pick can only keep its index while this count is the one it was taken
-   * under; past that the index names a different span, not a moved one.
-   */
-  spanCountAt(x: number, y: number): number;
-  /**
-   * Whether the span `spanIndex` of the column at (x, y) still DRAWS the
-   * world-space height `worldY` — i.e. `worldY` lies in the slab the renderer
-   * fills for it, from its underside (columns.ts `spanUndersideHeight`) to its
-   * cap. False when the cell, the index or the height is outside that.
-   *
-   * The test a cached RISER hit has to survive: `bandOfPick` clamps a struck
-   * height into the span's drawn range, which is right for a hit that landed on
-   * a slab boundary but turns a hit at a height the span no longer reaches into
-   * a silent claim about the band at the end of the clamp. A pick that fails
-   * this is not refreshable — it must be re-picked.
-   */
-  spanContainsHeight(x: number, y: number, spanIndex: number, worldY: number): boolean;
   /**
    * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
    * coordinate — terrain/drawnGround.ts's `capYAt`, read from the plan the
@@ -478,45 +485,32 @@ export function createWorld(viewport: Viewport): World {
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * The band a ray AIMED AT, as a number: the one derivation `graspSpanBand`
-   * and `carveBand` share, written once so the two can never disagree about
-   * which layer the player is pointing at. What differs between them is only
-   * WHEN they ask it — see their docs on the World interface.
+   * The band a ray AIMED AT — `terrain/pickBand.ts`'s derivation against the
+   * LIVE map. One derivation, so `graspSpanBand`, `carveBand` and
+   * `highlightLayerEdge` can never disagree about which layer the player is
+   * pointing at; null rather than a clamp when the pick does not fit the
+   * column it names. See that module for the rules and why they are there.
    */
-  const bandOfPick = (pick: TerrainRayPick): number | null => {
-    if (mirror === null) return null;
-    // A RISER HIT NAMES THE BAND WHOSE SLAB CONTAINS THE STRUCK HEIGHT (owner,
-    // 2026-08-26: "if you're grabbing the side of a band, then that is the band
-    // that should apply. I would never grab the band below"). The slab the
-    // renderer draws for band k occupies [(k−1)·BAND_HEIGHT, k·BAND_HEIGHT]
-    // (columns.ts `spanUndersideHeight`), so the band containing a height is
-    // its CEILING in band units — the whole face of band k, top to bottom, is
-    // band k's handle.
-    //
-    // NOT `round` (which is what this was): rounding made the bottom half of
-    // every face grab the band below the one being pointed at. NOT the span's
-    // cap band either: a column is drawn solid from its own cap down to its
-    // neighbour's, so a cliff that drops five bands at once is ONE span with
-    // one five-band-tall riser face carrying five lips, and the cap band would
-    // name the clifftop for every one of them (the 2026-08-24 report).
-    //
-    // CLAMPED TO THE STRUCK SPAN'S DRAWN RANGE so a hit landing exactly on a
-    // slab boundary — where `ceil` is exact and could name the band above the
-    // face — still resolves to a band this span actually draws.
-    //
-    // A horizontal face (a tread, or a cave roof seen from below) has no stack
-    // to disambiguate, so the band of the span the march itself reported is the
-    // answer.
-    const span = spanAt(mirror.map, pick.x, pick.y, pick.spanIndex);
-    if (pick.hitRiser) {
-      const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
-      const lowestDrawn = bandOf(spanUndersideHeight(span)) + 1;
-      const highestDrawn = bandOf(spanCapHeight(span));
-      if (struck < lowestDrawn) return lowestDrawn;
-      if (struck > highestDrawn) return highestDrawn;
-      return struck;
-    }
-    return bandOf(spanCapHeight(span));
+  const bandOfPick = (pick: TerrainRayPick): number | null =>
+    mirror === null ? null : bandOfPickIn(mirror.map, pick);
+
+  /**
+   * The band a CARVE press starting at this pick would cut from — the same
+   * derivation plus the two tests only the world can apply: the overlay's lip
+   * proximity for a tread hit (D1, owner 2026-09-04, "it should work on either
+   * the corner edge or the side face") and the server's own
+   * `spanIndexCoveringBand` belt.
+   *
+   * MEASURED FROM THE RAY'S OWN MEETING POINT, which is where the pointer is
+   * drawn — not the cell's lattice position, so the press and the lit lip
+   * cannot disagree about how far the lip is.
+   */
+  const carveBandOfPick = (pick: TerrainRayPick): number | null => {
+    const edges = layerEdges;
+    if (mirror === null || edges === null) return null;
+    return carveBandOfPickIn(mirror.map, pick, (band) =>
+      edges.lipNear({ x: pick.x, y: pick.y }, band, pick.hitX, pick.hitZ),
+    );
   };
 
   const clearExpiryTimer = (): void => {
@@ -949,34 +943,6 @@ export function createWorld(viewport: Viewport): World {
       return terrainEpoch + chunkRevisions[chunkIndexOfCell(mirror.map.size, cx, cy)];
     },
 
-    spanCapAt(x: number, y: number, spanIndex: number): number | null {
-      if (mirror === null) return null;
-      if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return null;
-      if (spanIndex < 0 || spanIndex >= spanCount(mirror.map, x, y)) return null;
-      return spanCapHeight(spanAt(mirror.map, x, y, spanIndex)) * HEIGHT_WORLD_SCALE;
-    },
-
-    spanCountAt(x: number, y: number): number {
-      if (mirror === null) return 0;
-      if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return 0;
-      return spanCount(mirror.map, x, y);
-    },
-
-    spanContainsHeight(x: number, y: number, spanIndex: number, worldY: number): boolean {
-      if (mirror === null) return false;
-      if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return false;
-      if (spanIndex < 0 || spanIndex >= spanCount(mirror.map, x, y)) return false;
-      // THE SAME BOUNDS `bandOfPick` CLAMPS INTO, in world units: the slab the
-      // renderer fills for this span runs from its underside to its cap, and
-      // those two heights are what the band range there is derived from. Read
-      // through the same helpers so the two can never disagree about how tall
-      // a span is drawn.
-      const span = spanAt(mirror.map, x, y, spanIndex);
-      const underside = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
-      const cap = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
-      return worldY >= underside && worldY <= cap;
-    },
-
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
       if (drawnGround === null || mirror === null) return null;
       // Same contract as terrainHeightAt: a never-received chunk has no drawn
@@ -1007,11 +973,19 @@ export function createWorld(viewport: Viewport): World {
       // of them could forget to pass is a way for them to disagree. They hand
       // over the pick; this turns it into the aim.
       //
-      // ONLY A RISER HIT NAMES A BAND, and it names it outright: the face under
-      // the cursor is the thing the player gets (owner, 2026-08-26). A ray that
-      // landed on a tread — or on a cave roof's underside — has no face to
-      // grab, so there is nothing to light and nothing to pull; the tread's own
-      // gesture is the seed (input/sculptInput.ts).
+      // FOR THE PULL, ONLY A RISER HIT NAMES A BAND, and it names it outright:
+      // the face under the cursor is the thing the player gets (owner,
+      // 2026-08-26). A ray that landed on a tread — or on a cave roof's
+      // underside — has no face to grab, so there is nothing to light and
+      // nothing to pull; the tread's own gesture is the seed
+      // (input/sculptInput.ts).
+      //
+      // THE CARVE IS THE EXCEPTION, and it is why `light.tool` exists (D1,
+      // owner 2026-09-04). A carve cuts from the corner edge as well as the
+      // side face, so for that tool the lit lip must come from the SAME
+      // derivation the press uses — `carveBandOfPick`, lip-proximity test and
+      // server belt included — or the highlight would be advertising an edit
+      // the press then refuses to make.
       //
       // THE OVERLAY IS NO LONGER ASKED WHICH BAND. It used to search: nearest
       // lip in plan within a grab radius, tie-broken by the aimed band. A
@@ -1022,8 +996,16 @@ export function createWorld(viewport: Viewport): World {
       // A LIVE STROKE'S GRAB WINS over the current ray — see LayerEdgeLight's
       // `heldBand`. `?? null` rather than a truthiness test: band 0 is a real
       // band (the waterline), and it is held like any other.
+      const carving = light.tool === 'carve';
       const band =
-        light.heldBand ?? (pick !== null && pick.hitRiser ? bandOfPick(pick) : null);
+        light.heldBand ??
+        (pick === null
+          ? null
+          : carving
+            ? carveBandOfPick(pick)
+            : pick.hitRiser
+              ? bandOfPick(pick)
+              : null);
       // CALLED EVEN WITH NOTHING TO LIGHT, because the overlay holds the
       // highlight from the last call: returning early on a null pick would
       // leave the previous frame's lip lit after the pointer had left it.
@@ -1041,8 +1023,14 @@ export function createWorld(viewport: Viewport): World {
       // horizontal face has no meeting point more meaningful than the cell.
       // Ignored entirely when there is no pick, which is why the cell doubles
       // as the "is there anything here" flag.
-      const atX = pick === null ? 0 : pick.hitRiser ? pick.hitX : pick.x * CELL_WORLD_SIZE;
-      const atZ = pick === null ? 0 : pick.hitRiser ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
+      //
+      // THE CARVE MEASURES FROM THE MEETING POINT ON EVERY FACE, tread
+      // included: `carveBandOfPick` tested lip proximity from exactly that
+      // point, so lighting from the cell lattice instead could light a lip the
+      // press did not admit, or leave the admitted one dark.
+      const useHitPoint = carving || (pick !== null && pick.hitRiser);
+      const atX = pick === null ? 0 : useHitPoint ? pick.hitX : pick.x * CELL_WORLD_SIZE;
+      const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
       return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;
     },
     bandAtCell(x: number, y: number): number | null {
@@ -1060,11 +1048,15 @@ export function createWorld(viewport: Viewport): World {
     },
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;
-      return bandOfPick(pick);
+      return carveBandOfPick(pick);
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
       return pickTerrainCellByRay(mirror, origin, direction);
+    },
+    pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null {
+      if (mirror === null) return null;
+      return pickTerrainInColumn(mirror, x, y, origin, direction);
     },
     pickPointedCell(
       origin: Vec3,

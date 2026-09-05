@@ -27,7 +27,12 @@ import {
   structureKey,
   type StructureCell,
 } from '../protocol.ts';
-import { createStructureModels, type StructureModels } from './models.ts';
+import timberHouseUrl from './assets/timber-house.glb?url';
+import {
+  createStructureModels,
+  preloadStructureModels,
+  type StructureModels,
+} from './models.ts';
 import { placementsFor } from './placement.ts';
 import { createSiteSurveyCache, type SiteSurveyCache } from './site.ts';
 import skiffUrl from './assets/skiff.glb?url';
@@ -116,13 +121,23 @@ function applyChanges(
 }
 
 /**
- * The buildings: THIRTY-SIX surfaces for the whole world's structures, not per
+ * The buildings: THIRTY-FIVE surfaces for the whole world's structures, not per
  * structure — models.ts merges every tier's ~100 authored parts into a handful
  * of surfaces per tier and draws all STRUCTURES_CAP placements through them.
- * Measured 2026-08-29; it does not scale with the settlement count, which is
- * the whole point of the merge.
+ * Measured 2026-08-29 at 36; it does not scale with the settlement count, which
+ * is the whole point of the merge.
+ *
+ * THIRTY-FIVE SINCE 2026-09-04, re-measured (not adjusted by hand) after tier 2
+ * became the imported timber-house asset: that model is one mesh with one
+ * textured material, so it merges to ONE surface where the procedural tier it
+ * replaced merged to two (its vertex-coloured surface plus its lit windows,
+ * which keep their own draw because they glow). Counted as
+ * `createStructureModels().root.children.length` with and without the asset
+ * installed — a textured tier costs its own surface exactly like the boat hull
+ * does, so this number moves with the ASSET and has to be re-measured whenever
+ * the asset changes.
  */
-const STRUCTURE_SURFACE_DRAW_OBJECTS = 36;
+const STRUCTURE_SURFACE_DRAW_OBJECTS = 35;
 
 /**
  * The moored skiffs: ONE surface for the whole fleet, however many boats are
@@ -142,13 +157,34 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: STRUCTURE_SURFACE_DRAW_OBJECTS + SKIFF_SURFACE_DRAW_OBJECTS,
 
   /**
-   * Loads skiff.glb before attach, so createSkiffModels has a hull to draw.
-   * A rejected load is a logged breach for this plugin only — the host never
-   * attaches afterwards, so the whole plugin (buildings included) stays
-   * unmounted rather than drawing a village with no boats.
+   * Loads BOTH of this plugin's model files before attach — one preload is all
+   * the host offers, and this plugin now draws two assets.
+   *
+   * Loads skiff.glb, so createSkiffModels has a hull to draw. A rejected load
+   * is a logged breach for this plugin only — the host never attaches
+   * afterwards, so the whole plugin (buildings included) stays unmounted
+   * rather than drawing a village with no boats.
+   *
+   * Loads the tier-2 building model, so createStructureModels has an asset to
+   * draw that tier from (models.ts's IMPORTED_STRUCTURE_TIER). That one is NOT
+   * fatal in the same way on its own: the tier falls back to its procedural
+   * builder, so every settlement would still stand in primitives — but the
+   * host's contract is one promise per plugin, so a rejection here still keeps
+   * the plugin unmounted, and the fallback is what covers a build that ships
+   * without the file rather than a load that failed.
+   *
+   * IN PARALLEL, and each keeps its OWN fit check and its own error wording
+   * (skiffModels.ts's hull budget, models.ts's footprint contract): the two
+   * loads are independent HTTP fetches of unrelated files, and sequencing them
+   * would add one round trip to every mount for no ordering that matters.
+   * Promise.all rejects with the first failure, which is the behaviour the
+   * host already logs.
    */
   preload(): Promise<void> {
-    return preloadSkiffModels(skiffUrl);
+    return Promise.all([
+      preloadSkiffModels(skiffUrl),
+      preloadStructureModels(timberHouseUrl),
+    ]).then(() => undefined);
   },
 
   attach(ctx: ClientPluginCtx): void {

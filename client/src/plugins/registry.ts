@@ -20,6 +20,7 @@ import { clientPlugin as mudslides } from '../../../plugins/mudslides/client/ind
 import { clientPlugin as pilgrims } from '../../../plugins/pilgrims/client/index.ts';
 import { clientPlugin as rain } from '../../../plugins/rain/client/index.ts';
 import { clientPlugin as relics } from '../../../plugins/relics/client/index.ts';
+import { clientPlugin as saucers } from '../../../plugins/saucers/client/index.ts';
 import { clientPlugin as snow } from '../../../plugins/snow/client/index.ts';
 import { clientPlugin as structures } from '../../../plugins/structures/client/index.ts';
 import { clientPlugin as temples } from '../../../plugins/temples/client/index.ts';
@@ -57,5 +58,6 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   cyclone,
   mudslides,
   volcanoes,
+  saucers,
   chronicle,
 ];
