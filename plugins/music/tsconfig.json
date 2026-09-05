@@ -6,7 +6,11 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     // tsc 7.0.2 does not auto-discover a nested workspace package's pnpm-linked
     // node_modules/@types; naming it explicitly is deterministic.
-    "types": ["node"]
+    "types": ["node"],
+    // Matches client/tsconfig.json: the panel is compiled by the client's
+    // vite-plugin-solid, which expects untransformed JSX.
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js"
   },
   "include": ["client"]
 }

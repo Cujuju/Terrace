@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@terrace/shared": "workspace:*",
+    "solid-js": "^1.9.14",
     "three": "^0.185.1"
   },
   "devDependencies": {
