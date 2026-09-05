@@ -262,6 +262,11 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
+    // DECODE THE CLAP NOW, not at the first bolt. A one-shot whose buffer is
+    // not ready is dropped rather than played late (ClientPluginCtx's
+    // PluginAudio), and without this the FIRST thunderclap of every session —
+    // the one a player actually notices — was silent.
+    ctx.audio.preload(thunderSfxUrl);
     unpublishShade = ctx.publishGroundShade(shadeDiscs);
 
     unsubscribeStrikes = ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
