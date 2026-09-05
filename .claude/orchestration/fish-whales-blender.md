@@ -17,7 +17,7 @@ phase-1 kit open). The first pass lands that adapter alongside its model.
 | 2 | Shark | `shark` | plugins/wildlife/client/species/shark.ts | merged (2026-09-05); brief `briefs/shark-glb-pass2.md`, one asset list `species/assets.ts` |
 | 3 | Ray | `ray` | plugins/wildlife/client/species/ray.ts | merged (2026-09-05); brief `briefs/ray-glb-pass3.md`; rest + swept envelopes |
 | 4 | Eel | `eel` | plugins/wildlife/client/species/eel.ts (+ .fish-shots/eel.py concept) | merged (2026-09-05); brief `briefs/eel-glb-pass4.md`; nested five-joint spine chain |
-| 5 | Angelfish | `angelfish` | plugins/wildlife/client/species/angelfish.ts (+ .fish-shots/angelfish.py concept) | todo |
+| 5 | Angelfish | `angelfish` | plugins/wildlife/client/species/angelfish.ts (+ .fish-shots/angelfish.py concept) | merged (2026-09-05); sheet `briefs/angelfish-glb-pass5.md`; bars as a thickened section |
 | 6 | Humpback whale | `whale` variant 0 | plugins/wildlife/client/whaleSpecies.ts | todo |
 | 7 | Blue whale | `whale` variant 1 | plugins/wildlife/client/whaleSpecies.ts | todo |
 | 8 | Sperm whale | `whale` variant 2 | plugins/wildlife/client/whaleSpecies.ts | todo |
