@@ -17,9 +17,10 @@
 // HOW DETERMINISM WORKS. All randomness comes from createPrng(seed), and the
 // draws are consumed in a fixed order that does NOT depend on when a tick
 // fires: exactly two draws per melody subdivision, whether or not a note
-// sounds. So the same seed and the same mood timeline always produce the same
-// NOTE STREAM — the same notes, at the same times, with the same envelopes.
-// renderComposition() below renders that stream offline so it can be checked.
+// sounds. So the same seed, the same mood timeline AND the same tuning timeline
+// always produce the same NOTE STREAM — the same notes, at the same times, with
+// the same envelopes. renderComposition() below renders that stream offline, at
+// DEFAULT_TUNING, so it can be checked.
 //
 // WHAT DETERMINISM DOES *NOT* MEAN HERE, measured 2026-09-04 on
 // chrome-headless-shell 1234: two offline renders of the identical score are
@@ -34,23 +35,41 @@
 // are GLIDED with setTargetAtTime, so they can be retargeted at any instant
 // without a click. Discrete musical choices (major or minor) are sampled only
 // at a chord boundary, so the key never jumps mid-bar.
+//
+// HOW TUNING WORKS (GH #325). The dials in tuning.ts land in three ways, and
+// which one a dial takes is a property of what it controls, not a preference:
+//   LEVELS AND CUTOFFS are AudioParams on three bus gains and the mood filter,
+//     glided with setTargetAtTime — heard on everything already sounding.
+//   EVENT SHAPE (detune, envelopes, densities) is read inside pumpUntil, so it
+//     is heard from the next scheduled event. It cannot be applied to a note
+//     already written without rewriting its automation.
+//   TEMPO lands only on the next CHORD BOUNDARY, because re-anchoring the beat
+//     grid anywhere else would move a beat that has already been scheduled.
 
 import { createPrng } from './prng.ts';
 import {
   BEATS_PER_CHORD,
   chordNotes,
   melodyEvent,
-  MELODY_OFFBEAT_DENSITY_FACTOR,
   MELODY_SUBDIVISIONS_PER_BEAT,
   moodParameters,
   ROOT_MIDI_NOTE,
-  SECONDS_PER_BEAT,
+  secondsPerBeat,
+  secondsPerChord,
   type ComposerMood,
   type MoodParameters,
 } from './theory.ts';
-import { createVoicePool, schedulePadChord, schedulePluck, startDrone } from './voices.ts';
+import { DEFAULT_TUNING, type ComposerTuning } from './tuning.ts';
+import {
+  createVoicePool,
+  schedulePadChord,
+  schedulePluck,
+  SILENT_GAIN,
+  startDrone,
+} from './voices.ts';
 
 export type { ComposerMood } from './theory.ts';
+export type { ComposerTuning } from './tuning.ts';
 
 /** How often the lookahead scheduler wakes, in milliseconds. 250 ms is four
  * wakes a second: far under SCHEDULE_AHEAD_SECONDS, so a tick delayed by a
@@ -107,6 +126,13 @@ export interface ComposerStats {
   readonly liveNodeCount: number;
   /** Wall-clock cost of the most recent scheduler tick, in milliseconds. */
   readonly lastTickMilliseconds: number;
+  /** The tempo the beat grid is actually running at right now. */
+  readonly activeTempoBpm: number;
+  /** Audio-clock time the active tempo was anchored at — the chord boundary it
+   * landed on, which is what makes "it landed on the grid" checkable. */
+  readonly tempoAnchorTime: number;
+  /** A tempo waiting for the next chord boundary, or null when none is. */
+  readonly pendingTempoBpm: number | null;
 }
 
 /** A running generative score. */
@@ -119,6 +145,10 @@ export interface Composer {
   /** Retarget the mood; parameters glide, never step (no clicks, no key jumps
    * mid-bar). Safe before start() and after stop(). */
   setMood(mood: ComposerMood): void;
+  /** Retarget the tuning. Levels and cutoffs glide now, event shape applies to
+   * the next scheduled event, tempo to the next chord boundary. Safe before
+   * start() and after stop(). */
+  setTuning(tuning: ComposerTuning): void;
   /** Live diagnostics. Additive to the phase-2a brief's interface, for the
    * preview page's node-count and tick-cost readouts. */
   stats(): ComposerStats;
@@ -126,6 +156,15 @@ export interface Composer {
 
 /** The mood a composer holds until told otherwise: midday, clear, calm. */
 const DEFAULT_MOOD: ComposerMood = { dayPhase: 0.5, weather: 0, tension: 0 };
+
+/**
+ * A tempo the scheduler can actually run on. Zero or a non-finite value makes
+ * secondsPerBeat infinite or negative, which hangs the pump loop — a guard here
+ * as well as the panel's clamp, because createComposer takes any tuning.
+ */
+function usableTempoBpm(tempoBpm: number): number {
+  return Number.isFinite(tempoBpm) && tempoBpm > 0 ? tempoBpm : DEFAULT_TUNING.tempoBpm;
+}
 
 /**
  * The part that is shared by the realtime composer and the offline render: the
@@ -138,6 +177,7 @@ function createEngine(
   destination: AudioNode,
   seed: number,
   initialMood: ComposerMood,
+  initialTuning: ComposerTuning,
 ) {
   const prng = createPrng(seed);
   const pool = createVoicePool();
@@ -151,10 +191,38 @@ function createEngine(
   moodFilter.connect(outputGain);
 
   let mood: ComposerMood = initialMood;
+  let tuning: ComposerTuning = initialTuning;
+
+  /**
+   * THE THREE LEVEL BUSES. Each family's voices peak at unity and meet their
+   * level here, so one glided gain retunes every note already sounding. The
+   * drone is not one of these: its level IS the mood's tension, glided on the
+   * gain startDrone returns, and it has no dial.
+   */
+  const padBus = context.createGain();
+  const shimmerBus = context.createGain();
+  const melodyBus = context.createGain();
+  for (const bus of [padBus, shimmerBus, melodyBus]) bus.connect(moodFilter);
+
+  /** The shimmer's level is a FRACTION of a pad tone's, so it tracks the pad. */
+  const shimmerBusGain = (of: ComposerTuning): number =>
+    of.padToneGain * of.shimmerGainFraction;
+
   let droneGain: GainNode | null = null;
   let startTime = 0;
-  /** Beats scheduled so far; the scheduler's whole position in the score. */
+  /** Beats scheduled since the last tempo anchor — the grid's position. */
   let nextBeatIndex = 0;
+  /**
+   * Chords scheduled since begin(). SEPARATE from the beat index because a
+   * tempo change re-anchors the beat grid: the progression must go on walking
+   * through the change rather than jumping back to its first chord.
+   */
+  let nextChordIndex = 0;
+  /** The tempo the grid is running at, and the boundary it was anchored on. */
+  let activeTempoBpm = usableTempoBpm(initialTuning.tempoBpm);
+  let tempoAnchorTime = 0;
+  /** A tempo held until the next chord boundary; null when none is waiting. */
+  let pendingTempoBpm: number | null = null;
   /** Major or minor, sampled at the last chord boundary and held until the
    * next one so the melody's scale always agrees with the chord under it. */
   let activeMinor = false;
@@ -185,40 +253,88 @@ function createEngine(
     droneGain?.gain.setValueAtTime(parameters.droneGain, atTime);
   };
 
+  /** Sets the three bus levels at `atTime`, gliding or stepping like the mood. */
+  const applyBusGains = (atTime: number, glide: boolean): void => {
+    const levels: readonly (readonly [GainNode, number])[] = [
+      [padBus, tuning.padToneGain],
+      [shimmerBus, shimmerBusGain(tuning)],
+      [melodyBus, tuning.pluckPeakGain],
+    ];
+    for (const [bus, level] of levels) {
+      if (glide) bus.gain.setTargetAtTime(level, atTime, MOOD_GLIDE_TIME_CONSTANT_SECONDS);
+      else bus.gain.setValueAtTime(level, atTime);
+    }
+  };
+
   return {
     setMood(next: ComposerMood, atTime: number): void {
       mood = next;
-      applyMoodParameters(moodParameters(mood), atTime, true);
+      applyMoodParameters(moodParameters(mood, tuning), atTime, true);
+    },
+
+    setTuning(next: ComposerTuning, atTime: number): void {
+      tuning = next;
+      applyBusGains(atTime, true);
+      applyMoodParameters(moodParameters(mood, tuning), atTime, true);
+      // Cleared, not queued, when the dial comes back to where the grid already
+      // is — otherwise a drag past a value and back would re-anchor for nothing.
+      const wanted = usableTempoBpm(next.tempoBpm);
+      pendingTempoBpm = wanted === activeTempoBpm ? null : wanted;
     },
 
     /** Opens the chain at `atTime` and starts the always-on drone voice. */
     begin(atTime: number): void {
       startTime = atTime;
+      tempoAnchorTime = atTime;
       outputGain.gain.setValueAtTime(0, atTime);
       outputGain.gain.linearRampToValueAtTime(OUTPUT_LEVEL, atTime + START_FADE_SECONDS);
       droneGain = startDrone(context, pool, moodFilter, ROOT_MIDI_NOTE, atTime);
-      applyMoodParameters(moodParameters(mood), atTime, false);
+      applyBusGains(atTime, false);
+      applyMoodParameters(moodParameters(mood, tuning), atTime, false);
     },
 
     /** Schedules every event whose start time is before `horizon`. */
     pumpUntil(horizon: number): void {
-      while (startTime + nextBeatIndex * SECONDS_PER_BEAT < horizon) {
+      for (;;) {
+        let beatSeconds = secondsPerBeat(activeTempoBpm);
+        const beatTime = startTime + nextBeatIndex * beatSeconds;
+        if (beatTime >= horizon) return;
+
+        if (nextBeatIndex % BEATS_PER_CHORD === 0 && pendingTempoBpm !== null) {
+          // RE-ANCHOR, and only here. `beatTime` was computed at the OLD tempo
+          // and is the boundary itself, so making it index 0 of the new grid
+          // moves no beat that has already been scheduled.
+          activeTempoBpm = pendingTempoBpm;
+          pendingTempoBpm = null;
+          startTime = beatTime;
+          nextBeatIndex = 0;
+          tempoAnchorTime = beatTime;
+          beatSeconds = secondsPerBeat(activeTempoBpm);
+        }
+
         const beatIndex = nextBeatIndex;
         nextBeatIndex += 1;
-        const beatTime = startTime + beatIndex * SECONDS_PER_BEAT;
-        const parameters = moodParameters(mood);
+        const parameters = moodParameters(mood, tuning);
 
         if (beatIndex % BEATS_PER_CHORD === 0) {
           // The one place mode is decided, and it is a chord boundary by
           // construction: this is what "no key jumps mid-bar" means.
           activeMinor = parameters.minor;
-          const chordIndex = beatIndex / BEATS_PER_CHORD;
+          const chordIndex = nextChordIndex;
+          nextChordIndex += 1;
           schedulePadChord(
             context,
             pool,
-            moodFilter,
+            padBus,
+            shimmerBus,
             chordNotes(chordIndex, activeMinor),
             beatTime,
+            {
+              holdSeconds: secondsPerChord(activeTempoBpm),
+              attackSeconds: tuning.padAttackSeconds,
+              releaseSeconds: tuning.padReleaseSeconds,
+              detuneCents: tuning.padDetuneCents,
+            },
           );
         }
 
@@ -226,7 +342,11 @@ function createEngine(
         // one; its density and octave follow the mood immediately, because
         // neither can produce a discontinuity in anything already sounding.
         const melodyParameters: MoodParameters = { ...parameters, minor: activeMinor };
-        const subdivisionSeconds = SECONDS_PER_BEAT / MELODY_SUBDIVISIONS_PER_BEAT;
+        const subdivisionSeconds = beatSeconds / MELODY_SUBDIVISIONS_PER_BEAT;
+        // Scaled by the bus level so the audible tail still ends at SILENT_GAIN;
+        // a silent melody bus divides by zero, so it keeps the unscaled floor.
+        const silentFloorGain =
+          tuning.pluckPeakGain > 0 ? SILENT_GAIN / tuning.pluckPeakGain : SILENT_GAIN;
         for (let sub = 0; sub < MELODY_SUBDIVISIONS_PER_BEAT; sub += 1) {
           // BOTH draws happen unconditionally. That is what keeps the random
           // stream a function of the seed alone: a denser mood then plays MORE
@@ -234,17 +354,18 @@ function createEngine(
           const gate = prng.next();
           const pick = prng.next();
           const density =
-            melodyParameters.melodyDensity * (sub === 0 ? 1 : MELODY_OFFBEAT_DENSITY_FACTOR);
+            melodyParameters.melodyDensity * (sub === 0 ? 1 : tuning.offbeatDensityFactor);
           if (gate >= density) continue;
           const event = melodyEvent(pick, melodyParameters, previousMelodyNote);
           previousMelodyNote = event.note;
           schedulePluck(
             context,
             pool,
-            moodFilter,
+            melodyBus,
             event.note,
             event.velocity,
             beatTime + sub * subdivisionSeconds,
+            { durationSeconds: tuning.pluckDurationSeconds, silentFloorGain },
           );
         }
       }
@@ -264,11 +385,15 @@ function createEngine(
     /** Takes the fixed part of the chain apart. Called after every voice has
      * been stopped; the voices themselves are released by the pool. */
     dispose(): void {
+      for (const bus of [padBus, shimmerBus, melodyBus]) bus.disconnect();
       moodFilter.disconnect();
       outputGain.disconnect();
     },
 
     liveNodeCount: (): number => pool.liveNodeCount(),
+    activeTempoBpm: (): number => activeTempoBpm,
+    tempoAnchorTime: (): number => tempoAnchorTime,
+    pendingTempoBpm: (): number | null => pendingTempoBpm,
   };
 }
 
@@ -285,8 +410,9 @@ export function createComposer(
   context: AudioContext,
   destination: AudioNode,
   seed: number,
+  tuning: ComposerTuning = DEFAULT_TUNING,
 ): Composer {
-  const engine = createEngine(context, destination, seed, DEFAULT_MOOD);
+  const engine = createEngine(context, destination, seed, DEFAULT_MOOD, tuning);
   let timer: ReturnType<typeof setInterval> | null = null;
   let stopped = false;
   let lastTickMilliseconds = 0;
@@ -319,9 +445,15 @@ export function createComposer(
     setMood(mood: ComposerMood): void {
       engine.setMood(mood, context.currentTime);
     },
+    setTuning(next: ComposerTuning): void {
+      engine.setTuning(next, context.currentTime);
+    },
     stats: (): ComposerStats => ({
       liveNodeCount: engine.liveNodeCount(),
       lastTickMilliseconds,
+      activeTempoBpm: engine.activeTempoBpm(),
+      tempoAnchorTime: engine.tempoAnchorTime(),
+      pendingTempoBpm: engine.pendingTempoBpm(),
     }),
   };
 }
@@ -349,7 +481,9 @@ export function renderComposition(
   // construction: setMood glides, and a glide starting at time 0 would leave
   // the first seconds of every render sweeping up from the default mood
   // instead of sitting at the requested one.
-  const engine = createEngine(context, destination, seed, mood);
+  // AT DEFAULT_TUNING, deliberately: this is the determinism artefact, so it
+  // must not depend on whatever the player last left the dials on.
+  const engine = createEngine(context, destination, seed, mood, DEFAULT_TUNING);
   engine.begin(0);
   engine.pumpUntil(seconds);
 }

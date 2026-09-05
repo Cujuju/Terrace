@@ -8,12 +8,21 @@
 // the pool, which releases it from the source's own `ended` event. That is the
 // only release path: nothing in this file relies on a timer to clean up.
 //
-// WHY NOTHING HERE READS A MOOD. Voices take frequencies and times. The mood
-// lives in theory.ts and is applied by the engine either as a scheduling
-// choice (which note, how often) or as one glided AudioParam (the filter, the
-// drone gain). Keeping it out of here is what makes the note stream auditable.
+// WHY NOTHING HERE READS A MOOD OR A TUNING. Voices take frequencies, times,
+// and the handful of shape numbers their caller passes. The mood lives in
+// theory.ts and the dials in tuning.ts; the engine applies both, either as a
+// scheduling choice (which note, how often) or as one glided AudioParam (the
+// filter, the buses, the drone). Keeping them out of here is what makes the
+// note stream auditable.
+//
+// WHY NO VOICE CARRIES ITS OWN LEVEL ANY MORE. A level baked into an envelope
+// is frozen the moment the note is scheduled, so moving a gain dial would only
+// be heard on notes not yet written — up to a chord and a half later. Every
+// envelope here therefore peaks at UNITY (a pluck, at its velocity) and the
+// engine's pad/shimmer/melody bus gains carry the level, glided, so a dial is
+// heard on everything already sounding.
 
-import { midiToFrequency, SECONDS_PER_CHORD } from './theory.ts';
+import { midiToFrequency } from './theory.ts';
 
 /** Oscillators stacked per chord tone in the pad. Three is the classic
  * "supersaw" minimum: one at pitch and one either side, which gives the slow
@@ -21,20 +30,14 @@ import { midiToFrequency, SECONDS_PER_CHORD } from './theory.ts';
  * a third more oscillators for every chord tone. */
 const PAD_VOICES_PER_TONE = 3;
 
-/** Detune spread of the outer pad voices, in cents. 7 cents is about a 0.4 %
- * pitch offset: at 110 Hz that beats a little under once a second, which is
- * movement without vibrato. Past ~15 cents it starts to sound out of tune. */
-const PAD_DETUNE_CENTS = 7;
-
 /** Pad waveform. A sawtooth has every harmonic, which is what gives the mood
  * low-pass something to actually remove; a sine or triangle would leave the
  * filter sweep nearly inaudible. */
 const PAD_WAVEFORM: OscillatorType = 'sawtooth';
 
-/** Peak gain of one chord tone (all detuned voices together), relative to the
- * composer's output. 0.044: owner 2026-09-05 took the pad from 0.09 to 0.055,
- * then 20 % lower again; three tones now sum to 0.132. */
-const PAD_TONE_PEAK_GAIN = 0.044;
+/** Peak of a pad tone's — and its shimmer's — envelope. Unity: the level is on
+ * the engine's pad and shimmer buses (see this file's header). */
+const ENVELOPE_PEAK_GAIN = 1;
 
 /** Shimmer waveform. Sine an octave up: a clean halo on each chord tone. */
 const SHIMMER_WAVEFORM: OscillatorType = 'sine';
@@ -42,47 +45,23 @@ const SHIMMER_WAVEFORM: OscillatorType = 'sine';
 /** Shimmer pitch above its chord tone, in semitones: one octave. */
 const SHIMMER_OCTAVE_SEMITONES = 12;
 
-/** Shimmer level as a fraction of its tone's gain. 0.3 is heard as air on the
- * pad, not as a second voice (owner 2026-09-05). */
-const SHIMMER_GAIN_FRACTION = 0.3;
-
 /** Shimmer detune, in cents. 4 cents against the tone's octave beats slowly
  * — the glisten — without reading as out of tune. */
 const SHIMMER_DETUNE_CENTS = 4;
-
-/** Pad attack, in seconds. 3 s over a 7.5 s chord means a chord is never
- * "struck" — the strongest reason the pad reads as weather, not a keyboard. */
-const PAD_ATTACK_SECONDS = 3;
-
-/** Pad release, in seconds. Begins as the NEXT chord's attack begins, so the
- * two overlap for their whole length and the progression crossfades. 3.5 s is
- * slightly longer than the attack so the outgoing chord is still under the
- * incoming one when that one arrives. */
-const PAD_RELEASE_SECONDS = 3.5;
 
 /** Melody waveform. Sine: no harmonics, so a note is a point of light over the
  * pad rather than an instrument — the "stars" half of the cosmic brief
  * (owner 2026-09-05; was triangle). */
 const PLUCK_WAVEFORM: OscillatorType = 'sine';
 
-/** Peak gain of one melody note. Well above the pad's per-tone level so single
- * notes read as foreground; four overlapping notes plus the pad stay under
- * unity. Sine carries less energy than triangle, hence 0.18 not 0.16. */
-const PLUCK_PEAK_GAIN = 0.18;
-
 /** Melody attack, in seconds. 12 ms is fast enough to read as a pluck and slow
  * enough to avoid the click a step change in gain would produce. */
 const PLUCK_ATTACK_SECONDS = 0.012;
 
-/** Total life of a melody note, in seconds — attack plus decay. 3.2 s (~7
- * eighths) lets each note hang and fade like a distant point of light; at the
- * densest mood a note has at most six live neighbours, still under unity. */
-const PLUCK_DURATION_SECONDS = 3.2;
-
-/** Gain a decaying note is ramped to before it is stopped. Exponential ramps
- * cannot reach zero, so they aim here: -80 dB, inaudible, and the node is
- * stopped immediately after. */
-const SILENT_GAIN = 0.0001;
+/** Gain a decaying note is ramped to before it is stopped, measured AFTER its
+ * bus. Exponential ramps cannot reach zero, so they aim here: -80 dB,
+ * inaudible, and the node is stopped immediately after. */
+export const SILENT_GAIN = 0.0001;
 
 /** Drone waveform. A sine has no harmonics to muddy the pad's low end — the
  * drone is meant to be felt under the music, not heard as a part. */
@@ -159,31 +138,49 @@ export function createVoicePool(): VoicePool {
   };
 }
 
+/** The envelope shape of one pad chord, in seconds and audio-clock times. */
+export interface PadShape {
+  /** Seconds the chord is held before its release begins. */
+  readonly holdSeconds: number;
+  readonly attackSeconds: number;
+  readonly releaseSeconds: number;
+  readonly detuneCents: number;
+}
+
 /**
  * Schedules one chord: every tone, every detuned voice, attack through
  * release. `startTime` is on the audio clock and is when the attack begins;
- * the release begins one chord later, so consecutive chords crossfade.
+ * the release begins `shape.holdSeconds` later, so consecutive chords
+ * crossfade. The tones go to `padDestination` and their octave shimmers to
+ * `shimmerDestination`, so the two levels are separate glided bus gains.
  */
 export function schedulePadChord(
   context: BaseAudioContext,
   pool: VoicePool,
-  destination: AudioNode,
+  padDestination: AudioNode,
+  shimmerDestination: AudioNode,
   notes: readonly number[],
   startTime: number,
+  shape: PadShape,
 ): void {
-  const releaseStart = startTime + SECONDS_PER_CHORD;
-  const releaseEnd = releaseStart + PAD_RELEASE_SECONDS;
+  const releaseStart = startTime + shape.holdSeconds;
+  const releaseEnd = releaseStart + shape.releaseSeconds;
 
-  for (const note of notes) {
-    const toneGain = context.createGain();
-    toneGain.gain.setValueAtTime(0, startTime);
-    toneGain.gain.linearRampToValueAtTime(PAD_TONE_PEAK_GAIN, startTime + PAD_ATTACK_SECONDS);
+  /** The tone envelope, peaking at unity — one shape, applied to two gains. */
+  const applyEnvelope = (gain: GainNode): void => {
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(ENVELOPE_PEAK_GAIN, startTime + shape.attackSeconds);
     // Held explicitly at the release point: without this the ramp below would
     // interpolate from the ATTACK's end value over the whole chord, i.e. the
     // pad would start fading the instant it arrived.
-    toneGain.gain.setValueAtTime(PAD_TONE_PEAK_GAIN, releaseStart);
-    toneGain.gain.linearRampToValueAtTime(0, releaseEnd);
-    toneGain.connect(destination);
+    gain.gain.setValueAtTime(ENVELOPE_PEAK_GAIN, releaseStart);
+    gain.gain.linearRampToValueAtTime(0, releaseEnd);
+  };
+
+  for (const note of notes) {
+    const toneGain = context.createGain();
+    applyEnvelope(toneGain);
+    toneGain.connect(padDestination);
 
     const sources: OscillatorNode[] = [];
     for (let voice = 0; voice < PAD_VOICES_PER_TONE; voice += 1) {
@@ -193,16 +190,19 @@ export function schedulePadChord(
       // Spread symmetrically about the pitch: for three voices that is
       // -1, 0, +1 detune steps.
       const spread = voice - (PAD_VOICES_PER_TONE - 1) / 2;
-      oscillator.detune.setValueAtTime(spread * PAD_DETUNE_CENTS, startTime);
+      oscillator.detune.setValueAtTime(spread * shape.detuneCents, startTime);
       oscillator.connect(toneGain);
       oscillator.start(startTime);
       oscillator.stop(releaseEnd + VOICE_STOP_MARGIN_SECONDS);
       sources.push(oscillator);
     }
 
+    // ITS OWN ENVELOPE, not a fraction of the tone's gain: routed to the
+    // shimmer bus it can no longer borrow the tone's shape, and the halo has to
+    // rise and fall with the chord it belongs to.
     const shimmerGain = context.createGain();
-    shimmerGain.gain.setValueAtTime(SHIMMER_GAIN_FRACTION, startTime);
-    shimmerGain.connect(toneGain);
+    applyEnvelope(shimmerGain);
+    shimmerGain.connect(shimmerDestination);
     const shimmer = context.createOscillator();
     shimmer.type = SHIMMER_WAVEFORM;
     shimmer.frequency.setValueAtTime(midiToFrequency(note + SHIMMER_OCTAVE_SEMITONES), startTime);
@@ -215,7 +215,23 @@ export function schedulePadChord(
   }
 }
 
-/** Schedules one melody note at `startTime`; `velocity` in (0, 1] scales it. */
+/** The envelope shape of one melody note, as its caller reads it off a tuning. */
+export interface PluckShape {
+  /** Total life of the note, in seconds — attack plus decay. */
+  readonly durationSeconds: number;
+  /**
+   * Where the decay aims, expressed BEFORE the melody bus. Passed in rather
+   * than fixed at SILENT_GAIN because an exponential ramp's curve is set by
+   * its start/end RATIO: aiming at a floor scaled by the bus gain is what
+   * keeps the audible tail identical whatever level the bus carries.
+   */
+  readonly silentFloorGain: number;
+}
+
+/**
+ * Schedules one melody note at `startTime`. The envelope peaks at `velocity`
+ * (in (0, 1]); the melody bus carries the level.
+ */
 export function schedulePluck(
   context: BaseAudioContext,
   pool: VoicePool,
@@ -223,16 +239,14 @@ export function schedulePluck(
   note: number,
   velocity: number,
   startTime: number,
+  shape: PluckShape,
 ): void {
-  const endTime = startTime + PLUCK_DURATION_SECONDS;
+  const endTime = startTime + shape.durationSeconds;
 
   const noteGain = context.createGain();
-  noteGain.gain.setValueAtTime(SILENT_GAIN, startTime);
-  noteGain.gain.linearRampToValueAtTime(
-    PLUCK_PEAK_GAIN * velocity,
-    startTime + PLUCK_ATTACK_SECONDS,
-  );
-  noteGain.gain.exponentialRampToValueAtTime(SILENT_GAIN, endTime);
+  noteGain.gain.setValueAtTime(shape.silentFloorGain, startTime);
+  noteGain.gain.linearRampToValueAtTime(velocity, startTime + PLUCK_ATTACK_SECONDS);
+  noteGain.gain.exponentialRampToValueAtTime(shape.silentFloorGain, endTime);
   noteGain.connect(destination);
 
   const oscillator = context.createOscillator();

@@ -10,16 +10,21 @@
 // pleasant; this is a terraforming god-game, not a shooter." Every choice
 // below is the conservative one — slow tempo, pentatonic melody, four-chord
 // loop, no modulation, no rhythm section.
+//
+// WHAT MOVED OUT. The numbers the owner tunes by ear (tempo, the two filter
+// cutoffs, the melody density scale and off-beat factor) live in tuning.ts and
+// arrive as arguments. What stays is the score's identity, which no dial moves.
 
-/**
- * Tempo. 64 BPM: a bar is 3.75 s, drifting rather than still. Owner 2026-09-05
- * asked for a little more pace than the original 56; faster starts demanding
- * attention, which a layer left on for hours must not.
- */
-export const TEMPO_BEATS_PER_MINUTE = 64;
+import type { ComposerTuning } from './tuning.ts';
 
-/** Seconds in one beat, derived so the tempo has exactly one definition. */
-export const SECONDS_PER_BEAT = 60 / TEMPO_BEATS_PER_MINUTE;
+/** Seconds in a minute — the one place the tempo unit is spelled out. */
+const SECONDS_PER_MINUTE = 60;
+
+/** Seconds in one beat at `tempoBpm`. A FUNCTION, not a constant: the tempo is
+ * a live dial (tuning.ts), so no consumer may hold a copy. */
+export function secondsPerBeat(tempoBpm: number): number {
+  return SECONDS_PER_MINUTE / tempoBpm;
+}
 
 /** Beats in a bar. 4/4 — the only metre that never sounds like a statement. */
 export const BEATS_PER_BAR = 4;
@@ -33,8 +38,10 @@ export const BARS_PER_CHORD = 2;
 /** Beats a chord is held for. Derived — the chord grid is the beat grid. */
 export const BEATS_PER_CHORD = BEATS_PER_BAR * BARS_PER_CHORD;
 
-/** Seconds a chord is held for. */
-export const SECONDS_PER_CHORD = BEATS_PER_CHORD * SECONDS_PER_BEAT;
+/** Seconds a chord is held for at `tempoBpm`. Derived, for the same reason. */
+export function secondsPerChord(tempoBpm: number): number {
+  return BEATS_PER_CHORD * secondsPerBeat(tempoBpm);
+}
 
 /**
  * Melody events per beat. Two (eighth notes) gives the melody somewhere to sit
@@ -115,14 +122,6 @@ export interface ComposerMood {
  */
 const MINOR_LEAN_WEATHER_THRESHOLD = 0.35;
 
-/** Lowest the mood filter ever closes to, in hertz: deep night, heavy weather. */
-const FILTER_NIGHT_CUTOFF_HZ = 380;
-
-/** Highest the mood filter opens to, in hertz: clear noon. 2800 leaves the
- * melody's upper octave (~1.2 kHz) untouched — air, the "open sky" half of the
- * cosmic brief (owner 2026-09-05). */
-const FILTER_DAY_CUTOFF_HZ = 2800;
-
 /**
  * Fraction of the cutoff that full weather removes. 0.45 is audible as "the
  * music is behind the rain" without muting the pad's fundamentals (the lowest
@@ -165,13 +164,6 @@ const MELODY_BRIGHT_SKEW = 0.5;
 /** Quietest melody note, as a fraction of the loudest. Velocity variety. */
 const MELODY_MIN_VELOCITY = 0.55;
 
-/**
- * Density multiplier for off-beat subdivisions. 0.55 makes the beat the place
- * notes usually land and the off-beat the exception, which gives the line a
- * pulse without a rhythm section.
- */
-export const MELODY_OFFBEAT_DENSITY_FACTOR = 0.55;
-
 /** Peak gain of the tension drone, relative to the composer's own output. */
 const DRONE_MAX_GAIN = 0.18;
 
@@ -209,18 +201,28 @@ function daylightFromPhase(dayPhase: number): number {
   return (1 - Math.cos(2 * Math.PI * clampUnit(dayPhase))) / 2;
 }
 
-/** Reads a mood into the numbers the synthesis uses. Pure; no clock, no nodes. */
-export function moodParameters(mood: ComposerMood): MoodParameters {
+/**
+ * Reads a mood into the numbers the synthesis uses. Pure; no clock, no nodes.
+ *
+ * TAKES THE WHOLE TUNING rather than the three numbers it reads today: this is
+ * the one function that turns a mood into synthesis parameters, so every future
+ * mood-shaped dial lands here with no further signature churn.
+ */
+export function moodParameters(mood: ComposerMood, tuning: ComposerTuning): MoodParameters {
   const daylight = daylightFromPhase(mood.dayPhase);
   const weather = clampUnit(mood.weather);
   const tension = clampUnit(mood.tension);
 
   const openCutoffHz =
-    FILTER_NIGHT_CUTOFF_HZ + (FILTER_DAY_CUTOFF_HZ - FILTER_NIGHT_CUTOFF_HZ) * daylight;
+    tuning.filterNightCutoffHz +
+    (tuning.filterDayCutoffHz - tuning.filterNightCutoffHz) * daylight;
+  // The scale multiplies BEFORE the ceiling, so turning it up cannot take the
+  // melody past the density the ceiling exists to forbid.
   const density =
-    MELODY_NIGHT_DENSITY +
-    (MELODY_DAY_DENSITY - MELODY_NIGHT_DENSITY) * daylight +
-    MELODY_TENSION_DENSITY * tension;
+    (MELODY_NIGHT_DENSITY +
+      (MELODY_DAY_DENSITY - MELODY_NIGHT_DENSITY) * daylight +
+      MELODY_TENSION_DENSITY * tension) *
+    tuning.melodyDensityScale;
 
   return {
     filterCutoffHz: openCutoffHz * (1 - FILTER_WEATHER_CLOSE_FRACTION * weather),
