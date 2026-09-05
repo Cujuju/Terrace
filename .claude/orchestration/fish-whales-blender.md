@@ -1,6 +1,12 @@
 # Fish + whales → Blender GLB (owner 2026-09-04)
 
-One model per pass; owner reviews each before the next; /prep + /clear between.
+Owner 2026-09-04 (revised): the ORCHESTRATOR runs the whole list unattended.
+For each remaining row, sequentially, never in parallel: write a brief (pass-1 brief
+is the template, model-only from here), spawn ONE fresh Fable agent (`model: "fable"`,
+`isolation: "worktree"`, no forks), let it finish, verify (typecheck, wildlife tests,
+render_glb 4 views, view the renders), merge to main, close that agent, next row.
+Owner reviews ALL models together when back — collect every pass's renders on one
+Artifact page (one section per species) instead of waiting for review per pass.
 Pipeline: docs/model-assets.md (Blender 5.2 headless → GLB → rigAsset/bakeRig).
 Gate: wildlife has NO asset-sourced SpeciesModelBuilder yet (#321 open; #318/#319
 phase-1 kit open). The first pass lands that adapter alongside its model.
