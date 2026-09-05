@@ -629,8 +629,11 @@ body {
 
 .hud-settings-popup {
   min-width: 230px;
-  /* A short landscape phone must still reach every binding row. */
-  max-height: min(72vh, 420px);
+  /* Grows upward as far as the screen allows (owner 2026-09-05: no locked
+     size). Reserved: the strip's 12px bottom inset, the 40px gear, the 8px
+     column gap, and a 12px top margin matching the strip's edge. */
+  --settings-popup-reserve: calc(12px + 40px + 8px + 12px + env(safe-area-inset-bottom, 0px));
+  max-height: calc(100vh - var(--settings-popup-reserve));
   overflow-y: auto;
 }
 
