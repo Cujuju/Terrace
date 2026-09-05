@@ -264,6 +264,19 @@ export interface LayerEdgeOverlay {
     atZ: number,
     litSpanWorldUnits: number,
   ): boolean;
+  /**
+   * Shows or hides the RESTING lips — state/layerEdgePrefs.ts's choice, which
+   * is 'debug' when they are shown. The grabbed lip is not affected: it is the
+   * grab affordance rather than a picture of what the map knows, and it stays
+   * in both modes (see that module's header).
+   *
+   * Hidden by `mesh.visible`, not by dropping the geometry: the tiles keep
+   * being written by `refreshChunk` either way, so turning the overlay on is
+   * immediate rather than a rebuild of every received chunk. `segmentsByChunk`
+   * — what `lipNear` and `lightBand` read — is untouched by this, so the grab
+   * and carve rules answer identically in both modes.
+   */
+  setRestingVisible(visible: boolean): void;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
   /**
@@ -272,7 +285,8 @@ export interface LayerEdgeOverlay {
    * docs/plans/frame-budget-growth-and-draw-calls.md).
    *
    * A LIVE COUNT AND NOT A CONSTANT: one LineSegments per SUPER-MESH TILE
-   * holding lips, plus the grabbed lip when one is lit. It still grows with
+   * holding lips — none of them while `setRestingVisible(false)` stands —
+   * plus the grabbed lip when one is lit. It still grows with
    * the revealed world — every merged rig does — but at one
    * SUPER_MESH_SPAN_CHUNKS^2-th of the rate it did while the chunk was the
    * drawing unit (issue #246); see B7 of the plan.
@@ -300,6 +314,12 @@ export function createLayerEdgeOverlay(
    * marching-squares pass every frame the pointer moves.
    */
   const segmentsByChunk = new Map<number, Map<number, Float32Array>>();
+  /**
+   * Are the resting lips on screen? True here so a caller that never sets it
+   * — the arch preview harness, which is asked for edges by `?edges=1` — gets
+   * the picture it asked for; world.ts applies the player's pref instead.
+   */
+  let restingVisible = true;
   const material = new LineBasicMaterial({
     color: EDGE_COLOR,
     transparent: true,
@@ -384,6 +404,9 @@ export function createLayerEdgeOverlay(
     const attribute = new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX);
     geometry.setAttribute('position', attribute);
     const mesh = new LineSegments(geometry, material);
+    // A tile created while the overlay is hidden must be born hidden, or the
+    // next chunk to build would put cyan back on screen on its own.
+    mesh.visible = restingVisible;
     mesh.renderOrder = RESTING_RENDER_ORDER;
     const tile: EdgeTile = { mesh, positions, attribute, liveEnd: 0, runs: new Map() };
     group.add(mesh);
@@ -718,13 +741,21 @@ export function createLayerEdgeOverlay(
       group.add(grabbed);
       return true;
     },
+    setRestingVisible(visible) {
+      if (visible === restingVisible) return;
+      restingVisible = visible;
+      for (const tile of tiles.values()) tile.mesh.visible = visible;
+    },
     clear() {
       clearGrabbed();
       segmentsByChunk.clear();
       for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return tiles.size + (grabbed === null ? 0 : 1);
+      // Hidden tiles are not drawn, so they are not in the budget: a count
+      // that ignored the mode would report the overlay's cost to a player who
+      // is not paying it.
+      return (restingVisible ? tiles.size : 0) + (grabbed === null ? 0 : 1);
     },
     dispose() {
       this.clear();

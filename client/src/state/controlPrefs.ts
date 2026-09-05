@@ -17,6 +17,7 @@
 
 import { createSignal } from 'solid-js';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
+import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
 
 export type MouseButtonName = 'left' | 'middle' | 'right';
@@ -159,7 +160,8 @@ export function setBinding(
  * panel" back, so a pref that appears on the panel and is not reset here makes
  * that promise false. The celestial void's look (state/voidPrefs.ts, issue
  * #326), its anchor and the frontier mist (state/frontierMistPrefs.ts) are
- * such prefs; they reset themselves and this calls them.
+ * such prefs, as is the terrace-lip overlay's mode
+ * (state/layerEdgePrefs.ts); they reset themselves and this calls them.
  */
 export function resetBindings(): void {
   setControlBindingsSignal(DEFAULT_BINDINGS);
@@ -167,6 +169,7 @@ export function resetBindings(): void {
   setWheelBehaviourSignal(DEFAULT_WHEEL_BEHAVIOUR);
   resetVoidPrefs();
   resetFrontierMistPrefs();
+  resetLayerEdgePrefs();
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);
