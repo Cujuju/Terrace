@@ -706,15 +706,24 @@ def main(watch: bool) -> int:
         # exit) also ends every child it started - never leave an orphan
         # holding a port. SIGINT for the server so its clean-shutdown snapshot
         # path runs; the same for vite, which exits on it just as readily.
-        # Restore the terminal FIRST, so it is sane even if reaping hangs:
-        # this is the authoritative (and only) restore - the reader thread
-        # never touches terminal mode (see the cbreak comment above).
-        # Telling the reader to stop is best-effort: it may be blocked in
-        # read(), in which case teardown just leaves it behind (daemon).
+        # Restore the terminal BEFORE reaping, so it is sane even if reaping
+        # hangs - and AGAIN AFTER, because the children put it back the way
+        # they found it. Vite's shortcut reader opens a readline on the
+        # shared stdin, and libuv snapshots the tty attributes the first time
+        # it enters raw mode as the "original" to reset to at exit; that
+        # snapshot is taken while THIS script already holds the tty in
+        # cbreak (-ECHO -ICANON), so a Vite that exits after our restore
+        # resets the shell straight back to no-echo (bit the owner every
+        # shutdown, 2026-09-04). The second call is the one that sticks; the
+        # first is kept for the hang case. Both are idempotent.
+        # The reader thread never touches terminal mode (see the cbreak
+        # comment above). Telling it to stop is best-effort: it may be
+        # blocked in read(), in which case teardown leaves it behind (daemon).
         state["stop"] = True
         restore_terminal()
         for proc in reversed(children):
             reap(proc, signal_module.SIGINT)
+        restore_terminal()
 
 
 def parse_args(argv=None) -> argparse.Namespace:
