@@ -32,7 +32,14 @@ import {
 } from 'three';
 import { bakeRig } from './render/rigSkin.ts';
 import { createRigHerd } from './render/rigHerd.ts';
-import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
+import { loadRigAsset } from './render/rigAsset.ts';
+import type {
+  AssetSpeciesModelBuilder,
+  AuthoredSpecies,
+  SpeciesModelBuilder,
+  SpeciesModelPool,
+} from '../../plugins/wildlife/client/species/speciesModel.ts';
+import grazerAssetUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
 import { buildFish } from '../../plugins/wildlife/client/species/fish.ts';
 import { buildGrazer } from '../../plugins/wildlife/client/species/grazer.ts';
 import { buildIbex } from '../../plugins/wildlife/client/species/ibex.ts';
@@ -44,13 +51,27 @@ import { buildAngelfish } from '../../plugins/wildlife/client/species/angelfish.
 
 const BUILDERS: Readonly<Record<string, SpeciesModelBuilder>> = {
   fish: buildFish,
-  grazer: buildGrazer,
   ibex: buildIbex,
   bison: buildBison,
   ray: buildRay,
   shark: buildShark,
   eel: buildEel,
   angelfish: buildAngelfish,
+};
+
+/**
+ * The species whose anatomy arrives in a FILE, with the URL to fetch it from.
+ *
+ * Kept apart from BUILDERS because the two are built differently — an asset
+ * species is preloaded first and takes the loaded asset as its first argument
+ * (plugins/wildlife/client/species/speciesModel.ts, AssetSpeciesModelBuilder).
+ * Mirrors what plugins/boats/client/index.ts's preload does for the war boat,
+ * and what the wildlife plugin now does for the same file.
+ */
+const ASSET_BUILDERS: Readonly<
+  Record<string, { readonly url: string; readonly build: AssetSpeciesModelBuilder }>
+> = {
+  grazer: { url: grazerAssetUrl, build: buildGrazer },
 };
 
 const SKY_COLOR = 0x9fc7e8;
@@ -114,7 +135,7 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
   camera.updateProjectionMatrix();
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   const species = query.get('species') ?? 'fish';
   const viewName = query.get('view') ?? 'iso';
@@ -122,7 +143,7 @@ function main(): void {
   const seconds = Number.parseFloat(query.get('t') ?? '0') || 0;
   const scale = Number.parseFloat(query.get('scale') ?? '1') || 1;
   const zoom = Number.parseFloat(query.get('zoom') ?? '1') || 1;
-  const build = BUILDERS[species] ?? buildFish;
+  const asset = ASSET_BUILDERS[species];
 
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
@@ -138,7 +159,12 @@ function main(): void {
     rigged() { const root = new Group(); const rig = new Group(); root.add(rig); return { root, rig }; },
   };
 
-  const authored = build(pool);
+  // An asset species is loaded before it is built; a hand-built one is not.
+  // Either way what comes back is the same AuthoredSpecies, and everything
+  // below this line is unchanged.
+  const authored: AuthoredSpecies = asset !== undefined
+    ? asset.build(await loadRigAsset(asset.url), pool)
+    : (BUILDERS[species] ?? buildFish)(pool);
   const blueprint = bakeRig(authored.root);
   const jointIndices: Record<string, number> = {};
   for (const [name, node] of Object.entries(authored.joints)) jointIndices[name] = blueprint.jointIndex(node);
@@ -200,4 +226,7 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+// A rejected load leaves __previewReady unset, which is exactly what the
+// screenshot driver already times out on — a harness, so a stack trace in the
+// console is the right report.
+void main();

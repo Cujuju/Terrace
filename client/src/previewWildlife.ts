@@ -55,6 +55,8 @@ import {
   type WildlifeSpecies,
 } from '../../plugins/wildlife/protocol.ts';
 import { createWildlifeModels } from '../../plugins/wildlife/client/models.ts';
+import { loadRigAsset } from './render/rigAsset.ts';
+import grazerAssetUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
 
 /** Creatures this page ever draws at once. It is a portrait: exactly one. */
 const PREVIEW_POPULATION = 1;
@@ -212,7 +214,7 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): 
   camera.updateProjectionMatrix();
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const query = readQuery();
   const species = readSpecies(query);
   const sizeClass = readSizeClass(query);
@@ -220,7 +222,12 @@ function main(): void {
 
   const { scene, camera, renderer, ground } = buildScene();
 
-  const models = createWildlifeModels(PREVIEW_POPULATION);
+  // The pool bakes one species from a file (plugins/wildlife/client/models.ts,
+  // WildlifeAssets), so the harness preloads it exactly as the plugin's own
+  // preload does. The asset is owned by the pool and freed with it.
+  const models = createWildlifeModels(PREVIEW_POPULATION, {
+    grazer: await loadRigAsset(grazerAssetUrl),
+  });
   const group = new Group();
   for (const object of models.objects) group.add(object);
   scene.add(group);
@@ -276,4 +283,6 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+// A rejected asset load leaves __previewReady unset, which is what the
+// screenshot driver already times out on.
+void main();
