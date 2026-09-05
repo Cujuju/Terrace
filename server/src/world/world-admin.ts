@@ -107,9 +107,9 @@ export class WorldAdminService {
    * A refusal answers with empty lists and the reason, never a silence — see
    * `list` for why.
    */
-  plugins(clientId: string, key: string, worldId: string): WorldPluginListMessage {
+  plugins(clientId: string, key: string, worldId?: string): WorldPluginListMessage {
     const refusal = this.gate.authorize(clientId, key);
-    if (refusal !== null) return refusedPlugins(worldId, refusal);
+    if (refusal !== null) return refusedPlugins(worldId ?? '', refusal);
     return this.pluginListing(worldId);
   }
 
@@ -188,20 +188,40 @@ export class WorldAdminService {
     };
   }
 
-  /** One world's plugin enablement and settings, as the panel sees it. */
-  pluginListing(worldId: string): WorldPluginListMessage {
+  /**
+   * One world's plugin enablement and settings, as the panel sees it.
+   *
+   * `worldId` ABSENT MEANS THE LIVE WORLD — the admin panel's question, asked
+   * without the panel having to learn an id from a `worldList` first (see
+   * WorldPluginListRequestMessage.id). Resolved here rather than at the
+   * transport so every caller of this method, including the refresh that rides
+   * along with a toggle, resolves it the same way.
+   *
+   * The answer states `activeId` whatever was asked, so a client holding a
+   * listing always knows whether it is the live world's.
+   */
+  pluginListing(worldId?: string): WorldPluginListMessage {
     const { manager } = this.deps;
-    const disabled = manager.disabledPluginsFor(worldId);
-    const settings = manager.pluginSettingsFor(worldId);
-    if (disabled === null || settings === null) return refusedPlugins(worldId, 'unknownWorld');
+    const activeId = manager.activeId;
+    const id = worldId ?? activeId;
+    // Asked about "the live world" when there is none. That is not a bad
+    // request and not an unknown world — it is an empty server, and saying so
+    // is what stops the panel sitting on a spinner for ever.
+    if (id === null) return { ...refusedPlugins('', 'noWorldLoaded'), activeId };
+    const disabled = manager.disabledPluginsFor(id);
+    const settings = manager.pluginSettingsFor(id);
+    if (disabled === null || settings === null) {
+      return { ...refusedPlugins(id, 'unknownWorld'), activeId };
+    }
     return {
       type: 'worldPluginListing',
-      id: worldId,
+      id,
       installed: [...manager.installedPluginNames],
       disabled: [...disabled],
       settings,
       actions: manager.pluginActions,
       versions: manager.installedPluginVersions,
+      activeId,
     };
   }
 
@@ -649,7 +669,7 @@ export async function containWorldAdminMessage(
     const action = actionOf(request);
     logError(`world management message "${request.type}" failed`, error);
     if (request.type === 'worldList') reply(refusedList('failed'));
-    else if (request.type === 'worldPluginList') reply(refusedPlugins(request.id, 'failed'));
+    else if (request.type === 'worldPluginList') reply(refusedPlugins(request.id ?? '', 'failed'));
     else reply(fail(action, 'failed'));
   }
 }

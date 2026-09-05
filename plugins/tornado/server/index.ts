@@ -261,6 +261,8 @@ export const plugin: TerracePlugin = {
   // THE ADMIN PANEL'S DEBUG SPAWN (server plugins/types.ts,
   // PluginActionDeclaration): the same birth the spawn roll uses, on the ground
   // ./dev.ts's search picks near the operator's view.
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'weather',
   actions: [
     {
       key: 'tornado',

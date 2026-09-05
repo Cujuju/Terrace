@@ -121,6 +121,8 @@ export const plugin: TerracePlugin = {
     systems.reset();
   },
 
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'weather',
   actions: [
     {
       key: FOG_PLUGIN_NAME,

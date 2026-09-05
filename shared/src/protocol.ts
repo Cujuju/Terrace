@@ -1136,7 +1136,16 @@ export interface WorldPinRequestMessage {
 export interface WorldPluginListRequestMessage {
   type: 'worldPluginList';
   key: string;
-  id: string;
+  /**
+   * Which world to describe. ABSENT MEANS "the one that is loaded right now",
+   * which is the admin panel's question: it lists the events of the world the
+   * operator is standing in, and it must not have to learn that world's id
+   * from a `worldList` first. That listing opens every world file on disk to
+   * read names, sizes and thumbnails — seconds on a directory of large worlds
+   * — so making the panel wait on it to discover an id it never displays was
+   * paying the cost of the whole shelf to read one book's spine.
+   */
+  id?: string;
 }
 
 /**
@@ -1370,6 +1379,22 @@ export interface WorldPluginAction {
   key: string;
   label: string;
   description: string;
+  /**
+   * The KIND of world event this is, as the declaring plugin names it —
+   * 'weather', 'terrain', 'creatures'. The admin panel groups by it, so the
+   * six plugins that each bring one kind of weather sit together instead of
+   * being scattered through the load order.
+   *
+   * DECLARED BY THE PLUGIN, never mapped in core: a list here of which plugin
+   * is which kind would be core knowing what a volcano is (design doc). It
+   * rides on the action rather than arriving as a separate plugin→archetype
+   * map for the same reason `plugin` does — the panel renders one flat list
+   * and each row must be self-describing.
+   *
+   * Optional and additive: absent means the plugin does not say, which the
+   * panel groups under a heading of its own rather than inventing a kind.
+   */
+  archetype?: string;
 }
 
 /**
@@ -1415,6 +1440,18 @@ export interface WorldPluginListMessage {
    * mechanic to it.
    */
   versions: Record<string, string>;
+  /**
+   * Which world this server has loaded RIGHT NOW, or null when none is — the
+   * same fact `WorldListMessage.activeId` carries, restated here so a client
+   * that asked about the live world learns its id from the answer.
+   *
+   * It is what lets the admin panel tell "the listing I am holding is this
+   * world's" from "it is some other world's, fetched by the Worlds panel",
+   * without a `worldList` round-trip of its own.
+   *
+   * Optional and additive: absent means a server too old to say, never null.
+   */
+  activeId?: string | null;
   /** Present INSTEAD of useful lists when the request was refused. */
   refused?: WorldAdminRefusal;
 }
@@ -1733,6 +1770,11 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
     }
 
     case 'worldPluginList': {
+      // An absent id is the live world (see the request type). A PRESENT one
+      // is still validated exactly as every other id is — "optional" must not
+      // become "unchecked", or a traversal attempt would simply omit nothing
+      // and pass a path through.
+      if (m.id === undefined) return { type: 'worldPluginList', key };
       const id = validateWorldId(m.id);
       if (id === null) return null;
       return { type: 'worldPluginList', key, id };

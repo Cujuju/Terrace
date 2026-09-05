@@ -482,3 +482,37 @@ export function settlementRace(x: number, y: number): SettlerRace {
   const districtY = Math.floor(y / SETTLER_DISTRICT_CELLS);
   return SETTLER_RACES[(hashStructureCell(districtX, districtY) >>> 24) & 1];
 }
+
+/**
+ * The strip of water past a village's OWN nearest confirmed water that belongs
+ * to its skiffs, in WORLD UNITS — a harbour's INSHORE half. A mooring may only
+ * be picked inside it; war boats berth beyond it (plugins/boats).
+ *
+ * WHY ZONING AT ALL (2026-09-05, GH #327 — owner: the skiffs "collide with each
+ * other and with the warboats"). Both fleets were placed by the SAME rule on the
+ * SAME spot: client/site.ts's `surveySite` and plugins/boats/server/fleet.ts's
+ * `surveyedLaunch` (1011-1052) both walk a nearest-first coastal disc of the
+ * same radius about the same village cell, at the same minimum tier
+ * (SKIFF_MIN_TIER = boats' VILLAGE_MIN_TIER = 1). Measured on the owner's world
+ * (15 coastal villages), the nearest skiff mooring and the nearest war-boat
+ * berth sat at the same distance from the village, to within a cell, every
+ * time. A distance BAND measured from each village's own shoreline is what
+ * separates them without either plugin knowing the other's placements.
+ *
+ * 1.5 — DERIVED FROM WHAT A SKIFF NEEDS, not chosen for looks. On the owner's
+ * world a skiff mooring sits 2.7-3.2 cells past the shore, because the mooring
+ * square must hold 2 cells of DRAWN water on every side (client/site.ts's
+ * SKIFF_MOORING_CLEARANCE_CELLS); the hull then reaches a further 1.84 cells
+ * (skiffs.ts's SKIFF_MOORING_CLEARANCE_WORLD_UNITS) from its anchor. 3.2 + 1.84
+ * = 5.0 cells, rounded up to 6 = 1.5 world units. Anything tighter and a coast
+ * whose shelf drops away slowly floats no skiffs at all.
+ *
+ * RESTATED, NOT IMPORTED, BY plugins/boats/protocol.ts, which carries its own
+ * `HARBOUR_INSHORE_BAND_WORLD_UNITS` of the same value and derives its berth
+ * standoff from it — the per-plugin-copy convention this file's header sets out
+ * and that plugin already follows for COASTAL_SEARCH_RADIUS_CELLS and
+ * COASTAL_MIN_WATER_CELLS (plugins/boats/protocol.ts:223-240). Plugins are
+ * independently installable, so neither may import the other; the semantics
+ * MUST match, and the two comments say so in both directions.
+ */
+export const HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.5;

@@ -11,9 +11,12 @@
 //
 // CORE KNOWS NO PLUGIN (design doc). Nothing here names a volcano. The cards
 // are rendered from the listing the server sends — plugin, key, label,
-// description — and the only thing this file adds is a colour, derived from
-// the plugin's NAME so every plugin gets a stable accent without core keeping
-// a palette of plugins. The server refuses an action nobody declares.
+// description, archetype — and the only thing this file adds is a colour,
+// derived from the ARCHETYPE's name so every kind of event gets a stable
+// accent without core keeping a palette of plugins. The archetype itself is
+// the plugin's own word for what it brings (server plugins/types.ts,
+// TerracePlugin.archetype); core groups by it without knowing one from
+// another. The server refuses an action nobody declares.
 //
 // WHERE THE EVENT LANDS — AIMED, IN TWO STEPS (owner, 2026-09-01). Pressing a
 // card does not fire it: it ARMS it (state/worldsState.ts's armedAction) and
@@ -25,7 +28,7 @@
 // SOLID REACTIVITY: every reactive value is read by calling its accessor at
 // the point of use — see Hud.tsx's header. There are no frozen consts here.
 
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup, type JSX } from 'solid-js';
 import type { WorldAdminRequestMessage, WorldPluginAction } from '@terrace/shared';
 import {
   activeWorldId,
@@ -42,36 +45,75 @@ import type { WorldActions } from './WorldManager.tsx';
 import { refusalText } from './worldAdminCopy.ts';
 
 /**
- * A stable hue for a plugin, from its name — so "volcanoes" is always the
- * same colour on every machine and nothing in core lists plugins to colour
- * them. FNV-1a over the name, folded onto the colour wheel. Any hash would
- * do; this one is short and spreads short lowercase words well.
+ * A stable hue for an archetype, from its name — so "weather" is always the
+ * same colour on every machine and nothing in core lists kinds to colour them.
+ * FNV-1a over the name, folded onto the colour wheel. Any hash would do; this
+ * one is short and spreads short lowercase words well.
  */
 const FNV_OFFSET_BASIS = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 const HUE_DEGREES = 360;
 
-function hueFor(pluginName: string): number {
+function hueFor(name: string): number {
   let hash = FNV_OFFSET_BASIS;
-  for (let index = 0; index < pluginName.length; index++) {
-    hash ^= pluginName.charCodeAt(index);
+  for (let index = 0; index < name.length; index++) {
+    hash ^= name.charCodeAt(index);
     hash = Math.imul(hash, FNV_PRIME) >>> 0;
   }
   return hash % HUE_DEGREES;
 }
 
-/** The declared actions, grouped by plugin in the server's load order. */
-function groupByPlugin(actions: readonly WorldPluginAction[]): Array<{
-  plugin: string;
-  actions: WorldPluginAction[];
-}> {
-  const groups: Array<{ plugin: string; actions: WorldPluginAction[] }> = [];
+/**
+ * The heading for actions whose plugin declares no archetype.
+ *
+ * A WORD OF CORE'S OWN, not a kind: it says "these plugins did not say what
+ * they are", which is true of any plugin and names none of them. Inventing
+ * 'weather' for an undeclared plugin would be exactly the guess the archetype
+ * exists to avoid (server plugins/types.ts, TerracePlugin.archetype).
+ */
+const UNDECLARED_ARCHETYPE = 'other';
+
+interface PluginGroup {
+  readonly plugin: string;
+  readonly actions: WorldPluginAction[];
+}
+
+interface ArchetypeGroup {
+  readonly archetype: string;
+  readonly plugins: PluginGroup[];
+}
+
+/**
+ * The declared actions, grouped by ARCHETYPE and then by plugin.
+ *
+ * TWO LEVELS, because the plugin is still the thing that answers for a card
+ * (a receipt names it, and the Worlds panel toggles it) while the archetype is
+ * what the eye is looking for — "the weather ones". Flattening the plugin away
+ * would leave two cards reading "Bring rain" and "Bring snow" with nothing
+ * saying which plugin to go and disable.
+ *
+ * First-appearance order at both levels, i.e. the server's load order, so the
+ * panel is stable across openings; `sort` is stable in ES2019 and later, so
+ * moving the undeclared group last leaves the rest of that order intact.
+ */
+function groupByArchetype(actions: readonly WorldPluginAction[]): ArchetypeGroup[] {
+  const groups: ArchetypeGroup[] = [];
   for (const action of actions) {
-    const group = groups.find((candidate) => candidate.plugin === action.plugin);
-    if (group === undefined) groups.push({ plugin: action.plugin, actions: [action] });
-    else group.actions.push(action);
+    const archetype = action.archetype ?? UNDECLARED_ARCHETYPE;
+    let group = groups.find((candidate) => candidate.archetype === archetype);
+    if (group === undefined) {
+      group = { archetype, plugins: [] };
+      groups.push(group);
+    }
+    const byPlugin = group.plugins.find((candidate) => candidate.plugin === action.plugin);
+    if (byPlugin === undefined) group.plugins.push({ plugin: action.plugin, actions: [action] });
+    else byPlugin.actions.push(action);
   }
-  return groups;
+  // "Other" last: a heading that means "unstated" must never lead the panel.
+  return groups.sort(
+    (a, b) =>
+      Number(a.archetype === UNDECLARED_ARCHETYPE) - Number(b.archetype === UNDECLARED_ARCHETYPE),
+  );
 }
 
 /** Only the feedback this panel caused is shown here; the rest is the Worlds panel's. */
@@ -81,7 +123,8 @@ function isActionFeedback(feedback: WorldFeedback): boolean {
 
 export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
   // Whether the operator has submitted a key from THIS panel (or arrived with
-  // one already typed in the Worlds panel) — what the listing effect waits on.
+  // one already typed in the Worlds panel) — what the listing request below
+  // waits on, and what hides the key field once it has been accepted.
   const [unlocked, setUnlocked] = createSignal(worldAdminKey() !== '');
 
   const send = (message: WorldAdminRequestMessage): void => {
@@ -89,24 +132,34 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
     props.actions.send(message);
   };
 
-  // THE LISTING, IN TWO STEPS. The action declarations ride on the plugin
-  // listing, which is asked for BY WORLD ID — and the live world's id reaches
-  // this client only on a world listing. So: ask for the worlds, and the
-  // moment the active id is known (or already was), ask for that world's
-  // plugins. `on` with `defer` false so a panel opened with the id already
-  // in hand asks immediately.
+  // THE LISTING, IN ONE ROUND-TRIP, ASKED WITHOUT AN ID (owner, 2026-09-04).
+  //
+  // It used to be two steps: ask for the WORLDS, wait for the active id to
+  // come back on that listing, then ask for that world's plugins. Both halves
+  // were wrong. The second is a round-trip the operator waits through; the
+  // first is far worse — a world listing opens every world file on disk and
+  // reads its name, size, restore-point count and thumbnail, which measured
+  // 2.7 s warm and 7.2 s cold over five worlds on this machine, ON THE TICK
+  // THREAD, to discover one id this panel never displays. The panel now asks
+  // `worldPluginList` with no id, which means "the world I am in"; the answer
+  // carries `activeId`, so the id arrives with the thing it identifies.
+  //
+  // The plugin listing itself touches no disk for the LIVE world — the enabled
+  // set and settings are read off the open session — so this is a message and
+  // a reply, and the cards are there.
   const requestListing = (): void => {
     setUnlocked(true);
-    send({ type: 'worldList', key: worldAdminKey() });
+    send({ type: 'worldPluginList', key: worldAdminKey() });
   };
-  createEffect(
-    on([activeWorldId, unlocked], ([id, ready]) => {
-      if (!ready || id === null) return;
-      if (worldPlugins()?.id === id) return;
-      send({ type: 'worldPluginList', key: worldAdminKey(), id });
-    }),
-  );
-  if (unlocked()) requestListing();
+
+  const listedForLiveWorld = (): boolean =>
+    activeWorldId() !== null && worldPlugins()?.id === activeWorldId();
+
+  // Asked once per opening, and skipped entirely when the listing already in
+  // hand is this world's — reopening the panel after arming one event must not
+  // cost a round-trip. A listing the Worlds panel fetched for some OTHER world
+  // does not count, which is what `listedForLiveWorld` is checking.
+  if (unlocked() && !listedForLiveWorld()) requestListing();
 
   // Escape closes, as every overlay here does. Window-level so it works with
   // focus anywhere in the sheet; not claimed, so nothing beneath loses it.
@@ -116,9 +169,7 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
   window.addEventListener('keydown', onKeyDown);
   onCleanup(() => window.removeEventListener('keydown', onKeyDown));
 
-  const groups = createMemo(() => groupByPlugin(worldPlugins()?.actions ?? []));
-  const listedForLiveWorld = (): boolean =>
-    activeWorldId() !== null && worldPlugins()?.id === activeWorldId();
+  const groups = createMemo(() => groupByArchetype(worldPlugins()?.actions ?? []));
 
   /** Arms the action and gets out of the way; the ground press does the rest. */
   const arm = (action: WorldPluginAction): void => {
@@ -215,7 +266,16 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
           </p>
         </Show>
 
-        <Show when={unlocked() && activeWorldId() === null && worldFeedback().kind !== 'working'}>
+        {/* Not shown while a refusal strip is up: the strip already says what
+            went wrong, and two explanations of one silence read as two faults. */}
+        <Show
+          when={
+            unlocked() &&
+            activeWorldId() === null &&
+            worldFeedback().kind !== 'working' &&
+            worldFeedback().kind !== 'refused'
+          }
+        >
           <p class="admin-empty">No world is loaded. Load one from the Worlds panel first.</p>
         </Show>
 
@@ -223,35 +283,50 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
           <p class="admin-empty">No installed plugin declares an action.</p>
         </Show>
 
-        {/* THE CARDS, grouped by plugin. Each group gets a hue from its name
-            (hueFor) — a swatch and a tinted hover glow — so the eye can find
-            "the storms ones" without reading, and every card is one button:
-            the whole surface fires, not a small control inside it. */}
+        {/* THE CARDS, grouped by ARCHETYPE and then by plugin. The hue comes
+            from the archetype's name (hueFor) rather than the plugin's, so all
+            of the weather shares one accent and the eye finds "the weather
+            ones" without reading — which is the whole point of the grouping.
+            Every card is one button: the whole surface fires, not a small
+            control inside it. */}
         <Show when={listedForLiveWorld()}>
           <div class="admin-groups">
             <For each={groups()}>
               {(group) => (
-                <section class="admin-group" style={{ '--admin-hue': `${hueFor(group.plugin)}` }}>
+                <section
+                  class="admin-group"
+                  style={{ '--admin-hue': `${hueFor(group.archetype)}` }}
+                >
                   <h3 class="admin-group-name">
                     <span class="admin-group-swatch" aria-hidden="true" />
-                    {group.plugin}
+                    {group.archetype}
                   </h3>
-                  <div class="admin-cards">
-                    <For each={group.actions}>
-                      {(action) => (
-                        <button
-                          type="button"
-                          class="admin-card"
-                          title={`${action.description} Click, then click the ground.`}
-                          onClick={() => arm(action)}
-                        >
-                          <span class="admin-card-label">{action.label}</span>
-                          <span class="admin-card-description">{action.description}</span>
-                          <span class="admin-card-go" aria-hidden="true">→</span>
-                        </button>
-                      )}
-                    </For>
-                  </div>
+                  <For each={group.plugins}>
+                    {(byPlugin) => (
+                      <div class="admin-plugin">
+                        {/* The plugin still named, quieter than its archetype:
+                            it is what a receipt cites and what the Worlds panel
+                            toggles, so a card must never be anonymous. */}
+                        <h4 class="admin-plugin-name">{byPlugin.plugin}</h4>
+                        <div class="admin-cards">
+                          <For each={byPlugin.actions}>
+                            {(action) => (
+                              <button
+                                type="button"
+                                class="admin-card"
+                                title={`${action.description} Click, then click the ground.`}
+                                onClick={() => arm(action)}
+                              >
+                                <span class="admin-card-label">{action.label}</span>
+                                <span class="admin-card-description">{action.description}</span>
+                                <span class="admin-card-go" aria-hidden="true">→</span>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    )}
+                  </For>
                 </section>
               )}
             </For>

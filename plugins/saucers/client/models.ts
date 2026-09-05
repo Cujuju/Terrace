@@ -166,6 +166,14 @@ export interface SaucerModel {
   readonly root: Object3D;
   /** Spun about local Y every frame. */
   readonly ring: Object3D | null;
+  /**
+   * The ring's own material, cloned per instance, for the MUZZLE FLASH — the
+   * hangar's: the ring glows up on every shot and decays back. Null when the
+   * ring is not a single standard material (the fallback's ring has no glow).
+   */
+  readonly ringGlow: MeshStandardMaterial | null;
+  /** The authored emissive intensity the ring rests at. */
+  readonly ringBaseEmissive: number;
   /** Emissive strip whose intensity is modulated to flash. Null if unlit. */
   readonly lights: MeshStandardMaterial | null;
   /**
@@ -422,6 +430,25 @@ function createFallbackWorkshop(): FallbackWorkshop {
   };
 }
 
+/**
+ * Gives `node` its own copy of its single MeshStandardMaterial and returns it,
+ * or null when the node is not a mesh wearing exactly one such material.
+ *
+ * CLONED, BUT NOT RETUNED. The clone is per-instance because a flash is
+ * written into the material and two saucers must not share a pulse; its
+ * emissive intensity is left exactly as the file set it, and read out by the
+ * caller as the rest value the flash swings around.
+ */
+function cloneStandardMaterial(node: Object3D): MeshStandardMaterial | null {
+  const mesh = node as Partial<Mesh> & Object3D;
+  if (mesh.isMesh !== true) return null;
+  const material = (node as Mesh).material;
+  if (Array.isArray(material) || !(material instanceof MeshStandardMaterial)) return null;
+  const own = material.clone();
+  (node as Mesh).material = own;
+  return own;
+}
+
 /** One stand-in saucer, under the convention's node names. */
 function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): SaucerModel {
   const radius = SAUCER_DIAMETER_WORLD_UNITS / 2;
@@ -468,6 +495,8 @@ function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): Sauce
   return {
     root,
     ring,
+    ringGlow: null,
+    ringBaseEmissive: 0,
     lights: lightsMaterial,
     lightsBaseEmissive: SAUCER_LIGHTS_BASE_EMISSIVE,
     muzzle,
@@ -503,42 +532,31 @@ function buildAuthoredSaucer(asset: RigAsset, variant: number): SaucerModel {
   root.scale.setScalar(AUTHORED_UNIT_SCALE);
 
   const ring = root.getObjectByName(RING_NODE) ?? null;
+  const ringGlow = ring === null ? null : cloneStandardMaterial(ring);
   const muzzleNode = root.getObjectByName(MUZZLE_NODE);
   // A file that is missing `muzzle` still flies; its bolts leave from the hull's
   // origin. Throwing here (which is what `asset.node` would do) would take the
   // whole encounter off the screen over a misnamed Empty.
   const muzzle = muzzleNode ?? root;
 
-  let lights: MeshStandardMaterial | null = null;
   const lightsNode = root.getObjectByName(LIGHTS_NODE);
-  if (lightsNode !== undefined) {
-    const mesh = lightsNode as Partial<Mesh> & Object3D;
-    if (mesh.isMesh === true) {
-      const material = (lightsNode as Mesh).material;
-      if (!Array.isArray(material) && material instanceof MeshStandardMaterial) {
-        // CLONED, BUT NOT RETUNED. The clone is per-instance because the flash
-        // is written into the material and two saucers must not share a pulse;
-        // its emissive intensity is left exactly as the file set it, and read
-        // out below as the rest value the flash swings around.
-        const own = material.clone();
-        (lightsNode as Mesh).material = own;
-        lights = own;
-      }
-    }
-  }
+  const lights = lightsNode === undefined ? null : cloneStandardMaterial(lightsNode);
 
   return {
     root,
     ring,
+    ringGlow,
+    ringBaseEmissive: ringGlow === null ? 0 : ringGlow.emissiveIntensity,
     lights,
     // The authored rest value, or the fallback's number when this file has no
     // recognisable lights material to read one from.
     lightsBaseEmissive: lights === null ? SAUCER_LIGHTS_BASE_EMISSIVE : lights.emissiveIntensity,
     muzzle,
     dispose() {
-      // The clone's own material (the one cloned above) is this instance's;
-      // everything else it references belongs to the RigAsset.
+      // The clones (the ones made above) are this instance's; everything else
+      // it references belongs to the RigAsset.
       lights?.dispose();
+      ringGlow?.dispose();
       root.clear();
     },
   };

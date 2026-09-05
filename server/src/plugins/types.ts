@@ -515,6 +515,23 @@ export interface TerracePlugin {
   readonly actions?: readonly PluginActionDeclaration[];
 
   /**
+   * The KIND of world event this plugin brings — 'weather', 'terrain',
+   * 'creatures' — used by the admin panel to group the action cards so the
+   * six plugins that each bring one kind of weather sit together instead of
+   * being scattered through the load order (owner, 2026-09-04).
+   *
+   * THE PLUGIN NAMES ITS OWN KIND, and core never maps one: a table here
+   * saying "volcanoes is terrain" would be core knowing what a volcano is
+   * (design doc). Two plugins are in the same group exactly when they write
+   * the same string, so the vocabulary is the plugins', not the protocol's.
+   *
+   * Free-form and lowercase by convention, and shown to the operator verbatim.
+   * Only meaningful alongside `actions` — it is the grouping for the cards —
+   * and absent means "does not say", which the panel groups on its own.
+   */
+  readonly archetype?: string;
+
+  /**
    * Performs one declared action, now, on the live world. Called only for a
    * key in `actions` and only while this plugin is enabled for the world —
    * the host refuses everything else before this is reached — so a plugin

@@ -252,6 +252,35 @@ export const COASTAL_SEARCH_RADIUS_CELLS = cellsAcross(4);
 export const COASTAL_MIN_WATER_CELLS = cellsOverArea(2);
 
 /**
+ * The INSHORE STRIP a village's skiffs own, in world units, measured out from
+ * that village's nearest water.
+ *
+ * A DELIBERATE RESTATEMENT of plugins/structures/protocol.ts's constant of the
+ * same name, on exactly the footing COASTAL_SEARCH_RADIUS_CELLS above is
+ * restated on: the two plugins are independently installable, so this is not
+ * imported, but the semantics MUST match or the partition it defines has a gap.
+ *
+ * WHY 1.5 (six cells). Structures moors a skiff 2.7-3.2 cells past the shore
+ * (its mooring square must hold 2 cells of drawn water on every side), and a
+ * moored skiff reaches 1.84 cells further still — up to 0.28 world units of
+ * orbit round its anchor plus half of a 0.36-long hull, converted. 3.2 + 1.84
+ * rounds up to six cells, so 1.5 world units is the smallest band that contains
+ * a skiff's whole reach. Verified against the twin's own derivation
+ * (plugins/structures/protocol.ts:502-509): same terms, same number.
+ *
+ * WHAT IT PARTITIONS (owner defect, 2026-09-05: skiffs "collide with each other
+ * and with the warboats"). Both plugins berth off the SAME village at the SAME
+ * distance from it — measured on the owner's world, nearest war-boat berth and
+ * nearest skiff mooring agreed to within a cell at all fifteen coastal villages
+ * — so war boats at rest sat inside the skiffs' orbits. Neither side can see
+ * the other's moorings (structures' depend on the client's drawn ground, which
+ * the server does not have), so the harbour is zoned by a rule both derive from
+ * the one input they share: the village cell and its nearest water. Skiffs stay
+ * inside this band; war boats berth beyond it (`BERTH_STANDOFF_CELLS`).
+ */
+export const HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.5;
+
+/**
  * Furthest a village will send boats, in cells.
  *
  * 64 WORLD UNITS — four chunks, the same order as monsters' own minimum lair

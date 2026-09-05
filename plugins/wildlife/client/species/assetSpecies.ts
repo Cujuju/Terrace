@@ -87,7 +87,7 @@ export interface SpeciesAssetSpec {
    * MUST include `rig` — see AuthoredSpecies.joints.
    */
   readonly joints: readonly string[];
-  /** What the file must measure, within ENVELOPE_TOLERANCE_CELLS. */
+  /** What the file must measure, within ENVELOPE_TOLERANCE_WORLD_UNITS. */
   readonly envelope: SpeciesEnvelope;
   /**
    * The file came out of `tools/blender/import_model.py --rigidify` — a
@@ -169,16 +169,19 @@ const ENVELOPE_ANCHORS = [
 ] as const;
 
 /**
- * How far a measured extreme may sit from the constant it is checked against.
+ * How far a measured extreme may sit from the constant it is checked against,
+ * in WORLD UNITS at model scale 1 — the units every number in a SpeciesEnvelope
+ * and every anchor position in this file is expressed in.
  *
- * A hundredth of a cell. It is chosen from BOTH ends: far above the float32
- * dust a glTF round trip adds to a position (glTF stores accessors as float32,
- * whose relative error at 0.3 is about 2e-8), and far below anything a player
- * could see — 0.01 cell is a seventieth of the fish's length, well under a
- * pixel at the play camera. So it absorbs the file format and nothing else: a
- * fin that really moved would move by more than this or not be worth moving.
+ * A hundredth of a world unit. It is chosen from BOTH ends: far above the
+ * float32 dust a glTF round trip adds to a position (glTF stores accessors as
+ * float32, whose relative error at 0.3 is about 2e-8), and far below anything a
+ * player could see — 0.01 world units is a seventieth of the fish's 0.72-unit
+ * length (../species/fish.ts FISH_LENGTH), well under a pixel at the play
+ * camera. So it absorbs the file format and nothing else: a fin that really
+ * moved would move by more than this or not be worth moving.
  */
-export const ENVELOPE_TOLERANCE_CELLS = 0.01;
+export const ENVELOPE_TOLERANCE_WORLD_UNITS = 0.01;
 
 /**
  * One installed species: the file, and the authoring tree + joint handles the
@@ -253,7 +256,7 @@ export function installSpeciesAsset(spec: SpeciesAssetSpec, asset: RigAsset): vo
   const flank = asset.anchor('flank');
   const halfWidth = Math.abs(flank.z);
   const zExtent = Math.max(Math.abs(min.z), Math.abs(max.z));
-  if (halfWidth > zExtent + ENVELOPE_TOLERANCE_CELLS) {
+  if (halfWidth > zExtent + ENVELOPE_TOLERANCE_WORLD_UNITS) {
     throw new Error(
       `${spec.file}: the "flank" anchor is ${halfWidth.toFixed(4)} from the centreline but ` +
         `nothing in the model reaches past ${zExtent.toFixed(4)}`,
@@ -450,9 +453,9 @@ function assertClose(
   declared: number,
   against: string,
 ): void {
-  if (Math.abs(measured - declared) <= ENVELOPE_TOLERANCE_CELLS) return;
+  if (Math.abs(measured - declared) <= ENVELOPE_TOLERANCE_WORLD_UNITS) return;
   throw new Error(
     `${spec.file}: ${label} measures ${measured.toFixed(4)} but ${against} says ` +
-      `${declared.toFixed(4)} — outside the ${ENVELOPE_TOLERANCE_CELLS} cell tolerance`,
+      `${declared.toFixed(4)} — outside the ${ENVELOPE_TOLERANCE_WORLD_UNITS} world-unit tolerance`,
   );
 }

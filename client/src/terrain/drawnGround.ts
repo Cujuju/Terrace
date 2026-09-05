@@ -136,6 +136,25 @@ export interface DrawnGround {
   ): { x: number; z: number; loop: ContourLoop; index: number } | null;
   /** The smoothed loops of `threshold` for the chunk holding a cell. */
   loopsAt(threshold: number, cellX: number, cellZ: number): readonly ContourLoop[];
+  /**
+   * Has the chunk holding this point been DRAWN — i.e. published a chart the
+   * queries above can read?
+   *
+   * A BLOCKY CHUNK COUNTS AS DRAWN. It published a chart, and its per-cell
+   * quads are genuinely what is on screen; the distinction this answers is
+   * "drawn" versus "not drawn YET", not "smooth" versus "blocky".
+   *
+   * WHY A CALLER WOULD ASK. `capYAt` never fails — for a chunk with no entry it
+   * answers through the blocky fallback (see the header's MISSING CHUNKS note),
+   * which is the right answer for anything that must draw SOMETHING this frame
+   * and would rather be one band out than absent. It is the wrong answer for a
+   * caller that MEMOISES the result, because "the chunk is a build behind" is a
+   * condition that resolves without any terrain change to notice it by — the
+   * per-chunk revision counter is bumped when a chunk is DIRTIED, not when it
+   * is drawn (client/src/world.ts `applyDirty`). Such a caller asks this first
+   * and treats false as "not yet".
+   */
+  isDrawnAt(cellX: number, cellZ: number): boolean;
 }
 
 /**
@@ -252,6 +271,10 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
 
     loopsAt(threshold, cellX, cellZ) {
       return polygonsOfThreshold(chartAt(cellX, cellZ), threshold).map((p) => p.outer);
+    },
+
+    isDrawnAt(cellX, cellZ) {
+      return chartAt(cellX, cellZ) !== null;
     },
   };
 }

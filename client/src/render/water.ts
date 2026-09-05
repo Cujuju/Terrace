@@ -41,13 +41,11 @@ import {
 import {
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
-  SEA_LEVEL,
   chunksPerEdge,
 } from '@terrace/shared';
 import {
   CELL_WORLD_SIZE,
-  HEIGHT_WORLD_SCALE,
-  WATER_SURFACE_LIFT,
+  SEA_SURFACE_WORLD_Y,
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
@@ -506,8 +504,11 @@ export function createWater(
   mesh.visible = false;
   parent.add(mesh);
   // Lifted off the SEA_LEVEL plane on purpose — band-0 terrain renders exactly
-  // there and would z-fight. See WATER_SURFACE_LIFT for the full reasoning.
-  const surfaceY = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
+  // there and would z-fight. See WATER_SURFACE_LIFT for the full reasoning, and
+  // SEA_SURFACE_WORLD_Y (config.ts) for why the expression is owned there
+  // rather than here: anything that floats has to name the same plane this
+  // draws, and a restated expression is a plane the two can disagree about.
+  const surfaceY = SEA_SURFACE_WORLD_Y;
 
   /**
    * Quads the current buffers can hold. Grown by doubling and never shrunk,

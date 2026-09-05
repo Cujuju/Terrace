@@ -330,7 +330,10 @@ export interface World extends TerrainSink {
    * afford the lattice answer, because a thing standing up is not seen against
    * the surface it stands on.
    *
-   * Null before the first snapshot, exactly as `terrainHeightAt` is.
+   * Null before the first snapshot, exactly as `terrainHeightAt` is — and also
+   * for a received chunk whose mesh build has not landed yet, which has drawn
+   * no cap to report. See the implementation for why that is a null rather
+   * than the blocky guess it used to be.
    */
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
   /**
@@ -947,6 +950,19 @@ export function createWorld(viewport: Viewport): World {
       // height, it is the mirror's storage zero. Null, like every other
       // "no ground here yet" answer in this file.
       if (!isCellReceived(mirror, cellX, cellZ)) return null;
+      // NOR HAS A RECEIVED CHUNK THAT HAS NOT BEEN DRAWN YET (2026-09-04). The
+      // chunk builder drains its queue under a frame budget, and `applyDirty`
+      // above bumps the terrain revision when a chunk is DIRTIED, not when it
+      // is drawn — so "received but not yet drawn" is a state no revision
+      // change announces the end of. `DrawnGround.capYAt` answers for such a
+      // chunk from the blocky per-cell fallback, which is the right answer for
+      // a caller that must draw something THIS frame and the wrong one for a
+      // caller that memoises: it would pin a guess against a fingerprint that
+      // never moves again (plugins/structures/client/site.ts's survey cache is
+      // the case that found this). Answering null hands both callers the truth
+      // and lets each choose — every consumer of this already handles null,
+      // because it is the pre-snapshot answer.
+      if (!drawnGround.isDrawnAt(cellX, cellZ)) return null;
       return drawnGround.capYAt(cellX, cellZ);
     },
 

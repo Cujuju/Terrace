@@ -464,6 +464,10 @@ export class WorldManager {
           key: declaration.key,
           label: declaration.label,
           description: declaration.description,
+          // Omitted rather than defaulted when the plugin does not say: the
+          // panel groups an absent archetype under its own heading, and a
+          // default here would be core naming a kind for it.
+          ...(plugin.archetype === undefined ? {} : { archetype: plugin.archetype }),
         });
       }
     }

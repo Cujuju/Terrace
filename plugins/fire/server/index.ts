@@ -913,6 +913,8 @@ export const plugin: TerracePlugin = {
   // THE ADMIN PANEL'S DEBUG SPAWN (server plugins/types.ts,
   // PluginActionDeclaration): `igniteAt`, the one way a fire ever starts, so
   // a forced fire is a lightning strike's in everything but its cause.
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'terrain',
   actions: [
     {
       key: IGNITE_ACTION,
