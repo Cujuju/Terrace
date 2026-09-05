@@ -17,85 +17,45 @@
 // with a literal fallback, so the panel follows the core theme.
 //
 // THE SKILL ROWS ARE TILES (owner, 2026-09-04: "update the HUD for the relics
-// in the same style" as the modeler dock and the toolbar): each skill wears a
-// shaded gem in its category's colour, hovering over the same isometric grass
-// tile the tool icons stand on, lifted by the same drop shadow. For an active
-// skill that tile IS the cast button — it glows in the accent while armed and
-// dims while recharging — so the panel answers "what do I hold, and what can I
-// throw" the way the toolbar answers "what is in my hand".
+// in the same style" as the modeler dock and the toolbar): each skill wears
+// its own shaded object (RelicIcons.tsx — the shape its relic takes in the
+// world) over the same isometric grass tile the tool icons stand on, lifted by
+// the same drop shadow, with its category's colour as the glow on the grass.
+// For an active skill that tile IS the cast button — it glows in the accent
+// while armed and dims while recharging — so the panel answers "what do I
+// hold, and what can I throw" the way the toolbar answers "what is in my
+// hand".
 
-import { For, Show, type JSX } from 'solid-js';
-import { skillInfo, type SkillView } from '../protocol.ts';
+import { For, Show, type Component, type JSX } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
+import { skillInfo, type SkillId, type SkillView } from '../protocol.ts';
 import {
   CAST_DENIED_COOLDOWN,
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
 } from '../protocol.ts';
-import { SKILL_KIND_COLOR, cooldownLabelSeconds, cssColor } from './gems.ts';
+import { cooldownLabelSeconds } from './gems.ts';
+import {
+  AzureHeartIcon,
+  GenesisIcon,
+  QuakeIcon,
+  SpringOfAetherIcon,
+  TitansHandIcon,
+} from './RelicIcons.tsx';
 import { armSkill, armedSkill, castDenial, relics, skills } from './state.ts';
 
 /**
- * A gem's four visible faces, lit from the top-left like the tool icons:
- * the category colour mixed toward white for the lit faces and toward black
- * for the shaded ones. Fractions are the brightness steps the isometric tiles
- * use between their own faces.
+ * The face each skill wears. Keyed by the protocol's own union, so a skill
+ * added there without art here fails to typecheck rather than rendering a
+ * blank tile.
  */
-const GEM_FACE_LIGHT = 0.45;
-const GEM_FACE_LIT = 0.15;
-const GEM_FACE_SHADE = -0.3;
-const GEM_FACE_DARK = -0.55;
-
-/** Mix a 0xRRGGBB colour toward white (fraction > 0) or black (fraction < 0). */
-function mixColor(color: number, fraction: number): string {
-  const channel = (shift: number): number => {
-    const value = (color >> shift) & 0xff;
-    const target = fraction > 0 ? 0xff : 0;
-    return Math.round(value + (target - value) * Math.abs(fraction));
-  };
-  return cssColor((channel(16) << 16) | (channel(8) << 8) | channel(0));
-}
-
-/**
- * One relic's face: a floating octahedron in its category's colour over the
- * toolbar icons' isometric tile. The tile's gradient ids are prefixed with
- * the plugin's name because SVG ids are document-global; the gem's own faces
- * are flat fills computed from its colour, so no per-kind gradient is needed
- * and any number of rows can share the one tile definition.
- */
-function GemIcon(props: { color: number }): JSX.Element {
-  return (
-    <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
-      <defs>
-        <linearGradient id="relics-tile-top" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#a6e08a" />
-          <stop offset="1" stop-color="#4f9a4a" />
-        </linearGradient>
-        <linearGradient id="relics-tile-left" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#9a6a45" />
-          <stop offset="1" stop-color="#5a3a22" />
-        </linearGradient>
-        <linearGradient id="relics-tile-right" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#6e4a2f" />
-          <stop offset="1" stop-color="#3a2415" />
-        </linearGradient>
-      </defs>
-      <ellipse cx="16" cy="27.5" rx="12" ry="3" fill="#000" opacity="0.35" />
-      <polygon points="16,13 28,19 16,25 4,19" fill="url(#relics-tile-top)" />
-      <polygon points="4,19 16,25 16,29 4,23" fill="url(#relics-tile-left)" />
-      <polygon points="28,19 16,25 16,29 28,23" fill="url(#relics-tile-right)" />
-      {/* The shade the hovering gem casts, then its glow on the grass. */}
-      <ellipse cx="16" cy="19.2" rx="5" ry="2.2" fill="#2e5a2e" opacity="0.55" />
-      <ellipse cx="16" cy="19" rx="6.5" ry="3" fill={cssColor(props.color)} opacity="0.22" />
-      {/* The octahedron: apex, equator, base, with a front edge that gives
-          it a near face and a far face on each half. */}
-      <polygon points="16,2.5 8.5,11 16,13.5" fill={mixColor(props.color, GEM_FACE_LIGHT)} />
-      <polygon points="16,2.5 16,13.5 23.5,11" fill={mixColor(props.color, GEM_FACE_LIT)} />
-      <polygon points="8.5,11 16,13.5 16,19" fill={mixColor(props.color, GEM_FACE_SHADE)} />
-      <polygon points="23.5,11 16,13.5 16,19" fill={mixColor(props.color, GEM_FACE_DARK)} />
-      <path d="M16 2.5L8.5 11" stroke="#ffffff" stroke-width="0.6" opacity="0.6" />
-    </svg>
-  );
-}
+const SKILL_ICON: Readonly<Record<SkillId, Component>> = {
+  'titans-hand': TitansHandIcon,
+  quake: QuakeIcon,
+  genesis: GenesisIcon,
+  'azure-heart': AzureHeartIcon,
+  'spring-of-aether': SpringOfAetherIcon,
+};
 
 /**
  * The one stylesheet this panel renders — the mana gauge's arrangement, and
@@ -270,7 +230,7 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
         when={isCastable(props.skill)}
         fallback={
           <span class="relics-tile">
-            <GemIcon color={SKILL_KIND_COLOR[props.skill.kind]} />
+            <Dynamic component={SKILL_ICON[props.skill.id]} />
           </span>
         }
       >
@@ -284,7 +244,7 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
           disabled={onCooldown()}
           onClick={() => armSkill(isArmed() ? null : props.skill.id)}
         >
-          <GemIcon color={SKILL_KIND_COLOR[props.skill.kind]} />
+          <Dynamic component={SKILL_ICON[props.skill.id]} />
           <Show when={onCooldown()}>
             <span class="relics-tile__cooldown">
               {cooldownLabelSeconds(props.skill.cooldownRemainingS)}s
