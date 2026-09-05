@@ -47,7 +47,6 @@ import {
   createSaucerModels,
   disposeSaucerAssets,
   preloadSaucerModels,
-  SAUCER_LIGHTS_BASE_EMISSIVE,
   SAUCER_MODEL_DRAW_OBJECTS,
   type SaucerModel,
   type SaucerModels,
@@ -60,20 +59,36 @@ import {
  * as a carousel, slow enough that it does not alias into a stutter or a
  * backwards spin at 60 fps (which starts around 30 rad/s for a shape with this
  * much rotational symmetry).
+ *
+ * SPUN HERE, NOT PLAYED FROM THE FILE. The authored hulls carry an animation
+ * clip named `spin` on this node, and it is deliberately not used: `RigAsset`
+ * (client/src/render/rigAsset.ts) exposes a scene, a node lookup and an anchor
+ * lookup — it never surfaces `gltf.animations`, so playing the clip would mean
+ * changing core's asset contract and carrying an AnimationMixer per saucer, to
+ * reproduce one `rotation.y = t * k` assignment. The clip stays in the file as
+ * the modeller's statement of intent; this is that intent, evaluated for free.
  */
 const RING_RADIANS_PER_SECOND = 6;
 
 /**
  * The light strip's flash: how many times a second, and how far the emissive
- * intensity swings either side of its base.
+ * intensity swings either side of its rest value.
  *
- * TWO HERTZ AND ±0.8. A saucer's lights are a beacon, not a strobe: two a second
- * is the cadence of a navigation light, and holding the swing under the base
- * intensity (SAUCER_LIGHTS_BASE_EMISSIVE is 1.2) means the strip DIMS rather
- * than switching off, which is what stops it reading as a fault.
+ * TWO HERTZ AND ±40 %. A saucer's lights are a beacon, not a strobe: two a
+ * second is the cadence of a navigation light, and a swing of less than the
+ * whole means the strip DIMS rather than switching off, which is what stops it
+ * reading as a fault.
+ *
+ * A FRACTION, NOT AN ABSOLUTE, and that is the load-bearing part. The rest value
+ * belongs to the MODEL — an authored hull carries its own baked emissive
+ * strength (the three installed files use 2.0) and the fallback supplies
+ * SAUCER_LIGHTS_BASE_EMISSIVE — so a swing written in absolute units would mean
+ * something different on every body, and would have to be re-tuned every time a
+ * hull was re-exported. A proportion of whatever the model says means the same
+ * thing on all of them.
  */
 const LIGHTS_FLASHES_PER_SECOND = 2;
-const LIGHTS_FLASH_SWING = 0.8;
+const LIGHTS_FLASH_FRACTION = 0.4;
 
 /**
  * How far the hull banks into a turn, in radians at full rate, and what "full
@@ -256,10 +271,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       view.model.ring.rotation.y = animationSeconds * RING_RADIANS_PER_SECOND;
     }
     if (view.model.lights !== null) {
+      // Swung around the MODEL's own rest value — never around a number this
+      // file chose. See LIGHTS_FLASH_FRACTION and SaucerModel.lightsBaseEmissive.
       view.model.lights.emissiveIntensity =
-        SAUCER_LIGHTS_BASE_EMISSIVE +
-        LIGHTS_FLASH_SWING *
-          Math.sin(animationSeconds * LIGHTS_FLASHES_PER_SECOND * Math.PI * 2);
+        view.model.lightsBaseEmissive *
+        (1 +
+          LIGHTS_FLASH_FRACTION *
+            Math.sin(animationSeconds * LIGHTS_FLASHES_PER_SECOND * Math.PI * 2));
     }
   }
 

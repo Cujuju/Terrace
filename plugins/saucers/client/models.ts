@@ -18,14 +18,22 @@
 //            `top`    the crown, for anything that wants to sit above the hull.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// TODO(saucers): remove fallback once assets land.
+// THE ASSETS HAVE LANDED, AND THE FALLBACK STAYS.
 //
-// The three GLBs are being authored in Blender as this is written. Until they
-// are on disk, `preloadSaucerModels` finds nothing and every saucer is built
-// from primitives instead — a flattened sphere, a dome and a torus, under the
-// same node names, so the rig, the muzzle, the ring spin and the light flash all
-// work against either. When the files land, this file needs no change: the glob
-// starts matching and the authored path is taken.
+// It was written as a stand-in while the three GLBs were being authored (the
+// brief's `TODO(saucers): remove fallback once assets land`), and that job is
+// done — the files are on disk and the authored path is what runs. What it is
+// NOW is the DEGRADED path, and that is a different thing worth keeping:
+// `preloadSaucerModels` is contractually forbidden to reject (see its doc
+// comment — a rejected preload unmounts the plugin for the whole session), so
+// something has to be drawable when a file is missing, truncated, or rejected by
+// rigAsset's own validation. Deleting it would turn "the art is broken" into
+// "the mechanic does not exist", which is the outcome the brief's
+// keep-the-load-path-tolerant instruction exists to prevent.
+//
+// It builds a flattened sphere, a dome and two tori under the SAME node names,
+// so the muzzle, the ring spin and the light flash work against either path and
+// nothing downstream can tell which it got.
 //
 // WHY A GLOB AND NOT A `.glb?url` IMPORT: a static import of a file that is not
 // there does not fail this plugin, it fails the whole client bundle at resolve
@@ -109,12 +117,19 @@ const AUTHORED_FIT_TOLERANCE_FRACTION = 0.05;
  * written from.
  *
  * MEASURED PER FILE at preload, not assumed: the convention names four meshes
- * (hull, ring, dome, lights) and the installed saucer-b carries a fifth (a
- * `deck`), which is the modeller's business and not a fault. Until the files are
- * loaded it holds the conservative ceiling below, which is what the budget is
- * checked against before any saucer exists.
+ * (hull, ring, dome, lights) and the installed hulls carry more — `rivets` on
+ * all three and a `deck` on saucer-b — which is the modeller's business and not
+ * a fault. Until the files are loaded this holds the conservative ceiling below,
+ * which is what the host checks the declared budget against before any saucer
+ * exists.
+ *
+ * THE CEILING IS EIGHT, not the six the current files need. It is HEADROOM, and
+ * the reason it is generous is the cost of being wrong in each direction: two
+ * spare draw objects per saucer is four draw calls out of a frame that measured
+ * 197, whereas a ceiling the next re-export happens to exceed drops the whole
+ * set to grey primitives over a modeller splitting a part in two.
  */
-const SAUCER_MESHES_MAX = 6;
+const SAUCER_MESHES_MAX = 8;
 
 /**
  * What the FALLBACK costs: four — hull, ring, dome and lights, exactly the
@@ -151,6 +166,17 @@ export interface SaucerModel {
   readonly ring: Object3D | null;
   /** Emissive strip whose intensity is modulated to flash. Null if unlit. */
   readonly lights: MeshStandardMaterial | null;
+  /**
+   * The strip's emissive intensity AT REST — the value the flash swings around.
+   *
+   * READ OFF THE MATERIAL, NOT IMPOSED ON IT. On the authored path this is what
+   * the modeller baked into the file (KHR_materials_emissive_strength; the three
+   * installed hulls carry 2.0 on `lights` and 1.3 on `ring`), and stamping this
+   * plugin's own number over it would silently overrule a lighting decision made
+   * in Blender — which for saucer-a would have DIMMED the strip from 2.0 to 1.2.
+   * The fallback, which has no author, supplies SAUCER_LIGHTS_BASE_EMISSIVE.
+   */
+  readonly lightsBaseEmissive: number;
   /** Where a bolt leaves from, in the model's own space. */
   readonly muzzle: Object3D;
   /** Drops anything this INSTANCE owns (never the shared pool). */
@@ -310,7 +336,14 @@ const FALLBACK_TUBE_SEGMENTS = 8;
 const FALLBACK_HULL_COLOURS: readonly ColorRepresentation[] = [0x9aa4b2, 0xb0a08a, 0x8f9a86];
 const FALLBACK_LIGHT_COLOURS: readonly ColorRepresentation[] = [0x66ccff, 0xffaa44, 0x88ff99];
 
-/** The emissive strip's base intensity — what `animate` modulates around. */
+/**
+ * The FALLBACK strip's emissive intensity at rest.
+ *
+ * ONLY THE FALLBACK'S. An authored hull carries its own (SaucerModel.
+ * lightsBaseEmissive), and this number must never be written over it. 1.2 is
+ * chosen to read like the authored 2.0 against the fallback's flat, untextured
+ * materials, which pick up far more of the scene's light than a baked hull does.
+ */
 export const SAUCER_LIGHTS_BASE_EMISSIVE = 1.2;
 
 /** The shared geometry pool the fallback builds from, or null on the file path. */
@@ -430,6 +463,7 @@ function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): Sauce
     root,
     ring,
     lights: lightsMaterial,
+    lightsBaseEmissive: SAUCER_LIGHTS_BASE_EMISSIVE,
     muzzle,
     dispose() {
       // Geometries and materials are the workshop's; an instance owns only its
@@ -476,8 +510,11 @@ function buildAuthoredSaucer(asset: RigAsset, variant: number): SaucerModel {
     if (mesh.isMesh === true) {
       const material = (lightsNode as Mesh).material;
       if (!Array.isArray(material) && material instanceof MeshStandardMaterial) {
+        // CLONED, BUT NOT RETUNED. The clone is per-instance because the flash
+        // is written into the material and two saucers must not share a pulse;
+        // its emissive intensity is left exactly as the file set it, and read
+        // out below as the rest value the flash swings around.
         const own = material.clone();
-        own.emissiveIntensity = SAUCER_LIGHTS_BASE_EMISSIVE;
         (lightsNode as Mesh).material = own;
         lights = own;
       }
@@ -488,6 +525,9 @@ function buildAuthoredSaucer(asset: RigAsset, variant: number): SaucerModel {
     root,
     ring,
     lights,
+    // The authored rest value, or the fallback's number when this file has no
+    // recognisable lights material to read one from.
+    lightsBaseEmissive: lights === null ? SAUCER_LIGHTS_BASE_EMISSIVE : lights.emissiveIntensity,
     muzzle,
     dispose() {
       // The clone's own material (the one cloned above) is this instance's;
