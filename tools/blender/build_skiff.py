@@ -9,8 +9,17 @@
 # transom aft, a gentle sheer rising to both ends, two thwarts and a short
 # keel strip. It is the smaller cousin of tools/blender/build_war_boat.py and
 # follows the same recipe — an ANALYTIC station loft with loud asserts,
-# numerically-verified outward winding, Solidify on the skin, an Empty as the
-# waterline anchor, transforms applied, then export_scene.gltf.
+# numerically-verified outward winding, Solidify on the skin, Empties for the
+# waterline and dryline anchors, transforms applied, then export_scene.gltf.
+#
+# THE HULL IS CLOSED EVERYWHERE BUT THE RAIL, AND THE INTERIOR IS SEALED. Both
+# ends of the loft are capped (see build_hull) and the sole spans the full
+# length out to the design surface (see the sole notes below), so there is no
+# path from outside the boat to inside it below the gunwale. The two contracts
+# are asserted, not asserted-in-prose: assert_only_the_rail_is_open counts the
+# boundary edges, assert_sole_meets_planking measures the sole/planking
+# crossing, and main() checks the sole's clearance over the waterline against
+# SOLE_DRY_CLEARANCE_MIN.
 #
 # WHY IT IS ONE MESH, ONE MATERIAL, NO TEXTURE. The structures plugin draws up
 # to 1 536 skiffs through a single InstancedMesh (see
@@ -44,6 +53,7 @@
 
 import sys
 
+import bmesh
 import bpy
 
 # ------------------------------------------------------------------ envelope
@@ -136,22 +146,48 @@ THWART_BEAM_FRACTION = 0.90
 # this with a deck above its waterline (build_war_boat.py DECK_Z > WATERLINE_Z);
 # an open boat answers it with floorboards. Verified in .skiff-shots/skiff-top:
 # without this panel the interior renders sea-blue.
+#
+# WHY THE SOLE IS A SEAL AND NOT A PANEL (2026-09-04, GH #327). Until now the
+# sole was an inset rectangle — it stopped at 0.14/0.88 of the length and at
+# 0.82 of the local beam, so the interior stayed OPEN to the sea in four
+# places: the wedge forward of it, the wedge aft of it, and the bilge gutter
+# down each side. From directly above those gaps showed sea inside the rail.
+# The sole is now a full-length prism whose port and starboard edges land
+# exactly ON THE DESIGN SURFACE at the sole's own height, at the SAME stations
+# the hull is lofted from. The design surface is the Solidify MID-surface, so
+# those edges finish 0.003 (SKIN_THICKNESS / 2) INSIDE the planking: the two
+# solids cross, they never coincide, so there is no gap to see through and no
+# coplanar pair to z-fight. `assert_sole_meets_planking` proves the crossing at
+# every span midpoint rather than asserting it in prose.
 
-#: The stations the sole spans, as fractions of the length from the stem.
-#: Nearly the whole boat: the top-down check render showed sea through the
-#: uncovered bilge wedges when the sole stopped at 0.28/0.76.
-FLOOR_START_FRACTION = 0.14
-FLOOR_END_FRACTION = 0.88
-#: Sections along the sole. Four: enough to follow the taper of the run.
-FLOOR_SECTION_COUNT = 4
-#: How much of the local beam the floorboards span. Short of the planking, so
-#: the two never z-fight where the sole meets the bilge.
-FLOOR_BEAM_FRACTION = 0.82
+#: Sections along the sole. One per loft station, and deliberately not fewer:
+#: the sole's edge is a straight chord between consecutive sections and so is
+#: the hull's side, so sharing the stations makes the two curves agree AT the
+#: stations exactly and to within float dust between them. A coarser sole would
+#: cut its own secant inside the hull's and re-open the bilge gutter this
+#: change exists to close.
+SOLE_SECTION_COUNT = STATION_COUNT
 #: Height of the sole's top above the local keel line, as a fraction of the
-#: local side depth. Above WATERLINE_DEPTH_FRACTION: that is the whole point.
-FLOOR_HEIGHT_FRACTION = 0.56
+#: local side depth. Set by SOLE_DRY_CLEARANCE_MIN, not by eye: 0.56 cleared
+#: the STATIC waterline by 0.008 and was under water for most of the client's
+#: bob cycle. Asserted against the measured geometry in main().
+FLOOR_HEIGHT_FRACTION = 0.60
 #: Thickness of the floorboards.
 FLOOR_THICKNESS = 0.005
+
+#: How far the sole's top must stand above the waterline, in world units, for
+#: the interior to be dry at every point of the client's float cycle.
+#:
+#: DERIVATION. Phase 5 contracts the client to a bob amplitude of 0.006 world
+#: units and floats the hull at the RENDERED sea surface rather than at
+#: SEA_LEVEL, leaving 0.004 of float margin for the difference between the
+#: authored waterline and wherever the surface actually lands (chiefly
+#: client/src/config.ts's WATER_SURFACE_LIFT, 1/32 = 0.031, which the old
+#: skiffModels.ts comment wrongly called "far smaller than any clearance
+#: here"). 0.006 + 0.004 = 0.010. Both halves are the CLIENT's numbers; this
+#: asset is contracted against them and exports `dryline` so the client can
+#: assert the same contract from its side at load.
+SOLE_DRY_CLEARANCE_MIN = 0.010
 
 #: Keel strip: the stations it spans, as fractions of the length from the stem.
 KEEL_STRIP_START_FRACTION = 0.25
@@ -206,6 +242,22 @@ WOOD_ROUGHNESS = 0.85
 
 MESH_NAME = 'skiff'
 WATERLINE_ANCHOR_NAME = 'waterline'
+#: The asset's own statement of "the interior is sealed below this height".
+#: Exported as a second Empty beside `waterline`; phase 5 asserts
+#: dryline.y - waterline.y >= its bob amplitude at load, so a re-author that
+#: lowers the sole, or a client that raises the bob, fails loudly instead of
+#: quietly showing sea inside the boat.
+DRYLINE_ANCHOR_NAME = 'dryline'
+
+#: The ONLY boundary the pre-Solidify hull may have: the gunwale, as ONE
+#: CLOSED LOOP. Two rail lines of (STATION_COUNT - 1) edges each, plus the top
+#: edge of each end cap — the cap is an n-gon over its whole station ring, so
+#: its rail-to-rail chord closes the loop across that end instead of leaving
+#: the sides' two boundaries dangling. A shell whose only boundary is one loop
+#: is a disc with one hole, which is precisely "an open boat": Solidify's rim
+#: is the gunwale and nothing else. Counted with bmesh in main() — a hole
+#: anywhere else changes this number.
+HULL_OPEN_BOUNDARY_EDGE_COUNT = 2 * (STATION_COUNT - 1) + 2
 
 #: Tolerance for the analytic self-checks below (float dust, not slack).
 EPSILON = 1e-6
@@ -249,6 +301,25 @@ def station_frame(t):
     keel_z = keel_lift(t)
     depth = HULL_DEPTH_MIDSHIPS + sheer_rise(t)
     return x, half, keel_z, depth
+
+
+def design_half_width_at(half, keel_z, depth, z):
+    """Half-width of the DESIGN SURFACE at height `z` on a station.
+
+    Only the topsides band is modelled — from the turn of the bilge up to the
+    rail — because that is the only band the sole can land in (its own height
+    fraction is asserted to sit inside it). The loft is ruled between the
+    section's corner points, so the half-width there is a straight
+    interpolation between the bilge point and the rail point, which is exactly
+    what the hull's quads render.
+    """
+    bilge_y = half * BILGE_HALF_FRACTION
+    bilge_z = keel_z + depth * BILGE_HEIGHT_FRACTION
+    rail_z = keel_z + depth
+    assert bilge_z - EPSILON <= z <= rail_z + EPSILON, (
+        f'z {z:.6f} is outside the topsides band [{bilge_z:.6f}, {rail_z:.6f}]')
+    run = (z - bilge_z) / (rail_z - bilge_z)
+    return bilge_y + run * (half - bilge_y)
 
 
 def station_ring(t):
@@ -379,6 +450,29 @@ def build_hull():
             # Bands 0 and 3 are the sheer strake, rail-to-bilge on each side.
             is_sheer_strake = band in (0, RING_POINT_COUNT - 2)
             colors.append(RAIL_COLOR if is_sheer_strake else PLANK_COLOR)
+
+    # END CAPS, BOTH ENDS. The loft only skins the sides, so before this each
+    # end ring was a hole. At the transom (TRANSOM_HALF_FRACTION 0.60) that is
+    # the missing back plate the owner reported; at the stem
+    # (STEM_HALF_FRACTION 0.06) it is a hole too, merely one too thin to see at
+    # this scale today. Both are capped: the contract worth having is "the loft
+    # is closed everywhere except the rail", and two triangles of stem board
+    # cost less than a hole that only stays invisible while nobody widens the
+    # stem. Each ring is planar in x and convex (the bilge point sits below the
+    # rail-to-keel chord), so one n-gon per end is a valid face.
+    #
+    # Appended BEFORE Solidify on purpose: the skin then thickens the caps with
+    # the rest of the planking, and the boundary they close stops generating
+    # rim faces — the caps cost 12 triangles after doubling and remove 16 of
+    # rim, so closing the boat is cheaper than leaving it open.
+    #
+    # Colour is PLANK_COLOR, not RAIL_COLOR: the transom IS planking. The sheer
+    # strake is a band read along the SIDE and painting a whole end panel with
+    # it would read as a dark slab, not as an edge.
+    for base in (0, (STATION_COUNT - 1) * RING_POINT_COUNT):
+        faces.append(list(range(base, base + RING_POINT_COUNT)))
+        colors.append(PLANK_COLOR)
+
     ref = (0.0, 0.0, HULL_DEPTH_MIDSHIPS * HULL_WINDING_REF_HEIGHT_FRACTION)
     faces = flip_to_outward(faces, verts, ref)
     assert_outward(faces, verts, ref, 'hull loft')
@@ -434,31 +528,110 @@ def closed_prism(verts, faces, colors, sections, color, label):
         colors.append(color)
 
 
+def sole_section(fraction):
+    """One sole section: (x, ring, interior_z, top_z, top_edge_y).
+
+    The ring is a trapezoid, not a rectangle: the topsides flare, so the sole's
+    TOP edge and its BOTTOM edge meet the design surface at different
+    half-widths. Following both keeps the whole port/starboard face on the
+    design surface — a rectangle would push its bottom corners outboard of the
+    mid-surface, eating into the 0.003 of skin that is the only thing keeping
+    the sole from poking through the planking.
+    """
+    x, half, keel_z, depth = station_frame(fraction)
+    top = keel_z + depth * FLOOR_HEIGHT_FRACTION
+    bottom = top - FLOOR_THICKNESS
+    top_edge = design_half_width_at(half, keel_z, depth, top)
+    bottom_edge = design_half_width_at(half, keel_z, depth, bottom)
+    ring = [
+        (x, -top_edge, top),
+        (x, top_edge, top),
+        (x, bottom_edge, bottom),
+        (x, -bottom_edge, bottom),
+    ]
+    return x, ring, top - FLOOR_THICKNESS / 2, top, top_edge
+
+
+def assert_sole_meets_planking(fractions):
+    """Numeric proof that the sole ends INSIDE the skin at every span midpoint.
+
+    At the stations themselves the sole edge is ON the design surface by
+    construction. BETWEEN them both surfaces are ruled, but they are ruled over
+    different quantities — the hull interpolates its corner POINTS, the sole
+    interpolates a half-width already solved at each station's own height — so
+    the two chords do not coincide exactly. This measures that disagreement at
+    the midpoint of every span, where a linear interpolation is furthest from
+    what it approximates, and requires it to stay inside the skin's outward
+    half-thickness. Inside the skin means the sole is buried in the planking:
+    no gap to see sea through, no coplanar faces to z-fight.
+    """
+    worst = 0.0
+    for index in range(len(fractions) - 1):
+        near, far = fractions[index], fractions[index + 1]
+        _nx, _nr, _ni, near_top, near_edge = sole_section(near)
+        _fx, _fr, _fi, far_top, far_edge = sole_section(far)
+        # The sole's own chord, sampled halfway along the span.
+        sole_z = (near_top + far_top) / 2.0
+        sole_y = (near_edge + far_edge) / 2.0
+        # The hull's ruled surface over the same span, at the same height: the
+        # loft's bilge and rail points interpolated, then solved for that z.
+        mid = []
+        for fraction in (near, far):
+            _x, half, keel_z, depth = station_frame(fraction)
+            mid.append((
+                half * BILGE_HALF_FRACTION, keel_z + depth * BILGE_HEIGHT_FRACTION,
+                half, keel_z + depth,
+            ))
+        bilge_y = (mid[0][0] + mid[1][0]) / 2.0
+        bilge_z = (mid[0][1] + mid[1][1]) / 2.0
+        rail_y = (mid[0][2] + mid[1][2]) / 2.0
+        rail_z = (mid[0][3] + mid[1][3]) / 2.0
+        run = (sole_z - bilge_z) / (rail_z - bilge_z)
+        hull_y = bilge_y + run * (rail_y - bilge_y)
+        worst = max(worst, abs(sole_y - hull_y))
+    limit = SKIN_THICKNESS / 2.0
+    print(f'  sole/planking worst mid-span disagreement {worst:.6f} '
+          f'(skin half-thickness {limit:.6f})')
+    assert worst < limit, (
+        f'sole edge misses the planking by {worst:.6f} >= {limit:.6f}')
+
+
 def build_fittings():
-    """Sole, thwarts and keel strip — joined to the hull AFTER Solidify."""
+    """Sole, thwarts and keel strip — joined to the hull AFTER Solidify.
+
+    Returns (verts, faces, colors, sole_top_min) — the lowest point of the
+    sole's top surface, MEASURED off the emitted vertices, which is the height
+    the `dryline` anchor and the dry-clearance assert are taken from.
+    """
     verts, faces, colors = [], [], []
 
-    # ---- the sole: floorboards above the waterline (see FLOOR_* constants) --
-    floor_span = FLOOR_END_FRACTION - FLOOR_START_FRACTION
+    # ---- the sole: a full-length seal above the waterline (see FLOOR_*) -----
+    # Transom station to stem station, at the loft's own stations: see the
+    # SOLE_SECTION_COUNT and "WHY THE SOLE IS A SEAL" notes above.
+    fractions = [index / (SOLE_SECTION_COUNT - 1) for index in range(SOLE_SECTION_COUNT)]
+    assert_sole_meets_planking(fractions)
     floor_sections = []
-    for index in range(FLOOR_SECTION_COUNT):
-        fraction = FLOOR_START_FRACTION + floor_span * index / (FLOOR_SECTION_COUNT - 1)
-        x, half, keel_z, depth = station_frame(fraction)
-        edge = half * FLOOR_BEAM_FRACTION
-        top = keel_z + depth * FLOOR_HEIGHT_FRACTION
-        bottom = top - FLOOR_THICKNESS
-        floor_sections.append((x, [
-            (x, -edge, top),
-            (x, edge, top),
-            (x, edge, bottom),
-            (x, -edge, bottom),
-        ], top - FLOOR_THICKNESS / 2))
+    sole_top_min = float('inf')
+    for fraction in fractions:
+        x, ring, interior_z, _top, _top_edge = sole_section(fraction)
+        floor_sections.append((x, ring, interior_z))
+        # Read off the emitted vertices, not off FLOOR_HEIGHT_FRACTION: the
+        # dry-clearance contract has to be measured from the geometry that
+        # actually ships.
+        sole_top_min = min(sole_top_min, max(point[2] for point in ring))
     closed_prism(verts, faces, colors, floor_sections, FLOOR_COLOR, 'sole')
 
     # ---- thwarts: closed boxes, analytic winding, never flipped ----
+    # Raising the sole eats into the space under the benches, so the clearance
+    # is measured here (thwart underside minus the sole top at the SAME
+    # station) instead of being left to the reader to subtract two fractions.
     for fraction in THWART_STATION_FRACTIONS:
         x, half, keel_z, depth = station_frame(fraction)
         top = keel_z + depth * THWART_HEIGHT_FRACTION
+        sole_top_here = keel_z + depth * FLOOR_HEIGHT_FRACTION
+        gap = top - THWART_PLANK_THICKNESS - sole_top_here
+        print(f'  thwart at t={fraction}: underside {gap:.4f} above the sole')
+        assert gap > EPSILON, f'thwart at t={fraction} sits on or below the sole'
         box_v, box_f = box_verts(
             (x, 0.0, top - THWART_PLANK_THICKNESS / 2),
             (THWART_PLANK_WIDTH, half * 2 * THWART_BEAM_FRACTION,
@@ -481,7 +654,7 @@ def build_fittings():
         ], keel_z - KEEL_STRIP_PROUD / 2))
     closed_prism(verts, faces, colors, keel_sections, KEEL_COLOR, 'keel strip')
 
-    return verts, faces, colors
+    return verts, faces, colors, sole_top_min
 
 
 def measure(objects):
@@ -497,6 +670,35 @@ def measure(objects):
     return lo, hi
 
 
+def assert_only_the_rail_is_open(mesh):
+    """The loft is closed everywhere but the gunwale — counted, not claimed.
+
+    Runs on the PRE-Solidify hull, which is where the contract lives: every
+    boundary edge Solidify finds becomes a rim, so "the only rim is the rail"
+    and "the only boundary is the rail" are the same statement. An open edge is
+    one with a single face; a rail edge is one whose two vertices are both rail
+    points, i.e. the first or last point of their station ring.
+    """
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    try:
+        open_edges = [edge for edge in bm.edges if len(edge.link_faces) != 2]
+        strays = [
+            tuple(vert.index for vert in edge.verts)
+            for edge in open_edges
+            if any(vert.index % RING_POINT_COUNT not in (0, RING_POINT_COUNT - 1)
+                   for vert in edge.verts)
+        ]
+        count = len(open_edges)
+    finally:
+        bm.free()
+    print(f'  hull boundary edges before Solidify: {count} '
+          f'(want {HULL_OPEN_BOUNDARY_EDGE_COUNT}, the gunwale loop)')
+    assert not strays, f'open edges away from the rail: {strays}'
+    assert count == HULL_OPEN_BOUNDARY_EDGE_COUNT, (
+        f'{count} boundary edges, want {HULL_OPEN_BOUNDARY_EDGE_COUNT}')
+
+
 def main():
     out_path = sys.argv[sys.argv.index('--') + 1:][0]
 
@@ -509,6 +711,7 @@ def main():
     hull_verts, hull_faces, hull_colors = build_hull()
     hull = make_object(MESH_NAME, hull_verts, hull_faces, hull_colors)
     hull.data.materials.append(material)
+    assert_only_the_rail_is_open(hull.data)
 
     # Solidify BEFORE the fittings are joined: the thwarts and the keel strip
     # are already closed solids, and thickening them would bury a second shell
@@ -521,7 +724,7 @@ def main():
     bpy.ops.object.modifier_apply(modifier=solid.name)
     hull.select_set(False)
 
-    fit_verts, fit_faces, fit_colors = build_fittings()
+    fit_verts, fit_faces, fit_colors, sole_top_design_z = build_fittings()
     fittings = make_object('skiff_fittings', fit_verts, fit_faces, fit_colors)
     fittings.data.materials.append(material)
 
@@ -550,12 +753,16 @@ def main():
     keel_rebase_lift = -lo[2]
     skiff.location.z = keel_rebase_lift
     waterline_z = keel_rebase_lift + HULL_DEPTH_MIDSHIPS * WATERLINE_DEPTH_FRACTION
+    # The sole's lowest top, carried through the same rebase the mesh gets.
+    dryline_z = keel_rebase_lift + sole_top_design_z
 
-    anchor = bpy.data.objects.new(WATERLINE_ANCHOR_NAME, None)
-    anchor.empty_display_type = 'SPHERE'
-    anchor.empty_display_size = 0.02
-    anchor.location = (0.0, 0.0, waterline_z)
-    bpy.context.collection.objects.link(anchor)
+    for name, height in ((WATERLINE_ANCHOR_NAME, waterline_z),
+                         (DRYLINE_ANCHOR_NAME, dryline_z)):
+        anchor = bpy.data.objects.new(name, None)
+        anchor.empty_display_type = 'SPHERE'
+        anchor.empty_display_size = 0.02
+        anchor.location = (0.0, 0.0, height)
+        bpy.context.collection.objects.link(anchor)
 
     bpy.context.view_layer.objects.active = skiff
     skiff.select_set(True)
@@ -566,6 +773,12 @@ def main():
     size = [hi[axis] - lo[axis] for axis in range(3)]
     print(f'measured box (blender XYZ): {size[0]:.4f} x {size[1]:.4f} x {size[2]:.4f}')
     print(f'  keel bottom z = {lo[2]:.6f} (must be 0), waterline z = {waterline_z:.4f}')
+    sole_dry_clearance = dryline_z - waterline_z
+    print(f'  dryline z = {dryline_z:.4f}, sole clears the waterline by '
+          f'{sole_dry_clearance:.4f} (min {SOLE_DRY_CLEARANCE_MIN})')
+    assert sole_dry_clearance >= SOLE_DRY_CLEARANCE_MIN, (
+        f'sole clears the waterline by only {sole_dry_clearance:.4f}, '
+        f'need {SOLE_DRY_CLEARANCE_MIN}')
     assert abs(lo[2]) < EPSILON, f'keel bottom is {lo[2]:.6f}, not 0'
     assert abs(lo[0] + hi[0]) < EPSILON, 'hull is not centred on x'
     assert abs(lo[1] + hi[1]) < EPSILON, 'hull is not centred on the centreline'
