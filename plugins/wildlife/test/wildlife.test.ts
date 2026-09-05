@@ -285,38 +285,45 @@ describe('population targets', () => {
     });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // RESTATED FOR THE FOUR SPECIES ADDED 2026-09-02 AND THE TWO SHELF SPECIES
-    // ADDED 2026-09-03 (eel, angelfish). The demand this nominal world makes
-    // went 1 532 → 2 000 → 2 099 —
+    // RESTATED FOR THE FOUR SPECIES ADDED 2026-09-02, THE TWO SHELF SPECIES
+    // ADDED 2026-09-03 (eel, angelfish) AND THE WOLF ADDED 2026-09-04. The
+    // demand this nominal world makes went 1 532 → 2 000 → 2 099 → 2 164 —
     //
     //   fish  131   whale  39   deepsea 52   grazer 1 310   eel       34
     //   ibex  187   bison 218   ray     43   shark     20   angelfish 65
+    //   wolf   65
     //
     // — and WILDLIFE_POPULATION_CAP (850, unchanged: it is a bandwidth budget)
-    // scales every species by 850/2 099 ≈ 0.405 and floors, giving 846.
+    // scales every species by 850/2 164 ≈ 0.393 and floors, giving 844.
+    //
+    // THE WOLF IS THE CHEAPEST SPECIES YET ADDED, and deliberately so: at 2 000
+    // square world units each (server/species/wolf.ts) it asks for 65 against
+    // the grazer's 1 310, so a predator's silhouette costs the rest of the
+    // ecosystem about 3%.
     //
     // WHAT IT COSTS, STATED RATHER THAN DISCOVERED. The sea thins again: fish
-    // 72 → 55 → 53, deepsea 28 → 22 → 21, whale 21 → 16 → 15. That is the
-    // honest price of more species under a fixed cap, it falls on every species
-    // proportionally (nothing is distorted, the ecosystem is smaller), and it
-    // only binds on a world of this shape — a fully revealed, half-land 512²
-    // world, which no world on this machine is. Every world that exists is far
-    // below the cap. Asserted exactly, because this table is the arithmetic the
-    // species.ts header claims and a silent drift in it is how that header
-    // becomes a lie.
+    // 72 → 55 → 53 → 51, deepsea 28 → 22 → 21 → 20, whale 21 → 16 → 15 → 15.
+    // That is the honest price of more species under a fixed cap, it falls on
+    // every species proportionally (nothing is distorted, the ecosystem is
+    // smaller), and it only binds on a world of this shape — a fully revealed,
+    // half-land 512² world, which no world on this machine is. Every world that
+    // exists is far below the cap. Asserted exactly, because this table is the
+    // arithmetic the species.ts header claims and a silent drift in it is how
+    // that header becomes a lie.
     expect(targets).toEqual({
-      fish: 53,
+      fish: 51,
       whale: 15,
-      deepsea: 21,
-      grazer: 530,
-      ibex: 75,
-      bison: 88,
-      ray: 17,
-      shark: 8,
+      deepsea: 20,
+      grazer: 514,
+      ibex: 73,
+      bison: 85,
+      ray: 16,
+      shark: 7,
       eel: 13,
-      angelfish: 26,
+      angelfish: 25,
+      wolf: 25,
     });
-    expect(total).toBe(846);
+    expect(total).toBe(844);
 
     expect(total).toBeGreaterThan(WILDLIFE_POPULATION_CAP / 2);
     expect(targets.fish).toBeGreaterThan(targets.whale);
