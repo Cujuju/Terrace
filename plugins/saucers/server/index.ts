@@ -25,7 +25,7 @@
 // message, which the client's interpolator (kit/interpolator.ts) walks smoothly.
 //
 // BANDWIDTH — and this is why the fastest cadence in the repo is also nearly the
-// cheapest. At the roster ceiling, fifteen saucers of nine keys each plus at
+// cheapest. At the roster ceiling (nine, since the 1-3 revision) saucers of nine keys each plus at
 // most MAX_LASER_BOLTS bolts of three is ~1.9 kB of msgpack per message, so
 // ~19 kB/s ≈ 150 kbit/s per client WHILE A FIGHT IS ON — and a typical roster
 // is a third of that. Wildlife runs at ~210 kbit/s continuously, so this is
@@ -79,6 +79,8 @@ import {
   hasEncounter,
   resetEncounter,
   trySpawnEncounter,
+  type EncounterKind,
+  type EncounterStart,
 } from './encounter.ts';
 import { clearFireBridge, loadFireBridge, resetFireBridge } from './fire-bridge.ts';
 import {
@@ -104,11 +106,29 @@ import { ADMIN_SEARCH_RADIUS_CELLS } from './site.ts';
 export const ENCOUNTER_MEAN_INTERVAL_AT_EASIEST_SECONDS = 1200;
 export const ENCOUNTER_MEAN_INTERVAL_AT_HARDEST_SECONDS = 240;
 
+/**
+ * A FLY-BY's arrival, on its own roll and the same curve. ASSUMPTION (owner
+ * gave no cadence, 2026-09-04): twice as often as a dogfight — a fly-by is
+ * over in five seconds and leaves nothing behind, so it can afford to be the
+ * more familiar sight and make the fight the rarer one. Halve or double here
+ * if the sky reads as too busy or too empty.
+ */
+export const FLYBY_MEAN_INTERVAL_AT_EASIEST_SECONDS = ENCOUNTER_MEAN_INTERVAL_AT_EASIEST_SECONDS / 2;
+export const FLYBY_MEAN_INTERVAL_AT_HARDEST_SECONDS = ENCOUNTER_MEAN_INTERVAL_AT_HARDEST_SECONDS / 2;
+
 /** Mean seconds between encounters on a world of this difficulty. */
 export function meanEncounterIntervalSeconds(difficulty: number): number {
   return interpolateByDifficulty(
     ENCOUNTER_MEAN_INTERVAL_AT_EASIEST_SECONDS,
     ENCOUNTER_MEAN_INTERVAL_AT_HARDEST_SECONDS,
+    difficulty,
+  );
+}
+
+export function meanFlybyIntervalSeconds(difficulty: number): number {
+  return interpolateByDifficulty(
+    FLYBY_MEAN_INTERVAL_AT_EASIEST_SECONDS,
+    FLYBY_MEAN_INTERVAL_AT_HARDEST_SECONDS,
     difficulty,
   );
 }
@@ -266,18 +286,34 @@ function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
  */
 function rollArrival(world: WorldApi, dt: number): void {
   if (hasEncounter()) return;
-  const meanInterval = meanEncounterIntervalSeconds(world.difficulty);
-  if (!rollEncounter(1 / meanInterval, dt)) return;
+  // Two independent rolls, dogfight first: on the tick both come up, the
+  // fight takes the slot and the fly-by is simply not this tick's.
+  if (rollEncounter(1 / meanEncounterIntervalSeconds(world.difficulty), dt)) {
+    logArrival(trySpawnEncounter(world, 'dogfight'));
+  }
+  if (hasEncounter()) return;
+  if (rollEncounter(1 / meanFlybyIntervalSeconds(world.difficulty), dt)) {
+    logArrival(trySpawnEncounter(world, 'flyby'));
+  }
+}
 
-  const started = trySpawnEncounter(world);
-  // Null is the ordinary answer on a world with nowhere legal to fly (all
-  // ocean, all fog, all town) — the roll simply produced nothing. Not logged:
-  // on such a world it would be a line every few minutes saying the same thing.
+/**
+ * Null is the ordinary answer on a world with nowhere legal to fly (all
+ * ocean, all fog, all town) — the roll simply produced nothing. Not logged:
+ * on such a world it would be a line every few minutes saying the same thing.
+ */
+function logArrival(started: EncounterStart | null): void {
   if (started === null) return;
   console.info(
-    `[${SAUCERS_PLUGIN_NAME}] ${started.saucers} saucers in ${started.factions} factions came ` +
-      `in over the map (encounter seed 0x${(started.seed >>> 0).toString(16)})`,
+    `[${SAUCERS_PLUGIN_NAME}] ${describeStart(started)} came in over the map ` +
+      `(encounter seed 0x${(started.seed >>> 0).toString(16)})`,
   );
+}
+
+function describeStart(started: EncounterStart): string {
+  return started.kind === 'flyby'
+    ? `a fly-by of ${started.saucers} saucers`
+    : `${started.saucers} saucers in ${started.factions} factions`;
 }
 
 function simulate(world: WorldApi, dt: number): void {
@@ -310,6 +346,11 @@ function resetSessionState(): void {
   clearStructuresBridge();
 }
 
+/** The action keys ARE the encounter kinds; anything else is not an action. */
+function actionKind(key: string): EncounterKind | null {
+  return key === 'dogfight' || key === 'flyby' ? key : null;
+}
+
 export const plugin: TerracePlugin = {
   name: SAUCERS_PLUGIN_NAME,
 
@@ -334,13 +375,21 @@ export const plugin: TerracePlugin = {
         'Rival saucer factions come in over the nearest open land to where you are looking, ' +
         'fight, and every one shot down leaves a burning crater.',
     },
+    {
+      key: 'flyby',
+      label: 'Start a saucer fly-by',
+      description:
+        'A formation of saucers passes over the nearest open land to where you are looking ' +
+        'and leaves. No fight, no craters.',
+    },
   ],
 
   onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
-    if (key !== 'dogfight') return { ok: false, detail: `no such action "${key}"` };
-    if (hasEncounter()) return { ok: false, detail: 'a dogfight is already under way' };
+    const kind = actionKind(key);
+    if (kind === null) return { ok: false, detail: `no such action "${key}"` };
+    if (hasEncounter()) return { ok: false, detail: 'saucers are already in the sky' };
 
-    const started = forceEncounterNear(world, site);
+    const started = forceEncounterNear(world, kind, site);
     if (started === null) {
       return {
         ok: false,
@@ -356,7 +405,7 @@ export const plugin: TerracePlugin = {
     return {
       ok: true,
       detail:
-        `${started.saucers} saucers in ${started.factions} factions are coming in over ` +
+        `${describeStart(started)} coming in over ` +
         `(${started.site.centreX}, ${started.site.centreY})`,
     };
   },
@@ -373,7 +422,7 @@ export const plugin: TerracePlugin = {
     console.info(
       `[${SAUCERS_PLUGIN_NAME}] difficulty ${world.difficulty} → a dogfight every ~${Math.round(
         meanEncounterIntervalSeconds(world.difficulty) / 60,
-      )} min`,
+      )} min, a fly-by every ~${Math.round(meanFlybyIntervalSeconds(world.difficulty) / 60)} min`,
     );
   },
 

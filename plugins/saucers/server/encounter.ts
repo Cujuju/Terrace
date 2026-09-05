@@ -36,6 +36,25 @@
 // Neighbours on the roster orbit opposite ways, so paths cross at angles
 // several times a fight instead of chasing each other round one track.
 //
+// THE SECOND REVISION (owner, 2026-09-04: "clumping up too much, running in to
+// each other, and slowing down when they do come too close") found the shape's
+// two faults, and both were in the parametrisation, not the shape:
+//
+//   * THE SPEED WAS THE RADIUS. The angular rate was fixed by the MEAN radius,
+//     so the linear speed was `radius × rate` — a saucer breathing in to a
+//     quarter of the arena flew at under half speed, and every inner-orbit
+//     saucer did so at the centre, together. The curve is now flown by ARC
+//     LENGTH: a per-saucer table (`arcLength`) maps distance flown to the
+//     curve parameter, and the wire speed is DOGFIGHT_SPEED exactly, always.
+//   * THE RADII WERE DRAWN, so two could land on the same orbit. Each saucer
+//     now owns a distinct RUNG of the orbit band, and a distinct ALTITUDE TIER
+//     with the porpoise kept smaller than the tier spacing — which is the
+//     collision guarantee: two curves may cross in plan, never in the air.
+//
+// A FLY-BY (same revision) is the other kind of encounter: one faction in a
+// V formation, straight through the arena at approach speed and out the far
+// side, with no fight, no bolts and no crash cells. It shares the slot.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 // EVERY RANDOM CHOICE COMES FROM THE ENCOUNTER'S OWN SEEDED GENERATOR
 // (./rng.ts), including the roster, every curve and who wins. Same seed, same
@@ -49,12 +68,13 @@ import {
   CRASH_CRATER_RADIUS_CELLS,
   CRASH_FIRE_RING_OFFSETS,
   CRASH_WIRE_SECONDS,
-  DIVE_SPEED_CELLS_PER_SECOND,
+  DIVE_SECONDS,
   DOGFIGHT_HOLD_FIRE_SECONDS,
   DOGFIGHT_SECONDS,
   DOGFIGHT_SPEED_CELLS_PER_SECOND,
   ENTRY_DISTANCE_CELLS,
   EXIT_SPEED_CELLS_PER_SECOND,
+  FLYBY_SECONDS,
   HEIGHT_WORLD_SCALE,
   LASER_BOLT_LIFETIME_SECONDS,
   LASER_BOLT_SPEED_CELLS_PER_SECOND,
@@ -66,9 +86,11 @@ import {
   LASER_SHOT_GAP_SECONDS,
   MAX_FACTIONS_PER_ENCOUNTER,
   MAX_SAUCERS_PER_FACTION,
+  MAX_SAUCERS_PER_FLYBY,
   MIN_FACTIONS_PER_ENCOUNTER,
   MIN_SAUCERS_PER_ENCOUNTER,
   MIN_SAUCERS_PER_FACTION,
+  MIN_SAUCERS_PER_FLYBY,
   RESOLVE_SECONDS,
   SAUCER_MAX_HP,
   SAUCER_VARIANT_COUNT,
@@ -77,7 +99,7 @@ import {
   type SaucerPhase,
   type SaucerState,
 } from '../protocol.ts';
-import { BAND_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE } from '@terrace/shared';
 import { igniteCrashCell } from './fire-bridge.ts';
 import { createEncounterRng } from './rng.ts';
 import {
@@ -97,10 +119,14 @@ export interface EncounterWorld extends SiteWorld {
 }
 
 /**
- * The band of orbit radii a saucer's curve is drawn from, as fractions of the
+ * The band of orbit radii the saucers' curves sit in, as fractions of the
  * arena radius. 0.55 to 1.0: the inner edge keeps the tightest orbit wider
  * than a hull, so a saucer never wheels about its own length, and the outer
  * edge is the arena's own rim, which the site was cleared for.
+ *
+ * EACH SAUCER OWNS ONE RUNG of the band — the band divided evenly by the
+ * roster, dealt by a seeded shuffle — rather than a draw from it, so no two
+ * fly the same orbit (see the header's second revision).
  */
 const ORBIT_RADIUS_FRACTION_MIN = 0.55;
 const ORBIT_RADIUS_FRACTION_MAX = 1;
@@ -109,27 +135,64 @@ const ORBIT_RADIUS_FRACTION_MAX = 1;
  * How far off its own orbit each saucer breathes, as a fraction of the arena
  * radius, and the band of rates it breathes at.
  *
- * A THIRD, at 0.9–1.6 rad/s. The breathing is what turns a ring into a
- * rosette: two saucers on nearby orbits, going opposite ways and breathing out
- * of phase, cross at a different angle every time. The rate band is chosen
- * not to contain a whole multiple of any orbit rate, so no path closes inside
- * DOGFIGHT_SECONDS.
+ * 0.15, at 0.9–1.6 rad/s. The breathing is what turns a ring into a rosette:
+ * two saucers on nearby orbits, going opposite ways and breathing out of
+ * phase, cross at a different angle every time. It was a third; that swept
+ * every inner orbit through the centre together, which is the clump the owner
+ * saw. The rate band is chosen not to contain a whole multiple of any orbit
+ * rate, so no path closes inside DOGFIGHT_SECONDS.
  */
-const BREATHE_RADIUS_FRACTION = 0.3;
+const BREATHE_RADIUS_FRACTION = 0.15;
 const BREATHE_RADIANS_PER_SECOND_MIN = 0.9;
 const BREATHE_RADIANS_PER_SECOND_MAX = 1.6;
 
 /**
- * How far a saucer rises and falls over the fight, in world units, and the
- * band of rates it does so at.
+ * THE COLLISION GUARANTEE: each saucer owns one ALTITUDE TIER, dealt by a
+ * seeded shuffle and centred on the site's altitude, and porpoises about it by
+ * less than half the tier spacing — so two saucers whose curves cross in plan
+ * are never closer in the air than the difference.
  *
- * TWO units at 0.8–1.4 rad/s — a porpoise. The purpose is that the saucers do
- * not sit in one flat plane; anything deeper starts to look like they are
- * losing control, which is the dive's job to say.
+ * A tier is ONE WORLD UNIT — one hull diameter (client/models.ts,
+ * SAUCER_DIAMETER_CELLS = 4 cells). A porpoise of a quarter unit leaves
+ * neighbours at least half a unit apart at the worst moment — two cells, which
+ * a disc a hull wide is assumed thinner than (unverified against the GLBs).
+ * The largest roster stacks eight units tall, centred six above the arena's
+ * peak; a typical one is under four.
  */
-const CLIMB_WORLD_UNITS = 2;
+const ALTITUDE_TIER_WORLD_UNITS = 1;
+const CLIMB_WORLD_UNITS = 0.25;
 const CLIMB_RADIANS_PER_SECOND_MIN = 0.8;
 const CLIMB_RADIANS_PER_SECOND_MAX = 1.4;
+
+/**
+ * The step, in curve-parameter seconds, the arc-length table is sampled at.
+ * A twentieth of a second: at dogfight speed that is one world unit of path,
+ * one hull, and the curve bends little over one hull, so the linear
+ * inversion between samples is invisible.
+ */
+const ARC_TABLE_STEP_SECONDS = 0.05;
+
+/**
+ * How far the curve parameter can run ahead of the clock, and so how long the
+ * table must be. DERIVED: the curve is slowest — and the parameter advances
+ * fastest — at the inner edge of the innermost orbit, where the linear speed
+ * is the parameter's nominal speed scaled by that radius over the orbit's
+ * mean. The table covers the whole dogfight at that worst case.
+ */
+const ARC_TABLE_PARAMETER_HEADROOM =
+  ORBIT_RADIUS_FRACTION_MIN / (ORBIT_RADIUS_FRACTION_MIN - BREATHE_RADIUS_FRACTION);
+const ARC_TABLE_SAMPLES =
+  Math.ceil((DOGFIGHT_SECONDS * ARC_TABLE_PARAMETER_HEADROOM) / ARC_TABLE_STEP_SECONDS) + 1;
+
+/**
+ * A fly-by's V formation, in cells: the lateral gap between neighbouring
+ * wingmates and how far each one trails the wingmate inboard of it.
+ *
+ * SIX cells abreast — a hull and a half, so the wings never overlap in plan —
+ * and four back, which opens the V enough to read as one from any angle.
+ */
+const FLYBY_WING_SPACING_CELLS = 6;
+const FLYBY_WING_STAGGER_CELLS = 4;
 
 /**
  * How far apart a faction's wingmates come in, in radians of bearing about
@@ -168,8 +231,18 @@ interface Saucer {
   readonly bearing: number;
   /** +1 anticlockwise, -1 clockwise. Alternates down the roster. */
   readonly orbitDirection: number;
-  /** Fraction of the arena radius this saucer's orbit sits at. */
+  /** Fraction of the arena radius this saucer's orbit sits at — its rung. */
   readonly orbitRadiusFraction: number;
+  /** World units above or below the site's altitude — its tier. */
+  readonly altitudeOffset: number;
+  /**
+   * Cumulative length of the fight curve, in cells, sampled every
+   * ARC_TABLE_STEP_SECONDS of the curve parameter. What makes the wire speed
+   * constant; see `placeOnCurve`. Empty for a fly-by.
+   */
+  readonly arcLength: Float64Array;
+  /** A fly-by wingmate's slot in the V, centred on zero. Zero in a dogfight. */
+  readonly formationSlot: number;
   readonly breatheRate: number;
   readonly breathePhase: number;
   readonly climbRate: number;
@@ -226,9 +299,13 @@ interface Crash extends CrashState {
  * and the resolve that begins the moment a faction has won (or the clock has
  * decided) — saucers leave the sky one by one after that.
  */
-type Stage = 'approach' | 'dogfight' | 'resolve';
+type Stage = 'approach' | 'dogfight' | 'resolve' | 'flyby';
+
+/** The two things an encounter can be. See the file header. */
+export type EncounterKind = 'dogfight' | 'flyby';
 
 interface Encounter {
+  readonly kind: EncounterKind;
   readonly seed: number;
   readonly random: () => number;
   readonly site: ArenaSite;
@@ -295,15 +372,7 @@ function wholeBetween(random: () => number, min: number, max: number): number {
  */
 function dealRoster(random: () => number): Roster {
   const factions = wholeBetween(random, MIN_FACTIONS_PER_ENCOUNTER, MAX_FACTIONS_PER_ENCOUNTER);
-
-  const variants: number[] = [];
-  for (let variant = 0; variant < SAUCER_VARIANT_COUNT; variant++) variants.push(variant);
-  for (let index = variants.length - 1; index > 0; index--) {
-    const swap = Math.floor(random() * (index + 1));
-    const held = variants[index]!;
-    variants[index] = variants[swap]!;
-    variants[swap] = held;
-  }
+  const variants = shuffledRange(random, SAUCER_VARIANT_COUNT);
 
   const sizes: number[] = [];
   let total = 0;
@@ -320,6 +389,35 @@ function dealRoster(random: () => number): Roster {
   return { factionVariants: variants.slice(0, factions), factionSizes: sizes, total };
 }
 
+/** A fly-by's roster: one faction in a drawn hull, MIN..MAX_SAUCERS_PER_FLYBY strong. */
+function dealFlybyRoster(random: () => number): Roster {
+  const variant = wholeBetween(random, 0, SAUCER_VARIANT_COUNT - 1);
+  const size = wholeBetween(random, MIN_SAUCERS_PER_FLYBY, MAX_SAUCERS_PER_FLYBY);
+  return { factionVariants: [variant], factionSizes: [size], total: size };
+}
+
+/** 0..count-1 in a seeded Fisher–Yates order. */
+function shuffledRange(random: () => number, count: number): number[] {
+  const values: number[] = [];
+  for (let value = 0; value < count; value++) values.push(value);
+  for (let index = values.length - 1; index > 0; index--) {
+    const swap = Math.floor(random() * (index + 1));
+    const held = values[index]!;
+    values[index] = values[swap]!;
+    values[swap] = held;
+  }
+  return values;
+}
+
+/**
+ * The `rank`-th of `count` evenly spaced values across [min, max], with a lone
+ * value at the middle — so one saucer flies the band's centre, not its edge.
+ */
+function rung(rank: number, count: number, min: number, max: number): number {
+  if (count <= 1) return (min + max) / 2;
+  return min + ((max - min) * rank) / (count - 1);
+}
+
 /**
  * Starts an encounter at `site` with `roster`, off `rng`.
  *
@@ -332,6 +430,7 @@ function dealRoster(random: () => number): Roster {
  * together and leave nobody to fly away.
  */
 function begin(
+  kind: EncounterKind,
   site: ArenaSite,
   roster: Roster,
   rng: { readonly seed: number; readonly next: () => number },
@@ -343,6 +442,13 @@ function begin(
   const compassOffset = next() * Math.PI * 2;
   const factionSpacing = (Math.PI * 2) / roster.factionVariants.length;
 
+  // The rungs and the tiers: two independent seeded orders over the roster,
+  // so the innermost orbit is not also the lowest, and a faction is not a
+  // stack.
+  const orbitRanks = shuffledRange(next, roster.total);
+  const tierRanks = shuffledRange(next, roster.total);
+  const tierSpan = (roster.total - 1) * ALTITUDE_TIER_WORLD_UNITS;
+
   const saucers: Saucer[] = [];
   for (let faction = 0; faction < roster.factionVariants.length; faction++) {
     const variant = roster.factionVariants[faction]!;
@@ -350,17 +456,31 @@ function begin(
     const factionBearing = compassOffset + faction * factionSpacing;
     for (let wingmate = 0; wingmate < size; wingmate++) {
       const index = saucers.length;
-      saucers.push({
+      const formationSlot = wingmate - (size - 1) / 2;
+      const saucer: Saucer = {
         id: nextSaucerId++,
         variant,
-        bearing: factionBearing + (wingmate - (size - 1) / 2) * WINGMATE_BEARING_SPREAD_RADIANS,
+        // A fly-by flies its faction's bearing exactly; the formation is the
+        // slot, not a spread of bearings.
+        bearing:
+          kind === 'flyby'
+            ? factionBearing
+            : factionBearing + formationSlot * WINGMATE_BEARING_SPREAD_RADIANS,
         orbitDirection: index % 2 === 0 ? 1 : -1,
-        orbitRadiusFraction: between(next, ORBIT_RADIUS_FRACTION_MIN, ORBIT_RADIUS_FRACTION_MAX),
+        orbitRadiusFraction: rung(
+          orbitRanks[index]!,
+          roster.total,
+          ORBIT_RADIUS_FRACTION_MIN,
+          ORBIT_RADIUS_FRACTION_MAX,
+        ),
+        altitudeOffset: rung(tierRanks[index]!, roster.total, -tierSpan / 2, tierSpan / 2),
+        arcLength: new Float64Array(kind === 'flyby' ? 0 : ARC_TABLE_SAMPLES),
+        formationSlot,
         breatheRate: between(next, BREATHE_RADIANS_PER_SECOND_MIN, BREATHE_RADIANS_PER_SECOND_MAX),
         breathePhase: next() * Math.PI * 2,
         climbRate: between(next, CLIMB_RADIANS_PER_SECOND_MIN, CLIMB_RADIANS_PER_SECOND_MAX),
         climbPhase: next() * Math.PI * 2,
-        phase: 'approach',
+        phase: kind === 'flyby' ? 'flyby' : 'approach',
         hp: SAUCER_MAX_HP,
         // Everyone opens fire within one rest of the hold-fire floor lifting,
         // each at their own moment.
@@ -379,15 +499,18 @@ function begin(
         alt: site.altitude,
         heading: 0,
         speed: 0,
-      });
+      };
+      if (kind === 'dogfight') tabulateArcLength(saucer);
+      saucers.push(saucer);
     }
   }
 
   encounter = {
+    kind,
     seed,
     random: next,
     site,
-    stage: 'approach',
+    stage: kind === 'flyby' ? 'flyby' : 'approach',
     stageSeconds: 0,
     saucers,
     bolts: [],
@@ -404,6 +527,7 @@ function begin(
 
 /** What an encounter's start looks like to the caller. */
 export interface EncounterStart {
+  readonly kind: EncounterKind;
   readonly seed: number;
   readonly site: ArenaSite;
   readonly saucers: number;
@@ -419,14 +543,17 @@ export interface EncounterStart {
  * find; the site draw itself runs off the arrival stream's generator, not the
  * encounter's, exactly as before.
  */
-export function trySpawnEncounter(world: EncounterWorld): EncounterStart | null {
+export function trySpawnEncounter(world: EncounterWorld, kind: EncounterKind): EncounterStart | null {
   if (encounter !== null) return null;
   const rng = createEncounterRng();
-  const roster = dealRoster(rng.next);
-  const site = findArenaSite(world, Math.random, roster.total);
+  const roster = kind === 'flyby' ? dealFlybyRoster(rng.next) : dealRoster(rng.next);
+  // A fly-by never crashes, so its site needs no crash cells — and no unlocked
+  // land beyond the arena clearance a dogfight's site also asks for.
+  const site = findArenaSite(world, Math.random, kind === 'flyby' ? 0 : roster.total);
   if (site === null) return null;
   return {
-    seed: begin(site, roster, rng),
+    kind,
+    seed: begin(kind, site, roster, rng),
     site,
     saucers: roster.total,
     factions: roster.factionVariants.length,
@@ -441,46 +568,113 @@ export function trySpawnEncounter(world: EncounterWorld): EncounterStart | null 
  */
 export function forceEncounterNear(
   world: EncounterWorld,
+  kind: EncounterKind,
   near: { readonly x: number; readonly y: number },
 ): EncounterStart | null {
   if (encounter !== null) return null;
   const rng = createEncounterRng();
-  const roster = dealRoster(rng.next);
-  const site = findArenaSiteNear(world, near, Math.random, roster.total);
+  const roster = kind === 'flyby' ? dealFlybyRoster(rng.next) : dealRoster(rng.next);
+  const site = findArenaSiteNear(world, near, Math.random, kind === 'flyby' ? 0 : roster.total);
   if (site === null) return null;
   return {
-    seed: begin(site, roster, rng),
+    kind,
+    seed: begin(kind, site, roster, rng),
     site,
     saucers: roster.total,
     factions: roster.factionVariants.length,
   };
 }
 
+/** A point on a fight curve and the curve's velocity there. Scratch, reused. */
+interface CurvePoint {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
+const curvePoint: CurvePoint = { x: 0, y: 0, vx: 0, vy: 0 };
+
 /**
- * Where a saucer's fight curve is at `t` seconds into the fight, and which way
- * it is going. Pure — the rosette described in the file header, with the
- * velocity taken analytically so the heading is exact rather than differenced.
+ * The rosette described in the file header, evaluated at curve parameter `u`
+ * (in seconds of the curve's own nominal clock), relative to the arena centre.
+ * Pure. The velocity is taken analytically so the heading is exact rather
+ * than differenced — and so the arc-length table can be built from it.
  */
-function placeOnCurve(saucer: Saucer, site: ArenaSite, t: number): void {
+function curveAt(saucer: Saucer, u: number, out: CurvePoint): void {
   const meanRadius = ARENA_RADIUS_CELLS * saucer.orbitRadiusFraction;
-  // Angular rate DERIVED from the linear speed and the orbit, so retuning
-  // either keeps the other honest: a saucer that "flies at 20 units/s" flies at
-  // about that whatever circle it is on.
+  // The parameter's nominal angular rate: the linear speed over the mean
+  // radius. What the saucer actually flies is decided by arc length, below.
   const orbitRate = (saucer.orbitDirection * DOGFIGHT_SPEED_CELLS_PER_SECOND) / meanRadius;
-  const angle = saucer.bearing + orbitRate * t;
-  const breathe = saucer.breatheRate * t + saucer.breathePhase;
+  const angle = saucer.bearing + orbitRate * u;
+  const breathe = saucer.breatheRate * u + saucer.breathePhase;
   const radius = meanRadius + ARENA_RADIUS_CELLS * BREATHE_RADIUS_FRACTION * Math.sin(breathe);
   const radiusRate = ARENA_RADIUS_CELLS * BREATHE_RADIUS_FRACTION * saucer.breatheRate * Math.cos(breathe);
 
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
-  saucer.x = site.centreX + cos * radius;
-  saucer.y = site.centreY + sin * radius;
-  const vx = radiusRate * cos - radius * sin * orbitRate;
-  const vy = radiusRate * sin + radius * cos * orbitRate;
-  saucer.heading = Math.atan2(vy, vx);
-  saucer.speed = Math.sqrt(vx * vx + vy * vy);
-  saucer.alt = site.altitude + CLIMB_WORLD_UNITS * Math.sin(saucer.climbRate * t + saucer.climbPhase);
+  out.x = cos * radius;
+  out.y = sin * radius;
+  out.vx = radiusRate * cos - radius * sin * orbitRate;
+  out.vy = radiusRate * sin + radius * cos * orbitRate;
+}
+
+/**
+ * Fills `saucer.arcLength`: the curve's cumulative length at every
+ * ARC_TABLE_STEP_SECONDS of parameter, by the trapezium rule on the analytic
+ * speed. Built once, at `begin`, in fixed order — same seed, same table.
+ */
+function tabulateArcLength(saucer: Saucer): void {
+  const table = saucer.arcLength;
+  curveAt(saucer, 0, curvePoint);
+  let previousSpeed = Math.hypot(curvePoint.vx, curvePoint.vy);
+  table[0] = 0;
+  for (let sample = 1; sample < table.length; sample++) {
+    curveAt(saucer, sample * ARC_TABLE_STEP_SECONDS, curvePoint);
+    const speed = Math.hypot(curvePoint.vx, curvePoint.vy);
+    table[sample] = table[sample - 1]! + ((previousSpeed + speed) / 2) * ARC_TABLE_STEP_SECONDS;
+    previousSpeed = speed;
+  }
+}
+
+/**
+ * The curve parameter at which `distance` cells of the curve have been flown:
+ * a binary search of the table and a linear interpolation between samples.
+ * Past the table's end — unreachable, see ARC_TABLE_PARAMETER_HEADROOM — the
+ * parameter is clamped to it, which stops the saucer rather than flinging it.
+ */
+function parameterAtDistance(table: Float64Array, distance: number): number {
+  const last = table.length - 1;
+  if (distance <= 0) return 0;
+  if (distance >= table[last]!) return last * ARC_TABLE_STEP_SECONDS;
+  let low = 0;
+  let high = last;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (table[mid]! <= distance) low = mid;
+    else high = mid;
+  }
+  const span = table[high]! - table[low]!;
+  const fraction = span > 0 ? (distance - table[low]!) / span : 0;
+  return (low + fraction) * ARC_TABLE_STEP_SECONDS;
+}
+
+/**
+ * Where a saucer's fight curve is at `t` seconds into the fight, and which way
+ * it is going — flown by ARC LENGTH, so the speed on the wire is
+ * DOGFIGHT_SPEED exactly wherever the curve is (the header's second revision).
+ */
+function placeOnCurve(saucer: Saucer, site: ArenaSite, t: number): void {
+  const u = parameterAtDistance(saucer.arcLength, DOGFIGHT_SPEED_CELLS_PER_SECOND * t);
+  curveAt(saucer, u, curvePoint);
+  saucer.x = site.centreX + curvePoint.x;
+  saucer.y = site.centreY + curvePoint.y;
+  saucer.heading = Math.atan2(curvePoint.vy, curvePoint.vx);
+  saucer.speed = DOGFIGHT_SPEED_CELLS_PER_SECOND;
+  saucer.alt =
+    site.altitude +
+    saucer.altitudeOffset +
+    CLIMB_WORLD_UNITS * Math.sin(saucer.climbRate * t + saucer.climbPhase);
 }
 
 /**
@@ -503,8 +697,28 @@ function placeSaucers(): void {
       const distance = ENTRY_DISTANCE_CELLS + (curveStart - ENTRY_DISTANCE_CELLS) * t;
       saucer.x = site.centreX + Math.cos(saucer.bearing) * distance;
       saucer.y = site.centreY + Math.sin(saucer.bearing) * distance;
-      saucer.alt = site.altitude;
+      // Coming in already on its tier, so the stack is in place when the
+      // curves begin and nobody has to climb through a neighbour.
+      saucer.alt = site.altitude + saucer.altitudeOffset;
       // Flying INWARD along its own bearing — the reciprocal of it.
+      saucer.heading = saucer.bearing + Math.PI;
+      saucer.speed = APPROACH_SPEED_CELLS_PER_SECOND;
+      continue;
+    }
+
+    if (saucer.phase === 'flyby') {
+      // A straight line through the centre, inbound along the bearing from the
+      // entry distance and out the far side to it. The V: each wingmate sits
+      // its slot abeam of the leader's line and trails it by its distance
+      // from the centre of the formation.
+      const inward = ENTRY_DISTANCE_CELLS - APPROACH_SPEED_CELLS_PER_SECOND * live.stageSeconds;
+      const along = inward + Math.abs(saucer.formationSlot) * FLYBY_WING_STAGGER_CELLS;
+      const abeam = saucer.formationSlot * FLYBY_WING_SPACING_CELLS;
+      const cos = Math.cos(saucer.bearing);
+      const sin = Math.sin(saucer.bearing);
+      saucer.x = site.centreX + cos * along - sin * abeam;
+      saucer.y = site.centreY + sin * along + cos * abeam;
+      saucer.alt = site.altitude;
       saucer.heading = saucer.bearing + Math.PI;
       saucer.speed = APPROACH_SPEED_CELLS_PER_SECOND;
       continue;
@@ -517,20 +731,27 @@ function placeSaucers(): void {
 
     // resolve — a loser dives at its crash cell, a winner climbs away along its
     // own bearing. Both start from the pose held when the phase began.
-    const t = clamp01(saucer.resolveSeconds / RESOLVE_SECONDS);
     const cell = saucer.crashCell;
     if (saucer.resolution === 'dive' && cell !== null) {
+      const t = clamp01(saucer.resolveSeconds / DIVE_SECONDS);
       // t² rather than t: a wreck ACCELERATES into the ground. A straight lerp
       // reads as a controlled descent, which is the one thing this must not look
       // like.
       const fall = t * t;
-      saucer.x = saucer.resolveFromX + (cell.x - saucer.resolveFromX) * fall;
-      saucer.y = saucer.resolveFromY + (cell.y - saucer.resolveFromY) * fall;
-      saucer.alt = saucer.resolveFromAlt + (cell.groundY - saucer.resolveFromAlt) * fall;
-      saucer.heading = Math.atan2(cell.y - saucer.resolveFromY, cell.x - saucer.resolveFromX);
-      saucer.speed = DIVE_SPEED_CELLS_PER_SECOND;
+      const dx = cell.x - saucer.resolveFromX;
+      const dy = cell.y - saucer.resolveFromY;
+      const dAlt = cell.groundY - saucer.resolveFromAlt;
+      saucer.x = saucer.resolveFromX + dx * fall;
+      saucer.y = saucer.resolveFromY + dy * fall;
+      saucer.alt = saucer.resolveFromAlt + dAlt * fall;
+      saucer.heading = Math.atan2(dy, dx);
+      // The path's own speed — d(t²)/dt times its length, the vertical leg in
+      // cells — so the wire says how fast it is really falling.
+      const length = Math.hypot(dx, dy, dAlt / CELL_WORLD_SIZE);
+      saucer.speed = (2 * t * length) / DIVE_SECONDS;
       continue;
     }
+    const t = clamp01(saucer.resolveSeconds / RESOLVE_SECONDS);
     const run = EXIT_SPEED_CELLS_PER_SECOND * RESOLVE_SECONDS * t;
     saucer.x = saucer.resolveFromX + Math.cos(saucer.bearing) * run;
     saucer.y = saucer.resolveFromY + Math.sin(saucer.bearing) * run;
@@ -773,6 +994,16 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
 
   live.stageSeconds += dt;
 
+  if (live.stage === 'flyby') {
+    // Out the far side and gone, all together: nothing lands, nothing burns.
+    if (live.stageSeconds >= FLYBY_SECONDS) {
+      encounter = null;
+      return { changed: true, crashed: [], ended: true };
+    }
+    placeSaucers();
+    return { changed: true, crashed: [], ended: false };
+  }
+
   if (live.stage === 'approach') {
     if (live.stageSeconds >= APPROACH_SECONDS) {
       for (const saucer of live.saucers) saucer.phase = 'dogfight';
@@ -799,7 +1030,9 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
   for (const saucer of live.saucers) {
     if (saucer.phase !== 'resolve') continue;
     saucer.resolveSeconds += dt;
-    if (saucer.resolveSeconds < RESOLVE_SECONDS) continue;
+    if (saucer.resolveSeconds < (saucer.resolution === 'dive' ? DIVE_SECONDS : RESOLVE_SECONDS)) {
+      continue;
+    }
     saucer.gone = true;
     const cell = saucer.crashCell;
     if (saucer.resolution !== 'dive' || cell === null) continue;
