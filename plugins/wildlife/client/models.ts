@@ -10,10 +10,21 @@
 // authored below, in the older spheres-and-cones idiom.
 //
 // Rules this file keeps:
-//   * NO textures, NO per-creature lights, NO external assets. Everything is
-//     generated here; the scene's hemisphere + sun light (render/scene.ts) does
-//     all the lighting, and flat shading is what makes a 6-segment sphere read as
-//     a deliberate faceted style rather than as a low-detail mistake.
+//   * NO per-creature lights, and NO Math.random in any geometry. What is
+//     authored below is generated here; the scene's hemisphere + sun light
+//     (render/scene.ts) does all the lighting, and flat shading is what makes a
+//     6-segment sphere read as a deliberate faceted style rather than as a
+//     low-detail mistake.
+//
+//     UNTIL 2026-09-04 this rule also read "NO textures, NO external assets".
+//     Superseded by the owner that day: external GLB assets and their textures
+//     are allowed, and an imported model is the DEFAULT path for a new species
+//     (docs/model-assets.md). The pool already holds asset-sourced species —
+//     ./species/assetSpecies.ts installs a .glb per species and the grazer is a
+//     CC0 deer (./assets/grazer-deer.glb), the fish a Blender-built body — and
+//     they arrive through this pool as the same AuthoredSpecies the hand-built
+//     ones do. What stays banned: non-determinism in procedural geometry,
+//     per-object lights, and anything that changes shared/.
 //   * GEOMETRIES AND MATERIALS ARE SHARED across every instance of a species and
 //     built exactly once. Per-creature allocation would be a hundred BufferGeometry
 //     uploads that are all byte-identical. `dispose()` frees them once too.

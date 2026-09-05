@@ -2,7 +2,8 @@
 // a ribbed wing membrane, smooth-shaded, in a silhouette that is unmistakable at
 // a hundred cells and holds up when the camera comes down to the water.
 //
-// Every rule this builder obeys — no textures, no Math.random, shared and
+// Every rule this builder obeys — no Math.random, no per-model lights (textures
+// and external assets are allowed since 2026-09-04; see ./geometry.ts), shared and
 // disposed-once resources — lives in ./geometry.ts, which is also where the
 // tools come from. ./anatomy.ts owns the numbers. This file owns the CREATURE:
 // which masses there are, how they are rigged, and how they move.

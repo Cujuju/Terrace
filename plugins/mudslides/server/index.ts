@@ -315,6 +315,8 @@ export const plugin: TerracePlugin = {
   // PluginActionDeclaration): the same `startSlide` the trigger calls, on the
   // hillside ./dev.ts's search picks near the operator's view — so the slide
   // is an ordinary slide in everything but its timing.
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'terrain',
   actions: [
     {
       key: SLIDE_ACTION,

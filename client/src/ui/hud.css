@@ -91,6 +91,13 @@ body {
   position: absolute;
   top: 16px;
   left: 16px;
+  /* The same glass as the modeler dock, the toolbar and the mana gauge
+     (owner, 2026-09-04: the relics panel "should share the same look as the
+     other HUDs") — the corner is where the relics panel lives, so it wears
+     the chrome the other instruments wear, open and collapsed alike. */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
 }
 
 .hud-bottom-strip {
@@ -1816,6 +1823,9 @@ button.world-header {
   gap: 8px;
 }
 
+/* The archetype's swatch and hover glow tint everything inside it, so the
+   hue is set once on this section and inherited by every card below. */
+
 /* The group name: the plugin, in small caps, with its swatch — a section
    label, not a heading, so the cards stay the loudest thing on the sheet. */
 .admin-group-name {
@@ -1843,6 +1853,29 @@ button.world-header {
   border-radius: 3px;
   background: hsl(var(--admin-hue) 70% 62%);
   box-shadow: 0 0 10px hsl(var(--admin-hue) 70% 55% / 0.6);
+}
+
+/* The plugin, inside its archetype: the second level of the grouping, and
+   deliberately the quieter one — the archetype heading is what the eye scans
+   for, and this only answers "which plugin owns this card". */
+.admin-plugin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-plugin + .admin-plugin {
+  margin-top: 10px;
+}
+
+.admin-plugin-name {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hud-muted);
+  opacity: 0.75;
 }
 
 .admin-cards {

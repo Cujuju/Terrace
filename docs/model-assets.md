@@ -187,7 +187,7 @@ the joint if one is missing:
 left = up × forward = Y × X = −Z.
 
 Anchors (Empties), all measured at install and asserted against the species'
-declared envelope within `ENVELOPE_TOLERANCE_CELLS`:
+declared envelope within `ENVELOPE_TOLERANCE_WORLD_UNITS`:
 
 - `nose`, `tail_tip`: the length's two ends, and the model's own x extremes.
 - `crown`, `belly`: the highest and lowest points, and its y extremes.
@@ -214,6 +214,11 @@ two — its placement `crownY`/`bellyY` are a wing tip at the top and bottom of
 its beat, which a file authored with the wings flat never reaches, so
 `RAY_REST_ENVELOPE` is what `ray.glb` measures and `RAY_ENVELOPE` is
 `rest ± wingReach · sin(flap)`.
+
+**A body that bends is a chain of NESTED joint Empties** (the eel: `spine0`
+… `spine4`, each a child of the one before, positioned in its parent's frame)
+— `bakeRig` composes a child's rotation onto its parent's, so `animate` drives
+relative bends and the file must carry the nesting, not a flat row of hinges.
 
 A WALKER reads the same five envelope numbers differently, and the difference
 is the origin: a swimmer is authored about its body centre so `crownY` and

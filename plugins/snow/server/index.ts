@@ -171,6 +171,8 @@ export const plugin: TerracePlugin = {
     currentWorld = null;
   },
 
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'weather',
   actions: [
     {
       key: SNOW_PLUGIN_NAME,

@@ -470,8 +470,15 @@ describe('a fleet is a fleet, not a stack (owner, 2026-08-20)', () => {
     // property under test is the one makeRoom actually owes — once a boat is
     // engaged, shuffling never puts it back out — rather than "every boat is
     // engaged on tick one", which was an artefact of the shared launch cell.
+    //
+    // THE WINDOW IS 11 SECONDS, not 5 (2026-09-05): berths now stand off the
+    // shore by BERTH_STANDOFF_CELLS so the skiffs keep the inshore strip, and a
+    // boat berthed on the far side of the village starts ~29 cells from a
+    // kraken it must close to 20 — a coming-about plus four seconds of sailing.
+    // Still short of KRAKEN_SINKS_BOAT_EVERY_SECONDS, so nothing sinks and the
+    // count below still compares like with like.
     const everEngaged = new Set<number>();
-    for (let n = 0; n < 50; n++) {
+    for (let n = 0; n < 110; n++) {
       advanceFleet(world, kraken, TICK_DT);
       for (const boat of livingBoats()) {
         if (boat.fighting) everEngaged.add(boat.id);

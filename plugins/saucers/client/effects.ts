@@ -86,6 +86,20 @@ const CYLINDER_AXIS = new Vector3(0, 1, 0);
  */
 const BOLT_RADIUS_CELLS = 0.12;
 
+/**
+ * How far above 1.0 a bolt's colour is driven, so it reads as LIGHT under the
+ * scene's ACES tone mapping rather than as a tinted streak.
+ *
+ * THREE (owner, 2026-09-04: "make the laser bursts brighter like they are in
+ * the artifact"). The hangar draws the same additive material at 1.0 against a
+ * black floor, where anything additive reads as bright; in the world the bolt
+ * is drawn over daylit ground and sky, and at 1.0 it washes out. Three times
+ * the faction colour pushes the streak's centre through ACES to near white
+ * while the hue survives in its falloff — a hot bolt of THAT colour, which is
+ * what the hangar shows.
+ */
+const BOLT_INTENSITY = 3;
+
 /** Sides on the bolt cylinder. SIX: it is a lit streak seen edge-on at speed. */
 const BOLT_RADIAL_SEGMENTS = 6;
 
@@ -194,7 +208,7 @@ export function createLaserPool(): LaserPool {
         scratchQuaternion.setFromUnitVectors(CYLINDER_AXIS, scratchDirection),
       );
       const material = bolt.mesh.material as MeshBasicMaterial;
-      material.color.set(colour);
+      material.color.set(colour).multiplyScalar(BOLT_INTENSITY);
       // Linear fade over the bolt's whole life, so a bolt is brightest at the
       // muzzle-flash instant and gone exactly when the server stops sending it.
       material.opacity = 1 - Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));
@@ -214,28 +228,38 @@ export function createLaserPool(): LaserPool {
 /**
  * How long a burst lasts, in seconds.
  *
- * 1.6 s (owner, 2026-09-04: "the explosion could be larger"), and it is
- * deliberately SHORTER than CRASH_WIRE_SECONDS: the burst has to be over before
- * the entry that carries it stops arriving, or the last frames of the fireball
- * would be cut off by the wire rather than by the effect finishing.
+ * 2 s (owner, 2026-09-04, twice: "the explosion could be larger", then "a
+ * larger brighter fireball"), and it is deliberately SHORTER than
+ * CRASH_WIRE_SECONDS: the burst has to be over before the entry that carries
+ * it stops arriving, or the last frames of the fireball would be cut off by
+ * the wire rather than by the effect finishing.
  */
-export const BURST_SECONDS = 1.6;
+export const BURST_SECONDS = 2;
 
 /**
- * The fireball at full expansion, in cells. FIVE — twice the crater's radius,
- * so the ball rolls out over the fire ring and well past the wreck's own
- * width; the previous three read as a puff against a hull four cells across.
+ * The fireball at full expansion, in cells. EIGHT — the arena's radius, over
+ * three times the crater's, so the ball swallows the fire ring and stands two
+ * hulls tall over the wreck. Five (the first revision) still read as a puff
+ * from the orbit camera the owner watches from.
  */
-const BURST_MAX_RADIUS_CELLS = 5;
+const BURST_MAX_RADIUS_CELLS = 8;
 
 /**
  * A WHITE-HOT CORE inside the ball: smaller, brighter, gone in the first part
  * of the burst. It is what makes the ball read as a detonation rather than as
- * an orange balloon — the flash, then the fire.
+ * an orange balloon — the flash, then the fire. Pure white, half the ball.
  */
-const CORE_MAX_RADIUS_CELLS = 2.2;
+const CORE_MAX_RADIUS_CELLS = 4;
 const CORE_SECONDS_FRACTION = 0.35;
-const CORE_COLOUR = 0xfff2c8;
+const CORE_COLOUR = 0xffffff;
+
+/**
+ * How the ball's brightness falls over the burst. Opacity is (1 − t) raised to
+ * this: under one HOLDS the light near full for most of the burst and drops it
+ * at the end, where a straight (1 − t) had it half-faded before it was
+ * half-grown — the "brighter" in the owner's ask.
+ */
+const BURST_FADE_EXPONENT = 0.5;
 
 /** Sphere tessellation. Low: it is on screen for under two seconds, glowing, expanding. */
 const BURST_RADIAL_SEGMENTS = 16;
@@ -253,9 +277,9 @@ const BURST_COLOUR = 0xffa03c;
  */
 const BURST_SHARD_COUNT = 24;
 
-/** How far a shard travels over the burst, in cells, and how high it arcs. */
-const SHARD_REACH_CELLS = 8;
-const SHARD_RISE_CELLS = 4;
+/** How far a shard travels over the burst, in cells, and how high it arcs — scaled with the ball. */
+const SHARD_REACH_CELLS = 12;
+const SHARD_RISE_CELLS = 6;
 
 /** Shard size in pixels, and their colour — the same fire as the ball. */
 const SHARD_SIZE_PIXELS = 5;
@@ -385,7 +409,7 @@ export function createCrashBursts(): CrashBursts {
       // which is what an explosion does and a balloon does not.
       const grow = Math.sqrt(t);
       burst.ball.scale.setScalar(worldUnitsAcross(BURST_MAX_RADIUS_CELLS) * grow);
-      burst.ballMaterial.opacity = 1 - t;
+      burst.ballMaterial.opacity = Math.pow(1 - t, BURST_FADE_EXPONENT);
 
       // The core is over in the first third: full size at once, fading out.
       const coreT = Math.min(1, t / CORE_SECONDS_FRACTION);
