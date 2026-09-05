@@ -1855,29 +1855,6 @@ button.world-header {
   box-shadow: 0 0 10px hsl(var(--admin-hue) 70% 55% / 0.6);
 }
 
-/* The plugin, inside its archetype: the second level of the grouping, and
-   deliberately the quieter one — the archetype heading is what the eye scans
-   for, and this only answers "which plugin owns this card". */
-.admin-plugin {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.admin-plugin + .admin-plugin {
-  margin-top: 10px;
-}
-
-.admin-plugin-name {
-  margin: 0;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--hud-muted);
-  opacity: 0.75;
-}
-
 .admin-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
