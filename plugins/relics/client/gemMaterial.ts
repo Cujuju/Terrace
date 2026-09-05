@@ -14,6 +14,11 @@
 // relic is a marker, and it kept its own glow before this (an emissive gem)
 // for the same reason.
 //
+// The tile under the relic (relicShapes.ts, tile) is the exception: the icon
+// paints it with fixed gradients, not by the light, so its vertices carry
+// their own blend between the paint's ends (PAINT_BLEND_ATTRIBUTE) and the
+// levels are skipped for them.
+//
 // relics.py reads ICON_LIGHT_UVH and ICON_LIGHT_LEVELS from this file, so
 // the panel and the world share one lighting model.
 
@@ -51,10 +56,12 @@ const LIGHT_DIR_VIEW = iconLightInViewSpace();
 const VERTEX_SHADER = /* glsl */ `
 attribute vec3 paintLight;
 attribute vec3 paintDark;
+attribute float paintBlend;
 uniform float uRadius;
 varying vec3 vViewPosition;
 varying vec3 vPaintLight;
 varying vec3 vPaintDark;
+varying float vPaintBlend;
 varying float vDownward;
 
 void main() {
@@ -66,6 +73,7 @@ void main() {
   vDownward = clamp((viewCentre.y + uRadius - viewPosition.y) / (2.0 * uRadius), 0.0, 1.0);
   vPaintLight = paintLight;
   vPaintDark = paintDark;
+  vPaintBlend = paintBlend;
   gl_Position = projectionMatrix * viewPosition;
 }
 `;
@@ -76,6 +84,7 @@ uniform float uLevels;
 varying vec3 vViewPosition;
 varying vec3 vPaintLight;
 varying vec3 vPaintDark;
+varying float vPaintBlend;
 varying float vDownward;
 
 void main() {
@@ -84,7 +93,9 @@ void main() {
   vec3 normal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
   float lit = (dot(normal, uLightDir) + 1.0) * 0.5;
   float level = min(uLevels - 1.0, floor((1.0 - lit) * uLevels));
-  float t = (level + vDownward) / uLevels;
+  // A vertex with its own blend (the tile) is painted with it; the rest are
+  // lit. A face is all one or all the other, so the varying never straddles.
+  float t = vPaintBlend < 0.0 ? (level + vDownward) / uLevels : vPaintBlend;
   // The paints are sRGB and the icon blends them as sRGB; blend the same,
   // then hand three linear light to write out.
   vec4 srgb = vec4(mix(vPaintLight, vPaintDark, t), 1.0);
