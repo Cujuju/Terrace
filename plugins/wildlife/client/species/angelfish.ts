@@ -1,9 +1,9 @@
 // The angelfish, as anatomy: the striped disc.
 //
-// A tall swept hull — taller than long, thin across — with a triangular dorsal
-// sweeping up, a matching anal fin below, a small forked caudal, fluttering
-// pectorals, two dark bars painted across the flanks, and two eyes. Golden,
-// smooth-shaded like the fish.
+// A tall swept hull — taller than long, thin across — with long trailing
+// dorsal and anal fins sweeping past the peduncle, a modest forked gold
+// caudal beating between them, fluttering pectorals, two dark bars painted
+// across the flanks, and two eyes. Golden, smooth-shaded like the fish.
 //
 // THE BARS are upright fins hung THROUGH the body: thin in Z, tall in Y,
 // standing proud of each flank by a hair. A second hull or a split sweep would
@@ -36,9 +36,10 @@ const HULL_CENTRE_X = 0.0;
 const MAX_HALF_WIDTH = 0.07;
 /** Peduncle: the hinge the tail swings from. */
 const PEDUNCLE_X = HULL_CENTRE_X - HULL_LENGTH / 2;
-/** Behind the peduncle the caudal fin reaches this far back. */
-const CAUDAL_REACH = 0.13;
-const CAUDAL_HALF_SPAN = 0.10;
+/** Behind the peduncle the caudal fork's tips reach this far back. */
+const CAUDAL_REACH = 0.15;
+/** How tall the fork stands, tip to tip half-height. */
+const CAUDAL_HALF_SPAN = 0.15;
 
 const HULL_RINGS = 22;
 const HULL_SEGMENTS = 14;
@@ -87,15 +88,28 @@ const angelHalfHeight: BodyProfile = (t) => angelHalfWidth(t) * angelHeightRatio
 /** Body t for a station x, on the authored hull. */
 const angelBodyT = (x: number): number => (HULL_CENTRE_X + HULL_LENGTH / 2 - x) / HULL_LENGTH;
 
-/** Where the dorsal and anal fins sit, and the water they stand in. */
-const DORSAL_X = -0.06;
-const dorsalSeatY = angelHalfHeight(angelBodyT(DORSAL_X)) - FIN_SEAT_BITE;
-/** Peak of the dorsal outline above its seat (an exact endpoint, not a guess). */
-const DORSAL_PEAK = 0.24;
-const ANAL_X = -0.05;
-const analSeatY = -angelHalfHeight(angelBodyT(ANAL_X)) + FIN_SEAT_BITE;
-/** Lowest point of the anal outline below its seat (likewise exact). */
-const ANAL_DEPTH = 0.22;
+/**
+ * The rear trio, after the concept sculpt (angelfish.py): the dorsal and the
+ * anal are LONG trailers, not sails — each rooted along most of the rear
+ * midline with its tip sweeping past the peduncle — and the gold caudal is a
+ * modest fork on the peduncle between them, clear of both above and below.
+ * Three separate pronounced points at the rear, with water between each pair:
+ * the trailing edges pass 0.06+ clear of the fork's tips.
+ */
+const DORSAL_BASE_FRONT_X = 0.15;
+const dorsalSeatFrontY = angelHalfHeight(angelBodyT(DORSAL_BASE_FRONT_X)) - FIN_SEAT_BITE;
+/** Rear of the dorsal's root, a membrane point just behind the peduncle. */
+const DORSAL_BASE_REAR_X = -0.31;
+const DORSAL_BASE_REAR_Y = 0.02;
+/** The dorsal's tip: past the peduncle, above the tail fan. */
+const DORSAL_TIP_X = -0.49;
+const DORSAL_TIP_Y = 0.40;
+const ANAL_BASE_FRONT_X = 0.13;
+const analSeatFrontY = -angelHalfHeight(angelBodyT(ANAL_BASE_FRONT_X)) + FIN_SEAT_BITE;
+const ANAL_BASE_REAR_X = -0.29;
+const ANAL_BASE_REAR_Y = -0.02;
+const ANAL_TIP_X = -0.46;
+const ANAL_TIP_Y = -0.38;
 
 /**
  * What this body measures, in world units at model scale 1 — the numbers
@@ -108,10 +122,10 @@ export const ANGELFISH_ENVELOPE = {
   halfLength: (0.25 + -PEDUNCLE_X + CAUDAL_REACH) / 2,
   /** To a bar's outer face. */
   halfWidth: BAR_HALF_THICKNESS,
-  /** Top of the dorsal fin above the origin. */
-  crownY: dorsalSeatY + DORSAL_PEAK,
-  /** Bottom of the anal fin below the origin. */
-  bellyY: analSeatY - ANAL_DEPTH,
+  /** Top of the dorsal trailer's tip above the origin. */
+  crownY: DORSAL_TIP_Y,
+  /** Bottom of the anal trailer's tip below the origin. */
+  bellyY: ANAL_TIP_Y,
 } as const;
 
 export const buildAngelfish: SpeciesModelBuilder = (pool) => {
@@ -134,29 +148,41 @@ export const buildAngelfish: SpeciesModelBuilder = (pool) => {
   hull.translate(HULL_CENTRE_X, 0, 0);
   pool.keepGeometry(hull);
 
-  // Tall triangular dorsal, seated a bite into the back.
+  // Long trailing dorsal: rooted from the mid-back to just behind the
+  // peduncle, tip sweeping up and back past it — the concept's angel wing,
+  // not a sail. Its trailing edge passes well above the tail fan's top tip.
   const dorsal = pool.keepGeometry(uprightFin((shape) => {
-    shape.moveTo(0.16, 0);
-    shape.quadraticCurveTo(0.05, 0.16, -0.08, 0.24);
-    shape.quadraticCurveTo(-0.11, 0.12, -0.16, 0);
-    shape.lineTo(0.16, 0);
+    const tipX = DORSAL_TIP_X - DORSAL_BASE_FRONT_X;
+    const tipY = DORSAL_TIP_Y - dorsalSeatFrontY;
+    const rearX = DORSAL_BASE_REAR_X - DORSAL_BASE_FRONT_X;
+    const rearY = DORSAL_BASE_REAR_Y - dorsalSeatFrontY;
+    shape.moveTo(0, 0);
+    shape.quadraticCurveTo(tipX * 0.45, tipY * 0.75, tipX, tipY);
+    shape.quadraticCurveTo((tipX + rearX) / 2, (tipY + rearY) / 2 - 0.02, rearX, rearY);
+    shape.lineTo(0, 0);
   }, FIN_THICKNESS));
 
-  // Matching anal fin below.
+  // Matching anal trailer below, mirrored.
   const anal = pool.keepGeometry(uprightFin((shape) => {
-    shape.moveTo(0.14, 0);
-    shape.quadraticCurveTo(0.04, -0.15, -0.07, -0.22);
-    shape.quadraticCurveTo(-0.10, -0.11, -0.14, 0);
-    shape.lineTo(0.14, 0);
+    const tipX = ANAL_TIP_X - ANAL_BASE_FRONT_X;
+    const tipY = ANAL_TIP_Y - analSeatFrontY;
+    const rearX = ANAL_BASE_REAR_X - ANAL_BASE_FRONT_X;
+    const rearY = ANAL_BASE_REAR_Y - analSeatFrontY;
+    shape.moveTo(0, 0);
+    shape.quadraticCurveTo(tipX * 0.45, tipY * 0.75, tipX, tipY);
+    shape.quadraticCurveTo((tipX + rearX) / 2, (tipY + rearY) / 2 + 0.02, rearX, rearY);
+    shape.lineTo(0, 0);
   }, FIN_THICKNESS));
 
-  // Small forked caudal, authored with x = 0 AT THE HINGE.
+  // Modest gold fork on the peduncle, beating between the dark trailers:
+  // root seated into the stem, tips well short of either trailer tip, notch
+  // halfway back. Authored with x = 0 AT THE HINGE.
   const caudal = pool.keepGeometry(uprightFin((shape) => {
-    shape.moveTo(0.02, 0);
-    shape.quadraticCurveTo(-0.04, 0.04, -CAUDAL_REACH, CAUDAL_HALF_SPAN);
-    shape.quadraticCurveTo(-0.08, 0.03, -0.07, 0);
-    shape.quadraticCurveTo(-0.08, -0.03, -CAUDAL_REACH, -CAUDAL_HALF_SPAN);
-    shape.quadraticCurveTo(-0.04, -0.04, 0.02, 0);
+    shape.moveTo(0.05, 0);
+    shape.quadraticCurveTo(-0.05, 0.10, -CAUDAL_REACH, CAUDAL_HALF_SPAN);
+    shape.quadraticCurveTo(-0.08, 0.05, -0.05, 0);
+    shape.quadraticCurveTo(-0.08, -0.05, -CAUDAL_REACH, -CAUDAL_HALF_SPAN);
+    shape.quadraticCurveTo(-0.05, -0.10, 0.05, 0);
   }, FIN_THICKNESS));
 
   // The bars: lens-shaped upright fins through the flanks, shorter than the
@@ -198,8 +224,12 @@ export const buildAngelfish: SpeciesModelBuilder = (pool) => {
   // ── Assembly ──────────────────────────────────────────────────────────────
   const { root, rig } = pool.rigged();
   rig.add(pool.part(hull, body, 0, 0, 0));
-  rig.add(pool.part(dorsal, fin, DORSAL_X, dorsalSeatY, 0));
-  rig.add(pool.part(anal, fin, ANAL_X, analSeatY, 0));
+  // The trailers wear the bars' near-black, not the fins' gold: the source's
+  // dorsal and anal are dark fins on a dark disc, and gold trailers on a gold
+  // flank merge into one kite. Dark trailers + gold body keeps the three rear
+  // fins three separate reads with the gold fork beating between them.
+  rig.add(pool.part(dorsal, bar, DORSAL_BASE_FRONT_X, dorsalSeatFrontY, 0));
+  rig.add(pool.part(anal, bar, ANAL_BASE_FRONT_X, analSeatFrontY, 0));
   for (const { geometry, barX } of bars) rig.add(pool.part(geometry, bar, barX, 0, 0));
   rig.add(pool.part(eyeGeometry, eye, EYE_X, 0.03, eyeZ));
   rig.add(pool.part(eyeGeometry, eye, EYE_X, 0.03, -eyeZ));
