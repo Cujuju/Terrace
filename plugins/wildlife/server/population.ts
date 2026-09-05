@@ -179,10 +179,10 @@ export interface WildlifeEntity {
   huntSecondsRemaining: number;
 
   /**
-   * Seconds before this hunter may lock a target again — satiety after a kill,
-   * winded after a miss (`Pursuit.restAfterKillSeconds` /
-   * `restAfterMissSeconds`). It is the rate limit on predation, and therefore
-   * the population governor: see species/wolf.ts's own arithmetic.
+   * Seconds before this hunter may lock a target again — done after a catch,
+   * winded after a miss (`Pursuit.restAfterCatchSeconds` /
+   * `restAfterMissSeconds`). It is the rate limit on predation, and would be
+   * the population governor if a catch killed: see species/wolf.ts.
    */
   huntRestSecondsRemaining: number;
 }

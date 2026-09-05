@@ -32,7 +32,7 @@ export const WILDLIFE_SLICE_VERSION = 1;
  * It omits `idle` (2026-09-02) on the same argument — a bout is a moment, and a
  * world that came back with a third of its animals frozen mid-graze would look
  * worse than one where every animal starts walking. It omits the three hunt
- * fields (2026-09-05) on the same argument again: a chase and the satiety after
+ * fields (2026-09-05) on the same argument again: a chase and the rest after
  * one are moments, so restored wolves start calm — and start hungry, which is
  * the honest reading of a gap in time nobody simulated.
  *
