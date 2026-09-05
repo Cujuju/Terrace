@@ -21,6 +21,18 @@ import {
   type TwoFingerGesture,
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
+import {
+  VOID_STYLES,
+  setVoidStyle,
+  voidStyle,
+  type VoidStyle,
+} from '../state/voidPrefs.ts';
+
+/** Panel copy for each celestial-void look (state/voidPrefs.ts owns the set). */
+const VOID_STYLE_LABEL: Record<VoidStyle, string> = {
+  wheel: 'Star wheel',
+  nebula: 'Nebula',
+};
 
 const ACTION_LABEL: Record<ControlAction, string> = {
   raise: 'Raise land',
@@ -167,6 +179,24 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
+      {/* What is drawn outside the map (render/celestialVoid.ts, issue #326).
+          A look, not a control — but this is the panel a player already opens
+          to make the view theirs, and it is where the reset button reaches. */}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Beyond the map</span>
+        <select
+          class="controls-select"
+          aria-label="Look of the space outside the map"
+          title="What fills the space outside the world. Purely a look — it never changes with the time of day."
+          value={voidStyle()}
+          onChange={(e) => setVoidStyle(e.currentTarget.value as VoidStyle)}
+        >
+          <For each={VOID_STYLES}>
+            {(style) => <option value={style}>{VOID_STYLE_LABEL[style]}</option>}
+          </For>
+        </select>
+      </div>
+
       <Show when={shadowedActions(controlBindings()).length > 0}>
         <p class="controls-warning">
           {/* Same binding twice: only the first (by precedence) ever fires. */}
@@ -192,8 +222,9 @@ export function ControlsPanel(): JSX.Element {
         </p>
       </Show>
 
-      {/* resetBindings clears the buttons, the touch gesture AND the wheel —
-          every setting on this panel — so the tooltip promises exactly that. */}
+      {/* resetBindings clears the buttons, the touch gesture, the wheel AND
+          the celestial void's look — every setting on this panel — so the
+          tooltip promises exactly that. */}
       <button
         type="button"
         class="controls-reset"

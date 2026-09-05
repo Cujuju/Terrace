@@ -47,6 +47,38 @@ const MILLISECONDS_PER_SECOND = 1000;
  */
 export const TERRACE_RESTART_EXIT_CODE = 75;
 
+/**
+ * The exit code that means "I was asked to restart, AND SO WAS THE CLIENT DEV
+ * SERVER beside me; bring us both back".
+ *
+ * The next code up from TERRACE_RESTART_EXIT_CODE, chosen by the same
+ * argument: 1–255, and clear of 0 / 1 / 2 / 128+N. (76 is `EX_PROTOCOL` in
+ * sysexits.h; the borrowed meaning stops at 75 — this one is simply "the
+ * other restart".) A supervisor that knows only 75 treats 76 as an ordinary
+ * exit, which under docker `restart: unless-stopped` and systemd
+ * `Restart=always` is still a restart of the one process they run, so the
+ * code degrades to a plain server restart where there is no client half.
+ *
+ * WHY A SECOND CODE AND NOT A FLAG FILE OR A SIGNAL: the exit code is the one
+ * channel the server already has to its supervisor, it is read exactly where
+ * the relaunch decision is made (run_server.py's wait loop), and it cannot go
+ * stale — it exists only in the instant the process ends.
+ */
+export const TERRACE_STACK_RESTART_EXIT_CODE = 76;
+
+/**
+ * What a restart takes down. 'server' is the keyed update button: this process
+ * only, the client dev server left running. 'stack' is the keyless dev-loop
+ * button (shared/src/protocol.ts's StackRestartRequestMessage): this process
+ * AND the client dev server, so client code that changed on disk arrives too.
+ */
+export type RestartScope = 'server' | 'stack';
+
+/** The exit code that tells the supervisor which scope was asked for. */
+export function restartExitCodeFor(scope: RestartScope): number {
+  return scope === 'stack' ? TERRACE_STACK_RESTART_EXIT_CODE : TERRACE_RESTART_EXIT_CODE;
+}
+
 /** What the restart needs from the process, injected so it can be tested. */
 export interface ServerRestartHooks {
   /**
@@ -96,6 +128,12 @@ export class ServerRestartService {
   private pending: { secondsRemaining: number; timer: NodeJS.Timeout } | null = null;
   /** Set the instant the shutdown is committed to, announced or not. */
   private firing = false;
+  /**
+   * What the restart in flight takes down; decides the exit code. Held on the
+   * service rather than threaded through the countdown, because the countdown
+   * is one timer that must not care why it is counting.
+   */
+  private scope: RestartScope = 'server';
 
   constructor(hooks: ServerRestartHooks) {
     this.hooks = hooks;
@@ -118,8 +156,9 @@ export class ServerRestartService {
    * Returns the receipt synchronously — the shutdown itself is always deferred
    * (see `fire`), so the caller's answer reaches the operator either way.
    */
-  request(): ServerRestartOutcome | ServerRestartRefusal {
+  request(scope: RestartScope = 'server'): ServerRestartOutcome | ServerRestartRefusal {
     if (this.pending !== null || this.firing) return 'restartInProgress';
+    this.scope = scope;
 
     const countdown = this.hooks.countdownS;
     const others = this.bridge?.clientCount() ?? 0;
@@ -184,8 +223,10 @@ export class ServerRestartService {
       // comes back having lost the last minute of an idle world.
       logError('graceful shutdown before restart failed; exiting anyway', error);
     }
-    logInfo(`exiting ${TERRACE_RESTART_EXIT_CODE} so the supervisor restarts this server`);
-    this.hooks.exit(TERRACE_RESTART_EXIT_CODE);
+    const code = restartExitCodeFor(this.scope);
+    const what = this.scope === 'stack' ? 'this server and its client dev server' : 'this server';
+    logInfo(`exiting ${code} so the supervisor restarts ${what}`);
+    this.hooks.exit(code);
   }
 
   /** Tells every connected client, or nobody when no room is attached. */

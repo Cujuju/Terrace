@@ -7,7 +7,6 @@
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -40,12 +39,19 @@ import {
   applyGroundClearance,
   type GroundHeightSampler,
 } from './cameraClearance.ts';
+import { createSkyEnvironment, type SkyEnvironment } from './skyEnvironment.ts';
+import type { SkyRigState } from '../plugins/types.ts';
 
 /**
- * Sky/background, and the hemisphere light's sky colour. Exported so other
- * render modules that want to blend toward "the sky" — the frontier mist
- * curtain (render/frontierFog.ts) — derive it from this one definition
- * rather than picking a second sky colour that could drift out of sync.
+ * The hemisphere light's sky colour — the daylight falling on the map from
+ * above. Exported so other render modules that want to blend toward "the sky"
+ * derive it from this one definition rather than picking a second sky colour
+ * that could drift out of sync.
+ *
+ * NOT the background any more (issue #326). Outside the map is the celestial
+ * void (./celestialVoid.ts), and nothing blends toward it: the frontier mist
+ * (./frontierFog.ts) is water-coloured throughout. This constant is the map's
+ * own light.
  */
 export const SKY_COLOR = 0x9fc7e8;
 /**
@@ -168,6 +174,15 @@ export interface Viewport {
    */
   readonly lighting: SkyLightingRig;
   /**
+   * The sky as an environment map for authored PBR assets to reflect — see
+   * ./skyEnvironment.ts. Painted at boot from the same noon constants the
+   * lamps above are built from, and repainted by applySkyRig whenever a plugin
+   * changes the sky, so a reflection and the lamps never disagree about what
+   * time of day it is. NOT scene.environment: only assets loaded with
+   * ClientPluginCtx.loadRigAsset's 'sky-environment' policy sample it.
+   */
+  readonly skyEnvironment: SkyEnvironment;
+  /**
    * Points the camera at a world of this size, once that size is known, and
    * arms pose persistence for it (nothing can be stored before the world's
    * identity — and therefore its storage key — exists).
@@ -244,7 +259,12 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
 
   const scene = new Scene();
   scene0Holder.scene = scene;
-  scene.background = new Color(SKY_COLOR);
+  // NO scene.background. What is drawn outside the map is the celestial void
+  // pass (./celestialVoid.ts, issue #326), a fullscreen mesh main.tsx adds to
+  // this scene — not a flat colour. Leaving `background` at its null default
+  // is also what keeps time of day off the void: ./skyRig.ts only writes a
+  // background that is a Color, so the day/night plugin's backgroundColor now
+  // has nothing to land on. See celestialVoid.ts's header.
 
   const camera = new PerspectiveCamera(
     CAMERA_FOV_DEGREES,
@@ -270,6 +290,26 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   // needs a large cascade to avoid acne, and the terraced silhouette already
   // reads without it. Revisit with the Phase 2 look pass.
   scene.add(sun);
+
+  // The SAME noon the lamps above were just built from, as a SkyRigState —
+  // the shape applySkyRig will later repaint the environment from — so the
+  // boot-time reflection is the boot-time sky and not a second opinion of it.
+  const noonSky: SkyRigState = {
+    sunDirection: {
+      x: SUN_DIRECTION_NOON[0],
+      y: SUN_DIRECTION_NOON[1],
+      z: SUN_DIRECTION_NOON[2],
+    },
+    sunColor: 0xffffff,
+    sunIntensity: SUN_LIGHT_INTENSITY,
+    hemisphereSkyColor: SKY_COLOR,
+    hemisphereGroundColor: GROUND_BOUNCE_COLOR,
+    hemisphereIntensity: HEMISPHERE_LIGHT_INTENSITY,
+    ambientColor: 0xffffff,
+    ambientIntensity: AMBIENT_FLOOR_INTENSITY,
+    backgroundColor: SKY_COLOR,
+  };
+  const skyEnvironment = createSkyEnvironment(renderer, noonSky, performance.now());
 
   const terrainGroup = new Group();
   scene.add(terrainGroup);
@@ -379,6 +419,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     if (groundHeightSampler !== null) {
       applyGroundClearance(camera.position, groundHeightSampler);
     }
+    // BEFORE the render: a repaint's own draws reset renderer.info, and the
+    // draw-budget sampler reads that after this frame's render (plugins/
+    // host.ts) — run here they cannot land in its count.
+    skyEnvironment.flush(nowMs);
     renderer.render(scene, camera);
   };
 
@@ -477,6 +521,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     controls,
     terrainGroup,
     lighting: { sun, hemisphere, ambient },
+    skyEnvironment,
     restoreOrFocus,
     onFrame(handler: (dt: number) => void, phase: FramePhase = 'draw'): () => void {
       const set = phase === 'pose' ? poseFrameCallbacks : frameCallbacks;
@@ -501,6 +546,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
       controls.removeEventListener('change', savePoseSoon);
       window.removeEventListener('pagehide', savePoseNow);
       controls.dispose();
+      skyEnvironment.dispose();
       renderer.dispose();
     },
   };
