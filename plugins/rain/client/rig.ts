@@ -28,22 +28,48 @@ import {
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
-import { MAX_ACTIVE_SYSTEMS, RAIN_PLUGIN_NAME } from '../protocol.ts';
+import {
+  MAX_ACTIVE_SYSTEMS,
+  RAIN_FOOTPRINT_AREA_SCALE,
+  RAIN_PLUGIN_NAME,
+} from '../protocol.ts';
 
 /**
- * Particles in one rain rig.
+ * Particles in one rain rig at the kit's BASE disc size.
  *
- * 900 over a system's disc, which is 1 800 cells² at the minimum radius and
+ * 900 over a base system's disc, which is 1 800 cells² at the minimum radius and
  * 9 800 at the maximum — so between one drop per two cells and one per eleven,
  * spread through a 28-unit column. That is not a physical density (real rain
  * would be millions); it is the density at which the eye reads "it is raining"
  * from the camera's 80-cell orbit, where a single drop is a sub-pixel streak and
  * what registers is the texture of the whole column.
  *
- * The cost is one draw call and, per frame, 900 iterations writing 5 400 floats
- * into a buffer that is allocated once.
+ * (Those cells² are the disc in WORLD UNITS — π·24² and π·56² — which is the
+ * frame the "density the eye reads" was judged in, at the camera's orbit.)
  */
-export const RAIN_DROP_COUNT = 900;
+const RAIN_DROP_COUNT_AT_BASE_FOOTPRINT = 900;
+
+/**
+ * Particles in one rain rig, derived.
+ *
+ * DENSITY IS THE INVARIANT, NOT THE COUNT. The 900 above is justified above as a
+ * density — drops per cell at the camera's orbit — and a drop count held fixed
+ * while RAIN_FOOTPRINT_AREA_SCALE triples the disc would be that density divided
+ * by three: a front you can see straight through, which is a thinning nobody
+ * asked for. The particles are seeded uniformly by AREA over the disc
+ * (client/src/plugins/kit/precipitation.ts, `seedRadius`), so the count that
+ * holds the density is the base count times the area scale.
+ *
+ * THE COST, STATED. 2 700 iterations per rig per frame writing 16 200 floats,
+ * against 900 and 5 400 before; at the plugin's cap of MAX_ACTIVE_SYSTEMS (7)
+ * that is 18 900 particles and ~454 KB of vertex upload a frame where it was
+ * 6 300 and ~151 KB. It is the same one draw call per rig. Against the project's
+ * ≈7 ms frame budget (140 fps) this is the deliberate purchase the owner's
+ * 2026-09-04 ask makes: three times the sky under a front costs three times the
+ * drops in it. UNVERIFIED: not measured on the owner's machine — the numbers
+ * above are counted, not profiled.
+ */
+export const RAIN_DROP_COUNT = RAIN_DROP_COUNT_AT_BASE_FOOTPRINT * RAIN_FOOTPRINT_AREA_SCALE;
 
 /**
  * How rain falls and looks.
@@ -83,7 +109,10 @@ export const RAIN_RIG_DRAW_OBJECTS = 5;
  * overcast rather than a few towering heads, so its puffs are small enough that
  * the deck's texture reads at the camera's 80-cell orbit and no single puff
  * spans the eye's whole disc. The COUNT follows from it and is not a second
- * decision (`puffsForCoverage`): 139 puffs today.
+ * decision (`puffsForCoverage`): 139 puffs today — and it is untouched by
+ * RAIN_FOOTPRINT_AREA_SCALE, because a fraction of the radius grows with the
+ * radius: an enlarged front gets the same 139 puffs, each bigger, so the deck's
+ * texture per unit of cloud is identical and the instance buffer does not move.
  */
 export const RAIN_PUFF_SIZE_FRACTION = 0.12;
 

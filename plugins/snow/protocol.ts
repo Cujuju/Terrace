@@ -53,3 +53,23 @@ export const SNOW_COVERAGE_FRACTION = 0.027;
  * the pre-split plugin capped the whole sky at.
  */
 export const MAX_ACTIVE_SYSTEMS = 2;
+
+/**
+ * How much sky ONE snow front covers, as a multiple of the kit's base disc area
+ * (server/src/plugins/kit/discSystems.ts, DISC_SYSTEM_MIN/MAX_RADIUS_CELLS).
+ *
+ * THREE, the same number and the same 2026-09-04 owner ask as rain's
+ * RAIN_FOOTPRINT_AREA_SCALE: "grow the size of the rain and snowstorms. I want
+ * them to cover three times as much area when they spawn." Two constants rather
+ * than one shared one because a plugin may not import another plugin's protocol
+ * — and because the two are one ask today and two independent dials tomorrow.
+ *
+ * IT DOES NOT CHANGE MAX_ACTIVE_SYSTEMS OR THE DERIVED CAP: the population is
+ * derived from SNOW_COVERAGE_FRACTION at the BASE disc size, so this is bigger
+ * storms and not fewer. The share of the map under snow at equilibrium goes from
+ * 0.027 to 0.081 — still an UPPER BOUND on a low world, for the siting reason
+ * above, and a slightly looser one: a wider candidate disc samples ground
+ * further out (server/siting.ts samples at half the radius), so on a world with
+ * one small massif a larger front is refused more often and handed to rain.
+ */
+export const SNOW_FOOTPRINT_AREA_SCALE = 3;
