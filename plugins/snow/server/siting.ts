@@ -47,12 +47,22 @@ export const SNOW_MIN_TERRAIN_HEIGHT =
  * candidate is sampled. The centre plus four points at half radius.
  *
  * FIVE SAMPLES, not one and not a full sweep of the disc. One is noise — a
- * single peak in an ocean would qualify a system 50 cells across. A full sweep
- * would be thousands of lookups to answer a question whose answer is "is this
- * broadly highland", which five points spread over the inner half of the disc
- * settle. Half radius rather than full, so the test is about the ground the
- * system is CENTRED on and not about its rim, which will have drifted somewhere
- * else within a minute anyway.
+ * single peak in an ocean would qualify a system of up to a 388-cell radius (the
+ * band SNOW_FOOTPRINT_AREA_SCALE puts snow in on the shipped world, and it was a
+ * 224-cell one before). A full sweep would be thousands
+ * of lookups to answer a question whose answer is "is this broadly highland",
+ * which five points spread over the inner half of the disc settle. Half radius
+ * rather than full, so the test is about the ground the system is CENTRED on and
+ * not about its rim, which will have drifted somewhere else within a minute
+ * anyway.
+ *
+ * STILL FIVE AFTER THE 2026-09-04 ENLARGEMENT, deliberately. The offsets are
+ * FRACTIONS of the candidate radius, so a three-times-the-area front spreads the
+ * same five points over the same shape — what changes is how far apart they are
+ * on the ground, which is the point: a bigger front is asked about bigger
+ * ground. The consequence, accepted: on a world with one small massif a larger
+ * candidate straddles the coast more often and is refused, and that refusal is
+ * handed to rain (server/index.ts, SNOW_HAND_OFF_KIND).
  */
 export const SNOW_ELEVATION_SAMPLE_OFFSETS: readonly (readonly [number, number])[] = [
   [0, 0],

@@ -53,6 +53,7 @@ import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.t
 import {
   MAX_ACTIVE_SYSTEMS,
   RAIN_COVERAGE_FRACTION,
+  RAIN_FOOTPRINT_AREA_SCALE,
   RAIN_PLUGIN_NAME,
   RAIN_SYSTEMS_MESSAGE,
 } from '../protocol.ts';
@@ -67,10 +68,13 @@ import {
 /**
  * Ticks between broadcasts. 10 → 1 Hz at the shipped TICK_HZ of 10.
  *
- * MOTION PICKS THE CADENCE, not bandwidth: the wind's ceiling is 2 cells/s, so a
- * system moves at most 2 cells between messages — 8% of the SMALLEST system's
- * 24-cell radius — and the client interpolates across the gap, so a player
- * cannot tell it from 10 Hz. 1 Hz is also the FLOOR: the client clamps its
+ * MOTION PICKS THE CADENCE, not bandwidth: the wind's ceiling is 2 world units
+ * per second (plugins/weather/server/wind.ts, WIND_MAX_SPEED_CELLS_PER_SECOND =
+ * cellsAcross(2) = 8 cells/s), so a system moves at most 8 cells between
+ * messages — under 5% of the SMALLEST system's 166-cell radius since
+ * RAIN_FOOTPRINT_AREA_SCALE enlarged the band (it was 8% of the base 96-cell
+ * floor) — and the client interpolates across the gap, so a player cannot tell
+ * it from 10 Hz. 1 Hz is also the FLOOR: the client clamps its
  * interpolation window at MAX_INTERPOLATION_SECONDS (2 s), sized to ride out one
  * dropped message at this cadence, so halving to 0.5 Hz would put the nominal
  * window at the clamp with no headroom and fronts would start snapping.
@@ -94,6 +98,7 @@ export const RAIN_DEV_FORCE_ENV = devForceEnvName(RAIN_PLUGIN_NAME);
  */
 const systems = createDiscSystems({
   coverageFraction: RAIN_COVERAGE_FRACTION,
+  footprintAreaScale: RAIN_FOOTPRINT_AREA_SCALE,
   maxActiveSystems: MAX_ACTIVE_SYSTEMS,
   random: rainRandom,
 });
