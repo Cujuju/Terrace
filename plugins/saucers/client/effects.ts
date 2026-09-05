@@ -79,13 +79,14 @@ const CYLINDER_AXIS = new Vector3(0, 1, 0);
 /**
  * A bolt's radius, in cells.
  *
- * 0.35 — a twelfth of a hull (SAUCER_DIAMETER_CELLS is four cells). It was
+ * 0.2 — a twentieth of a hull (SAUCER_DIAMETER_CELLS is four cells). It was
  * 0.12, the hangar's proportion, which from the orbit camera the owner watches
- * from is under a pixel wide: "extremely difficult to see" (2026-09-04). It is
- * a length of the WORLD, not of the model, so it does not change if the hull
+ * from is under a pixel wide: "extremely difficult to see" (2026-09-04); then
+ * 0.35, which was "too thick" (2026-09-05) once the bolt was opaque. It is a
+ * length of the WORLD, not of the model, so it does not change if the hull
  * is re-authored at another size.
  */
-const BOLT_RADIUS_CELLS = 0.35;
+const BOLT_RADIUS_CELLS = 0.2;
 
 /**
  * The fraction of a bolt's lifetime it stays at full brightness before it
@@ -117,11 +118,10 @@ const BOLT_INTENSITY = 2;
 const BOLT_RADIAL_SEGMENTS = 6;
 
 /**
- * How far past its target a bolt is drawn before it is hidden, in cells: its
- * own length, so a bolt that has arrived reads as having struck through the
- * hull rather than stopping short of it. A bolt that lands and one that misses
- * look the same — the server does not say which — and that is the one thing
- * about the fight a watching player cannot read off the screen.
+ * How far past its aim point a bolt is drawn before it is hidden, in cells:
+ * its own length, so a bolt that has arrived reads as having struck through
+ * the hull (or, aimed to one side for a miss, past it) rather than stopping
+ * short in the air.
  */
 const BOLT_OVERSHOOT_CELLS = LASER_BOLT_LENGTH_CELLS;
 
@@ -139,14 +139,14 @@ export interface LaserPool {
   /** Hides every bolt. Called at the top of each frame's apply pass. */
   begin(): void;
   /**
-   * Draws one bolt in flight from `from` toward `to`: a streak
+   * Draws one bolt in flight from `from` toward `aim` (world space): a streak
    * LASER_BOLT_LENGTH long whose head is where a projectile of
    * LASER_BOLT_SPEED would be `age` seconds after leaving the muzzle, in the
    * shooter's faction colour, faded by its age. Silently does nothing once the
    * pool is exhausted — MAX_LASER_BOLTS is the server's own ceiling, so that is
    * unreachable rather than a policy.
    */
-  draw(from: Vector3, to: Vector3, age: number, colour: ColorRepresentation): void;
+  draw(from: Vector3, aim: Vector3, age: number, colour: ColorRepresentation): void;
   dispose(): void;
 }
 
@@ -195,12 +195,12 @@ export function createLaserPool(): LaserPool {
       for (const bolt of bolts) bolt.mesh.visible = false;
       next = 0;
     },
-    draw(from: Vector3, to: Vector3, age: number, colour: ColorRepresentation): void {
+    draw(from: Vector3, aim: Vector3, age: number, colour: ColorRepresentation): void {
       const bolt = bolts[next];
       if (bolt === undefined) return;
       next++;
 
-      scratchDirection.subVectors(to, from);
+      scratchDirection.subVectors(aim, from);
       const distance = scratchDirection.length();
       // A zero-length flight line would produce a NaN direction. It cannot
       // happen while two saucers are apart, which is exactly why it is worth one
@@ -210,8 +210,8 @@ export function createLaserPool(): LaserPool {
       scratchDirection.divideScalar(distance);
 
       // The head travels at the wire's speed; once it is a bolt-length past the
-      // target the bolt has struck (or missed) and is hidden, so nothing flies on
-      // out of the fight.
+      // aim point the bolt has struck (or missed) and is hidden, so nothing
+      // flies on out of the fight.
       const head = worldUnitsAcross(LASER_BOLT_SPEED_CELLS_PER_SECOND) * age;
       if (head > distance + worldUnitsAcross(BOLT_OVERSHOOT_CELLS)) return;
       const tail = Math.max(0, head - worldUnitsAcross(LASER_BOLT_LENGTH_CELLS));
