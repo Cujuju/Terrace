@@ -68,6 +68,7 @@
 // The one import this file allows itself: every measurement below is a fact
 // about the WORLD, and @terrace/shared owns the world's own scale.
 import {
+  CELL_WORLD_SIZE,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
   WORLD_UNITS_PER_BAND,
@@ -290,12 +291,15 @@ export const FLYBY_SECONDS = (2 * ENTRY_DISTANCE_CELLS) / APPROACH_SPEED_CELLS_P
 /**
  * Radius of the arena the dogfight is flown over, in cells.
  *
- * EIGHT WORLD UNITS, so the fight is sixteen across — half a chunk, which is a
- * span a player watching from a normal orbit camera can hold in view at once.
- * Bigger and the saucers stop being in the same shot; smaller and nine of
- * them have nowhere to go.
+ * TWELVE WORLD UNITS, so the fight is twenty-four across — three quarters of a
+ * chunk. It was eight (sixteen across, "a span an orbit camera can hold in
+ * view"), and at that size nine saucers were a swarm: owner, 2026-09-05,
+ * "increase the size of area that the dog fights cover. They don't need to be
+ * as dense as they are." Half again wider is the step that thins the rosette
+ * without pushing the far side of the fight out of the same shot. At
+ * DOGFIGHT_SPEED a saucer on the rim laps in about four seconds.
  */
-export const ARENA_RADIUS_CELLS = cellsAcross(8);
+export const ARENA_RADIUS_CELLS = cellsAcross(12);
 
 /**
  * The band of orbit radii the fight is flown in, as fractions of the arena
@@ -313,9 +317,27 @@ export const ORBIT_RADIUS_FRACTION_MIN = 0.55;
 export const ORBIT_RADIUS_FRACTION_MAX = 1;
 export const BREATHE_RADIUS_FRACTION = 0.15;
 
-/** The widest gap two fighters can have, in cells — derived, see above. */
-export const FIGHT_SPAN_CELLS =
+/** The widest gap two fighters can have IN PLAN, in cells — derived, see above. */
+export const FIGHT_PLAN_SPAN_CELLS =
   2 * ARENA_RADIUS_CELLS * (ORBIT_RADIUS_FRACTION_MAX + BREATHE_RADIUS_FRACTION);
+
+/**
+ * The altitude stack, in world units. EACH SAUCER OWNS ONE TIER — the
+ * collision guarantee (server/encounter.ts): two curves may cross in plan,
+ * never in the air. ONE WORLD UNIT between tiers, a hull's own diameter, and
+ * a quarter of that of porpoising on top, so the closest two hulls ever come
+ * in the air is well over half a diameter.
+ *
+ * On the wire's side of the contract for FIGHT_PLAN_SPAN's reason: the stack's
+ * height is the other leg of the longest shot in the fight.
+ */
+export const ALTITUDE_TIER_WORLD_UNITS = 1;
+export const CLIMB_WORLD_UNITS = 0.25;
+
+/** Top tier to bottom tier, crest to trough, in cells — derived. */
+export const FIGHT_ALTITUDE_SPAN_CELLS =
+  ((MAX_SAUCERS_PER_ENCOUNTER - 1) * ALTITUDE_TIER_WORLD_UNITS + 2 * CLIMB_WORLD_UNITS) /
+  CELL_WORLD_SIZE;
 
 /**
  * How high the saucers fly, in TERRACE BANDS above the highest ground inside the
@@ -365,52 +387,115 @@ export const LASER_HIT_DAMAGE = 1;
  * that would only ever be rounded up to it. The rest between bursts is drawn
  * from the encounter's own generator, so a fight's rhythm is reproducible.
  *
- * THE REST IS 0.7–2.0 s since the second revision ("make the lasers burst
- * 0.7-2 seconds apart"); the hangar's 1.6–3.0 read as hesitant in-world.
- * Bursts can overlap in flight; MAX_LASER_BOLTS accounts for that.
+ * THE REST IS 0.3–1.0 s (owner, 2026-09-05: the lasers "don't fire nearly
+ * often enough"). It was 0.7–2.0 (the second revision, after the hangar's
+ * 1.6–3.0 read as hesitant in-world) — a burst every second and a half; this
+ * is one every 0.85 s on average, so a saucer is nearly always either firing
+ * or about to. Bursts can overlap in flight; MAX_LASER_BOLTS accounts for that.
  */
 export const LASER_BURST_SHOTS = 3;
 export const LASER_SHOT_GAP_SECONDS = 0.1;
-export const LASER_BURST_REST_MIN_SECONDS = 0.7;
-export const LASER_BURST_REST_MAX_SECONDS = 2.0;
+export const LASER_BURST_REST_MIN_SECONDS = 0.3;
+export const LASER_BURST_REST_MAX_SECONDS = 1.0;
 
 /**
- * Chance one shot connects. HALF: the honest coin. Anything higher and the
- * first faction to fire wins nearly every time; anything much lower and the
- * fight runs out of clock.
+ * Chance one shot connects. 0.3, DOWN FROM THE HALF THE 0.7–2.0 s REST WAS
+ * TUNED WITH, so that the faster cadence does not shorten the fight: hits per
+ * second per shooter — shots per burst × chance ÷ burst period — stay at
+ * about one, which is what put the first kill at a median five seconds after
+ * the hold-fire floor (harness, 2026-09-04). Higher and the first faction to
+ * fire wins nearly every time; much lower and the fight runs out of clock.
  */
-export const LASER_HIT_CHANCE = 0.5;
+export const LASER_HIT_CHANCE = 0.3;
 
 /**
- * A bolt is a PROJECTILE, not a beam: it leaves the muzzle and travels at
- * LASER_BOLT_SPEED for LASER_BOLT_LIFETIME, drawn LASER_BOLT_LENGTH long.
+ * How far to one side of its target a MISS is aimed, in cells — perpendicular
+ * to the shot, either side. A bolt is ballistic (below), so a miss has to be
+ * aimed somewhere: aimed at the hull it would fly straight through it and
+ * look like a hit that did nothing. One and a half to three hull diameters
+ * (SAUCER_DIAMETER_CELLS is four): clear of the hull, still plainly fired at
+ * it. Adds to the longest shot a bolt can be, and so to its lifetime.
+ */
+export const LASER_MISS_OFFSET_MIN_CELLS = 6;
+export const LASER_MISS_OFFSET_MAX_CELLS = 12;
+
+/**
+ * The longest shot in the fight, in cells: the plan span plus a miss's
+ * offset, and the altitude stack as the other leg — DERIVED, and the bolt's
+ * lifetime is what it takes to fly it.
+ */
+export const FIGHT_SPAN_CELLS = Math.hypot(
+  FIGHT_PLAN_SPAN_CELLS + LASER_MISS_OFFSET_MAX_CELLS,
+  FIGHT_ALTITUDE_SPAN_CELLS,
+);
+
+/**
+ * A bolt is a BALLISTIC PROJECTILE: it leaves the muzzle at the pose the
+ * shooter held when it fired and flies a straight line, at LASER_BOLT_SPEED,
+ * to the point it was aimed at — drawn LASER_BOLT_LENGTH long.
  *
- * SPEED 44 cells/s (owner, 2026-09-04: the hangar's 60 "might need to move
- * just a little bit slower" — the bolt was a flicker between hulls at orbit
- * camera distance). A quarter slower: the arena's diameter in about a second
- * and a half, which the eye can follow from muzzle to hull.
+ * BALLISTIC, NOT TRACKING (owner, 2026-09-05: "they can't just continue to
+ * track the saucer. They actually need to go from one to the other and cover
+ * that distance before the other saucer moves out of the way"). The first
+ * cut drew each bolt from the shooter's muzzle toward the target's CURRENT
+ * position every frame, so a bolt bent to follow a hull that had moved on —
+ * and the bolts were slower than the hulls, so it bent a lot. Now the server
+ * puts the launch point and the aim point on the wire, and the aim point is
+ * where the target WILL be when the bolt arrives — its curve evaluated at
+ * arrival time, which is computable because every path is a function of the
+ * clock (server/encounter.ts). A bolt rolled as a hit flies into the hull; a
+ * miss is aimed LASER_MISS_OFFSET to one side and flies past it.
  *
- * LENGTH 3.5 cells — most of a hull, up from the hangar's 2.4 for the same
- * reason: a streak shorter than the thing it is fired from was lost against
- * the ground from the camera's distance.
+ * SPEED 200 cells/s — two and a half times a dogfighting hull (DOGFIGHT_SPEED
+ * is 80 cells/s). It was 44 ("too thick, and way too slow"), which was SLOWER
+ * than the hulls: a bolt could not reach a target that was flying away from
+ * it. At 200 the longest shot in the fight (FIGHT_SPAN_CELLS) takes about
+ * 0.6 s and a typical forty-cell one 0.2 s, in which the target moves four of
+ * its own diameters — enough that the shot has to be led, not enough for the
+ * eye to lose the bolt between muzzle and hull.
  *
- * THE LIFETIME IS DERIVED: what it takes to cross the widest gap two fighters
- * can have (FIGHT_SPAN_CELLS), so a bolt always reaches its target. It was
- * written as 0.4 s, which at 60 cells/s is 24 cells — a third of the span —
- * so most bolts at a far target vanished mid-flight and the hit landed
- * invisibly, which is the larger part of why the lasers were "extremely
- * difficult to see". The client hides a bolt once it is past its target
- * (client/effects.ts), so the lifetime being the LONGEST flight is not a bolt
- * flying on past a near one.
+ * LENGTH 3.5 cells — most of a hull, up from the hangar's 2.4: a streak
+ * shorter than the thing it is fired from was lost against the ground from
+ * the camera's distance.
+ *
+ * THE LIFETIME IS DERIVED: what it takes to fly the longest shot in the fight,
+ * so a bolt is never pruned from the wire before it lands (it was written as
+ * 0.4 s once, and far shots vanished mid-flight with the hit landing
+ * invisibly). The client hides a bolt once it is past its aim point
+ * (client/effects.ts), so the lifetime being the LONGEST flight is not a
+ * bolt flying on past a near one.
  *
  * WHY THIS IS ON THE WIRE'S SIDE OF THE CONTRACT: the server decides the hit
- * the instant it fires and puts only `age` on the wire; the client draws the
- * bolt where a projectile of this speed would be at that age. Both halves need
- * the same speed for a bolt to arrive as the hit lands.
+ * the instant it fires and puts the two endpoints and `age` on the wire; the
+ * client draws the bolt where a projectile of this speed would be at that
+ * age. Both halves need the same speed for a bolt to arrive as the hit lands.
  */
-export const LASER_BOLT_SPEED_CELLS_PER_SECOND = cellsAcross(11);
+export const LASER_BOLT_SPEED_CELLS_PER_SECOND = cellsAcross(50);
 export const LASER_BOLT_LENGTH_CELLS = 3.5;
 export const LASER_BOLT_LIFETIME_SECONDS = FIGHT_SPAN_CELLS / LASER_BOLT_SPEED_CELLS_PER_SECOND;
+
+/**
+ * The authored outer diameter of a hull, in cells.
+ *
+ * ONE WORLD UNIT (four cells), from the brief. A war boat's silhouette fits
+ * one MODEL unit; a saucer is four cells, which is big enough to read as a
+ * vehicle from an orbit camera at the altitude these fly at, and small enough
+ * that nine of them fit inside the arena's weave without overlapping. Here
+ * rather than in client/models.ts because the SERVER writes where a bolt
+ * leaves the hull (LASER_MUZZLE_DROP_WORLD_UNITS).
+ */
+export const SAUCER_DIAMETER_CELLS = cellsAcross(1);
+
+/**
+ * How far under the hull's centre the muzzle sits, as a fraction of the
+ * radius — the client builds its muzzle node from this, the server launches
+ * bolts from it, so the two agree by construction.
+ */
+export const SAUCER_MUZZLE_DROP_FRACTION = 0.18;
+
+/** The same drop in world units — derived. */
+export const LASER_MUZZLE_DROP_WORLD_UNITS =
+  (SAUCER_DIAMETER_CELLS / 2) * CELL_WORLD_SIZE * SAUCER_MUZZLE_DROP_FRACTION;
 
 /**
  * The most bolts that can be on the wire at once — DERIVED, which is what makes
@@ -513,7 +598,14 @@ export interface SaucerState {
 }
 
 /**
- * One laser bolt in flight.
+ * One laser bolt in flight: a straight line from where it was fired to where
+ * it was aimed, and how long ago. Positions in cells, altitudes in world
+ * units, exactly as SaucerState's.
+ *
+ * THE ENDPOINTS ARE FIXED AT THE SHOT. Neither moves with a hull afterwards —
+ * that is what makes the bolt ballistic (see LASER_BOLT_SPEED). The client
+ * needs nothing but this record to draw the bolt, which is also why a bolt is
+ * on the wire whenever its SHOOTER is visible, whether or not its target is.
  *
  * `age` IS SECONDS SINCE THE SHOT, NOT A TIMESTAMP. The brief called this field
  * `t0`; a timestamp would have to be read against a clock, and the server's
@@ -525,8 +617,16 @@ export interface SaucerState {
 export interface LaserBolt {
   /** Id of the saucer that fired. */
   readonly from: number;
-  /** Id of the saucer it was fired at. */
+  /** Id of the saucer it was fired at — the record of the shot, not geometry. */
   readonly to: number;
+  /** The muzzle, at the shot. */
+  readonly x: number;
+  readonly y: number;
+  readonly alt: number;
+  /** Where it was aimed: the target's predicted position, offset for a miss. */
+  readonly aimX: number;
+  readonly aimY: number;
+  readonly aimAlt: number;
   /** Seconds since the shot, on the server's own sim clock. */
   readonly age: number;
 }
@@ -587,11 +687,13 @@ export function saucerVariantOf(raw: unknown): number {
  * is exactly why "not a payload" has to be reported as null rather than as an
  * empty result.
  *
- * A BOLT WHOSE ENDPOINTS ARE NOT BOTH PRESENT IS DROPPED, and that check lives
- * here rather than in the renderer: a bolt is drawn between two saucers, so one
- * naming an id that is not in this same payload has no geometry to be, and the
- * alternative to dropping it is a renderer that has to invent a fallback
- * endpoint — which is a line pointing somewhere nothing happened.
+ * A BOLT WHOSE SHOOTER IS NOT PRESENT IS DROPPED, and that check lives here
+ * rather than in the renderer: the bolt is drawn in its shooter's faction
+ * colour, and the server gates its visibility on the shooter's, so one naming
+ * a shooter that is not in this same payload is a bolt the recipient was not
+ * meant to see. Its TARGET need not be present: a bolt carries its own
+ * endpoints (LaserBolt) and is geometry whether or not the hull it was fired
+ * at is in view.
  */
 export function parseSaucersPayload(payload: unknown): SaucersStatePayload | null {
   if (typeof payload !== 'object' || payload === null) return null;
@@ -657,12 +759,25 @@ function parseBolt(entry: unknown, ids: ReadonlySet<number>): LaserBolt | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const raw = entry as Partial<LaserBolt>;
   if (!isFiniteNumber(raw.from) || !isFiniteNumber(raw.to)) return null;
+  if (!isFiniteNumber(raw.x) || !isFiniteNumber(raw.y) || !isFiniteNumber(raw.alt)) return null;
+  if (!isFiniteNumber(raw.aimX) || !isFiniteNumber(raw.aimY) || !isFiniteNumber(raw.aimAlt)) {
+    return null;
+  }
   if (!isFiniteNumber(raw.age)) return null;
-  // See the doc comment above: a bolt with no visible shooter or no visible
-  // target has no geometry to be. This ALSO covers the fog-of-war case, where
-  // the recipient can see one saucer and not the other.
-  if (!ids.has(raw.from) || !ids.has(raw.to)) return null;
-  return { from: raw.from, to: raw.to, age: raw.age };
+  // See the doc comment above: a bolt whose shooter the recipient cannot see
+  // is not theirs to see either.
+  if (!ids.has(raw.from)) return null;
+  return {
+    from: raw.from,
+    to: raw.to,
+    x: raw.x,
+    y: raw.y,
+    alt: raw.alt,
+    aimX: raw.aimX,
+    aimY: raw.aimY,
+    aimAlt: raw.aimAlt,
+    age: raw.age,
+  };
 }
 
 function parseCrash(entry: unknown): CrashState | null {

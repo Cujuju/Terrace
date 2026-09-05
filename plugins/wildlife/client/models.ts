@@ -6,10 +6,10 @@
 // angelfish) are authored
 // one file each under ./species/, against the SpeciesModelPool contract in
 // ./species/speciesModel.ts; this file lends them the pool, bakes what they
-// return and herds it. One whale body (sperm — whaleSpecies.ts), the
-// deep-sea angler and the bird are still authored below, in the older
-// spheres-and-cones idiom; the humpback and blue whale bodies are
-// ./species/humpback.ts and ./species/blueWhale.ts.
+// return and herds it. The deep-sea angler and the bird are still authored
+// below, in the older spheres-and-cones idiom; the three whale bodies are
+// ./species/humpback.ts, ./species/blueWhale.ts and ./species/spermWhale.ts
+// (assets since 2026-09-05; the procedural whale is gone).
 //
 // Rules this file keeps:
 //   * NO per-creature lights, and NO Math.random in any geometry. What is
@@ -59,17 +59,10 @@ import {
 // plugin — by path. See that module's header for why it lives there.
 import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
-import {
-  WHALE_SPECIES,
-  assembleWhale,
-  buildWhaleGeometrySets,
-  geometriesOf,
-  type WhaleGeometrySet,
-  type WhaleSpecies,
-} from './whaleSpecies.ts';
-import { animateWhale } from './species/whale.ts';
+import { WHALE_SPECIES, type WhaleSpecies } from './whaleSpecies.ts';
 import { buildHumpback } from './species/humpback.ts';
 import { buildBlueWhale } from './species/blueWhale.ts';
+import { buildSpermWhale } from './species/spermWhale.ts';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
   type WildlifeSizeClass,
@@ -103,11 +96,11 @@ const CONE_SEGMENTS = 4;
 /**
  * Distinct hues, each picked to sit against its own background.
  *
- * Only the species AUTHORED HERE are listed: the fish's, the grazer's and the
- * four new species' colours live in their own files (./species/), beside the
- * geometry they paint.
+ * Only the species AUTHORED HERE are listed: every other species' colours
+ * live in its own file (./species/), or in the Blender script that painted
+ * its asset (the whales' 0x39506b slate is tools/blender/build_*.py's
+ * BODY_COLOR).
  */
-const WHALE_COLOR = 0x39506b; // dark slate; big, so it needs no help
 const DEEPSEA_COLOR = 0x161c26; // near-black, an abyssal silhouette
 const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
 /**
@@ -143,7 +136,7 @@ export const BIRD_ENVELOPE = {
 /**
  * Idle-animation rates, in cycles per second. Slower = larger, by convention.
  * The whale's (WHALE_FLUKE_HZ) lives in ./species/whale.ts with the rest of
- * its animation, shared by its asset and procedural bodies alike.
+ * its animation, shared by its three asset bodies.
  */
 const DEEPSEA_SWAY_HZ = 0.7;
 /**
@@ -197,8 +190,8 @@ const BIRD_WING_ROOT_OFFSET = BIRD_WING_LENGTH / 2;
  * clearance reasoning those comments carried — why a whale's crown may not pass
  * y = 0.670 and its belly may not pass y = -0.575, and the 2026-08-19 report of
  * a whale that read as capsized because its dorsal was buried — now lives on
- * WHALE_ENVELOPE, which every whale body is fitted into. Nothing was lost; it
- * moved to where the numbers are used.
+ * WHALE_ENVELOPE, which every whale body fills. Nothing was lost; it moved to
+ * where the numbers are used.
  */
 
 const TWO_PI = Math.PI * 2;
@@ -296,8 +289,8 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   /**
    * Flat-shaded by default: with 6-segment spheres that is what reads as a
-   * deliberate faceted style rather than as low detail. Whales opt out — see
-   * whaleMaterial.
+   * deliberate faceted style rather than as low detail. The swept-hull
+   * species (ibex, bison) opt out through the pool contract's option.
    */
   function lambert(color: number, options: { flatShading?: boolean } = {}): MeshLambertMaterial {
     const material = new MeshLambertMaterial({ color, flatShading: options.flatShading ?? true });
@@ -320,20 +313,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   }
 
   // ── Shared resources, built once ───────────────────────────────────────────
-
-  // Whales are smooth-shaded, unlike everything else in this pool: their bodies
-  // are swept surfaces built in whaleSpecies.ts, where faceting would show as
-  // banding on a body this large rather than as the deliberate chunky style the
-  // other four keep.
-  const whaleMaterial = lambert(WHALE_COLOR, { flatShading: false });
-  // The whale body still built procedurally (sperm), built once and shared by
-  // every whale of that body in the world. The humpback and the blue whale
-  // are assets (./species/humpback.ts, ./species/blueWhale.ts) and come
-  // through speciesDrawable below.
-  const whaleSets: readonly WhaleGeometrySet[] = buildWhaleGeometrySets();
-  for (const set of whaleSets) {
-    for (const geometry of geometriesOf(set)) keepGeometry(geometry);
-  }
 
   const deepseaMaterial = lambert(DEEPSEA_COLOR);
   const deepseaLureMaterial = unlit(DEEPSEA_LURE_COLOR);
@@ -485,32 +464,6 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   // ── The rigs authored HERE, once ───────────────────────────────────────────
 
-  /**
-   * A whale, drawn as one of three real species (whaleSpecies.ts). Which one is
-   * decided by the caller's stable per-creature seed, so an individual keeps
-   * the same body for its whole life.
-   *
-   * These are the one exception to this file's "spheres, cones and boxes,
-   * flat-shaded" rule: smooth-shaded swept surfaces at a few thousand
-   * triangles, by owner decision (2026-08-21). A whale is the largest thing in
-   * the water and the one creature the camera comes near, where a stack of
-   * ellipsoids reads as a stack of ellipsoids. The cost is bounded — whales are
-   * habitat-capped by their 2 000-square-world-unit density (cellsOverArea):
-   * at most 39 of them on a fully revealed nominal 512² world, 21 once
-   * WILDLIFE_POPULATION_CAP has scaled the population down. And since the
-   * 2026-08-22 skinning each body is ONE draw call rather than the six the
-   * note here used to record.
-   *
-   * Keyed by body, never by index: the procedural sets are looked up by their
-   * `species` tag when the drawables are assembled in WHALE_SPECIES order.
-   */
-  const proceduralWhaleRigs = new Map<WhaleSpecies, SpeciesRig>(whaleSets.map((set) => {
-    const { root, rig } = rigged();
-    const { body, flukes } = assembleWhale(set, whaleMaterial);
-    rig.add(body);
-    return [set.species, bakeSpecies(root, { rig, flukes })];
-  }));
-
   const deepseaRig = (() => {
     const { root, rig } = rigged();
     rig.add(part(deepseaBody, deepseaMaterial, 0, 0, 0));
@@ -567,25 +520,31 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const angelfishDrawable = speciesDrawable(buildAngelfish);
 
   /**
-   * One drawable per whale body, in WHALE_SPECIES order — the order
-   * `drawableOf` indexes with the creature's seed, so it must never change.
-   * The humpback and the blue whale are asset-sourced species like any in
-   * ./species/; the procedural body is herded here and runs the SAME
+   * A whale, drawn as one of three real species (whaleSpecies.ts). Which one is
+   * decided by the caller's stable per-creature seed, so an individual keeps
+   * the same body for its whole life — hence WHALE_SPECIES order, which
+   * `drawableOf` indexes with that seed and which must never change.
+   *
+   * All three are asset-sourced species like any in ./species/ (smooth-shaded
+   * Blender-built bodies by owner decision: a whale is the largest thing in
+   * the water and the one creature the camera comes near, where a stack of
+   * ellipsoids reads as a stack of ellipsoids), and all three run the SAME
    * animation (./species/whale.ts's animateWhale), so the motion exists once.
+   * The cost is bounded — whales are habitat-capped by their
+   * 2 000-square-world-unit density (cellsOverArea): at most 39 of them on a
+   * fully revealed nominal 512² world, 21 once WILDLIFE_POPULATION_CAP has
+   * scaled the population down — and each body is ONE draw call.
+   *
+   * Keyed by body, never by index.
    */
-  const whaleDrawables: readonly SpeciesDrawable[] = WHALE_SPECIES.map((body): SpeciesDrawable => {
-    if (body === 'humpback') return speciesDrawable(buildHumpback);
-    if (body === 'blue') return speciesDrawable(buildBlueWhale);
-    const whaleRig = proceduralWhaleRigs.get(body);
-    if (whaleRig === undefined) throw new Error(`wildlife: no whale body built for "${body}"`);
-    const { herd, joints } = herdFor(whaleRig);
-    return {
-      herd,
-      animate(seconds: number, phase: number) {
-        animateWhale(joints, seconds, phase);
-      },
-    };
-  });
+  const whaleBuilders: Readonly<Record<WhaleSpecies, SpeciesModelBuilder>> = {
+    humpback: buildHumpback,
+    blue: buildBlueWhale,
+    sperm: buildSpermWhale,
+  };
+  const whaleDrawables: readonly SpeciesDrawable[] = WHALE_SPECIES.map(
+    (body): SpeciesDrawable => speciesDrawable(whaleBuilders[body]),
+  );
 
   const deepseaDrawable = ((): SpeciesDrawable => {
     const { herd, joints } = herdFor(deepseaRig);

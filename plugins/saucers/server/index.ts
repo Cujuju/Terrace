@@ -26,10 +26,11 @@
 //
 // BANDWIDTH — and this is why the fastest cadence in the repo is also nearly the
 // cheapest. At the roster ceiling (nine, since the 1-3 revision) saucers of nine keys each plus at
-// most MAX_LASER_BOLTS bolts of three (81, now bursts overlap in flight) is ~3 kB of msgpack per message, so
-// ~30 kB/s ≈ 240 kbit/s per client WHILE A FIGHT IS ON — and a typical roster
+// most MAX_LASER_BOLTS bolts of nine keys (81; ballistic bolts carry both
+// endpoints) is ~6 kB of msgpack per message, so
+// ~60 kB/s ≈ 480 kbit/s per client WHILE A FIGHT IS ON — and a typical roster
 // is a third of that. Wildlife runs at ~210 kbit/s continuously, so this is
-// about one existing plugin's steady cost, for twenty-odd seconds every few
+// about two existing plugins' steady cost, for twenty-odd seconds every few
 // minutes.
 //
 // AND ZERO WHEN NOTHING IS FLYING. `broadcastPending` (tornado's pattern, and
@@ -225,14 +226,24 @@ function visibleItems(): VisibleItem[] {
   }
 
   for (const bolt of encounterBolts()) {
-    // A BOLT'S VISIBILITY IS ITS SHOOTER'S. It has no cell of its own — it is a
-    // line between two hulls — so the honest gate is "can you see who fired it",
-    // and the parse drops it anyway if the recipient cannot also see the target.
+    // A BOLT'S VISIBILITY IS ITS SHOOTER'S: it leaves the shooter's muzzle in
+    // the shooter's colour, so "can you see who fired it" is the honest gate,
+    // and the parse drops it if the shooter is not in the same payload.
     const shooter = saucers.find((saucer) => saucer.id === bolt.from);
     if (shooter === undefined) continue;
     items.push({
       kind: 'bolt',
-      bolt: { from: bolt.from, to: bolt.to, age: roundBroadcastPosition(bolt.age) },
+      bolt: {
+        from: bolt.from,
+        to: bolt.to,
+        x: roundBroadcastPosition(bolt.x),
+        y: roundBroadcastPosition(bolt.y),
+        alt: roundBroadcastPosition(bolt.alt),
+        aimX: roundBroadcastPosition(bolt.aimX),
+        aimY: roundBroadcastPosition(bolt.aimY),
+        aimAlt: roundBroadcastPosition(bolt.aimAlt),
+        age: roundBroadcastPosition(bolt.age),
+      },
       x: roundBroadcastPosition(shooter.x),
       y: roundBroadcastPosition(shooter.y),
     });

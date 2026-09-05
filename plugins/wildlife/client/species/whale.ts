@@ -4,12 +4,12 @@
 //
 // ONE WIRE SPECIES, THREE BODIES. `whale` on the wire is drawn as one of
 // WHALE_SPECIES (../whaleSpecies.ts), picked by entity id in ../models.ts
-// `drawableOf`; an individual keeps its body for life. Each body that has
-// become a Blender-built asset is its own SpeciesAssetSpec keyed
-// `whale-<body>` — the key is only the install-map key in ./assetSpecies.ts,
-// the wire species stays `whale`. The bodies not yet converted keep drawing
-// from ../whaleSpecies.ts's procedural sets, and take their motion from
-// HERE, so each number below exists once.
+// `drawableOf`; an individual keeps its body for life. Each body is a
+// Blender-built asset with its own SpeciesAssetSpec keyed `whale-<body>` —
+// the key is only the install-map key in ./assetSpecies.ts, the wire species
+// stays `whale` — and all three take their motion from HERE, so each number
+// below exists once. (Until pass 8 the unconverted bodies drew from
+// ../whaleSpecies.ts's procedural sets on the same animation; those are gone.)
 //
 // EVERY WHALE ASSET FILLS THE BOX. WHALE_ENVELOPE (../whaleSpecies.ts) is
 // the placement contract — ../placement.ts's BODY_COLUMNS.whale reads its
