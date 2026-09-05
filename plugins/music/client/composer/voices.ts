@@ -32,9 +32,9 @@ const PAD_DETUNE_CENTS = 7;
 const PAD_WAVEFORM: OscillatorType = 'sawtooth';
 
 /** Peak gain of one chord tone (all detuned voices together), relative to the
- * composer's output. 0.055: owner 2026-09-05 heard the pad at 0.09 as too
- * strong under the melody; three tones now sum to 0.165, a bed, not a wall. */
-const PAD_TONE_PEAK_GAIN = 0.055;
+ * composer's output. 0.044: owner 2026-09-05 took the pad from 0.09 to 0.055,
+ * then 20 % lower again; three tones now sum to 0.132. */
+const PAD_TONE_PEAK_GAIN = 0.044;
 
 /** Shimmer waveform. Sine an octave up: a clean halo on each chord tone. */
 const SHIMMER_WAVEFORM: OscillatorType = 'sine';
