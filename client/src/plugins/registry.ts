@@ -16,6 +16,7 @@ import { clientPlugin as fog } from '../../../plugins/fog/client/index.ts';
 import { clientPlugin as invite } from '../../../plugins/invite/client/index.ts';
 import { clientPlugin as mana } from '../../../plugins/mana/client/index.ts';
 import { clientPlugin as monsters } from '../../../plugins/monsters/client/index.ts';
+import { clientPlugin as music } from '../../../plugins/music/client/index.ts';
 import { clientPlugin as mudslides } from '../../../plugins/mudslides/client/index.ts';
 import { clientPlugin as pilgrims } from '../../../plugins/pilgrims/client/index.ts';
 import { clientPlugin as rain } from '../../../plugins/rain/client/index.ts';
@@ -60,4 +61,7 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   volcanoes,
   saucers,
   chronicle,
+  // LAST: it draws nothing and reads its siblings' gauges off-frame, so order
+  // buys it nothing — and last keeps the weather comment block intact.
+  music,
 ];
