@@ -22,11 +22,22 @@
 //                                         dimmest ("off") point, so a driver
 //                                         can capture both halves of the
 //                                         flash without waiting on real time
-//   ?view=front|rear|left|right         — which 3/4 angle the camera takes
+//   ?beside=<0..STRUCTURE_TIER_COUNT-1> — a SECOND tier standing next to the
+//                                         first, at the same scale on the same
+//                                         ground, so the size relation between
+//                                         two tiers is visible in one shot —
+//                                         the only way to judge whether an
+//                                         IMPORTED model (models.ts's
+//                                         IMPORTED_STRUCTURE_TIER) sits right
+//                                         among the procedural ones
+//   ?view=front|rear|left|right|top     — which 3/4 angle the camera takes
 //                                         (default front, the original view);
 //                                         rear/left/right exist so a driver
 //                                         can inspect every face for missing
-//                                         sections, not just the show side
+//                                         sections, not just the show side,
+//                                         and top looks straight down, which
+//                                         is the only view that shows how much
+//                                         of its cell a model covers
 //   ?bulbphase=a|b                      — durands=1 only, overrides ?flash:
 //                                         freezes the marquee bulb chase at
 //                                         phase A brightest/phase B dimmest
@@ -71,8 +82,10 @@ import {
   settlementRace,
   type SettlerRace,
 } from '../../plugins/structures/protocol.ts';
+import timberHouseUrl from '../../plugins/structures/client/assets/timber-house.glb?url';
 import {
   createStructureModels,
+  preloadStructureModels,
   DURANDS_MARQUEE_BULB_PERIOD_SECONDS,
   DURANDS_SIGN_FLASH_PERIOD_SECONDS,
   type StructurePlacement,
@@ -196,6 +209,11 @@ const VIEW_DIRECTIONS: Readonly<Record<string, Vector3>> = {
   rear: new Vector3(-0.6, 0.45, -0.85),
   left: new Vector3(-0.85, 0.45, 0.6),
   right: new Vector3(0.85, 0.45, -0.6),
+  // Straight down, barely off-axis so `lookAt` still has a defined up vector.
+  // The FOOTPRINT view: it is the only one that shows how much of its cell a
+  // model actually covers, which is the property an imported building has to
+  // be judged on (the footprint contract, models.ts's STRUCTURE_FOOTPRINT_RADIUS).
+  top: new Vector3(0.01, 1, 0.01),
 };
 
 /** Points `camera` at `object`'s bounding sphere, close enough to fill the frame with `CAMERA_FRAMING_PADDING` of headroom. */
@@ -214,7 +232,16 @@ function frameCameraOn(camera: PerspectiveCamera, object: { root: Group }, view:
   camera.updateProjectionMatrix();
 }
 
-function main(): void {
+/**
+ * How far apart two buildings stand in a `?beside=` shot, in world units.
+ *
+ * One and a bit footprint spans (STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS is 1):
+ * far enough that neither model's silhouette touches the other, close enough
+ * that both fill the frame the camera fits around the pair.
+ */
+const BESIDE_SPACING_WORLD_UNITS = 1.2;
+
+async function main(): Promise<void> {
   const query = readQuery();
   const durandsRequested = query.get('durands') === '1';
   const hutParam = query.get('hut');
@@ -231,6 +258,11 @@ function main(): void {
 
   const { scene, camera, renderer } = buildScene();
 
+  // The asset BEFORE the models, exactly as the plugin's preload/attach pair
+  // runs it: createStructureModels draws the imported tier from the installed
+  // asset and falls back to primitives when there is none, so a preview that
+  // skipped this would quietly screenshot the superseded model.
+  await preloadStructureModels(timberHouseUrl);
   const models = createStructureModels();
   scene.add(models.root);
 
@@ -269,7 +301,26 @@ function main(): void {
     // able to show a coastal model at all.
     site: hutRequested ? 'coastal' : 'inland',
   };
-  models.apply([placement]);
+  // `?beside=<tier>`: a second building of another tier, one spacing along +X,
+  // sharing this one's race, scale and yaw so the ONLY difference in the shot
+  // is the model itself. Its cell goes through findTopTierCell exactly as the
+  // main placement does, for that function's own reason: (0, 0) rolls
+  // Durand's, so a hardcoded cell would show the saloon whenever the beside
+  // tier is the top one — and this comparison is about SIZE, not skins.
+  const besideParam = query.get('beside');
+  const placements: StructurePlacement[] = [placement];
+  if (besideParam !== null && Number.isInteger(Number(besideParam))) {
+    const besideTier = Math.min(Math.max(Number(besideParam), 0), STRUCTURE_TIER_COUNT - 1);
+    const besideCell = besideTier === MAX_STRUCTURE_TIER ? findTopTierCell(false) : { x: 0, y: 0 };
+    placements.push({
+      ...placement,
+      x: placement.x + BESIDE_SPACING_WORLD_UNITS,
+      cellX: besideCell.x,
+      cellY: besideCell.y,
+      tier: besideTier,
+    });
+  }
+  models.apply(placements);
 
   if (durandsRequested) {
     // A single animate() call sets the flash clock to exactly `dt` seconds
@@ -308,11 +359,21 @@ function main(): void {
       requestAnimationFrame(renderFrame);
     } else {
       // Signals the screenshot driver: the building is drawn, the frame is
-      // presented, it is safe to capture the canvas now.
+      // presented, it is safe to capture the canvas now. The stats ride with
+      // it because client/scripts/shootSpeciesPreview.mjs polls
+      // `__previewReady === true ? __previewStats : null` and would wait for
+      // ever on a harness that raises the flag alone — and because a draw-call
+      // count read off the renderer is worth more than one asserted.
+      (window as unknown as { __previewStats: unknown }).__previewStats = {
+        tiers: placements.map((placed) => placed.tier),
+        race,
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+      };
       (window as unknown as { __previewReady: boolean }).__previewReady = true;
     }
   }
   requestAnimationFrame(renderFrame);
 }
 
-main();
+void main();
