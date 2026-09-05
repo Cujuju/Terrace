@@ -5,20 +5,25 @@
 // same painted nothing. The owner's ask: make it read as "a plot among the
 // stars". Two approved looks, chosen per player in the HUD's Controls panel:
 //
-//   'wheel'  (default) — a tilted galactic haze disk with a full-screen star
-//                        field turning about a hub on the view axis, each star
-//                        drawing a short motion trail behind it.
+//   'wheel'  (default) — a two-armed spiral galaxy seen at 60 degrees, its hub
+//                        on the view axis under the map: log-spiral arms, dust
+//                        lanes, a warm bulge, and stars in the disk plane that
+//                        turn rigidly with the gas.
 //   'nebula'           — domain-warped fbm clouds with two steady star layers.
 //
 // The GLSL below is a faithful port of the shaders the owner approved
 // (.claude/orchestration/refs/celestial-void-shaders.glsl), at that file's
-// REVISION 3 (owner, 2026-09-04). Cumulatively that revision line is: a 60
-// degree default tilt, rotation reversed, no twinkle in either look, drift 3x
-// faster in both (NEBULA_RATE 0.15, WHEEL_RATE -0.018), and the wheel's stars
-// moved off the perspective disk plane onto the whole background — uniform
-// density edge to edge, turning about the same hub as the haze. The numbers
-// in them ARE the approved look; every one that encodes a design decision is
-// a named constant here or in the shader's own `const` block.
+// REVISION 4 (owner, 2026-09-04). Cumulatively that revision line is: a 60
+// degree default tilt, rotation reversed (clockwise seen from above), no
+// twinkle in either look, the nebula's drift 3x faster (NEBULA_RATE 0.15),
+// and the wheel rebuilt as a two-armed grand-design spiral galaxy — log-spiral
+// arms with grain streaked along them, dust lanes, a warm bulge under the map,
+// and stars embedded in the disk plane that turn rigidly with the gas. The
+// wheel's own rate went back down to -0.008 in revision 4: revision 3's 3x
+// was too fast for it, and the speed-up now applies to the nebula only. The
+// numbers in these shaders ARE the approved look; every one that encodes a
+// design decision is a named constant here or in the shader's own `const`
+// block.
 //
 // TIME OF DAY MUST NOT TOUCH IT. The owner's second rule: day/night affects
 // the map's lighting only, never the void. That is enforced structurally
@@ -74,11 +79,13 @@ export type VoidStyle = 'nebula' | 'wheel';
  * the frontier mist's top row (render/frontierFog.ts) is the one caller.
  *
  * The component-wise mean of the two looks' base colours: the nebula's `deep`
- * (0.05, 0.05, 0.14) and the wheel's backdrop (0.025, 0.03, 0.06), giving
- * (0.0375, 0.04, 0.10) → 0x0a0a1a. Those two are what fills most of the
- * screen in each look — the arms and stars are sparse highlights on top of
- * them — so the mean is the honest "average colour of the void", and one
- * value serves both styles without the fog having to know which is showing.
+ * (0.05, 0.05, 0.14) and the wheel's void backdrop (0.012, 0.014, 0.03,
+ * darkened by reference revision 4 when the wheel became a spiral galaxy),
+ * giving (0.031, 0.032, 0.085) → 0x080816. Those two are what fills most of
+ * the screen in each look — the arms, gas and stars are sparse highlights on
+ * top of them — so the mean is the honest "average colour of the void", and
+ * one value serves both styles without the fog having to know which is
+ * showing.
  *
  * Not exact: the fog is a lit-pipeline material and so passes through ACES
  * tone mapping and sRGB conversion, while the void pass deliberately does
@@ -86,7 +93,7 @@ export type VoidStyle = 'nebula' | 'wheel';
  * lands slightly lighter than the void behind it rather than identical to it,
  * which is the right direction for haze anyway.
  */
-export const VOID_HAZE_COLOR = 0x0a0a1a;
+export const VOID_HAZE_COLOR = 0x080816;
 
 /**
  * Tilt of the star wheel's disk from the view axis, in degrees.
@@ -179,30 +186,32 @@ void main(){
 const WHEEL_GLSL = /* glsl */ `${COMMON_GLSL}
 uniform float u_tilt;
 vec2 rot(vec2 p,float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y,s*p.x+c*p.y); }
-// Wheel stars: steady points positioned on the tilted disk (orthographic, so screen density is
-// uniform edge to edge) but shaped in screen space so they stay round at any tilt.
-float wstars(vec2 p, float density, float aspect){
+// Disk stars: steady points in the disk plane with a screen-space size floor so far stars
+// never shrink below a pixel and shimmer. minSize is in cell units, from the ray length.
+float dstars(vec2 p, float density, float minSize){
   vec2 i=floor(p), f=fract(p)-0.5; float h=hash(i);
   if(h>density) return 0.0;
-  vec2 o=vec2(hash(i+3.1),hash(i+7.7))-0.5; float d=length((f-o*0.8)*vec2(1.0,aspect));
-  float size = 0.03 + 0.06*hash(i+9.2);
+  vec2 o=vec2(hash(i+3.1),hash(i+7.7))-0.5; float d=length(f-o*0.8);
+  float size = max(0.03 + 0.05*hash(i+9.2), minSize);
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
-const float WHEEL_RATE   = -0.018; // rad/s (~6 min per revolution); owner set 3x the original; negative = clockwise from above
-const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the haze disk shows
+const float WHEEL_RATE   = -0.008; // rad/s: slow, deliberate (~13 min per turn); negative = clockwise from above
+const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
 const float DISK_DIST    = 2.6;    // hub distance along the view axis
-const float FAR_FADE     = 14.0;   // ray length where the haze has fully dissolved into the void
-const int   TRAIL_SAMPLES = 5;
-const float TRAIL_STEP   = 0.004;  // rad between trail samples
+const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
+const float ARMS         = 2.0;    // two-armed grand-design spiral, like the reference art
+const float WIND         = 3.2;    // how tightly the arms wind (log-spiral pitch)
+const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
+const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
+const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
   float a=u_time*WHEEL_RATE;
-  vec3 col=vec3(0.025,0.03,0.06);
+  vec3 col=vec3(0.012,0.014,0.03);
 
-  // The disk: a plane through the hub, tilted so its top edge leans away from the viewer.
   vec3 d=normalize(vec3(uv,-FOCAL));
   float ct=cos(u_tilt), st=sin(u_tilt);
-  vec3 n=vec3(0.0,st,ct);               // disk normal, tilted from the view axis
+  vec3 n=vec3(0.0,st,ct);               // disk normal, tilted so the top edge leans away
   vec3 hub=vec3(0.0,0.0,-DISK_DIST);
   float dn=dot(d,n);
   if(dn<0.0){
@@ -210,26 +219,38 @@ void main(){
     vec3 X=d*sdist-hub;
     vec3 e1=vec3(1.0,0.0,0.0), e2=vec3(0.0,ct,-st);
     vec2 pp=vec2(dot(X,e1),dot(X,e2));   // disk coordinates, hub at the origin
-    float r=length(pp);
+    vec2 rf=rot(pp,-a);                  // rotating frame: everything sampled here turns rigidly
+    float r=length(rf);
+    float th=atan(rf.y,rf.x);
     float depthFade=1.0-smoothstep(DISK_DIST,FAR_FADE,sdist);
-    // Disk density: dense inner ring around the map, thinning outward, with slow spiral arms.
-    // Spiral warp: rotate the plane coords by log(r) so noise winds into arms with no angular seam.
-    float arms=fbm(rot(pp,a*0.5+log(r+0.3)*2.0)*1.2+vec2(7.0,3.0));
-    float ring=smoothstep(0.35,0.9,r)*exp(-r*0.55);
-    vec3 haze=mix(vec3(0.28,0.22,0.5),vec3(0.9,0.62,0.45),smoothstep(0.4,0.8,arms));
-    col+=haze*ring*arms*1.3*depthFade;
+
+    // --- gas ---
+    // Two log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
+    float phase=th*ARMS-log(r+0.05)*WIND;
+    float arm=pow(0.5+0.5*cos(phase),2.2);
+    vec2 wound=rot(rf,log(r+0.05)*WIND/ARMS);
+    float grain=0.6*fbm(wound*2.2+vec2(4.0,1.0))+0.4*fbm(wound*5.0+vec2(1.0,7.0));
+    float haze=fbm(rf*1.4+vec2(9.0,2.0));
+    float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
+    float lanes=smoothstep(0.6,0.78,grain)*arm*0.6;          // dark dust lanes cut through the arms
+    float gas=(arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
+    float bulge=exp(-r*2.0);
+    float core=exp(-r*r*18.0);
+    vec3 outer=vec3(0.30,0.52,0.95), pink=vec3(0.92,0.50,0.80), warm=vec3(1.0,0.88,0.62), white=vec3(1.0,0.97,0.9);
+    vec3 gasCol=mix(outer,pink,smoothstep(0.5,0.85,grain)*0.8);
+    col+=(gasCol*gas*1.5+warm*bulge*0.55+white*core*1.2)*depthFade;
+
+    // --- stars in the disk, riding the rotation; denser and brighter inside the arms ---
+    float pxPerUnit=FOCAL*u_res.y/sdist;
+    float minA=STAR_MIN_PX*16.0/pxPerUnit, minB=STAR_MIN_PX*32.0/pxPerUnit;
+    float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/32.0);
+    float field=dstars(rf*16.0,0.07,minA)+0.6*dstars(rf*32.0+11.0,0.05,minB)*cellFade;
+    float inArms=dstars(rf*40.0+23.0,0.35,minB*1.25)*cellFade*gas*2.5;
+    col+=vec3(0.95,0.93,0.9)*(field*(0.45+0.9*gas)+inArms)*depthFade*depthFade;
+  } else {
+    // Above the plane's horizon (only at shallow tilts): a still, sparse field so the void is not empty.
+    col+=vec3(0.8,0.82,0.9)*0.4*stars(uv*110.0+5.0,0.03,0.0);
   }
-  // Stars: the whole background, hub on the view axis, turning with the haze at the same rate.
-  // Orthographic tilted-disk coordinates: y stretched by 1/cos(tilt), so a rotation here is an
-  // ellipse on screen (the disk seen at an angle) while density stays uniform top to bottom.
-  vec2 sp0=vec2(uv.x, uv.y/ct);
-  float s=0.0;
-  for(int k=0;k<TRAIL_SAMPLES;k++){
-    float w=1.0-float(k)/float(TRAIL_SAMPLES);
-    vec2 sp=rot(sp0,a-float(k)*TRAIL_STEP);
-    s+=w*w*(wstars(sp*90.0,0.06,ct)+0.6*wstars(sp*180.0+31.0,0.04,ct));
-  }
-  col+=vec3(0.95,0.93,0.85)*s*0.8;
   gl_FragColor=vec4(col,1.0);
 }
 `;

@@ -25,34 +25,42 @@ Files changed by `15087ca`:
 - `client/src/ui/ControlsPanel.tsx` — the "Beyond the map" `<select>`.
 - `client/src/main.tsx` — wiring + the live-apply effect.
 
-## Reference revisions 2 and 3
+## Reference revisions 2, 3 and 4
 
-The reference shader file was revised twice while this was being built. **What
-shipped is REVISION 3** (`.claude/orchestration/refs/celestial-void-shaders.glsl:3-8`).
-Cumulatively, against the brief as written:
+The reference shader file was revised three times while this was being built.
+**What shipped is REVISION 4**
+(`.claude/orchestration/refs/celestial-void-shaders.glsl:3-9`). Against the
+brief as written, cumulatively:
 
-- **Tilt is 60°, not 35°.** The brief said 35° from the owner's "thirty to
-  forty five"; revision 2 supersedes it with 60°.
-  `WHEEL_TILT_DEGREES = 60` (`client/src/render/celestialVoid.ts:103`). It is a
-  constant, not a preference — the owner asked for the *look* to be
-  switchable, not its tilt or speed, so nothing but the look reaches the UI.
-- **Rotation reversed and no twinkle in either look** (revision 2): the common
-  `stars()` lost its twinkle term, and `WHEEL_RATE` went negative.
-- **Drift 3× in both looks** (revision 3): `NEBULA_RATE = 0.15`
-  (`celestialVoid.ts:161`) and `WHEEL_RATE = -0.018` (`celestialVoid.ts:191`).
-- **The wheel's stars are now the whole background** (revision 3), at uniform
-  density, turning about the same hub as the haze — orthographic tilted-disk
-  coordinates `vec2(uv.x, uv.y/cos(tilt))` with the star shape evaluated in
-  screen space (the `aspect` argument to `wstars`) so stars stay round at any
-  tilt. Revision 2's perspective disk-star layer, its `STAR_MIN_PX` size floor
-  and its `CELL_FADE_PX` cell fade are gone; the haze's ray/plane math is
-  unchanged. `celestialVoid.ts:222-231`.
+- **Tilt is 60°, not 35°** (rev 2). The brief said 35° from the owner's
+  "thirty to forty five". `WHEEL_TILT_DEGREES = 60`
+  (`client/src/render/celestialVoid.ts:110`). It is a constant, not a
+  preference — the owner asked for the *look* to be switchable, not its tilt
+  or its speed, so nothing but the look reaches the UI.
+- **Rotation reversed** (clockwise seen from above) and **no twinkle in
+  either look** (rev 2): the common `stars()` lost its twinkle term.
+- **The nebula's drift is 3×** (rev 3): `NEBULA_RATE = 0.15`
+  (`celestialVoid.ts:168`).
+- **The wheel is now a two-armed grand-design spiral galaxy** (rev 4),
+  replacing rev 3's haze-disk-plus-screen-wide-star-layer entirely:
+  log-spiral arms (`ARMS = 2.0`, `WIND = 3.2`), grain sampled in a
+  spiral-wound frame so it streaks along the arms, dust lanes cut out of the
+  arms, a warm bulge and a white core under the map, and stars embedded in the
+  disk plane — denser and brighter inside the arms — that turn rigidly with
+  the gas in a rotating frame. No trails, no screen-space star layer; a still
+  sparse field only above the plane's horizon, which at 60° is off-frame.
+  `celestialVoid.ts:205-252`.
+- **The wheel's rate went back down** (rev 4): `WHEEL_RATE = -0.008`
+  (`celestialVoid.ts:198`). Rev 3's 3× was too fast for the wheel; the
+  speed-up now applies to the nebula only.
 
 **Parity check.** The GLSL in `celestialVoid.ts` was diffed line-by-line
 against the reference file with comments and whitespace normalised away: the
 two are **identical**. The only additions are the vertex shader (clip-space
 passthrough, which the reference does not carry) and three's uniform
-declarations.
+declarations. Every named constant in the reference — including rev 4's
+`ARMS`, `WIND`, `DISK_RADIUS`, `STAR_MIN_PX` and `CELL_FADE_PX` — is a named
+constant in the port, with its comment.
 
 ## Mechanism claims, verified from source this session
 
@@ -94,7 +102,7 @@ no per-frame work; a camera-following sphere would have needed
 against `CAMERA_NEAR`/`CAMERA_FAR`, and the "render before the scene with
 `autoClear` managed" option would have split one `renderer.render` call into a
 manual two-pass sequence there. Rationale is in the module header
-(`celestialVoid.ts:84-96`).
+(`celestialVoid.ts:36-48`).
 
 **Screen-space anchoring, for both looks.** The brief's anchoring paragraph
 reads two ways: "camera-anchored … the shader sees view direction" alongside
@@ -114,17 +122,21 @@ noise stays a screen-height of noise. That is ~15 lines and no measurable
 cost; it was left out because it changes an approved look on my own judgement,
 which is not mine to do. Easy follow-up if the owner wants the sky to turn.
 
-**`VOID_HAZE_COLOR = 0x0a0a1a`** (`celestialVoid.ts:89`) — the component-wise
+**`VOID_HAZE_COLOR = 0x080816`** (`celestialVoid.ts:96`) — the component-wise
 mean of the two looks' base colours: nebula `deep` (0.05, 0.05, 0.14) and the
-wheel's backdrop (0.025, 0.03, 0.06) → (0.0375, 0.04, 0.10). Those two fill
-most of the screen in each look, so the mean is the honest average, and one
-value serves both styles without the fog having to know which is showing.
+wheel's void backdrop (0.012, 0.014, 0.03) → (0.031, 0.032, 0.085). Those two
+fill most of the screen in each look, so the mean is the honest average, and
+one value serves both styles without the fog having to know which is showing.
+**Revised with the shaders**: it was 0x0a0a1a until revision 4 darkened the
+wheel's backdrop from (0.025, 0.03, 0.06), and a constant derived from the
+looks has to move when the looks do — otherwise the derivation in its own doc
+comment stops being true.
 
 The top row is now **not whitened at all**. `FOG_COLOR_WHITEN = 0.35` (`frontierFog.ts:173`) still
 lifts the water end (it sits against the sea and must stay visible there), but
 lifting the top end 35 % toward white against a near-black void is exactly the
-white-wall failure the brief warned about — 0x0a0a1a lerped 35 % to white is
-mid-grey. Residual, documented at `celestialVoid.ts:83-88`: the fog is a
+white-wall failure the brief warned about — 0x080816 lerped 35 % to white is
+mid-grey. Residual, documented at `celestialVoid.ts:90-95`: the fog is a
 lit-pipeline material and passes through ACES + sRGB conversion while the void
 pass deliberately does not, so the mist's top row lands slightly *lighter*
 than the void rather than identical to it. That is the right direction for
@@ -151,8 +163,8 @@ say so.
 
 **Time.** One `u_time` advanced from the render loop's own `dt`, never from a
 wall clock, so a backgrounded tab resumes where it left off
-(`celestialVoid.ts:319-325`). `prefers-reduced-motion: reduce` freezes it
-(`celestialVoid.ts:248-257`, read once — it is an accessibility setting, not
+(`celestialVoid.ts:340-346`). `prefers-reduced-motion: reduce` freezes it
+(`celestialVoid.ts:269-280`, read once — it is an accessibility setting, not
 something worth a live listener, and a frozen frame of either look is still
 the intended image).
 
@@ -164,13 +176,15 @@ with the pass in a scene holding nothing else, 60 samples, median reported.
 
 | look | resolution | median | min | max |
 | --- | --- | --- | --- | --- |
-| wheel | 2560 × 1440 | **0.431 ms** | 0.430 | 0.898 |
+| wheel | 2560 × 1440 | **0.409 ms** | 0.407 | 0.982 |
 | nebula | 2560 × 1440 | **0.523 ms** | 0.522 | 0.817 |
 
-(Revision 3 moved the wheel's five-tap star loop from inside the `dn < 0.0`
-branch to every pixel of the frame. Measured cost did not move — 0.433 →
-0.431 ms — because the branch already covered nearly the whole frame at 60°
-tilt and the removed perspective star layer paid for the wider coverage.)
+Cost has been flat across all three shader revisions: the wheel measured
+0.433 ms at rev 2, 0.431 ms at rev 3 and 0.409 ms at rev 4 — the spiral
+galaxy is slightly *cheaper* than what it replaced, because it drops rev 3's
+five-tap trail loop (five `wstars` pairs per pixel) in exchange for three
+single `dstars` calls and two extra `fbm`s. The nebula was untouched by rev 4
+and was not re-measured after it.
 
 Both are far under the brief's 1.5 ms-at-1440p trigger, so the
 half-resolution render target and upscale were **not** built — that machinery
@@ -195,9 +209,9 @@ slow — the GPU only matters for the timings above).
 
 | file | what it shows |
 | --- | --- |
-| `.celestial-shots/wheel-1600x900.png` | Star wheel at 60° (revision 3): tilted haze disk, spiral arms, and a full-frame star field turning about the hub with short trails. |
-| `.celestial-shots/nebula-1600x900.png` | Nebula (revision 3): domain-warped clouds at the 3× drift rate, ember and pale bands, two steady star layers. |
-| `.celestial-shots/frontier-wheel.png` | A frontier edge against the wheel — the mist bank's top dissolves into the void instead of standing as a pale wall. |
+| `.celestial-shots/wheel-1600x900.png` | Star wheel at 60° (revision 4): two-armed spiral galaxy — log-spiral arms, dust lanes, warm bulge and white core, stars embedded in the disk. |
+| `.celestial-shots/nebula-1600x900.png` | Nebula (revision 3, unchanged by revision 4): domain-warped clouds at the 3× drift rate, ember and pale bands, two steady star layers. |
+| `.celestial-shots/frontier-wheel.png` | A frontier edge against the wheel — the map sits over the galaxy's bulge, and the mist bank's top dissolves into the void instead of standing as a pale wall. |
 | `.celestial-shots/frontier-nebula.png` | The same edge against the nebula. |
 
 The frontier shots use the real `frontierFog`, `terrainMeshes` and `water`
@@ -208,7 +222,7 @@ terrain itself is harness filler and is not meant to look like a real world.
 ## Verification run
 
 - `pnpm --filter client typecheck` — clean.
-- `pnpm --filter client test` — 35 files, 556 tests, all passing (120 s). Re-run after the revision-3 port; unchanged.
+- `pnpm --filter client test` — 35 files, 556 tests, all passing (120 s). Re-run after each shader revision; unchanged throughout.
   Client package only, with a timeout; never `pnpm -r test`.
 - No test was added (owner rule; permission not granted).
 
