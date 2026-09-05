@@ -40,6 +40,7 @@ import {
   SAMPLE_COUNT,
   SHORE_EDGE_CROSSING,
   assembleLoops,
+  isSeamSegment,
   loadSampleField,
   loadSamples,
   marchLevel,
@@ -959,11 +960,6 @@ function emitSkirtQuad(
   pushVertex(px, bottomY, pz, outX, 0, outZ, color, selfLit);
 }
 
-/** True for a segment lying along the chunk border, which grows no skirt. */
-function isBorderSegment(a: ContourPoint, b: ContourPoint): boolean {
-  return (a.rect & b.rect) !== 0;
-}
-
 // ---------------------------------------------------------------------------
 // The blocky fallback
 //
@@ -1374,7 +1370,7 @@ export function planChunkCaps(
       const trianglesPerSegment = level.skirtBorderColor !== null ? 4 : 2;
       for (const loop of level.loops) {
         for (let i = 0; i < loop.length; i++) {
-          if (!isBorderSegment(loop[i], loop[(i + 1) % loop.length])) {
+          if (!isSeamSegment(loop[i], loop[(i + 1) % loop.length])) {
             skirtTriangles += trianglesPerSegment;
           }
         }
@@ -1486,7 +1482,7 @@ export function writeChunkVertexData(
       for (let i = 0; i < loop.length; i++) {
         const a = loop[i];
         const b = loop[(i + 1) % loop.length];
-        if (isBorderSegment(a, b)) continue;
+        if (isSeamSegment(a, b)) continue;
         if (level.skirtBorderColor !== null) {
           // Underwater: the hairline top-edge border in the next band down's
           // tread colour, then the face — the band's own tread, lightened —

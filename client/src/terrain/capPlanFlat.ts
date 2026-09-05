@@ -19,7 +19,7 @@
 import { BAND_HEIGHT } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { type ChunkDrawnCaps } from './capEmission.ts';
-import { RECT_NONE, type ContourLoop } from './contours.ts';
+import { isSeamSegment, type ContourLoop } from './contours.ts';
 
 /**
  * A cap plan, flat. Level i owns polygons
@@ -190,9 +190,9 @@ function emitLoopSegments(
   for (let i = 0; i < loop.length; i++) {
     const a = loop[i]!;
     const b = loop[(i + 1) % loop.length]!;
-    // Both ends on the chunk's own domain rectangle: a seam artefact, not a
-    // lip. capEmission drops exactly these when it extrudes skirts.
-    if (a.rect !== RECT_NONE && b.rect !== RECT_NONE) continue;
+    // A seam, not a lip — the SAME predicate capEmission drops a skirt by, so
+    // the overlay publishes a lip for exactly the risers the mesh draws.
+    if (isSeamSegment(a, b)) continue;
     const ax = a.x * CELL_WORLD_SIZE;
     const az = a.z * CELL_WORLD_SIZE;
     const bx = b.x * CELL_WORLD_SIZE;

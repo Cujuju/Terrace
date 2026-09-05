@@ -605,6 +605,123 @@ const FLOATS_PER_DRAWN_SEGMENT = 4;
 const DRAWN_FACE_MARGIN_CELLS = 0.5;
 
 /**
+ * Every drawn segment of `band` in the 3×3 chunk neighbourhood of chunk
+ * (chunkX, chunkY) — the same reach `layerEdgeOverlay.ts`'s `nearbyChunks`
+ * uses, because a contour bounding a cell can be published by the chunk next
+ * door.
+ *
+ * ONE WALK, TWO READERS (the parity gate and the event scan below), so they
+ * can never come to disagree about which segments a cell may be judged by.
+ */
+function forEachDrawnSegment(
+  risers: DrawnRisers,
+  size: number,
+  chunksPerEdge: number,
+  chunkX: number,
+  chunkY: number,
+  band: number,
+  visit: (ax: number, az: number, bx: number, bz: number) => void,
+): void {
+  for (let dy = -1; dy <= 1; dy++) {
+    const cy = chunkY + dy;
+    if (cy < 0 || cy >= chunksPerEdge) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = chunkX + dx;
+      if (cx < 0 || cx >= chunksPerEdge) continue;
+      const flat = risers.segmentsOf(chunkIndex(size, cx, cy), band);
+      if (flat === undefined) continue;
+      for (
+        let s = 0;
+        s + FLOATS_PER_DRAWN_SEGMENT - 1 < flat.length;
+        s += FLOATS_PER_DRAWN_SEGMENT
+      ) {
+        visit(flat[s]!, flat[s + 1]!, flat[s + 2]!, flat[s + 3]!);
+      }
+    }
+  }
+}
+
+/** Twice the signed area of (p, q, r) — the sign is which side of pq r is on. */
+function orient(
+  px: number, pz: number, qx: number, qz: number, rx: number, rz: number,
+): number {
+  return (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
+}
+
+/**
+ * Whether the two open segments cross PROPERLY — each strictly separates the
+ * other's endpoints.
+ *
+ * Strict on purpose: a probe that runs exactly through a shared vertex of a
+ * contour polyline would otherwise be counted twice and flip the parity. The
+ * cases it declines are measure-zero, and declining is the safe side — the
+ * answer then stays whatever the rest of the crossings say.
+ */
+function segmentsCrossProperly(
+  ax: number, az: number, bx: number, bz: number,
+  cx: number, cz: number, dx: number, dz: number,
+): boolean {
+  const d1 = orient(cx, cz, dx, dz, ax, az);
+  const d2 = orient(cx, cz, dx, dz, bx, bz);
+  const d3 = orient(ax, az, bx, bz, cx, cz);
+  const d4 = orient(ax, az, bx, bz, dx, dz);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+    && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/**
+ * IS THE BOX CAP POINT ON THE DRAWN CAP, or out over the staircase in front of
+ * it? Answered by crossing parity along the segment from the cell's own CENTRE
+ * to the hit point.
+ *
+ * THE CENTRE IS ALWAYS INSIDE, and that is what makes a parity test legitimate
+ * here rather than a guess: marching squares classifies a sample as inside band
+ * k iff the cell's own quantised height reaches k (`terrain/contours.ts`,
+ * `marchLevel`: "sample (i,j) is the centre of world cell (x0+i, y0+j)"), and
+ * `CONTOUR_CELL_CENTRE_GUARD` clamps every crossing fraction away from both
+ * ends of a lattice edge (`contours.ts`'s `crossingFraction`), so no contour
+ * vertex — before or after smoothing — can reach a cell centre. The cell that
+ * produced this hit draws band `band`, so its centre is inside band `band`'s
+ * region by construction.
+ *
+ * The probe segment never leaves the cell's own box (the centre is its middle
+ * and the hit point is on its cap), so no chunk-border seam can affect the
+ * count.
+ *
+ * WHY A CAP HIT NEEDS THIS AT ALL. The refinement below is an event walk that
+ * takes the first drawn surface along the ray. For a cap hit that is genuinely
+ * on drawn tread, the ray goes UNDERGROUND after it, and any contour of the
+ * same band that happens to lie further along — the far side of a two-cell
+ * ridge, the other wall of a notch, a contour curving round a corner — would
+ * be met at a legal height and taken as a riser, teleporting the crosshair
+ * behind the surface the player is standing on. Even parity ends it: the
+ * point is on real tread, and the march's own answer is right.
+ */
+function capPointIsOverStrip(
+  risers: DrawnRisers,
+  size: number,
+  chunksPerEdge: number,
+  chunkX: number,
+  chunkY: number,
+  band: number,
+  i: number,
+  j: number,
+  hitX: number,
+  hitZ: number,
+): boolean {
+  // Cell (i, j)'s centre in world units: `scaleRayToCellSpace` adds
+  // CELL_CENTRE_OFFSET after dividing by CELL_WORLD_SIZE, so scaled i + 0.5 —
+  // the middle of the cell's box — is world i · CELL_WORLD_SIZE.
+  const centreX = i * CELL_WORLD_SIZE;
+  const centreZ = j * CELL_WORLD_SIZE;
+  let crossings = 0;
+  forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
+    if (segmentsCrossProperly(centreX, centreZ, hitX, hitZ, ax, az, bx, bz)) crossings++;
+  });
+  return (crossings & 1) === 1;
+}
+
+/**
  * A BOX-FACE RISER HIT, MOVED ONTO THE FACE THE PLAYER CAN SEE.
  *
  * THE DEFECT THIS FIXES (owner, 2026-09-04: "at some camera angles carve does
@@ -641,6 +758,13 @@ const DRAWN_FACE_MARGIN_CELLS = 0.5;
  * b — the band the ledge belongs to — while a horizontal hit below the span's
  * cap is read as an UNDERSIDE (a cave roof), which a ledge is not. The pick
  * contract has no "tread below the cap" face and this does not invent one.
+ *
+ * A CAP HIT IS GATED FIRST. The box cap is a full cell wide while the DRAWN
+ * cap starts only at the band's own contour, so a steep ray can cross the box
+ * cap out over the staircase strip. `capPointIsOverStrip` decides which by
+ * crossing parity from the cell centre: even means real tread and the march
+ * was right, odd means the strip and the walk runs. Without that gate a true
+ * tread hit could be rewritten onto a far contour of the same band.
  *
  * NO EVENT AT ALL, TWO CASES, and they are not the same:
  *
@@ -714,36 +838,27 @@ function refineRiserToDrawnFace(
   const firstBand = Math.max(lowestBand, Math.ceil(yMin / bandSlab));
   const lastBand = Math.min(highestBand, Math.floor(yMax / bandSlab) + 1);
 
+  // THE CAP GATE. A riser hit is always somewhere it should not be; a cap hit
+  // may be exactly right, and only the drawn region can say which.
+  if (!hit.hitRiser && !capPointIsOverStrip(
+    risers, size, chunksPerEdge, chunkX, chunkY, highestBand, i, j, hit.hitX, hit.hitZ,
+  )) {
+    return hit;
+  }
+
   // PASS 1 — where the ray crosses each candidate band's contour IN PLAN.
   // Both kinds of event are derived from these: a riser hit is one of them, a
   // ledge hit lies between two consecutive ones.
   if (lastBand < firstBand) return hit;
   const contourT = new Float64Array(lastBand - firstBand + 1).fill(Infinity);
   for (let band = firstBand; band <= lastBand; band++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      const cy = chunkY + dy;
-      if (cy < 0 || cy >= chunksPerEdge) continue;
-      for (let dx = -1; dx <= 1; dx++) {
-        const cx = chunkX + dx;
-        if (cx < 0 || cx >= chunksPerEdge) continue;
-        const flat = risers.segmentsOf(chunkIndex(size, cx, cy), band);
-        if (flat === undefined) continue;
-        for (
-          let s = 0;
-          s + FLOATS_PER_DRAWN_SEGMENT - 1 < flat.length;
-          s += FLOATS_PER_DRAWN_SEGMENT
-        ) {
-          const t = crossRayWithWallPlan(
-            origin, direction,
-            flat[s]!, flat[s + 1]!, flat[s + 2]!, flat[s + 3]!,
-          );
-          // A crossing outside the window is one no surface of this cell can
-          // stand on — it belongs to a cell further along the ray.
-          if (t === null || t < fromT || t > toT) continue;
-          if (t < contourT[band - firstBand]!) contourT[band - firstBand] = t;
-        }
-      }
-    }
+    forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
+      const t = crossRayWithWallPlan(origin, direction, ax, az, bx, bz);
+      // A crossing outside the window is one no surface of this cell can
+      // stand on — it belongs to a cell further along the ray.
+      if (t === null || t < fromT || t > toT) return;
+      if (t < contourT[band - firstBand]!) contourT[band - firstBand] = t;
+    });
   }
 
   // NOT ONE SEGMENT ANYWHERE: this chunk neighbourhood has published no
@@ -798,9 +913,11 @@ function refineRiserToDrawnFace(
       hitZ: origin.z + bestT * direction.z,
     };
   }
-  // Only a RISER hit can have passed in front of the wall; a cap hit that met
-  // no drawn surface met the tread the march already named.
-  if (!hit.hitRiser) return hit;
+  // NO EVENT, AND THE POINT IS OVER THE STRIP either way — the parity gate
+  // above has already sent a true tread hit home. A one-band step at a pitch
+  // steep enough that the ray reaches the lower neighbour's cap plane before
+  // the band's contour leaves no event to find, and the ground in front of the
+  // wall is the honest answer for a cap hit exactly as it is for a riser hit.
   return treadOfEnteredNeighbour(mirror, i, j, origin, direction, tEnter, tExit, footT) ?? hit;
 }
 
