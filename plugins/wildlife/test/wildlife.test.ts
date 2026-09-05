@@ -555,6 +555,9 @@ describe('the cohesion blend', () => {
       heading,
       fleeSecondsRemaining: 0,
       idle: false,
+      huntTargetId: null,
+      huntSecondsRemaining: 0,
+      huntRestSecondsRemaining: 0,
     };
   }
 

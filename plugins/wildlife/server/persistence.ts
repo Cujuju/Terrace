@@ -31,7 +31,10 @@ export const WILDLIFE_SLICE_VERSION = 1;
  * no meaning after it, and calm is the state a returning player expects to see.
  * It omits `idle` (2026-09-02) on the same argument — a bout is a moment, and a
  * world that came back with a third of its animals frozen mid-graze would look
- * worse than one where every animal starts walking.
+ * worse than one where every animal starts walking. It omits the three hunt
+ * fields (2026-09-05) on the same argument again: a chase and the satiety after
+ * one are moments, so restored wolves start calm — and start hungry, which is
+ * the honest reading of a gap in time nobody simulated.
  *
  * `schoolId` and `size` ARE persisted, and both are additive optional fields
  * rather than a version bump. They have to be persisted because neither is
@@ -158,6 +161,11 @@ export function loadPopulation(data: unknown): void {
           // creature starts moving and rolls its way back into bouts within a
           // few seconds. See the field's note on WildlifeEntity.
           idle: false,
+          // Not persisted either, for the same reason: restored hunters start
+          // calm and unfed, and lock a target again on their first tick.
+          huntTargetId: null,
+          huntSecondsRemaining: 0,
+          huntRestSecondsRemaining: 0,
         });
       }
 

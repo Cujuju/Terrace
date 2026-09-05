@@ -35,9 +35,10 @@ import {
 } from '@terrace/shared';
 import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
-import { type WildlifeEntity, livingEntities } from './population.ts';
+import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
 import { randomSigned, rollEvent } from './rng.ts';
 import {
+  FLEE_SPEED_MULTIPLIER,
   SCHOOL_LOOSENESS_BY_SIZE,
   SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS,
   TURN_RADIUS_BODY_LENGTHS,
@@ -102,9 +103,31 @@ export { TURN_RADIUS_BODY_LENGTHS };
  * long enough for a fish to clear the ~12-cell disturbance radius (3 cells/s × 3
  * × 2.5 s = 22 cells) and short enough that the scene settles back to ambient
  * before the player has finished their next sculpt.
+ *
+ * THE MULTIPLIER IS ./species/profile.ts'S NOW (2026-09-05), re-exported here
+ * under its old name so every call site and test is unchanged. The wolf's
+ * `Pursuit` states it as a ROW value — a hunting wolf is at burst exactly as a
+ * fleeing deer is — and a per-name row file cannot import from movement.ts,
+ * which imports it (profile.ts's header: that cycle puts the constant in its
+ * temporal dead zone at the moment the row is built). The DURATION stays here:
+ * only the engine reads it, and a chase has its own clock.
  */
-export const FLEE_SPEED_MULTIPLIER = 3;
+export { FLEE_SPEED_MULTIPLIER };
 export const FLEE_DURATION_SECONDS = 2.5;
+
+/**
+ * How far past its detect radius a hunter will follow a target before letting
+ * go, as a multiple of that radius.
+ *
+ * PURE HYSTERESIS. Without it a target sitting on the detect line would unlock
+ * and re-lock every tick, which is a wolf that hesitates rather than one that
+ * commits. 1.5× is wide enough that no ordinary chase ends on the boundary and
+ * narrow enough that a hunter separated from its prey by a riser it cannot
+ * cross stops running at it. It is not what ENDS a chase in open ground —
+ * `Pursuit.maxSeconds` is, and a burst hunter closes on fleeing prey anyway; it
+ * is what ends the chases the terrain has already decided.
+ */
+export const PURSUIT_LOSE_RADIUS_SLACK = 1.5;
 
 // ── Cohesion: the boids-lite school ──────────────────────────────────────────
 //
@@ -212,10 +235,21 @@ export const SCHOOL_MIN_HEADING_COHERENCE = 0.1;
 /** Normalises an angle to (-π, π]. Shared's, re-exported — see above. */
 export const normalizeAngle = sharedNormalizeAngle;
 
-/** Current speed in cells/second: cruise, or burst while fleeing. */
+/**
+ * Current speed in cells/second: cruise, or burst while fleeing or chasing.
+ *
+ * FLEE WINS OVER HUNT wherever the two could disagree — here it makes no
+ * arithmetic difference, since a pursuing hunter is released from its chase the
+ * moment it is startled (`resolvePursuits`), but stating the order once here
+ * means the two states can never both be believed.
+ */
 export function speedOf(entity: WildlifeEntity): number {
-  const cruise = profileOf(entity.species).cruiseSpeedCellsPerSecond;
-  return entity.fleeSecondsRemaining > 0 ? cruise * FLEE_SPEED_MULTIPLIER : cruise;
+  const profile = profileOf(entity.species);
+  const cruise = profile.cruiseSpeedCellsPerSecond;
+  if (entity.fleeSecondsRemaining > 0) return cruise * FLEE_SPEED_MULTIPLIER;
+  const pursuit = profile.hunts?.pursuit;
+  if (pursuit !== undefined && entity.huntTargetId !== null) return cruise * pursuit.speedMultiplier;
+  return cruise;
 }
 
 /**
@@ -623,6 +657,11 @@ function steerThisTick(
  * no phase for a player to learn. The shape is the one monsters' `lurk.ts`
  * settled on; nothing is imported from that plugin.
  *
+ * A CHASE CANCELS IT TOO (2026-09-05), on exactly the argument fleeing has: an
+ * animal that has locked onto prey has stopped resting by definition, and a
+ * hunter that dropped back into the bout it was in the instant its chase ended
+ * would read as one that gave up because it was bored.
+ *
  * FLEEING CANCELS IT, and cancels it rather than merely masking it. A startled
  * animal has stopped grazing by definition, and if the flag were only ignored
  * during the panic the animal would drop straight back into a bout the instant
@@ -638,7 +677,7 @@ function steerThisTick(
  * behaviour, and the alternative is asserting it through a full tick.
  */
 export function advanceIdleState(entity: WildlifeEntity, dt: number): void {
-  if (entity.fleeSecondsRemaining > 0) {
+  if (entity.fleeSecondsRemaining > 0 || entity.huntTargetId !== null) {
     entity.idle = false;
     return;
   }
@@ -680,6 +719,12 @@ export function advanceIdleState(entity: WildlifeEntity, dt: number): void {
  * of the tick (see summarizeSchools); omitting it steers with wander alone,
  * which is what the solitary case and any caller without a population index get.
  *
+ * `pursuitTarget` is where this creature's locked prey stood at the START of the
+ * tick (see `resolvePursuits`), and its presence is what makes this a chase:
+ * the bearing to it REPLACES the wander, and then goes through the same ladder
+ * as any other desired heading — so a wolf cannot cross a slope, leave the
+ * land or turn inside its own turning circle to catch a deer.
+ *
  * `occupants` is everybody ELSE, as they stood at the start of the tick — the
  * same snapshot discipline, and for the same reason: a creature's step must not
  * depend on where it sits in the iteration order. It must not contain this
@@ -692,6 +737,7 @@ export function advanceEntity(
   dt: number,
   school?: SchoolSummary,
   occupants: readonly Occupant[] = [],
+  pursuitTarget?: PursuitTarget,
 ): void {
   if (entity.fleeSecondsRemaining > 0) {
     entity.fleeSecondsRemaining = Math.max(0, entity.fleeSecondsRemaining - dt);
@@ -706,14 +752,24 @@ export function advanceEntity(
   advanceIdleState(entity, dt);
   if (entity.idle) return;
 
-  // A fleeing creature swims straight: panic suppresses idle meandering.
-  const noise = fleeing ? 0 : randomSigned(profile.turnNoiseRadiansPerSecond * dt);
+  // A CHASE IS A BEARING, not a wander. `pursuitTarget` is only ever set for a
+  // creature `resolvePursuits` has locked onto prey this tick.
+  const chase =
+    pursuitTarget === undefined
+      ? null
+      : bearingTo(entity, pursuitTarget.x, pursuitTarget.y);
+
+  // A fleeing or chasing creature swims straight: neither meanders.
+  const noise =
+    fleeing || chase !== null ? 0 : randomSigned(profile.turnNoiseRadiansPerSecond * dt);
 
   const wander = normalizeAngle(entity.heading + noise);
   const desired =
-    fleeing || school === undefined
-      ? wander
-      : steerWithSchool(entity, school, schoolLoosenessOf(entity), wander, dt);
+    chase !== null
+      ? chase
+      : fleeing || school === undefined
+        ? wander
+        : steerWithSchool(entity, school, schoolLoosenessOf(entity), wander, dt);
   const lookahead = lookaheadCellsFor(entity);
   // One tick's travel — where separation is tested, and the same number every
   // step below moves by. Computed once so the distance the sweep reasons about
@@ -828,18 +884,29 @@ export function advanceMovement(world: HabitatWorld, dt: number): void {
   const population = livingEntities();
   const schools = summarizeSchools(population);
   const occupants = creatureOccupants(population);
+  // The third start-of-tick snapshot, and built for the same reason as the two
+  // above: a hunter steers at where its prey WAS when the tick began, so which
+  // way it turns cannot depend on whether the deer sits earlier or later in the
+  // population array.
+  const pursuits = resolvePursuits(population, dt);
   for (let index = 0; index < population.length; index++) {
     const entity = population[index];
+    const pursuit = pursuits.get(entity.id);
     advanceEntity(
       world,
       entity,
       dt,
       schools.get(entity.schoolId),
-      withoutSelf(occupants, occupants[index]),
+      huntingOccupants(population, occupants, index, pursuit),
+      pursuit,
     );
   }
 
+  // ALARM FIRST, THEN THE CATCH: a deer's last tick still ends with the wolf
+  // frightening its neighbours, and the catch pass never removes a creature the
+  // alarm loop is part-way through.
   applyPredatorAlarms();
+  resolveCatches();
 }
 
 /**
@@ -867,6 +934,222 @@ function applyPredatorAlarms(): void {
     const hunts = profileOf(hunter.species).hunts;
     if (hunts === undefined) continue;
     startleNear(hunter.x, hunter.y, hunts.alarmRadiusCells, { species: hunts.preySpecies });
+  }
+}
+
+// ── The chase ────────────────────────────────────────────────────────────────
+//
+// Owner, 2026-09-05: "wolves should hunt the deer." The alarm above is what
+// every hunter has; this is the opt-in extension a row asks for by declaring
+// `Pursuit` (species/profile.ts). Only species/wolf.ts declares one, and a row
+// that does not is bit-for-bit unaffected by every function below — each of
+// them leaves on the first property read.
+//
+// NOTHING HERE OVERRIDES THE WORLD. A chase produces one thing: a desired
+// heading, handed to `advanceEntity` in place of the wander. It then goes
+// through the same steering ladder, the same habitat and unlock vetoes, the
+// same turning circle and the same destination re-check as any other heading —
+// so a wolf runs prey down over ground it could have walked anyway.
+
+/** Which creature a hunter is chasing, and where it stood at the start of the tick. */
+export interface PursuitTarget {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * The occupant rows one creature steers against: everybody else, MINUS the
+ * animal it is currently chasing.
+ *
+ * A HUNTER'S TARGET IS NOT AN OBSTACLE TO IT, and this is the one place the
+ * chase touches the steering rules rather than merely feeding them a heading.
+ * Separation holds two creatures their two half-body-lengths apart
+ * (`personalSpaceCellsOf`) — 2 + 2.2 = 4.2 cells for a wolf and a deer — which
+ * is FURTHER than the wolf's own catch radius of one body length (4 cells). The
+ * catch would therefore be geometrically unreachable: the sweep would veto the
+ * very step that closes the last cell, and a hunt could only ever land by the
+ * prey blundering into a hunter through the one-tick staleness of this
+ * snapshot. Measured before this filter existed: 41 kills against 367 misses.
+ *
+ * It is deliberately ONE-SIDED. The prey still avoids the hunter's body, and
+ * the hunter still avoids every other creature, so nothing else about
+ * separation moves: the only pair that may close is the one pair that is
+ * supposed to.
+ */
+function huntingOccupants(
+  population: readonly WildlifeEntity[],
+  occupants: readonly Occupant[],
+  index: number,
+  pursuit: PursuitTarget | undefined,
+): readonly Occupant[] {
+  const others = withoutSelf(occupants, occupants[index]);
+  if (pursuit === undefined) return others;
+  const targetIndex = population.findIndex((candidate) => candidate.id === pursuit.id);
+  return targetIndex < 0 ? others : withoutSelf(others, occupants[targetIndex]);
+}
+
+/**
+ * The heading from this creature toward a point. A creature sitting exactly on
+ * the point keeps the heading it had: `atan2(0, 0)` is 0, which is a direction
+ * nothing chose — the same rule `startleNear` states for a creature on top of a
+ * disturbance.
+ */
+function bearingTo(entity: WildlifeEntity, x: number, y: number): number {
+  const dx = x - entity.x;
+  const dy = y - entity.y;
+  return dx === 0 && dy === 0 ? entity.heading : Math.atan2(dy, dx);
+}
+
+/**
+ * The nearest living prey inside `radius`, or null.
+ *
+ * NEAREST BY SQUARED DISTANCE, TIES BROKEN BY THE LOWER ID, and both halves of
+ * that are the determinism rule rather than taste (project design § terrain
+ * math): no square root, and no dependence on array order — two deer at exactly
+ * equal distance must resolve the same way whichever of them the loop met
+ * first.
+ */
+function nearestPrey(
+  population: readonly WildlifeEntity[],
+  hunter: WildlifeEntity,
+  preySpecies: readonly WildlifeHabitatSpecies[],
+  radius: number,
+): WildlifeEntity | null {
+  const radiusSquared = radius * radius;
+  let best: WildlifeEntity | null = null;
+  let bestSquared = 0;
+  for (const candidate of population) {
+    if (!preySpecies.includes(candidate.species)) continue;
+    const dx = candidate.x - hunter.x;
+    const dy = candidate.y - hunter.y;
+    const squared = dx * dx + dy * dy;
+    if (squared > radiusSquared) continue;
+    if (best !== null && (squared > bestSquared || (squared === bestSquared && candidate.id > best.id))) {
+      continue;
+    }
+    best = candidate;
+    bestSquared = squared;
+  }
+  return best;
+}
+
+/**
+ * Advances every hunter's chase clock and hands back where each one's prey
+ * stood at the start of this tick.
+ *
+ * RUN BEFORE ANYTHING MOVES, which is what makes the positions it records the
+ * start-of-tick snapshot the schools and occupant rows are also built from.
+ *
+ * A LOCKED TARGET IS KEPT until it dies, leaves detectRadius ×
+ * PURSUIT_LOSE_RADIUS_SLACK, or `maxSeconds` expires — never swapped mid-chase
+ * for a nearer animal. A predator that always chased the closest prey would
+ * cut from deer to deer across a hillside and catch none of them, which is both
+ * a worse read and a strictly better hunter.
+ *
+ * FLEE WINS OVER HUNT: a wolf that is itself running from something (fire) drops
+ * the chase outright, and drops it WITHOUT the miss rest — being startled is not
+ * a failed hunt, and charging a 20-second penalty for it would leave a
+ * fire-frightened wolf standing about long after the fire went out.
+ *
+ * EVERY EXIT THAT IS NOT A CATCH IS A MISS, including "the target is gone":
+ * the hunter ran and has nothing to show for it, which is what the rest is for.
+ * A catch is resolved after movement instead (`resolveCatches`).
+ */
+function resolvePursuits(
+  population: readonly WildlifeEntity[],
+  dt: number,
+): Map<number, PursuitTarget> {
+  const targets = new Map<number, PursuitTarget>();
+
+  for (const hunter of population) {
+    const hunts = profileOf(hunter.species).hunts;
+    const pursuit = hunts?.pursuit;
+    if (hunts === undefined || pursuit === undefined) continue;
+
+    if (hunter.huntRestSecondsRemaining > 0) {
+      hunter.huntRestSecondsRemaining = Math.max(0, hunter.huntRestSecondsRemaining - dt);
+    }
+
+    if (hunter.fleeSecondsRemaining > 0) {
+      hunter.huntTargetId = null;
+      hunter.huntSecondsRemaining = 0;
+      continue;
+    }
+
+    if (hunter.huntTargetId !== null) {
+      hunter.huntSecondsRemaining = Math.max(0, hunter.huntSecondsRemaining - dt);
+      const target = population.find((candidate) => candidate.id === hunter.huntTargetId);
+      const loseRadius = pursuit.detectRadiusCells * PURSUIT_LOSE_RADIUS_SLACK;
+      if (target !== undefined && hunter.huntSecondsRemaining > 0) {
+        const dx = target.x - hunter.x;
+        const dy = target.y - hunter.y;
+        if (dx * dx + dy * dy <= loseRadius * loseRadius) {
+          targets.set(hunter.id, { id: target.id, x: target.x, y: target.y });
+          continue;
+        }
+      }
+      hunter.huntTargetId = null;
+      hunter.huntSecondsRemaining = 0;
+      hunter.huntRestSecondsRemaining = pursuit.restAfterMissSeconds;
+      continue;
+    }
+
+    if (hunter.huntRestSecondsRemaining > 0) continue;
+    const prey = nearestPrey(population, hunter, hunts.preySpecies, pursuit.detectRadiusCells);
+    if (prey === null) continue;
+    hunter.huntTargetId = prey.id;
+    hunter.huntSecondsRemaining = pursuit.maxSeconds;
+    targets.set(hunter.id, { id: prey.id, x: prey.x, y: prey.y });
+  }
+
+  return targets;
+}
+
+/**
+ * Resolves catches from END-of-tick positions, and removes what was caught.
+ *
+ * AFTER ALL MOVEMENT, for the reason `applyPredatorAlarms` gives for running
+ * there: whether a deer is taken must not depend on whether it or the wolf
+ * moved first this tick.
+ *
+ * KILLS ARE COLLECTED FIRST AND DESPAWNED BY DESCENDING INDEX, so a splice can
+ * never shift an index still to be used. Two hunters on one animal: the animal
+ * is removed once (it is an id in a set) and BOTH hunters are sated — a pair
+ * shares the kill, which is the whole of the wolf's pack behaviour.
+ *
+ * A CAUGHT CREATURE LEAVES THROUGH `despawnWithCredit`, the machinery habitat
+ * loss uses, so predation is regulated by the census rather than being a second
+ * drain beside it. See `Predation` (species/profile.ts).
+ */
+function resolveCatches(): void {
+  const population = livingEntities();
+  const doomed = new Set<number>();
+  const sated: { readonly hunter: WildlifeEntity; readonly restSeconds: number }[] = [];
+
+  for (const hunter of population) {
+    if (hunter.huntTargetId === null) continue;
+    const pursuit = profileOf(hunter.species).hunts?.pursuit;
+    if (pursuit === undefined) continue;
+    const target = population.find((candidate) => candidate.id === hunter.huntTargetId);
+    if (target === undefined) continue;
+    const dx = target.x - hunter.x;
+    const dy = target.y - hunter.y;
+    if (dx * dx + dy * dy > pursuit.catchRadiusCells * pursuit.catchRadiusCells) continue;
+    doomed.add(target.id);
+    sated.push({ hunter, restSeconds: pursuit.restAfterKillSeconds });
+  }
+
+  if (doomed.size === 0) return;
+
+  for (const { hunter, restSeconds } of sated) {
+    hunter.huntTargetId = null;
+    hunter.huntSecondsRemaining = 0;
+    hunter.huntRestSecondsRemaining = restSeconds;
+  }
+
+  for (let index = population.length - 1; index >= 0; index--) {
+    if (doomed.has(population[index].id)) despawnWithCredit(index);
   }
 }
 
