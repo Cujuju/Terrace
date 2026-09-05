@@ -53,6 +53,8 @@
     <button data-k="lights" aria-pressed="true">Lights</button>
     <button data-k="lasers" aria-pressed="true">Lasers</button>
     <button data-k="orbit" aria-pressed="true">Auto-orbit</button>
+    <button data-k="env" aria-pressed="true" title="A/B: the sky environment map the game gives authored metals (#314). Off = lamps only, the old look.">Sky env</button>
+    <button data-k="sky" aria-pressed="false" title="Backdrop: the game's sky colour instead of the hangar's dark floor.">Sky backdrop</button>
   </div>
 </aside>
 <div class="hint">STAGE UNITS = CELLS</div>
@@ -155,7 +157,8 @@ const loader = new GLTFLoader();
 const models = [];
 const boltPool = [];
 const clock = new THREE.Clock();
-const state = { spin:true, lights:true, lasers:true, orbit:true, focus:null };
+const state = { spin:true, lights:true, lasers:true, orbit:true, env:true, sky:false, focus:null };
+const HANGAR_BACKGROUND = 0x090c12;
 
 function b64ToBuffer(b64){ const s = atob(b64); const u = new Uint8Array(s.length); for (let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u.buffer; }
 
@@ -168,6 +171,7 @@ async function loadCraft(spec, index){
   // What the game's loader does (rigAsset.ts createRigAsset, 'sky-environment'
   // policy): every PBR material in the file reflects the sky.
   root.traverse(o => { if (o.isMesh && o.material.isMeshStandardMaterial) o.material.envMap = skyEnvironment.texture; });
+  const pbrMaterials = []; root.traverse(o => { if (o.isMesh && o.material.isMeshStandardMaterial) pbrMaterials.push(o.material); });
   // Material handles for the runtime effects (one material per mesh by contract).
   const lightBase = parts.lights.material.emissiveIntensity;
   const ringBase = parts.ring.material.emissiveIntensity;
@@ -178,7 +182,7 @@ async function loadCraft(spec, index){
   const spinClip = gltf.animations.find(a => a.name === 'spin');
   const action = spinClip ? mixer.clipAction(spinClip) : null;
   if (action) { action.setLoop(THREE.LoopRepeat, Infinity); action.play(); }
-  models.push({ spec, index, pivot, root, parts, mixer, action, lightBase, ringBase, phase: index * 2.1, nextShot: 0.4 + index * 0.5, fireHeading: 0 });
+  models.push({ spec, index, pivot, root, parts, pbrMaterials, mixer, action, lightBase, ringBase, phase: index * 2.1, nextShot: 0.4 + index * 0.5, fireHeading: 0 });
 }
 
 function boltMesh(color){
@@ -287,13 +291,27 @@ document.getElementById('toggles').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   state[b.dataset.k] = !state[b.dataset.k];
   b.setAttribute('aria-pressed', String(state[b.dataset.k]));
+  if (b.dataset.k === 'env') applyEnvToggle();
+  if (b.dataset.k === 'sky') applySkyToggle();
 });
+// The A/B the owner asked for: the same hulls with and without the environment.
+function applyEnvToggle(){
+  for (const m of models) for (const mat of m.pbrMaterials) { mat.envMap = state.env ? skyEnvironment.texture : null; mat.needsUpdate = true; }
+}
+function applySkyToggle(){
+  const bg = state.sky ? NOON.backgroundColor : HANGAR_BACKGROUND;
+  scene.background.setHex(bg); scene.fog.color.setHex(bg);
+  grid.visible = !state.sky; floor.visible = !state.sky;
+}
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) { state.orbit = false; document.querySelector('[data-k="orbit"]').setAttribute('aria-pressed','false'); }
 
 try {
   await Promise.all(CRAFT.map((s, i) => loadCraft(s, i)));
   // ?focus=a|b|c opens on one craft — for the screenshot rig (shot.mjs).
-  const wanted = new URLSearchParams(location.search).get('focus');
+  const params = new URLSearchParams(location.search);
+  if (params.get('env') === '0') { state.env = false; document.querySelector('[data-k="env"]').setAttribute('aria-pressed','false'); applyEnvToggle(); }
+  if (params.get('sky') === '1') { state.sky = true; document.querySelector('[data-k="sky"]').setAttribute('aria-pressed','true'); applySkyToggle(); }
+  const wanted = params.get('focus');
   if (wanted && CRAFT.some(c => c.key === wanted)) {
     state.focus = wanted;
     for (const c of craftEl.children) c.setAttribute('aria-pressed', String(c.dataset.key === wanted));
