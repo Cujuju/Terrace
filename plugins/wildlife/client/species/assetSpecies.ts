@@ -23,7 +23,7 @@
 //
 // Nothing else moves. `models.ts`'s bakeSpecies / herdFor / drawInto never
 // learn that a species came from a file: `assetSpeciesBuilder` returns the same
-// `AuthoredSpecies` shape `buildGrazer` does, and `speciesDrawable`
+// `AuthoredSpecies` shape a hand-authored `buildIbex` does, and `speciesDrawable`
 // (../models.ts) bakes and herds it identically.
 //
 // WHY THE ENVELOPE IS ASSERTED RATHER THAN READ. placement.ts fits a swimmer

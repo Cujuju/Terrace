@@ -71,4 +71,8 @@ export function applySkyRig(viewport: Viewport, state: SkyRigState): void {
   // background again, setting one here is all it takes.
   const background = viewport.scene.background;
   if (background instanceof Color) background.setHex(state.backgroundColor);
+
+  // The reflection follows the lamps — see ./skyEnvironment.ts. A string
+  // compare when nothing changed; a throttled repaint when it did.
+  viewport.skyEnvironment.retint(state);
 }
