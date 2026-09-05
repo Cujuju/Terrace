@@ -12,11 +12,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   BoxGeometry,
+  DataTexture,
   DoubleSide,
   Matrix4,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  MeshStandardMaterial,
   Vector3,
+  type Texture,
 } from 'three';
 import { canShareOneSurface, mergeParts, mergeSharedSurface, type StructurePart } from '../client/parts.ts';
 
@@ -215,5 +218,71 @@ describe('merging a building s parts', () => {
     expect(colors.getX(colors.count - 1)).toBeCloseTo(second.color.r, 6);
     expect(colors.getY(colors.count - 1)).toBeCloseTo(second.color.g, 6);
     expect(colors.getZ(colors.count - 1)).toBeCloseTo(second.color.b, 6);
+  });
+});
+
+// ── Textured parts, since a tier can be an imported model (2026-09-04) ──────
+//
+// Everything above was written while every material in this plugin was a flat
+// colour. An imported asset brings a textured one, and two questions the merge
+// could answer loosely until now become load-bearing: which textured parts may
+// share a draw call, and what the merged geometry has to carry for the
+// survivor to sample the right texels.
+
+/** A 1x1 texture. Only its IDENTITY is read here, never its texels. */
+function texture(): Texture {
+  return new DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+}
+
+function texturedPart(material: MeshStandardMaterial): StructurePart {
+  return { geometry: new BoxGeometry(1, 1, 1), material, localMatrices: [new Matrix4()] };
+}
+
+describe('merging textured parts', () => {
+  it('keeps two parts with different normal maps apart', () => {
+    const map = texture();
+    const merged = mergeParts([
+      texturedPart(new MeshStandardMaterial({ map, normalMap: texture() })),
+      texturedPart(new MeshStandardMaterial({ map, normalMap: texture() })),
+    ]);
+
+    // Two surfaces, because they shade differently. Before the map identity
+    // joined the signature these merged into one, shaded by whichever material
+    // happened to be first — see client/src/render/materialMaps.ts's header.
+    expect(merged).toHaveLength(2);
+  });
+
+  it('merges two parts that sample exactly the same textures', () => {
+    const map = texture();
+    const normalMap = texture();
+    const merged = mergeParts([
+      texturedPart(new MeshStandardMaterial({ map, normalMap })),
+      texturedPart(new MeshStandardMaterial({ map, normalMap })),
+    ]);
+
+    expect(merged).toHaveLength(1);
+  });
+
+  it('keeps the uv attribute of a merged textured surface', () => {
+    const map = texture();
+    const merged = mergeParts([
+      texturedPart(new MeshStandardMaterial({ map })),
+      texturedPart(new MeshStandardMaterial({ map })),
+    ]);
+
+    const uv = merged[0].geometry.getAttribute('uv');
+    const position = merged[0].geometry.getAttribute('position');
+    expect(uv).toBeDefined();
+    // One uv per vertex of BOTH parts: a short (or absent) uv array is a
+    // surface reading one texel for every triangle — the whole building
+    // painted one flat wrong colour.
+    expect(uv.count).toBe(position.count);
+  });
+
+  it('refuses the shared surface to a part that samples any texture at all', () => {
+    // Not just `map`: the surface replaces the material outright, so a part
+    // carrying only a normal map would have that map silently thrown away.
+    const normalOnly = new MeshLambertMaterial({ flatShading: true, normalMap: texture() });
+    expect(canShareOneSurface(normalOnly)).toBe(false);
   });
 });

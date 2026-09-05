@@ -14,6 +14,8 @@ import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
+import { createCelestialVoid } from './render/celestialVoid.ts';
+import { voidStyle } from './state/voidPrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
@@ -63,6 +65,15 @@ const viewport = createViewport(canvas);
 // on the page URL, and eliminated entirely from a production build: DEV is
 // statically false there, exactly as for the __terrace handle at the bottom.
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
+// WHAT IS OUTSIDE THE MAP (render/celestialVoid.ts, issue #326). Wired here
+// rather than inside createViewport because the look is a player preference
+// (state/voidPrefs.ts) and the viewport deliberately knows nothing about the
+// HUD's state — same split as the ground-height sampler below. Created with
+// the stored style so the first frame is already the right look, then kept in
+// step by the effect: Solid re-runs it on every change, which is what makes
+// the panel's <select> apply live with no reload.
+const celestialVoid = createCelestialVoid(viewport, voidStyle());
+createEffect(() => celestialVoid.setStyle(voidStyle()));
 const world = createWorld(viewport);
 
 // THE PLACEMENT LISTENER — where an armed admin action lands (owner,
@@ -196,20 +207,18 @@ const sculptInput = createSculptInput({
   // Accessors, not snapshots: both the mesh list and the world size change
   // when chunks stream in or a new session starts.
   pickCell: (origin, direction) => world.pickCell(origin, direction),
-  // The outline's ground height, re-read every frame for the cell the pick
-  // already chose — see sculptInput's hoverTarget for why the cell is cached
-  // and this is not.
-  spanCapAt: (x, y, spanIndex) => world.spanCapAt(x, y, spanIndex),
-  // The column's live span count and the "does this span still draw that
-  // height" test — what tells a cached pick that its span index has gone stale
-  // (a carve split the column) rather than merely moved.
-  spanCountAt: (x, y) => world.spanCountAt(x, y),
-  spanContainsHeight: (x, y, spanIndex, worldY) =>
-    world.spanContainsHeight(x, y, spanIndex, worldY),
+  // THE HOVER CACHE'S ONLY MAP QUERY: the pinned ray, re-asked of the pinned
+  // column of the live terrain, every read. See sculptInput's hoverTarget for
+  // why the cell and the ray are cached and nothing derived from them is.
+  pickInColumn: (x, y, origin, direction) => world.pickInColumn(x, y, origin, direction),
   worldSize: () => world.worldSize(),
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.
-  riserBand: (pick) => world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan() }),
+  // The TOOL rides along because the carve reads a tread differently from the
+  // pull (world.ts's LayerEdgeLight.tool); read live, like every other HUD
+  // state here.
+  riserBand: (pick) =>
+    world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan(), tool: brushTool() }),
   bandAtCell: (x, y) => world.bandAtCell(x, y),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
   carveBand: (pick) => world.carveBand(pick),
@@ -279,6 +288,10 @@ viewport.onFrame(() => {
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
     heldBand: sculptInput.heldBand(),
+    // THE SAME TOOL THE PRESS WOULD USE, so the lit lip is the one a press
+    // takes — the carve's corner-edge rule and the pull's riser-only rule
+    // genuinely differ on a tread (D1, owner 2026-09-04).
+    tool: brushTool(),
   });
   brushPreview.update(
     // GRABBABLE MEANS "THIS PRESS WILL TAKE HOLD", so it is gated on the tool
