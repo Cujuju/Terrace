@@ -114,8 +114,8 @@ export const DISC_MEAN_LIFETIME_SECONDS = 240;
 export const DISC_FADE_SECONDS = 30;
 
 /**
- * The radius band a mass is drawn from, in cells — stated in WORLD UNITS and
- * converted, because a mass's size is measured against the camera and the
+ * The BASE radius band a mass is drawn from, in cells — stated in WORLD UNITS
+ * and converted, because a mass's size is measured against the camera and the
  * world's width.
  *
  * The floor is 24 — with the camera orbiting at 80 world units
@@ -124,9 +124,44 @@ export const DISC_FADE_SECONDS = 30;
  * ceiling is 56, a 112-unit body: most of a 128-unit world's width and about a
  * fifth of a 512-unit one, which is as large as a mass can get and still have an
  * outside that a player can stand in and look at.
+ *
+ * BASE, because a population may ask for a larger footprint than this
+ * (`DiscSystemsSpec.footprintAreaScale`); these two are the band at scale 1,
+ * which is what every population that does not ask gets, unchanged.
  */
 export const DISC_SYSTEM_MIN_RADIUS_CELLS = cellsAcross(24);
 export const DISC_SYSTEM_MAX_RADIUS_CELLS = cellsAcross(56);
+
+/**
+ * The footprint scale a population gets when it does not ask for one: the base
+ * band above, exactly.
+ *
+ * ONE AND NOT A NUMBER NEAR IT: every use below multiplies a radius by
+ * `Math.sqrt(scale)`, and `Math.sqrt(1)` is exactly 1 and multiplying by 1 is
+ * exact in IEEE — so a population at this default draws bit-for-bit the radii it
+ * drew before the option existed. That is what makes fog and thunderstorm
+ * untouched by rain and snow being enlarged.
+ */
+export const DISC_DEFAULT_FOOTPRINT_AREA_SCALE = 1;
+
+/**
+ * The RADIUS factor a footprint AREA scale works out to.
+ *
+ * AREA IS THE DECISION AND RADIUS IS THE CONSEQUENCE — "three times as much sky
+ * under one storm" is what a caller means and what a player sees, and a disc's
+ * area goes as r², so the radius factor is the square root. Callers state the
+ * area and never the root: the wrong power here is silent (it would be a storm
+ * nine times the area, or 1.7 times it, with nothing failing), which is the same
+ * hazard `cellsOverArea` exists for in @terrace/shared.
+ *
+ * `Math.sqrt` is exactly specified by IEEE-754 and is therefore allowed in this
+ * codebase's determinism rules (docs/DESIGN.md); a given scale yields the same
+ * factor on every machine. Nothing here is broadcast raw anyway — the resulting
+ * radius goes on the wire already rounded (`states`).
+ */
+export function discRadiusFactorFor(footprintAreaScale: number): number {
+  return Math.sqrt(footprintAreaScale);
+}
 
 /**
  * Ceiling on a radius as a fraction of the world edge.
@@ -136,7 +171,16 @@ export const DISC_SYSTEM_MAX_RADIUS_CELLS = cellsAcross(56);
  * map. 0.35 keeps the largest mass's diameter at 70% of the world edge, so there
  * is always somewhere else to stand. It is a FRACTION, so it needs no conversion
  * and binds identically at any sampling density; on the nominal world it never
- * binds (0.35 × 512 = 179 ≫ 56).
+ * binds for a population at the base scale (0.35 × 2048 cells = 717 ≫ the
+ * 224-cell ceiling).
+ *
+ * IT OUTRANKS THE FOOTPRINT SCALE, and that is the point of applying it after
+ * the scale rather than before: a population that asks for three times the area
+ * gets it wherever the world has room, and on a 128-unit world (512 cells) it
+ * gets whatever the 0.35 leaves — 179 cells, not 388 — so "there is always
+ * somewhere else to stand" survives an enlargement it never anticipated. On such
+ * a world an enlarged population's band is nearly a single size (166–179 cells),
+ * which is a narrower band and not a broken one.
  */
 export const DISC_MAX_RADIUS_WORLD_FRACTION = 0.35;
 
@@ -231,8 +275,29 @@ export interface DiscSystemsSpec {
    * this is the number an instance is tuned on and the population is a
    * consequence — stated as a fraction, it means the same thing on a 128-unit
    * world and on a 4096-cell one.
+   *
+   * AT THE BASE DISC SIZE. A population that also sets `footprintAreaScale`
+   * covers this fraction times that scale, because the scale is what makes each
+   * mass bigger while this number goes on deciding how many there are.
    */
   readonly coverageFraction: number;
+  /**
+   * How much bigger ONE of this population's masses is than the base band
+   * (DISC_SYSTEM_MIN/MAX_RADIUS_CELLS), stated as a multiple of its AREA.
+   * Absent or 1 is the base band, bit-for-bit.
+   *
+   * AN AREA AND NOT A RADIUS, because "how much sky is under one storm" is the
+   * thing a caller decides and a player sees; the kit takes the square root
+   * (`discRadiusFactorFor`) so no caller ever writes √3 and no caller can get
+   * the power wrong.
+   *
+   * IT CHANGES HOW BIG, NEVER HOW MANY. `capFor` deliberately derives the
+   * population from the BASE geometry, so raising this leaves the number of
+   * masses in the sky exactly where it was and multiplies the share of the map
+   * they cover instead — see `discActiveCapFor`, which states why that is the
+   * honest derivation and not a fudge.
+   */
+  readonly footprintAreaScale?: number;
   /**
    * Hard ceiling on the derived cap. Every cost an instance imposes — payload
    * size, draw calls, lights — is budgeted against this rather than against the
@@ -326,26 +391,50 @@ export interface DiscSystems {
   states(velocity: DiscVelocity): DiscSystemState[];
 }
 
-/** The largest radius a mass may have on a world of this size, in cells. */
-export function discMaxRadiusFor(worldSize: number): number {
+/** The smallest radius a mass of a population at this footprint scale may have. */
+export function discMinRadiusFor(
+  footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
+): number {
+  return DISC_SYSTEM_MIN_RADIUS_CELLS * discRadiusFactorFor(footprintAreaScale);
+}
+
+/**
+ * The largest radius a mass may have on a world of this size, in cells.
+ *
+ * THE WORLD'S CEILING IS APPLIED LAST, after the footprint scale, so it outranks
+ * it — see DISC_MAX_RADIUS_WORLD_FRACTION.
+ */
+export function discMaxRadiusFor(
+  worldSize: number,
+  footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
+): number {
   const fromWorld = worldSize * DISC_MAX_RADIUS_WORLD_FRACTION;
   // The floor keeps the band non-empty on a world so small that even the
   // minimum radius is more than a third of it; there, every mass is the minimum
   // size and the fraction has simply run out of room to bind.
   return Math.max(
-    DISC_SYSTEM_MIN_RADIUS_CELLS,
-    Math.min(DISC_SYSTEM_MAX_RADIUS_CELLS, fromWorld),
+    discMinRadiusFor(footprintAreaScale),
+    Math.min(DISC_SYSTEM_MAX_RADIUS_CELLS * discRadiusFactorFor(footprintAreaScale), fromWorld),
   );
 }
 
 /** The middle of the radius band this world allows, in cells. */
-export function discMeanRadiusFor(worldSize: number): number {
-  return (DISC_SYSTEM_MIN_RADIUS_CELLS + discMaxRadiusFor(worldSize)) / 2;
+export function discMeanRadiusFor(
+  worldSize: number,
+  footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
+): number {
+  return (
+    (discMinRadiusFor(footprintAreaScale) + discMaxRadiusFor(worldSize, footprintAreaScale)) / 2
+  );
 }
 
 /**
- * Mean footprint of one mass on this world, in cells², i.e. π·E[r²] over the
- * radius band the world allows.
+ * Mean footprint of one BASE-SIZE mass on this world, in cells², i.e. π·E[r²]
+ * over the radius band the world allows at footprint scale 1.
+ *
+ * BASE SIZE AND NOT THE CALLER'S, because its one consumer is the population
+ * derivation below, which is deliberately blind to `footprintAreaScale` — read
+ * `discActiveCapFor` for why.
  *
  * E[r²] AND NOT E[r]², because coverage is an area and the radius is a random
  * variable: using the mean radius would understate the mean area by the band's
@@ -376,6 +465,25 @@ export function discMeanFootprintCells(worldSize: number): number {
  * than the exact 1 − e^(−density·footprint): they differ by under a tenth of the
  * target at these densities, and the target is an aesthetic number that was
  * measured, not derived, so spending precision here would be false rigour.
+ *
+ * IT IS COMPUTED AT THE BASE DISC SIZE, WHATEVER `footprintAreaScale` SAYS — the
+ * one deliberate asymmetry in this file, and the reason it is deliberate is that
+ * the two knobs answer different questions. `coverageFraction` is the number a
+ * population's HOW MANY was tuned on; `footprintAreaScale` is a later decision
+ * about HOW BIG each one is. Feeding the scale in here would silently convert an
+ * enlargement into a thinning: the same coverage over three-times-the-area discs
+ * is a third of the storms, which is the opposite of what asking for bigger
+ * storms means (owner, 2026-09-04). So the enlargement lands where it was aimed
+ * — the realised coverage becomes `coverageFraction × footprintAreaScale`, which
+ * the spec field says out loud — and the population is untouched.
+ *
+ * REJECTED: deriving the cap from `coverageFraction × footprintAreaScale` over
+ * the SCALED footprint, which looks like the same thing and is not. The scaled
+ * band is clamped by DISC_MAX_RADIUS_WORLD_FRACTION and the scaled mean radius
+ * also widens the spawn field, so the two scalings do not cancel: on a 128-unit
+ * world at scale 3 it asks for 2 rain systems where the base derivation asks for
+ * 1. That is a population that changed because a size changed — exactly the
+ * coupling this asymmetry exists to break.
  */
 export function discActiveCapFor(
   worldSize: number,
@@ -404,6 +512,13 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
   const systems: DiscSystem[] = [];
   let nextId = 1;
   let forced = false;
+
+  /**
+   * This population's footprint scale, resolved once. Every radius drawn below
+   * goes through it; the population size deliberately does not (see
+   * `discActiveCapFor`).
+   */
+  const footprintAreaScale = spec.footprintAreaScale ?? DISC_DEFAULT_FOOTPRINT_AREA_SCALE;
 
   /** A centre drawn uniformly over the world square expanded by the spawn margin. */
   function randomCentre(worldSize: number, radius: number): { x: number; y: number } {
@@ -439,7 +554,12 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     if (systems.length === 0) {
       // The middle of the band this world allows, so the photograph shows an
       // ordinary mass rather than the largest or smallest one.
-      birth(centre, centre, discMeanRadiusFor(worldSize), DISC_MAX_PEAK_INTENSITY);
+      birth(
+        centre,
+        centre,
+        discMeanRadiusFor(worldSize, footprintAreaScale),
+        DISC_MAX_PEAK_INTENSITY,
+      );
     }
     const system = systems[0]!;
     system.x = centre;
@@ -454,8 +574,8 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
   function spawnOne(worldSize: number): DiscSystem | null {
     const radius = randomInRange(
       spec.random,
-      DISC_SYSTEM_MIN_RADIUS_CELLS,
-      discMaxRadiusFor(worldSize),
+      discMinRadiusFor(footprintAreaScale),
+      discMaxRadiusFor(worldSize, footprintAreaScale),
     );
 
     let centre = randomCentre(worldSize, radius);
@@ -509,7 +629,12 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     spawnAt(worldSize: number, x: number, y: number): DiscSystem {
       // The middle of the band this world allows, as a debug spawn chooses: an
       // ordinary mass rather than the largest or smallest one.
-      return birth(x, y, discMeanRadiusFor(worldSize), DISC_MAX_PEAK_INTENSITY);
+      return birth(
+        x,
+        y,
+        discMeanRadiusFor(worldSize, footprintAreaScale),
+        DISC_MAX_PEAK_INTENSITY,
+      );
     },
 
     force(next: boolean): void {

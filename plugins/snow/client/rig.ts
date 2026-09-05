@@ -26,15 +26,36 @@ import {
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
-import { MAX_ACTIVE_SYSTEMS, SNOW_PLUGIN_NAME } from '../protocol.ts';
+import {
+  MAX_ACTIVE_SYSTEMS,
+  SNOW_FOOTPRINT_AREA_SCALE,
+  SNOW_PLUGIN_NAME,
+} from '../protocol.ts';
 
 /**
- * Particles in one snow rig — fewer than rain's 900, and that is what makes it
- * read as snow. Snow falls an order of magnitude slower, so a flake is on screen
- * for eight seconds where a drop is on for one; matching rain's count would fill
- * the air with standing flakes.
+ * Particles in one snow rig at the kit's BASE disc size — fewer than rain's 900,
+ * and that is what makes it read as snow. Snow falls an order of magnitude
+ * slower, so a flake is on screen for eight seconds where a drop is on for one;
+ * matching rain's count would fill the air with standing flakes.
  */
-export const SNOW_FLAKE_COUNT = 700;
+const SNOW_FLAKE_COUNT_AT_BASE_FOOTPRINT = 700;
+
+/**
+ * Flakes in one snow rig, derived.
+ *
+ * DENSITY IS THE INVARIANT, NOT THE COUNT — the same call rain's
+ * RAIN_DROP_COUNT makes and for the same reason: 700 is justified as flakes per
+ * unit of disc, and holding it fixed while SNOW_FOOTPRINT_AREA_SCALE triples the
+ * disc would thin the fall to a third. Flakes are seeded uniformly by AREA
+ * (client/src/plugins/kit/precipitation.ts, `seedRadius`), so the count follows
+ * the area.
+ *
+ * THE COST, STATED. 2 100 flakes per rig where it was 700; at the plugin's cap
+ * of MAX_ACTIVE_SYSTEMS (2) that is 4 200 particles a frame against 1 400, each
+ * costing one `Math.sin` for the sway. A fifth of rain's enlarged load, on a
+ * plugin whose cap is two. UNVERIFIED: counted, not profiled.
+ */
+export const SNOW_FLAKE_COUNT = SNOW_FLAKE_COUNT_AT_BASE_FOOTPRINT * SNOW_FOOTPRINT_AREA_SCALE;
 
 /**
  * How snow falls and looks.
@@ -76,6 +97,12 @@ export const SNOW_RIG_DRAW_OBJECTS = 5;
  * the fine even grey of a rain front. The COUNT follows from it
  * (`puffsForCoverage`): 119 puffs today, against rain's 139 — the same "fewer,
  * bigger" relation SNOW_FLAKE_COUNT has to RAIN_DROP_COUNT.
+ *
+ * UNTOUCHED BY SNOW_FOOTPRINT_AREA_SCALE, and that is the fraction earning its
+ * keep: puff size is a fraction of the mass's radius and the count is derived
+ * from that fraction alone, so an enlarged mass gets the same 119 puffs, each
+ * grown with it — the deck's texture per unit of cloud is identical and the
+ * instance buffer does not move.
  */
 export const SNOW_PUFF_SIZE_FRACTION = 0.13;
 
