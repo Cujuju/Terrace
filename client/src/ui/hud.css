@@ -293,6 +293,16 @@ body {
     box-shadow var(--hud-motion);
 }
 
+/* The modeler's own tiles are the 34px square (owner mockup, 2026-09-04):
+   a 26px icon needs room around it that the 26px button the radius digits
+   used to sit in cannot give. Scoped to the dock rather than widened on
+   .brush-button itself, because the relics plugin reuses that class for a
+   word-labelled button and must keep the size it has. */
+.hud-modeler .brush-button {
+  width: 34px;
+  height: 34px;
+}
+
 /* The 32px toolbar face, shrunk to the 26px one a picker button holds
    (owner, 2026-09-04: the modeler's rows are icons now). Reusing
    .hud-tool__icon rather than a second class is what keeps the dock's tiles
