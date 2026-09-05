@@ -171,8 +171,7 @@ export interface SfxOptions {
   readonly delaySeconds?: number;
 }
 
-/** What a music generator plugs into: core's context and a core-owned node on
- * the music bus. */
+/** What a generator plugs into: core's context, core's node on the music bus. */
 export interface MusicOutlet {
   readonly context: AudioContext;
   readonly destination: AudioNode;
@@ -241,17 +240,8 @@ export interface PluginAudio {
 
   /**
    * Drives the music bus from code instead of a file. SAME CLAIMANT SLOT as
-   * `setMusic`: first caller of either owns the bus, and the two replace each
-   * other — a later `setMusic(url)` by the owner fades the generator out and
-   * the file in, and the reverse.
-   *
-   * `start` is called once, when core is ready to make sound; the handle it
-   * returns is stopped when the owner replaces it, passes null, or detaches.
-   * Passing null fades out. On a machine with no Web Audio `start` never runs.
-   *
-   * THE ONE PLACE A PLUGIN SEES WEB AUDIO, and it breaks none of the three
-   * rules above it: the outlet's context is core's own, the destination sits
-   * under the music bus and the master, and nothing about it is positional.
+   * `setMusic`; the two replace each other. `start` runs once; null fades out.
+   * The one place a plugin sees Web Audio — plan §8.2(a) for why that is safe.
    */
   setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void;
 }
@@ -651,24 +641,16 @@ export interface ClientPluginCtx {
   moverPose(pluginName: string, id: number): MoverPose | null;
 
   /**
-   * Publishes a named scalar THIS plugin already knows — a phase, a weight — so
-   * another plugin can read it without importing anything.
-   *
-   * The same rules `publishMovers` has: published under this plugin's OWN name,
-   * last publisher wins, and the returned function unpublishes.
-   *
-   * NO FRAME-PHASE CONSEQUENCE, unlike `publishMovers`: a gauge is a scalar a
-   * reader samples off-frame, and a per-frame reader getting the last-drawn
-   * value is exactly what such a reading is for.
+   * Publishes a named scalar this plugin knows — a phase, a weight.
+   * `publishMovers`' rules: own name, last publisher wins, return unpublishes.
+   * NO FRAME-PHASE CONSEQUENCE: a gauge is read off-frame (plan §8.2(b)).
    */
   publishGauge(key: string, read: () => number): () => void;
 
   /**
-   * Another plugin's gauge right now — the reading half of `publishGauge`. Null
-   * when that plugin publishes no such key, or is not mounted. The reader
-   * validates the range it expects; core knows nothing about the number.
-   *
-   * One map lookup plus the owner's own closure.
+   * Another plugin's gauge now — `publishGauge`'s reading half. Null when
+   * unpublished. The reader validates range. One lookup plus the owner's
+   * closure.
    */
   gauge(pluginName: string, key: string): number | null;
 
@@ -829,12 +811,8 @@ export interface TerraceClientPlugin {
   readonly groundShadeBudget?: number;
 
   /**
-   * This plugin has NO SERVER HALF, so the server's live plugin set can never
-   * name it — discovery skips a directory with no server entry, by design
-   * (server/src/plugins/discovery.ts). Without this flag the host would unmount
-   * it as "not live" the moment the first set arrived.
-   *
-   * Absence is the normal case and means "the server's set decides".
+   * NO SERVER HALF, so the live set can never name it (discovery skips it) and
+   * `syncLivePlugins` must not unmount it. Absent: the server's set decides.
    */
   readonly clientOnly?: boolean;
 

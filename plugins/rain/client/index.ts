@@ -142,8 +142,7 @@ export const clientPlugin: TerraceClientPlugin = {
     // Decode now, so the rain fades in instead of starting a decode as it does.
     ctx.audio.preload(rainLoopUrl);
     unpublishShade = ctx.publishGroundShade(shadeDiscs);
-    // The same weight the ambience loop is faded to, for any plugin that wants
-    // to know the weather over the listener (ClientPluginCtx.publishGauge).
+    // The same weight the ambience loop is faded to (publishGauge).
     unpublishWeight = ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
     // EVERY FRAME, deliberately: `ambience` short-circuits an unchanged weight
     // to one comparison, and the weight drifts continuously with the front.

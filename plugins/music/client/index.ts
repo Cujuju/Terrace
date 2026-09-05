@@ -1,10 +1,9 @@
-// music — client half, and client only. There is no server half and no wire
-// message: the score is generated on this machine from state this client
-// already has, so the server never knows a note was played.
+// music — client half, and client only. No server half, no wire message: the
+// score is generated here, so the server never knows a note was played.
 //
-// It draws nothing. What it owns is the music bus: it claims the generator lane
-// (ClientPluginCtx.audio.setMusicGenerator), runs the composer on core's own
-// context, and retargets the mood from gauges its siblings publish.
+// It draws nothing. It claims the generator lane
+// (ClientPluginCtx.audio.setMusicGenerator), runs the composer on core's
+// context, and retargets the mood from gauges its siblings publish. Plan §8.
 
 import { createComposer, type Composer } from './composer/composer.ts';
 import type {
@@ -16,30 +15,25 @@ import { AUDIO_DEBUG } from '../../../client/src/audio/audioDebug.ts';
 
 export const MUSIC_PLUGIN_NAME = 'music';
 
-/**
- * DRAWS NOTHING, so its share of the frame's draw calls is nothing — the honest
- * maximum, exactly as every other plugin's budget is an expression of its caps.
- */
+/** DRAWS NOTHING, so its share of the frame's draw calls is nothing. */
 const MUSIC_DRAW_OBJECTS = 0;
 
 /**
- * The score's seed. A constant because ClientPluginCtx exposes no world
- * identity, and the music is not meant to be recognisable per world. Named so a
- * per-world seed is one edit.
+ * The score's seed. Constant: ClientPluginCtx exposes no world identity, and
+ * the score is not meant to be per-world. Named so a per-world seed is one edit.
  */
 const MUSIC_SEED = 1;
 
 /**
- * How often the mood is resampled, milliseconds. The composer's parameters
- * glide with a 1.5 s time constant (~4.5 s to settle), so anything faster is
- * inaudible. A WALL-CLOCK TIMER, never onFrame: no per-frame work for audio.
+ * Mood resample period, ms. The composer glides over ~4.5 s
+ * (MOOD_GLIDE_TIME_CONSTANT_SECONDS), so faster is inaudible. Wall-clock timer,
+ * never onFrame.
  */
 const MOOD_SAMPLE_MS = 1000;
 
 /**
- * The siblings this plugin reads. DOCUMENTED COPIES of their own gauge keys —
- * plugins address each other by name and never import each other
- * (docs/decisions/plugin-host.md, 2026-09-01). A missing gauge reads null.
+ * DOCUMENTED COPIES of the siblings' gauge keys: plugins address each other by
+ * name, never by import (docs/decisions/plugin-host.md, 2026-09-01).
  */
 const MOOD_GAUGES = {
   dayPhase: { plugin: 'daynight', key: 'phase' },
@@ -48,15 +42,14 @@ const MOOD_GAUGES = {
 } as const;
 
 /**
- * Where danger would be read from. NOBODY PUBLISHES IT YET: which plugin owns
- * tension is a sound-design decision (plan §8.6), so the read is wired and
- * returns null until one does.
+ * Where danger would be read from. NOBODY PUBLISHES IT YET — the source is a
+ * sound-design decision (plan §8.6), so this reads null and tension stays 0.
  */
 const TENSION_GAUGE = { plugin: 'monsters', key: 'tension' } as const;
 
 /**
- * The mood when no sibling answers — a documented copy of the composer's own
- * DEFAULT_MOOD (composer.ts), which is not exported. Midday, clear, calm.
+ * The mood when no sibling answers — a documented copy of the composer's
+ * unexported DEFAULT_MOOD. Midday, clear, calm.
  */
 const FALLBACK_DAY_PHASE = 0.5;
 const FALLBACK_WEATHER = 0;
@@ -66,9 +59,8 @@ const FALLBACK_TENSION = 0;
 const MOOD_LOG_STEP = 0.05;
 
 /**
- * Module-level singleton, matching the shape of this repo's other plugins. The
- * client host constructs exactly one instance of each plugin, and
- * attach/dispose bracket its whole lifetime.
+ * Module-level singleton, as this repo's other plugins are: the host builds one
+ * instance per plugin, and attach/dispose bracket its lifetime.
  */
 let composer: Composer | null = null;
 let moodTimer: ReturnType<typeof setInterval> | null = null;
@@ -121,8 +113,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     audio = ctx.audio;
-    // START IS CALLED BY CORE, once it is ready to make sound, and never at all
-    // if the claim is refused or the machine has no Web Audio.
+    // START IS CALLED BY CORE, and never if the claim is refused.
     ctx.audio.setMusicGenerator((outlet) => {
       const running = createComposer(outlet.context, outlet.destination, MUSIC_SEED);
       composer = running;
@@ -144,7 +135,7 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
-    // Core fades and stops the generator; the host's own release would too.
+    // Core fades and stops the generator; the host's release would too.
     audio?.setMusicGenerator(null);
     audio = null;
   },

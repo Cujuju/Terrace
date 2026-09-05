@@ -78,8 +78,7 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: DAYNIGHT_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    // The same interpolated phase the sky is drawn from, for any plugin that
-    // wants to know the time of day (ClientPluginCtx.publishGauge).
+    // The same interpolated phase the sky is drawn from (publishGauge).
     unpublishPhase = ctx.publishGauge(PHASE_GAUGE_KEY, () => interpolator.samplePhase());
     reducedMotion = watchReducedMotion();
     hasPushedInitialSky = false;

@@ -61,7 +61,6 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   volcanoes,
   saucers,
   chronicle,
-  // LAST: it draws nothing and reads its siblings' gauges off-frame, so order
-  // buys it nothing — and last keeps the weather comment block intact.
+  // LAST: draws nothing, reads gauges off-frame, so order buys it nothing.
   music,
 ];
