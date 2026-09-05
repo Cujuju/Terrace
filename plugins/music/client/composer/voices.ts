@@ -31,16 +31,13 @@ const PAD_DETUNE_CENTS = 7;
  * filter sweep nearly inaudible. */
 const PAD_WAVEFORM: OscillatorType = 'sawtooth';
 
-/** Peak gain of one chord tone (all its detuned voices together), relative to
- * the composer's own output. Three tones at 0.09 sum to 0.27 before the filter
- * — deliberately far under 1 so the pad, the melody and the drone can never
- * add up to a clipped output even at their simultaneous peaks. */
-const PAD_TONE_PEAK_GAIN = 0.09;
+/** Peak gain of one chord tone (all detuned voices together), relative to the
+ * composer's output. 0.055: owner 2026-09-05 heard the pad at 0.09 as too
+ * strong under the melody; three tones now sum to 0.165, a bed, not a wall. */
+const PAD_TONE_PEAK_GAIN = 0.055;
 
-/** Pad attack, in seconds. 3 s over an 8.6 s chord means a chord is never
- * "struck": by the time it is at full level it has been audible for a third of
- * its life. This is the single strongest reason the pad reads as weather
- * rather than as a keyboard being played. */
+/** Pad attack, in seconds. 3 s over a 7.5 s chord means a chord is never
+ * "struck" — the strongest reason the pad reads as weather, not a keyboard. */
 const PAD_ATTACK_SECONDS = 3;
 
 /** Pad release, in seconds. Begins as the NEXT chord's attack begins, so the
@@ -49,23 +46,24 @@ const PAD_ATTACK_SECONDS = 3;
  * incoming one when that one arrives. */
 const PAD_RELEASE_SECONDS = 3.5;
 
-/** Melody waveform. Triangle: one soft odd-harmonic series, so a plucked note
- * carries over the pad without a sawtooth's edge. */
-const PLUCK_WAVEFORM: OscillatorType = 'triangle';
+/** Melody waveform. Sine: no harmonics, so a note is a point of light over the
+ * pad rather than an instrument — the "stars" half of the cosmic brief
+ * (owner 2026-09-05; was triangle). */
+const PLUCK_WAVEFORM: OscillatorType = 'sine';
 
-/** Peak gain of one melody note. Above the pad's per-tone level so single
- * notes read as foreground, still low enough that two overlapping plucks plus
- * a full pad stay under unity. */
-const PLUCK_PEAK_GAIN = 0.16;
+/** Peak gain of one melody note. Well above the pad's per-tone level so single
+ * notes read as foreground; four overlapping notes plus the pad stay under
+ * unity. Sine carries less energy than triangle, hence 0.18 not 0.16. */
+const PLUCK_PEAK_GAIN = 0.18;
 
 /** Melody attack, in seconds. 12 ms is fast enough to read as a pluck and slow
  * enough to avoid the click a step change in gain would produce. */
 const PLUCK_ATTACK_SECONDS = 0.012;
 
-/** Total life of a melody note, in seconds — attack plus decay. 2.2 s is about
- * four eighth notes at this tempo, so at the melody's densest a note has at
- * most three or four live neighbours. */
-const PLUCK_DURATION_SECONDS = 2.2;
+/** Total life of a melody note, in seconds — attack plus decay. 3.2 s (~7
+ * eighths) lets each note hang and fade like a distant point of light; at the
+ * densest mood a note has at most six live neighbours, still under unity. */
+const PLUCK_DURATION_SECONDS = 3.2;
 
 /** Gain a decaying note is ramped to before it is stopped. Exponential ramps
  * cannot reach zero, so they aim here: -80 dB, inaudible, and the node is
