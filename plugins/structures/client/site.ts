@@ -59,10 +59,36 @@
 //
 // So a survey now reports MOORINGS, not water cells: a mooring is a
 // lattice-confirmed water cell every point of whose reachable square is DRAWN
-// as water (`isMoorable`). The coastal/inland verdict is untouched and still
+// as water (`mooringVerdict`). The coastal/inland verdict is untouched and still
 // counts lattice cells — it is a question about a NEIGHBOURHOOD, not about
 // where a hull may swing, and re-deciding it on the drawn cap would change what
 // a fishing village is for no reason the owner asked for.
+//
+// WHY A MOORING IS ALSO A ZONE AND A SPACING (2026-09-05, GH #327 — owner: the
+// skiffs "collide with each other and with the warboats"). Being drawn water is
+// a fact about ONE candidate in isolation, and two of the three ways a hull ends
+// up inside another hull are facts about a PAIR:
+//
+//   * TWO SKIFFS. Moorable cells are adjacent — 0.25 world units apart — while
+//     each skiff reaches SKIFF_MOORING_CLEARANCE_WORLD_UNITS (0.46) from its
+//     anchor, so the nearest few moorings on any shoreline are three orbits over
+//     one patch of water. Fixed by requiring
+//     SKIFF_MOORING_SPACING_WORLD_UNITS between the moorings a survey keeps
+//     (below), which makes the reach discs provably disjoint.
+//   * A SKIFF AND A WAR BOAT. plugins/boats berths its fleet by the SAME rule on
+//     the SAME nearest-first coastal disc about the SAME village cell
+//     (server/fleet.ts's `surveyedLaunch`, 1011-1052), at the same minimum tier.
+//     Fixed by ZONING the harbour relative to each village's OWN shoreline:
+//     skiffs take the inshore strip (protocol.ts's
+//     HARBOUR_INSHORE_BAND_WORLD_UNITS), war boats berth beyond it. Neither
+//     plugin reads the other's placements; the band is what they agree on.
+//
+// The third way — two VILLAGES claiming one mooring, which handed
+// hashStructureCell the identical cell and drew two identical orbits through
+// each other — cannot be seen from inside a single survey at all, and is
+// enforced in placement.ts's cross-settlement claiming pass instead. That is
+// also why a survey now keeps SURVEY_MOORINGS_RETAINED candidates rather than
+// exactly the fleet's worth: the pass needs spares to fall back to.
 
 import {
   CELL_WORLD_SIZE,
@@ -72,9 +98,13 @@ import {
   cellsOverArea,
 } from '@terrace/shared';
 import { BAND_GRID_CELLS } from '../../../client/src/terrain/bandGrid.ts';
-import { structureKey } from '../protocol.ts';
+import { HARBOUR_INSHORE_BAND_WORLD_UNITS, structureKey } from '../protocol.ts';
 import type { GroundLookup } from './placement.ts';
-import { SKIFF_MAX_PER_SETTLEMENT, SKIFF_MOORING_CLEARANCE_WORLD_UNITS } from './skiffs.ts';
+import {
+  SKIFF_MAX_PER_SETTLEMENT,
+  SKIFF_MOORING_CLEARANCE_WORLD_UNITS,
+  SKIFF_MOORING_SPACING_WORLD_UNITS,
+} from './skiffs.ts';
 
 /**
  * Every site a settlement's location can qualify as. 'inland' is the
@@ -133,21 +163,23 @@ const CONFIRMED_WATER_MAX_WORLD_Y = -1;
 /**
  * How many MOORINGS a survey keeps.
  *
- * Bound by what the only consumer can use: skiffs.ts anchors at most
- * SKIFF_MAX_PER_SETTLEMENT boats and reads `moorings` nearest-first, so a
- * survey that retained the whole shoreline was building (and, before
- * 2026-09-01, sorting) hundreds of objects per structure to hand three of them
- * on. Retaining exactly that many keeps every anchor the fleet can place.
+ * TWICE the fleet (2026-09-05, GH #327), where it used to be exactly the fleet.
+ * placement.ts now claims moorings across the WHOLE world, so neighbouring
+ * villages on one bay compete for the same water and the nearest few are
+ * routinely a neighbour's by the time this settlement is served. The spares are
+ * what this settlement falls back to instead of floating nothing — the identical
+ * reasoning, and the identical multiple, plugins/boats/server/fleet.ts:455-465
+ * gives for its own MOORINGS_SURVEYED_PER_VILLAGE.
  *
  * IT NO LONGER BOUNDS THE SCAN (2026-09-04). The old early-out fired as soon as
- * the COASTAL threshold was met, which required
- * `SURVEY_WATER_CELLS_RETAINED <= COASTAL_MIN_WATER_CELLS` to be sure the kept
- * cells were not short. A water cell is no longer automatically a mooring, so
- * the threshold says nothing about how many moorings have been found and the
- * scan runs on until it has this many or the disc is exhausted — see
- * `surveySite`.
+ * the COASTAL threshold was met, which required this count to be
+ * `<= COASTAL_MIN_WATER_CELLS` (6 <= 32, still true) to be sure the kept cells
+ * were not short. A water cell is no longer automatically a mooring, so the
+ * threshold says nothing about how many moorings have been found; the scan runs
+ * on until it has this many, or until the inshore band closes, or until the disc
+ * is exhausted — see `surveySite`.
  */
-const SURVEY_WATER_CELLS_RETAINED = SKIFF_MAX_PER_SETTLEMENT;
+const SURVEY_MOORINGS_RETAINED = 2 * SKIFF_MAX_PER_SETTLEMENT;
 
 /**
  * Half-side of the square of DRAWN ground a mooring must be water across, in
@@ -168,6 +200,35 @@ const SURVEY_WATER_CELLS_RETAINED = SKIFF_MAX_PER_SETTLEMENT;
 export const SKIFF_MOORING_CLEARANCE_CELLS = Math.ceil(
   SKIFF_MOORING_CLEARANCE_WORLD_UNITS / CELL_WORLD_SIZE,
 );
+
+/**
+ * The same hull reach in CELLS but NOT rounded — 1.84 today.
+ *
+ * Distinct from SKIFF_MOORING_CLEARANCE_CELLS above, which is ceiled because it
+ * indexes a loop over a lattice of whole cells. This one is compared against a
+ * Euclidean distance, so rounding it up would push the inshore bound in by a
+ * sixth of a cell for no reason: it is an arithmetic term, not a loop bound.
+ */
+const SKIFF_MOORING_REACH_CELLS = SKIFF_MOORING_CLEARANCE_WORLD_UNITS / CELL_WORLD_SIZE;
+
+/**
+ * The inshore strip (protocol.ts's HARBOUR_INSHORE_BAND_WORLD_UNITS) in CELLS —
+ * 6 today. Converted here rather than written because CELL_WORLD_SIZE moved once
+ * already (the 2026-08-21 re-sample) and the band is stated in world units,
+ * which is the unit both plugins' copies agree in.
+ */
+const HARBOUR_INSHORE_BAND_CELLS = HARBOUR_INSHORE_BAND_WORLD_UNITS / CELL_WORLD_SIZE;
+
+/**
+ * The least allowed distance between two moorings, SQUARED and in CELLS —
+ * 3.68² = 13.54 today. Squared so the test needs no square root; in cells
+ * because moorings are cells.
+ *
+ * The rule itself, and its one-line disjointness proof, belong to skiffs.ts's
+ * SKIFF_MOORING_SPACING_WORLD_UNITS. This is only its unit conversion.
+ */
+export const SKIFF_MOORING_SPACING_CELLS_SQUARED =
+  (SKIFF_MOORING_SPACING_WORLD_UNITS / CELL_WORLD_SIZE) ** 2;
 
 /**
  * Grid samples across one axis of that square, inclusive of both edges.
@@ -279,16 +340,25 @@ export interface SiteSurvey {
    */
   readonly pending: boolean;
   /**
-   * The NEAREST MOORINGS found in the search disc, nearest first — skiffs.ts
-   * anchors boats on these. A mooring is a lattice-confirmed water cell that
-   * also passed `isMoorable`: every point the hull can reach from it is DRAWN
-   * as water (see the file banner). Always empty for a non-coastal result, and
-   * never longer than `SURVEY_WATER_CELLS_RETAINED`.
+   * The NEAREST MOORINGS found in the search disc, nearest first — a CANDIDATE
+   * POOL, not an assignment: placement.ts picks from it and may reject an entry
+   * a neighbouring settlement claimed first. Always empty for a non-coastal
+   * result, and never longer than `SURVEY_MOORINGS_RETAINED`.
+   *
+   * THREE THINGS ARE TRUE OF EVERY ENTRY, all enforced in `surveySite`:
+   *   1. MOORABLE — a lattice-confirmed water cell every point of whose hull
+   *      reach is also DRAWN as water (`mooringVerdict`, and the file banner).
+   *   2. INSHORE — its whole reach lies within HARBOUR_INSHORE_BAND_CELLS of the
+   *      settlement's own nearest confirmed water, so it is inside the half of
+   *      the harbour that belongs to skiffs rather than to war boats.
+   *   3. SPACED — at least SKIFF_MOORING_SPACING from every other entry, so no
+   *      two hulls anchored from this list can reach each other.
    *
    * IT MAY BE EMPTY ON A COASTAL SITE, and that is the guarantee working rather
    * than a failure: a settlement whose whole shoreline is too tight to swing a
-   * boat in is still a coastal site (it still renders the fishing-hut variant)
-   * and simply floats nothing. Better no skiff than a skiff in the sand.
+   * boat in — or whose inshore band holds no clear water at all — is still a
+   * coastal site (it still renders the fishing-hut variant) and simply floats
+   * nothing. Better no skiff than a skiff in the sand, or in a war boat.
    */
   readonly moorings: ReadonlyArray<{ readonly x: number; readonly y: number }>;
 }
@@ -305,16 +375,27 @@ export interface SiteSurvey {
  * the two disagree by a whole band exactly at the shoreline contour (see the
  * file banner).
  *
+ * ZONED AND SPACED (2026-09-05, GH #327). A candidate must also lie INSIDE this
+ * settlement's own inshore band and clear of every mooring already kept — see
+ * `SiteSurvey.moorings` for the three guarantees and the inline comments below
+ * for where each is applied. Both bounds only ever REJECT candidates, so the
+ * scan's cost can only fall; the inshore bound additionally CLOSES the mooring
+ * half early, because the disc is walked nearest-first and distance only grows.
+ *
  * COST, worst case, per survey: COASTAL_SEARCH_OFFSETS.length lattice samples
  * (748) plus MOORING_SAMPLES_PER_AXIS² (17 x 17 = 289) drawn samples for every
- * candidate water cell tested. The scan stops testing candidates once
- * SURVEY_WATER_CELLS_RETAINED moorings are kept, so the ceiling is a disc of
- * 748 lattice-water cells not one of which is moorable: 748 + 216 172 samples.
+ * candidate water cell tested. The drawn test is now paid only inside the
+ * inshore band — a ring of at most HARBOUR_INSHORE_BAND_CELLS (6) cells' depth
+ * about the shoreline — and only for candidates already spaced from the moorings
+ * kept, so the old ceiling (a disc of 748 unmoorable water cells, 216 172 drawn
+ * samples) is no longer reachable.
  *
- * MEASURED (2026-09-04, a straight coast three cells east of the site — the
- * ordinary fishing village): 126 lattice samples and 883 drawn samples, i.e.
- * the early-out fires after three candidates and the drawn test is what the
- * survey now mostly costs. 512 such surveys, ALL coastal and ALL missing the
+ * MEASURED before the zoning (2026-09-04, a straight coast three cells east of
+ * the site — the ordinary fishing village): 126 lattice samples and 883 drawn
+ * samples, i.e. the early-out fired after three candidates and the drawn test is
+ * what the survey mostly costs. The zoning does not raise either figure — it
+ * spends the same nearest-first walk and rejects more of it. 512 such surveys,
+ * ALL coastal and ALL missing the
  * cache, run 1.8 ms with an arithmetic lookup and about 16 ms against a stand-in
  * shaped like the real chart read (a Map get plus a typed-array index). The
  * second figure is over the 7.1 ms frame budget — as the pre-mooring code
@@ -342,6 +423,22 @@ export function surveySite(
   let unknown = 0;
   /** Some candidate was rejected ONLY because part of its square is not drawn yet. */
   let mooringUndrawn = false;
+  /**
+   * Distance in cells of the FIRST confirmed water cell the scan meets — this
+   * settlement's own shoreline, since the disc is walked nearest-first. Null
+   * until that cell is found, and every later distance is at least this one.
+   */
+  let shoreCells: number | null = null;
+  /** No later candidate can qualify, so the drawn-ground test is no longer paid. */
+  let mooringsClosed = false;
+  /**
+   * Is a re-survey worth it? Only when undrawn ground cost this settlement a
+   * mooring it could still USE — a full pool is a settled answer however many
+   * candidates were skipped on the way to it, and reporting it pending would
+   * bar `createSiteSurveyCache` from ever memoising a busy shoreline.
+   */
+  const mooringsPending = (): boolean =>
+    mooringUndrawn && moorings.length < SURVEY_MOORINGS_RETAINED;
 
   for (let i = 0; i < offsetsX.length; i++) {
     const cellX = x + offsetsX[i];
@@ -353,31 +450,53 @@ export function surveySite(
     }
     if (sample > CONFIRMED_WATER_MAX_WORLD_Y) continue;
     confirmed++;
-    // The scan is nearest-first, so the first moorings kept are the nearest
-    // ones and nothing later in the disc can displace them. The drawn-ground
-    // test is only paid while there is still a slot to fill.
-    if (moorings.length < SURVEY_WATER_CELLS_RETAINED) {
-      const verdict = mooringVerdict(drawnAt, cellX, cellY);
-      if (verdict === 'moorable') moorings.push({ x: cellX, y: cellY });
-      else if (verdict === 'undrawn') mooringUndrawn = true;
+    if (!mooringsClosed) {
+      const distance = Math.sqrt(offsetsX[i] * offsetsX[i] + offsetsY[i] * offsetsY[i]);
+      if (shoreCells === null) shoreCells = distance;
+      // THE INSHORE BOUND. The whole disc the hull can reach must stay within
+      // the band past this settlement's OWN shoreline — the water war boats
+      // keep out of (protocol.ts's HARBOUR_INSHORE_BAND_WORLD_UNITS). The scan
+      // is nearest-first, so `distance` only ever grows: once one candidate is
+      // out of the band, no later one can be in it, and the mooring half of the
+      // survey is finished for good. The COASTAL COUNT is a different question
+      // (a neighbourhood, not a berth) and keeps walking the whole disc.
+      if (distance + SKIFF_MOORING_REACH_CELLS > shoreCells + HARBOUR_INSHORE_BAND_CELLS) {
+        mooringsClosed = true;
+      } else if (
+        // SPACED FROM EVERY MOORING ALREADY KEPT, so two of this settlement's
+        // own skiffs can never reach each other (skiffs.ts's
+        // SKIFF_MOORING_SPACING_WORLD_UNITS carries the proof). Cheap integer
+        // test first: it rejects the adjacent cells that make up most of a
+        // shoreline before any drawn sampling is paid for.
+        moorings.every((kept) => {
+          const dxk = cellX - kept.x;
+          const dyk = cellY - kept.y;
+          return dxk * dxk + dyk * dyk >= SKIFF_MOORING_SPACING_CELLS_SQUARED;
+        })
+      ) {
+        const verdict = mooringVerdict(drawnAt, cellX, cellY);
+        if (verdict === 'moorable') {
+          moorings.push({ x: cellX, y: cellY });
+          if (moorings.length >= SURVEY_MOORINGS_RETAINED) mooringsClosed = true;
+        } else if (verdict === 'undrawn') mooringUndrawn = true;
+      }
     }
-    // EARLY OUT, NOW ON BOTH ANSWERS. The verdict is coastal and cannot become
-    // anything else, AND every anchor a fleet can use has been kept, so the
-    // rest of the disc has nothing left to say. It used to fire on the verdict
-    // alone, which was sound only while every water cell was an anchor; a
-    // mooring is a strictly stronger claim, so the scan has to be allowed to
-    // walk further out for one. The disc itself is still the hard bound —
-    // nothing here scans past COASTAL_SEARCH_RADIUS_CELLS.
-    if (confirmed >= COASTAL_MIN_WATER_CELLS && moorings.length >= SURVEY_WATER_CELLS_RETAINED) {
-      return { kind: 'coastal', pending: false, moorings };
+    // EARLY OUT, ON BOTH ANSWERS. The verdict is coastal and cannot become
+    // anything else, AND the mooring half is closed — either full or past the
+    // inshore band — so the rest of the disc has nothing left to say. It used to
+    // fire on the verdict alone, which was sound only while every water cell was
+    // an anchor. The disc itself is still the hard bound: nothing here scans
+    // past COASTAL_SEARCH_RADIUS_CELLS.
+    if (confirmed >= COASTAL_MIN_WATER_CELLS && mooringsClosed) {
+      return { kind: 'coastal', pending: mooringsPending(), moorings };
     }
   }
 
-  // Coastal, but the disc ran out before the fleet's anchors were filled. The
-  // moorings kept (possibly NONE — see SiteSurvey.moorings) are all there are.
-  // `pending` here is only about the MOORINGS: the verdict is settled.
+  // Coastal, but the disc ran out before the pool was filled. The moorings kept
+  // (possibly NONE — see SiteSurvey.moorings) are all there are. `pending` here
+  // is only about the MOORINGS: the verdict is settled.
   if (confirmed >= COASTAL_MIN_WATER_CELLS) {
-    return { kind: 'coastal', pending: mooringUndrawn, moorings };
+    return { kind: 'coastal', pending: mooringsPending(), moorings };
   }
   // Even if every still-unknown neighbour resolved to confirmed water, the
   // total could not reach the threshold — the verdict is settled 'inland'
