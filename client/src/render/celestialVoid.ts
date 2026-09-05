@@ -63,8 +63,8 @@
 //           reads the camera, so panning and orbiting leave the void alone
 //           and the hub stays on the view axis, exactly as approved.
 //   'world' — the disk IS the world's plane: its normal is world +Y, its hub
-//           is the fixed world point LOCKED_HUB_DEPTH_WORLD below the centre
-//           of the map, LOCKED_WORLD_UNITS_PER_DISK_UNIT world units to one
+//           is the fixed world point LOCKED_HUB_CLEARANCE_WORLD below the
+//           floor of the map at its centre, LOCKED_WORLD_UNITS_PER_DISK_UNIT world units to one
 //           disk unit, and the ray is the real camera's. Orbiting, panning
 //           and zooming all move the void with the terrain. THE HUB IS A
 //           CONSTANT, NOT CAPTURED: locking never samples the camera or the
@@ -97,7 +97,8 @@ import {
   Vector3,
   type IUniform,
 } from 'three';
-import { CELL_WORLD_SIZE } from '../config.ts';
+import { MIN_HEIGHT } from '@terrace/shared';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import type { Viewport } from './scene.ts';
 
 export type VoidStyle = 'nebula' | 'wheel';
@@ -121,9 +122,7 @@ const WHEEL_TILT_DEGREES = 60;
 
 /**
  * Distance from the eye to the hub along the view axis in the 'view' anchor,
- * disk units. The reference's DISK_DIST; also what LOCKED_HUB_DEPTH_WORLD is
- * derived from, so the locked wheel seen from straight above the map centre
- * frames the same way the view-anchored one does.
+ * disk units. The reference's DISK_DIST.
  */
 const VIEW_HUB_DISTANCE = 2.6;
 
@@ -154,12 +153,20 @@ const NEBULA_ZOOM = 2.2;
 const LOCKED_WORLD_UNITS_PER_DISK_UNIT = 200;
 
 /**
- * How far below y = 0 (sea level) the locked hub sits, world units. The view
- * anchor's hub distance in world units, so looking straight down on the map
- * centre from VIEW_HUB_DISTANCE disk units up shows the galaxy at the
- * concept's framing.
+ * Clearance between the bottom of the map and the locked disk, world units.
+ * Owner, 2026-09-04: "I want the map to sit just above the star rendering,
+ * maybe like ten world units." The map's lowest drawn geometry is at
+ * MIN_HEIGHT (the lava floor and the skirts down to it), so the disk lies
+ * this far under that, not under sea level.
  */
-const LOCKED_HUB_DEPTH_WORLD = VIEW_HUB_DISTANCE * LOCKED_WORLD_UNITS_PER_DISK_UNIT;
+const LOCKED_HUB_CLEARANCE_WORLD = 10;
+
+/**
+ * World y of the locked hub: LOCKED_HUB_CLEARANCE_WORLD under the world's
+ * floor. Negative — the floor is MIN_HEIGHT (−24 world units at the current
+ * relief scale) and the hub sits below it.
+ */
+const LOCKED_HUB_WORLD_Y = MIN_HEIGHT * HEIGHT_WORLD_SCALE - LOCKED_HUB_CLEARANCE_WORLD;
 
 /**
  * Draw order for the void. Three sorts opaque objects by `renderOrder` before
@@ -490,7 +497,7 @@ export function createCelestialVoid(
     cameraToWorld.setFromMatrix4(camera.matrixWorld);
     worldFrame.toDisk.multiplyMatrices(WORLD_TO_DISK, cameraToWorld);
     const halfSpan = (worldSize() * CELL_WORLD_SIZE) / 2;
-    hub.set(halfSpan, -LOCKED_HUB_DEPTH_WORLD, halfSpan);
+    hub.set(halfSpan, LOCKED_HUB_WORLD_Y, halfSpan);
     worldFrame.origin
       .copy(camera.position)
       .sub(hub)
