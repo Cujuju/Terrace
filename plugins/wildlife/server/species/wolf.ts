@@ -18,11 +18,15 @@
 // it was not yet asked for.
 //
 // WHAT IT IS NOW, in one sentence: a wolf sees a deer six body lengths off,
-// runs it down at the same burst a frightened animal flees at, takes it if it
-// gets within a body length inside four seconds, and then does not
-// hunt again for two minutes. Everything else — the alarm the deer bolts from,
-// the removal of the one that is caught — is machinery this plugin already had
-// (`Predation` on ./profile.ts, `despawnWithCredit` in ../population.ts).
+// runs it down at the same burst a frightened animal flees at, catches it if it
+// gets within a body length inside four seconds, and then does not hunt again
+// for two minutes. The alarm the deer bolts from is machinery this plugin
+// already had (`Predation` on ./profile.ts).
+//
+// CHASE ONLY — NOTHING DIES (owner, 2026-09-05): a kill needs a kill animation,
+// a deer on the ground and a wolf over it, and until there is one a caught deer
+// runs on. The kill version shipped first, was measured, and was taken out the
+// same day; ../movement.ts's `resolveCatches` names the one-line change back.
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
@@ -128,12 +132,12 @@ const WOLF_DETECT_RADIUS_CELLS = cellsAcross(6);
 const WOLF_ALARM_RADIUS_CELLS = cellsAcross(3);
 
 /**
- * How close a wolf must get to take a deer: ONE WOLF BODY LENGTH, the
+ * How close a wolf must get to catch a deer: ONE WOLF BODY LENGTH, the
  * `bodyLengthCells` this row declares below.
  *
  * The animals are touching at that distance — a wolf a body length from a deer
- * has its jaws where the deer is — so the kill lands where a player watching
- * would already have called it. Any larger and the deer disappears with daylight
+ * has its jaws where the deer is — so the catch lands where a player watching
+ * would already have called it. Any larger and the wolf breaks off with daylight
  * between them; any smaller and the two would have to occupy the same point,
  * which the steering's own personal-space separation (../movement.ts) works to
  * prevent.
@@ -143,7 +147,7 @@ const WOLF_CATCH_RADIUS_CELLS = cellsAcross(1.0);
 /**
  * How long one chase may last before the wolf gives up. FOUR SECONDS, picked so
  * that a deer spotted at the EDGE of WOLF_DETECT_RADIUS_CELLS is a coin flip
- * and a deer spotted well inside it is a kill.
+ * and a deer spotted well inside it is a catch.
  *
  * THE MODEL, in two phases, from the speeds at the top of this section.
  *
@@ -162,9 +166,9 @@ const WOLF_CATCH_RADIUS_CELLS = cellsAcross(1.0);
  * ~515 deer). Real chases close FASTER than the model: the model gives the deer
  * an unobstructed straight line away, and a real one is deflected by the ground
  * and by the other deer it has to keep clear of, so its escape speed is under
- * 2.4. At 4.5 s the measured kill rate for a deer locked at 5–6 units was 82%
+ * 2.4. At 4.5 s the measured catch rate for a deer locked at 5–6 units was 82%
  * — a magnet, not a hunt. At 4.0 s it is 51% at 5–6 units, 65% at 4–5 and 92%
- * at 3–4, which is exactly the shape this constant is for. Overall: 117 kills
+ * at 3–4, which is exactly the shape this constant is for. Overall: 117 catches
  * against 53 misses.
  *
  * BOTH ENDS OF THE RANGE ARE FAILURES. A hunt that never fails is a magnet —
@@ -177,32 +181,29 @@ const WOLF_CATCH_RADIUS_CELLS = cellsAcross(1.0);
 const WOLF_CHASE_MAX_SECONDS = 4.0;
 
 /**
- * How long a wolf goes without hunting after a kill. TWO MINUTES — satiety, and
- * THE POPULATION GOVERNOR: at most one deer per wolf per two minutes, whatever
- * else happens.
+ * How long a wolf goes without hunting after a catch. TWO MINUTES.
  *
- * AGAINST THE CENSUS'S OWN CLOCKS (../population.ts). A caught deer leaves
- * through `despawnWithCredit`, so its replacement credit ripens after
- * HABITAT_LOSS_RESPAWN_DELAY_SECONDS (8) and then hatches at the
- * SPAWN_MEAN_WAIT_SECONDS (20) hazard: the deer is back after ~28 s on average,
- * which is less than a quarter of this. The replacement therefore always
- * arrives long before the wolf that took it hunts again, and in steady state
- * the deer population sits at target minus at most (wolves × 1) — one deer in
- * flight per wolf, never a decline. Set against NATURAL_LIFESPAN_SECONDS (300),
- * predation is also the smaller force on any deer's life by a wide margin: a
- * deer is far likelier to wander off than to be eaten.
+ * IT IS WHAT MAKES A CATCH AN ENDING. The deer a wolf has just reached is, by
+ * construction, inside the detect radius; with no rest the wolf would lock it
+ * again on the next tick and the "catch" would be a wolf glued to a deer until
+ * the chase clock ran out. Six times the miss rest below, because a wolf that
+ * ran its deer down is finished with it, and because the catch is the event a
+ * player watched: at one per wolf per two minutes it stays an event.
  *
- * WHAT IT COSTS ON THE SMALLEST ISLAND THAT HAS ANY ANIMALS AT ALL, computed
- * rather than hoped. A habitat of MIN_FOUNDING_HABITAT_CELLS (../census.ts,
- * cellsOverArea(64) = 1 024 cells) is below BOTH densities — a deer wants 1 600
- * cells and a wolf 32 000 — so `targetsFor` gives each species its
- * FOUNDING_POPULATION of 2: two wolves and two deer. Two wolves at this rate
- * take at most one deer per 60 s, each absent ~28 s, so the island carries ~1.5
- * of its 2 deer on average and is briefly down to one. That is the honest cost
- * and it is the reason this number is 120 rather than 30: at 30 the same island
- * would sit at ~1 deer and read as a place where deer cannot live.
+ * IT IS ALSO THE POPULATION GOVERNOR THE DAY A KILL RETURNS, and the value is
+ * chosen so that turning the kill back on (../movement.ts's `resolveCatches`)
+ * moves nothing else. Against the census's own clocks (../population.ts): a
+ * deer removed through `despawnWithCredit` is back after ~28 s on average
+ * (HABITAT_LOSS_RESPAWN_DELAY_SECONDS 8, then the SPAWN_MEAN_WAIT_SECONDS 20
+ * hazard), under a quarter of this, so the deer population would sit at target
+ * minus at most one per wolf, never decline; and on the smallest island that
+ * has animals at all (MIN_FOUNDING_HABITAT_CELLS, ../census.ts — two wolves
+ * and two deer by FOUNDING_POPULATION) two wolves would take at most one deer
+ * per 60 s, each absent ~28 s, so the island would carry ~1.5 of its 2 deer.
+ * At 30 the same island would sit at ~1 and read as a place where deer cannot
+ * live, which is why this is 120 rather than 30.
  */
-const WOLF_REST_AFTER_KILL_SECONDS = 120;
+const WOLF_REST_AFTER_CATCH_SECONDS = 120;
 
 /**
  * How long a wolf goes without hunting after a chase it lost. TWENTY SECONDS —
@@ -222,9 +223,9 @@ const WOLF_REST_AFTER_KILL_SECONDS = 120;
  * that was always chasing would be a wolf on rails, and the burst would stop
  * reading as an event.
  *
- * A quarter of WOLF_REST_AFTER_KILL_SECONDS, which is the right ordering for
- * the right reason: a full wolf has a reason not to hunt, a winded one only
- * needs to get its breath back.
+ * A quarter of WOLF_REST_AFTER_CATCH_SECONDS, which is the right ordering for
+ * the right reason: a wolf that has run its deer down is done with it, a winded
+ * one only needs to get its breath back.
  */
 const WOLF_REST_AFTER_MISS_SECONDS = 20;
 
@@ -255,7 +256,7 @@ const WOLF_PREDATION: Predation = {
     catchRadiusCells: WOLF_CATCH_RADIUS_CELLS,
     maxSeconds: WOLF_CHASE_MAX_SECONDS,
     restAfterMissSeconds: WOLF_REST_AFTER_MISS_SECONDS,
-    restAfterKillSeconds: WOLF_REST_AFTER_KILL_SECONDS,
+    restAfterCatchSeconds: WOLF_REST_AFTER_CATCH_SECONDS,
   },
 };
 
@@ -289,8 +290,8 @@ export const WOLF_PROFILE: SpeciesProfile = {
   // predation was out of scope when this row shipped.
   //
   // UNCHANGED BY THE HUNT (2026-09-05), which is a decision. Two wolves that
-  // happen to lock the same deer both close on it and both are sated when one
-  // takes it (../movement.ts's `resolveCatches`), and that is the whole of the
+  // happen to lock the same deer both close on it and both rest when one
+  // catches it (../movement.ts's `resolveCatches`), and that is the whole of the
   // pack behaviour: coordinated flanking, a shared target, or a wolf calling
   // another in are named punts, not omissions.
   groupSize: 2,

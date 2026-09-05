@@ -35,7 +35,7 @@ import {
 } from '@terrace/shared';
 import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
-import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
+import { type WildlifeEntity, livingEntities } from './population.ts';
 import { randomSigned, rollEvent } from './rng.ts';
 import {
   FLEE_SPEED_MULTIPLIER,
@@ -902,9 +902,9 @@ export function advanceMovement(world: HabitatWorld, dt: number): void {
     );
   }
 
-  // ALARM FIRST, THEN THE CATCH: a deer's last tick still ends with the wolf
-  // frightening its neighbours, and the catch pass never removes a creature the
-  // alarm loop is part-way through.
+  // ALARM FIRST, THEN THE CATCH: the deer a wolf reaches this tick is startled
+  // from where the wolf now stands before the chase is booked as over, so it
+  // leaves at a run rather than at a walk.
   applyPredatorAlarms();
   resolveCatches();
 }
@@ -970,7 +970,7 @@ export interface PursuitTarget {
  * catch would therefore be geometrically unreachable: the sweep would veto the
  * very step that closes the last cell, and a hunt could only ever land by the
  * prey blundering into a hunter through the one-tick staleness of this
- * snapshot. Measured before this filter existed: 41 kills against 367 misses.
+ * snapshot. Measured before this filter existed: 41 catches against 367 misses.
  *
  * It is deliberately ONE-SIDED. The prey still avoids the hunter's body, and
  * the hunter still avoids every other creature, so nothing else about
@@ -1107,26 +1107,28 @@ function resolvePursuits(
 }
 
 /**
- * Resolves catches from END-of-tick positions, and removes what was caught.
+ * Resolves catches from END-of-tick positions: a hunter that has closed to its
+ * catch radius has caught its prey, and the chase is over.
  *
  * AFTER ALL MOVEMENT, for the reason `applyPredatorAlarms` gives for running
- * there: whether a deer is taken must not depend on whether it or the wolf
+ * there: whether a deer is caught must not depend on whether it or the wolf
  * moved first this tick.
  *
- * KILLS ARE COLLECTED FIRST AND DESPAWNED BY DESCENDING INDEX, so a splice can
- * never shift an index still to be used. Two hunters on one animal: the animal
- * is removed once (it is an id in a set) and BOTH hunters are sated — a pair
- * shares the kill, which is the whole of the wolf's pack behaviour.
+ * A CATCH REMOVES NOTHING (owner, 2026-09-05: chase only, until there is a kill
+ * animation — a deer on the ground and a wolf over it — to show for a kill; a
+ * deer that simply vanished at the wolf's jaws would read as a bug). The
+ * hunter is released and rests (`Pursuit.restAfterCatchSeconds`); the prey,
+ * startled this same tick by the alarm from the hunter's final position, runs
+ * on. The removal, when it comes, belongs HERE and goes through
+ * `despawnWithCredit` (population.ts) so the census refills it — that is the
+ * one-line change, and it was implemented and measured before being taken out
+ * (.claude/orchestration/briefs/assets-p6-report.md).
  *
- * A CAUGHT CREATURE LEAVES THROUGH `despawnWithCredit`, the machinery habitat
- * loss uses, so predation is regulated by the census rather than being a second
- * drain beside it. See `Predation` (species/profile.ts).
+ * Two hunters on one animal both catch it and both rest — a pair shares the
+ * catch, which is the whole of the wolf's pack behaviour.
  */
 function resolveCatches(): void {
   const population = livingEntities();
-  const doomed = new Set<number>();
-  const sated: { readonly hunter: WildlifeEntity; readonly restSeconds: number }[] = [];
-
   for (const hunter of population) {
     if (hunter.huntTargetId === null) continue;
     const pursuit = profileOf(hunter.species).hunts?.pursuit;
@@ -1136,20 +1138,9 @@ function resolveCatches(): void {
     const dx = target.x - hunter.x;
     const dy = target.y - hunter.y;
     if (dx * dx + dy * dy > pursuit.catchRadiusCells * pursuit.catchRadiusCells) continue;
-    doomed.add(target.id);
-    sated.push({ hunter, restSeconds: pursuit.restAfterKillSeconds });
-  }
-
-  if (doomed.size === 0) return;
-
-  for (const { hunter, restSeconds } of sated) {
     hunter.huntTargetId = null;
     hunter.huntSecondsRemaining = 0;
-    hunter.huntRestSecondsRemaining = restSeconds;
-  }
-
-  for (let index = population.length - 1; index >= 0; index--) {
-    if (doomed.has(population[index].id)) despawnWithCredit(index);
+    hunter.huntRestSecondsRemaining = pursuit.restAfterCatchSeconds;
   }
 }
 

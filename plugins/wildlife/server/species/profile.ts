@@ -673,21 +673,25 @@ export interface IdleBouts {
  * PURSUIT IS THE OPT-IN EXTENSION (owner, 2026-09-05: "wolves should hunt the
  * deer"). A row that declares no `pursuit` behaves bit-for-bit as it did before
  * the field existed — which is why it is optional rather than defaulted — and
- * THE SHARK STILL KILLS NOTHING: a fleeing fish (9 cells/s) outruns a cruising
- * shark (7.2), the shark declares no pursuit, and nothing on the shelf is ever
- * removed by a hunter. Only ./wolf.ts declares one.
+ * THE SHARK STILL CATCHES NOTHING: a fleeing fish (9 cells/s) outruns a
+ * cruising shark (7.2) and the shark declares no pursuit. Only ./wolf.ts
+ * declares one.
  *
- * A KILL IS A CREDITED DESPAWN, NOT A DRAIN, and that is what answers the
- * objection this comment used to state — that a hunter which removed prey would
- * put "a second, unregulated drain next to the census's own turnover" and the
- * two would fight over what the population count means. It would have, as an
- * unregulated removal. A catch instead goes through `despawnWithCredit`
+ * NOTHING IS KILLED, BY EITHER (owner, 2026-09-05: chase only — a kill needs a
+ * kill animation, a deer on the ground and a wolf over it, and there is none).
+ * A catch ends the chase and rests the hunter (`Pursuit.restAfterCatchSeconds`);
+ * the prey runs on. The population machinery is untouched, exactly as it was
+ * when this comment said "prey scatter ahead of it" was the whole mechanic.
+ *
+ * WHEN A KILL IS WANTED, it is a credited despawn, not a drain. The objection
+ * this comment used to state — that a hunter which removed prey would put "a
+ * second, unregulated drain next to the census's own turnover" — holds for an
+ * unregulated removal and not for one that goes through `despawnWithCredit`
  * (population.ts), the machinery habitat loss already uses: the census books
- * the replacement immediately, the credit ripens after
+ * the replacement at once, the credit ripens after
  * HABITAT_LOSS_RESPAWN_DELAY_SECONDS and hatches at the SPAWN_MEAN_WAIT_SECONDS
- * hazard, so predation is one more thing the census regulates rather than a
- * second accounting of the same population. The hunter's own
- * `restAfterKillSeconds` is what bounds the rate.
+ * hazard. That version shipped, was measured, and was taken out for want of
+ * the animation (movement.ts's `resolveCatches` names the one-line change).
  *
  * COST: O(hunters × population) per tick for the alarm, and the same again for
  * target selection and the catch on a hunter that pursues. Affordable only
@@ -721,29 +725,28 @@ export interface Predation {
  * `resolveCatches`): a rested hunter locks the nearest living prey inside
  * `detectRadiusCells` from the start-of-tick snapshot, steers at it through the
  * ordinary steering ladder at `speedMultiplier` × cruise, and keeps that target
- * until it dies, escapes, or `maxSeconds` runs out. Nothing here overrides the
- * world: a chase cannot cross a slope the species could not walk, leave its
+ * until it is caught, escapes, or `maxSeconds` runs out. Nothing here overrides
+ * the world: a chase cannot cross a slope the species could not walk, leave its
  * habitat, or turn faster than its own turning circle, so a hunt is a hunt over
  * real ground rather than a homing missile.
  *
  * NOTHING OF THIS GOES ON THE WIRE. The client is told where creatures are; a
- * caught one is simply absent from the next broadcast and the interpolator
- * drops it (../../client/interpolation.ts), which is exactly what natural
- * turnover has always looked like.
+ * chase is one animal running at another and a catch is the one behind
+ * dropping back to a walk, both of which the interpolator already draws.
  */
 export interface Pursuit {
   /** How far the hunter sees prey worth chasing, in cells. */
   readonly detectRadiusCells: number;
   /** Cruise multiplier while chasing — the burst a fleeing animal also uses. */
   readonly speedMultiplier: number;
-  /** How close the hunter must get to take the target, in cells. */
+  /** How close the hunter must get to catch the target, in cells. */
   readonly catchRadiusCells: number;
   /** How long one chase may last before the hunter gives up. */
   readonly maxSeconds: number;
   /** Seconds before the hunter may lock a target again after a failed chase. */
   readonly restAfterMissSeconds: number;
-  /** Seconds before the hunter may lock a target again after a kill: satiety. */
-  readonly restAfterKillSeconds: number;
+  /** Seconds before the hunter may lock a target again after a catch. */
+  readonly restAfterCatchSeconds: number;
 }
 
 /**
