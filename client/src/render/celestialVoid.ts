@@ -235,7 +235,7 @@ float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); retur
 float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
 float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*vnoise(p); p=p*2.03+vec2(17.3,9.1); a*=0.5; } return s; }
-// The same noise, periodic in y with period `per` cells: the lattice row wraps, so a domain
+// The same noise, periodic in y with period per cells: the lattice row wraps, so a domain
 // whose y is an angle has no seam. Lacunarity exactly 2 and no y offset keep every octave periodic.
 float pvnoise(vec2 p, float per){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   float y0=mod(i.y,per), y1=mod(i.y+1.0,per);
