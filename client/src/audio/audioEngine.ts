@@ -344,8 +344,18 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
 
   function debugLog(call: string, fields: Record<string, unknown>): void {
     if (!AUDIO_DEBUG) return;
+    // THE LIVE GAIN OF THE BUS THIS CALL IS ON. Between the voice's own gain
+    // (already in `fields`) and the master below, this is the only other factor
+    // in how loud the call ends up — so with all three on the line the trace
+    // explains a level completely instead of leaving one term out.
+    const bus = fields.bus;
+    const busGain =
+      graph === null || typeof bus !== 'string' || !(bus in graph.buses)
+        ? null
+        : graph.buses[bus as AudioBusName].gain.value;
     console.log('[terrace audio]', call, {
       ...fields,
+      busGain,
       sfxVoices: sfxVoices.length,
       // THE MASTER'S LIVE VALUE, on every line. It is the answer to the first
       // question anyone debugging silence asks — the player's own volume and
