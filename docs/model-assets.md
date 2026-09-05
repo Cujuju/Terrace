@@ -205,6 +205,16 @@ the shark's angled pectoral tip is both its `bellyY` and its `halfWidth` — the
 angle is baked into the mesh under an identity hinge, and `animate` leaves
 that hinge alone.
 
+**A species whose extremes move with its animation declares two envelopes**:
+the REST envelope the file is checked against (`SpeciesAssetSpec.envelope`)
+and the SWEPT envelope placement reads, derived in the species .ts as rest
+plus animation amplitude, with the relationship written once. Fish and shark
+have one envelope because their extremes are static; the ray is the first with
+two — its placement `crownY`/`bellyY` are a wing tip at the top and bottom of
+its beat, which a file authored with the wings flat never reaches, so
+`RAY_REST_ENVELOPE` is what `ray.glb` measures and `RAY_ENVELOPE` is
+`rest ± wingReach · sin(flap)`.
+
 A WALKER reads the same five envelope numbers differently, and the difference
 is the origin: a swimmer is authored about its body centre so `crownY` and
 `bellyY` straddle zero, while a walker is authored at its FEET, so `bellyY` is
