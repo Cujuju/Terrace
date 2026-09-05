@@ -231,6 +231,9 @@ export function paintColor(paint: Paint): Color {
   return new Color((r << 16) | (g << 8) | b);
 }
 
+/** Float slack on the half-height check: a bevel's rounding, never a design. */
+const HALF_HEIGHT_TOLERANCE = 1e-6;
+
 const cache = new Map<SkillId, BufferGeometry>();
 
 /**
@@ -264,6 +267,14 @@ export function relicGeometry(skill: SkillId): BufferGeometry {
   // spins about its own middle and hovers at the height gems.ts promises.
   merged.center();
   merged.scale(GEM_RADIUS_CELLS, GEM_RADIUS_CELLS, GEM_RADIUS_CELLS);
+  // The hover contract (gems.ts, GEM_HOVER_CELLS) clears the ground by the
+  // gem's radius; a shape modelled taller than the unit frame would dip below
+  // that clearance and clip the terrain, so it is refused here, not drawn.
+  merged.computeBoundingBox();
+  const halfHeight = Math.max(-merged.boundingBox!.min.y, merged.boundingBox!.max.y);
+  if (halfHeight > GEM_RADIUS_CELLS + HALF_HEIGHT_TOLERANCE) {
+    throw new Error(`relic shape for ${skill} is taller than GEM_RADIUS_CELLS allows`);
+  }
   cache.set(skill, merged);
   return merged;
 }
