@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { Box3, Mesh, Vector3, type MeshStandardMaterial } from 'three';
 import { readFile } from 'node:fs/promises';
-import { BOAT_WATERLINE_LIFT, createBoatModels, installBoatKit } from '../client/models.ts';
+import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
 import { parseRigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
@@ -97,11 +97,11 @@ describe('the boat model', () => {
     const models = createBoatModels();
     const boat = models.create();
     boat.animate(0, 0, false);
-    boat.root.position.y = BOAT_WATERLINE_LIFT;
+    boat.root.position.y = BOAT_SHAPE.waterlineLift;
     boat.root.updateMatrixWorld(true);
 
     const box = new Box3().setFromObject(boat.root);
-    expect(BOAT_WATERLINE_LIFT).toBeLessThan(0);
+    expect(BOAT_SHAPE.waterlineLift).toBeLessThan(0);
     // Sea level is world Y 0: some hull below it, and the mast well above.
     expect(box.min.y).toBeLessThan(0);
     expect(box.max.y).toBeGreaterThan(0);

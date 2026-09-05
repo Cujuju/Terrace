@@ -9,7 +9,7 @@
 //   ?t=<seconds>               — animation clock; defaults to 0.6 (mid-stroke)
 //
 // A WATERLINE PLANE, unlike the other harnesses' ground disc: this model's
-// whole vertical contract is BOAT_WATERLINE_LIFT — the hull is meant to sit
+// whole vertical contract is BOAT_SHAPE.waterlineLift — the hull is meant to sit
 // half-submerged — and a shot without a water surface cannot show whether it
 // does. Same reason preview-kraken.html grew one.
 //
@@ -35,7 +35,7 @@ import {
 } from 'three';
 import warBoatUrl from '../../plugins/boats/client/assets/war-boat.glb?url';
 import {
-  BOAT_WATERLINE_LIFT,
+  BOAT_SHAPE,
   createBoatModels,
   preloadBoatModels,
 } from '../../plugins/boats/client/models.ts';
@@ -77,7 +77,7 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   scene.background = new Color(BACKDROP_COLOR);
 
   // The waterline, at world Y 0 — exactly where render/water.ts draws the sea
-  // and exactly what BOAT_WATERLINE_LIFT is measured against.
+  // and exactly what BOAT_SHAPE.waterlineLift is measured against.
   const water = new Mesh(
     new CircleGeometry(WATER_RADIUS, 48),
     new MeshLambertMaterial({ color: WATER_COLOR }),
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
     // Phase 0 for both, so the pair differ ONLY by their fighting state —
     // which is the comparison this shot exists to make.
     model.animate(clock, 0, fighting);
-    model.root.position.y = BOAT_WATERLINE_LIFT;
+    model.root.position.y = BOAT_SHAPE.waterlineLift;
     model.root.position.z = (index - (states.length - 1) / 2) * PAIR_SPACING;
     subject.add(model.root);
   });

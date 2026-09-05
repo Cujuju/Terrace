@@ -16,7 +16,7 @@
 // A NOTE ON WHERE THE FLAME SITS. A boat is the one flammable thing in the game
 // that is not standing on the ground, and it needs no special case at all: an
 // entity fire is drawn at the pose its OWNER publishes, and this plugin's
-// client draws a hull at SEA_SURFACE_WORLD_Y + BOAT_WATERLINE_LIFT. So the
+// client draws a hull at SEA_SURFACE_WORLD_Y + BOAT_SHAPE.waterlineLift. So the
 // flame lands on the deck by construction, and the "how far above the ground
 // does this flame sit" field the cell wire would have needed never has to
 // exist.
