@@ -5,7 +5,7 @@
 // wired into models.ts. Not part of the shipped app: reached only through
 // preview-species.html.
 //
-//   ?species=<fish|grazer|ibex|bison|ray|shark|eel|angelfish> — defaults to "fish"
+//   ?species=<fish|grazer|wolf|ibex|bison|ray|shark|eel|angelfish> — defaults to "fish"
 //   ?view=<iso|side|top|front>                     — defaults to "iso"
 //   ?t=<seconds>                                   — animation clock, default 0
 //   ?scale=<n>                                     — instance scale, default 1
@@ -38,6 +38,7 @@ import { buildFish } from '../../plugins/wildlife/client/species/fish.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
 import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
 import { buildGrazer } from '../../plugins/wildlife/client/species/grazer.ts';
+import { buildWolf } from '../../plugins/wildlife/client/species/wolf.ts';
 import { buildIbex } from '../../plugins/wildlife/client/species/ibex.ts';
 import { buildBison } from '../../plugins/wildlife/client/species/bison.ts';
 import { buildRay } from '../../plugins/wildlife/client/species/ray.ts';
@@ -48,6 +49,7 @@ import { buildAngelfish } from '../../plugins/wildlife/client/species/angelfish.
 const BUILDERS: Readonly<Record<string, SpeciesModelBuilder>> = {
   fish: buildFish,
   grazer: buildGrazer,
+  wolf: buildWolf,
   ibex: buildIbex,
   bison: buildBison,
   ray: buildRay,
