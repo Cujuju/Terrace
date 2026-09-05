@@ -25,6 +25,13 @@ phase-1 kit open). The first pass lands that adapter alongside its model.
 
 Owner 2026-09-04: anglerfish is in (#9). Kraken is a monster, excluded.
 
+Note from the model-assets arc orchestrator (terrace-11, 2026-09-04): #318/#319 are MERGED
+(render kit PBR-complete, import_model.py/stat_glb.py/render_glb.py). Asset units are WORLD
+units, not cells (a cell is CELL_WORLD_SIZE = 0.25 world units; the fish, deer and war boat all
+carry no runtime scale). The render-kit type is being renamed AssetFootprintCells → AssetFootprint
+to say so. Do not add per-plugin glb-url.d.ts files: types/glb-url.d.ts covers every package.
+The deer grazer (#321) is being rebased onto pass 1's assetSpecies.ts contract, not a second one.
+
 Constraints every model must keep: species ENVELOPE (crownY/bellyY/length) read
 by placement.ts SWIM_PROFILES; forward = +X, Y up, cell units; size classes are a
 scale on the rig (WILDLIFE_SIZE_MODEL_SCALE), not separate models; animation

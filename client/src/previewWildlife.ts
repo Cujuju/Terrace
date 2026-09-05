@@ -228,8 +228,10 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): 
  * exactly as previewSpecies.ts does.
  */
 async function installAssets(): Promise<void> {
-  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl));
-  installSpeciesAsset(GRAZER_ASSET, await loadRigAsset(grazerUrl));
+  // Lamps-only (null environment), the same choice the plugin's own preload
+  // makes: these are painted surfaces with nothing on them to reflect a sky.
+  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl, null));
+  installSpeciesAsset(GRAZER_ASSET, await loadRigAsset(grazerUrl, null));
 }
 
 function main(): void {

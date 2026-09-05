@@ -79,26 +79,23 @@ export interface SculptInputOptions {
    */
   pickCell: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   /**
-   * World-space Y of the cap of the span a pick STRUCK, at its cell
-   * (World.spanCapAt) — read LIVE, every time the hover pick is read, so the
-   * brush outline sits on the ground as it is NOW rather than as it was when
-   * the ray last flew. See hoverTarget for why the cell is cached but its
-   * height is not, and why it is THIS span's cap and not the column's top.
+   * The SAME ray, re-asked of ONE column of the LIVE map (World.pickInColumn).
+   *
+   * THE WHOLE OF THE HOVER CACHE (issue #324, 2026-09-04). `hoverTarget` pins
+   * the cell the player aimed at and the ray that aimed at it — both facts
+   * about the RAY, which edits cannot invalidate — and re-derives everything
+   * the pick says about the MAP through this, every read. No `spanIndex`, no
+   * `surfaceY`, no `hitY` is ever copied from one frame to the next.
+   *
+   * Null when the ray meets nothing in that column at all, which is
+   * `hoverTarget`'s signal to march again.
    */
-  spanCapAt: (x: number, y: number, spanIndex: number) => number | null;
-  /**
-   * How many spans the column at a cell holds right now (World.spanCountAt).
-   * Captured with every pick and compared on every refresh: a span index is a
-   * position in a list whose length is state, so a split or a weld renumbers
-   * the column and the cached index stops naming the span the ray struck.
-   */
-  spanCountAt: (x: number, y: number) => number;
-  /**
-   * Whether a span still draws a world-space height (World.spanContainsHeight)
-   * — the test a cached RISER hit must survive before its height may be
-   * refreshed. See hoverTarget.
-   */
-  spanContainsHeight: (x: number, y: number, spanIndex: number, worldY: number) => boolean;
+  pickInColumn: (
+    x: number,
+    y: number,
+    origin: Vec3,
+    direction: Vec3,
+  ) => TerrainRayPick | null;
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
@@ -158,10 +155,13 @@ export interface SculptInput {
    * affordable only because the pick is a height-field march — when it was a
    * mesh raycast the same per-frame re-pick cost 29.5 ms a frame.
    *
-   * The CELL is what the cache holds. `surfaceY` is re-read live from the
-   * terrain on every call, so the outline tracks ground the player is actively
-   * sculpting without the ray being re-fired (which would move the target —
-   * see hoverTarget's own note and emitIntent's issue-#25 comment).
+   * THE CELL AND THE RAY ARE WHAT THE CACHE HOLDS. Everything else — the span
+   * index, `surfaceY`, `hitY`, the face kind — is re-derived from the LIVE map
+   * on every call by re-asking the pinned ray of the pinned column
+   * (`pickInColumn`), so the outline tracks ground the player is actively
+   * sculpting while the target cell stays the one they aimed at. Re-firing the
+   * ray instead would move that target — see hoverTarget's own note and
+   * emitIntent's issue-#25 comment.
    */
   hoverTarget(): TerrainRayPick | null;
   /**
@@ -203,9 +203,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     canvas,
     camera,
     pickCell: pickCellByRay,
-    spanCapAt,
-    spanCountAt,
-    spanContainsHeight,
+    pickInColumn,
     worldSize,
     riserBand,
     bandAtCell,
@@ -322,12 +320,25 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   /** Pending touch-stroke arming delay (TOUCH_STROKE_GRACE_MS). */
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** A world-space ray, owned by this module rather than by Three's scratch. */
+  interface PointerRay {
+    readonly origin: Vec3;
+    readonly direction: Vec3;
+  }
+
   /**
-   * Raycasts the current pointer position against the terrain and returns the
-   * cell under it, or null if the ray missed (empty sea, locked territory, or
-   * off-screen).
+   * The world-space ray through the current pointer position, or null when
+   * there is nothing to aim (no world yet, pointer away, canvas not laid out).
+   *
+   * COPIED OUT OF THE RAYCASTER, not returned by reference: `raycaster.ray` is
+   * reused by the next call, and `hoverTarget` keeps this ray across frames —
+   * a reference would silently become the newest ray instead of the pinned one.
+   *
+   * Three is used for the ONE step that needs the camera: unprojecting the
+   * pointer. The ray then goes to the height-field march, which never touches
+   * the scene graph.
    */
-  const pickCell = (): TerrainRayPick | null => {
+  const pointerRay = (): PointerRay | null => {
     const size = worldSize();
     if (size <= 0 || !havePointer) return null;
 
@@ -335,13 +346,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const device = pointerToNdc(pointerClientX, pointerClientY, rect);
     if (device === null) return null;
 
-    // Three is used for the ONE step that needs the camera — unprojecting the
-    // pointer into a world-space ray. The ray then goes to the height-field
-    // march, which never touches the scene graph.
     ndc.set(device.x, device.y);
     raycaster.setFromCamera(ndc, camera);
-    // surfaceY rides along for the hover preview; intents ignore it.
-    return pickCellByRay(raycaster.ray.origin, raycaster.ray.direction);
+    const o = raycaster.ray.origin;
+    const d = raycaster.ray.direction;
+    return {
+      origin: { x: o.x, y: o.y, z: o.z },
+      direction: { x: d.x, y: d.y, z: d.z },
+    };
   };
 
   /**
@@ -354,13 +366,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * sub-visible tail settles into a bucket instead of re-picking every frame.
    */
   let hoverKey = '';
-  let hoverCache: TerrainRayPick | null = null;
   /**
-   * The number of spans the picked column held WHEN THE PICK WAS TAKEN. The
-   * cached `spanIndex` is only a name for the span the ray struck while this
-   * still matches the live count — see hoverTarget's re-pick rule.
+   * THE TWO THINGS THE CACHE HOLDS, and it holds nothing else (issue #324,
+   * 2026-09-04): the CELL the player aimed at, and the RAY that aimed at it.
+   *
+   * Both are facts about the pointer, so an edit made with them cannot make
+   * either of them wrong. Everything the pick says about the MAP — the span
+   * index, the surface height, the struck height — is re-derived from the live
+   * terrain on every read, so there is no representation for a stale one.
    */
-  let hoverSpanCount = 0;
+  let hoverCell: { x: number; y: number } | null = null;
+  let hoverRay: PointerRay | null = null;
   /**
    * How steeply the pointer ray must descend for its meeting with the drag
    * plane to mean anything, as the downward component of a unit direction.
@@ -397,16 +413,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    */
   const dragPlaneCell = (band: number): { x: number; y: number } | null => {
     const size = worldSize();
-    if (size <= 0 || !havePointer) return null;
-
-    const rect = canvas.getBoundingClientRect();
-    const device = pointerToNdc(pointerClientX, pointerClientY, rect);
-    if (device === null) return null;
-    ndc.set(device.x, device.y);
-    raycaster.setFromCamera(ndc, camera);
-
-    const origin = raycaster.ray.origin;
-    const direction = raycaster.ray.direction;
+    // The SAME ray the pick uses, from the one place that unprojects the
+    // pointer — a second copy of that setup is a second chance to aim
+    // differently from what the player sees.
+    const ray = pointerRay();
+    if (size <= 0 || ray === null) return null;
+    const { origin, direction } = ray;
     // World Y of the grabbed band's floor — the plane the lip lies in. Derived
     // from the band, so it is exactly the surface the player took hold of.
     const planeY = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
@@ -428,17 +440,65 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
-   * Throws the cached pick away and marches the ray again, capturing the new
-   * column's span count with it. The ONE way `hoverCache` and `hoverSpanCount`
-   * are set together, so a re-pick can never leave the count describing the
-   * previous column.
+   * MARCHES AGAIN, and re-pins both halves of the cache from the result: the
+   * ray that was fired and the cell it named. The ONE way `hoverCell` and
+   * `hoverRay` are set together, so a re-pick can never leave the cell
+   * belonging to one ray and the ray to another.
    */
   const repick = (): TerrainRayPick | null => {
-    hoverCache = pickCell();
-    hoverSpanCount = hoverCache === null ? 0 : spanCountAt(hoverCache.x, hoverCache.y);
-    return hoverCache;
+    const ray = pointerRay();
+    hoverRay = ray;
+    if (ray === null) {
+      hoverCell = null;
+      return null;
+    }
+    const pick = pickCellByRay(ray.origin, ray.direction);
+    hoverCell = pick === null ? null : { x: pick.x, y: pick.y };
+    return pick;
   };
 
+  /**
+   * THE CELL AND THE RAY ARE PINNED; NOTHING DERIVED FROM THE MAP IS
+   * (issue #324, 2026-09-04).
+   *
+   * The cache key is the pointer, the camera and the world size, and
+   * DELIBERATELY carries nothing about the terrain (owner, 2026-08-14: the
+   * outline "needs to follow the mouse even during a pan"; a pointer-only key
+   * froze it mid-pan). While that key is unchanged, this re-evaluates the
+   * PINNED ray against the PINNED column of the LIVE map, using the march's own
+   * per-cell function — so the pick handed back is always a fresh statement
+   * about the terrain as it is now, and a span index that an edit renumbered
+   * has no way to survive into the next frame.
+   *
+   * IT USED TO PATCH A CACHED PICK field by field after each edit, and every
+   * consumer then depended on ad-hoc validity checks — span count unchanged,
+   * struck height still inside the slab — that each new kind of edit could
+   * defeat. The 2026-09-04 report (a second carve press with the mouse still
+   * dug the band BELOW the one just cut) was one such escape; the contract here
+   * is that there is nothing left to escape from.
+   *
+   * THE TWO SETTLED PROMISES BOTH HOLD.
+   *  - A HELD STROKE TARGETS THE CELL THE PLAYER AIMED AT (owner 2026-08-22,
+   *    issue #25). The cell is pinned, so a raise cannot march the stroke
+   *    uphill into the ground it just built, and a lower cannot walk it away
+   *    toward the camera — `pickInColumn`'s ground-under-the-ray fallback
+   *    answers with the ground still under the pinned column when the edit has
+   *    dropped it below the ray entirely.
+   *  - THE OUTLINE LIES ON THE GROUND. `surfaceY` comes from the live map on
+   *    every read, so the ring follows ground the player is actively sculpting
+   *    instead of hanging at the pre-stroke height.
+   *
+   * CONSEQUENCE, AND IT IS HONEST: after an edit made with the mouse still, a
+   * tread hit may become a RISER hit (the ground the player raised now meets
+   * the ray on its face) or the other way round. The CELL is what is promised,
+   * not the kind of face — and the face the pick reports is the face that ray
+   * genuinely meets in the world as it now is.
+   *
+   * COST: one column's span loop per read while the key is unchanged, against
+   * a full march of 0.0063 ms (docs/decisions/picking.md). There is no
+   * revision check on purpose — the contract must not rest on every heightmap
+   * mutation remembering to bump one.
+   */
   const hoverTarget = (): TerrainRayPick | null => {
     const p = camera.position;
     const q = camera.quaternion;
@@ -447,80 +507,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       : 'away';
     if (key !== hoverKey) {
       hoverKey = key;
-      repick();
-    }
-    // THE CELL IS CACHED; ITS HEIGHT IS NOT (owner bug report 2026-08-22,
-    // "lowering does not always seem to work"). The key deliberately carries
-    // nothing about the terrain — re-picking when the ground moves is what
-    // marched a held raise uphill (see emitIntent's issue-#25 note) — but that
-    // also froze the SURFACE the outline is drawn on, so after a sculpt with a
-    // still mouse the ring hung at the pre-stroke height while the ground
-    // moved out from under it. Lowering wore that worst: a raise pushes ground
-    // up through a stale ring, a lower leaves the ring floating over its own
-    // pit, which reads as "the click did nothing".
-    //
-    // Re-reading the height for the CACHED cell keeps both promises: the
-    // stroke still targets the cell the player aimed at, and the outline still
-    // lies on the ground. A cell whose chunk has gone (a rejoin between the
-    // pick and this read) yields null rather than a stale Y.
-    if (hoverCache === null) return null;
-    // A SPLIT OR A WELD KILLS EVERY INDEX IN THE COLUMN, tread hits included.
-    // `spanIndex` is a position in a list whose length is state (columns.ts's
-    // `spanIndexCoveringBand` says so outright): the carve that opens a tunnel
-    // turns one span into two, and index 0 stops meaning "the span the ray
-    // struck" and starts meaning "the floor under the new roof". Refreshing
-    // such a pick would refresh a name, not a fact, so it is re-picked.
-    if (spanCountAt(hoverCache.x, hoverCache.y) !== hoverSpanCount) return repick();
-    // THE STRUCK SPAN'S CAP, NOT THE COLUMN'S TOP (owner report 2026-08-27,
-    // "it jumps up several bands"). On a carved column the ray can strike the
-    // floor span under a roof; refreshing that pick from the topmost cap
-    // rewrote a tread hit on the floor as a tread hit on the roof, and the
-    // pointer was drawn there — several bands above the mouse. A span that
-    // has since vanished (welded, carved away, chunk gone) yields null, and
-    // the cached pick is then a claim about geometry that no longer exists:
-    // re-pick rather than refresh.
-    const surfaceY = spanCapAt(hoverCache.x, hoverCache.y, hoverCache.spanIndex);
-    if (surfaceY === null) return repick();
-    if (surfaceY === hoverCache.surfaceY) return hoverCache;
-    // A RISER HIT THE SPAN NO LONGER REACHES IS A DEAD CLAIM (owner report,
-    // 2026-09-04: a second carve press, mouse still, dug the band BELOW the
-    // one just cut). The span's cap moved under the pointer, and if `hitY` is
-    // now outside the slab this span draws then the face the ray met is not
-    // this span's face any more. `bandOfPick` would not say so — it CLAMPS the
-    // struck height into the span's drawn range, which is right for a hit on a
-    // slab boundary but turns this one into a confident answer of the band at
-    // the end of the clamp. Not refreshable: re-pick.
-    if (
-      hoverCache.hitRiser &&
-      !spanContainsHeight(hoverCache.x, hoverCache.y, hoverCache.spanIndex, hoverCache.hitY)
-    ) {
       return repick();
     }
-    // hitRiser and the hit POINT ride along, and so does `spanIndex` once the
-    // two tests above have shown it still names the span the ray struck: they
-    // are facts about the RAY, and this branch only refreshes the cached
-    // cell's height after the ground moved under a stationary pointer. The
-    // next pointermove re-picks and re-decides them.
-    //
-    // hitY IS THE ONE EXCEPTION, and only for a cap hit. "The ray met this
-    // column at its cap" is a fact about the ray too, and the refreshed cap has
-    // to carry it: leaving the old height behind would make a TREAD read as a
-    // cave roof's UNDERSIDE (hitY below surfaceY) the moment the ground moved
-    // — which is the one horizontal face `takeHold` refuses to seed on, and
-    // which the pointer draws as an inert mark. A riser hit's height is
-    // genuinely the ray's own and is left alone.
-    //
-    hoverCache = {
-      x: hoverCache.x,
-      y: hoverCache.y,
-      surfaceY,
-      spanIndex: hoverCache.spanIndex,
-      hitRiser: hoverCache.hitRiser,
-      hitY: hoverCache.hitY === hoverCache.surfaceY ? surfaceY : hoverCache.hitY,
-      hitX: hoverCache.hitX,
-      hitZ: hoverCache.hitZ,
-    };
-    return hoverCache;
+    if (hoverCell === null || hoverRay === null) return repick();
+    const pick = pickInColumn(hoverCell.x, hoverCell.y, hoverRay.origin, hoverRay.direction);
+    // NOTHING LEFT IN THAT COLUMN — the chunk went on a rejoin, or the ground
+    // under the ray was removed outright. A march is the honest answer: there
+    // is no aimed-at cell left to keep faith with, and it re-pins both halves.
+    if (pick === null) return repick();
+    return pick;
   };
 
   /**
@@ -867,13 +862,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // applied locally by the prediction the moment it is sent (main.tsx's
     // send), so the band under the pointer moves within this call.
     //
-    // THE NEW LIP IS READ FROM THE MAP AS A CHANGE, not re-picked. The hover
-    // pick is cached on pointer position and camera pose alone and does not
-    // re-march after a terrain edit, so a second `riserBand(hoverTarget())`
-    // would re-use the pre-seed TREAD pick — null by definition under the
-    // riser-only rule. And an absolute read after the seed is not safe either:
-    // `send` returns true for intents that predict nothing, so the band under
-    // the pointer could be one this press did not raise. A delta is.
+    // THE NEW LIP IS READ FROM THE MAP AS A CHANGE, not re-picked — and it
+    // stays that way now that `hoverTarget` DOES re-evaluate (2026-09-04). A
+    // second `riserBand(hoverTarget())` after the seed would be a fresh and
+    // honest pick, but it is not the question being asked: the ray is pinned,
+    // so whether the raised ground now meets it on a face is geometry, not
+    // proof that this press raised anything. An absolute read is not safe
+    // either — `send` returns true for intents that predict nothing, so the
+    // band under the pointer could be one this press did not raise. A delta
+    // is.
     //
     // THE RISE IS THE PROOF (main, 2026-08-27). `seedLayer` reports that the
     // intent reached the wire, not that it was predicted: a stroke at the
