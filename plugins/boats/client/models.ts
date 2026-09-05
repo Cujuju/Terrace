@@ -19,7 +19,6 @@
 // own its geometry pool, and dispose frees it the same way.
 
 import {
-  Box3,
   Group,
   Mesh,
   MeshStandardMaterial,
@@ -34,7 +33,12 @@ import {
   instantiateRig,
   type RigBlueprint,
 } from '../../../client/src/render/rigSkin.ts';
-import { loadRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
+import {
+  assertAssetFits,
+  loadRigAsset,
+  type AssetFootprintCells,
+  type RigAsset,
+} from '../../../client/src/render/rigAsset.ts';
 
 /**
  * The conservative ceiling `drawObjects` reports until the first bake measures
@@ -127,11 +131,16 @@ export const BOAT_SHAPE: {
 });
 
 /**
- * How far past one cell the rowed silhouette may reach before the asset is
- * rejected at load. Two hundredths: the fit is authored, not fitted — the
- * number only absorbs float dust in the bounding box, never a real overhang.
+ * The ground the rowed silhouette is allowed: one cell square.
+ *
+ * The fight's geometry is counted in whole cells — ram range, the kraken's
+ * reach, how many boats a tile holds — so a hull spilling past its own cell
+ * makes every distance in the fight read wrong. Height is deliberately
+ * unbudgeted: a mast is as tall as it looks good, and nothing measures it.
+ * The slack that absorbs float dust in the bounding box is the render kit's
+ * ASSET_FIT_TOLERANCE_CELLS, which is where that reasoning now lives.
  */
-export const BOAT_FIT_TOLERANCE_CELLS = 0.02;
+const BOAT_FOOTPRINT_CELLS: AssetFootprintCells = { x: 1, z: 1 };
 
 /** Undyed canvas at rest. */
 const SAIL_COLOR = 0xe8e0cf;
@@ -242,14 +251,16 @@ export function installBoatKit(asset: RigAsset): void {
         `the fire column would burn downward`,
     );
   }
-  const size = new Box3().setFromObject(asset.scene).getSize(new Vector3());
-  if (
-    size.x > 1 + BOAT_FIT_TOLERANCE_CELLS ||
-    size.z > 1 + BOAT_FIT_TOLERANCE_CELLS
-  ) {
+  try {
+    assertAssetFits(asset, BOAT_FOOTPRINT_CELLS);
+  } catch (cause) {
+    // Rethrown for the boat-specific MEANING, not for the measurement: the
+    // shared error already names the axis and the number, and it rides along as
+    // `cause`. What it cannot say is why one cell is the budget.
     throw new Error(
-      `boat asset: rowed silhouette ${size.x.toFixed(3)} x ${size.z.toFixed(3)} cells ` +
-        `breaks the one-cell fit budget — the fight's geometry is counted in whole cells`,
+      `boat asset: the rowed silhouette breaks the one-cell fit budget — ` +
+        `the fight's geometry is counted in whole cells`,
+      { cause },
     );
   }
   const sailNode = asset.node('sail');
