@@ -292,7 +292,28 @@ export interface AudioEngine {
 }
 
 export function createAudioEngine(viewport: Viewport): AudioEngine {
-  let graph: AudioGraph | null = null;
+  /**
+   * BUILT EAGERLY, at engine construction, and null only where Web Audio does
+   * not exist at all.
+   *
+   * WHY NOT LAZILY AT THE FIRST GESTURE, which is what this did first. A
+   * browser refuses to START an AudioContext before a gesture; it does not
+   * refuse to CREATE one — `new AudioContext()` is legal at any time and simply
+   * begins in the 'suspended' state, which is the whole reason `resume()`
+   * exists. Building lazily bought nothing and cost the thing that mattered:
+   * with no context there is no `decodeAudioData`, so no asset could be decoded
+   * until the player clicked, and the first event of every kind was therefore
+   * silent (see `preload` on PluginAudio). Eager construction means a plugin's
+   * `preload` in attach has a context to decode into, and by the first click
+   * the buffers are ready.
+   *
+   * NOTHING IS AUDIBLE BEFORE THE GESTURE either way. A suspended context's
+   * clock does not advance and its output is not connected to anything the
+   * player can hear; voices started against it are scheduled and become audible
+   * when `unlock()` resumes it. That is what replaced the pending-request
+   * bookkeeping this file used to carry.
+   */
+  let graph: AudioGraph | null = buildGraphSafely();
 
   /**
    * Per-URL decode, shared by every plugin: ONE fetch and ONE decodeAudioData
@@ -333,12 +354,6 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
   /** The track playing now, and the URL it came from (null = bus empty). */
   let musicVoice: Audio | null = null;
   let musicUrl: string | null = null;
-  /**
-   * What the claimant asked for while the context was still locked, or while a
-   * decode was in flight. The LAST request wins — a claimant that changed its
-   * mind twice before the first click meant the second answer.
-   */
-  let pendingMusicUrl: string | null = null;
 
   // ── Debug ──────────────────────────────────────────────────────────────────
 
@@ -477,6 +492,16 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     }
     return disposeRoot;
   });
+
+  /**
+   * `buildGraph` with its one failure mode handled, so the eager construction
+   * above is a plain assignment. Named separately rather than inlined because a
+   * `try` around an initialiser at the top of the closure would read as if
+   * something routine could throw here; nothing routine can.
+   */
+  function buildGraphSafely(): AudioGraph | null {
+    return buildGraph();
+  }
 
   function buildGraph(): AudioGraph | null {
     // three's AudioListener constructs the page's AudioContext for us
@@ -678,17 +703,6 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     retargetAmbience(layer, active);
   }
 
-  /** Starts every layer that wants to be heard — called on unlock. */
-  function resumePendingAmbience(active: AudioGraph): void {
-    for (const state of plugins.values()) {
-      if (state.released) continue;
-      for (const [url, layer] of state.ambience) {
-        if (layer.weight <= SILENT_GAIN || layer.audio !== null || layer.decoding) continue;
-        beginAmbience(url, layer, active);
-      }
-    }
-  }
-
   function beginAmbience(url: string, layer: AmbienceLayer, active: AudioGraph): void {
     layer.decoding = true;
     void bufferFor(url, active.context).then(
@@ -775,39 +789,29 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
 
   let disposed = false;
 
+  /**
+   * RESUME-ONLY. The graph exists from engine construction (see `graph`'s own
+   * declaration), so there is nothing to build here and nothing to replay: a
+   * voice started while the context was suspended is already scheduled and
+   * simply becomes audible when the clock starts.
+   *
+   * Idempotent and cheap once running, so the host may call it from every
+   * canvas press. A resume the browser still refuses leaves the context
+   * suspended and is NOT an error — it is the normal answer to a call that did
+   * not come from a gesture it accepted, and the next gesture tries again.
+   */
   function engineUnlock(): void {
     if (disposed) return;
-    if (graph === null) {
-      graph = buildGraph();
-      if (graph === null) return;
-      debugLog('unlock', { url: null, bus: null, gain: graph.master.gain.value });
-    }
     const active = graph;
-    if (active.context.state === 'suspended') {
-      // A resume that the browser still refuses leaves the context suspended
-      // and is NOT an error — it is the normal answer to a call that did not
-      // come from a gesture it accepted. The next gesture tries again.
-      void active.context.resume().then(
-        () => {
-          resumePendingAmbience(active);
-          if (pendingMusicUrl !== null) {
-            const url = pendingMusicUrl;
-            pendingMusicUrl = null;
-            crossfadeMusic(url, active);
-          }
-        },
-        () => {
-          /* Still locked; the next gesture will try again. */
-        },
-      );
-      return;
-    }
-    resumePendingAmbience(active);
-    if (pendingMusicUrl !== null) {
-      const url = pendingMusicUrl;
-      pendingMusicUrl = null;
-      crossfadeMusic(url, active);
-    }
+    if (active === null || active.context.state !== 'suspended') return;
+    void active.context.resume().then(
+      () => {
+        debugLog('unlock', { url: null, bus: null, gain: active.master.gain.value });
+      },
+      () => {
+        /* Still locked; the next gesture will try again. */
+      },
+    );
   }
 
   installWindowGestureListeners();
@@ -821,15 +825,29 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
    */
   function buildHandle(state: PluginAudioState): PluginAudio {
     return {
+      preload(url: string): void {
+        if (state.released || graph === null) return;
+        // The decode cache makes this idempotent for free: a second call for
+        // the same URL — from this plugin or any other — finds the in-flight
+        // promise and adds nothing. The `catch` is what keeps the contract's
+        // "never throws": without it a failed asset would surface as an
+        // unhandled rejection in a plugin that did everything right.
+        void bufferFor(url, graph.context).catch((error: unknown) => {
+          reportAssetFailure(url, error);
+        });
+        debugLog('preload', { url, bus: 'sfx', gain: null });
+      },
+
       playSfx(url: string, opts?: SfxOptions): void {
         if (state.released || graph === null) return;
         const active = graph;
         const cached = decoded.get(url);
         if (cached === undefined) {
-          // FIRST CALL FOR THIS URL STARTS THE DECODE AND PLAYS NOTHING. A
-          // one-shot is a moment; playing it whenever the fetch happened to
-          // finish would put a thunderclap a second after its flash. The
-          // contract says so (types.ts, PluginAudio.playSfx).
+          // NOT DECODED YET: START THE DECODE AND PLAY NOTHING. A one-shot is a
+          // moment; playing it whenever the fetch happened to finish would put
+          // a thunderclap a second after its flash. The contract says so
+          // (types.ts, PluginAudio.playSfx) — and a plugin that called
+          // `preload` in attach does not come through here at all.
           void bufferFor(url, active.context).catch((error: unknown) => {
             reportAssetFailure(url, error);
           });
@@ -906,11 +924,9 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
           }
           return;
         }
-        if (graph === null) {
-          pendingMusicUrl = url;
-          debugLog('setMusic (pending unlock)', { url, bus: 'music', gain: MUSIC_TRACK_GAIN });
-          return;
-        }
+        // No graph at all means no Web Audio in this browser; the claim stands
+        // (so a second plugin is still refused, consistently) and nothing plays.
+        if (graph === null) return;
         if (musicUrl === url) return; // already playing (or already stopped)
         crossfadeMusic(url, graph);
       },
@@ -928,7 +944,6 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     if (musicClaimant === state.name) {
       musicClaimant = null;
       musicRefusals.clear();
-      pendingMusicUrl = null;
       if (graph !== null && musicUrl !== null) crossfadeMusic(null, graph);
       else musicUrl = null;
     }
