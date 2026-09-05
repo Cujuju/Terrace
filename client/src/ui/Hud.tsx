@@ -91,6 +91,7 @@ import {
   controlBindings,
   type ControlBindings,
 } from '../state/controlPrefs.ts';
+import { AudioSettingsRow } from './AudioSettingsRow.tsx';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
 import { Toolbar } from './Toolbar.tsx';
@@ -458,6 +459,10 @@ export function Hud(props: {
               aria-label="Control settings"
             >
               <ControlsPanel />
+              {/* Beside the bindings panel, not inside it: its reset button
+                  promises to reset "every setting on this panel", and audio is
+                  not a control binding (see AudioSettingsRow's header). */}
+              <AudioSettingsRow />
             </div>
           </Show>
 

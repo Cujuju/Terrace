@@ -410,6 +410,32 @@ body {
   color: var(--hud-text);
 }
 
+/* The audio row (ui/AudioSettingsRow.tsx). It sits BESIDE .controls-panel in
+   the settings popup rather than inside it, so it needs the top rule the panel
+   would otherwise have given it, and nothing else: the label, the row and the
+   mute button all reuse the popup's existing classes. */
+.audio-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hud-border);
+}
+
+/* Let the slider take the row's slack; the label and the button are fixed. */
+.audio-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--hud-accent);
+}
+
+/* The mute toggle doubles as the level readout, so its width must not jump
+   between "Muted" and "80%" — a control that moves under the pointer as you
+   click it is the thing .hud-bottom-right's own comment warns about. */
+.audio-mute {
+  margin-top: 0;
+  min-width: 52px;
+  text-align: center;
+}
+
 /* Plugin HUD panels stack under the core controls, visually separated. */
 .hud-plugin-panel {
   margin-top: 8px;
