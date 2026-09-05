@@ -12,10 +12,11 @@
 // the hover height and the pick tolerance in gems.ts still fit.
 //
 // THE MODEL IS THE ICON (owner, 2026-09-04: "I really wanted match. That means
-// color and design"): each part is PAINTED, and the paint is written into the
-// merged geometry as a vertex colour, so a relic in the world wears the same
-// grass, bark, stone and water its panel tile does. RELIC_PALETTE below is the
-// one source of those colours — the icon generator
+// color and design"): each part is PAINTED, and the paint's light and dark
+// ends are written into the merged geometry as two vertex attributes, so the
+// gem shader (gemMaterial.ts) can shade a relic in the world exactly as the
+// icon shades its panel tile — same grass, bark, stone and water, same light.
+// RELIC_PALETTE below is the one source of those colours — the icon generator
 // (.claude/orchestration/refs/hud-icons/relics.py) reads it from this file.
 //
 // Built lazily and cached per skill: the geometry is shared by every relic
@@ -25,7 +26,6 @@
 import {
   BoxGeometry,
   type BufferGeometry,
-  Color,
   CylinderGeometry,
   ExtrudeGeometry,
   Float32BufferAttribute,
@@ -55,14 +55,6 @@ export const RELIC_PALETTE = {
 } as const;
 
 export type Paint = keyof typeof RELIC_PALETTE;
-
-/**
- * Where between a paint's light and dark end the world mesh sits. The icon
- * bins its faces into four light levels; a face turned toward the light lands
- * in the second bin, whose centre is this blend, so a facet in the sun matches
- * the icon's lit face and the scene's own lighting supplies the rest.
- */
-const LIT_FACE_BLEND = 0.375;
 
 /** A primitive and the paint it wears. */
 interface Part {
@@ -217,18 +209,31 @@ function hexChannels(hex: string): [number, number, number] {
   ];
 }
 
-/**
- * A paint as the linear-space colour the mesh wears: its ends blended in
- * sRGB exactly as the icon generator blends them, then converted by three.
- */
-export function paintColor(paint: Paint): Color {
+/** A hex paint end as the 0..1 sRGB channels the gem shader blends. */
+function srgbChannels(hex: string): [number, number, number] {
+  const [r, g, b] = hexChannels(hex);
+  return [r / HEX_CHANNEL_MAX, g / HEX_CHANNEL_MAX, b / HEX_CHANNEL_MAX];
+}
+
+const HEX_CHANNEL_MAX = 255;
+
+/** The vertex attributes carrying a paint's two ends — gemMaterial.ts reads them by these names. */
+export const PAINT_LIGHT_ATTRIBUTE = 'paintLight';
+export const PAINT_DARK_ATTRIBUTE = 'paintDark';
+
+/** Writes one paint's light and dark ends onto every vertex of a geometry. */
+function applyPaint(geometry: BufferGeometry, paint: Paint): void {
   const { light, dark } = RELIC_PALETTE[paint];
-  const from = hexChannels(light);
-  const to = hexChannels(dark);
-  const [r, g, b] = from.map((channel, i) =>
-    Math.round(channel + (to[i] - channel) * LIT_FACE_BLEND),
-  );
-  return new Color((r << 16) | (g << 8) | b);
+  const count = geometry.getAttribute('position').count;
+  for (const [name, hex] of [
+    [PAINT_LIGHT_ATTRIBUTE, light],
+    [PAINT_DARK_ATTRIBUTE, dark],
+  ] as const) {
+    const channels = srgbChannels(hex);
+    const values = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) values.set(channels, i * 3);
+    geometry.setAttribute(name, new Float32BufferAttribute(values, 3));
+  }
 }
 
 /** Float slack on the half-height check: a bevel's rounding, never a design. */
@@ -238,7 +243,7 @@ const cache = new Map<SkillId, BufferGeometry>();
 
 /**
  * The world geometry for a skill's relic, built on first use and shared after.
- * Every part is unrolled, painted with its vertex colour, merged into one
+ * Every part is unrolled, painted with its two paint ends, merged into one
  * geometry and scaled from the unit frame the builders model in to the gem's
  * world radius; the parts are disposed once merged, since only the merge is
  * kept.
@@ -252,11 +257,7 @@ export function relicGeometry(skill: SkillId): BufferGeometry {
   // so everything is unrolled — which flat shading wants anyway.
   const unrolled = parts.map(({ geometry, paint }) => {
     const flat = geometry.index === null ? geometry : geometry.toNonIndexed();
-    const { r, g, b } = paintColor(paint);
-    const count = flat.getAttribute('position').count;
-    const colors = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) colors.set([r, g, b], i * 3);
-    flat.setAttribute('color', new Float32BufferAttribute(colors, 3));
+    applyPaint(flat, paint);
     return flat;
   });
   const merged = mergeGeometries(unrolled);
@@ -275,6 +276,8 @@ export function relicGeometry(skill: SkillId): BufferGeometry {
   if (halfHeight > GEM_RADIUS_CELLS + HALF_HEIGHT_TOLERANCE) {
     throw new Error(`relic shape for ${skill} is taller than GEM_RADIUS_CELLS allows`);
   }
+  // The gem shader spans its vertical gradient over this radius.
+  merged.computeBoundingSphere();
   cache.set(skill, merged);
   return merged;
 }
