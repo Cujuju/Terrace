@@ -148,6 +148,9 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
  * The standard every string below is held to: ONE sentence, plain language,
  * stating the CONSEQUENCE for the player rather than the implementation — the
  * relaxation pass is "drags neighbouring terrain along", not "relaxation".
+ * The dock's tool and edge tiles are held shorter still (owner, 2026-09-05):
+ * the tile's name first, then FIVE WORDS for what it does, so the tip fits
+ * beside the dock instead of running off the screen edge.
  * Anything that depends on live state (the bound lower chord, the status) is
  * built from the same accessors the control itself reads, so a title can never
  * go stale against the control it explains.
@@ -160,20 +163,21 @@ const STATUS_TITLE: Record<ConnectionStatus, string> = {
 };
 
 const TOOL_TITLE: Record<SculptTool, string> = {
-  stamp: 'Moves exactly the ground under the brush — spires, pits and sheer cliffs.',
-  smooth: 'Drags neighbouring terrain along, like pulling fabric — blends shapes.',
-  drag: 'Grab the edge of a terrace and push it about with the cursor — extends a level without changing which levels exist.',
-  carve: 'Cuts a tunnel into the land and leaves the roof standing — start at a cliff face and work inward. Lowers only, and only where open air already reaches.',
+  stamp: 'Stamp: raise or lower brushed ground',
+  smooth: 'Smooth: blend ground with its neighbours',
+  drag: 'Pull: push a terrace edge outward',
+  carve: 'Carve: cut a tunnel, roof intact',
 };
 
-// The `hard` title states the level fill (shared/heightmap.ts,
-// applyLevelFillBrush) because that is what the player will actually see with
-// the default Stamp tool; the trailing clause is the Smooth pairing, which
-// keeps the plain flat lift. A tooltip that still promised "the same height
-// change across the whole brush" would be describing the old brush.
+// The `hard` title names the level fill (shared/heightmap.ts,
+// applyLevelFillBrush), which is what the player actually sees with the
+// default Stamp tool; the Smooth pairing (one flat lift that then slumps) and
+// the Pull pairing (the edge fills every reachable cell) no longer fit the
+// five words, so the dock's tile tells the common case and the rest is learnt
+// by use.
 const PROFILE_TITLE: Record<SculptProfile, string> = {
-  soft: 'Strongest at the centre and fading to nothing at the rim — a rounded hill. With Pull, the edge advances as a smooth face.',
-  hard: 'One terrace at a time: levels the lowest ground under the brush before starting the next. With Smooth, one flat lift that then slumps. With Pull, the edge fills every cell it can reach, notches included.',
+  soft: 'Soft: rounded hill fading to nothing',
+  hard: 'Hard: one terrace at a time',
 };
 
 const HINT_BUTTON: Record<string, string> = {
