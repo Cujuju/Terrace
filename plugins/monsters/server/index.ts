@@ -340,6 +340,8 @@ export const plugin: TerracePlugin = {
   // new kind is summonable the day it exists. A summon lands in the kind's
   // best lair, wherever that is — the operator's view is not consulted,
   // because a monster's whereabouts is the habitat's decision, not a camera's.
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'creatures',
   actions: MONSTER_KINDS.map((kind) => ({
     key: kind,
     label: `Summon the ${kind}`,

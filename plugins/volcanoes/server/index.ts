@@ -313,6 +313,8 @@ export const plugin: TerracePlugin = {
   // is what a player's digging opens — so a forced event is an ordinary one
   // in everything but its timing, and what the operator sees is what a
   // player would.
+  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
+  archetype: 'terrain',
   actions: [
     {
       key: ERUPT_ACTION,
