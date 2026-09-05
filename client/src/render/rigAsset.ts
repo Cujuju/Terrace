@@ -14,10 +14,15 @@
 // tools/blender/export_glb.py plus the per-asset fit check at the callsite.
 // What IS checked here, because a silent fallback would show up as bad art:
 // the file must contain at least one mesh, every mesh takes a single material
-// (bakeRig cannot bake a multi-material part), the file carries no armature
-// (see RIGIDIFY_INSTRUCTION), and every mesh MUST carry the uv attribute for
-// EVERY uv channel its material samples — a textured part with no UVs is a
-// load error naming the file, never an untextured fallback.
+// (bakeRig cannot bake a multi-material part), and every mesh MUST carry the uv
+// attribute for EVERY uv channel its material samples — a textured part with no
+// UVs is a load error naming the file, never an untextured fallback.
+//
+// AN ARMATURE IS ACCEPTED, and was not always (until 2026-09-04 a skinned file
+// was rejected here and had to be split by dominant weight offline, which tore
+// a deer's shoulder open mid-stride). A SkinnedMesh IS a Mesh, so every check
+// below applies to it unchanged; bakeRig keeps its weights — see rigSkin's
+// header, "TWO BINDINGS, ONE BAKE".
 //
 // THE FULL glTF MATERIAL SET IS SUPPORTED. Which slots a material can carry,
 // which of them are colour data and which are numbers, and which uv channel
@@ -116,11 +121,8 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
   let meshes = 0;
   const textures = new Set<Texture>();
   scene.traverse((child) => {
-    // An armature is rejected at LOAD, not at bake: the bake would otherwise
-    // consume the skinned mesh at its bind pose with the joints thrown away,
-    // which draws as a creature frozen mid-T-pose — art that looks authored
-    // wrong rather than loaded wrong.
-    assertNotSkinned(label, child);
+    // Bones draw nothing and carry no material; a SkinnedMesh sets isMesh too,
+    // so it takes every check below exactly as a plain Mesh does.
     const mesh = child as Partial<Mesh> & Object3D;
     if (mesh.isMesh !== true) return;
     meshes++;
@@ -209,36 +211,6 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
       for (const map of maps) map.dispose();
     },
   };
-}
-
-/**
- * What a file with an armature has to be told, verbatim, wherever one is found.
- *
- * ONE SENTENCE IN ONE PLACE because it is a CONTRACT with the authoring
- * pipeline, not an error message: the rig kit binds every vertex rigidly to the
- * node it was authored under (see rigSkin's header), so a skinned mesh has to
- * be turned back into a node tree before it can be baked, and the tool that
- * does it is named here so the message is the whole fix.
- */
-export const RIGIDIFY_INSTRUCTION =
-  'the asset must be rigidified — run tools/blender/import_model.py --rigidify';
-
-/**
- * Throws when a node is a bone or a skinned mesh — the only two ways an
- * armature shows up IN a scene graph (a Skeleton is not an Object3D; it hangs
- * off the SkinnedMesh, which this catches).
- *
- * Checked by three's own `is*` flags rather than by `instanceof`, so a node
- * that arrived through a different copy of three (a bundler resolving two) is
- * still caught.
- */
-function assertNotSkinned(label: string, node: Object3D): void {
-  const skinned = node as Object3D & { isBone?: boolean; isSkinnedMesh?: boolean };
-  if (skinned.isBone !== true && skinned.isSkinnedMesh !== true) return;
-  throw new Error(
-    `rigAsset "${label}": node "${node.name || '(unnamed)'}" is part of an armature — ` +
-      RIGIDIFY_INSTRUCTION,
-  );
 }
 
 /**
