@@ -649,24 +649,29 @@ function orient(
 }
 
 /**
- * Whether the two open segments cross PROPERLY — each strictly separates the
- * other's endpoints.
+ * Whether contour segment cd crosses the probe segment ab, counted so that a
+ * polyline crossing the probe is counted EXACTLY ONCE however its vertices
+ * fall.
  *
- * Strict on purpose: a probe that runs exactly through a shared vertex of a
- * contour polyline would otherwise be counted twice and flip the parity. The
- * cases it declines are measure-zero, and declining is the safe side — the
- * answer then stays whatever the rest of the crossings say.
+ * HALF-OPEN on the probe line: a contour vertex lying exactly on it is treated
+ * as on the non-positive side. A polyline that crosses the probe through a
+ * shared vertex then has one of its two segments counted and not the other,
+ * where a strict test would count neither and a closed one both — either of
+ * which flips the parity. Collinear segments count for nothing; their
+ * neighbours decide. The intersection must lie strictly between a and b, which
+ * the strict test on the contour's line supplies: with a vertex on the probe
+ * line, opposite strict sides of cd for a and b puts that vertex between them.
  */
-function segmentsCrossProperly(
+function probeCrossesSegment(
   ax: number, az: number, bx: number, bz: number,
   cx: number, cz: number, dx: number, dz: number,
 ): boolean {
-  const d1 = orient(cx, cz, dx, dz, ax, az);
-  const d2 = orient(cx, cz, dx, dz, bx, bz);
-  const d3 = orient(ax, az, bx, bz, cx, cz);
-  const d4 = orient(ax, az, bx, bz, dx, dz);
-  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
-    && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  const cSide = orient(ax, az, bx, bz, cx, cz) > 0;
+  const dSide = orient(ax, az, bx, bz, dx, dz) > 0;
+  if (cSide === dSide) return false;
+  const d3 = orient(cx, cz, dx, dz, ax, az);
+  const d4 = orient(cx, cz, dx, dz, bx, bz);
+  return (d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0);
 }
 
 /**
@@ -716,7 +721,7 @@ function capPointIsOverStrip(
   const centreZ = j * CELL_WORLD_SIZE;
   let crossings = 0;
   forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
-    if (segmentsCrossProperly(centreX, centreZ, hitX, hitZ, ax, az, bx, bz)) crossings++;
+    if (probeCrossesSegment(centreX, centreZ, hitX, hitZ, ax, az, bx, bz)) crossings++;
   });
   return (crossings & 1) === 1;
 }
@@ -838,6 +843,8 @@ function refineRiserToDrawnFace(
   const firstBand = Math.max(lowestBand, Math.ceil(yMin / bandSlab));
   const lastBand = Math.min(highestBand, Math.floor(yMax / bandSlab) + 1);
 
+  if (lastBand < firstBand) return hit;
+
   // THE CAP GATE. A riser hit is always somewhere it should not be; a cap hit
   // may be exactly right, and only the drawn region can say which.
   if (!hit.hitRiser && !capPointIsOverStrip(
@@ -849,7 +856,6 @@ function refineRiserToDrawnFace(
   // PASS 1 — where the ray crosses each candidate band's contour IN PLAN.
   // Both kinds of event are derived from these: a riser hit is one of them, a
   // ledge hit lies between two consecutive ones.
-  if (lastBand < firstBand) return hit;
   const contourT = new Float64Array(lastBand - firstBand + 1).fill(Infinity);
   for (let band = firstBand; band <= lastBand; band++) {
     forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
@@ -918,7 +924,9 @@ function refineRiserToDrawnFace(
   // steep enough that the ray reaches the lower neighbour's cap plane before
   // the band's contour leaves no event to find, and the ground in front of the
   // wall is the honest answer for a cap hit exactly as it is for a riser hit.
-  return treadOfEnteredNeighbour(mirror, i, j, origin, direction, tEnter, tExit, footT) ?? hit;
+  return treadOfEnteredNeighbour(
+    mirror, i, j, origin, direction, tEnter, tExit, footT, hit.surfaceY,
+  ) ?? hit;
 }
 
 /**
@@ -942,6 +950,13 @@ function refineRiserToDrawnFace(
  * ordering "the ray passed in front of the wall" is unproven, and a ray that
  * actually went through the wall's foot would be answered with a point inside
  * drawn solid.
+ *
+ * `ownCapY` is this cell's drawn cap. The tread stood on must be BELOW it as
+ * well as below the entry height: a riser hit enters under its own cap so the
+ * two bounds agree, but a cap hit enters above it, and without the second
+ * bound a HIGHER neighbour the ray had already flown over would be named at
+ * the point where the ray crosses its cap plane — in the air over this cell's
+ * tread, not on any drawn surface.
  */
 function treadOfEnteredNeighbour(
   mirror: TerrainMirror,
@@ -952,6 +967,7 @@ function treadOfEnteredNeighbour(
   tEnter: number,
   tExit: number,
   footContourT: number,
+  ownCapY: number,
 ): TerrainRayPick | null {
   const dy = direction.y;
   if (!(dy < 0)) return null;
@@ -971,15 +987,16 @@ function treadOfEnteredNeighbour(
   if (!cellRevealed(mirror, ni, nj)) return null;
 
   const entryY = origin.y + tEnter * dy;
-  // The neighbour's HIGHEST drawn cap under the entry height — the tread the
-  // ray is above as it crosses this box, topmost first for the same reason
-  // the span loop above scans that way.
+  const treadCeilingY = entryY < ownCapY ? entryY : ownCapY;
+  // The neighbour's HIGHEST drawn cap under both the entry height and this
+  // cell's own cap — the tread the ray is above as it crosses this box,
+  // topmost first for the same reason the span loop above scans that way.
   const count = spanCount(mirror.map, ni, nj);
   for (let k = count - 1; k >= 0; k--) {
     const nSpan = spanAt(mirror.map, ni, nj, k);
     if (!isSpanDrawn(nSpan)) continue;
     const capY = spanCapHeight(nSpan) * HEIGHT_WORLD_SCALE;
-    if (!(capY < entryY)) continue;
+    if (!(capY < treadCeilingY)) continue;
     const t = tEnter + (capY - entryY) / dy;
     if (t > tExit || !(t < footContourT)) return null;
     return {
