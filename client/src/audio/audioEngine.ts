@@ -2,7 +2,7 @@
 // per-plugin handles that are the only way into it (contract:
 // client/src/plugins/types.ts's PluginAudio; design: .claude/plans/audio-host.md §2).
 //
-//   plugin voices ──► bus gain (sfx | ambience | music) ──► master ──► destination
+//   plugin voices ──► bus gain (sfx | ambience | music) ──► master ──► limiter ──► destination
 //                              ▲                               ▲
 //         audioPrefs, one level per bus ┘   audioPrefs (volume × mute) ┘
 //
@@ -160,6 +160,71 @@ const SILENT_GAIN = 0;
 /** Full level for a bus or a master that is not being attenuated. */
 const UNITY_GAIN = 1;
 
+// ── The limiter ──────────────────────────────────────────────────────────────
+//
+// A safety limiter sits between the master and the destination. It is BELT AND
+// SUSPENDERS, not a mix tool: DEFAULT_MASTER_VOLUME's 0.8 of headroom is the
+// belt, and it is a convention that a player can now undo — the master and the
+// three bus sliders all go to 1.0 — so it cannot be the only thing standing
+// between MAX_SFX_VOICES stacked thunderclaps and a clipped output stage.
+// Digital clipping is not a soft failure; it is a buzz over everything, and it
+// happens exactly when the world is at its most dramatic.
+//
+// Every constant below is chosen so the limiter is INAUDIBLE until the ceiling
+// and then holds it — never so that it shapes the ordinary mix.
+
+/**
+ * Where the limiter starts working, in dBFS.
+ *
+ * −2: a hair under the 0 dBFS ceiling. One voice cannot reach it in the shipped
+ * mix (the generated placeholders peak at 0.7 of full scale, i.e. −3.1 dBFS,
+ * and the master's default takes another 1.9 dB off), so nothing a single sound
+ * does is touched. Two or three full-scale sounds landing together do reach it,
+ * which is the case this exists for.
+ */
+const LIMITER_THRESHOLD_DB = -2;
+
+/**
+ * How gradually it engages around the threshold, in dB.
+ *
+ * ZERO — a hard knee. A soft knee starts attenuating BELOW the threshold, which
+ * is compression: it would quietly reshape the dynamics of every loud moment,
+ * which is a mix decision and not this node's job. A limiter should do nothing
+ * at all until the ceiling.
+ */
+const LIMITER_KNEE_DB = 0;
+
+/**
+ * Input-to-output ratio above the threshold.
+ *
+ * 20:1, which is Web Audio's maximum and the number that makes this a LIMITER
+ * rather than a compressor: 10 dB of overshoot comes out as 0.5 dB. Anything
+ * lower would let a big enough stack through to clip anyway, which would leave
+ * the node costing CPU without closing the failure it was added for.
+ */
+const LIMITER_RATIO = 20;
+
+/**
+ * How fast it clamps an overshoot, in seconds.
+ *
+ * 3 ms. Fast enough to catch the leading edge of a thunderclap before it clips,
+ * and deliberately no faster: an attack shorter than one cycle of the signal
+ * tracks the WAVEFORM instead of its envelope, which is audible as distortion
+ * on low frequencies — and low frequency is most of what thunder is. 3 ms is
+ * about one cycle at 300 Hz.
+ */
+const LIMITER_ATTACK_SECONDS = 0.003;
+
+/**
+ * How fast it lets go again, in seconds.
+ *
+ * 250 ms. Long enough that a burst of strikes does not pump — the gain settling
+ * back up between claps a quarter-second apart would be heard as the world
+ * breathing — and short enough that the mix is back to full before the next
+ * weather event a second or more later.
+ */
+const LIMITER_RELEASE_SECONDS = 0.25;
+
 /**
  * Extra seconds to hold a faded-out voice before stopping it.
  *
@@ -233,6 +298,8 @@ interface AudioGraph {
   readonly context: AudioContext;
   readonly listener: AudioListener;
   readonly master: GainNode;
+  /** The safety limiter between the master and the destination — see above. */
+  readonly limiter: DynamicsCompressorNode;
   readonly buses: Readonly<Record<AudioBusName, GainNode>>;
   /**
    * Where positional voices hang, in the SCENE and not in any plugin's layer.
@@ -371,6 +438,12 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     console.log('[terrace audio]', call, {
       ...fields,
       busGain,
+      // HOW MUCH THE LIMITER IS TAKING OFF RIGHT NOW, in dB (always ≤ 0). It
+      // reads 0 while the limiter is transparent, which is the state it is
+      // supposed to be in — so a non-zero value here is the trace saying the
+      // output actually reached the ceiling, and is the only way to tell that
+      // from outside.
+      limiterReductionDb: graph === null ? null : graph.limiter.reduction,
       sfxVoices: sfxVoices.length,
       // THE MASTER'S LIVE VALUE, on every line. It is the answer to the first
       // question anyone debugging silence asks — the player's own volume and
@@ -518,15 +591,28 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     }
     const context = listener.context;
 
-    // MASTER STRAIGHT TO THE DESTINATION, bypassing listener.gain. three wires
+    // MASTER → LIMITER → DESTINATION, bypassing listener.gain. three wires
     // every voice's own gain to listener.getInput() (Audio.js:65) and the
     // listener's gain to the destination (AudioListener.js:50); each voice
     // below is rerouted off that default and onto its bus, so the listener's
     // gain would otherwise be a node with nothing connected to it pretending to
     // be the master. There is exactly one master and it is this one.
+    //
+    // THE LIMITER IS LAST, after the master rather than before it, because it
+    // guards the OUTPUT: a player who pulls the master down must be able to
+    // bring the signal back under the ceiling by doing so, and a limiter ahead
+    // of the master could not be turned off that way.
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.value = LIMITER_THRESHOLD_DB;
+    limiter.knee.value = LIMITER_KNEE_DB;
+    limiter.ratio.value = LIMITER_RATIO;
+    limiter.attack.value = LIMITER_ATTACK_SECONDS;
+    limiter.release.value = LIMITER_RELEASE_SECONDS;
+    limiter.connect(context.destination);
+
     const master = context.createGain();
     master.gain.value = effectiveMasterGain();
-    master.connect(context.destination);
+    master.connect(limiter);
 
     const buses = {} as Record<AudioBusName, GainNode>;
     for (const name of AUDIO_BUS_NAMES) {
@@ -552,7 +638,7 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     positionalRoot.name = POSITIONAL_VOICE_GROUP_NAME;
     viewport.scene.add(positionalRoot);
 
-    return { context, listener, master, buses, positionalRoot };
+    return { context, listener, master, limiter, buses, positionalRoot };
   }
 
   /** Routes a three Audio's own gain off the listener and onto its bus. */
@@ -998,6 +1084,7 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
       active.positionalRoot.removeFromParent();
       active.listener.removeFromParent();
       active.master.disconnect();
+      active.limiter.disconnect();
       // The context itself is closed: it owns a hardware output stream, and a
       // client torn down without closing it would leave that stream open for
       // the life of the tab.
