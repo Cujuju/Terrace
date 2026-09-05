@@ -338,7 +338,9 @@ export const clientPlugin: TerraceClientPlugin = {
    */
   async preload(): Promise<void> {
     for (const { spec, url } of SPECIES_ASSETS) {
-      installSpeciesAsset(spec, await loadRigAsset(url));
+      // Lamps-only (null environment): fur, feather and scale, not metal — see
+      // ClientPluginCtx.loadRigAsset for the choice.
+      installSpeciesAsset(spec, await loadRigAsset(url, null));
     }
   },
 

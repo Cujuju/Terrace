@@ -202,6 +202,30 @@ export interface Vec3 {
   readonly z: number;
 }
 
+/**
+ * Where a ray met the terrain.
+ *
+ * TWO KINDS OF FIELD LIVE IN HERE, and telling them apart is the whole of the
+ * hover-pick contract (2026-09-04, issue #324).
+ *
+ *   - FACTS ABOUT THE RAY — `x`, `y`, `hitRiser`, `hitY`, `hitX`, `hitZ`. They
+ *     describe where the player aimed, and aiming does not go stale when the
+ *     ground moves.
+ *   - A SNAPSHOT OF THE MAP — `spanIndex` and `surfaceY`. They are only names
+ *     for what the column held at the instant this pick was marched.
+ *
+ * SO A PICK MUST NEVER BE CACHED ACROSS AN EDIT. `spanIndex` is a position in
+ * a list whose length is state (columns.ts's `spanIndexCoveringBand` says so
+ * outright): a carve that splits a column, or a raise that welds two of its
+ * spans, renumbers every span above the change, and a kept index then names a
+ * different span rather than a moved one. Patching the snapshot half back up
+ * after an edit — which is what the client used to do — makes a dead claim
+ * look like a live one.
+ *
+ * THE ONE CACHE IS `hoverTarget` (input/sculptInput.ts), and it does not cache
+ * this object: it pins the CELL and the RAY and re-derives the pick from the
+ * live map through `pickTerrainInColumn` on every read.
+ */
 export interface TerrainRayPick {
   /** Cell coordinates, always in bounds and in a received chunk. */
   readonly x: number;
@@ -214,6 +238,9 @@ export interface TerrainRayPick {
    * Always the CAP, never the point on the riser the ray happened to graze:
    * the consumer is the hover outline (render/brushPreview.ts), which marks
    * the footprint about to be sculpted, and that footprint lies on the tread.
+   *
+   * MAP-DERIVED: valid only for the map this pick was marched against. See the
+   * interface header.
    */
   readonly surfaceY: number;
   /**
@@ -224,6 +251,9 @@ export interface TerrainRayPick {
    * consumer answer "which layer did I click" once they do not — a ray can
    * enter a cave mouth and strike a floor with a ceiling above it, and the cell
    * coordinates alone cannot say which of them was hit.
+   *
+   * MAP-DERIVED, and the most perishable field on this interface: valid only
+   * for the map this pick was marched against. See the interface header.
    */
   readonly spanIndex: number;
   /**
@@ -355,6 +385,94 @@ type CellVisitor = (i: number, j: number, tEnter: number, tExit: number) => bool
 const MAX_STANDING_WORLD_HEIGHT = 4;
 
 /**
+ * The ray in the mixed space the march works in: X and Z in CELL units,
+ * shifted so cell (i, j) occupies exactly [i, i+1] × [j, j+1]; Y left in world
+ * units.
+ *
+ * Scaling origin and direction by the same factor on the same axes maps the
+ * ray to a ray with the SAME parameter t, so one t indexes this space and
+ * world space alike — which is why `hitX`/`hitZ` can be evaluated on the
+ * unscaled ray at a t this space produced.
+ */
+interface ScaledRay {
+  readonly ox: number;
+  readonly oz: number;
+  readonly oy: number;
+  readonly dx: number;
+  readonly dz: number;
+  readonly dy: number;
+}
+
+/**
+ * ONE CONVERSION, TWO CALLERS (2026-09-04). `marchCells` walks the whole
+ * lattice; `pickTerrainInColumn` clips against ONE cell of it. A second copy
+ * of this arithmetic is exactly how the two would come to disagree about where
+ * a cell's box is, so neither owns it.
+ *
+ * Null for a non-finite ray, or one with no direction at all — there is
+ * nothing to walk either way.
+ */
+function scaleRayToCellSpace(origin: Vec3, direction: Vec3): ScaledRay | null {
+  const ox = origin.x / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET;
+  const oz = origin.z / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET;
+  const dx = direction.x / CELL_WORLD_SIZE;
+  const dz = direction.z / CELL_WORLD_SIZE;
+  const oy = origin.y;
+  const dy = direction.y;
+  if (
+    !Number.isFinite(ox) || !Number.isFinite(oz) || !Number.isFinite(oy) ||
+    !Number.isFinite(dx) || !Number.isFinite(dz) || !Number.isFinite(dy)
+  ) {
+    return null;
+  }
+  if (dx === 0 && dz === 0 && dy === 0) return null;
+  return { ox, oz, oy, dx, dz, dy };
+}
+
+/** The parameter interval a ray spends inside an axis-aligned box. */
+interface RayBoxClip {
+  readonly tEnter: number;
+  readonly tExit: number;
+}
+
+/**
+ * Clips `ray` to the box [xLo, xHi] × [zLo, zHi] in cell units, and
+ * [MIN_TERRAIN_WORLD_Y, ceilingY] in world units. Null when it misses.
+ *
+ * The Y clip is what makes a near-horizon ray cheap: a camera high above the
+ * terrain starts marching at the altitude of the tallest possible mountain,
+ * not at the camera, so it never walks cells it could not have hit.
+ */
+function clipRayToBox(
+  ray: ScaledRay,
+  xLo: number,
+  xHi: number,
+  zLo: number,
+  zHi: number,
+  ceilingY: number,
+): RayBoxClip | null {
+  let tMin = 0;
+  let tMax = Infinity;
+  const clipSlab = (o: number, d: number, lo: number, hi: number): boolean => {
+    if (d === 0) return o >= lo && o <= hi;
+    const t1 = (lo - o) / d;
+    const t2 = (hi - o) / d;
+    const near = t1 < t2 ? t1 : t2;
+    const far = t1 < t2 ? t2 : t1;
+    if (near > tMin) tMin = near;
+    if (far < tMax) tMax = far;
+    return tMin <= tMax;
+  };
+  if (!clipSlab(ray.ox, ray.dx, xLo, xHi)) return null;
+  if (!clipSlab(ray.oz, ray.dz, zLo, zHi)) return null;
+  if (!clipSlab(ray.oy, ray.dy, MIN_TERRAIN_WORLD_Y, ceilingY)) return null;
+  // The ray starts at its origin, so nothing behind the camera counts.
+  if (tMin < 0) tMin = 0;
+  if (tMin > tMax) return null;
+  return { tEnter: tMin, tExit: tMax };
+}
+
+/**
  * Walks the cells a world-space ray crosses, nearest first, and hands each to
  * `visit`.
  *
@@ -377,44 +495,16 @@ function marchCells(
   ceilingY: number,
   visit: CellVisitor,
 ): void {
-  // X/Z into CELL units; Y stays in world units. Scaling origin and direction
-  // by the same factor on the same axes maps the ray to a ray with the SAME
-  // parameter t, so one t indexes this mixed space consistently.
-  const ox = origin.x / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET;
-  const oz = origin.z / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET;
-  const dx = direction.x / CELL_WORLD_SIZE;
-  const dz = direction.z / CELL_WORLD_SIZE;
-  const oy = origin.y;
-  const dy = direction.y;
-  if (
-    !Number.isFinite(ox) || !Number.isFinite(oz) || !Number.isFinite(oy) ||
-    !Number.isFinite(dx) || !Number.isFinite(dz) || !Number.isFinite(dy)
-  ) {
-    return;
-  }
-  if (dx === 0 && dz === 0 && dy === 0) return;
+  // X/Z into CELL units; Y stays in world units — see ScaledRay.
+  const ray = scaleRayToCellSpace(origin, direction);
+  if (ray === null) return;
+  const { ox, oz, dx, dz } = ray;
 
-  // Clip to the slab the world occupies before stepping. The Y clip is what
-  // makes a near-horizon ray cheap: a camera high above the terrain starts
-  // marching at the altitude of the tallest possible mountain, not at the
-  // camera, so it never walks cells it could not have hit.
-  let tMin = 0;
-  let tMax = Infinity;
-  const clipSlab = (o: number, d: number, lo: number, hi: number): boolean => {
-    if (d === 0) return o >= lo && o <= hi;
-    const t1 = (lo - o) / d;
-    const t2 = (hi - o) / d;
-    const near = t1 < t2 ? t1 : t2;
-    const far = t1 < t2 ? t2 : t1;
-    if (near > tMin) tMin = near;
-    if (far < tMax) tMax = far;
-    return tMin <= tMax;
-  };
-  if (!clipSlab(ox, dx, 0, size)) return;
-  if (!clipSlab(oz, dz, 0, size)) return;
-  if (!clipSlab(oy, dy, MIN_TERRAIN_WORLD_Y, ceilingY)) return;
-  if (tMin < 0) tMin = 0;
-  if (tMin > tMax) return;
+  // Clip to the slab the world occupies before stepping.
+  const clip = clipRayToBox(ray, 0, size, 0, size, ceilingY);
+  if (clip === null) return;
+  const tMin = clip.tEnter;
+  const tMax = clip.tExit;
 
   // Amanatides & Woo grid traversal over the cell lattice.
   const u = ox + tMin * dx;
@@ -553,6 +643,95 @@ export function pickTerrainCellByRay(
     return found !== null;
   });
   return found;
+}
+
+/**
+ * THE SAME RAY, ASKED OF ONE PINNED COLUMN — what `hoverTarget` re-derives its
+ * pick from on every read (input/sculptInput.ts), so no map-derived field ever
+ * survives an edit (issue #324, 2026-09-04).
+ *
+ * It is `pickTerrainCellByRay`'s per-cell work with the march removed: the
+ * caller has already decided WHICH cell the player aimed at, and that decision
+ * is a fact about the ray rather than about the map, so it must not be
+ * re-taken every time the ground moves. Re-marching after each edit is what
+ * walked a held raise uphill (issue #25) and a held lower away from the
+ * camera; re-deriving inside the pinned column keeps the promised cell and
+ * still answers about the map as it is NOW.
+ *
+ * Three answers, in order:
+ *
+ *  1. The ray misses this cell's XZ box, or the cell is out of range or in a
+ *     chunk the server never sent → null.
+ *  2. The ray meets a drawn span of the column → that hit, exactly as the
+ *     march would have reported it (same `terrainHitInCell`).
+ *  3. GROUND UNDER THE RAY. The ray crosses the cell entirely in AIR — over a
+ *     cap the player just lowered, or through a gap they just carved. The
+ *     answer is the TREAD of the highest drawn span whose cap lies below the
+ *     ray's Y sweep across this cell: `hitRiser: false`,
+ *     `hitY === surfaceY === cap`. That is what keeps a held lower digging the
+ *     same cell instead of falling through it. No such span → null, and the
+ *     caller re-marches.
+ *
+ * WHY THE MIDPOINT OF [tEnter, tExit] FOR THE FALLBACK'S `hitX`/`hitZ`. There
+ * is no meeting to report — the ray passed above this ground, so no t on it
+ * lands on the tread — and the point must still lie inside the cell, because
+ * its consumer measures lip distance from it (world.ts's `carveBand`). The
+ * midpoint of the ray's chord across the cell is the one point that is inside
+ * by construction for every ray, and is the chord's own centre rather than an
+ * arbitrary end of it.
+ *
+ * `direction` need not be normalised; only its direction matters.
+ */
+export function pickTerrainInColumn(
+  mirror: TerrainMirror,
+  x: number,
+  y: number,
+  origin: Vec3,
+  direction: Vec3,
+): TerrainRayPick | null {
+  const size = mirror.map.size;
+  if (size <= 0) return null;
+  if (x < 0 || y < 0 || x >= size || y >= size) return null;
+  // The same rule the march applies: an unreceived chunk has no mesh, so there
+  // is nothing there to point at (mirror.ts invariant 1).
+  if (!cellRevealed(mirror, x, y)) return null;
+
+  const ray = scaleRayToCellSpace(origin, direction);
+  if (ray === null) return null;
+  // Cell (x, y) occupies exactly [x, x+1] × [y, y+1] in the scaled space.
+  const clip = clipRayToBox(ray, x, x + 1, y, y + 1, MAX_TERRAIN_WORLD_Y);
+  if (clip === null) return null;
+  const { tEnter, tExit } = clip;
+
+  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit);
+  if (hit !== null) return hit;
+
+  const entryY = ray.oy + tEnter * ray.dy;
+  const exitY = ray.oy + tExit * ray.dy;
+  const lowY = entryY < exitY ? entryY : exitY;
+  // TOPMOST FIRST: the highest ground still under the ray is the ground the
+  // player is looking down at. A span whose cap is inside the sweep would have
+  // been a hit above, so every span left here is wholly above or wholly below
+  // it, and `capY < lowY` is exactly "below".
+  const count = spanCount(mirror.map, x, y);
+  for (let k = count - 1; k >= 0; k--) {
+    const span = spanAt(mirror.map, x, y, k);
+    if (!isSpanDrawn(span)) continue;
+    const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+    if (capY >= lowY) continue;
+    const tMid = (tEnter + tExit) / 2;
+    return {
+      x,
+      y,
+      surfaceY: capY,
+      spanIndex: k,
+      hitRiser: false,
+      hitY: capY,
+      hitX: origin.x + tMid * direction.x,
+      hitZ: origin.z + tMid * direction.z,
+    };
+  }
+  return null;
 }
 
 /** Where a pointed-at pick landed: the cell, and how far away it was. */

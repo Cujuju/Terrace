@@ -33,9 +33,9 @@ import {
   instantiateRig,
   type RigBlueprint,
 } from '../../../client/src/render/rigSkin.ts';
+import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import {
   assertAssetFits,
-  loadRigAsset,
   type AssetFootprintCells,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
@@ -226,8 +226,14 @@ let kit: BoatKit | null = null;
  * the bake all funnel through installBoatKit, so this and the test/node path
  * (parse + install) cannot drift apart.
  */
-export async function preloadBoatModels(url: string): Promise<void> {
-  installBoatKit(await loadRigAsset(url));
+export async function preloadBoatModels(
+  ctx: Pick<ClientPluginCtx, 'loadRigAsset'>,
+  url: string,
+): Promise<void> {
+  // 'lamps-only': the war boat is diffuse art (wood, sailcloth) verified
+  // eyes-on against the lamps — see ClientPluginCtx.loadRigAsset for why the
+  // environment would light its diffuse term twice.
+  installBoatKit(await ctx.loadRigAsset(url, 'lamps-only'));
 }
 
 /**

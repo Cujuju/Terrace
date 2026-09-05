@@ -123,7 +123,9 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
  * no host to give it one, so it awaits the same install function directly.
  */
 async function installAssets(): Promise<void> {
-  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl));
+  // Lamps-only (null environment): fish are painted, not metal — see
+  // ClientPluginCtx.loadRigAsset for the choice.
+  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl, null));
 }
 
 function main(): void {

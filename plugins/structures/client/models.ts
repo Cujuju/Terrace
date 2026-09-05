@@ -28,10 +28,21 @@
 // the tiers stay legible from the game's orbit-camera distance the way
 // flora's two tree kinds and monsters' three creatures do.
 //
-// The rules those plugins' models.ts files keep, kept here too: no textures,
-// no per-object lights, no external assets, everything generated in this
-// file, flat shading so a low-segment primitive reads as a deliberate
+// The rules those plugins' models.ts files keep, kept here too: no per-object
+// lights, and flat shading so a low-segment primitive reads as a deliberate
 // faceted style rather than as low detail.
+//
+// TEXTURES AND EXTERNAL ASSETS ARE ALLOWED (owner, 2026-09-04, superseding
+// this file's original "no textures, no external assets, everything generated
+// in this file"). A tier may be an authored model loaded from a .glb instead
+// of a list of primitives — tier 2 is the first, see IMPORTED_STRUCTURE_TIER
+// below — and such a model brings its own textured material. Nothing else
+// about the file changes: an imported tier arrives as the SAME
+// (geometry, material, local transforms) list every procedural tier is, goes
+// through the same merge and the same InstancedMesh allocation, and is bound
+// by the same footprint contract. The procedural builder of a replaced tier
+// stays in this file, marked superseded, because it is also the fallback when
+// no asset is installed (a failed preload must not empty a tier).
 //
 // FIDELITY PASS (owner feedback: "these structures need more detail"): every
 // tier below picked up a fixed set of PRIMITIVE detail beyond its original
@@ -95,6 +106,15 @@ import {
   type InstancedBufferAttribute,
   type Material,
 } from 'three';
+// The render kit, reached by path exactly as plugins/boats reaches it — see
+// that plugin's models.ts header. rigAsset.ts loads and validates the file;
+// staticAsset.ts turns it into the part list this plugin already draws.
+import {
+  assertAssetFits,
+  loadRigAsset,
+  type RigAsset,
+} from '../../../client/src/render/rigAsset.ts';
+import { flattenAssetParts } from '../../../client/src/render/staticAsset.ts';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
@@ -107,7 +127,13 @@ import {
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
 import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
-import { fitToRadius, mergeParts, mergeSharedSurface, type StructurePart } from './parts.ts';
+import {
+  fitToRadius,
+  mergeParts,
+  mergeSharedSurface,
+  partsStandingHeight,
+  type StructurePart,
+} from './parts.ts';
 import type { SiteKind } from './site.ts';
 
 // ── Shared build helpers ─────────────────────────────────────────────────────
@@ -153,6 +179,163 @@ export const STRUCTURE_FOOTPRINT_RADIUS =
 
 function lambert(color: number, options: { emissive?: number } = {}): MeshLambertMaterial {
   return new MeshLambertMaterial({ color, flatShading: true, emissive: options.emissive ?? 0x000000 });
+}
+
+// ── The imported tier: an authored .glb where a tier used to be primitives ───
+//
+// Owner decision 2026-09-04: a plugin may ship external model assets. Tier 2
+// is the first one taken up on it — see IMPORTED_STRUCTURE_TIER for why that
+// tier, and the file banner for what does and does not change.
+
+/**
+ * Which tier is drawn from the .glb rather than built from primitives.
+ *
+ * TIER 2, THE TIMBER-HOUSE. The asset is a timber-framed cottage with a gable
+ * roof and a chimney (see assets/LICENSES.md), which is tier 2's own design
+ * line — "box wall + gable roof, first hard edges" — rather than an
+ * approximation of one. It is not tier 4: the stone-cottage's identity in the
+ * progression is its MATERIAL BREAK to stone (see the tier table above), and
+ * an imported timber house standing in for it would erase the one step in the
+ * six that changes material rather than shape.
+ */
+const IMPORTED_STRUCTURE_TIER = 2;
+
+/**
+ * How tall, in WORLD UNITS, the tallest procedural tier stands: the
+ * watchtower's spire apex — tower 1.3 + parapet 0.14 + roof 0.4 (tier 5's own
+ * constants, below).
+ *
+ * It is the CEILING an imported model is measured against, so no downloaded
+ * building can tower over the game's own tallest silhouette. Stated here and
+ * VERIFIED against the built models on every attach (see createStructureModels)
+ * rather than merely stated, because a number copied out of another block goes
+ * stale the moment that block is edited — and stale HIGH is a licence for an
+ * asset to dwarf every building in the game.
+ */
+const TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS = 1.84;
+
+/**
+ * The budget an imported building must fit, in WORLD UNITS.
+ *
+ * ASSETS ARE AUTHORED IN WORLD UNITS — the same frame every local matrix in
+ * this file is in, so an asset's parts are used exactly as they load, with no
+ * conversion step between the file and the model space (orchestrator decision
+ * 2026-09-04: the war boat and wildlife's deer are both authored this way and
+ * neither carries a runtime scale; this tier was the odd one out, and the
+ * render kit's own "…Cells" names are being corrected separately).
+ *
+ * x and z are the footprint contract restated for an asset: a tier may reach
+ * STRUCTURE_FOOTPRINT_RADIUS from its origin in either direction, so the whole
+ * model spans twice that — the same number the tiers below are measured
+ * against, in the same unit, which is what keeps an imported building and a
+ * procedural one under ONE bound rather than two that can drift. y is the
+ * height ceiling above.
+ */
+const IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS = {
+  x: STRUCTURE_FOOTPRINT_RADIUS * 2,
+  z: STRUCTURE_FOOTPRINT_RADIUS * 2,
+  y: TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS,
+};
+
+/**
+ * The loaded building asset, or null until preloadStructureModels installs one.
+ *
+ * MODULE-SCOPED AND NEVER DISPOSED BY THIS PLUGIN'S dispose(), which is the
+ * whole of the ownership design (D3). The asset owns its geometries, materials
+ * and textures; createStructureModels takes CLONES of them (see
+ * importedStructureParts) so that everything it pushes into its own dispose
+ * lists is its own, and mergeParts — which disposes what it is handed — never
+ * sees an asset-owned object. The alternative, tracking asset parts separately
+ * so dispose() could free the asset after the meshes, buys nothing: the file is
+ * ~180 KB and one settlement's worth of buildings re-mounts the plugin many
+ * times a session, so re-loading it per attach would be strictly worse.
+ */
+let importedBuildingAsset: RigAsset | null = null;
+
+/**
+ * Loads the tier-2 building asset before attach — the plugin's preload().
+ *
+ * A rejected load leaves the previous asset (or none) installed and is a
+ * logged breach for this plugin alone: buildTierParts falls back to the
+ * procedural timber-house, so the settlement still stands.
+ */
+export async function preloadStructureModels(url: string): Promise<void> {
+  // Lamps-only (null environment): timber and thatch have no sky to mirror —
+  // see ClientPluginCtx.loadRigAsset for the choice.
+  installStructureAsset(await loadRigAsset(url, null));
+}
+
+/**
+ * Installs an already-parsed asset: the node path (bytes off disk plus
+ * parseRigAsset), used by the verification scripts and the tests.
+ *
+ * The fit check lives HERE rather than in preloadStructureModels for boats'
+ * reason (installBoatKit): a file that passes offline must be the same file
+ * that passes in the browser, and it would not be if the two paths checked
+ * different things.
+ */
+export function installStructureAsset(asset: RigAsset): void {
+  // Measured BEFORE anything is assigned or freed, so a model that overruns
+  // its plot cannot replace a good one. The shared error already names the
+  // axis and the number; what it cannot say is why this budget is the budget.
+  try {
+    assertAssetFits(asset, IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS);
+  } catch (cause) {
+    throw new Error(
+      `structure asset: the model breaks the footprint contract — a building must stand ` +
+        `strictly over the ground the server surveys for it (see STRUCTURE_FOOTPRINT_RADIUS)`,
+      { cause },
+    );
+  }
+  // THE PREVIOUS ASSET IS FREED, NOT DROPPED. preload() runs on every mount,
+  // so without this each remount would leave the old file's geometries,
+  // materials and textures alive with nothing pointing at them — a leak that
+  // grows with the session rather than with the world.
+  //
+  // Safe for installBoatKit's reason: the host unmounts a plugin before it
+  // remounts it, so the merged clones that shared this asset's textures have
+  // already been disposed by createStructureModels' own dispose() — nothing
+  // live is sampling these texels. (Only the textures were ever shared; the
+  // geometries and materials the models hold are copies — see
+  // importedStructureParts.)
+  importedBuildingAsset?.dispose();
+  importedBuildingAsset = asset;
+}
+
+/**
+ * The imported tier as parts in this file's own model space, or null when no
+ * asset is installed (the caller falls back to the procedural builder).
+ *
+ * THREE STEPS, IN THIS ORDER, AND EACH IS LOAD-BEARING:
+ *
+ *   1. flattenAssetParts turns the file's meshes into (geometry, material,
+ *      local matrices) — ASSET-OWNED objects (staticAsset.ts's ownership rule);
+ *   2. every part is copied, geometry and material both, because the merge this
+ *      list is about to go through disposes what it is handed, and the asset's
+ *      own buffers must outlive it. Material.clone() shares the TEXTURE objects
+ *      rather than duplicating them, and three's Material.dispose() does not
+ *      free a texture, so the texels stay owned by the asset exactly as
+ *      staticAsset.ts requires;
+ *   3. the copies go through the same radial fit Durand's uses — a model may
+ *      fit its axis-aligned footprint and still swing a corner over unsurveyed
+ *      ground once the placement yaw turns it (parts.ts's partsRadialReach). A
+ *      no-op for a model that already fits, which this one does.
+ *
+ * NO SCALE STEP, AND THAT IS THE POINT: an asset is authored in the same WORLD
+ * UNITS this file's matrices are in (see
+ * IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS), so the local matrices load in
+ * already meaning what they say. A conversion here would be a second place for
+ * the model's size to be decided, and the one thing the assert at load could
+ * not catch.
+ */
+function importedStructureParts(): StructurePart[] | null {
+  if (importedBuildingAsset === null) return null;
+  const owned = flattenAssetParts(importedBuildingAsset).map((part) => ({
+    geometry: part.geometry.clone(),
+    material: part.material.clone(),
+    localMatrices: part.localMatrices.map((local) => local.clone()),
+  }));
+  return fitToRadius(owned, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX);
 }
 
 // ── Fidelity-pass helpers ────────────────────────────────────────────────────
@@ -1069,7 +1252,17 @@ function buildTierParts(): StructurePart[][] {
   // COMPOSITION PASS: the roof is now a whole gable (panels, closed ends and a
   // ridge cap — see gableRoof), where before it was two panels over an open
   // triangle you could see straight through.
-  {
+  //
+  // SUPERSEDED BY THE IMPORTED ASSET (2026-09-04, IMPORTED_STRUCTURE_TIER).
+  // The builder below is no longer what a tier-2 house normally looks like:
+  // when assets/timber-house.glb is installed, this tier is that model. It is
+  // kept, whole, for two reasons — it is the FALLBACK whenever no asset is
+  // installed (a rejected preload, a node test that never preloads), so the
+  // tier can never come out empty; and it is the record of how the tier's
+  // silhouette was arrived at, which the asset was then chosen to match.
+  // Nothing below runs when the asset is installed: it is built lazily, inside
+  // this function, precisely so the unused primitives are never allocated.
+  const buildTimberHouseTier = (): StructurePart[] => {
     const wallHeight = 0.5;
     const wallHalfWidth = 0.28;
     const wallHalfDepth = 0.23;
@@ -1197,8 +1390,12 @@ function buildTierParts(): StructurePart[][] {
       localMatrices: [at(0, wallHeight + ridgeRise * LOFT_WINDOW_RISE_FRACTION, wallHalfDepth + GABLE_END_THICKNESS / 2 + 0.012)],
     };
 
-    tiers.push([logCourses, roof, gableEnds, ridgeCap, door, windows, roofCourses, doorFrame, shutters, loftWindow]);
-  }
+    return [logCourses, roof, gableEnds, ridgeCap, door, windows, roofCourses, doorFrame, shutters, loftWindow];
+  };
+
+  // The imported model when one is installed, the primitives above when it is
+  // not — see IMPORTED_STRUCTURE_TIER and importedStructureParts.
+  tiers.push(importedStructureParts() ?? buildTimberHouseTier());
 
   // ── Tier 3: longhouse — longer and lower than the timber house (a workshop's
   // footprint, not its height), with a smoking chimney: the widest silhouette
@@ -3024,6 +3221,35 @@ function uploadInstancePrefix(
   attribute.needsUpdate = true;
 }
 
+/**
+ * Throws unless the stated asset height ceiling is still no taller than the
+ * tallest tier this file actually builds from primitives.
+ *
+ * WHY A RUNTIME CHECK FOR A CONSTANT. TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS
+ * is a number copied out of tier 5's own local constants, and the preload's fit
+ * check is only as honest as that copy. Stale LOW is harmless (a stricter
+ * budget); stale HIGH — someone lowers the watchtower — silently licenses an
+ * imported model to stand taller than anything in the game. Measured on the
+ * models just built, so the drift cannot survive one attach. Loud rather than
+ * quiet for the reason the tier-count check above is: the fix is a one-line
+ * constant edit, and a silently wrong skyline is not noticed for weeks.
+ */
+function assertHeightBudgetStillHolds(tierParts: readonly StructurePart[][]): void {
+  let tallestProcedural = 0;
+  for (let tier = 0; tier < tierParts.length; tier++) {
+    if (tier === IMPORTED_STRUCTURE_TIER) continue; // the budget is ABOUT this tier
+    tallestProcedural = Math.max(tallestProcedural, partsStandingHeight(tierParts[tier]));
+  }
+  if (TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS > tallestProcedural) {
+    throw new Error(
+      `structures: TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS is ` +
+        `${TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS}, but the tallest procedural tier now ` +
+        `stands ${tallestProcedural.toFixed(3)} — lower the constant to match, or an imported ` +
+        `asset may tower over every building in the game`,
+    );
+  }
+}
+
 export function createStructureModels(): StructureModels {
   // MERGED, not as authored: a tier is written as ~100 parts because that is
   // how a building is legible to write, and drawn as a handful because that is
@@ -3041,6 +3267,7 @@ export function createStructureModels(): StructureModels {
     // tier's buildings from the scene rather than fail loudly at boot.
     throw new Error(`structures: built ${tierParts.length} tier models, expected ${STRUCTURE_TIER_COUNT}`);
   }
+  assertHeightBudgetStillHolds(tierParts);
 
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
