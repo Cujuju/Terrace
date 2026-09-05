@@ -54,6 +54,10 @@ let calendarDay: number | null = null;
 let calendarGenesisDay: number | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
+let unpublishPhase: (() => void) | null = null;
+
+/** Gauge key for the rendered day phase, 0..1 (0 = midnight, 0.5 = noon). */
+const PHASE_GAUGE_KEY = 'phase';
 
 /**
  * DRAW BUDGET: NOTHING, which the module header above already states as a
@@ -74,6 +78,9 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: DAYNIGHT_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
+    // The same interpolated phase the sky is drawn from, for any plugin that
+    // wants to know the time of day (ClientPluginCtx.publishGauge).
+    unpublishPhase = ctx.publishGauge(PHASE_GAUGE_KEY, () => interpolator.samplePhase());
     reducedMotion = watchReducedMotion();
     hasPushedInitialSky = false;
     calendarDay = null;
@@ -133,6 +140,8 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
+    unpublishPhase?.();
+    unpublishPhase = null;
     unsubscribeMessages?.();
     unsubscribeFrames?.();
     unsubscribeMessages = null;

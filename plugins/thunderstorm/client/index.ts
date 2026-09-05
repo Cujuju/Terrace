@@ -58,6 +58,10 @@ const governor = new LightningGovernor();
 let rigs: ThunderstormRigs | null = null;
 let unsubscribeStrikes: (() => void) | null = null;
 let unpublishShade: (() => void) | null = null;
+let unpublishWeight: (() => void) | null = null;
+
+/** Gauge key for how hard the storm falls where the camera is, 0..1. */
+const WEIGHT_GAUGE_KEY = 'weightUnderCamera';
 
 const view = createDiscSystemsView<ThunderstormRig>({
   systemsMessage: THUNDERSTORM_SYSTEMS_MESSAGE,
@@ -181,6 +185,31 @@ function applyStrike(systemId: number, cellX: number, cellY: number): void {
 /** The shade this plugin's clouds throw — see rain's copy for the reasoning. */
 const shade: GroundShadeDisc[] = [];
 
+/**
+ * How hard it storms where the camera is, 0..1.
+ *
+ * A DOCUMENTED COPY of rain's rainWeightUnderCamera: plugins never import each
+ * other (docs/decisions/plugin-host.md, 2026-09-01), so the disc math is
+ * restated rather than shared. Loudest system wins, falloff to the disc edge.
+ */
+function stormWeightUnderCamera(ctx: ClientPluginCtx): number {
+  const camera = ctx.cameraPosition();
+  const cameraCellX = camera.x / CELL_WORLD_SIZE;
+  const cameraCellY = camera.z / CELL_WORLD_SIZE;
+  let loudest = 0;
+  for (const disc of view.poses().values()) {
+    if (disc.intensity <= 0 || disc.radius <= 0) continue;
+    const dx = cameraCellX - disc.x;
+    const dy = cameraCellY - disc.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance >= disc.radius) continue;
+    const weight = disc.intensity * (1 - distance / disc.radius);
+    if (weight > loudest) loudest = weight;
+  }
+  // In range by construction; clamped anyway, belt and suspenders.
+  return Math.min(1, Math.max(0, loudest));
+}
+
 function shadeDiscs(): readonly GroundShadeDisc[] {
   shade.length = 0;
   for (const disc of view.poses().values()) {
@@ -212,6 +241,7 @@ export const clientPlugin: TerraceClientPlugin = {
     // so without this the first thunderclap of every session was silent.
     ctx.audio.preload(thunderSfxUrl);
     unpublishShade = ctx.publishGroundShade(shadeDiscs);
+    unpublishWeight = ctx.publishGauge(WEIGHT_GAUGE_KEY, () => stormWeightUnderCamera(ctx));
 
     unsubscribeStrikes = ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
       const strikes = parseStrikesPayload(payload);
@@ -233,6 +263,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeStrikes = null;
     unpublishShade?.();
     unpublishShade = null;
+    unpublishWeight?.();
+    unpublishWeight = null;
     view.dispose();
   },
 };

@@ -46,6 +46,10 @@ import {
 let rigs: RainRigs | null = null;
 let unpublishShade: (() => void) | null = null;
 let unsubscribeAmbience: (() => void) | null = null;
+let unpublishWeight: (() => void) | null = null;
+
+/** Gauge key for how loud it rains where the camera is, 0..1. */
+const WEIGHT_GAUGE_KEY = 'weightUnderCamera';
 
 const view = createDiscSystemsView<DiscRig>({
   systemsMessage: RAIN_SYSTEMS_MESSAGE,
@@ -138,6 +142,9 @@ export const clientPlugin: TerraceClientPlugin = {
     // Decode now, so the rain fades in instead of starting a decode as it does.
     ctx.audio.preload(rainLoopUrl);
     unpublishShade = ctx.publishGroundShade(shadeDiscs);
+    // The same weight the ambience loop is faded to, for any plugin that wants
+    // to know the weather over the listener (ClientPluginCtx.publishGauge).
+    unpublishWeight = ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
     // EVERY FRAME, deliberately: `ambience` short-circuits an unchanged weight
     // to one comparison, and the weight drifts continuously with the front.
     unsubscribeAmbience = ctx.onFrame(() => {
@@ -148,6 +155,8 @@ export const clientPlugin: TerraceClientPlugin = {
   dispose(): void {
     unsubscribeAmbience?.();
     unsubscribeAmbience = null;
+    unpublishWeight?.();
+    unpublishWeight = null;
     unpublishShade?.();
     unpublishShade = null;
     view.dispose();
