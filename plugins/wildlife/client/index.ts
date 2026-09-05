@@ -285,14 +285,20 @@ function drawnPoseOf(id: number): MoverPose | null {
  * ONE surface because their kit welds every extrusion (species/bodyKit.ts:
  * rigSkin groups by material signature AND by indexed/non-indexed, and colour
  * is not in the signature). The deep-sea creature's lure is UNLIT — the one
- * two-surface herd. The three whale bodies, Blender-built files whose every
- * mesh is indexed under one roughness, bake to ONE each (measured under
- * Node, 2026-09-04/05, plugins/wildlife/.verify-humpback-asset.mts,
- * .verify-blue-whale-asset.mts and .verify-sperm-whale-asset.mts); the
- * procedural whale, whose indexed swept hull and non-indexed extruded fins
- * used to bake to two (rigSkin.ts `bakeRig` appends the indexing to the
- * material signature, client/src/render/rigSkin.ts ~L325-331), is gone since
- * pass 8 (2026-09-05).
+ * two-surface herd: since pass 9 (2026-09-05) the angler is a Blender-built
+ * file (./assets/deepsea.glb) whose lure material carries
+ * KHR_materials_unlit, which three's GLTFLoader turns into a
+ * MeshBasicMaterial — a different material.type from the body's
+ * MeshStandardMaterial, so two signatures, two surfaces (measured under
+ * Node, plugins/wildlife/.verify-deepsea-asset.mts), exactly as the
+ * procedural body's MeshBasicMaterial lure baked. The three whale bodies,
+ * Blender-built files whose every mesh is indexed under one roughness, bake
+ * to ONE each (measured under Node, 2026-09-04/05,
+ * plugins/wildlife/.verify-humpback-asset.mts, .verify-blue-whale-asset.mts
+ * and .verify-sperm-whale-asset.mts); the procedural whale, whose indexed
+ * swept hull and non-indexed extruded fins used to bake to two (rigSkin.ts
+ * `bakeRig` appends the indexing to the material signature,
+ * client/src/render/rigSkin.ts ~L325-331), is gone since pass 8 (2026-09-05).
  *
  * THE GRAZER AND THE WOLF ARE NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04):
  * they are downloaded files, so their surface counts are properties of art this

@@ -9,6 +9,10 @@
 # image's size and colour space, every Empty's position, and whether the file
 # carries an armature or a skinned mesh — which client/src/render/rigAsset.ts
 # does not consume (the pivot convention is Empties; see docs/model-assets.md).
+# Also the glTF EXTENSIONS, read off the file's own JSON chunk rather than
+# through the importer: which extensions the file declares, and which each
+# material carries — KHR_materials_unlit is what makes a material bake to a
+# MeshBasicMaterial in three, and a re-import cannot show it faithfully.
 #
 # `--footprint X Z [--height H] [--tolerance T]` turns it into a CHECK: it
 # exits non-zero when the model overflows the world units it was budgeted,
@@ -20,6 +24,8 @@
 #     E:\...\model-assets\plugins\boats\client\assets\war-boat.glb \
 #     [--footprint 1 1] [--height 1.2] [--tolerance 0.02]
 
+import json
+import struct
 import sys
 
 import bpy
@@ -301,6 +307,36 @@ def parse_args(args):
     return glb_path, footprint, height, tolerance
 
 
+# The GLB container (glTF 2.0 spec, "GLB File Format Specification"): a
+# 12-byte header (magic, version, length), then chunks of (length, type,
+# data); the first chunk is the JSON.
+GLB_HEADER_BYTES = 12
+GLB_CHUNK_HEADER_BYTES = 8
+GLB_JSON_CHUNK_TYPE = 0x4E4F534A  # 'JSON'
+
+
+def gltf_json(glb_path):
+    """The file's own glTF JSON, straight off the container."""
+    with open(glb_path, 'rb') as handle:
+        data = handle.read()
+    length, chunk_type = struct.unpack_from('<II', data, GLB_HEADER_BYTES)
+    if chunk_type != GLB_JSON_CHUNK_TYPE:
+        raise SystemExit('stat_glb: the first GLB chunk is not JSON')
+    start = GLB_HEADER_BYTES + GLB_CHUNK_HEADER_BYTES
+    return json.loads(data[start:start + length])
+
+
+def print_extensions(glb_path):
+    """Which glTF extensions the file declares, and which each material carries."""
+    doc = gltf_json(glb_path)
+    print(f'  extensionsUsed: {doc.get("extensionsUsed", [])}')
+    print(f'  extensionsRequired: {doc.get("extensionsRequired", [])}')
+    for material in doc.get('materials', []):
+        extensions = sorted(material.get('extensions', {}).keys())
+        print(f'    material {material.get("name", "(unnamed)")}: '
+              f'extensions={extensions if extensions else "(none)"}')
+
+
 def main():
     args = sys.argv[sys.argv.index('--') + 1:]
     glb_path, footprint, height, tolerance = parse_args(args)
@@ -309,6 +345,7 @@ def main():
     bpy.ops.import_scene.gltf(filepath=glb_path)
 
     lows, highs = print_stats(f'fresh import of {glb_path}')
+    print_extensions(glb_path)
     if footprint is not None or height is not None:
         if not check_fit(lows, highs, footprint or (None, None), height, tolerance):
             sys.exit(1)
