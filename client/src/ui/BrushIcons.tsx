@@ -176,7 +176,15 @@ export function PullIcon(): JSX.Element {
   );
 }
 
-/** Carve: a tunnel mouth cut into a standing block, roof left on. */
+/**
+ * Carve: an ARCHED tunnel mouth cut into a standing block, roof left on
+ * (owner, 2026-09-04: "make the carve icon more obvious by drawing an arch").
+ * The arch is drawn upright in the lit wall's own plane and sheared onto it
+ * with skewY — the wall's top and bottom edges fall at 1 in 2, and
+ * atan(1/2) is the 26.565° below — so its feet sit on the wall's foot and
+ * its crown runs parallel to the roof line, instead of being hand-plotted
+ * point by point.
+ */
 export function CarveIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -201,9 +209,13 @@ export function CarveIcon(): JSX.Element {
           <stop offset="0" stop-color="#b9e89c" />
           <stop offset="1" stop-color="#4f9a4a" />
         </linearGradient>
-        <radialGradient id="carve-hole" cx="0.5" cy="0.6" r="0.6">
+        <linearGradient id="carve-ring" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e2c19a" />
+          <stop offset="1" stop-color="#a67c58" />
+        </linearGradient>
+        <radialGradient id="carve-hole" cx="0.5" cy="0.9" r="0.85">
           <stop offset="0" stop-color="#05070a" />
-          <stop offset="0.7" stop-color="#1a1410" />
+          <stop offset="0.6" stop-color="#1a1410" />
           <stop offset="1" stop-color="#3a2a1e" />
         </radialGradient>
       </defs>
@@ -214,14 +226,20 @@ export function CarveIcon(): JSX.Element {
       <polygon points="7,10 16,5.5 25,10 16,14.5" fill="url(#carve-cap)" />
       <polygon points="7,10 16,14.5 16,25 7,20.5" fill="url(#carve-face)" />
       <polygon points="25,10 16,14.5 16,25 25,20.5" fill="#3a2415" />
-      <path d="M9 20.3v-4.2c0-2.4 1.2-3.6 2.7-2.9v6.6z" fill="url(#carve-hole)" />
-      <path
-        d="M9 16.1c0-2.4 1.2-3.6 2.7-2.9"
-        stroke="#c7a27a"
-        stroke-width="0.5"
-        fill="none"
-        opacity="0.8"
-      />
+      {/* The arch, upright in the wall's plane: the wall is the rectangle
+          x 7–16, y 6.5–17 before the shear. A ring of dressed stone, the
+          dark mouth inside it, and a lit edge along the crown. */}
+      <g transform="skewY(26.565)">
+        <path d="M8 17V12.2a3.5 3.5 0 0 1 7 0V17z" fill="url(#carve-ring)" />
+        <path d="M9.2 17v-4.8a2.3 2.3 0 0 1 4.6 0V17z" fill="url(#carve-hole)" />
+        <path
+          d="M8 17V12.2a3.5 3.5 0 0 1 7 0V17"
+          stroke="#f4e6d2"
+          stroke-width="0.5"
+          fill="none"
+          opacity="0.7"
+        />
+      </g>
     </svg>
   );
 }
