@@ -1253,6 +1253,21 @@ button.world-header {
   white-space: nowrap;
 }
 
+/* THE RESTART NOTICE sits in the MIDDLE of the screen, not at the top with
+   the other two (owner, 2026-09-04): a restart is the one banner the player
+   should not miss and cannot do anything about, and while it shows there is
+   no world to look at behind it. It keeps the banner chrome above and adds a
+   frosted backdrop, at the same blur the HUD panels use, so the frozen scene
+   under it reads as "paused" rather than "broken". */
+.world-banner-restart {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 14px 22px;
+  font-size: 1.05em;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    WORLD THUMBNAIL (2026-08-22). A 64px top-down picture of the world, so a
    list of five worlds is browsed by SHAPE rather than by reading five names.
