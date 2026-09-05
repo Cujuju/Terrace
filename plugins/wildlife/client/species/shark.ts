@@ -5,8 +5,8 @@
 // used to be built here out of a swept hull and extruded fins (../whaleHull.ts,
 // ./bodyKit.ts). It is now ../assets/shark.glb, authored by
 // tools/blender/build_shark.py and loaded through ./assetSpecies.ts. Those two
-// helpers are NOT orphaned — grazer, ibex, bison, ray, eel and angelfish still
-// build on them, and the whale bodies build on whaleHull too.
+// helpers are NOT orphaned — ibex and bison still build on both, the whale
+// bodies on whaleHull, and quadruped.ts on bodyKit.
 //
 // WHAT DID NOT CHANGE, and must not:
 //   * SHARK_ENVELOPE. It is the placement contract (../placement.ts's
