@@ -11,5 +11,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
-  }
+  },
+  // Inherited by every package: an extending tsconfig overrides `include`, but
+  // none of them sets `files`, so this one ambient declaration reaches the
+  // client and all 24 plugin packages without a line in any of them. See the
+  // file's own header for why it is not beside a consumer.
+  "files": ["types/glb-url.d.ts"]
 }
