@@ -63,11 +63,53 @@ export function cssColor(color: number): string {
 export const GEM_RADIUS_CELLS = 0.45;
 
 /**
+ * The cells a gem's body hangs over, as a half-extent in CELLS either side of
+ * its own: the gem's radius rounded up to whole cells, so the footprint always
+ * covers every cell the body can overlap.
+ */
+export const GEM_FOOTPRINT_HALF_EXTENT_CELLS = Math.ceil(GEM_RADIUS_CELLS / CELL_WORLD_SIZE);
+
+/**
+ * The ground a gem hovers over: the HIGHEST band under its whole footprint,
+ * not the band of its own cell (owner, 2026-09-04: "relics cannot collide with
+ * the terrain, and they currently do"). A gem is nearly two cells wide, and a
+ * neighbouring cell a few bands up — a riser, a cliff foot — used to rise
+ * straight through a body placed off a single sample; the wildlife walkers'
+ * footprint rule (plugins/wildlife/client/placement.ts, walkerGroundY) closes
+ * it the same way here. Null when the gem's own cell has no ground yet — the
+ * caller hides the gem, as before; unknown neighbours are simply skipped.
+ */
+export function gemGroundY(
+  sample: (cellX: number, cellY: number) => number | null,
+  x: number,
+  y: number,
+): number | null {
+  const own = sample(x, y);
+  if (own === null) return null;
+  let ground = own;
+  const reach = GEM_FOOTPRINT_HALF_EXTENT_CELLS;
+  for (let dy = -reach; dy <= reach; dy++) {
+    for (let dx = -reach; dx <= reach; dx++) {
+      const sampled = sample(x + dx, y + dy);
+      if (sampled !== null && sampled > ground) ground = sampled;
+    }
+  }
+  return ground;
+}
+
+/**
  * How far above the rendered surface a gem floats, in WORLD UNITS — a vertical
  * offset, so it never touched the horizontal re-sample. One and a bit units:
  * clear of a single terrace riser (BAND_WORLD_HEIGHT is a quarter of a world
  * unit, client/src/config.ts) so a gem on a step is never half-buried in the
- * step above it, and low enough to still read as "on" that cell.
+ * step above it, and low enough to still read as "on" that cell. Measured from
+ * the footprint's highest band (gemGroundY) to the gem's CENTRE, so the body's
+ * lowest point at the bottom of its bob sits GEM_HOVER_CELLS −
+ * GEM_BOB_AMPLITUDE_CELLS − GEM_RADIUS_CELLS = half a world unit, two bands,
+ * above any ground it hangs over — one band to spare over a drawn cap that
+ * sits a band above its lattice cell (ClientPluginCtx.drawnGroundYAt).
+ * relicShapes.ts refuses any shape taller than GEM_RADIUS_CELLS, which is what
+ * keeps that arithmetic true.
  */
 export const GEM_HOVER_CELLS = 1.2;
 
