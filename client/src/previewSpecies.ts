@@ -34,11 +34,9 @@ import { bakeRig } from './render/rigSkin.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
 import { createRigHerd } from './render/rigHerd.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
-import { FISH_ASSET, buildFish } from '../../plugins/wildlife/client/species/fish.ts';
-import { GRAZER_ASSET } from '../../plugins/wildlife/client/species/grazer.ts';
+import { buildFish } from '../../plugins/wildlife/client/species/fish.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
-import fishUrl from '../../plugins/wildlife/client/assets/fish.glb?url';
-import grazerUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
+import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
 import { buildGrazer } from '../../plugins/wildlife/client/species/grazer.ts';
 import { buildIbex } from '../../plugins/wildlife/client/species/ibex.ts';
 import { buildBison } from '../../plugins/wildlife/client/species/bison.ts';
@@ -122,14 +120,17 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
 /**
  * Installs the assets the asset-sourced species files need before any builder
  * runs. The shipped plugin does this in its `preload` hook; this harness has
- * no host to give it one, so it awaits the same install function directly.
+ * no host to give it one, so it awaits the same install function directly,
+ * over the SAME table (species/assets.ts) — a species the plugin can install,
+ * the preview can look at, with no second list to forget.
  */
 async function installAssets(): Promise<void> {
   // Lamps-only (null environment): fish are painted, not metal — see
   // ClientPluginCtx.loadRigAsset for the choice. The deer is the same kind of
   // surface: flat vertex colours, nothing on it to reflect a sky.
-  installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl, null));
-  installSpeciesAsset(GRAZER_ASSET, await loadRigAsset(grazerUrl, null));
+  for (const { spec, url } of SPECIES_ASSETS) {
+    installSpeciesAsset(spec, await loadRigAsset(url, null));
+  }
 }
 
 function main(): void {
