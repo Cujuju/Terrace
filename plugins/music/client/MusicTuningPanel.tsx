@@ -9,7 +9,7 @@
 // these dials shape belongs to this plugin. It reuses core's audio row classes
 // so the two blocks read as one column of sliders.
 
-import { For, type JSX } from 'solid-js';
+import { createSignal, For, Show, type JSX } from 'solid-js';
 import {
   DIALS,
   MUSIC_TUNING_FIELDS,
@@ -79,25 +79,36 @@ function DialRow(props: { field: MusicTuningField }): JSX.Element {
   );
 }
 
+/** Collapsed until asked for: twelve dials would otherwise dominate the popup. */
+const [expanded, setExpanded] = createSignal(false);
+
 export function MusicTuningPanel(): JSX.Element {
   return (
     <div class="audio-panel">
-      {/* A label row with no control: the block needs a name, because "Pad" and
-          "Melody" mean nothing under the bus levels above them. */}
-      <div class="hud-row controls-row audio-row">
-        <span class="controls-label">Music</span>
-      </div>
-
-      <For each={MUSIC_TUNING_FIELDS}>{(field) => <DialRow field={field} />}</For>
-
+      {/* The heading is the collapse control, as the corner panel's header is. */}
       <button
         type="button"
-        class="controls-reset"
-        title="Puts every dial in this block back to the score as it shipped."
-        onClick={resetMusicTuning}
+        class="panel-header hud-row controls-row audio-row"
+        aria-expanded={expanded()}
+        title={expanded() ? 'Hide the music dials.' : 'Show the music dials.'}
+        onClick={() => setExpanded(!expanded())}
       >
-        Reset music
+        <span class="controls-label">Music</span>
+        <span class="panel-chevron">{expanded() ? '▴' : '▾'}</span>
       </button>
+
+      <Show when={expanded()}>
+        <For each={MUSIC_TUNING_FIELDS}>{(field) => <DialRow field={field} />}</For>
+
+        <button
+          type="button"
+          class="controls-reset"
+          title="Puts every dial in this block back to the score as it shipped."
+          onClick={resetMusicTuning}
+        >
+          Reset music
+        </button>
+      </Show>
     </div>
   );
 }
