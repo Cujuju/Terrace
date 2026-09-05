@@ -15,7 +15,7 @@ import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { createCelestialVoid } from './render/celestialVoid.ts';
-import { voidStyle } from './state/voidPrefs.ts';
+import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
@@ -65,16 +65,23 @@ const viewport = createViewport(canvas);
 // on the page URL, and eliminated entirely from a production build: DEV is
 // statically false there, exactly as for the __terrace handle at the bottom.
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
+const world = createWorld(viewport);
 // WHAT IS OUTSIDE THE MAP (render/celestialVoid.ts, issue #326). Wired here
 // rather than inside createViewport because the look is a player preference
 // (state/voidPrefs.ts) and the viewport deliberately knows nothing about the
 // HUD's state — same split as the ground-height sampler below. Created with
-// the stored style so the first frame is already the right look, then kept in
-// step by the effect: Solid re-runs it on every change, which is what makes
-// the panel's <select> apply live with no reload.
-const celestialVoid = createCelestialVoid(viewport, voidStyle());
+// the stored style and anchor so the first frame is already right, then kept
+// in step by the effects: Solid re-runs them on every change, which is what
+// makes the panel's <select>s apply live with no reload. After createWorld
+// because the world anchor centres its hub under the map, read live.
+const celestialVoid = createCelestialVoid(
+  viewport,
+  voidStyle(),
+  voidAnchor(),
+  () => world.worldSize(),
+);
 createEffect(() => celestialVoid.setStyle(voidStyle()));
-const world = createWorld(viewport);
+createEffect(() => celestialVoid.setAnchor(voidAnchor()));
 
 // THE PLACEMENT LISTENER — where an armed admin action lands (owner,
 // 2026-09-01; ui/AdminPanel.tsx arms, ui/AdminAim.tsx explains). Capture
