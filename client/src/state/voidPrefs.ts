@@ -10,9 +10,9 @@ import {
   clearPersistedChoice,
   persistedChoice,
 } from './persistedChoice.ts';
-import type { VoidStyle } from '../render/celestialVoid.ts';
+import type { VoidAnchor, VoidStyle } from '../render/celestialVoid.ts';
 
-export type { VoidStyle };
+export type { VoidAnchor, VoidStyle };
 
 /**
  * Every value the pref accepts, in the order the panel lists them. Exported
@@ -37,11 +37,37 @@ export { voidStyle };
 export const setVoidStyle = setVoidStyleSignal;
 
 /**
- * Puts the look back to the default and forgets the stored value. Called by
- * state/controlPrefs.ts's `resetBindings`, which the Controls panel's reset
- * button promises resets EVERY setting on that panel — this pref is on it.
+ * What the void is fixed to (owner, 2026-09-04: "the option in settings to
+ * lock it"). 'view' is the approved reference look; 'world' locks the disk to
+ * the plane of the map at a fixed world position — render/celestialVoid.ts's
+ * header says exactly where. Listed in the panel's order.
  */
-export function resetVoidStyle(): void {
+export const VOID_ANCHORS: readonly VoidAnchor[] = ['view', 'world'];
+
+/** Default: what the owner approved on the concept page, fixed to the view. */
+export const DEFAULT_VOID_ANCHOR: VoidAnchor = 'view';
+
+const VOID_ANCHOR_STORAGE_KEY = 'terrace.celestialVoidAnchor.v1';
+
+const [voidAnchor, setVoidAnchorSignal] = persistedChoice<VoidAnchor>(
+  VOID_ANCHOR_STORAGE_KEY,
+  VOID_ANCHORS,
+  DEFAULT_VOID_ANCHOR,
+);
+
+export { voidAnchor };
+
+export const setVoidAnchor = setVoidAnchorSignal;
+
+/**
+ * Puts both prefs back to their defaults and forgets the stored values.
+ * Called by state/controlPrefs.ts's `resetBindings`, which the Controls
+ * panel's reset button promises resets EVERY setting on that panel — these
+ * prefs are on it.
+ */
+export function resetVoidPrefs(): void {
   setVoidStyleSignal(DEFAULT_VOID_STYLE);
   clearPersistedChoice(VOID_STORAGE_KEY);
+  setVoidAnchorSignal(DEFAULT_VOID_ANCHOR);
+  clearPersistedChoice(VOID_ANCHOR_STORAGE_KEY);
 }

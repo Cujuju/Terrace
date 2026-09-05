@@ -51,13 +51,32 @@
 // other option offered and was rejected for the same reason: it splits one
 // `renderer.render` call into a manual two-pass sequence in scene.ts.
 //
-// ANCHORED TO THE CAMERA. The shaders are written in screen space and are
-// ported that way: the void is fixed to the view. Panning the map does not
-// drag it, and the wheel's hub stays exactly on the view axis, which is what
-// the reference's ray/plane math assumes and what the owner approved on the
-// concept page. See the report for the alternative (an unwrapped
-// azimuth/elevation pan of the nebula's noise domain) and why it was not
-// taken here.
+// TWO ANCHORS, ONE SHADER (owner, 2026-09-04: "give me the option in settings
+// to lock it"). Every fragment builds a view ray from screen space and a
+// focal length, turns it into DISK SPACE — hub at the origin, the disk in the
+// z = 0 plane, z up, in disk units — and intersects the plane there. What
+// differs between the anchors is only the three uniforms that define that
+// frame, all set from JS:
+//
+//   'view'  (default) — the reference's own frame: origin fixed VIEW_HUB_DISTANCE
+//           along the view axis, disk tilted WHEEL_TILT_DEGREES. Nothing here
+//           reads the camera, so panning and orbiting leave the void alone
+//           and the hub stays on the view axis, exactly as approved.
+//   'world' — the disk IS the world's plane: its normal is world +Y, its hub
+//           is the fixed world point LOCKED_HUB_DEPTH_WORLD below the centre
+//           of the map, LOCKED_WORLD_UNITS_PER_DISK_UNIT world units to one
+//           disk unit, and the ray is the real camera's. Orbiting, panning
+//           and zooming all move the void with the terrain. THE HUB IS A
+//           CONSTANT, NOT CAPTURED: locking never samples the camera or the
+//           previous anchor, so lock → unlock → lock lands on the same
+//           position every time (owner: "always be in the same position").
+//
+// The world frame is read in the mesh's onBeforeRender, not in onFrame:
+// frame callbacks run BEFORE controls.update() writes the camera (see
+// scene.ts's renderFrame), so a pose read there is a frame stale, and a
+// backdrop one frame behind the terrain swims visibly during an orbit.
+// onBeforeRender runs inside renderer.render, after the camera's matrices
+// are final for this frame.
 //
 // COLOUR PIPELINE. The renderer runs ACES tone mapping at exposure 1.25
 // (render/scene.ts) and sRGB output conversion. Both are opt-in per shader in
@@ -70,14 +89,21 @@
 import {
   BufferGeometry,
   Float32BufferAttribute,
+  Matrix3,
   Mesh,
+  type PerspectiveCamera,
   ShaderMaterial,
   Vector2,
+  Vector3,
   type IUniform,
 } from 'three';
+import { CELL_WORLD_SIZE } from '../config.ts';
 import type { Viewport } from './scene.ts';
 
 export type VoidStyle = 'nebula' | 'wheel';
+
+/** Where the void is fixed: to the view (the reference look) or to the world. */
+export type VoidAnchor = 'view' | 'world';
 
 /**
  * Tilt of the star wheel's disk from the view axis, in degrees.
@@ -92,6 +118,48 @@ export type VoidStyle = 'nebula' | 'wheel';
  * switchable, not for its tilt or its speed to be dialled from the HUD.
  */
 const WHEEL_TILT_DEGREES = 60;
+
+/**
+ * Distance from the eye to the hub along the view axis in the 'view' anchor,
+ * disk units. The reference's DISK_DIST; also what LOCKED_HUB_DEPTH_WORLD is
+ * derived from, so the locked wheel seen from straight above the map centre
+ * frames the same way the view-anchored one does.
+ */
+const VIEW_HUB_DISTANCE = 2.6;
+
+/**
+ * The 'view' anchor's focal length: how far, in screen heights, the image
+ * plane sits from the eye. 1.2 is the reference's FOCAL — a stand-in
+ * perspective (~45° vertical) chosen for the look, not the real camera's.
+ * The 'world' anchor uses the real camera's focal instead, otherwise the void
+ * would not line up with the terrain drawn through the true projection.
+ */
+const VIEW_FOCAL = 1.2;
+
+/**
+ * The nebula's noise zoom: screen-height units to noise units in the 'view'
+ * anchor (the reference's `uv*2.2`). In disk space that is a plane
+ * NEBULA_ZOOM focal lengths from the eye, which is how the world anchor gets
+ * the same texture density at the same apparent distance.
+ */
+const NEBULA_ZOOM = 2.2;
+
+/**
+ * World units per disk unit in the 'world' anchor. 200 makes the galaxy's
+ * e-folding radius (DISK_RADIUS 1.7 → 340 world units) a little wider than
+ * the default map's half-span (256), so the map sits over the bulge with the
+ * arms sweeping out past every edge — the composition the concept page
+ * approved, at 1:1 with the world instead of the view.
+ */
+const LOCKED_WORLD_UNITS_PER_DISK_UNIT = 200;
+
+/**
+ * How far below y = 0 (sea level) the locked hub sits, world units. The view
+ * anchor's hub distance in world units, so looking straight down on the map
+ * centre from VIEW_HUB_DISTANCE disk units up shows the galaxy at the
+ * concept's framing.
+ */
+const LOCKED_HUB_DEPTH_WORLD = VIEW_HUB_DISTANCE * LOCKED_WORLD_UNITS_PER_DISK_UNIT;
 
 /**
  * Draw order for the void. Three sorts opaque objects by `renderOrder` before
@@ -133,6 +201,24 @@ const COMMON_GLSL = /* glsl */ `
 precision highp float;
 uniform vec2 u_res;
 uniform float u_time;
+// The anchor frame (see the header): focal length in screen heights, the
+// rotation taking a view-space direction into disk space, and the eye's
+// position in disk space (disk units, z up, plane at z = 0).
+uniform float u_focal;
+uniform mat3 u_toDisk;
+uniform vec3 u_origin;
+// 1.0 in the world anchor, 0.0 in the view anchor: whether a look that has no
+// plane to intersect (the nebula's clouds, the wheel's sky above its horizon)
+// maps the ray onto a dome around the world instead of the view's image plane.
+uniform float u_dome;
+vec3 viewRay(vec2 uv){ return u_toDisk*normalize(vec3(uv,-u_focal)); }
+// Lambert azimuthal equal-area projection of a direction, from the nadir: a
+// smooth 2-D domain over every direction but straight up (|p| = 2 there), with
+// no seam and no stretch at the horizon (|p| = sqrt 2). Near the nadir it is
+// d.xy to first order, so it matches the plane mapping where the two meet. The
+// zenith is the one singular point, and the orbit's polar cap
+// (CAMERA_MAX_POLAR_ANGLE_DEGREES) keeps it off screen.
+vec2 dome(vec3 d){ return d.xy*sqrt(2.0/(1.0-d.z)); }
 
 float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }
 float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -150,10 +236,29 @@ float stars(vec2 p, float density, float t){
 
 const NEBULA_GLSL = /* glsl */ `${COMMON_GLSL}
 const float NEBULA_RATE = 0.15;   // drift clock scale; owner set 3x the original 0.05
+const float NEBULA_ZOOM = ${NEBULA_ZOOM.toFixed(1)}; // reference: p = uv*2.2
+// World anchor only: how much of the eye's offset from the hub (disk units)
+// slides the clouds. A quarter: panning across the whole default map (±1.28
+// disk units) moves them by about a third of a screen, which reads as far
+// away but still attached to the world.
+const float NEBULA_PARALLAX = 0.25;
 void main(){
-  vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
+  vec2 suv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
+  vec3 d=viewRay(suv);
   float t=u_time*NEBULA_RATE;
-  vec2 p=uv*2.2;
+  vec2 p;
+  if(u_dome>0.5){
+    // World anchor: clouds on a dome around the world, so orbiting turns them
+    // with the terrain and no camera angle can see them stretch; panning
+    // slides them a little (NEBULA_PARALLAX).
+    p=NEBULA_ZOOM*dome(d)+u_origin.xy*NEBULA_PARALLAX;
+  } else {
+    // View anchor: the cloud plane is z = 0 in disk space with the eye
+    // u_origin.z = NEBULA_ZOOM*focal above it and u_toDisk the identity, which
+    // makes p exactly the reference's uv*NEBULA_ZOOM.
+    p=u_origin.xy+d.xy*(u_origin.z/-d.z);
+  }
+  vec2 uv=p/NEBULA_ZOOM;             // the reference's screen coordinate, for the star layers
   vec2 q=vec2(fbm(p+t*0.3), fbm(p+vec2(5.2,1.3)-t*0.2));
   vec2 r=vec2(fbm(p+3.0*q+vec2(1.7,9.2)+t*0.15), fbm(p+3.0*q+vec2(8.3,2.8)-t*0.1));
   float n=fbm(p+2.5*r);
@@ -168,7 +273,6 @@ void main(){
 `;
 
 const WHEEL_GLSL = /* glsl */ `${COMMON_GLSL}
-uniform float u_tilt;
 vec2 rot(vec2 p,float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y,s*p.x+c*p.y); }
 // Disk stars: steady points in the disk plane with a screen-space size floor so far stars
 // never shrink below a pixel and shimmer. minSize is in cell units, from the ray length.
@@ -180,9 +284,12 @@ float dstars(vec2 p, float density, float minSize){
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
 const float WHEEL_RATE   = -0.021; // rad/s (2*pi/300 = ~5.0 min per turn); rev 7 owner 2026-09-04: 'about five minutes per turn'; negative = clockwise from above
-const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
-const float DISK_DIST    = 2.6;    // hub distance along the view axis
-const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
+// Depth fade, as multiples of the eye's height above the plane so it is the
+// same at every zoom in the world anchor: the reference faded between ray
+// lengths DISK_DIST (2.6) and FAR_FADE (12.0) with the eye 2.6*cos(60deg) = 1.3
+// above the plane, i.e. between 2.0 and ~9.23 heights.
+const float FADE_START_HEIGHTS = 2.0;
+const float FADE_END_HEIGHTS   = 12.0/1.3;
 const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
 const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0 'more circular', rev 7: 8.0
 const float ARM_SHARPNESS= 1.0;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0
@@ -196,20 +303,14 @@ void main(){
   float a=u_time*WHEEL_RATE;
   vec3 col=vec3(0.012,0.014,0.03);
 
-  vec3 d=normalize(vec3(uv,-FOCAL));
-  float ct=cos(u_tilt), st=sin(u_tilt);
-  vec3 n=vec3(0.0,st,ct);               // disk normal, tilted so the top edge leans away
-  vec3 hub=vec3(0.0,0.0,-DISK_DIST);
-  float dn=dot(d,n);
-  if(dn<0.0){
-    float sdist=dot(hub,n)/dn;           // ray length to the plane
-    vec3 X=d*sdist-hub;
-    vec3 e1=vec3(1.0,0.0,0.0), e2=vec3(0.0,ct,-st);
-    vec2 pp=vec2(dot(X,e1),dot(X,e2));   // disk coordinates, hub at the origin
+  vec3 d=viewRay(uv);                    // disk space: plane z = 0, hub at the origin
+  if(d.z<0.0){
+    float sdist=-u_origin.z/d.z;         // ray length to the plane
+    vec2 pp=u_origin.xy+d.xy*sdist;      // disk coordinates, hub at the origin
     vec2 rf=rot(pp,-a);                  // rotating frame: everything sampled here turns rigidly
     float r=length(rf);
     float th=atan(rf.y,rf.x);
-    float depthFade=1.0-smoothstep(DISK_DIST,FAR_FADE,sdist);
+    float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
 
     // --- gas ---
     // ARMS log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
@@ -227,15 +328,16 @@ void main(){
     col+=(gasCol*gas*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars in the disk, riding the rotation; denser and brighter inside the arms ---
-    float pxPerUnit=FOCAL*u_res.y/sdist;
+    float pxPerUnit=u_focal*u_res.y/sdist;
     float minA=STAR_MIN_PX*16.0/pxPerUnit, minB=STAR_MIN_PX*32.0/pxPerUnit;
     float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/32.0);
     float field=dstars(rf*16.0,0.07,minA)+0.6*dstars(rf*32.0+11.0,0.05,minB)*cellFade;
     float inArms=dstars(rf*40.0+23.0,0.35,minB*1.25)*cellFade*gas*2.5;
     col+=vec3(0.95,0.93,0.9)*(field*(0.45+0.9*gas)+inArms)*depthFade*depthFade;
   } else {
-    // Above the plane's horizon (only at shallow tilts): a still, sparse field so the void is not empty.
-    col+=vec3(0.8,0.82,0.9)*0.4*stars(uv*110.0+5.0,0.03,0.0);
+    // Above the plane's horizon (never in the view anchor at 60deg; the world anchor at a flat
+    // orbit): a still, sparse field so the void is not empty, fixed to the sky direction.
+    col+=vec3(0.8,0.82,0.9)*0.4*stars(dome(d)*110.0+5.0,0.03,0.0);
   }
   gl_FragColor=vec4(col,1.0);
 }
@@ -249,6 +351,8 @@ const FRAGMENT_SHADER: Record<VoidStyle, string> = {
 export interface CelestialVoid {
   /** Switches the look live — no reload, no scene rebuild. */
   setStyle(style: VoidStyle): void;
+  /** Switches what the void is fixed to — see the header's TWO ANCHORS. */
+  setAnchor(anchor: VoidAnchor): void;
   /** Removes the pass from the scene and frees its GPU resources. */
   dispose(): void;
 }
@@ -268,12 +372,80 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
+ * The disk-space frame for one anchor: everything a fragment needs to turn a
+ * screen position into a ray and intersect the disk. Written into the shared
+ * uniforms — once for 'view', every frame for 'world'.
+ */
+interface DiskFrame {
+  focal: number;
+  toDisk: Matrix3;
+  origin: Vector3;
+}
+
+/**
+ * The reference's own frame, for the 'view' anchor: view space with the disk
+ * tilted WHEEL_TILT_DEGREES about x so its top edge leans away, and the eye
+ * VIEW_HUB_DISTANCE along the view axis from the hub. Constant — computed
+ * once per style, never touched by the camera.
+ *
+ * Disk-space basis in view coordinates: e1 = (1,0,0), e2 = (0,cos t,-sin t),
+ * e3 = (0,sin t,cos t) (the disk normal). The eye is at +VIEW_HUB_DISTANCE
+ * on the view z axis relative to the hub, so its disk coordinates are that
+ * vector projected onto e1..e3.
+ */
+function viewAnchorFrame(style: VoidStyle): DiskFrame {
+  if (style === 'nebula') {
+    // Untilted: the noise plane faces the eye, NEBULA_ZOOM focal lengths away,
+    // which reproduces the reference's `uv*2.2` exactly (see NEBULA_GLSL).
+    return {
+      focal: VIEW_FOCAL,
+      toDisk: new Matrix3().identity(),
+      origin: new Vector3(0, 0, NEBULA_ZOOM * VIEW_FOCAL),
+    };
+  }
+  const tilt = (WHEEL_TILT_DEGREES * Math.PI) / 180;
+  const ct = Math.cos(tilt);
+  const st = Math.sin(tilt);
+  // Rows are the disk basis vectors, so the matrix maps view → disk.
+  // prettier-ignore
+  const toDisk = new Matrix3().set(
+    1, 0,   0,
+    0, ct, -st,
+    0, st,  ct,
+  );
+  return {
+    focal: VIEW_FOCAL,
+    toDisk,
+    origin: new Vector3(0, -st * VIEW_HUB_DISTANCE, ct * VIEW_HUB_DISTANCE),
+  };
+}
+
+/**
+ * World → disk rotation for the 'world' anchor: disk x = world x, disk y =
+ * world −z, disk z = world y (up). Right-handed (x × −z = y), so the wheel
+ * turns the same way seen from above as it does in the view anchor.
+ */
+// prettier-ignore
+const WORLD_TO_DISK = new Matrix3().set(
+  1, 0,  0,
+  0, 0, -1,
+  0, 1,  0,
+);
+
+/**
  * Installs the void pass on `viewport`. Adds one mesh to its scene and one
  * frame callback; owns nothing else.
+ *
+ * @param worldSize The current world's edge in cells, read live: the locked
+ *   hub sits under the map's centre, and the map's size arrives with the
+ *   first snapshot and changes on a rejoin. 0 (no world yet) centres the hub
+ *   on the origin, which is where a 0-cell world's centre is anyway.
  */
 export function createCelestialVoid(
   viewport: Viewport,
   initialStyle: VoidStyle,
+  initialAnchor: VoidAnchor,
+  worldSize: () => number,
 ): CelestialVoid {
   const geometry = new BufferGeometry();
   geometry.setAttribute(
@@ -286,8 +458,53 @@ export function createCelestialVoid(
   const uniforms: Record<string, IUniform> = {
     u_res: { value: new Vector2(1, 1) },
     u_time: { value: 0 },
-    u_tilt: { value: (WHEEL_TILT_DEGREES * Math.PI) / 180 },
+    u_focal: { value: VIEW_FOCAL },
+    u_toDisk: { value: new Matrix3() },
+    u_origin: { value: new Vector3() },
+    u_dome: { value: 0 },
   };
+  const writeFrame = (frame: DiskFrame): void => {
+    (uniforms['u_focal'] as IUniform<number>).value = frame.focal;
+    (uniforms['u_toDisk'] as IUniform<Matrix3>).value.copy(frame.toDisk);
+    (uniforms['u_origin'] as IUniform<Vector3>).value.copy(frame.origin);
+  };
+
+  let style = initialStyle;
+  let anchor = initialAnchor;
+  // Scratch for the world anchor's per-frame frame; allocated once.
+  const worldFrame: DiskFrame = {
+    focal: VIEW_FOCAL,
+    toDisk: new Matrix3(),
+    origin: new Vector3(),
+  };
+  const cameraToWorld = new Matrix3();
+  const hub = new Vector3();
+  /**
+   * The world anchor's frame from the camera as it stands NOW. Called from
+   * onBeforeRender so the pose is this frame's, not last frame's (header).
+   */
+  const writeWorldFrame = (camera: PerspectiveCamera): void => {
+    // uv is in screen heights, so the focal length for a symmetric vertical
+    // field of view is half a height over tan(fov/2).
+    worldFrame.focal = 0.5 / Math.tan((camera.fov * Math.PI) / 360);
+    cameraToWorld.setFromMatrix4(camera.matrixWorld);
+    worldFrame.toDisk.multiplyMatrices(WORLD_TO_DISK, cameraToWorld);
+    const halfSpan = (worldSize() * CELL_WORLD_SIZE) / 2;
+    hub.set(halfSpan, -LOCKED_HUB_DEPTH_WORLD, halfSpan);
+    worldFrame.origin
+      .copy(camera.position)
+      .sub(hub)
+      .applyMatrix3(WORLD_TO_DISK)
+      .divideScalar(LOCKED_WORLD_UNITS_PER_DISK_UNIT);
+    writeFrame(worldFrame);
+  };
+  const applyAnchor = (): void => {
+    // 'world' is written per frame in onBeforeRender; 'view' is a constant
+    // per style and is written here, once, when either changes.
+    (uniforms['u_dome'] as IUniform<number>).value = anchor === 'world' ? 1 : 0;
+    if (anchor === 'view') writeFrame(viewAnchorFrame(style));
+  };
+  applyAnchor();
 
   // Materials are compiled on first use and then cached: booting straight into
   // the default style must not pay for the other look's program.
@@ -318,6 +535,9 @@ export function createCelestialVoid(
   mesh.frustumCulled = false;
   mesh.renderOrder = VOID_RENDER_ORDER;
   mesh.matrixAutoUpdate = false;
+  mesh.onBeforeRender = (_renderer, _scene, camera): void => {
+    if (anchor === 'world') writeWorldFrame(camera as PerspectiveCamera);
+  };
   viewport.scene.add(mesh);
 
   const frozen = prefersReducedMotion();
@@ -336,8 +556,14 @@ export function createCelestialVoid(
   });
 
   return {
-    setStyle(style: VoidStyle): void {
-      mesh.material = materialFor(style);
+    setStyle(next: VoidStyle): void {
+      style = next;
+      mesh.material = materialFor(next);
+      applyAnchor();
+    },
+    setAnchor(next: VoidAnchor): void {
+      anchor = next;
+      applyAnchor();
     },
     dispose(): void {
       stopFrames();
