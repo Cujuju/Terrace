@@ -2,8 +2,9 @@
 //
 // Three responsibilities, in the three things the ctx grants:
 //
-//   layer + onFrame   — a floating, slowly rotating gem per relic, sitting just
-//                       above the RENDERED terrain surface.
+//   layer + onFrame   — a floating, slowly rotating relic per skill, shaped as
+//                       what it does (relicShapes.ts), sitting just above the
+//                       RENDERED terrain surface.
 //   onCanvasPress     — claims a press that lands on a relic (collect) or that
 //                       lands anywhere while an active skill is armed (cast),
 //                       so neither one also sculpts or spins the camera.
@@ -12,7 +13,7 @@
 // The imperative half lives here; the maths it needs is in ./gems.ts (pure and
 // tested) and the reactive state it shares with the panel is in ./state.ts.
 
-import { Mesh, MeshStandardMaterial, OctahedronGeometry } from 'three';
+import { Mesh, MeshStandardMaterial } from 'three';
 // Type-only import of the client plugin contract, mirroring how the server
 // halves type-import theirs from server/src. Erased at runtime.
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
@@ -37,6 +38,7 @@ import {
   relicColor,
   relicUnderCell,
 } from './gems.ts';
+import { disposeRelicGeometries, relicGeometry } from './relicShapes.ts';
 import { RelicsHeaderLine, RelicsPanel } from './RelicsPanel.tsx';
 import {
   armSkill,
@@ -57,16 +59,9 @@ import {
  */
 const GEM_EMISSIVE_INTENSITY = 0.6;
 
-/** Gem surface: matte and non-metallic so the flat octahedron facets read. */
+/** Gem surface: matte and non-metallic so the flat-shaded facets read. */
 const GEM_ROUGHNESS = 0.35;
 const GEM_METALNESS = 0;
-
-/**
- * Octahedron subdivision detail. Zero — the literal 8-triangle solid. A relic
- * is a low-poly gem by design, and any subdivision above 0 rounds it into a
- * sphere and loses the facets.
- */
-const GEM_DETAIL = 0;
 
 /** Primary pointer button (mouse left / the only touch button). */
 const PRIMARY_BUTTON = 0;
@@ -85,18 +80,10 @@ let elapsedS = 0;
 /** Live gems by relic id. */
 const gems = new Map<string, GemEntry>();
 
-/** Shared across every gem: geometry is identical, only the material colour
- * differs, so one geometry is allocated for the whole plugin. */
-let sharedGeometry: OctahedronGeometry | null = null;
-
-function geometry(): OctahedronGeometry {
-  sharedGeometry ??= new OctahedronGeometry(GEM_RADIUS_CELLS, GEM_DETAIL);
-  return sharedGeometry;
-}
-
 function disposeGem(entry: GemEntry): void {
   entry.mesh.removeFromParent();
-  // The geometry is shared and outlives the gem; the material is per-relic.
+  // The geometry is shared per skill and outlives the gem (relicShapes.ts);
+  // the material is per-relic.
   (entry.mesh.material as MeshStandardMaterial).dispose();
 }
 
@@ -110,7 +97,7 @@ function createGem(relic: RelicView): GemEntry {
     metalness: GEM_METALNESS,
     flatShading: true,
   });
-  const mesh = new Mesh(geometry(), material);
+  const mesh = new Mesh(relicGeometry(relic.skill), material);
   mesh.name = `relic:${relic.id}`;
   return { mesh, phaseS: gemPhaseFor(relic.id), relic };
 }
@@ -213,7 +200,8 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
 }
 
 /**
- * Draw objects one relic costs: ONE mesh per gem (`createGem` above).
+ * Draw objects one relic costs: ONE mesh per gem (`createGem` above) — the
+ * per-skill shapes are merged into a single geometry (relicShapes.ts).
  */
 const RELIC_DRAW_OBJECTS = 1;
 
@@ -272,8 +260,7 @@ export const clientPlugin: TerraceClientPlugin = {
     // is the GPU memory behind the meshes, so those are released here.
     for (const entry of gems.values()) disposeGem(entry);
     gems.clear();
-    sharedGeometry?.dispose();
-    sharedGeometry = null;
+    disposeRelicGeometries();
     elapsedS = 0;
   },
 };

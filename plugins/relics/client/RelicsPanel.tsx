@@ -11,19 +11,165 @@
 // calling them at the use site is still a live read.
 //
 // Styling: this plugin cannot add to client/src/ui/hud.css, so it reuses the
-// core HUD's own classes (hud-row, hud-label, hud-hint, brush-button) for
-// anything they already cover and carries the rest inline. Colours come from
-// the HUD's CSS custom properties, so the panel follows the core theme.
+// core HUD's own classes (hud-row, hud-label, hud-hint) for anything they
+// already cover and carries the rest in the one <style> below, the way the
+// mana gauge does. Colours come from the HUD's CSS custom properties, each
+// with a literal fallback, so the panel follows the core theme.
+//
+// THE SKILL ROWS ARE TILES (owner, 2026-09-04: "update the HUD for the relics
+// in the same style" as the modeler dock and the toolbar): each skill wears
+// its own shaded object (RelicIcons.tsx — the shape its relic takes in the
+// world) over the same isometric grass tile the tool icons stand on, lifted by
+// the same drop shadow, with its category's colour as the glow on the grass.
+// For an active skill that tile IS the cast button — it glows in the accent
+// while armed and dims while recharging — so the panel answers "what do I
+// hold, and what can I throw" the way the toolbar answers "what is in my
+// hand".
 
-import { For, Show, type JSX } from 'solid-js';
-import { skillInfo, type SkillView } from '../protocol.ts';
+import { For, Show, type Component, type JSX } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
+import { skillInfo, type SkillId, type SkillView } from '../protocol.ts';
 import {
   CAST_DENIED_COOLDOWN,
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
 } from '../protocol.ts';
-import { SKILL_KIND_COLOR, cooldownLabelSeconds, cssColor } from './gems.ts';
+import { cooldownLabelSeconds } from './gems.ts';
+import {
+  AzureHeartIcon,
+  GenesisIcon,
+  QuakeIcon,
+  SpringOfAetherIcon,
+  TitansHandIcon,
+} from './RelicIcons.tsx';
 import { armSkill, armedSkill, castDenial, relics, skills } from './state.ts';
+
+/**
+ * The face each skill wears. Keyed by the protocol's own union, so a skill
+ * added there without art here fails to typecheck rather than rendering a
+ * blank tile.
+ */
+const SKILL_ICON: Readonly<Record<SkillId, Component>> = {
+  'titans-hand': TitansHandIcon,
+  quake: QuakeIcon,
+  genesis: GenesisIcon,
+  'azure-heart': AzureHeartIcon,
+  'spring-of-aether': SpringOfAetherIcon,
+};
+
+/**
+ * The one stylesheet this panel renders — the mana gauge's arrangement, and
+ * for the same reason: a plugin may not edit hud.css. The tile's chrome is
+ * the toolbar tile's (hud.css .hud-tool), restated here with the HUD's own
+ * custom properties and fallbacks rather than by depending on that class,
+ * which core may restyle.
+ */
+const RELICS_CSS = `
+.relics-skill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.relics-skill__words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.relics-skill__name {
+  color: var(--hud-text, #e8edf2);
+}
+.relics-skill__state {
+  font-size: 11px;
+  color: var(--hud-muted, #97a3b0);
+}
+.relics-tile {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--hud-border, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  transition:
+    border-color var(--hud-motion, 160ms ease),
+    background var(--hud-motion, 160ms ease),
+    box-shadow var(--hud-motion, 160ms ease),
+    transform var(--hud-motion, 160ms ease);
+}
+.relics-gem {
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  transition: transform var(--hud-motion, 160ms ease), filter var(--hud-motion, 160ms ease);
+}
+button.relics-tile {
+  cursor: pointer;
+}
+button.relics-tile:hover:enabled {
+  border-color: rgba(var(--hud-accent-rgb, 111, 191, 115), 0.6);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+}
+button.relics-tile:hover:enabled .relics-gem {
+  transform: translateY(-2px) scale(1.08);
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.6));
+}
+button.relics-tile:active:enabled {
+  transform: translateY(1px);
+}
+/* ARMED: the accent glow the toolbar gives the held tool, so "what am I
+   about to throw" is answered the same way "what am I holding" is. */
+button.relics-tile.armed {
+  border-color: rgba(var(--hud-accent-rgb, 111, 191, 115), 0.7);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb, 111, 191, 115), 0.32),
+    rgba(var(--hud-accent-rgb, 111, 191, 115), 0.1)
+  );
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb, 111, 191, 115), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+/* RECHARGING: the gem greys and the countdown rides the tile, since a
+   disabled button raises no hover and so can never show a tooltip. */
+button.relics-tile:disabled {
+  cursor: default;
+  position: relative;
+}
+button.relics-tile:disabled .relics-gem {
+  filter: grayscale(0.7) brightness(0.6);
+}
+.relics-tile__cooldown {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-text, #e8edf2);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+@media (pointer: coarse) {
+  .relics-tile {
+    width: 44px;
+    height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .relics-tile,
+  .relics-gem {
+    transition: none;
+  }
+  button.relics-tile:hover:enabled .relics-gem {
+    transform: none;
+  }
+}
+`;
 
 /** Human copy for each refusal the server can send. */
 const DENIAL_TEXT: Record<string, string> = {
@@ -71,32 +217,45 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
       ? `${info().description} Ready again in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s.`
       : info().description;
 
-  return (
-    <div class="hud-row" title={rowTitle()}>
-      <span
-        class="status-dot"
-        style={{ background: cssColor(SKILL_KIND_COLOR[props.skill.kind]) }}
-      />
-      <span style={{ flex: '1 1 auto' }}>{info().name}</span>
+  /** What the row says under the name: the kind, or the live cast state. */
+  const stateText = (): string => {
+    if (!isCastable(props.skill)) return props.skill.kind === 'perk' ? 'Perk' : 'Passive';
+    if (onCooldown()) return `Ready in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s`;
+    return isArmed() ? 'Click the ground to aim' : 'Click to ready';
+  };
 
-      <Show when={isCastable(props.skill)}>
+  return (
+    <div class="relics-skill" title={rowTitle()}>
+      <Show
+        when={isCastable(props.skill)}
+        fallback={
+          <span class="relics-tile">
+            <Dynamic component={SKILL_ICON[props.skill.id]} />
+          </span>
+        }
+      >
         <button
           type="button"
-          class="brush-button"
-          classList={{ active: isArmed() }}
-          style={{ width: 'auto', padding: '0 8px' }}
+          class="relics-tile"
+          classList={{ armed: isArmed() }}
           aria-label={`Cast ${info().name}`}
+          aria-pressed={isArmed()}
           title={castTitle(props.skill, isArmed())}
           disabled={onCooldown()}
           onClick={() => armSkill(isArmed() ? null : props.skill.id)}
         >
-          {onCooldown()
-            ? `${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s`
-            : isArmed()
-              ? 'Aim…'
-              : 'Cast'}
+          <Dynamic component={SKILL_ICON[props.skill.id]} />
+          <Show when={onCooldown()}>
+            <span class="relics-tile__cooldown">
+              {cooldownLabelSeconds(props.skill.cooldownRemainingS)}s
+            </span>
+          </Show>
         </button>
       </Show>
+      <span class="relics-skill__words">
+        <span class="relics-skill__name">{info().name}</span>
+        <span class="relics-skill__state">{stateText()}</span>
+      </span>
     </div>
   );
 }
@@ -127,6 +286,7 @@ export function RelicsPanel(): JSX.Element {
 
   return (
     <>
+      <style>{RELICS_CSS}</style>
       <Show
         when={skills().length > 0}
         fallback={

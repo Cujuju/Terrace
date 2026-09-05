@@ -26,6 +26,17 @@ import {
   type Color,
   type Material,
 } from 'three';
+// The render kit, reached by path exactly as plugins/boats reaches rigSkin —
+// see that module's header. Which texture slots exist, which uv channels they
+// sample and what makes two materials the same for merging purposes is that
+// module's business and no longer this one's: a hand-written slot list here
+// would silently merge two parts that differ only in normal map, and silently
+// strip the uv set of any slot it had forgotten (see materialMaps.ts's header).
+import {
+  mapIdentitySignature,
+  uvAttributeName,
+  uvChannelsUsed,
+} from '../../../client/src/render/materialMaps.ts';
 
 /** One part of a building: a geometry, its material, and where it sits. */
 export interface StructurePart {
@@ -172,11 +183,14 @@ const SURFACE_MERGE_MINIMUM_PARTS = 2;
  */
 export function canShareOneSurface(material: Material): material is MeshLambertMaterial {
   if (!(material instanceof MeshLambertMaterial)) return false;
-  // A texture needs its own UV space and the merge has no atlas (Durand's sign).
-  // This guard is load-bearing twice over: bakeInto() below carries position,
-  // normal and colour only, so a textured part that reached the merge would
-  // lose its UVs and sample one texel for every triangle.
-  if (material.map !== null) return false;
+  // A texture needs its own UV space and the surface has no atlas (Durand's
+  // sign). ASKED AS "does it sample ANY texture", not as `material.map !==
+  // null`: the surface replaces the material outright with one flat
+  // vertex-coloured Lambert, so a part carrying only a normal or occlusion map
+  // would have that map silently thrown away — the same class of bug the old
+  // hand-written slot pair caused everywhere else (materialMaps.ts's header).
+  // The slot list is the render kit's, so this cannot fall behind it.
+  if (uvChannelsUsed(material).size > 0) return false;
   // Emissive is one uniform for the whole draw call, so anything that glows
   // keeps its own mesh. This is also what holds Durand's ANIMATED materials out
   // of the merge: models.ts's animate() only ever drives emissiveIntensity and
@@ -205,6 +219,12 @@ function materialSignature(material: Material): string {
   const lambertLike = material as MeshLambertMaterial;
   return [
     material.type,
+    // COLOUR STAYS IN THE SIGNATURE. Step 1's vertex-coloured surface is what
+    // collapses parts that differ only in colour; anything that reaches step 2
+    // could not join that surface (it glows, it is transparent, it is
+    // textured), and for those the colour is a uniform of the draw call, so
+    // two differently-coloured parts are two draws whether this file likes it
+    // or not. Folding them together here would repaint one of them.
     lambertLike.color?.getHex() ?? -1,
     lambertLike.emissive?.getHex() ?? -1,
     lambertLike.emissiveIntensity ?? 1,
@@ -212,20 +232,68 @@ function materialSignature(material: Material): string {
     material.transparent === true ? 1 : 0,
     material.opacity,
     material.side,
+    // Every texture slot, by texture IDENTITY and uv channel, from the render
+    // kit's one list — never a hand-written `map`/`emissiveMap` pair here.
+    // Two authored parts that differ only in normal map are two different
+    // surfaces, and before this they merged into one shaded by whichever
+    // material happened to be first (materialMaps.ts's header).
+    mapIdentitySignature(material),
   ].join('|');
 }
 
+/** Floats one vertex occupies in a `uv` buffer attribute. */
+const UV_COMPONENTS = 2;
+
 /**
- * Position + normal of one geometry, baked through one local matrix — and its
- * material's colour per vertex, when the target is accumulating a shared
- * vertex-coloured surface.
+ * One accumulating merge group: the flat attribute arrays every part baked into
+ * it appends to.
  *
- * Position, normal and colour are the whole attribute set carried here. That is
- * why canShareOneSurface() refuses a textured material: a UV attribute would be
- * dropped on the floor, and the part would sample a single texel.
+ * `uvs` is one array per uv ATTRIBUTE NAME (`uv`, `uv1`, …) — present exactly
+ * when the group's material samples that channel, and absent otherwise, so an
+ * untextured merge carries no uv arrays at all and costs nothing.
+ */
+interface MergeGroupData {
+  positions: number[];
+  normals: number[];
+  colors?: number[];
+  uvs?: Map<string, number[]>;
+}
+
+/**
+ * The uv arrays a group needs, keyed by attribute name — empty when the
+ * material samples no texture.
+ *
+ * ASKED OF THE MATERIAL, never of the geometry: a geometry may carry a uv set
+ * nothing samples (three drops it at upload anyway), and — the failure that
+ * matters — a material may sample a channel on the SECOND uv set (glTF
+ * `texCoord: 1`), which a "copy `uv` if present" rule would strip. The channel
+ * list is materialMaps.ts's answer, so it cannot fall behind the slot list.
+ */
+function uvArraysFor(material: Material): Map<string, number[]> | undefined {
+  const channels = uvChannelsUsed(material);
+  if (channels.size === 0) return undefined;
+  const uvs = new Map<string, number[]>();
+  for (const channel of channels) uvs.set(uvAttributeName(channel), []);
+  return uvs;
+}
+
+/**
+ * Position + normal of one geometry, baked through one local matrix — its
+ * material's colour per vertex when the target is accumulating a shared
+ * vertex-coloured surface, and its uv sets when the target's material samples
+ * textures.
+ *
+ * UVs RIDE THROUGH UNTRANSFORMED, which is the whole of what "keeping" them
+ * means: the matrix moves the vertex in the world, not the texel it reads.
+ * They were dropped here until 2026-09-04, which was invisible while every
+ * merged material was a flat colour (canShareOneSurface refuses a textured
+ * one, so nothing textured used to reach step 2 either) and is not invisible
+ * now that a tier can be an imported, textured model: a textured part merged
+ * without its uv set samples one texel for every triangle — the whole building
+ * painted one flat colour.
  */
 function bakeInto(
-  target: { positions: number[]; normals: number[]; colors?: number[] },
+  target: MergeGroupData,
   geometry: BufferGeometry,
   local: Matrix4,
   color?: Color,
@@ -238,6 +306,23 @@ function bakeInto(
   baked.applyMatrix4(local); // transforms positions AND rotates normals
   const position = baked.getAttribute('position');
   const normal = baked.getAttribute('normal');
+  // Resolved once per part rather than per vertex, and MISSING IS FATAL: the
+  // loader guarantees a uv attribute for every channel an asset's material
+  // samples (rigAsset.ts), so a gap here means a part was assembled by hand
+  // with a textured material and no UVs — which would otherwise merge into a
+  // geometry whose uv array is short, i.e. a surface reading garbage texels.
+  const uvSources: Array<{ target: number[]; source: BufferAttribute }> = [];
+  for (const [attribute, values] of target.uvs ?? []) {
+    const source = baked.getAttribute(attribute) as BufferAttribute | undefined;
+    if (source === undefined) {
+      baked.dispose();
+      throw new Error(
+        `mergeParts: a part whose material samples uv channel "${attribute}" carries no ` +
+          `such attribute — it cannot share a merged surface`,
+      );
+    }
+    uvSources.push({ target: values, source });
+  }
   for (let i = 0; i < position.count; i++) {
     target.positions.push(position.getX(i), position.getY(i), position.getZ(i));
     if (normal !== undefined) target.normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
@@ -249,12 +334,15 @@ function bakeInto(
     if (target.colors !== undefined && color !== undefined) {
       target.colors.push(color.r, color.g, color.b);
     }
+    for (const { target: values, source } of uvSources) {
+      values.push(source.getX(i), source.getY(i));
+    }
   }
   baked.dispose();
 }
 
 /** Builds the output geometry for one accumulated group. */
-function geometryOf(group: { positions: number[]; normals: number[]; colors?: number[] }): BufferGeometry {
+function geometryOf(group: MergeGroupData): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(group.positions), 3));
   if (group.normals.length === group.positions.length) {
@@ -264,6 +352,9 @@ function geometryOf(group: { positions: number[]; normals: number[]; colors?: nu
   }
   if (group.colors !== undefined) {
     geometry.setAttribute('color', new BufferAttribute(new Float32Array(group.colors), COLOR_COMPONENTS));
+  }
+  for (const [attribute, values] of group.uvs ?? []) {
+    geometry.setAttribute(attribute, new BufferAttribute(new Float32Array(values), UV_COMPONENTS));
   }
   return geometry;
 }
@@ -370,16 +461,20 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
   const merged: StructurePart[] = [];
   if (surface !== null) merged.push(surface);
 
-  const groups = new Map<string, {
-    material: Material;
-    positions: number[];
-    normals: number[];
-  }>();
+  const groups = new Map<string, MergeGroupData & { material: Material }>();
   for (const part of rest) {
     const signature = materialSignature(part.material);
     let group = groups.get(signature);
     if (group === undefined) {
-      group = { material: part.material, positions: [], normals: [] };
+      // The uv sets come from the group's own material, and every part that
+      // joins this group samples the same textures on the same channels — the
+      // signature above says so, map identity and channel included.
+      group = {
+        material: part.material,
+        positions: [],
+        normals: [],
+        uvs: uvArraysFor(part.material),
+      };
       groups.set(signature, group);
     } else if (group.material !== part.material) {
       spentMaterials.add(part.material);
@@ -470,6 +565,24 @@ export function fitToRadius(parts: readonly StructurePart[], maxRadius: number):
     material: part.material,
     localMatrices: part.localMatrices.map((local) => new Matrix4().multiplyMatrices(shrink, local)),
   }));
+}
+
+/**
+ * How high above its own origin the highest vertex of these parts sits — the
+ * model's standing height, measured through every local matrix.
+ *
+ * Measured the same vertex-by-vertex way partsReach is, and for the same
+ * reason: a Box3 over a rotated part over-reports a pitched roof panel, and
+ * this number is compared against a stated height budget (models.ts's
+ * TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS), so over-reporting would fail
+ * models that fit.
+ */
+export function partsStandingHeight(parts: readonly StructurePart[]): number {
+  let height = 0;
+  forEachVertex(parts, (vertex) => {
+    height = Math.max(height, vertex.y);
+  });
+  return height;
 }
 
 /**

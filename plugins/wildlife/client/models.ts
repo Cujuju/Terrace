@@ -374,7 +374,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const speciesRigs: SpeciesRig[] = [];
 
   /** Bakes one authored tree and registers it for disposal. */
-  function bakeSpecies(root: Group, joints: Readonly<Record<string, Object3D>>): SpeciesRig {
+  function bakeSpecies(root: Object3D, joints: Readonly<Record<string, Object3D>>): SpeciesRig {
     const blueprint = bakeRig(root);
     const jointIndices: Record<string, number> = {};
     for (const [name, node] of Object.entries(joints)) {

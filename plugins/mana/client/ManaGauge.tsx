@@ -24,13 +24,14 @@
 // out. The brush's price is read from the HUD's own brush selection, so the two
 // controls agree by construction.
 //
-// ART DIRECTION (owner brief): this is a game object, not a UI widget — a
-// bronze-and-amber instrument that would not look out of place in an RPG
-// inventory. Everything is drawn: moulded caps built from stacked profiles,
-// corner posts with finials and studs, a gradient-lit frame, a diagonal sheen
-// across the glass. Pure inline SVG, no raster, no external assets. The warm
-// palette is deliberately narrow (three bronzes, two sands) so it stays
-// harmonious against the HUD's dark slate rather than competing with it.
+// ART DIRECTION (owner brief): this is a game object, not a UI widget. Since
+// 2026-09-04 ("a new hourglass icon in the same style as the other two HUDs")
+// it is drawn in the modeler dock's and toolbar's idiom — client/src/ui/
+// BrushIcons.tsx, Toolbar.tsx — a shaded object standing on an isometric grass
+// tile, lifted off its panel by a drop shadow, on the same glass chrome those
+// two panels wear. The vessel itself keeps its parts: turned wooden caps and
+// posts in the trowel handle's own browns, a gradient-lit sand, a diagonal
+// sheen across the glass. Pure inline SVG, no raster, no external assets.
 //
 // SMOOTHING IS DISPLAY ONLY. Between server pushes the level advances locally
 // at the pushed rate (gauge.ts) so the motion is continuous rather than a 10 Hz
@@ -55,32 +56,33 @@ import { currentBrushCost, deniedCount, liveBalance, manaPool } from './state.ts
 /** How long the denial flash lasts. Matches the HUD's other transient cues. */
 const DENIAL_FLASH_MS = 600;
 
-// ── Geometry, in SVG user units of the 52 × 74 viewBox ──────────────────────
-// The instrument is symmetric about x = 26. Vertically it reads as five bands:
-// top cap (3–12), upper funnel (12–35), neck (35–39), lower funnel (39–62),
-// bottom cap (62–71), with the corner posts spanning cap to cap behind it all.
+// ── Geometry, in SVG user units of the 32 × 40 viewBox ──────────────────────
+// The tile is the toolbar icons' own (a 24-wide diamond, two 4-deep walls),
+// pushed to the foot of a taller box so the vessel has room to stand on it.
+// The instrument is symmetric about x = 16. Vertically it reads as five
+// bands: top cap (4–6.5), upper funnel (6.5–15), neck (15–17), lower funnel
+// (17–25.5), bottom cap (25.5–28), with the posts spanning cap to cap.
 //
 // Only the lower funnel moves, so its extents are the named ones: the sand
 // rect, the grain's fall distance and the clip path are all derived from them
 // and cannot drift apart.
-const VIEW_W = 52;
-const VIEW_H = 74;
+const VIEW_W = 32;
+const VIEW_H = 40;
 
 /**
- * On-screen scale of the hourglass relative to its viewBox (owner, 2026-08-14:
- * "reduce the size of the hourglass by maybe 40%"). Applied to the rendered
- * width/height only — every geometric constant above stays in the same 52 × 74
- * user units, so the drawing itself never learns it was shrunk. 0.6 is the
- * asked-for reduction; the numeric readouts beside the glass keep their font
- * sizes, which at this scale become the instrument's primary face with the
- * glass as its animated accent.
+ * On-screen scale of the icon relative to its viewBox. The toolbar draws its
+ * 32-unit faces at 32px; this one is taller than it is wide, so the same
+ * scale lands it at 32 × 40 px — the height the old 52 × 74 glass had at its
+ * 0.6 reduction (owner, 2026-08-14: "reduce the size of the hourglass by maybe
+ * 40%"), so the panel keeps its footprint. Applied to the rendered
+ * width/height only; every geometric constant stays in user units.
  */
-const GAUGE_DISPLAY_SCALE = 0.6;
+const GAUGE_DISPLAY_SCALE = 1;
 const DISPLAY_W = Math.round(VIEW_W * GAUGE_DISPLAY_SCALE);
 const DISPLAY_H = Math.round(VIEW_H * GAUGE_DISPLAY_SCALE);
-const GLASS_CENTER_X = 26;
-const BULB_TOP_Y = 39;
-const BULB_BOTTOM_Y = 62;
+const GLASS_CENTER_X = 16;
+const BULB_TOP_Y = 17;
+const BULB_BOTTOM_Y = 25.5;
 const BULB_HEIGHT = BULB_BOTTOM_Y - BULB_TOP_Y;
 
 /**
@@ -89,26 +91,25 @@ const BULB_HEIGHT = BULB_BOTTOM_Y - BULB_TOP_Y;
  * waist and read as two shapes rather than as one hourglass (caught in a 5×
  * render); the neck walls are what make it a single vessel.
  */
-const GLASS_SILHOUETTE_PATH = `M11 12 H41 L27.5 35 V${BULB_TOP_Y} L41 ${BULB_BOTTOM_Y} H11 L24.5 ${BULB_TOP_Y} V35 Z`;
+const GLASS_SILHOUETTE_PATH = `M10.5 6.5 H21.5 L16.9 15 V${BULB_TOP_Y} L21.5 ${BULB_BOTTOM_Y} H10.5 L15.1 ${BULB_TOP_Y} V15 Z`;
 
 /** The lower funnel alone: what the sand is clipped to. */
-const LOWER_FUNNEL_PATH = `M24.5 ${BULB_TOP_Y} H27.5 L41 ${BULB_BOTTOM_Y} H11 Z`;
+const LOWER_FUNNEL_PATH = `M15.1 ${BULB_TOP_Y} H16.9 L21.5 ${BULB_BOTTOM_Y} H10.5 Z`;
 
 /** Where a grain appears — inside the neck, above an empty bulb's floor. */
-const GRAIN_START_Y = 37;
-const GRAIN_RADIUS = 1.8;
+const GRAIN_START_Y = 16;
+const GRAIN_RADIUS = 0.8;
 
 /** Thickness of the brighter band drawn along the top of the sand. */
-const SURFACE_LINE_H = 1.3;
+const SURFACE_LINE_H = 0.8;
 
-/** Corner posts: narrow columns joining the caps, with a finial at each end. */
-const POST_LEFT_X = 5.5;
-const POST_RIGHT_X = 43.5;
-const POST_WIDTH = 3;
-const POST_TOP_Y = 10;
-const POST_BOTTOM_Y = 64;
-const FINIAL_RADIUS = 2.1;
-const STUD_RADIUS = 0.9;
+/** Posts: narrow turned columns joining the caps, a bead at each end. */
+const POST_LEFT_X = 8.4;
+const POST_RIGHT_X = 22;
+const POST_WIDTH = 1.6;
+const POST_TOP_Y = 6;
+const POST_BOTTOM_Y = 26;
+const BEAD_RADIUS = 1.1;
 
 // ── Palette ─────────────────────────────────────────────────────────────────
 // Self-contained on purpose: this plugin may not touch client/src/ui/hud.css,
@@ -117,12 +118,21 @@ const STUD_RADIUS = 0.9;
 // the chrome, each with a literal fallback so the gauge stays legible even if a
 // future core drops them.
 //
-// The frame is three bronzes rather than one flat colour: a lit edge, a body
-// and a shadow, fed to a top-to-bottom gradient so the mouldings read as turned
-// metal instead of as stacked rectangles.
-const BRONZE_LIGHT = '#e0b262';
-const BRONZE_MID = '#a8752c';
-const BRONZE_DARK = '#4e3315';
+// The frame is three browns rather than one flat colour: a lit edge, a body
+// and a shadow, fed to a top-to-bottom gradient so the caps read as turned
+// wood instead of as stacked rectangles. They are the trowel handle's stops
+// (Toolbar.tsx, sculpt-handle), so the vessel and the tools share one timber.
+const BRONZE_LIGHT = '#e0a463';
+const BRONZE_MID = '#b0733a';
+const BRONZE_DARK = '#6d4220';
+
+/** The tile under the vessel: the toolbar icons' own grass and earth. */
+const TILE_TOP_LIGHT = '#a6e08a';
+const TILE_TOP_DARK = '#4f9a4a';
+const TILE_LEFT_LIGHT = '#9a6a45';
+const TILE_LEFT_DARK = '#5a3a22';
+const TILE_RIGHT_LIGHT = '#6e4a2f';
+const TILE_RIGHT_DARK = '#3a2415';
 
 /** Sand: warm amber, lit from the top of the bulb. */
 const SAND_LIGHT = '#f5cf74';
@@ -134,9 +144,11 @@ const DENIED_LIGHT = '#f08e80';
 const DENIED_MID = '#d9584a';
 const DENIED_DARK = '#6d241c';
 
-/** Glass. Warm-tinted rather than neutral white, so it belongs to the bronze. */
-const GLASS_STROKE = 'rgba(255, 228, 178, 0.46)';
-const GLASS_TINT = 'rgba(255, 238, 208, 0.05)';
+/** Glass. Warm-tinted rather than neutral white, so it belongs to the wood;
+ * denser than the old 52 × 74 glass needed, because at 32 units across the
+ * funnels are a few pixels wide and a fainter tint left only the frame. */
+const GLASS_STROKE = 'rgba(255, 234, 196, 0.75)';
+const GLASS_TINT = 'rgba(255, 238, 208, 0.18)';
 const GLASS_SHEEN = 'rgba(255, 255, 255, 0.14)';
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
@@ -146,6 +158,9 @@ const FRAME_GRADIENT_ID = 'mana-gauge-frame-grad';
 const SAND_GRADIENT_ID = 'mana-gauge-sand-grad';
 const BULB_CLIP_ID = 'mana-gauge-bulb-clip';
 const GLASS_CLIP_ID = 'mana-gauge-glass-clip';
+const TILE_TOP_GRADIENT_ID = 'mana-gauge-tile-top';
+const TILE_LEFT_GRADIENT_ID = 'mana-gauge-tile-left';
+const TILE_RIGHT_GRADIENT_ID = 'mana-gauge-tile-right';
 
 /**
  * The one stylesheet this component renders. Keyframes cannot be expressed as
@@ -178,14 +193,22 @@ const GAUGE_CSS = `
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 9px;
-  padding: 5px 13px 5px 9px;
-  border: 1px solid var(--hud-border, rgba(255, 255, 255, 0.12));
-  border-radius: 12px;
-  background: var(--hud-bg, rgba(18, 22, 28, 0.78));
+  gap: 8px;
+  padding: 5px 13px 5px 8px;
+  /* The glass the modeler dock and the toolbar wear (hud.css --hud-glass),
+     with the same fallbacks the text colours carry below. */
+  border-radius: 14px;
+  background: var(--hud-glass, linear-gradient(180deg, rgba(34, 41, 52, 0.86), rgba(14, 18, 24, 0.9)));
+  box-shadow:
+    var(--hud-glass-shadow, 0 12px 32px rgba(0, 0, 0, 0.45)),
+    var(--hud-glass-edge, inset 0 1px 0 rgba(255, 255, 255, 0.09));
   backdrop-filter: blur(6px);
   font-family: inherit;
   line-height: 1;
+}
+.mana-gauge__icon {
+  /* Lifted off the panel exactly as .hud-tool__icon is (hud.css). */
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
 }
 .mana-gauge__stats {
   display: flex;
@@ -378,6 +401,7 @@ export function ManaGauge(): JSX.Element {
         <style>{GAUGE_CSS}</style>
 
         <svg
+          class="mana-gauge__icon"
           width={DISPLAY_W}
           height={DISPLAY_H}
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
@@ -385,7 +409,7 @@ export function ManaGauge(): JSX.Element {
         >
           <defs>
             {/* Frame lighting: lit edge at the top, shadow at the bottom, so
-                every moulding picks up the same imaginary light. */}
+                every cap and post picks up the same imaginary light. */}
             <linearGradient id={FRAME_GRADIENT_ID} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stop-color={frameLight()} />
               <stop offset="45%" stop-color={frameMid()} />
@@ -407,6 +431,20 @@ export function ManaGauge(): JSX.Element {
               <stop offset="100%" stop-color={sandDeep()} />
             </linearGradient>
 
+            {/* The tile's three faces, the toolbar icons' own gradients. */}
+            <linearGradient id={TILE_TOP_GRADIENT_ID} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color={TILE_TOP_LIGHT} />
+              <stop offset="1" stop-color={TILE_TOP_DARK} />
+            </linearGradient>
+            <linearGradient id={TILE_LEFT_GRADIENT_ID} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color={TILE_LEFT_LIGHT} />
+              <stop offset="1" stop-color={TILE_LEFT_DARK} />
+            </linearGradient>
+            <linearGradient id={TILE_RIGHT_GRADIENT_ID} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color={TILE_RIGHT_LIGHT} />
+              <stop offset="1" stop-color={TILE_RIGHT_DARK} />
+            </linearGradient>
+
             <clipPath id={BULB_CLIP_ID}>
               <path d={LOWER_FUNNEL_PATH} />
             </clipPath>
@@ -416,42 +454,51 @@ export function ManaGauge(): JSX.Element {
             </clipPath>
           </defs>
 
-          {/* ── Corner posts, behind everything: the columns the caps are
-                turned onto, each capped with a finial. ── */}
+          {/* ── The tile: ground shadow, grass top, two earth walls — the
+                toolbar's own stand, at the foot of the box. ── */}
+          <ellipse cx="16" cy="35.5" rx="12" ry="3" fill="#000" opacity="0.35" />
+          <polygon points="16,21 28,27 16,33 4,27" fill={`url(#${TILE_TOP_GRADIENT_ID})`} />
+          <polygon points="4,27 16,33 16,37 4,31" fill={`url(#${TILE_LEFT_GRADIENT_ID})`} />
+          <polygon points="28,27 16,33 16,37 28,31" fill={`url(#${TILE_RIGHT_GRADIENT_ID})`} />
+          {/* The shade the vessel casts on the grass. */}
+          <ellipse cx="16" cy="27.6" rx="8" ry="3.2" fill="#2e5a2e" opacity="0.5" />
+
+          {/* ── Posts, behind the glass: the turned columns the caps sit on,
+                a bead at each end. ── */}
           <g fill={`url(#${FRAME_GRADIENT_ID})`}>
             <rect
               x={POST_LEFT_X}
               y={POST_TOP_Y}
               width={POST_WIDTH}
               height={POST_BOTTOM_Y - POST_TOP_Y}
-              rx="1.2"
+              rx="0.8"
             />
             <rect
               x={POST_RIGHT_X}
               y={POST_TOP_Y}
               width={POST_WIDTH}
               height={POST_BOTTOM_Y - POST_TOP_Y}
-              rx="1.2"
+              rx="0.8"
             />
-            <circle cx={POST_LEFT_X + POST_WIDTH / 2} cy={POST_TOP_Y} r={FINIAL_RADIUS} />
-            <circle cx={POST_RIGHT_X + POST_WIDTH / 2} cy={POST_TOP_Y} r={FINIAL_RADIUS} />
-            <circle cx={POST_LEFT_X + POST_WIDTH / 2} cy={POST_BOTTOM_Y} r={FINIAL_RADIUS} />
-            <circle cx={POST_RIGHT_X + POST_WIDTH / 2} cy={POST_BOTTOM_Y} r={FINIAL_RADIUS} />
+            <circle cx={POST_LEFT_X + POST_WIDTH / 2} cy={POST_TOP_Y} r={BEAD_RADIUS} />
+            <circle cx={POST_RIGHT_X + POST_WIDTH / 2} cy={POST_TOP_Y} r={BEAD_RADIUS} />
+            <circle cx={POST_LEFT_X + POST_WIDTH / 2} cy={POST_BOTTOM_Y} r={BEAD_RADIUS} />
+            <circle cx={POST_RIGHT_X + POST_WIDTH / 2} cy={POST_BOTTOM_Y} r={BEAD_RADIUS} />
           </g>
           {/* A single lit edge down each post — one line is all it takes to
               read as round rather than as a flat bar. */}
-          <g stroke={frameLight()} stroke-width="0.6" opacity="0.55">
+          <g stroke={frameLight()} stroke-width="0.4" opacity="0.55">
             <line
-              x1={POST_LEFT_X + 0.8}
-              y1={POST_TOP_Y + 1.5}
-              x2={POST_LEFT_X + 0.8}
-              y2={POST_BOTTOM_Y - 1.5}
+              x1={POST_LEFT_X + 0.5}
+              y1={POST_TOP_Y + 1}
+              x2={POST_LEFT_X + 0.5}
+              y2={POST_BOTTOM_Y - 1}
             />
             <line
-              x1={POST_RIGHT_X + 0.8}
-              y1={POST_TOP_Y + 1.5}
-              x2={POST_RIGHT_X + 0.8}
-              y2={POST_BOTTOM_Y - 1.5}
+              x1={POST_RIGHT_X + 0.5}
+              y1={POST_TOP_Y + 1}
+              x2={POST_RIGHT_X + 0.5}
+              y2={POST_BOTTOM_Y - 1}
             />
           </g>
 
@@ -506,12 +553,12 @@ export function ManaGauge(): JSX.Element {
                 glass. Drawn over the sand — it is a reflection ON the glass. ── */}
           <g clip-path={`url(#${GLASS_CLIP_ID})`}>
             <rect
-              x="9"
-              y="-16"
-              width="5.5"
-              height="110"
+              x="10"
+              y="-4"
+              width="2.4"
+              height="50"
               fill={GLASS_SHEEN}
-              transform={`rotate(18 ${GLASS_CENTER_X} 37)`}
+              transform={`rotate(18 ${GLASS_CENTER_X} 16)`}
             />
           </g>
 
@@ -520,33 +567,25 @@ export function ManaGauge(): JSX.Element {
             d={GLASS_SILHOUETTE_PATH}
             fill="none"
             stroke={glassColor()}
-            stroke-width="1"
+            stroke-width="0.8"
             stroke-linejoin="round"
           />
 
-          {/* ── Caps: three stacked profiles each (lip, body, shoulder) rather
-                than one bar — the step between them is what makes a moulding
-                read as moulded. Studs sit on the outer lips. ── */}
+          {/* ── Caps: two stacked profiles each (lip and body) rather than one
+                bar — the step between them is what makes a turning read as
+                turned. ── */}
           <g fill={`url(#${FRAME_GRADIENT_ID})`}>
-            <rect x="4" y="2.5" width="44" height="3.4" rx="1.7" />
-            <rect x="7.5" y="5.6" width="37" height="4" rx="1.2" />
-            <rect x="10.5" y="9.4" width="31" height="2.4" rx="1.2" />
+            <rect x="7" y="4" width="18" height="1.6" rx="0.8" />
+            <rect x="9" y="5.4" width="14" height="1.4" rx="0.6" />
 
-            <rect x="10.5" y="62.2" width="31" height="2.4" rx="1.2" />
-            <rect x="7.5" y="64.4" width="37" height="4" rx="1.2" />
-            <rect x="4" y="68.1" width="44" height="3.4" rx="1.7" />
+            <rect x="9" y="25.2" width="14" height="1.4" rx="0.6" />
+            <rect x="7" y="26.4" width="18" height="1.8" rx="0.9" />
           </g>
-          {/* Studs: four on each lip. Small, but they are most of what says
-              "forged object" at this size. */}
-          <g fill={frameLight()} opacity="0.8">
-            <circle cx="9" cy="4.2" r={STUD_RADIUS} />
-            <circle cx="19.5" cy="4.2" r={STUD_RADIUS} />
-            <circle cx="32.5" cy="4.2" r={STUD_RADIUS} />
-            <circle cx="43" cy="4.2" r={STUD_RADIUS} />
-            <circle cx="9" cy="69.8" r={STUD_RADIUS} />
-            <circle cx="19.5" cy="69.8" r={STUD_RADIUS} />
-            <circle cx="32.5" cy="69.8" r={STUD_RADIUS} />
-            <circle cx="43" cy="69.8" r={STUD_RADIUS} />
+          {/* One highlight along each lip, so the caps read as lit from above
+              like the tile's grass. */}
+          <g fill={frameLight()} opacity="0.7">
+            <rect x="8" y="4.2" width="16" height="0.4" rx="0.2" />
+            <rect x="8" y="26.6" width="16" height="0.4" rx="0.2" />
           </g>
         </svg>
 
