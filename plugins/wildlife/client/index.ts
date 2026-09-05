@@ -28,6 +28,9 @@ import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.t
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
 import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { createWildlifeModels, type WildlifeModels } from './models.ts';
+import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
+import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
+import { SPECIES_ASSETS } from './species/assets.ts';
 import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
   BODY_COLUMNS,
@@ -265,7 +268,7 @@ function drawnPoseOf(id: number): MoverPose | null {
  *   | herd                    | surfaces |
  *   |-------------------------|----------|
  *   | fish                    |        1 |
- *   | grazer                  |        1 |
+ *   | grazer (imported asset) |        1 |
  *   | ibex                    |        1 |
  *   | bison                   |        1 |
  *   | ray                     |        1 |
@@ -274,12 +277,17 @@ function drawnPoseOf(id: number): MoverPose | null {
  *   | deepsea                 |        2 |
  *   | whale × WHALE_SPECIES   |        2 |
  *
- * The six species authored in models.ts's ./species/ directory each bake to
+ * The species authored in models.ts's ./species/ directory each bake to
  * ONE surface because their kit welds every extrusion (species/bodyKit.ts:
  * rigSkin groups by material signature AND by indexed/non-indexed, and colour
  * is not in the signature). The deep-sea creature's lure is UNLIT and each
  * whale carries a second material its body cannot share — those are the only
  * two-surface herds.
+ *
+ * THE GRAZER IS NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04): it is a
+ * downloaded file, so its surface count is a property of art this repo did not
+ * write. It gets its own constant below rather than being folded into the
+ * hand-built tally.
  *
  * WHY A CONSTANT AND NOT `models.objects.length`. `drawBudget` is a static
  * field on the plugin object (client/src/plugins/types.ts), read by the host
@@ -288,9 +296,24 @@ function drawnPoseOf(id: number): MoverPose | null {
  * a species that quietly gains a surface fails at boot rather than showing up
  * as a budget breach half a second into the first frame.
  */
-const SINGLE_SURFACE_SPECIES = 9; // fish, grazer, ibex, bison, ray, shark, eel, angelfish, bird
+const SINGLE_SURFACE_SPECIES = 8; // fish, ibex, bison, ray, shark, eel, angelfish, bird
 const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
-const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECIES * 2;
+/**
+ * The DOWNLOADED grazer's surfaces, on their own line because it is the one
+ * herd whose material set this repo did not write.
+ *
+ * ONE, measured (`RigBlueprint.surfaceCount`, 2026-09-04) off
+ * ./assets/grazer-deer.glb. The file carries seven glTF materials — three coat
+ * tones, hooves and three eye tones — and they differ ONLY in base colour,
+ * which rigSkin's materialSignature deliberately leaves out because a vertex
+ * colour attribute carries it. They therefore bake to a single surface. A
+ * re-import with a texture, or with a material that disagrees about roughness
+ * or transparency, would bake to more, and the assert in `attach` below is what
+ * turns that into a boot failure rather than a budget breach.
+ */
+const GRAZER_ASSET_DRAW_OBJECTS = 1;
+const WILDLIFE_SPECIES_DRAW_OBJECTS =
+  SINGLE_SURFACE_SPECIES + GRAZER_ASSET_DRAW_OBJECTS + TWO_SURFACE_SPECIES * 2;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,
@@ -300,6 +323,27 @@ export const clientPlugin: TerraceClientPlugin = {
    * TerraceClientPlugin.drawBudget and the constants above.
    */
   drawBudget: WILDLIFE_SPECIES_DRAW_OBJECTS,
+
+  /**
+   * Loads every asset-sourced species before attach, so createWildlifeModels
+   * has something to bake from. Parsing a glTF is promise-based and attach()
+   * is synchronous, which is the whole reason this hook exists (see
+   * TerraceClientPlugin.preload).
+   *
+   * SEQUENTIAL, not Promise.all: the installs are cheap and the failure a
+   * developer will actually hit is a bad asset, where being told WHICH file
+   * broke first — rather than being handed whichever rejection won a race —
+   * is what makes the message useful. A rejected preload is a logged breach
+   * for this plugin only: the host never attaches it, so the world simply has
+   * no wildlife in it rather than no client.
+   */
+  async preload(): Promise<void> {
+    for (const { spec, url } of SPECIES_ASSETS) {
+      // Lamps-only (null environment): fur, feather and scale, not metal — see
+      // ClientPluginCtx.loadRigAsset for the choice.
+      installSpeciesAsset(spec, await loadRigAsset(url, null));
+    }
+  },
 
   attach(ctx: ClientPluginCtx): void {
     // Every herd sizes its instance buffers to the whole population: any one
@@ -361,6 +405,13 @@ export const clientPlugin: TerraceClientPlugin = {
     // Shared geometries and materials are freed exactly once, here.
     models?.dispose();
     models = null;
+    // AND THE ASSETS AFTER THE BLUEPRINTS, never before. A baked surface holds
+    // the asset's own material clone, and a clone shares the source's texture
+    // objects by reference (client/src/render/rigSkin.ts, vertexColoured), so
+    // freeing a file while a rig baked from it is still drawn pulls the texels
+    // out from under it. models.dispose() above frees every blueprint; only
+    // then is there nothing left reading the files.
+    disposeSpeciesAssets();
     animationSeconds = 0;
   },
 };

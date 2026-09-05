@@ -31,9 +31,12 @@ import {
   type Object3D,
 } from 'three';
 import { bakeRig } from './render/rigSkin.ts';
+import { loadRigAsset } from './render/rigAsset.ts';
 import { createRigHerd } from './render/rigHerd.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
 import { buildFish } from '../../plugins/wildlife/client/species/fish.ts';
+import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
+import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
 import { buildGrazer } from '../../plugins/wildlife/client/species/grazer.ts';
 import { buildIbex } from '../../plugins/wildlife/client/species/ibex.ts';
 import { buildBison } from '../../plugins/wildlife/client/species/bison.ts';
@@ -112,6 +115,22 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
   camera.position.copy(center).addScaledVector(direction, distance);
   camera.lookAt(center);
   camera.updateProjectionMatrix();
+}
+
+/**
+ * Installs the assets the asset-sourced species files need before any builder
+ * runs. The shipped plugin does this in its `preload` hook; this harness has
+ * no host to give it one, so it awaits the same install function directly,
+ * over the SAME table (species/assets.ts) — a species the plugin can install,
+ * the preview can look at, with no second list to forget.
+ */
+async function installAssets(): Promise<void> {
+  // Lamps-only (null environment): fish are painted, not metal — see
+  // ClientPluginCtx.loadRigAsset for the choice. The deer is the same kind of
+  // surface: flat vertex colours, nothing on it to reflect a sky.
+  for (const { spec, url } of SPECIES_ASSETS) {
+    installSpeciesAsset(spec, await loadRigAsset(url, null));
+  }
 }
 
 function main(): void {
@@ -200,4 +219,7 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+// Asset-sourced species (species/assetSpecies.ts) cannot be built before their
+// .glb is installed, and parsing one is promise-based — so the harness waits,
+// exactly as the plugin host waits on `preload` before `attach`.
+void installAssets().then(main);

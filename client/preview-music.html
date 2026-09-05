@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Music composer preview (throwaway)</title>
+    <style>
+      /* Deliberately plain: this harness is judged by EAR and by the numbers in
+         the readout, so the page carries no styling opinion beyond being
+         legible in a screenshot of the render-mode hash. */
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #1b1d21;
+        color: #e6e6e6;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0 0 16px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 96px 1fr 64px;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+        max-width: 560px;
+      }
+      .value {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+      button {
+        font: inherit;
+        padding: 6px 16px;
+        margin-right: 8px;
+      }
+      #readout,
+      #render {
+        margin-top: 16px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness for the procedural composer
+         (plugins/music/client/composer/). Not part of the shipped app: not
+         linked from index.html, not registered in plugins/registry.ts, and the
+         composer itself knows nothing about this page. See previewMusic.ts for
+         the query-string contract (?render, ?seed, ?day, ?weather, ?tension). -->
+    <h1>Procedural music composer — preview</h1>
+
+    <div class="row">
+      <label for="day">dayPhase</label>
+      <input id="day" type="range" min="0" max="1" step="0.01" value="0.5" />
+      <span class="value" id="day-value">0.50</span>
+    </div>
+    <div class="row">
+      <label for="weather">weather</label>
+      <input id="weather" type="range" min="0" max="1" step="0.01" value="0" />
+      <span class="value" id="weather-value">0.00</span>
+    </div>
+    <div class="row">
+      <label for="tension">tension</label>
+      <input id="tension" type="range" min="0" max="1" step="0.01" value="0" />
+      <span class="value" id="tension-value">0.00</span>
+    </div>
+    <div class="row">
+      <label for="seed">seed</label>
+      <input id="seed" type="number" value="1" step="1" />
+      <span class="value"></span>
+    </div>
+
+    <p>
+      <button id="start" type="button">Start</button>
+      <button id="stop" type="button">Stop</button>
+    </p>
+
+    <div id="readout">idle</div>
+    <div id="render"></div>
+
+    <script type="module" src="/src/previewMusic.ts"></script>
+  </body>
+</html>

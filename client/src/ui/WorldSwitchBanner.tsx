@@ -38,7 +38,7 @@ export function WorldSwitchBanner(): JSX.Element {
           for the player to do. Zero seconds reads as "now", which is what both
           the end of a countdown and an unannounced restart send. */}
       <Show when={pendingRestartSeconds() !== null}>
-        <div class="world-banner" role="status" aria-live="polite">
+        <div class="world-banner world-banner-restart" role="status" aria-live="polite">
           {pendingRestartSeconds() === 0
             ? 'The server is restarting — you will be reconnected.'
             : `The server restarts in ${pendingRestartSeconds()}s — you will be reconnected.`}
