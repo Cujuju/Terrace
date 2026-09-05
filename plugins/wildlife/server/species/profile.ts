@@ -186,6 +186,22 @@ export const NO_SPAWN_CLEARANCE_REQUIRED = 0;
  */
 export const TURN_RADIUS_BODY_LENGTHS = 0.5;
 
+/**
+ * Multiplier on cruise speed while BURSTING — fleeing, and since 2026-09-05 also
+ * running prey down (`Pursuit` below, ./wolf.ts).
+ *
+ * ×3 is the difference between "swimming" and "bolting" at a glance. The
+ * duration of a panic stays in movement.ts (FLEE_DURATION_SECONDS): a chase has
+ * its own clock, and only the engine reads the flee one.
+ *
+ * MOVED HERE FROM movement.ts (2026-09-05), on exactly the precedent
+ * TURN_RADIUS_BODY_LENGTHS set above: it is now a value a ROW declares, and a
+ * per-name row file cannot import from the module that imports it — this file's
+ * header names that cycle and its temporal dead zone. movement.ts still
+ * re-exports the name, so no existing importer moved.
+ */
+export const FLEE_SPEED_MULTIPLIER = 3;
+
 // ── Size classes ─────────────────────────────────────────────────────────────
 //
 // Owner, 2026-08-14: "fish come in three sizes; smaller fish should be more
@@ -645,30 +661,89 @@ export interface IdleBouts {
 }
 
 /**
- * A hunter's alarm: which species it frightens, and how far.
+ * A hunter's rule: which species it frightens and how far — plus, optionally,
+ * whether it runs one of them down.
  *
- * NOT PREDATION IN THE SENSE OF EATING (owner, 2026-09-02: "prey scatter ahead
- * of it"). Nothing is killed and no energy is modelled; what a hunter has is a
- * presence, and the population machinery is untouched by it. That is the whole
- * mechanic, and it is deliberately the whole mechanic: a shark that removed
- * fish would put a second, unregulated drain next to the census's own turnover
- * and the two would fight over what the shelf's fish count means.
- *
- * The alarm is applied FROM THE HUNTER'S OWN POSITION each tick, after
+ * THE ALARM IS THE BASE EVERY HUNTER HAS (owner, 2026-09-02: "prey scatter
+ * ahead of it"). It is applied FROM THE HUNTER'S OWN POSITION each tick, after
  * movement, through the same `startleNear` a sculpt uses (movement.ts's
  * `advanceMovement`) — so prey turn away from where the shark IS, and a fish
  * told to flee toward a beach still turns along the shore.
  *
- * COST: O(hunters × population) per tick. Affordable only because hunters are
- * rare by density — the shark's is the thinnest in the table — and the residual
- * is named rather than hidden: a species declaring `hunts` at a common density
- * would make this the plugin's most expensive loop.
+ * PURSUIT IS THE OPT-IN EXTENSION (owner, 2026-09-05: "wolves should hunt the
+ * deer"). A row that declares no `pursuit` behaves bit-for-bit as it did before
+ * the field existed — which is why it is optional rather than defaulted — and
+ * THE SHARK STILL KILLS NOTHING: a fleeing fish (9 cells/s) outruns a cruising
+ * shark (7.2), the shark declares no pursuit, and nothing on the shelf is ever
+ * removed by a hunter. Only ./wolf.ts declares one.
+ *
+ * A KILL IS A CREDITED DESPAWN, NOT A DRAIN, and that is what answers the
+ * objection this comment used to state — that a hunter which removed prey would
+ * put "a second, unregulated drain next to the census's own turnover" and the
+ * two would fight over what the population count means. It would have, as an
+ * unregulated removal. A catch instead goes through `despawnWithCredit`
+ * (population.ts), the machinery habitat loss already uses: the census books
+ * the replacement immediately, the credit ripens after
+ * HABITAT_LOSS_RESPAWN_DELAY_SECONDS and hatches at the SPAWN_MEAN_WAIT_SECONDS
+ * hazard, so predation is one more thing the census regulates rather than a
+ * second accounting of the same population. The hunter's own
+ * `restAfterKillSeconds` is what bounds the rate.
+ *
+ * COST: O(hunters × population) per tick for the alarm, and the same again for
+ * target selection and the catch on a hunter that pursues. Affordable only
+ * because hunters are rare by density — the shark's is the thinnest in the
+ * table, the wolf's the thinnest on land — and the residual is named rather
+ * than hidden: a species declaring `hunts` at a common density would make this
+ * the plugin's most expensive loop.
  */
 export interface Predation {
   /** Species this hunter startles. A hunter never appears in its own list. */
   readonly preySpecies: readonly WildlifeHabitatSpecies[];
   /** How far the alarm carries, in cells from the hunter. */
   readonly alarmRadiusCells: number;
+  /**
+   * How this hunter runs prey down, or `undefined` for one that only frightens
+   * it. Same `preySpecies` list: what a hunter chases is what it scares.
+   */
+  readonly pursuit?: Pursuit;
+}
+
+/**
+ * Running one animal down: the chase, the catch, and the rest afterwards.
+ *
+ * ONE RULE PER HUNTER, hung off `Predation` rather than sitting beside it on
+ * SpeciesProfile, because a hunter has one predation rule and the alarm radius
+ * and the detect radius are two readings of the same behaviour — a row that
+ * could state a pursuit without a prey list, or two prey lists, would be a
+ * shape nothing can check.
+ *
+ * WHAT THE ENGINE DOES WITH IT (movement.ts's `resolvePursuits` and
+ * `resolveCatches`): a rested hunter locks the nearest living prey inside
+ * `detectRadiusCells` from the start-of-tick snapshot, steers at it through the
+ * ordinary steering ladder at `speedMultiplier` × cruise, and keeps that target
+ * until it dies, escapes, or `maxSeconds` runs out. Nothing here overrides the
+ * world: a chase cannot cross a slope the species could not walk, leave its
+ * habitat, or turn faster than its own turning circle, so a hunt is a hunt over
+ * real ground rather than a homing missile.
+ *
+ * NOTHING OF THIS GOES ON THE WIRE. The client is told where creatures are; a
+ * caught one is simply absent from the next broadcast and the interpolator
+ * drops it (../../client/interpolation.ts), which is exactly what natural
+ * turnover has always looked like.
+ */
+export interface Pursuit {
+  /** How far the hunter sees prey worth chasing, in cells. */
+  readonly detectRadiusCells: number;
+  /** Cruise multiplier while chasing — the burst a fleeing animal also uses. */
+  readonly speedMultiplier: number;
+  /** How close the hunter must get to take the target, in cells. */
+  readonly catchRadiusCells: number;
+  /** How long one chase may last before the hunter gives up. */
+  readonly maxSeconds: number;
+  /** Seconds before the hunter may lock a target again after a failed chase. */
+  readonly restAfterMissSeconds: number;
+  /** Seconds before the hunter may lock a target again after a kill: satiety. */
+  readonly restAfterKillSeconds: number;
 }
 
 /**

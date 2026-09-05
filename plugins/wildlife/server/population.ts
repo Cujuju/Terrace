@@ -153,6 +153,38 @@ export interface WildlifeEntity {
    * tick. See ./persistence.ts.
    */
   idle: boolean;
+
+  /**
+   * THE CHASE (2026-09-05, issue #337). The id of the creature this hunter is
+   * running down, or null — which is what every creature that is not a hunter,
+   * and every hunter that is not currently chasing, always reads.
+   *
+   * THE THREE `idle` RULES APPLY UNCHANGED. ALWAYS PRESENT, initialised at
+   * spawn for every species, so the movement step reads a field rather than an
+   * optional; NEVER ON THE WIRE, because a chase is visible as an animal
+   * running at another one and the payload is 58 B (index.ts); NOT PERSISTED,
+   * because a chase is a moment and not a fact about the animal.
+   *
+   * THREE FLAT FIELDS RATHER THAN ONE SUB-OBJECT, decided rather than defaulted:
+   * `replacePopulation` below shallow-copies every entity (`{ ...entity }`), so
+   * a sub-object would be shared BY REFERENCE between the caller's array and the
+   * live population, and a nullable one would put a `?.` at every read site.
+   */
+  huntTargetId: number | null;
+
+  /**
+   * Seconds left in the current chase before this hunter gives up, from its
+   * species' `Pursuit.maxSeconds`. Meaningless while `huntTargetId` is null.
+   */
+  huntSecondsRemaining: number;
+
+  /**
+   * Seconds before this hunter may lock a target again — satiety after a kill,
+   * winded after a miss (`Pursuit.restAfterKillSeconds` /
+   * `restAfterMissSeconds`). It is the rate limit on predation, and therefore
+   * the population governor: see species/wolf.ts's own arithmetic.
+   */
+  huntRestSecondsRemaining: number;
 }
 
 /** A pending spawn. `readyAt` is accumulated SIMULATED seconds, never wall-clock. */
@@ -573,6 +605,10 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
       // Born moving. A group that appeared already idling would read as a group
       // that spawned broken; the onset roll starts the first bout soon enough.
       idle: false,
+      // Born calm and hungry: a hunter may lock a target on its first tick.
+      huntTargetId: null,
+      huntSecondsRemaining: 0,
+      huntRestSecondsRemaining: 0,
     });
     created++;
   }
