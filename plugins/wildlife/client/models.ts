@@ -6,8 +6,9 @@
 // angelfish) are authored
 // one file each under ./species/, against the SpeciesModelPool contract in
 // ./species/speciesModel.ts; this file lends them the pool, bakes what they
-// return and herds it. The whale, the deep-sea angler and the bird are still
-// authored below, in the older spheres-and-cones idiom.
+// return and herds it. Two whale bodies (blue, sperm — whaleSpecies.ts), the
+// deep-sea angler and the bird are still authored below, in the older
+// spheres-and-cones idiom; the humpback whale body is ./species/humpback.ts.
 //
 // Rules this file keeps:
 //   * NO per-creature lights, and NO Math.random in any geometry. What is
@@ -58,11 +59,15 @@ import {
 import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
 import {
+  WHALE_SPECIES,
   assembleWhale,
   buildWhaleGeometrySets,
   geometriesOf,
   type WhaleGeometrySet,
+  type WhaleSpecies,
 } from './whaleSpecies.ts';
+import { animateWhale } from './species/whale.ts';
+import { buildHumpback } from './species/humpback.ts';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
   type WildlifeSizeClass,
@@ -132,8 +137,11 @@ export const BIRD_ENVELOPE = {
   bellyY: -0.09,
 } as const;
 
-/** Idle-animation rates, in cycles per second. Slower = larger, by convention. */
-const WHALE_FLUKE_HZ = 0.45;
+/**
+ * Idle-animation rates, in cycles per second. Slower = larger, by convention.
+ * The whale's (WHALE_FLUKE_HZ) lives in ./species/whale.ts with the rest of
+ * its animation, shared by its asset and procedural bodies alike.
+ */
 const DEEPSEA_SWAY_HZ = 0.7;
 /**
  * Wing beats per second. The fastest animation here, which is the convention
@@ -147,7 +155,6 @@ const DEEPSEA_SWAY_HZ = 0.7;
  */
 const BIRD_WING_FLAP_HZ = 5.5;
 
-const WHALE_FLUKE_SWING_RADIANS = 0.3;
 const DEEPSEA_SWAY_RADIANS = 0.22;
 /** How far the lure bobs on its stalk, in world units. */
 const DEEPSEA_LURE_BOB = 0.05;
@@ -316,7 +323,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   // banding on a body this large rather than as the deliberate chunky style the
   // other four keep.
   const whaleMaterial = lambert(WHALE_COLOR, { flatShading: false });
-  // All three whale bodies, built once and shared by every whale in the world.
+  // The whale bodies still built procedurally (blue, sperm), built once and
+  // shared by every whale of that body in the world. The humpback is an asset
+  // (./species/humpback.ts) and comes through speciesDrawable below.
   const whaleSets: readonly WhaleGeometrySet[] = buildWhaleGeometrySets();
   for (const set of whaleSets) {
     for (const geometry of geometriesOf(set)) keepGeometry(geometry);
@@ -487,13 +496,16 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    * WILDLIFE_POPULATION_CAP has scaled the population down. And since the
    * 2026-08-22 skinning each body is ONE draw call rather than the six the
    * note here used to record.
+   *
+   * Keyed by body, never by index: the procedural sets are looked up by their
+   * `species` tag when the drawables are assembled in WHALE_SPECIES order.
    */
-  const whaleRigs: readonly SpeciesRig[] = whaleSets.map((set) => {
+  const proceduralWhaleRigs = new Map<WhaleSpecies, SpeciesRig>(whaleSets.map((set) => {
     const { root, rig } = rigged();
     const { body, flukes } = assembleWhale(set, whaleMaterial);
     rig.add(body);
-    return bakeSpecies(root, { rig, flukes });
-  });
+    return [set.species, bakeSpecies(root, { rig, flukes })];
+  }));
 
   const deepseaRig = (() => {
     const { root, rig } = rigged();
@@ -549,18 +561,22 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const eelDrawable = speciesDrawable(buildEel);
   const angelfishDrawable = speciesDrawable(buildAngelfish);
 
-  const whaleDrawables: readonly SpeciesDrawable[] = whaleRigs.map((whaleRig) => {
+  /**
+   * One drawable per whale body, in WHALE_SPECIES order — the order
+   * `drawableOf` indexes with the creature's seed, so it must never change.
+   * The humpback is an asset-sourced species like any in ./species/; the two
+   * procedural bodies are herded here and run the SAME animation
+   * (./species/whale.ts's animateWhale), so the motion exists once.
+   */
+  const whaleDrawables: readonly SpeciesDrawable[] = WHALE_SPECIES.map((body): SpeciesDrawable => {
+    if (body === 'humpback') return speciesDrawable(buildHumpback);
+    const whaleRig = proceduralWhaleRigs.get(body);
+    if (whaleRig === undefined) throw new Error(`wildlife: no whale body built for "${body}"`);
     const { herd, joints } = herdFor(whaleRig);
-    const rig = joints.rig!;
-    const flukes = joints.flukes!;
     return {
       herd,
       animate(seconds: number, phase: number) {
-        // Whales flap vertically, slowly. Pitch about Z, the axis across a model
-        // that faces +X.
-        const swing = Math.sin(seconds * WHALE_FLUKE_HZ * TWO_PI + phase);
-        flukes.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS;
-        rig.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS * 0.12;
+        animateWhale(joints, seconds, phase);
       },
     };
   });

@@ -1,10 +1,20 @@
-// The three whales, as anatomy.
+// The three whales, as anatomy — two of them still built here.
 //
 // One "whale" on the wire is drawn as one of three real species, chosen from
 // the creature's id so an individual keeps the same body for its whole life.
 // They are deliberately not variations on a theme: a humpback, a blue whale and
 // a sperm whale disagree about nearly every proportion an animal has, and the
 // point of drawing three is that you can tell which is which at a glance.
+//
+// SINCE 2026-09-04 (fish+whales arc, pass 6) the HUMPBACK is a Blender-built
+// asset — species/humpback.ts, ../assets/humpback.glb — and its procedural
+// set is gone from here (its profile numbers are the reference silhouette in
+// tools/blender/build_humpback.py's header). The blue and sperm bodies stay
+// procedural until their own passes; `buildWhaleGeometrySets` returns those
+// two, each tagged with its species, and models.ts looks a body up by that
+// tag, never by index. WHALE_SPECIES and WHALE_ENVELOPE are unchanged: the
+// order is a contract with every living whale, and the envelope is the
+// placement contract every body — asset or procedural — fills or fits.
 //
 // Sizing: whales draw their size class PER MEMBER (WHALE_SIZE_WEIGHTS with
 // sizeDraw 'per-member' on the server, and WILDLIFE_SIZE_MODEL_SCALE applied to
@@ -30,6 +40,13 @@ import { finGeometry, profileFromPoints, sweptHull, type BodyProfile } from './w
 /** The three bodies a whale can be drawn as. Order is the selection order. */
 export const WHALE_SPECIES = ['humpback', 'blue', 'sperm'] as const;
 export type WhaleSpecies = (typeof WHALE_SPECIES)[number];
+
+/**
+ * How many of those bodies are still built HERE (blue, sperm) rather than
+ * loaded from a file: what index.ts's draw-object table counts as the
+ * two-surface whale herds.
+ */
+export const PROCEDURAL_WHALE_BODIES = 2;
 
 /**
  * The authored envelope every whale body is fitted into, in world units,
@@ -77,105 +94,6 @@ function part(
   rotation: readonly [number, number, number] = [0, 0, 0],
 ): WhalePart {
   return { geometry, position, rotation };
-}
-
-// ── Humpback ────────────────────────────────────────────────────────────────
-// Recognised, in the order the eye takes it in, by: flippers nearly a third of
-// body length with a scalloped leading edge; a barrel chest collapsing to a
-// narrow tail stock; tubercles knobbling the rostrum; broad flukes with a
-// serrated trailing edge; and the hump the animal is named for.
-
-const HUMPBACK_TUBERCLE_EXTENT = 0.19;
-const HUMPBACK_TUBERCLE_HEIGHT = 0.030;
-const HUMPBACK_TUBERCLE_ROWS = 5;
-const HUMPBACK_TUBERCLE_PER_ROW = 7;
-const HUMPBACK_MAX_HALF_WIDTH = 0.60;
-
-function humpbackSet(): WhaleGeometrySet {
-  const width = profileFromPoints([
-    [0.00, 0.14], [0.04, 0.34], [0.09, 0.53], [0.15, 0.70], [0.22, 0.85],
-    [0.30, 0.96], [0.36, 1.00], [0.45, 0.97], [0.55, 0.87], [0.65, 0.71],
-    [0.74, 0.54], [0.82, 0.38], [0.89, 0.25], [0.95, 0.15], [1.00, 0.09],
-  ]);
-  // Height runs its own course: barrel-deep amidships, then holding its height
-  // while the width goes away, so the peduncle is a blade the flukes grow out
-  // of rather than a rod they are pinned to.
-  const heightRatio = profileFromPoints([
-    [0.00, 0.95], [0.10, 1.05], [0.25, 1.18], [0.40, 1.20], [0.55, 1.18],
-    [0.70, 1.30], [0.82, 1.60], [0.92, 2.00], [1.00, 2.20],
-  ]);
-  const halfWidth: BodyProfile = (t) => Math.max(0.03, width(t) * HUMPBACK_MAX_HALF_WIDTH);
-  const halfHeight: BodyProfile = (t) => halfWidth(t) * heightRatio(t);
-  const hull = sweptHull({
-    length: AUTHORED_LENGTH, rings: 120, segments: 56,
-    halfWidth, halfHeight,
-    displace: (t, theta) => {
-      let d = 0;
-      const up = Math.cos(theta - Math.PI / 2); // +1 on the back, -1 on the belly
-      d += 0.05 * Math.exp(-Math.pow((t - 0.62) / 0.09, 2)) * Math.max(0, up);
-      if (t < HUMPBACK_TUBERCLE_EXTENT) {
-        const row = Math.round((t / HUMPBACK_TUBERCLE_EXTENT) * (HUMPBACK_TUBERCLE_ROWS - 1));
-        const rowT = (row / (HUMPBACK_TUBERCLE_ROWS - 1)) * HUMPBACK_TUBERCLE_EXTENT;
-        const along = Math.exp(-Math.pow((t - rowT) / (HUMPBACK_TUBERCLE_EXTENT / 9), 2));
-        const around = Math.cos(theta * HUMPBACK_TUBERCLE_PER_ROW + row * 1.1);
-        // Knobs ride the crown of the rostrum and the jaw line, not the flanks,
-        // which |up| going to zero at the sides takes care of.
-        d += HUMPBACK_TUBERCLE_HEIGHT * along * Math.max(0, around) * Math.abs(up);
-      }
-      return d;
-    },
-  });
-
-  const bodyParts: WhalePart[] = [part(hull)];
-  const PECTORAL_ROOT_X = 1.30;
-  for (const sign of [1, -1]) {
-    bodyParts.push(part(
-      finGeometry((shape, s) => {
-        shape.moveTo(0.30, 0);
-        // Scalloped leading edge -- the humpback's tell, and unmistakable even
-        // as a silhouette.
-        shape.quadraticCurveTo(0.28, s * 0.50, 0.20, s * 0.72);
-        shape.quadraticCurveTo(0.26, s * 0.86, 0.14, s * 1.04);
-        shape.quadraticCurveTo(0.20, s * 1.20, 0.06, s * 1.42);
-        shape.quadraticCurveTo(-0.02, s * 1.60, -0.20, s * 1.66);
-        shape.quadraticCurveTo(-0.34, s * 1.58, -0.30, s * 1.36);
-        shape.quadraticCurveTo(-0.34, s * 0.90, -0.30, s * 0.44);
-        shape.quadraticCurveTo(-0.24, s * 0.16, 0.30, 0);
-      }, sign, 0.075),
-      [PECTORAL_ROOT_X, -0.14, sign * seatZ(halfWidth, PECTORAL_ROOT_X)],
-      [sign * 0.30, sign * -0.22, -0.16],
-    ));
-  }
-  const DORSAL_X = -0.85;
-  bodyParts.push(part(
-    uprightFin((shape) => {
-      shape.moveTo(0.30, 0);
-      shape.quadraticCurveTo(0.16, 0.20, -0.16, 0.34);
-      shape.quadraticCurveTo(-0.30, 0.30, -0.24, 0.14);
-      shape.quadraticCurveTo(-0.30, 0.06, -0.34, 0);
-      shape.lineTo(0.30, 0);
-    }, 0.07),
-    [DORSAL_X, seatY(halfHeight, DORSAL_X), 0],
-  ));
-
-  // Far enough aft that the hull's own tail tip is covered by the fluke roots
-  // rather than showing between them as a needle.
-  const FLUKE_ROOT_X = -2.80;
-  const flukeParts = [1, -1].map((sign) => part(
-    finGeometry((shape, s) => {
-      shape.moveTo(0.30, 0);
-      shape.quadraticCurveTo(0.16, s * 0.55, -0.16, s * 1.30);
-      shape.quadraticCurveTo(-0.30, s * 1.44, -0.46, s * 1.32);
-      // Trailing edge scalloped into three serrations, then the deep notch.
-      shape.quadraticCurveTo(-0.34, s * 1.10, -0.42, s * 0.94);
-      shape.quadraticCurveTo(-0.30, s * 0.76, -0.40, s * 0.58);
-      shape.quadraticCurveTo(-0.26, s * 0.40, -0.38, s * 0.24);
-      shape.quadraticCurveTo(-0.30, s * 0.10, 0.30, 0);
-    }, sign, 0.07),
-    [FLUKE_ROOT_X, 0, 0],
-    [0, 0, -0.06],
-  ));
-  return finish('humpback', bodyParts, flukeParts);
 }
 
 // ── Blue whale ──────────────────────────────────────────────────────────────
@@ -431,9 +349,16 @@ function finish(
   return { species, bodyParts, flukeParts, fitScale };
 }
 
-/** Builds all three bodies. Call once; the geometries are shared thereafter. */
+/**
+ * Builds the procedural bodies (PROCEDURAL_WHALE_BODIES of them). Call once;
+ * the geometries are shared thereafter.
+ */
 export function buildWhaleGeometrySets(): readonly WhaleGeometrySet[] {
-  return [humpbackSet(), blueSet(), spermSet()];
+  const sets = [blueSet(), spermSet()];
+  if (sets.length !== PROCEDURAL_WHALE_BODIES) {
+    throw new Error(`whaleSpecies: ${String(sets.length)} procedural bodies built but PROCEDURAL_WHALE_BODIES says ${String(PROCEDURAL_WHALE_BODIES)}`);
+  }
+  return sets;
 }
 
 /** Every geometry in a set, for the disposal pool. */
