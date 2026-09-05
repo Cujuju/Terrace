@@ -35,7 +35,9 @@ import {
   type SpeciesAssetSpec,
 } from './species/assetSpecies.ts';
 import { FISH_ASSET } from './species/fish.ts';
+import { GRAZER_ASSET } from './species/grazer.ts';
 import fishUrl from './assets/fish.glb?url';
+import grazerUrl from './assets/grazer-deer.glb?url';
 import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
   BODY_COLUMNS,
@@ -273,7 +275,7 @@ function drawnPoseOf(id: number): MoverPose | null {
  *   | herd                    | surfaces |
  *   |-------------------------|----------|
  *   | fish                    |        1 |
- *   | grazer                  |        1 |
+ *   | grazer (imported asset) |        1 |
  *   | ibex                    |        1 |
  *   | bison                   |        1 |
  *   | ray                     |        1 |
@@ -282,12 +284,17 @@ function drawnPoseOf(id: number): MoverPose | null {
  *   | deepsea                 |        2 |
  *   | whale × WHALE_SPECIES   |        2 |
  *
- * The six species authored in models.ts's ./species/ directory each bake to
+ * The species authored in models.ts's ./species/ directory each bake to
  * ONE surface because their kit welds every extrusion (species/bodyKit.ts:
  * rigSkin groups by material signature AND by indexed/non-indexed, and colour
  * is not in the signature). The deep-sea creature's lure is UNLIT and each
  * whale carries a second material its body cannot share — those are the only
  * two-surface herds.
+ *
+ * THE GRAZER IS NEITHER AUTHORED HERE NOR BUILT HERE (2026-09-04): it is a
+ * downloaded file, so its surface count is a property of art this repo did not
+ * write. It gets its own constant below rather than being folded into the
+ * hand-built tally.
  *
  * WHY A CONSTANT AND NOT `models.objects.length`. `drawBudget` is a static
  * field on the plugin object (client/src/plugins/types.ts), read by the host
@@ -296,15 +303,31 @@ function drawnPoseOf(id: number): MoverPose | null {
  * a species that quietly gains a surface fails at boot rather than showing up
  * as a budget breach half a second into the first frame.
  */
-const SINGLE_SURFACE_SPECIES = 9; // fish, grazer, ibex, bison, ray, shark, eel, angelfish, bird
+const SINGLE_SURFACE_SPECIES = 8; // fish, ibex, bison, ray, shark, eel, angelfish, bird
 const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
-const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECIES * 2;
+/**
+ * The DOWNLOADED grazer's surfaces, on their own line because it is the one
+ * herd whose material set this repo did not write.
+ *
+ * ONE, measured (`RigBlueprint.surfaceCount`, 2026-09-04) off
+ * ./assets/grazer-deer.glb. The file carries seven glTF materials — three coat
+ * tones, hooves and three eye tones — and they differ ONLY in base colour,
+ * which rigSkin's materialSignature deliberately leaves out because a vertex
+ * colour attribute carries it. They therefore bake to a single surface. A
+ * re-import with a texture, or with a material that disagrees about roughness
+ * or transparency, would bake to more, and the assert in `attach` below is what
+ * turns that into a boot failure rather than a budget breach.
+ */
+const GRAZER_ASSET_DRAW_OBJECTS = 1;
+const WILDLIFE_SPECIES_DRAW_OBJECTS =
+  SINGLE_SURFACE_SPECIES + GRAZER_ASSET_DRAW_OBJECTS + TWO_SURFACE_SPECIES * 2;
 
 /**
  * The species drawn from a Blender-built asset, and where each file is served
  * from. A `.glb?url` import, which is why client/vite.config.ts carries an
- * assetsInclude entry for .glb files (and why this directory carries its own
- * glb-url.d.ts).
+ * assetsInclude entry for .glb files. The declaration for the import itself is
+ * workspace-wide (types/glb-url.d.ts, named in tsconfig.base.json's `files`),
+ * so a plugin that ships a model needs no .d.ts of its own.
  *
  * A TABLE, not a call per species: every pass of the model arc (shark, ray,
  * eel, angelfish, the three whales, deepsea) adds ONE row here and its own
@@ -312,6 +335,7 @@ const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECI
  */
 const SPECIES_ASSETS: readonly { readonly spec: SpeciesAssetSpec; readonly url: string }[] = [
   { spec: FISH_ASSET, url: fishUrl },
+  { spec: GRAZER_ASSET, url: grazerUrl },
 ];
 
 export const clientPlugin: TerraceClientPlugin = {

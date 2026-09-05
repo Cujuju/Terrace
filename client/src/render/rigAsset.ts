@@ -244,16 +244,30 @@ function assertNotSkinned(label: string, node: Object3D): void {
 /**
  * How far past its footprint a model may reach before it is rejected at load.
  *
- * Two hundredths of a cell: the fit is AUTHORED, not fitted — the number only
- * absorbs float dust in the bounding box (a loft's vertices are computed, so
- * the box edge lands a few ulps either side of the intended dimension), never
- * a real overhang. It began life as boats' BOAT_FIT_TOLERANCE_CELLS and is
- * shared because the reason for it has nothing to do with boats.
+ * Two hundredths of a world unit: the fit is AUTHORED, not fitted — the number
+ * only absorbs float dust in the bounding box (a loft's vertices are computed,
+ * so the box edge lands a few ulps either side of the intended dimension),
+ * never a real overhang. That is a property of floating point and of the size
+ * models are authored at, not of any grid, which is why one number serves every
+ * asset. It began life as boats' BOAT_FIT_TOLERANCE_CELLS and is shared because
+ * the reason for it has nothing to do with boats.
  */
-export const ASSET_FIT_TOLERANCE_CELLS = 0.02;
+export const ASSET_FIT_TOLERANCE_WORLD_UNITS = 0.02;
 
-/** A footprint in cells. `y` is optional: most callers budget only the ground area. */
-export interface AssetFootprintCells {
+/**
+ * A footprint in WORLD UNITS — the asset's own units, the ones three draws.
+ *
+ * NOT CELLS (orchestrator decision, 2026-09-04). A model is authored at the
+ * size it is drawn at and carries no runtime scale, so the only unit its
+ * bounding box can be compared in is the renderer's; a budget stated in cells
+ * would be a number the measurement is not in. A cell is CELL_WORLD_SIZE world
+ * units (shared/src/constants.ts:50), so a footprint that starts life as a
+ * server-side cell count converts with `cellsAcross` before it becomes one of
+ * these — at that one boundary, and not here.
+ *
+ * `y` is optional: most callers budget only the ground area.
+ */
+export interface AssetFootprint {
   readonly x: number;
   readonly z: number;
   readonly y?: number;
@@ -263,16 +277,16 @@ export interface AssetFootprintCells {
  * Throws unless the model's bounding box fits the footprint it was authored for.
  *
  * WHY EVERY ASSET NEEDS THIS AND WHY IT IS NOT IN createRigAsset: the loader
- * cannot know what a file is FOR — a boat gets one cell, a temple gets its
- * own plan — so the budget is the callsite's to state, but the measurement and
- * the tolerance are not, and a callsite writing its own Box3 is a callsite that
- * can forget an axis. World-object fidelity is a standing rule: a structure
+ * cannot know what a file is FOR — a boat gets a cell's worth of world units,
+ * a temple gets its own plan — so the budget is the callsite's to state, but
+ * the measurement and the tolerance are not, and a callsite writing its own
+ * Box3 is a callsite that can forget an axis. World-object fidelity is a standing rule: a structure
  * that overruns its ground footprint reads as art hanging off its own plot.
  */
 export function assertAssetFits(
   asset: RigAsset,
-  footprint: AssetFootprintCells,
-  toleranceCells: number = ASSET_FIT_TOLERANCE_CELLS,
+  footprint: AssetFootprint,
+  tolerance: number = ASSET_FIT_TOLERANCE_WORLD_UNITS,
 ): void {
   // The box is taken in world space, so a scene whose nodes carry transforms
   // must have them resolved first — cheap, and the caller may have moved
@@ -282,7 +296,7 @@ export function assertAssetFits(
   const overruns: string[] = [];
   const check = (axis: string, measured: number, budget: number | undefined): void => {
     if (budget === undefined) return;
-    if (measured > budget + toleranceCells) {
+    if (measured > budget + tolerance) {
       overruns.push(`${axis} ${measured.toFixed(3)} > ${budget}`);
     }
   };
@@ -291,8 +305,8 @@ export function assertAssetFits(
   check('z', size.z, footprint.z);
   if (overruns.length > 0) {
     throw new Error(
-      `rigAsset: the model overruns its authored footprint in cells ` +
-        `(${overruns.join('; ')}, tolerance ${toleranceCells})`,
+      `rigAsset: the model overruns its authored footprint in world units ` +
+        `(${overruns.join('; ')}, tolerance ${tolerance})`,
     );
   }
 }

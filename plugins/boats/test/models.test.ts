@@ -11,7 +11,7 @@ import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Vector3
 import { readFile } from 'node:fs/promises';
 import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
 import {
-  ASSET_FIT_TOLERANCE_CELLS,
+  ASSET_FIT_TOLERANCE_WORLD_UNITS,
   parseRigAsset,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
@@ -261,7 +261,7 @@ describe('installBoatKit', () => {
     // its own cell makes every distance in the fight read wrong. The tolerance
     // absorbs float dust in the bounding box, never a real overhang — so a
     // silhouette one whole tolerance past it is an overhang.
-    const overhang = 1 + ASSET_FIT_TOLERANCE_CELLS * 2;
+    const overhang = 1 + ASSET_FIT_TOLERANCE_WORLD_UNITS * 2;
     expect(() =>
       installBoatKit(fakeBoatAsset({ silhouetteCells: overhang, fireTopY: VALID_FIRE_TOP_Y })),
     ).toThrow(/one-cell fit budget/);
