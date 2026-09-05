@@ -209,9 +209,23 @@ export interface LayerEdgeOverlay {
    */
   refreshChunk(chunkIdx: number): void;
   /**
+   * Is there a lip of band `band` within `GRAB_RADIUS_WORLD_UNITS` of
+   * `(atX, atZ)` — a segment bounding `cell` or one of its eight neighbours?
+   *
+   * `lightBand`'s own PASS 1, exposed (2026-09-04). The carve admits a TREAD
+   * hit only when the cap band's lip is within reach of where the ray met the
+   * tread (world.ts's `carveBand`, D1), and that is the same question the
+   * highlight asks before it lights anything. Two copies of a distance rule are
+   * two answers to "is there an edge here", so there is one: `lightBand` calls
+   * this, and so does the press.
+   *
+   * A null `cell` or `band` is "nothing aimed at", and answers false.
+   */
+  lipNear(cell: { x: number; y: number } | null, band: number | null, atX: number, atZ: number): boolean;
+  /**
    * Lights up ONE NAMED BAND's lip beside `(atX, atZ)` and reports whether that
    * band has a lip there at all — a segment bounding `cell` or one of its eight
-   * neighbours (GRAB_RADIUS_WORLD_UNITS).
+   * neighbours (GRAB_RADIUS_WORLD_UNITS), which is `lipNear` above.
    *
    * A GUARD, NOT A SEARCH, and that is the whole of the 2026-08-27 change. The
    * caller has already decided which band the player is aiming at, from the
@@ -627,6 +641,33 @@ export function createLayerEdgeOverlay(
     }
   };
 
+  /**
+   * THE ONE DISTANCE RULE — see `lipNear` on the interface. A local const
+   * rather than a method on the returned object so `lightBand` can call it
+   * without going through `this`, which a destructured method would not have.
+   */
+  const lipNear = (
+    cell: { x: number; y: number } | null,
+    band: number | null,
+    atX: number,
+    atZ: number,
+  ): boolean => {
+    if (cell === null || band === null) return false;
+    // Does this band's contour bound the aimed cell or one of its neighbours?
+    // One band, one yes/no; nothing is ranked and nothing else can win.
+    const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
+    for (const idx of nearbyChunks(cell.x, cell.y)) {
+      const flat = segmentsByChunk.get(idx)?.get(band);
+      if (flat === undefined) continue;
+      for (let i = 0; i + 3 < flat.length; i += 4) {
+        if (distanceSqToSegment(atX, atZ, flat[i]!, flat[i + 1]!, flat[i + 2]!, flat[i + 3]!) < grabRadiusSq) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   return {
     refreshChunk(chunkIdx) {
       rebuild(chunkIdx);
@@ -636,28 +677,15 @@ export function createLayerEdgeOverlay(
       clearGrabbed();
     },
 
+    lipNear,
+
     lightBand(cell, band, atX, atZ, litSpanWorldUnits) {
       clearGrabbed();
       if (cell === null || band === null) return false;
 
-      // PASS 1 — THE GUARD. Does this band's contour bound the aimed cell or
-      // one of its neighbours? One band, one yes/no; nothing is ranked and
-      // nothing else can win.
-      const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
-      let bounded = false;
-      for (const idx of nearbyChunks(cell.x, cell.y)) {
-        const flat = segmentsByChunk.get(idx)?.get(band);
-        if (flat === undefined) continue;
-        for (let i = 0; i + 3 < flat.length; i += 4) {
-          if (distanceSqToSegment(atX, atZ, flat[i]!, flat[i + 1]!, flat[i + 2]!, flat[i + 3]!) >= grabRadiusSq) {
-            continue;
-          }
-          bounded = true;
-          break;
-        }
-        if (bounded) break;
-      }
-      if (!bounded) return false;
+      // PASS 1 — THE GUARD, which is `lipNear` and nothing else: one distance
+      // rule, shared with the press that grabs or carves the lip.
+      if (!lipNear(cell, band, atX, atZ)) return false;
 
       // PASS 2 — light up the caller's stretch of that band's lip around the
       // aimed point. See `litSpanWorldUnits` on the interface for why the
