@@ -45,7 +45,7 @@ import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
 import {
   assertAssetFits,
   loadRigAsset,
-  type AssetFootprintCells,
+  type AssetFootprint,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
 import { STRUCTURES_CAP } from '../protocol.ts';
@@ -83,12 +83,12 @@ const SKIFF_BOB_PERIOD_SECONDS = 2.6;
  * shore. An authored hull may be prettier; it may not be BIGGER, so the
  * placement cell it was fitted to still holds.
  */
-const SKIFF_FOOTPRINT: AssetFootprintCells = { x: 0.36, z: 0.14 };
+const SKIFF_FOOTPRINT: AssetFootprint = { x: 0.36, z: 0.14 };
 
 /**
  * How far past that budget a measured hull may reach before the asset is
  * rejected at load — passed to rigAsset's assertAssetFits IN PLACE OF its
- * default ASSET_FIT_TOLERANCE_CELLS (0.02), which was sized for a one-cell
+ * default ASSET_FIT_TOLERANCE_WORLD_UNITS (0.02), which was sized for a one-cell
  * footprint and would be 5.6 % of this one. A thousandth of a world unit: the
  * fit is AUTHORED, not fitted — glTF stores positions as float32, whose
  * spacing near 0.36 is about 3e-8, so this is four orders of magnitude above

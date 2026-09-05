@@ -11,9 +11,19 @@
 //   the .ts supplies    the envelope it claims to measure, the joint names it
 //                       drives, and `animate`.
 //
+// TWO KINDS OF FILE COME THROUGH HERE, and only one of them was foreseen. A
+// BUILT asset (fish.glb, tools/blender/build_fish.py) is authored straight to
+// the convention: it carries a `rig` Empty, its pivots rest at the identity,
+// and nothing below has to touch it. A DOWNLOADED one (grazer-deer.glb, a CC0
+// Quaternius deer) is somebody else's armature put through
+// `import_model.py --rigidify`, and a converted armature is not yet a set of
+// hinges these animations can drive. `SpeciesAssetSpec.rigidified` says which
+// kind a species is, and `prepareRigidified` is the whole of the difference —
+// applied ONCE, at install, never per bake.
+//
 // Nothing else moves. `models.ts`'s bakeSpecies / herdFor / drawInto never
 // learn that a species came from a file: `assetSpeciesBuilder` returns the same
-// `AuthoredSpecies` shape `buildGrazer` does, and `speciesDrawable`
+// `AuthoredSpecies` shape a hand-authored `buildIbex` does, and `speciesDrawable`
 // (../models.ts) bakes and herds it identically.
 //
 // WHY THE ENVELOPE IS ASSERTED RATHER THAN READ. placement.ts fits a swimmer
@@ -42,7 +52,7 @@
 // texels out from under a drawn rig. Hence: ../index.ts disposes `models`
 // (every blueprint) and only then calls disposeSpeciesAssets().
 
-import { Box3, type Object3D } from 'three';
+import { Box3, Group, Matrix4, type Object3D } from 'three';
 import type { RigAsset } from '../../../../client/src/render/rigAsset.ts';
 import type { AuthoredSpecies, SpeciesJoints, SpeciesModelBuilder } from './speciesModel.ts';
 
@@ -79,7 +89,43 @@ export interface SpeciesAssetSpec {
   readonly joints: readonly string[];
   /** What the file must measure, within ENVELOPE_TOLERANCE_CELLS. */
   readonly envelope: SpeciesEnvelope;
+  /**
+   * The file came out of `tools/blender/import_model.py --rigidify` — a
+   * DOWNLOADED model whose skeleton was converted to this game's pivot
+   * convention — rather than being authored to it by a build script.
+   *
+   * Two things are true of every such file and of no hand-built one, which is
+   * why one flag covers both (see `prepareRigidified`):
+   *
+   *   * IT HAS NO `rig` NODE. A converted armature has the bones the artist
+   *     drew and nothing spare, so the whole-body node every animation moves is
+   *     SYNTHESISED here rather than demanded of the import. `rig` therefore
+   *     must still be listed in `joints`, and must NOT exist in the file.
+   *   * ITS PIVOTS ARE ORIENTED LIKE THE BONES THEY CAME FROM. Every other
+   *     joint named in `joints` is a bone Empty and is driven through a
+   *     model-axis pivot instead of directly.
+   */
+  readonly rigidified?: boolean;
+  /**
+   * Nodes the source file hung OUTSIDE the driven skeleton, and the joint that
+   * has to carry each one.
+   *
+   * `--rigidify` splits a skinned mesh by dominant vertex weight and parents
+   * each piece under the bone that weighed most on it. That is the honest
+   * split, but a rig is free to contain bones that are not in the limb chain at
+   * all — IK targets, commonly at the armature ROOT — and geometry that lands
+   * on one is nailed to a node no animation reaches. Naming it here moves it,
+   * unmoved, under the joint it belongs to. Empty for a hand-built asset.
+   */
+  readonly adopt?: readonly { readonly node: string; readonly under: string }[];
 }
+
+/**
+ * The whole-body node every species must expose, by name — the one joint the
+ * animations here all move (counter-yaw, walk bob, body roll) and the one a
+ * rigidified import does not bring with it.
+ */
+const RIG_JOINT = 'rig';
 
 /**
  * The joint convention for a SWIMMER, written down once (docs/model-assets.md,
@@ -134,8 +180,27 @@ const ENVELOPE_ANCHORS = [
  */
 export const ENVELOPE_TOLERANCE_CELLS = 0.01;
 
+/**
+ * One installed species: the file, and the authoring tree + joint handles the
+ * bake is given.
+ *
+ * PREPARED ONCE, AT INSTALL, not per build. A hand-built asset needs no
+ * preparation and these are simply the file's own scene and nodes; a
+ * `--rigidify` import needs the wrap and the pivots below, and those MUTATE the
+ * asset's tree. Doing that per build would nest a second pivot inside the first
+ * on the second bake, so it happens exactly once, here, and every later bake
+ * reads the same prepared tree — which is what keeps `assetSpeciesBuilder`'s
+ * promise that a scene survives repeated bakes.
+ */
+interface InstalledSpecies {
+  readonly asset: RigAsset;
+  /** Unparented and at the identity, as bakeRig's `authoredRoot` requires. */
+  readonly root: Object3D;
+  readonly joints: Readonly<Record<string, Object3D>>;
+}
+
 /** Installed assets by species key. Written only by installSpeciesAsset. */
-const installed = new Map<string, RigAsset>();
+const installed = new Map<string, InstalledSpecies>();
 
 /**
  * Installs one parsed asset for a species, after checking everything about it
@@ -166,7 +231,13 @@ export function installSpeciesAsset(spec: SpeciesAssetSpec, asset: RigAsset): vo
   // Every joint must resolve NOW. asset.node throws naming the file and the
   // node; finding a typo at the first bake (or the first frame) instead would
   // turn an authoring mistake into a runtime surprise.
-  for (const joint of spec.joints) asset.node(joint);
+  //
+  // `rig` is the one exception, and only for a rigidified import: there it is
+  // synthesised below rather than present in the file (SpeciesAssetSpec).
+  for (const joint of spec.joints) {
+    if (spec.rigidified === true && joint === RIG_JOINT) continue;
+    asset.node(joint);
+  }
 
   const bounds = new Box3().setFromObject(asset.scene);
   const min = bounds.min;
@@ -190,19 +261,73 @@ export function installSpeciesAsset(spec: SpeciesAssetSpec, asset: RigAsset): vo
   }
 
   const envelope = spec.envelope;
-  assertClose(spec, 'length', measured.nose! - measured.tail_tip!, envelope.length, 'FISH_ENVELOPE.length');
+  assertClose(spec, 'length', measured.nose! - measured.tail_tip!, envelope.length, 'envelope.length');
   assertClose(spec, 'halfLength', (measured.nose! - measured.tail_tip!) / 2, envelope.halfLength, 'envelope.halfLength');
   assertClose(spec, 'crownY', measured.crown!, envelope.crownY, 'envelope.crownY');
   assertClose(spec, 'bellyY', measured.belly!, envelope.bellyY, 'envelope.bellyY');
   assertClose(spec, 'halfWidth', halfWidth, envelope.halfWidth, 'envelope.halfWidth');
 
-  installed.get(spec.species)?.dispose();
-  installed.set(spec.species, asset);
+  // Prepared only after every check has passed, so a rejected file is never
+  // mutated and the previously installed one is never disturbed.
+  installed.get(spec.species)?.asset.dispose();
+  installed.set(
+    spec.species,
+    spec.rigidified === true ? prepareRigidified(spec, asset) : prepareAuthored(spec, asset),
+  );
+}
+
+/** The plain case: the file's own scene is the authoring tree. */
+function prepareAuthored(spec: SpeciesAssetSpec, asset: RigAsset): InstalledSpecies {
+  const joints: Record<string, Object3D> = {};
+  for (const name of spec.joints) joints[name] = asset.node(name);
+  // The file's scene IS the authored root: it is unparented and at the
+  // identity, which is exactly what bakeRig requires, so no placement step
+  // sits between the file and the bake.
+  return { asset, root: asset.scene, joints };
+}
+
+/**
+ * The converted case: wrap the file, and give every declared joint a pivot the
+ * animations here can actually drive.
+ *
+ * THE WRAP. `root` → `rig` → the file's scene, two identity Groups costing two
+ * bone matrices. Wrapping rather than requiring the import to name a top node
+ * `rig` keeps tools/blender/import_model.py generic — it normalises models for
+ * the whole game, not for this plugin's animation vocabulary — and means a
+ * downloaded model whose author happened to call something "rig" cannot collide
+ * with ours.
+ *
+ * THE PIVOTS. See `modelAxisPivot`; it is the half of this that is not
+ * obvious, and the half that broke first.
+ */
+function prepareRigidified(spec: SpeciesAssetSpec, asset: RigAsset): InstalledSpecies {
+  const root = new Group();
+  const rig = new Group();
+  rig.name = RIG_JOINT;
+  root.add(rig);
+  rig.add(asset.scene);
+
+  const joints: Record<string, Object3D> = { [RIG_JOINT]: rig };
+  for (const name of spec.joints) {
+    if (name === RIG_JOINT) continue;
+    joints[name] = modelAxisPivot(asset.node(name), rig);
+  }
+  for (const { node, under } of spec.adopt ?? []) {
+    const host = joints[under];
+    if (host === undefined) {
+      throw new Error(
+        `${spec.file}: adopt "${node}" names host joint "${under}", which the species ` +
+          'does not declare in `joints`',
+      );
+    }
+    adoptKeepingTransform(asset.node(node), host);
+  }
+  return { asset, root, joints };
 }
 
 /** Frees every installed asset. Blueprints baked from them must go FIRST. */
 export function disposeSpeciesAssets(): void {
-  for (const asset of installed.values()) asset.dispose();
+  for (const entry of installed.values()) entry.asset.dispose();
   installed.clear();
 }
 
@@ -218,21 +343,103 @@ export function assetSpeciesBuilder(
   animate: (joints: SpeciesJoints, seconds: number, phase: number) => void,
 ): SpeciesModelBuilder {
   return (): AuthoredSpecies => {
-    const asset = installed.get(spec.species);
-    if (asset === undefined) {
+    const entry = installed.get(spec.species);
+    if (entry === undefined) {
       throw new Error(
         `${spec.file}: no asset installed for "${spec.species}" — the wildlife plugin's ` +
           'preload (or installSpeciesAsset, under Node) runs first',
       );
     }
-    const joints: Record<string, Object3D> = {};
-    for (const name of spec.joints) joints[name] = asset.node(name);
-    // The file's scene IS the authored root: it is unparented and at the
-    // identity, which is exactly what bakeRig requires, so no placement step
-    // sits between the file and the bake. bakeRig consumes it as data and
-    // clones every buffer it keeps, so the scene survives repeated bakes.
-    return { root: asset.scene, joints, animate };
+    // The tree was prepared at install (see InstalledSpecies). bakeRig consumes
+    // it as data and clones every buffer it keeps, so it survives repeated bakes.
+    return { root: entry.root, joints: entry.joints, animate };
   };
+}
+
+// ── Driving a converted armature ─────────────────────────────────────────────
+//
+// Everything below exists because a `--rigidify` import is a real skeleton
+// flattened into Empties, and an Empty that came from a bone is not yet a hinge
+// this plugin's animations can drive. Both facilities are general: any
+// downloaded model normalised by tools/blender/import_model.py needs them, and
+// neither knows anything about any particular species.
+
+/** Scratch for the one decompose per re-home. Never escapes this module. */
+const scratchMatrix = new Matrix4();
+
+/** `node`'s world transform, rewritten as a local transform in `host`'s frame. */
+function localiseInto(node: Object3D, host: Object3D): void {
+  scratchMatrix
+    .copy(host.matrixWorld)
+    .invert()
+    .multiply(node.matrixWorld)
+    .decompose(node.position, node.quaternion, node.scale);
+}
+
+/**
+ * Hangs an identity-oriented pivot for `node` off `host`, and returns it. The
+ * animation drives the PIVOT; the bone hangs under it, unmoved.
+ *
+ * WHY A PIVOT AND NOT THE BONE ITSELF. `--rigidify` puts an Empty at each
+ * bone's head carrying the BONE's rest rotation (import_model.py,
+ * build_joint_empties), because that is the only orientation the source states.
+ * Two things break on that, and this fixes both:
+ *
+ *   * WRONG AXES. Every animation in this directory drives MODEL axes —
+ *     ./quadruped.ts's poseWalk swings a leg with `rotation.z` because a model
+ *     faces +X, so Z is fore-and-aft — and a deer's femur points down and back,
+ *     so `rotation.z` on its own Empty twists the leg sideways.
+ *   * A REST TRANSFORM THE ANIMATION DESTROYS. `joint.rotation.z = swing` is an
+ *     assignment to an EULER and three rebuilds the whole quaternion from it:
+ *     x and y come back zero and any rest rotation the node had is gone. The
+ *     same is true of `joint.position.y = bob`, which is absolute. Every
+ *     hand-built hinge in this directory rests at the identity, so that has
+ *     always been harmless; a bone Empty does not, and the model comes apart on
+ *     the first posed frame — observed 2026-09-04, the deer's legs lying flat
+ *     with its hooves scattered on the ground.
+ *
+ * `host` is the species' `rig`, which sits at the identity inside the authored
+ * root, so a pivot placed in its space is placed in the MODEL's frame. The
+ * pivot takes the joint's position there and nothing else — no rotation, no
+ * scale — and the bone keeps the rest the pivot did not take, so the model does
+ * not move by a hair.
+ *
+ * WHAT THIS GIVES UP, stated because it is a real constraint and not an
+ * oversight: a driven joint no longer inherits from the bones ABOVE it, only
+ * from `rig`. For the walkers here that changes nothing — the torso and neck
+ * bones between the rig and a leg never move — but an animation that wanted to
+ * swing a shoulder AND the leg under it would have to pivot both and accept
+ * that the second does not follow the first.
+ */
+export function modelAxisPivot(node: Object3D, host: Object3D): Group {
+  host.updateMatrixWorld(true);
+  node.updateWorldMatrix(true, false);
+  localiseInto(node, host);
+
+  const pivot = new Group();
+  pivot.name = `${node.name}:modelAxis`;
+  // The pivot takes the POSITION and nothing else; the node keeps the rotation
+  // and scale, so the two together are exactly the transform just computed.
+  pivot.position.copy(node.position);
+  host.add(pivot);
+
+  node.position.set(0, 0, 0);
+  pivot.add(node);
+  return pivot;
+}
+
+/**
+ * Re-homes `node` under `host` without moving it: its transform is re-expressed
+ * in the host's frame, so the model looks identical and only the tree changed.
+ *
+ * This is what `SpeciesAssetSpec.adopt` is applied with — see that field for
+ * why a converted rig can leave geometry on a node no animation reaches.
+ */
+export function adoptKeepingTransform(node: Object3D, host: Object3D): void {
+  host.updateMatrixWorld(true);
+  node.updateWorldMatrix(true, false);
+  localiseInto(node, host);
+  host.add(node);
 }
 
 /** One measured-versus-declared check, with the file named in the failure. */

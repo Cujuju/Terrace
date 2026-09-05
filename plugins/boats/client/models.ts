@@ -36,7 +36,7 @@ import {
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import {
   assertAssetFits,
-  type AssetFootprintCells,
+  type AssetFootprint,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
 
@@ -138,9 +138,16 @@ export const BOAT_SHAPE: {
  * makes every distance in the fight read wrong. Height is deliberately
  * unbudgeted: a mast is as tall as it looks good, and nothing measures it.
  * The slack that absorbs float dust in the bounding box is the render kit's
- * ASSET_FIT_TOLERANCE_CELLS, which is where that reasoning now lives.
+ * ASSET_FIT_TOLERANCE_WORLD_UNITS, which is where that reasoning now lives.
+ *
+ * THE NUMBERS ARE WORLD UNITS, not cells, and the name says so since the
+ * orchestrator settled the asset unit on 2026-09-04. Nothing about the hull
+ * changed: it was always modelled in world units (see ./index.ts:125-132), the
+ * budget was always the number 1, and a cell is CELL_WORLD_SIZE world units —
+ * so "one cell square" above is the DESIGN reason for the budget, and this is
+ * the measurement it is checked as.
  */
-const BOAT_FOOTPRINT_CELLS: AssetFootprintCells = { x: 1, z: 1 };
+const BOAT_FOOTPRINT_WORLD_UNITS: AssetFootprint = { x: 1, z: 1 };
 
 /** Undyed canvas at rest. */
 const SAIL_COLOR = 0xe8e0cf;
@@ -258,7 +265,7 @@ export function installBoatKit(asset: RigAsset): void {
     );
   }
   try {
-    assertAssetFits(asset, BOAT_FOOTPRINT_CELLS);
+    assertAssetFits(asset, BOAT_FOOTPRINT_WORLD_UNITS);
   } catch (cause) {
     // Rethrown for the boat-specific MEANING, not for the measurement: the
     // shared error already names the axis and the number, and it rides along as

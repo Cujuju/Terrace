@@ -35,8 +35,10 @@ import { loadRigAsset } from './render/rigAsset.ts';
 import { createRigHerd } from './render/rigHerd.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
 import { FISH_ASSET, buildFish } from '../../plugins/wildlife/client/species/fish.ts';
+import { GRAZER_ASSET } from '../../plugins/wildlife/client/species/grazer.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
 import fishUrl from '../../plugins/wildlife/client/assets/fish.glb?url';
+import grazerUrl from '../../plugins/wildlife/client/assets/grazer-deer.glb?url';
 import { buildGrazer } from '../../plugins/wildlife/client/species/grazer.ts';
 import { buildIbex } from '../../plugins/wildlife/client/species/ibex.ts';
 import { buildBison } from '../../plugins/wildlife/client/species/bison.ts';
@@ -124,8 +126,10 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
  */
 async function installAssets(): Promise<void> {
   // Lamps-only (null environment): fish are painted, not metal — see
-  // ClientPluginCtx.loadRigAsset for the choice.
+  // ClientPluginCtx.loadRigAsset for the choice. The deer is the same kind of
+  // surface: flat vertex colours, nothing on it to reflect a sky.
   installSpeciesAsset(FISH_ASSET, await loadRigAsset(fishUrl, null));
+  installSpeciesAsset(GRAZER_ASSET, await loadRigAsset(grazerUrl, null));
 }
 
 function main(): void {

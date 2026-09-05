@@ -9,8 +9,15 @@ broken; the rest is enforced offline by the tools below.
 
 ## Units, axes, origin
 
-Units are cells: 1 unit = 1 cell. Y up. Forward = +X — a model facing −X walks,
-sails or swims backwards, and nothing at runtime can tell.
+Units are WORLD units: 1 unit is one unit of the space three draws in, and a
+model carries no runtime scale, so the size it is authored at is the size it is
+drawn at. Y up. Forward = +X — a model facing −X walks, sails or swims
+backwards, and nothing at runtime can tell.
+
+A cell is `CELL_WORLD_SIZE` world units (`shared/src/constants.ts:50`), so a
+footprint that starts life on the server, stated in cells, is converted with
+`cellsAcross` before it becomes an asset footprint — at that one boundary, never
+inside the asset.
 
 The origin is where the game holds the model, and that differs by family:
 
@@ -26,10 +33,10 @@ the last.
 
 ## Footprint
 
-An asset is budgeted in whole cells, because the game's geometry is counted in
-cells: the war boat gets 1×1, a wolf-sized animal about 0.8×0.8. The whole
+An asset is budgeted in world units, the unit its bounding box is measured in:
+the war boat gets 1×1, a wolf-sized animal about 0.8×0.8. The whole
 silhouette — oars out, tail out, wings out — must fit inside that budget plus a
-small tolerance for float dust (`ASSET_FIT_TOLERANCE_CELLS`, 0.02, in
+small tolerance for float dust (`ASSET_FIT_TOLERANCE_WORLD_UNITS`, 0.02, in
 `client/src/render/rigAsset.ts`; the fit is authored, not fitted, so the
 tolerance never absorbs a real overhang).
 
@@ -140,8 +147,8 @@ passed INTO Blender must be Windows paths (`wslpath -w`):
    stats block `stat_glb.py` prints, so the two can be diffed.
 
 2. **`stat_glb.py <in.glb> [--footprint X Z] [--height H] [--tolerance T]`** —
-   an independent re-import of the finished file: bounding box in cells, min-Y,
-   per-mesh tri count / material / uv layers, each material's filled PBR slots,
+   an independent re-import of the finished file: bounding box in world units,
+   min-Y, per-mesh tri count / material / uv layers, each material's filled slots,
    each image's size and colour space, every Empty's position, and whether any
    armature or skinned mesh survived. With a footprint it exits non-zero on a
    model that does not fit.
@@ -189,9 +196,46 @@ declared envelope within `ENVELOPE_TOLERANCE_CELLS`:
   and against the model's z extent as an upper bound, never taken from the
   bounding box.
 
+A WALKER reads the same five envelope numbers differently, and the difference
+is the origin: a swimmer is authored about its body centre so `crownY` and
+`bellyY` straddle zero, while a walker is authored at its FEET, so `bellyY` is
+zero and `crownY` IS the standing height. `placement.ts` already knows this
+(`BODY_COLUMNS` gives a walker `{ bellyY: 0, crownY: height }`), so no new
+field exists for it. Its joints are its own — the grazer declares `rig` plus
+four leg hinges and a head, driven by `species/quadruped.ts`'s `poseWalk`.
+
 The envelope constants stay DECLARED in the species .ts, because
 `placement.ts` fits the creature's water column from them. The asset is
 checked against them; it never supplies them.
+
+### A DOWNLOADED species (`--rigidify`)
+
+A file built by a script in this repo arrives at the convention already. A file
+downloaded from an asset site is somebody else's armature put through
+`import_model.py --rigidify`, and a converted armature is not yet a set of
+hinges these animations can drive. `SpeciesAssetSpec.rigidified: true` says so,
+and the adapter then does two things at install — once, never per bake:
+
+- **Synthesises `rig`.** A converted armature has the bones the artist drew and
+  nothing spare, so the whole-body node is wrapped around the file's scene
+  rather than demanded of the import (which keeps `import_model.py` generic).
+  `rig` is still listed in `joints`; it must NOT exist in the file.
+- **Gives every other declared joint a model-axis pivot.** `--rigidify` puts an
+  Empty at each bone's head carrying the BONE's rest rotation, and the
+  animations here drive MODEL axes (`rotation.z` is fore-and-aft because a model
+  faces +X). Worse, `joint.rotation.z = swing` assigns an EULER, so three
+  rebuilds the whole quaternion and any rest rotation the node had is gone —
+  which is a model that comes apart on its first posed frame. The pivot is a
+  pure translation the animation drives instead; the bone hangs under it,
+  unmoved. The cost: a driven joint inherits from `rig` only, not from the bones
+  above it.
+
+`SpeciesAssetSpec.adopt` handles the third hazard: a source rig may hold bones
+that are not in the limb chain at all — IK targets, commonly at the armature
+ROOT — and `--rigidify`'s dominant-weight split honestly hands one of those the
+geometry that weighed most on it. Naming the node and the joint that must carry
+it moves it, unmoved, into the chain. Without it the deer's legs swing and its
+hooves stay standing on the ground.
 
 Ownership: an asset-sourced species allocates nothing from `SpeciesModelPool`.
 The .glb's buffers belong to the `RigAsset` and are freed by
