@@ -16,6 +16,7 @@
 // components must call the exported accessor at point of use.
 
 import { createSignal } from 'solid-js';
+import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
 
 export type MouseButtonName = 'left' | 'middle' | 'right';
@@ -157,14 +158,15 @@ export function setBinding(
  * button is documented, in its own tooltip, as putting "every setting on this
  * panel" back, so a pref that appears on the panel and is not reset here makes
  * that promise false. The celestial void's look (state/voidPrefs.ts, issue
- * #326) and its anchor are the first such prefs; they reset themselves and
- * this calls them.
+ * #326), its anchor and the frontier mist (state/frontierMistPrefs.ts) are
+ * such prefs; they reset themselves and this calls them.
  */
 export function resetBindings(): void {
   setControlBindingsSignal(DEFAULT_BINDINGS);
   setTwoFingerGestureSignal(DEFAULT_TWO_FINGER_GESTURE);
   setWheelBehaviourSignal(DEFAULT_WHEEL_BEHAVIOUR);
   resetVoidPrefs();
+  resetFrontierMistPrefs();
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);

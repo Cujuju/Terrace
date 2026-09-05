@@ -54,7 +54,9 @@ import {
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
+import { createEffect } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
+import { frontierMistMode } from './state/frontierMistPrefs.ts';
 import { createRiverRig, RIVER_RIG_DRAW_OBJECTS, type RiverRig } from './render/riverRig.ts';
 import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
 import { createWorkerRiverNetworkSource } from './render/water/riverNetworkSource.ts';
@@ -390,6 +392,13 @@ export function createWorld(viewport: Viewport): World {
   // synced (added/disposed) against whatever mirror currently exists rather
   // than being torn down and recreated on every rejoin.
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
+  // WHETHER THE MIST IS DRAWN AT ALL is a player preference
+  // (state/frontierMistPrefs.ts, default 'off'), kept in step by an effect for
+  // the same reason main.tsx keeps the celestial void's look in step by one:
+  // Solid re-runs it on every change, which is what makes the panel's <select>
+  // apply live with no reload. The fog starts hidden, so the microtask before
+  // this first runs cannot flash a layer the player turned off.
+  createEffect(() => fog.setMode(frontierMistMode()));
   // THE REVEAL MASK, and it belongs beside the fog rather than anywhere else
   // because it is the SAME fact: the frontier mist and the mask are both
   // derived from `received`, they are synced at the same two call sites, and a
