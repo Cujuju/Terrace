@@ -24,6 +24,17 @@
 // to match the faction, "saucers die after five hits", a floor of three seconds
 // before anyone can go down, and a larger explosion.
 //
+// REVISED AGAIN (owner, 2026-09-04, after watching the factions): "1-3 saucers
+// per group. They are clumping up too much, running in to each other, and
+// slowing down when they do come too close to each other. Let's also add the
+// ability for saucers to do fly bys in groups of 1-5. Fly bys are separate and
+// do not result in a dog fight. Make the lasers burst 0.7-2 seconds apart. Make
+// the crash in to the ground at a higher speed and a larger brighter fireball."
+//
+// TWO KINDS OF ENCOUNTER, THEN: the DOGFIGHT above, and the FLY-BY — one
+// faction, in formation, straight across the map at approach speed and gone.
+// Both occupy the one encounter slot; only the dogfight fires or crashes.
+//
 // AN ENCOUNTER IS THE UNIT, not a saucer. Several factions arrive together,
 // fight each other and nothing else, and the whole thing is over inside half a
 // minute leaving one crater per shot-down saucer behind. There is at most one
@@ -131,8 +142,16 @@ export const MAX_LIVING_ENCOUNTERS = 1;
  */
 export const MIN_FACTIONS_PER_ENCOUNTER = 2;
 export const MIN_SAUCERS_PER_FACTION = 1;
-export const MAX_SAUCERS_PER_FACTION = 5;
+/** THREE since the second revision ("1-3 saucers per group"); five clumped. */
+export const MAX_SAUCERS_PER_FACTION = 3;
 export const MIN_SAUCERS_PER_ENCOUNTER = 3;
+
+/**
+ * THE FLY-BY ROSTER (owner, 2026-09-04): "fly bys in groups of 1-5". One
+ * faction, so one hull, and nothing to fight.
+ */
+export const MIN_SAUCERS_PER_FLYBY = 1;
+export const MAX_SAUCERS_PER_FLYBY = 5;
 
 /**
  * The saucer bodies that exist — an index into the client's model table, not a
@@ -152,11 +171,15 @@ export const DEFAULT_SAUCER_VARIANT = 0;
 export const MAX_FACTIONS_PER_ENCOUNTER = SAUCER_VARIANT_COUNT;
 
 /**
- * The most saucers an encounter can hold — DERIVED from the roster bounds, so
- * every pool and budget sized against it (the client's views, the bolt pool,
- * the burst pool, the crash-cell search) follows a retune of the roster.
+ * The most saucers an encounter can hold — DERIVED from the roster bounds of
+ * BOTH kinds, so every pool and budget sized against it (the client's views,
+ * the bolt pool, the burst pool, the crash-cell search) follows a retune of
+ * either roster.
  */
-export const MAX_SAUCERS_PER_ENCOUNTER = MAX_FACTIONS_PER_ENCOUNTER * MAX_SAUCERS_PER_FACTION;
+export const MAX_SAUCERS_PER_ENCOUNTER = Math.max(
+  MAX_FACTIONS_PER_ENCOUNTER * MAX_SAUCERS_PER_FACTION,
+  MAX_SAUCERS_PER_FLYBY,
+);
 
 /**
  * The phases of a SAUCER, in the order it runs through them. Ordered and
@@ -168,12 +191,15 @@ export const MAX_SAUCERS_PER_ENCOUNTER = MAX_FACTIONS_PER_ENCOUNTER * MAX_SAUCER
  *   resolve    — either diving at its crash cell (shot down) or climbing away
  *                (its faction won). The client cannot tell the two apart and
  *                does not need to: both are a pose on the wire.
+ *   flyby      — the whole life of a saucer in a FLY-BY encounter: straight
+ *                across the arena in formation and out the far side. Never
+ *                fires, never falls.
  *
  * PER SAUCER, NOT PER ENCOUNTER, since the 2026-09-04 revision: one saucer can
  * be diving while its wingmates are still fighting. The crash itself is not a
  * phase of anything — it is an entry in the payload's `crashes`.
  */
-export const SAUCER_PHASES = ['approach', 'dogfight', 'resolve'] as const;
+export const SAUCER_PHASES = ['approach', 'dogfight', 'resolve', 'flyby'] as const;
 export type SaucerPhase = (typeof SAUCER_PHASES)[number];
 
 export function isSaucerPhase(value: unknown): value is SaucerPhase {
@@ -201,9 +227,20 @@ export function isSaucerPhase(value: unknown): value is SaucerPhase {
  * of two lucky misses does not orbit forever, and on it the faction with the
  * most hit points left wins.
  *
- * RESOLVE — 3 s: the dive and the climb-out. Shorter than the approach on
- * purpose — a loser that took as long to fall as it took to arrive would read
- * as a landing.
+ * RESOLVE — 3 s: the climb-out. Shorter than the approach on purpose — a
+ * winner that took as long to leave as it took to arrive would read as a
+ * landing.
+ *
+ * DIVE — 1.2 s, SEPARATE from the climb-out since the second revision ("crash
+ * into the ground at a higher speed"): the wreck falls from cruise altitude in
+ * well under half the time the winners take to leave, so on the wire its speed
+ * peaks at about the winners' EXIT speed. The speed is DERIVED from the
+ * path (server/encounter.ts) rather than written here: the dive is a
+ * fixed-duration fall, and a speed constant would be a second number that had
+ * to agree with it.
+ *
+ * FLYBY — DERIVED: a straight line at approach speed from the entry distance on
+ * one side of the arena to the entry distance on the other, twice the approach.
  *
  * CRASH_WIRE — 2.5 s. How long each impact stays in `crashes` after it happens:
  * longer than the client's fireball, so a client that joined a beat late still
@@ -215,6 +252,7 @@ export const APPROACH_SECONDS = 2.5;
 export const DOGFIGHT_HOLD_FIRE_SECONDS = 3;
 export const DOGFIGHT_SECONDS = 20;
 export const RESOLVE_SECONDS = 3;
+export const DIVE_SECONDS = 1.2;
 export const CRASH_WIRE_SECONDS = 2.5;
 
 /**
@@ -232,12 +270,11 @@ export const CRASH_WIRE_SECONDS = 2.5;
  *   dots leaving the arena; at 20 over ARENA_RADIUS a saucer laps the arena
  *   about every two and a half seconds, which reads as a fight. It is the
  *   TANGENTIAL speed each saucer's own path is scaled to (server/encounter.ts).
- * DIVE 26 and EXIT 40 — a loser accelerates into the ground and a winner
- *   outruns everything else in the encounter on the way out.
+ * EXIT 40 — a winner outruns everything else in the encounter on the way out.
+ *   A loser's dive speed follows from DIVE_SECONDS (above), not from a constant.
  */
 export const APPROACH_SPEED_CELLS_PER_SECOND = cellsAcross(34);
 export const DOGFIGHT_SPEED_CELLS_PER_SECOND = cellsAcross(20);
-export const DIVE_SPEED_CELLS_PER_SECOND = cellsAcross(26);
 export const EXIT_SPEED_CELLS_PER_SECOND = cellsAcross(40);
 
 /**
@@ -247,12 +284,15 @@ export const EXIT_SPEED_CELLS_PER_SECOND = cellsAcross(40);
  */
 export const ENTRY_DISTANCE_CELLS = APPROACH_SPEED_CELLS_PER_SECOND * APPROACH_SECONDS;
 
+/** Entry to exit at approach speed — see the durations above. */
+export const FLYBY_SECONDS = (2 * ENTRY_DISTANCE_CELLS) / APPROACH_SPEED_CELLS_PER_SECOND;
+
 /**
  * Radius of the arena the dogfight is flown over, in cells.
  *
  * EIGHT WORLD UNITS, so the fight is sixteen across — half a chunk, which is a
  * span a player watching from a normal orbit camera can hold in view at once.
- * Bigger and the saucers stop being in the same shot; smaller and fifteen of
+ * Bigger and the saucers stop being in the same shot; smaller and nine of
  * them have nowhere to go.
  */
 export const ARENA_RADIUS_CELLS = cellsAcross(8);
@@ -304,11 +344,15 @@ export const LASER_HIT_DAMAGE = 1;
  * tick and fires at most one shot per saucer per tick, so a gap shorter than
  * that would only ever be rounded up to it. The rest between bursts is drawn
  * from the encounter's own generator, so a fight's rhythm is reproducible.
+ *
+ * THE REST IS 0.7–2.0 s since the second revision ("make the lasers burst
+ * 0.7-2 seconds apart"); the hangar's 1.6–3.0 read as hesitant in-world. The
+ * floor stays above LASER_BOLT_LIFETIME, which MAX_LASER_BOLTS relies on.
  */
 export const LASER_BURST_SHOTS = 3;
 export const LASER_SHOT_GAP_SECONDS = 0.1;
-export const LASER_BURST_REST_MIN_SECONDS = 1.6;
-export const LASER_BURST_REST_MAX_SECONDS = 3.0;
+export const LASER_BURST_REST_MIN_SECONDS = 0.7;
+export const LASER_BURST_REST_MAX_SECONDS = 2.0;
 
 /**
  * Chance one shot connects. HALF: the honest coin. Anything higher and the
