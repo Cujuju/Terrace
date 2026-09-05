@@ -2914,3 +2914,40 @@ describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-0
     expect(bandOf(heightAt(map, CX - 1, CY))).toBe(CAP_BAND);
   });
 });
+
+describe('a lower seed on a plateau interior leaves a lip a lower pull can widen (2026-09-05)', () => {
+  // THE CONTRACT sculptInput's takeHold relies on for the shift-drag rescue:
+  // with no riser under the pointer, a `hard` lower stamp digs a one-band pit,
+  // and a lower drag holding the PLATEAU's band (the pit rim's cap) retreats
+  // that band into the pit — the mirror of the raise seed that already worked.
+  const SIZE = 32;
+  const PLATEAU_BAND = 4;
+  const CX = 16;
+  const CY = 16;
+  const RADIUS = 2;
+  const LOWER_SEED = { tool: 'stamp', profile: 'hard' } as const;
+  const DRAG_LOWER = { tool: 'drag', profile: 'hard', anchor: 'band' } as const;
+
+  it('digs one band at the cursor, then a lower drag grabbing the old band eats the rim', () => {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(PLATEAU_BAND * BAND_HEIGHT);
+
+    applySculpt(map, CX, CY, RADIUS, -DEFAULT_SCULPT_AMOUNT, LOWER_SEED);
+    const before = PLATEAU_BAND;
+    const after = bandOf(heightAt(map, CX, CY));
+    expect(after).toBe(before - 1);
+
+    // A rim cell just east of the seed's footprint still stands at the plateau.
+    const rimX = CX + RADIUS;
+    expect(bandOf(heightAt(map, rimX, CY))).toBe(before);
+
+    // The cursor sweeps one cell east: a lower pull holding `before`.
+    applySculpt(map, CX + 1, CY, RADIUS, -DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG_LOWER,
+      targetBand: before,
+    });
+    expect(bandOf(heightAt(map, rimX, CY))).toBe(after);
+    // Interior cells the cursor never reached are untouched.
+    expect(bandOf(heightAt(map, CX + RADIUS + 3, CY))).toBe(before);
+  });
+});
