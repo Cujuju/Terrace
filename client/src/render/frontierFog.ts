@@ -113,7 +113,7 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WORLD_UNIT_HEIGHT_UNITS } from '../config.ts';
 import {
   frontierEdgeKey,
