@@ -40,6 +40,7 @@ import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.t
 import {
   MAX_ACTIVE_SYSTEMS,
   SNOW_COVERAGE_FRACTION,
+  SNOW_FOOTPRINT_AREA_SCALE,
   SNOW_PLUGIN_NAME,
   SNOW_SYSTEMS_MESSAGE,
 } from '../protocol.ts';
@@ -92,6 +93,7 @@ let currentWorld: SnowWorld | null = null;
  */
 const systems = createDiscSystems({
   coverageFraction: SNOW_COVERAGE_FRACTION,
+  footprintAreaScale: SNOW_FOOTPRINT_AREA_SCALE,
   maxActiveSystems: MAX_ACTIVE_SYSTEMS,
   random: snowRandom,
   siting: (x, y, radius) =>

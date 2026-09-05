@@ -15,11 +15,34 @@ centreline at the keel. A model facing −X sails backwards.
 
 ## Materials
 
-One of three per mesh, never mixed on one: flat colour, vertex colour
-(merged by the baker), or ONE baseColor texture. PBR beyond colour and
-roughness is ignored — rigSkin reads map, emissiveMap and color only.
-Every mesh under a mapped material MUST carry `uv`; without it the load
-fails naming the file instead of shipping an untextured part.
+One material per mesh, never several on one — the baker cannot split a
+part. Within that, the FULL glTF PBR set is supported: baseColor, emissive,
+normal, metallic-roughness, occlusion, alpha, and the KHR extension slots
+GLTFLoader promotes to a MeshPhysicalMaterial. The one list of slots lives
+in `client/src/render/materialMaps.ts`; nothing else keeps its own.
+
+- **Colour slots** (uploaded as sRGB): baseColor (`map`), emissive,
+  sheen colour, specular colour — the four GLTFLoader itself marks sRGB.
+- **Data slots** (uploaded linear): normal, metallic-roughness, occlusion,
+  alpha, bump, displacement and the rest. A data map forced to sRGB is
+  gamma-decoded before it is used as a number, so the loader corrects
+  either mistake at load rather than trusting the file.
+- **UVs.** A mesh must carry the uv attribute for EVERY channel its
+  material samples: `uv` for glTF `TEXCOORD_0`, `uv1` for `TEXCOORD_1`
+  (an occlusion map is commonly authored there), and so on. A missing one
+  fails the load naming the file, the mesh and the channel — never a
+  silently untextured part. Unsampled uv sets and `tangent` are dropped at
+  bake time (three derives the tangent frame in-shader).
+- **Armatures are rejected**, at load and again at bake. Skinning is the
+  baker's own job: it binds every vertex rigidly to the node it was
+  authored under, so a file's own skeleton has to be converted first —
+  `tools/blender/import_model.py --rigidify`.
+- **Merge rule.** Parts that differ ONLY in `color` merge into one draw
+  (their colour is folded into vertex colours). Anything else that changes
+  shading splits them: a different texture in any slot, the same texture on
+  a different uv channel, a different roughness/metalness/normalScale or
+  map intensity, and the usual transparency/side/blending/shading-model
+  differences.
 
 ## Blender export
 

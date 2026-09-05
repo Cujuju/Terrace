@@ -131,6 +131,21 @@ export interface ScorchRemaining {
 export class ScorchField {
   private readonly regrowsAt = new Map<number, number>();
 
+  /**
+   * How long an entry bars its cell, in simulated seconds. Defaults to the
+   * burn window; the wind-flatten record (./index.ts's `flattenedField`,
+   * issue #304) is a second instance of this same class on its own shorter
+   * window (FLORA_WIND_CROP_REGROW_SECONDS, ./cyclone-event.ts) — same
+   * deadline-ordered map, same expiry walk, different clock. ONE WINDOW PER
+   * INSTANCE is what keeps insertion order equal to deadline order (class
+   * note), so the window is fixed at construction rather than passed per call.
+   */
+  private readonly regrowSeconds: number;
+
+  constructor(regrowSeconds: number = FLORA_SCORCH_REGROW_SECONDS) {
+    this.regrowSeconds = regrowSeconds;
+  }
+
   get count(): number {
     return this.regrowsAt.size;
   }
@@ -202,7 +217,9 @@ export class ScorchField {
 
   /**
    * A fire finished on this cell and the ground under it was meadow: the bed
-   * is consumed until FLORA_SCORCH_REGROW_SECONDS from now.
+   * is consumed until `regrowSeconds` from now (FLORA_SCORCH_REGROW_SECONDS on
+   * the scorch record itself; the wind-flatten instance reads "the crop here
+   * was laid over" for the same call).
    *
    * DELETE BEFORE SET on a refresh, so the entry moves to the BACK of the map
    * and insertion order stays deadline order — see the class note. A refresh
@@ -213,7 +230,7 @@ export class ScorchField {
   scorch(x: number, y: number, nowSeconds: number): void {
     const key = grassKey(x, y);
     this.regrowsAt.delete(key);
-    this.regrowsAt.set(key, nowSeconds + FLORA_SCORCH_REGROW_SECONDS);
+    this.regrowsAt.set(key, nowSeconds + this.regrowSeconds);
   }
 
   /**

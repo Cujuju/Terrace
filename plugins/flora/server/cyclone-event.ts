@@ -60,25 +60,25 @@ export const FLORA_WIND_MIN_SEVERITY = 0.15;
 /**
  * Chance that one second of severity-1 wind fells one standing tree.
  *
- * 0.5, chosen from the outcome the owner asked for ("it should flatten flora")
- * at the one place severity really does reach 1 — the eyewall of a cyclone at
- * full intensity. At a half per second a stand of trees under the eyewall is
- * 97% gone after five seconds and effectively bare after ten, which is what
- * "flattened" has to mean if the word is to mean anything.
+ * 0.25 — HALVED from the 0.5 that shipped with #299, on the owner's ruling of
+ * 2026-09-04 (issue #304). The fixture that prompted it ran a 0.75-intensity
+ * cyclone over an island for 60 s and left 2 of 417 trees standing: the wood
+ * well off the track was erased, not thinned, which is not what "a storm the
+ * world heals from" was meant to read as.
  *
- * IT IS NOT A TUNING KNOB FOR THE REST OF THE DISC, which is the point of
- * expressing it per severity-second rather than per event: the same number
- * gives the mid-disc (severity ~0.5) a half-life of about three seconds of
- * exposure and the near-rim (severity ~0.2) about seven, and a cyclone crosses
- * the map at a quarter of a world unit a second, so a wood well off the track
- * is thinned by a passage rather than erased by it.
+ * At a quarter per second the eyewall (severity 1) still flattens: a stand is
+ * 76% gone after five seconds, 94% after ten and bare inside twenty, so "it
+ * should flatten flora" still holds where the storm actually is. What changes
+ * is the rest of the disc, which is the point of a per-severity-second rate:
+ * the mid-disc (severity ~0.5) now has a half-life of about five seconds of
+ * exposure and the near-rim (severity ~0.2) about thirteen, against three and
+ * seven before — so a wood a cyclone passes at a distance loses roughly half
+ * of itself in a passage rather than nearly all of it.
  *
- * NOT 1.0, which would make the eyewall a guillotine — every tree in the disc
- * down on the first event that reached it, with no second in which a player
- * could see it happening — and would leave nothing for severity to modulate at
- * the top of the range.
+ * NOT 0.125, which would leave only the eyewall clearing anything and make the
+ * mid-disc a breeze; the owner chose the halving over the quartering.
  */
-export const FLORA_WIND_TREE_FELL_CHANCE_PER_SEVERITY_SECOND = 0.5;
+export const FLORA_WIND_TREE_FELL_CHANCE_PER_SEVERITY_SECOND = 0.25;
 
 /**
  * The same floor for a field of grain, and the same roll — with a LOWER bar
@@ -101,6 +101,35 @@ export const FLORA_WIND_CROP_MIN_SEVERITY = FLORA_WIND_MIN_SEVERITY / 3;
  * the middle of the storm's track goes flat at once.
  */
 export const FLORA_WIND_CROP_FLATTEN_CHANCE_PER_SEVERITY_SECOND = 1;
+
+/**
+ * How long a wind-flattened crop plot stays unsown, in simulated seconds.
+ *
+ * WHY A BAR AT ALL (issue #304). Wind stamps no scorch record — a cyclone takes
+ * the stalks, not the soil (./index.ts's FloraRemovalCause) — so until this
+ * existed a flattened field was re-sown by the very next crop survey, within
+ * CROP_SURVEY_INTERVAL_SECONDS (./crops.ts, 5 s) of going over, often while
+ * the storm still stood on it. A field that springs back inside the storm is
+ * a field the storm never visibly touched.
+ *
+ * 60 s — A THIRD OF FLORA_SCORCH_REGROW_SECONDS (./scorch.ts, 180 s), restated
+ * rather than derived, on scorch.ts's own rule that two windows which relate
+ * today must be free to disagree tomorrow. The ordering is the reason: a burn
+ * consumes the ground and a storm only lays the crop over, so wind must heal
+ * FASTER than fire or the two become indistinguishable on the ground. A minute
+ * is long enough to outlast the storm's own passage of a field (a cyclone
+ * crosses the map at a quarter of a world unit a second, so its disc clears a
+ * plot in well under a minute) and short enough that the field is visibly
+ * back before the stumps around it rot (FLORA_STUMP_ROT_SECONDS, 360 s). The
+ * owner chose this over reusing the 180 s scorch window (2026-09-04).
+ *
+ * NOT PERSISTED, unlike the scorch record. A lost scorch entry is FUEL and
+ * re-lights a fire; a lost flatten entry re-sows one field up to a minute
+ * early after a restart, which is cosmetic. The window is also about equal to
+ * the snapshot cadence (server/src/config.ts's DEFAULT_SNAPSHOT_INTERVAL_S,
+ * 60 s), so a persisted copy would be stale on arrival more often than not.
+ */
+export const FLORA_WIND_CROP_REGROW_SECONDS = 60;
 
 /**
  * The chance one roll should use, clamped to a probability.

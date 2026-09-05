@@ -86,6 +86,19 @@ export interface SculptInputOptions {
    * height is not, and why it is THIS span's cap and not the column's top.
    */
   spanCapAt: (x: number, y: number, spanIndex: number) => number | null;
+  /**
+   * How many spans the column at a cell holds right now (World.spanCountAt).
+   * Captured with every pick and compared on every refresh: a span index is a
+   * position in a list whose length is state, so a split or a weld renumbers
+   * the column and the cached index stops naming the span the ray struck.
+   */
+  spanCountAt: (x: number, y: number) => number;
+  /**
+   * Whether a span still draws a world-space height (World.spanContainsHeight)
+   * — the test a cached RISER hit must survive before its height may be
+   * refreshed. See hoverTarget.
+   */
+  spanContainsHeight: (x: number, y: number, spanIndex: number, worldY: number) => boolean;
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
@@ -191,6 +204,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     camera,
     pickCell: pickCellByRay,
     spanCapAt,
+    spanCountAt,
+    spanContainsHeight,
     worldSize,
     riserBand,
     bandAtCell,
@@ -341,6 +356,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let hoverKey = '';
   let hoverCache: TerrainRayPick | null = null;
   /**
+   * The number of spans the picked column held WHEN THE PICK WAS TAKEN. The
+   * cached `spanIndex` is only a name for the span the ray struck while this
+   * still matches the live count — see hoverTarget's re-pick rule.
+   */
+  let hoverSpanCount = 0;
+  /**
    * How steeply the pointer ray must descend for its meeting with the drag
    * plane to mean anything, as the downward component of a unit direction.
    *
@@ -406,6 +427,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     return worldPointToCell(worldX, worldZ, size);
   };
 
+  /**
+   * Throws the cached pick away and marches the ray again, capturing the new
+   * column's span count with it. The ONE way `hoverCache` and `hoverSpanCount`
+   * are set together, so a re-pick can never leave the count describing the
+   * previous column.
+   */
+  const repick = (): TerrainRayPick | null => {
+    hoverCache = pickCell();
+    hoverSpanCount = hoverCache === null ? 0 : spanCountAt(hoverCache.x, hoverCache.y);
+    return hoverCache;
+  };
+
   const hoverTarget = (): TerrainRayPick | null => {
     const p = camera.position;
     const q = camera.quaternion;
@@ -414,7 +447,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       : 'away';
     if (key !== hoverKey) {
       hoverKey = key;
-      hoverCache = pickCell();
+      repick();
     }
     // THE CELL IS CACHED; ITS HEIGHT IS NOT (owner bug report 2026-08-22,
     // "lowering does not always seem to work"). The key deliberately carries
@@ -431,6 +464,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // lies on the ground. A cell whose chunk has gone (a rejoin between the
     // pick and this read) yields null rather than a stale Y.
     if (hoverCache === null) return null;
+    // A SPLIT OR A WELD KILLS EVERY INDEX IN THE COLUMN, tread hits included.
+    // `spanIndex` is a position in a list whose length is state (columns.ts's
+    // `spanIndexCoveringBand` says so outright): the carve that opens a tunnel
+    // turns one span into two, and index 0 stops meaning "the span the ray
+    // struck" and starts meaning "the floor under the new roof". Refreshing
+    // such a pick would refresh a name, not a fact, so it is re-picked.
+    if (spanCountAt(hoverCache.x, hoverCache.y) !== hoverSpanCount) return repick();
     // THE STRUCK SPAN'S CAP, NOT THE COLUMN'S TOP (owner report 2026-08-27,
     // "it jumps up several bands"). On a carved column the ray can strike the
     // floor span under a roof; refreshing that pick from the topmost cap
@@ -440,15 +480,27 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // the cached pick is then a claim about geometry that no longer exists:
     // re-pick rather than refresh.
     const surfaceY = spanCapAt(hoverCache.x, hoverCache.y, hoverCache.spanIndex);
-    if (surfaceY === null) {
-      hoverCache = pickCell();
-      return hoverCache;
-    }
+    if (surfaceY === null) return repick();
     if (surfaceY === hoverCache.surfaceY) return hoverCache;
-    // hitRiser, spanIndex and the hit POINT ride along: they are facts about
-    // the RAY, and this branch only refreshes the cached cell's height after
-    // the ground moved under a stationary pointer. The next pointermove
-    // re-picks and re-decides them.
+    // A RISER HIT THE SPAN NO LONGER REACHES IS A DEAD CLAIM (owner report,
+    // 2026-09-04: a second carve press, mouse still, dug the band BELOW the
+    // one just cut). The span's cap moved under the pointer, and if `hitY` is
+    // now outside the slab this span draws then the face the ray met is not
+    // this span's face any more. `bandOfPick` would not say so — it CLAMPS the
+    // struck height into the span's drawn range, which is right for a hit on a
+    // slab boundary but turns this one into a confident answer of the band at
+    // the end of the clamp. Not refreshable: re-pick.
+    if (
+      hoverCache.hitRiser &&
+      !spanContainsHeight(hoverCache.x, hoverCache.y, hoverCache.spanIndex, hoverCache.hitY)
+    ) {
+      return repick();
+    }
+    // hitRiser and the hit POINT ride along, and so does `spanIndex` once the
+    // two tests above have shown it still names the span the ray struck: they
+    // are facts about the RAY, and this branch only refreshes the cached
+    // cell's height after the ground moved under a stationary pointer. The
+    // next pointermove re-picks and re-decides them.
     //
     // hitY IS THE ONE EXCEPTION, and only for a cap hit. "The ray met this
     // column at its cap" is a fact about the ray too, and the refreshed cap has

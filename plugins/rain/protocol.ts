@@ -75,3 +75,23 @@ export const RAIN_COVERAGE_FRACTION = 0.09;
  * gets a slightly emptier sky.
  */
 export const MAX_ACTIVE_SYSTEMS = 7;
+
+/**
+ * How much sky ONE rain front covers, as a multiple of the kit's base disc area
+ * (server/src/plugins/kit/discSystems.ts, DISC_SYSTEM_MIN/MAX_RADIUS_CELLS).
+ *
+ * THREE, because the owner asked for it on 2026-09-04: "grow the size of the
+ * rain and snowstorms. I want them to cover three times as much area when they
+ * spawn." Rain and snow only — fog and thunderstorm keep the base band.
+ *
+ * AN AREA, so it is the number the ask was made in and the number a player
+ * reads; the kit takes the square root to get the radius factor (√3 ≈ 1.732),
+ * and no caller ever writes that root down.
+ *
+ * IT DOES NOT CHANGE MAX_ACTIVE_SYSTEMS OR THE DERIVED CAP. The population is
+ * derived from RAIN_COVERAGE_FRACTION at the BASE disc size, so tripling the
+ * area gives the same number of fronts, each three times as wide a footprint —
+ * bigger storms, not fewer. What it does change is the share of the map under
+ * rain at equilibrium: 0.09 × 3 = 0.27.
+ */
+export const RAIN_FOOTPRINT_AREA_SCALE = 3;

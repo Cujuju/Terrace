@@ -26,9 +26,7 @@ import {
 import { BoatInterpolator } from './interpolation.ts';
 import warBoatUrl from './assets/war-boat.glb?url';
 import {
-  BOAT_DRAW_OBJECTS,
-  BOAT_FIRE_COLUMN,
-  BOAT_WATERLINE_LIFT,
+  BOAT_SHAPE,
   createBoatModels,
   disposeBoatKit,
   preloadBoatModels,
@@ -130,7 +128,7 @@ function renderFrame(dt: number): void {
     // attached to is modelled in world units.
     view.model.root.position.set(
       boat.x * CELL_WORLD_SIZE,
-      SEA_SURFACE_WORLD_Y + BOAT_WATERLINE_LIFT,
+      SEA_SURFACE_WORLD_Y + BOAT_SHAPE.waterlineLift,
       boat.y * CELL_WORLD_SIZE,
     );
     view.model.animate(animationSeconds, view.phase, boat.fighting);
@@ -164,8 +162,8 @@ function drawnPoseOf(id: number): MoverPose | null {
     x: at.x,
     y: at.y,
     z: at.z,
-    bodyBottomY: at.y + BOAT_FIRE_COLUMN.bottomY,
-    bodyHeight: BOAT_FIRE_COLUMN.height,
+    bodyBottomY: at.y + BOAT_SHAPE.fireColumn.bottomY,
+    bodyHeight: BOAT_SHAPE.fireColumn.height,
   };
 }
 
@@ -181,7 +179,7 @@ export const clientPlugin: TerraceClientPlugin = {
    * measurement instead of freezing the pre-load ceiling.
    */
   get drawBudget(): number {
-    return BOATS_PAYLOAD_CAP * BOAT_DRAW_OBJECTS;
+    return BOATS_PAYLOAD_CAP * BOAT_SHAPE.drawObjects;
   },
 
   /**
