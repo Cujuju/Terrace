@@ -108,6 +108,28 @@ export interface ContourPoint {
 
 export type ContourLoop = ContourPoint[];
 
+/**
+ * THE ONE TEST FOR "this contour segment is a chunk seam, not a surface".
+ *
+ * A segment lies ALONG the chunk's domain border exactly when both endpoints
+ * share an edge of it, which is what the bitwise AND says. It is drawn by
+ * nobody: `capEmission` grows no skirt from one (it would double the
+ * neighbour's), and the lip overlay must publish none (there is no riser there
+ * to grab or to pick against).
+ *
+ * ONE PREDICATE BECAUSE IT IS ONE QUESTION (2026-09-05). `capPlanFlat` asked it
+ * as `a.rect !== RECT_NONE && b.rect !== RECT_NONE` — both endpoints merely
+ * TOUCHING the border — and its comment claimed capEmission "drops exactly
+ * these". It does not, and the difference is a real cliff: a straight wall
+ * crossing a chunk north to south has one endpoint on the north edge and one
+ * on the south, so the AND is zero and the mesh draws the riser, while the
+ * wider test dropped its lip. That wall then had no highlight, nothing to
+ * grab, and no drawn face for `terrain/picking.ts` to resolve against.
+ */
+export function isSeamSegment(a: ContourPoint, b: ContourPoint): boolean {
+  return (a.rect & b.rect) !== 0;
+}
+
 // --- per-write scratch, module-scoped and reused ---------------------------
 //
 // Rebuilding a chunk allocates the contour polylines themselves (a few hundred
