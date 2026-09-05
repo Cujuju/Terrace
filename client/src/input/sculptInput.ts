@@ -801,13 +801,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
-   * RAISES ONE LAYER where there is no lip to take hold of (owner, 2026-08-24:
-   * "if there is no edge to pull, pop up a new layer that we can start pulling
-   * — just a single layer").
+   * MOVES ONE LAYER IN THE STROKE'S DIRECTION where there is no lip to take
+   * hold of (owner, 2026-08-24: "if there is no edge to pull, pop up a new
+   * layer that we can start pulling — just a single layer"; and 2026-09-05:
+   * shift-drag must work on a plateau, so the lower chord digs a one-band pit
+   * to pull wider instead of emitting nothing).
    *
    * A `hard` stamp, which level-fills its footprint to the next band, so what
-   * appears is a flat one-band plateau with a clean lip all the way round —
-   * the thing the pull needs in order to have anything to grab. `hard`
+   * appears is a flat one-band plateau (or pit) with a clean lip all the way
+   * round — the thing the pull needs in order to have anything to grab. `hard`
    * regardless of the edge toggle: a soft stamp's falloff would leave a mound
    * whose rim crosses no band at all on flat ground, i.e. no lip and nothing
    * gained.
@@ -819,13 +821,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * Returns whether the intent reached the wire; a seed that did not go out
    * has raised nothing, so there is no new lip to grab either.
    */
-  const seedLayer = (cell: { x: number; y: number }): boolean =>
+  const seedLayer = (cell: { x: number; y: number }, action: SculptAction): boolean =>
     send({
       type: 'sculpt',
       x: cell.x,
       y: cell.y,
       radius: brushRadius(),
-      dir: sculptDirection('raise'),
+      dir: sculptDirection(action),
       tool: 'stamp',
       profile: 'hard',
       seq: nextSeq++,
@@ -849,10 +851,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const hover = hoverTarget();
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
-    // SEEDING IS A RAISE-ONLY RESCUE. A lower press with nothing in its grasp
-    // has nothing to retreat, and stamping a plateau to pull in would be the
-    // opposite of what the player just asked for — it emits nothing instead.
-    if (action !== 'raise') return;
+    // SEEDING RESCUES BOTH DIRECTIONS (owner report, 2026-09-05: "shift drag
+    // does not work on plateaus"). Raise-only, a lower press on a plateau's
+    // interior emitted nothing, while a plain press seeded a layer — so the
+    // lower chord now digs the mirror: a one-band pit whose rim is a lip.
     // ON THE TREAD, and only there. `riserBand` is null on a cave roof's
     // UNDERSIDE too, and seeding one would add material to the bottom of a
     // roof — the very thing emitIntent refuses (plan D4). A horizontal face at
@@ -880,11 +882,23 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // not make, so a seed that did not visibly raise anything grabs nothing.
     // Read from the mirror, not the overlay: the overlay is a reader of what
     // the terrain PUBLISHES, a frame or two later under the build budget.
+    //
+    // THE GRAB IS THE LIP'S CAP BAND, whichever way the seed went. A raised
+    // layer's lip is capped at the NEW band, so a raise pull extends it. A pit's
+    // lip is the surrounding plateau, capped at the OLD band, so a lower pull
+    // grabbing it retreats that band into the pit (retreatHeightAt finds the
+    // pit floor beside each rim cell) — the pit widens as the cursor sweeps.
     const before = bandAtCell(hover.x, hover.y);
-    if (!seedLayer(hover)) return;
+    if (!seedLayer(hover, action)) return;
     const after = bandAtCell(hover.x, hover.y);
-    if (before === null || after === null || after <= before) return;
-    strokeGrab = after;
+    if (before === null || after === null) return;
+    if (action === 'raise') {
+      if (after <= before) return;
+      strokeGrab = after;
+    } else {
+      if (after >= before) return;
+      strokeGrab = before;
+    }
   };
 
   const startStroke = (event: PointerEvent, action: SculptAction): void => {
@@ -923,8 +937,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // fires. A touch press defers it to armStroke instead: see there.
     //
     // `strokeAction`, NOT the resolved `action`: the tool may just have
-    // decided the direction itself, and takeHold's raise-only seeding rescue
-    // must see the direction this stroke will actually sculpt in.
+    // decided the direction itself, and takeHold's seeding rescue must see
+    // the direction this stroke will actually sculpt in.
     if (!strokeIsTouch) takeHold(strokeAction);
 
     if (strokeIsTouch) {
