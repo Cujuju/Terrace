@@ -8,7 +8,7 @@
 
 import { Audio, PositionalAudio } from 'three';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE } from '../config.ts';
-import type { SfxOptions } from '../plugins/types.ts';
+import type { MusicGenerator, MusicOutlet, SfxOptions } from '../plugins/types.ts';
 import type { AudioBufferCache } from './audioBuffers.ts';
 import { reportAssetFailure } from './audioBuffers.ts';
 import type { AudioDebugLog } from './audioDebug.ts';
@@ -68,6 +68,16 @@ const MUSIC_TRACK_GAIN = 1;
  */
 const FADE_STOP_SLACK_SECONDS = 0.1;
 
+/** setTimeout takes milliseconds; every fade above is stated in seconds. */
+const MILLISECONDS_PER_SECOND = 1000;
+
+/** Teardown stops a generator now: there is no graph left to fade into. */
+const NO_FADE_SECONDS = 0;
+
+/** What occupies the music bus; null is an empty bus. One value, so `setMusic`,
+ * `setMusicGenerator`, `musicUrl` and `stopAll` cannot disagree. */
+type MusicSource = { readonly kind: 'url'; readonly url: string } | { readonly kind: 'generator' };
+
 /**
  * One owner's ambience layer for one URL. Owned by audioEngine.ts, mutated
  * here: it exists before there is a voice, which appears when the decode lands.
@@ -97,7 +107,11 @@ export interface AudioVoices {
   releaseAmbience(layer: AmbienceLayer): void;
   /** Crossfades the music bus to `url`, or to silence for null. */
   setMusic(url: string | null): void;
-  /** The URL the music bus is on, so a repeat call short-circuits. */
+  /** Crossfades the music bus to a generator on its own lane, or to silence. */
+  setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void;
+  /** Fades out whatever occupies the bus and leaves it empty. */
+  releaseMusic(): void;
+  /** The URL the music bus is on — null while a generator plays. */
   musicUrl(): string | null;
   /** Stops every voice of every kind — the engine's teardown. */
   stopAll(): void;
@@ -113,9 +127,14 @@ export function createAudioVoices(deps: {
   /** In START ORDER, so index 0 is the oldest and the steal needs no clock. */
   const sfxVoices: AnyAudio[] = [];
 
-  /** The track playing now, and the URL it came from (null = bus empty). */
+  let currentMusicSource: MusicSource | null = null;
+
+  /** The file track playing now, when the source is a url. */
   let musicVoice: Audio | null = null;
-  let currentMusicUrl: string | null = null;
+
+  /** The generator and the lane gain core owns for it, when the source is one. */
+  let musicGenerator: MusicGenerator | null = null;
+  let musicLane: GainNode | null = null;
 
   /** Drops a finished or stolen one-shot from the pool and the scene. */
   function retireSfx(voice: AnyAudio): void {
@@ -163,7 +182,7 @@ export function createAudioVoices(deps: {
         layer.stopTimer = null;
         releaseAmbience(layer);
       },
-      (AMBIENCE_FADE_SECONDS + FADE_STOP_SLACK_SECONDS) * 1000,
+      (AMBIENCE_FADE_SECONDS + FADE_STOP_SLACK_SECONDS) * MILLISECONDS_PER_SECOND,
     );
   }
 
@@ -188,6 +207,41 @@ export function createAudioVoices(deps: {
         layer.decoding = false;
         reportAssetFailure(url, error);
       },
+    );
+  }
+
+  /**
+   * Fades out whatever holds the music bus and forgets it. Shared by both
+   * setters and by the engine's release, so one path ends a track.
+   */
+  function releaseMusic(): void {
+    const outgoing = musicVoice;
+    musicVoice = null;
+    if (outgoing !== null) {
+      rampGain(outgoing.gain.gain, SILENT_GAIN, MUSIC_CROSSFADE_SECONDS, graph.context);
+      setTimeout(
+        () => {
+          if (outgoing.isPlaying) outgoing.stop();
+          outgoing.gain.disconnect();
+        },
+        (MUSIC_CROSSFADE_SECONDS + FADE_STOP_SLACK_SECONDS) * MILLISECONDS_PER_SECOND,
+      );
+    }
+
+    const generator = musicGenerator;
+    const lane = musicLane;
+    musicGenerator = null;
+    musicLane = null;
+    currentMusicSource = null;
+    if (lane === null) return;
+    // BELT AND SUSPENDERS: the lane ramp silences a generator that ignores stop.
+    rampGain(lane.gain, SILENT_GAIN, MUSIC_CROSSFADE_SECONDS, graph.context);
+    generator?.stop(MUSIC_CROSSFADE_SECONDS);
+    setTimeout(
+      () => {
+        lane.disconnect();
+      },
+      (MUSIC_CROSSFADE_SECONDS + FADE_STOP_SLACK_SECONDS) * MILLISECONDS_PER_SECOND,
     );
   }
 
@@ -258,31 +312,29 @@ export function createAudioVoices(deps: {
     },
 
     musicUrl(): string | null {
-      return currentMusicUrl;
+      return currentMusicSource !== null && currentMusicSource.kind === 'url'
+        ? currentMusicSource.url
+        : null;
     },
 
+    releaseMusic,
+
     setMusic(url: string | null): void {
-      const outgoing = musicVoice;
-      if (outgoing !== null) {
-        rampGain(outgoing.gain.gain, SILENT_GAIN, MUSIC_CROSSFADE_SECONDS, graph.context);
-        setTimeout(
-          () => {
-            if (outgoing.isPlaying) outgoing.stop();
-            outgoing.gain.disconnect();
-          },
-          (MUSIC_CROSSFADE_SECONDS + FADE_STOP_SLACK_SECONDS) * 1000,
-        );
-      }
-      musicVoice = null;
-      currentMusicUrl = url;
+      // The whole "already playing (or stopped)" test, here rather than in the
+      // engine: only this file knows a generator is on the bus.
+      if (url === null && currentMusicSource === null) return;
+      if (currentMusicSource?.kind === 'url' && currentMusicSource.url === url) return;
+      releaseMusic();
       if (url === null) {
         debugLog('setMusic', { url: null, bus: 'music', gain: SILENT_GAIN });
         return;
       }
+      currentMusicSource = { kind: 'url', url };
       void buffers.get(url).then(
         (buffer) => {
           // The claimant may have changed its mind while this decoded.
-          if (currentMusicUrl !== url) return;
+          const source = currentMusicSource;
+          if (source === null || source.kind !== 'url' || source.url !== url) return;
           const voice = new Audio(graph.listener);
           routeToBus(voice, 'music', graph);
           voice.setBuffer(buffer);
@@ -299,6 +351,32 @@ export function createAudioVoices(deps: {
       );
     },
 
+    setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void {
+      if (start === null && currentMusicSource === null) return;
+      releaseMusic();
+      if (start === null) {
+        debugLog('setMusicGenerator', { url: null, bus: 'music', gain: SILENT_GAIN });
+        return;
+      }
+      const lane = graph.context.createGain();
+      // From silence always, exactly as a file track starts; the ramp brings it in.
+      lane.gain.value = SILENT_GAIN;
+      lane.connect(graph.buses.music);
+      try {
+        musicGenerator = start({ context: graph.context, destination: lane });
+      } catch (error) {
+        // A generator that throws on start leaves the bus empty rather than
+        // holding a silent lane forever — the host's stance on plugin faults.
+        lane.disconnect();
+        console.error('[terrace audio] music generator threw in start', error);
+        return;
+      }
+      musicLane = lane;
+      currentMusicSource = { kind: 'generator' };
+      rampGain(lane.gain, MUSIC_TRACK_GAIN, MUSIC_CROSSFADE_SECONDS, graph.context);
+      debugLog('setMusicGenerator', { url: null, bus: 'music', gain: MUSIC_TRACK_GAIN });
+    },
+
     stopAll(): void {
       for (const voice of [...sfxVoices]) retireSfx(voice);
       if (musicVoice !== null) {
@@ -306,7 +384,12 @@ export function createAudioVoices(deps: {
         musicVoice.gain.disconnect();
         musicVoice = null;
       }
-      currentMusicUrl = null;
+      // Teardown, so no fade: stop at once and drop the lane with it.
+      musicGenerator?.stop(NO_FADE_SECONDS);
+      musicGenerator = null;
+      musicLane?.disconnect();
+      musicLane = null;
+      currentMusicSource = null;
     },
   };
 }
