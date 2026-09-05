@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM for Web Audio (AudioContext, GainNode) and for the CLIENT half's
+    // contract, which types onCanvasPress with PointerEvent — rain's reason.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // tsc 7.0.2 does not auto-discover a nested workspace package's pnpm-linked
+    // node_modules/@types; naming it explicitly is deterministic.
+    "types": ["node"]
+  },
+  "include": ["client"]
+}
