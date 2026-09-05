@@ -5,25 +5,26 @@
 // same painted nothing. The owner's ask: make it read as "a plot among the
 // stars". Two approved looks, chosen per player in the HUD's Controls panel:
 //
-//   'wheel'  (default) — a two-armed spiral galaxy seen at 60 degrees, its hub
-//                        on the view axis under the map: log-spiral arms, dust
-//                        lanes, a warm bulge, and stars in the disk plane that
-//                        turn rigidly with the gas.
+//   'wheel'  (default) — a four-armed spiral galaxy seen at 60 degrees, its
+//                        hub on the view axis under the map: log-spiral arms,
+//                        dust lanes, a warm bulge, and stars in the disk plane
+//                        that turn rigidly with the gas.
 //   'nebula'           — domain-warped fbm clouds with two steady star layers.
 //
 // The GLSL below is a faithful port of the shaders the owner approved
 // (.claude/orchestration/refs/celestial-void-shaders.glsl), at that file's
-// REVISION 4 (owner, 2026-09-04). Cumulatively that revision line is: a 60
+// REVISION 5 (owner, 2026-09-04). Cumulatively that revision line is: a 60
 // degree default tilt, rotation reversed (clockwise seen from above), no
 // twinkle in either look, the nebula's drift 3x faster (NEBULA_RATE 0.15),
-// and the wheel rebuilt as a two-armed grand-design spiral galaxy — log-spiral
-// arms with grain streaked along them, dust lanes, a warm bulge under the map,
-// and stars embedded in the disk plane that turn rigidly with the gas. The
-// wheel's own rate went back down to -0.008 in revision 4: revision 3's 3x
-// was too fast for it, and the speed-up now applies to the nebula only. The
-// numbers in these shaders ARE the approved look; every one that encodes a
-// design decision is a named constant here or in the shader's own `const`
-// block.
+// and the wheel rebuilt as a four-armed spiral galaxy — log-spiral arms with
+// grain streaked along them, dust lanes, a warm bulge under the map, and stars
+// embedded in the disk plane that turn rigidly with the gas. The wheel's rate
+// has moved twice: revision 4 put it back to -0.008 because revision 3's 3x
+// was too fast, then revision 5 took it to -0.04 (~2.6 min per turn) on the
+// owner's "many times faster", with the arm count going from two to four at
+// the same time. The numbers in these shaders ARE the approved look; every
+// one that encodes a design decision is a named constant here or in the
+// shader's own `const` block.
 //
 // TIME OF DAY MUST NOT TOUCH IT. The owner's second rule: day/night affects
 // the map's lighting only, never the void. That is enforced structurally
@@ -195,11 +196,11 @@ float dstars(vec2 p, float density, float minSize){
   float size = max(0.03 + 0.05*hash(i+9.2), minSize);
   return smoothstep(size,0.0,d)*(0.5+0.5*h/density);
 }
-const float WHEEL_RATE   = -0.008; // rad/s: slow, deliberate (~13 min per turn); negative = clockwise from above
+const float WHEEL_RATE   = -0.04;  // rad/s (~2.6 min per turn); owner 2026-09-04: 'many times faster'; negative = clockwise from above
 const float FOCAL        = 1.2;    // view-ray focal length; sets how much perspective the disk shows
 const float DISK_DIST    = 2.6;    // hub distance along the view axis
 const float FAR_FADE     = 12.0;   // ray length where the plane has fully dissolved into the void
-const float ARMS         = 2.0;    // two-armed grand-design spiral, like the reference art
+const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
 const float WIND         = 3.2;    // how tightly the arms wind (log-spiral pitch)
 const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
@@ -225,7 +226,7 @@ void main(){
     float depthFade=1.0-smoothstep(DISK_DIST,FAR_FADE,sdist);
 
     // --- gas ---
-    // Two log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
+    // ARMS log-spiral arms; texture sampled in a spiral-wound frame so grain streaks along the arms.
     float phase=th*ARMS-log(r+0.05)*WIND;
     float arm=pow(0.5+0.5*cos(phase),2.2);
     vec2 wound=rot(rf,log(r+0.05)*WIND/ARMS);
