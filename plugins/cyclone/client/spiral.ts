@@ -132,16 +132,20 @@ export const PUFF_SIZE_RADIUS_FRACTION = 0.085;
 // across the sky with the far side of the storm showing straight through it,
 // which is the whole of the owner's "extremely weak … a puffy disk" (#299).
 //
-// WHAT IT IS NOW. The storm keeps its disc footprint and its eye hole, and it
-// is built IN DEPTH: an arm rises from a low, wide RIM to a tall, dark EYEWALL
-// ring standing around the eye. It is NOT a cone — a funnel is the tornado
-// plugin's shape (#233) — it is a wall with a hole in it.
+// WHAT IT IS NOW (owner, 2026-09-05). The storm keeps its disc footprint and
+// its eye hole, and it is built IN DEPTH as a TRUNCATED FUNNEL: the deck is
+// deepest at the RIM and thins evenly towards the eye, so the cloud top slopes
+// down into the centre and stops at the hole. The first tower (#299) stood the
+// other way up — a tall eyewall over a low rim — and the owner read the raised
+// centre as wrong: the middle of a hurricane is the low point of its cloud top,
+// not a chimney. The eyewall still stands at the eye; it is dark, dense and
+// solid, not tall.
 //
-// ONE PROFILE DRIVES ALL FOUR THINGS. `wall` is 1 at the eyewall and 0 at the
-// rim, and the height, the puff size, the puff's solidity and the shade are all
-// read off it, so the dark, tall, solid part of the storm is the same part of
-// the storm by construction. Four independently tuned ramps could disagree
-// about where the eyewall is; this one cannot.
+// TWO PROFILES. `wall` is 1 at the eyewall and 0 at the rim, and the puff size,
+// the puff's solidity and the shade are all read off it, so the dark, solid part
+// of the storm is the same part by construction. HEIGHT has its own profile
+// (`towerHeightAt`), linear in `along`, because a funnel's wall is a straight
+// slope and the eyewall's dark core is a narrow ring — one curve cannot be both.
 
 /**
  * World-space Y of the deck's FLAT BASE — the plane the arms stand on and the
@@ -170,19 +174,19 @@ export const PUFF_SIZE_RADIUS_FRACTION = 0.085;
 export const CYCLONE_DECK_BASE_WORLD_Y = DECK_BASE_WORLD_Y;
 
 /**
- * How much taller the eyewall is than ordinary cloud is deep.
+ * How much deeper the deck is at the rim than at the eyewall.
  *
- * THREE. The eyewall is the deepest convection in the storm and the rim is an
- * ordinary overcast, so the ratio is the shape of a hurricane in one number.
- * Three is what makes the wall read as a WALL from a camera at cloud height:
- * at two the ring is barely taller than it is thick and still reads as a band,
- * and beyond three the storm starts to read as a chimney rather than as
- * weather.
+ * TWO. The eyewall keeps ordinary cloud depth and the rim stands one cloud
+ * depth above it, so the funnel's slope is one cloud depth over the storm's
+ * radius — the "slightly below" the owner asked for: enough drop into the eye
+ * to read as a bowl from the storm's edge, not enough to read as a pit. At one
+ * the deck is the flat lid #299 replaced; at three the rim is a wall and the
+ * storm reads as a crater.
  */
-export const CYCLONE_EYEWALL_HEIGHT_MULTIPLE = 3;
+export const CYCLONE_RIM_HEIGHT_MULTIPLE = 2;
 
 /**
- * How tall the eyewall and the rim stand above the base, in world units.
+ * How tall the rim and the eyewall stand above the base, in world units.
  *
  * A LENGTH, AND A MULTIPLE OF THE KIT'S CLOUD DEPTH — never a fraction of the
  * storm's radius, and this is the choice the radius clamp decides
@@ -190,31 +194,32 @@ export const CYCLONE_EYEWALL_HEIGHT_MULTIPLE = 3;
  * from CLOUD_HEADROOM_WORLD_UNITS, which is derived from MAX_GROUND_WORLD_Y —
  * the world's VERTICAL scale, which the radius clamp does not touch. So on a
  * small world, where a cyclone's radius is clamped to a third of what it would
- * otherwise be, the tower keeps the height that the air gives it; a
- * fraction-of-radius eyewall would flatten into a pancake on exactly the worlds
+ * otherwise be, the funnel keeps the depth that the air gives it; a
+ * fraction-of-radius rim would flatten into a pancake on exactly the worlds
  * where the storm is already smallest. It is the same argument
  * kit/cumulusDeck.ts makes for its own thickness — a cloud's depth is set by
  * the air, not by the width of the front — applied to the one number that
  * varies here.
  *
- * The rim IS ordinary cloud depth: at its outer edge a hurricane is an
- * overcast, and there is nothing to say about it that the kit has not said.
+ * The eyewall IS ordinary cloud depth, and the rim is CYCLONE_RIM_HEIGHT_MULTIPLE
+ * of it: the deck is thinnest where it meets the hole and deepest at its edge.
  */
-export const CYCLONE_EYEWALL_HEIGHT_WORLD_UNITS =
-  DECK_THICKNESS_WORLD_UNITS * CYCLONE_EYEWALL_HEIGHT_MULTIPLE;
-export const CYCLONE_RIM_HEIGHT_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS;
+export const CYCLONE_EYEWALL_HEIGHT_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS;
+export const CYCLONE_RIM_HEIGHT_WORLD_UNITS =
+  DECK_THICKNESS_WORLD_UNITS * CYCLONE_RIM_HEIGHT_MULTIPLE;
 
 /**
- * How fast the tower falls from the eyewall to the rim: the exponent in
- * `wall = 1 - along^k`.
+ * How fast the eyewall's darkness, size and solidity fall off towards the rim:
+ * the exponent in `wall = 1 - along^k`.
  *
- * A HALF — the square root, so half the height is gone by a QUARTER of the way
- * out. Below one the profile drops steeply at the eye and flattens outward,
- * which is the shape wanted: a narrow ring of tall cloud with a broad low deck
- * beyond it. At k = 1 the height ramps evenly across the whole radius and the
- * storm is a cone, which is the tornado's shape and not this one; above 1 the
- * deck stays tall almost to the rim and then falls off a cliff, which is a
- * cylinder with a lid.
+ * A HALF — the square root, so half of it is gone by a QUARTER of the way out.
+ * Below one the profile drops steeply at the eye and flattens outward, which is
+ * the shape wanted: a narrow ring of dark, solid cloud with a broad pale deck
+ * beyond it. At k = 1 the shade washes evenly across the whole storm and there
+ * is no eyewall to read; above 1 the whole deck is dark almost to the rim.
+ *
+ * IT NO LONGER DRIVES HEIGHT (owner, 2026-09-05): the deck's depth is the linear
+ * funnel of `towerHeightAt`, see the TOWER block.
  */
 export const CYCLONE_TOWER_FALLOFF_EXPONENT = 0.5;
 
@@ -313,12 +318,17 @@ export const CYCLONE_BAND_INNER_RADIUS_FRACTION =
  */
 export const CYCLONE_TIER_JITTER_FRACTION = 0.5;
 
-/** How tall the tower stands above the base at `along`, in world units. */
+/**
+ * How deep the deck stands above the base at `along`, in world units.
+ *
+ * LINEAR: a funnel's wall is a straight slope from the eyewall's depth to the
+ * rim's, cut off at the eye. The dark core (`wall`) is a different, steeper
+ * curve on purpose — see CYCLONE_TOWER_FALLOFF_EXPONENT.
+ */
 export function towerHeightAt(along: number): number {
-  const wall = 1 - Math.pow(along, CYCLONE_TOWER_FALLOFF_EXPONENT);
   return (
-    CYCLONE_RIM_HEIGHT_WORLD_UNITS +
-    (CYCLONE_EYEWALL_HEIGHT_WORLD_UNITS - CYCLONE_RIM_HEIGHT_WORLD_UNITS) * wall
+    CYCLONE_EYEWALL_HEIGHT_WORLD_UNITS +
+    (CYCLONE_RIM_HEIGHT_WORLD_UNITS - CYCLONE_EYEWALL_HEIGHT_WORLD_UNITS) * along
   );
 }
 
@@ -339,18 +349,18 @@ export function tierRiseAt(along: number): number {
 }
 
 /**
- * Puffs stacked at `along`: as many as it takes to fill the tower there at that
- * spacing, and never fewer than the two it takes to have a top and a bottom.
+ * Puffs stacked at `along`: as many as it takes to fill the deck's depth there
+ * at that spacing, and never fewer than the two it takes to have a top and a
+ * bottom.
  *
- * MORE PUFFS NEAR THE EYE, AND THAT IS THE DECISION (of the brief's two). The
- * other — a fixed stack count everywhere, spaced by a fraction of the local
- * height — spreads the SAME number of puffs over three times the height at the
- * eyewall, so the tallest part of the storm would also be its thinnest and the
- * wall would be see-through exactly where it has to occlude. Dealing the extra
- * puffs where the cloud is deep is what makes the eyewall dense as well as
- * tall, and it is also the cheaper of the two: the rim, which is most of the
- * storm's area, carries three puffs to a position rather than the eyewall's
- * five.
+ * AS MANY PUFFS AS THE DEPTH NEEDS, AND THAT IS THE DECISION (of the brief's
+ * two). The other — a fixed stack count everywhere, spaced by a fraction of the
+ * local depth — spreads the SAME number of puffs over twice the depth at the
+ * rim, so the deepest part of the storm would also be its thinnest. Dealing the
+ * puffs by depth keeps the deck as solid at the rim as at the eyewall; with the
+ * funnel it is the rim that carries the taller stack (five at the nominal
+ * radius) and the eyewall the shorter (two), the eyewall's puffs being the
+ * larger.
  */
 export function tiersAt(along: number): number {
   return Math.round(towerHeightAt(along) / tierRiseAt(along)) + 1;
@@ -588,24 +598,28 @@ const SPIRAL_PLACEMENT = /* glsl */ `vAlong = aAlong;
     vStrength = aStrength;
     vQuad = position.xy;
 
-    // THE TOWER PROFILE, and everything about this puff that is not its place
-    // along the arm is read off it: 1 at the eyewall, 0 at the rim. See the
-    // TOWER block above — the height it implies is already in aRise, computed
-    // once per layout because the STACK COUNT is what varies with it and a
-    // count cannot be produced in a vertex shader.
+    // THE EYEWALL PROFILE: 1 at the eyewall, 0 at the rim, and the puff's
+    // size, solidity and shade are read off it. See the TOWER block above —
+    // the deck's depth is a separate linear funnel and is already in aRise,
+    // computed once per layout because the STACK COUNT is what varies with it
+    // and a count cannot be produced in a vertex shader.
     float wall = 1.0 - pow(aAlong, ${glslFloat(CYCLONE_TOWER_FALLOFF_EXPONENT)});
     vWall = wall;
 
     // THE LOGARITHMIC SPIRAL. aAlong runs 0 at the eyewall to 1 at the rim; the
     // radius interpolates from the innermost band's centre line to the storm's
-    // edge, and the angle is the arm's own starting angle plus the wrap, plus
-    // the whole deck's slow rotation. The inner end is the EYE PLUS A PUFF
+    // edge, and the angle is the arm's own starting angle plus the wrap, MINUS
+    // the whole deck's slow rotation: +angle runs +X towards +Z, which is
+    // CLOCKWISE seen from above, and a cyclone turns anticlockwise (owner,
+    // 2026-09-05 — it spun the wrong way). With the wrap positive and the spin
+    // negative the arms TRAIL the rotation, as real bands do; the same sign on
+    // both had them leading. The inner end is the EYE PLUS A PUFF
     // (CYCLONE_BAND_INNER_RADIUS_FRACTION), so the cloud's inner edge is the
     // eye rather than its centre line.
     float radius = aRadius * mix(${glslFloat(CYCLONE_BAND_INNER_RADIUS_FRACTION)}, 1.0, aAlong);
     float angle = ${glslFloat(TWO_PI)} * (
       aArm +
-      aAlong * ${glslFloat(ARM_WRAP_TURNS)} +
+      aAlong * ${glslFloat(ARM_WRAP_TURNS)} -
       uElapsed * ${glslFloat(SPIRAL_SPIN_TURNS_PER_SECOND)});
 
     // A scatter across the arm's width, so an arm is a BAND of cloud and not a
