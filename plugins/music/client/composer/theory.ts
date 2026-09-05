@@ -12,13 +12,11 @@
 // loop, no modulation, no rhythm section.
 
 /**
- * Tempo. 56 BPM is at the slow end of "andante"; a bar is ~4.3 s, so the music
- * moves about as fast as weather does. Faster reads as a soundtrack demanding
- * attention, which is wrong for a background layer a player leaves on for
- * hours; much slower stops reading as pulse at all and the melody's placement
- * becomes arbitrary.
+ * Tempo. 64 BPM: a bar is 3.75 s, drifting rather than still. Owner 2026-09-05
+ * asked for a little more pace than the original 56; faster starts demanding
+ * attention, which a layer left on for hours must not.
  */
-export const TEMPO_BEATS_PER_MINUTE = 56;
+export const TEMPO_BEATS_PER_MINUTE = 64;
 
 /** Seconds in one beat, derived so the tempo has exactly one definition. */
 export const SECONDS_PER_BEAT = 60 / TEMPO_BEATS_PER_MINUTE;
@@ -27,9 +25,8 @@ export const SECONDS_PER_BEAT = 60 / TEMPO_BEATS_PER_MINUTE;
 export const BEATS_PER_BAR = 4;
 
 /**
- * Bars a chord is held for. Two bars (~8.6 s) is long enough that a chord
- * change is an event rather than a rhythm, which is what keeps the pad reading
- * as atmosphere; one bar starts to sound like a progression being played.
+ * Bars a chord is held for. Two bars (7.5 s) keeps a chord change an event
+ * rather than a rhythm, so the pad reads as atmosphere, not a progression.
  */
 export const BARS_PER_CHORD = 2;
 
@@ -41,8 +38,7 @@ export const SECONDS_PER_CHORD = BEATS_PER_CHORD * SECONDS_PER_BEAT;
 
 /**
  * Melody events per beat. Two (eighth notes) gives the melody somewhere to sit
- * off the beat without ever needing a faster grid; at this tempo an eighth is
- * ~0.54 s, already long enough for a plucked note to ring out.
+ * off the beat; at this tempo an eighth is ~0.47 s, enough for a note to ring.
  */
 export const MELODY_SUBDIVISIONS_PER_BEAT = 2;
 
@@ -123,8 +119,10 @@ const MINOR_LEAN_WEATHER_THRESHOLD = 0.35;
 /** Lowest the mood filter ever closes to, in hertz: deep night, heavy weather. */
 const FILTER_NIGHT_CUTOFF_HZ = 380;
 
-/** Highest the mood filter ever opens to, in hertz: clear noon. */
-const FILTER_DAY_CUTOFF_HZ = 2100;
+/** Highest the mood filter opens to, in hertz: clear noon. 2800 leaves the
+ * melody's upper octave (~1.2 kHz) untouched — air, the "open sky" half of the
+ * cosmic brief (owner 2026-09-05). */
+const FILTER_DAY_CUTOFF_HZ = 2800;
 
 /**
  * Fraction of the cutoff that full weather removes. 0.45 is audible as "the
@@ -136,7 +134,7 @@ const FILTER_WEATHER_CLOSE_FRACTION = 0.45;
 /** Melody note probability per subdivision at deep night: barely there. */
 const MELODY_NIGHT_DENSITY = 0.08;
 
-/** Melody note probability per subdivision at noon. ~1 note per 1.8 s. */
+/** Melody note probability per subdivision at noon. ~1 note per 1.6 s. */
 const MELODY_DAY_DENSITY = 0.3;
 
 /** Extra note probability at full tension — agitation, not a drum fill. */
