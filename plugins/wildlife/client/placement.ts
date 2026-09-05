@@ -429,6 +429,14 @@ export function swimmerColumnBounds(
   profile: SwimProfile,
   modelScale: number,
 ): { readonly lowest: number; readonly highest: number } {
+  // THE INVARIANT THIS FUNCTION EXISTS FOR: a swimmer's origin is never above
+  // the sea surface, whatever it is fed. A "seabed" above the surface is not a
+  // seabed (there is no water over it), and the crossed-limits midpoint below
+  // would otherwise be computed against it and land the creature in mid-air —
+  // halfway up whichever hill the sample came from. Clamping here rather than
+  // at the callers is what makes the guarantee hold for every caller,
+  // including any written later.
+  seabedY = Math.min(seabedY, SEA_SURFACE_WORLD_Y);
   const lowest = seabedY + profile.minClearance * modelScale;
   const highest = SEA_SURFACE_WORLD_Y - profile.minSubmergence * modelScale;
   if (highest < lowest) {
@@ -498,8 +506,9 @@ export function swimmerFrameY(
 }
 
 /**
- * Seabed a swimmer is placed against: the HIGHEST rendered cell anywhere under
- * its BODY, not the single cell under its centre.
+ * Seabed a swimmer is placed against: the HIGHEST rendered cell AT OR BELOW
+ * THE SURFACE anywhere under its BODY, not the single cell under its centre.
+ * Cells above the surface are land and are not seabed; see the loop.
  *
  * The same argument `walkerGroundY` makes, and the same bug (owner, 2026-08-24:
  * whales "have a tendency to glitch into the seabed"). A whale is five world
@@ -556,8 +565,22 @@ export function swimmerSeabedY(
       Math.floor(x + forwardX * alongOffset + rightX * acrossOffset),
       Math.floor(y + forwardY * alongOffset + rightY * acrossOffset),
     );
-    if (sampled !== null && (seabed === null || sampled > seabed)) seabed = sampled;
+    if (sampled === null) continue;
+    // A SAMPLE ABOVE THE SURFACE IS LAND, NOT SEABED, and is ignored. The
+    // server keeps a swimmer's CENTRE in water (population.ts's habitat sweep)
+    // but says nothing about its wings and nose, so a ray hugging a cliff
+    // routinely puts a flank sample on the hillside. Taking that as the
+    // shallowest seabed made the whole hull "clear" a seabed that was a
+    // mountain, and the column bounds' crossed-limits midpoint then drew the
+    // creature halfway up it (owner report 2026-09-04: a manta ray floating
+    // in the middle of a mountain). Land overlapped horizontally is a
+    // separate, server-side question; vertically it contributes nothing.
+    if (sampled > SEA_SURFACE_WORLD_Y) continue;
+    if (seabed === null || sampled > seabed) seabed = sampled;
   }
+  // Every sample on land (only possible while this client's terrain is ahead
+  // of or behind the server's) reads as "no seabed known", which the render
+  // path already answers by not drawing this frame — never by drawing on land.
   return seabed;
 }
 
