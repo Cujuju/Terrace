@@ -39,6 +39,33 @@ export function intersectRayWithWall(
   yLo: number,
   yHi: number,
 ): number | null {
+  const t = crossRayWithWallPlan(origin, direction, ax, az, bx, bz);
+  if (t === null) return null;
+  const py = origin.y + t * direction.y;
+  if (py < yLo || py > yHi) return null;
+  return t;
+}
+
+/**
+ * THE SAME MEETING WITH THE HEIGHT TEST REMOVED — where the ray crosses the
+ * wall's PLAN LINE, however high it is when it gets there.
+ *
+ * NOT A LOOSER VERSION OF THE ABOVE; a different question, and the refinement
+ * in picking.ts needs both. A terraced step draws a STAIRCASE — band b's cap
+ * polygon is a ledge in front of band b+1's riser — and the horizontal part of
+ * that staircase is not on any wall quad. Knowing where the ray crosses each
+ * band's contour in plan is what orders the events along it: the ray is over
+ * band b's ledge exactly between crossing band b's contour and crossing band
+ * b+1's.
+ */
+export function crossRayWithWallPlan(
+  origin: Vec3,
+  direction: Vec3,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): number | null {
   const ex = bx - ax;
   const ez = bz - az;
   const lengthSq = ex * ex + ez * ez;
@@ -53,9 +80,6 @@ export function intersectRayWithWall(
 
   const t = (nx * (ax - origin.x) + nz * (az - origin.z)) / denom;
   if (!(t >= 0)) return null;
-
-  const py = origin.y + t * direction.y;
-  if (py < yLo || py > yHi) return null;
 
   // Where along the segment the meeting fell — outside [0, 1] it met the
   // plane beyond the end of this wall.
