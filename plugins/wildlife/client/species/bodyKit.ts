@@ -73,15 +73,25 @@ export function flatFin(
  * An upright fin standing in the XY plane (thickness along Z): a dorsal, a
  * caudal blade, an anal fin. The outline is authored with +X forward and +Y
  * up, exactly as the animal is seen from the side.
+ *
+ * `bevelDepth` is the plate thickness the edges are bevelled as, and defaults
+ * to `depth`. A fin IS its thickness, but a through-body bar (the angelfish's
+ * stripes) extrudes far thicker than its edge radius: bevelled as itself, a
+ * 0.17 slab grows 0.07 in every direction of the outline and swallows the
+ * flank it was meant to stripe. Such a caller names a thin plate here.
  */
-export function uprightFin(buildOutline: (shape: Shape) => void, depth: number): BufferGeometry {
+export function uprightFin(
+  buildOutline: (shape: Shape) => void,
+  depth: number,
+  bevelDepth: number = depth,
+): BufferGeometry {
   const shape = new Shape();
   buildOutline(shape);
   const geometry = new ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: true,
-    bevelThickness: depth * FIN_BEVEL_THICKNESS_RATIO,
-    bevelSize: depth * FIN_BEVEL_SIZE_RATIO,
+    bevelThickness: bevelDepth * FIN_BEVEL_THICKNESS_RATIO,
+    bevelSize: bevelDepth * FIN_BEVEL_SIZE_RATIO,
     bevelSegments: FIN_BEVEL_SEGMENTS,
     curveSegments: FIN_CURVE_SEGMENTS,
   });

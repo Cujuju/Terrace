@@ -161,7 +161,11 @@ export const buildAngelfish: SpeciesModelBuilder = (pool) => {
 
   // The bars: lens-shaped upright fins through the flanks, shorter than the
   // hull is tall at their stations so their crowns and heels stay buried and
-  // only the flat sides show.
+  // only the flat sides show. Bevelled as a FIN_THICKNESS plate, not as the
+  // 0.17 slab they extrude: the kit proportions bevel to depth, and a slab
+  // bevelled as itself balloons 0.07 in every direction, merges the two bars
+  // into one black mass and buries the eye (seen 2026-09-05 in the
+  // preview-wildlife screenshots).
   const BAR_XS = [0.08, -0.10] as const;
   const bars = BAR_XS.map((barX) => {
     const barHalfHeight = angelHalfHeight(angelBodyT(barX)) * 0.88;
@@ -171,11 +175,13 @@ export const buildAngelfish: SpeciesModelBuilder = (pool) => {
       shape.quadraticCurveTo(-0.03, barHalfHeight * 0.7, -0.035, 0);
       shape.quadraticCurveTo(-0.03, -barHalfHeight * 0.7, 0, -barHalfHeight);
       shape.quadraticCurveTo(0.03, -barHalfHeight * 0.7, 0.035, 0);
-    }, BAR_HALF_THICKNESS * 2));
+    }, BAR_HALF_THICKNESS * 2, FIN_THICKNESS));
     return { geometry, barX };
   });
 
-  const PECTORAL_X = 0.08;
+  // Between the bars on the gold flank: at 0.08 the hinge sat inside the
+  // front bar's slab and the fin grew out of the stripe instead of the flank.
+  const PECTORAL_X = 0.0;
   const pectoralGeometries = [1, -1].map((sign) => pool.keepGeometry(flatFin((shape, s) => {
     shape.moveTo(0.02, 0);
     shape.quadraticCurveTo(-0.01, s * 0.04, -0.07, s * 0.07);
