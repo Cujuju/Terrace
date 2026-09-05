@@ -828,6 +828,16 @@ export interface TerraceClientPlugin {
    */
   readonly groundShadeBudget?: number;
 
+  /**
+   * This plugin has NO SERVER HALF, so the server's live plugin set can never
+   * name it — discovery skips a directory with no server entry, by design
+   * (server/src/plugins/discovery.ts). Without this flag the host would unmount
+   * it as "not live" the moment the first set arrived.
+   *
+   * Absence is the normal case and means "the server's set decides".
+   */
+  readonly clientOnly?: boolean;
+
   /** Called once at boot with the plugin's context. */
   attach(ctx: ClientPluginCtx): void;
 

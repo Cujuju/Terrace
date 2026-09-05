@@ -1086,7 +1086,10 @@ export function createClientPluginHost(
       // Down before up: a plugin leaving frees its single-claimant hooks (the
       // sky rig, the world-header banner) in the same pass that a plugin
       // arriving might want them.
-      for (const name of [...mounted.keys()]) {
+      for (const [name, entry] of [...mounted]) {
+        // A CLIENT-ONLY PLUGIN IS NEVER IN THE SET, so absence says nothing
+        // about it — see TerraceClientPlugin.clientOnly.
+        if (entry.plugin.clientOnly === true) continue;
         if (!live.has(name)) unmountPlugin(name);
       }
       // Over `plugins`, not over `liveNames`: the client mounts what it has
@@ -1096,7 +1099,8 @@ export function createClientPluginHost(
       for (const plugin of plugins) {
         // Pending counts as mounted here: a preload in flight is a mount that
         // has not finished yet, and mounting it twice would attach it twice.
-        if (live.has(plugin.name) && !mounted.has(plugin.name) && !pendingMounts.has(plugin.name))
+        const wanted = live.has(plugin.name) || plugin.clientOnly === true;
+        if (wanted && !mounted.has(plugin.name) && !pendingMounts.has(plugin.name))
           mountPlugin(plugin);
       }
     },
