@@ -78,7 +78,9 @@ import {
   advanceVolcanoes,
   drainPendingConeSculpts,
   forceEruption,
+  forgetLavaAt,
   GENESIS_CONE_BANDS,
+  isSelfSculpting,
   lavaStates,
   nearestVent,
   openVent,
@@ -396,11 +398,29 @@ export const plugin: TerracePlugin = {
     simulate(world, dt);
   },
 
-  onTerrainChanged(_world: WorldApi, diff: readonly CellDiff[]): void {
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
+    if (activity === 'none') return;
+
+    // RESHAPED GROUND SHEDS ITS CRUST (owner, 2026-09-05). Any edit that is not
+    // this plugin's own — a player's stroke, a mudslide, another plugin — drops
+    // the lava overlay on the cells it moved, and clients are told through the
+    // same `forgotten` path the tracker's eviction uses, so the client has one
+    // way to lose a cell. The flow's and the cone's own raises are skipped
+    // (`isSelfSculpting`): they reshape ground that already carries crust by
+    // design. Fire's onTerrainChanged does the same for a burning cell.
+    //
+    // RESIDUAL, NAMED: only cells the diff MOVED are dropped. A stroke whose
+    // edge moves ground inside a flow cell's drawn coverage disc but not the
+    // flow cell itself leaves that cell's cap where it was until the next
+    // message re-stamps it (client lavaFlow.ts's `restamp` states the hole).
+    if (!isSelfSculpting()) {
+      const forgotten = forgetLavaAt(diff);
+      if (forgotten.length > 0) broadcastChanges(world, ventStates(), [], forgotten);
+    }
+
     // BIRTH ROUTE 3 — a dig that reaches core's lava band opens a vent. Under
     // `dormant` as much as `active`: siting a vent is geology, and only
     // erupting is an event (./siting.ts's header).
-    if (activity === 'none') return;
     if (ventCount() >= MAX_VENTS_PER_WORLD) return;
 
     for (const cell of diff) {

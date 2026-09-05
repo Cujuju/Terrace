@@ -333,6 +333,63 @@ interface PendingConeSculpt {
  */
 let pendingConeSculpts: PendingConeSculpt[] = [];
 
+/**
+ * How many of this plugin's own `sculpt` calls are on the stack right now.
+ *
+ * THE ONE THING `onTerrainChanged` NEEDS TO KNOW (owner, 2026-09-05): a reshape
+ * of the ground under cooled lava despawns the crust there, so the player can
+ * remodel broken land — but the flow's own raise, and the cone's, ARE reshapes
+ * of ground that already carries crust, and they must not eat their own tail.
+ * The host fans the hook out synchronously from inside `WorldApi.sculpt`, so a
+ * depth counter around every sculpt this plugin makes is exact: non-zero means
+ * "this diff is ours". A counter and not a boolean because a sculpt may
+ * re-enter (host.ts's MAX_WORLD_EVENT_DEPTH).
+ */
+let selfSculptDepth = 0;
+
+/** True while a diff being fanned out was produced by this plugin's own sculpt. */
+export function isSelfSculpting(): boolean {
+  return selfSculptDepth > 0;
+}
+
+/**
+ * EVERY terrain edit this plugin makes goes through here — never `world.sculpt`
+ * directly — so `isSelfSculpting` cannot be wrong for a call site someone
+ * forgot to wrap.
+ */
+function sculptAsVolcano(world: WorldApi, x: number, y: number, radius: number, amount: number): void {
+  selfSculptDepth++;
+  try {
+    world.sculpt(x, y, radius, amount);
+  } finally {
+    selfSculptDepth--;
+  }
+}
+
+/**
+ * Forgets every tracked lava cell in `cells`, and returns the ones it dropped.
+ *
+ * The owner's call (2026-09-05) between the two ways a crust could follow a
+ * reshape: despawn, not re-drape. Cooled lava is the memory that this ground
+ * was once lava (see ./flow.ts's MAX_TRACKED_FLOW_CELLS); a player who reshapes
+ * that ground has made it something else, and dropping the memory is what lets
+ * broken land be remodelled instead of wearing a crust it no longer fits.
+ * Molten cells go the same way: the overlay describes ground that is gone.
+ */
+export function forgetLavaAt(
+  cells: Iterable<{ readonly x: number; readonly y: number }>,
+): Array<{ x: number; y: number }> {
+  const forgotten: Array<{ x: number; y: number }> = [];
+  for (const cell of cells) {
+    const key = lavaKey(cell.x, cell.y);
+    const tracked = lava.get(key);
+    if (tracked === undefined) continue;
+    lava.delete(key);
+    forgotten.push({ x: tracked.x, y: tracked.y });
+  }
+  return forgotten;
+}
+
 /** Test seam, and the world-close reset: drops everything. */
 export function resetVolcanoes(): void {
   vents = [];
@@ -433,7 +490,7 @@ function raiseCone(
   ringTiming: ConeRingTiming,
 ): void {
   const size = world.worldSize;
-  world.sculpt(x, y, MAX_BRUSH_RADIUS, bands * BAND_HEIGHT);
+  sculptAsVolcano(world, x, y, MAX_BRUSH_RADIUS, bands * BAND_HEIGHT);
 
   const rim = ringAmount(bands);
   for (const [dx, dy] of CONE_RING_OFFSETS) {
@@ -441,7 +498,7 @@ function raiseCone(
     const cy = y + dy;
     if (cx < 0 || cy < 0 || cx >= size || cy >= size) continue;
     if (ringTiming === 'immediate') {
-      world.sculpt(cx, cy, MAX_BRUSH_RADIUS, rim);
+      sculptAsVolcano(world, cx, cy, MAX_BRUSH_RADIUS, rim);
       continue;
     }
     pendingConeSculpts.push({ x: cx, y: cy, radius: MAX_BRUSH_RADIUS, amount: rim });
@@ -462,7 +519,7 @@ export function drainPendingConeSculpts(world: WorldApi): void {
   for (let applied = 0; applied < CONE_SCULPTS_PER_TICK; applied++) {
     const step = pendingConeSculpts.shift();
     if (step === undefined) return;
-    world.sculpt(step.x, step.y, step.radius, step.amount);
+    sculptAsVolcano(world, step.x, step.y, step.radius, step.amount);
   }
 }
 
@@ -680,7 +737,7 @@ function endEruption(vent: Vent, world: WorldApi): void {
  * told the age — which the next keepalive carries.
  */
 function meltCell(world: WorldApi, x: number, y: number): LavaCellState | null {
-  world.sculpt(x, y, FLOW_BRUSH_RADIUS, FLOW_THICKNESS);
+  sculptAsVolcano(world, x, y, FLOW_BRUSH_RADIUS, FLOW_THICKNESS);
 
   const key = lavaKey(x, y);
   const existing = lava.get(key);

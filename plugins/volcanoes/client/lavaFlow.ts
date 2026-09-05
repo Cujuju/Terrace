@@ -943,8 +943,10 @@ export function createLavaFlow(): LavaFlowRenderer {
    * delta, a `volcanoes:all` or a `retryPending` reaches it. The whole-mesh
    * version had the same hole whenever a message moved no cell at all (it
    * returned before rebuilding) — this widens it from "no cells moved" to "no
-   * cells moved NEAR THIS ONE". Nothing in ./index.ts re-stamps on a terrain
-   * change today, so neither version tracks a sculpt under a cooled flow.
+   * cells moved NEAR THIS ONE". A sculpt UNDER a flow cell is covered since
+   * 2026-09-05: the server forgets the cell and the drop re-stamps its disc.
+   * What remains is a sculpt that moves covered ground without moving any
+   * flow cell — the disc's fringe.
    */
   function restamp(groundAt: DrawnGroundAtCell): void {
     // ── 1. The footprint, and the heights, over the dirty cells only ────────
