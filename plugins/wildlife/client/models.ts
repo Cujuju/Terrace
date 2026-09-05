@@ -192,14 +192,18 @@ const TWO_PI = Math.PI * 2;
 /**
  * Distinct animation phases one species is drawn with in a single frame.
  *
- * WHY QUANTISING PHASE IS SAFE. Every animation below is a loop driven by
- * `seconds * HZ * TWO_PI + phase`, so slotting a creature's phase offset shifts
- * it along the loop by at most one slot — it never changes what the animation
- * IS. The bound that matters is the display: at the project's 140 fps target
- * the fastest animation here (BIRD_WING_FLAP_HZ, 5.5) advances 5.5/140 ≈ 1/25
- * of a cycle between two frames the player actually sees, so a quantisation
- * step of 1/32 of a cycle is smaller than the step the animation already takes
- * on its own. Anything the player could resolve, they resolve as motion.
+ * WHY QUANTISING PHASE IS SAFE. Every animation below is a loop driven by one
+ * angle — `seconds * HZ * TWO_PI + phase` for a swimmer or flyer, the
+ * distance-paced `phase` alone for a walker (species/speciesModel.ts) — so
+ * slotting a creature's phase shifts it along the loop by at most one slot; it
+ * never changes what the animation IS. The bound that matters is the display:
+ * at the project's 140 fps target the fastest loop here — a wolf at its
+ * hunting burst, 3.0 world units per second over a 0.314 stride ≈ 9.6 strides
+ * a second (species/wolf.ts) — advances 9.6/140 ≈ 1/15 of a cycle between two
+ * frames the player actually sees, and the bird's wing (BIRD_WING_FLAP_HZ, 5.5)
+ * 1/25, so a quantisation step of 1/32 of a cycle is smaller than the step the
+ * animation already takes on its own. Anything the player could resolve, they
+ * resolve as motion.
  *
  * WHY IT IS WORTH IT. The pose palette is rebuilt once per SLOT per frame, not
  * once per creature: at the population cap that is 32 poses per species instead

@@ -38,6 +38,7 @@ import {
   placementKindOf,
   swimmerSeabedY,
   walkerGroundY,
+  walkerStrideRadians,
 } from './placement.ts';
 
 /**
@@ -56,8 +57,15 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
 /** A creature currently in the scene. */
 interface CreatureView {
-  /** Fixed at creation from the entity id — never recomputed per frame. */
-  readonly phase: number;
+  /**
+   * The creature's animation phase, in radians. Seeded from the entity id so
+   * neighbours are not in lock-step (PHASE_RADIANS_PER_ID) and, for a SWIMMER
+   * or FLYER, never touched again: their loops run on the shared clock and this
+   * is their offset along it. A WALKER's advances every frame by the ground it
+   * was drawn covering (placement.ts's `walkerStrideRadians`), and IS its
+   * stride beat — legs pace with the body, and stop when it does.
+   */
+  phase: number;
   /**
    * Where this creature was last DRAWN, in world units.
    *
@@ -194,12 +202,24 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // whenever its whole hull sampled ground this client had not been sent.
     // Flyers never sample ground and are unaffected.
     if (kind !== 'flyer' && terrainY === null) continue;
-    const drawnY = creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt);
-    view.drawnY = drawnY;
     // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
     // whose named residual this multiply is).
-    view.drawnX = entity.x * CELL_WORLD_SIZE;
-    view.drawnZ = entity.y * CELL_WORLD_SIZE;
+    const drawnX = entity.x * CELL_WORLD_SIZE;
+    const drawnZ = entity.y * CELL_WORLD_SIZE;
+    // A walker's legs are paced by the ground it covers between the frames it
+    // was drawn in (WALKER_STRIDE_WORLD_UNITS_BY_SPECIES). `drawnY` is still
+    // null before the first draw — read BEFORE it is committed below — so a
+    // creature's first frame seeds no stride.
+    if (kind === 'walker' && view.drawnY !== null) {
+      view.phase += walkerStrideRadians(
+        entity.species,
+        Math.hypot(drawnX - view.drawnX, drawnZ - view.drawnZ),
+      );
+    }
+    const drawnY = creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt);
+    view.drawnY = drawnY;
+    view.drawnX = drawnX;
+    view.drawnZ = drawnZ;
     // The body span, at the scale models.draw is about to apply to the rig.
     const column = BODY_COLUMNS[entity.species];
     const modelScale = WILDLIFE_SIZE_MODEL_SCALE[sizeClass];

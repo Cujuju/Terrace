@@ -28,7 +28,6 @@ import {
   type SpeciesAssetSpec,
   type SpeciesEnvelope,
 } from './assetSpecies.ts';
-import { TWO_PI } from './speciesModel.ts';
 
 /**
  * The grazer's standing height, restated rather than imported.
@@ -188,22 +187,19 @@ export const WOLF_ASSET: SpeciesAssetSpec = {
 const WOLF_PAW_SPAN_WORLD_UNITS = 0.314;
 
 /**
- * The server's cruise speed, restated so the stride below can be derived from
- * it rather than tuned against it. ../../server/species/wolf.ts argues the
- * number; a `cellsAcross` figure cannot be imported here, because this file
- * measures in world units and that one in cells.
- */
-const WOLF_CRUISE_WORLD_UNITS_PER_SECOND = 1.0;
-
-/**
- * Stride rate: the cruise speed divided by the stride length above — 3.18 a
- * second.
+ * The stride ../placement.ts paces the wolf's legs by: the paw span itself.
  *
- * That is 1.6x the grazer's 2.0, for an animal whose legs are three quarters as
- * long moving 1.25x as fast: 1.25 / 0.75 = 1.67. The two rates therefore say
- * the same thing about the same gait rather than each having been tuned by eye.
+ * THE GAIT IS PACED OFF GROUND COVERED, NOT THE CLOCK (owner, 2026-09-05; see
+ * ./grazer.ts's GRAZER_STRIDE_WORLD_UNITS for the rule). Before that this file
+ * restated the server's cruise speed (1.0 world units per second, ../../server/
+ * species/wolf.ts) and divided it by the paw span for a rate of 3.18 strides a
+ * second — 1.6x the grazer's 2.0, for an animal whose legs are three quarters
+ * as long moving 1.25x as fast (1.25 / 0.75 = 1.67), so the two rates said the
+ * same thing about the same gait. Paced by distance, that relation holds
+ * without the restated speed: at cruise the wolf still takes 3.18 strides a
+ * second, and at the burst it hunts at (three times cruise) it takes 9.5.
  */
-const STRIDE_HZ = WOLF_CRUISE_WORLD_UNITS_PER_SECOND / WOLF_PAW_SPAN_WORLD_UNITS;
+export const WOLF_STRIDE_WORLD_UNITS = WOLF_PAW_SPAN_WORLD_UNITS;
 /**
  * Unchanged from the grazer. 0.32 rad (~18°) either side of vertical is a
  * walking swing; the wolf's quicker step comes from its SHORTER LEGS, not from
@@ -219,8 +215,9 @@ const WALK_BOB_WORLD_UNITS = 0.012 * WOLF_TO_GRAZER_CROWN_RATIO;
 /** The head follows the shoulder, so the nod scales with the bob: 0.05 x 0.75. */
 const HEAD_NOD_RADIANS = 0.05 * WOLF_TO_GRAZER_CROWN_RATIO;
 
-export const buildWolf = assetSpeciesBuilder(WOLF_ASSET, (joints, seconds, phase) => {
-  const beat = seconds * STRIDE_HZ * TWO_PI + phase;
+export const buildWolf = assetSpeciesBuilder(WOLF_ASSET, (joints, _seconds, phase) => {
+  // A walker's phase IS its stride beat (WOLF_STRIDE_WORLD_UNITS): no clock term.
+  const beat = phase;
   poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
   joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
 });

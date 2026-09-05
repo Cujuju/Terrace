@@ -16,7 +16,7 @@ import { Group, Vector3 } from 'three';
 import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
 import { flatFin, smoothEllipsoid, taperedTube } from './bodyKit.ts';
 import { addQuadrupedLegs, legJoints, poseWalk } from './quadruped.ts';
-import { TWO_PI, type SpeciesModelBuilder } from './speciesModel.ts';
+import type { SpeciesModelBuilder } from './speciesModel.ts';
 
 export const IBEX_SCALE = 0.36;
 
@@ -40,7 +40,14 @@ const HORN_ROOT_RADIUS = 0.04;
 const HORN_TIP_RADIUS = 0.012;
 const HORN_SEGMENTS = 10;
 
-const STRIDE_HZ = 2.2;
+/**
+ * Stride length in WORLD units, paced off ground covered rather than the clock
+ * (owner, 2026-09-05; ./grazer.ts's GRAZER_STRIDE_WORLD_UNITS states the rule).
+ * 0.545 is the stride the cruise gait was tuned to by eye: 1.2 world units per
+ * second (../../server/species/ibex.ts) at 2.2 strides a second. At cruise
+ * nothing moved; a startled ibex now takes three times the steps.
+ */
+export const IBEX_STRIDE_WORLD_UNITS = 0.545;
 const LEG_SWING_RADIANS = 0.40;
 /** WORLD units (root space). Higher than the grazer's: a step up, not along. */
 const WALK_BOB_WORLD_UNITS = 0.02;
@@ -169,8 +176,9 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
   return {
     root,
     joints: { rig, head: headPivot, ...legJoints(legs) },
-    animate(joints, seconds, phase) {
-      const beat = seconds * STRIDE_HZ * TWO_PI + phase;
+    animate(joints, _seconds, phase) {
+      // A walker's phase IS its stride beat (IBEX_STRIDE_WORLD_UNITS): no clock term.
+      const beat = phase;
       poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
       joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
     },
