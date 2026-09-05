@@ -180,7 +180,7 @@ the joint if one is missing:
 left = up × forward = Y × X = −Z.
 
 Anchors (Empties), all measured at install and asserted against the species'
-declared envelope within `ENVELOPE_TOLERANCE_CELLS`:
+declared envelope within `ENVELOPE_TOLERANCE_WORLD_UNITS`:
 
 - `nose`, `tail_tip`: the length's two ends, and the model's own x extremes.
 - `crown`, `belly`: the highest and lowest points, and its y extremes.
