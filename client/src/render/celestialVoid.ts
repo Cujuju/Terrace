@@ -265,6 +265,10 @@ float vnoise3(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(mix(hash3(i),hash3(i+vec3(1,0,0)),f.x), mix(hash3(i+vec3(0,1,0)),hash3(i+vec3(1,1,0)),f.x), f.y),
              mix(mix(hash3(i+vec3(0,0,1)),hash3(i+vec3(1,0,1)),f.x), mix(hash3(i+vec3(0,1,1)),hash3(i+vec3(1,1,1)),f.x), f.y), f.z); }
 float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*vnoise(p); p=p*2.03+vec2(17.3,9.1); a*=0.5; } return s; }
+// The same fbm cut to FBM_LOW_OCTAVES, for fields read only on the broad scale (their fine octaves
+// were below a filament wide and invisible); the same first octaves, so the look is unchanged.
+const int FBM_LOW_OCTAVES=3;
+float fbmLow(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<FBM_LOW_OCTAVES;i++){ s+=a*vnoise(p); p=p*2.03+vec2(17.3,9.1); a*=0.5; } return s; }
 // The same noise, periodic in y with period per cells: the lattice row wraps, so a domain
 // whose y is an angle has no seam. Lacunarity exactly 2 and no y offset keep every octave periodic.
 float pvnoise(vec2 p, float per){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -366,10 +370,11 @@ const float GAS_BOTTOM_Z = -0.88*DISK_THICKNESS;  // deepest layer centre
 const float GAS_SCALE_H  = 0.12*DISK_THICKNESS;   // sech^2 scale height of each patch about its own level
 const float LEVEL_SCALE  = 5.0;    // level-field features per disk unit: patches change level on about the filament scale
 const float LIT_FROM_ABOVE=0.6;    // gas at the bottom of the slab is this much darker than at the top (a depth cue the eye reads)
-const float GAS_EXTINCTION=160.0;  // optical depth per unit density per disk unit; scaled so the thin slab reads like the rev 10 sheet
+const float GAS_EXTINCTION=128.0;  // optical depth per unit density per disk unit; 160 read like the rev 10 sheet, rev 17 owner 2026-09-05: 'colors a little more transparent, maybe 20%' -> x0.8
 const float PUFF_SCALE   = 12.0;   // 3-D puff noise features per disk unit across the disk
 const float PUFF_Z_SCALE = 3.0/DISK_THICKNESS;    // ... and about three through the thickness, so the puffs vary with depth
 const float PUFF_DEPTH   = 0.7;    // how much the puffs modulate the density (0 = columnar gas); rev 14: 0.35 -> 0.7
+const float PUFF_OCTAVE2 = 0.4;    // weight of the second, finer puff octave (0 drops it: one vnoise3 per march step)
 const float STAR_FIELD_DEPTH=${STAR_FIELD_DEPTH.toFixed(3)}; // STAR_FIELD_DEPTH_WORLD in disk units: the coarse star grid reaches this far under the plane
 const float STAR_FINE_DEPTH=0.5*STAR_FIELD_DEPTH;  // the fine grid reaches half as deep (it has twice the cells per unit, so the same voxel budget)
 const float STAR_POINT_BOOST=3.0;  // a ray must pass within a star's radius in 3-D, not cross a disc: more stars per voxel to keep the count on screen
@@ -377,6 +382,16 @@ const float STAR_GAS_SHADE=0.7;    // how much fully overlying gas dims a star (
 const int   STAR_WALK    = 24;     // voxel visits per star grid per ray; reaches ~80% of STAR_FIELD_DEPTH in the coarse grid at 60 deg (bench: 36 -> 24 saves ~0.4 ms), flatter views lose the deepest stars
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
 const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
+// Rev 17 (owner 2026-09-05: 'make some of the floating stars glow a little bit, and others twinkle just a
+// little bit'). Each star draws one kind from its own hash: the first GLOW_FRACTION carry a soft halo
+// GLOW_RADIUS times their core, the next TWINKLE_FRACTION breathe in brightness by TWINKLE_DEPTH at
+// TWINKLE_RATE with a per-star phase, the rest are steady. u_time is frozen under reduced motion.
+const float GLOW_FRACTION   = 0.15;
+const float GLOW_RADIUS     = 4.0;   // halo radius as a multiple of the core radius
+const float GLOW_GAIN       = 0.35;  // halo peak brightness relative to the core
+const float TWINKLE_FRACTION= 0.30;
+const float TWINKLE_DEPTH   = 0.35;  // brightness swing, peak to trough, as a fraction of the star
+const float TWINKLE_RATE    = 2.2;   // rad/s: about one breath every three seconds
 // Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
 // (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
 // ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
@@ -403,7 +418,11 @@ float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float dept
       float t=tBase+along/scale;         // disk units along the ray from the eye
       float size=max(0.03+0.05*hash3(cell+seed+9.2), minSizePerT*t*scale);
       float dim=1.0-STAR_GAS_SHADE*above*clamp(-P.z/(DISK_THICKNESS*scale),0.0,1.0); // gas above this star
-      sum+=smoothstep(size,0.0,dist)*(0.5+0.5*h/perVoxel)*dim;
+      float kind=hash3(cell+seed+13.7);
+      float core=smoothstep(size,0.0,dist);
+      if(kind<GLOW_FRACTION) core+=GLOW_GAIN*smoothstep(size*GLOW_RADIUS,0.0,dist);
+      else if(kind<GLOW_FRACTION+TWINKLE_FRACTION) core*=1.0-TWINKLE_DEPTH*(0.5+0.5*sin(u_time*TWINKLE_RATE+kind*40.0));
+      sum+=core*(0.5+0.5*h/perVoxel)*dim;
     }
     if(tMax.x<tMax.y && tMax.x<tMax.z){ cell.x+=stp.x; tMax.x+=tDelta.x; }
     else if(tMax.y<tMax.z){ cell.y+=stp.y; tMax.y+=tDelta.y; }
@@ -423,7 +442,7 @@ float gasPattern(vec2 rf, out vec3 gasCol){
   float r=length(rf);
   float th=atan(rf.y,rf.x);
   float s=log(r+0.05);
-  float wobble=(fbm(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
+  float wobble=(fbmLow(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
   float phase=th*ARMS-s*WIND+wobble;
   float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
   // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
@@ -431,13 +450,13 @@ float gasPattern(vec2 rf, out vec3 gasCol){
   float thw=atan(wound.y,wound.x);
   vec2 aq=vec2(s*STREAK_ALONG, (thw/6.2831853+0.5)*STREAK_ACROSS);
   float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
-  float haze=fbm(rf*1.4+vec2(9.0,2.0));
+  float haze=fbmLow(rf*1.4+vec2(9.0,2.0));
   float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
   float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms
   // Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
   // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
   vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
-  float hue=fbm(rf/HUE_SCALE+vec2(2.0,5.0));
+  float hue=fbmLow(rf/HUE_SCALE+vec2(2.0,5.0));
   gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
   gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
   gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
@@ -450,7 +469,7 @@ float gasDepthProfile(vec2 rf, float z, float level){
   float ch=exp(dz)+exp(-dz);
   float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
   vec3 pq=vec3(rf*PUFF_SCALE,z*PUFF_Z_SCALE);
-  float puff=0.6*vnoise3(pq)+0.4*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
+  float puff=(1.0-PUFF_OCTAVE2)*vnoise3(pq)+PUFF_OCTAVE2*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
   float puffMod=1.0-PUFF_DEPTH+2.0*PUFF_DEPTH*puff;          // mean 1
   return vert*puffMod;
 }
@@ -466,11 +485,12 @@ void main(){
     vec2 rf=rot(pp,-a);                  // rotating frame: everything sampled here turns rigidly
     float r=length(rf);
     float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
+    if(depthFade<=0.0){ gl_FragColor=vec4(col,1.0); return; }   // fully faded: nothing below would show
 
     // --- gas: the plane pattern once, then march the thickness front to back ---
     vec3 gasCol;
     float pattern=gasPattern(rf,gasCol);
-    float level=mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbm(rf*LEVEL_SCALE+vec2(6.0,13.0)));  // this patch's depth
+    float level=mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbmLow(rf*LEVEL_SCALE+vec2(6.0,13.0)));  // this patch's depth
     float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
     float dt=(tBottom-sdist)/float(GAS_STEPS);
     float gasAcc=0.0;                     // lit weight so far
@@ -497,8 +517,11 @@ void main(){
     float pxPerUnit=u_focal*u_res.y/sdist;
     float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/32.0);
     float field=stars3(ro,rd,sdist,16.0,0.07,STAR_FIELD_DEPTH,minPerT,0.0,gas);
-    float fine=0.6*stars3(ro,rd,sdist,32.0,0.05,STAR_FINE_DEPTH,minPerT,11.0,gas)*cellFade;
-    float inArms=stars3(ro,rd,sdist,40.0,0.35,DISK_THICKNESS,minPerT,23.0,0.0)*cellFade*gas*2.5;
+    float fine=0.0, inArms=0.0;
+    if(cellFade>0.0){                                          // the fine grids fade out when zoomed far; skip their walks
+      fine=0.6*stars3(ro,rd,sdist,32.0,0.05,STAR_FINE_DEPTH,minPerT,11.0,gas)*cellFade;
+      inArms=stars3(ro,rd,sdist,40.0,0.35,DISK_THICKNESS,minPerT,23.0,0.0)*cellFade*gas*2.5;
+    }
     col+=vec3(0.95,0.93,0.9)*((field+fine)*(0.45+0.9*gas)+inArms)*depthFade*depthFade;
   } else {
     // Above the plane's horizon (never in the view anchor at 60deg; the world anchor at a flat
