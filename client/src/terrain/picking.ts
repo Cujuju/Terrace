@@ -13,17 +13,21 @@
 // all; see pickTerrainCellByRay's header for why that changed.
 
 import {
+  BAND_HEIGHT,
   CHUNK_SIZE,
   MAX_HEIGHT,
   MIN_HEIGHT,
+  bandOf,
   chunkIndex,
   isSpanDrawn,
   spanAt,
   spanUndersideHeight,
   spanCapHeight,
   spanCount,
+  type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { crossRayWithWallPlan } from './drawnFace.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
 import type { CellOccupancy, CellRayChord } from './occupancy.ts';
 
@@ -549,6 +553,467 @@ function marchCells(
 }
 
 /**
+ * THE RISERS THE MESH ACTUALLY DREW, per chunk and per band.
+ *
+ * The march owns the CELL LATTICE and nothing else; where inside a cell the
+ * renderer put a face is the mesh builder's business, and the overlay already
+ * holds the answer (render/layerEdgeOverlay.ts retains the marching-squares
+ * contour of every band it drew). This is the narrowest possible window onto
+ * it — no Three, no chart, one lookup — so picking can ask about the drawn
+ * face without importing the renderer.
+ *
+ * OPTIONAL EVERYWHERE. A null provider is the pre-2026-09-05 box behaviour,
+ * byte for byte, which is what every headless test of this module exercises
+ * and what a chunk with no published contour falls back to.
+ */
+export interface DrawnRisers {
+  /**
+   * World-space flat [ax, az, bx, bz, ...] segments of `band`'s lip in chunk
+   * `chunkIdx`, or undefined when that chunk publishes none.
+   *
+   * The lip of band k is the top edge of band k's riser, so the quad to test
+   * hangs from k·BAND_HEIGHT down to (k−1)·BAND_HEIGHT.
+   */
+  segmentsOf(chunkIdx: number, band: number): Float32Array | undefined;
+}
+
+/** Two endpoints, (x, z) each — `DrawnRisers`'s flat layout. */
+const FLOATS_PER_DRAWN_SEGMENT = 4;
+
+/**
+ * HOW FAR OUTSIDE A CELL'S BOX ITS OWN DRAWN RISERS CAN STAND, in cells.
+ *
+ * Marching squares puts a crossing on the lattice edge between two cell
+ * CENTRES (terrain/contours.ts's `marchLevel`: "sample (i,j) is the centre of
+ * world cell (x0+i, y0+j)"), at a fraction `crossingFraction` clamps into
+ * [CONTOUR_CELL_CENTRE_GUARD, 1 − CONTOUR_CELL_CENTRE_GUARD] — so a riser
+ * standing on the boundary between two cells is drawn strictly BETWEEN their
+ * centres, and never on the box face half way along that edge.
+ *
+ * WHICH SIDE it falls on is the height difference, not the geometry: a step of
+ * three bands puts band k+1's contour a third of the way across, band k+2's
+ * two thirds, and band k+3's against the far guard. So the faces of ONE cliff
+ * fan out across BOTH boxes, and a search confined to the struck cell's own
+ * box finds only the topmost of them — which is the 2026-09-04 defect in its
+ * second form: the crosshair snapped up to the top band of a multi-band cliff
+ * from anywhere on it.
+ *
+ * Half a cell is therefore the exact reach, not a tolerance: it is the
+ * distance from a box face to the cell centre on either side of it, and the
+ * guard keeps every contour vertex strictly inside that.
+ */
+const DRAWN_FACE_MARGIN_CELLS = 0.5;
+
+/**
+ * Every drawn segment of `band` in the 3×3 chunk neighbourhood of chunk
+ * (chunkX, chunkY) — the same reach `layerEdgeOverlay.ts`'s `nearbyChunks`
+ * uses, because a contour bounding a cell can be published by the chunk next
+ * door.
+ *
+ * ONE WALK, TWO READERS (the parity gate and the event scan below), so they
+ * can never come to disagree about which segments a cell may be judged by.
+ */
+function forEachDrawnSegment(
+  risers: DrawnRisers,
+  size: number,
+  chunksPerEdge: number,
+  chunkX: number,
+  chunkY: number,
+  band: number,
+  visit: (ax: number, az: number, bx: number, bz: number) => void,
+): void {
+  for (let dy = -1; dy <= 1; dy++) {
+    const cy = chunkY + dy;
+    if (cy < 0 || cy >= chunksPerEdge) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = chunkX + dx;
+      if (cx < 0 || cx >= chunksPerEdge) continue;
+      const flat = risers.segmentsOf(chunkIndex(size, cx, cy), band);
+      if (flat === undefined) continue;
+      for (
+        let s = 0;
+        s + FLOATS_PER_DRAWN_SEGMENT - 1 < flat.length;
+        s += FLOATS_PER_DRAWN_SEGMENT
+      ) {
+        visit(flat[s]!, flat[s + 1]!, flat[s + 2]!, flat[s + 3]!);
+      }
+    }
+  }
+}
+
+/** Twice the signed area of (p, q, r) — the sign is which side of pq r is on. */
+function orient(
+  px: number, pz: number, qx: number, qz: number, rx: number, rz: number,
+): number {
+  return (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
+}
+
+/**
+ * Whether contour segment cd crosses the probe segment ab, counted so that a
+ * polyline crossing the probe is counted EXACTLY ONCE however its vertices
+ * fall.
+ *
+ * HALF-OPEN on the probe line: a contour vertex lying exactly on it is treated
+ * as on the non-positive side. A polyline that crosses the probe through a
+ * shared vertex then has one of its two segments counted and not the other,
+ * where a strict test would count neither and a closed one both — either of
+ * which flips the parity. Collinear segments count for nothing; their
+ * neighbours decide. The intersection must lie strictly between a and b, which
+ * the strict test on the contour's line supplies: with a vertex on the probe
+ * line, opposite strict sides of cd for a and b puts that vertex between them.
+ */
+function probeCrossesSegment(
+  ax: number, az: number, bx: number, bz: number,
+  cx: number, cz: number, dx: number, dz: number,
+): boolean {
+  const cSide = orient(ax, az, bx, bz, cx, cz) > 0;
+  const dSide = orient(ax, az, bx, bz, dx, dz) > 0;
+  if (cSide === dSide) return false;
+  const d3 = orient(cx, cz, dx, dz, ax, az);
+  const d4 = orient(cx, cz, dx, dz, bx, bz);
+  return (d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0);
+}
+
+/**
+ * IS THE BOX CAP POINT ON THE DRAWN CAP, or out over the staircase in front of
+ * it? Answered by crossing parity along the segment from the cell's own CENTRE
+ * to the hit point.
+ *
+ * THE CENTRE IS ALWAYS INSIDE, and that is what makes a parity test legitimate
+ * here rather than a guess: marching squares classifies a sample as inside band
+ * k iff the cell's own quantised height reaches k (`terrain/contours.ts`,
+ * `marchLevel`: "sample (i,j) is the centre of world cell (x0+i, y0+j)"), and
+ * `CONTOUR_CELL_CENTRE_GUARD` clamps every crossing fraction away from both
+ * ends of a lattice edge (`contours.ts`'s `crossingFraction`), so no contour
+ * vertex — before or after smoothing — can reach a cell centre. The cell that
+ * produced this hit draws band `band`, so its centre is inside band `band`'s
+ * region by construction.
+ *
+ * The probe segment never leaves the cell's own box (the centre is its middle
+ * and the hit point is on its cap), so no chunk-border seam can affect the
+ * count.
+ *
+ * WHY A CAP HIT NEEDS THIS AT ALL. The refinement below is an event walk that
+ * takes the first drawn surface along the ray. For a cap hit that is genuinely
+ * on drawn tread, the ray goes UNDERGROUND after it, and any contour of the
+ * same band that happens to lie further along — the far side of a two-cell
+ * ridge, the other wall of a notch, a contour curving round a corner — would
+ * be met at a legal height and taken as a riser, teleporting the crosshair
+ * behind the surface the player is standing on. Even parity ends it: the
+ * point is on real tread, and the march's own answer is right.
+ */
+function capPointIsOverStrip(
+  risers: DrawnRisers,
+  size: number,
+  chunksPerEdge: number,
+  chunkX: number,
+  chunkY: number,
+  band: number,
+  i: number,
+  j: number,
+  hitX: number,
+  hitZ: number,
+): boolean {
+  // Cell (i, j)'s centre in world units: `scaleRayToCellSpace` adds
+  // CELL_CENTRE_OFFSET after dividing by CELL_WORLD_SIZE, so scaled i + 0.5 —
+  // the middle of the cell's box — is world i · CELL_WORLD_SIZE.
+  const centreX = i * CELL_WORLD_SIZE;
+  const centreZ = j * CELL_WORLD_SIZE;
+  let crossings = 0;
+  forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
+    if (probeCrossesSegment(centreX, centreZ, hitX, hitZ, ax, az, bx, bz)) crossings++;
+  });
+  return (crossings & 1) === 1;
+}
+
+/**
+ * A BOX-FACE RISER HIT, MOVED ONTO THE FACE THE PLAYER CAN SEE.
+ *
+ * THE DEFECT THIS FIXES (owner, 2026-09-04: "at some camera angles carve does
+ * not work at all", "it is moving my mouse pointer to different bands").
+ * `terrainHitInCell` reports a riser as the point where the ray entered the
+ * cell's BOX — the plane half a cell out from the cell centre. The mesh draws
+ * that riser on the band's marching-squares contour, which for a quantised
+ * step runs 0.375 cells INSIDE the higher cell's box (measured on a straight
+ * wall between cells 23 and 24: the contour is at x = 23.875, the box face at
+ * 23.5). The ray crosses the box face before the drawn one, and being on its
+ * way down it crosses it HIGHER — by 0.375·tan(pitch) cells of height. At a
+ * steep enough pitch that is a whole band or more, so the crosshair floated in
+ * front of and above the wall, the lit lip was the band above the one under
+ * the pointer, and the carve cut that band.
+ *
+ * A STEP OF SEVERAL BANDS IS DRAWN AS A STAIRCASE, not as one wall, and that
+ * is the whole reason this is an event walk rather than a nearest-quad search.
+ * Marching squares interpolates each band's contour separately, so a three-band
+ * step between cells 23 and 24 puts band 6's riser at x = 23.375, band 7's at
+ * 23.625 and band 8's at 23.875 (measured on the fixture): between them the
+ * mesh draws band 6's and band 7's CAP as a quarter-cell LEDGE. A ray can meet
+ * either kind of surface first, so both are events on t:
+ *
+ *  - RISER of band b, at `tc[b]` — where the ray crosses band b's contour in
+ *    plan — when the ray's height there is inside band b's slab.
+ *  - LEDGE of band b (only below the span's top band), at the crossing of the
+ *    plane y = b·slab, when the ray has already passed band b's contour and
+ *    has not yet reached band b+1's. That is exactly the stretch of that plane
+ *    the mesh draws as band b's cap.
+ *
+ * The earliest event wins. A LEDGE IS REPORTED AS A RISER HIT at
+ * `hitY = b·slab` exactly, and that is deliberate: `pickBand.ts`'s
+ * `resolvePick` reads a riser hit's band as `Math.ceil(hitY / slab)`, which is
+ * b — the band the ledge belongs to — while a horizontal hit below the span's
+ * cap is read as an UNDERSIDE (a cave roof), which a ledge is not. The pick
+ * contract has no "tread below the cap" face and this does not invent one.
+ *
+ * A CAP HIT IS GATED FIRST. The box cap is a full cell wide while the DRAWN
+ * cap starts only at the band's own contour, so a steep ray can cross the box
+ * cap out over the staircase strip. `capPointIsOverStrip` decides which by
+ * crossing parity from the cell centre: even means real tread and the march
+ * was right, odd means the strip and the walk runs. Without that gate a true
+ * tread hit could be rewritten onto a far contour of the same band.
+ *
+ * NO EVENT AT ALL, TWO CASES, and they are not the same:
+ *
+ *  - NO SEGMENTS ANYWHERE (`segmentsOf` undefined for every candidate band in
+ *    every nearby chunk — a chunk that is unreceived, frontier-adjacent,
+ *    blocky or not yet drawn, `layerEdgeOverlay.ts`'s `rebuild` early return):
+ *    nothing is known about where the faces are drawn, so the BOX hit stands
+ *    unchanged. Rewriting it would be inventing a face out of ignorance.
+ *  - SEGMENTS EXIST AND THE RAY PASSED IN FRONT OF THEM: it went by below the
+ *    foot of the wall, and what it met is the drawn TREAD of the cell it came
+ *    from, which extends into this box by the same fraction. Resolved as that
+ *    neighbour's tread — but only when the ray reaches that tread BEFORE the
+ *    foot contour, which is what "in front of" means.
+ *
+ * SEARCHED: the 3×3 chunk neighbourhood of (i, j) — the same reach
+ * `layerEdgeOverlay.ts`'s `nearbyChunks` uses, because a contour bounding this
+ * cell can be published by the chunk next door. Segments are NOT filtered by
+ * cell; the T-WINDOW is the filter, and it is the ray's chord across this
+ * cell's box grown by `DRAWN_FACE_MARGIN_CELLS` — the exact reach of a riser
+ * this cell owns, and the reason the window is not simply [tEnter, tExit].
+ *
+ * BANDS: the range the struck span draws, which is `pickBand.ts`'s
+ * `resolvePick` range — one above the band of the span's underside, up to the
+ * band of its cap.
+ */
+function refineRiserToDrawnFace(
+  mirror: TerrainMirror,
+  i: number,
+  j: number,
+  origin: Vec3,
+  direction: Vec3,
+  tEnter: number,
+  tExit: number,
+  hit: TerrainRayPick,
+  span: Span,
+  risers: DrawnRisers,
+): TerrainRayPick {
+  const size = mirror.map.size;
+  const chunksPerEdge = Math.ceil(size / CHUNK_SIZE);
+  const chunkX = Math.floor(i / CHUNK_SIZE);
+  const chunkY = Math.floor(j / CHUNK_SIZE);
+  const lowestBand = bandOf(spanUndersideHeight(span)) + 1;
+  const highestBand = bandOf(spanCapHeight(span));
+
+  const ray = scaleRayToCellSpace(origin, direction);
+  const window = ray === null ? null : clipRayToBox(
+    ray,
+    i - DRAWN_FACE_MARGIN_CELLS,
+    i + 1 + DRAWN_FACE_MARGIN_CELLS,
+    j - DRAWN_FACE_MARGIN_CELLS,
+    j + 1 + DRAWN_FACE_MARGIN_CELLS,
+    MAX_TERRAIN_WORLD_Y,
+  );
+  // The grown box contains this cell's box, so the clip cannot miss; the guard
+  // is for a ray this function was never handed (non-finite, no direction).
+  const fromT = window === null ? tEnter : window.tEnter;
+  const toT = window === null ? tExit : window.tExit;
+
+  // ONLY THE BANDS THE RAY'S OWN HEIGHT SWEEP CAN REACH. Y is linear in t, so
+  // the two ends of the window bound it exactly; band b's quad hangs in
+  // [(b−1)·BAND, b·BAND], and one that the sweep does not overlap cannot be
+  // struck. Not a heuristic and not a budget — it is the same overlap test the
+  // span loop above applies, and without it a column whose span reaches from
+  // the world floor sweeps every band in the world on every riser pick (5× the
+  // cost of the whole march, measured).
+  const yA = origin.y + fromT * direction.y;
+  const yB = origin.y + toT * direction.y;
+  const yMin = yA < yB ? yA : yB;
+  const yMax = yA < yB ? yB : yA;
+  const bandSlab = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+  const firstBand = Math.max(lowestBand, Math.ceil(yMin / bandSlab));
+  const lastBand = Math.min(highestBand, Math.floor(yMax / bandSlab) + 1);
+
+  if (lastBand < firstBand) return hit;
+
+  // THE CAP GATE. A riser hit is always somewhere it should not be; a cap hit
+  // may be exactly right, and only the drawn region can say which.
+  if (!hit.hitRiser && !capPointIsOverStrip(
+    risers, size, chunksPerEdge, chunkX, chunkY, highestBand, i, j, hit.hitX, hit.hitZ,
+  )) {
+    return hit;
+  }
+
+  // PASS 1 — where the ray crosses each candidate band's contour IN PLAN.
+  // Both kinds of event are derived from these: a riser hit is one of them, a
+  // ledge hit lies between two consecutive ones.
+  const contourT = new Float64Array(lastBand - firstBand + 1).fill(Infinity);
+  for (let band = firstBand; band <= lastBand; band++) {
+    forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
+      const t = crossRayWithWallPlan(origin, direction, ax, az, bx, bz);
+      // A crossing outside the window is one no surface of this cell can
+      // stand on — it belongs to a cell further along the ray.
+      if (t === null || t < fromT || t > toT) return;
+      if (t < contourT[band - firstBand]!) contourT[band - firstBand] = t;
+    });
+  }
+
+  // NOT ONE SEGMENT ANYWHERE: this chunk neighbourhood has published no
+  // contour, so the box answer is the only one there is evidence for.
+  let footT = Infinity;
+  for (let band = firstBand; band <= lastBand; band++) {
+    const t = contourT[band - firstBand]!;
+    if (t < footT) footT = t;
+  }
+  if (footT === Infinity) return hit;
+
+  // PASS 2 — the earliest event along the ray.
+  let bestT = Infinity;
+  let bestLedgeBand: number | null = null;
+  for (let band = firstBand; band <= lastBand; band++) {
+    const tc = contourT[band - firstBand]!;
+    if (tc === Infinity) continue;
+    const yHi = band * bandSlab;
+    const yLo = (band - 1) * bandSlab;
+    // (a) THE RISER: the crossing itself, if the ray is inside this band's
+    // slab when it gets there.
+    const yAt = origin.y + tc * direction.y;
+    if (yAt >= yLo && yAt <= yHi && tc < bestT) {
+      bestT = tc;
+      bestLedgeBand = null;
+    }
+    // (b) THE LEDGE: band b's cap, drawn between its own contour and the
+    // contour of the band above. The top band's cap is the span's tread and
+    // the march already handles it, so it is not an event here.
+    if (band >= highestBand || direction.y === 0) continue;
+    const tPlane = (yHi - origin.y) / direction.y;
+    if (!(tPlane > tc) || tPlane < fromT || tPlane > toT || tPlane >= bestT) continue;
+    const above = band + 1 <= lastBand ? contourT[band + 1 - firstBand]! : Infinity;
+    if (tPlane >= above) continue;
+    bestT = tPlane;
+    bestLedgeBand = band;
+  }
+
+  if (bestT < Infinity) {
+    return {
+      ...hit,
+      // A DRAWN FACE OR LEDGE IS A RISER HIT whichever face of the box the
+      // march happened to name: `resolvePick` reads the band off `hitY` for a
+      // riser and off the SPAN's cap for a tread, and the band that is right
+      // here is the one the ray actually met.
+      hitRiser: true,
+      // A LEDGE SITS EXACTLY ON ITS BAND'S PLANE. Taking the height from the
+      // ray instead would leave a rounding wobble either side of the boundary
+      // that `resolvePick`'s `Math.ceil` turns into a one-band flicker.
+      hitY: bestLedgeBand === null ? origin.y + bestT * direction.y : bestLedgeBand * bandSlab,
+      hitX: origin.x + bestT * direction.x,
+      hitZ: origin.z + bestT * direction.z,
+    };
+  }
+  // NO EVENT, AND THE POINT IS OVER THE STRIP either way — the parity gate
+  // above has already sent a true tread hit home. A one-band step at a pitch
+  // steep enough that the ray reaches the lower neighbour's cap plane before
+  // the band's contour leaves no event to find, and the ground in front of the
+  // wall is the honest answer for a cap hit exactly as it is for a riser hit.
+  return treadOfEnteredNeighbour(
+    mirror, i, j, origin, direction, tEnter, tExit, footT, hit.surfaceY,
+  ) ?? hit;
+}
+
+/**
+ * THE GROUND IN FRONT OF THE WALL — what a ray that entered this cell's box
+ * without meeting any drawn face inside it is actually pointing at.
+ *
+ * The face it slipped past is drawn a fraction of a cell inside this box, so
+ * the LOWER neighbour's tread is drawn that same fraction inside it too, and
+ * the ray met that tread. The neighbour is the one on the far side of the box
+ * face the ray came in through: an x-face means (i∓1, j), a z-face (i, j∓1).
+ *
+ * Null — leaving the caller with the unrefined box hit — whenever that story
+ * cannot be told honestly: the ray started inside this box (no face was
+ * entered), it is not descending, the neighbour is off the world or in a chunk
+ * the server never sent (the `cellRevealed` rule, mirror.ts invariant 1), it
+ * draws nothing below the entry height, or its cap plane is crossed beyond the
+ * far side of this box.
+ *
+ * `footContourT` is where the ray crosses the LOWEST drawn contour of this
+ * cell, and the tread only wins if the ray reaches it FIRST. Without that
+ * ordering "the ray passed in front of the wall" is unproven, and a ray that
+ * actually went through the wall's foot would be answered with a point inside
+ * drawn solid.
+ *
+ * `ownCapY` is this cell's drawn cap. The tread stood on must be BELOW it as
+ * well as below the entry height: a riser hit enters under its own cap so the
+ * two bounds agree, but a cap hit enters above it, and without the second
+ * bound a HIGHER neighbour the ray had already flown over would be named at
+ * the point where the ray crosses its cap plane — in the air over this cell's
+ * tread, not on any drawn surface.
+ */
+function treadOfEnteredNeighbour(
+  mirror: TerrainMirror,
+  i: number,
+  j: number,
+  origin: Vec3,
+  direction: Vec3,
+  tEnter: number,
+  tExit: number,
+  footContourT: number,
+  ownCapY: number,
+): TerrainRayPick | null {
+  const dy = direction.y;
+  if (!(dy < 0)) return null;
+  const ray = scaleRayToCellSpace(origin, direction);
+  if (ray === null) return null;
+
+  // Which slab this cell's box was entered through: the one whose entry
+  // parameter IS tEnter. A ray whose origin is already inside the box entered
+  // through neither, and both tests below are then at or behind the origin.
+  const tx = ray.dx === 0 ? -Infinity : ((ray.dx > 0 ? i : i + 1) - ray.ox) / ray.dx;
+  const tz = ray.dz === 0 ? -Infinity : ((ray.dz > 0 ? j : j + 1) - ray.oz) / ray.dz;
+  if (tx <= 0 && tz <= 0) return null;
+  const ni = tx > tz ? i - Math.sign(ray.dx) : i;
+  const nj = tx > tz ? j : j - Math.sign(ray.dz);
+  const size = mirror.map.size;
+  if (ni < 0 || nj < 0 || ni >= size || nj >= size) return null;
+  if (!cellRevealed(mirror, ni, nj)) return null;
+
+  const entryY = origin.y + tEnter * dy;
+  const treadCeilingY = entryY < ownCapY ? entryY : ownCapY;
+  // The neighbour's HIGHEST drawn cap under both the entry height and this
+  // cell's own cap — the tread the ray is above as it crosses this box,
+  // topmost first for the same reason the span loop above scans that way.
+  const count = spanCount(mirror.map, ni, nj);
+  for (let k = count - 1; k >= 0; k--) {
+    const nSpan = spanAt(mirror.map, ni, nj, k);
+    if (!isSpanDrawn(nSpan)) continue;
+    const capY = spanCapHeight(nSpan) * HEIGHT_WORLD_SCALE;
+    if (!(capY < treadCeilingY)) continue;
+    const t = tEnter + (capY - entryY) / dy;
+    if (t > tExit || !(t < footContourT)) return null;
+    return {
+      x: ni,
+      y: nj,
+      surfaceY: capY,
+      spanIndex: k,
+      hitRiser: false,
+      hitY: capY,
+      hitX: origin.x + t * direction.x,
+      hitZ: origin.z + t * direction.z,
+    };
+  }
+  return null;
+}
+
+/**
  * The terrain hit inside ONE marched cell, or null when the ray passes through
  * the column without meeting a drawn span.
  *
@@ -566,6 +1031,7 @@ function terrainHitInCell(
   direction: Vec3,
   tEnter: number,
   tExit: number,
+  risers: DrawnRisers | null,
 ): TerrainRayPick | null {
   if (!cellRevealed(mirror, i, j)) return null;
 
@@ -582,6 +1048,9 @@ function terrainHitInCell(
   const count = spanCount(mirror.map, i, j);
   let hit: TerrainRayPick | null = null;
   let hitT = Infinity;
+  // The span `hit` belongs to, kept so the refinement below does not have to
+  // look it up again by index.
+  let hitSpan: Span | null = null;
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, i, j, k);
     // A span too thin to reach a band boundary draws nothing, so there is
@@ -620,8 +1089,20 @@ function terrainHitInCell(
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
     };
+    hitSpan = span;
   }
-  return hit;
+  // THE BOX FACE IS NOT THE DRAWN FACE — the whole of the refinement below.
+  //
+  // A CAP HIT NEEDS IT TOO, not just a riser hit. The box cap is a full cell
+  // wide while the DRAWN cap starts only at the band's contour, so a steep ray
+  // can cross the box cap over ground the mesh draws as the staircase below —
+  // and that hit is horizontal, not a riser. An UNDERSIDE hit is excluded:
+  // it met the span from beneath, where none of this applies.
+  const refinable = hit !== null && (hit.hitRiser || hit.hitY === hit.surfaceY);
+  if (hit === null || !refinable || risers === null || hitSpan === null) return hit;
+  return refineRiserToDrawnFace(
+    mirror, i, j, origin, direction, tEnter, tExit, hit, hitSpan, risers,
+  );
 }
 
 /**
@@ -633,13 +1114,14 @@ export function pickTerrainCellByRay(
   mirror: TerrainMirror,
   origin: Vec3,
   direction: Vec3,
+  risers: DrawnRisers | null = null,
 ): TerrainRayPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
 
   let found: TerrainRayPick | null = null;
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, tEnter, tExit) => {
-    found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
+    found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
     return found !== null;
   });
   return found;
@@ -688,6 +1170,7 @@ export function pickTerrainInColumn(
   y: number,
   origin: Vec3,
   direction: Vec3,
+  risers: DrawnRisers | null = null,
 ): TerrainRayPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
@@ -703,7 +1186,7 @@ export function pickTerrainInColumn(
   if (clip === null) return null;
   const { tEnter, tExit } = clip;
 
-  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit);
+  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit, risers);
   if (hit !== null) return hit;
 
   const entryY = ray.oy + tEnter * ray.dy;
@@ -762,6 +1245,7 @@ export function pickPointedCellByRay(
   origin: Vec3,
   direction: Vec3,
   occupants: readonly CellOccupancy[],
+  risers: DrawnRisers | null = null,
 ): PointedCellPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
@@ -807,7 +1291,7 @@ export function pickPointedCellByRay(
       return true;
     }
 
-    const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
+    const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
     if (terrain === null) return false;
     found = {
       x: terrain.x,
