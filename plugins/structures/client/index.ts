@@ -30,7 +30,13 @@ import {
 import { createStructureModels, type StructureModels } from './models.ts';
 import { placementsFor } from './placement.ts';
 import { createSiteSurveyCache, type SiteSurveyCache } from './site.ts';
-import { createSkiffModels, type SkiffModels } from './skiffModels.ts';
+import skiffUrl from './assets/skiff.glb?url';
+import {
+  createSkiffModels,
+  disposeSkiffKit,
+  preloadSkiffModels,
+  type SkiffModels,
+} from './skiffModels.ts';
 
 /**
  * Seconds between retries while some structure's ground is still unknown.
@@ -114,8 +120,13 @@ function applyChanges(
  */
 const STRUCTURE_SURFACE_DRAW_OBJECTS = 36;
 
-/** The moored skiffs, merged the same way: TWO surfaces for the fleet. */
-const SKIFF_SURFACE_DRAW_OBJECTS = 2;
+/**
+ * The moored skiffs: ONE surface for the whole fleet, however many boats are
+ * afloat — skiff.glb is a single mesh with a single material (skiffModels.ts
+ * rejects an asset that is not), so one InstancedMesh draws every skiff in the
+ * world.
+ */
+const SKIFF_SURFACE_DRAW_OBJECTS = 1;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: STRUCTURES_PLUGIN_NAME,
@@ -125,6 +136,16 @@ export const clientPlugin: TerraceClientPlugin = {
    * TerraceClientPlugin.drawBudget and the constants above.
    */
   drawBudget: STRUCTURE_SURFACE_DRAW_OBJECTS + SKIFF_SURFACE_DRAW_OBJECTS,
+
+  /**
+   * Loads skiff.glb before attach, so createSkiffModels has a hull to draw.
+   * A rejected load is a logged breach for this plugin only — the host never
+   * attaches afterwards, so the whole plugin (buildings included) stays
+   * unmounted rather than drawing a village with no boats.
+   */
+  preload(): Promise<void> {
+    return preloadSkiffModels(skiffUrl);
+  },
 
   attach(ctx: ClientPluginCtx): void {
     buildings.clear();
@@ -188,5 +209,9 @@ export const clientPlugin: TerraceClientPlugin = {
     models = null;
     skiffModels?.dispose();
     skiffModels = null;
+    // AFTER the fleet: the InstancedMesh draws the asset's own geometry, and
+    // freeing it first would pull the buffers out from under a live mesh (see
+    // RigAsset.dispose's ordering contract).
+    disposeSkiffKit();
   },
 };

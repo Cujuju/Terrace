@@ -7,16 +7,17 @@
 // instance. A plugin computes them however it likes (plugins/daynight/client/
 // sky.ts is the first, and only, caller today) and hands them to
 // ClientPluginCtx.setSkyRig; applySkyRig below is the ONE place that turns
-// those numbers into mutations on the three real light objects and the
-// scene's background, which is what keeps "a plugin can drive the sky" from
-// turning into "a plugin gets the scene".
+// those numbers into mutations on the three real light objects, which is what
+// keeps "a plugin can drive the sky" from turning into "a plugin gets the
+// scene". The state's tenth number, backgroundColor, is intentionally inert
+// since issue #326 — see the note where it would have been applied, below.
 //
 // MUTATES IN PLACE, EVERY CALL. This runs once a frame for as long as the
 // claimant plugin is attached (the day/night plugin calls it from its own
 // onFrame), so allocating a Color or a Vector3 here would be a per-frame
-// allocation on the hottest path this module has. Every light and the
-// background Color already exist (render/scene.ts builds them once at boot);
-// this only ever writes into them.
+// allocation on the hottest path this module has. Every light already exists
+// (render/scene.ts builds them once at boot); this only ever writes into
+// them.
 
 import { Color } from 'three';
 // SkyRigState is DEFINED in plugins/types.ts, not here, even though this file
@@ -30,9 +31,9 @@ import { SUN_DISTANCE_WORLD_UNITS, type Viewport } from './scene.ts';
 export type { SkyRigState };
 
 /**
- * Writes `state` onto `viewport`'s real lights and background. The only
- * function in this codebase that may mutate Viewport.lighting or
- * scene.background — see the doc comment on Viewport.lighting and on
+ * Writes `state` onto `viewport`'s real lights. The only function in this
+ * codebase that may mutate Viewport.lighting or scene.background — see the
+ * doc comment on Viewport.lighting and on
  * ClientPluginCtx.setSkyRig for the single-claimant rule that makes that
  * true in practice, not just in a comment.
  */
@@ -53,11 +54,21 @@ export function applySkyRig(viewport: Viewport, state: SkyRigState): void {
   ambient.color.setHex(state.ambientColor);
   ambient.intensity = state.ambientIntensity;
 
-  // scene.background is typed Color | Texture | CubeTexture | null because
-  // three's Scene allows all three; core (render/scene.ts) only ever sets it
-  // to `new Color(SKY_COLOR)` at boot, so the instanceof guard is a defensive
-  // no-op today and a correct no-op forever — a background that somehow
-  // became a Texture is simply left alone rather than fought over.
+  // scene.background AND WHY THIS NO LONGER WRITES ANYTHING (issue #326).
+  //
+  // Core does not set a background any more. What is drawn outside the map is
+  // render/celestialVoid.ts's fullscreen pass, and the owner's rule for it is
+  // that time of day must not touch it at all: the map goes from day to night
+  // while the void keeps the same look. So `scene.background` stays null
+  // (render/scene.ts), the guard below never matches, and every
+  // `state.backgroundColor` a plugin computes is deliberately ignored.
+  //
+  // The field is NOT removed from SkyRigState, and this line is NOT deleted.
+  // Both remain because the guard is what makes the rule structural instead of
+  // a convention: plugins/daynight and plugins/cyclone keep publishing a
+  // background colour, core keeps declining to apply it, and neither side had
+  // to learn about the other. If a future look ever wants a tintable flat
+  // background again, setting one here is all it takes.
   const background = viewport.scene.background;
   if (background instanceof Color) background.setHex(state.backgroundColor);
 
