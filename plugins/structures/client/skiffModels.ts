@@ -33,18 +33,21 @@
 // derivation and not a per-frame measurement).
 
 import {
-  Box3,
   Group,
   InstancedMesh,
   Matrix4,
   Mesh,
   MeshLambertMaterial,
   Sphere,
-  Vector3,
   type BufferGeometry,
 } from 'three';
 import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
-import { loadRigAsset, type RigAsset } from '../../../client/src/render/rigAsset.ts';
+import {
+  assertAssetFits,
+  loadRigAsset,
+  type AssetFootprintCells,
+  type RigAsset,
+} from '../../../client/src/render/rigAsset.ts';
 import { STRUCTURES_CAP } from '../protocol.ts';
 import { SKIFF_MAX_PER_SETTLEMENT, SKIFF_ORBIT_PERIOD_SECONDS, type SkiffPlacement } from './skiffs.ts';
 
@@ -80,17 +83,17 @@ const SKIFF_BOB_PERIOD_SECONDS = 2.6;
  * shore. An authored hull may be prettier; it may not be BIGGER, so the
  * placement cell it was fitted to still holds.
  */
-const SKIFF_LENGTH_BUDGET_WORLD_UNITS = 0.36;
-const SKIFF_BEAM_BUDGET_WORLD_UNITS = 0.14;
+const SKIFF_FOOTPRINT: AssetFootprintCells = { x: 0.36, z: 0.14 };
 
 /**
  * How far past that budget a measured hull may reach before the asset is
- * rejected at load. A thousandth of a world unit: the fit is AUTHORED, not
- * fitted — glTF stores positions as float32, whose spacing near 0.36 is about
- * 3e-8, so this is four orders of magnitude above the rounding it exists to
- * absorb and still under 0.3 % of the budget, far too small to hide a real
- * overhang. (Same rule as plugins/boats/client/models.ts's
- * BOAT_FIT_TOLERANCE_CELLS, scaled to a budget a third the size.)
+ * rejected at load — passed to rigAsset's assertAssetFits IN PLACE OF its
+ * default ASSET_FIT_TOLERANCE_CELLS (0.02), which was sized for a one-cell
+ * footprint and would be 5.6 % of this one. A thousandth of a world unit: the
+ * fit is AUTHORED, not fitted — glTF stores positions as float32, whose
+ * spacing near 0.36 is about 3e-8, so this is four orders of magnitude above
+ * the rounding it exists to absorb and still under 0.3 % of the budget, far
+ * too small to hide a real overhang.
  */
 const SKIFF_FIT_TOLERANCE_WORLD_UNITS = 0.001;
 
@@ -200,17 +203,7 @@ export function installSkiffKit(asset: RigAsset): void {
 
   // Measured in the ASSET's frame, before the axis bake below: +X is the
   // authored forward, so x is the boat's LENGTH and z its BEAM.
-  const size = new Box3().setFromObject(asset.scene).getSize(new Vector3());
-  if (
-    size.x > SKIFF_LENGTH_BUDGET_WORLD_UNITS + SKIFF_FIT_TOLERANCE_WORLD_UNITS ||
-    size.z > SKIFF_BEAM_BUDGET_WORLD_UNITS + SKIFF_FIT_TOLERANCE_WORLD_UNITS
-  ) {
-    throw new Error(
-      `skiff asset: hull ${size.x.toFixed(4)} long x ${size.z.toFixed(4)} abeam breaks the ` +
-        `${SKIFF_LENGTH_BUDGET_WORLD_UNITS} x ${SKIFF_BEAM_BUDGET_WORLD_UNITS} world-unit ` +
-        `silhouette budget skiffs.ts's spacing was tuned against`,
-    );
-  }
+  assertAssetFits(asset, SKIFF_FOOTPRINT, SKIFF_FIT_TOLERANCE_WORLD_UNITS);
 
   // The authoring convention's +X forward becomes this file's +Z forward, once
   // and for all instances — see SKIFF_FORWARD_AXIS_YAW_RADIANS's derivation.
