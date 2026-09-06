@@ -37,6 +37,13 @@ export interface InterpolatedEntity {
    * it cannot change: the server draws a creature's size once, at spawn.
    */
   readonly size: number;
+  /**
+   * Stored height while this creature is off the ground — climbing a wall or
+   * falling off one (protocol.ts's WildlifeEntityState.climbHeight). Null on
+   * the ground. Interpolated like x and y: it is a position sent at the
+   * broadcast cadence and drawn every frame.
+   */
+  readonly climbHeight: number | null;
 }
 
 /**
@@ -60,6 +67,7 @@ interface Pose extends PoseSegment {
   x: number;
   y: number;
   heading: number;
+  climbHeight: number | null;
 }
 
 /**
@@ -74,6 +82,7 @@ interface PoseRecord extends InterpolatedEntity {
   heading: number;
   species: InterpolatedEntity['species'];
   size: InterpolatedEntity['size'];
+  climbHeight: number | null;
 }
 
 /**
@@ -93,11 +102,12 @@ export class WildlifeInterpolator extends PoseInterpolator<
       minWindowSeconds: MIN_INTERPOLATION_SECONDS,
       maxWindowSeconds: MAX_INTERPOLATION_SECONDS,
       defaultWindowSeconds: DEFAULT_INTERPOLATION_SECONDS,
-      createSegment: () => ({ x: 0, y: 0, heading: 0, generation: 0 }),
+      createSegment: () => ({ x: 0, y: 0, heading: 0, climbHeight: null, generation: 0 }),
       freeze: (target, source) => {
         target.x = source.x;
         target.y = source.y;
         target.heading = source.heading;
+        target.climbHeight = source.climbHeight;
       },
       createRecord: (entity) => ({ ...entity }),
       updateRecord: (record, entity, segment, t) => {
@@ -107,6 +117,7 @@ export class WildlifeInterpolator extends PoseInterpolator<
           record.x = entity.x;
           record.y = entity.y;
           record.heading = entity.heading;
+          record.climbHeight = entity.climbHeight;
           return;
         }
         record.x = lerp(segment.x, entity.x, t);
@@ -114,6 +125,14 @@ export class WildlifeInterpolator extends PoseInterpolator<
         // The short way round, so a creature turning through ±π spins 10°
         // rather than 350°.
         record.heading = lerpAngle(segment.heading, entity.heading, t);
+        // A climb that has just started or just ended has a height on one side
+        // of the window only, and there is nothing to interpolate between —
+        // the other side is "on the ground", whose height this field does not
+        // carry. The newest truth wins; the ground follower eases the join.
+        record.climbHeight =
+          segment.climbHeight === null || entity.climbHeight === null
+            ? entity.climbHeight
+            : lerp(segment.climbHeight, entity.climbHeight, t);
       },
     });
   }

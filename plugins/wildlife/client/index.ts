@@ -10,7 +10,15 @@
 // scene, the rendered terrain height, the message channel, and the frame clock.
 
 import { Group } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+
+/**
+ * World units per stored height unit — client/src/config.ts's
+ * HEIGHT_WORLD_SCALE, derived from its own two shared inputs rather than
+ * imported (./placement.ts states the reason: that module drags
+ * `import.meta.env` into a node test run).
+ */
+const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -31,6 +39,7 @@ import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
 import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
 import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
+import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
 import {
   BODY_COLUMNS,
   SWIM_PROFILES,
@@ -216,7 +225,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
         Math.hypot(drawnX - view.drawnX, drawnZ - view.drawnZ),
       );
     }
-    const drawnY = creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt);
+    // ON A WALL the server owns the height (protocol's `climbHeight`); the
+    // follower still eases toward it, which costs a climber nothing — it rises
+    // sixteen times slower than the follower can chase (groundFollow.ts).
+    const drawnY =
+      entity.climbHeight === null
+        ? creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt)
+        : followGroundY(view.drawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, dt);
     view.drawnY = drawnY;
     view.drawnX = drawnX;
     view.drawnZ = drawnZ;

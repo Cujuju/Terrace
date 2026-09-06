@@ -196,6 +196,19 @@ export interface WildlifeEntityState {
    * self-hosted server.
    */
   readonly size: number;
+  /**
+   * WHERE THIS CREATURE IS VERTICALLY WHILE IT IS OFF THE GROUND, in stored
+   * height units — climbing a wall or falling off one (@terrace/shared's
+   * climb.ts). Null, and absent from the wire, for a creature on the ground:
+   * every species but the ibex always, and the ibex almost all the time.
+   *
+   * IT IS ON THE WIRE BECAUSE THE CLIENT CANNOT INFER IT — the one piece of
+   * movement state this plugin sends that is not a position. A climber's x/y
+   * stay pinned at the foot of the wall for the whole climb, so the ground
+   * under it reads "still down here" until the instant it arrives. Additive,
+   * like `size` before it: absent means on the ground.
+   */
+  readonly climbHeight: number | null;
 }
 
 export interface WildlifeEntitiesPayload {
@@ -245,6 +258,9 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
       size: isFiniteNumber(entry.size)
         ? sizeClassIndex(sizeClassAt(entry.size))
         : DEFAULT_SIZE_CLASS_INDEX,
+      // Absent on every row from a pre-climb server and on every creature on
+      // the ground; both mean the same thing and are the same value here.
+      climbHeight: isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null,
     });
   }
   return parsed;

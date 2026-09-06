@@ -176,6 +176,9 @@ function parsePersistedMonster(raw: unknown): Monster | null {
     x: entry.x as number,
     y: entry.y as number,
     heading: entry.heading as number,
+    // Never persisted: a world reloaded mid-climb finds the animal standing at
+    // the foot of the wall (Monster.climb).
+    climb: null,
     idle: false,
     ...(variant === undefined ? {} : { variant }),
   };

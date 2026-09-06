@@ -67,6 +67,7 @@
 // CLOCK: `dt` from the host is the only time source. No Date.now anywhere, so a
 // server running at a different TICK_HZ behaves identically per simulated second.
 
+import type { ClimbState } from '@terrace/shared';
 import { CHUNK_SIZE, nearestWithinReach } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
@@ -171,6 +172,24 @@ export interface WildlifeEntity {
    * live population, and a nullable one would put a `?.` at every read site.
    */
   huntTargetId: number | null;
+
+  /**
+   * The wall this creature is on, or null for the ordinary case of standing on
+   * the ground (@terrace/shared's climb.ts). Only a species whose profile
+   * carries a ClimbRule ever has one (the ibex); set and cleared by
+   * `advanceEntity` alone, and its x/y do not move while it is set.
+   *
+   * ON THE WIRE, unlike `idle` and the hunt fields — and for the reason those
+   * are not: the client CANNOT see this one. A climber's x/y stay pinned at the
+   * foot of the wall for the whole climb, so the ground under it says "still
+   * down here" until it arrives, and a client left to infer the height would
+   * draw an ibex standing at the bottom and then teleporting to the top.
+   *
+   * NOT PERSISTED, the same reasoning the other two have: a climb is a moment,
+   * and a restored creature standing at the foot of the wall it was on simply
+   * climbs it again.
+   */
+  climb: ClimbState | null;
 
   /**
    * Seconds left in the current chase before this hunter gives up, from its
@@ -609,6 +628,7 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
       huntTargetId: null,
       huntSecondsRemaining: 0,
       huntRestSecondsRemaining: 0,
+      climb: null,
     });
     created++;
   }
@@ -1039,6 +1059,9 @@ export function entityStates(worldSize: number): WildlifeEntityState[] {
     // The class INDEX, not its name — one msgpack byte instead of seven.
     // `schoolId` is deliberately absent: see the field's note on WildlifeEntity.
     size: sizeClassIndex(entity.size),
+    // Null for everything on the ground, which msgpack drops; only a creature
+    // on a wall costs the wire anything (WildlifeEntityState.climbHeight).
+    climbHeight: entity.climb === null ? null : entity.climb.height,
   }));
 }
 
@@ -1054,7 +1077,9 @@ export function replacePopulation(
   nextSchool: number,
 ): void {
   resetPopulation();
-  for (const entity of restored) entities.push({ ...entity });
+  // `climb` is not persisted (see WildlifeEntity.climb), so a restored row may
+  // not carry one — it starts at the foot of whatever it was on.
+  for (const entity of restored) entities.push({ ...entity, climb: entity.climb ?? null });
   nextEntityId = nextId;
   // Never below "one past the highest restored school", or a newly spawned group
   // would join a restored school and inherit its departure roll.

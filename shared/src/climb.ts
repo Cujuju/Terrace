@@ -169,7 +169,13 @@ export function beginClimb(
   const fromHeight = world.heightAt(Math.floor(fromX), Math.floor(fromY));
   if (!exceedsWalkableGradient(profile, toHeight - fromHeight)) return null;
 
-  const doomed = hashToIndex(seed, FALL_ROLL_BASIS_POINTS) < rule.fallChance * FALL_ROLL_BASIS_POINTS;
+  // ONLY A WALL TALLER THAN THE CLIMBER CAN KILL IT (ClimbRule.lethalRise
+  // HeightUnits). Everything shorter is climbed exactly the same way and simply
+  // cannot end in a fall — there is not enough of it to fall off.
+  const rise = Math.abs(toHeight - fromHeight);
+  const doomed =
+    rise >= rule.lethalRiseHeightUnits &&
+    hashToIndex(seed, FALL_ROLL_BASIS_POINTS) < rule.fallChance * FALL_ROLL_BASIS_POINTS;
   // A second, independent draw off the same seed: the first decides WHETHER,
   // this one decides WHERE. `seed + 1` rather than a second seed argument
   // because hashToIndex's mix is an avalanche — consecutive seeds land far
@@ -236,3 +242,131 @@ export function advanceClimb(state: ClimbState, dt: number): ClimbOutcome {
   }
   return 'climbing';
 }
+
+/**
+ * One tick of "the way on is a wall": walk the last fraction of a cell to the
+ * foot of it, then start climbing. Null when stepping onto `target` is not a
+ * climb for this mover at all, which is the answer almost every tick.
+ *
+ * WHY THE APPROACH IS HERE AND NOT LEFT TO EACH MOVER'S STEERING. Every steering
+ * sweep in this repo looks for a heading that is legal to WALK, and beside a
+ * wall there almost always is one — along the foot of it. Left to the sweep a
+ * climber with a wall in its way simply slides sideways along the cliff for
+ * ever (measured on the pilgrims sim before this existed: 200 of 200 walkers,
+ * none climbing, none arriving). So the decision to climb is taken by whatever
+ * knows the way on — a route, a goal bearing — and the last fraction of a cell
+ * is walked STRAIGHT, unsteered: the destination is a point on the boundary of
+ * the cell the mover is already standing in, which is ground it has already
+ * been certified on, so there is nothing for a sweep to discover.
+ *
+ * `bodyHalfWidthCells` is how far short of the face the body stops, so it
+ * touches the wall rather than intersecting it. `seed` is `beginClimb`'s.
+ *
+ * Returns 'approaching' while it is still walking to the foot, 'climbing' the
+ * tick the climb starts. The mover's `heading` faces the wall throughout — a
+ * body climbing with its back to the cliff reads as a bug.
+ */
+export function approachAndClimb(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  mover: ClimbingMover,
+  target: { readonly x: number; readonly y: number },
+  stepCells: number,
+  bodyHalfWidthCells: number,
+  seed: number,
+): 'approaching' | 'climbing' | null {
+  if (!isClimbStep(world, profile, mover.x, mover.y, target.x, target.y)) return null;
+
+  const cellX = Math.floor(mover.x);
+  const cellY = Math.floor(mover.y);
+  const normalX = target.x - cellX;
+  const normalY = target.y - cellY;
+  // The middle of the shared edge, pulled back into the mover's own cell by its
+  // own half-width. A body wider than a cell stops behind the cell's centre,
+  // which is correct rather than a clamp to fix: that is where its edge touches
+  // the wall.
+  const inset = CELL_CENTRE_OFFSET - bodyHalfWidthCells;
+  const footX = cellX + CELL_CENTRE_OFFSET + normalX * inset;
+  const footY = cellY + CELL_CENTRE_OFFSET + normalY * inset;
+
+  mover.heading = Math.atan2(normalY, normalX);
+
+  const dx = footX - mover.x;
+  const dy = footY - mover.y;
+  // Math.sqrt, not Math.hypot — the determinism rule shared/src/traversal.ts
+  // states at its own use of it.
+  const remaining = Math.sqrt(dx * dx + dy * dy);
+  if (remaining > stepCells && remaining > 0) {
+    mover.x += (dx / remaining) * stepCells;
+    mover.y += (dy / remaining) * stepCells;
+    return 'approaching';
+  }
+
+  mover.x = footX;
+  mover.y = footY;
+  const climb = beginClimb(world, profile, mover.x, mover.y, target.x, target.y, seed);
+  if (climb === null) return null;
+  mover.climb = climb;
+  return 'climbing';
+}
+
+/**
+ * Would stepping onto this cell be a CLIMB for this profile — rather than a
+ * walk, or something it may not do at all?
+ *
+ * Asked through `beginClimb` with a throwaway seed, so the test and the act can
+ * never disagree about what a climb is.
+ */
+export function isClimbStep(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): boolean {
+  return beginClimb(world, profile, fromX, fromY, toX, toY, 0) !== null;
+}
+
+/** Cells are indexed at their corner; a mover stands in the middle of one. */
+export const CELL_CENTRE_OFFSET = 0.5;
+
+/** The mover fields climbing reads and writes — `Mover` (steering.ts) plus the wall. */
+export interface ClimbingMover {
+  x: number;
+  y: number;
+  heading: number;
+  climb: ClimbState | null;
+}
+
+/**
+ * The seed a climb's fall is rolled off, from the mover and the wall.
+ *
+ * ONE RULE FOR EVERY CLIMBER rather than one per plugin, because the property
+ * it has to have is subtle enough to be worth writing down once: STABLE for a
+ * given mover on a given face (so a climb cannot be re-rolled by re-entering
+ * the branch that starts it) and DIFFERENT for the next one (so a mover that
+ * meets the same wall twice is not fated to the same outcome). `discriminator`
+ * is whatever the caller has that moves on between climbs — a mover id, a route
+ * index — and mixing it in is what buys the second half.
+ *
+ * NO CLOCK TERM anywhere, so a replayed server kills the same mover on the same
+ * face: the determinism this file's header promises.
+ */
+export function climbSeed(
+  discriminator: number,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): number {
+  let seed = discriminator | 0;
+  seed = hashToIndex(seed ^ (fromX | 0), SEED_MIX_RANGE);
+  seed = hashToIndex(seed ^ (fromY | 0), SEED_MIX_RANGE);
+  seed = hashToIndex(seed ^ (toX | 0), SEED_MIX_RANGE);
+  return hashToIndex(seed ^ (toY | 0), SEED_MIX_RANGE);
+}
+
+/** Modulus the seed fold runs over: the whole non-negative int32 range, so the
+ *  fold keeps the mixer's spread instead of throwing most of it away. */
+const SEED_MIX_RANGE = 0x7fffffff;

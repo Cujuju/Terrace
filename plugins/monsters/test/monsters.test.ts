@@ -1406,7 +1406,7 @@ describe('body-aware habitat poses', () => {
   }
 
   function krakenAt(x: number, y: number, heading: number): Monster {
-    return { id: 1, kind: 'kraken', x, y, heading, idle: false };
+    return { id: 1, kind: 'kraken', x, y, heading, idle: false, climb: null };
   }
 
   it('never lets a wide monster lay its body over the shore', () => {

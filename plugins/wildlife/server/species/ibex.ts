@@ -41,6 +41,26 @@ import {
 export const IBEX_MAX_GRADIENT_PER_CELL = 2 * LAND_WALKER_MAX_GRADIENT_PER_CELL;
 
 /**
+ * The chance an ibex's climb of a lethal wall kills it — owner, 2026-09-05,
+ * against the peeps' 15 % and the yeti's 5 %: "I want Ibex to have a 1%
+ * chance". A fifteenth of a person's risk, which is the whole animal in one
+ * number: this is what it is FOR.
+ */
+export const IBEX_CLIMB_FALL_CHANCE = 0.01;
+
+/**
+ * How tall a wall has to be to kill it, in height units: ITS OWN HEIGHT, the
+ * rule shared's ClimbRule.lethalRiseHeightUnits states.
+ *
+ * 33 = IBEX_ENVELOPE.height (../../client/species/ibex.ts: 1.42 x IBEX_SCALE
+ * 0.36 = 0.511 world units, to the horn tips) over HEIGHT_WORLD_SCALE (1/64),
+ * rounded to a whole height unit. Restated rather than imported because a
+ * server sim must not pull a client model file into its bundle — the same rule
+ * every other cross-half number in this plugin follows.
+ */
+export const IBEX_LETHAL_RISE_HEIGHT_UNITS = 33;
+
+/**
  * How many of the eight compass directions from a candidate spawn cell must be
  * steps a PLAIN land walker could not take but an ibex can — the "broken
  * ground" rule (SpawnGround, ./profile.ts).
@@ -114,6 +134,15 @@ export const IBEX_PROFILE: SpeciesProfile = {
   sizeDraw: 'per-group',
   schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
   maxGradientPerCell: IBEX_MAX_GRADIENT_PER_CELL,
+  // AND IT CLIMBS WHAT EVEN THAT REFUSES (owner, 2026-09-05, naming the ibex
+  // with the peeps and the yeti). The doubled gradient above already lets it
+  // cross any legal SLOPE; what it could not cross is a terrace RISER, which is
+  // BAND_HEIGHT — four times this limit — and is most of what a mountain is
+  // made of. A goat that cannot get onto a ledge is not a mountain animal.
+  climb: {
+    fallChance: IBEX_CLIMB_FALL_CHANCE,
+    lethalRiseHeightUnits: IBEX_LETHAL_RISE_HEIGHT_UNITS,
+  },
   turnRadiusBodyLengths: TURN_RADIUS_BODY_LENGTHS,
   idle: IBEX_IDLE_BOUTS,
   // A pair on a crag is not a herd; there is nothing for an alarm to travel

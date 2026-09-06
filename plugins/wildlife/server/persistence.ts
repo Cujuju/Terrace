@@ -150,6 +150,9 @@ export function loadPopulation(data: unknown): void {
         restored.push({
           id: id as number,
           species: entry.species,
+          // Not persisted (WildlifeEntity.climb): a restored creature starts at
+          // the foot of whatever wall it was on.
+          climb: null,
           schoolId,
           size: sizeOf(entry.size),
           x: entry.x as number,

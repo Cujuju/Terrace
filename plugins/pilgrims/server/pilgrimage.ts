@@ -17,9 +17,12 @@
 // tier prosperity, never CA survival).
 
 import {
+  CELL_CENTRE_OFFSET,
   advanceClimb,
-  beginClimb,
+  approachAndClimb as sharedApproachAndClimb,
+  climbSeed,
   climbingWalkerProfile,
+  isClimbStep,
   ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
   cellsAcross,
@@ -38,7 +41,6 @@ import {
 } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
-  hashCell,
   settlementRace,
   type PilgrimEntityState,
   type SettlerRace,
@@ -356,6 +358,22 @@ export class SettlednessTracker {
 export const PILGRIM_CLIMB_FALL_CHANCE = 0.15;
 
 /**
+ * How tall a wall has to be to kill a peep that falls off it, in height units —
+ * A PEEP'S OWN HEIGHT (shared's ClimbRule.lethalRiseHeightUnits, which is where
+ * the rule and the measurement behind it live).
+ *
+ * 34 = 0.527 world units (PILGRIM_HEIGHT, plugins/pilgrims/client/models.ts —
+ * an authored 0.62 drawn at PILGRIM_MODEL_SCALE 0.85) over HEIGHT_WORLD_SCALE
+ * (MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT = 1/64), rounded to a whole height unit
+ * because heights are integers. RESTATED, not imported, for the reason
+ * VIEWPOINT_RING_CELLS gives: a server sim must not reach into a client model
+ * file, and the failure mode of drift is a wall a hair taller or shorter than a
+ * peep being lethal, never a crash. Just over two bands, so the wall that can
+ * kill is one a player sees as a two-storey face.
+ */
+export const PILGRIM_LETHAL_RISE_HEIGHT_UNITS = 34;
+
+/**
  * A peep may go anywhere it can reach, climbing what it cannot walk (owner,
  * 2026-09-05: "peeps need to be able to climb anything").
  *
@@ -368,7 +386,10 @@ export const PILGRIM_CLIMB_FALL_CHANCE = 0.15;
  * gradient limit fixes it: one band is eight times that limit, so a terraced
  * world has no walkable band changes at all.
  */
-export const PILGRIM_WALKER_PROFILE: TraversalProfile = climbingWalkerProfile(PILGRIM_CLIMB_FALL_CHANCE);
+export const PILGRIM_WALKER_PROFILE: TraversalProfile = climbingWalkerProfile(
+  PILGRIM_CLIMB_FALL_CHANCE,
+  PILGRIM_LETHAL_RISE_HEIGHT_UNITS,
+);
 
 /**
  * Land a walker will stand on: a thin adapter over shared's bounds+ground
@@ -702,7 +723,7 @@ export function advanceWalker(
   // The route is the authority here: A* prices a climbed edge by this walker's
   // own fall chance (pathing.ts), so a route that contains one is a route where
   // every way round cost more than the risk.
-  const climbing = approachAndClimb(world, walker, dt);
+  const climbing = climbTowardWall(world, walker, routeClimbTargetOf(world, walker), dt);
   if (climbing !== null) return climbing;
 
   const wasX = walker.x;
@@ -722,8 +743,7 @@ export function advanceWalker(
   // all is what "wedged" means here — every candidate heading refused, the
   // ladder's own one-cell pocket — and a wall is the commonest reason for it.
   if (walker.x !== wasX || walker.y !== wasY) return 'held';
-  const wedged = startClimb(world, walker, goalwardNeighbourOf(walker));
-  return wedged ?? 'held';
+  return climbTowardWall(world, walker, goalwardNeighbourOf(walker), dt) ?? 'held';
 }
 
 /**
@@ -737,64 +757,26 @@ export function advanceWalker(
  * nothing for a sweep to discover, and asking one would only reintroduce the
  * sideways slide this branch exists to prevent.
  */
-function approachAndClimb(world: PilgrimWorld, walker: RoutedWalker, dt: number): WalkerAdvance | null {
-  const target = routeClimbTargetOf(world, walker);
+function climbTowardWall(
+  world: PilgrimWorld,
+  walker: RoutedWalker,
+  target: RouteCell | null,
+  dt: number,
+): WalkerAdvance | null {
   if (target === null) return null;
-
-  const cellX = Math.floor(walker.x);
-  const cellY = Math.floor(walker.y);
-  // The middle of the shared edge, pulled back into the walker's own cell by
-  // its own half-width so the body stops AT the wall rather than inside it.
-  const normalX = target.x - cellX;
-  const normalY = target.y - cellY;
-  const footX = cellX + CELL_CENTRE_OFFSET + normalX * (CELL_CENTRE_OFFSET - WALKER_PERSONAL_SPACE_CELLS);
-  const footY = cellY + CELL_CENTRE_OFFSET + normalY * (CELL_CENTRE_OFFSET - WALKER_PERSONAL_SPACE_CELLS);
-
-  const dx = footX - walker.x;
-  const dy = footY - walker.y;
-  const remaining = Math.sqrt(dx * dx + dy * dy);
-  walker.heading = Math.atan2(normalY, normalX);
-
-  const stepCells = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
-  if (remaining > stepCells) {
-    walker.x += (dx / remaining) * stepCells;
-    walker.y += (dy / remaining) * stepCells;
-    // Still walking to the wall — progress, and the stuck timer must agree.
-    return 'progressed';
-  }
-  walker.x = footX;
-  walker.y = footY;
-  return startClimb(world, walker, target) ?? 'held';
-}
-
-/**
- * Puts `walker` on the wall at `target`, or null if that step is not a climb
- * (which is what `beginClimb` answers).
- */
-function startClimb(world: PilgrimWorld, walker: RoutedWalker, target: RouteCell | null): WalkerAdvance | null {
-  if (target === null) return null;
-  const climb = beginClimb(
+  const outcome = sharedApproachAndClimb(
     world,
     PILGRIM_WALKER_PROFILE,
-    walker.x,
-    walker.y,
-    target.x,
-    target.y,
+    walker,
+    target,
+    PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt,
+    WALKER_PERSONAL_SPACE_CELLS,
     climbSeedFor(walker, target),
   );
-  if (climb === null) return null;
-  walker.climb = climb;
-  // Facing the wall for the whole climb: the model is drawn at this heading,
-  // and a peep climbing with its back to the cliff reads as a bug.
-  walker.heading = Math.atan2(
-    target.y + CELL_CENTRE_OFFSET - walker.y,
-    target.x + CELL_CENTRE_OFFSET - walker.x,
-  );
-  return 'progressed';
+  // Walking to the foot of a wall is getting somewhere, and so is being on one:
+  // the stuck timer must not fire on either.
+  return outcome === null ? null : 'progressed';
 }
-
-/** Cells are indexed at their corner; a walker stands in the middle of one. */
-const CELL_CENTRE_OFFSET = 0.5;
 
 /**
  * The cell a blocked walker would climb onto: the next cell of its route, or —
@@ -827,20 +809,13 @@ function routeClimbTargetOf(world: PilgrimWorld, walker: RoutedWalker): RouteCel
   // certified both flanks — so whichever flank is the wall is the face to take.
   if (dx !== 0 && dy !== 0) {
     const alongX = { x: cellX + dx, y: cellY };
-    if (isClimbStep(world, walker, alongX)) return alongX;
+    if (isClimbStep(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, alongX.x, alongX.y)) return alongX;
     const alongY = { x: cellX, y: cellY + dy };
-    return isClimbStep(world, walker, alongY) ? alongY : null;
+    return isClimbStep(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, alongY.x, alongY.y)
+      ? alongY
+      : null;
   }
-  return isClimbStep(world, walker, next) ? next : null;
-}
-
-/** Would stepping onto this cell be a CLIMB for this walker (rather than a walk,
- *  or nothing it may do at all)? Asked through `beginClimb`, which owns the
- *  answer, so the test and the act can never disagree about what a climb is. */
-function isClimbStep(world: PilgrimWorld, walker: RoutedWalker, cell: RouteCell): boolean {
-  return (
-    beginClimb(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, cell.x, cell.y, 0) !== null
-  );
+  return isClimbStep(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, next.x, next.y) ? next : null;
 }
 
 /** The neighbouring cell most directly toward the goal — the routeless walker's
@@ -858,21 +833,17 @@ function goalwardNeighbourOf(walker: RoutedWalker): RouteCell | null {
 }
 
 /**
- * The seed the fall is rolled off (shared's `beginClimb`).
- *
- * STABLE FOR ONE CLIMB, DIFFERENT FOR THE NEXT, which is the whole contract:
- * the wall's cell decides most of it, so re-rolling the same wall in the same
- * tick is impossible; the route index moves it on for a walker that climbs the
- * same cell twice on one journey; and the walker's own cell separates two peeps
- * queued at the foot of the same wall. No clock term, so a replayed server
- * kills the same peep — this plugin's simulation is deterministic end to end
- * and a climb does not get to be the exception.
+ * The seed the fall is rolled off — shared's rule (`climbSeed`), discriminated
+ * by the ROUTE INDEX: a walker has no id on this slice, and the index is what
+ * moves on between one climb and the next on the same journey.
  */
 function climbSeedFor(walker: RoutedWalker, target: RouteCell): number {
-  return (
-    hashCell(target.x, target.y) ^
-    hashCell(Math.floor(walker.x), Math.floor(walker.y)) ^
-    (walker.routeIndex | 0)
+  return climbSeed(
+    walker.routeIndex,
+    Math.floor(walker.x),
+    Math.floor(walker.y),
+    target.x,
+    target.y,
   );
 }
 

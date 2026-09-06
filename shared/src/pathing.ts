@@ -428,7 +428,13 @@ function edgeCost(
  * more than one, which is the animal each of them is.
  */
 function climbEdgeCost(rule: ClimbRule, heightDifference: number): number {
-  return heightDifference * CLIMB_COST_PER_HEIGHT_UNIT + rule.fallChance * CERTAIN_DEATH_COST;
+  // The risk term rides on the same threshold the fall itself does
+  // (ClimbRule.lethalRiseHeightUnits): a scramble that cannot kill must not be
+  // priced as if it could, or a route would walk twenty cells out of its way to
+  // avoid a knee-high ledge.
+  const risk =
+    heightDifference >= rule.lethalRiseHeightUnits ? rule.fallChance * CERTAIN_DEATH_COST : 0;
+  return heightDifference * CLIMB_COST_PER_HEIGHT_UNIT + risk;
 }
 
 function reconstructPath(

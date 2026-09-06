@@ -478,6 +478,8 @@ export function birdStates(): WildlifeEntityState[] {
         x: roundBroadcastPosition(bird.x),
         y: roundBroadcastPosition(bird.y),
         heading: roundBroadcastPosition(bird.heading),
+        // A bird is never on a wall (WildlifeEntityState.climbHeight).
+        climbHeight: null,
         // Birds do not vary in size, so this is the default class every
         // non-fish species carries — see WILDLIFE_SIZE_MODEL_SCALE.
         size: DEFAULT_SIZE_CLASS_INDEX,

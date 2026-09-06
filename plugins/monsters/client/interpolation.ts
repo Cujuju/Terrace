@@ -31,6 +31,14 @@ export interface InterpolatedMonster {
   readonly x: number;
   readonly y: number;
   readonly heading: number;
+  /**
+   * Stored height while this monster is off the ground — climbing a wall or
+   * falling off one (protocol.ts's MonsterState.climbHeight). Null on the
+   * ground. Interpolated like x and y: it is a position the server sends at
+   * 1 Hz and the client draws at 60, and left un-interpolated a climb would
+   * rise in one visible jump a second.
+   */
+  readonly climbHeight: number | null;
 }
 
 /**
@@ -53,6 +61,7 @@ interface Pose extends PoseSegment {
   x: number;
   y: number;
   heading: number;
+  climbHeight: number | null;
 }
 
 /**
@@ -67,6 +76,7 @@ interface PoseRecord extends InterpolatedMonster {
   heading: number;
   kind: InterpolatedMonster['kind'];
   variant?: YetiVariant;
+  climbHeight: number | null;
 }
 
 /**
@@ -81,13 +91,14 @@ export class MonsterInterpolator extends PoseInterpolator<MonsterState, Pose, Po
       minWindowSeconds: MIN_INTERPOLATION_SECONDS,
       maxWindowSeconds: MAX_INTERPOLATION_SECONDS,
       defaultWindowSeconds: DEFAULT_INTERPOLATION_SECONDS,
-      createSegment: () => ({ x: 0, y: 0, heading: 0, generation: 0 }),
+      createSegment: () => ({ x: 0, y: 0, heading: 0, climbHeight: null, generation: 0 }),
       freeze: (target, source) => {
         target.x = source.x;
         target.y = source.y;
         target.heading = source.heading;
+        target.climbHeight = source.climbHeight ?? null;
       },
-      createRecord: (monster) => ({ ...monster }),
+      createRecord: (monster) => ({ ...monster, climbHeight: monster.climbHeight ?? null }),
       updateRecord: (record, monster, segment, t) => {
         record.kind = monster.kind;
         // DELETED rather than set to undefined when the payload has none, so a
@@ -95,14 +106,24 @@ export class MonsterInterpolator extends PoseInterpolator<MonsterState, Pose, Po
         // read as a yeti that lost its body.
         if (monster.variant === undefined) delete record.variant;
         else record.variant = monster.variant;
+        const climbHeight = monster.climbHeight ?? null;
         if (segment === undefined) {
           record.x = monster.x;
           record.y = monster.y;
           record.heading = monster.heading;
+          record.climbHeight = climbHeight;
           return;
         }
         record.x = lerp(segment.x, monster.x, t);
         record.y = lerp(segment.y, monster.y, t);
+        // A climb that has just started or just ended has a height on one side
+        // of the window only, and there is nothing to interpolate between —
+        // the other side is "on the ground", whose height this field does not
+        // carry. The newest truth wins and the ground follower eases the join.
+        record.climbHeight =
+          segment.climbHeight === null || climbHeight === null
+            ? climbHeight
+            : lerp(segment.climbHeight, climbHeight, t);
         // The short way round, so a swimmer turning through ±π spins 10° rather
         // than 350°.
         record.heading = lerpAngle(segment.heading, monster.heading, t);

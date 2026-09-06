@@ -22,9 +22,13 @@
 import {
   AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
   AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
+  CELL_CENTRE_OFFSET,
   CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR as SHARED_CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR,
   WORLD_UNIT_CELLS,
+  advanceClimb,
+  approachAndClimb,
   cellsAcross,
+  climbSeed,
   limitTurn as sharedLimitTurn,
   normalizeAngle as sharedNormalizeAngle,
   steerAvoiding,
@@ -35,7 +39,7 @@ import {
 } from '@terrace/shared';
 import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
-import { type WildlifeEntity, livingEntities } from './population.ts';
+import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
 import { randomSigned, rollEvent } from './rng.ts';
 import {
   FLEE_SPEED_MULTIPLIER,
@@ -731,6 +735,14 @@ export function advanceIdleState(entity: WildlifeEntity, dt: number): void {
  * creature (see `creatureOccupants` and shared's `withoutSelf`). Omitting it
  * disables separation for this creature only.
  */
+/**
+ * What one tick of `advanceEntity` did to the creature. 'alive' covers every
+ * ordinary outcome — it moved, it turned, it held, it is on a wall — because
+ * the only thing a caller has to act on is the other one: 'fell' is terminal
+ * and the caller despawns it.
+ */
+export type EntityAdvance = 'alive' | 'fell';
+
 export function advanceEntity(
   world: HabitatWorld,
   entity: WildlifeEntity,
@@ -738,19 +750,34 @@ export function advanceEntity(
   school?: SchoolSummary,
   occupants: readonly Occupant[] = [],
   pursuitTarget?: PursuitTarget,
-): void {
+): EntityAdvance {
   if (entity.fleeSecondsRemaining > 0) {
     entity.fleeSecondsRemaining = Math.max(0, entity.fleeSecondsRemaining - dt);
   }
 
   const profile = profileOf(entity.species);
+
+  // ON A WALL: one vertical motion and nothing else — no idle bout, no steer,
+  // no separation, no chase. pilgrims' `advanceWalker` states the reasoning;
+  // this is the same shared state machine on a smaller animal.
+  if (entity.climb !== null) {
+    const outcome = advanceClimb(entity.climb, dt);
+    if (outcome === 'fallen') return 'fell';
+    if (outcome === 'arrived') {
+      entity.x = entity.climb.toX + CELL_CENTRE_OFFSET;
+      entity.y = entity.climb.toY + CELL_CENTRE_OFFSET;
+      entity.climb = null;
+    }
+    return 'alive';
+  }
+
   const fleeing = entity.fleeSecondsRemaining > 0;
 
   // THE IDLE BOUT, resolved before anything else moves — so an animal that just
   // resumed walks this very tick rather than standing through the tick it woke
   // in. See `advanceIdleState` for the state machine and for why fleeing wins.
   advanceIdleState(entity, dt);
-  if (entity.idle) return;
+  if (entity.idle) return 'alive';
 
   // A CHASE IS A BEARING, not a wander. `pursuitTarget` is only ever set for a
   // creature `resolvePursuits` has locked onto prey this tick.
@@ -782,7 +809,7 @@ export function advanceEntity(
     // Nowhere legal even one tick's travel away, in any direction: a one-cell
     // pocket. Hold position and keep facing as-is — inventing a heading with
     // no matching movement is the twitch this replaces.
-    return;
+    return 'alive';
   }
 
   // THE TURNING CIRCLE, and it is the whole answer to "no spinning in place"
@@ -825,7 +852,13 @@ export function advanceEntity(
     // lands somewhere it isn't: a corner clipped between two samples, or a
     // `permits` rule that only the end of the probe was tested against.
     const retry = steerThisTick(world, entity, entity.heading, lookahead, stepCells, occupants);
-    if (retry === null) return; // hold position, keep facing as-is.
+    // Nothing walkable one tick away in any direction. For a CLIMBER that is
+    // usually a ring of risers, which is what climbing is for — it takes the
+    // wall it is already facing (owner, 2026-09-05: the ibex climbs).
+    if (retry === null) {
+      climbOut(world, entity, stepCells);
+      return 'alive';
+    }
 
     steered = turnToward(entity.heading, retry, turnRate, dt);
     nextX = entity.x + Math.cos(steered) * stepCells;
@@ -854,7 +887,7 @@ export function advanceEntity(
       // A grazer that stops at a riser and turns to follow it is also the
       // behaviour the animal should have had all along.
       entity.heading = steered;
-      return; // turned in place; no step this tick.
+      return 'alive'; // turned in place; no step this tick.
     }
   }
 
@@ -864,6 +897,38 @@ export function advanceEntity(
   entity.heading = steered;
   entity.x = nextX;
   entity.y = nextY;
+  return 'alive';
+}
+
+/**
+ * Puts a boxed-in climber on the wall it is facing, if that is what is in the
+ * way. False for every species that cannot climb, and for one whose way out is
+ * blocked by something other than a rise — those hold, exactly as before.
+ *
+ * THE TARGET MUST BE VALID HABITAT, not merely legal ground: `despawnInvalid
+ * Habitat` sweeps every creature whose cell is not habitat for its species, so
+ * an ibex that hauled itself onto a ledge outside its own range would be
+ * removed on the very next sweep — a climb straight into a despawn.
+ */
+function climbOut(world: HabitatWorld, entity: WildlifeEntity, stepCells: number): boolean {
+  const target = {
+    x: Math.floor(entity.x) + Math.round(Math.cos(entity.heading)),
+    y: Math.floor(entity.y) + Math.round(Math.sin(entity.heading)),
+  };
+  if (!isValidCellFor(world, entity.species, target.x + CELL_CENTRE_OFFSET, target.y + CELL_CENTRE_OFFSET)) {
+    return false;
+  }
+  return (
+    approachAndClimb(
+      world,
+      walkerProfileOf(entity.species),
+      entity,
+      target,
+      stepCells,
+      personalSpaceCellsOf(entity),
+      climbSeed(entity.id, Math.floor(entity.x), Math.floor(entity.y), target.x, target.y),
+    ) !== null
+  );
 }
 
 /**
@@ -882,6 +947,9 @@ export function advanceEntity(
  */
 export function advanceMovement(world: HabitatWorld, dt: number): void {
   const population = livingEntities();
+  // Collected, not spliced mid-loop: `population` is the live array and every
+  // index in this pass (schools, occupants, pursuits) is taken against it.
+  const fallen: number[] = [];
   const schools = summarizeSchools(population);
   const occupants = creatureOccupants(population);
   // The third start-of-tick snapshot, and built for the same reason as the two
@@ -892,7 +960,7 @@ export function advanceMovement(world: HabitatWorld, dt: number): void {
   for (let index = 0; index < population.length; index++) {
     const entity = population[index];
     const pursuit = pursuits.get(entity.id);
-    advanceEntity(
+    const advance = advanceEntity(
       world,
       entity,
       dt,
@@ -900,6 +968,16 @@ export function advanceMovement(world: HabitatWorld, dt: number): void {
       huntingOccupants(population, occupants, index, pursuit),
       pursuit,
     );
+    // FELL OFF A WALL. Removed with a credit, exactly like a creature whose
+    // habitat went away (population.ts's `despawnWithCredit`): the species is
+    // owed one back, somewhere else, after the usual delay — a fatal slip
+    // should not thin a mountain of its ibex.
+    if (advance === 'fell') fallen.push(entity.id);
+  }
+
+  // Highest index first, so each splice leaves the lower ones where they were.
+  for (let i = population.length - 1; i >= 0; i--) {
+    if (fallen.includes(population[i]!.id)) despawnWithCredit(i);
   }
 
   // ALARM FIRST, THEN THE CATCH: the deer a wolf reaches this tick is startled
