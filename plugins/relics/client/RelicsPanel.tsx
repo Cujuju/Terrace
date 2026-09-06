@@ -36,10 +36,12 @@ import {
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
   CAST_DENIED_UNSUITABLE,
+  CAST_DENIED_WARDED,
 } from '../protocol.ts';
 import { cooldownLabelSeconds } from './gems.ts';
 import {
   AzureHeartIcon,
+  BedrockWardIcon,
   BulwarkIcon,
   GenesisIcon,
   LandslideIcon,
@@ -56,6 +58,7 @@ import { armSkill, armedSkill, castDenial, relics, skills } from './state.ts';
  */
 const SKILL_ICON: Readonly<Record<SkillId, Component>> = {
   'titans-hand': TitansHandIcon,
+  'bedrock-ward': BedrockWardIcon,
   quake: QuakeIcon,
   genesis: GenesisIcon,
   bulwark: BulwarkIcon,
@@ -180,6 +183,7 @@ const DENIAL_TEXT: Record<string, string> = {
   [CAST_DENIED_COOLDOWN]: 'That skill is still recharging.',
   [CAST_DENIED_TARGET]: 'That target is outside your territory.',
   [CAST_DENIED_UNSUITABLE]: 'That ground has no cliff face to bring down.',
+  [CAST_DENIED_WARDED]: 'Another hand shaped that ground a moment ago.',
 };
 
 /** A skill is castable if the roster says it is active. */

@@ -13,6 +13,10 @@
 //
 //   passive (Titan's Hand)       — rewrites the holder's sculpt intents through
 //                                  the interceptor chain's `modify` verdict.
+//   passive (Bedrock Ward)       — the DENY side of the same chain, against
+//                                  OTHER players (ward.ts). The first skill
+//                                  that is about the people in the world
+//                                  rather than about the ground.
 //   active  (Quake, Genesis,     — a HUD button, then a targeting click, then
 //            Bulwark, Landslide)   composed WorldApi.sculpt calls. Landslide
 //                                  READS the ground first (terraform.ts,
@@ -73,6 +77,7 @@ import {
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
   CAST_DENIED_UNSUITABLE,
+  CAST_DENIED_WARDED,
   CAST_MESSAGE,
   COLLECT_MESSAGE,
   RELICS_MESSAGE,
@@ -96,6 +101,14 @@ import {
   type TerrainClass,
 } from './spawn.ts';
 import { TERRAFORM_BY_SKILL, applyTerraform } from './terraform.ts';
+import {
+  claimWardNotice,
+  dropWardsOf,
+  resetWards,
+  stampWard,
+  sweepWards,
+  wardHolderAgainst,
+} from './ward.ts';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Tuning constants
@@ -277,6 +290,32 @@ function sendSkills(world: WorldApi, sessionId: string): void {
 
 function denyCast(world: WorldApi, sessionId: string, skill: string, reason: string): void {
   world.sendTo(sessionId, CAST_DENIED_MESSAGE, { skill, reason });
+}
+
+/**
+ * Whether a brush at (x, y) is refused by someone else's Bedrock Ward, telling
+ * the actor so at most once a second.
+ *
+ * THE ONE PREDICATE BOTH WRITE PATHS ASK. A sculpt intent runs the interceptor
+ * chain and a relic cast does not, so the rule cannot live in `onIntent` — it
+ * would be enforced against hands and ignored by relics, which is the exact
+ * hole a ward exists to close.
+ */
+function wardRefuses(
+  world: WorldApi,
+  sessionId: string,
+  x: number,
+  y: number,
+  radius: number,
+): boolean {
+  if (wardHolderAgainst(world.worldSize, sessionId, x, y, radius) === null) return false;
+  // The notice rides this plugin's own `denied` channel because core's nack for
+  // a plugin-denied intent carries only the sequence number — a plugin that
+  // wants the player told why has to say it itself (intent/pipeline.ts).
+  if (claimWardNotice(sessionId)) {
+    denyCast(world, sessionId, 'bedrock-ward', CAST_DENIED_WARDED);
+  }
+  return true;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -470,7 +509,7 @@ function handleCollect(world: WorldApi, player: Player, payload: unknown): void 
 /**
  * CAST — CRITICAL VALIDATION PATH.
  *
- * Five gates, in this order, each one refusing with its own reason so the HUD
+ * Six gates, in this order, each one refusing with its own reason so the HUD
  * can say something true:
  *
  *   1. STRUCTURE  — parseCastPayload: a roster skill id, and integer x/y inside
@@ -486,6 +525,9 @@ function handleCollect(world: WorldApi, player: Player, payload: unknown): void 
  *   5. SHAPE      — the cast must plan at least one step. Only a skill that
  *                   reads the ground can fail this (Landslide with no cliff
  *                   under the cursor); a fixed shape always plans.
+ *   6. WARD       — no step of the cast may land on ground another player's
+ *                   Bedrock Ward holds. This gate is HERE and not in the
+ *                   interceptor chain because a cast never runs that chain.
  *
  * Only then does the terraform run, and only then does the cooldown start — a
  * refused cast must never cost the player anything.
@@ -525,6 +567,13 @@ function handleCast(world: WorldApi, player: Player, payload: unknown): void {
   if (steps.length === 0) {
     denyCast(world, player.id, skill, CAST_DENIED_UNSUITABLE);
     return;
+  }
+
+  // GATE 6 — WARD. Checked over every step's own footprint, not just the
+  // target: a Bulwark's ring touches ground its centre never does, so a
+  // centre-only check would let a cast wall in land another player holds.
+  for (const step of steps) {
+    if (wardRefuses(world, player.id, x + step.dx, y + step.dy, step.radius)) return;
   }
 
   applyTerraform(world, x, y, steps);
@@ -690,10 +739,15 @@ export const plugin: TerracePlugin = {
     // also clears its own perk on leave — belt and suspenders across a plugin
     // boundary, where the two halves can be at different versions.
     revokeManaPerk(player.id);
+    // A ward outliving its holder's connection would refuse everyone else on
+    // behalf of nobody, and could be inherited by whoever the transport hands
+    // that session id to next — the same reason skills do not survive either.
+    dropWardsOf(player.id);
   },
 
   onTick(world: WorldApi, dt: number): void {
     advanceCooldowns(world, dt);
+    sweepWards(dt);
 
     // Respawn timers. Entries that come due are removed first, then handed to
     // the top-up, so a spawn that fails to find a cell simply leaves that skill
@@ -758,6 +812,14 @@ export const plugin: TerracePlugin = {
    * being available to plugins at all, and it is a fair one.
    */
   onIntent(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void {
+    // DENY BEFORE MODIFY. A refused stroke must not first be widened by
+    // Titan's Hand: the wider brush would be the one the ward is tested
+    // against on the next interceptor, and a rewrite that only ever precedes a
+    // refusal is work the chain then has to throw away.
+    if (wardRefuses(ctx.world, ctx.player.id, intent.x, intent.y, intent.radius)) {
+      return { kind: 'deny', reason: CAST_DENIED_WARDED };
+    }
+
     const held = skillsBySession.get(ctx.player.id);
     if (held === undefined || !held.has('titans-hand')) return;
 
@@ -768,6 +830,24 @@ export const plugin: TerracePlugin = {
     if (radius === intent.radius) return;
 
     return { kind: 'modify', intent: { ...intent, radius } };
+  },
+
+  /**
+   * EFFECT PHASE — where a Bedrock Ward is laid down.
+   *
+   * Here rather than in onIntent because this hook is the one that fires only
+   * for intents that were actually APPLIED: a stroke refused further down the
+   * chain (no mana, another player's ward) must not leave its sculptor holding
+   * ground they never moved.
+   *
+   * The intent handed over is the one core applied — Titan's Hand's widening
+   * included — so a holder of both skills wards exactly the footprint they
+   * actually shaped.
+   */
+  onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
+    const held = skillsBySession.get(ctx.player.id);
+    if (held === undefined || !held.has('bedrock-ward')) return;
+    stampWard(ctx.world.worldSize, ctx.player.id, intent.x, intent.y, intent.radius);
   },
 
   messages: {
@@ -805,5 +885,6 @@ export function resetRelicsState(): void {
   rng = createRelicRng(RELIC_RNG_DEFAULT_SEED);
   skillsBySession.clear();
   cooldownsBySession.clear();
+  resetWards();
   sinceKeepaliveS = 0;
 }
