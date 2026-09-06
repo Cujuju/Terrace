@@ -92,6 +92,29 @@ watches — restart it after any client edit or you bench the old bundle.
 
 **Done when:** a recorded before-number with a fleet count beside it. No edits.
 
+**DONE 2026-09-06** (#367 closed, full table in its comment thread). Stack 2598/
+5198 from this worktree — a peer owned 2599/5199. World: `VACUUM INTO` copy of
+`frostwick-hollows`, loaded as snapshot #1057, verified at 119 villages / 231
+boats / 118 structures. 1584x805.
+
+| | |
+| --- | --- |
+| baseline draw calls | **373** |
+| baseline GPU p50 | **5.544 ms** |
+| error bar (`noise.baselineGpuMsMeanStep`) | **0.135 ms** |
+| **boats** | **180 draw calls, 1.231 ms GPU, 1.30 ms frame** |
+| next largest (pilgrims) | 59.5 draw calls, 0.627 ms |
+| `overview`, live sim | 357 draws, 5.518 ms GPU p50, 182.7 fps |
+
+Boats are **48% of the frame's draw calls** — 180 at 3/hull is ~60 hulls in
+frame of 231 in the world. Boats cost more CPU (1.30 ms) than GPU (1.23 ms),
+the signature of submission cost, which is what D1 and D2 remove. Contrast
+fire: 2.04 ms GPU from 5 draws — fill, which instancing cannot touch.
+
+Caveat carried forward: 1600x900 is not the owner's fullscreen-1440p target
+(2.6x the pixels). Kept for comparability with the historical numbers; the
+budget question must be re-asked at fullscreen.
+
 ## D1 — the sail leaves the per-instance path
 
 The sail is the easier half and is a blocker for D2 regardless: it is never
