@@ -18,6 +18,18 @@ export const MANA_DENIED_MESSAGE = 'denied';
 export interface ManaBalanceMessage {
   /** Whole mana units the player holds right now. */
   readonly balance: number;
+  /**
+   * THE LAST OF THIS PLAYER'S INTENTS THE SERVER HAD ACCOUNTED FOR when it
+   * wrote `balance` (2026-09-05). The client debits each intent locally the
+   * moment it sends it, and a push that arrived while more were still in
+   * flight used to replace that estimate wholesale — erasing the debits for
+   * everything queued behind the intent this push answered. On a fast large-
+   * brush pull that let the gate approve strokes the server then denied, and
+   * the denial tore the predicted ground back off. With this the client keeps
+   * the debits for every seq above it. Absent when the server has not yet
+   * seen an intent from this player, which means: keep them all.
+   */
+  readonly asOfSeq?: number;
   /** Pool size, so the HUD can draw a fraction without knowing the config. */
   readonly capacity: number;
   /**
@@ -56,6 +68,14 @@ export interface ManaDeniedMessage {
    * so it names that edit's price rather than making the reader re-derive it.
    */
   readonly cost: number;
+  /** As ManaBalanceMessage.asOfSeq — the highest seq the server has seen from this player. */
+  readonly asOfSeq?: number;
+}
+
+/** `asOfSeq` as the wire may carry it: absent, or a safe integer. Null on anything else. */
+function parseAsOfSeq(value: unknown): { asOfSeq?: number } | null {
+  if (value === undefined) return {};
+  return Number.isSafeInteger(value) ? { asOfSeq: value as number } : null;
 }
 
 function finiteNonNegative(value: unknown): number | null {
@@ -91,7 +111,9 @@ export function parseManaBalancePayload(payload: unknown): ManaBalanceMessage | 
     capacity?: unknown;
     manaPerBandCell?: unknown;
     regenPerSecond?: unknown;
+    asOfSeq?: unknown;
   };
+  const asOf = parseAsOfSeq(p.asOfSeq);
   const balance = finiteNonNegative(p.balance);
   const capacity = finiteNonNegative(p.capacity);
   const manaPerBandCell = finiteNonNegative(p.manaPerBandCell);
@@ -103,19 +125,21 @@ export function parseManaBalancePayload(payload: unknown): ManaBalanceMessage | 
     manaPerBandCell === null ||
     manaPerBandCell === 0 ||
     regenPerSecond === null ||
-    regenPerSecond === 0
+    regenPerSecond === 0 ||
+    asOf === null
   ) {
     return null;
   }
-  return { balance, capacity, manaPerBandCell, regenPerSecond };
+  return { balance, capacity, manaPerBandCell, regenPerSecond, ...asOf };
 }
 
 /** Defensive parse; null means "ignore the message". */
 export function parseManaDeniedPayload(payload: unknown): ManaDeniedMessage | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { balance?: unknown; cost?: unknown };
+  const p = payload as { balance?: unknown; cost?: unknown; asOfSeq?: unknown };
   const balance = finiteNonNegative(p.balance);
   const cost = finiteNonNegative(p.cost);
-  if (balance === null || cost === null) return null;
-  return { balance, cost };
+  const asOf = parseAsOfSeq(p.asOfSeq);
+  if (balance === null || cost === null || asOf === null) return null;
+  return { balance, cost, ...asOf };
 }

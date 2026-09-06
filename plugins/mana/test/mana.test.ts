@@ -948,6 +948,33 @@ describe('protocol parse (client half)', () => {
   });
 });
 
+describe('balance pushes name the last intent seq they account for (2026-09-05)', () => {
+  it('stamps asOfSeq on the push that follows an applied intent, and on a denial', () => {
+    const harness = boot();
+    harness.sink.clear();
+    handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { ...POINT_INTENT, dir: helperDir(), seq: 7 },
+    );
+    const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
+    expect(pushes.length).toBeGreaterThan(0);
+    expect(pushes[pushes.length - 1].payload).toMatchObject({ asOfSeq: 7 });
+
+    // Drain the pool, then a denied intent's own seq is what its denial names.
+    while (sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied) {
+      /* draining */
+    }
+    harness.sink.clear();
+    handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { ...POINT_INTENT, dir: helperDir(), seq: 900 },
+    );
+    expect(harness.sink.ofType(`mana:${MANA_DENIED_MESSAGE}`)[0].payload).toMatchObject({ asOfSeq: 900 });
+  });
+});
+
 describe('client local intent gate', () => {
   it('allows with no pool state, debits the intent, denies when broke', async () => {
     const { gateLocalSculpt, setManaPool, manaPool, deniedCount } = await import(
@@ -983,6 +1010,40 @@ describe('client local intent gate', () => {
     // own (smaller) price.
     expect(gateLocalSculpt(POINT_INTENT)).toBe(true);
     expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+  });
+
+  it('a balance push keeps the debits for intents the server has not yet accounted for', async () => {
+    // THE CONTRACT (2026-09-05): the gate debits each intent as it goes out,
+    // and a push carrying `asOfSeq` releases only the debits at or below it.
+    // Without this, the first push of a burst erased the debits of everything
+    // still queued behind it, the gate approved strokes the server then denied,
+    // and the denial tore predicted ground off (large-brush flick).
+    const { gateLocalSculpt, setManaPool, manaPool, applyBalancePush, applyDenial, clearInFlightDebits } =
+      await import('../client/state.ts');
+    clearInFlightDebits();
+    const rate = {
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
+    };
+    setManaPool({ balance: 30, ...rate });
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 1 })).toBe(true);
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 2 })).toBe(true);
+
+    // The server has applied seq 1 only: its balance is 30 - cost, and seq 2's
+    // debit must survive the push.
+    applyBalancePush({ balance: 30 - POINT_COST, asOfSeq: 1, ...rate });
+    expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+
+    // Seq 2 accounted for: the push lands as sent.
+    applyBalancePush({ balance: 30 - 2 * POINT_COST, asOfSeq: 2, ...rate });
+    expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+
+    // A denial releases the denied intent's own debit and keeps the rest.
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 3 })).toBe(true);
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 4 })).toBe(true);
+    applyDenial({ balance: 30 - 2 * POINT_COST, cost: POINT_COST, asOfSeq: 3 });
+    expect(manaPool()?.balance).toBe(30 - 3 * POINT_COST);
   });
 
   it('debits a big brush far faster than a point brush', async () => {

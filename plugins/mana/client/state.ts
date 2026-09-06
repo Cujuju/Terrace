@@ -4,6 +4,7 @@
 import { createSignal } from 'solid-js';
 import { sculptOptionsOf, sculptProfileOf, sculptSweepSteps, type SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
+import type { ManaBalanceMessage, ManaDeniedMessage } from '../protocol.ts';
 // THE ACCEPTED COUPLING (documented, deliberate): a plugin's client half reaching
 // into the core client's HUD state. Both compile into the same browser bundle
 // from the same repo — this is not a network hop or a published API — and the
@@ -92,6 +93,85 @@ const setManaPool: typeof setPoolSignal = ((value) => {
   balanceAsOfMs = nowMs();
   return setPoolSignal(value as never);
 }) as typeof setPoolSignal;
+
+/**
+ * A LOCAL DEBIT THE SERVER HAS NOT YET ACCOUNTED FOR — one per intent the gate
+ * allowed, until a push arrives whose `asOfSeq` covers it.
+ *
+ * WHY (owner report, 2026-09-05: a large-brush flick "sculpting and then it
+ * disappears"). The gate debits each intent as it goes out, but every balance
+ * push used to REPLACE the estimate wholesale. The server pushes after each
+ * intent it applies, and that number knows nothing of the intents still queued
+ * behind it — so with ten expensive pulls in flight, the first push erased the
+ * debits for the other nine, the gate approved more against mana already spent,
+ * the server denied them, and the denial tore the predicted ground off. The
+ * push now lands as `balance − Σ(debits it cannot yet have seen)`.
+ */
+interface InFlightDebit {
+  /** The intent's seq, or null when it had none (then any push releases it). */
+  readonly seq: number | null;
+  readonly cost: number;
+  readonly debitedAtMs: number;
+}
+
+/**
+ * How long a debit may stay outstanding before it is presumed lost: the intent
+ * never reached a hook (rate-limited, malformed, socket dropped), so no push
+ * will ever name its seq. THE SAME DEADLINE THE PREDICTION STORE USES to tear
+ * an unanswered intent's ground back off (PREDICTION_TTL_MS,
+ * client/src/terrain/prediction.ts) — the two are one contract, "an intent
+ * unanswered this long is lost". Restated here rather than imported because
+ * that module is browser-only (Vite env reads) and this one runs under Node in
+ * the plugin's tests; keep the two equal.
+ */
+const IN_FLIGHT_DEBIT_TTL_MS = 1000;
+
+let inFlight: InFlightDebit[] = [];
+
+/**
+ * Drops every debit the server has accounted for or that has timed out, and
+ * returns the sum of what is still owed. `asOfSeq` undefined means the server
+ * has not yet seen an intent from us: everything with a seq is still in flight.
+ */
+function settleInFlight(asOfSeq: number | undefined, at: number): number {
+  inFlight = inFlight.filter(
+    (debit) =>
+      debit.seq !== null &&
+      at - debit.debitedAtMs < IN_FLIGHT_DEBIT_TTL_MS &&
+      (asOfSeq === undefined || debit.seq > asOfSeq),
+  );
+  let owed = 0;
+  for (const debit of inFlight) owed += debit.cost;
+  return owed;
+}
+
+/** An authoritative balance push, reconciled against the debits still in flight. */
+export function applyBalancePush(msg: ManaBalanceMessage): void {
+  const owed = settleInFlight(msg.asOfSeq, nowMs());
+  setManaPool({
+    balance: Math.max(0, msg.balance - owed),
+    capacity: msg.capacity,
+    manaPerBandCell: msg.manaPerBandCell,
+    regenPerSecond: msg.regenPerSecond,
+  });
+}
+
+/**
+ * A denial carries the authoritative balance too; reconciled the same way.
+ * The denied intent's own debit is released by it — its seq is at or below
+ * `asOfSeq` — which is right: the server charged nothing for it.
+ */
+export function applyDenial(denied: ManaDeniedMessage): void {
+  const owed = settleInFlight(denied.asOfSeq, nowMs());
+  setManaPool((pool) =>
+    pool === null ? null : { ...pool, balance: Math.max(0, denied.balance - owed) },
+  );
+}
+
+/** Test seam: forget every in-flight debit. */
+export function clearInFlightDebits(): void {
+  inFlight = [];
+}
 
 /**
  * Monotonic count of denials, not a boolean: the panel keys its flash off the
@@ -207,5 +287,6 @@ export function gateLocalSculpt(intent: SculptIntent): boolean {
   // absolute balance stamped at `at`, so the regen already counted into
   // `balance` is not counted a second time by the next call.
   setManaPool({ ...pool, balance: balance - cost });
+  inFlight.push({ seq: intent.seq ?? null, cost, debitedAtMs: at });
   return true;
 }
