@@ -801,7 +801,7 @@ export function Hud(props: {
              line about how many relics are in the world"): the header lines
              stand alone, with no chevron and no collapse — an empty body is
              not worth a control. */
-          <div class="hud-panel hud-anchor-top-left">
+          <div class="hud-panel hud-panel--compact hud-anchor-top-left">
             <div class="hud-row panel-header panel-header--static">
               <For each={cornerHeaders()}>
                 {(panel) => <Dynamic component={panel.headerSummary} />}
