@@ -11,12 +11,13 @@ source it was generated from.
     .void-bench/run.sh                                            # bench every variant
     node .void-bench/shot.mjs [names...]                          # look check: shots/<name>{,_hub}.png (SwiftShader)
 
-`gen.mjs` lifts COMMON_GLSL + WHEEL_FIELDS_GLSL + WHEEL_GLSL + BAKE_GLSL from
-the client source and emits `{ wheel, bake }` per variant (`bake` absent means
-the variant needs no texture). Every `${...}` in the GLSL is evaluated against
+`gen.mjs` lifts COMMON_GLSL + WHEEL_FIELDS_GLSL + WHEEL_GLSL + BAKE_GLSL +
+GAS_GLSL from the client source and emits `{ wheel, bake, gas }` per variant
+(`bake` absent means the variant needs no texture; `gas` absent means it marches
+the gas inline instead of in a half-res pass). Every `${...}` in the GLSL is evaluated against
 the TS file's own top-level constants, so a shader constant has one source.
 Each argument makes a variant by overriding GLSL `const` values by name, in the
-wheel and the bake alike; `cur` is always the unmodified source. `gl2.js` holds
+wheel, the bake and the gas pass alike; `cur` is always the unmodified source. `gl2.js` holds
 the WebGL2 setup both `bench.html` and `shot.mjs` use — a `file://` page cannot
 load a sibling script, so both inline it.
 
@@ -24,6 +25,14 @@ For variants with a bake, the harness renders the bake shader once into the two
 log-polar textures (RGBA16F for colour+pattern, R16F for level, mipmapped, u
 repeating and v clamped — the app's setup) and reports that one-off cost apart
 from the per-frame time.
+
+For variants with a gas pass (#341), each frame is TWO draws: the gas shader into
+an RGBA16F target at `ceil(canvas / GAS_RES_DIVISOR)` — bilinear, clamped, no
+mips, the app's target — and then the wheel to the canvas with that texture bound
+to `u_gasHalf`. The GPU timer brackets the pair, so a reported ms/frame is the
+whole two-pass cost. `GAS_RES_DIVISOR` is a GLSL const purely so the harness can
+lift it: `div1=GAS_RES_DIVISOR:1` benches the two-pass path at full resolution,
+which isolates the pass's own overhead from the resolution saving.
 
 ## Frozen variants
 
@@ -33,6 +42,8 @@ be timed against what it replaced on the same harness.
 - `rev10` — the pre-3-D wheel. Predates DISK_SCALE, so it is posed at the
   reference's own eye distance, 2.6.
 - `rev18` — the wheel as it stood before the log-polar bake (#340).
+- `rev19` — the wheel as it stood after the bake and before the half-res gas
+  pass (#341): one program, the march inline at full resolution.
 
 ## Shot poses
 
@@ -69,3 +80,20 @@ within a few percent of the WebGL1 one on the same shader):
 
 The bake saves 0.59 ms/frame (19%). Resolution does not move the frame time —
 it is a VRAM and a sharpness choice, not a speed one.
+
+WebGL2 GPU timer, 2026-09-05, ONE run (absolute numbers drift with the GPU's
+clock state between runs — the table above ran cooler; only same-run differences
+mean anything). This is the phase 2 before/after, #341:
+
+| variant | ms/frame | note |
+| --- | --- | --- |
+| rev10 | 1.05 | pre-3-D reference |
+| rev18 | 2.84 | before #340 |
+| rev19 | 2.22 | after #340, before #341 — bake 1.8 ms once |
+| cur | 1.71 | #341, gas at 1280x720 — bake 2.6 ms once |
+| div1 | 2.50 | the same two-pass path at 2560x1440 — bake 3.4 ms once |
+
+The half-res gas pass saves 0.51 ms/frame against rev19 (23%). `div1` is what
+the second program, the extra target write and the texture read cost on their
+own: +0.28 ms over rev19 at the same resolution. So the resolution drop is worth
+about 0.79 ms and the split gives 0.51 of it back.
