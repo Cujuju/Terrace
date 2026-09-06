@@ -1,7 +1,9 @@
 # Skiffs go fishing, and boats stop owning half the frame
 
 Status: PLANNED, not started. Phase 1 of the boats arc (squadrons) shipped as
-`4b85631`.
+`4b85631`. Tracked on GitHub Issues 2026-09-05: D0-D2 = #367, #368, #369
+(`arc/render-draw-call-budget`); S1-S4 = #370, #371, #372, #373
+(`arc/skiffs-go-fishing`).
 
 Two arcs that touch the same plugin and must be sequenced together:
 
