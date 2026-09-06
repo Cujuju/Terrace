@@ -38,6 +38,7 @@ import {
   type SpawnWorld,
 } from '../server/spawn.ts';
 import {
+  BULWARK_STEPS,
   GENESIS_STEPS,
   QUAKE_CORE_DEPTH_BANDS,
   QUAKE_STEPS,
@@ -205,7 +206,7 @@ describe('chooseRelicCell', () => {
 });
 
 describe('terraform shapes', () => {
-  const allSteps = [...QUAKE_STEPS, ...GENESIS_STEPS];
+  const allSteps = [...QUAKE_STEPS, ...GENESIS_STEPS, ...BULWARK_STEPS];
 
   it('never asks the shared brush for a radius it throws on', () => {
     // applyBrush throws a RangeError outside [MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS]
@@ -244,7 +245,12 @@ describe('terraform shapes', () => {
   });
 
   it('is defined for exactly the active skills', () => {
-    expect([...TERRAFORM_BY_SKILL.keys()].sort()).toEqual(['genesis', 'quake']);
+    expect([...TERRAFORM_BY_SKILL.keys()].sort()).toEqual([
+      'bulwark',
+      'genesis',
+      'landslide',
+      'quake',
+    ]);
   });
 
   // AN EXPLICIT TIMEOUT (2026-08-29, #108). This test runs real casts over two
@@ -307,13 +313,18 @@ describe('terraform shapes', () => {
       return map;
     };
     const mkWorld = (map: ReturnType<typeof createHeightmap>) =>
-      // applyTerraform only reads worldSize and calls sculpt; cast the stub
-      // rather than stubbing all 17 WorldApi members the test never touches.
-      ({ worldSize: size, sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
+      // A cast reads worldSize and heights when it plans, then calls sculpt;
+      // cast the stub rather than stubbing all 17 WorldApi members the test
+      // never touches.
+      ({ worldSize: size,
+        heightAt(x: number, y: number): number {
+          return map.cells[y * size + x] ?? 0;
+        },
+        sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
         return applySculpt(map, x, y, radius, amount, PLUGIN_SCULPT_OPTIONS);
       } }) as unknown as WorldApi;
 
-    for (const [skill, steps] of TERRAFORM_BY_SKILL) {
+    for (const [skill, spec] of TERRAFORM_BY_SKILL) {
       // ── 1. OVER-STEEP TERRAIN — the live failure mode. A slope of 24 was
       // legal under the old MAX_STEP of 32 and is baked into every
       // pre-re-terrace world like Frostwick Hollows. Banded spill may slope
@@ -322,6 +333,10 @@ describe('terraform shapes', () => {
       {
         const map = mkMap(OVER_STEEP_SLOPE);
         const world = mkWorld(map);
+        // Planned against THIS fixture: a shape that reads the ground
+        // (Landslide) chooses different steps on different terrain, and the
+        // containment budget has to hold for the steps it actually runs.
+        const steps = spec.plan(world, cx, cy);
 
         // The exact union of the cast's brush footprints, so containment is
         // asserted EXACTLY outside them.
@@ -356,11 +371,12 @@ describe('terraform shapes', () => {
       {
         const map = mkMap(LEGAL_SLOPE);
         const world = mkWorld(map);
+        const steps = spec.plan(world, cx, cy);
         expect(applyTerraform(world, cx, cy, steps)).toBeLessThanOrEqual(CAST_CELL_BUDGET);
       }
 
-      // Both active skills must pass; name the key so the entry is used.
-      expect(['genesis', 'quake']).toContain(skill);
+      // Every active skill must pass; name the key so the entry is used.
+      expect(['bulwark', 'genesis', 'landslide', 'quake']).toContain(skill);
     }
   });
 });

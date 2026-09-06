@@ -35,6 +35,7 @@
 // when the plugin is disposed.
 
 import {
+  BoxGeometry,
   BufferGeometry,
   CircleGeometry,
   CylinderGeometry,
@@ -123,6 +124,8 @@ const ICON_SHADE_ELLIPSE_PX: Readonly<Record<SkillId, readonly [number, number]>
   'titans-hand': [5, 2.4],
   quake: [9, 3.8],
   genesis: [9, 3.8],
+  bulwark: [9, 3.8],
+  landslide: [9, 3.8],
   'azure-heart': [6, 2.6],
   'spring-of-aether': [8.5, 3.6],
 };
@@ -789,10 +792,143 @@ function springOfAether(): Part[] {
   ];
 }
 
+/**
+ * Bulwark — a ring wall with nothing in the middle — is a RING OF MASONRY on
+ * open ground: twelve blocks stood on a bearing each, alternating tall and
+ * short so the top reads as battlements rather than as a pipe, around a
+ * courtyard of grass that is the point of the skill (the cast leaves the
+ * middle untouched, terraform.ts, BULWARK_STEPS).
+ *
+ * Twelve, not the cast's eight: the icon is read at 30 px, where eight blocks
+ * on a circle this size leave gaps wide enough to look like a broken wall. The
+ * relic is a portrait of the skill, not a plan of its footprint.
+ */
+const BULWARK_BLOCKS = 12;
+const BULWARK_WALL_RADIUS = 0.62;
+const BULWARK_BLOCK_ACROSS = 0.3;
+const BULWARK_BLOCK_THROUGH = 0.2;
+const BULWARK_MERLON_HEIGHT = 0.46;
+const BULWARK_CRENEL_HEIGHT = 0.3;
+const BULWARK_COURTYARD_RADIUS = 0.5;
+const BULWARK_COURTYARD_HEIGHT = 0.1;
+
+function bulwark(): Part[] {
+  const courtyard = place(
+    new CylinderGeometry(
+      BULWARK_COURTYARD_RADIUS,
+      BULWARK_COURTYARD_RADIUS,
+      BULWARK_COURTYARD_HEIGHT,
+      ROUND_SEGMENTS,
+    ),
+    0,
+    BULWARK_COURTYARD_HEIGHT / 2,
+    0,
+  );
+  const blocks = Array.from({ length: BULWARK_BLOCKS }, (_unused, index) => {
+    const bearing = (index / BULWARK_BLOCKS) * TURN;
+    const height = index % 2 === 0 ? BULWARK_MERLON_HEIGHT : BULWARK_CRENEL_HEIGHT;
+    return place(
+      new BoxGeometry(BULWARK_BLOCK_THROUGH, height, BULWARK_BLOCK_ACROSS),
+      Math.cos(bearing) * BULWARK_WALL_RADIUS,
+      height / 2,
+      Math.sin(bearing) * BULWARK_WALL_RADIUS,
+      0,
+      -bearing,
+      0,
+    );
+  });
+  return [...painted('grass', courtyard), ...painted('stone', ...blocks)];
+}
+
+/**
+ * Landslide — a cliff toppled into a walkable slope — is THE RESULT, not the
+ * moment: a scarp with its grass cap still on, its face sheared away, and the
+ * fallen ground lying against it as a RAMP that runs from the lip down to open
+ * ground, boulders scattered along it.
+ *
+ * The ramp is what makes the icon read: a cliff with rubble at its foot is
+ * just a broken cliff, while a slab leaning from lip to floor is the thing the
+ * cast gives you — a way up. It runs toward +u, down-right on the tile and
+ * into the icon's light, so the eye reads it as descending.
+ */
+const LANDSLIDE_CLIFF_THROUGH = 0.62;
+const LANDSLIDE_CLIFF_ACROSS = 0.95;
+const LANDSLIDE_CLIFF_HEIGHT = 0.72;
+const LANDSLIDE_CAP_HEIGHT = 0.1;
+const LANDSLIDE_CLIFF_CENTRE = -0.48;
+
+/** The lip: the front edge of the scarp, where the ramp's head meets it. */
+const LANDSLIDE_LIP_U = LANDSLIDE_CLIFF_CENTRE + LANDSLIDE_CLIFF_THROUGH / 2;
+
+/** Where the ramp's foot lands on the tile, and how thick and wide the slab is. */
+const LANDSLIDE_RAMP_FOOT_U = 0.7;
+const LANDSLIDE_RAMP_FOOT_H = 0.03;
+const LANDSLIDE_RAMP_THICKNESS = 0.13;
+const LANDSLIDE_RAMP_ACROSS = 0.66;
+
+/** Boulders on the ramp: how far down the run each sits (0 lip, 1 foot), its offset across, its size. */
+const LANDSLIDE_BOULDERS: ReadonlyArray<readonly [number, number, number]> = [
+  [0.12, -0.16, 0.15],
+  [0.38, 0.15, 0.12],
+  [0.62, -0.1, 0.1],
+  [0.86, 0.19, 0.08],
+  [1.04, -0.05, 0.07],
+];
+
+function landslide(): Part[] {
+  const cliff = place(
+    new BoxGeometry(LANDSLIDE_CLIFF_THROUGH, LANDSLIDE_CLIFF_HEIGHT, LANDSLIDE_CLIFF_ACROSS),
+    LANDSLIDE_CLIFF_CENTRE,
+    LANDSLIDE_CLIFF_HEIGHT / 2,
+    0,
+  );
+  const cap = place(
+    new BoxGeometry(LANDSLIDE_CLIFF_THROUGH, LANDSLIDE_CAP_HEIGHT, LANDSLIDE_CLIFF_ACROSS),
+    LANDSLIDE_CLIFF_CENTRE,
+    LANDSLIDE_CLIFF_HEIGHT + LANDSLIDE_CAP_HEIGHT / 2,
+    0,
+  );
+
+  // The slab spans lip to foot, so its length and tilt are read off those two
+  // points rather than picked — move either end and it still lands on both.
+  const runU = LANDSLIDE_RAMP_FOOT_U - LANDSLIDE_LIP_U;
+  const runH = LANDSLIDE_CLIFF_HEIGHT - LANDSLIDE_RAMP_FOOT_H;
+  const rampLength = Math.hypot(runU, runH);
+  const rampTilt = -Math.atan2(runH, runU);
+  const ramp = place(
+    new BoxGeometry(rampLength, LANDSLIDE_RAMP_THICKNESS, LANDSLIDE_RAMP_ACROSS),
+    (LANDSLIDE_LIP_U + LANDSLIDE_RAMP_FOOT_U) / 2,
+    (LANDSLIDE_CLIFF_HEIGHT + LANDSLIDE_RAMP_FOOT_H) / 2,
+    0,
+    0,
+    0,
+    rampTilt,
+  );
+
+  const boulders = LANDSLIDE_BOULDERS.map(([along, across, size]) =>
+    place(
+      new SphereGeometry(size, SPHERE_SEGMENTS, SPHERE_SEGMENTS),
+      LANDSLIDE_LIP_U + runU * along,
+      LANDSLIDE_CLIFF_HEIGHT - runH * along + size / 2,
+      across,
+    ),
+  );
+
+  return [
+    ...painted('rock', cliff),
+    ...painted('grass', cap),
+    ...painted('tileLeft', ramp),
+    ...painted('stone', ...boulders),
+  ];
+}
+
+
 const BUILDERS: Readonly<Record<SkillId, () => Part[]>> = {
   'titans-hand': titansHand,
   quake,
   genesis,
+  bulwark,
+  landslide,
   'azure-heart': azureHeart,
   'spring-of-aether': springOfAether,
 };

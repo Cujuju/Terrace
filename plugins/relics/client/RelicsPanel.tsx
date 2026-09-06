@@ -35,11 +35,14 @@ import {
   CAST_DENIED_COOLDOWN,
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
+  CAST_DENIED_UNSUITABLE,
 } from '../protocol.ts';
 import { cooldownLabelSeconds } from './gems.ts';
 import {
   AzureHeartIcon,
+  BulwarkIcon,
   GenesisIcon,
+  LandslideIcon,
   QuakeIcon,
   SpringOfAetherIcon,
   TitansHandIcon,
@@ -55,6 +58,8 @@ const SKILL_ICON: Readonly<Record<SkillId, Component>> = {
   'titans-hand': TitansHandIcon,
   quake: QuakeIcon,
   genesis: GenesisIcon,
+  bulwark: BulwarkIcon,
+  landslide: LandslideIcon,
   'azure-heart': AzureHeartIcon,
   'spring-of-aether': SpringOfAetherIcon,
 };
@@ -174,6 +179,7 @@ const DENIAL_TEXT: Record<string, string> = {
   [CAST_DENIED_UNOWNED]: 'You no longer hold that skill.',
   [CAST_DENIED_COOLDOWN]: 'That skill is still recharging.',
   [CAST_DENIED_TARGET]: 'That target is outside your territory.',
+  [CAST_DENIED_UNSUITABLE]: 'That ground has no cliff face to bring down.',
 };
 
 /** A skill is castable if the roster says it is active. */
