@@ -40,6 +40,7 @@ import {
   type GroundHeightSampler,
 } from './cameraClearance.ts';
 import { createSkyEnvironment, type SkyEnvironment } from './skyEnvironment.ts';
+import { recordFrame, setFrameCounterSource } from './frameStats.ts';
 import type { SkyRigState } from '../plugins/types.ts';
 
 /**
@@ -240,6 +241,16 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
     (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
   }
+  // The frame meter's counter source (render/frameStats.ts). Read once per
+  // window, never per frame. It lives here because this is the only file that
+  // holds the renderer, and frameStats deliberately does not import three.
+  setFrameCounterSource(() => ({
+    drawCalls: renderer.info.render.calls,
+    triangles: renderer.info.render.triangles,
+    geometries: renderer.info.memory.geometries,
+    textures: renderer.info.memory.textures,
+    programs: renderer.info.programs?.length ?? 0,
+  }));
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   // Per-material clipping planes are ignored until this is on. The brush
   // preview (render/brushPreview.ts) is the one user, cutting its outline at
@@ -423,7 +434,14 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     // draw-budget sampler reads that after this frame's render (plugins/
     // host.ts) — run here they cannot land in its count.
     skyEnvironment.flush(nowMs);
+    // THE ONLY TWO EXTRA CLOCK READS IN THE FRAME (render/frameStats.ts). They
+    // bracket `renderer.render` because that is where the whole of the decay in
+    // docs/plans/frame-rate-decay-2026-09-05.md §7d lives, and because nothing
+    // outside three can sub-time it. `nowMs` above is reused as the frame's
+    // start, so the frame body pays for two readings and three array writes.
+    const renderStartMs = performance.now();
     renderer.render(scene, camera);
+    recordFrame(nowMs, renderStartMs, performance.now());
   };
 
   const resizeObserver = new ResizeObserver(resize);

@@ -1368,6 +1368,15 @@ button.world-header {
   color: rgb(255 138 128 / 90%);
 }
 
+/* The frame meter's rows (render/frameStats.ts, backquote to toggle). Dimmer
+   than the draw line above and tabular like it: these are four rows read as a
+   column of changing digits, and a proportional font would make every window
+   reflow the whole block. */
+.hud-version__perf {
+  color: rgb(255 255 255 / 45%);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    RESTORE POINTS (world rollback, 2026-08-21). A scrim overlay like the
    chart's — an open document covers the instruments — reusing .chart-button so
