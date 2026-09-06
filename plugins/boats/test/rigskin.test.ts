@@ -9,9 +9,9 @@
 // the comment on the sail in client/models.ts). So: 2.
 
 import { describe, expect, it } from 'vitest';
-import { Bone, Mesh } from 'three';
+import { Bone, InstancedMesh, Mesh } from 'three';
 import { readFile } from 'node:fs/promises';
-import { createBoatModels, installBoatKit } from '../client/models.ts';
+import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
 import { parseRigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
@@ -84,40 +84,51 @@ function bonesOf(root: { traverse(cb: (o: unknown) => void): void }): Bone[] {
 }
 
 describe('the boat as a rigged drawable', () => {
-  it('draws THREE objects per boat: two rig surfaces plus the sail', () => {
-    // One boat must cost its three draws and no more. The hand-built boat was
-    // 2 (one baked surface plus the sail); the authored hull carries the
-    // texture, and map identity is in rigSkin's merge key, so the textured
-    // hull bakes as its own surface beside the merged flat set — 2 + the
-    // sail's 1. A regression to per-part meshes (or a second flat surface —
-    // an indexed part beside a non-indexed one would do it) shows up here.
+  it('draws TWO objects per hull, and the whole fleet\'s sails in ONE more', () => {
+    // What a fleet COSTS, which is the number drawBudget is built from. The
+    // authored hull carries the texture and map identity is in rigSkin's merge
+    // key, so the textured hull bakes as its own surface beside the merged flat
+    // set — 2. The sail used to be a third, per boat; it is now one
+    // InstancedMesh for every boat in the world, so a second hull adds two
+    // draws and not three. A regression to per-part meshes (or a second flat
+    // surface — an indexed part beside a non-indexed one would do it) shows up
+    // here, and so does putting the sail back on the per-boat path.
     const models = createBoatModels();
     const boat = models.create();
     boat.animate(0, 0, false);
 
-    expect(drawablesOf(boat.root)).toHaveLength(3);
+    expect(drawablesOf(boat.root)).toHaveLength(2);
+    expect(BOAT_SHAPE.drawObjects).toBe(2);
 
+    const second = models.create();
+    second.animate(0, 0, false);
+    expect(drawablesOf(second.root)).toHaveLength(2);
+    // Still the one mesh, whatever the fleet size.
+    expect(models.sails).toBeInstanceOf(InstancedMesh);
+    expect(models.sails.parent).toBeNull();
+
+    second.dispose();
     boat.dispose();
     models.dispose();
   });
 
-  it('keeps the rig at TWO surfaces, so nothing but the sail was left behind', () => {
+  it('keeps the rig at TWO surfaces, both shared by every boat', () => {
     // The textured hull is one surface, every flat part merges into the
     // other, and both boats share both baked geometries; if the bake ever
-    // emits a third surface the total goes to 4 and this catches which side
-    // regressed.
+    // emits a third surface the per-hull cost goes to 3 and this catches which
+    // side regressed.
     const models = createBoatModels();
     const a = models.create();
     const b = models.create();
 
-    const [rigA1, rigA2, sailA] = drawablesOf(a.root);
+    const [rigA1, rigA2] = drawablesOf(a.root);
     const [rigB1, rigB2] = drawablesOf(b.root);
     expect(rigA1!.geometry).toBe(rigB1!.geometry);
     expect(rigA1!.material).toBe(rigB1!.material);
     expect(rigA2!.geometry).toBe(rigB2!.geometry);
     expect(rigA2!.material).toBe(rigB2!.material);
-    expect(sailA!.material).not.toBe(rigA1!.material);
-    expect(sailA!.material).not.toBe(rigA2!.material);
+    // Two and only two: a sail left behind on the root would be a third.
+    expect(drawablesOf(a.root)).toHaveLength(2);
 
     a.dispose();
     b.dispose();

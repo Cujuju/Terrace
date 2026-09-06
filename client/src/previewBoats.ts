@@ -142,16 +142,21 @@ async function main(): Promise<void> {
   );
   const models = createBoatModels();
   const subject = new Group();
+  // The sails are ONE mesh for the whole fleet, and it belongs to the same
+  // parent the roots do — their instance matrices are composed in its space.
+  subject.add(models.sails);
   states.forEach((fighting, index) => {
     const model = models.create();
-    // animate() is a pure function of the clock, so this IS the pose at `t`.
-    // Phase 0 for both, so the pair differ ONLY by their fighting state —
-    // which is the comparison this shot exists to make.
-    model.animate(clock, 0, fighting);
     model.root.position.y = BOAT_SHAPE.waterlineLift;
     model.root.position.z = (index - (states.length - 1) / 2) * PAIR_SPACING;
+    // AFTER the placement, which animate() composes the sail's instance matrix
+    // from. animate() is a pure function of the clock, so this IS the pose at
+    // `t`. Phase 0 for both, so the pair differ ONLY by their fighting state —
+    // which is the comparison this shot exists to make.
+    model.animate(clock, 0, fighting);
     subject.add(model.root);
   });
+  models.commitFrame();
   scene.add(subject);
 
   frameCameraOn(camera, subject, view);

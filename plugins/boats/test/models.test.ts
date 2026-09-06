@@ -7,7 +7,17 @@
 // shared.
 
 import { describe, expect, it } from 'vitest';
-import { Box3, BoxGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Vector3 } from 'three';
+import {
+  Box3,
+  BoxGeometry,
+  Color,
+  Group,
+  Matrix4,
+  Mesh,
+  MeshStandardMaterial,
+  Object3D,
+  Vector3,
+} from 'three';
 import { readFile } from 'node:fs/promises';
 import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
 import {
@@ -68,6 +78,15 @@ const assetBytes = assetBuffer.buffer.slice(
 );
 installBoatKit(await parseRigAsset(assetBytes, 'war-boat.glb'));
 
+/**
+ * Where the two boats of the tint test are parked, and how close an instance
+ * has to be to count as one of them. Far enough apart that no swell or oar
+ * swing could confuse the two.
+ */
+const FIGHTER_X = 0;
+const BYSTANDER_X = 10;
+const SAIL_MATCH_WORLD_UNITS = 1;
+
 /** Every Mesh under a node, depth-first. */
 function meshesOf(root: { traverse(cb: (o: unknown) => void): void }): Mesh[] {
   const found: Mesh[] = [];
@@ -115,44 +134,76 @@ describe('the boat model', () => {
   });
 
   it('reddens only its own sail when it engages', () => {
-    // The one per-boat material. A shared one would redden every sail in the
-    // world the moment a single boat engaged, which is the bug this split
-    // exists to prevent — so it is asserted across TWO boats.
+    // Every sail in the world is now ONE InstancedMesh with ONE material, so
+    // the tint has to be per INSTANCE — a material-level recolour would redden
+    // every sail afloat the moment a single boat engaged, which is the bug this
+    // asserts across TWO boats.
+    //
+    // Neither boat's slot is named anywhere, so each is identified by WHERE ITS
+    // SAIL IS: the boats are parked far apart and the instances are matched to
+    // them by the translation of the matrix animate() wrote.
     const models = createBoatModels();
     const fighter = models.create();
     const bystander = models.create();
 
+    fighter.root.position.x = FIGHTER_X;
+    bystander.root.position.x = BYSTANDER_X;
     fighter.animate(0, 0, false);
     bystander.animate(0, 0, false);
-    // The sail is the one mesh whose material is NOT shared between boats, so
-    // find it that way rather than by position in the child list — which is
-    // what an earlier version of this test got wrong, happily reading an oar.
-    const sharedMaterials = new Set(meshesOf(bystander.root).map((m) => m.material));
-    const sailOf = (boat: { root: Parameters<typeof meshesOf>[0] }): MeshStandardMaterial => {
-      const unique = meshesOf(boat.root)
-        .map((m) => m.material as MeshStandardMaterial)
-        .filter((material) => !sharedMaterials.has(material));
-      expect(unique).toHaveLength(1);
-      return unique[0]!;
+    models.commitFrame();
+
+    const matrix = new Matrix4();
+    const tint = new Color();
+    /** The instance whose sail sits over `x`, by its matrix's translation. */
+    const sailNear = (x: number): Color => {
+      for (let slot = 0; slot < models.sails.count; slot++) {
+        models.sails.getMatrixAt(slot, matrix);
+        if (Math.abs(matrix.elements[12]! - x) < SAIL_MATCH_WORLD_UNITS) {
+          models.sails.getColorAt(slot, tint);
+          return tint.clone();
+        }
+      }
+      throw new Error(`no sail instance near x=${x}`);
     };
-    const colorOf = (boat: { root: Parameters<typeof meshesOf>[0] }): number =>
-      sailOf(boat).color.getHex();
-    const restingFighter = colorOf(fighter);
-    // The bystander's own sail is inside its shared-material set by
-    // construction, so read it directly rather than through sailOf.
-    const bystanderSail = meshesOf(bystander.root)
-      .map((m) => m.material as MeshStandardMaterial)
-      .find((material) => material.color.getHex() === restingFighter)!;
-    const restingBystander = bystanderSail.color.getHex();
-    expect(restingFighter).toBe(restingBystander);
+
+    const restingFighter = sailNear(FIGHTER_X);
+    const restingBystander = sailNear(BYSTANDER_X);
+    expect(restingFighter.getHex()).toBe(restingBystander.getHex());
 
     fighter.animate(1, 0, true);
     bystander.animate(1, 0, false);
-    expect(colorOf(fighter)).not.toBe(restingFighter);
-    expect(bystanderSail.color.getHex()).toBe(restingBystander);
+    models.commitFrame();
+    expect(sailNear(FIGHTER_X).getHex()).not.toBe(restingFighter.getHex());
+    expect(sailNear(BYSTANDER_X).getHex()).toBe(restingBystander.getHex());
 
     fighter.dispose();
     bystander.dispose();
+    models.dispose();
+  });
+
+  it('stops drawing a sunk boat\'s sail', () => {
+    // A freed slot that kept its last matrix would leave a sail hanging over
+    // open water, which is the failure mode parking exists to design out.
+    const models = createBoatModels();
+    const boat = models.create();
+    boat.root.position.x = FIGHTER_X;
+    boat.animate(0, 0, false);
+    models.commitFrame();
+
+    const matrix = new Matrix4();
+    const scaleOfSlotZero = (): number => {
+      models.sails.getMatrixAt(0, matrix);
+      return matrix.getMaxScaleOnAxis();
+    };
+    expect(scaleOfSlotZero()).toBeGreaterThan(0);
+
+    boat.dispose();
+    models.commitFrame();
+    // Parked: zero scale, so it rasterises nothing even if it were submitted.
+    expect(scaleOfSlotZero()).toBe(0);
+    // And it is not submitted: the drawn prefix fell back over it.
+    expect(models.sails.count).toBe(0);
+
     models.dispose();
   });
 

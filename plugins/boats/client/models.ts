@@ -1,13 +1,12 @@
-// The war boat: one shared geometry set, one Group per afloat boat.
+// The war boat: one shared geometry set, one Group per afloat boat — plus ONE
+// InstancedMesh carrying every sail in the fleet.
 //
-// NOT INSTANCED, deliberately, and the reasoning is the opposite of
-// structures' skiffs (plugins/structures/client/skiffModels.ts, which DOES
-// instance). A skiff is scenery: a settlement floats up to three, every mature
-// coastal settlement has them, and a fully built 512² coastline can hold
-// hundreds — so their draw calls had to be collapsed. A war boat only exists
-// while a fleet is out, one village's worth at a time in practice, and each one
-// needs its own oar swing and its own list against the swell. A handful of
-// small Groups is the cheaper answer at that count and a far simpler one.
+// THE HULL IS NOT INSTANCED, deliberately: it needs its own oar swing and its
+// own list against the swell, which is a skeleton per boat. The SAIL is, since
+// 2026-09-06 (#367): it is a rigid board hanging off the root at a fixed
+// authored transform, so a fleet's worth of them is one draw call instead of
+// one each. Measured at 119 villages / 231 boats, boats were 180 of the
+// frame's 373 draw calls, three per hull; the sail was one of the three.
 //
 // LOADED, NOT HAND-BUILT (2026-09). The hull below used to be assembled here
 // from three.js primitives; it is now authored in Blender, exported to
@@ -19,9 +18,15 @@
 // own its geometry pool, and dispose frees it the same way.
 
 import {
+  Color,
   Group,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
+  Quaternion,
+  Sphere,
   Vector3,
   type BufferGeometry,
   type Material,
@@ -39,13 +44,30 @@ import {
   type AssetFootprint,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
+import { BOATS_PAYLOAD_CAP } from '../protocol.ts';
+import { createSailSlots } from './sailSlots.ts';
 
 /**
  * The conservative ceiling `drawObjects` reports until the first bake measures
- * the real count: four is above the three a textured hull plus sail settles at,
- * so budgeting against it can only ever over-reserve.
+ * the real count: four is above the two a textured hull settles at now the sail
+ * has left the per-boat path, so budgeting against it can only over-reserve.
  */
 const BOAT_DRAW_OBJECTS_MAX = 4;
+
+/**
+ * What the fleet's sails cost the frame, however many boats are afloat: ONE
+ * InstancedMesh (`BoatModels.sails`), added once to the boats' own container.
+ * Added to `drawBudget` beside the per-hull count rather than folded into it,
+ * because it does not scale with the fleet and a per-boat number that pretended
+ * it did would be a lie at every fleet size but one.
+ */
+export const FLEET_SAIL_DRAW_OBJECTS = 1;
+
+/** Floats one instance matrix occupies in `InstancedMesh.instanceMatrix`. */
+const MATRIX_ELEMENT_COUNT = 16;
+
+/** Floats one instance colour occupies in `InstancedMesh.instanceColor` — one RGB triple. */
+const COLOR_ELEMENT_COUNT = 3;
 
 /** Written only by createBoatModels, from the blueprint it just baked. */
 let drawObjects: number = BOAT_DRAW_OBJECTS_MAX;
@@ -80,7 +102,11 @@ export const BOAT_SHAPE: {
   readonly waterlineLift: number;
   /** The span of a boat that BURNS, in root space: from the deck to the masthead. */
   readonly fireColumn: { readonly bottomY: number; readonly height: number };
-  /** Draw objects one boat costs: the rig's baked surfaces plus the sail. */
+  /**
+   * Draw objects one HULL costs: the rig's baked surfaces, and nothing else.
+   * The sail is not in here — the whole fleet's sails are one instanced draw,
+   * counted once as FLEET_SAIL_DRAW_OBJECTS.
+   */
   readonly drawObjects: number;
 } = Object.freeze({
   /**
@@ -110,10 +136,11 @@ export const BOAT_SHAPE: {
   },
 
   /**
-   * MEASURED PER BAKE (`blueprint.surfaceCount + 1`), not assumed — a textured
+   * MEASURED PER BAKE (`blueprint.surfaceCount`), not assumed — a textured
    * hull costs its own surface beside the flat set (map identity is in the
    * merge key), and recounting is what keeps the number truthful when the
-   * asset changes.
+   * asset changes. It carried a `+ 1` for the sail until the sail became one
+   * instanced draw for the whole fleet.
    *
    * ALONE AMONG THE THREE THIS DOES NOT THROW: it returns the conservative
    * ceiling until the first bake. Two reasons, both from executed code rather
@@ -164,6 +191,32 @@ const SAIL_COLOR = 0xe8e0cf;
 const SAIL_FIGHTING_COLOR = 0xb03a2e;
 
 /**
+ * The two above as three `Color`s, built once: `setColorAt` takes a Color, and
+ * this runs on the frame a fight starts.
+ */
+const SAIL_REST_TINT = new Color(SAIL_COLOR);
+const SAIL_FIGHTING_TINT = new Color(SAIL_FIGHTING_COLOR);
+
+/**
+ * The shared sail material's own colour: WHITE, because it is not the sail's
+ * colour any more.
+ *
+ * three multiplies `instanceColor` into the material's diffuse term (verified
+ * in three 0.185.1: WebGLProgram.js:737 defines USE_COLOR for an instanced
+ * colour, ShaderChunk/color_fragment.glsl.js applies it), so a material still
+ * carrying SAIL_COLOR would square the canvas tint and darken every sail.
+ */
+const SAIL_MATERIAL_COLOR = 0xffffff;
+
+/**
+ * The matrix a slot no boat holds is parked at: scale zero, so the sail
+ * collapses to a point and rasterises nothing. Without it a freed slot would
+ * keep drawing its last sail — or, on an untouched slot, a stale one at the
+ * container's origin, which is the failure mode this designs out.
+ */
+const PARKED_SAIL_MATRIX = new Matrix4().makeScale(0, 0, 0);
+
+/**
  * The oar pivots by node name, with the side each pulls on.
  *
  * The sign is ONLY the opposition pairing — port yaws against starboard, which
@@ -206,12 +259,27 @@ export interface BoatModel {
    * the sail.
    */
   animate(elapsedSeconds: number, phase: number, fighting: boolean): void;
-  /** Frees only what is unique to this boat. Shared assets belong to the set. */
+  /**
+   * Parks and returns this boat's sail slot. Idempotent. Shared assets — the
+   * blueprint, the sail mesh — belong to the set.
+   */
   dispose(): void;
 }
 
 export interface BoatModels {
+  /**
+   * Every sail in the fleet, in ONE draw call. Add it to the SAME parent the
+   * boat roots go under: an instance matrix is composed from a root's LOCAL
+   * matrix, so a different parent would draw the sails in the wrong space.
+   */
+  readonly sails: InstancedMesh;
   create(): BoatModel;
+  /**
+   * Uploads the frame's sail matrices and re-bounds the fleet — ONCE for the
+   * whole mesh, after every boat has been animated. Skipping it leaves the
+   * sails on the previous frame's poses.
+   */
+  commitFrame(): void;
   dispose(): void;
 }
 
@@ -333,10 +401,13 @@ export function disposeBoatKit(): void {
  *   There is no per-instance recolour left to be had.
  *
  * But the sail's colour IS the fighting state signal (SAIL_FIGHTING_COLOR
- * above): one boat engaging must redden ITS sail alone. So the sail stays a
- * plain Mesh with its own per-boat material, hung off the instance root at its
- * authored transform. Do not "fix" this back into the rig without solving
- * those two bullets first.
+ * above): one boat engaging must redden ITS sail alone. Do not "fix" the sail
+ * back into the rig without solving those two bullets first.
+ *
+ * It is not a per-boat Mesh either, since 2026-09-06: it is one InstancedMesh
+ * for the whole fleet, and the per-instance recolour the blueprint could not
+ * offer is exactly what `setColorAt` does offer. The sail is a rigid board at a
+ * fixed authored transform, which is what makes an instance matrix enough.
  */
 export function createBoatModels(): BoatModels {
   const installed = kit;
@@ -367,34 +438,97 @@ export function createBoatModels(): BoatModels {
   }
 
   // Measured, not assumed: the textured hull costs its own surface beside the
-  // flat set, and the sail (never baked) is the +1. Recount here is what keeps
-  // BOAT_SHAPE.drawObjects — and through it drawBudget — truthful per asset.
-  drawObjects = blueprint.surfaceCount + 1;
+  // flat set. Recount here is what keeps BOAT_SHAPE.drawObjects — and through
+  // it drawBudget — truthful per asset.
+  drawObjects = blueprint.surfaceCount;
+
+  // ─── the fleet's sails: one mesh, one draw call, one material ──────────────
+
+  // ONE clone for the whole fleet, where there used to be one per boat. It is
+  // cloned rather than used directly because its colour is overwritten and the
+  // kit's own material must survive this factory's dispose.
+  const sailMaterial = installed.sailMaterial.clone();
+  sailMaterial.color.setHex(SAIL_MATERIAL_COLOR);
+
+  const sails = new InstancedMesh(installed.sailGeometry, sailMaterial, BOATS_PAYLOAD_CAP);
+  sails.name = 'boats:sails';
+  sails.count = 0;
+  // Allocated up front instead of lazily by the first setColorAt: three
+  // zero-fills that buffer, and zero is BLACK for every slot not yet tinted.
+  sails.instanceColor = new InstancedBufferAttribute(
+    new Float32Array(BOATS_PAYLOAD_CAP * COLOR_ELEMENT_COUNT).fill(1),
+    COLOR_ELEMENT_COUNT,
+  );
+  // Every slot starts parked, so no matrix is ever drawn before a boat writes
+  // one — an all-zero matrix out of the fresh buffer has a zero w row.
+  for (let slot = 0; slot < BOATS_PAYLOAD_CAP; slot++) {
+    sails.setMatrixAt(slot, PARKED_SAIL_MATRIX);
+  }
+
+  const slots = createSailSlots(BOATS_PAYLOAD_CAP);
+
+  // The sail's authored offset from the boat root, composed once: every
+  // instance matrix is a root's local matrix times this.
+  const authoredSailMatrix = new Matrix4().compose(
+    installed.sailPosition,
+    new Quaternion(
+      installed.sailQuaternion.x,
+      installed.sailQuaternion.y,
+      installed.sailQuaternion.z,
+      installed.sailQuaternion.w,
+    ),
+    installed.sailScale,
+  );
+
+  // How far a sail reaches from its own instance origin, for the fleet's
+  // bounding sphere below. The root contributes only a rotation and a
+  // translation, so this radius is the same whatever the boat is doing.
+  if (installed.sailGeometry.boundingSphere === null) {
+    installed.sailGeometry.computeBoundingSphere();
+  }
+  const sailSphere = installed.sailGeometry.boundingSphere;
+  const sailReach =
+    sailSphere === null
+      ? 0
+      : (sailSphere.center.length() + sailSphere.radius) *
+        Math.max(installed.sailScale.x, installed.sailScale.y, installed.sailScale.z);
+
+  // Scratch reused by every boat of every frame — the discipline skiffModels'
+  // writeFrame keeps, for the same reason: this runs per boat per frame.
+  const sailMatrix = new Matrix4();
+
+  // The extent of the sails written since the last commit, in container space.
+  // Inverted-empty until the first write, which is how commitFrame tells a
+  // frame with no boats from a frame with one at the origin.
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
 
   return {
+    sails,
+
     create(): BoatModel {
       // One instance of the shared rig: fresh bones and root, zero new buffers.
       const instance = instantiateRig(blueprint);
       const root = instance.root;
 
-      const sailMaterial = installed.sailMaterial.clone();
-      sailMaterial.color.setHex(SAIL_COLOR);
-      const sail = new Mesh(installed.sailGeometry, sailMaterial);
-      sail.position.copy(installed.sailPosition);
-      sail.quaternion.set(
-        installed.sailQuaternion.x,
-        installed.sailQuaternion.y,
-        installed.sailQuaternion.z,
-        installed.sailQuaternion.w,
-      );
-      sail.scale.copy(installed.sailScale);
-      root.add(sail);
+      let slot = slots.acquire();
+      // Parked and tinted at rest before the first animate(), so a slot handed
+      // out between frames cannot draw last owner's sail for one frame.
+      sails.setMatrixAt(slot, PARKED_SAIL_MATRIX);
+      sails.setColorAt(slot, SAIL_REST_TINT);
+      if (sails.instanceColor !== null) sails.instanceColor.needsUpdate = true;
 
       let wasFighting = false;
 
       return {
         root,
         animate(elapsedSeconds: number, phase: number, fighting: boolean): void {
+          // A disposed boat has no slot to write and no meshes left to pose.
+          if (slot < 0) return;
           const t = elapsedSeconds + phase;
 
           // Swell: roll about the keel, pitch about the beam. Two different
@@ -413,21 +547,74 @@ export function createBoatModels(): BoatModels {
             instance.joints[oarJoints[i]!]!.rotation.y = swing * oarSides[i]!;
           }
 
+          // The sail rides the root, and animate() runs BEFORE the renderer
+          // updates world matrices — so compose from the root's OWN transform
+          // rather than reading a matrixWorld that is still last frame's. The
+          // mesh shares the roots' parent, which is what makes a local matrix
+          // the whole answer.
+          root.updateMatrix();
+          sailMatrix.multiplyMatrices(root.matrix, authoredSailMatrix);
+          sails.setMatrixAt(slot, sailMatrix);
+
+          // The translation column: where this sail is, for the fleet bounds
+          // commitFrame turns into a sphere.
+          const at = sailMatrix.elements;
+          if (at[12]! < minX) minX = at[12]!;
+          if (at[12]! > maxX) maxX = at[12]!;
+          if (at[13]! < minY) minY = at[13]!;
+          if (at[13]! > maxY) maxY = at[13]!;
+          if (at[14]! < minZ) minZ = at[14]!;
+          if (at[14]! > maxZ) maxZ = at[14]!;
+
           // Only touched on the frame the state actually changes: assigning a
-          // colour every frame would dirty the material's uniforms 60 times a
+          // colour every frame would re-upload the instance colours 60 times a
           // second for a value that changes twice a fight.
           if (fighting !== wasFighting) {
-            sailMaterial.color.setHex(fighting ? SAIL_FIGHTING_COLOR : SAIL_COLOR);
+            sails.setColorAt(slot, fighting ? SAIL_FIGHTING_TINT : SAIL_REST_TINT);
+            if (sails.instanceColor !== null) sails.instanceColor.needsUpdate = true;
             wasFighting = fighting;
           }
         },
         dispose(): void {
-          // Only this boat's own sail material; the rig surface belongs to the
-          // shared blueprint and is freed by the set's dispose below.
-          sailMaterial.dispose();
+          if (slot < 0) return;
+          // Park BEFORE releasing: the slot goes back to the pool free of the
+          // sail it was drawing, whoever picks it up next.
+          sails.setMatrixAt(slot, PARKED_SAIL_MATRIX);
+          slots.release(slot);
+          slot = -1;
           root.clear();
         },
       };
+    },
+
+    commitFrame(): void {
+      const drawn = slots.drawnCount;
+      sails.count = drawn;
+      // ONLY THE LIVE PREFIX IS UPLOADED — without a range three re-sends the
+      // whole BOATS_PAYLOAD_CAP-sized array every frame. Cleared first because
+      // three only clears ranges when it actually uploads, so a frame the mesh
+      // was not drawn in would leave a range for the next one to add to.
+      sails.instanceMatrix.clearUpdateRanges();
+      sails.instanceMatrix.addUpdateRange(0, drawn * MATRIX_ELEMENT_COUNT);
+      sails.instanceMatrix.needsUpdate = true;
+
+      // The fleet's bounding sphere, DERIVED from the matrices just written.
+      // three would otherwise walk every instance to build one — once for the
+      // frustum test and again for every pick ray — and, worse, would build it
+      // ONCE and keep it, silently culling a fleet that had since sailed on.
+      const sphere = (sails.boundingSphere ??= new Sphere());
+      if (minX > maxX) {
+        sphere.makeEmpty();
+      } else {
+        sphere.center.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        sphere.radius = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2 + sailReach;
+      }
+      minX = Infinity;
+      minY = Infinity;
+      minZ = Infinity;
+      maxX = -Infinity;
+      maxY = -Infinity;
+      maxZ = -Infinity;
     },
 
     dispose(): void {
@@ -436,6 +623,10 @@ export function createBoatModels(): BoatModels {
       // the sail template, the file's textures) belongs to the kit and is
       // freed by disposeBoatKit, not here.
       blueprint.dispose();
+      // The fleet's own: the instance buffers and the one cloned material. The
+      // sail GEOMETRY is the kit's and is NOT freed here, for that same reason.
+      sails.dispose();
+      sailMaterial.dispose();
     },
   };
 }
