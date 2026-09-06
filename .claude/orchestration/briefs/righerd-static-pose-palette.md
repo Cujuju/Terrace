@@ -48,6 +48,35 @@ wrong but that its *invalidation* is unnecessary.
   So the *set* of `poseSlots` poses is invariant as time advances; only which
   slot a given creature should read rotates.
 
+## PRICED (2026-09-06) — worth 0.2-0.7 ms, and it steadies the frame
+
+The probe gained a `suppressUploads` flag that skips exactly these upload calls
+and re-measures. Rendering is wrong while suppressed (poses freeze); the
+performance answer is exact. Two scenarios, compared as DISTRIBUTIONS rather
+than as one pair:
+
+| scenario | unsuppressed GPU p50 | suppressed | delta |
+| --- | --- | --- | --- |
+| `overview` | 2.64 / 2.66 / 2.68 / 2.76 | **1.97** | ~0.67 ms |
+| `drift` blocks, median | 2.77  (range 2.08-3.70) | **2.54**  (range 2.51-2.64) | ~0.23 ms |
+
+**Take 0.2-0.7 ms, not 0.67.** A first pass quoted 0.67 from the single
+`overview` pair; on a frame whose blocks range 2.08-3.70 ms, one pair cannot
+support a point estimate.
+
+**The second effect is arguably the better one:** block-to-block variance
+collapses, from a 1.62 ms spread to 0.13 ms. Steadier frames are what a 144 Hz
+target actually needs.
+
+**Falsified along the way:** an earlier prediction that this fix would help the
+tail. It does not - `msP99` 3.80 -> 4.10, `msMax` 4.40 -> 4.80. Judge it on
+`gpuMsP50`, on the variance, and on the `W x 32` shapes disappearing from
+`uploadByShape`.
+
+Measured on a LIGHT state (~9 palette uploads/frame). In the heaviest states seen
+overnight uploads ran 3.2-4.6 ms of a ~9.8 ms frame, so the prize should be
+larger there - unmeasured, not claimed.
+
 ## What it costs today
 
 From the `overview` upload report, grouped by upload shape (each `W×32` is a
