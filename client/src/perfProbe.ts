@@ -116,7 +116,40 @@ const glUpload = {
    */
   byKind: Object.fromEntries(UPLOAD_KINDS.map((kind) => [kind, { calls: 0, ms: 0, bytes: 0 }])) as
     Record<UploadKind, { calls: number; ms: number; bytes: number }>,
+  /**
+   * Upload SHAPES, cumulative over the whole run, keyed `<entry point> <shape>`.
+   *
+   * WHY SHAPE AND NOT CALL SITE. Every one of these calls is issued from deep
+   * inside three's own texture/attribute upload path, so a JS stack names
+   * `WebGLTextures.uploadTexture` for all of them and settles nothing — and
+   * walking a stack per call would cost more than the call it is attributing.
+   * The ARGUMENTS, which are already in hand and free, separate them cleanly:
+   * a ranged water-curve upload is one texel row (`32x1`, `waterBands`'s row
+   * ranges), a palette or mask re-upload is the whole image (`512x512`), and a
+   * per-instance buffer is named by its byte size. Two uploads of the same
+   * shape are the same upload for every purpose this report serves.
+   *
+   * Cumulative rather than per frame: "who issues these" does not vary frame to
+   * frame, and a per-frame reset would lose the counts that tell a rare-but-
+   * huge shape from a constant small one.
+   */
+  byShape: new Map<string, { calls: number; ms: number; bytes: number }>(),
 };
+
+/** Buckets a byte count to a power of two, so near-identical sizes group. */
+function byteBucket(bytes: number): string {
+  if (bytes <= 0) return '0B';
+  const exponent = Math.ceil(Math.log2(bytes));
+  return `<=2^${String(exponent)}B`;
+}
+
+function recordUploadShape(key: string, ms: number, bytes: number): void {
+  const shape = glUpload.byShape.get(key) ?? { calls: 0, ms: 0, bytes: 0 };
+  shape.calls++;
+  shape.ms += ms;
+  shape.bytes += bytes;
+  glUpload.byShape.set(key, shape);
+}
 
 function resetGlUpload(): void {
   glUpload.ms = 0;
@@ -128,6 +161,7 @@ function resetGlUpload(): void {
     glUpload.byKind[kind].ms = 0;
     glUpload.byKind[kind].bytes = 0;
   }
+  // byShape is deliberately NOT reset here; see its doc comment.
 }
 
 function installGlUploadAccounting(): void {
@@ -138,7 +172,11 @@ function installGlUploadAccounting(): void {
       : typeof value === 'number'
         ? value
         : 0;
-  const wrap = (name: UploadKind, sizeOf: (args: unknown[]) => number): void => {
+  const wrap = (
+    name: UploadKind,
+    sizeOf: (args: unknown[]) => number,
+    shapeOf: (args: unknown[], bytes: number) => string,
+  ): void => {
     const original = proto[name] as (...args: unknown[]) => unknown;
     (proto as unknown as Record<string, unknown>)[name] = function (
       this: WebGL2RenderingContext,
@@ -156,16 +194,22 @@ function installGlUploadAccounting(): void {
       kind.calls++;
       kind.ms += ms;
       kind.bytes += bytes;
+      recordUploadShape(`${name} ${shapeOf(args, bytes)}`, ms, bytes);
       return result;
     };
   };
   // bufferData(target, sizeOrData, usage[, srcOffset, length])
-  wrap('bufferData', (args) => viewBytes(args[1]));
+  wrap('bufferData', (args) => viewBytes(args[1]), (_args, bytes) => byteBucket(bytes));
   // bufferSubData(target, dstOffset, data[, srcOffset, length])
-  wrap('bufferSubData', (args) => viewBytes(args[2]));
+  wrap('bufferSubData', (args) => viewBytes(args[2]), (_args, bytes) => byteBucket(bytes));
   // texSubImage2D(target, level, x, y, w, h, …) — w*h, a volume, not exact bytes.
-  wrap('texSubImage2D', (args) =>
-    typeof args[4] === 'number' && typeof args[5] === 'number' ? args[4] * args[5] : 0,
+  wrap(
+    'texSubImage2D',
+    (args) => (typeof args[4] === 'number' && typeof args[5] === 'number' ? args[4] * args[5] : 0),
+    (args) =>
+      typeof args[4] === 'number' && typeof args[5] === 'number'
+        ? `${String(args[4])}x${String(args[5])}`
+        : 'unknown',
   );
 }
 
@@ -264,6 +308,181 @@ function installTaskTiming(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GPU TIMING — the one measurement that says whether a slow frame is this
+// page's JavaScript or the adapter, and therefore whether any of the CPU
+// attribution above names the cause at all. Everything else in this file is a
+// wall clock: it cannot tell 6 ms of shading from 6 ms of waiting for it.
+//
+// WHY THE BRACKET IS TWO CONSECUTIVE SAMPLER TICKS and not a wrap of
+// renderer.render: render is called MORE THAN ONCE per frame — celestialVoid.ts
+// draws its half-res gas pass into a render target before the main pass — so a
+// wrap of it would time one pass and call it the frame. The sampler's own rAF
+// callback runs after the viewport's (render/scene.ts's renderFrame re-arms
+// itself at the top of its own callback, so it stays ahead of ours in the
+// queue), which makes "the commands issued between two of our ticks" exactly
+// one frame's GPU work, whatever passes it contains.
+//
+// A TIME_ELAPSED result arrives some frames after the frame it measures, so the
+// last few frames of a block have no GPU number. `gpuFrames` reports how many
+// did; it is not silently padded.
+
+/** Nanoseconds per millisecond — the unit TIME_ELAPSED_EXT answers in. */
+const NANOSECONDS_PER_MS = 1e6;
+/**
+ * Most unresolved queries kept before the oldest is dropped.
+ *
+ * SIXTY-FOUR, measured rather than assumed (2026-09-05). This was 8, on the
+ * textbook claim that a TIME_ELAPSED result lands within two or three frames.
+ * On this machine's ANGLE/D3D11 backend it does not: at 8 the eviction reached
+ * every query before its result did, and a 239-frame block returned exactly ONE
+ * GPU sample. The cap's job is only to bound leaked GL objects against a driver
+ * that has stopped answering entirely, so it is set far above any real
+ * latency — a quarter of a SAMPLE_FRAMES block — rather than at the latency
+ * itself.
+ */
+const MAX_PENDING_GPU_QUERIES = 64;
+
+interface GpuTimer {
+  /** True only when the extension exists; every other member is inert without it. */
+  readonly supported: boolean;
+  /** Closes the query covering the frame just ended and opens the next one. */
+  mark(): void;
+  /** Stops timing and releases every outstanding query. */
+  stop(): void;
+  /** Per-frame GPU milliseconds resolved so far, in frame order. */
+  samples(): readonly number[];
+  /** Frames whose result was thrown away because the GPU clock was disjoint. */
+  disjointDrops(): number;
+  /**
+   * Why no samples, when the extension exists and none arrived. A GL error
+   * raised by the FIRST beginQuery is the whole diagnosis in one number, and
+   * without it "supported, zero frames" is indistinguishable from a driver
+   * that simply never answers. Null once a query has started cleanly.
+   */
+  startupError(): string | null;
+}
+
+/** GL error enum → name, for startupError. Only the codes beginQuery can raise. */
+const GL_ERROR_NAMES: Readonly<Record<number, string>> = {
+  0x0500: 'INVALID_ENUM',
+  0x0501: 'INVALID_VALUE',
+  0x0502: 'INVALID_OPERATION',
+  0x0505: 'OUT_OF_MEMORY',
+  0x0506: 'INVALID_FRAMEBUFFER_OPERATION',
+  0x0507: 'CONTEXT_LOST_WEBGL',
+};
+
+function createGpuTimer(context: WebGLRenderingContext | WebGL2RenderingContext): GpuTimer {
+  // The WebGL1 branch is not dead code being tidy: three.js falls back to a
+  // WebGL1 context on an adapter or a flag that refuses WebGL2, and the query
+  // objects this file uses exist only on WebGL2. Reporting "unsupported" is the
+  // honest answer there; calling beginQuery would throw mid-frame.
+  const gl = context instanceof WebGL2RenderingContext ? context : null;
+  const ext =
+    gl === null
+      ? null
+      : (gl.getExtension('EXT_disjoint_timer_query_webgl2') as {
+          TIME_ELAPSED_EXT: number;
+          GPU_DISJOINT_EXT: number;
+        } | null);
+  if (gl === null || ext === null) {
+    return {
+      supported: false,
+      mark: () => {},
+      stop: () => {},
+      samples: () => [],
+      disjointDrops: () => 0,
+      startupError: () => (gl === null ? 'not a WebGL2 context' : 'extension absent'),
+    };
+  }
+  const resolved: number[] = [];
+  let pending: WebGLQuery[] = [];
+  let open: WebGLQuery | null = null;
+  let drops = 0;
+  let started = false;
+  let startupError: string | null = null;
+
+  const closeOpen = (): void => {
+    if (open === null) return;
+    gl.endQuery(ext.TIME_ELAPSED_EXT);
+    pending.push(open);
+    open = null;
+    // Oldest first: a driver that has stopped answering must not grow this
+    // list without bound, and the oldest query is the one least worth waiting
+    // for.
+    while (pending.length > MAX_PENDING_GPU_QUERIES) {
+      const dropped = pending.shift();
+      if (dropped !== undefined) gl.deleteQuery(dropped);
+    }
+  };
+
+  const collect = (): void => {
+    // READ THE DISJOINT FLAG ONCE PER COLLECT: getParameter CLEARS it, so a
+    // read per query would let a disjoint reported against the first query
+    // silently validate every later one in the same pass.
+    const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) === true;
+    const kept: WebGLQuery[] = [];
+    for (const query of pending) {
+      if (gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE) !== true) {
+        kept.push(query);
+        continue;
+      }
+      // A disjoint means the GPU clock was interrupted (a context switch, a
+      // power-state change): every result in flight is meaningless, not merely
+      // noisy, so it is dropped and counted rather than averaged in.
+      if (disjoint) drops++;
+      else resolved.push(Number(gl.getQueryParameter(query, gl.QUERY_RESULT)) / NANOSECONDS_PER_MS);
+      gl.deleteQuery(query);
+    }
+    pending = kept;
+  };
+
+  return {
+    supported: true,
+    mark(): void {
+      // COLLECT BEFORE CLOSING, so a result that has just landed is read on the
+      // tick it lands rather than after one more query has been pushed in
+      // behind it. With the two the other way round, the eviction inside
+      // closeOpen could discard a query whose result was already available.
+      collect();
+      closeOpen();
+      const query = gl.createQuery();
+      if (query === null) {
+        startupError ??= 'createQuery returned null';
+        return;
+      }
+      // ONLY ON THE FIRST START. getError is a synchronous round trip to the
+      // driver and would itself distort a per-frame measurement; one call, once,
+      // is the difference between a diagnosis and a shrug.
+      if (!started) {
+        started = true;
+        gl.getError(); // drain anything three left behind, so the read below is ours
+        gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+        const code = gl.getError();
+        if (code !== 0) {
+          startupError = GL_ERROR_NAMES[code] ?? `GL error 0x${code.toString(16)}`;
+          gl.deleteQuery(query);
+          return;
+        }
+        open = query;
+        return;
+      }
+      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+      open = query;
+    },
+    stop(): void {
+      closeOpen();
+      collect();
+      for (const query of pending) gl.deleteQuery(query);
+      pending = [];
+    },
+    samples: () => resolved,
+    disjointDrops: () => drops,
+    startupError: () => startupError,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE SAMPLE.
 
 export interface FrameBlock {
@@ -276,6 +495,29 @@ export interface FrameBlock {
   /** 1 % low = 1000 / the p99 frame interval. */
   fps1pctLow: number;
   msMax: number;
+  /**
+   * GPU milliseconds per frame, or null where EXT_disjoint_timer_query_webgl2
+   * is absent. NULL, NEVER ZERO: "the adapter took no time" and "nobody asked
+   * the adapter" must not read alike in a report whose whole purpose is to
+   * settle which side of the bus a frame was spent on.
+   */
+  gpuMsMean: number | null;
+  gpuMsP50: number | null;
+  gpuMsP99: number | null;
+  gpuMsMax: number | null;
+  /**
+   * Whether EXT_disjoint_timer_query_webgl2 was available at all. Reported
+   * apart from `gpuFrames`, because "the browser will not time the GPU here"
+   * and "the queries did not come back" are different problems with different
+   * fixes, and a bare zero cannot tell them apart.
+   */
+  gpuTimerSupported: boolean;
+  /** Null when GPU timing started cleanly; otherwise why it produced nothing. */
+  gpuTimerError: string | null;
+  /** Frames that produced a GPU result; below `frames` by the queries still in flight. */
+  gpuFrames: number;
+  /** Results discarded because the GPU clock was disjoint — see createGpuTimer. */
+  gpuDisjointDrops: number;
   drawCalls: number;
   drawCallsMax: number;
   triangles: number;
@@ -284,6 +526,12 @@ export interface FrameBlock {
   uploadMaxCallMB: number;
   /** Per-frame means, per GL entry point — see glUpload.byKind for why. */
   uploadPerFrameByKind: Record<UploadKind, { calls: number; ms: number; MB: number }>;
+  /**
+   * Run totals per upload shape, heaviest by total ms first — see
+   * glUpload.byShape. This is the field that names WHICH upload a frame spent
+   * itself on; the per-kind block above only says which entry point.
+   */
+  uploadByShape: Record<string, { calls: number; ms: number; MB: number }>;
   /** Mean ms per attribution key over the slowest 1 % of frames, sorted desc. */
   slowBreakdown: Record<string, number>;
   /** Mean ms per attribution key over every frame, sorted desc. */
@@ -332,10 +580,18 @@ function createSampler(viewport: Viewport): Sampler {
   ) as Record<UploadKind, { calls: number; ms: number; bytes: number }>;
   let maxCallBytes = 0;
   let last = performance.now();
+  const gpu = createGpuTimer(renderer.getContext());
   frameCost.clear();
   resetGlUpload();
+  // SCOPED TO THIS BLOCK, unlike the run-cumulative map it reads. The probe
+  // arms before the settle, and the settle is 45 s of chunk streaming whose
+  // uploads dwarf a 240-frame steady-state sample — left uncleared, every
+  // shape total would be a report on the load, which is not what any scenario
+  // here is measuring.
+  glUpload.byShape.clear();
   return {
     tick(): void {
+      gpu.mark();
       const now = performance.now();
       intervals.push(now - last);
       last = now;
@@ -355,6 +611,14 @@ function createSampler(viewport: Viewport): Sampler {
       resetGlUpload();
     },
     block(): FrameBlock {
+      gpu.stop();
+      const gpuSorted = gpu.samples().slice().sort((a, b) => a - b);
+      // Null the whole GPU group together when there is nothing behind it, so
+      // a reader never has to work out whether a zero is a measurement.
+      const gpuStat = (pick: (values: readonly number[]) => number): number | null =>
+        gpuSorted.length === 0 ? null : pick(gpuSorted);
+      const gpuPercentile = (p: number): number =>
+        gpuSorted[Math.min(gpuSorted.length - 1, Math.floor(gpuSorted.length * p))] ?? 0;
       const sorted = intervals.slice(1).sort((a, b) => a - b);
       const percentile = (p: number): number =>
         sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
@@ -373,6 +637,14 @@ function createSampler(viewport: Viewport): Sampler {
         msP99: percentile(0.99),
         fps1pctLow: 1000 / percentile(0.99),
         msMax: sorted[sorted.length - 1] ?? 0,
+        gpuMsMean: gpuStat((v) => v.reduce((sum, value) => sum + value, 0) / v.length),
+        gpuMsP50: gpuStat(() => gpuPercentile(0.5)),
+        gpuMsP99: gpuStat(() => gpuPercentile(0.99)),
+        gpuMsMax: gpuStat((v) => v[v.length - 1] ?? 0),
+        gpuTimerSupported: gpu.supported,
+        gpuTimerError: gpu.startupError(),
+        gpuFrames: gpuSorted.length,
+        gpuDisjointDrops: gpu.disjointDrops(),
         drawCalls: median(calls),
         drawCallsMax: Math.max(0, ...calls),
         triangles: median(triangles),
@@ -389,6 +661,14 @@ function createSampler(viewport: Viewport): Sampler {
             },
           ]),
         ) as Record<UploadKind, { calls: number; ms: number; MB: number }>,
+        uploadByShape: Object.fromEntries(
+          [...glUpload.byShape]
+            .sort((a, b) => b[1].ms - a[1].ms)
+            .map(([key, total]) => [
+              key,
+              { calls: total.calls, ms: total.ms, MB: total.bytes / 1e6 },
+            ]),
+        ),
         slowBreakdown: breakdown(intervals, costs, 0.01),
         allBreakdown: breakdown(intervals, costs, 1),
       };
@@ -471,6 +751,37 @@ const idleScenario: Scenario = async (ctx) => {
   const sampler = ctx.sampler();
   await sampleFrames(sampler, SAMPLE_FRAMES);
   return { sample: sampler.block(), detail: { cell } };
+};
+
+/**
+ * Steady state at the WORLD-FRAMING pose, with the camera never touched.
+ *
+ * WHY IT EXISTS BESIDE `idle` (2026-09-05). `idle` and `sculpt` both park at
+ * CAMERA_MIN_DISTANCE × STROKE_ZOOM_FACTOR — nose to the ground, where a
+ * handful of chunks fill the frame. That is the right pose for judging a
+ * sculpt, and the wrong one for judging the frame rate a player actually sees:
+ * the wide pose the world opens at holds most of the map in frustum, which is
+ * where the draw calls, the plugin populations and the sky all land at once.
+ * `idle` measured 2.17 ms on this machine's adapter while the same build was
+ * reported at 60–80 fps in play, so the two poses are not the same measurement.
+ *
+ * The camera is left exactly where render/scene.ts's restoreOrFocus put it —
+ * on a bench's throwaway Chrome profile there is no stored pose, so that is
+ * focusWorld's deterministic framing of the whole world, identical every run.
+ */
+const overviewScenario: Scenario = async (ctx) => {
+  ctx.beat('parked');
+  const sampler = ctx.sampler();
+  await sampleFrames(sampler, SAMPLE_FRAMES);
+  const { camera, controls } = ctx.viewport;
+  return {
+    sample: sampler.block(),
+    detail: {
+      worldSize: ctx.world.worldSize(),
+      orbitTarget: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      eye: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    },
+  };
 };
 
 /**
@@ -564,6 +875,7 @@ const cycloneScenario: Scenario = async (ctx) => {
 /** The scenario table. One entry, one function — that is the whole extension point. */
 const SCENARIOS: Readonly<Record<string, Scenario>> = {
   idle: idleScenario,
+  overview: overviewScenario,
   sculpt: sculptScenario,
   cyclone: cycloneScenario,
 };
