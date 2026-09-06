@@ -280,6 +280,23 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
 }
 
 /**
+ * Seconds an ibex takes over one BAND of wall.
+ *
+ * 0.8 AGAINST THE FOUR EVERYTHING ELSE TAKES (@terrace/shared's
+ * CLIMB_SECONDS_PER_BAND) — owner, 2026-09-06: "Ibex are known for being
+ * incredible jumpers." A leap is one ballistic act, not a rate of work: the
+ * animal is committed from the moment it leaves the ledge, so the only honest
+ * duration is about as long as a jump takes, and four seconds is a climb.
+ *
+ * IN THE PROTOCOL BECAUSE BOTH HALVES NEED THE SAME NUMBER: the server's climb
+ * rule ascends at it (server/species/ibex.ts) and the client's leap fills
+ * exactly one cycle with it (client/species/quadruped.ts's `poseLeap`). Stated
+ * once, imported twice — a restatement here would let the pose drift off the
+ * ascent by a whole leap.
+ */
+export const IBEX_CLIMB_SECONDS_PER_BAND = 0.8;
+
+/**
  * Hard ceiling on living creatures, whatever the habitat census says.
  *
  * 850 is a bandwidth number, not an ecology one (100 → 150 on 2026-08-14 with

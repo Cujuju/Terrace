@@ -147,26 +147,52 @@ export function poseWalk(
 // Positive Z lifts a hanging leg forward, toward the rock it is facing.
 
 /**
- * Scrambles per second on the wall.
+ * THE IBEX DOES NOT SCRAMBLE, IT LEAPS (owner, 2026-09-06: "Ibex are known for
+ * being incredible jumpers, so let's do a proper jumping motion as they go
+ * across the bands"). What was here before was a hand-over-hand scramble at
+ * 1.2 placements a second, which is a goat climbing like a small bear.
  *
- * 1.2 — faster than either biped climber (the peep's 0.75, the yeti's 0.5) and
- * deliberately so: a goat on a crag takes short quick placements where a
- * primate takes long deliberate reaches, and that difference is most of what
- * makes it read as a goat. Against the shipped climb (CLIMB_SECONDS_PER_BAND,
- * 4 s) it is five placements per band.
+ * ONE LEAP PER BAND, and the cycle length is passed in rather than stated here
+ * so it is the ascent's own rate: the ibex rises a band in
+ * IBEX_CLIMB_SECONDS_PER_BAND (../../protocol.ts, the same figure its server
+ * climb rule carries), and a leap that did not fill exactly that would drift
+ * against the height every band.
  */
-const CLIMB_SCRAMBLE_HZ = 1.2;
 
 /**
- * How far a scrambling leg reaches up the rock, and how far the one bearing
- * weight stays extended, in radians from hanging straight down.
+ * One leap, as the four instants that define it. `at` is the fraction of the
+ * cycle, `fore`/`hind` are leg rotations in radians from hanging straight down
+ * (positive lifts a leg forward, toward the rock), and `lift` is the body's
+ * rise in multiples of the walk's own bob — a leap heaves several times what a
+ * footfall does, which is what separates the two silhouettes.
  *
- * A quadruped's reach is SHORTER than a biped's (the peep's 2.4): its limbs
- * carry it rather than pull it, so the pose is a body pressed against the face
- * with the legs gathered under it — anything more reads as a bear.
+ * BOTH LEGS OF A PAIR MOVE TOGETHER, unlike every other gait here, and that is
+ * the whole read: a bound is symmetric where a walk is diagonal.
  */
-const CLIMB_LEG_HIGH_RADIANS = 1.1;
-const CLIMB_LEG_LOW_RADIANS = 0.25;
+interface LeapKey {
+  readonly at: number;
+  readonly fore: number;
+  readonly hind: number;
+  readonly lift: number;
+}
+
+const LEAP_CYCLE: readonly LeapKey[] = [
+  // Gathered on the ledge, weight back, about to go.
+  { at: 0, fore: 0.35, hind: -0.25, lift: 0 },
+  // COIL: everything folded under a body dropped below its standing height.
+  { at: 0.2, fore: 0.15, hind: -0.1, lift: -1 },
+  // DRIVE: hind legs straight out behind, forelegs thrown up at the next ledge.
+  { at: 0.42, fore: 1.5, hind: -0.95, lift: 2.4 },
+  // FLIGHT: tucked at the top of the arc, nothing touching rock.
+  { at: 0.7, fore: 1, hind: -0.35, lift: 3 },
+  // LAND, which is the gather again — one band higher.
+  { at: 1, fore: 0.35, hind: -0.25, lift: 0 },
+];
+
+/** Smooth in and out of every keyframe, so no joint changes direction abruptly. */
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * A fall: legs splayed and flailing at a rate nothing else here uses, because
@@ -179,32 +205,48 @@ const FALL_LEG_SPLAY_RADIANS = 0.7;
 const FALL_FLAIL_RADIANS = 0.35;
 
 /**
- * Poses the four legs and the body for one instant of a CLIMB.
+ * Poses the four legs and the body for one instant of a LEAP up the wall.
  *
- * DRIVEN BY THE CLOCK, not by ground covered: a climber's x/y are pinned at the
- * foot of the wall for the whole ascent, so there is no distance to pace off —
- * and the ascent runs at a fixed rate anyway. `phase` stays the individual's
- * offset along that clock. `bobAmplitude` is the walk's, and
- * the pull uses it directly: a climbing body heaves at the same scale it bobs.
+ * DRIVEN BY THE CLOCK against a cycle exactly one band long: a climber's x/y are
+ * pinned at the face and its height rises at a fixed rate, so the cycle and the
+ * ascent stay in step for free — the animal lands on each band edge at the same
+ * instant of the pose. `phase` stays the individual's offset, so two goats on
+ * one face are never in lockstep and the herd's pose palette holds real
+ * different instants rather than copies of one.
+ *
+ * `bobAmplitude` is the walk's own, and the lifts above are multiples of it: a
+ * re-proportioned ibex leaps at the same scale it walks.
  */
-export function poseClimb(
+export function poseLeap(
   joints: SpeciesJoints,
   seconds: number,
   phase: number,
   bobAmplitude: number,
+  secondsPerLeap: number,
 ): void {
-  // The phase offset is still the individual's: two goats on the same face must
-  // not scramble in lockstep, and it is what makes the herd's pose slots hold
-  // 32 different instants of the climb rather than 32 copies of one.
-  const scramble = Math.sin(seconds * CLIMB_SCRAMBLE_HZ * TWO_PI + phase);
-  const mid = (CLIMB_LEG_HIGH_RADIANS + CLIMB_LEG_LOW_RADIANS) / 2;
-  const span = (CLIMB_LEG_HIGH_RADIANS - CLIMB_LEG_LOW_RADIANS) / 2;
-  // The same diagonal pairs the walk uses — three feet on the rock at a time.
-  joints.foreLeft!.rotation.z = mid + scramble * span;
-  joints.hindRight!.rotation.z = mid + scramble * span;
-  joints.foreRight!.rotation.z = mid - scramble * span;
-  joints.hindLeft!.rotation.z = mid - scramble * span;
-  joints.rig!.position.y = Math.abs(scramble) * bobAmplitude;
+  const cycles = seconds / secondsPerLeap + phase / TWO_PI;
+  const u = cycles - Math.floor(cycles);
+
+  let previous = LEAP_CYCLE[0]!;
+  let next = LEAP_CYCLE[LEAP_CYCLE.length - 1]!;
+  for (let i = 1; i < LEAP_CYCLE.length; i++) {
+    if (u <= LEAP_CYCLE[i]!.at) {
+      previous = LEAP_CYCLE[i - 1]!;
+      next = LEAP_CYCLE[i]!;
+      break;
+    }
+  }
+  const span = next.at - previous.at;
+  const t = span <= 0 ? 0 : smoothstep((u - previous.at) / span);
+  const fore = previous.fore + (next.fore - previous.fore) * t;
+  const hind = previous.hind + (next.hind - previous.hind) * t;
+  const lift = previous.lift + (next.lift - previous.lift) * t;
+
+  joints.foreLeft!.rotation.z = fore;
+  joints.foreRight!.rotation.z = fore;
+  joints.hindLeft!.rotation.z = hind;
+  joints.hindRight!.rotation.z = hind;
+  joints.rig!.position.y = lift * bobAmplitude;
 }
 
 /** Poses the four legs and the body for one instant of a FALL: nothing holds. */
