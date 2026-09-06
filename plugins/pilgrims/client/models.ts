@@ -49,8 +49,25 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
 
-/** Overall height, world units — a little person: knee-high to a yeti. */
-export const PILGRIM_HEIGHT = 0.62;
+/**
+ * The height the geometry below is BUILT at, world units — every literal in
+ * this file (hip height, head radius, staff length) is measured against it.
+ * Nothing is drawn at this size; see PILGRIM_MODEL_SCALE.
+ */
+const PILGRIM_AUTHORED_HEIGHT = 0.62;
+
+/**
+ * Uniform scale every walker's rig is drawn at (owner, 2026-09-05: peeps
+ * fifteen percent smaller). Applied to the INSTANCE ROOT rather than by
+ * re-measuring the geometry: the bake is shared by every walker of a
+ * (race, kind), so one scale on the root moves the whole figure — body, limbs,
+ * props, bob and stride included — and leaves the authored numbers above
+ * meaning what they say.
+ */
+export const PILGRIM_MODEL_SCALE = 0.85;
+
+/** Overall height AS DRAWN, world units — a little person: knee-high to a yeti. */
+export const PILGRIM_HEIGHT = PILGRIM_AUTHORED_HEIGHT * PILGRIM_MODEL_SCALE;
 
 /**
  * Stride frequency at the shipped walk speed, cycles per second.
@@ -462,6 +479,10 @@ export function createPilgrimModels(): PilgrimModels {
     };
     const { root } = instance;
     root.name = `pilgrims:${kind}:${race}`;
+    // The one place the drawn size is set. ../client/index.ts writes position
+    // and yaw on this same node and never touches scale, so nothing overwrites
+    // it frame to frame.
+    root.scale.setScalar(PILGRIM_MODEL_SCALE);
 
     return {
       root,

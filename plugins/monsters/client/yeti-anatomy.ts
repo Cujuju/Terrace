@@ -66,9 +66,20 @@ import { YETI_VARIANTS, type YetiVariant } from '../protocol.ts';
  * It is PILGRIM_HEIGHT (plugins/pilgrims/client/models.ts), RESTATED rather
  * than imported, for the same reason the server's half of every monster
  * constant is restated: a monster must not pull another plugin's model module
- * into its bundle to learn one number. A test fails the day the two disagree.
+ * into its bundle to learn one number.
+ *
+ * 0.527 SINCE 2026-09-05, when the owner made peeps fifteen percent smaller:
+ * that plugin's figure is now an AUTHORED 0.62 drawn at PILGRIM_MODEL_SCALE
+ * 0.85, and the yeti follows the ruler rather than the authoring — owner's
+ * call, so the "twice a peep" ceiling below keeps meaning what it says.
+ *
+ * NOTHING CHECKS THE TWO AGREE, and this comment used to claim otherwise ("a
+ * test fails the day the two disagree"). ../test/client.test.ts imports
+ * PILGRIM_HEIGHT and never asserts on it, so the restatement is unguarded —
+ * left as it stands rather than fixed here, because this repo's tests are the
+ * owner's to add.
  */
-export const PEEP_HEIGHT_WORLD_UNITS = 0.62;
+export const PEEP_HEIGHT_WORLD_UNITS = 0.527;
 
 /**
  * How many peeps tall he is allowed to be. OWNER CEILING, 2026-08-24: "no more

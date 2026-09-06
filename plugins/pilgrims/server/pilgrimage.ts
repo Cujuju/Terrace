@@ -477,14 +477,16 @@ export interface RoutedWalker extends MovingWalker, RoutedMover {}
  * Personal space around one walker, in cells — how close another body may
  * come before a candidate heading is refused (shared's `steerAvoiding`).
  *
- * 0.2 — MEASURED off the shipped model, not guessed, and measured HERE rather
+ * 0.17 — MEASURED off the shipped model, not guessed, and measured HERE rather
  * than imported for the reason VIEWPOINT_RING_CELLS states above: a server sim
  * must not reach into a client model file, and the failure mode of drift is
  * walkers passing a little closer than intended, never a crash. The widest
- * part of a settler is the head sphere, radius 0.155 cells
- * (pilgrims/client/models.ts), and its limbs and tail swing a little wider
- * again; 0.2 is that rounded up. Two walkers therefore hold 0.4 cells centre
- * to centre — bodies clear, with the gap reading as a gap rather than a graze.
+ * part of a settler is the head sphere, radius 0.155 cells as AUTHORED, drawn
+ * at PILGRIM_MODEL_SCALE 0.85 (pilgrims/client/models.ts) — 0.132 — and its
+ * limbs and tail swing a little wider again; 0.17 is that rounded up. Two
+ * walkers therefore hold 0.34 cells centre to centre — bodies clear, with the
+ * gap reading as a gap rather than a graze. The scale is restated here for the
+ * same reason the radius is: the server sim may not import a client model file.
  *
  * WHY THIS DID NOT EXIST BEFORE (owner, 2026-08-20: "they tend to run into
  * each other"): nothing in this plugin, or in any other mover plugin, read a
@@ -492,7 +494,7 @@ export interface RoutedWalker extends MovingWalker, RoutedMover {}
  * shared/src/steering.ts's header — and this constant is only this plugin's
  * body size, the one part of it that is genuinely local.
  */
-export const WALKER_PERSONAL_SPACE_CELLS = cellsAcross(0.2);
+export const WALKER_PERSONAL_SPACE_CELLS = cellsAcross(0.17);
 
 /**
  * The moving population a walker must keep clear of, as shared's `Occupant`
