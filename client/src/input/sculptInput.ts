@@ -154,6 +154,23 @@ export interface SculptInputOptions {
    */
   carveBand: (pick: TerrainRayPick | null) => number | null;
   /**
+   * WHERE A HELD CARVE CUTS NEXT (World.carveReach): the first cell along this
+   * ray that still has material at `band`, or null when the aim runs out of
+   * solid material — the "no more cutting" that ends a tunnel.
+   *
+   * NOT `pickCell`, and that is the point (GH #349). A repeat that re-picked
+   * asked "what surface is under the pointer", and after the first cut the
+   * answer is the FLOOR of the hole the cut just made, INSIDE THE SAME CELL —
+   * so the repeat re-cut a band that column no longer had and moved nothing.
+   * A tunnel's question is "where along my aim is there still rock", which is
+   * this.
+   */
+  carveReach: (
+    origin: Vec3,
+    direction: Vec3,
+    band: number,
+  ) => { x: number; y: number } | null;
+  /**
    * Emits one intent, and reports whether it went out — false when a client
    * plugin vetoed it (out of mana) or the socket was not ready.
    *
@@ -232,6 +249,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     bandAtCell,
     graspSpanBand,
     carveBand,
+    carveReach,
     send,
   } = options;
 
@@ -292,6 +310,29 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * they were moving.
    */
   let strokeGrab: number | null = null;
+
+  /**
+   * THE BAND A CARVE STROKE IS CUTTING, taken from the FIRST cut of the press
+   * and held until release — null until then, and for every other tool.
+   *
+   * THE BAND IS THE CARVE'S GRASP, exactly as `strokeGrab` is the pull's, and
+   * it is frozen for the same reason: it is half of a decision the press
+   * already made. Owner, 2026-09-05: "Why would I get a different band when
+   * I'm still explicitly pointing at band three?"
+   *
+   * WHY RE-DERIVING IT WAS WRONG, precisely. The hover pin keeps faith with
+   * the CELL and the RAY and deliberately with nothing derived from the map
+   * (see `hoverCell`), so every repeat asked `carveBand` afresh — and the cut
+   * had just changed the very column it asks about. The ray then met the
+   * ceiling the cut exposed, an underside hit names the roof's lowest drawn
+   * band, and the repeat opened the band ABOVE the one the player was pointing
+   * at. That is the "band three and four missing" report of the same day.
+   *
+   * NOT KEPT ACROSS PRESSES (owner's choice, 2026-09-05): released in
+   * `stopRepeat` with the rest of the stroke, so the next press re-derives the
+   * band from wherever the pointer is then.
+   */
+  let strokeCarveBand: number | null = null;
 
   /**
    * Whether the stroke has actually started sculpting. A touch stroke waits out
@@ -624,42 +665,95 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       emitDrag(to.x, to.y, action, strokeGrab);
       return;
     }
-    const cell = hoverTarget();
-    if (cell === null) return;
-    // AN UNDERSIDE HIT REFUSES A RAISE (plan D4). A horizontal face BELOW the
-    // span's own cap is the roof of a cave seen from underneath, and there is
-    // no gesture in this game that means "add material to the bottom of a
-    // roof" — so the stroke is not emitted at all rather than being sent and
-    // silently reinterpreted as thickening the roof upward.
+    // ── A CARVE PAST ITS FIRST CUT TUNNELS ALONG ITS AIM (GH #349, owner
+    // 2026-09-05: "cut through this band until there's no more cutting and
+    // then you stop"). It is the one tool whose repeat does not act on the
+    // surface under the pointer, and it cannot: the cut it just made put a
+    // hole there, so the surface under the pointer IS that hole's floor. The
+    // band is the press's (`strokeCarveBand`) and the only open question is
+    // where along the aim there is still rock, which `carveReach` answers.
     //
-    // REFUSED HERE, IN THE CLIENT, because this is where the fact lives: which
-    // FACE a ray met is a property of that ray and of the camera, not of the
-    // world, so the server cannot re-derive it and the intent deliberately does
-    // not carry it (it would be an unverifiable claim on the wire). Lowering an
-    // underside is a carve, and belongs to the carve tool (D6).
-    const underside = !cell.hitRiser && cell.hitY < cell.surfaceY;
-    if (underside && sculptDirection(action) > 0) return;
-    // WHICH SPAN THIS STROKE HAS HOLD OF, omitted entirely on an ordinary
-    // column so an unlayered world's intents are byte-identical to before the
-    // field existed (World.graspSpanBand returns null there).
+    // THE PRESS'S RAY, not a fresh one — the same promise `hoverTarget` makes
+    // a held stroke (issue #25), asked of the tunnel instead of the column.
+    // `hoverRay` is the ray the first intent of this stroke pinned; a pointer
+    // move during the hold does not re-aim the tunnel, exactly as it does not
+    // re-aim a held stamp.
     //
-    // THE CARVE IS THE ONE TOOL THAT ALWAYS NAMES A BAND, ordinary column or
-    // not: the band is not a refinement of where it acts, it IS where it acts,
-    // and a carve that named none would be a no-op in the shared math. So it
-    // asks `carveBand`, the same derivation without the one-span shortcut —
-    // and it is only ever this tool that does, which is what leaves every
-    // other stroke over unlayered ground byte-identical.
-    const spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
-    // A BRUSH PRESS ON A RISER MEANS THE TREAD AT ITS FOOT (issue #347). The
-    // ray is the pinned one `hoverTarget` just re-derived this pick from, so
-    // the step-back is taken along the aim the player actually has.
-    const foot =
-      hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
-        ? footOfFaceCell(cell, hoverRay.direction, worldSize())
-        : null;
-    // Nothing the world→cell rule can answer: keep the cell the pick named,
-    // which is what every tool sent before this existed.
-    const anchor = foot ?? { x: cell.x, y: cell.y };
+    // NO FOOT ANCHOR AND NO UNDERSIDE TEST, because both are questions about a
+    // FACE and there is no pick here to have met one. The foot step-back
+    // (issue #347) turns a riser press into the tread at its foot for a brush;
+    // a carve names a band and a cell outright.
+    // WHERE THIS INTENT ACTS AND WHICH BAND IT NAMES — the two things the
+    // branches below disagree about, and the only two. One `send` after them,
+    // so a tunnelling repeat and a first press cannot describe themselves
+    // differently on the wire.
+    let anchor: { x: number; y: number };
+    let spanBand: number | null;
+
+    if (strokeTool === 'carve' && strokeCarveBand !== null) {
+      if (hoverRay === null) return;
+      const reach = carveReach(hoverRay.origin, hoverRay.direction, strokeCarveBand);
+      // THE TUNNEL HAS BROKEN THROUGH — nothing left at this band along this
+      // aim. Emitting anyway would spend a seq and a mana charge on a cut the
+      // shared math has nothing to apply, which is the same waste the Pull's
+      // "nothing in its grasp" guard above exists to stop.
+      if (reach === null) return;
+      anchor = reach;
+      spanBand = strokeCarveBand;
+    } else {
+      const cell = hoverTarget();
+      if (cell === null) return;
+      // AN UNDERSIDE HIT REFUSES A RAISE (plan D4). A horizontal face BELOW the
+      // span's own cap is the roof of a cave seen from underneath, and there is
+      // no gesture in this game that means "add material to the bottom of a
+      // roof" — so the stroke is not emitted at all rather than being sent and
+      // silently reinterpreted as thickening the roof upward.
+      //
+      // REFUSED HERE, IN THE CLIENT, because this is where the fact lives: which
+      // FACE a ray met is a property of that ray and of the camera, not of the
+      // world, so the server cannot re-derive it and the intent deliberately does
+      // not carry it (it would be an unverifiable claim on the wire). Lowering an
+      // underside is a carve, and belongs to the carve tool (D6).
+      const underside = !cell.hitRiser && cell.hitY < cell.surfaceY;
+      if (underside && sculptDirection(action) > 0) return;
+      // WHICH SPAN THIS STROKE HAS HOLD OF, omitted entirely on an ordinary
+      // column so an unlayered world's intents are byte-identical to before the
+      // field existed (World.graspSpanBand returns null there).
+      //
+      // THE CARVE IS THE ONE TOOL THAT ALWAYS NAMES A BAND, ordinary column or
+      // not: the band is not a refinement of where it acts, it IS where it acts,
+      // and a carve that named none would be a no-op in the shared math. So it
+      // asks `carveBand`, the same derivation without the one-span shortcut —
+      // and it is only ever this tool that does, which is what leaves every
+      // other stroke over unlayered ground byte-identical.
+      spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
+      // A CARVE WITH NO BAND CUTS NOTHING, so it emits nothing — the same rule,
+      // and the same reason, as the Pull's "nothing in its grasp" guard above
+      // (GH #349). A tread far from any lip resolves to no band (D1, owner
+      // 2026-09-04), and this used to put a band-less carve on the wire anyway:
+      // the shared math no-ops it, but `sculptDisplacementUnits` prices a carve
+      // from its RADIUS ALONE and deliberately never reads the terrain
+      // (shared/src/heightmap.ts), so the mana came off for a cut that could not
+      // happen. The press is dead either way; now it is also free.
+      //
+      // AND IT IS WHAT FREEZES THE BAND FOR THE REST OF THE PRESS. Reached only
+      // by the first cut of a carve stroke, because every repeat after it takes
+      // the tunnelling branch above.
+      if (strokeTool === 'carve') {
+        if (spanBand === null) return;
+        strokeCarveBand = spanBand;
+      }
+      // A BRUSH PRESS ON A RISER MEANS THE TREAD AT ITS FOOT (issue #347). The
+      // ray is the pinned one `hoverTarget` just re-derived this pick from, so
+      // the step-back is taken along the aim the player actually has.
+      const foot =
+        hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
+          ? footOfFaceCell(cell, hoverRay.direction, worldSize())
+          : null;
+      // Nothing the world→cell rule can answer: keep the cell the pick named,
+      // which is what every tool sent before this existed.
+      anchor = foot ?? { x: cell.x, y: cell.y };
+    }
     // The EDGE is read (not captured) per intent, so switching that toggle
     // mid-stroke takes effect on the very next repeat. The TOOL is not: it is
     // the press's own decision, frozen with the grasp it implies — see
@@ -803,13 +897,43 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     return true;
   };
 
+  /**
+   * ENDS THE STROKE — and RELEASES THE AIMED-CELL PIN with it (GH #349).
+   *
+   * THE PIN IS A PROMISE ABOUT A STROKE IN FLIGHT, and it used to outlive one.
+   * `hoverTarget` keys its cache on the pointer and the camera alone, so with
+   * the mouse still after a cut the key was unchanged and the next hover — and
+   * the next CLICK — went on being answered for the cell the last press aimed
+   * at. Issue #25 asks that a HELD stamp not march into the mound it is
+   * raising, and #324 that no map-derived field survive an edit; neither says
+   * anything about the press being over. Between presses the honest answer is
+   * a fresh march, and this is what makes the next read take one.
+   *
+   * The owner's report, 2026-09-05: after a carve the crosshair sat about 30 px
+   * BELOW the mouse and a second click did nothing. Both were this — the
+   * pinned ray now passed through the opening, and `pickTerrainInColumn`'s
+   * ground-under-the-ray answer reports the floor at the MIDPOINT of the ray's
+   * chord across the cell, a point that is not on the ray at all. Measured
+   * over camera pitches 20° to 70°, every hit an honest march returns lies
+   * exactly on the ray (`.agent-stack/carve-verify/probe/clickChain.txt`, offRay=0.00000c).
+   *
+   * CLEARING THE KEY IS THE RELEASE. The pointer has not moved, so the key the
+   * next read computes is the same string it was; only an unmatchable key
+   * forces the re-march. The cell and ray go with it rather than being left to
+   * be re-pinned by the next read, so there is no window in which they belong
+   * to a stroke that has ended.
+   */
   const stopRepeat = (): void => {
     strokeButton = null;
     strokePointerId = null;
     strokeIsTouch = false;
     strokeGrab = null;
+    strokeCarveBand = null;
     strokeArmed = false;
     haveDragTo = false;
+    hoverKey = '';
+    hoverCell = null;
+    hoverRay = null;
     if (repeatTimer !== null) {
       clearTimeout(repeatTimer);
       repeatTimer = null;
