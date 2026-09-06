@@ -126,6 +126,9 @@ WebGL2 GPU timer, 2026-09-05, ONE run. This is the phase 3 before/after, #342 �
 the stars as a point cloud. Baselines drift between runs, so only the same-run
 differences count:
 
+MEASURED WITH THE IN-ARM GRID ON, which is NOT the shipped configuration — see
+the run below it:
+
 | variant | view pose | hub pose | note |
 | --- | --- | --- | --- |
 | rev10 | 1.02 | | pre-3-D reference |
@@ -134,9 +137,28 @@ differences count:
 | rev20 | 1.73 | 1.43 | after #341, before #342 — bake 1.2 ms once |
 | cur | 1.00 | 1.00 | #342, 1,194,486 points — bake 3.9 ms once, buffers 179 ms once |
 
-The point cloud saves 0.73 ms/frame at the view pose (42%) and 0.43 ms at the hub
-pose (30%), and it takes the whole wheel back to the pre-3-D reference's cost.
-The two poses now time the same, which is the point: a fragment's cost no longer
-depends on how many voxels its ray crosses. The one-off buffer build is 179 ms of
-CPU at startup for 27.3 MB of vertex data (24 bytes a star: position float32 x3,
+The in-arm grid never drew in the shader this replaces: `stars3` was called for it
+with depth = DISK_THICKNESS at 40 cells per unit, so its floor sat at -0.94 cells
+while the walk starts at cell.z = floor(-0.001) = -1, and its
+`if(cell.z<zBot) break;` fired on the first iteration of every ray from rev 13
+through rev 20. Drawing it would be a look change, so STAR_ARM_GRID_ENABLED
+(client/src/render/celestialVoid.ts) keeps it off until the owner has seen it.
+`ARM_GRID_GAIN:0.0` blacks those stars out but still generates and shades their
+356 k vertices; the flag removes them, so this is the run that stands:
+
+| variant | view pose | hub pose | note |
+| --- | --- | --- | --- |
+| rev10 | 0.59 | | pre-3-D reference |
+| rev18 | 1.82 | | before #340 |
+| rev19 | 1.36 | | after #340, before #341 — bake 1.5 ms once |
+| rev20 | 0.97 | 0.81 | after #341, before #342 — bake 1.9 ms once |
+| cur | 0.45 | 0.44 | #342 as shipped, 838,897 points — bake 1.8 ms once, buffers 122 ms once |
+
+(That whole run reads cooler than the one above it — rev10 0.59 against 1.02 —
+which is exactly why only same-run differences count.) As shipped the point cloud
+saves 0.52 ms/frame at the view pose (54%) and 0.37 ms at the hub pose (46%), and
+takes the whole wheel below the pre-3-D reference's cost. The two poses now time
+the same, which is the point: a fragment's cost no longer depends on how many
+voxels its ray crosses. The one-off buffer build is 122 ms of CPU at startup for
+19.2 MB of vertex data (24 bytes a star: position float32 x3,
 radius/kind/brightness float32 x3).

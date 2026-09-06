@@ -123,15 +123,29 @@
 // arithmetic and needs no second render target. The gas opacity every star
 // formula wants is already in the texture the gas pass wrote this frame, so the
 // point programs read `u_gasHalf.a` at the star's own screen position — which is
-// why the in-arm stars are still dimmed by the gas exactly as before.
+// how the field stars are dimmed by the gas over them exactly as before.
+//
+// THE IN-ARM GRID HAS NEVER DRAWN, AND STAYS OFF. Its walk was called with
+// depth = DISK_THICKNESS at 40 cells per unit, which puts its floor at
+// zBot = -0.94 cells; the walk starts at the voxel just under the plane,
+// cell.z = floor(-0.001) = -1, so `if(cell.z<zBot) break;` fired on the first
+// iteration and the grid contributed exactly nothing to any frame from rev 13
+// to rev 20. The look the owner approved therefore has no in-arm stars in it,
+// and a perf phase is not where a new layer arrives: STAR_ARM_GRID_ENABLED is
+// false, so the grid is neither generated nor drawn. The shader's grid-2 branch
+// is kept as written — it is the intended design and one flag away — and the
+// owner decides on issue #342 whether to see it.
 //
 // Two things about the field DID change, and both are look decisions: it is a
 // fresh random draw with the same statistics rather than today's exact stars
 // (fixed seeds, so it is the same field on every start), and every star to a
 // grid's full depth is drawn, where the walk stopped after STAR_WALK voxels —
-// about 80 % of the coarse depth at 60 degrees and less at flatter angles, a
-// bench compromise rather than a look choice. Flat world-anchor views therefore
-// gain back their deepest stars.
+// about 80 % of the coarse depth at 60 degrees and much less at the grazing
+// angles that fill most of a tilted frame, a bench compromise rather than a look
+// choice. The field therefore gains back the stars the walk never reached, which
+// reads as more faint stars rather than as a brighter sky (measured on the
+// bench's shots: 3.5x the distinct star cores in the deep field, +3 % mean
+// luminance there).
 //
 // COLOUR PIPELINE. The renderer runs ACES tone mapping at exposure 1.25
 // (render/scene.ts) and sRGB output conversion. Both are opt-in per shader in
@@ -496,9 +510,30 @@ const STAR_ARM_CUTOFF = 0.02;
 const STAR_ARM_RADIUS = GAS_DISK_RADIUS * Math.log(ARM_GRID_GAIN / STAR_ARM_CUTOFF);
 
 /**
- * The three grids, in the order the shader's `u_starGrid` numbers them: 0 the
- * coarse field, 1 the fine field, 2 the in-arm stars. ~1.19 M points in all,
- * inside the 1.2 M budget this arc set.
+ * Whether the in-arm grid is drawn at all. FALSE, because it has never been
+ * drawn and the owner has therefore never seen it.
+ *
+ * The finding (2026-09-05, reviewing the point cloud against the walk it
+ * replaces): `stars3` was called for this grid with depth = DISK_THICKNESS at
+ * STAR_ARM_CELLS_PER_UNIT cells per unit, so its floor was
+ * zBot = -DISK_THICKNESS*40 = -0.94 CELLS, while the walk starts one whole voxel
+ * under the plane at cell.z = floor(-0.001) = -1. Its `if(cell.z<zBot) break;`
+ * fired on the first iteration, every ray, every frame, from rev 13 through
+ * rev 20. The approved look has no in-arm stars in it.
+ *
+ * The point cloud does not have that bug and would draw them — about 356 k more
+ * stars threaded through the arms, which is a look change, not a perf change.
+ * So it stays off: the grid is neither generated nor given a Points object, and
+ * the shader's grid-2 branch is kept exactly as written because it is the
+ * intended design. Flip this to true to see it; the owner decides on #342.
+ */
+const STAR_ARM_GRID_ENABLED = false;
+
+/**
+ * The grids, in the order the shader's `u_starGrid` numbers them: 0 the coarse
+ * field, 1 the fine field, and 2 the in-arm stars when STAR_ARM_GRID_ENABLED
+ * lets them exist. ~839 k points as shipped, ~1.19 M with the in-arm grid on —
+ * inside the 1.2 M budget this arc set either way.
  */
 const STAR_GRIDS: readonly StarGridSpec[] = [
   {
@@ -515,13 +550,17 @@ const STAR_GRIDS: readonly StarGridSpec[] = [
     scale: STAR_FINE_CELLS_PER_UNIT,
     density: STAR_FINE_DENSITY,
   },
-  {
-    seed: STAR_ARM_SEED,
-    radius: STAR_ARM_RADIUS,
-    depth: DISK_THICKNESS,
-    scale: STAR_ARM_CELLS_PER_UNIT,
-    density: STAR_ARM_DENSITY,
-  },
+  ...(STAR_ARM_GRID_ENABLED
+    ? [
+        {
+          seed: STAR_ARM_SEED,
+          radius: STAR_ARM_RADIUS,
+          depth: DISK_THICKNESS,
+          scale: STAR_ARM_CELLS_PER_UNIT,
+          density: STAR_ARM_DENSITY,
+        },
+      ]
+    : []),
 ];
 
 /**
@@ -710,7 +749,9 @@ const float DISK_RADIUS  = ${GAS_DISK_RADIUS.toFixed(1)};    // e-folding radius
 // points in three 3-D grids: the in-arm stars inside the gas, the field and fine grids on down to
 // STAR_FIELD_DEPTH under it, each dimmed by the gas in front of it. They used to be found by walking
 // those grids per fragment; since issue #342 they are a point cloud drawn after this program (see
-// STARS_VERT_GLSL and the header), and the numbers below that describe them are its numbers too.
+// STARS_VERT_GLSL and the header), and the numbers below that describe them are its numbers too. The
+// in-arm grid is the exception: its walk broke before its first voxel, so it has never drawn, and
+// STAR_ARM_GRID_ENABLED keeps it off until the owner has seen it.
 // Nothing is above the plane, so the clearance to the map is unchanged.
 const float DISK_THICKNESS= ${DISK_THICKNESS.toFixed(3)}; // DISK_THICKNESS_WORLD in disk units; gas and stars both stay within it
 const int   GAS_STEPS    = 6;      // march samples through the thickness; rev 16 bench: 10 -> 6 saves ~0.5 ms at 1440p, no visible banding
@@ -957,9 +998,10 @@ void main(){
  * them and are dead here, which the compiler removes.
  */
 const STARS_VERT_GLSL = /* glsl */ `${WHEEL_FIELDS_GLSL}
-// Which grid this Points object is: 0 the coarse field, 1 the fine field, 2 the in-arm stars. It
-// is a property of the OBJECT, not of the vertex, so it is a uniform and the three materials
-// differ in nothing else (see createStarPoints).
+// Which grid this Points object is: 0 the coarse field, 1 the fine field, 2 the in-arm stars (which
+// STAR_ARM_GRID_ENABLED keeps off - the branch below is kept because it is the intended design, not
+// because anything reaches it today). It is a property of the OBJECT, not of the vertex, so it is a
+// uniform and the materials differ in nothing else (see createStarPoints).
 uniform float u_starGrid;
 // The half-res gas pass's output (issue #341). Only its alpha is read here — the total gas opacity
 // along the ray — and only once per star, at the star's own screen position. Bilinear, no mips, so
@@ -1410,7 +1452,7 @@ export function createCelestialVoid(
    * Generates the star field and adds one `Points` per grid. Called once, from
    * the wheel material's creation.
    *
-   * ONE MATERIAL PER GRID, all three built on the SAME `uniforms` object (a
+   * ONE MATERIAL PER GRID, each built on the SAME `uniforms` object (a
    * shallow copy shares the IUniform objects themselves, so the clock, the
    * anchor frame and the gas texture cannot drift by a frame) plus the one
    * uniform that differs. Three materials rather than one with a per-object
@@ -1464,8 +1506,9 @@ export function createCelestialVoid(
   };
 
   /**
-   * Hides the fine and in-arm grids for frames on which they cannot draw
-   * anything, so their ~715 k vertices are not shaded to be discarded.
+   * Hides the fine grid (and the in-arm grid, where STAR_ARM_GRID_ENABLED lets
+   * it exist) for frames on which it cannot draw anything, so its ~360 k
+   * vertices are not shaded only to be discarded.
    *
    * The smallest `sdist` anywhere on screen is the eye's own height above the
    * plane — the ray straight down — so once THAT alone puts the fine grid's
