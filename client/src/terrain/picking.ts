@@ -24,6 +24,7 @@ import {
   spanUndersideHeight,
   spanCapHeight,
   spanCount,
+  spanIndexCoveringBand,
   type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
@@ -1123,6 +1124,50 @@ export function pickTerrainCellByRay(
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, tEnter, tExit) => {
     found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
     return found !== null;
+  });
+  return found;
+}
+
+/**
+ * THE FIRST CELL ALONG THE RAY WITH ANYTHING LEFT TO CUT AT `band`, or null
+ * when the aim runs out of the world without meeting solid material there.
+ *
+ * WHAT A HELD CARVE ADVANCES ALONG (GH #349, owner 2026-09-05: "cut through
+ * this band until there's no more cutting and then you stop"). A carve that
+ * re-picked instead would not tunnel at all: measured over camera pitches 20°
+ * to 70°, the cut opens a hole whose FLOOR the ray then meets inside the SAME
+ * cell, so the repeat re-cut a band that column no longer had and changed
+ * nothing (`.agent-stack/carve-verify/probe/clickChain.txt`, section B). The surface the
+ * ray meets is the wrong question for a tunnel; whether the band is still
+ * solid is the right one.
+ *
+ * IT SKIPS what is already open rather than stopping at it, which is what
+ * makes a repeat advance one cell per press instead of stalling on the hole
+ * behind it. The march bound (`marchStepLimit`) is the walk's only limit, so
+ * there is no reach constant to choose — the aim leaves the world and the
+ * answer is null.
+ *
+ * NOT A PICK, and it deliberately returns no face, height or span: the band is
+ * the caller's, frozen at the press, and the only thing still to decide is
+ * WHERE along the aim it can act. `direction` need not be normalised.
+ */
+export function carveReachCell(
+  mirror: TerrainMirror,
+  origin: Vec3,
+  direction: Vec3,
+  band: number,
+): { x: number; y: number } | null {
+  const size = mirror.map.size;
+  if (size <= 0) return null;
+
+  let found: { x: number; y: number } | null = null;
+  marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j) => {
+    // An unreceived chunk is not "nothing to cut here", it is "not known yet";
+    // the terrain pick stops at one for the same reason.
+    if (!cellRevealed(mirror, i, j)) return true;
+    if (spanIndexCoveringBand(mirror.map, i, j, band) === null) return false;
+    found = { x: i, y: j };
+    return true;
   });
   return found;
 }

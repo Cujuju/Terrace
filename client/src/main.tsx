@@ -237,6 +237,9 @@ const sculptInput = createSculptInput({
   bandAtCell: (x, y) => world.bandAtCell(x, y),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
   carveBand: (pick) => world.carveBand(pick),
+  // WHERE A HELD CARVE CUTS NEXT — not a pick, because after the first cut the
+  // surface under the pointer is the floor of the hole it made (GH #349).
+  carveReach: (origin, direction, band) => world.carveReach(origin, direction, band),
   // CLIENT-SIDE PREDICTION (design doc). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
   // frame instead of a round trip later; the world reconciles it against the
