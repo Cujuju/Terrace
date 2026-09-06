@@ -46,6 +46,19 @@ export interface FrameCounters {
   /** Drawing-buffer width in physical pixels — canvas CSS size x pixel ratio. */
   readonly pixelWidth: number;
   readonly pixelHeight: number;
+  /**
+   * Camera-to-target distance, in world units.
+   *
+   * HERE BECAUSE IT IS THE VARIABLE THAT INVALIDATED A DAY OF BENCH NUMBERS
+   * (2026-09-06). The bench runs on a throwaway Chrome profile, which has no
+   * stored camera pose, so it frames the world its own deterministic way and
+   * saw 138-162 draw calls; the owner plays from the pose their browser
+   * restored and sees 305-337. Same build, same world, same resolution, two
+   * populations of the frustum, and no reading said which one it was. A frame
+   * time without the pose it was taken at is as unreadable as one without its
+   * pixel count.
+   */
+  readonly cameraDistance: number;
   readonly drawCalls: number;
   readonly triangles: number;
   readonly geometries: number;
@@ -89,6 +102,7 @@ type FrameStatsSink = (sample: FrameStatsSample) => void;
 const EMPTY_COUNTERS: FrameCounters = {
   pixelWidth: 0,
   pixelHeight: 0,
+  cameraDistance: 0,
   drawCalls: 0,
   triangles: 0,
   geometries: 0,

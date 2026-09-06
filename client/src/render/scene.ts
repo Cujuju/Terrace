@@ -249,6 +249,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     // two, and pixels are what cost time.
     pixelWidth: renderer.domElement.width,
     pixelHeight: renderer.domElement.height,
+    cameraDistance: camera.position.distanceTo(controls.target),
     drawCalls: renderer.info.render.calls,
     triangles: renderer.info.render.triangles,
     geometries: renderer.info.memory.geometries,

@@ -176,7 +176,16 @@ export function VersionWatermark(): JSX.Element {
             <PerfMsRow label="p99" ms={stat().frameMsP99} />
             <PerfMsRow label="max" ms={stat().frameMsMax} />
             <PerfMsRow label="interval" ms={stat().intervalMsP50} />
+            {/* THE POSE, beside the draw calls it explains. A frame time is
+                only comparable with another taken from the same distance:
+                the bench's own framing sees a third of the draw calls the
+                stored play pose does (2026-09-06). */}
+            <PerfRow label="camera" value={stat().counters.cameraDistance.toFixed(0)} />
             <PerfRow label="draws" value={String(stat().counters.drawCalls)} />
+            <PerfRow
+              label="triangles"
+              value={`${(stat().counters.triangles / 1e6).toFixed(2)} M`}
+            />
             <PerfRow label="geometries" value={String(stat().counters.geometries)} />
             <PerfRow label="textures" value={String(stat().counters.textures)} />
             <PerfRow label="programs" value={String(stat().counters.programs)} />
