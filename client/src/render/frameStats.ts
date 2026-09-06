@@ -53,6 +53,15 @@ export interface FrameCounters {
   readonly programs: number;
 }
 
+/** One plugin's share of the frame, meaned over the window. */
+export interface PluginFrameCost {
+  readonly name: string;
+  /** Mean milliseconds this plugin's frame callbacks cost, per frame. */
+  readonly msPerFrame: number;
+  /** That cost as a fraction of the mean whole frame, 0-1. */
+  readonly shareOfFrame: number;
+}
+
 export interface FrameStatsSample {
   /** Seconds since the first recorded frame — the decay's x axis. */
   readonly uptimeS: number;
@@ -70,6 +79,8 @@ export interface FrameStatsSample {
   /** Wall-clock frame-to-frame gap; vsync-capped, unlike the three above. */
   readonly intervalMsP50: number;
   readonly counters: FrameCounters;
+  /** Every plugin that ran a frame callback in the window, dearest first. */
+  readonly plugins: readonly PluginFrameCost[];
 }
 
 type FrameStatsSink = (sample: FrameStatsSample) => void;
@@ -108,6 +119,22 @@ let sink: FrameStatsSink | null = null;
 let readCounters: (() => FrameCounters) | null = null;
 
 /**
+ * Milliseconds each plugin has spent in its frame callbacks this window, keyed
+ * by plugin name.
+ *
+ * A PLAIN RUNNING TOTAL, NOT A RING PER PLUGIN. The per-frame series above earn
+ * their ring buffers because their percentiles are the question — a p99 frame is
+ * a stutter someone saw. A plugin's question is different and simpler: what
+ * share of the frame does it eat, on average, right now. That is a mean, a mean
+ * needs one accumulator, and seventeen more ring buffers would cost more memory
+ * than everything else in this file to answer a question nobody asked.
+ *
+ * Entries are never deleted, only zeroed each window: an unmounted plugin should
+ * fall to 0.00 and stay visible for a window rather than vanish mid-read.
+ */
+const pluginMs = new Map<string, number>();
+
+/**
  * Hands the meter its counter source. Called once by render/scene.ts, which is
  * the only place holding the renderer; this file deliberately does not import
  * three, so it stays testable without a GL context.
@@ -128,6 +155,12 @@ export function setFrameStatsSink(next: FrameStatsSink | null): void {
 /** The most recently closed window, or null before the first one closes. */
 export function frameStatsSample(): FrameStatsSample | null {
   return latestSample;
+}
+
+function sumOf(source: Float32Array, count: number): number {
+  let total = 0;
+  for (let i = 0; i < count; i++) total += source[i] ?? 0;
+  return total;
 }
 
 function percentile(sorted: Float32Array, count: number, fraction: number): number {
@@ -152,6 +185,21 @@ function closeWindow(nowMs: number): void {
   // still counts every one — so an overflow is visible in the sample rather
   // than silently changing what the percentiles mean.
   const kept = Math.min(windowFrames, FRAME_STATS_CAPACITY);
+  // Meaned over EVERY frame in the window, including those the plugin did
+  // nothing in: the question is what it costs the frame, and a plugin that
+  // works every third frame costs a third as much as one that works every one.
+  const meanFrameMs = kept === 0 ? 0 : sumOf(frameMs, kept) / kept;
+  const plugins: PluginFrameCost[] = [];
+  for (const [name, totalMs] of pluginMs) {
+    const msPerFrame = kept === 0 ? 0 : totalMs / kept;
+    plugins.push({
+      name,
+      msPerFrame,
+      shareOfFrame: meanFrameMs === 0 ? 0 : msPerFrame / meanFrameMs,
+    });
+    pluginMs.set(name, 0);
+  }
+  plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
   // The median of the per-frame differences, not the difference of the two
   // medians: those are not the same number, and only the first is a frame that
   // actually happened. Built before the summarise() calls below because they
@@ -168,6 +216,7 @@ function closeWindow(nowMs: number): void {
     outsideMsP50: summarise(outsideMs, kept, 0.5),
     intervalMsP50: summarise(intervalMs, kept, 0.5),
     counters: readCounters?.() ?? EMPTY_COUNTERS,
+    plugins,
   };
   windowFrames = 0;
   writeCursor = 0;
@@ -196,6 +245,19 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
   writeCursor++;
   windowFrames++;
   if (endMs - windowStartMs >= FRAME_STATS_WINDOW_MS) closeWindow(endMs);
+}
+
+/**
+ * One plugin's frame callback, timed. Called by plugins/host.ts, which is the
+ * only place that knows which plugin a callback belongs to.
+ *
+ * The host wraps at its single registration site rather than this file wrapping
+ * anything: a meter that patches the callbacks it measures has to prove it is
+ * not itself the cost, which took a night the first time
+ * (docs/plans/frame-rate-decay-2026-09-05.md, `noInstrument`).
+ */
+export function recordPluginFrame(name: string, ms: number): void {
+  pluginMs.set(name, (pluginMs.get(name) ?? 0) + ms);
 }
 
 /**
@@ -231,4 +293,5 @@ export function resetFrameStats(): void {
   firstFrameMs = 0;
   prevStartMs = 0;
   latestSample = null;
+  pluginMs.clear();
 }

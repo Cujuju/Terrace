@@ -180,6 +180,31 @@ export function VersionWatermark(): JSX.Element {
             <PerfRow label="geometries" value={String(stat().counters.geometries)} />
             <PerfRow label="textures" value={String(stat().counters.textures)} />
             <PerfRow label="programs" value={String(stat().counters.programs)} />
+            {/* EVERY PLUGIN THAT RAN A FRAME CALLBACK, dearest first (owner,
+                2026-09-06). Two numbers, because "how much is this eating" has
+                two answers and only both together are actionable: the
+                milliseconds it costs the frame, and that as a SHARE of the
+                frame — 0.40 ms is most of a fast frame and nothing at all in a
+                slow one, and the share is what says which.
+
+                A SHARE RATHER THAN AN fps, unlike the millisecond rows above.
+                A plugin is not a frame rate: "0.40 ms (2500 fps)" invites the
+                reading that this plugin runs at 2500 fps, which is not a fact
+                about anything. The share answers the question actually being
+                asked, which is what to delete first.
+
+                The draw-budget row below is deliberately separate — objects
+                against budget is a different accounting (part B of
+                docs/plans/frame-budget-growth-and-draw-calls.md), sampled by
+                the host, and only breaches are worth permanent HUD space. */}
+            <For each={stat().plugins}>
+              {(row) => (
+                <PerfRow
+                  label={row.name}
+                  value={`${row.msPerFrame.toFixed(2)} ms (${String(Math.round(row.shareOfFrame * 100))}%)`}
+                />
+              )}
+            </For>
           </>
         )}
       </Show>
