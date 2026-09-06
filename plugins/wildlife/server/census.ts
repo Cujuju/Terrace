@@ -12,6 +12,7 @@ import {
   CHUNK_SIZE,
   LAND_WALKER_PROFILE,
   SEA_LEVEL,
+  admitsHeight,
   canProceedAlong,
   canTraverseSegment,
   cellsOverArea,
@@ -21,7 +22,7 @@ import {
   type TraversalProfile,
 } from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
-import { type Habitat, habitatOf, profileOf, spawnGroundConstrains } from './species.ts';
+import { profileOf, spawnGroundConstrains } from './species.ts';
 import { NO_MIN_WATER_DEPTH, SPAWN_AT_ANY_HEIGHT } from './species/profile.ts';
 
 /**
@@ -369,34 +370,23 @@ export function withinSpawnHeights(
 }
 
 export interface Census {
-  /** Habitat cells inside unlocked chunks, by class. */
-  readonly cellsByHabitat: Readonly<Record<Habitat, number>>;
+  /** Cells inside unlocked chunks each species may occupy, by its own walker profile's height rule. */
+  readonly cellsBySpecies: Readonly<Record<WildlifeHabitatSpecies, number>>;
   /** The unlocked chunks themselves — the pool spawning samples from. */
   readonly chunks: ReadonlyArray<readonly [number, number]>;
 }
 
 /**
- * The habitat classes in their storage order — the one place the mapping from
- * `Habitat` to a slot in a counts array is decided. `census-index.ts` stores
- * three Int32 counts per chunk against these positions; `takeCensus` below
- * reads them back through the same table, so the cached and the scanned answer
- * cannot disagree about which number is which.
+ * Counts are stored per SPECIES, in WILDLIFE_HABITAT_SPECIES order — one slot
+ * each. `census-index.ts` stores that many Int32 counts per chunk and
+ * `takeCensus` reads them back through the same table, so the cached and the
+ * scanned answer cannot disagree about which number is which.
  */
-export const HABITAT_CLASSES = ['land', 'shallow', 'deep'] as const;
+export const CENSUS_SLOT_COUNT = WILDLIFE_HABITAT_SPECIES.length;
 
-/** How many counts one chunk's slice of a habitat-counts array holds. */
-export const HABITAT_CLASS_COUNT = HABITAT_CLASSES.length;
-
-/**
- * Which slot in a counts array each habitat class occupies. Exported so
- * `census-index.ts` can read a chunk's three counts back by name instead of by
- * a literal offset — the mapping is decided here, once.
- */
-export const HABITAT_CLASS_SLOT: Readonly<Record<Habitat, number>> = {
-  land: 0,
-  shallow: 1,
-  deep: 2,
-};
+export const CENSUS_SLOT: Readonly<Record<WildlifeHabitatSpecies, number>> = Object.fromEntries(
+  WILDLIFE_HABITAT_SPECIES.map((species, slot) => [species, slot]),
+) as Record<WildlifeHabitatSpecies, number>;
 
 /**
  * Classifies every cell of ONE chunk into `out[offset + slot]`, overwriting
@@ -418,15 +408,16 @@ export function countChunkHabitat(
   out: Int32Array,
   offset: number,
 ): void {
-  out[offset] = 0;
-  out[offset + 1] = 0;
-  out[offset + 2] = 0;
+  for (let slot = 0; slot < CENSUS_SLOT_COUNT; slot++) out[offset + slot] = 0;
 
   const baseX = cx * CHUNK_SIZE;
   const baseY = cy * CHUNK_SIZE;
   for (let dy = 0; dy < CHUNK_SIZE; dy++) {
     for (let dx = 0; dx < CHUNK_SIZE; dx++) {
-      out[offset + HABITAT_CLASS_SLOT[habitatOf(world.heightAt(baseX + dx, baseY + dy))]]++;
+      const height = world.heightAt(baseX + dx, baseY + dy);
+      for (let slot = 0; slot < CENSUS_SLOT_COUNT; slot++) {
+        if (admitsHeight(WALKER_PROFILES[WILDLIFE_HABITAT_SPECIES[slot]!], height)) out[offset + slot]++;
+      }
     }
   }
 }
@@ -442,9 +433,9 @@ export function countChunkHabitat(
  * caller that holds no index.
  */
 export function takeCensus(world: HabitatWorld): Census {
-  const cellsByHabitat: Record<Habitat, number> = { land: 0, shallow: 0, deep: 0 };
+  const cellsBySpecies = emptySpeciesCounts();
   const chunks: Array<readonly [number, number]> = [];
-  const chunkCounts = new Int32Array(HABITAT_CLASS_COUNT);
+  const chunkCounts = new Int32Array(CENSUS_SLOT_COUNT);
 
   for (let cy = 0; cy < world.chunksPerEdge; cy++) {
     for (let cx = 0; cx < world.chunksPerEdge; cx++) {
@@ -452,13 +443,13 @@ export function takeCensus(world: HabitatWorld): Census {
       chunks.push([cx, cy]);
 
       countChunkHabitat(world, cx, cy, chunkCounts, 0);
-      for (let slot = 0; slot < HABITAT_CLASS_COUNT; slot++) {
-        cellsByHabitat[HABITAT_CLASSES[slot]] += chunkCounts[slot];
+      for (let slot = 0; slot < CENSUS_SLOT_COUNT; slot++) {
+        cellsBySpecies[WILDLIFE_HABITAT_SPECIES[slot]!] += chunkCounts[slot]!;
       }
     }
   }
 
-  return { cellsByHabitat, chunks };
+  return { cellsBySpecies, chunks };
 }
 
 /**
@@ -541,13 +532,13 @@ export const FOUNDING_POPULATION = 2;
 export const MIN_FOUNDING_HABITAT_CELLS = cellsOverArea(64);
 
 export function targetsFor(
-  cellsByHabitat: Readonly<Record<Habitat, number>>,
+  cellsBySpecies: Readonly<Record<WildlifeHabitatSpecies, number>>,
 ): Record<WildlifeHabitatSpecies, number> {
   const raw = emptySpeciesCounts();
   let total = 0;
   for (const species of WILDLIFE_HABITAT_SPECIES) {
     const profile = profileOf(species);
-    const cells = cellsByHabitat[profile.habitat];
+    const cells = cellsBySpecies[species];
     const byDensity = Math.floor(cells / profile.habitatCellsPerIndividual);
     // The founding pair, for a habitat too small to be worth one individual's
     // share of a big world but big enough to live in. Never a REDUCTION: on any
