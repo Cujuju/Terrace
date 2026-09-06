@@ -215,23 +215,29 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // whose named residual this multiply is).
     const drawnX = entity.x * CELL_WORLD_SIZE;
     const drawnZ = entity.y * CELL_WORLD_SIZE;
-    // A walker's legs are paced by the ground it covers between the frames it
-    // was drawn in (WALKER_STRIDE_WORLD_UNITS_BY_SPECIES). `drawnY` is still
-    // null before the first draw — read BEFORE it is committed below — so a
-    // creature's first frame seeds no stride.
-    if (kind === 'walker' && view.drawnY !== null) {
-      view.phase += walkerStrideRadians(
-        entity.species,
-        Math.hypot(drawnX - view.drawnX, drawnZ - view.drawnZ),
-      );
-    }
+    const previousDrawnY = view.drawnY;
     // ON A WALL the server owns the height (protocol's `climbHeight`); the
     // follower still eases toward it, which costs a climber nothing — it rises
     // sixteen times slower than the follower can chase (groundFollow.ts).
     const drawnY =
       entity.climbHeight === null
-        ? creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt)
-        : followGroundY(view.drawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, dt);
+        ? creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, dt)
+        : followGroundY(previousDrawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, dt);
+    // A walker's legs are paced by the DISTANCE it covers between the frames it
+    // was drawn in (WALKER_STRIDE_WORLD_UNITS_BY_SPECIES), and that distance is
+    // three-dimensional. Measured horizontally it is zero for a climbing ibex —
+    // whose x/y stay pinned at the foot of the wall for the whole ascent — so
+    // its legs froze and a statue slid up the cliff. `drawnY` is therefore
+    // computed FIRST and the stride reads all three axes; the vertical term is
+    // zero on flat ground, so nothing that walks changes.
+    // `previousDrawnY` is null before the first draw, so a creature's first
+    // frame still seeds no stride.
+    if (kind === 'walker' && previousDrawnY !== null) {
+      view.phase += walkerStrideRadians(
+        entity.species,
+        Math.hypot(drawnX - view.drawnX, drawnY - previousDrawnY, drawnZ - view.drawnZ),
+      );
+    }
     view.drawnY = drawnY;
     view.drawnX = drawnX;
     view.drawnZ = drawnZ;
