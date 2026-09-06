@@ -526,9 +526,40 @@ longer I play":
   flat, scene contents flat, three's resource tables doubling with nothing in
   the scene pointing at them. **This is a disposal leak.**
 
-**Still unknown for (B): which CPU work grows.** The soak carried no
-per-callback breakdown — `allBreakdown` is computed per block and simply was not
-reported. Fixed (commit `3df50bb`); the `cpu-soak` run answers it.
+### The growing CPU work is INSIDE `renderer.render` (2026-09-06 05:41)
+
+A second soak (50 blocks / 25 min) carrying the per-callback breakdown. Mean
+ms per frame, first block vs last:
+
+| CPU key | first | last | delta |
+| --- | --- | --- | --- |
+| frame ms | 3.618 | 6.780 | **+3.162** |
+| `raf renderFrame (render/scene.ts)` | 3.394 | 6.554 | +3.160 |
+| **`renderer.render`** | **2.548** | **5.985** | **+3.437** |
+| `frame pose finishMount (plugins/host.ts)` | 0.569 | 0.417 | −0.152 |
+| `gl upload (inside render)` | 0.406 | 0.183 | **−0.222** |
+| `frame draw createRiverRig` | 0.071 | 0.081 | +0.010 |
+| every other core and plugin callback | — | — | flat |
+
+**The entire decay is inside `renderer.render`, and it is CPU time.** Over the
+same window GPU p50 FELL (3.88 → 2.82), draw calls FELL (157 → 128), and upload
+cost FELL. No plugin callback grows. No core callback grows.
+
+So three's own per-frame work is growing while the thing it draws is shrinking.
+That rules out, by measurement rather than argument:
+
+- plugin frame handlers (flat);
+- GL uploads / the pose palette (falling — §4 is a real but *separate* fix);
+- GPU work of any kind (falling);
+- geometry and draw-call volume (falling).
+
+**What is left inside `renderer.render` that does not scale with what is drawn:**
+the per-frame scene-graph walk (`projectObject`), render-list construction and
+sorting, and program/material bookkeeping. Note `censusOf` counts only
+`Mesh`/`Points`/`Line`, so **accumulating empty `Group` nodes would cost
+traversal on every frame while being invisible to every census above** — the
+leading hypothesis, and the `node-soak` run instruments total scene nodes,
+groups and invisible nodes to settle it.
 
 ---
 
