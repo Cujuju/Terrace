@@ -528,7 +528,36 @@ export interface RiverRigOptions {
    * and previews want; the client passes the worker-backed one.
    */
   readonly networkSource?: RiverNetworkSource;
+  /**
+   * Monotonic millisecond clock the water-tile drain budget is measured
+   * against. Injectable exactly as `MeshScheduling.now` is
+   * (render/terrainMeshes.ts), so a test can advance time by a known amount
+   * instead of racing a real one; defaults to `performance.now`.
+   *
+   * THE DRAIN BUDGET ONLY. `refresh`'s RIVER_RECOMPUTE_INTERVAL_MS throttle
+   * keeps reading `performance.now`: it paces work against the player's real
+   * stroke, which a fake clock must not be able to stall or flood.
+   */
+  readonly now?: () => number;
 }
+
+/**
+ * How long one frame may spend marching and splicing water tiles, in
+ * milliseconds.
+ *
+ * ONE. The 140 fps bar (owner, 2026-08-26) gives a frame 7.1 ms. On the
+ * owner's world a sculpt frame already owes ~1.7 ms of idle render, 1.5 ms of
+ * chunk splice (CHUNK_SPLICE_FRAME_BUDGET_MS), ~0.5 ms of plugins and 1.0 ms
+ * of stroke compaction (ARENA_COMPACT_STROKE_BUDGET_MS) — 4.7 ms, leaving
+ * 2.4 ms. One water tile is ~0.2-0.3 ms (the 2026-09-05 profile's 42 ms of
+ * marching over the ~180 tiles a band-region reaches), so 1.0 ms lands 3-4
+ * tiles a frame and leaves 1.4 ms of slack. A crater's nine tiles drain in
+ * three frames, ~21 ms at 140 fps.
+ *
+ * A FLOOR ON PROGRESS, NOT A CEILING ON COST: the drain always emits at least
+ * one tile, exactly as CHUNK_SPLICE_FRAME_BUDGET_MS always splices one.
+ */
+export const WATER_TILE_FRAME_BUDGET_MS = 1.0;
 
 /**
  * The river rig's share of the frame's draw budget: THREE meshes, whatever the
@@ -546,6 +575,7 @@ export function createRiverRig(
   options?: RiverRigOptions,
 ): RiverRig {
   const networkSource = options?.networkSource ?? directRiverNetworkSource;
+  const now = options?.now ?? ((): number => performance.now());
   // ONE material and ONE mesh for every drop of river water in the network —
   // channels, pools and the aprons that pour between them. Two materials meant
   // two opacities and therefore a visible boundary wherever a channel met its
@@ -892,6 +922,48 @@ export function createRiverRig(
    * every rebuild for ever.
    */
   let emittedRunKeys = new Set<number>();
+
+  // ── The re-emission queue ─────────────────────────────────────────────────
+  //
+  // PASS THREE of a rebuild used to march and splice every stale tile on the
+  // frame the network answer landed: 57 ms for one crater on the owner's world
+  // (2026-09-05 profile, issue #343), against a 7.1 ms frame. It is now a
+  // QUEUE, drained a WATER_TILE_FRAME_BUDGET_MS slice at a time by the rig's
+  // own frame handler — the same shape terrainMeshes.ts's `drain` gives the
+  // chunk splice.
+
+  /** One queued tile: what to march, and the surface height to march it at. */
+  interface PendingTile {
+    key: number;
+    region: WaterRegion;
+    tile: number;
+    surfaceY: number;
+  }
+
+  /**
+   * Everything a queued tile needs that belongs to its REBUILD rather than to
+   * itself — the mirror and oracle it was queued against, and the two probes
+   * `appendCurtains` asks (both close over that rebuild's wet table).
+   */
+  interface DrainJob {
+    mirror: TerrainMirror;
+    ground: DrawnGround;
+    sources: RiverSurface['sources'];
+    waterBandAt: (cellX: number, cellZ: number) => number | null;
+    bandWorldY: (band: number, cellX: number, cellZ: number) => number;
+  }
+
+  const pendingTiles: PendingTile[] = [];
+  /** How far into `pendingTiles` the drain has got — a cursor, not a shift. */
+  let pendingCursor = 0;
+  let drainJob: DrainJob | null = null;
+
+  /** Empties the queue without drawing it. See `forceRefresh` and `dispose`. */
+  const clearPendingTiles = (): void => {
+    pendingTiles.length = 0;
+    pendingCursor = 0;
+    drainJob = null;
+  };
 
   // Spring materials — one shared instance each across every spring in
   // the network (the rings/dome geometries are merged, so one draw call per
@@ -1378,15 +1450,30 @@ export function createRiverRig(
     const bandWorldY = (band: number, cellXCoord: number, cellZCoord: number): number =>
       ground.capYOfBand(band, cellXCoord, cellZCoord) + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
-    // PASS THREE: re-emit only the TILES that can have moved.
+    // PASS THREE: QUEUE the tiles that can have moved. Nothing is marched here
+    // any more — the frame handler drains the queue under
+    // WATER_TILE_FRAME_BUDGET_MS (2026-09-05, issue #343). Passes one and two
+    // stay synchronous because everything a tile marches reads them: the wet
+    // table is the region's own membership test, and `region.tiles` is what
+    // says which tiles exist at all.
     //
-    // A tile re-emits when the terrain or the water under it can have changed
+    // A TILE RE-EMITS when the terrain or the water under it can have changed
     // (`affectedChunks`, already grown by one ring for the border row a tile
-    // shares with the tile next door and the cell a curtain probes past its
-    // own region), when this rebuild is a forced one (`dirtyChunks === null`),
-    // or when it was never drawn. Before 2026-09-05 the unit was the whole
-    // band-region, so a crater that touched nine chunks re-marched every tile
-    // the band reached.
+    // shares and the cell a curtain probes past its own region), when this
+    // rebuild is a forced one (`dirtyChunks === null`), or when it was never
+    // drawn.
+    //
+    // CARRIED OVER: keys the PREVIOUS rebuild queued and never drew re-emit
+    // regardless. `beginWetCells` has since rotated the wet table out from
+    // under them, so their old entries are abandoned; without this a tile the
+    // abandoned rebuild claimed but never drew would keep geometry no rebuild
+    // ever produced.
+    const carriedKeys = new Set<number>();
+    for (let i = pendingCursor; i < pendingTiles.length; i++) {
+      carriedKeys.add(pendingTiles[i]!.key);
+    }
+    clearPendingTiles();
+
     const tileCount = tileCols * tileCols;
     const currentKeys = new Set<number>();
     for (const region of regions.values()) {
@@ -1400,35 +1487,11 @@ export function createRiverRig(
         const key = runKeyOf(region.surfaceBand, tile, tileCount);
         currentKeys.add(key);
         const stale =
-          dirtyChunks === null || affectedChunks.has(tile) || !emittedRunKeys.has(key);
-        if (!stale) continue;
-        regionTriangles.length = 0;
-        const loops = appendRegionTile(mirror, region, tile, surfaceY, regionTriangles);
-        // The curtain asks the terrain where the ground is; it is not told, and
-        // it is given no probe of ours to guess with. The apron needed two
-        // callbacks here — a lower-water probe and a ground-height probe, both
-        // re-deriving from the cell lattice — and those two derivations are the
-        // defect this change deletes.
-        // bandWorldY is handed over rather than re-derived, so the sheet's top
-        // edge is the SAME NUMBER as the pool surface it hangs from and its foot
-        // is the same number as the pool it lands in — which is what makes the
-        // junctions welded rather than merely close.
-        //
-        // ONE TILE'S LOOPS ARE A COMPLETE INPUT: `appendCurtains` carries no
-        // state across loops (its only cross-loop value is the `topY` it is
-        // handed), so the curtains a tile's loops produce are exactly the ones
-        // it contributed when the whole region was passed at once.
-        appendCurtains(
-          ground,
-          loops,
-          region.surfaceBand,
-          surfaceY,
-          bandWorldY,
-          waterBandAt,
-          SEA_SURFACE_WORLD_Y,
-          regionTriangles,
-        );
-        spliceRun(key, regionTriangles, regionTriangles.length / 3);
+          dirtyChunks === null ||
+          affectedChunks.has(tile) ||
+          carriedKeys.has(key) ||
+          !emittedRunKeys.has(key);
+        if (stale) pendingTiles.push({ key, region, tile, surfaceY });
       }
     }
 
@@ -1440,21 +1503,126 @@ export function createRiverRig(
     }
     emittedRunKeys = currentKeys;
 
+    drainJob = { mirror, ground, sources: surface.sources, waterBandAt, bandWorldY };
+    // The vanished-key splices already moved the buffer, so it must be
+    // published before a frame can draw it — see `publishWaterBuffer`.
+    publishWaterBuffer();
+    // An empty queue still has to finish: the springs describe THIS surface.
+    if (pendingTiles.length === 0) finishDrain();
+  };
+
+  /**
+   * Hands the buffer to the renderer: the live draw range, and the upload flag.
+   *
+   * AFTER EVERY SPLICE, not once per rebuild. A splice that shortened a run
+   * moved every later run down, so a draw range left at the old, longer value
+   * would draw the tail past `liveWaterVertices` — which is whatever a previous
+   * occupant left there. The two go together: a new range over unuploaded
+   * bytes is the same garbage seen from the other side.
+   */
+  const publishWaterBuffer = (): void => {
     waterMesh.geometry.setDrawRange(0, liveWaterVertices);
     waterPositionAttribute.needsUpdate = true;
-    recomputeWaterBounds();
+  };
 
+  /**
+   * Marches, weld-fits and splices one queued tile.
+   *
+   * SCRATCH DISCIPLINE (contours.ts's `loadSampleField` precondition): this is
+   * one synchronous unit, so the module scratch `appendRegionTile` shares with
+   * `marchLevel`/`assembleLoops` is never left half-loaded between frames.
+   */
+  const emitPendingTile = (job: DrainJob, entry: PendingTile): void => {
+    regionTriangles.length = 0;
+    const loops = appendRegionTile(
+      job.mirror,
+      entry.region,
+      entry.tile,
+      entry.surfaceY,
+      regionTriangles,
+    );
+    // The curtain asks the terrain where the ground is; it is not told, and
+    // it is given no probe of ours to guess with. The apron needed two
+    // callbacks here — a lower-water probe and a ground-height probe, both
+    // re-deriving from the cell lattice — and those two derivations are the
+    // defect this change deletes.
+    // bandWorldY is handed over rather than re-derived, so the sheet's top
+    // edge is the SAME NUMBER as the pool surface it hangs from and its foot
+    // is the same number as the pool it lands in — which is what makes the
+    // junctions welded rather than merely close.
+    //
+    // ONE TILE'S LOOPS ARE A COMPLETE INPUT: `appendCurtains` carries no state
+    // across loops (its only cross-loop value is the `topY` it is handed), so
+    // the curtains a tile's loops produce are exactly the ones it contributed
+    // when the whole region was passed at once.
+    appendCurtains(
+      job.ground,
+      loops,
+      entry.region.surfaceBand,
+      entry.surfaceY,
+      job.bandWorldY,
+      job.waterBandAt,
+      SEA_SURFACE_WORLD_Y,
+      regionTriangles,
+    );
+    spliceRun(entry.key, regionTriangles, regionTriangles.length / 3);
+  };
+
+  /**
+   * The once-per-rebuild work that can only run when every queued tile is in
+   * the buffer: the cull bound and the springs. Both are O(live vertices) or
+   * O(springs), and neither has an answer until the last tile is in — running
+   * them per tile would bill that three or four times a frame for a bound the
+   * next tile invalidates.
+   */
+  const finishDrain = (): void => {
+    const job = drainJob;
+    drainJob = null;
+    publishWaterBuffer();
+    recomputeWaterBounds();
+    if (job === null) return;
     // The foam belongs on the WATER, so the springs are told where the water
     // surface is rather than left to ask the ground — see the site loop.
-    rebuildSprings(mirror, surface.sources, (x, y) => {
-      const band = waterBandAt(x, y);
-      return band === null ? null : bandWorldY(band, x, y);
+    rebuildSprings(job.mirror, job.sources, (x, y) => {
+      const band = job.waterBandAt(x, y);
+      return band === null ? null : job.bandWorldY(band, x, y);
     });
     // A rebuild leaves the rings' animated X/Z as placeholders — pose them
     // immediately so the effect is correct even if the frame handler never
     // runs again (prefers-reduced-motion: the spring holds THIS still frame,
     // exactly as the superseded mist held its rest pose).
     applySpringPose(elapsedSeconds);
+  };
+
+  /**
+   * Draws queued tiles until the frame's budget is spent, ALWAYS at least one
+   * (the no-starvation floor `drain` in terrainMeshes.ts keeps for the same
+   * reason: the constant is a floor on progress, not a ceiling on cost).
+   *
+   * RESIDUAL, named rather than hidden: terrain that changes while a queue is
+   * draining leaves the tiles already marched reading the old mirror and the
+   * rest the new, so a tile border can disagree until the next rebuild — whose
+   * dirty ring covers both sides. That window is shorter than the
+   * RIVER_RECOMPUTE_INTERVAL_MS throttle the water already runs behind.
+   */
+  const drainWaterTiles = (): void => {
+    const job = drainJob;
+    if (job === null || pendingCursor >= pendingTiles.length) return;
+    const startedMs = now();
+    for (;;) {
+      emitPendingTile(job, pendingTiles[pendingCursor]!);
+      pendingCursor++;
+      if (pendingCursor >= pendingTiles.length) {
+        pendingTiles.length = 0;
+        pendingCursor = 0;
+        finishDrain();
+        return;
+      }
+      if (now() - startedMs >= WATER_TILE_FRAME_BUDGET_MS) {
+        publishWaterBuffer();
+        return;
+      }
+    }
   };
 
   /**
@@ -1505,6 +1673,9 @@ export function createRiverRig(
   const reducedMotion = watchReducedMotion();
   let elapsedSeconds = 0;
   const unregisterFrame = onFrame((dt: number) => {
+    // BEFORE the spring early-outs: the water queue has to drain whether or
+    // not there is a spring to pose and whether or not motion is reduced.
+    drainWaterTiles();
     if (!reducedMotion.matches()) elapsedSeconds += dt;
     if (spring === null || reducedMotion.matches()) return;
     applySpringPose(elapsedSeconds);
@@ -1590,12 +1761,17 @@ export function createRiverRig(
       // rejoin, where the buffer may still hold the previous world's runs and
       // no dirty set describes the difference between two worlds.
       pendingEverything = true;
+      // Whatever the old world had queued describes terrain that is gone. The
+      // rebuild this starts passes `dirtyChunks === null`, so every tile of
+      // the new world re-emits and every key of the old one is spliced away.
+      clearPendingTiles();
       lastRebuildMs = performance.now();
       startCompute();
     },
 
     dispose(): void {
       disposed = true;
+      clearPendingTiles();
       networkSource.dispose();
       unregisterFrame();
       reducedMotion.stop();
