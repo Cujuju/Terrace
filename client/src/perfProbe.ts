@@ -111,6 +111,20 @@ const ABLATION_SAMPLE_FRAMES = 90;
  * pay forty times over, long enough to outlast the queued frames.
  */
 const ABLATION_SETTLE_FRAMES = 6;
+/**
+ * Blocks taken by the `drift` scenario, and the gap between their starts.
+ *
+ * TWELVE BLOCKS, TWENTY SECONDS APART — four minutes of wall clock. Sized off
+ * the effect being chased: an unfrozen ablation run watched its baseline climb
+ * from 5.81 to 10.44 ms GPU across roughly three minutes (2026-09-05), so the
+ * window has to be at least that long or the trend it exists to show falls off
+ * the end of it. Twelve points is enough to tell a straight climb from a step.
+ */
+const DRIFT_BLOCKS = 12;
+const DRIFT_INTERVAL_MS = 20000;
+/** Frames per drift block — ABLATION_SAMPLE_FRAMES' reasoning, same tradeoff. */
+const DRIFT_SAMPLE_FRAMES = 90;
+
 /** Scene-child name prefix the plugin host gives every plugin layer (host.ts). */
 const PLUGIN_LAYER_PREFIX = 'plugin:';
 /**
@@ -1077,11 +1091,89 @@ const ablateScenario: Scenario = async (ctx) => {
   };
 };
 
+/**
+ * WHAT GROWS WHILE YOU STAND STILL. One block every DRIFT_INTERVAL_MS for
+ * DRIFT_BLOCKS blocks, camera untouched, simulation running.
+ *
+ * WHY IT EXISTS. Every other scenario here takes ONE block and reports a
+ * number, which silently assumes the scene is stationary. It is not: the
+ * ablation runs showed the baseline nearly doubling over three minutes with the
+ * camera locked, which is a bigger effect than any single rig contributes and
+ * is much closer to the complaint that started this work ("we should be at 144,
+ * we are getting 60-80") than any per-rig table. A trend cannot be read off
+ * single blocks taken minutes apart in different runs, because the world
+ * differs between runs too — so the samples have to come from ONE run.
+ *
+ * The renderer's own resource counters ride along beside the frame time, because
+ * "the frame got slower" and "the frame got slower AND the geometry count only
+ * ever rises" are different findings: the second names a leak, the first only
+ * reports one.
+ */
+const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
+  const { renderer } = ctx.viewport;
+  // The CONTROL for the `drift` finding. Frozen, no server state reaches the
+  // client at all, so anything still growing across the window is grown by the
+  // client itself — a leak — and anything that stops growing was the world
+  // arriving. One flag is the whole difference between the two readings, so
+  // they share a body rather than being two scenarios that could drift apart.
+  ctx.freeze(freezeSim);
+  const startedAt = performance.now();
+  const blocks: Record<string, unknown>[] = [];
+  let firstBlock: FrameBlock | null = null;
+  for (let index = 0; index < DRIFT_BLOCKS; index++) {
+    const dueAt = startedAt + index * DRIFT_INTERVAL_MS;
+    const waitMs = dueAt - performance.now();
+    if (waitMs > 0) await wait(waitMs);
+    const sampler = ctx.sampler();
+    await sampleFrames(sampler, DRIFT_SAMPLE_FRAMES);
+    const block = sampler.block();
+    firstBlock ??= block;
+    blocks.push({
+      atSeconds: Math.round((performance.now() - startedAt) / 1000),
+      gpuMsP50: block.gpuMsP50,
+      frameMsP50: block.msP50,
+      frameMsP99: block.msP99,
+      drawCalls: block.drawCalls,
+      triangles: block.triangles,
+      uploadMsPerFrame: block.uploadMsTotal / Math.max(1, block.frames),
+      // three's own resource counters: the ones that only ever rising would
+      // mean something is not being released.
+      geometries: renderer.info.memory.geometries,
+      textures: renderer.info.memory.textures,
+      programs: renderer.info.programs === null ? 0 : renderer.info.programs.length,
+    });
+    ctx.beat(`drift-${String(index + 1)}-of-${String(DRIFT_BLOCKS)}`);
+  }
+  ctx.freeze(false);
+  const first = blocks[0]!;
+  const last = blocks[blocks.length - 1]!;
+  return {
+    // The FIRST block is the scenario's headline sample: it is the one taken
+    // under the same conditions every other scenario reports, so `fpsMean` at
+    // the top level stays comparable with them rather than meaning something
+    // new only this scenario understands. DRIFT_BLOCKS is a positive literal,
+    // so the loop above always ran and this is never null.
+    sample: firstBlock!,
+    detail: {
+      frozen: freezeSim,
+      blocks,
+      spanSeconds: Number(last['atSeconds']),
+      grew: Object.fromEntries(
+        (['gpuMsP50', 'frameMsP50', 'drawCalls', 'triangles', 'geometries', 'textures', 'programs'] as const).map(
+          (key) => [key, { from: first[key], to: last[key] }],
+        ),
+      ),
+    },
+  };
+};
+
 /** The scenario table. One entry, one function — that is the whole extension point. */
 const SCENARIOS: Readonly<Record<string, Scenario>> = {
   idle: idleScenario,
   overview: overviewScenario,
   ablate: ablateScenario,
+  drift: makeDriftScenario(false),
+  'drift-frozen': makeDriftScenario(true),
   sculpt: sculptScenario,
   cyclone: cycloneScenario,
 };

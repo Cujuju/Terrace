@@ -74,7 +74,10 @@ SETTLE_MS=${TERRACE_PROBE_SETTLE_MS:-45000}
 # Vite's dependency optimiser reloading the page once on a cold profile (which
 # restarts the settle timer from zero), plus the cyclone scenario's 30 s wait
 # for the server's first storm broadcast, plus the sampling itself.
-SCENARIO_SLACK_SECONDS=180
+# Overridable because a scenario's own length is not knowable here: `drift`
+# samples for four minutes by design, and would otherwise be declared a
+# no-sample failure while it was still running correctly.
+SCENARIO_SLACK_SECONDS=${TERRACE_PROBE_SLACK_SECONDS:-180}
 SAMPLE_TIMEOUT_SECONDS=$(( SETTLE_MS / 1000 + SCENARIO_SLACK_SECONDS ))
 
 WINDOWS_HOME=$(powershell.exe -NoProfile -Command '$env:USERPROFILE' | tr -d '\r')
