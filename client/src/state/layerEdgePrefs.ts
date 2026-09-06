@@ -32,8 +32,18 @@ export type { LayerEdgeStyle };
  */
 export const LAYER_EDGE_STYLES: readonly LayerEdgeStyle[] = ['normal', 'crease', 'debug'];
 
-/** Owner's choice, 2026-09-05: the plain terrain is what a player sees. */
-export const DEFAULT_LAYER_EDGE_STYLE: LayerEdgeStyle = 'normal';
+/**
+ * Owner's choice, 2026-09-05: the crease is what a player sees. The edges are
+ * worth showing — they are what a drag grabs — but as shading on the terrain
+ * rather than as the diagnostic they were.
+ *
+ * THE STORAGE KEY IS NOT BUMPED WITH THIS. A stored choice still means exactly
+ * what it meant, so a player who has already picked 'normal' or 'debug' keeps
+ * it; only someone who never touched the setting moves to the crease. Bumping
+ * the version is for when the VALUES change meaning (see persistedChoice.ts),
+ * not for a new default, and doing it here would overrule a real choice.
+ */
+export const DEFAULT_LAYER_EDGE_STYLE: LayerEdgeStyle = 'crease';
 
 const LAYER_EDGE_STORAGE_KEY = 'terrace.layerEdges.v1';
 
