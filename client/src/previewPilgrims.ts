@@ -29,6 +29,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
 import { isSettlerRace, type SettlerRace } from '../../plugins/pilgrims/protocol.ts';
 
@@ -113,6 +114,11 @@ function main(): void {
   const view: CameraView =
     viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
   const stride = Number(query.get('stride') ?? '0.25');
+  // ?gait=walk|climb|fall — the wall poses (plugins/pilgrims/client/models.ts),
+  // shot here rather than only in a live world: a pose is judged by looking at
+  // it, and a wall is a slow thing to arrange in the game.
+  const gaitParam = query.get('gait');
+  const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
 
   const { scene, camera, renderer } = buildScene();
 
@@ -122,7 +128,7 @@ function main(): void {
     const model = models.create(race);
     // Mid-stride pose at the requested cycle phase — animate() is a pure
     // function of the clock, so `stride / STRIDE_HZ` seconds IS that phase.
-    model.animate(stride / STRIDE_HZ, 0);
+    model.animate(stride / STRIDE_HZ, 0, gait);
     model.root.position.z = (index - (races.length - 1) / 2) * PAIR_SPACING;
     subject.add(model.root);
   });

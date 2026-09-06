@@ -6,6 +6,7 @@
 import { Group } from 'three';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 
 /**
  * World units per stored height unit — client/src/config.ts's HEIGHT_WORLD_SCALE,
@@ -132,7 +133,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // Models face +X; travel is toward (cos heading, sin heading) — the same
     // negation every mover in this repo applies.
     view.model.root.rotation.y = -pilgrim.heading;
-    view.model.animate(animationSeconds, view.phase);
+    // What the walker is doing vertically decides which pose it plays — a
+    // climb and a fall are not a walk at a different height.
+    view.model.animate(
+      animationSeconds,
+      view.phase,
+      moverGaitOf(pilgrim.climbHeight, pilgrim.falling),
+    );
   }
 }
 

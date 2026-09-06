@@ -384,11 +384,13 @@ describe('wildlife sync', () => {
 
     for (const entity of payload.entities) {
       // `size` is on the wire (the client scales the model by it), and so is
-      // `climbHeight` (null here — nothing is on a wall — because the client
-      // cannot infer where a climber is); `schoolId` deliberately is not —
+      // `climbHeight` and `falling` (null and false here — nothing is on a
+      // wall — because the client cannot infer either); `schoolId` deliberately
+      // is not —
       // schooling is a server-side steering concept.
       expect(Object.keys(entity).sort()).toEqual([
         'climbHeight',
+        'falling',
         'heading',
         'id',
         'size',

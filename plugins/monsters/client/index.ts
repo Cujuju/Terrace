@@ -22,6 +22,7 @@
 import { Group } from 'three';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 
 /**
  * World units per stored height unit — client/src/config.ts's
@@ -256,7 +257,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // negation.
     root.rotation.y = -monster.heading;
 
-    view.model.animate(animationSeconds, view.phase);
+    // A climb and a fall are poses, not a walk at another height (the kit's
+    // moverGaitOf, off the server's climb fields).
+    view.model.animate(
+      animationSeconds,
+      view.phase,
+      moverGaitOf(monster.climbHeight, monster.falling),
+    );
 
     // THE MIST FOLLOWS THE SAME INTERPOLATED POSE the model does, so the bank
     // cannot lag or lead the thing it belongs to. It sits on the SEA SURFACE

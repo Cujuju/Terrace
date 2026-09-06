@@ -46,6 +46,7 @@ import {
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // Render kit, reached by path the same way wildlife/client/models.ts reaches
 // it — see that module's import and render/rigSkin.ts's header for why.
+import type { MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
 
@@ -88,6 +89,66 @@ export const ARM_SWING_RADIANS = 0.25;
 
 /** Body bob amplitude, world units — a hair; more reads as hopping. */
 const BOB_AMPLITUDE = 0.012;
+
+// ── The wall gaits ─────────────────────────────────────────────────────────
+// A climb and a fall are POSES, not speeds (owner, 2026-09-05, on the shipped
+// climb: a peep rose up a cliff playing its walk cycle). Both are driven by the
+// CLOCK rather than by ground covered: a climber's x/y are pinned at the foot
+// of the wall for the whole ascent (@terrace/shared's climb.ts), so there is no
+// distance to pace a beat off — and the ascent is at a fixed rate anyway, which
+// is what makes a clock honest here where it is a lie for a walk.
+//
+// EVERY LIMB ANGLE IS ABOUT Z, the axis the walk already swings on: the models
+// face +X, so a positive rotation lifts a hanging limb forward — toward the
+// wall the climber is facing — and π puts it straight overhead.
+
+/**
+ * Reaches per second on the wall.
+ *
+ * 0.75 — one hand over the other every 1.33 s, so a peep makes three reaches
+ * per band of wall (@terrace/shared's CLIMB_SECONDS_PER_BAND, 4 s). Fewer reads
+ * as a body sliding up on stiff arms; more reads as scrabbling, which is the
+ * fall's register and must stay its own.
+ */
+const CLIMB_REACH_HZ = 0.75;
+
+/**
+ * How far the reaching and the anchored arm sit from straight down.
+ *
+ * The high arm is PAST vertical (π/2 is straight forward, π is straight up):
+ * 2.4 rad is up and into the wall, which is where a hand takes a hold. The low
+ * arm is the one bearing weight, still bent well up in front of the chest.
+ */
+const CLIMB_ARM_HIGH_RADIANS = 2.4;
+const CLIMB_ARM_LOW_RADIANS = 1.4;
+
+/** The same, for the legs: a high knee finding a foothold, the other extended. */
+const CLIMB_LEG_HIGH_RADIANS = 0.95;
+const CLIMB_LEG_LOW_RADIANS = 0.2;
+
+/**
+ * How far the body rises on each pull, world units.
+ *
+ * Three times the walk's bob: a pull-up is the whole body moving, where a
+ * footfall is a hip. Small in absolute terms — the CLIMB itself supplies the
+ * rise, and this only has to say the rise is being WORKED for.
+ */
+const CLIMB_PULL_WORLD_UNITS = BOB_AMPLITUDE * 3;
+
+/**
+ * A fall: limbs flung overhead, and flailing fast.
+ *
+ * 2.9 rad is very nearly straight up (π) — the pose of a body dropping away
+ * from its own arms, and unmistakable at a glance against the climb's 2.4. The
+ * flail is FASTER THAN ANY OTHER MOTION THIS MODEL HAS (4 Hz against the walk's
+ * 1.6) for the reason climb.ts gives about the drop rate itself: a fall that
+ * reads as a controlled descent is the one thing it must not look like.
+ */
+const FALL_ARM_RADIANS = 2.9;
+const FALL_FLAIL_HZ = 4;
+const FALL_FLAIL_RADIANS = 0.3;
+/** Legs part fore and aft as they lose the wall. */
+const FALL_LEG_SPREAD_RADIANS = 0.5;
 
 /**
  * The walker kinds × races a blueprint must cover. Both axes decide things
@@ -136,8 +197,13 @@ export interface PilgrimModel {
   readonly root: Group;
   /** The animated bones, exposed so tests (and only tests) can pin the gait. */
   readonly joints: WalkerJoints;
-  /** `seconds` is elapsed time; `phase` a per-pilgrim offset in radians. */
-  animate(seconds: number, phase: number): void;
+  /**
+   * `seconds` is elapsed time; `phase` a per-pilgrim offset in radians; `gait`
+   * what the walker is doing VERTICALLY (the kit's `moverGaitOf`, from the
+   * server's climb fields). Defaults to 'walk' so a caller that has no climb to
+   * report — and every test written before the wall gaits — keeps its answers.
+   */
+  animate(seconds: number, phase: number, gait?: MoverGait): void;
 }
 
 export interface PilgrimModels {
@@ -204,6 +270,56 @@ function mergePainted(parts: [BufferGeometry, number][]): BufferGeometry {
   }
   for (const [geometry] of parts) geometry.dispose();
   return merged;
+}
+
+/**
+ * The three gaits, each posing the same six joints.
+ *
+ * FREE FUNCTIONS, not branches inside `animate`: they are the whole difference
+ * between the three vertical acts, and holding each one whole is what lets a
+ * reader see the climb as a pose rather than as a set of exceptions to a walk.
+ */
+function poseWalk(joints: WalkerJoints, seconds: number, phase: number): void {
+  // Same writes as the pre-skinning rig, against Bones instead of scene
+  // nodes — Bone extends Object3D, so these are identical transforms.
+  const stride = Math.sin(seconds * TWO_PI * STRIDE_HZ + phase);
+  joints.leftLeg.rotation.z = stride * LEG_SWING_RADIANS;
+  joints.rightLeg.rotation.z = -stride * LEG_SWING_RADIANS;
+  // Arms counter-swing their own side's leg — the natural gait.
+  joints.leftArm.rotation.z = -stride * ARM_SWING_RADIANS;
+  joints.rightArm.rotation.z = stride * ARM_SWING_RADIANS;
+  // Two footfalls per stride cycle → the bob runs at double frequency.
+  joints.body.position.y = Math.abs(stride) * BOB_AMPLITUDE;
+}
+
+/** Hand over hand up the wall: one side reaching while the other bears weight. */
+function poseClimb(joints: WalkerJoints, seconds: number, phase: number): void {
+  const reach = Math.sin(seconds * TWO_PI * CLIMB_REACH_HZ + phase);
+  // `reach` runs -1…1; map it onto the low…high span so each limb spends half
+  // the cycle reaching and half anchored, and the two sides are opposite.
+  const high = (CLIMB_ARM_HIGH_RADIANS + CLIMB_ARM_LOW_RADIANS) / 2;
+  const armSpan = (CLIMB_ARM_HIGH_RADIANS - CLIMB_ARM_LOW_RADIANS) / 2;
+  joints.leftArm.rotation.z = high + reach * armSpan;
+  joints.rightArm.rotation.z = high - reach * armSpan;
+  const knee = (CLIMB_LEG_HIGH_RADIANS + CLIMB_LEG_LOW_RADIANS) / 2;
+  const legSpan = (CLIMB_LEG_HIGH_RADIANS - CLIMB_LEG_LOW_RADIANS) / 2;
+  // Legs follow the OPPOSITE arm: the diagonal that keeps three points on the
+  // rock, which is how anything with four limbs climbs.
+  joints.leftLeg.rotation.z = knee - reach * legSpan;
+  joints.rightLeg.rotation.z = knee + reach * legSpan;
+  // One pull per reach, so the body rises with the arm that is pulling.
+  joints.body.position.y = Math.abs(reach) * CLIMB_PULL_WORLD_UNITS;
+}
+
+/** Let go: arms overhead, legs parted, everything flailing. */
+function poseFall(joints: WalkerJoints, seconds: number, phase: number): void {
+  const flail = Math.sin(seconds * TWO_PI * FALL_FLAIL_HZ + phase) * FALL_FLAIL_RADIANS;
+  joints.leftArm.rotation.z = FALL_ARM_RADIANS + flail;
+  joints.rightArm.rotation.z = FALL_ARM_RADIANS - flail;
+  joints.leftLeg.rotation.z = FALL_LEG_SPREAD_RADIANS + flail;
+  joints.rightLeg.rotation.z = -FALL_LEG_SPREAD_RADIANS + flail;
+  // Nothing is bearing weight, so nothing bobs.
+  joints.body.position.y = 0;
 }
 
 export function createPilgrimModels(): PilgrimModels {
@@ -487,17 +603,10 @@ export function createPilgrimModels(): PilgrimModels {
     return {
       root,
       joints,
-      animate(seconds: number, phase: number): void {
-        // Same writes as the pre-skinning rig, against Bones instead of scene
-        // nodes — Bone extends Object3D, so these are identical transforms.
-        const stride = Math.sin(seconds * TWO_PI * STRIDE_HZ + phase);
-        joints.leftLeg.rotation.z = stride * LEG_SWING_RADIANS;
-        joints.rightLeg.rotation.z = -stride * LEG_SWING_RADIANS;
-        // Arms counter-swing their own side's leg — the natural gait.
-        joints.leftArm.rotation.z = -stride * ARM_SWING_RADIANS;
-        joints.rightArm.rotation.z = stride * ARM_SWING_RADIANS;
-        // Two footfalls per stride cycle → the bob runs at double frequency.
-        joints.body.position.y = Math.abs(stride) * BOB_AMPLITUDE;
+      animate(seconds: number, phase: number, gait: MoverGait = 'walk'): void {
+        if (gait === 'walk') poseWalk(joints, seconds, phase);
+        else if (gait === 'climb') poseClimb(joints, seconds, phase);
+        else poseFall(joints, seconds, phase);
         if (rudy) {
           joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
         } else {

@@ -48,6 +48,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { DEFAULT_YETI_VARIANT, isYetiVariant } from '../../plugins/monsters/protocol.ts';
+import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
 import { YETI_VARIANT_METRICS } from '../../plugins/monsters/client/yeti-anatomy.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
@@ -134,6 +135,10 @@ const variantParam = query.get('variant');
 // The same fallback the wire parse and the snapshot read-back use: an
 // unrecognised name is "some yeti", never an empty studio.
 const variant = isYetiVariant(variantParam) ? variantParam : DEFAULT_YETI_VARIANT;
+// ?gait=walk|climb|fall — the wall poses (./plugins/kit/moverGait.ts). Both
+// subjects take it: the yeti and the peep climb the same walls.
+const gaitParam = query.get('gait');
+const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
 const peepParam = query.get('peep');
 const showPeep = peepParam === null ? view !== 'face' && view !== 'hips' : peepParam === '1';
 
@@ -165,14 +170,14 @@ const subject = new Group();
 
 const monsters = createMonsterModels();
 const yeti = monsters.create('yeti', variant);
-yeti.animate(seconds, 0);
+yeti.animate(seconds, 0, gait);
 subject.add(yeti.root);
 
 if (showPeep) {
   const pilgrims = createPilgrimModels();
   const peep = pilgrims.create('rudy');
   // animate() is a pure function of the clock, so this phase IS that pose.
-  peep.animate(PEEP_STRIDE_PHASE / STRIDE_HZ, 0);
+  peep.animate(gait === 'walk' ? PEEP_STRIDE_PHASE / STRIDE_HZ : seconds, 0, gait);
 
   // HE STANDS ACROSS THE CAMERA, NEVER IN FRONT OF IT. A fixed offset put the
   // peep on the far side of the yeti in every Z-axis framing, where he is

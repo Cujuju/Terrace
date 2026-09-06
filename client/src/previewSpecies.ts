@@ -8,6 +8,8 @@
 //   ?species=<fish|grazer|wolf|ibex|bison|ray|shark|eel|angelfish|whale-humpback|whale-blue|whale-sperm|deepsea> — defaults to "fish"
 //   ?view=<iso|side|top|front>                     — defaults to "iso"
 //   ?t=<seconds>                                   — animation clock, default 0 (swimmers, flyers)
+//   ?gait=walk|climb|fall                          — which animation to pose, default walk. Only a
+//                                                    species with wallGaits answers to the other two
 //   ?phase=<radians>                               — animation phase, default 0. A WALKER's legs
 //                                                    are paced by ground covered, not the clock,
 //                                                    so this is its whole stride beat: a
@@ -37,6 +39,7 @@ import {
 import { bakeRig } from './render/rigSkin.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
 import { createRigHerd } from './render/rigHerd.ts';
+import { MOVER_GAITS, moverGaitIndex, type MoverGait } from './plugins/kit/moverGait.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
 import { buildFish } from '../../plugins/wildlife/client/species/fish.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
@@ -94,6 +97,12 @@ const CAMERA_VIEWS = {
   bottom: new Vector3(0.05, -1, 0.35),
 } as const;
 type CameraView = keyof typeof CAMERA_VIEWS;
+
+/** The gait named in the query, or the walk every species has. */
+function readGait(query: URLSearchParams): MoverGait {
+  const named = query.get('gait');
+  return MOVER_GAITS.find((gait) => gait === named) ?? 'walk';
+}
 
 function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer; ground: Mesh } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
@@ -154,6 +163,7 @@ function main(): void {
   const view: CameraView = viewName in CAMERA_VIEWS ? (viewName as CameraView) : 'iso';
   const seconds = Number.parseFloat(query.get('t') ?? '0') || 0;
   const phase = Number.parseFloat(query.get('phase') ?? '0') || 0;
+  const gait = readGait(query);
   const scale = Number.parseFloat(query.get('scale') ?? '1') || 1;
   const zoom = Number.parseFloat(query.get('zoom') ?? '1') || 1;
   const build = BUILDERS[species] ?? buildFish;
@@ -176,7 +186,14 @@ function main(): void {
   const blueprint = bakeRig(authored.root);
   const jointIndices: Record<string, number> = {};
   for (const [name, node] of Object.entries(authored.joints)) jointIndices[name] = blueprint.jointIndex(node);
-  const herd = createRigHerd(blueprint, { capacity: 1, poseSlots: POSE_SLOTS });
+  // Every gait gets a band here whatever the species declares: the preview's
+  // whole job is to pose an animation on demand, including one this species
+  // would never be asked for in the world.
+  const herd = createRigHerd(blueprint, {
+    capacity: 1,
+    poseSlots: POSE_SLOTS,
+    poseVariants: MOVER_GAITS.length,
+  });
   const joints: Record<string, import('three').Bone> = {};
   for (const [name, index] of Object.entries(jointIndices)) joints[name] = herd.joints[index]!;
 
@@ -193,8 +210,8 @@ function main(): void {
   scene.add(group);
 
   herd.beginFrame();
-  const slot = herd.poseSlotOf(phase);
-  authored.animate(joints, seconds, herd.poseSlotPhase(slot));
+  const slot = herd.poseSlotOf(phase, moverGaitIndex(gait));
+  authored.animate(joints, seconds, herd.poseSlotPhase(slot), gait);
   herd.capturePose(slot);
   herd.place(slot, 0, 0, 0, 0, scale);
   herd.endFrame();

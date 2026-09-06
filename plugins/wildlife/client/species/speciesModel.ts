@@ -27,6 +27,7 @@ import type {
   MeshLambertMaterial,
   Object3D,
 } from 'three';
+import type { MoverGait } from '../../../../client/src/plugins/kit/moverGait.ts';
 
 /** What the shared pool lends a species file at authoring time. */
 export interface SpeciesModelPool {
@@ -80,8 +81,25 @@ export interface AuthoredSpecies {
    *     and it must add NO clock term, or its legs would run while it stood.
    * Either way a term is a function of one unbounded angle, which is what makes
    * quantising the phase into slots safe (models.ts, POSE_SLOTS_PER_HERD).
+   *
+   * `gait` is what the creature is doing VERTICALLY (../../../client/src/plugins
+   * /kit/moverGait.ts). It is 'walk' for everything that never leaves the
+   * ground — the only value a species without `wallGaits` below is ever posed
+   * with — and a species that ignores it keeps its previous answers exactly.
    */
-  animate(joints: SpeciesJoints, seconds: number, phase: number): void;
+  animate(joints: SpeciesJoints, seconds: number, phase: number, gait: MoverGait): void;
+  /**
+   * True for a species that can be drawn OFF THE GROUND — climbing a wall or
+   * falling off one (@terrace/shared's climb.ts; the ibex is the only one
+   * today). It buys the herd one pose-palette band per MoverGait
+   * (client/src/render/rigHerd.ts's `poseVariants`), because two creatures at
+   * the same phase in different acts are not in the same pose.
+   *
+   * ABSENT MEANS NO, and a species that answers no is only ever asked for
+   * 'walk' — its `animate` may ignore the gait entirely, which is what every
+   * swimmer and flyer does.
+   */
+  readonly wallGaits?: boolean;
 }
 
 /** A species file exports exactly one of these. */

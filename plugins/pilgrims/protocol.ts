@@ -189,6 +189,18 @@ export interface PilgrimEntityState {
    * rather than dropping the row.
    */
   readonly climbHeight: number | null;
+  /**
+   * True once a doomed climber has LET GO — the height above is now dropping at
+   * eight times the climb rate (@terrace/shared's climb.ts), not rising.
+   *
+   * ON THE WIRE FOR THE SAME REASON `climbHeight` IS: a descent is also a climb
+   * whose height falls, so the two are indistinguishable from a height alone
+   * until several snapshots have gone by, and a fall that reads as a climb for
+   * its first frames is exactly the moment the drawing has to be right.
+   * Additive: absent means "not falling", which is every mover on a pre-fall
+   * server and every mover on the ground.
+   */
+  readonly falling: boolean;
 }
 
 export interface PilgrimsEntitiesPayload {
@@ -235,6 +247,7 @@ export function parseEntitiesPayload(payload: unknown): PilgrimEntityState[] | n
       // A row from a pre-climb server carries none; so does every walker on
       // the ground. Both mean the same thing and are the same value here.
       climbHeight: isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null,
+      falling: entry.falling === true,
     });
   }
   return parsed;

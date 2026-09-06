@@ -124,6 +124,20 @@ export interface RigHerdOptions {
   readonly capacity: number;
   /** Distinct poses one frame may hold. See the header: this quantises phase. */
   readonly poseSlots: number;
+  /**
+   * How many DIFFERENT ANIMATIONS the caller poses this rig with — 1 (the
+   * default) for a herd whose every individual is playing the same loop.
+   *
+   * A SECOND DIMENSION ON THE PALETTE, NOT A SECOND HERD. Phase alone stopped
+   * identifying a pose the moment a creature could be doing something other
+   * than walking (a climb, a fall — plugins/wildlife, 2026-09-05): two
+   * creatures at the same phase in different acts are in different poses, and
+   * sharing a row would put one of them in the other's body. Rows are
+   * `poseSlots × poseVariants`, the caller names its variant at `poseSlotOf`,
+   * and a variant nobody is in this frame costs nothing but its rows — the
+   * capture is still on demand.
+   */
+  readonly poseVariants?: number;
 }
 
 export interface RigHerd {
@@ -140,8 +154,12 @@ export interface RigHerd {
   readonly joints: readonly Bone[];
   /** Forgets last frame's individuals and poses. Call once per frame, first. */
   beginFrame(): void;
-  /** The pose row a creature with this phase offset (radians) is drawn from. */
-  poseSlotOf(phase: number): number;
+  /**
+   * The pose row a creature at this phase offset (radians), in this animation
+   * variant, is drawn from. `variant` defaults to 0 — the only one a herd built
+   * without `poseVariants` has.
+   */
+  poseSlotOf(phase: number, variant?: number): number;
   /** The phase (radians) the caller should pose the joints at for this row. */
   poseSlotPhase(slot: number): number;
   /** Whether this frame still needs the caller to pose and capture this row. */
@@ -170,9 +188,12 @@ export interface RigHerd {
  * rather than let two herds fight over one attribute buffer.
  */
 export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions): RigHerd {
-  const { capacity, poseSlots } = options;
+  const { capacity, poseSlots, poseVariants = 1 } = options;
   if (capacity <= 0) throw new Error('createRigHerd: capacity must be positive');
   if (poseSlots <= 0) throw new Error('createRigHerd: poseSlots must be positive');
+  if (poseVariants <= 0) throw new Error('createRigHerd: poseVariants must be positive');
+  // Every row of the palette: one band of `poseSlots` per animation variant.
+  const poseRows = poseSlots * poseVariants;
 
   const boneCount = blueprint.jointCount;
 
@@ -201,15 +222,15 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
 
   // The palette: one ROW per pose slot, MATRIX_TEXELS texels per bone.
   const paletteWidth = boneCount * MATRIX_TEXELS;
-  const paletteData = new Float32Array(paletteWidth * RGBA_COMPONENTS * poseSlots);
-  const palette = new DataTexture(paletteData, paletteWidth, poseSlots, RGBAFormat, FloatType);
+  const paletteData = new Float32Array(paletteWidth * RGBA_COMPONENTS * poseRows);
+  const palette = new DataTexture(paletteData, paletteWidth, poseRows, RGBAFormat, FloatType);
   // Nearest and no mipmaps: this is a lookup table read with texelFetch, not an
   // image — any filtering would blend two unrelated bone matrices.
   palette.minFilter = NearestFilter;
   palette.magFilter = NearestFilter;
   palette.generateMipmaps = false;
 
-  const captured = new Uint8Array(poseSlots);
+  const captured = new Uint8Array(poseRows);
   let capturedThisFrame = 0;
 
   // ONE attribute per herd, shared by every surface — deliberately. three's
@@ -270,18 +291,26 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
       }
     },
 
-    poseSlotOf(phase: number): number {
+    poseSlotOf(phase: number, variant: number = 0): number {
       // Phase is an unbounded offset in radians (the caller's is a golden-angle
       // multiple of an entity id), so fold it onto one cycle before slotting.
       const cycles = phase / TWO_PI;
       const fraction = cycles - Math.floor(cycles);
-      const slot = Math.floor(fraction * poseSlots);
+      const withinVariant = Math.floor(fraction * poseSlots);
       // Guard the float edge: `fraction` can round to exactly 1 for a large phase.
-      return slot < 0 ? 0 : slot >= poseSlots ? poseSlots - 1 : slot;
+      const slot =
+        withinVariant < 0 ? 0 : withinVariant >= poseSlots ? poseSlots - 1 : withinVariant;
+      // A variant out of range would silently land in another variant's band,
+      // which draws a creature in the wrong animation — clamp to variant 0,
+      // the one every herd has.
+      const band = variant > 0 && variant < poseVariants ? Math.floor(variant) : 0;
+      return band * poseSlots + slot;
     },
 
     poseSlotPhase(slot: number): number {
-      return (slot / poseSlots) * TWO_PI;
+      // The row's phase within its own variant band: the variant is WHICH
+      // animation, never where in it.
+      return ((slot % poseSlots) / poseSlots) * TWO_PI;
     },
 
     needsPose(slot: number): boolean {

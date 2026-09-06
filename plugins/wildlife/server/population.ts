@@ -67,6 +67,7 @@
 // CLOCK: `dt` from the host is the only time source. No Date.now anywhere, so a
 // server running at a different TICK_HZ behaves identically per simulated second.
 
+import { climbWireOf } from '@terrace/shared';
 import type { ClimbState } from '@terrace/shared';
 import { CHUNK_SIZE, nearestWithinReach } from '@terrace/shared';
 import {
@@ -1061,7 +1062,7 @@ export function entityStates(worldSize: number): WildlifeEntityState[] {
     size: sizeClassIndex(entity.size),
     // Null for everything on the ground, which msgpack drops; only a creature
     // on a wall costs the wire anything (WildlifeEntityState.climbHeight).
-    climbHeight: entity.climb === null ? null : entity.climb.height,
+    ...climbWireOf(entity.climb),
   }));
 }
 

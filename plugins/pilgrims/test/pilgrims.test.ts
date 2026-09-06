@@ -122,11 +122,12 @@ describe('the wire format', () => {
     });
     // A row without a kind is from a pre-wanderer server, which only ever
     // sent pilgrims — the parser restores that meaning, never guesses.
-    // `climbHeight` is null on every row here: absent on the wire means "on
-    // the ground", which is what a pre-climb server's rows also mean.
+    // `climbHeight` is null and `falling` false on every row here: absent on
+    // the wire means "on the ground", which is what a pre-climb server's rows
+    // also mean.
     expect(parsed).toEqual([
-      { ...good, climbHeight: null },
-      { id: 4, kind: 'pilgrim', race: 'uno', x: 1, y: 2, heading: 3, climbHeight: null },
+      { ...good, climbHeight: null, falling: false },
+      { id: 4, kind: 'pilgrim', race: 'uno', x: 1, y: 2, heading: 3, climbHeight: null, falling: false },
     ]);
   });
 
@@ -140,7 +141,7 @@ describe('the wire format', () => {
     // The unknown kind is dropped whole: a render loop must never meet a
     // model it cannot build (a newer server is an ordinary event).
     expect(parsed).toEqual([
-      { id: 1, kind: 'wanderer', race: 'uno', x: 1, y: 2, heading: 3, climbHeight: null },
+      { id: 1, kind: 'wanderer', race: 'uno', x: 1, y: 2, heading: 3, climbHeight: null, falling: false },
     ]);
   });
 

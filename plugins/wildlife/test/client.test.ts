@@ -49,6 +49,7 @@ function entity(
     heading: 0,
     size: DEFAULT_SIZE_CLASS_INDEX,
     climbHeight: null,
+    falling: false,
     ...overrides,
   };
 }
@@ -78,16 +79,16 @@ describe('entities payload parsing', () => {
         { id: 10, species: 'grazer', x: 1, y: 2, heading: 0.5, size: 1 },
       ],
     });
-    // `climbHeight` is null on every row: absent on the wire means "on the
+    // `climbHeight` is null and `falling` false on every row: absent on the wire means "on the
     // ground", which is what a pre-climb server's rows also mean.
     expect(parsed).toEqual([
-      { id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5, size: 0, climbHeight: null },
-      { id: 4, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null },
-      { id: 5, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null },
-      { id: 6, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null },
-      { id: 7, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null },
-      { id: 8, species: 'fish', x: 0, y: 0, heading: 0, size: 0, climbHeight: null },
-      { id: 10, species: 'grazer', x: 1, y: 2, heading: 0.5, size: 1, climbHeight: null },
+      { id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5, size: 0, climbHeight: null, falling: false },
+      { id: 4, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null, falling: false },
+      { id: 5, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null, falling: false },
+      { id: 6, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null, falling: false },
+      { id: 7, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null, falling: false },
+      { id: 8, species: 'fish', x: 0, y: 0, heading: 0, size: 0, climbHeight: null, falling: false },
+      { id: 10, species: 'grazer', x: 1, y: 2, heading: 0.5, size: 1, climbHeight: null, falling: false },
     ]);
     expect(sizeClassAt(DEFAULT_SIZE_CLASS_INDEX)).toBe(DEFAULT_SIZE_CLASS);
   });

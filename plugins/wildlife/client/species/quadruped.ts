@@ -140,3 +140,85 @@ export function poseWalk(
   // Two rises per stride: |sin| peaks at each pair's footfall.
   joints.rig!.position.y = Math.abs(Math.sin(beat)) * bobAmplitude;
 }
+
+// ── The wall gaits ─────────────────────────────────────────────────────────
+// A quadruped that climbs (the ibex — @terrace/shared's climb.ts and the
+// species' own `climb` rule) is drawn scrambling, not walking up a cliff.
+// Positive Z lifts a hanging leg forward, toward the rock it is facing.
+
+/**
+ * Scrambles per second on the wall.
+ *
+ * 1.2 — faster than either biped climber (the peep's 0.75, the yeti's 0.5) and
+ * deliberately so: a goat on a crag takes short quick placements where a
+ * primate takes long deliberate reaches, and that difference is most of what
+ * makes it read as a goat. Against the shipped climb (CLIMB_SECONDS_PER_BAND,
+ * 4 s) it is five placements per band.
+ */
+const CLIMB_SCRAMBLE_HZ = 1.2;
+
+/**
+ * How far a scrambling leg reaches up the rock, and how far the one bearing
+ * weight stays extended, in radians from hanging straight down.
+ *
+ * A quadruped's reach is SHORTER than a biped's (the peep's 2.4): its limbs
+ * carry it rather than pull it, so the pose is a body pressed against the face
+ * with the legs gathered under it — anything more reads as a bear.
+ */
+const CLIMB_LEG_HIGH_RADIANS = 1.1;
+const CLIMB_LEG_LOW_RADIANS = 0.25;
+
+/**
+ * A fall: legs splayed and flailing at a rate nothing else here uses, because
+ * the drop is eight times the climb (climb.ts's FALL_DROP_HEIGHT_UNITS_PER_
+ * SECOND) and a fall that reads as a controlled descent is the one thing it
+ * must not look like.
+ */
+const FALL_FLAIL_HZ = 4;
+const FALL_LEG_SPLAY_RADIANS = 0.7;
+const FALL_FLAIL_RADIANS = 0.35;
+
+/**
+ * Poses the four legs and the body for one instant of a CLIMB.
+ *
+ * DRIVEN BY THE CLOCK, not by ground covered: a climber's x/y are pinned at the
+ * foot of the wall for the whole ascent, so there is no distance to pace off —
+ * and the ascent runs at a fixed rate anyway. `phase` stays the individual's
+ * offset along that clock. `bobAmplitude` is the walk's, and
+ * the pull uses it directly: a climbing body heaves at the same scale it bobs.
+ */
+export function poseClimb(
+  joints: SpeciesJoints,
+  seconds: number,
+  phase: number,
+  bobAmplitude: number,
+): void {
+  // The phase offset is still the individual's: two goats on the same face must
+  // not scramble in lockstep, and it is what makes the herd's pose slots hold
+  // 32 different instants of the climb rather than 32 copies of one.
+  const scramble = Math.sin(seconds * CLIMB_SCRAMBLE_HZ * TWO_PI + phase);
+  const mid = (CLIMB_LEG_HIGH_RADIANS + CLIMB_LEG_LOW_RADIANS) / 2;
+  const span = (CLIMB_LEG_HIGH_RADIANS - CLIMB_LEG_LOW_RADIANS) / 2;
+  // The same diagonal pairs the walk uses — three feet on the rock at a time.
+  joints.foreLeft!.rotation.z = mid + scramble * span;
+  joints.hindRight!.rotation.z = mid + scramble * span;
+  joints.foreRight!.rotation.z = mid - scramble * span;
+  joints.hindLeft!.rotation.z = mid - scramble * span;
+  joints.rig!.position.y = Math.abs(scramble) * bobAmplitude;
+}
+
+/** Poses the four legs and the body for one instant of a FALL: nothing holds. */
+export function poseFall(joints: SpeciesJoints, seconds: number, phase: number): void {
+  const flail = Math.sin(seconds * FALL_FLAIL_HZ * TWO_PI + phase) * FALL_FLAIL_RADIANS;
+  // Fore legs thrown forward, hind legs back — the splay of a body with
+  // nothing under it.
+  joints.foreLeft!.rotation.z = FALL_LEG_SPLAY_RADIANS + flail;
+  joints.foreRight!.rotation.z = FALL_LEG_SPLAY_RADIANS - flail;
+  joints.hindLeft!.rotation.z = -FALL_LEG_SPLAY_RADIANS - flail;
+  joints.hindRight!.rotation.z = -FALL_LEG_SPLAY_RADIANS + flail;
+  // Nothing is bearing weight, so nothing bobs.
+  joints.rig!.position.y = 0;
+}
+
+/** One full turn, the unit every cycle above is written in. */
+const TWO_PI = Math.PI * 2;

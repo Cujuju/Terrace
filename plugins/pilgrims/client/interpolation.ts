@@ -43,6 +43,13 @@ export interface InterpolatedPilgrim {
    * vertical.
    */
   readonly climbHeight: number | null;
+  /**
+   * True once this mover has LET GO of the wall (protocol.ts's `falling`).
+   *
+   * NOT INTERPOLATED — it is a state, not a position. The newest message is the
+   * answer, so the pose changes on the frame the server says the grip failed.
+   */
+  readonly falling: boolean;
 }
 
 /**
@@ -80,6 +87,7 @@ interface PoseRecord extends InterpolatedPilgrim {
   kind: InterpolatedPilgrim['kind'];
   race: InterpolatedPilgrim['race'];
   climbHeight: number | null;
+  falling: boolean;
 }
 
 /**
@@ -109,6 +117,7 @@ export class PilgrimInterpolator extends PoseInterpolator<
       updateRecord: (record, pilgrim, segment, t) => {
         record.kind = pilgrim.kind;
         record.race = pilgrim.race;
+        record.falling = pilgrim.falling;
         if (segment === undefined) {
           record.x = pilgrim.x;
           record.y = pilgrim.y;
