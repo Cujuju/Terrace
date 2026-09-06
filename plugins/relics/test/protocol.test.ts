@@ -118,10 +118,10 @@ describe('parseSkillsPayload', () => {
     // A version-skewed server calling a passive skill 'active' must not make
     // the HUD render a cast button for it.
     const parsed = parseSkillsPayload({
-      skills: [{ id: 'titans-hand', kind: 'active', cooldownS: 9, cooldownRemainingS: 4 }],
+      skills: [{ id: 'bedrock-ward', kind: 'active', cooldownS: 9, cooldownRemainingS: 4 }],
     });
     expect(parsed).toEqual([
-      { id: 'titans-hand', kind: 'passive', cooldownS: 9, cooldownRemainingS: 4 },
+      { id: 'bedrock-ward', kind: 'passive', cooldownS: 9, cooldownRemainingS: 4 },
     ]);
   });
 

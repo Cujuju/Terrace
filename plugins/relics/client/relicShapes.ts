@@ -121,7 +121,6 @@ const ICON_GLOW_ELLIPSE_PX: readonly [number, number] = [7, 3.2];
 
 /** The icon's cast-shade ellipse on the grass (rx, ry px), sized to each object. */
 const ICON_SHADE_ELLIPSE_PX: Readonly<Record<SkillId, readonly [number, number]>> = {
-  'titans-hand': [5, 2.4],
   quake: [9, 3.8],
   genesis: [9, 3.8],
   'bedrock-ward': [8, 3.4],
@@ -286,165 +285,6 @@ function roundedRectShape(width: number, height: number, radius: number): Shape 
   outline.absarc(x, -y, radius, 3 * QUARTER_TURN, 4 * QUARTER_TURN, false);
   outline.closePath();
   return outline;
-}
-
-/**
- * Titan's Hand — a wider brush — is A HAND OF GOD (owner, 2026-09-05: "I want
- * the hand to be rendered like a strong high-resolution hand", then, with a
- * reference render of a smooth mannequin hand on a plinth: "the 3D hand
- * should look more like this 3D model"): a long smooth forearm rising from a
- * two-step pedestal, a rounded palm, four fingers standing straight up with a
- * soft curl at the tips, and a thumb swung out to the side and up. SMOOTH is
- * the brief: the joints are the same radius as the bones either side, so a
- * finger reads as one continuous digit, and everything round is modelled at
- * HAND_SEGMENTS rather than the other relics' ROUND_SEGMENTS, because the gem
- * shader takes its normal from screen-space derivatives (gemMaterial.ts) and
- * resolution is the only thing that makes a limb read as round.
- */
-const HAND_SEGMENTS = 18;
-const HAND_JOINT_LONGITUDES = 12;
-const HAND_JOINT_LATITUDES = 8;
-
-/** The pedestal: two stone discs, the upper narrower, as the reference's plinth. */
-const HAND_PLINTH_RADII = [0.62, 0.5] as const;
-const HAND_PLINTH_STEP_HEIGHT = 0.07;
-
-/** The forearm: a long taper from the plinth to the wrist. */
-const HAND_FOREARM_HEIGHT = 0.62;
-const HAND_FOREARM_RADIUS_BOTTOM = 0.24;
-const HAND_FOREARM_RADIUS_TOP = 0.19;
-
-/** The palm: a rounded slab a little taller than wide, and a third as deep. */
-const HAND_PALM_HEIGHT = 0.7;
-const HAND_PALM_WIDTH = 0.66;
-const HAND_PALM_DEPTH = 0.22;
-const HAND_PALM_CORNER_RADIUS = 0.16;
-const HAND_PALM_BEVEL = 0.06;
-
-/** The heel of the thumb: a rounded swell on the palm's thumb side, low down. */
-const HAND_THENAR_RADIUS = 0.17;
-const HAND_THENAR_HEIGHT_SHARE = 0.3;
-
-/** Fingers, index to little: total length, the middle longest. Straight, parallel, evenly spaced. */
-const HAND_FINGER_LENGTHS = [0.6, 0.66, 0.62, 0.5] as const;
-const HAND_FINGER_SPACING = 0.165;
-const HAND_FINGER_RADIUS = 0.07;
-
-/** How a finger's length divides between its three phalanges. Same radius throughout: a smooth digit. */
-const HAND_PHALANX_SHARES = [0.42, 0.32, 0.26] as const;
-
-/** The curl: only the tip leans toward the viewer, and only a little — an open hand. */
-const HAND_PHALANX_TILTS = [0, 0.08, 0.22] as const;
-
-/**
- * The thumb: rooted on the palm's +x side just above the thenar, swung out to
- * the side at about 55° then curling up so its tip reaches most of the way to
- * the palm's top, as the reference holds it.
- */
-const HAND_THUMB_RADIUS = 0.08;
-const HAND_THUMB_ROOT_HEIGHT_SHARE = 0.45;
-const HAND_THUMB_SEGMENTS = [
-  { length: 0.34, radius: HAND_THUMB_RADIUS, tilt: 0.15, spread: -0.95 },
-  { length: 0.3, radius: HAND_THUMB_RADIUS, tilt: 0.25, spread: -0.35 },
-] as const;
-
-/** One phalanx: how long, how thick, how far it leans toward the viewer and out to the side. */
-interface Phalanx {
-  readonly length: number;
-  readonly radius: number;
-  readonly tilt: number;
-  readonly spread: number;
-}
-
-/** Where a phalanx points: leaned `tilt` toward the viewer (+z) and swung `spread` about the vertical. */
-function limbDirection(tilt: number, spread: number): Point {
-  return [-Math.sin(spread) * Math.cos(tilt), Math.cos(spread) * Math.cos(tilt), Math.sin(tilt)];
-}
-
-/** A rounded root, then bone, joint, bone, joint … out to a rounded fingertip. */
-function digit(root: Point, phalanges: readonly Phalanx[]): BufferGeometry[] {
-  const parts = [joint(root, phalanges[0]!.radius)];
-  let at = root;
-  for (const { length, radius, tilt, spread } of phalanges) {
-    const dir = limbDirection(tilt, spread);
-    const tip: Point = [at[0] + dir[0] * length, at[1] + dir[1] * length, at[2] + dir[2] * length];
-    parts.push(strut(at, tip, radius, radius, HAND_SEGMENTS));
-    parts.push(joint(tip, radius));
-    at = tip;
-  }
-  return parts;
-}
-
-function joint([x, y, z]: Point, radius: number): BufferGeometry {
-  return place(
-    new SphereGeometry(radius, HAND_JOINT_LONGITUDES, HAND_JOINT_LATITUDES),
-    x,
-    y,
-    z,
-  );
-}
-
-function titansHand(): Part[] {
-  const plinth = HAND_PLINTH_RADII.map((radius, i) =>
-    place(
-      new CylinderGeometry(radius, radius, HAND_PLINTH_STEP_HEIGHT, HAND_SEGMENTS),
-      0,
-      HAND_PLINTH_STEP_HEIGHT * (i + 0.5),
-      0,
-    ),
-  );
-  const plinthTop = HAND_PLINTH_STEP_HEIGHT * HAND_PLINTH_RADII.length;
-  const forearm = place(
-    new CylinderGeometry(
-      HAND_FOREARM_RADIUS_TOP,
-      HAND_FOREARM_RADIUS_BOTTOM,
-      HAND_FOREARM_HEIGHT,
-      HAND_SEGMENTS,
-    ),
-    0,
-    plinthTop + HAND_FOREARM_HEIGHT / 2,
-    0,
-  );
-  const palmBottom = plinthTop + HAND_FOREARM_HEIGHT;
-  const palmTop = palmBottom + HAND_PALM_HEIGHT;
-  // Extrude runs along +z from the shape plane, so the palm already faces the
-  // viewer; it only has to be lifted onto the forearm and centred in depth.
-  const palm = new ExtrudeGeometry(
-    roundedRectShape(HAND_PALM_WIDTH, HAND_PALM_HEIGHT, HAND_PALM_CORNER_RADIUS),
-    {
-      depth: HAND_PALM_DEPTH,
-      bevelEnabled: true,
-      bevelThickness: HAND_PALM_BEVEL,
-      bevelSize: HAND_PALM_BEVEL,
-      bevelSegments: 3,
-      curveSegments: 8,
-    },
-  );
-  palm.translate(0, palmBottom + HAND_PALM_HEIGHT / 2, -HAND_PALM_DEPTH / 2);
-  const thenar = joint(
-    [HAND_PALM_WIDTH / 2 - HAND_THENAR_RADIUS / 2, palmBottom + HAND_PALM_HEIGHT * HAND_THENAR_HEIGHT_SHARE, 0],
-    HAND_THENAR_RADIUS,
-  );
-
-  const fingers = HAND_FINGER_LENGTHS.flatMap((length, i) => {
-    const x = (i - (HAND_FINGER_LENGTHS.length - 1) / 2) * HAND_FINGER_SPACING;
-    const phalanges = HAND_PHALANX_SHARES.map((share, k) => ({
-      length: length * share,
-      radius: HAND_FINGER_RADIUS,
-      tilt: HAND_PHALANX_TILTS[k]!,
-      spread: 0,
-    }));
-    return digit([x, palmTop, 0], phalanges);
-  });
-
-  const thumbRoot: Point = [
-    HAND_PALM_WIDTH / 2,
-    palmBottom + HAND_PALM_HEIGHT * HAND_THUMB_ROOT_HEIGHT_SHARE,
-    0,
-  ];
-  const thumb = digit(thumbRoot, HAND_THUMB_SEGMENTS);
-
-  return [...painted('stone', ...plinth), ...painted('amber', forearm, palm, thenar, ...fingers, ...thumb)];
 }
 
 /**
@@ -973,7 +813,6 @@ function landslide(): Part[] {
 
 
 const BUILDERS: Readonly<Record<SkillId, () => Part[]>> = {
-  'titans-hand': titansHand,
   quake,
   genesis,
   'bedrock-ward': bedrockWard,

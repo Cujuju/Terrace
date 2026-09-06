@@ -11,12 +11,15 @@
 // it and grants the skill it carries. Skills come in three categories, and each
 // category exists to prove a different reach of the plugin API:
 //
-//   passive (Titan's Hand)       — rewrites the holder's sculpt intents through
-//                                  the interceptor chain's `modify` verdict.
-//   passive (Bedrock Ward)       — the DENY side of the same chain, against
-//                                  OTHER players (ward.ts). The first skill
-//                                  that is about the people in the world
-//                                  rather than about the ground.
+//   passive (Bedrock Ward)       — denies OTHER players' sculpt intents over
+//                                  ground the holder just shaped (ward.ts).
+//                                  The interceptor chain's `deny` verdict; the
+//                                  only skill that is about the people in the
+//                                  world rather than about the ground.
+//
+// TITAN'S HAND IS GONE (owner, 2026-09-05: a wider brush trades away the aim
+// the player has learned, which is a downgrade dressed as a reward). It was
+// this plugin's one user of the chain's `modify` verdict — see onIntent.
 //   active  (Quake, Genesis,     — a HUD button, then a targeting click, then
 //            Bulwark, Landslide)   composed WorldApi.sculpt calls. Landslide
 //                                  READS the ground first (terraform.ts,
@@ -157,21 +160,6 @@ export const RELIC_KEEPALIVE_S = 15;
  * one chunk unlocking, or one relic being collected, changes the answer.
  */
 export const RELIC_SPAWN_RETRY_S = 5;
-
-/**
- * Extra brush radius Titan's Hand grants, before clamping to MAX_BRUSH_RADIUS.
- *
- * ONE WORLD UNIT of extra reach, converted. The brush range is [1 cell, 4
- * world units], so this is a quarter of the whole range at the top end and a
- * multiplying of area at the bottom — a passive that is felt at every brush
- * size without any of them becoming the obvious choice.
- *
- * Stated in world units because a brush's reach is a distance across the
- * ground: left at one CELL through the 2026-08-21 re-sample, the game's one
- * reach passive would have granted a quarter of the ground it used to and read
- * as doing nothing at the top end.
- */
-export const TITANS_HAND_RADIUS_BONUS = cellsAcross(1);
 
 /**
  * Seconds of cooldown an active skill earns per terrace band its strongest
@@ -768,68 +756,27 @@ export const plugin: TerracePlugin = {
   },
 
   /**
-   * PASSIVE SKILL — Titan's Hand, via the interceptor chain's `modify` verdict.
+   * PASSIVE SKILL — Bedrock Ward, via the interceptor chain's `deny` verdict.
    *
-   * Returns nothing (treated as allow) for players without the skill and for
-   * brushes already at MAX_BRUSH_RADIUS: an unchanged `modify` would still make
-   * core re-validate the intent (pipeline step 4) for no reason, and would make
-   * every holder's every stroke look modified in a log.
+   * Returns nothing (treated as allow) for a stroke on free ground or on the
+   * sculptor's own, which is every stroke in a single-player world: the ward
+   * map is empty until somebody holds the skill and works some ground.
    *
-   * ── KNOWN, ACCEPTED TRADEOFF: THE PREDICTION SHIMMER ───────────────────────
-   * The client predicts the intent it SENT (client/src/terrain/prediction.ts),
-   * so a holder's local view shows a radius-N edit while the server applies
-   * radius-N+1. The server's diff then cannot match the prediction, the
-   * prediction is not recognised as acknowledged (`isConfirmed`), and the
-   * client draws its own smaller edit on top of the server's larger one until
-   * PREDICTION_TTL_MS (1 s) retires it — the "MODIFIED INTENT" residual already
-   * documented in that module. Visually: about a second of doubled edit at the
-   * brush, per stroke, then it settles onto the server's version.
+   * THE VERDICT IS ONLY HALF THE ENFORCEMENT. A relic cast never reaches this
+   * hook (handleCast → applyTerraform → WorldApi.sculpt), so the same
+   * predicate is asked there as gate 6. See ward.ts's header for why that is
+   * the whole point rather than a detail.
    *
-   * ── LOAD-ORDER CONSEQUENCE, UPDATED BY ISSUE #19 ──────────────────────────
-   * Discovery sorts directories, so the verdict-phase chain is still
-   * mana → relics → reveal, and mana's own `onIntent` still only ever sees the
-   * PRE-widened intent (nothing runs before mana to modify it). But mana no
-   * longer charges during that pass — see mana's `checkAffordability` /
-   * `commitCharge` split (server/src/plugins/types.ts documents the
-   * onIntent / onIntentApplied contract this relies on). Charging now happens
-   * in the EFFECT phase, once every interceptor has allowed, against the
-   * EFFECTIVE intent core actually applied — which already includes this
-   * widened radius. So Titan's Hand is NO LONGER free extra area: the wider
-   * footprint is priced like any other radius, because the charge is taken
-   * after the widening rather than before it. This was the "same gap mana
-   * documents" the previous version of this comment named as the fix that
-   * would close it; issue #19 is that fix.
-   *
-   * THIS IS NOT FIXED CLIENT-SIDE, on purpose. Teaching the client to predict
-   * the modification would mean the client knowing this plugin's rules — which
-   * skills a player holds, what each does to an intent — and re-implementing
-   * them in sync with the server. That is the exact coupling the intent model
-   * exists to prevent, and it would break the moment a third-party plugin added
-   * its own modifier. The real fix is core-side and is the same one the
-   * prediction module already names: a correlation id on the intent, echoed on
-   * the diff that applied it, so a client can recognise its own edit whatever
-   * the server did to it. Until then, this shimmer is the price of `modify`
-   * being available to plugins at all, and it is a fair one.
+   * THE CHAIN'S `modify` VERDICT IS NO LONGER USED BY ANY PLUGIN. Titan's Hand
+   * was the only one, and removing it (owner, 2026-09-05) also retires the
+   * prediction shimmer this comment used to document: nothing now rewrites a
+   * player's intent behind their client's back, so a prediction that is not
+   * denied always matches what the server applied.
    */
   onIntent(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void {
-    // DENY BEFORE MODIFY. A refused stroke must not first be widened by
-    // Titan's Hand: the wider brush would be the one the ward is tested
-    // against on the next interceptor, and a rewrite that only ever precedes a
-    // refusal is work the chain then has to throw away.
     if (wardRefuses(ctx.world, ctx.player.id, intent.x, intent.y, intent.radius)) {
       return { kind: 'deny', reason: CAST_DENIED_WARDED };
     }
-
-    const held = skillsBySession.get(ctx.player.id);
-    if (held === undefined || !held.has('titans-hand')) return;
-
-    // Clamped to the shared cap: the brush math throws outside [1, 4], and the
-    // pipeline re-validates a modified intent against the same bound, so an
-    // unclamped +1 would turn every radius-4 stroke into a silent rejection.
-    const radius = Math.min(intent.radius + TITANS_HAND_RADIUS_BONUS, MAX_BRUSH_RADIUS);
-    if (radius === intent.radius) return;
-
-    return { kind: 'modify', intent: { ...intent, radius } };
   },
 
   /**
@@ -840,9 +787,8 @@ export const plugin: TerracePlugin = {
    * chain (no mana, another player's ward) must not leave its sculptor holding
    * ground they never moved.
    *
-   * The intent handed over is the one core applied — Titan's Hand's widening
-   * included — so a holder of both skills wards exactly the footprint they
-   * actually shaped.
+   * The intent handed over is the one core applied, so the ward covers exactly
+   * the footprint the player's stroke actually moved.
    */
   onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
     const held = skillsBySession.get(ctx.player.id);
