@@ -63,6 +63,20 @@ const SETTLE_QUERY_FLAG = 'settle';
  */
 const SUPPRESS_UPLOADS_QUERY_FLAG = 'suppressUploads';
 /**
+ * Page-URL query flag multiplying the renderer's pixel ratio
+ * (`&renderScale=0.5` renders a quarter of the pixels).
+ *
+ * THE FILL-RATE TEST. Triangles, draw calls and uploads have each failed to
+ * explain the frame time across tonight's runs — heavy blocks had FEWER draw
+ * calls than light ones. Fill cost is the remaining candidate: transparent
+ * full-screen weather and effect layers add almost no draw calls and enormous
+ * per-pixel work. If GPU time scales with the pixel count, the frame is
+ * fill-bound and the fix belongs in overdraw, not in geometry or uploads. If it
+ * does not scale, fill is exonerated. Either answer is worth having, and it
+ * costs one flag.
+ */
+const RENDER_SCALE_QUERY_FLAG = 'renderScale';
+/**
  * How long the page is left alone before a scenario starts, in milliseconds.
  *
  * FORTY-FIVE SECONDS, measured rather than guessed: a default 2048-cell world
@@ -1541,6 +1555,12 @@ export function installPerfProbe(deps: {
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '')) {
     suppressedUploadShapes.add(shape);
+  }
+  const renderScale = Number(
+    new URLSearchParams(location.search).get(RENDER_SCALE_QUERY_FLAG) ?? '1',
+  );
+  if (Number.isFinite(renderScale) && renderScale > 0 && renderScale !== 1) {
+    renderer.setPixelRatio(renderer.getPixelRatio() * renderScale);
   }
   installGlUploadAccounting();
   wrapSinkTiming(world);
