@@ -192,6 +192,14 @@ body {
   cursor: pointer;
 }
 
+/* Header-only corner (no plugin body): the tab's compact footprint, since
+   one line of text does not earn a panel's width. */
+.hud-panel--compact {
+  min-width: 0;
+  width: max-content;
+  padding: 8px 12px;
+}
+
 .panel-header--static {
   cursor: default;
 }
