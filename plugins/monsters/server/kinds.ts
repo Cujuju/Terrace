@@ -498,6 +498,12 @@ export const KRAKEN_MIN_LAIR_FITTING_CELLS = Math.ceil(KRAKEN_FOOTPRINT_CELLS **
  * under-stated the widest yeti would walk that one's shoulder into a cliff its
  * centre point cleared.
  *
+ * IT SHRANK WITH THE PEEP (2026-09-05). Every variant is solved to a multiple
+ * of PEEP_HEIGHT_WORLD_UNITS, and the owner made peeps fifteen percent smaller,
+ * so the whole animal — and this width with it — scales by 0.85: 1.203 to 1.023,
+ * and the minimum lair with the square of it. Re-derived from the client's
+ * solver, not multiplied by hand.
+ *
  * IT WENT UP A THIRD WHEN THE FOUR BODIES LANDED, from 0.901 to 1.203, and the
  * reason is the SILVERBACK: he is a knuckle-walker with a gorilla's shoulders
  * and the widest stance of the four, where the single body this replaced was a
@@ -508,7 +514,7 @@ export const KRAKEN_MIN_LAIR_FITTING_CELLS = Math.ceil(KRAKEN_FOOTPRINT_CELLS **
  * measured against (79 cells), and it is the SIZE moving rather than the
  * divisor, which is what that amendment asked for.
  */
-export const YETI_FOOTPRINT_CELLS = cellsAcross(1.2031547978277752);
+export const YETI_FOOTPRINT_CELLS = cellsAcross(1.022681578153609);
 
 /**
  * Cells in the smallest snowfield the yeti will accept as a lair, as a multiple
