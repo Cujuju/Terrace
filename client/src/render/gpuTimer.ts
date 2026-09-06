@@ -46,9 +46,39 @@ const UNSUPPORTED: GpuTimer = {
   drain: () => [],
 };
 
+/**
+ * The probe's arming flag (perfProbe.ts's PROBE_QUERY_FLAG). Restated rather
+ * than imported on purpose: perfProbe.ts is DEV-only and statically eliminated
+ * from a production build, and importing it here — from a module that ships —
+ * would drag the whole probe into every bundle.
+ */
+const PROBE_QUERY_FLAG = 'perfprobe';
+
+/**
+ * True while client/src/perfProbe.ts is armed and therefore owns the GPU clock.
+ *
+ * WEBGL2 ALLOWS EXACTLY ONE ACTIVE TIME_ELAPSED QUERY PER CONTEXT. Two timers
+ * calling beginQuery against one context is not two measurements, it is one
+ * INVALID_OPERATION and two sets of wrong numbers — and the one that would have
+ * broken is every `gpu-bench.sh` run, silently, because the probe reports its
+ * GPU figure without re-checking that its own beginQuery still succeeded.
+ *
+ * So the clock has exactly one owner at any moment: the probe during a bench
+ * run, this meter otherwise. The HUD reads "unavailable" for the duration of a
+ * bench, which is correct — the number is being taken by the instrument that
+ * asked for it first, and nobody is reading the HUD during a headless run.
+ */
+function probeOwnsTheClock(): boolean {
+  // `location` is absent in a non-DOM test run; absence means the probe is not
+  // armed, never a throw.
+  if (typeof location === 'undefined') return false;
+  return new URLSearchParams(location.search).get(PROBE_QUERY_FLAG) !== null;
+}
+
 export function createGpuTimer(
   context: WebGLRenderingContext | WebGL2RenderingContext,
 ): GpuTimer {
+  if (probeOwnsTheClock()) return UNSUPPORTED;
   // three falls back to a WebGL1 context on an adapter that refuses WebGL2, and
   // query objects exist only on WebGL2. "Unsupported" is the honest answer;
   // calling beginQuery there would throw mid-frame.
