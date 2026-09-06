@@ -41,16 +41,19 @@ import {
   AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
   AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
   UNCONSTRAINED_GRADIENT_PER_CELL,
+  advanceClimb,
+  approachAndClimb,
+  climbSeed,
   normalizeAngle as sharedNormalizeAngle,
   steerWithShorteningProbe,
   withoutSelf,
   type Occupant,
   type TraversalProfile,
 } from '@terrace/shared';
-import { type LairWorld, isLairCell, isLairPose } from './habitat.ts';
+import { CELL_CENTRE_OFFSET, type LairWorld, isLairCell, isLairPose } from './habitat.ts';
 import { bodyRadiusCells, profileOf, type MonsterProfile } from './kinds.ts';
 import { monsterRandom, rollEvent } from './rng.ts';
-import { type Monster, livingMonsters } from './summoning.ts';
+import { banish, type Monster, livingMonsters } from './summoning.ts';
 
 
 /**
@@ -103,6 +106,15 @@ export const normalizeAngle = sharedNormalizeAngle;
  * swim" — precisely the rule that was missing.
  */
 function steeringProfileOf(profile: MonsterProfile): TraversalProfile {
+  // A CLIMBER KEEPS ITS GRADIENT LIMIT, and that is the whole of the owner's
+  // 2026-09-05 decision about the yeti. The paragraph above says dropping the
+  // limit avoided "a gameplay decision nobody has made"; the owner has now made
+  // it, in the other direction — he climbs, slowly and at some risk, rather
+  // than walking up a cliff face at his ambling pace. For every kind that
+  // cannot climb nothing changes.
+  if (profile.traversal.climb !== undefined && profile.traversal.climb !== null) {
+    return profile.traversal;
+  }
   return { ...profile.traversal, maxGradientPerCell: UNCONSTRAINED_GRADIENT_PER_CELL };
 }
 
@@ -293,8 +305,24 @@ export function advanceMonster(
   monster: Monster,
   dt: number,
   occupants: readonly Occupant[] = [],
-): void {
+): MonsterAdvance {
   const profile = profileOf(monster.kind);
+
+  // ON A WALL: one vertical motion and nothing else — no idle beat, no steer,
+  // no separation. pilgrims' `advanceWalker` states the reasoning; this is the
+  // same rule for a bigger animal, and the shared state machine is the same
+  // object (@terrace/shared's climb.ts).
+  if (monster.climb !== null) {
+    const outcome = advanceClimb(monster.climb, dt);
+    if (outcome === 'fallen') return 'fell';
+    if (outcome === 'arrived') {
+      monster.x = monster.climb.toX + CELL_CENTRE_OFFSET;
+      monster.y = monster.climb.toY + CELL_CENTRE_OFFSET;
+      monster.climb = null;
+    }
+    return 'moved';
+  }
+
   advanceIdleState(monster, profile, dt);
 
   const noise = (monsterRandom() * 2 - 1) * profile.turnNoiseRadiansPerSecond * dt;
@@ -302,7 +330,7 @@ export function advanceMonster(
 
   if (isStranded(world, monster)) {
     monster.heading = desired;
-    return;
+    return 'moved';
   }
 
   // ONE CLEARANCE DECISION PER TICK, and both probes below use it.
@@ -363,12 +391,19 @@ export function advanceMonster(
     // its position, keeps the noise-drifted heading, and tries again next tick.
     // If the ground opens up — a player sculpts, or the water returns — the
     // ladder finds a step on that tick and it simply walks off.
+    //
+    // UNLESS IT CAN CLIMB OUT (owner, 2026-09-05). For a climbing kind "boxed
+    // in" usually means "ringed by risers", which is exactly what climbing is
+    // for. It climbs the neighbour it was already heading at, so a wall is
+    // crossed in the direction it wanted to go rather than in whichever one the
+    // ladder gave up on last.
     monster.heading = desired;
-    return;
+    if (climbOut(world, monster, desired, stepCells)) return 'moved';
+    return 'moved';
   }
 
   monster.heading = steered;
-  if (monster.idle) return;
+  if (monster.idle) return 'moved';
 
   const nextX = monster.x + Math.cos(steered) * stepCells;
   const nextY = monster.y + Math.sin(steered) * stepCells;
@@ -401,11 +436,55 @@ export function advanceMonster(
   // check.
   if (!isLairPose(profile.range, world, nextX, nextY, clearance)) {
     monster.heading = normalizeAngle(monster.heading + Math.PI);
-    return;
+    return 'moved';
   }
 
   monster.x = nextX;
   monster.y = nextY;
+  return 'moved';
+}
+
+/** What one tick of `advanceMonster` did. 'fell' is terminal: the caller banishes it. */
+export type MonsterAdvance = 'moved' | 'fell';
+
+/**
+ * Puts a boxed-in climber on the wall it is facing, if that is what is in the
+ * way. False for every kind that cannot climb, and for a monster whose way out
+ * is blocked by something other than a rise (water it cannot swim, ground
+ * outside its range) — those hold, exactly as before.
+ *
+ * THE POSE IS NOT RE-TESTED ON THE WALL, and that is deliberate rather than
+ * missed: `isLairPose` asks whether a BODY fits somewhere it stands, and a
+ * climbing body is not standing anywhere — it is against a face, between two
+ * cells, for a few seconds. The cell it arrives on was tested by `beginClimb`
+ * for ground legality, and the tick after it lands the ordinary steering
+ * invariant takes over again.
+ */
+function climbOut(world: LairWorld, monster: Monster, desired: number, stepCells: number): boolean {
+  const profile = profileOf(monster.kind);
+  const target = {
+    x: Math.floor(monster.x) + Math.round(Math.cos(desired)),
+    y: Math.floor(monster.y) + Math.round(Math.sin(desired)),
+  };
+  return (
+    approachAndClimb(
+      world,
+      profile.traversal,
+      monster,
+      target,
+      stepCells,
+      bodyRadiusCells(profile),
+      climbSeedFor(monster, target),
+    ) !== null
+  );
+}
+
+/** The seed this monster's fall is rolled off — shared's rule, discriminated by
+ *  the monster's own id (@terrace/shared's `climbSeed`). */
+function climbSeedFor(monster: Monster, target: { x: number; y: number }): number {
+  return (
+    climbSeed(monster.id, Math.floor(monster.x), Math.floor(monster.y), target.x, target.y)
+  );
 }
 
 /**
@@ -423,6 +502,13 @@ export function advanceLurking(world: LairWorld, dt: number): void {
   // note), so a monster's step never depends on where it sits in this list.
   const occupants = monsterOccupants(alive);
   for (let index = 0; index < alive.length; index++) {
-    advanceMonster(world, alive[index], dt, withoutSelf(occupants, occupants[index]));
+    // A FALL IS A DEPARTURE, and `banish` is the one exit every departure goes
+    // through (summoning.ts) — so a yeti that lets go of a cliff is gone and
+    // his kind's respawn cooldown starts, exactly as when his snowfield melts.
+    // `banish` refuses a kind with no BanishmentRule, which is the same guard
+    // that keeps Cthulhu unremovable; a fall cannot be a back door round it.
+    if (advanceMonster(world, alive[index], dt, withoutSelf(occupants, occupants[index])) === 'fell') {
+      banish(alive[index]);
+    }
   }
 }

@@ -24,6 +24,7 @@
 //      into a no-man's-land and be despawned by the habitat-loss rule for having
 //      done nothing but swim in a straight line.
 
+import type { ClimbRule } from '@terrace/shared';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
@@ -559,6 +560,13 @@ export interface SpeciesProfile {
    * that already agreed and is what makes the ibex climb.
    */
   readonly maxGradientPerCell: number;
+  /**
+   * What this species does about a rise steeper than `maxGradientPerCell`:
+   * absent to refuse it (every species but one), a ClimbRule to climb it
+   * (@terrace/shared's climb.ts). census.ts's `walkerProfileFor` copies it onto
+   * the traversal archetype, so this is the one place a species declares it.
+   */
+  readonly climb?: ClimbRule | null;
 
   /**
    * The radius of this creature's turning circle, as a fraction of its own body

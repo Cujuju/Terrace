@@ -116,6 +116,7 @@
 // still drives him off, and his threshold is why lairCollapseCells exists.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { ClimbState } from '@terrace/shared';
 import {
   MONSTER_KINDS,
   YETI_VARIANTS,
@@ -173,6 +174,13 @@ export interface Monster {
    * which is precisely what the client's interpolation keys off.
    */
   readonly variant?: YetiVariant;
+  /**
+   * The wall this monster is on, or null for the ordinary case of standing on
+   * the ground (@terrace/shared's climb.ts). Only a climbing kind ever has one
+   * (the yeti); set and cleared by `advanceMonster` alone, and never persisted
+   * — a world reloaded mid-climb simply finds him standing at the foot of it.
+   */
+  climb: ClimbState | null;
 }
 
 /**
@@ -535,6 +543,7 @@ function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster 
   state.living = {
     id: nextMonsterId++,
     kind: profile.kind,
+    climb: null,
     ...(variant === undefined ? {} : { variant }),
     // Cell centre: the survey reports a cell, and a monster placed on the corner
     // of one would be half a cell off from the ground the survey vouched for.

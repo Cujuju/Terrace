@@ -170,6 +170,21 @@ export interface MonsterState {
    * yetiVariantOf).
    */
   readonly variant?: YetiVariant;
+  /**
+   * WHERE THIS MONSTER IS VERTICALLY WHILE IT IS OFF THE GROUND, in stored
+   * height units — climbing a wall or falling off one (@terrace/shared's
+   * climb.ts). Null, and absent from the wire, for a monster standing on the
+   * ground, which is every monster almost all the time and every sea kind
+   * always.
+   *
+   * IT IS ON THE WIRE BECAUSE THE CLIENT CANNOT INFER IT: a climber's x/y stay
+   * pinned at the foot of the wall for the whole climb — that is what keeps it
+   * out of the rock — so the ground under it says "still down here" until the
+   * instant it arrives. Additive, like `variant` before it: absent means "on
+   * the ground", so an old client draws a climbing yeti at his feet rather
+   * than dropping him.
+   */
+  readonly climbHeight?: number | null;
 }
 
 export interface MonstersStatePayload {
@@ -212,6 +227,9 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
     if (!isFiniteNumber(entry.x) || !isFiniteNumber(entry.y)) continue;
     if (!isFiniteNumber(entry.heading)) continue;
     const variant = yetiVariantOf(entry.kind, entry.variant);
+    // Absent on every row from a pre-climb server and on every monster on the
+    // ground; both mean the same thing and are the same value here.
+    const climbHeight = isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null;
     parsed.push(
       variant === undefined
         ? {
@@ -220,6 +238,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             x: entry.x,
             y: entry.y,
             heading: entry.heading,
+            climbHeight,
           }
         : {
             id: entry.id,
@@ -227,6 +246,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             x: entry.x,
             y: entry.y,
             heading: entry.heading,
+            climbHeight,
             variant,
           },
     );

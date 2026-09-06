@@ -54,6 +54,7 @@
 
 import {
   AMPHIBIOUS_WALKER_PROFILE,
+  withClimb,
   BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
@@ -514,6 +515,32 @@ export const KRAKEN_MIN_LAIR_FITTING_CELLS = Math.ceil(KRAKEN_FOOTPRINT_CELLS **
  * measured against (79 cells), and it is the SIZE moving rather than the
  * divisor, which is what that amendment asked for.
  */
+/**
+ * The chance a yeti's climb of a lethal wall kills him — owner, 2026-09-05,
+ * against the peeps' 15 %: "I want Yeti to have a 5% chance". A third of a
+ * peep's risk, which is what being twice its size and built for the mountain
+ * buys him.
+ *
+ * A FALL IS A BANISHMENT, not a new mechanic: `banish` (summoning.ts) is the
+ * one exit every departure already goes through — habitat collapse, the ground
+ * moving out from under him — and it starts his kind's respawn cooldown, so a
+ * yeti that falls off his own mountain comes back the way a banished one does.
+ */
+export const YETI_CLIMB_FALL_CHANCE = 0.05;
+
+/**
+ * How tall a wall has to be to kill him, in height units: HIS OWN HEIGHT, the
+ * rule shared's ClimbRule.lethalRiseHeightUnits states.
+ *
+ * 67 = YETI_TOTAL_HEIGHT (client/yeti-anatomy.ts: 2 peeps, 1.054 world units)
+ * over HEIGHT_WORLD_SCALE (1/64), rounded to a whole height unit. Restated
+ * rather than imported for the same reason PEEP_HEIGHT_WORLD_UNITS is restated
+ * on the client side: a server file must not pull a model module in to learn
+ * one number. Four bands — so what can kill him is a face twice what can kill a
+ * peep, which is the animal.
+ */
+export const YETI_LETHAL_RISE_HEIGHT_UNITS = 67;
+
 export const YETI_FOOTPRINT_CELLS = cellsAcross(1.022681578153609);
 
 /**
@@ -1107,7 +1134,20 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     // channel, not to swim the lake. That archetype exists and is tested; the
     // yeti is simply not its subject, because the owner named him on the other
     // side of the line.
-    traversal: AMPHIBIOUS_WALKER_PROFILE,
+    //
+    // AND HE CLIMBS (owner, 2026-09-05, naming him with the peeps and the ibex).
+    // What that changes about him is not that he goes further — amphibious
+    // already meant the water in his snowfield was scenery — but HOW he crosses
+    // his own terraces: until now `steeringProfileOf` (lurk.ts) handed the
+    // steering an unconstrained gradient, so he strolled up a sheer face at
+    // walking pace as if it were a ramp. He now walks what a legged thing walks
+    // and hauls himself up the rest, four seconds a band, with a real chance of
+    // falling off the tall ones.
+    traversal: withClimb(
+      AMPHIBIOUS_WALKER_PROFILE,
+      YETI_CLIMB_FALL_CHANCE,
+      YETI_LETHAL_RISE_HEIGHT_UNITS,
+    ),
   }),
 };
 

@@ -20,7 +20,16 @@
 // scene, the rendered terrain height, the message channel, and the frame clock.
 
 import { Group } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+
+/**
+ * World units per stored height unit — client/src/config.ts's
+ * HEIGHT_WORLD_SCALE, derived from its own two shared inputs rather than
+ * imported (plugins/pilgrims/client/index.ts states the reason: importing that
+ * module drags `import.meta.env` into a node typecheck).
+ */
+const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -89,6 +98,12 @@ interface MonsterView {
    * left wearing the old body — see reconcileViews.
    */
   readonly variant: YetiVariant | undefined;
+  /**
+   * Where this monster was DRAWN vertically last frame — the ground follower's
+   * state (client/src/plugins/kit/groundFollow.ts), so crossing a terrace band
+   * is a step rather than a jump. Null before its first drawn frame.
+   */
+  drawnY: number | null;
 }
 
 /**
@@ -141,7 +156,13 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       const spec = dreadSpecOf(monster.kind);
       const dread = spec !== null ? createDread(spec) : null;
       if (dread !== null) scene.add(dread.root);
-      return { model, dread, phase: id * PHASE_RADIANS_PER_ID, variant: monster.variant };
+      return {
+        model,
+        dread,
+        phase: id * PHASE_RADIANS_PER_ID,
+        variant: monster.variant,
+        drawnY: null,
+      };
     },
     replace: (_id, monster, existing) => {
       if (existing.variant === monster.variant) return null;
@@ -162,6 +183,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       const rebuilt = bank.create(monster.kind, monster.variant);
       scene.add(rebuilt.root);
       return {
+        drawnY: existing.drawnY,
         model: rebuilt,
         dread: existing.dread,
         phase: existing.phase,
@@ -211,11 +233,24 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // at very different depths — which is most of what tells them apart from a
     // distance — and the yeti stands on the snow. placement.ts owns which is
     // which and how many terrain samples each needs.
-    root.position.set(
-      monster.x * CELL_WORLD_SIZE,
-      monsterOriginY(monster.kind, (cx, cy) => ctx.terrainHeightAt(cx, cy), monster.x, monster.y),
-      monster.y * CELL_WORLD_SIZE,
+    // WHERE IT IS VERTICALLY, in three cases and one expression — the walkers'
+    // rule (plugins/pilgrims/client/index.ts), for the same reasons:
+    //   * on a wall — the server says so and says how high (`climbHeight`),
+    //     because a climb and a fall are motions the simulation owns;
+    //   * otherwise the kind's own placement rule, CHASED rather than assigned
+    //     so a yeti crossing a band steps up instead of teleporting;
+    //   * first frame — the target itself, no ease.
+    const placedY = monsterOriginY(
+      monster.kind,
+      (cx, cy) => ctx.terrainHeightAt(cx, cy),
+      monster.x,
+      monster.y,
     );
+    const targetY =
+      monster.climbHeight === null ? placedY : monster.climbHeight * HEIGHT_WORLD_SCALE;
+    const drawnY = followGroundY(view.drawnY, targetY, dt);
+    view.drawnY = drawnY;
+    root.position.set(monster.x * CELL_WORLD_SIZE, drawnY, monster.y * CELL_WORLD_SIZE);
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and
     // the monster travels toward (cos heading, 0, sin heading) — hence the
     // negation.

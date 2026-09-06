@@ -49,6 +49,7 @@ const SEEDED_CREATURE: WildlifeEntity = {
   huntTargetId: null,
   huntSecondsRemaining: 0,
   huntRestSecondsRemaining: 0,
+  climb: null,
   x: 12,
   y: 12,
   heading: 0,

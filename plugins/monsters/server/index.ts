@@ -128,6 +128,9 @@ export function monsterStates(): MonsterState[] {
     // of bytes for the property that a client which joined mid-life needs most
     // — there is no other message that would ever tell it which yeti this is.
     ...(monster.variant === undefined ? {} : { variant: monster.variant }),
+    // Only while it is on a wall. Spread for the same reason the variant is:
+    // a monster on the ground puts no key on the wire at all.
+    ...(monster.climb === null ? {} : { climbHeight: monster.climb.height }),
   }));
 }
 

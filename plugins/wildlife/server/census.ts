@@ -90,6 +90,9 @@ function walkerProfileFor(species: WildlifeHabitatSpecies): TraversalProfile {
   return {
     ...archetype,
     maxGradientPerCell: profile.maxGradientPerCell,
+    // A species that climbs says so on its own row; absent is "cannot", which
+    // is what every archetype meant before climbing existed.
+    ...(profile.climb === undefined || profile.climb === null ? {} : { climb: profile.climb }),
     ...(depth === NO_MIN_WATER_DEPTH ? {} : { maxGroundHeight: SEA_LEVEL - depth * BAND_HEIGHT }),
   };
 }

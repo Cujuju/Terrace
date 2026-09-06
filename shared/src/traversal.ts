@@ -302,12 +302,31 @@ export interface TraversalProfile {
  */
 export interface ClimbRule {
   /**
-   * Chance in [0, 1] that the climb ends in a fatal fall, rolled ONCE at the
-   * foot of the wall whatever its height (owner's call, 2026-09-05, over a
-   * roll per band: a cliff is then no more lethal than a step, and what a
+   * Chance in [0, 1] that a climb of a LETHAL wall ends in a fatal fall, rolled
+   * ONCE at the foot of it whatever its height (owner's call, 2026-09-05, over
+   * a roll per band: a cliff is then no more lethal than a step, and what a
    * player learns to read is the CLIMBER rather than the wall).
    */
   readonly fallChance: number;
+  /**
+   * How tall a wall has to be, in height units, before falling off it can kill
+   * — and the number is the CLIMBER'S OWN HEIGHT, because that is the physical
+   * fact it stands for: nothing dies falling off something shorter than itself.
+   *
+   * WHY IT EXISTS AT ALL, measured rather than argued (live world,
+   * frostwick-hollows snapshot 990). Without it, "a climb" means every rise
+   * steeper than the walking limit — which on real terrain is 68 % of adjacent
+   * cell pairs, most of them ordinary rough ground a hand's breadth high. A
+   * pilgrimage-scale route then contains a mean of 7.3 of them, and at a 15 %
+   * roll each only 37 % of peeps would survive a ONE-WAY trip. That is not the
+   * mechanic the owner asked for ("slowly climb SHEER WALLS with maybe a
+   * fifteen percent chance of falling") — it is a death march over gravel.
+   *
+   * At the climber's own height the same routes carry a mean of 2.1 lethal
+   * walls and 74 % of peeps arrive. Everything shorter is still CLIMBED — at
+   * the same speed, with the same pause at the foot of it — it just cannot kill.
+   */
+  readonly lethalRiseHeightUnits: number;
 }
 
 /**
@@ -557,8 +576,24 @@ export const LAND_WALKER_PROFILE: TraversalProfile = {
  * chance beside the animal it belongs to — that is where the owner's sentence
  * about that animal lives.
  */
-export function climbingWalkerProfile(fallChance: number): TraversalProfile {
-  return { ...LAND_WALKER_PROFILE, climb: { fallChance } };
+export function climbingWalkerProfile(
+  fallChance: number,
+  lethalRiseHeightUnits: number,
+): TraversalProfile {
+  return withClimb(LAND_WALKER_PROFILE, fallChance, lethalRiseHeightUnits);
+}
+
+/**
+ * The same ability granted to any other archetype — the yeti climbs, and he is
+ * AMPHIBIOUS_WALKER_PROFILE rather than a land walker, so "can climb" has to be
+ * composable rather than a fourth archetype that restates the other three.
+ */
+export function withClimb(
+  profile: TraversalProfile,
+  fallChance: number,
+  lethalRiseHeightUnits: number,
+): TraversalProfile {
+  return { ...profile, climb: { fallChance, lethalRiseHeightUnits } };
 }
 
 /**
