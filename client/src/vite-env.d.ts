@@ -6,6 +6,11 @@
 interface ImportMetaEnv {
   /** Colyseus endpoint override, e.g. `ws://192.168.1.10:2567`. */
   readonly VITE_SERVER_URL?: string;
+  /**
+   * Game-server PORT override, leaving the hostname derived from the page —
+   * what a LAN visitor needs. `VITE_SERVER_URL` overrides both and wins.
+   */
+  readonly VITE_SERVER_PORT?: string;
   /** Room name override; must match the server's `gameServer.define()` name. */
   readonly VITE_ROOM_NAME?: string;
 }

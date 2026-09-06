@@ -1368,13 +1368,24 @@ button.world-header {
   color: rgb(255 138 128 / 90%);
 }
 
-/* The frame meter's rows (render/frameStats.ts, backquote to toggle). Dimmer
-   than the draw line above and tabular like it: these are four rows read as a
-   column of changing digits, and a proportional font would make every window
-   reflow the whole block. */
+/* The frame meter's rows (render/frameStats.ts; the pulse button or backquote
+   toggles them). ONE READING PER ROW (owner, 2026-09-06), label left and number
+   right, so the numbers line up as one column to read down. Tabular figures for
+   the same reason the draw line above uses them: without them each new window
+   re-widths the number and the whole block shuffles. min-width on the label
+   keeps the values aligned with each other rather than with their own labels. */
 .hud-version__perf {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75em;
   color: rgb(255 255 255 / 45%);
   font-variant-numeric: tabular-nums;
+}
+
+.hud-version__perf-label {
+  min-width: 4.5em;
+  text-align: left;
+  color: rgb(255 255 255 / 32%);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
