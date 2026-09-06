@@ -121,6 +121,11 @@ design, and a child that inherits the fd inherits the lock: measured 2026-09-06,
 the lock stayed held by `chrome.exe` after the run finished and the next run was
 refused, naming the run that had already ended.
 
+A run that prints a sample **closes its own window**. Left standing it kept
+rendering the scene with vsync off — nine chrome processes still on the GPU after
+the run printed (2026-09-06). A run that reports nothing keeps its window: then
+the window is the evidence.
+
 Each run's Chrome profile is `~/terrace-chrome-bench-<pid>` on the Windows side.
 Before 2026-09-06 it was a single shared directory that every launch killed and
 `rm -rf`'d, so a second bench silently destroyed the first one's run and the
