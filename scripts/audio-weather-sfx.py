@@ -215,23 +215,20 @@ def make_thunder() -> np.ndarray:
 
 # --- Rain loop ---------------------------------------------------------------
 #
-# Rain is SPARSE noise: countless drops, but not so many that they fuse into a
-# steady hiss. Every layer is noise gated by a train of short grains; what
-# separates them is how dense the train is and how bright the band:
-#   WASH   — hundreds of grains a second, broadband, tilted down at the top —
-#            dense enough to read as a bed, sparse enough to crackle;
-#   DROPS  — fewer, brighter ticks: individual drops close by;
-#   PLOPS  — a handful of heavier, lower drops on something near.
-# A slow gust rides the wash so a long listen never goes static.
+# Rain is a wash of noise gated by a dense train of short grains: broadband,
+# tilted down at the top, dense enough to read as a steady bed yet grainy
+# enough not to be flat white noise. No separate drops — owner call
+# (2026-09-05): they read as ticks on top of the rain, not as rain. A slow
+# gust rides the wash so a long listen never goes static.
 
 # Under the 8 s cap; long enough that the loop point is not heard coming round.
 RAIN_SECONDS = 8.0
 # Long enough to hide the splice in grains, short enough not to eat the loop.
 RAIN_CROSSFADE_SECONDS = 1.0
 
-# Wash: rate × tau ≈ 1 — about one grain sounding at any instant, so it is a
-# bed with holes in it, not a solid hiss.
-WASH_PER_SECOND = 600
+# Wash: rate × tau ≈ 2.5 grains sounding at any instant — smooth enough to be
+# a bed, grainy enough not to be a solid hiss.
+WASH_PER_SECOND = 1500
 WASH_TAU_SECONDS = 0.0017
 WASH_BAND_HZ = (500.0, 9000.0)
 WASH_TILT_HZ = 3000.0
@@ -239,17 +236,6 @@ WASH_LEVEL = 1.0
 # Gusting: sub-audio movement of the wash level.
 GUST_HZ = 0.35
 GUST_DEPTH = 0.3
-
-# Drops: how many per second, how long each rings, its band, and how loud.
-DROPS_PER_SECOND = 90
-DROP_TAU_SECONDS = 0.003
-DROP_BAND_HZ = (1500.0, 6500.0)
-DROP_LEVEL = 0.7
-# A few heavier drops on a surface nearby, lower and longer.
-PLOPS_PER_SECOND = 6
-PLOP_TAU_SECONDS = 0.012
-PLOP_BAND_HZ = (300.0, 1200.0)
-PLOP_LEVEL = 0.35
 
 
 def grain_layer(count: int, per_second: float, tau: float, band: tuple[float, float]) -> np.ndarray:
@@ -273,14 +259,7 @@ def make_rain_loop() -> np.ndarray:
 
     wash = lowpass(grain_layer(count, WASH_PER_SECOND, WASH_TAU_SECONDS, WASH_BAND_HZ), WASH_TILT_HZ)
     wash *= 1.0 - GUST_DEPTH * (0.5 + 0.5 * slow_noise(count, GUST_HZ))
-    drops = grain_layer(count, DROPS_PER_SECOND, DROP_TAU_SECONDS, DROP_BAND_HZ)
-    plops = grain_layer(count, PLOPS_PER_SECOND, PLOP_TAU_SECONDS, PLOP_BAND_HZ)
-
-    mix = (
-        WASH_LEVEL * wash / np.sqrt(np.mean(wash**2))
-        + DROP_LEVEL * drops / np.sqrt(np.mean(drops**2))
-        + PLOP_LEVEL * plops / np.sqrt(np.mean(plops**2))
-    )
+    mix = WASH_LEVEL * wash
 
     body = mix[:body_count].copy()
     tail = mix[body_count:]
