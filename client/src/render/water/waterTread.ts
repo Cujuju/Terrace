@@ -190,8 +190,10 @@ const DRY_SAME_TREAD_FIELD_OFFSET = 1;
  *
  * SCRATCH DISCIPLINE: `loadSampleField`/`marchLevel`/`assembleLoops` share
  * module-level scratch and must run to completion uninterrupted (see
- * loadSampleField's precondition). This runs inside the rig's synchronous
- * rebuild, so nothing can interleave with it.
+ * loadSampleField's precondition). ONE TILE is the unit that must not be
+ * interrupted, and `appendRegionTile` runs a whole tile synchronously, so a
+ * caller marching tiles across several frames (render/riverRig.ts's drain)
+ * keeps the precondition just as this whole-region loop does.
  */
 export function appendRegionSurface(
   mirror: TerrainMirror,
@@ -199,7 +201,61 @@ export function appendRegionSurface(
   surfaceY: number,
   out: number[],
 ): ContourLoop[] {
+  /** Every smoothed loop emitted, across all tiles, in emission order. */
+  const emittedLoops: ContourLoop[] = [];
+  for (const tile of region.tiles) {
+    emittedLoops.push(...appendRegionTile(mirror, region, tile, surfaceY, out));
+  }
+  return emittedLoops;
+}
+
+/**
+ * One marching tile of `appendRegionSurface` — same field, same pipeline, same
+ * emission, for a single member of `region.tiles`.
+ *
+ * The re-emission unit (2026-09-05, issue #343). A region is one band map-wide,
+ * so re-emitting a whole one for a crater that touched nine chunks marched
+ * every tile the band reaches. Tiles are independent by construction: they
+ * share only border SAMPLES, which both sides read from the mirror, and
+ * `smoothLoop` pins border points — so a tile marched on its own emits exactly
+ * the triangles it contributed to the whole-region loop.
+ */
+export function appendRegionTile(
+  mirror: TerrainMirror,
+  region: WaterRegion,
+  tile: number,
+  surfaceY: number,
+  out: number[],
+): ContourLoop[] {
   const threshold = region.surfaceBand * BAND_HEIGHT;
+  const fieldAt = regionFieldAt(mirror, region, threshold);
+
+  const tilesPerEdge = chunksPerEdge(mirror.map.size);
+  const tileX = (tile % tilesPerEdge) * CHUNK_SIZE;
+  const tileZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE;
+  loadSampleField((i, j) => fieldAt(tileX + i, tileZ + j));
+  const segmentCount = marchLevel(threshold, tileX, tileZ, null);
+  const loops = assembleLoops(segmentCount, tileX, tileZ, samples[0]! >= threshold)
+    .map(smoothLoop)
+    .filter((loop) => loop.length >= 3);
+  for (const polygon of groupLoops(loops)) {
+    let merged = polygon.outer;
+    for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
+    earClip(merged, (a, b, c) => {
+      out.push(a.x * CELL_WORLD_SIZE, surfaceY, a.z * CELL_WORLD_SIZE);
+      out.push(b.x * CELL_WORLD_SIZE, surfaceY, b.z * CELL_WORLD_SIZE);
+      out.push(c.x * CELL_WORLD_SIZE, surfaceY, c.z * CELL_WORLD_SIZE);
+    });
+  }
+  return loops;
+}
+
+/** The field rule documented on `appendRegionSurface`, as a sampler. */
+function regionFieldAt(
+  mirror: TerrainMirror,
+  region: WaterRegion,
+  threshold: number,
+): (x: number, y: number) => number {
   /** One unit under the threshold: outside, by the least amount expressible. */
   const beyondRegion = threshold - DRY_SAME_TREAD_FIELD_OFFSET;
 
@@ -210,7 +266,7 @@ export function appendRegionSurface(
     y < mirror.map.size &&
     region.isWet(cellIndex(mirror.map, x, y));
 
-  const fieldAt = (x: number, y: number): number => {
+  return (x: number, y: number): number => {
     if (wet(x, y)) return Math.max(threshold, sampleHeight(mirror, x, y));
     const besideWet = CARDINAL_NEIGHBOURS.some(([dx, dy]) => wet(x + dx, y + dy));
     if (besideWet) {
@@ -225,30 +281,4 @@ export function appendRegionSurface(
     }
     return beyondRegion;
   };
-
-  /** Every smoothed loop emitted, across all tiles, in emission order. */
-  const emittedLoops: ContourLoop[] = [];
-
-  const tilesPerEdge = chunksPerEdge(mirror.map.size);
-  for (const tile of region.tiles) {
-    const tileX = (tile % tilesPerEdge) * CHUNK_SIZE;
-    const tileZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE;
-    loadSampleField((i, j) => fieldAt(tileX + i, tileZ + j));
-    const segmentCount = marchLevel(threshold, tileX, tileZ, null);
-    const loops = assembleLoops(segmentCount, tileX, tileZ, samples[0]! >= threshold)
-      .map(smoothLoop)
-      .filter((loop) => loop.length >= 3);
-    emittedLoops.push(...loops);
-    for (const polygon of groupLoops(loops)) {
-      let merged = polygon.outer;
-      for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
-      earClip(merged, (a, b, c) => {
-        out.push(a.x * CELL_WORLD_SIZE, surfaceY, a.z * CELL_WORLD_SIZE);
-        out.push(b.x * CELL_WORLD_SIZE, surfaceY, b.z * CELL_WORLD_SIZE);
-        out.push(c.x * CELL_WORLD_SIZE, surfaceY, c.z * CELL_WORLD_SIZE);
-      });
-    }
-  }
-
-  return emittedLoops;
 }
