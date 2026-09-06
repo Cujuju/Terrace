@@ -15,6 +15,7 @@ import { createAudioEngine } from '../audio/audioEngine.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
+import { recordPluginFrame } from '../render/frameStats.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import {
   clearGroundShade,
@@ -861,7 +862,22 @@ export function createClientPluginHost(
             : 'draw';
         for (const deferred of deferredFrameHandlers) {
           if (deferred.cancelled) continue;
-          deferred.unregister = viewport.onFrame(deferred.handler, phase);
+          // TIMED, BY NAME, HERE AND NOWHERE ELSE (owner, 2026-09-06: "I need
+          // to know how much time and frame budget each one is eating"). This
+          // is the single site where a plugin's frame callback is handed to the
+          // viewport, and the only one where the plugin's NAME is still in
+          // scope — core's runFrameCallback sees an anonymous function. Wrapping
+          // at the registration means two clock reads per plugin per frame and
+          // no patching of anything global, unlike perfProbe.ts, which is why
+          // this one can ship enabled.
+          const handler = deferred.handler;
+          const name = plugin.name;
+          const timed = (dt: number): void => {
+            const startMs = performance.now();
+            handler(dt);
+            recordPluginFrame(name, performance.now() - startMs);
+          };
+          deferred.unregister = viewport.onFrame(timed, phase);
         }
         deferredFrameHandlers.length = 0;
       } catch (error) {
