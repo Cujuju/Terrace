@@ -468,6 +468,9 @@ const QUAKE_RIM_AMPLITUDE_SHARE = 0.25;
 /** How thick the rippled sheet of ground is: its rock underside rides this far below the crimson face. */
 const QUAKE_SHEET_THICKNESS = 0.07;
 
+/** How far the sheet hovers above the tile (owner, 2026-09-05: "sits above the ground and not on it"). */
+const QUAKE_HOVER = 0.3;
+
 /**
  * The damped ripple's height at radius r: the troughs all lie on the sheet's
  * floor (a thickness above the tile) and the crests rise from it, the first
@@ -477,7 +480,7 @@ const QUAKE_SHEET_THICKNESS = 0.07;
 function quakeWaveHeight(r: number): number {
   const decay = 1 - (1 - QUAKE_RIM_AMPLITUDE_SHARE) * (r / QUAKE_DISC_RADIUS);
   const crest = (1 - Math.cos((r / QUAKE_DISC_RADIUS) * QUAKE_WAVE_CYCLES * Math.PI * 2)) / 2;
-  return QUAKE_SHEET_THICKNESS + QUAKE_WAVE_AMPLITUDE * decay * crest;
+  return QUAKE_HOVER + QUAKE_SHEET_THICKNESS + QUAKE_WAVE_AMPLITUDE * decay * crest;
 }
 
 /**

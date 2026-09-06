@@ -452,209 +452,209 @@ export function QuakeIcon(): JSX.Element {
           <stop offset="1" stop-color="#2a2018" />
         </linearGradient>
       </defs>
-      <g transform="translate(0 -5.8)">
+      <g transform="translate(0 -4.9)">
         <Tile prefix="quake" glow="#ff5c5c" />
         <ellipse cx="16" cy="19.2" rx="9" ry="3.8" fill="#2e5a2e" opacity="0.5" />
-        <polygon points="16.0,14.8 16.0,14.2 19.2,14.5 19.2,15.1" fill="url(#quake-rock-1)" />
-        <polygon points="12.8,15.1 12.8,14.5 16.0,14.2 16.0,14.8" fill="url(#quake-rock-1)" />
-        <polygon points="19.2,15.1 16.0,14.8 16.0,14.6 19.0,14.9" fill="url(#quake-rock-2)" />
-        <polygon points="16.0,14.8 12.8,15.1 13.0,14.9 16.0,14.6" fill="url(#quake-rock-3)" />
-        <polygon points="19.2,15.1 19.2,14.5 22.0,15.4 22.0,16.0" fill="url(#quake-rock-1)" />
-        <polygon points="10.0,16.0 10.0,15.4 12.8,14.5 12.8,15.1" fill="url(#quake-rock-2)" />
-        <polygon points="16.0,14.6 13.0,14.9 13.3,14.5 16.0,14.2" fill="url(#quake-rock-2)" />
-        <polygon points="19.0,14.9 16.0,14.6 16.0,14.2 18.7,14.5" fill="url(#quake-rock-2)" />
-        <polygon points="21.5,15.2 19.0,14.3 19.2,14.5 22.0,15.4" fill="url(#quake-crimson-1)" />
-        <polygon points="13.0,14.3 10.5,15.2 10.0,15.4 12.8,14.5" fill="url(#quake-crimson-0)" />
-        <polygon points="21.5,15.7 19.0,14.9 18.7,14.5 21.0,15.2" fill="url(#quake-rock-2)" />
-        <polygon points="13.0,14.9 10.5,15.7 11.0,15.2 13.3,14.5" fill="url(#quake-rock-3)" />
-        <polygon points="18.4,14.8 16.0,14.5 16.0,13.6 18.7,13.9" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,14.5 13.6,14.8 13.3,13.9 16.0,13.6" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,15.6 13.8,15.8 13.6,14.8 16.0,14.5" fill="url(#quake-crimson-0)" />
-        <polygon points="18.2,15.8 16.0,15.6 16.0,14.5 18.4,14.8" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,16.2 13.8,16.4 14.1,15.8 16.0,15.6" fill="url(#quake-rock-2)" />
-        <polygon points="18.2,16.4 16.0,16.2 16.0,15.6 17.9,15.8" fill="url(#quake-rock-2)" />
-        <polygon points="8.2,17.4 8.2,16.8 10.0,15.4 10.0,16.0" fill="url(#quake-rock-2)" />
-        <polygon points="22.0,16.0 22.0,15.4 23.8,16.8 23.8,17.4" fill="url(#quake-rock-0)" />
-        <polygon points="20.5,15.5 18.4,14.8 18.7,13.9 21.0,14.7" fill="url(#quake-crimson-0)" />
-        <polygon points="13.6,14.8 11.5,15.5 11.0,14.7 13.3,13.9" fill="url(#quake-crimson-1)" />
-        <polygon points="20.0,16.4 18.2,15.8 18.4,14.8 20.5,15.5" fill="url(#quake-crimson-0)" />
-        <polygon points="13.8,15.8 12.0,16.4 11.5,15.5 13.6,14.8" fill="url(#quake-crimson-1)" />
-        <polygon points="20.0,17.0 18.2,16.4 17.9,15.8 19.5,16.3" fill="url(#quake-rock-2)" />
-        <polygon points="13.8,16.4 12.0,17.0 12.5,16.3 14.1,15.8" fill="url(#quake-rock-3)" />
-        <polygon points="10.5,15.2 8.8,16.4 8.2,16.8 10.0,15.4" fill="url(#quake-crimson-0)" />
-        <polygon points="23.2,16.4 21.5,15.2 22.0,15.4 23.8,16.8" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,15.6 14.1,15.8 14.4,14.9 16.0,14.8" fill="url(#quake-rock-2)" />
-        <polygon points="17.9,15.8 16.0,15.6 16.0,14.8 17.6,14.9" fill="url(#quake-rock-2)" />
-        <polygon points="11.0,14.7 9.5,15.8 8.8,16.4 10.5,15.2" fill="url(#quake-crimson-0)" />
-        <polygon points="22.5,15.8 21.0,14.7 21.5,15.2 23.2,16.4" fill="url(#quake-crimson-1)" />
-        <polygon points="19.5,16.3 17.9,15.8 17.6,14.9 19.0,15.4" fill="url(#quake-rock-1)" />
-        <polygon points="14.1,15.8 12.5,16.3 13.0,15.4 14.4,14.9" fill="url(#quake-rock-3)" />
-        <polygon points="21.2,17.4 20.0,16.4 20.5,15.5 21.9,16.5" fill="url(#quake-crimson-0)" />
-        <polygon points="12.0,16.4 10.8,17.4 10.1,16.5 11.5,15.5" fill="url(#quake-crimson-1)" />
-        <polygon points="21.2,17.9 20.0,17.0 19.5,16.3 20.6,17.1" fill="url(#quake-rock-1)" />
-        <polygon points="12.0,17.0 10.8,17.9 11.4,17.1 12.5,16.3" fill="url(#quake-rock-3)" />
-        <polygon points="21.9,16.5 20.5,15.5 21.0,14.7 22.5,15.8" fill="url(#quake-crimson-0)" />
-        <polygon points="11.5,15.5 10.1,16.5 9.5,15.8 11.0,14.7" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,17.0 14.9,17.1 14.6,15.7 16.0,15.5" fill="url(#quake-crimson-1)" />
-        <polygon points="17.1,17.1 16.0,17.0 16.0,15.5 17.4,15.7" fill="url(#quake-crimson-0)" />
-        <polygon points="17.4,15.7 16.0,15.5 16.0,14.2 17.6,14.4" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,15.5 14.6,15.7 14.4,14.4 16.0,14.2" fill="url(#quake-crimson-1)" />
-        <polygon points="17.1,17.7 16.0,17.6 16.0,16.6 16.8,16.7" fill="url(#quake-rock-2)" />
-        <polygon points="16.0,17.6 14.9,17.7 15.2,16.7 16.0,16.6" fill="url(#quake-rock-2)" />
-        <polygon points="18.0,17.4 17.1,17.1 17.4,15.7 18.5,16.0" fill="url(#quake-crimson-0)" />
-        <polygon points="14.9,17.1 14.0,17.4 13.5,16.0 14.6,15.7" fill="url(#quake-crimson-1)" />
-        <polygon points="18.5,16.0 17.4,15.7 17.6,14.4 19.0,14.8" fill="url(#quake-crimson-0)" />
-        <polygon points="14.6,15.7 13.5,16.0 13.0,14.8 14.4,14.4" fill="url(#quake-crimson-1)" />
-        <polygon points="18.0,18.0 17.1,17.7 16.8,16.7 17.5,16.9" fill="url(#quake-rock-1)" />
-        <polygon points="14.9,17.7 14.0,18.0 14.5,16.9 15.2,16.7" fill="url(#quake-rock-3)" />
-        <polygon points="23.8,17.4 23.8,16.8 24.5,18.4 24.5,19.0" fill="url(#quake-rock-0)" />
-        <polygon points="7.5,19.0 7.5,18.4 8.2,16.8 8.2,17.4" fill="url(#quake-rock-3)" />
-        <polygon points="20.6,17.1 19.5,16.3 19.0,15.4 19.9,16.1" fill="url(#quake-rock-1)" />
-        <polygon points="12.5,16.3 11.4,17.1 12.1,16.1 13.0,15.4" fill="url(#quake-rock-3)" />
-        <polygon points="23.8,17.9 23.2,16.4 23.8,16.8 24.5,18.4" fill="url(#quake-crimson-1)" />
-        <polygon points="8.8,16.4 8.2,17.9 7.5,18.4 8.2,16.8" fill="url(#quake-crimson-0)" />
-        <polygon points="14.0,17.4 13.4,17.9 12.7,16.6 13.5,16.0" fill="url(#quake-crimson-2)" />
-        <polygon points="18.6,17.9 18.0,17.4 18.5,16.0 19.3,16.6" fill="url(#quake-crimson-0)" />
-        <polygon points="14.0,18.0 13.4,18.5 14.0,17.2 14.5,16.9" fill="url(#quake-rock-3)" />
-        <polygon points="18.6,18.5 18.0,18.0 17.5,16.9 18.0,17.2" fill="url(#quake-rock-1)" />
-        <polygon points="13.5,16.0 12.7,16.6 12.1,15.5 13.0,14.8" fill="url(#quake-crimson-1)" />
-        <polygon points="19.3,16.6 18.5,16.0 19.0,14.8 19.9,15.5" fill="url(#quake-crimson-0)" />
-        <polygon points="21.7,18.4 21.2,17.4 21.9,16.5 22.4,17.7" fill="url(#quake-crimson-0)" />
-        <polygon points="10.8,17.4 10.3,18.4 9.6,17.7 10.1,16.5" fill="url(#quake-crimson-1)" />
-        <polygon points="9.5,15.8 8.9,17.2 8.2,17.9 8.8,16.4" fill="url(#quake-crimson-0)" />
-        <polygon points="23.1,17.2 22.5,15.8 23.2,16.4 23.8,17.9" fill="url(#quake-crimson-1)" />
-        <polygon points="20.9,17.5 20.6,16.5 21.2,17.4 21.7,18.4" fill="url(#quake-crimson-2)" />
-        <polygon points="11.4,16.5 11.1,17.5 10.3,18.4 10.8,17.4" fill="url(#quake-crimson-0)" />
-        <polygon points="22.4,17.7 21.9,16.5 22.5,15.8 23.1,17.2" fill="url(#quake-crimson-0)" />
-        <polygon points="10.1,16.5 9.6,17.7 8.9,17.2 9.5,15.8" fill="url(#quake-crimson-1)" />
-        <polygon points="16.8,16.7 16.0,16.6 16.0,15.4 16.5,15.4" fill="url(#quake-rock-2)" />
-        <polygon points="16.0,16.6 15.2,16.7 15.5,15.4 16.0,15.4" fill="url(#quake-rock-2)" />
-        <polygon points="17.5,16.9 16.8,16.7 16.5,15.4 17.0,15.6" fill="url(#quake-rock-1)" />
-        <polygon points="15.2,16.7 14.5,16.9 15.0,15.6 15.5,15.4" fill="url(#quake-rock-3)" />
-        <polygon points="13.4,17.9 13.2,18.4 12.5,17.3 12.7,16.6" fill="url(#quake-crimson-2)" />
-        <polygon points="18.8,18.4 18.6,17.9 19.3,16.6 19.5,17.3" fill="url(#quake-crimson-0)" />
-        <polygon points="18.1,17.1 18.0,16.7 18.6,17.9 18.8,18.4" fill="url(#quake-crimson-2)" />
-        <polygon points="14.0,16.7 13.9,17.1 13.2,18.4 13.4,17.9" fill="url(#quake-crimson-0)" />
-        <polygon points="14.5,16.9 14.0,17.2 14.7,15.8 15.0,15.6" fill="url(#quake-rock-3)" />
-        <polygon points="18.0,17.2 17.5,16.9 17.0,15.6 17.3,15.8" fill="url(#quake-rock-1)" />
-        <polygon points="20.2,16.3 19.9,15.5 20.6,16.5 20.9,17.5" fill="url(#quake-crimson-2)" />
-        <polygon points="12.1,15.5 11.8,16.3 11.1,17.5 11.4,16.5" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,18.4 15.7,16.5 16.0,16.5" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,18.4 16.0,16.5 16.3,16.5" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,18.4 15.5,16.6 15.7,16.5" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,18.4 16.3,16.5 16.5,16.6" fill="url(#quake-crimson-0)" />
-        <polygon points="19.5,17.3 19.3,16.6 19.9,15.5 20.2,16.3" fill="url(#quake-crimson-0)" />
-        <polygon points="12.7,16.6 12.5,17.3 11.8,16.3 12.1,15.5" fill="url(#quake-crimson-2)" />
-        <polygon points="16.0,18.4 15.3,16.7 15.5,16.6" fill="url(#quake-crimson-2)" />
-        <polygon points="16.0,18.4 16.5,16.6 16.7,16.7" fill="url(#quake-crimson-0)" />
-        <polygon points="16.5,17.7 16.7,17.6 16.0,19.0" fill="url(#quake-rock-3)" />
-        <polygon points="15.3,17.6 15.5,17.7 16.0,19.0" fill="url(#quake-rock-1)" />
-        <polygon points="16.3,16.5 16.0,16.5 16.0,14.8 16.5,14.8" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,16.5 15.7,16.5 15.5,14.8 16.0,14.8" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,18.4 15.3,16.9 15.3,16.7" fill="url(#quake-crimson-2)" />
-        <polygon points="16.0,18.4 16.7,16.7 16.7,16.9" fill="url(#quake-crimson-0)" />
-        <polygon points="16.3,17.8 16.5,17.7 16.0,19.0" fill="url(#quake-rock-3)" />
-        <polygon points="15.5,17.7 15.7,17.8 16.0,19.0" fill="url(#quake-rock-1)" />
-        <polygon points="16.0,17.8 16.3,17.8 16.0,19.0" fill="url(#quake-rock-2)" />
-        <polygon points="15.7,17.8 16.0,17.8 16.0,19.0" fill="url(#quake-rock-2)" />
-        <polygon points="16.5,16.6 16.3,16.5 16.5,14.8 17.0,15.0" fill="url(#quake-crimson-0)" />
-        <polygon points="15.7,16.5 15.5,16.6 15.0,15.0 15.5,14.8" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,18.4 16.7,16.9 16.7,17.0" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,18.4 15.3,17.0 15.3,16.9" fill="url(#quake-crimson-2)" />
-        <polygon points="18.0,17.5 18.1,17.1 18.8,18.4 18.6,19.0" fill="url(#quake-crimson-2)" />
-        <polygon points="13.9,17.1 14.0,17.5 13.4,19.0 13.2,18.4" fill="url(#quake-crimson-0)" />
-        <polygon points="18.6,19.0 18.8,18.4 19.5,17.3 19.3,18.0" fill="url(#quake-crimson-0)" />
-        <polygon points="13.2,18.4 13.4,19.0 12.7,18.0 12.5,17.3" fill="url(#quake-crimson-2)" />
-        <polygon points="15.5,16.6 15.3,16.7 14.7,15.2 15.0,15.0" fill="url(#quake-crimson-2)" />
-        <polygon points="16.7,16.7 16.5,16.6 17.0,15.0 17.3,15.2" fill="url(#quake-crimson-0)" />
-        <polygon points="14.7,15.2 14.6,15.5 13.9,17.1 14.0,16.7" fill="url(#quake-crimson-0)" />
-        <polygon points="17.4,15.5 17.3,15.2 18.0,16.7 18.1,17.1" fill="url(#quake-crimson-2)" />
-        <polygon points="20.6,18.4 20.9,17.5 21.7,18.4 21.2,19.5" fill="url(#quake-crimson-2)" />
-        <polygon points="11.1,17.5 11.4,18.4 10.8,19.5 10.3,18.4" fill="url(#quake-crimson-0)" />
-        <polygon points="21.2,19.5 21.7,18.4 22.4,17.7 21.9,18.9" fill="url(#quake-crimson-0)" />
-        <polygon points="10.3,18.4 10.8,19.5 10.1,18.9 9.6,17.7" fill="url(#quake-crimson-1)" />
-        <polygon points="16.7,16.9 16.7,16.7 17.3,15.2 17.4,15.5" fill="url(#quake-crimson-0)" />
-        <polygon points="15.3,16.7 15.3,16.9 14.6,15.5 14.7,15.2" fill="url(#quake-crimson-2)" />
-        <polygon points="18.5,19.1 19.3,18.5 18.6,19.5 18.0,20.0" fill="url(#quake-rock-3)" />
-        <polygon points="12.7,18.5 13.5,19.1 14.0,20.0 13.4,19.5" fill="url(#quake-rock-1)" />
-        <polygon points="23.2,19.4 23.8,17.9 24.5,18.4 23.8,20.1" fill="url(#quake-crimson-1)" />
-        <polygon points="8.2,17.9 8.8,19.4 8.2,20.1 7.5,18.4" fill="url(#quake-crimson-0)" />
-        <polygon points="17.0,16.6 17.3,16.3 16.7,17.6 16.5,17.7" fill="url(#quake-rock-3)" />
-        <polygon points="14.7,16.3 15.0,16.6 15.5,17.7 15.3,17.6" fill="url(#quake-rock-1)" />
-        <polygon points="17.5,17.8 18.0,17.5 18.6,19.0 18.0,19.4" fill="url(#quake-crimson-2)" />
-        <polygon points="14.0,17.5 14.5,17.8 14.0,19.4 13.4,19.0" fill="url(#quake-crimson-0)" />
-        <polygon points="16.7,17.0 16.7,16.9 17.4,15.5 17.3,15.8" fill="url(#quake-crimson-0)" />
-        <polygon points="15.3,16.9 15.3,17.0 14.7,15.8 14.6,15.5" fill="url(#quake-crimson-2)" />
-        <polygon points="17.3,15.8 17.4,15.5 18.1,17.1 18.0,17.5" fill="url(#quake-crimson-2)" />
-        <polygon points="14.6,15.5 14.7,15.8 14.0,17.5 13.9,17.1" fill="url(#quake-crimson-0)" />
-        <polygon points="19.3,18.0 19.5,17.3 20.2,16.3 19.9,17.2" fill="url(#quake-crimson-0)" />
-        <polygon points="12.5,17.3 12.7,18.0 12.1,17.2 11.8,16.3" fill="url(#quake-crimson-2)" />
-        <polygon points="19.9,17.2 20.2,16.3 20.9,17.5 20.6,18.4" fill="url(#quake-crimson-2)" />
-        <polygon points="11.8,16.3 12.1,17.2 11.4,18.4 11.1,17.5" fill="url(#quake-crimson-0)" />
-        <polygon points="21.9,18.9 22.4,17.7 23.1,17.2 22.5,18.5" fill="url(#quake-crimson-0)" />
-        <polygon points="9.6,17.7 10.1,18.9 9.5,18.5 8.9,17.2" fill="url(#quake-crimson-1)" />
-        <polygon points="22.5,18.5 23.1,17.2 23.8,17.9 23.2,19.4" fill="url(#quake-crimson-1)" />
-        <polygon points="8.9,17.2 9.5,18.5 8.8,19.4 8.2,17.9" fill="url(#quake-crimson-0)" />
-        <polygon points="16.5,16.7 17.0,16.6 16.5,17.7 16.3,17.8" fill="url(#quake-rock-3)" />
-        <polygon points="15.0,16.6 15.5,16.7 15.7,17.8 15.5,17.7" fill="url(#quake-rock-1)" />
-        <polygon points="16.0,16.8 16.5,16.7 16.3,17.8 16.0,17.8" fill="url(#quake-rock-2)" />
-        <polygon points="15.5,16.7 16.0,16.8 16.0,17.8 15.7,17.8" fill="url(#quake-rock-2)" />
-        <polygon points="16.8,18.1 17.5,17.8 18.0,19.4 17.1,19.7" fill="url(#quake-crimson-1)" />
-        <polygon points="14.5,17.8 15.2,18.1 14.9,19.7 14.0,19.4" fill="url(#quake-crimson-0)" />
-        <polygon points="17.0,16.0 17.3,15.8 18.0,17.5 17.5,17.8" fill="url(#quake-crimson-2)" />
-        <polygon points="14.7,15.8 15.0,16.0 14.5,17.8 14.0,17.5" fill="url(#quake-crimson-0)" />
-        <polygon points="17.4,19.5 18.5,19.1 18.0,20.0 17.1,20.3" fill="url(#quake-rock-3)" />
-        <polygon points="13.5,19.1 14.6,19.5 14.9,20.3 14.0,20.0" fill="url(#quake-rock-1)" />
-        <polygon points="16.0,18.1 16.8,18.1 17.1,19.7 16.0,19.9" fill="url(#quake-crimson-1)" />
-        <polygon points="15.2,18.1 16.0,18.1 16.0,19.9 14.9,19.7" fill="url(#quake-crimson-0)" />
-        <polygon points="19.0,18.4 19.9,17.7 19.3,18.5 18.5,19.1" fill="url(#quake-rock-3)" />
-        <polygon points="12.1,17.7 13.0,18.4 13.5,19.1 12.7,18.5" fill="url(#quake-rock-1)" />
-        <polygon points="16.5,16.2 17.0,16.0 17.5,17.8 16.8,18.1" fill="url(#quake-crimson-1)" />
-        <polygon points="15.0,16.0 15.5,16.2 15.2,18.1 14.5,17.8" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,19.6 17.4,19.5 17.1,20.3 16.0,20.4" fill="url(#quake-rock-2)" />
-        <polygon points="14.6,19.5 16.0,19.6 16.0,20.4 14.9,20.3" fill="url(#quake-rock-2)" />
-        <polygon points="19.5,19.2 20.6,18.4 21.2,19.5 20.0,20.4" fill="url(#quake-crimson-1)" />
-        <polygon points="11.4,18.4 12.5,19.2 12.0,20.4 10.8,19.5" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,16.2 16.5,16.2 16.8,18.1 16.0,18.1" fill="url(#quake-crimson-1)" />
-        <polygon points="15.5,16.2 16.0,16.2 16.0,18.1 15.2,18.1" fill="url(#quake-crimson-0)" />
-        <polygon points="20.0,20.4 21.2,19.5 21.9,18.9 20.5,20.0" fill="url(#quake-crimson-0)" />
-        <polygon points="10.8,19.5 12.0,20.4 11.5,20.0 10.1,18.9" fill="url(#quake-crimson-1)" />
-        <polygon points="19.0,17.8 19.9,17.2 20.6,18.4 19.5,19.2" fill="url(#quake-crimson-2)" />
-        <polygon points="12.1,17.2 13.0,17.8 12.5,19.2 11.4,18.4" fill="url(#quake-crimson-0)" />
-        <polygon points="17.6,18.9 19.0,18.4 18.5,19.1 17.4,19.5" fill="url(#quake-rock-3)" />
-        <polygon points="13.0,18.4 14.4,18.9 14.6,19.5 13.5,19.1" fill="url(#quake-rock-2)" />
-        <polygon points="20.5,20.0 21.9,18.9 22.5,18.5 21.0,19.7" fill="url(#quake-crimson-0)" />
-        <polygon points="10.1,18.9 11.5,20.0 11.0,19.7 9.5,18.5" fill="url(#quake-crimson-1)" />
-        <polygon points="16.0,19.0 17.6,18.9 17.4,19.5 16.0,19.6" fill="url(#quake-rock-2)" />
-        <polygon points="14.4,18.9 16.0,19.0 16.0,19.6 14.6,19.5" fill="url(#quake-rock-2)" />
-        <polygon points="21.5,20.7 23.2,19.4 23.8,20.1 22.0,21.4" fill="url(#quake-crimson-1)" />
-        <polygon points="8.8,19.4 10.5,20.7 10.0,21.4 8.2,20.1" fill="url(#quake-crimson-0)" />
-        <polygon points="17.9,19.8 19.5,19.2 20.0,20.4 18.2,21.1" fill="url(#quake-crimson-1)" />
-        <polygon points="12.5,19.2 14.1,19.8 13.8,21.1 12.0,20.4" fill="url(#quake-crimson-0)" />
-        <polygon points="21.0,19.7 22.5,18.5 23.2,19.4 21.5,20.7" fill="url(#quake-crimson-1)" />
-        <polygon points="9.5,18.5 11.0,19.7 10.5,20.7 8.8,19.4" fill="url(#quake-crimson-0)" />
-        <polygon points="18.4,21.2 20.5,20.5 20.0,21.0 18.2,21.6" fill="url(#quake-rock-3)" />
-        <polygon points="11.5,20.5 13.6,21.2 13.8,21.6 12.0,21.0" fill="url(#quake-rock-2)" />
-        <polygon points="17.6,18.3 19.0,17.8 19.5,19.2 17.9,19.8" fill="url(#quake-crimson-1)" />
-        <polygon points="13.0,17.8 14.4,18.3 14.1,19.8 12.5,19.2" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,20.0 17.9,19.8 18.2,21.1 16.0,21.3" fill="url(#quake-crimson-1)" />
-        <polygon points="14.1,19.8 16.0,20.0 16.0,21.3 13.8,21.1" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,18.5 17.6,18.3 17.9,19.8 16.0,20.0" fill="url(#quake-crimson-1)" />
-        <polygon points="14.4,18.3 16.0,18.5 16.0,20.0 14.1,19.8" fill="url(#quake-crimson-0)" />
-        <polygon points="13.6,21.2 16.0,21.4 16.0,21.8 13.8,21.6" fill="url(#quake-rock-2)" />
-        <polygon points="16.0,21.4 18.4,21.2 18.2,21.6 16.0,21.8" fill="url(#quake-rock-2)" />
-        <polygon points="18.4,20.6 20.5,20.0 21.0,19.7 18.7,20.4" fill="url(#quake-crimson-0)" />
-        <polygon points="11.5,20.0 13.6,20.6 13.3,20.4 11.0,19.7" fill="url(#quake-crimson-1)" />
-        <polygon points="18.7,20.4 21.0,19.7 21.5,20.7 19.0,21.5" fill="url(#quake-crimson-1)" />
-        <polygon points="11.0,19.7 13.3,20.4 13.0,21.5 10.5,20.7" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,21.3 18.7,21.0 18.4,21.2 16.0,21.4" fill="url(#quake-rock-3)" />
-        <polygon points="13.3,21.0 16.0,21.3 16.0,21.4 13.6,21.2" fill="url(#quake-rock-2)" />
-        <polygon points="19.0,21.5 21.5,20.7 22.0,21.4 19.2,22.4" fill="url(#quake-crimson-1)" />
-        <polygon points="10.5,20.7 13.0,21.5 12.8,22.4 10.0,21.4" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,20.7 18.7,20.4 19.0,21.5 16.0,21.8" fill="url(#quake-crimson-0)" />
-        <polygon points="13.3,20.4 16.0,20.7 16.0,21.8 13.0,21.5" fill="url(#quake-crimson-0)" />
-        <polygon points="16.0,21.8 19.0,21.5 19.2,22.4 16.0,22.7" fill="url(#quake-crimson-0)" />
-        <polygon points="13.0,21.5 16.0,21.8 16.0,22.7 12.8,22.4" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,12.4 16.0,11.8 19.2,12.1 19.2,12.7" fill="url(#quake-rock-1)" />
+        <polygon points="12.8,12.7 12.8,12.1 16.0,11.8 16.0,12.4" fill="url(#quake-rock-1)" />
+        <polygon points="19.2,12.7 16.0,12.4 16.0,12.2 19.0,12.5" fill="url(#quake-rock-2)" />
+        <polygon points="16.0,12.4 12.8,12.7 13.0,12.5 16.0,12.2" fill="url(#quake-rock-3)" />
+        <polygon points="19.2,12.7 19.2,12.1 22.0,13.0 22.0,13.6" fill="url(#quake-rock-1)" />
+        <polygon points="10.0,13.6 10.0,13.0 12.8,12.1 12.8,12.7" fill="url(#quake-rock-2)" />
+        <polygon points="16.0,12.2 13.0,12.5 13.3,12.1 16.0,11.8" fill="url(#quake-rock-2)" />
+        <polygon points="19.0,12.5 16.0,12.2 16.0,11.8 18.7,12.1" fill="url(#quake-rock-2)" />
+        <polygon points="21.5,12.8 19.0,11.9 19.2,12.1 22.0,13.0" fill="url(#quake-crimson-1)" />
+        <polygon points="13.0,11.9 10.5,12.8 10.0,13.0 12.8,12.1" fill="url(#quake-crimson-0)" />
+        <polygon points="21.5,13.3 19.0,12.5 18.7,12.1 21.0,12.8" fill="url(#quake-rock-2)" />
+        <polygon points="13.0,12.5 10.5,13.3 11.0,12.8 13.3,12.1" fill="url(#quake-rock-3)" />
+        <polygon points="18.4,12.4 16.0,12.1 16.0,11.2 18.7,11.5" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,12.1 13.6,12.4 13.3,11.5 16.0,11.2" fill="url(#quake-crimson-0)" />
+        <polygon points="18.2,13.4 16.0,13.2 16.0,12.1 18.4,12.4" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,13.2 13.8,13.4 13.6,12.4 16.0,12.1" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,13.8 13.8,14.0 14.1,13.4 16.0,13.2" fill="url(#quake-rock-2)" />
+        <polygon points="18.2,14.0 16.0,13.8 16.0,13.2 17.9,13.4" fill="url(#quake-rock-2)" />
+        <polygon points="8.2,15.0 8.2,14.4 10.0,13.0 10.0,13.6" fill="url(#quake-rock-2)" />
+        <polygon points="22.0,13.6 22.0,13.0 23.8,14.4 23.8,15.0" fill="url(#quake-rock-0)" />
+        <polygon points="20.5,13.1 18.4,12.4 18.7,11.5 21.0,12.3" fill="url(#quake-crimson-0)" />
+        <polygon points="13.6,12.4 11.5,13.1 11.0,12.3 13.3,11.5" fill="url(#quake-crimson-1)" />
+        <polygon points="20.0,14.0 18.2,13.4 18.4,12.4 20.5,13.1" fill="url(#quake-crimson-0)" />
+        <polygon points="13.8,13.4 12.0,14.0 11.5,13.1 13.6,12.4" fill="url(#quake-crimson-1)" />
+        <polygon points="20.0,14.6 18.2,14.0 17.9,13.4 19.5,13.9" fill="url(#quake-rock-2)" />
+        <polygon points="13.8,14.0 12.0,14.6 12.5,13.9 14.1,13.4" fill="url(#quake-rock-3)" />
+        <polygon points="10.5,12.8 8.8,14.0 8.2,14.4 10.0,13.0" fill="url(#quake-crimson-0)" />
+        <polygon points="23.2,14.0 21.5,12.8 22.0,13.0 23.8,14.4" fill="url(#quake-crimson-1)" />
+        <polygon points="16.0,13.2 14.1,13.4 14.4,12.5 16.0,12.4" fill="url(#quake-rock-2)" />
+        <polygon points="17.9,13.4 16.0,13.2 16.0,12.4 17.6,12.5" fill="url(#quake-rock-2)" />
+        <polygon points="11.0,12.3 9.5,13.4 8.8,14.0 10.5,12.8" fill="url(#quake-crimson-0)" />
+        <polygon points="22.5,13.4 21.0,12.3 21.5,12.8 23.2,14.0" fill="url(#quake-crimson-1)" />
+        <polygon points="19.5,13.9 17.9,13.4 17.6,12.5 19.0,13.0" fill="url(#quake-rock-1)" />
+        <polygon points="14.1,13.4 12.5,13.9 13.0,13.0 14.4,12.5" fill="url(#quake-rock-3)" />
+        <polygon points="21.2,15.0 20.0,14.0 20.5,13.1 21.9,14.1" fill="url(#quake-crimson-0)" />
+        <polygon points="12.0,14.0 10.8,15.0 10.1,14.1 11.5,13.1" fill="url(#quake-crimson-1)" />
+        <polygon points="21.2,15.5 20.0,14.6 19.5,13.9 20.6,14.7" fill="url(#quake-rock-1)" />
+        <polygon points="12.0,14.6 10.8,15.5 11.4,14.7 12.5,13.9" fill="url(#quake-rock-3)" />
+        <polygon points="21.9,14.1 20.5,13.1 21.0,12.3 22.5,13.4" fill="url(#quake-crimson-0)" />
+        <polygon points="11.5,13.1 10.1,14.1 9.5,13.4 11.0,12.3" fill="url(#quake-crimson-1)" />
+        <polygon points="16.0,14.6 14.9,14.7 14.6,13.3 16.0,13.1" fill="url(#quake-crimson-1)" />
+        <polygon points="17.1,14.7 16.0,14.6 16.0,13.1 17.4,13.3" fill="url(#quake-crimson-0)" />
+        <polygon points="17.4,13.3 16.0,13.1 16.0,11.8 17.6,12.0" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,13.1 14.6,13.3 14.4,12.0 16.0,11.8" fill="url(#quake-crimson-1)" />
+        <polygon points="17.1,15.3 16.0,15.2 16.0,14.2 16.8,14.3" fill="url(#quake-rock-2)" />
+        <polygon points="16.0,15.2 14.9,15.3 15.2,14.3 16.0,14.2" fill="url(#quake-rock-2)" />
+        <polygon points="18.0,15.0 17.1,14.7 17.4,13.3 18.5,13.6" fill="url(#quake-crimson-0)" />
+        <polygon points="14.9,14.7 14.0,15.0 13.5,13.6 14.6,13.3" fill="url(#quake-crimson-1)" />
+        <polygon points="18.5,13.6 17.4,13.3 17.6,12.0 19.0,12.4" fill="url(#quake-crimson-0)" />
+        <polygon points="14.6,13.3 13.5,13.6 13.0,12.4 14.4,12.0" fill="url(#quake-crimson-1)" />
+        <polygon points="18.0,15.6 17.1,15.3 16.8,14.3 17.5,14.5" fill="url(#quake-rock-1)" />
+        <polygon points="14.9,15.3 14.0,15.6 14.5,14.5 15.2,14.3" fill="url(#quake-rock-3)" />
+        <polygon points="23.8,15.0 23.8,14.4 24.5,16.0 24.5,16.6" fill="url(#quake-rock-0)" />
+        <polygon points="7.5,16.6 7.5,16.0 8.2,14.4 8.2,15.0" fill="url(#quake-rock-3)" />
+        <polygon points="20.6,14.7 19.5,13.9 19.0,13.0 19.9,13.7" fill="url(#quake-rock-1)" />
+        <polygon points="12.5,13.9 11.4,14.7 12.1,13.7 13.0,13.0" fill="url(#quake-rock-3)" />
+        <polygon points="23.8,15.5 23.2,14.0 23.8,14.4 24.5,16.0" fill="url(#quake-crimson-1)" />
+        <polygon points="8.8,14.0 8.2,15.5 7.5,16.0 8.2,14.4" fill="url(#quake-crimson-0)" />
+        <polygon points="14.0,15.0 13.4,15.5 12.7,14.2 13.5,13.6" fill="url(#quake-crimson-2)" />
+        <polygon points="18.6,15.5 18.0,15.0 18.5,13.6 19.3,14.2" fill="url(#quake-crimson-0)" />
+        <polygon points="14.0,15.6 13.4,16.1 14.0,14.8 14.5,14.5" fill="url(#quake-rock-3)" />
+        <polygon points="18.6,16.1 18.0,15.6 17.5,14.5 18.0,14.8" fill="url(#quake-rock-1)" />
+        <polygon points="13.5,13.6 12.7,14.2 12.1,13.1 13.0,12.4" fill="url(#quake-crimson-1)" />
+        <polygon points="19.3,14.2 18.5,13.6 19.0,12.4 19.9,13.1" fill="url(#quake-crimson-0)" />
+        <polygon points="21.7,16.0 21.2,15.0 21.9,14.1 22.4,15.3" fill="url(#quake-crimson-0)" />
+        <polygon points="10.8,15.0 10.3,16.0 9.6,15.3 10.1,14.1" fill="url(#quake-crimson-1)" />
+        <polygon points="9.5,13.4 8.9,14.8 8.2,15.5 8.8,14.0" fill="url(#quake-crimson-0)" />
+        <polygon points="23.1,14.8 22.5,13.4 23.2,14.0 23.8,15.5" fill="url(#quake-crimson-1)" />
+        <polygon points="20.9,15.1 20.6,14.1 21.2,15.0 21.7,16.0" fill="url(#quake-crimson-2)" />
+        <polygon points="11.4,14.1 11.1,15.1 10.3,16.0 10.8,15.0" fill="url(#quake-crimson-0)" />
+        <polygon points="22.4,15.3 21.9,14.1 22.5,13.4 23.1,14.8" fill="url(#quake-crimson-0)" />
+        <polygon points="10.1,14.1 9.6,15.3 8.9,14.8 9.5,13.4" fill="url(#quake-crimson-1)" />
+        <polygon points="16.8,14.3 16.0,14.2 16.0,13.0 16.5,13.0" fill="url(#quake-rock-2)" />
+        <polygon points="16.0,14.2 15.2,14.3 15.5,13.0 16.0,13.0" fill="url(#quake-rock-2)" />
+        <polygon points="17.5,14.5 16.8,14.3 16.5,13.0 17.0,13.2" fill="url(#quake-rock-1)" />
+        <polygon points="15.2,14.3 14.5,14.5 15.0,13.2 15.5,13.0" fill="url(#quake-rock-3)" />
+        <polygon points="13.4,15.5 13.2,16.0 12.5,14.9 12.7,14.2" fill="url(#quake-crimson-2)" />
+        <polygon points="18.8,16.0 18.6,15.5 19.3,14.2 19.5,14.9" fill="url(#quake-crimson-0)" />
+        <polygon points="18.1,14.7 18.0,14.3 18.6,15.5 18.8,16.0" fill="url(#quake-crimson-2)" />
+        <polygon points="14.0,14.3 13.9,14.7 13.2,16.0 13.4,15.5" fill="url(#quake-crimson-0)" />
+        <polygon points="14.5,14.5 14.0,14.8 14.7,13.4 15.0,13.2" fill="url(#quake-rock-3)" />
+        <polygon points="18.0,14.8 17.5,14.5 17.0,13.2 17.3,13.4" fill="url(#quake-rock-1)" />
+        <polygon points="20.2,13.9 19.9,13.1 20.6,14.1 20.9,15.1" fill="url(#quake-crimson-2)" />
+        <polygon points="12.1,13.1 11.8,13.9 11.1,15.1 11.4,14.1" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,16.0 15.7,14.1 16.0,14.1" fill="url(#quake-crimson-1)" />
+        <polygon points="16.0,16.0 16.0,14.1 16.3,14.1" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,16.0 16.3,14.1 16.5,14.2" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,16.0 15.5,14.2 15.7,14.1" fill="url(#quake-crimson-1)" />
+        <polygon points="19.5,14.9 19.3,14.2 19.9,13.1 20.2,13.9" fill="url(#quake-crimson-0)" />
+        <polygon points="12.7,14.2 12.5,14.9 11.8,13.9 12.1,13.1" fill="url(#quake-crimson-2)" />
+        <polygon points="16.0,16.0 15.3,14.3 15.5,14.2" fill="url(#quake-crimson-2)" />
+        <polygon points="16.0,16.0 16.5,14.2 16.7,14.3" fill="url(#quake-crimson-0)" />
+        <polygon points="16.5,15.3 16.7,15.2 16.0,16.6" fill="url(#quake-rock-3)" />
+        <polygon points="15.3,15.2 15.5,15.3 16.0,16.6" fill="url(#quake-rock-1)" />
+        <polygon points="16.0,14.1 15.7,14.1 15.5,12.4 16.0,12.4" fill="url(#quake-crimson-1)" />
+        <polygon points="16.3,14.1 16.0,14.1 16.0,12.4 16.5,12.4" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,16.0 15.3,14.5 15.3,14.3" fill="url(#quake-crimson-2)" />
+        <polygon points="16.0,16.0 16.7,14.3 16.7,14.5" fill="url(#quake-crimson-0)" />
+        <polygon points="16.3,15.4 16.5,15.3 16.0,16.6" fill="url(#quake-rock-3)" />
+        <polygon points="15.5,15.3 15.7,15.4 16.0,16.6" fill="url(#quake-rock-1)" />
+        <polygon points="16.0,15.4 16.3,15.4 16.0,16.6" fill="url(#quake-rock-2)" />
+        <polygon points="15.7,15.4 16.0,15.4 16.0,16.6" fill="url(#quake-rock-2)" />
+        <polygon points="16.5,14.2 16.3,14.1 16.5,12.4 17.0,12.6" fill="url(#quake-crimson-0)" />
+        <polygon points="15.7,14.1 15.5,14.2 15.0,12.6 15.5,12.4" fill="url(#quake-crimson-1)" />
+        <polygon points="16.0,16.0 15.3,14.6 15.3,14.5" fill="url(#quake-crimson-2)" />
+        <polygon points="16.0,16.0 16.7,14.5 16.7,14.6" fill="url(#quake-crimson-0)" />
+        <polygon points="18.0,15.1 18.1,14.7 18.8,16.0 18.6,16.6" fill="url(#quake-crimson-2)" />
+        <polygon points="13.9,14.7 14.0,15.1 13.4,16.6 13.2,16.0" fill="url(#quake-crimson-0)" />
+        <polygon points="18.6,16.6 18.8,16.0 19.5,14.9 19.3,15.6" fill="url(#quake-crimson-0)" />
+        <polygon points="13.2,16.0 13.4,16.6 12.7,15.6 12.5,14.9" fill="url(#quake-crimson-2)" />
+        <polygon points="15.5,14.2 15.3,14.3 14.7,12.8 15.0,12.6" fill="url(#quake-crimson-2)" />
+        <polygon points="16.7,14.3 16.5,14.2 17.0,12.6 17.3,12.8" fill="url(#quake-crimson-0)" />
+        <polygon points="14.7,12.8 14.6,13.1 13.9,14.7 14.0,14.3" fill="url(#quake-crimson-0)" />
+        <polygon points="17.4,13.1 17.3,12.8 18.0,14.3 18.1,14.7" fill="url(#quake-crimson-2)" />
+        <polygon points="20.6,16.0 20.9,15.1 21.7,16.0 21.2,17.1" fill="url(#quake-crimson-2)" />
+        <polygon points="11.1,15.1 11.4,16.0 10.8,17.1 10.3,16.0" fill="url(#quake-crimson-0)" />
+        <polygon points="21.2,17.1 21.7,16.0 22.4,15.3 21.9,16.5" fill="url(#quake-crimson-0)" />
+        <polygon points="10.3,16.0 10.8,17.1 10.1,16.5 9.6,15.3" fill="url(#quake-crimson-1)" />
+        <polygon points="15.3,14.3 15.3,14.5 14.6,13.1 14.7,12.8" fill="url(#quake-crimson-2)" />
+        <polygon points="16.7,14.5 16.7,14.3 17.3,12.8 17.4,13.1" fill="url(#quake-crimson-0)" />
+        <polygon points="18.5,16.7 19.3,16.1 18.6,17.1 18.0,17.6" fill="url(#quake-rock-3)" />
+        <polygon points="12.7,16.1 13.5,16.7 14.0,17.6 13.4,17.1" fill="url(#quake-rock-1)" />
+        <polygon points="23.2,17.0 23.8,15.5 24.5,16.0 23.8,17.7" fill="url(#quake-crimson-1)" />
+        <polygon points="8.2,15.5 8.8,17.0 8.2,17.7 7.5,16.0" fill="url(#quake-crimson-0)" />
+        <polygon points="14.7,13.9 15.0,14.2 15.5,15.3 15.3,15.2" fill="url(#quake-rock-1)" />
+        <polygon points="17.0,14.2 17.3,13.9 16.7,15.2 16.5,15.3" fill="url(#quake-rock-3)" />
+        <polygon points="17.5,15.4 18.0,15.1 18.6,16.6 18.0,17.0" fill="url(#quake-crimson-2)" />
+        <polygon points="14.0,15.1 14.5,15.4 14.0,17.0 13.4,16.6" fill="url(#quake-crimson-0)" />
+        <polygon points="15.3,14.5 15.3,14.6 14.7,13.4 14.6,13.1" fill="url(#quake-crimson-2)" />
+        <polygon points="16.7,14.6 16.7,14.5 17.4,13.1 17.3,13.4" fill="url(#quake-crimson-0)" />
+        <polygon points="17.3,13.4 17.4,13.1 18.1,14.7 18.0,15.1" fill="url(#quake-crimson-2)" />
+        <polygon points="14.6,13.1 14.7,13.4 14.0,15.1 13.9,14.7" fill="url(#quake-crimson-0)" />
+        <polygon points="19.3,15.6 19.5,14.9 20.2,13.9 19.9,14.8" fill="url(#quake-crimson-0)" />
+        <polygon points="12.5,14.9 12.7,15.6 12.1,14.8 11.8,13.9" fill="url(#quake-crimson-2)" />
+        <polygon points="19.9,14.8 20.2,13.9 20.9,15.1 20.6,16.0" fill="url(#quake-crimson-2)" />
+        <polygon points="11.8,13.9 12.1,14.8 11.4,16.0 11.1,15.1" fill="url(#quake-crimson-0)" />
+        <polygon points="21.9,16.5 22.4,15.3 23.1,14.8 22.5,16.1" fill="url(#quake-crimson-0)" />
+        <polygon points="9.6,15.3 10.1,16.5 9.5,16.1 8.9,14.8" fill="url(#quake-crimson-1)" />
+        <polygon points="22.5,16.1 23.1,14.8 23.8,15.5 23.2,17.0" fill="url(#quake-crimson-1)" />
+        <polygon points="8.9,14.8 9.5,16.1 8.8,17.0 8.2,15.5" fill="url(#quake-crimson-0)" />
+        <polygon points="16.5,14.3 17.0,14.2 16.5,15.3 16.3,15.4" fill="url(#quake-rock-3)" />
+        <polygon points="15.0,14.2 15.5,14.3 15.7,15.4 15.5,15.3" fill="url(#quake-rock-1)" />
+        <polygon points="16.0,14.4 16.5,14.3 16.3,15.4 16.0,15.4" fill="url(#quake-rock-2)" />
+        <polygon points="15.5,14.3 16.0,14.4 16.0,15.4 15.7,15.4" fill="url(#quake-rock-2)" />
+        <polygon points="16.8,15.7 17.5,15.4 18.0,17.0 17.1,17.3" fill="url(#quake-crimson-1)" />
+        <polygon points="14.5,15.4 15.2,15.7 14.9,17.3 14.0,17.0" fill="url(#quake-crimson-0)" />
+        <polygon points="17.0,13.6 17.3,13.4 18.0,15.1 17.5,15.4" fill="url(#quake-crimson-2)" />
+        <polygon points="14.7,13.4 15.0,13.6 14.5,15.4 14.0,15.1" fill="url(#quake-crimson-0)" />
+        <polygon points="17.4,17.1 18.5,16.7 18.0,17.6 17.1,17.9" fill="url(#quake-rock-3)" />
+        <polygon points="13.5,16.7 14.6,17.1 14.9,17.9 14.0,17.6" fill="url(#quake-rock-1)" />
+        <polygon points="16.0,15.7 16.8,15.7 17.1,17.3 16.0,17.5" fill="url(#quake-crimson-1)" />
+        <polygon points="15.2,15.7 16.0,15.7 16.0,17.5 14.9,17.3" fill="url(#quake-crimson-0)" />
+        <polygon points="19.0,16.0 19.9,15.3 19.3,16.1 18.5,16.7" fill="url(#quake-rock-3)" />
+        <polygon points="12.1,15.3 13.0,16.0 13.5,16.7 12.7,16.1" fill="url(#quake-rock-1)" />
+        <polygon points="16.5,13.8 17.0,13.6 17.5,15.4 16.8,15.7" fill="url(#quake-crimson-1)" />
+        <polygon points="15.0,13.6 15.5,13.8 15.2,15.7 14.5,15.4" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,17.2 17.4,17.1 17.1,17.9 16.0,18.0" fill="url(#quake-rock-2)" />
+        <polygon points="14.6,17.1 16.0,17.2 16.0,18.0 14.9,17.9" fill="url(#quake-rock-2)" />
+        <polygon points="19.5,16.8 20.6,16.0 21.2,17.1 20.0,18.0" fill="url(#quake-crimson-1)" />
+        <polygon points="11.4,16.0 12.5,16.8 12.0,18.0 10.8,17.1" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,13.8 16.5,13.8 16.8,15.7 16.0,15.7" fill="url(#quake-crimson-1)" />
+        <polygon points="15.5,13.8 16.0,13.8 16.0,15.7 15.2,15.7" fill="url(#quake-crimson-0)" />
+        <polygon points="20.0,18.0 21.2,17.1 21.9,16.5 20.5,17.6" fill="url(#quake-crimson-0)" />
+        <polygon points="10.8,17.1 12.0,18.0 11.5,17.6 10.1,16.5" fill="url(#quake-crimson-1)" />
+        <polygon points="19.0,15.4 19.9,14.8 20.6,16.0 19.5,16.8" fill="url(#quake-crimson-2)" />
+        <polygon points="12.1,14.8 13.0,15.4 12.5,16.8 11.4,16.0" fill="url(#quake-crimson-0)" />
+        <polygon points="17.6,16.5 19.0,16.0 18.5,16.7 17.4,17.1" fill="url(#quake-rock-3)" />
+        <polygon points="13.0,16.0 14.4,16.5 14.6,17.1 13.5,16.7" fill="url(#quake-rock-2)" />
+        <polygon points="20.5,17.6 21.9,16.5 22.5,16.1 21.0,17.3" fill="url(#quake-crimson-0)" />
+        <polygon points="10.1,16.5 11.5,17.6 11.0,17.3 9.5,16.1" fill="url(#quake-crimson-1)" />
+        <polygon points="14.4,16.5 16.0,16.6 16.0,17.2 14.6,17.1" fill="url(#quake-rock-2)" />
+        <polygon points="16.0,16.6 17.6,16.5 17.4,17.1 16.0,17.2" fill="url(#quake-rock-2)" />
+        <polygon points="21.5,18.3 23.2,17.0 23.8,17.7 22.0,19.0" fill="url(#quake-crimson-1)" />
+        <polygon points="8.8,17.0 10.5,18.3 10.0,19.0 8.2,17.7" fill="url(#quake-crimson-0)" />
+        <polygon points="17.9,17.4 19.5,16.8 20.0,18.0 18.2,18.7" fill="url(#quake-crimson-1)" />
+        <polygon points="12.5,16.8 14.1,17.4 13.8,18.7 12.0,18.0" fill="url(#quake-crimson-0)" />
+        <polygon points="21.0,17.3 22.5,16.1 23.2,17.0 21.5,18.3" fill="url(#quake-crimson-1)" />
+        <polygon points="9.5,16.1 11.0,17.3 10.5,18.3 8.8,17.0" fill="url(#quake-crimson-0)" />
+        <polygon points="18.4,18.8 20.5,18.1 20.0,18.6 18.2,19.2" fill="url(#quake-rock-3)" />
+        <polygon points="11.5,18.1 13.6,18.8 13.8,19.2 12.0,18.6" fill="url(#quake-rock-2)" />
+        <polygon points="17.6,15.9 19.0,15.4 19.5,16.8 17.9,17.4" fill="url(#quake-crimson-1)" />
+        <polygon points="13.0,15.4 14.4,15.9 14.1,17.4 12.5,16.8" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,17.6 17.9,17.4 18.2,18.7 16.0,18.9" fill="url(#quake-crimson-1)" />
+        <polygon points="14.1,17.4 16.0,17.6 16.0,18.9 13.8,18.7" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,16.1 17.6,15.9 17.9,17.4 16.0,17.6" fill="url(#quake-crimson-1)" />
+        <polygon points="14.4,15.9 16.0,16.1 16.0,17.6 14.1,17.4" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,19.0 18.4,18.8 18.2,19.2 16.0,19.4" fill="url(#quake-rock-2)" />
+        <polygon points="13.6,18.8 16.0,19.0 16.0,19.4 13.8,19.2" fill="url(#quake-rock-2)" />
+        <polygon points="18.4,18.2 20.5,17.6 21.0,17.3 18.7,18.0" fill="url(#quake-crimson-0)" />
+        <polygon points="11.5,17.6 13.6,18.2 13.3,18.0 11.0,17.3" fill="url(#quake-crimson-1)" />
+        <polygon points="18.7,18.0 21.0,17.3 21.5,18.3 19.0,19.1" fill="url(#quake-crimson-1)" />
+        <polygon points="11.0,17.3 13.3,18.0 13.0,19.1 10.5,18.3" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,18.9 18.7,18.6 18.4,18.8 16.0,19.0" fill="url(#quake-rock-3)" />
+        <polygon points="13.3,18.6 16.0,18.9 16.0,19.0 13.6,18.8" fill="url(#quake-rock-2)" />
+        <polygon points="19.0,19.1 21.5,18.3 22.0,19.0 19.2,20.0" fill="url(#quake-crimson-1)" />
+        <polygon points="10.5,18.3 13.0,19.1 12.8,20.0 10.0,19.0" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,18.3 18.7,18.0 19.0,19.1 16.0,19.4" fill="url(#quake-crimson-0)" />
+        <polygon points="13.3,18.0 16.0,18.3 16.0,19.4 13.0,19.1" fill="url(#quake-crimson-0)" />
+        <polygon points="16.0,19.4 19.0,19.1 19.2,20.0 16.0,20.3" fill="url(#quake-crimson-0)" />
+        <polygon points="13.0,19.1 16.0,19.4 16.0,20.3 12.8,20.0" fill="url(#quake-crimson-0)" />
       </g>
     </svg>
   );
