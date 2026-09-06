@@ -93,6 +93,27 @@ const CYCLONE_POLL_MS = 250;
  */
 const CYCLONE_FRAME_MARGIN = 1.15;
 
+/**
+ * Frames per ablation step. NINETY, not SAMPLE_FRAMES' 240: an ablation run
+ * takes one sample per mounted plugin plus a baseline, so the block length is
+ * multiplied by ~twenty and a 240-frame block would put the run past ninety
+ * seconds of sampling on top of the settle. Ninety frames still resolves a p50
+ * and — the number this scenario is actually read for — a GPU-millisecond
+ * median, which is far steadier frame to frame than a p99 would be.
+ */
+const ABLATION_SAMPLE_FRAMES = 90;
+/**
+ * Frames discarded after a layer's visibility is flipped, before its block is
+ * sampled. Hiding a layer retires its draw calls immediately but leaves the
+ * previous frames' GPU work in flight, and three re-sorts its render lists on
+ * the next frame; sampling into that measures the transition rather than the
+ * state. Six frames is under 60 ms at this scene's frame time — cheap enough to
+ * pay forty times over, long enough to outlast the queued frames.
+ */
+const ABLATION_SETTLE_FRAMES = 6;
+/** Scene-child name prefix the plugin host gives every plugin layer (host.ts). */
+const PLUGIN_LAYER_PREFIX = 'plugin:';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GL UPLOAD ACCOUNTING — wraps the page's WebGL2 buffer/texture uploads so a
 // frame's synchronous driver-copy time and byte volume can be read beside that
@@ -692,6 +713,21 @@ function sampleFrames(sampler: Sampler, frames: number): Promise<void> {
   });
 }
 
+/** Resolves after `frames` animation frames, measuring nothing. */
+function waitFrames(frames: number): Promise<void> {
+  return new Promise((resolve) => {
+    let left = frames;
+    const tick = (): void => {
+      if (--left <= 0) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
 /** Samples every frame until `stop` resolves, then resolves itself. */
 function sampleUntil(sampler: Sampler, stop: Promise<void>): Promise<void> {
   let running = true;
@@ -872,10 +908,92 @@ const cycloneScenario: Scenario = async (ctx) => {
   };
 };
 
+/**
+ * PER-PLUGIN GPU COST, by ablation: hide one plugin's layer, measure, restore.
+ *
+ * WHY ABLATION AND NOT A TIMER PER LAYER. A GPU timer query brackets a span of
+ * the COMMAND STREAM, and every plugin's draws are interleaved with core's
+ * inside one `renderer.render` — three orders by material and depth, not by
+ * owner. There is no seam to put a query around, short of splitting the frame
+ * into a render pass per plugin, which would change the very cost being
+ * measured. Removing one layer and re-measuring asks the same question from
+ * the outside, and the renderer stays exactly as it ships.
+ *
+ * WHAT A ROW MEANS: `gpuMsSaved` is the baseline's median GPU millisecond minus
+ * this step's. It is a SAVING, not a share — the numbers do not sum to the
+ * frame, because hiding two layers that both fill the same pixels saves less
+ * than the sum of hiding each. Read it as "what turning this off would buy",
+ * which is the decision it exists to inform.
+ *
+ * Core's own cost is the floor no ablation can reach, reported as `allHidden`:
+ * the terrain, water and sky with every plugin layer hidden at once.
+ */
+const ablateScenario: Scenario = async (ctx) => {
+  const layers = ctx.viewport.scene.children.filter((child) =>
+    child.name.startsWith(PLUGIN_LAYER_PREFIX),
+  );
+  ctx.beat(`ablating-${String(layers.length)}-layers`);
+
+  /** One block at the current visibility state, after letting it settle. */
+  const measure = async (): Promise<FrameBlock> => {
+    await waitFrames(ABLATION_SETTLE_FRAMES);
+    const sampler = ctx.sampler();
+    await sampleFrames(sampler, ABLATION_SAMPLE_FRAMES);
+    return sampler.block();
+  };
+
+  const baseline = await measure();
+  const baselineGpu = baseline.gpuMsP50;
+
+  const rows: Record<string, unknown>[] = [];
+  for (const layer of layers) {
+    if (!layer.visible) {
+      // Already hidden by the plugin itself: ablating it would measure nothing
+      // and the row would read as "this plugin is free", which is a different
+      // claim from "this plugin is not currently drawing".
+      rows.push({ plugin: layer.name.slice(PLUGIN_LAYER_PREFIX.length), skipped: 'already hidden' });
+      continue;
+    }
+    layer.visible = false;
+    const block = await measure();
+    layer.visible = true;
+    ctx.beat(`ablated-${layer.name}`);
+    rows.push({
+      plugin: layer.name.slice(PLUGIN_LAYER_PREFIX.length),
+      gpuMsP50: block.gpuMsP50,
+      gpuMsSaved:
+        baselineGpu === null || block.gpuMsP50 === null ? null : baselineGpu - block.gpuMsP50,
+      frameMsP50: block.msP50,
+      trianglesSaved: baseline.triangles - block.triangles,
+      drawCallsSaved: baseline.drawCalls - block.drawCalls,
+    });
+  }
+
+  for (const layer of layers) layer.visible = false;
+  const allHidden = await measure();
+  for (const layer of layers) layer.visible = true;
+
+  rows.sort((a, b) => (Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1)));
+  return {
+    sample: baseline,
+    detail: {
+      layers: layers.length,
+      ablation: rows,
+      allHidden: {
+        gpuMsP50: allHidden.gpuMsP50,
+        frameMsP50: allHidden.msP50,
+        triangles: allHidden.triangles,
+        drawCalls: allHidden.drawCalls,
+      },
+    },
+  };
+};
+
 /** The scenario table. One entry, one function — that is the whole extension point. */
 const SCENARIOS: Readonly<Record<string, Scenario>> = {
   idle: idleScenario,
   overview: overviewScenario,
+  ablate: ablateScenario,
   sculpt: sculptScenario,
   cyclone: cycloneScenario,
 };
