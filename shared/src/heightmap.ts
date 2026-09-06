@@ -32,7 +32,9 @@ export {
   cellIndex,
   cellX,
   cellY,
+  chebyshevDistance,
   createHeightmap,
+  forEachLineCell,
   inBounds,
   quantizeToBand,
   type Heightmap,
@@ -66,6 +68,7 @@ import {
   cellIndex,
   cellX,
   cellY,
+  forEachLineCell,
   inBounds,
   quantizeToBand,
   type Heightmap,
@@ -496,6 +499,19 @@ export interface SculptOptions {
    * form below. Absent and null both mean the topmost span.
    */
   readonly spanBand?: number | null;
+  /**
+   * THE SWEEP (2026-09-05): the cursor cell the PREVIOUS drag intent named.
+   * A pull's region is then the footprint swept along the straight line from
+   * here to (cx, cy), not the disc at (cx, cy) alone. Drag only; null or
+   * absent means a single disc, which is every pull before this field existed.
+   */
+  readonly sweepFrom?: SweepOrigin | null;
+}
+
+/** Where a drag sweep starts — see SculptOptions.sweepFrom. */
+export interface SweepOrigin {
+  readonly x: number;
+  readonly y: number;
 }
 
 /** Sculpt options with nothing left to default — what the math actually runs. */
@@ -523,6 +539,8 @@ export interface ResolvedSculptOptions {
    * in a list. See SculptIntent.spanBand in protocol.ts.
    */
   readonly spanBand: number | null;
+  /** The drag sweep's start cell, or null for a single disc. See SculptOptions. */
+  readonly sweepFrom: SweepOrigin | null;
 }
 
 /**
@@ -554,6 +572,8 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // No span named — the topmost one. Every pre-2026-08-25 caller meant exactly
   // this, and a plugin terraform still does: a plugin sculpts the surface.
   spanBand: null,
+  // A single disc: no pull before 2026-09-05 swept, and no plugin's does.
+  sweepFrom: null,
 };
 
 /**
@@ -1503,11 +1523,9 @@ function retreatHeightAt(
  */
 function admitRimEnclaves(
   map: Heightmap,
-  cx: number,
-  cy: number,
-  radius: number,
   targetBand: number,
   refused: Set<number>,
+  inDisc: Set<number>,
   disc: number[],
 ): void {
   const alreadyAtBand = (x: number, y: number): boolean => {
@@ -1528,25 +1546,28 @@ function admitRimEnclaves(
     stack.push(i);
   };
   // Ground this flood may escape TO: anything the pull is not offering — a
-  // neighbouring offset outside the disc, or one off the map altogether.
-  const outside = (dx: number, dy: number): boolean =>
-    !isFootprintOffset(radius, dx, dy) || !inBounds(map, cx + dx, cy + dy);
-  forEachFootprintOffset(radius, (dx, dy) => {
-    // THE SEEDS ARE THE DISC'S BOUNDARY, AND `dist === radius - 1` IS NOT IT
-    // (2026-08-30). `dist` is `floor(sqrt(dx² + dy²))` while membership is
-    // `dx² + dy² < r·(r−1)`, so the two disagree at the diagonals the tight
-    // disc was introduced to round off: at radius 16 there are 32 cells with
-    // a 4-neighbour outside the disc whose dist is 14, not 15 — (−5, −14) and
-    // (−4, −14) among them — and radii 12, 8, 5 and 4 have 16, 8, 8 and 4.
-    // Any of those refused by the noise, and not 4-chained to a dist-15 cell,
-    // was never seeded, so the flood never reached it and it was admitted as
-    // an ENCLAVE: filled, squaring the ragged outline off at exactly those
-    // diagonals. Asking the neighbours directly is the boundary itself rather
-    // than a stand-in for it, and it stays right if the disc's shape changes.
-    if (outside(dx - 1, dy) || outside(dx + 1, dy) || outside(dx, dy - 1) || outside(dx, dy + 1)) {
-      seed(cx + dx, cy + dy);
+  // neighbouring cell outside the region (admitted or refused), or one off the
+  // map altogether. Membership is asked of the region itself rather than of a
+  // disc formula, because since the sweep (2026-09-05) the region is a union
+  // of discs along the cursor's path and has no single centre.
+  const outside = (x: number, y: number): boolean => {
+    if (!inBounds(map, x, y)) return true;
+    const i = cellIndex(map, x, y);
+    return !inDisc.has(i) && !refused.has(i);
+  };
+  // THE SEEDS ARE THE REGION'S BOUNDARY, asked of the neighbours directly
+  // (2026-08-30: a `dist === radius - 1` ring was a DIFFERENT set from the
+  // disc's true edge at its diagonals, and cells between the two were never
+  // seeded, so the flood never reached them and they were filled as enclaves,
+  // squaring the ragged outline off). Insertion order of `refused` is fixed by
+  // construction, so both replicas seed identically.
+  for (const i of refused) {
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    if (outside(x - 1, y) || outside(x + 1, y) || outside(x, y - 1) || outside(x, y + 1)) {
+      seed(x, y);
     }
-  });
+  }
   while (stack.length > 0) {
     const i = stack.pop() as number;
     const x = cellX(map.size, i);
@@ -1571,6 +1592,7 @@ function applyDragRegion(
   raising: boolean,
   targetBand: number,
   profile: SculptProfile,
+  sweepFrom: SweepOrigin | null,
   changed: Set<number>,
 ): void {
   const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
@@ -1610,27 +1632,46 @@ function applyDragRegion(
     return false;
   };
 
-  // The footprint, collected once. The offsets come from the one iterator
-  // every brush uses, so a pull considers exactly the cells a stamp of the
-  // same radius would — minus, for `soft`, the bites taken out of the rim.
+  // THE REGION IS THE FOOTPRINT SWEPT ALONG THE CURSOR'S PATH (2026-09-05),
+  // not the disc at the cursor alone. One disc per pointermove left gaps on a
+  // fast flick with a small brush — and worse than gaps: a disc landing clear
+  // of the last one touches no ground at the band, so the spread rule filled
+  // nothing at all. The sweep unions the footprint at every cell of the
+  // straight line from `sweepFrom` to (cx, cy); a pull with no `sweepFrom` is
+  // the single disc it always was. Deduplicated on first sight, in line order
+  // then footprint order, so both replicas build the same list.
+  //
+  // The offsets come from the one iterator every brush uses, so a pull
+  // considers exactly the cells a stamp of the same radius would at each step
+  // — minus, for `soft`, the bites taken out of the rim.
   const disc: number[] = [];
+  const inDisc = new Set<number>();
   // Rim cells the noise refused, by index; resolved into rim or enclave below.
+  // A cell refused at one step of the sweep but admitted at another is admitted.
   const refused = new Set<number>();
-  forEachFootprintOffset(radius, (dx, dy, dist) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    if (!inBounds(map, x, y)) return;
-    // THE RAGGED RIM. Each cell keeps its own share of the radius, so the
-    // outline wanders in and out by up to (1 − SOFT_DRAG_MIN_REACH) of it.
-    // Deep cells are inside every possible share and are never affected, which
-    // is what keeps the region solid rather than pocked — only the rim moves.
-    if (ragged && dist >= radius * (SOFT_DRAG_MIN_REACH + (1 - SOFT_DRAG_MIN_REACH) * cellNoise(x, y))) {
-      refused.add(cellIndex(map, x, y));
-      return;
-    }
-    disc.push(cellIndex(map, x, y));
-  });
-  if (refused.size > 0) admitRimEnclaves(map, cx, cy, radius, targetBand, refused, disc);
+  const sweepDisc = (sx: number, sy: number): void => {
+    forEachFootprintOffset(radius, (dx, dy, dist) => {
+      const x = sx + dx;
+      const y = sy + dy;
+      if (!inBounds(map, x, y)) return;
+      const i = cellIndex(map, x, y);
+      if (inDisc.has(i)) return;
+      // THE RAGGED RIM. Each cell keeps its own share of the radius, so the
+      // outline wanders in and out by up to (1 − SOFT_DRAG_MIN_REACH) of it.
+      // Deep cells are inside every possible share and are never affected, which
+      // is what keeps the region solid rather than pocked — only the rim moves.
+      if (ragged && dist >= radius * (SOFT_DRAG_MIN_REACH + (1 - SOFT_DRAG_MIN_REACH) * cellNoise(x, y))) {
+        refused.add(i);
+        return;
+      }
+      refused.delete(i);
+      inDisc.add(i);
+      disc.push(i);
+    });
+  };
+  if (sweepFrom === null) sweepDisc(cx, cy);
+  else forEachLineCell(sweepFrom.x, sweepFrom.y, cx, cy, sweepDisc);
+  if (refused.size > 0) admitRimEnclaves(map, targetBand, refused, inDisc, disc);
 
   // THE RETREAT — the inward pull, and it returns before the outward pull's
   // machinery because almost none of that machinery applies to it.
@@ -2741,6 +2782,7 @@ export function applySculpt(
   const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
   const targetBand = options?.targetBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand;
   const spanBand = options?.spanBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand;
+  const sweepFrom = options?.sweepFrom ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.sweepFrom;
 
   // THE GRASP IS RESOLVED HERE, ONCE, BEFORE ANY TOOL RUNS (issue #129, step
   // 4.3). A stroke that names a band names a SPAN of the centre column, and
@@ -2815,7 +2857,7 @@ export function applySculpt(
   if (tool === 'drag') {
     const dragChanged = new Set<number>();
     if (targetBand !== null && amount !== 0) {
-      applyDragRegion(map, cx, cy, radius, amount > 0, targetBand, profile, dragChanged);
+      applyDragRegion(map, cx, cy, radius, amount > 0, targetBand, profile, sweepFrom, dragChanged);
     }
     return diffOf(map, dragChanged);
   }

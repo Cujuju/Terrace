@@ -472,6 +472,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       anchor: 'free',
       targetBand: null,
       spanBand: null,
+      sweepFrom: null,
     });
   });
 
@@ -2950,5 +2951,52 @@ describe('a lower seed on a plateau interior leaves a lip a lower pull can widen
     expect(bandOf(heightAt(map, rimX, CY))).toBe(after);
     // Interior cells the cursor never reached are untouched.
     expect(bandOf(heightAt(map, CX + RADIUS + 3, CY))).toBe(before);
+  });
+});
+
+describe('a drag sweeps its footprint along the cursor path — no gaps on a flick (2026-09-05)', () => {
+  // THE CONTRACT the client's emitDrag relies on: one intent naming where the
+  // previous one was (`sweepFrom`) fills every cell of the path between, so a
+  // cursor that jumped several cells between pointer samples leaves no gap and
+  // — the sharper failure — no disc landing clear of the band that fills nothing.
+  const SIZE = 64;
+  const PLAIN_BAND = 1;
+  const LIP_BAND = 3;
+  const CY = 32;
+  /** The plateau's east edge; everything at or west of it stands at LIP_BAND. */
+  const LIP_X = 20;
+  const RADIUS = 2;
+  /** Farther than a radius-2 disc reaches, so a point disc here misses the lip. */
+  const FLICK_CELLS = 12;
+  const PULL = { tool: 'drag', profile: 'hard', anchor: 'band', targetBand: LIP_BAND } as const;
+
+  const plateauWithLip = (): Heightmap => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        map.cells[cellIndex(map, x, y)] = (x <= LIP_X ? LIP_BAND : PLAIN_BAND) * BAND_HEIGHT;
+      }
+    }
+    return map;
+  };
+  const toX = LIP_X + FLICK_CELLS;
+
+  it('a point disc landing clear of the lip fills nothing — the gap the sweep exists to close', () => {
+    const map = plateauWithLip();
+    const diff = applySculpt(map, toX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, PULL);
+    expect(diff).toHaveLength(0);
+  });
+
+  it('the same cursor cell swept from the lip fills every cell of the path to the grabbed band', () => {
+    const map = plateauWithLip();
+    applySculpt(map, toX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      ...PULL,
+      sweepFrom: { x: LIP_X, y: CY },
+    });
+    for (let x = LIP_X; x <= toX; x++) {
+      expect(bandOf(heightAt(map, x, CY))).toBe(LIP_BAND);
+    }
+    // And no further than the disc reaches past the cursor.
+    expect(bandOf(heightAt(map, toX + RADIUS, CY))).toBe(PLAIN_BAND);
   });
 });

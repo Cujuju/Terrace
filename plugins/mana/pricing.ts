@@ -53,14 +53,21 @@ import type { SculptProfile, SculptTool } from '@terrace/shared';
  * the validating. Both callers are downstream of validateSculptIntent, which has
  * already rejected an out-of-range radius, so reaching here with one is a
  * programming error rather than untrusted input.
+ *
+ * `sweepSteps` (2026-09-05): how many discs a drag intent sweeps
+ * (shared `sculptSweepSteps`). Each step is the disc the pointermove it stands
+ * in for would have sent, so a swept flick costs exactly what the same path
+ * cost as one intent per cell — and a hostile sender cannot buy a long sweep
+ * for the price of one disc. 1 for every other intent.
  */
 export function sculptManaCost(
   manaPerBandCell: number,
   radius: number,
   profile: SculptProfile,
   tool: SculptTool,
+  sweepSteps: number = 1,
 ): number {
   return Math.ceil(
-    (manaPerBandCell * sculptDisplacementUnits(radius, profile, tool)) / BAND_HEIGHT,
+    (manaPerBandCell * sculptDisplacementUnits(radius, profile, tool) * sweepSteps) / BAND_HEIGHT,
   );
 }

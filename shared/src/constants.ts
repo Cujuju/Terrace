@@ -451,6 +451,21 @@ export const DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT;
 export const MIN_BRUSH_RADIUS = 1;
 export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
 
+/**
+ * THE FARTHEST ONE DRAG INTENT MAY SWEEP, in cells between the cursor cell it
+ * names and the cell the previous intent named (2026-09-05, owner report:
+ * "quick flicks on a small brush size are not recorded and leave gaps").
+ *
+ * A pull's region is the footprint SWEPT along that segment, so a fast flick
+ * fills the whole path instead of one disc per pointermove. The clamp bounds
+ * the work one message can ask of the server; it does not bound the gesture,
+ * because the client splits a longer flick into consecutive intents of at most
+ * this length (sculptInput.ts emitDrag). One chunk: the unit the server already
+ * streams and the prediction store already reasons about whole, and far longer
+ * than a cursor moves per frame at any speed a hand produces.
+ */
+export const MAX_DRAG_SWEEP_CELLS = CHUNK_SIZE;
+
 
 /**
  * How far excess can travel from one edit: relaxation stops where the slope
