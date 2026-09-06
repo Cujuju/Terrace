@@ -1,5 +1,12 @@
 # RigHerd: make the pose palette an immutable LUT
 
+> **Line numbers were correct at commit `909f551` (2026-09-05).** This is a
+> shared checkout with concurrent agents — `635ce13 feat(climb)` moved every
+> `rigHerd.ts` reference in this document once already. Locate code by the
+> SYMBOL, not the line: `grep -n '<symbol>' <file>`. If a cited line does not
+> say what this document claims, trust the file and tell the owner.
+
+
 The single largest per-frame cost found in the 2026-09-05 frame-rate
 investigation. Full analysis and the measurements behind it:
 `docs/plans/frame-rate-decay-2026-09-05.md` §4.
@@ -12,13 +19,13 @@ alone.**
 
 `client/src/render/rigHerd.ts` keeps a bone-matrix palette texture per herd:
 one row per pose slot, `boneCount × MATRIX_TEXELS` texels wide
-(`rigHerd.ts:203-205`). Every frame:
+(`rigHerd.ts:224-226`). Every frame:
 
-1. `beginFrame()` — `captured.fill(0)` (`rigHerd.ts:264-270`) throws away every
+1. `beginFrame()` — `captured.fill(0)` (`rigHerd.ts:289`) throws away every
    captured pose.
-2. Draw code re-captures each slot it needs (`plugins/wildlife/client/models.ts:399-403`).
+2. Draw code re-captures each slot it needs (`plugins/wildlife/client/models.ts:397-403`).
 3. `endFrame()` — `if (capturedThisFrame > 0) palette.needsUpdate = true`
-   (`rigHerd.ts:354`), which in three is a **whole-texture re-upload**, not a
+   (`rigHerd.ts:383`), which in three is a **whole-texture re-upload**, not a
    ranged one.
 4. `plugins/wildlife/client/models.ts:564` runs that for **every** herd, so the
    per-frame upload count is the number of species currently drawing.
@@ -33,7 +40,7 @@ wrong but that its *invalidation* is unnecessary.
   `plugins/wildlife/client/species/grazer.ts:233` is
   `(joints, _seconds, phase) => { const beat = phase; … }` — `seconds` is
   discarded. Same in `wolf.ts:218`, `bison.ts:290`, and the walk branch of
-  `ibex.ts:194`. A walker's phase is its stride, driven by distance travelled.
+  `ibex.ts:182-195`. A walker's phase is its stride, driven by distance travelled.
   **Their palette is byte-identical frame to frame and is re-uploaded anyway.**
 - **Swimmers use the clock and the phase only as a SUM.**
   `fish.ts:42` — `beat = seconds * FISH_TAIL_HZ * TWO_PI + phase`.
@@ -80,7 +87,7 @@ at herd construction**, and make animation a choice of which row to read.
 
 Animation becomes quantised in time to `poseSlots` steps per cycle instead of
 continuous. At today's `POSE_SLOTS_PER_HERD = 32`
-(`plugins/wildlife/client/models.ts:173`) and a ~1 Hz stride, that is 32
+(`plugins/wildlife/client/models.ts:178`) and a ~1 Hz stride, that is 32
 samples per cycle, which **will** read as stutter at 144 fps.
 
 Because the palette is now static, slot count costs **one-time memory only, not
@@ -113,7 +120,7 @@ These would each break the LUT premise:
 ## Explicitly NOT the fix
 
 Do **not** convert the palette upload to `addUpdateRange` (the pattern
-`rigHerd.ts:374-378` already uses for the instance buffers). Per-call cost is
+`rigHerd.ts:404` already uses for the instance buffers). Per-call cost is
 dominated by the stall and is near-independent of size, so N changed rows as N
 height-1 calls would likely be **worse** than one whole-image call. If the LUT
 proves infeasible, the stall-shaped interim is double-buffering (2–3 palette

@@ -1,5 +1,12 @@
 # Frame-rate decay — root cause and fixes
 
+> **Line numbers were correct at commit `909f551` (2026-09-05).** This is a
+> shared checkout with concurrent agents — `635ce13 feat(climb)` moved every
+> `rigHerd.ts` reference in this document once already. Locate code by the
+> SYMBOL, not the line: `grep -n '<symbol>' <file>`. If a cited line does not
+> say what this document claims, trust the file and tell the owner.
+
+
 Measured 2026-09-05 on the owner's RTX 3090 (ANGLE / D3D11), world
 `frostwick-hollows`, via `scripts/gpu-bench.sh` against an isolated bench stack
 on 2599/5199. Written from measurements taken this session; every number below
@@ -105,28 +112,28 @@ not bandwidth. On the slowest 1 % of frames, `gl upload (inside render)` is
 **31.65 ms of a 42.35 ms frame**.
 
 Every `W×32` shape is a wildlife bone-pose palette: `POSE_SLOTS_PER_HERD = 32`
-is the texture height (`plugins/wildlife/client/models.ts:173`) and
-`paletteWidth = boneCount × MATRIX_TEXELS` (`client/src/render/rigHerd.ts:203`,
+is the texture height (`plugins/wildlife/client/models.ts:178`) and
+`paletteWidth = boneCount × MATRIX_TEXELS` (`client/src/render/rigHerd.ts:224`,
 `MATRIX_TEXELS = 4`). So 92×32 is a 23-bone species, 332×32 an 83-bone species.
 The aged server showed ~8 such shapes uploading per frame; the fresh server ~2.
 
 ### The mechanism, from source
 
-1. `client/src/render/rigHerd.ts:264-270` — `beginFrame()` does
+1. `client/src/render/rigHerd.ts:289` — `beginFrame()` does
    `captured.fill(0)`, discarding every captured pose **every frame**.
-2. `client/src/render/rigHerd.ts:354` — `endFrame()` does
+2. `client/src/render/rigHerd.ts:383` — `endFrame()` does
    `if (capturedThisFrame > 0) palette.needsUpdate = true`, which in three is a
    **full re-upload of the whole palette**, not of the changed rows.
 3. `plugins/wildlife/client/models.ts:564` — `endFrame()` runs this for **every
    herd**, so the per-frame upload count is the number of *active* species.
-4. `plugins/wildlife/client/models.ts:399-403` — a slot's pose is
+4. `plugins/wildlife/client/models.ts:397-403` — a slot's pose is
    `drawable.animate(seconds, herd.poseSlotPhase(slot), gait)`.
 
 Now the decisive part — what those `animate` functions actually depend on:
 
 - **Walkers ignore `seconds` entirely.** `plugins/wildlife/client/species/grazer.ts:233`
   is `(joints, _seconds, phase) => { const beat = phase; … }`. Identical in
-  `wolf.ts:218`, `bison.ts:290`, and the walk branch of `ibex.ts:194`. Their
+  `wolf.ts:218`, `bison.ts:290`, and the walk branch of `ibex.ts:182-195`. Their
   phase *is* their stride, driven by distance travelled.
   **Their palette is a pure function of the slot index and is byte-for-byte
   identical every frame.** It is recomputed and re-uploaded anyway.
@@ -153,7 +160,7 @@ once at build time**, and animation becomes a choice of *which row to read*.
   `slot = (phaseSlot + timeSlot) mod poseSlots`. The set of 32 poses is
   invariant under time; only the *indexing* rotates. Per-frame upload → **zero**.
 - **Gaits** already have their own bands via `poseVariants`
-  (`plugins/wildlife/client/models.ts:365-367`); each band is baked once, same
+  (`plugins/wildlife/client/models.ts:367`); each band is baked once, same
   as above.
 
 **The trade this makes, stated honestly:** animation becomes quantised in time
@@ -188,7 +195,7 @@ a texture the previous frame may still be reading. Measure it; do not assume it.
 
 Full handoff already written: **`.claude/orchestration/briefs/boats-draw-calls.md`**.
 
-Summary: `plugins/boats/client/models.ts:376` calls `instantiateRig` per boat,
+Summary: `plugins/boats/client/models.ts:377` calls `instantiateRig` per boat,
 and `client/src/render/rigSkin.ts:405-435` builds **one `SkinnedMesh` per surface
 per instance** — nothing is instanced. Plus a per-boat cloned sail material
 (`models.ts:380`). That is 3 draw calls per boat, and boats measured **135, 172,
@@ -236,8 +243,8 @@ for the first time, not duplicate compiles.
 known variant set at load, or after first join while the camera is still
 settling. This converts ~50 mid-play compile stalls into load-time work.
 
-**A hazard to check first:** `applyGroundShade` (`groundShade.ts:349`) and
-`applyRevealClip` (`revealMask.ts:~250`) both *wrap* `customProgramCacheKey`,
+**A hazard to check first:** `applyGroundShade` (`groundShade.ts`, `applyGroundShade`) and
+`applyRevealClip` (`revealMask.ts`, `applyRevealClip`) both *wrap* `customProgramCacheKey`,
 appending a suffix. Applying either **twice to the same material** yields
 `…|revealClip|revealClip`, a different key, and therefore a duplicate program.
 `applyGroundShade` is called exactly twice on distinct materials
