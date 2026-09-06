@@ -1385,6 +1385,26 @@ button.world-header {
    The label column is sized for the longest label ("geometries"); tabular
    figures stop each new window's digits from re-widthing the value and
    shuffling the block. */
+/* The frame meter's panel. A flex COLUMN, which is what lets the rows below
+   stretch to a common width and keep their two columns aligned — the parent
+   .hud-version is align-items: flex-end, and a row that shrink-wraps there
+   drifts right and breaks the alignment. */
+.hud-version__perf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--hud-border);
+  border-radius: 8px;
+  background: var(--hud-bg);
+  /* The same blur the rest of the HUD wears (.hud-panel). -webkit- first for
+     the prefixed-only implementations; both are inert where unsupported, and
+     --hud-bg is opaque enough at 0.78 to carry the panel on its own there. */
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
 .hud-version__perf {
   align-self: stretch;
   display: grid;
