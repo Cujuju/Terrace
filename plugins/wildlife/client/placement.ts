@@ -39,6 +39,7 @@ import { GRAZER_ENVELOPE, GRAZER_STRIDE_WORLD_UNITS } from './species/grazer.ts'
 // imports models for BIRD_ENVELOPE, and the cycle would leave one of the two
 // reading a half-initialised module).
 import { modelScaleFor, speciesModelScale } from './modelScale.ts';
+import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { WOLF_ENVELOPE, WOLF_STRIDE_WORLD_UNITS } from './species/wolf.ts';
 import { IBEX_ENVELOPE, IBEX_STRIDE_WORLD_UNITS } from './species/ibex.ts';
 import { BISON_ENVELOPE, BISON_STRIDE_WORLD_UNITS } from './species/bison.ts';
@@ -330,9 +331,12 @@ export function swimmerFrameY(
   const bounds = swimmerColumnBounds(seabedY, profile, modelScale);
   if (previousY === null) return preferred;
 
-  const budget = SWIM_VERTICAL_WORLD_UNITS_PER_SECOND * Math.max(0, dt);
-  const remaining = preferred - previousY;
-  const eased = previousY + Math.max(-budget, Math.min(budget, remaining));
+  // The ease is the kit's (client/src/plugins/kit/groundFollow.ts) at this
+  // family's own rate; what stays here is the water column it is clamped into,
+  // which is the only part that is about swimming. No snap: a swimmer's target
+  // is a smooth function of the seabed, so a big gap is a big REAL change and
+  // easing through it is the point.
+  const eased = followGroundY(previousY, preferred, dt, SWIM_VERTICAL_WORLD_UNITS_PER_SECOND, Infinity);
   return Math.min(Math.max(eased, bounds.lowest), bounds.highest);
 }
 
@@ -416,8 +420,14 @@ export function creatureWorldY(
   // Land species' models are built with the origin at their feet, so the ground
   // height is the answer with no offset — and a walker's size scales its body
   // upward from that origin, which moves nothing about where its feet go.
+  //
+  // CHASED, NOT ASSIGNED (2026-09-05). `surfaceY` is band-quantised, so a
+  // walker crossing a band boundary used to jump a whole BAND_WORLD_HEIGHT
+  // between two frames. The kit's follower turns that step into a quarter
+  // second of visible motion and leaves a spawn or a sculpt snapping, which is
+  // what those should do.
   return profile === null
-    ? surfaceY
+    ? followGroundY(previousY, surfaceY, dt)
     : swimmerFrameY(previousY, surfaceY, profile, modelScaleFor(species, sizeClass), dt);
 }
 

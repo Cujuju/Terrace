@@ -4,7 +4,18 @@
 // only cosmetics, so a client that misses messages looks stiller, never wrong.
 
 import { Group } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+
+/**
+ * World units per stored height unit — client/src/config.ts's HEIGHT_WORLD_SCALE,
+ * DERIVED FROM ITS OWN TWO SHARED INPUTS rather than imported, because importing
+ * that module drags `import.meta.env` into this plugin's node typecheck and test
+ * run (the trap plugins/wildlife/client/placement.ts documents and plugins/mana
+ * carries an env.d.ts for). Both inputs are @terrace/shared constants, so the
+ * restatement cannot drift from the expression it copies.
+ */
+const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
   ClientPluginCtx,
   MoverPose,
@@ -33,6 +44,13 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 interface PilgrimView {
   readonly model: PilgrimModel;
   readonly phase: number;
+  /**
+   * Where this walker was DRAWN vertically last frame — the follower's state
+   * (client/src/plugins/kit/groundFollow.ts). Null until its first drawn frame,
+   * and reset to null whenever it is hidden, so a walker that reappears over
+   * different ground arrives there rather than gliding to it.
+   */
+  drawnY: number | null;
 }
 
 let models: PilgrimModels | null = null;
@@ -56,7 +74,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
     // binding the model at first sight is safe.
     const model = models.create(pilgrim.race, pilgrim.kind);
     container.add(model.root);
-    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID });
+    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID, drawnY: null });
   }
 
   for (const [id, view] of views) {
@@ -88,14 +106,27 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const terrainY = ctx.terrainHeightAt(Math.floor(pilgrim.x), Math.floor(pilgrim.y));
     if (terrainY === null) {
       view.model.root.visible = false;
+      // Nothing to ease from next time: see PilgrimView.drawnY.
+      view.drawnY = null;
       continue;
     }
     view.model.root.visible = true;
+    // WHERE THE WALKER IS VERTICALLY, in three cases and one expression:
+    //   * on a wall — the server says so and says how high (`climbHeight`), and
+    //     that height is the answer, because a climb and a fall are motions the
+    //     simulation owns rather than things to infer from the ground;
+    //   * walking — the drawn band under its feet, CHASED rather than assigned
+    //     (the kit's follower), so crossing a band is a step and not a jump;
+    //   * first frame or just un-hidden — the target itself, no ease.
+    const targetY =
+      pilgrim.climbHeight === null ? terrainY : pilgrim.climbHeight * HEIGHT_WORLD_SCALE;
+    const drawnY = followGroundY(view.drawnY, targetY, dt);
+    view.drawnY = drawnY;
     // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE; the model itself
     // is built in world units and is unaffected by the sampling density.
     view.model.root.position.set(
       pilgrim.x * CELL_WORLD_SIZE,
-      terrainY,
+      drawnY,
       pilgrim.y * CELL_WORLD_SIZE,
     );
     // Models face +X; travel is toward (cos heading, sin heading) — the same

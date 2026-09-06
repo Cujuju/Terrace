@@ -170,6 +170,25 @@ export interface PilgrimEntityState {
   readonly y: number;
   /** Radians; the walker walks toward (cos heading, sin heading). */
   readonly heading: number;
+  /**
+   * WHERE THIS WALKER IS VERTICALLY WHILE IT IS OFF THE GROUND, in stored
+   * height units — climbing a wall or falling off one (@terrace/shared's
+   * climb.ts). Null, and absent from the wire, for the ordinary case of a
+   * walker standing on the ground, which is every walker almost all of the
+   * time.
+   *
+   * IT IS ON THE WIRE BECAUSE THE CLIENT CANNOT INFER IT. A climber's x/y stay
+   * pinned at the foot of the wall for the whole climb — that is what keeps it
+   * out of the rock — so the ground under it says "still down here" until the
+   * instant it arrives. Without this field the client would draw a peep
+   * standing at the bottom and then teleporting to the top, which is the
+   * snapping the climb was added to remove.
+   *
+   * ADDITIVE, like `kind` before it: absent means the old meaning (on the
+   * ground), so an old client meeting a climbing peep draws it at its feet
+   * rather than dropping the row.
+   */
+  readonly climbHeight: number | null;
 }
 
 export interface PilgrimsEntitiesPayload {
@@ -213,6 +232,9 @@ export function parseEntitiesPayload(payload: unknown): PilgrimEntityState[] | n
       x: entry.x,
       y: entry.y,
       heading: entry.heading,
+      // A row from a pre-climb server carries none; so does every walker on
+      // the ground. Both mean the same thing and are the same value here.
+      climbHeight: isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null,
     });
   }
   return parsed;

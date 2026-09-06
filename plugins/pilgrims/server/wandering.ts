@@ -27,7 +27,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from '@terrace/shared';
-import type { Occupant, RouteCell } from '@terrace/shared';
+import type { ClimbState, Occupant, RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import {
   ARRIVAL_RADIUS_CELLS,
@@ -169,6 +169,8 @@ interface Wanderer {
   /** See pilgrimage.ts's Pilgrim.route — same contract, same fallback. */
   route: RouteCell[] | null;
   routeIndex: number;
+  /** See pilgrimage.ts's MovingWalker.climb — set and cleared by advanceWalker. */
+  climb: ClimbState | null;
 }
 
 interface SettlementCell {
@@ -245,8 +247,15 @@ export class Wandering {
       // own rule and the same reasoning (shared/src/steering.ts's
       // `progressed`): a detour must not read as being stuck, and oscillating
       // on the spot must not read as making headway.
-      const progressed = advanceWalker(world, wanderer, dt, crowd(wanderer, own, ownCrowd, occupants));
-      if (progressed) wanderer.stuckSeconds = 0;
+      const advance = advanceWalker(world, wanderer, dt, crowd(wanderer, own, ownCrowd, occupants));
+      // FELL OFF A WALL. A wanderer's outing is nobody's business but its own —
+      // no blessing, no county, nothing waiting at the other end — so a fatal
+      // fall is simply the end of it, and the pool refills at its own cadence.
+      if (advance === 'fell') {
+        this.wanderers.delete(wanderer.id);
+        continue;
+      }
+      if (advance === 'progressed') wanderer.stuckSeconds = 0;
       else wanderer.stuckSeconds += dt;
 
       const afterDx = wanderer.goalX - wanderer.x;
@@ -368,6 +377,7 @@ export class Wandering {
         panicFromY: 0,
         route,
         routeIndex: 0,
+      climb: null,
       });
     }
   }
@@ -390,6 +400,7 @@ export class Wandering {
         x: wanderer.x,
         y: wanderer.y,
         heading: wanderer.heading,
+        climbHeight: wanderer.climb === null ? null : wanderer.climb.height,
       });
     }
     return rows;

@@ -122,7 +122,12 @@ describe('the wire format', () => {
     });
     // A row without a kind is from a pre-wanderer server, which only ever
     // sent pilgrims — the parser restores that meaning, never guesses.
-    expect(parsed).toEqual([good, { id: 4, kind: 'pilgrim', race: 'uno', x: 1, y: 2, heading: 3 }]);
+    // `climbHeight` is null on every row here: absent on the wire means "on
+    // the ground", which is what a pre-climb server's rows also mean.
+    expect(parsed).toEqual([
+      { ...good, climbHeight: null },
+      { id: 4, kind: 'pilgrim', race: 'uno', x: 1, y: 2, heading: 3, climbHeight: null },
+    ]);
   });
 
   it('accepts wanderer rows and drops rows whose kind it does not know', () => {
@@ -134,7 +139,9 @@ describe('the wire format', () => {
     });
     // The unknown kind is dropped whole: a render loop must never meet a
     // model it cannot build (a newer server is an ordinary event).
-    expect(parsed).toEqual([{ id: 1, kind: 'wanderer', race: 'uno', x: 1, y: 2, heading: 3 }]);
+    expect(parsed).toEqual([
+      { id: 1, kind: 'wanderer', race: 'uno', x: 1, y: 2, heading: 3, climbHeight: null },
+    ]);
   });
 
   it('rejects a payload that is not a list at all', () => {

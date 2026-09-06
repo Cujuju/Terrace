@@ -19,8 +19,16 @@
 // callers searching the same heights from the same start/goal get a
 // byte-identical route, not merely "a shortest route", every time.
 
-import { type TerrainSampler, type TraversalProfile, isWalkableCell } from './traversal.ts';
 import {
+  exceedsWalkableGradient,
+  isWalkableCell,
+  type ClimbRule,
+  type TerrainSampler,
+  type TraversalProfile,
+} from './traversal.ts';
+import { CLIMB_RISE_HEIGHT_UNITS_PER_SECOND } from './climb.ts';
+import {
+  CELL_WORLD_SIZE,
   NEIGHBOURHOOD_CELLS,
   WORLD_UNIT_CELLS,
   cellsOverArea,
@@ -80,6 +88,33 @@ export const DIAGONAL_STEP_COST = 14;
  */
 export const SLOPE_COST_PER_HEIGHT_UNIT = WORLD_UNIT_CELLS;
 
+/**
+ * The walking speed climb costs are priced against, in world units per second.
+ *
+ * 0.5 — plugins/pilgrims' PILGRIM_WALK_SPEED_CELLS_PER_SECOND, RESTATED here
+ * because a planner may not import a plugin, and the peep is the canonical land
+ * walker this cost model has always been reasoned about (see
+ * SLOPE_COST_PER_HEIGHT_UNIT above, argued in peep-sized detours). It prices
+ * TIME ONLY: a mover that walks at some other speed still climbs at
+ * CLIMB_RISE_HEIGHT_UNITS_PER_SECOND, and what this decides is how many cells
+ * of ITS OWN walking a climb is worth — a ratio that barely moves across the
+ * shipped speeds (a yeti ambles at 0.45, an ibex trots faster) and would only
+ * change which of two nearly equal routes wins.
+ */
+export const WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND = 0.5;
+
+/** Seconds one cell of flat walking takes at that speed — the unit ORTHOGONAL_STEP_COST buys. */
+const FLAT_CELL_SECONDS = CELL_WORLD_SIZE / WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND;
+
+/**
+ * What one height unit of CLIMBING costs, in the same units as a walked step:
+ * the climb's own seconds priced at what a second of walking costs. 5 today
+ * (0.25 s a height unit against 0.5 s a cell, times the cell's 10), so a band
+ * of wall is 80 — eight cells of walking, which is the time it genuinely takes.
+ */
+const CLIMB_COST_PER_HEIGHT_UNIT =
+  (ORTHOGONAL_STEP_COST / FLAT_CELL_SECONDS) / CLIMB_RISE_HEIGHT_UNITS_PER_SECOND;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Search bounds
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,6 +141,17 @@ export const SLOPE_COST_PER_HEIGHT_UNIT = WORLD_UNIT_CELLS;
  * cross-continent trek.
  */
 export const ROUTE_SEARCH_MARGIN_CELLS = NEIGHBOURHOOD_CELLS * 2;
+
+/**
+ * What a route will pay to avoid a CERTAIN death: the widest detour this
+ * planner is capable of planning (ROUTE_SEARCH_MARGIN_CELLS of flat walking).
+ *
+ * Bounded by the search box on purpose. A larger figure would not buy a longer
+ * detour — the box is what limits that — it would only make every climbed edge
+ * look infinitely bad next to every walked one, which is the same thing as not
+ * being able to climb.
+ */
+const CERTAIN_DEATH_COST = ORTHOGONAL_STEP_COST * ROUTE_SEARCH_MARGIN_CELLS;
 
 /**
  * Hard cap on nodes EXPANDED (popped off the open set) by one `findRoute`
@@ -346,12 +392,43 @@ function edgeCost(
   baseCost: number,
 ): number | null {
   if (!isWalkableCell(world, profile, toX, toY)) return null;
-  const limit = profile.maxGradientPerCell;
-  if (!Number.isFinite(limit)) return baseCost; // water-ground: no risers, no slope cost.
+  if (!Number.isFinite(profile.maxGradientPerCell)) return baseCost; // water: no risers, no slope cost.
 
   const heightDiff = Math.abs(world.heightAt(toX, toY) - world.heightAt(fromX, fromY));
-  if (heightDiff > limit) return null;
+  if (exceedsWalkableGradient(profile, heightDiff)) {
+    const rule = profile.climb;
+    // Not a climber: the wall is the end of this branch, exactly as before.
+    if (rule === undefined || rule === null) return null;
+    return baseCost + climbEdgeCost(rule, heightDiff);
+  }
   return baseCost + heightDiff * SLOPE_COST_PER_HEIGHT_UNIT;
+}
+
+/**
+ * What one climbed edge costs a route, on top of the step itself: the TIME the
+ * climb takes, priced in the same currency as walking, plus what the risk of
+ * dying on it is worth avoiding.
+ *
+ * THE TIME TERM IS DERIVED, NOT TUNED. `ORTHOGONAL_STEP_COST` buys one cell of
+ * flat walking, which takes CELL_WORLD_SIZE / WALK_SPEED_FOR_COSTING seconds;
+ * one height unit of wall takes 1 / CLIMB_RISE_HEIGHT_UNITS_PER_SECOND. The
+ * ratio of those two is what a height unit of climbing is worth in cells of
+ * walking, and today it comes to 5 per height unit — 80 for a whole band,
+ * i.e. eight cells of detour, which is exactly the four seconds a band the
+ * climb actually takes against the half second a cell of walking takes.
+ *
+ * THE RISK TERM IS THE POINT OF HAVING ONE. Without it a route prices a lethal
+ * shortcut purely by how long it takes, and a climber walks up a cliff to save
+ * four cells. `CERTAIN_DEATH_COST` is what a route would pay to avoid a
+ * CERTAIN death — the widest detour the planner is able to plan at all
+ * (ROUTE_SEARCH_MARGIN_CELLS of flat walking), because a death it cannot plan
+ * around is one it must simply accept — and a fall chance buys that fraction
+ * of it. At the shipped chances a peep (15 %) walks up to 19 cells out of its
+ * way rather than take a wall, a yeti (5 %) about six, and an ibex (1 %) barely
+ * more than one, which is the animal each of them is.
+ */
+function climbEdgeCost(rule: ClimbRule, heightDifference: number): number {
+  return heightDifference * CLIMB_COST_PER_HEIGHT_UNIT + rule.fallChance * CERTAIN_DEATH_COST;
 }
 
 function reconstructPath(
@@ -653,8 +730,13 @@ export function floodReachableRegion(
   const heights = new Float64Array(cells);
   const limit = profile.maxGradientPerCell;
   // A water-ground profile has no risers to climb, so its edges never consult a
-  // height at all — the same branch `edgeCost` takes on a non-finite limit.
-  const checksGradient = Number.isFinite(limit);
+  // height at all — the same branch `edgeCost` takes on a non-finite limit. So
+  // does a CLIMBER: reachability asks whether a mover can get there at all, and
+  // one that climbs what it cannot walk is stopped by no rise, only by ground
+  // it may not stand on. (`edgeCost` still prices those edges — this is the
+  // same predicate, memoised, and it must admit exactly what that admits.)
+  const climbs = profile.climb !== undefined && profile.climb !== null;
+  const checksGradient = Number.isFinite(limit) && !climbs;
 
   const classify = (index: number, cx: number, cy: number): number => {
     const known = ground[index];
