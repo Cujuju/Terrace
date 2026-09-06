@@ -99,8 +99,16 @@ THUNDER_SECONDS = 6.0
 CRACK_ATTACK_SECONDS = 0.002
 CRACK_TAU_SECONDS = 0.02
 CRACK_BAND_HZ = (300.0, 3500.0)
-CRACK_LEVEL = 0.45
+CRACK_LEVEL = 0.55
 # The shockwave landing under the crack: one low thump.
+# The PUNCH: a pitch-dropping sine hit, the way a kick drum is built — the
+# one thing in the mix with a hard edge. Sits on the thump, not instead of it.
+PUNCH_ATTACK_SECONDS = 0.001
+PUNCH_TAU_SECONDS = 0.14
+PUNCH_PITCH_START_HZ = 220.0
+PUNCH_PITCH_END_HZ = 45.0
+PUNCH_PITCH_TAU_SECONDS = 0.05
+PUNCH_LEVEL = 2.2
 THUMP_ATTACK_SECONDS = 0.005
 THUMP_TAU_SECONDS = 0.22
 THUMP_BAND_HZ = (50.0, 250.0)
@@ -130,7 +138,7 @@ ECHO_LOWPASS_HZ = 180.0
 
 # Soft clip on the LOW layers only: rounds the thump and glues the roll. The
 # crack stays clean — clipping a bright transient is what distortion sounds like.
-THUNDER_DRIVE = 1.4
+THUNDER_DRIVE = 2.0
 
 # Different seeds give different strikes; the plugin picks one per strike.
 THUNDER_VARIANTS = 3
@@ -161,6 +169,14 @@ def make_thunder() -> np.ndarray:
     )
     crack = bandpass(noise, *CRACK_BAND_HZ) * crack_envelope
 
+    pitch = PUNCH_PITCH_END_HZ + (PUNCH_PITCH_START_HZ - PUNCH_PITCH_END_HZ) * np.exp(
+        -seconds / PUNCH_PITCH_TAU_SECONDS
+    )
+    phase = 2 * np.pi * np.cumsum(pitch) / SAMPLE_RATE_HZ
+    punch = np.sin(phase) * (
+        np.minimum(seconds / PUNCH_ATTACK_SECONDS, 1.0) * np.exp(-seconds / PUNCH_TAU_SECONDS)
+    )
+
     thump = bandpass(noise, *THUMP_BAND_HZ) * (
         np.minimum(seconds / THUMP_ATTACK_SECONDS, 1.0) * np.exp(-seconds / THUMP_TAU_SECONDS)
     )
@@ -183,7 +199,8 @@ def make_thunder() -> np.ndarray:
         echoes[offset:] += level * dull_roll[: count - offset]
 
     low = (
-        THUMP_LEVEL * thump / np.max(np.abs(thump))
+        PUNCH_LEVEL * punch
+        + THUMP_LEVEL * thump / np.max(np.abs(thump))
         + ROLL_LEVEL * roll / np.max(np.abs(roll))
         + SUB_LEVEL * sub / np.max(np.abs(sub))
         + echoes / np.max(np.abs(roll))
