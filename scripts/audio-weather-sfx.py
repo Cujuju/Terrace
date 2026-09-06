@@ -98,7 +98,10 @@ def write_wav(path: Path, signal: np.ndarray) -> None:
 #   * high modes die in a fraction of a second, low modes ring for seconds;
 #   * the whole sheet flexes as it is shaken, bending every mode's pitch
 #     together — the wobble that makes a sheet sound like thunder.
-# Under it a PUNCH (a kick-style hit) and a short CRACK for the strike itself.
+# The hit is the sheet's own high modes, struck hard: a CLANG — every mode
+# above the mids rings loud for a few tens of ms and is gone — over a short
+# CRACK for the mallet. No drum under it: a drum hit is what a kick sounds
+# like, and this is metal.
 
 # Long enough for the low modes to die away; ends silent so the voice cannot click.
 THUNDER_SECONDS = 6.0
@@ -121,20 +124,16 @@ SHEET_DAMPING_SLOPE = 0.7
 SHEET_FLEX_DEPTH = 0.06
 SHEET_FLEX_HZ = 2.2
 SHEET_FLEX_TAU_SECONDS = 1.8
-# The sheet's own swell: a sheet rolls up over tens of ms, not instantly.
-SHEET_ATTACK_SECONDS = 0.02
-# Pulled toward the low end, as a sheet heard from the back of a hall is.
-SHEET_TILT_HZ = 900.0
+# The hit: a hard edge on the metal, not a swell.
+SHEET_ATTACK_SECONDS = 0.002
+# Clang: the modes above this ring extra-loud at the hit and die this fast.
+CLANG_MIN_HZ = 600.0
+CLANG_TAU_SECONDS = 0.06
+CLANG_LEVEL = 2.0
+# Pulled toward the low end, as a sheet heard from the back of a hall is —
+# high enough to leave the clang its metal.
+SHEET_TILT_HZ = 2500.0
 SHEET_LEVEL = 1.0
-
-# The PUNCH: a pitch-dropping sine hit, the way a kick drum is built — the
-# one thing in the mix with a hard edge.
-PUNCH_ATTACK_SECONDS = 0.001
-PUNCH_TAU_SECONDS = 0.14
-PUNCH_PITCH_START_HZ = 220.0
-PUNCH_PITCH_END_HZ = 45.0
-PUNCH_PITCH_TAU_SECONDS = 0.05
-PUNCH_LEVEL = 2.0
 
 # Crack: one SHORT mid-band transient with a real attack (an instant edge is a
 # click), the mallet on the metal.
@@ -143,9 +142,9 @@ CRACK_TAU_SECONDS = 0.02
 CRACK_BAND_HZ = (300.0, 3500.0)
 CRACK_LEVEL = 0.45
 
-# Soft clip on the sheet and punch: rounds the hit and glues the modes. The
+# Soft clip on the sheet: rounds the hit and glues the modes. The
 # crack stays clean — clipping a bright transient is what distortion sounds like.
-THUNDER_DRIVE = 1.6
+THUNDER_DRIVE = 2.2
 
 # Different strike points and shakes give different claps; the plugin picks
 # one per strike.
@@ -176,9 +175,13 @@ def make_sheet(count: int, seconds: np.ndarray) -> np.ndarray:
     swell = np.minimum(seconds / SHEET_ATTACK_SECONDS, 1.0)
     phases = rng.uniform(0.0, 2 * np.pi, frequencies.size)
     out = np.zeros(count)
+    clang = np.exp(-seconds / CLANG_TAU_SECONDS)
     for frequency, level, tau, phase in zip(frequencies, levels, taus, phases):
         angle = 2 * np.pi * frequency * np.cumsum(flex) / SAMPLE_RATE_HZ
-        out += level * np.exp(-seconds / tau) * np.sin(angle + phase)
+        envelope = np.exp(-seconds / tau)
+        if frequency >= CLANG_MIN_HZ:
+            envelope = envelope + CLANG_LEVEL * clang
+        out += level * envelope * np.sin(angle + phase)
     return lowpass(out * swell, SHEET_TILT_HZ)
 
 
@@ -189,19 +192,11 @@ def make_thunder() -> np.ndarray:
 
     sheet = make_sheet(count, seconds)
 
-    pitch = PUNCH_PITCH_END_HZ + (PUNCH_PITCH_START_HZ - PUNCH_PITCH_END_HZ) * np.exp(
-        -seconds / PUNCH_PITCH_TAU_SECONDS
-    )
-    punch = np.sin(2 * np.pi * np.cumsum(pitch) / SAMPLE_RATE_HZ) * (
-        np.minimum(seconds / PUNCH_ATTACK_SECONDS, 1.0) * np.exp(-seconds / PUNCH_TAU_SECONDS)
-    )
-
     crack = bandpass(noise, *CRACK_BAND_HZ) * (
         np.minimum(seconds / CRACK_ATTACK_SECONDS, 1.0) * np.exp(-seconds / CRACK_TAU_SECONDS)
     )
 
-    low = SHEET_LEVEL * sheet / np.max(np.abs(sheet)) + PUNCH_LEVEL * punch
-    shaped = np.tanh(THUNDER_DRIVE * low / np.max(np.abs(low)))
+    shaped = np.tanh(THUNDER_DRIVE * SHEET_LEVEL * sheet / np.max(np.abs(sheet)))
     shaped += CRACK_LEVEL * crack / np.max(np.abs(crack))
     # Guarantee a silent end regardless of the mode tails.
     fade_count = int(0.5 * SAMPLE_RATE_HZ)
@@ -222,12 +217,12 @@ RAIN_SECONDS = 8.0
 # Long enough to hide the splice in grains, short enough not to eat the loop.
 RAIN_CROSSFADE_SECONDS = 1.0
 
-# Wash: rate × tau ≈ 9 grains sounding at any instant — smooth enough to be a
-# bed, grainy enough not to be a solid hiss. Fewer, or shorter, is static.
-WASH_PER_SECOND = 3500
-WASH_TAU_SECONDS = 0.0025
+# Wash: rate × tau ≈ 28 grains sounding at any instant — smooth enough to be
+# a bed, grainy enough not to be a solid hiss. Fewer, or shorter, is static.
+WASH_PER_SECOND = 8000
+WASH_TAU_SECONDS = 0.0035
 WASH_BAND_HZ = (500.0, 9000.0)
-WASH_TILT_HZ = 2500.0
+WASH_TILT_HZ = 2000.0
 WASH_LEVEL = 1.0
 # Gusting: sub-audio movement of the wash level.
 GUST_HZ = 0.35
