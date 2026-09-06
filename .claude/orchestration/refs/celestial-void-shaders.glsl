@@ -1,5 +1,23 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 21 (perf, issue #342, 2026-09-05): the stars are a POINT CLOUD. stars3 and the three
+// per-fragment voxel walks are gone from the wheel; the coarse and fine fields are generated once
+// (client/src/render/celestialVoidStars.ts: seeded mulberry32, the same counts, spreads and per-star
+// draws the voxel hashes made) into vertex buffers and drawn as GL_POINTS AFTER the wheel, additively
+// (ONE,ONE via premultipliedAlpha, alpha written 0), in the opaque list at VOID_RENDER_ORDER+1 so
+// the terrain still covers them. The vertex program projects each star through the wheel's own
+// frame (rel*u_toDisk, uv=-v.xy*u_focal/v.z), culls before its single u_gasHalf fetch, and applies
+// depthFade, cellFade, the gas dim/lift and rev 17's kinds exactly as the walk did; the fragment is
+// the walk's smoothstep falloff on gl_PointCoord, so the STAR_MIN_PX floor carries over. Look
+// changes: a fresh fixed-seed draw of the field, and every star to the grid's full depth (the walk
+// stopped at STAR_WALK visits, far short of the depth at grazing angles) - reads as more faint stars
+// in the far field, +0.2 % frame luminance. FINDING: the in-arm grid had NEVER drawn - its walk
+// floor was -0.94 cells and the first voxel -1, so it broke on iteration one from rev 13 through
+// rev 20; the approved look has no in-arm stars, so STAR_ARM_GRID_ENABLED = false keeps it off
+// until the owner sees it (its grid-2 branch is below, one flag away). WebGL2 GPU-timer bench, RTX
+// 3090 @1440p, same-run pairs: rev 20 0.97 ms -> 0.45 ms at the view pose (-0.52), 0.81 -> 0.44 at
+// the hub (-0.37); the same run reads rev 10 at 0.59, so the pass is under the pre-3-D wheel. 839 k
+// points, 19.2 MB, built in ~120 ms once with the wheel material. ALIASED_POINT_SIZE_RANGE 1..1024.
 // REVISION 20 (perf, issue #341, 2026-09-05): no look change. The gas march (bake fetches, GAS_STEPS
 // depth-profile samples, transmittance loop) now runs in its own program (GAS_GLSL, below the wheel)
 // into a half-resolution RGBA16F target (drawing buffer / GAS_RES_DIVISOR 2, rounded up) once per
@@ -172,9 +190,10 @@ const float WHEEL_RATE   = -0.021; // rad/s (2*pi/300 = ~5.0 min per turn); rev 
 // Depth fade, as multiples of the eye's height above the plane so it is the
 // same at every zoom in the world anchor: the reference faded between ray
 // lengths DISK_DIST (2.6) and FAR_FADE (12.0) with the eye 2.6*cos(60deg) = 1.3
-// above the plane, i.e. between 2.0 and ~9.23 heights.
+// above the plane, i.e. between 2.0 and ~9.23 heights. The end is a TS constant
+// as well: the star field's extents are derived from it.
 const float FADE_START_HEIGHTS = 2.0;
-const float FADE_END_HEIGHTS   = 12.0/1.3;
+const float FADE_END_HEIGHTS   = 9.230769;
 const float ARMS         = 4.0;    // four gas arms; owner 2026-09-04: 'more than two'
 const float WIND         = 8.0;    // how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0 'more circular', rev 7: 8.0
 const float ARM_SHARPNESS= 1.4;    // arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0, rev 14: 1.4 'more definition between the arms'
@@ -186,14 +205,19 @@ const float WOBBLE_SCALE = 0.6;    // disk units per wobble feature: the arms be
 const float STREAK_ALONG = 1.6;    // grain cells per e-fold of radius ALONG an arm (long filaments)
 const float STREAK_ACROSS= 40.0;   // grain cells around the full circle ACROSS the arms (fine filaments); integer, the y period
 const float HUE_SCALE    = 0.7;    // disk units per hue-drift feature between the deep blue and the violet
-const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units
+const float DISK_RADIUS  = 1.7;    // e-folding radius of the gas disk, plane units; TS: the in-arm stars' extent is derived from it
 // Rev 13 (owner 2026-09-05: 'the gas should look diffuse in three dimensions, and the stars should be
 // placed in three dimensions', and 'don't make the disk any thicker than four world units'). The
 // gas is a volume under the plane, ray-marched: the arm pattern runs through it as columns
 // (gasPattern, once per ray), a vertical profile makes it diffuse about each patch's own level,
-// and 3-D puff noise breaks it up through the thickness (gasDepthProfile, per sample). The stars are points in 3-D voxel grids that the ray walks exactly: the in-arm stars
-// inside the gas, the field and fine grids on down to STAR_FIELD_DEPTH under it, each dimmed by the
-// gas in front of it. Nothing is above the plane, so the clearance to the map is unchanged.
+// and 3-D puff noise breaks it up through the thickness (gasDepthProfile, per sample). The stars are
+// points in three 3-D grids: the in-arm stars inside the gas, the field and fine grids on down to
+// STAR_FIELD_DEPTH under it, each dimmed by the gas in front of it. They used to be found by walking
+// those grids per fragment; since issue #342 they are a point cloud drawn after this program (see
+// STARS_VERT_GLSL and the header), and the numbers below that describe them are its numbers too. The
+// in-arm grid is the exception: its walk broke before its first voxel, so it has never drawn, and
+// STAR_ARM_GRID_ENABLED keeps it off until the owner has seen it.
+// Nothing is above the plane, so the clearance to the map is unchanged.
 const float DISK_THICKNESS= 0.024; // DISK_THICKNESS_WORLD in disk units; gas and stars both stay within it
 const int   GAS_STEPS    = 6;      // march samples through the thickness; rev 16 bench: 10 -> 6 saves ~0.5 ms at 1440p, no visible banding
 // Rev 14 (owner: 'needs more 3-D variability, still a flat disk'): the depth of peak density is not one
@@ -209,13 +233,13 @@ const float PUFF_SCALE   = 12.0;   // 3-D puff noise features per disk unit acro
 const float PUFF_Z_SCALE = 3.0/DISK_THICKNESS;    // ... and about three through the thickness, so the puffs vary with depth
 const float PUFF_DEPTH   = 0.7;    // how much the puffs modulate the density (0 = columnar gas); rev 14: 0.35 -> 0.7
 const float PUFF_OCTAVE2 = 0.4;    // weight of the second, finer puff octave (0 drops it: one vnoise3 per march step)
-const float STAR_FIELD_DEPTH=0.706; // STAR_FIELD_DEPTH_WORLD in disk units: the coarse star grid reaches this far under the plane
-const float STAR_FINE_DEPTH=0.5*STAR_FIELD_DEPTH;  // the fine grid reaches half as deep (it has twice the cells per unit, so the same voxel budget)
-const float STAR_POINT_BOOST=3.0;  // a ray must pass within a star's radius in 3-D, not cross a disc: more stars per voxel to keep the count on screen
+// The grids' depths (STAR_FIELD_DEPTH, STAR_FINE_DEPTH) and their density boost (STAR_POINT_BOOST)
+// are TS/JS constants since issue #342: nothing in GLSL reads them now that the point cloud, not the
+// fragment, decides where the stars are. STAR_WALK went with the walk itself; the ~80% of the coarse
+// depth it reached at 60 degrees was a bench compromise, and the cloud draws every star instead.
 const float STAR_GAS_SHADE=0.7;    // how much fully overlying gas dims a star (1 = hidden)
-const int   STAR_WALK    = 24;     // voxel visits per star grid per ray; reaches ~80% of STAR_FIELD_DEPTH in the coarse grid at 60 deg (bench: 36 -> 24 saves ~0.4 ms), flatter views lose the deepest stars
 const float STAR_MIN_PX  = 0.8;    // smallest star radius on screen, px
-const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer)
+const float CELL_FADE_PX = 4.0;    // star cells narrower than this on screen fade out (anti-shimmer); TS too, for the per-frame guard
 // Rev 17 (owner 2026-09-05: 'make some of the floating stars glow a little bit, and others twinkle just a
 // little bit'). Each star draws one kind from its own hash: the first GLOW_FRACTION carry a soft halo
 // GLOW_RADIUS times their core, the next TWINKLE_FRACTION breathe in brightness by TWINKLE_DEPTH at
@@ -298,44 +322,6 @@ vec4 gasBakeFetch(sampler2D tex, vec2 uv){
 // The half-res gas pass's output (issue #341): rgb = gasCol*gasAcc before GAS_GAIN, a = the gas
 // opacity. Bilinear, so a full-res pixel between texel centres gets the interpolated field.
 uniform sampler2D u_gasHalf;
-// Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
-// (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
-// ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
-// column's voxels, so a deeper field is not a denser one. minSizePerT is the screen-size floor in
-// disk units per unit ray length; tBase the ray length from the eye to o (on the plane). above is
-// the gas opacity along the ray, which dims the stars under the gas by how much of it is over them.
-float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float depth, float minSizePerT, float seed, float above){
-  vec3 p=o*scale;                        // grid units, plane at z = 0
-  vec3 cell=floor(p-vec3(0.0,0.0,0.001)); // start in the voxel just under the plane
-  vec3 stp=sign(d);
-  vec3 tDelta=abs(1.0/d);
-  vec3 tMax=(cell+max(stp,0.0)-p)*tDelta*stp;   // grid-unit ray lengths to the next cell walls
-  float zBot=-depth*scale;
-  float perVoxel=density*STAR_POINT_BOOST/(depth*scale);
-  float sum=0.0;
-  for(int i=0;i<STAR_WALK;i++){
-    if(cell.z<zBot) break;
-    float h=hash3(cell+seed);
-    if(h<perVoxel){
-      vec3 P=cell+0.1+0.8*vec3(hash3(cell+seed+3.1),hash3(cell+seed+7.7),hash3(cell+seed+5.3));
-      vec3 rel=P-p;
-      float along=dot(rel,d);
-      float dist=length(rel-along*d);
-      float t=tBase+along/scale;         // disk units along the ray from the eye
-      float size=max(0.03+0.05*hash3(cell+seed+9.2), minSizePerT*t*scale);
-      float dim=1.0-STAR_GAS_SHADE*above*clamp(-P.z/(DISK_THICKNESS*scale),0.0,1.0); // gas above this star
-      float kind=hash3(cell+seed+13.7);
-      float core=smoothstep(size,0.0,dist);
-      if(kind<GLOW_FRACTION) core+=GLOW_GAIN*smoothstep(size*GLOW_RADIUS,0.0,dist);
-      else if(kind<GLOW_FRACTION+TWINKLE_FRACTION) core*=1.0-TWINKLE_DEPTH*(0.5+0.5*sin(u_time*TWINKLE_RATE+kind*40.0));
-      sum+=core*(0.5+0.5*h/perVoxel)*dim;
-    }
-    if(tMax.x<tMax.y && tMax.x<tMax.z){ cell.x+=stp.x; tMax.x+=tDelta.x; }
-    else if(tMax.y<tMax.z){ cell.y+=stp.y; tMax.y+=tDelta.y; }
-    else { cell.z+=stp.z; tMax.z+=tDelta.z; }
-  }
-  return sum;
-}
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
   float a=u_time*WHEEL_RATE;
@@ -356,31 +342,104 @@ void main(){
     // everywhere below the horizon, which is why the fade and the gain stay out of it.
     vec4 gasHalf=texture2D(u_gasHalf,gl_FragCoord.xy/u_res);
     vec3 gasCol=gasHalf.rgb;              // lit gas colour (gasCol*gasAcc), before GAS_GAIN
-    float gas=gasHalf.a;                  // total gas opacity along the ray
     float bulge=exp(-r*2.0);
     vec3 warm=vec3(1.0,0.88,0.62);
     col+=(gasCol*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
-
-    // --- stars: points in three voxel grids under the plane, rotating with the gas ---
-    // The grids are walked in the rotating frame: rotate the plane hit and the ray into it once.
-    vec3 ro=vec3(rf,0.0);                                      // the plane hit, rotating frame
-    vec3 rd=vec3(rot(d.xy,-a),d.z);
-    float minPerT=STAR_MIN_PX/(u_focal*u_res.y);               // disk units of star radius per unit ray length
-    float pxPerUnit=u_focal*u_res.y/sdist;
-    float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/32.0);
-    float field=stars3(ro,rd,sdist,16.0,0.07,STAR_FIELD_DEPTH,minPerT,0.0,gas);
-    float fine=0.0, inArms=0.0;
-    if(cellFade>0.0){                                          // the fine grids fade out when zoomed far; skip their walks
-      fine=0.6*stars3(ro,rd,sdist,32.0,0.05,STAR_FINE_DEPTH,minPerT,11.0,gas)*cellFade;
-      inArms=stars3(ro,rd,sdist,40.0,0.35,DISK_THICKNESS,minPerT,23.0,0.0)*cellFade*gas*2.5;
-    }
-    col+=vec3(0.95,0.93,0.9)*((field+fine)*(0.45+0.9*gas)+inArms)*depthFade*depthFade;
+    // The stars under the plane are no longer found here: they are a point cloud drawn straight
+    // over this program's output, additively (issue #342, STARS_VERT_GLSL below). col += stars
+    // was already the composite, so the arithmetic is unchanged.
   } else {
     // Above the plane's horizon (never in the view anchor at 60deg; the world anchor at a flat
     // orbit): a still, sparse field so the void is not empty, fixed to the sky direction.
     col+=vec3(0.8,0.82,0.9)*0.4*stars(dome(d)*110.0+5.0,0.03,0.0);
   }
   gl_FragColor=vec4(col,1.0);
+}
+// ===== stars, vertex (one per star, drawn additively after the wheel; shares the wheel's fields above) =====
+// Which grid this Points object is: 0 the coarse field, 1 the fine field, 2 the in-arm stars (which
+// STAR_ARM_GRID_ENABLED keeps off - the branch below is kept because it is the intended design, not
+// because anything reaches it today). It is a property of the OBJECT, not of the vertex, so it is a
+// uniform and the materials differ in nothing else (see createStarPoints).
+uniform float u_starGrid;
+// The half-res gas pass's output (issue #341). Only its alpha is read here — the total gas opacity
+// along the ray — and only once per star, at the star's own screen position. Bilinear, no mips, so
+// a vertex-shader texture2D is well defined under GLSL ES 1.00.
+uniform sampler2D u_gasHalf;
+// The driver's ALIASED_POINT_SIZE_RANGE maximum. A sprite wider than this is clamped by the GL
+// silently, and the fragment's falloff is measured across the sprite, so the clamp has to happen
+// here where both the size and the varying that carries it can see it.
+uniform float u_pointSizeMax;
+// Per star: radius in disk units, kind on [0,1), brightness on [0.5,1) - the three draws the voxel
+// hashes used to make, now generated once (render/celestialVoidStars.ts).
+attribute vec3 starShape;
+varying vec3 v_col;      // the star's colour, everything but the falloff already applied
+varying vec3 v_shape;    // core radius in px, 1 for a glow star, and the sprite's width in px
+const float STAR_GRID_FINE = 1.0;
+const float STAR_GRID_ARM  = 2.0;
+const float STAR_FINE_CELLS_PER_UNIT = 32.0;  // the cell fade's own measure, for the in-arm grid as well as the fine one
+const float FINE_GRID_WEIGHT = 0.6;   // the fine field's stars are drawn dimmer than the coarse field's
+const float FIELD_GAS_LIFT   = 0.45;  // a field star keeps this much of itself with no gas in front of it...
+const float FIELD_GAS_GAIN   = 0.9;   // ...and gains this much where the gas is thickest
+const float ARM_GRID_GAIN    = 2.5;   // in-arm stars are revealed BY the gas: bright only where it is
+const float POINT_SPRITE_MARGIN_PX = 2.0;  // so the smoothstep's tail is not clipped by the sprite's edge
+// Clip space well outside the frustum, for a star that must not rasterise at all.
+const vec4 OFF_SCREEN = vec4(2.0,2.0,2.0,1.0);
+void main(){
+  // The rotating frame back into disk space: the wheel samples at rot(pp,-a), so this is that
+  // inverted, and the field turns rigidly with the gas exactly as before.
+  float a=u_time*WHEEL_RATE;
+  vec3 P=vec3(rot(position.xy,a),position.z);
+  vec3 rel=P-u_origin;
+  // Disk space back into view space. u_toDisk is a rotation, so its inverse is its transpose, and
+  // rel*u_toDisk is that product (a row vector times the matrix). viewRay is the same map the
+  // other way: u_toDisk*normalize(vec3(uv,-u_focal)).
+  vec3 v=rel*u_toDisk;
+  if(v.z>=0.0){ gl_Position=OFF_SCREEN; gl_PointSize=0.0; return; }   // behind the eye
+  // Screen heights, the wheel's own uv convention. Named suv, not uv: three declares an attribute
+  // vec2 uv in every ShaderMaterial's vertex prefix and shadowing it here would only confuse.
+  vec2 suv=-v.xy*u_focal/v.z;
+  vec2 ndc=2.0*suv*u_res.y/u_res;
+  float t=length(rel);                   // disk units along the ray from the eye (the walk's tBase+along/scale)
+  float sdist=-u_origin.z*t/rel.z;       // ray length to the plane along THIS star's ray
+  float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
+  float pxPerUnit=u_focal*u_res.y/sdist;
+  float cellFade=smoothstep(CELL_FADE_PX,CELL_FADE_PX*3.0,pxPerUnit/STAR_FINE_CELLS_PER_UNIT);
+  float weight=u_starGrid<STAR_GRID_FINE?1.0:(u_starGrid<STAR_GRID_ARM?FINE_GRID_WEIGHT*cellFade:cellFade);
+  // The walk's max(size, minPerT*t*scale) projected: a star never shrinks below STAR_MIN_PX.
+  float rPx=max(starShape.x*u_focal*u_res.y/t,STAR_MIN_PX);
+  float glow=starShape.y<GLOW_FRACTION?1.0:0.0;
+  float size=min(2.0*rPx*mix(1.0,GLOW_RADIUS,glow)+POINT_SPRITE_MARGIN_PX,u_pointSizeMax);
+  // Faded out, or off screen by more than the sprite's own half width: no fragment, and no fetch.
+  // At the reference pose over nine tenths of the coarse field is off screen and the fetch is by
+  // far the most expensive thing here, so the order matters.
+  if(depthFade<=0.0||weight<=0.0||abs(ndc.x)>1.0+size/u_res.x||abs(ndc.y)>1.0+size/u_res.y){
+    gl_Position=OFF_SCREEN; gl_PointSize=0.0; return;
+  }
+  float gas=texture2D(u_gasHalf,ndc*0.5+0.5).a;   // total gas opacity along the ray
+  // The field grids are dimmed by the gas over them and lifted by the gas in front of them; the
+  // in-arm stars are INSIDE the gas, so nothing is over them and the gas is what reveals them.
+  float above=u_starGrid<STAR_GRID_ARM?gas:0.0;
+  float outer=u_starGrid<STAR_GRID_ARM?FIELD_GAS_LIFT+FIELD_GAS_GAIN*gas:1.0;
+  if(u_starGrid>=STAR_GRID_ARM) weight*=gas*ARM_GRID_GAIN;
+  float dim=1.0-STAR_GAS_SHADE*above*clamp(-position.z/DISK_THICKNESS,0.0,1.0);
+  // Rev 17's kinds, unchanged: the first GLOW_FRACTION carry a halo (the fragment adds it), the
+  // next TWINKLE_FRACTION breathe, the rest are steady. u_time is frozen under reduced motion.
+  float twinkle=1.0;
+  if(glow<0.5&&starShape.y<GLOW_FRACTION+TWINKLE_FRACTION)
+    twinkle=1.0-TWINKLE_DEPTH*(0.5+0.5*sin(u_time*TWINKLE_RATE+starShape.y*40.0));
+  v_col=vec3(0.95,0.93,0.9)*starShape.z*dim*twinkle*weight*outer*depthFade*depthFade;
+  v_shape=vec3(rPx,glow,size);
+  gl_Position=vec4(ndc,0.0,1.0);
+  gl_PointSize=size;
+}
+// ===== stars, fragment =====
+varying vec3 v_col;
+varying vec3 v_shape;
+void main(){
+  float d=length((gl_PointCoord-0.5)*v_shape.z);
+  float core=smoothstep(v_shape.x,0.0,d);
+  if(v_shape.y>0.5) core+=GLOW_GAIN*smoothstep(v_shape.x*GLOW_RADIUS,0.0,d);
+  gl_FragColor=vec4(v_col*core,0.0);
 }
 // ===== gas (the half-res march, drawn once per frame into u_gasHalf; shares the wheel's fields above) =====
 // The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
