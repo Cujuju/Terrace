@@ -77,6 +77,26 @@ const SUPPRESS_UPLOADS_QUERY_FLAG = 'suppressUploads';
  */
 const RENDER_SCALE_QUERY_FLAG = 'renderScale';
 /**
+ * Page-URL query flag that runs a scenario with the ATTRIBUTION wrappers off
+ * (`&noInstrument=1`). Frame intervals and the GPU timer still work; the
+ * per-callback timing, the task-timing monkey-patches and the GL upload
+ * accounting do not.
+ *
+ * WHY IT EXISTS. The `renderer.render` CPU decay measured 2026-09-06 correlates
+ * with wall-clock time at r=0.963 and with nothing else — not programs, not
+ * textures, not draw calls, not scene nodes. That is exactly the signature a
+ * MEASUREMENT ARTIFACT would have, and this probe has been armed in every run
+ * ever taken of this app, so the artifact has never been controlled for. If the
+ * decay is real it survives with the wrappers off; if it vanishes, the finding
+ * was the instrument all along and #378 is void.
+ */
+const NO_INSTRUMENT_QUERY_FLAG = 'noInstrument';
+
+/** True when the page asked for a scenario with attribution wrappers disabled. */
+function instrumentationDisabled(): boolean {
+  return new URLSearchParams(location.search).get(NO_INSTRUMENT_QUERY_FLAG) === '1';
+}
+/**
  * How long the page is left alone before a scenario starts, in milliseconds.
  *
  * FORTY-FIVE SECONDS, measured rather than guessed: a default 2048-cell world
@@ -1474,6 +1494,7 @@ function requestedScenario(): string | null {
  */
 export function installPerfProbeEarly(viewport: Viewport): void {
   if (requestedScenario() === null) return;
+  if (instrumentationDisabled()) return;
   installTaskTiming();
   const originalOnFrame = viewport.onFrame.bind(viewport);
   (viewport as { onFrame: Viewport['onFrame'] }).onFrame = (handler, phase) => {
@@ -1585,8 +1606,10 @@ export function installPerfProbe(deps: {
   if (Number.isFinite(renderScale) && renderScale > 0 && renderScale !== 1) {
     renderer.setPixelRatio(renderer.getPixelRatio() * renderScale);
   }
-  installGlUploadAccounting();
-  wrapSinkTiming(world);
+  if (!instrumentationDisabled()) {
+    installGlUploadAccounting();
+    wrapSinkTiming(world);
+  }
 
   let storms: readonly CycloneState[] = [];
   const originalRoute = pluginHost.routeMessage.bind(pluginHost);
