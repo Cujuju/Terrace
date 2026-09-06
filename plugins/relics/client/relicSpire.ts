@@ -8,6 +8,10 @@
 // relic's ground, so the three-colour code the panel teaches is legible at any
 // distance without the gem itself having to be big.
 //
+// It is ALPHA-BLENDED rather than additive, because additive light over the
+// terrain destroys the very thing the spire exists to carry: see
+// SPIRE_BASE_ALPHA below.
+//
 // It is a SECOND mesh, not part of the gem: the gem bobs and spins, and a
 // spire that bobbed would read as a searchlight rather than a beacon, while a
 // spire that spun would strobe. So it is positioned once per frame at the
@@ -19,7 +23,6 @@
 // gems make (relicShapes.ts shares geometry, index.ts makes the material).
 
 import {
-  AdditiveBlending,
   CylinderGeometry,
   DoubleSide,
   ShaderMaterial,
@@ -57,8 +60,17 @@ const SPIRE_FALLOFF_EXPONENT = 2.2;
  */
 const SPIRE_FOOT_FADE_WORLD = 1.2;
 
-/** Peak alpha at the foot, once the fades are applied. Additive, so this is a glow, not a wall. */
-const SPIRE_BASE_ALPHA = 0.5;
+/**
+ * Peak alpha at the foot, once the fades are applied.
+ *
+ * ALPHA-BLENDED, NOT ADDITIVE (2026-09-05, from the first render of the row:
+ * additive over the terrain's green washed crimson and amber into the same
+ * yellow and azure into cyan, so three relics a player is meant to tell apart
+ * at a glance all read the same). Straight alpha keeps the column the
+ * category's own colour over any ground; this value is what makes it still
+ * read as a column at thirty world units without becoming a solid wall.
+ */
+const SPIRE_BASE_ALPHA = 0.28;
 
 /** The pulse: how long one breath takes, and how much of the alpha it takes away at the trough. */
 export const SPIRE_PULSE_PERIOD_S = 4.5;
@@ -92,7 +104,7 @@ varying float vHeight;
 void main() {
   float up = clamp(vHeight / uHeight, 0.0, 1.0);
   float fade = pow(1.0 - up, uFalloff) * smoothstep(0.0, uFootFade, vHeight);
-  gl_FragColor = vec4(uColor * uAlpha * fade, uAlpha * fade);
+  gl_FragColor = vec4(uColor, uAlpha * fade);
 }
 `;
 
@@ -140,7 +152,6 @@ export function createSpireMaterial(color: Color): ShaderMaterial {
     },
     transparent: true,
     depthWrite: false,
-    blending: AdditiveBlending,
     side: DoubleSide,
     toneMapped: false,
   });
