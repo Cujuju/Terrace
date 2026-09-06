@@ -124,6 +124,7 @@ const ICON_SHADE_ELLIPSE_PX: Readonly<Record<SkillId, readonly [number, number]>
   'titans-hand': [5, 2.4],
   quake: [9, 3.8],
   genesis: [9, 3.8],
+  'bedrock-ward': [8, 3.4],
   bulwark: [9, 3.8],
   landslide: [9, 3.8],
   'azure-heart': [6, 2.6],
@@ -793,6 +794,54 @@ function springOfAether(): Part[] {
 }
 
 /**
+ * Bedrock Ward — ground that refuses another hand — is MARKED GROUND: a floor
+ * of amber sigil laid over the bare rock, with four standing stones set around
+ * its edge.
+ *
+ * A dome was tried first and read as a cauldron at panel size (the plinth rim
+ * occludes anything sitting inside it). The flat sigil is the better object:
+ * what the skill claims IS ground, so the ground is what the icon colours, and
+ * amber is the panel's passive category — the tile is legible before the shape
+ * is.
+ */
+const WARD_ROCK_RADIUS = 0.8;
+const WARD_ROCK_HEIGHT = 0.1;
+const WARD_SIGIL_RADIUS = 0.66;
+const WARD_SIGIL_HEIGHT = 0.06;
+const WARD_STONES = 4;
+const WARD_STONE_RADIUS = 0.66;
+const WARD_STONE_ACROSS = 0.14;
+const WARD_STONE_HEIGHT = 0.44;
+
+function bedrockWard(): Part[] {
+  const bedrock = place(
+    new CylinderGeometry(WARD_ROCK_RADIUS, WARD_ROCK_RADIUS, WARD_ROCK_HEIGHT, ROUND_SEGMENTS),
+    0,
+    WARD_ROCK_HEIGHT / 2,
+    0,
+  );
+  const sigil = place(
+    new CylinderGeometry(WARD_SIGIL_RADIUS, WARD_SIGIL_RADIUS, WARD_SIGIL_HEIGHT, ROUND_SEGMENTS),
+    0,
+    WARD_ROCK_HEIGHT + WARD_SIGIL_HEIGHT / 2,
+    0,
+  );
+  const stones = Array.from({ length: WARD_STONES }, (_unused, index) => {
+    const bearing = (index / WARD_STONES) * TURN;
+    return place(
+      new BoxGeometry(WARD_STONE_ACROSS, WARD_STONE_HEIGHT, WARD_STONE_ACROSS),
+      Math.cos(bearing) * WARD_STONE_RADIUS,
+      WARD_ROCK_HEIGHT + WARD_STONE_HEIGHT / 2,
+      Math.sin(bearing) * WARD_STONE_RADIUS,
+      0,
+      -bearing,
+      0,
+    );
+  });
+  return [...painted('rock', bedrock), ...painted('amber', sigil), ...painted('stone', ...stones)];
+}
+
+/**
  * Bulwark — a ring wall with nothing in the middle — is a RING OF MASONRY on
  * open ground: twelve blocks stood on a bearing each, alternating tall and
  * short so the top reads as battlements rather than as a pipe, around a
@@ -927,6 +976,7 @@ const BUILDERS: Readonly<Record<SkillId, () => Part[]>> = {
   'titans-hand': titansHand,
   quake,
   genesis,
+  'bedrock-ward': bedrockWard,
   bulwark,
   landslide,
   'azure-heart': azureHeart,

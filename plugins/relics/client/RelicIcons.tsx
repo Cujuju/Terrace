@@ -858,6 +858,84 @@ export function GenesisIcon(): JSX.Element {
   );
 }
 
+/** Bedrock Ward: a plinth ringed with standing stones under a dome of amber light. */
+export function BedrockWardIcon(): JSX.Element {
+  return (
+    <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="bedrock-ward-amber-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffe2b0" />
+          <stop offset="1" stop-color="#e2be88" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-amber-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e2be88" />
+          <stop offset="1" stop-color="#c49b60" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-amber-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#c49b60" />
+          <stop offset="1" stop-color="#a77838" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-amber-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#a77838" />
+          <stop offset="1" stop-color="#8a5410" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-rock-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#7a6a5a" />
+          <stop offset="1" stop-color="#66584a" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-rock-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#66584a" />
+          <stop offset="1" stop-color="#524539" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-rock-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#524539" />
+          <stop offset="1" stop-color="#3e3228" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-rock-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3e3228" />
+          <stop offset="1" stop-color="#2a2018" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-stone-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e6dcc8" />
+          <stop offset="1" stop-color="#c7bca7" />
+        </linearGradient>
+        <linearGradient id="bedrock-ward-stone-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#a89b86" />
+          <stop offset="1" stop-color="#897a66" />
+        </linearGradient>
+      </defs>
+      <g transform="translate(0 -5.4)">
+        <Tile prefix="bedrock-ward" glow="#ffb347" />
+        <ellipse cx="16" cy="19.2" rx="8" ry="3.4" fill="#2e5a2e" opacity="0.5" />
+        <polygon points="14.9,15.6 14.9,14.8 19.1,15.2 19.1,16.0" fill="url(#bedrock-ward-rock-1)" />
+        <polygon points="11.2,16.6 11.2,15.8 14.9,14.8 14.9,15.6" fill="url(#bedrock-ward-rock-2)" />
+        <polygon points="15.1,15.4 15.1,15.0 18.5,15.2 18.5,15.7" fill="url(#bedrock-ward-amber-1)" />
+        <polygon points="19.1,16.0 19.1,15.2 22.0,16.7 22.0,17.5" fill="url(#bedrock-ward-rock-0)" />
+        <polygon points="12.0,16.2 12.0,15.7 15.1,15.0 15.1,15.4" fill="url(#bedrock-ward-amber-2)" />
+        <polygon points="18.5,15.7 18.5,15.2 21.0,16.4 21.0,16.9" fill="url(#bedrock-ward-amber-0)" />
+        <polygon points="9.3,18.5 9.3,17.7 11.2,15.8 11.2,16.6" fill="url(#bedrock-ward-rock-3)" />
+        <polygon points="10.5,17.8 10.5,17.3 12.0,15.7 12.0,16.2" fill="url(#bedrock-ward-amber-3)" />
+        <polygon points="20.0,16.6 20.0,13.1 20.8,12.7 20.8,16.2" fill="url(#bedrock-ward-stone-2)" />
+        <polygon points="19.1,16.2 19.1,12.7 20.0,13.1 20.0,16.6" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="12.0,16.6 12.0,13.1 12.9,12.7 12.9,16.2" fill="url(#bedrock-ward-stone-2)" />
+        <polygon points="12.0,16.6 11.2,16.2 11.2,12.7 12.0,13.1" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="19.1,12.7 20.0,12.3 20.8,12.7 20.0,13.1" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="12.0,13.1 11.2,12.7 12.0,12.3 12.9,12.7" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="22.0,17.5 22.0,16.7 22.7,18.7 22.7,19.5" fill="url(#bedrock-ward-rock-0)" />
+        <polygon points="21.0,16.9 21.0,16.4 21.5,18.2 21.5,18.6" fill="url(#bedrock-ward-amber-0)" />
+        <polygon points="20.8,21.4 17.1,22.4 12.9,22.0 10.0,20.5 9.3,18.5 11.2,16.6 14.9,15.6 19.1,16.0 22.0,17.5 22.7,19.5" fill="url(#bedrock-ward-rock-0)" />
+        <polygon points="20.0,20.2 16.9,21.0 13.5,20.7 11.0,19.5 10.5,17.8 12.0,16.2 15.1,15.4 18.5,15.7 21.0,16.9 21.5,18.6" fill="url(#bedrock-ward-amber-0)" />
+        <polygon points="20.8,20.2 20.0,20.6 20.0,17.1 20.8,16.7" fill="url(#bedrock-ward-stone-2)" />
+        <polygon points="19.1,20.2 19.1,16.7 20.0,17.1 20.0,20.6" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="12.0,20.6 11.2,20.2 11.2,16.7 12.0,17.1" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="12.9,20.2 12.0,20.6 12.0,17.1 12.9,16.7" fill="url(#bedrock-ward-stone-2)" />
+        <polygon points="20.0,16.2 20.8,16.7 20.0,17.1 19.1,16.7" fill="url(#bedrock-ward-stone-0)" />
+        <polygon points="12.9,16.7 12.0,17.1 11.2,16.7 12.0,16.2" fill="url(#bedrock-ward-stone-0)" />
+      </g>
+    </svg>
+  );
+}
+
 /** Bulwark: a ring wall of blocks around a grass courtyard. */
 export function BulwarkIcon(): JSX.Element {
   return (

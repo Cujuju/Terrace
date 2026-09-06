@@ -36,6 +36,7 @@ export type SkillKind = 'passive' | 'active' | 'perk';
  */
 export type SkillId =
   | 'titans-hand'
+  | 'bedrock-ward'
   | 'quake'
   | 'genesis'
   | 'bulwark'
@@ -66,6 +67,12 @@ export const SKILLS: readonly SkillInfo[] = [
     kind: 'passive',
     name: "Titan's Hand",
     description: 'Your sculpt brush is one cell wider.',
+  },
+  {
+    id: 'bedrock-ward',
+    kind: 'passive',
+    name: 'Bedrock Ward',
+    description: 'Land you have just shaped refuses another hand.',
   },
   {
     id: 'quake',
@@ -203,6 +210,13 @@ export const CAST_DENIED_UNOWNED = 'unowned';
 export const CAST_DENIED_COOLDOWN = 'cooldown';
 /** The target cell is outside the world, or in territory not yet unlocked. */
 export const CAST_DENIED_TARGET = 'target';
+/**
+ * Someone else's Bedrock Ward holds the ground this sculpt or cast would move.
+ * Sent on this plugin's own `denied` channel for BOTH paths: core's nack for a
+ * plugin-denied intent carries only the sequence number (server/src/intent/
+ * pipeline.ts), so a plugin that wants a player told why must say so itself.
+ */
+export const CAST_DENIED_WARDED = 'warded';
 /**
  * The target is legal, but the ground there is not what the skill needs — the
  * cast planned no steps (see TerraformSpec.plan). Distinct from `target`
