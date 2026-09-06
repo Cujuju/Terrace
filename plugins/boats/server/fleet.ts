@@ -487,7 +487,7 @@ const MOORINGS_SURVEYED_PER_VILLAGE = 2 * BOATS_PER_VILLAGE;
  *
  *   * `cellsAcross(HARBOUR_INSHORE_BAND_WORLD_UNITS)` — the inshore strip the
  *     skiffs own outright. See that constant in ../protocol.ts for the defect
- *     this partitions and why the band is 1.5 world units.
+ *     this partitions and why the band is 1.75 world units.
  *   * `BOAT_HULL_LENGTH_CELLS / 2` — a berthed boat lies on its face-home
  *     heading, so half its hull sticks back TOWARD the shore from the cell the
  *     survey picked. Without this term the strip is clear of berth CENTRES and
@@ -498,7 +498,7 @@ const MOORINGS_SURVEYED_PER_VILLAGE = 2 * BOATS_PER_VILLAGE;
  *     and the client's drawn contour can differ from both again. The margin is
  *     what keeps a cell of disagreement from being a collision.
  *
- * Today that comes to 6 + 1.8 + 2 = 9.8 cells. It is a REAL distance and not a
+ * Today that comes to 7 + 1.8 + 2 = 10.8 cells. It is a REAL distance and not a
  * cell count, so it is not rounded here; only the disc radius below ceils it.
  */
 const BERTH_STANDOFF_CELLS =

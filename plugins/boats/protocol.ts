@@ -260,13 +260,19 @@ export const COASTAL_MIN_WATER_CELLS = cellsOverArea(2);
  * restated on: the two plugins are independently installable, so this is not
  * imported, but the semantics MUST match or the partition it defines has a gap.
  *
- * WHY 1.5 (six cells). Structures moors a skiff 2.7-3.2 cells past the shore
- * (its mooring square must hold 2 cells of drawn water on every side), and a
- * moored skiff reaches 1.84 cells further still — up to 0.28 world units of
- * orbit round its anchor plus half of a 0.36-long hull, converted. 3.2 + 1.84
- * rounds up to six cells, so 1.5 world units is the smallest band that contains
- * a skiff's whole reach. Verified against the twin's own derivation
- * (plugins/structures/protocol.ts:502-509): same terms, same number.
+ * WHY 1.75 (seven cells). Structures moors a skiff 3.7-4.2 cells past the shore
+ * (its mooring square must hold 3 cells of drawn water on every side), and a
+ * moored skiff reaches 2.27 cells further still — up to 0.28 world units of
+ * orbit round its anchor plus half of a 0.576-long DRAWN hull (0.36 authored at
+ * SKIFF_MODEL_SCALE 1.6), converted. 4.2 + 2.27 rounds up to seven cells, so
+ * 1.75 world units is the smallest band that contains a skiff's whole reach.
+ * Verified against the twin's own derivation
+ * (plugins/structures/protocol.ts): same terms, same number.
+ *
+ * IT GREW WITH THE BOAT (owner, 2026-09-05: skiffs sixty percent larger). Both
+ * terms moved — a longer hull reaches further, and a wider mooring square is
+ * found further out — so a band left at 1.5 would have put skiff hulls in the
+ * war boats' water, which is the exact defect this partition exists to prevent.
  *
  * WHAT IT PARTITIONS (owner defect, 2026-09-05: skiffs "collide with each other
  * and with the warboats"). Both plugins berth off the SAME village at the SAME
@@ -278,7 +284,7 @@ export const COASTAL_MIN_WATER_CELLS = cellsOverArea(2);
  * the one input they share: the village cell and its nearest water. Skiffs stay
  * inside this band; war boats berth beyond it (`BERTH_STANDOFF_CELLS`).
  */
-export const HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.5;
+export const HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.75;
 
 /**
  * Furthest a village will send boats, in cells.
