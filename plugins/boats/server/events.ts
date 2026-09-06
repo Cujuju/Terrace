@@ -1,4 +1,4 @@
-// Structural parsers for the two world events this plugin listens to.
+// Structural parsers for the world events this plugin reads.
 //
 // AN OWN COPY, NEVER AN IMPORT from the emitters. Every plugin must build and
 // test with every other plugin deleted (server/src/plugins/types.ts's emitEvent
@@ -23,6 +23,11 @@
 //     the monsters plugin alongside this feature): its pre-existing events
 //     announce arrival and departure only, and a fight needs a live position.
 //
+//   wildlife:shoals — where the schools of fishable (shallow-water) fish are,
+//     now. Added 2026-09-05 for the skiffs arc. NO CONSUMER YET: S1 ships the
+//     validator alone so the contract is pinned and reviewed before the
+//     behaviour that reads it lands (see .claude/plans/skiffs-and-boat-draw-calls.md).
+//
 // A MISSING EMITTER IS A LEGAL WORLD. With structures uninstalled no village
 // is ever learned and no boat is ever built; with monsters uninstalled no
 // kraken is ever seen and the fleet sits at home. Neither is an error path.
@@ -36,7 +41,7 @@ import { isFiniteNumber } from '@terrace/shared';
  * to spare; past this a payload is malformed or hostile, not a bigger world.
  * The same bound flora and chronicle keep against the same event.
  */
-const EVENT_LIST_CAP = 4096;
+export const EVENT_LIST_CAP = 4096;
 
 /** A cell inside an event payload. */
 export interface EventCell {
@@ -136,3 +141,53 @@ export function parseMonsterSightings(payload: unknown): MonsterSighting[] | nul
 
 /** The one kind this plugin fights. */
 export const KRAKEN_KIND = 'kraken';
+
+// ── wildlife:shoals ──────────────────────────────────────────────────────────
+
+/** A school is its members; one is the smallest school that can exist. */
+const MIN_SHOAL_MEMBERS = 1;
+
+/** One school of fish, as the shoals event carries it. */
+export interface ShoalSighting {
+  readonly species: string;
+  readonly x: number;
+  readonly y: number;
+  readonly count: number;
+}
+
+/**
+ * Reads a `wildlife:shoals` payload.
+ *
+ * SPECIES IS KEPT AS A STRING, exactly as parseMonsterSightings keeps `kind`
+ * (above) and for the same reason: the emitter's WildlifeHabitatSpecies is the
+ * emitter's type, and a version of it that grew a sixth shallow species must
+ * not fail to parse in a consumer that has never heard of it. An UNKNOWN
+ * SPECIES IS ACCEPTED, not an error.
+ *
+ * A MALFORMED PAYLOAD IS REJECTED WHOLE — null, and the caller does nothing.
+ * There is no partial salvage: half a shoal list is a picture of the sea with
+ * fish silently missing from it, which is worse than no picture at all.
+ */
+export function parseShoalSightings(payload: unknown): ShoalSighting[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const { shoals } = payload as { shoals?: unknown };
+  if (!Array.isArray(shoals) || shoals.length > EVENT_LIST_CAP) return null;
+
+  const sightings: ShoalSighting[] = [];
+  for (const item of shoals) {
+    if (typeof item !== 'object' || item === null) return null;
+    const { species, x, y, count } = item as {
+      species?: unknown;
+      x?: unknown;
+      y?: unknown;
+      count?: unknown;
+    };
+    if (typeof species !== 'string' || !isFiniteNumber(x) || !isFiniteNumber(y)) return null;
+    // A school always has at least one living member (the emitter builds these
+    // BY member), so a non-positive count is a malformed payload, not an
+    // empty school.
+    if (!Number.isInteger(count) || (count as number) < MIN_SHOAL_MEMBERS) return null;
+    sightings.push({ species, x, y, count: count as number });
+  }
+  return sightings;
+}
