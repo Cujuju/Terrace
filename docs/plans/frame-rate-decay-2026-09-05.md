@@ -553,13 +553,56 @@ That rules out, by measurement rather than argument:
 - GPU work of any kind (falling);
 - geometry and draw-call volume (falling).
 
+### The decay is REAL — controlled for the instrument (2026-09-06 06:05)
+
+`renderer.render` CPU correlates with wall-clock **time** at **r = 0.963**, and
+with nothing else measured (programs 0.401, textures 0.278, draw calls −0.290).
+Correlating with time and nothing else is also exactly what a **measurement
+artifact** looks like — and this probe had been armed in every run ever taken of
+this app, so it had never been controlled for.
+
+A `noInstrument=1` flag was added (disables the per-callback wrappers, the
+setTimeout/rAF/addEventListener monkey-patches and the GL upload accounting;
+frame intervals and the GPU timer still work). Same world, same length:
+
+| | frame p50 start → end | slope |
+| --- | --- | --- |
+| instrumented | 2.50 → 4.60 | **+2.10 ms / 580 s** |
+| **wrappers disabled** | 2.30 → 4.40 | **+2.10 ms / 560 s** |
+
+**Identical. The probe is exonerated and the decay is in the application.**
+
+### What the scene is doing while that happens — nothing
+
+| | start | end |
+| --- | --- | --- |
+| scene nodes (every `Object3D`) | 725 | 729 |
+| groups | 103 | 103 |
+| invisible nodes | 116 | 117 |
+| draw calls | 142 | 146 |
+| GPU p50 | 2.17 | 2.99 |
+
+So: **a constant scene graph, constant draw calls, flat GPU — and CPU inside
+`renderer.render` doubling.** The Group-accumulation hypothesis is dead too.
+
 **What is left inside `renderer.render` that does not scale with what is drawn:**
-the per-frame scene-graph walk (`projectObject`), render-list construction and
-sorting, and program/material bookkeeping. Note `censusOf` counts only
-`Mesh`/`Points`/`Line`, so **accumulating empty `Group` nodes would cost
-traversal on every frame while being invisible to every census above** — the
-leading hypothesis, and the `node-soak` run instruments total scene nodes,
-groups and invisible nodes to settle it.
+three-internal bookkeeping that grows with time rather than with the scene.
+The one thing that demonstrably DOES grow is three's resource tables, orphaned:
+`info.memory.geometries` 141 → 172 and `info.memory.textures` 37 → 74 while only
+7 textures remain reachable from the scene (§7d).
+
+**This is where the investigation stands. The driver is not yet identified**, and
+it should not be guessed at — five hypotheses have already died tonight (page
+uptime, world age, upload causality, fill/overdraw, Group accumulation).
+
+Next step for whoever picks this up: three's render path cannot be sub-timed
+from outside, so either
+(a) bisect by disabling renderer features (shadow map, environment, sorting) and
+    re-running the soak, or
+(b) take a JS CPU profile of the decayed page. Note CDP from WSL to the Windows
+    Chrome that has the discrete GPU is blocked in that direction
+    (`scripts/gpu-bench.md`), so (b) needs a profile started from the browser's
+    own devtools on the Windows side.
 
 ---
 
