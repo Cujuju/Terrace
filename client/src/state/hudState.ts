@@ -32,8 +32,19 @@ import {
 import type { ConnectionStatus } from '../net/connection.ts';
 
 /**
- * The brush ladder the player picks from: radii 1, 2, 4, 8 and 16 cells, which
- * paint 0.25, 0.75, 1.75, 3.75 and 7.75 world units of ground.
+ * The brush ladder the player picks from: EVERY radius from 1 to 8 cells
+ * (owner, 2026-09-05: "a smooth slider that I could slide from the lowest size
+ * up to the largest size in increments … 0.50, 1.00, 2.00, and 4.00 with 0.50
+ * increments in between"). Those numbers are the rungs' NOMINAL widths, 2·r
+ * cells — half a world unit per cell of radius — so the ladder is one rung per
+ * cell of radius and the slider shows the nominal width (brushNominalWidthWorldUnits).
+ * The four named sizes are the ANCHORS the slider marks (BRUSH_ANCHOR_RADII);
+ * the rungs between them are plain stops. The top rung is 8 cells, half the
+ * wire's ceiling: the owner's largest size is 4.00, so the 16-cell brush is
+ * no longer offered.
+ *
+ * SUPERSEDES THE DOUBLING LADDER of 2026-08-22, whose rationale follows as
+ * history — the doubling survives as the anchors.
  *
  * A DOUBLING, FROM THE GRID'S FLOOR TO THE WIRE'S CEILING (owner, 2026-08-22,
  * asked for 0.25, 1, 2, 4 and 8 world units, then for "the closest size you can
@@ -65,11 +76,36 @@ import type { ConnectionStatus } from '../net/connection.ts';
  * the grid can express, and MIN_BRUSH_RADIUS's note spells out that a click on
  * it polishes rather than builds.
  */
+export const BRUSH_LADDER_TOP_RADIUS = 2 * WORLD_UNIT_CELLS;
+
 export const BRUSH_RADII: readonly number[] = (() => {
+  if (BRUSH_LADDER_TOP_RADIUS > MAX_BRUSH_RADIUS) {
+    throw new Error('the brush ladder tops out above the wire ceiling');
+  }
   const rungs: number[] = [];
-  for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r *= 2) rungs.push(r);
+  for (let r = MIN_BRUSH_RADIUS; r <= BRUSH_LADDER_TOP_RADIUS; r += 1) rungs.push(r);
   return rungs;
 })();
+
+/**
+ * The ladder's anchors — the doubling from the floor to the top rung — which
+ * the slider marks with detents; every other rung is an unmarked stop.
+ */
+export const BRUSH_ANCHOR_RADII: readonly number[] = (() => {
+  const anchors: number[] = [];
+  for (let r = MIN_BRUSH_RADIUS; r <= BRUSH_LADDER_TOP_RADIUS; r *= 2) anchors.push(r);
+  return anchors;
+})();
+
+/**
+ * A rung's NOMINAL width in world units — 2·r cells — the number the slider
+ * shows (owner, 2026-09-05, who named the sizes 0.50 … 4.00). Distinct from
+ * brushWidthWorldUnits below, the width actually painted, which is a quarter
+ * unit less at every rung because a footprint spans an odd number of cells.
+ */
+export function brushNominalWidthWorldUnits(radius: number): number {
+  return 2 * radius * CELL_WORLD_SIZE;
+}
 
 /**
  * How wide a brush of `radius` actually paints, in WORLD UNITS — the number

@@ -92,7 +92,9 @@ import {
 } from '../state/worldsState.ts';
 import {
   BRUSH_PROFILES,
+  BRUSH_ANCHOR_RADII,
   BRUSH_RADII,
+  brushNominalWidthWorldUnits,
   brushWidthWorldUnits,
   BRUSH_TOOLS,
   brushProfile,
@@ -223,7 +225,7 @@ const PROFILE_ICON: Record<SculptProfile, Component> = {
 
 /**
  * The brush-width slider's top index: it spans the ladder by INDEX, not by
- * radius, which is what makes a native range snap to exactly the five rungs
+ * radius, which is what makes a native range snap to exactly the rungs
  * BRUSH_RADII offers (hudState.ts) instead of to arithmetic in between them.
  * Derived from the ladder, so a rung added there widens the slider by itself.
  */
@@ -238,6 +240,13 @@ const BRUSH_RUNG_MAX = BRUSH_RADII.length - 1;
  */
 function brushRungIndex(): number {
   return Math.max(0, BRUSH_RADII.indexOf(brushRadius()));
+}
+
+/** Decimal places the slider's nominal widths carry: "0.50", "4.00". */
+const BRUSH_WIDTH_DECIMALS = 2;
+
+function brushWidthLabel(radius: number): string {
+  return brushNominalWidthWorldUnits(radius).toFixed(BRUSH_WIDTH_DECIMALS);
 }
 
 const HINT_MODIFIER: Record<string, string> = {
@@ -508,27 +517,30 @@ export function Hud(props: {
             {/* BRUSH WIDTH as a slider (owner, 2026-09-04: "turn it into a
                 slider that goes from least to most values with stops for the
                 two center values"). A NATIVE `input[type=range]` carrying the
-                ladder's INDEX rather than its radius: the five rungs are the
+                ladder's INDEX rather than its radius: the rungs are the
                 only reachable values, so the control snaps to them and the
                 arrow keys, Home and End all step rung by rung for free —
                 which a div-and-pointer-handler slider would have had to
                 reimplement, badly.
 
-                The numbers on show are WIDTHS IN WORLD UNITS, not the
-                ladder's raw radii — see brushWidthWorldUnits (hudState.ts)
-                for why the raw value was showing a quarter of what it
-                appeared to promise. The ends caption the ladder's first and
-                last rung; the live width rides under the thumb, and is what
-                `aria-valuetext` says, because the raw index a screen reader
-                would otherwise read out ("3 of 4") means nothing to a
-                player.
+                The numbers on show are NOMINAL WIDTHS IN WORLD UNITS (owner,
+                2026-09-05: "0.50, 1.00, 2.00, and 4.00 with 0.50 increments
+                in between"), not the ladder's raw radii — see
+                brushNominalWidthWorldUnits (hudState.ts). The ends caption
+                the ladder's first and last rung; the live width rides under
+                the thumb. `aria-valuetext` says the width actually painted
+                (brushWidthWorldUnits), because the raw index a screen reader
+                would otherwise read out ("3 of 7") means nothing to a
+                player. Only the anchors get detents; the half-unit stops
+                between them are felt, not drawn. No tooltip (owner,
+                2026-09-05: "eliminate the tool tip for the brush size").
 
                 --brush-rung is the index the track's fill, its detents and
                 the caption's position are all derived from in CSS, so there
                 is one number to keep true rather than three. */}
             <div class="hud-row brush-slider">
               <span class="brush-slider__end">
-                {brushWidthWorldUnits(BRUSH_RADII[0])}
+                {brushWidthLabel(BRUSH_RADII[0])}
               </span>
               <div
                 class="brush-slider__track"
@@ -539,14 +551,17 @@ export function Hud(props: {
               >
                 <span class="brush-slider__rail" />
                 <span class="brush-slider__fill" />
-                {/* One detent per rung, its ring growing with the brush it
+                {/* One detent per ANCHOR, its ring growing with the brush it
                     stands for, so the width reads before the number does. */}
-                <For each={BRUSH_RADII}>
-                  {(radius, index) => (
+                <For each={BRUSH_ANCHOR_RADII}>
+                  {(radius, anchor) => (
                     <span
                       class="brush-slider__detent"
                       classList={{ on: brushRadius() >= radius }}
-                      style={{ '--brush-detent': String(index()) }}
+                      style={{
+                        '--brush-detent': String(BRUSH_RADII.indexOf(radius)),
+                        '--brush-anchor': String(anchor()),
+                      }}
                     />
                   )}
                 </For>
@@ -559,17 +574,16 @@ export function Hud(props: {
                   value={brushRungIndex()}
                   aria-label="Brush width"
                   aria-valuetext={`${brushWidthWorldUnits(brushRadius())} world units`}
-                  title="Width: wider brush, more mana"
                   onInput={(event) =>
                     setBrushRadius(BRUSH_RADII[event.currentTarget.valueAsNumber])
                   }
                 />
                 <span class="brush-slider__value">
-                  {brushWidthWorldUnits(brushRadius())}
+                  {brushWidthLabel(brushRadius())}
                 </span>
               </div>
               <span class="brush-slider__end">
-                {brushWidthWorldUnits(BRUSH_RADII[BRUSH_RUNG_MAX])}
+                {brushWidthLabel(BRUSH_RADII[BRUSH_RUNG_MAX])}
               </span>
             </div>
           </div>

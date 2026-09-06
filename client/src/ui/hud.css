@@ -487,7 +487,9 @@ body {
   );
 }
 
-/* One ring per rung, sized by the brush it stands for. */
+/* One ring per ANCHOR rung, placed by its ladder index (--brush-detent) and
+   sized by its anchor ordinal (--brush-anchor), so the ring still grows one
+   step per doubling now that the ladder has unmarked stops between them. */
 .brush-slider__detent {
   position: absolute;
   top: 50%;
@@ -497,11 +499,11 @@ body {
   );
   width: calc(
     var(--brush-slider-detent) + var(--brush-slider-detent-step) *
-      var(--brush-detent)
+      var(--brush-anchor)
   );
   height: calc(
     var(--brush-slider-detent) + var(--brush-slider-detent-step) *
-      var(--brush-detent)
+      var(--brush-anchor)
   );
   transform: translate(-50%, -50%);
   border: 1.5px solid rgba(255, 255, 255, 0.35);
