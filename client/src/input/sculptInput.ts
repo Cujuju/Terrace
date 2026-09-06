@@ -50,6 +50,7 @@ import {
   type TerrainRayPick,
   type Vec3,
 } from '../terrain/picking.ts';
+import { footOfFaceCell } from '../terrain/faceFoot.ts';
 import {
   DEFAULT_BRUSH_TOOL,
   brushRadius,
@@ -74,6 +75,22 @@ import {
   chebyshevDistance,
 } from '@terrace/shared';
 import type { SculptIntent, SculptTool } from '@terrace/shared';
+
+/**
+ * THE TOOLS THAT ANCHOR TO THE TREAD AT THE FOOT OF A STRUCK FACE (issue #347,
+ * owner 2026-09-05: a Plateau press near a lip "raises the clicked band and
+ * extends the band above").
+ *
+ * A brush anchors to the CENTRE cell's own ceiling plus one band (shared's
+ * `anchoredTargetHeight`), so a press that names the upper cell of a step
+ * targets two bands up and fills both. These tools mean the surface the player
+ * is looking at, which on a riser is the tread the face rises from.
+ *
+ * NOT `drag` and NOT `carve`, deliberately: the pull GRABS the struck face's
+ * band and the carve CUTS it, so for both of them the upper cell is not an
+ * off-by-one — it is the thing being acted on.
+ */
+const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth'];
 
 
 export interface SculptInputOptions {
@@ -633,14 +650,24 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // and it is only ever this tool that does, which is what leaves every
     // other stroke over unlayered ground byte-identical.
     const spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
+    // A BRUSH PRESS ON A RISER MEANS THE TREAD AT ITS FOOT (issue #347). The
+    // ray is the pinned one `hoverTarget` just re-derived this pick from, so
+    // the step-back is taken along the aim the player actually has.
+    const foot =
+      hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
+        ? footOfFaceCell(cell, hoverRay.direction, worldSize())
+        : null;
+    // Nothing the world→cell rule can answer: keep the cell the pick named,
+    // which is what every tool sent before this existed.
+    const anchor = foot ?? { x: cell.x, y: cell.y };
     // The EDGE is read (not captured) per intent, so switching that toggle
     // mid-stroke takes effect on the very next repeat. The TOOL is not: it is
     // the press's own decision, frozen with the grasp it implies — see
     // `strokeTool` for the two ways reading it live broke a stroke in flight.
     send({
       type: 'sculpt',
-      x: cell.x,
-      y: cell.y,
+      x: anchor.x,
+      y: anchor.y,
       radius: brushRadius(),
       dir: sculptDirection(action),
       tool: strokeTool,
