@@ -198,6 +198,31 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
   if (endMs - windowStartMs >= FRAME_STATS_WINDOW_MS) closeWindow(endMs);
 }
 
+/**
+ * Publishes at once instead of waiting for the window to close.
+ *
+ * WHY A READOUT MUST NOT OPEN EMPTY (owner, 2026-09-06): windows close every
+ * FRAME_STATS_WINDOW_MS, so a block opened just after a boundary showed nothing
+ * for five seconds and read exactly like a broken meter. The meter has been
+ * running the whole time — the readout simply had no way to ask for what it
+ * already held.
+ *
+ * Publishes the window in progress when it has frames, which is the freshest
+ * true answer; percentiles over a short window are wider than over a full one,
+ * and the row saying how many frames they came from is what makes that legible.
+ * With no frames yet (a boundary landed this instant) it re-publishes the last
+ * closed window rather than a row of fabricated zeros, and with neither — a
+ * page younger than its first window — it publishes nothing and the first real
+ * window arrives on its own.
+ */
+export function flushFrameStats(): void {
+  if (windowFrames > 0) {
+    closeWindow(performance.now());
+    return;
+  }
+  if (latestSample !== null) sink?.(latestSample);
+}
+
 /** Test seam: forgets every reading and the uptime origin. */
 export function resetFrameStats(): void {
   writeCursor = 0;

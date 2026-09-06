@@ -21,7 +21,12 @@
 // come from a normal session.
 
 import { createEffect, createRoot, createSignal } from 'solid-js';
-import { frameStatsSample, setFrameStatsSink, type FrameStatsSample } from './frameStats.ts';
+import {
+  flushFrameStats,
+  frameStatsSample,
+  setFrameStatsSink,
+  type FrameStatsSample,
+} from './frameStats.ts';
 import { perfOpen, setFrameStats, setPerfOpen } from '../state/hudState.ts';
 
 const PERF_LOG_QUERY_FLAG = 'perflog';
@@ -87,6 +92,11 @@ function trackReadouts(): () => void {
         if (logWants) logSample(sample);
         if (hudWants) setFrameStats(sample);
       });
+      // AFTER the sink is installed, never before: the flush publishes THROUGH
+      // it, so a flush ahead of it would go nowhere and the block would still
+      // open empty. This is what makes the readout show numbers on the click
+      // rather than up to FRAME_STATS_WINDOW_MS later.
+      flushFrameStats();
     });
     return dispose;
   });

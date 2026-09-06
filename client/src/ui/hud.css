@@ -1317,6 +1317,8 @@ button.world-header {
    takes pointer events: nothing diagnostic may steal a corner touch from the
    camera, so the mismatch state speaks through color and text alone. */
 .hud-version {
+  /* Wide enough for "geometries", the longest label the frame meter prints. */
+  --perf-label-column: 6.5em;
   position: absolute;
   top: 10px;
   right: 12px;
@@ -1369,22 +1371,32 @@ button.world-header {
 }
 
 /* The frame meter's rows (render/frameStats.ts; the pulse button or backquote
-   toggles them). ONE READING PER ROW (owner, 2026-09-06), label left and number
-   right, so the numbers line up as one column to read down. Tabular figures for
-   the same reason the draw line above uses them: without them each new window
-   re-widths the number and the whole block shuffles. min-width on the label
-   keeps the values aligned with each other rather than with their own labels. */
+   toggles them). ONE READING PER ROW, LABELS AND VALUES BOTH LEFT-ALIGNED
+   (owner, 2026-09-06). Two fixed grid columns, so every label starts at the
+   block's left edge and every value starts at the same offset after it — the
+   values read as one column top to bottom, which is the whole job here, since
+   what matters is a number CHANGING rather than its absolute size.
+
+   align-self: stretch IS LOAD-BEARING. The parent column is `align-items:
+   flex-end`, so without it a short row shrink-wraps and is pushed right, which
+   moves where its value column begins and destroys the alignment this rule
+   exists to create. Stretching every row to the block's width pins both columns.
+
+   The label column is sized for the longest label ("geometries"); tabular
+   figures stop each new window's digits from re-widthing the value and
+   shuffling the block. */
 .hud-version__perf {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75em;
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: var(--perf-label-column) auto;
+  gap: 0.5em;
+  text-align: left;
   color: rgb(255 255 255 / 45%);
   font-variant-numeric: tabular-nums;
+  white-space: pre;
 }
 
 .hud-version__perf-label {
-  min-width: 4.5em;
-  text-align: left;
   color: rgb(255 255 255 / 32%);
 }
 
