@@ -42,42 +42,10 @@ import { DEEPSEA_ENVELOPE } from './species/deepsea.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
 import { BIRD_ENVELOPE } from './models.ts';
 
-/**
- * Water a swimmer keeps between its own skin and the surface (or the seabed),
- * in world units, on top of the half-extent the clearance is derived from.
- *
- * READ OFF THE ROW IT REPLACES. The fish shipped with minSubmergence 0.3
- * against a body whose half-height was 0.13 at model scale 1 and 0.182 at the
- * large class (the arithmetic swimmerWorldY's note walks through) — 0.118 of
- * water above the crown. Rounded to 0.12, and used for the seabed side too:
- * the old fish row's 0.25 minClearance left only 0.068 there, which is less
- * visible water under a fish than above it for no reason anyone recorded.
- */
+/** Visible water a swimmer keeps past its crown and belly, in world units. */
 const WATER_MARGIN_WORLD_UNITS = 0.12;
 
-/**
- * The size class every envelope-derived clearance below is measured at.
- *
- * THE BRIEF'S RULE, and it is deliberately conservative: a clearance is stated
- * at model scale 1 (see SwimProfile) and then multiplied by the class scale
- * again at use, so a figure taken at `large` submerges a large creature by
- * WILDLIFE_SIZE_MODEL_SCALE.large² of its crown rather than once.
- *
- * RESIDUAL, NAMED RATHER THAN HIDDEN (2026-09-02): the fish, ray, shark, eel
- * and angelfish insist on
- * rows therefore ask for more water than their bodies strictly need — a large
- * shark insists on 0.68 x 1.4 = 0.95 of water above its 0.56 crown. The effect
- * is never a body out of the water; it is that in a column shallower than
- * `minClearance + minSubmergence` the two limits cross and
- * swimmerColumnBounds' midpoint split takes over, which happens sooner for
- * these three than the geometry alone requires. The whale and deep-sea rows
- * are hand-set at scale 1 and are NOT changed here, so this constant is also
- * the one place the two conventions can be reconciled.
- */
-// 'medium' IS scale 1 (WILDLIFE_SIZE_MODEL_SCALE): a SwimProfile clearance is a
-// scale-1 half-extent by contract, and swimmerColumnBounds applies the class
-// scale itself — deriving at 'large' scaled the crown twice (orchestrator,
-// 2026-09-02, on the wiring report's finding).
+/** 'medium' IS scale 1; swimmerColumnBounds applies the class scale itself, so deriving here at 'large' double-scaled. */
 const CLEARANCE_SIZE_CLASS: WildlifeSizeClass = 'medium';
 const CLEARANCE_MODEL_SCALE = WILDLIFE_SIZE_MODEL_SCALE[CLEARANCE_SIZE_CLASS];
 
@@ -86,78 +54,29 @@ function clearanceFor(halfExtentAtScaleOne: number): number {
   return halfExtentAtScaleOne * CLEARANCE_MODEL_SCALE + WATER_MARGIN_WORLD_UNITS;
 }
 
-/**
- * World-space Y of the sea surface.
- *
- * The renderer draws the sea at `SEA_LEVEL * HEIGHT_WORLD_SCALE +
- * WATER_SURFACE_LIFT` (client/src/render/water.ts). SEA_LEVEL is 0 by definition
- * in @terrace/shared — "water is every height at or below zero" — so the first
- * term is exactly 0 whatever the height scale is, and the second is a
- * thirty-second of a cell, two hundred times smaller than the tightest clearance
- * below. Swimmers are therefore placed against Y = 0.
- *
- * The `: 0` annotation is the guard: this stops compiling the day SEA_LEVEL
- * becomes anything else, which is exactly when this reasoning stops holding.
- */
+/** SEA_LEVEL is 0 by definition, so the sea surface is world Y 0. The `: 0` fails to compile if that changes. */
 export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
 
-/**
- * Where in the water column a species swims, and how much room it insists on.
- *
- * BOTH CLEARANCES ARE READ AT MODEL SCALE 1 — the `medium` class's scale by
- * definition (WILDLIFE_SIZE_MODEL_SCALE) — and multiplied by the drawn
- * creature's class scale at use (see swimmerWorldY). `depthFraction` is a
- * fraction of the water column and means the same thing at every size.
- *
- * WHAT GOES IN THE FIELD is not the same for every row. The whale and the
- * deep-sea creature are hand-set half-extents at scale 1; the fish, ray,
- * shark, eel and angelfish are derived from their model files' envelopes at
- * CLEARANCE_SIZE_CLASS,
- * which is a class scale larger. See that constant for the named residual — it
- * is why those three rows read high against their own crowns.
- */
+/** World units at model scale 1, multiplied by class scale at use. Whale and deepsea rows are hand-set. */
 export interface SwimProfile {
   /** 0 = at the surface, 1 = on the seabed. */
   readonly depthFraction: number;
-  /** Never closer than this to the seabed, in world units, at model scale 1. */
   readonly minClearance: number;
-  /** Never closer than this to the surface, in world units, at model scale 1. */
   readonly minSubmergence: number;
-  /**
-   * Half the model's length and half its width, in world units at model scale
-   * 1 — the footprint `swimmerSeabedY` samples the seabed over.
-   *
-   * A MODEL DIMENSION, exactly like WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES
-   * further down,
-   * and read off the same place (./models.ts, ./whaleSpecies.ts) for the same
-   * reason: this is a question about the hull the client draws, not about the
-   * body the simulation steers. The server's own bodyLengthCells answers a
-   * different question — how far ahead to probe for habitat — and the two are
-   * deliberately not one number.
-   */
+  /** The hull footprint `swimmerSeabedY` samples over; not the server's bodyLengthCells. */
   readonly halfLength: number;
   readonly halfWidth: number;
 }
 
-/**
- * Fish sit just under the surface where the light is, whales cruise mid-water,
- * and the deep-sea creature hugs the bottom — that vertical separation is what
- * makes three species sharing one body of water read as three species rather
- * than as a soup. The clearances are sized off each model's own half-height so a
- * creature never intersects the seabed or breaches the surface.
- */
 export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>> = {
-  // Every figure but the depth fraction is FISH_ENVELOPE (species/fish.ts).
   fish: {
-    // Unchanged: a fish sits just under the surface where the light is.
     depthFraction: 0.2,
-    minClearance: clearanceFor(-FISH_ENVELOPE.bellyY), // anal fin, envelope bellyY
-    minSubmergence: clearanceFor(FISH_ENVELOPE.crownY), // dorsal tip, envelope crownY
-    halfLength: FISH_ENVELOPE.halfLength, // nose to caudal tip, envelope halfLength
-    halfWidth: FISH_ENVELOPE.halfWidth, // widest station, envelope halfWidth
+    minClearance: clearanceFor(-FISH_ENVELOPE.bellyY),
+    minSubmergence: clearanceFor(FISH_ENVELOPE.crownY),
+    halfLength: FISH_ENVELOPE.halfLength,
+    halfWidth: FISH_ENVELOPE.halfWidth,
   },
-  // WHALE_ENVELOPE.length 5.05 (./whaleSpecies.ts); the widest hull of the
-  // three is roughly a fifth of its length across.
+  // Hand-set against WHALE_ENVELOPE (crown 0.670, belly -0.575, length 5.05).
   whale: {
     depthFraction: 0.5,
     minClearance: 0.7,
@@ -165,14 +84,7 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
     halfLength: 2.53,
     halfWidth: 0.5,
   },
-  // minClearance 0.8, NOT the 0.35 it shipped with (owner report 2026-08-14:
-  // the angler "keeps clipping into the terrain"). The model's body ellipsoid
-  // reaches 0.7 below the placement point (models.ts, ellipsoid(1, 0.7, 0.55))
-  // and 0.35 honoured only half of that, so at depthFraction 0.88 the belly
-  // sat inside the seabed — the one species that HUGS the bottom had the one
-  // clearance smaller than its own lower half-height. 0.7 + 0.1 of visible
-  // water under the belly restores the contract stated above the table.
-  // Body ellipsoid(1, 0.7, 0.55) — see the clearance note above.
+  // Hand-set; minClearance covers the 0.35 belly plus visible water (owner report 2026-08-14).
   deepsea: {
     depthFraction: 0.88,
     minClearance: 0.8,
@@ -185,43 +97,34 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
   wolf: null,
   ibex: null,
   bison: null,
-  // The ray sits deepest of the shelf species because it rests on the seabed
-  // (server/species/ray.ts's idle bouts); the shark cruises the middle of the
-  // column. Both bodies are now MEASURED — the interim figures these rows
-  // carried while the models were being authored in parallel are gone.
+  // Ray and eel rest on the seabed (server idle bouts); shark and angelfish cruise mid-column.
   ray: {
     depthFraction: 0.85,
-    // A wing tip at the bottom of its beat, envelope bellyY.
     minClearance: clearanceFor(-RAY_ENVELOPE.bellyY),
-    // A wing tip at the top of its beat plus the eyes, envelope crownY.
     minSubmergence: clearanceFor(RAY_ENVELOPE.crownY),
-    halfLength: RAY_ENVELOPE.halfLength, // lobes to tail tip, envelope halfLength
-    halfWidth: RAY_ENVELOPE.halfWidth, // half the wingspan, envelope halfWidth
+    halfLength: RAY_ENVELOPE.halfLength,
+    halfWidth: RAY_ENVELOPE.halfWidth,
   },
   shark: {
     depthFraction: 0.4,
-    minClearance: clearanceFor(-SHARK_ENVELOPE.bellyY), // pectoral tip, envelope bellyY
-    minSubmergence: clearanceFor(SHARK_ENVELOPE.crownY), // first dorsal, envelope crownY
-    halfLength: SHARK_ENVELOPE.halfLength, // snout to caudal tip, envelope halfLength
-    halfWidth: SHARK_ENVELOPE.halfWidth, // pectoral tips, envelope halfWidth
+    minClearance: clearanceFor(-SHARK_ENVELOPE.bellyY),
+    minSubmergence: clearanceFor(SHARK_ENVELOPE.crownY),
+    halfLength: SHARK_ENVELOPE.halfLength,
+    halfWidth: SHARK_ENVELOPE.halfWidth,
   },
-  // The eel hugs the bottom it rests on (server/species/eel.ts's idle
-  // bouts) without quite touching it; the angelfish cruises mid-water with
-  // the shark, a little higher for its tall dorsal. Both bodies are MEASURED
-  // — derived from their model files' envelopes like the three rows above.
   eel: {
     depthFraction: 0.8,
-    minClearance: clearanceFor(-EEL_ENVELOPE.bellyY), // belly line, envelope bellyY
-    minSubmergence: clearanceFor(EEL_ENVELOPE.crownY), // ridge tip, envelope crownY
-    halfLength: EEL_ENVELOPE.halfLength, // nose to paddle tip, envelope halfLength
-    halfWidth: EEL_ENVELOPE.halfWidth, // widest station, envelope halfWidth
+    minClearance: clearanceFor(-EEL_ENVELOPE.bellyY),
+    minSubmergence: clearanceFor(EEL_ENVELOPE.crownY),
+    halfLength: EEL_ENVELOPE.halfLength,
+    halfWidth: EEL_ENVELOPE.halfWidth,
   },
   angelfish: {
     depthFraction: 0.3,
-    minClearance: clearanceFor(-ANGELFISH_ENVELOPE.bellyY), // anal tip, envelope bellyY
-    minSubmergence: clearanceFor(ANGELFISH_ENVELOPE.crownY), // dorsal tip, envelope crownY
-    halfLength: ANGELFISH_ENVELOPE.halfLength, // nose to caudal tip, envelope halfLength
-    halfWidth: ANGELFISH_ENVELOPE.halfWidth, // bar faces, envelope halfWidth
+    minClearance: clearanceFor(-ANGELFISH_ENVELOPE.bellyY),
+    minSubmergence: clearanceFor(ANGELFISH_ENVELOPE.crownY),
+    halfLength: ANGELFISH_ENVELOPE.halfLength,
+    halfWidth: ANGELFISH_ENVELOPE.halfWidth,
   },
   // Flyers have no water column either — see FLIGHT_ALTITUDES.
   bird: null,
@@ -373,30 +276,8 @@ export function placementKindOf(species: WildlifeSpecies): PlacementKind {
 export const UNKNOWN_TERRAIN_WORLD_Y = 0;
 
 /**
- * Where a swimmer's origin PREFERS to sit between the seabed and the surface:
- * the depth fraction, clamped into the legal band (swimmerColumnBounds).
- *
- * This is the instantaneous answer — the depth for a seabed, with no history.
- * The render path does not call it directly; it calls `swimmerFrameY`, which
- * eases toward this and re-clamps, because a seabed quantised to terrace bands
- * makes this function's output step by a whole band as a creature crosses a
- * boundary. See SWIM_VERTICAL_WORLD_UNITS_PER_SECOND.
- *
- * `modelScale` IS NOT OPTIONAL, and it is the fix for a bug the table above was
- * always one size class away from (found 2026-08-21, when whales gained size
- * classes). A clearance is the creature's own half-height plus a little water;
- * the class scales the model but was scaling nothing here. An earlier version
- * of this note blamed the FISH, computing its half-height from ellipsoid()'s
- * full height argument — 1.4 x 0.26 = 0.36 against a 0.3 minSubmergence, which
- * it noted protocol.ts called "comfortably inside". That was wrong about the
- * fish: ellipsoid() takes FULL extents, so a fish's half-height is 0.13, and at
- * 1.4x that is 0.182 — comfortably inside, as it always was. The whale is the
- * genuine case: WHALE_ENVELOPE (whaleSpecies.ts) IS a half-extent envelope,
- * measured from the model's bounding box, so at `large` its crown reaches
- * 1.4 x 0.670 = 0.938 and its belly sits 1.4 x 0.575 = 0.805 below the origin,
- * against this table's whale minSubmergence 0.7 and minClearance 0.7.
- * Unscaled, a large whale would have put its belly 0.1 units into the seabed
- * and its dorsal 0.24 above the waterline.
+ * Preferred origin Y, no history: depth fraction clamped into swimmerColumnBounds.
+ * `modelScale` is required: unscaled, a large whale's belly sat inside the seabed.
  */
 export function swimmerWorldY(
   seabedY: number,
@@ -409,39 +290,13 @@ export function swimmerWorldY(
   return Math.min(Math.max(preferred, bounds.lowest), bounds.highest);
 }
 
-/**
- * The band of world Y a swimmer's origin may occupy over a seabed at
- * `seabedY`: floor is the seabed plus its belly clearance, ceiling is the
- * surface less its dorsal submergence.
- *
- * SEPARATE FROM `swimmerWorldY` BECAUSE THE TWO ARE DIFFERENT KINDS OF RULE,
- * and keeping them apart is what lets the smoothing below exist. The preferred
- * depth is a PREFERENCE — a fish likes the light, a whale likes mid-water —
- * and something that can be eased toward over a second without anyone being
- * harmed. These two are HARD INVARIANTS: below the floor the body is inside
- * the seabed, above the ceiling it is out of the water. So the render path
- * eases toward the preference and then clamps to this band, and the clamp
- * always wins.
- *
- * When the water is too shallow to honour both (a whale over a sandbar) the
- * limits cross, and splitting the remaining column is the only answer that
- * keeps the creature inside the water at all; it degrades smoothly as the
- * water shallows rather than snapping when the two limits meet. Both halves of
- * the returned pair are that midpoint in that case, so a caller that clamps to
- * it lands exactly there without a special case of its own.
- */
+/** Hard invariants: seabed plus clearance, surface less submergence. Crossed limits return the column midpoint twice. */
 export function swimmerColumnBounds(
   seabedY: number,
   profile: SwimProfile,
   modelScale: number,
 ): { readonly lowest: number; readonly highest: number } {
-  // THE INVARIANT THIS FUNCTION EXISTS FOR: a swimmer's origin is never above
-  // the sea surface, whatever it is fed. A "seabed" above the surface is not a
-  // seabed (there is no water over it), and the crossed-limits midpoint below
-  // would otherwise be computed against it and land the creature in mid-air —
-  // halfway up whichever hill the sample came from. Clamping here rather than
-  // at the callers is what makes the guarantee hold for every caller,
-  // including any written later.
+  // A "seabed" above the surface would put the crossed-limits midpoint in mid-air.
   seabedY = Math.min(seabedY, SEA_SURFACE_WORLD_Y);
   const lowest = seabedY + profile.minClearance * modelScale;
   const highest = SEA_SURFACE_WORLD_Y - profile.minSubmergence * modelScale;
@@ -452,47 +307,12 @@ export function swimmerColumnBounds(
   return { lowest, highest };
 }
 
-/**
- * How fast a swimmer's origin may rise or sink, in world units per second.
- *
- * ROOT CAUSE THIS FIXES (owner, 2026-08-24: sea creatures should "float
- * smoothly somewhere in between there without glitching up and down a level").
- * A swimmer's Y was a pure function of the seabed directly beneath it, and the
- * rendered seabed is QUANTISED TO TERRACE BANDS — so the instant a creature's
- * centre crossed a band boundary its whole depth recomputed against a seabed
- * that had just moved by a full band. Not a drift: a jump, every boundary, on
- * one frame. The owner's own framing is the fix — a creature "doesn't need to
- * follow the contour of the ground", it only may not clip into it or breach
- * the surface — so the preferred depth becomes something eased toward at this
- * rate, and the two things that genuinely must hold stay hard clamps
- * (swimmerColumnBounds).
- *
- * HALF A WORLD UNIT PER SECOND, which is two terrace bands a second (a band is
- * a quarter of a world unit at the client's current relief — see
- * MAX_TERRAIN_WORLD_Y). Sized against the animal that has the problem: a whale
- * cruises at 0.8 world units/s, so this is a gentle glide relative to its own
- * travel — visibly a fish rising, never a step — while still crossing the band
- * it just stepped over in half a second, long before the eye reads the depth
- * as wrong. It is a fixed rate rather than one scaled by species speed because
- * what it has to beat is a property of the TERRAIN (how often a band boundary
- * passes underneath), not of the swimmer.
- */
+/** The seabed is band-quantised, so un-eased depth jumps at every boundary. Two bands a second, fixed: terrain sets it. */
 export const SWIM_VERTICAL_WORLD_UNITS_PER_SECOND = 0.5;
 
 /**
- * World Y for a swimmer this frame: ease toward the depth it prefers, then
- * clamp to the depth it is allowed.
- *
- * `previousY` is the Y this creature was drawn at last frame, or null for one
- * that has just appeared — which starts at its preferred depth, because there
- * is no history to ease from and easing up from nowhere would read as the
- * creature surfacing.
- *
- * ORDER MATTERS: ease first, clamp second. Clamping the eased value means a
- * seabed that rises faster than SWIM_VERTICAL_WORLD_UNITS_PER_SECOND still
- * pushes the creature up immediately — the body never enters the ground, which
- * is the invariant — and the easing only ever governs the slack between the
- * clamps. Doing it the other way round would let a creature lag inside a bank.
+ * Ease toward the preferred depth, THEN clamp: a bank rising faster than the
+ * easing still pushes the body up at once. `previousY` null starts at preferred.
  */
 export function swimmerFrameY(
   previousY: number | null,
@@ -511,40 +331,15 @@ export function swimmerFrameY(
   return Math.min(Math.max(eased, bounds.lowest), bounds.highest);
 }
 
-/**
- * Seabed a swimmer is placed against: the HIGHEST rendered cell AT OR BELOW
- * THE SURFACE anywhere under its BODY, not the single cell under its centre.
- * Cells above the surface are land and are not seabed; see the loop.
- *
- * The same argument `walkerGroundY` makes, and the same bug (owner, 2026-08-24:
- * whales "have a tendency to glitch into the seabed"). A whale is five world
- * units long; sampling one cell under its origin says nothing about the bank
- * its nose is already over, so its head entered the seabed a full body length
- * before its centre noticed. Sampling the nose, the tail and both flanks and
- * taking the shallowest reading means the whole hull clears every band it
- * overlaps.
- *
- * IT SAMPLES ALONG THE CREATURE'S FACING, which is why `heading` is required:
- * the footprint of a five-by-one body is a completely different set of cells
- * depending on which way it points, and a heading-agnostic disc would have to
- * use the LENGTH as its radius in every direction — making a whale rise for
- * banks a body length off its beam that it will never touch.
- *
- * The nose sample is also what buys the easing above its time: a whale meets a
- * rising bank two and a half units before its centre does, which at cruise
- * speed is roughly three seconds of warning — far more than the fraction of a
- * second SWIM_VERTICAL_WORLD_UNITS_PER_SECOND needs to lift it clear.
- */
-/**
- * Where a swimmer's hull is sampled, as multipliers of its half-length (along
- * the heading) and half-width (across it): centre, nose, tail, both flanks.
- * Module-level so the per-frame call allocates nothing — an inline
- * `[[0, 0], …] as const` is type-only and rebuilt on every call.
- */
+/** Hull sample offsets (centre, nose, tail, flanks) as half-extent multipliers. Module-level: no per-frame allocation. */
 const HULL_SAMPLE_ALONG: readonly number[] = [0, 1, -1, 0, 0];
 const HULL_SAMPLE_ACROSS: readonly number[] = [0, 0, 0, 1, -1];
 const HULL_SAMPLE_COUNT = HULL_SAMPLE_ALONG.length;
 
+/**
+ * The highest rendered cell at or below the surface under the whole hull, sampled
+ * along the heading. One cell under the centre let a whale's nose enter a bank first.
+ */
 export function swimmerSeabedY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
@@ -553,8 +348,7 @@ export function swimmerSeabedY(
   profile: SwimProfile,
   modelScale: number,
 ): number | null {
-  // Model dimensions are WORLD UNITS; this steps in CELLS. One conversion, at
-  // the boundary — the same trap WALKER_FOOTPRINT_HALF_EXTENT_CELLS names.
+  // World units in, cells out: one conversion at the boundary.
   const along = cellsAcross(profile.halfLength * modelScale);
   const across = cellsAcross(profile.halfWidth * modelScale);
   const forwardX = Math.cos(heading);
@@ -572,21 +366,11 @@ export function swimmerSeabedY(
       Math.floor(y + forwardY * alongOffset + rightY * acrossOffset),
     );
     if (sampled === null) continue;
-    // A SAMPLE ABOVE THE SURFACE IS LAND, NOT SEABED, and is ignored. The
-    // server keeps a swimmer's CENTRE in water (population.ts's habitat sweep)
-    // but says nothing about its wings and nose, so a ray hugging a cliff
-    // routinely puts a flank sample on the hillside. Taking that as the
-    // shallowest seabed made the whole hull "clear" a seabed that was a
-    // mountain, and the column bounds' crossed-limits midpoint then drew the
-    // creature halfway up it (owner report 2026-09-04: a manta ray floating
-    // in the middle of a mountain). Land overlapped horizontally is a
-    // separate, server-side question; vertically it contributes nothing.
+    // Land is not seabed: a flank sample on a cliff drew a ray halfway up the mountain.
     if (sampled > SEA_SURFACE_WORLD_Y) continue;
     if (seabed === null || sampled > seabed) seabed = sampled;
   }
-  // Every sample on land (only possible while this client's terrain is ahead
-  // of or behind the server's) reads as "no seabed known", which the render
-  // path already answers by not drawing this frame — never by drawing on land.
+  // All samples on land reads as "no seabed known"; the render path skips the frame.
   return seabed;
 }
 
