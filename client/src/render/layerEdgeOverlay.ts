@@ -94,14 +94,51 @@ import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
 
 /**
- * Edge colour. Cyan because nothing else in the scene is: terrain is green and
- * brown, the brush ring is white, a riser pick is amber. An edge overlay whose
- * colour collides with any of those cannot be read at a glance over terrain.
+ * HOW THE RESTING LIPS ARE DRAWN — the player's choice
+ * (state/layerEdgePrefs.ts holds which; this module owns what each one looks
+ * like, the same split as render/celestialVoid.ts and its VoidStyle).
+ *
+ * 'normal'  — not drawn at all. The terraces are the mesh's own shading, which
+ *             is what the world looked like before this overlay existed.
+ * 'crease'  — drawn as a shadow in the terrain rather than a marking over it.
+ * 'debug'   — cyan, the diagnostic picture of every edge the map knows about.
  */
-const EDGE_COLOR = 0x35d6e8;
+export type LayerEdgeStyle = 'normal' | 'crease' | 'debug';
 
-/** Edge line opacity — present over bright treads, not so solid it flattens the terrain under it. */
-const EDGE_OPACITY = 0.9;
+/**
+ * Debug edge colour. Cyan because nothing else in the scene is: terrain is
+ * green and brown, the brush ring is white, a riser pick is amber. A debug
+ * overlay whose colour collides with any of those cannot be read at a glance.
+ */
+const DEBUG_COLOR = 0x35d6e8;
+
+/** Debug line opacity — present over bright treads, not so solid it flattens the terrain under it. */
+const DEBUG_OPACITY = 0.9;
+
+/**
+ * Crease colour: BLACK, and the alpha below is the whole of the look.
+ *
+ * A crease is a shadow, so it must DARKEN what it lies on rather than tint it,
+ * and black over alpha is the only line that does that on every ground the
+ * palette reaches. terrain/bandColors.ts's land ramp runs warm sand
+ * (0xd9c89a) through grass (0x8fc25a) to grey rock and snow, and the seabed
+ * ramp runs green-blue to near-black blue; any single HUE picked here would
+ * read as a correct crease on one of those and as a coloured marking on the
+ * rest. Black has no hue to be wrong about.
+ */
+const CREASE_COLOR = 0x000000;
+
+/**
+ * How dark the crease is. Bounded from both sides: too light and it vanishes
+ * on the bright sand and snow at the ends of the ramp, too dark and it becomes
+ * an ink outline — a cartoon look the terraces, which are shaded surfaces, do
+ * not have. A third of the way is the middle of that band.
+ *
+ * NOT a measured value: this is an eyeball starting point (2026-09-05), and
+ * the only test of it is the owner seeing it in-world. It is deliberately far
+ * below DEBUG_OPACITY, which is drawing a diagnostic and wants to win.
+ */
+const CREASE_OPACITY = 0.33;
 
 /** Two endpoints per segment, three floats each. */
 const FLOATS_PER_SEGMENT = 6;
@@ -279,18 +316,18 @@ export interface LayerEdgeOverlay {
     litSpanWorldUnits: number,
   ): boolean;
   /**
-   * Shows or hides the RESTING lips — state/layerEdgePrefs.ts's choice, which
-   * is 'debug' when they are shown. The grabbed lip is not affected: it is the
-   * grab affordance rather than a picture of what the map knows, and it stays
-   * in both modes (see that module's header).
+   * How the RESTING lips are drawn — state/layerEdgePrefs.ts's choice; see
+   * LayerEdgeStyle for what each one is. The grabbed lip is not affected: it
+   * is the grab affordance rather than a picture of what the map knows, and it
+   * stays in every mode (see that module's header).
    *
-   * Hidden by `mesh.visible`, not by dropping the geometry: the tiles keep
-   * being written by `refreshChunk` either way, so turning the overlay on is
-   * immediate rather than a rebuild of every received chunk. `segmentsByChunk`
-   * — what `lipNear` and `lightBand` read — is untouched by this, so the grab
-   * and carve rules answer identically in both modes.
+   * 'normal' hides by `mesh.visible`, not by dropping the geometry: the tiles
+   * keep being written by `refreshChunk` either way, so turning the overlay on
+   * is immediate rather than a rebuild of every received chunk.
+   * `segmentsByChunk` — what `lipNear` and `lightBand` read — is untouched by
+   * this, so the grab and carve rules answer identically in every mode.
    */
-  setRestingVisible(visible: boolean): void;
+  setStyle(style: LayerEdgeStyle): void;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
   /**
@@ -299,7 +336,7 @@ export interface LayerEdgeOverlay {
    * docs/plans/frame-budget-growth-and-draw-calls.md).
    *
    * A LIVE COUNT AND NOT A CONSTANT: one LineSegments per SUPER-MESH TILE
-   * holding lips — none of them while `setRestingVisible(false)` stands —
+   * holding lips — none of them while the 'normal' style stands —
    * plus the grabbed lip when one is lit. It still grows with
    * the revealed world — every merged rig does — but at one
    * SUPER_MESH_SPAN_CHUNKS^2-th of the rate it did while the chunk was the
@@ -329,15 +366,17 @@ export function createLayerEdgeOverlay(
    */
   const segmentsByChunk = new Map<number, Map<number, Float32Array>>();
   /**
-   * Are the resting lips on screen? True here so a caller that never sets it
-   * — the arch preview harness, which is asked for edges by `?edges=1` — gets
-   * the picture it asked for; world.ts applies the player's pref instead.
+   * How the resting lips are drawn. 'debug' here so a caller that never sets
+   * it — the arch preview harness, which is asked for edges by `?edges=1` —
+   * gets the diagnostic picture it asked for; world.ts applies the player's
+   * pref instead.
    */
-  let restingVisible = true;
+  let style: LayerEdgeStyle = 'debug';
+  const restingVisible = (): boolean => style !== 'normal';
   const material = new LineBasicMaterial({
-    color: EDGE_COLOR,
+    color: DEBUG_COLOR,
     transparent: true,
-    opacity: EDGE_OPACITY,
+    opacity: DEBUG_OPACITY,
     // Depth-tested, unlike the brush ring: an edge behind a hill is NOT
     // grabbable, and drawing it through the hill would promise otherwise.
     depthTest: true,
@@ -419,8 +458,8 @@ export function createLayerEdgeOverlay(
     geometry.setAttribute('position', attribute);
     const mesh = new LineSegments(geometry, material);
     // A tile created while the overlay is hidden must be born hidden, or the
-    // next chunk to build would put cyan back on screen on its own.
-    mesh.visible = restingVisible;
+    // next chunk to build would put the lines back on screen on its own.
+    mesh.visible = restingVisible();
     mesh.renderOrder = RESTING_RENDER_ORDER;
     const tile: EdgeTile = { mesh, positions, attribute, liveEnd: 0, runs: new Map() };
     group.add(mesh);
@@ -759,10 +798,20 @@ export function createLayerEdgeOverlay(
       group.add(grabbed);
       return true;
     },
-    setRestingVisible(visible) {
-      if (visible === restingVisible) return;
-      restingVisible = visible;
+    setStyle(next) {
+      if (next === style) return;
+      style = next;
+      const visible = restingVisible();
       for (const tile of tiles.values()) tile.mesh.visible = visible;
+      // One material behind every tile, so the look is one assignment rather
+      // than a walk. 'normal' leaves it alone: nothing is drawn with it.
+      if (next === 'crease') {
+        material.color.setHex(CREASE_COLOR);
+        material.opacity = CREASE_OPACITY;
+      } else if (next === 'debug') {
+        material.color.setHex(DEBUG_COLOR);
+        material.opacity = DEBUG_OPACITY;
+      }
     },
     clear() {
       clearGrabbed();
@@ -773,7 +822,7 @@ export function createLayerEdgeOverlay(
       // Hidden tiles are not drawn, so they are not in the budget: a count
       // that ignored the mode would report the overlay's cost to a player who
       // is not paying it.
-      return (restingVisible ? tiles.size : 0) + (grabbed === null ? 0 : 1);
+      return (restingVisible() ? tiles.size : 0) + (grabbed === null ? 0 : 1);
     },
     dispose() {
       this.clear();

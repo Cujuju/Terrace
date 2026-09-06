@@ -65,6 +65,7 @@ const VOID_ANCHOR_LABEL: Record<VoidAnchor, string> = {
 /** Panel copy for each lip-overlay mode (state/layerEdgePrefs.ts owns the set). */
 const LAYER_EDGE_STYLE_LABEL: Record<LayerEdgeStyle, string> = {
   normal: 'Normal',
+  crease: 'Crease lines',
   debug: 'Debug (cyan lines)',
 };
 
@@ -267,16 +268,16 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* The terrace-lip overlay (render/layerEdgeOverlay.ts). Debug draws
-          every edge the map knows about; Normal leaves the terrain plain. The
-          lip under the cursor lights either way — it is the grab affordance,
-          not the debug picture. */}
+      {/* The terrace-lip overlay (render/layerEdgeOverlay.ts). Normal leaves
+          the terrain plain; Crease shades every edge in as a shadow; Debug
+          outlines the same edges in cyan. The lip under the cursor lights in
+          all three — it is the grab affordance, not the picture. */}
       <div class="hud-row controls-row">
         <span class="controls-label">Terrain edges</span>
         <select
           class="controls-select"
           aria-label="How terrain layer edges are drawn"
-          title="Normal: the terrain draws its own terraces. Debug: every layer edge the map knows about is outlined in cyan. The edge under the cursor lights up either way."
+          title="Normal: the terrain draws its own terraces. Crease lines: every layer edge is shaded in as a dark crease. Debug: the same edges outlined in cyan. The edge under the cursor lights up in all three."
           value={layerEdgeStyle()}
           onChange={(e) => setLayerEdgeStyle(e.currentTarget.value as LayerEdgeStyle)}
         >

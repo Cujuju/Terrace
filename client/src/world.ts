@@ -53,7 +53,11 @@ import {
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
-import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
+import {
+  createLayerEdgeOverlay,
+  type LayerEdgeOverlay,
+  type LayerEdgeStyle,
+} from './render/layerEdgeOverlay.ts';
 import { createEffect } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { frontierMistMode } from './state/frontierMistPrefs.ts';
@@ -218,15 +222,16 @@ export interface World extends TerrainSink {
    */
   highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null;
   /**
-   * Draws the resting terrace lips, or leaves the terrain plain — the player's
-   * choice (state/layerEdgePrefs.ts, applied by main.tsx). The lip under the
-   * cursor lights either way; see that module for why.
+   * How the resting terrace lips are drawn — the player's choice
+   * (state/layerEdgePrefs.ts, applied by main.tsx; render/layerEdgeOverlay.ts
+   * owns what each style looks like). The lip under the cursor lights in every
+   * style; see that module for why.
    *
    * Remembered here rather than pushed at the overlay directly because a
-   * rejoin REPLACES the overlay (`resetWorld`), and a pref applied once to the
-   * old one would come back on at the next world switch.
+   * rejoin REPLACES the overlay (`resetWorld`), and a style applied once to
+   * the old one would be lost at the next world switch.
    */
-  setLayerEdgesVisible(visible: boolean): void;
+  setLayerEdgeStyle(style: LayerEdgeStyle): void;
   /**
    * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored
    * height, in BAND units, not world units.
@@ -463,11 +468,11 @@ export function createWorld(viewport: Viewport): World {
   let meshes: TerrainMeshes | null = null;
   let layerEdges: LayerEdgeOverlay | null = null;
   /**
-   * The live value of `setLayerEdgesVisible`, kept so a rejoin's fresh overlay
-   * is created into the same choice. Defaults to the overlay's own resting
-   * state; main.tsx sets it from the stored pref before the first chunk lands.
+   * The live value of `setLayerEdgeStyle`, kept so a rejoin's fresh overlay is
+   * created into the same choice. Defaults to the overlay's own resting style;
+   * main.tsx sets it from the stored pref before the first chunk lands.
    */
-  let layerEdgesVisible = true;
+  let layerEdgeStyle: LayerEdgeStyle = 'debug';
   let predictions: PredictionStore | null = null;
 
   /**
@@ -678,7 +683,7 @@ export function createWorld(viewport: Viewport): World {
       worldSize,
       nextMeshes.drawnGround(),
     );
-    nextLayerEdges.setRestingVisible(layerEdgesVisible);
+    nextLayerEdges.setStyle(layerEdgeStyle);
     mirror = nextMirror;
     // The oracle closes over the mirror it was built on AND over that mirror's
     // mesh store, so a replaced mirror takes both with it. This is the only
@@ -1059,9 +1064,9 @@ export function createWorld(viewport: Viewport): World {
       const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
       return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;
     },
-    setLayerEdgesVisible(visible: boolean): void {
-      layerEdgesVisible = visible;
-      layerEdges?.setRestingVisible(visible);
+    setLayerEdgeStyle(style: LayerEdgeStyle): void {
+      layerEdgeStyle = style;
+      layerEdges?.setStyle(style);
     },
     bandAtCell(x: number, y: number): number | null {
       if (mirror === null) return null;
