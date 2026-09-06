@@ -102,11 +102,13 @@ import {
   brushTool,
   connectionStatus,
   panelOpen,
+  perfOpen,
   sculptMode,
   setBrushProfile,
   setBrushRadius,
   setBrushTool,
   setPanelOpen,
+  setPerfOpen,
   setSculptMode,
   setShowControls,
   showControls,
@@ -773,6 +775,36 @@ export function Hud(props: {
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18.4 6.6A9 9 0 1 1 5.6 6.6" />
               <path d="M12 3v8" />
+            </svg>
+          </button>
+          {/* THE FRAME METER'S SWITCH (owner, 2026-09-06). Beside the restart
+              button rather than beside the flask: both are development-loop
+              controls, and both act immediately with nothing behind them —
+              this one opens no popup, it turns four lines on in the top-right
+              diagnostic column where the frame rate and the draw budget
+              already live (ui/VersionWatermark.tsx).
+
+              NO aria-haspopup, unlike its neighbours: nothing pops up. It IS
+              aria-pressed, because that is what a toggle whose effect lands
+              elsewhere on the screen owes a screen reader — aria-expanded
+              would promise a disclosure this button does not perform.
+
+              Backquote does the same thing from the keyboard
+              (render/perfHandle.ts); the title says so, because a shortcut no
+              one can discover is a shortcut no one uses. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            classList={{ open: perfOpen() }}
+            aria-pressed={perfOpen()}
+            aria-label="Performance meter"
+            title="Performance: frame time, resource counts (`)"
+            onClick={() => setPerfOpen(!perfOpen())}
+          >
+            {/* A pulse trace — the conventional glyph for a live meter, and
+                unlike a bar chart it cannot be mistaken for the Cartographer. */}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12h3.5l2.5-6 4 12 2.5-6H21" />
             </svg>
           </button>
           {/* ADMIN MODE (owner, 2026-09-01): the debug spawn panel's door, at
