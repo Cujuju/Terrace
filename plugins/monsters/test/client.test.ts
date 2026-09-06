@@ -76,10 +76,10 @@ describe('state payload parsing', () => {
     const parsed = parseMonstersPayload({
       monsters: [{ id: 3, kind: 'cthulhu', x: 1.25, y: -2.5, heading: 1.5 }],
     });
-    // `climbHeight` is null for a monster on the ground, which is what a row
-    // carrying none means (protocol.ts's MonsterState.climbHeight).
+    // `climbHeight` is null and `falling` false for a monster on the ground,
+    // which is what a row carrying neither means (protocol.ts's MonsterState).
     expect(parsed).toEqual([
-      { id: 3, kind: 'cthulhu', x: 1.25, y: -2.5, heading: 1.5, climbHeight: null },
+      { id: 3, kind: 'cthulhu', x: 1.25, y: -2.5, heading: 1.5, climbHeight: null, falling: false },
     ]);
   });
 });

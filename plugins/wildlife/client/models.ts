@@ -50,6 +50,11 @@ import {
 // plugin — by path. See that module's header for why it lives there.
 import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
+import {
+  MOVER_GAITS,
+  moverGaitIndex,
+  type MoverGait,
+} from '../../../client/src/plugins/kit/moverGait.ts';
 import { WHALE_SPECIES, type WhaleSpecies } from './whaleSpecies.ts';
 import { buildHumpback } from './species/humpback.ts';
 import { buildBlueWhale } from './species/blueWhale.ts';
@@ -182,7 +187,7 @@ interface SpeciesDrawable {
    * Poses the herd's scratch rig. `seconds` is elapsed time; `phase` is the
    * offset in radians of the pose slot being filled.
    */
-  animate(seconds: number, phase: number): void;
+  animate(seconds: number, phase: number, gait: MoverGait): void;
 }
 
 export interface WildlifeModels {
@@ -206,8 +211,10 @@ export interface WildlifeModels {
    * whales do. It must be STABLE for a creature's whole life (the caller passes
    * its entity id), or an individual would change species between frames.
    *
-   * `phase` is the creature's own animation offset in radians; `yaw` is the
-   * rotation about Y the caller derives from the creature's heading.
+   * `phase` is the creature's own animation offset in radians; `gait` is what
+   * it is doing vertically (the kit's `moverGaitOf`) and picks WHICH animation
+   * the pose comes from; `yaw` is the rotation about Y the caller derives from
+   * the creature's heading.
    *
    * Positional arguments rather than a pose object, deliberately: this is
    * called once per creature per frame, and a fresh object each time is 850
@@ -218,6 +225,7 @@ export interface WildlifeModels {
     sizeClass: WildlifeSizeClass,
     variantSeed: number,
     phase: number,
+    gait: MoverGait,
     x: number,
     y: number,
     z: number,
@@ -346,10 +354,17 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    * Named joints rather than positional ones for the same reason bakeSpecies
    * captures them by name: `joints.leftWing` reads, `joints[3]` does not.
    */
-  function herdFor(rig: SpeciesRig): { herd: RigHerd; joints: Readonly<Record<string, Bone>> } {
+  function herdFor(
+    rig: SpeciesRig,
+    wallGaits: boolean = false,
+  ): { herd: RigHerd; joints: Readonly<Record<string, Bone>> } {
     const herd = createRigHerd(rig.blueprint, {
       capacity: instanceCapacity,
       poseSlots: POSE_SLOTS_PER_HERD,
+      // A species that can be on a wall needs a band of slots per gait: phase
+      // alone stops identifying a pose once a creature can be climbing
+      // (AuthoredSpecies.wallGaits).
+      poseVariants: wallGaits ? MOVER_GAITS.length : 1,
     });
     herds.push(herd);
     const joints: Record<string, Bone> = {};
@@ -371,6 +386,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     drawable: SpeciesDrawable,
     seconds: number,
     phase: number,
+    gait: MoverGait,
     x: number,
     y: number,
     z: number,
@@ -378,9 +394,11 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     scale: number,
   ): void {
     const herd = drawable.herd;
-    const slot = herd.poseSlotOf(phase);
+    // The gait picks the palette band, the phase picks the row inside it. A
+    // herd built without wall gaits has one band and clamps to it.
+    const slot = herd.poseSlotOf(phase, moverGaitIndex(gait));
     if (herd.needsPose(slot)) {
-      drawable.animate(seconds, herd.poseSlotPhase(slot));
+      drawable.animate(seconds, herd.poseSlotPhase(slot), gait);
       herd.capturePose(slot);
     }
     herd.place(slot, x, y, z, yaw, scale);
@@ -403,11 +421,12 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    */
   function speciesDrawable(build: SpeciesModelBuilder): SpeciesDrawable {
     const authored = build(speciesPool);
-    const { herd, joints } = herdFor(bakeSpecies(authored.root, authored.joints));
+    const wallGaits = authored.wallGaits === true;
+    const { herd, joints } = herdFor(bakeSpecies(authored.root, authored.joints), wallGaits);
     return {
       herd,
-      animate(seconds, phase) {
-        authored.animate(joints, seconds, phase);
+      animate(seconds, phase, gait) {
+        authored.animate(joints, seconds, phase, gait);
       },
     };
   }
@@ -526,11 +545,12 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
       animationSeconds = seconds;
       for (const herd of herds) herd.beginFrame();
     },
-    draw(species, sizeClass, variantSeed, phase, x, y, z, yaw) {
+    draw(species, sizeClass, variantSeed, phase, gait, x, y, z, yaw) {
       drawInto(
         drawableOf(species, variantSeed),
         animationSeconds,
         phase,
+        gait,
         x,
         y,
         z,

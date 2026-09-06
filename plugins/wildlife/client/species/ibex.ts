@@ -15,7 +15,7 @@
 import { Group, Vector3 } from 'three';
 import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
 import { flatFin, smoothEllipsoid, taperedTube } from './bodyKit.ts';
-import { addQuadrupedLegs, legJoints, poseWalk } from './quadruped.ts';
+import { addQuadrupedLegs, legJoints, poseClimb, poseFall, poseWalk } from './quadruped.ts';
 import type { SpeciesModelBuilder } from './speciesModel.ts';
 
 export const IBEX_SCALE = 0.36;
@@ -176,7 +176,21 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
   return {
     root,
     joints: { rig, head: headPivot, ...legJoints(legs) },
-    animate(joints, _seconds, phase) {
+    // IT CLIMBS (its server profile's `climb` rule), so it is drawn on the wall
+    // as well as on the ground — one pose-palette band per gait.
+    wallGaits: true,
+    animate(joints, seconds, phase, gait) {
+      if (gait === 'climb') {
+        poseClimb(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+        // Head level with the rock it is looking up: no nod while scrambling.
+        joints.head!.rotation.z = 0;
+        return;
+      }
+      if (gait === 'fall') {
+        poseFall(joints, seconds, phase);
+        joints.head!.rotation.z = 0;
+        return;
+      }
       // A walker's phase IS its stride beat (IBEX_STRIDE_WORLD_UNITS): no clock term.
       const beat = phase;
       poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);

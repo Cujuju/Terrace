@@ -26,6 +26,7 @@
 import {
   WORLD_UNIT_CELLS,
   cellsAcross,
+  climbWireOf,
 } from '@terrace/shared';
 import type { ClimbState, Occupant, RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
@@ -400,7 +401,7 @@ export class Wandering {
         x: wanderer.x,
         y: wanderer.y,
         heading: wanderer.heading,
-        climbHeight: wanderer.climb === null ? null : wanderer.climb.height,
+        ...climbWireOf(wanderer.climb),
       });
     }
     return rows;

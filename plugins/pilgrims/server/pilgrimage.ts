@@ -38,6 +38,7 @@ import {
   type RouteCell,
   type RoutedMover,
   type TraversalProfile,
+  climbWireOf,
 } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
@@ -1402,7 +1403,7 @@ export class Pilgrimage {
         heading: pilgrim.heading,
         // Only while off the ground; null is the ordinary case and costs the
         // wire nothing once msgpack has dropped it.
-        climbHeight: pilgrim.climb === null ? null : pilgrim.climb.height,
+        ...climbWireOf(pilgrim.climb),
       });
     }
     return rows;

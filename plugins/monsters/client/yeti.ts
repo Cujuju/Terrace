@@ -83,7 +83,17 @@ import {
 } from './geometry.ts';
 import {
   YETI_BOB_CELLS,
+  YETI_CLIMB_ARM_HIGH_RADIANS,
+  YETI_CLIMB_ARM_LOW_RADIANS,
+  YETI_CLIMB_LEG_HIGH_RADIANS,
+  YETI_CLIMB_LEG_LOW_RADIANS,
+  YETI_CLIMB_PULL_CELLS,
+  YETI_CLIMB_REACH_HZ,
   YETI_EYE_COLOR,
+  YETI_FALL_ARM_RADIANS,
+  YETI_FALL_FLAIL_HZ,
+  YETI_FALL_FLAIL_RADIANS,
+  YETI_FALL_LEG_SPREAD_RADIANS,
   YETI_EYE_EMISSIVE,
   YETI_FUR_TEXTURE_FREQUENCY,
   YETI_FUR_WRINKLE_DEPTH,
@@ -527,7 +537,39 @@ function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => Mons
 
     return {
       root: instance.root,
-      animate(seconds, phase) {
+      animate(seconds, phase, gait = 'walk') {
+        if (gait !== 'walk') {
+          // ON THE WALL. One wave again, at the climb's own rate, and the fall
+          // is the same wave with nothing holding on — see the constants in
+          // ./yeti-anatomy.ts.
+          const falling = gait === 'fall';
+          const hz = falling ? YETI_FALL_FLAIL_HZ : YETI_CLIMB_REACH_HZ;
+          const reach = Math.sin(seconds * hz * TWO_PI + phase);
+          const armMid = (YETI_CLIMB_ARM_HIGH_RADIANS + YETI_CLIMB_ARM_LOW_RADIANS) / 2;
+          const armSpan = (YETI_CLIMB_ARM_HIGH_RADIANS - YETI_CLIMB_ARM_LOW_RADIANS) / 2;
+          const legMid = (YETI_CLIMB_LEG_HIGH_RADIANS + YETI_CLIMB_LEG_LOW_RADIANS) / 2;
+          const legSpan = (YETI_CLIMB_LEG_HIGH_RADIANS - YETI_CLIMB_LEG_LOW_RADIANS) / 2;
+          SIDES.forEach((side, index) => {
+            const swing = reach * side;
+            armJoints[index]!.rotation.z = falling
+              ? YETI_FALL_ARM_RADIANS + swing * YETI_FALL_FLAIL_RADIANS
+              : armMid + swing * armSpan;
+            // The leg follows the OPPOSITE arm while climbing: the diagonal
+            // that keeps three limbs on the rock.
+            legJoints[index]!.rotation.z = falling
+              ? side * YETI_FALL_LEG_SPREAD_RADIANS + swing * YETI_FALL_FLAIL_RADIANS
+              : legMid - swing * legSpan;
+            // The sole stays with its leg — there is no ground to keep it
+            // parallel to, and a foot left flat while the knee comes up reads
+            // as a broken ankle.
+            ankles[index]!.rotation.z = 0;
+          });
+          upper.rotation.x = 0;
+          // He pulls himself up on each reach; a body that has let go does not.
+          rig.position.y = falling ? 0 : Math.abs(reach) * YETI_CLIMB_PULL_CELLS;
+          head.rotation.y = 0;
+          return;
+        }
         // ONE WAVE DRIVES THE WHOLE GAIT, at the rate this variant's stride and
         // the server's speed between them fix (metrics.ambleHz). Everything
         // below is a phase of it, so nothing can drift out of step.

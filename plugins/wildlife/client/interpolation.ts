@@ -44,6 +44,13 @@ export interface InterpolatedEntity {
    * broadcast cadence and drawn every frame.
    */
   readonly climbHeight: number | null;
+  /**
+   * True once this mover has LET GO of the wall (protocol.ts's `falling`).
+   *
+   * NOT INTERPOLATED — it is a state, not a position. The newest message is the
+   * answer, so the pose changes on the frame the server says the grip failed.
+   */
+  readonly falling: boolean;
 }
 
 /**
@@ -83,6 +90,7 @@ interface PoseRecord extends InterpolatedEntity {
   species: InterpolatedEntity['species'];
   size: InterpolatedEntity['size'];
   climbHeight: number | null;
+  falling: boolean;
 }
 
 /**
@@ -113,6 +121,7 @@ export class WildlifeInterpolator extends PoseInterpolator<
       updateRecord: (record, entity, segment, t) => {
         record.species = entity.species;
         record.size = entity.size;
+        record.falling = entity.falling;
         if (segment === undefined) {
           record.x = entity.x;
           record.y = entity.y;

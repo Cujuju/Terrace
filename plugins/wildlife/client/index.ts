@@ -40,6 +40,7 @@ import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecie
 import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
 import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import {
   BODY_COLUMNS,
   SWIM_PROFILES,
@@ -254,6 +255,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       // species between frames.
       id,
       view.phase,
+      // Climbing and falling are their own poses, not a walk at another height.
+      moverGaitOf(entity.climbHeight, entity.falling),
       view.drawnX,
       drawnY,
       view.drawnZ,

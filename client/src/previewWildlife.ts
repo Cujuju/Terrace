@@ -59,6 +59,7 @@ import {
   type WildlifeSpecies,
 } from '../../plugins/wildlife/protocol.ts';
 import { createWildlifeModels } from '../../plugins/wildlife/client/models.ts';
+import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
 import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
@@ -151,6 +152,12 @@ function readSeconds(query: URLSearchParams): number {
  */
 function readPhase(query: URLSearchParams): number {
   return Number.parseFloat(query.get('phase') ?? '0') || 0;
+}
+
+/** ?gait=walk|climb|fall — the wall poses, for a species that has them. */
+function readGait(query: URLSearchParams): MoverGait {
+  const named = query.get('gait');
+  return MOVER_GAITS.find((gait) => gait === named) ?? 'walk';
 }
 
 function buildScene(): {
@@ -272,7 +279,7 @@ function main(): void {
   // bodies (models.ts); exposing it lets a screenshot driver ask for a specific
   // one instead of taking whatever id 0 happens to select.
   models.beginFrame(readSeconds(query));
-  models.draw(species, sizeClass, readVariant(query), readPhase(query), 0, 0, 0, 0);
+  models.draw(species, sizeClass, readVariant(query), readPhase(query), readGait(query), 0, 0, 0, 0);
   models.endFrame();
 
   // A SWIMMER'S ORIGIN IS ITS BODY CENTRE, so a disc at y = 0 cuts the animal

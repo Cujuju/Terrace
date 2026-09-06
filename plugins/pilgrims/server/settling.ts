@@ -41,6 +41,7 @@ import {
   cellsAcross,
   createRouteBudget,
   floodReachableRegion,
+  climbWireOf,
 } from '@terrace/shared';
 import type { ClimbState, Occupant, ReachableRegion, RouteBudget, RouteCell } from '@terrace/shared';
 import { SETTLERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
@@ -830,7 +831,7 @@ export class Settling {
         x: settler.x,
         y: settler.y,
         heading: settler.heading,
-        climbHeight: settler.climb === null ? null : settler.climb.height,
+        ...climbWireOf(settler.climb),
       });
     }
     return rows;

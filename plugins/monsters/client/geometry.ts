@@ -69,6 +69,7 @@ import {
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 // Render kit, reached the same way client/src/plugins/registry.ts reaches this
 // plugin — by path. See that module's header for why it lives there.
+import type { MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import type { RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 
 /**
@@ -924,8 +925,17 @@ export function membranePanel(
 export interface MonsterModel {
   /** Positioned and yawed by the caller; never touched by `animate`. */
   readonly root: Group;
-  /** `seconds` is elapsed time; `phase` is a per-monster offset in radians. */
-  animate(seconds: number, phase: number): void;
+  /**
+   * `seconds` is elapsed time; `phase` is a per-monster offset in radians;
+   * `gait` is what the monster is doing VERTICALLY (the kit's `moverGaitOf`,
+   * from the server's climb fields).
+   *
+   * ON THE ONE ANIMATION CONTRACT, not on the yeti alone: he is the only
+   * monster that climbs today, and a second climber must not be a second place
+   * this question is asked. Defaults to 'walk', which is what every model that
+   * never leaves the ground answers to.
+   */
+  animate(seconds: number, phase: number, gait?: MoverGait): void;
 }
 
 /**

@@ -185,6 +185,18 @@ export interface MonsterState {
    * than dropping him.
    */
   readonly climbHeight?: number | null;
+  /**
+   * True once a doomed climber has LET GO — the height above is now dropping at
+   * eight times the climb rate (@terrace/shared's climb.ts), not rising.
+   *
+   * ON THE WIRE FOR THE SAME REASON `climbHeight` IS: a descent is also a climb
+   * whose height falls, so the two are indistinguishable from a height alone
+   * until several snapshots have gone by, and a fall that reads as a climb for
+   * its first frames is exactly the moment the drawing has to be right.
+   * Additive: absent means "not falling", which is every mover on a pre-fall
+   * server and every mover on the ground.
+   */
+  readonly falling?: boolean;
 }
 
 export interface MonstersStatePayload {
@@ -230,6 +242,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
     // Absent on every row from a pre-climb server and on every monster on the
     // ground; both mean the same thing and are the same value here.
     const climbHeight = isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null;
+    const falling = entry.falling === true;
     parsed.push(
       variant === undefined
         ? {
@@ -239,6 +252,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             y: entry.y,
             heading: entry.heading,
             climbHeight,
+            falling,
           }
         : {
             id: entry.id,
@@ -247,6 +261,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             y: entry.y,
             heading: entry.heading,
             climbHeight,
+            falling,
             variant,
           },
     );

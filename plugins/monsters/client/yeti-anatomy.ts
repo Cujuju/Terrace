@@ -1572,6 +1572,52 @@ export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = 0.08110465116279071;
 const BOB_OF_HEIGHT = 0.00872;
 export const YETI_BOB_CELLS = BOB_OF_HEIGHT * YETI_TOTAL_HEIGHT;
 
+// ── The wall gaits ─────────────────────────────────────────────────────────
+// He climbs (traversal's withClimb, plugins/monsters/server/kinds.ts) and he
+// can fall off, and until 2026-09-05 he played his amble up the rock face.
+// Every angle below is about Z, the axis the amble already swings on: a limb
+// hangs down, so a positive rotation lifts it forward — toward the wall he is
+// facing — and π puts it straight overhead.
+
+/**
+ * Reaches per second on the wall — deliberately SLOWER than the peep's 0.75
+ * (plugins/pilgrims/client/models.ts): he is four times their size, and a big
+ * animal moves its limbs at a big animal's rate. One reach per two seconds is
+ * two per band of wall (@terrace/shared's CLIMB_SECONDS_PER_BAND).
+ */
+export const YETI_CLIMB_REACH_HZ = 0.5;
+
+/**
+ * Where the reaching arm goes and where the anchored one holds, in radians from
+ * hanging straight down. Past π/2 (straight forward) is up and into the rock.
+ */
+export const YETI_CLIMB_ARM_HIGH_RADIANS = 2.3;
+export const YETI_CLIMB_ARM_LOW_RADIANS = 1.3;
+
+/** The same for the legs — a knee finding a hold while the other is extended. */
+export const YETI_CLIMB_LEG_HIGH_RADIANS = 0.8;
+export const YETI_CLIMB_LEG_LOW_RADIANS = 0.15;
+
+/**
+ * How far he pulls himself up on each reach, in the cells YETI_BOB_CELLS is in.
+ *
+ * Twice the amble's bob and derived from it rather than stated: a pull-up is
+ * the whole body, a footfall is a hip, and tying the two means a re-proportioned
+ * yeti climbs at the same scale as he walks.
+ */
+export const YETI_CLIMB_PULL_CELLS = YETI_BOB_CELLS * 2;
+
+/**
+ * The fall: arms flung nearly straight overhead (π is exactly up), and flailing
+ * at a rate nothing else about him uses — he drops at eight times his climb
+ * (climb.ts's FALL_DROP_HEIGHT_UNITS_PER_SECOND) and the pose has to say so.
+ */
+export const YETI_FALL_ARM_RADIANS = 2.9;
+export const YETI_FALL_FLAIL_HZ = 3;
+export const YETI_FALL_FLAIL_RADIANS = 0.35;
+/** Legs part fore and aft as they lose the rock. */
+export const YETI_FALL_LEG_SPREAD_RADIANS = 0.45;
+
 /**
  * The head scans on its own unrelated clock, so the two motions never lock into
  * a pattern a player can feel repeating. 0.09 Hz is an eleven-second sweep;

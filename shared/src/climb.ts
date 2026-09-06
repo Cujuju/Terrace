@@ -127,6 +127,37 @@ export interface ClimbState {
   falling: boolean;
 }
 
+/**
+ * The two things a client has to be TOLD about a mover that is off the ground.
+ *
+ * ONE SHAPE FOR EVERY WIRE, because there are six places a mover's climb is
+ * serialised (pilgrims' three walker kinds, monsters, wildlife's population and
+ * its flocks) and a field added at five of them is a bug at the sixth. Each
+ * protocol still declares its own fields — this only decides what goes in them.
+ *
+ * `falling` IS NOT INFERRABLE FROM `climbHeight`, which is why it is here: a
+ * descent is a climb whose height is also falling, at an eighth of the speed
+ * (FALL_DROP_HEIGHT_UNITS_PER_SECOND), so a client watching the height alone
+ * would have to guess a rate from two snapshots and would guess wrong at the
+ * first tick of every fall — the same argument that put `climbHeight` on the
+ * wire rather than deriving it from the ground.
+ */
+export interface ClimbWire {
+  /** Stored height while off the ground; null for a mover standing on it. */
+  readonly climbHeight: number | null;
+  /** True once a doomed climber has let go. Meaningless while climbHeight is null. */
+  readonly falling: boolean;
+}
+
+/** A mover on the ground — one frozen object rather than one per mover per tick. */
+const NOT_CLIMBING: ClimbWire = Object.freeze({ climbHeight: null, falling: false });
+
+/** The wire fields for a mover's climb, or the standing case. */
+export function climbWireOf(climb: ClimbState | null): ClimbWire {
+  if (climb === null) return NOT_CLIMBING;
+  return { climbHeight: climb.height, falling: climb.falling };
+}
+
 /** What one `advanceClimb` tick did. `fallen` means the caller's mover dies. */
 export type ClimbOutcome = 'climbing' | 'arrived' | 'fallen';
 

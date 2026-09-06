@@ -64,6 +64,7 @@
 // Positions are rounded to BROADCAST_POSITION_DECIMALS (1/100 cell) on the way out.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { climbWireOf } from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 // Type-only import of the plugin contract (fully erased at runtime). It reaches
 // into server/src because core publishes no plugin-API entry point yet — the
@@ -130,7 +131,9 @@ export function monsterStates(): MonsterState[] {
     ...(monster.variant === undefined ? {} : { variant: monster.variant }),
     // Only while it is on a wall. Spread for the same reason the variant is:
     // a monster on the ground puts no key on the wire at all.
-    ...(monster.climb === null ? {} : { climbHeight: monster.climb.height }),
+    // Only while it is on a wall, and the pair is @terrace/shared's
+    // (climbWireOf) so no serialiser can send a height without its fall flag.
+    ...(monster.climb === null ? {} : climbWireOf(monster.climb)),
   }));
 }
 
