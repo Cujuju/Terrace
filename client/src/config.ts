@@ -62,8 +62,27 @@ const pageHost =
  * constructor argument is parsed with `new URL(...)` and treats
  * `wss:`/`https:` as secure, so a `ws://` URL is an accepted endpoint form.
  */
+/**
+ * The game server's port, when it is not the conventional one.
+ *
+ * SEPARATE FROM `VITE_SERVER_URL` BECAUSE THE HOST AND THE PORT ARE SEPARATE
+ * QUESTIONS (owner bug report 2026-09-06: "I can bring up the client, but I
+ * can't connect to the server", from a second machine on the LAN). Launching
+ * on a non-default PORT used to be corrected by having run_server.py set
+ * `VITE_SERVER_URL=ws://localhost:<PORT>` — which fixes the port by hard-wiring
+ * the HOST to `localhost`, and `localhost` on a LAN visitor's machine is that
+ * visitor's own machine. The page loaded and the socket dialled nowhere.
+ *
+ * A port override therefore overrides ONLY the port; the hostname stays derived
+ * from the page, which is what makes a LAN visitor dial the machine that served
+ * them. `VITE_SERVER_URL` remains the whole-endpoint override for the Docker
+ * Compose path, where host AND port genuinely both differ.
+ */
+const serverPort: string =
+  import.meta.env.VITE_SERVER_PORT ?? String(DEFAULT_SERVER_PORT);
+
 export const DEFAULT_SERVER_URL = import.meta.env.DEV
-  ? `ws://${pageHostname}:${DEFAULT_SERVER_PORT}`
+  ? `ws://${pageHostname}:${serverPort}`
   : `ws://${pageHost}`;
 
 /**

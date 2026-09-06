@@ -36,6 +36,16 @@ import { pluginDrawRows } from '../plugins/hudPanels.ts';
 const CLIENT_VERSION: string =
   typeof __CLIENT_VERSION__ === 'string' ? __CLIENT_VERSION__ : 'unversioned';
 
+/** One labelled reading of the frame meter — label left, number right. */
+function PerfRow(props: { label: string; value: string }): JSX.Element {
+  return (
+    <span class="hud-version__perf">
+      <span class="hud-version__perf-label">{props.label}</span>
+      <span>{props.value}</span>
+    </span>
+  );
+}
+
 export function VersionWatermark(): JSX.Element {
   // A mismatch needs BOTH stamps: a server too old to send one (null) is
   // "unknown", and unknown must render quiet, not accused — same absent-means-
@@ -90,25 +100,36 @@ export function VersionWatermark(): JSX.Element {
       <Show when={perfOpen() ? frameStats() : null}>
         {(stat) => (
           <>
-            <span class="hud-version__perf">
-              up {Math.round(stat().uptimeS)}s · {stat().frames} frames ·{' '}
-              {stat().counters.pixelWidth}x{stat().counters.pixelHeight}
-            </span>
-            <span class="hud-version__perf">
-              render {stat().renderMsP50.toFixed(2)} · outside{' '}
-              {stat().outsideMsP50.toFixed(2)} ms
-            </span>
-            <span class="hud-version__perf">
-              frame {stat().frameMsP50.toFixed(2)} · p99{' '}
-              {stat().frameMsP99.toFixed(2)} · max {stat().frameMsMax.toFixed(2)}
-            </span>
-            {/* The three tables §7d found growing ORPHANED — textures 37 -> 74
-                with only 7 reachable from the scene. Printed together because
-                the finding is that they rise while draw calls do not. */}
-            <span class="hud-version__perf">
-              geo {stat().counters.geometries} · tex {stat().counters.textures} ·
-              prog {stat().counters.programs}
-            </span>
+            {/* ONE READING PER LINE (owner, 2026-09-06: packed rows are "too
+                hard to read"). Each row is a label and its number, the label
+                left and the number right, so the numbers form a single column
+                the eye can run down — which is the whole job here, since what
+                matters is a value CHANGING, not its absolute size. Packing
+                three per line saved height and cost exactly that.
+
+                Order is the order the questions get asked: how long has this
+                page been up, how big is what it is drawing, where is the frame
+                time going, how bad do the worst frames get, and what is three
+                holding on to. */}
+            <PerfRow label="up" value={`${Math.round(stat().uptimeS)}s`} />
+            <PerfRow label="frames" value={String(stat().frames)} />
+            <PerfRow
+              label="pixels"
+              value={`${stat().counters.pixelWidth}x${stat().counters.pixelHeight}`}
+            />
+            {/* Two decimals throughout: the decay this exists to show is about
+                2 ms per ten minutes, and one decimal rounds a window's worth of
+                it away. */}
+            <PerfRow label="render" value={`${stat().renderMsP50.toFixed(2)} ms`} />
+            <PerfRow label="outside" value={`${stat().outsideMsP50.toFixed(2)} ms`} />
+            <PerfRow label="frame" value={`${stat().frameMsP50.toFixed(2)} ms`} />
+            <PerfRow label="p99" value={`${stat().frameMsP99.toFixed(2)} ms`} />
+            <PerfRow label="max" value={`${stat().frameMsMax.toFixed(2)} ms`} />
+            <PerfRow label="interval" value={`${stat().intervalMsP50.toFixed(2)} ms`} />
+            <PerfRow label="draws" value={String(stat().counters.drawCalls)} />
+            <PerfRow label="geometries" value={String(stat().counters.geometries)} />
+            <PerfRow label="textures" value={String(stat().counters.textures)} />
+            <PerfRow label="programs" value={String(stat().counters.programs)} />
           </>
         )}
       </Show>
