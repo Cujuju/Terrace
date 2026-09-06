@@ -81,8 +81,34 @@ geometries  153 -> 153      textures  124 -> 124      programs  72 -> 72
 GPU p50    5.71 -> 4.18 ms  (settles DOWNWARD)
 ```
 
-Flat on all three counters. **There is no client-side leak.** Every bit of the
-growth is driven by inbound server state.
+Flat on all three counters — **nothing accumulates without inbound messages.**
+
+**RETRACTION (2026-09-06 04:10).** This document originally read that result as
+"there is no client-side leak." That was wrong, and the error is worth naming:
+freezing drops the inbound messages, which is also the input that *drives* the
+accumulation, so the control cannot distinguish "the client leaks nothing" from
+"the client leaks in response to traffic." It only ever proved the second
+clause.
+
+The measurement that settles it: a **fresh page against a server aged 4 h 15 m**
+(`night-freshpage`) —
+
+| | fresh page, aged server | long-lived page, same world |
+| --- | --- | --- |
+| GPU p50 | **2.68 ms** | 8.7 – 11.3 ms |
+| draw calls | **170** | 320 – 390 |
+| textures | **41** | 135 – 189 |
+
+An older *world* seen through a new *page* is dramatically cheaper than a
+younger world seen through an old page. **The accumulation is page-side, driven
+by inbound traffic — a client-side leak that only manifests while messages are
+arriving.** This is the strongest candidate for the owner's "it gets worse the
+longer I play," and it displaces the ranking in §8 below.
+
+*Confidence:* the direction is unambiguous, but these are two different runs
+against servers of different uptimes, so the magnitude is not yet pinned. The
+run that settles it is a single page watched from fresh with the per-rig census
+(`phase 11`, `leak-soak`), which attributes the growth to an owning rig.
 
 And at matched geometry (4.16 M tris, ~400 draws) the frozen client renders in
 **3.8–4.2 ms** against the live client's **8.95 ms**. More than half the GPU
