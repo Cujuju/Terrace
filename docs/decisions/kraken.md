@@ -148,3 +148,64 @@ body and permitted the monster to move its body into the world. Fixed at the
 predicate (`isLairPose`), not at the three callsites, because the callsites all
 asked the only question on offer. Filed under #44 as a render-only graphics
 item; it was neither.
+
+## Decisions made 2026-09-05 (the home guard is one; the rout now depends on recall)
+
+**The owner, on seeing the fleet a settled coast floats: "we are spawning an
+enormous amount of boats and they're not doing anything but sitting around the
+shore."** The count was not a defect — it is exactly `BOATS_PER_VILLAGE` (3) per
+coastal settlement at `VILLAGE_MIN_TIER`, ~45 hulls on the owner's 15-village
+world, and `forgetVillage` scuttles orphans correctly. The defect was that a war
+boat had exactly ONE peacetime goal: the mooring `homeBerthFor` handed it.
+Settled with the owner and shipped as `plugins/boats/server/squadrons.ts`:
+
+- **A village moors one boat, not three.** `HOME_GUARD_BOATS_PER_VILLAGE` is 1;
+  the other two are free for the open sea. The total hull count is unchanged —
+  the owner explicitly kept it ("if we're gonna spawn this many warboats") — and
+  what changed is what they do.
+- **This weakens the 2026-08-20 rule above, deliberately and with the owner's
+  agreement.** *"A full fishing fleet, and not one boat less"* still describes
+  the fight — `KRAKEN_ROUT_WOUNDS` is untouched at 54, and three engaged boats
+  still beat it in the time the arithmetic predicts — but a lone settlement can
+  no longer produce those three from its own harbour. It has one, and must hold
+  until a squadron is recalled. Measured on a 15-village test coast: of one
+  village's three boats, two were engaged within 20 cells of the kraken and the
+  third was recalled from 192 cells out. **That transit is now part of the
+  cost of a kraken**, and it is the price the owner accepted for a coastline
+  that is not lined with idle hulls.
+- **Recall needed no new mechanism.** `targetFor` already answers a kraken
+  within one patrol range of a boat's OWN home; a ship that answers simply stops
+  being a squadron candidate on that tick, `squadrons.ts` prunes it, and the
+  station-goal path takes it over. There is no handover state to get wrong.
+- **A squadron is crewed inside one recall range.** `SQUADRON_HOME_SPREAD_CELLS`
+  is `VILLAGE_PATROL_RANGE_CELLS` for exactly this reason: every ship of a
+  squadron must be recalled by the SAME kraken, or one arrival splits the
+  squadron, the remainder falls under strength and dissolves, and the fleet
+  meant to answer together arrives in two pieces.
+- **Three to seven ships, and the size is drawn from the flagship's home cell.**
+  The owner's own range. `HOME_GUARD_BOATS_PER_VILLAGE` is 1 rather than 2
+  because of that range and not for defensive reasons: at 2 a village frees one
+  explorer, so a squadron would need three to seven separate villages and its
+  members' homes would exceed the spread on any thinly settled coast — no
+  squadron would ever form.
+- **One shared waypoint, not a formation.** Every ship of a squadron steers for
+  the same point and plans its own route to it. A lateral formation offset was
+  rejected: it puts followers on water no route ever certified, and a *moving*
+  goal trips `REPLAN_GOAL_DRIFT_CELLS` every couple of cells. A shared route
+  ARRAY was also rejected, and this was the correction to the plan as written: a
+  ship astern cannot re-sync against a route that starts at the flagship's
+  position (shared's `ROUTE_REJOIN_RADIUS_CELLS`), and legs are long enough that
+  per-ship planning averages well under one search a tick. Measured on a
+  45-boat, 15-village coast: 1.0 ms/tick in peacetime, 1.6 ms in the fight.
+- **Leg planning has its own route pool.** A leg is the longest search this
+  plugin runs, and on the tick a coastline's squadrons all muster at once every
+  one of them wants a route. Sharing the fleet's pool would let that burst stall
+  every hull's replan for a tick; a pool per leg would put no ceiling on the
+  burst. One pool per tick caps it, and a squadron that finds it empty holds and
+  asks again — a second of a voyage that lasts minutes.
+- **A muster that cannot complete dissolves; it never waits.** Found by the
+  contract test rather than in the world: the timeout only released stragglers
+  from a squadron that could still sail, so a squadron whose absentees left it
+  under `SQUADRON_MIN_SHIPS` held its gathered ships at the rendezvous forever.
+  Dissolving hands them back to the harbour pass, which is the only thing that
+  can actually move a straggler toward a rendezvous.

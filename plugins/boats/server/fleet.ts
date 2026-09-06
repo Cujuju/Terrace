@@ -67,6 +67,20 @@ import {
   BOAT_WIND_PUSH_STEP_CELLS,
 } from './cyclone-event.ts';
 import {
+  HOME_GUARD_BOATS_PER_VILLAGE,
+  SQUADRON_LEG_LENGTH_CELLS,
+  SQUADRON_LEG_MIN_LENGTH_CELLS,
+  SQUADRON_WAYPOINT_ATTEMPTS,
+  advanceSquadrons,
+  resetSquadrons,
+  squadronCount,
+  squadronMembers,
+  squadronOf,
+  type SquadronBoat,
+  type SquadronNavigator,
+  type SquadronWaypoint,
+} from './squadrons.ts';
+import {
   BOATS_PER_VILLAGE,
   BOAT_ENGAGEMENT_RANGE_CELLS,
   BOAT_REBUILD_SECONDS,
@@ -650,8 +664,16 @@ const CROWD_REST_SECONDS = 5;
  */
 const HELD_TICKS_BEFORE_KEDGE = 5;
 
-/** Which berth list a sticky slot index belongs to. */
-type BerthList = 'station' | 'home';
+/**
+ * Which berth list a sticky slot index belongs to.
+ *
+ * 'squadron' carries no index at all — a squadron ship steers for one shared
+ * waypoint, not for a numbered place on a circle — but it must still be its
+ * own value: `Voyage.slot` is only ever a preference for the list it came
+ * from, and a mooring index left over from harbour reread as a station slot is
+ * exactly the defect that comment records.
+ */
+type BerthList = 'station' | 'home' | 'squadron';
 
 const voyages = new Map<number, Voyage>();
 
@@ -836,6 +858,7 @@ const pendingWinds: ParsedStormDamage[] = [];
 const villageKey = (x: number, y: number): string => `${x},${y}`;
 
 export function resetFleet(): void {
+  resetSquadrons();
   villages.clear();
   shipyards.clear();
   voyages.clear();
@@ -1400,10 +1423,14 @@ function assignStationGoals(
 function homeBerthFor(
   index: number,
   kraken: KrakenTarget | null,
+  atSea: ReadonlyMap<number, StationGoal>,
   taken: KrakenTarget[],
 ): StationGoal | null {
   const boat = boats[index];
   if (targetFor(boat, kraken) !== null) return null;
+  // Sailing with a squadron: it has a goal already, and claiming a mooring for
+  // it here would hold that berth against the ship that is actually at home.
+  if (atSea.has(index)) return null;
   const key = villageKey(boat.homeX, boat.homeY);
   const moorings = shipyards.get(key)?.moorings ?? [];
   // No berths at all — filled bay, or inland: the village itself, an
@@ -1466,18 +1493,205 @@ function homeBerthFor(
 /**
  * Every peacetime boat's home berth for this tick, keyed by boat index —
  * assigned from start-of-tick state before anyone moves, the way station
- * slots are. Engaged boats are absent (the station map seats them); a missing
- * entry at sail time can only mean a mid-tick roster change.
+ * slots are. Engaged boats are absent (the station map seats them), and so are
+ * squadron ships (`assignSquadronGoals` seats those, and must therefore run
+ * FIRST — a berth claimed for a ship at sea is a berth the home guard cannot
+ * have); a missing entry at sail time can only mean a mid-tick roster change.
  */
-function assignHomeBerths(kraken: KrakenTarget | null): Map<number, StationGoal> {
+function assignHomeBerths(
+  kraken: KrakenTarget | null,
+  atSea: ReadonlyMap<number, StationGoal>,
+): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
   const taken: KrakenTarget[] = [];
   for (let index = 0; index < boats.length; index++) {
-    const goal = homeBerthFor(index, kraken, taken);
+    const goal = homeBerthFor(index, kraken, atSea, taken);
     if (goal !== null) goals.set(index, goal);
   }
   return goals;
 }
+
+// ── squadrons ────────────────────────────────────────────────────────────────
+
+/**
+ * How far back along a bearing the leg walk steps while looking for water a
+ * hull may hold, in cells.
+ *
+ * BOAT_HULL_LENGTH_CELLS: the walk is looking for somewhere a hull can lie, so
+ * a stride longer than a hull could step straight over a legal berth, and a
+ * stride shorter buys nothing a hull could use.
+ */
+const SQUADRON_LEG_SHORTEN_STEP_CELLS = BOAT_HULL_LENGTH_CELLS;
+
+/**
+ * Full turns of the compass, in radians — the span the leg bearings divide.
+ * Named because it is a fact about circles, not a tuning knob.
+ */
+const FULL_TURN_RADIANS = 2 * Math.PI;
+
+/**
+ * The world questions ./squadrons.ts asks, answered under the same hull law
+ * the rest of this file sails by.
+ *
+ * ONE ROUTE POOL FOR EVERY LEG IN THE TICK, and deliberately not the fleet's.
+ * A leg is a route across SQUADRON_LEG_LENGTH_CELLS of open sea — the most
+ * expensive search this plugin ever runs — and on the tick a coastline's
+ * squadrons all muster at once, every one of them wants one. Sharing the
+ * fleet's pool would let that burst spend the sailing fleet's whole allowance
+ * and stall every hull's replan for a tick; giving each leg its own pool would
+ * put no ceiling on the burst at all. One pool of its own caps the tick's leg
+ * planning at a single budget, and a squadron that finds it empty simply holds
+ * and asks again next tick — which costs a second of a voyage that lasts
+ * minutes.
+ */
+function squadronNavigator(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  legBudget: RouteBudget,
+): SquadronNavigator {
+  return {
+    rendezvousFor(homeX: number, homeY: number): SquadronWaypoint | null {
+      // The village's FIRST surveyed mooring. Not `launch`: that cell is
+      // centre-water a hull length off a beach the planner refuses to certify,
+      // so no route ever starts or ends on it (see `surveyedLaunch`). A
+      // mooring is already proved a manoeuvrable hull pose by the survey.
+      const moorings = shipyards.get(villageKey(homeX, homeY))?.moorings ?? [];
+      return moorings.length === 0 ? null : moorings[0];
+    },
+
+    isInHarbour(homeX: number, homeY: number, x: number, y: number): boolean {
+      // BERTH_SEARCH_RADIUS_CELLS is by construction the disc `surveyedLaunch`
+      // walks, so every cell this village could ever have moored a boat on is
+      // inside it and nothing else is. Answering with the mooring list instead
+      // would be the same fact at O(moorings) per candidate per tick.
+      return distance(x, y, homeX, homeY) <= BERTH_SEARCH_RADIUS_CELLS;
+    },
+
+    legFrom(
+      fromX: number,
+      fromY: number,
+      seed: number,
+      attempt: number,
+    ): SquadronWaypoint | null {
+      const spoke = (seed + attempt) % SQUADRON_WAYPOINT_ATTEMPTS;
+      const bearing = (spoke * FULL_TURN_RADIANS) / SQUADRON_WAYPOINT_ATTEMPTS;
+      const dx = Math.cos(bearing);
+      const dy = Math.sin(bearing);
+      // Walk IN from the full leg length: the far end of a bearing is usually
+      // land or locked ocean, and the longest leg this bearing affords is the
+      // one worth sailing. The floor is what keeps a shortened leg from
+      // collapsing into a patrol — see SQUADRON_LEG_MIN_LENGTH_CELLS.
+      for (
+        let reach = SQUADRON_LEG_LENGTH_CELLS;
+        reach >= SQUADRON_LEG_MIN_LENGTH_CELLS;
+        reach -= SQUADRON_LEG_SHORTEN_STEP_CELLS
+      ) {
+        const x = fromX + dx * reach;
+        const y = fromY + dy * reach;
+        // Judged at the bearing, because that is the heading a hull arrives on.
+        if (!isManoeuvrablePose(world, eroded, x, y, bearing)) continue;
+        // REACHABILITY IS PROVED HERE, ONCE, not discovered by the fleet. A leg
+        // whose end no route reaches would leave every ship of the squadron
+        // pressing the closest hull-legal approach to it for the life of the
+        // voyage — the dead-reckoning branch in `sailBoat`, which is a hold,
+        // not a passage. The route itself is thrown away: each ship plans its
+        // own from where it actually lies, which is the only start position
+        // that can be re-synced against (shared's ROUTE_REJOIN_RADIUS_CELLS).
+        const plan = findRoute(
+          eroded,
+          HULL_PROFILE,
+          { x: fromX, y: fromY },
+          { x, y },
+          legBudget,
+        );
+        if (plan !== null) return { x, y };
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * Each boat's rank among its OWN village's hulls, in `boats` order — 0 for the
+ * first, 1 for the second, and so on.
+ *
+ * It is what "the home guard" means: ranks below
+ * HOME_GUARD_BOATS_PER_VILLAGE hold their village's moorings and answer a
+ * kraken from them; every rank above is free for the open sea. Computed in one
+ * pass, where `homeBerthFor`'s own k counts earlier boats per call — that
+ * quadratic is tolerable for a berth lookup and is not for a per-tick pass
+ * over the whole fleet.
+ */
+function villageRanks(): number[] {
+  const seen = new Map<string, number>();
+  const ranks: number[] = [];
+  for (const boat of boats) {
+    const key = villageKey(boat.homeX, boat.homeY);
+    const rank = seen.get(key) ?? 0;
+    ranks.push(rank);
+    seen.set(key, rank + 1);
+  }
+  return ranks;
+}
+
+/**
+ * Every squadron ship's goal for this tick, keyed by boat index — the third
+ * goal source, sitting between the fight and the harbour.
+ *
+ * A boat is a CANDIDATE for a squadron only if it is past its village's home
+ * guard AND has no kraken to answer. The second half is the recall: `targetFor`
+ * is the same test `sailBoat` makes, so a kraken arriving in range of a ship's
+ * home drops that ship out of the candidate set on the same tick, ./squadrons.
+ * ts prunes it from its squadron, and the station-goal path takes it over with
+ * no handover to write. A squadron that falls under strength dissolves there,
+ * and its survivors are back on their moorings the tick after.
+ *
+ * The goal carries standoff 0 and slot null: a squadron steers for one shared
+ * waypoint, and arriving on it is `advanceSquadron`'s signal to draw the next
+ * leg — not a place to hold.
+ */
+function assignSquadronGoals(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  kraken: KrakenTarget | null,
+  legBudget: RouteBudget,
+  dt: number,
+): Map<number, StationGoal> {
+  const ranks = villageRanks();
+  const candidates: SquadronBoat[] = [];
+  const indexOfBoat = new Map<number, number>();
+  for (let index = 0; index < boats.length; index++) {
+    const boat = boats[index];
+    if (ranks[index] < HOME_GUARD_BOATS_PER_VILLAGE) continue;
+    if (targetFor(boat, kraken) !== null) continue;
+    candidates.push({
+      id: boat.id,
+      x: boat.x,
+      y: boat.y,
+      homeX: boat.homeX,
+      homeY: boat.homeY,
+    });
+    indexOfBoat.set(boat.id, index);
+  }
+  const waypoints = advanceSquadrons(
+    candidates,
+    squadronNavigator(world, eroded, legBudget),
+    dt,
+  );
+  const goals = new Map<number, StationGoal>();
+  for (const [boatId, waypoint] of waypoints) {
+    const index = indexOfBoat.get(boatId);
+    if (index === undefined) continue;
+    goals.set(index, { x: waypoint.x, y: waypoint.y, standoff: 0, slot: null });
+  }
+  return goals;
+}
+
+/**
+ * The squadron this boat sails with, or null — the peacetime trace's read.
+ * Re-exported from ./squadrons.ts so tooling has one import for the fleet.
+ */
+export { squadronCount, squadronMembers, squadronOf };
 
 /**
  * This village's surveyed berths, nearest-first — a read of the survey cache
@@ -1571,6 +1785,7 @@ interface SailTick {
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
+  squadronGoals: Map<number, StationGoal>;
   homeGoals: Map<number, StationGoal>;
 }
 
@@ -1641,6 +1856,7 @@ function sailBoat(tick: SailTick, index: number): void {
     berths,
     krakenOccupant,
     goals,
+    squadronGoals,
     homeGoals,
   } = tick;
   const boat = boats[index];
@@ -1688,8 +1904,18 @@ function sailBoat(tick: SailTick, index: number): void {
   let slotIndex: number | null;
   // Which list `slotIndex` indexes, so next tick's stickiness reads it against
   // the right one (see Voyage.slotList).
-  const slotList: BerthList = target === null ? 'home' : 'station';
-  if (target === null) {
+  // A squadron ship is one that is neither answering a kraken nor holding a
+  // mooring — the third goal source, read before the harbour so that a ship at
+  // sea is never also given a berth.
+  const squadron = target === null ? squadronGoals.get(index) : undefined;
+  const slotList: BerthList =
+    target !== null ? 'station' : squadron !== undefined ? 'squadron' : 'home';
+  if (squadron !== undefined) {
+    goalX = squadron.x;
+    goalY = squadron.y;
+    standoff = squadron.standoff;
+    slotIndex = squadron.slot;
+  } else if (target === null) {
     const home = homeGoals.get(index);
     goalX = home?.x ?? boat.homeX;
     goalY = home?.y ?? boat.homeY;
@@ -2053,6 +2279,8 @@ export function advanceFleet(
   // same allowance, so a headland the whole fleet must round cannot spend one
   // budget per hull. See shared/src/pathing.ts's RouteBudget.
   const budget: RouteBudget = createRouteBudget();
+  // The leg pool, separate from the fleet's — see `squadronNavigator`.
+  const legBudget: RouteBudget = createRouteBudget();
   // The kraken is an occupant, not open water: a hull sails round its body,
   // never through it. One snapshot, taken before anyone moves.
   const krakenOccupant: Occupant | null =
@@ -2061,8 +2289,11 @@ export function advanceFleet(
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
   // Station slots, assigned from start-of-tick positions before anyone moves.
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
+  // Squadrons, assigned the same way — and BEFORE the harbour, because a ship
+  // at sea must not also hold a mooring against the boat that is home.
+  const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt);
   // Home berths, assigned the same way from each village's own surveyed list.
-  const homeGoals = assignHomeBerths(kraken);
+  const homeGoals = assignHomeBerths(kraken, squadronGoals);
 
   // One tick's shared sailing state: every boat sails from the same snapshots.
   const tick: SailTick = {
@@ -2078,6 +2309,7 @@ export function advanceFleet(
     berths,
     krakenOccupant,
     goals,
+    squadronGoals,
     homeGoals,
   };
 
