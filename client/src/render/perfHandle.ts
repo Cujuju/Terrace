@@ -20,6 +20,7 @@
 // had to prove the rig was not causing it. This ships, so the next reading can
 // come from a normal session.
 
+import { createEffect, createRoot, createSignal } from 'solid-js';
 import { frameStatsSample, setFrameStatsSink, type FrameStatsSample } from './frameStats.ts';
 import { perfOpen, setFrameStats, setPerfOpen } from '../state/hudState.ts';
 
@@ -27,7 +28,7 @@ const PERF_LOG_QUERY_FLAG = 'perflog';
 /** Matches the query-flag convention in perfProbe.ts and audio/audioDebug.ts. */
 const PERF_TOGGLE_KEY = 'Backquote';
 
-let logging = false;
+const [logging, setLogging] = createSignal(false);
 
 function queryFlagSet(name: string): boolean {
   // `location` is absent in a non-DOM test run; absence means off, never a throw.
@@ -53,24 +54,41 @@ function logSample(sample: FrameStatsSample): void {
 }
 
 /**
- * Installed whenever at least one readout wants windows, removed when none do.
- * Removing it rather than leaving a no-op sink in place is what keeps a closed
- * readout free: with no sink, a window closes without writing a signal and
+ * Keeps the sink in step with whoever wants windows — installed when a readout
+ * is on, removed when none are.
+ *
+ * AN EFFECT, NOT A CALL EVERY TOGGLE MAKES. The sink was originally refreshed by
+ * hand at each toggle site, which meant every new way to open the block — the
+ * key, the console handle, and then the HUD button (2026-09-06) — had to
+ * remember to refresh it, and a caller that forgot would open a block that
+ * displayed nothing at all. Deriving it from `perfOpen()` instead makes
+ * `setPerfOpen` sufficient on its own from anywhere, so there is nothing left to
+ * forget. Owned by a createRoot because this is not a component: without one the
+ * effect would belong to no owner and never be disposed.
+ *
+ * Removing the sink rather than leaving a no-op in place is what keeps a closed
+ * readout free: with no sink a window closes without writing a signal and
  * without formatting a string.
  */
-function refreshSink(): void {
-  const hudWants = perfOpen();
-  if (!hudWants && !logging) {
-    setFrameStatsSink(null);
-    // The block prints from this signal, so a stale sample must not survive its
-    // own readout — reopening it should show the next real window, not the last
-    // one from minutes ago.
-    setFrameStats(null);
-    return;
-  }
-  setFrameStatsSink((sample) => {
-    if (logging) logSample(sample);
-    if (perfOpen()) setFrameStats(sample);
+function trackReadouts(): () => void {
+  return createRoot((dispose) => {
+    createEffect(() => {
+      const hudWants = perfOpen();
+      const logWants = logging();
+      if (!hudWants && !logWants) {
+        setFrameStatsSink(null);
+        // The block prints from this signal, so a stale sample must not survive
+        // its own readout — reopening it should show the next real window, not
+        // the last one from minutes ago.
+        setFrameStats(null);
+        return;
+      }
+      setFrameStatsSink((sample) => {
+        if (logWants) logSample(sample);
+        if (hudWants) setFrameStats(sample);
+      });
+    });
+    return dispose;
   });
 }
 
@@ -97,7 +115,8 @@ function isTextEntry(target: EventTarget | null): boolean {
  * which layer Escape closes; a diagnostic toggle has no business inside it.
  */
 export function installPerfHandle(): () => void {
-  logging = queryFlagSet(PERF_LOG_QUERY_FLAG);
+  setLogging(queryFlagSet(PERF_LOG_QUERY_FLAG));
+  const disposeReadouts = trackReadouts();
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.code !== PERF_TOGGLE_KEY) return;
     // Modified backquote belongs to the browser and the OS (Ctrl+` is a
@@ -105,7 +124,6 @@ export function installPerfHandle(): () => void {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (isTextEntry(event.target)) return;
     setPerfOpen(!perfOpen());
-    refreshSink();
   };
   window.addEventListener('keydown', onKeyDown);
   (globalThis as unknown as { __terracePerf: unknown }).__terracePerf = {
@@ -114,19 +132,17 @@ export function installPerfHandle(): () => void {
     /** Show or hide the HUD block; no argument toggles it. */
     hud: (on?: boolean): boolean => {
       setPerfOpen(on ?? !perfOpen());
-      refreshSink();
       return perfOpen();
     },
     /** Start or stop the per-window console line; no argument toggles it. */
     log: (on?: boolean): boolean => {
-      logging = on ?? !logging;
-      refreshSink();
-      return logging;
+      setLogging(on ?? !logging());
+      return logging();
     },
   };
-  refreshSink();
   return () => {
     window.removeEventListener('keydown', onKeyDown);
+    disposeReadouts();
     setFrameStatsSink(null);
   };
 }
