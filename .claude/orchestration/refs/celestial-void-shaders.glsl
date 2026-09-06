@@ -1,5 +1,11 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 19 (perf, issue #340, 2026-09-05): no look change. gasPattern and the level field are
+// baked ONCE into two log-polar textures (theta x log r, GAS_BAKE_SIZE 2048, half float, mipmapped;
+// BAKE_GLSL shares WHEEL_FIELDS_GLSL with the wheel) and read back per fragment through
+// gasBakeFetch, which takes whichever atan branch has its cut a quarter turn away so the mip chain
+// never sees the cut. WebGL2 GPU-timer bench, RTX 3090 @1440p: rev 18 3.05 ms -> 2.46 ms (-0.59);
+// bake 1.5-2.5 ms once. Shots differ from rev 18 by max 20/255, mean 0.08 (view) / 0.12 (hub).
 // REVISION 18 (owner 2026-09-05): 'make the gas more transparent' - GAS_EXTINCTION 128 -> 100; stars and twinkle approved.
 // REVISION 17 (owner 2026-09-05): 'colors a little more transparent, maybe 20%' - GAS_EXTINCTION
 // 160 -> 128; 'some of the floating stars glow a little bit, others twinkle just a little bit' -
@@ -211,6 +217,79 @@ const float GLOW_GAIN       = 0.35;  // halo peak brightness relative to the cor
 const float TWINKLE_FRACTION= 0.30;
 const float TWINKLE_DEPTH   = 0.35;  // brightness swing, peak to trough, as a fraction of the star
 const float TWINKLE_RATE    = 2.2;   // rad/s: about one breath every three seconds
+// --- the log-polar bake (perf, issue #340) --------------------------------------------------
+// gasPattern and gasLevel below depend only on rf, the rotating-frame plane position, so they are
+// evaluated once into two textures at startup (BAKE_GLSL) and read back per fragment. The grid is
+// the arms' own coordinate: theta across u, wrapping, and s = log(r + S_LOG_EPS) up v, in which a
+// log spiral is a straight line - so a texel keeps the same shape across an arm at every radius
+// (its aspect is TAU/BAKE_S_SPAN, a constant) and the grain stays resolved out to the rim.
+const float TAU          = 6.2831853;
+const float GAS_INNER_R  = 0.12;   // radius over which the gas ramps in from the hub (a ramp, not a floor)
+const float S_LOG_EPS    = 0.05;   // the offset in s = log(r + eps); keeps s finite at the hub
+const float GAS_BAKE_SIZE= 2048.0; // texels per axis; the TS constant carries the Nyquist derivation
+const float BAKE_S_MIN   = -2.995732;  // s at the hub: log(S_LOG_EPS)
+const float BAKE_S_SPAN  = 5.484797;   // log(R_BAKE_MAX + S_LOG_EPS) - BAKE_S_MIN
+// The gas pattern on the plane in the rotating frame: the arms, their grain, lanes and colour.
+// It is columnar - the same at every depth of the four-unit slab, whose parallax across the
+// thickness is under a filament wide - so it is baked ONCE into the log-polar texture above and
+// read back per fragment, and the march below only
+// varies the vertical profile and the 3-D puffs (rev 16: 6.1 ms -> see the bench in .void-bench).
+// ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
+// straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
+// runs ACROSS it - an arm sits at a fixed thw. The grain is sampled in (s, thw) with long cells
+// along and short cells across, so the filaments run along the curve of each arm.
+float gasPattern(vec2 rf, out vec3 gasCol){
+  float r=length(rf);
+  float th=atan(rf.y,rf.x);
+  float s=log(r+S_LOG_EPS);
+  float wobble=(fbmLow(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
+  float phase=th*ARMS-s*WIND+wobble;
+  float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
+  // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
+  vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
+  float thw=atan(wound.y,wound.x);
+  vec2 aq=vec2(s*STREAK_ALONG, (thw/TAU+0.5)*STREAK_ACROSS);
+  float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
+  float haze=fbmLow(rf*1.4+vec2(9.0,2.0));
+  float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,GAS_INNER_R,r);
+  float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms
+  // Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
+  // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
+  vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
+  float hue=fbmLow(rf/HUE_SCALE+vec2(2.0,5.0));
+  gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
+  gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
+  gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
+  return (arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
+}
+// This patch's depth in the slab: the level field of rev 14, baked alongside the pattern.
+float gasLevel(vec2 rf){ return mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbmLow(rf*LEVEL_SCALE+vec2(6.0,13.0))); }
+// rf -> bake texture coordinate. u wraps with theta (RepeatWrapping, so the two sides of atan's
+// branch cut still filter into each other); v spans the hub to R_BAKE_MAX and clamps beyond it,
+// where the gas is under 1e-3 of its peak.
+vec2 gasBakeUv(vec2 rf){
+  return vec2(atan(rf.y,rf.x)/TAU+0.5, (log(length(rf)+S_LOG_EPS)-BAKE_S_MIN)/BAKE_S_SPAN);
+}
+// ...and back: the rf that a bake texel centre stands for. Exactly the inverse of gasBakeUv, so a
+// lookup lands on the texel that was written for it.
+vec2 gasBakeRf(vec2 uv){
+  float th=(uv.x-0.5)*TAU;
+  return vec2(cos(th),sin(th))*(exp(BAKE_S_MIN+uv.y*BAKE_S_SPAN)-S_LOG_EPS);
+}
+// Reads the bake through whichever branch of atan has its cut a quarter turn away. RepeatWrapping
+// gets the VALUE right across the cut, but u jumps by 1 there, and the quad that straddles the
+// jump derives a huge du/dx and drops to the coarsest mip - a blurred radial line along -x, plain
+// to see in the hub shot. u+1 reaches the same texel through the branch that is continuous there,
+// so its cut lies along +x instead; each fragment takes the branch whose cut it is far from.
+// The two branches sample the same texel wherever both are valid, so the switch itself is unseen.
+vec4 gasBakeFetch(sampler2D tex, vec2 uv){
+  vec4 nearCut=texture2D(tex,vec2(uv.x+1.0-step(0.5,uv.x),uv.y));
+  return mix(texture2D(tex,uv),nearCut,step(0.25,abs(uv.x-0.5)));
+}
+// The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
+// texture's r. Half float, so the pattern's ~1.55 peak needs no scaling on the way through.
+uniform sampler2D u_gasBake;
+uniform sampler2D u_gasLevel;
 // Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
 // (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
 // ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
@@ -249,38 +328,6 @@ float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float dept
   }
   return sum;
 }
-// The gas pattern on the plane in the rotating frame: the arms, their grain, lanes and colour.
-// It is columnar - the same at every depth of the four-unit slab, whose parallax across the
-// thickness is under a filament wide - so it is evaluated ONCE per ray, and the march below only
-// varies the vertical profile and the 3-D puffs (rev 16: 6.1 ms -> see the bench in .void-bench).
-// ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
-// straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
-// runs ACROSS it - an arm sits at a fixed thw. The grain is sampled in (s, thw) with long cells
-// along and short cells across, so the filaments run along the curve of each arm.
-float gasPattern(vec2 rf, out vec3 gasCol){
-  float r=length(rf);
-  float th=atan(rf.y,rf.x);
-  float s=log(r+0.05);
-  float wobble=(fbmLow(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
-  float phase=th*ARMS-s*WIND+wobble;
-  float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
-  // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
-  vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
-  float thw=atan(wound.y,wound.x);
-  vec2 aq=vec2(s*STREAK_ALONG, (thw/6.2831853+0.5)*STREAK_ACROSS);
-  float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
-  float haze=fbmLow(rf*1.4+vec2(9.0,2.0));
-  float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
-  float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms
-  // Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
-  // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
-  vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
-  float hue=fbmLow(rf/HUE_SCALE+vec2(2.0,5.0));
-  gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
-  gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
-  gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
-  return (arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
-}
 // The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
 // broken up by 3-D puffs. Multiplies gasPattern.
 float gasDepthProfile(vec2 rf, float z, float level){
@@ -307,9 +354,11 @@ void main(){
     if(depthFade<=0.0){ gl_FragColor=vec4(col,1.0); return; }   // fully faded: nothing below would show
 
     // --- gas: the plane pattern once, then march the thickness front to back ---
-    vec3 gasCol;
-    float pattern=gasPattern(rf,gasCol);
-    float level=mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbmLow(rf*LEVEL_SCALE+vec2(6.0,13.0)));  // this patch's depth
+    vec2 bakeUv=gasBakeUv(rf);
+    vec4 baked=gasBakeFetch(u_gasBake,bakeUv);
+    vec3 gasCol=baked.rgb;
+    float pattern=baked.a;
+    float level=gasBakeFetch(u_gasLevel,bakeUv).r;                                  // this patch's depth
     float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
     float dt=(tBottom-sdist)/float(GAS_STEPS);
     float gasAcc=0.0;                     // lit weight so far
@@ -348,4 +397,13 @@ void main(){
     col+=vec3(0.8,0.82,0.9)*0.4*stars(dome(d)*110.0+5.0,0.03,0.0);
   }
   gl_FragColor=vec4(col,1.0);
+}
+// ===== bake (drawn twice at startup into the wheel's two log-polar targets; same fields as the wheel) =====
+uniform float u_bakeField;   // 0: colour and pattern; 1: level
+void main(){
+  vec2 rf=gasBakeRf(gl_FragCoord.xy/GAS_BAKE_SIZE);
+  if(u_bakeField>0.5){ gl_FragColor=vec4(gasLevel(rf),0.0,0.0,1.0); return; }
+  vec3 gasCol;
+  float pattern=gasPattern(rf,gasCol);
+  gl_FragColor=vec4(gasCol,pattern);
 }
