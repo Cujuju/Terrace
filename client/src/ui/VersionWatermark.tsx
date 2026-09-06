@@ -48,10 +48,18 @@ const CLIENT_VERSION: string =
  *
  * Zero is not divided into: a window with no interval yet (the first frame has
  * no predecessor) has no rate, and an infinity in a diagnostic is noise.
+ *
+ * A RATE BELOW ONE PRINTS "<1", NEVER "0". Rounding 0.31 fps to "0 fps" says
+ * the renderer has stopped, which is a different and much worse fact than "this
+ * is desperately slow" — and the frames it was measured from prove it has not.
+ * A diagnostic that lies at its own extreme is worse than no diagnostic.
  */
+const MIN_PRINTABLE_FPS = 1;
+
 function asFps(ms: number): string {
   if (ms <= 0) return '';
-  return `${String(Math.round(1000 / ms))} fps`;
+  const fps = 1000 / ms;
+  return fps < MIN_PRINTABLE_FPS ? '<1 fps' : `${String(Math.round(fps))} fps`;
 }
 
 /** One labelled reading of the frame meter — label and value, both left. */
