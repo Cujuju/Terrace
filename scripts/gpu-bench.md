@@ -92,7 +92,36 @@ dependency-optimiser reload if the page gets one), plus Chrome start and
 sampling.
 
 Optional environment: `TERRACE_PROBE_URL` (default `http://localhost:5199`),
-`TERRACE_PROBE_SETTLE_MS` (default 45000).
+`TERRACE_PROBE_SETTLE_MS` (default 45000), `TERRACE_BENCH_LOCK` (default
+`/tmp/terrace-gpu-bench.lock`).
+
+### One run at a time, machine-wide
+
+There is one GPU and one desktop here, and several agents share this repo, so a
+run takes an exclusive `flock` before it launches anything. A second caller
+**exits 3 immediately**, naming the holder:
+
+```
+BENCH LOCK HELD by pid 4242, label peer-run, scenario drift, since 2026-09-06T10:00:00-04:00
+```
+
+Exit 3 is distinct from 1 (no sample) and 2 (bad usage), so a caller can tell
+"someone else is benching" from "the rig is broken". Wait for the holder — two
+runs sharing the GPU make both numbers dishonest, and `gpu-bench.md`'s own
+history shows `idle` at 1.72 ms and 4.77 ms an hour apart on a busy machine,
+larger than most effects a bench here is chasing.
+
+The lock lives in `/tmp`, not the checkout, deliberately: agents bench from
+separate worktrees but share one GPU, so a lock under any one checkout would be
+invisible to the run it has to exclude. `flock` is held by the process, so a
+killed run releases it — there is no stale lock to clear.
+
+Each run's Chrome profile is `~/terrace-chrome-bench-<pid>` on the Windows side.
+Before 2026-09-06 it was a single shared directory that every launch killed and
+`rm -rf`'d, so a second bench silently destroyed the first one's run and the
+victim saw only `NO SAMPLE` (#380). Profiles are swept at the start of the next
+run, under the lock — while it is held no other bench is live, so every surviving
+profile belongs to a run that has finished.
 
 ### Launch modes — measured, not assumed
 
