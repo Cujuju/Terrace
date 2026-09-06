@@ -116,6 +116,11 @@ separate worktrees but share one GPU, so a lock under any one checkout would be
 invisible to the run it has to exclude. `flock` is held by the process, so a
 killed run releases it — there is no stale lock to clear.
 
+The launched Chrome gets the lock fd closed (`9>&-`). It outlives the script by
+design, and a child that inherits the fd inherits the lock: measured 2026-09-06,
+the lock stayed held by `chrome.exe` after the run finished and the next run was
+refused, naming the run that had already ended.
+
 Each run's Chrome profile is `~/terrace-chrome-bench-<pid>` on the Windows side.
 Before 2026-09-06 it was a single shared directory that every launch killed and
 `rm -rf`'d, so a second bench silently destroyed the first one's run and the

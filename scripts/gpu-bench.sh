@@ -189,6 +189,11 @@ HEADLESS_FLAGS=()
 # reach the adapter silently falls back to SwiftShader.
 [ "$HEADLESS" = 1 ] && HEADLESS_FLAGS=(--headless=new)
 
+# 9>&- CLOSES THE LOCK FD IN THE CHILD. Chrome outlives this script by design
+# (the next run sweeps it), and a child that inherits fd 9 inherits the flock
+# with it — measured 2026-09-06: the lock stayed held by chrome.exe after the
+# script exited, and the next run failed with the finished run named as holder.
+#
 # LAUNCHED DIRECTLY, NOT THROUGH `cmd.exe /c start` (fixed 2026-09-05).
 # cmd re-parses its command line and treats `&` as a command separator, so
 # everything after the FIRST `&` of the probe URL was silently dropped: the
@@ -206,19 +211,19 @@ HEADLESS_FLAGS=()
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \
   --disable-features=CalculateNativeWinOcclusion \
-  "${PROBE_URL}/?perfprobe=${SCENARIO}&settle=${SETTLE_MS}${EXTRA_QUERY}" >/dev/null 2>&1 &
+  "${PROBE_URL}/?perfprobe=${SCENARIO}&settle=${SETTLE_MS}${EXTRA_QUERY}" >/dev/null 2>&1 9>&- &
 
 case "$RAISE" in
   once)
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$FOREGROUND_PS1_WIN" \
       -ProfileMatch "$BENCH_PROFILE_DIR" -HoldSeconds "$SAMPLE_TIMEOUT_SECONDS" -Once \
-      >/dev/null 2>&1 &
+      >/dev/null 2>&1 9>&- &
     ;;
   hold)
     # STEALS WINDOWS DESKTOP FOCUS for the length of the run. Opt-in only.
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$FOREGROUND_PS1_WIN" \
       -ProfileMatch "$BENCH_PROFILE_DIR" -HoldSeconds "$SAMPLE_TIMEOUT_SECONDS" \
-      >/dev/null 2>&1 &
+      >/dev/null 2>&1 9>&- &
     ;;
 esac
 
