@@ -451,15 +451,24 @@ transparent full-screen layers (cyclone deck, rain, fog, thunderstorm glow) add
 almost no draw calls and enormous per-pixel work. The heavy cluster is the
 session in which the ablation found storms present.
 
-**The decisive test is queued** (`renderScale` flag, commit `92700aa`): render
-the same scene at 1.0 / 0.7 / 0.5 pixel scale. GPU time proportional to pixel
-count ⇒ fill-bound, and the work belongs in overdraw (layer count, blend cost,
-half-res effect passes). No scaling ⇒ fill is exonerated and the search
-continues.
+### RESULT (2026-09-06 05:15) — NOT fill-bound
 
-**Do not start §8 item 0 or a weather-overdraw change until that test reports.**
-Three hypotheses have already been retracted tonight; this one is not yet
-evidence.
+| `renderScale` | pixels | GPU p50 |
+| --- | --- | --- |
+| 1.0 | 100 % | 1.91 ms |
+| 0.7 | 49 % | 2.42 ms |
+| 0.5 | **25 %** | 2.19 ms |
+
+Quarter the pixel count and GPU time does not fall — it is flat inside noise.
+**Fill and overdraw are exonerated.** Do not spend effort on transparent-layer
+count, blend cost or half-res effect passes on the strength of this document.
+
+*Limit of the test:* it ran on a LIGHT state (1.91 ms), close enough to the
+floor that a fixed per-frame cost — the celestial-void gas pass renders to its
+own fixed-size target, for instance — could mask a fill term. It should be
+repeated on one of the 9.8 ms states before being generalised to those. But at
+light load the answer is unambiguous, and it removes the fourth hypothesis of
+the night.
 
 ---
 
