@@ -300,38 +300,52 @@ const HAND_SEGMENTS = 14;
 const HAND_JOINT_LONGITUDES = 10;
 const HAND_JOINT_LATITUDES = 6;
 
-const HAND_WRIST_HEIGHT = 0.32;
-const HAND_WRIST_RADIUS_TOP = 0.26;
-const HAND_WRIST_RADIUS_BOTTOM = 0.2;
-const HAND_PALM_HEIGHT = 0.66;
+const HAND_WRIST_HEIGHT = 0.3;
+const HAND_WRIST_RADIUS_TOP = 0.27;
+const HAND_WRIST_RADIUS_BOTTOM = 0.22;
+/** The palm: about as tall as it is wide, a third as deep — a broad, square, strong palm. */
+const HAND_PALM_HEIGHT = 0.8;
 const HAND_PALM_WIDTH = 0.8;
-const HAND_PALM_DEPTH = 0.24;
-const HAND_PALM_CORNER_RADIUS = 0.14;
+const HAND_PALM_DEPTH = 0.26;
+const HAND_PALM_CORNER_RADIUS = 0.12;
 const HAND_PALM_BEVEL = 0.045;
 
-/** Fingers, index to little: total length and the sideways splay of the whole digit. */
-const HAND_FINGER_LENGTHS = [0.62, 0.7, 0.65, 0.5] as const;
-const HAND_FINGER_SPACING = 0.205;
-const HAND_FINGER_SPLAY = 0.11;
+/**
+ * Fingers, index to little: total length. They rise STRAIGHT and PARALLEL from
+ * the knuckle row (2026-09-05, from the first render: splayed, back-leaning
+ * fingers read as a sheaf of twigs), the middle finger longest, about the
+ * palm's width, so the hand's proportions are a hand's.
+ */
+const HAND_FINGER_LENGTHS = [0.7, 0.78, 0.72, 0.58] as const;
+const HAND_FINGER_SPACING = 0.2;
 
 /** How a finger's length divides between its three phalanges, and how it thins along them. */
-const HAND_PHALANX_SHARES = [0.42, 0.33, 0.25] as const;
-const HAND_PHALANX_RADII = [0.072, 0.064, 0.055] as const;
+const HAND_PHALANX_SHARES = [0.4, 0.33, 0.27] as const;
+const HAND_PHALANX_RADII = [0.075, 0.068, 0.06] as const;
 
-/** The curl: each phalanx leans a little further toward the viewer than the last. */
-const HAND_PHALANX_TILTS = [0.07, 0.24, 0.44] as const;
+/** The curl: only the outer phalanges lean toward the viewer, and only a little — an open hand, not a grasp. */
+const HAND_PHALANX_TILTS = [0, 0.12, 0.3] as const;
 
 /** A joint reads as a knuckle only if it is thicker than the bone either side of it. */
 const HAND_JOINT_BULGE = 1.18;
 
-/** The knuckle row on the palm's top edge. */
-const HAND_KNUCKLE_RADIUS = 0.085;
+/** The knuckle row, its spheres seated ON the palm's top edge. */
+const HAND_KNUCKLE_RADIUS = 0.09;
 
-/** The thumb: rooted low on the palm's +x side, swung out and toward the viewer. */
-const HAND_THUMB_ROOT: Point = [0.38, 0.45, 0.08];
+/**
+ * The thumb: rooted on the palm's +x SIDE two-fifths of the way up, swung out
+ * about 45° and a little forward, then curling upward so its tip reaches the
+ * height of the palm's top.
+ */
+const HAND_THUMB_ROOT_HEIGHT_SHARE = 0.4;
+const HAND_THUMB_ROOT: Point = [
+  HAND_PALM_WIDTH / 2,
+  HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT * HAND_THUMB_ROOT_HEIGHT_SHARE,
+  0.04,
+];
 const HAND_THUMB_SEGMENTS = [
-  { length: 0.34, radius: 0.082, tilt: 0.5, spread: -1.05 },
-  { length: 0.26, radius: 0.07, tilt: 0.7, spread: -0.8 },
+  { length: 0.42, radius: 0.1, tilt: 0.2, spread: -1.1 },
+  { length: 0.34, radius: 0.088, tilt: 0.4, spread: -0.65 },
 ] as const;
 
 /** One phalanx: how long, how thick, how far it leans toward the viewer and out to the side. */
@@ -395,12 +409,11 @@ function titansHand(): Part[] {
 
   const fingers = HAND_FINGER_LENGTHS.flatMap((length, i) => {
     const x = (i - (HAND_FINGER_LENGTHS.length - 1) / 2) * HAND_FINGER_SPACING;
-    const spread = (i - (HAND_FINGER_LENGTHS.length - 1) / 2) * HAND_FINGER_SPLAY;
     const phalanges = HAND_PHALANX_SHARES.map((share, k) => ({
       length: length * share,
       radius: HAND_PHALANX_RADII[k]!,
       tilt: HAND_PHALANX_TILTS[k]!,
-      spread,
+      spread: 0,
     }));
     return digit([x, palmTop, 0], phalanges, HAND_KNUCKLE_RADIUS);
   });
@@ -425,16 +438,26 @@ function titansHand(): Part[] {
 const QUAKE_SLAB_HEIGHT = 0.1;
 const QUAKE_SLAB_RADIUS = 1;
 
-/** How much of a turn one wave arc spans — a third, so it opens rather than closes. */
-const QUAKE_ARC_TURN = 0.28 * Math.PI * 2;
+/**
+ * How much of a turn one wave arc spans: 100°, centred on the horizontal, so
+ * every arc is the same open bracket and the fan reads as ONE glyph. The arcs
+ * all share ONE centre (2026-09-05, from the first render: arcs lifted to
+ * stand their feet on the slab had three different centres and read as
+ * claws) — a point QUAKE_ARC_CENTRE_LIFT above the slab, so the lower reach of
+ * each arc sinks into the slab and the tile beneath, which hide it.
+ */
+const QUAKE_ARC_TURN = (100 / 360) * Math.PI * 2;
+const QUAKE_ARC_CENTRE_LIFT = 0.3;
 
-/** The three waves, outward: how far from the epicentre and how thick. */
-const QUAKE_ARC_RADII = [0.36, 0.62, 0.88] as const;
-const QUAKE_ARC_TUBES = [0.055, 0.048, 0.041] as const;
-const QUAKE_ARC_TUBE_SEGMENTS = 6;
-const QUAKE_ARC_RING_SEGMENTS = 12;
+/** The three waves, outward: how far from the centre and how thick. Chunky, and clearly nested. */
+const QUAKE_ARC_RADII = [0.42, 0.66, 0.9] as const;
+const QUAKE_ARC_TUBES = [0.09, 0.08, 0.07] as const;
+const QUAKE_ARC_TUBE_SEGMENTS = 8;
+const QUAKE_ARC_RING_SEGMENTS = 18;
 
-const QUAKE_EPICENTRE_RADIUS = 0.16;
+/** The epicentre dome, rising from the slab under the arcs' shared centre. */
+const QUAKE_EPICENTRE_RADIUS = 0.26;
+const QUAKE_EPICENTRE_SINK = 0.12;
 
 function quake(): Part[] {
   const slab = place(
@@ -445,12 +468,11 @@ function quake(): Part[] {
   );
   const top = QUAKE_SLAB_HEIGHT;
   // A torus arc starts at +x and sweeps counter-clockwise, so turning it back
-  // by half its span centres it on the direction the wave travels; lifting it
-  // by the height of its own ends stands those ends on the slab.
+  // by half its span centres it on the direction the wave travels.
   const halfSpan = QUAKE_ARC_TURN / 2;
-  const arcs = QUAKE_ARC_RADII.flatMap((radius, i) => {
-    const foot = radius * Math.sin(halfSpan);
-    return [0, Math.PI].map((facing) =>
+  const centreY = top + QUAKE_ARC_CENTRE_LIFT;
+  const arcs = QUAKE_ARC_RADII.flatMap((radius, i) =>
+    [0, Math.PI].map((facing) =>
       place(
         new TorusGeometry(
           radius,
@@ -460,18 +482,18 @@ function quake(): Part[] {
           QUAKE_ARC_TURN,
         ),
         0,
-        top + foot,
+        centreY,
         0,
         0,
         0,
         facing - halfSpan,
       ),
-    );
-  });
+    ),
+  );
   const epicentre = place(
-    new SphereGeometry(QUAKE_EPICENTRE_RADIUS, SPHERE_SEGMENTS, SPHERE_SEGMENTS),
+    new SphereGeometry(QUAKE_EPICENTRE_RADIUS, HAND_JOINT_LONGITUDES, HAND_JOINT_LATITUDES),
     0,
-    top,
+    top + QUAKE_EPICENTRE_RADIUS - QUAKE_EPICENTRE_SINK,
     0,
   );
   return [...painted('rock', slab), ...painted('crimson', ...arcs, epicentre)];
@@ -488,18 +510,25 @@ function quake(): Part[] {
 const GENESIS_BEACH_HEIGHT = 0.16;
 const GENESIS_MOUND_HEIGHT = 0.3;
 
-const GENESIS_SHAFT_RADIUS = 0.06;
+/** A stout arrow (2026-09-05, from the first render: the slender one was a pin). */
+const GENESIS_SHAFT_RADIUS = 0.09;
 const GENESIS_SHAFT_LENGTH = 0.9;
-const GENESIS_HEAD_RADIUS = 0.16;
-const GENESIS_HEAD_LENGTH = 0.34;
+const GENESIS_HEAD_RADIUS = 0.22;
+const GENESIS_HEAD_LENGTH = 0.44;
 
 /** The barbs: how long, how thick at the root, and how far they lean off the shaft. */
-const GENESIS_BARB_LENGTH = 0.42;
-const GENESIS_BARB_RADIUS = 0.115;
-const GENESIS_BARB_LEAN = 1.05;
+const GENESIS_BARB_LENGTH = 0.5;
+const GENESIS_BARB_RADIUS = 0.16;
+const GENESIS_BARB_LEAN = 0.95;
 
 /** Three sides is enough for a barb: it is a wedge, and its job is the silhouette. */
 const GENESIS_BARB_SIDES = 3;
+
+/** Fletching: three thin vanes around the shaft's foot, as tall as they are shallow. */
+const GENESIS_VANE_COUNT = 3;
+const GENESIS_VANE_HEIGHT = 0.3;
+const GENESIS_VANE_REACH = 0.16;
+const GENESIS_VANE_THICKNESS = 0.03;
 
 function genesis(): Part[] {
   const beach = place(
@@ -548,10 +577,25 @@ function genesis(): Part[] {
       dir[2] * half,
     );
   });
+  // Each vane stands off one side of the shaft, then the set is turned about it.
+  const vanes = Array.from({ length: GENESIS_VANE_COUNT }, (_, i) =>
+    place(
+      new BoxGeometry(GENESIS_VANE_REACH, GENESIS_VANE_HEIGHT, GENESIS_VANE_THICKNESS).translate(
+        GENESIS_SHAFT_RADIUS + GENESIS_VANE_REACH / 2,
+        0,
+        0,
+      ),
+      0,
+      moundTop + GENESIS_VANE_HEIGHT / 2,
+      0,
+      0,
+      (i / GENESIS_VANE_COUNT) * Math.PI * 2,
+    ),
+  );
   return [
     ...painted('stone', beach),
     ...painted('grass', mound),
-    ...painted('crimson', shaft, head, ...barbs),
+    ...painted('crimson', shaft, head, ...barbs, ...vanes),
   ];
 }
 
