@@ -198,11 +198,26 @@ What survives, and it is still worth fixing:
 - In the worst runs total upload was **3.2–4.6 ms/frame of a ~9.8 ms frame**
   (33–47 %).
 
-So the pose-palette fix targets **the hitch and the tail (`msP99`, `msMax`) —
-the stutter — not the steady-state GPU median.** That is a narrower and more
-honest claim than the one below, and it is the one the fix should be measured
-against. Removing the upload removes real blocking main-thread time whatever
-causes the stall, so the fix is sound even under the revised causality.
+**PRICED (2026-09-06 04:25).** Rather than argue the causality, the probe gained
+a `suppressUploads` flag that skips exactly these calls. Same world, same
+camera, back-to-back:
+
+| | baseline | suppressed |
+| --- | --- | --- |
+| GPU p50 | 2.64 ms | **1.97 ms** (−0.67, −25 %) |
+| frame p50 | 2.60 ms | 2.30 ms |
+| upload CPU | 0.146 ms/f | 0.074 ms/f |
+| msP99 / msMax | 3.80 / 4.40 | 4.10 / 4.80 |
+
+**The prize is the MEDIAN, not the tail** — and that falsifies the guess written
+three paragraphs above, that the fix would help the stutter. It does not: p99 and
+max were unchanged-to-worse. The GPU saving (0.67 ms) is ~9× the CPU-side upload
+saving (0.072 ms/f), so these uploads cost GPU pipeline time and not merely
+blocking main-thread time.
+
+Measured on a LIGHT state (2.64 ms baseline, ~9 palette uploads/frame). In the
+heaviest states seen tonight uploads ran 3.2–4.6 ms of a ~9.8 ms frame, so the
+prize should be larger there — unmeasured, and not claimed.
 
 **Root cause in one sentence:** `rigHerd` invalidates its entire pose cache
 every frame, so every active species pays a full, stalling palette texture

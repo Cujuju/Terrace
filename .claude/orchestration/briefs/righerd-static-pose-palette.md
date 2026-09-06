@@ -48,20 +48,6 @@ wrong but that its *invalidation* is unnecessary.
   So the *set* of `poseSlots` poses is invariant as time advances; only which
   slot a given creature should read rotates.
 
-## AMENDMENT (2026-09-06) — measure this against the TAIL, not the median
-
-Cross-tabulating eighteen runs: the same upload shape costs 0.010–1.462 ms per
-call depending on the run, and several runs sit at 8.46–8.86 ms GPU with total
-uploads of only ~0.5 ms/frame. So these uploads are **not** the general cause of
-a heavy frame, and where they are large they may partly be a symptom of a busy
-GPU rather than its cause.
-
-The fix is still correct and still worth doing — the upload is **blocking
-main-thread time** (31.65 ms of a 42.35 ms worst-1% frame), and removing work
-that recomputes unchanged bytes is right regardless. But judge it on
-**`sample.msP99` and `sample.msMax`** — the stutter — and on criterion 1 below
-(the shapes disappearing). Do **not** promise a `gpuMsP50` improvement.
-
 ## What it costs today
 
 From the `overview` upload report, grouped by upload shape (each `W×32` is a
