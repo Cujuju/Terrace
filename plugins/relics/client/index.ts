@@ -47,6 +47,7 @@ import {
   setCastDenial,
   setRelics,
   setSkills,
+  skills,
 } from './state.ts';
 
 /** Primary pointer button (mouse left / the only touch button). */
@@ -233,6 +234,9 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.registerHudPanel(RelicsPanel, {
       headerSummary: RelicsHeaderLine,
       tabSummary: () => `Relics (${relics().length})`,
+      // With no skill held the panel has nothing to expand: the corner shows
+      // the header line alone (owner, 2026-09-05).
+      hasBody: () => skills().length > 0,
     });
   },
 

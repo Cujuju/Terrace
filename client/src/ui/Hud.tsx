@@ -74,7 +74,7 @@ import {
   type JSX,
 } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
-import { pluginHudPanels } from '../plugins/hudPanels.ts';
+import { pluginHudPanels, type PluginHudPanel } from '../plugins/hudPanels.ts';
 import { VersionWatermark } from './VersionWatermark.tsx';
 import { RestorePoints, type RollbackActions } from './RestorePoints.tsx';
 import { restorePanelOpen, setRestorePanelOpen } from '../state/rollbackState.ts';
@@ -275,6 +275,16 @@ function cornerTabName(): string {
   // A plugin may supply a live tab label (relics: "Relics (3)"); otherwise
   // the capitalised registration name stands in.
   return first.tabSummary?.() ?? first.pluginName.charAt(0).toUpperCase() + first.pluginName.slice(1);
+}
+
+/** Corner-panel plugins whose body currently has something to show. */
+function cornerBodies(): PluginHudPanel[] {
+  return pluginHudPanels().filter((p) => p.placement === 'panel' && (p.hasBody?.() ?? true));
+}
+
+/** Corner-panel plugins with a header line. */
+function cornerHeaders(): PluginHudPanel[] {
+  return pluginHudPanels().filter((p) => p.placement === 'panel' && p.headerSummary);
 }
 
 export function Hud(props: {
@@ -785,6 +795,22 @@ export function Hud(props: {
           button in the bottom-right column now (see this file's header), which
           is what stops the plugin panels below from reading as part of it. */}
       <Show
+        when={cornerBodies().length > 0}
+        fallback={
+          /* NOTHING TO EXPAND (owner, 2026-09-05: no relic held → "just the
+             line about how many relics are in the world"): the header lines
+             stand alone, with no chevron and no collapse — an empty body is
+             not worth a control. */
+          <div class="hud-panel hud-anchor-top-left">
+            <div class="hud-row panel-header panel-header--static">
+              <For each={cornerHeaders()}>
+                {(panel) => <Dynamic component={panel.headerSummary} />}
+              </For>
+            </div>
+          </div>
+        }
+      >
+      <Show
         when={panelOpen()}
         fallback={
           <button
@@ -814,11 +840,7 @@ export function Hud(props: {
             title={`${cornerTabName()}: collapse the panel`}
             onClick={() => setPanelOpen(false)}
           >
-            <For
-              each={pluginHudPanels().filter(
-                (p) => p.placement === 'panel' && p.headerSummary,
-              )}
-            >
+            <For each={cornerHeaders()}>
               {(panel) => <Dynamic component={panel.headerSummary} />}
             </For>
             <span class="panel-chevron">▴</span>
@@ -829,7 +851,7 @@ export function Hud(props: {
               the placement contract's meaning ("the corner panel",
               client/src/plugins/types.ts) is unchanged, only the corner's
               contents around them slimmed down. */}
-          <For each={pluginHudPanels().filter((p) => p.placement === 'panel')}>
+          <For each={cornerBodies()}>
             {(panel) => (
               <div class="hud-plugin-panel">
                 <Dynamic component={panel.component} />
@@ -837,6 +859,7 @@ export function Hud(props: {
             )}
           </For>
         </div>
+      </Show>
       </Show>
 
       {/* The Cartographer overlay, mounted only while open — mounting IS the

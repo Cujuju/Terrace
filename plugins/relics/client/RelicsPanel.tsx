@@ -296,21 +296,11 @@ export function RelicsPanel(): JSX.Element {
   return (
     <>
       <style>{RELICS_CSS}</style>
-      <Show
-        when={skills().length > 0}
-        fallback={
-          <p
-            class="hud-hint"
-            title="Relics: click a gem to collect"
-          >
-            No skills yet — click a floating gem to collect one.
-          </p>
-        }
-      >
-        <div class="relics-grid">
-          <For each={skills()}>{(skill) => <SkillCell skill={skill} />}</For>
-        </div>
-      </Show>
+      {/* Mounted only while a skill is held (hasBody in ./index.ts), so there
+          is no empty-state copy here: the header line is the empty state. */}
+      <div class="relics-grid">
+        <For each={skills()}>{(skill) => <SkillCell skill={skill} />}</For>
+      </div>
 
       <Show when={armedSkill() !== null}>
         <p class="hud-hint">Click the ground to cast {armedName()}.</p>

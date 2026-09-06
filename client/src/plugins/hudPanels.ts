@@ -39,6 +39,13 @@ export interface PluginHudPanel {
   /** Live label for the collapsed corner tab (`Relics (3)`); falls back to
    *  the capitalised plugin name. */
   readonly tabSummary?: () => string;
+  /**
+   * Live "does my body have anything to show" read at render time. When no
+   * corner panel has a body, the corner renders its header lines alone —
+   * no collapse control, no body (relics with no skill held). Absent means
+   * always.
+   */
+  readonly hasBody?: () => boolean;
 }
 
 const [pluginHudPanels, setPluginHudPanels] = createSignal<

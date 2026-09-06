@@ -398,6 +398,12 @@ export interface ClientPluginCtx {
        * absent.
        */
       tabSummary?: () => string;
+      /**
+       * Live "my body has something to show", read at render time. While
+       * every corner panel answers false the corner shows only its header
+       * lines, with no expansion at all. Absent means always.
+       */
+      hasBody?: () => boolean;
     },
   ): void;
 
