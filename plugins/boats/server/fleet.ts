@@ -91,6 +91,20 @@ export interface BoatWorld {
   isCellUnlocked(x: number, y: number): boolean;
 }
 
+/**
+ * `isCellUnlocked` for a cell that MAY LIE OUTSIDE THE WORLD. Core's predicate
+ * has no bounds guard and throws a RangeError on an out-of-range chunk (see
+ * World.isCellUnlocked); every other plugin that asks it bounds-checks first
+ * (monsters' isLairCell, wildlife's habitat check, structures' isBuildableCell).
+ * Both boat predicates probe cells that can fall off the map — an edge
+ * village's survey disc, and a hull pose whose bow is past the shoreline — so
+ * they go through here rather than at the raw call.
+ */
+function isUnlockedCellInWorld(world: BoatWorld, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
+  return world.isCellUnlocked(x, y);
+}
+
 /** A coastal settlement that keeps boats. */
 export interface Village {
   readonly x: number;
@@ -328,7 +342,7 @@ export function isHullPose(
     [x + sin * halfBeam, y - cos * halfBeam],
   ];
   for (const [probeX, probeY] of probes) {
-    if (!world.isCellUnlocked(Math.floor(probeX), Math.floor(probeY))) return false;
+    if (!isUnlockedCellInWorld(world, Math.floor(probeX), Math.floor(probeY))) return false;
     if (!sharedIsWalkableCell(eroded, HULL_PROFILE, probeX, probeY)) return false;
   }
   return true;
@@ -882,7 +896,7 @@ export function forgetVillage(x: number, y: number): void {
 export function isSailable(world: BoatWorld, cellX: number, cellY: number): boolean {
   const x = Math.floor(cellX);
   const y = Math.floor(cellY);
-  if (!world.isCellUnlocked(x, y)) return false;
+  if (!isUnlockedCellInWorld(world, x, y)) return false;
   // Bounds, ground class and everything else terrain has to say: shared's one
   // predicate over OPEN_WATER_PROFILE, so "water a hull may cross" is decided
   // in the same place as "water a kraken may swim" rather than beside it.
