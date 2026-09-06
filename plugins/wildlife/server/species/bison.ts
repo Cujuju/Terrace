@@ -12,6 +12,7 @@
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  NO_MIN_WATER_DEPTH,
   GRASSLAND_SPAWN_HEIGHTS,
   GRAZER_SPAWN_OPEN_DIRECTIONS,
   SINGLE_SIZE_WEIGHTS,
@@ -67,6 +68,7 @@ const BISON_IDLE_BOUTS: IdleBouts = { onsetPerSecond: 0.05, endPerSecond: 0.1 };
 export const BISON_PROFILE: SpeciesProfile = {
   species: 'bison',
   habitat: 'land',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // The slowest thing that walks, at three quarters of the halved grazer's 0.8
   // and half the ibex's 1.2. It is also now the animal that sets
   // FIRE_STARTLE_RADIUS_CELLS (../index.ts), which is derived from the slowest

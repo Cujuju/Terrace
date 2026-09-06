@@ -10,6 +10,7 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
   AQUATIC_MAX_GRADIENT_PER_CELL,
+  NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
   SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
@@ -33,6 +34,7 @@ const EEL_IDLE_BOUTS: IdleBouts = { onsetPerSecond: 0.04, endPerSecond: 0.10 };
 export const EEL_PROFILE: SpeciesProfile = {
   species: 'eel',
   habitat: 'shallow',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // The slowest thing in the water except the whale (0.8): slower than the ray
   // (1.0) it shares the bottom with, much slower than the fish (3) flickering
   // above it. Slow is what makes a wave-swimmer read instead of a dart.

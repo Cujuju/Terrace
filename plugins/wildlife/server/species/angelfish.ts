@@ -12,6 +12,7 @@ import {
   AQUATIC_MAX_GRADIENT_PER_CELL,
   FISH_SCHOOLING_PROBABILITY_BY_SIZE,
   FISH_SIZE_WEIGHTS,
+  NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
   SPAWN_AT_ANY_HEIGHT,
   TURN_RADIUS_BODY_LENGTHS,
@@ -21,6 +22,7 @@ import {
 export const ANGELFISH_PROFILE: SpeciesProfile = {
   species: 'angelfish',
   habitat: 'shallow',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // Between the ray's 1.0 and the shark's 1.8, well under the fish's 3: a disc
   // pushes more water than a torpedo, so it cruises slower than either
   // torpedo-shaped shoaler. Still faster than everything it shares the bottom

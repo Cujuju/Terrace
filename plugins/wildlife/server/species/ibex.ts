@@ -12,6 +12,7 @@
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  NO_MIN_WATER_DEPTH,
   MOUNTAIN_SPAWN_HEIGHTS,
   SINGLE_SIZE_WEIGHTS,
   SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
@@ -83,6 +84,7 @@ const IBEX_IDLE_BOUTS: IdleBouts = { onsetPerSecond: 0.08, endPerSecond: 0.25 };
 export const IBEX_PROFILE: SpeciesProfile = {
   species: 'ibex',
   habitat: 'land',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // Faster than the halved grazer (0.8) and much faster than the bison (0.6):
   // the small, light-footed one of the three land animals. Still well under the
   // fish's 3, because it is a walker and the sea is where speed lives.

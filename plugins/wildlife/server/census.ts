@@ -8,8 +8,10 @@
 import {
   AVOID_TURN_ATTEMPTS,
   AVOID_TURN_STEP_RADIANS,
+  BAND_HEIGHT,
   CHUNK_SIZE,
   LAND_WALKER_PROFILE,
+  SEA_LEVEL,
   canProceedAlong,
   canTraverseSegment,
   cellsOverArea,
@@ -20,7 +22,7 @@ import {
 } from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type Habitat, habitatOf, profileOf, spawnGroundConstrains } from './species.ts';
-import { SPAWN_AT_ANY_HEIGHT } from './species/profile.ts';
+import { NO_MIN_WATER_DEPTH, SPAWN_AT_ANY_HEIGHT } from './species/profile.ts';
 
 /**
  * Adapts one species onto a shared traversal archetype (shared/src/
@@ -75,12 +77,20 @@ export function walkerProfileOf(species: WildlifeHabitatSpecies): TraversalProfi
  * decision: which ground classes count, the band-0 fringe, and rivers-vs-lakes
  * are facts about a kind of mover, not per-species dials, and building a
  * literal here is how this contract drifted the first time.
+ *
+ * A row's `minWaterDepthBands` becomes the archetype's `maxGroundHeight`, the
+ * same axis boats' `navigableWaterProfile` uses for hull draft.
  */
 function walkerProfileFor(species: WildlifeHabitatSpecies): TraversalProfile {
   const profile = profileOf(species);
   const archetype =
     profile.habitat === 'land' ? LAND_WALKER_PROFILE : waterBandProfile(profile.habitat);
-  return { ...archetype, maxGradientPerCell: profile.maxGradientPerCell };
+  const depth = profile.minWaterDepthBands;
+  return {
+    ...archetype,
+    maxGradientPerCell: profile.maxGradientPerCell,
+    ...(depth === NO_MIN_WATER_DEPTH ? {} : { maxGroundHeight: SEA_LEVEL - depth * BAND_HEIGHT }),
+  };
 }
 
 /**
