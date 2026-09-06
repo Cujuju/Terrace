@@ -1350,6 +1350,22 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
       // simply not being reported here, which made the decisive question
       // unanswerable from a soak.
       topCpu: Object.fromEntries(Object.entries(block.allBreakdown).slice(0, 10)),
+      // EVERY node, not just the drawable ones. The CPU soak (2026-09-06) put the
+      // whole decay inside `renderer.render` while draw calls FELL, which points
+      // at three's per-frame scene walk rather than at what it draws — and
+      // `censusOf` counts only Mesh/Points/Line, so accumulating empty Groups
+      // would cost traversal on every frame while being invisible to it.
+      sceneNodes: (() => {
+        let nodes = 0;
+        let groups = 0;
+        let invisible = 0;
+        ctx.viewport.scene.traverse((node) => {
+          nodes++;
+          if ((node as { isGroup?: boolean }).isGroup === true) groups++;
+          if (!node.visible) invisible++;
+        });
+        return { nodes, groups, invisible };
+      })(),
       // THE DISPOSAL GAP. `textures` above is three's count of what it has
       // uploaded and not disposed; the census below counts only what is
       // REACHABLE from the scene graph. A texture whose mesh was dropped
