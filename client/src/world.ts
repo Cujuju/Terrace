@@ -79,6 +79,7 @@ import {
   carveBandOfPick as carveBandOfPickIn,
 } from './terrain/pickBand.ts';
 import {
+  carveReachCell,
   pickPointedCellByRay,
   pickTerrainCellByRay,
   pickTerrainInColumn,
@@ -292,6 +293,23 @@ export interface World extends TerrainSink {
    * column, or no band survives the two tests above.
    */
   carveBand(pick: TerrainRayPick | null): number | null;
+  /**
+   * WHERE A HELD CARVE CUTS NEXT: the first cell along this ray that still has
+   * material at `band` (terrain/picking.ts's `carveReachCell`).
+   *
+   * A SECOND METHOD RATHER THAN A PICK, because a tunnel asks a different
+   * question than a hover does. `pickCell` answers "what surface is the player
+   * looking at", and after the first cut that is the FLOOR of the hole just
+   * made — measured over pitches 20° to 70°, re-picking made every repeat
+   * re-cut an already-open band and change nothing. This answers "where along
+   * the aim is there still something to remove", which is the question a
+   * repeat is actually asking.
+   *
+   * Null before the first snapshot, and when the aim leaves the world without
+   * meeting solid material at that band — the "no more cutting" that ends the
+   * tunnel (owner, 2026-09-05).
+   */
+  carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
@@ -1084,6 +1102,10 @@ export function createWorld(viewport: Viewport): World {
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;
       return carveBandOfPick(pick);
+    },
+    carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null {
+      if (mirror === null) return null;
+      return carveReachCell(mirror, origin, direction, band);
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
