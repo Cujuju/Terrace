@@ -1,9 +1,31 @@
 # Skiffs go fishing, and boats stop owning half the frame
 
-Status: PLANNED, not started. Phase 1 of the boats arc (squadrons) shipped as
-`4b85631`. Tracked on GitHub Issues 2026-09-05: D0-D2 = #367, #368, #369
-(`arc/render-draw-call-budget`); S1-S4 = #370, #371, #372, #373
-(`arc/skiffs-go-fishing`).
+Status: IN PROGRESS on branch `arc/skiffs-and-draw-calls` (pushed, unmerged).
+Phase 1 of the boats arc (squadrons) shipped as `4b85631`. Tracked on GitHub
+Issues 2026-09-05: D0-D2 = #367, #368, #369 (`arc/render-draw-call-budget`);
+S1-S4 = #370, #371, #372, #373 (`arc/skiffs-go-fishing`).
+
+**2026-09-06.** S1 SHIPPED (`b2052be`, #370 closed). D0 ATTEMPTED, NO NUMBERS.
+Owner calls both answered: sharks ARE fishable (no exclusion list); skiffs are
+VILLAGE-BOUND, not roaming.
+
+Two corrections to this plan, evidenced in #367's comment thread:
+
+- **D0 cannot be run on `the-windward-fells`.** It has 0 villages and 0 boats —
+  as do `galewick-downs`, `moonreach` and `wilds-of-thornfall`. It is big
+  *terrain* (2048x2048) with no settlements, so its `boats` ablation row would
+  read ~0. `frostwick-hollows` (512x512, 119 villages, 231 boats) is the only
+  world with a fleet and is almost certainly what the pre-squadron baseline was
+  taken on. Bench it via a read-only `VACUUM INTO` copy (owner-approved
+  2026-09-06); verify the copy reopens at 119/231 before benching.
+- **Two agents cannot bench concurrently.** `scripts/gpu-bench.sh:88,97,99`
+  hardcodes one Chrome profile and kills + `rm -rf`s it every launch, so the
+  second caller destroys the first caller's run and sees only `NO SAMPLE`.
+  Filed as #380; land it before the next D0 attempt.
+
+The fleet distribution D0 did obtain (frostwick snapshot #1057): 231 boats,
+77 villages with hulls, distance-from-home p50 21.33 cells, 219 of 231 beyond
+10 cells. The squadrons effect this plan predicted, in the data.
 
 Two arcs that touch the same plugin and must be sequenced together:
 
