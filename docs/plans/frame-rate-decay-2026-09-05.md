@@ -326,12 +326,61 @@ Tracked as issue #377.
 
 ---
 
+## 7b. Overnight result — the world is not the problem (2026-09-06)
+
+An isolated bench server was left simulating for 4 h 15 m, then measured with a
+**fresh page**. Same world, same camera, same scenario as §2:
+
+| | fresh page, 4 h-old world | long-lived page |
+| --- | --- | --- |
+| GPU p50 | **2.76 ms** (~360 fps) | 9.82 ms |
+| frame p99 / max | **4.0 / 4.8 ms** | 25.7 / 50.8 ms |
+| draw calls | **152** | ~305 |
+| textures | **40** | 135 – 189 |
+| programs | **81** | 124 – 127 |
+| upload | **0.161 ms/frame** | 3.246 ms/frame |
+| ablation error bar | **±0.08 ms** | ±0.21 – 0.94 ms |
+
+A four-hour-old world renders in **less than half the 144 fps budget**, and the
+per-rig ablation on it finds nothing above 0.41 ms (thunderstorm), with the
+all-hidden floor at 0.95 ms.
+
+**So world content is not what makes the frame slow. Page uptime is.** The same
+uploads cost 20× more on an aged page than a fresh one against the same world —
+and because those uploads are driver *stalls* rather than bandwidth (§4), that is
+consistent with accumulated textures and programs raising the cost of every
+upload the page issues.
+
+### This demotes §5 (boats), and the demotion is the honest reading
+
+On the fresh page, boats is **45 draw calls and −0.16 ms**. On aged pages it was
+135–172. The world is the same. So the "boats owns half the frame's draw calls"
+finding measures a *long-lived page*, not boats' design.
+
+Boats' own cleanup looks correct on inspection — `reconcileViews`
+(`plugins/boats/client/index.ts`) removes and disposes any view absent from the
+interpolator's sample, and `BoatInterpolator`
+(`plugins/boats/client/interpolation.ts`) drops ids absent from the newest
+message. **No boats leak has been demonstrated**; the 45-vs-158 gap may equally
+be fleet size varying between measurements. Issue #375 should not be worked as a
+leak, and its instancing rationale now rests on draw-call count alone, which is
+a smaller prize than first reported.
+
+*What is still unresolved:* which subsystem's objects/textures actually
+accumulate on a long-lived page. Only a single page watched from fresh can show
+it — every `gpu-bench.sh` run launches a new Chrome, so phases 2–5 above are all
+blind to it by construction. The per-rig census soak (`leak-soak`) is the run
+that answers it.
+
+---
+
 ## 8. Ranked plan
 
 | # | Fix | Evidence | Est. size | Expected |
 | --- | --- | --- | --- | --- |
-| 1 | Pose palette → immutable LUT (§4) | proven from source + measured 0.2–0.9 ms per active herd per frame | medium, contained to `rigHerd.ts` + species slot indexing | removes an unbounded per-frame stall; the decay's main driver |
-| 2 | Boats instancing (§5) | ~150 of ~305 draw calls, 5 runs | medium, `models.ts` + `rigHerd` adoption | halves frame draw calls |
+| 0 | **Find and stop the page-side accumulation (§7b)** | fresh page 2.76 ms vs aged page 9.82 ms on the SAME world | unknown until the census names the owner | this is the decay; everything below is secondary to it |
+| 1 | Pose palette → immutable LUT (§4) | proven from source + measured 0.2–0.9 ms per active herd per frame | medium, contained to `rigHerd.ts` + species slot indexing | removes a per-frame stall, and stalls are what page-side accumulation makes worse |
+| 2 | Boats instancing (§5) — **demoted, see §7b** | 45 draw calls on a fresh page; the ~150 figure measured an aged page | medium | draw-call reduction only; no leak demonstrated |
 | 3 | Precompile shader catalogue (§6) | 74→~125 programs, converging | small | removes ~50 mid-play compile stalls (p99/max) |
 | 4 | Idempotent `applyRevealClip` / `applyGroundShade` (§6) | latent, not observed | small | prevents a duplicate-program class of bug |
 | 5 | Identify texture growth (§7) | +69 textures / 4 min, unexplained | investigation | unknown |
