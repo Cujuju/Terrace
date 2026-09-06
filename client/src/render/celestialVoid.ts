@@ -82,6 +82,15 @@
 // onBeforeRender runs inside renderer.render, after the camera's matrices
 // are final for this frame.
 //
+// THE ARM PATTERN IS BAKED, NOT EVALUATED PER FRAGMENT (perf, issue #340).
+// `gasPattern` and the gas's level field depend only on the rotating-frame
+// plane position, so they are rendered ONCE into two log-polar textures when
+// the wheel material is first created, and every fragment reads them back with
+// one atan, one log and two fetches. The values are the approved ones — the
+// same GLSL writes the texture — and the mip chain also removes the shimmer the
+// procedural version showed when the world anchor was zoomed far out. Rotation
+// stays per-frame: only the evaluation was replaced, not the motion.
+//
 // COLOUR PIPELINE. The renderer runs ACES tone mapping at exposure 1.25
 // (render/scene.ts) and sRGB output conversion. Both are opt-in per shader in
 // three: a custom ShaderMaterial only gets them if its fragment source
@@ -92,13 +101,25 @@
 
 import {
   BufferGeometry,
+  Camera,
+  ClampToEdgeWrapping,
   Float32BufferAttribute,
+  HalfFloatType,
+  LinearFilter,
+  LinearMipmapLinearFilter,
   Matrix3,
   Mesh,
   type PerspectiveCamera,
+  type PixelFormat,
+  RedFormat,
+  RepeatWrapping,
+  RGBAFormat,
+  Scene,
   ShaderMaterial,
+  type Texture,
   Vector2,
   Vector3,
+  WebGLRenderTarget,
   type IUniform,
 } from 'three';
 import { MIN_HEIGHT } from '@terrace/shared';
@@ -197,6 +218,50 @@ const LOCKED_HUB_CLEARANCE_WORLD = 2;
  * relief scale) and the hub sits below it.
  */
 const LOCKED_HUB_WORLD_Y = MIN_HEIGHT * HEIGHT_WORLD_SCALE - LOCKED_HUB_CLEARANCE_WORLD;
+
+/**
+ * Where `gasPattern`'s radial falloff finishes ramping in, disk units. It is a
+ * RAMP, `smoothstep(0, GAS_INNER_R, r)`, not a floor: the gas is already half
+ * strength at r = 0.06 and only reaches exactly zero at the hub itself. The
+ * bake therefore has to cover r = 0, not start here — starting at 0.12 clamped
+ * the inner sixth of the hub shot to one row of texels and turned the arms
+ * into radial spokes (seen, 2026-09-05).
+ */
+const GAS_INNER_R = 0.12;
+
+/**
+ * The offset inside the arms' radial coordinate `s = log(r + S_LOG_EPS)`. It
+ * is part of the approved arm geometry, and it is what makes the bake possible
+ * at all: s stays finite at the hub, so the whole disk fits a bounded s range.
+ */
+const S_LOG_EPS = 0.05;
+
+/**
+ * Outer radius of the bake, disk units. The gas fades as
+ * `exp(-r/DISK_RADIUS)` with DISK_RADIUS 1.7, which is under 1e-3 of its peak
+ * beyond r = 12, so nothing visible lies outside and the texture's clamped
+ * outer edge carries a negligible value.
+ */
+const R_BAKE_MAX = 12;
+
+/** Bottom and height of the baked s range: the hub (r = 0) out to R_BAKE_MAX. */
+const GAS_BAKE_S_MIN = Math.log(S_LOG_EPS);
+const GAS_BAKE_S_SPAN = Math.log(R_BAKE_MAX + S_LOG_EPS) - GAS_BAKE_S_MIN;
+
+/**
+ * Texels along each axis of the baked arm pattern: GAS_BAKE_SIZE around theta
+ * and the same up s.
+ *
+ * The derivation. The finest grain octave is `STREAK_ACROSS*16` = 640 cells
+ * around the circle, i.e. 2pi/640 ~ 0.01 rad across an arm; and because the
+ * wound angle advances `WIND/ARMS` = 2 rad per e-fold of radius, that same
+ * feature moves ~0.005 e-fold in s. Over the baked range (GAS_BAKE_S_SPAN,
+ * ~5.5 e-folds from the hub to R_BAKE_MAX) Nyquist therefore asks for ~2200
+ * texels in s and ~1300 around, so 2048 on both axes — the nearest power of
+ * two, a shade under what s asks for at the very finest octave, whose weight
+ * is 0.025. 1024 was benched and shot against it (.void-bench/README.md).
+ */
+const GAS_BAKE_SIZE = 2048;
 
 /**
  * Draw order for the void. Three sorts opaque objects by `renderOrder` before
@@ -323,7 +388,7 @@ void main(){
 }
 `;
 
-const WHEEL_GLSL = /* glsl */ `${COMMON_GLSL}
+const WHEEL_FIELDS_GLSL = /* glsl */ `${COMMON_GLSL}
 vec2 rot(vec2 p,float a){ float c=cos(a),s=sin(a); return vec2(c*p.x-s*p.y,s*p.x+c*p.y); }
 // Disk stars: steady points in the disk plane with a screen-space size floor so far stars
 // never shrink below a pixel and shimmer. minSize is in cell units, from the ray length.
@@ -392,6 +457,100 @@ const float GLOW_GAIN       = 0.35;  // halo peak brightness relative to the cor
 const float TWINKLE_FRACTION= 0.30;
 const float TWINKLE_DEPTH   = 0.35;  // brightness swing, peak to trough, as a fraction of the star
 const float TWINKLE_RATE    = 2.2;   // rad/s: about one breath every three seconds
+// --- the log-polar bake (perf, issue #340) --------------------------------------------------
+// gasPattern and gasLevel below depend only on rf, the rotating-frame plane position, so they are
+// evaluated once into two textures at startup (BAKE_GLSL) and read back per fragment. The grid is
+// the arms' own coordinate: theta across u, wrapping, and s = log(r + S_LOG_EPS) up v, in which a
+// log spiral is a straight line - so a texel keeps the same shape across an arm at every radius
+// (its aspect is TAU/BAKE_S_SPAN, a constant) and the grain stays resolved out to the rim.
+const float TAU          = 6.2831853;
+const float GAS_INNER_R  = ${GAS_INNER_R.toFixed(2)};   // radius over which the gas ramps in from the hub (a ramp, not a floor)
+const float S_LOG_EPS    = ${S_LOG_EPS.toFixed(2)};   // the offset in s = log(r + eps); keeps s finite at the hub
+const float GAS_BAKE_SIZE= ${GAS_BAKE_SIZE.toFixed(1)}; // texels per axis; the TS constant carries the Nyquist derivation
+const float BAKE_S_MIN   = ${GAS_BAKE_S_MIN.toFixed(6)};  // s at the hub: log(S_LOG_EPS)
+const float BAKE_S_SPAN  = ${GAS_BAKE_S_SPAN.toFixed(6)};   // log(R_BAKE_MAX + S_LOG_EPS) - BAKE_S_MIN
+// The gas pattern on the plane in the rotating frame: the arms, their grain, lanes and colour.
+// It is columnar - the same at every depth of the four-unit slab, whose parallax across the
+// thickness is under a filament wide - so it is baked ONCE into the log-polar texture above and
+// read back per fragment, and the march below only
+// varies the vertical profile and the 3-D puffs (rev 16: 6.1 ms -> see the bench in .void-bench).
+// ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
+// straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
+// runs ACROSS it - an arm sits at a fixed thw. The grain is sampled in (s, thw) with long cells
+// along and short cells across, so the filaments run along the curve of each arm.
+float gasPattern(vec2 rf, out vec3 gasCol){
+  float r=length(rf);
+  float th=atan(rf.y,rf.x);
+  float s=log(r+S_LOG_EPS);
+  float wobble=(fbmLow(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
+  float phase=th*ARMS-s*WIND+wobble;
+  float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
+  // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
+  vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
+  float thw=atan(wound.y,wound.x);
+  vec2 aq=vec2(s*STREAK_ALONG, (thw/TAU+0.5)*STREAK_ACROSS);
+  float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
+  float haze=fbmLow(rf*1.4+vec2(9.0,2.0));
+  float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,GAS_INNER_R,r);
+  float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms
+  // Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
+  // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
+  vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
+  float hue=fbmLow(rf/HUE_SCALE+vec2(2.0,5.0));
+  gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
+  gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
+  gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
+  return (arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
+}
+// This patch's depth in the slab: the level field of rev 14, baked alongside the pattern.
+float gasLevel(vec2 rf){ return mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbmLow(rf*LEVEL_SCALE+vec2(6.0,13.0))); }
+// rf -> bake texture coordinate. u wraps with theta (RepeatWrapping, so the two sides of atan's
+// branch cut still filter into each other); v spans the hub to R_BAKE_MAX and clamps beyond it,
+// where the gas is under 1e-3 of its peak.
+vec2 gasBakeUv(vec2 rf){
+  return vec2(atan(rf.y,rf.x)/TAU+0.5, (log(length(rf)+S_LOG_EPS)-BAKE_S_MIN)/BAKE_S_SPAN);
+}
+// ...and back: the rf that a bake texel centre stands for. Exactly the inverse of gasBakeUv, so a
+// lookup lands on the texel that was written for it.
+vec2 gasBakeRf(vec2 uv){
+  float th=(uv.x-0.5)*TAU;
+  return vec2(cos(th),sin(th))*(exp(BAKE_S_MIN+uv.y*BAKE_S_SPAN)-S_LOG_EPS);
+}
+// Reads the bake through whichever branch of atan has its cut a quarter turn away. RepeatWrapping
+// gets the VALUE right across the cut, but u jumps by 1 there, and the quad that straddles the
+// jump derives a huge du/dx and drops to the coarsest mip - a blurred radial line along -x, plain
+// to see in the hub shot. u+1 reaches the same texel through the branch that is continuous there,
+// so its cut lies along +x instead; each fragment takes the branch whose cut it is far from.
+// The two branches sample the same texel wherever both are valid, so the switch itself is unseen.
+vec4 gasBakeFetch(sampler2D tex, vec2 uv){
+  vec4 nearCut=texture2D(tex,vec2(uv.x+1.0-step(0.5,uv.x),uv.y));
+  return mix(texture2D(tex,uv),nearCut,step(0.25,abs(uv.x-0.5)));
+}
+`;
+
+/**
+ * The bake pass: writes gasPattern and gasLevel over the log-polar grid. It is drawn twice at
+ * startup, once per field — WebGL2 gives one colour attachment per draw and this deliberately
+ * uses no MRT — into the two render targets the wheel then samples. It is built from the same
+ * WHEEL_FIELDS_GLSL as the wheel, so the arm pattern has exactly one source and the two cannot
+ * drift apart.
+ */
+const BAKE_GLSL = /* glsl */ `${WHEEL_FIELDS_GLSL}
+uniform float u_bakeField;   // 0: colour and pattern; 1: level
+void main(){
+  vec2 rf=gasBakeRf(gl_FragCoord.xy/GAS_BAKE_SIZE);
+  if(u_bakeField>0.5){ gl_FragColor=vec4(gasLevel(rf),0.0,0.0,1.0); return; }
+  vec3 gasCol;
+  float pattern=gasPattern(rf,gasCol);
+  gl_FragColor=vec4(gasCol,pattern);
+}
+`;
+
+const WHEEL_GLSL = /* glsl */ `${WHEEL_FIELDS_GLSL}
+// The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
+// texture's r. Half float, so the pattern's ~1.55 peak needs no scaling on the way through.
+uniform sampler2D u_gasBake;
+uniform sampler2D u_gasLevel;
 // Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
 // (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
 // ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
@@ -430,38 +589,6 @@ float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float dept
   }
   return sum;
 }
-// The gas pattern on the plane in the rotating frame: the arms, their grain, lanes and colour.
-// It is columnar - the same at every depth of the four-unit slab, whose parallax across the
-// thickness is under a filament wide - so it is evaluated ONCE per ray, and the march below only
-// varies the vertical profile and the 3-D puffs (rev 16: 6.1 ms -> see the bench in .void-bench).
-// ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
-// straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
-// runs ACROSS it - an arm sits at a fixed thw. The grain is sampled in (s, thw) with long cells
-// along and short cells across, so the filaments run along the curve of each arm.
-float gasPattern(vec2 rf, out vec3 gasCol){
-  float r=length(rf);
-  float th=atan(rf.y,rf.x);
-  float s=log(r+0.05);
-  float wobble=(fbmLow(rf/WOBBLE_SCALE+vec2(3.0,8.0))-0.5)*2.0*ARM_WOBBLE;
-  float phase=th*ARMS-s*WIND+wobble;
-  float arm=mix(pow(0.5+0.5*cos(phase),ARM_SHARPNESS),1.0,ARM_BLEED);
-  // Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
-  vec2 wound=rot(rf,-(s*WIND-wobble)/ARMS);
-  float thw=atan(wound.y,wound.x);
-  vec2 aq=vec2(s*STREAK_ALONG, (thw/6.2831853+0.5)*STREAK_ACROSS);
-  float grain=0.6*pfbm(aq+vec2(4.0,0.0),STREAK_ACROSS)+0.4*pfbm(aq*2.0+vec2(1.0,0.0),STREAK_ACROSS*2.0);
-  float haze=fbmLow(rf*1.4+vec2(9.0,2.0));
-  float radial=exp(-r/DISK_RADIUS)*smoothstep(0.0,0.12,r);
-  float lanes=smoothstep(0.6,0.78,grain)*arm*0.45;         // dark dust lanes cut through the arms
-  // Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
-  // rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
-  vec3 deepBlue=vec3(0.08,0.24,0.88), violet=vec3(0.40,0.14,0.82), rose=vec3(0.95,0.30,0.60), teal=vec3(0.12,0.70,0.85);
-  float hue=fbmLow(rf/HUE_SCALE+vec2(2.0,5.0));
-  gasCol=mix(deepBlue,violet,smoothstep(0.35,0.7,hue));
-  gasCol=mix(gasCol,rose,smoothstep(0.55,0.9,grain)*0.7);
-  gasCol=mix(gasCol,teal,smoothstep(0.6,0.85,haze)*0.35);
-  return (arm*(0.35+1.1*grain)+0.10*haze)*radial*(1.0-lanes);
-}
 // The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
 // broken up by 3-D puffs. Multiplies gasPattern.
 float gasDepthProfile(vec2 rf, float z, float level){
@@ -488,9 +615,11 @@ void main(){
     if(depthFade<=0.0){ gl_FragColor=vec4(col,1.0); return; }   // fully faded: nothing below would show
 
     // --- gas: the plane pattern once, then march the thickness front to back ---
-    vec3 gasCol;
-    float pattern=gasPattern(rf,gasCol);
-    float level=mix(GAS_TOP_Z,GAS_BOTTOM_Z,fbmLow(rf*LEVEL_SCALE+vec2(6.0,13.0)));  // this patch's depth
+    vec2 bakeUv=gasBakeUv(rf);
+    vec4 baked=gasBakeFetch(u_gasBake,bakeUv);
+    vec3 gasCol=baked.rgb;
+    float pattern=baked.a;
+    float level=gasBakeFetch(u_gasLevel,bakeUv).r;                                  // this patch's depth
     float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
     float dt=(tBottom-sdist)/float(GAS_STEPS);
     float gasAcc=0.0;                     // lit weight so far
@@ -651,6 +780,10 @@ export function createCelestialVoid(
     u_toDisk: { value: new Matrix3() },
     u_origin: { value: new Vector3() },
     u_dome: { value: 0 },
+    // Filled by the bake when the wheel material is first created; the nebula
+    // program has neither sampler, and three skips uniforms a program lacks.
+    u_gasBake: { value: null },
+    u_gasLevel: { value: null },
   };
   const writeFrame = (frame: DiskFrame): void => {
     (uniforms['u_focal'] as IUniform<number>).value = frame.focal;
@@ -695,12 +828,83 @@ export function createCelestialVoid(
   };
   applyAnchor();
 
+  /**
+   * One of the two log-polar targets the arm pattern is baked into (`format`
+   * says which: RGBA for the colour and pattern, red for the level). Half float
+   * so the pattern's ~1.55 peak and the level's ~0.02 disk units both survive
+   * unscaled; u repeats because theta wraps and v clamps because the s range
+   * ends where the gas does; mipmapped because the world anchor zoomed far out
+   * puts many texels in a pixel, which is exactly the shimmer the procedural
+   * version had.
+   */
+  const makeBakeTarget = (format: PixelFormat): WebGLRenderTarget =>
+    new WebGLRenderTarget(GAS_BAKE_SIZE, GAS_BAKE_SIZE, {
+      type: HalfFloatType,
+      format,
+      wrapS: RepeatWrapping,
+      wrapT: ClampToEdgeWrapping,
+      minFilter: LinearMipmapLinearFilter,
+      magFilter: LinearFilter,
+      generateMipmaps: true,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+
+  /** Which field one bake draw writes; matches BAKE_GLSL's `u_bakeField`. */
+  const BAKE_FIELD_PATTERN = 0;
+  const BAKE_FIELD_LEVEL = 1;
+
+  let bakeTargets: WebGLRenderTarget[] = [];
+  /**
+   * Renders the arm pattern into its textures. Called once, from the wheel
+   * material's creation, so a player on the nebula never pays for it.
+   */
+  const bakeGasPattern = (): void => {
+    const material = new ShaderMaterial({
+      uniforms: { u_bakeField: { value: BAKE_FIELD_PATTERN } },
+      vertexShader: VERTEX_SHADER,
+      fragmentShader: BAKE_GLSL,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    // The vertex shader writes clip space directly, so the camera is a
+    // formality and the mesh must not be culled against it.
+    const bakeMesh = new Mesh(geometry, material);
+    bakeMesh.frustumCulled = false;
+    const bakeScene = new Scene().add(bakeMesh);
+    const bakeCamera = new Camera();
+    const { renderer } = viewport;
+    const previous = renderer.getRenderTarget();
+    const previousCubeFace = renderer.getActiveCubeFace();
+    const previousMipmap = renderer.getActiveMipmapLevel();
+    // The pattern target needs four channels (colour and pattern), the level one only needs one:
+    // at GAS_BAKE_SIZE that is 45 MB against 11 MB with the mip chains, so it is worth the split.
+    bakeTargets = [makeBakeTarget(RGBAFormat), makeBakeTarget(RedFormat)];
+    for (const field of [BAKE_FIELD_PATTERN, BAKE_FIELD_LEVEL]) {
+      (material.uniforms['u_bakeField'] as IUniform<number>).value = field;
+      // renderer.render, not a raw draw: it is what generates the target's
+      // mipmaps when it restores the framebuffer.
+      renderer.setRenderTarget(bakeTargets[field] as WebGLRenderTarget);
+      renderer.render(bakeScene, bakeCamera);
+    }
+    renderer.setRenderTarget(previous, previousCubeFace, previousMipmap);
+    material.dispose();
+    (uniforms['u_gasBake'] as IUniform<Texture>).value = (
+      bakeTargets[BAKE_FIELD_PATTERN] as WebGLRenderTarget
+    ).texture;
+    (uniforms['u_gasLevel'] as IUniform<Texture>).value = (
+      bakeTargets[BAKE_FIELD_LEVEL] as WebGLRenderTarget
+    ).texture;
+  };
+
   // Materials are compiled on first use and then cached: booting straight into
   // the default style must not pay for the other look's program.
   const materials = new Map<VoidStyle, ShaderMaterial>();
   const materialFor = (style: VoidStyle): ShaderMaterial => {
     const cached = materials.get(style);
     if (cached !== undefined) return cached;
+    if (style === 'wheel') bakeGasPattern();
     const material = new ShaderMaterial({
       uniforms,
       vertexShader: VERTEX_SHADER,
@@ -759,6 +963,8 @@ export function createCelestialVoid(
       viewport.scene.remove(mesh);
       for (const material of materials.values()) material.dispose();
       materials.clear();
+      for (const target of bakeTargets) target.dispose();
+      bakeTargets = [];
       geometry.dispose();
     },
   };
