@@ -35,7 +35,7 @@
 // wall clock, no RNG, fixed iteration order. Two callers running this against
 // the same heights get byte-identical answers.
 
-import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, MIN_HEIGHT, RELAX_SLACK, SEA_LEVEL } from './constants.ts';
 import { NO_FRESHWATER, type Freshwater, type FreshwaterMap } from './freshwater.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,6 +172,36 @@ export const UNCONSTRAINED_GRADIENT_PER_CELL = Infinity;
 export const LAND_WALKER_MAX_GRADIENT_PER_CELL = MAX_STEP / 2;
 
 /**
+ * What makes a face SHEER: more rise in one cell than the terrain itself can
+ * come to rest at.
+ *
+ * THE OWNER'S RULE (2026-09-05): "If a face is not sheer, then the peep should
+ * be able to go from one band to the next at the same pace as walking. It's
+ * only if it's a sheer face that they need the slower rate." So sheerness has
+ * to be a property of the GROUND, and the ground already states its own
+ * steepest possible slope: relaxation leaves a neighbour pair standing at
+ * MAX_STEP + RELAX_SLACK and never steeper (constants.ts, and shared/test/
+ * heightmap.test.ts's expectGradientLimitHolds pins it). A rise above that
+ * line was therefore not grown by the world — it was SCULPTED vertical, which
+ * is exactly the wall the climb mechanic was asked for.
+ *
+ * NOT THE DRAWN FACE, which cannot answer the question: terrain draws snapped
+ * down to its band floor (grid.ts's `quantizeToBand`), so EVERY band change is
+ * a BAND_HEIGHT vertical riser on screen whether the ground under it rose 5
+ * units over four cells or 400 in one. Reading sheerness off the picture would
+ * make every slope in the world sheer, which is the behaviour the owner is
+ * asking to be rid of.
+ *
+ * WHAT IT BUYS, in the units of the complaint: a band is BAND_HEIGHT and this
+ * is the steepest natural approach to it, so a natural band crossing takes at
+ * least BAND_HEIGHT / SHEER_RISE_HEIGHT_UNITS_PER_CELL = 3.2 cells of ground —
+ * walked, at walking pace, with the drawn body stepping up the riser at
+ * client/src/plugins/kit/groundFollow.ts's rate. A sculpted terrace riser, a
+ * whole band or more inside ONE cell, is still a climb.
+ */
+export const SHEER_RISE_HEIGHT_UNITS_PER_CELL = MAX_STEP + RELAX_SLACK;
+
+/**
  * The lowest stored height a LAND walker will accept as ground: the floor of
  * band 1.
  *
@@ -279,6 +309,11 @@ export interface TraversalProfile {
    * `climb` rule crosses a steeper rise by climbing it (see `climb` below and
    * shared/src/climb.ts). For a profile without one, this is still the whole
    * answer and nothing about it has changed.
+   *
+   * A CLIMBER'S DECLARED FIGURE IS A FLOOR, NOT THE ANSWER: it walks at least
+   * every slope legal terrain can grow (`walkableGradientLimit`), so ask that
+   * function — or `exceedsWalkableGradient`, which does — rather than reading
+   * this field.
    */
   readonly maxGradientPerCell: number;
   /**
@@ -342,9 +377,41 @@ export interface ClimbRule {
  * `Infinity` compares correctly but says nothing about intent.
  */
 export function exceedsWalkableGradient(profile: TraversalProfile, heightDifference: number): boolean {
-  const limit = profile.maxGradientPerCell;
+  const limit = walkableGradientLimit(profile);
   if (!Number.isFinite(limit)) return false;
   return Math.abs(heightDifference) > limit;
+}
+
+/**
+ * The slope this profile actually WALKS, which for a climber is not the one it
+ * declares.
+ *
+ * A CLIMBER WALKS EVERY SLOPE THE WORLD CAN GROW (owner, 2026-09-05: "If a face
+ * is not sheer, then the peep should be able to go from one band to the next at
+ * the same pace as walking. It's only if it's a sheer face that they need the
+ * slower rate."). A mover that will pull itself up a cliff is not the mover that
+ * stops at a 3-unit bank and takes four seconds over it; so granting the climb
+ * rule IS widening the walk, and the widened figure is
+ * SHEER_RISE_HEIGHT_UNITS_PER_CELL — above which the ground was sculpted rather
+ * than grown, which is the definition of the sheer face the slow rate is for.
+ *
+ * DERIVED HERE, NOT STORED ON THE PROFILE, and that is the whole point: a climb
+ * rule is attached in two places (`withClimb` in this file, and plugins/wildlife
+ * /server/census.ts, which builds a species' profile field by field), and a
+ * widening written at either of them is a widening the other forgets. Every
+ * consumer — climb.ts's `beginClimb`, pathing.ts's `edgeCost`, steering's
+ * sweeps, `canTraverseSegment` — already asks `exceedsWalkableGradient` rather
+ * than reading the field, so deriving it inside that one predicate is the only
+ * form of this rule a caller cannot get half right.
+ *
+ * `Math.max`, never a replacement: a water ground has no risers at all
+ * (UNCONSTRAINED_GRADIENT_PER_CELL) and an ibex declares a doubled limit of its
+ * own — neither may be NARROWED by gaining the ability to climb.
+ */
+export function walkableGradientLimit(profile: TraversalProfile): number {
+  const limit = profile.maxGradientPerCell;
+  if (profile.climb === undefined || profile.climb === null) return limit;
+  return Math.max(limit, SHEER_RISE_HEIGHT_UNITS_PER_CELL);
 }
 
 /**
@@ -425,7 +492,7 @@ export function canTraverseSegment(
   toX: number,
   toY: number,
 ): boolean {
-  const limit = profile.maxGradientPerCell;
+  const limit = walkableGradientLimit(profile);
   if (!Number.isFinite(limit)) return true; // water-ground: no risers to cross.
 
   const dx = toX - fromX;
@@ -565,9 +632,11 @@ export const LAND_WALKER_PROFILE: TraversalProfile = {
  * A legged thing that will CLIMB rather than turn back — peeps, the yeti and
  * the ibex (owner, 2026-09-05). Identical to LAND_WALKER_PROFILE but for the
  * one axis that differs, written as a spread so the two can never drift on the
- * axes they share: a climber is still refused water, still refused the band-0
- * fringe, and still WALKS only what a land walker walks. What it gains is
- * everything steeper, at climb.ts's speed and this rule's risk.
+ * axes they share: a climber is still refused water and still refused the
+ * band-0 fringe. What it gains is the whole of the steepest ground the world
+ * can grow, walked (SHEER_RISE_HEIGHT_UNITS_PER_CELL, via `walkableGradientLimit`),
+ * and everything sheerer than that climbed — at climb.ts's speed and this
+ * rule's risk.
  *
  * A FUNCTION RATHER THAN THREE CONSTANTS, on `navigableWaterProfile`'s footing:
  * the three shipped climbers differ in exactly one number and nothing else

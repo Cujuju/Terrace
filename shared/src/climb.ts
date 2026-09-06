@@ -140,6 +140,13 @@ export type ClimbOutcome = 'climbing' | 'arrived' | 'fallen';
  * a river — climbing does not make a lake crossable), or the step was never
  * blocked in the first place and is simply walkable.
  *
+ * "WALKABLE" IS THE CLIMBER'S OWN FIGURE, and for a climber that is every slope
+ * the world can grow (traversal.ts's `walkableGradientLimit` and
+ * SHEER_RISE_HEIGHT_UNITS_PER_CELL), so a band crossed over ordinary ground is
+ * WALKED at walking pace and only a sculpted, sheer face is climbed — the
+ * owner's rule of 2026-09-05, and the reason this file needs no rate of its own
+ * for gentle rises.
+ *
  * `seed` decides the fall. It must be stable for THIS climb and different for
  * the next one — a mover id mixed with the cell it is climbing onto and a
  * per-mover climb counter is the shape every caller uses; see plugins/pilgrims'
