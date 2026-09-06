@@ -698,15 +698,12 @@ export function advanceWalker(
   // negotiating for space, and its x/y must not move or it would climb
   // sideways into the rock.
   if (walker.climb !== null) {
-    const outcome = advanceClimb(walker.climb, dt);
+    // `advanceClimb` moves the walker as well as raising it: the body comes
+    // over the lip across the last band of the rise (climb.ts's mantle), so by
+    // the tick this returns 'arrived' it is already standing on the cell.
+    const outcome = advanceClimb(walker, dt);
     if (outcome === 'fallen') return 'fell';
-    if (outcome === 'arrived') {
-      // The cell is ENTERED only now, at its centre — the one moment the
-      // walker's horizontal position changes during a climb.
-      walker.x = walker.climb.toX + CELL_CENTRE_OFFSET;
-      walker.y = walker.climb.toY + CELL_CENTRE_OFFSET;
-      walker.climb = null;
-    }
+    if (outcome === 'arrived') walker.climb = null;
     // Climbing IS getting somewhere, and the stuck timer must hear that: a wall
     // takes CLIMB_SECONDS_PER_BAND a band, which is longer than
     // PILGRIM_STUCK_SECONDS on anything four bands tall.

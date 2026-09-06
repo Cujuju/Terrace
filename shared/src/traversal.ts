@@ -35,7 +35,16 @@
 // wall clock, no RNG, fixed iteration order. Two callers running this against
 // the same heights get byte-identical answers.
 
-import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, MIN_HEIGHT, RELAX_SLACK, SEA_LEVEL } from './constants.ts';
+import {
+  BAND_HEIGHT,
+  CELL_WORLD_SIZE,
+  MAX_HEIGHT,
+  MAX_RELIEF_WORLD_UNITS,
+  MAX_STEP,
+  MIN_HEIGHT,
+  RELAX_SLACK,
+  SEA_LEVEL,
+} from './constants.ts';
 import { NO_FRESHWATER, type Freshwater, type FreshwaterMap } from './freshwater.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,34 +181,46 @@ export const UNCONSTRAINED_GRADIENT_PER_CELL = Infinity;
 export const LAND_WALKER_MAX_GRADIENT_PER_CELL = MAX_STEP / 2;
 
 /**
- * What makes a face SHEER: more rise in one cell than the terrain itself can
- * come to rest at.
+ * How long one cell of ground is, in HEIGHT units.
  *
- * THE OWNER'S RULE (2026-09-05): "If a face is not sheer, then the peep should
- * be able to go from one band to the next at the same pace as walking. It's
- * only if it's a sheer face that they need the slower rate." So sheerness has
- * to be a property of the GROUND, and the ground already states its own
- * steepest possible slope: relaxation leaves a neighbour pair standing at
- * MAX_STEP + RELAX_SLACK and never steeper (constants.ts, and shared/test/
- * heightmap.test.ts's expectGradientLimitHolds pins it). A rise above that
- * line was therefore not grown by the world — it was SCULPTED vertical, which
- * is exactly the wall the climb mechanic was asked for.
+ * The world's two scales are not the same number and the slope of a riser is
+ * the ratio between them: a cell is CELL_WORLD_SIZE world units across, and a
+ * height unit is MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT world units tall. Sixteen
+ * today — one cell of run is exactly one BAND_HEIGHT of rise, so a band-tall
+ * riser standing in a single cell is a 1:1 face at 45 degrees.
  *
- * NOT THE DRAWN FACE, which cannot answer the question: terrain draws snapped
- * down to its band floor (grid.ts's `quantizeToBand`), so EVERY band change is
- * a BAND_HEIGHT vertical riser on screen whether the ground under it rose 5
- * units over four cells or 400 in one. Reading sheerness off the picture would
- * make every slope in the world sheer, which is the behaviour the owner is
- * asking to be rid of.
- *
- * WHAT IT BUYS, in the units of the complaint: a band is BAND_HEIGHT and this
- * is the steepest natural approach to it, so a natural band crossing takes at
- * least BAND_HEIGHT / SHEER_RISE_HEIGHT_UNITS_PER_CELL = 3.2 cells of ground —
- * walked, at walking pace, with the drawn body stepping up the riser at
- * client/src/plugins/kit/groundFollow.ts's rate. A sculpted terrace riser, a
- * whole band or more inside ONE cell, is still a climb.
+ * DERIVED, NEVER WRITTEN DOWN: both scales are already settled elsewhere, and a
+ * hand-written 16 here would be a third place for them to disagree.
  */
-export const SHEER_RISE_HEIGHT_UNITS_PER_CELL = MAX_STEP + RELAX_SLACK;
+export const HEIGHT_UNITS_PER_CELL_OF_RUN =
+  (CELL_WORLD_SIZE * MAX_HEIGHT) / MAX_RELIEF_WORLD_UNITS;
+
+/**
+ * What makes a face SHEER: FOUR OF RISE TO ONE OF RUN, and steeper.
+ *
+ * THE OWNER'S RULE (2026-09-06, deciding it as a slope after seeing the ratios
+ * drawn to scale): "I would say a 4:1 ratio would be a climb. Below that, it's
+ * a walk." So sheerness is the STEEPNESS of the face and nothing else — not how
+ * the ground got there, and not how many band edges it crosses.
+ *
+ * WHAT IT REPLACED, and why the earlier answer was not wrong so much as a
+ * different question. This was MAX_STEP + RELAX_SLACK: the steepest pair
+ * relaxation leaves standing, i.e. "steeper than the world can grow, so it was
+ * sculpted". That is a true statement about provenance and a 17-degree slope,
+ * and it made a climb out of every terrace riser a player had ever cut. The
+ * owner asked for a wall, and a wall is an angle.
+ *
+ * WHAT IT BUYS, in the units of the complaint: 4:1 is 76 degrees, and one cell
+ * of run is one band of rise, so a face has to gain FOUR bands inside a single
+ * cell before anything climbs it. Everything gentler — a terrace riser, a
+ * two-band step, a cut bank — is walked at walking pace, with the drawn body
+ * stepping up the riser at client/src/plugins/kit/groundFollow.ts's rate.
+ * Measured on frostwick-hollows: 4.2 % of walkable adjacent pairs are climbs,
+ * where the provenance rule made 19.7 % of them climbs.
+ */
+export const SHEER_RISE_TO_RUN = 4;
+
+export const SHEER_RISE_HEIGHT_UNITS_PER_CELL = SHEER_RISE_TO_RUN * HEIGHT_UNITS_PER_CELL_OF_RUN;
 
 /**
  * The lowest stored height a LAND walker will accept as ground: the floor of
@@ -362,6 +383,16 @@ export interface ClimbRule {
    * the same speed, with the same pause at the foot of it — it just cannot kill.
    */
   readonly lethalRiseHeightUnits: number;
+  /**
+   * Seconds this climber takes over one BAND of wall, or absent for the rate
+   * every climber shares (climb.ts's CLIMB_SECONDS_PER_BAND).
+   *
+   * OPTIONAL, so the axis is additive exactly like `climb` itself: a rule
+   * written before any animal had a speed of its own keeps the default to the
+   * letter. Read it through climb.ts's `climbRiseHeightUnitsPerSecond`, never
+   * directly — that function is where the default lives.
+   */
+  readonly secondsPerBand?: number;
 }
 
 /**

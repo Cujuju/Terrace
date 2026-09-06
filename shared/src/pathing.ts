@@ -26,7 +26,7 @@ import {
   type TerrainSampler,
   type TraversalProfile,
 } from './traversal.ts';
-import { CLIMB_RISE_HEIGHT_UNITS_PER_SECOND } from './climb.ts';
+import { climbRiseHeightUnitsPerSecond } from './climb.ts';
 import {
   CELL_WORLD_SIZE,
   NEIGHBOURHOOD_CELLS,
@@ -107,13 +107,17 @@ export const WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND = 0.5;
 const FLAT_CELL_SECONDS = CELL_WORLD_SIZE / WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND;
 
 /**
- * What one height unit of CLIMBING costs, in the same units as a walked step:
- * the climb's own seconds priced at what a second of walking costs. 5 today
- * (0.25 s a height unit against 0.5 s a cell, times the cell's 10), so a band
- * of wall is 80 — eight cells of walking, which is the time it genuinely takes.
+ * What one SECOND of climbing costs, in the same units as a walked step: a
+ * second of walking, priced by what a cell of it buys.
+ *
+ * PER SECOND RATHER THAN PER HEIGHT UNIT since climbers gained rates of their
+ * own (climb.ts's `climbRiseHeightUnitsPerSecond`). At the default rate the
+ * arithmetic is unchanged — 5 per height unit, 80 for a band, eight cells of
+ * walking, which is the four seconds a band the climb genuinely takes — but the
+ * height-unit figure is no longer a constant, because it depends on who is
+ * climbing.
  */
-const CLIMB_COST_PER_HEIGHT_UNIT =
-  (ORTHOGONAL_STEP_COST / FLAT_CELL_SECONDS) / CLIMB_RISE_HEIGHT_UNITS_PER_SECOND;
+const CLIMB_COST_PER_SECOND = ORTHOGONAL_STEP_COST / FLAT_CELL_SECONDS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Search bounds
@@ -434,7 +438,10 @@ function climbEdgeCost(rule: ClimbRule, heightDifference: number): number {
   // avoid a knee-high ledge.
   const risk =
     heightDifference >= rule.lethalRiseHeightUnits ? rule.fallChance * CERTAIN_DEATH_COST : 0;
-  return heightDifference * CLIMB_COST_PER_HEIGHT_UNIT + risk;
+  // THIS CLIMBER'S OWN SECONDS, not the world's: an animal that goes up four
+  // times faster must price a wall at a quarter of the detour, or the planner
+  // sends the best climber in the world the long way round.
+  return (heightDifference / climbRiseHeightUnitsPerSecond(rule)) * CLIMB_COST_PER_SECOND + risk;
 }
 
 function reconstructPath(

@@ -761,13 +761,11 @@ export function advanceEntity(
   // no separation, no chase. pilgrims' `advanceWalker` states the reasoning;
   // this is the same shared state machine on a smaller animal.
   if (entity.climb !== null) {
-    const outcome = advanceClimb(entity.climb, dt);
+    // `advanceClimb` owns the horizontal too — the body mantles over the lip
+    // across the last band of the rise — so 'arrived' has nothing left to place.
+    const outcome = advanceClimb(entity, dt);
     if (outcome === 'fallen') return 'fell';
-    if (outcome === 'arrived') {
-      entity.x = entity.climb.toX + CELL_CENTRE_OFFSET;
-      entity.y = entity.climb.toY + CELL_CENTRE_OFFSET;
-      entity.climb = null;
-    }
+    if (outcome === 'arrived') entity.climb = null;
     return 'alive';
   }
 

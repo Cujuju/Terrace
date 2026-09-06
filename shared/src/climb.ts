@@ -37,7 +37,13 @@
 
 import { BAND_HEIGHT } from './constants.ts';
 import { hashToIndex } from './rng.ts';
-import { admitsHeight, exceedsWalkableGradient, type TerrainSampler, type TraversalProfile } from './traversal.ts';
+import {
+  admitsHeight,
+  exceedsWalkableGradient,
+  type ClimbRule,
+  type TerrainSampler,
+  type TraversalProfile,
+} from './traversal.ts';
 
 /**
  * Seconds a climber spends on one BAND of wall.
@@ -60,15 +66,41 @@ export const CLIMB_SECONDS_PER_BAND = 4;
 export const CLIMB_RISE_HEIGHT_UNITS_PER_SECOND = BAND_HEIGHT / CLIMB_SECONDS_PER_BAND;
 
 /**
- * How fast a climber that has let go drops, in height units per second.
+ * How fast THIS climber goes up, in height units per second.
  *
- * EIGHT TIMES THE CLIMB, and it is a statement about what the two things ARE
- * rather than a tuned number: climbing is work against the wall and falling is
- * not, so a fall must read as a fall — one band in half a second — where the
- * climb it interrupts took four. Slower and a fall reads as a controlled
- * descent, which is the one thing it must not look like.
+ * A RATE PER CLIMBER, not one for the world (owner, 2026-09-06: "Ibex are known
+ * for being incredible jumpers"). The figure above stays the default and every
+ * profile that does not ask for another one keeps it exactly, so this widening
+ * costs the peep and the yeti nothing; what it buys is that an animal whose
+ * whole character is HOW it gets up a wall can say so in the one place the
+ * climb is defined, instead of the client faking a leap over a crawl.
+ *
+ * ASK THIS, NEVER `CLIMB_RISE_HEIGHT_UNITS_PER_SECOND` DIRECTLY, anywhere a
+ * particular climber's speed is meant — the constant is the default, not the
+ * answer.
  */
-export const FALL_DROP_HEIGHT_UNITS_PER_SECOND = CLIMB_RISE_HEIGHT_UNITS_PER_SECOND * 8;
+export function climbRiseHeightUnitsPerSecond(rule: ClimbRule): number {
+  return BAND_HEIGHT / (rule.secondsPerBand ?? CLIMB_SECONDS_PER_BAND);
+}
+
+/**
+ * Seconds a climber that has let go takes to drop one band.
+ *
+ * HALF A SECOND, AND IT BELONGS TO NOBODY. It was written as eight times the
+ * climb rate while there was only one climb rate, and that reading breaks the
+ * moment a climber gets a rate of its own: a fall is gravity, so the better
+ * climber must not also be the faster faller. The value is exactly what that
+ * derivation produced (BAND_HEIGHT / 4 s, times eight), so nothing shipped
+ * moves — only what the number MEANS does.
+ *
+ * It still has to read as a fall rather than a controlled descent, which is the
+ * one thing it must not look like, and against the default climb it is the same
+ * eight-to-one it always was.
+ */
+export const FALL_SECONDS_PER_BAND = 0.5;
+
+/** How fast a climber that has let go drops, in height units per second. */
+export const FALL_DROP_HEIGHT_UNITS_PER_SECOND = BAND_HEIGHT / FALL_SECONDS_PER_BAND;
 
 /**
  * Denominator the fall roll is taken over — basis points.
@@ -110,9 +142,22 @@ export interface ClimbState {
   /** The cell being climbed ONTO — entered only when the climb completes. */
   readonly toX: number;
   readonly toY: number;
+  /**
+   * Where the body stands against the face, in cell units — `approachAndClimb`'s
+   * foot position, remembered because the mantle over the lip interpolates from
+   * it. Without it, arriving could only be a teleport onto the target cell.
+   */
+  readonly footX: number;
+  readonly footY: number;
   /** Stored height the climb started from and is heading for. */
   readonly fromHeight: number;
   readonly toHeight: number;
+  /**
+   * This climber's own rise, in height units per second — `climbRiseHeightUnits
+   * PerSecond` of the rule that started it, resolved ONCE at the foot so a tick
+   * never has to go looking for the profile again.
+   */
+  readonly risePerSecond: number;
   /**
    * Where the climber is right now, in stored height units. Between
    * `fromHeight` and `toHeight` while climbing; falling back toward
@@ -226,8 +271,11 @@ export function beginClimb(
   return {
     toX: cellX,
     toY: cellY,
+    footX: fromX,
+    footY: fromY,
     fromHeight,
     toHeight,
+    risePerSecond: climbRiseHeightUnitsPerSecond(rule),
     height: fromHeight,
     doomed,
     releaseHeight: fromHeight + (toHeight - fromHeight) * releaseFraction,
@@ -236,14 +284,59 @@ export function beginClimb(
 }
 
 /**
- * Advances one climb by `dt` seconds, in place.
+ * How much of the climb, measured down from the lip in height units, is spent
+ * coming over the edge rather than hanging against the face.
  *
- * 'arrived' means the caller moves its mover into (toX, toY) and clears the
- * state; 'fallen' means the climber is back at the foot of the wall having let
- * go, and the caller kills it. Both are terminal — a caller that keeps ticking
- * a finished climb gets the same answer again rather than a moving corpse.
+ * ONE BAND, because the lip IS a band edge: the terrain draws quantised to band
+ * floors, so the ledge a climber tops out onto is exactly one band above the
+ * last of the wall. A climber's hands reach that edge about a band below it and
+ * its body comes forward from there — which is why this is an absolute height
+ * and not a fraction of the rise. A fraction would have a four-band climb
+ * drifting forward for four bands, i.e. through the rock.
+ *
+ * A climb shorter than one band mantles for its whole length, which is right:
+ * a wall you can reach the top of is one you pull over immediately.
  */
-export function advanceClimb(state: ClimbState, dt: number): ClimbOutcome {
+export const MANTLE_RISE_HEIGHT_UNITS = BAND_HEIGHT;
+
+/**
+ * How far onto the target cell the body has come, 0 at the face and 1 standing
+ * on the ledge.
+ *
+ * DERIVED FROM THE HEIGHT EVERY TICK, never accumulated: a doomed climber that
+ * lets go mid-mantle slides back off the lip for free, because its height is
+ * dropping and this reads the height. Nothing to unwind, nothing to drift.
+ */
+function mantleFraction(state: ClimbState): number {
+  const rise = Math.abs(state.toHeight - state.fromHeight);
+  if (rise <= 0) return 1;
+  const mantle = Math.min(MANTLE_RISE_HEIGHT_UNITS, rise);
+  const climbed = Math.abs(state.height - state.fromHeight);
+  const intoMantle = climbed - (rise - mantle);
+  if (intoMantle <= 0) return 0;
+  return Math.min(1, intoMantle / mantle);
+}
+
+/**
+ * Advances one climb by `dt` seconds, moving the mover.
+ *
+ * IT OWNS THE HORIZONTAL TOO, and that is the fix rather than a convenience
+ * (owner, 2026-09-06: "I don't want a model sitting in place for 4 s as it
+ * climbs only for it to pop to the next level"). Every caller used to place the
+ * mover on the target cell itself, in one frame, on the tick that returned
+ * 'arrived' — three plugins each writing the same teleport, and no place where
+ * topping out could be written once. Here the body comes over the lip across
+ * MANTLE_RISE_HEIGHT_UNITS of the rise, and 'arrived' is simply the tick that
+ * lands at the end of that.
+ *
+ * 'arrived' means the caller clears the state; 'fallen' means the climber is
+ * back at the foot of the wall having let go, and the caller kills it. Both are
+ * terminal — a caller that keeps ticking a finished climb gets the same answer
+ * again rather than a moving corpse.
+ */
+export function advanceClimb(mover: ClimbingMover, dt: number): ClimbOutcome {
+  const state = mover.climb;
+  if (state === null) return 'arrived';
   const step = Math.max(0, dt);
   const rising = state.toHeight >= state.fromHeight;
   // Toward the target while climbing, back toward the foot once it has let go.
@@ -254,12 +347,14 @@ export function advanceClimb(state: ClimbState, dt: number): ClimbOutcome {
     const hitTheGround = rising ? state.height <= state.fromHeight : state.height >= state.fromHeight;
     if (hitTheGround) {
       state.height = state.fromHeight;
+      placeOnWall(mover, state);
       return 'fallen';
     }
+    placeOnWall(mover, state);
     return 'climbing';
   }
 
-  state.height += direction * CLIMB_RISE_HEIGHT_UNITS_PER_SECOND * step;
+  state.height += direction * state.risePerSecond * step;
 
   // The release is tested BEFORE arrival: a doomed climb whose release height
   // and target are within one tick of each other must still fall, or a fast
@@ -276,9 +371,22 @@ export function advanceClimb(state: ClimbState, dt: number): ClimbOutcome {
   const arrived = rising ? state.height >= state.toHeight : state.height <= state.toHeight;
   if (arrived) {
     state.height = state.toHeight;
+    placeOnWall(mover, state);
     return 'arrived';
   }
+  placeOnWall(mover, state);
   return 'climbing';
+}
+
+/**
+ * Puts the mover where its own height says it is: against the face, or some way
+ * over the lip. At a mantle fraction of 1 this is exactly the target cell's
+ * centre, which is what makes 'arrived' need no placement of its own.
+ */
+function placeOnWall(mover: ClimbingMover, state: ClimbState): void {
+  const onto = mantleFraction(state);
+  mover.x = state.footX + (state.toX + CELL_CENTRE_OFFSET - state.footX) * onto;
+  mover.y = state.footY + (state.toY + CELL_CENTRE_OFFSET - state.footY) * onto;
 }
 
 /**
