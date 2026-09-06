@@ -70,7 +70,7 @@ import { installWaterBandClock, makeBanded } from './water/waterBands.ts';
 import {
   TILE_LATTICE_MAX_OFFSET,
   TILE_LATTICE_MIN_OFFSET,
-  appendRegionSurface,
+  appendRegionTile,
   type WaterRegion,
 } from './water/waterTread.ts';
 import { appendCurtains } from './water/waterCurtain.ts';
@@ -599,7 +599,7 @@ export function createRiverRig(
   // authored flat rather than face-shaded), so the normal buffer is a constant
   // the length of the capacity — filled on growth and never moved.
 
-  /** Where one region's vertices live inside the packed water buffer. */
+  /** Where one region TILE's vertices live inside the packed water buffer. */
   interface RegionRun {
     /** First vertex of the run, as an index into the packed buffers. */
     offset: number;
@@ -621,15 +621,28 @@ export function createRiverRig(
   /** Sum of every run's count — the geometry's draw range, and its only one. */
   let liveWaterVertices = 0;
   /**
-   * The regions in the buffer, by surface band, in ASCENDING BAND ORDER — which
-   * is the order their runs sit in the buffer, so a run's offset is the sum of
-   * the counts before it. Sorted rather than insertion-ordered because the
-   * packing depends on it: a splice shifts exactly the runs that follow, and
-   * "the runs that follow" has to be well-defined however the regions happened
-   * to appear.
+   * The runs in the buffer, by RUN KEY, in ASCENDING KEY ORDER — which is the
+   * order their runs sit in the buffer, so a run's offset is the sum of the
+   * counts before it. Sorted rather than insertion-ordered because the packing
+   * depends on it: a splice shifts exactly the runs that follow, and "the runs
+   * that follow" has to be well-defined however the runs happened to appear.
+   *
+   * A KEY IS A (BAND, TILE) PAIR, not a band (2026-09-05, issue #343). A
+   * region is one band map-wide, so re-emitting a whole one for a crater that
+   * touched nine chunks marched every tile the band reaches — ~180 of them on
+   * the owner's world, 42 ms of marching for ~2 ms of new answer. `runKeyOf`
+   * below packs the pair; ascending key is ascending band and then ascending
+   * tile, so the buffer order is still deterministic.
    */
   const waterRunOrder: number[] = [];
   const waterRuns = new Map<number, RegionRun>();
+
+  /**
+   * The packed (band, tile) run key. `tileCount` is the world's tile count, so
+   * the tile occupies the low digits and the key sorts by band first.
+   */
+  const runKeyOf = (band: number, tile: number, tileCount: number): number =>
+    band * tileCount + tile;
 
   /** Every normal from `from` to `to` (vertex indices) authored straight up. */
   const fillWaterNormals = (from: number, to: number): void => {
@@ -677,32 +690,32 @@ export function createRiverRig(
   };
 
   /**
-   * Copies `count` vertices of `source` into the region's run, moving
+   * Copies `count` vertices of `source` into the run keyed `key`, moving
    * everything after it if the run changed length. A `count` of 0 removes the
-   * region from the buffer.
+   * run from the buffer.
    *
    * Line for line the same manoeuvre as terrainMeshes.ts's `spliceChunk`, and
    * deliberately so: the packing invariant (runs back-to-back, offsets exact,
    * one draw range) is the thing that must hold, and two spellings of it would
    * be two chances to get it wrong.
    */
-  const spliceRegion = (band: number, source: readonly number[], count: number): void => {
-    let run = waterRuns.get(band);
+  const spliceRun = (key: number, source: readonly number[], count: number): void => {
+    let run = waterRuns.get(key);
     if (run === undefined) {
       if (count === 0) return;
-      // A new region goes where its band sorts to, so one that appears later
-      // still lands between its neighbours rather than at the end.
+      // A new run goes where its key sorts to, so one that appears later still
+      // lands between its neighbours rather than at the end.
       let at = waterRunOrder.length;
       for (let i = 0; i < waterRunOrder.length; i++) {
-        if (waterRunOrder[i]! > band) {
+        if (waterRunOrder[i]! > key) {
           at = i;
           break;
         }
       }
       const previous = at === 0 ? null : waterRuns.get(waterRunOrder[at - 1]!)!;
       run = { offset: previous === null ? 0 : previous.offset + previous.count, count: 0 };
-      waterRunOrder.splice(at, 0, band);
-      waterRuns.set(band, run);
+      waterRunOrder.splice(at, 0, key);
+      waterRuns.set(key, run);
     }
 
     const delta = count - run.count;
@@ -720,7 +733,7 @@ export function createRiverRig(
       );
     }
     if (delta !== 0) {
-      const from = waterRunOrder.indexOf(band) + 1;
+      const from = waterRunOrder.indexOf(key) + 1;
       for (let i = from; i < waterRunOrder.length; i++) {
         waterRuns.get(waterRunOrder[i]!)!.offset += delta;
       }
@@ -732,8 +745,8 @@ export function createRiverRig(
     for (let i = 0; i < count * 3; i++) waterPositions[base + i] = source[i]!;
 
     if (count === 0) {
-      waterRuns.delete(band);
-      waterRunOrder.splice(waterRunOrder.indexOf(band), 1);
+      waterRuns.delete(key);
+      waterRunOrder.splice(waterRunOrder.indexOf(key), 1);
     }
   };
 
@@ -852,50 +865,33 @@ export function createRiverRig(
   /** One region's triangles, reused across regions and rebuilds. */
   const regionTriangles: number[] = [];
 
-  /** The empty run handed to `spliceRegion` when a region is removed. */
+  /** The empty run handed to `spliceRun` when a run is removed. */
   const EMPTY_TRIANGLES: readonly number[] = [];
 
   /**
-   * The marching tiles each band-region was EMITTED with, by band.
+   * The run keys the LAST rebuild claimed — every (band, tile) it listed,
+   * whether or not that tile ended up with any vertices.
    *
    * A region's IDENTITY IS ITS BAND, which is not a convention imposed here —
    * the rebuild groups every wet cell by the band its surface is drawn at, so
    * one band is one region by construction (see the rebuild's step 2). That
    * makes identity deterministic without an anchor-cell rule: the same terrain
-   * always produces the same bands with the same contents.
+   * always produces the same bands with the same contents. The TILE half of
+   * the key comes from `region.tiles`, so a key is deterministic too.
    *
-   * The tiles are kept, rather than the cells, because of the one case the new
-   * tiles cannot speak for: a region that LOST every cell it had in some chunk
-   * no longer lists that chunk, so only the tiles it was drawn with can say
-   * that its old geometry there is stale.
+   * IT REPLACES THE TWO-SET `regionNeedsReemit` TEST (2026-09-05, issue #343),
+   * whose second set existed for one case: a region that LOST every cell it
+   * had in some chunk no longer lists that chunk, so its NEW tiles could not
+   * report that its old geometry there was stale. Per-tile keys answer that
+   * directly — the key is simply absent from the new rebuild's set, and the
+   * loop that gives vanished keys their runs back splices it to nothing.
+   *
+   * KEYS WITH NO VERTICES ARE STILL RECORDED, which is why this is not just
+   * `waterRuns`: `spliceRun` drops a run whose count is 0, so a tile that
+   * marched to nothing would otherwise read as "never emitted" and re-march on
+   * every rebuild for ever.
    */
-  const emittedRegionTiles = new Map<number, ReadonlySet<number>>();
-
-  /**
-   * Whether a region has to be emitted again, or may keep the vertices it has.
-   *
-   * A region's geometry is a function of three things: its own cells, the
-   * terrain in and beside its tiles, and the water standing just outside it (a
-   * curtain's foot lands on the pool below, not on the first rock ledge). The
-   * `affectedChunks` set is built to cover all three — every chunk whose terrain
-   * changed and every chunk holding a cell whose water changed, each grown by
-   * one ring — so intersecting it with the region's tiles is the whole test.
-   *
-   * BOTH TILE SETS ARE TESTED, and the second is not redundant. A region that
-   * lost every cell it had in a chunk does not list that chunk any more, so its
-   * NEW tiles cannot report the change that emptied it; the tiles it was drawn
-   * with can.
-   */
-  const regionNeedsReemit = (
-    region: WaterRegion,
-    affectedChunks: ReadonlySet<number>,
-  ): boolean => {
-    const emittedTiles = emittedRegionTiles.get(region.surfaceBand);
-    if (emittedTiles === undefined || !waterRuns.has(region.surfaceBand)) return true;
-    for (const tile of region.tiles) if (affectedChunks.has(tile)) return true;
-    for (const tile of emittedTiles) if (affectedChunks.has(tile)) return true;
-    return false;
-  };
+  let emittedRunKeys = new Set<number>();
 
   // Spring materials — one shared instance each across every spring in
   // the network (the rings/dome geometries are merged, so one draw call per
@@ -1382,47 +1378,67 @@ export function createRiverRig(
     const bandWorldY = (band: number, cellXCoord: number, cellZCoord: number): number =>
       ground.capYOfBand(band, cellXCoord, cellZCoord) + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
-    // PASS THREE: re-emit only the regions that can have moved.
+    // PASS THREE: re-emit only the TILES that can have moved.
+    //
+    // A tile re-emits when the terrain or the water under it can have changed
+    // (`affectedChunks`, already grown by one ring for the border row a tile
+    // shares with the tile next door and the cell a curtain probes past its
+    // own region), when this rebuild is a forced one (`dirtyChunks === null`),
+    // or when it was never drawn. Before 2026-09-05 the unit was the whole
+    // band-region, so a crater that touched nine chunks re-marched every tile
+    // the band reached.
+    const tileCount = tileCols * tileCols;
+    const currentKeys = new Set<number>();
     for (const region of regions.values()) {
-      if (dirtyChunks !== null && !regionNeedsReemit(region, affectedChunks)) continue;
       // Anchored at a cell the region actually covers, so band 0 resolves in
       // the chunk the water is really in. Regions are non-empty by
       // construction (they are created when their first cell is added).
       const anchorX = region.anchorCell % worldSize;
       const anchorZ = (region.anchorCell - anchorX) / worldSize;
       const surfaceY = bandWorldY(region.surfaceBand, anchorX, anchorZ);
-      regionTriangles.length = 0;
-      const loops = appendRegionSurface(mirror, region, surfaceY, regionTriangles);
-      // The curtain asks the terrain where the ground is; it is not told, and
-      // it is given no probe of ours to guess with. The apron needed two
-      // callbacks here — a lower-water probe and a ground-height probe, both
-      // re-deriving from the cell lattice — and those two derivations are the
-      // defect this change deletes.
-      // bandWorldY is handed over rather than re-derived, so the sheet's top
-      // edge is the SAME NUMBER as the pool surface it hangs from and its foot
-      // is the same number as the pool it lands in — which is what makes the
-      // junctions welded rather than merely close.
-      appendCurtains(
-        ground,
-        loops,
-        region.surfaceBand,
-        surfaceY,
-        bandWorldY,
-        waterBandAt,
-        SEA_SURFACE_WORLD_Y,
-        regionTriangles,
-      );
-      spliceRegion(region.surfaceBand, regionTriangles, regionTriangles.length / 3);
-      emittedRegionTiles.set(region.surfaceBand, region.tiles);
+      for (const tile of region.tiles) {
+        const key = runKeyOf(region.surfaceBand, tile, tileCount);
+        currentKeys.add(key);
+        const stale =
+          dirtyChunks === null || affectedChunks.has(tile) || !emittedRunKeys.has(key);
+        if (!stale) continue;
+        regionTriangles.length = 0;
+        const loops = appendRegionTile(mirror, region, tile, surfaceY, regionTriangles);
+        // The curtain asks the terrain where the ground is; it is not told, and
+        // it is given no probe of ours to guess with. The apron needed two
+        // callbacks here — a lower-water probe and a ground-height probe, both
+        // re-deriving from the cell lattice — and those two derivations are the
+        // defect this change deletes.
+        // bandWorldY is handed over rather than re-derived, so the sheet's top
+        // edge is the SAME NUMBER as the pool surface it hangs from and its foot
+        // is the same number as the pool it lands in — which is what makes the
+        // junctions welded rather than merely close.
+        //
+        // ONE TILE'S LOOPS ARE A COMPLETE INPUT: `appendCurtains` carries no
+        // state across loops (its only cross-loop value is the `topY` it is
+        // handed), so the curtains a tile's loops produce are exactly the ones
+        // it contributed when the whole region was passed at once.
+        appendCurtains(
+          ground,
+          loops,
+          region.surfaceBand,
+          surfaceY,
+          bandWorldY,
+          waterBandAt,
+          SEA_SURFACE_WORLD_Y,
+          regionTriangles,
+        );
+        spliceRun(key, regionTriangles, regionTriangles.length / 3);
+      }
     }
 
-    // Regions that vanished — a band the water has left entirely — give their
-    // run back. Collected first: `spliceRegion` mutates the order it walks.
-    for (const band of Array.from(waterRunOrder)) {
-      if (regions.has(band)) continue;
-      spliceRegion(band, EMPTY_TRIANGLES, 0);
-      emittedRegionTiles.delete(band);
+    // Run keys that vanished — a (band, tile) the water has left — give their
+    // runs back. Collected first: `spliceRun` mutates the order it walks.
+    for (const key of Array.from(waterRunOrder)) {
+      if (currentKeys.has(key)) continue;
+      spliceRun(key, EMPTY_TRIANGLES, 0);
     }
+    emittedRunKeys = currentKeys;
 
     waterMesh.geometry.setDrawRange(0, liveWaterVertices);
     waterPositionAttribute.needsUpdate = true;
