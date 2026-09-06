@@ -30,6 +30,7 @@ import {
   type SculptTool,
 } from '@terrace/shared';
 import type { ConnectionStatus } from '../net/connection.ts';
+import type { FrameStatsSample } from '../render/frameStats.ts';
 
 /**
  * The brush ladder the player picks from: EVERY radius from 1 to 8 cells
@@ -254,6 +255,39 @@ const [frameDraw, setFrameDrawSignal] = createSignal<FrameDrawAccounting | null>
 
 export function setFrameDraw(accounting: FrameDrawAccounting): void {
   setFrameDrawSignal(accounting);
+}
+
+/**
+ * The frame meter's latest window (render/frameStats.ts), or null while the
+ * perf block is closed.
+ *
+ * WRITTEN ONLY WHILE THE BLOCK IS OPEN. The meter runs unconditionally — it is
+ * two clock reads — but publishing it into Solid is what costs a re-render, so
+ * main.tsx installs the sink when the block opens and removes it when it
+ * closes. A closed block therefore means null here, and `__terracePerf.stats()`
+ * remains the way to read the meter without a HUD.
+ *
+ * Not persisted: like `frameRate`, it is a fact about this session's rendering,
+ * and a restored one would be a stale lie about the machine's health.
+ */
+const [frameStats, setFrameStatsSignal] = createSignal<FrameStatsSample | null>(
+  null,
+);
+
+export function setFrameStats(sample: FrameStatsSample | null): void {
+  setFrameStatsSignal(sample);
+}
+
+/**
+ * Whether the perf block is showing, toggled with the backquote key
+ * (ui/Hud.tsx). Off by default and NOT persisted: it is a diagnostic the owner
+ * opens when a session feels slow, and a page that restored it would print
+ * eight numbers at every player who once pressed the key.
+ */
+const [perfOpen, setPerfOpenSignal] = createSignal(false);
+
+export function setPerfOpen(open: boolean): void {
+  setPerfOpenSignal(open);
 }
 
 // ---------------------------------------------------------------------------
@@ -598,6 +632,8 @@ export {
   serverVersion,
   frameRate,
   frameDraw,
+  frameStats,
+  perfOpen,
   brushRadius,
   brushTool,
   brushProfile,
