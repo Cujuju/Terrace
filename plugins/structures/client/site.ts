@@ -45,8 +45,9 @@
 // boat:
 //
 //   * A skiff is not a point. It orbits its anchor by up to
-//     SKIFF_ORBIT_RADIUS_MAX_WORLD_UNITS and is 0.36 world units long, so some
-//     part of it reaches SKIFF_MOORING_CLEARANCE_WORLD_UNITS = 0.46 (1.8 cells)
+//     SKIFF_ORBIT_RADIUS_MAX_WORLD_UNITS and is 0.576 world units long as drawn
+//     (0.36 authored x SKIFF_MODEL_SCALE), so some part of it reaches
+//     SKIFF_MOORING_CLEARANCE_WORLD_UNITS = 0.568 (2.27 cells)
 //     from the anchor. Handing it the NEAREST water cell — which, by
 //     construction, is the SHORELINE — sailed it straight into the beach.
 //   * The lattice is not what a player sees. `terrainHeightAt` reports the band
@@ -70,7 +71,7 @@
 // up inside another hull are facts about a PAIR:
 //
 //   * TWO SKIFFS. Moorable cells are adjacent — 0.25 world units apart — while
-//     each skiff reaches SKIFF_MOORING_CLEARANCE_WORLD_UNITS (0.46) from its
+//     each skiff reaches SKIFF_MOORING_CLEARANCE_WORLD_UNITS (0.568) from its
 //     anchor, so the nearest few moorings on any shoreline are three orbits over
 //     one patch of water. Fixed by requiring
 //     SKIFF_MOORING_SPACING_WORLD_UNITS between the moorings a survey keeps
@@ -202,7 +203,7 @@ export const SKIFF_MOORING_CLEARANCE_CELLS = Math.ceil(
 );
 
 /**
- * The same hull reach in CELLS but NOT rounded — 1.84 today.
+ * The same hull reach in CELLS but NOT rounded — 2.27 today.
  *
  * Distinct from SKIFF_MOORING_CLEARANCE_CELLS above, which is ceiled because it
  * indexes a loop over a lattice of whole cells. This one is compared against a

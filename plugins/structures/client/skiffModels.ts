@@ -42,7 +42,7 @@
 //   * an Empty named `waterline` — the height the sea plane must cut the hull
 //     at, which is what waterlineLift floats the boat by;
 //   * an Empty named `dryline` — the top of the sole (the boat's floor), which
-//     must stand at least SKIFF_BOB_AMPLITUDE_WORLD_UNITS above `waterline`.
+//     must stand at least SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS above `waterline`.
 //     That last check is the ASSET'S dry-interior promise (build_skiff.py's
 //     SOLE_DRY_CLEARANCE_MIN) tested against the ANIMATION that could break it,
 //     at load, so neither side can silently regress the other (GH #327).
@@ -66,9 +66,10 @@ import {
 } from '../../../client/src/render/rigAsset.ts';
 import { STRUCTURES_CAP } from '../protocol.ts';
 import {
-  SKIFF_HULL_BEAM_WORLD_UNITS,
-  SKIFF_HULL_LENGTH_WORLD_UNITS,
+  SKIFF_HULL_AUTHORED_BEAM_WORLD_UNITS,
+  SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS,
   SKIFF_MAX_PER_SETTLEMENT,
+  SKIFF_MODEL_SCALE,
   SKIFF_ORBIT_PERIOD_SECONDS,
   type SkiffPlacement,
 } from './skiffs.ts';
@@ -79,7 +80,7 @@ const MATRIX_ELEMENT_COUNT = 16;
 
 /**
  * World-space Y a skiff's WATERLINE floats at, before its own small bob
- * (SKIFF_BOB_AMPLITUDE_WORLD_UNITS below).
+ * (SKIFF_BOB_AMPLITUDE_DRAWN_WORLD_UNITS below).
  *
  * THE DRAWN SEA SURFACE, NOT SEA_LEVEL — and the difference is the whole of
  * GH #327's "the water should not render inside of the boat" (owner,
@@ -115,7 +116,18 @@ const SKIFF_FLOAT_WORLD_Y = SEA_SURFACE_WORLD_Y;
  * each other at load (see the `dryline` check there) rather than trusting
  * either comment.
  */
-const SKIFF_BOB_AMPLITUDE_WORLD_UNITS = 0.006;
+const SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS = 0.006;
+
+/**
+ * The same ripple AS DRAWN. The bob is a fraction of the hull's own depth, so
+ * it rides the model scale with everything else — a boat drawn 1.6x that bobbed
+ * by the authored amount would sit visibly stiller than the one this value was
+ * tuned on. The DRY-INTERIOR CHECK stays in authored units (see installSkiffKit)
+ * because the anchors it compares are the asset's own, and scaling both sides
+ * of that inequality by the same factor cannot change its verdict.
+ */
+const SKIFF_BOB_AMPLITUDE_DRAWN_WORLD_UNITS =
+  SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS * SKIFF_MODEL_SCALE;
 /** Seconds for one full bob cycle (down-up-down). Distinct from every skiff's own orbit period, so bobbing never lines up with orbiting into a repeating combined cycle a player could clock. */
 const SKIFF_BOB_PERIOD_SECONDS = 2.6;
 
@@ -135,8 +147,8 @@ const SKIFF_BOB_PERIOD_SECONDS = 2.6;
  * the clearance there can never be tuned against different boats.
  */
 const SKIFF_FOOTPRINT: AssetFootprint = {
-  x: SKIFF_HULL_LENGTH_WORLD_UNITS,
-  z: SKIFF_HULL_BEAM_WORLD_UNITS,
+  x: SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS,
+  z: SKIFF_HULL_AUTHORED_BEAM_WORLD_UNITS,
 };
 
 /**
@@ -195,14 +207,15 @@ interface SkiffKit {
   readonly geometry: BufferGeometry;
   /**
    * How far the boat's origin must rise for its authored `waterline` Empty to
-   * land on the sea surface — the negated anchor height, because the origin
-   * sits at the keel BELOW that line. The old box hull instead sat its centre
+   * land on the sea surface, AS DRAWN — the negated anchor height times
+   * SKIFF_MODEL_SCALE, because the origin sits at the keel BELOW that line and
+   * the whole hull is drawn scaled. The old box hull instead sat its centre
    * half a hull-height up, which floated the whole boat ON the surface rather
    * than in it.
    */
   readonly waterlineLift: number;
   /**
-   * How far the geometry reaches from the boat's own origin, in world units —
+   * How far the DRAWN geometry reaches from the boat's own origin, in world units —
    * the radius of a sphere at the skiff's position that certainly contains it,
    * whatever its yaw. Yaw is a rotation about Y through the origin, so it can
    * only move geometry around a circle of its own radius, never further out:
@@ -240,7 +253,10 @@ export function installSkiffKit(asset: RigAsset): void {
   // THE ASSET'S DRY INTERIOR, CHECKED AGAINST THE ANIMATION THAT COULD FLOOD IT
   // (GH #327). `dryline` is the top of the sole; `waterline` is where the sea
   // cuts the hull. The bob moves the whole boat down by
-  // SKIFF_BOB_AMPLITUDE_WORLD_UNITS at the bottom of every cycle, which moves
+  // SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS of its own hull at the bottom of
+  // every cycle — the drawn bob and the drawn hull are both SKIFF_MODEL_SCALE
+  // times the authored figures, so this inequality reads the same either way —
+  // which moves
   // the sea that far UP the hull's own frame, so the sole is dry for the whole
   // cycle exactly when the gap between the two anchors is at least the
   // amplitude. build_skiff.py asserts the same relationship from its side
@@ -251,13 +267,13 @@ export function installSkiffKit(asset: RigAsset): void {
   // the boat.
   const dryline = asset.anchor('dryline');
   const soleDryClearance = dryline.y - waterline.y;
-  if (soleDryClearance < SKIFF_BOB_AMPLITUDE_WORLD_UNITS) {
+  if (soleDryClearance < SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS) {
     throw new Error(
       `skiff asset: the sole clears the waterline by ${soleDryClearance.toFixed(4)} world ` +
-        `units, less than the bob amplitude ${SKIFF_BOB_AMPLITUDE_WORLD_UNITS} — the sea ` +
+        `units, less than the authored bob amplitude ${SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS} — the sea ` +
         `would render inside the hull at the bottom of every bob cycle. Raise ` +
         `tools/blender/build_skiff.py's FLOOR_HEIGHT_FRACTION (and its ` +
-        `SOLE_DRY_CLEARANCE_MIN) or lower SKIFF_BOB_AMPLITUDE_WORLD_UNITS.`,
+        `SOLE_DRY_CLEARANCE_MIN) or lower SKIFF_BOB_AMPLITUDE_AUTHORED_WORLD_UNITS.`,
     );
   }
 
@@ -291,11 +307,17 @@ export function installSkiffKit(asset: RigAsset): void {
   const sphere = geometry.boundingSphere;
 
   disposeSkiffKit();
+  // BOTH FIGURES ARE STORED AS DRAWN, scaled out of the asset's own frame here
+  // rather than at each use: every consumer of them (the instance matrix's
+  // world Y, the fleet's bounding sphere) works in world space against a hull
+  // already scaled by SKIFF_MODEL_SCALE, and a lift or a reach left at the
+  // authored size would float the boat at the wrong depth and under-bound the
+  // sphere by the same factor.
   kit = {
     asset,
     geometry,
-    waterlineLift: -waterline.y,
-    reachWorldUnits: sphere === null ? 0 : sphere.center.length() + sphere.radius,
+    waterlineLift: -waterline.y * SKIFF_MODEL_SCALE,
+    reachWorldUnits: (sphere === null ? 0 : sphere.center.length() + sphere.radius) * SKIFF_MODEL_SCALE,
   };
 }
 
@@ -357,7 +379,11 @@ export function createSkiffModels(): SkiffModels {
   elements[1] = 0;
   elements[3] = 0;
   elements[4] = 0;
-  elements[5] = 1;
+  // The Y row of a uniform scale: the boat is drawn SKIFF_MODEL_SCALE times its
+  // authored size (skiffs.ts), and a scale about Y never varies with the yaw, so
+  // it is written once here beside the other constant elements. The X and Z rows
+  // carry the same factor multiplied into the rotation, below.
+  elements[5] = SKIFF_MODEL_SCALE;
   elements[6] = 0;
   elements[7] = 0;
   elements[9] = 0;
@@ -375,7 +401,9 @@ export function createSkiffModels(): SkiffModels {
       // same space — a no-op until the 2026-08-21 re-sample.
       const worldX = skiff.x * CELL_WORLD_SIZE + Math.sin(angle) * skiff.orbitRadius;
       const worldZ = skiff.z * CELL_WORLD_SIZE + Math.cos(angle) * skiff.orbitRadius;
-      const bob = Math.sin((t / SKIFF_BOB_PERIOD_SECONDS) * FULL_TURN_RADIANS) * SKIFF_BOB_AMPLITUDE_WORLD_UNITS;
+      const bob =
+        Math.sin((t / SKIFF_BOB_PERIOD_SECONDS) * FULL_TURN_RADIANS) *
+        SKIFF_BOB_AMPLITUDE_DRAWN_WORLD_UNITS;
       // The lift is what puts the authored waterline on the sea surface; the
       // origin itself (the keel) therefore rides below it.
       const worldY = SKIFF_FLOAT_WORLD_Y + waterlineLift + bob;
@@ -401,10 +429,12 @@ export function createSkiffModels(): SkiffModels {
       // the translation column is the boat's world position. There is no
       // per-part offset left to carry around by that rotation — the whole
       // boat is one mesh whose origin IS the instance origin.
-      elements[0] = yawCos;
-      elements[2] = -yawSin;
-      elements[8] = yawSin;
-      elements[10] = yawCos;
+      // Rotation about Y times a uniform scale — the columns of makeRotationY
+      // scaled by SKIFF_MODEL_SCALE, which is what the boat is drawn at.
+      elements[0] = yawCos * SKIFF_MODEL_SCALE;
+      elements[2] = -yawSin * SKIFF_MODEL_SCALE;
+      elements[8] = yawSin * SKIFF_MODEL_SCALE;
+      elements[10] = yawCos * SKIFF_MODEL_SCALE;
       elements[12] = worldX;
       elements[13] = worldY;
       elements[14] = worldZ;
@@ -465,7 +495,7 @@ export function createSkiffModels(): SkiffModels {
     // can stick out of it by: its bob along Y and its own geometry.
     sphere.radius =
       Math.hypot(maxX - centerX, maxZ - centerZ) +
-      SKIFF_BOB_AMPLITUDE_WORLD_UNITS +
+      SKIFF_BOB_AMPLITUDE_DRAWN_WORLD_UNITS +
       reachWorldUnits;
   }
 

@@ -227,6 +227,13 @@ function isCoastMooring(dx: number): boolean {
   return dx - SKIFF_MOORING_CLEARANCE_CELLS >= COAST_WATER_MIN_DX;
 }
 
+/**
+ * How many moorings this straight-coast fixture yields. See the
+ * coastal-classification test below for the derivation — it is a property of
+ * the fixture's geometry against the skiff's own reach, not a cap.
+ */
+const COAST_FIXTURE_MOORINGS = 1;
+
 describe('tier table', () => {
   it('has at least four and at most six tiers, as the brief asks for', () => {
     expect(STRUCTURE_TIER_COUNT).toBeGreaterThanOrEqual(4);
@@ -334,12 +341,15 @@ describe('site survey (card 33, coastal classification)', () => {
     const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
-    // Three, and no longer because three is the cap (SURVEY_MOORINGS_RETAINED
-    // is six since 2026-09-05): on this straight coast the INSHORE BAND and the
-    // SKIFF_MOORING_SPACING between kept moorings are what run out first —
-    // moorable columns start at dx 5, the band closes past distance 7.16, and
-    // 3.68 cells of spacing leaves room for exactly (5, 0), (5, -4), (5, 4).
-    expect(survey.moorings.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
+    // ONE, and not because one is any kind of cap: on this straight coast the
+    // INSHORE BAND and the SKIFF_MOORING_SPACING between kept moorings are what
+    // run out first. At SKIFF_MODEL_SCALE 1.6 (skiffs.ts, owner 2026-09-05)
+    // moorable columns start at dx 6, the band closes past distance 7.73, and
+    // 4.54 cells of spacing puts the next candidate at (6, +/-5) — 7.81 out,
+    // just past the band. A straight coast floats one skiff; a bay or a river
+    // mouth, whose water opens out rather than running parallel, still floats
+    // SKIFF_MAX_PER_SETTLEMENT. It was three here while the boat was 0.36 long.
+    expect(survey.moorings.length).toBe(COAST_FIXTURE_MOORINGS);
   });
 
   it('classifies a fully dry, fully known neighbourhood inland — never pending', () => {
@@ -400,7 +410,7 @@ describe('site survey (card 33, coastal classification)', () => {
 
     const distanceOf = (cell: { x: number; y: number }): number =>
       (cell.x - CENTER.x) ** 2 + (cell.y - CENTER.y) ** 2;
-    expect(survey.moorings.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
+    expect(survey.moorings.length).toBe(COAST_FIXTURE_MOORINGS);
     for (let i = 1; i < survey.moorings.length; i++) {
       expect(distanceOf(survey.moorings[i]!)).toBeGreaterThanOrEqual(
         distanceOf(survey.moorings[i - 1]!),

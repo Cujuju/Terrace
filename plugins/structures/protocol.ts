@@ -499,13 +499,18 @@ export function settlementRace(x: number, y: number): SettlerRace {
  * time. A distance BAND measured from each village's own shoreline is what
  * separates them without either plugin knowing the other's placements.
  *
- * 1.5 — DERIVED FROM WHAT A SKIFF NEEDS, not chosen for looks. On the owner's
- * world a skiff mooring sits 2.7-3.2 cells past the shore, because the mooring
- * square must hold 2 cells of DRAWN water on every side (client/site.ts's
- * SKIFF_MOORING_CLEARANCE_CELLS); the hull then reaches a further 1.84 cells
- * (skiffs.ts's SKIFF_MOORING_CLEARANCE_WORLD_UNITS) from its anchor. 3.2 + 1.84
- * = 5.0 cells, rounded up to 6 = 1.5 world units. Anything tighter and a coast
+ * 1.75 — DERIVED FROM WHAT A SKIFF NEEDS, not chosen for looks. On the owner's
+ * world a skiff mooring sits 3.7-4.2 cells past the shore, because the mooring
+ * square must hold 3 cells of DRAWN water on every side (client/site.ts's
+ * SKIFF_MOORING_CLEARANCE_CELLS); the hull then reaches a further 2.27 cells
+ * (skiffs.ts's SKIFF_MOORING_CLEARANCE_WORLD_UNITS) from its anchor. 4.2 + 2.27
+ * = 6.5 cells, rounded up to 7 = 1.75 world units. Anything tighter and a coast
  * whose shelf drops away slowly floats no skiffs at all.
+ *
+ * BOTH TERMS MOVED WITH SKIFF_MODEL_SCALE (owner, 2026-09-05: skiffs sixty
+ * percent larger): the drawn hull is 0.576 world units long, so its reach and
+ * the mooring square it needs both grew, and the band that contains them had to
+ * grow with them or the skiffs would swing into the war boats' water.
  *
  * RESTATED, NOT IMPORTED, BY plugins/boats/protocol.ts, which carries its own
  * `HARBOUR_INSHORE_BAND_WORLD_UNITS` of the same value and derives its berth
@@ -515,4 +520,4 @@ export function settlementRace(x: number, y: number): SettlerRace {
  * independently installable, so neither may import the other; the semantics
  * MUST match, and the two comments say so in both directions.
  */
-export const HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.5;
+export const HARBOUR_INSHORE_BAND_WORLD_UNITS = 1.75;

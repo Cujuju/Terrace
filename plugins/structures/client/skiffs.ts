@@ -116,10 +116,36 @@ export const SKIFF_ORBIT_RADIUS_MAX_WORLD_UNITS = 0.28;
  * node test environment (see this file's banner and placement.ts's).
  *
  * 0.36 x 0.14 are the box the pre-GLB skiff was drawn at and the numbers the
- * fleet's spacing was tuned against — see SKIFF_FOOTPRINT's own comment.
+ * fleet's spacing was tuned against — see SKIFF_FOOTPRINT's own comment. They
+ * are the AUTHORED silhouette: what assets/skiff.glb itself must measure inside.
  */
-export const SKIFF_HULL_LENGTH_WORLD_UNITS = 0.36;
-export const SKIFF_HULL_BEAM_WORLD_UNITS = 0.14;
+export const SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS = 0.36;
+export const SKIFF_HULL_AUTHORED_BEAM_WORLD_UNITS = 0.14;
+
+/**
+ * How much bigger than authored a skiff is DRAWN (owner, 2026-09-05: skiffs
+ * sixty percent larger).
+ *
+ * IT IS NOT A NEW ASSET. The hull is authored once, at the size the .glb
+ * measures, and every instance is drawn through a uniform scale in its own
+ * matrix (skiffModels.ts's writeFrame) — so the fit check still tests the FILE
+ * against the size the file was authored to, and this constant is the only
+ * place the drawn size is decided.
+ *
+ * EVERYTHING SIZED OFF THE HULL FOLLOWS IT, because the two constants below are
+ * derived rather than restated: the mooring clearance a survey must find water
+ * out to, the spacing between two moorings, and the inshore strip war boats
+ * keep clear of (plugins/boats/protocol.ts, which restates the reach) all move
+ * with the boat. A skiff drawn 1.6x with a 1.0x clearance would put hulls over
+ * dry land and inside each other's orbits.
+ */
+export const SKIFF_MODEL_SCALE = 1.6;
+
+/** The silhouette AS DRAWN — what every placement rule below is measured on. */
+export const SKIFF_HULL_LENGTH_WORLD_UNITS =
+  SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS * SKIFF_MODEL_SCALE;
+export const SKIFF_HULL_BEAM_WORLD_UNITS =
+  SKIFF_HULL_AUTHORED_BEAM_WORLD_UNITS * SKIFF_MODEL_SCALE;
 
 /**
  * THE FARTHEST ANY POINT OF A MOORED HULL EVER GETS FROM ITS ANCHOR CELL, in
