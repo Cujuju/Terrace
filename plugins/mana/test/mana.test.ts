@@ -39,6 +39,7 @@ import { sculptManaCost } from '../pricing.ts';
 import {
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
   INSUFFICIENT_MANA_REASON,
+  MANA_BALANCE_HEARTBEAT_MS,
   MANA_BALANCE_MESSAGE,
   MANA_CAPACITY,
   MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
@@ -83,6 +84,12 @@ const INTERIOR_CELL = { x: 24, y: 24 } as const;
 
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
+
+const MILLISECONDS_PER_SECOND = 1000;
+
+/** Ticks between two heartbeat pushes to an unchanged pool. */
+const TICKS_PER_HEARTBEAT =
+  MANA_BALANCE_HEARTBEAT_MS / MILLISECONDS_PER_SECOND / TICK_DT;
 
 /**
  * The difficulty every test in this file boots at unless it says otherwise.
@@ -333,11 +340,17 @@ describe('mana plugin', () => {
     const duringRegen = harness.sink.ofType('mana:balance').length;
     expect(duringRegen).toBeGreaterThan(0);
 
-    // Refill completely, then keep ticking: a capped pool sends nothing.
+    // Refill completely, then keep ticking: a capped pool drops to the
+    // HEARTBEAT — one push per MANA_BALANCE_HEARTBEAT_MS, not one per tick.
+    // The anti-spam property is the ratio, not silence: the client's gate is a
+    // strict lower bound on this balance, so a pool that goes permanently quiet
+    // strands it (see MANA_BALANCE_HEARTBEAT_MS and client/state.ts).
     for (let n = 0; n < 200; n++) harness.host.tick(TICK_DT);
     harness.sink.clear();
-    for (let n = 0; n < 50; n++) harness.host.tick(TICK_DT);
-    expect(harness.sink.ofType('mana:balance')).toHaveLength(0);
+    const ticks = 50;
+    for (let n = 0; n < ticks; n++) harness.host.tick(TICK_DT);
+    expect(harness.sink.ofType('mana:balance')).toHaveLength(ticks / TICKS_PER_HEARTBEAT);
+    expect(TICKS_PER_HEARTBEAT).toBeGreaterThan(1);
   });
 
   it('drops a pool when its player leaves', () => {
@@ -1046,6 +1059,75 @@ describe('client local intent gate', () => {
     expect(manaPool()?.balance).toBe(30 - 3 * POINT_COST);
   });
 
+  it('credits itself no regen between pushes — the gate is a LOWER BOUND', async () => {
+    // THE CONTRACT (owner, 2026-09-05: "I don't ever want to see the land snap
+    // back because I don't have enough mana"). Regen the server has not ticked
+    // into its own pool is mana the player does not have, so a gate that spends
+    // it approves a stroke the server then refuses — and the refusal tears the
+    // predicted ground back off. Time passing must not raise what the gate will
+    // approve; only a push may. The GAUGE keeps the friendlier number, and this
+    // pins that the two are genuinely different readings of the same pool.
+    const { gateLocalSculpt, setManaPool, manaPool, liveBalance, clearInFlightDebits } =
+      await import('../client/state.ts');
+    clearInFlightDebits();
+
+    const rate = {
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
+    };
+    // One mana short of the cheapest stamp, so the verdict turns on the regen
+    // question and on nothing else.
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    setManaPool({ balance: POINT_COST - 1, ...rate });
+
+    // A minute of regen at the suite rate is orders of magnitude more than the
+    // one missing unit.
+    const A_MINUTE_MS = 60_000;
+    now.mockReturnValue(A_MINUTE_MS);
+
+    // The bar shows it filling, because a bar that froze between pushes would
+    // read as a broken economy...
+    expect(liveBalance(manaPool()!)).toBeGreaterThan(POINT_COST);
+    // ...and the gate still refuses, because the server has confirmed none of
+    // it. No intent is sent, so nothing is predicted, so nothing snaps back.
+    expect(gateLocalSculpt(POINT_INTENT)).toBe(false);
+
+    now.mockRestore();
+  });
+
+  it('a local debit does not rewind the gauge’s regen clock', async () => {
+    // The gate's debit is the one write that must NOT restamp when the
+    // authoritative balance was true (state.ts's `debitLocally`). Restamping
+    // would tell `liveBalance` that the regen since the last push had never
+    // been earned, and the bar would step backwards by more than the stroke
+    // cost every time the player pressed.
+    const { gateLocalSculpt, setManaPool, manaPool, liveBalance, clearInFlightDebits } =
+      await import('../client/state.ts');
+    clearInFlightDebits();
+
+    const HALF_A_POOL = MANA_CAPACITY / 2;
+    const HALF_SECOND_MS = 500;
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    setManaPool({
+      balance: HALF_A_POOL,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
+    });
+
+    now.mockReturnValue(HALF_SECOND_MS);
+    const shownBeforePress = liveBalance(manaPool()!);
+    expect(shownBeforePress).toBeGreaterThan(HALF_A_POOL); // regen is being shown
+
+    expect(gateLocalSculpt(POINT_INTENT)).toBe(true);
+    // Exactly the stroke's price came off the bar — not the price plus the
+    // half-second of regen the restamp would have thrown away.
+    expect(liveBalance(manaPool()!)).toBeCloseTo(shownBeforePress - POINT_COST);
+
+    now.mockRestore();
+  });
+
   it('debits a big brush far faster than a point brush', async () => {
     const { gateLocalSculpt, setManaPool, manaPool } = await import('../client/state.ts');
 
@@ -1433,11 +1515,16 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
     expect(pushes[0].target).toBe(PLAYER.id);
     expect(pushes[0].payload).toMatchObject({ balance: MANA_CAPACITY });
 
-    // And ticking on changes nothing: a full pool stays silent, so the push
-    // above was genuinely the only correction the client will ever get.
+    // The deny-side push is still the IMMEDIATE correction, and since
+    // 2026-09-05 it is no longer the last one either: a full pool now
+    // re-affirms itself on the heartbeat, so a client whose estimate drifted
+    // low for any other reason recovers without having to send an intent it
+    // believes it cannot pay for.
     harness.sink.clear();
-    for (let n = 0; n < 50; n++) harness.host.tick(TICK_DT);
-    expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)).toHaveLength(0);
+    for (let n = 0; n < TICKS_PER_HEARTBEAT; n++) harness.host.tick(TICK_DT);
+    const beats = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
+    expect(beats).toHaveLength(1);
+    expect(beats[0].payload).toMatchObject({ balance: MANA_CAPACITY });
   });
 });
 
