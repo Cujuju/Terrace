@@ -19,6 +19,10 @@
 // competing handlers, so there is exactly one shutdown path.
 
 import './quiet-boot.ts'; // must precede any Colyseus import — see that file's comment
+// SECOND, AND FOR ITS SIDE EFFECT: it stamps every console line with the local
+// time, and it has to be evaluated before the imports below or the lines they
+// write while loading go out unstamped. See that file's header on hoisting.
+import './log-timestamps.ts';
 import { Server, type ServerOptions } from '@colyseus/core';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
