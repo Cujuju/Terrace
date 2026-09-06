@@ -1,32 +1,10 @@
-// Swept-surface geometry, the one place a whale body is built.
-//
-// The rest of models.ts is spheres, cones and boxes: five silhouettes you can
-// tell apart at fifty cells, flat-shaded to match terraced terrain. Whales are
-// the exception, by owner decision (2026-08-21: "higher resolution with smooth
-// tapers"). They are the largest thing in the water, the one creature the
-// camera gets close to, and a stack of ellipsoids reads as stacked ellipsoids
-// at that range.
-//
-// A whale body is a swept surface: elliptical cross-sections whose half-width
-// and half-height vary INDEPENDENTLY along the body. That independence is the
-// whole point — a lathe (one radius per station) cannot give a blue whale both
-// a flat spade of a head and a tall blade of a tail stock, and it is that
-// inversion, not the vertex count, that makes the shape read as an animal.
-//
-// Both ends are closed here, always. Three earlier hand-rolled candidates each
-// terminated their ring loop without a cap, leaving a hole you could see the
-// backdrop through; closing the surface is not something a caller should be
-// able to forget.
+// Swept-surface geometry for smooth-tapered bodies (ibex, bison): elliptical
+// cross-sections whose half-width and half-height vary independently along X.
+// Both ends are always capped; a caller cannot leave the surface open.
 import { BufferGeometry, Float32BufferAttribute } from 'three';
 
-/** Rings spent rounding each end closed. Four reads as rounded at any range. */
 const DEFAULT_CAP_RINGS = 4;
-/**
- * How far a cap reaches along X, as a multiple of the end ring's larger radius.
- * 1.0 would be a hemisphere; under that keeps a rostrum blunt rather than
- * bulbous. Overridable per species — a sperm whale's face is a wall, and
- * forcing a hemisphere onto it puts a dome where the blunt front should be.
- */
+/** Cap reach along X as a multiple of the end ring's larger radius; 1.0 is a hemisphere. */
 const DEFAULT_NOSE_CAP_REACH = 0.85;
 const DEFAULT_TAIL_CAP_REACH = 0.6;
 /** Superellipse exponent at full boxiness — a rounded square, not a hard box. */
@@ -68,13 +46,7 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
   const indices: number[] = [];
   const ringStart: number[] = [];
 
-  /**
-   * One ring of exactly `segments` vertices, WRAPPED rather than duplicated at
-   * the seam. Duplicating the seam vertex leaves every seam edge owned by a
-   * single triangle — a surface that looks closed and tests open — and lets the
-   * two coincident vertices average their normals separately, which draws a
-   * faint crease down the animal's whole length.
-   */
+  /** Seam vertex is wrapped, not duplicated: a duplicate splits normals into a visible crease. */
   function pushRing(x: number, a: number, b: number, t: number, scale: number): void {
     ringStart.push(positions.length / 3);
     const exponent = boxiness
@@ -129,14 +101,8 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
     const next = ringStart[r + 1]!;
     for (let j = 0; j < segments; j++) {
       const k = (j + 1) % segments;
-      // Counter-clockwise seen from OUTSIDE the body — three's front face.
-      // Rings run nose to tail (x decreasing) and theta runs +Z toward +Y, so
-      // the outward winding is (cur, cur+1, next), not (cur, next, cur+1).
-      // The body shipped wound the other way (2026-09-02): every flank
-      // triangle faced inward while the two caps faced out, so the renderer
-      // culled the near flank and drew the far wall's inside — a convex hull
-      // looks the same either way, which is how it went unnoticed, but any
-      // part seated inside the body (a fin root) showed through the skin.
+      // Counter-clockwise from outside (three's front face). Wound the other way,
+      // the flank is culled and parts seated inside the body show through.
       indices.push(cur + j, cur + k, next + j);
       indices.push(next + j, cur + k, next + k);
     }
@@ -153,15 +119,7 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
   return geometry;
 }
 
-/**
- * A body profile authored as ANATOMY rather than as an equation: control points
- * `[t, value]` from nose to tail, Catmull-Rom interpolated and clamped.
- *
- * Sums of gaussians and sine powers are almost impossible to steer — moving the
- * widest point also changes how fat it is, and every correction breaks
- * something upstream. Control points state what the animal measures at each
- * station, which is how the shape is judged in the first place.
- */
+/** Control points `[t, value]` nose to tail, Catmull-Rom interpolated and clamped. */
 export function profileFromPoints(points: readonly (readonly [number, number])[]): BodyProfile {
   const ts = points.map((p) => p[0]);
   const vs = points.map((p) => p[1]);
