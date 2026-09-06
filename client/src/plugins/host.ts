@@ -704,6 +704,7 @@ export function createClientPluginHost(
             | 'settings';
           headerSummary?: Component;
           tabSummary?: () => string;
+          hasBody?: () => boolean;
         },
       ) {
         addPluginHudPanel({
@@ -712,6 +713,7 @@ export function createClientPluginHost(
           placement: options?.placement ?? 'panel',
           headerSummary: options?.headerSummary,
           tabSummary: options?.tabSummary,
+          hasBody: options?.hasBody,
         });
       },
       registerTool(tool) {

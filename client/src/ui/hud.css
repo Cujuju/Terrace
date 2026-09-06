@@ -192,6 +192,10 @@ body {
   cursor: pointer;
 }
 
+.panel-header--static {
+  cursor: default;
+}
+
 .panel-chevron {
   margin-left: auto;
   color: var(--hud-muted);
