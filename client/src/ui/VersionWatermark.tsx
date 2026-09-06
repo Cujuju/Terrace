@@ -36,7 +36,25 @@ import { pluginDrawRows } from '../plugins/hudPanels.ts';
 const CLIENT_VERSION: string =
   typeof __CLIENT_VERSION__ === 'string' ? __CLIENT_VERSION__ : 'unversioned';
 
-/** One labelled reading of the frame meter — label left, number right. */
+/**
+ * A millisecond reading as the frame rate it corresponds to.
+ *
+ * TWO ROWS CARRY ONE, AND THEY MEAN DIFFERENT THINGS. Beside `interval` it is
+ * the rate actually being presented — the honest fps, the same quantity the
+ * meter at the top of this column reports. Beside `frame` it is the rate the
+ * CPU's work would ALLOW if nothing else capped it, which is higher than the
+ * presented rate whenever vsync is holding frames back, and is the number that
+ * says whether there is headroom against the project's 140 fps bar.
+ *
+ * Zero is not divided into: a window with no interval yet (the first frame has
+ * no predecessor) has no rate, and an infinity in a diagnostic is noise.
+ */
+function asFps(ms: number): string {
+  if (ms <= 0) return '';
+  return `${String(Math.round(1000 / ms))} fps`;
+}
+
+/** One labelled reading of the frame meter — label and value, both left. */
 function PerfRow(props: { label: string; value: string }): JSX.Element {
   return (
     <span class="hud-version__perf">
@@ -122,10 +140,10 @@ export function VersionWatermark(): JSX.Element {
                 it away. */}
             <PerfRow label="render" value={`${stat().renderMsP50.toFixed(2)} ms`} />
             <PerfRow label="outside" value={`${stat().outsideMsP50.toFixed(2)} ms`} />
-            <PerfRow label="frame" value={`${stat().frameMsP50.toFixed(2)} ms`} />
+            <PerfRow label="frame" value={`${stat().frameMsP50.toFixed(2)} ms  ${asFps(stat().frameMsP50)}`} />
             <PerfRow label="p99" value={`${stat().frameMsP99.toFixed(2)} ms`} />
             <PerfRow label="max" value={`${stat().frameMsMax.toFixed(2)} ms`} />
-            <PerfRow label="interval" value={`${stat().intervalMsP50.toFixed(2)} ms`} />
+            <PerfRow label="interval" value={`${stat().intervalMsP50.toFixed(2)} ms  ${asFps(stat().intervalMsP50)}`} />
             <PerfRow label="draws" value={String(stat().counters.drawCalls)} />
             <PerfRow label="geometries" value={String(stat().counters.geometries)} />
             <PerfRow label="textures" value={String(stat().counters.textures)} />
