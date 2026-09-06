@@ -17,7 +17,9 @@
 // tier prosperity, never CA survival).
 
 import {
-  LAND_WALKER_PROFILE,
+  advanceClimb,
+  beginClimb,
+  climbingWalkerProfile,
   ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
   cellsAcross,
@@ -27,13 +29,20 @@ import {
   isWalkableCell as sharedIsWalkableCell,
   steerWithShorteningProbe,
   type FreshwaterMap,
+  type ClimbState,
   type Occupant,
   type RouteBudget,
   type RouteCell,
   type RoutedMover,
   type TraversalProfile,
 } from '@terrace/shared';
-import { PILGRIMS_CAP, settlementRace, type PilgrimEntityState, type SettlerRace } from '../protocol.ts';
+import {
+  PILGRIMS_CAP,
+  hashCell,
+  settlementRace,
+  type PilgrimEntityState,
+  type SettlerRace,
+} from '../protocol.ts';
 
 /** The slice of the world the sim reads. Matches WorldApi's members 1:1. */
 export interface PilgrimWorld {
@@ -333,7 +342,33 @@ export class SettlednessTracker {
  * or lake is something to walk around — is decided once in
  * shared/src/traversal.ts and never here.
  */
-export const PILGRIM_WALKER_PROFILE: TraversalProfile = LAND_WALKER_PROFILE;
+/**
+ * The chance a peep's climb ends in a fatal fall — owner, 2026-09-05: "I would
+ * even like them to be able to slowly climb sheer walls with maybe a fifteen
+ * percent chance of falling and dying", and 15 % exactly when asked whether the
+ * roll was per wall or per band (per wall).
+ *
+ * WHAT IT BUYS BESIDES DRAMA: pathing.ts prices a climbed edge by this, so it
+ * is also the number that decides how far out of its way a peep walks to find a
+ * ramp — about 19 cells at 15 %. The yeti's 5 % and the ibex's 1 % (their own
+ * plugins) buy six cells and one, which is the animal each of them is.
+ */
+export const PILGRIM_CLIMB_FALL_CHANCE = 0.15;
+
+/**
+ * A peep may go anywhere it can reach, climbing what it cannot walk (owner,
+ * 2026-09-05: "peeps need to be able to climb anything").
+ *
+ * WHAT IT REPLACED AND WHY, measured rather than argued: under the plain
+ * LAND_WALKER_PROFILE the live world's walkable land was 35 617 disconnected
+ * regions over 66 255 cells, 28 157 of them a single isolated cell, and the
+ * largest one spanned exactly one terrace band — see shared/src/climb.ts's
+ * header for the whole measurement. That is the "they seem to always be
+ * confined to one layer" the owner reported, and no amount of tuning the
+ * gradient limit fixes it: one band is eight times that limit, so a terraced
+ * world has no walkable band changes at all.
+ */
+export const PILGRIM_WALKER_PROFILE: TraversalProfile = climbingWalkerProfile(PILGRIM_CLIMB_FALL_CHANCE);
 
 /**
  * Land a walker will stand on: a thin adapter over shared's bounds+ground
@@ -456,6 +491,9 @@ export interface Pilgrim {
   route: RouteCell[] | null;
   /** Index of the next unreached waypoint in `route`. */
   routeIndex: number;
+  /** The wall this walker is on — see MovingWalker.climb. Never planned for;
+   *  set and cleared by `advanceWalker` alone. */
+  climb: ClimbState | null;
 }
 
 /** The moving slice of a walker — what `stepWalker` needs, and nothing more.
@@ -466,7 +504,25 @@ export interface MovingWalker {
   heading: number;
   goalX: number;
   goalY: number;
+  /**
+   * The wall this walker is on, or null for the ordinary case of standing on
+   * the ground (@terrace/shared's climb.ts). Owned by `advanceWalker`, which is
+   * the only thing that sets or clears it; `x`/`y` do not move while it is set.
+   *
+   * ON THE MOVING SLICE RATHER THAN ON EACH SIM'S OWN WALKER TYPE, so all three
+   * sims — pilgrimage, wandering, settling — get climbing from the one function
+   * that already moves all three, and none of them can forget to.
+   */
+  climb: ClimbState | null;
 }
+
+/**
+ * What one tick of `advanceWalker` did.
+ *
+ * 'held' is the honest name for the old `false`: the walker is where it was.
+ * 'fell' is terminal and the caller must act on it — see `advanceWalker`.
+ */
+export type WalkerAdvance = 'progressed' | 'held' | 'fell';
 
 /** A MovingWalker that also carries a planned route — what `advanceWalker`
  *  needs. Both `Pilgrim` and wandering.ts's `Wanderer` satisfy this, and it is
@@ -599,18 +655,58 @@ export function stepWalker(
  * over shared's `followRoute` (shared/src/steering.ts), which owns the
  * route-following contract and the fix to the freeze it used to cause.
  *
- * Returns TRUE when the walker got somewhere this tick — it entered a new
- * route cell, or (routeless) closed on its goal. The caller's stuck timer
- * runs off THIS, not off distance to the goal; see `followRoute`'s
- * `progressed` for why the distance measure could neither survive a real
- * detour nor detect a walker oscillating on the spot.
+ * 'progressed' means the walker got somewhere this tick — it entered a new
+ * route cell, (routeless) closed on its goal, or spent the tick climbing. The
+ * caller's stuck timer runs off THAT, not off distance to the goal; see
+ * `followRoute`'s `progressed` for why the distance measure could neither
+ * survive a real detour nor detect a walker oscillating on the spot.
+ *
+ * 'fell' means the walker let go of a wall and is dead: the CALLER despawns it,
+ * because what a death costs — a blessing, a settlement's founding party, a
+ * wandering slot — is each sim's own business and none of it belongs here.
  */
 export function advanceWalker(
   world: PilgrimWorld,
   walker: RoutedWalker,
   dt: number,
   occupants: readonly Occupant[] = [],
-): boolean {
+): WalkerAdvance {
+  // ON A WALL: one vertical motion and nothing else. No steering, no route
+  // following and no separation — a body pinned to a cliff face is not
+  // negotiating for space, and its x/y must not move or it would climb
+  // sideways into the rock.
+  if (walker.climb !== null) {
+    const outcome = advanceClimb(walker.climb, dt);
+    if (outcome === 'fallen') return 'fell';
+    if (outcome === 'arrived') {
+      // The cell is ENTERED only now, at its centre — the one moment the
+      // walker's horizontal position changes during a climb.
+      walker.x = walker.climb.toX + CELL_CENTRE_OFFSET;
+      walker.y = walker.climb.toY + CELL_CENTRE_OFFSET;
+      walker.climb = null;
+    }
+    // Climbing IS getting somewhere, and the stuck timer must hear that: a wall
+    // takes CLIMB_SECONDS_PER_BAND a band, which is longer than
+    // PILGRIM_STUCK_SECONDS on anything four bands tall.
+    return 'progressed';
+  }
+
+  // THE WAY ON IS A WALL: approach its face and start climbing, instead of
+  // handing the tick to the steering sweep.
+  //
+  // WHY THE SWEEP CANNOT BE LEFT TO DISCOVER THIS. Its whole job is to find a
+  // heading that is legal to WALK, and beside a wall there almost always is
+  // one — along the foot of it. Left to the sweep a peep with a climb in its
+  // route simply slides sideways along the cliff for ever (measured, before
+  // this branch existed: 200 of 200 walkers, none climbing, none arriving).
+  // The route is the authority here: A* prices a climbed edge by this walker's
+  // own fall chance (pathing.ts), so a route that contains one is a route where
+  // every way round cost more than the risk.
+  const climbing = approachAndClimb(world, walker, dt);
+  if (climbing !== null) return climbing;
+
+  const wasX = walker.x;
+  const wasY = walker.y;
   const result = followRoute(world, PILGRIM_WALKER_PROFILE, walker, {
     stepCells: PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt,
     lookaheadCells: lookaheadCells(),
@@ -619,7 +715,165 @@ export function advanceWalker(
     occupants,
     selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS,
   });
-  return result.progressed;
+  if (result.progressed) return 'progressed';
+
+  // A ROUTELESS WALKER WEDGED AGAINST SOMETHING (the degraded path: planning
+  // failed, so there is no route to read a climb out of). Not having moved at
+  // all is what "wedged" means here — every candidate heading refused, the
+  // ladder's own one-cell pocket — and a wall is the commonest reason for it.
+  if (walker.x !== wasX || walker.y !== wasY) return 'held';
+  const wedged = startClimb(world, walker, goalwardNeighbourOf(walker));
+  return wedged ?? 'held';
+}
+
+/**
+ * The approach-and-climb branch: walk the last fraction of a cell to the foot
+ * of the wall the route says to climb, then climb it. Null when this walker's
+ * next step is not a climb at all, which is every walker almost all the time.
+ *
+ * THE APPROACH IS A STRAIGHT WALK INSIDE THE WALKER'S OWN CELL, deliberately
+ * not steered: the destination is a point on the boundary of the cell it is
+ * already standing in — ground it has already been certified on — so there is
+ * nothing for a sweep to discover, and asking one would only reintroduce the
+ * sideways slide this branch exists to prevent.
+ */
+function approachAndClimb(world: PilgrimWorld, walker: RoutedWalker, dt: number): WalkerAdvance | null {
+  const target = routeClimbTargetOf(world, walker);
+  if (target === null) return null;
+
+  const cellX = Math.floor(walker.x);
+  const cellY = Math.floor(walker.y);
+  // The middle of the shared edge, pulled back into the walker's own cell by
+  // its own half-width so the body stops AT the wall rather than inside it.
+  const normalX = target.x - cellX;
+  const normalY = target.y - cellY;
+  const footX = cellX + CELL_CENTRE_OFFSET + normalX * (CELL_CENTRE_OFFSET - WALKER_PERSONAL_SPACE_CELLS);
+  const footY = cellY + CELL_CENTRE_OFFSET + normalY * (CELL_CENTRE_OFFSET - WALKER_PERSONAL_SPACE_CELLS);
+
+  const dx = footX - walker.x;
+  const dy = footY - walker.y;
+  const remaining = Math.sqrt(dx * dx + dy * dy);
+  walker.heading = Math.atan2(normalY, normalX);
+
+  const stepCells = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
+  if (remaining > stepCells) {
+    walker.x += (dx / remaining) * stepCells;
+    walker.y += (dy / remaining) * stepCells;
+    // Still walking to the wall — progress, and the stuck timer must agree.
+    return 'progressed';
+  }
+  walker.x = footX;
+  walker.y = footY;
+  return startClimb(world, walker, target) ?? 'held';
+}
+
+/**
+ * Puts `walker` on the wall at `target`, or null if that step is not a climb
+ * (which is what `beginClimb` answers).
+ */
+function startClimb(world: PilgrimWorld, walker: RoutedWalker, target: RouteCell | null): WalkerAdvance | null {
+  if (target === null) return null;
+  const climb = beginClimb(
+    world,
+    PILGRIM_WALKER_PROFILE,
+    walker.x,
+    walker.y,
+    target.x,
+    target.y,
+    climbSeedFor(walker, target),
+  );
+  if (climb === null) return null;
+  walker.climb = climb;
+  // Facing the wall for the whole climb: the model is drawn at this heading,
+  // and a peep climbing with its back to the cliff reads as a bug.
+  walker.heading = Math.atan2(
+    target.y + CELL_CENTRE_OFFSET - walker.y,
+    target.x + CELL_CENTRE_OFFSET - walker.x,
+  );
+  return 'progressed';
+}
+
+/** Cells are indexed at their corner; a walker stands in the middle of one. */
+const CELL_CENTRE_OFFSET = 0.5;
+
+/**
+ * The cell a blocked walker would climb onto: the next cell of its route, or —
+ * with no route — the neighbouring cell most directly toward its goal.
+ *
+ * THE ROUTE IS THE FIRST ANSWER because A* has already decided this wall is
+ * worth climbing (pathing.ts prices a climbed edge by the climber's own fall
+ * chance, so a route that contains one is a route where every way round cost
+ * more). The routeless case is the degraded path followRoute itself keeps —
+ * a walker steering straight at its goal — and it climbs on the same rule.
+ */
+function routeClimbTargetOf(world: PilgrimWorld, walker: RoutedWalker): RouteCell | null {
+  const route = walker.route;
+  if (route === null) return null;
+  const next = route[walker.routeIndex + 1];
+  if (next === undefined) return null;
+
+  const cellX = Math.floor(walker.x);
+  const cellY = Math.floor(walker.y);
+  const dx = next.x - cellX;
+  const dy = next.y - cellY;
+  // The follower's own invariant is that route[routeIndex] is the cell under
+  // the walker's feet, so the next cell is one step away. Anything else means
+  // the walker is off its route and the follower is about to re-sync it; that
+  // is not a moment to start a climb.
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1 || (dx === 0 && dy === 0)) return null;
+
+  // A DIAGONAL IS CLIMBED AS ONE OF ITS TWO ORTHOGONAL HALVES. A body pulls
+  // itself over one face, not over a corner, and A*'s corner guard has already
+  // certified both flanks — so whichever flank is the wall is the face to take.
+  if (dx !== 0 && dy !== 0) {
+    const alongX = { x: cellX + dx, y: cellY };
+    if (isClimbStep(world, walker, alongX)) return alongX;
+    const alongY = { x: cellX, y: cellY + dy };
+    return isClimbStep(world, walker, alongY) ? alongY : null;
+  }
+  return isClimbStep(world, walker, next) ? next : null;
+}
+
+/** Would stepping onto this cell be a CLIMB for this walker (rather than a walk,
+ *  or nothing it may do at all)? Asked through `beginClimb`, which owns the
+ *  answer, so the test and the act can never disagree about what a climb is. */
+function isClimbStep(world: PilgrimWorld, walker: RoutedWalker, cell: RouteCell): boolean {
+  return (
+    beginClimb(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, cell.x, cell.y, 0) !== null
+  );
+}
+
+/** The neighbouring cell most directly toward the goal — the routeless walker's
+ *  only idea of "the way on". ONE cell, on the dominant axis: a diagonal would
+ *  let a walker pull itself round a corner it never faced. */
+function goalwardNeighbourOf(walker: RoutedWalker): RouteCell | null {
+  const dx = walker.goalX - walker.x;
+  const dy = walker.goalY - walker.y;
+  if (dx === 0 && dy === 0) return null;
+  const cellX = Math.floor(walker.x);
+  const cellY = Math.floor(walker.y);
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { x: cellX + Math.sign(dx), y: cellY }
+    : { x: cellX, y: cellY + Math.sign(dy) };
+}
+
+/**
+ * The seed the fall is rolled off (shared's `beginClimb`).
+ *
+ * STABLE FOR ONE CLIMB, DIFFERENT FOR THE NEXT, which is the whole contract:
+ * the wall's cell decides most of it, so re-rolling the same wall in the same
+ * tick is impossible; the route index moves it on for a walker that climbs the
+ * same cell twice on one journey; and the walker's own cell separates two peeps
+ * queued at the foot of the same wall. No clock term, so a replayed server
+ * kills the same peep — this plugin's simulation is deterministic end to end
+ * and a climb does not get to be the exception.
+ */
+function climbSeedFor(walker: RoutedWalker, target: RouteCell): number {
+  return (
+    hashCell(target.x, target.y) ^
+    hashCell(Math.floor(walker.x), Math.floor(walker.y)) ^
+    (walker.routeIndex | 0)
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1065,6 +1319,7 @@ export class Pilgrimage {
           panicFromY: 0,
           route,
           routeIndex: 0,
+          climb: null,
         });
       }
     }
@@ -1111,8 +1366,18 @@ export class Pilgrimage {
       // it, for as long as the detour lasts) from being stuck, nor a walker
       // oscillating on the spot (which decreases it every other tick) from
       // one making headway; see shared/src/steering.ts's `progressed`.
-      const progressed = advanceWalker(world, pilgrim, dt, crowdAround(pilgrim, own, ownCrowd, occupants));
-      if (progressed) pilgrim.stuckSeconds = 0;
+      const advance = advanceWalker(world, pilgrim, dt, crowdAround(pilgrim, own, ownCrowd, occupants));
+      // FELL OFF A WALL — the pilgrim is gone, and its town's blessing ends
+      // with it, exactly as it does for a homebound pilgrim that gives up (see
+      // PILGRIM_STUCK_SECONDS, "their town's blessing ends with them,
+      // honestly"). Deleting the row IS ending the blessing:
+      // `blessedCellKeys` derives the blessed set from the live pilgrim table
+      // rather than keeping a second list.
+      if (advance === 'fell') {
+        this.pilgrims.delete(pilgrim.id);
+        continue;
+      }
+      if (advance === 'progressed') pilgrim.stuckSeconds = 0;
       else pilgrim.stuckSeconds += dt;
 
       const after = goalDistanceSq(pilgrim);
@@ -1164,6 +1429,9 @@ export class Pilgrimage {
         x: pilgrim.x,
         y: pilgrim.y,
         heading: pilgrim.heading,
+        // Only while off the ground; null is the ordinary case and costs the
+        // wire nothing once msgpack has dropped it.
+        climbHeight: pilgrim.climb === null ? null : pilgrim.climb.height,
       });
     }
     return rows;

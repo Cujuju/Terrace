@@ -31,6 +31,18 @@ export interface InterpolatedPilgrim {
   readonly x: number;
   readonly y: number;
   readonly heading: number;
+  /**
+   * Stored height while this walker is off the ground — climbing a wall or
+   * falling off one (protocol.ts's PilgrimEntityState.climbHeight). Null while
+   * it is standing on the ground, which is the ordinary case.
+   *
+   * INTERPOLATED LIKE x AND y, and for the same reason: it is a position the
+   * server sends at 5 Hz and the client draws at 60. Left un-interpolated a
+   * climb would rise in five visible steps a second, which is the stepping this
+   * whole change exists to remove — on the one motion that is nothing but
+   * vertical.
+   */
+  readonly climbHeight: number | null;
 }
 
 /**
@@ -49,6 +61,7 @@ export const DEFAULT_INTERPOLATION_SECONDS = 0.2;
 
 /** The pose a segment is walked from. */
 interface Pose extends PoseSegment {
+  climbHeight: number | null;
   x: number;
   y: number;
   heading: number;
@@ -66,6 +79,7 @@ interface PoseRecord extends InterpolatedPilgrim {
   heading: number;
   kind: InterpolatedPilgrim['kind'];
   race: InterpolatedPilgrim['race'];
+  climbHeight: number | null;
 }
 
 /**
@@ -84,11 +98,12 @@ export class PilgrimInterpolator extends PoseInterpolator<
       minWindowSeconds: MIN_INTERPOLATION_SECONDS,
       maxWindowSeconds: MAX_INTERPOLATION_SECONDS,
       defaultWindowSeconds: DEFAULT_INTERPOLATION_SECONDS,
-      createSegment: () => ({ x: 0, y: 0, heading: 0, generation: 0 }),
+      createSegment: () => ({ x: 0, y: 0, heading: 0, climbHeight: null, generation: 0 }),
       freeze: (target, source) => {
         target.x = source.x;
         target.y = source.y;
         target.heading = source.heading;
+        target.climbHeight = source.climbHeight;
       },
       createRecord: (pilgrim) => ({ ...pilgrim }),
       updateRecord: (record, pilgrim, segment, t) => {
@@ -98,8 +113,18 @@ export class PilgrimInterpolator extends PoseInterpolator<
           record.x = pilgrim.x;
           record.y = pilgrim.y;
           record.heading = pilgrim.heading;
+          record.climbHeight = pilgrim.climbHeight;
           return;
         }
+        // A climb that has just started or just ended has a height on one side
+        // of the window only. There is nothing to interpolate BETWEEN there —
+        // the other side is "on the ground", whose height this field does not
+        // carry — so the newest truth is the answer and the ground follower
+        // (client/src/plugins/kit/groundFollow.ts) eases the join.
+        record.climbHeight =
+          segment.climbHeight === null || pilgrim.climbHeight === null
+            ? pilgrim.climbHeight
+            : lerp(segment.climbHeight, pilgrim.climbHeight, t);
         record.x = lerp(segment.x, pilgrim.x, t);
         record.y = lerp(segment.y, pilgrim.y, t);
         // The short way round, so a walker turning through ±π spins 10° rather

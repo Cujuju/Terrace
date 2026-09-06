@@ -42,7 +42,7 @@ import {
   createRouteBudget,
   floodReachableRegion,
 } from '@terrace/shared';
-import type { Occupant, ReachableRegion, RouteBudget, RouteCell } from '@terrace/shared';
+import type { ClimbState, Occupant, ReachableRegion, RouteBudget, RouteCell } from '@terrace/shared';
 import { SETTLERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import type { SettlerRace } from '../protocol.ts';
 import {
@@ -492,6 +492,8 @@ interface Settler {
   /** See pilgrimage.ts's Pilgrim.route — same contract, same fallback. */
   route: RouteCell[] | null;
   routeIndex: number;
+  /** See pilgrimage.ts's MovingWalker.climb — set and cleared by advanceWalker. */
+  climb: ClimbState | null;
 }
 
 /**
@@ -592,13 +594,22 @@ export class Settling {
       // pursuing this tick.
       if (panicStep(world, settler, dt, crowd(settler, own, ownCrowd, occupants))) continue;
 
-      const progressed = advanceWalker(
+      const advance = advanceWalker(
         world,
         settler,
         dt,
         crowd(settler, own, ownCrowd, occupants),
       );
-      if (progressed) settler.stuckSeconds = 0;
+      // FELL OFF A WALL. The founding party is one settler smaller and the
+      // temple dispatches again on its own cadence — the same outcome as a
+      // settler that gave up, minus the house. `retire` is not called: it exists
+      // to hand a settler's ATTEMPT back where that matters, and a dead one has
+      // no attempt to hand back.
+      if (advance === 'fell') {
+        this.settlers.delete(settler.id);
+        continue;
+      }
+      if (advance === 'progressed') settler.stuckSeconds = 0;
       else settler.stuckSeconds += dt;
 
       const dx = settler.goalX - settler.x;
@@ -733,6 +744,7 @@ export class Settling {
       panicFromY: 0,
       route,
       routeIndex: 0,
+      climb: null,
     });
   }
 
@@ -802,6 +814,7 @@ export class Settling {
       panicFromY: 0,
       route,
       routeIndex: 0,
+      climb: null,
     });
     return true;
   }
@@ -817,6 +830,7 @@ export class Settling {
         x: settler.x,
         y: settler.y,
         heading: settler.heading,
+        climbHeight: settler.climb === null ? null : settler.climb.height,
       });
     }
     return rows;

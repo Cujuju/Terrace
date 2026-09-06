@@ -274,8 +274,58 @@ export interface TraversalProfile {
    * UNCONSTRAINED_GRADIENT_PER_CELL (Infinity) for a mover whose ground has
    * no risers (water); LAND_WALKER_MAX_GRADIENT_PER_CELL for one that walks
    * dry ground.
+   *
+   * IT IS THE LIMIT ON WALKING, not on going: a profile that also carries a
+   * `climb` rule crosses a steeper rise by climbing it (see `climb` below and
+   * shared/src/climb.ts). For a profile without one, this is still the whole
+   * answer and nothing about it has changed.
    */
   readonly maxGradientPerCell: number;
+  /**
+   * What this mover does about a rise steeper than it can walk: null (or
+   * absent) to refuse it, a ClimbRule to climb it.
+   *
+   * OPTIONAL SO THE AXIS IS ADDITIVE, exactly like `maxGroundHeight` above:
+   * every profile written before climbing existed keeps its previous answers
+   * to the letter, because absent means "cannot climb", which is what they all
+   * did.
+   */
+  readonly climb?: ClimbRule | null;
+}
+
+/**
+ * What climbing costs the mover that can do it — one number, because that is
+ * the only thing that differs between the climbers (owner, 2026-09-05: "I want
+ * Peeps to have a 15% chance. I want Yeti to have a 5% chance. And I want Ibex
+ * to have a 1% chance"). HOW FAST a climb goes is one figure for everything
+ * that climbs, and it lives with the mechanic in shared/src/climb.ts.
+ */
+export interface ClimbRule {
+  /**
+   * Chance in [0, 1] that the climb ends in a fatal fall, rolled ONCE at the
+   * foot of the wall whatever its height (owner's call, 2026-09-05, over a
+   * roll per band: a cliff is then no more lethal than a step, and what a
+   * player learns to read is the CLIMBER rather than the wall).
+   */
+  readonly fallChance: number;
+}
+
+/**
+ * Is this height difference steeper than `profile` may WALK across one cell?
+ *
+ * The one expression of the gradient rule. Both segment predicates below and
+ * every climb decision (climb.ts, pathing.ts) ask it rather than restating
+ * `Math.abs(dh) > profile.maxGradientPerCell` — which is exactly the shape of
+ * duplication that let a walker's rule and a planner's rule disagree before
+ * this file existed.
+ *
+ * False for an infinite limit without arithmetic: water has no risers, and
+ * `Infinity` compares correctly but says nothing about intent.
+ */
+export function exceedsWalkableGradient(profile: TraversalProfile, heightDifference: number): boolean {
+  const limit = profile.maxGradientPerCell;
+  if (!Number.isFinite(limit)) return false;
+  return Math.abs(heightDifference) > limit;
 }
 
 /**
@@ -383,7 +433,7 @@ export function canTraverseSegment(
     const sampleX = Math.floor(fromX + dx * t);
     const sampleY = Math.floor(fromY + dy * t);
     const height = world.heightAt(sampleX, sampleY);
-    if (Math.abs(height - previousHeight) > limit) return false;
+    if (exceedsWalkableGradient(profile, height - previousHeight)) return false;
     previousHeight = height;
   }
   return true;
@@ -437,9 +487,6 @@ export function canProceedAlong(
   toX: number,
   toY: number,
 ): boolean {
-  const limit = profile.maxGradientPerCell;
-  const checksGradient = Number.isFinite(limit);
-
   const dx = toX - fromX;
   const dy = toY - fromY;
   const distance = Math.sqrt(dx * dx + dy * dy);
@@ -460,7 +507,7 @@ export function canProceedAlong(
     }
 
     const height = world.heightAt(sampleX, sampleY);
-    if (checksGradient && Math.abs(height - previousHeight) > limit) return false;
+    if (exceedsWalkableGradient(profile, height - previousHeight)) return false;
     previousHeight = height;
 
     if (!admitsHeight(profile, height)) return false;
@@ -494,6 +541,25 @@ export const LAND_WALKER_PROFILE: TraversalProfile = {
   freshwater: 'blocked',
   maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL,
 };
+
+/**
+ * A legged thing that will CLIMB rather than turn back — peeps, the yeti and
+ * the ibex (owner, 2026-09-05). Identical to LAND_WALKER_PROFILE but for the
+ * one axis that differs, written as a spread so the two can never drift on the
+ * axes they share: a climber is still refused water, still refused the band-0
+ * fringe, and still WALKS only what a land walker walks. What it gains is
+ * everything steeper, at climb.ts's speed and this rule's risk.
+ *
+ * A FUNCTION RATHER THAN THREE CONSTANTS, on `navigableWaterProfile`'s footing:
+ * the three shipped climbers differ in exactly one number and nothing else
+ * about them is a decision, so naming three near-identical archetypes here
+ * would only be a place for two of them to drift. Each plugin names its own
+ * chance beside the animal it belongs to — that is where the owner's sentence
+ * about that animal lives.
+ */
+export function climbingWalkerProfile(fallChance: number): TraversalProfile {
+  return { ...LAND_WALKER_PROFILE, climb: { fallChance } };
+}
 
 /**
  * A land animal long-legged enough to ford a river but not to swim a lake —
