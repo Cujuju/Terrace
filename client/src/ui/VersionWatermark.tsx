@@ -39,12 +39,20 @@ const CLIENT_VERSION: string =
 /**
  * A millisecond reading as the frame rate it corresponds to.
  *
- * TWO ROWS CARRY ONE, AND THEY MEAN DIFFERENT THINGS. Beside `interval` it is
- * the rate actually being presented — the honest fps, the same quantity the
- * meter at the top of this column reports. Beside `frame` it is the rate the
- * CPU's work would ALLOW if nothing else capped it, which is higher than the
- * presented rate whenever vsync is holding frames back, and is the number that
- * says whether there is headroom against the project's 140 fps bar.
+ * EVERY MILLISECOND ROW CARRIES ONE (owner, 2026-09-06), and they do not all
+ * mean the same thing, so read the label first:
+ *
+ *   - `interval` is the rate actually being presented — the honest fps, the
+ *     same quantity the meter at the top of this column reports.
+ *   - `frame` is the rate the frame's CPU work would ALLOW if nothing else
+ *     capped it. Higher than the presented rate whenever vsync holds frames
+ *     back, and the number that says whether there is headroom against the
+ *     project's 140 fps bar.
+ *   - `render`, `outside`, `p99` and `max` are the rate that COMPONENT alone
+ *     would allow, were it the only cost in the frame. None of them is an
+ *     achievable rate; each answers "what is this piece costing me, in the
+ *     units I think in", which is the question a millisecond does not answer
+ *     at a glance.
  *
  * Zero is not divided into: a window with no interval yet (the first frame has
  * no predecessor) has no rate, and an infinity in a diagnostic is noise.
@@ -60,6 +68,22 @@ function asFps(ms: number): string {
   if (ms <= 0) return '';
   const fps = 1000 / ms;
   return fps < MIN_PRINTABLE_FPS ? '<1 fps' : `${String(Math.round(fps))} fps`;
+}
+
+/**
+ * One millisecond reading and, in parentheses, the frame rate it corresponds
+ * to. Its own component because every ms row is the same shape, and six
+ * hand-built template strings is five chances to format one of them differently
+ * from the rest.
+ */
+function PerfMsRow(props: { label: string; ms: number }): JSX.Element {
+  const fps = (): string => asFps(props.ms);
+  return (
+    <PerfRow
+      label={props.label}
+      value={`${props.ms.toFixed(2)} ms${fps() === '' ? '' : ` (${fps()})`}`}
+    />
+  );
 }
 
 /** One labelled reading of the frame meter — label and value, both left. */
@@ -146,12 +170,12 @@ export function VersionWatermark(): JSX.Element {
             {/* Two decimals throughout: the decay this exists to show is about
                 2 ms per ten minutes, and one decimal rounds a window's worth of
                 it away. */}
-            <PerfRow label="render" value={`${stat().renderMsP50.toFixed(2)} ms`} />
-            <PerfRow label="outside" value={`${stat().outsideMsP50.toFixed(2)} ms`} />
-            <PerfRow label="frame" value={`${stat().frameMsP50.toFixed(2)} ms  ${asFps(stat().frameMsP50)}`} />
-            <PerfRow label="p99" value={`${stat().frameMsP99.toFixed(2)} ms`} />
-            <PerfRow label="max" value={`${stat().frameMsMax.toFixed(2)} ms`} />
-            <PerfRow label="interval" value={`${stat().intervalMsP50.toFixed(2)} ms  ${asFps(stat().intervalMsP50)}`} />
+            <PerfMsRow label="render" ms={stat().renderMsP50} />
+            <PerfMsRow label="outside" ms={stat().outsideMsP50} />
+            <PerfMsRow label="frame" ms={stat().frameMsP50} />
+            <PerfMsRow label="p99" ms={stat().frameMsP99} />
+            <PerfMsRow label="max" ms={stat().frameMsMax} />
+            <PerfMsRow label="interval" ms={stat().intervalMsP50} />
             <PerfRow label="draws" value={String(stat().counters.drawCalls)} />
             <PerfRow label="geometries" value={String(stat().counters.geometries)} />
             <PerfRow label="textures" value={String(stat().counters.textures)} />
