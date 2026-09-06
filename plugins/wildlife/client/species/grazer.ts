@@ -64,6 +64,20 @@ import {
 export const GRAZER_SCALE = 0.4;
 
 /**
+ * How big a grazer is DRAWN, against the asset's own measurements below (owner,
+ * 2026-09-05: grazers ten percent smaller).
+ *
+ * It is not folded into the envelope, and that is the whole point: the envelope
+ * is ASSERTED against the .glb at install (./assetSpecies.ts), so a figure
+ * multiplied through it would fail that assertion the moment it stopped being
+ * 1. The asset keeps measuring the asset; this is the one number that says how
+ * large the animal appears, and ../placement.ts's `modelScaleFor` is the only
+ * thing that reads it — so the rig, the body column a flame is drawn on, the
+ * ground footprint and the stride all move together or none of them do.
+ */
+export const GRAZER_DRAW_SCALE = 0.9;
+
+/**
  * The height of the hand-built figure this asset replaced, before GRAZER_SCALE.
  * Kept because the height is DERIVED from it rather than re-picked: the new
  * animal is deliberately the same height as the one players already know.

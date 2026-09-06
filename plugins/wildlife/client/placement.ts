@@ -34,6 +34,11 @@ import { SHARK_ENVELOPE } from './species/shark.ts';
 import { EEL_ENVELOPE } from './species/eel.ts';
 import { ANGELFISH_ENVELOPE } from './species/angelfish.ts';
 import { GRAZER_ENVELOPE, GRAZER_STRIDE_WORLD_UNITS } from './species/grazer.ts';
+// The per-species draw scale, in its own module so this file and ./models.ts
+// can both read it: ./models.ts cannot import THIS file (placement already
+// imports models for BIRD_ENVELOPE, and the cycle would leave one of the two
+// reading a half-initialised module).
+import { modelScaleFor, speciesModelScale } from './modelScale.ts';
 import { WOLF_ENVELOPE, WOLF_STRIDE_WORLD_UNITS } from './species/wolf.ts';
 import { IBEX_ENVELOPE, IBEX_STRIDE_WORLD_UNITS } from './species/ibex.ts';
 import { BISON_ENVELOPE, BISON_STRIDE_WORLD_UNITS } from './species/bison.ts';
@@ -413,7 +418,7 @@ export function creatureWorldY(
   // upward from that origin, which moves nothing about where its feet go.
   return profile === null
     ? surfaceY
-    : swimmerFrameY(previousY, surfaceY, profile, WILDLIFE_SIZE_MODEL_SCALE[sizeClass], dt);
+    : swimmerFrameY(previousY, surfaceY, profile, modelScaleFor(species, sizeClass), dt);
 }
 
 /**
@@ -517,7 +522,9 @@ export function walkerStrideRadians(species: WildlifeSpecies, distanceWorldUnits
   if (stride === null) {
     throw new Error(`walkerStrideRadians: "${species}" is not a walker and has no stride`);
   }
-  return (distanceWorldUnits / stride) * TWO_PI;
+  // Legs drawn at `speciesModelScale` cover that much less ground per cycle, so
+  // a re-sized animal takes proportionally more steps rather than gliding.
+  return (distanceWorldUnits / (stride * speciesModelScale(species))) * TWO_PI;
 }
 
 /** The same half-extents in the CELLS walkerGroundY steps in. Converted once. */
@@ -566,11 +573,15 @@ export function walkerGroundY(
   if (halfExtent === null) {
     throw new Error(`walkerGroundY: "${species}" is not a walker and has no ground footprint`);
   }
+  // The footprint is the DRAWN body's, not the authored one's: an animal drawn
+  // smaller stands within less ground, and probing the authored extent would
+  // pop it onto a riser its feet are nowhere near.
+  const drawnHalfExtent = halfExtent * speciesModelScale(species);
   let ground: number | null = null;
   for (let i = 0; i < FOOTPRINT_SAMPLE_COUNT; i++) {
     const sampled = sampleRenderedY(
-      Math.floor(x + FOOTPRINT_SAMPLE_DX[i]! * halfExtent),
-      Math.floor(y + FOOTPRINT_SAMPLE_DY[i]! * halfExtent),
+      Math.floor(x + FOOTPRINT_SAMPLE_DX[i]! * drawnHalfExtent),
+      Math.floor(y + FOOTPRINT_SAMPLE_DY[i]! * drawnHalfExtent),
     );
     if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
   }

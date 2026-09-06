@@ -18,7 +18,6 @@ import type {
 import {
   WILDLIFE_ENTITIES_MESSAGE,
   WILDLIFE_PLUGIN_NAME,
-  WILDLIFE_SIZE_MODEL_SCALE,
   parseEntitiesPayload,
   sizeClassAt,
   MAX_BIRDS_ALOFT,
@@ -31,6 +30,7 @@ import { createWildlifeModels, type WildlifeModels } from './models.ts';
 import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
 import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
 import { SPECIES_ASSETS } from './species/assets.ts';
+import { modelScaleFor } from './modelScale.ts';
 import {
   BODY_COLUMNS,
   SWIM_PROFILES,
@@ -193,7 +193,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
               entity.y,
               entity.heading,
               swimProfile,
-              WILDLIFE_SIZE_MODEL_SCALE[sizeClass],
+              modelScaleFor(entity.species, sizeClass),
             );
     // NO GROUND, NO DRAW — the same answer every other plugin gives
     // (pilgrims, relics, fire). A swimmer with no known seabed used to be
@@ -222,7 +222,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     view.drawnZ = drawnZ;
     // The body span, at the scale models.draw is about to apply to the rig.
     const column = BODY_COLUMNS[entity.species];
-    const modelScale = WILDLIFE_SIZE_MODEL_SCALE[sizeClass];
+    const modelScale = modelScaleFor(entity.species, sizeClass);
     view.drawnBodyBottomY = drawnY + column.bellyY * modelScale;
     view.drawnBodyHeight = (column.crownY - column.bellyY) * modelScale;
     models.draw(
