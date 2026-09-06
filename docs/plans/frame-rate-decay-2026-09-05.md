@@ -198,26 +198,33 @@ What survives, and it is still worth fixing:
 - In the worst runs total upload was **3.2–4.6 ms/frame of a ~9.8 ms frame**
   (33–47 %).
 
-**PRICED (2026-09-06 04:25).** Rather than argue the causality, the probe gained
-a `suppressUploads` flag that skips exactly these calls. Same world, same
-camera, back-to-back:
+The probe gained a `suppressUploads` flag that skips exactly these upload calls
+and re-measures. Rendering is wrong while suppressed (poses freeze); the
+performance answer is exact. Two scenarios, compared as DISTRIBUTIONS rather
+than as one pair:
 
-| | baseline | suppressed |
-| --- | --- | --- |
-| GPU p50 | 2.64 ms | **1.97 ms** (−0.67, −25 %) |
-| frame p50 | 2.60 ms | 2.30 ms |
-| upload CPU | 0.146 ms/f | 0.074 ms/f |
-| msP99 / msMax | 3.80 / 4.40 | 4.10 / 4.80 |
+| scenario | unsuppressed GPU p50 | suppressed | delta |
+| --- | --- | --- | --- |
+| `overview` | 2.64 / 2.66 / 2.68 / 2.76 | **1.97** | ~0.67 ms |
+| `drift` blocks, median | 2.77  (range 2.08-3.70) | **2.54**  (range 2.51-2.64) | ~0.23 ms |
 
-**The prize is the MEDIAN, not the tail** — and that falsifies the guess written
-three paragraphs above, that the fix would help the stutter. It does not: p99 and
-max were unchanged-to-worse. The GPU saving (0.67 ms) is ~9× the CPU-side upload
-saving (0.072 ms/f), so these uploads cost GPU pipeline time and not merely
-blocking main-thread time.
+**Take 0.2-0.7 ms, not 0.67.** A first pass quoted 0.67 from the single
+`overview` pair; on a frame whose blocks range 2.08-3.70 ms, one pair cannot
+support a point estimate.
 
-Measured on a LIGHT state (2.64 ms baseline, ~9 palette uploads/frame). In the
-heaviest states seen tonight uploads ran 3.2–4.6 ms of a ~9.8 ms frame, so the
-prize should be larger there — unmeasured, and not claimed.
+**The second effect is arguably the better one:** block-to-block variance
+collapses, from a 1.62 ms spread to 0.13 ms. Steadier frames are what a 144 Hz
+target actually needs.
+
+**Falsified along the way:** an earlier prediction that this fix would help the
+tail. It does not - `msP99` 3.80 -> 4.10, `msMax` 4.40 -> 4.80. Judge it on
+`gpuMsP50`, on the variance, and on the `W x 32` shapes disappearing from
+`uploadByShape`.
+
+Measured on a LIGHT state (~9 palette uploads/frame). In the heaviest states seen
+overnight uploads ran 3.2-4.6 ms of a ~9.8 ms frame, so the prize should be
+larger there - unmeasured, not claimed.
+
 
 **Root cause in one sentence:** `rigHerd` invalidates its entire pose cache
 every frame, so every active species pays a full, stalling palette texture
