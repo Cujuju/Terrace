@@ -1,5 +1,12 @@
 # Boats owns half the frame's draw calls
 
+> **Line numbers were correct at commit `909f551` (2026-09-05).** This is a
+> shared checkout with concurrent agents — `635ce13 feat(climb)` moved every
+> `rigHerd.ts` reference in this document once already. Locate code by the
+> SYMBOL, not the line: `grep -n '<symbol>' <file>`. If a cited line does not
+> say what this document claims, trust the file and tell the owner.
+
+
 Measured 2026-09-05 on the RTX 3090 via `scripts/gpu-bench.sh ablate`.
 Handoff for whoever is already working on boats — this is a rendering-shape
 change, not a gameplay change.
@@ -32,7 +39,7 @@ this brief rests on.
 
 ## The cause — verify these lines before trusting this paragraph
 
-1. `plugins/boats/client/models.ts:376` — `create()` calls
+1. `plugins/boats/client/models.ts:377` — `create()` calls
    `instantiateRig(blueprint)` once per boat.
 2. `client/src/render/rigSkin.ts:405-435` — `instantiateRig` builds a fresh
    `Group`, a fresh `Skeleton`, and **one `SkinnedMesh` per surface, per
@@ -53,9 +60,9 @@ frame can afford.
 ## The alternative already in this repo
 
 `client/src/render/rigHerd.ts` is the instanced skinned-rig path, used today by
-wildlife (`plugins/wildlife/client/models.ts:352`). It draws a whole herd in a
+wildlife (`plugins/wildlife/client/models.ts`, `herdFor`). It draws a whole herd in a
 handful of `InstancedMesh` calls by quantising animation into shared pose slots
-(`POSE_SLOTS_PER_HERD = 32`, `plugins/wildlife/client/models.ts:173`) held in a
+(`POSE_SLOTS_PER_HERD = 32`, `plugins/wildlife/client/models.ts:178`) held in a
 bone-matrix palette texture, with per-instance transforms in an instance
 buffer.
 

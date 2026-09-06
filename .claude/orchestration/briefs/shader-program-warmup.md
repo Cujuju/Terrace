@@ -1,5 +1,12 @@
 # Shader programs: warm the catalogue, and close the double-patch trap
 
+> **Line numbers were correct at commit `909f551` (2026-09-05).** This is a
+> shared checkout with concurrent agents — `635ce13 feat(climb)` moved every
+> `rigHerd.ts` reference in this document once already. Locate code by the
+> SYMBOL, not the line: `grep -n '<symbol>' <file>`. If a cited line does not
+> say what this document claims, trust the file and tell the owner.
+
+
 Two related items from the 2026-09-05 frame-rate investigation
 (`docs/plans/frame-rate-decay-2026-09-05.md` §6). Smaller and lower-risk than
 the pose-palette work; independent of it.
@@ -88,9 +95,9 @@ because it is cheap and because the failure is silent.
 
 Both functions *wrap* the material's existing `customProgramCacheKey`:
 
-- `client/src/render/groundShade.ts:389-390`
+- `client/src/render/groundShade.ts:390`
   `material.customProgramCacheKey = () => \`${previousKey()}|groundShade\``
-- `client/src/render/revealMask.ts:290-291`
+- `client/src/render/revealMask.ts:289`
   `material.customProgramCacheKey = () => \`${previousKey()}|revealClip\``
 
 Apply either **twice to the same material** and the key becomes
