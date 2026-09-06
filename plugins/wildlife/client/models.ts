@@ -1,16 +1,6 @@
-// The shared pool and the per-species herds: nine silhouettes you can tell
-// apart at fifty cells.
-//
-// WHAT THIS FILE IS, SINCE 2026-09-02. It no longer AUTHORS most of the
-// creatures. Ten species (fish, grazer, wolf, ibex, bison, ray, shark, eel,
-// angelfish, deepsea) are authored
-// one file each under ./species/, against the SpeciesModelPool contract in
-// ./species/speciesModel.ts; this file lends them the pool, bakes what they
-// return and herds it. Only the bird is still authored below, in the older
-// spheres-and-cones idiom; the deep-sea angler joined ./species/ as an asset
-// on 2026-09-05 (./species/deepsea.ts), and the three whale bodies are
-// ./species/humpback.ts, ./species/blueWhale.ts and ./species/spermWhale.ts
-// (assets since 2026-09-05; the procedural whale is gone).
+// The shared pool and the per-species herds. Every species but the bird is
+// authored in its own file under ./species/ (SpeciesModelPool contract in
+// ./species/speciesModel.ts); this file lends the pool, bakes and herds.
 //
 // Rules this file keeps:
 //   * NO per-creature lights, and NO Math.random in any geometry. What is
@@ -92,18 +82,9 @@ import { buildDeepsea } from './species/deepsea.ts';
  */
 const SPHERE_SEGMENTS = 6;
 const SPHERE_RINGS = 4;
-/** Cones and the whale's flukes are 4-sided — pyramids, deliberately. */
+/** Cones are 4-sided — pyramids, deliberately. */
 const CONE_SEGMENTS = 4;
 
-/**
- * Distinct hues, each picked to sit against its own background.
- *
- * Only the species AUTHORED HERE are listed: every other species' colours
- * live in its own file (./species/), or in the Blender script that painted
- * its asset (the whales' 0x39506b slate is tools/blender/build_*.py's
- * BODY_COLOR; the angler's 0x161c26 body and 0xa8fbff lure are
- * build_deepsea.py's).
- */
 /**
  * Birds are read as SILHOUETTES, not as coloured objects: they are the only
  * creature seen against the sky (0x9fc7e8 in render/scene.ts) rather than
@@ -120,8 +101,7 @@ const BIRD_COLOR = 0x2e3646;
  * files' envelopes state (species/fish.ts's crownY/bellyY), read by
  * placement.ts's BODY_COLUMNS so a flame on it covers the body that is
  * actually drawn. A centre-origin ellipsoid, so crown and belly are half the
- * full height each way; the geometry below is built FROM these. (The
- * angler's DEEPSEA_ENVELOPE moved to ./species/deepsea.ts with its body.)
+ * full height each way; the geometry below is built FROM these.
  */
 export const BIRD_ENVELOPE = {
   /** Body ellipsoid full height 0.18; the wings are thinner than the body. */
@@ -129,12 +109,6 @@ export const BIRD_ENVELOPE = {
   bellyY: -0.09,
 } as const;
 
-/**
- * Idle-animation rates, in cycles per second. Slower = larger, by convention.
- * The whale's (WHALE_FLUKE_HZ) lives in ./species/whale.ts with the rest of
- * its animation, shared by its three asset bodies; the angler's
- * (DEEPSEA_SWAY_HZ) in ./species/deepsea.ts.
- */
 /**
  * Wing beats per second. The fastest animation here, which is the convention
  * this list follows (slower = larger) and also just true of small birds.
@@ -175,17 +149,6 @@ const BIRD_WING_LENGTH = 0.62;
  * drift apart.
  */
 const BIRD_WING_ROOT_OFFSET = BIRD_WING_LENGTH / 2;
-
-/**
- * The whale's pectoral, dorsal and fluke geometry moved to whaleSpecies.ts on
- * 2026-08-21, along with the constants that placed them on the old stacked-
- * ellipsoid rig (WHALE_PECTORAL_SPAN and friends, WHALE_DORSAL_HEIGHT). The
- * clearance reasoning those comments carried — why a whale's crown may not pass
- * y = 0.670 and its belly may not pass y = -0.575, and the 2026-08-19 report of
- * a whale that read as capsized because its dorsal was buried — now lives on
- * WHALE_ENVELOPE, which every whale body fills. Nothing was lost; it moved to
- * where the numbers are used.
- */
 
 const TWO_PI = Math.PI * 2;
 
@@ -295,13 +258,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     return material;
   }
 
-  /**
-   * Unlit — for the one thing per model that has to glow without costing a
-   * light. Part of the SpeciesModelPool contract (./species/speciesModel.ts);
-   * no species authored here calls it since the angler became an asset
-   * (its lure is unlit IN THE FILE: KHR_materials_unlit), but the pool
-   * still lends it.
-   */
+  /** Unlit glow without a light. SpeciesModelPool contract; no species calls it today. */
   function unlit(color: number): MeshBasicMaterial {
     const material = new MeshBasicMaterial({ color });
     materials.push(material);
@@ -435,7 +392,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    * The pool as a species file sees it: the same helpers this file uses, handed
    * over through the ./species/speciesModel.ts interface rather than copied.
    * There is exactly one implementation of each — a species file's geometry and
-   * materials land in the same two disposal lists as the whale's.
+   * materials land in the same two disposal lists as the bird's.
    */
   const speciesPool: SpeciesModelPool = { keepGeometry, lambert, unlit, part, rigged };
 
@@ -499,24 +456,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const eelDrawable = speciesDrawable(buildEel);
   const angelfishDrawable = speciesDrawable(buildAngelfish);
 
-  /**
-   * A whale, drawn as one of three real species (whaleSpecies.ts). Which one is
-   * decided by the caller's stable per-creature seed, so an individual keeps
-   * the same body for its whole life — hence WHALE_SPECIES order, which
-   * `drawableOf` indexes with that seed and which must never change.
-   *
-   * All three are asset-sourced species like any in ./species/ (smooth-shaded
-   * Blender-built bodies by owner decision: a whale is the largest thing in
-   * the water and the one creature the camera comes near, where a stack of
-   * ellipsoids reads as a stack of ellipsoids), and all three run the SAME
-   * animation (./species/whale.ts's animateWhale), so the motion exists once.
-   * The cost is bounded — whales are habitat-capped by their
-   * 2 000-square-world-unit density (cellsOverArea): at most 39 of them on a
-   * fully revealed nominal 512² world, 21 once WILDLIFE_POPULATION_CAP has
-   * scaled the population down — and each body is ONE draw call.
-   *
-   * Keyed by body, never by index.
-   */
+  /** One whale body per WHALE_SPECIES entry; `drawableOf` indexes by the stable per-creature seed. */
   const whaleBuilders: Readonly<Record<WhaleSpecies, SpeciesModelBuilder>> = {
     humpback: buildHumpback,
     blue: buildBlueWhale,
