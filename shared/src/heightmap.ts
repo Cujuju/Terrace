@@ -225,24 +225,6 @@ export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['drag', 'carve
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
 
 /**
- * THE TOOLS A HELD BUTTON DOES NOT REPEAT. A stamp held in place stacks bands,
- * which is the whole thing a stamp does; these two have nothing to gain from
- * a second intent at the same spot:
- *
- * - `drag` is driven by motion (owner report, 2026-08-23). Standing still means
- *   the lip is already where the player put it.
- * - `carve` re-picks its pinned column against the live map on every intent,
- *   so the first repeat lands on the ceiling the first cut just exposed, names
- *   the roof's lowest band, and takes a second band the player never aimed at
- *   (owner report, 2026-09-05: "band three and four missing when band three
- *   is clicked"). One press, one cut; a deeper tunnel is another click.
- *
- * Read by the pointer layer when it arms a stroke. A list for the same reason
- * the two above are.
- */
-export const TOOLS_WITHOUT_HOLD_REPEAT: readonly SculptTool[] = ['drag', 'carve'];
-
-/**
  * How many terrace bands ONE carve stroke removes from each footprint cell.
  *
  * DERIVED FROM `isGapDrawn`, NOT CHOSEN. The value is the SMALLEST band count

@@ -23,7 +23,6 @@
 // A press fires ONE intent immediately and then repeats on an ACCELERATING
 // schedule (repeatDelayMs, below): slow enough at the top that a click is a
 // click, ramping to full sculpting speed over the first second or so of a hold.
-// The tools in shared's TOOLS_WITHOUT_HOLD_REPEAT fire once and stop.
 //
 // Which action owns a press is decided by the shared resolver in
 // state/controlPrefs.ts — the same one the camera consults — so the brush and
@@ -72,7 +71,6 @@ import {
   BAND_HEIGHT,
   MAX_DRAG_SWEEP_CELLS,
   TOOLS_WITHOUT_DIRECTION,
-  TOOLS_WITHOUT_HOLD_REPEAT,
   TOOLS_WITHOUT_EDGE_PROFILE,
   chebyshevDistance,
 } from '@terrace/shared';
@@ -872,11 +870,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // does; standing still with the Pull tool means the lip is already where
     // the player put it, and a seeded layer is "a single layer" by the owner's
     // instruction — a repeat would turn either into a tower.
-    //
-    // NEITHER DOES THE CARVE (owner, 2026-09-05): its repeat re-picks the
-    // pinned column, meets the ceiling the first cut exposed, and takes the
-    // band above. Which tools do not repeat is shared's list, not a name here.
-    if (TOOLS_WITHOUT_HOLD_REPEAT.includes(strokeTool)) return;
+    if (strokeTool === 'drag') return;
     scheduleRepeat(0);
   };
 
