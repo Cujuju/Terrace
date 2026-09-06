@@ -112,7 +112,7 @@ SHEET_FUNDAMENTAL_HZ = 9.0
 SHEET_ASPECT = 1.4
 SHEET_MODES_PER_AXIS = 40
 SHEET_BOTTOM_HZ = 30.0
-SHEET_TOP_HZ = 6000.0
+SHEET_TOP_HZ = 9500.0
 # Where it is struck, as a fraction of width and height, per variant.
 SHEET_STRIKE_RANGE = (0.15, 0.45)
 # Ring time of the fundamental, and how much faster higher modes die:
@@ -127,24 +127,24 @@ SHEET_FLEX_TAU_SECONDS = 1.8
 # The hit: a hard edge on the metal, not a swell.
 SHEET_ATTACK_SECONDS = 0.002
 # Clang: the modes above this ring extra-loud at the hit and die this fast.
-CLANG_MIN_HZ = 600.0
+CLANG_MIN_HZ = 400.0
 CLANG_TAU_SECONDS = 0.06
-CLANG_LEVEL = 2.0
+CLANG_LEVEL = 2.5
 # Pulled toward the low end, as a sheet heard from the back of a hall is —
 # high enough to leave the clang its metal.
-SHEET_TILT_HZ = 2500.0
+SHEET_TILT_HZ = 5000.0
 SHEET_LEVEL = 1.0
 
 # Crack: one SHORT mid-band transient with a real attack (an instant edge is a
 # click), the mallet on the metal.
 CRACK_ATTACK_SECONDS = 0.002
 CRACK_TAU_SECONDS = 0.02
-CRACK_BAND_HZ = (300.0, 3500.0)
-CRACK_LEVEL = 0.45
+CRACK_BAND_HZ = (800.0, 8000.0)
+CRACK_LEVEL = 0.7
 
 # Soft clip on the sheet: rounds the hit and glues the modes. The
 # crack stays clean — clipping a bright transient is what distortion sounds like.
-THUNDER_DRIVE = 2.2
+THUNDER_DRIVE = 3.2
 
 # Different strike points and shakes give different claps; the plugin picks
 # one per strike.
@@ -217,12 +217,12 @@ RAIN_SECONDS = 8.0
 # Long enough to hide the splice in grains, short enough not to eat the loop.
 RAIN_CROSSFADE_SECONDS = 1.0
 
-# Wash: rate × tau ≈ 28 grains sounding at any instant — smooth enough to be
+# Wash: rate × tau ≈ 42 grains sounding at any instant — smooth enough to be
 # a bed, grainy enough not to be a solid hiss. Fewer, or shorter, is static.
-WASH_PER_SECOND = 8000
+WASH_PER_SECOND = 12000
 WASH_TAU_SECONDS = 0.0035
 WASH_BAND_HZ = (500.0, 9000.0)
-WASH_TILT_HZ = 2000.0
+WASH_TILT_HZ = 1400.0
 WASH_LEVEL = 1.0
 # Gusting: sub-audio movement of the wash level.
 GUST_HZ = 0.35
