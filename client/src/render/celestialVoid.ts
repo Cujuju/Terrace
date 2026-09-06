@@ -1191,6 +1191,15 @@ const WORLD_TO_DISK = new Matrix3().set(
  *   first snapshot and changes on a rejoin. 0 (no world yet) centres the hub
  *   on the origin, which is where a 0-cell world's centre is anyway.
  */
+/**
+ * Scene-child names for this file's two contributions, under the `core:`
+ * prefix client/src/perfProbe.ts ablates by. A core rig that wants to be
+ * measurable names itself here-style; an unnamed one is invisible to the
+ * attribution and shows up only inside the unattributable remainder.
+ */
+const CORE_RIG_STARS_NAME = 'core:void-stars';
+const CORE_RIG_VOID_NAME = 'core:void';
+
 export function createCelestialVoid(
   viewport: Viewport,
   initialStyle: VoidStyle,
@@ -1500,6 +1509,13 @@ export function createCelestialVoid(
       points.matrixAutoUpdate = false;
       points.renderOrder = STARS_RENDER_ORDER;
       points.visible = style === 'wheel';
+      // Named so the perf probe's ablation scenario can hide it by name, the
+      // way it hides a plugin's layer (client/src/perfProbe.ts). Core rigs are
+      // otherwise anonymous children of the scene and cannot be attributed.
+      // Per GRID, not one name for all of them: STAR_GRIDS builds several
+      // Points objects and a shared name would make two rigs indistinguishable
+      // in an ablation report — which it did on this name's first run.
+      points.name = `${CORE_RIG_STARS_NAME}-${String(grid)}`;
       viewport.scene.add(points);
       return points;
     });
@@ -1576,6 +1592,8 @@ export function createCelestialVoid(
     updateStarVisibility();
     if (style === 'wheel') renderGasPass();
   };
+  // See points.name above: this is the void's other scene child.
+  mesh.name = CORE_RIG_VOID_NAME;
   viewport.scene.add(mesh);
 
   const frozen = prefersReducedMotion();
