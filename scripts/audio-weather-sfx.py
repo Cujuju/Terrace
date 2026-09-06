@@ -27,9 +27,15 @@ INT16_PEAK = 32767
 # -3 dBFS: the host's gains multiply on top, so full scale would clip on layering.
 PEAK_HEADROOM = 0.7
 
-# One seeded generator, so a regenerated asset is not a spurious diff.
+# Seeded PER ASSET, so regenerating is not a spurious diff and retuning one
+# asset cannot re-roll another.
 RANDOM_SEED = 20260905
 rng = np.random.default_rng(RANDOM_SEED)
+
+
+def seed_asset(name: str, variant: int = 0) -> None:
+    global rng
+    rng = np.random.default_rng([RANDOM_SEED, variant, *name.encode()])
 
 FILTER_ORDER = 4
 
@@ -83,80 +89,97 @@ def write_wav(path: Path, signal: np.ndarray) -> None:
 
 # --- Thunder -----------------------------------------------------------------
 #
-# Three things a listener hears in a nearby strike, layered:
-#   1. the CRACK — a tearing burst of broadband clicks as the channel breaks
-#      (tens of ms, bright), followed by one deep thump as the shockwave lands;
-#   2. the ROLL — low rumble whose loudness lurches as sound from different
-#      lengths of the bolt arrives, decaying over several seconds;
-#   3. the ECHOES — a few softer, duller copies of the roll off terrain.
+# A THUNDER SHEET, the foley rig: a big thin metal sheet struck once, ringing
+# on. Modelled as what it physically is — a plate with hundreds of
+# inharmonic modes, struck at one point:
+#   * mode frequencies follow a thin plate, f ∝ (m/W)² + (n/H)², so the
+#     spectrum is dense and unmusical;
+#   * each mode's level is the plate's shape at the strike point;
+#   * high modes die in a fraction of a second, low modes ring for seconds;
+#   * the whole sheet flexes as it is shaken, bending every mode's pitch
+#     together — the wobble that makes a sheet sound like thunder.
+# Under it a PUNCH (a kick-style hit) and a short CRACK for the strike itself.
 
-# Long enough for the roll to die away; ends silent so the voice cannot click.
+# Long enough for the low modes to die away; ends silent so the voice cannot click.
 THUNDER_SECONDS = 6.0
 
-# Crack: one SHORT mid-band transient with a real attack (an instant edge is a
-# click). Kept brief and not too bright: a long hissy burst is what a synthetic
-# clap sounds like, and the thump under it carries the impact.
-CRACK_ATTACK_SECONDS = 0.002
-CRACK_TAU_SECONDS = 0.02
-CRACK_BAND_HZ = (300.0, 3500.0)
-CRACK_LEVEL = 0.55
-# The shockwave landing under the crack: one low thump.
+# The plate: a BIG sheet, its fundamental below hearing so the low modes are
+# dense — a small sheet's sparse low modes ring like a gong, not thunder.
+SHEET_FUNDAMENTAL_HZ = 9.0
+SHEET_ASPECT = 1.4
+SHEET_MODES_PER_AXIS = 40
+SHEET_BOTTOM_HZ = 30.0
+SHEET_TOP_HZ = 6000.0
+# Where it is struck, as a fraction of width and height, per variant.
+SHEET_STRIKE_RANGE = (0.15, 0.45)
+# Ring time of the fundamental, and how much faster higher modes die:
+# tau ∝ f ** -SHEET_DAMPING_SLOPE.
+SHEET_FUNDAMENTAL_TAU_SECONDS = 10.0
+SHEET_DAMPING_SLOPE = 0.7
+# Flex: the sheet is shaken after the hit, bending every pitch together. A
+# few percent, at a rate that itself dies down as the shaking settles.
+SHEET_FLEX_DEPTH = 0.06
+SHEET_FLEX_HZ = 2.2
+SHEET_FLEX_TAU_SECONDS = 1.8
+# The sheet's own swell: a sheet rolls up over tens of ms, not instantly.
+SHEET_ATTACK_SECONDS = 0.02
+# Pulled toward the low end, as a sheet heard from the back of a hall is.
+SHEET_TILT_HZ = 900.0
+SHEET_LEVEL = 1.0
+
 # The PUNCH: a pitch-dropping sine hit, the way a kick drum is built — the
-# one thing in the mix with a hard edge. Sits on the thump, not instead of it.
+# one thing in the mix with a hard edge.
 PUNCH_ATTACK_SECONDS = 0.001
 PUNCH_TAU_SECONDS = 0.14
 PUNCH_PITCH_START_HZ = 220.0
 PUNCH_PITCH_END_HZ = 45.0
 PUNCH_PITCH_TAU_SECONDS = 0.05
-PUNCH_LEVEL = 2.2
-THUMP_ATTACK_SECONDS = 0.005
-THUMP_TAU_SECONDS = 0.22
-THUMP_BAND_HZ = (50.0, 250.0)
-THUMP_LEVEL = 1.5
+PUNCH_LEVEL = 2.0
 
-# Roll: rumble whose envelope is several lumps arriving over the first two
-# seconds, then decays.
-ROLL_LUMPS = 6
-ROLL_LUMP_SPREAD_SECONDS = 2.2
-ROLL_LUMP_TAU_SECONDS = 0.35
-# A lump swells in; a step onset on filtered noise is a broadband click.
-ROLL_LUMP_ATTACK_SECONDS = 0.06
-ROLL_BAND_HZ = (45.0, 320.0)
-ROLL_DECAY_TAU_SECONDS = 1.4
-# Sub-audio wobble on the roll so it rolls instead of hissing at one level.
-ROLL_WOBBLE_HZ = 3.0
-ROLL_WOBBLE_DEPTH = 0.45
-ROLL_LEVEL = 1.2
-# The very low body under the roll; felt more than heard.
-SUB_BAND_HZ = (25.0, 70.0)
-SUB_LEVEL = 0.6
+# Crack: one SHORT mid-band transient with a real attack (an instant edge is a
+# click), the mallet on the metal.
+CRACK_ATTACK_SECONDS = 0.002
+CRACK_TAU_SECONDS = 0.02
+CRACK_BAND_HZ = (300.0, 3500.0)
+CRACK_LEVEL = 0.45
 
-# Echoes: delayed, duller, quieter copies of the roll.
-ECHO_DELAYS_SECONDS = (0.9, 1.7, 2.8)
-ECHO_LEVELS = (0.45, 0.28, 0.16)
-ECHO_LOWPASS_HZ = 180.0
-
-# Soft clip on the LOW layers only: rounds the thump and glues the roll. The
+# Soft clip on the sheet and punch: rounds the hit and glues the modes. The
 # crack stays clean — clipping a bright transient is what distortion sounds like.
-THUNDER_DRIVE = 2.0
+THUNDER_DRIVE = 1.6
 
-# Different seeds give different strikes; the plugin picks one per strike.
+# Different strike points and shakes give different claps; the plugin picks
+# one per strike.
 THUNDER_VARIANTS = 3
 
 
-def decaying_bursts(
-    count: int, times: np.ndarray, tau: float, levels: np.ndarray, attack: float = 0.0
-) -> np.ndarray:
-    """Sum of exponential decays starting at `times`, scaled by `levels`,
-    each rising over `attack` seconds first (zero attack is a step)."""
-    seconds = seconds_axis(count)
-    envelope = np.zeros(count)
-    for start, level in zip(times, levels):
-        active = seconds >= start
-        since = seconds[active] - start
-        rise = np.minimum(since / attack, 1.0) if attack > 0.0 else 1.0
-        envelope[active] += level * rise * np.exp(-since / tau)
-    return envelope
+def sheet_modes() -> tuple[np.ndarray, np.ndarray]:
+    """Frequencies and per-mode levels for one strike point on the plate."""
+    m = np.arange(1, SHEET_MODES_PER_AXIS + 1)
+    mm, nn = np.meshgrid(m, m, indexing="ij")
+    frequencies = SHEET_FUNDAMENTAL_HZ * (mm**2 + (nn / SHEET_ASPECT) ** 2) / (
+        1 + 1 / SHEET_ASPECT**2
+    )
+    strike_x, strike_y = rng.uniform(*SHEET_STRIKE_RANGE, 2)
+    levels = np.sin(np.pi * mm * strike_x) * np.sin(np.pi * nn * strike_y)
+    keep = (frequencies.ravel() >= SHEET_BOTTOM_HZ) & (frequencies.ravel() <= SHEET_TOP_HZ)
+    return frequencies.ravel()[keep], levels.ravel()[keep]
+
+
+def make_sheet(count: int, seconds: np.ndarray) -> np.ndarray:
+    frequencies, levels = sheet_modes()
+    taus = SHEET_FUNDAMENTAL_TAU_SECONDS * (frequencies / SHEET_FUNDAMENTAL_HZ) ** (
+        -SHEET_DAMPING_SLOPE
+    )
+    flex = 1.0 + SHEET_FLEX_DEPTH * np.exp(-seconds / SHEET_FLEX_TAU_SECONDS) * slow_noise(
+        count, SHEET_FLEX_HZ
+    )
+    swell = np.minimum(seconds / SHEET_ATTACK_SECONDS, 1.0)
+    phases = rng.uniform(0.0, 2 * np.pi, frequencies.size)
+    out = np.zeros(count)
+    for frequency, level, tau, phase in zip(frequencies, levels, taus, phases):
+        angle = 2 * np.pi * frequency * np.cumsum(flex) / SAMPLE_RATE_HZ
+        out += level * np.exp(-seconds / tau) * np.sin(angle + phase)
+    return lowpass(out * swell, SHEET_TILT_HZ)
 
 
 def make_thunder() -> np.ndarray:
@@ -164,50 +187,23 @@ def make_thunder() -> np.ndarray:
     seconds = seconds_axis(count)
     noise = rng.standard_normal(count)
 
-    crack_envelope = np.minimum(seconds / CRACK_ATTACK_SECONDS, 1.0) * np.exp(
-        -seconds / CRACK_TAU_SECONDS
-    )
-    crack = bandpass(noise, *CRACK_BAND_HZ) * crack_envelope
+    sheet = make_sheet(count, seconds)
 
     pitch = PUNCH_PITCH_END_HZ + (PUNCH_PITCH_START_HZ - PUNCH_PITCH_END_HZ) * np.exp(
         -seconds / PUNCH_PITCH_TAU_SECONDS
     )
-    phase = 2 * np.pi * np.cumsum(pitch) / SAMPLE_RATE_HZ
-    punch = np.sin(phase) * (
+    punch = np.sin(2 * np.pi * np.cumsum(pitch) / SAMPLE_RATE_HZ) * (
         np.minimum(seconds / PUNCH_ATTACK_SECONDS, 1.0) * np.exp(-seconds / PUNCH_TAU_SECONDS)
     )
 
-    thump = bandpass(noise, *THUMP_BAND_HZ) * (
-        np.minimum(seconds / THUMP_ATTACK_SECONDS, 1.0) * np.exp(-seconds / THUMP_TAU_SECONDS)
+    crack = bandpass(noise, *CRACK_BAND_HZ) * (
+        np.minimum(seconds / CRACK_ATTACK_SECONDS, 1.0) * np.exp(-seconds / CRACK_TAU_SECONDS)
     )
 
-    lump_times = np.sort(rng.uniform(0.0, ROLL_LUMP_SPREAD_SECONDS, ROLL_LUMPS))
-    lump_times[0] = 0.0
-    lump_levels = rng.uniform(0.5, 1.0, ROLL_LUMPS)
-    roll_envelope = decaying_bursts(
-        count, lump_times, ROLL_LUMP_TAU_SECONDS, lump_levels, ROLL_LUMP_ATTACK_SECONDS
-    )
-    roll_envelope *= np.exp(-seconds / ROLL_DECAY_TAU_SECONDS)
-    roll_envelope *= 1.0 - ROLL_WOBBLE_DEPTH * (0.5 + 0.5 * slow_noise(count, ROLL_WOBBLE_HZ))
-    roll = bandpass(noise, *ROLL_BAND_HZ) * roll_envelope
-    sub = bandpass(rng.standard_normal(count), *SUB_BAND_HZ) * roll_envelope
-
-    echoes = np.zeros(count)
-    dull_roll = lowpass(roll, ECHO_LOWPASS_HZ)
-    for delay, level in zip(ECHO_DELAYS_SECONDS, ECHO_LEVELS):
-        offset = int(delay * SAMPLE_RATE_HZ)
-        echoes[offset:] += level * dull_roll[: count - offset]
-
-    low = (
-        PUNCH_LEVEL * punch
-        + THUMP_LEVEL * thump / np.max(np.abs(thump))
-        + ROLL_LEVEL * roll / np.max(np.abs(roll))
-        + SUB_LEVEL * sub / np.max(np.abs(sub))
-        + echoes / np.max(np.abs(roll))
-    )
+    low = SHEET_LEVEL * sheet / np.max(np.abs(sheet)) + PUNCH_LEVEL * punch
     shaped = np.tanh(THUNDER_DRIVE * low / np.max(np.abs(low)))
     shaped += CRACK_LEVEL * crack / np.max(np.abs(crack))
-    # Guarantee a silent end regardless of the echo tails.
+    # Guarantee a silent end regardless of the mode tails.
     fade_count = int(0.5 * SAMPLE_RATE_HZ)
     shaped[-fade_count:] *= np.linspace(1.0, 0.0, fade_count)
     return normalize(shaped)
@@ -226,12 +222,12 @@ RAIN_SECONDS = 8.0
 # Long enough to hide the splice in grains, short enough not to eat the loop.
 RAIN_CROSSFADE_SECONDS = 1.0
 
-# Wash: rate × tau ≈ 2.5 grains sounding at any instant — smooth enough to be
-# a bed, grainy enough not to be a solid hiss.
-WASH_PER_SECOND = 1500
-WASH_TAU_SECONDS = 0.0017
+# Wash: rate × tau ≈ 9 grains sounding at any instant — smooth enough to be a
+# bed, grainy enough not to be a solid hiss. Fewer, or shorter, is static.
+WASH_PER_SECOND = 3500
+WASH_TAU_SECONDS = 0.0025
 WASH_BAND_HZ = (500.0, 9000.0)
-WASH_TILT_HZ = 3000.0
+WASH_TILT_HZ = 2500.0
 WASH_LEVEL = 1.0
 # Gusting: sub-audio movement of the wash level.
 GUST_HZ = 0.35
@@ -272,7 +268,9 @@ def make_rain_loop() -> np.ndarray:
 def main() -> None:
     root = Path(__file__).resolve().parent.parent
     for index in range(THUNDER_VARIANTS):
+        seed_asset("thunder", index)
         write_wav(root / f"plugins/thunderstorm/client/assets/thunder-{index}.wav", make_thunder())
+    seed_asset("rain")
     write_wav(root / "plugins/rain/client/assets/rain-loop.wav", make_rain_loop())
 
 
