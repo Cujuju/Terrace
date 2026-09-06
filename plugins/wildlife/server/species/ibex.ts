@@ -11,6 +11,7 @@
 // doubled, plus a spawn rule that puts it where the number matters.
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
+import { IBEX_CLIMB_SECONDS_PER_BAND } from '../../protocol.ts';
 import {
   NO_MIN_WATER_DEPTH,
   MOUNTAIN_SPAWN_HEIGHTS,
@@ -142,6 +143,9 @@ export const IBEX_PROFILE: SpeciesProfile = {
   climb: {
     fallChance: IBEX_CLIMB_FALL_CHANCE,
     lethalRiseHeightUnits: IBEX_LETHAL_RISE_HEIGHT_UNITS,
+    // AND IT GOES UP IN LEAPS, not at the world's climbing pace — see
+    // IBEX_CLIMB_SECONDS_PER_BAND, which the drawn leap is timed off too.
+    secondsPerBand: IBEX_CLIMB_SECONDS_PER_BAND,
   },
   turnRadiusBodyLengths: TURN_RADIUS_BODY_LENGTHS,
   idle: IBEX_IDLE_BOUTS,

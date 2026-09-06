@@ -15,7 +15,8 @@
 import { Group, Vector3 } from 'three';
 import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
 import { flatFin, smoothEllipsoid, taperedTube } from './bodyKit.ts';
-import { addQuadrupedLegs, legJoints, poseClimb, poseFall, poseWalk } from './quadruped.ts';
+import { addQuadrupedLegs, legJoints, poseFall, poseLeap, poseWalk } from './quadruped.ts';
+import { IBEX_CLIMB_SECONDS_PER_BAND } from '../../protocol.ts';
 import type { SpeciesModelBuilder } from './speciesModel.ts';
 
 export const IBEX_SCALE = 0.36;
@@ -181,8 +182,10 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
     wallGaits: true,
     animate(joints, seconds, phase, gait) {
       if (gait === 'climb') {
-        poseClimb(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
-        // Head level with the rock it is looking up: no nod while scrambling.
+        // IT LEAPS THE BANDS rather than climbing them, one bound per band at
+        // the rate its own server climb rule ascends at.
+        poseLeap(joints, seconds, phase, WALK_BOB_WORLD_UNITS, IBEX_CLIMB_SECONDS_PER_BAND);
+        // Head level with the ledge it is jumping for: no nod in mid-air.
         joints.head!.rotation.z = 0;
         return;
       }
