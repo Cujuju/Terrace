@@ -1,18 +1,5 @@
-// The species drawn from a file — Blender-built (fish, shark, ray, eel, angelfish, the humpback,
-// blue and sperm whale bodies, the deep-sea angler) or downloaded and rigidified (the deer grazer,
-// the wolf) — and where each file is served from. THE ONE LIST.
-//
-// Two consumers install these: the shipped plugin's `preload` (../index.ts)
-// and the throwaway preview harness (client/src/previewSpecies.ts). Until the
-// shark, each kept its own list, and a species added to one and not the other
-// was a preview that threw "no asset installed" the first time someone looked
-// at it. One table, imported by both, is how each pass of the model arc (ray,
-// eel, angelfish, the three whales, deepsea) added ONE row and nothing else.
-//
-// A `.glb?url` import, which is why client/vite.config.ts carries an
-// assetsInclude entry for .glb files; the ambient declaration for the import
-// pattern is types/glb-url.d.ts at the repo root, which every package's
-// tsconfig inherits through tsconfig.base.json's `files`.
+// THE ONE LIST of asset-sourced species; ../index.ts preload and client/src/previewSpecies.ts
+// both install from it. `.glb?url` typing: types/glb-url.d.ts.
 import type { SpeciesAssetSpec } from './assetSpecies.ts';
 import { FISH_ASSET } from './fish.ts';
 import fishUrl from '../assets/fish.glb?url';
@@ -37,7 +24,6 @@ import grazerUrl from '../assets/grazer-deer.glb?url';
 import { WOLF_ASSET } from './wolf.ts';
 import wolfUrl from '../assets/wolf.glb?url';
 
-/** One asset-sourced species: what it must measure, and where its file is. */
 export interface SpeciesAssetEntry {
   readonly spec: SpeciesAssetSpec;
   readonly url: string;
