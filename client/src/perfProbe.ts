@@ -954,6 +954,18 @@ interface ProbeContext {
    * after the freeze lifts.
    */
   readonly freeze: (on: boolean) => void;
+  /**
+   * Posts one intermediate result to the sink, before the scenario finishes.
+   *
+   * WHY A SCENARIO NEEDS THIS (2026-09-05, learned by losing three hours). The
+   * report is normally posted once, at the end. A 180-block `drift` soak
+   * reached block 177 and then stopped progressing; the run timed out and
+   * every one of those blocks was lost, because none of them had been sent.
+   * A long scenario must stream what it has: partial data from a run that died
+   * is worth far more than nothing, and a run this long is exactly the kind
+   * most likely to die.
+   */
+  readonly postPartial: (body: Record<string, unknown>) => void;
   readonly beat: (stage: string) => void;
 }
 
@@ -1327,6 +1339,8 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
     });
     if (index === 0) firstKeys = programCacheKeys(renderer);
     lastKeys = programCacheKeys(renderer);
+    // STREAMED, not only accumulated: see ProbeContext.postPartial.
+    ctx.postPartial({ blockIndex: index, blockCount, frozen: freezeSim, block: blocks[blocks.length - 1] });
     ctx.beat(`drift-${String(index + 1)}-of-${String(blockCount)}`);
   }
   ctx.freeze(false);
@@ -1549,6 +1563,9 @@ export function installPerfProbe(deps: {
     sampler: () => createSampler(viewport),
     freeze: (on: boolean): void => {
       frozenState.on = on;
+    },
+    postPartial: (body): void => {
+      post({ scenario: name, partial: true, ...body });
     },
     beat,
   };
