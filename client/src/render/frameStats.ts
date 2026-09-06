@@ -30,8 +30,22 @@
 
 import { FRAME_STATS_CAPACITY, FRAME_STATS_WINDOW_MS } from '../config.ts';
 
-/** Three's own resource tables, sampled once per window. */
+/**
+ * What the renderer can be asked about once per window — its resource tables,
+ * and the size of what it is drawing into.
+ *
+ * THE PIXEL COUNT IS NOT OPTIONAL METADATA. Frame time is a function of it, so
+ * two readings taken at different drawing-buffer sizes are not comparable and a
+ * reading that does not state its size cannot be checked. Every number in
+ * docs/plans/frame-rate-decay-2026-09-05.md was taken in a 1600x900 window
+ * (scripts/gpu-bench.sh) — 44% of the pixels of the full-screen 1440p the owner
+ * actually plays at — and not one of them says so, which is why they were
+ * argued about for a night. No sample this file emits will have that hole.
+ */
 export interface FrameCounters {
+  /** Drawing-buffer width in physical pixels — canvas CSS size x pixel ratio. */
+  readonly pixelWidth: number;
+  readonly pixelHeight: number;
   readonly drawCalls: number;
   readonly triangles: number;
   readonly geometries: number;
@@ -62,6 +76,8 @@ type FrameStatsSink = (sample: FrameStatsSample) => void;
 
 /** What a window reports before render/scene.ts has handed over the renderer. */
 const EMPTY_COUNTERS: FrameCounters = {
+  pixelWidth: 0,
+  pixelHeight: 0,
   drawCalls: 0,
   triangles: 0,
   geometries: 0,

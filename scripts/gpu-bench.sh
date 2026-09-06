@@ -22,6 +22,22 @@
 #   --headless    --headless=new, no window at all. VERIFY the `gpu` field names
 #                 the discrete adapter: headless can fall back to SwiftShader,
 #                 and a SwiftShader number cannot judge anything here.
+## ─────────────────────────────────────────────────────────────────────────────
+# WINDOW SIZE — THE THING EVERY EARLIER RUN LEFT UNSAID.
+#
+#   --fullscreen  no window size at all: --start-fullscreen, so the canvas is
+#                 the whole display with no browser chrome above it. THIS IS THE
+#                 TARGET (owner, 2026-09-06): full-screen 1440p is what the game
+#                 is actually played at and therefore what it must be fast at.
+#   TERRACE_PROBE_WINDOW=WxH   an explicit window size instead.
+#
+# The default stays 1600x900 so a run can still be compared with the numbers in
+# docs/plans/frame-rate-decay-2026-09-05.md, every one of which was taken at
+# that size — 1.44 Mpx, 39% of full-screen 1440p's 3.69 Mpx. Frame time is a
+# function of pixel count, so those numbers do not describe the target and were
+# never meant to be read as if they did. Every sample now carries its own
+# drawing-buffer size (client/src/render/frameStats.ts), so no future reading
+# can be ambiguous about which of these it is.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # WHY THIS SHAPE. Linux-side Chrome here has no /dev/dri, so every WSL browser —
@@ -42,11 +58,15 @@ set -uo pipefail
 
 RAISE=none
 HEADLESS=0
+FULLSCREEN=0
+# 1600x900 for continuity with every historical sample; see the header.
+PROBE_WINDOW=${TERRACE_PROBE_WINDOW:-1600x900}
 while [ $# -gt 0 ]; do
   case "$1" in
     --raise-once) RAISE=once; shift ;;
     --raise-hold) RAISE=hold; shift ;;
     --headless) HEADLESS=1; shift ;;
+    --fullscreen) FULLSCREEN=1; shift ;;
     --*) echo "unknown flag $1 (see this script's header for the launch modes)" >&2; exit 2 ;;
     *) break ;;
   esac
@@ -120,6 +140,10 @@ BEFORE=$(wc -l < "$SINK")
 #   --disable-backgrounding-occluded-windows alone does not stop it.
 # --window-size: fixed, because frame time is a function of pixel count and a
 #   bench whose window size varies is not comparable with itself.
+# --start-fullscreen wins over --window-size: fullscreen is defined by the
+# display, and passing both leaves it ambiguous which one Chrome honoured.
+SIZE_FLAGS=("--window-size=${PROBE_WINDOW/x/,}")
+[ "$FULLSCREEN" = 1 ] && SIZE_FLAGS=(--start-fullscreen)
 HEADLESS_FLAGS=()
 # --headless=new keeps a real GPU-backed compositor (the old --headless did
 # not); it is still checked at the end, because a headless Chrome that cannot
@@ -136,7 +160,7 @@ HEADLESS_FLAGS=()
 "$CHROME_EXE_WSL" \
   --user-data-dir="$CHROME_PROFILE_WIN" \
   --no-first-run --no-default-browser-check --new-window \
-  --window-size=1600,900 \
+  "${SIZE_FLAGS[@]}" \
   "${HEADLESS_FLAGS[@]}" \
   --disable-gpu-vsync --disable-frame-rate-limit \
   --disable-background-timer-throttling \
