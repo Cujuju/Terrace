@@ -13,6 +13,7 @@ __pycache__/
 .mudslide-shots/
 .weather-verify/
 .gpu-perf/
+.relics-harness/
 
 # Third-party model sources, the .glb the import tool writes from them, and its
 # render checks. Sources are downloaded, never committed (see LICENSES.md

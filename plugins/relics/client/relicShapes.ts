@@ -42,10 +42,12 @@ import {
   ExtrudeGeometry,
   Float32BufferAttribute,
   PlaneGeometry,
+  Quaternion,
   RingGeometry,
   Shape,
   SphereGeometry,
   TorusGeometry,
+  Vector3,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SKILL_IDS, type SkillId } from '../protocol.ts';
@@ -62,6 +64,7 @@ export const RELIC_PALETTE = {
   crimson: { light: '#ffc2b8', dark: '#701818' },
   azure: { light: '#d8f4ff', dark: '#155c88' },
   water: { light: '#e2f7ff', dark: '#1a6fa0' },
+  foam: { light: '#ffffff', dark: '#8fdcf5' },
   stone: { light: '#e6dcc8', dark: '#6a5a45' },
   grass: { light: '#c8f0a8', dark: '#3f7f3e' },
   bark: { light: '#a06a3a', dark: '#4a2c14' },
@@ -239,63 +242,360 @@ function mixHex(a: string, b: string, t: number): string {
 }
 
 /**
- * Titan's Hand — a wider brush — is a RAISED HAND, palm toward the viewer
- * and fingers pointing up (owner, 2026-09-04: "point upwards, not flat"): a
- * wrist, a tall palm slab, four fingers of uneven length and a thumb splayed
- * out to the side, all in the passive category's amber.
+ * The axis every primitive is modelled along, and the shortest-arc turn that
+ * aims one down an arbitrary direction. Limbs — fingers, spray arcs, barbs —
+ * are aimed at a point rather than composed out of Euler angles, because the
+ * angles that would reach a point are exactly the magic numbers a named
+ * constant is meant to replace.
  */
+const MODEL_AXIS = new Vector3(0, 1, 0);
+
+type Point = readonly [number, number, number];
+
+function orient(geometry: BufferGeometry, dir: Point, x: number, y: number, z: number): BufferGeometry {
+  const to = new Vector3(dir[0], dir[1], dir[2]).normalize();
+  geometry.applyQuaternion(new Quaternion().setFromUnitVectors(MODEL_AXIS, to));
+  geometry.translate(x, y, z);
+  return geometry;
+}
+
+/** A tapered strut spanning two points: `radiusTo` is the end at `to`. */
+function strut(from: Point, to: Point, radiusTo: number, radiusFrom: number, segments: number): BufferGeometry {
+  const dir: Point = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+  const length = Math.hypot(dir[0], dir[1], dir[2]);
+  return orient(
+    new CylinderGeometry(radiusTo, radiusFrom, length, segments),
+    dir,
+    (from[0] + to[0]) / 2,
+    (from[1] + to[1]) / 2,
+    (from[2] + to[2]) / 2,
+  );
+}
+
+/** A rounded rectangle in the xy plane, for a palm that has no sharp corners. */
+function roundedRectShape(width: number, height: number, radius: number): Shape {
+  const x = width / 2 - radius;
+  const y = height / 2 - radius;
+  const outline = new Shape();
+  outline.absarc(x, y, radius, 0, QUARTER_TURN, false);
+  outline.absarc(-x, y, radius, QUARTER_TURN, 2 * QUARTER_TURN, false);
+  outline.absarc(-x, -y, radius, 2 * QUARTER_TURN, 3 * QUARTER_TURN, false);
+  outline.absarc(x, -y, radius, 3 * QUARTER_TURN, 4 * QUARTER_TURN, false);
+  outline.closePath();
+  return outline;
+}
+
+/**
+ * Titan's Hand — a wider brush — is A HAND OF GOD (owner, 2026-09-05: "I want
+ * the hand to be rendered like a strong high-resolution hand like you would
+ * expect the hand of God to look like"), replacing the slab-and-boxes mitten:
+ * a tapered wrist, a palm with rounded edges, knuckle bulges, four fingers of
+ * three phalanges each with a sphere at every joint and a natural curl toward
+ * the viewer, and a two-segment thumb splayed out and forward. It is modelled
+ * at HAND_SEGMENTS rather than the other relics' ROUND_SEGMENTS: the gem
+ * shader takes its normal from screen-space derivatives (gemMaterial.ts), so
+ * resolution is the only thing that makes a limb read as round.
+ */
+const HAND_SEGMENTS = 14;
+const HAND_JOINT_LONGITUDES = 10;
+const HAND_JOINT_LATITUDES = 6;
+
+const HAND_WRIST_HEIGHT = 0.3;
+const HAND_WRIST_RADIUS_TOP = 0.27;
+const HAND_WRIST_RADIUS_BOTTOM = 0.22;
+/** The palm: about as tall as it is wide, a third as deep — a broad, square, strong palm. */
+const HAND_PALM_HEIGHT = 0.8;
+const HAND_PALM_WIDTH = 0.8;
+const HAND_PALM_DEPTH = 0.26;
+const HAND_PALM_CORNER_RADIUS = 0.12;
+const HAND_PALM_BEVEL = 0.045;
+
+/**
+ * Fingers, index to little: total length. They rise STRAIGHT and PARALLEL from
+ * the knuckle row (2026-09-05, from the first render: splayed, back-leaning
+ * fingers read as a sheaf of twigs), the middle finger longest, about the
+ * palm's width, so the hand's proportions are a hand's.
+ */
+const HAND_FINGER_LENGTHS = [0.7, 0.78, 0.72, 0.58] as const;
+const HAND_FINGER_SPACING = 0.2;
+
+/** How a finger's length divides between its three phalanges, and how it thins along them. */
+const HAND_PHALANX_SHARES = [0.4, 0.33, 0.27] as const;
+const HAND_PHALANX_RADII = [0.075, 0.068, 0.06] as const;
+
+/** The curl: only the outer phalanges lean toward the viewer, and only a little — an open hand, not a grasp. */
+const HAND_PHALANX_TILTS = [0, 0.12, 0.3] as const;
+
+/** A joint reads as a knuckle only if it is thicker than the bone either side of it. */
+const HAND_JOINT_BULGE = 1.18;
+
+/** The knuckle row, its spheres seated ON the palm's top edge. */
+const HAND_KNUCKLE_RADIUS = 0.09;
+
+/**
+ * The thumb: rooted on the palm's +x SIDE two-fifths of the way up, swung out
+ * about 45° and a little forward, then curling upward so its tip reaches the
+ * height of the palm's top.
+ */
+const HAND_THUMB_ROOT_HEIGHT_SHARE = 0.4;
+const HAND_THUMB_ROOT: Point = [
+  HAND_PALM_WIDTH / 2,
+  HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT * HAND_THUMB_ROOT_HEIGHT_SHARE,
+  0.04,
+];
+const HAND_THUMB_SEGMENTS = [
+  { length: 0.42, radius: 0.1, tilt: 0.2, spread: -1.1 },
+  { length: 0.34, radius: 0.088, tilt: 0.4, spread: -0.65 },
+] as const;
+
+/** One phalanx: how long, how thick, how far it leans toward the viewer and out to the side. */
+interface Phalanx {
+  readonly length: number;
+  readonly radius: number;
+  readonly tilt: number;
+  readonly spread: number;
+}
+
+/** Where a phalanx points: leaned `tilt` toward the viewer (+z) and swung `spread` about the vertical. */
+function limbDirection(tilt: number, spread: number): Point {
+  return [-Math.sin(spread) * Math.cos(tilt), Math.cos(spread) * Math.cos(tilt), Math.sin(tilt)];
+}
+
+/** A knuckle at the root and then bone, joint, bone, joint … out to the fingertip. */
+function digit(root: Point, phalanges: readonly Phalanx[], rootRadius: number): BufferGeometry[] {
+  const parts = [joint(root, rootRadius)];
+  let at = root;
+  for (const { length, radius, tilt, spread } of phalanges) {
+    const dir = limbDirection(tilt, spread);
+    const tip: Point = [at[0] + dir[0] * length, at[1] + dir[1] * length, at[2] + dir[2] * length];
+    parts.push(strut(at, tip, radius, radius, HAND_SEGMENTS));
+    parts.push(joint(tip, radius * HAND_JOINT_BULGE));
+    at = tip;
+  }
+  return parts;
+}
+
+function joint([x, y, z]: Point, radius: number): BufferGeometry {
+  return place(
+    new SphereGeometry(radius, HAND_JOINT_LONGITUDES, HAND_JOINT_LATITUDES),
+    x,
+    y,
+    z,
+  );
+}
+
 function titansHand(): Part[] {
-  const wristHeight = 0.3;
-  const palmHeight = 0.9;
-  const wrist = place(new BoxGeometry(0.44, wristHeight, 0.22), 0, wristHeight / 2, 0);
-  const palmTop = wristHeight + palmHeight;
-  const palm = place(new BoxGeometry(0.8, palmHeight, 0.22), 0, wristHeight + palmHeight / 2, 0);
-  const fingerWidth = 0.17;
-  const fingerGap = 0.21;
-  const fingerLengths = [0.42, 0.52, 0.5, 0.4];
-  const fingers = fingerLengths.map((length, i) =>
-    place(new BoxGeometry(fingerWidth, length, 0.2), (i - 1.5) * fingerGap, palmTop + length / 2, 0),
+  const wrist = place(
+    new CylinderGeometry(HAND_WRIST_RADIUS_TOP, HAND_WRIST_RADIUS_BOTTOM, HAND_WRIST_HEIGHT, HAND_SEGMENTS),
+    0,
+    HAND_WRIST_HEIGHT / 2,
+    0,
   );
-  const thumb = place(new BoxGeometry(0.18, 0.46, 0.2), 0.58, 0.87, 0, 0, 0, -0.55);
-  return painted('amber', wrist, palm, ...fingers, thumb);
+  const palmTop = HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT;
+  // Extrude runs along +z from the shape plane, so the palm already faces the
+  // viewer; it only has to be lifted onto the wrist and centred in depth.
+  const palm = new ExtrudeGeometry(
+    roundedRectShape(HAND_PALM_WIDTH, HAND_PALM_HEIGHT, HAND_PALM_CORNER_RADIUS),
+    {
+      depth: HAND_PALM_DEPTH,
+      bevelEnabled: true,
+      bevelThickness: HAND_PALM_BEVEL,
+      bevelSize: HAND_PALM_BEVEL,
+      bevelSegments: 2,
+      curveSegments: 6,
+    },
+  );
+  palm.translate(0, HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT / 2, -HAND_PALM_DEPTH / 2);
+
+  const fingers = HAND_FINGER_LENGTHS.flatMap((length, i) => {
+    const x = (i - (HAND_FINGER_LENGTHS.length - 1) / 2) * HAND_FINGER_SPACING;
+    const phalanges = HAND_PHALANX_SHARES.map((share, k) => ({
+      length: length * share,
+      radius: HAND_PHALANX_RADII[k]!,
+      tilt: HAND_PHALANX_TILTS[k]!,
+      spread: 0,
+    }));
+    return digit([x, palmTop, 0], phalanges, HAND_KNUCKLE_RADIUS);
+  });
+
+  const thumb = digit(HAND_THUMB_ROOT, HAND_THUMB_SEGMENTS, HAND_KNUCKLE_RADIUS);
+
+  return painted('amber', wrist, palm, ...fingers, ...thumb);
 }
 
 /**
- * Quake — a collapsing crater — is RIPPLES IN THE GROUND (owner, 2026-09-04:
- * "a series of ripples"): a flat rock disc with three concentric crimson
- * ridges standing on it and a small dome at the epicentre.
+ * Quake — a collapsing crater — is SOUND WAVES (owner, 2026-09-05: "the quake
+ * needs to look more like sound waves instead of concentric circles"): the
+ * rock slab and the crimson epicentre dome as before, but the three flat
+ * closed rings are gone. In their place two mirrored fans of three open arcs
+ * stand UPRIGHT in a vertical plane through the epicentre, each arc a segment
+ * of a circle centred on the epicentre with its feet on the slab — the
+ * ")))•(((" glyph, in three dimensions. Upright and open is the whole point:
+ * flat rings read as concentric circles from the isometric camera, which is
+ * what the owner was looking at
+ * (.claude/orchestration/refs/relics/quake-in-game-2026-09-05.png).
  */
+const QUAKE_SLAB_HEIGHT = 0.1;
+const QUAKE_SLAB_RADIUS = 1;
+
+/**
+ * How much of a turn one wave arc spans: 100°, centred on the horizontal, so
+ * every arc is the same open bracket and the fan reads as ONE glyph. The arcs
+ * all share ONE centre (2026-09-05, from the first render: arcs lifted to
+ * stand their feet on the slab had three different centres and read as
+ * claws) — a point QUAKE_ARC_CENTRE_LIFT above the slab, so the lower reach of
+ * each arc sinks into the slab and the tile beneath, which hide it.
+ */
+const QUAKE_ARC_TURN = (100 / 360) * Math.PI * 2;
+const QUAKE_ARC_CENTRE_LIFT = 0.3;
+
+/** The three waves, outward: how far from the centre and how thick. Chunky, and clearly nested. */
+const QUAKE_ARC_RADII = [0.42, 0.66, 0.9] as const;
+const QUAKE_ARC_TUBES = [0.09, 0.08, 0.07] as const;
+const QUAKE_ARC_TUBE_SEGMENTS = 8;
+const QUAKE_ARC_RING_SEGMENTS = 18;
+
+/** The epicentre dome, rising from the slab under the arcs' shared centre. */
+const QUAKE_EPICENTRE_RADIUS = 0.26;
+const QUAKE_EPICENTRE_SINK = 0.12;
+
 function quake(): Part[] {
-  const slabHeight = 0.1;
-  const slab = place(new CylinderGeometry(1.0, 1.0, slabHeight, ROUND_SEGMENTS), 0, slabHeight / 2, 0);
-  const top = slabHeight;
-  const ripples = [
-    [0.32, 0.065],
-    [0.62, 0.055],
-    [0.92, 0.045],
-  ].map(([radius, tube]) =>
-    place(new TorusGeometry(radius, tube, 6, 12), 0, top + tube, 0, QUARTER_TURN),
+  const slab = place(
+    new CylinderGeometry(QUAKE_SLAB_RADIUS, QUAKE_SLAB_RADIUS, QUAKE_SLAB_HEIGHT, ROUND_SEGMENTS),
+    0,
+    QUAKE_SLAB_HEIGHT / 2,
+    0,
   );
-  const epicentre = place(new SphereGeometry(0.15, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, top + 0.06, 0);
-  return [...painted('rock', slab), ...painted('crimson', ...ripples, epicentre)];
+  const top = QUAKE_SLAB_HEIGHT;
+  // A torus arc starts at +x and sweeps counter-clockwise, so turning it back
+  // by half its span centres it on the direction the wave travels.
+  const halfSpan = QUAKE_ARC_TURN / 2;
+  const centreY = top + QUAKE_ARC_CENTRE_LIFT;
+  const arcs = QUAKE_ARC_RADII.flatMap((radius, i) =>
+    [0, Math.PI].map((facing) =>
+      place(
+        new TorusGeometry(
+          radius,
+          QUAKE_ARC_TUBES[i]!,
+          QUAKE_ARC_TUBE_SEGMENTS,
+          QUAKE_ARC_RING_SEGMENTS,
+          QUAKE_ARC_TURN,
+        ),
+        0,
+        centreY,
+        0,
+        0,
+        0,
+        facing - halfSpan,
+      ),
+    ),
+  );
+  const epicentre = place(
+    new SphereGeometry(QUAKE_EPICENTRE_RADIUS, HAND_JOINT_LONGITUDES, HAND_JOINT_LATITUDES),
+    0,
+    top + QUAKE_EPICENTRE_RADIUS - QUAKE_EPICENTRE_SINK,
+    0,
+  );
+  return [...painted('rock', slab), ...painted('crimson', ...arcs, epicentre)];
 }
 
 /**
- * Genesis — raising a small island — is an ISLAND first (owner, 2026-09-04:
- * "the arrow isn't as prominent"): a wide two-tier mound, stone beach then
- * grass, with one small tree on it, bark trunk and a round crimson canopy.
+ * Genesis — raising a small island — keeps its two-tier island and plants a
+ * BARBED ARROW in the mound (owner, 2026-09-05: "Genesis has a ball on a stick
+ * and it should probably look more like a barbed arrow"), replacing the trunk
+ * and canopy: a slender crimson shaft, a sharp conical head pointing up, and
+ * two barbs swept back and down from under the head, so the silhouette reads
+ * "barbed" both from the isometric camera and at 32 px.
  */
+const GENESIS_BEACH_HEIGHT = 0.16;
+const GENESIS_MOUND_HEIGHT = 0.3;
+
+/** A stout arrow (2026-09-05, from the first render: the slender one was a pin). */
+const GENESIS_SHAFT_RADIUS = 0.09;
+const GENESIS_SHAFT_LENGTH = 0.9;
+const GENESIS_HEAD_RADIUS = 0.22;
+const GENESIS_HEAD_LENGTH = 0.44;
+
+/** The barbs: how long, how thick at the root, and how far they lean off the shaft. */
+const GENESIS_BARB_LENGTH = 0.5;
+const GENESIS_BARB_RADIUS = 0.16;
+const GENESIS_BARB_LEAN = 0.95;
+
+/** Three sides is enough for a barb: it is a wedge, and its job is the silhouette. */
+const GENESIS_BARB_SIDES = 3;
+
+/** Fletching: three thin vanes around the shaft's foot, as tall as they are shallow. */
+const GENESIS_VANE_COUNT = 3;
+const GENESIS_VANE_HEIGHT = 0.3;
+const GENESIS_VANE_REACH = 0.16;
+const GENESIS_VANE_THICKNESS = 0.03;
+
 function genesis(): Part[] {
-  const beachHeight = 0.16;
-  const beach = place(new CylinderGeometry(0.8, 1.0, beachHeight, ROUND_SEGMENTS), 0, beachHeight / 2, 0);
-  const mound = place(new CylinderGeometry(0.55, 0.8, 0.3, ROUND_SEGMENTS), 0, 0.31, 0);
-  const trunk = place(new CylinderGeometry(0.06, 0.08, 0.32, 6), 0, 0.62, 0);
-  const canopy = place(new SphereGeometry(0.3, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, 0.96, 0);
+  const beach = place(
+    new CylinderGeometry(0.8, 1, GENESIS_BEACH_HEIGHT, ROUND_SEGMENTS),
+    0,
+    GENESIS_BEACH_HEIGHT / 2,
+    0,
+  );
+  const moundTop = GENESIS_BEACH_HEIGHT + GENESIS_MOUND_HEIGHT;
+  const mound = place(
+    new CylinderGeometry(0.55, 0.8, GENESIS_MOUND_HEIGHT, ROUND_SEGMENTS),
+    0,
+    GENESIS_BEACH_HEIGHT + GENESIS_MOUND_HEIGHT / 2,
+    0,
+  );
+  const shaftTop = moundTop + GENESIS_SHAFT_LENGTH;
+  const shaft = place(
+    new CylinderGeometry(GENESIS_SHAFT_RADIUS, GENESIS_SHAFT_RADIUS, GENESIS_SHAFT_LENGTH, ROUND_SEGMENTS),
+    0,
+    moundTop + GENESIS_SHAFT_LENGTH / 2,
+    0,
+  );
+  const head = place(
+    new CylinderGeometry(0, GENESIS_HEAD_RADIUS, GENESIS_HEAD_LENGTH, ROUND_SEGMENTS),
+    0,
+    shaftTop + GENESIS_HEAD_LENGTH / 2,
+    0,
+  );
+  // The barbs are swept BACK: their roots meet the shaft under the head and
+  // their points fall away from it, along the icon's screen-horizontal axis
+  // ((1, 0, -1) normalised) so both read at 32 px rather than one hiding
+  // behind the other.
+  const across = 1 / Math.SQRT2;
+  const barbs = [1, -1].map((side) => {
+    const out = side * Math.sin(GENESIS_BARB_LEAN);
+    const dir: Point = [out * across, -Math.cos(GENESIS_BARB_LEAN), -out * across];
+    // A cone is modelled with its base at -length/2 and its point at +length/2
+    // along its axis, so seating the base on the shaft puts the centre half a
+    // barb along the direction the point falls in.
+    const half = GENESIS_BARB_LENGTH / 2;
+    return orient(
+      new CylinderGeometry(0, GENESIS_BARB_RADIUS, GENESIS_BARB_LENGTH, GENESIS_BARB_SIDES),
+      dir,
+      dir[0] * half,
+      shaftTop + dir[1] * half,
+      dir[2] * half,
+    );
+  });
+  // Each vane stands off one side of the shaft, then the set is turned about it.
+  const vanes = Array.from({ length: GENESIS_VANE_COUNT }, (_, i) =>
+    place(
+      new BoxGeometry(GENESIS_VANE_REACH, GENESIS_VANE_HEIGHT, GENESIS_VANE_THICKNESS).translate(
+        GENESIS_SHAFT_RADIUS + GENESIS_VANE_REACH / 2,
+        0,
+        0,
+      ),
+      0,
+      moundTop + GENESIS_VANE_HEIGHT / 2,
+      0,
+      0,
+      (i / GENESIS_VANE_COUNT) * Math.PI * 2,
+    ),
+  );
   return [
     ...painted('stone', beach),
     ...painted('grass', mound),
-    ...painted('bark', trunk),
-    ...painted('crimson', canopy),
+    ...painted('crimson', shaft, head, ...barbs, ...vanes),
   ];
 }
 
@@ -325,22 +625,112 @@ function azureHeart(): Part[] {
 }
 
 /**
- * Spring of Aether — mana twice as fast — is a NATURAL SPRING (owner,
- * 2026-09-04: "like a water spring"): a stone outcrop with a rimmed pool sunk
- * into its top, water welling up as a low dome in the middle and one ripple
- * ring around it. No fountain column.
+ * Spring of Aether — mana twice as fast — is a FOUNTAIN (owner, 2026-09-05:
+ * "it looks like it's actually got water coming up, spraying up from the
+ * centre into a plume"), replacing the low well dome: the rock outcrop, rim
+ * and pool as before, then a column of water rising out of the pool's centre
+ * and opening as it goes, a plume head of foam spheres at its top, six arcs of
+ * spray falling from the plume back into the pool, and a few droplets on the
+ * water. The foam paint is the water paint's light end pushed further: the
+ * plume head is the brightest thing on the relic, and the shader lights every
+ * unblended face the same way, so the brightness has to come from the paint.
  */
+const SPRING_ROCK_HEIGHT = 0.35;
+const SPRING_POOL_DEPTH = 0.06;
+
+const FOUNTAIN_COLUMN_HEIGHT = 0.72;
+const FOUNTAIN_COLUMN_RADIUS_FOOT = 0.08;
+const FOUNTAIN_COLUMN_RADIUS_HEAD = 0.17;
+
+/** The plume head: one core sphere with a ring of smaller ones bursting off it. */
+const FOUNTAIN_PLUME_CORE_RADIUS = 0.17;
+const FOUNTAIN_PLUME_BURST_RADIUS = 0.12;
+const FOUNTAIN_PLUME_BURST_COUNT = 5;
+const FOUNTAIN_PLUME_BURST_REACH = 0.17;
+const FOUNTAIN_PLUME_BURST_RISE = 0.09;
+
+/** The falling spray: how many arcs, how far they reach, and how far they rise before they fall. */
+const FOUNTAIN_SPRAY_ARCS = 6;
+const FOUNTAIN_SPRAY_REACH = 0.46;
+const FOUNTAIN_SPRAY_RISE = 0.16;
+const FOUNTAIN_SPRAY_STEPS = 3;
+const FOUNTAIN_SPRAY_RADIUS = 0.028;
+
+/** Droplets sitting on the pool where the spray lands. */
+const FOUNTAIN_DROPLET_RADIUS = 0.055;
+const FOUNTAIN_DROPLET_COUNT = 4;
+const FOUNTAIN_DROPLET_REACH = 0.36;
+
+const TURN = Math.PI * 2;
+
 function springOfAether(): Part[] {
-  const rockHeight = 0.35;
-  const rock = place(new CylinderGeometry(0.75, 0.95, rockHeight, 7), 0, rockHeight / 2, 0);
-  const rockTop = rockHeight;
+  const rock = place(new CylinderGeometry(0.75, 0.95, SPRING_ROCK_HEIGHT, 7), 0, SPRING_ROCK_HEIGHT / 2, 0);
+  const rockTop = SPRING_ROCK_HEIGHT;
   const rim = place(new TorusGeometry(0.58, 0.1, 6, ROUND_SEGMENTS), 0, rockTop, 0, QUARTER_TURN);
-  const poolDepth = 0.06;
-  const pool = place(new CylinderGeometry(0.52, 0.52, poolDepth, ROUND_SEGMENTS), 0, rockTop, 0);
-  const waterLevel = rockTop + poolDepth / 2;
-  const well = place(new SphereGeometry(0.28, SPHERE_SEGMENTS, SPHERE_SEGMENTS), 0, waterLevel, 0);
-  const ripple = place(new TorusGeometry(0.38, 0.035, 5, ROUND_SEGMENTS), 0, waterLevel, 0, QUARTER_TURN);
-  return [...painted('stone', rock, rim), ...painted('water', pool, well, ripple)];
+  const pool = place(new CylinderGeometry(0.52, 0.52, SPRING_POOL_DEPTH, ROUND_SEGMENTS), 0, rockTop, 0);
+  const waterLevel = rockTop + SPRING_POOL_DEPTH / 2;
+
+  const column = place(
+    new CylinderGeometry(
+      FOUNTAIN_COLUMN_RADIUS_HEAD,
+      FOUNTAIN_COLUMN_RADIUS_FOOT,
+      FOUNTAIN_COLUMN_HEIGHT,
+      ROUND_SEGMENTS,
+    ),
+    0,
+    waterLevel + FOUNTAIN_COLUMN_HEIGHT / 2,
+    0,
+  );
+  const plumeY = waterLevel + FOUNTAIN_COLUMN_HEIGHT;
+  const core = place(
+    new SphereGeometry(FOUNTAIN_PLUME_CORE_RADIUS, SPHERE_SEGMENTS, SPHERE_SEGMENTS),
+    0,
+    plumeY,
+    0,
+  );
+  const burst = Array.from({ length: FOUNTAIN_PLUME_BURST_COUNT }, (_, i) => {
+    const angle = (i / FOUNTAIN_PLUME_BURST_COUNT) * TURN;
+    return place(
+      new SphereGeometry(FOUNTAIN_PLUME_BURST_RADIUS, SPHERE_SEGMENTS, SPHERE_SEGMENTS),
+      Math.cos(angle) * FOUNTAIN_PLUME_BURST_REACH,
+      plumeY + FOUNTAIN_PLUME_BURST_RISE,
+      Math.sin(angle) * FOUNTAIN_PLUME_BURST_REACH,
+    );
+  });
+
+  // Each arc is a parabola from the plume out to the pool: it leaves rising at
+  // FOUNTAIN_SPRAY_RISE and lands exactly on the water, so the coefficients are
+  // fixed by those two conditions rather than chosen.
+  const fall = plumeY - waterLevel;
+  const sprayHeight = (t: number): number =>
+    plumeY + FOUNTAIN_SPRAY_RISE * t - (FOUNTAIN_SPRAY_RISE + fall) * t * t;
+  const spray = Array.from({ length: FOUNTAIN_SPRAY_ARCS }, (_, i) => {
+    const angle = (i / FOUNTAIN_SPRAY_ARCS) * TURN;
+    const at = (t: number): Point => [
+      Math.cos(angle) * (FOUNTAIN_PLUME_BURST_REACH + (FOUNTAIN_SPRAY_REACH - FOUNTAIN_PLUME_BURST_REACH) * t),
+      sprayHeight(t),
+      Math.sin(angle) * (FOUNTAIN_PLUME_BURST_REACH + (FOUNTAIN_SPRAY_REACH - FOUNTAIN_PLUME_BURST_REACH) * t),
+    ];
+    return Array.from({ length: FOUNTAIN_SPRAY_STEPS }, (_, k) =>
+      strut(at(k / FOUNTAIN_SPRAY_STEPS), at((k + 1) / FOUNTAIN_SPRAY_STEPS), FOUNTAIN_SPRAY_RADIUS, FOUNTAIN_SPRAY_RADIUS, SPHERE_SEGMENTS),
+    );
+  }).flat();
+
+  const droplets = Array.from({ length: FOUNTAIN_DROPLET_COUNT }, (_, i) => {
+    const angle = ((i + 0.5) / FOUNTAIN_DROPLET_COUNT) * TURN;
+    return place(
+      new SphereGeometry(FOUNTAIN_DROPLET_RADIUS, SPHERE_SEGMENTS, SPHERE_SEGMENTS),
+      Math.cos(angle) * FOUNTAIN_DROPLET_REACH,
+      waterLevel,
+      Math.sin(angle) * FOUNTAIN_DROPLET_REACH,
+    );
+  });
+
+  return [
+    ...painted('stone', rock, rim),
+    ...painted('water', pool, column, ...spray, ...droplets),
+    ...painted('foam', core, ...burst),
+  ];
 }
 
 const BUILDERS: Readonly<Record<SkillId, () => Part[]>> = {
