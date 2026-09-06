@@ -27,6 +27,7 @@ import { BoatInterpolator } from './interpolation.ts';
 import warBoatUrl from './assets/war-boat.glb?url';
 import {
   BOAT_SHAPE,
+  FLEET_SAIL_DRAW_OBJECTS,
   createBoatModels,
   disposeBoatKit,
   preloadBoatModels,
@@ -131,18 +132,21 @@ function renderFrame(dt: number): void {
       SEA_SURFACE_WORLD_Y + BOAT_SHAPE.waterlineLift,
       boat.y * CELL_WORLD_SIZE,
     );
-    view.model.animate(animationSeconds, view.phase, boat.fighting);
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, −sin θ) and
     // the boat travels toward (cos heading, 0, sin heading) — hence the
     // negation. The same rule monsters' render loop states, because both
     // plugins' models share the +X convention.
     //
-    // Applied AFTER animate, which writes rotation.x and rotation.z for the
-    // swell: animate must not clobber the yaw, and this must not clobber the
-    // roll, so the two touch disjoint axes and the order is only about which
-    // reads clearly.
+    // BEFORE animate, which now composes the sail's instance matrix from this
+    // root's transform: the yaw has to be this frame's by then. animate writes
+    // only rotation.x and rotation.z (the swell), so the two still touch
+    // disjoint axes and neither clobbers the other.
     view.model.root.rotation.y = -boat.heading;
+    view.model.animate(animationSeconds, view.phase, boat.fighting);
   }
+
+  // One upload for every sail in the fleet, after the last of them is posed.
+  models?.commitFrame();
 }
 
 /**
@@ -172,14 +176,17 @@ export const clientPlugin: TerraceClientPlugin = {
 
   /**
    * Its share of the frame's draw calls, from its own caps — see
-   * TerraceClientPlugin.drawBudget. A GETTER, not a value: the per-boat count
+   * TerraceClientPlugin.drawBudget. A GETTER, not a value: the per-HULL count
    * is measured when the asset bakes (the textured hull costs its own surface
-   * beside the flat set, which is why this settles at 3 and not the hand-built
-   * 2), and the host reads the field every sample — so the budget follows the
-   * measurement instead of freezing the pre-load ceiling.
+   * beside the flat set), and the host reads the field every sample — so the
+   * budget follows the measurement instead of freezing the pre-load ceiling.
+   *
+   * TWO TERMS, because the fleet's costs scale differently: the hulls are per
+   * boat, and every sail in the world is one InstancedMesh however many boats
+   * are afloat (FLEET_SAIL_DRAW_OBJECTS).
    */
   get drawBudget(): number {
-    return BOATS_PAYLOAD_CAP * BOAT_SHAPE.drawObjects;
+    return BOATS_PAYLOAD_CAP * BOAT_SHAPE.drawObjects + FLEET_SAIL_DRAW_OBJECTS;
   },
 
   /**
@@ -196,6 +203,9 @@ export const clientPlugin: TerraceClientPlugin = {
 
     container = new Group();
     container.name = 'boats:afloat';
+    // THE SAME PARENT the boat roots go under, which is what lets a sail's
+    // instance matrix be composed from a root's LOCAL matrix.
+    container.add(models.sails);
     ctx.layer.add(container);
     // Aimable, and something a flame can be drawn on — the two halves of being
     // able to put a torch to a boat and watch it burn to the waterline.
