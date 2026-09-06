@@ -235,6 +235,13 @@ interface WalkerJoints {
   readonly leftArm: Bone;
   readonly rightArm: Bone;
   readonly tail: Bone;
+  /**
+   * The staff, which is a JOINT and not just a part: `bakeRig` makes every
+   * authored node a bone, so the staff's own vertices bind to its own bone and
+   * collapsing that bone is what stows it. Absent on the kinds that carry no
+   * staff (settler, wanderer).
+   */
+  readonly staff: Bone | null;
 }
 
 /**
@@ -309,6 +316,23 @@ function poseClimb(joints: WalkerJoints, seconds: number, phase: number): void {
   joints.rightLeg.rotation.z = knee + reach * legSpan;
   // One pull per reach, so the body rises with the arm that is pulling.
   joints.body.position.y = Math.abs(reach) * CLIMB_PULL_WORLD_UNITS;
+}
+
+/**
+ * Whether the staff is in the paw at all: carried on the ground, STOWED on the
+ * wall (owner, 2026-09-06). Both hands are on the rock during a climb, and a
+ * walker that has let go of the rock has let go of the staff with it.
+ *
+ * SCALE, not `visible`. `bakeRig` merges every part of a walker into one skinned
+ * surface, so there is no per-part mesh left to hide; collapsing the staff's own
+ * bone sends its vertices to a single point and rasterises nothing, without
+ * splitting the draw call the merge exists to keep.
+ */
+const STAFF_CARRIED_SCALE = 1;
+const STAFF_STOWED_SCALE = 0;
+
+function setStaffCarried(joints: WalkerJoints, carried: boolean): void {
+  joints.staff?.scale.setScalar(carried ? STAFF_CARRIED_SCALE : STAFF_STOWED_SCALE);
 }
 
 /** Let go: arms overhead, legs parted, everything flailing. */
@@ -525,8 +549,9 @@ export function createPilgrimModels(): PilgrimModels {
     // gait and palette are the race's, not the kind's). A pilgrim has the
     // staff of a long journey; a settler has its household on its back and
     // both paws free; a strolling wanderer carries nothing at all.
+    let staff: Mesh | null = null;
     if (kind === 'pilgrim') {
-      const staff = new Mesh(staffGeometry, staffMaterial);
+      staff = new Mesh(staffGeometry, staffMaterial);
       // In the arm's own frame: seated IN the paw (the arm's low end) — round
       // 2 had it floating a visible gap outside the hand.
       staff.position.set(0.045, -0.105, 0.012);
@@ -560,6 +585,7 @@ export function createPilgrimModels(): PilgrimModels {
         leftArm: blueprint.jointIndex(leftArm),
         rightArm: blueprint.jointIndex(rightArm),
         tail: blueprint.jointIndex(tail),
+        ...(staff === null ? {} : { staff: blueprint.jointIndex(staff) }),
       },
     };
   }
@@ -592,6 +618,10 @@ export function createPilgrimModels(): PilgrimModels {
       leftArm: instance.joints[rig.jointIndices.leftArm]!,
       rightArm: instance.joints[rig.jointIndices.rightArm]!,
       tail: instance.joints[rig.jointIndices.tail]!,
+      staff:
+        rig.jointIndices.staff === undefined
+          ? null
+          : instance.joints[rig.jointIndices.staff]!,
     };
     const { root } = instance;
     root.name = `pilgrims:${kind}:${race}`;
@@ -607,6 +637,7 @@ export function createPilgrimModels(): PilgrimModels {
         if (gait === 'walk') poseWalk(joints, seconds, phase);
         else if (gait === 'climb') poseClimb(joints, seconds, phase);
         else poseFall(joints, seconds, phase);
+        setStaffCarried(joints, gait === 'walk');
         if (rudy) {
           joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
         } else {
