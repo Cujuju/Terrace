@@ -313,13 +313,11 @@ export function advanceMonster(
   // same rule for a bigger animal, and the shared state machine is the same
   // object (@terrace/shared's climb.ts).
   if (monster.climb !== null) {
-    const outcome = advanceClimb(monster.climb, dt);
+    // `advanceClimb` owns the horizontal too — the body mantles over the lip
+    // across the last band of the rise — so 'arrived' has nothing left to place.
+    const outcome = advanceClimb(monster, dt);
     if (outcome === 'fallen') return 'fell';
-    if (outcome === 'arrived') {
-      monster.x = monster.climb.toX + CELL_CENTRE_OFFSET;
-      monster.y = monster.climb.toY + CELL_CENTRE_OFFSET;
-      monster.climb = null;
-    }
+    if (outcome === 'arrived') monster.climb = null;
     return 'moved';
   }
 
