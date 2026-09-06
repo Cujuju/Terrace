@@ -263,6 +263,27 @@ print(json.dumps(sample))
 # then the window is the evidence.
 kill_bench_chrome "$BENCH_PROFILE_DIR"
 
+# IS THE PAGE EVEN RUNNING THE CODE UNDER TEST? A dev server that failed to
+# restart keeps serving the old bundle on the same port, and the run reports a
+# clean number for the wrong build — it cost a whole D1 measurement on
+# 2026-09-06 before the sample's own clientVersion gave it away. Compared here
+# rather than left to the reader: TERRACE_EXPECT_VERSION when the caller knows
+# what it started Vite as, else this checkout's HEAD.
+BENCH_HEAD_VERSION=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || true)
+EXPECT_VERSION=${TERRACE_EXPECT_VERSION:-$BENCH_HEAD_VERSION}
+SAMPLE_VERSION=$(printf '%s' "$RESULT" | python3 -c "
+import json, sys
+print(json.load(sys.stdin).get('clientVersion', ''))
+" 2>/dev/null)
+case "$SAMPLE_VERSION" in
+  *"$EXPECT_VERSION"*) ;;
+  *)
+    echo "WARNING: the page reports clientVersion '${SAMPLE_VERSION}', which does not carry '${EXPECT_VERSION}'." >&2
+    echo "  Either Vite is serving another checkout on purpose, or its restart failed and you just" >&2
+    echo "  benchmarked the OLD bundle. Check which pid holds the port before quoting this number." >&2
+    ;;
+esac
+
 # A SwiftShader number cannot judge anything here — say so rather than let it be
 # quoted as a frame time.
 case "$RESULT" in
