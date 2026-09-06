@@ -150,6 +150,28 @@ D1 numbers were discarded); and the world simulates between runs, moving fire's
 row 2.04 → 0.55 ms on scene drift alone. The bench now warns on a
 clientVersion mismatch, and the A/B rig restores a pristine world per side.
 
+## D1b — the hull's two surfaces become one (#381)
+
+**Owner, 2026-09-06: do this and D2; the third lever — fewer hulls in frame —
+is off the table ("I am not ready yet to reduce the number of boats").**
+
+**Run this BEFORE D2.** A hull costs 2 draw calls because of one textured
+material. Verified from the asset, not from a comment: `war-boat.glb` carries
+`deck_flat`, `wood_dark`, `sail_canvas` (flat) and `hull_mapped` (a
+`baseColorTexture`), and `bakeRig` keys its merge on map identity
+(`client/src/render/rigSkin.ts:331`) — so the flat pieces merge and the textured
+hull stands alone. Give the hull its colour by vertex colour or the shared
+atlas and `surfaceCount` goes 2 -> 1.
+
+Worth on its own: boats 145 -> ~72 draws, frame 283 -> ~210. After D2 it turns
+the fleet's 2 draws into 1. It carries no animation seam, and it shrinks what
+D2 has to justify — which is the point of doing it first.
+
+**Done when:** `BOAT_SHAPE.drawObjects` is 1, ablation shows boats' draws
+roughly halve, and the preview pair is compared by EYE against the pre-change
+shot. D1's pixel-identical bar does NOT apply here: a texture-to-vertex-colour
+change is meant to look slightly different, so the owner's eye is the acceptance.
+
 ## D2 — the hull onto `rigHerd`
 
 `client/src/render/rigHerd.ts:190` (`createRigHerd`) is the instanced
@@ -170,6 +192,14 @@ a pose cycle. Two sub-options, decide with a measurement rather than taste:
   phase. One palette, and no discontinuity.
 
 Recommend the accumulator; it is one herd and has no seam at the transition.
+
+**Sized after D1 (2026-09-06):** boats are still **145 of 283 draw calls, 51% of
+the frame**. This phase takes that to ~2 (or ~1 after D1b): frame -> ~141. It is
+the whole remaining prize.
+
+**Judge it on the boats row, not the frame total.** D1's win was real and
+whole-frame GPU p50 could not see it (5.151 -> 5.332 ms against a 0.419 ms error
+bar). Read boats' `drawCallsSaved`, its `gpuMsSaved` and its `frameMsSaved`.
 
 **Do not assume this wins.** The brief's own caveat is verified-worth-keeping:
 wildlife's palette uploads are themselves measured stalls (`texSubImage2D`
