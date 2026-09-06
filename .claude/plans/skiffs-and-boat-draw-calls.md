@@ -129,6 +129,27 @@ boats total — on its own.
 **Done when:** ablation shows boats' draw calls fall by ~1/3 and the drop clears
 `baselineGpuMsMeanStep`; sails still visibly tint red in a fight.
 
+**DONE 2026-09-06** (`54b3cf2`, #368 closed). A/B on one world snapshot (#1071),
+restored between runs, bundle verified over HTTP each side:
+
+| | pre-D1 | D1 |
+| --- | --- | --- |
+| boats' draw calls | 213 | **145 (−32%)** |
+| whole frame draw calls | 336 | 283 |
+| boats GPU / frame ms | 2.23 / 2.20 | 1.67 / 1.55 |
+| whole-frame GPU p50 | 5.151 | 5.332 (inside the 0.419 error bar) |
+
+Draw calls fell by the designed third. **Whole-frame GPU time did not move
+outside noise** — the win is submission cost, and it shows in boats' own row,
+not in the frame total at this window size. Visual: the preview pair is
+PIXEL-IDENTICAL before and after (0 of 1,024,000 differ).
+
+Two rig failures found and fixed on main while measuring: `npx vite` hides the
+server's real pid, so a restart silently left the OLD bundle serving (the first
+D1 numbers were discarded); and the world simulates between runs, moving fire's
+row 2.04 → 0.55 ms on scene drift alone. The bench now warns on a
+clientVersion mismatch, and the A/B rig restores a pristine world per side.
+
 ## D2 — the hull onto `rigHerd`
 
 `client/src/render/rigHerd.ts:190` (`createRigHerd`) is the instanced
