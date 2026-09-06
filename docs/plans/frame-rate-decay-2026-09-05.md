@@ -110,9 +110,22 @@ against servers of different uptimes, so the magnitude is not yet pinned. The
 run that settles it is a single page watched from fresh with the per-rig census
 (`phase 11`, `leak-soak`), which attributes the growth to an owning rig.
 
-And at matched geometry (4.16 M tris, ~400 draws) the frozen client renders in
-**3.8–4.2 ms** against the live client's **8.95 ms**. More than half the GPU
-frame is the cost of *applying* state, not of drawing the scene.
+~~And at matched geometry the frozen client renders in 3.8–4.2 ms against the
+live client's 8.95 ms, so more than half the GPU frame is the cost of applying
+state.~~
+
+**RETRACTED (2026-09-06 04:15).** That compared an *aged* live page against a
+*fresh* frozen one — the pages differed, not just the freeze. Re-run with both
+on fresh pages against the same 4 h-old server:
+
+| | GPU p50 |
+| --- | --- |
+| live (`night-freshpage`) | 2.68 – 2.98 ms |
+| frozen (`night-frozen`) | 2.81 – 3.03 ms |
+
+**Identical within the error bar. Applying server state costs nothing
+measurable.** The freeze's only real value is as a stabiliser for the ablation
+scenario (§1), not as evidence about state cost.
 
 ---
 
