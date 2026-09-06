@@ -40,7 +40,8 @@ import {
   type GroundHeightSampler,
 } from './cameraClearance.ts';
 import { createSkyEnvironment, type SkyEnvironment } from './skyEnvironment.ts';
-import { recordFrame, setFrameCounterSource } from './frameStats.ts';
+import { recordFrame, setFrameCounterSource, setGpuSampleSource } from './frameStats.ts';
+import { createGpuTimer } from './gpuTimer.ts';
 import type { SkyRigState } from '../plugins/types.ts';
 
 /**
@@ -241,6 +242,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
     (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
   }
+  // The frame meter's GPU clock (render/gpuTimer.ts). Marked once per frame
+  // below; one query in flight, which is all WebGL2 allows.
+  const gpuTimer = createGpuTimer(renderer.getContext());
+  setGpuSampleSource(() => gpuTimer.drain());
   // The frame meter's counter source (render/frameStats.ts). Read once per
   // window, never per frame. It lives here because this is the only file that
   // holds the renderer, and frameStats deliberately does not import three.
@@ -417,6 +422,9 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   const renderFrame = (): void => {
     frameHandle = requestAnimationFrame(renderFrame);
     const nowMs = performance.now();
+    // BEFORE ANY GL WORK THIS FRAME: the query spans mark to mark, so this is
+    // what makes it one whole frame's GPU time rather than part of one.
+    gpuTimer.mark();
     // First frame has no predecessor; a zero step is correct for it.
     const dt =
       lastFrameMs === 0

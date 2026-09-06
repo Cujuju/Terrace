@@ -176,6 +176,16 @@ export function VersionWatermark(): JSX.Element {
             <PerfMsRow label="p99" ms={stat().frameMsP99} />
             <PerfMsRow label="max" ms={stat().frameMsMax} />
             <PerfMsRow label="interval" ms={stat().intervalMsP50} />
+            {/* THE ROW THAT SAYS WHOSE FAULT A SLOW FRAME IS. Read against
+                `frame`: GPU well above it means the CPU is finishing early and
+                waiting on the adapter; GPU well below it while `interval` is
+                far above BOTH means neither is busy and something outside the
+                renderer is pacing presentation — a display refresh, a
+                compositor, a throttle. Absent where the adapter offers no
+                timer, which is a different fact from zero. */}
+            <Show when={stat().gpuMsP50 !== null} fallback={<PerfRow label="gpu" value="unavailable" />}>
+              <PerfMsRow label="gpu" ms={stat().gpuMsP50 ?? 0} />
+            </Show>
             {/* THE POSE, beside the draw calls it explains. A frame time is
                 only comparable with another taken from the same distance:
                 the bench's own framing sees a third of the draw calls the

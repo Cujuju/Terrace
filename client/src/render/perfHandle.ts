@@ -59,6 +59,7 @@ function logSample(sample: FrameStatsSample): void {
       `tri=${(sample.counters.triangles / 1e6).toFixed(2)}M ` +
       `render=${sample.renderMsP50.toFixed(2)} outside=${sample.outsideMsP50.toFixed(2)} ` +
       `frame=${sample.frameMsP50.toFixed(2)} p99=${sample.frameMsP99.toFixed(2)} ` +
+      `gpu=${sample.gpuMsP50 === null ? 'n/a' : sample.gpuMsP50.toFixed(2)} ` +
       `max=${sample.frameMsMax.toFixed(2)} interval=${sample.intervalMsP50.toFixed(2)} ` +
       `draws=${sample.counters.drawCalls} geo=${sample.counters.geometries} ` +
       `tex=${sample.counters.textures} prog=${sample.counters.programs}` +
