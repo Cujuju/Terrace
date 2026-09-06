@@ -49,8 +49,9 @@ import { createSailSlots } from './sailSlots.ts';
 
 /**
  * The conservative ceiling `drawObjects` reports until the first bake measures
- * the real count: four is above the two a textured hull settles at now the sail
- * has left the per-boat path, so budgeting against it can only over-reserve.
+ * the real count: four is above the one a hull settles at now the sail has left
+ * the per-boat path and every baked part samples one atlas, so budgeting
+ * against it can only over-reserve.
  */
 const BOAT_DRAW_OBJECTS_MAX = 4;
 
@@ -136,11 +137,11 @@ export const BOAT_SHAPE: {
   },
 
   /**
-   * MEASURED PER BAKE (`blueprint.surfaceCount`), not assumed — a textured
-   * hull costs its own surface beside the flat set (map identity is in the
-   * merge key), and recounting is what keeps the number truthful when the
-   * asset changes. It carried a `+ 1` for the sail until the sail became one
-   * instanced draw for the whole fleet.
+   * MEASURED PER BAKE (`blueprint.surfaceCount`), not assumed — map identity
+   * is in the merge key, so an asset whose parts stopped sharing one baseColor
+   * atlas would cost a surface each, and recounting is what keeps the number
+   * truthful when the asset changes. It carried a `+ 1` for the sail until the
+   * sail became one instanced draw for the whole fleet.
    *
    * ALONE AMONG THE THREE THIS DOES NOT THROW: it returns the conservative
    * ceiling until the first bake. Two reasons, both from executed code rather
@@ -437,9 +438,10 @@ export function createBoatModels(): BoatModels {
     oarSides.push(pivot.side);
   }
 
-  // Measured, not assumed: the textured hull costs its own surface beside the
-  // flat set. Recount here is what keeps BOAT_SHAPE.drawObjects — and through
-  // it drawBudget — truthful per asset.
+  // Measured, not assumed: the count follows the asset's materials, and the
+  // atlas that makes them one is authored in tools/blender/build_war_boat.py.
+  // Recount here is what keeps BOAT_SHAPE.drawObjects — and through it
+  // drawBudget — truthful per asset.
   drawObjects = blueprint.surfaceCount;
 
   // ─── the fleet's sails: one mesh, one draw call, one material ──────────────

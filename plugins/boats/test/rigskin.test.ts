@@ -6,7 +6,8 @@
 // Meshes (hull, deck, mast, sail, yard, 4 oars) = 9 draw calls; after it, the
 // hull/deck/mast/yard/oars are ONE baked skinned surface and only the sail
 // stays separate (its per-boat colour cannot live in shared vertex data — see
-// the comment on the sail in client/models.ts). So: 2.
+// the comment on the sail in client/models.ts), and the sail is now one
+// InstancedMesh for the whole fleet. So: 1.
 
 import { describe, expect, it } from 'vitest';
 import { Bone, InstancedMesh, Mesh } from 'three';
@@ -84,25 +85,25 @@ function bonesOf(root: { traverse(cb: (o: unknown) => void): void }): Bone[] {
 }
 
 describe('the boat as a rigged drawable', () => {
-  it('draws TWO objects per hull, and the whole fleet\'s sails in ONE more', () => {
-    // What a fleet COSTS, which is the number drawBudget is built from. The
-    // authored hull carries the texture and map identity is in rigSkin's merge
-    // key, so the textured hull bakes as its own surface beside the merged flat
-    // set — 2. The sail used to be a third, per boat; it is now one
-    // InstancedMesh for every boat in the world, so a second hull adds two
-    // draws and not three. A regression to per-part meshes (or a second flat
-    // surface — an indexed part beside a non-indexed one would do it) shows up
+  it('draws ONE object per hull, and the whole fleet\'s sails in ONE more', () => {
+    // What a fleet COSTS, which is the number drawBudget is built from. Map
+    // identity is in rigSkin's merge key, so a textured hull beside untextured
+    // spars used to bake as its own second surface; every baked part now
+    // samples one atlas and the whole hull is 1. The sail was a third, per
+    // boat, then one InstancedMesh for every boat in the world. A regression
+    // to per-part meshes — or to a second surface, which splitting the atlas
+    // or putting a non-indexed part beside an indexed one would do — shows up
     // here, and so does putting the sail back on the per-boat path.
     const models = createBoatModels();
     const boat = models.create();
     boat.animate(0, 0, false);
 
-    expect(drawablesOf(boat.root)).toHaveLength(2);
-    expect(BOAT_SHAPE.drawObjects).toBe(2);
+    expect(drawablesOf(boat.root)).toHaveLength(1);
+    expect(BOAT_SHAPE.drawObjects).toBe(1);
 
     const second = models.create();
     second.animate(0, 0, false);
-    expect(drawablesOf(second.root)).toHaveLength(2);
+    expect(drawablesOf(second.root)).toHaveLength(1);
     // Still the one mesh, whatever the fleet size.
     expect(models.sails).toBeInstanceOf(InstancedMesh);
     expect(models.sails.parent).toBeNull();
@@ -112,23 +113,20 @@ describe('the boat as a rigged drawable', () => {
     models.dispose();
   });
 
-  it('keeps the rig at TWO surfaces, both shared by every boat', () => {
-    // The textured hull is one surface, every flat part merges into the
-    // other, and both boats share both baked geometries; if the bake ever
-    // emits a third surface the per-hull cost goes to 3 and this catches which
-    // side regressed.
+  it('keeps the rig at ONE surface, shared by every boat', () => {
+    // Every part merges into one surface and both boats share its baked
+    // geometry; if the bake ever emits a second the per-hull cost doubles and
+    // this catches it.
     const models = createBoatModels();
     const a = models.create();
     const b = models.create();
 
-    const [rigA1, rigA2] = drawablesOf(a.root);
-    const [rigB1, rigB2] = drawablesOf(b.root);
-    expect(rigA1!.geometry).toBe(rigB1!.geometry);
-    expect(rigA1!.material).toBe(rigB1!.material);
-    expect(rigA2!.geometry).toBe(rigB2!.geometry);
-    expect(rigA2!.material).toBe(rigB2!.material);
-    // Two and only two: a sail left behind on the root would be a third.
-    expect(drawablesOf(a.root)).toHaveLength(2);
+    const [rigA] = drawablesOf(a.root);
+    const [rigB] = drawablesOf(b.root);
+    expect(rigA!.geometry).toBe(rigB!.geometry);
+    expect(rigA!.material).toBe(rigB!.material);
+    // One and only one: a sail left behind on the root would be a second.
+    expect(drawablesOf(a.root)).toHaveLength(1);
 
     a.dispose();
     b.dispose();
