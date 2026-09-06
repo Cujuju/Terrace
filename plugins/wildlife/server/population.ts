@@ -1006,7 +1006,7 @@ export function advancePopulation(world: HabitatWorld, dt: number): void {
     // only the chunks a sculpt or an unlock touched. See census-index.ts.
     const census = reconcileCensus(world);
     spawnChunks = census.chunks;
-    targets = targetsFor(census.cellsByHabitat);
+    targets = targetsFor(census.cellsBySpecies);
     // BEFORE reconciling, so a creature the terrain has walled in is counted as
     // the loss it is and its replacement is issued in the same pass.
     despawnWedged(world);

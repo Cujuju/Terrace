@@ -50,14 +50,14 @@
 // and rides along on the sweep that has to happen anyway.
 
 import { CHUNK_SIZE } from '@terrace/shared';
+import { WILDLIFE_HABITAT_SPECIES } from '../protocol.ts';
 import {
-  HABITAT_CLASS_COUNT,
-  HABITAT_CLASS_SLOT,
+  CENSUS_SLOT_COUNT,
+  emptySpeciesCounts,
   countChunkHabitat,
   type Census,
   type HabitatWorld,
 } from './census.ts';
-import type { Habitat } from './species.ts';
 
 /** One cell of a terrain diff — the shape `CellDiff` (plugins/types.ts) has. */
 interface ChangedCell {
@@ -66,7 +66,7 @@ interface ChangedCell {
 }
 
 /**
- * Per-chunk habitat counts, `HABITAT_CLASS_COUNT` Int32s per chunk in
+ * Per-chunk habitat counts, `CENSUS_SLOT_COUNT` Int32s per chunk in
  * row-major chunk order. Only the slice of a chunk marked `counted` below is
  * meaningful.
  */
@@ -162,7 +162,7 @@ function ensureSizedFor(world: HabitatWorld): void {
   }
 
   const chunkCount = world.chunksPerEdge * world.chunksPerEdge;
-  counts = new Int32Array(chunkCount * HABITAT_CLASS_COUNT);
+  counts = new Int32Array(chunkCount * CENSUS_SLOT_COUNT);
   counted = new Uint8Array(chunkCount);
   unlockedMirror = new Uint8Array(chunkCount);
   unlockedChunkList = null;
@@ -189,9 +189,7 @@ export function reconcileCensus(world: HabitatWorld): Census {
   // Accumulated in locals rather than into the record directly: this is the
   // one loop that runs over every chunk on every reconcile, and three plain
   // numbers keep it out of property-lookup territory.
-  let land = 0;
-  let shallow = 0;
-  let deep = 0;
+  const cellsBySpecies = emptySpeciesCounts();
   let maskMoved = unlockedChunkList === null;
 
   for (let cy = 0; cy < world.chunksPerEdge; cy++) {
@@ -212,14 +210,14 @@ export function reconcileCensus(world: HabitatWorld): Census {
       if (!isUnlocked) continue;
 
       if (chunkCounted[chunk] === 0 || dirtyChunks.has(chunk)) {
-        countChunkHabitat(world, cx, cy, chunkCounts, chunk * HABITAT_CLASS_COUNT);
+        countChunkHabitat(world, cx, cy, chunkCounts, chunk * CENSUS_SLOT_COUNT);
         chunkCounted[chunk] = 1;
       }
 
-      const base = chunk * HABITAT_CLASS_COUNT;
-      land += chunkCounts[base + HABITAT_CLASS_SLOT.land];
-      shallow += chunkCounts[base + HABITAT_CLASS_SLOT.shallow];
-      deep += chunkCounts[base + HABITAT_CLASS_SLOT.deep];
+      const base = chunk * CENSUS_SLOT_COUNT;
+      for (let slot = 0; slot < CENSUS_SLOT_COUNT; slot++) {
+        cellsBySpecies[WILDLIFE_HABITAT_SPECIES[slot]!] += chunkCounts[base + slot]!;
+      }
     }
   }
 
@@ -229,8 +227,7 @@ export function reconcileCensus(world: HabitatWorld): Census {
 
   if (maskMoved) unlockedChunkList = buildUnlockedChunkList(world.chunksPerEdge, mirror);
 
-  const cellsByHabitat: Record<Habitat, number> = { land, shallow, deep };
-  return { cellsByHabitat, chunks: unlockedChunkList as ReadonlyArray<readonly [number, number]> };
+  return { cellsBySpecies, chunks: unlockedChunkList as ReadonlyArray<readonly [number, number]> };
 }
 
 /**

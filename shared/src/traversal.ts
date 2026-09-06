@@ -313,13 +313,22 @@ export function isWalkableCell(
   const cy = Math.floor(y);
   if (cx < 0 || cy < 0 || cx >= world.worldSize || cy >= world.worldSize) return false;
 
-  const height = world.heightAt(cx, cy);
-  if (height < profile.minGroundHeight) return false;
-  if (height > (profile.maxGroundHeight ?? UNCONSTRAINED_MAX_GROUND_HEIGHT)) return false;
-  if (!profile.grounds.includes(groundOf(height))) return false;
+  if (!admitsHeight(profile, world.heightAt(cx, cy))) return false;
 
   const freshwater = (world.freshwater ?? NO_FRESHWATER).at(cx, cy);
   return admitsFreshwater(profile.freshwater, freshwater);
+}
+
+/**
+ * Is a cell of this stored height ground `profile` may stand on? The height
+ * half of `isWalkableCell`: ground class and the min/max ground-height axes,
+ * with no bounds, unlock or freshwater question. Also what a habitat census
+ * counts with, so a target and the veto cannot disagree about a cell.
+ */
+export function admitsHeight(profile: TraversalProfile, height: number): boolean {
+  if (height < profile.minGroundHeight) return false;
+  if (height > (profile.maxGroundHeight ?? UNCONSTRAINED_MAX_GROUND_HEIGHT)) return false;
+  return profile.grounds.includes(groundOf(height));
 }
 
 /**
@@ -454,9 +463,7 @@ export function canProceedAlong(
     if (checksGradient && Math.abs(height - previousHeight) > limit) return false;
     previousHeight = height;
 
-    if (height < profile.minGroundHeight) return false;
-    if (height > (profile.maxGroundHeight ?? UNCONSTRAINED_MAX_GROUND_HEIGHT)) return false;
-    if (!profile.grounds.includes(groundOf(height))) return false;
+    if (!admitsHeight(profile, height)) return false;
     const freshwater = (world.freshwater ?? NO_FRESHWATER).at(sampleX, sampleY);
     if (!admitsFreshwater(profile.freshwater, freshwater)) return false;
   }

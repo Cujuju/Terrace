@@ -258,7 +258,11 @@ describe('population targets', () => {
     const land = 200_000;
     const shallow = 100_000;
     const deep = 300_000;
-    const targets = targetsFor({ land, shallow, deep });
+    const targets = targetsFor({
+      grazer: land, wolf: land, ibex: land, bison: land,
+      fish: shallow, ray: shallow, shark: shallow, eel: shallow, angelfish: shallow,
+      whale: deep, deepsea: deep,
+    });
     expect(targets.grazer).toBe(Math.floor(land / profileOf('grazer').habitatCellsPerIndividual));
     expect(targets.fish).toBe(Math.floor(shallow / profileOf('fish').habitatCellsPerIndividual));
     expect(targets.deepsea).toBe(Math.floor(deep / profileOf('deepsea').habitatCellsPerIndividual));
@@ -278,10 +282,13 @@ describe('population targets', () => {
     // land; the densities they are divided by are themselves cellsOverArea, so
     // converting both sides leaves the whole table below unchanged — which is
     // the point, because none of this ecosystem is about sampling density.
+    const land = cellsOverArea(131072);
+    const shallow = cellsOverArea(52429);
+    const deep = cellsOverArea(78643);
     const targets = targetsFor({
-      land: cellsOverArea(131072),
-      shallow: cellsOverArea(52429),
-      deep: cellsOverArea(78643),
+      grazer: land, wolf: land, ibex: land, bison: land,
+      fish: shallow, ray: shallow, shark: shallow, eel: shallow, angelfish: shallow,
+      whale: deep, deepsea: deep,
     });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
