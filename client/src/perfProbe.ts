@@ -175,10 +175,48 @@ function shortProgramKey(key: string): string {
  * question a census exists to answer. Instanced meshes multiply by their live
  * `count`, because that is the number that actually grows as a population does.
  */
-function censusOf(root: Object3D): { objects: number; triangles: number } {
+function censusOf(root: Object3D): {
+  objects: number;
+  triangles: number;
+  materials: number;
+  textures: number;
+} {
   let objects = 0;
   let triangles = 0;
+  // BY IDENTITY, not by count of references: a material shared by forty meshes
+  // is one material and one program, and counting it forty times would report
+  // sharing as growth — the exact opposite of the finding being chased.
+  const materials = new Set<unknown>();
+  const textures = new Set<unknown>();
+  const noteMaterial = (material: unknown): void => {
+    if (material === null || material === undefined) return;
+    if (materials.has(material)) return;
+    materials.add(material);
+    // Every texture-valued property, whatever it is called: three's slot names
+    // differ per material type (map, normalMap, alphaMap, emissiveMap, …) and
+    // an allow-list here would silently miss whichever one is actually growing.
+    for (const value of Object.values(material as Record<string, unknown>)) {
+      if (value !== null && typeof value === 'object' && (value as { isTexture?: boolean }).isTexture === true) {
+        textures.add(value);
+      }
+    }
+    // Uniform-held textures too: a ShaderMaterial keeps its maps in `uniforms`,
+    // where the loop above cannot see them, and this renderer is full of them.
+    const uniforms = (material as { uniforms?: Record<string, { value?: unknown }> }).uniforms;
+    if (uniforms !== undefined) {
+      for (const uniform of Object.values(uniforms)) {
+        const value = uniform.value;
+        if (value !== null && typeof value === 'object' && (value as { isTexture?: boolean }).isTexture === true) {
+          textures.add(value);
+        }
+      }
+    }
+  };
   root.traverse((node: Object3D) => {
+    const withMaterial = node as Object3D & { material?: unknown };
+    const material = withMaterial.material;
+    if (Array.isArray(material)) for (const entry of material) noteMaterial(entry);
+    else noteMaterial(material);
     const mesh = node as Object3D & {
       isMesh?: boolean;
       isPoints?: boolean;
@@ -195,7 +233,12 @@ function censusOf(root: Object3D): { objects: number; triangles: number } {
     const instances = mesh.isInstancedMesh === true ? (mesh.count ?? 0) : 1;
     triangles += (vertices / 3) * instances;
   });
-  return { objects, triangles: Math.round(triangles) };
+  return {
+    objects,
+    triangles: Math.round(triangles),
+    materials: materials.size,
+    textures: textures.size,
+  };
 }
 
 function programCacheKeys(renderer: { info: { programs: unknown } }): string[] {
