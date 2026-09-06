@@ -1,5 +1,14 @@
 // Reference shaders for arc celestial-void, lifted verbatim from the approved
 // concept page (https://claude.ai/code/artifact/53915c5c-1373-496c-b6ad-6a58a0303ced).
+// REVISION 20 (perf, issue #341, 2026-09-05): no look change. The gas march (bake fetches, GAS_STEPS
+// depth-profile samples, transmittance loop) now runs in its own program (GAS_GLSL, below the wheel)
+// into a half-resolution RGBA16F target (drawing buffer / GAS_RES_DIVISOR 2, rounded up) once per
+// frame from the wheel mesh's onBeforeRender, and the full-res wheel reads it back bilinearly at
+// gl_FragCoord/u_res: rgb = gasCol*gasAcc before GAS_GAIN, a = gas opacity. Depth fade, bulge, gain
+// and the fade early-out stay at full res, so the field the upsample crosses is smooth everywhere.
+// WebGL2 GPU-timer bench, RTX 3090 @1440p, same-run pairs: rev 19 1.34 ms -> 0.98 ms (-0.36) and,
+// on a slower clock state, 2.22 -> 1.71 (-0.51); the split alone at full res costs +0.28. Shots
+// differ from rev 19 by max 13/255, mean 0.19 (view) / 0.21 (hub); bilinear only, no edge filter.
 // REVISION 19 (perf, issue #340, 2026-09-05): no look change. gasPattern and the level field are
 // baked ONCE into two log-polar textures (theta x log r, GAS_BAKE_SIZE 2048, half float, mipmapped;
 // BAKE_GLSL shares WHEEL_FIELDS_GLSL with the wheel) and read back per fragment through
@@ -286,10 +295,9 @@ vec4 gasBakeFetch(sampler2D tex, vec2 uv){
   vec4 nearCut=texture2D(tex,vec2(uv.x+1.0-step(0.5,uv.x),uv.y));
   return mix(texture2D(tex,uv),nearCut,step(0.25,abs(uv.x-0.5)));
 }
-// The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
-// texture's r. Half float, so the pattern's ~1.55 peak needs no scaling on the way through.
-uniform sampler2D u_gasBake;
-uniform sampler2D u_gasLevel;
+// The half-res gas pass's output (issue #341): rgb = gasCol*gasAcc before GAS_GAIN, a = the gas
+// opacity. Bilinear, so a full-res pixel between texel centres gets the interpolated field.
+uniform sampler2D u_gasHalf;
 // Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
 // (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
 // ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
@@ -328,17 +336,6 @@ float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float dept
   }
   return sum;
 }
-// The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
-// broken up by 3-D puffs. Multiplies gasPattern.
-float gasDepthProfile(vec2 rf, float z, float level){
-  float dz=(z-level)/GAS_SCALE_H;
-  float ch=exp(dz)+exp(-dz);
-  float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
-  vec3 pq=vec3(rf*PUFF_SCALE,z*PUFF_Z_SCALE);
-  float puff=(1.0-PUFF_OCTAVE2)*vnoise3(pq)+PUFF_OCTAVE2*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
-  float puffMod=1.0-PUFF_DEPTH+2.0*PUFF_DEPTH*puff;          // mean 1
-  return vert*puffMod;
-}
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
   float a=u_time*WHEEL_RATE;
@@ -353,29 +350,16 @@ void main(){
     float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
     if(depthFade<=0.0){ gl_FragColor=vec4(col,1.0); return; }   // fully faded: nothing below would show
 
-    // --- gas: the plane pattern once, then march the thickness front to back ---
-    vec2 bakeUv=gasBakeUv(rf);
-    vec4 baked=gasBakeFetch(u_gasBake,bakeUv);
-    vec3 gasCol=baked.rgb;
-    float pattern=baked.a;
-    float level=gasBakeFetch(u_gasLevel,bakeUv).r;                                  // this patch's depth
-    float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
-    float dt=(tBottom-sdist)/float(GAS_STEPS);
-    float gasAcc=0.0;                     // lit weight so far
-    float T=1.0;                          // transmittance so far
-    for(int i=0;i<GAS_STEPS;i++){
-      float t=sdist+(float(i)+0.5)*dt;
-      vec3 q=u_origin+d*t;
-      float dens=pattern*gasDepthProfile(rot(q.xy,-a),q.z,level);
-      float lit=1.0-LIT_FROM_ABOVE*clamp(-q.z/DISK_THICKNESS,0.0,1.0);   // deeper gas is darker
-      float alpha=1.0-exp(-dens*GAS_EXTINCTION*dt);
-      gasAcc+=T*alpha*lit;
-      T*=1.0-alpha;
-    }
-    float gas=1.0-T;                      // total gas opacity along the ray
+    // --- gas: marched at half resolution into u_gasHalf (issue #341), read back here ---
+    // The exact inverse of the gas pass's own mapping, so the texel a pixel lands on is the one
+    // written for it; between centres the bilinear filter interpolates a field that is smooth
+    // everywhere below the horizon, which is why the fade and the gain stay out of it.
+    vec4 gasHalf=texture2D(u_gasHalf,gl_FragCoord.xy/u_res);
+    vec3 gasCol=gasHalf.rgb;              // lit gas colour (gasCol*gasAcc), before GAS_GAIN
+    float gas=gasHalf.a;                  // total gas opacity along the ray
     float bulge=exp(-r*2.0);
     vec3 warm=vec3(1.0,0.88,0.62);
-    col+=(gasCol*gasAcc*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
+    col+=(gasCol*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars: points in three voxel grids under the plane, rotating with the gas ---
     // The grids are walked in the rotating frame: rotate the plane hit and the ray into it once.
@@ -397,6 +381,63 @@ void main(){
     col+=vec3(0.8,0.82,0.9)*0.4*stars(dome(d)*110.0+5.0,0.03,0.0);
   }
   gl_FragColor=vec4(col,1.0);
+}
+// ===== gas (the half-res march, drawn once per frame into u_gasHalf; shares the wheel's fields above) =====
+// The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
+// texture's r. Half float, so the pattern's ~1.55 peak needs no scaling on the way through.
+uniform sampler2D u_gasBake;
+uniform sampler2D u_gasLevel;
+// This pass's own resolution in texels; u_res stays the FULL-res drawing buffer in both programs.
+uniform vec2 u_gasRes;
+// Declared for the bench harness, which lifts it to size its own target (.void-bench/gl2.js); the
+// app sizes the render target from the TS constant of the same name. The pass itself needs only
+// the two resolutions, because ceil() rounding makes the ratio not exactly the divisor.
+const float GAS_RES_DIVISOR = 2.0;
+// The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
+// broken up by 3-D puffs. Multiplies gasPattern.
+float gasDepthProfile(vec2 rf, float z, float level){
+  float dz=(z-level)/GAS_SCALE_H;
+  float ch=exp(dz)+exp(-dz);
+  float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
+  vec3 pq=vec3(rf*PUFF_SCALE,z*PUFF_Z_SCALE);
+  float puff=(1.0-PUFF_OCTAVE2)*vnoise3(pq)+PUFF_OCTAVE2*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
+  float puffMod=1.0-PUFF_DEPTH+2.0*PUFF_DEPTH*puff;          // mean 1
+  return vert*puffMod;
+}
+void main(){
+  // The full-res pixel this texel stands for. Scaling the texel centre by the exact ratio of the
+  // two buffers — not by GAS_RES_DIVISOR — is what keeps the two passes on the same uv when the
+  // drawing buffer has an odd dimension and the target was rounded up. The wheel reads back at
+  // gl_FragCoord.xy/u_res, which is this mapping inverted exactly.
+  vec2 full=gl_FragCoord.xy*(u_res/u_gasRes);
+  vec2 uv=(full-0.5*u_res)/u_res.y;
+  float a=u_time*WHEEL_RATE;
+  vec3 d=viewRay(uv);                    // disk space: plane z = 0, hub at the origin
+  if(d.z>=0.0){ gl_FragColor=vec4(0.0); return; }   // above the plane's horizon: no gas to march
+  float sdist=-u_origin.z/d.z;           // ray length to the plane
+  vec2 pp=u_origin.xy+d.xy*sdist;        // disk coordinates, hub at the origin
+  vec2 rf=rot(pp,-a);                    // rotating frame: everything sampled here turns rigidly
+
+  // --- gas: the plane pattern once, then march the thickness front to back ---
+  vec2 bakeUv=gasBakeUv(rf);
+  vec4 baked=gasBakeFetch(u_gasBake,bakeUv);
+  vec3 gasCol=baked.rgb;
+  float pattern=baked.a;
+  float level=gasBakeFetch(u_gasLevel,bakeUv).r;                                  // this patch's depth
+  float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
+  float dt=(tBottom-sdist)/float(GAS_STEPS);
+  float gasAcc=0.0;                     // lit weight so far
+  float T=1.0;                          // transmittance so far
+  for(int i=0;i<GAS_STEPS;i++){
+    float t=sdist+(float(i)+0.5)*dt;
+    vec3 q=u_origin+d*t;
+    float dens=pattern*gasDepthProfile(rot(q.xy,-a),q.z,level);
+    float lit=1.0-LIT_FROM_ABOVE*clamp(-q.z/DISK_THICKNESS,0.0,1.0);   // deeper gas is darker
+    float alpha=1.0-exp(-dens*GAS_EXTINCTION*dt);
+    gasAcc+=T*alpha*lit;
+    T*=1.0-alpha;
+  }
+  gl_FragColor=vec4(gasCol*gasAcc,1.0-T);   // lit colour before GAS_GAIN; alpha = total gas opacity
 }
 // ===== bake (drawn twice at startup into the wheel's two log-polar targets; same fields as the wheel) =====
 uniform float u_bakeField;   // 0: colour and pattern; 1: level
