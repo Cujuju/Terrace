@@ -1507,8 +1507,8 @@ export function createRiverRig(
     // The vanished-key splices already moved the buffer, so it must be
     // published before a frame can draw it — see `publishWaterBuffer`.
     publishWaterBuffer();
-    // An empty queue still has to finish: the springs describe THIS surface.
-    if (pendingTiles.length === 0) finishDrain();
+    // An empty queue still finishes, on the next frame: the springs describe
+    // THIS surface, and the frame handler finishes any job whose queue is empty.
   };
 
   /**
@@ -1607,18 +1607,23 @@ export function createRiverRig(
    */
   const drainWaterTiles = (): void => {
     const job = drainJob;
-    if (job === null || pendingCursor >= pendingTiles.length) return;
+    if (job === null) return;
+    // THE FINISH GETS A FRAME OF ITS OWN. Measured on the owner's world
+    // snapshot (2026-09-05): the frame that drained the last tile also paid
+    // `finishDrain` — +1 ms after a crater, +9 ms after a join — on top of the
+    // budget. Finishing on the next frame keeps every drain frame at the
+    // budget plus one tile, and the finish frame at the finish alone.
+    if (pendingCursor >= pendingTiles.length) {
+      pendingTiles.length = 0;
+      pendingCursor = 0;
+      finishDrain();
+      return;
+    }
     const startedMs = now();
     for (;;) {
       emitPendingTile(job, pendingTiles[pendingCursor]!);
       pendingCursor++;
-      if (pendingCursor >= pendingTiles.length) {
-        pendingTiles.length = 0;
-        pendingCursor = 0;
-        finishDrain();
-        return;
-      }
-      if (now() - startedMs >= WATER_TILE_FRAME_BUDGET_MS) {
+      if (pendingCursor >= pendingTiles.length || now() - startedMs >= WATER_TILE_FRAME_BUDGET_MS) {
         publishWaterBuffer();
         return;
       }
