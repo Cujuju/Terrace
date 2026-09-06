@@ -14,7 +14,7 @@ import {
   parseManaDeniedPayload,
 } from '../protocol.ts';
 import { ManaGauge } from './ManaGauge.tsx';
-import { gateLocalSculpt, recordDenial, setManaPool } from './state.ts';
+import { applyBalancePush, applyDenial, gateLocalSculpt, recordDenial } from './state.ts';
 
 /**
  * DRAW BUDGET: NOTHING. This plugin is a HUD gauge and a local-intent gate; it
@@ -37,7 +37,7 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     ctx.onMessage(MANA_BALANCE_MESSAGE, (payload) => {
       const pool = parseManaBalancePayload(payload);
-      if (pool !== null) setManaPool(pool);
+      if (pool !== null) applyBalancePush(pool);
     });
     ctx.onMessage(MANA_DENIED_MESSAGE, (payload) => {
       const denied = parseManaDeniedPayload(payload);
@@ -45,9 +45,7 @@ export const clientPlugin: TerraceClientPlugin = {
       // The denial carries the authoritative balance; keep the gauge honest
       // even if a balance push was lost. Capacity and rate are whatever we last
       // heard — a refusal says nothing about either.
-      setManaPool((pool) =>
-        pool === null ? null : { ...pool, balance: denied.balance },
-      );
+      applyDenial(denied);
       recordDenial();
     });
     // Bottom right (owner move, 2026-08-25 — it began top-centre, then the

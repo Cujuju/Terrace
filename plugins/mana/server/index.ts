@@ -589,6 +589,26 @@ interface ManaPool {
    * -1 is "nothing sent yet" and can never equal a real floored balance.
    */
   lastSentBalance: number;
+  /**
+   * The highest `seq` of this player's intents this plugin has seen, or null
+   * before the first. Stamped on every push as `asOfSeq` so the client can
+   * tell which of its local debits the push already accounts for
+   * (../protocol.ts, ManaBalanceMessage.asOfSeq). Highest, not latest: the
+   * client's seq is monotonic, so an intent core dropped before any hook ran
+   * (rate limit, malformed) is covered by the next one that gets through.
+   */
+  lastSeenSeq: number | null;
+}
+
+/** Records an intent's seq against its sender's pool — see ManaPool.lastSeenSeq. */
+function noteSeq(pool: ManaPool, intent: SculptIntent): void {
+  if (intent.seq === undefined) return;
+  if (pool.lastSeenSeq === null || intent.seq > pool.lastSeenSeq) pool.lastSeenSeq = intent.seq;
+}
+
+/** The `asOfSeq` field for a push to this pool's player, or nothing to add. */
+function asOfSeqOf(pool: ManaPool): { asOfSeq?: number } {
+  return pool.lastSeenSeq === null ? {} : { asOfSeq: pool.lastSeenSeq };
 }
 
 /** Sentinel for "no balance has been pushed to this player yet". */
@@ -750,6 +770,7 @@ function sendBalance(world: WorldApi, playerId: string, pool: ManaPool): void {
   world.sendTo(playerId, MANA_BALANCE_MESSAGE, {
     balance,
     capacity: MANA_CAPACITY,
+    ...asOfSeqOf(pool),
     // The perk-adjusted RATE, not a price: prices depend on the brush the
     // player is holding, which is a client-side fact the server does not track
     // and has no business tracking. Handing over the rate lets the client's
@@ -776,7 +797,7 @@ function poolFor(playerId: string): ManaPool {
   const existing = poolsByPlayer.get(playerId);
   if (existing !== undefined) return existing;
 
-  const created: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT };
+  const created: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT, lastSeenSeq: null };
   poolsByPlayer.set(playerId, created);
   return created;
 }
@@ -850,6 +871,7 @@ export function spendMana(world: WorldApi, playerId: string, amount: number): bo
 function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
+  noteSeq(pool, intent);
   // The price of THIS intent for THIS player: the volume its brush displaces at
   // the rate this player pays, after any perk another plugin has set on them.
   // Computed per intent and never cached, for two independent reasons — a perk
@@ -872,6 +894,7 @@ function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict
     world.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
       balance: displayBalance(pool),
       cost,
+      ...asOfSeqOf(pool),
     });
     return { kind: 'deny', reason: INSUFFICIENT_MANA_REASON };
   }
@@ -909,6 +932,7 @@ function commitCharge(
 ): void {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
+  noteSeq(pool, intent);
 
   // CHARGE FOLLOWS EFFECT (owner bug report 2026-08-19: sculpting at the
   // world floor "is not changing the landscape … but it's taking my mana").
@@ -1010,7 +1034,7 @@ export const plugin: TerracePlugin = {
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
-    const pool: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT };
+    const pool: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT, lastSeenSeq: null };
     poolsByPlayer.set(player.id, pool);
     // The room sends the join snapshot before calling this hook, so the client
     // is already sized and listening; this is the first thing its HUD sees.
@@ -1054,8 +1078,10 @@ export const plugin: TerracePlugin = {
    * level. (On mana's OWN denial this doubles the balance already carried by
    * mana:denied — harmless, and cheaper than tracking who denied.)
    */
-  onIntentDenied(_intent: SculptIntent, ctx: IntentCtx): void {
-    sendBalance(ctx.world, ctx.player.id, poolFor(ctx.player.id));
+  onIntentDenied(intent: SculptIntent, ctx: IntentCtx): void {
+    const pool = poolFor(ctx.player.id);
+    noteSeq(pool, intent);
+    sendBalance(ctx.world, ctx.player.id, pool);
   },
 };
 
