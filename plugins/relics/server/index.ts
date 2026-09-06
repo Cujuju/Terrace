@@ -13,8 +13,11 @@
 //
 //   passive (Titan's Hand)       — rewrites the holder's sculpt intents through
 //                                  the interceptor chain's `modify` verdict.
-//   active  (Quake, Genesis)     — a HUD button, then a targeting click, then
-//                                  composed WorldApi.sculpt calls.
+//   active  (Quake, Genesis,     — a HUD button, then a targeting click, then
+//            Bulwark, Landslide)   composed WorldApi.sculpt calls. Landslide
+//                                  READS the ground first (terraform.ts,
+//                                  TerraformSpec.plan) and refuses where there
+//                                  is no cliff to topple.
 //   perk    (Azure Heart,        — reaches into the mana plugin's exported perk
 //            Spring of Aether)     API, optionally, over a dynamic import.
 //
@@ -69,6 +72,7 @@ import {
   CAST_DENIED_MESSAGE,
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
+  CAST_DENIED_UNSUITABLE,
   CAST_MESSAGE,
   COLLECT_MESSAGE,
   RELICS_MESSAGE,
@@ -157,8 +161,8 @@ export const RELIC_SPAWN_RETRY_S = 5;
 export const TITANS_HAND_RADIUS_BONUS = cellsAcross(1);
 
 /**
- * Seconds of cooldown an active skill earns per terrace band it moves at its
- * centre. Cooldowns are PRICED, not picked per skill, so a skill added later
+ * Seconds of cooldown an active skill earns per terrace band its strongest
+ * step moves. Cooldowns are PRICED, not picked per skill, so a skill added later
  * cannot accidentally be free, and so making a cast stronger automatically
  * makes it rarer.
  *
@@ -171,7 +175,7 @@ export const TITANS_HAND_RADIUS_BONUS = cellsAcross(1);
  * throughput. The number is written here rather than imported from mana because
  * relics must build and run with plugins/mana deleted.
  */
-export const COOLDOWN_S_PER_CENTRE_BAND = 5;
+export const COOLDOWN_S_PER_PEAK_BAND = 5;
 
 /**
  * Cooldown, in seconds, for each active skill — DERIVED from that skill's own
@@ -179,13 +183,10 @@ export const COOLDOWN_S_PER_CENTRE_BAND = 5;
  * Skills with no terraform (passive, perk) are absent and read as zero.
  */
 const COOLDOWN_BY_SKILL: ReadonlyMap<SkillId, number> = new Map<SkillId, number>(
-  Array.from(TERRAFORM_BY_SKILL, ([id, steps]) => {
-    // The centre step is the one at offset (0,0); the bands it moves are what
-    // the price is computed from (see COOLDOWN_S_PER_CENTRE_BAND).
-    const centre = steps.find((step) => step.dx === 0 && step.dy === 0);
-    const bands = centre === undefined ? 0 : Math.abs(centre.amount) / BAND_HEIGHT;
-    return [id, bands * COOLDOWN_S_PER_CENTRE_BAND] as const;
-  }),
+  Array.from(TERRAFORM_BY_SKILL, ([id, spec]) => [
+    id,
+    spec.peakBands * COOLDOWN_S_PER_PEAK_BAND,
+  ]),
 );
 
 /** Schema version of this plugin's persistence slice. */
@@ -469,7 +470,7 @@ function handleCollect(world: WorldApi, player: Player, payload: unknown): void 
 /**
  * CAST — CRITICAL VALIDATION PATH.
  *
- * Four gates, in this order, each one refusing with its own reason so the HUD
+ * Five gates, in this order, each one refusing with its own reason so the HUD
  * can say something true:
  *
  *   1. STRUCTURE  — parseCastPayload: a roster skill id, and integer x/y inside
@@ -482,6 +483,9 @@ function handleCollect(world: WorldApi, player: Player, payload: unknown): void 
  *                   core intent pipeline applies to a brush centre. Without it a
  *                   relic holder could reshape and thereby probe terrain the
  *                   mask exists to hide.
+ *   5. SHAPE      — the cast must plan at least one step. Only a skill that
+ *                   reads the ground can fail this (Landslide with no cliff
+ *                   under the cursor); a fixed shape always plans.
  *
  * Only then does the terraform run, and only then does the cooldown start — a
  * refused cast must never cost the player anything.
@@ -497,8 +501,8 @@ function handleCast(world: WorldApi, player: Player, payload: unknown): void {
   const { skill, x, y } = message;
 
   const held = skillsBySession.get(player.id);
-  const steps = TERRAFORM_BY_SKILL.get(skill);
-  if (held === undefined || !held.has(skill) || steps === undefined) {
+  const spec = TERRAFORM_BY_SKILL.get(skill);
+  if (held === undefined || !held.has(skill) || spec === undefined) {
     denyCast(world, player.id, skill, CAST_DENIED_UNOWNED);
     return;
   }
@@ -510,6 +514,16 @@ function handleCast(world: WorldApi, player: Player, payload: unknown): void {
 
   if (!world.isCellUnlocked(x, y)) {
     denyCast(world, player.id, skill, CAST_DENIED_TARGET);
+    return;
+  }
+
+  // GATE 5 — SHAPE. A cast that plans itself against the terrain can find
+  // nothing to do there (Landslide on flat ground). That is the player aiming
+  // badly, not the world refusing them, so it is its own reason and — like
+  // every other refusal above — it costs no cooldown.
+  const steps = spec.plan(world, x, y);
+  if (steps.length === 0) {
+    denyCast(world, player.id, skill, CAST_DENIED_UNSUITABLE);
     return;
   }
 

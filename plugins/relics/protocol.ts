@@ -38,6 +38,8 @@ export type SkillId =
   | 'titans-hand'
   | 'quake'
   | 'genesis'
+  | 'bulwark'
+  | 'landslide'
   | 'azure-heart'
   | 'spring-of-aether';
 
@@ -76,6 +78,18 @@ export const SKILLS: readonly SkillInfo[] = [
     kind: 'active',
     name: 'Genesis',
     description: 'Raise a small island at a chosen cell.',
+  },
+  {
+    id: 'bulwark',
+    kind: 'active',
+    name: 'Bulwark',
+    description: 'Raise a ring wall, and leave the ground inside it alone.',
+  },
+  {
+    id: 'landslide',
+    kind: 'active',
+    name: 'Landslide',
+    description: 'Topple a cliff face into a slope that can be walked.',
   },
   {
     id: 'azure-heart',
@@ -189,6 +203,13 @@ export const CAST_DENIED_UNOWNED = 'unowned';
 export const CAST_DENIED_COOLDOWN = 'cooldown';
 /** The target cell is outside the world, or in territory not yet unlocked. */
 export const CAST_DENIED_TARGET = 'target';
+/**
+ * The target is legal, but the ground there is not what the skill needs — the
+ * cast planned no steps (see TerraformSpec.plan). Distinct from `target`
+ * because the player's fix is different: `target` means go somewhere you own,
+ * this means aim at a cliff. A refusal on this reason costs no cooldown.
+ */
+export const CAST_DENIED_UNSUITABLE = 'unsuitable';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Defensive parsers

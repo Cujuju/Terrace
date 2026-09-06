@@ -858,6 +858,197 @@ export function GenesisIcon(): JSX.Element {
   );
 }
 
+/** Bulwark: a ring wall of blocks around a grass courtyard. */
+export function BulwarkIcon(): JSX.Element {
+  return (
+    <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="bulwark-grass-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#c8f0a8" />
+          <stop offset="1" stop-color="#a6d48e" />
+        </linearGradient>
+        <linearGradient id="bulwark-grass-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#a6d48e" />
+          <stop offset="1" stop-color="#84b873" />
+        </linearGradient>
+        <linearGradient id="bulwark-grass-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#84b873" />
+          <stop offset="1" stop-color="#619b58" />
+        </linearGradient>
+        <linearGradient id="bulwark-grass-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#619b58" />
+          <stop offset="1" stop-color="#3f7f3e" />
+        </linearGradient>
+        <linearGradient id="bulwark-stone-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e6dcc8" />
+          <stop offset="1" stop-color="#c7bca7" />
+        </linearGradient>
+        <linearGradient id="bulwark-stone-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#c7bca7" />
+          <stop offset="1" stop-color="#a89b86" />
+        </linearGradient>
+        <linearGradient id="bulwark-stone-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#a89b86" />
+          <stop offset="1" stop-color="#897a66" />
+        </linearGradient>
+        <linearGradient id="bulwark-stone-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#897a66" />
+          <stop offset="1" stop-color="#6a5a45" />
+        </linearGradient>
+      </defs>
+      <g transform="translate(0 -5.4)">
+        <Tile prefix="bulwark" glow="#ff5c5c" />
+        <ellipse cx="16" cy="19.2" rx="9" ry="3.8" fill="#2e5a2e" opacity="0.5" />
+        <polygon points="13.6,17.0 13.2,16.2 13.2,13.8 13.6,14.6" fill="url(#bulwark-stone-0)" />
+        <polygon points="15.3,16.9 15.3,16.1 17.9,16.3 17.9,17.1" fill="url(#bulwark-grass-1)" />
+        <polygon points="18.4,17.0 18.4,13.4 18.8,12.5 18.8,16.2" fill="url(#bulwark-stone-3)" />
+        <polygon points="13.6,17.0 13.6,14.6 16.1,14.3 16.1,16.7" fill="url(#bulwark-stone-2)" />
+        <polygon points="13.0,17.5 13.0,16.7 15.3,16.1 15.3,16.9" fill="url(#bulwark-grass-2)" />
+        <polygon points="13.6,14.6 13.2,13.8 15.6,13.5 16.1,14.3" fill="url(#bulwark-stone-0)" />
+        <polygon points="15.9,16.7 15.9,13.0 18.4,13.4 18.4,17.0" fill="url(#bulwark-stone-1)" />
+        <polygon points="17.9,17.1 17.9,16.3 19.8,17.2 19.8,18.0" fill="url(#bulwark-grass-0)" />
+        <polygon points="15.9,13.0 16.4,12.2 18.8,12.5 18.4,13.4" fill="url(#bulwark-stone-0)" />
+        <polygon points="18.2,17.0 18.2,14.6 20.0,15.5 20.0,17.9" fill="url(#bulwark-stone-0)" />
+        <polygon points="18.2,14.6 19.4,14.0 21.2,14.9 20.0,15.5" fill="url(#bulwark-stone-0)" />
+        <polygon points="20.0,17.9 20.0,15.5 21.2,14.9 21.2,17.3" fill="url(#bulwark-stone-2)" />
+        <polygon points="12.0,17.9 12.0,14.2 13.8,13.3 13.8,17.0" fill="url(#bulwark-stone-2)" />
+        <polygon points="11.8,18.7 11.8,17.9 13.0,16.7 13.0,17.5" fill="url(#bulwark-grass-3)" />
+        <polygon points="12.0,17.9 10.8,17.3 10.8,13.6 12.0,14.2" fill="url(#bulwark-stone-0)" />
+        <polygon points="12.0,14.2 10.8,13.6 12.6,12.7 13.8,13.3" fill="url(#bulwark-stone-0)" />
+        <polygon points="19.8,18.0 19.8,17.2 20.2,18.5 20.2,19.3" fill="url(#bulwark-grass-0)" />
+        <polygon points="11.4,19.0 11.4,16.6 12.1,15.4 12.1,17.8" fill="url(#bulwark-stone-3)" />
+        <polygon points="19.0,20.5 16.7,21.1 14.1,20.9 12.2,20.0 11.8,18.7 13.0,17.5 15.3,16.9 17.9,17.1 19.8,18.0 20.2,19.3" fill="url(#bulwark-grass-0)" />
+        <polygon points="19.9,17.8 19.9,14.1 20.6,15.4 20.6,19.0" fill="url(#bulwark-stone-0)" />
+        <polygon points="11.4,16.6 9.8,16.4 10.4,15.2 12.1,15.4" fill="url(#bulwark-stone-0)" />
+        <polygon points="11.4,19.0 9.8,18.8 9.8,16.4 11.4,16.6" fill="url(#bulwark-stone-1)" />
+        <polygon points="20.6,19.0 20.6,15.4 22.2,15.1 22.2,18.8" fill="url(#bulwark-stone-2)" />
+        <polygon points="19.9,14.1 21.6,13.9 22.2,15.1 20.6,15.4" fill="url(#bulwark-stone-0)" />
+        <polygon points="22.2,19.2 21.6,20.4 21.6,18.0 22.2,16.8" fill="url(#bulwark-stone-3)" />
+        <polygon points="10.4,20.4 9.8,19.2 9.8,15.5 10.4,16.7" fill="url(#bulwark-stone-0)" />
+        <polygon points="20.6,16.6 22.2,16.8 21.6,18.0 19.9,17.8" fill="url(#bulwark-stone-0)" />
+        <polygon points="19.9,20.2 19.9,17.8 21.6,18.0 21.6,20.4" fill="url(#bulwark-stone-1)" />
+        <polygon points="12.1,20.2 10.4,20.4 10.4,16.7 12.1,16.5" fill="url(#bulwark-stone-2)" />
+        <polygon points="12.1,16.5 10.4,16.7 9.8,15.5 11.4,15.3" fill="url(#bulwark-stone-0)" />
+        <polygon points="12.6,21.6 10.8,20.7 10.8,18.3 12.6,19.2" fill="url(#bulwark-stone-0)" />
+        <polygon points="13.8,18.6 12.6,19.2 10.8,18.3 12.0,17.7" fill="url(#bulwark-stone-0)" />
+        <polygon points="13.8,21.0 12.6,21.6 12.6,19.2 13.8,18.6" fill="url(#bulwark-stone-2)" />
+        <polygon points="21.2,20.7 19.4,21.6 19.4,17.9 21.2,17.0" fill="url(#bulwark-stone-2)" />
+        <polygon points="18.2,21.0 18.2,17.3 19.4,17.9 19.4,21.6" fill="url(#bulwark-stone-0)" />
+        <polygon points="15.9,21.3 15.9,18.9 16.4,19.7 16.4,22.1" fill="url(#bulwark-stone-0)" />
+        <polygon points="20.0,16.4 21.2,17.0 19.4,17.9 18.2,17.3" fill="url(#bulwark-stone-0)" />
+        <polygon points="16.1,21.3 15.6,22.1 15.6,18.4 16.1,17.6" fill="url(#bulwark-stone-3)" />
+        <polygon points="18.8,21.8 16.4,22.1 16.4,19.7 18.8,19.4" fill="url(#bulwark-stone-2)" />
+        <polygon points="18.4,18.6 18.8,19.4 16.4,19.7 15.9,18.9" fill="url(#bulwark-stone-0)" />
+        <polygon points="15.6,22.1 13.2,21.8 13.2,18.1 15.6,18.4" fill="url(#bulwark-stone-1)" />
+        <polygon points="16.1,17.6 15.6,18.4 13.2,18.1 13.6,17.3" fill="url(#bulwark-stone-0)" />
+      </g>
+    </svg>
+  );
+}
+
+/** Landslide: a capped cliff with its face fallen away down the slope. */
+export function LandslideIcon(): JSX.Element {
+  return (
+    <svg class="relics-gem" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="landslide-grass-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#c8f0a8" />
+          <stop offset="1" stop-color="#a6d48e" />
+        </linearGradient>
+        <linearGradient id="landslide-grass-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#84b873" />
+          <stop offset="1" stop-color="#619b58" />
+        </linearGradient>
+        <linearGradient id="landslide-rock-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#7a6a5a" />
+          <stop offset="1" stop-color="#66584a" />
+        </linearGradient>
+        <linearGradient id="landslide-rock-2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#524539" />
+          <stop offset="1" stop-color="#3e3228" />
+        </linearGradient>
+        <linearGradient id="landslide-stone-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#e6dcc8" />
+          <stop offset="1" stop-color="#c7bca7" />
+        </linearGradient>
+        <linearGradient id="landslide-stone-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#c7bca7" />
+          <stop offset="1" stop-color="#a89b86" />
+        </linearGradient>
+        <linearGradient id="landslide-stone-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#897a66" />
+          <stop offset="1" stop-color="#6a5a45" />
+        </linearGradient>
+        <linearGradient id="landslide-tileLeft-0" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#9a6a45" />
+          <stop offset="1" stop-color="#8a5e3c" />
+        </linearGradient>
+        <linearGradient id="landslide-tileLeft-1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#8a5e3c" />
+          <stop offset="1" stop-color="#7a5234" />
+        </linearGradient>
+        <linearGradient id="landslide-tileLeft-3" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6a462b" />
+          <stop offset="1" stop-color="#5a3a22" />
+        </linearGradient>
+      </defs>
+      <g transform="translate(0 -3.6)">
+        <Tile prefix="landslide" glow="#ff5c5c" />
+        <ellipse cx="16" cy="19.2" rx="9" ry="3.8" fill="#2e5a2e" opacity="0.5" />
+        <polygon points="17.8,17.1 12.1,19.9 12.1,14.2 17.8,11.3" fill="url(#landslide-rock-2)" />
+        <polygon points="14.1,9.4 17.8,11.3 12.1,14.2 8.4,12.3" fill="url(#landslide-rock-0)" />
+        <polygon points="17.1,12.7 16.6,13.8 15.8,12.8" fill="url(#landslide-stone-0)" />
+        <polygon points="17.1,11.5 17.1,12.7 15.8,12.8 15.8,11.6" fill="url(#landslide-stone-1)" />
+        <polygon points="14.1,8.6 17.8,10.5 12.1,13.4 8.4,11.5" fill="url(#landslide-grass-0)" />
+        <polygon points="17.7,13.3 16.6,13.8 17.1,12.7" fill="url(#landslide-stone-0)" />
+        <polygon points="8.4,18.1 8.4,12.3 12.1,14.2 12.1,19.9" fill="url(#landslide-rock-0)" />
+        <polygon points="15.8,12.8 16.6,13.8 15.6,13.5" fill="url(#landslide-stone-1)" />
+        <polygon points="17.7,12.1 17.7,13.3 17.1,12.7 17.1,11.5" fill="url(#landslide-stone-0)" />
+        <polygon points="16.7,13.8 16.6,13.8 17.7,13.3" fill="url(#landslide-stone-0)" />
+        <polygon points="15.8,11.6 15.8,12.8 15.6,13.5 15.6,12.3" fill="url(#landslide-stone-3)" />
+        <polygon points="15.6,13.5 16.6,13.8 16.7,13.8" fill="url(#landslide-stone-1)" />
+        <polygon points="19.2,17.1 18.8,17.9 18.3,17.2" fill="url(#landslide-stone-0)" />
+        <polygon points="19.2,16.3 19.2,17.1 18.3,17.2 18.3,16.4" fill="url(#landslide-stone-1)" />
+        <polygon points="19.5,17.5 18.8,17.9 19.2,17.1" fill="url(#landslide-stone-0)" />
+        <polygon points="18.3,17.2 18.8,17.9 18.2,17.6" fill="url(#landslide-stone-1)" />
+        <polygon points="19.5,16.7 19.5,17.5 19.2,17.1 19.2,16.3" fill="url(#landslide-stone-0)" />
+        <polygon points="18.9,17.8 18.8,17.9 19.5,17.5" fill="url(#landslide-stone-0)" />
+        <polygon points="18.3,16.4 18.3,17.2 18.2,17.6 18.2,16.8" fill="url(#landslide-stone-3)" />
+        <polygon points="17.8,11.3 12.1,14.2 12.1,13.4 17.8,10.5" fill="url(#landslide-grass-2)" />
+        <polygon points="18.2,17.6 18.8,17.9 18.9,17.8" fill="url(#landslide-stone-1)" />
+        <polygon points="20.9,20.8 20.7,21.3 20.3,20.9" fill="url(#landslide-stone-0)" />
+        <polygon points="20.9,20.2 20.9,20.8 20.3,20.9 20.3,20.3" fill="url(#landslide-stone-1)" />
+        <polygon points="21.2,21.1 20.7,21.3 20.9,20.8" fill="url(#landslide-stone-0)" />
+        <polygon points="20.3,20.9 20.7,21.3 20.3,21.2" fill="url(#landslide-stone-1)" />
+        <polygon points="16.5,15.9 16.1,16.7 15.4,16.0" fill="url(#landslide-stone-0)" />
+        <polygon points="21.2,20.5 21.2,21.1 20.9,20.8 20.9,20.2" fill="url(#landslide-stone-0)" />
+        <polygon points="20.8,21.3 20.7,21.3 21.2,21.1" fill="url(#landslide-stone-0)" />
+        <polygon points="16.5,14.9 16.5,15.9 15.4,16.0 15.4,15.0" fill="url(#landslide-stone-1)" />
+        <polygon points="20.3,20.3 20.3,20.9 20.3,21.2 20.3,20.6" fill="url(#landslide-stone-3)" />
+        <polygon points="16.9,16.3 16.1,16.7 16.5,15.9" fill="url(#landslide-stone-0)" />
+        <polygon points="20.3,21.2 20.7,21.3 20.8,21.3" fill="url(#landslide-stone-1)" />
+        <polygon points="21.9,20.2 18.0,22.1 18.5,21.6 22.4,19.6" fill="url(#landslide-tileLeft-3)" />
+        <polygon points="17.2,11.5 22.4,19.6 18.5,21.6 13.2,13.4" fill="url(#landslide-tileLeft-1)" />
+        <polygon points="15.4,16.0 16.1,16.7 15.3,16.5" fill="url(#landslide-stone-1)" />
+        <polygon points="8.4,12.3 8.4,11.5 12.1,13.4 12.1,14.2" fill="url(#landslide-grass-0)" />
+        <polygon points="16.9,15.4 16.9,16.3 16.5,15.9 16.5,14.9" fill="url(#landslide-stone-0)" />
+        <polygon points="16.2,16.7 16.1,16.7 16.9,16.3" fill="url(#landslide-stone-0)" />
+        <polygon points="15.4,15.0 15.4,16.0 15.3,16.5 15.3,15.5" fill="url(#landslide-stone-3)" />
+        <polygon points="15.3,16.5 16.1,16.7 16.2,16.7" fill="url(#landslide-stone-1)" />
+        <polygon points="18.6,20.0 18.3,20.6 17.9,20.1" fill="url(#landslide-stone-0)" />
+        <polygon points="18.6,19.4 18.6,20.0 17.9,20.1 17.9,19.4" fill="url(#landslide-stone-1)" />
+        <polygon points="18.9,20.3 18.3,20.6 18.6,20.0" fill="url(#landslide-stone-0)" />
+        <polygon points="17.9,20.1 18.3,20.6 17.8,20.4" fill="url(#landslide-stone-1)" />
+        <polygon points="18.9,19.7 18.9,20.3 18.6,20.0 18.6,19.4" fill="url(#landslide-stone-0)" />
+        <polygon points="18.4,20.6 18.3,20.6 18.9,20.3" fill="url(#landslide-stone-0)" />
+        <polygon points="17.9,19.4 17.9,20.1 17.8,20.4 17.8,19.8" fill="url(#landslide-stone-3)" />
+        <polygon points="17.8,20.4 18.3,20.6 18.4,20.6" fill="url(#landslide-stone-1)" />
+        <polygon points="12.8,14.0 13.2,13.4 18.5,21.6 18.0,22.1" fill="url(#landslide-tileLeft-0)" />
+      </g>
+    </svg>
+  );
+}
+
 /** Azure Heart: a cut heart hovering over the tile. */
 export function AzureHeartIcon(): JSX.Element {
   return (
