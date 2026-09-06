@@ -463,11 +463,72 @@ evidence.
 
 ---
 
+## 7d. THE DECAY, ISOLATED — a single page degrades 2.6 -> 9.0 ms (2026-09-06)
+
+One page, held open 45 minutes against the bench server, sampling every 30 s
+(`leak-soak`). The camera never moves.
+
+| t (s) | frame p50 | GPU p50 | draws | triangles | geometries | textures | programs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | **2.60** | 2.63 | 153 | 3.54 M | 141 | 37 | 62 |
+| 1080 | 5.00 | 3.18 | 158 | 3.50 M | 169 | 52 | 113 |
+| 2671 | **9.00** | 3.74 | 140 | 3.49 M | 172 | 74 | 114 |
+
+**Frame time grows 3.5x; GPU time only 1.4x.** By the end the frame is 9.00 ms
+against 3.74 ms of GPU — roughly **5.3 ms of CPU per frame**. The frame starts
+GPU-bound and ends CPU-bound.
+
+Meanwhile **the scene does not grow**: draw calls FALL (153 -> 140), triangles
+fall, and the per-rig census is flat (boats 39 -> 42 objects; every other rig
+unchanged). So the CPU cost is not from drawing more things.
+
+**What does grow is three's resource tables, and they grow ORPHANED:**
+
+| counter | start | end |
+| --- | --- | --- |
+| `info.memory.geometries` | 141 | 172 |
+| `info.memory.textures` | 37 | **74** |
+| `info.programs.length` | 62 | 114 |
+| **textures reachable from the scene graph** | **7** | **7** |
+
+That last row is the finding. `info.memory.textures` counts what three has
+uploaded and NOT disposed; the census counts what is reachable from the scene.
+The two diverge, so **resources are being created and never disposed, while
+nothing in the scene refers to them any more.** A scene-walking census alone
+would have reported "nothing is growing" — which is why the disposal gap was
+instrumented.
+
+### This reinstates page-side accumulation, on better evidence
+
+§7b claimed page-side accumulation and was then retracted, correctly, because
+every `gpu-bench.sh` run launches a fresh Chrome — so the fresh-vs-aged
+comparison it rested on compared two fresh pages. This run does not have that
+flaw: it is **one page, watched from fresh, degrading on its own**.
+
+### There are TWO problems, not one
+
+They must not be conflated, and only the second matches "it gets worse the
+longer I play":
+
+- **(A) Heavy world states.** Some fresh-page measurements show **9.8 ms GPU** at
+  ~300 draw calls while others show 2.7 ms at ~150. High GPU, low CPU. Cause
+  unresolved (§7c); the fill-rate test is queued.
+- **(B) Page-side CPU decay.** One page, 2.60 -> 9.00 ms frame with GPU almost
+  flat, scene contents flat, three's resource tables doubling with nothing in
+  the scene pointing at them. **This is a disposal leak.**
+
+**Still unknown for (B): which CPU work grows.** The soak carried no
+per-callback breakdown — `allBreakdown` is computed per block and simply was not
+reported. Fixed (commit `3df50bb`); the `cpu-soak` run answers it.
+
+---
+
 ## 8. Ranked plan
 
 | # | Fix | Evidence | Est. size | Expected |
 | --- | --- | --- | --- | --- |
-| 0 | **Identify what makes a heavy frame heavy (§7c)** — fill-rate test queued | 2.1–11.3 ms on one world; draws/triangles/uploads/page-age all fail to explain it | investigation, not a change | the actual decay; everything below is secondary |
+| 0 | **Find the disposal leak (§7d)** — orphaned geometries/textures/programs on a long-lived page | one page 2.60 -> 9.00 ms frame, GPU flat, scene flat, textures 37 -> 74 with only 7 reachable | unknown until `cpu-soak` names the growing CPU work | **this is "it gets worse the longer I play"** |
+| 0b | Heavy world states (§7c) — fill-rate test queued | 9.8 ms GPU at 300 draws vs 2.7 ms at 150, both fresh pages | investigation | a separate problem from 0; do not conflate |
 | 1 | Pose palette → immutable LUT (§4 + amendment) | re-upload of unchanged data proven from source; 31.65 ms of a 42.35 ms worst-1% frame is upload stall | medium, contained to `rigHerd.ts` + species slot indexing | targets the HITCH (`msP99`/`msMax`), not the GPU median |
 | 2 | Boats instancing (§5) — **demoted, see §7b** | 45 draw calls on a fresh page; the ~150 figure measured an aged page | medium | draw-call reduction only; no leak demonstrated |
 | 3 | Precompile shader catalogue (§6) | 74→~125 programs, converging | small | removes ~50 mid-play compile stalls (p99/max) |
