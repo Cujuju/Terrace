@@ -42,7 +42,7 @@ export const SPIRE_HEIGHT_WORLD = 14;
 /** How wide the column is at its foot, in WORLD UNITS: about a cell across. */
 export const SPIRE_RADIUS_WORLD = 0.5;
 
-/** Sides on the column. Ten reads as round through additive blending, which hides the facets. */
+/** Sides on the column. Ten reads as round at the spire's alpha, which hides the facets. */
 const SPIRE_SEGMENTS = 10;
 
 /**
