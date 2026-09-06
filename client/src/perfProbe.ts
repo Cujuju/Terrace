@@ -942,30 +942,59 @@ const ablateScenario: Scenario = async (ctx) => {
     return sampler.block();
   };
 
-  const baseline = await measure();
-  const baselineGpu = baseline.gpuMsP50;
+  // THE BASELINE IS RE-MEASURED BETWEEN EVERY STEP, and a step is scored
+  // against the MEAN of the baselines either side of it.
+  //
+  // WHY (measured 2026-09-05, and this scenario's first version got it wrong).
+  // With one baseline taken at the start, every later step is compared against
+  // a world that no longer exists: the server keeps simulating for the three
+  // minutes a full run takes, so fires spread and herds grow underneath the
+  // measurement. In that version `chronicle` — which draws nothing — scored a
+  // 2.36 ms saving, and nearly every row reported the same ~28 "saved" draw
+  // calls, which is the signature of a uniform offset rather than of per-plugin
+  // cost. Bracketing each step cancels any drift that is linear across it,
+  // which monotonic world growth is.
+  //
+  // It also yields the noise floor for free: consecutive baselines measure the
+  // SAME scene, so the spread between them is exactly the error bar every row
+  // below has to clear before it means anything. Reported as `noise` rather
+  // than left for the reader to guess.
+  const baselines: FrameBlock[] = [await measure()];
+  const gpuOf = (block: FrameBlock): number | null => block.gpuMsP50;
 
   const rows: Record<string, unknown>[] = [];
   for (const layer of layers) {
+    const name = layer.name.slice(PLUGIN_LAYER_PREFIX.length);
     if (!layer.visible) {
       // Already hidden by the plugin itself: ablating it would measure nothing
       // and the row would read as "this plugin is free", which is a different
       // claim from "this plugin is not currently drawing".
-      rows.push({ plugin: layer.name.slice(PLUGIN_LAYER_PREFIX.length), skipped: 'already hidden' });
+      rows.push({ plugin: name, skipped: 'already hidden' });
       continue;
     }
+    const before = baselines[baselines.length - 1]!;
     layer.visible = false;
-    const block = await measure();
+    const step = await measure();
     layer.visible = true;
-    ctx.beat(`ablated-${layer.name}`);
+    const after = await measure();
+    baselines.push(after);
+    ctx.beat(`ablated-${name}`);
+
+    const bracket = (pick: (block: FrameBlock) => number): number =>
+      (pick(before) + pick(after)) / 2;
+    const beforeGpu = gpuOf(before);
+    const afterGpu = gpuOf(after);
+    const stepGpu = gpuOf(step);
     rows.push({
-      plugin: layer.name.slice(PLUGIN_LAYER_PREFIX.length),
-      gpuMsP50: block.gpuMsP50,
+      plugin: name,
       gpuMsSaved:
-        baselineGpu === null || block.gpuMsP50 === null ? null : baselineGpu - block.gpuMsP50,
-      frameMsP50: block.msP50,
-      trianglesSaved: baseline.triangles - block.triangles,
-      drawCallsSaved: baseline.drawCalls - block.drawCalls,
+        beforeGpu === null || afterGpu === null || stepGpu === null
+          ? null
+          : (beforeGpu + afterGpu) / 2 - stepGpu,
+      gpuMsP50: stepGpu,
+      frameMsSaved: bracket((block) => block.msP50) - step.msP50,
+      trianglesSaved: bracket((block) => block.triangles) - step.triangles,
+      drawCallsSaved: bracket((block) => block.drawCalls) - step.drawCalls,
     });
   }
 
@@ -973,11 +1002,26 @@ const ablateScenario: Scenario = async (ctx) => {
   const allHidden = await measure();
   for (const layer of layers) layer.visible = true;
 
-  rows.sort((a, b) => (Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1)));
+  // The error bar: how far apart two measurements of the SAME scene landed.
+  const baselineGpu = baselines.map(gpuOf).filter((ms): ms is number => ms !== null);
+  const steps = baselineGpu.slice(1).map((ms, index) => Math.abs(ms - baselineGpu[index]!));
+  const noise = {
+    baselineGpuMsMin: baselineGpu.length === 0 ? null : Math.min(...baselineGpu),
+    baselineGpuMsMax: baselineGpu.length === 0 ? null : Math.max(...baselineGpu),
+    /** Mean absolute gap between consecutive baselines — the per-row error bar. */
+    baselineGpuMsMeanStep:
+      steps.length === 0 ? null : steps.reduce((sum, ms) => sum + ms, 0) / steps.length,
+    baselineDrawCallsMin: Math.min(...baselines.map((block) => block.drawCalls)),
+    baselineDrawCallsMax: Math.max(...baselines.map((block) => block.drawCalls)),
+  };
+
+  rows.sort((a, b) => Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1));
   return {
-    sample: baseline,
+    sample: baselines[0]!,
     detail: {
       layers: layers.length,
+      baselineBlocks: baselines.length,
+      noise,
       ablation: rows,
       allHidden: {
         gpuMsP50: allHidden.gpuMsP50,
