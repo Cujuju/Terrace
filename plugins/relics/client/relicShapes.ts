@@ -35,8 +35,7 @@
 // when the plugin is disposed.
 
 import {
-  BoxGeometry,
-  type BufferGeometry,
+  BufferGeometry,
   CircleGeometry,
   CylinderGeometry,
   ExtrudeGeometry,
@@ -287,65 +286,62 @@ function roundedRectShape(width: number, height: number, radius: number): Shape 
 
 /**
  * Titan's Hand — a wider brush — is A HAND OF GOD (owner, 2026-09-05: "I want
- * the hand to be rendered like a strong high-resolution hand like you would
- * expect the hand of God to look like"), replacing the slab-and-boxes mitten:
- * a tapered wrist, a palm with rounded edges, knuckle bulges, four fingers of
- * three phalanges each with a sphere at every joint and a natural curl toward
- * the viewer, and a two-segment thumb splayed out and forward. It is modelled
- * at HAND_SEGMENTS rather than the other relics' ROUND_SEGMENTS: the gem
- * shader takes its normal from screen-space derivatives (gemMaterial.ts), so
+ * the hand to be rendered like a strong high-resolution hand", then, with a
+ * reference render of a smooth mannequin hand on a plinth: "the 3D hand
+ * should look more like this 3D model"): a long smooth forearm rising from a
+ * two-step pedestal, a rounded palm, four fingers standing straight up with a
+ * soft curl at the tips, and a thumb swung out to the side and up. SMOOTH is
+ * the brief: the joints are the same radius as the bones either side, so a
+ * finger reads as one continuous digit, and everything round is modelled at
+ * HAND_SEGMENTS rather than the other relics' ROUND_SEGMENTS, because the gem
+ * shader takes its normal from screen-space derivatives (gemMaterial.ts) and
  * resolution is the only thing that makes a limb read as round.
  */
-const HAND_SEGMENTS = 14;
-const HAND_JOINT_LONGITUDES = 10;
-const HAND_JOINT_LATITUDES = 6;
+const HAND_SEGMENTS = 18;
+const HAND_JOINT_LONGITUDES = 12;
+const HAND_JOINT_LATITUDES = 8;
 
-const HAND_WRIST_HEIGHT = 0.3;
-const HAND_WRIST_RADIUS_TOP = 0.27;
-const HAND_WRIST_RADIUS_BOTTOM = 0.22;
-/** The palm: about as tall as it is wide, a third as deep — a broad, square, strong palm. */
-const HAND_PALM_HEIGHT = 0.8;
-const HAND_PALM_WIDTH = 0.8;
-const HAND_PALM_DEPTH = 0.26;
-const HAND_PALM_CORNER_RADIUS = 0.12;
-const HAND_PALM_BEVEL = 0.045;
+/** The pedestal: two stone discs, the upper narrower, as the reference's plinth. */
+const HAND_PLINTH_RADII = [0.62, 0.5] as const;
+const HAND_PLINTH_STEP_HEIGHT = 0.07;
+
+/** The forearm: a long taper from the plinth to the wrist. */
+const HAND_FOREARM_HEIGHT = 0.62;
+const HAND_FOREARM_RADIUS_BOTTOM = 0.24;
+const HAND_FOREARM_RADIUS_TOP = 0.19;
+
+/** The palm: a rounded slab a little taller than wide, and a third as deep. */
+const HAND_PALM_HEIGHT = 0.7;
+const HAND_PALM_WIDTH = 0.66;
+const HAND_PALM_DEPTH = 0.22;
+const HAND_PALM_CORNER_RADIUS = 0.16;
+const HAND_PALM_BEVEL = 0.06;
+
+/** The heel of the thumb: a rounded swell on the palm's thumb side, low down. */
+const HAND_THENAR_RADIUS = 0.17;
+const HAND_THENAR_HEIGHT_SHARE = 0.3;
+
+/** Fingers, index to little: total length, the middle longest. Straight, parallel, evenly spaced. */
+const HAND_FINGER_LENGTHS = [0.6, 0.66, 0.62, 0.5] as const;
+const HAND_FINGER_SPACING = 0.165;
+const HAND_FINGER_RADIUS = 0.07;
+
+/** How a finger's length divides between its three phalanges. Same radius throughout: a smooth digit. */
+const HAND_PHALANX_SHARES = [0.42, 0.32, 0.26] as const;
+
+/** The curl: only the tip leans toward the viewer, and only a little — an open hand. */
+const HAND_PHALANX_TILTS = [0, 0.08, 0.22] as const;
 
 /**
- * Fingers, index to little: total length. They rise STRAIGHT and PARALLEL from
- * the knuckle row (2026-09-05, from the first render: splayed, back-leaning
- * fingers read as a sheaf of twigs), the middle finger longest, about the
- * palm's width, so the hand's proportions are a hand's.
+ * The thumb: rooted on the palm's +x side just above the thenar, swung out to
+ * the side at about 55° then curling up so its tip reaches most of the way to
+ * the palm's top, as the reference holds it.
  */
-const HAND_FINGER_LENGTHS = [0.7, 0.78, 0.72, 0.58] as const;
-const HAND_FINGER_SPACING = 0.2;
-
-/** How a finger's length divides between its three phalanges, and how it thins along them. */
-const HAND_PHALANX_SHARES = [0.4, 0.33, 0.27] as const;
-const HAND_PHALANX_RADII = [0.075, 0.068, 0.06] as const;
-
-/** The curl: only the outer phalanges lean toward the viewer, and only a little — an open hand, not a grasp. */
-const HAND_PHALANX_TILTS = [0, 0.12, 0.3] as const;
-
-/** A joint reads as a knuckle only if it is thicker than the bone either side of it. */
-const HAND_JOINT_BULGE = 1.18;
-
-/** The knuckle row, its spheres seated ON the palm's top edge. */
-const HAND_KNUCKLE_RADIUS = 0.09;
-
-/**
- * The thumb: rooted on the palm's +x SIDE two-fifths of the way up, swung out
- * about 45° and a little forward, then curling upward so its tip reaches the
- * height of the palm's top.
- */
-const HAND_THUMB_ROOT_HEIGHT_SHARE = 0.4;
-const HAND_THUMB_ROOT: Point = [
-  HAND_PALM_WIDTH / 2,
-  HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT * HAND_THUMB_ROOT_HEIGHT_SHARE,
-  0.04,
-];
+const HAND_THUMB_RADIUS = 0.08;
+const HAND_THUMB_ROOT_HEIGHT_SHARE = 0.45;
 const HAND_THUMB_SEGMENTS = [
-  { length: 0.42, radius: 0.1, tilt: 0.2, spread: -1.1 },
-  { length: 0.34, radius: 0.088, tilt: 0.4, spread: -0.65 },
+  { length: 0.34, radius: HAND_THUMB_RADIUS, tilt: 0.15, spread: -0.95 },
+  { length: 0.3, radius: HAND_THUMB_RADIUS, tilt: 0.25, spread: -0.35 },
 ] as const;
 
 /** One phalanx: how long, how thick, how far it leans toward the viewer and out to the side. */
@@ -361,15 +357,15 @@ function limbDirection(tilt: number, spread: number): Point {
   return [-Math.sin(spread) * Math.cos(tilt), Math.cos(spread) * Math.cos(tilt), Math.sin(tilt)];
 }
 
-/** A knuckle at the root and then bone, joint, bone, joint … out to the fingertip. */
-function digit(root: Point, phalanges: readonly Phalanx[], rootRadius: number): BufferGeometry[] {
-  const parts = [joint(root, rootRadius)];
+/** A rounded root, then bone, joint, bone, joint … out to a rounded fingertip. */
+function digit(root: Point, phalanges: readonly Phalanx[]): BufferGeometry[] {
+  const parts = [joint(root, phalanges[0]!.radius)];
   let at = root;
   for (const { length, radius, tilt, spread } of phalanges) {
     const dir = limbDirection(tilt, spread);
     const tip: Point = [at[0] + dir[0] * length, at[1] + dir[1] * length, at[2] + dir[2] * length];
     parts.push(strut(at, tip, radius, radius, HAND_SEGMENTS));
-    parts.push(joint(tip, radius * HAND_JOINT_BULGE));
+    parts.push(joint(tip, radius));
     at = tip;
   }
   return parts;
@@ -385,15 +381,30 @@ function joint([x, y, z]: Point, radius: number): BufferGeometry {
 }
 
 function titansHand(): Part[] {
-  const wrist = place(
-    new CylinderGeometry(HAND_WRIST_RADIUS_TOP, HAND_WRIST_RADIUS_BOTTOM, HAND_WRIST_HEIGHT, HAND_SEGMENTS),
+  const plinth = HAND_PLINTH_RADII.map((radius, i) =>
+    place(
+      new CylinderGeometry(radius, radius, HAND_PLINTH_STEP_HEIGHT, HAND_SEGMENTS),
+      0,
+      HAND_PLINTH_STEP_HEIGHT * (i + 0.5),
+      0,
+    ),
+  );
+  const plinthTop = HAND_PLINTH_STEP_HEIGHT * HAND_PLINTH_RADII.length;
+  const forearm = place(
+    new CylinderGeometry(
+      HAND_FOREARM_RADIUS_TOP,
+      HAND_FOREARM_RADIUS_BOTTOM,
+      HAND_FOREARM_HEIGHT,
+      HAND_SEGMENTS,
+    ),
     0,
-    HAND_WRIST_HEIGHT / 2,
+    plinthTop + HAND_FOREARM_HEIGHT / 2,
     0,
   );
-  const palmTop = HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT;
+  const palmBottom = plinthTop + HAND_FOREARM_HEIGHT;
+  const palmTop = palmBottom + HAND_PALM_HEIGHT;
   // Extrude runs along +z from the shape plane, so the palm already faces the
-  // viewer; it only has to be lifted onto the wrist and centred in depth.
+  // viewer; it only has to be lifted onto the forearm and centred in depth.
   const palm = new ExtrudeGeometry(
     roundedRectShape(HAND_PALM_WIDTH, HAND_PALM_HEIGHT, HAND_PALM_CORNER_RADIUS),
     {
@@ -401,134 +412,195 @@ function titansHand(): Part[] {
       bevelEnabled: true,
       bevelThickness: HAND_PALM_BEVEL,
       bevelSize: HAND_PALM_BEVEL,
-      bevelSegments: 2,
-      curveSegments: 6,
+      bevelSegments: 3,
+      curveSegments: 8,
     },
   );
-  palm.translate(0, HAND_WRIST_HEIGHT + HAND_PALM_HEIGHT / 2, -HAND_PALM_DEPTH / 2);
+  palm.translate(0, palmBottom + HAND_PALM_HEIGHT / 2, -HAND_PALM_DEPTH / 2);
+  const thenar = joint(
+    [HAND_PALM_WIDTH / 2 - HAND_THENAR_RADIUS / 2, palmBottom + HAND_PALM_HEIGHT * HAND_THENAR_HEIGHT_SHARE, 0],
+    HAND_THENAR_RADIUS,
+  );
 
   const fingers = HAND_FINGER_LENGTHS.flatMap((length, i) => {
     const x = (i - (HAND_FINGER_LENGTHS.length - 1) / 2) * HAND_FINGER_SPACING;
     const phalanges = HAND_PHALANX_SHARES.map((share, k) => ({
       length: length * share,
-      radius: HAND_PHALANX_RADII[k]!,
+      radius: HAND_FINGER_RADIUS,
       tilt: HAND_PHALANX_TILTS[k]!,
       spread: 0,
     }));
-    return digit([x, palmTop, 0], phalanges, HAND_KNUCKLE_RADIUS);
+    return digit([x, palmTop, 0], phalanges);
   });
 
-  const thumb = digit(HAND_THUMB_ROOT, HAND_THUMB_SEGMENTS, HAND_KNUCKLE_RADIUS);
+  const thumbRoot: Point = [
+    HAND_PALM_WIDTH / 2,
+    palmBottom + HAND_PALM_HEIGHT * HAND_THUMB_ROOT_HEIGHT_SHARE,
+    0,
+  ];
+  const thumb = digit(thumbRoot, HAND_THUMB_SEGMENTS);
 
-  return painted('amber', wrist, palm, ...fingers, ...thumb);
+  return [...painted('stone', ...plinth), ...painted('amber', forearm, palm, thenar, ...fingers, ...thumb)];
 }
 
 /**
- * Quake — a collapsing crater — is SOUND WAVES (owner, 2026-09-05: "the quake
- * needs to look more like sound waves instead of concentric circles"): the
- * rock slab and the crimson epicentre dome as before, but the three flat
- * closed rings are gone. In their place two mirrored fans of three open arcs
- * stand UPRIGHT in a vertical plane through the epicentre, each arc a segment
- * of a circle centred on the epicentre with its feet on the slab — the
- * ")))•(((" glyph, in three dimensions. Upright and open is the whole point:
- * flat rings read as concentric circles from the isometric camera, which is
- * what the owner was looking at
- * (.claude/orchestration/refs/relics/quake-in-game-2026-09-05.png).
+ * Quake — a collapsing crater — is A REVERBERATING WAVEFORM (owner,
+ * 2026-09-05, with a reference plot of a damped radial sine surface: "that
+ * should look like a reverberating waveform"): a disc of ground whose surface
+ * is a standing ripple, sunk deepest at the epicentre and ringing outward in
+ * waves that die away toward the rim — the plot, cast in crimson on a rock
+ * base. Not rings and not arcs: ONE continuous surface, which is what a
+ * shockwave through the ground is.
  */
-const QUAKE_SLAB_HEIGHT = 0.1;
-const QUAKE_SLAB_RADIUS = 1;
+const QUAKE_DISC_RADIUS = 1;
+
+/** The surface's resolution: rings out from the centre and spokes around it. */
+const QUAKE_RINGS = 40;
+const QUAKE_SPOKES = 48;
+
+/** The wave: how many full cycles fit between centre and rim, and how tall the first crest is. */
+const QUAKE_WAVE_CYCLES = 3;
+const QUAKE_WAVE_AMPLITUDE = 0.42;
+
+/** How fast the ringing dies with distance: crest height at the rim as a share of the first crest's. */
+const QUAKE_RIM_AMPLITUDE_SHARE = 0.25;
+
+/** How thick the rippled sheet of ground is: its rock underside rides this far below the crimson face. */
+const QUAKE_SHEET_THICKNESS = 0.07;
 
 /**
- * How much of a turn one wave arc spans: 100°, centred on the horizontal, so
- * every arc is the same open bracket and the fan reads as ONE glyph. The arcs
- * all share ONE centre (2026-09-05, from the first render: arcs lifted to
- * stand their feet on the slab had three different centres and read as
- * claws) — a point QUAKE_ARC_CENTRE_LIFT above the slab, so the lower reach of
- * each arc sinks into the slab and the tile beneath, which hide it.
+ * The damped ripple's height at radius r: the troughs all lie on the sheet's
+ * floor (a thickness above the tile) and the crests rise from it, the first
+ * the tallest, dying away toward the rim — the plot's shape, a deep bowl at
+ * the centre ringed by ever-lower waves.
  */
-const QUAKE_ARC_TURN = (100 / 360) * Math.PI * 2;
-const QUAKE_ARC_CENTRE_LIFT = 0.3;
+function quakeWaveHeight(r: number): number {
+  const decay = 1 - (1 - QUAKE_RIM_AMPLITUDE_SHARE) * (r / QUAKE_DISC_RADIUS);
+  const crest = (1 - Math.cos((r / QUAKE_DISC_RADIUS) * QUAKE_WAVE_CYCLES * Math.PI * 2)) / 2;
+  return QUAKE_SHEET_THICKNESS + QUAKE_WAVE_AMPLITUDE * decay * crest;
+}
 
-/** The three waves, outward: how far from the centre and how thick. Chunky, and clearly nested. */
-const QUAKE_ARC_RADII = [0.42, 0.66, 0.9] as const;
-const QUAKE_ARC_TUBES = [0.09, 0.08, 0.07] as const;
-const QUAKE_ARC_TUBE_SEGMENTS = 8;
-const QUAKE_ARC_RING_SEGMENTS = 18;
+/**
+ * A disc surface sampled on rings and spokes, displaced by `height(r)`,
+ * unrolled to triangles wound to face up — or down, for an underside. The
+ * centre is one fan.
+ */
+function rippleSurface(
+  radius: number,
+  rings: number,
+  spokes: number,
+  height: (r: number) => number,
+  faceUp = true,
+): BufferGeometry {
+  const at = (ring: number, spoke: number): Point => {
+    const r = (ring / rings) * radius;
+    const a = (spoke / spokes) * Math.PI * 2;
+    return [Math.cos(a) * r, height(r), Math.sin(a) * r];
+  };
+  const tris: number[] = [];
+  const push = (...pts: Point[]): void => {
+    for (const p of pts) tris.push(p[0], p[1], p[2]);
+  };
+  for (let ring = 0; ring < rings; ring++) {
+    for (let spoke = 0; spoke < spokes; spoke++) {
+      const a = at(ring, spoke);
+      const b = at(ring, spoke + 1);
+      const c = at(ring + 1, spoke + 1);
+      const d = at(ring + 1, spoke);
+      // Spokes run from +x toward +z, so (a, b, c) and (a, c, d) face up.
+      if (faceUp) {
+        if (ring > 0) push(a, b, c);
+        push(a, c, d);
+      } else {
+        if (ring > 0) push(a, c, b);
+        push(a, d, c);
+      }
+    }
+  }
+  return unrolledGeometry(tris);
+}
 
-/** The epicentre dome, rising from the slab under the arcs' shared centre. */
-const QUAKE_EPICENTRE_RADIUS = 0.26;
-const QUAKE_EPICENTRE_SINK = 0.12;
+/**
+ * A geometry from a flat triangle list. It carries the normal and uv
+ * attributes the three primitives carry, because mergeGeometries refuses to
+ * merge parts whose attribute sets differ.
+ */
+function unrolledGeometry(tris: readonly number[]): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(tris, 3));
+  geometry.setAttribute('uv', new Float32BufferAttribute(new Float32Array((tris.length / 3) * 2), 2));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** The wall around the sheet's rim, between its face and its underside. */
+function rippleWall(radius: number, spokes: number, rimHeight: number, floor: number): BufferGeometry {
+  const tris: number[] = [];
+  for (let spoke = 0; spoke < spokes; spoke++) {
+    const a0 = (spoke / spokes) * Math.PI * 2;
+    const a1 = ((spoke + 1) / spokes) * Math.PI * 2;
+    const [x0, z0] = [Math.cos(a0) * radius, Math.sin(a0) * radius];
+    const [x1, z1] = [Math.cos(a1) * radius, Math.sin(a1) * radius];
+    // Outward-facing: counter-clockwise seen from outside the wall.
+    tris.push(x0, floor, z0, x0, rimHeight, z0, x1, rimHeight, z1);
+    tris.push(x0, floor, z0, x1, rimHeight, z1, x1, floor, z1);
+  }
+  return unrolledGeometry(tris);
+}
 
 function quake(): Part[] {
-  const slab = place(
-    new CylinderGeometry(QUAKE_SLAB_RADIUS, QUAKE_SLAB_RADIUS, QUAKE_SLAB_HEIGHT, ROUND_SEGMENTS),
-    0,
-    QUAKE_SLAB_HEIGHT / 2,
-    0,
+  const face = rippleSurface(QUAKE_DISC_RADIUS, QUAKE_RINGS, QUAKE_SPOKES, quakeWaveHeight);
+  const underside = rippleSurface(
+    QUAKE_DISC_RADIUS,
+    QUAKE_RINGS,
+    QUAKE_SPOKES,
+    (r) => quakeWaveHeight(r) - QUAKE_SHEET_THICKNESS,
+    false,
   );
-  const top = QUAKE_SLAB_HEIGHT;
-  // A torus arc starts at +x and sweeps counter-clockwise, so turning it back
-  // by half its span centres it on the direction the wave travels.
-  const halfSpan = QUAKE_ARC_TURN / 2;
-  const centreY = top + QUAKE_ARC_CENTRE_LIFT;
-  const arcs = QUAKE_ARC_RADII.flatMap((radius, i) =>
-    [0, Math.PI].map((facing) =>
-      place(
-        new TorusGeometry(
-          radius,
-          QUAKE_ARC_TUBES[i]!,
-          QUAKE_ARC_TUBE_SEGMENTS,
-          QUAKE_ARC_RING_SEGMENTS,
-          QUAKE_ARC_TURN,
-        ),
-        0,
-        centreY,
-        0,
-        0,
-        0,
-        facing - halfSpan,
-      ),
-    ),
-  );
-  const epicentre = place(
-    new SphereGeometry(QUAKE_EPICENTRE_RADIUS, HAND_JOINT_LONGITUDES, HAND_JOINT_LATITUDES),
-    0,
-    top + QUAKE_EPICENTRE_RADIUS - QUAKE_EPICENTRE_SINK,
-    0,
-  );
-  return [...painted('rock', slab), ...painted('crimson', ...arcs, epicentre)];
+  const rim = quakeWaveHeight(QUAKE_DISC_RADIUS);
+  const wall = rippleWall(QUAKE_DISC_RADIUS, QUAKE_SPOKES, rim, rim - QUAKE_SHEET_THICKNESS);
+  return [...painted('rock', underside, wall), ...painted('crimson', face)];
 }
 
 /**
- * Genesis — raising a small island — keeps its two-tier island and plants a
- * BARBED ARROW in the mound (owner, 2026-09-05: "Genesis has a ball on a stick
- * and it should probably look more like a barbed arrow"), replacing the trunk
- * and canopy: a slender crimson shaft, a sharp conical head pointing up, and
- * two barbs swept back and down from under the head, so the silhouette reads
- * "barbed" both from the isometric camera and at 32 px.
+ * Genesis — raising a small island — is LAND BEING PULLED UP (owner,
+ * 2026-09-05: "what it needs to look more like is land being pulled up"): out
+ * of the island's grass mound a plug of ground is rising, a stack of strata —
+ * grass cap, soil, rock, soil — torn free along a crimson fissure that rings
+ * its foot, with loose clods hanging in the air around it where they broke
+ * away. The island itself stays as before, beach then grass.
  */
 const GENESIS_BEACH_HEIGHT = 0.16;
 const GENESIS_MOUND_HEIGHT = 0.3;
 
-/** A stout arrow (2026-09-05, from the first render: the slender one was a pin). */
-const GENESIS_SHAFT_RADIUS = 0.09;
-const GENESIS_SHAFT_LENGTH = 0.9;
-const GENESIS_HEAD_RADIUS = 0.22;
-const GENESIS_HEAD_LENGTH = 0.44;
+/** The plug's radius at its cap, and how much wider each stratum is below the one above. */
+const GENESIS_PLUG_RADIUS = 0.32;
+const GENESIS_PLUG_FLARE = 0.02;
 
-/** The barbs: how long, how thick at the root, and how far they lean off the shaft. */
-const GENESIS_BARB_LENGTH = 0.5;
-const GENESIS_BARB_RADIUS = 0.16;
-const GENESIS_BARB_LEAN = 0.95;
+/** The strata, top down: paint and thickness. Uneven, as ground is. */
+const GENESIS_STRATA: readonly { readonly paint: Paint; readonly height: number }[] = [
+  { paint: 'tileTop', height: 0.1 },
+  { paint: 'tileLeft', height: 0.22 },
+  { paint: 'rock', height: 0.3 },
+  { paint: 'tileLeft', height: 0.18 },
+];
 
-/** Three sides is enough for a barb: it is a wedge, and its job is the silhouette. */
-const GENESIS_BARB_SIDES = 3;
+/** How far the plug has risen: the gap between its lowest stratum and the mound. */
+const GENESIS_LIFT = 0.42;
 
-/** Fletching: three thin vanes around the shaft's foot, as tall as they are shallow. */
-const GENESIS_VANE_COUNT = 3;
-const GENESIS_VANE_HEIGHT = 0.3;
-const GENESIS_VANE_REACH = 0.16;
-const GENESIS_VANE_THICKNESS = 0.03;
+/** The fissure around the plug's foot on the mound: a thin crimson ring. */
+const GENESIS_FISSURE_RADIUS = 0.42;
+const GENESIS_FISSURE_TUBE = 0.035;
+
+/** The clods: loose lumps hanging around the plug — bearing, height, distance out, size. */
+const GENESIS_CLODS: readonly { readonly bearing: number; readonly height: number; readonly out: number; readonly size: number }[] = [
+  { bearing: 0.4, height: 0.16, out: 0.62, size: 0.09 },
+  { bearing: 1.9, height: 0.42, out: 0.58, size: 0.07 },
+  { bearing: 3.3, height: 0.1, out: 0.7, size: 0.11 },
+  { bearing: 4.6, height: 0.55, out: 0.55, size: 0.06 },
+  { bearing: 5.6, height: 0.3, out: 0.66, size: 0.08 },
+];
+const GENESIS_CLOD_SEGMENTS = 5;
 
 function genesis(): Part[] {
   const beach = place(
@@ -544,58 +616,39 @@ function genesis(): Part[] {
     GENESIS_BEACH_HEIGHT + GENESIS_MOUND_HEIGHT / 2,
     0,
   );
-  const shaftTop = moundTop + GENESIS_SHAFT_LENGTH;
-  const shaft = place(
-    new CylinderGeometry(GENESIS_SHAFT_RADIUS, GENESIS_SHAFT_RADIUS, GENESIS_SHAFT_LENGTH, ROUND_SEGMENTS),
-    0,
-    moundTop + GENESIS_SHAFT_LENGTH / 2,
-    0,
-  );
-  const head = place(
-    new CylinderGeometry(0, GENESIS_HEAD_RADIUS, GENESIS_HEAD_LENGTH, ROUND_SEGMENTS),
-    0,
-    shaftTop + GENESIS_HEAD_LENGTH / 2,
-    0,
-  );
-  // The barbs are swept BACK: their roots meet the shaft under the head and
-  // their points fall away from it, along the icon's screen-horizontal axis
-  // ((1, 0, -1) normalised) so both read at 32 px rather than one hiding
-  // behind the other.
-  const across = 1 / Math.SQRT2;
-  const barbs = [1, -1].map((side) => {
-    const out = side * Math.sin(GENESIS_BARB_LEAN);
-    const dir: Point = [out * across, -Math.cos(GENESIS_BARB_LEAN), -out * across];
-    // A cone is modelled with its base at -length/2 and its point at +length/2
-    // along its axis, so seating the base on the shaft puts the centre half a
-    // barb along the direction the point falls in.
-    const half = GENESIS_BARB_LENGTH / 2;
-    return orient(
-      new CylinderGeometry(0, GENESIS_BARB_RADIUS, GENESIS_BARB_LENGTH, GENESIS_BARB_SIDES),
-      dir,
-      dir[0] * half,
-      shaftTop + dir[1] * half,
-      dir[2] * half,
+  // The strata are stacked from the bottom up so each sits on the one below.
+  const strata: Part[] = [];
+  let y = moundTop + GENESIS_LIFT;
+  for (let i = GENESIS_STRATA.length - 1; i >= 0; i--) {
+    const { paint, height } = GENESIS_STRATA[i]!;
+    const top = GENESIS_PLUG_RADIUS + GENESIS_PLUG_FLARE * i;
+    const bottom = top + GENESIS_PLUG_FLARE;
+    strata.push(
+      ...painted(paint, place(new CylinderGeometry(top, bottom, height, ROUND_SEGMENTS), 0, y + height / 2, 0)),
     );
-  });
-  // Each vane stands off one side of the shaft, then the set is turned about it.
-  const vanes = Array.from({ length: GENESIS_VANE_COUNT }, (_, i) =>
+    y += height;
+  }
+  const fissure = place(
+    new TorusGeometry(GENESIS_FISSURE_RADIUS, GENESIS_FISSURE_TUBE, 5, ROUND_SEGMENTS),
+    0,
+    moundTop,
+    0,
+    QUARTER_TURN,
+  );
+  const clods = GENESIS_CLODS.map(({ bearing, height, out, size }) =>
     place(
-      new BoxGeometry(GENESIS_VANE_REACH, GENESIS_VANE_HEIGHT, GENESIS_VANE_THICKNESS).translate(
-        GENESIS_SHAFT_RADIUS + GENESIS_VANE_REACH / 2,
-        0,
-        0,
-      ),
-      0,
-      moundTop + GENESIS_VANE_HEIGHT / 2,
-      0,
-      0,
-      (i / GENESIS_VANE_COUNT) * Math.PI * 2,
+      new SphereGeometry(size, GENESIS_CLOD_SEGMENTS, GENESIS_CLOD_SEGMENTS),
+      Math.cos(bearing) * out,
+      moundTop + height,
+      Math.sin(bearing) * out,
     ),
   );
   return [
     ...painted('stone', beach),
     ...painted('grass', mound),
-    ...painted('crimson', shaft, head, ...barbs, ...vanes),
+    ...strata,
+    ...painted('crimson', fissure),
+    ...painted('tileLeft', ...clods),
   ];
 }
 
