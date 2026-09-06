@@ -104,7 +104,7 @@ def write_wav(path: Path, signal: np.ndarray) -> None:
 # like, and this is metal.
 
 # Long enough for the low modes to die away; ends silent so the voice cannot click.
-THUNDER_SECONDS = 8.0
+THUNDER_SECONDS = 11.0
 
 # The plate: a BIG sheet, its fundamental below hearing so the low modes are
 # dense — a small sheet's sparse low modes ring like a gong, not thunder.
@@ -117,7 +117,7 @@ SHEET_TOP_HZ = 9500.0
 SHEET_STRIKE_RANGE = (0.15, 0.45)
 # Ring time of the fundamental, and how much faster higher modes die:
 # tau ∝ f ** -SHEET_DAMPING_SLOPE.
-SHEET_FUNDAMENTAL_TAU_SECONDS = 14.0
+SHEET_FUNDAMENTAL_TAU_SECONDS = 7.0
 SHEET_DAMPING_SLOPE = 0.7
 # Flex: the sheet is shaken after the hit, bending every pitch together. A
 # few percent, at a rate that itself dies down as the shaking settles.
@@ -129,7 +129,7 @@ SHEET_ATTACK_SECONDS = 0.002
 # Clang: the modes above this ring extra-loud at the hit and die this fast.
 CLANG_MIN_HZ = 400.0
 CLANG_TAU_SECONDS = 0.06
-CLANG_LEVEL = 3.5
+CLANG_LEVEL = 5.0
 # Pulled toward the low end, as a sheet heard from the back of a hall is —
 # high enough to leave the clang its metal.
 SHEET_TILT_HZ = 5000.0
@@ -140,20 +140,33 @@ SHEET_LEVEL = 1.0
 CRACK_ATTACK_SECONDS = 0.002
 CRACK_TAU_SECONDS = 0.02
 CRACK_BAND_HZ = (800.0, 8000.0)
-CRACK_LEVEL = 0.7
+CRACK_LEVEL = 0.9
 
 # Soft clip on the sheet: rounds the hit and glues the modes. The crack stays
 # clean — clipping a bright transient is what distortion sounds like. High,
 # because the drive is also the loudness: it lifts the ring under the hit.
-THUNDER_DRIVE = 5.0
+THUNDER_DRIVE = 7.0
 
-# The hall: the sheet is heard in a big space. A decaying-noise impulse
-# response, darkened, convolved in — the reverberation after the hit.
-REVERB_SECONDS = 4.0
-REVERB_RT60_SECONDS = 2.8
-REVERB_LOWPASS_HZ = 2500.0
+# The space: a hard strike, then RUMBLING. Two decaying-noise impulse
+# responses convolved in — short, bright early reflections that keep the hit
+# metal, and a long, dark tail that is the rumble — with the tail's level
+# rolling slowly, as thunder rolls.
+REVERB_SECONDS = 8.0
+EARLY_RT60_SECONDS = 0.9
+EARLY_LOWPASS_HZ = 3000.0
+EARLY_LEVEL = 0.5
+TAIL_RT60_SECONDS = 6.0
+TAIL_LOWPASS_HZ = 450.0
+TAIL_LEVEL = 1.1
+TAIL_ROLL_HZ = 1.5
+TAIL_ROLL_DEPTH = 0.6
 REVERB_PREDELAY_SECONDS = 0.03
-REVERB_MIX = 0.6
+REVERB_MIX = 1.0
+# The whole clip, wet included, is soft-clipped once more and pushed to a
+# higher ceiling than the rain: the graph has a limiter, and thunder is the
+# loudest thing in the world.
+THUNDER_MASTER_DRIVE = 1.6
+THUNDER_PEAK = 0.95
 
 # Different strike points and shakes give different claps; the plugin picks
 # one per strike.
@@ -194,16 +207,22 @@ def make_sheet(count: int, seconds: np.ndarray) -> np.ndarray:
     return lowpass(out * swell, SHEET_TILT_HZ)
 
 
-def reverberate(dry: np.ndarray) -> np.ndarray:
+def impulse_response(rt60: float, lowpass_hz: float) -> np.ndarray:
     ir_count = int(REVERB_SECONDS * SAMPLE_RATE_HZ)
     # RT60 is a 60 dB drop: amplitude 1e-3, so tau = RT60 / ln(1000).
-    tau = REVERB_RT60_SECONDS / np.log(1000.0)
+    tau = rt60 / np.log(1000.0)
     impulse = rng.standard_normal(ir_count) * np.exp(-seconds_axis(ir_count) / tau)
-    impulse = lowpass(impulse, REVERB_LOWPASS_HZ)
-    impulse /= np.sqrt(np.sum(impulse**2))
+    impulse = lowpass(impulse, lowpass_hz)
+    return impulse / np.sqrt(np.sum(impulse**2))
+
+
+def reverberate(dry: np.ndarray) -> np.ndarray:
     predelay = np.zeros(int(REVERB_PREDELAY_SECONDS * SAMPLE_RATE_HZ))
-    wet = np.convolve(dry, np.concatenate([predelay, impulse]))[: dry.size]
-    return dry + REVERB_MIX * wet / np.max(np.abs(wet)) * np.max(np.abs(dry))
+    early = np.convolve(dry, np.concatenate([predelay, impulse_response(EARLY_RT60_SECONDS, EARLY_LOWPASS_HZ)]))[: dry.size]
+    tail = np.convolve(dry, np.concatenate([predelay, impulse_response(TAIL_RT60_SECONDS, TAIL_LOWPASS_HZ)]))[: dry.size]
+    tail *= 1.0 - TAIL_ROLL_DEPTH * (0.5 + 0.5 * slow_noise(dry.size, TAIL_ROLL_HZ))
+    wet = EARLY_LEVEL * early / np.max(np.abs(early)) + TAIL_LEVEL * tail / np.max(np.abs(tail))
+    return dry + REVERB_MIX * wet * np.max(np.abs(dry))
 
 
 def make_thunder() -> np.ndarray:
@@ -220,10 +239,11 @@ def make_thunder() -> np.ndarray:
     shaped = np.tanh(THUNDER_DRIVE * SHEET_LEVEL * sheet / np.max(np.abs(sheet)))
     shaped += CRACK_LEVEL * crack / np.max(np.abs(crack))
     shaped = reverberate(shaped)
-    # Guarantee a silent end regardless of the mode tails.
+    shaped = np.tanh(THUNDER_MASTER_DRIVE * shaped / np.max(np.abs(shaped)))
+    # Guarantee a silent end regardless of the tails.
     fade_count = int(0.5 * SAMPLE_RATE_HZ)
     shaped[-fade_count:] *= np.linspace(1.0, 0.0, fade_count)
-    return normalize(shaped)
+    return shaped * (THUNDER_PEAK / np.max(np.abs(shaped)))
 
 
 # --- Rain loop ---------------------------------------------------------------
