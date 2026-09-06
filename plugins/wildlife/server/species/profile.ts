@@ -354,6 +354,12 @@ export const SCHOOL_LOOSENESS_BY_SIZE: Readonly<Record<WildlifeSizeClass, number
 export interface SpeciesProfile {
   readonly species: WildlifeHabitatSpecies;
   readonly habitat: Habitat;
+  /**
+   * Water shallower than this, in bands below sea, is not this species' ground:
+   * gates spawn, steering and the habitat-loss sweep alike (census.ts's
+   * walkerProfileFor). NO_MIN_WATER_DEPTH for a species with no rule.
+   */
+  readonly minWaterDepthBands: number | typeof NO_MIN_WATER_DEPTH;
 
   /**
    * Ordinary wander speed, cells per second. Every entry in the table below
@@ -805,6 +811,9 @@ export interface SpawnHeights {
 
 /** No height rule: the species spawns anywhere its habitat allows. */
 export const SPAWN_AT_ANY_HEIGHT = null;
+
+/** No depth rule: the habitat class alone decides. */
+export const NO_MIN_WATER_DEPTH = null;
 
 /** Grassland — the land ramp's green window, the same ground flora's meadow covers. */
 export const GRASSLAND_SPAWN_HEIGHTS: SpawnHeights = {

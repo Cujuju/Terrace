@@ -30,6 +30,7 @@
 
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  NO_MIN_WATER_DEPTH,
   FLEE_SPEED_MULTIPLIER,
   GRAZER_SPAWN_OPEN_DIRECTIONS,
   SINGLE_SIZE_WEIGHTS,
@@ -263,6 +264,7 @@ const WOLF_PREDATION: Predation = {
 export const WOLF_PROFILE: SpeciesProfile = {
   species: 'wolf',
   habitat: 'land',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // 1.0 — exactly between the halved grazer's 0.8 and the ibex's 1.2, and it is
   // the middle on purpose: a wolf ranges further than a deer, but the light
   // small-hoofed climber is still the quickest thing on land, because that is

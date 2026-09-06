@@ -12,6 +12,7 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
   AQUATIC_MAX_GRADIENT_PER_CELL,
+  NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
   SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
@@ -74,6 +75,7 @@ const SHARK_PREY: Predation = {
 export const SHARK_PROFILE: SpeciesProfile = {
   species: 'shark',
   habitat: 'shallow',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // The second fastest thing in the game after the fish's 3, and slower than it
   // deliberately: a fish must be able to escape (see SHARK_ALARM_RADIUS_CELLS).
   // Nearly twice the ray's 1.0, which is what makes a shark crossing a shelf

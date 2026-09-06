@@ -11,6 +11,7 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
   AQUATIC_MAX_GRADIENT_PER_CELL,
+  NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
   SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
@@ -72,6 +73,7 @@ const RAY_IDLE_BOUTS: IdleBouts = { onsetPerSecond: 0.05, endPerSecond: 0.15 };
 export const RAY_PROFILE: SpeciesProfile = {
   species: 'ray',
   habitat: 'shallow',
+  minWaterDepthBands: NO_MIN_WATER_DEPTH,
   // A third of the fish's 3 and a little over half the shark's 1.8: the slowest
   // thing in the water except the whale (0.8). Slow is the species.
   cruiseSpeedCellsPerSecond: cellsAcross(1.0),

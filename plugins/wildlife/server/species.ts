@@ -17,6 +17,7 @@ import {
   FISH_SIZE_WEIGHTS,
   GRAZER_MAX_GRADIENT_PER_CELL,
   GRAZER_SPAWN_OPEN_DIRECTIONS,
+  NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
   SPAWN_AT_ANY_HEIGHT,
   SINGLE_SIZE_WEIGHTS,
@@ -88,10 +89,15 @@ export const FISH_SCHOOLS_ON_FRESH_SHELF = 1;
  * between updates,
  * which is what makes 5 Hz + interpolation indistinguishable from 10 Hz.
  */
+/** Owner, 2026-09-05: whales swim only in water at least fifteen bands deep, anglers twenty. */
+export const WHALE_MIN_WATER_DEPTH_BANDS = 15;
+export const DEEPSEA_MIN_WATER_DEPTH_BANDS = 20;
+
 export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesProfile>> = {
   fish: {
     species: 'fish',
     habitat: 'shallow',
+    minWaterDepthBands: NO_MIN_WATER_DEPTH,
     cruiseSpeedCellsPerSecond: cellsAcross(3),
     turnNoiseRadiansPerSecond: 1.4,
     bodyLengthCells: cellsAcross(0.7),
@@ -114,6 +120,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   whale: {
     species: 'whale',
     habitat: 'deep',
+    minWaterDepthBands: WHALE_MIN_WATER_DEPTH_BANDS,
     cruiseSpeedCellsPerSecond: cellsAcross(0.8),
     turnNoiseRadiansPerSecond: 0.25,
     bodyLengthCells: cellsAcross(5),
@@ -157,6 +164,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   deepsea: {
     species: 'deepsea',
     habitat: 'deep',
+    minWaterDepthBands: DEEPSEA_MIN_WATER_DEPTH_BANDS,
     cruiseSpeedCellsPerSecond: cellsAcross(1.2),
     turnNoiseRadiansPerSecond: 0.9,
     bodyLengthCells: cellsAcross(1.2),
@@ -177,6 +185,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   grazer: {
     species: 'grazer',
     habitat: 'land',
+    minWaterDepthBands: NO_MIN_WATER_DEPTH,
     // Owner, 2026-09-02: "Grazers move too fast. I like their speed reduced by
     // half." 1.6 → 0.8 world units per second, exactly halved.
     //
