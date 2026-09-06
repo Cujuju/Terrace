@@ -590,6 +590,15 @@ interface ManaPool {
    */
   lastSentBalance: number;
   /**
+   * Simulated milliseconds since the last push to this player, advanced by the
+   * regen tick and reset by `sendBalance`. Drives MANA_BALANCE_HEARTBEAT_MS.
+   *
+   * SIMULATED, not wall-clock, for the same reason regen is: it is accumulated
+   * from the host's fixed `dt`, so a server at a different TICK_HZ re-affirms
+   * at the same rate per second and a test can advance it by ticking.
+   */
+  msSinceLastSend: number;
+  /**
    * The highest `seq` of this player's intents this plugin has seen, or null
    * before the first. Stamped on every push as `asOfSeq` so the client can
    * tell which of its local debits the push already accounts for
@@ -613,6 +622,38 @@ function asOfSeqOf(pool: ManaPool): { asOfSeq?: number } {
 
 /** Sentinel for "no balance has been pushed to this player yet". */
 const NO_BALANCE_SENT = -1;
+
+/**
+ * HOW LONG A PLAYER MAY GO WITHOUT HEARING THEIR BALANCE, in simulated
+ * milliseconds. Past this, `regenerate` re-affirms the pool even though nothing
+ * about it moved.
+ *
+ * WHY IT EXISTS (owner, 2026-09-05: "I don't ever want to see the land snap
+ * back"). The client's gate is now a strict lower bound on this balance — it
+ * credits itself no regen the server has not ticked (plugins/mana/client/
+ * state.ts) — which is what makes an approved stroke un-clawable. A lower bound
+ * only works if it can be RAISED, and the only thing that raises it is a push.
+ * Every applied and every denied intent already pushes, so an active stroke is
+ * corrected per intent; the hole is the idle player whose pool is FULL, because
+ * a full pool regenerates by nothing, moves its whole-unit balance by nothing,
+ * and so used to push nothing — leaving a client that had drifted low frozen
+ * out for the rest of the session (the 2026-08-24 stuck-gate report). This
+ * closes that hole at its source instead of papering it with an optimistic
+ * client estimate.
+ *
+ * THE VALUE is IN_FLIGHT_DEBIT_TTL_MS / PREDICTION_TTL_MS, the deadline both
+ * halves already agree means "an intent unanswered this long is lost": a client
+ * that drops a phantom debit on that deadline hears an authoritative balance
+ * within one further beat, so the two recovery paths run at the same cadence
+ * rather than at two numbers that have to be reasoned about separately. It is
+ * NOT tuned for how fast regen becomes spendable — below capacity, regen moves
+ * the whole-unit balance every tick and pushes on its own, and at capacity there
+ * is no regen to withhold.
+ *
+ * The cost is one message per second per idle player, and only while their pool
+ * is unchanged.
+ */
+export const MANA_BALANCE_HEARTBEAT_MS = 1000;
 
 /**
  * Pools keyed by Player.id — currently the Colyseus sessionId, which is
@@ -767,6 +808,7 @@ function displayBalance(pool: ManaPool): number {
 function sendBalance(world: WorldApi, playerId: string, pool: ManaPool): void {
   const balance = displayBalance(pool);
   pool.lastSentBalance = balance;
+  pool.msSinceLastSend = 0;
   world.sendTo(playerId, MANA_BALANCE_MESSAGE, {
     balance,
     capacity: MANA_CAPACITY,
@@ -797,7 +839,12 @@ function poolFor(playerId: string): ManaPool {
   const existing = poolsByPlayer.get(playerId);
   if (existing !== undefined) return existing;
 
-  const created: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT, lastSeenSeq: null };
+  const created: ManaPool = {
+    balance: MANA_CAPACITY,
+    lastSentBalance: NO_BALANCE_SENT,
+    msSinceLastSend: 0,
+    lastSeenSeq: null,
+  };
   poolsByPlayer.set(playerId, created);
   return created;
 }
@@ -961,41 +1008,65 @@ function commitCharge(
   sendBalance(world, ctx.player.id, pool);
 }
 
+/** Seconds → milliseconds, for MANA_BALANCE_HEARTBEAT_MS against a `dt` in seconds. */
+const MILLISECONDS_PER_SECOND = 1000;
+
 /**
  * Regenerates every pool by one tick's worth and pushes the pools whose whole-
- * unit balance actually moved. `dt` is the host's fixed tick period in seconds,
- * so regen is tied to simulated time and a server configured at a different
- * TICK_HZ regenerates at the same rate per second.
+ * unit balance actually moved OR whose last push has gone stale. `dt` is the
+ * host's fixed tick period in seconds, so regen is tied to simulated time and a
+ * server configured at a different TICK_HZ regenerates at the same rate per
+ * second.
+ *
+ * A FULL POOL IS STILL VISITED (2026-09-05). It gains nothing and its balance
+ * does not move, but it still ages toward the heartbeat — which is the entire
+ * point of the heartbeat: a full pool is exactly the state that used to emit no
+ * push at all and strand a client-side gate that had drifted low. See
+ * MANA_BALANCE_HEARTBEAT_MS.
  */
 function regenerate(world: WorldApi, dt: number): void {
   const baseGain = regenPerSecond * dt;
+  const dtMs = dt * MILLISECONDS_PER_SECOND;
 
   for (const [playerId, pool] of poolsByPlayer) {
-    // TEMPORARY TEST SWITCH (see MANA_INSTANT_REGEN_ENV) — remove with it.
-    // Refilling to capacity every tick rather than skipping the charge is what
-    // makes this a change to GENERATION and nothing else: prices, the perk
-    // multipliers, the affordability check and the balance push all keep
-    // running on the real numbers, so what is being tested is the sculpt and
-    // not a second, quieter code path through the economy.
-    if (instantRegen) {
-      if (pool.balance >= MANA_CAPACITY) continue;
-      pool.balance = MANA_CAPACITY;
-      if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(world, playerId, pool);
-      continue;
+    pool.msSinceLastSend += dtMs;
+
+    if (pool.balance < MANA_CAPACITY) {
+      if (instantRegen) {
+        // TEMPORARY TEST SWITCH (see MANA_INSTANT_REGEN_ENV) — remove with it.
+        // Refilling to capacity every tick rather than skipping the charge is
+        // what makes this a change to GENERATION and nothing else: prices, the
+        // perk multipliers, the affordability check and the balance push all
+        // keep running on the real numbers, so what is being tested is the
+        // sculpt and not a second, quieter code path through the economy.
+        pool.balance = MANA_CAPACITY;
+      } else {
+        // Per-player, because regen is perk- AND waterfall-aura-scaled: a Spring
+        // of Aether holder, or a player standing on their own revealed
+        // waterfall, earns faster than everyone else in the same tick. Capacity
+        // is deliberately NOT scaled by either — both change the rate you fill
+        // at, never how much you can hold, so a burst of sculpts stays worth the
+        // same to every player.
+        pool.balance = Math.min(
+          MANA_CAPACITY,
+          pool.balance +
+            baseGain *
+              manaPerkOf(playerId).regenMultiplier *
+              waterfallAuraMultiplierFor(world, playerId),
+        );
+      }
     }
-    if (pool.balance >= MANA_CAPACITY) continue;
-    // Per-player, because regen is perk- AND waterfall-aura-scaled: a Spring
-    // of Aether holder, or a player standing on their own revealed waterfall,
-    // earns faster than everyone else in the same tick. Capacity is
-    // deliberately NOT scaled by either — both change the rate you fill at,
-    // never how much you can hold, so a burst of sculpts stays worth the same
-    // to every player.
-    pool.balance = Math.min(
-      MANA_CAPACITY,
-      pool.balance +
-        baseGain * manaPerkOf(playerId).regenMultiplier * waterfallAuraMultiplierFor(world, playerId),
-    );
-    if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(world, playerId, pool);
+
+    // ONE push decision for every path above, so no branch can be the one that
+    // forgets to re-affirm. Whole-unit movement is what keeps a 10 Hz tick from
+    // generating 10 messages a second for a bar that only moves in integers;
+    // the heartbeat is what stops a pool that never moves from going silent.
+    if (
+      displayBalance(pool) !== pool.lastSentBalance ||
+      pool.msSinceLastSend >= MANA_BALANCE_HEARTBEAT_MS
+    ) {
+      sendBalance(world, playerId, pool);
+    }
   }
 }
 
@@ -1034,7 +1105,12 @@ export const plugin: TerracePlugin = {
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
-    const pool: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT, lastSeenSeq: null };
+    const pool: ManaPool = {
+    balance: MANA_CAPACITY,
+    lastSentBalance: NO_BALANCE_SENT,
+    msSinceLastSend: 0,
+    lastSeenSeq: null,
+  };
     poolsByPlayer.set(player.id, pool);
     // The room sends the join snapshot before calling this hook, so the client
     // is already sized and listening; this is the first thing its HUD sees.
