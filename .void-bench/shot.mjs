@@ -19,12 +19,8 @@ ${gl2}
 const V=${JSON.stringify(variant)};
 try{
 const gl=makeGL(document.getElementById('c'));
-const bake=V.bake?makeBake(gl,V.bake,${W},${H}):null;
-const prog=makeProgram(gl,V.wheel);
-pose(gl,prog,${W},${H},${dist},${JSON.stringify(kind)});
-gl.uniform1f(gl.getUniformLocation(prog,'u_time'),0.7);
-bindBake(gl,prog,bake);
-gl.drawArrays(gl.TRIANGLES,0,3);gl.finish();
+const P=prepVariant(gl,V,${W},${H},${dist},${JSON.stringify(kind)});
+drawFrame(gl,P,${W},${H},0.7);gl.finish();
 document.getElementById('out').textContent=document.getElementById('c').toDataURL('image/png');
 }catch(e){document.getElementById('out').textContent='ERR '+e.message;}
 </script>`;

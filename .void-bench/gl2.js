@@ -73,3 +73,56 @@ function pose(gl,prog,resW,resH,dist,kind){
   gl.uniform3f(U('u_origin'),0,-st*d,ct*d);
   gl.uniform1f(U('u_dome'),kind==='hub'?1:0);
 }
+// The half-res gas pass (#341). A variant with a `gas` shader marches the gas into an RGBA16F
+// texture at ceil(canvas/GAS_RES_DIVISOR) and its wheel shader reads that back through u_gasHalf
+// instead of marching — the app's two-pass path. Bilinear, clamped, no mips: the app's target.
+const GAS_HALF_UNIT=2;   // texture unit for u_gasHalf; the bake owns 0 and 1
+function makeGas(gl,src,W,H){
+  const div=Number(src.match(/const float GAS_RES_DIVISOR\s*=\s*([0-9.]+)/)[1]);
+  const w=Math.ceil(W/div), h=Math.ceil(H/div);
+  const prog=makeProgram(gl,src);
+  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texStorage2D(gl.TEXTURE_2D,1,gl.RGBA16F,w,h);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  const fb=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  const st=gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if(st!==gl.FRAMEBUFFER_COMPLETE)throw new Error('gas FBO 0x'+st.toString(16)+' - half-float RT unsupported');
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);
+  return {prog,tex,fb,w,h,time:gl.getUniformLocation(prog,'u_time')};
+}
+// Compiles one variant and readies it to draw at (W,H) in `kind`'s pose: the bake once (its cost
+// reported apart), the gas program and its target when the variant has one, and the pose on every
+// program. Shared by bench.html and shot.mjs, so both exercise the same two-pass path.
+function prepVariant(gl,V,W,H,dist,kind){
+  const bake=V.bake?makeBake(gl,V.bake,W,H):null;
+  const gas=V.gas?makeGas(gl,V.gas,W,H):null;
+  const prog=makeProgram(gl,V.wheel);
+  pose(gl,prog,W,H,dist,kind);
+  if(gas){
+    gl.useProgram(gas.prog);
+    pose(gl,gas.prog,W,H,dist,kind);   // u_res stays the FULL-res buffer in both programs
+    gl.uniform2f(gl.getUniformLocation(gas.prog,'u_gasRes'),gas.w,gas.h);
+    bindBake(gl,gas.prog,bake);
+    gl.useProgram(prog);
+    gl.uniform1i(gl.getUniformLocation(prog,'u_gasHalf'),GAS_HALF_UNIT);
+  } else bindBake(gl,prog,bake);
+  return {prog,bake,gas,time:gl.getUniformLocation(prog,'u_time'),samples:[]};
+}
+// One frame of a variant: the gas pass into its target when there is one, then the wheel to the
+// canvas. BOTH draws are the frame - the bench's timer brackets this whole call.
+function drawFrame(gl,P,W,H,t){
+  if(P.gas){
+    gl.bindFramebuffer(gl.FRAMEBUFFER,P.gas.fb);gl.viewport(0,0,P.gas.w,P.gas.h);
+    gl.useProgram(P.gas.prog);bindBake(gl,P.gas.prog,P.bake);
+    gl.uniform1f(P.gas.time,t);gl.drawArrays(gl.TRIANGLES,0,3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);
+    gl.activeTexture(gl.TEXTURE0+GAS_HALF_UNIT);gl.bindTexture(gl.TEXTURE_2D,P.gas.tex);
+  }
+  gl.useProgram(P.prog);
+  if(!P.gas)bindBake(gl,P.prog,P.bake);
+  gl.uniform1f(P.time,t);gl.drawArrays(gl.TRIANGLES,0,3);
+}

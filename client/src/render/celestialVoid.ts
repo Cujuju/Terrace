@@ -91,6 +91,20 @@
 // procedural version showed when the world anchor was zoomed far out. Rotation
 // stays per-frame: only the evaluation was replaced, not the motion.
 //
+// THE GAS IS MARCHED AT HALF RESOLUTION (perf, issue #341). The march itself —
+// the bake fetches, GAS_STEPS samples of the depth profile and the
+// transmittance loop — is the wheel's other bulk cost, and its result is a
+// smooth field: it has no edge sharper than a dust lane, which is many pixels
+// wide at every pose. So it runs in its own program (GAS_GLSL) into a
+// half-resolution render target once per frame, and the full-res wheel reads it
+// back bilinearly. Only what the march CANNOT reconstruct is stored — the lit
+// gas colour and the opacity — while the depth fade, the bulge, GAS_GAIN and
+// the fade early-out stay at full resolution, so the one genuinely sharp edge
+// in the composite is still evaluated per pixel. The pass is driven from the
+// mesh's onBeforeRender, the same hook that writes the world frame, so the gas
+// and the stars are drawn from one camera; an onFrame callback would leave the
+// gas a frame behind the stars and the two layers would slide apart in an orbit.
+//
 // COLOUR PIPELINE. The renderer runs ACES tone mapping at exposure 1.25
 // (render/scene.ts) and sRGB output conversion. Both are opt-in per shader in
 // three: a custom ShaderMaterial only gets them if its fragment source
@@ -272,6 +286,18 @@ const GAS_BAKE_SIZE = 2048;
  * "behind everything" layer can still be ordered against it.
  */
 const VOID_RENDER_ORDER = -1000;
+
+/**
+ * How many full-res pixels across one texel of the half-resolution gas target
+ * (perf, issue #341). The owner's rule for this pass is "half-res is fine,
+ * quarter-res is not": 2 keeps the dust lanes' edges within a pixel of where
+ * the full-res march put them, 4 shows them as blocks.
+ *
+ * The gas field is smooth everywhere below the horizon by construction — the
+ * fade, the bulge and the gain are applied at full res — so 2 costs nothing in
+ * sharpness and takes the march to a quarter of the fragments.
+ */
+const GAS_RES_DIVISOR = 2;
 
 /**
  * Clip-space vertices of a single triangle that covers the viewport. Larger
@@ -546,11 +572,84 @@ void main(){
 }
 `;
 
-const WHEEL_GLSL = /* glsl */ `${WHEEL_FIELDS_GLSL}
+/**
+ * THE GAS MARCH AT HALF RESOLUTION (perf, issue #341). Every fragment of this pass stands for one
+ * full-res pixel — the centre of the GAS_RES_DIVISOR-square block it covers — and does exactly
+ * what the wheel's march used to do inline: the two bake fetches, GAS_STEPS samples of
+ * `pattern*gasDepthProfile`, and the transmittance loop. It writes what the wheel cannot cheaply
+ * recompute: `rgb = gasCol*gasAcc` (the lit gas colour) and `a = gas` (= 1 - T, the opacity the
+ * stars are dimmed by).
+ *
+ * What it deliberately does NOT apply: GAS_GAIN, the depth fade, the bulge and the fade early-out.
+ * Those are analytic and cost a few instructions at full res, and leaving them out is what keeps
+ * this field smooth everywhere below the horizon — there is no fade edge and no early-out cliff in
+ * it for the bilinear upsample to blur across, and the fade's own edge stays pixel-crisp because
+ * the full-res pass still evaluates it per pixel. Above the horizon (d.z >= 0) it writes zeros;
+ * the wheel never reads the target there.
+ */
+const GAS_GLSL = /* glsl */ `${WHEEL_FIELDS_GLSL}
 // The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
 // texture's r. Half float, so the pattern's ~1.55 peak needs no scaling on the way through.
 uniform sampler2D u_gasBake;
 uniform sampler2D u_gasLevel;
+// This pass's own resolution in texels; u_res stays the FULL-res drawing buffer in both programs.
+uniform vec2 u_gasRes;
+// Declared for the bench harness, which lifts it to size its own target (.void-bench/gl2.js); the
+// app sizes the render target from the TS constant of the same name. The pass itself needs only
+// the two resolutions, because ceil() rounding makes the ratio not exactly the divisor.
+const float GAS_RES_DIVISOR = ${GAS_RES_DIVISOR.toFixed(1)};
+// The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
+// broken up by 3-D puffs. Multiplies gasPattern.
+float gasDepthProfile(vec2 rf, float z, float level){
+  float dz=(z-level)/GAS_SCALE_H;
+  float ch=exp(dz)+exp(-dz);
+  float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
+  vec3 pq=vec3(rf*PUFF_SCALE,z*PUFF_Z_SCALE);
+  float puff=(1.0-PUFF_OCTAVE2)*vnoise3(pq)+PUFF_OCTAVE2*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
+  float puffMod=1.0-PUFF_DEPTH+2.0*PUFF_DEPTH*puff;          // mean 1
+  return vert*puffMod;
+}
+void main(){
+  // The full-res pixel this texel stands for. Scaling the texel centre by the exact ratio of the
+  // two buffers — not by GAS_RES_DIVISOR — is what keeps the two passes on the same uv when the
+  // drawing buffer has an odd dimension and the target was rounded up. The wheel reads back at
+  // gl_FragCoord.xy/u_res, which is this mapping inverted exactly.
+  vec2 full=gl_FragCoord.xy*(u_res/u_gasRes);
+  vec2 uv=(full-0.5*u_res)/u_res.y;
+  float a=u_time*WHEEL_RATE;
+  vec3 d=viewRay(uv);                    // disk space: plane z = 0, hub at the origin
+  if(d.z>=0.0){ gl_FragColor=vec4(0.0); return; }   // above the plane's horizon: no gas to march
+  float sdist=-u_origin.z/d.z;           // ray length to the plane
+  vec2 pp=u_origin.xy+d.xy*sdist;        // disk coordinates, hub at the origin
+  vec2 rf=rot(pp,-a);                    // rotating frame: everything sampled here turns rigidly
+
+  // --- gas: the plane pattern once, then march the thickness front to back ---
+  vec2 bakeUv=gasBakeUv(rf);
+  vec4 baked=gasBakeFetch(u_gasBake,bakeUv);
+  vec3 gasCol=baked.rgb;
+  float pattern=baked.a;
+  float level=gasBakeFetch(u_gasLevel,bakeUv).r;                                  // this patch's depth
+  float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
+  float dt=(tBottom-sdist)/float(GAS_STEPS);
+  float gasAcc=0.0;                     // lit weight so far
+  float T=1.0;                          // transmittance so far
+  for(int i=0;i<GAS_STEPS;i++){
+    float t=sdist+(float(i)+0.5)*dt;
+    vec3 q=u_origin+d*t;
+    float dens=pattern*gasDepthProfile(rot(q.xy,-a),q.z,level);
+    float lit=1.0-LIT_FROM_ABOVE*clamp(-q.z/DISK_THICKNESS,0.0,1.0);   // deeper gas is darker
+    float alpha=1.0-exp(-dens*GAS_EXTINCTION*dt);
+    gasAcc+=T*alpha*lit;
+    T*=1.0-alpha;
+  }
+  gl_FragColor=vec4(gasCol*gasAcc,1.0-T);   // lit colour before GAS_GAIN; alpha = total gas opacity
+}
+`;
+
+const WHEEL_GLSL = /* glsl */ `${WHEEL_FIELDS_GLSL}
+// The half-res gas pass's output (issue #341): rgb = gasCol*gasAcc before GAS_GAIN, a = the gas
+// opacity. Bilinear, so a full-res pixel between texel centres gets the interpolated field.
+uniform sampler2D u_gasHalf;
 // Stars as points in 3-D. The grid has scale cells per disk unit; the ray is walked voxel by voxel
 // (Amanatides-Woo) from the plane down to -depth, and each voxel that holds a star lights up by the
 // ray's 3-D distance to that point. density is per column of the plane grid and is spread over the
@@ -589,17 +688,6 @@ float stars3(vec3 o, vec3 d, float tBase, float scale, float density, float dept
   }
   return sum;
 }
-// The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
-// broken up by 3-D puffs. Multiplies gasPattern.
-float gasDepthProfile(vec2 rf, float z, float level){
-  float dz=(z-level)/GAS_SCALE_H;
-  float ch=exp(dz)+exp(-dz);
-  float vert=4.0/(ch*ch);                                    // sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
-  vec3 pq=vec3(rf*PUFF_SCALE,z*PUFF_Z_SCALE);
-  float puff=(1.0-PUFF_OCTAVE2)*vnoise3(pq)+PUFF_OCTAVE2*vnoise3(pq*2.1+vec3(3.0,1.0,7.0));
-  float puffMod=1.0-PUFF_DEPTH+2.0*PUFF_DEPTH*puff;          // mean 1
-  return vert*puffMod;
-}
 void main(){
   vec2 uv=(gl_FragCoord.xy-0.5*u_res)/u_res.y;
   float a=u_time*WHEEL_RATE;
@@ -614,29 +702,16 @@ void main(){
     float depthFade=1.0-smoothstep(FADE_START_HEIGHTS*u_origin.z,FADE_END_HEIGHTS*u_origin.z,sdist);
     if(depthFade<=0.0){ gl_FragColor=vec4(col,1.0); return; }   // fully faded: nothing below would show
 
-    // --- gas: the plane pattern once, then march the thickness front to back ---
-    vec2 bakeUv=gasBakeUv(rf);
-    vec4 baked=gasBakeFetch(u_gasBake,bakeUv);
-    vec3 gasCol=baked.rgb;
-    float pattern=baked.a;
-    float level=gasBakeFetch(u_gasLevel,bakeUv).r;                                  // this patch's depth
-    float tBottom=(u_origin.z+DISK_THICKNESS)/-d.z;
-    float dt=(tBottom-sdist)/float(GAS_STEPS);
-    float gasAcc=0.0;                     // lit weight so far
-    float T=1.0;                          // transmittance so far
-    for(int i=0;i<GAS_STEPS;i++){
-      float t=sdist+(float(i)+0.5)*dt;
-      vec3 q=u_origin+d*t;
-      float dens=pattern*gasDepthProfile(rot(q.xy,-a),q.z,level);
-      float lit=1.0-LIT_FROM_ABOVE*clamp(-q.z/DISK_THICKNESS,0.0,1.0);   // deeper gas is darker
-      float alpha=1.0-exp(-dens*GAS_EXTINCTION*dt);
-      gasAcc+=T*alpha*lit;
-      T*=1.0-alpha;
-    }
-    float gas=1.0-T;                      // total gas opacity along the ray
+    // --- gas: marched at half resolution into u_gasHalf (issue #341), read back here ---
+    // The exact inverse of the gas pass's own mapping, so the texel a pixel lands on is the one
+    // written for it; between centres the bilinear filter interpolates a field that is smooth
+    // everywhere below the horizon, which is why the fade and the gain stay out of it.
+    vec4 gasHalf=texture2D(u_gasHalf,gl_FragCoord.xy/u_res);
+    vec3 gasCol=gasHalf.rgb;              // lit gas colour (gasCol*gasAcc), before GAS_GAIN
+    float gas=gasHalf.a;                  // total gas opacity along the ray
     float bulge=exp(-r*2.0);
     vec3 warm=vec3(1.0,0.88,0.62);
-    col+=(gasCol*gasAcc*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
+    col+=(gasCol*GAS_GAIN+warm*bulge*BULGE_GAIN)*depthFade;
 
     // --- stars: points in three voxel grids under the plane, rotating with the gas ---
     // The grids are walked in the rotating frame: rotate the plane hit and the ray into it once.
@@ -782,8 +857,13 @@ export function createCelestialVoid(
     u_dome: { value: 0 },
     // Filled by the bake when the wheel material is first created; the nebula
     // program has neither sampler, and three skips uniforms a program lacks.
+    // Only the gas program reads these two now — the wheel reads u_gasHalf.
     u_gasBake: { value: null },
     u_gasLevel: { value: null },
+    // The half-res gas pass (issue #341): its target's size, and its texture.
+    // Filled with the wheel material as well; sized in the frame callback.
+    u_gasRes: { value: new Vector2(1, 1) },
+    u_gasHalf: { value: null },
   };
   const writeFrame = (frame: DiskFrame): void => {
     (uniforms['u_focal'] as IUniform<number>).value = frame.focal;
@@ -898,13 +978,122 @@ export function createCelestialVoid(
     ).texture;
   };
 
+  /**
+   * The half-res gas pass's own resources (issue #341). All four are null until
+   * the wheel material is first created, exactly like the bake, so a player on
+   * the nebula never allocates the target or compiles the program.
+   */
+  let gasTarget: WebGLRenderTarget | null = null;
+  let gasMaterial: ShaderMaterial | null = null;
+  let gasScene: Scene | null = null;
+  let gasCamera: Camera | null = null;
+  /** Scratch for the drawing-buffer size, read every frame; allocated once. */
+  const drawingBuffer = new Vector2();
+
+  /**
+   * Sizes the gas target to the drawing buffer over GAS_RES_DIVISOR, rounding
+   * UP so the target always covers the last, partly-filled block of pixels —
+   * a floor would leave the right and top edges sampling off the end of it.
+   * Also writes u_gasRes, which is how the gas program recovers the exact
+   * ratio between the two buffers rather than assuming the divisor.
+   */
+  const sizeGasTarget = (width: number, height: number): void => {
+    if (gasTarget === null) return;
+    const w = Math.ceil(width / GAS_RES_DIVISOR);
+    const h = Math.ceil(height / GAS_RES_DIVISOR);
+    if (gasTarget.width === w && gasTarget.height === h) return;
+    gasTarget.setSize(w, h);
+    (uniforms['u_gasRes'] as IUniform<Vector2>).value.set(w, h);
+  };
+
+  /**
+   * Allocates the gas target, program and scene. Called once, from the wheel
+   * material's creation, next to the bake.
+   */
+  const createGasPass = (): void => {
+    const { renderer } = viewport;
+    renderer.getDrawingBufferSize(drawingBuffer);
+    // Half float and RGBA: rgb carries the lit gas colour and a the opacity,
+    // both small positive numbers, and 8 bits would band the faint gas the
+    // depth fade then stretches. Bilinear both ways because the whole point is
+    // reading it back between texel centres; clamped because a pixel on the
+    // very edge of the frame maps half a texel outside the target; no mipmaps
+    // and no depth or stencil because it is sampled at one level and written by
+    // a fullscreen triangle that tests nothing.
+    gasTarget = new WebGLRenderTarget(1, 1, {
+      type: HalfFloatType,
+      format: RGBAFormat,
+      wrapS: ClampToEdgeWrapping,
+      wrapT: ClampToEdgeWrapping,
+      minFilter: LinearFilter,
+      magFilter: LinearFilter,
+      generateMipmaps: false,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    sizeGasTarget(drawingBuffer.x, drawingBuffer.y);
+    // The SAME uniforms object as the wheel, so the clock, the anchor frame and
+    // the bake textures are shared and cannot drift by a frame between the two
+    // programs.
+    gasMaterial = new ShaderMaterial({
+      uniforms,
+      vertexShader: VERTEX_SHADER,
+      fragmentShader: GAS_GLSL,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const gasMesh = new Mesh(geometry, gasMaterial);
+    // As in the bake: the vertex shader writes clip space, so the camera is a
+    // formality and the mesh must not be culled against it.
+    gasMesh.frustumCulled = false;
+    gasScene = new Scene().add(gasMesh);
+    gasCamera = new Camera();
+    (uniforms['u_gasHalf'] as IUniform<Texture>).value = gasTarget.texture;
+  };
+
+  /**
+   * Renders the gas into its target. Called from onBeforeRender, so the camera
+   * it reads through the shared uniforms is this frame's final one.
+   *
+   * The state discipline is the Reflector's (three/examples/jsm/objects/
+   * Reflector.js): a nested renderer.render must leave the render target, the
+   * XR flag and the shadow auto-update exactly as it found them. `autoReset` is
+   * saved too, which the Reflector does not need but this does — three resets
+   * renderer.info at the top of every render, and the app reads the frame's
+   * draw-call count out of it after the outer render (plugins/host.ts), so a
+   * nested reset would throw away everything drawn before the void.
+   */
+  const renderGasPass = (): void => {
+    if (gasScene === null || gasCamera === null || gasTarget === null) return;
+    const { renderer } = viewport;
+    const previousTarget = renderer.getRenderTarget();
+    const previousCubeFace = renderer.getActiveCubeFace();
+    const previousMipmap = renderer.getActiveMipmapLevel();
+    const previousXrEnabled = renderer.xr.enabled;
+    const previousShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+    const previousInfoAutoReset = renderer.info.autoReset;
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.info.autoReset = false;
+    renderer.setRenderTarget(gasTarget);
+    renderer.render(gasScene, gasCamera);
+    renderer.info.autoReset = previousInfoAutoReset;
+    renderer.xr.enabled = previousXrEnabled;
+    renderer.shadowMap.autoUpdate = previousShadowAutoUpdate;
+    renderer.setRenderTarget(previousTarget, previousCubeFace, previousMipmap);
+  };
+
   // Materials are compiled on first use and then cached: booting straight into
   // the default style must not pay for the other look's program.
   const materials = new Map<VoidStyle, ShaderMaterial>();
   const materialFor = (style: VoidStyle): ShaderMaterial => {
     const cached = materials.get(style);
     if (cached !== undefined) return cached;
-    if (style === 'wheel') bakeGasPattern();
+    if (style === 'wheel') {
+      bakeGasPattern();
+      createGasPass();
+    }
     const material = new ShaderMaterial({
       uniforms,
       vertexShader: VERTEX_SHADER,
@@ -930,11 +1119,13 @@ export function createCelestialVoid(
   mesh.matrixAutoUpdate = false;
   mesh.onBeforeRender = (_renderer, _scene, camera): void => {
     if (anchor === 'world') writeWorldFrame(camera as PerspectiveCamera);
+    // AFTER the frame is written, and only for the wheel: the gas pass reads
+    // the anchor frame this call just set, so both layers see one camera.
+    if (style === 'wheel') renderGasPass();
   };
   viewport.scene.add(mesh);
 
   const frozen = prefersReducedMotion();
-  const drawingBuffer = new Vector2();
 
   const stopFrames = viewport.onFrame((dt) => {
     // Advanced from the render loop's own dt (capped by FRAME_DELTA_CAP_S in
@@ -946,6 +1137,9 @@ export function createCelestialVoid(
     // coordinates by it, and those are in device pixels.
     viewport.renderer.getDrawingBufferSize(drawingBuffer);
     (uniforms['u_res'] as IUniform<Vector2>).value.copy(drawingBuffer);
+    // Same source, same moment: the gas target follows the drawing buffer, and
+    // sizeGasTarget returns immediately unless the size actually changed.
+    sizeGasTarget(drawingBuffer.x, drawingBuffer.y);
   });
 
   return {
@@ -965,6 +1159,13 @@ export function createCelestialVoid(
       materials.clear();
       for (const target of bakeTargets) target.dispose();
       bakeTargets = [];
+      gasMaterial?.dispose();
+      gasMaterial = null;
+      gasTarget?.dispose();
+      gasTarget = null;
+      gasScene?.clear();
+      gasScene = null;
+      gasCamera = null;
       geometry.dispose();
     },
   };
