@@ -91,7 +91,8 @@ export function VersionWatermark(): JSX.Element {
         {(stat) => (
           <>
             <span class="hud-version__perf">
-              up {Math.round(stat().uptimeS)}s · {stat().frames} frames
+              up {Math.round(stat().uptimeS)}s · {stat().frames} frames ·{' '}
+              {stat().counters.pixelWidth}x{stat().counters.pixelHeight}
             </span>
             <span class="hud-version__perf">
               render {stat().renderMsP50.toFixed(2)} · outside{' '}

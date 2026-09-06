@@ -43,6 +43,7 @@ function queryFlagSet(name: string): boolean {
 function logSample(sample: FrameStatsSample): void {
   console.info(
     `[perf] up=${Math.round(sample.uptimeS)}s frames=${sample.frames} ` +
+      `px=${sample.counters.pixelWidth}x${sample.counters.pixelHeight} ` +
       `render=${sample.renderMsP50.toFixed(2)} outside=${sample.outsideMsP50.toFixed(2)} ` +
       `frame=${sample.frameMsP50.toFixed(2)} p99=${sample.frameMsP99.toFixed(2)} ` +
       `max=${sample.frameMsMax.toFixed(2)} interval=${sample.intervalMsP50.toFixed(2)} ` +

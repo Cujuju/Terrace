@@ -245,6 +245,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   // window, never per frame. It lives here because this is the only file that
   // holds the renderer, and frameStats deliberately does not import three.
   setFrameCounterSource(() => ({
+    // The DRAWING BUFFER, not the CSS box: pixel ratio is what separates the
+    // two, and pixels are what cost time.
+    pixelWidth: renderer.domElement.width,
+    pixelHeight: renderer.domElement.height,
     drawCalls: renderer.info.render.calls,
     triangles: renderer.info.render.triangles,
     geometries: renderer.info.memory.geometries,

@@ -1677,6 +1677,13 @@ export function installPerfProbe(deps: {
           gpu: gpuName(),
           clientVersion: __CLIENT_VERSION__,
           pixelRatio: renderer.getPixelRatio(),
+          // THE DRAWING BUFFER, recorded because frame time is a function of it
+          // and every sample taken before 2026-09-06 left it unsaid. All of
+          // those were a 1600x900 window (scripts/gpu-bench.sh); the target is
+          // full-screen 1440p, 2.6x the pixels, so the two are not comparable
+          // and a report that does not name its size cannot say which it is.
+          pixelWidth: renderer.domElement.width,
+          pixelHeight: renderer.domElement.height,
           settleMs,
           cameraDistance: camera.position.distanceTo(controls.target),
           programs: renderer.info.programs === null ? null : renderer.info.programs.length,
