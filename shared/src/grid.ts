@@ -88,3 +88,43 @@ export function bandOf(h: number): number {
 export function quantizeToBand(h: number): number {
   return bandOf(h) * BAND_HEIGHT;
 }
+
+/**
+ * EVERY CELL ON THE STRAIGHT LINE from (x0, y0) to (x1, y1), both ends
+ * included, in order from the first to the second. Bresenham: integer-only,
+ * 8-connected, so consecutive cells always touch (at worst diagonally).
+ * Deterministic by construction — the drag sweep runs it on both replicas.
+ */
+export function forEachLineCell(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  visit: (x: number, y: number) => void,
+): void {
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  let x = x0;
+  let y = y0;
+  for (;;) {
+    visit(x, y);
+    if (x === x1 && y === y1) return;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
+/** Chebyshev distance — the number of 8-connected steps between two cells. */
+export function chebyshevDistance(x0: number, y0: number, x1: number, y1: number): number {
+  return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+}

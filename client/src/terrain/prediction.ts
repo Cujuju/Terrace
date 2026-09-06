@@ -75,6 +75,7 @@ import {
   cellY,
   chunkIndex,
   forEachFootprintOffset,
+  forEachLineCell,
   sculptOptionsOf,
   validateSculptIntent,
   type SculptIntent,
@@ -354,7 +355,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
    * stroke reads" cannot drift apart. Runs at most once per intent (ten a
    * second while a brush is held) over a few hundred offsets.
    */
-  const canPredictFaithfully = (cx: number, cy: number, radius: number): boolean => {
+  const discIsKnown = (cx: number, cy: number, radius: number): boolean => {
     let known = true;
     forEachFootprintOffset(radius, (dx, dy) => {
       if (!known) return;
@@ -369,6 +370,19 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       ) {
         known = false;
       }
+    });
+    return known;
+  };
+  // A SWEPT DRAG (2026-09-05) touches the footprint at every cell of the line
+  // from where the previous intent was to the cursor, so the whole path has to
+  // be known, not just the disc at the cursor — the same question asked of
+  // each disc the sweep stands in for.
+  const canPredictFaithfully = (intent: SculptIntent): boolean => {
+    const { x, y, radius } = intent;
+    if (intent.fromX === undefined || intent.fromY === undefined) return discIsKnown(x, y, radius);
+    let known = true;
+    forEachLineCell(intent.fromX, intent.fromY, x, y, (sx, sy) => {
+      if (known && !discIsKnown(sx, sy, radius)) known = false;
     });
     return known;
   };
@@ -641,7 +655,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       // ...and the server will happily apply an intent whose FOOTPRINT reaches
       // past what we hold, which we cannot reproduce. Send it, draw nothing,
       // and let the authoritative diff show what it did (issue #21).
-      if (!canPredictFaithfully(validated.x, validated.y, validated.radius)) return dirty;
+      if (!canPredictFaithfully(validated)) return dirty;
 
       // Opened after the refusals above, which mutate nothing, and before
       // anything below, which all do.

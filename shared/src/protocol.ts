@@ -6,7 +6,8 @@
 // range before any of it touches the world. Plugins add further verdicts
 // (mana, cooldowns) AFTER this structural validation passes.
 
-import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from './constants.ts';
+import { MAX_BRUSH_RADIUS, MAX_DRAG_SWEEP_CELLS, MIN_BRUSH_RADIUS } from './constants.ts';
+import { chebyshevDistance } from './grid.ts';
 // Type-only, and so erased: chunks.ts already imports this module the same way,
 // and a type-only pair is not a cycle at runtime.
 import type { ChunkHeights } from './chunks.ts';
@@ -108,6 +109,20 @@ export interface SculptIntent {
    */
   spanBand?: number;
   /**
+   * THE SWEEP (2026-09-05): the cursor cell the sender's PREVIOUS drag intent
+   * named, so this one's region is the footprint swept along the straight
+   * line from there to (x, y) rather than the disc at (x, y) alone. Fixes the
+   * gaps a fast flick with a small brush left between one disc and the next.
+   *
+   * Drag only, both or neither, and at most MAX_DRAG_SWEEP_CELLS from (x, y)
+   * — the validator rejects anything else with the whole intent. Safe for the
+   * reason `targetBand` is: it names where the hand WAS, and every cell of the
+   * sweep still passes the same per-cell spread rule against the server's own
+   * heightmap, so the worst a hostile client gains is a longer no-op.
+   */
+  fromX?: number;
+  fromY?: number;
+  /**
    * Client-chosen correlation id, echoed back on the server's ANSWER to this
    * intent — SculptAppliedMessage when it was applied, SculptDeniedMessage
    * when a plugin denied it — so the sender can retire the exact client-side
@@ -154,6 +169,8 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // decision 2026-08-19: the brush periphery must never climb past the level
   // the player pointed at). Not a wire field, same argument as `spill`.
   anchor: 'clicked',
+  // A single disc unless the intent names where the previous one was.
+  sweepFrom: null,
 };
 
 /**
@@ -255,7 +272,24 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // null, and null is resolved to the topmost span by the terrain math —
     // never here, which has no map to resolve against.
     spanBand: intent.spanBand ?? null,
+    // The sweep origin rides only on a drag; the validator already refuses it
+    // on any other tool, so this guard is the resolver's own statement of it.
+    sweepFrom:
+      tool === 'drag' && intent.fromX !== undefined && intent.fromY !== undefined
+        ? { x: intent.fromX, y: intent.fromY }
+        : null,
   };
+}
+
+/**
+ * HOW MANY DISCS A DRAG INTENT SWEEPS — the steps from `fromX/fromY` to `x/y`,
+ * and 1 for a pull that names no origin. Each step is the disc the pointermove
+ * it stands in for would have sent, so a flick is priced (plugins/mana) exactly
+ * as the intents it replaces.
+ */
+export function sculptSweepSteps(intent: SculptIntent): number {
+  if (intent.fromX === undefined || intent.fromY === undefined) return 1;
+  return Math.max(1, chebyshevDistance(intent.fromX, intent.fromY, intent.x, intent.y));
 }
 
 /**
@@ -586,6 +620,22 @@ export function validateSculptIntent(
     return null;
   }
 
+  // THE SWEEP ORIGIN: drag only, both coordinates or neither, a cell of this
+  // world, and no farther than MAX_DRAG_SWEEP_CELLS from the cursor cell — the
+  // bound on how much ground one message may ask the server to walk. Rejected
+  // with the whole intent, like every other malformed field here: dropping the
+  // origin and applying a single disc would be a differently-shaped edit than
+  // the sender predicted.
+  const { fromX, fromY } = m;
+  if (fromX !== undefined || fromY !== undefined) {
+    if (tool !== 'drag') return null;
+    if (!Number.isInteger(fromX) || (fromX as number) < 0 || (fromX as number) >= worldSize) return null;
+    if (!Number.isInteger(fromY) || (fromY as number) < 0 || (fromY as number) >= worldSize) return null;
+    if (chebyshevDistance(fromX as number, fromY as number, x as number, y as number) > MAX_DRAG_SWEEP_CELLS) {
+      return null;
+    }
+  }
+
   return {
     type: 'sculpt',
     x: x as number,
@@ -596,6 +646,7 @@ export function validateSculptIntent(
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
+    ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
 }

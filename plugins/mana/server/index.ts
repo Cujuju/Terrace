@@ -27,6 +27,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
   sculptOptionsOf,
+  sculptSweepSteps,
 } from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
@@ -733,6 +734,7 @@ export function manaCostFor(playerId: string, intent: SculptIntent): number {
     intent.radius,
     options.profile,
     options.tool,
+    sculptSweepSteps(intent),
   );
 }
 

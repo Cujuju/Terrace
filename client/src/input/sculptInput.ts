@@ -66,7 +66,13 @@ import {
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
-import { BAND_HEIGHT, TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  MAX_DRAG_SWEEP_CELLS,
+  TOOLS_WITHOUT_DIRECTION,
+  TOOLS_WITHOUT_EDGE_PROFILE,
+  chebyshevDistance,
+} from '@terrace/shared';
 import type { SculptIntent, SculptTool } from '@terrace/shared';
 
 
@@ -664,6 +670,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    *
    * Skips a repeat of the same cursor cell, which is a rate limit and nothing
    * more (see lastDragTo).
+   *
+   * THE INTENT NAMES A SEGMENT, NOT A POINT (owner report, 2026-09-05: "quick
+   * flicks on a small brush size are not recorded and leave gaps"). Pointer
+   * events sample the cursor once per frame; a flick crosses several cells
+   * between two samples, and a small disc at each sample left ground between
+   * them untouched — or, landing clear of the band, filled nothing. So the
+   * intent carries the cell the previous one named (`fromX/fromY`) and the
+   * shared math sweeps the footprint along the line between the two. Still one
+   * message per pointermove, so the rate the prediction store and the server's
+   * limiter are sized for is unchanged — EXCEPT that a segment longer than
+   * MAX_DRAG_SWEEP_CELLS is split into legs of at most that length, one intent
+   * each, because the server bounds the ground one message may walk.
    */
   const emitDrag = (toX: number, toY: number, action: SculptAction, band: number): void => {
     const dir = sculptDirection(action);
@@ -677,6 +695,33 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     ) {
       return;
     }
+    if (!haveDragTo || (lastDragToX === toX && lastDragToY === toY)) {
+      emitDragLeg(toX, toY, dir, radius, band, null);
+      return;
+    }
+    // Leg ends are the straight line sampled at equal fractions, rounded to
+    // cells; consecutive legs share an end, so the sweep has no seam. Each leg
+    // is sent from the last one that reached the wire (lastDragTo), so a
+    // dropped leg is retried by the next pointermove rather than skipped.
+    const fromX = lastDragToX;
+    const fromY = lastDragToY;
+    const legs = Math.ceil(chebyshevDistance(fromX, fromY, toX, toY) / MAX_DRAG_SWEEP_CELLS);
+    for (let leg = 1; leg <= legs; leg++) {
+      const legX = fromX + Math.round(((toX - fromX) * leg) / legs);
+      const legY = fromY + Math.round(((toY - fromY) * leg) / legs);
+      if (!emitDragLeg(legX, legY, dir, radius, band, { x: lastDragToX, y: lastDragToY })) return;
+    }
+  };
+
+  /** One drag intent on the wire; true if it reached it. See emitDrag. */
+  const emitDragLeg = (
+    toX: number,
+    toY: number,
+    dir: 1 | -1,
+    radius: number,
+    band: number,
+    from: { x: number; y: number } | null,
+  ): boolean => {
     const sent = send({
       type: 'sculpt',
       // THE CURSOR CELL, which for this tool is where the edit happens — the
@@ -717,16 +762,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // `targetBand` plus the receiver's own map names the grasped span
       // exactly — a `spanBand` here would be the same number twice, derived
       // from the wrong cell.
+      ...(from !== null ? { fromX: from.x, fromY: from.y } : {}),
       seq: nextSeq++,
     });
     // A dropped intent leaves lastDragTo alone, so the very next pointermove
-    // — even one inside the same cell — retries the identical disc.
-    if (!sent) return;
+    // — even one inside the same cell — retries the identical sweep.
+    if (!sent) return false;
     lastDragToX = toX;
     lastDragToY = toY;
     lastDragDir = dir;
     lastDragRadius = radius;
     haveDragTo = true;
+    return true;
   };
 
   const stopRepeat = (): void => {

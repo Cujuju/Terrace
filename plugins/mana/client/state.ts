@@ -2,7 +2,7 @@
 // Module-scope signals, per the client's standing pattern (see hudState.ts).
 
 import { createSignal } from 'solid-js';
-import { sculptOptionsOf, sculptProfileOf, type SculptIntent } from '@terrace/shared';
+import { sculptOptionsOf, sculptProfileOf, sculptSweepSteps, type SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
 // THE ACCEPTED COUPLING (documented, deliberate): a plugin's client half reaching
 // into the core client's HUD state. Both compile into the same browser bundle
@@ -189,6 +189,7 @@ export function gateLocalSculpt(intent: SculptIntent): boolean {
     intent.radius,
     options.profile,
     options.tool,
+    sculptSweepSteps(intent),
   );
 
   // The balance AS IT STANDS, regen included — not the number the last push
