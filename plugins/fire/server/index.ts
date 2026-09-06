@@ -963,7 +963,7 @@ export const plugin: TerracePlugin = {
     // split and lightning moved to the kind that has it (#283). The payload is
     // unchanged, which is why only this string moved.
     if (event !== 'thunderstorm:strikes') return;
-    const struck = parseStruckCells(payload);
+    const struck = parseStruckCells(payload, world.worldSize);
     if (struck === null) return;
     // ONE BATCH FOR THE WHOLE VOLLEY — a squall lands several bolts in one
     // event and they are one weather moment, not eight.
