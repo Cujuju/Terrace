@@ -113,6 +113,16 @@ const ABLATION_SAMPLE_FRAMES = 90;
 const ABLATION_SETTLE_FRAMES = 6;
 /** Scene-child name prefix the plugin host gives every plugin layer (host.ts). */
 const PLUGIN_LAYER_PREFIX = 'plugin:';
+/**
+ * Scene-child name prefix a CORE rig uses to opt into the same ablation
+ * (render/celestialVoid.ts names both of its children this way). Core's rigs
+ * are otherwise anonymous children of the scene, so without a name they can
+ * only ever appear inside the unattributable remainder — which is exactly
+ * where the celestial void sat until 2026-09-05, invisible to every run.
+ */
+const CORE_RIG_PREFIX = 'core:';
+/** Every scene child the ablation scenario can hide, by name prefix. */
+const ABLATABLE_PREFIXES = [PLUGIN_LAYER_PREFIX, CORE_RIG_PREFIX] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GL UPLOAD ACCOUNTING — wraps the page's WebGL2 buffer/texture uploads so a
@@ -758,6 +768,21 @@ interface ProbeContext {
   /** Points the orbit at a cell and pulls the camera back to `distance` world units. */
   readonly dollyTo: (x: number, y: number, distance: number) => void;
   readonly sampler: () => Sampler;
+  /**
+   * Stops (or resumes) applying inbound server state — plugin messages,
+   * terrain diffs, chunk unlocks. See ablateScenario for why a scenario needs
+   * this. Frozen, the client keeps rendering and animating exactly what it
+   * already holds, so a measurement compares two visibility states of ONE
+   * scene rather than of two worlds a minute apart.
+   *
+   * CLIENT-SIDE, not a server pause: the server is authoritative and shared,
+   * pausing its tick would change what every other session sees, and the drift
+   * this exists to stop arrives through these sinks anyway. Nothing is
+   * acknowledged differently — the messages are received and dropped, so the
+   * connection does not notice and the world resyncs on the next snapshot
+   * after the freeze lifts.
+   */
+  readonly freeze: (on: boolean) => void;
   readonly beat: (stage: string) => void;
 }
 
@@ -930,9 +955,27 @@ const cycloneScenario: Scenario = async (ctx) => {
  */
 const ablateScenario: Scenario = async (ctx) => {
   const layers = ctx.viewport.scene.children.filter((child) =>
-    child.name.startsWith(PLUGIN_LAYER_PREFIX),
+    ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix)),
   );
-  ctx.beat(`ablating-${String(layers.length)}-layers`);
+  /**
+   * The rig's name with WHICHEVER prefix it carries removed. Slicing a fixed
+   * PLUGIN_LAYER_PREFIX.length was wrong the moment core rigs joined: it ate
+   * seven characters off five-character `core:` names and reported the void as
+   * "id" and its stars as "id-stars".
+   */
+  const rigName = (child: { name: string }): string => {
+    const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
+    return prefix === undefined ? child.name : child.name.slice(prefix.length);
+  };
+  // THE SIMULATION IS FROZEN FOR THE WHOLE RUN. Without it this scenario
+  // cannot work: its previous version measured a baseline that drifted from
+  // 5.81 to 10.44 ms GPU over one three-minute run (2026-09-05) — a bigger
+  // swing than any plugin's whole contribution — because the server keeps
+  // ticking and the world keeps growing underneath the measurement. Bracketing
+  // each step cancels drift that is LINEAR across that step; it cannot rescue
+  // a scene that is a different scene by the end.
+  ctx.freeze(true);
+  ctx.beat(`ablating-${String(layers.length)}-layers-frozen`);
 
   /** One block at the current visibility state, after letting it settle. */
   const measure = async (): Promise<FrameBlock> => {
@@ -964,7 +1007,7 @@ const ablateScenario: Scenario = async (ctx) => {
 
   const rows: Record<string, unknown>[] = [];
   for (const layer of layers) {
-    const name = layer.name.slice(PLUGIN_LAYER_PREFIX.length);
+    const name = rigName(layer);
     if (!layer.visible) {
       // Already hidden by the plugin itself: ablating it would measure nothing
       // and the row would read as "this plugin is free", which is a different
@@ -1001,6 +1044,7 @@ const ablateScenario: Scenario = async (ctx) => {
   for (const layer of layers) layer.visible = false;
   const allHidden = await measure();
   for (const layer of layers) layer.visible = true;
+  ctx.freeze(false);
 
   // The error bar: how far apart two measurements of the SAME scene landed.
   const baselineGpu = baselines.map(gpuOf).filter((ms): ms is number => ms !== null);
@@ -1078,9 +1122,25 @@ export function installPerfProbeEarly(viewport: Viewport): void {
   }) as typeof renderer.render;
 }
 
+/**
+ * The freeze switch shared by the two wrappers below and read by ProbeContext's
+ * `freeze`. Module state rather than a parameter because the sinks are wrapped
+ * once, at install time, and flipped much later by a scenario.
+ */
+const frozenState = { on: false };
+
+/**
+ * The world sinks that carry WORLD GROWTH, and are therefore the ones a freeze
+ * drops. `onSculptDenied` and `onSculptApplied` are deliberately absent: they
+ * are verdicts on this client's own stroke, they change no population, and the
+ * sculpt scenario needs them to keep arriving while it holds a stroke.
+ */
+const FREEZABLE_WORLD_SINKS = ['onSnapshot', 'onChunkUnlock', 'onTerrainDiff'] as const;
+
 /** Times the world's message sinks, so a snapshot or a diff names itself. */
 function wrapSinkTiming(world: World): void {
   const sink = world as unknown as Record<string, unknown>;
+  const freezable = new Set<string>(FREEZABLE_WORLD_SINKS);
   for (const name of [
     'onSnapshot',
     'onChunkUnlock',
@@ -1091,6 +1151,7 @@ function wrapSinkTiming(world: World): void {
     const fn = sink[name];
     if (typeof fn !== 'function') continue;
     sink[name] = (...args: unknown[]) => {
+      if (frozenState.on && freezable.has(name)) return undefined;
       const started = performance.now();
       const out = (fn as (...a: unknown[]) => unknown).apply(world, args);
       addCost(`msg ${name}`, performance.now() - started);
@@ -1150,6 +1211,9 @@ export function installPerfProbe(deps: {
       const parsed = parseAllPayload(payload);
       if (parsed !== null) storms = parsed.storms;
     }
+    // A frozen run drops the payload but still reads the storm list above, so
+    // the cyclone scenario can be frozen too without losing the storm it framed.
+    if (frozenState.on) return;
     originalRoute(type, payload);
   };
 
@@ -1181,6 +1245,9 @@ export function installPerfProbe(deps: {
       controls.update();
     },
     sampler: () => createSampler(viewport),
+    freeze: (on: boolean): void => {
+      frozenState.on = on;
+    },
     beat,
   };
 
