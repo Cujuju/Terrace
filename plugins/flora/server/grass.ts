@@ -125,9 +125,13 @@ export type GrassWorld = FloraWorld & {
  * (bands.ts's isPlantableCell asks `isCellUnlocked` per cell for exactly this
  * reason — it is the same anti-leak rule, stated there for trees.)
  *
- * WHAT IT DOES NOT ASK: the world bounds, because both callers already hold
- * them — the survey walks chunks of this world, and fire's spread clamps to
- * `world.worldSize`.
+ * BOUNDS FIRST, like its sibling isPlantableCell: `isCellUnlocked` has no
+ * bounds guard of its own and throws on an out-of-range chunk. The survey
+ * caller walks chunks of this world and fire's spread clamps to
+ * `world.worldSize`, but this is also a registered FUEL PROVIDER — fire's
+ * `fuelAt` is a cross-plugin entry point taking any cell, and one of its
+ * callers (the thunderstorm strike event) bounds struck cells from below
+ * only. An out-of-world query is not this predicate's to crash on.
  *
  * AND, THROUGH THE BAR, WHETHER THE GROUND HAS BURNED (issues #290, #297). The
  * terrain terms have no memory of a fire, which was harmless while the fuel
@@ -149,6 +153,7 @@ export function isMeadowCell(
   x: number,
   y: number,
 ): boolean {
+  if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (!world.isCellUnlocked(x, y)) return false;
   // Crops, buildings and stumps win; trees do not (owner, 2026-08-24: grass
   // grows under trees). And burned ground is barred until it regrows (#297).
