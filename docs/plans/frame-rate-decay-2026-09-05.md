@@ -257,9 +257,39 @@ not a diagnosed bug.
 server-state driven, but **what** allocates them is not yet identified — three
 exposes no texture list the way it does for programs.
 
-Next step: wrap `WebGLRenderingContext.createTexture` in the probe the way GL
-uploads are already wrapped, and attribute by allocation stack. This is the one
-thread in this document that is not run to ground.
+**Leading hypothesis (source-read 2026-09-05, NOT yet confirmed by measurement):
+on-demand GLB asset loading as content types first appear — the same bounded
+warm-up shape as the program catalogue in §6, not a leak.**
+
+Supporting the hypothesis: every texture-*constructing* site in the client and
+plugins is bounded or shared, so none of them can account for +69.
+
+| site | why it cannot be the growth |
+| --- | --- |
+| `plugins/structures/client/models.ts:2258` | `DURANDS_SIGN_TEXTURE` is built once at module init and shared by every instance (`models.ts:2262`) |
+| `plugins/monsters/client/geometry.ts:444,637` | memoised — `if (furTexture === undefined) furTexture = furShadeTexture()` (`geometry.ts:1094`) |
+| `client/src/render/rigHerd.ts:226` | one palette per herd; herds are built eagerly, all ~15 at once (`plugins/wildlife/client/models.ts:466-486`) |
+| `revealMask.ts:183`, `water.ts:229`, `skyEnvironment.ts:182` | one each, at construction |
+| `celestialVoid.ts:1287,1389` | two render targets, at construction |
+| `plugins/structures/client/models.ts:335` | `part.material.clone()` — three's clone SHARES texture objects, as that file's own comment at `:315` states |
+
+That leaves textures arriving inside loaded assets (`ClientPluginCtx.loadRigAsset`
+— boats, saucers, structures, wildlife), where one GLB can carry many maps and a
+new building or creature type appearing for the first time pulls its whole set in
+at once.
+
+**How it will be settled:** a per-rig material/texture census was added to the
+`drift` scenario (`censusOf` in `client/src/perfProbe.ts`, commit `f419d7d`). It
+counts DISTINCT material and texture objects reachable from each `plugin:`/`core:`
+scene child, so the growth names its owner. If the hypothesis holds, the count
+rises in one or two content plugins and then plateaus; if instead it climbs
+without bound in a rig whose population is growing, it is per-instance allocation
+and a genuine leak.
+
+If the census proves insufficient, the fallback is wrapping
+`WebGL2RenderingContext.prototype.createTexture` the way GL uploads already are.
+
+Tracked as issue #377.
 
 ---
 
