@@ -24,7 +24,7 @@
 //
 // ADDING A SCENARIO is one function plus one entry in SCENARIOS.
 
-import { Vector3 } from 'three';
+import { Vector3, type Object3D } from 'three';
 import { CAMERA_MIN_DISTANCE, CELL_WORLD_SIZE, SCULPT_REPEAT_INTERVAL_MS } from './config.ts';
 import type { Connection } from './net/connection.ts';
 import type { ClientPluginHost } from './plugins/host.ts';
@@ -120,10 +120,92 @@ const ABLATION_SETTLE_FRAMES = 6;
  * window has to be at least that long or the trend it exists to show falls off
  * the end of it. Twelve points is enough to tell a straight climb from a step.
  */
-const DRIFT_BLOCKS = 12;
-const DRIFT_INTERVAL_MS = 20000;
+const DRIFT_BLOCKS_DEFAULT = 12;
+const DRIFT_INTERVAL_MS_DEFAULT = 20000;
+/** Page-URL query flags overriding the two above, for long soak runs. */
+const DRIFT_BLOCKS_QUERY_FLAG = 'blocks';
+const DRIFT_INTERVAL_QUERY_FLAG = 'interval';
 /** Frames per drift block — ABLATION_SAMPLE_FRAMES' reasoning, same tradeoff. */
 const DRIFT_SAMPLE_FRAMES = 90;
+/**
+ * Most newly-appeared program cache keys reported, and how much of each.
+ *
+ * A three cache key is a long concatenation of every parameter that selects a
+ * shader variant; the whole set would be tens of kilobytes of JSON for a
+ * finding that is legible from the first hundred characters. Forty keys is
+ * more than the largest growth observed (88 -> 127 programs over four
+ * minutes), so a truncated report cannot hide the tail that matters.
+ */
+const DRIFT_MAX_NEW_PROGRAMS = 40;
+/**
+ * How much of a program cache key is reported, as a HEAD and a TAIL with the
+ * middle elided.
+ *
+ * THE TAIL IS THE POINT, learned the hard way (2026-09-05): a first attempt
+ * reported the first 160 characters and every new key looked identical, because
+ * a three cache key opens with the material type and a long run of parameter
+ * booleans that barely vary — and ends with `customProgramCacheKey()`, which is
+ * where this codebase's own splices (`|groundShade`, `|revealClip`) append. A
+ * head-only view is blind to precisely the suffix that distinguishes one
+ * variant from another.
+ */
+const DRIFT_PROGRAM_KEY_HEAD_CHARS = 40;
+const DRIFT_PROGRAM_KEY_TAIL_CHARS = 140;
+
+/** A cache key shortened to its head and its (informative) tail. */
+function shortProgramKey(key: string): string {
+  if (key.length <= DRIFT_PROGRAM_KEY_HEAD_CHARS + DRIFT_PROGRAM_KEY_TAIL_CHARS) return key;
+  return `${key.slice(0, DRIFT_PROGRAM_KEY_HEAD_CHARS)}…[${String(key.length)} chars]…${key.slice(-DRIFT_PROGRAM_KEY_TAIL_CHARS)}`;
+}
+
+/**
+ * The cache keys of every program the renderer currently holds.
+ *
+ * `renderer.info.programs` is three's own live list and each entry carries the
+ * `cacheKey` it was compiled under, so this names WHICH shader variants exist
+ * rather than only how many — the difference between "programs grew by 39" and
+ * a finding.
+ */
+/**
+ * Renderable objects and triangles under one scene child.
+ *
+ * TRIANGLES ARE COUNTED FROM THE GEOMETRY, not from renderer.info: info's count
+ * is per-frame and post-culling, so it answers "what was drawn from here this
+ * frame" and cannot say whether a rig's CONTENT is growing — which is the whole
+ * question a census exists to answer. Instanced meshes multiply by their live
+ * `count`, because that is the number that actually grows as a population does.
+ */
+function censusOf(root: Object3D): { objects: number; triangles: number } {
+  let objects = 0;
+  let triangles = 0;
+  root.traverse((node: Object3D) => {
+    const mesh = node as Object3D & {
+      isMesh?: boolean;
+      isPoints?: boolean;
+      isLine?: boolean;
+      isInstancedMesh?: boolean;
+      count?: number;
+      geometry?: { index?: { count: number } | null; attributes?: { position?: { count: number } } };
+    };
+    if (mesh.isMesh !== true && mesh.isPoints !== true && mesh.isLine !== true) return;
+    objects++;
+    const geometry = mesh.geometry;
+    if (geometry === undefined) return;
+    const vertices = geometry.index?.count ?? geometry.attributes?.position?.count ?? 0;
+    const instances = mesh.isInstancedMesh === true ? (mesh.count ?? 0) : 1;
+    triangles += (vertices / 3) * instances;
+  });
+  return { objects, triangles: Math.round(triangles) };
+}
+
+function programCacheKeys(renderer: { info: { programs: unknown } }): string[] {
+  const programs = renderer.info.programs;
+  if (!Array.isArray(programs)) return [];
+  return programs.map((program: unknown) => {
+    const key = (program as { cacheKey?: unknown }).cacheKey;
+    return typeof key === 'string' ? key : '<no cacheKey>';
+  });
+}
 
 /** Scene-child name prefix the plugin host gives every plugin layer (host.ts). */
 const PLUGIN_LAYER_PREFIX = 'plugin:';
@@ -1111,6 +1193,9 @@ const ablateScenario: Scenario = async (ctx) => {
  */
 const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
   const { renderer } = ctx.viewport;
+  const query = new URLSearchParams(location.search);
+  const blockCount = Number(query.get(DRIFT_BLOCKS_QUERY_FLAG) ?? DRIFT_BLOCKS_DEFAULT);
+  const intervalMs = Number(query.get(DRIFT_INTERVAL_QUERY_FLAG) ?? DRIFT_INTERVAL_MS_DEFAULT);
   // The CONTROL for the `drift` finding. Frozen, no server state reaches the
   // client at all, so anything still growing across the window is grown by the
   // client itself — a leak — and anything that stops growing was the world
@@ -1120,8 +1205,10 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
   const startedAt = performance.now();
   const blocks: Record<string, unknown>[] = [];
   let firstBlock: FrameBlock | null = null;
-  for (let index = 0; index < DRIFT_BLOCKS; index++) {
-    const dueAt = startedAt + index * DRIFT_INTERVAL_MS;
+  let firstKeys: string[] = [];
+  let lastKeys: string[] = [];
+  for (let index = 0; index < blockCount; index++) {
+    const dueAt = startedAt + index * intervalMs;
     const waitMs = dueAt - performance.now();
     if (waitMs > 0) await wait(waitMs);
     const sampler = ctx.sampler();
@@ -1141,8 +1228,31 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
       programs: renderer.info.programs === null ? 0 : renderer.info.programs.length,
+      // Per block, so the composition of the churn can be compared across the
+      // window and not only its total. createSampler clears the shape map per
+      // block, so these are this block's uploads alone.
+      uploadTopShapes: Object.fromEntries(
+        Object.entries(block.uploadByShape)
+          .slice(0, 6)
+          .map(([key, value]) => [
+            key,
+            { callsPerFrame: value.calls / block.frames, msPerFrame: value.ms / block.frames },
+          ]),
+      ),
+      // Per-rig content census: which owner's population is growing.
+      census: Object.fromEntries(
+        ctx.viewport.scene.children
+          .filter((child) => ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix)))
+          .map((child) => {
+            const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
+            const counted = censusOf(child);
+            return [prefix === undefined ? child.name : child.name.slice(prefix.length), counted];
+          }),
+      ),
     });
-    ctx.beat(`drift-${String(index + 1)}-of-${String(DRIFT_BLOCKS)}`);
+    if (index === 0) firstKeys = programCacheKeys(renderer);
+    lastKeys = programCacheKeys(renderer);
+    ctx.beat(`drift-${String(index + 1)}-of-${String(blockCount)}`);
   }
   ctx.freeze(false);
   const first = blocks[0]!;
@@ -1151,13 +1261,32 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
     // The FIRST block is the scenario's headline sample: it is the one taken
     // under the same conditions every other scenario reports, so `fpsMean` at
     // the top level stays comparable with them rather than meaning something
-    // new only this scenario understands. DRIFT_BLOCKS is a positive literal,
-    // so the loop above always ran and this is never null.
+    // new only this scenario understands. The loop above always runs at least
+    // once (blockCount falls back to a positive literal), so this is set.
     sample: firstBlock!,
     detail: {
       frozen: freezeSim,
+      blockCount,
+      intervalMs,
       blocks,
       spanSeconds: Number(last['atSeconds']),
+      // WHICH programs appeared, not just how many. A key present at the end
+      // and absent at the start is a shader variant the running world asked for
+      // that the loaded world did not — the actual unit of the growth.
+      newPrograms: (() => {
+        const before = new Set(firstKeys);
+        const added = lastKeys.filter((key) => !before.has(key));
+        const counts = new Map<string, number>();
+        for (const key of added) {
+          const short = shortProgramKey(key);
+          counts.set(short, (counts.get(short) ?? 0) + 1);
+        }
+        return {
+          total: added.length,
+          distinct: counts.size,
+          keys: Object.fromEntries([...counts].slice(0, DRIFT_MAX_NEW_PROGRAMS)),
+        };
+      })(),
       grew: Object.fromEntries(
         (['gpuMsP50', 'frameMsP50', 'drawCalls', 'triangles', 'geometries', 'textures', 'programs'] as const).map(
           (key) => [key, { from: first[key], to: last[key] }],

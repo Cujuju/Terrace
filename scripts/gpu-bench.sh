@@ -64,6 +64,11 @@ esac
 # and 2567, and a bench must never touch them (scripts/gpu-bench.md).
 PROBE_URL=${TERRACE_PROBE_URL:-http://localhost:5199}
 
+# Extra query flags appended to the probe URL, e.g. '&blocks=90&interval=60000'
+# for a long `drift` soak. Scenario-specific flags belong to the scenario, not
+# to this script's argument list, so they pass through rather than being parsed.
+EXTRA_QUERY=${TERRACE_PROBE_EXTRA_QUERY:-}
+
 # How long the page is left alone before the scenario starts, in milliseconds.
 # Passed through to the probe's `settle` query flag, which defaults to the same
 # number; overridable for a small world that streams in faster.
@@ -88,6 +93,8 @@ WINDOWS_HOME=$(powershell.exe -NoProfile -Command '$env:USERPROFILE' | tr -d '\r
 CHROME_PROFILE_WIN="${WINDOWS_HOME}\\terrace-chrome-bench"
 CHROME_PROFILE_WSL="$(wslpath -u "$CHROME_PROFILE_WIN")"
 CHROME_EXE='C:\Program Files\Google\Chrome\Application\chrome.exe'
+# The same binary as a WSL path, for the direct launch below.
+CHROME_EXE_WSL=$(wslpath -u "$CHROME_EXE")
 FOREGROUND_PS1_WIN="$(wslpath -w "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gpu-bench-foreground.ps1")"
 
 # Kill ONLY this benchmark's Chrome, matched on the throwaway profile in its
@@ -119,7 +126,14 @@ HEADLESS_FLAGS=()
 # reach the adapter silently falls back to SwiftShader.
 [ "$HEADLESS" = 1 ] && HEADLESS_FLAGS=(--headless=new)
 
-cmd.exe /c start "" "$CHROME_EXE" \
+# LAUNCHED DIRECTLY, NOT THROUGH `cmd.exe /c start` (fixed 2026-09-05).
+# cmd re-parses its command line and treats `&` as a command separator, so
+# everything after the FIRST `&` of the probe URL was silently dropped: the
+# `settle` flag below never reached the page, and any scenario flag after it
+# could not either. It went unnoticed because the script's default settle and
+# the probe's own default are the same number. WSL execs a Windows binary with
+# a real argv, so nothing re-parses the URL.
+"$CHROME_EXE_WSL" \
   --user-data-dir="$CHROME_PROFILE_WIN" \
   --no-first-run --no-default-browser-check --new-window \
   --window-size=1600,900 \
@@ -129,7 +143,7 @@ cmd.exe /c start "" "$CHROME_EXE" \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \
   --disable-features=CalculateNativeWinOcclusion \
-  "${PROBE_URL}/?perfprobe=${SCENARIO}&settle=${SETTLE_MS}" >/dev/null 2>&1 &
+  "${PROBE_URL}/?perfprobe=${SCENARIO}&settle=${SETTLE_MS}${EXTRA_QUERY}" >/dev/null 2>&1 &
 
 case "$RAISE" in
   once)
