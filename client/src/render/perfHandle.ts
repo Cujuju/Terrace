@@ -28,6 +28,11 @@ import {
   type FrameStatsSample,
 } from './frameStats.ts';
 import { perfOpen, setFrameStats, setPerfOpen } from '../state/hudState.ts';
+import {
+  selfProfileAvailable,
+  startSelfProfile,
+  type SelfProfileResult,
+} from './selfProfile.ts';
 
 const PERF_LOG_QUERY_FLAG = 'perflog';
 /** Matches the query-flag convention in perfProbe.ts and audio/audioDebug.ts. */
@@ -148,6 +153,36 @@ export function installPerfHandle(): () => void {
       setPerfOpen(on ?? !perfOpen());
       return perfOpen();
     },
+    /**
+     * Samples this page's own call stacks for `seconds` and prints them ranked
+     * by self time — the one instrument that can name what inside
+     * `renderer.render` is growing (render/selfProfile.ts, issue #378).
+     *
+     * Run it on a page that has ALREADY decayed: a fresh page profiles the
+     * thing that is not yet wrong. Leave the tab in the foreground while it
+     * runs; Chrome stops sampling a page it considers hidden, exactly as it
+     * stops rAF.
+     */
+    profile: async (seconds = 10): Promise<SelfProfileResult> => {
+      const result = await startSelfProfile(seconds * 1000);
+      console.info(
+        `[perf] profile: ${String(Math.round(result.durationMs))}ms, ` +
+          `${String(result.sampleCount)} samples at ${result.sampleIntervalMs}ms` +
+          (result.truncated ? ' (TRUNCATED - buffer filled)' : ''),
+      );
+      console.table(
+        result.rows.map((r) => ({
+          fn: r.name,
+          site: r.site,
+          selfMs: Math.round(r.selfMs),
+          self: r.selfSamples,
+          total: r.totalSamples,
+        })),
+      );
+      return result;
+    },
+    /** Whether this page is allowed to profile itself at all. */
+    canProfile: (): boolean => selfProfileAvailable(),
     /** Start or stop the per-window console line; no argument toggles it. */
     log: (on?: boolean): boolean => {
       setLogging(on ?? !logging());

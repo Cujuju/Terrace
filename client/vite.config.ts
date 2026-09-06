@@ -124,6 +124,23 @@ export default defineConfig({
     __CLIENT_VERSION__: JSON.stringify(buildVersion()),
   },
   server: {
+    // THE ONE HEADER THAT MAKES `render()` OPENABLE (issue #378). Chrome gates
+    // the JS Self-Profiling API behind this document policy: with it, the page
+    // can sample its OWN call stacks (render/selfProfile.ts) and post the trace
+    // back here. Without it `window.Profiler` does not exist.
+    //
+    // WHY IT HAD TO BE THIS AND NOT DEVTOOLS. The decay lives inside
+    // `renderer.render`, which cannot be sub-timed from outside three, so the
+    // remaining move was a sampled CPU profile of a page that has already
+    // decayed. Only Windows-side Chrome has the discrete GPU, and the WSL2 NAT
+    // boundary passes Windows -> WSL only, so an inbound CDP socket from here
+    // times out (scripts/gpu-bench.md) and the profile could not be started
+    // from this side. A page that profiles ITSELF needs no inbound socket.
+    //
+    // Dev-server only, and it grants nothing to anyone: it permits this origin
+    // to profile its own JavaScript, which is what a profiler in the browser's
+    // own devtools already does.
+    headers: { 'Document-Policy': 'js-profiling' },
     // Colyseus owns 2567 (design doc §8 "Configuration"); keep the dev server
     // clear of it so both can run side by side.
     port: 5173,
