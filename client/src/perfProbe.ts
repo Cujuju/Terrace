@@ -197,6 +197,8 @@ function censusOf(root: Object3D): {
   triangles: number;
   materials: number;
   textures: number;
+  /** The texture objects themselves, so callers can union across rigs. */
+  textureSet: Set<unknown>;
 } {
   let objects = 0;
   let triangles = 0;
@@ -255,6 +257,7 @@ function censusOf(root: Object3D): {
     triangles: Math.round(triangles),
     materials: materials.size,
     textures: textures.size,
+    textureSet: textures,
   };
 }
 
@@ -1326,6 +1329,20 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
             { callsPerFrame: value.calls / block.frames, msPerFrame: value.ms / block.frames },
           ]),
       ),
+      // THE DISPOSAL GAP. `textures` above is three's count of what it has
+      // uploaded and not disposed; the census below counts only what is
+      // REACHABLE from the scene graph. A texture whose mesh was dropped
+      // without `.dispose()` stays in the first number and vanishes from the
+      // second, so a widening gap is a disposal leak — and one that a
+      // scene-walking census alone would report as "nothing is growing".
+      censusTexturesReachable: (() => {
+        const all = new Set<unknown>();
+        for (const child of ctx.viewport.scene.children) {
+          if (!ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix))) continue;
+          for (const texture of censusOf(child).textureSet) all.add(texture);
+        }
+        return all.size;
+      })(),
       // Per-rig content census: which owner's population is growing.
       census: Object.fromEntries(
         ctx.viewport.scene.children
@@ -1333,7 +1350,15 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
           .map((child) => {
             const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
             const counted = censusOf(child);
-            return [prefix === undefined ? child.name : child.name.slice(prefix.length), counted];
+            return [
+              prefix === undefined ? child.name : child.name.slice(prefix.length),
+              {
+                objects: counted.objects,
+                triangles: counted.triangles,
+                materials: counted.materials,
+                textures: counted.textures,
+              },
+            ];
           }),
       ),
     });
