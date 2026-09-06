@@ -54,11 +54,8 @@ import { WHALE_SPECIES, type WhaleSpecies } from './whaleSpecies.ts';
 import { buildHumpback } from './species/humpback.ts';
 import { buildBlueWhale } from './species/blueWhale.ts';
 import { buildSpermWhale } from './species/spermWhale.ts';
-import {
-  WILDLIFE_SIZE_MODEL_SCALE,
-  type WildlifeSizeClass,
-  type WildlifeSpecies,
-} from '../protocol.ts';
+import { type WildlifeSizeClass, type WildlifeSpecies } from '../protocol.ts';
+import { modelScaleFor } from './modelScale.ts';
 // One file per species (./species/), each the sole author of its own anatomy
 // and animation. This file no longer draws a fish or a grazer; it lends the
 // pool and bakes whatever the species file hands back. See
@@ -202,7 +199,8 @@ export interface WildlifeModels {
    * `sizeClass` scales the whole rig uniformly — the geometries stay shared and
    * un-scaled (they are the medium-sized authoring, see
    * WILDLIFE_SIZE_MODEL_SCALE), so a size class costs three numbers in an
-   * instance matrix and not a second copy of every buffer.
+   * instance matrix and not a second copy of every buffer. The species' own
+   * draw scale rides in the same number (./modelScale.ts).
    *
    * `variantSeed` picks between bodies where a species has more than one — only
    * whales do. It must be STABLE for a creature's whole life (the caller passes
@@ -539,7 +537,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         yaw,
         // Uniform, in the instance matrix: the pose palette holds rig-space
         // transforms only, so nothing an animation does can overwrite it.
-        WILDLIFE_SIZE_MODEL_SCALE[sizeClass],
+        modelScaleFor(species, sizeClass),
       );
     },
     endFrame() {
