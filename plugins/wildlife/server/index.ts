@@ -123,6 +123,7 @@ import {
   resetPopulation,
 } from './population.ts';
 import { closeFireBridge, loadFireBridge, registerWildlifeFuel } from './fire-bridge.ts';
+import { emitShoals } from './shoals.ts';
 
 /**
  * Ticks between broadcasts. 2 → 5 Hz at the shipped TICK_HZ of 10. See the
@@ -223,7 +224,9 @@ let tickCount = 0;
  *   4. flocks — the transient sky: arrivals, flight, departures (flocks.ts).
  *      It runs AFTER the habitat sweep and shares no state with steps 1–3
  *      beyond the entity-id allocator, which is the whole point of the split;
- *   5. broadcast, on the cadence — habitat creatures and birds in one message,
+ *   5. shoals — one centroid per fishable school onto the event bus
+ *      (shoals.ts). Server-side only, no wire bytes;
+ *   6. broadcast, on the cadence — habitat creatures and birds in one message,
  *      because the client's parser, interpolator and view reconciliation are all
  *      keyed by id and do not care which subsystem produced a row.
  *
@@ -234,6 +237,7 @@ function simulate(world: WorldApi, dt: number): void {
   advanceMovement(world, dt);
   despawnInvalidHabitat(world);
   advanceFlocks(world, dt);
+  emitShoals(world);
 
   tickCount++;
   if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
