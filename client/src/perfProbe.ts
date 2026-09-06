@@ -46,6 +46,23 @@ const PROBE_QUERY_FLAG = 'perfprobe';
 /** Page-URL query flag overriding SETTLE_MS_DEFAULT, in milliseconds. */
 const SETTLE_QUERY_FLAG = 'settle';
 /**
+ * Page-URL query flag naming `texSubImage2D` shapes to SKIP, comma separated
+ * (`&suppressUploads=92x32,68x32`).
+ *
+ * WHAT IT IS FOR: pricing a fix before anyone builds it. The pose-palette work
+ * (docs/plans/frame-rate-decay-2026-09-05.md §4) claims that removing the
+ * per-frame herd palette re-upload is worth some number of milliseconds, and
+ * the honest way to learn that number is to remove the uploads and measure —
+ * not to predict it. Suppressing them here answers the performance question
+ * exactly while touching no rendering code, which matters on a shared checkout
+ * that other agents are committing to.
+ *
+ * THE RENDERING IS WRONG WHILE THIS IS ON — poses freeze at whatever was last
+ * uploaded. It is a measurement instrument, never a fix, and it is inert unless
+ * the flag names a shape.
+ */
+const SUPPRESS_UPLOADS_QUERY_FLAG = 'suppressUploads';
+/**
  * How long the page is left alone before a scenario starts, in milliseconds.
  *
  * FORTY-FIVE SECONDS, measured rather than guessed: a default 2048-cell world
@@ -334,6 +351,9 @@ function resetGlUpload(): void {
   // byShape is deliberately NOT reset here; see its doc comment.
 }
 
+/** texSubImage2D shapes (`WxH`) the current page is suppressing; empty = none. */
+const suppressedUploadShapes = new Set<string>();
+
 function installGlUploadAccounting(): void {
   const proto = WebGL2RenderingContext.prototype;
   const viewBytes = (value: unknown): number =>
@@ -352,6 +372,18 @@ function installGlUploadAccounting(): void {
       this: WebGL2RenderingContext,
       ...args: unknown[]
     ) {
+      // texSubImage2D ONLY. The other two entry points are keyed by a byte
+      // bucket, not a pixel shape, and suppressing a vertex buffer would remove
+      // geometry rather than a texture update — a different experiment, and not
+      // one anything here asks for.
+      const shape = name === 'texSubImage2D' ? shapeOf(args, 0) : '';
+      if (shape !== '' && suppressedUploadShapes.has(shape)) {
+        // Counted as a suppressed call and NOT issued. Deliberately still
+        // recorded, so a run reports how many uploads it removed rather than
+        // silently reporting fewer.
+        recordUploadShape(`${name} ${shape} SUPPRESSED`, 0, 0);
+        return undefined;
+      }
       const started = performance.now();
       const result = original.apply(this, args);
       const ms = performance.now() - started;
@@ -1465,6 +1497,12 @@ export function installPerfProbe(deps: {
     return;
   }
 
+  for (const shape of (new URLSearchParams(location.search).get(SUPPRESS_UPLOADS_QUERY_FLAG) ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')) {
+    suppressedUploadShapes.add(shape);
+  }
   installGlUploadAccounting();
   wrapSinkTiming(world);
 
