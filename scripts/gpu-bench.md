@@ -69,6 +69,18 @@ self-matches the shell running it, and would take out other agents' processes.
 **Vite on `/mnt/e` never watches** (drvfs delivers no inotify events). Restart
 Vite after every client edit or you are benchmarking the old bundle.
 
+**Record the pid of `node`, not of `npx`.** `npx vite` spawns the server as a
+child, so `$!` names the wrapper: killing it leaves the real server holding the
+port, the replacement dies on `--strictPort`, and the bench happily measures the
+old bundle. Launch it directly — `node client/node_modules/vite/bin/vite.js
+--port 5198 --strictPort --host` — so the pid you record is the pid that serves.
+This cost a whole D1 measurement on 2026-09-06.
+
+Every run now checks the sample's `clientVersion` against
+`TERRACE_EXPECT_VERSION` (or this checkout's HEAD) and warns when the page is
+not running the code under test. Heed it — that warning is the only thing
+between a failed restart and a number for the wrong build.
+
 ### 2. One sample
 
 ```bash
@@ -120,6 +132,11 @@ The launched Chrome gets the lock fd closed (`9>&-`). It outlives the script by
 design, and a child that inherits the fd inherits the lock: measured 2026-09-06,
 the lock stayed held by `chrome.exe` after the run finished and the next run was
 refused, naming the run that had already ended.
+
+A run that prints a sample **closes its own window**. Left standing it kept
+rendering the scene with vsync off — nine chrome processes still on the GPU after
+the run printed (2026-09-06). A run that reports nothing keeps its window: then
+the window is the evidence.
 
 Each run's Chrome profile is `~/terrace-chrome-bench-<pid>` on the Windows side.
 Before 2026-09-06 it was a single shared directory that every launch killed and

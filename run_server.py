@@ -408,7 +408,16 @@ def main(watch: bool) -> int:
     # PORT the server is being handed. setdefault, so an explicit
     # VITE_SERVER_URL in the shell still wins - the Docker Compose path relies
     # on that.
-    env.setdefault("VITE_SERVER_URL", f"ws://localhost:{env.get('PORT', 2567)}")
+    # THE PORT ONLY - NEVER THE HOST (owner bug report 2026-09-06: "I can bring
+    # up the client, but I can't connect to the server", playing from a second
+    # machine on the LAN). This used to set VITE_SERVER_URL to a whole endpoint
+    # beginning ws://localhost, which fixed the port by hard-wiring the host,
+    # and `localhost` on a visitor's machine is THAT MACHINE. The client already
+    # derives the hostname from the page it was served by, precisely so a LAN
+    # visitor dials the server that served them (client/src/config.ts) - the
+    # override was defeating it. VITE_SERVER_URL is still the whole-endpoint
+    # override and still wins if the shell sets it, for Docker Compose.
+    env.setdefault("VITE_SERVER_PORT", str(env.get("PORT", 2567)))
 
     # IN DEV MODE, DO NOT LET THE GAME SERVER SERVE client/dist.
     #

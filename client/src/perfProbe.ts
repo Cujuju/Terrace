@@ -1656,7 +1656,18 @@ export function installPerfProbe(deps: {
       frozenState.on = on;
     },
     postPartial: (body): void => {
-      post({ scenario: name, partial: true, ...body });
+      // The drawing buffer travels with EVERY partial, not just the final
+      // report. A long soak that dies part-way — the bench Chrome swept by a
+      // concurrent run, a reload — still leaves its blocks in the sink, and a
+      // block that cannot say what resolution it was taken at cannot be read
+      // at all (see FrameCounters in render/frameStats.ts).
+      post({
+        scenario: name,
+        partial: true,
+        pixelWidth: renderer.domElement.width,
+        pixelHeight: renderer.domElement.height,
+        ...body,
+      });
     },
     beat,
   };

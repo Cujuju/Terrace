@@ -151,16 +151,21 @@ CHROME_EXE='C:\Program Files\Google\Chrome\Application\chrome.exe'
 CHROME_EXE_WSL=$(wslpath -u "$CHROME_EXE")
 FOREGROUND_PS1_WIN="$(wslpath -w "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gpu-bench-foreground.ps1")"
 
-# Kill ONLY this benchmark's Chrome, matched on the throwaway profile prefix in
-# its command line. Never a bare pkill: that self-matches this script's own
-# command line and would take down whatever else happened to mention chrome.
+# Kill ONLY this benchmark's Chrome, matched on the throwaway profile in its
+# command line. Never a bare pkill: that self-matches this script's own command
+# line and would take down whatever else happened to mention chrome.
+kill_bench_chrome() {
+  powershell.exe -NoProfile -Command \
+    "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { \$_.CommandLine -like '*$1*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
+    >/dev/null 2>&1
+}
+
+# The sweep, on the PREFIX: every bench profile, not just this run's.
 # The prefix sweeps EVERY bench profile, not just this run's, which the lock
 # above makes safe by construction: while it is held no other bench is live, so
 # each surviving profile belongs to a run that has already finished. That is
 # what keeps per-run profile directories from accumulating.
-powershell.exe -NoProfile -Command \
-  "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { \$_.CommandLine -like '*${BENCH_PROFILE_PREFIX}*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
-  >/dev/null 2>&1
+kill_bench_chrome "$BENCH_PROFILE_PREFIX"
 find "$WINDOWS_HOME_WSL" -maxdepth 1 -type d -name "${BENCH_PROFILE_PREFIX}*" \
   -exec rm -rf {} + 2>/dev/null
 
@@ -250,6 +255,34 @@ sample['scenario'] = '$SCENARIO'
 sample['launchMode'] = '$RAISE' if '$HEADLESS' == '0' else 'headless'
 print(json.dumps(sample))
 "
+
+# THE SAMPLE IS IN, SO THE WINDOW HAS DONE ITS JOB. Left running it renders this
+# scene with vsync off for as long as the machine is up — measured 2026-09-06:
+# nine chrome processes still on the GPU after the run printed. It is killed on
+# SUCCESS only; a run that reported nothing leaves its window standing, because
+# then the window is the evidence.
+kill_bench_chrome "$BENCH_PROFILE_DIR"
+
+# IS THE PAGE EVEN RUNNING THE CODE UNDER TEST? A dev server that failed to
+# restart keeps serving the old bundle on the same port, and the run reports a
+# clean number for the wrong build — it cost a whole D1 measurement on
+# 2026-09-06 before the sample's own clientVersion gave it away. Compared here
+# rather than left to the reader: TERRACE_EXPECT_VERSION when the caller knows
+# what it started Vite as, else this checkout's HEAD.
+BENCH_HEAD_VERSION=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || true)
+EXPECT_VERSION=${TERRACE_EXPECT_VERSION:-$BENCH_HEAD_VERSION}
+SAMPLE_VERSION=$(printf '%s' "$RESULT" | python3 -c "
+import json, sys
+print(json.load(sys.stdin).get('clientVersion', ''))
+" 2>/dev/null)
+case "$SAMPLE_VERSION" in
+  *"$EXPECT_VERSION"*) ;;
+  *)
+    echo "WARNING: the page reports clientVersion '${SAMPLE_VERSION}', which does not carry '${EXPECT_VERSION}'." >&2
+    echo "  Either Vite is serving another checkout on purpose, or its restart failed and you just" >&2
+    echo "  benchmarked the OLD bundle. Check which pid holds the port before quoting this number." >&2
+    ;;
+esac
 
 # A SwiftShader number cannot judge anything here — say so rather than let it be
 # quoted as a frame time.
