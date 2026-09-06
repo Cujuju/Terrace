@@ -180,6 +180,30 @@ Now the decisive part — what those `animate` functions actually depend on:
   `fish.ts:42` — `beat = seconds * FISH_TAIL_HZ * TWO_PI + phase`;
   `shark.ts:40` — `Math.sin(seconds * TAIL_HZ * TWO_PI + phase)`.
 
+### AMENDMENT (2026-09-06 04:25) — what this fix is actually for
+
+Eighteen runs' upload accounting, cross-tabulated, changes the claim below in
+one important way. The **same** upload shape costs wildly different amounts
+between runs (`332x32` ranges **0.010 → 1.462 ms per call**), and several runs
+sit at **8.46–8.86 ms GPU with total uploads of only ~0.5 ms/frame** — 6 % of
+the frame. So palette uploads are **not** the general driver of a heavy frame,
+and where they are large they may be a *symptom* of a busy GPU (a stall is
+longer when more work is in flight) rather than its cause.
+
+What survives, and it is still worth fixing:
+
+- The upload stall is **CPU time on the main thread** — it is measured with
+  `performance.now()` around the GL call, and it blocks. On the slowest 1 % of
+  frames it was **31.65 ms of a 42.35 ms frame**.
+- In the worst runs total upload was **3.2–4.6 ms/frame of a ~9.8 ms frame**
+  (33–47 %).
+
+So the pose-palette fix targets **the hitch and the tail (`msP99`, `msMax`) —
+the stutter — not the steady-state GPU median.** That is a narrower and more
+honest claim than the one below, and it is the one the fix should be measured
+against. Removing the upload removes real blocking main-thread time whatever
+causes the stall, so the fix is sound even under the revised causality.
+
 **Root cause in one sentence:** `rigHerd` invalidates its entire pose cache
 every frame, so every active species pays a full, stalling palette texture
 upload per frame for contents that are either unchanged (walkers) or a
@@ -387,12 +411,42 @@ that answers it.
 
 ---
 
+## 7c. What actually predicts a heavy frame — still open (2026-09-06)
+
+Across 117 measured blocks tonight, **nothing yet explains the 2.1 → 11.3 ms
+range on one world file**:
+
+| candidate | correlation with GPU ms | verdict |
+| --- | --- | --- |
+| draw calls | 0.50 | weak, and **non-monotonic** — 282–320 draws cost 6.5–9.8 ms while 354–405 draws cost 3.4–5.7 ms |
+| triangles | 0.60 | weak; flora is a third of the scene's triangles and costs ~1 ms |
+| upload ms/frame | — | large in only 4 of 18 runs; several 8.5 ms runs upload 0.5 ms/frame |
+| page uptime | — | **refuted** — every `gpu-bench.sh` run launches a fresh Chrome, so all of these are fresh pages |
+| world age | — | **refuted** — a 4 h-old world renders in 2.76 ms |
+
+Fewer draw calls costing *more* time is the signature of **fill / overdraw**:
+transparent full-screen layers (cyclone deck, rain, fog, thunderstorm glow) add
+almost no draw calls and enormous per-pixel work. The heavy cluster is the
+session in which the ablation found storms present.
+
+**The decisive test is queued** (`renderScale` flag, commit `92700aa`): render
+the same scene at 1.0 / 0.7 / 0.5 pixel scale. GPU time proportional to pixel
+count ⇒ fill-bound, and the work belongs in overdraw (layer count, blend cost,
+half-res effect passes). No scaling ⇒ fill is exonerated and the search
+continues.
+
+**Do not start §8 item 0 or a weather-overdraw change until that test reports.**
+Three hypotheses have already been retracted tonight; this one is not yet
+evidence.
+
+---
+
 ## 8. Ranked plan
 
 | # | Fix | Evidence | Est. size | Expected |
 | --- | --- | --- | --- | --- |
-| 0 | **Find and stop the page-side accumulation (§7b)** | fresh page 2.76 ms vs aged page 9.82 ms on the SAME world | unknown until the census names the owner | this is the decay; everything below is secondary to it |
-| 1 | Pose palette → immutable LUT (§4) | proven from source + measured 0.2–0.9 ms per active herd per frame | medium, contained to `rigHerd.ts` + species slot indexing | removes a per-frame stall, and stalls are what page-side accumulation makes worse |
+| 0 | **Identify what makes a heavy frame heavy (§7c)** — fill-rate test queued | 2.1–11.3 ms on one world; draws/triangles/uploads/page-age all fail to explain it | investigation, not a change | the actual decay; everything below is secondary |
+| 1 | Pose palette → immutable LUT (§4 + amendment) | re-upload of unchanged data proven from source; 31.65 ms of a 42.35 ms worst-1% frame is upload stall | medium, contained to `rigHerd.ts` + species slot indexing | targets the HITCH (`msP99`/`msMax`), not the GPU median |
 | 2 | Boats instancing (§5) — **demoted, see §7b** | 45 draw calls on a fresh page; the ~150 figure measured an aged page | medium | draw-call reduction only; no leak demonstrated |
 | 3 | Precompile shader catalogue (§6) | 74→~125 programs, converging | small | removes ~50 mid-play compile stalls (p99/max) |
 | 4 | Idempotent `applyRevealClip` / `applyGroundShade` (§6) | latent, not observed | small | prevents a duplicate-program class of bug |
