@@ -13,7 +13,7 @@
 // The imperative half lives here; the maths it needs is in ./gems.ts (pure and
 // tested) and the reactive state it shares with the panel is in ./state.ts.
 
-import { Mesh, type ShaderMaterial } from 'three';
+import { Color, Mesh, type BufferGeometry, type ShaderMaterial } from 'three';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
   CAST_DENIED_MESSAGE,
@@ -34,9 +34,16 @@ import {
   gemGroundY,
   gemPhaseFor,
   gemSpinAngle,
+  relicColor,
   relicUnderCell,
 } from './gems.ts';
 import { createGemMaterial } from './gemMaterial.ts';
+import {
+  createSpireMaterial,
+  spireAlpha,
+  spireGeometry,
+  SPIRE_RENDER_ORDER,
+} from './relicSpire.ts';
 import { disposeRelicGeometries, relicGeometry } from './relicShapes.ts';
 import { RelicsHeaderLine, RelicsPanel } from './RelicsPanel.tsx';
 import {
@@ -53,12 +60,24 @@ import {
 /** Primary pointer button (mouse left / the only touch button). */
 const PRIMARY_BUTTON = 0;
 
-/** One rendered relic: its mesh plus the animation phase that keeps it out of
- * lockstep with its neighbours. */
+/** One rendered relic: its two meshes plus the animation phase that keeps it
+ * out of lockstep with its neighbours. */
 interface GemEntry {
   readonly mesh: Mesh;
+  readonly spire: Mesh;
   readonly phaseS: number;
   readonly relic: RelicView;
+}
+
+/**
+ * The column geometry every spire shares (relicSpire.ts), built on first use
+ * and released with the per-skill gem geometries on dispose.
+ */
+let spireShape: BufferGeometry | null = null;
+
+function sharedSpireGeometry(): BufferGeometry {
+  spireShape ??= spireGeometry();
+  return spireShape;
 }
 
 /** Seconds since attach, driving bob and spin. */
@@ -68,17 +87,26 @@ let elapsedS = 0;
 const gems = new Map<string, GemEntry>();
 
 function disposeGem(entry: GemEntry): void {
-  entry.mesh.removeFromParent();
-  // The geometry is shared per skill and outlives the gem (relicShapes.ts);
-  // the material is per-relic.
-  (entry.mesh.material as ShaderMaterial).dispose();
+  for (const mesh of [entry.mesh, entry.spire]) {
+    mesh.removeFromParent();
+    // The geometries are shared — per skill for the gem (relicShapes.ts), one
+    // for every spire (above) — and outlive the relic; the materials are
+    // per-relic, because each carries its own colour and its own pulse.
+    (mesh.material as ShaderMaterial).dispose();
+  }
 }
 
 function createGem(relic: RelicView): GemEntry {
   const geometry = relicGeometry(relic.skill);
   const mesh = new Mesh(geometry, createGemMaterial(geometry.boundingSphere!.radius));
   mesh.name = `relic:${relic.id}`;
-  return { mesh, phaseS: gemPhaseFor(relic.id), relic };
+  const spire = new Mesh(
+    sharedSpireGeometry(),
+    createSpireMaterial(new Color(relicColor(relic.skill))),
+  );
+  spire.name = `relic-spire:${relic.id}`;
+  spire.renderOrder = SPIRE_RENDER_ORDER;
+  return { mesh, spire, phaseS: gemPhaseFor(relic.id), relic };
 }
 
 /**
@@ -99,7 +127,7 @@ function syncGems(ctx: ClientPluginCtx, next: readonly RelicView[]): void {
   for (const relic of next) {
     if (gems.has(relic.id)) continue;
     const entry = createGem(relic);
-    ctx.layer.add(entry.mesh);
+    ctx.layer.add(entry.mesh, entry.spire);
     gems.set(relic.id, entry);
   }
 }
@@ -127,6 +155,7 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
     const ground = gemGroundY(sample, entry.relic.x, entry.relic.y);
     if (ground === null) {
       entry.mesh.visible = false;
+      entry.spire.visible = false;
       continue;
     }
 
@@ -137,6 +166,19 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
       entry.relic.y * CELL_WORLD_SIZE,
     );
     entry.mesh.rotation.y = gemSpinAngle(elapsedS, entry.phaseS);
+
+    // The spire stands on the ground and neither bobs nor spins (relicSpire.ts):
+    // only its intensity moves.
+    entry.spire.visible = true;
+    entry.spire.position.set(
+      entry.relic.x * CELL_WORLD_SIZE,
+      ground,
+      entry.relic.y * CELL_WORLD_SIZE,
+    );
+    (entry.spire.material as ShaderMaterial).uniforms.uAlpha!.value = spireAlpha(
+      elapsedS,
+      entry.phaseS,
+    );
   }
 }
 
@@ -182,10 +224,12 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
 }
 
 /**
- * Draw objects one relic costs: ONE mesh per gem (`createGem` above) — the
- * per-skill shapes are merged into a single geometry (relicShapes.ts).
+ * Draw objects one relic costs: TWO meshes — the gem, whose per-skill shape is
+ * merged into a single geometry (relicShapes.ts), and its spire of light
+ * (relicSpire.ts), which is a second mesh because it must not bob or spin with
+ * the gem.
  */
-const RELIC_DRAW_OBJECTS = 1;
+const RELIC_DRAW_OBJECTS = 2;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: 'relics',
@@ -246,6 +290,8 @@ export const clientPlugin: TerraceClientPlugin = {
     for (const entry of gems.values()) disposeGem(entry);
     gems.clear();
     disposeRelicGeometries();
+    spireShape?.dispose();
+    spireShape = null;
     elapsedS = 0;
   },
 };
