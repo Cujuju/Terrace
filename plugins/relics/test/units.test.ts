@@ -53,7 +53,7 @@ describe('mana perk composition', () => {
       costMultiplier: NEUTRAL_MULTIPLIER,
       regenMultiplier: NEUTRAL_MULTIPLIER,
     });
-    expect(composeManaPerk(['titans-hand', 'quake'])).toEqual({
+    expect(composeManaPerk(['bedrock-ward', 'quake'])).toEqual({
       costMultiplier: NEUTRAL_MULTIPLIER,
       regenMultiplier: NEUTRAL_MULTIPLIER,
     });
@@ -80,7 +80,7 @@ describe('mana perk composition', () => {
     expect(isPerkSkill('azure-heart')).toBe(true);
     expect(isPerkSkill('spring-of-aether')).toBe(true);
     expect(isPerkSkill('quake')).toBe(false);
-    expect(isPerkSkill('titans-hand')).toBe(false);
+    expect(isPerkSkill('bedrock-ward')).toBe(false);
   });
 });
 

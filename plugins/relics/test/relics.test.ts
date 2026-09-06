@@ -57,7 +57,6 @@ import {
   RELIC_KEEPALIVE_S,
   RELIC_RESPAWN_S,
   RELIC_SPAWN_RETRY_S,
-  TITANS_HAND_RADIUS_BONUS,
   cooldownOf,
   currentRelics,
   plugin as relicsPlugin,
@@ -289,16 +288,16 @@ describe('relics plugin', () => {
       expect(skillsOf(PLAYER.id)).toEqual([]);
       harness.sink.clear();
 
-      collectSkill(harness, 'titans-hand');
+      collectSkill(harness, 'bedrock-ward');
 
-      expect(skillsOf(PLAYER.id)).toEqual(['titans-hand']);
-      expect(currentRelics().some((relic) => relic.skill === 'titans-hand')).toBe(false);
+      expect(skillsOf(PLAYER.id)).toEqual(['bedrock-ward']);
+      expect(currentRelics().some((relic) => relic.skill === 'bedrock-ward')).toBe(false);
       expect(harness.sink.ofType(`relics:${RELICS_MESSAGE}`).length).toBeGreaterThan(0);
 
       const pushed = harness.sink.ofType(`relics:${SKILLS_MESSAGE}`);
       expect(pushed[pushed.length - 1].target).toBe(PLAYER.id);
       expect(pushed[pushed.length - 1].payload).toEqual({
-        skills: [{ id: 'titans-hand', kind: 'passive', cooldownS: 0, cooldownRemainingS: 0 }],
+        skills: [{ id: 'bedrock-ward', kind: 'passive', cooldownS: 0, cooldownRemainingS: 0 }],
       });
     });
 
@@ -321,80 +320,12 @@ describe('relics plugin', () => {
     });
 
     it('drops a session’s skills entirely when its player leaves', () => {
-      collectSkill(harness, 'titans-hand');
-      expect(skillsOf(PLAYER.id)).toEqual(['titans-hand']);
+      collectSkill(harness, 'bedrock-ward');
+      expect(skillsOf(PLAYER.id)).toEqual(['bedrock-ward']);
 
       harness.world.removePlayer(PLAYER.id);
       harness.host.playerLeft(PLAYER);
       expect(skillsOf(PLAYER.id)).toEqual([]);
-    });
-  });
-
-  describe("passive skill — Titan's Hand", () => {
-    beforeEach(() => {
-      harness = boot();
-    });
-
-    it('is inert for a player who does not hold it', () => {
-      const verdict = harness.host.runIntent(
-        { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: 2, dir: 1 },
-        PLAYER,
-      );
-      expect(verdict).toEqual({ kind: 'allow' });
-    });
-
-    it('returns a modify verdict widening the brush by exactly the bonus', () => {
-      collectSkill(harness, 'titans-hand');
-
-      const verdict = harness.host.runIntent(
-        { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: 2, dir: 1 },
-        PLAYER,
-      );
-      expect(verdict).toEqual({
-        kind: 'modify',
-        intent: {
-          type: 'sculpt',
-          x: TARGET_CELL.x,
-          y: TARGET_CELL.y,
-          radius: 2 + TITANS_HAND_RADIUS_BONUS,
-          dir: 1,
-        },
-      });
-    });
-
-    it('clamps at MAX_BRUSH_RADIUS instead of producing an invalid intent', () => {
-      collectSkill(harness, 'titans-hand');
-
-      // A widened radius 5 would fail the pipeline's re-validation of a modified
-      // intent (step 4) and the whole sculpt would be silently dropped, so the
-      // plugin must return no verdict at all here.
-      const verdict = harness.host.runIntent(
-        { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: MAX_BRUSH_RADIUS, dir: 1 },
-        PLAYER,
-      );
-      expect(verdict).toEqual({ kind: 'allow' });
-    });
-
-    it('actually widens the applied edit, end to end through the pipeline', () => {
-      const plain = handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: 1, dir: 1 },
-      );
-      expect(plain.applied).toBe(true);
-      const plainCells = plain.applied ? plain.diff.length : 0;
-
-      collectSkill(harness, 'titans-hand');
-
-      const widened = handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        { type: 'sculpt', x: TARGET_CELL.x + 20, y: TARGET_CELL.y, radius: 1, dir: 1 },
-      );
-      expect(widened.applied).toBe(true);
-      if (!widened.applied) return;
-      expect(widened.intent.radius).toBe(1 + TITANS_HAND_RADIUS_BONUS);
-      expect(widened.diff.length).toBeGreaterThan(plainCells);
     });
   });
 

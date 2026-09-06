@@ -35,7 +35,6 @@ export type SkillKind = 'passive' | 'active' | 'perk';
  * casing or separator ambiguity is a silent data bug.
  */
 export type SkillId =
-  | 'titans-hand'
   | 'bedrock-ward'
   | 'quake'
   | 'genesis'
@@ -62,12 +61,6 @@ export interface SkillInfo {
  * order, groups "always on" skills above the buttons you press.
  */
 export const SKILLS: readonly SkillInfo[] = [
-  {
-    id: 'titans-hand',
-    kind: 'passive',
-    name: "Titan's Hand",
-    description: 'Your sculpt brush is one cell wider.',
-  },
   {
     id: 'bedrock-ward',
     kind: 'passive',

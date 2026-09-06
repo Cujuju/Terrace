@@ -47,7 +47,6 @@ import {
   LandslideIcon,
   QuakeIcon,
   SpringOfAetherIcon,
-  TitansHandIcon,
 } from './RelicIcons.tsx';
 import { armSkill, armedSkill, castDenial, relics, skills } from './state.ts';
 
@@ -57,7 +56,6 @@ import { armSkill, armedSkill, castDenial, relics, skills } from './state.ts';
  * blank tile.
  */
 const SKILL_ICON: Readonly<Record<SkillId, Component>> = {
-  'titans-hand': TitansHandIcon,
   'bedrock-ward': BedrockWardIcon,
   quake: QuakeIcon,
   genesis: GenesisIcon,
