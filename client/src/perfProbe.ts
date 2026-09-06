@@ -1343,6 +1343,13 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
             { callsPerFrame: value.calls / block.frames, msPerFrame: value.ms / block.frames },
           ]),
       ),
+      // WHICH CPU WORK GROWS. The 45-minute soak (2026-09-06) showed frame time
+      // going 2.60 -> 9.00 ms while GPU time went only 2.63 -> 3.74 — so the
+      // frame ends CPU-bound, and none of the counters above can say what the
+      // CPU is doing. `allBreakdown` is already computed per block; it was
+      // simply not being reported here, which made the decisive question
+      // unanswerable from a soak.
+      topCpu: Object.fromEntries(Object.entries(block.allBreakdown).slice(0, 10)),
       // THE DISPOSAL GAP. `textures` above is three's count of what it has
       // uploaded and not disposed; the census below counts only what is
       // REACHABLE from the scene graph. A texture whose mesh was dropped
