@@ -8,16 +8,25 @@ function makeGL(canvas){
   gl.getExtension('EXT_color_buffer_half_float')||gl.getExtension('EXT_color_buffer_float');
   const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
-  return gl;
+  gl.fullscreenBuffer=b;   // makeProgram rebinds it: ARRAY_BUFFER is global state, not VAO state,
+  return gl;               // so building the star buffers leaves someone else's buffer bound.
 }
-function makeProgram(gl,src){
+// Links a vertex/fragment pair. `bind` fixes attribute locations before the link, which is how the
+// star program gets position at 0 and starShape at 1 without a getAttribLocation round trip.
+function linkProgram(gl,vsSrc,fsSrc,bind){
   const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
     if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;};
   const p=gl.createProgram();
-  gl.attachShader(p,sh(gl.VERTEX_SHADER,'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}'));
-  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,src));gl.linkProgram(p);
+  gl.attachShader(p,sh(gl.VERTEX_SHADER,vsSrc));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fsSrc));
+  if(bind)for(const n in bind)gl.bindAttribLocation(p,bind[n],n);
+  gl.linkProgram(p);
   if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+function makeProgram(gl,src){
+  const p=linkProgram(gl,'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}',src);
   gl.useProgram(p);
+  gl.bindVertexArray(null);gl.bindBuffer(gl.ARRAY_BUFFER,gl.fullscreenBuffer);
   const loc=gl.getAttribLocation(p,'p');gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
   return p;
@@ -94,14 +103,49 @@ function makeGas(gl,src,W,H){
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);
   return {prog,tex,fb,w,h,time:gl.getUniformLocation(prog,'u_time')};
 }
+// The star point cloud (#342). A variant with a `stars` block carries the point programs AND the
+// generator's own JavaScript (gen.mjs inlines client/src/render/celestialVoidStars.ts through
+// stripTypeScriptTypes), so the bench builds the very buffers the app builds instead of a second
+// implementation of the same formulas. One VAO per grid, so the fullscreen triangle's attribute
+// state and the points' survive each other; `reuse` shares the built buffers with a second pose of
+// the same variant, whose cost is the same buffers at a different camera.
+// three injects `attribute vec3 position` into every ShaderMaterial, so the lifted vertex source
+// does not declare it and this does.
+const STARS_POSITION_DECL='attribute vec3 position;\n';
+function makeStars(gl,S,reuse){
+  const prog=linkProgram(gl,STARS_POSITION_DECL+S.vert,S.frag,{position:0,starShape:1});
+  const t0=performance.now();
+  const grids=reuse||(()=>{
+    const G=Function(S.gen+'\nreturn {STAR_GRIDS:STAR_GRIDS,generateStarGrid:generateStarGrid};')();
+    return G.STAR_GRIDS.map((spec)=>{
+      const b=G.generateStarGrid(spec);
+      const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+      for(const [loc,data] of [[0,b.position],[1,b.shape]]){
+        const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+        gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);}
+      gl.bindVertexArray(null);
+      return {vao,count:b.count};});})();
+  gl.finish();
+  const ms=reuse?0:performance.now()-t0;
+  const range=gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
+  gl.useProgram(prog);
+  gl.uniform1f(gl.getUniformLocation(prog,'u_pointSizeMax'),range[1]);
+  gl.uniform1i(gl.getUniformLocation(prog,'u_gasHalf'),GAS_HALF_UNIT);
+  return {prog,grids,ms,range,
+    time:gl.getUniformLocation(prog,'u_time'),grid:gl.getUniformLocation(prog,'u_starGrid')};
+}
 // Compiles one variant and readies it to draw at (W,H) in `kind`'s pose: the bake once (its cost
 // reported apart), the gas program and its target when the variant has one, and the pose on every
 // program. Shared by bench.html and shot.mjs, so both exercise the same two-pass path.
-function prepVariant(gl,V,W,H,dist,kind){
-  const bake=V.bake?makeBake(gl,V.bake,W,H):null;
+function prepVariant(gl,V,W,H,dist,kind,reuse){
+  const bake=V.bake?(reuse?reuse.bake:makeBake(gl,V.bake,W,H)):null;
   const gas=V.gas?makeGas(gl,V.gas,W,H):null;
+  const stars=V.stars?makeStars(gl,V.stars,reuse&&reuse.stars?reuse.stars.grids:null):null;
   const prog=makeProgram(gl,V.wheel);
   pose(gl,prog,W,H,dist,kind);
+  // Uniforms go to the CURRENT program, so the star pose needs its own useProgram around it.
+  if(stars){gl.useProgram(stars.prog);pose(gl,stars.prog,W,H,dist,kind);gl.useProgram(prog);}
   if(gas){
     gl.useProgram(gas.prog);
     pose(gl,gas.prog,W,H,dist,kind);   // u_res stays the FULL-res buffer in both programs
@@ -110,7 +154,7 @@ function prepVariant(gl,V,W,H,dist,kind){
     gl.useProgram(prog);
     gl.uniform1i(gl.getUniformLocation(prog,'u_gasHalf'),GAS_HALF_UNIT);
   } else bindBake(gl,prog,bake);
-  return {prog,bake,gas,time:gl.getUniformLocation(prog,'u_time'),samples:[]};
+  return {prog,bake,gas,stars,time:gl.getUniformLocation(prog,'u_time'),samples:[]};
 }
 // One frame of a variant: the gas pass into its target when there is one, then the wheel to the
 // canvas. BOTH draws are the frame - the bench's timer brackets this whole call.
@@ -125,4 +169,14 @@ function drawFrame(gl,P,W,H,t){
   gl.useProgram(P.prog);
   if(!P.gas)bindBake(gl,P.prog,P.bake);
   gl.uniform1f(P.time,t);gl.drawArrays(gl.TRIANGLES,0,3);
+  // The stars last, straight over the wheel's output with ONE,ONE - the app's AdditiveBlending on a
+  // premultiplied material, which is the same arithmetic the wheel's own `col += stars` was.
+  if(P.stars){
+    gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
+    gl.useProgram(P.stars.prog);gl.uniform1f(P.stars.time,t);
+    P.stars.grids.forEach((g,i)=>{
+      gl.uniform1f(P.stars.grid,i);gl.bindVertexArray(g.vao);
+      gl.drawArrays(gl.POINTS,0,g.count);});
+    gl.bindVertexArray(null);gl.disable(gl.BLEND);
+  }
 }

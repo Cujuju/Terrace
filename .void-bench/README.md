@@ -12,12 +12,17 @@ source it was generated from.
     node .void-bench/shot.mjs [names...]                          # look check: shots/<name>{,_hub}.png (SwiftShader)
 
 `gen.mjs` lifts COMMON_GLSL + WHEEL_FIELDS_GLSL + WHEEL_GLSL + BAKE_GLSL +
-GAS_GLSL from the client source and emits `{ wheel, bake, gas }` per variant
-(`bake` absent means the variant needs no texture; `gas` absent means it marches
-the gas inline instead of in a half-res pass). Every `${...}` in the GLSL is evaluated against
-the TS file's own top-level constants, so a shader constant has one source.
+GAS_GLSL + STARS_VERT_GLSL + STARS_FRAG_GLSL from the client source and emits
+`{ wheel, bake, gas, stars }` per variant (`bake` absent means the variant needs
+no texture; `gas` absent means it marches the gas inline instead of in a half-res
+pass; `stars` absent means it finds its stars inside the wheel program instead of
+drawing a point cloud). Every `${...}` in the GLSL is evaluated against
+the TS file's own top-level constants — and against `shared/src/constants.ts` and
+`client/src/config.ts` first, since the star field's extents are derived from
+world and camera constants celestialVoid.ts imports — so a shader constant has
+one source.
 Each argument makes a variant by overriding GLSL `const` values by name, in the
-wheel, the bake and the gas pass alike; `cur` is always the unmodified source. `gl2.js` holds
+wheel, the bake, the gas pass and the star programs alike; `cur` is always the unmodified source. `gl2.js` holds
 the WebGL2 setup both `bench.html` and `shot.mjs` use — a `file://` page cannot
 load a sibling script, so both inline it.
 
@@ -34,6 +39,23 @@ whole two-pass cost. `GAS_RES_DIVISOR` is a GLSL const purely so the harness can
 lift it: `div1=GAS_RES_DIVISOR:1` benches the two-pass path at full resolution,
 which isolates the pass's own overhead from the resolution saving.
 
+For variants with a point cloud (#342), the frame gains a third stage: three
+`drawArrays(POINTS)`, one per star grid, additively (`ONE, ONE` — the app's
+`AdditiveBlending` on a premultiplied material) straight over the wheel's output,
+with blending off again afterwards. The GPU timer brackets all three stages. The
+buffers are built ONCE from the generator's own source: `gen.mjs` runs
+`client/src/render/celestialVoidStars.ts` through `stripTypeScriptTypes` and
+inlines it with the grid table lifted from `celestialVoid.ts`, so the bench draws
+the very stars the app draws rather than a second implementation of the same
+formulas. That build is reported apart from the frame time, as the bake is, and
+so are the point counts, their bytes and the driver's
+`ALIASED_POINT_SIZE_RANGE` (1..1024 on the RTX 3090, 1..1023 under SwiftShader).
+
+The point cloud's cost depends on the POSE — the ray march's did not — so `rev20`
+and `cur` are timed at the hub pose as well, as extra `@hub` rows. A variant's
+second pose shares the first's bake textures and star buffers; only its programs
+and uniforms are built again.
+
 ## Frozen variants
 
 `gen.mjs` never regenerates these; they are kept in `bench.html` so a change can
@@ -44,6 +66,8 @@ be timed against what it replaced on the same harness.
 - `rev18` — the wheel as it stood before the log-polar bake (#340).
 - `rev19` — the wheel as it stood after the bake and before the half-res gas
   pass (#341): one program, the march inline at full resolution.
+- `rev20` — the wheel as it stood after the half-res gas pass and before the
+  star point cloud (#342): two programs, the stars still walked per fragment.
 
 ## Shot poses
 
@@ -97,3 +121,22 @@ The half-res gas pass saves 0.51 ms/frame against rev19 (23%). `div1` is what
 the second program, the extra target write and the texture read cost on their
 own: +0.28 ms over rev19 at the same resolution. So the resolution drop is worth
 about 0.79 ms and the split gives 0.51 of it back.
+
+WebGL2 GPU timer, 2026-09-05, ONE run. This is the phase 3 before/after, #342 —
+the stars as a point cloud. Baselines drift between runs, so only the same-run
+differences count:
+
+| variant | view pose | hub pose | note |
+| --- | --- | --- | --- |
+| rev10 | 1.02 | | pre-3-D reference |
+| rev18 | 2.83 | | before #340 |
+| rev19 | 2.22 | | after #340, before #341 — bake 2.0 ms once |
+| rev20 | 1.73 | 1.43 | after #341, before #342 — bake 1.2 ms once |
+| cur | 1.00 | 1.00 | #342, 1,194,486 points — bake 3.9 ms once, buffers 179 ms once |
+
+The point cloud saves 0.73 ms/frame at the view pose (42%) and 0.43 ms at the hub
+pose (30%), and it takes the whole wheel back to the pre-3-D reference's cost.
+The two poses now time the same, which is the point: a fragment's cost no longer
+depends on how many voxels its ray crosses. The one-off buffer build is 179 ms of
+CPU at startup for 27.3 MB of vertex data (24 bytes a star: position float32 x3,
+radius/kind/brightness float32 x3).
