@@ -93,22 +93,18 @@ def write_wav(path: Path, signal: np.ndarray) -> None:
 # Long enough for the roll to die away; ends silent so the voice cannot click.
 THUNDER_SECONDS = 6.0
 
-# Crack: one bright burst with a real attack (an instant edge is a click), a
-# fast decay, and a tearing texture from fast amplitude modulation rather than
-# from discrete clicks — clicks read as a glitch, not a bolt.
-CRACK_ATTACK_SECONDS = 0.004
-CRACK_TAU_SECONDS = 0.07
-CRACK_BODY_TAU_SECONDS = 0.18
-CRACK_BODY_LEVEL = 0.4
-CRACK_TEAR_HZ = 90.0
-CRACK_TEAR_DEPTH = 0.6
-CRACK_BAND_HZ = (700.0, 5500.0)
-CRACK_LEVEL = 0.7
+# Crack: one SHORT mid-band transient with a real attack (an instant edge is a
+# click). Kept brief and not too bright: a long hissy burst is what a synthetic
+# clap sounds like, and the thump under it carries the impact.
+CRACK_ATTACK_SECONDS = 0.002
+CRACK_TAU_SECONDS = 0.02
+CRACK_BAND_HZ = (300.0, 3500.0)
+CRACK_LEVEL = 0.45
 # The shockwave landing under the crack: one low thump.
-THUMP_ATTACK_SECONDS = 0.003
-THUMP_TAU_SECONDS = 0.09
-THUMP_BAND_HZ = (40.0, 160.0)
-THUMP_LEVEL = 1.6
+THUMP_ATTACK_SECONDS = 0.005
+THUMP_TAU_SECONDS = 0.22
+THUMP_BAND_HZ = (50.0, 250.0)
+THUMP_LEVEL = 1.5
 
 # Roll: rumble whose envelope is several lumps arriving over the first two
 # seconds, then decays.
@@ -160,11 +156,9 @@ def make_thunder() -> np.ndarray:
     seconds = seconds_axis(count)
     noise = rng.standard_normal(count)
 
-    crack_envelope = np.minimum(seconds / CRACK_ATTACK_SECONDS, 1.0) * (
-        np.exp(-seconds / CRACK_TAU_SECONDS)
-        + CRACK_BODY_LEVEL * np.exp(-seconds / CRACK_BODY_TAU_SECONDS)
+    crack_envelope = np.minimum(seconds / CRACK_ATTACK_SECONDS, 1.0) * np.exp(
+        -seconds / CRACK_TAU_SECONDS
     )
-    crack_envelope *= 1.0 - CRACK_TEAR_DEPTH * (0.5 + 0.5 * slow_noise(count, CRACK_TEAR_HZ))
     crack = bandpass(noise, *CRACK_BAND_HZ) * crack_envelope
 
     thump = bandpass(noise, *THUMP_BAND_HZ) * (
@@ -204,47 +198,45 @@ def make_thunder() -> np.ndarray:
 
 # --- Rain loop ---------------------------------------------------------------
 #
-# Rain is drops, all the way down: there is no steady hiss under it, only a
-# density of drops too high to pick apart. A stationary noise bed reads as
-# white noise with rain on top, so every layer here is granular:
-#   FINE   — thousands of tiny bright grains a second: the wash itself;
-#   DROPS  — a few hundred ringing drops a second, each a damped sine at its
-#            own pitch, so the texture sparkles instead of hissing;
+# Rain is SPARSE noise: countless drops, but not so many that they fuse into a
+# steady hiss. Every layer is noise gated by a train of short grains; what
+# separates them is how dense the train is and how bright the band:
+#   WASH   — hundreds of grains a second, broadband, tilted down at the top —
+#            dense enough to read as a bed, sparse enough to crackle;
+#   DROPS  — fewer, brighter ticks: individual drops close by;
 #   PLOPS  — a handful of heavier, lower drops on something near.
-# A slow gust rides the fine layer so a long listen never goes static.
+# A slow gust rides the wash so a long listen never goes static.
 
 # Under the 8 s cap; long enough that the loop point is not heard coming round.
 RAIN_SECONDS = 8.0
-# Long enough to hide the splice in dense grains, short enough not to eat the loop.
+# Long enough to hide the splice in grains, short enough not to eat the loop.
 RAIN_CROSSFADE_SECONDS = 1.0
 
-# Fine grains: rate × tau ≈ 3 overlapping at any instant — dense, yet churning.
-FINE_PER_SECOND = 3000
-FINE_TAU_SECONDS = 0.001
-FINE_BAND_HZ = (1200.0, 7500.0)
-FINE_LEVEL = 1.0
-# Gusting: sub-audio movement of the fine layer.
+# Wash: rate × tau ≈ 1 — about one grain sounding at any instant, so it is a
+# bed with holes in it, not a solid hiss.
+WASH_PER_SECOND = 600
+WASH_TAU_SECONDS = 0.0017
+WASH_BAND_HZ = (500.0, 9000.0)
+WASH_TILT_HZ = 3000.0
+WASH_LEVEL = 1.0
+# Gusting: sub-audio movement of the wash level.
 GUST_HZ = 0.35
-GUST_DEPTH = 0.35
+GUST_DEPTH = 0.3
 
-# Ringing drops: a damped sine per drop, pitch drawn per drop.
-DROPS_PER_SECOND = 220
-DROP_TAU_SECONDS = 0.004
-DROP_PITCH_HZ = (1800.0, 5200.0)
+# Drops: how many per second, how long each rings, its band, and how loud.
+DROPS_PER_SECOND = 90
+DROP_TAU_SECONDS = 0.003
+DROP_BAND_HZ = (1500.0, 6500.0)
 DROP_LEVEL = 0.7
-# Heavier drops on a surface nearby, lower and longer.
-PLOPS_PER_SECOND = 7
-PLOP_TAU_SECONDS = 0.014
-PLOP_PITCH_HZ = (260.0, 700.0)
-PLOP_LEVEL = 0.45
-
-# The final band: nothing below the drops, and the very top rolled off so it
-# is not fizzy.
-RAIN_BAND_HZ = (350.0, 8500.0)
+# A few heavier drops on a surface nearby, lower and longer.
+PLOPS_PER_SECOND = 6
+PLOP_TAU_SECONDS = 0.012
+PLOP_BAND_HZ = (300.0, 1200.0)
+PLOP_LEVEL = 0.35
 
 
 def grain_layer(count: int, per_second: float, tau: float, band: tuple[float, float]) -> np.ndarray:
-    """Noise gated by a dense train of exponential grains: the wash."""
+    """Noise gated by a train of exponential grains at random times and levels."""
     total = int(per_second * count / SAMPLE_RATE_HZ)
     starts = rng.integers(0, count, total)
     kernel_count = int(tau * 8 * SAMPLE_RATE_HZ)
@@ -255,24 +247,6 @@ def grain_layer(count: int, per_second: float, tau: float, band: tuple[float, fl
     return bandpass(rng.standard_normal(count), *band) * envelope
 
 
-def ringing_drops(
-    count: int, per_second: float, tau: float, pitch_hz: tuple[float, float]
-) -> np.ndarray:
-    """One damped sine per drop at its own pitch and phase."""
-    total = int(per_second * count / SAMPLE_RATE_HZ)
-    ring_count = int(tau * 8 * SAMPLE_RATE_HZ)
-    ring_seconds = seconds_axis(ring_count)
-    decay = np.exp(-ring_seconds / tau)
-    out = np.zeros(count + ring_count)
-    for start in rng.integers(0, count, total):
-        pitch = rng.uniform(*pitch_hz)
-        phase = rng.uniform(0.0, 2 * np.pi)
-        out[start : start + ring_count] += (
-            rng.uniform(0.3, 1.0) * decay * np.sin(2 * np.pi * pitch * ring_seconds + phase)
-        )
-    return out[:count]
-
-
 def make_rain_loop() -> np.ndarray:
     fade_count = int(RAIN_CROSSFADE_SECONDS * SAMPLE_RATE_HZ)
     body_count = int(RAIN_SECONDS * SAMPLE_RATE_HZ)
@@ -280,17 +254,16 @@ def make_rain_loop() -> np.ndarray:
     # continuous stretch and the splice is inaudible, not merely quiet.
     count = body_count + fade_count
 
-    fine = grain_layer(count, FINE_PER_SECOND, FINE_TAU_SECONDS, FINE_BAND_HZ)
-    fine *= 1.0 - GUST_DEPTH * (0.5 + 0.5 * slow_noise(count, GUST_HZ))
-    drops = ringing_drops(count, DROPS_PER_SECOND, DROP_TAU_SECONDS, DROP_PITCH_HZ)
-    plops = ringing_drops(count, PLOPS_PER_SECOND, PLOP_TAU_SECONDS, PLOP_PITCH_HZ)
+    wash = lowpass(grain_layer(count, WASH_PER_SECOND, WASH_TAU_SECONDS, WASH_BAND_HZ), WASH_TILT_HZ)
+    wash *= 1.0 - GUST_DEPTH * (0.5 + 0.5 * slow_noise(count, GUST_HZ))
+    drops = grain_layer(count, DROPS_PER_SECOND, DROP_TAU_SECONDS, DROP_BAND_HZ)
+    plops = grain_layer(count, PLOPS_PER_SECOND, PLOP_TAU_SECONDS, PLOP_BAND_HZ)
 
     mix = (
-        FINE_LEVEL * fine / np.sqrt(np.mean(fine**2))
+        WASH_LEVEL * wash / np.sqrt(np.mean(wash**2))
         + DROP_LEVEL * drops / np.sqrt(np.mean(drops**2))
         + PLOP_LEVEL * plops / np.sqrt(np.mean(plops**2))
     )
-    mix = bandpass(mix, *RAIN_BAND_HZ)
 
     body = mix[:body_count].copy()
     tail = mix[body_count:]
