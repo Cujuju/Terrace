@@ -522,6 +522,12 @@ export const WALKER_STRIDE_WORLD_UNITS_BY_SPECIES: Readonly<Record<WildlifeSpeci
  * How far a walker's animation phase advances for `distanceWorldUnits` of
  * ground covered: one full turn per stride.
  *
+ * THE DISTANCE IS THREE-DIMENSIONAL (2026-09-05). It was the horizontal hypot,
+ * which reads the same as the 3D one on any ground a walker walks — and zero on
+ * a CLIMB, where the mover's x/y are pinned at the foot of the wall and all of
+ * the motion is vertical (shared/src/climb.ts). A climbing ibex therefore rose
+ * up the cliff on frozen legs. See index.ts's stride call.
+ *
  * Throws for a non-walker on the same belt-and-suspenders argument as
  * `walkerGroundY`: the render path only reaches here for a 'walker', and a
  * species that gained legs without gaining a row would otherwise walk on
