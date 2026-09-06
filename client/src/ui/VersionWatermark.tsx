@@ -149,7 +149,19 @@ export function VersionWatermark(): JSX.Element {
           decimal would round away a window's worth of it. */}
       <Show when={perfOpen() ? frameStats() : null}>
         {(stat) => (
-          <>
+          /* ITS OWN PANEL, not loose rows on the world (owner, 2026-09-06:
+             "easier to read them against a busy background"). The rest of this
+             column is three or four short lines that survive anything behind
+             them; this is thirty-odd rows of small monospace digits, and over
+             lit water or a fire it stopped being readable at all.
+
+             Reuses the HUD's own panel vocabulary — --hud-bg, --hud-border and
+             the same 6px backdrop blur every other panel wears — rather than
+             inventing a second translucent-dark, so it reads as part of the
+             interface. It keeps the column's pointer-events: none: this is a
+             readout, and a panel that swallowed a camera drag in the corner
+             would be a worse bug than the unreadability it fixes. */
+          <div class="hud-version__perf-panel">
             {/* ONE READING PER LINE (owner, 2026-09-06: packed rows are "too
                 hard to read"). Each row is a label and its number, the label
                 left and the number right, so the numbers form a single column
@@ -224,7 +236,7 @@ export function VersionWatermark(): JSX.Element {
                 />
               )}
             </For>
-          </>
+          </div>
         )}
       </Show>
       {/* One row per plugin over its budget. Only the breaches: seventeen rows
