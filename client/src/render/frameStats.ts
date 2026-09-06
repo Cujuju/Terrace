@@ -91,6 +91,16 @@ export interface FrameStatsSample {
   readonly outsideMsP50: number;
   /** Wall-clock frame-to-frame gap; vsync-capped, unlike the three above. */
   readonly intervalMsP50: number;
+  /**
+   * Median GPU milliseconds per frame, or null where the timer extension is
+   * absent.
+   *
+   * NULL, NEVER ZERO: "no GPU clock on this adapter" and "the GPU took no time"
+   * must not read alike in the one row that decides whether a slow frame is the
+   * GPU's fault. Results land a few frames after the frame they measure, so a
+   * window's median is over the frames whose results arrived during it.
+   */
+  readonly gpuMsP50: number | null;
   readonly counters: FrameCounters;
   /** Every plugin that ran a frame callback in the window, dearest first. */
   readonly plugins: readonly PluginFrameCost[];
@@ -131,6 +141,9 @@ let prevStartMs = 0;
 let latestSample: FrameStatsSample | null = null;
 let sink: FrameStatsSink | null = null;
 let readCounters: (() => FrameCounters) | null = null;
+let drainGpu: (() => number[]) | null = null;
+/** GPU results that landed this window. Cleared at every close, like pluginMs. */
+let gpuMs: number[] = [];
 
 /**
  * Milliseconds each plugin has spent in its frame callbacks this window, keyed
@@ -158,6 +171,15 @@ export function setFrameCounterSource(read: () => FrameCounters): void {
 }
 
 /**
+ * Hands the meter its GPU clock (render/gpuTimer.ts), wired by render/scene.ts
+ * for the same reason as the counters: this file does not import three, and the
+ * renderer is what owns the GL context.
+ */
+export function setGpuSampleSource(drain: () => number[]): void {
+  drainGpu = drain;
+}
+
+/**
  * Installs (or with null, removes) the once-per-window sink. main.tsx wires
  * this to the HUD signal and the console line; with no sink the meter still
  * runs and still updates `frameStatsSample()`, it just publishes nothing.
@@ -169,6 +191,12 @@ export function setFrameStatsSink(next: FrameStatsSink | null): void {
 /** The most recently closed window, or null before the first one closes. */
 export function frameStatsSample(): FrameStatsSample | null {
   return latestSample;
+}
+
+/** Median of a plain array; it is sorted in place, which the caller discards. */
+function medianOf(values: number[]): number {
+  values.sort((a, b) => a - b);
+  return values[Math.min(values.length - 1, Math.max(0, Math.ceil(0.5 * values.length) - 1))] ?? 0;
 }
 
 function sumOf(source: Float32Array, count: number): number {
@@ -199,6 +227,11 @@ function closeWindow(nowMs: number): void {
   // still counts every one — so an overflow is visible in the sample rather
   // than silently changing what the percentiles mean.
   const kept = Math.min(windowFrames, FRAME_STATS_CAPACITY);
+  // Drained at the close rather than per frame: the driver answers when it
+  // answers, and asking once a window is enough to median over.
+  if (drainGpu !== null) gpuMs = gpuMs.concat(drainGpu());
+  const gpuMsP50 = gpuMs.length === 0 ? null : medianOf(gpuMs);
+  gpuMs = [];
   // Meaned over EVERY frame in the window, including those the plugin did
   // nothing in: the question is what it costs the frame, and a plugin that
   // works every third frame costs a third as much as one that works every one.
@@ -229,6 +262,7 @@ function closeWindow(nowMs: number): void {
     renderMsP99: summarise(renderMs, kept, 0.99),
     outsideMsP50: summarise(outsideMs, kept, 0.5),
     intervalMsP50: summarise(intervalMs, kept, 0.5),
+    gpuMsP50,
     counters: readCounters?.() ?? EMPTY_COUNTERS,
     plugins,
   };
@@ -308,4 +342,5 @@ export function resetFrameStats(): void {
   prevStartMs = 0;
   latestSample = null;
   pluginMs.clear();
+  gpuMs = [];
 }
