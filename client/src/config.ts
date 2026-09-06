@@ -581,3 +581,30 @@ export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
  * is also about as fast as a reading of this kind can be usefully read.
  */
 export const FPS_SAMPLE_INTERVAL_MS = 500;
+
+/**
+ * Length of one frame-statistics window, in milliseconds (render/frameStats.ts
+ * summarises over it; ui/VersionWatermark.tsx prints the result).
+ *
+ * Deliberately ten times FPS_SAMPLE_INTERVAL_MS above, because the two windows
+ * answer different questions and a shared one would serve neither. The fps
+ * digit is read live, so it must update faster than a person loses patience.
+ * These are percentiles, and a p99 is a lie below about a hundred samples: at
+ * 500 ms a 60 fps page offers 30 frames, where "the 99th percentile" is just
+ * the largest of thirty. Five seconds gives 300 at 60 fps and 1750 at 350, and
+ * the thing being watched — a decay measured in milliseconds per TEN MINUTES
+ * (docs/plans/frame-rate-decay-2026-09-05.md §7d) — cannot be blurred by a
+ * window this short.
+ */
+export const FRAME_STATS_WINDOW_MS = 5000;
+
+/**
+ * Most frames one window keeps readings for.
+ *
+ * 2048 covers a full 5 s window up to 409 fps, comfortably past the project's
+ * 140 fps benchmark and past anything the display can present. Beyond it the
+ * window keeps its most recent 2048 frames and still reports the true frame
+ * count, so an overflow is visible rather than silent. Three Float32Arrays of
+ * this length plus a scratch is 32 KB, allocated once for the life of the page.
+ */
+export const FRAME_STATS_CAPACITY = 2048;

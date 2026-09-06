@@ -49,6 +49,7 @@ import {
   PICK_DEBUG_OVERLAY_DRAW_OBJECTS,
 } from './render/pickDebugOverlay.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
+import { installPerfHandle } from './render/perfHandle.ts';
 import { Hud } from './ui/Hud.tsx';
 import './ui/hud.css';
 
@@ -351,6 +352,12 @@ viewport.onFrame(() => {
 // The frame-rate readout in the top-right watermark. Started here, beside the
 // other viewport frame hooks, because the viewport is what it measures.
 startFrameRateMeter(viewport.onFrame);
+// The frame meter's readouts (render/perfHandle.ts): backquote for the HUD
+// block, `__terracePerf` for a console, `?perflog=1` for a per-window line.
+// NOT under import.meta.env.DEV, unlike the handle at the bottom of this file —
+// the whole reason this exists beside perfProbe.ts is that the decay it watches
+// has to be observable in a normal session, not only in a bench rig.
+installPerfHandle();
 
 render(
   () => (

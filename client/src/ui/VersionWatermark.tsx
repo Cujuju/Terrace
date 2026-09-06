@@ -28,7 +28,7 @@
 // cannot change for the life of the page.
 
 import { For, Show, type JSX } from 'solid-js';
-import { frameDraw, frameRate, serverVersion } from '../state/hudState.ts';
+import { frameDraw, frameRate, frameStats, perfOpen, serverVersion } from '../state/hudState.ts';
 import { pluginDrawRows } from '../plugins/hudPanels.ts';
 
 /** This bundle's stamp; the `typeof` guard keeps any non-Vite runtime (a
@@ -72,6 +72,44 @@ export function VersionWatermark(): JSX.Element {
           >
             {draw().objects}/{draw().budget} objects · {draw().calls} calls
           </span>
+        )}
+      </Show>
+      {/* THE FRAME METER (render/frameStats.ts), backquote to toggle. It joins
+          the diagnostic column rather than taking a corner of its own for the
+          reason the frame rate did: this block already takes no pointer events,
+          so nothing added to it can steal a corner drag from the camera.
+
+          `uptime` is first because it is the axis every other number on these
+          rows is read against — the decay in
+          docs/plans/frame-rate-decay-2026-09-05.md §7d is a slope in minutes,
+          invisible in any single reading. `render` is second because it is the
+          quantity that was shown to grow; `outside` sits beside it so a growing
+          render can be told at a glance from a growing plugin frame handler.
+          Two decimals: the whole decay is 2.1 ms per ten minutes, and one
+          decimal would round away a window's worth of it. */}
+      <Show when={perfOpen() ? frameStats() : null}>
+        {(stat) => (
+          <>
+            <span class="hud-version__perf">
+              up {Math.round(stat().uptimeS)}s · {stat().frames} frames ·{' '}
+              {stat().counters.pixelWidth}x{stat().counters.pixelHeight}
+            </span>
+            <span class="hud-version__perf">
+              render {stat().renderMsP50.toFixed(2)} · outside{' '}
+              {stat().outsideMsP50.toFixed(2)} ms
+            </span>
+            <span class="hud-version__perf">
+              frame {stat().frameMsP50.toFixed(2)} · p99{' '}
+              {stat().frameMsP99.toFixed(2)} · max {stat().frameMsMax.toFixed(2)}
+            </span>
+            {/* The three tables §7d found growing ORPHANED — textures 37 -> 74
+                with only 7 reachable from the scene. Printed together because
+                the finding is that they rise while draw calls do not. */}
+            <span class="hud-version__perf">
+              geo {stat().counters.geometries} · tex {stat().counters.textures} ·
+              prog {stat().counters.programs}
+            </span>
+          </>
         )}
       </Show>
       {/* One row per plugin over its budget. Only the breaches: seventeen rows

@@ -24,7 +24,7 @@
 //
 // ADDING A SCENARIO is one function plus one entry in SCENARIOS.
 
-import { Vector3 } from 'three';
+import { Vector3, type Object3D } from 'three';
 import { CAMERA_MIN_DISTANCE, CELL_WORLD_SIZE, SCULPT_REPEAT_INTERVAL_MS } from './config.ts';
 import type { Connection } from './net/connection.ts';
 import type { ClientPluginHost } from './plugins/host.ts';
@@ -45,6 +45,57 @@ import {
 const PROBE_QUERY_FLAG = 'perfprobe';
 /** Page-URL query flag overriding SETTLE_MS_DEFAULT, in milliseconds. */
 const SETTLE_QUERY_FLAG = 'settle';
+/**
+ * Page-URL query flag naming `texSubImage2D` shapes to SKIP, comma separated
+ * (`&suppressUploads=92x32,68x32`).
+ *
+ * WHAT IT IS FOR: pricing a fix before anyone builds it. The pose-palette work
+ * (docs/plans/frame-rate-decay-2026-09-05.md §4) claims that removing the
+ * per-frame herd palette re-upload is worth some number of milliseconds, and
+ * the honest way to learn that number is to remove the uploads and measure —
+ * not to predict it. Suppressing them here answers the performance question
+ * exactly while touching no rendering code, which matters on a shared checkout
+ * that other agents are committing to.
+ *
+ * THE RENDERING IS WRONG WHILE THIS IS ON — poses freeze at whatever was last
+ * uploaded. It is a measurement instrument, never a fix, and it is inert unless
+ * the flag names a shape.
+ */
+const SUPPRESS_UPLOADS_QUERY_FLAG = 'suppressUploads';
+/**
+ * Page-URL query flag multiplying the renderer's pixel ratio
+ * (`&renderScale=0.5` renders a quarter of the pixels).
+ *
+ * THE FILL-RATE TEST. Triangles, draw calls and uploads have each failed to
+ * explain the frame time across tonight's runs — heavy blocks had FEWER draw
+ * calls than light ones. Fill cost is the remaining candidate: transparent
+ * full-screen weather and effect layers add almost no draw calls and enormous
+ * per-pixel work. If GPU time scales with the pixel count, the frame is
+ * fill-bound and the fix belongs in overdraw, not in geometry or uploads. If it
+ * does not scale, fill is exonerated. Either answer is worth having, and it
+ * costs one flag.
+ */
+const RENDER_SCALE_QUERY_FLAG = 'renderScale';
+/**
+ * Page-URL query flag that runs a scenario with the ATTRIBUTION wrappers off
+ * (`&noInstrument=1`). Frame intervals and the GPU timer still work; the
+ * per-callback timing, the task-timing monkey-patches and the GL upload
+ * accounting do not.
+ *
+ * WHY IT EXISTS. The `renderer.render` CPU decay measured 2026-09-06 correlates
+ * with wall-clock time at r=0.963 and with nothing else — not programs, not
+ * textures, not draw calls, not scene nodes. That is exactly the signature a
+ * MEASUREMENT ARTIFACT would have, and this probe has been armed in every run
+ * ever taken of this app, so the artifact has never been controlled for. If the
+ * decay is real it survives with the wrappers off; if it vanishes, the finding
+ * was the instrument all along and #378 is void.
+ */
+const NO_INSTRUMENT_QUERY_FLAG = 'noInstrument';
+
+/** True when the page asked for a scenario with attribution wrappers disabled. */
+function instrumentationDisabled(): boolean {
+  return new URLSearchParams(location.search).get(NO_INSTRUMENT_QUERY_FLAG) === '1';
+}
 /**
  * How long the page is left alone before a scenario starts, in milliseconds.
  *
@@ -120,10 +171,138 @@ const ABLATION_SETTLE_FRAMES = 6;
  * window has to be at least that long or the trend it exists to show falls off
  * the end of it. Twelve points is enough to tell a straight climb from a step.
  */
-const DRIFT_BLOCKS = 12;
-const DRIFT_INTERVAL_MS = 20000;
+const DRIFT_BLOCKS_DEFAULT = 12;
+const DRIFT_INTERVAL_MS_DEFAULT = 20000;
+/** Page-URL query flags overriding the two above, for long soak runs. */
+const DRIFT_BLOCKS_QUERY_FLAG = 'blocks';
+const DRIFT_INTERVAL_QUERY_FLAG = 'interval';
 /** Frames per drift block — ABLATION_SAMPLE_FRAMES' reasoning, same tradeoff. */
 const DRIFT_SAMPLE_FRAMES = 90;
+/**
+ * Most newly-appeared program cache keys reported, and how much of each.
+ *
+ * A three cache key is a long concatenation of every parameter that selects a
+ * shader variant; the whole set would be tens of kilobytes of JSON for a
+ * finding that is legible from the first hundred characters. Forty keys is
+ * more than the largest growth observed (88 -> 127 programs over four
+ * minutes), so a truncated report cannot hide the tail that matters.
+ */
+const DRIFT_MAX_NEW_PROGRAMS = 40;
+/**
+ * How much of a program cache key is reported, as a HEAD and a TAIL with the
+ * middle elided.
+ *
+ * THE TAIL IS THE POINT, learned the hard way (2026-09-05): a first attempt
+ * reported the first 160 characters and every new key looked identical, because
+ * a three cache key opens with the material type and a long run of parameter
+ * booleans that barely vary — and ends with `customProgramCacheKey()`, which is
+ * where this codebase's own splices (`|groundShade`, `|revealClip`) append. A
+ * head-only view is blind to precisely the suffix that distinguishes one
+ * variant from another.
+ */
+const DRIFT_PROGRAM_KEY_HEAD_CHARS = 40;
+const DRIFT_PROGRAM_KEY_TAIL_CHARS = 140;
+
+/** A cache key shortened to its head and its (informative) tail. */
+function shortProgramKey(key: string): string {
+  if (key.length <= DRIFT_PROGRAM_KEY_HEAD_CHARS + DRIFT_PROGRAM_KEY_TAIL_CHARS) return key;
+  return `${key.slice(0, DRIFT_PROGRAM_KEY_HEAD_CHARS)}…[${String(key.length)} chars]…${key.slice(-DRIFT_PROGRAM_KEY_TAIL_CHARS)}`;
+}
+
+/**
+ * The cache keys of every program the renderer currently holds.
+ *
+ * `renderer.info.programs` is three's own live list and each entry carries the
+ * `cacheKey` it was compiled under, so this names WHICH shader variants exist
+ * rather than only how many — the difference between "programs grew by 39" and
+ * a finding.
+ */
+/**
+ * Renderable objects and triangles under one scene child.
+ *
+ * TRIANGLES ARE COUNTED FROM THE GEOMETRY, not from renderer.info: info's count
+ * is per-frame and post-culling, so it answers "what was drawn from here this
+ * frame" and cannot say whether a rig's CONTENT is growing — which is the whole
+ * question a census exists to answer. Instanced meshes multiply by their live
+ * `count`, because that is the number that actually grows as a population does.
+ */
+function censusOf(root: Object3D): {
+  objects: number;
+  triangles: number;
+  materials: number;
+  textures: number;
+  /** The texture objects themselves, so callers can union across rigs. */
+  textureSet: Set<unknown>;
+} {
+  let objects = 0;
+  let triangles = 0;
+  // BY IDENTITY, not by count of references: a material shared by forty meshes
+  // is one material and one program, and counting it forty times would report
+  // sharing as growth — the exact opposite of the finding being chased.
+  const materials = new Set<unknown>();
+  const textures = new Set<unknown>();
+  const noteMaterial = (material: unknown): void => {
+    if (material === null || material === undefined) return;
+    if (materials.has(material)) return;
+    materials.add(material);
+    // Every texture-valued property, whatever it is called: three's slot names
+    // differ per material type (map, normalMap, alphaMap, emissiveMap, …) and
+    // an allow-list here would silently miss whichever one is actually growing.
+    for (const value of Object.values(material as Record<string, unknown>)) {
+      if (value !== null && typeof value === 'object' && (value as { isTexture?: boolean }).isTexture === true) {
+        textures.add(value);
+      }
+    }
+    // Uniform-held textures too: a ShaderMaterial keeps its maps in `uniforms`,
+    // where the loop above cannot see them, and this renderer is full of them.
+    const uniforms = (material as { uniforms?: Record<string, { value?: unknown }> }).uniforms;
+    if (uniforms !== undefined) {
+      for (const uniform of Object.values(uniforms)) {
+        const value = uniform.value;
+        if (value !== null && typeof value === 'object' && (value as { isTexture?: boolean }).isTexture === true) {
+          textures.add(value);
+        }
+      }
+    }
+  };
+  root.traverse((node: Object3D) => {
+    const withMaterial = node as Object3D & { material?: unknown };
+    const material = withMaterial.material;
+    if (Array.isArray(material)) for (const entry of material) noteMaterial(entry);
+    else noteMaterial(material);
+    const mesh = node as Object3D & {
+      isMesh?: boolean;
+      isPoints?: boolean;
+      isLine?: boolean;
+      isInstancedMesh?: boolean;
+      count?: number;
+      geometry?: { index?: { count: number } | null; attributes?: { position?: { count: number } } };
+    };
+    if (mesh.isMesh !== true && mesh.isPoints !== true && mesh.isLine !== true) return;
+    objects++;
+    const geometry = mesh.geometry;
+    if (geometry === undefined) return;
+    const vertices = geometry.index?.count ?? geometry.attributes?.position?.count ?? 0;
+    const instances = mesh.isInstancedMesh === true ? (mesh.count ?? 0) : 1;
+    triangles += (vertices / 3) * instances;
+  });
+  return {
+    objects,
+    triangles: Math.round(triangles),
+    materials: materials.size,
+    textures: textures.size,
+    textureSet: textures,
+  };
+}
+
+function programCacheKeys(renderer: { info: { programs: unknown } }): string[] {
+  const programs = renderer.info.programs;
+  if (!Array.isArray(programs)) return [];
+  return programs.map((program: unknown) => {
+    const key = (program as { cacheKey?: unknown }).cacheKey;
+    return typeof key === 'string' ? key : '<no cacheKey>';
+  });
+}
 
 /** Scene-child name prefix the plugin host gives every plugin layer (host.ts). */
 const PLUGIN_LAYER_PREFIX = 'plugin:';
@@ -209,6 +388,9 @@ function resetGlUpload(): void {
   // byShape is deliberately NOT reset here; see its doc comment.
 }
 
+/** texSubImage2D shapes (`WxH`) the current page is suppressing; empty = none. */
+const suppressedUploadShapes = new Set<string>();
+
 function installGlUploadAccounting(): void {
   const proto = WebGL2RenderingContext.prototype;
   const viewBytes = (value: unknown): number =>
@@ -227,6 +409,18 @@ function installGlUploadAccounting(): void {
       this: WebGL2RenderingContext,
       ...args: unknown[]
     ) {
+      // texSubImage2D ONLY. The other two entry points are keyed by a byte
+      // bucket, not a pixel shape, and suppressing a vertex buffer would remove
+      // geometry rather than a texture update — a different experiment, and not
+      // one anything here asks for.
+      const shape = name === 'texSubImage2D' ? shapeOf(args, 0) : '';
+      if (shape !== '' && suppressedUploadShapes.has(shape)) {
+        // Counted as a suppressed call and NOT issued. Deliberately still
+        // recorded, so a run reports how many uploads it removed rather than
+        // silently reporting fewer.
+        recordUploadShape(`${name} ${shape} SUPPRESSED`, 0, 0);
+        return undefined;
+      }
       const started = performance.now();
       const result = original.apply(this, args);
       const ms = performance.now() - started;
@@ -797,6 +991,18 @@ interface ProbeContext {
    * after the freeze lifts.
    */
   readonly freeze: (on: boolean) => void;
+  /**
+   * Posts one intermediate result to the sink, before the scenario finishes.
+   *
+   * WHY A SCENARIO NEEDS THIS (2026-09-05, learned by losing three hours). The
+   * report is normally posted once, at the end. A 180-block `drift` soak
+   * reached block 177 and then stopped progressing; the run timed out and
+   * every one of those blocks was lost, because none of them had been sent.
+   * A long scenario must stream what it has: partial data from a run that died
+   * is worth far more than nothing, and a run this long is exactly the kind
+   * most likely to die.
+   */
+  readonly postPartial: (body: Record<string, unknown>) => void;
   readonly beat: (stage: string) => void;
 }
 
@@ -1111,6 +1317,9 @@ const ablateScenario: Scenario = async (ctx) => {
  */
 const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
   const { renderer } = ctx.viewport;
+  const query = new URLSearchParams(location.search);
+  const blockCount = Number(query.get(DRIFT_BLOCKS_QUERY_FLAG) ?? DRIFT_BLOCKS_DEFAULT);
+  const intervalMs = Number(query.get(DRIFT_INTERVAL_QUERY_FLAG) ?? DRIFT_INTERVAL_MS_DEFAULT);
   // The CONTROL for the `drift` finding. Frozen, no server state reaches the
   // client at all, so anything still growing across the window is grown by the
   // client itself — a leak — and anything that stops growing was the world
@@ -1120,8 +1329,10 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
   const startedAt = performance.now();
   const blocks: Record<string, unknown>[] = [];
   let firstBlock: FrameBlock | null = null;
-  for (let index = 0; index < DRIFT_BLOCKS; index++) {
-    const dueAt = startedAt + index * DRIFT_INTERVAL_MS;
+  let firstKeys: string[] = [];
+  let lastKeys: string[] = [];
+  for (let index = 0; index < blockCount; index++) {
+    const dueAt = startedAt + index * intervalMs;
     const waitMs = dueAt - performance.now();
     if (waitMs > 0) await wait(waitMs);
     const sampler = ctx.sampler();
@@ -1141,8 +1352,78 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
       programs: renderer.info.programs === null ? 0 : renderer.info.programs.length,
+      // Per block, so the composition of the churn can be compared across the
+      // window and not only its total. createSampler clears the shape map per
+      // block, so these are this block's uploads alone.
+      uploadTopShapes: Object.fromEntries(
+        Object.entries(block.uploadByShape)
+          .slice(0, 6)
+          .map(([key, value]) => [
+            key,
+            { callsPerFrame: value.calls / block.frames, msPerFrame: value.ms / block.frames },
+          ]),
+      ),
+      // WHICH CPU WORK GROWS. The 45-minute soak (2026-09-06) showed frame time
+      // going 2.60 -> 9.00 ms while GPU time went only 2.63 -> 3.74 — so the
+      // frame ends CPU-bound, and none of the counters above can say what the
+      // CPU is doing. `allBreakdown` is already computed per block; it was
+      // simply not being reported here, which made the decisive question
+      // unanswerable from a soak.
+      topCpu: Object.fromEntries(Object.entries(block.allBreakdown).slice(0, 10)),
+      // EVERY node, not just the drawable ones. The CPU soak (2026-09-06) put the
+      // whole decay inside `renderer.render` while draw calls FELL, which points
+      // at three's per-frame scene walk rather than at what it draws — and
+      // `censusOf` counts only Mesh/Points/Line, so accumulating empty Groups
+      // would cost traversal on every frame while being invisible to it.
+      sceneNodes: (() => {
+        let nodes = 0;
+        let groups = 0;
+        let invisible = 0;
+        ctx.viewport.scene.traverse((node) => {
+          nodes++;
+          if ((node as { isGroup?: boolean }).isGroup === true) groups++;
+          if (!node.visible) invisible++;
+        });
+        return { nodes, groups, invisible };
+      })(),
+      // THE DISPOSAL GAP. `textures` above is three's count of what it has
+      // uploaded and not disposed; the census below counts only what is
+      // REACHABLE from the scene graph. A texture whose mesh was dropped
+      // without `.dispose()` stays in the first number and vanishes from the
+      // second, so a widening gap is a disposal leak — and one that a
+      // scene-walking census alone would report as "nothing is growing".
+      censusTexturesReachable: (() => {
+        const all = new Set<unknown>();
+        for (const child of ctx.viewport.scene.children) {
+          if (!ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix))) continue;
+          for (const texture of censusOf(child).textureSet) all.add(texture);
+        }
+        return all.size;
+      })(),
+      // Per-rig content census: which owner's population is growing.
+      census: Object.fromEntries(
+        ctx.viewport.scene.children
+          .filter((child) => ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix)))
+          .map((child) => {
+            const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
+            const counted = censusOf(child);
+            return [
+              prefix === undefined ? child.name : child.name.slice(prefix.length),
+              {
+                objects: counted.objects,
+                triangles: counted.triangles,
+                materials: counted.materials,
+                textures: counted.textures,
+              },
+            ];
+          }),
+      ),
     });
-    ctx.beat(`drift-${String(index + 1)}-of-${String(DRIFT_BLOCKS)}`);
+    if (index === 0) firstKeys = programCacheKeys(renderer);
+    lastKeys = programCacheKeys(renderer);
+    // STREAMED, not only accumulated: see ProbeContext.postPartial.
+    ctx.postPartial({ blockIndex: index, blockCount, frozen: freezeSim, block: blocks[blocks.length - 1] });
+    ctx.beat(`drift-${String(index + 1)}-of-${String(blockCount)}`);
   }
   ctx.freeze(false);
   const first = blocks[0]!;
@@ -1151,13 +1432,32 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
     // The FIRST block is the scenario's headline sample: it is the one taken
     // under the same conditions every other scenario reports, so `fpsMean` at
     // the top level stays comparable with them rather than meaning something
-    // new only this scenario understands. DRIFT_BLOCKS is a positive literal,
-    // so the loop above always ran and this is never null.
+    // new only this scenario understands. The loop above always runs at least
+    // once (blockCount falls back to a positive literal), so this is set.
     sample: firstBlock!,
     detail: {
       frozen: freezeSim,
+      blockCount,
+      intervalMs,
       blocks,
       spanSeconds: Number(last['atSeconds']),
+      // WHICH programs appeared, not just how many. A key present at the end
+      // and absent at the start is a shader variant the running world asked for
+      // that the loaded world did not — the actual unit of the growth.
+      newPrograms: (() => {
+        const before = new Set(firstKeys);
+        const added = lastKeys.filter((key) => !before.has(key));
+        const counts = new Map<string, number>();
+        for (const key of added) {
+          const short = shortProgramKey(key);
+          counts.set(short, (counts.get(short) ?? 0) + 1);
+        }
+        return {
+          total: added.length,
+          distinct: counts.size,
+          keys: Object.fromEntries([...counts].slice(0, DRIFT_MAX_NEW_PROGRAMS)),
+        };
+      })(),
       grew: Object.fromEntries(
         (['gpuMsP50', 'frameMsP50', 'drawCalls', 'triangles', 'geometries', 'textures', 'programs'] as const).map(
           (key) => [key, { from: first[key], to: last[key] }],
@@ -1194,6 +1494,7 @@ function requestedScenario(): string | null {
  */
 export function installPerfProbeEarly(viewport: Viewport): void {
   if (requestedScenario() === null) return;
+  if (instrumentationDisabled()) return;
   installTaskTiming();
   const originalOnFrame = viewport.onFrame.bind(viewport);
   (viewport as { onFrame: Viewport['onFrame'] }).onFrame = (handler, phase) => {
@@ -1293,8 +1594,22 @@ export function installPerfProbe(deps: {
     return;
   }
 
-  installGlUploadAccounting();
-  wrapSinkTiming(world);
+  for (const shape of (new URLSearchParams(location.search).get(SUPPRESS_UPLOADS_QUERY_FLAG) ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')) {
+    suppressedUploadShapes.add(shape);
+  }
+  const renderScale = Number(
+    new URLSearchParams(location.search).get(RENDER_SCALE_QUERY_FLAG) ?? '1',
+  );
+  if (Number.isFinite(renderScale) && renderScale > 0 && renderScale !== 1) {
+    renderer.setPixelRatio(renderer.getPixelRatio() * renderScale);
+  }
+  if (!instrumentationDisabled()) {
+    installGlUploadAccounting();
+    wrapSinkTiming(world);
+  }
 
   let storms: readonly CycloneState[] = [];
   const originalRoute = pluginHost.routeMessage.bind(pluginHost);
@@ -1340,6 +1655,9 @@ export function installPerfProbe(deps: {
     freeze: (on: boolean): void => {
       frozenState.on = on;
     },
+    postPartial: (body): void => {
+      post({ scenario: name, partial: true, ...body });
+    },
     beat,
   };
 
@@ -1359,6 +1677,13 @@ export function installPerfProbe(deps: {
           gpu: gpuName(),
           clientVersion: __CLIENT_VERSION__,
           pixelRatio: renderer.getPixelRatio(),
+          // THE DRAWING BUFFER, recorded because frame time is a function of it
+          // and every sample taken before 2026-09-06 left it unsaid. All of
+          // those were a 1600x900 window (scripts/gpu-bench.sh); the target is
+          // full-screen 1440p, 2.6x the pixels, so the two are not comparable
+          // and a report that does not name its size cannot say which it is.
+          pixelWidth: renderer.domElement.width,
+          pixelHeight: renderer.domElement.height,
           settleMs,
           cameraDistance: camera.position.distanceTo(controls.target),
           programs: renderer.info.programs === null ? null : renderer.info.programs.length,
