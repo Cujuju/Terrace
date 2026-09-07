@@ -1048,17 +1048,9 @@ describe('applySculpt — tools and profiles are orthogonal', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Σ |height change| over the whole map across ONE player stroke: the volume
- * applySculpt moved, observed rather than predicted.
- *
- * THE SECOND PRESS IS THE ONE MEASURED (issue #387). A soft stroke is a core
- * plus an apron one band back from it, so over flat ground the FIRST press
- * moves the core alone — the apron's target is the level the press has only
- * just left. That is the documented `clamping` exclusion (a stroke that moves
- * less because the ground was already level is the same request, not a cheaper
- * one), so the press on which nominal and actual coincide is the one after it.
- * The warm-up press is run and then excluded from the total, so what is
- * compared is one stroke's worth of movement.
+ * Σ |height change| over the CORE after one player stroke: the volume the
+ * priced disc moved. The apron is deliberately uncharged (#387), so it is
+ * excluded here too — the claim is that the price equals the core's movement.
  */
 function observedDisplacement(
   radius: number,
@@ -1079,11 +1071,11 @@ function observedDisplacement(
   // is no longer what a priced stroke runs.
   const options = { tool: 'stamp', profile, anchor: 'clicked' } as const;
   applySculpt(map, 32, 32, radius, amount, options);
-  const before = Int32Array.from(map.cells);
-  applySculpt(map, 32, 32, radius, amount, options);
 
   let total = 0;
-  for (let i = 0; i < map.cells.length; i++) total += Math.abs(map.cells[i]! - before[i]!);
+  forEachFootprintOffset(radius, (dx, dy) => {
+    total += Math.abs(map.cells[(32 + dy) * size + (32 + dx)]! - start);
+  });
   return total;
 }
 
@@ -1135,10 +1127,10 @@ describe('sculptDisplacementUnits', () => {
    *      4     37       288  (1152)         592  (2368)
    */
   it('matches the published table of displacement volumes', () => {
-    expect(sculptDisplacementUnits(1, 'soft', 'stamp')).toBe(80);
-    expect(sculptDisplacementUnits(2, 'soft', 'stamp')).toBe(592);
-    expect(sculptDisplacementUnits(3, 'soft', 'stamp')).toBe(1552);
-    expect(sculptDisplacementUnits(4, 'soft', 'stamp')).toBe(2832);
+    expect(sculptDisplacementUnits(1, 'soft', 'stamp')).toBe(16);
+    expect(sculptDisplacementUnits(2, 'soft', 'stamp')).toBe(80);
+    expect(sculptDisplacementUnits(3, 'soft', 'stamp')).toBe(336);
+    expect(sculptDisplacementUnits(4, 'soft', 'stamp')).toBe(592);
 
     expect(sculptDisplacementUnits(1, 'hard', 'stamp')).toBe(16);
     expect(sculptDisplacementUnits(2, 'hard', 'stamp')).toBe(80);
@@ -1146,16 +1138,13 @@ describe('sculptDisplacementUnits', () => {
     expect(sculptDisplacementUnits(4, 'hard', 'stamp')).toBe(592);
   });
 
-  it('is one band-cell at the point brush under hard, and a point plus its apron under soft', () => {
+  it('is one band-cell at the point brush, where the two profiles coincide', () => {
     // The unit the price rate is denominated in: one band of height, one cell.
+    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'soft', 'stamp')).toBe(BAND_HEIGHT);
     expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'hard', 'stamp')).toBe(BAND_HEIGHT);
-    // Soft no longer coincides with it (issue #387): the apron is capped at the
-    // brush's own radius, so the point brush carries a one-cell skirt — five
-    // cells in all, not one.
-    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'soft', 'stamp')).toBe(5 * BAND_HEIGHT);
   });
 
-  it('grows with radius, and soft never displaces less than hard', () => {
+  it('grows with radius, and the two profiles price the same core', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius < MAX_BRUSH_RADIUS; radius++) {
         expect(sculptDisplacementUnits(radius + 1, profile, 'stamp')).toBeGreaterThan(
@@ -1163,10 +1152,10 @@ describe('sculptDisplacementUnits', () => {
         );
       }
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        // INVERTED BY #387, deliberately: soft is the hard core PLUS an apron,
-        // so it moves strictly more ground at every radius. Before #387 soft
-        // was a cone inside the same disc and this read the other way.
-        expect(sculptDisplacementUnits(radius, 'soft', 'stamp')).toBeGreaterThanOrEqual(
+        // EQUAL SINCE #387: both profiles level-fill the same core, and only
+        // the core is priced. Soft's apron is the talus that rise implies and
+        // is deliberately uncharged.
+        expect(sculptDisplacementUnits(radius, 'soft', 'stamp')).toBe(
           sculptDisplacementUnits(radius, 'hard', 'stamp'),
         );
       }
