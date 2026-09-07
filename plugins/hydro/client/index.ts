@@ -155,16 +155,16 @@ const instances: PuddleInstance[] = [];
 const shade: GroundShadeDisc[] = [];
 
 /**
- * The tool's id, label and the sentence the toolbar shows on hover.
+ * The tool's id, label and the phrase the toolbar shows on hover.
  *
- * The title says what it costs and what it does not promise, because neither is
- * discoverable by trying: the mana is debited server-side with no local gate,
- * and water on a rim looks identical to water on a field until the hillside
- * goes.
+ * `<Name>: <what a press does>`, in the four or five words the bar's other
+ * tools use ('Pyro: set unlocked growth alight', 'Sculpt: drag to shape land').
+ * The landslide is deliberately left out: a tooltip is a label, not a manual,
+ * and a sentence twice the length of its neighbours' reads as the odd one out.
  */
 const POUR_TOOL_ID = 'pour';
 const POUR_TOOL_LABEL = 'Hydro';
-const POUR_TOOL_TITLE = 'Hydro: pour water on unlocked ground — it puts fires out, and soaks a steep hillside loose';
+const POUR_TOOL_TITLE = 'Hydro: douse unlocked ground';
 
 /**
  * The mouse button a pour is made with. 0 — the primary only, so a middle- or

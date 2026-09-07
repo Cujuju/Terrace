@@ -1,4 +1,5 @@
-// The Hydro tool's face on the bottom toolbar: a tipped pail pouring, drawn as
+// The Hydro tool's face on the bottom toolbar: a bucket tipped on its side and
+// pouring, drawn as
 // a shaded inline SVG (owner, 2026-09-04: "gorgeous 3D icons") — gradients give
 // the water its depth and the pail its roundness, so the button reads as an
 // object rather than a glyph. Every gradient id is prefixed with the tool's
@@ -13,9 +14,9 @@
 //
 // IT PAIRS WITH THE TORCH IT STANDS NEXT TO (../../fire/client/TorchIcon.tsx).
 // Same 32×32 frame, same optical balance — one heavy body over one bright
-// event — and the pail is deliberately the torch's own materials, a wooden
-// stave body under an iron band, so the two read as one set of tools rather
-// than as two pieces of clip art.
+// event — and the bucket is deliberately the torch's own materials, wooden
+// staves under iron bands, so the two read as one set of tools rather than as
+// two pieces of clip art.
 
 import type { JSX } from 'solid-js';
 
@@ -61,16 +62,42 @@ export function WaterIcon(): JSX.Element {
         </linearGradient>
       </defs>
       {/* The sheen behind the pool. */}
-      <circle cx="16" cy="23" r="11" fill="url(#hydro-glow)" />
-      {/* The pail, tipped: a staved body under an iron band, mouth to the left. */}
-      <path d="M11.6 3.4 25.4 7.9l-2.4 7.4a3.6 3.6 0 0 1-4.5 2.3l-5.2-1.7a3.6 3.6 0 0 1-2.3-4.5z" fill="url(#hydro-wood)" />
-      <path d="M11.2 4.6 25.9 9.4l1-3L12.2 1.6z" fill="url(#hydro-band)" />
-      {/* The stream, from the pail's lip to the pool it is making. */}
-      <path d="M14.9 16.4c1.4 2.9 2.1 5.4 2.1 7.5l-4.5 0.6c0-2.2 0.6-4.9 2.4-8.1z" fill="url(#hydro-stream)" />
+      <circle cx="15.5" cy="23.5" r="11" fill="url(#hydro-glow)" />
+      {/*
+        The bail, swung forward off the two rim ears. Drawn BEFORE the body so
+        the half that passes behind the bucket is covered by it, which is what
+        makes the arc read as a handle going round rather than a line drawn
+        across.
+      */}
+      <path
+        d="M9.5 10.13 A 6.6 6.6 0 0 0 16.5 19.87"
+        fill="none"
+        stroke="url(#hydro-band)"
+        stroke-width="1.1"
+        stroke-linecap="round"
+      />
+      {/*
+        The bucket, tipped on its side and pouring: staves tapering from the
+        NARROW base at the top right down to the WIDE mouth at the bottom left.
+        The taper is the whole of the read — a bucket seen end-on is a cylinder,
+        and a cylinder is a pipe.
+      */}
+      <path d="M23.86 3.73 9.50 10.13 16.50 19.87 27.14 8.27z" fill="url(#hydro-wood)" />
+      {/* Two iron hoops, sized to the body where each one sits. */}
+      <path d="M20.27 5.33 24.48 11.17 23.43 11.93 19.22 6.09z" fill="url(#hydro-band)" />
+      <path d="M15.24 7.57 20.76 15.23 19.71 15.99 14.19 8.33z" fill="url(#hydro-band)" />
+      {/* The closed base. WOOD, not iron: a bright cap here out-reads the mouth
+          and the bucket turns back to front. */}
+      <ellipse cx="25.5" cy="6" rx="2.8" ry="1.1" transform="rotate(54.2 25.5 6)" fill="#5a3720" />
+      {/* The mouth: the iron rim, then the dark inside seen through it. */}
+      <ellipse cx="13" cy="15" rx="6" ry="2.3" transform="rotate(54.2 13 15)" fill="url(#hydro-band)" />
+      <ellipse cx="13.5" cy="14.9" rx="5" ry="1.7" transform="rotate(54.2 13.5 14.9)" fill="#2b1a0c" />
+      {/* The stream, off the mouth's low lip into the pool it is making. */}
+      <path d="M15.0 18.6c1.9 2.6 2.9 4.6 3.0 6.2l-5.6 0.6c0.1-1.9 1.0-4.2 2.6-6.8z" fill="url(#hydro-stream)" />
       {/* The patch on the ground: the disc this tool actually leaves behind. */}
-      <ellipse cx="15.4" cy="25" rx="12" ry="5.2" fill="url(#hydro-pool)" />
+      <ellipse cx="15.4" cy="25.4" rx="12" ry="5" fill="url(#hydro-pool)" />
       {/* The specular the torch's flame has, on the near lip of the water. */}
-      <ellipse cx="11.2" cy="23.4" rx="2.6" ry="1" fill="#ffffff" opacity="0.85" />
+      <ellipse cx="10.8" cy="24.2" rx="2.6" ry="1" fill="#ffffff" opacity="0.85" />
     </svg>
   );
 }
