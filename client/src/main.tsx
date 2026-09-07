@@ -253,7 +253,23 @@ const sculptInput = createSculptInput({
     // veto (out of mana, say) stops the intent HERE — nothing is sent, nothing
     // is predicted, so a refusal cannot flicker. The server still runs its own
     // authoritative chain on whatever does go out.
-    if (!pluginHost.allowLocalIntent(intent)) return false;
+    if (!pluginHost.allowLocalIntent(intent)) {
+      // A REFUSAL ENDS THE STROKE, IT DOES NOT JUST DROP THE INTENT (owner,
+      // 2026-09-06). A held brush re-emits on every pointer move and every
+      // repeat tick, so a stroke that runs out of mana mid-drag would
+      // otherwise keep firing into a gate that keeps refusing — and start
+      // sculpting again by itself the moment regen crossed the price, with the
+      // player's hand still moving. Released here, the button has to be lifted
+      // and pressed again, so what happens next is something the player asked
+      // for. The red flash on the outline is what says the tool did not break.
+      //
+      // BOTH ARE CORE'S, DRIVEN BY THE CHAIN'S VERDICT rather than by the mana
+      // plugin's own denial signal: core must not import a plugin, and any
+      // interceptor's veto leaves the stroke in exactly the same dead state.
+      brushPreview.flashDenied();
+      sculptInput.releaseStroke();
+      return false;
+    }
     if (!connection.sendSculpt(intent)) return false;
     world.predictSculpt(intent);
     // Reported back so the caller knows the intent reached the wire. A drag

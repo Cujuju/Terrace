@@ -412,6 +412,18 @@ export interface BrushSelection {
 export interface BrushPreview {
   /** Shows the outline for `brush` at the hovered cell, or hides on null. */
   update(hover: BrushHover | null, brush: BrushSelection): void;
+  /**
+   * A LOCAL INTENT WAS REFUSED (owner, 2026-09-06: "change the brush color
+   * from what it is now to red, flash it twice"). Starts the denial flash, or
+   * restarts one already running — a second refusal must read as a second
+   * event, not be swallowed by the first flash still playing.
+   *
+   * Called for ANY client-side veto, not only the mana gate's: the plugin
+   * interceptor chain is what refused, core does not know which plugin spoke,
+   * and a cue that only covered one of them would leave the others silently
+   * dead under the cursor.
+   */
+  flashDenied(): void;
   dispose(): void;
 }
 
@@ -436,6 +448,34 @@ const OUTLINE_COLOR_CAP = 0xffffff;
  * with the dim grey cell grid or the white ring.
  */
 const OUTLINE_COLOR_RISER = 0xffb347;
+
+/**
+ * Outline colour while the denial flash is red — the whole preview, ring,
+ * skirt and mark alike (`flashDenied`).
+ *
+ * THE SAME RED THE MANA GAUGE FLASHES (DENIED_MID in
+ * plugins/mana/client/ManaGauge.tsx). One refusal, two cues at opposite
+ * corners of the screen; a different red would read as two unrelated things
+ * going wrong at once. The value is restated rather than imported because core
+ * must not import a plugin — the whole reason this cue is driven by the
+ * interceptor chain's verdict and not by the mana plugin's own signal.
+ */
+const OUTLINE_COLOR_DENIED = 0xd9584a;
+
+/**
+ * The denial flash: how long the outline holds red, and how long it holds its
+ * ordinary colour before going red again.
+ *
+ * SPLIT EVENLY, so the flash reads as a blink rather than as a colour change
+ * with a stutter in it. Two pulses of the two together come to the gauge's own
+ * DENIAL_FLASH_MS (600 ms), which is what makes the brush and the gauge finish
+ * their cues at the same moment instead of one outlasting the other.
+ */
+const DENIED_FLASH_RED_MS = 150;
+const DENIED_FLASH_GAP_MS = 150;
+const DENIED_FLASH_PERIOD_MS = DENIED_FLASH_RED_MS + DENIED_FLASH_GAP_MS;
+/** "Flash it twice" (owner, 2026-09-06). */
+const DENIED_FLASH_PULSES = 2;
 
 /**
  * Colour of the pointer mark when the pick names no band a press could act on
@@ -1172,6 +1212,23 @@ export function createBrushPreview(
    */
   let showing = false;
   /**
+   * When the denial flash began, on the same monotonic clock the phase is
+   * measured against. Starts at −∞ so the very first frame is already past the
+   * end of a flash that never happened.
+   */
+  let deniedFlashStartMs = Number.NEGATIVE_INFINITY;
+  /**
+   * Whether the flash is RED this instant. Read off the clock on the frame
+   * that draws it, rather than driven by a timer flipping a flag: the preview
+   * is repainted every frame anyway, so a timer would only be a second source
+   * of truth about one interval — and one that keeps running after `dispose`.
+   */
+  const deniedFlashIsRed = (): boolean => {
+    const elapsed = performance.now() - deniedFlashStartMs;
+    if (elapsed < 0 || elapsed >= DENIED_FLASH_PULSES * DENIED_FLASH_PERIOD_MS) return false;
+    return elapsed % DENIED_FLASH_PERIOD_MS < DENIED_FLASH_RED_MS;
+  };
+  /**
    * `crosshairOnly` drops the footprint parts and keeps the centre mark — the
    * drag pointer (see BrushHover.grabbable). The cursor class still follows
    * `visible` alone: the crosshair IS the pointer in that state, so hiding the
@@ -1183,6 +1240,18 @@ export function createBrushPreview(
     skirt.visible = footprint;
     cellGrid.visible = footprint;
     crosshair.visible = visible;
+    // THE DENIAL FLASH OVERRIDES EVERY OTHER COLOUR, and it is applied HERE
+    // for the same reason visibility is written here: `update` paints the ring,
+    // the skirt and the mark on four different paths (tread, riser, the
+    // crosshair-only tools, the seeding drag), and a tint applied on each is a
+    // tint one of them can be added without. This is the last write before the
+    // frame, so it wins; the next frame's `update` paints the ordinary colours
+    // back over it once the flash is spent.
+    if (visible && deniedFlashIsRed()) {
+      material.color.setHex(OUTLINE_COLOR_DENIED);
+      skirtMaterial.color.setHex(OUTLINE_COLOR_DENIED);
+      crosshairMaterial.color.setHex(OUTLINE_COLOR_DENIED);
+    }
     if (visible === showing) return;
     showing = visible;
     canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, visible);
@@ -1312,6 +1381,9 @@ export function createBrushPreview(
       skirt.position.copy(line.position);
       cellGrid.position.copy(line.position);
       show(true);
+    },
+    flashDenied() {
+      deniedFlashStartMs = performance.now();
     },
     dispose() {
       show(false);
