@@ -55,10 +55,13 @@ import {
  * How far above the drawn cap the disc floats, in world units.
  *
  * Coplanar geometry z-fights, and on terraced ground the fight is visible as a
- * flickering band. This is ../../fire/client/torchMarker.ts's RING_HOVER_HEIGHT
- * — the same question, on the same surface, at the same camera distances — and
- * restating it as a different number would mean a puddle and a ring drawn on
- * one cell could disagree about which of them is on top.
+ * flickering band. This lifts the decal clear of the cap it lies on and nothing
+ * more.
+ *
+ * IT IS NOT THE HOVER RING'S LIFT and does not have to agree with it: the ring
+ * is a depth-test-off overlay (client/src/plugins/kit/hoverRing.ts), so it is
+ * drawn over this decal whatever either number says. The two stopped being the
+ * same question on 2026-09-06, when the ring became an overlay.
  */
 const PUDDLE_HOVER_HEIGHT = 0.02;
 
