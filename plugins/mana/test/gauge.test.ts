@@ -43,13 +43,15 @@ import {
   MIN_MANA_REGEN_PER_SECOND,
 } from '../server/index.ts';
 
-/**
- * A concrete, plausible world rate for the examples below. The gauge has no
- * default rate of its own — it animates whatever the balance push carries — so
- * this is a stand-in, and the punishing anchor (20/s) is used because it is the
- * whole number the readout examples in this file were written against.
- */
+/** A stand-in world rate: the gauge animates whatever the push carries. */
 const EXAMPLE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
+
+/**
+ * A rate slow enough that BOTH ends of the brush ladder stay inside the pulse
+ * clamp, so a ratio between them is the raw arithmetic and not the floor.
+ */
+const UNCLAMPED_REGEN_PER_SECOND =
+  MANA_COST_PER_MAX_RADIUS_HARD_SCULPT / (MAX_PULSE_PERIOD_S / 2);
 
 describe('fill level', () => {
   it('is the fraction of the vessel, clamped to it', () => {
@@ -71,10 +73,13 @@ describe('fill level', () => {
 
 describe('pulse period — the rate readout', () => {
   it('is one CURRENT-BRUSH sculpt worth of regen, in seconds', () => {
-    // The point brush at 20/s: 7 mana at 20/s = 0.35 s per grain.
+    // Cost over rate, floored at the legibility clamp.
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, EXAMPLE_REGEN_PER_SECOND),
-    ).toBeCloseTo(MANA_COST_PER_MIN_RADIUS_SCULPT / EXAMPLE_REGEN_PER_SECOND, 10);
+    ).toBeCloseTo(
+      Math.max(MIN_PULSE_PERIOD_S, MANA_COST_PER_MIN_RADIUS_SCULPT / EXAMPLE_REGEN_PER_SECOND),
+      10,
+    );
     expect(pulsePeriodSeconds(25, 5)).toBe(5);
   });
 
@@ -88,11 +93,11 @@ describe('pulse period — the rate readout', () => {
     // regen, but the wait between sculpts is the wait for 45 band-cells.
     const point = pulsePeriodSeconds(
       MANA_COST_PER_MIN_RADIUS_SCULPT,
-      EXAMPLE_REGEN_PER_SECOND,
+      UNCLAMPED_REGEN_PER_SECOND,
     );
     const plateau = pulsePeriodSeconds(
       MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
-      EXAMPLE_REGEN_PER_SECOND,
+      UNCLAMPED_REGEN_PER_SECOND,
     );
     expect(plateau / point).toBeCloseTo(
       MANA_COST_PER_MAX_RADIUS_HARD_SCULPT / MANA_COST_PER_MIN_RADIUS_SCULPT,
@@ -200,11 +205,12 @@ describe('current-brush cost', () => {
       setManaPool(POOL);
       setBrushRadius(POINT_BRUSH_RADIUS);
       setBrushProfile('soft');
-      const pointPeriod = pulsePeriodSeconds(currentBrushCost(), POOL.regenPerSecond);
+      // The unclamped rate, so the ratio below is the cost ratio and not the floor.
+      const pointPeriod = pulsePeriodSeconds(currentBrushCost(), UNCLAMPED_REGEN_PER_SECOND);
 
       setBrushRadius(MAX_BRUSH_RADIUS);
       setBrushProfile('hard');
-      const plateauPeriod = pulsePeriodSeconds(currentBrushCost(), POOL.regenPerSecond);
+      const plateauPeriod = pulsePeriodSeconds(currentBrushCost(), UNCLAMPED_REGEN_PER_SECOND);
 
       expect(plateauPeriod).toBeGreaterThan(pointPeriod);
       expect(plateauPeriod / pointPeriod).toBeCloseTo(
@@ -245,7 +251,7 @@ describe('brush price readout', () => {
 
 describe('numeric rate readout', () => {
   it('shows whole units at playable rates', () => {
-    expect(formatRegenRate(EXAMPLE_REGEN_PER_SECOND)).toBe('+20/s');
+    expect(formatRegenRate(EXAMPLE_REGEN_PER_SECOND)).toBe('+30/s');
     expect(formatRegenRate(19.7)).toBe('+20/s');
     expect(formatRegenRate(1)).toBe('+1/s');
   });

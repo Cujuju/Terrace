@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BAND_HEIGHT,
+  CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
@@ -57,8 +58,6 @@ import {
   MAX_MANA_REGEN_PER_SECOND,
   MIN_MANA_REGEN_PER_SECOND,
   NEUTRAL_MANA_MULTIPLIER,
-  WATERFALL_AURA_MAX_COUNTED,
-  WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL,
   clearManaPerk,
   manaBalanceOf,
   manaCostFor,
@@ -84,8 +83,26 @@ const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true };
 /** 64² cells = 4×4 chunks — small enough to reason about cell by cell. */
 const WORLD_SIZE = 64;
 
-/** The one unlocked chunk; cells (16..31, 16..31). */
+/** The chunk every stroke in this suite lands in; cells (16..31, 16..31). */
 const HOME_CHUNK: readonly [number, number] = [1, 1];
+
+/**
+ * EVERY chunk of the test world, unlocked.
+ *
+ * This suite is about what a sculpt COSTS, and since 2026-09-06 a sculpt near
+ * a locked chunk also buys land (chunkUnlockPenalty). A world with one
+ * unlocked chunk would put that surcharge on every stroke here — the reveal
+ * reach is a whole chunk, so from the middle of HOME_CHUNK it reaches all
+ * eight neighbours — and the volume prices these tests assert would all be
+ * measured through it. Unlocking the world removes the surcharge from the
+ * arithmetic entirely; the surcharge's own behaviour is reveal's suite.
+ */
+const EVERY_CHUNK: ReadonlyArray<readonly [number, number]> = (() => {
+  const edge = WORLD_SIZE / CHUNK_SIZE;
+  const chunks: Array<readonly [number, number]> = [];
+  for (let cy = 0; cy < edge; cy++) for (let cx = 0; cx < edge; cx++) chunks.push([cx, cy]);
+  return chunks;
+})();
 
 /** Well inside HOME_CHUNK, far enough from every border to spill nowhere. */
 const INTERIOR_CELL = { x: 24, y: 24 } as const;
@@ -101,16 +118,8 @@ const TICKS_PER_HEARTBEAT =
 
 /**
  * The difficulty every test in this file boots at unless it says otherwise.
- *
- * MAX_WORLD_DIFFICULTY, deliberately: regen is now DERIVED from the world's
- * difficulty (see manaRegenForDifficulty), and the hardest world's anchor is
- * exactly MANA_REGEN_AT_DIFFICULTY_100 = 20 mana/s — a whole number that divides
- * the tick period and the point-stamp price evenly, so every "ticks to earn one
- * sculpt back" count in this suite stays an exact integer instead of an IEEE
- * near-miss. That was true of the flat 20/s default this replaced, so the suite's
- * arithmetic is unchanged; what changed is that the rate is now stated rather
- * than inherited. The derivation itself is tested at all three anchors in the
- * "difficulty-derived regen" block below.
+ * MAX_WORLD_DIFFICULTY gives the whole-number anchor rate, so every "ticks to
+ * earn one sculpt back" count stays an exact integer.
  */
 const SUITE_DIFFICULTY = MAX_WORLD_DIFFICULTY;
 
@@ -181,11 +190,11 @@ interface Harness {
  * billed for buying the very ground the test world was set up to have already
  * given it.
  */
-function seedTerritory(world: World): void {
+function seedTerritory(world: World, token: string = PLAYER.token): void {
   const edge = world.chunksPerEdge;
   for (let cy = 0; cy < edge; cy++) {
     for (let cx = 0; cx < edge; cx++) {
-      if (world.isChunkUnlocked(cx, cy)) world.seedChunkForToken(PLAYER.token, cx, cy);
+      if (world.isChunkUnlocked(cx, cy)) world.seedChunkForToken(token, cx, cy);
     }
   }
 }
@@ -195,7 +204,7 @@ function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   nextHelperDir = 1;
   // reveal is stateless since issue #17 (2026-08-19) — no reset needed.
 
-  const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], difficulty);
+  const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, difficulty);
   const sink = new RecordingSink();
   world.setSink(sink);
 
@@ -399,6 +408,7 @@ describe('mana perks', () => {
   beforeEach(() => {
     harness = boot();
     harness.world.addPlayer(OTHER_PLAYER);
+    seedTerritory(harness.world, OTHER_PLAYER.token);
     harness.host.playerJoined(OTHER_PLAYER);
     harness.sink.clear();
   });
@@ -592,6 +602,7 @@ describe('mana perks', () => {
     setManaPerk(latecomer.id, { costMultiplier: 0.5 });
 
     harness.world.addPlayer(latecomer);
+    seedTerritory(harness.world, latecomer.token);
     harness.host.playerJoined(latecomer);
     harness.sink.clear();
 
@@ -705,12 +716,8 @@ describe('mana regen configuration', () => {
 
     const harness = boot();
     setManaPerk(PLAYER.id, { regenMultiplier: 2 });
-    // A fresh unlocked chunk here is flat (no relief at all), so it seeds no
-    // spring and the waterfall aura's multiplier is neutral — see
-    // waterfallAuraMultiplierFor's own test coverage for the non-neutral case.
-    const api = createWorldApi(harness.world, harness.host, 'mana').api;
-    expect(manaRegenFor(api, PLAYER.id)).toBe(configured * 2);
-    expect(manaRegenFor(api, 'never-seen')).toBe(configured); // no perk: world rate
+    expect(manaRegenFor(PLAYER.id)).toBe(configured * 2);
+    expect(manaRegenFor('never-seen')).toBe(configured); // no perk: world rate
 
     // The push a spend triggers carries this player's own rate, not the world's.
     harness.sink.clear();
@@ -720,53 +727,6 @@ describe('mana regen configuration', () => {
     });
   });
 
-  it('grants the waterfall aura only once the player can see the waterfall', () => {
-    const configured = 8;
-    process.env[MANA_REGEN_ENV] = String(configured);
-    const harness = boot();
-    const api = createWorldApi(harness.world, harness.host, 'mana').api;
-
-    // World.riverNetwork() throttles its own recompute to at most once per
-    // RIVER_RECOMPUTE_INTERVAL_MS of REAL time (server/src/world/world.ts —
-    // deliberately wall-clock, not tick-driven; see that constant's doc
-    // comment). boot()'s own player-join balance push already reads it once
-    // (against the still-flat world), so the cache must be allowed to age
-    // past the throttle window before the sculpts below can be reflected —
-    // fake timers make that deterministic instead of a real sleep.
-    vi.useFakeTimers();
-
-    // Carve a peak inside HOME_CHUNK (cells 16..31, default-flat everywhere
-    // else in it) through the SAME authoritative path a player's stroke would
-    // use — a radius-1 stamp touches exactly its one cell with no falloff, so
-    // each call sets that cell's absolute height (every cell starts at 0) and
-    // — unlike poking `map.cells` directly — correctly marks the river cache
-    // stale, exactly as every real sculpt does. (20,20) at band 4, its three
-    // "outward" neighbours at band 3 (high enough to keep it a strict local
-    // max, low enough that the actual descent still prefers the fourth side),
-    // and (21,20) at band 2 — a clean two-band drop, i.e. one waterfall on the
-    // very first step. The river then continues into the chunk's default-flat
-    // (sea-level) ground beyond, which may cross another band edge of its own
-    // — deliberately not hand-traced here (that exact arithmetic is
-    // rivers.test.ts's job); this test only needs AT LEAST ONE waterfall to
-    // land in the player's own territory.
-    const STAMP: SculptOptions = { tool: 'stamp' };
-    harness.world.applySculpt(20, 20, 1, 4 * BAND_HEIGHT, STAMP); // the spring
-    harness.world.applySculpt(20, 19, 1, 3 * BAND_HEIGHT, STAMP); // north
-    harness.world.applySculpt(20, 21, 1, 3 * BAND_HEIGHT, STAMP); // south
-    harness.world.applySculpt(19, 20, 1, 3 * BAND_HEIGHT, STAMP); // west
-    harness.world.applySculpt(21, 20, 1, 2 * BAND_HEIGHT, STAMP); // east — the plunge pool
-    // Union-unlocked already (HOME_CHUNK), but the aura reads PER-PLAYER
-    // visibility (issue #17) — grant it to this player's own token too, so the
-    // assertion does not depend on what reveal's onPlayerJoin happens to do.
-    harness.world.unlockChunkForToken(PLAYER.token, ...HOME_CHUNK);
-    vi.advanceTimersByTime(RIVER_RECOMPUTE_INTERVAL_MS);
-
-    const regen = manaRegenFor(api, PLAYER.id);
-    expect(regen).toBeGreaterThan(configured); // the aura fired at all
-    expect(regen).toBeLessThanOrEqual(
-      configured * (NEUTRAL_MANA_MULTIPLIER + WATERFALL_AURA_MAX_COUNTED * WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL),
-    ); // and stayed inside its cap
-  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -800,8 +760,8 @@ describe('difficulty-derived regen', () => {
   }
 
   it('anchors the scale where the owner set it, and names the anchors correctly', () => {
-    expect(MANA_REGEN_AT_DIFFICULTY_1).toBe(200);
-    expect(MANA_REGEN_AT_DIFFICULTY_100).toBe(20);
+    expect(MANA_REGEN_AT_DIFFICULTY_1).toBe(300);
+    expect(MANA_REGEN_AT_DIFFICULTY_100).toBe(30);
     // The names claim these sit at difficulty 1 and 100. Assert that against
     // CORE's band, so rescaling WORLD_DIFFICULTY cannot leave them misnamed —
     // the same plugin-side relation check wildlife uses for the seabed depth.
@@ -809,21 +769,21 @@ describe('difficulty-derived regen', () => {
     expect(MAX_WORLD_DIFFICULTY).toBe(100);
   });
 
-  it('gives a WARM world 200/s, on the wire', () => {
+  it('gives a WARM world 300/s, on the wire', () => {
     const harness = boot(MIN_WORLD_DIFFICULTY);
     expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_1);
     expect(pushedRegen(harness)).toBe(MANA_REGEN_AT_DIFFICULTY_1);
   });
 
-  it('gives a PUNISHING world 20/s, on the wire', () => {
+  it('gives a PUNISHING world 30/s, on the wire', () => {
     const harness = boot(MAX_WORLD_DIFFICULTY);
     expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_100);
     expect(pushedRegen(harness)).toBe(MANA_REGEN_AT_DIFFICULTY_100);
   });
 
-  it('gives the default world the documented midpoint, ≈110.9/s', () => {
+  it('gives the default world the documented midpoint, ≈166.4/s', () => {
     // The formula stated independently of the implementation:
-    //   regen(d) = 200 + (d − 1)/(100 − 1) × (20 − 200)
+    //   regen(d) = 300 + (d − 1)/(100 − 1) × (30 − 300)
     const expected =
       MANA_REGEN_AT_DIFFICULTY_1 +
       ((DEFAULT_WORLD_DIFFICULTY - MIN_WORLD_DIFFICULTY) /
@@ -834,7 +794,7 @@ describe('difficulty-derived regen', () => {
     expect(manaRegenPerSecond()).toBe(expected);
     expect(pushedRegen(harness)).toBe(expected);
     // The number the comments and .env.example quote to self-hosters.
-    expect(expected).toBeCloseTo(110.909, 3);
+    expect(expected).toBeCloseTo(166.364, 3);
   });
 
   it('interpolates linearly and monotonically across the whole scale', () => {
@@ -858,6 +818,9 @@ describe('difficulty-derived regen', () => {
     // times as much sculpting at difficulty 1 as at difficulty 100.
     function earnedInOneSecond(difficulty: number): number {
       const harness = boot(difficulty);
+      // Twice, so the hole left in the pool is deeper than a second of the
+      // FASTEST anchor — otherwise capacity, not the rate, decides the answer.
+      sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
       const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
       for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
@@ -1371,7 +1334,7 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
    *  is a genuine terrain no-op, whatever the brush. */
   function bootAtWorldFloor(): Harness {
     resetManaState();
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], SUITE_DIFFICULTY, MIN_HEIGHT);
+    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY, MIN_HEIGHT);
     const sink = new RecordingSink();
     world.setSink(sink);
     const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
@@ -1462,7 +1425,7 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
   /** Boots mana with an extra plugin appended AFTER it in the chain. */
   function bootWithLaterPlugin(laterPlugin: TerracePlugin): Harness {
     resetManaState();
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], SUITE_DIFFICULTY);
+    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
     const sink = new RecordingSink();
     world.setSink(sink);
 

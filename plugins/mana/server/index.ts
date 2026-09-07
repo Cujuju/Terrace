@@ -193,78 +193,18 @@ export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = 3;
 export const MANA_CAPACITY =
   FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT;
 
-// ────────────────────────────────────────────────────────────────────────────
-// REGEN IS DERIVED FROM THE WORLD'S DIFFICULTY (owner-settled 2026-08-14: "warm
-// maps regenerate 200/s, difficult maps 20/s").
-//
-// Core owns a neutral per-world scalar — WorldApi.difficulty, an integer in
-// [1, 100] where 1 is warm/forgiving and 100 is punishing — and attaches no
-// mechanic to it whatsoever. mana is its first consumer, and this is the whole
-// of mana's interpretation: the pace of the economy IS what "difficulty" means
-// to a plugin whose only mechanic is a spending limit. A warm world hands the
-// player mana faster than they can plausibly spend it, so the veto is nearly
-// never felt; a punishing one makes every sculpt a decision.
-//
-// This replaces a FLAT default of 20/s. A world that leaves both settings alone
-// therefore regenerates faster than it used to (110.9/s at the default
-// difficulty of 50, up from 20/s) — intended, and the mid-scale answer to the
-// owner's two anchors rather than a retune of the old number.
-//
-// NOTE: mana is an economy, not terrain math — the determinism contract in
-// CLAUDE.md governs shared/'s heightmap ops and does not apply here, so a
-// fractional rate and a fractional pool are both fine. State is still
-// reproducible: regen is driven purely by the fixed tick period the host passes
-// in, never by wall-clock time.
-// ────────────────────────────────────────────────────────────────────────────
+// Regen is interpolated from WorldApi.difficulty: 1 is warm, 100 is punishing.
+// Driven by the host's fixed tick period, never wall-clock time.
+
+/** Regen at MIN_WORLD_DIFFICULTY, mana per second of simulated time. */
+export const MANA_REGEN_AT_DIFFICULTY_1 = 300;
+
+/** Regen at MAX_WORLD_DIFFICULTY. */
+export const MANA_REGEN_AT_DIFFICULTY_100 = 30;
 
 /**
- * The WARM anchor: regen at MIN_WORLD_DIFFICULTY, in mana units per second of
- * simulated time. The owner's number for an easy map.
- *
- * What it buys, at the shipped prices: 200/s is 33 point stamps a second
- * (MANA_COST_PER_MIN_RADIUS_SCULPT = 6) against a held brush that emits ~8
- * intents/s, and a full empty-to-capacity refill in MANA_CAPACITY / 200 ≈ 4 s.
- * Fine detailing is effectively free at this end of the scale and only the
- * biggest brushes are ever rationed, which is what "warm" is meant to feel like.
- * It sits well inside the configurable band (MAX_MANA_REGEN_PER_SECOND = 810).
- */
-export const MANA_REGEN_AT_DIFFICULTY_1 = 200;
-
-/**
- * The PUNISHING anchor: regen at MAX_WORLD_DIFFICULTY. The owner's number for a
- * difficult map, and — not by coincidence — the flat default this derivation
- * replaces: 3.3 point stamps a second sustained, a full refill in
- * MANA_CAPACITY / 20 = 40.5 s, an economy that is felt continuously.
- */
-export const MANA_REGEN_AT_DIFFICULTY_100 = 20;
-
-/**
- * This world's DEFAULT regen rate, derived from its difficulty by linear
- * interpolation between the two anchors above:
- *
- *   t         = (difficulty − 1) / (100 − 1)
- *   regen(d)  = MANA_REGEN_AT_DIFFICULTY_1
- *               + t × (MANA_REGEN_AT_DIFFICULTY_100 − MANA_REGEN_AT_DIFFICULTY_1)
- *             = 200 − 180 × (d − 1) / 99
- *
- * so regen(1) = 200/s exactly, regen(100) = 20/s exactly, and the default
- * difficulty of 50 gives 200 − 180 × 49/99 = 110.909…/s — the documented
- * midpoint an unconfigured world runs at. Linear because the scalar is a
- * dimensionless 1–100 dial with no natural curve to it: any easing would be a
- * second tuning decision hidden inside a first one, and a plugin author reading
- * "difficulty 25" should be able to predict the rate.
- *
- * The endpoints are read from core's band rather than written as 1 and 100, so
- * the two anchors stay pinned to the ends of whatever that band is; the test
- * suite asserts the names still match (MANA_REGEN_AT_DIFFICULTY_1 ↔
- * MIN_WORLD_DIFFICULTY) so a rescale in core cannot leave these misnamed.
- *
- * Defensive on input: a non-finite difficulty degrades to core's own default
- * rather than propagating NaN into every pool (a NaN balance compares false
- * against every threshold, which freezes a player out permanently and silently),
- * and the interpolation parameter is clamped so an out-of-band difficulty cannot
- * extrapolate past the anchors. WorldApi.difficulty already guarantees both;
- * this function is exported and cheap to make total.
+ * Linear between the two anchors, so difficulty 50 gives 166.4/s. Clamped and
+ * NaN-guarded: a non-finite rate would freeze a player out permanently.
  */
 export function manaRegenForDifficulty(difficulty: number): number {
   const rated = Number.isFinite(difficulty) ? difficulty : DEFAULT_WORLD_DIFFICULTY;
@@ -468,88 +408,9 @@ export function manaRegenPerSecond(): number {
   return regenPerSecond;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// THE WATERFALL AURA (mechanics card 40: "a small mana-regen aura at the
-// plunge pool"). Waterfalls are core terrain fact, derived and cached on
-// World (see World.riverNetwork and WorldApi.riverNetwork's doc comments) —
-// nothing "gamey" lives there. This is the one place that fact becomes a
-// mechanic, in the same "core publishes a neutral read, mana decides what it
-// means" shape WorldApi.difficulty already established for regen above, and
-// it needs no new seam beyond a read mana already has access to — see the
-// PERK API section below for the seam that exists for OTHER plugins; this is
-// mana reading one more fact about its OWN world, not a second plugin.
-//
-// NO PLAYER AVATARS EXIST IN THIS GAME (design doc — players are gods
-// sculpting a world, never embodied in it), so "standing at the plunge pool"
-// cannot mean spatial proximity the way it would for a walking character. The
-// aura is instead read against each player's own REVEALED TERRITORY
-// (WorldApi.isCellVisibleTo, the same per-player fog-of-war primitive issue
-// #17 built) — a waterfall a player has personally unlocked is "theirs" in
-// exactly the sense a shrine on your own land is, and a waterfall still
-// hidden behind fog grants nothing, which is what keeps this from being a
-// free, world-wide buff the instant anyone anywhere sculpts one.
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * Regen bonus granted per waterfall inside a player's own revealed territory,
- * as a fraction of their base rate. "A SMALL... aura" (the card's own words)
- * is why this is a percentage add-on rather than a new anchor on the scale
- * WORLD_DIFFICULTY already owns (MANA_REGEN_AT_DIFFICULTY_1/100 span a 10×
- * range; this must read as a bonus on top of that, never as a second economy).
- * 0.15 keeps even a fully-stacked aura (see the cap below) inside a third of
- * the base rate — noticeable to a player who went and built one, never
- * capable of swallowing the difficulty dial's own effect.
- */
-export const WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL = 0.15;
-
-/**
- * How many waterfalls in a player's territory count toward their aura bonus.
- * Without a cap, a player who reveals a very jagged stretch of coastline (see
- * rivers.ts — a single river's course can in principle cross many band edges)
- * could stack an unbounded multiplier from terrain shape alone, which is the
- * same "a mechanic must not depend on how the terrain happens to be carved"
- * argument sculptDisplacementUnits makes about NOT pricing the level-fill
- * profile's real volume (shared/src/heightmap.ts). 3 keeps the aura reading
- * as "you built a handful of dramatic waterfalls", not as a stat to farm.
- */
-export const WATERFALL_AURA_MAX_COUNTED = 3;
-
-/**
- * This player's waterfall-aura multiplier: 1 (neutral) with none in view,
- * rising by WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL per waterfall inside
- * their own revealed territory, capped at WATERFALL_AURA_MAX_COUNTED.
- *
- * COST. `world.riverNetwork()` is itself cached and throttled server-side
- * (World.riverNetwork's doc comment) — calling it here every tick, for every
- * player, is free. Flattening its rivers' waterfall lists is bounded by the
- * same MAX_SPRINGS_PER_NETWORK × per-river trace-budget argument
- * shared/src/rivers.ts already makes for why a full recompute is cheap; this
- * only re-walks that already-small list, per player, per tick — negligible
- * next to the regen loop's own per-player work.
- */
-function waterfallAuraMultiplierFor(world: WorldApi, playerId: string): number {
-  let counted = 0;
-  for (const river of world.riverNetwork().rivers) {
-    for (const waterfall of river.waterfalls) {
-      if (!world.isCellVisibleTo(playerId, waterfall.x, waterfall.y)) continue;
-      counted++;
-      if (counted >= WATERFALL_AURA_MAX_COUNTED) break;
-    }
-    if (counted >= WATERFALL_AURA_MAX_COUNTED) break;
-  }
-  return NEUTRAL_MANA_MULTIPLIER + counted * WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL;
-}
-
-/**
- * What THIS player's pool actually earns per second, perk AND waterfall aura
- * included — the number the balance push carries so the client gauge can
- * animate at the true rate instead of guessing at a constant it has no
- * business knowing.
- */
-export function manaRegenFor(world: WorldApi, playerId: string): number {
-  return (
-    regenPerSecond * manaPerkOf(playerId).regenMultiplier * waterfallAuraMultiplierFor(world, playerId)
-  );
+/** What this player's pool earns per second, perk included. */
+export function manaRegenFor(playerId: string): number {
+  return regenPerSecond * manaPerkOf(playerId).regenMultiplier;
 }
 
 /**
@@ -860,7 +721,7 @@ function sendBalance(world: WorldApi, playerId: string, pool: ManaPool): void {
     // The perk-adjusted rate this pool refills at. Display-only on the client
     // (it animates the gauge between pushes); the authoritative arithmetic
     // stays here.
-    regenPerSecond: manaRegenFor(world, playerId),
+    regenPerSecond: manaRegenFor(playerId),
   });
 }
 
@@ -1108,18 +969,10 @@ function regenerate(world: WorldApi, dt: number): void {
         // sculpt and not a second, quieter code path through the economy.
         pool.balance = MANA_CAPACITY;
       } else {
-        // Per-player, because regen is perk- AND waterfall-aura-scaled: a Spring
-        // of Aether holder, or a player standing on their own revealed
-        // waterfall, earns faster than everyone else in the same tick. Capacity
-        // is deliberately NOT scaled by either — both change the rate you fill
-        // at, never how much you can hold, so a burst of sculpts stays worth the
-        // same to every player.
+        // Per-player: a regen perk scales the rate you fill at, never capacity.
         pool.balance = Math.min(
           MANA_CAPACITY,
-          pool.balance +
-            baseGain *
-              manaPerkOf(playerId).regenMultiplier *
-              waterfallAuraMultiplierFor(world, playerId),
+          pool.balance + baseGain * manaPerkOf(playerId).regenMultiplier,
         );
       }
     }
