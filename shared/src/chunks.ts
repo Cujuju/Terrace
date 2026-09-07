@@ -270,7 +270,8 @@ export function extractChunkPayload(map: Heightmap, cx: number, cy: number): Chu
  * `Uint8Array` of two bytes a height, so indexing the argument yields a BYTE;
  * handing the converted array back means a caller that needs one height never
  * has to reach for the union. See writeChunkPayload, whose span check read a
- * byte for three months because it did.
+ * byte from 2026-09-01 (when the wire became bytes) to 2026-09-06 because it
+ * did.
  */
 export function writeChunkHeights(
   map: Heightmap,
