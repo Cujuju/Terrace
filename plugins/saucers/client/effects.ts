@@ -13,21 +13,28 @@
 // EVERYTHING IS POOLED AND NOTHING IS ALLOCATED PER FRAME.
 //
 // The frame budget is 7.1 ms (140 fps, the project benchmark) and this rig runs
-// inside it every frame an encounter is alive. So: the bolt meshes are built
-// once at attach and hidden rather than removed, the shard cloud is one Points
-// object whose positions are rewritten in place, and the scratch vectors below
-// are module-scope singletons rather than locals. A hidden subtree costs no draw
-// call at all (client/src/plugins/host.ts, countDrawObjects), so the pool is
-// free when the sky is empty.
+// inside it every frame an encounter is alive. So: every pool below is built
+// once at attach — one InstancedMesh per visual part, cut to zero (`count = 0`)
+// rather than removed when nothing is showing, plus a handful of individual
+// shard clouds hidden the same way meshes always were — the shard cloud is one
+// Points object whose positions are rewritten in place, and the scratch
+// vectors below are module-scope singletons rather than locals. A hidden
+// subtree, or an InstancedMesh at `count = 0`, costs no draw call at all
+// (client/src/plugins/host.ts, countDrawObjects), so the pool is free when the
+// sky is empty.
 
 import {
   AdditiveBlending,
   NormalBlending,
   BufferAttribute,
   BufferGeometry,
+  Color,
   CylinderGeometry,
+  DynamicDrawUsage,
   Group,
-  Mesh,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  Matrix4,
   MeshBasicMaterial,
   Points,
   PointsMaterial,
@@ -45,6 +52,7 @@ import {
   MAX_LASER_BOLTS,
   MAX_SAUCERS_PER_ENCOUNTER,
 } from '../protocol.ts';
+import { spliceShader } from '../../../client/src/render/shaderSplice.ts';
 
 /**
  * A LENGTH OF GROUND, IN THE UNITS THE SCENE IS DRAWN IN.
@@ -66,13 +74,118 @@ function worldUnitsAcross(cells: number): number {
  * garbage collector pays for inside the frame budget.
  *
  * SAFE BECAUSE NOTHING HERE IS RE-ENTRANT: the client host calls each frame
- * handler in turn, on one thread, and no function below yields.
+ * handler in turn, on one thread, and no function below yields. Shared across
+ * all three pools below for the same reason — a bolt, a burst and a splash are
+ * never being placed at the same instant.
  */
 const scratchDirection = new Vector3();
+const scratchPosition = new Vector3();
+const scratchScale = new Vector3();
 const scratchQuaternion = new Quaternion();
+const scratchMatrix = new Matrix4();
+const scratchColor = new Color();
 
 /** A cylinder is authored along +Y; every orientation below is measured from it. */
 const CYLINDER_AXIS = new Vector3(0, 1, 0);
+
+/** A bolt's own geometry is already sized and never scaled per instance. */
+const UNIT_SCALE = new Vector3(1, 1, 1);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-INSTANCE ALPHA.
+//
+// InstancedMesh gives per-instance COLOUR for free: `setColorAt` writes into
+// `instanceColor`, and three's stock program multiplies it into `diffuseColor`
+// on its own. It gives NO per-instance alpha — there is nothing in the stock
+// program that reads a second instanced value into `diffuseColor.a`. Every
+// pool in this file fades its members on their own clock, so that gap has to
+// be closed one of two ways:
+//
+//   - fold the fade into the instance COLOUR and hold material opacity at a
+//     constant 1. Correct ONLY under AdditiveBlending, where the blend
+//     equation is `colour · srcAlpha + dst` and a constant srcAlpha of 1
+//     makes that `colour + dst` — so a colour already scaled by the fade
+//     reproduces the old per-material opacity fade exactly. `createCrashBursts`
+//     uses this: the ball and the core were additive already (BURST_COLOUR's
+//     comment).
+//   - splice a REAL per-instance alpha into the compiled program, via a second
+//     InstancedBufferAttribute. Required under NormalBlending, where the
+//     result is a mix with the background (`colour · a + dst · (1 − a)`) and
+//     folding the fade into colour instead would fade the pool toward BLACK,
+//     not toward the background — which over daylit ground or sky is exactly
+//     the "extremely difficult to see" additive bolt BOLT_INTENSITY's comment
+//     already rejected once. `createLaserPool` and `createCrashSplashes` (both
+//     NormalBlending, by design — see BOLT_INTENSITY and SPLASH_COLOUR) use
+//     `addInstancedAlpha` below for this.
+//
+// The splice itself is the same primitive plugins/cyclone/client/spiral.ts
+// uses for its own per-puff fade, adapted to MeshBasicMaterial's stock program
+// instead of a hand-authored ShaderMaterial.
+
+/** The header, in both stages — same anchor spiral.ts patches at. */
+const SHADER_COMMON_ANCHOR = '#include <common>';
+/** Declares `vec3 transformed`; a convenient, side-effect-free place to read the attribute. */
+const BEGIN_VERTEX_ANCHOR = '#include <begin_vertex>';
+/** The last chunk in MeshBasicMaterial's fragment program to touch `diffuseColor.a` before it. */
+const ALPHATEST_FRAGMENT_ANCHOR = '#include <alphatest_fragment>';
+
+const INSTANCED_ALPHA_VERTEX_DECLARATIONS = /* glsl */ `varying float vInstancedAlpha;
+attribute float instancedAlpha;`;
+const INSTANCED_ALPHA_FRAGMENT_DECLARATIONS = /* glsl */ `varying float vInstancedAlpha;`;
+const INSTANCED_ALPHA_ASSIGN = /* glsl */ `vInstancedAlpha = instancedAlpha;`;
+const INSTANCED_ALPHA_APPLY = /* glsl */ `diffuseColor.a *= vInstancedAlpha;`;
+
+/**
+ * Attaches a per-instance alpha to `material` — a `MeshBasicMaterial` drawn by
+ * an `InstancedMesh` of `capacity` instances — and returns the attribute so
+ * the caller can write a fade into it per instance, per frame.
+ *
+ * `label` names the material in `spliceShader`'s own thrown error, should a
+ * future three.js upgrade move one of the two anchors.
+ */
+function addInstancedAlpha(
+  geometry: BufferGeometry,
+  material: MeshBasicMaterial,
+  capacity: number,
+  label: string,
+): InstancedBufferAttribute {
+  const alpha = new InstancedBufferAttribute(new Float32Array(capacity).fill(1), 1);
+  alpha.setUsage(DynamicDrawUsage);
+  geometry.setAttribute('instancedAlpha', alpha);
+
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = spliceShader(
+      spliceShader(
+        shader.vertexShader,
+        SHADER_COMMON_ANCHOR,
+        `${SHADER_COMMON_ANCHOR}\n${INSTANCED_ALPHA_VERTEX_DECLARATIONS}`,
+        label,
+      ),
+      BEGIN_VERTEX_ANCHOR,
+      `${BEGIN_VERTEX_ANCHOR}\n    ${INSTANCED_ALPHA_ASSIGN}`,
+      label,
+    );
+    shader.fragmentShader = spliceShader(
+      spliceShader(
+        shader.fragmentShader,
+        SHADER_COMMON_ANCHOR,
+        `${SHADER_COMMON_ANCHOR}\n${INSTANCED_ALPHA_FRAGMENT_DECLARATIONS}`,
+        label,
+      ),
+      ALPHATEST_FRAGMENT_ANCHOR,
+      `${ALPHATEST_FRAGMENT_ANCHOR}\n    ${INSTANCED_ALPHA_APPLY}`,
+      label,
+    );
+  };
+  // three keys a compiled program by material type, parameters and this
+  // method — never by `onBeforeCompile` — so without a key of its own this
+  // pool could share a program with another patched MeshBasicMaterial of the
+  // same parameters. Same defensive step spiral.ts's own patch takes.
+  const stockCacheKey = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${stockCacheKey()}|instancedAlpha:${label}`;
+
+  return alpha;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE BOLTS.
@@ -111,7 +224,10 @@ const BOLT_FADE_START_FRACTION = 0.7;
  * light cannot darken anything, so over a bright sky or pale ground an
  * additive bolt is invisible by construction. An opaque streak occludes what
  * is behind it and is seen against everything. Three times, additive, was the
- * first cut and was still "extremely difficult to see".
+ * first cut and was still "extremely difficult to see". This is also why the
+ * instancing below gives the pool a REAL per-instance alpha (addInstancedAlpha)
+ * instead of folding the fade into instance colour: NormalBlending fades
+ * toward the background, additive-style folding would fade toward black.
  */
 const BOLT_INTENSITY = 2;
 
@@ -125,15 +241,6 @@ const BOLT_RADIAL_SEGMENTS = 6;
  * short in the air.
  */
 const BOLT_OVERSHOOT_CELLS = LASER_BOLT_LENGTH_CELLS;
-
-/**
- * One pooled bolt. `mesh.visible` is the only thing that changes when a bolt is
- * not in use — never `add`/`remove`, which would touch the scene graph every
- * time anybody fired.
- */
-interface Bolt {
-  readonly mesh: Mesh;
-}
 
 export interface LaserPool {
   readonly root: Group;
@@ -170,36 +277,41 @@ export function createLaserPool(): LaserPool {
 
   const root = new Group();
   root.name = 'saucers:bolts';
-  const bolts: Bolt[] = [];
-  for (let index = 0; index < MAX_LASER_BOLTS; index++) {
-    // ONE MATERIAL PER BOLT, not one shared: the fade and the faction colour
-    // are written into the material, and bolts of different ages and factions
-    // are on screen together.
-    const material = new MeshBasicMaterial({
-      transparent: true,
-      opacity: 1,
-      blending: NormalBlending,
-      depthWrite: false,
-    });
-    const mesh = new Mesh(geometry, material);
-    mesh.name = `saucers:bolt:${index}`;
-    mesh.visible = false;
-    root.add(mesh);
-    bolts.push({ mesh });
-  }
 
+  // ONE MATERIAL FOR THE WHOLE POOL, not one per bolt: the faction colour is
+  // now per-instance data via `setColorAt` (free RGB), and the fade is the
+  // `instancedAlpha` attribute `addInstancedAlpha` attaches below — between the
+  // two, one InstancedMesh draws every bolt of every age and faction on screen
+  // together, in place of MAX_LASER_BOLTS separate meshes and materials.
+  const material = new MeshBasicMaterial({
+    transparent: true,
+    opacity: 1,
+    blending: NormalBlending,
+    depthWrite: false,
+  });
+  const instancedAlpha = addInstancedAlpha(geometry, material, MAX_LASER_BOLTS, 'saucers:bolts');
+
+  const mesh = new InstancedMesh(geometry, material, MAX_LASER_BOLTS);
+  mesh.name = 'saucers:bolts:pool';
+  mesh.count = 0;
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  // No per-frame bounding-volume recompute for a pool this small and this
+  // mobile — plugins/cyclone/client/spiral.ts's deck makes the same call for
+  // the same reason.
+  mesh.frustumCulled = false;
+  root.add(mesh);
+
+  /** Instances actually written this frame so far — also the next write index. */
   let next = 0;
 
   return {
     root,
     begin(): void {
-      for (const bolt of bolts) bolt.mesh.visible = false;
+      mesh.count = 0;
       next = 0;
     },
     draw(from: Vector3, aim: Vector3, age: number, colour: ColorRepresentation): void {
-      const bolt = bolts[next];
-      if (bolt === undefined) return;
-      next++;
+      if (next >= MAX_LASER_BOLTS) return;
 
       scratchDirection.subVectors(aim, from);
       const distance = scratchDirection.length();
@@ -217,22 +329,36 @@ export function createLaserPool(): LaserPool {
       if (head > distance + worldUnitsAcross(BOLT_OVERSHOOT_CELLS)) return;
       const tail = Math.max(0, head - worldUnitsAcross(LASER_BOLT_LENGTH_CELLS));
 
-      bolt.mesh.position.copy(from).addScaledVector(scratchDirection, tail);
-      bolt.mesh.quaternion.copy(
-        scratchQuaternion.setFromUnitVectors(CYLINDER_AXIS, scratchDirection),
-      );
-      const material = bolt.mesh.material as MeshBasicMaterial;
-      material.color.set(colour).multiplyScalar(BOLT_INTENSITY);
+      const index = next;
+      next++;
+
+      scratchPosition.copy(from).addScaledVector(scratchDirection, tail);
+      scratchQuaternion.setFromUnitVectors(CYLINDER_AXIS, scratchDirection);
+      scratchMatrix.compose(scratchPosition, scratchQuaternion, UNIT_SCALE);
+      mesh.setMatrixAt(index, scratchMatrix);
+
+      scratchColor.set(colour).multiplyScalar(BOLT_INTENSITY);
+      mesh.setColorAt(index, scratchColor);
+
       // Full brightness for most of the flight, then a linear fade that ends
       // exactly when the server stops sending it.
       const life = Math.min(1, Math.max(0, age / LASER_BOLT_LIFETIME_SECONDS));
-      material.opacity =
+      const opacity =
         life < BOLT_FADE_START_FRACTION ? 1 : (1 - life) / (1 - BOLT_FADE_START_FRACTION);
-      bolt.mesh.visible = true;
+      instancedAlpha.setX(index, opacity);
+
+      mesh.count = next;
+      mesh.instanceMatrix.needsUpdate = true;
+      // `setColorAt` allocates `instanceColor` the first time it is ever
+      // called, and never sets it back to null — safe to assert non-null on
+      // every call after this one.
+      mesh.instanceColor!.needsUpdate = true;
+      instancedAlpha.needsUpdate = true;
     },
     dispose(): void {
-      for (const bolt of bolts) (bolt.mesh.material as MeshBasicMaterial).dispose();
+      material.dispose();
       geometry.dispose();
+      mesh.dispose();
       root.clear();
     },
   };
@@ -320,15 +446,11 @@ const SHARD_BEARINGS: readonly { readonly x: number; readonly z: number; readonl
     };
   });
 
-/** One pooled fireball. */
-interface Burst {
-  readonly root: Group;
-  readonly ball: Mesh;
-  readonly ballMaterial: MeshBasicMaterial;
-  readonly core: Mesh;
-  readonly coreMaterial: MeshBasicMaterial;
-  readonly shardGeometry: BufferGeometry;
-  readonly shardMaterial: PointsMaterial;
+/** One pooled burst's shard cloud — the one part of a burst left unmerged. */
+interface BurstShards {
+  readonly points: Points;
+  readonly geometry: BufferGeometry;
+  readonly material: PointsMaterial;
 }
 
 export interface CrashBursts {
@@ -349,40 +471,52 @@ export interface CrashBursts {
 /** One burst per saucer the roster can hold: on the clock they can all go down together. */
 const BURST_POOL_SIZE = MAX_SAUCERS_PER_ENCOUNTER;
 
-/** The ball, the core and the shard cloud. */
-const OBJECTS_PER_BURST = 3;
-
 export function createCrashBursts(): CrashBursts {
   const root = new Group();
   root.name = 'saucers:bursts';
 
   const sphere = new SphereGeometry(1, BURST_RADIAL_SEGMENTS, BURST_HEIGHT_SEGMENTS);
-  const bursts: Burst[] = [];
+
+  // THE BALL AND THE CORE WERE ADDITIVE ALREADY (BURST_COLOUR's comment), so
+  // the fold-into-colour option from the header above applies directly: hold
+  // material opacity at a constant 1 and write each instance's OWN fade into
+  // its instance colour instead (`BURST_COLOUR * fade`, `CORE_COLOUR * fade`).
+  // Under AdditiveBlending that reproduces the old per-material opacity fade
+  // exactly, with no shader patch needed — unlike the bolts and the splashes.
+  const ballMaterial = new MeshBasicMaterial({
+    transparent: true,
+    opacity: 1,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  });
+  const ball = new InstancedMesh(sphere, ballMaterial, BURST_POOL_SIZE);
+  ball.name = 'saucers:bursts:ball';
+  ball.count = 0;
+  ball.instanceMatrix.setUsage(DynamicDrawUsage);
+  ball.frustumCulled = false;
+  root.add(ball);
+
+  const coreMaterial = new MeshBasicMaterial({
+    transparent: true,
+    opacity: 1,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  });
+  const core = new InstancedMesh(sphere, coreMaterial, BURST_POOL_SIZE);
+  core.name = 'saucers:bursts:core';
+  core.count = 0;
+  core.instanceMatrix.setUsage(DynamicDrawUsage);
+  core.frustumCulled = false;
+  root.add(core);
+
+  // THE SHARD CLOUDS ARE LEFT UNMERGED (see the file header on this pool):
+  // each burst's own fade is a uniform PointsMaterial.opacity, one per burst,
+  // and merging the nine clouds into one Points object would need a
+  // per-vertex alpha to keep that — the same shader-patch machinery the bolts
+  // need, for twenty-four points per burst rather than one bolt. Not "trivially
+  // mergeable" by the job's own bar, so nine draws they stay.
+  const shards: BurstShards[] = [];
   for (let index = 0; index < BURST_POOL_SIZE; index++) {
-    const burstRoot = new Group();
-    burstRoot.name = `saucers:burst:${index}`;
-    burstRoot.visible = false;
-
-    const ballMaterial = new MeshBasicMaterial({
-      color: BURST_COLOUR,
-      transparent: true,
-      opacity: 1,
-      blending: AdditiveBlending,
-      depthWrite: false,
-    });
-    const ball = new Mesh(sphere, ballMaterial);
-    burstRoot.add(ball);
-
-    const coreMaterial = new MeshBasicMaterial({
-      color: CORE_COLOUR,
-      transparent: true,
-      opacity: 1,
-      blending: AdditiveBlending,
-      depthWrite: false,
-    });
-    const core = new Mesh(sphere, coreMaterial);
-    burstRoot.add(core);
-
     const shardGeometry = new BufferGeometry();
     shardGeometry.setAttribute(
       'position',
@@ -397,61 +531,86 @@ export function createCrashBursts(): CrashBursts {
       blending: AdditiveBlending,
       depthWrite: false,
     });
-    burstRoot.add(new Points(shardGeometry, shardMaterial));
-
-    root.add(burstRoot);
-    bursts.push({ root: burstRoot, ball, ballMaterial, core, coreMaterial, shardGeometry, shardMaterial });
+    const points = new Points(shardGeometry, shardMaterial);
+    points.name = `saucers:burst:shards:${index}`;
+    points.visible = false;
+    root.add(points);
+    shards.push({ points, geometry: shardGeometry, material: shardMaterial });
   }
 
+  /** Instances actually written this frame so far — also the next write index. */
   let next = 0;
 
   return {
     root,
     begin(): void {
-      for (const burst of bursts) burst.root.visible = false;
+      ball.count = 0;
+      core.count = 0;
+      for (const shard of shards) shard.points.visible = false;
       next = 0;
     },
     show(x: number, groundY: number, z: number, age: number): void {
       const t = age / BURST_SECONDS;
       if (t < 0 || t >= 1) return;
-      const burst = bursts[next];
-      if (burst === undefined) return;
+      if (next >= BURST_POOL_SIZE) return;
+      const index = next;
       next++;
-
-      burst.root.visible = true;
-      burst.root.position.set(x, groundY, z);
+      const shard = shards[index]!;
 
       // The ball expands fast and fades linearly: `sqrt` front-loads the growth,
       // which is what an explosion does and a balloon does not.
       const grow = Math.sqrt(t);
-      burst.ball.scale.setScalar(worldUnitsAcross(BURST_MAX_RADIUS_CELLS) * grow);
-      burst.ballMaterial.opacity = Math.pow(1 - t, BURST_FADE_EXPONENT);
+      scratchScale.setScalar(worldUnitsAcross(BURST_MAX_RADIUS_CELLS) * grow);
+      scratchMatrix.makeScale(scratchScale.x, scratchScale.y, scratchScale.z);
+      scratchMatrix.setPosition(x, groundY, z);
+      ball.setMatrixAt(index, scratchMatrix);
+      scratchColor.set(BURST_COLOUR).multiplyScalar(Math.pow(1 - t, BURST_FADE_EXPONENT));
+      ball.setColorAt(index, scratchColor);
+      ball.count = next;
 
       // The core is over in the first third: full size at once, fading out.
+      // Its colour reaches exactly zero at coreT = 1, which under additive
+      // blending contributes nothing — the same as the old `core.visible =
+      // coreT < 1`, with no separate visibility flag to manage per instance.
       const coreT = Math.min(1, t / CORE_SECONDS_FRACTION);
-      burst.core.visible = coreT < 1;
-      burst.core.scale.setScalar(worldUnitsAcross(CORE_MAX_RADIUS_CELLS) * Math.sqrt(coreT));
-      burst.coreMaterial.opacity = 1 - coreT;
+      scratchScale.setScalar(worldUnitsAcross(CORE_MAX_RADIUS_CELLS) * Math.sqrt(coreT));
+      scratchMatrix.makeScale(scratchScale.x, scratchScale.y, scratchScale.z);
+      scratchMatrix.setPosition(x, groundY, z);
+      core.setMatrixAt(index, scratchMatrix);
+      scratchColor.set(CORE_COLOUR).multiplyScalar(1 - coreT);
+      core.setColorAt(index, scratchColor);
+      core.count = next;
 
       // Shards fly out on their fixed bearings and fall back under a simple
       // parabola. Not physics — there is no gravity constant here and there does
       // not need to be one; it is the arc a thrown thing makes.
-      const positions = burst.shardGeometry.getAttribute('position') as BufferAttribute;
-      for (let index = 0; index < SHARD_BEARINGS.length; index++) {
-        const bearing = SHARD_BEARINGS[index]!;
+      shard.points.visible = true;
+      shard.points.position.set(x, groundY, z);
+      const positions = shard.geometry.getAttribute('position') as BufferAttribute;
+      for (let i = 0; i < SHARD_BEARINGS.length; i++) {
+        const bearing = SHARD_BEARINGS[i]!;
         const reach = worldUnitsAcross(SHARD_REACH_CELLS) * t;
         const rise = worldUnitsAcross(SHARD_RISE_CELLS) * bearing.lift * (t * (2 - 2 * t));
-        positions.setXYZ(index, bearing.x * reach, rise, bearing.z * reach);
+        positions.setXYZ(i, bearing.x * reach, rise, bearing.z * reach);
       }
       positions.needsUpdate = true;
-      burst.shardMaterial.opacity = 1 - t;
+      shard.material.opacity = 1 - t;
+
+      ball.instanceMatrix.needsUpdate = true;
+      ball.instanceColor!.needsUpdate = true;
+      core.instanceMatrix.needsUpdate = true;
+      // Same non-null reasoning as the laser pool's `draw`: `setColorAt`
+      // allocates `instanceColor` on first use and it stays allocated.
+      core.instanceColor!.needsUpdate = true;
     },
     dispose(): void {
-      for (const burst of bursts) {
-        burst.ballMaterial.dispose();
-        burst.coreMaterial.dispose();
-        burst.shardGeometry.dispose();
-        burst.shardMaterial.dispose();
+      ballMaterial.dispose();
+      coreMaterial.dispose();
+      ball.dispose();
+      core.dispose();
+      for (const shard of shards) {
+        shard.material.dispose();
+        shard.geometry.dispose();
       }
       sphere.dispose();
       root.clear();
@@ -494,18 +653,11 @@ const RING_TUBULAR_SEGMENTS = 32;
 /**
  * Sea-foam white, drawn OPAQUE-ish (NormalBlending) and not additive: water
  * is not light, and an additive plume over a bright sea vanishes exactly as
- * the additive bolts did (BOLT_INTENSITY). The ring is the same white.
+ * the additive bolts did (BOLT_INTENSITY). The ring is the same white. For the
+ * same reason, this pool keeps a REAL per-instance alpha (addInstancedAlpha)
+ * rather than folding the fade into instance colour.
  */
 const SPLASH_COLOUR = 0xe8f4ff;
-
-/** One pooled splash. */
-interface Splash {
-  readonly root: Group;
-  readonly plume: Mesh;
-  readonly plumeMaterial: MeshBasicMaterial;
-  readonly ring: Mesh;
-  readonly ringMaterial: MeshBasicMaterial;
-}
 
 export interface CrashSplashes {
   readonly root: Group;
@@ -519,9 +671,6 @@ export interface CrashSplashes {
 /** One per saucer the roster can hold, as the bursts: they can all go into the sea together. */
 const SPLASH_POOL_SIZE = MAX_SAUCERS_PER_ENCOUNTER;
 
-/** The plume and the ring. */
-const OBJECTS_PER_SPLASH = 2;
-
 export function createCrashSplashes(): CrashSplashes {
   const root = new Group();
   root.name = 'saucers:splashes';
@@ -533,77 +682,89 @@ export function createCrashSplashes(): CrashSplashes {
   const ringGeometry = new TorusGeometry(1, worldUnitsAcross(RING_TUBE_CELLS), RING_RADIAL_SEGMENTS, RING_TUBULAR_SEGMENTS);
   ringGeometry.rotateX(Math.PI / 2);
 
-  const splashes: Splash[] = [];
-  for (let index = 0; index < SPLASH_POOL_SIZE; index++) {
-    const splashRoot = new Group();
-    splashRoot.name = `saucers:splash:${index}`;
-    splashRoot.visible = false;
+  const plumeMaterial = new MeshBasicMaterial({
+    color: SPLASH_COLOUR,
+    transparent: true,
+    opacity: 1,
+    blending: NormalBlending,
+    depthWrite: false,
+  });
+  const plumeAlpha = addInstancedAlpha(sphere, plumeMaterial, SPLASH_POOL_SIZE, 'saucers:splashes:plume');
+  const plume = new InstancedMesh(sphere, plumeMaterial, SPLASH_POOL_SIZE);
+  plume.name = 'saucers:splashes:plume';
+  plume.count = 0;
+  plume.instanceMatrix.setUsage(DynamicDrawUsage);
+  plume.frustumCulled = false;
+  root.add(plume);
 
-    const plumeMaterial = new MeshBasicMaterial({
-      color: SPLASH_COLOUR,
-      transparent: true,
-      opacity: 1,
-      blending: NormalBlending,
-      depthWrite: false,
-    });
-    const plume = new Mesh(sphere, plumeMaterial);
-    splashRoot.add(plume);
+  const ringMaterial = new MeshBasicMaterial({
+    color: SPLASH_COLOUR,
+    transparent: true,
+    opacity: 1,
+    blending: NormalBlending,
+    depthWrite: false,
+  });
+  const ringAlpha = addInstancedAlpha(ringGeometry, ringMaterial, SPLASH_POOL_SIZE, 'saucers:splashes:ring');
+  const ring = new InstancedMesh(ringGeometry, ringMaterial, SPLASH_POOL_SIZE);
+  ring.name = 'saucers:splashes:ring';
+  ring.count = 0;
+  ring.instanceMatrix.setUsage(DynamicDrawUsage);
+  ring.frustumCulled = false;
+  root.add(ring);
 
-    const ringMaterial = new MeshBasicMaterial({
-      color: SPLASH_COLOUR,
-      transparent: true,
-      opacity: 1,
-      blending: NormalBlending,
-      depthWrite: false,
-    });
-    const ring = new Mesh(ringGeometry, ringMaterial);
-    splashRoot.add(ring);
-
-    root.add(splashRoot);
-    splashes.push({ root: splashRoot, plume, plumeMaterial, ring, ringMaterial });
-  }
-
+  /** Instances actually written this frame so far — also the next write index. */
   let next = 0;
 
   return {
     root,
     begin(): void {
-      for (const splash of splashes) splash.root.visible = false;
+      plume.count = 0;
+      ring.count = 0;
       next = 0;
     },
     show(x: number, surfaceY: number, z: number, age: number): void {
       const t = age / SPLASH_SECONDS;
       if (t < 0 || t >= 1) return;
-      const splash = splashes[next];
-      if (splash === undefined) return;
+      if (next >= SPLASH_POOL_SIZE) return;
+      const index = next;
       next++;
-
-      splash.root.visible = true;
-      splash.root.position.set(x, surfaceY, z);
 
       // Up and back down: the shards' arc, peaking mid-splash. The base
       // widens as the column collapses.
       const arc = t * (2 - 2 * t);
-      splash.plume.scale.set(
+      scratchScale.set(
         worldUnitsAcross(PLUME_RADIUS_CELLS) * (0.5 + 0.5 * t),
         worldUnitsAcross(PLUME_HEIGHT_CELLS) * arc,
         worldUnitsAcross(PLUME_RADIUS_CELLS) * (0.5 + 0.5 * t),
       );
-      splash.plumeMaterial.opacity = 1 - t * t;
+      scratchMatrix.makeScale(scratchScale.x, scratchScale.y, scratchScale.z);
+      scratchMatrix.setPosition(x, surfaceY, z);
+      plume.setMatrixAt(index, scratchMatrix);
+      plumeAlpha.setX(index, 1 - t * t);
+      plume.count = next;
 
       const spread = Math.sqrt(t);
-      splash.ring.scale.set(
+      scratchScale.set(
         worldUnitsAcross(RING_MAX_RADIUS_CELLS) * spread,
         1,
         worldUnitsAcross(RING_MAX_RADIUS_CELLS) * spread,
       );
-      splash.ringMaterial.opacity = 1 - t;
+      scratchMatrix.makeScale(scratchScale.x, scratchScale.y, scratchScale.z);
+      scratchMatrix.setPosition(x, surfaceY, z);
+      ring.setMatrixAt(index, scratchMatrix);
+      ringAlpha.setX(index, 1 - t);
+      ring.count = next;
+
+      plume.instanceMatrix.needsUpdate = true;
+      plumeAlpha.needsUpdate = true;
+      ring.instanceMatrix.needsUpdate = true;
+      ringAlpha.needsUpdate = true;
     },
     dispose(): void {
-      for (const splash of splashes) {
-        splash.plumeMaterial.dispose();
-        splash.ringMaterial.dispose();
-      }
+      plumeMaterial.dispose();
+      ringMaterial.dispose();
+      plume.dispose();
+      ring.dispose();
       sphere.dispose();
       ringGeometry.dispose();
       root.clear();
@@ -611,9 +772,20 @@ export function createCrashSplashes(): CrashSplashes {
   };
 }
 
-/** Exposed so the plugin's draw budget is written from the rigs' own counts. */
-export const LASER_POOL_DRAW_OBJECTS = MAX_LASER_BOLTS;
-/** Every burst in the pool, fully drawn. */
-export const BURST_DRAW_OBJECTS = BURST_POOL_SIZE * OBJECTS_PER_BURST;
-/** Every splash in the pool, fully drawn. */
-export const SPLASH_DRAW_OBJECTS = SPLASH_POOL_SIZE * OBJECTS_PER_SPLASH;
+/**
+ * Exposed so the plugin's draw budget is written from the rigs' own counts.
+ * ONE now, whatever MAX_LASER_BOLTS is: the whole pool is one InstancedMesh
+ * (countDrawObjects counts an InstancedMesh once, however many instances it
+ * carries), where it used to be one Mesh — and one draw call — per bolt.
+ */
+export const LASER_POOL_DRAW_OBJECTS = 1;
+/** The ball and the core: each is now one InstancedMesh across the whole pool. */
+const BURST_INSTANCED_DRAW_OBJECTS = 2;
+/** Plus one shard-Points object per pool slot — left unmerged, see createCrashBursts. */
+export const BURST_DRAW_OBJECTS = BURST_INSTANCED_DRAW_OBJECTS + BURST_POOL_SIZE;
+/**
+ * The plume and the ring: each is now one InstancedMesh across the whole pool,
+ * no longer multiplied by SPLASH_POOL_SIZE — the pool no longer costs one
+ * draw per member.
+ */
+export const SPLASH_DRAW_OBJECTS = 2;
