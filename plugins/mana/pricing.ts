@@ -135,19 +135,21 @@ export function chunkUnlockPenalty(
  * same count, over the same disc the reveal plugin will open (shared's
  * revealChunkIndices).
  *
- * NO RADIUS. The reveal reach is flat across every brush since 2026-09-06, so
- * the brush decides the PRICE of the land (chunkUnlockPenalty above) and never
- * how much of it there is.
+ * THE RADIUS IS THE REACH'S, NOT THE FOOTPRINT'S. A wider brush reveals
+ * further (shared's revealReachCells), so it opens more chunks AND pays a
+ * smaller surcharge on each — the two halves of "the brush that spends the
+ * mana is the brush that sees further".
  */
 export function openedChunkCount(
   worldSize: number,
   x: number,
   y: number,
+  radius: number,
   isOpen: (cx: number, cy: number) => boolean,
 ): number {
   const cols = chunksPerEdge(worldSize);
   let opened = 0;
-  for (const index of revealChunkIndices(worldSize, x, y)) {
+  for (const index of revealChunkIndices(worldSize, x, y, radius)) {
     if (!isOpen(index % cols, Math.floor(index / cols))) opened++;
   }
   return opened;

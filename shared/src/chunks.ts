@@ -6,7 +6,13 @@
 // is in shared/ because the client needs the same chunk geometry to place
 // streamed chunks, and the server needs extraction/writing for snapshots.
 
-import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT, REVEAL_REACH_CELLS } from './constants.ts';
+import {
+  CHUNK_SIZE,
+  MAX_HEIGHT,
+  MIN_HEIGHT,
+  REVEAL_REACH_BASE_CELLS,
+  REVEAL_REACH_PER_BRUSH_CELL,
+} from './constants.ts';
 import { cellIndex, type Heightmap } from './heightmap.ts';
 import {
   applyPackedSpans,
@@ -399,7 +405,19 @@ export function writeChunkPayload(
 }
 
 /**
- * Every chunk a sculpt at (x, y) REVEALS, ascending, each named once.
+ * HOW FAR A STROKE OF THIS BRUSH REVEALS, in cells from the clicked cell.
+ *
+ * The floor plus the brush's own share (see both constants). Integer for every
+ * legal radius, and the ONE definition of the reach: the reveal plugin opens
+ * this far and the mana plugin prices exactly this far.
+ */
+export function revealReachCells(radius: number): number {
+  return REVEAL_REACH_BASE_CELLS + REVEAL_REACH_PER_BRUSH_CELL * radius;
+}
+
+/**
+ * Every chunk a sculpt at (x, y) with this brush REVEALS, ascending, each
+ * named once.
  *
  * THE REVEAL AND ITS PRICE ASK THE SAME QUESTION, so they ask it here. The
  * reveal plugin opens exactly this set and the mana plugin prices the ones the
@@ -408,25 +426,32 @@ export function writeChunkPayload(
  * never opened.
  *
  * A CHUNK IS IN REACH WHEN ITS NEAREST CELL IS, measured from the clicked cell
- * over REVEAL_REACH_CELLS — so the shape is a disc on the ground and not a
- * square of chunks, and a click deep inside your own territory names only the
- * chunks actually near it. Squared distances only: integer arithmetic, no
- * square root, identical on server and client (which prices the same stroke
- * locally — see plugins/mana/pricing.ts).
+ * over `revealReachCells(radius)` — so the shape is a disc on the ground and
+ * not a square of chunks, and a click deep inside your own territory names
+ * only the chunks actually near it. Squared distances only: integer
+ * arithmetic, no square root, identical on server and client (which prices the
+ * same stroke locally — see plugins/mana/pricing.ts).
+ *
+ * THE RADIUS IS THE BRUSH'S, NOT THE FOOTPRINT'S REACH. A wider brush sees
+ * further because it pays for the ground (2026-09-06); it does not reveal the
+ * cells it happens to touch, which is the rule this replaced and which left
+ * the finest brush revealing nothing at all.
  *
  * Chunks off the map are not named, because there are none there.
- *
- * NOT THE BRUSH'S FOOTPRINT (superseded 2026-09-06, same day it shipped). The
- * footprint reach is r−1 cells, which is ZERO at the picker's smallest rung —
- * so the 0.50 brush revealed nothing at all, ever. See REVEAL_REACH_CELLS.
  */
-export function revealChunkIndices(worldSize: number, x: number, y: number): number[] {
+export function revealChunkIndices(
+  worldSize: number,
+  x: number,
+  y: number,
+  radius: number,
+): number[] {
   const n = chunksPerEdge(worldSize);
-  const reachSquared = REVEAL_REACH_CELLS * REVEAL_REACH_CELLS;
-  const first = Math.floor((x - REVEAL_REACH_CELLS) / CHUNK_SIZE);
-  const last = Math.floor((x + REVEAL_REACH_CELLS) / CHUNK_SIZE);
-  const firstRow = Math.floor((y - REVEAL_REACH_CELLS) / CHUNK_SIZE);
-  const lastRow = Math.floor((y + REVEAL_REACH_CELLS) / CHUNK_SIZE);
+  const reach = revealReachCells(radius);
+  const reachSquared = reach * reach;
+  const first = Math.floor((x - reach) / CHUNK_SIZE);
+  const last = Math.floor((x + reach) / CHUNK_SIZE);
+  const firstRow = Math.floor((y - reach) / CHUNK_SIZE);
+  const lastRow = Math.floor((y + reach) / CHUNK_SIZE);
   const reached: number[] = [];
 
   for (let cy = Math.max(0, firstRow); cy <= Math.min(n - 1, lastRow); cy++) {
