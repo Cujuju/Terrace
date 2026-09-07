@@ -359,22 +359,6 @@ export class SettlednessTracker {
 export const PILGRIM_CLIMB_FALL_CHANCE = 0.15;
 
 /**
- * How tall a wall has to be to kill a peep that falls off it, in height units —
- * A PEEP'S OWN HEIGHT (shared's ClimbRule.lethalRiseHeightUnits, which is where
- * the rule and the measurement behind it live).
- *
- * 34 = 0.527 world units (PILGRIM_HEIGHT, plugins/pilgrims/client/models.ts —
- * an authored 0.62 drawn at PILGRIM_MODEL_SCALE 0.85) over HEIGHT_WORLD_SCALE
- * (MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT = 1/64), rounded to a whole height unit
- * because heights are integers. RESTATED, not imported, for the reason
- * VIEWPOINT_RING_CELLS gives: a server sim must not reach into a client model
- * file, and the failure mode of drift is a wall a hair taller or shorter than a
- * peep being lethal, never a crash. Just over two bands, so the wall that can
- * kill is one a player sees as a two-storey face.
- */
-export const PILGRIM_LETHAL_RISE_HEIGHT_UNITS = 34;
-
-/**
  * A peep may go anywhere it can reach, climbing what it cannot walk (owner,
  * 2026-09-05: "peeps need to be able to climb anything").
  *
@@ -387,10 +371,7 @@ export const PILGRIM_LETHAL_RISE_HEIGHT_UNITS = 34;
  * gradient limit fixes it: one band is eight times that limit, so a terraced
  * world has no walkable band changes at all.
  */
-export const PILGRIM_WALKER_PROFILE: TraversalProfile = climbingWalkerProfile(
-  PILGRIM_CLIMB_FALL_CHANCE,
-  PILGRIM_LETHAL_RISE_HEIGHT_UNITS,
-);
+export const PILGRIM_WALKER_PROFILE: TraversalProfile = climbingWalkerProfile(PILGRIM_CLIMB_FALL_CHANCE);
 
 /**
  * Land a walker will stand on: a thin adapter over shared's bounds+ground

@@ -50,18 +50,6 @@ export const IBEX_MAX_GRADIENT_PER_CELL = 2 * LAND_WALKER_MAX_GRADIENT_PER_CELL;
 export const IBEX_CLIMB_FALL_CHANCE = 0.01;
 
 /**
- * How tall a wall has to be to kill it, in height units: ITS OWN HEIGHT, the
- * rule shared's ClimbRule.lethalRiseHeightUnits states.
- *
- * 33 = IBEX_ENVELOPE.height (../../client/species/ibex.ts: 1.42 x IBEX_SCALE
- * 0.36 = 0.511 world units, to the horn tips) over HEIGHT_WORLD_SCALE (1/64),
- * rounded to a whole height unit. Restated rather than imported because a
- * server sim must not pull a client model file into its bundle — the same rule
- * every other cross-half number in this plugin follows.
- */
-export const IBEX_LETHAL_RISE_HEIGHT_UNITS = 33;
-
-/**
  * How many of the eight compass directions from a candidate spawn cell must be
  * steps a PLAIN land walker could not take but an ibex can — the "broken
  * ground" rule (SpawnGround, ./profile.ts).
@@ -142,7 +130,6 @@ export const IBEX_PROFILE: SpeciesProfile = {
   // made of. A goat that cannot get onto a ledge is not a mountain animal.
   climb: {
     fallChance: IBEX_CLIMB_FALL_CHANCE,
-    lethalRiseHeightUnits: IBEX_LETHAL_RISE_HEIGHT_UNITS,
     // AND IT GOES UP IN LEAPS, not at the world's climbing pace — see
     // IBEX_CLIMB_SECONDS_PER_BAND, which the drawn leap is timed off too.
     secondsPerBand: IBEX_CLIMB_SECONDS_PER_BAND,

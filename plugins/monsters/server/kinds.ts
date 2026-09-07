@@ -528,19 +528,6 @@ export const KRAKEN_MIN_LAIR_FITTING_CELLS = Math.ceil(KRAKEN_FOOTPRINT_CELLS **
  */
 export const YETI_CLIMB_FALL_CHANCE = 0.05;
 
-/**
- * How tall a wall has to be to kill him, in height units: HIS OWN HEIGHT, the
- * rule shared's ClimbRule.lethalRiseHeightUnits states.
- *
- * 67 = YETI_TOTAL_HEIGHT (client/yeti-anatomy.ts: 2 peeps, 1.054 world units)
- * over HEIGHT_WORLD_SCALE (1/64), rounded to a whole height unit. Restated
- * rather than imported for the same reason PEEP_HEIGHT_WORLD_UNITS is restated
- * on the client side: a server file must not pull a model module in to learn
- * one number. Four bands — so what can kill him is a face twice what can kill a
- * peep, which is the animal.
- */
-export const YETI_LETHAL_RISE_HEIGHT_UNITS = 67;
-
 export const YETI_FOOTPRINT_CELLS = cellsAcross(1.022681578153609);
 
 /**
@@ -1143,11 +1130,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     // walking pace as if it were a ramp. He now walks what a legged thing walks
     // and hauls himself up the rest, four seconds a band, with a real chance of
     // falling off the tall ones.
-    traversal: withClimb(
-      AMPHIBIOUS_WALKER_PROFILE,
-      YETI_CLIMB_FALL_CHANCE,
-      YETI_LETHAL_RISE_HEIGHT_UNITS,
-    ),
+    traversal: withClimb(AMPHIBIOUS_WALKER_PROFILE, YETI_CLIMB_FALL_CHANCE),
   }),
 };
 

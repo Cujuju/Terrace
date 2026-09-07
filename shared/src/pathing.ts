@@ -432,12 +432,10 @@ function edgeCost(
  * more than one, which is the animal each of them is.
  */
 function climbEdgeCost(rule: ClimbRule, heightDifference: number): number {
-  // The risk term rides on the same threshold the fall itself does
-  // (ClimbRule.lethalRiseHeightUnits): a scramble that cannot kill must not be
-  // priced as if it could, or a route would walk twenty cells out of its way to
-  // avoid a knee-high ledge.
-  const risk =
-    heightDifference >= rule.lethalRiseHeightUnits ? rule.fallChance * CERTAIN_DEATH_COST : 0;
+  // Every climb rolls (climb.ts's `beginClimb`), so every climbed edge is priced
+  // for the risk. No height gate: the 4:1 sheer rule is what keeps a knee-high
+  // ledge from being a climb in the first place.
+  const risk = rule.fallChance * CERTAIN_DEATH_COST;
   // THIS CLIMBER'S OWN SECONDS, not the world's: an animal that goes up four
   // times faster must price a wall at a quarter of the detour, or the planner
   // sends the best climber in the world the long way round.
