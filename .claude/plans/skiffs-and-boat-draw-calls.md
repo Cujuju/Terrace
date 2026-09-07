@@ -256,6 +256,49 @@ is a trade, not a free lunch.
 delta clearing the error bar. If it does not clear it, D2 is **reverted**, not
 kept — and the finding is written into the brief.
 
+**SHIPPED 2026-09-06** (`ae44dcc` + `801de9b`, #369). The accumulator was the
+right call and cost less than the plan budgeted: because the pose is a function
+of the accumulated angle alone, fighting and calm hulls share ONE palette band,
+not two.
+
+Two things the plan did not foresee, both load-bearing:
+
+* **The swell is not a pose.** It is a rigid roll and pitch of the whole hull,
+  so it moved out of the palette and into the instance matrix — via a new
+  `RigHerd.placeMatrix`, since `place()` carries a yaw and a uniform scale and
+  nothing else. `place()` keeps its hand-written path, so wildlife pays nothing.
+* **That makes the palette STATIC.** With the clock gone from the pose, row `k`
+  holds the same bytes for ever: captured once, never re-uploaded. This is the
+  immutable-LUT change of `.claude/orchestration/briefs/righerd-static-pose-palette.md`
+  (new `RigHerd.staticPoses`), scoped to the one caller that can satisfy it —
+  16 joints × 4 texels × 128 rows is 128 KB uploaded once, against wildlife's
+  92×32 every frame at a measured 0.63–0.89 ms. It is why the palette-upload
+  caveat did not bite, and it is what `OAR_POSE_SLOTS = 128` is affordable on.
+
+Measured on the isolated 2598/5198 stack, world snapshot #1071 restored and the
+server restarted between runs, 89 frames each:
+
+| | before `cef42dc` | after `ae44dcc` |
+| --- | --- | --- |
+| **boats draw calls** | 71 | **2** |
+| **boats GPU** | 2.954 ms | **0.710 ms** |
+| **boats frame** | 2.00 ms | **0.25 ms** |
+| whole-frame draws | 205 | **146** |
+| whole-frame GPU p50 | 7.620 ms | **5.425 ms** |
+| error bar (`baselineGpuMsMeanStep`) | ±0.371 | ±0.397 |
+
+Boats' own GPU delta clears the error bar by ~6×. Unlike the D1b pair the
+whole-frame numbers ARE comparable here — the draw ranges held at 205-205 and
+146-151 — so p50 crossing from over the ~7.14 ms budget to under it is real.
+Boats have gone from the frame's largest consumer (180 of 373 draws at D0) to
+behind structures, pilgrims, flora, snow and thunderstorm.
+
+`drawBudget` fell from `BOATS_PAYLOAD_CAP × drawObjects + 1` (6144 reserved) to
+`drawObjects + 1` — the budget-from-a-payload-cap defect of GH #247, gone for
+this plugin.
+
+**Owner eyes-on is still outstanding**; #369 stays open for it.
+
 ---
 
 # Arc S — skiffs
