@@ -98,9 +98,13 @@ export class RollbackService {
     });
   }
 
-  /** True when ROLLBACK_KEY is configured; the boot log states this, not the key. */
-  get enabled(): boolean {
-    return this.gate.enabled;
+  /**
+   * True when ROLLBACK_KEY is configured; the boot log states this, not the
+   * key. An unkeyed server allows rollback WITHOUT a key rather than refusing
+   * it (OperatorGate.authorize, owner 2026-09-06).
+   */
+  get keyed(): boolean {
+    return this.gate.keyed;
   }
 
   /** Drops a disconnected connection's attempt record. */

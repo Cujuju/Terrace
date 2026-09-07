@@ -114,8 +114,9 @@ function readRollbackKey(env: NodeJS.ProcessEnv): string | null {
 
     throw new ConfigError(
       `ROLLBACK_KEY must be at least ${MIN_ROLLBACK_KEY_LENGTH} characters ` +
-        `(got ${raw.length}); set it to nothing at all (ROLLBACK_KEY=) to ` +
-        'disable world rollback',
+        `(got ${raw.length}); set it to nothing at all (ROLLBACK_KEY=) to run rollback ` +
+        'unkeyed — every operator gate is OPEN without a key (owner, 2026-09-06), and the ' +
+        'boot log warns about it',
     );
   }
   return raw;
@@ -131,8 +132,9 @@ function readWorldAdminKey(env: NodeJS.ProcessEnv): string | null {
   if (raw.length < MIN_ROLLBACK_KEY_LENGTH) {
     throw new ConfigError(
       `WORLD_ADMIN_KEY must be at least ${MIN_ROLLBACK_KEY_LENGTH} characters ` +
-        `(got ${raw.length}); set it to nothing at all (WORLD_ADMIN_KEY=) to ` +
-        'turn world management off',
+        `(got ${raw.length}); set it to nothing at all (WORLD_ADMIN_KEY=) to run world ` +
+        'management unkeyed — every operator gate is OPEN without a key (owner, ' +
+        '2026-09-06), and the boot log warns about it',
     );
   }
   return raw;

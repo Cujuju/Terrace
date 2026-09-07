@@ -27,6 +27,7 @@ import type {
   WorldPluginSetting,
   WorldSummary,
   WorldSwitchStatus,
+  WorldViewScope,
 } from '@terrace/shared';
 
 /**
@@ -165,6 +166,23 @@ const [worldFeedback, setWorldFeedback] = createSignal<WorldFeedback>({ kind: 'i
 /** The world-admin key, for this tab only. See this file's header. */
 const [worldAdminKey, setWorldAdminKey] = createSignal('');
 
+/**
+ * WHICH SLICE OF THE WORLD THIS CLIENT IS LOOKING AT (owner, 2026-09-06) —
+ * 'mine' (the chunks this player has unlocked) or 'all' (every chunk, an
+ * operator view). The HUD's show-all button reads it and the server's receipt
+ * writes it.
+ *
+ * SET FROM THE SERVER'S ANSWER, NEVER FROM THE CLICK. The button asks; the
+ * terrain that comes back is what makes the answer true, so an ask that was
+ * refused (wrong key) must leave the button where it was. See
+ * applyWorldAdminResult.
+ *
+ * NOT PERSISTED, and reset to 'mine' by every ordinary snapshot: a rejoin, a
+ * rollback or a world switch re-sends this client its OWN territory, so the
+ * view is over whether the client asked for it again or not.
+ */
+const [worldViewScope, setWorldViewScope] = createSignal<WorldViewScope>('mine');
+
 export {
   activeWorldId,
   adminPanelOpen,
@@ -186,6 +204,8 @@ export {
   worldPanelOpen,
   worldPlugins,
   worlds,
+  worldViewScope,
+  setWorldViewScope,
 };
 
 /** Applies a world listing from the server. Called by the network layer. */
@@ -282,6 +302,13 @@ export function applyWorldAdminResult(message: {
   }
 
   if (message.action === 'unload') setWorldLoaded(false);
+  // THE SHOW-ALL TOGGLE'S ONE WRITER (owner, 2026-09-06). The snapshot that
+  // carries the new view arrived just before this receipt, so flipping the
+  // button here can never show a state the terrain has not reached; a scope
+  // this client does not recognise is left alone rather than guessed at.
+  if (message.action === 'view' && (message.detail === 'all' || message.detail === 'mine')) {
+    setWorldViewScope(message.detail);
+  }
   setWorldFeedback({
     kind: 'done',
     action: message.action,

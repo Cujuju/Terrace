@@ -1066,7 +1066,9 @@ export type WorldAdminAction =
   | 'configurePlugin'
   | 'reloadPlugin'
   | 'actPlugin'
-  | 'restart';
+  | 'restart'
+  /** Show the whole world, or go back to my own territory. See WorldViewRequestMessage. */
+  | 'view';
 
 /** Client → server: "list every world you have". Answered to the sender only. */
 export interface WorldListRequestMessage {
@@ -1385,6 +1387,42 @@ export interface WorldSwitchCancelRequestMessage {
   key: string;
 }
 
+/**
+ * Client → server: "send me the WHOLE world" / "send me only my own
+ * territory" (owner, 2026-09-06 — the show-all toggle in the HUD's right-hand
+ * button column).
+ *
+ * THIS IS THE ONE HOLE IN "ANTI-CHEAT BY OMISSION", AND IT IS DELIBERATE.
+ * Every other terrain path filters to the requesting token's own unlock mask
+ * (server/src/world/mask-filter.ts). `scope: 'all'` does not, so an operator
+ * can look at the map they are running. It is therefore an OPERATOR message
+ * and carries the world-admin key like every other one in this union — which
+ * on an unkeyed server (WORLD_ADMIN_KEY=) means anyone connected can ask.
+ * That is the same bargain as `worldPurge`, made once, in the config.
+ *
+ * The answer is an ordinary `snapshot` message. A snapshot is already the
+ * client's "forget what you had, here is the world" path (rejoin, world
+ * switch, rollback), so a view change needs no second client-side pathway and
+ * cannot drift from one.
+ *
+ * IT IS A VIEW, NOT A GRANT. No mask is touched: the player still owns
+ * exactly the chunks they owned, may still only sculpt where the union mask
+ * allows, and the next ordinary snapshot (a rejoin, a rollback, a world
+ * switch) puts them back to `'mine'` without being asked. Terrain edits
+ * elsewhere in the world do not stream in either — a diff is filtered per
+ * viewer — so a show-all view is a photograph, dated the moment it was asked
+ * for, exactly as the Cartographer's chart is.
+ */
+export interface WorldViewRequestMessage {
+  type: 'worldView';
+  key: string;
+  /** 'all' — every chunk in the world. 'mine' — the ordinary join snapshot. */
+  scope: WorldViewScope;
+}
+
+/** What a `worldView` request may ask to see. */
+export type WorldViewScope = 'all' | 'mine';
+
 /** Server → the requesting client only: every world this server has. */
 export interface WorldListMessage {
   type: 'worldListing';
@@ -1607,7 +1645,8 @@ export type WorldAdminRequestMessage =
   | WorldPluginActRequestMessage
   | WorldPluginReloadRequestMessage
   | ServerRestartRequestMessage
-  | WorldSwitchCancelRequestMessage;
+  | WorldSwitchCancelRequestMessage
+  | WorldViewRequestMessage;
 
 /**
  * Turns a world name into a filesystem-safe id.
@@ -1735,8 +1774,15 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
   const m = msg as Record<string, unknown>;
 
   // The key check is FIRST and identical for every action — see the doc above.
+  //
+  // AN EMPTY KEY IS WELL-FORMED (owner, 2026-09-06). It used to be rejected
+  // here, back when a server with no key configured refused everything anyway;
+  // now an unkeyed server accepts every operator request without one
+  // (server/src/world/operator-gate.ts), so the empty string is what a client
+  // legitimately sends to it. A key that is WRONG is still the gate's business,
+  // not this validator's — the shape is all that is checked here.
   const key = typeof m.key === 'string' ? m.key : null;
-  if (key === null || key.length === 0 || key.length > MAX_ROLLBACK_KEY_LENGTH) return null;
+  if (key === null || key.length > MAX_ROLLBACK_KEY_LENGTH) return null;
 
   switch (m.type) {
     case 'worldList':
@@ -1747,6 +1793,13 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
 
     case 'worldSwitchCancel':
       return { type: 'worldSwitchCancel', key };
+
+    // The only field is a closed two-value set, so it is checked here rather
+    // than trusted downstream: an unknown scope is a malformed message, not a
+    // scope to guess at.
+    case 'worldView':
+      if (m.scope !== 'all' && m.scope !== 'mine') return null;
+      return { type: 'worldView', key, scope: m.scope };
 
     // No fields beyond the key: a restart is not about a world, and the code
     // the process comes back on is whatever is on disk — nothing a client

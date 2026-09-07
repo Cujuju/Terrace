@@ -59,7 +59,7 @@ import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { ServerRestartService } from '../restart.ts';
 import { containWorldAdminMessage, type WorldAdminService } from '../world/world-admin.ts';
 import type { WorldManager } from '../world/world-manager.ts';
-import { buildJoinSnapshot } from './join-snapshot.ts';
+import { buildJoinSnapshot, buildShowAllSnapshot } from './join-snapshot.ts';
 import { isPluginMessageType, routePluginMessage } from './plugin-message-routing.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
 import { SculptRateLimiter } from './sculpt-rate-limit.ts';
@@ -103,6 +103,7 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
   'worldPluginReload',
   'serverRestart',
   'worldSwitchCancel',
+  'worldView',
 ] as const;
 
 /**
@@ -396,6 +397,56 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
   ): void | Promise<void> {
     if (request.type === 'worldList') {
       client.send('worldListing', this.context.admin.list(client.sessionId, request.key));
+      return;
+    }
+
+    // THE SHOW-ALL VIEW (owner, 2026-09-06). Answered here rather than in the
+    // admin service because it changes no world — it re-answers ONE connection
+    // with a different slice of the same terrain — but it is gated by the same
+    // key through the same gate instance, so the lockout counts its failures
+    // with everything else's. See WorldViewRequestMessage.
+    if (request.type === 'worldView') {
+      const refusal = this.context.admin.authorize(client.sessionId, request.key);
+      if (refusal !== null) {
+        client.send('worldAdminResult', {
+          type: 'worldAdminResult',
+          action: 'view',
+          ok: false,
+          refused: refusal,
+        });
+        return;
+      }
+      const session = this.context.manager.current;
+      const player = client.userData?.player;
+      // No world, or a connection that has not finished joining: there is
+      // nothing to re-send and no token to re-send it for. 'failed' is the
+      // honest answer — the key was fine, the request simply had no world.
+      if (session === null || player === undefined) {
+        client.send('worldAdminResult', {
+          type: 'worldAdminResult',
+          action: 'view',
+          ok: false,
+          refused: 'failed',
+        });
+        return;
+      }
+      const snapshot =
+        request.scope === 'all'
+          ? buildShowAllSnapshot(session.world, session.host)
+          : buildJoinSnapshot(session.world, session.host, player.token);
+      client.send('snapshot', snapshot);
+      // The receipt AFTER the snapshot: it is what flips the button, and a
+      // button that flips before its terrain lands is a button that lies.
+      client.send('worldAdminResult', {
+        type: 'worldAdminResult',
+        action: 'view',
+        ok: true,
+        detail: request.scope,
+      });
+      logInfo(
+        `player "${player.name}" set world view to ${request.scope} ` +
+          `(${snapshot.chunks.length} chunks sent)`,
+      );
       return;
     }
 

@@ -70,14 +70,34 @@ export class WorldAdminService {
     });
   }
 
-  /** True when WORLD_ADMIN_KEY is configured; the boot log states this. */
-  get enabled(): boolean {
-    return this.gate.enabled;
+  /**
+   * True when WORLD_ADMIN_KEY is configured; the boot log states this.
+   *
+   * An unkeyed server is OPEN, not off (OperatorGate.authorize, owner
+   * 2026-09-06) — so this says whether an operator must present a key, not
+   * whether world management works.
+   */
+  get keyed(): boolean {
+    return this.gate.keyed;
   }
 
   /** Drops a disconnected connection's failed-attempt record. */
   forgetClient(clientId: string): void {
     this.gate.forgetClient(clientId);
+  }
+
+  /**
+   * THE GATE ITSELF, for an operator action this service does not perform.
+   *
+   * Its one caller is the show-all view (WorldViewRequestMessage): that action
+   * changes no world, so it has no business in `handle`'s switch, but it must
+   * pass the SAME key check as everything that does — including the
+   * per-connection lockout, which only works if every keyed request goes
+   * through one gate instance. Exposing the verdict is what keeps that true
+   * without a second gate to keep in step.
+   */
+  authorize(clientId: string, key: string): WorldAdminRefusal | null {
+    return this.gate.authorize(clientId, key);
   }
 
   /**
@@ -231,6 +251,12 @@ export class WorldAdminService {
         // Handled by list() above; reaching here means a caller routed a list
         // request through handle(). Answer honestly rather than pretending.
         return fail('load', 'failed');
+
+      case 'worldView':
+        // Same shape of mistake as 'worldList' above: the show-all view is
+        // answered in the room with a snapshot (it changes no world), so a
+        // request that reached this switch was misrouted.
+        return fail('view', 'failed');
 
       case 'worldCreate':
         return this.create(
@@ -579,6 +605,8 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
       return 'purge';
     case 'worldPin':
       return 'pin';
+    case 'worldView':
+      return 'view';
     case 'worldPluginList':
     case 'worldPluginSet':
       return 'setPlugin';

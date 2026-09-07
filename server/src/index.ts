@@ -60,13 +60,18 @@ async function clientStaticExpressHook(
 /** Built-in defaults are printed on purpose; a key the operator chose never is. */
 function logOperatorKeys(config: ServerConfig): void {
   if (config.rollbackKey === null) {
-    logInfo('world rollback is disabled (ROLLBACK_KEY is set to nothing)');
+    logWarn(
+      'world rollback is UNKEYED (ROLLBACK_KEY is set to nothing): anyone who can reach ' +
+        'this server can roll the world back without presenting anything. Set ROLLBACK_KEY ' +
+        'to your own value to put the gate back.',
+    );
   } else if (config.rollbackKey === DEFAULT_ROLLBACK_KEY) {
     logInfo(`world rollback is enabled (${config.snapshotRetention} restore points kept)`);
     logWarn(
       `world rollback is using the built-in key "${DEFAULT_ROLLBACK_KEY}", which is public. ` +
         'Anyone who can reach this server can roll the world back. Set ROLLBACK_KEY to your ' +
-        'own value, or ROLLBACK_KEY= (empty) to turn rollback off.',
+        'own value. ROLLBACK_KEY= (empty) does NOT turn rollback off any more — it removes ' +
+        'the key requirement entirely.',
     );
   } else {
     logInfo(
@@ -75,13 +80,18 @@ function logOperatorKeys(config: ServerConfig): void {
   }
 
   if (config.worldAdminKey === null) {
-    logInfo('world management is disabled (WORLD_ADMIN_KEY is set to nothing)');
+    logWarn(
+      'world management is UNKEYED (WORLD_ADMIN_KEY is set to nothing): anyone who can ' +
+        'reach this server can create, load and archive worlds, restart the server, and ' +
+        'view the whole map. Set WORLD_ADMIN_KEY to your own value to put the gate back.',
+    );
   } else if (config.worldAdminKey === DEFAULT_WORLD_ADMIN_KEY) {
     logInfo('world management is enabled');
     logWarn(
       `world management is using the built-in key "${DEFAULT_WORLD_ADMIN_KEY}", which is ` +
         'public. Anyone who can reach this server can create, load and archive worlds. Set ' +
-        'WORLD_ADMIN_KEY to your own value, or WORLD_ADMIN_KEY= (empty) to turn it off.',
+        'WORLD_ADMIN_KEY to your own value. WORLD_ADMIN_KEY= (empty) does NOT turn it off any ' +
+        'more — it removes the key requirement entirely.',
     );
   } else {
     logInfo('world management is enabled with your own key');

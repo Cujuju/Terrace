@@ -131,14 +131,13 @@ function snapshot(h: Harness): number {
 }
 
 describe('the operator gate', () => {
-  it('refuses everything when no key is configured', () => {
+  it('asks for nothing when no key is configured', () => {
+    // Owner, 2026-09-06: an unkeyed gate is open, not off (operator-gate.ts).
+    // This case used to refuse everything with 'disabled'.
     const h = harness(null);
-    expect(h.service.enabled).toBe(false);
-    expect(h.service.listRestorePoints(CLIENT, 'anything').refused).toBe('disabled');
-    expect(h.service.rollback(CLIENT, 'anything', 1)).toMatchObject({
-      ok: false,
-      refused: 'disabled',
-    });
+    snapshot(h);
+    expect(h.service.keyed).toBe(false);
+    expect(h.service.listRestorePoints(CLIENT, '').refused).toBeUndefined();
   });
 
   it('refuses a wrong key and accepts the right one', () => {

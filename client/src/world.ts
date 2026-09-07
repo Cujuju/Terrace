@@ -46,6 +46,7 @@ import {
   setPendingRestartSeconds,
   setPendingSwitch,
   setWorldLoaded,
+  setWorldViewScope,
 } from './state/worldsState.ts';
 import {
   createPredictionStore,
@@ -798,6 +799,15 @@ export function createWorld(viewport: Viewport): World {
       // the switch re-sends every client exactly this message (multi-world,
       // 2026-08-22 — see WorldManager.openInto step 7).
       setWorldLoaded(true);
+      // BACK TO YOUR OWN TERRITORY (owner, 2026-09-06). A snapshot is by
+      // definition "here is the world you may see", and every unasked-for one
+      // — rejoin, rollback, world switch — carries this token's own chunks, so
+      // the show-all button must not stay lit over terrain that is no longer
+      // there. The show-all snapshot passes through here too and would land on
+      // 'mine' as well; its receipt is sent immediately AFTER it and sets the
+      // scope back to 'all' (worldsState.applyWorldAdminResult), which is the
+      // ordering the server half is written to guarantee.
+      setWorldViewScope('mine');
       // Belt-and-braces against a lost terminal switch notice (reconnect
       // mid-countdown): the snapshot proves the new world landed, so whatever
       // countdown the client still believes in is over. Normally this arrives
