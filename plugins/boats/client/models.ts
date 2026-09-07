@@ -40,6 +40,7 @@ import {
   Sphere,
   Vector3,
   type BufferGeometry,
+  type Bone,
   type Material,
   type Object3D,
 } from 'three';
@@ -341,6 +342,17 @@ export interface BoatModels {
    * composed in that parent's space.
    */
   readonly objects: readonly Object3D[];
+  /**
+   * The herd's scratch rig, in the blueprint's joint order — the bones every
+   * pose in the palette is built by posing.
+   *
+   * NOT IN THE SCENE and never drawn: a boat's drawn pose comes from the
+   * palette row it names, not from these. Exposed because the oar rules
+   * (a swing is a YAW about the mount, port and starboard in opposition) are
+   * statements about these bones, and after the herd there is no per-boat
+   * skeleton left to read them from.
+   */
+  readonly joints: readonly Bone[];
   create(): BoatModel;
   /**
    * Opens the frame: forgets the individuals the last one drew. Every boat
@@ -634,6 +646,7 @@ export function createBoatModels(): BoatModels {
 
   return {
     objects: [...herd.meshes, sails],
+    joints: herd.joints,
 
     create(): BoatModel {
       let slot = slots.acquire();

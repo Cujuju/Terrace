@@ -12,6 +12,7 @@ import {
   BoxGeometry,
   Color,
   Group,
+  InstancedMesh,
   Matrix4,
   Mesh,
   MeshStandardMaterial,
@@ -19,7 +20,14 @@ import {
   Vector3,
 } from 'three';
 import { readFile } from 'node:fs/promises';
-import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
+import {
+  BOAT_SHAPE,
+  HULL_MESH_NAME,
+  SAIL_MESH_NAME,
+  createBoatModels,
+  installBoatKit,
+  type BoatModels,
+} from '../client/models.ts';
 import {
   ASSET_FIT_TOLERANCE_WORLD_UNITS,
   parseRigAsset,
@@ -87,13 +95,23 @@ const FIGHTER_X = 0;
 const BYSTANDER_X = 10;
 const SAIL_MATCH_WORLD_UNITS = 1;
 
-/** Every Mesh under a node, depth-first. */
-function meshesOf(root: { traverse(cb: (o: unknown) => void): void }): Mesh[] {
-  const found: Mesh[] = [];
-  root.traverse((object) => {
-    if (object instanceof Mesh) found.push(object);
-  });
+/** One of the fleet's two drawn meshes, by name rather than by its index. */
+function meshNamed(models: BoatModels, name: string): InstancedMesh {
+  const found = models.objects.find((object) => object.name === name);
+  if (!(found instanceof InstancedMesh)) throw new Error(`no InstancedMesh named ${name}`);
   return found;
+}
+
+/**
+ * The world box of everything the fleet DRAWS this frame.
+ *
+ * Measured off the instanced meshes, which is what the renderer submits — a
+ * boat has no node of its own to measure any more.
+ */
+function drawnBox(models: BoatModels): Box3 {
+  const box = new Box3();
+  for (const object of models.objects) box.union(new Box3().setFromObject(object));
+  return box;
 }
 
 describe('the boat model', () => {
@@ -102,10 +120,12 @@ describe('the boat model', () => {
     // (BOAT_ENGAGEMENT_RANGE_CELLS is 5), so a hull spilling past its own cell
     // would make every distance in the fight read wrong.
     const models = createBoatModels();
+    models.beginFrame();
     const boat = models.create();
-    boat.animate(0, 0, false);
+    boat.draw(0, 0, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
 
-    const size = new Box3().setFromObject(boat.root).getSize(new Vector3());
+    const size = drawnBox(models).getSize(new Vector3());
     expect(size.x).toBeLessThanOrEqual(1);
     expect(size.z).toBeLessThanOrEqual(1);
 
@@ -118,12 +138,12 @@ describe('the boat model', () => {
     // half really is visible and a boat floating above the surface reads
     // immediately as hovering. The lift must put the waterline inside the hull.
     const models = createBoatModels();
+    models.beginFrame();
     const boat = models.create();
-    boat.animate(0, 0, false);
-    boat.root.position.y = BOAT_SHAPE.waterlineLift;
-    boat.root.updateMatrixWorld(true);
+    boat.draw(0, BOAT_SHAPE.waterlineLift, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
 
-    const box = new Box3().setFromObject(boat.root);
+    const box = drawnBox(models);
     expect(BOAT_SHAPE.waterlineLift).toBeLessThan(0);
     // Sea level is world Y 0: some hull below it, and the mast well above.
     expect(box.min.y).toBeLessThan(0);
@@ -146,20 +166,20 @@ describe('the boat model', () => {
     const fighter = models.create();
     const bystander = models.create();
 
-    fighter.root.position.x = FIGHTER_X;
-    bystander.root.position.x = BYSTANDER_X;
-    fighter.animate(0, 0, false);
-    bystander.animate(0, 0, false);
+    models.beginFrame();
+    fighter.draw(FIGHTER_X, 0, 0, 0, 0, 0, 0, false);
+    bystander.draw(BYSTANDER_X, 0, 0, 0, 0, 0, 0, false);
     models.commitFrame();
 
+    const sails = meshNamed(models, SAIL_MESH_NAME);
     const matrix = new Matrix4();
     const tint = new Color();
     /** The instance whose sail sits over `x`, by its matrix's translation. */
     const sailNear = (x: number): Color => {
-      for (let slot = 0; slot < models.sails.count; slot++) {
-        models.sails.getMatrixAt(slot, matrix);
+      for (let slot = 0; slot < sails.count; slot++) {
+        sails.getMatrixAt(slot, matrix);
         if (Math.abs(matrix.elements[12]! - x) < SAIL_MATCH_WORLD_UNITS) {
-          models.sails.getColorAt(slot, tint);
+          sails.getColorAt(slot, tint);
           return tint.clone();
         }
       }
@@ -170,8 +190,9 @@ describe('the boat model', () => {
     const restingBystander = sailNear(BYSTANDER_X);
     expect(restingFighter.getHex()).toBe(restingBystander.getHex());
 
-    fighter.animate(1, 0, true);
-    bystander.animate(1, 0, false);
+    models.beginFrame();
+    fighter.draw(FIGHTER_X, 0, 0, 0, 1, 0, 1, true);
+    bystander.draw(BYSTANDER_X, 0, 0, 0, 1, 0, 1, false);
     models.commitFrame();
     expect(sailNear(FIGHTER_X).getHex()).not.toBe(restingFighter.getHex());
     expect(sailNear(BYSTANDER_X).getHex()).toBe(restingBystander.getHex());
@@ -186,37 +207,47 @@ describe('the boat model', () => {
     // open water, which is the failure mode parking exists to design out.
     const models = createBoatModels();
     const boat = models.create();
-    boat.root.position.x = FIGHTER_X;
-    boat.animate(0, 0, false);
+    models.beginFrame();
+    boat.draw(FIGHTER_X, 0, 0, 0, 0, 0, 0, false);
     models.commitFrame();
 
+    const sails = meshNamed(models, SAIL_MESH_NAME);
     const matrix = new Matrix4();
     const scaleOfSlotZero = (): number => {
-      models.sails.getMatrixAt(0, matrix);
+      sails.getMatrixAt(0, matrix);
       return matrix.getMaxScaleOnAxis();
     };
     expect(scaleOfSlotZero()).toBeGreaterThan(0);
 
     boat.dispose();
+    models.beginFrame();
     models.commitFrame();
     // Parked: zero scale, so it rasterises nothing even if it were submitted.
     expect(scaleOfSlotZero()).toBe(0);
     // And it is not submitted: the drawn prefix fell back over it.
-    expect(models.sails.count).toBe(0);
+    expect(sails.count).toBe(0);
+    // The hull went with it — a sunk boat that stopped drawing is simply not
+    // in the frame the herd rebuilt.
+    expect(meshNamed(models, HULL_MESH_NAME).count).toBe(0);
 
     models.dispose();
   });
 
   it('shares hull geometry between boats', () => {
     // The whole reason createBoatModels exists rather than a bare factory: a
-    // fleet must not allocate a hull each.
+    // fleet must not allocate a hull each. Sharing is now structural rather
+    // than merely observed — two boats are two INSTANCE MATRICES in one mesh,
+    // so there is no second geometry for them to fail to share.
     const models = createBoatModels();
     const a = models.create();
     const b = models.create();
-    const hullA = meshesOf(a.root)[0]!;
-    const hullB = meshesOf(b.root)[0]!;
-    expect(hullA.geometry).toBe(hullB.geometry);
-    expect(hullA.material).toBe(hullB.material);
+    models.beginFrame();
+    a.draw(0, 0, 0, 0, 0, 0, 0, false);
+    b.draw(BYSTANDER_X, 0, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
+
+    expect(models.objects.filter((object) => object.name === HULL_MESH_NAME)).toHaveLength(1);
+    expect(meshNamed(models, HULL_MESH_NAME).count).toBe(2);
 
     a.dispose();
     b.dispose();
@@ -227,25 +258,39 @@ describe('the boat model', () => {
     // The oar swing is a YAW about each oar's own mount, never a lift — the
     // same constraint the kraken's arms keep, and for the same reason: it makes
     // the animation incapable of clipping through what it is attached to.
+    // ASSERTED ON THE BONES, not on the silhouette. The drawn geometry is
+    // posed in the vertex shader from the herd's palette, so a CPU-side box
+    // measures the REST hull and could no longer see an oar move at all — a
+    // test that cannot fail would be worse than none. The rule itself is a
+    // statement about the joints: a swing is a yaw, so nothing but rotation.y
+    // may ever differ from rest.
     const models = createBoatModels();
     const boat = models.create();
 
-    const restingHeight = (): number => {
-      boat.root.updateMatrixWorld(true);
-      return new Box3().setFromObject(boat.root).max.y;
-    };
-    // Sampled across a whole stroke; roll and pitch move the hull, so compare
-    // against the same pose with the oars at rest by holding the clock still
-    // and only changing the fighting flag (which only changes stroke RATE).
-    const heights: number[] = [];
+    // Against REST, not against zero: the asset authors an oar's mount with a
+    // dip already in it (OAR_DIP_RADIANS, tools/blender/build_war_boat.py), so
+    // a rest pitch of zero was never the rule. The rule is that posing moves
+    // nothing but the yaw.
+    const rest = models.joints.map((bone) => ({
+      position: bone.position.clone(),
+      x: bone.rotation.x,
+      z: bone.rotation.z,
+    }));
     for (let step = 0; step < 12; step++) {
-      boat.animate(step * 0.25, 0, false);
-      heights.push(restingHeight());
+      models.beginFrame();
+      boat.draw(0, 0, 0, 0, step * 0.25, 0, 0.25, false);
+      models.commitFrame();
+      models.joints.forEach((bone, index) => {
+        // No lift and no slide: an oar that translated would leave its mount.
+        expect(bone.position.equals(rest[index]!.position)).toBe(true);
+        // No added pitch and no roll: either would dip the blade through the
+        // water plane or swing it up into the hull.
+        expect(bone.rotation.x).toBe(rest[index]!.x);
+        expect(bone.rotation.z).toBe(rest[index]!.z);
+      });
     }
-    const spread = Math.max(...heights) - Math.min(...heights);
-    // Only the swell should move the silhouette vertically, and it is bounded
-    // by a few hundredths of a cell. An oar that lifted would blow this open.
-    expect(spread).toBeLessThan(0.1);
+    // And the swing really did happen — otherwise the above is vacuous.
+    expect(models.joints.some((bone) => bone.rotation.y !== 0)).toBe(true);
 
     boat.dispose();
     models.dispose();
