@@ -17,18 +17,27 @@ export type { FrontierMistMode };
  * so ui/ControlsPanel.tsx renders its options from the same list the setter
  * validates against.
  */
-export const FRONTIER_MIST_MODES: readonly FrontierMistMode[] = ['off', 'waterline'];
+export const FRONTIER_MIST_MODES: readonly FrontierMistMode[] = ['off', 'line', 'waterline'];
 
 /**
- * Owner's choice, 2026-09-05: no boundary treatment at all. The mist was a
- * water-coloured bank standing off the sea all the way round the received
- * set, and from a low camera it read as a wall across the horizon rather than
- * as an edge — the owner's in-world screenshot. 'waterline' is here for the
- * player who wants the sea's cut edge veiled anyway.
+ * Owner's choice, 2026-09-06: the red boundary line (render/frontierLine.ts).
+ *
+ * SUPERSEDES 'off', which was the owner's call on 2026-09-05 against the only
+ * treatment there was then — a water-coloured bank that from a low camera read
+ * as a wall across the horizon rather than as an edge. Turning it off left the
+ * boundary drawn by nothing at all, which is what made a sculpt at the
+ * frontier unaimable; the line marks the same edge without veiling anything.
+ * 'waterline' is still here for the player who wants the sea's cut edge hidden.
  */
-export const DEFAULT_FRONTIER_MIST_MODE: FrontierMistMode = 'off';
+export const DEFAULT_FRONTIER_MIST_MODE: FrontierMistMode = 'line';
 
-const FRONTIER_MIST_STORAGE_KEY = 'terrace.frontierMist.v1';
+/**
+ * v2 because the DEFAULT changed, not the values: a player carrying the stored
+ * 'off' from the mist-only pref would otherwise keep an unmarked boundary
+ * forever and never see the line they were given. Both old values are still
+ * legal, so anyone who re-picks one keeps it.
+ */
+const FRONTIER_MIST_STORAGE_KEY = 'terrace.frontierMist.v2';
 
 const [frontierMistMode, setFrontierMistModeSignal] = persistedChoice<FrontierMistMode>(
   FRONTIER_MIST_STORAGE_KEY,

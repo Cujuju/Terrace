@@ -60,6 +60,7 @@ import {
 } from './render/layerEdgeOverlay.ts';
 import { createEffect } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
+import { createFrontierLine, type FrontierLine } from './render/frontierLine.ts';
 import { frontierMistMode } from './state/frontierMistPrefs.ts';
 import { createRiverRig, RIVER_RIG_DRAW_OBJECTS, type RiverRig } from './render/riverRig.ts';
 import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
@@ -431,7 +432,19 @@ export function createWorld(viewport: Viewport): World {
   // Solid re-runs it on every change, which is what makes the panel's <select>
   // apply live with no reload. The fog starts hidden, so the microtask before
   // this first runs cannot flash a layer the player turned off.
-  createEffect(() => fog.setMode(frontierMistMode()));
+  // The red boundary line — the default treatment since 2026-09-06. Its own
+  // layer rather than a third profile inside the mist bank: it is a marker
+  // laid on the ground, not a veil standing on it, so it shares the bank's
+  // edge derivation (terrain/frontier.ts) and none of its geometry.
+  const frontierLine: FrontierLine = createFrontierLine(viewport.scene);
+  // ONE CHOICE, TWO LAYERS. Both are handed the same mode and each shows
+  // itself for its own value, so the panel can never leave both drawn — see
+  // FrontierMistMode's doc comment for why the type is shared.
+  createEffect(() => {
+    const mode = frontierMistMode();
+    fog.setMode(mode);
+    frontierLine.setVisible(mode === 'line');
+  });
   // THE REVEAL MASK, and it belongs beside the fog rather than anywhere else
   // because it is the SAME fact: the frontier mist and the mask are both
   // derived from `received`, they are synced at the same two call sites, and a
@@ -617,6 +630,7 @@ export function createWorld(viewport: Viewport): World {
       // every chunk whose build has not landed yet.
       if (mirror !== null) {
         fog.refresh(mirror, dirty);
+        frontierLine.refresh(mirror, dirty);
         water.refresh(mirror, dirty);
       }
     }
@@ -829,6 +843,8 @@ export function createWorld(viewport: Viewport): World {
       // -> starter footprint) or a rejoin (old world's segments dropped, this
       // session's rebuilt).
       fog.sync(fresh.mirror);
+      // Same fact, same call site — see fog.sync above.
+      frontierLine.sync(fresh.mirror);
       // Derived from the same `received` the mist above is, at the same call
       // site, so the two can never describe different frontiers.
       revealMask.sync(fresh.mirror);
@@ -903,6 +919,8 @@ export function createWorld(viewport: Viewport): World {
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);
+      // ...and the boundary line creeps outward with it.
+      frontierLine.sync(mirror);
       // ...and the mask creeps outward with it, same as on the snapshot path.
       revealMask.sync(mirror);
       // ...and the sea creeps outward with it, same as on the snapshot path.
@@ -1182,6 +1200,7 @@ export function createWorld(viewport: Viewport): World {
       predictions = null;
       water.dispose();
       fog.dispose();
+      frontierLine.dispose();
       revealMask.dispose();
       rivers.dispose();
       // The pool outlives every mesh set in the session, so this is the only

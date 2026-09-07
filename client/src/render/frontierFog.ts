@@ -117,6 +117,7 @@ import { CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WORLD_UNIT_HEIGHT_UNITS } from '../config.ts';
 import {
   frontierEdgeKey,
+  frontierEdgeSampling,
   frontierEdges,
   type FrontierEdge,
 } from '../terrain/frontier.ts';
@@ -258,49 +259,6 @@ const COLOR_COMPONENTS_PER_VERTEX = 4; // RGBA — itemSize 4 is what
 export const INDICES_PER_SEGMENT = (FOG_ROW_COUNT - 1) * (FOG_COLUMNS - 1) * 6;
 
 /**
- * The 16 border cells on the RECEIVED side of a frontier edge, plus the
- * boundary line the segment stands on, both derived from the same chunk-side
- * facts frontierEdgeSpan documents (chunk origin 16·(cx,cy), CHUNK_SIZE cells
- * a side). `cellStep`/`lineStep` run in the same +x/+z direction whatever the
- * edge's winding, so column k's ground always sits beside column k's position.
- */
-function edgeSampling(edge: FrontierEdge): {
-  cellX: number;
-  cellY: number;
-  cellStepX: number;
-  cellStepY: number;
-  lineX: number;
-  lineZ: number;
-  lineStepX: number;
-  lineStepZ: number;
-} {
-  const x0 = edge.cx * CHUNK_SIZE;
-  const y0 = edge.cy * CHUNK_SIZE;
-  switch (edge.dir) {
-    case 'N':
-      return {
-        cellX: x0, cellY: y0, cellStepX: 1, cellStepY: 0,
-        lineX: x0, lineZ: y0, lineStepX: 1, lineStepZ: 0,
-      };
-    case 'S':
-      return {
-        cellX: x0, cellY: y0 + CHUNK_SIZE - 1, cellStepX: 1, cellStepY: 0,
-        lineX: x0, lineZ: y0 + CHUNK_SIZE, lineStepX: 1, lineStepZ: 0,
-      };
-    case 'E':
-      return {
-        cellX: x0 + CHUNK_SIZE - 1, cellY: y0, cellStepX: 0, cellStepY: 1,
-        lineX: x0 + CHUNK_SIZE, lineZ: y0, lineStepX: 0, lineStepZ: 1,
-      };
-    case 'W':
-      return {
-        cellX: x0, cellY: y0, cellStepX: 0, cellStepY: 1,
-        lineX: x0, lineZ: y0, lineStepX: 0, lineStepZ: 1,
-      };
-  }
-}
-
-/**
  * (Re)writes one segment's vertex positions and colours from the mirror's
  * CURRENT heights, into the slot starting at vertex `firstVertex` of its
  * super-mesh's buffers. Positions and colours only — the index buffer depends
@@ -314,7 +272,7 @@ function writeSegmentArrays(
   colors: Float32Array,
   firstVertex: number,
 ): void {
-  const s = edgeSampling(edge);
+  const s = frontierEdgeSampling(edge);
   const rowColors = fogRowColors();
 
   // Ground height per border cell, then per column: a column between two
@@ -435,11 +393,18 @@ interface FogSuperMesh {
 
 /**
  * What this player wants drawn at the boundary. 'off' is no boundary
- * treatment at all; 'waterline' is the bank this module builds — which already
- * lies flat wherever it stands on open sea. state/frontierMistPrefs.ts owns
- * which one is chosen and persists it.
+ * treatment at all; 'line' is the red thread render/frontierLine.ts traces
+ * along every openable edge; 'waterline' is the mist bank this module builds
+ * — which already lies flat wherever it stands on open sea.
+ * state/frontierMistPrefs.ts owns which one is chosen and persists it.
+ *
+ * THE MODE LIVES HERE, not beside the line, because it is one question with
+ * three answers and only one of them can be drawn at a time: a type owned by
+ * either renderer would make the other's mode a value it must remember to
+ * handle. Both layers are handed the same choice by world.ts and each shows
+ * itself for its own value.
  */
-export type FrontierMistMode = 'off' | 'waterline';
+export type FrontierMistMode = 'off' | 'line' | 'waterline';
 
 export interface FrontierFog {
   /**
