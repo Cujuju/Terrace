@@ -452,6 +452,26 @@ export const MIN_BRUSH_RADIUS = 1;
 export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
 
 /**
+ * THE WIDEST BRUSH A PLAYER CAN SELECT — the top rung of the picker's ladder
+ * (client/src/state/hudState.ts's BRUSH_LADDER_TOP_RADIUS, which is this
+ * value), half the wire ceiling above.
+ *
+ * IT IS HERE, NOT ONLY IN THE HUD, because two things outside the HUD are
+ * defined against it and must not drift from it or from each other. The mana
+ * plugin prices opening a chunk at what the FULL brush would have cost
+ * (plugins/mana/pricing.ts's chunkUnlockPenalty), so "full brush" has to mean
+ * the same radius to the server charging, the client gating and the picker
+ * offering — and the penalty is zero at this radius by construction rather
+ * than by a constant someone remembered to keep in step.
+ *
+ * The wire ceiling stays MAX_BRUSH_RADIUS: a plugin may still widen a stroke
+ * past this (relics' Titan's Hand), and such a stroke simply pays no unlock
+ * penalty, which is the right answer for a brush bigger than the one the
+ * penalty is measured against.
+ */
+export const FULL_BRUSH_RADIUS = 2 * WORLD_UNIT_CELLS;
+
+/**
  * THE FARTHEST ONE DRAG INTENT MAY SWEEP, in cells between the cursor cell it
  * names and the cell the previous intent named (2026-09-05, owner report:
  * "quick flicks on a small brush size are not recorded and leave gaps").
