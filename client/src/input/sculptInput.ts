@@ -215,6 +215,24 @@ export interface SculptInput {
    * it.
    */
   heldBand(): number | null;
+  /**
+   * ENDS THE LIVE STROKE AS A POINTERUP WOULD — the grab dropped, the aimed
+   * cell unpinned, the drag's sent-region bookkeeping cleared, the repeat
+   * timer cancelled — while the button is still physically held.
+   *
+   * FOR A CLIENT-SIDE REFUSAL (owner, 2026-09-06: "disable the click... like
+   * the user let off the click, so that if they're continuing to drag around
+   * while holding the mouse, they don't get inconsistent sculpting"). The
+   * plugin interceptor chain vetoes ONE intent (main.tsx's `send`), but a held
+   * stroke re-emits on every pointer move and every repeat tick, so without
+   * this a stroke that ran out of mana kept firing intents into a gate that
+   * kept refusing them — sculpting again the instant regen crossed the price,
+   * mid-drag, without the player having pressed anything.
+   *
+   * The stroke does NOT resume on its own: a fresh pointerdown is required,
+   * which is the intentional re-click the owner asked for.
+   */
+  releaseStroke(): void;
   dispose(): void;
 }
 
@@ -945,6 +963,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
+   * IS A STROKE STILL IN FLIGHT? Every field `stopRepeat` clears would answer,
+   * and the pointer id is the one that is set for a stroke of either input
+   * kind and at every stage of it — before arming (a touch stroke waiting out
+   * its grace delay) as well as after.
+   *
+   * Asked after each `emitIntent`, because `send` can end the stroke UNDER the
+   * caller: a client-plugin veto releases it (see `releaseStroke`), and the
+   * callers below would otherwise go on to arm, or to schedule the next
+   * repeat of, a stroke that is over.
+   */
+  const strokeIsLive = (): boolean => strokePointerId !== null;
+
+  /**
    * Schedules repeat number `repeatIndex` (0 = the first repeat, i.e. the
    * SECOND intent of the stroke) and, when it fires, the one after it.
    *
@@ -958,6 +989,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     repeatTimer = setTimeout(() => {
       repeatTimer = null;
       emitIntent();
+      if (!strokeIsLive()) return;
       scheduleRepeat(repeatIndex + 1);
     }, repeatDelayMs(repeatIndex));
   };
@@ -975,6 +1007,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // has passed anyway. A mouse press has already taken hold in startStroke,
     // where the pointer is exactly where the player put it.
     if (strokeIsTouch) takeHold(currentStrokeAction());
+    // The seed a Drag press makes is itself an intent (takeHold → seedLayer),
+    // so it can be the one that is refused — here for a touch stroke, back in
+    // `startStroke` for a mouse one. Either way the stroke is already over and
+    // arming it would emit the very intent that was just refused.
+    if (!strokeIsLive()) return;
     strokeArmed = true;
     emitIntent();
     // A DRAG IS DRIVEN BY MOTION, NOT BY A TIMER (owner report, 2026-08-23:
@@ -995,6 +1032,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // the player put it, and a seeded layer is "a single layer" by the owner's
     // instruction — a repeat would turn either into a tower.
     if (strokeTool === 'drag') return;
+    // The first intent was refused, so there is no stroke left to repeat.
+    if (!strokeIsLive()) return;
     scheduleRepeat(0);
   };
 
@@ -1281,6 +1320,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   return {
     hoverTarget,
     heldBand: (): number | null => strokeGrab,
+    releaseStroke: stopRepeat,
     dispose(): void {
       stopRepeat();
       canvas.removeEventListener('pointerdown', onPointerDown);
