@@ -674,10 +674,10 @@ Dated decisions moved out of `docs/DESIGN.md` on 2026-09-01. Settled with the ow
   cheaper request.
 
   **The drag's price is accepted as a stamp's (2026-09-01, issue #279).** The
-  sculpt audit measured a pull at up to ~56x the units a stamp of the same
+  sculpt audit measured a drag at up to ~56x the units a stamp of the same
   radius is priced for. Not fixed, on purpose: a drag emits once per cursor
   cell crossed and each intent is priced in full, so the moved-to-priced ratio
-  is a function of cursor speed and band gap — a slow one-band pull is ~23x
+  is a function of cursor speed and band gap — a slow one-band drag is ~23x
   OVER-priced at r=16, a flick toward a high band ~56x under. No fixed multiple
   (`DRAG_BANDS_PER_STROKE`, carve-style) is right at both ends, and pricing by
   `targetBand` would make a high terrace un-extendable (r=16 to band 60 ≈ 20x

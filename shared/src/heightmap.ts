@@ -136,9 +136,9 @@ function clampHeight(h: number): number {
  *              fabric-pull, kept verbatim as a deliberate blending tool and as
  *              the library default for API compatibility (plugins tuned their
  *              terraforms against relaxation).
- * - `drag`   — THE LAYER-EDGE PULL (owner decision 2026-08-24, issue #99, and
+ * - `drag`   — THE LAYER-EDGE DRAG (owner decision 2026-08-24, issue #99, and
  *              the model Godus shipped as its first god power). Not a brush at
- *              all: the player grabs a terrace lip and pulls it sideways, and
+ *              all: the player grabs a terrace lip and drags it sideways, and
  *              the edit is the REGION swept between where the lip was and
  *              where the cursor is. It changes how far a band extends and
  *              never which bands exist, so the vertical stays entirely the
@@ -188,7 +188,7 @@ export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', '
  *   neither its arithmetic nor its price (see sculptDisplacementUnits).
  * - `drag` moves a level sideways, and its contract is that "a drag never
  *   changes WHICH bands exist, only how far one extends" (SculptAnchor:
- *   'band' below). A soft edge bites cells out of the pulled region's rim and
+ *   'band' below). A soft edge bites cells out of the dragged region's rim and
  *   leaves them at partial-band heights, which the level-set renderer draws
  *   as a ledge poking out under the lip — a band the player never asked for,
  *   i.e. exactly what the contract forbids.
@@ -218,8 +218,8 @@ export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['drag', 'carve
  * Adding a tool here changes both at once — which is the whole point of it
  * being a list rather than an `=== 'carve'` at each site.
  *
- * IT DOES NOT INCLUDE `drag`: a pull genuinely has both directions (the
- * lower chord pulls a lip inward, see applyDragRegion/retreatHeightAt), so
+ * IT DOES NOT INCLUDE `drag`: a drag genuinely has both directions (the
+ * lower chord drags a lip inward, see applyDragRegion/retreatHeightAt), so
  * its Mode row and its modifier both still mean something.
  */
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
@@ -341,7 +341,7 @@ export type SculptAnchor = 'clicked' | 'free' | 'band';
  *
  * True when any of the eight neighbours of (cx, cy) already stands at or above
  * `band · BAND_HEIGHT`. A band-anchored sculpt is therefore never a way to
- * conjure height: it can only pull a level onto ground that is already
+ * conjure height: it can only drag a level onto ground that is already
  * touching that level, one cell at a time. Dragging a terrace across a plain
  * is a WALK — each intent extends the lip by one cell, and the next intent's
  * legality is created by the previous one's result — which is exactly the
@@ -386,7 +386,7 @@ export function canSpreadBandTo(
 // painted the single cells the cursor crossed, chained one intent to the next,
 // and a dropped intent severed the stroke for good (issue #120). The second
 // froze the grabbed lip's normal and moved a straight front along it — the CAD
-// "pull a wall" gesture — which cured the wander but could not curve or turn:
+// "drag a wall" gesture — which cured the wander but could not curve or turn:
 // the owner's report was that "everything ends up looking like a straight
 // section". Pushing with a disc curves freely, turns wherever the hand turns,
 // and accumulates into shapes that are not made of straight runs.
@@ -501,9 +501,9 @@ export interface SculptOptions {
   readonly spanBand?: number | null;
   /**
    * THE SWEEP (2026-09-05): the cursor cell the PREVIOUS drag intent named.
-   * A pull's region is then the footprint swept along the straight line from
+   * A drag's region is then the footprint swept along the straight line from
    * here to (cx, cy), not the disc at (cx, cy) alone. Drag only; null or
-   * absent means a single disc, which is every pull before this field existed.
+   * absent means a single disc, which is every drag before this field existed.
    */
   readonly sweepFrom?: SweepOrigin | null;
 }
@@ -572,7 +572,7 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // No span named — the topmost one. Every pre-2026-08-25 caller meant exactly
   // this, and a plugin terraform still does: a plugin sculpts the surface.
   spanBand: null,
-  // A single disc: no pull before 2026-09-05 swept, and no plugin's does.
+  // A single disc: no drag before 2026-09-05 swept, and no plugin's does.
   sweepFrom: null,
 };
 
@@ -1093,20 +1093,20 @@ function fillTowardTarget(
 }
 
 /**
- * How close a pulled lip must come to the level below before that level is
+ * How close a dragged lip must come to the level below before that level is
  * pushed along too, in cells. ONE CELL — adjacency, i.e. the lower level gives
  * ground only once the upper lip is standing directly against it and the tread
  * between them has been consumed to nothing.
  *
  * SUPERSEDES HALF A WORLD UNIT (owner, 2026-08-24, with a screenshot: "I am
- * soft pulling that top band and it keeps pushing out all the bands below it.
- * I'm unable to pull it to the edge"). At half a world unit every band of a
+ * soft dragging that top band and it keeps pushing out all the bands below it.
+ * I'm unable to drag it to the edge"). At half a world unit every band of a
  * staircase with treads that narrow is inside the window at once, so the WHOLE
- * STACK translates outward with the pull and the pulled band never gains on
+ * STACK translates outward with the drag and the dragged band never gains on
  * it — measured on 2-cell treads, bands 7 down to 1 each moved out two cells,
- * so the lip could not be pulled to the edge however long the stroke was held.
- * That is the ladder. At adjacency the same pull leaves every band below
- * exactly where it stood and only the pulled band advances.
+ * so the lip could not be dragged to the edge however long the stroke was held.
+ * That is the ladder. At adjacency the same drag leaves every band below
+ * exactly where it stood and only the dragged band advances.
  *
  * A LATTICE FACT, NOT A GROUND FACT, which is why this one is NOT stated in
  * world units. "The edges are aligned" means the two lips are in touching
@@ -1122,9 +1122,9 @@ function fillTowardTarget(
 const DRAG_TREAD_TOLERANCE_CELLS = 1;
 
 /**
- * PUSHING THE LEVELS BELOW ALONG WITH THE ONE BEING PULLED.
+ * PUSHING THE LEVELS BELOW ALONG WITH THE ONE BEING DRAGGED.
  *
- * Without this a pull simply swallows the terrace under it: band k advances
+ * Without this a drag simply swallows the terrace under it: band k advances
  * over band k−1's tread, band k−1 never moves, and a staircase turns into one
  * tall face. What the player expects is that the step is CARRIED — crowd the
  * level below and it gives ground too, and so on down.
@@ -1138,12 +1138,12 @@ const DRAG_TREAD_TOLERANCE_CELLS = 1;
  *    same tolerance BEFORE this edit, so there is a real step here to push
  *    rather than open ground to terrace;
  * 3. `canSpreadBandTo` admits it on the live map — the band can physically
- *    reach it, the same rule the pull itself runs.
+ *    reach it, the same rule the drag itself runs.
  *
  * CLAUSE 2 IS THE ONE THAT WAS MISSING, and its absence was not a matter of
- * degree (owner report, 2026-08-24: pulling a layer beside a tall totem "blew
- * up into a giant pyramid"). Judged on the map AFTER the pull, the land the
- * pull had just created was itself ground at band j+1, so it justified
+ * degree (owner report, 2026-08-24: dragging a layer beside a tall totem "blew
+ * up into a giant pyramid"). Judged on the map AFTER the drag, the land the
+ * drag had just created was itself ground at band j+1, so it justified
  * spreading band j beneath it, which justified band j−1 beneath that. Beside a
  * 20-band spire standing on flat ground there is no lower lip anywhere near —
  * and the cascade INVENTED the entire staircase down to sea level: one click
@@ -1154,7 +1154,7 @@ const DRAG_TREAD_TOLERANCE_CELLS = 1;
  * from the map as it stood BEFORE — `hadCapAtBandBefore`, which answers from
  * the recorded pre-edit column for anything this intent has touched and from
  * the live column for everything else. A level that was not there before this
- * pull cannot be pushed by it.
+ * drag cannot be pushed by it.
  *
  * SEEDED BY WHAT MOVED, NEVER BY THE TERRAIN AT LARGE. Stated as a property of
  * the map — "bands within `tolerance` cells of each other may differ by at most
@@ -1241,7 +1241,7 @@ function pushLowerLayers(
   if (candidates.length === 0) return;
   candidates.sort((a, b) => a - b);
 
-  // The same wave discipline the pull itself uses: a candidate more than one
+  // The same wave discipline the drag itself uses: a candidate more than one
   // cell from the band cannot take it until its inward neighbour has, so the
   // set is swept until a pass changes nothing. What it fills is not collected:
   // the only thing a list of it could seed is the next level down, and there
@@ -1271,30 +1271,30 @@ function pushLowerLayers(
   }
 
   // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
-  // pulling up to those layers, it pushes them out until it slowly stops
+  // dragging up to those layers, it pushes them out until it slowly stops
   // pushing them and slowly catches up").
   //
   // This used to be `seeds = raised`, which fed each level's push into the
   // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
-  // different hat. There, the cascade judged entitlement on land the pull had
+  // different hat. There, the cascade judged entitlement on land the drag had
   // just created; here it judged crowding on land THE CASCADE ITSELF had just
   // created. Band j−4 was never crowded by the band the player grabbed; it was
   // crowded by band j−3, which this loop moved a moment earlier. Measured on
   // the owner's own world, one intent grabbing band 24: 33 cells filled at the
   // grabbed band and 202 cells pushed across NINE bands beneath it — the
-  // cascade doing six times the work of the pull, which is what reads on
+  // cascade doing six times the work of the drag, which is what reads on
   // screen as a ladder the lip can never catch up to.
   //
   // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
   // stroke moves the grabbed band and at most the single level under it. To
-  // carry the next one down the player pulls again — the same walk the inward
+  // carry the next one down the player drags again — the same walk the inward
   // drag makes, and the same "one gesture, one level" the stamp has always
   // had. The step is still carried rather than swallowed; it is simply
   // carried one at a time instead of all the way to the sea.
 }
 
 /**
- * The smallest fraction of the brush radius a `soft` pull's edge can pull in
+ * The smallest fraction of the brush radius a `soft` drag's edge can drag in
  * to, as the ragged footprint's inner bound.
  *
  * WHAT IT BUYS: at 1 the footprint is the plain disc and `soft` is `hard`; the
@@ -1342,10 +1342,10 @@ const SOFT_DRAG_LOBE_SHARE = 0.65;
  *
  * ANCHORED TO THE WORLD, NOT TO THE STROKE, and that is the whole design. A
  * value that varied per push would let a cell be refused on one intent and
- * taken on the next, so a held pull would fill in its own gaps and converge
+ * taken on the next, so a held drag would fill in its own gaps and converge
  * on the plain disc — the irregularity would be a shimmer that averaged away
  * rather than a shape. Keyed on the cell, the same ground always answers the
- * same way, so the ragged edge a pull leaves behind STAYS ragged, and pushing
+ * same way, so the ragged edge a drag leaves behind STAYS ragged, and pushing
  * the same place twice reproduces it exactly.
  *
  * INTEGER-ONLY, therefore safe for the determinism contract (design doc).
@@ -1388,8 +1388,8 @@ function cellNoise(x: number, y: number): number {
  * there is none.
  *
  * THE EXACT MIRROR OF `canSpreadBandTo`, AND THAT IS THE POINT. The outward
- * pull may only raise a cell to a level that already stands beside it; the
- * inward pull may only drop a cell to a level that already stands beside it.
+ * drag may only raise a cell to a level that already stands beside it; the
+ * inward drag may only drop a cell to a level that already stands beside it.
  * One reads the neighbourhood for the highest thing at or above the band, the
  * other for the highest thing below it — same eight neighbours (a lip is a
  * marching-squares contour and cuts diagonally, see canSpreadBandTo), same
@@ -1397,14 +1397,14 @@ function cellNoise(x: number, y: number): number {
  *
  * WHY IT ANSWERS "WHAT IS EXPOSED UNDERNEATH", which the terrain itself cannot:
  * a column stores one height, so the level this band was built on top of is not
- * recorded anywhere. It does not need to be. The lip being pulled in is by
+ * recorded anywhere. It does not need to be. The lip being dragged in is by
  * definition standing against lower ground — that ground IS the surface the
  * band was sitting proud of, and continuing it inward is the only answer that
  * invents nothing. On a staircase the neighbour is the tread one band down, so
- * the retreat exposes band−1 and widens that tread; where the band was pulled
+ * the retreat exposes band−1 and widens that tread; where the band was dragged
  * out over a plain several bands below, the retreat exposes the plain. THE
- * ACID TEST IS THAT THIS UNDOES AN OUTWARD PULL: pull band 7 out over a band-2
- * flat and pull it back in, and band 2 is what returns. A rule that always
+ * ACID TEST IS THAT THIS UNDOES AN OUTWARD DRAG: drag band 7 out over a band-2
+ * flat and drag it back in, and band 2 is what returns. A rule that always
  * exposed band−1 instead would fail that test in both directions at once — it
  * would leave a band-6 shelf that was never there (inventing a level, which
  * the drag tool is defined never to do) and it could never retreat a lip that
@@ -1415,7 +1415,7 @@ function cellNoise(x: number, y: number): number {
  * level underneath — it can only flatten a cell into ground that is already
  * there. Null (no neighbour below the band) means the cell is in the interior
  * of the plateau, and an interior cell is untouchable: the retreat has to eat
- * inward from the rim one wave at a time, exactly as the pull creeps outward
+ * inward from the rim one wave at a time, exactly as the drag creeps outward
  * one wave at a time, so there is no way to punch a hole in the middle of a
  * plateau or to delete ground the gesture never reached.
  */
@@ -1466,7 +1466,7 @@ function retreatHeightAt(
  *            masonry.
  *
  * SOFT USED TO MEAN "ONE WAVE PER INTENT" AND THAT WAS WRONG (owner report,
- * 2026-08-24: "what I'm getting is a big flat wall pulling along with me — I
+ * 2026-08-24: "what I'm getting is a big flat wall dragging along with me — I
  * would expect something more organic when you say soft"). Limiting the wave
  * count makes the front advance more SLOWLY; it does not make it any less
  * straight, because a wave still takes the whole rind of the disc that touches
@@ -1481,8 +1481,8 @@ function retreatHeightAt(
  * drag stops at a higher band's edge and does not strip the ground standing on
  * it" falls out of that rather than being coded separately.
  *
- * PULLING INWARD IS THE SAME GESTURE WITH THE SIGN FLIPPED (owner, 2026-08-24:
- * "we also still need the lower mode for pull as well"). The band RETREATS:
+ * DRAGGING INWARD IS THE SAME GESTURE WITH THE SIGN FLIPPED (owner, 2026-08-24:
+ * "we also still need the lower mode for drag as well"). The band RETREATS:
  * every footprint cell standing at exactly the grabbed band falls to the ground
  * already beside it, so the band's extent shrinks and the level it was standing
  * proud of comes back into view. `retreatBandTo` below is its whole stop rule,
@@ -1545,7 +1545,7 @@ function admitRimEnclaves(
     reached.add(i);
     stack.push(i);
   };
-  // Ground this flood may escape TO: anything the pull is not offering — a
+  // Ground this flood may escape TO: anything the drag is not offering — a
   // neighbouring cell outside the region (admitted or refused), or one off the
   // map altogether. Membership is asked of the region itself rather than of a
   // disc formula, because since the sweep (2026-09-05) the region is a union
@@ -1601,7 +1601,7 @@ function applyDragRegion(
   /**
    * The height each cell this intent touches had BEFORE it did. The cascade
    * below needs to tell "a lip that was already here" from "a lip this very
-   * pull just built", and after the fill the live map can no longer say which
+   * drag just built", and after the fill the live map can no longer say which
    * is which — that confusion is what turned one click into a pyramid.
    *
    * A map of only the touched cells rather than a snapshot of the window: the
@@ -1637,11 +1637,11 @@ function applyDragRegion(
   // fast flick with a small brush — and worse than gaps: a disc landing clear
   // of the last one touches no ground at the band, so the spread rule filled
   // nothing at all. The sweep unions the footprint at every cell of the
-  // straight line from `sweepFrom` to (cx, cy); a pull with no `sweepFrom` is
+  // straight line from `sweepFrom` to (cx, cy); a drag with no `sweepFrom` is
   // the single disc it always was. Deduplicated on first sight, in line order
   // then footprint order, so both replicas build the same list.
   //
-  // The offsets come from the one iterator every brush uses, so a pull
+  // The offsets come from the one iterator every brush uses, so a drag
   // considers exactly the cells a stamp of the same radius would at each step
   // — minus, for `soft`, the bites taken out of the rim.
   const disc: number[] = [];
@@ -1673,7 +1673,7 @@ function applyDragRegion(
   else forEachLineCell(sweepFrom.x, sweepFrom.y, cx, cy, sweepDisc);
   if (refused.size > 0) admitRimEnclaves(map, targetBand, refused, inDisc, disc);
 
-  // THE RETREAT — the inward pull, and it returns before the outward pull's
+  // THE RETREAT — the inward drag, and it returns before the outward drag's
   // machinery because almost none of that machinery applies to it.
   //
   // WHAT RETREATING BAND k MEANS: every cell of the footprint that is solid at
@@ -1688,7 +1688,7 @@ function applyDragRegion(
   // byte-identical there.
   //
   // WHAT THAT COSTS, NAMED: a span that towers over the grabbed band is cut
-  // back too, so pulling band 7 in beneath a band-9 totem takes the totem's own
+  // back too, so dragging band 7 in beneath a band-9 totem takes the totem's own
   // cells down with the face they stand on — the stop rule this clause used to
   // be (0b81845, read in the retreat's direction). The retreat cannot tell a
   // totem from a tall face: both are one span, solid at k, capping above it.
@@ -1699,10 +1699,10 @@ function applyDragRegion(
   //
   // HOW FAR A CELL FALLS DEPENDS ON WHERE IT WAS GRABBED (owner report
   // 2026-09-02: on a stamped five-band face, "refusing to do anything less
-  // than five bands when attempting to pull any of the bands in the top 5").
+  // than five bands when attempting to drag any of the bands in the top 5").
   // Two rules that were each right alone had collided: `retreatHeightAt`
-  // exposes the NEIGHBOURING GROUND, however far down it is (so pulling a lip
-  // back in undoes a pull-out over a plain — its acid test), and #223 above
+  // exposes the NEIGHBOURING GROUND, however far down it is (so dragging a lip
+  // back in undoes a drag-out over a plain — its acid test), and #223 above
   // selects every cell capping at OR ABOVE the grab. On a sheer face the
   // neighbour is the ground at the bottom, so grabbing band 3 of a 0→5 face
   // did exactly what grabbing band 5 did, and the fixpoint then ate the whole
@@ -1710,7 +1710,7 @@ function applyDragRegion(
   // FAR. The rule now:
   //
   //   - a cell capping AT the grabbed band falls to the exposed ground,
-  //     unchanged — grabbing the top lip still undoes a pull-out exactly;
+  //     unchanged — grabbing the top lip still undoes a drag-out exactly;
   //   - a cell capping ABOVE it falls no further than the band beneath the
   //     grab, `(k − 1) · BAND_HEIGHT`, the same one-band-down target the
   //     stamp's anchor uses (anchoredTargetHeight). The face is cut back at
@@ -1722,17 +1722,17 @@ function applyDragRegion(
   // pointer names the slab under the ray, so the player chooses between the
   // two by where on the face they take hold.
   //
-  // SUPERSEDED IN PART (owner decision 2026-09-05): "a shift pull should only
+  // SUPERSEDED IN PART (owner decision 2026-09-05): "a shift drag should only
   // do the current band and bands above, never the band below." The first
   // bullet no longer holds — a cell capping AT the grab is bounded at
   // `(k − 1) · BAND_HEIGHT` like every other, so a retreat removes band k's
-  // material and nothing beneath it. Undoing a pull-out over a plain several
-  // bands down is now one grab per band, the same walk the outward pull is.
+  // material and nothing beneath it. Undoing a drag-out over a plain several
+  // bands down is now one grab per band, the same walk the outward drag is.
   // `retreatHeightAt` still decides WHERE the band ends (a lip needs lower
   // ground beside it); it no longer decides how far the cell falls.
   //
   // NO CASCADE, DELIBERATELY, and this is where the symmetry with the outward
-  // pull is broken on purpose. `pushLowerLayers` exists because an ADVANCING
+  // drag is broken on purpose. `pushLowerLayers` exists because an ADVANCING
   // lip swallows the tread below it: the step is destroyed unless the level
   // below gives ground too. A RETREATING lip does the opposite — it uncovers
   // the level below and makes that tread WIDER — so nothing is being crowded
@@ -1741,7 +1741,7 @@ function applyDragRegion(
   // (8103dc9), and it would also be the unbounded terrain-delete this tool must
   // not be: one gesture would strip a whole staircase. To retreat the next
   // level down the player grabs THAT lip, which is the same walk the outward
-  // pull is.
+  // drag is.
   if (!raising) {
     // Swept to a fixpoint like the fill, so the rim's retreat exposes the
     // cells behind it and they may retreat in turn — the wave eats inward from
@@ -1765,11 +1765,11 @@ function applyDragRegion(
         // the band's threshold is at most the span's drawn cap), so this cannot
         // fire today. It is kept as the loop's rule written down where the loop
         // relies on it: a span capping BELOW the grabbed band is not that
-        // band's lip and must not be cut by a pull on it.
+        // band's lip and must not be cut by a drag on it.
         if (bandOf(span.ceiling) < targetBand) continue;
         const ground = retreatHeightAt(map, x, y, targetBand);
         // Interior of the plateau — nothing lower beside it, so the band does
-        // not end here and there is no lip at this cell to pull in.
+        // not end here and there is no lip at this cell to drag in.
         if (ground === null) continue;
         // THE GRAB BOUNDS THE DROP (owner 2026-09-02 for a tall face, widened
         // 2026-09-05 to every cell — the block comment above): the cell is cut
@@ -1804,7 +1804,7 @@ function applyDragRegion(
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
       // Already solid at the band: the lip itself, land an earlier pass took,
-      // or higher ground the pull leaves standing. Otherwise `fill` says where
+      // or higher ground the drag leaves standing. Otherwise `fill` says where
       // the material lands — the ground below when this cell has open sky, a
       // NEW SLAB when the band lies in a gap under this cell's own roof
       // (columns.ts `bandFillAt`, owner decision 2026-08-27, issue #224).
@@ -1812,8 +1812,8 @@ function applyDragRegion(
       // The superseded rule, kept here as the record of what changed: the fill
       // used to land on `spanIndexBelowBand` unconditionally (plan D4, "put
       // material in the opening… the two weld, a sealed cave"), which is why
-      // pulling a roof band over a carve raised the FLOOR span to the roof and
-      // sealed the carve. See DESIGN.md, "Decisions made 2026-08-27 (a pulled
+      // dragging a roof band over a carve raised the FLOOR span to the roof and
+      // sealed the carve. See DESIGN.md, "Decisions made 2026-08-27 (a dragged
       // band overhangs a carve; it never fills it)".
       const fill = bandFillAt(map, x, y, targetBand);
       if (fill === null) continue;
@@ -1832,9 +1832,9 @@ function applyDragRegion(
     }
   }
 
-  // THE STEP IS CARRIED, NOT SWALLOWED. Whatever this pull just took, the
+  // THE STEP IS CARRIED, NOT SWALLOWED. Whatever this drag just took, the
   // levels beneath it give ground too once it crowds them — see
-  // pushLowerLayers. Seeded with this intent's own cells, so a pull that moved
+  // pushLowerLayers. Seeded with this intent's own cells, so a drag that moved
   // nothing cascades nothing.
   if (raised.length > 0) pushLowerLayers(map, raised, targetBand, hadCapAtBandBefore, record, changed);
 }
@@ -1906,22 +1906,22 @@ function applyDragRegion(
  *
  * THE DRAG IS THE ONE EXCLUSION THAT RUNS THE OTHER WAY, and it is a KNOWN
  * OPEN PRICE rather than a decided one (2026-08-30). The five above all
- * describe a stroke that moves LESS than the cone priced here; a pull moves
+ * describe a stroke that moves LESS than the cone priced here; a drag moves
  * MORE. It has no cone at all — `applyDragRegion` takes every admitted cell
  * ALL THE WAY to the grabbed band, up to FULL_HEIGHT_SPAN each — so extending
  * a band-60 terrace over a band-0 plain at radius 16 displaces on the order of
  * 700,000 units for the price of a stamp's 749 x BAND_HEIGHT. That is the same
  * free-tool asymmetry the carve branch above was added to close (plan D6/P3),
  * and it is left open here because closing it needs a number nobody has
- * chosen: the price may not read the terrain (see (a) below), so a pull's
+ * chosen: the price may not read the terrain (see (a) below), so a drag's
  * price can only ever be a fixed multiple of its footprint, and which multiple
  * is a balance decision for the owner rather than an arithmetic one. Until
- * then a held pull is the cheapest terrain in the game per unit moved.
+ * then a held drag is the cheapest terrain in the game per unit moved.
  *
  * DECIDED 2026-09-01 (issue #279): ACCEPTED AS IS, deliberately. A drag emits
  * once per cursor cell crossed (client sculptInput.ts), each intent priced in
- * full, so what a pull "really" moves per priced intent depends on cursor
- * speed and band gap, not on any multiple: a slow pull extending a one-band
+ * full, so what a drag "really" moves per priced intent depends on cursor
+ * speed and band gap, not on any multiple: a slow drag extending a one-band
  * lip admits ~2r new cells against a 749-cell price (~23x OVER-priced at
  * r=16), while a flick across a plain toward a high band is the ~56x
  * UNDER-priced case above. No fixed multiple is right at both ends, so none
@@ -2310,7 +2310,7 @@ function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | nul
 /**
  * Gradient-limit relaxation — the Populous signature and the single most
  * feel-critical routine in the project. After an edit, any 4-neighbor pair
- * differing by more than MAX_STEP + RELAX_SLACK is pulled toward each other by
+ * differing by more than MAX_STEP + RELAX_SLACK is dragged toward each other by
  * half the excess (each cell moves floor(e/2), leaving the pair at MAX_STEP,
  * or at MAX_STEP + RELAX_SLACK when the excess was odd), swept in fixed
  * row-major passes over a bounding box that grows by one cell per pass so
@@ -2813,15 +2813,15 @@ export function applySculpt(
   // the vertical belongs to the stamp.
   //
   // DISPATCHED BEFORE THE BAND GUARD BELOW, which is deliberate. That guard
-  // asks whether the band reaches the stroke's CENTRE cell, and for a pull it
+  // asks whether the band reaches the stroke's CENTRE cell, and for a drag it
   // would be wrong as well as redundant: the disc is a brush, so a legitimate
-  // pull can have its centre out over ground the band does not touch while the
+  // drag can have its centre out over ground the band does not touch while the
   // rest of the disc lies against the lip. The per-cell neighbour rule inside
   // applyDragRegion is the real anti-cheat and it is sufficient on its own —
   // no cell is ever raised unless that band already stands beside THAT CELL.
   //
   // A drag with no band is a NO-OP rather than a fallback to a brush: silently
-  // stamping where the player asked to pull would apply a differently-shaped
+  // stamping where the player asked to drag would apply a differently-shaped
   // edit than the sender predicted, and desync the prediction for a round trip
   // (the same argument protocol.ts's validator makes for rejecting an unknown
   // tool outright).
@@ -2875,7 +2875,7 @@ export function applySculpt(
 
 
   // A DRAG ARRIVES IN ONE INTENT (owner decision 2026-08-23, after the first
-  // build felt wrong: "grab the lip and pull the terrace out to here" has to
+  // build felt wrong: "grab the lip and drag the terrace out to here" has to
   // finish in one pass). Every other stroke moves by `amount` — one band per
   // click, the server's own DEFAULT_SCULPT_AMOUNT — and repeats to climb; a
   // drag that did the same would raise each cell the cursor crossed by a

@@ -42,7 +42,7 @@ Dated decision records, one file per arc, split from `docs/DESIGN.md` on 2026-09
   - Decisions made 2026-08-22 (the walkers were probing a quarter of their feet)
 - [overhangs](overhangs.md)
   - Decisions made 2026-08-24 (overhangs, arches and caves — the column becomes a list of spans)
-  - Decisions made 2026-08-27 (a pulled band overhangs a carve; it never fills it)
+  - Decisions made 2026-08-27 (a dragged band overhangs a carve; it never fills it)
   - Decisions made 2026-09-02 (the carve opens the band the player points at)
 - [phase-0-1-kickoff](phase-0-1-kickoff.md)
   - 10. Open questions (not yet decided — raise before building the affected part)

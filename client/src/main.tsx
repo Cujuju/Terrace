@@ -231,7 +231,7 @@ const sculptInput = createSculptInput({
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.
   // The TOOL rides along because the carve reads a tread differently from the
-  // pull (world.ts's LayerEdgeLight.tool); read live, like every other HUD
+  // drag (world.ts's LayerEdgeLight.tool); read live, like every other HUD
   // state here.
   riserBand: (pick) =>
     world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan(), tool: brushTool() }),
@@ -300,7 +300,7 @@ viewport.onFrame(() => {
   // the pointer shape can never disagree about what is under the cursor —
   // and it is the same question input/sculptInput.ts asks on pointerdown.
   //
-  // A LIVE STROKE'S GRAB OVERRIDES THE PICK. A pull drags the pointer off the
+  // A LIVE STROKE'S GRAB OVERRIDES THE PICK. A drag moves the pointer off the
   // riser it grabbed within the first cell of travel, and the pick-derived band
   // is null everywhere but on a riser — so without this the lip the player was
   // holding went dark while they were still holding it.
@@ -308,7 +308,7 @@ viewport.onFrame(() => {
     litSpanWorldUnits: litLipSpan(),
     heldBand: sculptInput.heldBand(),
     // THE SAME TOOL THE PRESS WOULD USE, so the lit lip is the one a press
-    // takes — the carve's corner-edge rule and the pull's riser-only rule
+    // takes — the carve's corner-edge rule and the drag's riser-only rule
     // genuinely differ on a tread (D1, owner 2026-09-04).
     tool: brushTool(),
   });

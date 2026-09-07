@@ -336,14 +336,14 @@ export interface BrushHover {
    * It hides the footprint outline and leaves the bare crosshair (owner,
    * 2026-08-23). The ring is a promise about which cells one click will change,
    * and a drag does not keep that promise: it changes one cell, follows the
-   * cursor, and its extent is however far the player pulls. Showing a
+   * cursor, and its extent is however far the player drags. Showing a
    * radius-4 stamp footprint over a lip the player is about to drag would
    * advertise an edit that is not the one about to happen — so the pointer
    * says only "here", which is all a drag actually commits to.
    *
-   * IT IS THE TOOL-GATED FORM OF `band`: main.tsx sets it only for the Pull,
-   * because only the Pull takes HOLD of a lip. The mark below reads both — see
-   * `held` in `update` — so the Pull's pointer cannot promise a grab that the
+   * IT IS THE TOOL-GATED FORM OF `band`: main.tsx sets it only for the Drag,
+   * because only the Drag takes HOLD of a lip. The mark below reads both — see
+   * `held` in `update` — so the Drag's pointer cannot promise a grab that the
    * press itself would not make.
    */
   readonly grabbable: boolean;
@@ -993,13 +993,13 @@ export function createBrushPreview(
   ): string => `${radius}|${tool}|${profile}|${dir}`;
   for (const r of BRUSH_RADII) {
     for (const tool of SCULPT_TOOLS) {
-      // THE PULL AND THE CARVE HAVE NO FOOTPRINT OF THEIR OWN TO CACHE.
+      // THE DRAG AND THE CARVE HAVE NO FOOTPRINT OF THEIR OWN TO CACHE.
       // Building a ring, a skirt and a cell grid under either tool's own key
       // would be part of this eager cache that nothing ever displays. Skipped
       // here rather than filtered at the draw site so the cache holds exactly
       // what is drawable.
       //
-      // The PULL has no footprint of its own: what it changes is however far
+      // The DRAG has no footprint of its own: what it changes is however far
       // the player drags. Its one press with an exact extent is the tread SEED,
       // and that is a hard stamp (SEED_TOOL/SEED_PROFILE), so `update` draws it
       // from the stamp's entry — the same simulation, not a duplicate of it.
@@ -1227,9 +1227,9 @@ export function createBrushPreview(
       const onTread = !hover.hitRiser && atY === hover.surfaceY;
       const seeding = brush.tool === 'drag' && onTread && brush.dir === SEED_DIR;
 
-      // THE PULL AND THE CARVE ARE POINTED, NOT OUTLINED, everywhere else — a
+      // THE DRAG AND THE CARVE ARE POINTED, NOT OUTLINED, everywhere else — a
       // ring is a promise about which cells one click will change, and neither
-      // tool keeps it: the Pull changes however far the player drags, and the
+      // tool keeps it: the Drag changes however far the player drags, and the
       // Carve's reach depends on where the open air beside the cut is, which
       // the flat-ground premise cannot express. Over a riser the layer-edge
       // overlay lights the band's lip beside the mark, which is the affordance
@@ -1245,8 +1245,8 @@ export function createBrushPreview(
           // would not is the refused grey. `grabbable` and `band` are both
           // read, and both do work: `band` is the aimed band for either tool,
           // while `grabbable` is main.tsx's tool-gated statement that a press
-          // will actually GRAB — true only for the Pull. They agree by
-          // construction, and on the Pull the conjunction means a regression in
+          // will actually GRAB — true only for the Drag. They agree by
+          // construction, and on the Drag the conjunction means a regression in
           // either derivation shows a refused mark rather than promising a hold
           // the press will not make. The Carve does not grab: it cuts from the
           // aimed band, so `band` alone answers for it.
@@ -1295,7 +1295,7 @@ export function createBrushPreview(
       // Smooth as well. Copying the ring's position put the pointer on the
       // hovered column's CAP, which on a five-band cliff is five
       // BAND_WORLD_HEIGHTs above the ground the mouse is actually addressing:
-      // the same "stuck on the top terrace" defect already fixed for the Pull
+      // the same "stuck on the top terrace" defect already fixed for the Drag
       // and the Carve (owner, 2026-08-27), left standing on the two tools that
       // are used most.
       //

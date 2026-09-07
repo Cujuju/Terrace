@@ -113,7 +113,7 @@ export interface LayerEdgeLight {
    * A band to light INSTEAD of the one this pick names — a live stroke's
    * frozen grab (input/sculptInput.ts's `heldBand`).
    *
-   * WHY IT OVERRIDES THE PICK. A pull drags the pointer OFF the riser it
+   * WHY IT OVERRIDES THE PICK. A drag moves the pointer OFF the riser it
    * grabbed within the first cell of travel, and the pick-derived band is null
    * everywhere but on a riser — so the lip the player was holding went dark
    * while they were still holding it. What is held is a fact about the STROKE,
@@ -128,13 +128,13 @@ export interface LayerEdgeLight {
    * The tool a press would use RIGHT NOW (state/hudState.ts's `brushTool`).
    *
    * WHY THE HIGHLIGHT NEEDS IT (D1, owner 2026-09-04: the carve "should work
-   * on either the corner edge or the side face"). The pull grabs risers only,
+   * on either the corner edge or the side face"). The drag grabs risers only,
    * so a tread under its cursor lights nothing and means "seed". The carve
    * also cuts from a TREAD near a lip, so on the same pixel the two tools
    * genuinely have different answers — and the lit lip has to be the one the
    * press will actually take, or the highlight is advertising the wrong edit.
    *
-   * Absent means the pull's rule, which is what every non-carve tool wants.
+   * Absent means the drag's rule, which is what every non-carve tool wants.
    */
   readonly tool?: SculptTool;
 }
@@ -209,7 +209,7 @@ export interface World extends TerrainSink {
   ): PointedCellPick | null;
   /**
    * Lights up the terrace lip this PICK is pointing at and returns the band a
-   * pull starting there would grab, or null when there is none
+   * drag starting there would grab, or null when there is none
    * (render/layerEdgeOverlay.ts).
    *
    * ONLY A RISER HIT HAS A LIP TO GRAB: the band is the one whose slab contains
@@ -279,7 +279,7 @@ export interface World extends TerrainSink {
    * was built to keep.
    *
    * THE CORNER EDGE OR THE SIDE FACE (D1, owner 2026-09-04). A riser hit
-   * carves the band of the face, as the pull grabs it. A TREAD hit carves the
+   * carves the band of the face, as the drag grabs it. A TREAD hit carves the
    * struck span's cap band, but only when that band's lip lies within reach of
    * the point the ray met the tread — a flat tread far from any lip is not an
    * edge and carves nothing. An underside hit carves the lowest band the span
@@ -1022,11 +1022,11 @@ export function createWorld(viewport: Viewport): World {
       // of them could forget to pass is a way for them to disagree. They hand
       // over the pick; this turns it into the aim.
       //
-      // FOR THE PULL, ONLY A RISER HIT NAMES A BAND, and it names it outright:
+      // FOR THE DRAG, ONLY A RISER HIT NAMES A BAND, and it names it outright:
       // the face under the cursor is the thing the player gets (owner,
       // 2026-08-26). A ray that landed on a tread — or on a cave roof's
       // underside — has no face to grab, so there is nothing to light and
-      // nothing to pull; the tread's own gesture is the seed
+      // nothing to drag; the tread's own gesture is the seed
       // (input/sculptInput.ts).
       //
       // THE CARVE IS THE EXCEPTION, and it is why `light.tool` exists (D1,

@@ -11,7 +11,7 @@
 // which advanced the drawn balance every frame from its OWN previous output —
 // a second accumulator of the same quantity the intent gate was accumulating,
 // with nothing tying the two together. They diverged exactly as you would
-// expect: a burst of pull intents drained the gate to nothing while the gauge
+// expect: a burst of drag intents drained the gate to nothing while the gauge
 // filled to the brim, and the player was shown a full pool that would not
 // spend (owner report: "how can the gauge show full and internally it's
 // zero"). What the pool holds is now said once, by `liveBalance` in state.ts,
