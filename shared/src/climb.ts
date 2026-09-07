@@ -339,14 +339,17 @@ export function advanceClimb(mover: ClimbingMover, dt: number): ClimbOutcome {
   if (state === null) return 'arrived';
   const step = Math.max(0, dt);
   const rising = state.toHeight >= state.fromHeight;
-  // Toward the target while climbing, back toward the foot once it has let go.
-  const direction = state.falling === rising ? -1 : 1;
+  // Toward the target. The fall has its own direction — always down — below.
+  const direction = rising ? 1 : -1;
 
   if (state.falling) {
-    state.height += direction * FALL_DROP_HEIGHT_UNITS_PER_SECOND * step;
-    const hitTheGround = rising ? state.height <= state.fromHeight : state.height >= state.fromHeight;
-    if (hitTheGround) {
-      state.height = state.fromHeight;
+    // A FALL GOES DOWN AND LANDS AT THE FOOT, whichever way the climb was
+    // going. `fromHeight` is the foot only on the way UP; on a descent it is
+    // the lip, and reading it as the ground sent a faller back up the cliff.
+    const foot = Math.min(state.fromHeight, state.toHeight);
+    state.height -= FALL_DROP_HEIGHT_UNITS_PER_SECOND * step;
+    if (state.height <= foot) {
+      state.height = foot;
       placeOnWall(mover, state);
       return 'fallen';
     }
