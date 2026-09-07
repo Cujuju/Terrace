@@ -43,6 +43,7 @@ import {
   worldAdminKey,
 } from './state/worldsState.ts';
 import { BRUSH_PREVIEW_DRAW_OBJECTS, createBrushPreview } from './render/brushPreview.ts';
+import { createDenialCue } from './render/denialCue.ts';
 import { SCULPT_TOOL_ID, activeToolId } from './plugins/toolbar.ts';
 import {
   createPickDebugOverlay,
@@ -293,14 +294,17 @@ const sculptInput = createSculptInput({
 // the meshes; radius, tool and edge are all read live so the outline reshapes
 // the moment the
 // HUD changes it.
+// THE REFUSAL CUE, MADE ONCE AND SHARED (render/denialCue.ts). Both things
+// that draw the player's aim read it — the brush outline below and the lit lip
+// in the frame loop — so they turn red on the same frame and blink in step.
+// Its input is the input module's own live state: the refused button is still
+// down. Nothing here keeps a copy of that.
+const denialCue = createDenialCue(() => sculptInput.refusedHold());
 const brushPreview = createBrushPreview(
   viewport.scene,
   canvas,
   () => world.worldSize(),
-  // THE OUTLINE IS RED FOR AS LONG AS THE REFUSED BUTTON IS DOWN. Read live
-  // from the input module, which is what knows the button is still held; the
-  // preview keeps no copy of it. See SculptInput.refusedHold.
-  () => sculptInput.refusedHold(),
+  denialCue,
 );
 // The pick-debug overlay reads the SAME pick object as the outline, so the two
 // can never disagree about what is under the pointer. See its module header for
@@ -333,6 +337,10 @@ viewport.onFrame(() => {
   // riser it grabbed within the first cell of travel, and the pick-derived band
   // is null everywhere but on a riser — so without this the lip the player was
   // holding went dark while they were still holding it.
+  // THE LIT LIP IS THE INTENT LINE, and it goes red with the brush (owner,
+  // 2026-09-06). Written before the lip is lit, so the frame that first draws
+  // a refused lip already draws it in the refused colour.
+  world.setBrushRefused(denialCue.isRed());
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
     heldBand: sculptInput.heldBand(),

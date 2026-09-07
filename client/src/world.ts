@@ -235,6 +235,17 @@ export interface World extends TerrainSink {
    */
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
   /**
+   * Draws the lit lip — the intent line — in the refused red, or back in its
+   * own colour (LayerEdgeOverlay.setRefused).
+   *
+   * WRITTEN EVERY FRAME by main.tsx from the shared denial cue, which is why
+   * nothing is remembered here the way `setLayerEdgeStyle` remembers its
+   * style: a rejoin's fresh overlay is correct on the next frame anyway, and a
+   * remembered copy could only be a second, staler answer. The overlay
+   * compares before it writes, so the per-frame call costs one compare.
+   */
+  setBrushRefused(refused: boolean): void;
+  /**
    * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored
    * height, in BAND units, not world units.
    *
@@ -1103,6 +1114,9 @@ export function createWorld(viewport: Viewport): World {
     setLayerEdgeStyle(style: LayerEdgeStyle): void {
       layerEdgeStyle = style;
       layerEdges?.setStyle(style);
+    },
+    setBrushRefused(refused: boolean): void {
+      layerEdges?.setRefused(refused);
     },
     bandAtCell(x: number, y: number): number | null {
       if (mirror === null) return null;

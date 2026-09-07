@@ -24,6 +24,7 @@ import {
   type BrushSelection,
   type CursorSurface,
 } from '../src/render/brushPreview.ts';
+import { createDenialCue } from '../src/render/denialCue.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 // THE LADDER, NOT THE WIRE RANGE: the preview builds a geometry per rung the
 // Brush row offers, so these loops walk exactly the radii that can be drawn —
@@ -157,7 +158,7 @@ function brush(radius: number): BrushSelection {
 const TEST_WORLD_SIZE_CELLS = 64;
 
 /** No client plugin has vetoed: the outline draws its ordinary colours. */
-const NEVER_DENIED = (): boolean => false;
+const NEVER_DENIED = createDenialCue(() => false);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLIPPED AT THE WORLD'S EDGE (issue #281 B). The outline geometry is one per
