@@ -306,9 +306,10 @@ function skyCells(): readonly SkyCell[] {
  *      unlocked. Without this the message is a way to collapse a rival's
  *      hillside from across a fogged world, and to probe what is out there by
  *      watching what slides.
- *   3. THE CAP. Checked here as well as in `Puddles.pour` — a world already at
- *      HYDRO_PATCH_CAP evicts its driest patch rather than refusing, so this is
- *      not a refusal path but the place the fact is stated; see below.
+ *   3. THE CAP IS NOT A TEST AT ALL, and is listed only so its absence is
+ *      deliberate rather than forgotten: a world already at HYDRO_PATCH_CAP
+ *      evicts its driest patch inside `Puddles.pour` rather than refusing, so
+ *      there is nothing here that could fail on it. See below.
  *   4. CAN THIS GROUND TAKE WATER. Two ways it cannot: it is already water (at
  *      or below SEA_LEVEL — pouring a bucket into the sea is the clearest case
  *      of paying for nothing there is), or it is already at full strength

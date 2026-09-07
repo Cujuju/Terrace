@@ -39,9 +39,10 @@ export function WaterIcon(): JSX.Element {
           with a boundary the game's own water does not have.
         */}
         <radialGradient id="hydro-pool" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stop-color="#bde9ff" />
-          <stop offset="0.45" stop-color="#4aa8e8" />
-          <stop offset="1" stop-color="#1a5fa8" stop-opacity="0" />
+          <stop offset="0" stop-color="#d5f2ff" />
+          <stop offset="0.45" stop-color="#3d9ce4" />
+          <stop offset="0.82" stop-color="#1a5fa8" />
+          <stop offset="1" stop-color="#124878" stop-opacity="0" />
         </radialGradient>
         <linearGradient id="hydro-stream" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stop-color="#1f74c8" />
@@ -60,16 +61,16 @@ export function WaterIcon(): JSX.Element {
         </linearGradient>
       </defs>
       {/* The sheen behind the pool. */}
-      <circle cx="16" cy="24" r="9" fill="url(#hydro-glow)" />
+      <circle cx="16" cy="23" r="11" fill="url(#hydro-glow)" />
       {/* The pail, tipped: a staved body under an iron band, mouth to the left. */}
-      <path d="M9.4 4.2 22.6 8.1l-2.1 7.1a3.4 3.4 0 0 1-4.2 2.3l-5-1.5a3.4 3.4 0 0 1-2.3-4.2z" fill="url(#hydro-wood)" />
-      <path d="M9.1 5.3 23 9.4l0.8-2.7L9.9 2.6z" fill="url(#hydro-band)" />
+      <path d="M11.6 3.4 25.4 7.9l-2.4 7.4a3.6 3.6 0 0 1-4.5 2.3l-5.2-1.7a3.6 3.6 0 0 1-2.3-4.5z" fill="url(#hydro-wood)" />
+      <path d="M11.2 4.6 25.9 9.4l1-3L12.2 1.6z" fill="url(#hydro-band)" />
       {/* The stream, from the pail's lip to the pool it is making. */}
-      <path d="M13.6 16.2c1.6 3.1 2.4 5.6 2.4 7.4h-3.6c0-1.8 0.4-4.3 1.2-7.4z" fill="url(#hydro-stream)" />
+      <path d="M14.9 16.4c1.4 2.9 2.1 5.4 2.1 7.5l-4.5 0.6c0-2.2 0.6-4.9 2.4-8.1z" fill="url(#hydro-stream)" />
       {/* The patch on the ground: the disc this tool actually leaves behind. */}
-      <ellipse cx="16" cy="25.4" rx="10" ry="4.2" fill="url(#hydro-pool)" />
+      <ellipse cx="15.4" cy="25" rx="12" ry="5.2" fill="url(#hydro-pool)" />
       {/* The specular the torch's flame has, on the near lip of the water. */}
-      <ellipse cx="12.4" cy="24.2" rx="2.1" ry="0.85" fill="#ffffff" opacity="0.8" />
+      <ellipse cx="11.2" cy="23.4" rx="2.6" ry="1" fill="#ffffff" opacity="0.85" />
     </svg>
   );
 }
