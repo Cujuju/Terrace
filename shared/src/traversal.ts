@@ -386,6 +386,15 @@ export interface ClimbRule {
    * directly — that function is where the default lives.
    */
   readonly secondsPerBand?: number;
+  /**
+   * How far this climber's centre stands off the face, in cells, or absent for
+   * the body every climber shares (climb.ts's CLIMB_BODY_HALF_WIDTH_CELLS).
+   *
+   * OPTIONAL for the same reason `secondsPerBand` is: a wider animal says so
+   * here, and a rule that does not mention it keeps the default exactly. Read
+   * it through climb.ts's `climbBodyHalfWidthCells`, never directly.
+   */
+  readonly bodyHalfWidthCells?: number;
 }
 
 /**

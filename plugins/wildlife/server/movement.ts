@@ -929,7 +929,6 @@ function climbOut(world: HabitatWorld, entity: WildlifeEntity, stepCells: number
       entity,
       target,
       stepCells,
-      personalSpaceCellsOf(entity),
       climbSeed(entity.id, Math.floor(entity.x), Math.floor(entity.y), target.x, target.y),
     ) !== null
   );

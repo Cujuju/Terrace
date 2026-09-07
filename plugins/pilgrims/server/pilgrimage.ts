@@ -613,7 +613,6 @@ function climbTowardWall(
     walker,
     target,
     PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt,
-    WALKER_PERSONAL_SPACE_CELLS,
     climbSeedFor(walker, target),
   );
   // Walking to the wall's foot counts as progress too — the stuck timer must

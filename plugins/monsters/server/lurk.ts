@@ -477,7 +477,6 @@ function climbOut(world: LairWorld, monster: Monster, desired: number, stepCells
       monster,
       target,
       stepCells,
-      bodyRadiusCells(profile),
       climbSeedFor(monster, target),
     ) !== null
   );
