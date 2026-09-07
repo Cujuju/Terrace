@@ -262,13 +262,22 @@ export function extractChunkPayload(map: Heightmap, cx: number, cy: number): Chu
   return layered === undefined ? { cx, cy, heights } : { cx, cy, heights, layered };
 }
 
-/** Writes a streamed chunk into a local map (client join / chunk unlock). */
+/**
+ * Writes a streamed chunk into a local map (client join / chunk unlock).
+ *
+ * RETURNS THE CELL VALUES IT WROTE, which is the only in-cell-units view of a
+ * payload anyone gets. `ChunkHeights` is a union whose wire member is a
+ * `Uint8Array` of two bytes a height, so indexing the argument yields a BYTE;
+ * handing the converted array back means a caller that needs one height never
+ * has to reach for the union. See writeChunkPayload, whose span check read a
+ * byte for three months because it did.
+ */
 export function writeChunkHeights(
   map: Heightmap,
   cx: number,
   cy: number,
   wire: ChunkHeights,
-): void {
+): ArrayLike<number> {
   chunkIndex(map.size, cx, cy); // bounds check
   const heights = chunkHeightsAsCells(wire);
   if (heights.length !== CHUNK_SIZE * CHUNK_SIZE) {
@@ -302,6 +311,7 @@ export function writeChunkHeights(
       map.cells[cellIndex(map, x0 + x, y0 + y)] = heights[k++]!;
     }
   }
+  return heights;
 }
 
 /**
@@ -329,10 +339,12 @@ export function writeChunkPayload(
   map: Heightmap,
   cx: number,
   cy: number,
-  heights: ChunkHeights,
+  wire: ChunkHeights,
   layered?: ChunkLayeredSpans,
 ): number {
-  writeChunkHeights(map, cx, cy, heights);
+  // The CELLS, from the one function that converts them — never `wire`, which
+  // is two bytes a height on the path this actually runs on.
+  const heights = writeChunkHeights(map, cx, cy, wire);
   if (layered === undefined) return 0;
 
   const x0 = cx * CHUNK_SIZE;
