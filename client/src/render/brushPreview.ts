@@ -202,6 +202,7 @@ import {
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
+  sculptSweepRadius,
   MIN_BRUSH_RADIUS,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
@@ -601,7 +602,16 @@ interface Mark {
  * the footprint may change BAND at all, which is precisely what is measured
  * here.
  */
-const SIMULATION_SPAN_CELLS = 2 * (MAX_BRUSH_RADIUS + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
+// SIZED AGAINST THE SWEPT RADIUS, NOT THE BRUSH RADIUS (issue #387, review
+// 2026-09-06). A soft stamp writes an apron beyond its core, so the widest
+// stroke reaches sculptSweepRadius cells rather than MAX_BRUSH_RADIUS, and a
+// map sized for the core clips it — the one thing the doc above says must
+// never happen, because a clipped stroke is a different stroke. It was
+// harmless only because the apron writes nothing on the flat band-floor ground
+// simulated here, which is a coincidence of the fixture and not a property of
+// the brush; sizing to the sweep stops the guarantee resting on it.
+const SIMULATION_SPAN_CELLS =
+  2 * (sculptSweepRadius(MAX_BRUSH_RADIUS, 'soft', 'stamp', 'clicked') + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
 
 /** Height every cell of the synthetic map starts at: flat, and on a band floor. */
 const SIMULATION_GROUND_HEIGHT = 0;
