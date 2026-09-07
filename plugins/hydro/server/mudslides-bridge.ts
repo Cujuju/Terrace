@@ -16,20 +16,21 @@
 // stroke (plugins/mudslides/server/slides.ts's header). Nothing in this plugin
 // ever calls `WorldApi.sculpt`.
 //
-// WHOSE OPINION "STEEP" IS. Not this plugin's. `startSlide` refuses on ground
+// WHOSE OPINION "STEEP" IS. Not this plugin's. mudslides refuses on ground
 // its own `slopeAt` will not have — the rim test (MUDSLIDE_RIM_DROP) and the
 // span test (MUDSLIDE_TRIGGER_DROP), both fractions of the steepest gradient
 // the terrain sim can hold — and hydro deliberately keeps no steepness constant
 // of its own to disagree with them. A pour on a gentle field simply gets a null
 // back and is water and nothing more.
 //
-// THE CAP IS ASKED FOR, NOT ASSUMED. `startSlide` is the DIRECTED entry point
-// and does not itself check MAX_ACTIVE_SLIDES — that check lives in mudslides'
-// own trigger and admin action — so this bridge asks the two members mudslides
-// already re-exports for exactly this purpose (its `livingSlides` doc: "a
-// sibling that wants to ask … can duck-type this member"). Without it a
-// bucketful of pours could push past the ceiling the mudslides CLIENT sizes its
-// pools against.
+// ONE MEMBER, AND EVERY GUARD BEHIND IT. `startDirectedSlide` is mudslides'
+// own sibling-facing entry point and it answers for all of its preconditions —
+// the frequency setting (a world with mudslides `off` never advances a slide,
+// so one started there would sit frozen forever, holding a MAX_ACTIVE_SLIDES
+// slot and persisting across restarts), the ceiling itself, and the ground.
+// This bridge deliberately duck-types NOTHING ELSE: every member named here is
+// another way a version mismatch can degrade, and a guard restated on this side
+// of the seam is a guard that can drift from the sim it is guarding.
 //
 // DEGRADED BEHAVIOUR when mudslides is absent, disabled here, or too old to
 // export the entry point: poured water still douses, still darkens the ground
@@ -43,18 +44,15 @@ import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.
  * The slice of mudslides this plugin uses: the directed slide, and the two
  * members that make its ceiling askable.
  *
- * `startSlide` is typed to take `WorldApi` because that is what this plugin
- * holds; mudslides declares it against its own narrow `MudslideWorld`, which
- * WorldApi satisfies structurally (plugins/mudslides/server/terrain.ts —
- * "there is no adapter and no cast"). The return is `unknown` rather than a
- * slide type, deliberately: the only thing this plugin may know about it is
- * whether it happened, and importing mudslides' `Slide` would be the static
- * coupling this whole file exists to avoid.
+ * ONE MEMBER — see the header. It is typed to take `WorldApi` because that is
+ * what this plugin holds; mudslides declares it against its own narrow
+ * `MudslideWorld`, which WorldApi satisfies structurally
+ * (plugins/mudslides/server/terrain.ts — "there is no adapter and no cast").
+ * It answers a bare boolean, which is the only thing this plugin may know about
+ * a slide: whether it happened.
  */
 export interface MudslidesApi {
-  startSlide(world: WorldApi, x: number, y: number): unknown;
-  livingSlides(): readonly unknown[];
-  readonly MAX_ACTIVE_SLIDES: number;
+  startDirectedSlide(world: WorldApi, x: number, y: number): boolean;
 }
 
 /**
@@ -70,9 +68,7 @@ export const MUDSLIDES_UNAVAILABLE_WARNING =
 /** Duck-types the sibling's module namespace into the API we need (rule 4). */
 function asMudslidesApi(module: SiblingModule | null): MudslidesApi | null {
   if (module === null) return null;
-  if (typeof module.startSlide !== 'function') return null;
-  if (typeof module.livingSlides !== 'function') return null;
-  if (typeof module.MAX_ACTIVE_SLIDES !== 'number') return null;
+  if (typeof module.startDirectedSlide !== 'function') return null;
   return module as unknown as MudslidesApi;
 }
 
@@ -97,12 +93,13 @@ export function loadMudslidesBridge(world: WorldApi): void {
  * Asks mudslides to collapse this cell. True only when a slide actually
  * started.
  *
- * FALSE IS THE ORDINARY ANSWER and covers four unremarkable cases the caller
- * must not have to tell apart: there is no mudslides plugin here, the ground is
- * not a rim, there is nowhere downhill for the mud to go, and the world is
- * already running as many slides as it is allowed to. All four mean "the water
- * soaked in and the hillside held", which is the commonest outcome of pouring a
- * bucket on a hill and needs no explanation to anybody.
+ * FALSE IS THE ORDINARY ANSWER and covers every unremarkable case the caller
+ * must not have to tell apart: there is no mudslides plugin here, mudslides are
+ * off for this world, the ground is not a rim, there is nowhere downhill for the
+ * mud to go, and the world is already running as many slides as it is allowed
+ * to. All of them mean "the water soaked in and the hillside held", which is the
+ * commonest outcome of pouring a bucket on a hill and needs no explanation to
+ * anybody.
  */
 export function requestSlide(world: WorldApi, x: number, y: number): boolean {
   const api = bridge.api();
@@ -110,8 +107,7 @@ export function requestSlide(world: WorldApi, x: number, y: number): boolean {
     bridge.warnUnavailable();
     return false;
   }
-  if (api.livingSlides().length >= api.MAX_ACTIVE_SLIDES) return false;
-  return api.startSlide(world, x, y) != null;
+  return api.startDirectedSlide(world, x, y);
 }
 
 /**
