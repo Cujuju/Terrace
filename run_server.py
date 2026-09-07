@@ -57,8 +57,15 @@ CONFIG = {
     # both of these is a PUBLIC value from the source - fine on a laptop, not
     # fine on anything reachable. The server warns at boot when either is on
     # its default. Set them here (or export them) to silence that honestly.
+    #
+    # EMPTY STRING MEANS UNKEYED (owner, 2026-09-06): no key is required at
+    # all, rather than the feature being switched off, which is what an empty
+    # key used to mean. WORLD_ADMIN_KEY is empty here because the owner asked
+    # to stop typing a secret into their own laptop's game - the boot log
+    # warns about it every start, and anything reachable from outside this
+    # machine should set a real value.
     "ROLLBACK_KEY": None,         # None -> "terrace"        (rewinds the world)
-    "WORLD_ADMIN_KEY": None,      # None -> "terrace"        (creates/archives worlds)
+    "WORLD_ADMIN_KEY": "",        # "" -> no key required    (creates/archives worlds, show-all)
     # Seconds a world switch is announced for when somebody other than the
     # operator is connected; skipped entirely when they are alone. 0 = never.
     "WORLD_SWITCH_COUNTDOWN_S": None,  # None -> server default (10)

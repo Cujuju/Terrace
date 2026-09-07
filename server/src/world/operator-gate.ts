@@ -42,6 +42,11 @@ export const OPERATOR_LOCKOUT_MS = 60_000;
  * Why the gate said no. A subset of both RollbackRefusal and
  * WorldAdminRefusal, which is what lets one gate serve both features: each
  * caller widens this into its own refusal type without translation.
+ *
+ * 'disabled' is NO LONGER PRODUCED by this gate (owner, 2026-09-06: an
+ * unkeyed gate is open, see `authorize`). It stays in the union because both
+ * client refusal types still carry it and a client must keep the wording for
+ * a server older than that ruling.
  */
 export type OperatorRefusal = 'disabled' | 'badKey' | 'throttled';
 
@@ -111,8 +116,14 @@ export class OperatorGate {
     this.log = options.log ?? ((): void => {});
   }
 
-  /** True when a key is configured; the boot log states this, not the key. */
-  get enabled(): boolean {
+  /**
+   * True when a key is configured; the boot log states this, not the key.
+   *
+   * NOT "is this feature on" any more (owner, 2026-09-06 — see `authorize`):
+   * an unkeyed gate is OPEN, not off, so the only thing this answers is
+   * whether a caller has to present anything.
+   */
+  get keyed(): boolean {
     return this.key !== null;
   }
 
@@ -125,13 +136,21 @@ export class OperatorGate {
    * The gate. Returns null when the request may proceed, or the refusal to
    * send back.
    *
-   * ORDER MATTERS: `disabled` is checked before the lockout, so a self-hoster
-   * who never set a key is told THAT however many times they ask, rather than
-   * being throttled for failing to guess a secret that does not exist.
+   * NO KEY CONFIGURED MEANS NO KEY REQUIRED (owner, 2026-09-06: "do a check,
+   * and if no key is set, then no key is required"), superseding the previous
+   * rule that an unconfigured key switched the feature OFF. What the operator
+   * sends is not even looked at in that case — there is nothing to compare it
+   * against, and refusing them for holding no secret was the friction the
+   * ruling removed. The boot log WARNS on every unkeyed gate (index.ts), which
+   * is now the only thing standing between a reachable port and world
+   * management; the lockout below still applies wherever a key IS configured.
+   *
+   * ORDER MATTERS: the unkeyed case is answered before the lockout, so an
+   * unkeyed server can never throttle anyone for a secret that does not exist.
    */
   authorize(clientId: string, key: string): OperatorRefusal | null {
     const configured = this.key;
-    if (configured === null) return 'disabled';
+    if (configured === null) return null;
 
     const now = this.now();
     const record = this.attempts.get(clientId);

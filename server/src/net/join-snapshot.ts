@@ -12,7 +12,8 @@
 // path must not import Colyseus: the room is the transport adapter, and a
 // rollback is a world operation that happens to need to tell people about it.
 
-import type { JoinSnapshotMessage } from '@terrace/shared';
+import type { ChunkPayload, JoinSnapshotMessage } from '@terrace/shared';
+import { collectAllChunkPayloads } from '../world/mask-filter.ts';
 import type { PluginHost } from '../plugins/host.ts';
 import type { World } from '../world/world.ts';
 import { buildIdentity } from '../build-identity.ts';
@@ -50,6 +51,32 @@ export function buildJoinSnapshot(
   host: PluginHost,
   token: string,
 ): JoinSnapshotMessage {
+  return snapshotOf(world, host, world.chunkPayloadsForToken(token));
+}
+
+/**
+ * THE OPERATOR'S SHOW-ALL SNAPSHOT — every chunk in the world, whoever owns
+ * it (owner, 2026-09-06; see WorldViewRequestMessage for the whole bargain).
+ *
+ * THE ONE EXCEPTION to this module's anti-cheat note above, and it is why the
+ * two builders are here TOGETHER rather than this one living next to the
+ * handler that calls it: the rule and its exception are read in one place, and
+ * a third builder would have to be written past both of them.
+ *
+ * The caller MUST have cleared the world-admin gate first
+ * (WorldAdminService.authorize). This function checks nothing — it cannot, it
+ * has no connection and no key — so a caller that forgets is a terrain leak.
+ */
+export function buildShowAllSnapshot(world: World, host: PluginHost): JoinSnapshotMessage {
+  return snapshotOf(world, host, collectAllChunkPayloads(world.map));
+}
+
+/** Everything a snapshot carries EXCEPT which chunks are in it. */
+function snapshotOf(
+  world: World,
+  host: PluginHost,
+  chunks: ChunkPayload[],
+): JoinSnapshotMessage {
   return {
     type: 'snapshot',
     worldSize: world.size,
@@ -67,6 +94,6 @@ export function buildJoinSnapshot(
     // host mounts against, and a client half whose server half is not running
     // would sit there sending messages nothing answers.
     livePlugins: host.pluginNames,
-    chunks: world.chunkPayloadsForToken(token),
+    chunks,
   };
 }

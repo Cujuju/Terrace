@@ -89,6 +89,8 @@ import {
   setArmedAction,
   worldPanelOpen,
   setWorldPanelOpen,
+  worldAdminKey,
+  worldViewScope,
 } from '../state/worldsState.ts';
 import {
   BRUSH_PROFILES,
@@ -701,6 +703,52 @@ export function Hud(props: {
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" />
               <path d="M9 4v14M15 6v14" />
+            </svg>
+          </button>
+          {/* SHOW THE WHOLE WORLD (owner, 2026-09-06). Sits with the chart
+              because it answers the same question the chart does — "what is
+              out there?" — and unlike its neighbours it opens nothing: one
+              press asks the server for every chunk, the next asks for this
+              player's own territory back.
+
+              aria-pressed, not aria-expanded, for the same reason as the
+              performance meter below: the effect lands on the world, not in a
+              disclosure under the button.
+
+              IT DOES NOT FLIP ITSELF. The pressed state follows the server's
+              receipt (worldsState.worldViewScope), so a refusal — this is an
+              operator action, gated by the world-admin key like the Worlds
+              panel — leaves the button where it was rather than lying about
+              what is on screen. On an unkeyed server (WORLD_ADMIN_KEY=) the
+              empty key this sends is accepted, which is the whole point of
+              that setting. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            classList={{ open: worldViewScope() === 'all' }}
+            aria-pressed={worldViewScope() === 'all'}
+            aria-label={
+              worldViewScope() === 'all' ? 'Show only my territory' : 'Show the whole world'
+            }
+            title={
+              worldViewScope() === 'all'
+                ? 'Showing the whole world — press to see only your own territory'
+                : 'Show the whole world (operator view)'
+            }
+            onClick={() =>
+              props.worlds.send({
+                type: 'worldView',
+                key: worldAdminKey(),
+                scope: worldViewScope() === 'all' ? 'mine' : 'all',
+              })
+            }
+          >
+            {/* A globe with a meridian: the whole world, as opposed to the
+                chart's folded map of the part you know. */}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18" />
+              <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18Z" />
             </svg>
           </button>
           {/* Restore points: the door to world rollback. It sits in the same

@@ -727,6 +727,14 @@ function doneText(done: Extract<WorldFeedback, { kind: 'done' }>): string {
       return `Re-imported “${done.plugin ?? 'the plugin'}”. The version beside its toggle is the build that is now live.`;
     case 'restart':
       return 'The server is restarting. It will come back on the code that is on disk now.';
+    case 'view':
+      // The show-all toggle's receipt. It is worded for THIS panel, which the
+      // operator is unlikely to have open when they press a button in the
+      // button column — the button's own pressed state is the real feedback,
+      // and this line only ever shows if both are on screen at once.
+      return done.detail === 'all'
+        ? 'Showing the whole world.'
+        : 'Showing your own territory again.';
     case 'actPlugin':
       // The plugin's own account is the receipt (AdminPanel.tsx shows it in
       // full); this panel only ever sees one if both are open at once.

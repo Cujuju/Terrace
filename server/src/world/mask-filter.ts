@@ -136,6 +136,29 @@ export function chunkPayloadOf(terrain: MaskedTerrain, cx: number, cy: number): 
  * Iteration is row-major over chunk coordinates so the payload order is
  * deterministic (useful for tests and for client-side progressive upload).
  */
+/**
+ * EVERY CHUNK, MASK IGNORED — the one function in this file that does not
+ * filter, and the only place in the server that may build such a payload.
+ *
+ * IT EXISTS FOR ONE CALLER: the operator's show-all view
+ * (WorldViewRequestMessage, owner 2026-09-06), which is gated on the
+ * world-admin key before it gets here. Nothing else may call it. It is in
+ * THIS file rather than beside its caller precisely because of this file's
+ * header rule — the exception to "every terrain payload is filtered" belongs
+ * next to the rule it excepts, where anyone auditing the boundary reads it,
+ * not hidden in a net/ module where it looks like ordinary plumbing.
+ *
+ * It takes the map alone: there is no mask argument to pass wrongly.
+ */
+export function collectAllChunkPayloads(map: Heightmap): ChunkPayload[] {
+  const edge = chunksPerEdge(map.size);
+  const payloads: ChunkPayload[] = [];
+  for (let cy = 0; cy < edge; cy++) {
+    for (let cx = 0; cx < edge; cx++) payloads.push(extractChunkPayload(map, cx, cy));
+  }
+  return payloads;
+}
+
 export function collectUnlockedChunkPayloads(terrain: MaskedTerrain): ChunkPayload[] {
   const edge = chunksPerEdge(terrain.map.size);
   const payloads: ChunkPayload[] = [];

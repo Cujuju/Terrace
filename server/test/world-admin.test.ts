@@ -131,14 +131,18 @@ describe('the gate', () => {
     expect(admin.handle('quiet', { type: 'worldLoad', key: KEY, id }).ok).toBe(true);
   });
 
-  it('says "disabled" — not "badKey" — when no key is configured', () => {
-    // A self-hoster who never set a key must be told THAT, or they will retype
-    // a key that was never going to work.
+  it('requires no key at all when none is configured', () => {
+    // Owner, 2026-09-06: "if no key is set, then no key is required". An
+    // unkeyed server is OPEN, not off — it used to refuse everything with
+    // 'disabled'. The boot log is what warns about it (index.ts).
     rmSync(root, { recursive: true, force: true });
     setUp(null);
-    const result = admin.handle(CLIENT, { type: 'worldUnload', key: 'anything' });
-    expect(result.refused).toBe('disabled');
-    expect(admin.enabled).toBe(false);
+    expect(admin.keyed).toBe(false);
+    // The LISTING, because it is the one entry point whose answer is purely
+    // the gate's verdict: an action would also have to succeed on its own
+    // merits (a world to unload, a name to rename), which is a different
+    // question from whether the key was demanded.
+    expect(admin.list(CLIENT, '').refused).toBeUndefined();
   });
 
   it('refuses a listing with the wrong key and reveals no worlds', () => {
@@ -264,9 +268,15 @@ describe('the protocol validator', () => {
     }
   });
 
-  it('rejects a missing or oversized key', () => {
+  it('rejects a missing or oversized key, and accepts an empty one', () => {
     expect(validateWorldAdminRequest({ type: 'worldList' })).toBeNull();
-    expect(validateWorldAdminRequest({ type: 'worldList', key: '' })).toBeNull();
+    // An EMPTY key is well-formed since the unkeyed ruling (owner,
+    // 2026-09-06): it is what a client sends to a server with no key set, and
+    // whether it is good enough is the gate's business, not the shape's.
+    expect(validateWorldAdminRequest({ type: 'worldList', key: '' })).toEqual({
+      type: 'worldList',
+      key: '',
+    });
     expect(validateWorldAdminRequest({ type: 'worldList', key: 'x'.repeat(1000) })).toBeNull();
   });
 
