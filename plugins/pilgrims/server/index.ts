@@ -128,9 +128,12 @@ function simulate(world: WorldApi, dt: number): void {
     (walker) => ({ x: Math.floor(walker.x), y: Math.floor(walker.y) }),
     (visible) => ({
       pilgrims: visible.map((p) => ({
-        id: p.id,
-        kind: p.kind,
-        race: p.race,
+        // THE WHOLE ROW GOES ON THE WIRE. A projection that re-enumerates
+        // fields silently drops every field added to the state row after it
+        // was written — climbHeight, falling and stance all vanished that way.
+        // Override only what must be bounded or rounded; climbHeight is not
+        // rounded (the client lerps it).
+        ...p,
         // Bounded to the map, not merely rounded: a walker legally standing
         // within half a quantum of the far edge rounds to `worldSize`, which
         // is not a cell (issue #180). `positionOf` above floors the LIVE
