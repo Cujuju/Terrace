@@ -77,6 +77,7 @@ import {
   forEachFootprintOffset,
   forEachLineCell,
   sculptOptionsOf,
+  sculptSweepRadius,
   validateSculptIntent,
   type SculptIntent,
   type TerrainDiffMessage,
@@ -378,7 +379,25 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   // be known, not just the disc at the cursor — the same question asked of
   // each disc the sweep stands in for.
   const canPredictFaithfully = (intent: SculptIntent): boolean => {
-    const { x, y, radius } = intent;
+    const { x, y } = intent;
+    // THE RADIUS THE STROKE SWEEPS, NOT THE ONE IT CARRIES (issue #387). A
+    // player's soft stamp writes an apron beyond its core, so asking about the
+    // core alone green-lit a prediction that then read cells this client has
+    // never been sent — up to three of them past the halo at the default
+    // brush, filled in from the mirror at SEA_LEVEL, which is the simulation
+    // reading fiction that PREDICTION_HALO_CELLS exists to forbid.
+    //
+    // Resolved through `sculptOptionsOf`, the one normalisation both replicas
+    // run, and measured by shared's own `sculptSweepRadius` — the same
+    // function the sweep and the price use. A local copy of the arithmetic
+    // here is exactly the drift this guard exists to catch.
+    const options = sculptOptionsOf(intent);
+    const radius = sculptSweepRadius(
+      intent.radius,
+      options.profile,
+      options.tool,
+      options.anchor,
+    );
     if (intent.fromX === undefined || intent.fromY === undefined) return discIsKnown(x, y, radius);
     let known = true;
     forEachLineCell(intent.fromX, intent.fromY, x, y, (sx, sy) => {

@@ -365,17 +365,27 @@ export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
  * (issue #387, owner 2026-09-06: "the center should be the size of the brush,
  * and then outside of that it should continue to pull up the land around it").
  *
- * DERIVED FROM MAX_STEP, NOT CHOSEN. MAX_STEP is one band of fall per
- * WORLD_UNIT_CELLS cells of run — the steepest slope this world allows — so a
- * skirt of exactly that run is one band deep and is the terrain's own talus.
- * Any wider and the apron would be shallower than ground the world can already
- * grow; any narrower and it would be a cliff the smooth tool immediately eats.
+ * DERIVED FROM MAX_STEP, NOT CHOSEN — as a RUN, and only as a run. MAX_STEP
+ * is one band of fall per WORLD_UNIT_CELLS cells, the steepest slope this
+ * world allows, so this is exactly the ground a one-band talus would need to
+ * stand on. The apron is sited where that talus would reach.
  *
- * ONE BAND, THEREFORE ONE RING SET: because the run equals a single band's
- * fall, the whole skirt shares one target (the core's level, one band back),
- * which is what keeps `applySoftSkirt` a single sweep and its price a function
- * of the radius alone. A multi-band talus that walks outward as the core
- * climbs is the follow-up this deliberately is not — see #387.
+ * WHAT IT IS NOT, stated because the derivation invites the wrong reading and
+ * a comment is a claim, not evidence (review, 2026-09-06): the apron is not a
+ * ramp. `applySoftSkirt` gives the whole of it ONE target — the core's level,
+ * one band back — so what it builds is a second plateau, and both of its edges
+ * are sheer. Measured at radius 4 after six presses, the profile out from the
+ * centre reads 224,224,224,224 | 208,208,208,208 | 128,128,128,128: an inner
+ * step of 4x MAX_STEP and an outer one that grows a band per press without
+ * bound, because `stamp` runs no relaxation and nothing eats it. That is the
+ * same sheer edge hard's cylinder has and is not a defect, but this constant
+ * does not soften it and must not be read as if it did.
+ *
+ * ONE BAND, THEREFORE ONE RING SET: one target for the whole apron is what
+ * keeps `applySoftSkirt` a single sweep and its price a function of the radius
+ * alone. The multi-band talus that would actually ramp — walking outward as
+ * the core climbs, costing a sweep proportional to the core's height — is the
+ * follow-up this deliberately is not. See #387.
  */
 export const SOFT_SKIRT_CELLS = WORLD_UNIT_CELLS;
 

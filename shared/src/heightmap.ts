@@ -1081,6 +1081,44 @@ export function applyLevelFillBrush(
  * for bit) is untouched.
  */
 /**
+ * THE RADIUS A STROKE ACTUALLY SWEEPS — the core for every tool and profile
+ * but a player's soft stamp, which also sweeps its apron (issue #387).
+ *
+ * THREE READERS, ONE STATEMENT, and the third is why this is exported. The
+ * sweep (`applySoftSkirt`) and the price (`sculptDisplacementUnits`) have to
+ * agree or the mana gate charges for ground the stroke never touches; the
+ * client's prediction guard (client/src/terrain/prediction.ts's `discIsKnown`)
+ * has to agree with BOTH or it green-lights a stroke that reads cells the
+ * client has never been sent. It asked about the core alone until #387 gave
+ * soft an apron, and a prediction that reads unknown ground is the client
+ * simulating fiction — see PREDICTION_HALO_CELLS for why that is fatal rather
+ * than merely wrong.
+ *
+ * NOT the halo. This is the reach of the WRITES and the reads that feed them;
+ * a caller that also reads a ring outside its sweep (relaxation does) adds
+ * that ring itself.
+ *
+ * THE ANCHOR IS A PARAMETER, and it is the third of three conditions rather
+ * than an assumption (review, 2026-09-06). `applySculpt`'s own `softCore` gate
+ * asks for `clicked` as well, and a version here that asked for only two would
+ * be a second, laxer statement of the same predicate — true today solely
+ * because the wire normalisation cannot produce a soft stamp on any other
+ * anchor, which is an invariant of protocol.ts that nothing in this file
+ * enforces. A plugin calling applySculpt with soft/stamp/free sweeps the core
+ * alone, and this must say so.
+ */
+export function sculptSweepRadius(
+  radius: number,
+  profile: SculptProfile,
+  tool: SculptTool,
+  anchor: SculptAnchor,
+): number {
+  return profile === 'soft' && tool === 'stamp' && anchor === 'clicked'
+    ? radius + softSkirtCells(radius)
+    : radius;
+}
+
+/**
  * How far this brush's apron actually reaches, in cells: the SMALLER of one
  * band's run (SOFT_SKIRT_CELLS) and the brush's own radius.
  *
@@ -1114,7 +1152,7 @@ function applySoftSkirt(
   // applyLevelFillBrush clamps its own target: a core at the top band puts
   // this one band off the map's range.
   const target = clampHeight(coreTarget + (raising ? -BAND_HEIGHT : BAND_HEIGHT));
-  forEachFootprintCell(map, cx, cy, radius + softSkirtCells(radius), (i) => {
+  forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, 'soft', 'stamp', 'clicked'), (i) => {
     // THE CORE IS ALREADY DONE, and it is excluded by the core's OWN
     // membership test rather than by a distance compared here — one statement
     // of the disc's shape, the same one `forEachFootprintOffset` walks.
@@ -2082,8 +2120,11 @@ export function sculptDisplacementUnits(
   // `tool === 'stamp'` gate applySculpt runs, stated here because a price that
   // charged `smooth` for a disc it never sweeps is exactly the gauge/gate
   // mismatch this function exists to prevent.
-  const pricedRadius =
-    profile === 'soft' && tool === 'stamp' ? radius + softSkirtCells(radius) : radius;
+  // 'clicked' because a PRICED stroke is a player's, by definition: the mana
+  // gate and the server price the wire path, whose normalisation gives every
+  // non-drag intent that anchor (protocol.ts's sculptOptionsOf). A plugin
+  // terraform runs 'free' and is not priced at all.
+  const pricedRadius = sculptSweepRadius(radius, profile, tool, 'clicked');
   let cells = 0;
   forEachFootprintOffset(pricedRadius, () => {
     cells++;
