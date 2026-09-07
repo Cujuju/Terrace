@@ -25,7 +25,7 @@
  *
  * IT IS THE DRAG THAT SETS THIS, NOT THE HELD STAMP. A held stamp is paced by
  * a timer (SCULPT_REPEAT_INTERVAL_MS, 120 ms — client/src/config.ts), but a
- * pull deliberately is not: "A DRAG IS DRIVEN BY MOTION, NOT BY A TIMER"
+ * drag deliberately is not: "A DRAG IS DRIVEN BY MOTION, NOT BY A TIMER"
  * (input/sculptInput.ts's armStroke, owner report 2026-08-23), so `emitDrag`
  * fires straight out of `onPointerMove` and is bounded only by how often the
  * cursor changes CELL — at most once per pointermove, which browsers align to
@@ -49,7 +49,7 @@ const HONEST_DRAG_INTENTS_PER_SECOND = 144;
  * one intent per frame at 144 Hz, so a headroom of two is exactly "a display
  * up to 288 Hz" — which is the residual DISPLAY_HZ_CEILING's own note names
  * (faster panels exist, and this project does not size for them). A player on
- * one of those keeps their pull; a socket sending faster than any display can
+ * one of those keeps their drag; a socket sending faster than any display can
  * drive is not a display.
  */
 const SCULPT_RATE_HEADROOM_MULTIPLE = 2;
@@ -66,8 +66,8 @@ const SCULPT_RATE_HEADROOM_MULTIPLE = 2;
  *
  * CORRECTED (2026-08-30): the paragraph above measured "one honest player"
  * from the held stamp alone, and the drag tool is not on that timer — see
- * HONEST_DRAG_INTENTS_PER_SECOND. An honest pull streams ~144 intents/s, so a
- * flat 20 shed roughly seven of every eight intents of any pull lasting longer
+ * HONEST_DRAG_INTENTS_PER_SECOND. An honest drag streams ~144 intents/s, so a
+ * flat 20 shed roughly seven of every eight intents of any drag lasting longer
  * than the burst. Those are intents the client has ALREADY PREDICTED locally,
  * and a prediction the server never answers is torn back off by
  * PREDICTION_TTL_MS — the sculpt reappearing and vanishing that

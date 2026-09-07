@@ -129,46 +129,46 @@ export function SmoothIcon(): JSX.Element {
   );
 }
 
-/** Pull (the `drag` tool): a terrace edge pushed sideways by an arrow. */
-export function PullIcon(): JSX.Element {
+/** Drag: a terrace edge pushed sideways by an arrow. */
+export function DragIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
       <defs>
-        <linearGradient id="pull-top" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id="drag-top" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="#a6e08a" />
           <stop offset="1" stop-color="#4f9a4a" />
         </linearGradient>
-        <linearGradient id="pull-left" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id="drag-left" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#9a6a45" />
           <stop offset="1" stop-color="#5a3a22" />
         </linearGradient>
-        <linearGradient id="pull-right" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id="drag-right" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#6e4a2f" />
           <stop offset="1" stop-color="#3a2415" />
         </linearGradient>
-        <linearGradient id="pull-cap" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id="drag-cap" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="#c8f0a8" />
           <stop offset="1" stop-color="#5faa5a" />
         </linearGradient>
-        <linearGradient id="pull-wall" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id="drag-wall" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#8f6a4a" />
           <stop offset="1" stop-color="#4a2f1a" />
         </linearGradient>
-        <linearGradient id="pull-arrow" x1="0" y1="0" x2="1" y2="0">
+        <linearGradient id="drag-arrow" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stop-color="#ffffff" />
           <stop offset="1" stop-color="#cfe2ef" />
         </linearGradient>
       </defs>
       <ellipse cx="16" cy="27.5" rx="12" ry="3" fill="#000" opacity="0.35" />
-      <polygon points="16,13 28,19 16,25 4,19" fill="url(#pull-top)" />
-      <polygon points="4,19 16,25 16,29 4,23" fill="url(#pull-left)" />
-      <polygon points="28,19 16,25 16,29 28,23" fill="url(#pull-right)" />
-      <polygon points="8,12.6 16,8.6 24,12.6 16,16.6" fill="url(#pull-cap)" />
-      <polygon points="8,12.6 16,16.6 16,21 8,17" fill="url(#pull-wall)" />
+      <polygon points="16,13 28,19 16,25 4,19" fill="url(#drag-top)" />
+      <polygon points="4,19 16,25 16,29 4,23" fill="url(#drag-left)" />
+      <polygon points="28,19 16,25 16,29 28,23" fill="url(#drag-right)" />
+      <polygon points="8,12.6 16,8.6 24,12.6 16,16.6" fill="url(#drag-cap)" />
+      <polygon points="8,12.6 16,16.6 16,21 8,17" fill="url(#drag-wall)" />
       <polygon points="24,12.6 16,16.6 16,21 24,17" fill="#4a3220" />
       <path
         d="M19.5 5.2h6.2V3l4.3 3.6-4.3 3.6V8H19.5z"
-        fill="url(#pull-arrow)"
+        fill="url(#drag-arrow)"
         stroke="#5b6873"
         stroke-width="0.4"
       />

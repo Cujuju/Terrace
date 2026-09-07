@@ -9,7 +9,7 @@ empty below and solid above.** Everything an overhang, an arch or a cave is
 depends on exactly that shape. `picking.ts` states the consequence outright —
 "the column is treated as SOLID from its cap downward" — and that sentence, not
 the renderer, is the whole obstacle. Raised by the owner (2026-08-24) after
-trying to pull one layer out from under another with the Pull tool (#99) and
+trying to drag one layer out from under another with the Drag tool (#99) and
 getting the levels below dragged out with it: the tool was not misbehaving, the
 terrain model has no way to express what was being asked for.
 
@@ -122,7 +122,7 @@ independently verifiable, and the first two change nothing a player can see.
    something on screen rather than in the abstract.
 
    AMENDED 2026-08-27 (issue #224): the first of those decisions is made — see
-   "Decisions made 2026-08-27 (a pulled band overhangs a carve; it never fills
+   "Decisions made 2026-08-27 (a dragged band overhangs a carve; it never fills
    it)" at the end of this file, which overturns the drag's D4 "fill the
    opening" rule.
 
@@ -144,11 +144,11 @@ alternative above is the fallback and steps 1–2 are still worth having.
 
 Tracked as #129 (this work), which supersedes #110 (overhangs) in scope.
 
-## Decisions made 2026-08-27 (a pulled band overhangs a carve; it never fills it)
+## Decisions made 2026-08-27 (a dragged band overhangs a carve; it never fills it)
 
-Owner report (#224): "if I carve and I try to pull the layers above, it
+Owner report (#224): "if I carve and I try to drag the layers above, it
 instantly fills the carve." Reproduced on a carved column — a floor span, an
-opening, a roof span — by pulling a band that lies in the opening.
+opening, a roof span — by dragging a band that lies in the opening.
 
 **This overturns D4's "fill the opening" rule, which is kept below as the
 record of what it used to be.** D4 (issue #129, step 4.5) said the receiving
@@ -162,7 +162,7 @@ opening and grabbed the roof gets the opening filled from the floor up and the
 carve destroyed in one click.
 
 **Decision (owner, 2026-08-27): the roof extends as an OVERHANG. The floor span
-never rises.** Pulling a band that lies in a gap under the cell's own roof lays
+never rises.** Dragging a band that lies in a gap under the cell's own roof lays
 that band's own slab — which welds to the roof above it wherever the join is
 too thin to draw — and leaves the span below byte-untouched.
 
@@ -184,14 +184,14 @@ it exists to carry an existing staircase and must never author new roofs.
   carries `targetBand`, one column covers a band with at most one span, and both
   replicas resolve the band against their own map. A `spanBand` on a drag intent
   would be the same number twice — and it could not be derived correctly anyway,
-  because a pull's `x`/`y` is the CURSOR cell, not the cell whose lip is in the
+  because a drag's `x`/`y` is the CURSOR cell, not the cell whose lip is in the
   player's hand. This is what `sculptInput.ts` `emitDrag` deferred to "plan step
-  4.5, D5", now resolved: the span-aware form of the pull is the per-cell rule
+  4.5, D5", now resolved: the span-aware form of the drag is the per-cell rule
   inside `applyDragRegion`, not a wire field.
 - **Unlayered worlds cannot reach the new branch, by construction.** A one-span
   column floors at `BEDROCK_FLOOR` and every band of a valid world is at or
   above it, so the span either covers the band or lies below it and there is
-  never a span above. Verified: a hard drag pulling a band-4 terrace across a
+  never a span above. Verified: a hard drag extending a band-4 terrace across a
   disc produces a byte-identical height field before and after this change.
 - **The slab is floored one height unit above the boundary below it**, not on
   it, because `spanUndersideHeight` hangs a span one band below its lowest
@@ -206,7 +206,7 @@ it exists to carry an existing staircase and must never author new roofs.
 
 **Rejected alternatives.**
 
-- *Keep D4 and refuse the pull under a roof.* Honest, and useless: the owner's
+- *Keep D4 and refuse the drag under a roof.* Honest, and useless: the owner's
   gesture would do nothing rather than the wrong thing, and there would still be
   no way to extend a roof.
 - *Ask the neighbour that holds the band whether it holds it as a roof

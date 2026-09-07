@@ -456,7 +456,7 @@ export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
  * names and the cell the previous intent named (2026-09-05, owner report:
  * "quick flicks on a small brush size are not recorded and leave gaps").
  *
- * A pull's region is the footprint SWEPT along that segment, so a fast flick
+ * A drag's region is the footprint SWEPT along that segment, so a fast flick
  * fills the whole path instead of one disc per pointermove. The clamp bounds
  * the work one message can ask of the server; it does not bound the gesture,
  * because the client splits a longer flick into consecutive intents of at most

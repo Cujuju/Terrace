@@ -24,7 +24,7 @@ export interface ManaBalanceMessage {
    * moment it sends it, and a push that arrived while more were still in
    * flight used to replace that estimate wholesale — erasing the debits for
    * everything queued behind the intent this push answered. On a fast large-
-   * brush pull that let the gate approve strokes the server then denied, and
+   * brush drag that let the gate approve strokes the server then denied, and
    * the denial tore the predicted ground back off. With this the client keeps
    * the debits for every seq above it. Absent when the server has not yet
    * seen an intent from this player, which means: keep them all.

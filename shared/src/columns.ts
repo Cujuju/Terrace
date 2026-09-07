@@ -420,7 +420,7 @@ export function spanIndexCoveringBand(
  *
  * SUPERSEDED AS THE DRAG'S RECEIVING-SPAN RULE (2026-08-27, issue #224). The
  * paragraph above describes D4's "fill the opening" behaviour, which the owner
- * overturned: pulling a band over a carve must extend the material as an
+ * overturned: dragging a band over a carve must extend the material as an
  * OVERHANG and must never raise the floor span. This function still answers
  * exactly the question its first paragraph asks — it is the "material below"
  * half of `bandFillAt`, which is now the rule callers want. Kept as the record
@@ -458,7 +458,7 @@ export function spanIndexBelowBand(
  * - `overhang` — some span of this column stands ABOVE the band, so the band
  *   lies in a gap under a roof. The material becomes the band's own slab and
  *   the span below is left byte-untouched. Filling that gap from the floor is
- *   what the owner reported as "if I carve and I try to pull the layers above,
+ *   what the owner reported as "if I carve and I try to drag the layers above,
  *   it instantly fills the carve": it welds floor to roof and destroys the
  *   opening the player just cut. The floor span never rises.
  *
@@ -523,7 +523,7 @@ export function bandFillAt(
  *
  * Everything that makes the result honest is `canonicaliseColumn`, not this
  * function: a slab laid directly on the ground below merges into it (so a
- * pull over ground that already reaches the band under it is exactly the
+ * drag over ground that already reaches the band under it is exactly the
  * `extend` it would have been), and a slab laid against the roof above merges
  * into the roof, which is what "extends the roof laterally" means in spans.
  */
@@ -766,7 +766,7 @@ function canonicaliseColumn(spans: readonly Span[]): Span[] {
  * column byte-untouched.
  *
  * That second clause is the point of the whole span model: the report this work
- * answers (#99) was that pulling on one layer dragged the layers below it out
+ * answers (#99) was that dragging on one layer dragged the layers below it out
  * with it, and a primitive that can only write one span's ceiling makes that
  * impossible rather than merely unlikely.
  *

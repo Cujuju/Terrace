@@ -86,7 +86,7 @@ import type { SculptIntent, SculptTool } from '@terrace/shared';
  * targets two bands up and fills both. These tools mean the surface the player
  * is looking at, which on a riser is the tread the face rises from.
  *
- * NOT `drag` and NOT `carve`, deliberately: the pull GRABS the struck face's
+ * NOT `drag` and NOT `carve`, deliberately: the drag GRABS the struck face's
  * band and the carve CUTS it, so for both of them the upper cell is not an
  * off-by-one — it is the thing being acted on.
  */
@@ -205,12 +205,12 @@ export interface SculptInput {
    */
   hoverTarget(): TerrainRayPick | null;
   /**
-   * The band the LIVE stroke has hold of, or null when no stroke is pulling
+   * The band the LIVE stroke has hold of, or null when no stroke is dragging
    * one — the frozen `strokeGrab`.
    *
    * Exposed so the frame loop can keep the grabbed lip lit for as long as it is
    * held. The highlight is otherwise re-derived from the live pick every frame,
-   * and a pull drags the pointer OFF the riser it grabbed within the first
+   * and a drag moves the pointer OFF the riser it grabbed within the first
    * cell — so the lip the player is holding went dark while they were holding
    * it.
    */
@@ -283,10 +283,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * FROZEN BECAUSE THE GRASP IS. Which tool is held decides whether the press
    * takes hold of a lip at all (`takeHold`), and that answer is frozen in
    * `strokeGrab`; reading the live HUD signal afterwards let the two disagree.
-   * Clicking Stamp in the HUD mid-pull kept the frozen grasp and went on
-   * pulling the terrace out while the HUD said Stamp, and switching the other
-   * way — Stamp to Pull, with nothing grasped — made every remaining intent
-   * fall out of `emitIntent`'s "a Pull with nothing in its grasp emits
+   * Clicking Stamp in the HUD mid-drag kept the frozen grasp and went on
+   * dragging the terrace out while the HUD said Stamp, and switching the other
+   * way — Stamp to Drag, with nothing grasped — made every remaining intent
+   * fall out of `emitIntent`'s "a Drag with nothing in its grasp emits
    * nothing" guard, so the brush went dead until the button was released.
    *
    * Only the TOOL is frozen. Radius and edge stay live reads, because neither
@@ -303,9 +303,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * null for an ordinary brush stroke.
    *
    * FROZEN, NOT RE-QUERIED, and this is what stops the wander (issue #119). A
-   * pull MOVES the lip, so re-asking "what lip is under the cursor now"
+   * drag MOVES the lip, so re-asking "what lip is under the cursor now"
    * mid-stroke lets the stroke re-grab the edge it just built — the edit
-   * chasing its own result — or hand off to a different band's lip the pull
+   * chasing its own result — or hand off to a different band's lip the drag
    * happened to sweep past, with the player unable to predict which terrace
    * they were moving.
    */
@@ -315,7 +315,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * THE BAND A CARVE STROKE IS CUTTING, taken from the FIRST cut of the press
    * and held until release — null until then, and for every other tool.
    *
-   * THE BAND IS THE CARVE'S GRASP, exactly as `strokeGrab` is the pull's, and
+   * THE BAND IS THE CARVE'S GRASP, exactly as `strokeGrab` is the drag's, and
    * it is frozen for the same reason: it is half of a decision the press
    * already made. Owner, 2026-09-05: "Why would I get a different band when
    * I'm still explicitly pointing at band three?"
@@ -355,10 +355,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * messages.
    *
    * THE WHOLE INTENT, NOT JUST THE CELL. Keyed on the cursor cell alone this
-   * dropped intents that were not duplicates at all: pressing Shift to pull a
+   * dropped intents that were not duplicates at all: pressing Shift to drag a
    * lip back IN without moving the mouse changes `dir` and nothing else, and
    * was silently swallowed until the player jiggled the cursor into another
-   * cell. Everything else a pull's intent carries is fixed for the stroke —
+   * cell. Everything else a drag's intent carries is fixed for the stroke —
    * the tool, the grasped band — or absent, so cell, direction and radius are
    * the whole of what can differ between two of them.
    */
@@ -449,7 +449,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * that meeting point by an enormous distance for one pixel of mouse travel —
    * the caveat raised against plane projection when it was proposed (issue
    * #99). Below this the sample is not merely imprecise, it is unusable, so it
-   * is discarded and the pull keeps the depth it last had.
+   * is discarded and the drag keeps the depth it last had.
    *
    * 0.05 is one part in twenty: at the horizon-most usable camera pitch the
    * plane is still met within twenty times the camera's height above it. Above
@@ -464,10 +464,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    *
    * NOT the terrain pick, and that is the whole point (issue #119). The
    * ordinary hover pick marches the height field, so during a drag it is
-   * reading ground the drag itself is raising: the pull builds land, the new
+   * reading ground the drag itself is raising: the drag builds land, the new
    * land intercepts the ray earlier, the picked cell moves back toward the
    * grab, and the depth stops growing — the lip moves a cell or two and then
-   * stalls no matter how far the player keeps pulling. A plane frozen at the
+   * stalls no matter how far the player keeps dragging. A plane frozen at the
    * height the lip was grabbed at cannot be disturbed by the edit, so the
    * cursor means the same thing at the end of the stroke as at the start.
    *
@@ -496,9 +496,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const worldZ = origin.z + direction.z * distance;
     // THE ONE PLAN-POINT → CELL RULE (terrain/picking.ts). This used to floor
     // where every other pick rounds, which is half a cell of bias in one
-    // direction for the whole length of every pull. `worldPointToCell` also
+    // direction for the whole length of every drag. `worldPointToCell` also
     // owns the off-the-world rule — the plane is infinite, the world is not,
-    // and a point past the border is the EDGE cell (issue #281 A), so a pull
+    // and a point past the border is the EDGE cell (issue #281 A), so a drag
     // flicked off the world lands on the border rather than holding short.
     return worldPointToCell(worldX, worldZ, size);
   };
@@ -627,7 +627,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const action = currentStrokeAction();
     // A DRAG READS THE PLANE, NOT THE GROUND (issue #119). Resolved before the
     // hover pick so a drag never touches it: the pick marches terrain the drag
-    // is raising, and reading it here is what made the pull stall a cell or
+    // is raising, and reading it here is what made the drag stall a cell or
     // two in (see dragPlaneCell). setSculptMode still runs first for both, so
     // the HUD's raise/lower indicator is honest either way.
     //
@@ -638,7 +638,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // direction — it would silently rewrite the player's choice. The carve's
     // direction is the tool's, so it is nobody else's business.
     if (!TOOLS_WITHOUT_DIRECTION.includes(strokeTool)) setSculptMode(action);
-    // A Pull with nothing in its grasp emits nothing at all. Without this the
+    // A Drag with nothing in its grasp emits nothing at all. Without this the
     // generic send below would put a `drag` intent with no band on the wire,
     // which the shared math treats as a no-op — a message, and a mana charge,
     // for an edit that was never going to happen.
@@ -658,9 +658,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (TOOLS_WITHOUT_DIRECTION.includes(strokeTool) && sculptDirection(action) > 0) return;
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
-      // Too shallow a ray, or off the world: hold the pull where it was rather
+      // Too shallow a ray, or off the world: hold the drag where it was rather
       // than lurch. The intent is absolute, so skipping one sample loses
-      // nothing — the next usable one carries the whole pull.
+      // nothing — the next usable one carries the whole drag.
       if (to === null) return;
       emitDrag(to.x, to.y, action, strokeGrab);
       return;
@@ -695,7 +695,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       const reach = carveReach(hoverRay.origin, hoverRay.direction, strokeCarveBand);
       // THE TUNNEL HAS BROKEN THROUGH — nothing left at this band along this
       // aim. Emitting anyway would spend a seq and a mana charge on a cut the
-      // shared math has nothing to apply, which is the same waste the Pull's
+      // shared math has nothing to apply, which is the same waste the Drag's
       // "nothing in its grasp" guard above exists to stop.
       if (reach === null) return;
       anchor = reach;
@@ -728,7 +728,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // other stroke over unlayered ground byte-identical.
       spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
       // A CARVE WITH NO BAND CUTS NOTHING, so it emits nothing — the same rule,
-      // and the same reason, as the Pull's "nothing in its grasp" guard above
+      // and the same reason, as the Drag's "nothing in its grasp" guard above
       // (GH #349). A tread far from any lip resolves to no band (D1, owner
       // 2026-09-04), and this used to put a band-less carve on the wire anyway:
       // the shared math no-ops it, but `sculptDisplacementUnits` prices a carve
@@ -766,7 +766,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       dir: sculptDirection(action),
       tool: strokeTool,
       // NO EDGE FOR A TOOL THAT HAS NONE — the carve, here, for exactly the
-      // reason the pull names none in `emitDrag`: `sculptOptionsOf` resolves
+      // reason the drag names none in `emitDrag`: `sculptOptionsOf` resolves
       // every TOOLS_WITHOUT_EDGE_PROFILE tool to EDGELESS_SCULPT_PROFILE, so a
       // profile sent with one describes nothing that will happen. The stamp
       // and the smooth do have an edge and send the live toggle.
@@ -779,7 +779,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
-   * THE PULL EMISSION — one self-contained intent describing the disc under
+   * THE DRAG EMISSION — one self-contained intent describing the disc under
    * the cursor right now.
    *
    * Not a step, not an increment, not a link in a chain: the cursor cell and
@@ -847,7 +847,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       type: 'sculpt',
       // THE CURSOR CELL, which for this tool is where the edit happens — the
       // same meaning x/y carry for every brush. The cell the lip was first
-      // grabbed at does not appear in the intent at all: a pull is wherever
+      // grabbed at does not appear in the intent at all: a drag is wherever
       // the hand is now, not a measurement from where it started, which is
       // what lets the lip turn and curve instead of advancing as one straight
       // front (owner report, 2026-08-24).
@@ -856,7 +856,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       radius,
       dir,
       tool: 'drag',
-      // NO `profile`, because a pull has no edge to choose (issue #225). It
+      // NO `profile`, because a drag has no edge to choose (issue #225). It
       // used to send the Edge toggle live, on the reading that soft advanced
       // the lip as a smooth face and hard filled every legal cell of the disc;
       // `sculptOptionsOf` resolves every tool in TOOLS_WITHOUT_EDGE_PROFILE to
@@ -864,20 +864,20 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // sides of the prediction contract before it reached any arithmetic. A
       // field whose value cannot change the stroke does not belong on the
       // wire: leaving it out is what stops the next reader believing the
-      // toggle reshapes a pull. The HUD hides the Edge row for these tools for
+      // toggle reshapes a drag. The HUD hides the Edge row for these tools for
       // the same reason.
       targetBand: band,
       // NO `spanBand` HERE YET, and that is a decision rather than an
-      // oversight. A pull's x/y is the CURSOR cell, not the cell whose lip is
+      // oversight. A drag's x/y is the CURSOR cell, not the cell whose lip is
       // in the player's grasp, so a grasp derived here would name a span of the
       // wrong column — and the shared math's whole-stroke guard would then
-      // no-op legitimate pulls over layered ground. The pull's grasp travels as
+      // no-op legitimate drags over layered ground. The drag's grasp travels as
       // `targetBand` plus the per-cell neighbour rule inside applyDragRegion,
       // which is where the span-aware form belongs (plan step 4.5, D5).
       //
       // SETTLED 2026-08-27 (issue #224), and the answer is that there is
-      // nothing to add here. The span-aware pull now lives entirely in the
-      // shared math's per-cell rule (`bandFillAt`, columns.ts): a pull over a
+      // nothing to add here. The span-aware drag now lives entirely in the
+      // shared math's per-cell rule (`bandFillAt`, columns.ts): a drag over a
       // gap under a roof extends the roof as an OVERHANG instead of raising
       // the floor into it. One column covers a band with at most one span, so
       // `targetBand` plus the receiver's own map names the grasped span
@@ -989,9 +989,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // The wire rate stays bounded WITHOUT a timer, because a drag emits per
     // CURSOR CELL CHANGE, not per event: a hundred pointermove events inside
     // one cell send nothing at all (see lastDragTo).
-    // THE PULL NEVER REPEATS, whether it grabbed a lip or seeded a new layer.
+    // THE DRAG NEVER REPEATS, whether it grabbed a lip or seeded a new layer.
     // A held stamp stacking bands in one place is the whole thing a stamp
-    // does; standing still with the Pull tool means the lip is already where
+    // does; standing still with the Drag tool means the lip is already where
     // the player put it, and a seeded layer is "a single layer" by the owner's
     // instruction — a repeat would turn either into a tower.
     if (strokeTool === 'drag') return;
@@ -1000,14 +1000,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   /**
    * MOVES ONE LAYER IN THE STROKE'S DIRECTION where there is no lip to take
-   * hold of (owner, 2026-08-24: "if there is no edge to pull, pop up a new
-   * layer that we can start pulling — just a single layer"; and 2026-09-05:
+   * hold of (owner, 2026-08-24: "if there is no edge to drag, pop up a new
+   * layer that we can start dragging — just a single layer"; and 2026-09-05:
    * shift-drag must work on a plateau, so the lower chord digs a one-band pit
-   * to pull wider instead of emitting nothing).
+   * to drag wider instead of emitting nothing).
    *
    * A `hard` stamp, which level-fills its footprint to the next band, so what
    * appears is a flat one-band plateau (or pit) with a clean lip all the way
-   * round — the thing the pull needs in order to have anything to grab. `hard`
+   * round — the thing the drag needs in order to have anything to grab. `hard`
    * regardless of the edge toggle: a soft stamp's falloff would leave a mound
    * whose rim crosses no band at all on flat ground, i.e. no lip and nothing
    * gained.
@@ -1034,13 +1034,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   /**
    * DECIDES WHAT THIS STROKE HAS HOLD OF, once, and freezes it in `strokeGrab`.
    *
-   * THE PULL IS A TOOL YOU SELECT, not a mode a press falls into (owner
+   * THE DRAG IS A TOOL YOU SELECT, not a mode a press falls into (owner
    * decision 2026-08-24): Stamp and Smooth always brush, so they hold nothing.
    *
-   * With the Pull tool the answer is the face under the pointer and nothing
+   * With the Drag tool the answer is the face under the pointer and nothing
    * else — a riser is grabbed at the band whose slab the ray struck, a tread
    * seeds (below), and anything else holds nothing. BOTH DIRECTIONS grab the
-   * same lip (issue #99 step 3): the lower chord pulls it INWARD, and the stop
+   * same lip (issue #99 step 3): the lower chord drags it INWARD, and the stop
    * rule that needs lives in the shared math (applyDragRegion/retreatHeightAt).
    */
   const takeHold = (action: SculptAction): void => {
@@ -1058,7 +1058,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // roof — the very thing emitIntent refuses (plan D4). A horizontal face at
     // the span's own cap is the tread; below it, the underside.
     if (hover === null || hover.hitRiser || hover.hitY !== hover.surfaceY) return;
-    // NOTHING TO PULL, SO MAKE SOMETHING (owner, 2026-08-24). The seed is
+    // NOTHING TO DRAG, SO MAKE SOMETHING (owner, 2026-08-24). The seed is
     // applied locally by the prediction the moment it is sent (main.tsx's
     // send), so the band under the pointer moves within this call.
     //
@@ -1082,8 +1082,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // the terrain PUBLISHES, a frame or two later under the build budget.
     //
     // THE GRAB IS THE LIP'S CAP BAND, whichever way the seed went. A raised
-    // layer's lip is capped at the NEW band, so a raise pull extends it. A pit's
-    // lip is the surrounding plateau, capped at the OLD band, so a lower pull
+    // layer's lip is capped at the NEW band, so a raise drag extends it. A pit's
+    // lip is the surrounding plateau, capped at the OLD band, so a lower drag
     // grabbing it retreats that band into the pit (retreatHeightAt finds the
     // pit floor beside each rim cell) — the pit widens as the cursor sweeps.
     const before = bandAtCell(hover.x, hover.y);
@@ -1230,7 +1230,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // IT TAKES HOLD FIRST, exactly as `armStroke` would have. A touch press
     // defers the grasp to arming (the ray is only worth firing once the finger
     // has settled), so a tap that never armed had never grasped anything —
-    // and with the Pull tool `emitIntent` then refused it as "a Pull with
+    // and with the Drag tool `emitIntent` then refused it as "a Drag with
     // nothing in its grasp", which is the one tool for which fast taps still
     // did nothing. The grace timer is a touch-stroke timer and nothing else,
     // so this branch is exactly the arming that did not happen.

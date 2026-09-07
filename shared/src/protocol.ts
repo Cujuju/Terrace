@@ -87,10 +87,10 @@ export interface SculptIntent {
    * A DRAG DOES NOT CARRY THIS ONE, and that is settled rather than pending
    * (owner, 2026-08-27, issue #224 — DESIGN.md, "Why no new field on the
    * wire"). This doc used to say "a drag carries both", and acting on that
-   * sentence would break the tool: a pull's `x`/`y` is the CURSOR cell, not the
+   * sentence would break the tool: a drag's `x`/`y` is the CURSOR cell, not the
    * cell whose lip is in the player's hand, so a `spanBand` derived at the
    * sender names a span of the wrong column — and applySculpt's whole-stroke
-   * grasp guard then no-ops legitimate pulls over layered ground. The grasp
+   * grasp guard then no-ops legitimate drags over layered ground. The grasp
    * travels as `targetBand` plus the per-cell rule inside `applyDragRegion`
    * (`bandFillAt`): one column covers a band with at most one span, so the band
    * plus the receiver's own map names the grasped span exactly, and a
@@ -199,7 +199,7 @@ export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
  * a TOOL and an EDGE with no intent between them: the mana gauge pricing the
  * brush the player is holding (plugins/mana/client/state.ts) and anything else
  * that must show what the next stroke will cost or look like. The gauge
- * restated the profile as the raw HUD choice and priced a Pull at up to 2.6x
+ * restated the profile as the raw HUD choice and priced a Drag at up to 2.6x
  * less than the gate one line below it charged for the same stroke.
  */
 export function sculptProfileOf(tool: SculptTool, profile: SculptProfile): SculptProfile {
@@ -244,7 +244,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
   return {
     tool,
     // AN EDGELESS TOOL'S PROFILE IS DECIDED HERE (issue #225), not honoured
-    // and then ignored downstream: the drag would otherwise pull a ragged rim
+    // and then ignored downstream: the drag would otherwise leave a ragged rim
     // and leave partial-band shelves under the lip it extended, contradicting
     // its own contract. Doing it in this resolver is what makes the server's
     // pipeline and the client's prediction — its only two callers — run the
@@ -283,7 +283,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
 
 /**
  * HOW MANY DISCS A DRAG INTENT SWEEPS — the steps from `fromX/fromY` to `x/y`,
- * and 1 for a pull that names no origin. Each step is the disc the pointermove
+ * and 1 for a drag that names no origin. Each step is the disc the pointermove
  * it stands in for would have sent, so a flick is priced (plugins/mana) exactly
  * as the intents it replaces.
  */
