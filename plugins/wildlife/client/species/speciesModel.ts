@@ -82,24 +82,31 @@ export interface AuthoredSpecies {
    * Either way a term is a function of one unbounded angle, which is what makes
    * quantising the phase into slots safe (models.ts, POSE_SLOTS_PER_HERD).
    *
-   * `gait` is what the creature is doing VERTICALLY (../../../client/src/plugins
-   * /kit/moverGait.ts). It is 'walk' for everything that never leaves the
-   * ground — the only value a species without `wallGaits` below is ever posed
-   * with — and a species that ignores it keeps its previous answers exactly.
+   * `gait` is what the creature is DOING (../../../client/src/plugins/kit/
+   * moverGait.ts) — on the wall, climbing or falling; on the ground, walking,
+   * standing still, or sat down after a long stillness (@terrace/shared's
+   * stance.ts). It is 'walk' for a species that does not declare
+   * `posesByGait` below, and a species that ignores it keeps its previous
+   * answers exactly.
    */
   animate(joints: SpeciesJoints, seconds: number, phase: number, gait: MoverGait): void;
   /**
-   * True for a species that can be drawn OFF THE GROUND — climbing a wall or
-   * falling off one (@terrace/shared's climb.ts; the ibex is the only one
-   * today). It buys the herd one pose-palette band per MoverGait
+   * True for a species whose `animate` READS the gait — every land walker (it
+   * stands and sits where it stops), and any species that can be drawn off the
+   * ground climbing or falling (the ibex).
+   *
+   * It buys the herd one pose-palette band per MoverGait
    * (client/src/render/rigHerd.ts's `poseVariants`), because two creatures at
    * the same phase in different acts are not in the same pose.
    *
    * ABSENT MEANS NO, and a species that answers no is only ever asked for
    * 'walk' — its `animate` may ignore the gait entirely, which is what every
-   * swimmer and flyer does.
+   * swimmer and flyer does. It is ONE flag and not one per act deliberately:
+   * the question the herd needs answered is whether the gait changes this
+   * species' pose at all, and a second boolean beside it would be a second
+   * place for the palette to disagree with the animation.
    */
-  readonly wallGaits?: boolean;
+  readonly posesByGait?: boolean;
 }
 
 /** A species file exports exactly one of these. */

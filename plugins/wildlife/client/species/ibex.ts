@@ -15,7 +15,15 @@
 import { Group, Vector3 } from 'three';
 import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
 import { flatFin, smoothEllipsoid, taperedTube } from './bodyKit.ts';
-import { addQuadrupedLegs, legJoints, poseFall, poseLeap, poseWalk } from './quadruped.ts';
+import {
+  addQuadrupedLegs,
+  legJoints,
+  poseFall,
+  poseLeap,
+  poseSit,
+  poseStand,
+  poseWalk,
+} from './quadruped.ts';
 import { IBEX_CLIMB_SECONDS_PER_BAND } from '../../protocol.ts';
 import type { SpeciesModelBuilder } from './speciesModel.ts';
 
@@ -178,8 +186,9 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
     root,
     joints: { rig, head: headPivot, ...legJoints(legs) },
     // IT CLIMBS (its server profile's `climb` rule), so it is drawn on the wall
-    // as well as on the ground — one pose-palette band per gait.
-    wallGaits: true,
+    // as well as on the ground; and like every land walker it stands and sits
+    // where it stops — one pose-palette band per gait either way.
+    posesByGait: true,
     animate(joints, seconds, phase, gait) {
       if (gait === 'climb') {
         // IT LEAPS THE BANDS rather than climbing them, one bound per band at
@@ -191,6 +200,14 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
       }
       if (gait === 'fall') {
         poseFall(joints, seconds, phase);
+        joints.head!.rotation.z = 0;
+        return;
+      }
+      // STOPPED IS NOT A FROZEN STRIDE (./quadruped.ts's ground gaits).
+      if (gait === 'stand' || gait === 'sit') {
+        if (gait === 'stand') poseStand(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+        else poseSit(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+        // Head level: the nod belongs to the footfalls, and there are none.
         joints.head!.rotation.z = 0;
         return;
       }

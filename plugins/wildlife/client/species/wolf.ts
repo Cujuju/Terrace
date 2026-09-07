@@ -22,7 +22,7 @@
 // two bones or more (measured on the exported file). A rigidified wolf would
 // open the same shoulder and hip seams the deer opened.
 
-import { poseWalk } from './quadruped.ts';
+import { poseSit, poseStand, poseWalk } from './quadruped.ts';
 import {
   assetSpeciesBuilder,
   type SpeciesAssetSpec,
@@ -215,9 +215,21 @@ const WALK_BOB_WORLD_UNITS = 0.012 * WOLF_TO_GRAZER_CROWN_RATIO;
 /** The head follows the shoulder, so the nod scales with the bob: 0.05 x 0.75. */
 const HEAD_NOD_RADIANS = 0.05 * WOLF_TO_GRAZER_CROWN_RATIO;
 
-export const buildWolf = assetSpeciesBuilder(WOLF_ASSET, (joints, _seconds, phase) => {
-  // A walker's phase IS its stride beat (WOLF_STRIDE_WORLD_UNITS): no clock term.
-  const beat = phase;
-  poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
-  joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
-});
+export const buildWolf = assetSpeciesBuilder(
+  WOLF_ASSET,
+  (joints, seconds, phase, gait) => {
+    // The grazer's rule, and the same reason (../quadruped.ts's ground gaits).
+    if (gait === 'stand' || gait === 'sit') {
+      if (gait === 'stand') poseStand(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+      else poseSit(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+      joints.head!.rotation.z = 0;
+      return;
+    }
+    // A walker's phase IS its stride beat (WOLF_STRIDE_WORLD_UNITS): no clock term.
+    const beat = phase;
+    poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
+    joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
+  },
+  // It stands and sits where it stops (AuthoredSpecies.posesByGait).
+  true,
+);

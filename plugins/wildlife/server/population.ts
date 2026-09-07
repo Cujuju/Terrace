@@ -67,7 +67,7 @@
 // CLOCK: `dt` from the host is the only time source. No Date.now anywhere, so a
 // server running at a different TICK_HZ behaves identically per simulated second.
 
-import { climbWireOf } from '@terrace/shared';
+import { climbWireOf, newStillness, stanceWireOf } from '@terrace/shared';
 import type { ClimbState } from '@terrace/shared';
 import { CHUNK_SIZE, nearestWithinReach } from '@terrace/shared';
 import {
@@ -191,6 +191,25 @@ export interface WildlifeEntity {
    * climbs it again.
    */
   climb: ClimbState | null;
+
+  /**
+   * How long this creature has been still, and where it was when that was last
+   * measured (@terrace/shared's stance.ts) — what the wire's `stance` is read
+   * from. Advanced by `advanceEntity` alone, at the top of the tick.
+   *
+   * THE THREE `idle` RULES DO NOT ALL APPLY. Always present, like the flag; ON
+   * THE WIRE, unlike it, because a duration and a stand-up window are the two
+   * things a position stream cannot show (stance.ts's header); NOT PERSISTED,
+   * like it, because how long an animal has been standing about is a moment and
+   * not a fact about the animal — a restored one starts walking and settles
+   * again on its own.
+   *
+   * THREE FLAT FIELDS, for `huntTargetId`'s reason above: `replacePopulation`
+   * shallow-copies every entity, and a sub-object would be shared by reference.
+   */
+  stillSeconds: number;
+  stillX: number;
+  stillY: number;
 
   /**
    * Seconds left in the current chase before this hunter gives up, from its
@@ -630,6 +649,8 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
       huntSecondsRemaining: 0,
       huntRestSecondsRemaining: 0,
       climb: null,
+      // Born moving, like the idle flag above.
+      ...newStillness(x, y),
     });
     created++;
   }
@@ -1063,6 +1084,9 @@ export function entityStates(worldSize: number): WildlifeEntityState[] {
     // Null for everything on the ground, which msgpack drops; only a creature
     // on a wall costs the wire anything (WildlifeEntityState.climbHeight).
     ...climbWireOf(entity.climb),
+    // Null for everything that is walking, which msgpack drops; only a stopped
+    // creature costs the wire anything (WildlifeEntityState.stance).
+    ...stanceWireOf(entity),
   }));
 }
 

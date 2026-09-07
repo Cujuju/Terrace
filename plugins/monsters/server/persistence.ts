@@ -19,6 +19,7 @@ import {
   type MonsterKind,
   type YetiVariant,
 } from '../protocol.ts';
+import { newStillness } from '@terrace/shared';
 import type { HabitatRegimeId } from './habitat.ts';
 import {
   type Monster,
@@ -180,6 +181,9 @@ function parsePersistedMonster(raw: unknown): Monster | null {
     // the foot of the wall (Monster.climb).
     climb: null,
     idle: false,
+    // Never persisted either, and for the climb's reason: a reloaded world
+    // finds the monster on its feet (Monster.stillSeconds).
+    ...newStillness(entry.x as number, entry.y as number),
     ...(variant === undefined ? {} : { variant }),
   };
 }

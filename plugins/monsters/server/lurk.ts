@@ -49,6 +49,7 @@ import {
   withoutSelf,
   type Occupant,
   type TraversalProfile,
+  advanceStillness,
 } from '@terrace/shared';
 import { CELL_CENTRE_OFFSET, type LairWorld, isLairCell, isLairPose } from './habitat.ts';
 import { bodyRadiusCells, profileOf, type MonsterProfile } from './kinds.ts';
@@ -307,6 +308,11 @@ export function advanceMonster(
   occupants: readonly Occupant[] = [],
 ): MonsterAdvance {
   const profile = profileOf(monster.kind);
+
+  // STILLNESS FIRST OF ALL, above every exit below — the wall branch, the idle
+  // beat and a stranded body are all ticks a monster does not move, and a call
+  // at the bottom would be one they each skip (@terrace/shared's stance.ts).
+  advanceStillness(monster, dt);
 
   // ON A WALL: one vertical motion and nothing else — no idle beat, no steer,
   // no separation. pilgrims' `advanceWalker` states the reasoning; this is the

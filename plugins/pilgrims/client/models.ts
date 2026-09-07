@@ -90,6 +90,55 @@ export const ARM_SWING_RADIANS = 0.25;
 /** Body bob amplitude, world units — a hair; more reads as hopping. */
 const BOB_AMPLITUDE = 0.012;
 
+/**
+ * How high the hip joint sits above the ground, world units, AS AUTHORED.
+ *
+ * It is also the LEG'S OWN LENGTH: the leg geometry is shifted so its top sits
+ * at the pivot (see `part` below) and its foot reaches the ground, so one
+ * number states both. The ground poses read it — see `poseSit`, which is
+ * nothing but that identity used twice.
+ */
+const WALKER_HIP_HEIGHT_WORLD_UNITS = 0.1;
+
+// ── The ground gaits ───────────────────────────────────────────────────────
+// A stopped walker is NOT a walk cycle that has stopped advancing (owner,
+// 2026-09-06: "if they're not walking, then they should look like they are
+// standing in place. And if they haven't moved for a while, then they should
+// sit"). Which of the three a walker is in is the server's answer, not a guess
+// from the position stream — @terrace/shared's stance.ts.
+
+/**
+ * Breaths per second while standing.
+ *
+ * 0.25 — fifteen a minute, a resting mammal. It is the ONE clock term a
+ * standing walker gets, and it exists because a body held perfectly still for
+ * eight seconds reads as a frozen frame rather than as a peep waiting.
+ */
+const STAND_BREATH_HZ = 0.25;
+
+/** How far the breath lifts the trunk: a third of a footfall's bob. */
+const STAND_BREATH_WORLD_UNITS = BOB_AMPLITUDE / 3;
+
+/**
+ * SITTING: legs straight out in front, hips on the ground.
+ *
+ * A RIGHT ANGLE EXACTLY, and it is the same statement as the hips going to
+ * zero: the leg pivots at the hip and reaches the ground, so a quarter turn
+ * forward lays it flat and drops the hip precisely where the foot was. Nothing
+ * floats and nothing sinks, at any scale the rig is drawn, and neither number
+ * has to be re-tuned if the walker is re-proportioned.
+ */
+const SIT_LEG_RADIANS = Math.PI / 2;
+
+/**
+ * Where the arms hang when sitting: a little BEHIND vertical.
+ *
+ * Negative is backwards on this rig (positive lifts a limb forward, see the
+ * wall gaits below). A body on the ground props itself; arms hanging dead
+ * straight read as a puppet set down rather than as someone sitting.
+ */
+const SIT_ARM_RADIANS = -0.3;
+
 // ── The wall gaits ─────────────────────────────────────────────────────────
 // A climb and a fall are POSES, not speeds (owner, 2026-09-05, on the shipped
 // climb: a peep rose up a cliff playing its walk cycle). Both are driven by the
@@ -199,8 +248,8 @@ export interface PilgrimModel {
   readonly joints: WalkerJoints;
   /**
    * `seconds` is elapsed time; `phase` a per-pilgrim offset in radians; `gait`
-   * what the walker is doing VERTICALLY (the kit's `moverGaitOf`, from the
-   * server's climb fields). Defaults to 'walk' so a caller that has no climb to
+   * what the walker is doing (the kit's `moverGaitOf`, from the server's climb
+   * and stance fields). Defaults to 'walk' so a caller that has nothing to
    * report — and every test written before the wall gaits — keeps its answers.
    */
   animate(seconds: number, phase: number, gait?: MoverGait): void;
@@ -280,13 +329,24 @@ function mergePainted(parts: [BufferGeometry, number][]): BufferGeometry {
 }
 
 /**
- * The three gaits, each posing the same six joints.
+ * Where the hips sit this pose, world units — written by EVERY pose, so no
+ * pose can inherit half of another's. Only the sit moves them, and only
+ * because a body on the ground has nothing left to stand on.
+ */
+function setHipHeight(joints: WalkerJoints, y: number): void {
+  joints.leftLeg.position.y = y;
+  joints.rightLeg.position.y = y;
+}
+
+/**
+ * The five gaits, each posing the same six joints.
  *
  * FREE FUNCTIONS, not branches inside `animate`: they are the whole difference
- * between the three vertical acts, and holding each one whole is what lets a
- * reader see the climb as a pose rather than as a set of exceptions to a walk.
+ * between the acts, and holding each one whole is what lets a reader see the
+ * climb as a pose rather than as a set of exceptions to a walk.
  */
 function poseWalk(joints: WalkerJoints, seconds: number, phase: number): void {
+  setHipHeight(joints, WALKER_HIP_HEIGHT_WORLD_UNITS);
   // Same writes as the pre-skinning rig, against Bones instead of scene
   // nodes — Bone extends Object3D, so these are identical transforms.
   const stride = Math.sin(seconds * TWO_PI * STRIDE_HZ + phase);
@@ -299,8 +359,40 @@ function poseWalk(joints: WalkerJoints, seconds: number, phase: number): void {
   joints.body.position.y = Math.abs(stride) * BOB_AMPLITUDE;
 }
 
+/**
+ * Standing in place: limbs at rest, weight on both feet, breathing.
+ *
+ * `phase` offsets the breath so a crowd standing in a square is not a row of
+ * metronomes — the same job it does in the walk.
+ */
+function poseStand(joints: WalkerJoints, seconds: number, phase: number): void {
+  setHipHeight(joints, WALKER_HIP_HEIGHT_WORLD_UNITS);
+  joints.leftLeg.rotation.z = 0;
+  joints.rightLeg.rotation.z = 0;
+  joints.leftArm.rotation.z = 0;
+  joints.rightArm.rotation.z = 0;
+  // (1 - cos)/2 runs 0…1, so the breath only ever LIFTS: a walker standing on
+  // the ground the client just placed it on may not sink into it.
+  const breath = (1 - Math.cos(seconds * TWO_PI * STAND_BREATH_HZ + phase)) / 2;
+  joints.body.position.y = breath * STAND_BREATH_WORLD_UNITS;
+}
+
+/** Sat down: legs out front along the ground, hips on it, arms propping. */
+function poseSit(joints: WalkerJoints, seconds: number, phase: number): void {
+  setHipHeight(joints, 0);
+  joints.leftLeg.rotation.z = SIT_LEG_RADIANS;
+  joints.rightLeg.rotation.z = SIT_LEG_RADIANS;
+  joints.leftArm.rotation.z = SIT_ARM_RADIANS;
+  joints.rightArm.rotation.z = SIT_ARM_RADIANS;
+  // Still breathing, and still only upward — but from the hips, which are now
+  // the ground.
+  const breath = (1 - Math.cos(seconds * TWO_PI * STAND_BREATH_HZ + phase)) / 2;
+  joints.body.position.y = -WALKER_HIP_HEIGHT_WORLD_UNITS + breath * STAND_BREATH_WORLD_UNITS;
+}
+
 /** Hand over hand up the wall: one side reaching while the other bears weight. */
 function poseClimb(joints: WalkerJoints, seconds: number, phase: number): void {
+  setHipHeight(joints, WALKER_HIP_HEIGHT_WORLD_UNITS);
   const reach = Math.sin(seconds * TWO_PI * CLIMB_REACH_HZ + phase);
   // `reach` runs -1…1; map it onto the low…high span so each limb spends half
   // the cycle reaching and half anchored, and the two sides are opposite.
@@ -337,6 +429,7 @@ function setStaffCarried(joints: WalkerJoints, carried: boolean): void {
 
 /** Let go: arms overhead, legs parted, everything flailing. */
 function poseFall(joints: WalkerJoints, seconds: number, phase: number): void {
+  setHipHeight(joints, WALKER_HIP_HEIGHT_WORLD_UNITS);
   const flail = Math.sin(seconds * TWO_PI * FALL_FLAIL_HZ + phase) * FALL_FLAIL_RADIANS;
   joints.leftArm.rotation.z = FALL_ARM_RADIANS + flail;
   joints.rightArm.rotation.z = FALL_ARM_RADIANS - flail;
@@ -523,7 +616,7 @@ export function createPilgrimModels(): PilgrimModels {
     const body = new Group();
     root.add(body);
 
-    const hipY = 0.1;
+    const hipY = WALKER_HIP_HEIGHT_WORLD_UNITS;
     const shoulderY = 0.3;
     const shoulderZ = rudy ? 0.115 : 0.105;
 
@@ -635,9 +728,13 @@ export function createPilgrimModels(): PilgrimModels {
       joints,
       animate(seconds: number, phase: number, gait: MoverGait = 'walk'): void {
         if (gait === 'walk') poseWalk(joints, seconds, phase);
+        else if (gait === 'stand') poseStand(joints, seconds, phase);
+        else if (gait === 'sit') poseSit(joints, seconds, phase);
         else if (gait === 'climb') poseClimb(joints, seconds, phase);
         else poseFall(joints, seconds, phase);
-        setStaffCarried(joints, gait === 'walk');
+        // The staff is in the paw on the GROUND — standing and sitting
+        // included — and stowed on the wall. See setStaffCarried.
+        setStaffCarried(joints, gait !== 'climb' && gait !== 'fall');
         if (rudy) {
           joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
         } else {

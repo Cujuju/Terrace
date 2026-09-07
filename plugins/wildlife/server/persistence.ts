@@ -13,6 +13,7 @@ import {
   sizeClassAt,
   sizeClassIndex,
 } from '../protocol.ts';
+import { newStillness } from '@terrace/shared';
 import { WILDLIFE_POPULATION_CAP } from './census.ts';
 import {
   type WildlifeEntity,
@@ -169,6 +170,9 @@ export function loadPopulation(data: unknown): void {
           huntTargetId: null,
           huntSecondsRemaining: 0,
           huntRestSecondsRemaining: 0,
+          // Not persisted either: how long a creature has been standing about
+          // is a moment, not a fact about it (WildlifeEntity.stillSeconds).
+          ...newStillness(entry.x as number, entry.y as number),
         });
       }
 

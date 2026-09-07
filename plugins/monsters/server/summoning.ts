@@ -117,6 +117,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ClimbState } from '@terrace/shared';
+import { newStillness } from '@terrace/shared';
 import {
   MONSTER_KINDS,
   YETI_VARIANTS,
@@ -181,6 +182,16 @@ export interface Monster {
    * — a world reloaded mid-climb simply finds him standing at the foot of it.
    */
   climb: ClimbState | null;
+  /**
+   * How long this monster has been still, and where it was when that was last
+   * measured (@terrace/shared's stance.ts) — what the wire's `stance` is read
+   * from. Advanced by `advanceMonster` alone, at the top of the tick, and never
+   * persisted: a world reloaded finds the monster on its feet, like the climb
+   * above.
+   */
+  stillSeconds: number;
+  stillX: number;
+  stillY: number;
 }
 
 /**
@@ -554,6 +565,7 @@ function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster 
     y: cellY + CELL_CENTRE_OFFSET,
     heading: monsterRandom() * Math.PI * 2,
     idle: false,
+    ...newStillness(cellX + CELL_CENTRE_OFFSET, cellY + CELL_CENTRE_OFFSET),
   };
   pendingTransitions.push({ event: 'arrived', kind: profile.kind, x: cellX, y: cellY });
   return state.living;

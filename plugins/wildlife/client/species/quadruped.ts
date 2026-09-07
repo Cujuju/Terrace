@@ -141,6 +141,91 @@ export function poseWalk(
   joints.rig!.position.y = Math.abs(Math.sin(beat)) * bobAmplitude;
 }
 
+// ── The ground gaits ───────────────────────────────────────────────────────
+// A stopped animal is NOT a walk cycle that has stopped advancing (owner,
+// 2026-09-06). A walker's beat is the ground it covers, so a stopped one froze
+// mid-stride with a foot in the air; standing and sitting are poses of their
+// own. Which one it is in is the server's answer — @terrace/shared's stance.ts.
+
+/**
+ * Breaths per second while standing or sitting.
+ *
+ * 0.25 — fifteen a minute, a resting mammal. It is the ONE clock term a stopped
+ * quadruped gets, and it exists because a body held perfectly still for eight
+ * seconds reads as a frozen frame rather than as an animal at rest.
+ */
+const REST_BREATH_HZ = 0.25;
+
+/** How big a breath is against a footfall's bob: a third of it. */
+const BREATH_TO_BOB_RATIO = 1 / 3;
+
+/**
+ * How far a couched animal folds its legs under itself, radians from hanging.
+ *
+ * 1.2 (~69°) FOLDS RATHER THAN SPLAYS. The fore legs tuck BACK and the hind
+ * legs FORWARD, so both pairs come in under the belly the way a bedded ungulate
+ * carries them; a quarter turn would lay them flat out in front, which is a
+ * dead animal, and half of this would read as a crouch about to spring.
+ */
+const SIT_TUCK_RADIANS = 1.2;
+
+/** Only ever upward: a body may not sink into the ground it was placed on. */
+function breath(seconds: number, phase: number, bobAmplitude: number): number {
+  const cycle = (1 - Math.cos(seconds * REST_BREATH_HZ * TWO_PI + phase)) / 2;
+  return cycle * bobAmplitude * BREATH_TO_BOB_RATIO;
+}
+
+/** Poses the four legs and the body STANDING: weight on all four, breathing. */
+export function poseStand(
+  joints: SpeciesJoints,
+  seconds: number,
+  phase: number,
+  bobAmplitude: number,
+): void {
+  joints.foreLeft!.rotation.z = 0;
+  joints.foreRight!.rotation.z = 0;
+  joints.hindLeft!.rotation.z = 0;
+  joints.hindRight!.rotation.z = 0;
+  joints.rig!.position.y = breath(seconds, phase, bobAmplitude);
+}
+
+/**
+ * Poses the four legs and the body COUCHED: legs folded under, belly down.
+ *
+ * THE DROP IS MEASURED OFF THE RIG, NOT GIVEN. A leg hinge sits at the hip and
+ * its foot reaches the ground, so the hinge's own height IS the leg's length —
+ * and a leg folded by `SIT_TUCK_RADIANS` lifts its foot by `hipY (1 - cos)`.
+ * Lowering the body by exactly that puts the feet back where they were. It is
+ * read from the rig rather than passed in because the two asset species'
+ * skeletons come out of a .glb and have no authored spec to state it.
+ *
+ * THROUGH THE RIG'S OWN SCALE, and that is not a detail: a hinge's height is in
+ * RIG space and `rig.position` is in its PARENT's, so a species that scales its
+ * rig (bison.ts's BISON_SCALE, ibex.ts's IBEX_SCALE) would be dropped by its
+ * unscaled leg length and buried to the shoulders. Measured on the bison
+ * before this factor was here: 0.41 world units of drop against a 0.54-unit
+ * animal.
+ *
+ * THE SHORTEST LEG DECIDES, so nothing is driven through the ground: a species
+ * whose shoulders and hips differ leaves the taller pair's feet a hair above
+ * it, which is the same direction of error the bob is written to make.
+ */
+export function poseSit(
+  joints: SpeciesJoints,
+  seconds: number,
+  phase: number,
+  bobAmplitude: number,
+): void {
+  // Fore legs back and hind legs forward: both pairs come in under the belly.
+  joints.foreLeft!.rotation.z = -SIT_TUCK_RADIANS;
+  joints.foreRight!.rotation.z = -SIT_TUCK_RADIANS;
+  joints.hindLeft!.rotation.z = SIT_TUCK_RADIANS;
+  joints.hindRight!.rotation.z = SIT_TUCK_RADIANS;
+  const hipY = Math.min(joints.foreLeft!.position.y, joints.hindLeft!.position.y);
+  const drop = hipY * (1 - Math.cos(SIT_TUCK_RADIANS)) * joints.rig!.scale.y;
+  joints.rig!.position.y = -drop + breath(seconds, phase, bobAmplitude);
+}
+
 // ── The wall gaits ─────────────────────────────────────────────────────────
 // A quadruped that climbs (the ibex — @terrace/shared's climb.ts and the
 // species' own `climb` rule) is drawn scrambling, not walking up a cliff.

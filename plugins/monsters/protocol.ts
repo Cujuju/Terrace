@@ -197,6 +197,21 @@ export interface MonsterState {
    * server and every mover on the ground.
    */
   readonly falling?: boolean;
+  /**
+   * WHAT THIS MONSTER IS DOING ON THE GROUND — walking, standing still, or sat
+   * down after a long stillness. The INDEX into @terrace/shared's
+   * MOVER_STANCES; null, and absent from the wire, for the walking case, which
+   * is what almost every monster is doing almost all of the time.
+   *
+   * IT IS ON THE WIRE BECAUSE THE CLIENT CANNOT INFER IT (stance.ts states the
+   * argument in full). "Hasn't moved for a while" is a duration, and a client
+   * that has just connected has no history to measure it over; the rise out of
+   * a sit is a memory only the side that has been ticking all along holds.
+   *
+   * Additive, like `climbHeight` before it: absent means walking, which is
+   * every mover on a pre-stance server.
+   */
+  readonly stance?: number | null;
 }
 
 export interface MonstersStatePayload {
@@ -243,6 +258,11 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
     // ground; both mean the same thing and are the same value here.
     const climbHeight = isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null;
     const falling = entry.falling === true;
+    // Absent on every row from a pre-stance server and on every monster that
+    // is walking. An index this build has no stance for means the same thing,
+    // and is normalised at the READ (stance.ts's moverStanceFromWire) rather
+    // than here — that function is the one place the mapping lives.
+    const stance = isFiniteNumber(entry.stance) ? entry.stance : null;
     parsed.push(
       variant === undefined
         ? {
@@ -253,6 +273,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             heading: entry.heading,
             climbHeight,
             falling,
+            stance,
           }
         : {
             id: entry.id,
@@ -262,6 +283,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             heading: entry.heading,
             climbHeight,
             falling,
+            stance,
             variant,
           },
     );
