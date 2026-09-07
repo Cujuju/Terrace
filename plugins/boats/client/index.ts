@@ -10,7 +10,7 @@
 //
 // That is why this plugin has no placement.ts: there is no rule to own.
 
-import { Group } from 'three';
+import { Group, Vector3 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
@@ -71,6 +71,15 @@ const PHASE_PER_ID = 0.618;
 interface BoatView {
   readonly model: BoatModel;
   readonly phase: number;
+  /**
+   * Where this boat was drawn on the last frame, for `drawnPoseOf`.
+   *
+   * Held here because a boat no longer HAS a node whose position could be
+   * read: it is one instance matrix among the fleet's, and reading it back out
+   * of the buffer to answer a mover query would be a decode of something this
+   * loop already knows.
+   */
+  readonly drawnAt: Vector3;
 }
 
 const interpolator = new BoatInterpolator();
@@ -98,16 +107,15 @@ function reconcileViews(sampled: ReadonlyMap<number, unknown>): void {
 
   for (const [id, view] of views) {
     if (sampled.has(id)) continue;
-    container.remove(view.model.root);
     view.model.dispose();
     views.delete(id);
   }
 
   for (const id of sampled.keys()) {
     if (views.has(id)) continue;
-    const model = models.create();
-    container.add(model.root);
-    views.set(id, { model, phase: (id * PHASE_PER_ID) % 1 });
+    // Nothing to add to the container: a boat is an instance in the fleet's
+    // herd, and the herd's meshes went in once at attach.
+    views.set(id, { model: models.create(), phase: (id * PHASE_PER_ID) % 1, drawnAt: new Vector3() });
   }
 }
 
@@ -119,6 +127,10 @@ function renderFrame(dt: number): void {
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
+  // The frame's individuals are forgotten and rebuilt from the sample: a boat
+  // that stops drawing simply is not in it.
+  models?.beginFrame();
+
   for (const [id, boat] of sampled) {
     const view = views.get(id);
     if (view === undefined) continue;
@@ -127,7 +139,7 @@ function renderFrame(dt: number): void {
     // the 2026-08-21 re-sample and this line carried no factor; a boat's pose
     // is in cells because the server steers it in cells, and the hull it is
     // attached to is modelled in world units.
-    view.model.root.position.set(
+    view.drawnAt.set(
       boat.x * CELL_WORLD_SIZE,
       SEA_SURFACE_WORLD_Y + BOAT_SHAPE.waterlineLift,
       boat.y * CELL_WORLD_SIZE,
@@ -136,16 +148,20 @@ function renderFrame(dt: number): void {
     // the boat travels toward (cos heading, 0, sin heading) — hence the
     // negation. The same rule monsters' render loop states, because both
     // plugins' models share the +X convention.
-    //
-    // BEFORE animate, which now composes the sail's instance matrix from this
-    // root's transform: the yaw has to be this frame's by then. animate writes
-    // only rotation.x and rotation.z (the swell), so the two still touch
-    // disjoint axes and neither clobbers the other.
-    view.model.root.rotation.y = -boat.heading;
-    view.model.animate(animationSeconds, view.phase, boat.fighting);
+    view.model.draw(
+      view.drawnAt.x,
+      view.drawnAt.y,
+      view.drawnAt.z,
+      -boat.heading,
+      animationSeconds,
+      view.phase,
+      step,
+      boat.fighting,
+    );
   }
 
-  // One upload for every sail in the fleet, after the last of them is posed.
+  // One upload for the fleet's hulls and one for its sails, after the last
+  // boat has drawn.
   models?.commitFrame();
 }
 
@@ -161,7 +177,7 @@ function renderFrame(dt: number): void {
 function drawnPoseOf(id: number): MoverPose | null {
   const view = views.get(id);
   if (view === undefined) return null;
-  const at = view.model.root.position;
+  const at = view.drawnAt;
   return {
     x: at.x,
     y: at.y,
@@ -175,18 +191,20 @@ export const clientPlugin: TerraceClientPlugin = {
   name: BOATS_PLUGIN_NAME,
 
   /**
-   * Its share of the frame's draw calls, from its own caps — see
-   * TerraceClientPlugin.drawBudget. A GETTER, not a value: the per-HULL count
-   * is measured when the asset bakes (the textured hull costs its own surface
-   * beside the flat set), and the host reads the field every sample — so the
-   * budget follows the measurement instead of freezing the pre-load ceiling.
+   * Its share of the frame's draw calls — see TerraceClientPlugin.drawBudget. A
+   * GETTER, not a value: the hull count is measured when the asset bakes, and
+   * the host reads the field every sample, so the budget follows the
+   * measurement instead of freezing the pre-load ceiling.
    *
-   * TWO TERMS, because the fleet's costs scale differently: the hulls are per
-   * boat, and every sail in the world is one InstancedMesh however many boats
-   * are afloat (FLEET_SAIL_DRAW_OBJECTS).
+   * NO LONGER SCALED BY THE FLEET CAP (#369). Every hull afloat is an instance
+   * in one herd and every sail an instance in one mesh, so the whole plugin
+   * costs its surfaces plus one, at any fleet size. The old
+   * `BOATS_PAYLOAD_CAP × drawObjects` reserved 6144 draw calls for a thing that
+   * now costs two — which is the budget-from-a-payload-cap defect of GH #247,
+   * gone for this plugin.
    */
   get drawBudget(): number {
-    return BOATS_PAYLOAD_CAP * BOAT_SHAPE.drawObjects + FLEET_SAIL_DRAW_OBJECTS;
+    return BOAT_SHAPE.drawObjects + FLEET_SAIL_DRAW_OBJECTS;
   },
 
   /**
@@ -203,9 +221,10 @@ export const clientPlugin: TerraceClientPlugin = {
 
     container = new Group();
     container.name = 'boats:afloat';
-    // THE SAME PARENT the boat roots go under, which is what lets a sail's
-    // instance matrix be composed from a root's LOCAL matrix.
-    container.add(models.sails);
+    // ONE PARENT for both drawn things — the hull herd's surface and the
+    // sails' mesh — which is what lets each instance matrix be the boat's own
+    // local transform. Added once here and never re-parented.
+    for (const object of models.objects) container.add(object);
     ctx.layer.add(container);
     // Aimable, and something a flame can be drawn on — the two halves of being
     // able to put a torch to a boat and watch it burn to the waterline.

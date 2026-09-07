@@ -154,19 +154,26 @@ async function main(): Promise<void> {
   );
   const models = createBoatModels();
   const subject = new Group();
-  // The sails are ONE mesh for the whole fleet, and it belongs to the same
-  // parent the roots do — their instance matrices are composed in its space.
-  subject.add(models.sails);
+  // The hull herd's surface and the fleet's sails: two instanced meshes for any
+  // number of boats, sharing one parent so each instance matrix is a boat's own
+  // local transform. There are no per-boat nodes to add.
+  for (const object of models.objects) subject.add(object);
+  models.beginFrame();
   states.forEach((fighting, index) => {
-    const model = models.create();
-    model.root.position.y = BOAT_SHAPE.waterlineLift;
-    model.root.position.z = (index - (states.length - 1) / 2) * PAIR_SPACING;
-    // AFTER the placement, which animate() composes the sail's instance matrix
-    // from. animate() is a pure function of the clock, so this IS the pose at
-    // `t`. Phase 0 for both, so the pair differ ONLY by their fighting state —
-    // which is the comparison this shot exists to make.
-    model.animate(clock, 0, fighting);
-    subject.add(model.root);
+    // Phase 0 for both boats, so the pair differ ONLY by their fighting state —
+    // which is the comparison this shot exists to make. The whole clock is
+    // handed over as ONE step, which drives the stroke accumulator to exactly
+    // `clock × rate` — the pose the old wall-clock formula gave at `t`.
+    models.create().draw(
+      0,
+      BOAT_SHAPE.waterlineLift,
+      (index - (states.length - 1) / 2) * PAIR_SPACING,
+      0,
+      clock,
+      0,
+      clock,
+      fighting,
+    );
   });
   models.commitFrame();
   scene.add(subject);
