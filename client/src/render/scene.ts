@@ -45,86 +45,64 @@ import { createGpuTimer } from './gpuTimer.ts';
 import type { SkyRigState } from '../plugins/types.ts';
 
 /**
- * The hemisphere light's sky colour — the daylight falling on the map from
- * above. Exported so other render modules that want to blend toward "the sky"
- * derive it from this one definition rather than picking a second sky colour
- * that could drift out of sync.
+ * The hemisphere light's sky colour — the daylight falling on the map.
+ * Exported so other modules that want to blend toward "the sky" derive it
+ * from here rather than picking a second, driftable sky colour.
  *
- * NOT the background any more (issue #326). Outside the map is the celestial
- * void (./celestialVoid.ts), and nothing blends toward it: the frontier mist
- * (./frontierFog.ts) is water-coloured throughout. This constant is the map's
- * own light.
+ * Not the background (issue #326) — outside the map is the celestial void
+ * (./celestialVoid.ts), water-coloured throughout.
  */
 export const SKY_COLOR = 0x9fc7e8;
 /**
- * Bounce colour from below — keeps shaded terrace faces from going black.
- * Lightened from 0x5b5a4e with the 2026-08-14 rebalance: the old bounce was
- * charcoal, so a face tilted away from the sky received almost nothing and
- * read as a black cut whatever the intensities above said.
+ * Bounce colour from below, keeping shaded terrace faces off black.
+ * Lightened from 0x5b5a4e (2026-08-14 rebalance): the old charcoal bounce
+ * gave a sky-averted face almost nothing regardless of intensities above.
  *
- * Exported as the day/night plugin's noon anchor for the hemisphere's ground
- * term — see SUN_DIRECTION_NOON.
+ * Exported as the day/night plugin's noon anchor — see SUN_DIRECTION_NOON.
  */
 export const GROUND_BOUNCE_COLOR = 0x9a948a;
 /**
- * Key-to-fill balance, retuned 2026-08-14 (owner: "the sun is too harsh. It
- * acts too much like a spotlight", then "too much shadow. The world is too
- * dark"). The original 2.2 sun over 1.1 hemisphere put two thirds of a lit
- * face's light in the directional term, so faces swung hard between blasted
- * and murky as they turned. Now the FILL leads (1.9) and the sun (1.5) only
- * models the terraces — its off-axis direction does that work, not raw
- * intensity — so no face of a step is ever far from daylight.
+ * Key-to-fill balance, retuned 2026-08-14 (owner: sun "too much like a
+ * spotlight", then "too dark"). The old 2.2 sun / 1.1 hemisphere put most of
+ * a lit face's light in the directional term, swinging faces between blasted
+ * and murky. Now fill leads (1.9) and the sun (1.5) only models terraces via
+ * its off-axis direction, not intensity.
  *
- * EXPORTED as the NOON ANCHOR of the day/night plugin's cycle (plugins/
- * daynight): that plugin derives its whole lighting sweep from these values
- * so that an unmodded server — or any server at the exact instant its cycle
- * passes through noon — looks exactly like this file always has. Core has no
- * idea a day/night cycle exists; it only publishes the numbers it already
- * had an opinion about.
+ * Exported as the day/night plugin's noon anchor (plugins/daynight): that
+ * plugin derives its whole lighting sweep from these values, so noon there
+ * matches this file always has. Core has no idea a day/night cycle exists.
  */
 export const HEMISPHERE_LIGHT_INTENSITY = 1.5;
 /** Key light. Intensity is tuned against ACES tone mapping, below. */
 export const SUN_LIGHT_INTENSITY = 1.2;
 
 /**
- * The FLOOR under every face, from an AmbientLight — the one lamp with no
- * direction at all. The sun is directional and the hemisphere is vertical-
- * orientation-dependent, so with only those two a face turned away from both
- * is dark from SOME camera angle whatever their intensities are — which is
- * exactly the report this closes (owner, 2026-08-14, third round: "it still
- * doesn't fix the darker view when looking at the side of terrain"). 0.9
- * guarantees roughly a third of full daylight to the worst-oriented face;
- * modeling contrast on top comes from the (now gentler) sun and hemisphere.
+ * The floor under every face, from an AmbientLight (no direction). The sun
+ * is directional and the hemisphere vertical-dependent, so without this a
+ * face turned away from both is dark from some angle regardless of their
+ * intensities (owner, 2026-08-14, third round: "still doesn't fix the darker
+ * view when looking at the side of terrain"). 0.9 gives the worst-oriented
+ * face roughly a third of full daylight.
  *
- * Exported for the same day/night noon-anchor reason as HEMISPHERE_LIGHT_
- * INTENSITY above.
+ * Exported for the same day/night noon-anchor reason as HEMISPHERE_LIGHT_INTENSITY.
  */
 export const AMBIENT_FLOOR_INTENSITY = 0.9;
 /**
- * Sun direction as a unit-ish vector. Deliberately off-axis on all three axes
- * so that the four sides of a terrace step each catch a different amount of
- * light — an axis-aligned sun makes opposite faces identical and the steps
- * stop reading as steps.
+ * Sun direction, deliberately off-axis on all three axes so the four sides
+ * of a terrace step each catch a different amount of light — axis-aligned
+ * would make opposite faces identical and the steps stop reading as steps.
  *
- * A plain tuple, not a Vector3, and EXPORTED: the day/night plugin's pure
- * numeric module (plugins/daynight/client/sky.ts) needs these three numbers
- * as its noon anchor but must stay import.meta.env-free to run under a plain
- * node test (the same constraint plugins/weather/client/sky.ts documents on
- * WORLD_UNITS_PER_BAND) — a Vector3 export would be fine for that constraint
- * itself, but the raw numbers are also what that plugin's tests assert
- * against directly, without constructing three.js objects to do it.
+ * A plain tuple, exported: the day/night plugin's pure module
+ * (plugins/daynight/client/sky.ts) needs these numbers as its noon anchor
+ * but must stay import.meta.env-free to run under plain node, and its tests
+ * assert against the raw numbers directly.
+ *
+ * LOWERED 2026-08-14 (owner: sun "feels overhead and still harsh so the
+ * sides of terrain appears dark"): y 0.7→0.45 takes elevation ~45°→~27°, so
+ * walls catch real sun while treads stay brightest.
  */
-// LOWERED 2026-08-14 (owner: the light "feels like it's overhead and still
-// harsh so the sides of terrain appears dark"): y dropped 0.7 → 0.45 takes
-// the sun from ~45° to ~27° elevation, so terrace WALLS now catch real sun
-// while treads keep enough of it to stay the brightest surfaces. Still
-// off-axis on all three axes for the reasons above.
 export const SUN_DIRECTION_NOON: readonly [number, number, number] = [0.7, 0.45, 0.55];
-/**
- * Distance to place the (directional) sun at; only its direction matters —
- * exported so applySkyRig (./skyRig.ts) can place a plugin-driven sun the
- * same way core places its own, without a second unjustified number.
- */
+/** Distance to place the directional sun at; only direction matters. Exported so applySkyRig (./skyRig.ts) places a plugin-driven sun the same way. */
 export const SUN_DISTANCE_WORLD_UNITS = 200;
 
 /** Pixel-ratio cap: beyond 2x the fill cost buys nothing visible. */
@@ -139,10 +117,8 @@ const INITIAL_POLAR_DEGREES = 55;
 
 /**
  * The lights a plugin-driven sky rig may mutate — see Viewport.lighting and
- * ClientPluginCtx.setSkyRig (client/src/plugins/types.ts). Deliberately just
- * the three light objects and nothing else of the scene (no camera, no
- * terrain, no `scene` itself): the capability this backs is "the shape of a
- * sky", not a raw scene handle.
+ * ClientPluginCtx.setSkyRig. Deliberately just the three lights, nothing
+ * else of the scene: the capability is "the shape of a sky", not a scene handle.
  */
 export interface SkyLightingRig {
   readonly sun: DirectionalLight;
@@ -167,47 +143,36 @@ export interface Viewport {
   /** Everything sculptable lives here; the raycaster tests this group only. */
   readonly terrainGroup: Group;
   /**
-   * The three lights core builds at boot, handed out so client/plugins/
-   * host.ts can mutate them on behalf of the ONE plugin that claims
-   * ClientPluginCtx.setSkyRig (see ./skyRig.ts). Nothing outside host.ts and
-   * skyRig.ts should reach into this — a second mutator would race the first
-   * with no error, exactly the failure the single-claimant rule in
-   * setSkyRig's own doc comment exists to prevent.
+   * The three lights core builds at boot, for client/plugins/host.ts to
+   * mutate on behalf of the one plugin claiming ClientPluginCtx.setSkyRig
+   * (./skyRig.ts). Nothing else should reach in — a second mutator would
+   * race the first with no error.
    */
   readonly lighting: SkyLightingRig;
   /**
-   * The sky as an environment map for authored PBR assets to reflect — see
-   * ./skyEnvironment.ts. Painted at boot from the same noon constants the
-   * lamps above are built from, and repainted by applySkyRig whenever a plugin
-   * changes the sky, so a reflection and the lamps never disagree about what
-   * time of day it is. NOT scene.environment: only assets loaded with
-   * ClientPluginCtx.loadRigAsset's 'sky-environment' policy sample it.
+   * The sky as an environment map for authored PBR assets to reflect
+   * (./skyEnvironment.ts). Painted at boot from the same noon constants as
+   * the lamps, repainted by applySkyRig on any sky change, so reflections
+   * and lamps never disagree. Not scene.environment — only assets loaded
+   * with ClientPluginCtx.loadRigAsset's 'sky-environment' policy sample it.
    */
   readonly skyEnvironment: SkyEnvironment;
   /**
-   * Points the camera at a world of this size, once that size is known, and
-   * arms pose persistence for it (nothing can be stored before the world's
-   * identity — and therefore its storage key — exists).
-   *
-   * The stored pose for this server + world size wins if there is a valid one,
-   * so a reload resumes the exact view it left; otherwise the world is framed
-   * from scratch. Returns true when a stored pose was restored.
+   * Points the camera at a world of this size and arms pose persistence for
+   * it. A stored pose for this server + world size wins if valid, so a
+   * reload resumes the exact view; otherwise the world is framed from
+   * scratch. Returns true when a stored pose was restored.
    */
   restoreOrFocus(worldSize: number): boolean;
-  /**
-   * Registers a per-frame callback, called before each render with the frame
-   * delta in seconds (capped — see FRAME_DELTA_CAP_S). Returns an unregister
-   * function. This is how plugin layers animate without owning a loop.
-   */
+  /** Registers a per-frame callback with the frame delta in seconds (capped — see FRAME_DELTA_CAP_S). Returns an unregister function. */
   onFrame(handler: (dt: number) => void, phase?: FramePhase): () => void;
   /**
    * Supplies the ground the camera is held above (render/cameraClearance.ts).
-   * Null — the state at boot — disables the floor entirely, which is correct
-   * before a world exists: there is no ground to be under yet.
+   * Null (the boot state) disables the floor — correct before a world exists.
    *
-   * Core cannot build this itself. The height field belongs to the world
-   * (world.ts owns the mirror), and the viewport deliberately knows nothing
-   * about terrain data; main.tsx is where the two meet.
+   * Core cannot build this itself: the height field belongs to the world
+   * (world.ts), and the viewport deliberately knows nothing about terrain
+   * data; main.tsx is where the two meet.
    */
   setGroundHeightSampler(sampler: GroundHeightSampler | null): void;
   start(): void;
@@ -215,43 +180,35 @@ export interface Viewport {
 }
 
 /**
- * Upper bound on the dt handed to frame callbacks, in seconds. A backgrounded
- * tab stops receiving animation frames; without the cap, returning to the tab
- * would hand animations one multi-second step and every wandering creature
- * would teleport. 100 ms = the server's tick period: a plausible worst normal
- * frame, and far below anything that reads as a jump.
+ * Upper bound on the dt handed to frame callbacks, seconds. A backgrounded
+ * tab stops receiving animation frames; without this cap, returning would
+ * hand animations a multi-second step and teleport every creature. 100 ms
+ * matches the server's tick period.
  */
 const FRAME_DELTA_CAP_S = 0.1;
 
-/**
- * Dev-only handle onto the live Scene, filled once it exists below. Held in a
- * holder rather than assigned to the global directly so the global exists (and
- * a driver can wait on `.scene`) from the first line of createViewport.
- */
+/** Dev-only handle onto the live Scene. Held in a holder rather than assigned directly so the global exists from createViewport's first line. */
 const scene0Holder: { scene: unknown } = { scene: null };
 
 export function createViewport(canvas: HTMLCanvasElement): Viewport {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
-  // Dev-only handles for the CDP perf drivers (scripts/gpu-bench.md and the
-  // .gpu-perf / .perf-run rigs): the renderer, so a driver can read
-  // renderer.info (draw calls, triangles) per frame, and the scene, so it can
-  // census instanced meshes and lights. Same gate as the `__terrace` handle in
-  // main.tsx — import.meta.env.DEV is statically false in production builds,
-  // so the block is eliminated there (issue #309).
+  // Dev-only handles for the CDP perf drivers (scripts/gpu-bench.md, the
+  // .gpu-perf/.perf-run rigs). Same gate as main.tsx's `__terrace` handle:
+  // import.meta.env.DEV is statically false in production, eliminating the
+  // block there (issue #309).
   if (import.meta.env.DEV) {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
     (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
   }
-  // The frame meter's GPU clock (render/gpuTimer.ts). Marked once per frame
-  // below; one query in flight, which is all WebGL2 allows.
+  // The frame meter's GPU clock. Marked once per frame below; one query in
+  // flight, all WebGL2 allows.
   const gpuTimer = createGpuTimer(renderer.getContext());
   setGpuSampleSource(() => gpuTimer.drain());
-  // The frame meter's counter source (render/frameStats.ts). Read once per
-  // window, never per frame. It lives here because this is the only file that
-  // holds the renderer, and frameStats deliberately does not import three.
+  // The frame meter's counter source, read once per window (not per frame).
+  // Lives here since this file holds the renderer and frameStats deliberately
+  // does not import three.
   setFrameCounterSource(() => ({
-    // The DRAWING BUFFER, not the CSS box: pixel ratio is what separates the
-    // two, and pixels are what cost time.
+    // The drawing buffer, not the CSS box — pixel ratio separates the two.
     pixelWidth: renderer.domElement.width,
     pixelHeight: renderer.domElement.height,
     cameraDistance: camera.position.distanceTo(controls.target),
@@ -264,28 +221,23 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   // Per-material clipping planes are ignored until this is on. The brush
   // preview (render/brushPreview.ts) is the one user, cutting its outline at
-  // the world's edge (issue #281); a material with no clippingPlanes set pays
-  // nothing for the flag.
+  // the world's edge (issue #281); a material with no clippingPlanes pays nothing.
   renderer.localClippingEnabled = true;
   renderer.outputColorSpace = SRGBColorSpace;
-  // ACES keeps the bright snow band and the dark seabed both readable without
+  // ACES keeps the bright snow band and dark seabed both readable without
   // per-material tuning.
   renderer.toneMapping = ACESFilmicToneMapping;
-  // Above the default 1: the third dial of the 2026-08-14 daylight retune
-  // (with the key/fill balance and the lowered sun above). Exposure lifts
-  // EVERYTHING — including the shadow sides the owner reported as too dark —
-  // where intensity changes shift the key/fill balance; ACES soft-clips the
-  // top end so treads and snow do not blow out.
+  // Above the default 1: third dial of the 2026-08-14 daylight retune,
+  // alongside the key/fill balance and lowered sun. Lifts everything,
+  // including the shadow sides; ACES soft-clips the top end.
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
 
   const scene = new Scene();
   scene0Holder.scene = scene;
-  // NO scene.background. What is drawn outside the map is the celestial void
-  // pass (./celestialVoid.ts, issue #326), a fullscreen mesh main.tsx adds to
-  // this scene — not a flat colour. Leaving `background` at its null default
-  // is also what keeps time of day off the void: ./skyRig.ts only writes a
-  // background that is a Color, so the day/night plugin's backgroundColor now
-  // has nothing to land on. See celestialVoid.ts's header.
+  // NO scene.background: outside the map is the celestial void pass
+  // (./celestialVoid.ts, issue #326), a fullscreen mesh main.tsx adds — not a
+  // flat colour. `background` staying null also keeps time of day off the
+  // void, since ./skyRig.ts only writes a Color background.
 
   const camera = new PerspectiveCamera(
     CAMERA_FOV_DEGREES,
@@ -307,14 +259,13 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
 
   const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
   sun.position.set(...SUN_DIRECTION_NOON).normalize().multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
-  // No shadow map in Phase 1: a directional shadow covering a 512-cell world
+  // No shadow map in Phase 1: a directional shadow over a 512-cell world
   // needs a large cascade to avoid acne, and the terraced silhouette already
-  // reads without it. Revisit with the Phase 2 look pass.
+  // reads without it.
   scene.add(sun);
 
-  // The SAME noon the lamps above were just built from, as a SkyRigState —
-  // the shape applySkyRig will later repaint the environment from — so the
-  // boot-time reflection is the boot-time sky and not a second opinion of it.
+  // The same noon the lamps above were just built from, as a SkyRigState, so
+  // the boot-time reflection matches the boot-time sky rather than a second opinion.
   const noonSky: SkyRigState = {
     sunDirection: {
       x: SUN_DIRECTION_NOON[0],
@@ -340,17 +291,14 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   controls.minDistance = CAMERA_MIN_DISTANCE;
   controls.maxDistance = CAMERA_MAX_DISTANCE;
   controls.maxPolarAngle = MathUtils.degToRad(CAMERA_MAX_POLAR_ANGLE_DEGREES);
-  // Wheel zoom dollies toward the point under the POINTER, not the orbit
-  // target (owner, 2026-08-14: "it should zoom in to the location where the
-  // mouse is currently sitting"). OrbitControls' native implementation — it
-  // re-anchors controls.target as it dollies, so the orbit centre lands where
-  // the player was looking. Trackpad pinch (wheelCamera.ts) keeps its own
-  // centre-anchored dolly: there the fingers are the gesture's own anchor.
+  // Wheel zoom dollies toward the point under the pointer, not the orbit
+  // target (owner, 2026-08-14: "zoom in to where the mouse is sitting").
+  // Trackpad pinch (wheelCamera.ts) keeps its own centre-anchored dolly —
+  // there the fingers are the gesture's own anchor.
   controls.zoomToCursor = true;
-  // Which mouse button drives which camera verb is user-configurable and is
-  // owned by input/cameraBindings.ts (wired in main.tsx): it sets
-  // controls.mouseButtons per press so buttons claimed by the sculpt brush are
-  // null here and the two input owners never fight over a drag.
+  // Mouse-button-to-verb mapping is owned by input/cameraBindings.ts (wired
+  // in main.tsx), setting controls.mouseButtons per press so the sculpt
+  // brush and orbit controls never fight over a drag.
 
   const resize = (): void => {
     const width = canvas.clientWidth;
@@ -362,20 +310,17 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   };
 
   /**
-   * Frame callbacks, in TWO PHASES.
+   * Frame callbacks, in two phases.
    *
-   * WHY A PHASE AND NOT JUST REGISTRATION ORDER (bug, 2026-08-24). Some plugins
-   * draw a thing ON another plugin's thing — a flame on a burning boat — by
-   * asking its owner, every frame, where that thing is being drawn
-   * (ClientPluginCtx.publishMovers). That is a read-after-write between two
-   * plugins inside one frame, and with a single callback list its correctness
-   * came down to the order of an array in client/src/plugins/registry.ts: fire
-   * happened to be listed after wildlife and before boats, so it read one
-   * owner's poses fresh and the other's one frame stale.
+   * WHY A PHASE, NOT REGISTRATION ORDER (bug, 2026-08-24). Some plugins draw a
+   * thing on another plugin's thing — a flame on a burning boat — by reading
+   * that owner's live pose every frame (ClientPluginCtx.publishMovers), a
+   * read-after-write between plugins within one frame. With a single callback
+   * list, correctness depended on registry.ts's array order — fire happened
+   * to read one owner fresh and the other a frame stale.
    *
-   * So the dependency is DECLARED instead of stumbled into. Everything that
-   * publishes poses runs in the 'pose' phase, everything else in 'draw', and
-   * the loop below runs the phases in that order.
+   * The dependency is declared instead: pose-publishers run in 'pose', the
+   * rest in 'draw', in that order.
    */
   const frameCallbacks = new Set<(dt: number) => void>();
   const poseFrameCallbacks = new Set<(dt: number) => void>();
@@ -384,28 +329,18 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   // and null again for any point with no ground — see GroundHeightSampler.
   let groundHeightSampler: GroundHeightSampler | null = null;
 
-  /**
-   * Frame callbacks that have already thrown once. A callback that throws does
-   * so EVERY frame, so the console would otherwise carry sixty copies of the
-   * same stack per second and bury whatever else was being reported — the same
-   * once-per-claimant rule the plugin host applies to its sky-rig refusals.
-   */
+  /** Frame callbacks that have already thrown once — a throwing callback throws every frame, so this stops the console filling with duplicate stacks. */
   const brokenFrameCallbacks = new WeakSet<(dt: number) => void>();
 
   /**
    * Runs one frame callback in isolation.
    *
-   * WITHOUT THIS, ONE PLUGIN FREEZES THE WHOLE GAME. The callbacks share a
-   * single loop with `controls.update()` and `renderer.render()` below, so a
-   * throw from any one of them skipped every later subscriber AND the render
-   * itself: the canvas kept showing its last frame forever, which reads as
-   * "the world froze" rather than as "one plugin is broken". A per-callback
-   * boundary keeps the failure the size of the plugin that caused it.
+   * Without this, one throw skips every later subscriber AND the render
+   * itself — the canvas freezes on its last frame, reading as "the world
+   * froze" rather than "one plugin is broken".
    *
-   * A throwing callback is NOT unsubscribed. Some of them are waiting on data
-   * that has not arrived (a chunk, a texture) and recover on their own, and
-   * silently disabling a plugin for one bad frame would be a worse failure than
-   * the one this guards against.
+   * A throwing callback is NOT unsubscribed: some are waiting on data that
+   * has not arrived yet and recover on their own.
    */
   const runFrameCallback = (cb: (dt: number) => void, dt: number): void => {
     try {
@@ -422,8 +357,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   const renderFrame = (): void => {
     frameHandle = requestAnimationFrame(renderFrame);
     const nowMs = performance.now();
-    // BEFORE ANY GL WORK THIS FRAME: the query spans mark to mark, so this is
-    // what makes it one whole frame's GPU time rather than part of one.
+    // Before any GL work this frame: the query spans mark to mark.
     gpuTimer.mark();
     // First frame has no predecessor; a zero step is correct for it.
     const dt =
@@ -434,24 +368,20 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     // POSE FIRST, then everything that may read a pose.
     for (const cb of poseFrameCallbacks) runFrameCallback(cb, dt);
     for (const cb of frameCallbacks) runFrameCallback(cb, dt);
-    // Damping needs a per-frame update; it is also what applies any pending
-    // camera input.
+    // Damping needs a per-frame update; it also applies any pending camera input.
     controls.update();
-    // AFTER the update, never before: the update is what writes the camera
-    // position, so a floor applied ahead of it is simply overwritten. See
-    // ./cameraClearance.ts for why the orbit's own minDistance cannot do this.
+    // After the update, never before — the update writes the camera
+    // position, so an earlier floor would just be overwritten.
     if (groundHeightSampler !== null) {
       applyGroundClearance(camera.position, groundHeightSampler);
     }
-    // BEFORE the render: a repaint's own draws reset renderer.info, and the
-    // draw-budget sampler reads that after this frame's render (plugins/
-    // host.ts) — run here they cannot land in its count.
+    // Before the render: a repaint's own draws reset renderer.info, and the
+    // draw-budget sampler (plugins/host.ts) reads that after this frame's render.
     skyEnvironment.flush(nowMs);
-    // THE ONLY TWO EXTRA CLOCK READS IN THE FRAME (render/frameStats.ts). They
-    // bracket `renderer.render` because that is where the whole of the decay in
-    // docs/plans/frame-rate-decay-2026-09-05.md §7d lives, and because nothing
-    // outside three can sub-time it. `nowMs` above is reused as the frame's
-    // start, so the frame body pays for two readings and three array writes.
+    // The only two extra clock reads in the frame (render/frameStats.ts),
+    // bracketing `renderer.render` — where the §7d decay lives and the only
+    // thing outside three that can sub-time it. `nowMs` above is reused as
+    // the frame start.
     const renderStartMs = performance.now();
     renderer.render(scene, camera);
     recordFrame(nowMs, renderStartMs, performance.now());
@@ -503,11 +433,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   };
 
   /**
-   * Schedules ONE save CAMERA_POSE_SAVE_DEBOUNCE_MS from the first change of a
-   * burst; further changes inside that window ride along rather than pushing
-   * the deadline out. A deadline-resetting debounce would write nothing at all
-   * during a long continuous gesture (wheel zoom, damping decay), which is
-   * precisely the case 'end' does not cover.
+   * Schedules one save CAMERA_POSE_SAVE_DEBOUNCE_MS from the first change of a
+   * burst; later changes ride along rather than pushing the deadline out. A
+   * deadline-resetting debounce would write nothing during a long continuous
+   * gesture (wheel zoom, damping decay) — the case 'end' does not cover.
    */
   const savePoseSoon = (): void => {
     if (poseStorageKey === null || poseSaveTimer !== null) return;
@@ -517,10 +446,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     }, CAMERA_POSE_SAVE_DEBOUNCE_MS);
   };
 
-  // 'end' closes a completed gesture; 'change' catches the streams that never
-  // emit one. pagehide covers the reload that lands inside the debounce window
-  // — it fires on both navigation and bfcache suspension, where 'unload' does
-  // not (and 'unload' would disqualify the page from the bfcache).
+  // 'end' closes a completed gesture; 'change' catches streams that never
+  // emit one. pagehide covers a reload landing inside the debounce window —
+  // it fires on navigation and bfcache suspension, unlike 'unload' (which
+  // would also disqualify the page from the bfcache).
   controls.addEventListener('end', savePoseNow);
   controls.addEventListener('change', savePoseSoon);
   window.addEventListener('pagehide', savePoseNow);
@@ -538,9 +467,8 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
       stored.position.y,
       stored.position.z,
     );
-    // Recomputes the controls' internal spherical from the pose we just set;
-    // without it the next input would swing the camera back to the previous
-    // orbit angles.
+    // Recomputes the controls' internal spherical from the pose just set;
+    // without it the next input swings the camera back to the previous orbit angles.
     controls.update();
     return true;
   };

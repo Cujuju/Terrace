@@ -1,24 +1,18 @@
 // The frame meter's three readouts, and the only file that decides when the
 // meter publishes anything.
 //
-// render/frameStats.ts measures unconditionally — it is two clock reads — but
-// it publishes only through a sink, and this file owns that sink. Three ways to
-// read it, and they exist for three different situations:
+// render/frameStats.ts measures unconditionally but publishes only through a
+// sink this file owns. Three ways to read it:
 //
-//   * THE HUD BLOCK (backquote) — "this session feels slower than it did", the
-//     numbers wanted live while playing.
-//   * `__terracePerf.stats()` — one reading, from a console or a driver, with
-//     no HUD and no re-render.
-//   * `?perflog=1` (or `__terracePerf.log(true)`) — one line per window into
-//     the console, so a two-hour session leaves a decay trace that can be read
-//     afterwards without anyone having watched it happen.
+//   * THE HUD BLOCK (backquote) — live numbers while playing.
+//   * `__terracePerf.stats()` — one reading, from a console or a driver.
+//   * `?perflog=1` (or `__terracePerf.log(true)`) — one line per window to
+//     the console, so a long session leaves a decay trace readable afterward.
 //
-// NONE OF IT IS DEV-GATED, unlike perfProbe.ts and the `__terrace` handle in
-// main.tsx. That is the point: the decay in
-// docs/plans/frame-rate-decay-2026-09-05.md §7d took a night of bench runs to
-// characterise because it could only be watched in a rig, and §7d's own control
-// had to prove the rig was not causing it. This ships, so the next reading can
-// come from a normal session.
+// NOT DEV-GATED, unlike perfProbe.ts and the `__terrace` handle in main.tsx:
+// the decay in docs/plans/frame-rate-decay-2026-09-05.md §7d took a night of
+// bench runs to characterise and could only be watched in a rig. This ships
+// so the next reading can come from a normal session.
 
 import { createEffect, createRoot, createSignal } from 'solid-js';
 import {
@@ -41,16 +35,11 @@ const PERF_TOGGLE_KEY = 'Backquote';
 const [logging, setLogging] = createSignal(false);
 
 function queryFlagSet(name: string): boolean {
-  // `location` is absent in a non-DOM test run; absence means off, never a throw.
   if (typeof location === 'undefined') return false;
   return new URLSearchParams(location.search).get(name) !== null;
 }
 
-/**
- * One window as one line. Fixed field order and two decimals so a session's
- * worth of these can be pasted into a sheet and read as a slope, which is the
- * only form the decay is visible in.
- */
+/** One window as one line, fixed field order, so a session's worth can be pasted into a sheet and read as a slope. */
 function logSample(sample: FrameStatsSample): void {
   console.info(
     `[perf] up=${Math.round(sample.uptimeS)}s frames=${sample.frames} ` +
@@ -63,29 +52,20 @@ function logSample(sample: FrameStatsSample): void {
       `max=${sample.frameMsMax.toFixed(2)} interval=${sample.intervalMsP50.toFixed(2)} ` +
       `draws=${sample.counters.drawCalls} geo=${sample.counters.geometries} ` +
       `tex=${sample.counters.textures} prog=${sample.counters.programs}` +
-      // Appended to the SAME line, not logged separately: a soak's value is in
-      // pasting its lines into a sheet and reading a slope down each column,
-      // and a second line per window breaks that.
+      // Same line, not a second one: a soak's value is pasting into a sheet
+      // and reading a slope down each column.
       sample.plugins.map((p) => ` ${p.name}=${p.msPerFrame.toFixed(2)}`).join(''),
   );
 }
 
 /**
- * Keeps the sink in step with whoever wants windows — installed when a readout
- * is on, removed when none are.
+ * Keeps the sink in step with whoever wants windows.
  *
- * AN EFFECT, NOT A CALL EVERY TOGGLE MAKES. The sink was originally refreshed by
- * hand at each toggle site, which meant every new way to open the block — the
- * key, the console handle, and then the HUD button (2026-09-06) — had to
- * remember to refresh it, and a caller that forgot would open a block that
- * displayed nothing at all. Deriving it from `perfOpen()` instead makes
- * `setPerfOpen` sufficient on its own from anywhere, so there is nothing left to
- * forget. Owned by a createRoot because this is not a component: without one the
- * effect would belong to no owner and never be disposed.
- *
- * Removing the sink rather than leaving a no-op in place is what keeps a closed
- * readout free: with no sink a window closes without writing a signal and
- * without formatting a string.
+ * An effect, not a call at every toggle site: each new way to open the block
+ * (key, console handle, HUD button) would otherwise have to remember to
+ * refresh the sink or open showing nothing. Owned by a createRoot since this
+ * is not a component. Removing the sink (not a no-op) is what keeps a closed
+ * readout free of formatting cost.
  */
 function trackReadouts(): () => void {
   return createRoot((dispose) => {
@@ -94,9 +74,7 @@ function trackReadouts(): () => void {
       const logWants = logging();
       if (!hudWants && !logWants) {
         setFrameStatsSink(null);
-        // The block prints from this signal, so a stale sample must not survive
-        // its own readout — reopening it should show the next real window, not
-        // the last one from minutes ago.
+        // A reopened block must show the next real window, not a stale one.
         setFrameStats(null);
         return;
       }
@@ -104,21 +82,15 @@ function trackReadouts(): () => void {
         if (logWants) logSample(sample);
         if (hudWants) setFrameStats(sample);
       });
-      // AFTER the sink is installed, never before: the flush publishes THROUGH
-      // it, so a flush ahead of it would go nowhere and the block would still
-      // open empty. This is what makes the readout show numbers on the click
-      // rather than up to FRAME_STATS_WINDOW_MS later.
+      // After the sink installs, never before, or the flush goes nowhere and
+      // the block opens empty instead of showing numbers immediately.
       flushFrameStats();
     });
     return dispose;
   });
 }
 
-/**
- * True while the event's target is somewhere text is being typed. Without this
- * the toggle key fires inside the world-name field and every other text input,
- * where a backquote is a character and not a command.
- */
+/** True while typing, so the toggle key doesn't fire as a character inside a text field. */
 function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -128,21 +100,18 @@ function isTextEntry(target: EventTarget | null): boolean {
 
 /**
  * Wires the key, the console handle and the query flag. Called once from
- * main.tsx. Returns the teardown, so a caller that unmounts the client stops
- * publishing with it.
+ * main.tsx; returns the teardown.
  *
- * THE KEY IS HANDLED HERE, NOT IN ui/Hud.tsx, on purpose: this is a diagnostic
- * rather than a HUD control, and it has to answer whether the HUD is mounted,
- * collapsed, or mid-popup. Hud.tsx's own key handler is a careful chain about
- * which layer Escape closes; a diagnostic toggle has no business inside it.
+ * The key is handled here, not in ui/Hud.tsx: this is a diagnostic, not a HUD
+ * control, and Hud.tsx's own Escape-key chain has no business inside it.
  */
 export function installPerfHandle(): () => void {
   setLogging(queryFlagSet(PERF_LOG_QUERY_FLAG));
   const disposeReadouts = trackReadouts();
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.code !== PERF_TOGGLE_KEY) return;
-    // Modified backquote belongs to the browser and the OS (Ctrl+` is a
-    // terminal in several editors); only the bare key is ours.
+    // Modified backquote belongs to the browser/OS (Ctrl+` opens a terminal
+    // in several editors); only the bare key is ours.
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (isTextEntry(event.target)) return;
     setPerfOpen(!perfOpen());
@@ -157,14 +126,10 @@ export function installPerfHandle(): () => void {
       return perfOpen();
     },
     /**
-     * Samples this page's own call stacks for `seconds` and prints them ranked
-     * by self time — the one instrument that can name what inside
-     * `renderer.render` is growing (render/selfProfile.ts, issue #378).
-     *
-     * Run it on a page that has ALREADY decayed: a fresh page profiles the
-     * thing that is not yet wrong. Leave the tab in the foreground while it
-     * runs; Chrome stops sampling a page it considers hidden, exactly as it
-     * stops rAF.
+     * Samples this page's own call stacks for `seconds`, ranked by self time
+     * — names what inside `renderer.render` is growing (issue #378). Run on
+     * a page that has already decayed; a fresh page profiles the wrong
+     * thing. Keep the tab foregrounded — Chrome stops sampling hidden tabs.
      */
     profile: async (seconds = 10): Promise<SelfProfileResult> => {
       const result = await startSelfProfile(seconds * 1000);

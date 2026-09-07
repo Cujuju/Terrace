@@ -3,35 +3,28 @@
 // ./species/speciesModel.ts); this file lends the pool, bakes and herds.
 //
 // Rules this file keeps:
-//   * NO per-creature lights, and NO Math.random in any geometry. What is
-//     authored below is generated here; the scene's hemisphere + sun light
-//     (render/scene.ts) does all the lighting, and flat shading is what makes a
-//     6-segment sphere read as a deliberate faceted style rather than as a
-//     low-detail mistake.
+//   * NO per-creature lights, and NO Math.random in any geometry. The scene's
+//     hemisphere + sun light (render/scene.ts) does all the lighting, and
+//     flat shading is what makes a 6-segment sphere read as deliberate
+//     faceting rather than low detail.
 //
-//     UNTIL 2026-09-04 this rule also read "NO textures, NO external assets".
-//     Superseded by the owner that day: external GLB assets and their textures
-//     are allowed, and an imported model is the DEFAULT path for a new species
-//     (docs/model-assets.md). The pool already holds asset-sourced species —
-//     ./species/assetSpecies.ts installs a .glb per species and the grazer is a
-//     CC0 deer (./assets/grazer-deer.glb), the fish a Blender-built body — and
-//     they arrive through this pool as the same AuthoredSpecies the hand-built
-//     ones do. What stays banned: non-determinism in procedural geometry,
-//     per-object lights, and anything that changes shared/.
-//   * GEOMETRIES AND MATERIALS ARE SHARED across every instance of a species and
-//     built exactly once. Per-creature allocation would be a hundred BufferGeometry
-//     uploads that are all byte-identical. `dispose()` frees them once too.
-//   * The origin is the creature's PIVOT: feet for a walker, body centre for a
-//     swimmer, and the model faces +X (see index.ts for the heading → rotation.y
-//     mapping).
-//
-//   * A CREATURE IS NOT A SCENE OBJECT. Every individual used to carry a root
-//     Group, a Skeleton, a Bone per joint and a SkinnedMesh per surface — ~8 300
-//     Object3Ds at the population cap, all of them walked by three's
-//     updateMatrixWorld before culling could reject any (perf review
-//     2026-08-29, A2). Now a whole species is one InstancedMesh per baked
-//     surface: `create` became `draw`, and the scene object count is O(species)
-//     rather than O(creatures). See client/src/render/rigHerd.ts.
+//     Until 2026-09-04 this also read "no textures, no external assets".
+//     Superseded that day: external GLB assets are allowed and are the
+//     default path for a new species (docs/model-assets.md) —
+//     ./species/assetSpecies.ts installs a .glb per species, arriving
+//     through this pool as the same AuthoredSpecies the hand-built ones are.
+//     Still banned: non-determinism in procedural geometry, per-object
+//     lights, and anything touching shared/.
+//   * GEOMETRIES AND MATERIALS ARE SHARED across every instance of a species,
+//     built exactly once; `dispose()` frees them once too.
+//   * The origin is the creature's PIVOT: feet for a walker, body centre for
+//     a swimmer, facing +X (see index.ts for heading → rotation.y).
+//   * A CREATURE IS NOT A SCENE OBJECT. Each used to carry a root Group, a
+//     Skeleton, a Bone per joint and a SkinnedMesh per surface (~8,300
+//     Object3Ds at population cap, all walked by updateMatrixWorld before
+//     culling — perf review 2026-08-29, A2). Now a whole species is one
+//     InstancedMesh per baked surface: `create` became `draw`, and scene
+//     object count is O(species), not O(creatures). See render/rigHerd.ts.
 
 import {
   BoxGeometry,
@@ -46,8 +39,8 @@ import {
   type Material,
   type Object3D,
 } from 'three';
-// Render kit, reached the same way client/src/plugins/registry.ts reaches this
-// plugin — by path. See that module's header for why it lives there.
+// Render kit, reached the same way client/src/plugins/registry.ts reaches
+// this plugin — by path.
 import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
 import {
@@ -62,10 +55,8 @@ import { buildBlueWhale } from './species/blueWhale.ts';
 import { buildSpermWhale } from './species/spermWhale.ts';
 import { type WildlifeSizeClass, type WildlifeSpecies } from '../protocol.ts';
 import { modelScaleFor } from './modelScale.ts';
-// One file per species (./species/), each the sole author of its own anatomy
-// and animation. This file no longer draws a fish or a grazer; it lends the
-// pool and bakes whatever the species file hands back. See
-// ./species/speciesModel.ts for the contract and for why it is a file each.
+// One file per species (./species/); this file no longer draws a fish or a
+// grazer, it lends the pool and bakes whatever the species file hands back.
 import type { SpeciesModelBuilder, SpeciesModelPool } from './species/speciesModel.ts';
 import { buildFish } from './species/fish.ts';
 import { buildGrazer } from './species/grazer.ts';
@@ -78,79 +69,55 @@ import { buildEel } from './species/eel.ts';
 import { buildAngelfish } from './species/angelfish.ts';
 import { buildDeepsea } from './species/deepsea.ts';
 
-/**
- * Sphere tessellation. 6 segments around, 4 rings tall: the fewest that still
- * reads as a body rather than a die, and with flatShading it gives the chunky
- * facets the terraced terrain already has.
- */
+/** Sphere tessellation: 6 segments, 4 rings — fewest that still reads as a body, and gives flatShading the terraced terrain's chunky facets. */
 const SPHERE_SEGMENTS = 6;
 const SPHERE_RINGS = 4;
 /** Cones are 4-sided — pyramids, deliberately. */
 const CONE_SEGMENTS = 4;
 
 /**
- * Birds are read as SILHOUETTES, not as coloured objects: they are the only
- * creature seen against the sky (0x9fc7e8 in render/scene.ts) rather than
- * against terrain or water, and they are the smallest thing on screen. A dark
- * slate keeps that contrast from every camera angle — a bird tinted to look
- * "right" in isolation would vanish into the background at distance, which is
- * the only distance birds are ever seen from.
+ * Birds are read as SILHOUETTES: the only creature seen against the sky
+ * (0x9fc7e8, render/scene.ts) rather than terrain or water, and the smallest
+ * thing on screen. Dark slate keeps contrast from every angle — a bird
+ * tinted to look "right" up close would vanish at the only distance it's seen from.
  */
 const BIRD_COLOR = 0x2e3646;
 
 /**
- * What the one body still authored in this file measures in WORLD units at
- * model scale 1, above and below its origin — the same shape the species
- * files' envelopes state (species/fish.ts's crownY/bellyY), read by
- * placement.ts's BODY_COLUMNS so a flame on it covers the body that is
- * actually drawn. A centre-origin ellipsoid, so crown and belly are half the
- * full height each way; the geometry below is built FROM these.
+ * What the one body still authored here measures in world units at model
+ * scale 1, above/below origin — matches the species files' envelopes
+ * (species/fish.ts's crownY/bellyY), read by placement.ts's BODY_COLUMNS so
+ * a flame covers the body actually drawn. Centre-origin ellipsoid.
  */
 export const BIRD_ENVELOPE = {
-  /** Body ellipsoid full height 0.18; the wings are thinner than the body. */
+  /** Body ellipsoid full height 0.18; wings are thinner than the body. */
   crownY: 0.09,
   bellyY: -0.09,
 } as const;
 
 /**
- * Wing beats per second. The fastest animation here, which is the convention
- * this list follows (slower = larger) and also just true of small birds.
+ * Wing beats per second — the fastest animation here (convention: slower =
+ * larger), also just true of small birds.
  *
- * Bounded above by the display, not by taste: at 60 fps a 5.5 Hz cycle is ~11
- * frames, so the wing is drawn several times on each stroke and reads as
- * flapping. Push it toward 10 Hz and consecutive frames start landing on
- * opposite ends of the stroke — the wing aliases into a blur or, worse, appears
- * to beat slowly backwards.
+ * Bounded by the display: at 60 fps a 5.5 Hz cycle is ~11 frames, so the
+ * wing is drawn several times per stroke and reads as flapping. Push toward
+ * 10 Hz and consecutive frames land on opposite stroke ends — aliasing into
+ * a blur or an apparent backward beat.
  */
 const BIRD_WING_FLAP_HZ = 5.5;
 
 /**
- * Half the wing's travel, in radians. 0.7 is ~40° either side of level — a 80°
- * total stroke, which is the range at which a wing seen from above (this game's
- * camera) visibly changes its projected width. A smaller stroke reads as a rigid
- * glider; a much larger one folds the wings over the bird's own back.
+ * Half the wing's travel, radians. 0.7 is ~40° either side of level (an 80°
+ * stroke) — the range at which a wing seen from above visibly changes its
+ * projected width. Smaller reads as a rigid glider; much larger folds the
+ * wings over the bird's own back.
  */
 const BIRD_WING_FLAP_RADIANS = 0.7;
-/**
- * Vertical travel of the body over one wing beat, in world units. Tiny by
- * design: it exists so the bird rises fractionally on the downstroke, which is
- * what stops the flap looking like a hinge bolted to a static body. Same trick,
- * same scale, as the fish's counter-roll.
- */
+/** Vertical body travel over one wing beat, world units. Tiny by design: rises fractionally on the downstroke so the flap doesn't look like a hinge on a static body — same trick as the fish's counter-roll. */
 const BIRD_BODY_BOB = 0.04;
-/**
- * Span of ONE wing panel, in world units. Two of them plus the body gives a
- * ~1.3-unit wingspan against a 0.6-unit body — roughly a bird's proportions, and
- * more than twice a fish's total length, because a bird is drawn at
- * BIRD_FLIGHT_WORLD_Y and is the furthest thing in this file from the camera.
- */
+/** Span of one wing panel, world units. Two plus the body give a ~1.3-unit wingspan against a 0.6-unit body, sized larger than a fish since a bird is seen from further away (BIRD_FLIGHT_WORLD_Y). */
 const BIRD_WING_LENGTH = 0.62;
-/**
- * Where a wing's pivot sits relative to its panel, along Z: half the panel's own
- * length, so the panel's inner edge lands on the body's centreline and the hinge
- * is at the shoulder rather than out in mid-air. Derived, so the two cannot
- * drift apart.
- */
+/** Where a wing's pivot sits along Z relative to its panel: half the panel's length, so the inner edge lands on the body centreline and the hinge sits at the shoulder. Derived so the two can't drift apart. */
 const BIRD_WING_ROOT_OFFSET = BIRD_WING_LENGTH / 2;
 
 const TWO_PI = Math.PI * 2;
@@ -158,68 +125,49 @@ const TWO_PI = Math.PI * 2;
 /**
  * Distinct animation phases one species is drawn with in a single frame.
  *
- * WHY QUANTISING PHASE IS SAFE. Every animation below is a loop driven by one
- * angle — `seconds * HZ * TWO_PI + phase` for a swimmer or flyer, the
- * distance-paced `phase` alone for a walker (species/speciesModel.ts) — so
- * slotting a creature's phase shifts it along the loop by at most one slot; it
- * never changes what the animation IS. The bound that matters is the display:
- * at the project's 140 fps target the fastest loop here — a wolf at its
- * hunting burst, 3.0 world units per second over a 0.314 stride ≈ 9.6 strides
- * a second (species/wolf.ts) — advances 9.6/140 ≈ 1/15 of a cycle between two
- * frames the player actually sees, and the bird's wing (BIRD_WING_FLAP_HZ, 5.5)
- * 1/25, so a quantisation step of 1/32 of a cycle is smaller than the step the
- * animation already takes on its own. Anything the player could resolve, they
- * resolve as motion.
+ * WHY QUANTISING PHASE IS SAFE. Every animation is a loop driven by one
+ * angle, so slotting a phase shifts it along the loop by at most one slot,
+ * never changing what the animation IS. At the project's 140 fps target the
+ * fastest loop here (a hunting wolf, ~9.6 strides/s) advances ~1/15 of a
+ * cycle between two seen frames, and the bird's wing (5.5 Hz) ~1/25 — a
+ * 1/32-cycle quantisation step is smaller than the animation's own step.
  *
- * WHY IT IS WORTH IT. The pose palette is rebuilt once per SLOT per frame, not
- * once per creature: at the population cap that is 32 poses per species instead
- * of 850, and it is what makes the frame cost independent of how many creatures
- * are alive (client/src/render/rigHerd.ts).
+ * WHY IT'S WORTH IT. The pose palette rebuilds once per SLOT per frame, not
+ * per creature: at population cap that's 32 poses instead of 850, making
+ * frame cost independent of population (render/rigHerd.ts).
  */
 const POSE_SLOTS_PER_HERD = 32;
 
-/**
- * One species (or one whale body) as it is DRAWN: a herd of instances sharing
- * one set of buffers, and the idle animation that poses them.
- */
+/** One species (or one whale body) as it is DRAWN: a herd of instances sharing one set of buffers, and the idle animation that poses them. */
 interface SpeciesDrawable {
   readonly herd: RigHerd;
-  /**
-   * Poses the herd's scratch rig. `seconds` is elapsed time; `phase` is the
-   * offset in radians of the pose slot being filled.
-   */
+  /** Poses the herd's scratch rig. `seconds` is elapsed time; `phase` is the offset in radians of the pose slot being filled. */
   animate(seconds: number, phase: number, gait: MoverGait): void;
 }
 
 export interface WildlifeModels {
-  /**
-   * The drawn objects — one per species surface, NOT one per creature. Added to
-   * the scene once by the caller and never re-parented.
-   */
+  /** The drawn objects — one per species surface, not one per creature. Added to the scene once by the caller and never re-parented. */
   readonly objects: readonly Object3D[];
   /** Opens a frame. `seconds` is the animation clock every pose is read at. */
   beginFrame(seconds: number): void;
   /**
    * Draws one creature this frame.
    *
-   * `sizeClass` scales the whole rig uniformly — the geometries stay shared and
-   * un-scaled (they are the medium-sized authoring, see
-   * WILDLIFE_SIZE_MODEL_SCALE), so a size class costs three numbers in an
-   * instance matrix and not a second copy of every buffer. The species' own
-   * draw scale rides in the same number (./modelScale.ts).
+   * `sizeClass` scales the whole rig uniformly — geometries stay shared and
+   * un-scaled (medium-sized authoring, see WILDLIFE_SIZE_MODEL_SCALE), so a
+   * size class costs three numbers in an instance matrix, not a second
+   * buffer copy. The species' own draw scale rides the same number (./modelScale.ts).
    *
-   * `variantSeed` picks between bodies where a species has more than one — only
-   * whales do. It must be STABLE for a creature's whole life (the caller passes
-   * its entity id), or an individual would change species between frames.
+   * `variantSeed` picks between bodies where a species has more than one —
+   * only whales do. Must be STABLE for a creature's whole life (the caller
+   * passes its entity id), or it would change species between frames.
    *
-   * `phase` is the creature's own animation offset in radians; `gait` is what
-   * it is doing vertically (the kit's `moverGaitOf`) and picks WHICH animation
-   * the pose comes from; `yaw` is the rotation about Y the caller derives from
-   * the creature's heading.
+   * `phase` is the creature's animation offset in radians; `gait` (the kit's
+   * `moverGaitOf`) picks which animation the pose comes from; `yaw` is
+   * rotation about Y from the creature's heading.
    *
-   * Positional arguments rather than a pose object, deliberately: this is
-   * called once per creature per frame, and a fresh object each time is 850
-   * allocations a frame for nothing.
+   * Positional arguments, not a pose object: called once per creature per
+   * frame, and a fresh object each time is 850 allocations a frame for nothing.
    */
   draw(
     species: WildlifeSpecies,
@@ -254,11 +202,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     return geometry;
   }
 
-  /**
-   * Flat-shaded by default: with 6-segment spheres that is what reads as a
-   * deliberate faceted style rather than as low detail. The swept-hull
-   * species (ibex, bison) opt out through the pool contract's option.
-   */
+  /** Flat-shaded by default: reads as deliberate faceting with 6-segment spheres. Swept-hull species (ibex, bison) opt out via the pool contract's option. */
   function lambert(color: number, options: { flatShading?: boolean } = {}): MeshLambertMaterial {
     const material = new MeshLambertMaterial({ color, flatShading: options.flatShading ?? true });
     materials.push(material);
@@ -281,11 +225,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   // ── Shared resources, built once ───────────────────────────────────────────
 
-  // A bird is authored roughly one cell across the wings — twice its body
-  // length, which is what a bird's proportions are and what makes the silhouette
-  // read as a bird rather than as a small fish flying. It is bigger than a fish
-  // (0.55 long) on purpose: it is seen from BIRD_FLIGHT_WORLD_Y further away
-  // than anything else in this file.
+  // Authored roughly one cell across the wings — twice its body length, a
+  // bird's real proportions. Bigger than a fish (0.55 long) since it's seen
+  // from BIRD_FLIGHT_WORLD_Y, further than anything else here.
   const birdMaterial = lambert(BIRD_COLOR);
   const birdBody = ellipsoid(0.6, BIRD_ENVELOPE.crownY - BIRD_ENVELOPE.bellyY, 0.18);
   /** One wing panel. Its LENGTH runs along Z, so it hinges about the X axis. */
@@ -307,11 +249,11 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   }
 
   /**
-   * Root + inner rig, as AUTHORED. The tree below is built exactly once per
-   * species and handed to `bakeRig`, which turns it into one skinned drawable;
-   * `rig` and any hinge under it become bones an individual creature animates.
-   * See client/src/render/rigSkin.ts — the authoring style here is unchanged,
-   * only what the renderer is asked to draw is.
+   * Root + inner rig, as AUTHORED. Built exactly once per species and handed
+   * to `bakeRig`, which turns it into one skinned drawable; `rig` and any
+   * hinge under it become bones an individual creature animates. See
+   * render/rigSkin.ts — the authoring style is unchanged, only what the
+   * renderer draws is.
    */
   function rigged(): { root: Group; rig: Group } {
     const root = new Group();
@@ -324,19 +266,13 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    * A species' baked rig: the shared buffers, plus the joint index of every
    * node its animation drives.
    *
-   * Named joints rather than positional ones because an animation reads far
-   * better as `joints.leftWing` than as `joints[3]`, and a bake that reordered
-   * its nodes would otherwise silently swap two limbs.
+   * Named joints, not positional: `joints.leftWing` reads far better than
+   * `joints[3]`, and a reordering bake would otherwise silently swap limbs.
    */
   interface SpeciesRig {
     readonly blueprint: RigBlueprint;
     readonly jointIndices: Readonly<Record<string, number>>;
-    /**
-     * The authored root, which `bakeRig` bakes as a bone like any other. Named
-     * apart from the species' own joints because it is not one: the gait's body
-     * tilt goes here (the kit's `applyMoverBodyTilt`), and it is the one node a
-     * species file cannot reach and so cannot fight.
-     */
+    /** The authored root, baked as a bone like any other. Named apart from the species' own joints: the gait's body tilt (`applyMoverBodyTilt`) goes here — the one node a species file cannot reach and so cannot fight. */
     readonly rootJoint: number;
   }
 
@@ -356,12 +292,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   const herds: RigHerd[] = [];
 
-  /**
-   * The whole species as one herd, plus the named handles its animation drives.
-   *
-   * Named joints rather than positional ones for the same reason bakeSpecies
-   * captures them by name: `joints.leftWing` reads, `joints[3]` does not.
-   */
+  /** The whole species as one herd, plus the named handles its animation drives — named for the same reason bakeSpecies captures joints by name. */
   function herdFor(
     rig: SpeciesRig,
     posesByGait: boolean = false,
@@ -369,9 +300,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     const herd = createRigHerd(rig.blueprint, {
       capacity: instanceCapacity,
       poseSlots: POSE_SLOTS_PER_HERD,
-      // A species whose pose depends on its gait needs a band of slots per
-      // gait: phase alone stops identifying a pose once a creature can be
-      // climbing, or standing where it stopped (AuthoredSpecies.posesByGait).
+      // A species whose pose depends on gait needs a band of slots per gait:
+      // phase alone can't distinguish climbing from standing where it
+      // stopped (AuthoredSpecies.posesByGait).
       poseVariants: posesByGait ? MOVER_GAITS.length : 1,
     });
     herds.push(herd);
@@ -386,9 +317,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    * THE ONE PLACE a creature turns into an instance.
    *
    * A pose is built at most once per slot per frame — the first creature to
-   * land in a slot pays for it and every other creature in that slot rides it
-   * free, which is the whole reason the frame cost stops scaling with the
-   * population.
+   * land in a slot pays for it, every other creature in that slot rides free.
    */
   function drawInto(
     drawable: SpeciesDrawable,
@@ -412,20 +341,15 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     herd.place(slot, x, y, z, yaw, scale);
   }
 
-  /**
-   * The pool as a species file sees it: the same helpers this file uses, handed
-   * over through the ./species/speciesModel.ts interface rather than copied.
-   * There is exactly one implementation of each — a species file's geometry and
-   * materials land in the same two disposal lists as the bird's.
-   */
+  /** The pool as a species file sees it: the same helpers this file uses, via the ./species/speciesModel.ts interface. One implementation of each — a species file's geometry lands in the same disposal lists as the bird's. */
   const speciesPool: SpeciesModelPool = { keepGeometry, lambert, unlit, part, rigged };
 
   /**
    * Builds one species from its own file: author, bake, herd, and wrap its
    * `animate` in the `SpeciesDrawable` shape the draw path speaks.
    *
-   * The species file names its own joints and drives them itself; nothing here
-   * knows what a fin or a hind leg is, which is the whole point of the split.
+   * The species file names its own joints and drives them; nothing here
+   * knows what a fin or a hind leg is — the whole point of the split.
    */
   function speciesDrawable(build: SpeciesModelBuilder): SpeciesDrawable {
     const authored = build(speciesPool);
@@ -450,10 +374,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     rig.add(part(birdBody, birdMaterial, 0, 0, 0));
     rig.add(part(birdTail, birdMaterial, -0.38, 0, 0));
 
-    // Each wing gets its own pivot Group AT THE SHOULDER, with the panel offset
-    // outboard inside it. Rotating the panel directly would swing it about its
-    // own centre, which lifts the root through the bird's back and drops the tip
-    // only half as far as it should.
+    // Each wing gets its own pivot Group AT THE SHOULDER, with the panel
+    // offset outboard inside it — rotating the panel directly would swing
+    // it about its own centre, lifting the root through the back.
     function wing(sign: number): Group {
       const pivot = new Group();
       pivot.add(part(birdWing, birdMaterial, 0, 0, sign * BIRD_WING_ROOT_OFFSET));
@@ -467,14 +390,12 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
 
   // ── One herd each ──────────────────────────────────────────────────────────
   //
-  // Built ONCE, not per creature: what used to be a per-individual model is now
-  // a per-species drawable whose `animate` poses the shared scratch rig. The
-  // animation bodies themselves are unchanged — they still say
-  // `joint.rotation.z = …` against a Bone.
+  // Built ONCE, not per creature: a per-individual model is now a per-species
+  // drawable whose `animate` poses the shared scratch rig. Animation bodies
+  // are unchanged — still `joint.rotation.z = …` against a Bone.
 
   // The nine species authored in ./species/. Order fixes the order their
-  // surfaces appear in `objects`, which is what the draw-object table in
-  // ./index.ts is counted against.
+  // surfaces appear in `objects`, counted against in ./index.ts's draw-object table.
   const fishDrawable = speciesDrawable(buildFish);
   const grazerDrawable = speciesDrawable(buildGrazer);
   const wolfDrawable = speciesDrawable(buildWolf);
@@ -506,9 +427,8 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
       herd,
       animate(seconds, phase) {
         const swing = Math.sin(seconds * BIRD_WING_FLAP_HZ * TWO_PI + phase);
-        // Rotation about X maps a point at +Z to y = -L·sin(θ), so the two wings
-        // take OPPOSITE signs to send both tips the same way. Getting this wrong
-        // is a bird rolling on the spot rather than flapping.
+        // Rotation about X maps a point at +Z to y = -L·sin(θ), so the two
+        // wings take OPPOSITE signs to send both tips the same way.
         leftWing.rotation.x = -swing * BIRD_WING_FLAP_RADIANS;
         rightWing.rotation.x = swing * BIRD_WING_FLAP_RADIANS;
         rig.position.y = swing * BIRD_BODY_BOB;
@@ -568,7 +488,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         z,
         yaw,
         // Uniform, in the instance matrix: the pose palette holds rig-space
-        // transforms only, so nothing an animation does can overwrite it.
+        // transforms only, so no animation can overwrite it.
         modelScaleFor(species, sizeClass),
       );
     },
@@ -579,9 +499,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
       for (const herd of herds) herd.dispose();
       herds.length = 0;
       objects.length = 0;
-      // The baked rigs own buffers of their own — the merged geometry and the
-      // vertex-coloured material per species — on top of the authored pool the
-      // two loops below free.
+      // The baked rigs own buffers of their own — merged geometry and
+      // vertex-coloured material per species — on top of the authored pool
+      // the two loops below free.
       for (const rig of speciesRigs) rig.blueprint.dispose();
       speciesRigs.length = 0;
       for (const geometry of geometries) geometry.dispose();

@@ -1,62 +1,52 @@
 // The ultralight frame meter: what `renderer.render` costs on the CPU, held
 // against how long the page has been open.
 //
-// WHY IT EXISTS, AND WHY IT IS NOT perfProbe.ts. The decay in
+// WHY NOT perfProbe.ts: the decay in
 // docs/plans/frame-rate-decay-2026-09-05.md §7d is entirely CPU time inside
-// `renderer.render` — GPU time, draw calls and the scene graph all stay flat
-// while the frame triples. perfProbe.ts can see that, but only in a dev build,
-// only behind `?perfprobe=`, and only by wrapping rAF, setTimeout and
-// addEventListener, which is why a whole night went into proving the probe was
-// not itself the cause (§7d, `noInstrument`). This file wraps nothing. It reads
-// the clock twice more per frame than scene.ts already does and writes three
-// floats, so it can ship enabled and the decay can be watched in a NORMAL play
-// session instead of only in the bench rig.
+// `renderer.render` while GPU time, draw calls and the scene graph stay flat.
+// perfProbe.ts can see that, but only in a dev build behind `?perfprobe=`,
+// and by wrapping rAF/setTimeout/addEventListener — a whole night went into
+// proving the probe wasn't itself the cause (§7d, `noInstrument`). This file
+// wraps nothing; it costs two extra clock reads and three floats per frame,
+// so it ships enabled and the decay can be watched in a normal session.
 //
-// WHY WORK TIME AND NOT THE FRAME INTERVAL: the interval is capped by vsync, so
-// a frame whose CPU cost doubled from 2 ms to 4 ms shows an unchanged 16.7 ms
-// interval right up until it crosses the budget, and then falls off a cliff.
-// Work time moves the whole way. The interval is recorded too, because the
-// question "has the growth crossed the budget yet" needs both.
+// WHY WORK TIME, NOT INTERVAL: interval is vsync-capped, so a frame whose CPU
+// cost doubles from 2ms to 4ms shows an unchanged 16.7ms interval right up
+// until it crosses budget, then falls off a cliff. Interval is recorded too
+// since "has growth crossed budget yet" needs both.
 //
-// WHY THE COUNTERS ARE READ ONCE PER WINDOW: `renderer.info` is the only thing
-// measured here that was shown to grow (§7d: textures 37 -> 74 with 7 reachable
-// from the scene), but it grows on the scale of minutes. Reading it per frame
-// would cost more than everything else in this file put together.
+// WHY COUNTERS ARE READ ONCE PER WINDOW: `renderer.info` (the only thing here
+// shown to grow — §7d: textures 37→74) grows on the scale of minutes; reading
+// it per frame would cost more than everything else in this file combined.
 //
-// WHY NOTHING IS PUBLISHED UNLESS SOMETHING IS LISTENING: a sink is installed
-// by main.tsx only when a readout is actually on. With no sink the window still
-// closes and `latestSample` is still updated — so `__terracePerf.stats()` is
-// never stale — but no signal is written and Solid never re-renders.
+// WHY NOTHING PUBLISHES UNLESS SOMETHING LISTENS: main.tsx installs a sink
+// only when a readout is on. With no sink the window still closes and
+// `latestSample` still updates, so `__terracePerf.stats()` is never stale —
+// but no signal writes and Solid never re-renders.
 
 import { FRAME_STATS_CAPACITY, FRAME_STATS_WINDOW_MS } from '../config.ts';
 
 /**
- * What the renderer can be asked about once per window — its resource tables,
- * and the size of what it is drawing into.
+ * What the renderer can be asked once per window, plus drawing-buffer size.
  *
- * THE PIXEL COUNT IS NOT OPTIONAL METADATA. Frame time is a function of it, so
- * two readings taken at different drawing-buffer sizes are not comparable and a
- * reading that does not state its size cannot be checked. Every number in
- * docs/plans/frame-rate-decay-2026-09-05.md was taken in a 1600x900 window
- * (scripts/gpu-bench.sh) — 44% of the pixels of the full-screen 1440p the owner
- * actually plays at — and not one of them says so, which is why they were
- * argued about for a night. No sample this file emits will have that hole.
+ * PIXEL COUNT IS NOT OPTIONAL: frame time is a function of it, so readings at
+ * different sizes aren't comparable. Every number in
+ * docs/plans/frame-rate-decay-2026-09-05.md was taken at 1600x900
+ * (scripts/gpu-bench.sh, 44% of the owner's actual 1440p) without stating so
+ * — argued over for a night. No sample here omits it.
  */
 export interface FrameCounters {
   /** Drawing-buffer width in physical pixels — canvas CSS size x pixel ratio. */
   readonly pixelWidth: number;
   readonly pixelHeight: number;
   /**
-   * Camera-to-target distance, in world units.
+   * Camera-to-target distance, world units.
    *
-   * HERE BECAUSE IT IS THE VARIABLE THAT INVALIDATED A DAY OF BENCH NUMBERS
-   * (2026-09-06). The bench runs on a throwaway Chrome profile, which has no
-   * stored camera pose, so it frames the world its own deterministic way and
-   * saw 138-162 draw calls; the owner plays from the pose their browser
-   * restored and sees 305-337. Same build, same world, same resolution, two
-   * populations of the frustum, and no reading said which one it was. A frame
-   * time without the pose it was taken at is as unreadable as one without its
-   * pixel count.
+   * INVALIDATED A DAY OF BENCH NUMBERS (2026-09-06): the bench's throwaway
+   * Chrome profile has no stored camera pose and saw 138-162 draw calls; the
+   * owner's restored pose saw 305-337. Same build, same world — two
+   * populations of the frustum, unlabeled. A frame time without its camera
+   * pose is as unreadable as one without pixel count.
    */
   readonly cameraDistance: number;
   readonly drawCalls: number;
@@ -92,13 +82,10 @@ export interface FrameStatsSample {
   /** Wall-clock frame-to-frame gap; vsync-capped, unlike the three above. */
   readonly intervalMsP50: number;
   /**
-   * Median GPU milliseconds per frame, or null where the timer extension is
-   * absent.
+   * Median GPU ms/frame, or null where the timer extension is absent.
    *
-   * NULL, NEVER ZERO: "no GPU clock on this adapter" and "the GPU took no time"
-   * must not read alike in the one row that decides whether a slow frame is the
-   * GPU's fault. Results land a few frames after the frame they measure, so a
-   * window's median is over the frames whose results arrived during it.
+   * Null, never zero: "no GPU clock" and "GPU took no time" must not read
+   * alike in the row that decides whether a slow frame is the GPU's fault.
    */
   readonly gpuMsP50: number | null;
   readonly counters: FrameCounters;
@@ -120,16 +107,16 @@ const EMPTY_COUNTERS: FrameCounters = {
   programs: 0,
 };
 
-// Ring buffers, allocated once. Float32 carries ~7 significant digits, which is
-// six more than a millisecond reading of this kind can justify.
+// Ring buffers, allocated once. Float32 gives ~7 significant digits, six more
+// than a millisecond reading needs.
 const frameMs = new Float32Array(FRAME_STATS_CAPACITY);
 const renderMs = new Float32Array(FRAME_STATS_CAPACITY);
 const intervalMs = new Float32Array(FRAME_STATS_CAPACITY);
-// Derived per window from the two above rather than written per frame: one
-// subtraction at window close is cheaper than one on every frame.
+// Derived per window rather than per frame: one subtraction at close is
+// cheaper than one every frame.
 const outsideMs = new Float32Array(FRAME_STATS_CAPACITY);
-// The percentile sort works on a copy, so a window's readings are not reordered
-// underneath the ring's write cursor. Allocated once for the same reason.
+// Percentile sort works on this copy so it never reorders the ring under the
+// write cursor.
 const scratch = new Float32Array(FRAME_STATS_CAPACITY);
 
 let writeCursor = 0;
@@ -146,44 +133,27 @@ let drainGpu: (() => number[]) | null = null;
 let gpuMs: number[] = [];
 
 /**
- * Milliseconds each plugin has spent in its frame callbacks this window, keyed
- * by plugin name.
+ * Milliseconds each plugin spent in frame callbacks this window, by name.
  *
- * A PLAIN RUNNING TOTAL, NOT A RING PER PLUGIN. The per-frame series above earn
- * their ring buffers because their percentiles are the question — a p99 frame is
- * a stutter someone saw. A plugin's question is different and simpler: what
- * share of the frame does it eat, on average, right now. That is a mean, a mean
- * needs one accumulator, and seventeen more ring buffers would cost more memory
- * than everything else in this file to answer a question nobody asked.
- *
- * Entries are never deleted, only zeroed each window: an unmounted plugin should
- * fall to 0.00 and stay visible for a window rather than vanish mid-read.
+ * A running total, not a ring per plugin: the per-frame series above earn
+ * their ring buffers because percentiles are the question there (a p99 frame
+ * is a stutter someone saw); a plugin's share is a mean, needing only one
+ * accumulator. Entries are zeroed each window, never deleted, so an
+ * unmounted plugin falls to 0.00 for a window rather than vanishing mid-read.
  */
 const pluginMs = new Map<string, number>();
 
-/**
- * Hands the meter its counter source. Called once by render/scene.ts, which is
- * the only place holding the renderer; this file deliberately does not import
- * three, so it stays testable without a GL context.
- */
+/** Hands the meter its counter source; called once by render/scene.ts, so this file avoids importing three and stays testable without a GL context. */
 export function setFrameCounterSource(read: () => FrameCounters): void {
   readCounters = read;
 }
 
-/**
- * Hands the meter its GPU clock (render/gpuTimer.ts), wired by render/scene.ts
- * for the same reason as the counters: this file does not import three, and the
- * renderer is what owns the GL context.
- */
+/** Hands the meter its GPU clock (render/gpuTimer.ts), same reason as setFrameCounterSource. */
 export function setGpuSampleSource(drain: () => number[]): void {
   drainGpu = drain;
 }
 
-/**
- * Installs (or with null, removes) the once-per-window sink. main.tsx wires
- * this to the HUD signal and the console line; with no sink the meter still
- * runs and still updates `frameStatsSample()`, it just publishes nothing.
- */
+/** Installs (or with null, removes) the once-per-window sink. With no sink the meter still runs and updates `frameStatsSample()`; it just publishes nothing. */
 export function setFrameStatsSink(next: FrameStatsSink | null): void {
   sink = next;
 }
@@ -193,7 +163,7 @@ export function frameStatsSample(): FrameStatsSample | null {
   return latestSample;
 }
 
-/** Median of a plain array; it is sorted in place, which the caller discards. */
+/** Median of a plain array; sorted in place, which the caller discards. */
 function medianOf(values: number[]): number {
   values.sort((a, b) => a - b);
   return values[Math.min(values.length - 1, Math.max(0, Math.ceil(0.5 * values.length) - 1))] ?? 0;
@@ -207,9 +177,7 @@ function sumOf(source: Float32Array, count: number): number {
 
 function percentile(sorted: Float32Array, count: number, fraction: number): number {
   if (count === 0) return 0;
-  // Nearest-rank on a zero-based array, clamped: with 30 samples a "p99" is the
-  // largest one, and saying so is honest where interpolating between two
-  // readings that do not exist is not.
+  // Nearest-rank, clamped: with 30 samples a "p99" is just the largest one.
   const rank = Math.min(count - 1, Math.max(0, Math.ceil(fraction * count) - 1));
   return sorted[rank] ?? 0;
 }
@@ -222,19 +190,16 @@ function summarise(source: Float32Array, count: number, fraction: number): numbe
 }
 
 function closeWindow(nowMs: number): void {
-  // The buffers keep at most CAPACITY frames of one window. A window that
-  // overflowed reports percentiles over the frames it kept, while `frames`
-  // still counts every one — so an overflow is visible in the sample rather
-  // than silently changing what the percentiles mean.
+  // Buffers keep at most CAPACITY frames; `frames` still counts every one, so
+  // an overflow is visible in the sample rather than silently changing what
+  // the percentiles mean.
   const kept = Math.min(windowFrames, FRAME_STATS_CAPACITY);
-  // Drained at the close rather than per frame: the driver answers when it
-  // answers, and asking once a window is enough to median over.
+  // Drained at close, not per frame: the driver answers when it answers.
   if (drainGpu !== null) gpuMs = gpuMs.concat(drainGpu());
   const gpuMsP50 = gpuMs.length === 0 ? null : medianOf(gpuMs);
   gpuMs = [];
-  // Meaned over EVERY frame in the window, including those the plugin did
-  // nothing in: the question is what it costs the frame, and a plugin that
-  // works every third frame costs a third as much as one that works every one.
+  // Meaned over every frame in the window, including idle ones: a plugin
+  // that works every third frame costs a third as much as one working every one.
   const meanFrameMs = kept === 0 ? 0 : sumOf(frameMs, kept) / kept;
   const plugins: PluginFrameCost[] = [];
   for (const [name, totalMs] of pluginMs) {
@@ -247,10 +212,8 @@ function closeWindow(nowMs: number): void {
     pluginMs.set(name, 0);
   }
   plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
-  // The median of the per-frame differences, not the difference of the two
-  // medians: those are not the same number, and only the first is a frame that
-  // actually happened. Built before the summarise() calls below because they
-  // reuse `scratch`.
+  // Median of the per-frame differences, not the difference of two medians —
+  // those aren't the same number. Built before summarise() reuses `scratch`.
   for (let i = 0; i < kept; i++) outsideMs[i] = (frameMs[i] ?? 0) - (renderMs[i] ?? 0);
   latestSample = {
     uptimeS: (nowMs - firstFrameMs) / 1000,
@@ -272,11 +235,7 @@ function closeWindow(nowMs: number): void {
   sink?.(latestSample);
 }
 
-/**
- * One frame's three clock readings, from render/scene.ts. `startMs` is the rAF
- * callback's own first `performance.now()` — reused rather than read again, so
- * this costs exactly two extra clock reads per frame.
- */
+/** One frame's three clock readings, from render/scene.ts. `startMs` reuses the rAF callback's own first `performance.now()`, so this costs two extra clock reads per frame. */
 export function recordFrame(startMs: number, renderStartMs: number, endMs: number): void {
   if (firstFrameMs === 0) {
     firstFrameMs = startMs;
@@ -286,8 +245,7 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
   const slot = writeCursor % FRAME_STATS_CAPACITY;
   frameMs[slot] = endMs - startMs;
   renderMs[slot] = endMs - renderStartMs;
-  // Zero for the very first frame: it has no predecessor, and inventing one
-  // would put a fabricated reading in the first window's median.
+  // Zero for the first frame: it has no predecessor to measure against.
   intervalMs[slot] = startMs === prevStartMs ? 0 : startMs - prevStartMs;
   prevStartMs = startMs;
   writeCursor++;
@@ -296,13 +254,10 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
 }
 
 /**
- * One plugin's frame callback, timed. Called by plugins/host.ts, which is the
- * only place that knows which plugin a callback belongs to.
- *
- * The host wraps at its single registration site rather than this file wrapping
- * anything: a meter that patches the callbacks it measures has to prove it is
- * not itself the cost, which took a night the first time
- * (docs/plans/frame-rate-decay-2026-09-05.md, `noInstrument`).
+ * One plugin's frame callback, timed. Called by plugins/host.ts, the only
+ * place that knows which plugin a callback belongs to — a meter that patches
+ * the callbacks it measures would have to prove it isn't itself the cost,
+ * which took a night the first time (§7d, `noInstrument`).
  */
 export function recordPluginFrame(name: string, ms: number): void {
   pluginMs.set(name, (pluginMs.get(name) ?? 0) + ms);
@@ -311,19 +266,14 @@ export function recordPluginFrame(name: string, ms: number): void {
 /**
  * Publishes at once instead of waiting for the window to close.
  *
- * WHY A READOUT MUST NOT OPEN EMPTY (owner, 2026-09-06): windows close every
- * FRAME_STATS_WINDOW_MS, so a block opened just after a boundary showed nothing
- * for five seconds and read exactly like a broken meter. The meter has been
- * running the whole time — the readout simply had no way to ask for what it
- * already held.
+ * Owner, 2026-09-06: a block opened just after a window boundary showed
+ * nothing for five seconds, reading like a broken meter, though the meter
+ * had been running the whole time.
  *
- * Publishes the window in progress when it has frames, which is the freshest
- * true answer; percentiles over a short window are wider than over a full one,
- * and the row saying how many frames they came from is what makes that legible.
- * With no frames yet (a boundary landed this instant) it re-publishes the last
- * closed window rather than a row of fabricated zeros, and with neither — a
- * page younger than its first window — it publishes nothing and the first real
- * window arrives on its own.
+ * Publishes the in-progress window if it has frames (freshest true answer;
+ * the frame count says how wide its percentiles are). With no frames yet, it
+ * re-publishes the last closed window rather than fabricated zeros; with
+ * neither, it publishes nothing.
  */
 export function flushFrameStats(): void {
   if (windowFrames > 0) {
