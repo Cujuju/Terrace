@@ -76,6 +76,7 @@ import { MUDSLIDES_SLICE_VERSION, loadSlides, saveSlides } from './persistence.t
 import {
   FREQUENCY_INTERVAL_MULTIPLIERS,
   MAX_ACTIVE_SLIDES,
+  startSlide,
   advanceSlides,
   flowEventFor,
   livingSlides,
@@ -378,3 +379,33 @@ export function resetMudslidesState(): void {
  * layout. Nothing does yet; `mudslides:flow` is the push half of the same seam.
  */
 export { livingSlides };
+
+/**
+ * THE DIRECTED SLIDE, for other plugins — for `plugins/hydro`, whose poured
+ * water saturates a rim and then asks that rim to give way. Until now
+ * "collapse THIS cell" was a thing an operator could do (./dev.ts's
+ * `forceSlideNear`) and a sibling could not.
+ *
+ * IT IS A WRAPPER, AND `startSlide` ITSELF STAYS PRIVATE, because a slide is
+ * only half-created by the thing that starts it: it is `onTick` that advances
+ * one, and `onTick` does nothing at all on a world whose frequency is `off`.
+ * Exporting the raw entry point would therefore hand every caller a way to
+ * create a slide that can never move, never finish and never be cleaned up —
+ * one that still occupies a MAX_ACTIVE_SLIDES slot and still persists across a
+ * restart. The admin action above already remembers both guards; a second
+ * caller that forgot either is a bug in this export, not in that caller, so
+ * the guards live here where no caller can miss them.
+ *
+ * False for every ordinary refusal, which the caller must not have to tell
+ * apart: mudslides are off here, the world is already at its ceiling, the
+ * ground is not a rim, there is nowhere downhill, or it is under the sea.
+ */
+export function startDirectedSlide(world: WorldApi, x: number, y: number): boolean {
+  if (frequency === 'off') return false;
+  if (livingSlides().length >= MAX_ACTIVE_SLIDES) return false;
+  if (startSlide(world, x, y) === null) return false;
+  // Clients are told now rather than on the next broadcast tick, exactly as the
+  // admin action does: a directed slide exists to be watched starting.
+  broadcastActive(world);
+  return true;
+}
