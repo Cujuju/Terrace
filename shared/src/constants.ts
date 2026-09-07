@@ -478,36 +478,55 @@ export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
 export const FULL_BRUSH_RADIUS = 2 * WORLD_UNIT_CELLS;
 
 /**
- * HOW FAR A SCULPT REVEALS, in cells from the cell the player clicked —
- * deliberately NOT the brush's own reach (owner, 2026-09-06: "I want the
- * reveal radius substantially enlarged against the current brush sizes. This
- * does not work. It sucks for reveal.").
+ * HOW FAR A SCULPT REVEALS — the floor of it, before the brush adds its own.
  *
- * ONE CHUNK, and that is the whole derivation. A chunk is CHUNK_SIZE cells on
- * a side, so from ANY cell of the chunk you are standing in, the nearest cell
- * of the chunk beyond the frontier is at most CHUNK_SIZE away. At this reach a
- * click anywhere inside your own border chunk therefore opens the neighbour —
- * which is exactly the property the old rule lacked, and the reason the owner
- * had to hunt for "a specific side of the cell" to make anything happen.
+ * HALF A CHUNK OF STANDING REACH, and that is the derivation: it is what the
+ * FINEST brush gets, and it is enough that a click in the half of your chunk
+ * nearest the frontier opens the chunk beyond (the nearest cell across a
+ * border is one cell further than the border itself).
  *
- * IT IS FLAT ACROSS EVERY BRUSH. The brush's own reach is r−1 cells, from 0 at
- * the 0.50 rung to 7 at the widest, so tying reveal to it made the smallest
- * brush incapable of revealing at all (owner: "for soft stamp at 0.5, it is
- * not unlocking" — its footprint IS the clicked cell, which is already yours).
- * The brush decides what you SCULPT; this decides what you SEE, and the two
- * stopped being the same question the moment the picker offered a quarter-unit
- * brush. What keeps the wide brush worth holding is the price: opening a chunk
- * costs what the full brush's own stroke costs, whatever brush opened it
- * (plugins/mana/pricing.ts's chunkUnlockPenalty).
- *
- * WHY NOT WIDER. Reach and revealed area go up together but not linearly: at
- * one chunk a frontier click opens one or two chunks, at one and a half it
- * opens seven, at two it opens eight — and every one of them is charged for.
- * A reach that hands a player eight chunks for one poke is both a quarter of
- * their pool and most of the map's mystery, in one click. Raising it is a
- * one-line change here, by design.
+ * It is not the brush's own reach and never was again after 2026-09-06. The
+ * footprint reaches r−1 cells, which is ZERO at the picker's smallest rung, so
+ * tying reveal to it left the 0.50 brush unable to reveal at all (owner: "for
+ * soft stamp at 0.5, it is not unlocking" — its footprint IS the clicked cell,
+ * which is already yours).
  */
-export const REVEAL_REACH_CELLS = CHUNK_SIZE;
+export const REVEAL_REACH_BASE_CELLS = CHUNK_SIZE / 2;
+
+/**
+ * WHAT EACH CELL OF BRUSH RADIUS ADDS to that reach (owner, 2026-09-06: "you
+ * could make the reveal size larger for the larger brush … the amount of mana
+ * used between say a 0.5 brush is one and a 4.0 is 166 … make the reveal size
+ * 2x larger for a 4.0 brush than it is for a 0.5 brush. Assume the current
+ * reveal size is a 2.0 brush").
+ *
+ * TWO CELLS PER CELL OF RADIUS — half a world unit of reach per rung of the
+ * picker's ladder — which is the value that satisfies both halves of that
+ * instruction at once:
+ *
+ *   brush   radius   reach            
+ *   0.50    1        10 cells          the floor plus one rung
+ *   1.00    2        12
+ *   1.50    3        14
+ *   2.00    4        16 cells          UNCHANGED — the owner's anchor
+ *   2.50    5        18
+ *   3.00    6        20
+ *   3.50    7        22
+ *   4.00    8        24 cells          2.4× the 0.50 rung, against a 2× floor
+ *
+ * WHY THE BIG BRUSH EARNS IT. Reveal is priced per chunk opened, and the
+ * surcharge is what the full brush's own stroke costs (plugins/mana's
+ * chunkUnlockPenalty) — so the wide brush pays for its territory in the stroke
+ * itself while the fine brush pays a surcharge many times its own price. The
+ * brush that spends the mana is the brush that should see further; before this
+ * the two saw exactly as far and only one of them paid for it.
+ *
+ * THE RATIO IS THE CONSTRAINT, NOT THE SLOPE. Steepening it further pulls the
+ * fine brush's reach below half a chunk, which is where the owner's original
+ * complaint lives — a brush that has to be aimed at a particular cell of the
+ * frontier to open anything.
+ */
+export const REVEAL_REACH_PER_BRUSH_CELL = CHUNK_SIZE / 8;
 
 /**
  * THE FARTHEST ONE DRAG INTENT MAY SWEEP, in cells between the cursor cell it

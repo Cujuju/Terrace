@@ -688,7 +688,7 @@ export function manaCostFor(
  * server/src/plugins/types.ts); this is the second thing it settles.
  */
 function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number {
-  return openedChunkCount(world.worldSize, intent.x, intent.y, (cx, cy) =>
+  return openedChunkCount(world.worldSize, intent.x, intent.y, intent.radius, (cx, cy) =>
     world.isChunkUnlockedForToken(token, cx, cy),
   );
 }

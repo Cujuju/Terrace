@@ -9,8 +9,8 @@
 // ────────────────────────────────────────────────────────────────────────────
 // THE POLICY (re-decided 2026-09-06, owner): THE STROKE OPENS WHAT IT COVERS.
 //
-//   Every chunk within REVEAL_REACH_CELLS of the cell a player clicked unlocks
-//   for that player, whether or not the ground inside it moved.
+//   Every chunk within revealReachCells(radius) of the cell a player clicked
+//   unlocks for that player, whether or not the ground inside it moved.
 //
 //   THE REACH IS THE SAME FOR EVERY BRUSH (owner, 2026-09-06, superseding the
 //   footprint reach this file shipped with earlier the same day: "I want the
@@ -18,9 +18,11 @@
 //   for soft stamp at 0.5, it is not unlocking"). Tying reveal to the
 //   footprint gave the picker's smallest rung a reach of ZERO — its footprint
 //   is the clicked cell, which the player already owns — so the finest brush
-//   could not reveal at all. One chunk of reach means a click anywhere inside
-//   your own border chunk opens the neighbour, whatever brush is held; see
-//   REVEAL_REACH_CELLS for why one chunk and not more.
+//   could not reveal at all. The reach now STARTS at half a chunk, which any
+//   brush can see, and the brush adds to it from there — the wide brush sees
+//   further because it is the one paying for the ground (owner, same day:
+//   "make the reveal size 2x larger for a 4.0 brush than it is for a 0.5
+//   brush"). See REVEAL_REACH_BASE_CELLS and REVEAL_REACH_PER_BRUSH_CELL.
 //
 // SUPERSEDES "INSTANT CREEP ON SPILLOVER" (issue #17, 2026-08-19), which
 // unlocked a chunk when a CHANGED cell landed in it. That rule was legible on
@@ -71,7 +73,6 @@ import {
   CHUNK_SIZE,
   chunkIndex,
   chunksPerEdge,
-  REVEAL_REACH_CELLS,
   revealChunkIndices,
   type CellDiff,
   type SculptIntent,
@@ -112,8 +113,8 @@ function creepForSculptor(
 }
 
 /**
- * Unlocks every chunk within REVEAL_REACH_CELLS of the clicked cell, for the
- * sculptor.
+ * Unlocks every chunk within this brush's reveal reach of the clicked cell,
+ * for the sculptor.
  *
  * The reached set comes from shared's `revealChunkIndices`, and the mana
  * plugin prices exactly the same set (see that function's doc comment).
@@ -124,7 +125,12 @@ function creepForSculptor(
  */
 function openReach(world: WorldApi, intent: SculptIntent, token: string): void {
   const cols = chunksPerEdge(world.worldSize);
-  for (const index of revealChunkIndices(world.worldSize, intent.x, intent.y)) {
+  for (const index of revealChunkIndices(
+    world.worldSize,
+    intent.x,
+    intent.y,
+    intent.radius,
+  )) {
     world.unlockChunkForToken(token, index % cols, Math.floor(index / cols));
   }
 }
