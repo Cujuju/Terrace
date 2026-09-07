@@ -361,6 +361,25 @@ export const LEGACY_MIN_HEIGHT = -1536;
 export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
 
 /**
+ * How far a SOFT stroke's apron reaches beyond the brush core, in cells
+ * (issue #387, owner 2026-09-06: "the center should be the size of the brush,
+ * and then outside of that it should continue to pull up the land around it").
+ *
+ * DERIVED FROM MAX_STEP, NOT CHOSEN. MAX_STEP is one band of fall per
+ * WORLD_UNIT_CELLS cells of run — the steepest slope this world allows — so a
+ * skirt of exactly that run is one band deep and is the terrain's own talus.
+ * Any wider and the apron would be shallower than ground the world can already
+ * grow; any narrower and it would be a cliff the smooth tool immediately eats.
+ *
+ * ONE BAND, THEREFORE ONE RING SET: because the run equals a single band's
+ * fall, the whole skirt shares one target (the core's level, one band back),
+ * which is what keeps `applySoftSkirt` a single sweep and its price a function
+ * of the radius alone. A multi-band talus that walks outward as the core
+ * climbs is the follow-up this deliberately is not — see #387.
+ */
+export const SOFT_SKIRT_CELLS = WORLD_UNIT_CELLS;
+
+/**
  * The odd height unit relaxation is allowed to LEAVE STANDING in a pair, in
  * height units. A neighbour pair is relaxed only when it exceeds
  * `MAX_STEP + RELAX_SLACK`, so a pair sitting one unit over the gradient limit
@@ -470,6 +489,38 @@ export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
  * penalty is measured against.
  */
 export const FULL_BRUSH_RADIUS = 2 * WORLD_UNIT_CELLS;
+
+/**
+ * HOW FAR A SCULPT REVEALS, in cells from the cell the player clicked —
+ * deliberately NOT the brush's own reach (owner, 2026-09-06: "I want the
+ * reveal radius substantially enlarged against the current brush sizes. This
+ * does not work. It sucks for reveal.").
+ *
+ * ONE CHUNK, and that is the whole derivation. A chunk is CHUNK_SIZE cells on
+ * a side, so from ANY cell of the chunk you are standing in, the nearest cell
+ * of the chunk beyond the frontier is at most CHUNK_SIZE away. At this reach a
+ * click anywhere inside your own border chunk therefore opens the neighbour —
+ * which is exactly the property the old rule lacked, and the reason the owner
+ * had to hunt for "a specific side of the cell" to make anything happen.
+ *
+ * IT IS FLAT ACROSS EVERY BRUSH. The brush's own reach is r−1 cells, from 0 at
+ * the 0.50 rung to 7 at the widest, so tying reveal to it made the smallest
+ * brush incapable of revealing at all (owner: "for soft stamp at 0.5, it is
+ * not unlocking" — its footprint IS the clicked cell, which is already yours).
+ * The brush decides what you SCULPT; this decides what you SEE, and the two
+ * stopped being the same question the moment the picker offered a quarter-unit
+ * brush. What keeps the wide brush worth holding is the price: opening a chunk
+ * costs what the full brush's own stroke costs, whatever brush opened it
+ * (plugins/mana/pricing.ts's chunkUnlockPenalty).
+ *
+ * WHY NOT WIDER. Reach and revealed area go up together but not linearly: at
+ * one chunk a frontier click opens one or two chunks, at one and a half it
+ * opens seven, at two it opens eight — and every one of them is charged for.
+ * A reach that hands a player eight chunks for one poke is both a quarter of
+ * their pool and most of the map's mystery, in one click. Raising it is a
+ * one-line change here, by design.
+ */
+export const REVEAL_REACH_CELLS = CHUNK_SIZE;
 
 /**
  * THE FARTHEST ONE DRAG INTENT MAY SWEEP, in cells between the cursor cell it

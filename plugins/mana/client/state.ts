@@ -332,7 +332,7 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
   const opened =
     worldSize <= 0
       ? 0
-      : openedChunkCount(worldSize, intent.x, intent.y, intent.radius, (cx, cy) => {
+      : openedChunkCount(worldSize, intent.x, intent.y, (cx, cy) => {
           const origin = chunkOriginCell(cx, cy);
           return territory.revealedAt(origin.x, origin.y);
         });

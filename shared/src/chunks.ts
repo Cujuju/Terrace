@@ -6,8 +6,8 @@
 // is in shared/ because the client needs the same chunk geometry to place
 // streamed chunks, and the server needs extraction/writing for snapshots.
 
-import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
-import { cellIndex, forEachFootprintOffset, type Heightmap } from './heightmap.ts';
+import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT, REVEAL_REACH_CELLS } from './constants.ts';
+import { cellIndex, type Heightmap } from './heightmap.ts';
 import {
   applyPackedSpans,
   assertSingleSpanChunk,
@@ -399,35 +399,50 @@ export function writeChunkPayload(
 }
 
 /**
- * Every chunk one brush footprint covers, ascending, each named once.
+ * Every chunk a sculpt at (x, y) REVEALS, ascending, each named once.
  *
  * THE REVEAL AND ITS PRICE ASK THE SAME QUESTION, so they ask it here. The
- * reveal plugin unlocks the chunks a stroke covers and the mana plugin prices
- * the ones that were still locked; if each walked its own disc, a change to
- * the footprint rule would open chunks nobody was charged for, or charge for
- * chunks that never opened. `forEachFootprintOffset` is the same iterator the
- * brushes themselves run, so the covered set cannot drift from the edit.
+ * reveal plugin opens exactly this set and the mana plugin prices the ones the
+ * sculptor did not already hold; if each derived its own, a change to the
+ * reach would open chunks nobody was charged for, or charge for chunks that
+ * never opened.
  *
- * Cells off the map are dropped, exactly as the brushes drop them: a brush
- * overhanging the world edge covers no chunk there because there is none.
+ * A CHUNK IS IN REACH WHEN ITS NEAREST CELL IS, measured from the clicked cell
+ * over REVEAL_REACH_CELLS — so the shape is a disc on the ground and not a
+ * square of chunks, and a click deep inside your own territory names only the
+ * chunks actually near it. Squared distances only: integer arithmetic, no
+ * square root, identical on server and client (which prices the same stroke
+ * locally — see plugins/mana/pricing.ts).
  *
- * Deterministic — integer-only, fixed iteration order, sorted before it is
- * returned — so server and client (which prices the same stroke locally, see
- * plugins/mana/pricing.ts) always agree cell for cell.
+ * Chunks off the map are not named, because there are none there.
+ *
+ * NOT THE BRUSH'S FOOTPRINT (superseded 2026-09-06, same day it shipped). The
+ * footprint reach is r−1 cells, which is ZERO at the picker's smallest rung —
+ * so the 0.50 brush revealed nothing at all, ever. See REVEAL_REACH_CELLS.
  */
-export function footprintChunkIndices(
-  worldSize: number,
-  cx: number,
-  cy: number,
-  radius: number,
-): number[] {
+export function revealChunkIndices(worldSize: number, x: number, y: number): number[] {
   const n = chunksPerEdge(worldSize);
-  const covered = new Set<number>();
-  forEachFootprintOffset(radius, (dx, dy) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    if (x < 0 || y < 0 || x >= worldSize || y >= worldSize) return;
-    covered.add(Math.floor(y / CHUNK_SIZE) * n + Math.floor(x / CHUNK_SIZE));
-  });
-  return Array.from(covered).sort((a, b) => a - b);
+  const reachSquared = REVEAL_REACH_CELLS * REVEAL_REACH_CELLS;
+  const first = Math.floor((x - REVEAL_REACH_CELLS) / CHUNK_SIZE);
+  const last = Math.floor((x + REVEAL_REACH_CELLS) / CHUNK_SIZE);
+  const firstRow = Math.floor((y - REVEAL_REACH_CELLS) / CHUNK_SIZE);
+  const lastRow = Math.floor((y + REVEAL_REACH_CELLS) / CHUNK_SIZE);
+  const reached: number[] = [];
+
+  for (let cy = Math.max(0, firstRow); cy <= Math.min(n - 1, lastRow); cy++) {
+    const y0 = cy * CHUNK_SIZE;
+    const y1 = y0 + CHUNK_SIZE - 1;
+    // Distance from the click to this chunk's nearest ROW of cells: zero while
+    // the click is inside the band, otherwise the gap to the nearer edge.
+    const dy = y < y0 ? y0 - y : y > y1 ? y - y1 : 0;
+    const budget = reachSquared - dy * dy;
+    if (budget < 0) continue;
+    for (let cx = Math.max(0, first); cx <= Math.min(n - 1, last); cx++) {
+      const x0 = cx * CHUNK_SIZE;
+      const x1 = x0 + CHUNK_SIZE - 1;
+      const dx = x < x0 ? x0 - x : x > x1 ? x - x1 : 0;
+      if (dx * dx <= budget) reached.push(cy * n + cx);
+    }
+  }
+  return reached;
 }

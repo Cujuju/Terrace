@@ -9,10 +9,18 @@
 // ────────────────────────────────────────────────────────────────────────────
 // THE POLICY (re-decided 2026-09-06, owner): THE STROKE OPENS WHAT IT COVERS.
 //
-//   Every chunk a player's brush FOOTPRINT covers unlocks for that player,
-//   whether or not the ground inside it moved. The reach is the disc the HUD
-//   already draws — r−1 cells past the clicked cell — so what you can see
-//   before you click is what you open by clicking.
+//   Every chunk within REVEAL_REACH_CELLS of the cell a player clicked unlocks
+//   for that player, whether or not the ground inside it moved.
+//
+//   THE REACH IS THE SAME FOR EVERY BRUSH (owner, 2026-09-06, superseding the
+//   footprint reach this file shipped with earlier the same day: "I want the
+//   reveal radius substantially enlarged against the current brush sizes …
+//   for soft stamp at 0.5, it is not unlocking"). Tying reveal to the
+//   footprint gave the picker's smallest rung a reach of ZERO — its footprint
+//   is the clicked cell, which the player already owns — so the finest brush
+//   could not reveal at all. One chunk of reach means a click anywhere inside
+//   your own border chunk opens the neighbour, whatever brush is held; see
+//   REVEAL_REACH_CELLS for why one chunk and not more.
 //
 // SUPERSEDES "INSTANT CREEP ON SPILLOVER" (issue #17, 2026-08-19), which
 // unlocked a chunk when a CHANGED cell landed in it. That rule was legible on
@@ -63,7 +71,8 @@ import {
   CHUNK_SIZE,
   chunkIndex,
   chunksPerEdge,
-  footprintChunkIndices,
+  REVEAL_REACH_CELLS,
+  revealChunkIndices,
   type CellDiff,
   type SculptIntent,
 } from '@terrace/shared';
@@ -103,24 +112,19 @@ function creepForSculptor(
 }
 
 /**
- * Unlocks every chunk this stroke's footprint covers, for its sculptor.
+ * Unlocks every chunk within REVEAL_REACH_CELLS of the clicked cell, for the
+ * sculptor.
  *
- * The covered set comes from `footprintChunkIndices` — the brushes' own disc
- * iterator — so it cannot drift from the edit, and the mana plugin prices
- * exactly the same set (see that function's doc comment).
+ * The reached set comes from shared's `revealChunkIndices`, and the mana
+ * plugin prices exactly the same set (see that function's doc comment).
  *
  * `unlockChunkForToken` is idempotent per token and returns false for a chunk
- * the player already had, so the common case (a stroke wholly inside your own
+ * the player already had, so the common case (a stroke well inside your own
  * territory) is a handful of bit tests and sends nothing.
  */
-function openFootprint(world: WorldApi, intent: SculptIntent, token: string): void {
+function openReach(world: WorldApi, intent: SculptIntent, token: string): void {
   const cols = chunksPerEdge(world.worldSize);
-  for (const index of footprintChunkIndices(
-    world.worldSize,
-    intent.x,
-    intent.y,
-    intent.radius,
-  )) {
+  for (const index of revealChunkIndices(world.worldSize, intent.x, intent.y)) {
     world.unlockChunkForToken(token, index % cols, Math.floor(index / cols));
   }
 }
@@ -139,7 +143,7 @@ export const plugin: TerracePlugin = {
    * disc core just sculpted with, and the same one mana was billed for.
    */
   onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
-    openFootprint(ctx.world, intent, ctx.player.token);
+    openReach(ctx.world, intent, ctx.player.token);
   },
 
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[], sculptorToken?: string): void {
