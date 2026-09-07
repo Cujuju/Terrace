@@ -8,6 +8,9 @@
 //   ?view=<iso|side|front>                       — defaults to "iso"
 //   ?stride=<0..1>     — phase of the walk cycle; defaults to 0.25 (mid-swing,
 //                        the pose that shows the legs and tail actually move)
+//   ?zoom=<n>          — camera pull-back, default 1. Under 1 pulls back, which
+//                        is what it takes to frame a gait that turns the body
+//                        off the rest box
 //
 // The lighting rig and framing are previewWildlife.ts's, copied verbatim.
 // A screenshot driver waits for `window.__previewReady === true`.
@@ -91,6 +94,16 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   return { scene, camera, renderer };
 }
 
+/**
+ * `?zoom=<n>` — previewSpecies.ts's knob, same name and same meaning.
+ *
+ * The framing below is the REST pose's box: three measures a SkinnedMesh from
+ * its geometry, and a skinned pose is not in it. A gait that turns the body —
+ * the wall gaits do, see plugins/kit/moverBodyTilt.ts — swings it out of that
+ * box, so pulling back is the only way to photograph one.
+ */
+let ZOOM = 1;
+
 function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraView): void {
   const box = new Box3().setFromObject(subject);
   const center = box.getCenter(new Vector3());
@@ -98,7 +111,7 @@ function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraVi
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
 
   const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
-  const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2);
+  const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2) / ZOOM;
 
   const direction = CAMERA_VIEWS[view].clone().normalize();
   camera.position.copy(center).addScaledVector(direction, distance);
@@ -134,6 +147,7 @@ function main(): void {
   });
   scene.add(subject);
 
+  ZOOM = Number(query.get('zoom') ?? '1') || 1;
   frameCameraOn(camera, subject, view);
 
   let framesRendered = 0;
