@@ -485,15 +485,26 @@ const MARK_BAND_TINT_MIX = 1 / 3;
 const SEED_TOOL: SculptTool = 'stamp';
 const SEED_PROFILE: SculptProfile = 'hard';
 /**
- * And it always RAISES: `seedLayer` sends `sculptDirection('raise')` outright
- * (input/sculptInput.ts), so the seed's ring is looked up under the raise mark
- * rather than under the HUD's current direction. `takeHold` only ever calls it
- * on a raise press, so the two never disagree — but naming the direction here
- * is what makes that true by construction rather than by the two staying in
- * step, and it is the value `update` tests the selection against before it
- * decides a press is a seed at all.
+ * THE SEED HAS NO DIRECTION OF ITS OWN — it sculpts in the PRESS's, which is
+ * why there is no SEED_DIR beside the two constants above and why `update`
+ * looks the ring up under `brush.dir`.
+ *
+ * IT USED TO HAVE ONE, and that is what hid the outline (owner report,
+ * 2026-09-06: "the moment I hold shift to do a drag, my brush graphic goes
+ * away"). Seeding was raise-only, so a constant here said so and `update`
+ * refused to call a lower press a seed. Then `takeHold` learned to seed BOTH
+ * directions — the lower chord digs a one-band pit whose rim is the lip to
+ * drag (input/sculptInput.ts, 2026-09-05, owner: "shift drag does not work on
+ * plateaus") — and this constant went on saying otherwise, so a shift-held
+ * Drag over a tread fell through to the pointed branch and drew nothing but
+ * the crosshair for a press that stamps a whole footprint.
+ *
+ * The lesson is why the note is this long: the seed's shape is `seedLayer`'s
+ * to decide, and every part of it that is restated here is a part that can go
+ * stale. The tool and the edge above are literals in that function and are
+ * named to match; the direction is the press's `action`, so there is nothing
+ * left here to disagree with it.
  */
-const SEED_DIR: SculptDir = 1;
 
 /**
  * Both directions the wire allows, in the order the eager cache builds them.
@@ -1020,8 +1031,9 @@ export function createBrushPreview(
       //
       // The DRAG has no footprint of its own: what it changes is however far
       // the player drags. Its one press with an exact extent is the tread SEED,
-      // and that is a hard stamp (SEED_TOOL/SEED_PROFILE), so `update` draws it
-      // from the stamp's entry — the same simulation, not a duplicate of it.
+      // and that is a hard stamp (SEED_TOOL/SEED_PROFILE) in the press's own
+      // direction, so `update` draws it from the stamp's entry — the same
+      // simulation, not a duplicate of it.
       //
       // The CARVE has a footprint, but not one this cache can answer for:
       // `oneClickMark` runs the real sculpt on FLAT GROUND, and flat ground is
@@ -1255,14 +1267,14 @@ export function createBrushPreview(
       // same horizontal test is a cave roof's UNDERSIDE, where a raise is
       // refused outright and there is nothing to promise.
       //
-      // AND ONLY WHEN THE PRESS RAISES. `takeHold` seeds on `action === 'raise'`
-      // and returns outright otherwise ("a lower press with nothing in its grasp
-      // has nothing to retreat" — input/sculptInput.ts), so a Drag press on a
-      // tread in Lower mode emits no intent at all. Ringing it would promise a
-      // stamp that never happens; without the direction test this branch could
-      // not tell the two presses apart, and drew the seed's ring for both.
+      // IN EITHER DIRECTION. A raise seeds a one-band plateau and a lower digs
+      // a one-band pit; both are the same hard stamp at the same radius, and
+      // both give the drag the lip it needs. The direction is not a condition
+      // on seeding at all — it is part of the footprint, and it travels into
+      // the geometry lookup below as `brush.dir`. See SEED_TOOL's note for the
+      // stale raise-only test that used to live here.
       const onTread = !hover.hitRiser && atY === hover.surfaceY;
-      const seeding = brush.tool === 'drag' && onTread && brush.dir === SEED_DIR;
+      const seeding = brush.tool === 'drag' && onTread;
 
       // THE DRAG AND THE CARVE ARE POINTED, NOT OUTLINED, everywhere else — a
       // ring is a promise about which cells one click will change, and neither
@@ -1303,7 +1315,7 @@ export function createBrushPreview(
         return;
       }
       const wanted = seeding
-        ? key(brush.radius, SEED_TOOL, SEED_PROFILE, SEED_DIR)
+        ? key(brush.radius, SEED_TOOL, SEED_PROFILE, brush.dir)
         : key(brush.radius, brush.tool, brush.profile, brush.dir);
       if (wanted !== shownKey) {
         const geometry = geometries.get(wanted);
