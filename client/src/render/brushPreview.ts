@@ -412,18 +412,6 @@ export interface BrushSelection {
 export interface BrushPreview {
   /** Shows the outline for `brush` at the hovered cell, or hides on null. */
   update(hover: BrushHover | null, brush: BrushSelection): void;
-  /**
-   * A LOCAL INTENT WAS REFUSED (owner, 2026-09-06: "change the brush color
-   * from what it is now to red, flash it twice"). Starts the denial flash, or
-   * restarts one already running — a second refusal must read as a second
-   * event, not be swallowed by the first flash still playing.
-   *
-   * Called for ANY client-side veto, not only the mana gate's: the plugin
-   * interceptor chain is what refused, core does not know which plugin spoke,
-   * and a cue that only covered one of them would leave the others silently
-   * dead under the cursor.
-   */
-  flashDenied(): void;
   dispose(): void;
 }
 
@@ -450,8 +438,16 @@ const OUTLINE_COLOR_CAP = 0xffffff;
 const OUTLINE_COLOR_RISER = 0xffb347;
 
 /**
- * Outline colour while the denial flash is red — the whole preview, ring,
- * skirt and mark alike (`flashDenied`).
+ * Outline colour while the brush is REFUSED — the whole preview, ring, skirt
+ * and mark alike. Owner, 2026-09-06: "change the brush color from what it is
+ * now to red".
+ *
+ * A HOLD, NOT A BLINK THAT ENDS (owner, same day, correcting the first cut:
+ * "if it just goes back to the normal color and they can't draw, then they
+ * have no idea what's going on"). The red is a STATE readout — this button
+ * press is over and nothing you do with it will sculpt — so it lasts exactly
+ * as long as that state does, until the button comes up. The opening blink
+ * below is only what makes the transition catch the eye.
  *
  * THE SAME RED THE MANA GAUGE FLASHES (DENIED_MID in
  * plugins/mana/client/ManaGauge.tsx). One refusal, two cues at opposite
@@ -463,19 +459,24 @@ const OUTLINE_COLOR_RISER = 0xffb347;
 const OUTLINE_COLOR_DENIED = 0xd9584a;
 
 /**
- * The denial flash: how long the outline holds red, and how long it holds its
- * ordinary colour before going red again.
+ * THE OPENING BLINK: red, back to the ordinary colour, red — and from there
+ * red for as long as the refusal stands (owner, 2026-09-06: "red, white, red,
+ * stay red until mouse release").
  *
- * SPLIT EVENLY, so the flash reads as a blink rather than as a colour change
- * with a stutter in it. Two pulses of the two together come to the gauge's own
- * DENIAL_FLASH_MS (600 ms), which is what makes the brush and the gauge finish
- * their cues at the same moment instead of one outlasting the other.
+ * `DENIED_BLINK_REDS` counts the RED ONSETS, so the gaps between them number
+ * one fewer and the last onset is the one that never ends. Written as onsets
+ * because that is what the eye counts and what the owner asked for; a gap
+ * count would have to be read as "two flashes" by subtracting one.
+ *
+ * The red and the gap are equal so the blink reads as a blink rather than as a
+ * colour change with a stutter in it, and their sum is a third of the mana
+ * gauge's own DENIAL_FLASH_MS (600 ms) — the two cues start together, and the
+ * gauge is still flashing while the outline settles into its hold.
  */
-const DENIED_FLASH_RED_MS = 150;
-const DENIED_FLASH_GAP_MS = 150;
-const DENIED_FLASH_PERIOD_MS = DENIED_FLASH_RED_MS + DENIED_FLASH_GAP_MS;
-/** "Flash it twice" (owner, 2026-09-06). */
-const DENIED_FLASH_PULSES = 2;
+const DENIED_BLINK_RED_MS = 100;
+const DENIED_BLINK_GAP_MS = 100;
+const DENIED_BLINK_PERIOD_MS = DENIED_BLINK_RED_MS + DENIED_BLINK_GAP_MS;
+const DENIED_BLINK_REDS = 2;
 
 /**
  * Colour of the pointer mark when the pick names no band a press could act on
@@ -1016,6 +1017,22 @@ export function createBrushPreview(
   scene: Scene,
   canvas: CursorSurface,
   worldSize: () => number,
+  /**
+   * IS THE BRUSH REFUSED RIGHT NOW — a client plugin vetoed this press and the
+   * button has not come back up yet (input/sculptInput.ts's `refusedHold`).
+   * While it is true the outline is red; the transition into it blinks.
+   *
+   * AN ACCESSOR, NOT A CALL THE REFUSAL MAKES, and for the same reason
+   * `worldSize` is one: the state belongs to whoever owns the pointer, and a
+   * preview told about it in a start call and a stop call is a second copy of
+   * that state which can be left switched on. Read every frame, so it cannot
+   * disagree with the input layer for longer than a frame.
+   *
+   * Driven by the interceptor CHAIN's verdict rather than by the mana plugin's
+   * own denial signal: core must not import a plugin, and any interceptor's
+   * veto leaves the press equally dead.
+   */
+  denied: () => boolean,
 ): BrushPreview {
   const edgeClip = createWorldEdgeClip();
   /**
@@ -1212,21 +1229,38 @@ export function createBrushPreview(
    */
   let showing = false;
   /**
-   * When the denial flash began, on the same monotonic clock the phase is
-   * measured against. Starts at −∞ so the very first frame is already past the
-   * end of a flash that never happened.
+   * When the CURRENT refusal began, on the same monotonic clock its blink
+   * phase is measured against, or −∞ while the brush is not refused.
+   *
+   * STAMPED ON THE RISING EDGE of `denied`, in `paintDenial` below, rather
+   * than by a call the refusal makes: the accessor is the one source of truth
+   * about the state (see the `denied` parameter), and a start time taken from
+   * its edge cannot describe a different refusal from the one being drawn.
    */
-  let deniedFlashStartMs = Number.NEGATIVE_INFINITY;
+  let deniedSinceMs = Number.NEGATIVE_INFINITY;
   /**
-   * Whether the flash is RED this instant. Read off the clock on the frame
-   * that draws it, rather than driven by a timer flipping a flag: the preview
-   * is repainted every frame anyway, so a timer would only be a second source
-   * of truth about one interval — and one that keeps running after `dispose`.
+   * Paints the refusal, and returns whether the outline is RED this frame.
+   *
+   * Read off the clock on the frame that draws it rather than driven by a
+   * timer flipping a flag: the preview is repainted every frame anyway, so a
+   * timer would only be a second source of truth about the same interval — and
+   * one that would keep firing after `dispose`.
+   *
+   * The blink is the gaps, not the reds: after the last gap the elapsed time
+   * has left the blink window for good and every later frame is red, which is
+   * the hold. `DENIED_BLINK_REDS - 1` is the gap count — see the constants.
    */
-  const deniedFlashIsRed = (): boolean => {
-    const elapsed = performance.now() - deniedFlashStartMs;
-    if (elapsed < 0 || elapsed >= DENIED_FLASH_PULSES * DENIED_FLASH_PERIOD_MS) return false;
-    return elapsed % DENIED_FLASH_PERIOD_MS < DENIED_FLASH_RED_MS;
+  const deniedIsRed = (): boolean => {
+    if (!denied()) {
+      deniedSinceMs = Number.NEGATIVE_INFINITY;
+      return false;
+    }
+    const at = performance.now();
+    if (deniedSinceMs === Number.NEGATIVE_INFINITY) deniedSinceMs = at;
+    const elapsed = at - deniedSinceMs;
+    const blinkMs = (DENIED_BLINK_REDS - 1) * DENIED_BLINK_PERIOD_MS;
+    if (elapsed >= blinkMs) return true;
+    return elapsed % DENIED_BLINK_PERIOD_MS < DENIED_BLINK_RED_MS;
   };
   /**
    * `crosshairOnly` drops the footprint parts and keeps the centre mark — the
@@ -1240,14 +1274,20 @@ export function createBrushPreview(
     skirt.visible = footprint;
     cellGrid.visible = footprint;
     crosshair.visible = visible;
-    // THE DENIAL FLASH OVERRIDES EVERY OTHER COLOUR, and it is applied HERE
-    // for the same reason visibility is written here: `update` paints the ring,
+    // THE REFUSAL RED OVERRIDES EVERY OTHER COLOUR, and it is applied HERE for
+    // the same reason visibility is written here: `update` paints the ring,
     // the skirt and the mark on four different paths (tread, riser, the
     // crosshair-only tools, the seeding drag), and a tint applied on each is a
     // tint one of them can be added without. This is the last write before the
     // frame, so it wins; the next frame's `update` paints the ordinary colours
-    // back over it once the flash is spent.
-    if (visible && deniedFlashIsRed()) {
+    // back over it once the refusal is over.
+    //
+    // ASKED EVEN WHEN NOTHING IS DRAWN, because the call is also what starts
+    // and clears the blink clock: a refusal that begins while the pointer is
+    // off the world would otherwise leave its start time behind to be read as
+    // the start of the NEXT one, and the next refusal would open mid-blink.
+    const red = deniedIsRed();
+    if (visible && red) {
       material.color.setHex(OUTLINE_COLOR_DENIED);
       skirtMaterial.color.setHex(OUTLINE_COLOR_DENIED);
       crosshairMaterial.color.setHex(OUTLINE_COLOR_DENIED);
@@ -1381,9 +1421,6 @@ export function createBrushPreview(
       skirt.position.copy(line.position);
       cellGrid.position.copy(line.position);
       show(true);
-    },
-    flashDenied() {
-      deniedFlashStartMs = performance.now();
     },
     dispose() {
       show(false);

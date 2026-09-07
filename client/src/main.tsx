@@ -261,12 +261,17 @@ const sculptInput = createSculptInput({
       // sculpting again by itself the moment regen crossed the price, with the
       // player's hand still moving. Released here, the button has to be lifted
       // and pressed again, so what happens next is something the player asked
-      // for. The red flash on the outline is what says the tool did not break.
+      // for.
       //
-      // BOTH ARE CORE'S, DRIVEN BY THE CHAIN'S VERDICT rather than by the mana
-      // plugin's own denial signal: core must not import a plugin, and any
-      // interceptor's veto leaves the stroke in exactly the same dead state.
-      brushPreview.flashDenied();
+      // AND THE BRUSH GOES RED, which is the half that says the tool did not
+      // break: `releaseStroke` records that the refused button is still down,
+      // and the outline is drawn from that state (SculptInput.refusedHold), so
+      // the red lasts until the player lets go rather than ending on a timer
+      // and leaving them a white brush that will not draw.
+      //
+      // DRIVEN BY THE CHAIN'S VERDICT rather than by the mana plugin's own
+      // denial signal: core must not import a plugin, and any interceptor's
+      // veto leaves the stroke in exactly the same dead state.
       sculptInput.releaseStroke();
       return false;
     }
@@ -288,7 +293,15 @@ const sculptInput = createSculptInput({
 // the meshes; radius, tool and edge are all read live so the outline reshapes
 // the moment the
 // HUD changes it.
-const brushPreview = createBrushPreview(viewport.scene, canvas, () => world.worldSize());
+const brushPreview = createBrushPreview(
+  viewport.scene,
+  canvas,
+  () => world.worldSize(),
+  // THE OUTLINE IS RED FOR AS LONG AS THE REFUSED BUTTON IS DOWN. Read live
+  // from the input module, which is what knows the button is still held; the
+  // preview keeps no copy of it. See SculptInput.refusedHold.
+  () => sculptInput.refusedHold(),
+);
 // The pick-debug overlay reads the SAME pick object as the outline, so the two
 // can never disagree about what is under the pointer. See its module header for
 // why it draws one cell and nothing richer.

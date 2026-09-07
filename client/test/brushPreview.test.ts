@@ -156,6 +156,9 @@ function brush(radius: number): BrushSelection {
 /** World edge for the tests below: any size works, the clip must follow it. */
 const TEST_WORLD_SIZE_CELLS = 64;
 
+/** No client plugin has vetoed: the outline draws its ordinary colours. */
+const NEVER_DENIED = (): boolean => false;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CLIPPED AT THE WORLD'S EDGE (issue #281 B). The outline geometry is one per
 // (radius, tool, edge, dir) and position-independent, so at the border it would
@@ -183,7 +186,7 @@ describe('world-edge clipping', () => {
   it('cuts the ring, skirt and cell grid at the editable extent, and follows a world switch', () => {
     let size = TEST_WORLD_SIZE_CELLS;
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => size);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => size, NEVER_DENIED);
     preview.update(hover, stamp);
 
     const clipped = footprintMaterials(scene).filter((m) => m.clippingPlanes !== null && m.clippingPlanes.length > 0);
@@ -207,7 +210,7 @@ describe('world-edge clipping', () => {
 
   it('leaves the outline geometry itself position-independent — clipping is the material\'s job', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
     preview.update(hover, stamp);
     const centre = outlinePoints(line);
@@ -225,7 +228,7 @@ describe('createBrushPreview', () => {
     // what makes this a test of the PROMISE ("these cells move") instead of a
     // snapshot of whichever smoothing pass happens to be configured.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -269,7 +272,7 @@ describe('createBrushPreview', () => {
     // outlined against 749 edited. This loop fails on every soft entry and on
     // smooth+hard if the direction stops reaching the simulation.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
     for (const radius of [1, 2, 4, 8]) {
@@ -310,7 +313,7 @@ describe('createBrushPreview', () => {
     // brushPreview.ts, Chaikin pushed 24 of radius 8's 96 vertices and 48 of
     // radius 16's 160 over concave steps, overhanging by 0.1875 of a cell.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -342,7 +345,7 @@ describe('createBrushPreview', () => {
     // that a segment count alone would not catch — a grid drawn from all four
     // edges of every cell looks identical and is twice the geometry.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const grids = scene.children.filter(
       (c): c is LineSegments => c instanceof LineSegments,
     );
@@ -376,7 +379,7 @@ describe('createBrushPreview', () => {
     // the moment the drawn shape stops agreeing with the cells it stands for,
     // whatever geometry is used to draw it.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -397,7 +400,7 @@ describe('createBrushPreview', () => {
 
   it('places the outline at the hovered cell centre', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
     preview.update({ x: 7, y: 11, surfaceY: 3, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
@@ -411,7 +414,7 @@ describe('createBrushPreview', () => {
   it('hides the pointer exactly while an outline is drawn', () => {
     const scene = new Scene();
     const canvas = fakeCanvas();
-    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
 
     // Nothing hovered yet: the player still has their arrow.
     expect(canvas.on).toBe(false);
@@ -439,7 +442,7 @@ describe('createBrushPreview', () => {
   it('writes the cursor class only when it changes', () => {
     const scene = new Scene();
     const canvas = fakeCanvas();
-    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS);
+    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
 
     // `update` runs every frame; a steady hover must not touch the DOM.
     for (let frame = 0; frame < 60; frame++) {
