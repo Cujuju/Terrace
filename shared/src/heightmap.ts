@@ -1,12 +1,8 @@
 // Heightmap: grid type, brush, gradient-limit smoothing, water, terracing.
 //
-// CRITICAL CODE — this module runs on BOTH server (authoritative) and client
-// (prediction). See the determinism contract in constants.ts: identical inputs
-// must give identical outputs on both sides, or reconciliation will visibly
-// snap. Iteration order in every loop here is part of the contract — do not
-// "optimize" loop order or replace the sequential relaxation without updating
-// both sides atomically (they always are, this is the shared package — that is
-// the point).
+// Runs on server and client. Iteration order in every loop is part of the
+// determinism contract (constants.ts) — identical inputs must give identical
+// outputs on both sides.
 
 import {
   BAND_HEIGHT,
@@ -23,11 +19,8 @@ import {
   WORLD_UNIT_CELLS,
 } from './constants.ts';
 
-// THE GRID ITSELF LIVES IN grid.ts, the leaf both this module and columns.ts
-// sit on (see that file's header for the cycle this split settles). Re-exported
-// here — rather than left for callers to import from a second place — so every
-// module that has always said `from './heightmap.ts'` still can, and
-// `@terrace/shared` exports exactly the names it always did.
+// Grid type lives in grid.ts; re-exported here so `@terrace/shared` keeps its
+// existing export surface.
 export {
   bandOf,
   cellIndex,
@@ -41,8 +34,7 @@ export {
   type Heightmap,
 } from './grid.ts';
 
-// Used by the terrain math below, which is why they are imported as well as
-// re-exported: a re-export is not a binding in this module's own scope.
+// Imported (not just re-exported) because used below.
 import {
   anyColumnLayered,
   applyBandFill,
@@ -76,16 +68,10 @@ import {
 } from './grid.ts';
 
 /**
- * One changed cell, as broadcast to clients after an applied edit.
- *
- * `h` is the TOPMOST CEILING — what it has always been — so every existing
- * consumer of a diff keeps working untouched.
- *
- * `spans` carries the whole column, flattened `[floor0, ceiling0, ...]`, and
- * only for the rare column that holds more than one. ABSENT MEANS ONE SPAN:
- * a receiver must return the cell to `[BEDROCK_FLOOR, h)` — deleting any span
- * list it still holds for it — or a carve that later re-merges would leave it
- * split forever. `applyPackedSpans` (columns.ts) is that rule, written once.
+ * One changed cell, broadcast after an applied edit. `h` is the topmost
+ * ceiling. `spans` (flattened `[floor0, ceiling0, ...]`) is present only for
+ * a column with more than one span; absent means one span — see
+ * `applyPackedSpans` (columns.ts).
  */
 export interface CellDiff {
   x: number;
@@ -98,28 +84,16 @@ export function heightAt(map: Heightmap, x: number, y: number): number {
   return map.cells[cellIndex(map, x, y)];
 }
 
-/** Static sea (design decision Q3): water is derived, never simulated. */
+/** Water is derived, never simulated (decision Q3). */
 export function isWater(h: number): boolean {
   return h <= SEA_LEVEL;
 }
 
-/**
- * THE BAND RANGE THE WORLD CAN HOLD — the bands of its own height limits, so
- * these move with MIN_HEIGHT/MAX_HEIGHT and BAND_HEIGHT rather than restating
- * any of them. Used to bound a `targetBand` arriving off the wire (protocol.ts):
- * a band outside this range names no ground that could exist, so it is rejected
- * structurally rather than left to clamp into something plausible.
- */
+/** Band range the world can hold. Used to reject an out-of-range `targetBand` off the wire. */
 export const MIN_BAND = bandOf(MIN_HEIGHT);
 export const MAX_BAND = bandOf(MAX_HEIGHT);
 
-/**
- * The furthest any single cell in a valid world can have to move: the whole
- * height range. What a `band`-anchored stroke uses as its amount — see
- * applySculpt — so "fill to the grabbed band" needs no special case in the
- * brushes, only an amount large enough that the target clamp is what stops it.
- * DERIVED, so it cannot fall behind a change to either limit.
- */
+/** Whole height range — the amount a `band`-anchored stroke uses so the target clamp alone stops it. */
 export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
 
 function clampHeight(h: number): number {
@@ -127,130 +101,39 @@ function clampHeight(h: number): number {
 }
 
 /**
- * How a sculpt treats the terrain AROUND its footprint (decision 2026-08-14).
- *
- * - `stamp`  — the brush changes exactly its footprint and nothing else. No
- *              relaxation pass runs, so repeated radius-1 raises stack into a
- *              true vertical spire and lowering digs a sheer pit. This is the
- *              player-facing default on the wire (see protocol.ts).
- * - `smooth` — brush THEN the gradient-limit relaxation: the Populous
- *              fabric-pull, kept verbatim as a deliberate blending tool and as
- *              the library default for API compatibility (plugins tuned their
- *              terraforms against relaxation).
- * - `drag`   — THE LAYER-EDGE DRAG (owner decision 2026-08-24, issue #99, and
- *              the model Godus shipped as its first god power). Not a brush at
- *              all: the player grabs a terrace lip and drags it sideways, and
- *              the edit is the REGION swept between where the lip was and
- *              where the cursor is. It changes how far a band extends and
- *              never which bands exist, so the vertical stays entirely the
- *              stamp's. See `applyDragRegion` for the region's exact shape and
- *              `DragPull` for what the wire carries.
- * - `carve`  — REMOVES MATERIAL, AND ONLY REMOVES IT (owner decision
- *              2026-08-24, issue #129 plan D6). The one tool that can open a
- *              second span in a column and so the only way a player — rather
- *              than a fixture — can build an arch or a tunnel. Every other
- *              tool moves a surface; this one cuts a fixed block of bands out
- *              of the brush footprint, at the band the stroke has hold of, and
- *              leaves whatever is above it standing as a roof. Direction is
- *              always lower: a carve intent carrying `dir: 1` is REJECTED by
- *              the validator (protocol.ts) rather than reinterpreted, because
- *              "add material to the underside of a roof" is not a gesture this
- *              game has. See `applyCarve` for the cut and `canCarveBandAt`
- *              (columns.ts) for the rule that says where a player may make it.
+ * `stamp` — footprint only, sheer edges. `smooth` — brush + relaxation.
+ * `drag` — drags a terrace lip sideways (`applyDragRegion`). `carve` —
+ * lower-only, opens a second span for arches/tunnels (`applyCarve`).
  */
 export type SculptTool = 'stamp' | 'smooth' | 'drag' | 'carve';
 
 /**
- * How the brush distributes its amount ACROSS its footprint.
- *
- * - `soft` — the original linear falloff from the centre (design decision Q2).
- * - `hard` — LEVEL-FILLS, under either tool (decision 2026-08-14; widened
- *            from stamp-only to the whole profile 2026-08-19 — see
- *            applySculpt's supersession note): it finishes the lowest terrace
- *            band under the brush before starting the next one, giving
- *            plateaus and clean holes with sheer edges. See
- *            `applyLevelFillBrush` and the dispatch in `applySculpt`. (The
- *            flat per-cell delta this profile originally meant survives only
- *            in `brushDelta`, whose arithmetic still prices a hard sculpt —
- *            see sculptDisplacementUnits.)
+ * `soft` — linear falloff from centre. `hard` — level-fills the lowest band
+ * under the brush before starting the next, under either tool; see
+ * `applyLevelFillBrush`.
  */
 export type SculptProfile = 'soft' | 'hard';
 
-/** Every valid tool, in wire/UI order. Validation and the HUD both read this. */
+/** Every valid tool, in wire/UI order. */
 export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
 
 /**
- * THE TOOLS THAT HAVE NO EDGE PROFILE AT ALL (owner decision 2026-08-27,
- * issue #225). Not "tools whose profile happens to be ignored" — a shape
- * neither tool can have:
- *
- * - `carve` removes a fixed block, CARVE_BANDS_PER_STROKE bands deep, from
- *   every footprint cell. It never had a cone, which is why `profile` reaches
- *   neither its arithmetic nor its price (see sculptDisplacementUnits).
- * - `drag` moves a level sideways, and its contract is that "a drag never
- *   changes WHICH bands exist, only how far one extends" (SculptAnchor:
- *   'band' below). A soft edge bites cells out of the dragged region's rim and
- *   leaves them at partial-band heights, which the level-set renderer draws
- *   as a ledge poking out under the lip — a band the player never asked for,
- *   i.e. exactly what the contract forbids.
- *
- * ONE STATEMENT, TWO READERS: `sculptOptionsOf` (protocol.ts) resolves these
- * tools to a fixed profile so server and prediction cannot disagree, and the
- * HUD hides its Edge row for them so the UI cannot offer a choice that does
- * nothing. Adding a tool here changes both at once.
+ * Tools with no edge profile: `carve` has no cone, `drag`'s soft edge would
+ * leave partial-band ledges (issue #225). `sculptOptionsOf` (protocol.ts)
+ * resolves both to a fixed profile; the HUD hides Edge for them.
  */
 export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['drag', 'carve'];
 
 /**
- * THE TOOLS THAT HAVE NO RAISE/LOWER DIRECTION AT ALL (owner report,
- * 2026-09-02). Not "tools whose raise chord happens to be refused" — a
- * direction the tool cannot have:
- *
- * - `carve` only ever removes. "Add material to the underside of a roof" is
- *   not a gesture this game has, which is why `sculptOptionsOf`'s validator
- *   rejects a carve intent carrying `dir: 1` outright (protocol.ts) rather
- *   than reinterpreting it. A tool with exactly one direction does not have
- *   one to choose.
- *
- * ONE STATEMENT, TWO READERS, the same way TOOLS_WITHOUT_EDGE_PROFILE has
- * two: the pointer layer forces such a stroke to `lower` regardless of the
- * modifier held (or the sticky touch mode), and the HUD hides its Mode row
- * for them so the UI cannot offer a direction that provably does nothing.
- * Adding a tool here changes both at once — which is the whole point of it
- * being a list rather than an `=== 'carve'` at each site.
- *
- * IT DOES NOT INCLUDE `drag`: a drag genuinely has both directions (the
- * lower chord drags a lip inward, see applyDragRegion/retreatHeightAt), so
- * its Mode row and its modifier both still mean something.
+ * Tools with no raise/lower direction: `carve` only removes. `sculptOptionsOf`
+ * forces `lower`; the HUD hides Mode. Excludes `drag`, which has both.
  */
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
 
 /**
- * How many terrace bands ONE carve stroke removes from each footprint cell.
- *
- * DERIVED FROM `isGapDrawn`, NOT CHOSEN. The value is the SMALLEST band count
- * for which a first cut through solid ground leaves an opening the renderer
- * actually draws — anything smaller is a hole nobody can see, which
- * `canonicaliseColumn` then closes again (columns.ts), so the stroke would
- * cost mana and change nothing.
- *
- * The derivation, from `spanUndersideHeight`: a span's underside hangs ONE
- * band below its lowest filled band, so an opening of one band puts the roof's
- * underside at exactly the floor's cap — `isGapDrawn` is false and there is no
- * gap. Two bands is the first that clears it. Measured, at BAND_HEIGHT = 16,
- * by cutting into a solid column capped at band 10 (2026-08-25):
- *
- *   1 band  → spans [-1536, 160)              — one span; the cut closed itself
- *   2 bands → [-1536, 64), [96, 160)          — cap 64, underside 80, drawn
- *   3 bands → [-1536, 64), [112, 160)         — cap 64, underside 96, drawn
- *
- * THE PREDICATE IS THE AUTHORITY. If `spanUndersideHeight` or `isGapDrawn`
- * ever changes, re-run that cut and move this number to whatever the new
- * smallest drawn opening is — never the other way round.
- *
- * A DEEPER TUNNEL IS MORE STROKES, not a bigger number here. This is the
- * minimum a single click can usefully do; repeated clicks deepen the cut, the
- * same way repeated stamps stack a spire.
+ * Bands one carve stroke removes. Smallest value for which `isGapDrawn`
+ * renders an opening (1 band closes itself against `spanUndersideHeight`).
+ * Derived from that predicate — re-check if it changes, don't just bump this.
  */
 export const CARVE_BANDS_PER_STROKE = 2;
 
@@ -258,112 +141,24 @@ export const CARVE_BANDS_PER_STROKE = 2;
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
 
 /**
- * How far the `smooth` tool's relaxation may move terrain OUTSIDE the brush
- * footprint (owner decision 2026-08-19, issue #26).
- *
- * - `banded` — the fabric-pull still drags neighbouring terrain, but a cell
- *              outside the footprint may only move WITHIN the terrace band it
- *              occupied when the stroke first touched it: the spill can slope
- *              ground, it can never create or erase a rendered level anywhere
- *              the player did not aim. This is what every PLAYER sculpt runs
- *              (see WIRE_DEFAULT_SCULPT_OPTIONS / sculptOptionsOf in
- *              protocol.ts — the wire never carries the field, because it is
- *              not the client's to choose).
- * - `free`   — the original unbounded relaxation, verbatim. The library
- *              default, for the same compatibility reason the library tool
- *              default is `smooth` (see LIBRARY_DEFAULT_SCULPT_OPTIONS):
- *              plugin terraforms were tuned against the unbounded spill.
- *
- * NOT a wire field: unlike tool/profile (which change what an edit looks
- * like), containment is a fairness rule, so it is fixed server-side and
- * mirrored into prediction through the one shared resolver.
+ * How far `smooth`'s relaxation may move terrain outside the footprint
+ * (issue #26). `banded` — capped to the cell's own terrace band. `free` —
+ * unbounded (library default). Not a wire field; fixed server-side.
  */
 export type SculptSpill = 'banded' | 'free';
 
 /**
- * What level a stroke's own brush writes are locked to (owner decision
- * 2026-08-19: raising must be "locked at that layer that I'm clicking on" —
- * the periphery of a brush must never end up above its centre).
- *
- * - `clicked` — the stroke computes ONE target level from the CENTRE cell's
- *               pre-stroke band: raising, the floor of the band above it;
- *               lowering, the floor of the band below it. Footprint cells
- *               already at/past that level are untouched; every other cell
- *               moves by its profile's delta but never past the target. This
- *               is what every PLAYER sculpt runs (WIRE_DEFAULT_SCULPT_OPTIONS)
- *               — for `soft` it caps the falloff cone, for `hard` it anchors
- *               the level fill to the clicked cell instead of the footprint
- *               survey (see applyLevelFillBrush's supersession note).
- * - `free`    — the unanchored originals, verbatim: soft's cone grows without
- *               a ceiling, hard's fill targets the footprint's own extreme
- *               band. The library default, for the same compatibility reason
- *               as `spill` (plugin terraforms were tuned against it).
- *
- * THE CEILING BINDS ONLY THE BRUSH'S OWN WRITES. The smooth tool's relaxation
- * afterwards is governed by `spill` alone: outside the footprint it is
- * band-capped ('banded') or unbounded ('free'); INSIDE the footprint it stays
- * unrestricted either way, exactly as before — slump may still redistribute
- * what the anchored brush deposited. The two options compose; neither reads
- * the other.
- *
- * `clicked` and `free` are NOT wire fields, same as `spill`: the anchor is what
- * clicking MEANS, not a brush shape, so it is fixed policy and mirrored into
- * prediction through the one shared resolver (sculptOptionsOf). `band` is the
- * exception, and the paragraph below it says why that is safe.
- *
- * - `band`   — THE DRAG ANCHOR (owner decision 2026-08-23: the drag tool owns
- *              the horizontal). The target is a band the player physically
- *              GRABBED — a terrace lip they clicked on — carried alongside as
- *              `targetBand`, and the level is that band's floor exactly:
- *              `targetBand · BAND_HEIGHT`, not one band off the cell under the
- *              cursor. That is the whole difference from `clicked`, and it is
- *              what lets a drag EXTEND an existing terrace over ground several
- *              bands below it instead of building a new step one band up.
- *
- *              A drag never changes WHICH bands exist, only how far one
- *              extends, and that is enforced by construction rather than by
- *              intent: `canSpreadBandTo` below requires the band to already be
- *              present in the cell's own neighbourhood, so the level can only
- *              ever creep outward from ground that is already at it.
- *
- * IT IS THE ONE ANCHOR THAT IS PARTLY CLIENT INPUT, unlike the two above
- * (which are fixed policy — see sculptOptionsOf in protocol.ts). It has to be:
- * the band comes from a lip the player picked out on screen, which is a fact
- * about their aim and not about the terrain alone. It is safe because the
- * server never trusts the number on its own — canSpreadBandTo re-derives, from
- * the server's own heightmap, whether that band is genuinely adjacent to the
- * cell being sculpted, and a band that is not simply does nothing.
+ * Level a stroke's brush writes lock to. `clicked` — centre cell's adjacent
+ * band, player default. `free` — unanchored, library default. `band` — drag
+ * anchor, client-supplied `targetBand` re-validated by `canSpreadBandTo`.
+ * Binds only the brush; `smooth`'s relaxation uses `spill` instead.
  */
 export type SculptAnchor = 'clicked' | 'free' | 'band';
 
 /**
- * WHETHER BAND `band` MAY SPREAD ONTO CELL (cx, cy) — the drag anchor's whole
- * anti-cheat story, and the reason `targetBand` can be a wire field at all.
- *
- * True when any of the eight neighbours of (cx, cy) already stands at or above
- * `band · BAND_HEIGHT`. A band-anchored sculpt is therefore never a way to
- * conjure height: it can only drag a level onto ground that is already
- * touching that level, one cell at a time. Dragging a terrace across a plain
- * is a WALK — each intent extends the lip by one cell, and the next intent's
- * legality is created by the previous one's result — which is exactly the
- * "how far one extends" semantics, and it makes a forged `targetBand` on an
- * unrelated cell a no-op rather than an exploit.
- *
- * EIGHT NEIGHBOURS, NOT FOUR. The lip a player grabs is a marching-squares
- * contour over the cell lattice (see the client's layer-edge overlay), and
- * that contour cuts diagonally across a cell corner wherever the region turns.
- * With four-neighbour adjacency a drag following such a corner would stall on
- * a lip it is visibly touching, which reads as the tool breaking. Off-map
- * neighbours are simply absent — the world's border holds nothing up.
- *
- * Reads the map only; the caller decides what to do with a false answer (both
- * brushes treat it as "this stroke moves nothing").
- *
- * "STANDS AT IT" MEANS SOLID AT THAT BAND, NOT TOPMOST SURFACE ABOVE IT (issue
- * #129, step 4.5, plan D5). The test used to be `cells[n] >= threshold`, which
- * a neighbour with a cave running under it satisfies while having no material
- * at the band — a terrace could creep out of a roof's shadow. The span form is
- * strictly tighter and identical on one-span columns; see `canSpreadBandToSpan`.
+ * Whether band `band` may spread onto (cx, cy): true iff a neighbour already
+ * stands solid there (not merely above it — #129 step 4.5). Eight neighbours
+ * because a grabbed lip's contour cuts diagonally.
  */
 export function canSpreadBandTo(
   map: Heightmap,
@@ -374,65 +169,15 @@ export function canSpreadBandTo(
   return canSpreadBandToSpan(map, cx, cy, band);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE LAYER-EDGE DRAG (owner decision 2026-08-24, issues #99/#119/#120).
-//
-// WHAT IT IS. The player takes hold of a terrace lip and pushes it about with
-// the cursor. One intent is a BRUSH DISC AT THE CURSOR, filled to the grabbed
-// band — but only onto cells that band already touches. It changes how far a
-// level extends and never which levels exist, so the vertical stays entirely
-// the stamp's.
-//
-// WHY A DISC AT THE CURSOR, after two models that were not. The first build
-// painted the single cells the cursor crossed, chained one intent to the next,
-// and a dropped intent severed the stroke for good (issue #120). The second
-// froze the grabbed lip's normal and moved a straight front along it — the CAD
-// "drag a wall" gesture — which cured the wander but could not curve or turn:
-// the owner's report was that "everything ends up looking like a straight
-// section". Pushing with a disc curves freely, turns wherever the hand turns,
-// and accumulates into shapes that are not made of straight runs.
-//
-// WHAT MAKES IT SAFE, and it is the one rule that has survived all three
-// models: `canSpreadBandTo`. A cell may only be raised to the grabbed band if
-// that band ALREADY stands next to it, re-derived from the server's own
-// heightmap. The band therefore creeps outward from land that really is at
-// that height and can never reach a level that is not already there — which is
-// what keeps "clients send intents, never heights" true of a message that
-// names a band. It also makes the disc self-limiting: most of a disc hanging
-// out over ground the band does not reach simply does nothing.
-//
-// WHY EACH INTENT STANDS ALONE. The region is a function of the cursor cell,
-// the radius and the map — nothing about what an earlier intent did. Applying
-// the same one twice changes nothing the second time, so a dropped intent
-// costs a frame rather than the rest of the stroke.
+// The layer-edge drag: each intent is a disc filled to the grabbed band, but
+// only onto cells `canSpreadBandTo` admits. Idempotent, so a dropped intent
+// costs a frame, not the stroke.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE GRASP — which span of a column a stroke is working on, and the only two
-// operations a brush performs on one (issue #129, step 4.4).
-//
-// Every brush used to read `map.cells[i]` and write it back, which is exactly
-// right for a column of one span and silently wrong for a column of several:
-// `cells[i]` is the TOPMOST ceiling, so a stroke that had hold of a cave floor
-// would read the roof's height, move it, and flatten the cave doing it. These
-// two functions are what make "a sculpt moves exactly one span, and every other
-// span in the column is left byte-untouched" (plan D4) a fact about the code
-// rather than a rule each tool has to remember.
-//
-// ON AN UNLAYERED WORLD THEY ARE THE OLD CODE. `spanBand === null` resolves to
-// the topmost span, which on a one-span column is span 0, whose ceiling IS
-// `cells[i]`; and `moveSpanCeiling` on a lone span writes `cells[i]` and
-// nothing else (columns.ts's setColumn deletes the side-table entry). That
-// identity is what step 4.4 is verified against.
+// The grasp (#129 step 4.4): which span of a column a stroke works on.
+// `map.cells[i]` alone is only correct for one span — it's the topmost
+// ceiling, so a cave-floor grasp would wrongly move the roof.
 
-/**
- * Which span of cell `i` this stroke has hold of, or null when it has none
- * there — a cell the grasped band passes clean through, which the brush skips
- * rather than treating as ground at some other level.
- *
- * `spanBand === null` means the topmost span: no band was named, so the stroke
- * has hold of the surface, which is what every stroke before this field existed
- * meant and what a plugin terraform still means.
- */
+/** Span of cell `i` this stroke holds, or null if the grasped band passes through open air there. Null band means topmost span (the surface). */
 function graspedSpanIndex(map: Heightmap, i: number, spanBand: number | null): number | null {
   const x = cellX(map.size, i);
   const y = cellY(map.size, i);
@@ -441,20 +186,9 @@ function graspedSpanIndex(map: Heightmap, i: number, spanBand: number | null): n
 }
 
 /**
- * THE LAYER-CONSISTENT SPAN of cell `i` for a stroke that has hold of
- * `spanBand` — the span the relaxation pass reads as "this cell's height" and
- * writes as this cell's ground (issue #129, step 4.6, plan D4). Three cases:
- *
- * - the column is SOLID at the band: that span;
- * - the band lies ABOVE the column's top: the top span — the ground under
- *   open sky, which is what MAX_STEP has always been a statement about;
- * - the band lies in a GAP under a roof: `null`, the open-neighbour exclusion.
- *   There is no ground at that level to relax against, and reading the floor
- *   beneath the air (or any stand-in height) would make an artificial cliff
- *   for relaxation to fill — the ledge slumping into the tunnel mouth.
- *
- * `spanBand === null` is the surface, so the top span everywhere; on an
- * unlayered world every case resolves to span 0 and this is `cells[i]`.
+ * Layer-consistent span for relaxation (issue #129 step 4.6): solid at the
+ * band → that span; band above the column top → top span; band in a gap
+ * under a roof → null (excluded, not filled with a stand-in height).
  */
 function layerSpanIndex(map: Heightmap, i: number, spanBand: number | null): number | null {
   const x = cellX(map.size, i);
@@ -471,13 +205,7 @@ function graspedCeiling(map: Heightmap, i: number, k: number): number {
   return spanAt(map, cellX(map.size, i), cellY(map.size, i), k).ceiling;
 }
 
-/**
- * Writes the grasped span's ceiling back through the one primitive that owns
- * merge, split and canonical form. Raising into the span above merges them and
- * keeps the UPPER ceiling (filling under a roof cannot push the roof up);
- * lowering a non-bottom span to its own floor removes it and its opening joins
- * the one below. Neither rule is decided here — see columns.ts.
- */
+/** Writes the grasped span's ceiling; merge/split/canonical-form rules live in columns.ts. */
 function writeGraspedCeiling(map: Heightmap, i: number, k: number, ceiling: number): void {
   moveSpanCeiling(map, cellX(map.size, i), cellY(map.size, i), k, ceiling);
 }
@@ -488,24 +216,11 @@ export interface SculptOptions {
   readonly profile?: SculptProfile;
   readonly spill?: SculptSpill;
   readonly anchor?: SculptAnchor;
-  /**
-   * The band a `band`-anchored stroke fills toward — the terrace lip the
-   * player grabbed. Meaningful ONLY with `anchor: 'band'`; null (and ignored)
-   * for every other anchor, which derive their level from the clicked cell or
-   * the footprint survey instead.
-   */
+  /** Band a `band`-anchored stroke fills toward. Meaningful only with `anchor: 'band'`. */
   readonly targetBand?: number | null;
-  /**
-   * The band at which the stroke has hold of the column — see the resolved
-   * form below. Absent and null both mean the topmost span.
-   */
+  /** Band the stroke holds. Absent/null means topmost span. */
   readonly spanBand?: number | null;
-  /**
-   * THE SWEEP (2026-09-05): the cursor cell the PREVIOUS drag intent named.
-   * A drag's region is then the footprint swept along the straight line from
-   * here to (cx, cy), not the disc at (cx, cy) alone. Drag only; null or
-   * absent means a single disc, which is every drag before this field existed.
-   */
+  /** Previous drag intent's cursor cell; region sweeps the line to (cx, cy). Drag only. */
   readonly sweepFrom?: SweepOrigin | null;
 }
 
@@ -521,111 +236,45 @@ export interface ResolvedSculptOptions {
   readonly profile: SculptProfile;
   readonly spill: SculptSpill;
   readonly anchor: SculptAnchor;
-  /**
-   * The band a `band`-anchored stroke fills toward — the terrace lip the
-   * player grabbed. Meaningful ONLY with `anchor: 'band'`; null (and ignored)
-   * for every other anchor, which derive their level from the clicked cell or
-   * the footprint survey instead.
-   */
+  /** Band a `band`-anchored stroke fills toward. Meaningful only with `anchor: 'band'`. */
   readonly targetBand: number | null;
   /**
-   * The band at which the stroke has hold of the column — WHICH SPAN it is
-   * working on, for a cell that holds more than one. Null means the topmost
-   * span, which is every column in an unlayered world and the surface every
-   * tool has always moved.
-   *
-   * A BAND, NOT A SPAN INDEX, all the way in: the index is resolved from the
-   * map at apply time (`spanIndexCoveringBand`), so the two replicas resolve
-   * the same number against their own terrain instead of trusting a position
-   * in a list. See SculptIntent.spanBand in protocol.ts.
+   * Band the stroke holds, not a span index — resolved via
+   * `spanIndexCoveringBand` at apply time so both replicas agree. Null means
+   * topmost span. See SculptIntent.spanBand in protocol.ts.
    */
   readonly spanBand: number | null;
-  /** The drag sweep's start cell, or null for a single disc. See SculptOptions. */
+  /** Drag sweep's start cell, or null for a single disc. */
   readonly sweepFrom: SweepOrigin | null;
 }
 
 /**
- * What `applySculpt` runs when it is called WITHOUT options.
- *
- * COMPATIBILITY CONTRACT: this is deliberately NOT the player-facing default.
- * Every pre-2026-08-14 caller of applySculpt — the plugin `WorldApi.sculpt`
- * path above all — was written and tuned against brush + gradient relaxation,
- * so an absent options argument must keep reproducing that behaviour bit for
- * bit. The new player-facing default (stamp) lives on the wire instead:
- * `WIRE_DEFAULT_SCULPT_OPTIONS` in protocol.ts. Tested in heightmap.test.ts,
- * "an ABSENT options argument is byte-identical to explicit smooth+soft".
+ * What `applySculpt` runs without options. NOT the player-facing default —
+ * this reproduces pre-2026-08-14 plugin behaviour (brush + relaxation, no
+ * spill containment) bit for bit. Player default is `WIRE_DEFAULT_SCULPT_OPTIONS`
+ * in protocol.ts.
  */
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   tool: 'smooth',
   profile: 'soft',
-  // 'free' for the same reason the tool is 'smooth': an absent options
-  // argument must reproduce the pre-2026-08-14 behaviour bit for bit, and
-  // that behaviour had no spill containment (issue #26 added it for PLAYER
-  // sculpts only — see SculptSpill and WIRE_DEFAULT_SCULPT_OPTIONS).
   spill: 'free',
-  // 'free' by the same contract once more: the clicked-cell ceiling
-  // (2026-08-19) is player-sculpt policy; plugin terraforms rely on the
-  // unanchored cone/fill. See SculptAnchor.
   anchor: 'free',
-  // No band to fill toward: only the 'band' anchor reads this, and the
-  // library default is not it.
   targetBand: null,
-  // No span named — the topmost one. Every pre-2026-08-25 caller meant exactly
-  // this, and a plugin terraform still does: a plugin sculpts the surface.
   spanBand: null,
-  // A single disc: no drag before 2026-09-05 swept, and no plugin's does.
   sweepFrom: null,
 };
 
 /**
- * THE BRUSH FOOTPRINT, DEFINED EXACTLY ONCE. Visits every offset `(dx, dy)`
- * with `dx² + dy² < radius·(radius−1)` — a TIGHT integer disc — except
- * radius 1, which is the centre cell alone (the product is 0 there, and a
- * point brush is the point of radius 1). Integer arithmetic only, so the
- * footprint is identical on every platform, and the scan order (dy outer, dx
- * inner, both ascending) is part of the determinism contract — see the module
- * header.
- *
- * WHY r·(r−1) AND NOT r² (owner decision 2026-08-19: a rounder,
- * Populous-feeling brush). The old test, `floor(sqrt(dx²+dy²)) < r`, is
- * algebraically `dx²+dy² < r²`, and on the integer lattice that fills the
- * whole bounding square at small radii — radius 2 was a 3×3 block and
- * radius 3 a full 5×5, which is why the brush read as square. r·(r−1) is the
- * geometric-mean radius between r−1 and r, and it carves the corners off at
- * every size:
- *
- *   radius 1 →  1 cell  (centre; special-cased)
- *   radius 2 →  5 cells (the plus/diamond — the old 3×3 minus its corners)
- *   radius 3 → 21 cells (5×5 minus its 4 corners)
- *   radius 4 → 37 cells (rounded octagon; the old shape kept its corners)
- *
- * `dist` handed to the callback is unchanged — `floor(sqrt(dx²+dy²))`, the
- * soft profile's falloff ring index — only MEMBERSHIP tightened.
- *
- * WHY IT IS A FUNCTION AND NOT A LOOP EACH CALLER WRITES OUT. Three callers
- * must agree on this set of cells, and each disagreement is a real defect:
- *   applyBrush            — which cells one sculpt moves;
- *   applyLevelFillBrush   — which cells it SURVEYS for the fill level, and then
- *                           moves; surveying a different set than it edits is
- *                           how a "level" fill would leave a cell behind;
- *   sculptDisplacementUnits — what a sculpt COSTS, so a cell counted here but
- *                           never touched is mana charged for nothing.
- * These were three verbatim copies of one loop; one function is what makes
- * "they agree" a fact rather than a comment. EXPORTED (2026-08-14) for a
- * fourth consumer with the same must-agree stake: the client's brush-outline
- * preview (client/src/render/brushPreview.ts) — an outline drawn from any
- * other loop would promise cells the brush does not touch.
- *
- * The callback takes the OFFSET, not a cell: bounds are the caller's business
- * (sculptDisplacementUnits has no map at all — it prices an intent, not a
- * position, so a brush overhanging the map edge still costs full price).
+ * The brush footprint, defined once: `dx²+dy² < radius·(radius−1)`, except
+ * radius 1 (centre alone). Scan order is part of the determinism contract.
+ * Shared by every consumer (brushes, pricing, client preview) so none drift.
  */
 export function forEachFootprintOffset(
   radius: number,
   visit: (dx: number, dy: number, dist: number) => void,
 ): void {
   if (radius === 1) {
-    // r·(r−1) = 0 would exclude even the centre; radius 1 IS the point brush.
+    // r·(r−1)=0 would exclude the centre; radius 1 is the point brush.
     visit(0, 0, 0);
     return;
   }
@@ -637,36 +286,13 @@ export function forEachFootprintOffset(
   }
 }
 
-/**
- * THE MEMBERSHIP HALF of the footprint above, for a caller that has one offset
- * in hand rather than a disc to walk — "is (dx, dy) in the brush of this
- * radius". Same test, same integer arithmetic, same radius-1 special case; it
- * is a function so that asking about a single offset does not mean writing the
- * disc's shape down a second time, which is the drift `forEachFootprintOffset`
- * itself exists to prevent.
- *
- * Its caller is `admitRimEnclaves`: whether a rim cell touches the ground
- * OUTSIDE the disc is a question about the disc's boundary, and the boundary
- * is not a ring the iterator can hand out — see the note there.
- */
+/** Membership test for a single offset, same rule as forEachFootprintOffset. Used by admitRimEnclaves. */
 function isFootprintOffset(radius: number, dx: number, dy: number): boolean {
   if (radius === 1) return dx === 0 && dy === 0;
   return dx * dx + dy * dy < radius * (radius - 1);
 }
 
-/**
- * `forEachFootprintOffset` narrowed to CELLS: turns each offset into an
- * absolute (x, y), drops it if off-map, and hands the caller the cell index
- * and distance directly. Built on top of forEachFootprintOffset so the scan
- * order and the `floor(sqrt) < radius` footprint test still exist exactly
- * once — this only adds the offset→bounds-check→index step, and adds it once.
- *
- * Off-map cells are excluded: a brush overhanging the map edge loses the
- * cells outside it, because they are not part of this world. That matters
- * beyond applyBrush — applyLevelFillBrush's survey pass and fill pass must
- * see exactly the same in-bounds set or the fill is not level (see its doc),
- * and sharing this iterator is what makes that true by construction.
- */
+/** forEachFootprintOffset narrowed to in-bounds cells (index + dist). Off-map offsets are dropped. */
 function forEachFootprintCell(
   map: Heightmap,
   cx: number,
@@ -677,22 +303,12 @@ function forEachFootprintCell(
   forEachFootprintOffset(radius, (dx, dy, dist) => {
     const x = cx + dx;
     const y = cy + dy;
-    if (!inBounds(map, x, y)) return; // brush overhanging the map edge
+    if (!inBounds(map, x, y)) return;
     visit(cellIndex(map, x, y), dist);
   });
 }
 
-/**
- * The per-cell delta a brush of `profile` applies at distance `dist` from its
- * centre, for a stroke of `amount` over the given `radius`. Shared by
- * applyBrush (which applies it) and sculptDisplacementUnits (which prices it)
- * so the two agree by construction rather than by review — see
- * sculptDisplacementUnits's doc for why that agreement matters.
- *
- * 'hard': the same flat delta everywhere in the footprint (sheer edges).
- * 'soft': linear falloff; trunc (toward zero) keeps raise/lower symmetric.
- * At radius 1 the two are identical — the footprint is the centre alone.
- */
+/** Per-cell delta at distance `dist`. Shared with sculptDisplacementUnits so pricing matches application exactly. */
 function brushDelta(
   amount: number,
   radius: number,
@@ -703,21 +319,9 @@ function brushDelta(
 }
 
 /**
- * THE FOOTPRINT CELLS A BAND-ANCHORED STROKE MAY WRITE, decided from the map
- * BEFORE the stroke writes anything.
- *
- * canSpreadBandTo is the band anchor's whole anti-cheat story, but the brushes
- * used to ask it once, for the stroke centre, and then write the entire disc:
- * with the whole-way amount the anchor also buys (FULL_HEIGHT_SPAN, see
- * applySculpt) that lifted every cell in the footprint to the named band off a
- * single adjacent cell — a height that came from the caller rather than from
- * the world. Asking per cell restores the documented semantics: the level
- * creeps onto ground already touching it, one cell at a time.
- *
- * READ FROM THE UNTOUCHED MAP, which is why the answers are collected up front
- * instead of being asked inside the writing sweep: a cell this stroke raises
- * would otherwise make its own neighbour legal, and the disc would fill by
- * scan order. Same map in, same set out — no iteration-order dependence.
+ * Footprint cells a band-anchored stroke may write, checked per cell against
+ * the untouched map (not just the centre) — otherwise one legal cell would
+ * make its neighbours legal mid-sweep, filling by scan order.
  */
 function spreadableFootprintCells(
   map: Heightmap,
@@ -733,11 +337,7 @@ function spreadableFootprintCells(
   return spreadable;
 }
 
-/**
- * The radius precondition every brush entry point shares. Untrusted input is
- * validated in protocol.ts; reaching the math with garbage is a programming
- * error, so this throws rather than clamping.
- */
+/** Radius precondition. Throws (not clamps) — untrusted input is validated in protocol.ts. */
 function assertBrushRadius(radius: number): void {
   if (
     !Number.isInteger(radius) ||
@@ -748,12 +348,7 @@ function assertBrushRadius(radius: number): void {
   }
 }
 
-/**
- * The full precondition set for a brush that touches terrain: an in-bounds
- * centre, a legal radius, an integer amount. Checked in that order so the
- * thrown message names the first thing wrong, exactly as before this was one
- * function rather than one copy per brush.
- */
+/** Full brush precondition set: in-bounds centre, legal radius, integer amount. */
 function assertBrushArgs(
   map: Heightmap,
   cx: number,
@@ -771,17 +366,10 @@ function assertBrushArgs(
 }
 
 /**
- * THE ANCHOR TARGET — the one derivation of "the level the clicked cell
- * implies": the floor of the band adjacent (above when raising, below when
- * lowering) to the CENTRE cell's band, clamped into the height range. Read
- * from the map BEFORE any write of the stroke — the centre is itself a
- * footprint cell, and a target computed after it moved would anchor the
- * stroke to the wrong band.
- *
- * Extracted (2026-08-19, owner bug report) because THREE call sites must
- * agree bit for bit or the anchored stroke contradicts itself: applyBrush's
- * ceiling, applyLevelFillBrush's fill level, and applySculpt's relaxation
- * containment for anchored smooth strokes.
+ * The level the clicked cell implies: floor of the band adjacent to the
+ * centre cell's pre-stroke band. Read before any write. Shared by applyBrush,
+ * applyLevelFillBrush and applySculpt's relaxation containment — they must
+ * agree bit for bit.
  */
 function anchoredTargetHeight(
   map: Heightmap,
@@ -791,62 +379,23 @@ function anchoredTargetHeight(
   targetBand: number | null = null,
   spanBand: number | null = null,
 ): number {
-  // THE DRAG CASE (`anchor: 'band'`, 2026-08-23). The player grabbed a lip, so
-  // the level is that band's own floor — NOT one band off whatever happens to
-  // lie under the cursor. `raising` is deliberately unread here: which way the
-  // ground has to move to reach a grabbed level is a consequence of where it
-  // already is, not a separate choice, and fillTowardTarget/applyBrush already
-  // leave cells at or past the target alone.
+  // Drag case: level is the grabbed band's own floor, not derived from `raising`.
   if (targetBand !== null) return clampHeight(targetBand * BAND_HEIGHT);
-  // The CENTRE'S GRASPED ceiling, not the column's topmost one: a stroke with
-  // hold of a cave floor anchors to the floor it is standing on, not to the
-  // roof over it. Identical on a one-span column, where the two are the same
-  // number.
+  // Centre's grasped ceiling, not the column's topmost — a cave-floor grasp
+  // anchors to the floor, not the roof.
   const centre = cellIndex(map, cx, cy);
   const k = graspedSpanIndex(map, centre, spanBand);
-  // No span at the grasped band under the cursor: the stroke has nothing to
-  // anchor to. Callers guard this case before writing (applySculpt's whole-
-  // stroke refusal, and each brush's own resolve-or-skip), so the value only
-  // has to be one that moves nothing.
+  // No span at the grasped band: nothing to anchor to; callers guard this
+  // before writing, so the fallback only needs to move nothing.
   const here = k === null ? map.cells[centre]! : graspedCeiling(map, centre, k);
   return clampHeight((bandOf(here) + (raising ? 1 : -1)) * BAND_HEIGHT);
 }
 
 /**
- * Applies the sculpt brush over its footprint — the tight integer disc
- * forEachFootprintOffset defines. Cells outside the footprint are never
- * touched by the brush itself.
- *
- * The per-cell delta depends on `profile`:
- *   soft — `trunc(amount * (radius - d) / radius)`: linear falloff, radius 1
- *          degenerating to the Populous point brush (design decision Q2).
- *   hard — `amount` at every footprint cell, edge included: a flat plateau or
- *          a clean hole with sheer edges (decision 2026-08-14).
- * `trunc` (toward zero) is what keeps raise and lower exact mirrors of each
- * other; `hard` is trivially symmetric for the same reason.
- *
- * Results clamp to [MIN_HEIGHT, MAX_HEIGHT].
- *
- * Changed cell indices are added to `changed` (for the caller to smooth and
- * diff). Throws on invalid center/radius — validation of untrusted input
- * happens in protocol.ts; reaching here with garbage is a programming error.
- *
- * NOT the whole story for the `hard` profile: applySculpt routes it (under
- * either tool, since 2026-08-19; stamp-only before that) to
- * applyLevelFillBrush instead. This function stays the plain per-cell-delta
- * brush the `soft` combinations (and every direct caller) run.
- *
- * THE CLICKED-CELL CEILING (`anchor: 'clicked'`, owner decision 2026-08-19:
- * "everything at the edge or peripheral of that brush should not be going
- * higher than the center of the brush, like it should be locked at that layer
- * that I'm clicking on"). Raising, the target is the floor of the band above
- * the CENTRE cell's pre-stroke band; cells already at/above it are untouched,
- * every other cell's falloff delta stops AT it. Lowering mirrors (the floor of
- * the band below; cells at/below it untouched). The soft cone therefore fills
- * toward the level the player pointed at instead of stacking past it wherever
- * the ground under the falloff already ran high. `'free'` (the default, for
- * the library-compatibility contract) is the pre-2026-08-19 arithmetic, bit
- * for bit — the target computation does not even run.
+ * Applies the sculpt brush. `soft`: linear falloff. `hard`: flat delta
+ * (applySculpt actually routes `hard` to applyLevelFillBrush instead).
+ * Clamps to [MIN_HEIGHT, MAX_HEIGHT]; throws on invalid centre/radius.
+ * `anchor: 'clicked'` stops cells at the centre's adjacent band.
  */
 export function applyBrush(
   map: Heightmap,
@@ -862,37 +411,25 @@ export function applyBrush(
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
 
-  // THE DRAG'S SPREAD RULE (`anchor: 'band'`): a grabbed level may only creep
-  // onto ground that already touches it. Checked before anything is written,
-  // from the map alone, so a forged band on an unrelated cell moves nothing.
-  // Asked for EVERY footprint cell and not only the centre — see
-  // spreadableFootprintCells for what the centre-only test allowed.
+  // Drag's spread rule: checked per footprint cell against the untouched map.
   let spreadable: ReadonlySet<number> | null = null;
   if (anchor === 'band') {
     if (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand)) return;
     spreadable = spreadableFootprintCells(map, cx, cy, radius, targetBand);
   }
 
-  // The ceiling/floor is pinned from the centre BEFORE any write: the centre
-  // is itself a footprint cell, and computing the target mid-scan (after the
-  // centre moved) would anchor the periphery to the wrong band. amount === 0
-  // has no direction to anchor and writes nothing anyway.
+  // Target pinned from centre before any write, so periphery cells don't
+  // anchor to a target computed after the centre moved.
   const raising = amount > 0;
   const anchored = anchor !== 'free' && amount !== 0;
   const target = anchored ? anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand) : 0;
 
-  // Each cell is written at most once, so the fixed scan order only matters for
-  // reproducibility of the `changed` set's insertion order.
   forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
-    // Ground this band cannot spread onto: outside the stroke, not merely
-    // unmoved by it (the spread rule above).
     if (spreadable !== null && !spreadable.has(i)) return;
     const delta = brushDelta(amount, radius, dist, profile);
     if (delta === 0) return;
-    // WHICH SPAN THIS CELL OFFERS THE STROKE. Null is a cell the grasped band
-    // passes clean through — open air at that level — and it is SKIPPED, not
-    // filled: treating a void as ground at some other height is relaxation
-    // inventing terrain, the failure the plan calls out under D4.
+    // Null means the grasped band passes through open air here — skip, don't
+    // fill with a stand-in height (D4).
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
@@ -912,66 +449,9 @@ export function applyBrush(
 }
 
 /**
- * THE LEVEL-FILL BRUSH — what the `hard` profile runs under either tool
- * (stamp-only 2026-08-14 → whole profile 2026-08-19, see applySculpt's
- * supersession note; the original owner request:
- * "I would also like the hard edge brush to only work at one level at a time
- * until it fills out everything at that level. So if I'm at level 2 and I'm
- * trying to fill out all the ground at a level 2, I don't want it to start
- * building level 3 until everything within that brush edge is level 2").
- *
- * SEMANTICS. Raising (`amount > 0`):
- *   1. SURVEY the footprint's in-bounds cells and take the LOWEST terrace band
- *      present, `minBand = min(bandOf(h))`.
- *   2. The target is the FLOOR OF THE NEXT BAND UP: `(minBand + 1) *
- *      BAND_HEIGHT`, clamped into the height range.
- *   3. Every cell already at or above the target is left completely alone.
- *      Every cell below it rises by `amount`, stopping AT the target — never
- *      through it.
- * Lowering (`amount < 0`) is the same algorithm with the extremes swapped: the
- * HIGHEST band present, the floor of the band below it, and only cells above
- * the target descend, stopping at it.
- *
- * The consequence the owner asked for: repeated strokes flatten the lowest
- * ground under the brush up to one uniform level, and only once every cell in
- * the footprint has reached that level does the next stroke start on the level
- * above. The brush can never build a step inside its own footprint.
- *
- * ONE BAND PER STROKE, EVEN IF `amount` IS BIGGER. `amount` is server
- * configuration and a plugin may modify it; the target clamp means a stroke
- * carrying two bands' worth of height still advances the footprint by one band.
- * That is the request ("don't start building level 3"), not an oversight — the
- * amount still governs the stroke on ground that is BELOW the target, which is
- * where a partially-filled level actually lives.
- *
- * RAISE AND LOWER ARE THE SAME OPERATION MIRRORED, exactly on the band-aligned
- * terrain the stamp tool produces (a footprint flat at `B * BAND_HEIGHT` goes to
- * `(B ± 1) * BAND_HEIGHT`). On terrain that is NOT band-aligned — only the
- * `smooth` tool's relaxation makes such heights — the two differ by the
- * half-open band convention `[B·H, (B+1)·H)` that `bandOf` (floor division)
- * defines and that terraced rendering draws. That is the right asymmetry to
- * have: a cell at height 70 renders on band 1, so lowering it must leave it
- * rendering on band 0, and raising it must leave it rendering on band 2. A
- * perfect negation mirror would instead drop it to 64 — still band 1, a stroke
- * with no visible effect.
- *
- * DETERMINISM. Integer-only throughout; both passes use the one fixed-order
- * footprint iterator; min/max over a set is order-independent anyway. Server and
- * client therefore land on identical cells (this is the whole point of shared/).
- *
- * Changed cell indices are added to `changed`, exactly as applyBrush does.
- * Throws on the same invalid arguments applyBrush throws on.
- *
- * THE ANCHOR (2026-08-19, second decision of the day — supersedes the SURVEY
- * for player sculpts). With `anchor: 'clicked'` the fill level is derived
- * from the CENTRE cell's pre-stroke band — the level the player is pointing
- * at — and the survey pass does not run at all. The owner chose this knowing
- * the trade: a hole under the brush's edge no longer holds the fill back the
- * way the original 2026-08-14 request ("don't start building level 3 until
- * everything within that brush edge is level 2") had it — the brush builds
- * toward the CLICKED level over whatever lies beneath, and low cells simply
- * rise by `amount` toward it. `'free'` (the default) keeps the surveyed
- * extreme, bit for bit, for direct library callers.
+ * Level-fill brush (`hard` profile). Raising: target is the floor of the
+ * band above the footprint's lowest terrace; cells below rise to it, rest
+ * stay. Lowering mirrors. Advances one band per stroke.
  */
 export function applyLevelFillBrush(
   map: Heightmap,
@@ -985,13 +465,10 @@ export function applyLevelFillBrush(
   spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
-  // A zero-amount sculpt moves nothing and has no direction to fill in; without
-  // this, the survey below would still run and pick a meaningless target.
+  // No direction to fill toward; without this the survey would pick a meaningless target.
   if (amount === 0) return;
 
-  // THE DRAG'S SPREAD RULE — see canSpreadBandTo, and applyBrush's identical
-  // guard. Both brushes carry it because both are reachable with this anchor,
-  // and both ask it per footprint cell rather than for the centre alone.
+  // Same spread-rule guard as applyBrush.
   let spreadable: ReadonlySet<number> | null = null;
   if (anchor === 'band') {
     if (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand)) return;
@@ -1001,9 +478,7 @@ export function applyLevelFillBrush(
   const raising = amount > 0;
 
   if (anchor !== 'free') {
-    // ANCHORED: the level the player pointed at ('clicked') or grabbed
-    // ('band'), read before any write — the same derivation the other two
-    // anchored call sites use.
+    // Anchored target, read before any write — same derivation as the other anchored call sites.
     const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
     fillTowardTarget(
       map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand, spreadable,
@@ -1013,13 +488,10 @@ export function applyLevelFillBrush(
 
   let extremeBand = 0;
   {
-    // PASS 1 — SURVEY. The extreme band across the footprint's in-bounds cells.
-    // Off-map cells are excluded for the same reason applyBrush skips them: they
-    // are not part of this world, so they cannot hold back a fill in it.
+    // Pass 1: survey. Extreme band across the footprint's in-bounds cells.
     let surveyed = false;
     forEachFootprintCell(map, cx, cy, radius, (i) => {
-      // Surveyed on the GRASPED span, and a cell the grasp passes through is
-      // not surveyed at all — an opening is not a low place to be filled from.
+      // A cell the grasp passes through is not surveyed — an opening isn't a low place to fill from.
       const k = graspedSpanIndex(map, i, spanBand);
       if (k === null) return;
       const band = bandOf(graspedCeiling(map, i, k));
@@ -1030,26 +502,17 @@ export function applyLevelFillBrush(
       }
       if (raising ? band < extremeBand : band > extremeBand) extremeBand = band;
     });
-    // assertBrushArgs proved the CENTRE is in bounds and the centre is always in
-    // the footprint, so this cannot fire — belt and braces against a future
-    // change to either fact leaving `extremeBand` an invented number.
+    // Cannot fire: the centre is always in bounds and in the footprint. Defensive.
     if (!surveyed) return;
   }
 
-  // The level being filled: the floor of the band adjacent to the extreme one.
-  // ±1 band is the semantics, not a tunable — "the next level up/down" is what
-  // the brush means, so there is no other value it could take.
-  // Clamped here rather than per cell: the top band's ceiling (band 16 at
-  // BAND_HEIGHT 64) is MAX_HEIGHT + BAND_HEIGHT, i.e. off the map's range, and
-  // the same one band below MIN_HEIGHT.
+  // Floor of the band adjacent to the extreme one; clamped since the top
+  // band's ceiling can exceed MAX_HEIGHT.
   const targetHeight = clampHeight((extremeBand + (raising ? 1 : -1)) * BAND_HEIGHT);
   fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
 }
 
-/**
- * Cells this stroke writes to. Shared by the sweep, the price and the client's
- * prediction guard — they must not disagree. All three gate conditions, not two.
- */
+/** Cells this stroke writes to. Shared by sweep, price, and prediction guard — must not disagree. */
 export function sculptSweepRadius(
   radius: number,
   profile: SculptProfile,
@@ -1102,12 +565,7 @@ function applySoftSkirt(
   });
 }
 
-/**
- * PASS 2 of the level fill — one footprint sweep moving every cell short of
- * `targetHeight` by `amount`, stopping AT the target, leaving cells at or past
- * it untouched. Shared by both of applyLevelFillBrush's target derivations
- * (anchored and surveyed) so the fill semantics cannot fork between them.
- */
+/** Pass 2 of the level fill: moves cells short of `targetHeight` by `amount`, stopping at it. Shared by both target derivations. */
 function fillTowardTarget(
   map: Heightmap,
   cx: number,
@@ -1150,81 +608,16 @@ function fillTowardTarget(
 }
 
 /**
- * How close a dragged lip must come to the level below before that level is
- * pushed along too, in cells. ONE CELL — adjacency, i.e. the lower level gives
- * ground only once the upper lip is standing directly against it and the tread
- * between them has been consumed to nothing.
- *
- * SUPERSEDES HALF A WORLD UNIT (owner, 2026-08-24, with a screenshot: "I am
- * soft dragging that top band and it keeps pushing out all the bands below it.
- * I'm unable to drag it to the edge"). At half a world unit every band of a
- * staircase with treads that narrow is inside the window at once, so the WHOLE
- * STACK translates outward with the drag and the dragged band never gains on
- * it — measured on 2-cell treads, bands 7 down to 1 each moved out two cells,
- * so the lip could not be dragged to the edge however long the stroke was held.
- * That is the ladder. At adjacency the same drag leaves every band below
- * exactly where it stood and only the dragged band advances.
- *
- * A LATTICE FACT, NOT A GROUND FACT, which is why this one is NOT stated in
- * world units. "The edges are aligned" means the two lips are in touching
- * cells; that is a statement about the sampling grid and stays true at any
- * re-sample, so scaling it by WORLD_UNIT_CELLS (the 2026-08-21 quartering trap
- * that the previous value was written against) would be the error here rather
- * than the protection against it.
- *
- * The earlier value's own doc named this outcome as the alternative it was
- * replacing — "the lower level never moved until the upper one had swallowed
- * it entirely". That is now the intended behaviour, chosen deliberately.
+ * Adjacency before a dragged lip pushes the level below along. A larger
+ * value (world units) let a whole staircase translate with the drag instead
+ * of just the dragged band. A lattice fact, so stated in cells.
  */
 const DRAG_TREAD_TOLERANCE_CELLS = 1;
 
 /**
- * PUSHING THE LEVELS BELOW ALONG WITH THE ONE BEING DRAGGED.
- *
- * Without this a drag simply swallows the terrace under it: band k advances
- * over band k−1's tread, band k−1 never moves, and a staircase turns into one
- * tall face. What the player expects is that the step is CARRIED — crowd the
- * level below and it gives ground too, and so on down.
- *
- * THE RULE, and every clause of it is load-bearing. A cell is raised to band j
- * when all three hold:
- *
- * 1. it lies within DRAG_TREAD_TOLERANCE_CELLS of ground THIS EDIT just put at
- *    band j+1 or above — the level above is crowding it;
- * 2. a TREAD OF BAND j — ground standing at exactly that band — was within the
- *    same tolerance BEFORE this edit, so there is a real step here to push
- *    rather than open ground to terrace;
- * 3. `canSpreadBandTo` admits it on the live map — the band can physically
- *    reach it, the same rule the drag itself runs.
- *
- * CLAUSE 2 IS THE ONE THAT WAS MISSING, and its absence was not a matter of
- * degree (owner report, 2026-08-24: dragging a layer beside a tall totem "blew
- * up into a giant pyramid"). Judged on the map AFTER the drag, the land the
- * drag had just created was itself ground at band j+1, so it justified
- * spreading band j beneath it, which justified band j−1 beneath that. Beside a
- * 20-band spire standing on flat ground there is no lower lip anywhere near —
- * and the cascade INVENTED the entire staircase down to sea level: one click
- * changed 2,780 cells across 12 new levels and reached 28 cells out. It was
- * never pushing lips; it was building them.
- *
- * So the crowding is read from the map as it stands NOW, and the entitlement
- * from the map as it stood BEFORE — `hadCapAtBandBefore`, which answers from
- * the recorded pre-edit column for anything this intent has touched and from
- * the live column for everything else. A level that was not there before this
- * drag cannot be pushed by it.
- *
- * SEEDED BY WHAT MOVED, NEVER BY THE TERRAIN AT LARGE. Stated as a property of
- * the map — "bands within `tolerance` cells of each other may differ by at most
- * one" — the same rule would be a global terracing constraint far stricter than
- * MAX_STEP, and applying it would raise ground across every natural slope in
- * the world steeper than one band per half world unit. Seeded from this
- * intent's own changes it can only ever propagate outward from land the player
- * just moved, and it stops of its own accord the moment it reaches a tread
- * already wider than the tolerance.
- *
- * It cannot invent height either: every cell it raises to band j is admitted by
- * `canSpreadBandTo`, so band j must already stand next to that cell before it
- * may spread there.
+ * Carries a staircase step by pushing the level below the dragged one.
+ * Raises a cell to band j only if crowded by this edit's own j+1 ground,
+ * a tread of band j pre-existed (else: pyramid bug), and canSpreadBandTo admits it.
  */
 function pushLowerLayers(
   map: Heightmap,
@@ -1235,19 +628,9 @@ function pushLowerLayers(
   changed: Set<number>,
 ): void {
   /**
-   * Whether a TREAD OF BAND `band` stood within the tread tolerance of
-   * (cx, cy) before this intent — ground whose own band is exactly `band`.
-   *
-   * EXACTLY, NOT "AT OR ABOVE", and the difference is the second half of the
-   * pyramid bug. A test for `height >= band · BAND_HEIGHT` is satisfied by
-   * anything TALLER as well, so beside a 20-band totem every band from 19 down
-   * to 1 counts as "already here" — the totem is above all of them — and the
-   * cascade walks the whole way down again. What the rule means to ask is
-   * whether there is a STEP at this level being crowded, and a step at band j
-   * is ground standing at band j, not ground towering over it.
-   *
-   * In spans (step 4.5): a span whose CAP is at band j. A layered column can
-   * hold such a step under a roof, and the roof above it does not count.
+   * Whether a tread of exactly `band` (not "at or above" — that let a totem
+   * count as every band below it, the pyramid bug) stood within tolerance
+   * before this intent. A span whose cap is at band j.
    */
   const treadWasNear = (cx: number, cy: number, band: number): boolean => {
     for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
@@ -1261,19 +644,12 @@ function pushLowerLayers(
     return false;
   };
 
-  // ONE LEVEL, WRITTEN AS ONE LEVEL. This was a descending loop over bands
-  // whose body ended in an unconditional `return`, so it could never reach its
-  // own second iteration and the state that fed one — the reassignable `seeds`
-  // and the `raised` list the sweep filled — was write-only. Saying it once,
-  // straight, is what makes the decision below legible: there is no chain here
-  // to restore by editing a loop bound.
+  // Only one level down — no chain here (see the note at the end of this function).
   const band = topBand - 1;
   if (band <= MIN_BAND || raisedAtBand.length === 0) return;
   const level = clampHeight(band * BAND_HEIGHT);
 
-  // Everything within the tolerance of what the level above just took. A Set
-  // then a sort, because a cell near two seeds must be considered once and
-  // the order must not depend on which seed reached it first.
+  // Cells within tolerance of what the level above just took, deduped and sorted for order-independence.
   const candidates: number[] = [];
   const seen = new Set<number>();
   for (const seed of raisedAtBand) {
@@ -1298,25 +674,14 @@ function pushLowerLayers(
   if (candidates.length === 0) return;
   candidates.sort((a, b) => a - b);
 
-  // The same wave discipline the drag itself uses: a candidate more than one
-  // cell from the band cannot take it until its inward neighbour has, so the
-  // set is swept until a pass changes nothing. What it fills is not collected:
-  // the only thing a list of it could seed is the next level down, and there
-  // is no next level down — see the note under the sweep.
+  // Same wave discipline as the drag: swept to a fixpoint. Not collected — no next level down.
   let filledThisPass = true;
   while (filledThisPass) {
     filledThisPass = false;
     for (const i of candidates) {
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
-      // Where the fill lands: null once this band is solid here.
-      //
-      // THE CASCADE CARRIES STEPS AND NEVER AUTHORS OVERHANGS (issue #224).
-      // A cell whose band lies in a gap under its own roof answers
-      // `overhang`, and it is skipped: this pass is here to keep an existing
-      // staircase from being swallowed, not to hang new slabs under roofs,
-      // and filling that gap from the floor is exactly the carve-sealing the
-      // rule above forbids.
+      // Skips 'overhang' fills (issue #224): this pass carries steps, never hangs new slabs under roofs.
       const fill = bandFillAt(map, x, y, band);
       if (fill === null || fill.kind !== 'extend') continue;
       if (!canSpreadBandTo(map, x, y, band)) continue;
@@ -1327,92 +692,28 @@ function pushLowerLayers(
     }
   }
 
-  // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
-  // dragging up to those layers, it pushes them out until it slowly stops
-  // pushing them and slowly catches up").
-  //
-  // This used to be `seeds = raised`, which fed each level's push into the
-  // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
-  // different hat. There, the cascade judged entitlement on land the drag had
-  // just created; here it judged crowding on land THE CASCADE ITSELF had just
-  // created. Band j−4 was never crowded by the band the player grabbed; it was
-  // crowded by band j−3, which this loop moved a moment earlier. Measured on
-  // the owner's own world, one intent grabbing band 24: 33 cells filled at the
-  // grabbed band and 202 cells pushed across NINE bands beneath it — the
-  // cascade doing six times the work of the drag, which is what reads on
-  // screen as a ladder the lip can never catch up to.
-  //
-  // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
-  // stroke moves the grabbed band and at most the single level under it. To
-  // carry the next one down the player drags again — the same walk the inward
-  // drag makes, and the same "one gesture, one level" the stamp has always
-  // had. The step is still carried rather than swallowed; it is simply
-  // carried one at a time instead of all the way to the sea.
+  // Chain stops here deliberately: chaining `seeds = raised` into the next
+  // level's entitlement reproduced the pyramid bug one level down (measured:
+  // one intent cascaded across nine bands). Carry the next level by dragging again.
 }
 
 /**
- * The smallest fraction of the brush radius a `soft` drag's edge can drag in
- * to, as the ragged footprint's inner bound.
- *
- * WHAT IT BUYS: at 1 the footprint is the plain disc and `soft` is `hard`; the
- * lower it goes the deeper the bites out of the rim, and below about a half
- * the outline stops reading as one shape and starts reading as scattered
- * cells. 0.45 puts the deepest possible bite just past half the brush —
- * measured, the edge then wanders 3 cells at radius 6 and 5 at radius 12,
- * which is plainly irregular while the brush is plainly still round.
+ * Smallest fraction of brush radius a `soft` drag's rim can bite in to.
+ * 0.45 measured as the deepest bite that still reads as one round shape
+ * rather than scattered cells.
  */
 const SOFT_DRAG_MIN_REACH = 0.45;
 
-/**
- * How wide a lobe of the ragged edge is, in cells — the lattice the coarse
- * half of `cellNoise` is sampled on.
- *
- * WORLD_UNIT_CELLS, so a lobe is about ONE WORLD UNIT across whatever the
- * sampling density happens to be. That is the size at which an irregularity
- * reads as a feature of the ground rather than as noise on a line, and stating
- * it in world units rather than cells is what keeps it that size through a
- * future re-sample (the trap the 2026-08-21 quartering set for every constant
- * that was secretly "one cell").
- *
- * WHY THERE IS A LOBE OCTAVE AT ALL: per-cell noise alone gives a one-cell
- * fringe — measured, a mean run of 1.5 rows at the same depth — which reads as
- * a frayed line rather than as bays and points. Sampling on a coarser lattice
- * alone gives the opposite problem, long axis-aligned steps that read as
- * blocky. The two summed give lobes broken up by a fringe, which is neither.
- */
+/** Width of a ragged-edge lobe, in cells: about one world unit, so it stays that size across a re-sample. */
 const SOFT_DRAG_LOBE_CELLS = WORLD_UNIT_CELLS;
 
-/**
- * How much of the ragged edge's wander comes from the LOBE octave rather than
- * the per-cell one. The rest comes from the fringe, and the two must sum to 1
- * or the noise no longer spans [0, 1) and the reach bounds stop meaning what
- * they say.
- *
- * Weighted toward the lobes because they are the part that reads as terrain;
- * the fringe is there to stop the lobes looking cut with a stencil.
- */
+/** Share of ragged-edge wander from the lobe octave vs. per-cell fringe. Must sum to 1 with the fringe's share. */
 const SOFT_DRAG_LOBE_SHARE = 0.65;
 
 /**
- * A stable pseudo-random number in [0, 1) for a cell, from its coordinates
- * alone.
- *
- * ANCHORED TO THE WORLD, NOT TO THE STROKE, and that is the whole design. A
- * value that varied per push would let a cell be refused on one intent and
- * taken on the next, so a held drag would fill in its own gaps and converge
- * on the plain disc — the irregularity would be a shimmer that averaged away
- * rather than a shape. Keyed on the cell, the same ground always answers the
- * same way, so the ragged edge a drag leaves behind STAYS ragged, and pushing
- * the same place twice reproduces it exactly.
- *
- * INTEGER-ONLY, therefore safe for the determinism contract (design doc).
- * `Math.imul` is exact 32-bit multiplication on every platform, the shifts and
- * xors are integer ops, and the final divisor is a power of two so the scaling
- * is exact in binary floating point. Client and server get the same bits.
- *
- * The constants are the standard MurmurHash3 finalisation mixers; they are
- * chosen for avalanche (one bit of input flipping about half the output bits),
- * which is what stops the noise showing the cell grid's own axes as streaks.
+ * Stable pseudo-random [0, 1) for a cell, keyed on its coordinates (not the
+ * stroke) so a held drag's ragged edge stays ragged instead of averaging out.
+ * Integer-only (determinism contract); MurmurHash3 finalisation mixers.
  */
 function hashCell(x: number, y: number): number {
   let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1);
@@ -1422,15 +723,7 @@ function hashCell(x: number, y: number): number {
   return (h >>> 0) / 4294967296;
 }
 
-/**
- * The two-octave version: a lobe the size of SOFT_DRAG_LOBE_CELLS, plus a
- * per-cell fringe over it. See SOFT_DRAG_LOBE_CELLS for why one octave is not
- * enough in either direction. Still in [0, 1), since the weights sum to 1.
- *
- * `Math.floor` rather than a shift, so the lattice follows the constant rather
- * than requiring it to be a power of two — and so negative coordinates round
- * the same way positive ones do, which a shift does not guarantee.
- */
+/** Two-octave noise: lobe (SOFT_DRAG_LOBE_CELLS) plus per-cell fringe, still in [0, 1). `floor` (not a shift) so negatives round consistently. */
 function cellNoise(x: number, y: number): number {
   const lobe = hashCell(
     Math.floor(x / SOFT_DRAG_LOBE_CELLS),
@@ -1440,41 +733,9 @@ function cellNoise(x: number, y: number): number {
 }
 
 /**
- * WHAT CELL (cx, cy) FALLS TO WHEN BAND `band` RETREATS OFF IT — the highest
- * ground already standing beside it that is BELOW the band's floor, or null if
- * there is none.
- *
- * THE EXACT MIRROR OF `canSpreadBandTo`, AND THAT IS THE POINT. The outward
- * drag may only raise a cell to a level that already stands beside it; the
- * inward drag may only drop a cell to a level that already stands beside it.
- * One reads the neighbourhood for the highest thing at or above the band, the
- * other for the highest thing below it — same eight neighbours (a lip is a
- * marching-squares contour and cuts diagonally, see canSpreadBandTo), same
- * "the world, not the message, supplies the height".
- *
- * WHY IT ANSWERS "WHAT IS EXPOSED UNDERNEATH", which the terrain itself cannot:
- * a column stores one height, so the level this band was built on top of is not
- * recorded anywhere. It does not need to be. The lip being dragged in is by
- * definition standing against lower ground — that ground IS the surface the
- * band was sitting proud of, and continuing it inward is the only answer that
- * invents nothing. On a staircase the neighbour is the tread one band down, so
- * the retreat exposes band−1 and widens that tread; where the band was dragged
- * out over a plain several bands below, the retreat exposes the plain. THE
- * ACID TEST IS THAT THIS UNDOES AN OUTWARD DRAG: drag band 7 out over a band-2
- * flat and drag it back in, and band 2 is what returns. A rule that always
- * exposed band−1 instead would fail that test in both directions at once — it
- * would leave a band-6 shelf that was never there (inventing a level, which
- * the drag tool is defined never to do) and it could never retreat a lip that
- * had no band−1 beneath it at all.
- *
- * IT CANNOT DIG. The height returned is a height the map already holds one cell
- * away, so a retreat never goes below its own surroundings and never below the
- * level underneath — it can only flatten a cell into ground that is already
- * there. Null (no neighbour below the band) means the cell is in the interior
- * of the plateau, and an interior cell is untouchable: the retreat has to eat
- * inward from the rim one wave at a time, exactly as the drag creeps outward
- * one wave at a time, so there is no way to punch a hole in the middle of a
- * plateau or to delete ground the gesture never reached.
+ * What (cx, cy) falls to when band `band` retreats: highest ground beside
+ * it below the band's floor, or null (plateau interior). Mirrors
+ * `canSpreadBandTo`; never invents a level.
  */
 function retreatHeightAt(
   map: Heightmap,
@@ -1490,9 +751,7 @@ function retreatHeightAt(
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
-      // The neighbour's ground AT THIS LEVEL — its highest ceiling under the
-      // band, not its top surface (step 4.5): beside a lip that is a cave
-      // floor, the roof over that floor is not ground the lip can fall to.
+      // Highest ceiling under the band, not top surface: a roof isn't ground to fall to.
       const h = highestCeilingBelow(map, nx, ny, floor);
       if (h === null) continue;
       if (best === null || h > best) best = h;
@@ -1502,81 +761,14 @@ function retreatHeightAt(
 }
 
 /**
- * THE DRAG REGION — the brush footprint at the cursor, filled to the grabbed
- * band wherever that band already reaches.
- *
- * THE BAND CREEPS, IT DOES NOT TELEPORT. A cell may only be raised to the
- * grabbed band if that band ALREADY stands next to it (`canSpreadBandTo`,
- * re-derived from the server's own heightmap), so the fill advances in WAVES
- * from land that really is at that height: the first wave takes the cells
- * touching the existing plateau, the second takes the cells that now touch
- * those, until nothing more qualifies. That rule is the whole anti-cheat
- * story — the band can never reach a level that is not already there, which is
- * what keeps "clients send intents, never heights" true of a message that
- * names a band.
- *
- * THE PROFILE CHOOSES THE FOOTPRINT'S EDGE:
- *
- * - `hard` — the plain disc, so the lip advances as a clean front.
- * - `soft` — the disc with its rim eaten into by `cellNoise`, so the lip comes
- *            out irregular and the extension reads as ground rather than as
- *            masonry.
- *
- * SOFT USED TO MEAN "ONE WAVE PER INTENT" AND THAT WAS WRONG (owner report,
- * 2026-08-24: "what I'm getting is a big flat wall dragging along with me — I
- * would expect something more organic when you say soft"). Limiting the wave
- * count makes the front advance more SLOWLY; it does not make it any less
- * straight, because a wave still takes the whole rind of the disc that touches
- * the band, and along a straight lip that rind is a straight line of cells.
- * The edge's shape lives in the footprint, so that is where the profile has to
- * act. An earlier attempt at a neighbour-count threshold failed for the mirror
- * image of the same reason: the fixpoint washed it out entirely.
- *
- * IT CANNOT LEAK PAST THE STOP RULE. A wave only ever takes cells the spread
- * rule admits, so ground standing ABOVE the grabbed band is never written and
- * never becomes a neighbour that admits anything beyond it. The owner's "a
- * drag stops at a higher band's edge and does not strip the ground standing on
- * it" falls out of that rather than being coded separately.
- *
- * DRAGGING INWARD IS THE SAME GESTURE WITH THE SIGN FLIPPED (owner, 2026-08-24:
- * "we also still need the lower mode for drag as well"). The band RETREATS:
- * every footprint cell standing at exactly the grabbed band falls to the ground
- * already beside it, so the band's extent shrinks and the level it was standing
- * proud of comes back into view. `retreatBandTo` below is its whole stop rule,
- * and the three questions it has to answer are answered there. Issue #99
- * step 3.
+ * The drag region: footprint filled to the grabbed band, advancing in waves
+ * via `canSpreadBandTo`. `soft` profile: rim eaten by `cellNoise`. Dragging
+ * inward retreats instead (see `retreatHeightAt`).
  */
 /**
- * A REFUSED RIM CELL MAY ONLY BE RIM IF IT STILL REACHES THE OUTSIDE (issue
- * #152). The ragged rim above refuses each cell by its OWN share of the radius,
- * and that share is not monotone in distance: a cell can be refused while the
- * cells further out on every side of it are taken. The fill then walls it in,
- * and because the fixpoint only ever offers the footprint, nothing ever comes
- * back for it — a one-cell pit at the old band inside an otherwise flat
- * terrace, reading as damage in ground whose whole point is the terrace.
- *
- * THE RULE: a refused cell counts as rim only if it connects, through other
- * refused cells that are not already standing at the band, to ground OUTSIDE
- * the footprint. A refused cell that cannot get out is an enclave and goes
- * back into the footprint; the fill decides what happens to it under the same
- * spread rule as every other cell, so nothing here can leak past a higher band.
- *
- * "NOT ALREADY AT THE BAND" is what makes it hold across a held drag, not only
- * within one intent: a cell refused laterally by stroke N sits at the same
- * lateral distance in stroke N+1 and is refused again, while the ground behind
- * it was filled by stroke N. Its only way out then runs through cells already
- * at the band — that is no way out, so it is an enclave here too.
- *
- * A flood from the outside in, over the disc's own bound square: the seeds are
- * every refused cell ON THE DISC'S BOUNDARY — one whose four-neighbourhood
- * reaches an offset the disc does not contain, or reaches off the map — which
- * is the cells that touch the outside, said as the thing itself. (It used to
- * be the `dist === radius − 1` ring, which is a DIFFERENT set: see the note at
- * the seeding loop for the cells that fall between the two.) 4-connected,
- * because the fill it argues with spreads 8-connected — a pit sealed on its
- * four sides is sealed for the fill's purposes, and a diagonal gap is one the
- * fill closes anyway. Fixed scan order, integer-only: client and server
- * resolve the same enclaves.
+ * A refused rim cell counts as rim only if it connects to ground outside the
+ * footprint (#152), else a fixpoint fill walls it in. Flood from outside in;
+ * 4-connected against the fill's 8-connected spread.
  */
 function admitRimEnclaves(
   map: Heightmap,
@@ -1602,22 +794,15 @@ function admitRimEnclaves(
     reached.add(i);
     stack.push(i);
   };
-  // Ground this flood may escape TO: anything the drag is not offering — a
-  // neighbouring cell outside the region (admitted or refused), or one off the
-  // map altogether. Membership is asked of the region itself rather than of a
-  // disc formula, because since the sweep (2026-09-05) the region is a union
-  // of discs along the cursor's path and has no single centre.
+  // Anything not in this region (or off-map). Asked of the region itself, not
+  // a disc formula, since the region can be a union of swept discs.
   const outside = (x: number, y: number): boolean => {
     if (!inBounds(map, x, y)) return true;
     const i = cellIndex(map, x, y);
     return !inDisc.has(i) && !refused.has(i);
   };
-  // THE SEEDS ARE THE REGION'S BOUNDARY, asked of the neighbours directly
-  // (2026-08-30: a `dist === radius - 1` ring was a DIFFERENT set from the
-  // disc's true edge at its diagonals, and cells between the two were never
-  // seeded, so the flood never reached them and they were filled as enclaves,
-  // squaring the ragged outline off). Insertion order of `refused` is fixed by
-  // construction, so both replicas seed identically.
+  // Seeds are the region's boundary cells (not a `dist === radius - 1` ring,
+  // which misses diagonal edge cells). Insertion order fixed by construction.
   for (const i of refused) {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
@@ -1634,8 +819,7 @@ function admitRimEnclaves(
     seed(x, y - 1);
     seed(x, y + 1);
   }
-  // Enclaves are what the flood never reached; among the refused, still in
-  // the footprint iterator's own order so `disc` stays in one fixed order.
+  // Enclaves: refused cells the flood never reached.
   for (const i of refused) {
     if (!reached.has(i)) disc.push(i);
   }
@@ -1655,22 +839,9 @@ function applyDragRegion(
   const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
   const ragged = profile === 'soft';
 
-  /**
-   * The height each cell this intent touches had BEFORE it did. The cascade
-   * below needs to tell "a lip that was already here" from "a lip this very
-   * drag just built", and after the fill the live map can no longer say which
-   * is which — that confusion is what turned one click into a pyramid.
-   *
-   * A map of only the touched cells rather than a snapshot of the window: the
-   * cascade's window grows with the band count, and copying it would cost more
-   * than the edit does. `heightBefore` below reads through to the live map for
-   * everything absent, which is correct precisely because absent means
-   * untouched.
-   */
-  //
-  // In spans since step 4.5: what is recorded is the whole column, because the
-  // question the cascade asks of it — "did a step stand at band j here?" — is
-  // about a span's cap, and on a layered column that span may not be the top.
+  // Pre-edit column for every cell this intent touches: lets pushLowerLayers
+  // tell "a lip already here" from "a lip this drag just built" (the pyramid
+  // bug). Only touched cells recorded; everything else reads through live.
   const priorSpans = new Map<number, readonly Span[]>();
   const record = (i: number): void => {
     if (!priorSpans.has(i)) priorSpans.set(i, readSpans(map, cellX(map.size, i), cellY(map.size, i)));
@@ -1680,8 +851,7 @@ function applyDragRegion(
     if (prior !== undefined) return spansHaveCapAtBand(prior, band);
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    // Live and untouched: walk the column in place rather than copying it —
-    // this runs once per cell of the cascade's window.
+    // Live and untouched: walk the column in place.
     const count = spanCount(map, x, y);
     for (let k = 0; k < count; k++) {
       if (bandOf(spanAt(map, x, y, k).ceiling) === band) return true;
@@ -1689,22 +859,12 @@ function applyDragRegion(
     return false;
   };
 
-  // THE REGION IS THE FOOTPRINT SWEPT ALONG THE CURSOR'S PATH (2026-09-05),
-  // not the disc at the cursor alone. One disc per pointermove left gaps on a
-  // fast flick with a small brush — and worse than gaps: a disc landing clear
-  // of the last one touches no ground at the band, so the spread rule filled
-  // nothing at all. The sweep unions the footprint at every cell of the
-  // straight line from `sweepFrom` to (cx, cy); a drag with no `sweepFrom` is
-  // the single disc it always was. Deduplicated on first sight, in line order
-  // then footprint order, so both replicas build the same list.
-  //
-  // The offsets come from the one iterator every brush uses, so a drag
-  // considers exactly the cells a stamp of the same radius would at each step
-  // — minus, for `soft`, the bites taken out of the rim.
+  // Region is the footprint swept along the cursor's path, not just the disc
+  // at the cursor — a single disc per pointermove left gaps on a fast flick.
+  // Deduplicated in line order then footprint order.
   const disc: number[] = [];
   const inDisc = new Set<number>();
-  // Rim cells the noise refused, by index; resolved into rim or enclave below.
-  // A cell refused at one step of the sweep but admitted at another is admitted.
+  // Rim cells the noise refused. A cell refused at one sweep step but admitted at another is admitted.
   const refused = new Set<number>();
   const sweepDisc = (sx: number, sy: number): void => {
     forEachFootprintOffset(radius, (dx, dy, dist) => {
@@ -1713,10 +873,7 @@ function applyDragRegion(
       if (!inBounds(map, x, y)) return;
       const i = cellIndex(map, x, y);
       if (inDisc.has(i)) return;
-      // THE RAGGED RIM. Each cell keeps its own share of the radius, so the
-      // outline wanders in and out by up to (1 − SOFT_DRAG_MIN_REACH) of it.
-      // Deep cells are inside every possible share and are never affected, which
-      // is what keeps the region solid rather than pocked — only the rim moves.
+      // Ragged rim: each cell's own noise-share of the radius; deep cells always pass.
       if (ragged && dist >= radius * (SOFT_DRAG_MIN_REACH + (1 - SOFT_DRAG_MIN_REACH) * cellNoise(x, y))) {
         refused.add(i);
         return;
@@ -1730,114 +887,31 @@ function applyDragRegion(
   else forEachLineCell(sweepFrom.x, sweepFrom.y, cx, cy, sweepDisc);
   if (refused.size > 0) admitRimEnclaves(map, targetBand, refused, inDisc, disc);
 
-  // THE RETREAT — the inward drag, and it returns before the outward drag's
-  // machinery because almost none of that machinery applies to it.
-  //
-  // WHAT RETREATING BAND k MEANS: every cell of the footprint that is solid at
-  // band k and whose span CAPS AT OR ABOVE k falls back to the ground exposed
-  // beside it (`retreatHeightAt`), so the FACE is cut back at the band the
-  // player has hold of. It used to mean "caps at exactly k", and that was a
-  // silent no-op on every face taller than one band (#223): since #217 the
-  // pointer names the slab under the ray, so a grab low on a 4→6 face names
-  // band 5, no cell on that face caps at band 5, and nothing moved — while
-  // raise, which has never cared how tall the face is, worked. On a one-band
-  // step "caps at k" and "caps at or above k" select the same cells, so this is
-  // byte-identical there.
-  //
-  // WHAT THAT COSTS, NAMED: a span that towers over the grabbed band is cut
-  // back too, so dragging band 7 in beneath a band-9 totem takes the totem's own
-  // cells down with the face they stand on — the stop rule this clause used to
-  // be (0b81845, read in the retreat's direction). The retreat cannot tell a
-  // totem from a tall face: both are one span, solid at k, capping above it.
-  // Bounded, deliberately, by the same two things that bound every retreat —
-  // the footprint, and `retreatHeightAt` returning null wherever no lower
-  // ground stands beside the cell, which is why a retreat never eats inward
-  // past the lip it was aimed at.
-  //
-  // HOW FAR A CELL FALLS DEPENDS ON WHERE IT WAS GRABBED (owner report
-  // 2026-09-02: on a stamped five-band face, "refusing to do anything less
-  // than five bands when attempting to drag any of the bands in the top 5").
-  // Two rules that were each right alone had collided: `retreatHeightAt`
-  // exposes the NEIGHBOURING GROUND, however far down it is (so dragging a lip
-  // back in undoes a drag-out over a plain — its acid test), and #223 above
-  // selects every cell capping at OR ABOVE the grab. On a sheer face the
-  // neighbour is the ground at the bottom, so grabbing band 3 of a 0→5 face
-  // did exactly what grabbing band 5 did, and the fixpoint then ate the whole
-  // footprint down to the plain. The grab named WHERE and had no say in HOW
-  // FAR. The rule now:
-  //
-  //   - a cell capping AT the grabbed band falls to the exposed ground,
-  //     unchanged — grabbing the top lip still undoes a drag-out exactly;
-  //   - a cell capping ABOVE it falls no further than the band beneath the
-  //     grab, `(k − 1) · BAND_HEIGHT`, the same one-band-down target the
-  //     stamp's anchor uses (anchoredTargetHeight). The face is cut back at
-  //     band k and the bands below it stand; the wave carries that cut across
-  //     the footprint because each cut cell is now lower ground beside the next.
-  //
-  // On a one-band step both cases are the same height, so this is
-  // byte-identical wherever the old rule was already right. Since #217 the
-  // pointer names the slab under the ray, so the player chooses between the
-  // two by where on the face they take hold.
-  //
-  // SUPERSEDED IN PART (owner decision 2026-09-05): "a shift drag should only
-  // do the current band and bands above, never the band below." The first
-  // bullet no longer holds — a cell capping AT the grab is bounded at
-  // `(k − 1) · BAND_HEIGHT` like every other, so a retreat removes band k's
-  // material and nothing beneath it. Undoing a drag-out over a plain several
-  // bands down is now one grab per band, the same walk the outward drag is.
-  // `retreatHeightAt` still decides WHERE the band ends (a lip needs lower
-  // ground beside it); it no longer decides how far the cell falls.
-  //
-  // NO CASCADE, DELIBERATELY, and this is where the symmetry with the outward
-  // drag is broken on purpose. `pushLowerLayers` exists because an ADVANCING
-  // lip swallows the tread below it: the step is destroyed unless the level
-  // below gives ground too. A RETREATING lip does the opposite — it uncovers
-  // the level below and makes that tread WIDER — so nothing is being crowded
-  // and there is nothing to carry. Dragging the lower levels inward as well
-  // would be exactly the "everything comes with it" the owner complained about
-  // (8103dc9), and it would also be the unbounded terrain-delete this tool must
-  // not be: one gesture would strip a whole staircase. To retreat the next
-  // level down the player grabs THAT lip, which is the same walk the outward
-  // drag is.
+  // The retreat (inward drag): cells solid at/above band k fall back to
+  // exposed ground (`retreatHeightAt`), never past `(k-1)·BAND_HEIGHT`. No
+  // cascade — a retreating lip doesn't crowd the level below, so nothing to carry.
   if (!raising) {
-    // Swept to a fixpoint like the fill, so the rim's retreat exposes the
-    // cells behind it and they may retreat in turn — the wave eats inward from
-    // the frontier and stops at the edge of the footprint. It terminates
-    // because every write moves a cell strictly below the band's floor, so no
-    // cell can ever be taken twice. Order within a pass is the footprint
-    // iterator's fixed scan order, so client and server walk it identically.
+    // Swept to a fixpoint: cut cells expose the ones behind them. Terminates
+    // because every write strictly lowers, so no cell is taken twice.
     let cutThisPass = true;
     while (cutThisPass) {
       cutThisPass = false;
       for (const i of disc) {
         const x = cellX(map.size, i);
         const y = cellY(map.size, i);
-        // Not this band's ground: lower land the retreat has already exposed,
-        // or a level this column never owned.
+        // Lower land already exposed, or a level this column never owned.
         const k = spanIndexCoveringBand(map, x, y, targetBand);
         if (k === null) continue;
         const span = spanAt(map, x, y, k);
-        // The span that covers the band caps at or above it by
-        // `spanIndexCoveringBand`'s own contract (it admits a span only when
-        // the band's threshold is at most the span's drawn cap), so this cannot
-        // fire today. It is kept as the loop's rule written down where the loop
-        // relies on it: a span capping BELOW the grabbed band is not that
-        // band's lip and must not be cut by a drag on it.
+        // Defensive: spanIndexCoveringBand's contract already guarantees this.
         if (bandOf(span.ceiling) < targetBand) continue;
         const ground = retreatHeightAt(map, x, y, targetBand);
-        // Interior of the plateau — nothing lower beside it, so the band does
-        // not end here and there is no lip at this cell to drag in.
+        // Interior of the plateau: no lip here to drag in.
         if (ground === null) continue;
-        // THE GRAB BOUNDS THE DROP (owner 2026-09-02 for a tall face, widened
-        // 2026-09-05 to every cell — the block comment above): the cell is cut
-        // back to the band beneath the grab and never further, so band k comes
-        // off and the bands below it stand.
+        // Cut back to the band beneath the grab and never further.
         const exposed = Math.max(ground, (targetBand - 1) * BAND_HEIGHT);
-        // A DRAG NEVER REMOVES A ROOF (plan D4). A span above the bottom one
-        // that would fall below its own floor, or thin out past drawing, is
-        // left standing: the ground beside it is under it, not beside it. The
-        // bottom span keeps the old rule to the letter — it floors at the
-        // bottom of the world and cannot be removed, only emptied.
+        // A drag never removes a roof (D4): a span that would fall below its
+        // own floor or thin past drawing stays standing.
         if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
           continue;
         }
@@ -1849,10 +923,7 @@ function applyDragRegion(
     return;
   }
 
-  // Swept to a fixpoint: every pass but the last takes at least one cell of a
-  // finite footprint, so this terminates, and the result does not depend on
-  // the order within a pass — a cell passed over early is simply offered again
-  // next time round.
+  // Swept to a fixpoint over the finite footprint; order within a pass doesn't matter.
   const raised: number[] = [];
   let filledThisPass = true;
   while (filledThisPass) {
@@ -1860,139 +931,29 @@ function applyDragRegion(
     for (const i of disc) {
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
-      // Already solid at the band: the lip itself, land an earlier pass took,
-      // or higher ground the drag leaves standing. Otherwise `fill` says where
-      // the material lands — the ground below when this cell has open sky, a
-      // NEW SLAB when the band lies in a gap under this cell's own roof
-      // (columns.ts `bandFillAt`, owner decision 2026-08-27, issue #224).
-      //
-      // The superseded rule, kept here as the record of what changed: the fill
-      // used to land on `spanIndexBelowBand` unconditionally (plan D4, "put
-      // material in the opening… the two weld, a sealed cave"), which is why
-      // dragging a roof band over a carve raised the FLOOR span to the roof and
-      // sealed the carve. See DESIGN.md, "Decisions made 2026-08-27 (a dragged
-      // band overhangs a carve; it never fills it)".
+      // `fill` says where material lands: ground below for open sky, a new
+      // slab for a gap under this cell's own roof (`bandFillAt`, issue #224).
       const fill = bandFillAt(map, x, y, targetBand);
       if (fill === null) continue;
       if (!canSpreadBandTo(map, x, y, targetBand)) continue;
       record(i);
       applyBandFill(map, x, y, fill, targetHeight);
       changed.add(i);
-      // ONLY AN `extend` SEEDS THE CASCADE. `pushLowerLayers` exists because an
-      // advancing lip swallows the tread below it, and the level below has to
-      // give ground too or the step is destroyed. An overhang advances over AIR
-      // and swallows nothing: there is no tread under it being crowded, and
-      // carrying the levels below it would push material into the very opening
-      // the overhang was created to leave open.
+      // Only 'extend' seeds the cascade — an overhang advances over air, crowding nothing.
       if (fill.kind === 'extend') raised.push(i);
       filledThisPass = true;
     }
   }
 
-  // THE STEP IS CARRIED, NOT SWALLOWED. Whatever this drag just took, the
-  // levels beneath it give ground too once it crowds them — see
-  // pushLowerLayers. Seeded with this intent's own cells, so a drag that moved
-  // nothing cascades nothing.
+  // Carry the step: the level beneath gives ground too once crowded (pushLowerLayers).
   if (raised.length > 0) pushLowerLayers(map, raised, targetBand, hadCapAtBandBefore, record, changed);
 }
 
 /**
- * HOW MUCH TERRAIN ONE SCULPT NOMINALLY MOVES: the sum, over the brush
- * footprint, of the ABSOLUTE per-cell delta a sculpt of DEFAULT_SCULPT_AMOUNT
- * would apply. Height units × cells — a volume, in the only units this project
- * has for one. Deterministic and integer, like every other number in here.
- *
- * WHY IT LIVES BESIDE applyBrush AND NOT IN THE PLUGIN THAT PRICES SCULPTS.
- * This is terrain math: it is the SAME loop, the same footprint test (the
- * tight disc in forEachFootprintOffset) and the same per-cell delta expression
- * (including the same `Math.trunc`) that applyBrush runs, and the two must
- * agree exactly or a price would be charged for an edit that never happens.
- * shared/ is where math that both sides must agree on lives (CLAUDE.md), and
- * the regression test in heightmap.test.ts pins this function against
- * applyBrush's own observed output for every radius × profile rather than
- * against a re-derivation of it.
- *
- * "NOMINALLY" — five deliberate exclusions, each of which would make the
- * number depend on WHERE the player clicked rather than on WHAT they asked for:
- *
- *   anchor       — the clicked-cell ceiling (`anchor: 'clicked'`, 2026-08-19)
- *                  stops the brush's own deltas at the level above/below the
- *                  centre's band, so an anchored stroke usually moves less
- *                  than the flat cone priced here. Same rule and same two
- *                  reasons as `level fill` below: the ceiling's bite depends
- *                  on the terrain under the brush, which the client cannot be
- *                  required to know to agree on a price.
- *
- *   clamping     — a brush hitting MAX_HEIGHT moves less terrain than the same
- *                  brush in open ground. Pricing that would make a sculpt
- *                  cheaper exactly where it does nothing, which is a refund for
- *                  failure, not a discount.
- *   map edges    — a brush overhanging the border loses the cells outside it.
- *                  Same argument: the intent is identical, so the price is.
- *   relaxation   — the `smooth` tool's gradient-limit spill moves further
- *                  terrain still, and is DELIBERATELY FREE. `tool` is a
- *                  parameter (the carve below is priced differently), but the
- *                  three BRUSH tools all price identically through it — the
- *                  spill costs nothing. This preserves exactly what the
- *                  flat per-sculpt price did before volume pricing (it ignored
- *                  the spill too), and it is the honest answer: the spill's size
- *                  depends on the terrain that is already there, so charging for
- *                  it would price the world's history rather than the player's
- *                  action, and would make an identical intent cost two different
- *                  amounts in two places.
- *   level fill   — the `hard` profile runs applyLevelFillBrush (under either
- *                  tool since 2026-08-19), which skips cells
- *                  already at the level being filled and stops the rest AT it,
- *                  so it moves at most (usually less than) the flat-delta volume
- *                  priced here. DECIDED 2026-08-14: the price does not move.
- *                  Two reasons, and the first is not a preference:
- *                    (a) THE PRICE MUST NOT DEPEND ON THE TERRAIN. The mana
- *                        plugin gates a stroke locally, on the client, before it
- *                        is sent (plugins/mana/pricing.ts), and the server
- *                        charges the same number. A level-fill's real volume is
- *                        a function of the heights under the brush — heights the
- *                        client holds only as base-plus-predictions, and not at
- *                        all in a locked chunk. Pricing it would make the gate
- *                        and the server disagree, which is exactly the phantom
- *                        stroke and clawback the shared price exists to remove.
- *                    (b) It is the same rule as `clamping` above: a stroke that
- *                        moves less because the ground was already level is not
- *                        a cheaper request, it is the same request landing on
- *                        flatter ground.
- *                  So a level-fill stroke displaces less and is priced the same.
- *
- * THE DRAG IS THE ONE EXCLUSION THAT RUNS THE OTHER WAY, and it is a KNOWN
- * OPEN PRICE rather than a decided one (2026-08-30). The five above all
- * describe a stroke that moves LESS than the cone priced here; a drag moves
- * MORE. It has no cone at all — `applyDragRegion` takes every admitted cell
- * ALL THE WAY to the grabbed band, up to FULL_HEIGHT_SPAN each — so extending
- * a band-60 terrace over a band-0 plain at radius 16 displaces on the order of
- * 700,000 units for the price of a stamp's 749 x BAND_HEIGHT. That is the same
- * free-tool asymmetry the carve branch above was added to close (plan D6/P3),
- * and it is left open here because closing it needs a number nobody has
- * chosen: the price may not read the terrain (see (a) below), so a drag's
- * price can only ever be a fixed multiple of its footprint, and which multiple
- * is a balance decision for the owner rather than an arithmetic one. Until
- * then a held drag is the cheapest terrain in the game per unit moved.
- *
- * DECIDED 2026-09-01 (issue #279): ACCEPTED AS IS, deliberately. A drag emits
- * once per cursor cell crossed (client sculptInput.ts), each intent priced in
- * full, so what a drag "really" moves per priced intent depends on cursor
- * speed and band gap, not on any multiple: a slow drag extending a one-band
- * lip admits ~2r new cells against a 749-cell price (~23x OVER-priced at
- * r=16), while a flick across a plain toward a high band is the ~56x
- * UNDER-priced case above. No fixed multiple is right at both ends, so none
- * is chosen. The mismatch is that a per-INTENT price is the wrong unit for a
- * motion-driven STREAM; if intents are ever coalesced per tick (issue #282)
- * the drag's unit of work changes and its price is decided then, once.
- *
- * This function is therefore about `applyBrush`'s arithmetic specifically, and
- * is pinned to it by test rather than to whatever applySculpt dispatches to.
- *
- * The result is a pure function of (radius, profile), which is what lets the
- * client price an intent identically to the server without knowing the terrain.
- *
- * Throws on an out-of-range radius, exactly as applyBrush does.
+ * Nominal sculpt volume: pure function of (radius, profile), never terrain,
+ * so client/server price identically without agreeing on world state.
+ * "Nominal" because some strokes move less (anchor/clamping/level-fill) but
+ * price the same. Drag pricing is the reverse and knowingly under-priced (#279).
  */
 export function sculptDisplacementUnits(
   radius: number,
@@ -2001,26 +962,9 @@ export function sculptDisplacementUnits(
 ): number {
   assertBrushRadius(radius);
 
-  // THE CARVE HAS NO CONE, so it is not priced by one (plan D6/P3: a free tool
-  // beside three charged ones is an exploit, not an omission). It removes a
-  // fixed block — every footprint cell, CARVE_BANDS_PER_STROKE bands deep — so
-  // its nominal volume is exactly that block, and it is a function of the
-  // radius alone. `profile` does not reach the carve at all, which is why it
-  // does not reach its price either.
-  //
-  // The same five exclusions the doc above lists still apply, and the same
-  // way: a carve refused by `canCarveBandAt` on every cell of its footprint
-  // moves nothing and is priced in full, for the reason `clamping` gives — a
-  // stroke that moves less because of the terrain it landed on is the same
-  // request, not a cheaper one. What it must NOT do is depend on that terrain,
-  // because the mana plugin gates the intent on the client before the server
-  // has seen it and both must reach the same integer.
-  //
-  // `tool` IS A PARAMETER, and required, precisely so this cannot be
-  // forgotten: pricing a stroke now demands saying which tool it is, rather
-  // than defaulting to the brush arithmetic and silently under-charging a
-  // carve. The other three tools price identically to each other — the
-  // `smooth` spill stays deliberately free, as the doc above sets out.
+  // Carve has no cone: priced by radius alone, in full even if refused —
+  // pricing must not depend on terrain. `tool` is required so it can't
+  // silently default to brush pricing.
   if (tool === 'carve') {
     let cells = 0;
     forEachFootprintOffset(radius, () => {
@@ -2029,9 +973,7 @@ export function sculptDisplacementUnits(
     return cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
   }
 
-  // THE CORE ONLY. You pay for the ground you raise; the apron is the talus
-  // that rise implies, not a second stroke (owner, 2026-09-06). Charging the
-  // apron made the first press over flat ground cost 4.8x what it moved.
+  // Core only: the apron is talus the rise implies, not a second stroke.
   let cells = 0;
   forEachFootprintOffset(radius, () => {
     cells++;
@@ -2042,71 +984,19 @@ export function sculptDisplacementUnits(
   return cells * perCell;
 }
 
-/**
- * The height interval a spill-contained cell may occupy for the rest of the
- * stroke: the terrace band it was in when the stroke first touched it
- * (issue #26). `hi` is the band's last height, `lo * BAND_HEIGHT`-aligned;
- * bandOf(h) is constant over [lo, hi] by construction.
- */
+/** Height interval a spill-contained cell may occupy for the rest of the stroke: the terrace band it started in (issue #26). */
 interface SpillBand {
   readonly lo: number;
   readonly hi: number;
 }
 
-/**
- * Band lookup for banded relaxation: null means the cell is FREE (inside the
- * brush footprint — unrestricted, exactly as before #26); a SpillBand means
- * the cell is outside the footprint and capped to it. The whole free/banded
- * dispatch below rides on this being null for the `free` spill mode, which is
- * what keeps that mode's arithmetic bit-identical to the pre-#26 code.
- */
+/** Band lookup for banded relaxation: null means free (unrestricted); a SpillBand caps the cell. */
 type SpillBoundsOf = (index: number) => SpillBand | null;
 
 /**
- * Moves the excess `e` (the amount a pair exceeds MAX_STEP by) between the
- * higher cell `hiIdx` and the lower cell `loIdx`: BOTH sides move by exactly
- * `e >> 1`, leaving the pair at MAX_STEP when `e` is even and at
- * MAX_STEP + RELAX_SLACK when it is odd.
- *
- * THE SPLIT IS EXACT (issue #108, 2026-08-29). It used to be
- * `drop = e >> 1; rise = e - drop`, which on an odd excess gave the low cell
- * one unit the high cell never lost. Relaxation is CLOSED over the map — the
- * only thing it may do is move height between two cells — so that unit was
- * manufactured out of nothing: one bare smooth of a 401-unit cliff on a 128²
- * map invented 1,666,592 height units, 50.7% of the map's own total, and a
- * player roaming with a smooth brush was a height pump. `drop === rise` makes
- * a pass sum-preserving by construction, on every path through this function
- * including the coupled clamp below (which already moved both sides by the
- * same `t`). The caller pays for it with RELAX_SLACK — see that constant for
- * why the trigger had to move with the arithmetic, and for the alternatives
- * (odd unit to the high side; parity alternation; a remainder ledger) that
- * were rejected.
- *
- * BANDED CLAMPING (issue #26). When either side is band-capped and its half
- * of the move does not fit, BOTH sides move by the same reduced amount `t`
- * (the largest transfer both caps admit) instead: the transfer stays coupled,
- * so the unrestricted side never keeps shedding height a capped neighbour
- * cannot absorb — uncoupled clamping would bleed a mound away at the brush
- * ring, one orphaned half-move per pass. When not even `t = 1` fits, the pair
- * is left alone and reported UNCHANGED, which is what lets the sweep still
- * converge (a capped pair that cannot move must not count as progress).
- *
- * STANDING RESIDUAL (issue #26, measured 2026-08-19): where a band cap binds,
- * the pair is left exceeding MAX_STEP — an over-steep wall at the brush ring.
- * Banded relaxation can NEVER repair it: the capped side cannot rise past its
- * band, and the coupled rule then refuses to move the free side either
- * (t = 0), so further banded smooth strokes leave the wall standing however
- * many are thrown at it (measured: hundreds of strokes, excess never falls).
- * It is removed only by deliberately LOWERING the high side — brush deltas
- * are uncapped inside the footprint — or by a 'free' (plugin) sculpt covering
- * it. That permanence is consistent with the game's own precedent: the stamp
- * tool deliberately builds sheer walls that relaxation never touches.
- *
- * REJECTED ALTERNATIVE: resolving a capped pair by moving ONLY the free side
- * down to `capped + MAX_STEP`. It would "repair" the wall by eroding the
- * mound at its ring (~25k height-units lost on a measured slope scenario) and
- * would cap every smooth-built structure at the ring's band + MAX_STEP —
- * a worse trade than a standing wall the player built on purpose.
+ * Moves excess `e` between hi/lo cells: both move by `e >> 1` (#108,
+ * sum-preserving). Band-capped sides move by the largest transfer both
+ * admit (#26); if none fits, the pair is left unchanged (permanently over-steep).
  */
 function movePair(
   cells: Int16Array,
@@ -2117,54 +1007,27 @@ function movePair(
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
 ): boolean {
-  // Cell indices are the world's throughout; `base` is the global index the
-  // working array starts at (0 for `map.cells`, the band's first cell for a
-  // layer view — see LayerView). One subtraction, no other translation: a
-  // view covers whole rows, so it keeps the world's own stride.
+  // `base`: global index the working array starts at (0 for map.cells, band's first cell for a layer view).
   const hi = hiIdx - base;
   const lo = loIdx - base;
-  // EXACTLY half each way — never `e - drop` for the low side (#108). The
-  // caller guarantees e >= 2 (relaxPair's trigger), so this is never a
-  // zero move on the unbanded path.
+  // Exactly half each way (#108). Caller guarantees e >= 2.
   let drop = e >> 1;
   let rise = drop;
   if (boundsOf !== null || spanCaps !== null) {
     const hiBand = boundsOf === null ? null : boundsOf(hiIdx);
     const loBand = boundsOf === null ? null : boundsOf(loIdx);
-    // How much of each half actually fits inside its side's band. A capture
-    // happens before a cell's first move, and every later move stays inside
-    // the captured band, so on THAT path these are never negative — the
-    // coupled clamp below no longer relies on it being true of every path.
+    // How much of each half fits inside its side's band.
     let dropCap = hiBand === null ? drop : Math.min(drop, cells[hi] - hiBand.lo);
     let riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[lo]);
-    // A LAYERED CELL'S SPAN BOUNDS (step 4.6), intersected with the above: its
-    // span may not thin past drawing, and may not close the gap to the span
-    // over it. Same coupled clamping, so a capped side never orphans a half.
+    // Layered cell's span bounds (step 4.6), intersected: span may not thin past drawing or weld to the span above.
     const hiSpan = spanCaps === null ? undefined : spanCaps.get(hiIdx);
     const loSpan = spanCaps === null ? undefined : spanCaps.get(loIdx);
     if (hiSpan !== undefined) dropCap = Math.min(dropCap, cells[hi] - hiSpan.lo);
     if (loSpan !== undefined) riseCap = Math.min(riseCap, loSpan.hi - cells[lo]);
     if (dropCap < drop || riseCap < rise) {
       const t = Math.min(dropCap, riseCap);
-      // A NEGATIVE `t` WOULD MOVE THE PAIR APART, which is the one thing this
-      // function must never do. Both caps are DIFFERENCES against a cap that
-      // the capture is supposed to have put on the far side of the cell
-      // (`cells[hiIdx] - hiBand.lo`, `loBand.hi - cells[loIdx]`), so the
-      // comment above says they cannot go negative — but that is an argument
-      // about the CALLER, and there are four of them (band capture, span caps,
-      // and the two intersected together). A cell that reaches here already
-      // outside a bound — a span cap built from a column the stroke did not
-      // capture, a saved world whose spans predate the current rule — makes
-      // one cap negative, and `drop = rise = t` with t < 0 then RAISES the
-      // high cell and LOWERS the low one: the pair ends steeper than it
-      // started, the sweep counts it as progress, and the cascade runs away
-      // from its own termination argument. The `drop === 0 && rise === 0`
-      // test below does not catch it, because -3 is not 0.
-      //
-      // Refusing the pair is the correct answer and not merely the safe one:
-      // "not even one unit fits" is exactly the state the coupled clamp
-      // already reports as UNCHANGED (see the standing-residual note above),
-      // and a pair that cannot move must not count as progress.
+      // t < 0 (a cell already outside its bound, e.g. a pre-rule saved world)
+      // would move the pair apart instead of together — refuse rather than risk it.
       if (t <= 0) return false;
       drop = t;
       rise = t;
@@ -2177,27 +1040,10 @@ function movePair(
 }
 
 /**
- * Relaxes one 4-neighbor pair toward the gradient limit: if `cells[i]` and
- * `cells[j]` differ by more than `MAX_STEP + RELAX_SLACK`, the higher of the
- * two loses `floor(e/2)` (`e` the excess over MAX_STEP) and the lower gains
- * the SAME amount, leaving the pair at MAX_STEP or, on an odd excess, at
- * MAX_STEP + RELAX_SLACK — subject to band caps when `boundsOf` is non-null
- * (see movePair).
- *
- * WHY THE THRESHOLD IS NOT MAX_STEP (issue #108). The excess is now split
- * evenly, so an excess of 1 would move nobody; treating such a pair as
- * relaxable would make every pass report "changed" forever and the sweep would
- * run to SMOOTH_PASS_LIMIT. Excluding it here makes `e >= 2` for every pair
- * movePair is called on, hence both sides always move at least 1, hence every
- * pass that reports a change strictly reduced the map's total excess — which
- * is the termination argument the sweep rests on. The cost is one unit of
- * standing slope, named RELAX_SLACK.
- *
- * Both indices are added to `changed`, in (i, j)
- * caller order and even when one side's own delta rounded to zero — the
- * pre-#26 behaviour, kept so free mode's changed-set is bit-identical in
- * contents AND insertion order. Returns whether the pair was adjusted, so a
- * sweep can tell whether the pass changed anything.
+ * Relaxes one 4-neighbor pair toward MAX_STEP + RELAX_SLACK via movePair.
+ * Threshold is not MAX_STEP (#108): an excess of 1 would move nobody yet
+ * loop forever, so triggering only at e >= 2 guarantees every accepted pass
+ * strictly reduces total excess — the sweep's termination argument.
  */
 function relaxPair(
   cells: Int16Array,
@@ -2208,8 +1054,7 @@ function relaxPair(
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
 ): boolean {
-  // Open-neighbour exclusion (step 4.6): a cell with no ground at the grasped
-  // level is not in the relaxation at all — neither moved nor leaned on.
+  // Open-neighbour exclusion (step 4.6): no ground at the grasped level, so out of relaxation entirely.
   if (layer !== null && (layer.excluded[i - base] === 1 || layer.excluded[j - base] === 1)) return false;
   const spanCaps = layer === null ? null : layer.spanCaps;
   const d = cells[i - base] - cells[j - base];
@@ -2227,63 +1072,27 @@ function relaxPair(
 }
 
 /**
- * THE HEIGHTS RELAXATION WORKS ON, for a stroke over a layered world (issue
- * #129, step 4.6). `heights[i]` is the ceiling of cell i's layer-consistent
- * span (`layerSpanIndex`), `excluded[i]` is 1 where there is none, and
- * `spanCaps` bounds every LAYERED cell's span so the pass can move it without
- * changing what the column is: never thinner than drawn, never welded to the
- * span above.
- *
- * WHY A VIEW AND NOT `map.cells`: relaxation is one Int16Array's arithmetic,
- * tuned and verified pass for pass, and on an unlayered surface stroke it
- * still runs on `map.cells` itself with no view built — that path is byte-
- * identical to before this existed. Only a stroke that grasps a band, or a
- * world holding a layered column, pays for the copy; it is then written back
- * through `moveSpanCeiling`, once per changed column, by `commitLayerView`.
- *
- * WHY THE GAP IS NEVER CLOSED HERE, though a stamp or drag may close it (D4):
- * the view holds the height the arithmetic reasoned with, and a merge would
- * replace it with the roof's ceiling — the whole roof's thickness appearing
- * in one write that every neighbour was relaxed against a smaller number.
- * Relaxation inventing height is the failure this pass is not allowed to
- * have; welding stays a deliberate stroke's job.
+ * Working heights for relaxation over a layered world (#129 step 4.6).
+ * `spanCaps` bounds each cell so it can't thin past drawing or weld to the
+ * span above. Never closes a gap here (D4) — welding is a stroke's own job.
  */
 interface LayerView {
   readonly heights: Int16Array;
   readonly excluded: Uint8Array;
   readonly spanCaps: ReadonlyMap<number, SpillBand>;
   /**
-   * The view covers a BAND OF WHOLE ROWS, `firstRow..lastRow`, not the world
-   * (issue #275). `base` is the global index of the band's first cell, so a
-   * global cell index reads as `heights[i - base]` and nothing else changes:
-   * whole rows keep the world's stride, so the sweep's `i + 1` / `i + size`
-   * neighbour arithmetic is the same arithmetic it always was.
-   *
-   * WHY A BAND AND NOT THE BOX. A 2D window would be tighter, but it changes
-   * the stride, and the stride is wired through relaxPair, movePair and the
-   * spill capture. A band is one subtraction, and it already turns the copy
-   * from O(world) into O(rows the sweep reaches) — 2048² fell from ~12.6 MB
-   * per sculpt to a few tens of KB for a brush-sized stroke.
+   * Covers a band of whole rows, not the world (issue #275) — keeps the
+   * sweep's stride arithmetic unchanged and bounds the copy to rows reached.
    */
   readonly base: number;
   readonly firstRow: number;
   readonly lastRow: number;
 }
 
-/**
- * Rows kept above and below the sweep box when a view is built, so the box's
- * one-ring-per-pass growth does not rebuild the band on every pass. On a
- * rebuild the slack is at least the whole band that came before, which makes
- * the band at least double each time and bounds the total copying by a
- * constant factor of the final band's size.
- */
+/** Rows kept above/below the sweep box so a view isn't rebuilt every pass. */
 const LAYER_VIEW_SLACK_ROWS = 8;
 
-/**
- * Builds the view over rows `firstRow..lastRow`. `previous`, when given, is a
- * view this one grows from: its band is contained in the new one and its
- * heights are the working values the sweep has already moved.
- */
+/** Builds the view over `firstRow..lastRow`, growing from `previous` when given. */
 function buildLayerView(
   map: Heightmap,
   spanBand: number | null,
@@ -2312,35 +1121,19 @@ function buildLayerView(
     const isTop = k === spanCount(map, x, y) - 1;
     spanCaps.set(i, {
       lo: spanLowestBandHeight(span),
-      // The highest ceiling that still leaves a DRAWN gap under the span
-      // above (`isGapDrawn`: cap strictly below the roof's underside).
+      // Highest ceiling leaving a drawn gap under the span above (isGapDrawn).
       hi: isTop ? MAX_HEIGHT : spanUndersideHeight(spanAt(map, x, y, k + 1)) - 1,
     });
   }
-  // A GROWN VIEW INHERITS THE HEIGHTS IT ALREADY HELD. The rows the old band
-  // covered may hold cells the sweep has already moved; `map.cells` does not
-  // know about those moves (they are committed once, at the end), and the
-  // span resolution above would roll them back to the ceiling the column
-  // still records. Copying the old band over the overlap restores the working
-  // values for every cell in it, layered or not.
+  // Grown view inherits heights already moved by the sweep (map.cells isn't updated until commit).
   if (previous !== null) heights.set(previous.heights, previous.base - base);
   return { heights, excluded, spanCaps, base, firstRow, lastRow };
 }
 
-/**
- * Writes the relaxed view back. Each column is written once and resolved
- * against the map as it still stands, so the span index is the one the view
- * was built from. Unlayered columns take the height directly — relaxation
- * moves a cell toward a neighbour that is itself in range, so this is the
- * same write `moveSpanCeiling` on a lone span would make.
- */
+/** Writes the relaxed view back, once per changed column. */
 function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | null, changed: ReadonlySet<number>): void {
   for (const i of changed) {
-    // Every cell that can be here is inside the band: the view is built to
-    // cover the rows of the incoming `changed` set and of the sweep box, the
-    // band only ever grows, and relaxation adds nothing from outside the box.
-    // A cell outside it would silently read `undefined` and write NaN, so it
-    // is refused loudly instead — the same choice `setColumn` makes.
+    // Should always be inside the band; refuse loudly rather than read undefined (as setColumn does).
     const v = i - view.base;
     if (v < 0 || v >= view.heights.length) {
       throw new RangeError(`layer view does not cover changed cell ${i}`);
@@ -2357,66 +1150,10 @@ function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | nul
 }
 
 /**
- * Gradient-limit relaxation — the Populous signature and the single most
- * feel-critical routine in the project. After an edit, any 4-neighbor pair
- * differing by more than MAX_STEP + RELAX_SLACK is dragged toward each other by
- * half the excess (each cell moves floor(e/2), leaving the pair at MAX_STEP,
- * or at MAX_STEP + RELAX_SLACK when the excess was odd), swept in fixed
- * row-major passes over a bounding box that grows by one cell per pass so
- * spillover can propagate outward.
- *
- * A PASS MOVES HEIGHT AND NEVER MAKES IT (issue #108). Both cells of a pair
- * move by the same amount in opposite directions, so sum(cells) is invariant
- * across this whole routine — tested. Relaxation is not allowed to be a source
- * or a sink of ground; that it once was is what made a roaming smooth brush a
- * height pump and what made mudslide head scours net zero on steep ground
- * (#239).
- *
- * Exits as soon as a full pass changes nothing. SMOOTH_PASS_LIMIT (see
- * constants.ts) is a safety cap sized so every single-stroke cascade a player
- * can construct converges first (#12); if it is ever hit, the gradient
- * invariant may be locally violated until a later edit resumes relaxation —
- * accepted and documented residual, observable via the returned pass count.
- *
- * Every adjusted cell's index is added to `changed`. `bboxSeed`, when given,
- * supplies the cells the initial bounding box is computed from instead of
- * `changed` — the smooth tool passes the brush footprint when the brush
- * itself changed nothing (a fully clamped stroke), so the stroke still
- * relaxes the ground under the brush (#12).
- *
- * Returns the number of passes that adjusted at least one pair. A return
- * value strictly below SMOOTH_PASS_LIMIT proves a clean pass ran, i.e. the
- * cascade converged.
- *
- * INVARIANT (tested): starting from a map that satisfies the gradient limit,
- * applyBrush + smooth leaves no 4-neighbor pair exceeding
- * MAX_STEP + RELAX_SLACK.
- * Relaxation moves values strictly toward each other, so it can never leave
- * [MIN_HEIGHT, MAX_HEIGHT] and never needs clamping.
- *
- * BANDED SPILL CONTAINMENT (issue #26). When `spillFree` is given, it is the
- * set of cells (the brush footprint) allowed to move without restriction;
- * every OTHER cell is capped, on the stroke's first touch of it, to the
- * terrace band it occupied at that moment — captured lazily because a cell
- * relaxation never reaches needs no bookkeeping, and a cell it does reach is
- * still at its pre-stroke height the first time it is looked at (only this
- * sweep moves cells, and every move goes through the same lookup first). The
- * MAX_STEP invariant above is then explicitly NOT guaranteed where a cap
- * binds — see movePair's ACCEPTED RESIDUAL note. Omitting `spillFree` is the
- * pre-#26 relaxation, bit for bit.
- *
- * ANCHOR CONTAINMENT (2026-08-19, owner bug report "smooth, soft appears to
- * be broken"). When `anchorBounds` is given (applySculpt builds it for
- * anchored smooth strokes, one entry per footprint cell), those cells are
- * bounded INSIDE the footprint too: relaxation may not carry any footprint
- * cell past the stroke's anchor target, and may not move at all a cell that
- * started past it — the cells the anchored brush promised to leave alone
- * (the higher terrace under a raising brush) can no longer be eroded by the
- * relaxation pass that follows it. Where a bound bites, the pair is left
- * over-steep — the SAME accepted residual as the banded spill above, for the
- * same reason: the wall the player deliberately kept is not relaxation's to
- * repair. `anchorBounds` takes precedence over `spillFree` membership; cells
- * in neither behave exactly as before.
+ * Gradient-limit relaxation: sweeps a growing box, dragging over-limit pairs
+ * toward MAX_STEP + RELAX_SLACK. sum(cells) invariant (#108). Returns pass
+ * count; at SMOOTH_PASS_LIMIT the invariant may stay locally violated.
+ * `spillFree`/`anchorBounds` cap cells outside the footprint or anchor target.
  */
 export function smooth(
   map: Heightmap,
@@ -2430,42 +1167,15 @@ export function smooth(
   if (seed.size === 0) return 0;
 
   const { size } = map;
-  // Layered strokes relax a VIEW of the grasped layer and commit it after
-  // (see LayerView); a surface stroke over an unlayered world is the original
-  // in-place pass on `map.cells`, untouched.
-  //
-  // A BANDED STROKE ALWAYS NEEDS THE VIEW — it has hold of a span the cell
-  // index cannot name — but a SURFACE stroke needs it only where a layered
-  // column actually stands, and "stands somewhere in the world" is not that
-  // question: asking `columnSpans.size` made one carve anywhere make every
-  // later surface stroke build a view. The question is whether a layered
-  // column stands in the box THIS sweep touches, and the box is only known as
-  // it grows, so the view is adopted lazily below, one ring at a time.
-  //
-  // AND THE VIEW ITSELF IS SIZED TO THE SWEEP (issue #275). It covers the
-  // band of rows the box can reach, not the world, so a stroke that does
-  // need one — a banded stroke, or a surface stroke that meets a carved
-  // column — pays for its own rows and not for 2048² of them.
-  //
-  // Adopting it late is exact, not an approximation. Where the swept box
-  // holds no layered column, every cell the view could differ on is one it
-  // does not contain: `layerSpanIndex` with `spanBand === null` resolves to
-  // the top span, whose ceiling IS `map.cells[i]` (setColumn keeps that
-  // identity, columns.ts), nothing is excluded, no `spanCaps` entry is ever
-  // looked up, and `commitLayerView` writes unlayered columns straight back.
+  // Banded strokes always need the LayerView; surface strokes only when a
+  // layered column enters the box, adopted lazily (#275) — exact, since
+  // otherwise layerSpanIndex resolves identically to map.cells.
   let layer: LayerView | null = null;
   let cells: Int16Array = map.cells;
-  // The global index the working array starts at: 0 while it is `map.cells`,
-  // the band's first cell once a view is adopted (see LayerView).
+  // 0 while working on map.cells; the band's first cell once a view is adopted.
   let viewBase = 0;
 
-  /**
-   * Builds — or grows — the view over the rows the sweep can currently reach,
-   * plus slack (issue #275). `previous` is the view being grown, or null for
-   * the first build; on a first build the band also covers the rows of the
-   * incoming `changed` set, because `commitLayerView` writes every one of
-   * them back through the view.
-   */
+  /** Builds or grows the view over rows the sweep can reach, plus slack (issue #275). */
   const rebuildLayerView = (previous: LayerView | null): void => {
     const slack = previous === null
       ? LAYER_VIEW_SLACK_ROWS
@@ -2489,20 +1199,6 @@ export function smooth(
     viewBase = layer.base;
   };
 
-  /**
-   * Builds the layer view if the rectangle holds a layered column and the
-   * sweep is not already working on one. A BANDED stroke always needs one —
-   * it has hold of a span the cell index cannot name — so it adopts on the
-   * first call, whatever the rectangle holds.
-   *
-   * Switching mid-sweep loses nothing: the passes already run wrote
-   * `map.cells` in place, which for an unlayered column is exactly the write
-   * `commitLayerView` would have made, and the view is built from
-   * `map.cells` as it now stands. `cells` is rebound rather than copied into,
-   * so the sweep AND `boundsOf` below both follow the switch; `captured`
-   * keeps its entries, and every one of them still reads the same height
-   * (the fresh `heights` starts as a copy of `map.cells`).
-   */
   /** Grows the adopted view when the box has outrun the band it covers. */
   const growLayerView = (): void => {
     if (layer === null) return;
@@ -2519,19 +1215,14 @@ export function smooth(
   if (spillFree !== undefined || anchorBounds !== undefined) {
     const captured = new Map<number, SpillBand>();
     boundsOf = (index: number): SpillBand | null => {
-      // Anchored footprint cells carry their own interval; it wins over the
-      // footprint's blanket freedom because it is strictly more specific —
-      // the whole reason it exists is to bound cells `spillFree` would free.
+      // anchorBounds wins: more specific than spillFree's blanket freedom.
       const anchored = anchorBounds?.get(index);
       if (anchored !== undefined) return anchored;
       if (spillFree === undefined || spillFree.has(index)) return null;
       let band = captured.get(index);
       if (band === undefined) {
-        // First touch: the cell is at its pre-stroke height (see the doc
-        // above), so this pins the band the player saw before the stroke.
-        // No clamping to [MIN_HEIGHT, MAX_HEIGHT]: relaxation moves cells
-        // strictly toward a neighbour, which is itself in range, so a cap
-        // endpoint outside the range is simply never reached.
+        // First touch: pins the pre-stroke band. No clamping needed —
+        // relaxation moves strictly toward an in-range neighbour.
         const lo = bandOf(cells[index - viewBase]) * BAND_HEIGHT;
         band = { lo, hi: lo + BAND_HEIGHT - 1 };
         captured.set(index, band);
@@ -2556,23 +1247,16 @@ export function smooth(
   let adjustingPasses = 0;
   for (let pass = 0; pass < SMOOTH_PASS_LIMIT; pass++) {
     const heldMinX = minX, heldMinY = minY, heldMaxX = maxX, heldMaxY = maxY;
-    // Expand one ring per pass: excess travels at most one cell per pass, so
-    // this always covers the frontier. Everything outside the box satisfied
-    // the invariant before the edit and is untouched, so it still does.
+    // One ring per pass: excess travels at most one cell per pass.
     if (minX > 0) minX--;
     if (minY > 0) minY--;
     if (maxX < size - 1) maxX++;
     if (maxY < size - 1) maxY++;
 
-    // The box may now reach past the band the view covers; grow it before any
-    // pair in the new ring is read (issue #275).
+    // Box may now reach past the view's band; grow before reading the new ring.
     growLayerView();
 
-    // Only the ring just gained is new ground for the layered-column test —
-    // the seed box was tested above and every earlier ring on its own pass —
-    // so the whole test costs O(cells the sweep reaches), never O(world).
-    // The two rows take the full new width; the two columns take only the
-    // rows the box already had, so the corners are not walked twice.
+    // Only the newly gained ring needs the layered-column test.
     if (minY < heldMinY) adoptLayerView(minX, minY, maxX - minX + 1, 1);
     if (maxY > heldMaxY) adoptLayerView(minX, maxY, maxX - minX + 1, 1);
     if (minX < heldMinX) adoptLayerView(minX, heldMinY, 1, heldMaxY - heldMinY + 1);
@@ -2598,79 +1282,19 @@ export function smooth(
 }
 
 /**
- * The complete sculpt operation both sides run: brush → (relaxation) → diff.
- * The server runs it authoritatively and broadcasts the returned diff; the
- * client runs it for instant prediction and reconciles against that diff.
- * Diff order is ascending cell index — deterministic wire order.
- *
- * `options` picks the tool and the edge profile; the two are orthogonal, so
- * hard+smooth (level-fill, then let it slump) is a legal, meaningful combination.
- * The third field, `spill`, bounds how far the smooth tool's relaxation may
- * move terrain outside the footprint (see SculptSpill); it is meaningless for
- * `stamp`, which never touches an outside cell in the first place. The
- * fourth, `anchor`, locks the brush's own writes to the level the clicked
- * cell implies (see SculptAnchor) — it governs the brush pass, never the
- * relaxation, so the two compose without reading each other.
- * OMITTING `options` ENTIRELY reproduces the pre-2026-08-14 behaviour bit for
- * bit — see LIBRARY_DEFAULT_SCULPT_OPTIONS for why that, and not the new
- * player-facing default, is what an absent argument means.
- *
- * THE `hard` PROFILE ALWAYS LEVEL-FILLS (owner report, 2026-08-19), whatever
- * the tool: applyLevelFillBrush finishes the lowest band under the footprint
- * before starting the next one, and never lifts a cell already at or above
- * the fill target. Under `smooth`, relaxation then runs on the FILL's result
- * — fill-then-slump — so the brush itself can no longer push an adjacent
- * higher level's cells up a band ("I'm clicking on level six and it is
- * adjusting level seven … seven sometimes contracts like it's getting pushed
- * away. That does not feel natural" — the flat +amount delta was lifting the
- * band-7 cells inside the footprint to band 8, so band 7's own contour
- * retreated from the click).
- *
- * SUPERSEDED (2026-08-19, by the owner report above) — the level fill used to
- * be `stamp`+`hard` only, and the reasons hard+smooth kept the plain flat
- * delta were:
- *   - the `smooth` tool relaxes the footprint the instant the brush lifts, so a
- *     level it had just filled would be sloped again before it was drawn. "Fill
- *     this level flat" is a promise that tool cannot keep;
- *   - hard+smooth's meaning was settled in docs/DESIGN.md as "stamp a plateau,
- *     let it slump";
- *   - the owner's original request named the hard EDGE BRUSH: the stamp.
- * The first point is still true and still matters: relaxation may slope a
- * just-filled level, so "fill this level FLAT and leave it standing" remains
- * stamp+hard's promise alone. What the supersession changes is narrower and
- * is the part the flat delta got wrong: `hard` never STARTS the next level
- * anywhere, under either tool.
- *
- * DETERMINISM: both branches are integer-only over the same fixed iteration
- * order, so server and client predicting with the same options land on the
- * same cells. Predicting with DIFFERENT options than the server applies is a
- * mismatch like any other and resolves through normal reconciliation — which
- * is exactly why both sides normalise an intent through one shared function
- * (`sculptOptionsOf`, protocol.ts) rather than each defaulting for itself.
+ * The complete sculpt: brush → (relaxation) → diff, ascending cell index.
+ * Omitting `options` reproduces pre-2026-08-14 behaviour, not the
+ * player-facing default (LIBRARY_DEFAULT_SCULPT_OPTIONS). Integer-only over
+ * fixed order, so server/client land on the same cells.
  */
-/**
- * The broadcast diff for a set of changed cell indices, in ASCENDING INDEX
- * ORDER. The order is part of the contract, not an accident of the Set: both
- * sides of the prediction compare these diffs, and two orderings of the same
- * cells are two different messages.
- *
- * Shared by every exit from applySculpt — the brushes and the drag — so the
- * two cannot disagree about what an applied edit looks like on the wire.
- */
+/** Broadcast diff in ascending cell index — part of the wire contract, not incidental Set order. */
 function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
   const indices = Array.from(changed).sort((a, b) => a - b);
   const diff: CellDiff[] = [];
   for (const i of indices) {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    // The span list is attached only when there IS one, so a diff for an
-    // ordinary column is byte-identical to what this has always produced.
-    //
-    // Read BY CELL INDEX off the side table, which is what columns.ts's header
-    // licenses; iterating the table is what it forbids, and nothing here
-    // iterates it. (This used to carry a note about not importing columns.ts at
-    // all, because the two modules would have formed a cycle. They no longer
-    // can — the grid they both need is grid.ts, a leaf under both.)
+    // Span list attached only when present. Read by cell index off the side table, per columns.ts's contract.
     const packed = map.columnSpans.get(i);
     const h = map.cells[i]!;
     diff.push(packed === undefined ? { x, y, h } : { x, y, h, spans: Array.from(packed) });
@@ -2679,81 +1303,10 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
 }
 
 /**
- * THE CARVE (plan D6, issue #129 step 4.7): every footprint cell loses the
- * range `[(spanBand − 1) · BAND_HEIGHT, (spanBand + CARVE_BANDS_PER_STROKE −
- * 1) · BAND_HEIGHT)`, and whatever stood above it stays standing as a roof.
- *
- * THE CUT OPENS THE BAND THE PICK NAMES — the fix for "carving stops after one
- * cell" (owner report, 2026-09-02). It used to leave the grasped band solid
- * and open `spanBand + 1` instead, and that one-band offset is what made the
- * tool stop: `bandOfPick` (client/src/world.ts) names the band whose DRAWN
- * SLAB the ray struck, and band k's slab is `[(k−1) · BAND_HEIGHT, k ·
- * BAND_HEIGHT]` (`spanUndersideHeight`, columns.ts). So the back wall inside
- * the opening a cut had just left named the band that cut had OPENED, the
- * next intent asked to open the band ABOVE that one, no neighbour was open
- * there, and the neighbour rule refused it. Every tunnel was exactly one cell
- * deep, forever. Opening band k means removing from `(k − 1) · BAND_HEIGHT`
- * upward, which is where the `− 1` in both bounds comes from and the only
- * thing it means.
- *
- * WHAT THE CUT LEAVES, stated once because every rule below refers to it. The
- * lower piece keeps its ceiling at `(spanBand − 1) · BAND_HEIGHT`, so the cell
- * is OPEN at the grasped band and the tunnel FLOOR is level with the foot of
- * the lip the player pointed at — the ground he was standing on outside it.
- * The upper piece floors at `(spanBand + CARVE_BANDS_PER_STROKE − 1) ·
- * BAND_HEIGHT`, so it is solid again from there up. The bands that change
- * hands are therefore `spanBand … spanBand + CARVE_BANDS_PER_STROKE − 2`,
- * which at the shipped constant is the single band `spanBand`. The DEPTH is
- * unchanged — still `CARVE_BANDS_PER_STROKE` bands of material, so
- * `sculptDisplacementUnits` prices it exactly as before; only where the block
- * sits relative to the grasp has moved.
- *
- * THE ANTI-CHEAT RULE IS `canCarveBandAt`, ASKED OF EXACTLY THOSE BANDS. Air
- * spreads the way material does: a cell may be opened at a band only where a
- * neighbour is already open at it (columns.ts). Asking it of the bands the cut
- * actually opens is what makes the tunnel walk inward: the low ground outside
- * a cliff is open at the grasped band, which admits the face cell; the cut
- * makes THAT cell open at the same band, and the next pick — on the back wall
- * the cut just exposed — names that same band again, which admits the next
- * cell in. All of the opened bands must be admitted, not merely one: the
- * tighter direction, and the one that stays right if CARVE_BANDS_PER_STROKE
- * ever moves.
- *
- * The same rule is where "on flat ground a carve is refused" comes from, and
- * it is a consequence rather than a special case: on flat ground capped at
- * band C every neighbour is solid at every band up to C, and a carve that
- * removes anything at all has to open a band at or below C. Carve is refused
- * exactly where plain lowering is the tool that means what the player wants.
- *
- * EVERY CELL IS JUDGED AGAINST THE MAP AS IT STOOD BEFORE THE STROKE, which is
- * why the admissible cells are collected before any of them is cut. Cutting as
- * we walk would let a cell opened by this very intent admit its neighbour
- * inside the same intent, and the footprint would hollow out in one click —
- * the precise thing "one cell per intent, outward from air that is really
- * there" forbids. Iteration order is the footprint iterator's fixed scan, so
- * server and client collect the same cells in the same order.
- *
- * A CUT THAT STARTS AT THE BOTTOM OF THE WORLD IS THE WHOLE STROKE REFUSED,
- * and it is `lo` — not the anti-cheat rule — that decides it. The lower piece
- * a cut leaves is `[span.floor, lo)`, so at `lo === BEDROCK_FLOOR` the bottom
- * span has no lower piece and whatever stood above the cut is left standing on
- * nothing: a column the storage cannot encode (`setColumn`), i.e. a RangeError
- * out of the server's message handler and the client's prediction alike.
- * `canCarveBandAt` does not catch it, and cannot be asked to: it is asked of
- * the bands the cut OPENS (`spanBand` upward), and a neighbour dug to the
- * floor is genuinely open at those — the BEDROCK_REMNANT it keeps caps below
- * the world's bottom band. So the grasped band's own footing is a separate
- * question, asked here, once, before any cell is judged. `spanBand` reaches
- * MIN_BAND from an ordinary pick — the floor of a fully dug pit — and
- * validateSculptIntent admits MIN_BAND because it is a band this world holds;
- * "this world has no material to take from under it" is terrain, and terrain
- * is re-derived here on both replicas rather than trusted off the wire.
- *
- * SINCE THE CUT MOVED DOWN A BAND, THIS REFUSES `spanBand === MIN_BAND + 1`
- * TOO, and correctly: its lower piece would be `[BEDROCK_FLOOR,
- * BEDROCK_FLOOR)`, i.e. no footing at all — the same column the storage
- * cannot encode. Nothing about the test changed; `lo` did, and the test is
- * written against `lo` precisely so it follows.
+ * The carve (plan D6, #129 step 4.7): removes
+ * `[(spanBand-1)·BAND_HEIGHT, (spanBand+CARVE_BANDS_PER_STROKE-1)·BAND_HEIGHT)`.
+ * Anti-cheat: `canCarveBandAt` on every opened band. Cells collected before
+ * any cut applies, so one intent can't admit its own neighbours.
  */
 function applyCarve(
   map: Heightmap,
@@ -2763,38 +1316,21 @@ function applyCarve(
   spanBand: number,
   changed: Set<number>,
 ): void {
-  // THE BANDS THIS CUT OPENS, named rather than arithmetic-in-place, because
-  // the bounds below and the anti-cheat loop must be derived from the SAME
-  // pair — that they disagreed by one band is the whole of the "carving stops
-  // after one cell" bug (see the doc block above).
+  // Named rather than inlined so the bounds and the anti-cheat loop derive from the same pair.
   const lowestOpenedBand = spanBand;
   const highestOpenedBand = spanBand + CARVE_BANDS_PER_STROKE - 2;
-  // A piece is SOLID at band k when it spans the boundary height `k ·
-  // BAND_HEIGHT` (`spanIndexCoveringBand`, columns.ts). So a lower piece
-  // capped at `(k − 1) · BAND_HEIGHT` is open at band k and solid below it,
-  // and a roof floored at `k · BAND_HEIGHT` is solid from band k up. That is
-  // the whole of the arithmetic: cap the floor one band boundary below the
-  // lowest band to open, floor the roof at the first band to leave alone.
-  //
-  // Equivalently, in the terms `bandOfPick` (client/src/world.ts) uses: band
-  // k's drawn slab is `[(k − 1) · BAND_HEIGHT, k · BAND_HEIGHT]`, so the range
-  // removed is exactly the slabs of the bands being opened.
+  // Band k's drawn slab is [(k-1)·BAND_HEIGHT, k·BAND_HEIGHT] (bandOfPick's convention).
   const lo = (lowestOpenedBand - 1) * BAND_HEIGHT;
   const hi = (highestOpenedBand + 1) * BAND_HEIGHT;
 
-  // No footing would be left under the cut — see the paragraph above. `<=`
-  // rather than `===` because a lower band would take even more away; both are
-  // the same refusal, and the comparison stays right if MIN_BAND ever stops
-  // being the lowest band a `spanBand` can name.
+  // No footing left under the cut. `<=` not `===`: stays right if MIN_BAND ever changes.
   if (lo <= BEDROCK_FLOOR) return;
 
   const admitted: number[] = [];
   forEachFootprintCell(map, cx, cy, radius, (i) => {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    // Nothing here to remove: the cut would rewrite the column to itself and
-    // put a no-op row in the diff. Any overlap at all with [lo, hi) does take
-    // material away, so an overlapping column always genuinely changes.
+    // Any overlap with [lo, hi) genuinely changes the column.
     let overlaps = false;
     const count = spanCount(map, x, y);
     for (let k = 0; k < count; k++) {
@@ -2833,68 +1369,15 @@ export function applySculpt(
   const spanBand = options?.spanBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand;
   const sweepFrom = options?.sweepFrom ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.sweepFrom;
 
-  // THE GRASP IS RESOLVED HERE, ONCE, BEFORE ANY TOOL RUNS (issue #129, step
-  // 4.3). A stroke that names a band names a SPAN of the centre column, and
-  // this is the only place that turns one into the other — both replicas run
-  // it, against their own map, so neither can be told which span to move.
-  //
-  // A BAND NO SPAN COVERS MAKES THE WHOLE STROKE A NO-OP rather than falling
-  // back to the topmost span. Silently moving a different span than the sender
-  // grasped would apply a differently-shaped edit than it predicted and desync
-  // the prediction for a round trip — the same argument protocol.ts's validator
-  // makes for rejecting an unknown tool outright instead of defaulting it.
-  //
-  // It is not read again below, because no tool addresses a span yet: step 4.3
-  // is the ADDRESSING, deliberately with no behaviour change, and steps 4.4-4.6
-  // are the tools that act on it. What it already does is refuse a stroke whose
-  // grasp is gone — the case a layered world can produce today.
+  // Grasp resolved once, before any tool runs (#129 step 4.3). A band no
+  // span covers is a whole-stroke no-op, not a fallback to the topmost span.
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
   }
 
-  // THE DRAG IS ITS OWN EDIT, NOT A BRUSH VARIANT (owner decision 2026-08-24).
-  // It shares this entry point on purpose — the server pipeline, the client's
-  // prediction store and the brush preview all reach the sculpt through
-  // applySculpt, so a drag that returned here would have needed three new call
-  // sites to agree with each other, which is exactly the drift the one
-  // dispatch below exists to prevent. What it does NOT share is the per-cell
-  // amount or the relaxation pass, because the drag moves a level sideways and
-  // the vertical belongs to the stamp.
-  //
-  // DISPATCHED BEFORE THE BAND GUARD BELOW, which is deliberate. That guard
-  // asks whether the band reaches the stroke's CENTRE cell, and for a drag it
-  // would be wrong as well as redundant: the disc is a brush, so a legitimate
-  // drag can have its centre out over ground the band does not touch while the
-  // rest of the disc lies against the lip. The per-cell neighbour rule inside
-  // applyDragRegion is the real anti-cheat and it is sufficient on its own —
-  // no cell is ever raised unless that band already stands beside THAT CELL.
-  //
-  // A drag with no band is a NO-OP rather than a fallback to a brush: silently
-  // stamping where the player asked to drag would apply a differently-shaped
-  // edit than the sender predicted, and desync the prediction for a round trip
-  // (the same argument protocol.ts's validator makes for rejecting an unknown
-  // tool outright).
-  // THE CARVE IS ITS OWN EDIT TOO, and dispatched here for the same three
-  // reasons the drag is: it shares this entry point so the server pipeline,
-  // the prediction store and the preview cannot pick different branches; it
-  // shares none of the per-cell amount, because it removes a fixed block of
-  // bands rather than moving a surface by a delta; and it comes BEFORE the
-  // band guard below, which asks about spreading MATERIAL and has nothing to
-  // say about removing it (`canCarveBandAt` is the carve's whole rule and it
-  // is asked per cell, inside).
-  //
-  // A CARVE WITH NO GRASP IS A NO-OP, exactly as a drag with no band is. The
-  // grasp is not a refinement of this tool, it IS the tool's target: without a
-  // band there is no range to remove, and falling back to the topmost span
-  // would cut at the column's cap, which on ordinary ground removes nothing
-  // and on a roof would cut the roof the player is standing under.
-  //
-  // ONLY EVER LOWERS. The validator rejects a carve intent carrying `dir: 1`
-  // outright (protocol.ts) rather than reinterpreting it, so a positive amount
-  // can only reach here from a plugin calling applySculpt directly; it is a
-  // no-op rather than a raise, because "add material to the underside of a
-  // roof" is not a thing this tool can express. Zero is a no-op for the reason
-  // a zero-amount drag is: a stroke with no direction has none to invent.
+  // Drag/carve dispatch here, before the band guard below (which wrongly
+  // tests only the centre cell for a drag). Each tool's per-cell rule is the
+  // real anti-cheat. Carve only lowers and no-ops without a grasp.
   if (tool === 'carve') {
     const carveChanged = new Set<number>();
     if (spanBand !== null && amount < 0) {
@@ -2911,66 +1394,29 @@ export function applySculpt(
     return diffOf(map, dragChanged);
   }
 
-  // THE DRAG'S SPREAD RULE, DECIDED FOR THE WHOLE STROKE (2026-08-23). Both
-  // brushes carry the same guard, but the decision belongs here too: a refused
-  // drag must be a NO-OP, and returning from the brush alone would still let
-  // the smooth tool's relaxation run (it seeds from the footprint when the
-  // brush changed nothing — issue #12) and reshape terrain the stroke was not
-  // allowed to touch. Belt and suspenders: this bounds the stroke, the brush
-  // guards bound the brush, and neither depends on the other being right.
+  // Belt and suspenders: without this, a refused band-anchored stroke could
+  // still let smooth's relaxation run (it seeds from the footprint when the
+  // brush changed nothing — issue #12) and reshape terrain it shouldn't touch.
   if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
     return [];
   }
 
-
-  // A DRAG ARRIVES IN ONE INTENT (owner decision 2026-08-23, after the first
-  // build felt wrong: "grab the lip and drag the terrace out to here" has to
-  // finish in one pass). Every other stroke moves by `amount` — one band per
-  // click, the server's own DEFAULT_SCULPT_AMOUNT — and repeats to climb; a
-  // drag that did the same would raise each cell the cursor crossed by a
-  // single band, so extending a band-6 terrace would mean sweeping the same
-  // ground six times. A drag instead moves each cell ALL THE WAY to the band
-  // the player grabbed, in one go.
-  //
-  // THIS IS NOT A STRONGER SCULPT, and that is why it can be safe while the
-  // amount stays server-owned everywhere else. The target is a band that is
-  // already standing next to this cell (canSpreadBandTo would have refused it
-  // otherwise), so the stroke can only ever LEVEL a cell with the terrace
-  // beside it. It cannot reach a height that is not already there, which is
-  // exactly the property that makes "clients send intents, never heights"
-  // hold: the height came from the world, not from the message.
-  //
-  // Implemented as an amount rather than a special case in the brushes because
-  // the target clamp in fillTowardTarget/applyBrush already stops at the band
-  // — an amount that cannot be the binding constraint means "go the whole way"
-  // without a second code path to keep in agreement.
-  // amount === 0 stays 0: a zero-amount stroke has no direction, and turning it
-  // into a full-span move in either direction would invent one.
+  // Band-anchored strokes move the whole way to the grabbed band in one
+  // intent (not `amount` per click), safe because canSpreadBandTo already
+  // proved the target is adjacent — it can never reach a height not already there.
   const strokeAmount =
     anchor === 'band' && amount !== 0
       ? (amount > 0 ? FULL_HEIGHT_SPAN : -FULL_HEIGHT_SPAN)
       : amount;
 
   const changed = new Set<number>();
-  // The anchor target for the RELAXATION containment below, read before the
-  // brush writes anything — the same pre-stroke-centre derivation the brushes
-  // themselves use (anchoredTargetHeight), or the three would disagree.
-  // 'band' is contained exactly as 'clicked' is: a drag that let relaxation
-  // carry ground past the grabbed level would be changing the vertical, which
-  // is the one thing the drag tool is defined not to do.
+  // Read before the brush writes, same derivation as the brushes themselves use.
   const anchoredSmooth = tool === 'smooth' && anchor !== 'free' && amount !== 0;
   const anchorTarget = anchoredSmooth
     ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand, spanBand)
     : 0;
-  // The one dispatch in the sculpt path. Both branches are integer-only over the
-  // same footprint, and both sides of the prediction contract reach them through
-  // this one function, so client and server cannot pick different branches.
-  // `hard` dispatches on the PROFILE alone (2026-08-19 supersession above):
-  // the level fill is what "hard" means now, under either tool. `anchor`
-  // reaches both branches — it decides where the fill/ceiling level comes
-  // from (the clicked cell for players, the old derivations for the library).
-  // radius names the CORE under both profiles (#387); soft adds the apron.
-  // 'free' is the plugin path: still the old cone. Not smooth — see #388.
+  // The one dispatch: `hard` (either tool) or a soft+clicked+stamp core both
+  // route to the level fill; radius names the core, soft adds the apron.
   const softCore = profile === 'soft' && anchor === 'clicked' && tool === 'stamp';
   // Read before the core writes: the centre is a core cell.
   const skirtCoreTarget = softCore
@@ -2984,112 +1430,20 @@ export function applySculpt(
   if (softCore) {
     applySoftSkirt(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
   }
-  // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
-  // footprint is the entire extent of the edit, so a spire stays a spire.
-  //
-  //
-  // ON A GRASPED SPAN (step 4.6) the relaxation works the layer the stroke has
-  // hold of — `smooth` builds a view of that layer's ceilings, excludes cells
-  // open at that level, and writes back through `moveSpanCeiling` — so the
-  // roof over a cave floor is never the thing that moves (plan D4).
+  // 'stamp' means no relaxation pass at all — the footprint is the whole edit.
   if (tool === 'smooth') {
-    // The footprint set serves two masters, built by forEachFootprintCell —
-    // the same offset→bounds-check→index step every brush runs, shared so the
-    // agreement is structural (see forEachFootprintOffset's doc):
-    //   - the bounding-box seed of a fully clamped stroke (#12): a brush that
-    //     changed nothing (e.g. stroking a MAX_HEIGHT plateau) used to make
-    //     the smooth tool a silent no-op that left standing cliffs
-    //     unrelaxed; seeding from the footprint keeps the stroke's promise
-    //     while `changed` (and the diff) still carries only cells relaxation
-    //     actually moved;
-    //   - the spill-containment free set (#26): the cells relaxation may move
-    //     without a band cap.
-    // Strokes with spill 'free' whose brush DID move cells keep the pre-#12
-    // call shape (no footprint computed at all) bit for bit.
+    // Footprint serves two masters: bbox seed for a fully-clamped stroke (#12,
+    // so a no-op brush still relaxes) and the spill-containment free set (#26).
     let footprint: Set<number> | undefined;
     if (changed.size === 0 || spill === 'banded' || anchoredSmooth) {
       const cells = new Set<number>();
       forEachFootprintCell(map, cx, cy, radius, (i) => cells.add(i));
       footprint = cells;
     }
-    // ANCHOR CONTAINMENT (2026-08-19, owner bug report). The anchored brush
-    // promised two things relaxation used to break in the very next pass:
-    // cells past the target stay byte-untouched (the higher terrace beside a
-    // raising brush was being eroded down — "it sometimes resets top layers"),
-    // and nothing the stroke moves ends past the target (raised ground was
-    // relaxed above the clicked ceiling). So an anchored smooth stroke bounds
-    // its own footprint cells for the relaxation pass, from their pre-relax
-    // heights: past the target → frozen; short of it → movable up to the
-    // target in the stroke's direction, and NO FURTHER BACK THAN THE BRUSH
-    // JUST PUT IT. Both are per-stroke intervals, deterministic, and the map
-    // is only ever read via .get — no iteration-order dependence.
-    //
-    // THE CLICKED CELL MAY NOT BE UNDONE BY ITS OWN STROKE (2026-08-22, owner
-    // bug report "shift click lowering does not always work"). The
-    // against-the-stroke end of that interval used to be the world's own limit
-    // for EVERY footprint cell — MIN_HEIGHT raising, MAX_HEIGHT lowering —
-    // which licensed the stroke's own relaxation pass to put the cell the
-    // player aimed at back where it started. THE MECHANISM IS PURE TRANSFER
-    // AND IS STILL HERE: a pit is a cell below its neighbours, so the very
-    // next pass moves their height into it, and without a bound the cell the
-    // player aimed at is refilled by the ground around it.
-    //
-    // WHAT IS NO LONGER TRUE, and is kept here because the numbers below were
-    // measured against it (2026-08-22): relaxation used to be a net height
-    // SOURCE as well as a mover — movePair handed the odd unit of every excess
-    // to the LOW cell — so a pit was refilled by more than its neighbours gave
-    // up, and lowering wore the defect worst. Measured then, on rolling terrain
-    // at the default brush: 137 of 200 lower clicks left the clicked cell's
-    // drawn band unchanged and 131 of those could not be lowered a band by
-    // FORTY clicks, against 30 of 200 raising, none permanent. Since 2026-08-29
-    // (issue #108) the split is exact and relaxation moves height without
-    // making it, so that asymmetry is gone and the raw counts above are
-    // expected to be smaller — not re-measured, because they are not what this
-    // bound rests on.
-    //
-    // THE BOUND DOES NOT REST ON THE BIAS, WHICH IS WHY IT IS STILL HERE and
-    // why it was right to put it here rather than in movePair. Neighbours
-    // higher than a freshly-dug pit refill it under ANY conservative rule; a
-    // bias only decided which direction hurt more, and inverting it reproduced
-    // the identical bug mirrored onto raising (127 of 200, measured). The
-    // clicked cell's own interval is what makes the stroke keep its promise,
-    // under the old arithmetic and under the new.
-    //
-    // ONLY THE CLICKED CELL, AND THAT BOUND IS LOAD-BEARING. Applying it to
-    // the whole footprint also fixes the click — and collapses `smooth` into
-    // `stamp`. An anchored stroke leaves most of its footprint sitting exactly
-    // ON the target, so bounding every cell there freezes them all, and #26's
-    // coupled transfer then refuses to move their neighbours either: measured
-    // on a stamped spire, the ring one cell outside a radius-4 footprint went
-    // from 15 units to 0, and the stroke moved only its own 37 footprint
-    // cells. Bounding the ONE cell whose result the stroke actually promises
-    // leaves the spill byte-identical to before (24.4 / 38.6 / 49.2 cells
-    // moved outside the footprint at radius 4 / 8 / 16, unchanged) while
-    // holding the click at 0 of 200 failures in both directions.
-    //
-    // KNOWN BOUNDARY, stated rather than discovered later: at radius 1 the
-    // footprint IS the clicked cell, so a one-cell smooth stroke can no longer
-    // shed into its neighbours and behaves as a stamp. THE PICKER OFFERS THAT
-    // BRUSH — client/src/state/hudState.ts's BRUSH_RADII leads with
-    // MIN_BRUSH_RADIUS, shown as the 0.25 rung — so this is a player-reachable
-    // combination, not a hand-made wire message. Verified in the running game
-    // (2026-08-22): at radius 1 the clicked cell still falls a full band on
-    // every click, 10 of 10; what it no longer does is drag its neighbours.
-    // Plugin terraforms are unaffected either way — they run `anchor: 'free'`,
-    // which never reaches this code.
-    //
-    // NOT the relaxation height leak itself. That was a separate defect —
-    // movePair manufactured height (a 401-unit cliff relaxed into over a
-    // million units from nowhere), and it is what made the two directions
-    // asymmetric. FIXED 2026-08-29 in its own change (#108): the excess is now
-    // split exactly in half and the pair trigger carries RELAX_SLACK, so the
-    // invariant this anchor keeps is MAX_STEP + RELAX_SLACK rather than
-    // MAX_STEP exactly. The anchor arithmetic here is unaffected — it bounds
-    // cells, it does not split excesses.
-    //
-    // PLAYER STROKES ONLY. anchorBounds is built for `anchor: 'clicked'`, and
-    // the library default is `anchor: 'free'` — plugin terraforms are
-    // byte-identical across this change.
+    // Anchor containment: bounds footprint cells for relaxation — frozen past
+    // target, else movable up to it. Only the clicked cell is bounded, not
+    // the whole footprint (else `smooth` collapses into `stamp`). Plugin
+    // strokes (`anchor: 'free'`) never reach this code.
     let anchorBounds: Map<number, SpillBand> | undefined;
     if (anchoredSmooth) {
       const raising = amount > 0;
