@@ -1,27 +1,10 @@
-// Boot sequence for a Terrace server (design doc, amended 2026-08-22: one
-// world LIVE per process, many worlds on disk — see the WORLD MANAGEMENT
-// section in shared/src/protocol.ts).
-//
-//   config → plugins → world registry → migration → world manager
-//          → the world to load (or none) → tick loop → snapshot scheduler
-//          → Colyseus server
-//
-// WHAT CHANGED FROM ONE-WORLD-PER-PROCESS. The World, its plugin host, its
-// store and its rollback service are no longer boot-time constants; they are a
-// SESSION the WorldManager creates, replaces and destroys while the process
-// runs. Everything downstream — the tick loop, the snapshot scheduler, the
-// room — therefore talks to the manager rather than holding any of them.
-//
-// Shutdown is the reverse, driven by Colyseus's own SIGINT/SIGTERM handling
-// (verified in @colyseus/core 0.17.50: `gracefullyShutdown` defaults to true and
-// registers the signal handlers, then awaits onBeforeShutdown → matchmaker
-// shutdown → transport close → onShutdown). We hook that instead of installing
-// competing handlers, so there is exactly one shutdown path.
+// One world live per process, many on disk. Everything downstream holds the
+// WorldManager, never a world. Shutdown rides Colyseus's own signal handling:
+// never add competing SIGINT/SIGTERM handlers.
 
 import './quiet-boot.ts'; // must precede any Colyseus import — see that file's comment
-// SECOND, AND FOR ITS SIDE EFFECT: it stamps every console line with the local
-// time, and it has to be evaluated before the imports below or the lines they
-// write while loading go out unstamped. See that file's header on hoisting.
+// Side effect, and must precede the imports below or their load-time lines
+// go out unstamped.
 import './log-timestamps.ts';
 import { Server, type ServerOptions } from '@colyseus/core';
 import { stat } from 'node:fs/promises';
@@ -49,13 +32,8 @@ import { WorldManager } from './world/world-manager.ts';
 const MILLISECONDS_PER_SECOND = 1000;
 
 /**
- * Wires a built client (issue #20: "one process = playable URL") into the
- * game server's own HTTP port, via Colyseus's `ServerOptions.express` hook —
- * see static/serve-client.ts's header comment for why that hook is used
- * without express ever being a declared dependency of this package. Returns
- * `undefined` when `config.clientDistPath` has no `index.html`: the common
- * case in dev, where Vite (`pnpm --dir client dev`) remains the dev path and
- * nothing about that workflow changes.
+ * Serves a built client on the game port (#20). Uses Colyseus's express hook
+ * without express as a dependency — see static/serve-client.ts.
  */
 async function clientStaticExpressHook(
   config: ServerConfig,
@@ -79,13 +57,7 @@ async function clientStaticExpressHook(
   };
 }
 
-/**
- * States which operator keys are live, and warns about the built-in defaults.
- *
- * The defaults ARE named in the warning, because they are public knowledge
- * already and the whole purpose of the line is to make sure nobody is running
- * on one by accident. A key the self-hoster chose is never printed.
- */
+/** Built-in defaults are printed on purpose; a key the operator chose never is. */
 function logOperatorKeys(config: ServerConfig): void {
   if (config.rollbackKey === null) {
     logInfo('world rollback is disabled (ROLLBACK_KEY is set to nothing)');
@@ -106,8 +78,6 @@ function logOperatorKeys(config: ServerConfig): void {
     logInfo('world management is disabled (WORLD_ADMIN_KEY is set to nothing)');
   } else if (config.worldAdminKey === DEFAULT_WORLD_ADMIN_KEY) {
     logInfo('world management is enabled');
-    // WARN for the same reason as rollback's, and more so: this key can
-    // archive a world, not merely rewind one.
     logWarn(
       `world management is using the built-in key "${DEFAULT_WORLD_ADMIN_KEY}", which is ` +
         'public. Anyone who can reach this server can create, load and archive worlds. Set ' +
@@ -120,26 +90,18 @@ function logOperatorKeys(config: ServerConfig): void {
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  // `newWorlds=` rather than `world=`: WORLD_SIZE is now the size worlds are
-  // CREATED at, not the size of the one that is about to load — an existing
-  // world keeps whatever size it was made with, and this server may hold
-  // several of different sizes. The loaded world states its own size below.
+  // `newWorlds=`: WORLD_SIZE sizes worlds at CREATION. A loaded world keeps its own.
   logInfo(
     `starting: newWorlds=${config.worldSize}² difficulty=${config.difficulty} ` +
       `port=${config.port} tick=${config.tickHz}Hz snapshot=${config.snapshotIntervalS}s ` +
       `worlds=${config.worldsDir}`,
   );
 
-  // Plugins load before any world so a load failure costs nothing but a boot.
-  // THE INSTALLED SET, held in an object rather than the array discovery
-  // returns: one plugin of it can be replaced in place by a reload (#198), and
-  // everything downstream asks this object rather than keeping a copy.
+  // Before any world, so a load failure costs only a boot. An object, not an
+  // array, because a reload replaces one plugin in place (#198).
   const plugins = new InstalledPlugins(await discoverPlugins(config.pluginsDir));
 
-  // Bound before any world opens, because a join snapshot carries it and a
-  // client can join as soon as the room exists. Reads the built client's
-  // manifest, so it must come after nothing in particular — the dist is on
-  // disk or it is not.
+  // Before any world opens: a join snapshot carries it.
   const identity = initBuildIdentity({ plugins: plugins.list, clientDistPath: config.clientDistPath });
   logInfo(`build identity ${identity} (core, plugins and the served client bundle)`);
 
@@ -151,8 +113,7 @@ async function main(): Promise<void> {
     switchCountdownS: config.worldSwitchCountdownS,
   });
 
-  // Migration + "what is live" policy, in one place: see boot/open-worlds.ts
-  // for why a missing world never becomes a fresh one.
+  // A missing world never becomes a fresh one — see boot/open-worlds.ts.
   const outcome = openWorlds(config, registry, manager);
   const session = manager.current;
   if (session === null) {
@@ -161,17 +122,11 @@ async function main(): Promise<void> {
         'load or create a world from the panel.',
     );
   } else {
-    // The name is how a self-hoster tells one of their worlds from another in
-    // a log; it is stated once, here, whenever a world becomes live.
     logInfo(`world is "${session.world.name}" (${outcome.loadedId})`);
   }
 
-  // THE RESTART SERVICE IS BUILT BEFORE THE COLYSEUS SERVER IT SHUTS DOWN,
-  // because the admin service needs it and the room context needs that. The
-  // cycle is broken by a thunk rather than by a setter: `gameServer` below is
-  // the only thing that can perform the shutdown, and a restart can only be
-  // ASKED FOR over a connection, which cannot exist before `listen`. The throw
-  // states that invariant instead of silently skipping the snapshot.
+  // Built before the server it shuts down, because admin needs it. The thunk
+  // breaks the cycle: no connection, and so no restart, can exist before listen.
   let gameServer: Server | null = null;
   const restart = new ServerRestartService({
     shutdown: async () => {
@@ -185,8 +140,6 @@ async function main(): Promise<void> {
       process.exit(code);
     },
     countdownS: config.worldSwitchCountdownS,
-    // setImmediate, not a timeout with a number in it: the requirement is
-    // "after this turn of the event loop", which is what setImmediate names.
     defer: (run) => {
       setImmediate(run);
     },
@@ -195,50 +148,34 @@ async function main(): Promise<void> {
   const admin = new WorldAdminService({ manager, registry, config, restart });
   logOperatorKeys(config);
 
-  // BELT AND SUSPENDERS FOR WORLD IDENTITY. Booting can leave the world already
-  // differing from the file it came from: a world restored without a name has
-  // just been given one, and a plugin's onWorldCreate may have unlocked chunks.
-  // Waiting SNAPSHOT_INTERVAL_S to write that would mean a crash inside the
-  // first minute silently re-names the world on the next boot — an identity
-  // wobble, not a lost sculpt. One extra write per process start, only when
-  // something actually changed, closes it.
+  // Boot can already have changed the world (a restored world just named, a
+  // plugin's onWorldCreate). Without this, a crash inside the first minute
+  // silently re-names it on the next boot.
   try {
     if (manager.snapshotIfDirty()) logInfo('boot snapshot written');
   } catch (error) {
-    // Same policy as the periodic snapshot: a failed write must not stop a
-    // world from opening; the world stays dirty and the scheduler retries.
+    // A failed write must not stop a world opening; it stays dirty and retries.
     logError('boot snapshot failed', error);
   }
 
-  // The loop belongs to the PROCESS, not to a world: it keeps ticking across a
-  // world switch and across having no world at all (WorldManager.tick is a
-  // no-op then), so nothing has to be torn down and restarted to change worlds.
+  // The PROCESS's loop, not a world's: it ticks across a switch and across
+  // having no world, so changing worlds tears nothing down.
   const tickLoop = startTickLoop(config.tickHz, (dt) => manager.tick(dt));
 
-  // Cadence half of the snapshot decision: every SNAPSHOT_INTERVAL_S, but only
-  // if the world changed — an idle server writes nothing at all.
   const snapshotTimer = setInterval(() => {
     try {
-      // DEFERRED: the copy happens here, the encode, the thumbnail pass and
-      // the transaction happen on the writer thread (issue #273). Everything
-      // else that snapshots — boot above, shutdown below, a world switch, an
-      // operator's save — still blocks, because each needs the row on disk
-      // before its next step.
+      // Deferred: only this one. Every other caller needs the row on disk
+      // before its next step (#273).
       if (manager.snapshotIfDirty({ defer: true })) logInfo('world snapshot handed to writer');
     } catch (error) {
-      // A failed periodic snapshot must not kill a live world; the next tick
-      // retries, and the world stays dirty until one succeeds.
       logError('periodic snapshot failed', error);
     }
   }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
 
-  // Bind before define(): a room can be created as soon as the server listens.
-  // No plugin message types travel with the context: the room routes every
-  // `<plugin>:<type>` through the live host per message (issue #197), so there
-  // is nothing here to go stale when a plugin's message set changes.
+  // Before define(): a room can exist as soon as the server listens. No plugin
+  // message types here — the room routes each one through the live host (#197).
   bindRoomContext({ manager, admin, restart });
-  // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
-  // (@colyseus/core ServerOptions.greet, default true).
+  // greet: suppresses Colyseus's boot banner.
   const serverOptions: ServerOptions = { greet: false };
   const clientExpressHook = await clientStaticExpressHook(config);
   if (clientExpressHook !== undefined) {
@@ -248,14 +185,12 @@ async function main(): Promise<void> {
   gameServer.define(ROOM_NAME, TerraceRoom);
 
   gameServer.onBeforeShutdown(() => {
-    // Stop simulating first so the final snapshot is a quiescent world, then
-    // write it — this is the "snapshot on clean shutdown" half of the decision.
+    // Stop simulating first, so the final snapshot is a quiescent world.
     tickLoop.stop();
     clearInterval(snapshotTimer);
     try {
-      // `shutdown`, not `unload`: it saves and closes the live world but
-      // deliberately leaves the active pointer alone, so the next boot comes
-      // back to the same world.
+      // `shutdown`, not `unload`: leaves the active pointer, so the next boot
+      // returns to this world.
       logInfo(manager.shutdown() ? 'shutdown snapshot written' : 'nothing to snapshot');
     } catch (error) {
       logError('shutdown snapshot failed', error);
@@ -268,15 +203,11 @@ async function main(): Promise<void> {
 
   await gameServer.listen(config.port);
   logInfo(`listening on ws://0.0.0.0:${config.port} (room "${ROOM_NAME}")`);
-  // Stated at boot so a self-hoster writing a supervisor unit knows which code
-  // means "bring me back" without reading the source.
   logInfo(
     `an operator restart exits ${TERRACE_RESTART_EXIT_CODE}; ` +
       'a supervisor must relaunch on that code',
   );
-  // The line a self-hoster actually needs: where to point a browser. The ws://
-  // line above is the protocol endpoint, not a page — printing only that
-  // reads as "the client lives at 2567" while a browser gets a 404 (#20).
+  // The ws:// line above is not a page; without this a browser gets a 404 (#20).
   if (clientExpressHook !== undefined) {
     logInfo(`play at http://localhost:${config.port} (same URL on your LAN address)`);
   } else {
@@ -286,8 +217,7 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   if (error instanceof ConfigError) {
-    // Configuration mistakes are the self-hoster's most likely failure; print
-    // the message alone, without a stack trace they cannot act on.
+    // The message alone: an operator cannot act on a stack trace.
     logError(error.message);
   } else {
     logError('failed to start', error);
