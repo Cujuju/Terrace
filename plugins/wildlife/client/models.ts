@@ -55,6 +55,7 @@ import {
   moverGaitIndex,
   type MoverGait,
 } from '../../../client/src/plugins/kit/moverGait.ts';
+import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import { WHALE_SPECIES, type WhaleSpecies } from './whaleSpecies.ts';
 import { buildHumpback } from './species/humpback.ts';
 import { buildBlueWhale } from './species/blueWhale.ts';
@@ -330,6 +331,13 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   interface SpeciesRig {
     readonly blueprint: RigBlueprint;
     readonly jointIndices: Readonly<Record<string, number>>;
+    /**
+     * The authored root, which `bakeRig` bakes as a bone like any other. Named
+     * apart from the species' own joints because it is not one: the gait's body
+     * tilt goes here (the kit's `applyMoverBodyTilt`), and it is the one node a
+     * species file cannot reach and so cannot fight.
+     */
+    readonly rootJoint: number;
   }
 
   const speciesRigs: SpeciesRig[] = [];
@@ -341,7 +349,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     for (const [name, node] of Object.entries(joints)) {
       jointIndices[name] = blueprint.jointIndex(node);
     }
-    const rig: SpeciesRig = { blueprint, jointIndices };
+    const rig: SpeciesRig = { blueprint, jointIndices, rootJoint: blueprint.jointIndex(root) };
     speciesRigs.push(rig);
     return rig;
   }
@@ -357,7 +365,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   function herdFor(
     rig: SpeciesRig,
     wallGaits: boolean = false,
-  ): { herd: RigHerd; joints: Readonly<Record<string, Bone>> } {
+  ): { herd: RigHerd; joints: Readonly<Record<string, Bone>>; rigRoot: Bone } {
     const herd = createRigHerd(rig.blueprint, {
       capacity: instanceCapacity,
       poseSlots: POSE_SLOTS_PER_HERD,
@@ -371,7 +379,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     for (const [name, index] of Object.entries(rig.jointIndices)) {
       joints[name] = herd.joints[index]!;
     }
-    return { herd, joints };
+    return { herd, joints, rigRoot: herd.joints[rig.rootJoint]! };
   }
 
   /**
@@ -422,11 +430,15 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   function speciesDrawable(build: SpeciesModelBuilder): SpeciesDrawable {
     const authored = build(speciesPool);
     const wallGaits = authored.wallGaits === true;
-    const { herd, joints } = herdFor(bakeSpecies(authored.root, authored.joints), wallGaits);
+    const { herd, joints, rigRoot } = herdFor(
+      bakeSpecies(authored.root, authored.joints),
+      wallGaits,
+    );
     return {
       herd,
       animate(seconds, phase, gait) {
         authored.animate(joints, seconds, phase, gait);
+        applyMoverBodyTilt(rigRoot, gait, seconds, phase);
       },
     };
   }

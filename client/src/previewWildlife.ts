@@ -17,6 +17,9 @@
 //   ?t=<seconds>                     — animation clock, default 0 (the rest
 //                                      pose). A limb only proves it is hinged
 //                                      correctly off the rest pose.
+//   ?zoom=<n>                        — camera pull-back, default 1. Under 1 pulls
+//                                      back, which is what it takes to frame a
+//                                      gait that turns the body off the rest box
 //   ?phase=<radians>                 — animation phase, default 0. A WALKER's
 //                                      legs are paced by ground covered, not
 //                                      the clock, so this is its whole stride
@@ -220,6 +223,17 @@ function drawnBounds(objects: readonly Object3D[]): Box3 {
   return box;
 }
 
+/**
+ * `?zoom=<n>` — previewSpecies.ts's knob, same name and same meaning.
+ *
+ * The framing above is the REST pose's box (see drawnBounds: three measures an
+ * InstancedMesh from its geometry and its instance matrices, and a skinned pose
+ * is in neither). A gait that turns the body — the wall gaits do, see
+ * plugins/kit/moverBodyTilt.ts — swings it out of that box, so pulling back is
+ * the only way to photograph one.
+ */
+let ZOOM = 1;
+
 /** Points `camera` at the drawn creature, filling the frame with `CAMERA_FRAMING_PADDING` of headroom. */
 function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): void {
   const center = box.getCenter(new Vector3());
@@ -227,7 +241,7 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): 
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
 
   const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
-  const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2);
+  const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2) / ZOOM;
 
   const direction = CAMERA_VIEWS[view].clone().normalize();
   camera.position.copy(center).addScaledVector(direction, distance);
@@ -288,8 +302,19 @@ function main(): void {
   // — never above y = 0, so a walker still stands on it. previewSpecies.ts does
   // the same thing for the same reason.
   const drawnBox = drawnBounds(models.objects);
-  ground.position.y = Math.min(0, drawnBox.min.y - GROUND_DROP_WORLD_UNITS);
+  // A CLIMBER AND A FALLER ARE OFF THE GROUND, and the wall gaits turn the whole
+  // body about the rig origin (plugins/kit/moverBodyTilt.ts) — an upside-down
+  // faller hangs entirely BELOW that origin, where a disc at zero hides it. Drop
+  // the disc a body clear rather than hiding it, so the shot still says which way
+  // is down. The rest box's own height is the measure: no turn about the origin
+  // can put a vertex further below it than that.
+  const bodyHeight = drawnBox.max.y - drawnBox.min.y;
+  ground.position.y =
+    readGait(query) === 'walk'
+      ? Math.min(0, drawnBox.min.y - GROUND_DROP_WORLD_UNITS)
+      : drawnBox.min.y - bodyHeight - GROUND_DROP_WORLD_UNITS;
 
+  ZOOM = Number.parseFloat(query.get('zoom') ?? '1') || 1;
   frameCameraOn(camera, drawnBox, view);
 
   // What the REAL pool baked, for the screenshot driver to print beside the
