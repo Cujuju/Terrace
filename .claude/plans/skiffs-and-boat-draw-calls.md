@@ -172,6 +172,49 @@ roughly halve, and the preview pair is compared by EYE against the pre-change
 shot. D1's pixel-identical bar does NOT apply here: a texture-to-vertex-colour
 change is meant to look slightly different, so the owner's eye is the acceptance.
 
+**DONE 2026-09-06** (`22614d1`, owner eyes-on still open). Vertex colour was
+REJECTED for the atlas, the other option this section allowed: the hull loft is
+a 13x17 cage and `v = ring/16` puts a strake seam on EVERY ring vertex, so
+carrying 8 strakes a side needs the loft subdivided — paying vertices to save
+draw calls immediately before D2 puts the hull in a bone-matrix palette. The
+atlas costs no geometry: one 512x256 baseColor image (strakes in the left 256
+columns, 32 guard columns of the hull's last column, then a solid block per flat
+colour), sampled by EVERY baked part, so all four materials collapse to one
+signature. Deck and spar colours moved from `baseColorFactor` to texels at the
+same sRGB hexes; a flat part gives every vertex one uv, so its uv derivatives
+are zero and it reads mip 0.
+
+| | pre-D1b | D1b |
+| --- | --- | --- |
+| boats' draw calls | 145.5 | **72 (-50.5%)** |
+| boats GPU / frame ms | 2.483 / 3.15 | 1.819 / 1.90 |
+| boats triangles in frame | 103 204 | 102 836 (same fleet) |
+| whole frame draw calls | 279 | 229 |
+| baked surfaces per hull | 2 | **1** |
+
+Both runs on restored snapshot #1071, 1584x805, the served GLB verified over
+HTTP each side. Geometry, skin bindings and vertex counts are identical to the
+previous asset, compared per vertex.
+
+**Whole-frame GPU p50 is NOT comparable between the two runs** — 4.596 vs 6.359
+ms. The pre side's baseline swung 223-296 draws at a 0.524 ms mean step with
+fire's row at -0.5 draws (nothing burning); the D1b side held 227-229 at 0.137
+ms with fire at 4 draws / 2.02 ms. Fifteen minutes of simulation separates them.
+The per-layer ablation is immune to that drift; the frame total is not.
+
+**Eyes-on:** https://claude.ai/code/artifact/b1d67084-b82e-4d82-bcb5-c71abb23f266
+About 1.4% of pixels differ and they are ALL edges, the water disc's rim
+included — `preview-boats.html` frames the two ~2.6% apart because
+`Box3.setFromObject` caches a pose-stale skinned box that lands differently for
+a one-surface rig than a two-surface one. A control shot (same asset, fresh
+browser) diffs to 0 of 1 024 000 pixels, so the renderer is deterministic and
+the shift is the harness's, not the boat's.
+
+**Rig note for D2:** `client/scripts/shootSpeciesPreview.mjs` cannot drive
+`preview-boats.html` — it waits for `window.__previewStats`, which the wildlife
+harnesses raise and `previewBoats.ts` does not. `.d1b-eyes-on/shoot.mjs` is the
+same driver one flag apart.
+
 ## D2 — the hull onto `rigHerd`
 
 `client/src/render/rigHerd.ts:190` (`createRigHerd`) is the instanced
@@ -193,9 +236,10 @@ a pose cycle. Two sub-options, decide with a measurement rather than taste:
 
 Recommend the accumulator; it is one herd and has no seam at the transition.
 
-**Sized after D1 (2026-09-06):** boats are still **145 of 283 draw calls, 51% of
-the frame**. This phase takes that to ~2 (or ~1 after D1b): frame -> ~141. It is
-the whole remaining prize.
+**Sized after D1b (2026-09-06):** boats are still **72 of 229 draw calls, 31% of
+the frame**. This phase takes that to ~1: frame -> ~158. It is the whole
+remaining prize, and D1b already took the cheap half of what D1's sizing
+attributed to it.
 
 **Judge it on the boats row, not the frame total.** D1's win was real and
 whole-frame GPU p50 could not see it (5.151 -> 5.332 ms against a 0.419 ms error
