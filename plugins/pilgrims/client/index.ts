@@ -82,8 +82,9 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
   for (const [id, view] of views) {
     if (sampled.has(id)) continue;
     container.remove(view.model.root);
-    // Geometries/materials are shared and owned by `models` — dropping the
-    // meshes is the whole teardown (wildlife's identical note).
+    // Geometries/materials are shared and owned by `models`; model.dispose()
+    // frees only this walker's own skeleton bone texture.
+    view.model.dispose();
     views.delete(id);
   }
 }
@@ -212,7 +213,10 @@ export const clientPlugin: TerraceClientPlugin = {
     unpublishMovers?.();
     unpublishMovers = null;
 
-    for (const view of views.values()) view.model.root.clear();
+    for (const view of views.values()) {
+      view.model.dispose();
+      view.model.root.clear();
+    }
     views.clear();
     interpolator.clear();
 

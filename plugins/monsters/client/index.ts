@@ -182,6 +182,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       // for a change that is invisible on a swimmer anyway (no sea kind has
       // variants).
       scene.remove(existing.model.root);
+      existing.model.dispose();
       const rebuilt = bank.create(monster.kind, monster.variant);
       scene.add(rebuilt.root);
       return {
@@ -195,9 +196,10 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     release: (_id, view) => {
       scene.remove(view.model.root);
       // Geometries and materials are shared per kind and owned by `models`, so
-      // there is nothing to dispose here — dropping the Mesh objects is the whole
-      // teardown. Disposing them here would tear the resource out from under the
-      // next monster of the same kind.
+      // model.dispose() frees only what this instance owns: its skeleton's bone
+      // texture. Disposing the shared pool here would tear the resource out from
+      // under the next monster of the same kind.
+      view.model.dispose();
       //
       // The dread is the opposite case: it owns its geometry, its materials and
       // its light outright, so it stays in the scene until it has faded and is
@@ -351,6 +353,7 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = null;
 
     for (const view of views.values()) {
+      view.model.dispose();
       view.model.root.clear();
       // Each dread owns its own GPU resources, so every one of them — living or
       // still fading — is freed here. Nothing may outlive the plugin.

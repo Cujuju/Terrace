@@ -746,6 +746,9 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
             Math.sin(wave - 1) * CTHULHU_TENTACLE_SWAY_RADIANS * 0.6;
         }
       },
+      dispose(): void {
+        instance.dispose();
+      },
     };
   };
 }
