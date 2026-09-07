@@ -138,6 +138,24 @@ export interface RigHerdOptions {
    * capture is still on demand.
    */
   readonly poseVariants?: number;
+  /**
+   * That a captured row STAYS captured, for the life of the herd.
+   *
+   * A herd re-poses every occupied row every frame by default, because the
+   * caller's animation is a function of the wall clock as well as the slot
+   * phase — a fish's tail is `seconds * HZ + phase`
+   * (plugins/wildlife/client/species/fish.ts:42), so last frame's row is the
+   * wrong pose this frame. A caller whose animation is a function of the SLOT
+   * PHASE ALONE has no such staleness: row `k` holds the same bytes forever,
+   * and the individual animates by moving BETWEEN rows. Declaring that here
+   * turns the per-frame palette upload into a one-off — the upload wildlife
+   * measured at 0.63-0.89 ms when the driver stalls on a texture the in-flight
+   * frame still holds (GH #369).
+   *
+   * Say true ONLY if `poseSlotPhase(slot)` determines the pose. A caller that
+   * reads the clock and says true will freeze its animation at frame one.
+   */
+  readonly staticPoses?: boolean;
 }
 
 export interface RigHerd {
@@ -174,6 +192,19 @@ export interface RigHerd {
    * cap is what keeps it from happening.
    */
   place(slot: number, x: number, y: number, z: number, yaw: number, scale: number): void;
+  /**
+   * The same, for an individual whose placement is more than a yaw — a hull
+   * that rolls and pitches on the swell, say. `matrix` is its full local
+   * transform in the herd's own space, and `reach` is the uniform scale its
+   * geometry is drawn at, which is what the frustum bound is grown by (pass 1
+   * for an unscaled rig). The matrix is COPIED, so the caller may reuse it.
+   *
+   * Separate from `place` rather than folded into it: `place` writes its
+   * sixteen floats from a cosine and a sine precisely to avoid composing a
+   * matrix per individual per frame, and a caller that has no tilt must keep
+   * paying nothing for one.
+   */
+  placeMatrix(slot: number, matrix: Matrix4, reach: number): void;
   /** Uploads the frame's poses and placements. Call once per frame, last. */
   endFrame(): void;
   /** Frees the palette and the materials this herd created. */
@@ -188,7 +219,7 @@ export interface RigHerd {
  * rather than let two herds fight over one attribute buffer.
  */
 export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions): RigHerd {
-  const { capacity, poseSlots, poseVariants = 1 } = options;
+  const { capacity, poseSlots, poseVariants = 1, staticPoses = false } = options;
   if (capacity <= 0) throw new Error('createRigHerd: capacity must be positive');
   if (poseSlots <= 0) throw new Error('createRigHerd: poseSlots must be positive');
   if (poseVariants <= 0) throw new Error('createRigHerd: poseVariants must be positive');
@@ -278,6 +309,27 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   let maxZ = 0;
   let maxScale = 0;
 
+  /**
+   * Folds one individual's origin into the frame's extent, and its scale into
+   * the largest drawn — the two numbers endFrame turns into a bounding sphere.
+   * Shared by both placement paths so the bound cannot mean two things.
+   */
+  function noteBounds(x: number, y: number, z: number, scale: number): void {
+    if (count === 0) {
+      minX = maxX = x;
+      minY = maxY = y;
+      minZ = maxZ = z;
+    } else {
+      if (x < minX) minX = x;
+      else if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      else if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      else if (z > maxZ) maxZ = z;
+    }
+    if (scale > maxScale) maxScale = scale;
+  }
+
   return {
     meshes,
     joints,
@@ -285,8 +337,11 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     beginFrame(): void {
       count = 0;
       maxScale = 0;
+      // The COUNTER always resets — it is what makes endFrame upload the
+      // palette only on a frame that actually wrote to it. The CAPTURED FLAGS
+      // reset only for a caller whose poses go stale; see options.staticPoses.
       if (capturedThisFrame > 0) {
-        captured.fill(0);
+        if (!staticPoses) captured.fill(0);
         capturedThisFrame = 0;
       }
     },
@@ -362,20 +417,18 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
       instanceMatrices[at + 14] = z;
       instanceMatrices[at + 15] = 1;
       slotValues[count] = slot;
+      noteBounds(x, y, z, scale);
+      count++;
+    },
 
-      if (count === 0) {
-        minX = maxX = x;
-        minY = maxY = y;
-        minZ = maxZ = z;
-      } else {
-        if (x < minX) minX = x;
-        else if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        else if (y > maxY) maxY = y;
-        if (z < minZ) minZ = z;
-        else if (z > maxZ) maxZ = z;
-      }
-      if (scale > maxScale) maxScale = scale;
+    placeMatrix(slot: number, matrix: Matrix4, reach: number): void {
+      if (count >= capacity) return;
+      const at = count * MATRIX_ELEMENTS;
+      instanceMatrices.set(matrix.elements, at);
+      slotValues[count] = slot;
+      // The translation column, in three's column-major layout — the same
+      // three numbers `place` is handed directly.
+      noteBounds(matrix.elements[12]!, matrix.elements[13]!, matrix.elements[14]!, reach);
       count++;
     },
 

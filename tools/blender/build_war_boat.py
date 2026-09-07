@@ -16,8 +16,9 @@
 # silently stop being the trace. Stem/stern posts come from the same trace
 # (thin blades overlapping the hull ends, stretched to bite deeper and stand
 # taller) and are JOINED into the hull mesh — shared geometry, not floating
-# trim. Strakes and the shield-row stripe live in a 256px generated baseColor
-# texture on the hull; everything else is flat colour. Mast, yard and sail are
+# trim. Strakes, the shield-row stripe and one solid swatch per flat colour
+# live in ONE generated baseColor atlas that EVERY baked part samples, so the
+# whole boat bakes to a single draw call. Mast, yard and sail are
 # separate nodes (the plugin recolours the sail when fighting); four oars hang
 # under pivot Empties at the gunwale, dipped per OAR_DIP_RADIANS; anchors are
 # Empties.
@@ -56,7 +57,29 @@ OAR_RADIUS = 0.012
 OAR_DIP_RADIANS = 0.38
 WATERLINE_Z = HULL_DEPTH * 0.55
 DECK_Z = HULL_DEPTH - 0.035
-TEX_SIZE = 256
+
+# ------------------------------------------------------------------- atlas
+# ONE image, sampled by EVERY baked material, because `bakeRig` merges parts
+# by material signature and map identity is part of that key
+# (client/src/render/rigSkin.ts). A textured hull beside untextured deck and
+# spars is two draw calls per hull however small either half is; pointing all
+# of them at one image makes a boat one surface. The flat parts sample a white
+# texel, so their own baseColorFactor still supplies their colour — the baker
+# folds it into vertex colours and the shader multiplies the two.
+HULL_TEX_COLUMNS = 256
+# The hull's last column, repeated to the right of it. Mip level n averages
+# 2^n source columns, so this many columns keep the white swatch out of the
+# stem posts down to the 16x8 mip — far below anything the game camera picks.
+MIP_GUARD_COLUMNS = 32
+ATLAS_WIDTH = 512
+ATLAS_HEIGHT = 256
+# The two flat swatches, as [start, end) column ranges. A part that samples one
+# gives EVERY vertex the same uv, so its uv derivatives are zero and it reads
+# mip 0 — the block's size is belt to the guard's suspenders, not the mechanism.
+DECK_SWATCH_COLUMNS = (HULL_TEX_COLUMNS + MIP_GUARD_COLUMNS, 400)
+WOOD_SWATCH_COLUMNS = (400, ATLAS_WIDTH)
+# The hull pattern's share of the atlas width: authored u in 0..1 maps here.
+HULL_U_SPAN = HULL_TEX_COLUMNS / ATLAS_WIDTH
 
 
 
@@ -70,7 +93,7 @@ def srgb(hex_color):
     spars and sail rendered paler than their hex (found on the fish, 2026-09-04;
     same helper as build_fish.py). The transfer function is the sRGB standard's.
 
-    The hull TEXTURE does not go through this: `Image.pixels` on a byte image
+The ATLAS does not go through this: `Image.pixels` on a byte image
     are the raw byte values, and the image is tagged sRGB, so its bytes are
     already what glTF expects of a baseColor texture.
     """
@@ -81,8 +104,12 @@ def srgb(hex_color):
             channel(hex_color & 0xFF), 1.0)
 
 
-DECK_COLOR = srgb(0x8A6A44)
-WOOD_COLOR = srgb(0x53381F)
+# The deck and the spars are now PIXELS in the atlas, not baseColorFactors, so
+# they are kept as sRGB hexes: `Image.pixels` on a byte image tagged sRGB take
+# the raw byte values (see srgb's docstring), which is why these do not go
+# through it and the sail's colour, still a factor, does.
+DECK_HEX = 0x8A6A44
+WOOD_HEX = 0x53381F
 SAIL_COLOR = srgb(0xE8E0CF)
 
 MAST_X = 0.05
@@ -204,6 +231,7 @@ def make_empty(name, location, size=0.03):
 
 
 def flat_material(name, color):
+    """Colour from baseColorFactor alone — the sail, which is never baked."""
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes['Principled BSDF']
@@ -213,24 +241,40 @@ def flat_material(name, color):
     return mat
 
 
-def hull_texture():
-    """256px baseColor: plank strakes with seams, grain, shield-row stripes."""
+
+
+def texel(hex_color):
+    """An sRGB hex -> the byte triple `Image.pixels` wants (see srgb)."""
+    return (hex_color >> 16 & 0xFF) / 255, (hex_color >> 8 & 0xFF) / 255, (hex_color & 0xFF) / 255
+
+
+def swatch_uv(columns):
+    """The uv at the middle of a swatch block, in atlas coordinates."""
+    return ((columns[0] + columns[1]) / 2 / ATLAS_WIDTH, 0.5)
+
+
+def boat_atlas():
+    """The boat's one baseColor image: hull strakes, then the flat swatches.
+
+    Left `HULL_TEX_COLUMNS` columns: plank strakes with seams, grain and the
+    shield-row stripes, exactly the pattern the hull carried when it had the
+    texture to itself. Then `MIP_GUARD_COLUMNS` of the hull's last column, then
+    one solid block per flat colour.
+    """
     rng = random.Random(20260903)
-    size = TEX_SIZE
-    pixels = [0.0] * (size * size * 4)
-    base = (0x6B / 255, 0x4A / 255, 0x2F / 255)
-    seam = (0x3A / 255, 0x26 / 255, 0x16 / 255)
-    shields = [(0xB0 / 255, 0x3A / 255, 0x2E / 255), (0xE8 / 255, 0xE0 / 255, 0xCF / 255),
-               (0xC8 / 255, 0x96 / 255, 0x2E / 255), (0x2E / 255, 0x2E / 255, 0x2E / 255)]
+    pixels = [0.0] * (ATLAS_WIDTH * ATLAS_HEIGHT * 4)
+    base = texel(0x6B4A2F)
+    seam = texel(0x3A2616)
+    shields = [texel(0xB03A2E), texel(0xE8E0CF), texel(0xC8962E), texel(0x2E2E2E)]
     # v=0 is one rail, v=1 the other; 8 strakes a side over the 17-ring loft.
     strake_rows = 8
-    for row in range(size):
-        v = row / (size - 1)
+    for row in range(ATLAS_HEIGHT):
+        v = row / (ATLAS_HEIGHT - 1)
         side = min(v, 1.0 - v) * 2.0  # 0 at a rail, 1 at the keel
         in_stripe = side < 0.10
         pos = (1.0 - side) * strake_rows
         seam_line = abs(pos - round(pos)) < 0.06
-        for col in range(size):
+        for col in range(HULL_TEX_COLUMNS):
             shade = 0.92 + 0.08 * rng.random()
             r, g, b = base[0] * shade, base[1] * shade, base[2] * shade
             if seam_line and not in_stripe:
@@ -240,9 +284,18 @@ def hull_texture():
             # Butt joints: a vertical seam every ~64px, staggered per strake.
             if ((col + round(pos) * 37) % 64) == 0 and not in_stripe:
                 r, g, b = seam
-            i = (row * size + col) * 4
+            i = (row * ATLAS_WIDTH + col) * 4
             pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3] = r, g, b, 1.0
-    image = bpy.data.images.new('war_boat_hull', size, size)
+        edge = (row * ATLAS_WIDTH + HULL_TEX_COLUMNS - 1) * 4
+        for col in range(HULL_TEX_COLUMNS, HULL_TEX_COLUMNS + MIP_GUARD_COLUMNS):
+            i = (row * ATLAS_WIDTH + col) * 4
+            pixels[i:i + 4] = pixels[edge:edge + 4]
+        for columns, colour in ((DECK_SWATCH_COLUMNS, texel(DECK_HEX)),
+                                (WOOD_SWATCH_COLUMNS, texel(WOOD_HEX))):
+            for col in range(*columns):
+                i = (row * ATLAS_WIDTH + col) * 4
+                pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3] = (*colour, 1.0)
+    image = bpy.data.images.new('war_boat_atlas', ATLAS_WIDTH, ATLAS_HEIGHT)
     image.pixels.foreach_set(pixels)
     image.update()
     return image
@@ -334,7 +387,7 @@ def main():
     # UV: u along the length, v across the section (rail 0 -> keel .5 -> rail 1).
     hull_uvs = []
     for v in raw_verts:
-        u = (v[0] + 0.45) / 0.9
+        u = (v[0] + 0.45) / 0.9 * HULL_U_SPAN
         ring = [w for w in raw_verts if abs(w[0] - v[0]) < 1e-9]
         hull_uvs.append((u, ring.index(v) / 16) if len(ring) == 17 else (u, 0.5))
 
@@ -351,7 +404,7 @@ def main():
     for v in posts['verts']:
         z = 0.05 + (v[2] - 0.05) * 1.3
         all_verts.append((v[0], v[1], lift(z)))
-        u = min(1.0, max(0.0, (v[0] + 0.45) / 0.9))
+        u = min(1.0, max(0.0, (v[0] + 0.45) / 0.9)) * HULL_U_SPAN
         all_uvs.append((u, 0.5))
     for face in posts['faces']:
         blade = [i + post_base for i in face]
@@ -375,13 +428,19 @@ def main():
         all_verts.extend(ribbon)
         v_row = 0.03 if side < 0 else 0.97
         for x, _y, _z in ribbon:
-            all_uvs.append(((x + 0.45) / 0.9, v_row))
+            all_uvs.append(((x + 0.45) / 0.9 * HULL_U_SPAN, v_row))
         for k in range(len(ribbon) // 2 - 1):
             quad = [start + 2 * k, start + 2 * k + 1, start + 2 * k + 3, start + 2 * k + 2]
             all_faces.extend(flip_to_outward([quad], all_verts, (0.0, side * 10.0, 0.1)))
 
+    # ONE material for every part the rig bakes — see the atlas constants for
+    # why that, and not four, is what makes a hull one draw call.
+    boat_material = mapped_material('boat_atlas', boat_atlas())
+    deck_uv = swatch_uv(DECK_SWATCH_COLUMNS)
+    wood_uv = swatch_uv(WOOD_SWATCH_COLUMNS)
+
     hull_obj = make_object('hull', all_verts, all_faces, all_uvs)
-    hull_obj.data.materials.append(mapped_material('hull_mapped', hull_texture()))
+    hull_obj.data.materials.append(boat_material)
 
     # Solidify: the loft is a skin with no thickness — from above, the far
     # wall's backface would cull and the hull would read see-through.
@@ -411,23 +470,21 @@ def main():
         off = len(deck_verts)
         deck_faces.extend([[i + off for i in f] for f in faces])
         deck_verts.extend(verts)
-    deck_obj = make_object('deck', deck_verts, deck_faces, None)
-    deck_obj.data.materials.append(flat_material('deck_flat', DECK_COLOR))
-
-    wood = flat_material('wood_dark', WOOD_COLOR)
+    deck_obj = make_object('deck', deck_verts, deck_faces, [deck_uv] * len(deck_verts))
+    deck_obj.data.materials.append(boat_material)
 
     # ---- mast + yard (analytic cylinders, no flip needed) ----
     mast_verts, mast_faces = cylinder_verts(MAST_RADIUS, MAST_HEIGHT, 8, 'Z')
     mast_verts = [(MAST_X + x, y, DECK_Z + MAST_HEIGHT / 2 + z) for x, y, z in mast_verts]
-    mast_obj = make_object('mast', mast_verts, mast_faces, None)
-    mast_obj.data.materials.append(wood)
+    mast_obj = make_object('mast', mast_verts, mast_faces, [wood_uv] * len(mast_verts))
+    mast_obj.data.materials.append(boat_material)
 
     sail_cz = DECK_Z + MAST_HEIGHT * 0.62
     yard_cz = sail_cz + SAIL_HEIGHT / 2
     yard_verts, yard_faces = cylinder_verts(YARD_RADIUS, SAIL_WIDTH + 0.06, 8, 'Y')
     yard_verts = [(MAST_X + x, y, yard_cz + z) for x, y, z in yard_verts]
-    yard_obj = make_object('yard', yard_verts, yard_faces, None)
-    yard_obj.data.materials.append(wood)
+    yard_obj = make_object('yard', yard_verts, yard_faces, [wood_uv] * len(yard_verts))
+    yard_obj.data.materials.append(boat_material)
 
     # ---- sail: its own node, NOT baked (the plugin recolours it to fight) ---
     # A thin SOLID, not a plane: single-sided planes vanish from behind, and a
@@ -455,8 +512,9 @@ def main():
             mesh_f = shaft_f + [[i + off for i in f] for f in blade_f]
             theta = (-math.pi / 2 - OAR_DIP_RADIANS) if side > 0 else (math.pi / 2 + OAR_DIP_RADIANS)
             mesh_v = [rot_x(p, theta) for p in mesh_v]
-            oar_obj = make_object(f'oar_{side_name}_{num}_shaft', mesh_v, mesh_f, None)
-            oar_obj.data.materials.append(wood)
+            oar_obj = make_object(f'oar_{side_name}_{num}_shaft', mesh_v, mesh_f,
+                                  [wood_uv] * len(mesh_v))
+            oar_obj.data.materials.append(boat_material)
             oar_obj.parent = pivot
             oar_names.append(pivot.name)
 

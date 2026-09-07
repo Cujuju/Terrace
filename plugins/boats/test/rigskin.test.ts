@@ -6,12 +6,20 @@
 // Meshes (hull, deck, mast, sail, yard, 4 oars) = 9 draw calls; after it, the
 // hull/deck/mast/yard/oars are ONE baked skinned surface and only the sail
 // stays separate (its per-boat colour cannot live in shared vertex data — see
-// the comment on the sail in client/models.ts). So: 2.
+// the comment on the sail in client/models.ts), and the sail is now one
+// InstancedMesh for the whole fleet. So: 1.
 
 import { describe, expect, it } from 'vitest';
-import { Bone, Mesh } from 'three';
+import { InstancedMesh } from 'three';
 import { readFile } from 'node:fs/promises';
-import { createBoatModels, installBoatKit } from '../client/models.ts';
+import {
+  BOAT_SHAPE,
+  HULL_MESH_NAME,
+  SAIL_MESH_NAME,
+  createBoatModels,
+  installBoatKit,
+  type BoatModels,
+} from '../client/models.ts';
 import { parseRigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
@@ -65,59 +73,61 @@ const assetBytes = assetBuffer.buffer.slice(
 );
 installBoatKit(await parseRigAsset(assetBytes, 'war-boat.glb'));
 
-/** Every Mesh under a node, depth-first — the renderer's unit of charging. */
-function drawablesOf(root: { traverse(cb: (o: unknown) => void): void }): Mesh[] {
-  const found: Mesh[] = [];
-  root.traverse((object) => {
-    if (object instanceof Mesh) found.push(object);
-  });
-  return found;
-}
-
-/** Every Bone under a node — the baked rig's animated handles. */
-function bonesOf(root: { traverse(cb: (o: unknown) => void): void }): Bone[] {
-  const found: Bone[] = [];
-  root.traverse((object) => {
-    if (object instanceof Bone) found.push(object);
-  });
+/** One of the fleet's two drawn meshes, by name rather than by its index. */
+function meshNamed(models: BoatModels, name: string): InstancedMesh {
+  const found = models.objects.find((object) => object.name === name);
+  if (!(found instanceof InstancedMesh)) throw new Error(`no InstancedMesh named ${name}`);
   return found;
 }
 
 describe('the boat as a rigged drawable', () => {
-  it('draws THREE objects per boat: two rig surfaces plus the sail', () => {
-    // One boat must cost its three draws and no more. The hand-built boat was
-    // 2 (one baked surface plus the sail); the authored hull carries the
-    // texture, and map identity is in rigSkin's merge key, so the textured
-    // hull bakes as its own surface beside the merged flat set — 2 + the
-    // sail's 1. A regression to per-part meshes (or a second flat surface —
-    // an indexed part beside a non-indexed one would do it) shows up here.
+  it('draws ONE object per hull, and the whole fleet\'s sails in ONE more', () => {
+    // What a fleet COSTS, which is the number drawBudget is built from. Map
+    // identity is in rigSkin's merge key, so a textured hull beside untextured
+    // spars used to bake as its own second surface; every baked part now
+    // samples one atlas and the whole hull is 1. The sail was a third, per
+    // boat, then one InstancedMesh for every boat in the world. A regression
+    // to per-part meshes — or to a second surface, which splitting the atlas
+    // or putting a non-indexed part beside an indexed one would do — shows up
+    // here, and so does putting the sail back on the per-boat path.
     const models = createBoatModels();
+    models.beginFrame();
     const boat = models.create();
-    boat.animate(0, 0, false);
+    boat.draw(0, 0, 0, 0, 0, 0, 0, false);
 
-    expect(drawablesOf(boat.root)).toHaveLength(3);
+    // TWO objects for the whole fleet: the hull herd's one baked surface and
+    // the sails' one mesh. Not two PER BOAT — that is the point of the count.
+    expect(models.objects).toHaveLength(2);
+    expect(BOAT_SHAPE.drawObjects).toBe(1);
 
+    const second = models.create();
+    second.draw(5, 0, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
+    // Still the same two meshes, now carrying two instances each.
+    expect(models.objects).toHaveLength(2);
+    expect(meshNamed(models, HULL_MESH_NAME).count).toBe(2);
+    expect(meshNamed(models, SAIL_MESH_NAME).count).toBe(2);
+
+    second.dispose();
     boat.dispose();
     models.dispose();
   });
 
-  it('keeps the rig at TWO surfaces, so nothing but the sail was left behind', () => {
-    // The textured hull is one surface, every flat part merges into the
-    // other, and both boats share both baked geometries; if the bake ever
-    // emits a third surface the total goes to 4 and this catches which side
-    // regressed.
+  it('keeps the rig at ONE surface, shared by every boat', () => {
+    // Every part merges into one surface, and two boats are two INSTANCES of
+    // it rather than two meshes. If the bake ever emits a second surface the
+    // herd grows a second mesh and this catches it.
     const models = createBoatModels();
+    models.beginFrame();
     const a = models.create();
     const b = models.create();
+    a.draw(0, 0, 0, 0, 0, 0, 0, false);
+    b.draw(5, 0, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
 
-    const [rigA1, rigA2, sailA] = drawablesOf(a.root);
-    const [rigB1, rigB2] = drawablesOf(b.root);
-    expect(rigA1!.geometry).toBe(rigB1!.geometry);
-    expect(rigA1!.material).toBe(rigB1!.material);
-    expect(rigA2!.geometry).toBe(rigB2!.geometry);
-    expect(rigA2!.material).toBe(rigB2!.material);
-    expect(sailA!.material).not.toBe(rigA1!.material);
-    expect(sailA!.material).not.toBe(rigA2!.material);
+    const hulls = models.objects.filter((object) => object.name === HULL_MESH_NAME);
+    expect(hulls).toHaveLength(1);
+    expect(meshNamed(models, HULL_MESH_NAME).count).toBe(2);
 
     a.dispose();
     b.dispose();
@@ -133,13 +143,14 @@ describe('the boat as a rigged drawable', () => {
     const boat = models.create();
 
     // Step until the stroke is clearly away from zero so both signs are real,
-    // not float noise around rest.
+    // not float noise around rest. The pose lives on the herd's scratch rig
+    // now — there is no per-boat skeleton left to read.
     let swings: number[] = [];
     for (let step = 0; step < 12 && swings.every((s) => s === 0); step++) {
-      boat.animate(step * 0.25, 0, false);
-      swings = bonesOf(boat.root)
-        .map((bone) => bone.rotation.y)
-        .filter((yaw) => yaw !== 0);
+      models.beginFrame();
+      boat.draw(0, 0, 0, 0, 0, 0, 0.25, false);
+      models.commitFrame();
+      swings = models.joints.map((bone) => bone.rotation.y).filter((yaw) => yaw !== 0);
     }
     // Four oars were animated; anything else means animate() reached a bone it
     // should not have (a shaft or the root).
