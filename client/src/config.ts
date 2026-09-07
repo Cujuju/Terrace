@@ -1,9 +1,7 @@
 // Client-only tuning constants and environment-derived configuration.
 //
-// Nothing here belongs in shared/: these are presentation and input-feel
-// numbers that only the client has an opinion about. Terrain maths constants
-// (CHUNK_SIZE, BAND_HEIGHT, SEA_LEVEL, brush radius bounds…) live in
-// @terrace/shared and are never re-declared here.
+// Terrain maths constants (CHUNK_SIZE, BAND_HEIGHT, SEA_LEVEL, brush radius
+// bounds…) live in @terrace/shared and are never re-declared here.
 
 import {
   BAND_HEIGHT,
@@ -13,70 +11,41 @@ import {
   SEA_LEVEL,
 } from '@terrace/shared';
 
-/** 2567 is the Colyseus convention and the server's `PORT` default. */
+/** Colyseus convention; the server's `PORT` default. */
 export const DEFAULT_SERVER_PORT = 2567;
 
-/**
- * Hostname the page itself was served from, with a fallback for non-browser
- * contexts (Vitest runs this module in a plain node environment).
- */
+/** Fallback for non-browser contexts: Vitest runs this module in plain node. */
 const pageHostname =
   typeof location === 'undefined' ? 'localhost' : location.hostname;
 
-/**
- * Host (hostname *and* port, when the page has one) the page itself was
- * served from. Falls back to the dev default port when there is no
- * `location` (Vitest) — see DEFAULT_SERVER_URL below for why that fallback
- * specifically matches the Vite-dev branch rather than being port-less.
- */
+/** Same fallback as pageHostname, extended with the dev-default port. */
 const pageHost =
   typeof location === 'undefined' ? `${pageHostname}:${DEFAULT_SERVER_PORT}` : location.host;
 
 /**
- * Default Colyseus endpoint — two different answers depending on how this
- * bundle got to the browser (issue #20: "one process = playable URL").
+ * Default Colyseus endpoint (issue #20: "one process = playable URL").
  *
- * `import.meta.env.DEV` is Vite's own compile-time constant: true only for
- * the `vite`/`pnpm --dir client dev` dev server, false in every BUILT bundle
- * (a `vite build` output, wherever it ends up being served from) — verified
- * against Vite's env docs and by inspecting a built bundle, where `DEV` comes
- * out as the literal `false`. It, not some runtime guess, is the right
- * switch:
+ * `import.meta.env.DEV` is true only for Vite's own dev server, false in any
+ * built bundle (verified against Vite docs and a built bundle's output).
  *
- *   - DEV (Vite's own server, port 5173 by default): the page and the game
- *     server are two different processes on two different ports, so the
- *     default must still name the server's own conventional port explicitly
- *     — this is the pre-#20 behaviour, unchanged, derived from the page's
- *     hostname so a LAN visitor to the Vite dev server dials the same
- *     machine's game server rather than themselves.
- *   - NOT DEV (a built bundle): a build only exists to be served BY
- *     something, and issue #20 adds exactly one thing that serves it same-
- *     origin — the game server handing out `client/dist` on its own port.
- *     `ws://<location.host>` (hostname AND port, whatever they are) is then
- *     always correct with zero configuration, on any port the self-hoster
- *     picked via `PORT`. `VITE_SERVER_URL`/`PUBLIC_WS_URL` still overrides
- *     this outright for the two-container Docker Compose path, where the
- *     client is served by nginx on a different port than the game server.
+ *   - DEV: page and game server are separate processes/ports, so the default
+ *     must name the server's port explicitly, derived from the page's
+ *     hostname so a LAN visitor dials the same machine.
+ *   - Built bundle: issue #20 has the game server serve `client/dist`
+ *     same-origin, so `ws://<location.host>` is always correct with zero
+ *     config. `VITE_SERVER_URL`/`PUBLIC_WS_URL` still overrides this for the
+ *     two-container Docker Compose path.
  *
- * Verified against @colyseus/sdk 0.17.43 `Client.ts`: the string form of the
- * constructor argument is parsed with `new URL(...)` and treats
- * `wss:`/`https:` as secure, so a `ws://` URL is an accepted endpoint form.
+ * Verified against @colyseus/sdk 0.17.43: `ws://` is an accepted endpoint form.
  */
 /**
- * The game server's port, when it is not the conventional one.
+ * The game server's port, when not the conventional one.
  *
- * SEPARATE FROM `VITE_SERVER_URL` BECAUSE THE HOST AND THE PORT ARE SEPARATE
- * QUESTIONS (owner bug report 2026-09-06: "I can bring up the client, but I
- * can't connect to the server", from a second machine on the LAN). Launching
- * on a non-default PORT used to be corrected by having run_server.py set
- * `VITE_SERVER_URL=ws://localhost:<PORT>` — which fixes the port by hard-wiring
- * the HOST to `localhost`, and `localhost` on a LAN visitor's machine is that
- * visitor's own machine. The page loaded and the socket dialled nowhere.
- *
- * A port override therefore overrides ONLY the port; the hostname stays derived
- * from the page, which is what makes a LAN visitor dial the machine that served
- * them. `VITE_SERVER_URL` remains the whole-endpoint override for the Docker
- * Compose path, where host AND port genuinely both differ.
+ * SEPARATE FROM `VITE_SERVER_URL` (owner bug report 2026-09-06: LAN client
+ * couldn't reach server) — a port-only override used to require hard-wiring
+ * the host to `localhost`, which on a LAN visitor's machine is themselves.
+ * A port override now overrides only the port; the hostname stays derived
+ * from the page.
  */
 const serverPort: string =
   import.meta.env.VITE_SERVER_PORT ?? String(DEFAULT_SERVER_PORT);
@@ -85,11 +54,7 @@ export const DEFAULT_SERVER_URL = import.meta.env.DEV
   ? `ws://${pageHostname}:${serverPort}`
   : `ws://${pageHost}`;
 
-/**
- * Room name passed to `joinOrCreate`. Core has no lobby — one process is one
- * world (design doc) — so a single fixed name is all that is needed. It
- * must match the server's `gameServer.define(...)` name.
- */
+/** Core has no lobby — one process is one world (design doc) — so this must match the server's `gameServer.define(...)` name. */
 export const DEFAULT_ROOM_NAME = 'world';
 
 /** `VITE_SERVER_URL` overrides the endpoint; `VITE_ROOM_NAME` the room. */
@@ -97,40 +62,24 @@ export const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? DEFAULT_SERVER_URL;
 export const ROOM_NAME = import.meta.env.VITE_ROOM_NAME ?? DEFAULT_ROOM_NAME;
 
 /**
- * World units per cell edge — re-exported from @terrace/shared, which owns it
- * so that plugins can reach the same number (see its comment there).
+ * Re-exported from @terrace/shared, which owns it so plugins can reach the
+ * same number.
  *
- * It was fixed at 1 until 2026-08-21, so world-space X/Z coordinates WERE cell
- * coordinates and picking was a bare floor(). It is a quarter of that now
- * (WORLD_UNIT_CELLS = 4): scene coordinates are still world units — the camera
- * distances below, the water margin, the sun, every size in the render code —
- * and a cell is simply four times smaller than one, so cell↔world conversions
- * are a real multiply in both directions and picking divides before it floors.
- *
- * NOTHING IN THE SCENE CHANGES SIZE BECAUSE OF THIS. A 512-world-unit world is
- * 2048 cells across and still 512 units wide; what moved is only how many
- * samples the terrain is drawn from.
+ * Fixed at 1 until 2026-08-21 (a cell was a world unit); now a quarter of
+ * that (WORLD_UNIT_CELLS = 4) — cell↔world conversions are a real multiply,
+ * picking divides before flooring. World size is unchanged; only sample
+ * density moved.
  */
 export { CELL_WORLD_SIZE };
 
 /**
- * How tall the world's full above-sea range stands, in WORLD UNITS. THE relief
- * fact: a MAX_HEIGHT mountain rises this far over the sea, so this alone
- * decides how mountainous the world looks.
+ * How tall the world's above-sea range stands, in world units — the relief
+ * fact deciding how mountainous the world looks.
  *
- * 16 is exactly the relief the world had before the 2026-08-20 re-terrace and
- * the 2026-08-21 re-sample, and is kept there deliberately through both: those
- * changes were about how finely the world steps and how finely it is sampled,
- * never about how high it stands.
- *
- * IT LIVES IN @terrace/shared NOW, and is re-exported here so every reader in
- * the client is unchanged. Four plugin protocols and two plugin client rigs each
- * carried a copy of the literal 16 with the same residual named beside it — a
- * plugin cannot import this file from its SERVER half without dragging
- * `import.meta.env` into a node test run — so the number that both halves must
- * agree on became a shared constant, which is what closes that residual rather
- * than merely recording it. Its full derivation note is on the shared
- * definition.
+ * 16, unchanged through the 2026-08-20 re-terrace and 2026-08-21 re-sample
+ * (those changed step/sample density, not height). Lives in @terrace/shared
+ * so client and server plugins agree without each carrying its own copy of
+ * the literal.
  */
 export { MAX_RELIEF_WORLD_UNITS };
 
@@ -138,271 +87,169 @@ export { MAX_RELIEF_WORLD_UNITS };
 export const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 
 /**
- * How deep the ORDINARY sea is, in terrace bands — the depth an unmodified
- * genesis ocean reaches, below which the world is trench.
+ * Depth (terrace bands) an unmodified genesis ocean floor reaches; past this
+ * a depth is a dig or trench.
  *
- * MEASURED, NOT REASONED. Live world frostwick-hollows, 2026-08-26, 235,663
- * water cells (90% of a 512² map), depth in bands:
+ * MEASURED: live world frostwick-hollows, 2026-08-26, 235,663 water cells,
+ * depth in bands: p25 10, p50 11, p75 12, p95 15, p99 21, max 62. This is
+ * the p95. 83% of water sits in bands 10-14.
  *
- *     p25 10    p50 11    p75 12    p95 15    p99 21    max 62
- *
- * 83% of all water sits in bands 10-14. This constant is the p95: the depth
- * the ordinary ocean floor never exceeds, past which a depth is a dig or a
- * trench and may share one look.
- *
- * WHY IT IS ONE CONSTANT HERE AND NOT A NUMBER IN EACH CURVE. Every
- * depth-to-appearance map in the client — the seabed palette
- * (terrain/bandColors.ts), the water's alpha ramp (terrain/waterDepth.ts) —
- * has to decide how much of its range to spend on the ordinary sea versus the
- * trench below it. Three times now (the shade ramp 2026-08-24, the alpha ramp
- * 2026-08-25, the seabed palette 2026-08-26) a curve was spent across the sea
- * column's full 64 bands because that is the constant that was to hand, and
- * the ordinary ocean — a sixth of the way down — came out flat: alpha at a
- * fifth of its range, seabed stops 10 through 14 differing by two parts in 255.
- * Owner, 2026-08-26: "There is no difference between the shallows and the
- * depths." A curve that derives from THIS constant cannot make that mistake,
- * and one measurement moves them all together.
- *
- * NOT a shared/ constant: it describes what the world tends to be, not what
- * it is allowed to be, and nothing deterministic depends on it.
+ * One constant shared by every depth-to-appearance curve (bandColors.ts,
+ * waterDepth.ts) so they can't drift: three curves independently spent their
+ * range across the full 64-band column and made the ordinary sea look flat
+ * (owner, 2026-08-26: "no difference between the shallows and the depths").
+ * Not shared/: describes what the world tends to be, not what it must be.
  */
 export const ORDINARY_SEA_DEPTH_BANDS = 15;
 
-/** The same depth as a signed height, for the modules that think in heights. */
+/** The same depth as a signed height. */
 export const ORDINARY_SEA_FLOOR_HEIGHT = -ORDINARY_SEA_DEPTH_BANDS * BAND_HEIGHT;
 
 /**
- * Where the ordinary ocean floor BEGINS, in terrace bands — the p25 of the very
- * same measurement ORDINARY_SEA_DEPTH_BANDS quotes above (2026-08-27).
+ * Where the ordinary ocean floor begins (bands) — the p25 of the same
+ * measurement above (2026-08-27).
  *
- * The p95 alone was only half the constant the curves needed. It says where the
- * ocean ENDS, so a curve pinned to it spends its range across bands 0-15 — and
- * the histogram in the comment above says three quarters of all water is in the
- * last third of that span, bands 10-15. Every curve pinned to the p95 therefore
- * still hands two thirds of its range to the shallow quarter of the water and
- * squeezes the ordinary ocean floor — the part the owner is actually looking at
- * — into the remaining third. Measured through the shipped shader math
- * (2026-08-27): adjacent bands 10-14 differed by 1-2 parts in 255 on screen,
- * which is the "before and after is identical" report that this pair of
- * constants exists to close.
- *
- * With BOTH ends named, a depth curve can spend its range where the water
- * actually is: sparse shallows across bands 0-10, the dense ordinary floor
- * across bands 10-15. That is histogram equalisation, the discipline
- * terrain/waterDepth.ts's shade ramp already adopted and states in those words;
- * this constant is what lets the seabed palette adopt it too.
+ * The p95 alone only says where the ocean ends; a curve pinned to it still
+ * spends two-thirds of its range on the shallow quarter and squeezes the
+ * ordinary floor into the rest (measured: adjacent bands 10-14 differed by
+ * 1-2/255 on screen). With both ends named, a curve can spend its range
+ * where the water actually is — histogram equalisation, as waterDepth.ts's
+ * shade ramp already does.
  */
 export const ORDINARY_SEA_SHELF_BANDS = 10;
 
-/** The same depth as a signed height, matching ORDINARY_SEA_FLOOR_HEIGHT. */
+/** The same depth as a signed height. */
 export const ORDINARY_SEA_SHELF_HEIGHT = -ORDINARY_SEA_SHELF_BANDS * BAND_HEIGHT;
 
 /**
- * How many bands of depth the sea's DEPTH CUES span — the water's shade and
- * alpha ramps (terrain/waterDepth.ts) and the seabed palette
- * (terrain/bandColors.ts) all run from the surface to here, EVENLY in
- * luminance, and are flat below it. Owner, 2026-08-28: "I want the luminance
- * spread evenly across the first forty-eight bands." This supersedes the
- * histogram-equalised curves the two ORDINARY_SEA_* constants above were
- * measured for: 48 is three quarters of the 64-band sea column
- * (shared/constants.ts), so a sculpted trench keeps darkening well past the
- * deepest natural floor and only the column's bottom quarter, and the deep
- * strata under it, sit on the plateau. Lives here, not in either consumer, so
- * the water and the seabed cannot be tuned to different spans.
+ * Bands the sea's depth cues (shade/alpha ramps, seabed palette) span evenly
+ * in luminance before going flat. Owner, 2026-08-28: spread luminance evenly
+ * across the first 48 bands — three quarters of the 64-band column, so a
+ * sculpted trench keeps darkening well past the natural floor. Shared here so
+ * water and seabed can't be tuned to different spans.
  */
 export const SEA_DEPTH_CUE_SPAN_BANDS = 48;
 
-/** The same depth as a signed height, matching ORDINARY_SEA_FLOOR_HEIGHT. */
+/** The same depth as a signed height. */
 export const SEA_DEPTH_CUE_FLOOR_HEIGHT = -SEA_DEPTH_CUE_SPAN_BANDS * BAND_HEIGHT;
 
 /**
- * World units a single terrace band rises — how tall one step LOOKS.
+ * World units a single terrace band rises.
  *
- * Historically forced to equal CELL_WORLD_SIZE by the old vertex-per-cell grid
- * (whose steepest face was 45°); since the 2026-08-14 cliff renderer, risers
- * are true vertical walls (terrain/vertexGrid.ts emits duplicated per-face
- * vertices), so it was free of that constraint. It is DERIVED from the relief
- * above rather than chosen: a quarter of a world unit at BAND_HEIGHT 16, which
- * is the whole visible point of the re-terrace — the same hills, stepped four
- * times as finely.
- *
- * It is exactly one CELL tall again since the 2026-08-21 re-sample, and that
- * is a coincidence of two independent quarterings rather than a constraint
- * returning: a riser is still a true vertical wall and would keep this height
- * at any sampling density.
+ * Historically forced to equal CELL_WORLD_SIZE by the old 45°-riser grid;
+ * free of that since the 2026-08-14 cliff renderer's true vertical walls.
+ * Derived from MAX_RELIEF_WORLD_UNITS: a quarter of a world unit at
+ * BAND_HEIGHT 16. Equal to one cell again since the 2026-08-21 re-sample —
+ * coincidence of two independent quarterings, not a returned constraint.
  */
 export const BAND_WORLD_HEIGHT = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 
 /**
- * Height units per WORLD UNIT — the conversion for anything whose size is a
- * world-space fact but which is computed in height units (the frontier fog's
- * bank profile, for one). Stating such a thing as a multiple of BAND_HEIGHT
- * instead is the bug this arc keeps finding: it silently rescales the moment
- * the world is re-terraced.
+ * Height units per world unit, for anything sized in world space but
+ * computed in height units (e.g. the frontier fog's bank profile) — stating
+ * such a size as a multiple of BAND_HEIGHT instead silently rescales on
+ * re-terrace.
  *
- * PER WORLD UNIT, NOT PER CELL (2026-08-21). This was CELL_HEIGHT_UNITS while
- * a cell was a world unit; every caller wanted the world-space meaning, so
- * re-sampling the world would have shrunk each of them to a quarter.
+ * Per world unit, not per cell (2026-08-21): was CELL_HEIGHT_UNITS while a
+ * cell was a world unit; re-sampling would have shrunk every caller to a
+ * quarter otherwise.
  */
 export const WORLD_UNIT_HEIGHT_UNITS = 1 / HEIGHT_WORLD_SCALE;
 
 /**
- * How far above SEA_LEVEL the water surface is drawn, in world units.
+ * How far above SEA_LEVEL the water surface draws, in world units.
  *
- * It cannot be zero. Terrace band 0 covers heights 0..BAND_HEIGHT-1 and every
- * one of them quantises to a vertex height of 0 — the same plane the sea would
- * sit on. That is not a rare case: it is a freshly generated world (all cells
- * at 0) and every shoreline flat thereafter, so a coplanar sea would z-fight
- * across the most-looked-at part of the map.
+ * Cannot be zero: band 0 (heights 0..BAND_HEIGHT-1) quantises to vertex
+ * height 0, the same plane the sea would sit on — a freshly generated world
+ * and every shoreline flat, so a coplanar sea would z-fight there.
  *
- * A thirty-second of a WORLD UNIT is the compromise: far above the depth-buffer
- * resolution at these camera distances, so the ordering is decided and stable,
- * yet a small enough step that a band-0 flat still reads as sitting AT the
- * waterline rather than floating above or sunk below it.
- *
- * MEASURED AGAINST THE WORLD UNIT, NOT THE BAND (2026-08-20, restated in world
- * units 2026-08-21 when the cell stopped being one). Depth-buffer
- * resolution is a fact about world space and the camera, and nothing about
- * re-terracing the world changed either — written as a fraction of a band it
- * would have quietly shrunk to a quarter of the separation it was tuned for.
- * The band-relative consequence noted here before has moved with it: clearing
- * the water now takes four clicks rather than one, because a click is a band
- * and a band is four times finer, which is the re-terrace working as intended
- * and still leaves "raising land out of water" legible.
+ * 1/32 world unit: far above depth-buffer resolution at these camera
+ * distances (stable ordering), small enough that a band-0 flat still reads
+ * as at the waterline. Measured against the world unit, not the band
+ * (2026-08-20, restated 2026-08-21): written as a band fraction it would
+ * have shrunk to a quarter at the re-terrace.
  */
 export const WATER_SURFACE_LIFT = 1 / 32;
 
 /**
- * WORLD Y OF THE DRAWN SEA SURFACE — the plane render/water.ts actually writes
- * into its vertex buffer, and therefore the only Y anything meaning "floating
- * on the sea" may use.
+ * World Y of the drawn sea surface — the plane render/water.ts writes into
+ * its vertex buffer, and the only Y anything "floating on the sea" may use.
  *
- * IT IS NOT `SEA_LEVEL * HEIGHT_WORLD_SCALE` (which is 0, SEA_LEVEL being 0 by
- * definition): the surface is lifted clear of the band-0 plane by
- * WATER_SURFACE_LIFT, for the z-fighting reason that constant states in full.
- * A thirty-second of a world unit is negligible against terrain, and NOT
- * negligible against a small floating prop — plugins/structures' skiff has
- * 0.0113 world units of freeboard between its waterline and its sole, so a
- * boat floated at 0 sits 0.031 UNDER the drawn sea and takes it aboard.
- *
- * OWNED HERE, WHERE ITS TWO INPUTS ALREADY LIVE, and consumed by water.ts
- * itself (the drawing side) as well as by anything that floats on it, so the
- * two cannot drift: there is no second copy of the expression to forget.
+ * Not `SEA_LEVEL * HEIGHT_WORLD_SCALE` (=0): lifted by WATER_SURFACE_LIFT.
+ * plugins/structures' skiff has 0.0113 world units of freeboard, so floating
+ * it at 0 would sit 0.031 under the drawn sea. Owned here with its two
+ * inputs so water.ts and anything floating can't drift apart.
  */
 export const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
 /**
- * THE FLOOR of the hold-repeat ramp: the shortest interval between repeated
- * sculpt intents, reached only after a hold has been sustained (see
- * SCULPT_REPEAT_DELAY_MS and SCULPT_REPEAT_RAMP_FACTOR — input/sculptInput.ts
- * owns the schedule).
+ * Floor of the hold-repeat ramp — shortest interval between repeated sculpt
+ * intents (see SCULPT_REPEAT_DELAY_MS, SCULPT_REPEAT_RAMP_FACTOR;
+ * input/sculptInput.ts owns the schedule).
  *
- * Chosen at 120 ms — deliberately just above the server's 100 ms tick period
- * (TICK_HZ 10, design doc) — so a held brush can never queue more than
- * one intent per tick. Because it is the FLOOR, no ramped interval is ever
- * shorter than it, which is what keeps terrain/prediction.ts's in-flight cap
- * (derived from this constant) a true upper bound rather than an estimate.
+ * 120 ms: just above the server's 100 ms tick (TICK_HZ 10), so a held brush
+ * can never queue more than one intent per tick — keeping
+ * terrain/prediction.ts's in-flight cap a true upper bound.
  *
- * PROVISIONAL / feel-tuning: at one BAND_HEIGHT per intent a fully ramped hold
- * raises roughly eight terrace bands per second. Re-tune in Phase 2.
+ * Provisional: ~8 bands/second at full ramp. Re-tune in Phase 2.
  */
 export const SCULPT_REPEAT_INTERVAL_MS = 120;
 
 /**
- * The FASTEST display refresh this client sizes against, in hertz. Used to turn
- * a duration into a count of frames — and therefore into a count of coalesced
- * pointer events (see DRAG_INTENTS_PER_TICK).
+ * Fastest display refresh this client sizes against, hertz — turns a
+ * duration into a frame count, and so a count of coalesced pointer events
+ * (see DRAG_INTENTS_PER_TICK).
  *
- * A CEILING, AND IT HAS TO BE (2026-08-30). This was DISPLAY_HZ_FLOOR = 60,
- * "the universal floor for a display a browser will render to", on the
- * reasoning that assuming a slower refresh than the real one is the safe
- * direction. It is the unsafe one: frames per tick is what the count MEASURES,
- * so a faster display emits MORE intents per tick, not fewer, and every
- * display above 60 Hz emitted past the bound derived here. On a 144 Hz panel a
- * fast drag put ~17 intents in a tick against a budget of 8, so the prediction
- * store began evicting the live stroke's own oldest prediction — the start of
- * the drag snapping back to authoritative ground mid-drag.
- *
- * 144 Hz is the fastest panel this project is developed and benchmarked
- * against (the 140 fps frame-budget target is measured on one). Faster
- * displays exist; on one of those, a drag fast enough to change cell every
- * frame over a link near PREDICTION_TTL_MS can still reach the cap and evict,
- * which is the pre-existing behaviour rather than a new failure. Sizing for an
- * arbitrarily fast display is not free — MAX_PENDING_PREDICTIONS is replayed
- * whole on every reconciliation, so the bound is also a frame-time cost, and
- * it buys nothing on a link that meets the deadline.
+ * A ceiling, not a floor (2026-08-30): frames/tick is what the bound
+ * measures, so a faster display emits MORE intents, not fewer. The prior
+ * 60 Hz floor let a 144 Hz drag put ~17 intents against a budget of 8,
+ * evicting the live stroke's own prediction (camera snap-back mid-drag).
+ * 144 Hz is this project's fastest benchmarked panel; a faster display can
+ * still reach the cap and evict — pre-existing behaviour, not a new failure.
  */
 export const DISPLAY_HZ_CEILING = 144;
 
 /**
- * HOW MANY INTENTS ONE DRAG CAN PUT IN FLIGHT PER REPEAT TICK — the figure
- * MAX_PENDING_PREDICTIONS (terrain/prediction.ts) is sized against.
+ * Most intents one drag can put in flight per repeat tick — sizes
+ * MAX_PENDING_PREDICTIONS (terrain/prediction.ts).
  *
- * SUPERSEDES THE PER-EMISSION CELL BUDGET (2026-08-24). A drag used to walk
- * the cursor's path and emit one intent per cell crossed, so it needed a
- * ceiling or a flick of the mouse became a burst of a hundred messages. It now
- * sends ONE ABSOLUTE REGION per emission, and emits at most once per cursor
- * CELL CHANGE, so the burst is gone and what is left to bound is simply how
- * many of those a tick can contain.
- *
- * DERIVED, NOT CHOSEN. A cursor changes cell at most once per pointermove
- * event, and browsers coalesce pointermove to the display refresh, so the
- * ceiling is the number of frames in one repeat tick — at the FASTEST refresh
- * the frames are counted against (DISPLAY_HZ_CEILING, which says why the
- * slowest is the wrong end of that range for a bound whose undercount makes a
- * fast drag evict its own live predictions).
+ * Supersedes a per-emission cell budget (2026-08-24): a drag now sends one
+ * absolute region per cursor cell-change instead of one per cell crossed.
+ * Derived: a cursor changes cell at most once per (refresh-coalesced)
+ * pointermove, so the ceiling is frames-per-tick at DISPLAY_HZ_CEILING.
  */
 export const DRAG_INTENTS_PER_TICK = Math.ceil(
   (SCULPT_REPEAT_INTERVAL_MS * DISPLAY_HZ_CEILING) / 1000,
 );
 
 /**
- * Milliseconds from a stroke's FIRST intent to its second — the top of the
+ * Milliseconds from a stroke's first intent to its second — top of the
  * hold-repeat ramp.
  *
- * Owner report, 2026-08-19: "a single click is raising land too fast; it
- * should start slow and progressively speed up." The old schedule was a flat
- * setInterval at SCULPT_REPEAT_INTERVAL_MS, so a press held for the ~150 ms a
- * deliberate click actually lasts landed TWO bands, not one — the brush had
- * no notion of a click being different from a hold.
- *
- * 400 ms is sized against human click duration, not picked for feel: a
- * deliberate mouse click is press-to-release in roughly 80–150 ms, and a slow
- * or heavy-handed one still lands under 300 ms. At 400 ms every click that is
- * meant as a click ends before the second intent is due, so ONE click is ONE
- * band by construction. It is also comfortably under the ~500 ms an OS
- * keyboard typematic delay uses, which is the closest thing to a learned
- * expectation a player brings to "press and hold".
+ * Owner, 2026-08-19: a single click was raising land too fast; wanted
+ * start-slow-then-ramp. A deliberate click is 80-150 ms press-to-release,
+ * rarely over 300 ms; 400 ms means every such click ends before a second
+ * intent is due, so one click is one band by construction — also under the
+ * ~500 ms typical OS keyboard typematic delay.
  */
 export const SCULPT_REPEAT_DELAY_MS = 400;
 
 /**
- * Multiplier applied to the repeat interval after each repeat, until it
- * reaches SCULPT_REPEAT_INTERVAL_MS and stays there. This is the "and
- * progressively speed up" half of the owner's report.
+ * Multiplier applied to the repeat interval after each repeat, down to the
+ * floor SCULPT_REPEAT_INTERVAL_MS.
  *
- * 0.75 gives the ramp 400 → 300 → 225 → 169 → 127 → 120 ms: five accelerating
- * repeats over the first ~1.2 s of a hold, then the flat floor. That shape is
- * the point — the early repeats are far enough apart to be counted (a player
- * can stop at exactly three bands), and a sustained hold still reaches full
- * sculpting speed inside the time it takes to decide you want a mountain.
- *
- * Rejected alternatives: a linear step-down needs two numbers (a step size AND
- * a floor) that must be kept consistent with the delay, and a step-per-repeat
- * count makes the ramp's DURATION depend on the floor. One multiplier makes
- * "how fast does it speed up" a single dial, and the geometric shape means the
- * big changes happen early, which is where the player is still deciding.
+ * 0.75 ramps 400→300→225→169→127→120 ms over ~1.2 s. Rejected: a linear
+ * step-down needs a step size AND a floor kept consistent; a step-count ramp
+ * makes duration depend on the floor. One multiplier and a geometric shape
+ * puts the big changes early, while the player is still deciding.
  */
 export const SCULPT_REPEAT_RAMP_FACTOR = 0.75;
 
 /**
  * Milliseconds a one-finger touch stroke waits before its first sculpt
- * intent. The two fingers of an intended camera gesture never land in the
- * same instant — tens of milliseconds apart is typical — and without this
- * grace the first finger's immediate intent pokes the terrain once per
- * pinch/pan. 100 ms comfortably covers the inter-finger gap while staying
- * below what a deliberate tap reads as lag. Mouse strokes are unaffected:
- * a mouse cannot grow a second finger, so they still fire immediately.
+ * intent, so the two fingers of an intended camera gesture (tens of ms
+ * apart) don't poke the terrain once per pinch/pan. Mouse strokes fire
+ * immediately.
  */
 export const TOUCH_STROKE_GRACE_MS = 100;
 
@@ -412,174 +259,107 @@ export const TOUCH_STROKE_GRACE_MS = 100;
 
 /**
  * Zoom factor per unit of pinch delta: distance scales by
- * PINCH_ZOOM_BASE^deltaY. 1.01 ≈ a 3× zoom across a full ~110-unit pinch
- * stroke — matches what the same gesture does in the OS's own apps.
+ * PINCH_ZOOM_BASE^deltaY. 1.01 ≈ 3x zoom across a full ~110-unit pinch,
+ * matching the OS's own apps.
  */
 export const PINCH_ZOOM_BASE = 1.01;
 
-/**
- * Screen-heights of camera-distance-scaled travel per pixel of trackpad
- * scroll. 1.5/1000: a full-height two-finger swipe moves the view by 1.5
- * "screens" — brisk enough to cross a world, calm enough to aim.
- */
+/** Screen-heights of camera-distance-scaled travel per pixel of trackpad scroll. A full-height swipe moves 1.5 "screens". */
 export const TRACKPAD_PAN_SPEED = 1.5 / 1000;
 
 /**
- * Two-finger separations below this, in CSS pixels, are treated as one merged
- * contact rather than a pinch pair (input/cameraBindings.ts touch-dolly
- * guard). iOS coalesces two adjacent touches into one and re-splits them,
- * momentarily reporting near-zero separation; OrbitControls divides by that
- * separation, so without a floor a single such frame dollies the camera by
- * hundreds of times in one event (reproduced 2026-08-19: a two-finger tap
- * slammed the orbit distance to its 900 clamp — the owner's "camera resets to
- * a default location"). 24 px is under half a fingertip: no intentional pinch
- * operates below it, and every merge artifact does.
+ * Two-finger separations below this (CSS px) are treated as one merged
+ * contact, not a pinch pair (input/cameraBindings.ts touch-dolly guard). iOS
+ * coalesces adjacent touches and momentarily reports near-zero separation;
+ * OrbitControls divides by it, so without a floor one frame can dolly by
+ * hundreds of times (reproduced 2026-08-19: a two-finger tap slammed orbit
+ * distance to its clamp). 24 px is under half a fingertip.
  */
 export const TOUCH_DOLLY_MIN_SEPARATION_PX = 24;
 
 /**
- * Largest growth (or shrink, as its reciprocal) of the two-finger separation
- * OrbitControls may be shown in ONE pointermove event. Real fingers at ≥60 Hz
- * event delivery change separation by a few percent per event; a stalled
- * main thread batching moves can reach tens of percent. 1.5× sits far above
- * both and far below the coalescing artifacts this guards against (30–200×
- * in the 2026-08-19 reproduction). A swallowed step is not lost motion: the
- * guard's baseline holds, and the fingers' true separation passes on the
- * next in-bounds event.
+ * Largest growth/shrink of two-finger separation OrbitControls may see in one
+ * pointermove. Real fingers change a few percent per event; a stalled main
+ * thread can batch tens of percent. 1.5x sits above both, well below the
+ * 30-200x coalescing artifacts from the 2026-08-19 reproduction. A swallowed
+ * step isn't lost motion — the guard's baseline holds for the next event.
  */
 export const TOUCH_DOLLY_MAX_STEP_RATIO = 1.5;
 
 /**
- * Wheel-delta pixels one edge-to-edge two-finger swipe across the trackpad
- * reports. The reference for the orbit rates below, and an APPROXIMATION: the
- * OS scales finger travel to wheel deltas with an acceleration curve that
- * differs per platform and per pointer-speed setting, so no exact figure
- * exists. 500 is the order of magnitude a slow, deliberate full-trackpad swipe
- * produces on a MacBook trackpad (unverified on Windows precision trackpads,
- * which report smaller deltas — orbiting there is correspondingly slower, not
- * broken). Named so the two rates below stay in step when it is re-tuned.
+ * Wheel-delta pixels one edge-to-edge trackpad swipe reports — an
+ * approximation (OS acceleration curves vary by platform/setting). 500 is a
+ * slow deliberate full swipe on a MacBook trackpad; unverified on Windows
+ * precision trackpads (smaller deltas there just orbit slower).
  */
 const TRACKPAD_FULL_SWIPE_DELTA_PIXELS = 500;
 
-/**
- * Radians of orbit azimuth per pixel of Alt+scroll deltaX. Half a turn per
- * full-trackpad swipe: enough to bring the far side of the map into view in
- * one gesture, while still leaving a heading reachable without a feather-touch.
- */
+/** Radians of orbit azimuth per pixel of Alt+scroll deltaX — half a turn per full swipe. */
 export const TRACKPAD_ORBIT_AZIMUTH_RADIANS_PER_PIXEL =
   Math.PI / TRACKPAD_FULL_SWIPE_DELTA_PIXELS;
 
 /**
- * Radians of orbit polar angle per pixel of Alt+scroll deltaY. Deliberately
- * EQUAL to the azimuth rate: OrbitControls' own drag-orbit uses one rate for
- * both axes (2π per element height), and matching that isotropy is what makes
- * a diagonal swipe rotate along the diagonal instead of skewing. The usable
- * polar range is only CAMERA_MAX_POLAR_ANGLE_DEGREES wide, so a swipe reaches
- * the clamp long before its end — that is the clamp doing its job, not a rate
- * that needs softening.
+ * Radians of orbit polar angle per pixel of Alt+scroll deltaY. Equal to the
+ * azimuth rate to match OrbitControls' own isotropic drag-orbit, so a
+ * diagonal swipe rotates along the diagonal instead of skewing.
  */
 export const TRACKPAD_ORBIT_POLAR_RADIANS_PER_PIXEL =
   TRACKPAD_ORBIT_AZIMUTH_RADIANS_PER_PIXEL;
 
-/**
- * World-rotation per degree of Safari trackpad-rotation gesture, in degrees.
- * 1 is fingers-to-world 1:1 — twisting the fingers 30° twists the map 30°,
- * which is the only rate that can be described without qualification and the
- * one every OS-level rotate gesture (Photos, Preview) uses. Change it only if
- * real use says the wrist runs out of travel before the map is where it
- * should be.
- */
+/** World-rotation per degree of Safari trackpad-rotation gesture. 1 = fingers-to-world 1:1, matching every OS-level rotate gesture. */
 export const SAFARI_GESTURE_ROTATE_SENSITIVITY = 1;
 
-/** Camera framing. Every distance below is in WORLD UNITS — see CELL_WORLD_SIZE. */
+/** Camera framing. Every distance below is in world units — see CELL_WORLD_SIZE. */
 export const CAMERA_FOV_DEGREES = 55;
 export const CAMERA_NEAR = 0.1;
-/**
- * Far plane must clear the diagonal of the largest supported world — 512 WORLD
- * UNITS on a side, which the 2026-08-21 re-sample left exactly where it was
- * (DEFAULT_WORLD_SPAN); only the cell count under it moved.
- */
+/** Must clear the diagonal of the largest supported world: 512 world units/side (DEFAULT_WORLD_SPAN). */
 export const CAMERA_FAR = 4000;
-/**
- * Initial orbit distance and the zoom bounds, in world units. The maximum lets
- * a full 512-unit world fit on screen; the minimum is derived just below.
- */
+/** Initial orbit distance; the max lets a full 512-unit world fit on screen. */
 export const CAMERA_INITIAL_DISTANCE = 80;
 
 /**
- * How much of the world the closest zoom frames, as frame HEIGHT in world
- * units. This is the design decision the minimum orbit distance encodes: at
- * the closest zoom a player is inspecting a handful of individual features —
- * a single structure's footprint, one terrace step, the lip of a river bank —
- * not a region. TEN is where the owner set it (2026-08-21, trying values;
- * four was the first attempt).
+ * How much of the world the closest zoom frames, as frame height in world
+ * units. At the closest zoom a player inspects a handful of features, not a
+ * region. Owner-tuned, 2026-08-21 (tried 4 first, settled on 10).
  *
- * IN WORLD UNITS, NOT CELLS, and the value is the owner's unchanged. The
- * framing was tuned the same day on a grid where a cell WAS a world unit, so
- * the two readings named the same camera and the choice between them was
- * invisible. It stopped being invisible at the re-sample: the derivation below
- * solves for a distance in whatever units the frame height is stated in, and
- * the camera lives in world space, so the number that was tuned was always a
- * world-unit frame height. Read literally as ten CELLS it would frame two and
- * a half terrace treads — four times closer than what was tuned.
- *
- * Raise it to pull the closest zoom back out, lower it to get closer still.
+ * In world units, not cells: tuned when a cell was a world unit, so the
+ * distinction was invisible until the re-sample. Read as 10 cells it would
+ * frame four times closer than intended.
  */
 export const CAMERA_CLOSEST_VIEW_WORLD_UNITS = 10;
 
 /**
- * Closest orbit distance, in world units. DERIVED from the framing decision above
- * and the lens, never written by hand: a perspective camera of vertical field
- * CAMERA_FOV_DEGREES sees `2 * d * tan(fov / 2)` of world height at distance
- * d, so the distance that frames exactly CAMERA_CLOSEST_VIEW_WORLD_UNITS is
- * that solved for d. Change the FOV and the closest zoom keeps framing the
- * same amount of world.
+ * Closest orbit distance, world units. Derived from the framing above and
+ * the lens: a perspective camera of vertical field CAMERA_FOV_DEGREES sees
+ * `2 * d * tan(fov / 2)` of world height at distance d; solved for d.
  *
- * WAS 20, loosened 2026-08-21 on owner request ("zoom in further"). That value
- * was one hand-written number justified as clearing a maximum-height mountain
- * (MAX_RELIEF_WORLD_UNITS = 16) — but that clearance only ever held looking
- * straight down: orbit distance is measured to the target on the ground, so at
- * the steepest allowed orbit (CAMERA_MAX_POLAR_ANGLE_DEGREES = 85°) even the
- * old 20 put the camera 20·cos 85° ≈ 1.7 world units above its target, well
- * under a 16-unit peak. The guarantee was already not there to lose.
+ * Was 20 (loosened 2026-08-21, owner: "zoom in further"); that value assumed
+ * clearance over a max-height mountain, but orbit distance is measured to
+ * the ground target, so even the old value only cleared ~1.7 units above
+ * target at the steepest orbit angle — the guarantee was never really there.
  *
- * RESIDUAL FAILURE MODE, unchanged in kind but easier to reach: with no
- * terrain-aware clamp on the camera anywhere in the client, orbiting to a
- * shallow angle next to tall terrain can put the near plane inside a
- * hillside, which renders as the world opening up in front of the camera. The
- * fix for that is a ground-clearance clamp that lifts the camera to stay above
- * the height field under it — it is not this constant's job, and it does not
- * exist yet.
+ * Residual: with no terrain-aware camera clamp, orbiting shallow next to
+ * tall terrain can put the near plane inside a hillside. Needs a
+ * ground-clearance clamp; doesn't exist yet.
  */
 export const CAMERA_MIN_DISTANCE =
   CAMERA_CLOSEST_VIEW_WORLD_UNITS /
   (2 * Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
 export const CAMERA_MAX_DISTANCE = 900;
 /**
- * How far above the RENDERED terrain surface the camera is held, in WORLD
- * UNITS (render/cameraClearance.ts applies it every frame). This is the
- * constant that actually answers "how close can I get to the landscape" —
- * unlike CAMERA_MIN_DISTANCE, which is measured to the orbit target and so
- * says nothing about the ground (see its own note).
+ * How far above the rendered terrain the camera is held, world units
+ * (render/cameraClearance.ts applies it every frame) — the constant that
+ * actually bounds ground closeness, unlike CAMERA_MIN_DISTANCE which is
+ * measured to the orbit target.
  *
- * TWO HARD LOWER BOUNDS, and the value sits clear of both:
- *   - CAMERA_NEAR (0.1). Below it the cap under the camera crosses the near
- *     plane and the terrain opens up in front of the view.
- *   - BAND_WORLD_HEIGHT (a quarter of a world unit). A sculpt raises the
- *     ground under the camera a band at a time; less than one band of
- *     headroom and a single raise-stroke could swallow the camera between two
- *     frames.
- * One world unit — one terrace tread, four band steps — clears both with room
- * to spare, and keeps the ground under the camera fully in frame.
+ * Two lower bounds to clear: CAMERA_NEAR (0.1, below it terrain crosses the
+ * near plane), and BAND_WORLD_HEIGHT (a sculpt stroke raises ground a band
+ * at a time; less headroom and a raise could swallow the camera). One world
+ * unit (one tread, four bands) clears both with room to spare.
  *
- * IN WORLD UNITS, NOT CELLS (2026-08-21), and this is a correction rather than
- * a conversion of taste: the reasoning above was written when a cell WAS a
- * world unit, where "one cell" and "four band steps" were the same statement.
- * Carried onto the re-sampled grid as one CELL it would be a quarter of a
- * world unit — EXACTLY one band, not four — so a single raise-stroke would
- * consume the entire clearance in one frame, which is the failure mode the
- * second bound exists to prevent. The value here is the one that was reasoned
- * for; only the unit it is stated in has been made explicit.
+ * In world units, not cells (2026-08-21 correction): as one cell it would be
+ * a quarter unit — exactly one band — letting a single raise consume all
+ * clearance in one frame.
  */
 export const CAMERA_GROUND_CLEARANCE_WORLD_UNITS = 1;
 
@@ -587,43 +367,31 @@ export const CAMERA_GROUND_CLEARANCE_WORLD_UNITS = 1;
 export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
 
 /**
- * Length of one frame-rate sampling window, in milliseconds (render/
- * frameRate.ts averages over it; ui/VersionWatermark.tsx prints the result).
+ * Frame-rate sampling window length, ms (render/frameRate.ts averages over
+ * it; ui/VersionWatermark.tsx prints the result).
  *
- * 500 ms is the compromise between the two ways a frame counter goes wrong.
- * Shorter windows chase every hitch — at 100 ms a single dropped frame moves
- * the reading by 10 fps, so the number flickers and stops being readable —
- * while longer ones average away the very thing the meter exists to expose:
- * the chunk-splice spikes a held brush causes (render/terrainMeshes.ts's
- * CHUNK_SPLICE_FRAME_BUDGET_MS) last a few hundred milliseconds, and a 2 s
- * window would smear them into an innocent-looking mean. Two updates a second
- * is also about as fast as a reading of this kind can be usefully read.
+ * 500 ms balances two failure modes: shorter windows flicker (100 ms: one
+ * dropped frame moves the reading 10 fps), longer ones average away the
+ * chunk-splice spikes (terrainMeshes.ts's CHUNK_SPLICE_FRAME_BUDGET_MS) the
+ * meter exists to expose.
  */
 export const FPS_SAMPLE_INTERVAL_MS = 500;
 
 /**
- * Length of one frame-statistics window, in milliseconds (render/frameStats.ts
- * summarises over it; ui/VersionWatermark.tsx prints the result).
+ * Frame-statistics window length, ms (render/frameStats.ts summarises over
+ * it; ui/VersionWatermark.tsx prints the result).
  *
- * Deliberately ten times FPS_SAMPLE_INTERVAL_MS above, because the two windows
- * answer different questions and a shared one would serve neither. The fps
- * digit is read live, so it must update faster than a person loses patience.
- * These are percentiles, and a p99 is a lie below about a hundred samples: at
- * 500 ms a 60 fps page offers 30 frames, where "the 99th percentile" is just
- * the largest of thirty. Five seconds gives 300 at 60 fps and 1750 at 350, and
- * the thing being watched — a decay measured in milliseconds per TEN MINUTES
- * (docs/plans/frame-rate-decay-2026-09-05.md §7d) — cannot be blurred by a
- * window this short.
+ * 10x FPS_SAMPLE_INTERVAL_MS deliberately: these are percentiles, and a p99
+ * needs more than the ~30 samples a 500 ms window gives at 60 fps. Five
+ * seconds gives 300-1750 samples, enough to resolve the decay measured in
+ * ms per ten minutes (docs/plans/frame-rate-decay-2026-09-05.md §7d).
  */
 export const FRAME_STATS_WINDOW_MS = 5000;
 
 /**
- * Most frames one window keeps readings for.
- *
- * 2048 covers a full 5 s window up to 409 fps, comfortably past the project's
- * 140 fps benchmark and past anything the display can present. Beyond it the
- * window keeps its most recent 2048 frames and still reports the true frame
- * count, so an overflow is visible rather than silent. Three Float32Arrays of
- * this length plus a scratch is 32 KB, allocated once for the life of the page.
+ * Most frames one window keeps readings for. 2048 covers a full 5 s window
+ * up to 409 fps — past this a window keeps its most recent 2048 and still
+ * reports the true frame count, so overflow is visible, not silent. Three
+ * Float32Arrays of this length is 32 KB, allocated once.
  */
 export const FRAME_STATS_CAPACITY = 2048;

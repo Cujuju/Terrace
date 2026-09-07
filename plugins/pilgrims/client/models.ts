@@ -1,31 +1,25 @@
 // High-resolution pilgrim folk: RUDYS (little dog people) and UNOS (cat
 // people), matching the owner-approved concept (artifact d6cf5ca4, decision
 // 2026-08-19): chibi ~1:2 head-to-body proportions, soft rounded forms with
-// SMOOTH normals — the one family of models in the world that is deliberately
-// not blocky. The environment stays flat-shaded; these little people are lit
-// by the same hemisphere + sun rig as everything else, their smoothness comes
-// from curved geometry and smooth shading, not from any lighting change.
+// SMOOTH normals — the one family of models deliberately not blocky. Lit by
+// the same hemisphere + sun rig as everything else; smoothness comes from
+// curved geometry and shading, not lighting.
 //
-// CONSTRUCTION. Every static part of a race's body (coat, cream mask, muzzle,
-// ears, collar, tag base) is baked into ONE merged, vertex-colored geometry
-// per race, built once and shared by every instance. Animated parts (legs,
-// arms, tail, the bobbing body) were originally their own meshes because they
-// rotate at joints — eight draw calls per walker — but a body whose parts MOVE
-// cannot be fixed by merging alone, so each walker is now a SKINNED rig
-// (render/rigSkin.ts): the authored part-tree is baked once per (race, kind)
-// pair into shared buffers, and each individual gets its own skeleton whose
-// bones reproduce the old scene-graph transforms exactly. The glossy bits are
-// a separate surface because they carry the model's single specular material
-// (dark wet eyes and nose are what make a soft face read as alive); everything
-// else is matte Lambert and merges into one. Two draw calls per walker — the
-// animate() contract and the gait constants are unchanged, this is a drawing
-// change, not a behaviour change.
+// CONSTRUCTION. Every static part of a race's body is baked into ONE merged,
+// vertex-colored geometry per race, built once and shared by every instance.
+// Animated parts (legs, arms, tail, bobbing body) can't be fixed by merging
+// alone, so each walker is a SKINNED rig (render/rigSkin.ts): the authored
+// part-tree bakes once per (race, kind) into shared buffers, each instance
+// getting its own skeleton reproducing the old scene-graph transforms. The
+// glossy bits (dark wet eyes and nose) are a separate surface carrying the
+// specular material; everything else is matte Lambert merged into one — two
+// draw calls per walker. animate()'s contract and the gait constants are
+// unchanged; this is a drawing change, not a behaviour change.
 //
 // SILHOUETTE STILL WINS AT DISTANCE: a Rudy is round and tan with floppy ears
 // and an up-curled wagging tail; an Uno is slimmer and slate with tall
 // pointed ears and a long swaying tail. Collars echo the district tints the
-// structures plugin paints their home towns with (warm hearth / cool
-// moonlit), same as the old tunics did.
+// structures plugin paints their home towns with (warm hearth / cool moonlit).
 
 import {
   BufferAttribute,
@@ -59,12 +53,10 @@ import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '
 const PILGRIM_AUTHORED_HEIGHT = 0.62;
 
 /**
- * Uniform scale every walker's rig is drawn at (owner, 2026-09-05: peeps
- * fifteen percent smaller). Applied to the INSTANCE ROOT rather than by
- * re-measuring the geometry: the bake is shared by every walker of a
- * (race, kind), so one scale on the root moves the whole figure — body, limbs,
- * props, bob and stride included — and leaves the authored numbers above
- * meaning what they say.
+ * Uniform scale every walker's rig draws at (owner, 2026-09-05: peeps 15%
+ * smaller). Applied to the INSTANCE ROOT, not by re-measuring geometry: the
+ * bake is shared per (race, kind), so one scale on the root moves the whole
+ * figure and leaves the authored numbers meaning what they say.
  */
 export const PILGRIM_MODEL_SCALE = 0.85;
 
@@ -123,11 +115,11 @@ const STAND_BREATH_WORLD_UNITS = BOB_AMPLITUDE / 3;
 /**
  * SITTING: legs straight out in front, hips on the ground.
  *
- * A RIGHT ANGLE EXACTLY, and it is the same statement as the hips going to
- * zero: the leg pivots at the hip and reaches the ground, so a quarter turn
- * forward lays it flat and drops the hip precisely where the foot was. Nothing
- * floats and nothing sinks, at any scale the rig is drawn, and neither number
- * has to be re-tuned if the walker is re-proportioned.
+ * A right angle exactly, the same statement as the hips going to zero: the
+ * leg pivots at the hip and reaches the ground, so a quarter turn forward
+ * lays it flat and drops the hip precisely where the foot was — nothing
+ * floats or sinks at any scale, and neither number needs re-tuning if the
+ * walker is re-proportioned.
  */
 const SIT_LEG_RADIANS = Math.PI / 2;
 
@@ -186,13 +178,11 @@ const CLIMB_LEG_LOW_RADIANS = 0.2;
 const CLIMB_PULL_WORLD_UNITS = BOB_AMPLITUDE * 3;
 
 /**
- * A fall: limbs flung overhead, and flailing fast.
+ * A fall: limbs flung overhead, flailing fast.
  *
- * 2.9 rad is very nearly straight up (π) — the pose of a body dropping away
- * from its own arms, and unmistakable at a glance against the climb's 2.4. The
- * flail is FASTER THAN ANY OTHER MOTION THIS MODEL HAS (4 Hz against the walk's
- * 1.6) for the reason climb.ts gives about the drop rate itself: a fall that
- * reads as a controlled descent is the one thing it must not look like.
+ * 2.9 rad is very nearly straight up — unmistakable against the climb's 2.4.
+ * The flail is the fastest motion this model has (4 Hz vs the walk's 1.6): a
+ * fall that reads as a controlled descent is the one thing it must not look like.
  */
 const FALL_ARM_RADIANS = 2.9;
 const FALL_FLAIL_HZ = 4;
@@ -201,17 +191,12 @@ const FALL_FLAIL_RADIANS = 0.3;
 const FALL_LEG_SPREAD_RADIANS = 0.5;
 
 /**
- * The walker kinds × races a blueprint must cover. Both axes decide things
- * fixed at author time — geometry, fur material, shoulder width, whether the
- * staff exists — so neither can be a per-instance parameter.
+ * The walker kinds × races a blueprint must cover — both fixed at author
+ * time, so neither can be a per-instance parameter.
  *
- * TAKEN FROM THE PROTOCOL, NOT RESTATED HERE. These two lists are the same
- * facts `isSettlerRace`/`isWalkerKind` validate off the wire, and a local copy
- * would be a second place to remember: add a third race to the protocol and a
- * restated list here would silently bake no blueprint for it, so the first
- * walker of that race to arrive would look up a missing rig and take the frame
- * down. Deriving the bake set from the wire contract makes that unrepresentable
- * — a new race is a new blueprint by construction.
+ * TAKEN FROM THE PROTOCOL, NOT RESTATED: a local copy could silently bake no
+ * blueprint for a race added to the protocol, crashing the first walker of
+ * that race to arrive. Deriving from the wire contract makes that unrepresentable.
  */
 const BLUEPRINT_KINDS = WALKER_KINDS;
 const BLUEPRINT_RACES = SETTLER_RACES;
@@ -302,11 +287,9 @@ interface WalkerJoints {
 
 /**
  * Bakes a solid vertex color onto a geometry so same-material parts can merge
- * into one draw call. `new Color(hex)` already converts the sRGB hex into the
- * renderer's working color space (three r152+ color management) — converting
- * again here double-darkens every merged part, which is exactly how round 1's
- * coats came out chocolate instead of tan while the plain-material limbs
- * stayed correct. Store the managed color as-is.
+ * into one draw call. `new Color(hex)` already converts sRGB to the
+ * renderer's working color space — converting again double-darkens the part
+ * (round 1's coats came out chocolate, not tan). Store the managed color as-is.
  */
 function paint(geometry: BufferGeometry, hex: number): BufferGeometry {
   const linear = new Color(hex);
@@ -345,13 +328,7 @@ function setHipHeight(joints: WalkerJoints, y: number): void {
   joints.rightLeg.position.y = y;
 }
 
-/**
- * The five gaits, each posing the same six joints.
- *
- * FREE FUNCTIONS, not branches inside `animate`: they are the whole difference
- * between the acts, and holding each one whole is what lets a reader see the
- * climb as a pose rather than as a set of exceptions to a walk.
- */
+/** The five gaits, each posing the same six joints. FREE FUNCTIONS, not branches inside `animate`, so a reader sees the climb as a pose rather than a set of exceptions to a walk. */
 function poseWalk(joints: WalkerJoints, seconds: number, phase: number): void {
   setHipHeight(joints, WALKER_HIP_HEIGHT_WORLD_UNITS);
   // Same writes as the pre-skinning rig, against Bones instead of scene
@@ -500,10 +477,9 @@ export function createPilgrimModels(): PilgrimModels {
   const unoFurMaterial = matte(UNO_COAT_COLOR);
 
   // ── Rudy: static body, one merged vertex-colored geometry ────────────────
-  // Baked in place (feet at y=0, +X forward). The egg body overlaps the big
-  // head so no neck seam shows; the cream belly and muzzle bulge through the
-  // coat as slightly smaller inset spheres — the concept's two-tone mask
-  // without any texture.
+  // Baked in place (feet at y=0, +X forward). The egg body overlaps the head
+  // so no neck seam shows; cream belly and muzzle bulge through the coat as
+  // smaller inset spheres — the concept's two-tone mask without a texture.
   const rudyBody = keep(
     mergePainted([
       // coat: egg torso
@@ -603,13 +579,10 @@ export function createPilgrimModels(): PilgrimModels {
   );
 
   /**
-   * Authors one walker's part-tree exactly as the pre-skinning code drew it —
-   * a Group per joint, a Mesh per part — and bakes it into a shared rig. The
-   * tree is consumed as data by `bakeRig`; the returned blueprint is shared by
-   * every walker of this (race, kind), and only its skeleton is per-instance.
-   *
-   * Every node `animate()` writes to must be captured as a joint index here,
-   * at author time — after the bake the authored nodes are inert data.
+   * Authors one walker's part-tree — a Group per joint, a Mesh per part —
+   * and bakes it into a shared rig; only its skeleton is per-instance. Every
+   * node `animate()` writes to must be captured as a joint index here, at
+   * author time — after the bake the authored nodes are inert data.
    */
   function bakeWalker(race: SettlerRace, kind: WalkerKind): WalkerRig {
     const rudy = race === 'rudy';
