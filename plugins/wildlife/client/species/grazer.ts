@@ -48,7 +48,7 @@
 // nothing to play into. Said here as well as in LICENSES.md so nobody goes
 // hunting for them.
 
-import { poseWalk } from './quadruped.ts';
+import { poseSit, poseStand, poseWalk } from './quadruped.ts';
 import {
   assetSpeciesBuilder,
   type SpeciesAssetSpec,
@@ -230,9 +230,24 @@ const WALK_BOB_WORLD_UNITS = 0.012;
 /** The head dips a little at each footfall pair. */
 const HEAD_NOD_RADIANS = 0.05;
 
-export const buildGrazer = assetSpeciesBuilder(GRAZER_ASSET, (joints, _seconds, phase) => {
-  // A walker's phase IS its stride beat (GRAZER_STRIDE_WORLD_UNITS): no clock term.
-  const beat = phase;
-  poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
-  joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
-});
+export const buildGrazer = assetSpeciesBuilder(
+  GRAZER_ASSET,
+  (joints, seconds, phase, gait) => {
+    // STOPPED IS NOT A FROZEN STRIDE (../quadruped.ts's ground gaits): the beat
+    // below is ground covered, so a deer that stops holds whatever half-step it
+    // stopped on until these two branches take over.
+    if (gait === 'stand' || gait === 'sit') {
+      if (gait === 'stand') poseStand(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+      else poseSit(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+      // Head level: the nod belongs to the footfalls, and there are none.
+      joints.head!.rotation.z = 0;
+      return;
+    }
+    // A walker's phase IS its stride beat (GRAZER_STRIDE_WORLD_UNITS): no clock term.
+    const beat = phase;
+    poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
+    joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
+  },
+  // It stands and sits where it stops (AuthoredSpecies.posesByGait).
+  true,
+);

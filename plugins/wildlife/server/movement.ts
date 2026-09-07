@@ -36,6 +36,7 @@ import {
   turnToward as sharedTurnToward,
   withoutSelf,
   type Occupant,
+  advanceStillness,
 } from '@terrace/shared';
 import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
@@ -751,6 +752,11 @@ export function advanceEntity(
   occupants: readonly Occupant[] = [],
   pursuitTarget?: PursuitTarget,
 ): EntityAdvance {
+  // STILLNESS FIRST OF ALL, above every exit below — the wall branch, the idle
+  // bout and the vetoed step are all ticks a creature does not move, and a call
+  // at the bottom would be one they each skip (@terrace/shared's stance.ts).
+  advanceStillness(entity, dt);
+
   if (entity.fleeSecondsRemaining > 0) {
     entity.fleeSecondsRemaining = Math.max(0, entity.fleeSecondsRemaining - dt);
   }

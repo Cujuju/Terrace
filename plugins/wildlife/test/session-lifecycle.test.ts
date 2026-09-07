@@ -18,6 +18,7 @@
 // something other than what ships.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { newStillness } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import {
@@ -41,6 +42,7 @@ const WORLD_SIZE = 64;
 const UNLOCKED_CHUNKS: ReadonlyArray<readonly [number, number]> = [[0, 0]];
 /** The creature the previous world had alive, seeded straight into the population. */
 const SEEDED_CREATURE: WildlifeEntity = {
+  ...newStillness(0, 0),
   id: 1,
   species: 'grazer',
   schoolId: 1,

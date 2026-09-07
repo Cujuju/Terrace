@@ -135,8 +135,9 @@ const variantParam = query.get('variant');
 // The same fallback the wire parse and the snapshot read-back use: an
 // unrecognised name is "some yeti", never an empty studio.
 const variant = isYetiVariant(variantParam) ? variantParam : DEFAULT_YETI_VARIANT;
-// ?gait=walk|climb|fall — the wall poses (./plugins/kit/moverGait.ts). Both
-// subjects take it: the yeti and the peep climb the same walls.
+// ?gait=walk|climb|fall|stand|sit — the wall poses and the ground ones
+// (./plugins/kit/moverGait.ts). Both subjects take it: the yeti and the peep
+// climb the same walls and stop on the same ground.
 const gaitParam = query.get('gait');
 const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
 const peepParam = query.get('peep');

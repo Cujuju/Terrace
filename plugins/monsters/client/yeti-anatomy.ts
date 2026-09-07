@@ -1612,6 +1612,37 @@ export const YETI_CLIMB_PULL_CELLS = YETI_BOB_CELLS * 2;
  * at a rate nothing else about him uses — he drops at eight times his climb
  * (climb.ts's FALL_DROP_HEIGHT_UNITS_PER_SECOND) and the pose has to say so.
  */
+// ── The ground gaits ───────────────────────────────────────────────────────
+// A stopped yeti is not a walk cycle that has stopped advancing (owner,
+// 2026-09-06). His amble is driven by the CLOCK, so a stopped one marched on
+// the spot; standing and sitting are poses of their own, and which one he is in
+// is the server's answer (@terrace/shared's stance.ts).
+
+/**
+ * Breaths per second while standing or sitting.
+ *
+ * 0.15 — nine a minute, and slower than the peep's fifteen for the reason every
+ * other figure on this animal is: he is much bigger, and a big body breathes
+ * slowly. It is the one clock term a stopped yeti gets, so that a body held
+ * still for eight seconds reads as waiting rather than as a frozen frame.
+ */
+export const YETI_BREATH_HZ = 0.15;
+
+/** How far a breath lifts him: half a footfall's bob, in the same cells. */
+export const YETI_BREATH_CELLS = YETI_BOB_CELLS / 2;
+
+/**
+ * How far his legs swing forward when he sits, radians from hanging.
+ *
+ * 1.35 (~77°) is very nearly straight out in front — a big ape sits down with
+ * its legs before it, not folded under. Short of a right angle so the knees
+ * still read as knees rather than as a body snapped in half.
+ */
+export const YETI_SIT_LEG_RADIANS = 1.35;
+
+/** Where the arms rest when he is sat down: a little behind vertical, propping. */
+export const YETI_SIT_ARM_RADIANS = -0.35;
+
 export const YETI_FALL_ARM_RADIANS = 2.9;
 export const YETI_FALL_FLAIL_HZ = 3;
 export const YETI_FALL_FLAIL_RADIANS = 0.35;

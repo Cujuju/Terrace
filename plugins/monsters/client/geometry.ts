@@ -927,13 +927,14 @@ export interface MonsterModel {
   readonly root: Group;
   /**
    * `seconds` is elapsed time; `phase` is a per-monster offset in radians;
-   * `gait` is what the monster is doing VERTICALLY (the kit's `moverGaitOf`,
-   * from the server's climb fields).
+   * `gait` is what the monster is DOING (the kit's `moverGaitOf`, from the
+   * server's climb and stance fields) — climbing or falling on a wall, walking,
+   * standing still or sat down on the ground.
    *
    * ON THE ONE ANIMATION CONTRACT, not on the yeti alone: he is the only
-   * monster that climbs today, and a second climber must not be a second place
-   * this question is asked. Defaults to 'walk', which is what every model that
-   * never leaves the ground answers to.
+   * monster that walks a wall or a floor today, and a second one must not be a
+   * second place this question is asked. Defaults to 'walk', which is what
+   * every model that only ever swims answers to.
    */
   animate(seconds: number, phase: number, gait?: MoverGait): void;
 }

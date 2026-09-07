@@ -46,6 +46,15 @@ export interface InterpolatedMonster {
    * answer, so the pose changes on the frame the server says the grip failed.
    */
   readonly falling: boolean;
+  /**
+   * What this mover is doing on the ground — the INDEX into @terrace/shared's
+   * MOVER_STANCES, or null for walking (protocol.ts's `stance`).
+   *
+   * NOT INTERPOLATED, like `falling` above — it is a state, not a position. The
+   * newest message is the answer, so the pose changes on the frame the server
+   * says the body stopped.
+   */
+  readonly stance: number | null;
 }
 
 /**
@@ -85,6 +94,7 @@ interface PoseRecord extends InterpolatedMonster {
   variant?: YetiVariant;
   climbHeight: number | null;
   falling: boolean;
+  stance: number | null;
 }
 
 /**
@@ -110,10 +120,12 @@ export class MonsterInterpolator extends PoseInterpolator<MonsterState, Pose, Po
         ...monster,
         climbHeight: monster.climbHeight ?? null,
         falling: monster.falling === true,
+        stance: monster.stance ?? null,
       }),
       updateRecord: (record, monster, segment, t) => {
         record.kind = monster.kind;
         record.falling = monster.falling === true;
+        record.stance = monster.stance ?? null;
         // DELETED rather than set to undefined when the payload has none, so a
         // record that once carried a variant does not keep the key around and
         // read as a yeti that lost its body.

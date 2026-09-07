@@ -364,15 +364,15 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    */
   function herdFor(
     rig: SpeciesRig,
-    wallGaits: boolean = false,
+    posesByGait: boolean = false,
   ): { herd: RigHerd; joints: Readonly<Record<string, Bone>>; rigRoot: Bone } {
     const herd = createRigHerd(rig.blueprint, {
       capacity: instanceCapacity,
       poseSlots: POSE_SLOTS_PER_HERD,
-      // A species that can be on a wall needs a band of slots per gait: phase
-      // alone stops identifying a pose once a creature can be climbing
-      // (AuthoredSpecies.wallGaits).
-      poseVariants: wallGaits ? MOVER_GAITS.length : 1,
+      // A species whose pose depends on its gait needs a band of slots per
+      // gait: phase alone stops identifying a pose once a creature can be
+      // climbing, or standing where it stopped (AuthoredSpecies.posesByGait).
+      poseVariants: posesByGait ? MOVER_GAITS.length : 1,
     });
     herds.push(herd);
     const joints: Record<string, Bone> = {};
@@ -429,10 +429,10 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
    */
   function speciesDrawable(build: SpeciesModelBuilder): SpeciesDrawable {
     const authored = build(speciesPool);
-    const wallGaits = authored.wallGaits === true;
+    const posesByGait = authored.posesByGait === true;
     const { herd, joints, rigRoot } = herdFor(
       bakeSpecies(authored.root, authored.joints),
-      wallGaits,
+      posesByGait,
     );
     return {
       herd,

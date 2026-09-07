@@ -81,14 +81,20 @@ export function WaterIcon(): JSX.Element {
         NARROW base at the top right down to the WIDE mouth at the bottom left.
         The taper is the whole of the read — a bucket seen end-on is a cylinder,
         and a cylinder is a pipe.
+
+        SHORT (owner, 2026-09-06: "three brown sections, making it too long").
+        A bucket is about as deep as its mouth is wide; the first cut of this
+        icon was half again that, which read as a length of pipe however well
+        the ends were drawn. The body is now a shade under one mouth-width deep,
+        and the single hoop leaves TWO staves showing rather than three — the
+        section count is what the length is actually read from at 32px.
       */}
-      <path d="M23.86 3.73 9.50 10.13 16.50 19.87 27.14 8.27z" fill="url(#hydro-wood)" />
-      {/* Two iron hoops, sized to the body where each one sits. */}
-      <path d="M20.27 5.33 24.48 11.17 23.43 11.93 19.22 6.09z" fill="url(#hydro-band)" />
-      <path d="M15.24 7.57 20.76 15.23 19.71 15.99 14.19 8.33z" fill="url(#hydro-band)" />
+      <path d="M18.60 6.53 9.50 10.13 16.50 19.87 22.80 12.37z" fill="url(#hydro-wood)" />
+      {/* One iron hoop, sized to the body where it sits. */}
+      <path d="M14.51 8.15 19.97 15.75 18.92 16.51 13.46 8.91z" fill="url(#hydro-band)" />
       {/* The closed base. WOOD, not iron: a bright cap here out-reads the mouth
           and the bucket turns back to front. */}
-      <ellipse cx="25.5" cy="6" rx="2.8" ry="1.1" transform="rotate(54.2 25.5 6)" fill="#5a3720" />
+      <ellipse cx="20.7" cy="9.45" rx="3.6" ry="1.4" transform="rotate(54.2 20.7 9.45)" fill="#5a3720" />
       {/* The mouth: the iron rim, then the dark inside seen through it. */}
       <ellipse cx="13" cy="15" rx="6" ry="2.3" transform="rotate(54.2 13 15)" fill="url(#hydro-band)" />
       <ellipse cx="13.5" cy="14.9" rx="5" ry="1.7" transform="rotate(54.2 13.5 14.9)" fill="#2b1a0c" />

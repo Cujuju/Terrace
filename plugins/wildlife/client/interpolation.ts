@@ -51,6 +51,15 @@ export interface InterpolatedEntity {
    * answer, so the pose changes on the frame the server says the grip failed.
    */
   readonly falling: boolean;
+  /**
+   * What this mover is doing on the ground — the INDEX into @terrace/shared's
+   * MOVER_STANCES, or null for walking (protocol.ts's `stance`).
+   *
+   * NOT INTERPOLATED, like `falling` above — it is a state, not a position. The
+   * newest message is the answer, so the pose changes on the frame the server
+   * says the body stopped.
+   */
+  readonly stance: number | null;
 }
 
 /**
@@ -91,6 +100,7 @@ interface PoseRecord extends InterpolatedEntity {
   size: InterpolatedEntity['size'];
   climbHeight: number | null;
   falling: boolean;
+  stance: number | null;
 }
 
 /**
@@ -122,6 +132,7 @@ export class WildlifeInterpolator extends PoseInterpolator<
         record.species = entity.species;
         record.size = entity.size;
         record.falling = entity.falling;
+        record.stance = entity.stance;
         if (segment === undefined) {
           record.x = entity.x;
           record.y = entity.y;

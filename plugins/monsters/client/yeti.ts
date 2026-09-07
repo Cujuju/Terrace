@@ -91,6 +91,10 @@ import {
   YETI_CLIMB_PULL_CELLS,
   YETI_CLIMB_REACH_HZ,
   YETI_EYE_COLOR,
+  YETI_BREATH_CELLS,
+  YETI_BREATH_HZ,
+  YETI_SIT_ARM_RADIANS,
+  YETI_SIT_LEG_RADIANS,
   YETI_FALL_ARM_RADIANS,
   YETI_FALL_FLAIL_HZ,
   YETI_FALL_FLAIL_RADIANS,
@@ -547,6 +551,41 @@ function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => Mons
         // WHICH WAY UP, before which limbs where: a faller's orientation is the
         // whole read (client/src/plugins/kit/moverBodyTilt.ts).
         applyMoverBodyTilt(rigRoot, gait, seconds, phase);
+
+        if (gait === 'stand' || gait === 'sit') {
+          // ON THE GROUND, NOT MOVING. His amble is a clock wave, so without
+          // this branch a stopped yeti marched on the spot for ever.
+          //
+          // THE DROP IS MEASURED OFF THE RIG, NOT GIVEN: a leg joint sits at
+          // the hip and its foot reaches the ground, so the joint's own height
+          // IS the leg's length, and a leg swung forward by
+          // YETI_SIT_LEG_RADIANS lifts its foot by `legLength (1 - cos)`.
+          // Lowering him by exactly that puts his feet back on the floor.
+          const sitting = gait === 'sit';
+          const legSwing = sitting ? YETI_SIT_LEG_RADIANS : 0;
+          const legLength = legJoints[0]!.position.y;
+          // Through the rig's own scale: a joint's height is in RIG space and
+          // `rig.position` is in its parent's — the trap the quadruped kit's
+          // poseSit documents, and the yeti's rig is unscaled only today.
+          const drop = sitting ? legLength * (1 - Math.cos(legSwing)) * rig.scale.y : 0;
+          SIDES.forEach((_side, index) => {
+            legJoints[index]!.rotation.z = legSwing;
+            // The sole stays parallel to the ground the whole time: the ankle
+            // undoes exactly what the hip did, as it does in the walk.
+            ankles[index]!.rotation.z = -legSwing;
+            armJoints[index]!.rotation.z = sitting ? YETI_SIT_ARM_RADIANS : 0;
+          });
+          // Square over his hips: the lean belongs to the stride.
+          upper.rotation.x = 0;
+          // (1 - cos)/2 runs 0…1, so the breath only ever LIFTS — the same rule
+          // the bob is written to, and it must hold from a lowered seat too.
+          const breath = (1 - Math.cos(seconds * YETI_BREATH_HZ * TWO_PI + phase)) / 2;
+          rig.position.y = -drop + breath * YETI_BREATH_CELLS;
+          // He still watches the world while he waits.
+          head.rotation.y =
+            Math.sin(seconds * YETI_HEAD_SCAN_HZ * TWO_PI + phase) * YETI_HEAD_SCAN_RADIANS;
+          return;
+        }
         if (gait !== 'walk') {
           // ON THE WALL. One wave again, at the climb's own rate, and the fall
           // is the same wave with nothing holding on — see the constants in
