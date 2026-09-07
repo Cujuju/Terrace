@@ -7,6 +7,13 @@
   },
   "scripts": {
     "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "lint": "eslint .",
+    "lint:seed": "node tools/eslint-plugin-terrace/bin/seed-budget.ts"
+  },
+  "devDependencies": {
+    "eslint": "^10.10.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.69.0"
   }
 }
