@@ -1,28 +1,16 @@
-// Loading an externally authored model as a rigSkin authoring tree.
+// Why this exists: glTF parsing is promise-based, so a plugin preloads through
+// here (TerraceClientPlugin.preload) and hands the scene to bakeRig as if it
+// had built the part-tree itself.
 //
-// WHY THIS EXISTS. Models used to be hand-built from three.js primitives
-// inside a synchronous plugin attach(), but glTF parsing is promise-based. A
-// plugin that wants an authored model preloads it through here
-// (TerraceClientPlugin.preload) and hands the resulting scene to bakeRig
-// exactly as if it had built the part-tree itself.
+// Authoring convention (docs/model-assets.md): units are cells, Y up, forward
+// +X, origin on the centreline at the keel — enforced by export_glb.py and the
+// per-asset fit check at the callsite.
 //
-// THE AUTHORING CONVENTION (docs/model-assets.md): units are cells (1 unit =
-// 1 cell), Y up, forward = +X, origin on the centreline at the keel. Axis
-// placement and origin are convention only, enforced by
-// tools/blender/export_glb.py and the per-asset fit check at the callsite.
-// What IS checked here, because a silent fallback would show up as bad art:
-// the file has at least one mesh, every mesh takes a single material (bakeRig
-// cannot bake a multi-material part), and every mesh carries the uv attribute
-// for every uv channel its material samples.
+// A skinned file is accepted since 2026-09-04; before that it had to be split
+// by dominant weight offline, which tore a deer's shoulder open mid-stride.
 //
-// AN ARMATURE IS ACCEPTED (not always — until 2026-09-04 a skinned file was
-// rejected here and had to be split by dominant weight offline, tearing a
-// deer's shoulder open mid-stride). A SkinnedMesh IS a Mesh, so every check
-// below applies unchanged; bakeRig keeps its weights — see rigSkin's header.
-//
-// THE FULL glTF MATERIAL SET IS SUPPORTED via ./materialMaps.ts, which owns
-// which slots a material can carry and which uv channel each reads — this
-// file never keeps its own slot list.
+// ./materialMaps.ts owns which slots a material carries and which uv channel
+// each reads — this file never keeps its own slot list.
 
 import {
   Box3,
@@ -33,8 +21,7 @@ import {
   type Object3D,
   type Texture,
 } from 'three';
-// Shipped inside the `three` package (see its package.json "exports"), the
-// same reach rigSkin.ts already makes.
+// Deep import: shipped inside the `three` package's "exports", as rigSkin.ts does.
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   applyMapColourSpaces,
@@ -44,37 +31,31 @@ import {
 } from './materialMaps.ts';
 
 /**
- * Anisotropy for an authored model's colour textures.
- *
- * 4: the most a surface at the game's grazing camera angles can use before
- * three's own hardware-max clamp — past it is a sharper number on the same
- * blurry texel.
+ * 4: the most a surface at the game's grazing angles can use before three's own
+ * hardware-max clamp — past it is a sharper number on the same blurry texel.
  */
 export const RIG_TEXTURE_ANISOTROPY = 4;
 
-/** One loaded model file: its scene graph plus the convention's accessors. */
 export interface RigAsset {
-  /** The file's scene, at the identity transform and unparented — bakeRig's `authoredRoot` shape. Consumed as data; never added to the render graph. */
+  /** At the identity and unparented — bakeRig's `authoredRoot` shape. Consumed as data; never added to the render graph. */
   readonly scene: Object3D;
-  /** The authored node of that name (an oar pivot, the sail, a mast). Throws naming the file and node when absent — a missing pivot would otherwise drive the wrong joint silently. */
+  /** Throws when absent, naming file and node — a missing pivot would otherwise drive the wrong joint silently. */
   node(name: string): Object3D;
-  /** The position of a named Empty (a `waterline`, `fire_top`-style anchor) in scene space. Throws exactly like node() when absent. */
   anchor(name: string): Vector3;
   /**
-   * Frees the source geometries, materials and textures. Call AFTER the
-   * blueprint built from this asset is disposed — baked surfaces sample the
-   * same texture objects.
+   * Call AFTER the blueprint built from this asset is disposed — baked surfaces
+   * sample the same texture objects.
    */
   dispose(): void;
 }
 
-/** Parses one model file over HTTP: the browser path (a plugin's preload). `url` is typically a `.glb?url` import — see client/vite.config.ts's assetsInclude entry. */
+/** `url` is typically a `.glb?url` import — see client/vite.config.ts's assetsInclude entry. */
 export async function loadRigAsset(url: string, environment: Texture | null): Promise<RigAsset> {
   const gltf = await new GLTFLoader().loadAsync(url);
   return createRigAsset(url, gltf.scene, environment);
 }
 
-/** Parses one model file from bytes already in hand: the Node path (a verification script, a fixture-reading test). Same GLTFLoader and validation as loadRigAsset, so a file that passes here passes there. */
+/** The Node path (verification scripts, fixture tests). Same loader and validation as loadRigAsset, so a file that passes here passes there. */
 export async function parseRigAsset(data: ArrayBuffer, label: string): Promise<RigAsset> {
   const gltf = await new GLTFLoader().parseAsync(data, '');
   // No environment on the node path: no renderer built one, nothing is drawn.
@@ -82,9 +63,9 @@ export async function parseRigAsset(data: ArrayBuffer, label: string): Promise<R
 }
 
 /**
- * `environment` — the prefiltered sky (render/skyEnvironment.ts) every PBR
- * material is pointed at, or null to leave the file lamp-lit. Set here, on
- * the source materials, so every clone and bake inherits it for free.
+ * `environment` is the prefiltered sky (render/skyEnvironment.ts), or null to
+ * leave the file lamp-lit. Set on the SOURCE materials, so every clone and bake
+ * inherits it for free.
  */
 function createRigAsset(label: string, scene: Object3D, environment: Texture | null): RigAsset {
   scene.updateMatrixWorld(true);
@@ -103,9 +84,8 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
           `split it into one part per material, the way bakeRig requires`,
       );
     }
-    // No silent fallback: an unmapped UV lookup samples the texture's first
-    // texel across the whole part. Checked per channel since occlusion may
-    // sit on the second uv set (glTF `texCoord: 1`).
+    // An unmapped UV lookup samples the texture's first texel across the whole
+    // part. Per channel: occlusion may sit on the second uv set (`texCoord: 1`).
     const geometry = (mesh as Mesh).geometry;
     for (const channel of uvChannelsUsed(material)) {
       const attribute = uvAttributeName(channel);
@@ -119,11 +99,8 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
     if (environment !== null && material instanceof MeshStandardMaterial) {
       material.envMap = environment;
     }
-    // GLTFLoader assigns colour spaces itself for files it writes; verified
-    // here rather than assumed, since a hand-edited file or another exporter
-    // can leave a colour texture linear (renders too dark) or mark a data
-    // texture sRGB (gamma-decodes a number before use) — indistinguishable
-    // from bad art downstream.
+    // Verified, not assumed: a hand-edited file or another exporter can leave a
+    // colour texture linear (too dark) or mark a data texture sRGB.
     applyMapColourSpaces(material);
     for (const texture of texturesOf(material)) textures.add(texture);
   });
@@ -151,8 +128,8 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
     scene,
     node: find,
     anchor(name: string): Vector3 {
-      // The scene sits at the identity, so this is the anchor's authored
-      // position — the number the callsite measures its constants from.
+      // The scene sits at the identity, so this is the authored position — the
+      // number the callsite measures its constants from.
       return find(name).getWorldPosition(new Vector3());
     },
     dispose(): void {
@@ -173,31 +150,26 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
       // Baked surfaces sample these same texture objects (clone() shares the
-      // map, doesn't duplicate it) — the reading blueprint must already be disposed.
+      // map) — the reading blueprint must already be disposed.
       for (const map of maps) map.dispose();
     },
   };
 }
 
 /**
- * How far past its footprint a model may reach before it is rejected at load.
- *
- * 0.02 world units: absorbs float dust in the bounding box (a loft's box edge
- * lands a few ulps off the intended dimension), never a real overhang. Began
- * life as boats' BOAT_FIT_TOLERANCE_CELLS; shared because the reason applies
- * to any asset.
+ * 0.02 absorbs float dust in the bounding box (a loft's edge lands a few ulps
+ * off the intended dimension), never a real overhang. Was boats'
+ * BOAT_FIT_TOLERANCE_CELLS; shared because the reason applies to any asset.
  */
 export const ASSET_FIT_TOLERANCE_WORLD_UNITS = 0.02;
 
 /**
- * A footprint in WORLD UNITS — the asset's own units, the ones three draws.
+ * World units, not cells (orchestrator decision, 2026-09-04): a model carries no
+ * runtime scale, so its bounding box compares only in the renderer's own unit.
  *
- * Not cells (orchestrator decision, 2026-09-04): a model carries no runtime
- * scale, so its bounding box can only be compared in the renderer's unit. A
- * cell is CELL_WORLD_SIZE world units (shared/src/constants.ts:50); a
- * server-side cell count converts via `cellsAcross` before reaching here.
- *
- * `y` is optional: most callers budget only the ground area.
+ * A cell is CELL_WORLD_SIZE world units; a server-side cell count converts via
+ * `cellsAcross` before reaching here. `y` is optional — most callers budget
+ * only the ground area.
  */
 export interface AssetFootprint {
   readonly x: number;
@@ -206,19 +178,16 @@ export interface AssetFootprint {
 }
 
 /**
- * Throws unless the model's bounding box fits the footprint it was authored for.
- *
- * Not folded into createRigAsset: the loader can't know what a file is FOR
- * (a boat gets a cell's worth of world units, a temple its own plan), so the
- * budget is the callsite's to state — but the measurement and tolerance stay
- * here so no callsite's own Box3 can forget an axis.
+ * Not folded into createRigAsset: only the callsite knows what a file is FOR, so
+ * the budget is its to state. The measurement and tolerance stay here so no
+ * callsite's own Box3 can forget an axis.
  */
 export function assertAssetFits(
   asset: RigAsset,
   footprint: AssetFootprint,
   tolerance: number = ASSET_FIT_TOLERANCE_WORLD_UNITS,
 ): void {
-  // World space, so a scene whose nodes carry transforms needs them resolved first.
+  // World space: a scene whose nodes carry transforms needs them resolved first.
   asset.scene.updateMatrixWorld(true);
   const size = new Box3().setFromObject(asset.scene).getSize(new Vector3());
   const overruns: string[] = [];
