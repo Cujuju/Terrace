@@ -338,7 +338,7 @@ export const MAX_MANA_REGEN_PER_SECOND = MANA_CAPACITY / MIN_FULL_REFILL_S;
 // TEMPORARY: INSTANT REGEN FOR SCULPT TESTING (owner, 2026-08-24).
 //
 // THIS IS SCAFFOLDING AND IT IS MEANT TO COME OUT. It exists so the layer-edge
-// Pull tool can be exercised without the economy interrupting, and it must be
+// Drag tool can be exercised without the economy interrupting, and it must be
 // removed once that work is done — tracked as its own issue so it cannot be
 // forgotten in a comment nobody reads.
 //

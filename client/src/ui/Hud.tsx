@@ -127,7 +127,7 @@ import {
   CarveIcon,
   HardIcon,
   LowerIcon,
-  PullIcon,
+  DragIcon,
   RaiseIcon,
   SmoothIcon,
   SoftIcon,
@@ -168,14 +168,14 @@ const STATUS_TITLE: Record<ConnectionStatus, string> = {
 const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Stamp: raise or lower brushed ground',
   smooth: 'Smooth: blend ground with its neighbours',
-  drag: 'Pull: pull a terrace edge outward',
+  drag: 'Drag: drag a terrace edge outward',
   carve: 'Carve: cut a tunnel, roof intact',
 };
 
 // The `hard` title names the level fill (shared/heightmap.ts,
 // applyLevelFillBrush), which is what the player actually sees with the
 // default Stamp tool; the Smooth pairing (one flat lift that then slumps) and
-// the Pull pairing (the edge fills every reachable cell) no longer fit the
+// the Drag pairing (the edge fills every reachable cell) no longer fit the
 // five words, so the dock's tile tells the common case and the rest is learnt
 // by use.
 const PROFILE_TITLE: Record<SculptProfile, string> = {
@@ -198,7 +198,7 @@ const HINT_BUTTON: Record<string, string> = {
 const TOOL_LABEL: Record<SculptTool, string> = {
   stamp: 'Stamp',
   smooth: 'Smooth',
-  drag: 'Pull',
+  drag: 'Drag',
   carve: 'Carve',
 };
 
@@ -216,7 +216,7 @@ const PROFILE_LABEL: Record<SculptProfile, string> = {
 const TOOL_ICON: Record<SculptTool, Component> = {
   stamp: StampIcon,
   smooth: SmoothIcon,
-  drag: PullIcon,
+  drag: DragIcon,
   carve: CarveIcon,
 };
 
@@ -461,7 +461,7 @@ export function Hud(props: {
               {/* EDGE and MODE follow on the same row, and each is present
                   ONLY FOR THE TOOLS THAT HAVE IT (issue #225; owner report,
                   2026-09-02: "Mode should also not be displayed in the HUD,
-                  much as we do not show hard or smooth for the pull tool").
+                  much as we do not show hard or smooth for the drag tool").
                   The drag and the carve have no edge profile at all and the
                   carve only ever removes — shared says which tools those are,
                   and its resolver normalises theirs away, so leaving either

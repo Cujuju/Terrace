@@ -1,5 +1,5 @@
 // WHICH BAND A PICK NAMES — the one derivation every consumer of a
-// `TerrainRayPick` shares: the pull's grab (`World.highlightLayerEdge`), the
+// `TerrainRayPick` shares: the drag's grab (`World.highlightLayerEdge`), the
 // wire's `spanBand` (`World.graspSpanBand`) and the carve's cut
 // (`World.carveBand`).
 //

@@ -159,7 +159,7 @@ the pointer, brush-sized): it stays. Review corrections:
   `hitRiser` here would be a third derivation).
 - Frame loop: light `sculptInput.heldBand()` when non-null, else the hover
   derivation. Today the highlight is re-derived from the live pick every
-  frame, so during a pull the lit lip goes dark the moment the pointer leaves
+  frame, so during a drag the lit lip goes dark the moment the pointer leaves
   the riser while the player is still holding it.
 
 ### `client/src/render/brushPreview.ts`
@@ -216,10 +216,10 @@ pointing to those cells on the band lip." Chosen from a modelled comparison:
 1. Cliff of ≥5 bands, shallow pitch, Drag selected: hovering each height on
    the face lights only the band whose slab contains that height; hovering
    the tread shows the footprint ring and lights no lip.
-2. Press a riser and pull: the edge follows from the first pointer move with
-   no jump. At maximum zoom, move one cell right: the pull advances one cell
+2. Press a riser and drag: the edge follows from the first pointer move with
+   no jump. At maximum zoom, move one cell right: the drag advances one cell
    right when the pointer crosses the cell boundary, not before.
-3. While pulling, the grabbed lip stays lit and no other lip lights.
+3. While dragging, the grabbed lip stays lit and no other lip lights.
 4. Tread + Drag + raise: a plateau seeds and is immediately in hand. Tread +
    Drag + lower: nothing.
 5. Carve on the face of a ≥3-band cliff opens a tunnel mouth at the aimed
@@ -245,7 +245,7 @@ one live-world screenshot per case; orchestrator views before merging.
   *projected* height shrinks with camera pitch; the mouse copes, touch gets
   the arm-time re-pick above instead of a radius.
 - **Tread press with Drag falls back to Stamp** — a hidden mode switch; the
-  seed rescue covers "nothing to pull".
+  seed rescue covers "nothing to drag".
 - **Raw ray entry point as the crosshair** — a lattice crossing, not the
   drawn face.
 
@@ -281,7 +281,7 @@ rule, guard, seed, touch, `dragPlaneCell`, `heldBand`); (2) pointer visuals
     no-op predictions (→ `bandAtCell` delta); carve-at-tread claim wrong
     (→ table); `brushPreview.test.ts` breakage (→ named); grab could name an
     unspreadable band (→ guard kept); `dragPlaneCell` floors (→ round);
-    touch grab frozen pre-arm (→ arm-time pick); highlight dies mid-pull
+    touch grab frozen pre-arm (→ arm-time pick); highlight dies mid-drag
     (→ `heldBand`); ray entry point is not the drawn face (→ nearest contour
     point; `hitX/hitZ` dropped); pointer must advertise the seed (→ ring).
   - MINOR ×5 — `lightBand` needs the cell; `grabbable` third derivation
