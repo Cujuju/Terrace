@@ -158,16 +158,13 @@ const POINT_COST = MANA_COST_PER_MIN_RADIUS_SCULPT;
 const POINT_STAMPS_PER_POOL = Math.floor(MANA_CAPACITY / POINT_COST);
 
 /**
- * Cells in the widest footprint (749 since the 2026-08-21 re-sample, 37 before
- * it). A HARD stamp moves a full band over every one of them — geometry, not
- * tuning, which is why it is derived here rather than written down.
+ * A part-drained balance for the gate fixtures: enough point stamps to watch
+ * several debits settle against each other, nowhere near the widest stamp's
+ * price. DERIVED FROM THE POINT PRICE, because that is what it is counted in —
+ * it was the literal 30, which was four stamps when one cost 7 and stopped
+ * being enough for the fixture's fourth the moment #387 made it 14.
  */
-const MAX_RADIUS_HARD_FOOTPRINT_CELLS =
-  sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard', 'stamp') / BAND_HEIGHT;
-
-/** The same footprint as GROUND: square world units, the unit prices are in. */
-const MAX_RADIUS_HARD_FOOTPRINT_WORLD_UNITS =
-  MAX_RADIUS_HARD_FOOTPRINT_CELLS / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS);
+const GATE_FIXTURE_BALANCE = 5 * POINT_COST;
 
 interface Harness {
   readonly world: World;
@@ -982,15 +979,15 @@ describe('client local intent gate', () => {
     setManaPool(null);
     expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // no economy: never veto
 
-    // 30 mana at rate 6: five point stamps' worth.
+    // Five point stamps' worth — see GATE_FIXTURE_BALANCE.
     setManaPool({
-      balance: 30,
+      balance: GATE_FIXTURE_BALANCE,
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
-    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // 30 -> 24, affordable
-    expect(manaPool()?.balance).toBe(30 - POINT_COST);
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // one stamp off, still affordable
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - POINT_COST);
 
     const denialsBefore = deniedCount();
     // The SAME balance that pays for a point stamp cannot pay for the radius-4
@@ -1002,12 +999,12 @@ describe('client local intent gate', () => {
     };
     expect(gateLocalSculpt(bigStamp, ALL_REVEALED)).toBe(false);
     expect(deniedCount()).toBe(denialsBefore + 1); // ...flash...
-    expect(manaPool()?.balance).toBe(30 - POINT_COST); // ...and no debit on a veto
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - POINT_COST); // ...and no debit on a veto
 
     // ...while the point brush it can still afford goes through, and debits its
     // own (smaller) price.
     expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
-    expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 2 * POINT_COST);
   });
 
   it('a balance push keeps the debits for intents the server has not yet accounted for', async () => {
@@ -1024,24 +1021,24 @@ describe('client local intent gate', () => {
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     };
-    setManaPool({ balance: 30, ...rate });
+    setManaPool({ balance: GATE_FIXTURE_BALANCE, ...rate });
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 1 }, ALL_REVEALED)).toBe(true);
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 2 }, ALL_REVEALED)).toBe(true);
 
-    // The server has applied seq 1 only: its balance is 30 - cost, and seq 2's
+    // The server has applied seq 1 only: its balance is one stamp off, and seq 2's
     // debit must survive the push.
-    applyBalancePush({ balance: 30 - POINT_COST, asOfSeq: 1, ...rate });
-    expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+    applyBalancePush({ balance: GATE_FIXTURE_BALANCE - POINT_COST, asOfSeq: 1, ...rate });
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 2 * POINT_COST);
 
     // Seq 2 accounted for: the push lands as sent.
-    applyBalancePush({ balance: 30 - 2 * POINT_COST, asOfSeq: 2, ...rate });
-    expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+    applyBalancePush({ balance: GATE_FIXTURE_BALANCE - 2 * POINT_COST, asOfSeq: 2, ...rate });
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 2 * POINT_COST);
 
     // A denial releases the denied intent's own debit and keeps the rest.
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 3 }, ALL_REVEALED)).toBe(true);
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 4 }, ALL_REVEALED)).toBe(true);
-    applyDenial({ balance: 30 - 2 * POINT_COST, cost: POINT_COST, asOfSeq: 3 });
-    expect(manaPool()?.balance).toBe(30 - 3 * POINT_COST);
+    applyDenial({ balance: GATE_FIXTURE_BALANCE - 2 * POINT_COST, cost: POINT_COST, asOfSeq: 3 });
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 3 * POINT_COST);
   });
 
   it('credits itself no regen between pushes — the gate is a LOWER BOUND', async () => {
@@ -1162,10 +1159,17 @@ describe('the price of a sculpt', () => {
     expect(MANA_PER_BAND_CELL).toBe(
       MANA_PER_BAND_WORLD_UNIT_SQUARED / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS),
     );
-    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(7);
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(14);
 
-    // What a PLAYER's smallest brush costs — the ladder's first rung, one world
-    // unit of ground — is still the number the owner's constraint named.
+    // WHAT A PLAYER'S SMALLEST BRUSH COSTS, against the range the owner's
+    // 2026-08-14 constraint named. IT IS OUT OF RANGE AND THIS ASSERTION FAILS
+    // ON PURPOSE: #387 made the point stamp a level fill of its whole core
+    // rather than a truncated cone, doubling it from 7 to 14, and e06b203 says
+    // outright that holding the felt price at 7 means re-cutting mana's rate —
+    // which would reprice every tool, so it is the owner's call and not this
+    // suite's. Left standing rather than widened, because widening it would
+    // invent an owner constraint, and deleting it would lose the only thing
+    // still asking the question.
     const playerPointStamp = MANA_COST_PER_MIN_RADIUS_SCULPT;
     expect(playerPointStamp).toBeGreaterThanOrEqual(5);
     expect(playerPointStamp).toBeLessThanOrEqual(8);
@@ -1251,39 +1255,23 @@ describe('charging per intent, through the real pipeline', () => {
     expect(sculptWith(MAX_BRUSH_RADIUS, 'hard').applied).toBe(true);
     const plateauFee = before - (manaBalanceOf(PLAYER.id) ?? 0);
 
+    // WHAT THE PIPELINE CHARGES IS WHAT THE CONSTANTS SAY — the whole content
+    // of this test, and what makes the price the player pays the price the
+    // gauge quoted.
     expect(pointFee).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(plateauFee).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
-    // The ratio is geometry, not tuning: the widest hard stamp moves a full
-    // band over its whole footprint, the point stamp over a soft disc one world
-    // unit across. Both footprints are counted in square WORLD UNITS, which is
-    // what the rate is denominated in — and the widest one is 46.8 of them
-    // since the re-sample, where the coarser grid rounded the same disc down to
-    // 37. Stated as a bound rather than an equality because the point stamp's
-    // own soft falloff is not a whole band everywhere.
-    expect(plateauFee / pointFee).toBeGreaterThan(
-      MAX_RADIUS_HARD_FOOTPRINT_WORLD_UNITS / 2,
-    );
+    // A ratio bound used to follow, against half the widest footprint in square
+    // world units. It was a coincidence of the old cone pricing, not a rule:
+    // #387 made both prices one band over the core's cells, and the bound then
+    // sat above the true ratio. Dropped rather than re-fitted — the two
+    // equalities above already say everything the pipeline owes.
   });
 
-  it('charges hard more than soft at the same radius', () => {
-    // Every rung of the player's ladder above the first — hard and soft are the
-    // same stroke on a single cell, so the smallest brush has nothing to say.
-    for (
-      let radius = 2 * POINT_BRUSH_RADIUS_CELLS;
-      radius <= MAX_BRUSH_RADIUS;
-      radius += POINT_BRUSH_RADIUS_CELLS
-    ) {
-      const beforeSoft = manaBalanceOf(PLAYER.id) ?? 0;
-      expect(sculptWith(radius, 'soft').applied).toBe(true);
-      const softFee = beforeSoft - (manaBalanceOf(PLAYER.id) ?? 0);
-
-      const beforeHard = manaBalanceOf(PLAYER.id) ?? 0;
-      expect(sculptWith(radius, 'hard').applied).toBe(true);
-      const hardFee = beforeHard - (manaBalanceOf(PLAYER.id) ?? 0);
-
-      expect(hardFee).toBeGreaterThan(softFee);
-    }
-  });
+  // DELETED 2026-09-06: 'charges hard more than soft at the same radius'.
+  // It pinned the pre-#387 contract, and #387 replaced it — a stroke pays for
+  // its CORE, both profiles level-fill the same core, so soft and hard price
+  // identically by owner decision (e06b203). The test was asserting a rule the
+  // game no longer has, not catching a regression.
 
   it('denies at the threshold of THE INTENT’S cost, not a flat one', () => {
     // Drain to a balance that can still pay for a point stamp but not for a
