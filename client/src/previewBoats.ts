@@ -59,6 +59,14 @@ const WATER_RADIUS = 3;
 const CAMERA_FRAMING_PADDING = 1.3;
 const SETTLE_FRAME_COUNT = 3;
 
+/** Box3's per-vertex mode. A SkinnedMesh's object-level `boundingBox` is skinned
+ *  ONCE and cached, so the conservative path frames the rig from whatever pose
+ *  the bones happened to hold — and the answer changed when the hull's two baked
+ *  surfaces merged into one (GH #393). Per-vertex goes through
+ *  SkinnedMesh.getVertexPosition, which skins against the bones' live
+ *  matrixWorld and caches nothing. */
+const FRAME_ON_POSED_VERTICES = true;
+
 /** Gap between the two boats in the side-by-side shot, world units. */
 const PAIR_SPACING = 1.1;
 
@@ -105,7 +113,11 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
 }
 
 function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraView): void {
-  const box = new Box3().setFromObject(subject);
+  // Before the box, not after: the per-vertex path reads each bone's
+  // `matrixWorld` and the mesh's `bindMatrixInverse`, and SkinnedMesh derives
+  // that inverse in `updateMatrixWorld`. animate() only moved bone LOCALS.
+  subject.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(subject, FRAME_ON_POSED_VERTICES);
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
@@ -142,16 +154,28 @@ async function main(): Promise<void> {
   );
   const models = createBoatModels();
   const subject = new Group();
+  // The hull herd's surface and the fleet's sails: two instanced meshes for any
+  // number of boats, sharing one parent so each instance matrix is a boat's own
+  // local transform. There are no per-boat nodes to add.
+  for (const object of models.objects) subject.add(object);
+  models.beginFrame();
   states.forEach((fighting, index) => {
-    const model = models.create();
-    // animate() is a pure function of the clock, so this IS the pose at `t`.
-    // Phase 0 for both, so the pair differ ONLY by their fighting state —
-    // which is the comparison this shot exists to make.
-    model.animate(clock, 0, fighting);
-    model.root.position.y = BOAT_SHAPE.waterlineLift;
-    model.root.position.z = (index - (states.length - 1) / 2) * PAIR_SPACING;
-    subject.add(model.root);
+    // Phase 0 for both boats, so the pair differ ONLY by their fighting state —
+    // which is the comparison this shot exists to make. The whole clock is
+    // handed over as ONE step, which drives the stroke accumulator to exactly
+    // `clock × rate` — the pose the old wall-clock formula gave at `t`.
+    models.create().draw(
+      0,
+      BOAT_SHAPE.waterlineLift,
+      (index - (states.length - 1) / 2) * PAIR_SPACING,
+      0,
+      clock,
+      0,
+      clock,
+      fighting,
+    );
   });
+  models.commitFrame();
   scene.add(subject);
 
   frameCameraOn(camera, subject, view);
