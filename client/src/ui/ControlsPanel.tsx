@@ -47,6 +47,7 @@ import {
 /** Panel copy for each map-edge mist mode (state/frontierMistPrefs.ts owns the set). */
 const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
   off: 'None',
+  line: 'Red boundary line',
   waterline: 'Flat over the sea',
 };
 
@@ -256,7 +257,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="What marks the edge of the revealed map"
-          title="Map edge: nothing, or mist over sea"
+          title="Map edge: nothing, a red boundary line, or mist over sea"
           value={frontierMistMode()}
           onChange={(e) =>
             setFrontierMistMode(e.currentTarget.value as FrontierMistMode)

@@ -57,6 +57,24 @@ export interface FrontierEdge {
   readonly dir: FrontierDirection;
 }
 
+/**
+ * The chunk index across `edge`, or null where that side is the world's own
+ * outer rim and there is no chunk there at all.
+ *
+ * ONE DEFINITION OF "WHAT IS ACROSS THIS SIDE", because two callers ask it for
+ * opposite reasons and must not answer differently: `frontierEdges` below asks
+ * to decide whether the side faces away from revealed territory, and the red
+ * boundary line (render/frontierLine.ts) asks to decide whether the side can
+ * ever be opened — a rim edge is a frontier but not an opportunity.
+ */
+export function neighbourChunkIndex(edge: FrontierEdge, chunkCols: number): number | null {
+  const [dx, dy] = NEIGHBOR_OFFSET[edge.dir];
+  const nx = edge.cx + dx;
+  const ny = edge.cy + dy;
+  if (nx < 0 || nx >= chunkCols || ny < 0 || ny >= chunkCols) return null;
+  return ny * chunkCols + nx;
+}
+
 /** Stable identity for a frontier edge: (cx, cy, dir) never repeats. */
 export function frontierEdgeKey(edge: FrontierEdge): string {
   return `${edge.cx},${edge.cy},${edge.dir}`;
@@ -94,11 +112,8 @@ export function frontierEdges(
     const cx = idx % chunkCols;
     const cy = (idx - cx) / chunkCols;
     for (const dir of FRONTIER_DIRECTIONS) {
-      const [dx, dy] = NEIGHBOR_OFFSET[dir];
-      const nx = cx + dx;
-      const ny = cy + dy;
-      const neighborInBounds = nx >= 0 && nx < chunkCols && ny >= 0 && ny < chunkCols;
-      const neighborReceived = neighborInBounds && received.has(ny * chunkCols + nx);
+      const neighbour = neighbourChunkIndex({ cx, cy, dir }, chunkCols);
+      const neighborReceived = neighbour !== null && received.has(neighbour);
       if (!neighborReceived) edges.push({ cx, cy, dir });
     }
   }
@@ -136,5 +151,56 @@ export function frontierEdgeSpan(edge: FrontierEdge): FrontierEdgeSpan {
       return { x0: x1, z0: z1, x1: x0, z1 };
     case 'W':
       return { x0, z0: z1, x1: x0, z1: z0 };
+  }
+}
+
+/**
+ * Where to sample the ground for one frontier edge, and where the boundary
+ * line itself runs.
+ *
+ * `cellX/cellY` walk the CHUNK_SIZE border cells on the RECEIVED side of the
+ * side; `lineX/lineZ` walk the boundary line's own lattice points. Both step
+ * in the same +x/+z direction whatever the edge's winding, so column k's
+ * ground always sits beside column k's position.
+ *
+ * Lives here, with the other facts about a chunk side, because the mist bank
+ * (render/frontierFog.ts) and the boundary line (render/frontierLine.ts) hug
+ * the same ground along the same line and must not derive it twice.
+ */
+export interface FrontierEdgeSampling {
+  readonly cellX: number;
+  readonly cellY: number;
+  readonly cellStepX: number;
+  readonly cellStepY: number;
+  readonly lineX: number;
+  readonly lineZ: number;
+  readonly lineStepX: number;
+  readonly lineStepZ: number;
+}
+
+export function frontierEdgeSampling(edge: FrontierEdge): FrontierEdgeSampling {
+  const x0 = edge.cx * CHUNK_SIZE;
+  const y0 = edge.cy * CHUNK_SIZE;
+  switch (edge.dir) {
+    case 'N':
+      return {
+        cellX: x0, cellY: y0, cellStepX: 1, cellStepY: 0,
+        lineX: x0, lineZ: y0, lineStepX: 1, lineStepZ: 0,
+      };
+    case 'S':
+      return {
+        cellX: x0, cellY: y0 + CHUNK_SIZE - 1, cellStepX: 1, cellStepY: 0,
+        lineX: x0, lineZ: y0 + CHUNK_SIZE, lineStepX: 1, lineStepZ: 0,
+      };
+    case 'E':
+      return {
+        cellX: x0 + CHUNK_SIZE - 1, cellY: y0, cellStepX: 0, cellStepY: 1,
+        lineX: x0 + CHUNK_SIZE, lineZ: y0, lineStepX: 0, lineStepZ: 1,
+      };
+    case 'W':
+      return {
+        cellX: x0, cellY: y0, cellStepX: 0, cellStepY: 1,
+        lineX: x0, lineZ: y0, lineStepX: 0, lineStepZ: 1,
+      };
   }
 }
