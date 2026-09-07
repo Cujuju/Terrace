@@ -10,9 +10,16 @@
 // InstancedMesh for the whole fleet. So: 1.
 
 import { describe, expect, it } from 'vitest';
-import { Bone, InstancedMesh, Mesh } from 'three';
+import { InstancedMesh } from 'three';
 import { readFile } from 'node:fs/promises';
-import { BOAT_SHAPE, createBoatModels, installBoatKit } from '../client/models.ts';
+import {
+  BOAT_SHAPE,
+  HULL_MESH_NAME,
+  SAIL_MESH_NAME,
+  createBoatModels,
+  installBoatKit,
+  type BoatModels,
+} from '../client/models.ts';
 import { parseRigAsset } from '../../../client/src/render/rigAsset.ts';
 
 /**
@@ -66,21 +73,10 @@ const assetBytes = assetBuffer.buffer.slice(
 );
 installBoatKit(await parseRigAsset(assetBytes, 'war-boat.glb'));
 
-/** Every Mesh under a node, depth-first — the renderer's unit of charging. */
-function drawablesOf(root: { traverse(cb: (o: unknown) => void): void }): Mesh[] {
-  const found: Mesh[] = [];
-  root.traverse((object) => {
-    if (object instanceof Mesh) found.push(object);
-  });
-  return found;
-}
-
-/** Every Bone under a node — the baked rig's animated handles. */
-function bonesOf(root: { traverse(cb: (o: unknown) => void): void }): Bone[] {
-  const found: Bone[] = [];
-  root.traverse((object) => {
-    if (object instanceof Bone) found.push(object);
-  });
+/** One of the fleet's two drawn meshes, by name rather than by its index. */
+function meshNamed(models: BoatModels, name: string): InstancedMesh {
+  const found = models.objects.find((object) => object.name === name);
+  if (!(found instanceof InstancedMesh)) throw new Error(`no InstancedMesh named ${name}`);
   return found;
 }
 
@@ -95,18 +91,22 @@ describe('the boat as a rigged drawable', () => {
     // or putting a non-indexed part beside an indexed one would do — shows up
     // here, and so does putting the sail back on the per-boat path.
     const models = createBoatModels();
+    models.beginFrame();
     const boat = models.create();
-    boat.animate(0, 0, false);
+    boat.draw(0, 0, 0, 0, 0, 0, 0, false);
 
-    expect(drawablesOf(boat.root)).toHaveLength(1);
+    // TWO objects for the whole fleet: the hull herd's one baked surface and
+    // the sails' one mesh. Not two PER BOAT — that is the point of the count.
+    expect(models.objects).toHaveLength(2);
     expect(BOAT_SHAPE.drawObjects).toBe(1);
 
     const second = models.create();
-    second.animate(0, 0, false);
-    expect(drawablesOf(second.root)).toHaveLength(1);
-    // Still the one mesh, whatever the fleet size.
-    expect(models.sails).toBeInstanceOf(InstancedMesh);
-    expect(models.sails.parent).toBeNull();
+    second.draw(5, 0, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
+    // Still the same two meshes, now carrying two instances each.
+    expect(models.objects).toHaveLength(2);
+    expect(meshNamed(models, HULL_MESH_NAME).count).toBe(2);
+    expect(meshNamed(models, SAIL_MESH_NAME).count).toBe(2);
 
     second.dispose();
     boat.dispose();
@@ -114,19 +114,20 @@ describe('the boat as a rigged drawable', () => {
   });
 
   it('keeps the rig at ONE surface, shared by every boat', () => {
-    // Every part merges into one surface and both boats share its baked
-    // geometry; if the bake ever emits a second the per-hull cost doubles and
-    // this catches it.
+    // Every part merges into one surface, and two boats are two INSTANCES of
+    // it rather than two meshes. If the bake ever emits a second surface the
+    // herd grows a second mesh and this catches it.
     const models = createBoatModels();
+    models.beginFrame();
     const a = models.create();
     const b = models.create();
+    a.draw(0, 0, 0, 0, 0, 0, 0, false);
+    b.draw(5, 0, 0, 0, 0, 0, 0, false);
+    models.commitFrame();
 
-    const [rigA] = drawablesOf(a.root);
-    const [rigB] = drawablesOf(b.root);
-    expect(rigA!.geometry).toBe(rigB!.geometry);
-    expect(rigA!.material).toBe(rigB!.material);
-    // One and only one: a sail left behind on the root would be a second.
-    expect(drawablesOf(a.root)).toHaveLength(1);
+    const hulls = models.objects.filter((object) => object.name === HULL_MESH_NAME);
+    expect(hulls).toHaveLength(1);
+    expect(meshNamed(models, HULL_MESH_NAME).count).toBe(2);
 
     a.dispose();
     b.dispose();
@@ -142,13 +143,14 @@ describe('the boat as a rigged drawable', () => {
     const boat = models.create();
 
     // Step until the stroke is clearly away from zero so both signs are real,
-    // not float noise around rest.
+    // not float noise around rest. The pose lives on the herd's scratch rig
+    // now — there is no per-boat skeleton left to read.
     let swings: number[] = [];
     for (let step = 0; step < 12 && swings.every((s) => s === 0); step++) {
-      boat.animate(step * 0.25, 0, false);
-      swings = bonesOf(boat.root)
-        .map((bone) => bone.rotation.y)
-        .filter((yaw) => yaw !== 0);
+      models.beginFrame();
+      boat.draw(0, 0, 0, 0, 0, 0, 0.25, false);
+      models.commitFrame();
+      swings = models.joints.map((bone) => bone.rotation.y).filter((yaw) => yaw !== 0);
     }
     // Four oars were animated; anything else means animate() reached a bone it
     // should not have (a shaft or the root).
