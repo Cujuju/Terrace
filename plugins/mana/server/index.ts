@@ -148,50 +148,49 @@ export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
 );
 
 /**
- * The owner's other tuning constraint: how many of those maximum stamps a full
- * pool buys. Stated as "≈3–4"; 3 is taken, and the reason is the conflict below.
+ * Full pool, in mana units. THE OWNER'S NUMBER, set outright (2026-09-06:
+ * "bump max mana from eight forty three to five thousand").
  *
- * THE TWO CONSTRAINTS ARE NOT SIMULTANEOUSLY SATISFIABLE, and pretending
- * otherwise would just hide which one was quietly dropped. Under a strictly
- * volume-proportional price the ratio between the two stamps is fixed by
- * GEOMETRY, not by tuning: a radius-4 hard stamp displaces exactly 45 band-cells
- * to the point brush's 1. "≈100 radius-1 stamps" therefore means 100/45 = 2.2
- * big stamps, and "3 big stamps" means 135 point stamps — the same pool cannot
- * be both. Taking 3 (the LOW end of the owner's second range) is the choice that
- * satisfies that range exactly while overshooting the ≈100 by the least possible
- * margin; going the other way — 100 point stamps — would land outside the stated
- * 3–4 entirely, and 4 big stamps would put the point-stamp count at 180.
+ * IT USED TO BE DERIVED, and the inversion is the whole of this note. The pool
+ * was `FULL_POOL_MAX_RADIUS_HARD_STAMPS × MANA_COST_PER_MAX_RADIUS_HARD_SCULPT`
+ * = 3 × 281 = 843, so that the owner's 2026-08-14 tuning constraint — "a full
+ * pool buys ≈3–4 of the widest hard stamps" — was executable rather than
+ * written down, and re-pricing the brush re-sized the pool with it. That
+ * constraint has now been superseded by a direct instruction naming an exact
+ * capacity, and 5000 is not a multiple of 281 (17 × 281 = 4777, 18 × 281 =
+ * 5058), so the derivation cannot express it. Keeping it and rounding to the
+ * nearest multiple would deliver a number the owner did not ask for while
+ * still claiming to be derived, which is worse than being plainly a literal:
+ * the stamp count is derived FROM the pool below instead, so the relationship
+ * is still executable, it simply now runs the other way.
  *
- * The alternative that would satisfy both is a price that is sub-linear in
- * volume (a discount for big brushes), which is not the model the owner settled:
- * "proportional to the terrain volume its brush nominally displaces".
+ * WHAT IT BUYS is not restated here. The two numbers the owner's original
+ * constraint was phrased in — how many point stamps and how many widest hard
+ * stamps a full pool affords — are derived below and in the test suite
+ * (POINT_STAMPS_PER_POOL), and both are pinned by tests that drain a pool and
+ * count. A price table in this comment would be a third copy of them, and the
+ * one that cannot be checked: the last one said "rate 6, capacity 666" long
+ * after both had moved.
+ *
+ * Pricing is still by VOLUME, so the trade the economy asks for is unchanged —
+ * reach against stamina. It is simply made at a scale where a session's worth
+ * of sculpting fits inside one pool.
  */
-export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = 3;
+export const MANA_CAPACITY = 5000;
 
 /**
- * Full pool, in mana units — DERIVED from the tuning constraint above rather
- * than written down, so the constraint is executable and re-tuning the rate
- * re-sizes the pool with it:
+ * How many of the most expensive sculpts a full pool buys — the shape of the
+ * owner's original tuning constraint, now REPORTED rather than imposed (see
+ * MANA_CAPACITY for the inversion, and for why it was 3).
  *
- *   MANA_CAPACITY = 3 × 222 = 666   (3 × 270 = 810 before the 2026-08-19
- *                                    tight-disc footprint shrank the radius-4
- *                                    hard stamp from 45 to 37 band-cells)
- *
- * What that buys, at rate 6 (pinned by a test, so these numbers cannot rot):
- *
- *   radius 1 (either profile)  6 mana   → 111 stamps from a full pool
- *   radius 2 soft / hard      18 / 30   →  37 / 22
- *   radius 3 soft / hard      62 / 126  →  10 /  5
- *   radius 4 soft / hard     108 / 222  →   6 /  3
- *
- * The held brush emits ~8 intents/s, so 111 point stamps is ~14 s of
- * continuous fine detailing before the economy bites, while three big plateaus
- * empty the same pool — which is the point of pricing by volume: the player
- * chooses between reach and stamina instead of always taking the biggest
- * brush.
+ * FLOORED, because a part-paid stamp is not a stamp: the gate refuses an
+ * intent the balance cannot cover in full, so what the remainder buys is a
+ * smaller brush, not a fraction of this one. Two tests drain a pool with this
+ * very brush and count, which is what keeps the number honest.
  */
-export const MANA_CAPACITY =
-  FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT;
+export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = Math.floor(
+  MANA_CAPACITY / MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+);
 
 // Regen is interpolated from WorldApi.difficulty: 1 is warm, 100 is punishing.
 // Driven by the host's fixed tick period, never wall-clock time.
@@ -249,9 +248,9 @@ export const MAX_DRAINED_WAIT_S = 60;
  *
  * WHAT THE GAUGE DOES UP HERE, since the old derivation of this bound leaned on
  * it: at this ceiling one point stamp's worth of regen lands every
- * MANA_COST_PER_MIN_RADIUS_SCULPT / MANA_CAPACITY = 6/666 ≈ 9 ms, far below the
+ * MANA_COST_PER_MIN_RADIUS_SCULPT / MANA_CAPACITY = 7/5000 ≈ 1.4 ms, far below the
  * gauge's MIN_PULSE_PERIOD_S (0.25 s) floor. The falling-grain cue therefore
- * saturates at its fastest legible rhythm rather than trying to draw ~135 grains
+ * saturates at its fastest legible rhythm rather than trying to draw ~714 grains
  * a second, which is both a flicker hazard and unreadable. That clamp lives in
  * the gauge (client/gauge.ts) where it belongs; it is not a reason to move this
  * bound, because a rate can be unplayable-fast without being illegible-fast.

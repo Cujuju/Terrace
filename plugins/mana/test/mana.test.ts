@@ -150,10 +150,10 @@ const POINT_COST = MANA_COST_PER_MIN_RADIUS_SCULPT;
 
 /**
  * How many point stamps a full, unperked pool buys — FLOORED since the
- * 2026-08-21 re-sample. The pool is three of the widest hard stamps and the
- * point stamp is a different brush entirely; the two divided evenly by
- * coincidence before (666 / 6) and do not now (843 / 7), so the suite takes
- * the whole stamps a pool actually affords.
+ * 2026-08-21 re-sample. The pool is a round number the owner set outright and
+ * the point stamp is a different brush entirely, so the two do not divide
+ * evenly (they did once, by coincidence, at 666 / 6); the suite takes the
+ * whole stamps a pool actually affords.
  */
 const POINT_STAMPS_PER_POOL = Math.floor(MANA_CAPACITY / POINT_COST);
 
@@ -1171,17 +1171,18 @@ describe('the price of a sculpt', () => {
     expect(playerPointStamp).toBeLessThanOrEqual(8);
 
     // The most expensive brush: four world units of ground moved a whole band,
-    // unchanged in price by construction. The pool is three of those, the low
-    // end of the owner's "≈3–4" — see the derivation on
-    // FULL_POOL_MAX_RADIUS_HARD_STAMPS for why the other constraint ("≈100
-    // point stamps") cannot be met at the same time.
+    // unchanged in price by construction.
     expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(281);
-    expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(3);
-    expect(MANA_CAPACITY).toBe(843);
-    expect(MANA_CAPACITY).toBe(
-      FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+    // THE POOL IS THE OWNER'S NUMBER NOW, not a multiple of that brush (owner,
+    // 2026-09-06: "bump max mana from eight forty three to five thousand"). The
+    // stamp count is what is derived from it — see MANA_CAPACITY for why the
+    // 2026-08-14 "≈3–4 widest stamps" constraint no longer drives the size.
+    expect(MANA_CAPACITY).toBe(5000);
+    expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(17);
+    expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(
+      Math.floor(MANA_CAPACITY / MANA_COST_PER_MAX_RADIUS_HARD_SCULPT),
     );
-    expect(POINT_STAMPS_PER_POOL).toBe(120);
+    expect(POINT_STAMPS_PER_POOL).toBe(357);
 
     // The widest SOFT brush lands proportionally between the two, by volume
     // alone.
