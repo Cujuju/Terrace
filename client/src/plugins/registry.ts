@@ -13,6 +13,7 @@ import { clientPlugin as daynight } from '../../../plugins/daynight/client/index
 import { clientPlugin as fire } from '../../../plugins/fire/client/index.ts';
 import { clientPlugin as flora } from '../../../plugins/flora/client/index.ts';
 import { clientPlugin as fog } from '../../../plugins/fog/client/index.ts';
+import { clientPlugin as hydro } from '../../../plugins/hydro/client/index.ts';
 import { clientPlugin as invite } from '../../../plugins/invite/client/index.ts';
 import { clientPlugin as mana } from '../../../plugins/mana/client/index.ts';
 import { clientPlugin as monsters } from '../../../plugins/monsters/client/index.ts';
@@ -37,6 +38,10 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   relics,
   wildlife,
   flora,
+  // BEFORE fire, and that is the whole of the wiring: this array's order is
+  // mount order is TOOLBAR order (client/src/plugins/toolbar.ts appends), so
+  // Hydro sits immediately left of Pyro on the bar — the owner's placement.
+  hydro,
   fire,
   structures,
   temples,

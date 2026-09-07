@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is needed by the CLIENT half's contract, not by anything in this
+    // plugin directly: client/src/plugins/types.ts types onCanvasPress with
+    // PointerEvent. Same reason client/tsconfig.json and plugins/fire carry it.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
+    // nested workspace package (it does for server/, one level up), and this
+    // package compiles server sources that reach node: builtins through core.
+    // Naming the types explicitly is deterministic and costs nothing.
+    "types": ["node"],
+    // The server loads this plugin's TypeScript through Node 24's type
+    // STRIPPING, exactly as it does shared/ (CLAUDE.md's hard rule). Syntax that
+    // has to be transformed rather than erased — parameter properties, enums,
+    // namespaces — therefore does not boot, and no test can see it. This flag
+    // turns that class of bug into a compile error.
+    // The Hydro tool's icon is a Solid component (client/WaterIcon.tsx), so this
+    // package compiles JSX exactly as plugins/fire does — same two settings,
+    // same reason: a toolbar tool must hand core a component.
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "erasableSyntaxOnly": true
+  },
+  "include": ["protocol.ts", "server", "client"]
+}
