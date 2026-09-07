@@ -71,6 +71,7 @@
 // Render kit, reached the same way client/src/plugins/registry.ts reaches this
 // plugin — by path. See that module's header for why it lives there.
 import { bakeRig, instantiateRig } from '../../../client/src/render/rigSkin.ts';
+import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import type { YetiVariant } from '../protocol.ts';
 import { CatmullRomCurve3, Color, Group, Mesh, Vector3, type BufferGeometry } from 'three';
 import {
@@ -519,6 +520,10 @@ function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => Mons
   })();
 
   const blueprint = workshop.keepRig(bakeRig(authored.root));
+  // The authored root bakes as a bone like any other, and it is the only node
+  // above `rig` — so the gait's body tilt goes there and cannot reach the
+  // amble's lean or bob.
+  const rootJoint = blueprint.jointIndex(authored.root);
   const rigJoint = blueprint.jointIndex(authored.rig);
   const upperJoint = blueprint.jointIndex(authored.upper);
   const headJoint = blueprint.jointIndex(authored.head);
@@ -528,6 +533,7 @@ function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => Mons
 
   return function createYeti(): MonsterModel {
     const instance = instantiateRig(blueprint);
+    const rigRoot = instance.joints[rootJoint]!;
     const rig = instance.joints[rigJoint]!;
     const upper = instance.joints[upperJoint]!;
     const head = instance.joints[headJoint]!;
@@ -538,6 +544,9 @@ function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => Mons
     return {
       root: instance.root,
       animate(seconds, phase, gait = 'walk') {
+        // WHICH WAY UP, before which limbs where: a faller's orientation is the
+        // whole read (client/src/plugins/kit/moverBodyTilt.ts).
+        applyMoverBodyTilt(rigRoot, gait, seconds, phase);
         if (gait !== 'walk') {
           // ON THE WALL. One wave again, at the climb's own rate, and the fall
           // is the same wave with nothing holding on — see the constants in

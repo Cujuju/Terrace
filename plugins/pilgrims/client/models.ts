@@ -47,6 +47,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // Render kit, reached by path the same way wildlife/client/models.ts reaches
 // it — see that module's import and render/rigSkin.ts's header for why.
 import type { MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
+import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
 
@@ -229,6 +230,12 @@ interface WalkerRig {
 
 /** The animated handles of one instantiated walker, by name. */
 interface WalkerJoints {
+  /**
+   * The whole walker as one bone — legs included — because `bakeRig` makes the
+   * authored root a bone like any other. The gait's body tilt goes here (the
+   * kit's `applyMoverBodyTilt`); no pose below writes it.
+   */
+  readonly rigRoot: Bone;
   readonly body: Bone;
   readonly leftLeg: Bone;
   readonly rightLeg: Bone;
@@ -579,6 +586,7 @@ export function createPilgrimModels(): PilgrimModels {
     return {
       blueprint,
       jointIndices: {
+        rigRoot: blueprint.jointIndex(root),
         body: blueprint.jointIndex(body),
         leftLeg: blueprint.jointIndex(leftLeg),
         rightLeg: blueprint.jointIndex(rightLeg),
@@ -612,6 +620,7 @@ export function createPilgrimModels(): PilgrimModels {
     if (rig === undefined) throw new Error(`pilgrims: no baked rig for ${rigKey}`);
     const instance = instantiateRig(rig.blueprint);
     const joints: WalkerJoints = {
+      rigRoot: instance.joints[rig.jointIndices.rigRoot]!,
       body: instance.joints[rig.jointIndices.body]!,
       leftLeg: instance.joints[rig.jointIndices.leftLeg]!,
       rightLeg: instance.joints[rig.jointIndices.rightLeg]!,
@@ -638,6 +647,7 @@ export function createPilgrimModels(): PilgrimModels {
         else if (gait === 'climb') poseClimb(joints, seconds, phase);
         else poseFall(joints, seconds, phase);
         setStaffCarried(joints, gait === 'walk');
+        applyMoverBodyTilt(joints.rigRoot, gait, seconds, phase);
         if (rudy) {
           joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
         } else {
