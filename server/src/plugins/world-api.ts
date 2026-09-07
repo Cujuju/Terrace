@@ -191,6 +191,9 @@ export function createWorldApi(
     isChunkUnlocked(cx: number, cy: number): boolean {
       return bound('isChunkUnlocked').world.isChunkUnlocked(cx, cy);
     },
+    isChunkUnlockedForToken(token: string, cx: number, cy: number): boolean {
+      return bound('isChunkUnlockedForToken').world.isChunkUnlockedForToken(token, cx, cy);
+    },
     riverNetwork(): RiverNetwork {
       return bound('riverNetwork').world.riverNetwork();
     },

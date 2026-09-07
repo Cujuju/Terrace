@@ -99,6 +99,16 @@ export interface WorldApi {
   heightAt(x: number, y: number): number;
   isCellUnlocked(x: number, y: number): boolean;
   isChunkUnlocked(cx: number, cy: number): boolean;
+  /**
+   * Whether ONE TOKEN has personally unlocked the chunk at (cx, cy) — its own
+   * mask, never the union `isChunkUnlocked` above answers from.
+   *
+   * BY TOKEN, NOT BY PLAYER ID, unlike isChunkVisibleTo below: a policy that
+   * decides what a stroke OPENS or COSTS is about the territory, which one
+   * token can be holding in several sessions at once (issue #17), and asking
+   * by session would answer differently for two tabs of the same player.
+   */
+  isChunkUnlockedForToken(token: string, cx: number, cy: number): boolean;
 
   /**
    * This world's current rivers, springs, pools and waterfalls (mechanics

@@ -7,7 +7,7 @@
 // streamed chunks, and the server needs extraction/writing for snapshots.
 
 import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
-import { cellIndex, type Heightmap } from './heightmap.ts';
+import { cellIndex, forEachFootprintOffset, type Heightmap } from './heightmap.ts';
 import {
   applyPackedSpans,
   assertSingleSpanChunk,
@@ -396,4 +396,38 @@ export function writeChunkPayload(
     if (!applyPackedSpans(map, x, y, flat)) rejected++;
   }
   return rejected;
+}
+
+/**
+ * Every chunk one brush footprint covers, ascending, each named once.
+ *
+ * THE REVEAL AND ITS PRICE ASK THE SAME QUESTION, so they ask it here. The
+ * reveal plugin unlocks the chunks a stroke covers and the mana plugin prices
+ * the ones that were still locked; if each walked its own disc, a change to
+ * the footprint rule would open chunks nobody was charged for, or charge for
+ * chunks that never opened. `forEachFootprintOffset` is the same iterator the
+ * brushes themselves run, so the covered set cannot drift from the edit.
+ *
+ * Cells off the map are dropped, exactly as the brushes drop them: a brush
+ * overhanging the world edge covers no chunk there because there is none.
+ *
+ * Deterministic — integer-only, fixed iteration order, sorted before it is
+ * returned — so server and client (which prices the same stroke locally, see
+ * plugins/mana/pricing.ts) always agree cell for cell.
+ */
+export function footprintChunkIndices(
+  worldSize: number,
+  cx: number,
+  cy: number,
+  radius: number,
+): number[] {
+  const n = chunksPerEdge(worldSize);
+  const covered = new Set<number>();
+  forEachFootprintOffset(radius, (dx, dy) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (x < 0 || y < 0 || x >= worldSize || y >= worldSize) return;
+    covered.add(Math.floor(y / CHUNK_SIZE) * n + Math.floor(x / CHUNK_SIZE));
+  });
+  return Array.from(covered).sort((a, b) => a - b);
 }
