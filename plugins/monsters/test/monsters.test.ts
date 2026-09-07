@@ -20,6 +20,7 @@ import {
   type SculptProfile,
   cellsAcross,
   isWater,
+  newStillness,
 } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -1406,7 +1407,7 @@ describe('body-aware habitat poses', () => {
   }
 
   function krakenAt(x: number, y: number, heading: number): Monster {
-    return { id: 1, kind: 'kraken', x, y, heading, idle: false, climb: null };
+    return { id: 1, kind: 'kraken', x, y, heading, idle: false, climb: null, ...newStillness(x, y) };
   }
 
   it('never lets a wide monster lay its body over the shore', () => {

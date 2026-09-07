@@ -14,6 +14,7 @@ import {
   cellsAcross,
   cellsOverArea,
   isWater,
+  newStillness,
 } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -385,8 +386,9 @@ describe('wildlife sync', () => {
     for (const entity of payload.entities) {
       // `size` is on the wire (the client scales the model by it), and so is
       // `climbHeight` and `falling` (null and false here — nothing is on a
-      // wall — because the client cannot infer either); `schoolId` deliberately
-      // is not —
+      // wall — because the client cannot infer either), and `stance` (null
+      // here for anything walking, and not inferrable either); `schoolId`
+      // deliberately is not —
       // schooling is a server-side steering concept.
       expect(Object.keys(entity).sort()).toEqual([
         'climbHeight',
@@ -395,6 +397,7 @@ describe('wildlife sync', () => {
         'id',
         'size',
         'species',
+        'stance',
         'x',
         'y',
       ]);
@@ -558,6 +561,7 @@ describe('the cohesion blend', () => {
   /** A fish with an explicit pose, for steering arithmetic. */
   function fishAt(x: number, y: number, heading: number, size: WildlifeSizeClass): WildlifeEntity {
     return {
+      ...newStillness(x, y),
       id: 1,
       species: 'fish',
       schoolId: 1,

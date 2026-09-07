@@ -4,6 +4,7 @@
 // Dispose blueprints (models.dispose) BEFORE assets (disposeSpeciesAssets): bakeRig holds texture references.
 
 import { Box3, Group, Matrix4, type Object3D } from 'three';
+import type { MoverGait } from '../../../../client/src/plugins/kit/moverGait.ts';
 import type { RigAsset } from '../../../../client/src/render/rigAsset.ts';
 import type { AuthoredSpecies, SpeciesJoints, SpeciesModelBuilder } from './speciesModel.ts';
 
@@ -163,10 +164,18 @@ export function disposeSpeciesAssets(): void {
   installed.clear();
 }
 
-/** `animate` is the species file's own; the asset never supplies motion. */
+/**
+ * `animate` is the species file's own; the asset never supplies motion.
+ *
+ * `posesByGait` is AuthoredSpecies.posesByGait, passed straight through: an
+ * asset species that stands and sits where it stops needs its palette bands
+ * exactly as a hand-authored one does, and the asset has nothing to say about
+ * it either way.
+ */
 export function assetSpeciesBuilder(
   spec: SpeciesAssetSpec,
-  animate: (joints: SpeciesJoints, seconds: number, phase: number) => void,
+  animate: (joints: SpeciesJoints, seconds: number, phase: number, gait: MoverGait) => void,
+  posesByGait: boolean = false,
 ): SpeciesModelBuilder {
   return (): AuthoredSpecies => {
     const entry = installed.get(spec.species);
@@ -176,7 +185,7 @@ export function assetSpeciesBuilder(
           'preload (or installSpeciesAsset, under Node) runs first',
       );
     }
-    return { root: entry.root, joints: entry.joints, animate };
+    return { root: entry.root, joints: entry.joints, animate, posesByGait };
   };
 }
 

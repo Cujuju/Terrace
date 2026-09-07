@@ -42,6 +42,9 @@ import {
   createRouteBudget,
   floodReachableRegion,
   climbWireOf,
+  advanceStillness,
+  newStillness,
+  stanceWireOf,
 } from '@terrace/shared';
 import type { ClimbState, Occupant, ReachableRegion, RouteBudget, RouteCell } from '@terrace/shared';
 import { SETTLERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
@@ -495,6 +498,11 @@ interface Settler {
   routeIndex: number;
   /** See pilgrimage.ts's MovingWalker.climb — set and cleared by advanceWalker. */
   climb: ClimbState | null;
+  /** See pilgrimage.ts's MovingWalker.stillSeconds — the stillness stance.ts
+   *  reads, advanced at the top of this sim's loop. */
+  stillSeconds: number;
+  stillX: number;
+  stillY: number;
 }
 
 /**
@@ -588,6 +596,10 @@ export class Settling {
     const ownCrowd = walkerOccupants(own);
 
     for (const settler of this.settlers.values()) {
+      // STILLNESS FIRST OF ALL — pilgrimage.ts's loop states the rule and the
+      // reason (MovingWalker.stillSeconds).
+      advanceStillness(settler, dt);
+
       // PANIC FIRST — pilgrimage.ts's PANIC section states the rule. A settler
       // has no standing-still leg to skip, but the ordering is the same one in
       // all three sims deliberately: panic is checked before anything reads the
@@ -740,6 +752,7 @@ export class Settling {
       boundToTemple: true,
       attempts: 1,
       stuckSeconds: 0,
+      ...newStillness(doorX, doorY),
       panicSecondsRemaining: 0,
       panicFromX: 0,
       panicFromY: 0,
@@ -810,6 +823,7 @@ export class Settling {
       boundToTemple: false,
       attempts: 1,
       stuckSeconds: 0,
+      ...newStillness(startX, startY),
       panicSecondsRemaining: 0,
       panicFromX: 0,
       panicFromY: 0,
@@ -832,6 +846,7 @@ export class Settling {
         y: settler.y,
         heading: settler.heading,
         ...climbWireOf(settler.climb),
+        ...stanceWireOf(settler),
       });
     }
     return rows;

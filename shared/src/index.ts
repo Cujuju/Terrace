@@ -16,6 +16,7 @@ export * from './rivers.ts';
 export * from './freshwater.ts';
 export * from './traversal.ts';
 export * from './climb.ts';
+export * from './stance.ts';
 export * from './farmland.ts';
 export * from './pathing.ts';
 export * from './steering.ts';

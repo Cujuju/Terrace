@@ -114,9 +114,10 @@ function main(): void {
   const view: CameraView =
     viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
   const stride = Number(query.get('stride') ?? '0.25');
-  // ?gait=walk|climb|fall — the wall poses (plugins/pilgrims/client/models.ts),
-  // shot here rather than only in a live world: a pose is judged by looking at
-  // it, and a wall is a slow thing to arrange in the game.
+  // ?gait=walk|climb|fall|stand|sit — the wall poses and the ground ones
+  // (plugins/pilgrims/client/models.ts), shot here rather than only in a live
+  // world: a pose is judged by looking at it, and neither a wall nor an eight
+  // second stillness is a quick thing to arrange in the game.
   const gaitParam = query.get('gait');
   const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
 

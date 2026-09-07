@@ -8,8 +8,8 @@
 //   ?species=<fish|grazer|wolf|ibex|bison|ray|shark|eel|angelfish|whale-humpback|whale-blue|whale-sperm|deepsea> — defaults to "fish"
 //   ?view=<iso|side|top|front>                     — defaults to "iso"
 //   ?t=<seconds>                                   — animation clock, default 0 (swimmers, flyers)
-//   ?gait=walk|climb|fall                          — which animation to pose, default walk. Only a
-//                                                    species with wallGaits answers to the other two
+//   ?gait=walk|climb|fall|stand|sit                — which animation to pose, default walk. Only a
+//                                                    species with posesByGait answers to the others
 //   ?phase=<radians>                               — animation phase, default 0. A WALKER's legs
 //                                                    are paced by ground covered, not the clock,
 //                                                    so this is its whole stride beat: a
