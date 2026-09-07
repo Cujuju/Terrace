@@ -23,6 +23,7 @@ import { Group } from 'three';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
+import { moverStanceFromWire } from '@terrace/shared';
 
 /**
  * World units per stored height unit — client/src/config.ts's
@@ -257,12 +258,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // negation.
     root.rotation.y = -monster.heading;
 
-    // A climb and a fall are poses, not a walk at another height (the kit's
-    // moverGaitOf, off the server's climb fields).
+    // A climb and a fall are poses, not a walk at another height, and so are
+    // standing and sitting (the kit's moverGaitOf, off the server's climb and
+    // stance fields).
     view.model.animate(
       animationSeconds,
       view.phase,
-      moverGaitOf(monster.climbHeight, monster.falling),
+      moverGaitOf(monster.climbHeight, monster.falling, moverStanceFromWire(monster.stance)),
     );
 
     // THE MIST FOLLOWS THE SAME INTERPOLATED POSE the model does, so the bank

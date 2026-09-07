@@ -157,7 +157,8 @@ function readPhase(query: URLSearchParams): number {
   return Number.parseFloat(query.get('phase') ?? '0') || 0;
 }
 
-/** ?gait=walk|climb|fall — the wall poses, for a species that has them. */
+/** ?gait=walk|climb|fall|stand|sit — the wall and ground poses, for a species
+ *  that has them (AuthoredSpecies.posesByGait). */
 function readGait(query: URLSearchParams): MoverGait {
   const named = query.get('gait');
   return MOVER_GAITS.find((gait) => gait === named) ?? 'walk';

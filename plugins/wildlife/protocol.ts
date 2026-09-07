@@ -221,6 +221,21 @@ export interface WildlifeEntityState {
    * server and every mover on the ground.
    */
   readonly falling: boolean;
+  /**
+   * WHAT THIS CREATURE IS DOING ON THE GROUND — walking, standing still, or sat
+   * down after a long stillness. The INDEX into @terrace/shared's
+   * MOVER_STANCES; null, and absent from the wire, for the walking case, which
+   * is what almost every creature is doing almost all of the time.
+   *
+   * IT IS ON THE WIRE BECAUSE THE CLIENT CANNOT INFER IT (stance.ts states the
+   * argument in full). "Hasn't moved for a while" is a duration, and a client
+   * that has just connected has no history to measure it over; the rise out of
+   * a sit is a memory only the side that has been ticking all along holds.
+   *
+   * Additive, like `climbHeight` before it: absent means walking, which is
+   * every mover on a pre-stance server.
+   */
+  readonly stance: number | null;
 }
 
 export interface WildlifeEntitiesPayload {
@@ -274,6 +289,11 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
       // the ground; both mean the same thing and are the same value here.
       climbHeight: isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null,
       falling: entry.falling === true,
+      // Absent on every row from a pre-stance server and on every mover that
+      // is walking. An index this build has no stance for means the same
+      // thing, and is normalised at the READ (stance.ts's moverStanceFromWire)
+      // rather than here — that function is the one place the mapping lives.
+      stance: isFiniteNumber(entry.stance) ? entry.stance : null,
     });
   }
   return parsed;

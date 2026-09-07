@@ -27,6 +27,9 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
   climbWireOf,
+  advanceStillness,
+  newStillness,
+  stanceWireOf,
 } from '@terrace/shared';
 import type { ClimbState, Occupant, RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
@@ -172,6 +175,11 @@ interface Wanderer {
   routeIndex: number;
   /** See pilgrimage.ts's MovingWalker.climb — set and cleared by advanceWalker. */
   climb: ClimbState | null;
+  /** See pilgrimage.ts's MovingWalker.stillSeconds — the stillness stance.ts
+   *  reads, advanced at the top of this sim's loop. */
+  stillSeconds: number;
+  stillX: number;
+  stillY: number;
 }
 
 interface SettlementCell {
@@ -226,6 +234,11 @@ export class Wandering {
     const ownCrowd = walkerOccupants(own);
 
     for (const wanderer of this.wanderers.values()) {
+      // STILLNESS FIRST OF ALL, above even the visit branch — a wanderer
+      // standing in a town is exactly the walker the branch below `continue`s
+      // past (pilgrimage.ts's MovingWalker.stillSeconds).
+      advanceStillness(wanderer, dt);
+
       // PANIC FIRST, above the visit branch — pilgrimage.ts's PANIC section
       // states the rule and the reason: a walker standing still in a town is
       // the one the branch below would `continue` past without ever looking.
@@ -373,6 +386,7 @@ export class Wandering {
         goalY,
         visitSeconds: 0,
         stuckSeconds: 0,
+        ...newStillness(homeX, homeY),
         panicSecondsRemaining: 0,
         panicFromX: 0,
         panicFromY: 0,
@@ -402,6 +416,7 @@ export class Wandering {
         y: wanderer.y,
         heading: wanderer.heading,
         ...climbWireOf(wanderer.climb),
+        ...stanceWireOf(wanderer),
       });
     }
     return rows;

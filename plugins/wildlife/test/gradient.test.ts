@@ -11,7 +11,7 @@
 // call it is an implementation detail these tests do not depend on.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, SEA_LEVEL, newStillness } from '@terrace/shared';
 import { type HabitatWorld, canTraverse } from '../server/census.ts';
 import { advanceEntity, lookaheadCellsFor, speedOf, steerToValidHeading } from '../server/movement.ts';
 import type { WildlifeEntity } from '../server/population.ts';
@@ -42,6 +42,7 @@ function riserWorld(riseUnits: number): HabitatWorld {
 
 function grazer(x: number, y: number, overrides: Partial<WildlifeEntity> = {}): WildlifeEntity {
   return {
+    ...newStillness(x, y),
     id: 1,
     species: 'grazer',
     schoolId: 1,
@@ -146,6 +147,7 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
     const shallowFloor = SEA_LEVEL - 10;
     const seaWorld = fakeWorld((x) => (x < 10 ? shallowFloor : shallowFloor - 100));
     const fish: WildlifeEntity = {
+      ...newStillness(0, 0),
       id: 2,
       species: 'fish',
       schoolId: 1,

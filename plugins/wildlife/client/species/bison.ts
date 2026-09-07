@@ -27,7 +27,7 @@
 import { Group, Vector3 } from 'three';
 import { profileFromPoints, sweptHull, type BodyProfile } from '../whaleHull.ts';
 import { deform, smoothEllipsoid, taperedTube } from './bodyKit.ts';
-import { addQuadrupedLegs, legJoints, poseWalk } from './quadruped.ts';
+import { addQuadrupedLegs, legJoints, poseSit, poseStand, poseWalk } from './quadruped.ts';
 import type { SpeciesModelBuilder } from './speciesModel.ts';
 
 export const BISON_SCALE = 0.4;
@@ -287,7 +287,17 @@ export const buildBison: SpeciesModelBuilder = (pool) => {
   return {
     root,
     joints: { rig, head: headPivot, ...legJoints(legs) },
-    animate(joints, _seconds, phase) {
+    // It stands and sits where it stops (AuthoredSpecies.posesByGait).
+    posesByGait: true,
+    animate(joints, seconds, phase, gait) {
+      // The grazer's rule, and the same reason (./quadruped.ts's ground gaits).
+      if (gait === 'stand' || gait === 'sit') {
+        if (gait === 'stand') poseStand(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+        else poseSit(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
+        // Head square: the sway belongs to the stride, and there is none.
+        joints.head!.rotation.y = 0;
+        return;
+      }
       // A walker's phase IS its stride beat (BISON_STRIDE_WORLD_UNITS): no clock term.
       const beat = phase;
       poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);

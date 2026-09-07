@@ -41,6 +41,7 @@ import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
 import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
+import { moverStanceFromWire } from '@terrace/shared';
 import {
   BODY_COLUMNS,
   SWIM_PROFILES,
@@ -255,8 +256,10 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       // species between frames.
       id,
       view.phase,
-      // Climbing and falling are their own poses, not a walk at another height.
-      moverGaitOf(entity.climbHeight, entity.falling),
+      // Climbing and falling are their own poses, not a walk at another
+      // height; and so are standing and sitting, which is what a creature that
+      // is not covering ground is doing (@terrace/shared's stance.ts).
+      moverGaitOf(entity.climbHeight, entity.falling, moverStanceFromWire(entity.stance)),
       view.drawnX,
       drawnY,
       view.drawnZ,

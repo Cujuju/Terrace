@@ -39,6 +39,9 @@ import {
   type RoutedMover,
   type TraversalProfile,
   climbWireOf,
+  advanceStillness,
+  newStillness,
+  stanceWireOf,
 } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
@@ -497,6 +500,14 @@ export interface Pilgrim {
   /** The wall this walker is on — see MovingWalker.climb. Never planned for;
    *  set and cleared by `advanceWalker` alone. */
   climb: ClimbState | null;
+  /**
+   * How long this walker has been still, and where it was when that was last
+   * measured (@terrace/shared's stance.ts). Owned by `advanceStillness`, which
+   * every sim calls FIRST in its own walker loop — see MovingWalker.
+   */
+  stillSeconds: number;
+  stillX: number;
+  stillY: number;
 }
 
 /** The moving slice of a walker — what `stepWalker` needs, and nothing more.
@@ -517,6 +528,17 @@ export interface MovingWalker {
    * that already moves all three, and none of them can forget to.
    */
   climb: ClimbState | null;
+  /**
+   * STILLNESS, on the same slice and for the same reason (@terrace/shared's
+   * stance.ts). Advanced by `advanceStillness` at the TOP of each sim's walker
+   * loop rather than at the bottom: a walker's tick has a dozen exits — a
+   * panic, a linger, an arrival, a death — and one of those exits is exactly
+   * the state a stopped walker spends its time in, so a call at the end would
+   * be a call the interesting cases skip.
+   */
+  stillSeconds: number;
+  stillX: number;
+  stillY: number;
 }
 
 /**
@@ -1264,6 +1286,7 @@ export class Pilgrimage {
           goalY: viewpoint.y,
           lingerSeconds: 0,
           stuckSeconds: 0,
+          ...newStillness(homeX, homeY),
           panicSecondsRemaining: 0,
           panicFromX: 0,
           panicFromY: 0,
@@ -1287,6 +1310,11 @@ export class Pilgrimage {
     const ownCrowd = walkerOccupants(own);
 
     for (const pilgrim of this.pilgrims.values()) {
+      // STILLNESS FIRST OF ALL, above even the panic branch — every exit below
+      // is a walker that did not move, and a lingering one is the whole point
+      // (MovingWalker.stillSeconds).
+      advanceStillness(pilgrim, dt);
+
       // PANIC FIRST, ABOVE THE LINGER BRANCH. A pilgrim standing still watching
       // a monster is the walker most in need of being told the world is on
       // fire, and it is the one the linger branch would otherwise `continue`
@@ -1382,6 +1410,7 @@ export class Pilgrimage {
         // Only while off the ground; null is the ordinary case and costs the
         // wire nothing once msgpack has dropped it.
         ...climbWireOf(pilgrim.climb),
+        ...stanceWireOf(pilgrim),
       });
     }
     return rows;

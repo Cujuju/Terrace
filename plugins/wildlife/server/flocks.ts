@@ -481,6 +481,9 @@ export function birdStates(): WildlifeEntityState[] {
         // A bird is never on a wall (WildlifeEntityState.climbHeight).
         climbHeight: null,
         falling: false,
+        // Nor does a bird aloft ever stand or sit: it is flying, which is the
+        // one thing its model draws (WildlifeEntityState.stance).
+        stance: null,
         // Birds do not vary in size, so this is the default class every
         // non-fish species carries — see WILDLIFE_SIZE_MODEL_SCALE.
         size: DEFAULT_SIZE_CLASS_INDEX,
