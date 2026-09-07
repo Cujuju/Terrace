@@ -1,12 +1,23 @@
-// The war boat: one shared geometry set, one Group per afloat boat — plus ONE
-// InstancedMesh carrying every sail in the fleet.
+// The war boat: TWO instanced meshes for the whole fleet, however many boats
+// are afloat — the hull herd's single baked surface, and every sail.
 //
-// THE HULL IS NOT INSTANCED, deliberately: it needs its own oar swing and its
-// own list against the swell, which is a skeleton per boat. The SAIL is, since
-// 2026-09-06 (#367): it is a rigid board hanging off the root at a fixed
-// authored transform, so a fleet's worth of them is one draw call instead of
-// one each. Measured at 119 villages / 231 boats, boats were 180 of the
-// frame's 373 draw calls, three per hull; the sail was one of the three.
+// THE HULL WAS NOT INSTANCED until 2026-09-06 (#369), on the reasoning that it
+// needed its own oar swing and its own list against the swell, and that both
+// meant a skeleton per boat. Only half of that was true, and the half that was
+// is what `rigHerd` already solves:
+//
+// * The OAR SWING is a pose, and a pose is shared. Two boats at the same point
+//   of the stroke are in the identical pose byte for byte, so the fleet needs
+//   as many poses as it cares to tell strokes apart (OAR_POSE_SLOTS), not one
+//   per boat. `fighting` changes the stroke RATE, which would have broken that
+//   — the accumulator in `create` is how it does not.
+// * The SWELL is not a pose at all. It is a rigid roll and pitch of the whole
+//   hull, which is exactly what an instance matrix carries.
+//
+// Measured at 119 villages / 231 boats: boats were 180 of the frame's 373 draw
+// calls at three per hull (2026-09-06, #367), 72 after the sail left the
+// per-boat path and the atlas collapsed the hull's surfaces (#381), and one
+// hull draw for any fleet after this.
 //
 // LOADED, NOT HAND-BUILT (2026-09). The hull below used to be assembled here
 // from three.js primitives; it is now authored in Blender, exported to
@@ -19,7 +30,7 @@
 
 import {
   Color,
-  Group,
+  Euler,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -30,14 +41,12 @@ import {
   Vector3,
   type BufferGeometry,
   type Material,
+  type Object3D,
 } from 'three';
 // Render kit, reached the same way plugins/wildlife reaches it — by path. See
 // that module's header for why it lives there.
-import {
-  bakeRig,
-  instantiateRig,
-  type RigBlueprint,
-} from '../../../client/src/render/rigSkin.ts';
+import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
+import { createRigHerd } from '../../../client/src/render/rigHerd.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import {
   assertAssetFits,
@@ -49,18 +58,17 @@ import { createSailSlots } from './sailSlots.ts';
 
 /**
  * The conservative ceiling `drawObjects` reports until the first bake measures
- * the real count: four is above the one a hull settles at now the sail has left
- * the per-boat path and every baked part samples one atlas, so budgeting
- * against it can only over-reserve.
+ * the real count: four is above the one the herd settles at now every baked
+ * part samples one atlas, so budgeting against it can only over-reserve.
  */
 const BOAT_DRAW_OBJECTS_MAX = 4;
 
 /**
  * What the fleet's sails cost the frame, however many boats are afloat: ONE
- * InstancedMesh (`BoatModels.sails`), added once to the boats' own container.
- * Added to `drawBudget` beside the per-hull count rather than folded into it,
- * because it does not scale with the fleet and a per-boat number that pretended
- * it did would be a lie at every fleet size but one.
+ * InstancedMesh, added once to the boats' own container. Counted beside the
+ * hull herd's own surfaces rather than folded into them, because it is a
+ * separate mesh with a separate material and merging the two numbers would
+ * hide which of them a future asset change moved.
  */
 export const FLEET_SAIL_DRAW_OBJECTS = 1;
 
@@ -104,9 +112,11 @@ export const BOAT_SHAPE: {
   /** The span of a boat that BURNS, in root space: from the deck to the masthead. */
   readonly fireColumn: { readonly bottomY: number; readonly height: number };
   /**
-   * Draw objects one HULL costs: the rig's baked surfaces, and nothing else.
-   * The sail is not in here — the whole fleet's sails are one instanced draw,
-   * counted once as FLEET_SAIL_DRAW_OBJECTS.
+   * Draw objects the fleet's HULLS cost — the rig's baked surfaces, and nothing
+   * else. ONE COUNT FOR THE WHOLE FLEET, not one per boat: every hull afloat is
+   * an instance in one herd (#369), so this number does not move when a boat is
+   * launched or sinks. The sail is not in here — the whole fleet's sails are
+   * one more instanced draw, counted once as FLEET_SAIL_DRAW_OBJECTS.
    */
   readonly drawObjects: number;
 } = Object.freeze({
@@ -250,35 +260,98 @@ const OAR_FIGHTING_RATE = 2.1;
 const SWELL_ROLL_RADIANS = 0.07;
 const SWELL_PITCH_RADIANS = 0.04;
 const SWELL_HZ = 0.31;
+/**
+ * The pitch runs at this fraction of the roll's rate. Deliberately not a
+ * simple ratio: two frequencies that share a period would beat back into one
+ * rocking axis, which is the thing the second axis exists to avoid.
+ */
+const SWELL_PITCH_BEAT_RATIO = 0.73;
+
+const TWO_PI = Math.PI * 2;
+
+/**
+ * Rows in the hull herd's pose palette — one stroke cycle, sampled this many
+ * times, and the quantisation a boat's oars are drawn at.
+ *
+ * DERIVED, the way wildlife's POSE_SLOTS_PER_HERD is: the step must be smaller
+ * than the step the animation already takes between two frames the player
+ * sees. The fastest stroke here is a fighting boat's, OAR_STROKE_HZ ×
+ * OAR_FIGHTING_RATE = 1.155 Hz, which at the project's 140 fps benchmark
+ * advances 1.155/140 ≈ 1/121 of a cycle per displayed frame. 128 rows puts one
+ * slot under that.
+ *
+ * Rows are nearly free HERE and are not for wildlife, which is why this number
+ * is four times theirs: the palette is captured ONCE (`staticPoses` below), so
+ * a row costs its memory and no per-frame bandwidth — 16 joints × 4 texels ×
+ * 128 rows × RGBA float is 128 KB for the whole fleet, for ever.
+ */
+const OAR_POSE_SLOTS = 128;
+
+/**
+ * The scale the hull is drawn at, which is the scale it was authored at — the
+ * war boat has no size classes the way a species does. Named because
+ * `RigHerd.placeMatrix` grows the fleet's frustum bound by it, so a bare 1
+ * there would be a number with a meaning.
+ */
+const HULL_UNSCALED_REACH = 1;
+
+/** `Object3D.name` on the fleet's two drawn meshes. Exported because a caller
+ *  that has to tell them apart must not do it by their order in `objects`. */
+export const HULL_MESH_NAME = 'boats:hulls';
+export const SAIL_MESH_NAME = 'boats:sails';
 
 /** One boat's scene node and the handle that animates it. */
 export interface BoatModel {
-  readonly root: Group;
   /**
-   * Poses the boat for this frame. `phase` de-synchronises a fleet so three
-   * boats do not roll as one object; `fighting` quickens the oars and reddens
+   * Places and poses this boat for this frame. A boat has NO NODE OF ITS OWN
+   * since 2026-09-06 — it is an instance in the fleet's herd — so where it is
+   * arrives here rather than being written to a root beforehand.
+   *
+   * `x`/`y`/`z` are world units and `heading` is the server's, negated by the
+   * caller the way the +X model convention requires. `phase` de-synchronises a
+   * fleet so three boats do not roll as one object. `stepSeconds` is the
+   * frame's own capped step, which the oar clock INTEGRATES — see the stroke
+   * accumulator in createBoatModels. `fighting` quickens the oars and reddens
    * the sail.
+   *
+   * Nothing is drawn until the set's `commitFrame`.
    */
-  animate(elapsedSeconds: number, phase: number, fighting: boolean): void;
+  draw(
+    x: number,
+    y: number,
+    z: number,
+    heading: number,
+    elapsedSeconds: number,
+    phase: number,
+    stepSeconds: number,
+    fighting: boolean,
+  ): void;
   /**
    * Parks and returns this boat's sail slot. Idempotent. Shared assets — the
-   * blueprint, the sail mesh — belong to the set.
+   * herd, the sail mesh — belong to the set.
    */
   dispose(): void;
 }
 
 export interface BoatModels {
   /**
-   * Every sail in the fleet, in ONE draw call. Add it to the SAME parent the
-   * boat roots go under: an instance matrix is composed from a root's LOCAL
-   * matrix, so a different parent would draw the sails in the wrong space.
+   * What the fleet DRAWS, whatever its size: the hull herd's instanced surface
+   * (one, since the atlas) and the sails' single mesh. Added to ONE parent by
+   * the caller and never re-parented — every instance matrix in both is
+   * composed in that parent's space.
    */
-  readonly sails: InstancedMesh;
+  readonly objects: readonly Object3D[];
   create(): BoatModel;
   /**
-   * Uploads the frame's sail matrices and re-bounds the fleet — ONCE for the
-   * whole mesh, after every boat has been animated. Skipping it leaves the
-   * sails on the previous frame's poses.
+   * Opens the frame: forgets the individuals the last one drew. Every boat
+   * still afloat must `draw` again between this and `commitFrame`, or it is
+   * simply not in the frame.
+   */
+  beginFrame(): void;
+  /**
+   * Uploads the frame's hull instances and sail matrices and re-bounds both —
+   * ONCE for the whole fleet, after the last boat has drawn. Skipping it
+   * leaves the fleet on the previous frame's poses.
    */
   commitFrame(): void;
   dispose(): void;
@@ -409,6 +482,11 @@ export function disposeBoatKit(): void {
  * for the whole fleet, and the per-instance recolour the blueprint could not
  * offer is exactly what `setColorAt` does offer. The sail is a rigid board at a
  * fixed authored transform, which is what makes an instance matrix enough.
+ *
+ * The HULL is instanced too now, but through `rigHerd` rather than through a
+ * bare InstancedMesh — it is skinned, and its pose comes from a shared palette
+ * the sail has no need of. The two are separate meshes for that reason and not
+ * by accident.
  */
 export function createBoatModels(): BoatModels {
   const installed = kit;
@@ -444,6 +522,41 @@ export function createBoatModels(): BoatModels {
   // drawBudget — truthful per asset.
   drawObjects = blueprint.surfaceCount;
 
+  // ─── the fleet's hulls: one herd, one draw call per baked surface ──────────
+
+  // `staticPoses` IS THE POINT, not an optimisation on the side. A boat's oars
+  // are `sin(oarPhase) × OAR_SWEEP_RADIANS` and nothing else — no term reads
+  // the wall clock, because the SWELL, which does, is a rigid roll and pitch of
+  // the whole hull and rides the instance matrix instead (see `draw`). So row
+  // `k` of the palette holds the same bytes for ever, and the fleet's animation
+  // is a boat walking between rows. Uploaded once, never re-uploaded: the cost
+  // wildlife pays every frame and measures at 0.63–0.89 ms per palette when the
+  // driver stalls (.claude/orchestration/briefs/righerd-static-pose-palette.md).
+  const herd = createRigHerd(blueprint, {
+    capacity: BOATS_PAYLOAD_CAP,
+    poseSlots: OAR_POSE_SLOTS,
+    staticPoses: true,
+  });
+  // Named so a caller can tell the fleet's two drawn things apart without
+  // relying on their order in `objects`.
+  for (const mesh of herd.meshes) mesh.name = HULL_MESH_NAME;
+
+  /**
+   * Poses the herd's scratch rig at one point of the stroke. THE WHOLE of a
+   * hull's pose: the swell is not in here on purpose.
+   *
+   * Opposite sides pull in opposition, which is what reads as rowing rather
+   * than as a shiver. The side comes from the parallel array captured at bake
+   * time, NOT from userData: the bake builds fresh Bones from rest transforms
+   * and does not carry userData across it.
+   */
+  function poseOars(oarPhase: number): void {
+    const swing = Math.sin(oarPhase) * OAR_SWEEP_RADIANS;
+    for (let i = 0; i < oarJoints.length; i++) {
+      herd.joints[oarJoints[i]!]!.rotation.y = swing * oarSides[i]!;
+    }
+  }
+
   // ─── the fleet's sails: one mesh, one draw call, one material ──────────────
 
   // ONE clone for the whole fleet, where there used to be one per boat. It is
@@ -453,7 +566,7 @@ export function createBoatModels(): BoatModels {
   sailMaterial.color.setHex(SAIL_MATERIAL_COLOR);
 
   const sails = new InstancedMesh(installed.sailGeometry, sailMaterial, BOATS_PAYLOAD_CAP);
-  sails.name = 'boats:sails';
+  sails.name = SAIL_MESH_NAME;
   sails.count = 0;
   // Allocated up front instead of lazily by the first setColorAt: three
   // zero-fills that buffer, and zero is BLACK for every slot not yet tinted.
@@ -498,6 +611,16 @@ export function createBoatModels(): BoatModels {
   // Scratch reused by every boat of every frame — the discipline skiffModels'
   // writeFrame keeps, for the same reason: this runs per boat per frame.
   const sailMatrix = new Matrix4();
+  /**
+   * The boat's own transform: where the hull is placed AND how it lies on the
+   * swell. It feeds both drawn things — the herd instance and, multiplied by
+   * the sail's authored offset, the sail instance — so the two cannot disagree
+   * about which way a boat is leaning.
+   */
+  const boatMatrix = new Matrix4();
+  // XYZ, three's default Euler order and the one Object3D.rotation used when
+  // this was a Group with .x/.y/.z assigned: the composition is unchanged.
+  const boatRotation = new Euler(0, 0, 0, 'XYZ');
 
   // The extent of the sails written since the last commit, in container space.
   // Inverted-empty until the first write, which is how commitFrame tells a
@@ -510,13 +633,9 @@ export function createBoatModels(): BoatModels {
   let maxZ = -Infinity;
 
   return {
-    sails,
+    objects: [...herd.meshes, sails],
 
     create(): BoatModel {
-      // One instance of the shared rig: fresh bones and root, zero new buffers.
-      const instance = instantiateRig(blueprint);
-      const root = instance.root;
-
       let slot = slots.acquire();
       // Parked and tinted at rest before the first animate(), so a slot handed
       // out between frames cannot draw last owner's sail for one frame.
@@ -525,37 +644,63 @@ export function createBoatModels(): BoatModels {
       if (sails.instanceColor !== null) sails.instanceColor.needsUpdate = true;
 
       let wasFighting = false;
+      // The stroke clock, INTEGRATED rather than read off the wall clock.
+      //
+      // `fighting` changes the stroke RATE, and a rate cannot be applied to a
+      // shared clock without the phase jumping at the moment it changes — a
+      // boat mid-pull would snap to another point of the stroke as the fight
+      // starts. Accumulating `rate × dt` instead makes the rate change a change
+      // of SPEED only, and the pose stays continuous across it. It is also what
+      // lets the whole fleet share ONE palette band: the pose is a function of
+      // this angle alone, whatever rate the boat reached it at.
+      //
+      // Seeded from the boat's own phase, so a fleet does not row in unison;
+      // -1 means "not yet", because 0 is a phase a boat can legitimately have.
+      let oarPhase = -1;
 
       return {
-        root,
-        animate(elapsedSeconds: number, phase: number, fighting: boolean): void {
-          // A disposed boat has no slot to write and no meshes left to pose.
+        draw(
+          x: number,
+          y: number,
+          z: number,
+          heading: number,
+          elapsedSeconds: number,
+          phase: number,
+          stepSeconds: number,
+          fighting: boolean,
+        ): void {
+          // A disposed boat has no slot to write and nothing left to pose.
           if (slot < 0) return;
-          const t = elapsedSeconds + phase;
+          if (oarPhase < 0) oarPhase = phase * TWO_PI;
+          const strokeRate = fighting ? OAR_STROKE_HZ * OAR_FIGHTING_RATE : OAR_STROKE_HZ;
+          oarPhase += stepSeconds * strokeRate * TWO_PI;
 
           // Swell: roll about the keel, pitch about the beam. Two different
           // frequencies so the motion never looks like a single rocking axis.
-          root.rotation.z = Math.sin(t * SWELL_HZ * Math.PI * 2) * SWELL_ROLL_RADIANS;
-          root.rotation.x = Math.sin(t * SWELL_HZ * Math.PI * 2 * 0.73) * SWELL_PITCH_RADIANS;
+          // A RIGID transform of the whole boat, which is why it lives in the
+          // instance matrix and not in the pose palette — see the herd above.
+          const t = elapsedSeconds + phase;
+          boatRotation.set(
+            Math.sin(t * SWELL_HZ * TWO_PI * SWELL_PITCH_BEAT_RATIO) * SWELL_PITCH_RADIANS,
+            heading,
+            Math.sin(t * SWELL_HZ * TWO_PI) * SWELL_ROLL_RADIANS,
+          );
+          boatMatrix.makeRotationFromEuler(boatRotation);
+          boatMatrix.setPosition(x, y, z);
 
-          const strokeRate = fighting ? OAR_STROKE_HZ * OAR_FIGHTING_RATE : OAR_STROKE_HZ;
-          const swing = Math.sin(t * strokeRate * Math.PI * 2) * OAR_SWEEP_RADIANS;
-          for (let i = 0; i < oarJoints.length; i++) {
-            // Opposite sides pull in opposition, which is what reads as rowing
-            // rather than as a shiver. The side comes from the parallel array
-            // captured at bake time, NOT from userData: instantiateRig builds
-            // fresh Bone objects from rest transforms and does not carry
-            // userData across the bake.
-            instance.joints[oarJoints[i]!]!.rotation.y = swing * oarSides[i]!;
+          // The first boat to land in a row pays for it and every boat after it
+          // rides that row free — for the life of the herd, not just the frame.
+          const poseSlot = herd.poseSlotOf(oarPhase);
+          if (herd.needsPose(poseSlot)) {
+            poseOars(herd.poseSlotPhase(poseSlot));
+            herd.capturePose(poseSlot);
           }
+          herd.placeMatrix(poseSlot, boatMatrix, HULL_UNSCALED_REACH);
 
-          // The sail rides the root, and animate() runs BEFORE the renderer
-          // updates world matrices — so compose from the root's OWN transform
-          // rather than reading a matrixWorld that is still last frame's. The
-          // mesh shares the roots' parent, which is what makes a local matrix
-          // the whole answer.
-          root.updateMatrix();
-          sailMatrix.multiplyMatrices(root.matrix, authoredSailMatrix);
+          // The sail hangs off the boat at a fixed authored offset, so its
+          // instance matrix is the boat's times that offset. Both meshes share
+          // one parent, which is what makes a local matrix the whole answer.
+          sailMatrix.multiplyMatrices(boatMatrix, authoredSailMatrix);
           sails.setMatrixAt(slot, sailMatrix);
 
           // The translation column: where this sail is, for the fleet bounds
@@ -584,12 +729,16 @@ export function createBoatModels(): BoatModels {
           sails.setMatrixAt(slot, PARKED_SAIL_MATRIX);
           slots.release(slot);
           slot = -1;
-          root.clear();
         },
       };
     },
 
+    beginFrame(): void {
+      herd.beginFrame();
+    },
+
     commitFrame(): void {
+      herd.endFrame();
       const drawn = slots.drawnCount;
       sails.count = drawn;
       // ONLY THE LIVE PREFIX IS UPLOADED — without a range three re-sends the
@@ -620,6 +769,9 @@ export function createBoatModels(): BoatModels {
     },
 
     dispose(): void {
+      // The herd first: its palette and its per-surface material clones are
+      // built ON the blueprint's surfaces, so they go before the surfaces do.
+      herd.dispose();
       // The blueprint: merged rig geometry plus the vertex-coloured material
       // clones the instances draw with. The installed asset (source geometry,
       // the sail template, the file's textures) belongs to the kit and is
