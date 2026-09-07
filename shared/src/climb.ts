@@ -41,7 +41,7 @@
 // HORIZONTAL leg across the lip, never one diagonal through the rock corner.
 // `advanceClimb`'s leg tables are that shape written down.
 
-import { BAND_HEIGHT } from './constants.ts';
+import { BAND_HEIGHT, cellsAcross } from './constants.ts';
 import { hashToIndex } from './rng.ts';
 import {
   admitsHeight,
@@ -98,19 +98,35 @@ export function climbSecondsPerBand(rule: ClimbRule): number {
 export const CELL_CENTRE_OFFSET = 0.5;
 
 /**
+ * Half the drawn peep's DEPTH along the axis it faces, in world units.
+ *
+ * MEASURED OFF THE MODEL, not chosen: Rudy's torso is a sphere of 0.125
+ * scaled 0.95 on its facing axis (plugins/pilgrims/client/models.ts), drawn at
+ * PILGRIM_MODEL_SCALE 0.85 — so 0.125 * 0.95 * 0.85. Rudy rather than Uno
+ * because Rudy is the deeper of the two peeps and neither may enter the rock.
+ *
+ * A NUMBER, NOT AN IMPORT, because shared/ may not read client geometry. If
+ * the peep is remodelled this has to be re-measured; the arithmetic above is
+ * written out so the next reader can check it against the model in one look.
+ */
+const CLIMB_BODY_HALF_DEPTH_WORLD_UNITS = 0.125 * 0.95 * 0.85;
+
+/**
  * How far a climber's centre stands from the face it is holding, in cells.
  *
  * A BODY DIMENSION, AND THE ONLY THING THAT MAY BE PASSED HERE. It used to be
- * an argument, and all three callers handed it WALKER_PERSONAL_SPACE_CELLS —
- * a crowding radius of 0.68, wider than the half-cell it is subtracted from,
- * so the inset went negative and every climber hung 0.68 cells out in the air
- * instead of touching the wall (measured 2026-09-06). An argument three
- * callers get wrong the same way is the API's bug, so the argument is gone.
+ * an argument, and all three callers handed it a crowding radius —
+ * WALKER_PERSONAL_SPACE_CELLS at 0.68, wider than the half-cell it is
+ * subtracted from, so the inset went negative and every climber hung 0.68
+ * cells out in the air instead of touching the wall (measured 2026-09-06). An
+ * argument three callers get wrong the same way is the API's bug, so the
+ * argument is gone.
  *
- * 0.1 of a cell is the drawn peep's own half-depth, and a climber that is not
+ * It comes to 0.404 of a cell: a peep is nearly as deep as a cell is wide, so
+ * a climber's centre barely leaves its own cell centre. A climber that is not
  * a peep says so on its rule rather than at the callsite.
  */
-export const CLIMB_BODY_HALF_WIDTH_CELLS = 0.1;
+export const CLIMB_BODY_HALF_WIDTH_CELLS = cellsAcross(CLIMB_BODY_HALF_DEPTH_WORLD_UNITS);
 
 /**
  * The widest half-width the inset arithmetic admits: a body at exactly this
