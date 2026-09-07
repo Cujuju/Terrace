@@ -26,7 +26,7 @@ import {
   type TerrainSampler,
   type TraversalProfile,
 } from './traversal.ts';
-import { climbRiseHeightUnitsPerSecond } from './climb.ts';
+import { climbSeconds } from './climb.ts';
 import {
   CELL_WORLD_SIZE,
   NEIGHBOURHOOD_CELLS,
@@ -398,12 +398,16 @@ function edgeCost(
   if (!isWalkableCell(world, profile, toX, toY)) return null;
   if (!Number.isFinite(profile.maxGradientPerCell)) return baseCost; // water: no risers, no slope cost.
 
-  const heightDiff = Math.abs(world.heightAt(toX, toY) - world.heightAt(fromX, fromY));
+  const fromHeight = world.heightAt(fromX, fromY);
+  const toHeight = world.heightAt(toX, toY);
+  const heightDiff = Math.abs(toHeight - fromHeight);
   if (exceedsWalkableGradient(profile, heightDiff)) {
     const rule = profile.climb;
     // Not a climber: the wall is the end of this branch, exactly as before.
     if (rule === undefined || rule === null) return null;
-    return baseCost + climbEdgeCost(rule, heightDiff);
+    // Signed, not the magnitude: a descent also turns about and steps off at
+    // the bottom, so it is the dearer of the two directions.
+    return baseCost + climbEdgeCost(rule, fromHeight, toHeight);
   }
   return baseCost + heightDiff * SLOPE_COST_PER_HEIGHT_UNIT;
 }
@@ -431,15 +435,15 @@ function edgeCost(
  * way rather than take a wall, a yeti (5 %) about six, and an ibex (1 %) barely
  * more than one, which is the animal each of them is.
  */
-function climbEdgeCost(rule: ClimbRule, heightDifference: number): number {
+function climbEdgeCost(rule: ClimbRule, fromHeight: number, toHeight: number): number {
   // Every climb rolls (climb.ts's `beginClimb`), so every climbed edge is priced
   // for the risk. No height gate: the 4:1 sheer rule is what keeps a knee-high
   // ledge from being a climb in the first place.
   const risk = rule.fallChance * CERTAIN_DEATH_COST;
-  // THIS CLIMBER'S OWN SECONDS, not the world's: an animal that goes up four
-  // times faster must price a wall at a quarter of the detour, or the planner
-  // sends the best climber in the world the long way round.
-  return (heightDifference / climbRiseHeightUnitsPerSecond(rule)) * CLIMB_COST_PER_SECOND + risk;
+  // THIS CLIMBER'S OWN SECONDS, and ALL of them: `climbSeconds` adds up the
+  // legs climb.ts actually walks, so a change to the motion cannot leave the
+  // planner pricing a climb that no longer exists.
+  return climbSeconds(rule, fromHeight, toHeight) * CLIMB_COST_PER_SECOND + risk;
 }
 
 function reconstructPath(
