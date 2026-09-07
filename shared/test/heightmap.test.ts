@@ -1083,7 +1083,7 @@ describe('sculptDisplacementUnits', () => {
   it('equals the volume applyBrush actually moves, for every radius × profile', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, profile, 'stamp')).toBe(
+        expect(sculptDisplacementUnits(radius, 'stamp')).toBe(
           observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),
         );
       }
@@ -1095,87 +1095,47 @@ describe('sculptDisplacementUnits', () => {
     // otherwise digging would be the economical way to reshape a world.
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, profile, 'stamp')).toBe(
+        expect(sculptDisplacementUnits(radius, 'stamp')).toBe(
           observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT),
         );
       }
     }
   });
 
-  /**
-   * THE LITERAL TABLE. Deliberately hand-written numbers, not a formula: this is
-   * the wall that stops a "harmless" refactor of the brush from silently
-   * re-pricing the whole economy. Every value is height-units × cells, at
-   * DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT = 16.
-   *
-   * RE-MEASURED 2026-08-20 for BAND_HEIGHT 16 (the previous BAND_HEIGHT 64
-   * column is kept beside each value). The economy is priced in HEIGHT UNITS
-   * and a click is now worth a quarter of what it was, so every price falls —
-   * but NOT by a clean quarter everywhere: the soft profile truncates its
-   * falloff per cell, and at a smaller amount those truncations bite harder
-   * (radius 3 soft is 156, where a quarter of 652 would be 163). That is
-   * exactly the kind of drift this table exists to catch, so the numbers are
-   * measured rather than divided.
-   *
-   * Recomputed 2026-08-19 for the tight-disc footprint (the pre-disc square
-   * numbers were 9/25/45 cells → soft 320/736/1280, hard 576/1600/2880):
-   *
-   *   radius  cells   soft (was, @64)     hard (was, @64)
-   *      1      1        16  (  64)          16  (  64)
-   *      2      5        48  ( 192)          80  ( 320)
-   *      3     21       156  ( 652)         336  (1344)
-   *      4     37       288  (1152)         592  (2368)
-   */
+  // The wall that stops a refactor of the brush silently re-pricing the economy.
+  // Height-units x cells at DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT = 16.
   it('matches the published table of displacement volumes', () => {
-    expect(sculptDisplacementUnits(1, 'soft', 'stamp')).toBe(16);
-    expect(sculptDisplacementUnits(2, 'soft', 'stamp')).toBe(80);
-    expect(sculptDisplacementUnits(3, 'soft', 'stamp')).toBe(336);
-    expect(sculptDisplacementUnits(4, 'soft', 'stamp')).toBe(592);
-
-    expect(sculptDisplacementUnits(1, 'hard', 'stamp')).toBe(16);
-    expect(sculptDisplacementUnits(2, 'hard', 'stamp')).toBe(80);
-    expect(sculptDisplacementUnits(3, 'hard', 'stamp')).toBe(336);
-    expect(sculptDisplacementUnits(4, 'hard', 'stamp')).toBe(592);
+    expect(sculptDisplacementUnits(1, 'stamp')).toBe(16);
+    expect(sculptDisplacementUnits(2, 'stamp')).toBe(80);
+    expect(sculptDisplacementUnits(3, 'stamp')).toBe(336);
+    expect(sculptDisplacementUnits(4, 'stamp')).toBe(592);
   });
 
-  it('is one band-cell at the point brush, where the two profiles coincide', () => {
+  it('is one band-cell at the point brush', () => {
     // The unit the price rate is denominated in: one band of height, one cell.
-    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'soft', 'stamp')).toBe(BAND_HEIGHT);
-    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'hard', 'stamp')).toBe(BAND_HEIGHT);
+    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'stamp')).toBe(BAND_HEIGHT);
   });
 
-  it('grows with radius, and the two profiles price the same core', () => {
-    for (const profile of ['soft', 'hard'] as const) {
-      for (let radius = MIN_BRUSH_RADIUS; radius < MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius + 1, profile, 'stamp')).toBeGreaterThan(
-          sculptDisplacementUnits(radius, profile, 'stamp'),
-        );
-      }
-      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        // EQUAL SINCE #387: both profiles level-fill the same core, and only
-        // the core is priced. Soft's apron is the talus that rise implies and
-        // is deliberately uncharged.
-        expect(sculptDisplacementUnits(radius, 'soft', 'stamp')).toBe(
-          sculptDisplacementUnits(radius, 'hard', 'stamp'),
-        );
-      }
+  it('grows with radius', () => {
+    for (let radius = MIN_BRUSH_RADIUS; radius < MAX_BRUSH_RADIUS; radius++) {
+      expect(sculptDisplacementUnits(radius + 1, 'stamp')).toBeGreaterThan(
+        sculptDisplacementUnits(radius, 'stamp'),
+      );
     }
   });
 
-  it('is a pure integer function of radius and profile', () => {
-    for (const profile of ['soft', 'hard'] as const) {
-      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        const units = sculptDisplacementUnits(radius, profile, 'stamp');
-        expect(Number.isInteger(units)).toBe(true);
-        // Called twice, same answer — no hidden state, nothing terrain-dependent.
-        expect(sculptDisplacementUnits(radius, profile, 'stamp')).toBe(units);
-      }
+  it('is a pure integer function of radius and tool', () => {
+    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+      const units = sculptDisplacementUnits(radius, 'stamp');
+      expect(Number.isInteger(units)).toBe(true);
+      // Called twice, same answer — no hidden state, nothing terrain-dependent.
+      expect(sculptDisplacementUnits(radius, 'stamp')).toBe(units);
     }
   });
 
   it('rejects a radius the brush itself would reject', () => {
     for (const bad of [0, MAX_BRUSH_RADIUS + 1, 1.5, Number.NaN]) {
-      expect(() => sculptDisplacementUnits(bad, 'soft', 'stamp')).toThrow(RangeError);
+      expect(() => sculptDisplacementUnits(bad, 'stamp')).toThrow(RangeError);
     }
   });
 
@@ -1209,7 +1169,7 @@ describe('sculptDisplacementUnits', () => {
     // relaxation touched strictly more of the world than that.
     expect(slumpedDiff.length).toBeGreaterThan(stampedCells.size);
     // And the price is the brush's volume either way — one number, no tool.
-    expect(sculptDisplacementUnits(4, 'hard', 'stamp')).toBe(592);
+    expect(sculptDisplacementUnits(4, 'stamp')).toBe(592);
   });
 
   it('prices a LEVEL FILL at the flat-delta volume, deliberately', () => {
@@ -1237,7 +1197,7 @@ describe('sculptDisplacementUnits', () => {
     // the same square so the PRICE of that stroke is unchanged: see
     // plugins/mana/server/index.ts's MANA_PER_BAND_WORLD_UNIT_SQUARED.
     expect(diff).toHaveLength(1);
-    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard', 'stamp')).toBe(749 * BAND_HEIGHT);
+    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'stamp')).toBe(749 * BAND_HEIGHT);
   });
 });
 
