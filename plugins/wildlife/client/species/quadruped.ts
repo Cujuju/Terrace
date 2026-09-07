@@ -162,10 +162,13 @@ const BREATH_TO_BOB_RATIO = 1 / 3;
 /**
  * How far a couched animal folds its legs under itself, radians from hanging.
  *
- * 1.2 (~69°) FOLDS RATHER THAN SPLAYS. The fore legs tuck BACK and the hind
- * legs FORWARD, so both pairs come in under the belly the way a bedded ungulate
- * carries them; a quarter turn would lay them flat out in front, which is a
- * dead animal, and half of this would read as a crouch about to spring.
+ * 1.2 (~69°) FOLDS RATHER THAN SPLAYS: a quarter turn would lay a leg flat out,
+ * which is a dead animal, and half of this reads as a crouch about to spring.
+ *
+ * BOTH PAIRS SWING FORWARD (owner, 2026-09-06, on the couched renders: "instead
+ * of bending the Front legs backwards, bend them forwards"). A bedded ungulate
+ * carries its fore legs with the knee jutting FORWARD and the lower leg tucked
+ * under it; folding them back is a bird's attitude, not a bison's.
  */
 const SIT_TUCK_RADIANS = 1.2;
 
@@ -216,9 +219,10 @@ export function poseSit(
   phase: number,
   bobAmplitude: number,
 ): void {
-  // Fore legs back and hind legs forward: both pairs come in under the belly.
-  joints.foreLeft!.rotation.z = -SIT_TUCK_RADIANS;
-  joints.foreRight!.rotation.z = -SIT_TUCK_RADIANS;
+  // Both pairs forward — see SIT_TUCK_RADIANS. The drop below is unaffected by
+  // the sign: cosine is even, so a leg lifts its foot the same either way.
+  joints.foreLeft!.rotation.z = SIT_TUCK_RADIANS;
+  joints.foreRight!.rotation.z = SIT_TUCK_RADIANS;
   joints.hindLeft!.rotation.z = SIT_TUCK_RADIANS;
   joints.hindRight!.rotation.z = SIT_TUCK_RADIANS;
   const hipY = Math.min(joints.foreLeft!.position.y, joints.hindLeft!.position.y);
