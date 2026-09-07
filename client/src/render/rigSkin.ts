@@ -245,6 +245,15 @@ export interface RigInstance {
   readonly joints: readonly Bone[];
   /** The drawn objects — ONE PER MATERIAL GROUP, not one per part. */
   readonly meshes: readonly SkinnedMesh[];
+  /**
+   * Frees what THIS instance allocated: the skeleton's bone texture. Geometry
+   * and materials belong to the blueprint and are left alone.
+   *
+   * Call on despawn. three allocates a DataTexture per Skeleton and frees it
+   * only here (Skeleton.js:259/300, three 0.185.1); removing the root from the
+   * scene does not, so a despawn without this strands one texture per entity.
+   */
+  dispose(): void;
 }
 
 /**
@@ -436,7 +445,18 @@ export function instantiateRig(blueprint: RigBlueprint): RigInstance {
     meshes.push(mesh);
   }
 
-  return { root, joints, meshes };
+  let disposed = false;
+
+  return {
+    root,
+    joints,
+    meshes,
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      skeleton.dispose();
+    },
+  };
 }
 
 /**

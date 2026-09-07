@@ -651,6 +651,9 @@ function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => Mons
         head.rotation.y =
           Math.sin(seconds * YETI_HEAD_SCAN_HZ * TWO_PI + phase) * YETI_HEAD_SCAN_RADIANS;
       },
+      dispose(): void {
+        instance.dispose();
+      },
     };
   };
 }

@@ -239,6 +239,14 @@ export interface PilgrimModel {
    * report — and every test written before the wall gaits — keeps its answers.
    */
   animate(seconds: number, phase: number, gait?: MoverGait): void;
+  /**
+   * Frees what THIS walker allocated — its rig instance. Shared geometry and
+   * materials belong to `models` and are freed by PilgrimModels.dispose.
+   *
+   * Call on despawn: removing the root from the scene does not free the
+   * skeleton's bone texture.
+   */
+  dispose(): void;
 }
 
 export interface PilgrimModels {
@@ -723,6 +731,9 @@ export function createPilgrimModels(): PilgrimModels {
         } else {
           joints.tail.rotation.y = Math.sin(seconds * TWO_PI * (STRIDE_HZ / 3) + phase) * UNO_SWAY_RADIANS;
         }
+      },
+      dispose(): void {
+        instance.dispose();
       },
     };
   }

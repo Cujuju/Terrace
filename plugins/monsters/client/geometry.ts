@@ -937,6 +937,14 @@ export interface MonsterModel {
    * every model that only ever swims answers to.
    */
   animate(seconds: number, phase: number, gait?: MoverGait): void;
+  /**
+   * Frees what THIS monster allocated — its rig instance. Shared geometry and
+   * materials belong to the workshop and are freed by MonsterModels.dispose.
+   *
+   * Call on despawn: removing the root from the scene does not free the
+   * skeleton's bone texture.
+   */
+  dispose(): void;
 }
 
 /**

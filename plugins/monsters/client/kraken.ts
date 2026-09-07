@@ -546,6 +546,9 @@ export function createKrakenFactory(workshop: ModelWorkshop): () => MonsterModel
           limb.joint.rotation.y = Math.sin(wave) * KRAKEN_ARM_WAVE_RADIANS;
         }
       },
+      dispose(): void {
+        instance.dispose();
+      },
     };
   };
 }
