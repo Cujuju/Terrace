@@ -484,27 +484,7 @@ const MARK_BAND_TINT_MIX = 1 / 3;
  */
 const SEED_TOOL: SculptTool = 'stamp';
 const SEED_PROFILE: SculptProfile = 'hard';
-/**
- * THE SEED HAS NO DIRECTION OF ITS OWN — it sculpts in the PRESS's, which is
- * why there is no SEED_DIR beside the two constants above and why `update`
- * looks the ring up under `brush.dir`.
- *
- * IT USED TO HAVE ONE, and that is what hid the outline (owner report,
- * 2026-09-06: "the moment I hold shift to do a drag, my brush graphic goes
- * away"). Seeding was raise-only, so a constant here said so and `update`
- * refused to call a lower press a seed. Then `takeHold` learned to seed BOTH
- * directions — the lower chord digs a one-band pit whose rim is the lip to
- * drag (input/sculptInput.ts, 2026-09-05, owner: "shift drag does not work on
- * plateaus") — and this constant went on saying otherwise, so a shift-held
- * Drag over a tread fell through to the pointed branch and drew nothing but
- * the crosshair for a press that stamps a whole footprint.
- *
- * The lesson is why the note is this long: the seed's shape is `seedLayer`'s
- * to decide, and every part of it that is restated here is a part that can go
- * stale. The tool and the edge above are literals in that function and are
- * named to match; the direction is the press's `action`, so there is nothing
- * left here to disagree with it.
- */
+/* No SEED_DIR: the seed sculpts in the press's own direction. */
 
 /**
  * Both directions the wire allows, in the order the eager cache builds them.
@@ -993,12 +973,7 @@ export function createBrushPreview(
   scene: Scene,
   canvas: CursorSurface,
   worldSize: () => number,
-  /**
-   * IS THE PLAYER'S AIM REFUSED AND RED THIS FRAME (render/denialCue.ts). The
-   * cue is SHARED with the lit lip the intent would move, which is the whole
-   * reason it is passed in rather than kept here: two modules drawing one
-   * refusal off two clocks would blink out of step.
-   */
+  /** Shared with the lit lip, so the two cannot blink out of step. */
   denial: DenialCue,
 ): BrushPreview {
   const edgeClip = createWorldEdgeClip();
@@ -1025,9 +1000,8 @@ export function createBrushPreview(
       //
       // The DRAG has no footprint of its own: what it changes is however far
       // the player drags. Its one press with an exact extent is the tread SEED,
-      // and that is a hard stamp (SEED_TOOL/SEED_PROFILE) in the press's own
-      // direction, so `update` draws it from the stamp's entry — the same
-      // simulation, not a duplicate of it.
+      // and that is a hard stamp in the press's own direction, so `update`
+      // draws it from the stamp's entry.
       //
       // The CARVE has a footprint, but not one this cache can answer for:
       // `oneClickMark` runs the real sculpt on FLAT GROUND, and flat ground is
@@ -1208,18 +1182,8 @@ export function createBrushPreview(
     skirt.visible = footprint;
     cellGrid.visible = footprint;
     crosshair.visible = visible;
-    // THE REFUSAL RED OVERRIDES EVERY OTHER COLOUR, and it is applied HERE for
-    // the same reason visibility is written here: `update` paints the ring,
-    // the skirt and the mark on four different paths (tread, riser, the
-    // crosshair-only tools, the seeding drag), and a tint applied on each is a
-    // tint one of them can be added without. This is the last write before the
-    // frame, so it wins; the next frame's `update` paints the ordinary colours
-    // back over it once the refusal is over.
-    //
-    // ASKED EVEN WHEN NOTHING IS DRAWN, because the call is also what starts
-    // and clears the cue's blink clock: a refusal that begins while the
-    // pointer is off the world would otherwise leave its start time behind to
-    // be read as the start of the NEXT one, which would open mid-blink.
+    // Last write before the frame, so it wins over all four paint paths.
+    // Asked even when hidden: the call also runs the cue's blink clock.
     const red = denial.isRed();
     if (visible && red) {
       material.color.setHex(DENIED_COLOR);
@@ -1261,12 +1225,8 @@ export function createBrushPreview(
       // same horizontal test is a cave roof's UNDERSIDE, where a raise is
       // refused outright and there is nothing to promise.
       //
-      // IN EITHER DIRECTION. A raise seeds a one-band plateau and a lower digs
-      // a one-band pit; both are the same hard stamp at the same radius, and
-      // both give the drag the lip it needs. The direction is not a condition
-      // on seeding at all — it is part of the footprint, and it travels into
-      // the geometry lookup below as `brush.dir`. See SEED_TOOL's note for the
-      // stale raise-only test that used to live here.
+      // Either direction: a raise seeds a plateau, a lower a pit. Both give
+      // the drag a lip.
       const onTread = !hover.hitRiser && atY === hover.surfaceY;
       const seeding = brush.tool === 'drag' && onTread;
 

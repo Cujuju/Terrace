@@ -147,47 +147,10 @@ export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
   'stamp',
 );
 
-/**
- * Full pool, in mana units. THE OWNER'S NUMBER, set outright (2026-09-06:
- * "bump max mana from eight forty three to five thousand").
- *
- * IT USED TO BE DERIVED, and the inversion is the whole of this note. The pool
- * was `FULL_POOL_MAX_RADIUS_HARD_STAMPS × MANA_COST_PER_MAX_RADIUS_HARD_SCULPT`
- * = 3 × 281 = 843, so that the owner's 2026-08-14 tuning constraint — "a full
- * pool buys ≈3–4 of the widest hard stamps" — was executable rather than
- * written down, and re-pricing the brush re-sized the pool with it. That
- * constraint has now been superseded by a direct instruction naming an exact
- * capacity, and 5000 is not a multiple of 281 (17 × 281 = 4777, 18 × 281 =
- * 5058), so the derivation cannot express it. Keeping it and rounding to the
- * nearest multiple would deliver a number the owner did not ask for while
- * still claiming to be derived, which is worse than being plainly a literal:
- * the stamp count is derived FROM the pool below instead, so the relationship
- * is still executable, it simply now runs the other way.
- *
- * WHAT IT BUYS is not restated here. The two numbers the owner's original
- * constraint was phrased in — how many point stamps and how many widest hard
- * stamps a full pool affords — are derived below and in the test suite
- * (POINT_STAMPS_PER_POOL), and both are pinned by tests that drain a pool and
- * count. A price table in this comment would be a third copy of them, and the
- * one that cannot be checked: the last one said "rate 6, capacity 666" long
- * after both had moved.
- *
- * Pricing is still by VOLUME, so the trade the economy asks for is unchanged —
- * reach against stamina. It is simply made at a scale where a session's worth
- * of sculpting fits inside one pool.
- */
+/** Full pool. Set outright by the owner, 2026-09-06; was 3 × the widest stamp. */
 export const MANA_CAPACITY = 5000;
 
-/**
- * How many of the most expensive sculpts a full pool buys — the shape of the
- * owner's original tuning constraint, now REPORTED rather than imposed (see
- * MANA_CAPACITY for the inversion, and for why it was 3).
- *
- * FLOORED, because a part-paid stamp is not a stamp: the gate refuses an
- * intent the balance cannot cover in full, so what the remainder buys is a
- * smaller brush, not a fraction of this one. Two tests drain a pool with this
- * very brush and count, which is what keeps the number honest.
- */
+/** Widest hard stamps a full pool buys. Floored: a part-paid stamp is not one. */
 export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = Math.floor(
   MANA_CAPACITY / MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
 );

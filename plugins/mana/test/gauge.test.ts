@@ -182,11 +182,7 @@ describe('current-brush cost', () => {
         sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp'),
       );
 
-      // Profile alone. IT NO LONGER MOVES THE PRICE, and that is the assertion
-      // now: since e06b203 a stroke pays for its CORE, and both profiles level-
-      // fill the same core — soft's apron is the talus the rise implies, not a
-      // second stroke (owner, 2026-09-06, #387). This used to assert hard >
-      // soft, which was the pre-#387 contract.
+      // Profile no longer moves the price: both fill the same core (#387).
       setBrushProfile('hard');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
       expect(currentBrushCost()).toBe(
@@ -261,8 +257,7 @@ describe('numeric rate readout', () => {
   });
 
   it('never rounds a world that IS refilling down to +0/s', () => {
-    // The band's floor is one point stamp a minute — 14/60 ≈ 0.23 mana/s since
-    // #387 made a level fill of the core the player's smallest stroke.
+    // Floor: one point stamp a minute, 14/60 ≈ 0.23 mana/s.
     expect(formatRegenRate(MIN_MANA_REGEN_PER_SECOND)).toBe('+0.2/s');
     expect(formatRegenRate(0.05)).toBe('+0.1/s');
   });
