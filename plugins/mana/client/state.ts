@@ -70,7 +70,7 @@ const nowMs = (): number => performance.now();
  * balance (see gateLocalSculpt).
  *
  * SUPERSEDES the 2026-08-24 use of this function as the gate's estimate (owner
- * report: after a drag "it won't let me click and pull any vertices — like
+ * report: after a drag "it won't let me click and drag any vertices — like
  * we've flipped a flag and it doesn't get flipped back"). That was a stuck gate:
  * a burst of intents drove the local estimate below the truth, the server's pool
  * was already full, `regenerate` skipped a full pool, no push was ever emitted,
@@ -130,7 +130,7 @@ function debitLocally(pool: ManaPool, cost: number): void {
  * disappears"). The gate debits each intent as it goes out, but every balance
  * push used to REPLACE the estimate wholesale. The server pushes after each
  * intent it applies, and that number knows nothing of the intents still queued
- * behind it — so with ten expensive pulls in flight, the first push erased the
+ * behind it — so with ten expensive drags in flight, the first push erased the
  * debits for the other nine, the gate approved more against mana already spent,
  * the server denied them, and the denial tore the predicted ground off. The
  * push now lands as `balance − Σ(debits it cannot yet have seen)`.
@@ -230,14 +230,14 @@ export function recordDenial(): void {
  * a fixed block of bands rather than a brush cone and prices as that block, so
  * the gauge would show the wrong number for it if the signal were not read.
  * The second is the EDGE — the tool decides whether the player's edge choice
- * survives at all (`sculptProfileOf`), and the stamp/smooth/pull choice cannot
+ * survives at all (`sculptProfileOf`), and the stamp/smooth/drag choice cannot
  * change the answer beyond that, because the relaxation spill those three
  * differ by is free by design (see sculptDisplacementUnits in
  * shared/src/heightmap.ts). Reactive, like every other read here.
  *
  * PRICED THROUGH THE SHARED NORMALISATION, not off the raw HUD signals. An
  * edgeless tool runs at EDGELESS_SCULPT_PROFILE whatever the Edge row was last
- * left on, so pricing the held Pull at a raw `soft` showed 283 where the gate
+ * left on, so pricing the held Drag at a raw `soft` showed 283 where the gate
  * one function below — and the server — charged 749 for the very same stroke.
  * The gauge and the gate now resolve the profile through one function.
  */

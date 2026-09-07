@@ -277,7 +277,7 @@ export function ManaGauge(): JSX.Element {
    * can the gauge show full and internally it's zero"). This signal held a
    * value that advanced ITSELF every frame from its own previous output, so it
    * and the intent gate were two independent accumulators of the same quantity
-   * with nothing tying them together. They duly disagreed: a burst of pull
+   * with nothing tying them together. They duly disagreed: a burst of drag
    * intents drained the gate's estimate to nothing while this one, which never
    * looked at it, went on filling the vessel to the brim.
    *

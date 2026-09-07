@@ -319,9 +319,9 @@ export const SCULPT_REPEAT_INTERVAL_MS = 120;
  * direction. It is the unsafe one: frames per tick is what the count MEASURES,
  * so a faster display emits MORE intents per tick, not fewer, and every
  * display above 60 Hz emitted past the bound derived here. On a 144 Hz panel a
- * fast pull put ~17 intents in a tick against a budget of 8, so the prediction
+ * fast drag put ~17 intents in a tick against a budget of 8, so the prediction
  * store began evicting the live stroke's own oldest prediction — the start of
- * the pull snapping back to authoritative ground mid-drag.
+ * the drag snapping back to authoritative ground mid-drag.
  *
  * 144 Hz is the fastest panel this project is developed and benchmarked
  * against (the 140 fps frame-budget target is measured on one). Faster

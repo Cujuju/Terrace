@@ -95,10 +95,10 @@ export function pointerToNdc(
  * (input/sculptInput.ts dragPlaneCell): the grab-height plane is infinite and
  * the world is not, and this used to answer a point past half a cell beyond
  * the last cell centre with null, which the drag treated as "hold". A slow
- * pull never noticed — its last cell crossing had already landed on the edge
+ * drag never noticed — its last cell crossing had already landed on the edge
  * cell — but a flick from well inside straight onto the drawn rim, or off the
  * world, dropped that sample and left the lip one or more cells short of the
- * border until the cursor came back. Pulling past the edge means pulling TO
+ * border until the cursor came back. Dragging past the edge means dragging TO
  * the edge, so the nearest edge cell is the answer. Only a non-finite input
  * has no nearest cell and returns null.
  *
@@ -274,7 +274,7 @@ export interface TerrainRayPick {
    * distinguishes) and always discarded it, because the only consumer was the
    * hover outline, which marks a footprint on the tread either way. It is
    * surfaced for the two-method sculpt design (owner, 2026-08-23): "if I tap
-   * on flat, I get a stamp. Otherwise I pull on an edge."
+   * on flat, I get a stamp. Otherwise I drag on an edge."
    *
    * VIEW-DEPENDENT, and deliberately so: this is a fact about THIS RAY, not
    * about the cell. The same step reads as a riser from a low camera and as a
