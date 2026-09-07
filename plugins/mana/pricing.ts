@@ -75,7 +75,7 @@ export function sculptManaCost(
   sweepSteps: number = 1,
 ): number {
   return Math.ceil(
-    (manaPerBandCell * sculptDisplacementUnits(radius, profile, tool) * sweepSteps) / BAND_HEIGHT,
+    (manaPerBandCell * sculptDisplacementUnits(radius, tool) * sweepSteps) / BAND_HEIGHT,
   );
 }
 

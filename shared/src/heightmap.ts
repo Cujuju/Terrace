@@ -913,14 +913,10 @@ function applyDragRegion(
 }
 
 /**
- * Nominal volume: a pure function of (radius, profile), never terrain, so both replicas
+ * Nominal volume: a pure function of (radius, tool), never terrain, so both replicas
  * price identically. Nominal because some strokes move less and cost the same.
  */
-export function sculptDisplacementUnits(
-  radius: number,
-  profile: SculptProfile,
-  tool: SculptTool,
-): number {
+export function sculptDisplacementUnits(radius: number, tool: SculptTool): number {
   assertBrushRadius(radius);
 
   // Carve is priced by radius alone, in full even when refused — pricing may not read
