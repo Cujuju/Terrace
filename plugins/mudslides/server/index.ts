@@ -76,6 +76,7 @@ import { MUDSLIDES_SLICE_VERSION, loadSlides, saveSlides } from './persistence.t
 import {
   FREQUENCY_INTERVAL_MULTIPLIERS,
   MAX_ACTIVE_SLIDES,
+  startSlide,
   advanceSlides,
   flowEventFor,
   livingSlides,
@@ -378,3 +379,18 @@ export function resetMudslidesState(): void {
  * layout. Nothing does yet; `mudslides:flow` is the push half of the same seam.
  */
 export { livingSlides };
+
+/**
+ * THE DIRECTED SLIDE, re-exported for other plugins — for `plugins/hydro`,
+ * whose poured water saturates a rim and then asks that rim to give way. Until
+ * now this reached only this plugin's own admin action (./dev.ts's
+ * `forceSlideNear`), so "collapse THIS cell" was a thing an operator could do
+ * and a sibling could not.
+ *
+ * It refuses on ground that is not a rim, has nowhere downhill to go, or is
+ * under the sea, and it does NOT check MAX_ACTIVE_SLIDES — that check belongs
+ * to each caller, exactly as it does for the trigger and the admin action
+ * above; `livingSlides` and `MAX_ACTIVE_SLIDES` are re-exported here so a
+ * sibling can make it.
+ */
+export { startSlide };
