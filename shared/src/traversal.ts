@@ -365,24 +365,17 @@ export interface ClimbRule {
    */
   readonly fallChance: number;
   /**
-   * How tall a wall has to be, in height units, before falling off it can kill
-   * — and the number is the CLIMBER'S OWN HEIGHT, because that is the physical
-   * fact it stands for: nothing dies falling off something shorter than itself.
-   *
-   * WHY IT EXISTS AT ALL, measured rather than argued (live world,
-   * frostwick-hollows snapshot 990). Without it, "a climb" means every rise
-   * steeper than the walking limit — which on real terrain is 68 % of adjacent
-   * cell pairs, most of them ordinary rough ground a hand's breadth high. A
-   * pilgrimage-scale route then contains a mean of 7.3 of them, and at a 15 %
-   * roll each only 37 % of peeps would survive a ONE-WAY trip. That is not the
-   * mechanic the owner asked for ("slowly climb SHEER WALLS with maybe a
-   * fifteen percent chance of falling") — it is a death march over gravel.
-   *
-   * At the climber's own height the same routes carry a mean of 2.1 lethal
-   * walls and 74 % of peeps arrive. Everything shorter is still CLIMBED — at
-   * the same speed, with the same pause at the foot of it — it just cannot kill.
+   * WHY THERE IS NO HEIGHT GATE ANY MORE (2026-09-06). This used to be the
+   * climber's own height: nothing dies falling off something shorter than
+   * itself, which kept a 15 % roll off every knee-high bank back when a climb
+   * meant any rise steeper than the walking limit. SHEER_RISE_TO_RUN now does
+   * that job and does it better — a climb is a 4:1 face, four bands inside one
+   * cell, so the shortest climb in the world is 65 height units against a peep
+   * of 34 and an ibex of 33. Measured on frostwick-hollows: 153 of 153 real
+   * climbs cleared the gate, i.e. it had stopped discriminating and every climb
+   * already rolled. Keeping a dead field would only invite the next threshold
+   * change to orphan it again.
    */
-  readonly lethalRiseHeightUnits: number;
   /**
    * Seconds this climber takes over one BAND of wall, or absent for the rate
    * every climber shares (climb.ts's CLIMB_SECONDS_PER_BAND).
@@ -676,11 +669,8 @@ export const LAND_WALKER_PROFILE: TraversalProfile = {
  * chance beside the animal it belongs to — that is where the owner's sentence
  * about that animal lives.
  */
-export function climbingWalkerProfile(
-  fallChance: number,
-  lethalRiseHeightUnits: number,
-): TraversalProfile {
-  return withClimb(LAND_WALKER_PROFILE, fallChance, lethalRiseHeightUnits);
+export function climbingWalkerProfile(fallChance: number): TraversalProfile {
+  return withClimb(LAND_WALKER_PROFILE, fallChance);
 }
 
 /**
@@ -688,12 +678,8 @@ export function climbingWalkerProfile(
  * AMPHIBIOUS_WALKER_PROFILE rather than a land walker, so "can climb" has to be
  * composable rather than a fourth archetype that restates the other three.
  */
-export function withClimb(
-  profile: TraversalProfile,
-  fallChance: number,
-  lethalRiseHeightUnits: number,
-): TraversalProfile {
-  return { ...profile, climb: { fallChance, lethalRiseHeightUnits } };
+export function withClimb(profile: TraversalProfile, fallChance: number): TraversalProfile {
+  return { ...profile, climb: { fallChance } };
 }
 
 /**

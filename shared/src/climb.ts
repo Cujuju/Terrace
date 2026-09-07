@@ -252,13 +252,11 @@ export function beginClimb(
   const fromHeight = world.heightAt(Math.floor(fromX), Math.floor(fromY));
   if (!exceedsWalkableGradient(profile, toHeight - fromHeight)) return null;
 
-  // ONLY A WALL TALLER THAN THE CLIMBER CAN KILL IT (ClimbRule.lethalRise
-  // HeightUnits). Everything shorter is climbed exactly the same way and simply
-  // cannot end in a fall — there is not enough of it to fall off.
-  const rise = Math.abs(toHeight - fromHeight);
-  const doomed =
-    rise >= rule.lethalRiseHeightUnits &&
-    hashToIndex(seed, FALL_ROLL_BASIS_POINTS) < rule.fallChance * FALL_ROLL_BASIS_POINTS;
+  // ONE ROLL PER CLIMB, whatever the wall's height — the owner's rule, and the
+  // 4:1 sheer face is what guarantees there is a wall to roll against at all
+  // (ClimbRule's own comment). A climb of forty bands is the same single roll as
+  // a climb of four.
+  const doomed = hashToIndex(seed, FALL_ROLL_BASIS_POINTS) < rule.fallChance * FALL_ROLL_BASIS_POINTS;
   // A second, independent draw off the same seed: the first decides WHETHER,
   // this one decides WHERE. `seed + 1` rather than a second seed argument
   // because hashToIndex's mix is an avalanche — consecutive seeds land far
