@@ -24,20 +24,39 @@ import {
 } from '../../mana/server/index.ts';
 import { plugin as revealPlugin } from '../server/index.ts';
 
-/** 64² cells = 4×4 chunks. */
-const WORLD_SIZE = 64;
+/** 128² cells = 8×8 chunks. */
+const WORLD_SIZE = 128;
 
-/** The shared home chunk; cells (16..31, 16..31). Every player starts here. */
-const HOME_CHUNK: readonly [number, number] = [1, 1];
+/**
+ * The shared home territory: chunks (1..3, 1..3), cells (16..63, 16..63).
+ *
+ * THREE CHUNKS ON A SIDE, not one, because REVEAL_REACH_CELLS is a whole chunk
+ * (2026-09-06): a click at the centre of a one-chunk home reaches every one of
+ * its eight neighbours, so such a world has no interior at all and could not
+ * express "sculpting away from the border reveals nothing". A 3×3 home has an
+ * interior exactly one chunk wide, which is the smallest world in which that
+ * sentence is still a statement about the policy rather than about the map.
+ */
+const HOME_CHUNKS: ReadonlyArray<readonly [number, number]> = (() => {
+  const chunks: Array<readonly [number, number]> = [];
+  for (let cy = 1; cy <= 3; cy++) for (let cx = 1; cx <= 3; cx++) chunks.push([cx, cy]);
+  return chunks;
+})();
 
-/** The locked chunk east of home; cells (32..47, 16..31). */
-const FRONTIER_CHUNK: readonly [number, number] = [2, 1];
+/** The locked chunk due east of home; cells (64..79, 32..47). */
+const FRONTIER_CHUNK: readonly [number, number] = [4, 2];
 
-/** Border column of HOME_CHUNK — sculpting here reaches into FRONTIER_CHUNK. */
-const BORDER_CELL = { x: 31, y: 24 } as const;
+/**
+ * East border column of home — one chunk of reveal reach from here lands in
+ * FRONTIER_CHUNK and in the two chunks north and south of it.
+ */
+const BORDER_CELL = { x: 63, y: 40 } as const;
 
-/** Centre of HOME_CHUNK, 8 cells from every border. */
-const INTERIOR_CELL = { x: 24, y: 24 } as const;
+/** The number of chunks a BORDER_CELL sculpt opens: the whole east column. */
+const BORDER_SCULPT_CHUNKS = 3;
+
+/** Centre of home's middle chunk — a whole chunk from every locked chunk. */
+const INTERIOR_CELL = { x: 40, y: 40 } as const;
 
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
@@ -67,7 +86,7 @@ interface Harness {
 function boot(players: readonly Player[], extraPlugins: readonly TerracePlugin[] = []): Harness {
   resetManaState();
 
-  const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK]);
+  const world = worldWithUnlockedChunks(WORLD_SIZE, HOME_CHUNKS);
   const sink = new RecordingSink();
   world.setSink(sink);
 
@@ -80,7 +99,7 @@ function boot(players: readonly Player[], extraPlugins: readonly TerracePlugin[]
   for (const player of players) {
     world.addPlayer(player);
     host.playerJoined(player);
-    world.seedChunkForToken(player.token, ...HOME_CHUNK);
+    for (const chunk of HOME_CHUNKS) world.seedChunkForToken(player.token, ...chunk);
   }
 
   // The seed above is silent (World.seedChunkForToken never sends), and
@@ -126,35 +145,39 @@ describe('reveal plugin', () => {
 
       expect(paidSculpt(harness, PLAYER_A, BORDER_CELL.x, BORDER_CELL.y, 4).applied).toBe(true);
 
-      // No threshold: one sculpt that spills into the frontier is enough.
+      // No threshold: one sculpt within reach of the frontier is enough.
       expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, ...FRONTIER_CHUNK)).toBe(true);
       expect(harness.world.isChunkUnlocked(...FRONTIER_CHUNK)).toBe(true); // union OR'd too
 
       const streamed = harness.sink.ofType('chunkUnlock');
-      expect(streamed).toHaveLength(1);
+      expect(streamed).toHaveLength(BORDER_SCULPT_CHUNKS);
       // TARGETED, not a broadcast (issue #17 decision 2).
-      expect(streamed[0].target).toBe(PLAYER_A.id);
-      expect(streamed[0].payload).toMatchObject({
-        type: 'chunkUnlock',
-        chunks: [{ cx: FRONTIER_CHUNK[0], cy: FRONTIER_CHUNK[1] }],
-      });
+      for (const message of streamed) expect(message.target).toBe(PLAYER_A.id);
+      expect(
+        streamed.some((m) =>
+          (m.payload as { chunks: { cx: number; cy: number }[] }).chunks.some(
+            (c) => c.cx === FRONTIER_CHUNK[0] && c.cy === FRONTIER_CHUNK[1],
+          ),
+        ),
+      ).toBe(true);
     });
 
     it('reveals nothing when the sculpting stays away from the border', () => {
       expect(paidSculpt(harness, PLAYER_A, INTERIOR_CELL.x, INTERIOR_CELL.y, 4).applied).toBe(true);
 
       expect(harness.sink.ofType('chunkUnlock')).toHaveLength(0);
+      const home = new Set(HOME_CHUNKS.map(([cx, cy]) => `${cx},${cy}`));
       for (let cy = 0; cy < WORLD_SIZE / 16; cy++) {
         for (let cx = 0; cx < WORLD_SIZE / 16; cx++) {
-          if (cx === HOME_CHUNK[0] && cy === HOME_CHUNK[1]) continue;
+          if (home.has(`${cx},${cy}`)) continue;
           expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, cx, cy)).toBe(false);
         }
       }
     });
 
     it('does not re-stream a chunk the sculptor already has', () => {
-      // HOME_CHUNK is already unlocked for A (seeded by boot()) — sculpting
-      // deep inside it must not fire a redundant unlockChunkForToken.
+      // Home is already unlocked for A (seeded by boot()) — sculpting deep
+      // inside it must not fire a redundant unlockChunkForToken.
       expect(paidSculpt(harness, PLAYER_A, INTERIOR_CELL.x, INTERIOR_CELL.y, 1).applied).toBe(true);
       expect(harness.sink.ofType('chunkUnlock')).toHaveLength(0);
     });
@@ -224,8 +247,8 @@ describe('reveal plugin', () => {
       expect(harness.world.isChunkUnlockedForToken(PLAYER_B.token, ...FRONTIER_CHUNK)).toBe(false);
 
       const streamed = harness.sink.ofType('chunkUnlock');
-      expect(streamed).toHaveLength(1);
-      expect(streamed[0].target).toBe(PLAYER_A.id);
+      expect(streamed).toHaveLength(BORDER_SCULPT_CHUNKS);
+      for (const message of streamed) expect(message.target).toBe(PLAYER_A.id);
       expect(streamed.some((m) => m.target === PLAYER_B.id)).toBe(false);
       expect(streamed.some((m) => m.target === 'broadcast')).toBe(false);
     });
@@ -238,8 +261,8 @@ describe('reveal plugin', () => {
 
       expect(harness.world.isChunkUnlockedForToken(PLAYER_B.token, ...FRONTIER_CHUNK)).toBe(true);
       const streamed = harness.sink.ofType('chunkUnlock');
-      expect(streamed).toHaveLength(1);
-      expect(streamed[0].target).toBe(PLAYER_B.id);
+      expect(streamed).toHaveLength(BORDER_SCULPT_CHUNKS);
+      for (const message of streamed) expect(message.target).toBe(PLAYER_B.id);
     });
   });
 });

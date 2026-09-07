@@ -19,7 +19,7 @@ import {
   CHUNK_SIZE,
   FULL_BRUSH_RADIUS,
   chunksPerEdge,
-  footprintChunkIndices,
+  revealChunkIndices,
   sculptDisplacementUnits,
 } from '@terrace/shared';
 import type { SculptProfile, SculptTool } from '@terrace/shared';
@@ -125,26 +125,29 @@ export function chunkUnlockPenalty(
 }
 
 /**
- * How many chunks this stroke would OPEN: the ones its footprint covers that
- * the sculptor has not already unlocked.
+ * How many chunks this stroke would OPEN: the ones within reveal reach of the
+ * clicked cell that the sculptor has not already unlocked.
  *
  * `isOpen` is the caller's own view of the sculptor's territory — the server
  * asks its per-token mask (WorldApi.isChunkUnlockedForToken), the client asks
  * what it has been sent (ClientPluginCtx.revealedAt, which IS that mask: a
  * locked chunk is never on the wire). One function so the two counts are the
- * same count, over the same disc the reveal plugin will open and the brushes
- * will sculpt (shared's footprintChunkIndices).
+ * same count, over the same disc the reveal plugin will open (shared's
+ * revealChunkIndices).
+ *
+ * NO RADIUS. The reveal reach is flat across every brush since 2026-09-06, so
+ * the brush decides the PRICE of the land (chunkUnlockPenalty above) and never
+ * how much of it there is.
  */
 export function openedChunkCount(
   worldSize: number,
   x: number,
   y: number,
-  radius: number,
   isOpen: (cx: number, cy: number) => boolean,
 ): number {
   const cols = chunksPerEdge(worldSize);
   let opened = 0;
-  for (const index of footprintChunkIndices(worldSize, x, y, radius)) {
+  for (const index of revealChunkIndices(worldSize, x, y)) {
     if (!isOpen(index % cols, Math.floor(index / cols))) opened++;
   }
   return opened;
