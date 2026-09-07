@@ -255,24 +255,10 @@ const sculptInput = createSculptInput({
     // is predicted, so a refusal cannot flicker. The server still runs its own
     // authoritative chain on whatever does go out.
     if (!pluginHost.allowLocalIntent(intent)) {
-      // A REFUSAL ENDS THE STROKE, IT DOES NOT JUST DROP THE INTENT (owner,
-      // 2026-09-06). A held brush re-emits on every pointer move and every
-      // repeat tick, so a stroke that runs out of mana mid-drag would
-      // otherwise keep firing into a gate that keeps refusing — and start
-      // sculpting again by itself the moment regen crossed the price, with the
-      // player's hand still moving. Released here, the button has to be lifted
-      // and pressed again, so what happens next is something the player asked
-      // for.
-      //
-      // AND THE BRUSH GOES RED, which is the half that says the tool did not
-      // break: `releaseStroke` records that the refused button is still down,
-      // and the outline is drawn from that state (SculptInput.refusedHold), so
-      // the red lasts until the player lets go rather than ending on a timer
-      // and leaving them a white brush that will not draw.
-      //
-      // DRIVEN BY THE CHAIN'S VERDICT rather than by the mana plugin's own
-      // denial signal: core must not import a plugin, and any interceptor's
-      // veto leaves the stroke in exactly the same dead state.
+      // A refusal ends the stroke rather than dropping one intent: a held
+      // brush would otherwise keep firing into a gate that keeps refusing.
+      // `releaseStroke` also records the button as still down, which is what
+      // the red outline is drawn from.
       sculptInput.releaseStroke();
       return false;
     }
@@ -294,11 +280,7 @@ const sculptInput = createSculptInput({
 // the meshes; radius, tool and edge are all read live so the outline reshapes
 // the moment the
 // HUD changes it.
-// THE REFUSAL CUE, MADE ONCE AND SHARED (render/denialCue.ts). Both things
-// that draw the player's aim read it — the brush outline below and the lit lip
-// in the frame loop — so they turn red on the same frame and blink in step.
-// Its input is the input module's own live state: the refused button is still
-// down. Nothing here keeps a copy of that.
+// One cue, read by the outline and by the lit lip, so they blink in step.
 const denialCue = createDenialCue(() => sculptInput.refusedHold());
 const brushPreview = createBrushPreview(
   viewport.scene,
@@ -337,9 +319,7 @@ viewport.onFrame(() => {
   // riser it grabbed within the first cell of travel, and the pick-derived band
   // is null everywhere but on a riser — so without this the lip the player was
   // holding went dark while they were still holding it.
-  // THE LIT LIP IS THE INTENT LINE, and it goes red with the brush (owner,
-  // 2026-09-06). Written before the lip is lit, so the frame that first draws
-  // a refused lip already draws it in the refused colour.
+  // Before the lip is lit, so its first refused frame is already red.
   world.setBrushRefused(denialCue.isRed());
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),

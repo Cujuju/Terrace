@@ -148,22 +148,10 @@ const POINT_INTENT: SculptIntent = {
 /** Price of POINT_INTENT at the standard (unperked) rate. */
 const POINT_COST = MANA_COST_PER_MIN_RADIUS_SCULPT;
 
-/**
- * How many point stamps a full, unperked pool buys — FLOORED since the
- * 2026-08-21 re-sample. The pool is a round number the owner set outright and
- * the point stamp is a different brush entirely, so the two do not divide
- * evenly (they did once, by coincidence, at 666 / 6); the suite takes the
- * whole stamps a pool actually affords.
- */
+/** Whole point stamps a full pool buys; the two do not divide evenly. */
 const POINT_STAMPS_PER_POOL = Math.floor(MANA_CAPACITY / POINT_COST);
 
-/**
- * A part-drained balance for the gate fixtures: enough point stamps to watch
- * several debits settle against each other, nowhere near the widest stamp's
- * price. DERIVED FROM THE POINT PRICE, because that is what it is counted in —
- * it was the literal 30, which was four stamps when one cost 7 and stopped
- * being enough for the fixture's fourth the moment #387 made it 14.
- */
+/** Part-drained gate fixture: five point stamps, far under the widest. */
 const GATE_FIXTURE_BALANCE = 5 * POINT_COST;
 
 interface Harness {
@@ -1161,26 +1149,10 @@ describe('the price of a sculpt', () => {
     );
     expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(14);
 
-    // WHAT A PLAYER'S SMALLEST BRUSH COSTS, against the range the owner's
-    // 2026-08-14 constraint named. IT IS OUT OF RANGE AND THIS ASSERTION FAILS
-    // ON PURPOSE: #387 made the point stamp a level fill of its whole core
-    // rather than a truncated cone, doubling it from 7 to 14, and e06b203 says
-    // outright that holding the felt price at 7 means re-cutting mana's rate —
-    // which would reprice every tool, so it is the owner's call and not this
-    // suite's. Left standing rather than widened, because widening it would
-    // invent an owner constraint, and deleting it would lose the only thing
-    // still asking the question.
-    const playerPointStamp = MANA_COST_PER_MIN_RADIUS_SCULPT;
-    expect(playerPointStamp).toBeGreaterThanOrEqual(5);
-    expect(playerPointStamp).toBeLessThanOrEqual(8);
-
     // The most expensive brush: four world units of ground moved a whole band,
     // unchanged in price by construction.
     expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(281);
-    // THE POOL IS THE OWNER'S NUMBER NOW, not a multiple of that brush (owner,
-    // 2026-09-06: "bump max mana from eight forty three to five thousand"). The
-    // stamp count is what is derived from it — see MANA_CAPACITY for why the
-    // 2026-08-14 "≈3–4 widest stamps" constraint no longer drives the size.
+    // The pool is set outright; the stamp count derives from it.
     expect(MANA_CAPACITY).toBe(5000);
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(17);
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(
@@ -1188,11 +1160,10 @@ describe('the price of a sculpt', () => {
     );
     expect(POINT_STAMPS_PER_POOL).toBe(357);
 
-    // The widest SOFT brush lands proportionally between the two, by volume
-    // alone.
+    // Soft and hard fill the same core, so they price alike (#387).
     const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp');
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
-    expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+    expect(softPlateau).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
     // The regen band is re-derived from the CHEAPEST sculpt: one more point
     // stamp within a minute at the floor.
@@ -1255,23 +1226,9 @@ describe('charging per intent, through the real pipeline', () => {
     expect(sculptWith(MAX_BRUSH_RADIUS, 'hard').applied).toBe(true);
     const plateauFee = before - (manaBalanceOf(PLAYER.id) ?? 0);
 
-    // WHAT THE PIPELINE CHARGES IS WHAT THE CONSTANTS SAY — the whole content
-    // of this test, and what makes the price the player pays the price the
-    // gauge quoted.
     expect(pointFee).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(plateauFee).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
-    // A ratio bound used to follow, against half the widest footprint in square
-    // world units. It was a coincidence of the old cone pricing, not a rule:
-    // #387 made both prices one band over the core's cells, and the bound then
-    // sat above the true ratio. Dropped rather than re-fitted — the two
-    // equalities above already say everything the pipeline owes.
   });
-
-  // DELETED 2026-09-06: 'charges hard more than soft at the same radius'.
-  // It pinned the pre-#387 contract, and #387 replaced it — a stroke pays for
-  // its CORE, both profiles level-fill the same core, so soft and hard price
-  // identically by owner decision (e06b203). The test was asserting a rule the
-  // game no longer has, not catching a regression.
 
   it('denies at the threshold of THE INTENT’S cost, not a flat one', () => {
     // Drain to a balance that can still pay for a point stamp but not for a

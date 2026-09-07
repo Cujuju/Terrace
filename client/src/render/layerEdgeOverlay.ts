@@ -92,8 +92,6 @@ import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
-// What GRABBED_COLOR becomes while the press is refused (`setRefused`) — the
-// brush outline's own red, so one refusal shows as one colour.
 import { DENIED_COLOR } from './denialCue.ts';
 
 /**
@@ -332,18 +330,8 @@ export interface LayerEdgeOverlay {
    */
   setStyle(style: LayerEdgeStyle): void;
   /**
-   * THE LIT LIP IS THE INTENT LINE, so it goes red with the brush when a
-   * client plugin has refused the press (owner, 2026-09-06: "we are changing
-   * the brush, but we are not changing the intent line"). The brush outline
-   * says which cells; this says which lip those cells would move — a red brush
-   * over a warm-white lip is the tool saying it is dead and alive at once.
-   *
-   * DRIVEN FROM render/denialCue.ts, the same cue the outline reads, so the
-   * two turn red on the same frame and blink in step.
-   *
-   * ONLY THE GRABBED LIP. The resting edges are a picture of what the map
-   * knows, not of what this press would do, and reddening them would say the
-   * whole world was refused.
+   * The lit lip is the intent line, so it reddens with the brush on a refused
+   * press. Only the grabbed lip: the resting edges are not this press.
    */
   setRefused(refused: boolean): void;
   /** Drops every edge mesh — for a fresh join replacing the world. */
@@ -697,11 +685,7 @@ export function createLayerEdgeOverlay(
     depthWrite: false,
   });
   let grabbed: LineSegments | null = null;
-  /**
-   * What `grabbedMaterial.color` currently holds, so the per-frame
-   * `setRefused` is a compare rather than a colour write on every frame of
-   * every session.
-   */
+  /** What the material holds, so the per-frame call is a compare. */
   let grabbedRefused = false;
 
   const clearGrabbed = (): void => {

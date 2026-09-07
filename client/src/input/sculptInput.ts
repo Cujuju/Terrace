@@ -216,35 +216,13 @@ export interface SculptInput {
    */
   heldBand(): number | null;
   /**
-   * ENDS THE LIVE STROKE AS A POINTERUP WOULD — the grab dropped, the aimed
-   * cell unpinned, the drag's sent-region bookkeeping cleared, the repeat
-   * timer cancelled — while the button is still physically held.
-   *
-   * FOR A CLIENT-SIDE REFUSAL (owner, 2026-09-06: "disable the click... like
-   * the user let off the click, so that if they're continuing to drag around
-   * while holding the mouse, they don't get inconsistent sculpting"). The
-   * plugin interceptor chain vetoes ONE intent (main.tsx's `send`), but a held
-   * stroke re-emits on every pointer move and every repeat tick, so without
-   * this a stroke that ran out of mana kept firing intents into a gate that
-   * kept refusing them — sculpting again the instant regen crossed the price,
-   * mid-drag, without the player having pressed anything.
-   *
-   * The stroke does NOT resume on its own: a fresh pointerdown is required,
-   * which is the intentional re-click the owner asked for.
+   * Ends the live stroke as a pointerup would, while the button is still held
+   * — for a client-plugin veto. A fresh pointerdown is required to resume.
    */
   releaseStroke(): void;
   /**
-   * IS A REFUSED BUTTON STILL DOWN — true from the veto that called
-   * `releaseStroke` until that same pointer comes up (or is cancelled, or the
-   * window loses it, or a new press supersedes it).
-   *
-   * WHAT THE RED OUTLINE IS DRAWN FROM (render/brushPreview.ts's `denied`).
-   * The refusal is not an event that happens and is gone, it is the state the
-   * press is in — owner, 2026-09-06: "if it just goes back to the normal
-   * colour and they can't draw, then they have no idea what's going on". The
-   * button being down is exactly as long as that state lasts, and this module
-   * is the one that knows it, so the cue is read from here rather than kept as
-   * a second copy inside the renderer.
+   * Is a refused button still down: true from the veto until that pointer
+   * comes up. What the red outline and lit lip are drawn from.
    */
   refusedHold(): boolean;
   dispose(): void;
@@ -977,39 +955,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
-   * IS A STROKE STILL IN FLIGHT? Every field `stopRepeat` clears would answer,
-   * and the pointer id is the one that is set for a stroke of either input
-   * kind and at every stage of it — before arming (a touch stroke waiting out
-   * its grace delay) as well as after.
-   *
-   * Asked after each `emitIntent`, because `send` can end the stroke UNDER the
-   * caller: a client-plugin veto releases it (see `releaseStroke`), and the
-   * callers below would otherwise go on to arm, or to schedule the next
-   * repeat of, a stroke that is over.
+   * Asked after each `emitIntent`, because `send` can end the stroke under the
+   * caller: a client-plugin veto releases it.
    */
   const strokeIsLive = (): boolean => strokePointerId !== null;
 
   /**
-   * The pointer whose stroke a client plugin refused, while its button is
-   * STILL DOWN — null the rest of the time. See `refusedHold`.
-   *
-   * The id and not a boolean: the release that clears it has to be THIS
-   * pointer's, or a second finger lifting, or the tail of an unrelated pointer
-   * still being tracked on the window, would put the brush back to white while
-   * the refused button was still held.
+   * The pointer whose stroke was refused, while its button is still down. The
+   * id, not a boolean: only THIS pointer's release may clear it.
    */
   let refusedPointerId: number | null = null;
 
-  /**
-   * Ends the stroke on a client-plugin veto and REMEMBERS that its button is
-   * still down. Everything `stopRepeat` does, plus the one fact stopping does
-   * not carry: the player has not let go, so the refusal is still on screen.
-   */
   const releaseRefusedStroke = (): void => {
-    // Read before stopRepeat clears it. Null when nothing was live (a veto can
-    // only come from an intent, and every intent belongs to a stroke, so this
-    // is defence rather than an expected case).
-    const refused = strokePointerId;
+    const refused = strokePointerId; // before stopRepeat clears it
     stopRepeat();
     refusedPointerId = refused;
   };
@@ -1046,10 +1004,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // has passed anyway. A mouse press has already taken hold in startStroke,
     // where the pointer is exactly where the player put it.
     if (strokeIsTouch) takeHold(currentStrokeAction());
-    // The seed a Drag press makes is itself an intent (takeHold → seedLayer),
-    // so it can be the one that is refused — here for a touch stroke, back in
-    // `startStroke` for a mouse one. Either way the stroke is already over and
-    // arming it would emit the very intent that was just refused.
+    // The Drag seed is itself an intent, so it can be the refused one.
     if (!strokeIsLive()) return;
     strokeArmed = true;
     emitIntent();
@@ -1181,9 +1136,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // Abandon any stroke still in flight (e.g. a missed pointerup) before
     // starting this one, so at most one repeat timer can ever exist.
     stopRepeat();
-    // A NEW PRESS IS THE INTENTIONAL RE-CLICK the refusal was waiting for
-    // (owner, 2026-09-06), so the red goes with it — even if the pointerup for
-    // the refused button was never delivered here.
+    // A new press is the re-click the refusal was waiting for.
     refusedPointerId = null;
 
     strokeButton = event.button;
@@ -1304,9 +1257,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   const onPointerUp = (event: PointerEvent): void => {
     if (event.pointerType === 'touch') activeTouchIds.delete(event.pointerId);
-    // THE RELEASE THE REFUSAL WAS WAITING FOR — cleared before the stroke test
-    // below, which a refused pointer no longer passes: `releaseRefusedStroke`
-    // has already dropped `strokePointerId`.
+    // Before the stroke test, which a refused pointer no longer passes.
     if (event.pointerId === refusedPointerId) refusedPointerId = null;
     if (event.pointerId !== strokePointerId) return;
     // A tap quicker than the grace delay ended before the stroke armed. It is
@@ -1346,9 +1297,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   // ever arrive for fingers lifted while another window had focus.
   const onWindowBlur = (): void => {
     activeTouchIds.clear();
-    // No pointerup will arrive for a button released while another window had
-    // focus, so a refusal held across the blur would leave the brush red for
-    // the rest of the session.
+    // No pointerup arrives for a button released while unfocused.
     refusedPointerId = null;
     stopRepeat();
   };

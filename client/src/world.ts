@@ -235,14 +235,8 @@ export interface World extends TerrainSink {
    */
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
   /**
-   * Draws the lit lip — the intent line — in the refused red, or back in its
-   * own colour (LayerEdgeOverlay.setRefused).
-   *
-   * WRITTEN EVERY FRAME by main.tsx from the shared denial cue, which is why
-   * nothing is remembered here the way `setLayerEdgeStyle` remembers its
-   * style: a rejoin's fresh overlay is correct on the next frame anyway, and a
-   * remembered copy could only be a second, staler answer. The overlay
-   * compares before it writes, so the per-frame call costs one compare.
+   * Reddens the lit lip on a refused press. Written every frame, so nothing is
+   * remembered here — a rejoin's fresh overlay is right on the next frame.
    */
   setBrushRefused(refused: boolean): void;
   /**

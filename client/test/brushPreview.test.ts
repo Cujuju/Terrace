@@ -157,7 +157,7 @@ function brush(radius: number): BrushSelection {
 /** World edge for the tests below: any size works, the clip must follow it. */
 const TEST_WORLD_SIZE_CELLS = 64;
 
-/** No client plugin has vetoed: the outline draws its ordinary colours. */
+/** Nothing vetoed: the outline draws its ordinary colours. */
 const NEVER_DENIED = createDenialCue(() => false);
 
 // ─────────────────────────────────────────────────────────────────────────────
