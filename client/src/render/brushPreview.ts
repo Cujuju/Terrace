@@ -613,14 +613,8 @@ interface Mark {
  * the footprint may change BAND at all, which is precisely what is measured
  * here.
  */
-// SIZED AGAINST THE SWEPT RADIUS, NOT THE BRUSH RADIUS (issue #387, review
-// 2026-09-06). A soft stamp writes an apron beyond its core, so the widest
-// stroke reaches sculptSweepRadius cells rather than MAX_BRUSH_RADIUS, and a
-// map sized for the core clips it — the one thing the doc above says must
-// never happen, because a clipped stroke is a different stroke. It was
-// harmless only because the apron writes nothing on the flat band-floor ground
-// simulated here, which is a coincidence of the fixture and not a property of
-// the brush; sizing to the sweep stops the guarantee resting on it.
+// Swept radius, not brush radius: a soft stamp reaches past its core, and a
+// clipped stroke is a different stroke (#387).
 const SIMULATION_SPAN_CELLS =
   2 * (sculptSweepRadius(MAX_BRUSH_RADIUS, 'soft', 'stamp', 'clicked') + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
 

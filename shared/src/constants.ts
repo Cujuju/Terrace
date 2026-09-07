@@ -361,31 +361,8 @@ export const LEGACY_MIN_HEIGHT = -1536;
 export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
 
 /**
- * How far a SOFT stroke's apron reaches beyond the brush core, in cells
- * (issue #387, owner 2026-09-06: "the center should be the size of the brush,
- * and then outside of that it should continue to pull up the land around it").
- *
- * DERIVED FROM MAX_STEP, NOT CHOSEN — as a RUN, and only as a run. MAX_STEP
- * is one band of fall per WORLD_UNIT_CELLS cells, the steepest slope this
- * world allows, so this is exactly the ground a one-band talus would need to
- * stand on. The apron is sited where that talus would reach.
- *
- * WHAT IT IS NOT, stated because the derivation invites the wrong reading and
- * a comment is a claim, not evidence (review, 2026-09-06): the apron is not a
- * ramp. `applySoftSkirt` gives the whole of it ONE target — the core's level,
- * one band back — so what it builds is a second plateau, and both of its edges
- * are sheer. Measured at radius 4 after six presses, the profile out from the
- * centre reads 224,224,224,224 | 208,208,208,208 | 128,128,128,128: an inner
- * step of 4x MAX_STEP and an outer one that grows a band per press without
- * bound, because `stamp` runs no relaxation and nothing eats it. That is the
- * same sheer edge hard's cylinder has and is not a defect, but this constant
- * does not soften it and must not be read as if it did.
- *
- * ONE BAND, THEREFORE ONE RING SET: one target for the whole apron is what
- * keeps `applySoftSkirt` a single sweep and its price a function of the radius
- * alone. The multi-band talus that would actually ramp — walking outward as
- * the core climbs, costing a sweep proportional to the core's height — is the
- * follow-up this deliberately is not. See #387.
+ * Cells a soft stroke's apron reaches past the core (#387). One band's run at
+ * MAX_STEP. Read applySoftSkirt: the apron is one flat step, not a ramp.
  */
 export const SOFT_SKIRT_CELLS = WORLD_UNIT_CELLS;
 

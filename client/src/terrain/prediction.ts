@@ -380,17 +380,8 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   // each disc the sweep stands in for.
   const canPredictFaithfully = (intent: SculptIntent): boolean => {
     const { x, y } = intent;
-    // THE RADIUS THE STROKE SWEEPS, NOT THE ONE IT CARRIES (issue #387). A
-    // player's soft stamp writes an apron beyond its core, so asking about the
-    // core alone green-lit a prediction that then read cells this client has
-    // never been sent — up to three of them past the halo at the default
-    // brush, filled in from the mirror at SEA_LEVEL, which is the simulation
-    // reading fiction that PREDICTION_HALO_CELLS exists to forbid.
-    //
-    // Resolved through `sculptOptionsOf`, the one normalisation both replicas
-    // run, and measured by shared's own `sculptSweepRadius` — the same
-    // function the sweep and the price use. A local copy of the arithmetic
-    // here is exactly the drift this guard exists to catch.
+    // The radius the stroke SWEEPS, not the one it carries: a soft stamp writes
+    // an apron past its core, and reading unpushed cells is fiction (#387).
     const options = sculptOptionsOf(intent);
     const radius = sculptSweepRadius(
       intent.radius,

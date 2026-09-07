@@ -149,14 +149,8 @@ describe('predict', () => {
 
   it('drops the oldest prediction once the in-flight cap is reached', () => {
     const { store } = createClient();
-    // ALTERNATING DIRECTIONS, so every one of these presses genuinely moves
-    // ground and is therefore retained — a prediction that changed nothing is
-    // dropped (the test above), which would make this measure saturation
-    // rather than the cap. Since #387 both profiles level-fill the core, so a
-    // held raise on one cell reaches MAX_HEIGHT in MAX_HEIGHT / BAND_HEIGHT
-    // presses — fewer than the cap — and the old fixture stopped counting
-    // there. Flipping the direction keeps the cell oscillating across one band
-    // boundary for as many presses as the cap needs.
+    // Alternating direction so every press moves ground. A held raise now
+    // saturates at MAX_HEIGHT in 64 presses, fewer than the cap (#387).
     for (let i = 0; i <= MAX_PENDING_PREDICTIONS; i++) {
       store.predict({ ...raise(), dir: i % 2 === 0 ? 1 : -1 }, i);
     }

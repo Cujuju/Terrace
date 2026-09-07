@@ -1047,65 +1047,8 @@ export function applyLevelFillBrush(
 }
 
 /**
- * THE SOFT PROFILE'S APRON — the ring of ground between the brush core and
- * SOFT_SKIRT_CELLS beyond it, filled toward ONE BAND BACK from the core's own
- * level (issue #387, owner 2026-09-06).
- *
- * WHY THE FALLOFF IS A BAND AND NOT A FRACTION. The soft brush used to spend
- * its falloff in height UNITS — `trunc(amount · (r − d) / r)` — and terraced
- * rendering draws bands, so at radius 4 the ring one cell out took 12 of the
- * 16 units a band needs and DREW UNCHANGED. Measured on flat band-floor
- * ground, at every one of the four brush sizes, a soft press moved exactly one
- * visible cell. A target expressed in bands is visible on the press that makes
- * it, by construction.
- *
- * THE CORE IS THE BRUSH, AND BOTH PROFILES NOW AGREE ON THAT (the whole point
- * of #387): `radius` used to name the outer edge of the soft cone and the
- * whole of the hard disc, so one number meant two things. The core is filled
- * by `applyLevelFillBrush` under either profile; this is the only thing soft
- * adds.
- *
- * ONE SWEEP, ONE TARGET. SOFT_SKIRT_CELLS is one band's run at MAX_STEP, so
- * the entire apron sits one band back from the core and there is no per-ring
- * arithmetic here to disagree with the price.
- *
- * NOTHING HAPPENS ON THE FIRST PRESS OVER FLAT GROUND, and that is the
- * contract rather than a shortfall: the apron's target is the core's level one
- * band back, which on flat ground the press has only just left. From the
- * second press the apron climbs with the core, one band behind it — a stepped
- * mound, which is what the soft profile is FOR now that hard is the cylinder.
- *
- * PLAYER STROKES ONLY, exactly as the anchored brush is: `applySculpt`
- * reaches this only under `anchor: 'clicked'`, so the library-compatibility
- * contract (an absent options argument reproducing the pre-2026-08-14 cone bit
- * for bit) is untouched.
- */
-/**
- * THE RADIUS A STROKE ACTUALLY SWEEPS — the core for every tool and profile
- * but a player's soft stamp, which also sweeps its apron (issue #387).
- *
- * THREE READERS, ONE STATEMENT, and the third is why this is exported. The
- * sweep (`applySoftSkirt`) and the price (`sculptDisplacementUnits`) have to
- * agree or the mana gate charges for ground the stroke never touches; the
- * client's prediction guard (client/src/terrain/prediction.ts's `discIsKnown`)
- * has to agree with BOTH or it green-lights a stroke that reads cells the
- * client has never been sent. It asked about the core alone until #387 gave
- * soft an apron, and a prediction that reads unknown ground is the client
- * simulating fiction — see PREDICTION_HALO_CELLS for why that is fatal rather
- * than merely wrong.
- *
- * NOT the halo. This is the reach of the WRITES and the reads that feed them;
- * a caller that also reads a ring outside its sweep (relaxation does) adds
- * that ring itself.
- *
- * THE ANCHOR IS A PARAMETER, and it is the third of three conditions rather
- * than an assumption (review, 2026-09-06). `applySculpt`'s own `softCore` gate
- * asks for `clicked` as well, and a version here that asked for only two would
- * be a second, laxer statement of the same predicate — true today solely
- * because the wire normalisation cannot produce a soft stamp on any other
- * anchor, which is an invariant of protocol.ts that nothing in this file
- * enforces. A plugin calling applySculpt with soft/stamp/free sweeps the core
- * alone, and this must say so.
+ * Cells this stroke writes to. Shared by the sweep, the price and the client's
+ * prediction guard — they must not disagree. All three gate conditions, not two.
  */
 export function sculptSweepRadius(
   radius: number,
@@ -1118,24 +1061,15 @@ export function sculptSweepRadius(
     : radius;
 }
 
-/**
- * How far this brush's apron actually reaches, in cells: the SMALLER of one
- * band's run (SOFT_SKIRT_CELLS) and the brush's own radius.
- *
- * BOTH BOUNDS ARE DERIVED, and the tighter one wins. The first is the terrain's
- * maximum slope — see SOFT_SKIRT_CELLS. The second is a rule about aim: a
- * stroke may not move ground further from the cell the player named than the
- * brush itself reaches, or the finest brush in the game stops being fine. At
- * radius 1 the uncapped skirt was a 60-cell apron around a ONE-cell core,
- * which is not a soft point brush, it is a different brush.
- *
- * ONE DEFINITION, TWO READERS: the sweep and the price. They must agree or the
- * mana gate charges for a disc the stroke does not touch.
- */
+/** Apron run: one band's run, or the radius when that is smaller. */
 function softSkirtCells(radius: number): number {
   return radius < SOFT_SKIRT_CELLS ? radius : SOFT_SKIRT_CELLS;
 }
 
+/**
+ * The soft profile's apron: one flat step, one band back from the core.
+ * Targets are bands, so a press is always visible (#387).
+ */
 function applySoftSkirt(
   map: Heightmap,
   cx: number,
@@ -1148,20 +1082,13 @@ function applySoftSkirt(
 ): void {
   if (amount === 0) return;
   const raising = amount > 0;
-  // ONE BAND BACK FROM THE CORE, clamped for the same reason
-  // applyLevelFillBrush clamps its own target: a core at the top band puts
-  // this one band off the map's range.
   const target = clampHeight(coreTarget + (raising ? -BAND_HEIGHT : BAND_HEIGHT));
   forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, 'soft', 'stamp', 'clicked'), (i) => {
-    // THE CORE IS ALREADY DONE, and it is excluded by the core's OWN
-    // membership test rather than by a distance compared here — one statement
-    // of the disc's shape, the same one `forEachFootprintOffset` walks.
+    // Core cells are already filled; excluded by the core's own membership test.
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
     if (isFootprintOffset(radius, x - cx, y - cy)) return;
-    // A cell the grasped band passes clean through is SKIPPED, not filled —
-    // the same rule applyBrush states: treating a void as ground at some other
-    // height is terrain invented out of nothing.
+    // Open air at this level: skip, never fill. Same rule as applyBrush.
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
@@ -2102,39 +2029,14 @@ export function sculptDisplacementUnits(
     return cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
   }
 
-  // A PLAYER'S STROKE MOVES ONE BAND PER CELL UNDER EITHER PROFILE (issue
-  // #387). The soft cone this used to price is now the plugin path only
-  // (`anchor: 'free'`): a player's soft stroke level-fills the same core the
-  // hard one does and adds an apron, so the two profiles differ in the SIZE of
-  // the priced disc and in nothing else.
-  //
-  // WHY THE PRICE STOPPED SHARING brushDelta, stated because the doc above
-  // rests on it having done so: the cone's per-cell delta no longer describes
-  // what a player's stroke does, so pricing through it would have charged a
-  // falloff the stroke does not apply. What replaces the shared function is a
-  // shared RADIUS — the same `radius + SOFT_SKIRT_CELLS` disc applySoftSkirt
-  // sweeps, walked by the same iterator — so "the cells priced are the cells
-  // brushed" still holds by construction. The library cone keeps brushDelta,
-  // and a plugin terraform is not priced at all.
-  // THE APRON IS THE STAMP'S, so only the stamp is charged for it — the same
-  // `tool === 'stamp'` gate applySculpt runs, stated here because a price that
-  // charged `smooth` for a disc it never sweeps is exactly the gauge/gate
-  // mismatch this function exists to prevent.
-  // 'clicked' because a PRICED stroke is a player's, by definition: the mana
-  // gate and the server price the wire path, whose normalisation gives every
-  // non-drag intent that anchor (protocol.ts's sculptOptionsOf). A plugin
-  // terraform runs 'free' and is not priced at all.
+  // One band per cell either way now: the profiles differ only in disc size.
+  // 'clicked': a priced stroke is a player's. Plugin terraforms run 'free'.
   const pricedRadius = sculptSweepRadius(radius, profile, tool, 'clicked');
   let cells = 0;
   forEachFootprintOffset(pricedRadius, () => {
     cells++;
   });
-  // DEFAULT_SCULPT_AMOUNT is the amount a sculpt intent actually carries — it
-  // is server configuration, never client input (protocol.ts). Its absolute
-  // value for the same reason the old sum took one: raising and lowering
-  // displace the same volume, so a lower costs exactly what the raise that
-  // undoes it costs, and a plugin-configured negative amount must not price
-  // out as a negative volume.
+  // |amount|: a lower costs what the raise that undoes it costs.
   const perCell =
     DEFAULT_SCULPT_AMOUNT < 0 ? -DEFAULT_SCULPT_AMOUNT : DEFAULT_SCULPT_AMOUNT;
   return cells * perCell;
@@ -3067,30 +2969,10 @@ export function applySculpt(
   // the level fill is what "hard" means now, under either tool. `anchor`
   // reaches both branches — it decides where the fill/ceiling level comes
   // from (the clicked cell for players, the old derivations for the library).
-  // A PLAYER'S SOFT STROKE IS A CORE PLUS AN APRON (issue #387, owner
-  // 2026-09-06). `radius` names the CORE under both profiles now, so the core
-  // is the same level fill either way and `soft` is the level fill plus
-  // `applySoftSkirt`. What separates the two profiles is no longer the shape
-  // of the disc — it is whether anything happens outside it.
-  //
-  // GATED ON THE ANCHOR, not on the profile alone, and that is the whole of
-  // the library-compatibility contract: `anchor: 'free'` is the plugin path
-  // (LIBRARY_DEFAULT_SCULPT_OPTIONS), and it still runs the pre-2026-08-14
-  // cone through applyBrush, bit for bit. 'band' is the drag's, whose profile
-  // is normalised to `hard` on the wire and which has no apron by definition —
-  // a pull moves a level sideways and may not change which bands exist.
-  //
-  // STAMP ONLY, and not `smooth` (owner's framing, 2026-09-06: "for a stamp on
-  // soft, I would expect the center to be the size of the brush"). Smooth
-  // already reaches outside its footprint through relaxation, and giving it a
-  // second, differently-shaped outside reach would be two rules for the same
-  // ground. The soft cone it keeps is the invisible one #387 measured — left
-  // standing deliberately, because #388 is to stop that tool building height
-  // at all, and widening it here would be work thrown away.
+  // radius names the CORE under both profiles (#387); soft adds the apron.
+  // 'free' is the plugin path: still the old cone. Not smooth — see #388.
   const softCore = profile === 'soft' && anchor === 'clicked' && tool === 'stamp';
-  // READ BEFORE THE CORE WRITES, for the same reason the brushes read their
-  // own target first: the centre is a core cell, so deriving the apron's level
-  // afterwards would measure it against ground this stroke had already moved.
+  // Read before the core writes: the centre is a core cell.
   const skirtCoreTarget = softCore
     ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
     : 0;
