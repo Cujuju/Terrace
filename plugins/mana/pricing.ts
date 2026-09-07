@@ -14,7 +14,14 @@
 // function is what turns that rate into a price. protocol.ts describes the
 // shapes on the wire; this describes the arithmetic behind one of its fields.
 
-import { BAND_HEIGHT, sculptDisplacementUnits } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  FULL_BRUSH_RADIUS,
+  chunksPerEdge,
+  footprintChunkIndices,
+  sculptDisplacementUnits,
+} from '@terrace/shared';
 import type { SculptProfile, SculptTool } from '@terrace/shared';
 
 /**
@@ -70,4 +77,80 @@ export function sculptManaCost(
   return Math.ceil(
     (manaPerBandCell * sculptDisplacementUnits(radius, profile, tool) * sweepSteps) / BAND_HEIGHT,
   );
+}
+
+
+/**
+ * WHAT OPENING ONE FOGGED CHUNK COSTS ON TOP OF THE STROKE ITSELF.
+ *
+ * THE RULE (owner, 2026-09-06): a chunk costs the same to open however you
+ * open it. The full brush pays that price as part of its own stroke and owes
+ * nothing extra; every narrower brush pays the difference. So the penalty is
+ * `fullBrushStroke − thisStroke`, which is zero at FULL_BRUSH_RADIUS by
+ * construction rather than by a special case, and rises as the brush shrinks —
+ * exactly the shape the owner asked for ("no penalty at maximum brush size,
+ * because that's already going to consume pretty much all of your mana").
+ *
+ * WHY EXPANSION NEEDS A PRICE AT ALL. Since 2026-09-06 the reveal plugin opens
+ * every chunk a stroke's FOOTPRINT covers rather than every chunk its diff
+ * reached (plugins/reveal), which is what made the frontier predictable. It
+ * also made the cheapest brush as good at claiming territory as the dearest
+ * one, since a click is a click: without this, the efficient way to take the
+ * map would be to poke at its edge with the 0.25 brush. This restores the
+ * proportion the volume price already has everywhere else — land costs mana —
+ * to the one act that had escaped it.
+ *
+ * NOT SCALED BY SWEEP STEPS, unlike the stroke price. A swept drag pays per
+ * disc because it makes the edit each of those discs would have made; the
+ * chunks it opens are counted once each regardless, so the surcharge is per
+ * CHUNK and the sweep has already been paid for.
+ *
+ * A BRUSH WIDER THAN FULL_BRUSH_RADIUS pays nothing: the subtraction floors at
+ * zero. That is reachable only by a plugin widening a stroke (relics' Titan's
+ * Hand), and a brush bigger than the one the penalty is measured against has
+ * already paid more than the penalty asks.
+ *
+ * Both halves import this, for the reason the whole module exists: the client
+ * gate must refuse exactly the strokes the server would refuse.
+ */
+export function chunkUnlockPenalty(
+  manaPerBandCell: number,
+  radius: number,
+  profile: SculptProfile,
+  tool: SculptTool,
+): number {
+  const full = sculptManaCost(manaPerBandCell, FULL_BRUSH_RADIUS, profile, tool);
+  const own = sculptManaCost(manaPerBandCell, radius, profile, tool);
+  return full > own ? full - own : 0;
+}
+
+/**
+ * How many chunks this stroke would OPEN: the ones its footprint covers that
+ * the sculptor has not already unlocked.
+ *
+ * `isOpen` is the caller's own view of the sculptor's territory — the server
+ * asks its per-token mask (WorldApi.isChunkUnlockedForToken), the client asks
+ * what it has been sent (ClientPluginCtx.revealedAt, which IS that mask: a
+ * locked chunk is never on the wire). One function so the two counts are the
+ * same count, over the same disc the reveal plugin will open and the brushes
+ * will sculpt (shared's footprintChunkIndices).
+ */
+export function openedChunkCount(
+  worldSize: number,
+  x: number,
+  y: number,
+  radius: number,
+  isOpen: (cx: number, cy: number) => boolean,
+): number {
+  const cols = chunksPerEdge(worldSize);
+  let opened = 0;
+  for (const index of footprintChunkIndices(worldSize, x, y, radius)) {
+    if (!isOpen(index % cols, Math.floor(index / cols))) opened++;
+  }
+  return opened;
+}
+
+/** A chunk's origin cell — what a cell-granular `isOpen` is asked about. */
+export function chunkOriginCell(cx: number, cy: number): { x: number; y: number } {
+  return { x: cx * CHUNK_SIZE, y: cy * CHUNK_SIZE };
 }

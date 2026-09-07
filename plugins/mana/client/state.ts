@@ -3,7 +3,7 @@
 
 import { createSignal } from 'solid-js';
 import { sculptOptionsOf, sculptProfileOf, sculptSweepSteps, type SculptIntent } from '@terrace/shared';
-import { sculptManaCost } from '../pricing.ts';
+import { chunkOriginCell, chunkUnlockPenalty, openedChunkCount, sculptManaCost } from '../pricing.ts';
 import type { ManaBalanceMessage, ManaDeniedMessage } from '../protocol.ts';
 // THE ACCEPTED COUPLING (documented, deliberate): a plugin's client half reaching
 // into the core client's HUD state. Both compile into the same browser bundle
@@ -260,6 +260,17 @@ export function currentBalance(): number | null {
 }
 
 /**
+ * What the gate needs to know about this player's territory — the two reads
+ * from ClientPluginCtx that decide how much of the stroke's footprint is
+ * still fogged. A structural slice rather than the whole ctx, so the pricing
+ * path stays testable and cannot reach for anything else.
+ */
+export interface LocalTerritory {
+  worldSize(): number;
+  revealedAt(x: number, y: number): boolean;
+}
+
+/**
  * THE LOCAL INTENT GATE (wired to ClientPluginCtx.onLocalIntent).
  *
  * Decides against REPLICATED server state whether the player can pay for THIS
@@ -303,18 +314,38 @@ export function currentBalance(): number | null {
  * has not landed), the gate allows: the mana client half must never invent an
  * economy the server did not declare.
  */
-export function gateLocalSculpt(intent: SculptIntent): boolean {
+export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory): boolean {
   const pool = manaPool();
   if (pool === null) return true;
 
   const options = sculptOptionsOf(intent);
-  const cost = sculptManaCost(
-    pool.manaPerBandCell,
-    intent.radius,
-    options.profile,
-    options.tool,
-    sculptSweepSteps(intent),
-  );
+  // THE LAND THIS STROKE WOULD CLAIM, priced exactly as the server prices it
+  // (../pricing.ts). The client can answer this without a round trip because
+  // its received-chunk set IS its own unlock mask — a locked chunk is never on
+  // the wire — so `revealedAt` and the server's per-token mask are the same
+  // fact asked two ways.
+  //
+  // A worldSize of 0 (no snapshot yet) means there is nothing to open and
+  // nothing to gate; `openedChunkCount` is not asked, because chunksPerEdge
+  // throws on a size that is not a multiple of CHUNK_SIZE.
+  const worldSize = territory.worldSize();
+  const opened =
+    worldSize <= 0
+      ? 0
+      : openedChunkCount(worldSize, intent.x, intent.y, intent.radius, (cx, cy) => {
+          const origin = chunkOriginCell(cx, cy);
+          return territory.revealedAt(origin.x, origin.y);
+        });
+  const cost =
+    sculptManaCost(
+      pool.manaPerBandCell,
+      intent.radius,
+      options.profile,
+      options.tool,
+      sculptSweepSteps(intent),
+    ) +
+    opened *
+      chunkUnlockPenalty(pool.manaPerBandCell, intent.radius, options.profile, options.tool);
 
   // CONFIRMED MANA ONLY — the pushed balance less the debits already taken
   // against it. No local regen: see this function's doc comment and

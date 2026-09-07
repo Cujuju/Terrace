@@ -59,6 +59,9 @@ export const clientPlugin: TerraceClientPlugin = {
     // The client half of the interceptor chain: unaffordable sculpts stop
     // here, before they are sent or predicted (see gateLocalSculpt). The INTENT
     // is passed through — its radius and profile are what it costs.
-    ctx.onLocalIntent((intent) => gateLocalSculpt(intent));
+    // The ctx doubles as the gate's LocalTerritory: what this client has been
+    // sent is what its player has unlocked, which is what decides whether the
+    // stroke is also buying land (see gateLocalSculpt).
+    ctx.onLocalIntent((intent) => gateLocalSculpt(intent, ctx));
   },
 };

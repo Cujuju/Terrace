@@ -73,6 +73,14 @@ import {
   setManaPerk,
 } from '../server/index.ts';
 
+/**
+ * A territory in which every chunk is already the player's, so the gate prices
+ * the stroke alone. These cases are about the volume price; the unlock penalty
+ * has its own coverage.
+ */
+const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true };
+
+
 /** 64² cells = 4×4 chunks — small enough to reason about cell by cell. */
 const WORLD_SIZE = 64;
 
@@ -163,6 +171,25 @@ interface Harness {
  * sorts directories alphabetically: mana, then reveal) and walks the same boot
  * sequence server/src/index.ts does.
  */
+/**
+ * Seeds PLAYER's OWN mask with every chunk the test world unlocked, exactly as
+ * a real join seeds the starter square (world/initial-unlock.ts's
+ * applyInitialUnlockForToken) before anything else runs.
+ *
+ * It stopped being optional on 2026-09-06: mana now prices the chunks a stroke
+ * would OPEN for its sculptor, so a token holding no mask at all would be
+ * billed for buying the very ground the test world was set up to have already
+ * given it.
+ */
+function seedTerritory(world: World): void {
+  const edge = world.chunksPerEdge;
+  for (let cy = 0; cy < edge; cy++) {
+    for (let cx = 0; cx < edge; cx++) {
+      if (world.isChunkUnlocked(cx, cy)) world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+  }
+}
+
 function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   resetManaState();
   nextHelperDir = 1;
@@ -176,13 +203,8 @@ function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   host.worldCreate();
 
   world.addPlayer(PLAYER);
+  seedTerritory(world);
   host.playerJoined(PLAYER);
-  // A real join seeds the starter square into the joining token's OWN mask
-  // (terrace-room.ts's applyInitialUnlockForToken) before this harness's
-  // equivalent of the join snapshot is ever read; this harness never builds
-  // one, so nothing here depends on PLAYER's per-token mask — only the union
-  // mask worldWithUnlockedChunks sets up, which every existing assertion in
-  // this file already reasons about.
 
   return { world, host, sink };
 }
@@ -995,7 +1017,7 @@ describe('client local intent gate', () => {
     );
 
     setManaPool(null);
-    expect(gateLocalSculpt(POINT_INTENT)).toBe(true); // no economy: never veto
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // no economy: never veto
 
     // 30 mana at rate 6: five point stamps' worth.
     setManaPool({
@@ -1004,7 +1026,7 @@ describe('client local intent gate', () => {
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
-    expect(gateLocalSculpt(POINT_INTENT)).toBe(true); // 30 -> 24, affordable
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // 30 -> 24, affordable
     expect(manaPool()?.balance).toBe(30 - POINT_COST);
 
     const denialsBefore = deniedCount();
@@ -1015,13 +1037,13 @@ describe('client local intent gate', () => {
       radius: MAX_BRUSH_RADIUS,
       profile: 'hard',
     };
-    expect(gateLocalSculpt(bigStamp)).toBe(false);
+    expect(gateLocalSculpt(bigStamp, ALL_REVEALED)).toBe(false);
     expect(deniedCount()).toBe(denialsBefore + 1); // ...flash...
     expect(manaPool()?.balance).toBe(30 - POINT_COST); // ...and no debit on a veto
 
     // ...while the point brush it can still afford goes through, and debits its
     // own (smaller) price.
-    expect(gateLocalSculpt(POINT_INTENT)).toBe(true);
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
     expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
   });
 
@@ -1040,8 +1062,8 @@ describe('client local intent gate', () => {
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     };
     setManaPool({ balance: 30, ...rate });
-    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 1 })).toBe(true);
-    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 2 })).toBe(true);
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 1 }, ALL_REVEALED)).toBe(true);
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 2 }, ALL_REVEALED)).toBe(true);
 
     // The server has applied seq 1 only: its balance is 30 - cost, and seq 2's
     // debit must survive the push.
@@ -1053,8 +1075,8 @@ describe('client local intent gate', () => {
     expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
 
     // A denial releases the denied intent's own debit and keeps the rest.
-    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 3 })).toBe(true);
-    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 4 })).toBe(true);
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 3 }, ALL_REVEALED)).toBe(true);
+    expect(gateLocalSculpt({ ...POINT_INTENT, seq: 4 }, ALL_REVEALED)).toBe(true);
     applyDenial({ balance: 30 - 2 * POINT_COST, cost: POINT_COST, asOfSeq: 3 });
     expect(manaPool()?.balance).toBe(30 - 3 * POINT_COST);
   });
@@ -1091,7 +1113,7 @@ describe('client local intent gate', () => {
     expect(liveBalance(manaPool()!)).toBeGreaterThan(POINT_COST);
     // ...and the gate still refuses, because the server has confirmed none of
     // it. No intent is sent, so nothing is predicted, so nothing snaps back.
-    expect(gateLocalSculpt(POINT_INTENT)).toBe(false);
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(false);
 
     now.mockRestore();
   });
@@ -1120,7 +1142,7 @@ describe('client local intent gate', () => {
     const shownBeforePress = liveBalance(manaPool()!);
     expect(shownBeforePress).toBeGreaterThan(HALF_A_POOL); // regen is being shown
 
-    expect(gateLocalSculpt(POINT_INTENT)).toBe(true);
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
     // Exactly the stroke's price came off the bar — not the price plus the
     // half-second of regen the restamp would have thrown away.
     expect(liveBalance(manaPool()!)).toBeCloseTo(shownBeforePress - POINT_COST);
@@ -1140,7 +1162,7 @@ describe('client local intent gate', () => {
 
     setManaPool(fullPool);
     let points = 0;
-    while (gateLocalSculpt(POINT_INTENT)) points++;
+    while (gateLocalSculpt(POINT_INTENT, ALL_REVEALED)) points++;
     expect(points).toBe(POINT_STAMPS_PER_POOL);
 
     setManaPool(fullPool);
@@ -1150,7 +1172,7 @@ describe('client local intent gate', () => {
       profile: 'hard',
     };
     let plateaus = 0;
-    while (gateLocalSculpt(bigStamp)) plateaus++;
+    while (gateLocalSculpt(bigStamp, ALL_REVEALED)) plateaus++;
     expect(plateaus).toBe(FULL_POOL_MAX_RADIUS_HARD_STAMPS);
     expect(manaPool()?.balance).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
   });
@@ -1355,6 +1377,7 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
     const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
     host.worldCreate();
     world.addPlayer(PLAYER);
+    seedTerritory(world);
     host.playerJoined(PLAYER);
     return { world, host, sink };
   }
@@ -1450,6 +1473,7 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
     const host = new PluginHost(world, [manaPlugin, laterPlugin].map(asLoadedPlugin));
     host.worldCreate();
     world.addPlayer(PLAYER);
+    seedTerritory(world);
     host.playerJoined(PLAYER);
 
     return { world, host, sink };
@@ -1579,7 +1603,7 @@ describe('gate / server parity — the same intent, the same fee', () => {
             manaPerBandCell: pushed.manaPerBandCell,
             regenPerSecond: pushed.regenPerSecond,
           });
-          expect(gateLocalSculpt(intent)).toBe(true);
+          expect(gateLocalSculpt(intent, ALL_REVEALED)).toBe(true);
           const clientFee = MANA_CAPACITY - (manaPool()?.balance ?? 0);
 
           expect(clientFee).toBe(serverFee);
@@ -1611,7 +1635,7 @@ describe('gate / server parity — the same intent, the same fee', () => {
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
-    expect(gateLocalSculpt(plateau)).toBe(false);
+    expect(gateLocalSculpt(plateau, ALL_REVEALED)).toBe(false);
     expect(
       handleSculptIntent(
         { world: harness.world, interceptors: harness.host },
@@ -1627,6 +1651,6 @@ describe('gate / server parity — the same intent, the same fee', () => {
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
-    expect(gateLocalSculpt(plateau)).toBe(true);
+    expect(gateLocalSculpt(plateau, ALL_REVEALED)).toBe(true);
   });
 });

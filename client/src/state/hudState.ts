@@ -19,6 +19,7 @@
 import { createSignal } from 'solid-js';
 import {
   CELL_WORLD_SIZE,
+  FULL_BRUSH_RADIUS,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   SCULPT_PROFILES,
@@ -77,7 +78,7 @@ import type { FrameStatsSample } from '../render/frameStats.ts';
  * the grid can express, and MIN_BRUSH_RADIUS's note spells out that a click on
  * it polishes rather than builds.
  */
-export const BRUSH_LADDER_TOP_RADIUS = 2 * WORLD_UNIT_CELLS;
+export const BRUSH_LADDER_TOP_RADIUS = FULL_BRUSH_RADIUS;
 
 export const BRUSH_RADII: readonly number[] = (() => {
   if (BRUSH_LADDER_TOP_RADIUS > MAX_BRUSH_RADIUS) {

@@ -30,7 +30,7 @@ import {
   sculptSweepSteps,
 } from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
-import { sculptManaCost } from '../pricing.ts';
+import { chunkUnlockPenalty, openedChunkCount, sculptManaCost } from '../pricing.ts';
 // The difficulty band core publishes (WorldApi.difficulty lives inside it). A
 // RUNTIME import into core, unlike the type-only one below, and the dependency
 // runs the allowed direction — plugins depend on core, never the reverse — so
@@ -788,14 +788,52 @@ export function manaPerBandCellFor(playerId: string): number {
  * zero by rounding. With the shipped 0.5 perk a point stamp is ceil(3) = 3 and a
  * radius-3 soft is ceil(34.5) = 35 — "about half", never free.
  */
-export function manaCostFor(playerId: string, intent: SculptIntent): number {
+export function manaCostFor(
+  playerId: string,
+  intent: SculptIntent,
+  openedChunks: number = 0,
+): number {
   const options = sculptOptionsOf(intent);
-  return sculptManaCost(
-    manaPerBandCellFor(playerId),
+  const rate = manaPerBandCellFor(playerId);
+  const stroke = sculptManaCost(
+    rate,
     intent.radius,
     options.profile,
     options.tool,
     sculptSweepSteps(intent),
+  );
+  // THE LAND THIS STROKE CLAIMS, priced at what the full brush would have paid
+  // for it (../pricing.ts's chunkUnlockPenalty). Zero for the overwhelming
+  // majority of strokes, which open nothing; zero at the full brush whatever
+  // they open. Defaulted so a caller pricing a brush with no position in mind
+  // — the client's gauge — gets the stroke price it is asking for.
+  if (openedChunks === 0) return stroke;
+  return (
+    stroke +
+    openedChunks * chunkUnlockPenalty(rate, intent.radius, options.profile, options.tool)
+  );
+}
+
+/**
+ * How many chunks this intent would OPEN for its sculptor — the footprint's
+ * chunks their token has not already earned.
+ *
+ * ASKED TWICE PER INTENT, in the verdict phase and again in the effect phase,
+ * and it must answer the same both times. It does, but only because the reveal
+ * plugin opens those chunks from its OWN onIntentApplied and effect hooks run
+ * in LOAD ORDER (server/src/plugins/discovery.ts sorts by raw directory name):
+ * 'mana' precedes 'reveal', so this plugin charges for the land before that
+ * one hands it over. The same ordering already decides that relics' brush
+ * widening is billed (see onIntentApplied's doc comment in
+ * server/src/plugins/types.ts); this is the second thing it settles.
+ */
+function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number {
+  return openedChunkCount(
+    world.worldSize,
+    intent.x,
+    intent.y,
+    intent.radius,
+    (cx, cy) => world.isChunkUnlockedForToken(token, cx, cy),
   );
 }
 
@@ -926,7 +964,11 @@ function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict
   // since volume pricing the radius and profile are the intent's own fields, so
   // consecutive intents from the same player legitimately cost different
   // amounts.
-  const cost = manaCostFor(ctx.player.id, intent);
+  const cost = manaCostFor(
+    ctx.player.id,
+    intent,
+    openedChunksFor(world, ctx.player.token, intent),
+  );
 
   if (pool.balance < cost) {
     // Tell the player why. Core's own rejections are silent on purpose — an
@@ -998,12 +1040,37 @@ function commitCharge(
   // regen-pushes, so without this push that phantom debit would stand
   // indefinitely — the same standing-phantom failure onIntentDenied closes
   // on the deny path.
+  // ...BUT LAND IT CLAIMED IS STILL PAID FOR (2026-09-06). Since the reveal
+  // plugin opens the chunks a stroke's FOOTPRINT covers rather than the ones
+  // its diff reached, a stroke can move no cell at all and still take
+  // territory — clicking at the frontier into ground the anchored brush
+  // refuses to move is exactly that case, and it is the case the unlock
+  // penalty exists to price.
+  //
+  // THE TWO RULES COMPOSE RATHER THAN OVERRIDE. The volume price still follows
+  // the effect, so the owner's 2026-08-19 report ("not changing the landscape …
+  // but it's taking my mana") stays fixed: a stroke that moved nothing is
+  // charged nothing FOR THE DIRT. The surcharge is for the land, which it did
+  // take, so it stands on its own — and at the full brush it is zero anyway,
+  // which leaves that stroke exactly as free as it was before this change.
+  const opened = openedChunksFor(world, ctx.player.token, intent);
+  const options = sculptOptionsOf(intent);
+  const claimed =
+    opened *
+    chunkUnlockPenalty(
+      manaPerBandCellFor(ctx.player.id),
+      intent.radius,
+      options.profile,
+      options.tool,
+    );
+
   if (diff.length === 0) {
+    if (claimed > 0) pool.balance -= claimed;
     sendBalance(world, ctx.player.id, pool);
     return;
   }
 
-  const cost = manaCostFor(ctx.player.id, intent);
+  const cost = manaCostFor(ctx.player.id, intent, opened);
   pool.balance -= cost;
   sendBalance(world, ctx.player.id, pool);
 }

@@ -147,6 +147,17 @@ function boot(
   host.worldCreate();
 
   world.addPlayer(PLAYER);
+  // A real join seeds the starter square into the joining token's OWN mask
+  // (world/initial-unlock.ts's applyInitialUnlockForToken) before anything
+  // else runs. Required since 2026-09-06: mana prices the chunks a stroke
+  // would OPEN for its sculptor, so a token holding no mask would be billed
+  // an unlock surcharge for ground this world already unlocked.
+  const chunkEdge = world.chunksPerEdge;
+  for (let cy = 0; cy < chunkEdge; cy++) {
+    for (let cx = 0; cx < chunkEdge; cx++) {
+      if (world.isChunkUnlocked(cx, cy)) world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+  }
   host.playerJoined(PLAYER);
 
   return { world, host, sink };
