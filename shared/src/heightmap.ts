@@ -2029,11 +2029,11 @@ export function sculptDisplacementUnits(
     return cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
   }
 
-  // One band per cell either way now: the profiles differ only in disc size.
-  // 'clicked': a priced stroke is a player's. Plugin terraforms run 'free'.
-  const pricedRadius = sculptSweepRadius(radius, profile, tool, 'clicked');
+  // THE CORE ONLY. You pay for the ground you raise; the apron is the talus
+  // that rise implies, not a second stroke (owner, 2026-09-06). Charging the
+  // apron made the first press over flat ground cost 4.8x what it moved.
   let cells = 0;
-  forEachFootprintOffset(pricedRadius, () => {
+  forEachFootprintOffset(radius, () => {
     cells++;
   });
   // |amount|: a lower costs what the raise that undoes it costs.
