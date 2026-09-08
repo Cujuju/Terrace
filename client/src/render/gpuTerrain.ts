@@ -27,7 +27,11 @@ import { CHUNK_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { RENDER_HALO_CELLS, type TerrainMirror } from '../terrain/mirror.ts';
 import { createDrawnGroundStore, type DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import type { ArenaLayout, ArenaStats, TerrainMeshes } from './terrainMeshes.ts';
-import { createBandPaletteTexture, createHeightTexture } from './gpuTerrainTextures.ts';
+import {
+  createBandPaletteTexture,
+  createColumnSpanTextures,
+  createHeightTexture,
+} from './gpuTerrainTextures.ts';
 import { createChunkTemplate, createGpuTerrainMaterial } from './gpuTerrainMaterial.ts';
 
 export const GPU_TERRAIN_SMOOTH_DEFAULT = true;
@@ -75,6 +79,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
   const chunkCount = chunkCols * chunkCols;
 
   const height = createHeightTexture(map);
+  const columnSpans = createColumnSpanTextures(map);
   const palette = createBandPaletteTexture();
   const smooth: IUniform<number> = { value: GPU_TERRAIN_SMOOTH_DEFAULT ? 1 : 0 };
   const shared: Record<string, IUniform> = {
@@ -82,6 +87,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
     uPalette: { value: palette },
     uSizeCells: { value: map.size },
     uSmooth: smooth,
+    ...columnSpans.uniforms,
   };
 
   const near = createLevel(TERRAIN_LOD_NEAR_N, chunkCount, shared, 0);
@@ -133,6 +139,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
       const x1 = Math.min(map.size, (cx + 1) * CHUNK_SIZE + RENDER_HALO_CELLS);
       const y1 = Math.min(map.size, (cy + 1) * CHUNK_SIZE + RENDER_HALO_CELLS);
       height.uploadRect(renderer, x0, y0, x1 - x0, y1 - y0);
+      columnSpans.uploadChunk(renderer, cx, cy);
       for (const handler of drawnHandlers) handler(chunkIdx);
     }
     pending.clear();
@@ -247,6 +254,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
         level.material.dispose();
       }
       height.dispose();
+      columnSpans.dispose();
       palette.dispose();
       drawnHandlers.clear();
     },
