@@ -3,11 +3,15 @@ import {
   BAND_HEIGHT,
   BEDROCK_FLOOR,
   canCarveBandAt,
+  carveKeepsSpanCap,
+  carveRange,
   createHeightmap,
+  fitColumnToSpanCap,
   heightAt,
   seabedHeight,
   SEA_LEVEL,
   MAX_SPANS_PER_COLUMN,
+  parsePackedSpans,
   setColumn,
   spanCount,
   type Heightmap,
@@ -74,6 +78,10 @@ describe('seabedHeight', () => {
   });
 });
 
+const DRAWN_GAP_HEIGHT = 2 * BAND_HEIGHT;
+
+const SPLITTABLE_SPAN_HEIGHT = 5 * BAND_HEIGHT;
+
 function stackedSpans(count: number): Span[] {
   const spans: Span[] = [{ floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT }];
   for (let k = 1; k < count; k++) {
@@ -81,6 +89,21 @@ function stackedSpans(count: number): Span[] {
     spans.push({ floor, ceiling: floor + BAND_HEIGHT });
   }
   return spans;
+}
+
+function drawnGapSpans(count: number, bottomHeight: number = BAND_HEIGHT): Span[] {
+  const spans: Span[] = [{ floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + bottomHeight }];
+  for (let k = 1; k < count; k++) {
+    const floor = spans[k - 1]!.ceiling + DRAWN_GAP_HEIGHT;
+    spans.push({ floor, ceiling: floor + BAND_HEIGHT });
+  }
+  return spans;
+}
+
+function packOf(spans: readonly Span[]): number[] {
+  const flat: number[] = [];
+  for (const span of spans) flat.push(span.floor, span.ceiling);
+  return flat;
 }
 
 describe('MAX_SPANS_PER_COLUMN', () => {
@@ -95,14 +118,73 @@ describe('MAX_SPANS_PER_COLUMN', () => {
     expect(() => setColumn(map, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN + 1))).toThrow(RangeError);
   });
 
-  it('makes canCarveBandAt refuse a column already at the limit', () => {
-    const band = 5;
-    const below = world();
-    setColumn(below, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN - 1));
-    expect(canCarveBandAt(below, 4, 4, band)).toBe(true);
+  it('lets a carve through at the limit when the carve shrinks the column', () => {
+    const map = world();
+    const spans = stackedSpans(MAX_SPANS_PER_COLUMN);
+    setColumn(map, 4, 4, spans);
+    const top = spans[spans.length - 1]!;
 
-    const atLimit = world();
-    setColumn(atLimit, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN));
-    expect(canCarveBandAt(atLimit, 4, 4, band)).toBe(false);
+    expect(carveKeepsSpanCap(map, 4, 4, top.floor, top.ceiling)).toBe(true);
+    carveRange(map, 4, 4, top.floor, top.ceiling);
+    expect(spanCount(map, 4, 4)).toBeLessThan(MAX_SPANS_PER_COLUMN);
+  });
+
+  it('refuses a carve at the limit that splits a span into two', () => {
+    const map = world();
+    setColumn(map, 4, 4, drawnGapSpans(MAX_SPANS_PER_COLUMN, SPLITTABLE_SPAN_HEIGHT));
+    const lo = BEDROCK_FLOOR + BAND_HEIGHT;
+    const hi = BEDROCK_FLOOR + SPLITTABLE_SPAN_HEIGHT - BAND_HEIGHT;
+
+    expect(carveKeepsSpanCap(map, 4, 4, lo, hi)).toBe(false);
+    expect(() => carveRange(map, 4, 4, lo, hi)).toThrow(RangeError);
+  });
+
+  it('leaves canCarveBandAt judging only whether a side is open', () => {
+    const map = world();
+    setColumn(map, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN));
+    setColumn(map, 5, 4, [{ floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT }]);
+    const topBand = stackedSpans(MAX_SPANS_PER_COLUMN)[MAX_SPANS_PER_COLUMN - 1]!.ceiling / BAND_HEIGHT;
+
+    expect(canCarveBandAt(map, 4, 4, topBand)).toBe(true);
+  });
+});
+
+describe('fitColumnToSpanCap', () => {
+  it('parses a saved over-cap column instead of rejecting it', () => {
+    const saved = stackedSpans(MAX_SPANS_PER_COLUMN + 1);
+    const parsed = parsePackedSpans(packOf(saved));
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.length).toBe(MAX_SPANS_PER_COLUMN);
+    expect(parsed![0]!.floor).toBe(BEDROCK_FLOOR);
+    expect(parsed![parsed!.length - 1]!.ceiling).toBe(saved[saved.length - 1]!.ceiling);
+  });
+
+  it('fills an undrawn gap before any drawn one', () => {
+    const spans = drawnGapSpans(MAX_SPANS_PER_COLUMN + 1);
+    const below = spans[4]!;
+    spans[5] = { floor: below.ceiling + BAND_HEIGHT, ceiling: below.ceiling + 2 * BAND_HEIGHT };
+
+    expect(fitColumnToSpanCap(spans)).toEqual([
+      ...spans.slice(0, 4),
+      { floor: below.floor, ceiling: spans[5]!.ceiling },
+      ...spans.slice(6),
+    ]);
+  });
+
+  it('fills the smallest drawn gap once no undrawn gap is left', () => {
+    const smallGapAt = 3;
+    const spans: Span[] = [{ floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT }];
+    for (let k = 1; k <= MAX_SPANS_PER_COLUMN; k++) {
+      const gap = k - 1 === smallGapAt ? DRAWN_GAP_HEIGHT : DRAWN_GAP_HEIGHT + BAND_HEIGHT;
+      const floor = spans[k - 1]!.ceiling + gap;
+      spans.push({ floor, ceiling: floor + BAND_HEIGHT });
+    }
+
+    expect(fitColumnToSpanCap(spans)).toEqual([
+      ...spans.slice(0, smallGapAt),
+      { floor: spans[smallGapAt]!.floor, ceiling: spans[smallGapAt + 1]!.ceiling },
+      ...spans.slice(smallGapAt + 2),
+    ]);
   });
 });

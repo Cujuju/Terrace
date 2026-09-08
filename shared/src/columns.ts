@@ -332,9 +332,7 @@ export function moveSpanCeiling(
   setColumn(map, x, y, canonicaliseColumn(spans));
 }
 
-export function carveRange(map: Heightmap, x: number, y: number, lo: number, hi: number): void {
-  if (lo >= hi) return;
-  const spans = readSpans(map, x, y);
+function spansAfterCarve(spans: readonly Span[], lo: number, hi: number): Span[] {
   const cut: Span[] = [];
   for (let k = 0; k < spans.length; k++) {
     const span = spans[k]!;
@@ -345,7 +343,23 @@ export function carveRange(map: Heightmap, x: number, y: number, lo: number, hi:
     if (span.floor < lo) cut.push({ floor: span.floor, ceiling: lo });
     if (hi < span.ceiling) cut.push({ floor: hi, ceiling: span.ceiling });
   }
-  setColumn(map, x, y, canonicaliseColumn(cut));
+  return canonicaliseColumn(cut);
+}
+
+export function carveRange(map: Heightmap, x: number, y: number, lo: number, hi: number): void {
+  if (lo >= hi) return;
+  setColumn(map, x, y, spansAfterCarve(readSpans(map, x, y), lo, hi));
+}
+
+export function carveKeepsSpanCap(
+  map: Heightmap,
+  x: number,
+  y: number,
+  lo: number,
+  hi: number,
+): boolean {
+  if (lo >= hi) return true;
+  return spansAfterCarve(readSpans(map, x, y), lo, hi).length <= MAX_SPANS_PER_COLUMN;
 }
 
 export function canSpreadBandToSpan(
@@ -367,7 +381,6 @@ export function canSpreadBandToSpan(
 }
 
 export function canCarveBandAt(map: Heightmap, cx: number, cy: number, band: number): boolean {
-  if (spanCount(map, cx, cy) >= MAX_SPANS_PER_COLUMN) return false;
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
@@ -385,10 +398,49 @@ export function packColumnSpans(map: Heightmap, x: number, y: number): number[] 
   return packed === undefined ? undefined : Array.from(packed);
 }
 
+const MIN_PACKED_SPANS = 2;
+
+const SPANS_PER_MERGE = 2;
+
+function gapHeight(lower: Span, upper: Span): number {
+  return upper.floor - lower.ceiling;
+}
+
+// Fills undrawn gaps first (invisible), then the smallest drawn gaps; lowest index breaks ties.
+export function fitColumnToSpanCap(spans: readonly Span[]): Span[] {
+  const out = spans.slice();
+  while (out.length > MAX_SPANS_PER_COLUMN) {
+    let chosen = 0;
+    let chosenDrawn = isGapDrawn(out[0]!, out[1]!);
+    let chosenGap = gapHeight(out[0]!, out[1]!);
+    for (let k = 1; k + 1 < out.length; k++) {
+      const drawn = isGapDrawn(out[k]!, out[k + 1]!);
+      const gap = gapHeight(out[k]!, out[k + 1]!);
+      if (drawn !== chosenDrawn) {
+        if (chosenDrawn) {
+          chosen = k;
+          chosenDrawn = drawn;
+          chosenGap = gap;
+        }
+        continue;
+      }
+      if (gap < chosenGap) {
+        chosen = k;
+        chosenGap = gap;
+      }
+    }
+    out.splice(chosen, SPANS_PER_MERGE, {
+      floor: out[chosen]!.floor,
+      ceiling: out[chosen + 1]!.ceiling,
+    });
+  }
+  return out;
+}
+
 export function parsePackedSpans(flat: readonly number[]): Span[] | null {
   if (flat.length % SPAN_STRIDE !== 0) return null;
   const count = flat.length / SPAN_STRIDE;
-  if (count < 2 || count > MAX_SPANS_PER_COLUMN) return null;
+  if (count < MIN_PACKED_SPANS) return null;
   const spans: Span[] = [];
   for (let k = 0; k < count; k++) {
     const floor = flat[k * SPAN_STRIDE]!;
@@ -400,7 +452,7 @@ export function parsePackedSpans(flat: readonly number[]): Span[] | null {
     spans.push({ floor, ceiling });
   }
   if (spans[0]!.floor !== BEDROCK_FLOOR) return null;
-  return spans;
+  return fitColumnToSpanCap(spans);
 }
 
 export function applyPackedSpans(
