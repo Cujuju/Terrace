@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node tools/eslint-plugin-terrace/bin/check-file.ts",
+            "command": "COMMENT_BUDGET_REDIRECT='docs/decisions/<arc>.md' node_modules/.bin/comment-budget-check",
             "timeout": 15
           }
         ]

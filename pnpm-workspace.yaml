@@ -3,4 +3,3 @@ packages:
   - client
   - server
   - plugins/*
-  - tools/eslint-plugin-terrace

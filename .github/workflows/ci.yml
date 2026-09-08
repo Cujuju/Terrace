@@ -36,7 +36,7 @@ jobs:
           status=0
           while IFS= read -r path; do
             [ -f "$path" ] || continue
-            node tools/eslint-plugin-terrace/bin/check-file.ts "$path" || status=1
+            node_modules/.bin/comment-budget-check "$path" || status=1
           done < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.ts' '*.tsx')
           exit $status
       - run: pnpm typecheck

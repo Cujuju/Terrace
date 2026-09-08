@@ -9,10 +9,11 @@
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
     "lint": "eslint .",
-    "lint:seed": "node tools/eslint-plugin-terrace/bin/seed-budget.ts"
+    "lint:seed": "comment-budget-seed"
   },
   "devDependencies": {
     "eslint": "^10.10.0",
+    "eslint-plugin-comment-budget": "github:Cujuju/eslint-plugin-comment-budget#v1.1.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.69.0"
   }

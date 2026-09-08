@@ -20,7 +20,7 @@ fi
 status=0
 for path in "${staged[@]}"; do
   [ -f "$root/$path" ] || continue
-  (cd "$root" && node tools/eslint-plugin-terrace/bin/check-file.ts "$path") || status=1
+  (cd "$root" && node_modules/.bin/comment-budget-check "$path") || status=1
 done
 
 if [ $status -ne 0 ]; then
