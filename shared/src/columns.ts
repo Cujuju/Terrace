@@ -1,4 +1,10 @@
-import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
+import {
+  BAND_HEIGHT,
+  MAX_HEIGHT,
+  MAX_SPANS_PER_COLUMN,
+  MIN_HEIGHT,
+  SEA_LEVEL,
+} from './constants.ts';
 import { cellIndex, cellX, cellY, quantizeToBand, type Heightmap } from './grid.ts';
 
 export const BEDROCK_FLOOR = MIN_HEIGHT;
@@ -54,6 +60,12 @@ export function seabedHeight(map: Heightmap, x: number, y: number): number {
 export function setColumn(map: Heightmap, x: number, y: number, spans: readonly Span[]): void {
   if (spans.length === 0) {
     throw new RangeError(`cell (${x}, ${y}) needs at least one solid span`);
+  }
+  if (spans.length > MAX_SPANS_PER_COLUMN) {
+    throw new RangeError(
+      `cell (${x}, ${y}) was given ${spans.length} spans; a column holds at most ` +
+        `${MAX_SPANS_PER_COLUMN}`,
+    );
   }
   for (let k = 0; k < spans.length; k++) {
     const { floor, ceiling } = spans[k]!;
@@ -190,8 +202,11 @@ export function bandFillAt(
 ): BandFill | null {
   if (columnCoversBand(map, x, y, band)) return null;
   const below = spanIndexBelowBand(map, x, y, band);
+  const count = spanCount(map, x, y);
   const firstAbove = below === null ? 0 : below + 1;
-  if (firstAbove < spanCount(map, x, y)) return { kind: 'overhang' };
+  if (firstAbove < count) {
+    return count >= MAX_SPANS_PER_COLUMN ? null : { kind: 'overhang' };
+  }
   if (below === null) return null;
   return { kind: 'extend', spanIndex: below };
 }
@@ -352,6 +367,7 @@ export function canSpreadBandToSpan(
 }
 
 export function canCarveBandAt(map: Heightmap, cx: number, cy: number, band: number): boolean {
+  if (spanCount(map, cx, cy) >= MAX_SPANS_PER_COLUMN) return false;
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
@@ -372,7 +388,7 @@ export function packColumnSpans(map: Heightmap, x: number, y: number): number[] 
 export function parsePackedSpans(flat: readonly number[]): Span[] | null {
   if (flat.length % SPAN_STRIDE !== 0) return null;
   const count = flat.length / SPAN_STRIDE;
-  if (count < 2) return null;
+  if (count < 2 || count > MAX_SPANS_PER_COLUMN) return null;
   const spans: Span[] = [];
   for (let k = 0; k < count; k++) {
     const floor = flat[k * SPAN_STRIDE]!;
