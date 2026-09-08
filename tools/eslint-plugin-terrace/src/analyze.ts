@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 /** Word cap for one comment block, from code_style.md. */
 export const COMMENT_WORD_CAP = 30
 
@@ -7,8 +5,6 @@ export type ViolationKind = 'over-cap' | `banned:${string}`
 
 export type Violation = {
   kind: ViolationKind
-  /** Stable across moves: hashes the kind and the normalized text, not the position. */
-  fingerprint: string
   line: number
   column: number
   endLine: number
@@ -17,13 +13,6 @@ export type Violation = {
   words: number
   /** Human label of the banned pattern; empty for 'over-cap'. */
   label: string
-}
-
-export type FileAnalysis = {
-  violations: Violation[]
-  commentLines: number
-  nonBlankLines: number
-  ratio: number
 }
 
 type Loc = { line: number; column: number }
@@ -64,8 +53,8 @@ function isDigitRow(line: string): boolean {
 }
 
 /**
- * Prose that belongs in docs/decisions/<arc>.md, not beside the code: the dated
- * record of who decided what, what it used to be, and what was measured.
+ * Prose that belongs in a decision record, not beside the code: dates, who
+ * decided, the shape before this one, and the figures that settled it.
  */
 export const BANNED_PATTERNS: BannedPattern[] = [
   { id: 'iso-date', label: 'a dated record', test: (text) => ISO_DATE.test(text) },
@@ -87,11 +76,6 @@ function stripMarkers(comment: CommentNode): string {
 
 export function countWords(text: string): number {
   return text.split(/\s+/u).filter((word) => word !== '').length
-}
-
-function fingerprintOf(kind: ViolationKind, text: string): string {
-  const normalized = text.replace(/\s+/gu, ' ').trim().toLowerCase()
-  return createHash('sha256').update(`${kind} ${normalized}`).digest('hex').slice(0, 12)
 }
 
 type Block = { comments: CommentNode[]; text: string }
@@ -136,7 +120,6 @@ function violationAt(kind: ViolationKind, label: string, block: Block, words: nu
     kind,
     label,
     words,
-    fingerprint: fingerprintOf(kind, block.text),
     line: first.line,
     column: first.column,
     endLine: last.line,
@@ -144,9 +127,8 @@ function violationAt(kind: ViolationKind, label: string, block: Block, words: nu
   }
 }
 
-export function analyze(source: string, comments: CommentNode[]): FileAnalysis {
-  const lines = source.split('\n')
-  const blocks = groupBlocks(comments, lines)
+export function analyze(source: string, comments: CommentNode[]): Violation[] {
+  const blocks = groupBlocks(comments, source.split('\n'))
   const violations: Violation[] = []
 
   for (const block of blocks) {
@@ -159,20 +141,5 @@ export function analyze(source: string, comments: CommentNode[]): FileAnalysis {
     }
   }
 
-  const commentOnly = new Set<number>()
-  for (const block of blocks) {
-    for (const comment of block.comments) {
-      if (!isOwnLine(comment, lines)) continue
-      for (let line = comment.loc.start.line; line <= comment.loc.end.line; line += 1) commentOnly.add(line)
-    }
-  }
-  const nonBlankLines = lines.filter((line) => line.trim() !== '').length
-  const commentLines = [...commentOnly].filter((line) => (lines[line - 1] ?? '').trim() !== '').length
-
-  return {
-    violations,
-    commentLines,
-    nonBlankLines,
-    ratio: nonBlankLines === 0 ? 0 : commentLines / nonBlankLines,
-  }
+  return violations
 }

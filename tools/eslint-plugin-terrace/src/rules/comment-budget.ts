@@ -1,9 +1,7 @@
 import type { Rule } from 'eslint'
 import { COMMENT_WORD_CAP } from '../analyze.ts'
-import { fileBudget } from '../baseline.ts'
-import { analyzeFile, budgetOf, OPTIONS_SCHEMA, relativePathOf } from '../context.ts'
-
-const DECISIONS = 'docs/decisions/<arc>.md'
+import { isExempt, OPTIONS_SCHEMA, violationsOf } from '../context.ts'
+import { REDIRECT } from '../redirect.ts'
 
 export const commentBudget: Rule.RuleModule = {
   meta: {
@@ -13,26 +11,26 @@ export const commentBudget: Rule.RuleModule = {
     },
     schema: OPTIONS_SCHEMA,
     messages: {
-      overCap: `Comment block is {{words}} words; the cap is ${COMMENT_WORD_CAP}. Cut it, or move the reasoning to ${DECISIONS}.`,
-      banned: `Comment carries {{label}}, which belongs in ${DECISIONS}, not beside the code.`,
+      overCap: `Comment block is {{words}} words; the cap is ${COMMENT_WORD_CAP}. Cut it, or move the reasoning to {{redirect}}.`,
+      banned: 'Comment carries {{label}}, which belongs in {{redirect}}, not beside the code.',
     },
   },
 
   create(context) {
     return {
       'Program:exit'(): void {
-        const grandfathered = new Set(fileBudget(budgetOf(context), relativePathOf(context))?.grandfathered ?? [])
+        if (isExempt(context)) return
+        const redirect = REDIRECT
 
-        for (const violation of analyzeFile(context).violations) {
-          if (grandfathered.has(violation.fingerprint)) continue
+        for (const violation of violationsOf(context)) {
           const loc = {
             start: { line: violation.line, column: violation.column },
             end: { line: violation.endLine, column: violation.endColumn },
           }
           if (violation.kind === 'over-cap') {
-            context.report({ loc, messageId: 'overCap', data: { words: String(violation.words) } })
+            context.report({ loc, messageId: 'overCap', data: { words: String(violation.words), redirect } })
           } else {
-            context.report({ loc, messageId: 'banned', data: { label: violation.label } })
+            context.report({ loc, messageId: 'banned', data: { label: violation.label, redirect } })
           }
         }
       },

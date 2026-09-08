@@ -7,11 +7,16 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  COMMENT_BUDGET_REDIRECT: docs/decisions/<arc>.md
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         # pnpm version comes from packageManager in package.json
       - uses: actions/setup-node@v4
@@ -20,5 +25,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      # The exemption list forgives untouched files, so a bypassed pre-commit
+      # would slip a dirty edit past `pnpm lint`. Changed files answer in full.
+      - name: comment budget on changed files
+        run: |
+          base='${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}'
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1)"
+          fi
+          status=0
+          while IFS= read -r path; do
+            [ -f "$path" ] || continue
+            node tools/eslint-plugin-terrace/bin/check-file.ts "$path" || status=1
+          done < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.ts' '*.tsx')
+          exit $status
       - run: pnpm typecheck
       - run: pnpm test
