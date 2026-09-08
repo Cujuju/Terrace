@@ -14,6 +14,7 @@ import {
   cellY,
   chunkIndexOfCell,
   chunksPerEdge,
+  CHUNK_SIZE,
   drawnGroundHeight,
   SEA_LEVEL,
 } from '@terrace/shared';
@@ -37,6 +38,8 @@ import { watchReducedMotion } from '../plugins/kit/reducedMotion.ts';
 const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 
 const CELL_CENTRE_OFFSET_CELLS = 0.5;
+
+const DRAWN_BLEND_REACH_CELLS = 1;
 
 const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
@@ -636,6 +639,8 @@ export function createRiverRig(
     wetCells.list = wetList;
 
     const regions = new Map<number, WaterRegion>();
+    const lastCell = worldSize - 1;
+    const tileOfCell = (coord: number): number => Math.floor(coord / CHUNK_SIZE);
     let lastBand = Number.NaN;
     let lastRegion: WaterRegion | undefined;
     for (const cell of wetList) {
@@ -655,7 +660,15 @@ export function createRiverRig(
       lastBand = band;
       const x = cell % worldSize;
       const y = (cell - x) / worldSize;
-      region.tiles.add(chunkIndexOfCell(worldSize, x, y));
+      const loX = Math.max(0, x - DRAWN_BLEND_REACH_CELLS);
+      const hiX = Math.min(lastCell, x + DRAWN_BLEND_REACH_CELLS);
+      const loY = Math.max(0, y - DRAWN_BLEND_REACH_CELLS);
+      const hiY = Math.min(lastCell, y + DRAWN_BLEND_REACH_CELLS);
+      for (let tileY = tileOfCell(loY); tileY <= tileOfCell(hiY); tileY++) {
+        for (let tileX = tileOfCell(loX); tileX <= tileOfCell(hiX); tileX++) {
+          region.tiles.add(tileY * tileCols + tileX);
+        }
+      }
     }
 
     const waterBandAt = (cellXCoord: number, cellYCoord: number): number | null => {
