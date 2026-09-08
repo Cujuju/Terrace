@@ -311,7 +311,7 @@ function terrainHitInCell(
     const exitY = oy + tOut * dy;
     const lowY = entryY < exitY ? entryY : exitY;
     const highY = entryY < exitY ? exitY : entryY;
-    const drawnHeight = drawnGroundHeight(map, sampleX, sampleZ);
+    const drawnHeight = drawnGroundHeight(mirror.renderMap, sampleX, sampleZ);
     const drawnSpan = drawnSpanIndexAt(map, i, j, drawnHeight);
     let hitT = Infinity;
     for (let k = count - 1; k >= 0; k--) {
@@ -402,7 +402,7 @@ export function pickTerrainInColumn(
   const exitY = ray.oy + tExit * ray.dy;
   const lowY = entryY < exitY ? entryY : exitY;
   const count = spanCount(mirror.map, x, y);
-  const drawnHeight = drawnGroundHeight(mirror.map, cellCentreCoord(x), cellCentreCoord(y));
+  const drawnHeight = drawnGroundHeight(mirror.renderMap, cellCentreCoord(x), cellCentreCoord(y));
   const drawnSpan = drawnSpanIndexAt(mirror.map, x, y, drawnHeight);
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, x, y, k);

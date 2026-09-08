@@ -30,7 +30,7 @@ import {
   worldUnitsAcross,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
-import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
+import { createTerrainMirror, refreshRenderMap, type TerrainMirror } from './terrain/mirror.ts';
 import { createGpuTerrainMeshes } from './render/gpuTerrain.ts';
 import {
   RECT_NONE,
@@ -329,6 +329,7 @@ for (let cy = 0; cy < chunkCols; cy++) {
     allChunks.push(index);
   }
 }
+refreshRenderMap(mirror);
 
 const terrainGroup = new Group();
 scene.add(terrainGroup);

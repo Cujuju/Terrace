@@ -1,5 +1,6 @@
 import {
   CHUNK_SIZE,
+  SEA_LEVEL,
   applyPackedSpans,
   cellIndex,
   chunkIndex,
@@ -18,12 +19,47 @@ import {
 
 export interface TerrainMirror {
   readonly map: Heightmap;
+  /**
+   * What the client draws: `map`, but unreceived halo cells carry their nearest
+   * received neighbour's height, so the blend never mixes real ground with cells
+   * that have not arrived.
+   */
+  readonly renderMap: Heightmap;
   readonly received: Set<number>;
 }
 
+/** A drawn chunk reads past its own cells: one for the coarsest skirt step, one for the blend. */
+export const RENDER_HALO_CELLS = 2;
+
+/** Orthogonal before diagonal, so a straight frontier pulls back along its own axis. */
+const HALO_PROBE_OFFSETS: readonly (readonly [number, number])[] = (() => {
+  const orthogonal: [number, number][] = [];
+  const diagonal: [number, number][] = [];
+  for (let r = 1; r <= RENDER_HALO_CELLS; r++) {
+    orthogonal.push([0, -r], [-r, 0], [r, 0], [0, r]);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx === 0 || dy === 0) continue;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        diagonal.push([dx, dy]);
+      }
+    }
+  }
+  return [...orthogonal, ...diagonal];
+})();
+
 export function createTerrainMirror(worldSize: number): TerrainMirror {
   chunksPerEdge(worldSize);
-  return { map: createHeightmap(worldSize), received: new Set<number>() };
+  const map = createHeightmap(worldSize);
+  return {
+    map,
+    renderMap: {
+      size: map.size,
+      cells: new Int16Array(map.cells.length),
+      columnSpans: map.columnSpans,
+    },
+    received: new Set<number>(),
+  };
 }
 
 export function sampleHeight(mirror: TerrainMirror, x: number, y: number): number {
@@ -51,6 +87,56 @@ function cellChunkReceived(mirror: TerrainMirror, x: number, y: number): boolean
       Math.floor(x / CHUNK_SIZE),
       Math.floor(y / CHUNK_SIZE),
     ),
+  );
+}
+
+function nearestReceivedHeight(mirror: TerrainMirror, x: number, y: number): number {
+  const map = mirror.map;
+  for (const [dx, dy] of HALO_PROBE_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
+    if (!cellChunkReceived(mirror, nx, ny)) continue;
+    return map.cells[cellIndex(map, nx, ny)];
+  }
+  return SEA_LEVEL;
+}
+
+function refreshRenderCells(
+  mirror: TerrainMirror,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): void {
+  const map = mirror.map;
+  const last = map.size - 1;
+  const toX = x1 > last ? last : x1;
+  const toY = y1 > last ? last : y1;
+  for (let y = y0 < 0 ? 0 : y0; y <= toY; y++) {
+    for (let x = x0 < 0 ? 0 : x0; x <= toX; x++) {
+      const i = cellIndex(map, x, y);
+      mirror.renderMap.cells[i] = cellChunkReceived(mirror, x, y)
+        ? map.cells[i]
+        : nearestReceivedHeight(mirror, x, y);
+    }
+  }
+}
+
+/** For callers that fill `map` and `received` wholesale instead of applying chunk payloads. */
+export function refreshRenderMap(mirror: TerrainMirror): void {
+  const last = mirror.map.size - 1;
+  refreshRenderCells(mirror, 0, 0, last, last);
+}
+
+/** Callers that write `mirror.map` outside this module must report every cell they changed. */
+export function refreshRenderCellsAt(mirror: TerrainMirror, x: number, y: number): void {
+  refreshRenderCells(
+    mirror,
+    x - RENDER_HALO_CELLS,
+    y - RENDER_HALO_CELLS,
+    x + RENDER_HALO_CELLS,
+    y + RENDER_HALO_CELLS,
   );
 }
 
@@ -188,6 +274,13 @@ function applyChunkPayload(mirror: TerrainMirror, chunk: ChunkPayload): number[]
 
   const idx = chunkIndex(worldSize, chunk.cx, chunk.cy);
   mirror.received.add(idx);
+  refreshRenderCells(
+    mirror,
+    chunk.cx * CHUNK_SIZE - RENDER_HALO_CELLS,
+    chunk.cy * CHUNK_SIZE - RENDER_HALO_CELLS,
+    (chunk.cx + 1) * CHUNK_SIZE - 1 + RENDER_HALO_CELLS,
+    (chunk.cy + 1) * CHUNK_SIZE - 1 + RENDER_HALO_CELLS,
+  );
 
   const dirty = [idx];
   if (chunk.cx > 0) dirty.push(chunkIndex(worldSize, chunk.cx - 1, chunk.cy));
@@ -251,6 +344,7 @@ export function applyTerrainDiff(
     } else if (!applyPackedSpans(mirror.map, cell.x, cell.y, cell.spans)) {
       rejectedSpans++;
     }
+    refreshRenderCellsAt(mirror, cell.x, cell.y);
 
     if (onCellWrite === undefined) {
       for (const idx of chunksDirtiedByCell(mirror, cell.x, cell.y)) {

@@ -19,6 +19,7 @@ import {
   applyTerrainDiff,
   chunksDirtiedByCell,
   hasChunk,
+  refreshRenderCellsAt,
   type CellWriteSink,
   type TerrainMirror,
 } from './mirror.ts';
@@ -176,9 +177,10 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
         changed = !spansEqual(beforeSpans, live.get(i));
       }
       if (!changed) continue;
-      for (const idx of chunksDirtiedByCell(mirror, cellX(size, i), cellY(size, i))) {
-        dirty.add(idx);
-      }
+      const x = cellX(size, i);
+      const y = cellY(size, i);
+      refreshRenderCellsAt(mirror, x, y);
+      for (const idx of chunksDirtiedByCell(mirror, x, y)) dirty.add(idx);
     }
   };
 

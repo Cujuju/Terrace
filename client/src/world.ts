@@ -364,7 +364,7 @@ export function createWorld(viewport: Viewport): World {
       if (mirror === null) return null;
       if (!isCellReceived(mirror, cellX, cellZ)) return null;
       return (
-        drawnGroundHeight(mirror.map, cellCentreCoord(cellX), cellCentreCoord(cellZ)) *
+        drawnGroundHeight(mirror.renderMap, cellCentreCoord(cellX), cellCentreCoord(cellZ)) *
         HEIGHT_WORLD_SCALE
       );
     },

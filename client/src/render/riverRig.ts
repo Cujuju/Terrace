@@ -54,7 +54,7 @@ const RIVER_METALNESS = 0;
 function plotRadiusCells(mirror: TerrainMirror, x: number, y: number): number {
   const drawnAt = (cx: number, cy: number): number =>
     drawnGroundHeight(
-      mirror.map,
+      mirror.renderMap,
       cx + CELL_CENTRE_OFFSET_CELLS,
       cy + CELL_CENTRE_OFFSET_CELLS,
     );
@@ -719,7 +719,7 @@ export function createRiverRig(
   const emitPendingTile = (job: DrainJob, entry: PendingTile): void => {
     regionTriangles.length = 0;
     appendDrawnWaterTile(
-      job.mirror.map,
+      job.mirror.renderMap,
       entry.region,
       entry.tile,
       entry.surfaceY,

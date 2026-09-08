@@ -22,7 +22,7 @@ import {
   chunksPerEdge,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import type { TerrainMirror } from '../terrain/mirror.ts';
+import { RENDER_HALO_CELLS, type TerrainMirror } from '../terrain/mirror.ts';
 import { createDrawnGroundStore, type DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import type { ArenaLayout, ArenaStats, TerrainMeshes } from './terrainMeshes.ts';
 import { createBandPaletteTexture, createHeightTexture } from './gpuTerrainTextures.ts';
@@ -36,9 +36,6 @@ const NEAR_LOD_WORLD_RADIUS = TERRAIN_LOD_NEAR_RADIUS_CHUNKS * CHUNK_WORLD_SIZE;
 
 /** The bilinear blend floors to a band, so a chunk can drop one band below its cells. */
 const CHUNK_BOUND_SLACK_HEIGHT = BAND_HEIGHT;
-
-/** A chunk's drawn surface reads one cell past its own edge on every side. */
-const CHUNK_BOUND_MARGIN_CELLS = 1;
 
 const INSTANCE_COMPONENTS = 2;
 
@@ -75,7 +72,7 @@ function createLevel(
 }
 
 export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): TerrainMeshes {
-  const map = mirror.map;
+  const map = mirror.renderMap;
   const chunkCols = chunksPerEdge(map.size);
   const chunkCount = chunkCols * chunkCols;
 
@@ -105,10 +102,10 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
   const bounds = new Box3();
 
   const measureChunk = (cx: number, cy: number, chunkIdx: number): void => {
-    const x0 = Math.max(0, cx * CHUNK_SIZE - CHUNK_BOUND_MARGIN_CELLS);
-    const y0 = Math.max(0, cy * CHUNK_SIZE - CHUNK_BOUND_MARGIN_CELLS);
-    const x1 = Math.min(map.size - 1, (cx + 1) * CHUNK_SIZE + CHUNK_BOUND_MARGIN_CELLS - 1);
-    const y1 = Math.min(map.size - 1, (cy + 1) * CHUNK_SIZE + CHUNK_BOUND_MARGIN_CELLS - 1);
+    const x0 = Math.max(0, cx * CHUNK_SIZE - RENDER_HALO_CELLS);
+    const y0 = Math.max(0, cy * CHUNK_SIZE - RENDER_HALO_CELLS);
+    const x1 = Math.min(map.size - 1, (cx + 1) * CHUNK_SIZE + RENDER_HALO_CELLS - 1);
+    const y1 = Math.min(map.size - 1, (cy + 1) * CHUNK_SIZE + RENDER_HALO_CELLS - 1);
     let lo = Infinity;
     let hi = -Infinity;
     for (let y = y0; y <= y1; y++) {
@@ -128,7 +125,11 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
     for (const chunkIdx of pending) {
       const cx = chunkIdx % chunkCols;
       const cy = (chunkIdx - cx) / chunkCols;
-      height.uploadRect(renderer, cx * CHUNK_SIZE, cy * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE);
+      const x0 = Math.max(0, cx * CHUNK_SIZE - RENDER_HALO_CELLS);
+      const y0 = Math.max(0, cy * CHUNK_SIZE - RENDER_HALO_CELLS);
+      const x1 = Math.min(map.size, (cx + 1) * CHUNK_SIZE + RENDER_HALO_CELLS);
+      const y1 = Math.min(map.size, (cy + 1) * CHUNK_SIZE + RENDER_HALO_CELLS);
+      height.uploadRect(renderer, x0, y0, x1 - x0, y1 - y0);
       for (const handler of drawnHandlers) handler(chunkIdx);
     }
     pending.clear();
