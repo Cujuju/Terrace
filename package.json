@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "eslint": "^10.10.0",
-    "eslint-plugin-comment-budget": "git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#v1.1.0",
+    "eslint-plugin-comment-budget": "git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#v2.0.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.69.0"
   }

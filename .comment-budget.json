@@ -1,4 +1,26 @@
 {
+  "wordCap": 30,
+  "patterns": [
+    "iso-date",
+    "owner",
+    "history",
+    "measurement",
+    "was-now",
+    "digit-row"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/__pycache__/**",
+    "**/.*/**",
+    "**/*.d.ts"
+  ],
+  "linted": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
   "exempt": [
     "client/src/audio/audioEngine.ts",
     "client/src/audio/audioGraph.ts",
