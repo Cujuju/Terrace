@@ -67,6 +67,12 @@ const SETTLE_STABLE_MS = 3_000;
 const POSE_SETTLE_MIN_MS = 2_500;
 const POSE_SETTLE_MAX_MS = 90_000;
 
+// GPU/CPU frame-time sampling, once a pose has settled. 150 frames gives p99
+// single-frame resolution (needs >=100 samples) with headroom, and stays under
+// a few seconds even on the slowest measured config (2048 N=4, no LOD, 38ms).
+const GPU_TIMING_SAMPLE_FRAMES = 150;
+const GPU_TIMING_MAX_WAIT_MS = 60_000;
+
 const WORLDS_RELATIVE_DIR = 'server/data/worlds';
 const WORLDS_DIR_ENV_VAR = 'TERRACE_SHOT_WORLDS_DIR';
 const ACTIVE_WORLD_FILE = '.active';
@@ -524,19 +530,91 @@ const DRIVER_SCRIPT = `
     }
     const renderer = globalThis.__terraceRenderer;
     const original = renderer.render.bind(renderer);
+    const gl = renderer.getContext();
+
+    // EXT_disjoint_timer_query_webgl2: real GPU time per frame, TIME_ELAPSED_EXT
+    // between back-to-back queries. Absent under SwiftShader/ANGLE-no-ext.
+    const NANOSECONDS_PER_MS = 1e6;
+    // Bounds the query backlog so a stalled readback can't leak GL query objects.
+    const MAX_PENDING_GPU_QUERIES = 64;
+    function createGpuTimer() {
+      const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+      if (!ext) return { supported: false, mark() {}, stop() {}, samples: () => [] };
+      const resolved = [];
+      let pending = [];
+      let open = null;
+      const closeOpen = () => {
+        if (open === null) return;
+        gl.endQuery(ext.TIME_ELAPSED_EXT);
+        pending.push(open);
+        open = null;
+        while (pending.length > MAX_PENDING_GPU_QUERIES) {
+          const dropped = pending.shift();
+          if (dropped !== undefined) gl.deleteQuery(dropped);
+        }
+      };
+      const collect = () => {
+        const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) === true;
+        const kept = [];
+        for (const query of pending) {
+          if (gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE) !== true) {
+            kept.push(query);
+            continue;
+          }
+          if (!disjoint) resolved.push(Number(gl.getQueryParameter(query, gl.QUERY_RESULT)) / NANOSECONDS_PER_MS);
+          gl.deleteQuery(query);
+        }
+        pending = kept;
+      };
+      return {
+        supported: true,
+        mark() {
+          collect();
+          closeOpen();
+          const query = gl.createQuery();
+          if (query === null) return;
+          gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+          open = query;
+        },
+        stop() {
+          closeOpen();
+          collect();
+          for (const query of pending) gl.deleteQuery(query);
+          pending = [];
+        },
+        samples: () => resolved,
+      };
+    }
+
+    const percentile = (values, p) => {
+      const sorted = values.slice().sort((a, b) => a - b);
+      if (sorted.length === 0) return null;
+      return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+    };
+
     let pinned = null;
     let capture = null;
     let frames = 0;
     let counters = '';
+    let gpuTimer = createGpuTimer();
+    let sampling = false;
+    let frameIntervals = [];
+    let lastFrameAt = null;
     renderer.render = (scene, camera) => {
       const onScreen = renderer.getRenderTarget() === null;
       if (onScreen && pinned !== null) {
         camera.position.set(pinned.eye.x, pinned.eye.y, pinned.eye.z);
         camera.lookAt(pinned.target.x, pinned.target.y, pinned.target.z);
       }
+      if (onScreen && sampling) gpuTimer.mark();
       const out = original(scene, camera);
       if (!onScreen) return out;
       frames++;
+      if (sampling) {
+        const now = performance.now();
+        if (lastFrameAt !== null) frameIntervals.push(now - lastFrameAt);
+        lastFrameAt = now;
+      }
       const info = renderer.info.render;
       counters = info.triangles + '/' + info.calls + '/' + renderer.info.memory.geometries;
       if (capture !== null) {
@@ -546,6 +624,38 @@ const DRIVER_SCRIPT = `
       }
       return out;
     };
+
+    // One GPU/CPU frame-time sample per pinned pose, isolated from settle-phase
+    // frames and from the previous pose's queries by a fresh timer each call.
+    const sampleTiming = () =>
+      new Promise((resolveTiming) => {
+        gpuTimer.stop();
+        gpuTimer = createGpuTimer();
+        frameIntervals = [];
+        lastFrameAt = null;
+        sampling = true;
+        const deadline = Date.now() + plan.gpuTimingMaxWaitMs;
+        const poll = () => {
+          if (frameIntervals.length >= plan.gpuTimingSampleFrames || Date.now() > deadline) {
+            sampling = false;
+            gpuTimer.stop();
+            const gpuSamples = gpuTimer.samples();
+            resolveTiming({
+              frames: frameIntervals.length,
+              timedOut: Date.now() > deadline,
+              cpuMsP50: percentile(frameIntervals, 0.5),
+              cpuMsP99: percentile(frameIntervals, 0.99),
+              gpuTimerSupported: gpuTimer.supported,
+              gpuFrames: gpuSamples.length,
+              gpuMsP50: percentile(gpuSamples, 0.5),
+              gpuMsP99: percentile(gpuSamples, 0.99),
+            });
+            return;
+          }
+          setTimeout(poll, plan.pollIntervalMs);
+        };
+        poll();
+      });
 
     const rendererName = (() => {
       const gl = renderer.getContext();
@@ -583,6 +693,7 @@ const DRIVER_SCRIPT = `
     for (const scene of plan.scenes) {
       pinned = { eye: scene.eye, target: scene.target };
       await settle(plan.poseSettleMinMs, plan.poseSettleMaxMs);
+      const timing = await sampleTiming();
       const shot = await grab();
       await post(${JSON.stringify(SHOT_FRAME_PATH)}, {
         scene: scene.id,
@@ -593,6 +704,7 @@ const DRIVER_SCRIPT = `
         height: shot.height,
         png: shot.full,
         contact: shot.contact,
+        timing,
       });
     }
     await post(${JSON.stringify(SHOT_DONE_PATH)}, { ok: true, renderer: rendererName, pageErrors });
@@ -799,6 +911,8 @@ async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheD
         poseSettleMaxMs: POSE_SETTLE_MAX_MS,
         contactWidth: CONTACT_IMAGE_WIDTH,
         contactQuality: CONTACT_IMAGE_QUALITY,
+        gpuTimingSampleFrames: GPU_TIMING_SAMPLE_FRAMES,
+        gpuTimingMaxWaitMs: GPU_TIMING_MAX_WAIT_MS,
       };
       let finish = null;
       const finished = new Promise((res) => {
@@ -818,11 +932,20 @@ async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheD
           counters: payload.counters,
           width: payload.width,
           height: payload.height,
+          timing: payload.timing,
           sha,
           file: `${base}.png`,
           contact: `${base}.jpg`,
         });
-        console.log(`  ${base.padEnd(28)} ${payload.width}x${payload.height} ${payload.counters}`);
+        const t = payload.timing ?? {};
+        const gpuMs =
+          t.gpuTimerSupported === true
+            ? `gpu p50/p99=${t.gpuMsP50?.toFixed(2)}/${t.gpuMsP99?.toFixed(2)}ms (n=${t.gpuFrames})`
+            : 'gpu timer unsupported';
+        console.log(
+          `  ${base.padEnd(28)} ${payload.width}x${payload.height} ${payload.counters} ` +
+            `cpu p50/p99=${t.cpuMsP50?.toFixed(2)}/${t.cpuMsP99?.toFixed(2)}ms ${gpuMs}`,
+        );
       };
       state.onDone = (payload) => finish(payload);
 
