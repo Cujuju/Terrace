@@ -35,6 +35,11 @@ import {
   drawnGroundSampler,
   followGroundY,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
+import {
+  advanceClimbRiserShift,
+  newClimbRiserShift,
+  type ClimbRiserShift,
+} from '../../../client/src/plugins/kit/climbRiser.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 import {
@@ -85,6 +90,8 @@ interface CreatureView {
    */
   drawnBodyBottomY: number;
   drawnBodyHeight: number;
+  /** How far the drawn body sits off the wire while it holds a wall. */
+  readonly riserShift: ClimbRiserShift;
 }
 
 /**
@@ -117,6 +124,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
       drawnY: null,
       drawnBodyBottomY: 0,
       drawnBodyHeight: 0,
+      riserShift: newClimbRiserShift(),
     }),
     // A creature's view is numbers and no scene object: the instanced meshes
     // are rebuilt every frame, so retiring one is dropping the entry.
@@ -171,10 +179,6 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // NO GROUND, NO DRAW — the same answer every other plugin gives. Flyers
     // never sample ground and are unaffected.
     if (kind !== 'flyer' && terrainY === null) continue;
-    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
-    // whose named residual this multiply is).
-    const drawnX = entity.x * CELL_WORLD_SIZE;
-    const drawnZ = entity.y * CELL_WORLD_SIZE;
     const previousDrawnY = view.drawnY;
     // ON A WALL the server owns the height (`climbHeight`); the follower still
     // eases toward it, which costs a climber nothing.
@@ -182,9 +186,16 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       entity.climbHeight === null
         ? creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, dt)
         : followGroundY(previousDrawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, dt);
+    // A climber holds the riser the terrain DREW, which is nowhere near the
+    // lattice edge the server pins its foot to (the kit's climbRiser).
+    advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, dt);
+    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
+    // whose named residual this multiply is).
+    const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
+    const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
     // A walker's legs are paced by the DISTANCE it covers between drawn frames,
-    // in THREE dimensions: measured horizontally it is zero for a climber,
-    // whose x/y stay pinned.
+    // in THREE dimensions: horizontally that is almost nothing for a climber,
+    // whose x/y are pinned.
     if (kind === 'walker' && previousDrawnY !== null) {
       view.phase += walkerStrideRadians(
         entity.species,
