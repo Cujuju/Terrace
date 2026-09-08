@@ -12,7 +12,8 @@ import {
   RELAX_SLACK,
   SEA_LEVEL,
   SMOOTH_PASS_LIMIT,
-  SOFT_SKIRT_CELLS,
+  SOFT_APRON_MAX_BANDS,
+  SOFT_APRON_TREAD_CELLS,
   WORLD_UNIT_CELLS,
 } from './constants.ts';
 
@@ -500,20 +501,31 @@ export function sculptSweepRadius(
   anchor: SculptAnchor,
 ): number {
   return profile === 'soft' && tool === 'stamp' && anchor === 'clicked'
-    ? radius + softSkirtCells(radius)
+    ? radius + softApronReachCells(radius)
     : radius;
 }
 
-/** Apron run: one band's run, or the radius when that is smaller. */
-function softSkirtCells(radius: number): number {
-  return radius < SOFT_SKIRT_CELLS ? radius : SOFT_SKIRT_CELLS;
+/**
+ * Cells the apron runs past the core: twice the radius, capped at the band
+ * ceiling. Twice, so it drops one band per world unit the brush slider names.
+ */
+export function softApronReachCells(radius: number): number {
+  const capped = SOFT_APRON_MAX_BANDS * SOFT_APRON_TREAD_CELLS;
+  const reach = 2 * radius;
+  return reach < capped ? reach : capped;
+}
+
+/** Bands below the core at `distPastCore` (1..reach) cells out. */
+export function softApronBandDrop(distPastCore: number): number {
+  const band = Math.floor((distPastCore + SOFT_APRON_TREAD_CELLS - 1) / SOFT_APRON_TREAD_CELLS);
+  return band < SOFT_APRON_MAX_BANDS ? band : SOFT_APRON_MAX_BANDS;
 }
 
 /**
- * The soft profile's apron: one flat step, one band back from the core.
- * Targets are bands, so a press is always visible (#387).
+ * The soft profile's apron: a staircase of up to SOFT_APRON_MAX_BANDS below
+ * the core. Targets are bands, so a press is always visible (#387).
  */
-function applySoftSkirt(
+function applySoftApron(
   map: Heightmap,
   cx: number,
   cy: number,
@@ -525,12 +537,26 @@ function applySoftSkirt(
 ): void {
   if (amount === 0) return;
   const raising = amount > 0;
-  const target = clampHeight(coreTarget + (raising ? -BAND_HEIGHT : BAND_HEIGHT));
+  const reach = softApronReachCells(radius);
   forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, 'soft', 'stamp', 'clicked'), (i) => {
     // Core cells are already filled; excluded by the core's own membership test.
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    if (isFootprintOffset(radius, x - cx, y - cy)) return;
+    const dx = x - cx;
+    const dy = y - cy;
+    if (isFootprintOffset(radius, dx, dy)) return;
+    // Ring distance by the core's own predicate, so the apron cannot drift
+    // from the footprint boundary. The sweep radius guarantees a hit by `reach`.
+    let dist = reach;
+    for (let d = 1; d < reach; d++) {
+      if (isFootprintOffset(radius + d, dx, dy)) {
+        dist = d;
+        break;
+      }
+    }
+    const target = clampHeight(
+      coreTarget + (raising ? -1 : 1) * softApronBandDrop(dist) * BAND_HEIGHT,
+    );
     // Open air at this level: skip, never fill. Same rule as applyBrush.
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
@@ -1374,7 +1400,7 @@ export function applySculpt(
     applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
   }
   if (softCore) {
-    applySoftSkirt(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
+    applySoftApron(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
   }
   // 'stamp' means no relaxation pass at all — the footprint is the whole edit.
   if (tool === 'smooth') {

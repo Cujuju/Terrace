@@ -361,10 +361,17 @@ export const LEGACY_MIN_HEIGHT = -1536;
 export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
 
 /**
- * Cells a soft stroke's apron reaches past the core (#387). One band's run at
- * MAX_STEP. Read applySoftSkirt: the apron is one flat step, not a ramp.
+ * Run of ONE apron band on a soft stroke (#414) — one world unit, MAX_STEP's
+ * run. That slope is the steepest edge a later `smooth` will not re-cut.
  */
-export const SOFT_SKIRT_CELLS = WORLD_UNIT_CELLS;
+export const SOFT_APRON_TREAD_CELLS = WORLD_UNIT_CELLS;
+
+/**
+ * Apron bands a soft stroke may descend. Four is the most any SELECTABLE
+ * brush asks for — FULL_BRUSH_RADIUS's nominal width — so a widened stroke
+ * gets the same edge.
+ */
+export const SOFT_APRON_MAX_BANDS = 4;
 
 /**
  * The odd height unit relaxation is allowed to LEAVE STANDING in a pair, in
