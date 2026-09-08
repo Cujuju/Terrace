@@ -7,7 +7,7 @@
 //   driven    by the page posting results back, not by CDP evaluate
 //
 // Mutants deform the shipped material and must be caught, so a pass is not
-// vacuous. Layered columns are refused rather than silently compared.
+// vacuous. Layered fixtures carve caves and fill columns to the span cap.
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,6 +33,11 @@ const REF_MIN_HEIGHT = -1536;
 const REF_MAX_HEIGHT = 1024;
 const REF_CELL_WORLD_SIZE = 1 / 4;
 const REF_CELL_CENTRE_OFFSET = 0.5;
+const REF_MAX_SPANS = 8;
+const REF_BEDROCK_FLOOR = REF_MIN_HEIGHT;
+const REF_OPEN_COLUMN_SAMPLE = REF_BEDROCK_FLOOR - REF_BAND_HEIGHT;
+const REF_FIXPOINT_STEPS = 4 * REF_MAX_SPANS;
+const REF_SPAN_STRIDE = 2;
 
 const SUBDIV_NEAR = 4;
 const SUBDIV_FAR = 1;
@@ -61,16 +66,59 @@ function refAxis(size, coord) {
   };
 }
 
-function refSurfaceHeight(cells, size, x, y, floorDiv = refFloorDiv) {
+function refQuantise(height) {
+  return refFloorDiv(height, REF_BAND_HEIGHT) * REF_BAND_HEIGHT;
+}
+
+/** The band-k sample of one column: its cap where band k is solid, else the cap below. */
+function refColumnSample(cells, size, spans, x, y, band) {
+  const threshold = band * REF_BAND_HEIGHT;
+  const packed = spans.get(y * size + x);
+  if (packed === undefined) {
+    return threshold < REF_BEDROCK_FLOOR ? REF_OPEN_COLUMN_SAMPLE : cells[y * size + x];
+  }
+  let below = REF_OPEN_COLUMN_SAMPLE;
+  for (let k = 0; k < packed.length; k += REF_SPAN_STRIDE) {
+    const floor = packed[k];
+    const ceiling = packed[k + 1];
+    const cap = refQuantise(ceiling);
+    const lowest = refQuantise(floor) === floor ? floor : refQuantise(floor) + REF_BAND_HEIGHT;
+    if (lowest > cap) continue;
+    if (floor <= threshold && threshold <= cap) return ceiling;
+    if (cap < threshold) below = ceiling;
+  }
+  return below;
+}
+
+function refSurfaceHeight(cells, size, spans, x, y, floorDiv = refFloorDiv) {
   const ax = refAxis(size, x);
   const ay = refAxis(size, y);
   const d = REF_SUBCELL_DENOM;
-  const numerator =
-    (d - ax.f) * (d - ay.f) * cells[ay.i0 * size + ax.i0] +
-    ax.f * (d - ay.f) * cells[ay.i0 * size + ax.i1] +
-    (d - ax.f) * ay.f * cells[ay.i1 * size + ax.i0] +
-    ax.f * ay.f * cells[ay.i1 * size + ax.i1];
-  return floorDiv(numerator, REF_BAND_BLEND_DENOM) * REF_BAND_HEIGHT;
+  const blend = (h00, h10, h01, h11) =>
+    floorDiv(
+      (d - ax.f) * (d - ay.f) * h00 +
+        ax.f * (d - ay.f) * h10 +
+        (d - ax.f) * ay.f * h01 +
+        ax.f * ay.f * h11,
+      REF_BAND_BLEND_DENOM,
+    );
+  let band = blend(
+    cells[ay.i0 * size + ax.i0],
+    cells[ay.i0 * size + ax.i1],
+    cells[ay.i1 * size + ax.i0],
+    cells[ay.i1 * size + ax.i1],
+  );
+  for (let step = 0; spans.size > 0 && step < REF_FIXPOINT_STEPS; step++) {
+    const next = blend(
+      refColumnSample(cells, size, spans, ax.i0, ay.i0, band),
+      refColumnSample(cells, size, spans, ax.i1, ay.i0, band),
+      refColumnSample(cells, size, spans, ax.i0, ay.i1, band),
+      refColumnSample(cells, size, spans, ax.i1, ay.i1, band),
+    );
+    if (next === band) break;
+    band = next;
+  }
+  return band * REF_BAND_HEIGHT;
 }
 
 /** Deliberately wrong: truncates toward zero, the classic negative-height trap. */
@@ -108,13 +156,79 @@ function buildMapCells(kind, size, minHeight, maxHeight, bandHeight) {
   return cells;
 }
 
+const CAVE_X_STRIDE = 7;
+const CAVE_Y_STRIDE = 11;
+const CAVE_PERIOD = 5;
+const CAVE_ROOF_BANDS = 2;
+const CAVE_FLOOR_BANDS = 6;
+const STACK_FIRST_BANDS = 3;
+const STACK_GAP_SPREAD_BANDS = 2;
+const STACK_RUN_SPREAD_BANDS = 3;
+const STACK_GAP_X_STRIDE = 3;
+const STACK_GAP_Y_STRIDE = 5;
+const STACK_GAP_K_STRIDE = 7;
+const STACK_RUN_X_STRIDE = 5;
+const STACK_RUN_Y_STRIDE = 3;
+const STACK_RUN_K_STRIDE = 11;
+
+// 'cave' hollows every fifth column; 'stack' fills every column to the span cap.
+function buildColumnSpans(kind, size, cells, minHeight, bandHeight, maxSpans) {
+  const spans = new Map();
+  if (kind !== 'cave' && kind !== 'stack') return spans;
+  for (let i = 0; i < cells.length; i++) {
+    const x = i % size;
+    const y = (i - x) / size;
+    if (kind === 'cave') {
+      if ((x * CAVE_X_STRIDE + y * CAVE_Y_STRIDE) % CAVE_PERIOD !== 0) continue;
+      const ground = cells[i];
+      const slab = ground - CAVE_FLOOR_BANDS * bandHeight;
+      if (slab <= minHeight) continue;
+      spans.set(i, [minHeight, slab, ground - CAVE_ROOF_BANDS * bandHeight, ground]);
+      continue;
+    }
+    let ceiling = minHeight + bandHeight * (1 + ((x + y) % STACK_FIRST_BANDS));
+    const flat = [minHeight, ceiling];
+    for (let k = 1; k < maxSpans; k++) {
+      const floor =
+        ceiling +
+        1 +
+        ((x * STACK_GAP_X_STRIDE + y * STACK_GAP_Y_STRIDE + k * STACK_GAP_K_STRIDE) %
+          (STACK_GAP_SPREAD_BANDS * bandHeight));
+      ceiling =
+        floor +
+        1 +
+        ((x * STACK_RUN_X_STRIDE + y * STACK_RUN_Y_STRIDE + k * STACK_RUN_K_STRIDE) %
+          (STACK_RUN_SPREAD_BANDS * bandHeight));
+      flat.push(floor, ceiling);
+    }
+    cells[i] = ceiling;
+    spans.set(i, flat);
+  }
+  return spans;
+}
+
 const MAP_BUILDER_SOURCE = `${buildMapCells.toString()}
+${buildColumnSpans.toString()}
 const MAP_LCG_MULTIPLIER = ${MAP_LCG_MULTIPLIER};
 const MAP_LCG_INCREMENT = ${MAP_LCG_INCREMENT};
 const MAP_LCG_MODULUS = ${MAP_LCG_MODULUS};
 const MAP_SEED_MIX = ${MAP_SEED_MIX};
 const RAMP_X_STRIDE = ${RAMP_X_STRIDE};
-const RAMP_Y_STRIDE = ${RAMP_Y_STRIDE};`;
+const RAMP_Y_STRIDE = ${RAMP_Y_STRIDE};
+const CAVE_X_STRIDE = ${CAVE_X_STRIDE};
+const CAVE_Y_STRIDE = ${CAVE_Y_STRIDE};
+const CAVE_PERIOD = ${CAVE_PERIOD};
+const CAVE_ROOF_BANDS = ${CAVE_ROOF_BANDS};
+const CAVE_FLOOR_BANDS = ${CAVE_FLOOR_BANDS};
+const STACK_FIRST_BANDS = ${STACK_FIRST_BANDS};
+const STACK_GAP_SPREAD_BANDS = ${STACK_GAP_SPREAD_BANDS};
+const STACK_RUN_SPREAD_BANDS = ${STACK_RUN_SPREAD_BANDS};
+const STACK_GAP_X_STRIDE = ${STACK_GAP_X_STRIDE};
+const STACK_GAP_Y_STRIDE = ${STACK_GAP_Y_STRIDE};
+const STACK_GAP_K_STRIDE = ${STACK_GAP_K_STRIDE};
+const STACK_RUN_X_STRIDE = ${STACK_RUN_X_STRIDE};
+const STACK_RUN_Y_STRIDE = ${STACK_RUN_Y_STRIDE};
+const STACK_RUN_K_STRIDE = ${STACK_RUN_K_STRIDE};`;
 
 // ---------------------------------------------------------------------------
 // Cases and mutants.
@@ -154,6 +268,10 @@ const CASES = [
   smallCase('ramp 64 near', 'ramp', SUBDIV_NEAR),
   smallCase('mixed 64 far', 'mixed', SUBDIV_FAR),
   smallCase('negative 64 far', 'negative', SUBDIV_FAR),
+  smallCase('cave 64 near', 'cave', SUBDIV_NEAR),
+  smallCase('cave 64 far', 'cave', SUBDIV_FAR),
+  smallCase('stack 64 near', 'stack', SUBDIV_NEAR),
+  smallCase('stack 64 far', 'stack', SUBDIV_FAR),
   largeCase('mixed 2048 corner near', 'mixed', SUBDIV_NEAR, LARGE_CORNER_CHUNK0),
   largeCase('mixed 2048 corner far', 'mixed', SUBDIV_FAR, LARGE_CORNER_CHUNK0),
   largeCase('negative 2048 corner near', 'negative', SUBDIV_NEAR, LARGE_CORNER_CHUNK0),
@@ -168,6 +286,9 @@ const MUTANTS = [
   { key: 'shiftSubcell', caseName: 'mixed 64 far' },
   { key: 'dropHalfCell', caseName: 'mixed 64 far' },
   { key: 'truncDiv', caseName: 'negative 64 near' },
+  { key: 'ignoreSpans', caseName: 'cave 64 near' },
+  { key: 'ignoreSpans', caseName: 'stack 64 near' },
+  { key: 'capFixpoint', caseName: 'stack 64 near' },
 ];
 
 /** Known slack: at subdivision 4 the half-subcell offset never crosses a lattice edge. */
@@ -192,12 +313,21 @@ const JOBS = [
 const mapCache = new Map();
 function mapFor(kind, size) {
   const key = `${kind}:${size}`;
-  let cells = mapCache.get(key);
-  if (cells === undefined) {
-    cells = buildMapCells(kind, size, REF_MIN_HEIGHT, REF_MAX_HEIGHT, REF_BAND_HEIGHT);
-    mapCache.set(key, cells);
+  let entry = mapCache.get(key);
+  if (entry === undefined) {
+    const cells = buildMapCells(kind, size, REF_MIN_HEIGHT, REF_MAX_HEIGHT, REF_BAND_HEIGHT);
+    const spans = buildColumnSpans(
+      kind,
+      size,
+      cells,
+      REF_MIN_HEIGHT,
+      REF_BAND_HEIGHT,
+      REF_MAX_SPANS,
+    );
+    entry = { cells, spans };
+    mapCache.set(key, entry);
   }
-  return cells;
+  return entry;
 }
 
 const sideOf = (job) => job.chunks * REF_CHUNK_SIZE * job.subdiv;
@@ -207,14 +337,14 @@ function sampleCellCoord(chunk0, pixel, subdiv) {
 }
 
 function expectedForCase(testCase, floorDiv) {
-  const cells = mapFor(testCase.kind, testCase.size);
+  const { cells, spans } = mapFor(testCase.kind, testCase.size);
   const side = sideOf(testCase);
   const out = new Int32Array(side * side);
   for (let py = 0; py < side; py++) {
     const y = sampleCellCoord(testCase.cy0, py, testCase.subdiv);
     for (let px = 0; px < side; px++) {
       const x = sampleCellCoord(testCase.cx0, px, testCase.subdiv);
-      out[py * side + px] = refSurfaceHeight(cells, testCase.size, x, y, floorDiv);
+      out[py * side + px] = refSurfaceHeight(cells, testCase.size, spans, x, y, floorDiv);
     }
   }
   return out;
@@ -238,7 +368,11 @@ const PROBE_PAGE = `<!doctype html><meta charset="utf-8"><title>independent gpu 
 const PROBE_SCRIPT = `
 import * as THREE from 'three';
 import { createChunkTemplate, createGpuTerrainMaterial } from 'gpuTerrainMaterial';
-import { createBandPaletteTexture, createHeightTexture } from 'gpuTerrainTextures';
+import {
+  createBandPaletteTexture,
+  createColumnSpanTextures,
+  createHeightTexture,
+} from 'gpuTerrainTextures';
 
 ${MAP_BUILDER_SOURCE}
 
@@ -249,6 +383,7 @@ const CELL_CENTRE_OFFSET = ${REF_CELL_CENTRE_OFFSET};
 const MIN_HEIGHT = ${REF_MIN_HEIGHT};
 const MAX_HEIGHT = ${REF_MAX_HEIGHT};
 const BAND_HEIGHT = ${REF_BAND_HEIGHT};
+const MAX_SPANS = ${REF_MAX_SPANS};
 const COVERED_FLAG = ${PROBE_COVERED_FLAG};
 const CAMERA_HEIGHT = ${CAMERA_HEIGHT_WORLD};
 const CAMERA_NEAR = ${CAMERA_NEAR_WORLD};
@@ -264,6 +399,8 @@ const MUTATIONS = {
   dropHalfCell: ['(subIJ + 0.5) / uSubdiv', '(subIJ) / uSubdiv'],
   shiftSubcell: ['(subIJ + 0.5) / uSubdiv', '(subIJ + 1.5) / uSubdiv'],
   truncDiv: ['return q * b > a ? q - 1 : q;', 'return q;'],
+  ignoreSpans: ['if (uWorldHasSpans != 0) {', 'if (false) {'],
+  capFixpoint: ['step < FIELD_FIXPOINT_STEPS', 'step < 1'],
 };
 
 function splice(source, anchor, replacement) {
@@ -308,14 +445,25 @@ const cellCoordToWorld = (c) => (c - CELL_CENTRE_OFFSET) * CELL_WORLD_SIZE;
 let loaded = null;
 
 function load(kind, size) {
-  if (loaded !== null) loaded.height.dispose();
-  const map = {
-    size,
-    cells: buildMapCells(kind, size, MIN_HEIGHT, MAX_HEIGHT, BAND_HEIGHT),
-    columnSpans: new Map(),
-  };
-  loaded = { key: kind + ':' + size, map, height: createHeightTexture(map) };
-  return loaded.map.columnSpans.size;
+  if (loaded !== null) {
+    loaded.height.dispose();
+    loaded.spans.dispose();
+  }
+  const cells = buildMapCells(kind, size, MIN_HEIGHT, MAX_HEIGHT, BAND_HEIGHT);
+  const columnSpans = new Map();
+  for (const [index, flat] of buildColumnSpans(
+    kind, size, cells, MIN_HEIGHT, BAND_HEIGHT, MAX_SPANS,
+  )) {
+    columnSpans.set(index, Int16Array.from(flat));
+  }
+  const map = { size, cells, columnSpans };
+  const spans = createColumnSpanTextures(map);
+  loaded = { key: kind + ':' + size, map, height: createHeightTexture(map), spans };
+  const perEdge = size / CHUNK_SIZE;
+  for (let cy = 0; cy < perEdge; cy++) {
+    for (let cx = 0; cx < perEdge; cx++) spans.uploadChunk(renderer, cx, cy);
+  }
+  return columnSpans.size;
 }
 
 function probe(job) {
@@ -324,6 +472,7 @@ function probe(job) {
     uPalette: { value: createBandPaletteTexture() },
     uSizeCells: { value: loaded.map.size },
     uSmooth: { value: 1 },
+    ...loaded.spans.uniforms,
   };
   const { geometry } = createChunkTemplate(job.subdiv);
   const count = job.chunks * job.chunks;
@@ -400,10 +549,14 @@ function rendererName() {
     meta.renderer = rendererName();
     for (const job of JOBS) {
       const key = job.kind + ':' + job.size;
-      const layered = loaded !== null && loaded.key === key ? 0 : load(job.kind, job.size);
-      if (layered !== 0) throw new Error('layered columns present; this reference covers unlayered only');
+      if (loaded === null || loaded.key !== key) load(job.kind, job.size);
       const result = probe(job);
-      meta.jobs.push({ label: job.label, side: result.side, uncovered: result.uncovered });
+      meta.jobs.push({
+        label: job.label,
+        side: result.side,
+        uncovered: result.uncovered,
+        layered: loaded.map.columnSpans.size,
+      });
       blocks.push(result.heights);
     }
   } catch (error) {
@@ -615,6 +768,7 @@ async function runBrowser(which, port, inbox) {
     console.log(
       `[${which}] ${job.label.padEnd(34)} samples ${String(cmp.samples).padStart(6)}` +
         `  mismatches ${String(cmp.mismatches).padStart(6)}  uncovered ${reported.uncovered}` +
+        `  layered ${String(reported.layered).padStart(5)}` +
         (job.mutate === null ? '' : job.slack ? '  (no-op by design)' : '  (must be non-zero)'),
     );
   }
@@ -633,6 +787,7 @@ const OFF_MAP_COORDS = [-9, -0.1, 0, SMALL_SIZE - 0.001, SMALL_SIZE, SMALL_SIZE 
 async function checkReferenceAgainstShipped() {
   const shared = await import('../../shared/src/drawnGround.ts');
   const grid = await import('../../shared/src/grid.ts');
+  const columns = await import('../../shared/src/columns.ts');
   const constants = await import('../../shared/src/constants.ts');
   const drift = [];
   for (const [name, value] of [
@@ -642,17 +797,29 @@ async function checkReferenceAgainstShipped() {
     ['CHUNK_SIZE', REF_CHUNK_SIZE],
     ['MIN_HEIGHT', REF_MIN_HEIGHT],
     ['MAX_HEIGHT', REF_MAX_HEIGHT],
+    ['MAX_SPANS_PER_COLUMN', REF_MAX_SPANS],
+    ['DRAWN_GROUND_FIXPOINT_STEPS', REF_FIXPOINT_STEPS],
   ]) {
-    if (constants[name] !== value) drift.push(`${name}: shipped ${constants[name]}, mine ${value}`);
+    const shipped = constants[name] ?? shared[name];
+    if (shipped !== value) drift.push(`${name}: shipped ${shipped}, mine ${value}`);
   }
   let samples = 0;
   let mismatches = 0;
   let worst = null;
   let offMapMismatches = 0;
-  for (const kind of ['mixed', 'negative', 'ramp']) {
-    const cells = mapFor(kind, SMALL_SIZE);
+  let layeredCells = 0;
+  for (const kind of ['mixed', 'negative', 'ramp', 'cave', 'stack']) {
+    const { cells, spans } = mapFor(kind, SMALL_SIZE);
     const map = grid.createHeightmap(SMALL_SIZE);
     map.cells.set(cells);
+    for (const [index, flat] of spans) {
+      const built = [];
+      for (let k = 0; k < flat.length; k += REF_SPAN_STRIDE) {
+        built.push({ floor: flat[k], ceiling: flat[k + 1] });
+      }
+      columns.setColumn(map, index % SMALL_SIZE, Math.floor(index / SMALL_SIZE), built);
+    }
+    layeredCells += spans.size;
     for (const subdiv of [SUBDIV_NEAR, SUBDIV_FAR]) {
       const side = SMALL_SIZE * subdiv;
       for (let py = 0; py < side; py++) {
@@ -660,7 +827,11 @@ async function checkReferenceAgainstShipped() {
         for (let px = 0; px < side; px++) {
           const x = sampleCellCoord(0, px, subdiv);
           samples++;
-          if (refSurfaceHeight(cells, SMALL_SIZE, x, y) === shared.drawnGroundHeight(map, x, y)) continue;
+          if (
+            refSurfaceHeight(cells, SMALL_SIZE, spans, x, y) === shared.drawnGroundHeight(map, x, y)
+          ) {
+            continue;
+          }
           mismatches++;
           if (worst === null) worst = { kind, subdiv, x, y };
         }
@@ -669,14 +840,18 @@ async function checkReferenceAgainstShipped() {
     for (const x of OFF_MAP_COORDS) {
       for (const y of OFF_MAP_COORDS) {
         samples++;
-        if (refSurfaceHeight(cells, SMALL_SIZE, x, y) === shared.drawnGroundHeight(map, x, y)) continue;
+        if (
+          refSurfaceHeight(cells, SMALL_SIZE, spans, x, y) === shared.drawnGroundHeight(map, x, y)
+        ) {
+          continue;
+        }
         mismatches++;
         offMapMismatches++;
         if (worst === null) worst = { kind, subdiv: 'off-map', x, y };
       }
     }
   }
-  return { drift, samples, mismatches, worst, offMapMismatches };
+  return { drift, samples, mismatches, worst, offMapMismatches, layeredCells };
 }
 
 function referenceSelfTest() {
@@ -701,7 +876,7 @@ async function main() {
   );
   if (ref.drift.length > 0) console.log(`constant drift: ${ref.drift.join('; ')}`);
   if (ref.worst !== null) console.log(`first reference mismatch: ${JSON.stringify(ref.worst)}`);
-  console.log('layered columns: refused (probe maps carry no columnSpans; unlayered reference only)');
+  console.log(`layered columns compared: ${ref.layeredCells} across the cave and stack fixtures`);
 
   const self = referenceSelfTest();
   console.log(
