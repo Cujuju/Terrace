@@ -1,12 +1,25 @@
-import { BAND_HEIGHT, TERRAIN_LOD_NEAR_N } from './constants.ts';
+import { BAND_HEIGHT, MAX_SPANS_PER_COLUMN, TERRAIN_LOD_NEAR_N } from './constants.ts';
 import { cellIndex, type Heightmap } from './grid.ts';
-import { columnSampleAtBand, OPEN_COLUMN_SAMPLE } from './columns.ts';
+import { columnSampleAtBand, spanCount } from './columns.ts';
 
 const SUBCELL_DENOM = 2 * TERRAIN_LOD_NEAR_N;
 
 const BLEND_DENOM = SUBCELL_DENOM * SUBCELL_DENOM;
 
-const TOP_SURFACE = null;
+const BAND_BLEND_DENOM = BLEND_DENOM * BAND_HEIGHT;
+
+const FIXPOINT_STEPS_PER_SPAN = 4;
+
+export const DRAWN_GROUND_FIXPOINT_STEPS = FIXPOINT_STEPS_PER_SPAN * MAX_SPANS_PER_COLUMN;
+
+interface Footprint {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+  readonly fx: number;
+  readonly fy: number;
+}
 
 function floorDiv(a: number, b: number): number {
   const q = Math.trunc(a / b);
@@ -21,58 +34,83 @@ function latticeOffset(coord: number): number {
   return 2 * Math.floor(coord * TERRAIN_LOD_NEAR_N) + 1 - TERRAIN_LOD_NEAR_N;
 }
 
-function cornerSample(map: Heightmap, cx: number, cy: number, band: number | null): number {
-  if (band === TOP_SURFACE) return map.cells[cellIndex(map, cx, cy)]!;
-  return columnSampleAtBand(map, cx, cy, band);
-}
-
-function drawnSurface(map: Heightmap, x: number, y: number, band: number | null): number {
+function footprintAt(map: Heightmap, x: number, y: number): Footprint {
   const qx = latticeOffset(x);
   const qy = latticeOffset(y);
   const baseX = floorDiv(qx, SUBCELL_DENOM);
   const baseY = floorDiv(qy, SUBCELL_DENOM);
-  const fx = qx - baseX * SUBCELL_DENOM;
-  const fy = qy - baseY * SUBCELL_DENOM;
-  const x0 = clampCell(map.size, baseX);
-  const x1 = clampCell(map.size, baseX + 1);
-  const y0 = clampCell(map.size, baseY);
-  const y1 = clampCell(map.size, baseY + 1);
-  const h00 = cornerSample(map, x0, y0, band);
-  const h10 = cornerSample(map, x1, y0, band);
-  const h01 = cornerSample(map, x0, y1, band);
-  const h11 = cornerSample(map, x1, y1, band);
-
-  let numerator: number;
-  if (
-    h00 === OPEN_COLUMN_SAMPLE ||
-    h10 === OPEN_COLUMN_SAMPLE ||
-    h01 === OPEN_COLUMN_SAMPLE ||
-    h11 === OPEN_COLUMN_SAMPLE
-  ) {
-    const takeX1 = 2 * fx > SUBCELL_DENOM;
-    const takeY1 = 2 * fy > SUBCELL_DENOM;
-    const nearest = takeY1 ? (takeX1 ? h11 : h01) : takeX1 ? h10 : h00;
-    numerator = nearest * BLEND_DENOM;
-  } else {
-    numerator =
-      (SUBCELL_DENOM - fx) * (SUBCELL_DENOM - fy) * h00 +
-      fx * (SUBCELL_DENOM - fy) * h10 +
-      (SUBCELL_DENOM - fx) * fy * h01 +
-      fx * fy * h11;
-  }
-
-  return floorDiv(numerator, BLEND_DENOM * BAND_HEIGHT) * BAND_HEIGHT;
+  return {
+    x0: clampCell(map.size, baseX),
+    y0: clampCell(map.size, baseY),
+    x1: clampCell(map.size, baseX + 1),
+    y1: clampCell(map.size, baseY + 1),
+    fx: qx - baseX * SUBCELL_DENOM,
+    fy: qy - baseY * SUBCELL_DENOM,
+  };
 }
 
-export function drawnGroundHeight(map: Heightmap, x: number, y: number): number {
-  return drawnSurface(map, x, y, TOP_SURFACE);
+function blendBand(
+  fp: Footprint,
+  h00: number,
+  h10: number,
+  h01: number,
+  h11: number,
+): number {
+  const numerator =
+    (SUBCELL_DENOM - fp.fx) * (SUBCELL_DENOM - fp.fy) * h00 +
+    fp.fx * (SUBCELL_DENOM - fp.fy) * h10 +
+    (SUBCELL_DENOM - fp.fx) * fp.fy * h01 +
+    fp.fx * fp.fy * h11;
+  return floorDiv(numerator, BAND_BLEND_DENOM);
 }
 
-export function drawnGroundHeightAtBand(
+function bandOfCellBlend(map: Heightmap, fp: Footprint): number {
+  return blendBand(
+    fp,
+    map.cells[cellIndex(map, fp.x0, fp.y0)]!,
+    map.cells[cellIndex(map, fp.x1, fp.y0)]!,
+    map.cells[cellIndex(map, fp.x0, fp.y1)]!,
+    map.cells[cellIndex(map, fp.x1, fp.y1)]!,
+  );
+}
+
+function bandOfSampleBlend(map: Heightmap, fp: Footprint, band: number): number {
+  return blendBand(
+    fp,
+    columnSampleAtBand(map, fp.x0, fp.y0, band),
+    columnSampleAtBand(map, fp.x1, fp.y0, band),
+    columnSampleAtBand(map, fp.x0, fp.y1, band),
+    columnSampleAtBand(map, fp.x1, fp.y1, band),
+  );
+}
+
+function footprintIsUnlayered(map: Heightmap, fp: Footprint): boolean {
+  if (map.columnSpans.size === 0) return true;
+  return (
+    spanCount(map, fp.x0, fp.y0) === 1 &&
+    spanCount(map, fp.x1, fp.y0) === 1 &&
+    spanCount(map, fp.x0, fp.y1) === 1 &&
+    spanCount(map, fp.x1, fp.y1) === 1
+  );
+}
+
+export function drawnGroundCoversBand(
   map: Heightmap,
   x: number,
   y: number,
   band: number,
-): number {
-  return drawnSurface(map, x, y, band);
+): boolean {
+  return bandOfSampleBlend(map, footprintAt(map, x, y), band) >= band;
+}
+
+export function drawnGroundHeight(map: Heightmap, x: number, y: number): number {
+  const fp = footprintAt(map, x, y);
+  let band = bandOfCellBlend(map, fp);
+  if (footprintIsUnlayered(map, fp)) return band * BAND_HEIGHT;
+  for (let step = 0; step < DRAWN_GROUND_FIXPOINT_STEPS; step++) {
+    const next = bandOfSampleBlend(map, fp, band);
+    if (next === band) break;
+    band = next;
+  }
+  return band * BAND_HEIGHT;
 }
