@@ -4,8 +4,6 @@ import {
   BAND_HEIGHT,
   BEDROCK_FLOOR,
   CHUNK_SIZE,
-  applySculpt,
-  setColumn,
   spanIndexCoveringBand,
   type ChunkPayload,
   type JoinSnapshotMessage,
@@ -22,6 +20,7 @@ import {
 } from '../src/terrain/picking.ts';
 import { carveBandOfPick, resolvePick } from '../src/terrain/pickBand.ts';
 import { brushRadius, brushTool, setBrushRadius, setBrushTool } from '../src/state/hudState.ts';
+import { sculptMirror, setMirrorColumn } from './mirrorEdit.ts';
 
 const WORLD = 64;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
@@ -35,6 +34,12 @@ const WALL_X = 32;
 const AIM_Z = 20;
 const GROUND_BAND = 5;
 const WALL_BAND = 10;
+
+/** Mid-wall: clear of the blended steps that straddle the cliff's foot. */
+const FACE_BAND = GROUND_BAND + 3;
+
+/** A cell's drawn surface blends its 2x2 neighbourhood, so a patch has to move together. */
+const PATCH_REACH_CELLS = 1;
 
 function flatWorld(heightOf: (x: number, y: number) => number): TerrainMirror {
   const mirror = createTerrainMirror(WORLD);
@@ -149,6 +154,19 @@ function driveInput(
 const bandY = (bands: number): number => bands * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 const cellW = (cells: number): number => cells * CELL_WORLD_SIZE;
 
+function setPatchCap(
+  mirror: TerrainMirror,
+  cx: number,
+  cy: number,
+  ceiling: number,
+): void {
+  for (let dy = -PATCH_REACH_CELLS; dy <= PATCH_REACH_CELLS; dy++) {
+    for (let dx = -PATCH_REACH_CELLS; dx <= PATCH_REACH_CELLS; dx++) {
+      setMirrorColumn(mirror, cx + dx, cy + dy, [{ floor: BEDROCK_FLOOR, ceiling }]);
+    }
+  }
+}
+
 describe('hoverTarget pins the cell and re-derives the pick', () => {
   it('keeps the aimed cell when the ground under it is RAISED, and follows its new surface', () => {
     const mirror = flatWorld(() => 0);
@@ -164,13 +182,12 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       expect(before!.surfaceY).toBe(0);
       const cell = { x: before!.x, y: before!.y };
 
-      setColumn(mirror.map, cell.x, cell.y, [
-        { floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 3 },
-      ]);
+      const RAISED_BANDS = 3;
+      setPatchCap(mirror, cell.x, cell.y, BAND_HEIGHT * RAISED_BANDS);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
       expect({ x: after!.x, y: after!.y }).toEqual(cell);
-      expect(after!.surfaceY).toBe(bandY(3));
+      expect(after!.surfaceY).toBe(bandY(RAISED_BANDS));
     } finally {
       dispose();
     }
@@ -188,7 +205,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       expect(before).not.toBeNull();
       const cell = { x: before!.x, y: before!.y };
 
-      setColumn(mirror.map, cell.x, cell.y, [{ floor: BEDROCK_FLOOR, ceiling: 0 }]);
+      setPatchCap(mirror, cell.x, cell.y, 0);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
       expect({ x: after!.x, y: after!.y }).toEqual(cell);
@@ -204,7 +221,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
     const mirror = flatWorld((x) =>
       x >= WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND,
     );
-    const rayY = bandY(GROUND_BAND + 0.5);
+    const rayY = bandY(FACE_BAND - 0.5);
     const { input, dispose } = driveInput(
       mirror,
       { x: cellW(WALL_X - 10), y: rayY, z: cellW(AIM_Z) },
@@ -216,11 +233,11 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       expect(struck!.x).toBe(WALL_X);
       expect(struck!.hitRiser).toBe(true);
       const grabbed = resolvePick(mirror.map, struck!);
-      const k = GROUND_BAND + 1;
+      const k = FACE_BAND;
       expect(grabbed).toEqual({ face: 'riser', band: k });
 
       const CARVE_RADIUS_CELLS = 1;
-      applySculpt(mirror.map, struck!.x, struck!.y, CARVE_RADIUS_CELLS, -BAND_HEIGHT, {
+      sculptMirror(mirror, struck!.x, struck!.y, CARVE_RADIUS_CELLS, -BAND_HEIGHT, {
         tool: 'carve',
         spanBand: k,
       });
@@ -285,9 +302,7 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
       expect(before).not.toBeNull();
       const cell = { x: before!.x, y: before!.y };
       fire('pointerdown', {});
-      setColumn(mirror.map, cell.x, cell.y, [
-        { floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 3 },
-      ]);
+      setPatchCap(mirror, cell.x, cell.y, BAND_HEIGHT * 3);
       expect({ x: input.hoverTarget()!.x, y: input.hoverTarget()!.y }).toEqual(cell);
     } finally {
       dispose();
@@ -298,7 +313,7 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
     const mirror = flatWorld((x) =>
       x >= WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND,
     );
-    const rayY = bandY(GROUND_BAND + 0.5);
+    const rayY = bandY(FACE_BAND - 0.5);
     const { input, fire, dispose } = driveInput(
       mirror,
       { x: cellW(WALL_X - 10), y: rayY, z: cellW(AIM_Z) },
@@ -311,9 +326,9 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
 
       fire('pointerdown', {});
       const CARVE_RADIUS_CELLS = 1;
-      applySculpt(mirror.map, WALL_X, struck!.y, CARVE_RADIUS_CELLS, -BAND_HEIGHT, {
+      sculptMirror(mirror, WALL_X, struck!.y, CARVE_RADIUS_CELLS, -BAND_HEIGHT, {
         tool: 'carve',
-        spanBand: GROUND_BAND + 1,
+        spanBand: FACE_BAND,
       });
       expect(input.hoverTarget()!.x).toBe(WALL_X);
 
@@ -349,7 +364,7 @@ describe('carveReachCell: where a held carve cuts next (#349)', () => {
       const reach = carveReachCell(mirror, eastward.origin, eastward.direction, k);
       expect(reach).not.toBeNull();
       cut.push(reach!.x);
-      applySculpt(mirror.map, reach!.x, reach!.y, CARVE_RADIUS_CELLS, -BAND_HEIGHT, {
+      sculptMirror(mirror, reach!.x, reach!.y, CARVE_RADIUS_CELLS, -BAND_HEIGHT, {
         tool: 'carve',
         spanBand: k,
       });
@@ -375,7 +390,7 @@ describe('a held carve keeps the band it pressed on and tunnels inward (#349)', 
 
   const applyLast = (mirror: TerrainMirror, sent: readonly SculptIntent[]): void => {
     const intent = sent[sent.length - 1]!;
-    applySculpt(mirror.map, intent.x, intent.y, intent.radius, -BAND_HEIGHT, {
+    sculptMirror(mirror, intent.x, intent.y, intent.radius, -BAND_HEIGHT, {
       tool: 'carve',
       spanBand: intent.spanBand ?? null,
     });
@@ -388,14 +403,14 @@ describe('a held carve keeps the band it pressed on and tunnels inward (#349)', 
     const mirror = flatWorld((x) =>
       x >= WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND,
     );
-    const rayY = bandY(GROUND_BAND + 0.5);
+    const rayY = bandY(FACE_BAND - 0.5);
     const { input, sent, fire, dispose } = driveInput(
       mirror,
       { x: cellW(WALL_X - 10), y: rayY, z: cellW(AIM_Z) },
       { x: cellW(WALL_X), y: rayY, z: cellW(AIM_Z) },
     );
     try {
-      const k = GROUND_BAND + 1;
+      const k = FACE_BAND;
       expect(input.hoverTarget()!.x).toBe(WALL_X);
 
       fire('pointerdown', {});
@@ -421,7 +436,7 @@ describe('a held carve keeps the band it pressed on and tunnels inward (#349)', 
     const mirror = flatWorld((x) =>
       x === WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND,
     );
-    const rayY = bandY(GROUND_BAND + 0.5);
+    const rayY = bandY(FACE_BAND - 0.5);
     const { sent, fire, dispose } = driveInput(
       mirror,
       { x: cellW(WALL_X - 10), y: rayY, z: cellW(AIM_Z) },
