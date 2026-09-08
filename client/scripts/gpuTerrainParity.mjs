@@ -8,14 +8,19 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { resolveChromeHeadlessShell } from './chromeHeadlessShell.mjs';
 import {
+  BAND_HEIGHT,
   CHUNK_SIZE,
   MAX_HEIGHT,
+  MAX_SPANS_PER_COLUMN,
   MIN_HEIGHT,
   TERRAIN_LOD_FAR_N,
   TERRAIN_LOD_NEAR_N,
 } from '../../shared/src/constants.ts';
-import { createHeightmap } from '../../shared/src/grid.ts';
+import { cellIndex, createHeightmap } from '../../shared/src/grid.ts';
+import { BEDROCK_FLOOR, setColumn } from '../../shared/src/columns.ts';
+import { chunkIndex, chunksPerEdge } from '../../shared/src/chunks.ts';
 import { drawnGroundHeight } from '../../shared/src/drawnGround.ts';
+import { carveArchFixture } from '../src/terrain/archFixture.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '../..');
@@ -60,6 +65,56 @@ const SWEEP_MODULUS = 2 ** 32;
 const SCULPT_CHUNK = { cx: 1, cy: 1 };
 const SCULPT_DELTA = -777;
 
+/** Wide enough for the arch fixture's mound, which reaches 30 cells from centre. */
+const LAYERED_CHUNKS_PER_EDGE = 4;
+const LAYERED_SIZE = CHUNK_SIZE * LAYERED_CHUNKS_PER_EDGE;
+
+const BASE_X_STRIDE = 3;
+const BASE_Y_STRIDE = 5;
+const BASE_BAND_SPREAD = 17;
+const BASE_BAND_FLOOR = -4;
+
+/** Every fifth cell on a stride that is coprime with the lattice, so caves straddle blends. */
+const CAVE_X_STRIDE = 7;
+const CAVE_Y_STRIDE = 11;
+const CAVE_PERIOD = 5;
+const CAVE_ROOF_BANDS = 2;
+const CAVE_FLOOR_BANDS = 6;
+
+/** The overhang plateau measured on this arc: a bedrock slab, a gap, then a roof. */
+const OVERHANG_CELLS = 16;
+const OVERHANG_SLAB_CEILING = 0;
+const OVERHANG_ROOF_FLOOR = 256;
+const OVERHANG_ROOF_CEILING = 320;
+
+const MAX_SPAN_REGION_CELLS = 12;
+const MAX_SPAN_FIRST_BANDS = 3;
+const MAX_SPAN_GAP_SPREAD = 2 * BAND_HEIGHT;
+const MAX_SPAN_RUN_SPREAD = 3 * BAND_HEIGHT;
+const MAX_SPAN_GAP_X_STRIDE = 3;
+const MAX_SPAN_GAP_Y_STRIDE = 5;
+const MAX_SPAN_GAP_K_STRIDE = 7;
+const MAX_SPAN_RUN_X_STRIDE = 5;
+const MAX_SPAN_RUN_Y_STRIDE = 3;
+const MAX_SPAN_RUN_K_STRIDE = 11;
+
+/**
+ * Four adjacent columns, searched for the deepest bounded fixpoint they can drive.
+ * Offsets above BEDROCK_FLOOR; the best sub-cell settles after 15 blends.
+ */
+const FIXPOINT_CHAIN_COLUMNS = [
+  [[0, 27], [39, 67], [100, 101], [134, 135], [200, 233], [266, 299], [332, 333], [398, 399]],
+  [[0, 1], [66, 131], [132, 165], [230, 231], [232, 265], [330, 395], [428, 461], [526, 591]],
+  [[0, 17], [82, 115], [148, 213], [246, 279], [280, 345], [410, 411], [412, 477], [542, 607]],
+  [[0, 33], [98, 163], [228, 229], [294, 295], [360, 425], [490, 491], [556, 557], [558, 591]],
+];
+
+const FIXPOINT_CHAIN_CELLS = 2;
+
+/** Chunks the span-upload check empties and fills; the plateau covers the first, not the second. */
+const SPAN_FREED_CHUNK = { cx: 1, cy: 1 };
+const SPAN_ADDED_CHUNK = { cx: 0, cy: 0 };
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function clampHeight(h) {
@@ -85,6 +140,154 @@ function patchMaps() {
   return maps;
 }
 
+function baseTerrain(size) {
+  const map = createHeightmap(size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const band = ((x * BASE_X_STRIDE + y * BASE_Y_STRIDE) % BASE_BAND_SPREAD) + BASE_BAND_FLOOR;
+      map.cells[cellIndex(map, x, y)] = band * BAND_HEIGHT;
+    }
+  }
+  return map;
+}
+
+function carveCaves(map) {
+  for (let y = 0; y < map.size; y++) {
+    for (let x = 0; x < map.size; x++) {
+      if ((x * CAVE_X_STRIDE + y * CAVE_Y_STRIDE) % CAVE_PERIOD !== 0) continue;
+      const ground = map.cells[cellIndex(map, x, y)];
+      setColumn(map, x, y, [
+        { floor: BEDROCK_FLOOR, ceiling: ground - CAVE_FLOOR_BANDS * BAND_HEIGHT },
+        { floor: ground - CAVE_ROOF_BANDS * BAND_HEIGHT, ceiling: ground },
+      ]);
+    }
+  }
+  return map;
+}
+
+function overhangPlateau(map) {
+  const origin = Math.floor((map.size - OVERHANG_CELLS) / 2);
+  for (let y = origin; y < origin + OVERHANG_CELLS; y++) {
+    for (let x = origin; x < origin + OVERHANG_CELLS; x++) {
+      setColumn(map, x, y, [
+        { floor: BEDROCK_FLOOR, ceiling: OVERHANG_SLAB_CEILING },
+        { floor: OVERHANG_ROOF_FLOOR, ceiling: OVERHANG_ROOF_CEILING },
+      ]);
+    }
+  }
+  return map;
+}
+
+/** A full stack of MAX_SPANS_PER_COLUMN, some of them sub-band slivers that are never drawn. */
+function maxSpanColumn(x, y) {
+  const spans = [];
+  let ceiling = BEDROCK_FLOOR + BAND_HEIGHT * (1 + ((x + y) % MAX_SPAN_FIRST_BANDS));
+  spans.push({ floor: BEDROCK_FLOOR, ceiling });
+  for (let k = 1; k < MAX_SPANS_PER_COLUMN; k++) {
+    const floor =
+      ceiling +
+      1 +
+      ((x * MAX_SPAN_GAP_X_STRIDE + y * MAX_SPAN_GAP_Y_STRIDE + k * MAX_SPAN_GAP_K_STRIDE) %
+        MAX_SPAN_GAP_SPREAD);
+    ceiling =
+      floor +
+      1 +
+      ((x * MAX_SPAN_RUN_X_STRIDE + y * MAX_SPAN_RUN_Y_STRIDE + k * MAX_SPAN_RUN_K_STRIDE) %
+        MAX_SPAN_RUN_SPREAD);
+    spans.push({ floor, ceiling });
+  }
+  return spans;
+}
+
+function maxSpanRegion(map) {
+  const origin = Math.floor((map.size - MAX_SPAN_REGION_CELLS) / 2);
+  for (let y = origin; y < origin + MAX_SPAN_REGION_CELLS; y++) {
+    for (let x = origin; x < origin + MAX_SPAN_REGION_CELLS; x++) {
+      setColumn(map, x, y, maxSpanColumn(x, y));
+    }
+  }
+  return map;
+}
+
+function fixpointChain(map) {
+  const origin = Math.floor(map.size / 2);
+  for (let j = 0; j < FIXPOINT_CHAIN_CELLS; j++) {
+    for (let i = 0; i < FIXPOINT_CHAIN_CELLS; i++) {
+      const column = FIXPOINT_CHAIN_COLUMNS[j * FIXPOINT_CHAIN_CELLS + i];
+      setColumn(
+        map,
+        origin + i,
+        origin + j,
+        column.map(([floor, ceiling]) => ({
+          floor: BEDROCK_FLOOR + floor,
+          ceiling: BEDROCK_FLOOR + ceiling,
+        })),
+      );
+    }
+  }
+  return map;
+}
+
+function archMap(size) {
+  const map = baseTerrain(size);
+  const received = new Set();
+  const perEdge = chunksPerEdge(size);
+  for (let cy = 0; cy < perEdge; cy++) {
+    for (let cx = 0; cx < perEdge; cx++) received.add(chunkIndex(size, cx, cy));
+  }
+  carveArchFixture({ map, renderMap: map, received });
+  return map;
+}
+
+function layeredMaps() {
+  return [
+    { name: 'caves', map: carveCaves(baseTerrain(LAYERED_SIZE)) },
+    { name: 'overhangs', map: overhangPlateau(baseTerrain(LAYERED_SIZE)) },
+    { name: 'maxspans', map: maxSpanRegion(carveCaves(baseTerrain(LAYERED_SIZE))) },
+    { name: 'arch', map: archMap(LAYERED_SIZE) },
+    { name: 'fixpoint', map: fixpointChain(carveCaves(baseTerrain(LAYERED_SIZE))) },
+  ];
+}
+
+/** Every column in the chunk loses its spans, so the chunk's block is freed. */
+function flattenColumn(map, x, y) {
+  setColumn(map, x, y, [
+    { floor: BEDROCK_FLOOR, ceiling: map.cells[cellIndex(map, x, y)] },
+  ]);
+}
+
+/** A chequer of overhangs in a chunk that held none, so a block is allocated. */
+function raiseOverhang(map, x, y) {
+  if ((x + y) % 2 !== 0) return;
+  setColumn(map, x, y, [
+    { floor: BEDROCK_FLOOR, ceiling: OVERHANG_SLAB_CEILING },
+    { floor: OVERHANG_ROOF_FLOOR, ceiling: OVERHANG_ROOF_CEILING },
+  ]);
+}
+
+function sculptChunk(map, chunk, mutate) {
+  const x = chunk.cx * CHUNK_SIZE;
+  const y = chunk.cy * CHUNK_SIZE;
+  for (let j = 0; j < CHUNK_SIZE; j++) {
+    for (let i = 0; i < CHUNK_SIZE; i++) mutate(map, x + i, y + j);
+  }
+  const cells = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
+  const spans = [];
+  for (let j = 0; j < CHUNK_SIZE; j++) {
+    for (let i = 0; i < CHUNK_SIZE; i++) {
+      const index = cellIndex(map, x + i, y + j);
+      cells[j * CHUNK_SIZE + i] = map.cells[index];
+      const packed = map.columnSpans.get(index);
+      spans.push([index, packed === undefined ? null : Array.from(packed)]);
+    }
+  }
+  return { x, y, cells, spans };
+}
+
+function spanEntries(map) {
+  return Array.from(map.columnSpans, ([index, packed]) => [index, Array.from(packed)]);
+}
+
 function expectedHeights(map, subdivision) {
   const span = CHUNK_SIZE * subdivision;
   const side = map.size * subdivision;
@@ -107,7 +310,7 @@ const PROBE_PAGE = `<!doctype html><meta charset="utf-8"><title>gpu terrain pari
 const PROBE_SCRIPT = `
 import * as THREE from 'three';
 import { GPU_TERRAIN_FIELD_GLSL } from 'gpuTerrainField';
-import { createHeightTexture } from 'gpuTerrainTextures';
+import { createColumnSpanTextures, createHeightTexture } from 'gpuTerrainTextures';
 
 const VERTEX = \`in vec3 position;
 void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }\`;
@@ -138,6 +341,9 @@ const uniforms = {
   uChunkCells: { value: 0 },
   uSizeCells: { value: 0 },
   uHeight: { value: null },
+  uChunkSpanBlock: { value: null },
+  uColumnSpans: { value: null },
+  uWorldHasSpans: { value: 0 },
 };
 const material = new THREE.RawShaderMaterial({
   vertexShader: VERTEX,
@@ -152,24 +358,51 @@ scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
 
 let state = null;
 
-window.__load = (cells, size, chunkCells) => {
-  if (state !== null) state.height.dispose();
-  const map = { size, cells: Int16Array.from(cells) };
+// The span store re-points its own sampler when it grows, so re-read every time.
+const syncSpanUniforms = () => {
+  for (const name of ['uChunkSpanBlock', 'uColumnSpans', 'uWorldHasSpans']) {
+    uniforms[name].value = state.spans.uniforms[name].value;
+  }
+};
+
+const uploadChunksOver = (x, y, w, h) => {
+  const chunkCells = state.chunkCells;
+  const first = { x: Math.floor(x / chunkCells), y: Math.floor(y / chunkCells) };
+  const last = { x: Math.floor((x + w - 1) / chunkCells), y: Math.floor((y + h - 1) / chunkCells) };
+  for (let cy = first.y; cy <= last.y; cy++) {
+    for (let cx = first.x; cx <= last.x; cx++) state.spans.uploadChunk(renderer, cx, cy);
+  }
+  syncSpanUniforms();
+};
+
+window.__load = (cells, size, chunkCells, spans) => {
+  if (state !== null) {
+    state.height.dispose();
+    state.spans.dispose();
+  }
+  const columnSpans = new Map(spans.map(([index, packed]) => [index, Int16Array.from(packed)]));
+  const map = { size, cells: Int16Array.from(cells), columnSpans };
   const height = createHeightTexture(map);
-  state = { map, height, chunkCells };
+  state = { map, height, spans: createColumnSpanTextures(map), chunkCells };
   uniforms.uHeight.value = height.texture;
   uniforms.uSizeCells.value = size;
   uniforms.uChunkCells.value = chunkCells;
+  uploadChunksOver(0, 0, size, size);
   return true;
 };
 
-window.__writeRect = (x, y, w, h, cells) => {
+window.__writeRect = (x, y, w, h, cells, spans) => {
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       state.map.cells[(y + j) * state.map.size + x + i] = cells[j * w + i];
     }
   }
+  for (const [index, packed] of spans) {
+    if (packed === null) state.map.columnSpans.delete(index);
+    else state.map.columnSpans.set(index, Int16Array.from(packed));
+  }
   state.height.uploadRect(renderer, x, y, w, h);
+  uploadChunksOver(x, y, w, h);
   return true;
 };
 
@@ -352,11 +585,20 @@ async function main() {
 
   console.log(`renderer: ${await evaluate('window.__renderer()')}`);
 
-  const results = [];
-  for (const { name, map } of patchMaps()) {
-    await evaluate(
-      `window.__load(${JSON.stringify(Array.from(map.cells))}, ${map.size}, ${CHUNK_SIZE})`,
+  const load = (map) =>
+    evaluate(
+      `window.__load(${JSON.stringify(Array.from(map.cells))}, ${map.size}, ${CHUNK_SIZE},` +
+        ` ${JSON.stringify(spanEntries(map))})`,
     );
+  const writeChunk = (rect) =>
+    evaluate(
+      `window.__writeRect(${rect.x}, ${rect.y}, ${CHUNK_SIZE}, ${CHUNK_SIZE},` +
+        ` ${JSON.stringify(Array.from(rect.cells))}, ${JSON.stringify(rect.spans)})`,
+    );
+
+  const results = [];
+  for (const { name, map } of [...patchMaps(), ...layeredMaps()]) {
+    await load(map);
     for (const subdiv of SUBDIVISIONS) {
       const gpu = await evaluate(`window.__probe(${subdiv})`);
       results.push(compare(`${name} N=${subdiv}`, gpu, expectedHeights(map, subdiv)));
@@ -364,9 +606,7 @@ async function main() {
   }
 
   const { map } = patchMaps()[0];
-  await evaluate(
-    `window.__load(${JSON.stringify(Array.from(map.cells))}, ${map.size}, ${CHUNK_SIZE})`,
-  );
+  await load(map);
   await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
   const rect = { x: SCULPT_CHUNK.cx * CHUNK_SIZE, y: SCULPT_CHUNK.cy * CHUNK_SIZE };
   const patchCells = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
@@ -377,12 +617,25 @@ async function main() {
       map.cells[(rect.y + j) * map.size + rect.x + i] = clampHeight(cell);
     }
   }
-  await evaluate(
-    `window.__writeRect(${rect.x}, ${rect.y}, ${CHUNK_SIZE}, ${CHUNK_SIZE}, ${JSON.stringify(Array.from(patchCells))})`,
-  );
+  await writeChunk({ x: rect.x, y: rect.y, cells: patchCells, spans: [] });
   const sculpted = await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
   results.push(
     compare('frostwick after rect upload N=4', sculpted, expectedHeights(map, TERRAIN_LOD_NEAR_N)),
+  );
+
+  // Freeing a chunk's span block and allocating one for a chunk that had none.
+  const layered = overhangPlateau(baseTerrain(LAYERED_SIZE));
+  await load(layered);
+  await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
+  await writeChunk(sculptChunk(layered, SPAN_FREED_CHUNK, flattenColumn));
+  await writeChunk(sculptChunk(layered, SPAN_ADDED_CHUNK, raiseOverhang));
+  const relayered = await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
+  results.push(
+    compare(
+      'overhangs after span upload N=4',
+      relayered,
+      expectedHeights(layered, TERRAIN_LOD_NEAR_N),
+    ),
   );
 
   shutdown();
