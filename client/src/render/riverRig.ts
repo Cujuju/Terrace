@@ -10,6 +10,7 @@ import {
   type Object3D,
 } from 'three';
 import {
+  cellCentreCoord,
   cellX,
   cellY,
   chunkIndexOfCell,
@@ -37,8 +38,6 @@ import { watchReducedMotion } from '../plugins/kit/reducedMotion.ts';
 
 const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 
-const CELL_CENTRE_OFFSET_CELLS = 0.5;
-
 const DRAWN_BLEND_REACH_CELLS = 1;
 
 const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
@@ -53,11 +52,7 @@ const RIVER_METALNESS = 0;
 
 function plotRadiusCells(mirror: TerrainMirror, x: number, y: number): number {
   const drawnAt = (cx: number, cy: number): number =>
-    drawnGroundHeight(
-      mirror.renderMap,
-      cx + CELL_CENTRE_OFFSET_CELLS,
-      cy + CELL_CENTRE_OFFSET_CELLS,
-    );
+    drawnGroundHeight(mirror.renderMap, cellCentreCoord(cx), cellCentreCoord(cy));
   const height = drawnAt(x, y);
   for (let reach = 1; reach <= SPRING_PLOT_PROBE_CELLS; reach++) {
     for (let dy = -reach; dy <= reach; dy++) {
@@ -648,8 +643,6 @@ export function createRiverRig(
       let region = band === lastBand ? lastRegion : regions.get(band);
       if (region === undefined) {
         region = {
-          isWet: (candidate) =>
-            wetStamp[candidate] === generation && wetBand[candidate] === band,
           anchorCell: cell,
           surfaceBand: band,
           tiles: new Set<number>(),
