@@ -7,6 +7,7 @@ import {
   bandOf,
   cellCentreCoord,
   chunkIndex,
+  columnSampleAtBand,
   drawnGroundHeight,
   isSpanDrawn,
   spanAt,
@@ -336,6 +337,7 @@ function drawnBandOwner(
   const baseZ = blendBaseCell(centreZ);
   let owner: DrawnOwner | null = null;
   let nearest = 0;
+  let lifted = 0;
   for (let dz = 0; dz < FOOTPRINT_SPAN_CELLS; dz++) {
     const y = clampCell(size, baseZ + dz);
     const offZ = centreZ - cellCentreHalfSubcells(y);
@@ -344,12 +346,14 @@ function drawnBandOwner(
       if (x === i && y === j) continue;
       const offX = centreX - cellCentreHalfSubcells(x);
       const distance = offX * offX + offZ * offZ;
-      if (owner !== null && distance >= nearest) continue;
+      if (owner !== null && distance > nearest) continue;
       if (!cellRevealed(mirror, x, y)) continue;
       const spanIndex = spanIndexCoveringBand(mirror.map, x, y, band);
       if (spanIndex === null) continue;
       const span = spanAt(mirror.map, x, y, spanIndex);
       if (!isSpanDrawn(span)) continue;
+      const sample = columnSampleAtBand(mirror.map, x, y, band);
+      if (owner !== null && distance === nearest && sample <= lifted) continue;
       owner = {
         x,
         y,
@@ -357,6 +361,7 @@ function drawnBandOwner(
         undersideY: spanUndersideHeight(span) * HEIGHT_WORLD_SCALE,
       };
       nearest = distance;
+      lifted = sample;
     }
   }
   return owner;
