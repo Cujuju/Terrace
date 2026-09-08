@@ -1,14 +1,3 @@
-// The Torch tool's face on the bottom toolbar: a lit torch, drawn as a
-// shaded inline SVG (owner, 2026-09-04: "gorgeous 3D icons") — gradients give
-// the flame its heat and the handle its roundness, so the button reads as an
-// object rather than a glyph. Every gradient id is prefixed with the tool's
-// name because SVG ids are document-global and the toolbar holds several
-// icons at once.
-//
-// It is the SHAPE THE GAME DRAWS, not a generic fire glyph — the teardrop
-// flame is the plume's own silhouette (flames/shaderPlume.ts), so a player
-// who has watched a tree burn recognises the button without reading it.
-
 import type { JSX } from 'solid-js';
 
 export function TorchIcon(): JSX.Element {
@@ -43,12 +32,12 @@ export function TorchIcon(): JSX.Element {
           <stop offset="1" stop-color="#3f474f" />
         </linearGradient>
       </defs>
-      {/* The heat haze behind the flame. */}
+      {}
       <circle cx="16" cy="12" r="12" fill="url(#pyro-glow)" />
-      {/* The handle: a wooden shaft under an iron band. */}
+      {}
       <path d="M13.2 17.5h5.6l-1.4 12.5h-2.8z" fill="url(#pyro-wood)" />
       <path d="M12.6 16.6h6.8v3h-6.8z" fill="url(#pyro-band)" />
-      {/* The outer flame, then its hot core and a white-hot highlight. */}
+      {}
       <path
         d="M16 2.5c4.4 4.6 6.6 8.1 6.6 11.4a6.6 6.6 0 0 1-13.2 0c0-3.3 2.2-6.8 6.6-11.4z"
         fill="url(#pyro-outer)"

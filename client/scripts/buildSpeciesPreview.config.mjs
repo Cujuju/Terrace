@@ -1,9 +1,3 @@
-// Static build of preview-species.html into .smoke-shots/species/site — see
-// shootSpeciesPreview.mjs for why a dev server is not enough on this drive.
-//
-// Roots are resolved from THIS FILE rather than written down, so the same
-// config builds the shared checkout and any worktree of it — the twin of
-// buildWildlifePreview.config.mjs, which already did.
 import { defineConfig } from 'vite';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

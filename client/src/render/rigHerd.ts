@@ -1,42 +1,3 @@
-// Drawing a WHOLE SPECIES from one baked rig: instances, not individuals.
-//
-// THE DEFECT THIS EXISTS TO REMOVE. `./rigSkin.ts` collapsed the unit of
-// AUTHORING (a Group per joint, a Mesh per part) into the unit of DRAWING (one
-// skinned surface per material). It left one level standing: every individual
-// still got a `Group`, a `Skeleton`, a `Bone` per joint and a `SkinnedMesh` per
-// surface of its own. At the wildlife population cap that is ~8 300 Object3Ds
-// for 850 creatures, and three walks EVERY one of them in
-// `scene.updateMatrixWorld` before culling can reject anything — measured at
-// 2.3–2.5 ms/frame against a 7.1 ms budget (perf review 2026-08-29, A2). Only
-// removing nodes fixes that, so this module removes them: a herd of any size is
-// one `InstancedMesh` per baked surface and no per-individual node at all.
-//
-// WHAT AN INDIVIDUAL STILL GETS, and how. Two things vary per creature: WHERE it
-// is (position, heading, size class) and WHAT POSE it is in. Placement rides
-// three's own `instanceMatrix`. The pose rides a small floating-point texture —
-// the same shape three's own skinning uses, four RGBA texels per bone matrix —
-// with ONE ROW PER POSE rather than one texture per creature, and a per-instance
-// attribute naming the row. The vertex shader reads the row the instance names
-// and blends the four bones the vertex is weighted to, which is exactly the
-// product `SkinnedMesh` would have computed, evaluated from shared data.
-//
-// WHY POSES ARE SHARED, and what that costs. A creature's animation here is a
-// LOOP driven by one scalar: elapsed time plus the individual's own phase
-// offset. Two creatures at the same point of that loop are in the identical
-// pose, byte for byte — so a herd only ever needs as many distinct poses as
-// there are distinct phases it cares to tell apart. The caller picks that count
-// (`poseSlots`); the cost of a frame becomes O(species × poseSlots) instead of
-// O(creatures), and every creature keeps its own placement exactly. The price is
-// that phase is QUANTISED to a slot: two creatures less than one slot apart on
-// the cycle animate identically. The caller chooses `poseSlots` against its own
-// fastest animation — see the wildlife plugin's POSE_SLOTS_PER_HERD for the
-// derivation this was designed around.
-//
-// WHAT THE CALLER KEEPS. The animation is still written against `Bone`s —
-// `herd.joints[i].rotation.z = …`, the same statement `instantiateRig` allowed —
-// only it is now run once per POSE rather than once per creature, against a
-// scratch rig that is never in the scene.
-
 import {
   Bone,
   DataTexture,
@@ -53,38 +14,16 @@ import {
 } from 'three';
 import type { RigBlueprint } from './rigSkin.ts';
 
-/** Floats in a 4×4 matrix, and the RGBA texels it takes to carry them. */
 const MATRIX_ELEMENTS = 16;
 const MATRIX_TEXELS = 4;
 
-/** Components in one texel of an `RGBAFormat` texture. */
 const RGBA_COMPONENTS = 4;
 
-/** Name of the per-instance attribute naming a pose row, in JS and in GLSL. */
 const POSE_SLOT_ATTRIBUTE = 'rigPoseSlot';
-/** Name of the palette sampler uniform, in JS and in GLSL. */
 const POSE_PALETTE_UNIFORM = 'rigPosePalette';
 
-/**
- * Marker appended to every patched material's program cache key.
- *
- * `onBeforeCompile` rewrites the shader source, and three's program cache does
- * not hash that source — `customProgramCacheKey` is the only way a material can
- * declare that its program differs. Without this, a herd's material could be
- * handed the program compiled for the unpatched material it was cloned from.
- */
 const POSE_PROGRAM_KEY = 'rigHerd:posePalette';
 
-/**
- * The declarations the patched vertex shader needs, and the palette read.
- *
- * FOUR INFLUENCES, BLENDED, the way three's own `<skinning_vertex>` and
- * `<skinnormal_vertex>` do it (`skinMatrix += skinWeight.x * boneMatX; …`).
- * Reading `skinIndex.x` alone was the rigid contract's shortcut; a downloaded
- * animal's weights are real, and a vertex 60/40 across a shoulder drawn wholly
- * on one side is the seam this file used to open. Rigid binding is now the
- * 1/0/0/0 case of the same three lines, so there is ONE shader, not two.
- */
 const POSE_SHADER_PARS = `
 attribute vec4 skinIndex;
 attribute vec4 skinWeight;
@@ -120,119 +59,35 @@ mat4 rigPoseMatrix() {
 const TWO_PI = Math.PI * 2;
 
 export interface RigHerdOptions {
-  /** The most individuals this herd will ever be asked to draw in one frame. */
   readonly capacity: number;
-  /** Distinct poses one frame may hold. See the header: this quantises phase. */
   readonly poseSlots: number;
-  /**
-   * How many DIFFERENT ANIMATIONS the caller poses this rig with — 1 (the
-   * default) for a herd whose every individual is playing the same loop.
-   *
-   * A SECOND DIMENSION ON THE PALETTE, NOT A SECOND HERD. Phase alone stopped
-   * identifying a pose the moment a creature could be doing something other
-   * than walking (a climb, a fall — plugins/wildlife, 2026-09-05): two
-   * creatures at the same phase in different acts are in different poses, and
-   * sharing a row would put one of them in the other's body. Rows are
-   * `poseSlots × poseVariants`, the caller names its variant at `poseSlotOf`,
-   * and a variant nobody is in this frame costs nothing but its rows — the
-   * capture is still on demand.
-   */
   readonly poseVariants?: number;
-  /**
-   * That a captured row STAYS captured, for the life of the herd.
-   *
-   * A herd re-poses every occupied row every frame by default, because the
-   * caller's animation is a function of the wall clock as well as the slot
-   * phase — a fish's tail is `seconds * HZ + phase`
-   * (plugins/wildlife/client/species/fish.ts:42), so last frame's row is the
-   * wrong pose this frame. A caller whose animation is a function of the SLOT
-   * PHASE ALONE has no such staleness: row `k` holds the same bytes forever,
-   * and the individual animates by moving BETWEEN rows. Declaring that here
-   * turns the per-frame palette upload into a one-off — the upload wildlife
-   * measured at 0.63-0.89 ms when the driver stalls on a texture the in-flight
-   * frame still holds (GH #369).
-   *
-   * Say true ONLY if `poseSlotPhase(slot)` determines the pose. A caller that
-   * reads the clock and says true will freeze its animation at frame one.
-   */
   readonly staticPoses?: boolean;
 }
 
 export interface RigHerd {
-  /**
-   * The drawn objects — ONE PER BAKED SURFACE, whatever the population. Added
-   * to a scene once, by the caller, and never re-parented.
-   */
   readonly meshes: readonly InstancedMesh[];
-  /**
-   * The scratch rig the caller animates, in the blueprint's joint order. Not in
-   * the scene and never drawn: posing it and calling `capturePose` is how a
-   * pose reaches the palette.
-   */
   readonly joints: readonly Bone[];
-  /** Forgets last frame's individuals and poses. Call once per frame, first. */
   beginFrame(): void;
-  /**
-   * The pose row a creature at this phase offset (radians), in this animation
-   * variant, is drawn from. `variant` defaults to 0 — the only one a herd built
-   * without `poseVariants` has.
-   */
   poseSlotOf(phase: number, variant?: number): number;
-  /** The phase (radians) the caller should pose the joints at for this row. */
   poseSlotPhase(slot: number): number;
-  /** Whether this frame still needs the caller to pose and capture this row. */
   needsPose(slot: number): boolean;
-  /** Copies the scratch rig's current pose into `slot`. */
   capturePose(slot: number): void;
-  /**
-   * Draws one individual at a world position, yaw and uniform scale, in the
-   * pose held by `slot`. Beyond `capacity` the individual is DROPPED rather
-   * than allowed to overrun the buffers — a creature that is not drawn is a
-   * smaller failure than a frame that throws, and the caller's own population
-   * cap is what keeps it from happening.
-   */
   place(slot: number, x: number, y: number, z: number, yaw: number, scale: number): void;
-  /**
-   * The same, for an individual whose placement is more than a yaw — a hull
-   * that rolls and pitches on the swell, say. `matrix` is its full local
-   * transform in the herd's own space, and `reach` is the uniform scale its
-   * geometry is drawn at, which is what the frustum bound is grown by (pass 1
-   * for an unscaled rig). The matrix is COPIED, so the caller may reuse it.
-   *
-   * Separate from `place` rather than folded into it: `place` writes its
-   * sixteen floats from a cosine and a sine precisely to avoid composing a
-   * matrix per individual per frame, and a caller that has no tilt must keep
-   * paying nothing for one.
-   */
   placeMatrix(slot: number, matrix: Matrix4, reach: number): void;
-  /** Uploads the frame's poses and placements. Call once per frame, last. */
   endFrame(): void;
-  /** Frees the palette and the materials this herd created. */
   dispose(): void;
 }
 
-/**
- * Builds the drawables and the shared pose palette for one baked rig.
- *
- * The blueprint's surface geometries gain a per-instance attribute, so a
- * blueprint feeds exactly ONE herd; a second call on the same blueprint throws
- * rather than let two herds fight over one attribute buffer.
- */
 export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions): RigHerd {
   const { capacity, poseSlots, poseVariants = 1, staticPoses = false } = options;
   if (capacity <= 0) throw new Error('createRigHerd: capacity must be positive');
   if (poseSlots <= 0) throw new Error('createRigHerd: poseSlots must be positive');
   if (poseVariants <= 0) throw new Error('createRigHerd: poseVariants must be positive');
-  // Every row of the palette: one band of `poseSlots` per animation variant.
   const poseRows = poseSlots * poseVariants;
 
   const boneCount = blueprint.jointCount;
 
-  // The scratch rig: one Bone per joint at its rest transform, UNPARENTED. The
-  // tree is expressed by the descriptors' parent indices and walked flat below
-  // (bakeRig collects depth-first, so a parent always precedes its children),
-  // which is both cheaper than Object3D.updateMatrixWorld and immune to anyone
-  // adding these to a scene by accident.
   const joints: Bone[] = [];
   const parents: number[] = [];
   for (const descriptor of blueprint.bones) {
@@ -251,12 +106,9 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   const boneWorlds = joints.map(() => new Matrix4());
   const boneScratch = new Matrix4();
 
-  // The palette: one ROW per pose slot, MATRIX_TEXELS texels per bone.
   const paletteWidth = boneCount * MATRIX_TEXELS;
   const paletteData = new Float32Array(paletteWidth * RGBA_COMPONENTS * poseRows);
   const palette = new DataTexture(paletteData, paletteWidth, poseRows, RGBAFormat, FloatType);
-  // Nearest and no mipmaps: this is a lookup table read with texelFetch, not an
-  // image — any filtering would blend two unrelated bone matrices.
   palette.minFilter = NearestFilter;
   palette.magFilter = NearestFilter;
   palette.generateMipmaps = false;
@@ -264,10 +116,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   const captured = new Uint8Array(poseRows);
   let capturedThisFrame = 0;
 
-  // ONE attribute per herd, shared by every surface — deliberately. three's
-  // WebGLAttributes keys its GPU buffers by attribute identity, so a rig that
-  // bakes to two surfaces uploads one copy of the placements and one of the
-  // slots, not two.
   const instanceMatrix = new InstancedBufferAttribute(
     new Float32Array(capacity * MATRIX_ELEMENTS),
     MATRIX_ELEMENTS,
@@ -293,9 +141,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     const mesh = new InstancedMesh(surface.geometry, material, capacity);
     mesh.instanceMatrix = instanceMatrix;
     mesh.count = 0;
-    // Ours, refreshed in endFrame from the individuals actually placed. Set
-    // here so three never falls back to InstancedMesh.computeBoundingSphere,
-    // which walks every instance matrix.
     mesh.boundingSphere = bounds;
     meshes.push(mesh);
   }
@@ -309,11 +154,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   let maxZ = 0;
   let maxScale = 0;
 
-  /**
-   * Folds one individual's origin into the frame's extent, and its scale into
-   * the largest drawn — the two numbers endFrame turns into a bounding sphere.
-   * Shared by both placement paths so the bound cannot mean two things.
-   */
   function noteBounds(x: number, y: number, z: number, scale: number): void {
     if (count === 0) {
       minX = maxX = x;
@@ -337,9 +177,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     beginFrame(): void {
       count = 0;
       maxScale = 0;
-      // The COUNTER always resets — it is what makes endFrame upload the
-      // palette only on a frame that actually wrote to it. The CAPTURED FLAGS
-      // reset only for a caller whose poses go stale; see options.staticPoses.
       if (capturedThisFrame > 0) {
         if (!staticPoses) captured.fill(0);
         capturedThisFrame = 0;
@@ -347,24 +184,16 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     },
 
     poseSlotOf(phase: number, variant: number = 0): number {
-      // Phase is an unbounded offset in radians (the caller's is a golden-angle
-      // multiple of an entity id), so fold it onto one cycle before slotting.
       const cycles = phase / TWO_PI;
       const fraction = cycles - Math.floor(cycles);
       const withinVariant = Math.floor(fraction * poseSlots);
-      // Guard the float edge: `fraction` can round to exactly 1 for a large phase.
       const slot =
         withinVariant < 0 ? 0 : withinVariant >= poseSlots ? poseSlots - 1 : withinVariant;
-      // A variant out of range would silently land in another variant's band,
-      // which draws a creature in the wrong animation — clamp to variant 0,
-      // the one every herd has.
       const band = variant > 0 && variant < poseVariants ? Math.floor(variant) : 0;
       return band * poseSlots + slot;
     },
 
     poseSlotPhase(slot: number): number {
-      // The row's phase within its own variant band: the variant is WHICH
-      // animation, never where in it.
       return ((slot % poseSlots) / poseSlots) * TWO_PI;
     },
 
@@ -381,8 +210,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
         const parent = parents[i]!;
         if (parent < 0) world.copy(bone.matrix);
         else world.multiplyMatrices(boneWorlds[parent]!, bone.matrix);
-        // The bind-pose inverse undoes the transform the vertices were baked
-        // with, exactly as Skeleton.update does — see rigSkin.bakeRig.
         boneScratch.multiplyMatrices(world, blueprint.boneInverses[i]!);
         paletteData.set(boneScratch.elements, target);
         target += MATRIX_ELEMENTS;
@@ -393,10 +220,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
 
     place(slot: number, x: number, y: number, z: number, yaw: number, scale: number): void {
       if (count >= capacity) return;
-      // Written straight into the buffer rather than through Matrix4.compose:
-      // the transform is only ever a yaw, a uniform scale and a translation, so
-      // a quaternion round trip would be arithmetic with a known answer. The
-      // layout is three's — column-major, translation in the last column.
       const cos = Math.cos(yaw) * scale;
       const sin = Math.sin(yaw) * scale;
       const at = count * MATRIX_ELEMENTS;
@@ -426,8 +249,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
       const at = count * MATRIX_ELEMENTS;
       instanceMatrices.set(matrix.elements, at);
       slotValues[count] = slot;
-      // The translation column, in three's column-major layout — the same
-      // three numbers `place` is handed directly.
       noteBounds(matrix.elements[12]!, matrix.elements[13]!, matrix.elements[14]!, reach);
       count++;
     },
@@ -435,10 +256,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     endFrame(): void {
       if (capturedThisFrame > 0) palette.needsUpdate = true;
 
-      // The herd's own bound: the box its individuals' origins span, plus the
-      // pose-invariant reach of one creature at the largest scale drawn (see
-      // rigSkin.poseInvariantReach — that radius holds for every pose, which is
-      // what lets frustum culling stay on).
       const halfX = (maxX - minX) / 2;
       const halfY = (maxY - minY) / 2;
       const halfZ = (maxZ - minZ) / 2;
@@ -451,8 +268,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
 
       for (const mesh of meshes) mesh.count = count;
       if (count === 0) return;
-      // Ranged, so a herd well under capacity does not upload the whole buffer
-      // every frame.
       instanceMatrix.clearUpdateRanges();
       instanceMatrix.addUpdateRange(0, count * MATRIX_ELEMENTS);
       instanceMatrix.needsUpdate = true;
@@ -469,20 +284,8 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   };
 }
 
-/**
- * A copy of a baked surface's material that poses its vertices from the palette.
- *
- * The bone product is applied to POSITION and NORMAL and nothing else, which is
- * what three's own `<skinning_vertex>` does — and it is applied INSIDE the
- * instance transform, because `<project_vertex>` multiplies `transformed` by
- * `instanceMatrix` afterwards. So a creature is posed in rig space and then
- * placed, exactly as a `SkinnedMesh` under a placed root was.
- */
 function poseSkinnedMaterial(source: Material, palette: DataTexture): Material {
   const material = source.clone();
-  // THE SHADER HOOKS DO NOT SURVIVE A CLONE (see rigSkin.vertexColoured, which
-  // learned this the same way). Chained rather than replaced: a material that
-  // rewrites its own shader must still mean what it meant unposed.
   const inherited = source.onBeforeCompile;
   const inheritedKey = source.customProgramCacheKey;
   material.onBeforeCompile = (shader, renderer): void => {
@@ -490,11 +293,6 @@ function poseSkinnedMaterial(source: Material, palette: DataTexture): Material {
     shader.uniforms[POSE_PALETTE_UNIFORM] = { value: palette };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${POSE_SHADER_PARS}`)
-      // Appended to the stock chunks rather than replacing them, so the
-      // branches they carry (alpha hash, tangents) keep working. Both chunks
-      // read the palette for themselves: MeshBasicMaterial guards
-      // <beginnormal_vertex> behind USE_ENVMAP, so neither may depend on the
-      // other having run.
       .replace(
         '#include <begin_vertex>',
         '#include <begin_vertex>\n\ttransformed = ( rigPoseMatrix() * vec4( transformed, 1.0 ) ).xyz;',
@@ -504,11 +302,6 @@ function poseSkinnedMaterial(source: Material, palette: DataTexture): Material {
         '#include <beginnormal_vertex>\n\tobjectNormal = mat3( rigPoseMatrix() ) * objectNormal;',
       );
   };
-  // Asked of the SOURCE, not of the clone. three's default implementation is
-  // `this.onBeforeCompile.toString()`, so asking the clone would stringify the
-  // patch below and answer with a page of our own source — the question this
-  // half of the key means to ask is what the material declared BEFORE it was
-  // patched, and only the source can still answer that.
   material.customProgramCacheKey = (): string =>
     `${inheritedKey.call(source)}|${POSE_PROGRAM_KEY}`;
   return material;

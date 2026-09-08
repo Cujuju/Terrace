@@ -1,22 +1,14 @@
-// The cross-plugin event primitive (WorldApi.emitEvent → onWorldEvent, added
-// 2026-08-19 for the chronicle plugin). CONTRACT tests: namespacing is stamped
-// by the host side and unforgeable, fan-out order is load order, the emitter
-// hears itself, a plugin with no hook is skipped, a throwing consumer is
-// contained, and a runaway emit-from-handler cascade is cut at the guard.
-
 import { describe, expect, it } from 'vitest';
 import { MAX_WORLD_EVENT_DEPTH, PluginHost } from '../src/plugins/host.ts';
 import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
 
-/** A two-plugin host on a minimal world; the world itself is irrelevant here. */
 function hostWith(...plugins: TerracePlugin[]): PluginHost {
   const world = worldWithUnlockedChunks(64, [[0, 0]]);
   world.setSink(new RecordingSink());
   return new PluginHost(world, plugins.map(asLoadedPlugin));
 }
 
-/** Captures every event a plugin hears, tagged with the hearer's name. */
 function listener(
   name: string,
   heard: Array<{ hearer: string; event: string; payload: unknown }>,
@@ -45,7 +37,6 @@ describe('WorldApi.emitEvent → onWorldEvent', () => {
     const host = hostWith(emitter, listener('hearer', heard));
     host.worldCreate();
 
-    // Even an emitter that TRIES to pass a namespaced name only prefixes its own.
     ref.api?.emitEvent('changes', { n: 1 });
     ref.api?.emitEvent('structures:changes', { forged: true });
 
@@ -100,7 +91,7 @@ describe('WorldApi.emitEvent → onWorldEvent', () => {
       },
       onWorldEvent(world: WorldApi): void {
         deliveries++;
-        world.emitEvent('again', null); // no stop condition — the guard is the stop
+        world.emitEvent('again', null);
       },
     };
     const host = hostWith(looper);

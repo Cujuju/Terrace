@@ -1,35 +1,3 @@
-// THE FUNNEL — a tornado, and the only part of this plugin that has to read as
-// something with a SHAPE rather than as weather.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// A SHEET, NOT A SWARM. The lesson this file was rewritten for.
-//
-// The first version was a column of billboarded puffs, copying the volcano
-// plume. It never worked, at any count: a plume is a cloud, so a cloud of
-// sprites IS a plume, but a funnel is a SURFACE — a continuous, tapered,
-// rotating wall of condensation — and a stack of round sprites reads as a stack
-// of round sprites however many you use and however you jitter them. Chasing it
-// with density made it a grey sausage; chasing it with jitter made it a wisp.
-//
-// So the vortex is now one open-ended CONE MESH, tapered and twisted in the
-// vertex shader, with the churn painted on as scrolling streaks in the fragment
-// shader. A surface is drawn as a surface. The only sprites left are the DEBRIS
-// SKIRT at the ground, which is genuinely a swarm — dirt and chaff thrown out
-// around the touchdown — and is what gives the funnel a ragged foot instead of
-// a clean geometric edge where it meets the terrain.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// TWO DRAW CALLS FOR EVERY TORNADO IN THE WORLD, AND THE CPU ANIMATES NEITHER.
-//
-// The cone is an InstancedMesh whose instance matrix holds only where the
-// tornado stands; the taper, the twist, the spin, the sway and the streaks are
-// functions of one time uniform and three per-instance attributes. The skirt is
-// a second InstancedMesh on the same principle. So a funnel costs a handful of
-// matrix writes per server push and nothing per frame in between — which is
-// this project's standing render defect (the streaming unit becoming the
-// drawing unit; low triangles-per-call over a shared material) avoided by
-// construction, against a 7 ms frame budget.
-
 import {
   CylinderGeometry,
   DoubleSide,
@@ -56,127 +24,36 @@ import {
   WORLD_UNITS_PER_BAND,
 } from '../protocol.ts';
 
-/**
- * How many funnels can be drawn at once — the server's tornado cap, plus one.
- *
- * The spare is deliberate: a tornado that has stopped being broadcast is still
- * dispersing here for FUNNEL_DISPERSE_SECONDS, so at the moment one dies and
- * another forms this renderer legitimately holds one more than the server does.
- */
 export const MAX_FUNNELS = 3;
 
-/**
- * How much of the server's DAMAGE radius the visible vortex fills.
- *
- * A HALF, and the gap is not sloppiness — it is what a tornado is. The wind
- * that takes a roof off reaches well beyond the condensation funnel you can
- * see, so the damage swathe is genuinely wider than the column. Derived from
- * the server's radius rather than typed, so widening the damage still widens
- * the funnel.
- */
 export const VISIBLE_VORTEX_FRACTION = 0.5;
 
-/**
- * The vortex's radius at the ground and at the cloud, in world units.
- *
- * THE FLARE IS 2.4×, MEASURED AGAINST THE HEIGHT rather than chosen for itself:
- * at 4× the top was twelve world units across against a six-unit column, which
- * renders as a mushroom. A funnel has to be taller than it is wide at every
- * height or it stops reading as one.
- */
 export const FUNNEL_GROUND_RADIUS_WORLD_UNITS =
   TORNADO_RADIUS_CELLS * CELL_WORLD_SIZE * VISIBLE_VORTEX_FRACTION;
 export const FUNNEL_CLOUD_RADIUS_WORLD_UNITS = FUNNEL_GROUND_RADIUS_WORLD_UNITS * 2.4;
 
-/**
- * Segments around the cone and up it.
- *
- * 48 × 24 — 2 304 triangles for a whole tornado, which is nothing, and the
- * counts are set by two different requirements. AROUND: the silhouette is a
- * circle seen edge-on, and under 32 segments the edge of the funnel visibly
- * facets. UP: the twist rotates each ring by a different amount, so the ring
- * spacing is what the helical shear is sampled at — too few and the streaks
- * staircase instead of spiralling.
- */
 export const FUNNEL_RADIAL_SEGMENTS = 48;
 export const FUNNEL_HEIGHT_SEGMENTS = 24;
 
-/**
- * Turns of twist between the ground and the cloud.
- *
- * TWO. The whole cone is sheared into a helix by this, which is what makes the
- * streaks painted on it climb rather than run straight up. More than about
- * three and adjacent streaks alias into a moiré at any distance.
- */
 export const FUNNEL_TWIST_TURNS = 2;
 
-/**
- * Turns per second the vortex rotates.
- *
- * 0.9 — just under one revolution a second. It is the difference between a
- * static twisted shape and something spinning; much faster and it strobes at
- * frame rates that are multiples of it.
- */
 export const FUNNEL_SPIN_TURNS_PER_SECOND = 0.9;
 
-/**
- * Streaks painted around the cone.
- *
- * NINE, which is prime to neither the radial segments nor the twist, and that
- * is the point: a count that divides into either lines the streaks up with the
- * mesh and the funnel starts to look like a wireframe of itself.
- */
 export const FUNNEL_STREAK_COUNT = 9;
 
-/**
- * Seconds a funnel takes to disperse after the server stops broadcasting it.
- *
- * THERE IS NO TOUCHDOWN TIME, for the reason ./spiral.ts's
- * SPIRAL_DISPERSE_SECONDS gives at length: the arrival is already faded in by
- * the server's own spin-up envelope, which reaches the client as `intensity`,
- * and a second envelope here multiplies the two into invisibility. The
- * dispersal is the only direction the wire cannot express, because a dead
- * tornado simply stops appearing in the list.
- *
- * Five seconds, and slow on purpose: a touchdown is sudden but the debris
- * hangs, so a symmetric fade would make the end look like somebody switched
- * the funnel off.
- */
 export const FUNNEL_DISPERSE_SECONDS = 5;
 
-/** Debris sprites thrown out around one touchdown. */
 export const DEBRIS_PER_FUNNEL = 64;
 
-/**
- * How high the skirt reaches and how far out it is thrown, as fractions of the
- * funnel's own height and ground radius.
- *
- * A SIXTH OF THE HEIGHT and up to THREE GROUND RADII out. The skirt's job is to
- * hide the geometric circle where the cone meets the terrain and to say that
- * this thing is picking the ground up; it stops well below the point where it
- * would start competing with the vortex for the silhouette.
- */
 export const DEBRIS_HEIGHT_FRACTION = 1 / 6;
 export const DEBRIS_SPREAD_RADII = 3;
 
-/** Seconds one debris sprite takes to be thrown out and fall back. */
 export const DEBRIS_LIFE_SECONDS = 1.4;
 
-/**
- * Where the funnel sits in the transparent pass — above the cyclone deck
- * (./spiral.ts's SPIRAL_RENDER_ORDER_CAMERA_ABOVE_BASE, which is the highest of
- * that deck's two camera-dependent orders), so a tornado seen against an
- * overcast is painted over it. Both are depth-write-off transparent geometry,
- * so submission order IS composite order. The skirt goes above the cone for the
- * same reason: debris is in front of the wall it was torn from.
- */
 export const FUNNEL_RENDER_ORDER = 2;
 export const DEBRIS_RENDER_ORDER = 3;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE VORTEX SHEET.
-
-const CONE_VERTEX_SHADER = /* glsl */ `
+const CONE_VERTEX_SHADER =  `
   ${REVEAL_CLIP_UNIFORMS_GLSL}
 
   uniform float uElapsed;
@@ -250,7 +127,7 @@ const CONE_VERTEX_SHADER = /* glsl */ `
   }
 `;
 
-const CONE_FRAGMENT_SHADER = /* glsl */ `
+const CONE_FRAGMENT_SHADER =  `
   ${REVEAL_CLIP_UNIFORMS_GLSL}
 
   // See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
@@ -310,10 +187,7 @@ const CONE_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE DEBRIS SKIRT.
-
-const DEBRIS_VERTEX_SHADER = /* glsl */ `
+const DEBRIS_VERTEX_SHADER =  `
   ${REVEAL_CLIP_UNIFORMS_GLSL}
 
   uniform float uElapsed;
@@ -359,7 +233,7 @@ const DEBRIS_VERTEX_SHADER = /* glsl */ `
   }
 `;
 
-const DEBRIS_FRAGMENT_SHADER = /* glsl */ `
+const DEBRIS_FRAGMENT_SHADER =  `
   ${REVEAL_CLIP_UNIFORMS_GLSL}
 
   uniform float uDaylight;
@@ -388,35 +262,21 @@ const DEBRIS_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-/** One tornado, as this renderer remembers it. */
 interface Funnel {
   x: number;
-  /** World-space Y of the ground the funnel is standing on. */
   groundY: number;
   z: number;
-  /** Stable 0…1 from the storm id — offsets the twist so two do not match. */
   readonly seed: number;
-  /** True while the server is still broadcasting this tornado. */
   alive: boolean;
-  /** 1 while the server is broadcasting it; falls over FUNNEL_DISPERSE_SECONDS. */
   presence: number;
-  /** The storm's own intensity, as last broadcast. */
   intensity: number;
-  /**
-   * Cone slot and first debris slot this funnel occupies, set by the last full
-   * rewrite — so a frame that only needs to change one funnel's strength knows
-   * where to write it without walking the others.
-   */
   coneSlot: number;
   debrisBase: number;
-  /** The strength value currently sitting in the buffers for those slots. */
   writtenStrength: number;
 }
 
-/** One live tornado, as ./index.ts hands it over. */
 export interface FunnelSource {
   readonly id: number;
-  /** World-space X/Z of the eye, and the Y of the ground under it. */
   readonly x: number;
   readonly groundY: number;
   readonly z: number;
@@ -425,22 +285,11 @@ export interface FunnelSource {
 
 export interface FunnelRenderer {
   readonly root: Group;
-  /**
-   * Tells the renderer which tornadoes exist right now. A funnel is created for
-   * an id it has not seen, moved for one it has, and left to DISPERSE for one
-   * that has stopped appearing — which is why a tornado dying needs no message
-   * of its own.
-   */
   apply(live: readonly FunnelSource[]): void;
-  /**
-   * Advances every funnel's presence and the shared clock. `dt` in seconds;
-   * `daylight` is how much of the scene's light is reaching it, in [0, 1].
-   */
   update(dt: number, elapsed: number, daylight: number): void;
   dispose(): void;
 }
 
-/** Stable 0…1 from a storm id. */
 function unitFromId(id: number): number {
   let h = id >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
@@ -448,20 +297,10 @@ function unitFromId(id: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
 
-/**
- * `revealClip` is `ClientPluginCtx.revealClipUniforms()`, SPREAD into both
- * materials' own uniform objects — the same `{ value }` boxes in all three
- * places, so one mask upload reaches every material at once. See
- * client/src/plugins/kit/revealClip.ts for the whole pattern.
- */
 export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
   const root = new Group();
   root.name = 'tornado:funnel';
 
-  // ── The vortex sheet ──────────────────────────────────────────────────────
-  // A UNIT open cylinder, reshaped entirely in the vertex shader: the taper is
-  // per-height, so authoring a cone here would only fix the wrong taper into
-  // the geometry.
   const coneGeometry = new CylinderGeometry(
     1,
     1,
@@ -476,20 +315,12 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
     fragmentShader: CONE_FRAGMENT_SHADER,
     transparent: true,
     depthWrite: false,
-    // SEEN FROM INSIDE AS WELL AS OUT — the near wall is transparent, so the
-    // far wall is what gives the funnel its volume. Culling it would leave a
-    // hollow shell that reads as a decal.
     side: DoubleSide,
-    // NORMAL BLENDING, NEVER ADDITIVE — plugins/fire/client/smoke.ts's rule. A
-    // funnel must be able to DARKEN what is behind it: against daylight it is a
-    // silhouette, and additive blending can only ever lighten.
   });
   const cone = new InstancedMesh(coneGeometry, coneMaterial, MAX_FUNNELS);
   cone.name = 'tornado:funnel:vortex';
   cone.count = 0;
   cone.renderOrder = FUNNEL_RENDER_ORDER;
-  // Every vertex is displaced in the shader, so three's bounding sphere — which
-  // it computes from the undisplaced cylinder — describes nothing this draws.
   cone.frustumCulled = false;
   root.add(cone);
 
@@ -500,7 +331,6 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
   coneGeometry.setAttribute('aSeed', coneSeeds);
   coneGeometry.setAttribute('aStrength', coneStrengths);
 
-  // ── The debris skirt ──────────────────────────────────────────────────────
   const debrisCapacity = MAX_FUNNELS * DEBRIS_PER_FUNNEL;
   const debrisGeometry = new PlaneGeometry(2, 2, 1, 1);
   const debrisMaterial = new ShaderMaterial({
@@ -535,29 +365,16 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
   const rotation = new Quaternion();
   const scale = new Vector3(1, 1, 1);
 
-  /**
-   * Set whenever the instance LAYOUT stops matching the buffers — a funnel
-   * added, dropped, or moved by a server push.
-   *
-   * Everything the five buffers hold is a function of the push (position,
-   * seed, debris phase); only `strength` moves between pushes, and only while
-   * a funnel is dispersing. See ./spiral.ts, which had the same defect at a
-   * larger scale and is fixed the same way.
-   */
   let layoutDirty = false;
   let drawnCones = 0;
   let drawnDebris = 0;
 
-  /** Queues `instances` worth of `attribute` for upload, and nothing beyond. */
   function markUploaded(attribute: InstancedBufferAttribute, instances: number): void {
     attribute.clearUpdateRanges();
-    // In ARRAY ELEMENTS, not instances: three multiplies the start by the
-    // array's BYTES_PER_ELEMENT itself, so the count carries the itemSize.
     attribute.addUpdateRange(0, instances * attribute.itemSize);
     attribute.needsUpdate = true;
   }
 
-  /** Writes every buffer for every live funnel, and records where each landed. */
   function writeLayout(): void {
     const coneSeedArray = coneSeeds.array as Float32Array;
     const coneStrengthArray = coneStrengths.array as Float32Array;
@@ -570,8 +387,6 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
     for (const funnel of funnels.values()) {
       position.set(funnel.x, funnel.groundY, funnel.z);
       matrix.compose(position, rotation, scale);
-      // The storm's own intensity times how far into its touchdown it is: a
-      // weak tornado is a thin funnel, and a dispersing one thins out.
       const strength = funnel.presence * funnel.intensity;
       funnel.coneSlot = drawnCones;
       funnel.debrisBase = drawnDebris;
@@ -584,11 +399,7 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
 
       for (let i = 0; i < DEBRIS_PER_FUNNEL; i++) {
         debris.setMatrixAt(drawnDebris, matrix);
-        // Evenly spaced around the life cycle, so the skirt is continuous
-        // rather than pulsing.
         phaseArray[drawnDebris] = i / DEBRIS_PER_FUNNEL;
-        // Offset by the golden ratio per sprite, so two tornadoes with
-        // adjacent ids do not throw their debris into the same places.
         seedArray[drawnDebris] = (funnel.seed + i * 0.6180339887) % 1;
         strengthArray[drawnDebris] = strength;
         drawnDebris++;
@@ -611,18 +422,12 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
     root,
 
     apply(live): void {
-      // Everything is presumed finished until this call says otherwise — the
-      // rule that turns "the tornado stopped being broadcast", which arrives as
-      // an ABSENCE, into the start of a dispersal.
       for (const funnel of funnels.values()) funnel.alive = false;
 
       for (const storm of live) {
         const existing = funnels.get(storm.id);
         if (existing !== undefined) {
           existing.alive = true;
-          // A MOVE IS A LAYOUT CHANGE; a change of intensity is not — intensity
-          // only reaches the buffers through `strength`, which has its own
-          // two-buffer path in update().
           if (existing.x !== storm.x || existing.groundY !== storm.groundY || existing.z !== storm.z) {
             layoutDirty = true;
           }
@@ -639,7 +444,6 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
           z: storm.z,
           seed: unitFromId(storm.id),
           alive: true,
-          // BORN AT FULL PRESENCE — see FUNNEL_DISPERSE_SECONDS.
           presence: 1,
           intensity: storm.intensity,
           coneSlot: 0,
@@ -664,16 +468,12 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
         return;
       }
 
-      // ── The life cycle, which is the only thing a frame actually advances ──
       for (const [id, funnel] of funnels) {
         if (funnel.alive) {
-          // A funnel that was dispersing and came back (a dropped message, a
-          // reconnect) recovers rather than restarting its life.
           funnel.presence = 1;
         } else {
           funnel.presence -= dt / FUNNEL_DISPERSE_SECONDS;
           if (funnel.presence <= 0) {
-            // Dispersed. Deleting DURING the iteration is safe on a Map.
             funnels.delete(id);
             layoutDirty = true;
           }
@@ -695,7 +495,6 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
         return;
       }
 
-      // ── The steady state: one float per instance, and usually none ────────
       const coneStrengthArray = coneStrengths.array as Float32Array;
       const strengthArray = debrisStrengths.array as Float32Array;
       let touched = false;

@@ -1,8 +1,3 @@
-// The client half's PURE logic: the wire format, the deterministic per-
-// building variation, and vertical placement. No three import here, so this
-// runs in the same node environment as the server tests (design doc — no
-// headless GL rig). Mirrors flora/test/client.test.ts's shape.
-
 import { describe, expect, it } from 'vitest';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
@@ -72,11 +67,11 @@ describe('the wire format', () => {
 
   it('drops malformed triples individually and keeps the rest', () => {
     const parsed = parseStructureCells([
-      1, 2, 0, // ok
-      -1, 4, 0, // negative x
-      5, 1.5, 0, // fractional y
-      7, 8, 99, // out-of-range tier
-      9, 9, 5, // ok
+      1, 2, 0,
+      -1, 4, 0,
+      5, 1.5, 0,
+      7, 8, 99,
+      9, 9, 5,
     ]);
     expect(parsed).toEqual(cells([1, 2, 0], [9, 9, 5]));
   });
@@ -143,22 +138,6 @@ describe('per-building variation', () => {
   });
 });
 
-/**
- * The `count` cells of a site's coastal search disc that are nearest to it,
- * nearest first — a patch of water that is guaranteed to be inside the disc
- * and to be exactly as big as the caller asked for.
- *
- * DERIVED FROM THE DISC ITSELF (2026-08-21). The fixtures below used to write
- * a couple of literal neighbours, or a straight column, because
- * COASTAL_MIN_WATER_CELLS was two and the disc's radius four. Both moved with
- * the re-sample, and they moved DIFFERENTLY — the bar is an AREA (32 cells now)
- * and the radius a LENGTH (16) — so a column of the bar's length no longer fits
- * inside the disc. Enumerating the disc is the only statement of "enough water,
- * near enough" that cannot go stale again.
- *
- * The ordering is total (distance, then y, then x), so it is the same list on
- * every run and the "nearest first" test can compare against it.
- */
 function nearestWaterCells(
   centreX: number,
   centreY: number,
@@ -170,7 +149,7 @@ function nearestWaterCells(
   const offsets: Array<[number, number]> = [];
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
-      if (dx === 0 && dy === 0) continue; // the site's own cell is dry by construction
+      if (dx === 0 && dy === 0) continue;
       if (dx * dx + dy * dy < threshold) offsets.push([dx, dy]);
     }
   }
@@ -187,51 +166,20 @@ function nearestWaterCells(
     .map(([dx, dy]) => [centreX + dx, centreY + dy]);
 }
 
-/**
- * The DRAWN-cap lookup for a fixture whose drawn ground agrees with its
- * lattice ground — the ordinary case away from a contour.
- *
- * site.ts samples the drawn cap at quarter-cell steps (drawnGroundStore's
- * BAND_GRID_CELLS), so this rounds each sample onto the cell it falls in,
- * which is what a per-cell fixture can answer about.
- */
 function drawnAsLattice(groundAt: GroundLookup): GroundLookup {
   return (x, y) => groundAt(Math.round(x), Math.round(y));
 }
 
-/**
- * How far east of a site's own cell this file's coast fixture starts.
- *
- * A STRAIGHT COAST RATHER THAN A DISC OF WATER AROUND THE SITE, since
- * 2026-09-04 (GH #327): a skiff moors only where its whole reachable square is
- * water (site.ts's SKIFF_MOORING_CLEARANCE_CELLS), and a settlement's own cell
- * is dry by construction, so the cells nearest a site can never be moorings.
- * A fixture that only put water in the site's immediate neighbourhood would
- * have a coastal verdict and no boats — true, but not what these tests are
- * about. 3 is the smallest offset that leaves the site itself on dry land with
- * a cell to spare.
- */
 const COAST_WATER_MIN_DX = 3;
 
-/** A north-south coastline: everything `COAST_WATER_MIN_DX` cells or more east of the centre is confirmed water, everything west of it known dry. */
 function coastGroundAt(centreX: number): GroundLookup {
   return (x) => (x - centreX >= COAST_WATER_MIN_DX ? -1 : 4);
 }
 
-/**
- * Is a cell of that coast a MOORING? Its whole clearance square has to be
- * water, and the square reaches SKIFF_MOORING_CLEARANCE_CELLS west, so the
- * first moorable column is that much further out than the waterline.
- */
 function isCoastMooring(dx: number): boolean {
   return dx - SKIFF_MOORING_CLEARANCE_CELLS >= COAST_WATER_MIN_DX;
 }
 
-/**
- * How many moorings this straight-coast fixture yields. See the
- * coastal-classification test below for the derivation — it is a property of
- * the fixture's geometry against the skiff's own reach, not a cap.
- */
 const COAST_FIXTURE_MOORINGS = 1;
 
 describe('tier table', () => {
@@ -258,21 +206,9 @@ describe('placement', () => {
     expect(placements).toHaveLength(1);
 
     const variation = structureVariation(3, 4);
-    // Every neighbour of (3, 4) within the coastal search disc is unknown to
-    // this sparse fixture, so the site survey defaults to 'inland' — see
-    // site.ts's surveySite for the conservative-default contract this
-    // exercises (its own describe block below tests the surveying itself).
-    // X/Z ARE WORLD UNITS, not the cell (placement.ts multiplies by
-    // CELL_WORLD_SIZE): the renderer places a mesh in the scene, and the scene
-    // is world space. They read as the bare cell only while a cell was a world
-    // unit. groundY is already a world Y and never was a cell.
     expect(placements[0]).toEqual({
       x: 3 * CELL_WORLD_SIZE,
       z: 4 * CELL_WORLD_SIZE,
-      // …and the CELL travels alongside them, because the cosmetic rolls
-      // downstream (Durand's skin, the fishing-hut variant) hash integer cell
-      // coordinates. Hashing the world x/z above would fold four cells onto
-      // one roll at today's sampling — see models.ts's StructurePlacement.
       cellX: 3,
       cellY: 4,
       groundY: 5,
@@ -295,13 +231,6 @@ describe('placement', () => {
   });
 
   it('reports a coastal placement, seeded with skiffs, when its neighbourhood is confirmed water', () => {
-    // A tier-2 settlement at (100, 100) on a straight coast: every cell
-    // COAST_WATER_MIN_DX or more east of it is confirmed water (band <= -1),
-    // everything west of that known dry. EVERY cell answers, inside the search
-    // disc and out: since 2026-09-04 a mooring is tested over a clearance
-    // square that can reach past the disc's edge, and an unknown sample there
-    // would make the survey pending rather than settled — which is the
-    // contract, not a fixture this test is trying to exercise.
     const groundAt = coastGroundAt(100);
 
     const { placements, skiffs, pendingSite } = placementsFor(
@@ -315,8 +244,6 @@ describe('placement', () => {
     expect(skiffs.length).toBeGreaterThan(0);
     expect(skiffs.length).toBeLessThanOrEqual(SKIFF_MAX_PER_SETTLEMENT);
     for (const skiff of skiffs) {
-      // Every skiff anchors on a MOORING: water, and far enough offshore that
-      // its whole clearance square is water too.
       expect(groundAt(skiff.x, skiff.z)).toBeLessThanOrEqual(-1);
       expect(isCoastMooring(skiff.x - 100)).toBe(true);
     }
@@ -326,29 +253,16 @@ describe('placement', () => {
 describe('site survey (card 33, coastal classification)', () => {
   const CENTER = { x: 200, y: 200 };
 
-  /** A GroundLookup where every cell in `waterAt` reads as confirmed water (-1) and everything else is dry (4), fully known. */
   function worldWithWater(waterAt: ReadonlyArray<readonly [number, number]>): GroundLookup {
     const water = new Set(waterAt.map(([x, y]) => `${x},${y}`));
     return (x, y) => (water.has(`${x},${y}`) ? -1 : 4);
   }
 
   it('classifies a shore site coastal: enough confirmed water nearby', () => {
-    // Exactly the bar, and every one of them INSIDE the search disc. A single
-    // column of COASTAL_MIN_WATER_CELLS cells was inside it only while the bar
-    // was smaller than the disc's radius; the bar is an area and the radius a
-    // length, so they stopped fitting that way at the 2026-08-21 re-sample.
     const groundAt = coastGroundAt(CENTER.x);
     const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
-    // ONE, and not because one is any kind of cap: on this straight coast the
-    // INSHORE BAND and the SKIFF_MOORING_SPACING between kept moorings are what
-    // run out first. At SKIFF_MODEL_SCALE 1.6 (skiffs.ts, owner 2026-09-05)
-    // moorable columns start at dx 6, the band closes past distance 7.73, and
-    // 4.54 cells of spacing puts the next candidate at (6, +/-5) — 7.81 out,
-    // just past the band. A straight coast floats one skiff; a bay or a river
-    // mouth, whose water opens out rather than running parallel, still floats
-    // SKIFF_MAX_PER_SETTLEMENT. It was three here while the boat was 0.36 long.
     expect(survey.moorings.length).toBe(COAST_FIXTURE_MOORINGS);
   });
 
@@ -361,7 +275,6 @@ describe('site survey (card 33, coastal classification)', () => {
   });
 
   it('a single stray deep cell (a borrow pit, not a coastline) does not qualify', () => {
-    // Below COASTAL_MIN_WATER_CELLS by construction.
     const groundAt = worldWithWater([[CENTER.x + 1, CENTER.y]]);
     const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
@@ -369,10 +282,6 @@ describe('site survey (card 33, coastal classification)', () => {
   });
 
   it('never counts a band-0 cell (world Y = 0) as water — the ambiguous case', () => {
-    // Height 0 renders identically to shallow dry land under band
-    // quantisation (see site.ts's file banner); a lookup that always
-    // returns 0 must never read as coastal however many such cells surround
-    // the site.
     const groundAt: GroundLookup = () => 0;
     const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
@@ -380,24 +289,13 @@ describe('site survey (card 33, coastal classification)', () => {
   });
 
   it('the "lake" edge case: one confirmed-water cell plus unresolved neighbours stays pending, not falsely inland or coastal', () => {
-    // One short of COASTAL_MIN_WATER_CELLS confirmed, but with enough
-    // still-unknown neighbours that the verdict could still flip once they
-    // resolve — the caller (placement.ts) is expected to retry, not to
-    // trust this 'inland' as final.
     const groundAt: GroundLookup = (x, y) => (x === CENTER.x + 1 && y === CENTER.y ? -1 : null);
     const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
-    expect(survey.kind).toBe('inland'); // conservative default while undecided
+    expect(survey.kind).toBe('inland');
     expect(survey.pending).toBe(true);
   });
 
   it('moorings are sorted nearest first', () => {
-    // Over the coast fixture, whose moorable cells are a known, ordered set:
-    // the nearest disc offsets that clear COAST_WATER_MIN_DX by the mooring
-    // clearance. Spacing and the inshore band thin that set out (see the
-    // coastal-classification test above for the count), but they can only
-    // REJECT candidates, never reorder them — the scan is distance-ordered, so
-    // nothing further out may displace a nearer mooring, and the nearest
-    // moorable cell of all is always kept because nothing precedes it.
     const nearestFirst = nearestWaterCells(
       CENTER.x,
       CENTER.y,
@@ -476,10 +374,6 @@ describe("Durand's variant selection", () => {
   });
 
   it('never fires below the top tier, whatever the cell', () => {
-    // Sweep every tier below the top one, over a wide enough patch of cells
-    // that if the tier gate were missing, some cell in this sweep would be
-    // all but guaranteed to roll Durand's by chance (DURANDS_SHARE_OF_256 is
-    // ~1 in 6, and this sweep covers 40 * 40 = 1600 cells per tier).
     for (let tier = 0; tier < MAX_STRUCTURE_TIER; tier++) {
       for (let x = 0; x < 40; x++) {
         for (let y = 0; y < 40; y++) {
@@ -499,19 +393,11 @@ describe("Durand's variant selection", () => {
       }
     }
     const expectedShare = DURANDS_SHARE_OF_256 / 256;
-    // A tolerance band around the expected share, not an exact count: this is
-    // a hash's distribution over a finite sample, not a controlled random
-    // draw, so some variance around the mean is normal — the test asserts
-    // the roll is landing near ~1-in-6, not landing on a to-the-cell count.
     expect(durandsCount / sampleCount).toBeGreaterThan(expectedShare - 0.05);
     expect(durandsCount / sampleCount).toBeLessThan(expectedShare + 0.05);
   });
 
   it('does not correlate with the yaw/scale roll structureVariation reads from the same hash', () => {
-    // structureVariation spends bits 0-23; isDurandsCell reads bits 24-31.
-    // This does not prove independence, but it does prove the two are not
-    // reading the SAME bits, which would be the actual bug this guards
-    // against (e.g. a copy-paste that reused structureVariation's mask).
     let sawDurandsWithMinScale = false;
     let sawDurandsWithMaxScale = false;
     for (let x = 0; x < 200; x++) {
@@ -525,9 +411,6 @@ describe("Durand's variant selection", () => {
         }
       }
     }
-    // Both halves of the scale range appear among Durand's cells — if the
-    // selection roll were secretly reading the same bits as the scale roll,
-    // Durand's would cluster entirely on one side.
     expect(sawDurandsWithMinScale).toBe(true);
     expect(sawDurandsWithMaxScale).toBe(true);
   });
@@ -535,16 +418,6 @@ describe("Durand's variant selection", () => {
 
 describe('settler races', () => {
   it('is deterministic and matches the pinned golden vectors', () => {
-    // Golden values computed from the shipped hash — a change to the hash,
-    // the district size, or the bit slice shows up here as a diff, which is
-    // the point: race placement is a WORLD fact players will name on maps,
-    // so it must never drift silently between builds (or between this
-    // function and any other plugin's documented copy of it).
-    // STATED IN DISTRICTS SINCE 2026-08-21, not in cells. The vectors pin the
-    // HASH — the thing that must not drift between copies — and a district is
-    // sixteen world units of ground, which the re-sample made 64 cells rather
-    // than 16. Written as cells they pinned the district SIZE as well, and
-    // every one of them named a different district after the change.
     for (const [districtX, districtY, race] of [
       [0, 0, 'rudy'],
       [1, 1, 'uno'],
@@ -552,8 +425,6 @@ describe('settler races', () => {
       [15, 1, 'uno'],
       [31, 31, 'rudy'],
     ] as const) {
-      // Any cell inside the district; the rule is district-wide by
-      // construction (the "every cell of one district" test pins that).
       const x = districtX * SETTLER_DISTRICT_CELLS + 3;
       const y = districtY * SETTLER_DISTRICT_CELLS + 3;
       expect(settlementRace(x, y)).toBe(race);
@@ -561,12 +432,6 @@ describe('settler races', () => {
   });
 
   it('gives every cell of one district the same race', () => {
-    // District ORIGINS, not arbitrary points: a district is
-    // SETTLER_DISTRICT_CELLS across, and the probes below step to its far
-    // corner, so a base that is not on the grid straddles two districts and
-    // the test asks the wrong question. The literals [0,0], [16,16], [240,240]
-    // were origins only while a district was 16 CELLS; it is 16 WORLD UNITS
-    // (64 cells) since the 2026-08-21 re-sample.
     const D = SETTLER_DISTRICT_CELLS;
     for (const [baseX, baseY] of [
       [0, 0],
@@ -588,8 +453,6 @@ describe('settler races', () => {
 
   it('splits a full world of districts roughly evenly between the peoples', () => {
     const counts: Record<SettlerRace, number> = { rudy: 0, uno: 0 };
-    // A 512-WORLD-UNIT world edge — the nominal one — divided by a district's
-    // 16 world units. Unchanged by the re-sample, which moved neither.
     const districtsPerEdge = 32;
     for (let dy = 0; dy < districtsPerEdge; dy++) {
       for (let dx = 0; dx < districtsPerEdge; dx++) {
@@ -597,17 +460,12 @@ describe('settler races', () => {
       }
     }
     const total = districtsPerEdge * districtsPerEdge;
-    // 529 / 495 with the shipped hash; the assertion is the property (no
-    // race owns more than ~60% of the world), not the exact split.
     expect(counts.rudy + counts.uno).toBe(total);
     expect(counts.rudy).toBeGreaterThan(total * 0.4);
     expect(counts.uno).toBeGreaterThan(total * 0.4);
   });
 
   it('flows into placements so the renderer tints without re-deriving', () => {
-    // Two cells in DIFFERENT districts, so the assertion is about the race
-    // travelling with each placement rather than about one constant. [16,16]
-    // was a second district only while a district was 16 cells.
     const other: readonly [number, number] = [SETTLER_DISTRICT_CELLS, SETTLER_DISTRICT_CELLS];
     expect(settlementRace(0, 0)).not.toBe(settlementRace(other[0], other[1]));
 

@@ -1,17 +1,3 @@
-// World persistence: SQLite via better-sqlite3 (design doc — zero-config for
-// self-hosters, no server to run alongside).
-//
-// CRITICAL CODE (persistence path). Acceptance criterion 6 is "kill the server
-// process; restart; the world comes back from SQLite intact", so the guarantees
-// here are: a snapshot is written atomically (one transaction covering the
-// heightmap, the mask and every plugin slice), it is versioned, and a snapshot
-// this build cannot read is refused loudly instead of being partially applied.
-//
-// Cadence and retention are decided (open question 4, 2026-08-13): every
-// SNAPSHOT_INTERVAL_S but only if the world changed, keep the last 10, plus one
-// on clean shutdown. This file owns the retention half; the scheduler in
-// index.ts owns the cadence half.
-
 import {
   isValidHeight,
   LEGACY_MIN_HEIGHT,
@@ -39,140 +25,33 @@ import {
   type SnapshotWriterThread,
 } from './snapshot-writer.ts';
 
-/**
- * Bumped whenever the stored layout changes in a way this reader cannot
- * interpret. There are no migrations yet: a snapshot from a future (or
- * incompatible past) version is refused rather than guessed at.
- *
- * DELIBERATELY NOT BUMPED for the `world_name` column added 2026-08-14. The
- * version guard exists to stop a reader from misinterpreting a row it cannot
- * understand, and this column is compatible in BOTH directions: this build
- * reads a row without one as an unnamed world (and names it), and an older
- * build's `SELECT *` simply ignores a column it never asks for. Bumping would
- * turn a purely additive column into a refusal to boot — i.e. into a
- * self-hoster losing their world over a string.
- */
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
-/**
- * DEFAULT rolling history depth. 10 at the default 60 s cadence is ten minutes
- * of undo-by-hand for a self-hoster whose world was wrecked, at ~512 KB each
- * for a 512² world (~5 MB total) — cheap enough to keep, deep enough to be
- * useful.
- *
- * NOW A DEFAULT RATHER THAN THE POLICY (2026-08-21, world rollback). The
- * original decision (open question 4, 2026-08-13) is unchanged and still the
- * default; what changed is that a self-hoster can now SEE this history in the
- * game and restore from it, which makes its depth something they have an
- * opinion about. SNAPSHOT_RETENTION in the environment moves it — see
- * config.ts, and MAX_SNAPSHOT_RETENTION for the ceiling and why there is one.
- */
 export const SNAPSHOT_RETENTION = 10;
 
-/** better-sqlite3's in-memory database path; used by tests. */
 export const IN_MEMORY_DB_PATH = ':memory:';
 
 export interface SnapshotInput {
   readonly worldSize: number;
-  /** The world's name. A writer always knows it — see World.name. */
   readonly name: string;
   readonly cells: Int16Array;
   readonly mask: Uint8Array;
   readonly pluginSlices: Record<string, unknown>;
-  /**
-   * Per-player unlock masks, keyed by token (issue #17 — see the TOKEN_MASKS
-   * TABLE comment below for the format and why it is its own table). OPTIONAL
-   * and additive, following the same pattern as `world_name` before it: a
-   * caller that has never touched per-token unlocks (most of this file's
-   * existing tests) simply omits it, and an omitted map persists as "nothing
-   * to write" rather than as a type error every pre-existing call site would
-   * otherwise need fixing for.
-   */
   readonly tokenMasks?: ReadonlyMap<string, Uint8Array>;
-  /**
-   * The world clock at write time, in milliseconds (World.simMillis).
-   *
-   * OPTIONAL and additive, following tokenMasks: a caller that does not track
-   * it (every existing test) omits it and the column stores 0, which reads
-   * back as a world whose calendar starts at its next boot.
-   */
   readonly simMillis?: number;
-  /**
-   * The world clock at this world's GENESIS, in milliseconds
-   * (World.genesisMillis) — the world's birthday, not its age.
-   *
-   * OPTIONAL and additive like `simMillis` above, and NULLABLE unlike it:
-   * since the clock became a function of real time, 0 is a legitimate genesis
-   * (a world born at the epoch) and so cannot also mean "unknown". An omitted
-   * genesis stores NULL, and World.anchorClockToRealTime reconstructs one from
-   * the row's `simMillis`, which on any pre-genesis row is the world's age.
-   */
   readonly genesisMillis?: number;
-  /**
-   * A top-down picture of this world for the worlds panel — see
-   * persistence/thumbnail.ts. OPTIONAL and additive, following tokenMasks:
-   * a caller that does not produce one (every existing test) simply omits it,
-   * and the column stays null.
-   */
   readonly thumbnail?: Uint8Array;
-  /**
-   * The world's span side table — every column holding MORE THAN ONE solid
-   * span (shared/src/columns.ts). OPTIONAL and additive, following
-   * tokenMasks/thumbnail: a caller that has never had a layered column (every
-   * pre-existing call site) simply omits it, and the column stores NULL.
-   *
-   * The map is the LIVE table (World.spansForPersistence), encoded to a blob by
-   * saveSnapshot — the same division of labour as `cells`, which arrives live
-   * and leaves as an encodeHeights blob. An EMPTY map encodes to a
-   * zero-length BLOB, not NULL: "carved, then re-merged flat" and "never
-   * carved" read back identically either way, so the distinction costs nothing
-   * to drop.
-   */
   readonly columnSpans?: ReadonlyMap<number, Int16Array>;
 }
 
-// `genesisMillis` is omitted and redeclared below for the same reason `name`
-// is: the writer's field is optional (`number | undefined`), the reader's is
-// `number | null`, and only a reader can meet a row that predates the column.
 export interface WorldSnapshot
   extends Omit<SnapshotInput, 'name' | 'tokenMasks' | 'genesisMillis' | 'columnSpans'> {
   readonly id: number;
   readonly createdAt: number;
-  /**
-   * The stored name, or null for a row written before worlds had names. The
-   * asymmetry against SnapshotInput is the point: only a READER can encounter
-   * a nameless world, and World.restore is what names it.
-   */
   readonly name: string | null;
-  /**
-   * Per-token unlock masks recorded against this snapshot. ALWAYS PRESENT on
-   * a read (unlike SnapshotInput's optional field) — a legacy snapshot or one
-   * that simply had no per-token state yet reads back as an EMPTY map, never
-   * undefined, so World.restore's own default parameter is the only place
-   * "no per-token history" has to be spelled out.
-   */
   readonly tokenMasks: ReadonlyMap<string, Uint8Array>;
-  /** The world clock this snapshot recorded, ms; 0 for a pre-clock row. */
   readonly simMillis: number;
-  /**
-   * The genesis this snapshot recorded, ms, or null for a row written before
-   * the world clock was anchored to real time. NULL SURVIVES TO THE READER
-   * rather than being defaulted here, because only World.anchorClockToRealTime
-   * has the second half of the answer (the row's `simMillis`, i.e. the age) —
-   * defaulting it to 0 here would silently date every legacy world to the
-   * epoch and restart its saga's day numbering.
-   */
   readonly genesisMillis: number | null;
-  /**
-   * The stored span side table, keyed by cell index. ALWAYS PRESENT on a read
-   * (unlike SnapshotInput's optional field) — a legacy row written before the
-   * column existed reads back as an EMPTY map, never undefined, exactly like
-   * tokenMasks above. That is honest rather than lossy because of the storage
-   * contract: NULL on disk means "written before spans existed", which IS "no
-   * layered column", so an empty map says precisely what the row said. The
-   * lists are canonical Spans, already parsed and validated at decode — see
-   * COLUMN_SPANS_COLUMN and decodeColumnSpans.
-   */
   readonly columnSpans: ReadonlyMap<number, Span[]>;
 }
 
@@ -182,15 +61,11 @@ interface SnapshotRow {
   created_at: number;
   world_size: number;
   world_name: string | null;
-  /** SQLite has no boolean: 0 or 1. See PINNED_COLUMN. */
   pinned: number;
-  /** World clock at write time, ms. 0 in a row written before the column. */
   sim_millis: number;
-  /** World clock at genesis, ms. NULL in a row written before the column. */
   genesis_millis: number | null;
   heightmap: Uint8Array;
   mask: Uint8Array;
-  /** Encoded layered-column records; NULL in a row written before spans persisted. */
   column_spans: Uint8Array | null;
 }
 
@@ -199,8 +74,6 @@ interface SliceRow {
   data: string;
 }
 
-/** The columns listRestorePoints needs — deliberately not `SELECT *`: the mask
- * and the plugin slices are megabytes it never reads. */
 interface HistoryRow {
   id: number;
   created_at: number;
@@ -214,124 +87,18 @@ interface TokenMaskRow {
   mask: Uint8Array;
 }
 
-/**
- * Name of the additive column introduced with world names (2026-08-14).
- * NULLABLE, and it has to be: SQLite cannot add a NOT NULL column without a
- * default to a table that already has rows, and there is no honest default for
- * "what was this world called" — null means "nobody has named it yet".
- */
 const WORLD_NAME_COLUMN = 'world_name';
 
-/**
- * Name of the additive column introduced with PINNED RESTORE POINTS
- * (2026-08-22). 0 = ordinary, prunable; 1 = pinned, and therefore exempt from
- * retention forever.
- *
- * WHY PINNING EXISTS. Retention is a rolling window, which means every restore
- * point is on its way to being deleted — the newest ten are simply the ones
- * that have not got there yet. That is right for an undo buffer and wrong for
- * a moment you want to keep, so a pinned point is removed from the window
- * entirely: it survives however much play happens after it, until a human
- * unpins it. Retention then counts only UNPINNED rows, so pinning something
- * never costs you undo depth (see the pruneOld statement).
- *
- * NOT NULL DEFAULT 0 is safe on an ALTER for an existing table — unlike
- * world_name, a boolean HAS an honest default: a restore point written before
- * pinning existed was, in fact, not pinned.
- */
 const PINNED_COLUMN = 'pinned';
 
-/**
- * Name of the additive column holding the world's THUMBNAIL (2026-08-22): a
- * 64² grid of band bytes, ~4 KB, so the worlds panel can show what each world
- * looks like without decoding a megabyte of heightmap per row.
- *
- * NULLABLE, like world_name and unlike pinned: there is no honest default
- * picture of a world nobody has rendered yet, and "not drawn" has to be
- * distinguishable from "drawn, and empty". See persistence/thumbnail.ts.
- */
 const THUMBNAIL_COLUMN = 'thumbnail';
 
-/**
- * How much simulated time the world had lived when this snapshot was written,
- * in milliseconds — the world CLOCK (World.simMillis, 2026-08-23).
- *
- * ADDITIVE, like world_name/pinned/thumbnail before it, and for the same
- * reason SNAPSHOT_SCHEMA_VERSION does not move: `addColumnIfMissing` gives an
- * existing database the column on open, an older build's queries never name
- * it, and a row written before it existed reads as 0 — "this world's calendar
- * starts at its next boot", which costs at most one extra Monday and never a
- * refused start.
- *
- * DEFAULT 0 AND NOT NULL, unlike the nullable columns above: absent and zero
- * mean exactly the same thing for a clock, so there is nothing for a NULL to
- * express that 0 does not.
- */
 const SIM_MILLIS_COLUMN = 'sim_millis';
 
-/**
- * The world clock at the world's GENESIS, in milliseconds
- * (World.genesisMillis, 2026-08-23) — its birthday, written once and read back
- * forever.
- *
- * ADDITIVE exactly like sim_millis above, and SNAPSHOT_SCHEMA_VERSION does not
- * move for the same reasons. NULLABLE, unlike sim_millis, and that is the one
- * real difference: a clock's "absent" and "zero" mean the same thing, but a
- * genesis's do not — since the clock was anchored to real time, 0 is a world
- * born at WORLD_EPOCH_REAL_MILLIS, so NULL is what "written before this column
- * existed" has to say. World.anchorClockToRealTime turns that NULL into a real
- * birthday using the row's sim_millis, which on such a row is the world's age.
- */
 const GENESIS_MILLIS_COLUMN = 'genesis_millis';
 
-/**
- * The world's SPAN SIDE TABLE (2026-08-24, issue #129 step 4.2): every column
- * holding more than one solid span, as the record blob defined in codec.ts.
- *
- * THE COLUMN THAT MAKES SNAPSHOTS SURVIVE CARVING. Before it existed,
- * heightsForPersistence threw the moment any column grew a second span, so a
- * world's FIRST carve was minutes away from killing its own persistence; and a
- * restore laid only heights back down, silently flattening every layer. The
- * heights blob stays exactly what it always was — one Int16 per cell, the
- * TOPMOST ceiling — because every existing consumer of it keeps working; the
- * full picture for the rare layered column travels here, beside it.
- *
- * ADDITIVE, like world_name/pinned/thumbnail/sim_millis/genesis_millis before
- * it, and SNAPSHOT_SCHEMA_VERSION does not move for the same settled reasons:
- * addColumnIfMissing gives an existing database the column on open, an older
- * build's queries never name it, and a row written before it existed reads as
- * no layered column — which is the truth about that row, not a guess.
- *
- * NULLABLE, like world_name and unlike pinned: there is nothing for NULL to
- * be defaulted to honestly except absence itself. A zero-length BLOB (the
- * empty-table encoding) is also "no layered columns"; both read back as an
- * empty map, so callers never see the difference.
- */
 const COLUMN_SPANS_COLUMN = 'column_spans';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
-// per (snapshot, token) — persisted BESIDE the union `mask` on `snapshots`,
-// not inside a plugin's `plugin_slices` JSON blob. CORE'S OWN TABLE, chosen
-// over a reveal-plugin slice, for one reason: unlockChunkForToken lives on
-// WorldApi, not inside the reveal plugin (issue #17's "minimal API addition"
-// — see world.ts), so the state it produces belongs with the OTHER core mask
-// it is a per-player refinement of, in the same binary BLOB shape `mask`
-// already uses, rather than smuggled through a JSON column meant for
-// plugin-private data a plugin no longer even keeps (reveal is stateless
-// after this change — see plugins/reveal/server/index.ts).
-//
-// A WHOLE NEW TABLE, not a column, mirrors how `world_name` was added: a
-// second `CREATE TABLE IF NOT EXISTS` picks it up for free on every open(),
-// fresh database or years-old one, with no ALTER-style migration function
-// needed (unlike a column, a missing table costs nothing to add later).
-// SNAPSHOT_SCHEMA_VERSION does NOT move for the same reason it didn't for
-// world_name: the table is invisible to an older build's `SELECT *` (which
-// never names it), and THIS build reads a snapshot with no matching rows —
-// exactly what a pre-#17 snapshot has — as "no per-token masks recorded",
-// which is precisely the legacy-restore behaviour issue #17 decision 4 asks
-// for (union mask preserved, every per-token mask starts empty). See
-// World.restore's doc comment for what that means for a returning player.
 const TOKEN_MASKS_DDL = `
   CREATE TABLE IF NOT EXISTS token_masks (
     snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
@@ -341,58 +108,12 @@ const TOKEN_MASKS_DDL = `
   );
 `;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DISABLED_PLUGINS TABLE (issue #165, 2026-08-25). Which plugins this world
-// does NOT run. A property of the WORLD, so it lives in the world's own file —
-// the registry has no index to put it in on purpose (see world-registry.ts,
-// "THE FILES ARE THE TRUTH"), and a per-world setting kept outside the world
-// would be lost by the copy/archive/restore paths that move only the file.
-//
-// THE DISABLED SET, NOT THE ENABLED SET, and that polarity is the contract:
-// the default for a world is "run every installed plugin", so a world that has
-// never been touched has no rows here, and a plugin installed LATER is enabled
-// everywhere without a migration. Storing the enabled set instead would make
-// every existing world silently refuse every new plugin.
-//
-// NOT KEYED BY SNAPSHOT, unlike plugin_slices: rolling the terrain back to
-// last Tuesday must not also re-enable a plugin the operator turned off since.
-// SNAPSHOT_SCHEMA_VERSION does not move, for the same reason it did not for
-// token_masks — a new table is invisible to an older build, and no rows reads
-// as "nothing disabled", which is exactly the legacy behaviour.
 const DISABLED_PLUGINS_DDL = `
   CREATE TABLE IF NOT EXISTS disabled_plugins (
     plugin TEXT NOT NULL PRIMARY KEY
   );
 `;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PLUGIN_SETTINGS TABLE (per-world plugin settings, 2026-08-25). One row per
-// (plugin, key) a world has been configured with — structures' growth model is
-// the first, and every future settlement rule is a value of that same key
-// rather than a table of its own.
-//
-// BESIDE disabled_plugins, AND NOT KEYED BY SNAPSHOT, for exactly its reasons:
-// this is operator configuration, a property of the WORLD rather than of a
-// moment in it, so it lives in the world's own file (the registry has no index
-// to put it in — world-registry.ts, "THE FILES ARE THE TRUTH") and a rollback
-// to last Tuesday must not silently put the settlement model back to whatever
-// it was then. Same polarity argument too: a world with no row runs the
-// deployment's default, so an existing world needs no migration and a setting
-// added later is absent everywhere until somebody chooses it.
-//
-// VALUES ARE TEXT, and the set a key accepts is the declaring PLUGIN's, never
-// this table's: core has no vocabulary for what `model = populous` means and
-// must not grow one. The admin path validates a value against the declaration
-// before it is ever written (see world-manager.ts).
-//
-// SNAPSHOT_SCHEMA_VERSION does not move, for the reason it did not for
-// token_masks or disabled_plugins — a new table is invisible to an older
-// build's queries, and no rows reads as "nothing configured", which is exactly
-// the pre-existing behaviour.
-/**
- * One row of `plugin_settings`: a plugin, a key it declared, and the value
- * this world was configured with.
- */
 export interface PluginSettingRow {
   readonly plugin: string;
   readonly key: string;
@@ -408,12 +129,6 @@ const PLUGIN_SETTINGS_DDL = `
   );
 `;
 
-// Each fragment interpolated below terminates its OWN statement with a
-// semicolon, so a new one can always be appended. Without that, whichever
-// fragment happens to be last is the only one that parses, and adding the next
-// breaks the schema at boot with "syntax error near CREATE". (The note lives
-// here rather than inside the template because `//` is not a SQL comment —
-// SQLite reads it as an expression and fails on the slash.)
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS snapshots (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -444,25 +159,6 @@ const SCHEMA_DDL = `
   ${PLUGIN_SETTINGS_DDL}
 `;
 
-/**
- * Adds one column to a database created before that column existed.
- *
- * GENERIC BECAUSE THERE ARE NOW TWO (world_name in 2026-08-14, pinned in
- * 2026-08-22) AND THERE WILL BE MORE. `CREATE TABLE IF NOT EXISTS` is a no-op
- * on an existing table, so the DDL above only names a column on FRESH
- * databases; every self-hoster who already has a world file needs this for
- * each additive column. Writing it once means the second column cannot be
- * added with a subtly different idempotence check than the first.
- *
- * Idempotent by inspection (`PRAGMA table_info`) rather than by catching the
- * duplicate-column error, because a swallowed exception here would hide a real
- * schema problem behind the same silence.
- *
- * `definition` is the column's type and constraints — everything that follows
- * its name in an ALTER. SQLite can only add a column with a default (or a
- * nullable one), which is why every caller either passes a DEFAULT or a
- * nullable type.
- */
 function addColumnIfMissing(
   db: Database,
   table: string,
@@ -474,17 +170,6 @@ function addColumnIfMissing(
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-// ---------------------------------------------------------------------------
-// THE WRITE CORE — the one transaction that turns a world into a row.
-//
-// EXTRACTED OUT OF THE STORE (issue #273) so it can run on a worker thread as
-// well as on the tick thread. Both callers go through `writeSnapshot` with the
-// same payload shape and the same prepared statements, which is what makes the
-// off-thread write BYTE-IDENTICAL to the synchronous one by construction
-// rather than by two code paths agreeing: there is only one code path.
-// ---------------------------------------------------------------------------
-
-/** The four statements one snapshot write needs. Prepared per connection. */
 export interface SnapshotWriteStatements {
   readonly insertSnapshot: Statement;
   readonly insertSlice: Statement;
@@ -492,25 +177,12 @@ export interface SnapshotWriteStatements {
   readonly pruneOld: Statement;
 }
 
-/**
- * A snapshot with every live reference already resolved: the plugin slices are
- * JSON text, not objects, and every buffer is one the writer may hold across a
- * thread hop.
- *
- * WHY THE SLICES ARRIVE AS TEXT. `JSON.stringify` is the only step of a write
- * that can see a plugin's live object graph, and a graph is not something a
- * worker can be handed (a class instance loses its prototype and its `toJSON`
- * on the way over, which would silently change the bytes stored). So the
- * stringify stays with the caller that owns the graph, and what crosses the
- * boundary is the exact string the row will hold.
- */
 export interface SnapshotWritePayload {
   readonly worldSize: number;
   readonly name: string;
   readonly cells: Int16Array;
   readonly mask: Uint8Array;
   readonly columnSpans?: ReadonlyMap<number, Int16Array> | undefined;
-  /** `[plugin, json]` pairs, in the order the row's slices must be inserted. */
   readonly slicesJson: readonly (readonly [string, string])[];
   readonly tokenMasks?: ReadonlyMap<string, Uint8Array> | undefined;
   readonly simMillis?: number | undefined;
@@ -518,7 +190,6 @@ export interface SnapshotWritePayload {
   readonly thumbnail?: Uint8Array | undefined;
 }
 
-/** Prepares the write statements against one connection (main or worker). */
 export function prepareSnapshotWriteStatements(db: Database): SnapshotWriteStatements {
   return {
     insertSnapshot: db.prepare(
@@ -534,14 +205,6 @@ export function prepareSnapshotWriteStatements(db: Database): SnapshotWriteState
     insertTokenMask: db.prepare(
       'INSERT INTO token_masks (snapshot_id, token, mask) VALUES (?, ?, ?)',
     ),
-    // Keep the newest N rows; ON DELETE CASCADE removes their slices and
-    // token_masks rows too — both reference snapshots(id) the same way.
-    // PINNED ROWS ARE NOT IN THE WINDOW AT ALL — note `pinned = 0` appears
-    // TWICE, and both are load-bearing. The outer one stops a pinned row from
-    // ever being deleted. The inner one keeps pinned rows from consuming the
-    // LIMIT, so pinning a moment does not silently shorten the undo history:
-    // retention means "the newest N unprotected points", plus everything a
-    // human asked to keep.
     pruneOld: db.prepare(
       `DELETE FROM snapshots
          WHERE ${PINNED_COLUMN} = 0
@@ -552,11 +215,6 @@ export function prepareSnapshotWriteStatements(db: Database): SnapshotWriteState
   };
 }
 
-/**
- * Writes one snapshot and prunes the history, in a single transaction: a
- * crash mid-write leaves the previous snapshot as the newest, never a half
- * world. Returns the new snapshot's id.
- */
 export function writeSnapshot(
   db: Database,
   statements: SnapshotWriteStatements,
@@ -565,15 +223,8 @@ export function writeSnapshot(
 ): number {
   const heightmap = encodeHeights(payload.cells);
   const mask = Buffer.copyBytesFrom(payload.mask);
-  // Same shape as the heights above: the caller hands over live state, the
-  // encode happens HERE, once, before the transaction — so a failure in the
-  // encoder can never leave a half-written row behind. An omitted map and an
-  // empty one both become NULL/zero-length respectively; see SnapshotInput.
   const columnSpansBlob =
     payload.columnSpans === undefined ? null : encodeColumnSpans(payload.columnSpans);
-  // `?? []`: an omitted tokenMasks means "this caller never touched
-  // per-token unlocks" (see SnapshotInput's doc comment) — nothing to write,
-  // not an error.
   const tokenMaskEntries = payload.tokenMasks ?? [];
 
   const write = db.transaction((): number => {
@@ -584,28 +235,16 @@ export function writeSnapshot(
       payload.name,
       heightmap,
       mask,
-      // `?? null` rather than undefined: better-sqlite3 refuses undefined as
-      // a bound value, and a caller that produced no thumbnail means NULL.
       payload.thumbnail === undefined ? null : Buffer.copyBytesFrom(payload.thumbnail),
       payload.simMillis ?? 0,
-      // `?? null` for the same better-sqlite3 reason as the thumbnail above;
-      // here NULL is also the meaningful value — see GENESIS_MILLIS_COLUMN.
       payload.genesisMillis ?? null,
-      // Already encoded (or null); binding it inside the transaction like
-      // every other column keeps "one transaction covering everything" true.
       columnSpansBlob,
     );
     const snapshotId = Number(result.lastInsertRowid);
     for (const [plugin, json] of payload.slicesJson) {
-      // JSON, not a binary encoding: plugin slices are small, and a
-      // human-readable column is worth a lot when debugging someone else's
-      // plugin from a self-hoster's database.
       statements.insertSlice.run(snapshotId, plugin, json);
     }
     for (const [token, tokenMask] of tokenMaskEntries) {
-      // BINARY, like `mask` above and unlike plugin_slices: a per-token
-      // mask is the same bitset shape as the union mask, not small JSON a
-      // human would want to eyeball.
       statements.insertTokenMask.run(snapshotId, token, Buffer.copyBytesFrom(tokenMask));
     }
     statements.pruneOld.run(retention);
@@ -615,10 +254,6 @@ export function writeSnapshot(
   return write();
 }
 
-/**
- * Turns a caller's `SnapshotInput` into the payload the write core takes —
- * i.e. resolves the one field that cannot cross a thread, the plugin slices.
- */
 export function snapshotWritePayloadOf(input: SnapshotInput): SnapshotWritePayload {
   return {
     worldSize: input.worldSize,
@@ -638,19 +273,7 @@ export function snapshotWritePayloadOf(input: SnapshotInput): SnapshotWritePaylo
 
 export class SnapshotStore {
   private readonly db: Database;
-  /**
-   * The file this store's connection is open on — `IN_MEMORY_DB_PATH` for a
-   * test store. Kept because the writer thread opens the SAME file through a
-   * SECOND connection, and a path is the only thing a connection can be
-   * described by across a thread boundary.
-   */
   private readonly dbPath: string;
-  /**
-   * The writer thread, started on the first deferred write and shared by every
-   * store in the process. Null until then (and forever for an in-memory
-   * database) so nothing pays for a thread it never uses — most notably the
-   * test suite, which never takes the deferred path.
-   */
   private deferredWriter: SnapshotWriterThread | null = null;
   private readonly writeStatements: SnapshotWriteStatements;
   private readonly selectLatest: Statement;
@@ -671,12 +294,6 @@ export class SnapshotStore {
   private readonly selectPluginSetting: Statement;
   private readonly upsertPluginSetting: Statement;
 
-  /**
-   * How many snapshots survive a write. Held per-store rather than read from
-   * the module constant at each prune, so a test (and a self-hoster's
-   * SNAPSHOT_RETENTION) changes retention in ONE place instead of at every
-   * call site that could forget to pass it.
-   */
   private readonly retention: number;
 
   private constructor(db: Database, retention: number, dbPath: string) {
@@ -686,9 +303,6 @@ export class SnapshotStore {
     this.writeStatements = prepareSnapshotWriteStatements(db);
     this.selectLatest = db.prepare('SELECT * FROM snapshots ORDER BY id DESC LIMIT 1');
     this.selectById = db.prepare('SELECT * FROM snapshots WHERE id = ?');
-    // OLDEST FIRST, and that ordering is load-bearing: listRestorePoints
-    // measures each row against the one before it, so it must walk history
-    // forwards even though it hands the result back newest-first.
     this.selectHistory = db.prepare(
       `SELECT id, created_at, world_size, ${PINNED_COLUMN}, heightmap
          FROM snapshots ORDER BY id ASC`,
@@ -717,45 +331,28 @@ export class SnapshotStore {
     );
     this.countAll = db.prepare('SELECT COUNT(*) AS n FROM snapshots');
     this.selectDisabledPlugins = db.prepare('SELECT plugin FROM disabled_plugins');
-    // OR IGNORE / plain DELETE so both writes are idempotent: disabling a
-    // plugin that is already disabled must be a no-op, not a constraint error
-    // an operator's second click turns into a failed toggle.
     this.insertDisabledPlugin = db.prepare(
       'INSERT OR IGNORE INTO disabled_plugins (plugin) VALUES (?)',
     );
     this.deleteDisabledPlugin = db.prepare('DELETE FROM disabled_plugins WHERE plugin = ?');
-    // OLDEST-TO-NEWEST is meaningless here, so the order is the one thing a
-    // caller can rely on: plugin then key, so a listing reads the same way
-    // twice running and a diff of two worlds' configuration lines up.
     this.selectPluginSettings = db.prepare(
       'SELECT plugin, key, value FROM plugin_settings ORDER BY plugin ASC, key ASC',
     );
     this.selectPluginSetting = db.prepare(
       'SELECT value FROM plugin_settings WHERE plugin = ? AND key = ?',
     );
-    // UPSERT so writing a setting twice is a no-op rather than a constraint
-    // error — the same idempotence disabled_plugins' two writes have, for the
-    // same reason: an operator's second click must not fail.
     this.upsertPluginSetting = db.prepare(
       `INSERT INTO plugin_settings (plugin, key, value) VALUES (?, ?, ?)
          ON CONFLICT(plugin, key) DO UPDATE SET value = excluded.value`,
     );
   }
 
-  /**
-   * Opens (creating if needed) the world database. The parent directory is
-   * created too: `DB_PATH=./data/world.db` must work on a fresh clone where
-   * `data/` is gitignored and therefore absent.
-   */
   static open(dbPath: string, retention: number = SNAPSHOT_RETENTION): SnapshotStore {
     if (dbPath !== IN_MEMORY_DB_PATH) {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
     const db = new DatabaseConstructor(dbPath);
-    // WAL keeps the periodic snapshot write from blocking readers, and survives
-    // an unclean kill better than the rollback journal.
     db.pragma('journal_mode = WAL');
-    // Required for the plugin_slices cascade — SQLite defaults it off.
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA_DDL);
     addColumnIfMissing(db, 'snapshots', WORLD_NAME_COLUMN, 'TEXT');
@@ -767,15 +364,6 @@ export class SnapshotStore {
     return new SnapshotStore(db, retention, dbPath);
   }
 
-  /**
-   * Writes one snapshot and prunes the history, in a single transaction: a
-   * crash mid-write leaves the previous snapshot as the newest, never a half
-   * world. Returns the new snapshot's id.
-   *
-   * SYNCHRONOUS, and stays that way: it returns the id, and three callers
-   * (rollback, world creation, close) need the row on disk before they take
-   * their next step. The off-thread cadence path is `saveSnapshotDeferred`.
-   */
   saveSnapshot(input: SnapshotInput): number {
     this.settle();
     return writeSnapshot(
@@ -786,43 +374,12 @@ export class SnapshotStore {
     );
   }
 
-  /**
-   * Hands one snapshot to the writer thread and returns — the periodic-cadence
-   * path (issue #273).
-   *
-   * WHAT THE CALLER PAYS, and why it is the irreducible part: this copies the
-   * live world (heights, mask, per-token masks, span table) and stringifies the
-   * plugin slices, because everything it hands over must be a value the tick
-   * thread can no longer touch. A snapshot that shared the live heightmap would
-   * be torn by the next sculpt. Everything AFTER the copy — the LE-Int16
-   * encode, the thumbnail pass, the span encode, the transaction and the
-   * retention prune — happens on the worker.
-   *
-   * DURABILITY IS UNCHANGED, NOT WEAKENED. The window in which a snapshot
-   * exists but is not on disk already existed: the synchronous path spent
-   * milliseconds-to-seconds inside one transaction, and a process killed there
-   * lost exactly the same write to the rollback. What this adds is that the
-   * window is no longer *blocking*; it is closed by `settle()`, which every
-   * other method of this store and `close()` run first, and by the shutdown
-   * hook that saves before the process ends.
-   *
-   * Falls back to a synchronous write when there is no worker to hand it to —
-   * an in-memory database (no path a second connection could open) or a writer
-   * that failed to start. The world is still saved; it just blocks, exactly as
-   * it did before.
-   */
   saveSnapshotDeferred(
     input: Omit<SnapshotInput, 'thumbnail'>,
     onSettled?: SnapshotSettledCallback,
   ): void {
     const writer = this.writer();
     if (writer === null) {
-      // Inline, and report the outcome through the same callback the deferred
-      // path uses, so no caller has to have a second story for the fallback.
-      // The thumbnail is built HERE rather than by the caller for the same
-      // reason it is built on the worker: a caller that had to remember to
-      // pass one would be a caller that can silently store a world with no
-      // picture in the list.
       try {
         this.saveSnapshot({
           ...input,
@@ -835,9 +392,6 @@ export class SnapshotStore {
       }
       return;
     }
-    // Filled, not allocated: `scratchHeights` hands back the buffer the last
-    // snapshot used, whose pages are already resident — six sevenths cheaper
-    // than a fresh 8 MB `.slice()`. See RECYCLED_HEIGHT_BUFFERS.
     const cells = writer.scratchHeights(input.cells.length);
     cells.set(input.cells);
     writer.enqueue(
@@ -846,9 +400,6 @@ export class SnapshotStore {
       {
         worldSize: input.worldSize,
         name: input.name,
-        // A COPY of every live buffer: the tick thread owns the originals and
-        // will mutate them on its next sculpt. Copied here rather than
-        // structured-cloned at postMessage time so the buffers can be MOVED.
         cells,
         mask: input.mask.slice(),
         columnSpans: copyColumnSpans(input.columnSpans),
@@ -861,39 +412,16 @@ export class SnapshotStore {
     );
   }
 
-  /**
-   * Loads the most recent snapshot, or null on a fresh database.
-   *
-   * Refuses (throws) a snapshot written by an incompatible schema version. The
-   * alternative — starting a fresh world — would silently destroy a
-   * self-hoster's map, so an unreadable database must stop the boot and say so.
-   */
   loadLatest(): WorldSnapshot | null {
     this.settle();
     return this.hydrate(this.selectLatest.get() as SnapshotRow | undefined);
   }
 
-  /**
-   * Loads ONE snapshot by id — the restore-point path (world rollback,
-   * 2026-08-21) — or null when no such row exists (it was pruned, or the id
-   * was never real).
-   *
-   * Shares every check with loadLatest by construction rather than by
-   * discipline: both are one line over `hydrate`, so the schema-version
-   * refusal and the per-cell height validation below cannot be present on one
-   * path and missing on the other. That mattered enough to refactor for — a
-   * rollback is the one operation that takes an OLD row, i.e. the row most
-   * likely to be the corrupt or foreign one those checks exist to catch.
-   */
   loadSnapshot(id: number): WorldSnapshot | null {
     this.settle();
     return this.hydrate(this.selectById.get(id) as SnapshotRow | undefined);
   }
 
-  /**
-   * The one place a stored row becomes values the rest of the process trusts.
-   * See loadSnapshot for why both public readers go through it.
-   */
   private hydrate(row: SnapshotRow | undefined): WorldSnapshot | null {
     if (row === undefined) return null;
 
@@ -905,38 +433,6 @@ export class SnapshotStore {
     }
 
     const cells = decodeHeights(row.heightmap, row.world_size * row.world_size);
-    // Per-cell validity (isValidHeight, issue #13) is checked HERE — at decode,
-    // not in World.restore — for the same reason the schema-version and
-    // byte-length checks already live at this boundary rather than in the
-    // caller: this is the one place raw DB bytes turn into values the rest of
-    // the process trusts, so every future reader of a snapshot (not just
-    // World.restore) gets the guarantee for free, and a corrupt row is named
-    // by the snapshot id this function already has in scope. World.restore's
-    // own checks stay scoped to size-compatibility with the CONFIGURED world
-    // (a concern only it has); a Uint16Array wraps and NaN coerces to 0 on
-    // assignment into the Int16Array-backed heightmap (see codec.ts's header
-    // comment), so an out-of-range or non-integer value must be caught before
-    // it is ever assigned, not clamped or repaired after the fact — the whole
-    // point of failing at boot is that this is the one moment a self-hoster is
-    // watching (config.ts).
-    //
-    // Cost: one pass over up to 512² = 262,144 cells, each check an
-    // Number.isInteger plus two comparisons. Measured on this machine
-    // (Node 24, `isValidHeight` inlined): ~2.7 ms for the worst case, once per
-    // boot — negligible next to the SQLite read that produced the blob.
-    //
-    // THE ONE EXCEPTION IS A WORLD SAVED AGAINST A DEEPER FLOOR (2026-08-24).
-    // See LEGACY_MIN_HEIGHT: a snapshot records no floor of its own, so a cell
-    // at −1152 is indistinguishable from corruption by range alone even though
-    // it is honest terrain a player dug when the floor was −1536. Such cells
-    // are RAISED to today's floor here — the only repair this boundary does,
-    // and it is a migration, not a repair of damage: the world model got
-    // shallower and the stored terrain follows it up. Everything outside the
-    // migration window still throws, which is the case the paragraph above is
-    // about. The clamp cannot manufacture an illegal SLOPE either: it only
-    // ever raises a cell toward its neighbours' floor, so every gradient it
-    // touches gets shallower or stays put. Nothing is written back — the next
-    // ordinary snapshot persists the migrated heights.
     let migrated = 0;
     let deepestMigrated = 0;
     for (let i = 0; i < cells.length; i++) {
@@ -954,8 +450,6 @@ export class SnapshotStore {
       );
     }
     if (migrated > 0) {
-      // Said once per load, not once per cell, and said at all because this is
-      // the one moment a self-hoster's terrain silently changes shape.
       logWarn(
         `snapshot #${row.id}: raised ${migrated} cell(s) from as deep as ${deepestMigrated} ` +
           `to the world floor ${MIN_HEIGHT} (saved against the older ${LEGACY_MIN_HEIGHT} floor)`,
@@ -964,16 +458,6 @@ export class SnapshotStore {
     const mask = new Uint8Array(row.mask.byteLength);
     mask.set(row.mask);
 
-    // The span side table: NULL means "written before spans persisted", which
-    // is exactly "no layered column", so both NULL and a zero-length blob
-    // (the empty-table encoding) read back as an empty map — see
-    // WorldSnapshot.columnSpans for why the reader never sees undefined/null.
-    // Everything else goes through decodeColumnSpans with THIS row's id as the
-    // error context: a malformed blob is fatal at this boundary rather than
-    // downstream, for the same reason the per-cell height check below-adjacent
-    // is — this is where raw DB bytes turn into values the rest of the process
-    // trusts, and a corrupt span table must stop the boot, name its snapshot,
-    // and not half-apply.
     let columnSpans: Map<number, Span[]> = new Map();
     if (row.column_spans !== null) {
       columnSpans = decodeColumnSpans(
@@ -981,12 +465,6 @@ export class SnapshotStore {
         row.world_size * row.world_size,
         `snapshot #${row.id}`,
       );
-      // CROSS-CHECK against the heights already validated above. The storage
-      // contract makes each entry's LAST ceiling equal that cell's height
-      // (`cells[i]` IS the topmost ceiling — columns.ts); the two blobs are
-      // written together but are separate bytes, so only a corrupt or
-      // hand-edited database can desync them, and continuing would restore a
-      // world whose walkable surface disagrees with its own layers.
       for (const [cellIndex, spans] of columnSpans) {
         const topCeiling = spans[spans.length - 1]!.ceiling;
         if (cells[cellIndex] !== topCeiling) {
@@ -1003,12 +481,6 @@ export class SnapshotStore {
       pluginSlices[slice.plugin] = JSON.parse(slice.data);
     }
 
-    // A legacy (pre-#17) snapshot has NO rows here at all — the table exists
-    // (added by SCHEMA_DDL on open()) but nothing was ever written against
-    // this snapshot_id — so this loop simply never runs and tokenMasks stays
-    // the empty map. That IS the legacy-restore contract (see World.restore's
-    // doc comment): no special-casing needed here, only in what an empty map
-    // means downstream.
     const tokenMasks = new Map<string, Uint8Array>();
     for (const maskRow of this.selectTokenMasks.all(row.id) as TokenMaskRow[]) {
       const copy = new Uint8Array(maskRow.mask.byteLength);
@@ -1020,13 +492,8 @@ export class SnapshotStore {
       id: row.id,
       createdAt: row.created_at,
       worldSize: row.world_size,
-      // `?? null` covers a row written before the column existed AND a row
-      // written by a build that stored nothing in it; both mean "unnamed".
       name: row.world_name ?? null,
-      // `?? 0` covers a row written before the column existed: an unaged world.
       simMillis: row.sim_millis ?? 0,
-      // `?? null` covers a row written before the column existed; unlike the
-      // clock it is NOT defaulted to 0 — see WorldSnapshot.genesisMillis.
       genesisMillis: row.genesis_millis ?? null,
       tokenMasks,
       cells,
@@ -1036,28 +503,6 @@ export class SnapshotStore {
     };
   }
 
-  /**
-   * Every retained snapshot as a RESTORE POINT, newest first — the list the
-   * rollback panel shows (world rollback, 2026-08-21).
-   *
-   * WHY IT DECODES EVERY HEIGHTMAP. A list of bare timestamps is useless for
-   * the job this feature exists for: the self-hoster is looking for the moment
-   * something went wrong, and "19:16" and "19:17" look identical while one of
-   * them moved 108 cells and the other moved 11,673. So each point carries how
-   * far the world moved to REACH it, measured against the point before it, and
-   * that measurement can only come from the heights themselves.
-   *
-   * COST, stated because it is the expensive call on this class: one decode
-   * plus one full compare per retained snapshot — at the default retention of
-   * 10 and a 512² world, ~5 MB read and ~2.6 M Int16 comparisons, measured at
-   * ~40 ms on this machine. Bounded by MAX_SNAPSHOT_RETENTION and paid only
-   * when an operator opens the panel, never on a tick or a snapshot write.
-   *
-   * A row whose heightmap does not decode to its own world_size is listed with
-   * NULL deltas rather than dropped or thrown on: it is still a real restore
-   * point (loadSnapshot re-validates it properly before anything is applied),
-   * and hiding it would hide the very row an operator most needs to see.
-   */
   listRestorePoints(): RestorePoint[] {
     this.settle();
     const rows = this.selectHistory.all() as HistoryRow[];
@@ -1070,12 +515,9 @@ export class SnapshotStore {
       try {
         current = decodeHeights(row.heightmap, expectedCells);
       } catch {
-        current = null; // see doc comment: listed, un-measured, never hidden
+        current = null;
       }
 
-      // Comparable only when BOTH sides decoded AND describe the same grid.
-      // A world-size change mid-history makes cell i of one row a different
-      // place from cell i of the other, so there is no honest delta to report.
       const comparable =
         current !== null && previous !== null && current.length === previous.length;
 
@@ -1099,191 +541,92 @@ export class SnapshotStore {
         createdAt: row.created_at,
         cellsChanged,
         maxCellDelta,
-        // SQLite integer → boolean at the one boundary that reads the column,
-        // so nothing downstream has to know the storage is 0/1.
         pinned: row.pinned !== 0,
-        // Overwritten below for the genuinely newest row; `false` here keeps
-        // the flag a fact about position in the list rather than something
-        // each iteration has to know the list's length to compute.
         isCurrent: false,
       });
       if (current !== null) previous = current;
     }
 
     if (points.length > 0) points[points.length - 1].isCurrent = true;
-    // Newest first: an operator rolling back is looking for something that
-    // just happened, so the rows they want are the ones they see without
-    // scrolling.
     return points.reverse();
   }
 
-  /** The newest snapshot's thumbnail, or null when it has none. */
   latestThumbnail(): Buffer | null {
     this.settle();
     const row = this.selectLatestThumbnail.get() as { thumbnail: Buffer | null } | undefined;
     return row?.thumbnail ?? null;
   }
 
-  /**
-   * Attaches a thumbnail to the newest snapshot — the LAZY BACKFILL path, for
-   * a world whose newest snapshot predates thumbnails existing.
-   *
-   * Targets the newest row specifically rather than every row: a thumbnail is
-   * a picture of one moment, and painting an old restore point with the
-   * current world's outline would be a small lie in the one place whose
-   * purpose is showing what a world looks like.
-   */
   setLatestThumbnail(thumbnail: Uint8Array): boolean {
     this.settle();
     return this.setLatestThumbnailStatement.run(Buffer.copyBytesFrom(thumbnail)).changes > 0;
   }
 
-  /**
-   * Renames the world this file holds, across its WHOLE history.
-   *
-   * EVERY ROW, not just the newest, because a name is the world's IDENTITY
-   * rather than per-snapshot state: the same world was called this all along
-   * as far as anyone looking at it is concerned. Leaving older rows on the old
-   * name would mean a rollback to one of them silently renamed the world back,
-   * which is precisely the identity wobble the boot snapshot in index.ts
-   * already exists to prevent.
-   *
-   * Used for renaming a world that is NOT loaded. The LIVE world is renamed
-   * through World.rename, which marks it dirty so the next snapshot carries
-   * the new name; this then aligns its history the next time the file is
-   * opened for a rename. Returns how many rows were relabelled.
-   */
   setWorldName(name: string): number {
     this.settle();
     return this.setWorldNameStatement.run(name).changes;
   }
 
-  /**
-   * Pins or unpins one restore point. Returns false when no such row exists —
-   * it was pruned before the click landed, or the id was never real.
-   *
-   * SAFE TO CALL ON AN ALREADY-PINNED ROW: the UPDATE is idempotent, so a
-   * double-click cannot toggle something the operator did not see.
-   */
   setPinned(id: number, pinned: boolean): boolean {
     this.settle();
     const result = this.setPinnedStatement.run(pinned ? 1 : 0, id);
     return result.changes > 0;
   }
 
-  /**
-   * Plugins this world does not run. Empty for every world nobody has
-   * disabled anything in — see DISABLED_PLUGINS_DDL for why it is the
-   * disabled set that is stored rather than the enabled one.
-   *
-   * Names are returned as written, WITHOUT being checked against what this
-   * build has installed: a plugin that is temporarily absent from `plugins/`
-   * must keep its "off" flag rather than coming back enabled the first time
-   * the world is opened without it.
-   */
   disabledPlugins(): string[] {
     this.settle();
     return (this.selectDisabledPlugins.all() as { plugin: string }[]).map((row) => row.plugin);
   }
 
-  /**
-   * Every per-plugin setting this world has been configured with, in a stable
-   * (plugin, key) order. Empty for a world nobody has configured — see
-   * PLUGIN_SETTINGS_DDL for why absence means "the deployment default".
-   *
-   * Returned as stored, WITHOUT being checked against what this build declares,
-   * for disabledPlugins' reason: a plugin temporarily absent from `plugins/`
-   * must keep the choice made for it rather than having it dropped the first
-   * time the world is opened without it.
-   */
   pluginSettings(): PluginSettingRow[] {
     this.settle();
     return this.selectPluginSettings.all() as PluginSettingRow[];
   }
 
-  /** One setting's value, or undefined when this world has never set it. */
   pluginSetting(plugin: string, key: string): string | undefined {
     this.settle();
     const row = this.selectPluginSetting.get(plugin, key) as { value: string } | undefined;
     return row?.value;
   }
 
-  /** Records one plugin setting for this world. Idempotent. */
   setPluginSetting(plugin: string, key: string, value: string): void {
     this.settle();
     this.upsertPluginSetting.run(plugin, key, value);
   }
 
-  /** Records whether this world runs `plugin`. Idempotent in both directions. */
   setPluginEnabled(plugin: string, enabled: boolean): void {
     this.settle();
     if (enabled) this.deleteDisabledPlugin.run(plugin);
     else this.insertDisabledPlugin.run(plugin);
   }
 
-  /** How many restore points are pinned, i.e. exempt from retention. */
   countPinned(): number {
     this.settle();
     return (this.countPinnedStatement.get() as { n: number }).n;
   }
 
-  /** Number of retained snapshots; used by the retention test. */
   countSnapshots(): number {
     this.settle();
     return (this.countAll.get() as { n: number }).n;
   }
 
-  /**
-   * Folds this world's write-ahead log back into its database file.
-   *
-   * EXISTS FOR COPYING A LIVE WORLD (multi-world, 2026-08-22). In WAL mode the
-   * newest committed snapshots can live entirely in `<file>-wal`, so copying
-   * the `.db` alone can silently produce a duplicate that is missing the very
-   * rows the operator just made. The registry checkpoints through its OWN
-   * connection for worlds that are not loaded; a world that IS loaded must be
-   * checkpointed through THIS one, because a TRUNCATE checkpoint from a second
-   * connection cannot complete while this one holds the file open.
-   */
   checkpoint(): void {
     this.settle();
     this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
 
   close(): void {
-    // SETTLE BEFORE CLOSING, and close the WORKER's connection too: a handed-
-    // off snapshot must land in the file it belongs to, and a worker
-    // connection left open on a world nobody is looking at any more keeps that
-    // world's WAL alive — the exact leak releaseSession() exists to avoid.
     this.settle();
     if (this.deferredWriter !== null) this.deferredWriter.closeDatabase(this.dbPath);
     this.db.close();
   }
 
-  /**
-   * Blocks until the writer thread has no work left for ANY database.
-   *
-   * CALLED AT THE TOP OF EVERY METHOD THAT TOUCHES THE FILE, which is the
-   * whole contract: two connections must never be inside SQLite at once, and a
-   * read must never answer from before a snapshot this process already
-   * decided to write. Costing one atomic load when the queue is empty (the
-   * normal case) is what makes "call it everywhere" affordable rather than a
-   * rule each method has to be trusted to remember.
-   */
   private settle(): void {
     this.deferredWriter?.settle();
   }
 
-  /**
-   * The process-wide writer thread, or null when this store cannot use one.
-   *
-   * An in-memory database has no path a second connection could open, so it
-   * has no off-thread path either — see saveSnapshotDeferred's fallback.
-   */
   private writer(): SnapshotWriterThread | null {
     if (this.dbPath === IN_MEMORY_DB_PATH) return null;
-    // A thread that has died is not a thread to hand a snapshot to. Returning
-    // null puts this store back on the inline path for good rather than
-    // queueing writes at a worker that will never run them.
     if (this.deferredWriter !== null && !this.deferredWriter.alive) return null;
     this.deferredWriter ??= snapshotWriterThread();
     return this.deferredWriter;

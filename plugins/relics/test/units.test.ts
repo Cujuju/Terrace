@@ -1,9 +1,3 @@
-// Unit coverage for the three pure server modules: perk composition, relic
-// placement, and the composed terraform shapes. The integration behaviour they
-// add up to is in relics.test.ts; what is checked here is the maths and the
-// invariants that make that integration safe — above all, that no terraform
-// step can be handed to the shared brush with a radius it throws on.
-
 import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
@@ -95,18 +89,13 @@ describe('relic rng', () => {
     const original = createRelicRng(RELIC_RNG_DEFAULT_SEED);
     for (let n = 0; n < 10; n++) original.next();
 
-    // Save, as the persistence slice does…
     const saved = original.state();
     const expected = [original.next(), original.next(), original.next()];
 
-    // …and restore. The restored generator must produce the very draws the
-    // original went on to produce, not restart from the seed.
     const resumed = createRelicRng(saved);
     expect([resumed.next(), resumed.next(), resumed.next()]).toEqual(expected);
     expect(resumed.state()).toBe(original.state());
 
-    // A generator restarted from the seed does NOT match — i.e. the assertion
-    // above is testing resumption, not a coincidence.
     const restarted = createRelicRng(RELIC_RNG_DEFAULT_SEED);
     expect([restarted.next(), restarted.next(), restarted.next()]).not.toEqual(expected);
   });
@@ -127,12 +116,10 @@ describe('terrainClassOf', () => {
     expect(terrainClassOf(SEA_LEVEL + SHORE_HEIGHT_MARGIN)).toBe('shore');
     expect(terrainClassOf(SEA_LEVEL - SHORE_HEIGHT_MARGIN)).toBe('shore');
     expect(terrainClassOf(SEA_LEVEL + SHORE_HEIGHT_MARGIN + 1)).toBe('land');
-    // Open sea is neither: a gem down there would be unreachable-looking.
     expect(terrainClassOf(SEA_LEVEL - SHORE_HEIGHT_MARGIN - 1)).toBeNull();
   });
 });
 
-/** A stub world: every cell unlocked unless listed, at a single height. */
 function stubWorld(options: { size: number; height: number; locked?: (x: number, y: number) => boolean }): SpawnWorld {
   return {
     worldSize: options.size,
@@ -145,7 +132,6 @@ describe('chooseRelicCell', () => {
   const rng = () => createRelicRng(RELIC_RNG_DEFAULT_SEED);
 
   it('never returns a locked cell', () => {
-    // Only the top-left quadrant is unlocked.
     const world = stubWorld({
       size: 64,
       height: 0,
@@ -164,7 +150,6 @@ describe('chooseRelicCell', () => {
   it('never returns an occupied cell', () => {
     const size = 4;
     const world = stubWorld({ size, height: 0 });
-    // Everything but (3,3) is taken.
     const occupied = new Set<number>();
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
@@ -178,14 +163,11 @@ describe('chooseRelicCell', () => {
   });
 
   it('honours the preferred terrain when the world offers it', () => {
-    // All land.
     const world = stubWorld({ size: 32, height: SEA_LEVEL + BAND_HEIGHT * 4 });
     expect(chooseRelicCell(world, rng(), new Set(), 'land')).not.toBeNull();
   });
 
   it('relaxes to any unlocked cell rather than starving on a flat new world', () => {
-    // A brand-new world is flat at sea level: every cell is shore, so a relic
-    // that insisted on land would never spawn at all.
     const world = stubWorld({ size: 32, height: SEA_LEVEL });
     expect(chooseRelicCell(world, rng(), new Set(), 'land')).not.toBeNull();
     expect(RELIC_PREFERRED_TERRAIN_ATTEMPTS).toBeLessThan(RELIC_SPAWN_ATTEMPTS);
@@ -195,7 +177,6 @@ describe('chooseRelicCell', () => {
     const world = stubWorld({ size: 32, height: 0, locked: () => true });
     expect(chooseRelicCell(world, rng(), new Set(), 'shore')).toBeNull();
 
-    // Deep sea everywhere is also a legitimate "nowhere to put it".
     const drowned = stubWorld({ size: 32, height: SEA_LEVEL - SHORE_HEIGHT_MARGIN - 1 });
     expect(chooseRelicCell(drowned, rng(), new Set(), 'shore')).toBeNull();
   });
@@ -209,15 +190,11 @@ describe('terraform shapes', () => {
   const allSteps = [...QUAKE_STEPS, ...GENESIS_STEPS, ...BULWARK_STEPS];
 
   it('never asks the shared brush for a radius it throws on', () => {
-    // applyBrush throws a RangeError outside [MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS]
-    // and on a non-integer amount — the host would swallow it and the skill
-    // would silently never work. This is the invariant that prevents that.
     for (const step of allSteps) {
       expect(Number.isInteger(step.radius)).toBe(true);
       expect(step.radius).toBeGreaterThanOrEqual(MIN_BRUSH_RADIUS);
       expect(step.radius).toBeLessThanOrEqual(MAX_BRUSH_RADIUS);
       expect(Number.isInteger(step.amount)).toBe(true);
-      // Math.abs because `-384 % 64` is -0 in JS, and Object.is(-0, 0) is false.
       expect(Math.abs(step.amount % BAND_HEIGHT)).toBe(0);
     }
   });
@@ -253,51 +230,10 @@ describe('terraform shapes', () => {
     ]);
   });
 
-  // AN EXPLICIT TIMEOUT (2026-08-29, #108). This test runs real casts over two
-  // 256² maps of deliberately over-steep terrain, and relaxation got slower
-  // when it stopped manufacturing height: the fill on a pair's low side is no
-  // longer invented, so a cascade walks the same excess out in more passes
-  // (measured ~4× on a bare cliff). It now runs at ~9 s against vitest's
-  // 5 000 ms default. The work is legitimate and the budget it asserts is
-  // unchanged — only the wall clock moved.
   it('stays inside a small footprint on real terrain, through the plugin sculpt path', { timeout: 60_000 }, () => {
-    // REGRESSION (2026-08-21, Frostwick Hollows): WorldApi.sculpt used to run
-    // the library default (smooth + FREE spill). After MAX_STEP was halved to
-    // BAND_HEIGHT, one Genesis cast's unbounded relaxation regraded every
-    // over-steep pre-existing slope in reach: 11,673 cells changed, max
-    // single-cell delta 1,772 — against 5–108 cells for a player stroke.
-    // Banded spill (what every PLAYER sculpt runs) caps outside-footprint
-    // movement to one terrace band, which is what this test pins.
-    //
-    // The world stub below runs the EXACT options the production path runs
-    // (PLUGIN_SCULPT_OPTIONS, imported, not restated) over real Heightmaps,
-    // on two fixtures: one reproducing the live failure mode (over-steep
-    // legacy terrain), one pinning the honest footprint on gradient-legal
-    // ground.
-    // BOTH SLOPES ARE STATED AGAINST MAX_STEP, not written down (2026-08-21).
-    // The literals 24 and 12 were "over-steep" and "legal" against a MAX_STEP
-    // of 16 per CELL; the re-sample made MAX_STEP one band per WORLD UNIT, so
-    // 12 stopped being legal and fixture 2 stopped testing gradient-legal
-    // ground at all — it regraded 7 253 cells, which is the failure mode
-    // fixture 1 exists to catch, asserted against fixture 2's tight budget.
     const OVER_STEEP_SLOPE = Math.ceil(MAX_STEP * 1.5);
     const LEGAL_SLOPE = Math.floor(MAX_STEP * 0.75);
 
-    /**
-     * Cells one cast may touch on gradient-legal ground.
-     *
-     * AN AREA, so it converts as the SQUARE of the sampling density: the old
-     * 600 covered five radius-4 brushes and a skirt, and both halves of that
-     * grew — the brushes because MAX_BRUSH_RADIUS is stated in world units,
-     * the skirt because a deposit spreading at MAX_STEP now travels four times
-     * as many cells to shed the same height. Headroom for shape retuning is
-     * preserved by converting rather than re-picking; the old free-spill path
-     * blows past any such bound.
-     *
-     * Measured after the conversion: a quake cast touches 3 894 cells and a
-     * genesis cast 5 094, against this budget of 9 600 — the same proportion of
-     * headroom the 600 was chosen with.
-     */
     const CAST_CELL_BUDGET = cellsOverArea(600);
     const size = cellsAcross(64);
     const cx = size / 2;
@@ -313,9 +249,6 @@ describe('terraform shapes', () => {
       return map;
     };
     const mkWorld = (map: ReturnType<typeof createHeightmap>) =>
-      // A cast reads worldSize and heights when it plans, then calls sculpt;
-      // cast the stub rather than stubbing all 17 WorldApi members the test
-      // never touches.
       ({ worldSize: size,
         heightAt(x: number, y: number): number {
           return map.cells[y * size + x] ?? 0;
@@ -325,21 +258,11 @@ describe('terraform shapes', () => {
       } }) as unknown as WorldApi;
 
     for (const [skill, spec] of TERRAFORM_BY_SKILL) {
-      // ── 1. OVER-STEEP TERRAIN — the live failure mode. A slope of 24 was
-      // legal under the old MAX_STEP of 32 and is baked into every
-      // pre-re-terrace world like Frostwick Hollows. Banded spill may slope
-      // such terrain, but may move any outside-footprint cell at most one
-      // terrace band, however far the cascade travels.
       {
         const map = mkMap(OVER_STEEP_SLOPE);
         const world = mkWorld(map);
-        // Planned against THIS fixture: a shape that reads the ground
-        // (Landslide) chooses different steps on different terrain, and the
-        // containment budget has to hold for the steps it actually runs.
         const steps = spec.plan(world, cx, cy);
 
-        // The exact union of the cast's brush footprints, so containment is
-        // asserted EXACTLY outside them.
         const footprint = new Set<number>();
         for (const step of steps) {
           forEachFootprintOffset(step.radius, (dx, dy) => {
@@ -357,17 +280,9 @@ describe('terraform shapes', () => {
           if (footprint.has(i)) continue;
           maxOutsideDelta = Math.max(maxOutsideDelta, Math.abs(map.cells[i] - before[i]));
         }
-        // smooth() pins each outside cell's movable interval on first touch,
-        // so this holds regardless of cascade reach. Under the old free-spill
-        // path a single cell moved 1,772 units on the live world.
         expect(maxOutsideDelta).toBeLessThanOrEqual(BAND_HEIGHT - 1);
       }
 
-      // ── 2. GRADIENT-LEGAL TERRAIN — the honest footprint budget. With no
-      // legacy over-steepness to regrade, a cast's reach is bounded by its own
-      // deposit spreading at MAX_STEP: five brushes of MAX_BRUSH_RADIUS plus a
-      // modest skirt. See CAST_CELL_BUDGET for why that is an area and why it
-      // is stated as one.
       {
         const map = mkMap(LEGAL_SLOPE);
         const world = mkWorld(map);
@@ -375,7 +290,6 @@ describe('terraform shapes', () => {
         expect(applyTerraform(world, cx, cy, steps)).toBeLessThanOrEqual(CAST_CELL_BUDGET);
       }
 
-      // Every active skill must pass; name the key so the entry is used.
       expect(['bulwark', 'genesis', 'landslide', 'quake']).toContain(skill);
     }
   });

@@ -1,15 +1,3 @@
-// The static-file handler is security-sensitive (path traversal) and is the
-// only thing standing between a self-hoster's filesystem and the internet
-// once a client build is wired in, so it is tested against a REAL HTTP
-// server bound to an ephemeral port rather than by hand-mocking
-// IncomingMessage/ServerResponse — that would risk testing the mock instead
-// of the handler's actual header/streaming/error-path behaviour.
-//
-// No real `vite build` output is needed: the fixture below is a minimal
-// stand-in (index.html + assets/app.js + assets/app.css) that exercises
-// every code path — exact file, SPA fallback, directory (no listing),
-// traversal rejection — without depending on the client package building.
-
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type Server as HttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -27,18 +15,6 @@ describe('createStaticFileHandler', () => {
   let base: string;
   let port: number;
 
-  /**
-   * Issues a request with `rawPath` written VERBATIM onto the request line —
-   * unlike `fetch`/undici, `http.request`'s `path` option is not run through
-   * the WHATWG URL parser, so a percent-encoded (or even literal) dot-segment
-   * survives transport exactly as written. That is the only way to actually
-   * exercise this handler's own traversal defense from outside: a
-   * spec-compliant fetch client normalises "/../" and even "%2e%2e" out of a
-   * URL before ever sending it (verified — see the traversal tests below for
-   * what that means for a `fetch`-based test), but nothing requires a real
-   * TCP client sending raw bytes to a Node `http.Server` to be spec-compliant,
-   * so the server-side defense is exactly as necessary as this test proves.
-   */
   function rawRequest(
     rawPath: string,
     method: 'GET' | 'HEAD' | 'POST' = 'GET',
@@ -110,8 +86,6 @@ describe('createStaticFileHandler', () => {
   });
 
   it('falls back to index.html for a real directory instead of listing it', async () => {
-    // /assets/ is a real directory on disk with no index.html of its own —
-    // must not enumerate app.js/app.css back to the client.
     const res = await fetch(`${base}/assets/`);
     expect(res.status).toBe(200);
     const body = await res.text();
@@ -151,7 +125,6 @@ describe('createStaticFileHandler', () => {
   it('rejects a deep percent-encoded traversal that escapes further than it descended', async () => {
     writeFileSync(join(dir, '..', 'terrace-static-test-secret3.txt'), 'secret');
     try {
-      // %2f decodes to '/': .. / .. / <secret>, climbing past root.
       const res = await rawRequest(
         '/assets/%2e%2e%2f%2e%2e%2fterrace-static-test-secret3.txt',
       );

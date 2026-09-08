@@ -1,64 +1,16 @@
-// The wire form of a ROTATING STORM — an eye with a radius, a strength, the
-// velocity it is tracking on, and sometimes a name.
-//
-// WHY IT IS HERE AND NOT IN A PLUGIN'S protocol.ts, which is ./discWire.ts's
-// reason exactly. Two plugins (tornado, cyclone) each broadcast this same
-// payload since the 2026-09-02 split, and a plugin may not import another
-// plugin's protocol — a plugin folder is deletable, and a wire contract that
-// resolved through a neighbour would turn "I removed cyclone" into "tornado no
-// longer parses". Before the split there was one plugin and one copy;
-// afterwards there would have been two copies of one defensive parser, which is
-// the shape #180 already moved out of five plugins (see ./wire.ts). The
-// precision of a broadcast value, and the validation of one, are properties of
-// the PROTOCOL — which is what this package is the single source of truth for.
-//
-// WHAT IS NOT HERE: the message NAME (`tornado:all`, `cyclone:all`), which the
-// host namespaces per plugin, and every measurement that differs between the
-// two kinds — a funnel's height, a cyclone's eye fraction and deck height are
-// each one plugin's business and live in that plugin's protocol.ts.
-
 import { isFiniteNumber } from './parse.ts';
 
-/**
- * One rotating storm, as it appears on the wire.
- *
- * There is no `kind` field. Until 2026-09-02 one plugin carried two kinds on one
- * message and had to say which; now the message itself is namespaced by the
- * plugin that sends it, so a kind field would be a second, weaker copy of the
- * name already in the message type.
- */
 export interface RotatingStormState {
-  /** Stable for the storm's whole life; the client keys its renderers by it. */
   readonly id: number;
-  /**
-   * Cell-space centre (fractional). It may legitimately sit OUTSIDE the world —
-   * a cyclone is born over the sea beyond the coast and drifts in.
-   */
   readonly x: number;
   readonly y: number;
-  /** Cell-space radius. Constant for a storm's whole life. */
   readonly radius: number;
-  /**
-   * Strength in [0, 1]. It ramps up as the storm spins up and back down as it
-   * dies, so a storm is never seen appearing or vanishing and the client needs
-   * no fade envelope of its own.
-   */
   readonly intensity: number;
-  /** Cells per second, as a velocity — the client extrapolates between pushes. */
   readonly vx: number;
   readonly vy: number;
-  /**
-   * `Hurricane Ada`, for a storm whose sender names its storms; absent
-   * otherwise.
-   *
-   * BUILT SERVER-SIDE AND SENT WHOLE rather than sent as a basin plus an index
-   * for the client to join: it is a label, it is written once per storm, and the
-   * alternative is two fields and a formatting rule duplicated on both sides.
-   */
   readonly name?: string;
 }
 
-/** The `<plugin>:all` payload. */
 export interface RotatingStormsPayload {
   readonly storms: readonly RotatingStormState[];
 }
@@ -83,17 +35,6 @@ function parseOne(value: unknown): RotatingStormState | null {
   };
 }
 
-/**
- * Defensive parse of a received storm list.
- *
- * A BAD PAYLOAD IS DROPPED WHOLE — one malformed entry rejects the message, and
- * the caller keeps rendering what it already has until the next good one, which
- * is one broadcast interval away. That is the rule this list has always been
- * parsed under, and it differs from ./discWire.ts's per-entry drop for a reason
- * worth keeping: there are at most a handful of storms and each one is a large,
- * named event, so silently rendering "the two of the three that parsed" would
- * show a world that is missing a hurricane rather than one that is a beat stale.
- */
 export function parseRotatingStormsPayload(payload: unknown): RotatingStormsPayload | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const { storms } = payload as Record<string, unknown>;
@@ -107,49 +48,6 @@ export function parseRotatingStormsPayload(payload: unknown): RotatingStormsPayl
   return { storms: parsed };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE WIND FIELD OF A STORM WITH AN EYE.
-//
-// ONE RAMP, TWO CALLERS, AND THAT IS WHY IT IS HERE. The shape below is
-// evaluated on both sides of the damage event and must agree exactly or the
-// mechanic is quietly wrong:
-//
-//   * the EMITTER runs it as its RotatingStormProfile's `windFalloff`, which is
-//     what decides the severity of every cell it samples
-//     (plugins/cyclone/server/sim.ts);
-//   * every CONSUMER runs it to answer "how hard is the wind at MY cell",
-//     because the event carries a bounded sample rather than an enumeration and
-//     a consumer with a spatial index is expected to answer exactly
-//     (server/src/plugins/kit/rotatingStormDamage.ts's `severityAt`).
-//
-// Written out by hand in both places it drifted the moment either was retuned,
-// and the failure is silent: trees fall at a severity the storm never had. The
-// wind field a payload describes is a property of the PROTOCOL between the two,
-// which is what this package is the single source of truth for — the same
-// argument the parser at the top of this file is here under.
-//
-// IT IS THE EYE SHAPE, NOT "THE" SHAPE. A rotating storm is not required to
-// have an eye: the kit's other owner is a tornado, whose profile is a solid
-// core falling off as 1 − r² (plugins/tornado/server/sim.ts) and which passes
-// eyeRadiusFraction 0. A consumer reacting to a tornado's damage would need the
-// payload to carry the falloff SHAPE as well as the eye radius, because no
-// function of (radius, eyeRadius, intensity) can tell the two curves apart.
-// Nothing consumes a tornado's damage today, so the payload does not carry it;
-// the day something does, that field is the change to make.
-
-/**
- * The wind at `radiusFraction` of the way out from a storm's eye, in [0, 1].
- *
- * Zero inside the eye, one at the eyewall, falling LINEARLY to zero at the rim.
- * Linear and deliberately not smoothed: the eyewall is the one place in a
- * hurricane where the wind really does change over a short distance, and
- * rounding it off would hide the only structure this shape has.
- *
- * Both arguments are fractions of the storm's own radius, which is what makes
- * the shape a fact about a cyclone rather than about how big this one is.
- * Guarded at both ends — a storm whose eye fills it blows nothing, and nothing
- * outside the disc is struck — so no caller has to remember to check either.
- */
 export function eyewallWindFalloff(radiusFraction: number, eyeRadiusFraction: number): number {
   if (eyeRadiusFraction >= 1) return 0;
   if (radiusFraction <= eyeRadiusFraction) return 0;

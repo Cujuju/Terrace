@@ -1,18 +1,3 @@
-// relics — the client half (contract: client/src/plugins/types.ts).
-//
-// Three responsibilities, in the three things the ctx grants:
-//
-//   layer + onFrame   — a floating, slowly rotating relic per skill, shaped as
-//                       what it does (relicShapes.ts), sitting just above the
-//                       RENDERED terrain surface.
-//   onCanvasPress     — claims a press that lands on a relic (collect) or that
-//                       lands anywhere while an active skill is armed (cast),
-//                       so neither one also sculpts or spins the camera.
-//   registerHudPanel  — the skill list and the cast buttons.
-//
-// The imperative half lives here; the maths it needs is in ./gems.ts (pure and
-// tested) and the reactive state it shares with the panel is in ./state.ts.
-
 import { Color, Mesh, type BufferGeometry, type ShaderMaterial } from 'three';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
@@ -57,11 +42,8 @@ import {
   skills,
 } from './state.ts';
 
-/** Primary pointer button (mouse left / the only touch button). */
 const PRIMARY_BUTTON = 0;
 
-/** One rendered relic: its two meshes plus the animation phase that keeps it
- * out of lockstep with its neighbours. */
 interface GemEntry {
   readonly mesh: Mesh;
   readonly spire: Mesh;
@@ -69,10 +51,6 @@ interface GemEntry {
   readonly relic: RelicView;
 }
 
-/**
- * The column geometry every spire shares (relicSpire.ts), built on first use
- * and released with the per-skill gem geometries on dispose.
- */
 let spireShape: BufferGeometry | null = null;
 
 function sharedSpireGeometry(): BufferGeometry {
@@ -80,18 +58,13 @@ function sharedSpireGeometry(): BufferGeometry {
   return spireShape;
 }
 
-/** Seconds since attach, driving bob and spin. */
 let elapsedS = 0;
 
-/** Live gems by relic id. */
 const gems = new Map<string, GemEntry>();
 
 function disposeGem(entry: GemEntry): void {
   for (const mesh of [entry.mesh, entry.spire]) {
     mesh.removeFromParent();
-    // The geometries are shared — per skill for the gem (relicShapes.ts), one
-    // for every spire (above) — and outlive the relic; the materials are
-    // per-relic, because each carries its own colour and its own pulse.
     (mesh.material as ShaderMaterial).dispose();
   }
 }
@@ -109,12 +82,6 @@ function createGem(relic: RelicView): GemEntry {
   return { mesh, spire, phaseS: gemPhaseFor(relic.id), relic };
 }
 
-/**
- * Reconciles the scene against a new relic list: creates gems for ids that are
- * new, removes gems for ids that are gone, and leaves the rest ALONE — an
- * untouched gem keeps its animation phase, so a keepalive re-broadcast does not
- * make every relic in the world visibly jump.
- */
 function syncGems(ctx: ClientPluginCtx, next: readonly RelicView[]): void {
   const wanted = new Set(next.map((relic) => relic.id));
 
@@ -132,20 +99,6 @@ function syncGems(ctx: ClientPluginCtx, next: readonly RelicView[]): void {
   }
 }
 
-/**
- * Positions every gem for this frame.
- *
- * The ground height is re-read every frame rather than cached: terrain under a
- * relic changes constantly (any player's sculpt, or a Quake), and a cached
- * height would leave gems buried in new hills or hanging over new craters. It
- * is a few dozen cheap array reads per gem — the whole footprint, gemGroundY —
- * and there are RELIC_COUNT of them.
- *
- * A gem whose cell has no height yet — the join snapshot has not arrived, or
- * the relic sits in a chunk this client was never sent — is hidden rather than
- * drawn at a guessed height, because a gem floating over blank sea is a bug
- * report and an absent one is simply territory you have not unlocked.
- */
 function animateGems(ctx: ClientPluginCtx, dt: number): void {
   elapsedS += dt;
 
@@ -167,8 +120,6 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
     );
     entry.mesh.rotation.y = gemSpinAngle(elapsedS, entry.phaseS);
 
-    // The spire stands on the ground and neither bobs nor spins (relicSpire.ts):
-    // only its intensity moves.
     entry.spire.visible = true;
     entry.spire.position.set(
       entry.relic.x * CELL_WORLD_SIZE,
@@ -182,23 +133,6 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
   }
 }
 
-/**
- * THE PRESS CLAIM. Returning true stops the event dead — the sculpt brush and
- * OrbitControls never see it (client/src/plugins/host.ts listens in the capture
- * phase). So this must claim ONLY presses it genuinely consumes, or the world
- * becomes unsculptable wherever a relic happens to be.
- *
- * Two consuming cases, in priority order:
- *
- *   1. A skill is armed → this press IS the target. Claimed even if the ray
- *      misses the ground, because the player is aiming, not sculpting; the
- *      alternative (a missed aim silently digging a hole) is worse. A miss
- *      simply disarms.
- *   2. A primary press whose ground cell is within the pick tolerance of a
- *      relic → collect it.
- *
- * Everything else falls through untouched.
- */
 function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   if (event.button !== PRIMARY_BUTTON) return false;
 
@@ -216,35 +150,18 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   const relic = relicUnderCell(relics(), cell);
   if (relic === null) return false;
 
-  // Optimistically nothing is changed locally: the server owns the relic list
-  // and will broadcast the removal. Predicting it would only mean a gem that
-  // pops back into existence when someone else's collect message won the race.
   ctx.send(COLLECT_MESSAGE, { id: relic.id });
   return true;
 }
 
-/**
- * Draw objects one relic costs: TWO meshes — the gem, whose per-skill shape is
- * merged into a single geometry (relicShapes.ts), and its spire of light
- * (relicSpire.ts), which is a second mesh because it must not bob or spin with
- * the gem.
- */
 const RELIC_DRAW_OBJECTS = 2;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: 'relics',
 
-  /**
-   * Its share of the frame's draw calls, from its own caps — see
-   * TerraceClientPlugin.drawBudget and the constants above.
-   */
   drawBudget: RELIC_COUNT * RELIC_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    // Module-scope signals outlive an attach (the module is a singleton), so a
-    // re-attach after a rejoin would otherwise open on the previous world's
-    // relics and skills — the same hygiene clearPluginHudPanels does for the
-    // panel stack.
     resetRelicsClientState();
 
     ctx.onMessage(RELICS_MESSAGE, (payload) => {
@@ -256,8 +173,6 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.onMessage(SKILLS_MESSAGE, (payload) => {
       const next = parseSkillsPayload(payload);
       setSkills(next);
-      // Disarm a skill the player no longer holds, so a stale "Aim…" button
-      // cannot keep claiming presses after the relic's grant went away.
       const armed = armedSkill();
       if (armed !== null && !next.some((skill) => skill.id === armed)) armSkill(null);
     });
@@ -272,21 +187,14 @@ export const clientPlugin: TerraceClientPlugin = {
 
     ctx.onFrame((dt) => animateGems(ctx, dt));
     ctx.onCanvasPress((event) => handlePress(ctx, event));
-    // The summary row rides in the corner panel's header (owner move): the
-    // panel is named "Relics" by that line, so the line is the title bar.
-    // The collapsed tab gets the live count in parentheses.
     ctx.registerHudPanel(RelicsPanel, {
       headerSummary: RelicsHeaderLine,
       tabSummary: () => `Relics (${relics().length})`,
-      // With no skill held the panel has nothing to expand: the corner shows
-      // the header line alone (owner, 2026-09-05).
       hasBody: () => skills().length > 0,
     });
   },
 
   dispose(): void {
-    // The host empties and removes the layer itself; what it cannot know about
-    // is the GPU memory behind the meshes, so those are released here.
     for (const entry of gems.values()) disposeGem(entry);
     gems.clear();
     disposeRelicGeometries();

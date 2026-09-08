@@ -1,7 +1,3 @@
-// Client-half tests: the wire validator and the interpolator. Both are pure
-// logic (no three, no DOM, no clock), which is the half of a render feature
-// this project tests — design doc ships no headless GL rig.
-
 import { describe, expect, it } from 'vitest';
 import {
   BOATS_PAYLOAD_CAP,
@@ -74,9 +70,6 @@ describe('BoatInterpolator', () => {
   });
 
   it('clamps at the destination rather than extrapolating past it', () => {
-    // A boat holding station at the edge of a fight is stationary for long
-    // stretches; overshooting a thing that has stopped is worse than briefly
-    // holding still.
     const interpolator = new BoatInterpolator();
     interpolator.receive([boat(1, 0, 0)]);
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
@@ -87,8 +80,6 @@ describe('BoatInterpolator', () => {
   });
 
   it('drops a boat the moment it leaves the list', () => {
-    // It sank, or it left this player's view. Easing it onward would read as
-    // sailing away, which is the opposite of what happened.
     const interpolator = new BoatInterpolator();
     interpolator.receive([boat(1, 0, 0), boat(2, 5, 5)]);
     interpolator.receive([boat(2, 5, 5)]);
@@ -102,14 +93,10 @@ describe('BoatInterpolator', () => {
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
     interpolator.receive([boat(1, 1, 0, 0, true)]);
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 4);
-    // A quarter of the way through the glide, and already fully engaged:
-    // half-fighting is not a state.
     expect(interpolator.sample().get(1)?.fighting).toBe(true);
   });
 
   it('continues from the pose being rendered, not from the last message', () => {
-    // A late message must not make the boat jump back to re-run ground it has
-    // already covered.
     const interpolator = new BoatInterpolator();
     interpolator.receive([boat(1, 0, 0)]);
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);

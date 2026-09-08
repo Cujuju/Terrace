@@ -1,8 +1,3 @@
-// The client half's PURE logic: the wire format, the deterministic per-tree
-// variation, and vertical placement. Rendering is verified by eye per design doc
-// ("no headless GL rig"), so nothing here imports three — which is also what
-// lets it run in the same node environment as the server tests.
-
 import { worldUnitsAcross } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -53,8 +48,6 @@ describe('the wire format', () => {
   });
 
   it('drops malformed pairs individually, and a payload that is not a list at all entirely', () => {
-    // Negative, fractional, non-numeric and out-of-range coordinates, plus a
-    // trailing unpaired value.
     const parsed = parseTreeCells([1, 2, -1, 4, 5, 1.5, 'x', 7, 8, 9, 70000, 1, 11]);
     expect(parsed).toEqual(cells([1, 2], [8, 9]));
 
@@ -94,8 +87,6 @@ describe('per-tree variation', () => {
       expect(hashCell(x, y)).toBe(hashCell(x, y));
     }
 
-    // Two multipliers rather than one is what buys this; with a single one,
-    // (3, 7) and (7, 3) would hash alike and a diagonal of clones would appear.
     expect(hashCell(3, 7)).not.toBe(hashCell(7, 3));
   });
 
@@ -115,9 +106,6 @@ describe('per-tree variation', () => {
     }
     const share = conifers / (edge * edge);
     const declared = FLORA_CONIFER_SHARE_OF_256 / 256;
-    // Wide bounds on purpose: this asserts "a clear majority of firs with
-    // broadleaves through it", which is the design intent, not a hash's exact
-    // uniformity.
     expect(Math.abs(share - declared)).toBeLessThan(0.05);
   });
 });
@@ -134,14 +122,11 @@ describe('placement', () => {
       cells([3, 4], [9, 9], [50, 50], [60, 1]),
       groundAt,
     );
-    // The two cells whose ground this client has not been sent are omitted.
     expect(pendingGround).toBe(2);
     expect(placements).toHaveLength(2);
 
     const variation = treeVariation(3, 4);
     expect(placements[0]).toEqual({
-      // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (2026-08-21:
-      // it was 1, and this assertion read as an identity).
       x: worldUnitsAcross(3),
       z: worldUnitsAcross(4),
       groundY: 5,
@@ -150,10 +135,6 @@ describe('placement', () => {
       yaw: variation.yaw,
     });
 
-    // Below sea level, exactly where the terrain says. Not a case the server
-    // can produce (band 3 is 192 height units above the waterline) — but the
-    // client must not invent a floor of its own, because "the server said so"
-    // is the only rule it follows.
     expect(placements[1].groundY).toBe(-2);
   });
 });

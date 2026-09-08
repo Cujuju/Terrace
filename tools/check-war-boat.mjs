@@ -1,21 +1,6 @@
-// check-war-boat.mjs — verifies plugins/boats/client/assets/war-boat.glb
-// through the SAME loader path the plugin uses (parseRigAsset: same
-// GLTFLoader class, same validation as loadRigAsset — only the transport,
-// bytes-off-disk vs fetch, differs). Not a test file: run it by hand and
-// read the output.
-//
-//   node tools/check-war-boat.mjs
-//
-// Prints node names, anchors, per-mesh tri counts + uv/map status, the
-// file's image dimensions (read off the PNG IHDR in the GLB — three's
-// headless Image stub never decodes pixels), and the one-cell fit check.
-
 import { readFile } from 'node:fs/promises';
 import { parseRigAsset } from '../client/src/render/rigAsset.ts';
 
-// three's ImageLoader decodes through the DOM `Image` API, absent in Node —
-// so a stub reporting every image loaded. Pixel CONTENT is never read here;
-// dimensions come from the IHDR below, which is what makes this honest.
 const scope = globalThis;
 if (scope.self === undefined) scope.self = globalThis;
 if (scope.document === undefined) {
@@ -79,8 +64,6 @@ asset.scene.traverse((child) => {
   const mapInfo = map === null ? 'flat' : `mapped colorSpace=${map.colorSpace} aniso=${map.anisotropy}`;
   console.log(`  ${child.name}: ${tris} tris, uv=${uv ? 'yes' : 'no'}, ${mapInfo}`);
   const position = geometry.getAttribute('position');
-  // Rigid transform by hand: the script imports no three itself (only the
-  // loader under check), so there is no Vector3 to hand localToWorld.
   const e = child.matrixWorld.elements;
   for (let i = 0; i < position.count; i++) {
     const x = position.getX(i);
@@ -100,15 +83,11 @@ asset.scene.traverse((child) => {
 });
 console.log(`total: ${totalTris} tris`);
 
-// The file's images, straight out of the GLB container: PNG IHDR width and
-// height (bytes 16..24 of the image bufferView), no decoder needed.
 const view = new DataView(bytes);
 const jsonLength = view.getUint32(12, true);
 const gltf = JSON.parse(Buffer.from(bytes, 20, jsonLength).toString('utf-8'));
 for (const [index, image] of (gltf.images ?? []).entries()) {
   const viewDef = gltf.bufferViews[image.bufferView];
-  // GLB layout: 12-byte header, 8-byte JSON-chunk header, JSON, 8-byte
-  // BIN-chunk header, then the binary data the views are relative to.
   const binStart = 12 + 8 + jsonLength + 8 + (gltf.buffers[0].byteOffset ?? 0);
   const start = binStart + viewDef.byteOffset;
   const w = view.getUint32(start + 16, false);

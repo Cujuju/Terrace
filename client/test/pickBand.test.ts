@@ -1,11 +1,3 @@
-// WHICH BAND A PICK NAMES (client/src/terrain/pickBand.ts) — the contract the
-// 2026-09-04 hover-pick work rests on (issue #324).
-//
-// The point of these is the NEGATIVE cases. The old derivation clamped a struck
-// height into the span's drawn range, so a pick that had outlived an edit came
-// back as a confident band rather than as "I cannot say"; that clamp is what
-// turned a stale claim into a wrong carve.
-
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
@@ -23,14 +15,12 @@ const WORLD = 16;
 const CELL_X = 4;
 const CELL_Z = 4;
 
-/** A map whose one interesting column is (CELL_X, CELL_Z). */
 function mapWith(spans: ReadonlyArray<{ floor: number; ceiling: number }>): Heightmap {
   const map = createHeightmap(WORLD);
   setColumn(map, CELL_X, CELL_Z, spans);
   return map;
 }
 
-/** A pick of the column above, stated in the terms the march reports. */
 function pickAt(
   spanIndex: number,
   hitRiser: boolean,
@@ -49,7 +39,6 @@ function pickAt(
   };
 }
 
-/** Every band is reachable — the "no lip anywhere" case is its own test. */
 const LIP_EVERYWHERE = (): boolean => true;
 const LIP_NOWHERE = (): boolean => false;
 
@@ -59,21 +48,12 @@ describe('resolvePick / bandOfPick', () => {
   const oneSpan = (): Heightmap => mapWith([{ floor: BEDROCK_FLOOR, ceiling: CAP }]);
 
   it('names the band whose slab a riser hit landed in', () => {
-    // Band k's face is [(k−1)·BAND_HEIGHT, k·BAND_HEIGHT] (owner, 2026-08-26),
-    // so a hit in the middle of that face is band k.
     const map = oneSpan();
     const midFace = BAND_HEIGHT * 6 - BAND_HEIGHT / 2;
     expect(resolvePick(map, pickAt(0, true, midFace, CAP))).toEqual({ face: 'riser', band: 6 });
   });
 
   it('gives a riser hit exactly on the underside boundary the LOWEST drawn band', () => {
-    // THE ONE LEGITIMATE TIE-BREAK. `ceil` is exact on a boundary and would
-    // name the band below the face; the lowest band the span draws is the one
-    // whose slab that boundary is the bottom of.
-    //
-    // The span is [BEDROCK_FLOOR + BAND_HEIGHT, CAP): its underside sits one
-    // band below its lowest filled band (columns.ts spanUndersideHeight), so
-    // the two are stated from the map rather than assumed.
     const FLOOR_BAND = 3;
     const map = mapWith([
       { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT },
@@ -95,16 +75,12 @@ describe('resolvePick / bandOfPick', () => {
   });
 
   it('gives an underside hit the LOWEST drawn band, not the cap band', () => {
-    // The band whose slab the ray actually met, coming up from below. This
-    // returned the CAP band before 2026-09-04.
     const FLOOR_BAND = 3;
     const map = mapWith([
       { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT },
       { floor: BAND_HEIGHT * FLOOR_BAND, ceiling: CAP },
     ]);
     const underside = BAND_HEIGHT * (FLOOR_BAND - 1);
-    // Strictly between the underside and the cap is a riser; the underside
-    // FACE is the horizontal one at that boundary.
     expect(resolvePick(map, pickAt(1, false, underside, CAP))).toEqual({
       face: 'underside',
       band: FLOOR_BAND,
@@ -112,9 +88,6 @@ describe('resolvePick / bandOfPick', () => {
   });
 
   it('is NULL — not a clamped band — when the struck height is outside the span', () => {
-    // THE #324 SHAPE: the ground moved under a stationary pointer and the
-    // struck height no longer lies in the slab this span draws. The old code
-    // clamped and answered; a caller cannot tell that from a real answer.
     const map = oneSpan();
     const aboveCap = CAP + BAND_HEIGHT;
     const belowUnderside = BEDROCK_FLOOR - BAND_HEIGHT * 2;
@@ -147,8 +120,6 @@ describe('carveBandOfPick', () => {
   });
 
   it('carves NOTHING on a tread hit with no lip in reach', () => {
-    // A flat tread far from any lip is not a corner edge (D1, owner
-    // 2026-09-04); the middle of a plateau must not cut.
     const map = oneSpan();
     expect(carveBandOfPick(map, pickAt(0, false, CAP, CAP), LIP_NOWHERE)).toBeNull();
   });
@@ -164,16 +135,6 @@ describe('carveBandOfPick', () => {
   });
 
   it('never answers a band no span covers — the server-side belt', () => {
-    // `spanIndexCoveringBand` is the exact test shared/src/heightmap.ts applies
-    // before it acts on a `spanBand`, so a band that failed it would reach the
-    // wire as a silent no-op.
-    //
-    // SWEPT, NOT SPOT-CHECKED, because the belt is not reachable from a
-    // well-formed pick (see carveBandOfPick's doc): the band `resolvePick`
-    // names always lies between the struck span's lowest drawn band and its
-    // cap, and a span covers every band in that range. What this pins is that
-    // property — if it ever stops holding, the belt starts earning its keep
-    // and this test says so by going red on the band instead of on the null.
     const FLOOR_TOP = BAND_HEIGHT * 3;
     const ROOF_BASE = BAND_HEIGHT * 6;
     const map = mapWith([

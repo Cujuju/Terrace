@@ -1,20 +1,3 @@
-// Water-tread geometry tests: the CONTRACT of the horizontal surface a water
-// region is drawn with, ported from poolSurface.test.ts (which guards the old
-// lake function until the swap) plus two contracts new to the band-region
-// builder:
-//
-//   6. A one-cell-wide channel across FLAT ground stays one cell wide — the
-//      dry same-tread field arm keeps the water from spreading onto land the
-//      course never ran through.
-//   7. The builder returns the smoothed boundary loops it emitted, non-empty
-//      and each with at least three points — the apron builder's input.
-//
-// The six ported contracts are the lake's, and a lake has no same-tread dry
-// ring cells by construction of a basin, so all six must still pass here.
-//
-// No WebGLRenderer and no DOM: appendRegionSurface writes a plain triangle
-// soup and returns plain point loops.
-
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terrace/shared';
 import {
@@ -25,26 +8,13 @@ import {
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 
-/** Fixture world: four chunks a side, big enough to hold a region that spans a
- *  tile border with dry ground all round it. */
 const WORLD_SIZE = CHUNK_SIZE * 4;
-/** The flooded floor, in height units: the bottom of band 1, so the water has a
- *  band of dry ground below it as well as above and neither is a world edge. */
 const FLOOR_HEIGHT = BAND_HEIGHT;
-/** The bank: two bands over the floor, unambiguously out of the water. */
 const BANK_HEIGHT = FLOOR_HEIGHT + 2 * BAND_HEIGHT;
-/** World Y the surface is asked for — an arbitrary value the test can check
- *  against exactly, since the builder must not derive its own. */
 const SURFACE_Y = 1.5;
 
-/**
- * A heightmap used only for its cell-index LAYOUT, so the test addresses cells
- * through `cellIndex` exactly as the code under test does rather than
- * restating the row-major formula.
- */
 const layout = createTerrainMirror(WORLD_SIZE).map;
 
-/** A world of bank-height ground with `cells` dug down to the water floor. */
 function mirrorWithFloor(cells: Iterable<number>): TerrainMirror {
   const mirror = createTerrainMirror(WORLD_SIZE);
   mirror.map.cells.fill(BANK_HEIGHT);
@@ -52,14 +22,12 @@ function mirrorWithFloor(cells: Iterable<number>): TerrainMirror {
   return mirror;
 }
 
-/** A world where EVERY cell sits at one height — flat-tread fixtures. */
 function mirrorFlatAt(height: number): TerrainMirror {
   const mirror = createTerrainMirror(WORLD_SIZE);
   mirror.map.cells.fill(height);
   return mirror;
 }
 
-/** The wet set for a filled rectangle of cells, inclusive of its corners. */
 function rectangleCells(x0: number, y0: number, x1: number, y1: number): Set<number> {
   const cells = new Set<number>();
   for (let y = y0; y <= y1; y++) {
@@ -74,7 +42,6 @@ function regionOf(cells: Set<number>): WaterRegion {
   for (const cell of cells) {
     const x = cellX(WORLD_SIZE, cell);
     const y = cellY(WORLD_SIZE, cell);
-    // The same four-tile rule TILE_LATTICE_OFFSETS encodes.
     for (const [dx, dy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]] as const) {
       const nx = x + dx;
       const ny = y + dy;
@@ -85,15 +52,6 @@ function regionOf(cells: Set<number>): WaterRegion {
   return waterRegionOfCells(cells, bandOf(FLOOR_HEIGHT), tiles);
 }
 
-/**
- * How many of `triangles` contain the world XZ point.
- *
- * `strict` decides what a point ON a triangle's edge means. Counting edges in
- * answers "is this point covered at all" — the gap question. Counting only
- * strict interiors answers "is it covered twice" — the overlap question —
- * without the false positives every shared edge of a triangulation would
- * otherwise produce.
- */
 function coverCount(
   triangles: readonly number[],
   px: number,
@@ -144,8 +102,6 @@ describe('water region tread', () => {
     const triangles: number[] = [];
     appendRegionSurface(mirrorWithFloor(cells), regionOf(cells), SURFACE_Y, triangles);
 
-    // Two cells clear of the water on every side: whatever the bank does, the
-    // water's own field is not even read out here.
     for (let y = 2; y <= 11; y++) {
       for (let x = 2; x <= 12; x++) {
         const nearWater = x >= 3 && x <= 11 && y >= 3 && y <= 10;
@@ -159,10 +115,6 @@ describe('water region tread', () => {
   });
 
   it('does not overhang the lip where the ground falls away', () => {
-    // A region with a cliff on its east side: the neighbour is at sea level,
-    // several bands under the water. The terrain's cap for the band ends a
-    // quarter of a cell inside the region's own rim cell there, and the water
-    // may not be drawn past it — it would be hanging in the air.
     const cells = rectangleCells(4, 4, 8, 8);
     const mirror = mirrorWithFloor(cells);
     for (let y = 3; y <= 9; y++) mirror.map.cells[cellIndex(layout, 9, y)] = 0;
@@ -190,9 +142,6 @@ describe('water region tread', () => {
   });
 
   it('runs under an island rather than stopping short of it', () => {
-    // An unwetted cell inside the region stands ABOVE the water (it is bank
-    // height), so the terrain draws it over the surface. The water carries on
-    // underneath: that is what leaves no seam around it to get wrong.
     const cells = rectangleCells(4, 4, 12, 12);
     cells.delete(cellIndex(layout, 8, 8));
     const triangles: number[] = [];
@@ -203,14 +152,10 @@ describe('water region tread', () => {
   });
 
   it('meets exactly across a marching-tile border', () => {
-    // Straddles the tile boundary at CHUNK_SIZE on both axes, so the region is
-    // built out of four tiles and every seam between them is under test.
     const cells = rectangleCells(CHUNK_SIZE - 3, CHUNK_SIZE - 3, CHUNK_SIZE + 3, CHUNK_SIZE + 3);
     const triangles: number[] = [];
     appendRegionSurface(mirrorWithFloor(cells), regionOf(cells), SURFACE_Y, triangles);
 
-    // Sampled ACROSS the seam, at quarter-cell steps, including points exactly
-    // on the tile border line itself — where a gap or an overlap would be.
     for (let x = CHUNK_SIZE - 2; x <= CHUNK_SIZE + 2; x += 0.25) {
       for (let y = CHUNK_SIZE - 2; y <= CHUNK_SIZE + 2; y += 0.25) {
         const px = worldOfCell(x);
@@ -228,25 +173,18 @@ describe('water region tread', () => {
   });
 
   it('keeps a one-cell channel one cell wide across flat ground', () => {
-    // A straight one-cell-wide course across a FLAT tread: every dry neighbour
-    // sits at the water's own height, so every one of them hits the new
-    // dry-same-tread field arm. Without that arm each would read >= the
-    // threshold and the water would spread a full extra cell to either side.
     const courseY = CHUNK_SIZE;
     const cells = new Set<number>();
     for (let x = 2; x <= CHUNK_SIZE + 4; x++) cells.add(cellIndex(layout, x, courseY));
     const triangles: number[] = [];
     appendRegionSurface(mirrorFlatAt(FLOOR_HEIGHT), regionOf(cells), SURFACE_Y, triangles);
 
-    // On the course line: covered.
     for (let x = 3; x <= CHUNK_SIZE + 3; x++) {
       expect(
         coverCount(triangles, worldOfCell(x), worldOfCell(courseY)),
         `course cell (${x},${courseY}) has no water on it`,
       ).toBeGreaterThan(0);
     }
-    // A full cell to either side of the course line: NOT covered — the water
-    // did not spread onto land the river never ran through.
     for (const dy of [-1, 1]) {
       for (let x = 3; x <= CHUNK_SIZE + 3; x++) {
         expect(

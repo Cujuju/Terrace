@@ -1,11 +1,7 @@
-// Per-tick phase timing, for judging how much sim headroom a tick has left.
-// Off unless TERRACE_TICK_TIMING=1; off, every helper here is a pass-through.
-
 import { logInfo } from './log.ts';
 
 const TICK_TIMING_ENV_VAR = 'TERRACE_TICK_TIMING';
 const TICK_TIMING_ENABLED_VALUE = '1';
-/** Samples kept per phase for the p99; rolls on across report windows. */
 const SAMPLE_RING_CAPACITY = 1024;
 const TICK_TIMING_REPORT_INTERVAL_MS = 10_000;
 const P99_QUANTILE = 0.99;
@@ -17,7 +13,6 @@ const REPORT_PREFIX = '[tick]';
 const PHASE_COLUMN_WIDTH = 24;
 const PLUGIN_PHASE_PREFIX = 'plugin:';
 
-/** The whole tick callback. Its average against the tick period is `util`. */
 export const TICK_TOTAL_PHASE = 'total';
 
 export const tickTimingEnabled: boolean =
@@ -59,7 +54,6 @@ function record(phase: string, elapsedMs: number): void {
   if (stats.sampleCount < SAMPLE_RING_CAPACITY) stats.sampleCount += 1;
 }
 
-/** Books `run` under `phase`. A throw is booked too, then propagates. */
 export function timePhase<T>(phase: string, run: () => T): T {
   if (!tickTimingEnabled) return run();
   const startedMs = performance.now();
@@ -70,7 +64,6 @@ export function timePhase<T>(phase: string, run: () => T): T {
   }
 }
 
-/** One row per plugin id, so a hot plugin is named rather than averaged away. */
 export function timePluginPhase<T>(pluginName: string, run: () => T): T {
   if (!tickTimingEnabled) return run();
   return timePhase(`${PLUGIN_PHASE_PREFIX}${pluginName}`, run);
@@ -98,7 +91,6 @@ function phaseRow(phase: string, stats: PhaseStats): string {
   );
 }
 
-/** Counts and max are per report window; the p99 ring deliberately is not. */
 function resetWindow(stats: PhaseStats): void {
   stats.count = 0;
   stats.totalMs = 0;
@@ -111,11 +103,9 @@ export interface TickTimingReport {
 
 export interface TickTimingReportDeps {
   readonly tickHz: number;
-  /** Null while no world is loaded; the size line waits for one. */
   worldSize(): number | null;
 }
 
-/** Starts the stdout report. Returns null when timing is off. */
 export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingReport | null {
   if (!tickTimingEnabled) return null;
 

@@ -1,18 +1,7 @@
-// Contract tests for the control-binding resolver (state/controlPrefs.ts):
-// resolvePress is the single authority on "who owns this press" for BOTH the
-// sculpt brush and the camera, so its precedence and modifier semantics are
-// the contract under test — not the UI that edits the bindings.
-//
-// The module holds signals and touches localStorage at import time, so every
-// test imports a fresh copy via vi.resetModules() against its own storage
-// stub. The node environment has no localStorage at all; the module must
-// degrade to defaults in that case too (last test).
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Prefs = typeof import('../src/state/controlPrefs.ts');
 
-/** Minimal in-memory localStorage; installed before each fresh import. */
 function fakeStorage(initial: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(initial));
   return {
@@ -72,7 +61,7 @@ describe('buttonName', () => {
     expect(prefs.buttonName(0)).toBe('left');
     expect(prefs.buttonName(1)).toBe('middle');
     expect(prefs.buttonName(2)).toBe('right');
-    expect(prefs.buttonName(3)).toBeNull(); // browser back button
+    expect(prefs.buttonName(3)).toBeNull();
     expect(prefs.buttonName(-1)).toBeNull();
   });
 });
@@ -100,12 +89,12 @@ describe('rebinding and precedence', () => {
     const { prefs } = await freshPrefs();
     prefs.setBinding('orbit', { button: 'left', modifier: 'ctrl' });
     expect(prefs.resolvePress(0, CTRL)).toBe('orbit');
-    expect(prefs.resolvePress(2, NO_MODS)).toBeNull(); // right button now unbound
+    expect(prefs.resolvePress(2, NO_MODS)).toBeNull();
   });
 
   it('on a duplicate binding the earlier action in ACTION_PRECEDENCE wins', async () => {
     const { prefs } = await freshPrefs();
-    prefs.setBinding('orbit', { button: 'left', modifier: 'none' }); // same as raise
+    prefs.setBinding('orbit', { button: 'left', modifier: 'none' });
     expect(prefs.resolvePress(0, NO_MODS)).toBe('raise');
     expect(prefs.shadowedActions(prefs.controlBindings())).toEqual(['orbit']);
   });
@@ -123,7 +112,6 @@ describe('persistence', () => {
     first.prefs.setTwoFingerGesture('orbit');
     first.prefs.setWheelBehaviour('zoom');
 
-    // Same storage, fresh module: what a page reload sees.
     vi.resetModules();
     (globalThis as { localStorage?: Storage }).localStorage = first.storage;
     const second: Prefs = await import('../src/state/controlPrefs.ts');
@@ -134,11 +122,8 @@ describe('persistence', () => {
 
   it('defaults the wheel to zoom and keeps its own storage key', async () => {
     const { prefs, storage } = await freshPrefs();
-    // Zoom is the default (owner decision 2026-08-19, issue #24) — a mouse
-    // wheel's reflex; trackpad users opt into 'pan' in the Controls panel.
     expect(prefs.wheelBehaviour()).toBe('zoom');
     expect(prefs.DEFAULT_WHEEL_BEHAVIOUR).toBe('zoom');
-    // Editing one preference must not disturb the other two.
     prefs.setWheelBehaviour('pan');
     expect(storage.getItem(WHEEL_KEY)).toBe(JSON.stringify({ wheel: 'pan' }));
     expect(storage.getItem(BINDINGS_KEY)).toBeNull();
@@ -162,7 +147,7 @@ describe('persistence', () => {
       '42',
       'null',
       '{}',
-      JSON.stringify({ wheel: 'auto' }), // the mode that no longer exists
+      JSON.stringify({ wheel: 'auto' }),
       JSON.stringify({ wheel: 'dolly' }),
       JSON.stringify({ wheel: 7 }),
     ]) {
@@ -176,11 +161,11 @@ describe('persistence', () => {
       'not json',
       '42',
       '{}',
-      JSON.stringify({ raise: { button: 'left', modifier: 'none' } }), // partial
+      JSON.stringify({ raise: { button: 'left', modifier: 'none' } }),
       JSON.stringify({
         raise: { button: 'left', modifier: 'none' },
         lower: { button: 'left', modifier: 'shift' },
-        orbit: { button: 'trackball', modifier: 'none' }, // bad button
+        orbit: { button: 'trackball', modifier: 'none' },
         pan: { button: 'middle', modifier: 'none' },
       }),
     ]) {
@@ -212,13 +197,11 @@ describe('persistence', () => {
 describe('no localStorage at all', () => {
   it('still works with in-memory defaults (private mode, node)', async () => {
     vi.resetModules();
-    // beforeEach already deleted the stub; import with nothing installed.
     const prefs: Prefs = await import('../src/state/controlPrefs.ts');
     expect(prefs.controlBindings()).toEqual(prefs.DEFAULT_BINDINGS);
     expect(prefs.wheelBehaviour()).toBe('zoom');
     prefs.setBinding('raise', { button: 'middle', modifier: 'none' });
     expect(prefs.resolvePress(1, NO_MODS)).toBe('raise');
-    // Setting a preference with no storage at all must not throw.
     prefs.setWheelBehaviour('zoom');
     expect(prefs.wheelBehaviour()).toBe('zoom');
   });

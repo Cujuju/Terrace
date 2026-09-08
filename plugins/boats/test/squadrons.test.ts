@@ -1,15 +1,3 @@
-// squadrons — the assembly contract, tested against the contract and not
-// against the callsites.
-//
-// ../server/squadrons.ts is deliberately pure of the world: every terrain
-// question it has goes through `SquadronNavigator`. That is what lets these
-// tests state the contract as properties of a hand-built roster — sizes,
-// spread, determinism, recall, muster — with no heightmap, no hull law and no
-// route pool anywhere in the file. The one thing NOT tested here is what a leg
-// is, because "reachable open water on a bearing" is ../server/fleet.ts's
-// answer under the hull law, and ../test/boats.test.ts is where hull law is
-// asserted.
-
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BOATS_PER_VILLAGE, VILLAGE_PATROL_RANGE_CELLS } from '../protocol.ts';
 import {
@@ -32,14 +20,8 @@ import {
 
 const TICK_DT = 0.1;
 
-/** A leg's end, far enough out that no roster below is ever standing on it. */
 const LEG_END: SquadronWaypoint = { x: 10_000, y: 10_000 };
 
-/**
- * A navigator that always answers: every village moors at its own cell, and
- * every bearing affords a leg. Terrain refusal is fleet.ts's business; these
- * tests are about what the state machine does with the answers.
- */
 function openSea(): SquadronNavigator {
   return {
     rendezvousFor: (homeX, homeY) => ({ x: homeX, y: homeY }),
@@ -48,12 +30,10 @@ function openSea(): SquadronNavigator {
   };
 }
 
-/** A navigator whose villages have no water at all. */
 function landlocked(): SquadronNavigator {
   return { rendezvousFor: () => null, isInHarbour: () => true, legFrom: () => null };
 }
 
-/** A navigator that musters but can never draw a leg. */
 function noWayOut(): SquadronNavigator {
   return {
     rendezvousFor: (homeX, homeY) => ({ x: homeX, y: homeY }),
@@ -64,11 +44,6 @@ function noWayOut(): SquadronNavigator {
 
 let nextId = 1;
 
-/**
- * `EXPLORERS_PER_VILLAGE` boats for each village, sitting on their own home
- * cell — which is where `openSea`'s rendezvous is, so a roster built this way
- * is mustered from the first tick unless a test moves someone.
- */
 function explorersFor(villages: ReadonlyArray<readonly [number, number]>): SquadronBoat[] {
   const roster: SquadronBoat[] = [];
   for (const [homeX, homeY] of villages) {
@@ -79,24 +54,16 @@ function explorersFor(villages: ReadonlyArray<readonly [number, number]>): Squad
   return roster;
 }
 
-/** A row of villages one cell apart — well inside SQUADRON_HOME_SPREAD_CELLS. */
 function neighbouringVillages(count: number): Array<readonly [number, number]> {
   return Array.from({ length: count }, (_unused, n) => [100 + n, 100] as const);
 }
 
-/**
- * A row of villages far enough apart that a ship lying at its OWN mooring is
- * outside the FLAGSHIP's muster radius — which is the only arrangement in
- * which mustering is observable at all. Still well inside the home spread, so
- * one squadron may still be crewed from them.
- */
 function spreadVillages(count: number): Array<readonly [number, number]> {
   const spacing = Math.ceil(SQUADRON_MUSTER_RADIUS_CELLS) * 3;
   expect(spacing * (count - 1)).toBeLessThan(SQUADRON_HOME_SPREAD_CELLS);
   return Array.from({ length: count }, (_unused, n) => [100 + n * spacing, 100] as const);
 }
 
-/** Every ship of every squadron, as one flat list of boat ids. */
 function allSquadronMembers(): number[] {
   const ids: number[] = [];
   for (let id = 1; id <= nextId; id++) {
@@ -113,10 +80,6 @@ beforeEach(() => {
 
 describe('the home guard leaves something to explore', () => {
   it('frees at least SQUADRON_MIN_SHIPS from a handful of villages', () => {
-    // The arithmetic HOME_GUARD_BOATS_PER_VILLAGE is chosen against: a
-    // squadron must be crewable from villages close enough together to share
-    // one recall. If a future edit raised the guard to BOATS_PER_VILLAGE this
-    // fails here rather than by silently never forming a squadron.
     expect(EXPLORERS_PER_VILLAGE).toBe(BOATS_PER_VILLAGE - HOME_GUARD_BOATS_PER_VILLAGE);
     expect(EXPLORERS_PER_VILLAGE).toBeGreaterThan(0);
     const villagesNeeded = Math.ceil(SQUADRON_MAX_SHIPS / EXPLORERS_PER_VILLAGE);
@@ -124,8 +87,6 @@ describe('the home guard leaves something to explore', () => {
   });
 
   it('crews a full squadron from villages inside one recall range', () => {
-    // Every ship of a squadron must be answerable to the same kraken, so the
-    // villages a full squadron takes must fit inside SQUADRON_HOME_SPREAD_CELLS.
     expect(SQUADRON_HOME_SPREAD_CELLS).toBe(VILLAGE_PATROL_RANGE_CELLS);
   });
 });
@@ -140,8 +101,6 @@ describe('assembly', () => {
   });
 
   it('never forms a squadron outside three to seven ships', () => {
-    // Twelve villages: enough that several squadrons form and the last run is
-    // a short one, which is the case a greedy chunker gets wrong.
     const roster = explorersFor(neighbouringVillages(12));
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBeGreaterThan(0);
@@ -161,7 +120,6 @@ describe('assembly', () => {
   });
 
   it('crews a squadron only from homes inside the spread', () => {
-    // Two clusters a full spread and more apart: no squadron may straddle them.
     const far = SQUADRON_HOME_SPREAD_CELLS * 4;
     const homes = [
       ...neighbouringVillages(4),
@@ -202,8 +160,6 @@ describe('assembly', () => {
   });
 
   it('assembles the same fleet whatever order the roster arrives in', () => {
-    // The ordering contract is the Z-order key over HOME cells, not the order
-    // the fleet happens to hold its boats in.
     const roster = explorersFor(neighbouringVillages(12));
     advanceSquadrons(roster, openSea(), TICK_DT);
     const crews = new Set<string>();
@@ -224,9 +180,6 @@ describe('assembly', () => {
 
 describe('mustering', () => {
   it('holds the rendezvous until every ship is on it', () => {
-    // Ships lying at their OWN moorings, villages far enough apart that they
-    // are not yet at the flagship's. The squadron forms, and steers for the
-    // rendezvous rather than for a leg.
     const roster = explorersFor(spreadVillages(4));
     const goals = advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBeGreaterThan(0);
@@ -259,9 +212,6 @@ describe('mustering', () => {
   });
 
   it('sails without a straggler once the muster times out', () => {
-    // Every ship sits at its own mooring and never moves, so only the ones
-    // homed at the flagship's own village ever reach the rendezvous. The
-    // squadron must eventually sail without the rest rather than wait forever.
     const roster = explorersFor(spreadVillages(4));
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBe(1);
@@ -284,14 +234,10 @@ describe('mustering', () => {
 
     const sailed = squadronMembers(1);
     if (sailed.length > 0) {
-      // The original squadron sailed: it is at sea, still at strength, and
-      // carries none of the ships that never came.
       expect(sailed.length).toBeGreaterThanOrEqual(SQUADRON_MIN_SHIPS);
       for (const boatId of stragglers) expect(sailed).not.toContain(boatId);
       expect(goals.get(sailed[0])).toEqual(LEG_END);
     } else {
-      // Or it went under strength and dissolved, which is the other legal
-      // outcome — never a squadron held at anchor for the life of the world.
       expect(squadronMembers(1)).toHaveLength(0);
     }
   });
@@ -320,13 +266,11 @@ describe('recall dissolves rather than tops up', () => {
   });
 
   it('dissolves a squadron taken under strength and releases every survivor', () => {
-    // One cluster only, so exactly one squadron forms and its crew is known.
     const roster = explorersFor(neighbouringVillages(2));
     expect(roster.length).toBe(SQUADRON_MIN_SHIPS + 1);
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBe(1);
     const crew = [...squadronMembers(1)];
-    // Take back enough that the squadron cannot sail.
     const left = roster.filter((boat) => !crew.slice(0, 2).includes(boat.id));
     advanceSquadrons(left, openSea(), TICK_DT);
     for (const boatId of crew) expect(squadronOf(boatId)).toBeNull();
@@ -349,8 +293,6 @@ describe('cruising', () => {
     expect(squadronId).toBeDefined();
     const flagshipId = squadronMembers(squadronId!)[0];
 
-    // A navigator that hands out a different leg each time it is asked, so
-    // "the leg changed" is observable.
     let drawn = 0;
     const legs: SquadronWaypoint[] = [
       { x: 20_000, y: 0 },
@@ -366,13 +308,11 @@ describe('cruising', () => {
     const first = goals.get(flagshipId);
     expect(first).toEqual(legs[0]);
 
-    // Put the flagship on its leg; every other ship stays behind.
     const arrived = roster.map((boat) =>
       boat.id === flagshipId ? { ...boat, x: legs[0].x, y: legs[0].y } : boat,
     );
     goals = advanceSquadrons(arrived, wandering, TICK_DT);
     expect(goals.get(flagshipId)).toEqual(legs[1]);
-    // And the ships astern are sent to the same new leg, not left on the old.
     for (const boatId of squadronMembers(squadronId!)) {
       expect(goals.get(boatId)).toEqual(legs[1]);
     }

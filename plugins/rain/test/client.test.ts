@@ -1,16 +1,3 @@
-// The client half's PURE logic: payload validation, interpolation and the fall
-// maths.
-//
-// These are the pre-split weather suite's `parseSystemsPayload`,
-// `WeatherInterpolator` and `the falling column` blocks. The first two now cover
-// code that lives in @terrace/shared and in core's client kit — four plugins
-// share one disc payload and one interpolator — and they are asserted from here
-// because this is the plugin whose halves they join.
-//
-// Rendering is verified by eye per design doc ("no headless GL rig"), so nothing
-// here imports three, which is also what lets it run in the same node
-// environment as the server tests.
-
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
@@ -39,8 +26,6 @@ import { RAIN_DROP_COUNT, RAIN_PROFILE } from '../client/rig.ts';
 function system(id: number, overrides: Partial<DiscSystemState> = {}): DiscSystemState {
   return { id, x: 0, y: 0, radius: 30, intensity: 1, vx: 0, vy: 0, ...overrides };
 }
-
-// ── The wire ─────────────────────────────────────────────────────────────────
 
 describe('parseDiscSystemsPayload', () => {
   it('accepts a well-formed payload unchanged', () => {
@@ -87,14 +72,10 @@ describe('parseDiscSystemsPayload', () => {
     expect(roundBroadcastPosition(1.234567)).toBe(1.23);
     expect(roundBroadcastPosition(-1.235)).toBe(-1.24);
     expect(roundBroadcastIntensity(0.1234567)).toBe(0.123);
-    // The clamp is part of the rounding contract, so an over-range envelope
-    // cannot reach the wire.
     expect(roundBroadcastIntensity(1.5)).toBe(1);
     expect(roundBroadcastIntensity(-0.2)).toBe(0);
   });
 });
-
-// ── Interpolation ────────────────────────────────────────────────────────────
 
 describe('DiscInterpolator', () => {
   it('walks the centre between two broadcasts and clamps at the end', () => {
@@ -108,7 +89,6 @@ describe('DiscInterpolator', () => {
     expect(interpolator.sample().get(1)!.x).toBeCloseTo(5, 9);
     expect(interpolator.sample().get(1)!.y).toBeCloseTo(10, 9);
 
-    // Past the window it holds at truth rather than running ahead of it.
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS * 10);
     expect(interpolator.sample().get(1)!.x).toBe(10);
     expect(interpolator.progress()).toBe(1);
@@ -145,13 +125,11 @@ describe('DiscInterpolator', () => {
   it('measures the window and clamps it into the documented band', () => {
     const interpolator = new DiscInterpolator();
     interpolator.receive([system(1, { x: 0 })]);
-    // A stall far longer than the ceiling must not become the window.
     interpolator.advance(60);
     interpolator.receive([system(1, { x: 10 })]);
     interpolator.advance(MAX_INTERPOLATION_SECONDS);
     expect(interpolator.progress()).toBe(1);
 
-    // …and a burst far shorter than the floor must not either.
     const fast = new DiscInterpolator();
     fast.receive([system(1, { x: 0 })]);
     fast.advance(1e-9);
@@ -165,11 +143,9 @@ describe('DiscInterpolator', () => {
     interpolator.receive([system(1, { x: 0 })]);
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
     interpolator.receive([system(1, { x: 10 })]);
-    // Only a quarter of the way there when the next message lands.
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 4);
     expect(interpolator.sample().get(1)!.x).toBeCloseTo(2.5, 9);
     interpolator.receive([system(1, { x: 20 })]);
-    // The new segment starts at 2.5, not back at 10 and not at 0.
     expect(interpolator.sample().get(1)!.x).toBeCloseTo(2.5, 9);
   });
 
@@ -181,17 +157,10 @@ describe('DiscInterpolator', () => {
   });
 });
 
-// ── The vertical layout, and the fall ────────────────────────────────────────
-
 describe('the falling column', () => {
   it('derives the cloud base from the shared height constants', () => {
-    // The ceiling in BANDS times what a band draws — the quotient alone was
-    // world units only while a band drew one world unit.
     expect(MAX_GROUND_WORLD_Y).toBe((MAX_HEIGHT / BAND_HEIGHT) * WORLD_UNITS_PER_BAND);
-    // Clear sky above the tallest possible mountain, at the worst case.
     expect(CLOUD_BASE_WORLD_Y).toBeGreaterThan(MAX_GROUND_WORLD_Y);
-    // The column reaches past a fresh world's open-sea floor (three bands down)
-    // so precipitation visibly meets the ground everywhere.
     expect(PRECIPITATION_FLOOR_WORLD_Y).toBeLessThan(-3);
     expect(PRECIPITATION_COLUMN_WORLD_UNITS).toBe(
       CLOUD_BASE_WORLD_Y - PRECIPITATION_FLOOR_WORLD_Y,

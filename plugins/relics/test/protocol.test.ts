@@ -1,6 +1,3 @@
-// The wire contract both halves share: the roster's own invariants, and the
-// defensive parsers that stand between untrusted bytes and everything else.
-
 import { describe, expect, it } from 'vitest';
 import { MAX_BRUSH_RADIUS } from '@terrace/shared';
 import {
@@ -83,11 +80,8 @@ describe('parseCastPayload', () => {
   });
 
   it('bounds-checks against the LIVE world size, not a constant', () => {
-    // The brush throws on an out-of-bounds centre rather than clamping, so a
-    // small world must reject a cell a large world would accept.
     expect(parseCastPayload({ skill: 'quake', x: 40, y: 0 }, WORLD_SIZE)).not.toBeNull();
     expect(parseCastPayload({ skill: 'quake', x: 40, y: 0 }, 32)).toBeNull();
-    // Unrelated to the brush radius, but the same family of bound.
     expect(MAX_BRUSH_RADIUS).toBeGreaterThan(0);
   });
 });
@@ -115,8 +109,6 @@ describe('parseRelicsPayload', () => {
 
 describe('parseSkillsPayload', () => {
   it('takes the category from the local roster, never from the wire', () => {
-    // A version-skewed server calling a passive skill 'active' must not make
-    // the HUD render a cast button for it.
     const parsed = parseSkillsPayload({
       skills: [{ id: 'bedrock-ward', kind: 'active', cooldownS: 9, cooldownRemainingS: 4 }],
     });

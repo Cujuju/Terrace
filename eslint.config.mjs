@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import tseslint from 'typescript-eslint'
 import budget from 'eslint-plugin-comment-budget'
 
-// One policy, read by the rule, the CLI and this config alike.
 const policy = JSON.parse(readFileSync(new URL('.comment-budget.json', import.meta.url), 'utf8'))
 
 const commentRules = { 'budget/comment-budget': 'error' }

@@ -1,7 +1,3 @@
-// The Cartographer's chart model (src/terrain/chart.ts): classification,
-// the singed-frontier distance field, the kraken anchor, and determinism.
-// The canvas painting is not under test — everything it consumes is.
-
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, WORLD_UNIT_CELLS, bandOf } from '@terrace/shared';
 import {
@@ -17,7 +13,6 @@ import {
   type ChartSource,
 } from '../src/terrain/chart.ts';
 
-/** A source over a plain height function and a revealed predicate. */
 function sourceOf(
   size: number,
   height: (x: number, y: number) => number,
@@ -39,8 +34,6 @@ describe('hash01', () => {
   });
 
   it('separates neighbouring cells (no visible banding)', () => {
-    // Not a statistical test — just that adjacent cells do not share values,
-    // which is the failure mode that draws stripes on the chart.
     expect(hash01(10, 10)).not.toBe(hash01(11, 10));
     expect(hash01(10, 10)).not.toBe(hash01(10, 11));
   });
@@ -48,8 +41,6 @@ describe('hash01', () => {
 
 describe('buildChartModel — classification', () => {
   it('classifies water at the shared waterline and land above it', () => {
-    // h = 0 is water, h = 1 is dry land — the band-0 straddle that
-    // bandColors.ts documents; the chart must agree with the game.
     const size = 4;
     const model = buildChartModel(
       sourceOf(size, (x) => (x < 2 ? 0 : 1), () => true),
@@ -81,11 +72,6 @@ describe('buildChartModel — classification', () => {
 });
 
 describe('buildChartModel — the singed frontier', () => {
-  // A 24×24 WORLD-UNIT world with a revealed 8×8 block in the top-left corner
-  // — the same map this suite has always drawn, counted in cells. Stated in
-  // world units because SINGE_RANGE_CELLS is: the singe reaches five world
-  // units into the unknown, which is twenty cells since the 2026-08-21
-  // re-sample, and a 24-CELL world would no longer have room for it.
   const size = 24 * WORLD_UNIT_CELLS;
   const revealedSpan = 8 * WORLD_UNIT_CELLS;
   const revealed = (x: number, y: number): boolean => x < revealedSpan && y < revealedSpan;
@@ -97,21 +83,17 @@ describe('buildChartModel — the singed frontier', () => {
   });
 
   it('steps 1, 2, … away from the frontier and stops at SINGE_RANGE_CELLS', () => {
-    // Walking east from the revealed block along y = 0: the first unrevealed
-    // cell touches it.
     for (let step = 1; step <= SINGE_RANGE_CELLS; step++) {
       expect(model.singe[revealedSpan - 1 + step]).toBe(step);
     }
-    expect(model.singe[revealedSpan + SINGE_RANGE_CELLS]).toBe(0); // past the singe
+    expect(model.singe[revealedSpan + SINGE_RANGE_CELLS]).toBe(0);
   });
 
   it('anchors the kraken at the deepest unknown cell, deterministically', () => {
-    // The far corner is unambiguously the farthest cell from the block.
     expect(model.krakenCell).toBe(size * size - 1);
   });
 
   it('withholds the kraken when no unknown cell is deep enough', () => {
-    // Reveal all but a 2-cell fringe: max depth 2 < KRAKEN_MIN_DEPTH_CELLS.
     const fringeSize = 24 * WORLD_UNIT_CELLS;
     const fringeDepth = 2;
     const fringe = buildChartModel(
@@ -142,9 +124,7 @@ describe('bounds and chartWindow', () => {
       sourceOf(size, () => 1, (x, y) => x >= 200 && x < 240 && y >= 300 && y < 320),
     );
     const win = chartWindow(model);
-    // Longest revealed axis is 40 cells; pad both sides; square.
     expect(win.span).toBe(40 + 2 * WINDOW_PAD_CELLS);
-    // The revealed bbox plus its full singe reach sits inside the window.
     expect(win.x0).toBeLessThanOrEqual(200 - SINGE_RANGE_CELLS);
     expect(win.y0).toBeLessThanOrEqual(300 - SINGE_RANGE_CELLS);
     expect(win.x0 + win.span).toBeGreaterThanOrEqual(240 + SINGE_RANGE_CELLS);
@@ -161,7 +141,6 @@ describe('bounds and chartWindow', () => {
       buildChartModel(sourceOf(32, () => 1, () => true)),
     );
     expect(everywhere).toEqual({ x0: 0, y0: 0, span: 32 });
-    // Nothing revealed: chart the whole world.
     const nothing = chartWindow(
       buildChartModel(sourceOf(32, () => 1, () => false)),
     );

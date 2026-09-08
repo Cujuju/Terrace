@@ -1,26 +1,3 @@
-// WORLD ADMINISTRATION — the operator-facing half of multi-world.
-//
-// CRITICAL CODE. Every message this file answers is gated by WORLD_ADMIN_KEY,
-// and one of them (`worldPurge`) destroys a world permanently. The rules:
-//
-//   1. THE GATE RUNS FIRST, ALWAYS, for every action without exception. There
-//      is exactly one `authorize` call site per public entry point, at the top,
-//      before any argument is even looked at.
-//   2. ARCHIVING IS NOT DELETING, AND ONLY PURGE DELETES. Archive moves a file
-//      into `.trash`. Purge is refused unless the world is ALREADY archived
-//      and the operator has echoed its name back exactly, so destroying a
-//      world always takes two separate decisions.
-//   3. THE LIVE WORLD CANNOT BE ARCHIVED OR PURGED OUT FROM UNDER ITSELF.
-//      Unload or switch away first — a refusal, not a silent close.
-//   4. NOTHING IS EVER OVERWRITTEN. Every id that names a new file is checked
-//      for collision against live AND archived worlds first (see
-//      WorldRegistry.uniqueIdFor).
-//
-// The split from world-manager.ts is deliberate: the manager owns the world
-// LIFECYCLE (what is loaded, how one becomes another) and knows nothing about
-// keys or protocol messages; this file owns the OPERATOR CONTRACT and knows
-// nothing about plugin hosts or sinks.
-
 import {
   CHUNK_SIZE,
   type WorldAdminAction,
@@ -41,18 +18,11 @@ import { OperatorGate } from './operator-gate.ts';
 import { snapshotIfDirty } from './session.ts';
 import type { WorldManager } from './world-manager.ts';
 
-/** Everything world administration needs from the process. */
 export interface WorldAdminDeps {
   readonly manager: WorldManager;
   readonly registry: WorldRegistry;
   readonly config: ServerConfig;
-  /**
-   * Owns the exit sequence for `serverRestart`. Required rather than optional:
-   * a service that answers the restart action with "unavailable" would be a
-   * refusal nothing can act on, and the boot path always has one.
-   */
   readonly restart: ServerRestartService;
-  /** Injectable clock, for the lockout tests. See OperatorGateOptions. */
   readonly now?: () => number;
 }
 
@@ -70,44 +40,18 @@ export class WorldAdminService {
     });
   }
 
-  /**
-   * True when WORLD_ADMIN_KEY is configured; the boot log states this.
-   *
-   * An unkeyed server is OPEN, not off (OperatorGate.authorize, owner
-   * 2026-09-06) — so this says whether an operator must present a key, not
-   * whether world management works.
-   */
   get keyed(): boolean {
     return this.gate.keyed;
   }
 
-  /** Drops a disconnected connection's failed-attempt record. */
   forgetClient(clientId: string): void {
     this.gate.forgetClient(clientId);
   }
 
-  /**
-   * THE GATE ITSELF, for an operator action this service does not perform.
-   *
-   * Its one caller is the show-all view (WorldViewRequestMessage): that action
-   * changes no world, so it has no business in `handle`'s switch, but it must
-   * pass the SAME key check as everything that does — including the
-   * per-connection lockout, which only works if every keyed request goes
-   * through one gate instance. Exposing the verdict is what keeps that true
-   * without a second gate to keep in step.
-   */
   authorize(clientId: string, key: string): WorldAdminRefusal | null {
     return this.gate.authorize(clientId, key);
   }
 
-  /**
-   * Answers a world listing request.
-   *
-   * A refusal still returns a well-formed message with empty lists, never a
-   * silence — same reasoning as RollbackService.listRestorePoints: the
-   * operator needs to be told WHY, or they will retype a key against a server
-   * that has none configured.
-   */
   list(clientId: string, key: string): WorldListMessage {
     const refusal = this.gate.authorize(clientId, key);
     if (refusal !== null) {
@@ -116,35 +60,12 @@ export class WorldAdminService {
     return this.listing();
   }
 
-  /**
-   * Answers a plugin-enablement request for ONE world.
-   *
-   * Its own entry point rather than a `handle` action for the same reason
-   * `list` has one: it answers with a LISTING, not a receipt, and folding a
-   * second response shape into WorldAdminResultMessage would make every caller
-   * of `handle` check which one it got.
-   *
-   * A refusal answers with empty lists and the reason, never a silence — see
-   * `list` for why.
-   */
   plugins(clientId: string, key: string, worldId?: string): WorldPluginListMessage {
     const refusal = this.gate.authorize(clientId, key);
     if (refusal !== null) return refusedPlugins(worldId ?? '', refusal);
     return this.pluginListing(worldId);
   }
 
-  /**
-   * Re-imports one plugin's server code in place (issue #198).
-   *
-   * ITS OWN ENTRY POINT rather than a `handle` action, for one reason: it is
-   * the only world-management action that AWAITS. Every other action is
-   * synchronous by construction — that is what makes a world swap a moment
-   * nothing can observe half-done (world-manager.ts guarantee 2) — and turning
-   * `handle` into a promise to accommodate one import would put an await in
-   * front of fifteen actions that have no use for it.
-   *
-   * The gate runs first here exactly as it does in `handle` (rule 1).
-   */
   async reloadPlugin(
     clientId: string,
     request: WorldPluginReloadRequestMessage,
@@ -160,24 +81,14 @@ export class WorldAdminService {
         action: 'reloadPlugin',
         ok: true,
         id: request.id,
-        // Echoed so the client's receipt can name the code that was reloaded
-        // (issue #211) — `id` above is the world, not the plugin.
         plugin: request.plugin,
       };
     } catch (error) {
-      // The manager contains every failure the plugin itself can produce, so a
-      // throw out of it is core's own — the same class `handle` catches.
       logError(`reloading plugin "${request.plugin}" failed`, error);
       return fail('reloadPlugin', 'failed');
     }
   }
 
-  /**
-   * Answers every world-management action other than listing.
-   *
-   * ONE ENTRY POINT FOR EVERY ACTION BUT THE TWO LISTINGS, so the gate check
-   * exists once. The switch below runs only after the key has been accepted.
-   */
   handle(clientId: string, request: WorldAdminRequestMessage): WorldAdminResultMessage {
     const action = actionOf(request);
     const refusal = this.gate.authorize(clientId, request.key);
@@ -186,15 +97,11 @@ export class WorldAdminService {
     try {
       return this.dispatch(clientId, request);
     } catch (error) {
-      // A throw here means the filesystem or SQLite said no. Nothing in this
-      // file destroys anything except purge, so "failed" genuinely means the
-      // world is still where it was.
       logError(`world management action "${action}" failed`, error);
       return fail(action, 'failed');
     }
   }
 
-  /** The current listing, as the panel sees it. */
   listing(): WorldListMessage {
     const { manager, registry } = this.deps;
     const activeId = manager.activeId;
@@ -208,25 +115,10 @@ export class WorldAdminService {
     };
   }
 
-  /**
-   * One world's plugin enablement and settings, as the panel sees it.
-   *
-   * `worldId` ABSENT MEANS THE LIVE WORLD — the admin panel's question, asked
-   * without the panel having to learn an id from a `worldList` first (see
-   * WorldPluginListRequestMessage.id). Resolved here rather than at the
-   * transport so every caller of this method, including the refresh that rides
-   * along with a toggle, resolves it the same way.
-   *
-   * The answer states `activeId` whatever was asked, so a client holding a
-   * listing always knows whether it is the live world's.
-   */
   pluginListing(worldId?: string): WorldPluginListMessage {
     const { manager } = this.deps;
     const activeId = manager.activeId;
     const id = worldId ?? activeId;
-    // Asked about "the live world" when there is none. That is not a bad
-    // request and not an unknown world — it is an empty server, and saying so
-    // is what stops the panel sitting on a spinner for ever.
     if (id === null) return { ...refusedPlugins('', 'noWorldLoaded'), activeId };
     const disabled = manager.disabledPluginsFor(id);
     const settings = manager.pluginSettingsFor(id);
@@ -248,14 +140,9 @@ export class WorldAdminService {
   private dispatch(clientId: string, request: WorldAdminRequestMessage): WorldAdminResultMessage {
     switch (request.type) {
       case 'worldList':
-        // Handled by list() above; reaching here means a caller routed a list
-        // request through handle(). Answer honestly rather than pretending.
         return fail('load', 'failed');
 
       case 'worldView':
-        // Same shape of mistake as 'worldList' above: the show-all view is
-        // answered in the room with a snapshot (it changes no world), so a
-        // request that reached this switch was misrouted.
         return fail('view', 'failed');
 
       case 'worldCreate':
@@ -294,13 +181,9 @@ export class WorldAdminService {
         return this.pin(request.pointId, request.pinned);
 
       case 'worldPluginList':
-        // Handled by plugins() above; reaching here means a caller routed a
-        // plugin listing through handle(). Answer honestly, as worldList does.
         return fail('setPlugin', 'failed');
 
       case 'worldPluginReload':
-        // Handled by reloadPlugin() below; reaching here means a caller routed
-        // a reload through handle(). Answer honestly, as worldList does.
         return fail('reloadPlugin', 'failed');
 
       case 'worldPluginSet':
@@ -327,15 +210,6 @@ export class WorldAdminService {
     }
   }
 
-  /**
-   * Creates a world. Size and difficulty fall back to this server's own
-   * configuration, so the common case ("another world like this one") needs
-   * no numbers at all.
-   *
-   * The requester id rides along only for the loadNow path: an announced
-   * switch that later fails at fire time must be able to reach the operator
-   * who asked for it (see PendingSwitch.requesterId).
-   */
   private create(
     requesterId: string,
     name: string | undefined,
@@ -347,10 +221,6 @@ export class WorldAdminService {
 
     const chosenName = name ?? generateWorldName();
     const size = worldSize ?? config.worldSize;
-    // Re-validated HERE against the same bounds boot uses, because a size that
-    // came off the wire has only been checked for being a positive integer
-    // (see validateWorldAdminRequest). A world whose size is not a whole
-    // number of chunks has cells no reveal could ever reach.
     if (size < MIN_WORLD_SIZE || size > MAX_WORLD_SIZE || size % CHUNK_SIZE !== 0) {
       return fail('create', 'invalidSize');
     }
@@ -361,8 +231,6 @@ export class WorldAdminService {
     if (loadNow === true) {
       const outcome = manager.requestLoad(id, requesterId);
       if (typeof outcome === 'string') {
-        // The world WAS created; only loading it failed. Report the create as
-        // the success it is, so nobody goes looking for a world that exists.
         logInfo(`world "${id}" was created but could not be loaded (${outcome})`);
       }
     }
@@ -375,16 +243,6 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'load', ok: true, id };
   }
 
-  /**
-   * Renames a world, live or not.
-   *
-   * TWO PATHS BECAUSE THERE ARE GENUINELY TWO CASES, and neither can stand in
-   * for the other: the live world's name is held in memory by a World that
-   * every plugin and every join snapshot reads, so it must be renamed THERE
-   * and allowed to reach disk through the ordinary snapshot path; a world that
-   * is merely a file has no memory to update, so its history is relabelled
-   * directly. The file is never renamed either way — see World.rename.
-   */
   private rename(id: string, name: string): WorldAdminResultMessage {
     const { manager, registry, config } = this.deps;
     if (!registry.has(id)) return fail('rename', 'unknownWorld');
@@ -392,9 +250,6 @@ export class WorldAdminService {
     const session = manager.current;
     if (session !== null && session.id === id) {
       session.world.rename(name);
-      // Persist immediately rather than waiting for the scheduler: a rename
-      // the operator can see in the panel but that a crash would undo is a
-      // rename that lies.
       snapshotIfDirty(session);
       session.store.setWorldName(name);
     } else {
@@ -409,13 +264,6 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'rename', ok: true, id };
   }
 
-  /**
-   * Copies a world under a new name, with its whole history.
-   *
-   * The LIVE world is snapshotted first, so "duplicate" means what an operator
-   * expects — the world as it is right now, not as it was at the last
-   * scheduled save.
-   */
   private duplicate(id: string, name: string | undefined): WorldAdminResultMessage {
     const { manager, registry } = this.deps;
     if (!registry.has(id)) return fail('duplicate', 'unknownWorld');
@@ -423,9 +271,6 @@ export class WorldAdminService {
     const session = manager.current;
     if (session !== null && session.id === id) {
       snapshotIfDirty(session);
-      // ...and get those rows out of the WAL and into the file that is about
-      // to be copied. Through the LIVE store's own connection: see
-      // SnapshotStore.checkpoint for why the registry's cannot do it here.
       session.store.checkpoint();
     }
 
@@ -435,8 +280,6 @@ export class WorldAdminService {
     if (copyId === null) return fail('duplicate', 'nameInUse');
 
     registry.duplicate(id, copyId);
-    // The copy carries the ORIGINAL's name inside it until it is relabelled,
-    // which would make two worlds claiming the same name in one list.
     const store = registry.openStore(copyId, this.deps.config.snapshotRetention);
     try {
       store.setWorldName(copyName);
@@ -447,7 +290,6 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'duplicate', ok: true, id: copyId };
   }
 
-  /** Moves a world to the trash. Refuses the live world. */
   private archive(id: string): WorldAdminResultMessage {
     const { manager, registry } = this.deps;
     if (!registry.has(id)) return fail('archive', 'unknownWorld');
@@ -457,7 +299,6 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'archive', ok: true, id, archivedPath: path };
   }
 
-  /** Brings a world back out of the trash. */
   private unarchive(archivedId: string): WorldAdminResultMessage {
     const { registry } = this.deps;
     if (!registry.hasArchived(archivedId)) return fail('unarchive', 'notArchived');
@@ -465,15 +306,6 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'unarchive', ok: true, id: restoredId };
   }
 
-  /**
-   * PERMANENTLY DESTROYS an archived world.
-   *
-   * Three gates stand in front of the `rm`: the operator key (already checked
-   * by `handle`), the world having been archived first, and the operator
-   * typing its name. The name comparison is exact and untrimmed — this is the
-   * one place in the file where being forgiving about whitespace would make
-   * the confirmation weaker.
-   */
   private purge(archivedId: string, confirmName: string): WorldAdminResultMessage {
     const { registry } = this.deps;
     if (!registry.hasArchived(archivedId)) return fail('purge', 'notArchived');
@@ -488,30 +320,12 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'purge', ok: true, id: archivedId };
   }
 
-  /**
-   * Switches one plugin on or off for one world.
-   *
-   * THE MANAGER OWNS THE WHOLE ACT, because enabling a plugin is not a setting
-   * — it is a property of the session that runs it. `setPluginEnabled` writes
-   * the world file and, when that world is the live one, reopens it so the new
-   * plugin set is actually in effect; every player is carried across without
-   * dropping a socket (issue #166). This method only widens its refusal into
-   * the operator's vocabulary.
-   */
   private setPlugin(id: string, plugin: string, enabled: boolean): WorldAdminResultMessage {
     const outcome = this.deps.manager.setPluginEnabled(id, plugin, enabled);
     if (typeof outcome === 'string') return fail('setPlugin', outcome);
     return { type: 'worldAdminResult', action: 'setPlugin', ok: true, id };
   }
 
-  /**
-   * Records one plugin setting for one world.
-   *
-   * THE MANAGER OWNS THE WHOLE ACT, exactly as it does for enablement: it is
-   * the holder of the installed plugins and therefore of their declarations,
-   * which are what a key and a value are checked against. This method only
-   * widens its refusal into the operator's vocabulary.
-   */
   private configurePlugin(
     id: string,
     plugin: string,
@@ -523,16 +337,6 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'configurePlugin', ok: true, id };
   }
 
-  /**
-   * Performs one plugin's declared action on the live world (the admin
-   * panel, 2026-09-01).
-   *
-   * THE MANAGER OWNS THE WHOLE ACT, as for a setting; this method widens its
-   * refusal into the operator's vocabulary and carries the plugin's own
-   * account through on the receipt — on success AND on a decline, because
-   * "no hillside near you was steep enough" is the answer the operator
-   * needs either way, and only the plugin can compose it.
-   */
   private actPlugin(
     plugin: string,
     action: string,
@@ -547,31 +351,12 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'actPlugin', ok: true, plugin, detail: outcome.detail };
   }
 
-  /**
-   * Restarts the server process, so code that changed on disk becomes live.
-   *
-   * THE SERVICE OWNS THE WHOLE ACT, for `setPlugin`'s reason: the exit sequence
-   * is a property of the process, not of any world, and its one correct order
-   * is stated in exactly one place (server/src/restart.ts). This method only
-   * widens the refusal into the operator's vocabulary.
-   *
-   * NOT GATED ON A WORLD BEING LOADED. A server with no world still has code
-   * to update, and the restart is how it gets it.
-   */
   private restartServer(): WorldAdminResultMessage {
     const outcome = this.deps.restart.request();
     if (typeof outcome === 'string') return fail('restart', outcome);
     return { type: 'worldAdminResult', action: 'restart', ok: true };
   }
 
-  /**
-   * Pins or unpins a restore point in the LIVE world.
-   *
-   * Only the live world, because pinning is a judgement about a moment the
-   * operator is looking at in the rollback panel, and that panel shows the
-   * live world's history. Pinning inside a world you are not in has no way to
-   * name a point.
-   */
   private pin(pointId: number, pinned: boolean): WorldAdminResultMessage {
     const session = this.deps.manager.current;
     if (session === null) return fail('pin', 'noWorldLoaded');
@@ -583,7 +368,6 @@ export class WorldAdminService {
   }
 }
 
-/** The action name for a request, for the receipt and the failure log. */
 function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
   switch (request.type) {
     case 'worldCreate':
@@ -623,7 +407,6 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
   }
 }
 
-/** One shape for every refused world listing, matching `fail`'s role. */
 function refusedList(refused: WorldAdminRefusal): WorldListMessage {
   return {
     type: 'worldListing',
@@ -634,7 +417,6 @@ function refusedList(refused: WorldAdminRefusal): WorldListMessage {
   };
 }
 
-/** One shape for every refused plugin listing, matching `fail`'s role. */
 function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPluginListMessage {
   return {
     type: 'worldPluginListing',
@@ -648,44 +430,15 @@ function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPlugi
   };
 }
 
-/** One shape for every refusal, so no call site invents its own. */
 function fail(action: WorldAdminAction, refused: WorldAdminRefusal): WorldAdminResultMessage {
   return { type: 'worldAdminResult', action, ok: false, refused };
 }
 
-/** Everything the room may send in answer to one world-admin message. */
 export type WorldAdminReply =
   | WorldAdminResultMessage
   | WorldListMessage
   | WorldPluginListMessage;
 
-/**
- * Runs one world-admin message's whole response — action AND the listing
- * refreshes that ride along with it — with a single containment around it
- * (issue #210).
- *
- * WHY A WRAPPER AND NOT A `.catch` PER CALL SITE. `handle` and `reloadPlugin`
- * each contain the ACTION, but the room sends listings after them, and
- * `listing()`/`pluginListing()` do real I/O: they read the worlds directory
- * and open a SnapshotStore per world. Colyseus does not wrap handler dispatch
- * (`Room._onMessage` guards decode and validation, then emits unguarded), so a
- * throw from a listing leaves as an uncaughtException on the synchronous path
- * and as an unhandled rejection on the reload path — and Node's default for
- * both is to exit the process, taking every connected player's world with it,
- * for a listing refresh. There were five such call sites; a per-site `.catch`
- * leaves the sixth one someone adds next unguarded, so the containment lives
- * where the dispatch does: every `world*` message runs through here, and there
- * is no other way for the room to answer one.
- *
- * NEVER REJECTS AND NEVER THROWS. The returned promise is the completion of
- * the response, not its success; a synchronous body still does its sends
- * synchronously, because `run` is called before the first await.
- *
- * The refusal is sent in the SHAPE THE REQUEST ASKED FOR — a listing request
- * is answered with a refused listing, everything else with a `fail` receipt —
- * for the same reason `list` and `plugins` answer their gate refusals that
- * way: a client waiting for a listing must not have to recognise a receipt.
- */
 export async function containWorldAdminMessage(
   request: WorldAdminRequestMessage,
   reply: (message: WorldAdminReply) => void,

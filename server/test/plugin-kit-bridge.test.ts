@@ -1,13 +1,3 @@
-// Contract test for server/src/plugins/kit/bridge.ts — the sibling-lookup
-// MECHANISM that the nineteen `plugins/*/server/*-bridge.ts` files used to each
-// carry a copy of.
-//
-// WHAT IS UNDER TEST IS THE MECHANISM, NOT A CONTRACT. Each bridge keeps its
-// own duck-typed interface and its own accessors: that interface is the
-// agreement between two independently-deletable plugins and stays a documented
-// copy. What moved here is the name lookup, the null-on-absent rule, the
-// warn-once, the re-resolve on every load and the reset seam.
-
 import { describe, expect, it, vi } from 'vitest';
 import { createSiblingBridge } from '../src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../src/plugins/types.ts';
@@ -22,9 +12,7 @@ function demoDuckType(module: SiblingModule | null): DemoApi | null {
   return module as unknown as DemoApi;
 }
 
-/** A WorldApi stub with nothing on it but the one member a bridge uses. */
 function worldWith(module: SiblingModule | null): WorldApi {
-  // The kit only ever reads `sibling`; the rest of WorldApi is irrelevant here.
   return { sibling: () => module } as unknown as WorldApi;
 }
 
@@ -102,9 +90,6 @@ describe('createSiblingBridge', () => {
   });
 
   it('clear() drops the sibling but LEAVES the warning stood', () => {
-    // What a bridge does when its world closes: a module-scope view must not
-    // outlive the world, but the warning is a property of the process, not of
-    // the world, and re-warning on every reopen would be a log flood.
     const bridge = makeBridge();
     bridge.load(worldWith({ doThing: () => 1 }));
     bridge.clear();

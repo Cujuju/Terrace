@@ -1,6 +1,3 @@
-// Throwaway probe (not committed as a contract): (1) how many passes the new
-// rule really needs on a 1000-unit cliff, by re-seeding smooth() until it
-// reports a clean pass; (2) whether banded spill still saturates.
 import * as NEW from '../shared/src/index.ts';
 
 const size = 256;
@@ -22,7 +19,6 @@ for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
 }
 console.log('final max gradient', worst);
 
-// (2) banded saturation on the #26 ledge fixture.
 const L = 64;
 const led = NEW.createHeightmap(L);
 for (let y = 0; y < L; y++) for (let x = 0; x < L; x++) {

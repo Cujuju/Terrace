@@ -1,306 +1,72 @@
-// volcanoes — the wire contract between the plugin's two halves, and the
-// vocabulary its per-world setting is written in.
-//
-// Imported by BOTH server/ and client/, so it stays dependency-free (no three,
-// no node builtins) and side-effect-free — the plugin-local equivalent of
-// @terrace/shared, exactly as boats/protocol.ts and structures/protocol.ts are
-// for their plugins.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// THE FICTION (issue #214, owner 2026-08-26).
-//
-// A VENT is a place where the world's deepest strata reach the surface. Core
-// already owns the geology: below the sea column the range continues through
-// basalt, obsidian and one lava band at MIN_HEIGHT (docs/DESIGN.md, Deep Strata
-// 2026-08-19), and that section closes with the rule this whole plugin exists
-// under — "Hazards are NOT core. Heat, eruptions, anything gamey in the deep is
-// a future plugin reading these same boundary constants."
-//
-// So: core says where the lava band IS. This plugin says what comes out of it.
-//
-// A vent sits dormant, wakes, erupts, and goes back to sleep. Each eruption
-// builds its cone a little higher and sends a lava front downhill, which cools
-// into new rock behind it. Fresh water stops the front dead — steam, not stone.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// COOLED LAVA IS THIS PLUGIN'S OVERLAY, NOT A NEW CORE TERRAIN BAND.
-//
-// Issue #214 left that open. It is not open: the Deep Strata decision already
-// ruled that hazards are not core, and a "cooled lava" band would be a gameplay
-// concern inside shared/'s deterministic terrain contract — the one thing
-// CLAUDE.md's hard rules forbid outright. What the flow leaves behind in CORE
-// terms is ordinary raised ground (the sculpt really happened, and every client
-// that ever streams the chunk sees the same heights). What makes it READ as
-// lava is a decal this plugin's client half draws over those cells, on the
-// SAME lifetime the server broadcasts. Delete the plugin and the mountain
-// stays; only the glow goes.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// The one import this file allows itself, and for boats/protocol.ts's reason:
-// every measurement below is a fact about the WORLD, and @terrace/shared owns
-// the world's own scale.
 import { BAND_HEIGHT, MAX_HEIGHT, WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE SHAPE OF A VOLCANO, IN THE UNITS BOTH HALVES MEASURE IN.
-//
-// These live here rather than beside the sim because BOTH HALVES HAVE A STAKE
-// IN THEM: the server sites and sculpts the cone, and the client sizes a plume
-// and a flow decal AGAINST that cone. Two copies of "how big is a volcano"
-// would drift, and the way they would drift is silent — a column that no longer
-// clears the mountain it comes out of still renders, it just looks wrong.
-
-/**
- * World units one terrace band rises.
- *
- * NOW IMPORTED, NOT RESTATED. This file used to carry `MAX_RELIEF_WORLD_UNITS =
- * 16` and this derivation as a copy of client/src/config.ts's, with the residual
- * named in the header: if the client's relief moved and this did not, every
- * vertical measurement in this plugin was wrong by that ratio and nothing failed
- * loudly. Four plugins carried that same residual. The constant moved into
- * @terrace/shared — which a plugin CAN import from either half, where
- * client/src/config.ts is unreachable from a server file — so the residual is
- * closed rather than merely named. Re-exported here so nothing that reads it
- * from this protocol moved.
- */
 export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
-/**
- * How high above sea level a GENESIS vent's ground has to be, in terrace bands.
- *
- * Six bands is issue #214's "high ground" made checkable. It is above the shore
- * and above the buildable flats a settlement wants (structures sites near the
- * waterline), so a genesis cone lands on the part of the island a player was
- * going to look at rather than the part they were going to live on.
- */
 export const VENT_MIN_BANDS_ABOVE_SEA = 6;
 
-/**
- * Terrace bands a vent's cone stands above the ground it was sited on, when the
- * world is created.
- *
- * FOUR, on top of the siting bar above, so a genesis volcano's mouth sits ten
- * bands above the sea — clearly the highest thing in its region without being
- * the map's ceiling, and low enough that the flows it throws still have
- * somewhere to run downhill to.
- *
- * FOUR BRUSH BANDS, AND ON REAL GROUND THAT IS NOT FOUR BANDS OF MOUNTAIN.
- * Re-measured old vs new after the conserving relaxation (issue #108,
- * 2026-08-29, .sim-108/plugins.mjs — `=== VOLCANOES: what a GENESIS cone
- * actually delivers at its peak ===`), peak gain from one `raiseCone` call:
- *
- *   ground    rule  bands asked   peak gain   in bands   summit above sea
- *   flat      old   4                    64       4.00              10.00
- *   flat      new   4                    64       4.00              10.00
- *   genesis   old   4                    54       3.38               9.38
- *   genesis   new   4                    44       2.75               8.75
- *   genesis   new   6                    60       3.75               9.75
- *   genesis   new   8                    77       4.81              10.81
- *
- * MEASURED AND ACCEPTED, NOT RETUNED, and the reasons are in that table. On
- * flat ground the sentence above is exactly true under BOTH rules — the ten
- * bands are real. The shortfall is a property of the GROUND a genesis vent is
- * sited on: a fresh world is band-quantised and over-steep everywhere
- * (server/src/world/world.ts writes `bands * BAND_HEIGHT` and never smooths),
- * so the cone sheds into the terraces around it. That was already happening
- * before the conserving split — 9.38 bands, not 10 — and the split moved it by
- * 0.63 of a band.
- *
- * Retuning to 6 or 8 would buy that back on genesis ground at the cost of
- * overshooting to 11.4 or 12.4 bands on flat ground, where the number is
- * currently exact, and of making genesis dearer: a genesis cone's ring steps
- * are the expensive kind (4-190 ms apiece on a 2048² world — see vents.ts's
- * `ConeRingTiming`), and they scale with this. Not worth 0.63 of a band on a
- * figure whose only consumers are cosmetic (below).
- */
 export const GENESIS_CONE_BANDS = 4;
 
-/**
- * A genesis summit's height above sea level, in WORLD UNITS — the one number
- * the client's plume is sized against.
- *
- * 2.5, against a world whose entire relief is 16. It is worth writing out
- * because the intuition is wrong in a way that has already bitten this
- * codebase: a band has drawn a QUARTER of a world unit since 2026-08-20, so ten
- * bands of mountain is two and a half world units, not ten. Anything sized "in
- * bands" by eye comes out four times too big.
- *
- * NOMINAL, NOT MEASURED, and deliberately so: it adds the siting bar to the
- * bands the cone is ASKED for, and a cone on real genesis ground keeps about
- * 2.75 of its 4 (see GENESIS_CONE_BANDS above), so a real summit is nearer 8.75
- * bands — 2.19 world units. Everything downstream is decoration sized against
- * a mountain: the client's plume (PLUME_HEIGHT_WORLD_UNITS and the particle
- * sizes in client/plume.ts) and the settings preview's cone
- * (client/src/previewVolcano.ts). A plume 14% taller than the mountain it
- * stands on is not a defect worth a per-vent measurement round trip, and the
- * alternative — deriving this from a height the SERVER measured after siting —
- * would make a client-side constant depend on per-world terrain.
- */
 export const VENT_SUMMIT_WORLD_UNITS =
   (VENT_MIN_BANDS_ABOVE_SEA + GENESIS_CONE_BANDS) * WORLD_UNITS_PER_BAND;
 
-/**
- * The nominal RADIUS of a lava flow, in world units — how wide a river of lava
- * is.
- *
- * ONE WORLD UNIT, so a flow is two across: a flow you could step over, which is
- * what the fiction wants (a river of lava, not a lake front). The server turns
- * this into its sculpt brush (server/flow.ts's FLOW_BRUSH_RADIUS) and the client
- * turns it into its decal (client/lavaFlow.ts's LAVA_DECAL_RADIUS), so the
- * glow and the ground it raised are the same width by construction. They were
- * not, before this constant existed: the decal was sized off the CELL and came
- * out a fifth of the ridge it was supposed to be marking.
- */
 export const FLOW_RADIUS_WORLD_UNITS = 1;
 
-/** Plugin name on both sides. Also the message namespace. */
 export const VOLCANOES_PLUGIN_NAME = 'volcanoes';
 
-/**
- * Server → client, EVERYTHING this plugin currently has (`volcanoes:all`).
- *
- * Sent on join and on a slow keepalive, never per tick — see
- * VOLCANOES_CHANGES_MESSAGE for why the steady state is a delta stream and
- * this one is the repair cadence. The structures/flora shape, for the same
- * reason: what this plugin draws is CONTENT THAT DOES NOT MOVE once placed.
- */
 export const VOLCANOES_ALL_MESSAGE = 'all';
 
-/**
- * Server → client, what changed (`volcanoes:changes`).
- *
- * WHY A DELTA AND NOT A FULL REPLACE, which is what weather, wildlife, monsters
- * and boats all chose. Those broadcast things that MOVE, so there is no quiet
- * steady state for a delta to exploit and a replace message is both smaller and
- * impossible to desync. A lava cell is the opposite: it appears once, never
- * moves, and then spends a minute and a half cooling on a clock the client can
- * run for itself. Replacing the whole flow at 1 Hz would put a few kilobytes a
- * second on every client's wire to re-state cells that have not changed and
- * whose only time-varying quantity — the heat — is a pure function of an age
- * the client was already told.
- *
- * `vents` is always the COMPLETE vent list rather than a delta of it: there are
- * a handful of vents in a world (MAX_VENTS_PER_WORLD), a vent's `erupting` flag
- * flips often, and a list that short is cheaper to replace than to reconcile.
- */
 export const VOLCANOES_CHANGES_MESSAGE = 'changes';
 
-/**
- * The per-world setting this plugin offers the operator, and its vocabulary
- * (issue #214: "Per-world `settings`: none | dormant | active").
- *
- *   none    — no volcanoes at all. Nothing is seeded, nothing is born, nothing
- *             erupts. A world that has already grown cones keeps the LAND it
- *             was given (the sculpts really happened) and stops being told
- *             anything about it — the plugin runs inert, exactly as if it had
- *             been uninstalled, which is what makes this setting a safe thing
- *             for an operator to reach for on a live world.
- *   dormant — vents exist as geology. Genesis sites them, and a player who digs
- *             down into the lava band opens a new one, but none of them ever
- *             erupts. Volcanic scenery with no volcanic events.
- *   active  — the whole mechanic: eruptions, lava, ash, and the rare
- *             spontaneous birth of a brand-new vent.
- */
 export const VOLCANOES_ACTIVITY_SETTING_KEY = 'activity';
 
 export type VolcanicActivity = 'none' | 'dormant' | 'active';
 
-/** Every value the setting accepts, in the order the world panel shows them. */
 export const VOLCANIC_ACTIVITIES: readonly VolcanicActivity[] = [
   'none',
   'dormant',
   'active',
 ];
 
-/**
- * In force where the world file has no row.
- *
- * `dormant`, NOT `active`, and the choice is about what an operator who has
- * never heard of this plugin should wake up to. `active` means the terrain
- * rewrites itself unattended — a cone grows, a flow fills a valley — and doing
- * that to somebody's world because they happened to pull a new plugins/ folder
- * is the kind of surprise that is only ever discovered after it has landed on
- * something they built. `dormant` gives the same world the same mountains and
- * changes nothing else, and the operator turns it up when they mean to.
- */
 export const DEFAULT_VOLCANIC_ACTIVITY: VolcanicActivity = 'dormant';
 
-/** Narrows an operator's stored string, falling back to the default. */
 export function parseActivity(value: string | undefined): VolcanicActivity {
   const found = VOLCANIC_ACTIVITIES.find((activity) => activity === value);
   return found ?? DEFAULT_VOLCANIC_ACTIVITY;
 }
 
-/** One vent, as broadcast. */
 export interface VentState {
-  /** Stable for the vent's whole life; never reused. */
   readonly id: number;
-  /** Cell-space position of the vent mouth. Integers; a vent never moves. */
   readonly x: number;
   readonly y: number;
-  /** True while it is throwing lava and ash. */
   readonly erupting: boolean;
 }
 
-/**
- * One cell of lava, as broadcast.
- *
- * `ageSeconds` RATHER THAN a heat scalar, deliberately: heat is a pure function
- * of age (server/flow.ts's heatFromAge, restated on the client), so sending the
- * age lets a client run the cooling curve itself between messages instead of
- * being re-told a number that only ever counts down. It is what makes the
- * keepalive a REPAIR cadence rather than a sync mechanism.
- */
 export interface LavaCellState {
   readonly x: number;
   readonly y: number;
-  /** Simulated seconds since this cell went molten. */
   readonly ageSeconds: number;
 }
 
-/** `volcanoes:all` — the complete state. */
 export interface VolcanoesAllPayload {
   readonly vents: readonly VentState[];
   readonly lava: readonly LavaCellState[];
 }
 
-/** `volcanoes:changes` — the vent list, plus what happened to the flow. */
 export interface VolcanoesChangesPayload {
   readonly vents: readonly VentState[];
-  /** Cells that went molten since the last message. */
   readonly molten: readonly LavaCellState[];
-  /** Cells the server has stopped tracking; the client forgets them too. */
   readonly forgotten: ReadonlyArray<{ readonly x: number; readonly y: number }>;
 }
 
-/**
- * How long a cell takes to go from molten to cold, in SIMULATED seconds.
- *
- * IN THE PROTOCOL, not in the server's ./server/flow.ts, because BOTH HALVES
- * RUN THE SAME CURVE and two copies of it would drift: the server ages a cell
- * to decide when to stop counting it hot, and the client runs the identical
- * curve between messages so that a flow keeps cooling smoothly instead of
- * stepping once per keepalive. That shared curve is the whole reason the wire
- * carries an AGE rather than a heat (see LavaCellState).
- *
- * 90 s is chosen against the eruption, not against physics: an eruption runs
- * ERUPTION_SECONDS (60) and the flow behind the front has to still be glowing
- * when the front stops, or the player never sees a lit flow — only a lit dot
- * with a dark trail, which reads as a bug rather than as lava.
- */
 export const LAVA_COOL_SECONDS = 90;
 
-/** How hot a cell of that age still is, on 0 (cold crust) … 1 (molten). */
 export function heatFromAge(ageSeconds: number): number {
   if (!(ageSeconds > 0)) return 1;
   if (ageSeconds >= LAVA_COOL_SECONDS) return 0;
   return 1 - ageSeconds / LAVA_COOL_SECONDS;
 }
 
-/** Packs a cell into one integer key. */
 export function lavaKey(x: number, y: number): number {
-  // The same shape structures' structureKey uses. A world edge is far below
-  // 2^16, so the pair fits in a safe integer with room to spare.
   return y * 0x10000 + x;
 }
 
@@ -326,13 +92,6 @@ function parseLavaCell(value: unknown): LavaCellState | null {
   return { x: value.x, y: value.y, ageSeconds: ageSeconds as number };
 }
 
-/**
- * Parses one list, returning null if ANY member is malformed.
- *
- * ALL-OR-NOTHING, the rule every plugin's parser in this repo follows: a
- * half-applied payload leaves the client drawing a world that never existed,
- * and the next good message is at most one keepalive away.
- */
 function parseList<T>(value: unknown, parseOne: (item: unknown) => T | null): T[] | null {
   if (!Array.isArray(value)) return null;
   const parsed: T[] = [];

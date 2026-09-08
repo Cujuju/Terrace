@@ -1,20 +1,3 @@
-// previewPilgrims.ts — THROWAWAY preview harness for the pilgrims plugin,
-// mirroring previewWildlife.ts (see previewStructures.ts for the original
-// rationale). Not part of the shipped app: reached only through
-// preview-pilgrims.html, not registered in plugins/registry.ts.
-//
-//   ?race=<rudy|uno>   — one figure alone; absent, BOTH races side by side,
-//                        which is the shot that proves the silhouettes differ
-//   ?view=<iso|side|front>                       — defaults to "iso"
-//   ?stride=<0..1>     — phase of the walk cycle; defaults to 0.25 (mid-swing,
-//                        the pose that shows the legs and tail actually move)
-//   ?zoom=<n>          — camera pull-back, default 1. Under 1 pulls back, which
-//                        is what it takes to frame a gait that turns the body
-//                        off the rest box
-//
-// The lighting rig and framing are previewWildlife.ts's, copied verbatim.
-// A screenshot driver waits for `window.__previewReady === true`.
-
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -36,7 +19,6 @@ import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
 import { isSettlerRace, type SettlerRace } from '../../plugins/pilgrims/protocol.ts';
 
-// ── Lighting rig, copied from previewWildlife.ts / render/scene.ts ────────
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
 const HEMISPHERE_LIGHT_INTENSITY = 1.5;
@@ -52,7 +34,6 @@ const GROUND_RADIUS = 2;
 const CAMERA_FRAMING_PADDING = 1.25;
 const SETTLE_FRAME_COUNT = 3;
 
-/** Gap between the two figures in the side-by-side shot, world units. */
 const PAIR_SPACING = 0.55;
 
 const CAMERA_VIEWS = {
@@ -94,14 +75,6 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   return { scene, camera, renderer };
 }
 
-/**
- * `?zoom=<n>` — previewSpecies.ts's knob, same name and same meaning.
- *
- * The framing below is the REST pose's box: three measures a SkinnedMesh from
- * its geometry, and a skinned pose is not in it. A gait that turns the body —
- * the wall gaits do, see plugins/kit/moverBodyTilt.ts — swings it out of that
- * box, so pulling back is the only way to photograph one.
- */
 let ZOOM = 1;
 
 function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraView): void {
@@ -127,10 +100,6 @@ function main(): void {
   const view: CameraView =
     viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
   const stride = Number(query.get('stride') ?? '0.25');
-  // ?gait=walk|climb|fall|stand|sit — the wall poses and the ground ones
-  // (plugins/pilgrims/client/models.ts), shot here rather than only in a live
-  // world: a pose is judged by looking at it, and neither a wall nor an eight
-  // second stillness is a quick thing to arrange in the game.
   const gaitParam = query.get('gait');
   const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
 
@@ -140,8 +109,6 @@ function main(): void {
   const subject = new Group();
   races.forEach((race, index) => {
     const model = models.create(race);
-    // Mid-stride pose at the requested cycle phase — animate() is a pure
-    // function of the clock, so `stride / STRIDE_HZ` seconds IS that phase.
     model.animate(stride / STRIDE_HZ, 0, gait);
     model.root.position.z = (index - (races.length - 1) / 2) * PAIR_SPACING;
     subject.add(model.root);

@@ -1,54 +1,3 @@
-// structures — man-made settlements as Conway's Game of Life (classic
-// B3/S23), run over the world's buildable ground. A structure exists exactly
-// where a live cell exists; its tier is how long it has survived AND how
-// crowded its neighbourhood is (tiers.ts). Terrain is the board's walls
-// (suitability.ts). The whole mechanic lives in ./life.ts; this file is the
-// plugin wiring — the clock, the wire, and the persistence slice.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// WHICH RULE GROWS THE TOWN IS A PER-WORLD CHOICE (./growth-model.ts).
-// The `model` setting picks it, once, when the world opens — STRUCTURES_MODEL
-// is the deployment's default for a world that has never been configured:
-// `life` (described below) runs the Conway CA; any other registered model is handed
-// the whole board on the same interval and its outcome is applied through the
-// same swap, the same delta and the same persistence write. EVERYTHING ELSE
-// ON THIS PAGE IS THE SAME EITHER WAY — the board, the wire, the tiers, the
-// fog of war, the reactive demolition and every downstream consumer.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// THE TWO PATHS.
-//
-// THE CA is polled: every CA_GENERATION_INTERVAL_SECONDS the whole board
-// steps (amortised across ticks, life.ts's GenerationSurvey) — every birth,
-// death and tier change in the plugin's steady state happens here, plus an
-// occasional seed pattern to keep a quiet WORLD from staying quiet forever,
-// and an occasional stir event (owner decision 2026-08-19) to keep an already
-// settled BOARD from freezing into still lifes forever — see life.ts's
-// attemptSeed and attemptStir doc comments respectively.
-//
-// DEMOLITION is reactive: onTerrainChanged carries the full server-side
-// diff, so an edit under a live cell kills it in the same call that applied
-// the edit — before the terrain diff reaches any client. A live cell whose
-// NEIGHBOUR was edited (which can silently break its own buildability — see
-// life.ts's header) is left for the next generation to notice; that lag is
-// named and accepted there.
-//
-// Both paths write to the same board and emit the same delta message, so a
-// client applies "the ground moved, three buildings fell" and "a block
-// aged into a hut" through one code path.
-//
-// FOG OF WAR (added issue #18). Every send — the CA's own delta, the join
-// snapshot, the keepalive — is now per RECIPIENT: a player is sent only the
-// structures inside chunks they have personally unlocked (WorldApi.
-// broadcastVisible), and a recipient whose own subset is empty is sent
-// nothing at all rather than an empty message (STRUCTURES_SKIP_EMPTY is safe
-// for the same reason flora's identical flag is — see its doc comment). The
-// one gap a 60 s keepalive cannot close fast enough — a player creeping into
-// a chunk that already has buildings standing in it — gets its own targeted
-// push instead of waiting: see onChunkUnlockedForToken / refreshUnlockedChunk
-// below, flora's identical mechanism applied to this plugin's own wire shape.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { CHUNK_SIZE, dayOfSimMillis, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
@@ -108,104 +57,37 @@ import {
   windDemolishChance,
 } from './cyclone-event.ts';
 
-/**
- * Simulated seconds between unsolicited full re-broadcasts.
- *
- * A REPAIR cadence, not a sync mechanism — flora's identical role, at the
- * same 60 s: a delta stream cannot notice it has drifted, so a periodic full
- * snapshot bounds any such divergence at one minute.
- */
 export const STRUCTURES_KEEPALIVE_SECONDS = 60;
 
-/**
- * Logged once when this deployment is configured for a growth model that no
- * installed plugin ever registered — a settlement world where nothing is ever
- * built. Named so a suite can assert on it rather than on a string literal.
- */
 export const NO_GROWTH_MODEL_WARNING =
   '[structures] configured for a non-default growth model, but none was registered — the board will not change';
 
-// ── Mutable module state ─────────────────────────────────────────────────────
-// Module-level singletons with a reset seam, matching every other plugin's
-// shape here. No world-readiness null-guard is needed anymore — the current
-// plugin contract hands every hook its own WorldApi directly (issue #15), so
-// there is no "did onWorldCreate run yet" stash to check.
-
-/**
- * The board: cellKey → {age, tier, population?}. Swapped wholesale on every
- * generation, by whichever model is driving (see ./growth-model.ts).
- */
 let live: Map<number, BoardCellRecord> = new Map();
 
-/** Completed generations since the world began — persisted, diagnostic. */
 let generation = 0;
-/**
- * World-day settlers last arrived on; -1 for never. Persisted.
- *
- * THE CALENDAR ITSELF IS NOT THIS PLUGIN'S (2026-08-23): the day comes from
- * `WorldApi.simMillis`, the one world clock, so structures' Monday IS the sky's
- * Monday. This plugin briefly kept its own persisted millisecond clock for the
- * same job; it was correct in isolation and wrong the moment you compared it to
- * the sunrise, which is the whole reason the clock moved to core.
- *
- * `simSeconds` below stays — it is a float accumulator for cadences measured in
- * seconds (the keepalive), where drift is invisible. What a plugin must not do
- * is derive a DAY from one of those.
- */
 let lastSeedDay = -1;
 let restoredLastSeedDay = -1;
 
-/**
- * THE DEPLOYMENT'S DEFAULT MODEL, read ONCE, when this module is imported —
- * i.e. when the host loads the plugin, which is the moment a bad value must be
- * fatal (see readStructuresModel). It is what a world that has never been
- * configured runs, and the value the declaration below offers as the default.
- */
 let defaultModel: StructuresModel = readStructuresModel(process.env);
 
-/**
- * WHICH MODEL *THIS WORLD* RUNS — the `model` setting if it has one, otherwise
- * the deployment default above. Read once per session, in `onWorldCreate`, and
- * fixed for the life of that session: the only way it moves is a reopen, which
- * replays restore + worldCreate, so no tick can ever observe it changing.
- */
 let selectedModel: StructuresModel = defaultModel;
 
-/** Simulated seconds at the last growth-model step — the populous path's clock. */
 let lastGrowthSeconds = 0;
 
-/** Whether the "configured for a model that never registered" line has been logged. */
 let warnedNoGrowthModel = false;
 
 let survey = new GenerationSurvey();
 let rng: StructuresRng = createStructuresRng(STRUCTURES_RNG_DEFAULT_SEED);
 
-/** Accumulated simulated seconds — the only clock this plugin has. */
 let simSeconds = 0;
 let lastKeepaliveSeconds = 0;
 
-/** Fractional chunks owed to the CA sweep, carried between ticks. */
 let scanCredit = 0;
 
-/**
- * Homes founded by an OUTSIDE hand this tick (see `foundStructure`), waiting
- * for the next `simulate` to broadcast them.
- *
- * A QUEUE RATHER THAN AN IMMEDIATE SEND because the caller does not have a
- * WorldApi to broadcast with — it has its own, from its own plugin, and a
- * broadcast made through that one would go out under the WRONG namespace. The
- * cell itself is written into `live` immediately, so `standingStructures()`
- * and the CA see it at once; only the WIRE waits, by at most one tick.
- */
 let pendingFounded: StructureCell[] = [];
 
-/** Restored from a snapshot, held until onWorldCreate — flora's identical seam. */
 let restoredLive: Map<number, BoardCellRecord> = new Map();
 let restoredGeneration = 0;
-
-// ────────────────────────────────────────────────────────────────────────────
-// Wire
-// ────────────────────────────────────────────────────────────────────────────
 
 function liveCells(): StructureCell[] {
   const cells: StructureCell[] = [];
@@ -216,7 +98,6 @@ function liveCells(): StructureCell[] {
   return cells;
 }
 
-/** A structure cell's own position — what `WorldApi.broadcastVisible` gates visibility by. */
 function structurePosition(cell: { readonly x: number; readonly y: number }): {
   x: number;
   y: number;
@@ -224,14 +105,6 @@ function structurePosition(cell: { readonly x: number; readonly y: number }): {
   return { x: cell.x, y: cell.y };
 }
 
-/**
- * FOG OF WAR (issue #18). Every broadcastVisible call this plugin makes
- * passes `skipEmpty: true` — safe for the identical reason flora's own
- * FLORA_SKIP_EMPTY is: per-player masks only ever GROW (issue #17), so a
- * structure invisible to a player right now was equally invisible to them
- * whenever it last changed. See WorldApi.broadcastVisible's doc comment for
- * the general rule.
- */
 const STRUCTURES_SKIP_EMPTY = { skipEmpty: true } as const;
 
 function broadcastAll(world: WorldApi): void {
@@ -245,22 +118,13 @@ function broadcastAll(world: WorldApi): void {
   lastKeepaliveSeconds = simSeconds;
 }
 
-/** One cell tagged with which of `structures:changes`' three lists it belongs to. */
 interface TaggedStructureChange {
   readonly kind: 'founded' | 'upgraded' | 'demolished';
   readonly x: number;
   readonly y: number;
-  /** Only meaningful for founded/upgraded; demolished carries no tier on the wire. */
   readonly tier: number;
 }
 
-/**
- * Sends one delta. Silent when nothing changed anywhere — the common case by
- * far between generations. Per RECIPIENT, silence is more common still:
- * broadcastVisible additionally skips any player whose own subset of THIS
- * delta is empty (STRUCTURES_SKIP_EMPTY) — the ordinary case for a change
- * happening in someone else's territory.
- */
 function broadcastChanges(
   world: WorldApi,
   founded: readonly StructureCell[],
@@ -287,16 +151,6 @@ function broadcastChanges(
   );
 }
 
-/**
- * THE TARGETED-REFRESH PATH (issue #18) — flora's identical mechanism
- * (server/index.ts's refreshUnlockedChunk), for the same reason: the 60 s
- * keepalive is a REPAIR cadence, far too slow for "a player just earned a
- * chunk that already has buildings in it" to feel instant. Fired once per
- * successful per-token unlock. Sent as a `founded` DELTA, not a
- * `structures:all` snapshot — the client's ALL-message handler REPLACES its
- * whole board (see ../client/index.ts), which would wipe out every other
- * chunk this player already knows about, whereas `founded` is additive.
- */
 function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: number): void {
   const x0 = cx * CHUNK_SIZE;
   const y0 = cy * CHUNK_SIZE;
@@ -314,15 +168,6 @@ function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: nu
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// The two paths
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * THE CONWAY PATH (STRUCTURES_MODEL=life, the default) — unchanged behaviour,
- * lifted out of `simulate` verbatim when the growth-model seam was added so
- * the two models sit side by side rather than interleaved.
- */
 function advanceLife(world: WorldApi, dt: number): void {
   const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
   scanCredit = Math.min(scanCredit + generationChunksPerTick(world, dt), totalChunks);
@@ -334,12 +179,6 @@ function advanceLife(world: WorldApi, dt: number): void {
       live = outcome.nextLive;
       generation++;
 
-      // SETTLERS COME ON MONDAY, AND ONLY TO AN EMPTY WORLD — see life.ts's
-      // shouldSeed for the rule and why the old per-generation coin flip went.
-      // `lastSeedDay` advances on the ATTEMPT, not on success: a Monday whose
-      // one attempt found nowhere to build is still a Monday that has had its
-      // turn, and re-trying it every generation for the rest of the day is
-      // precisely the ninety-six-times-a-week behaviour the rule replaces.
       let seeded: StructureCell[] = [];
       const today = dayOfSimMillis(world.simMillis);
       if (shouldSeed(live, today, lastSeedDay)) {
@@ -351,11 +190,6 @@ function advanceLife(world: WorldApi, dt: number): void {
         }
       }
 
-      // Independent roll from seeding, same "AFTER the swap" reasoning: a
-      // spark ignited here is a birth the CA hasn't evaluated yet, so it is
-      // deferred to next generation like a fresh seed is (see attemptStir's
-      // doc comment). Rolled every generation regardless of whether seeding
-      // fired above — the two events are unrelated and independently timed.
       let stirred: StructureCell[] = [];
       if (rng.next() < CA_STIR_PROBABILITY_PER_GENERATION) {
         const sparks = attemptStir(world, live, rng);
@@ -367,12 +201,6 @@ function advanceLife(world: WorldApi, dt: number): void {
 
       broadcastChanges(world, [...outcome.born, ...seeded, ...stirred], outcome.upgraded, outcome.died);
 
-      // THE CHRONICLE'S EAR (2026-08-19): the same generation facts, as a
-      // server-side world event. `seeded` (a new settlement) and the tier/loss
-      // lists are what a historian can use; routine births and stir sparks
-      // are churn, deliberately not part of the event's meaning — consumers
-      // get `seeded`, `upgraded`, `died`, nothing else. Emitted only when
-      // something happened, so a quiet generation costs no fan-out.
       if (seeded.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
         world.emitEvent('changes', {
           cause: 'generation',
@@ -386,26 +214,6 @@ function advanceLife(world: WorldApi, dt: number): void {
 
 }
 
-/**
- * THE REGISTERED-MODEL PATH (STRUCTURES_MODEL=populous, and any future model).
- *
- * ON THE SAME CADENCE AS A CA GENERATION, and deliberately the same constant:
- * whatever grows the town, it grows it at the rhythm this world's players have
- * learned. The CA amortises its sweep across ticks because a whole-board pass
- * is expensive; a registered model is handed the board whole and steps it in
- * one call, so a plain seconds accumulator is all this needs — the same float
- * clock the keepalive runs on, where drift is invisible (see `simSeconds`).
- *
- * NO SEEDING AND NO STIRRING. Both exist to keep a CELLULAR AUTOMATON from
- * dying out or freezing (life.ts's attemptSeed and attemptStir doc comments);
- * a model with no birth-by-neighbour rule has neither failure mode, and
- * sprinkling unrequested houses into its board would be this plugin
- * overruling the model it was told to run.
- *
- * NO MODEL REGISTERED YET is an ordinary state, not an error: the model's
- * plugin loads asynchronously and may not be installed at all. The board
- * simply does not change, and one line says so.
- */
 function advanceGrowthModel(world: WorldApi): void {
   if (simSeconds - lastGrowthSeconds < CA_GENERATION_INTERVAL_SECONDS) return;
   lastGrowthSeconds = simSeconds;
@@ -422,16 +230,11 @@ function advanceGrowthModel(world: WorldApi): void {
   const ctx: GrowthContext = {
     isBuildable: (x: number, y: number) => isBuildableCell(world, x, y),
     maxTier: MAX_STRUCTURE_TIER,
-    // The keep-clear rule, from its one home (clearance.ts) — the same
-    // predicate the CA's own scan asks, so the two models cannot disagree
-    // about what "too close" means.
     hasBuildingWithinSeparation: (cells, x: number, y: number) =>
       hasBuildingWithinSeparation(cells, world, x, y),
   };
   const outcome = model.step(world, live, ctx);
 
-  // THE SAME APPLY PATH THE CA'S OWN OUTCOME TAKES — same swap, same delta,
-  // same event — which is the whole contract of the seam (./growth-model.ts).
   live = outcome.nextLive;
   generation++;
   broadcastChanges(world, outcome.born, outcome.upgraded, outcome.died);
@@ -444,34 +247,12 @@ function advanceGrowthModel(world: WorldApi): void {
     });
   }
 
-  // LAST, AND DELIBERATELY SO — see GrowthModel.afterSwap. The model's side
-  // effects reach the rest of the world only once the generation they belong
-  // to is the one standing: board swapped, deltas on the wire, event raised.
   model.afterSwap?.(outcome.emitted);
 }
 
-/**
- * THE SIM STEP. Fixed order, once per host tick:
- *
- *   1. advance the clock;
- *   2. advance the CA sweep by this tick's share of the board. On the tick
- *      that completes it: swap in the new generation, maybe seed a fresh
- *      pattern AND/OR stir a few sparks next to an existing settlement onto
- *      the RESULT (so a just-placed seed or spark is evaluated by B3/S23
- *      starting next generation, never the one that just ran — life.ts's
- *      attemptSeed and attemptStir doc comments), and broadcast everything
- *      that changed;
- *   3. keepalive, on its own independent cadence.
- */
 function simulate(world: WorldApi, dt: number): void {
   simSeconds += dt;
 
-  // Outside foundings first, on their own: they are already in `live` (see
-  // foundStructure), so all that is owed is the delta. Sent as its OWN
-  // broadcast rather than folded into the generation's below, because a
-  // generation completes at most every CA_GENERATION_INTERVAL_SECONDS and a
-  // settler that has just walked into its new house must not wait fifteen
-  // seconds to be given one.
   if (pendingFounded.length > 0) {
     const founded = pendingFounded;
     pendingFounded = [];
@@ -479,64 +260,21 @@ function simulate(world: WorldApi, dt: number): void {
     world.emitEvent('changes', { cause: 'settled', seeded: founded, upgraded: [], died: [] });
   }
 
-  // WHICH RULE GROWS THE TOWN (./growth-model.ts). One branch, taken on every
-  // tick for the life of the session, because `selectedModel` is read once at
-  // world create and cannot change under a running world.
   if (selectedModel === STRUCTURES_MODEL_LIFE) advanceLife(world, dt);
   else advanceGrowthModel(world);
 
   if (simSeconds - lastKeepaliveSeconds >= STRUCTURES_KEEPALIVE_SECONDS) broadcastAll(world);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Fire
-//
-// A building is flammable, and it burns the way everything else in the world
-// burns: `fire` owns the flame and the clock, this plugin owns what is standing
-// there and what it means for it to be gone. See ./fire-bridge.ts, and
-// plugins/fire/server/fuel.ts for why the dependency runs this way.
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * How long a building burns, in simulated seconds.
- *
- * Longer than flora's tree (22 s) because there is more of it to consume and
- * because the loss is heavier — a player who sees a home catch has time to dig
- * a break around the rest of the street. Still under a minute: a fire is an
- * event, not the world's new weather.
- */
 export const STRUCTURES_BURN_SECONDS = 30;
 
-/**
- * Flame size for a building, in world units.
- *
- * Restated here rather than imported, exactly as flora restates FLORA_TREE_
- * FUEL_HEIGHT and for the same reason: the drawn height lives in a THREE-
- * dependent client module the server must not load. A home reads a little
- * shorter than a full-grown tree (1.5), so the flame that replaces it is sized
- * to match rather than towering over the roof it is consuming.
- */
 export const STRUCTURES_FUEL_HEIGHT = 1.0;
 
-/** What burns at this cell: a building, or nothing of this plugin's. */
 function structuresFuelAt(x: number, y: number): { burnSeconds: number; height: number } | null {
   if (!live.has(structureKey(x, y))) return null;
   return { burnSeconds: STRUCTURES_BURN_SECONDS, height: STRUCTURES_FUEL_HEIGHT };
 }
 
-/**
- * A fire finished here: the building is gone.
- *
- * THE SAME DEMOLITION AS EVERY OTHER — the board loses the cell, the same
- * delta message goes out, and the chronicle hears about it. Only the CAUSE is
- * new ('fire' rather than 'sculpt' or 'generation'), because "the town burned"
- * and "the ground was dug out from under it" are different stories about the
- * same missing house.
- *
- * Called ONLY for fires that ran their full course (plugins/fire/server/
- * blaze.ts's three endings): a building the rain saved is scorched and still
- * standing, which is the whole point of putting the fire out.
- */
 function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: number }[]): void {
   const world = fuelWorld;
   if (world === null) return;
@@ -545,13 +283,6 @@ function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: n
   for (const cell of cells) {
     const key = structureKey(cell.x, cell.y);
     if (!live.delete(key)) continue;
-    // AND TELL THE SWEEP. Deleting from `live` alone is not enough: a
-    // generation sweep spans many ticks and reads a SNAPSHOT of the board it
-    // took when it started (life.ts's GenerationSurvey), so a house that
-    // burns down mid-sweep is still standing in that snapshot and gets staged
-    // straight back into the next generation — and since buildings became
-    // permanent (2026-08-26) a resurrected building never dies again. See
-    // `evict`'s own comment for why the snapshot is not edited instead.
     survey.evict(key);
     burned.push({ x: cell.x, y: cell.y });
   }
@@ -561,39 +292,8 @@ function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: n
   world.emitEvent('changes', { cause: 'fire', died: burned });
 }
 
-/**
- * A CYCLONE PASSED OVER (issue #299): the wind takes buildings inside the
- * storm's disc, the flimsiest first.
- *
- * THE WHOLE BOARD, NOT THE EVENT'S SAMPLE, for the reason flora's counterpart
- * gives: the emitter's `cells` list is a bounded sample "for consumers with no
- * spatial index" (server/src/plugins/kit/rotatingStorms.ts, where it says so),
- * and `live` IS an index — capped at STRUCTURES_CAP (512), so answering
- * exactly is at most 512 distance tests per second of storm, against a
- * generation sweep that surveys the whole world.
- *
- * ONE ROLL PER BUILDING PER EVENT, on this plugin's OWN seeded generator
- * (./rng.ts's single persisted sequence), never Math.random — a world replayed
- * from the same seed must lose the same houses. `live` iterates in insertion
- * order, so the order the rolls are drawn in is fixed too.
- *
- * THE SAME DEMOLITION AS EVERY OTHER, exactly as structuresBurnedOut above:
- * the board loses the cell, the in-flight sweep is told (or it would carry a
- * flattened house into the next generation), the same delta goes out on the
- * wire, and the world event carries a CAUSE — 'wind' here, because "the storm
- * took the village" is a different story from "it burned" or "the ground was
- * dug out from under it".
- *
- * RESIDUAL, NAMED: the chronicle reads only 'generation' and 'sculpt' from
- * that event (plugins/chronicle/server/saga.ts refuses anything else), so a
- * wind loss goes unchronicled — as a fire loss already does. That is a pinned
- * contract on the chronicle's side, not a gap on this one, and widening it is
- * the chronicle's call to make.
- */
 function reactToCycloneDamage(world: WorldApi, payload: unknown): void {
   const damage = parseStormDamage(payload);
-  // A malformed event demolishes NOTHING: half-applying it would take a town
-  // down under a storm that was never described.
   if (damage === null) return;
 
   const demolished: Array<{ x: number; y: number }> = [];
@@ -606,9 +306,6 @@ function reactToCycloneDamage(world: WorldApi, payload: unknown): void {
   }
   if (demolished.length === 0) return;
 
-  // Deleted in a second pass rather than inside the loop above: `live` is being
-  // iterated, and a Map deleted from mid-iteration is a rule this file should
-  // not have to depend on the exact wording of.
   for (const cell of demolished) {
     const key = structureKey(cell.x, cell.y);
     live.delete(key);
@@ -619,64 +316,23 @@ function reactToCycloneDamage(world: WorldApi, payload: unknown): void {
   world.emitEvent('changes', { cause: 'wind', died: demolished });
 }
 
-/**
- * The live world, stashed for structuresBurnedOut — which is called from fire's
- * tick rather than from one of this plugin's own hooks, and so is handed no
- * world of its own. flora keeps its own for the identical reason.
- */
 let fuelWorld: WorldApi | null = null;
 
-/**
- * THE REACTIVE PATH. Fired after any applied edit with the FULL server-side
- * diff. A live cell standing exactly on a changed cell is killed immediately
- * — see life.ts's header for why this covers only the direct hit, and why
- * the (rarer) neighbour-invalidation case is left to the next generation.
- */
 function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (diff.length === 0) return;
-
-  // NOTHING TO INVALIDATE. The CA's board TOPOLOGY is a function of the
-  // terrain (topology.ts) — an edit can join two headlands, split one, or
-  // drown a landmass outright — but the labelling is rebuilt by every sweep
-  // out of that sweep's own buildability survey rather than cached across
-  // generations, so an edit is picked up within two generations with no
-  // notification from here (GenerationSurvey's `labels` states that lag; see
-  // computeLandmassLabels for why the cache this once dropped had to go).
 
   const demolished: Array<{ x: number; y: number }> = [];
   for (const cell of diff) {
     const key = structureKey(cell.x, cell.y);
     if (!live.delete(key)) continue;
-    // The sweep is told too, for the reason structuresBurnedOut gives above:
-    // an in-flight generation is reading a snapshot that still holds this
-    // house, and would otherwise carry it into the next generation on ground
-    // the player just dug away.
     survey.evict(key);
     demolished.push({ x: cell.x, y: cell.y });
   }
   broadcastChanges(world, [], [], demolished);
 
-  // The chronicle's ear, sculpt side: an edit-caused loss is a different
-  // STORY than a generation's (a hand, not fate), so the cause travels.
   if (demolished.length > 0) world.emitEvent('changes', { cause: 'sculpt', died: demolished });
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// The plugin
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * The version a stored blob SAYS it was written under, or undefined when it
- * says nothing.
- *
- * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
- * host's `{ v, data }` envelope is authoritative for everything written since
- * it existed — but every byte written BEFORE it carries no envelope and reaches
- * `load` as version 1, and this plugin's own format was already past that.
- * Trusting the host's 1 over this field would run a version-1 migration over a
- * version-2 slice on the first boot after the envelope landed, which is the
- * one way this contract can destroy a world.
- */
 function selfDescribedSliceVersion(data: unknown): number | undefined {
   if (typeof data !== 'object' || data === null) return undefined;
   const version = (data as { version?: unknown }).version;
@@ -689,10 +345,6 @@ const persistence: PersistenceSlice = {
   },
   version: STRUCTURES_SLICE_VERSION,
   load(data: unknown, fromVersion: number): SliceLoadOutcome {
-    // REFUSE, DO NOT DEMOLISH, a board from a newer build. loadStructures
-    // answers an unknown version with the EMPTY board, and the next snapshot
-    // would write that over the settlement — the town demolished about a minute
-    // after a downgrade. v1 is still read and migrated below.
     if ((selfDescribedSliceVersion(data) ?? fromVersion) > STRUCTURES_SLICE_VERSION) {
       return 'refuse';
     }
@@ -705,44 +357,6 @@ const persistence: PersistenceSlice = {
   },
 };
 
-/**
- * EVERYTHING THIS PLUGIN HOLDS THAT BELONGS TO ONE SESSION RATHER THAN TO ONE
- * BOARD — cleared at the top of every `onWorldCreate`, which is the only
- * moment a new session's simulation begins.
- *
- * WHY IT EXISTS (plan §2.3 Phase S0). Plugin modules outlive a world: a reopen
- * (a plugin toggle, a rollback, a world switch) builds a new host over THIS
- * module, and until now the clocks, the in-flight CA sweep and the queue of
- * outside foundings all carried the previous session's values into the new
- * one. Concretely, a founding made while this plugin was DISABLED — through
- * the pilgrims-facing surface, which a sibling's bridge can still reach —
- * survived in `pendingFounded` and was broadcast as a house on the first tick
- * after the plugin was switched back on, against a board that does not hold
- * it.
- *
- * THE CLOCK PAIR IS RESET TOGETHER, and that is load-bearing rather than
- * tidiness: `advanceGrowthModel` gates on `simSeconds - lastGrowthSeconds`, so
- * zeroing the mark while the accumulator still carried the whole process's
- * uptime would step a generation on the very first tick after every reopen —
- * a cadence discontinuity that does not exist today. Both terms go to zero,
- * which restarts the interval from the moment the world opened.
- *
- * NOT HERE, deliberately: `live`, `generation`, `rngState`, `restoredLive`,
- * `restoredGeneration` and `restoredLastSeedDay` — all of them are written by
- * `persistence.load`, which the host runs BEFORE `onWorldCreate`, so clearing
- * them here would throw away the very snapshot that was just restored.
- */
-/**
- * WHICH MODEL THIS SESSION RUNS, from the world's own setting.
- *
- * A STORED VALUE THIS BUILD DOES NOT KNOW IS NOT FATAL, unlike the same typo
- * in the environment, and the asymmetry is deliberate: the environment is read
- * at boot, where a refusal costs one restart and stops a whole deployment
- * running the wrong rule; a world file is read while the server is live and
- * may name a model an older build has never heard of (an operator rolling a
- * server back). Refusing there would take a world down over a value it can
- * simply not honour yet — so the default runs and one line says so.
- */
 function sessionModel(world: WorldApi): StructuresModel {
   const chosen = world.setting(STRUCTURES_MODEL_SETTING_KEY);
   if (chosen === undefined) return defaultModel;
@@ -751,12 +365,10 @@ function sessionModel(world: WorldApi): StructuresModel {
   return defaultModel;
 }
 
-/** Said once per open, so the log answers "which rule is this world running?". */
 export function structuresModelMessage(model: StructuresModel): string {
   return `[structures] growth model for this world: ${model}`;
 }
 
-/** Said instead when the world file names a model this build does not have. */
 export function unknownModelWarning(stored: string): string {
   return (
     `[structures] this world is set to growth model "${stored}", which this build ` +
@@ -777,27 +389,6 @@ function resetSessionState(): void {
 export const plugin: TerracePlugin = {
   name: STRUCTURES_PLUGIN_NAME,
 
-  /**
-   * THE ONE KNOB THIS PLUGIN OFFERS AN OPERATOR: which rule grows the town.
-   * Every future settlement rule is a value here rather than a plugin of its
-   * own — the board, the wire, the tiers and the slice are the same under all
-   * of them (./growth-model.ts), so a rule is a value, not an installation.
-   *
-   * The declared default is the DEPLOYMENT's (STRUCTURES_MODEL, read at load),
-   * which is what a world with no row of its own actually runs.
-   *
-   * ACCEPTED RESIDUAL, stated where the feature lives (plan §2.3 step 6).
-   * SWAPPING THE MODEL IS SAFE: it does not toggle this plugin, the reopen
-   * replays restore + worldCreate, and the session-scoped reset at the top of
-   * that hook means the incoming rule inherits no clock, sweep or queue from
-   * the outgoing one. TOGGLING THIS PLUGIN ITSELF is a different matter and is
-   * only fully safe after Phase 2 (host-mediated sibling lookup): flora,
-   * pilgrims and temples reach this MODULE through dynamic-import bridges, so
-   * while it is switched off they still resolve it. Closing the world now
-   * empties the board (onWorldClose), which is what makes their answers honest
-   * — but a sibling can still call in DURING a world this plugin is not part
-   * of, and only the host-mediated lookup can answer that with `null`.
-   */
   settings: [
     {
       key: STRUCTURES_MODEL_SETTING_KEY,
@@ -808,39 +399,9 @@ export const plugin: TerracePlugin = {
 
   onWorldCreate(world: WorldApi): void {
     resetSessionState();
-    // THE ONE READ OF THE SETTING, at the one moment a session begins. See
-    // `selectedModel`; the branch in `simulate` is taken from it every tick.
     selectedModel = sessionModel(world);
     console.info(structuresModelMessage(selectedModel));
 
-    // Any snapshot has already been restored by the time this runs, so the
-    // board here is either empty (fresh world) or the persisted one. Cells
-    // outside this world (a snapshot restored onto a smaller WORLD_SIZE) are
-    // now pruned immediately below (isBuildableCell already rejects an
-    // out-of-bounds cell), rather than surviving in `live` until the next
-    // generation's own rescan would have dropped them — a stricter, earlier
-    // cut of the SAME case the footprint prune below exists for.
-    //
-    // FOOTPRINT-FIT PRUNE, ON LOAD (owner directive 2026-08-20). A structure
-    // persisted from BEFORE suitability.ts's hasClearFootprint shipped may
-    // stand on ground that no longer passes isBuildableCell's now-stricter
-    // check — founded back when only the four orthogonal neighbours were
-    // surveyed, it can be straddling a diagonal terrace edge or a corner of
-    // water. PRUNE, not grandfather: the whole point of this rule is that a
-    // structure must never render hanging off its own ground, and
-    // grandfathering would leave exactly that defect standing, silently, for
-    // as long as the world lives — worst in the self-hosted worlds most
-    // likely to predate the fix, which is precisely who this change protects.
-    // Filtered HERE, before restoredLive ever becomes `live`, rather than
-    // left for the next CA generation's own full-board rescan to drop it
-    // (life.ts's header: every generation already recomputes buildability
-    // from scratch) — that path is correct but not instant: it would still
-    // broadcast the violator, unfiltered, to broadcastAll below and to any
-    // player joining before the next generation completes (up to
-    // CA_GENERATION_INTERVAL_SECONDS = 15s later), which is the exact
-    // user-visible defect this rule exists to close, not an acceptable
-    // residual. One pass over the restored board — at most STRUCTURES_CAP
-    // cells — costs nothing measurable at boot, run once, never again.
     live = new Map();
     for (const [key, record] of restoredLive) {
       const cell = cellOfKey(key);
@@ -852,10 +413,6 @@ export const plugin: TerracePlugin = {
     restoredGeneration = 0;
     restoredLastSeedDay = -1;
 
-    // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
-    // resolved through the host, so the town is flammable exactly when fire is
-    // running in this world. The registration is still buffered and replayed
-    // by the bridge.
     fuelWorld = world;
     loadFireBridge(world);
     registerStructuresFuel({
@@ -864,28 +421,10 @@ export const plugin: TerracePlugin = {
       onBurnedOut: structuresBurnedOut,
     });
 
-    // No players are connected yet — this is only so a client already
-    // listening at boot is not left empty for up to a keepalive.
     broadcastAll(world);
   },
 
-  /**
-   * THE BOARD STOPS EXISTING WHEN ITS WORLD DOES (issue #167, plan §1.9
-   * finding 3).
-   *
-   * The final snapshot has already been written by the time this runs (see
-   * `closeSession`), so nothing is lost — and what is dropped here is exactly
-   * what a sibling would otherwise keep reading. flora, pilgrims and temples
-   * hold this MODULE, not this plugin's enrolment in a session: their bridges
-   * resolve the module URL once and keep answering from it, so a board left
-   * standing here is a town that refuses trees, takes settlers and hands out
-   * houses in a world nobody ticks or persists. An empty board is the honest
-   * answer to every one of those questions once this world is gone.
-   */
   onWorldClose(): void {
-    // The registration fire holds is withdrawn by the bridge that made it
-    // (issue #208): a source left standing is asked for fuel every spread
-    // step of the NEXT world, whether or not this plugin is in it.
     closeFireBridge();
     resetStructuresState();
   },
@@ -899,19 +438,10 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
-    // By-name subscription (see server/src/plugins/types.ts's emitEvent doc
-    // comment): the cyclone plugin's NAME is the coupling, exactly like a wire
-    // message namespace — never an import of its code. ./cyclone-event.ts
-    // holds the name and the numbers that answer it.
     if (event === CYCLONE_DAMAGE_EVENT_NAME) reactToCycloneDamage(world, payload);
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
-    // FOG OF WAR (issue #18): filtered to the structures inside THIS player's
-    // own unlocked view (onlyPlayerId), same skipEmpty rule as every other
-    // send in this plugin — a player who has just joined and unlocked
-    // nothing of their own yet is sent nothing, which is exactly what their
-    // client already renders by default.
     world.broadcastVisible(
       STRUCTURES_ALL_MESSAGE,
       liveCells(),
@@ -928,45 +458,10 @@ export const plugin: TerracePlugin = {
   persistence,
 };
 
-// ────────────────────────────────────────────────────────────────────────────
-// Test seams
-// ────────────────────────────────────────────────────────────────────────────
-
-// THE PILGRIMS-FACING SURFACE (owner decision 2026-08-19). The pilgrims
-// plugin duck-types both of these off this module through the relics→mana
-// dynamic-import bridge pattern: `standingStructures` to find the towns near
-// a settled monster, `setBlessedStructureCells` to prosper the ones on an
-// active route. Re-exported here so the bridge has ONE module to load.
 export { setBlessedStructureCells } from './blessings.ts';
 
-// THE TEMPLES-FACING SURFACE (2026-08-24), same pattern, other claimant: the
-// temples plugin pushes the square of ground its building stands on, and this
-// plugin will not grow a house there. See ./reservations.ts for the contract.
 export { setReservedStructureCells } from './reservations.ts';
 
-/**
- * FOUND A HOME AT (x, y) FROM OUTSIDE THIS PLUGIN — the third member of the
- * pilgrims-facing surface (owner, 2026-08-24: a temple's settlers walk out and
- * build). Returns whether it happened.
- *
- * WHY IT TAKES A WORLD. Buildability is a question about the ground, and this
- * plugin holds no WorldApi between hooks (see the module-state note above);
- * the caller has one and passes it, which is also what keeps this a PURE
- * request — nothing here reaches into another plugin's world.
- *
- * ONE PREDICATE, NOT A SECOND OPINION: the cell must pass the same
- * `isBuildableCell` the CA's own wall test uses, so a house founded this way
- * stands on exactly the ground a house born of the CA would. A cell that is
- * already built on, or that the board is full of, is refused rather than
- * overwritten — an outside caller may not evict a standing settlement, which
- * is the same rule the CA's own birth path keeps at STRUCTURES_CAP.
- *
- * The new cell is a TIER-0, AGE-0 birth: a home just moved into, which the CA
- * then ages and upgrades on its ordinary schedule. It is subject to B3/S23
- * from the next generation like any other cell — a house founded alone in
- * empty country will die of loneliness, and that is correct: this API founds a
- * settlement, it does not exempt one from the rules the rest live under.
- */
 export function foundStructure(world: StructuresWorld, x: number, y: number): boolean {
   if (!canFoundStructure(world, x, y)) return false;
 
@@ -975,49 +470,13 @@ export function foundStructure(world: StructuresWorld, x: number, y: number): bo
   return true;
 }
 
-/**
- * WOULD `foundStructure` SUCCEED HERE, RIGHT NOW? The fourth member of the
- * pilgrims-facing surface, and the predicate `foundStructure` itself is
- * defined by — so an asker and a builder can never disagree about what ground
- * will take a house.
- *
- * WHY AN OUTSIDE CALLER NEEDS TO ASK (2026-08-24, measured on the live world,
- * snapshot 468). A settler used to choose where to build on WALKABILITY alone
- * and learn the truth on arrival, on the reasoning that buildability is this
- * plugin's business and a copy of it elsewhere would drift. The reasoning was
- * right and the conclusion was wrong: walkable is dry ground, buildable is dry
- * ground whose whole 3×3 footprint sits in one terrace band, and on real
- * sculpted terrain only 7.2% of walkable 2×2 blocks clear that bar. Four in
- * five settlers therefore spent every one of their attempts walking to ground
- * that would not have them, and vanished — the "they walk off to a corner and
- * disappear" the owner saw. Asking across the bridge keeps the predicate here,
- * in one place, and is the opposite of a copy.
- *
- * PURE: no cell is written and no wire traffic is produced, so a chooser may
- * call it per candidate site.
- */
 export function canFoundStructure(world: StructuresWorld, x: number, y: number): boolean {
   if (live.size >= STRUCTURES_CAP) return false;
   if (live.has(structureKey(x, y))) return false;
-  // KEEP-CLEAR (2026-08-26): a settler may not move in inside a standing
-  // building's reserved ground. The predicate is clearance.ts's own, not a
-  // local restatement — the same "one predicate, not a second opinion" rule
-  // that keeps this function on isBuildableCell keeps it on
-  // hasBuildingWithinSeparation, so founding can never disagree with the CA's
-  // birth gate or placePatternAt about where a building's ground ends. A
-  // teepee founded beside another TEEPEE remains legal: the predicate looks
-  // for tier > 0 only.
   if (hasBuildingWithinSeparation(live, world, x, y)) return false;
   return isBuildableCell(world, x, y);
 }
 
-/**
- * A standing town as bridge consumers see it: the wire cell plus how long it
- * has STOOD — `age` is life.ts's generations-survived counter (resets on
- * birth), the CA's own measure of "has been here some while". Deliberately
- * NOT on the client wire: packStructureCells packs x/y/tier explicitly, so
- * this field costs the broadcast nothing.
- */
 export interface StandingStructure extends StructureCell {
   readonly age: number;
 }
@@ -1031,36 +490,16 @@ export function standingStructures(): StandingStructure[] {
   return cells;
 }
 
-/** The live board's raw records (age, tier AND population), for suites asserting on the board's own state. */
 export function currentLive(): ReadonlyMap<number, BoardCellRecord> {
   return live;
 }
 
-/**
- * THE GROWTH-MODEL-FACING SURFACE (./growth-model.ts). A model plugin
- * duck-types this off this module through its own dynamic-import bridge — the
- * same direction and the same pattern pilgrims already uses here, and the
- * reason this plugin needs no knowledge of any model plugin's existence.
- */
 export { setGrowthModel } from './growth-model.ts';
 
-/** Which growth model this process is running. Diagnostic, and a test seam's read side. */
 export function structuresModel(): StructuresModel {
   return selectedModel;
 }
 
-/**
- * TEST SEAM ONLY: overrides the model this process read from the environment,
- * i.e. the DEFAULT every world without a `model` row of its own then runs —
- * and, so a suite that never opens a world still sees it, this session's model
- * too.
- *
- * Deliberately NOT reset by `resetStructuresState` — a suite sets the mode
- * once for a whole describe block and boots several worlds inside it, and a
- * reset that silently put the mode back would make every one of those worlds
- * run the wrong model. The real server never calls this: its default is read
- * once at load, and a world's own choice comes from the setting.
- */
 export function setStructuresModel(model: StructuresModel): void {
   defaultModel = model;
   selectedModel = model;
@@ -1070,15 +509,6 @@ export function currentGeneration(): number {
   return generation;
 }
 
-/**
- * EVERYTHING THIS MODULE HOLDS, dropped: the session-scoped half
- * (`resetSessionState`) plus the board itself and what was derived from it.
- *
- * TWO CALLERS, AND THEY WANT THE SAME THING. A suite starting from zero, and
- * `onWorldClose` — the world is going away, so the board goes with it (see
- * that hook for why a board that outlives its world is a ghost its siblings
- * keep talking to). It is no longer a test-only seam.
- */
 export function resetStructuresState(): void {
   resetSessionState();
   live = new Map();
@@ -1090,8 +520,5 @@ export function resetStructuresState(): void {
   restoredLive = new Map();
   restoredGeneration = 0;
   restoredLastSeedDay = -1;
-  // The world stashed for the fire registry's callbacks (see `fuelWorld`).
-  // Held at module scope and assigned only in onWorldCreate, so this is
-  // exactly the reference issue #164 exists to stop pinning a heightmap.
   fuelWorld = null;
 }

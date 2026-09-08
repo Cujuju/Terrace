@@ -1,8 +1,3 @@
-// The control-bindings editor inside the HUD panel.
-//
-// SOLID REACTIVITY: reactive values are read by calling their accessor at the
-// point of use, never stored in a component-body const (project rule).
-
 import { For, Show, type JSX } from 'solid-js';
 import {
   ACTION_PRECEDENCE,
@@ -44,26 +39,22 @@ import {
   type LayerEdgeStyle,
 } from '../state/layerEdgePrefs.ts';
 
-/** Panel copy for each map-edge mist mode (state/frontierMistPrefs.ts owns the set). */
 const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
   off: 'None',
   line: 'Red boundary line',
   waterline: 'Flat over the sea',
 };
 
-/** Panel copy for each celestial-void look (state/voidPrefs.ts owns the set). */
 const VOID_STYLE_LABEL: Record<VoidStyle, string> = {
   wheel: 'Star wheel',
   nebula: 'Nebula',
 };
 
-/** Panel copy for each celestial-void anchor (state/voidPrefs.ts owns the set). */
 const VOID_ANCHOR_LABEL: Record<VoidAnchor, string> = {
   view: 'Follows the camera',
   world: 'Locked to the world',
 };
 
-/** Panel copy for each lip-overlay mode (state/layerEdgePrefs.ts owns the set). */
 const LAYER_EDGE_STYLE_LABEL: Record<LayerEdgeStyle, string> = {
   normal: 'Normal',
   crease: 'Crease lines',
@@ -77,11 +68,6 @@ const ACTION_LABEL: Record<ControlAction, string> = {
   pan: 'Pan',
 };
 
-/**
- * What each action DOES, phrased to drop into a sentence ("Mouse button dragged
- * to orbit the camera"). The row's own label is a noun; a tooltip needs a verb,
- * and 'Pan' on its own does not tell a new player what moves.
- */
 const ACTION_EFFECT: Record<ControlAction, string> = {
   raise: 'pile land up',
   lower: 'dig land down',
@@ -96,15 +82,11 @@ const HINT_VERB: Record<ControlAction, string> = {
   pan: 'pans',
 };
 
-/** "Left-drag raises · Shift+Left-drag lowers · …" from the live bindings. */
 function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
   const parts = ACTION_PRECEDENCE.map((action) => {
     const b = bindings[action];
     return `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag ${HINT_VERB[action]}`;
   });
-  // The wheel verb follows the preference (input/wheelCamera.ts) — it is the
-  // one modifier-free gesture the user can change. Pinch and Alt+scroll are
-  // fixed in both modes, so they are stated flatly.
   const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
   return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
 }
@@ -116,7 +98,6 @@ const HINT_MODIFIER: Record<BindingModifier, string> = {
   alt: 'Alt+',
 };
 
-/** Button captions reused by the hint text above. */
 const BUTTON_LABEL: Record<MouseButtonName, string> = {
   left: 'Left',
   middle: 'Middle',
@@ -179,7 +160,7 @@ export function ControlsPanel(): JSX.Element {
         )}
       </For>
 
-      {/* Touch: one finger always sculpts; only the two-finger drag varies. */}
+      {}
       <div class="hud-row controls-row">
         <span class="controls-label">2-finger drag</span>
         <select
@@ -196,9 +177,8 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* Wheel: scrolling pans the map by default (a trackpad's two-finger
-          scroll must not dolly); mouse users can put zoom back on the wheel.
-          A pinch always zooms, whichever is chosen. */}
+      {
+}
       <div class="hud-row controls-row">
         <span class="controls-label">Scroll wheel</span>
         <select
@@ -215,9 +195,8 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* What is drawn outside the map (render/celestialVoid.ts, issue #326).
-          A look, not a control — but this is the panel a player already opens
-          to make the view theirs, and it is where the reset button reaches. */}
+      {
+}
       <div class="hud-row controls-row">
         <span class="controls-label">Beyond the map</span>
         <select
@@ -248,10 +227,8 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* What marks the edge of revealed territory (render/frontierFog.ts).
-          Beside the void settings because it is the same question — what the
-          player sees where the map stops — and it is where the reset button
-          reaches. */}
+      {
+}
       <div class="hud-row controls-row">
         <span class="controls-label">Map edge</span>
         <select
@@ -269,10 +246,8 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* The terrace-lip overlay (render/layerEdgeOverlay.ts). Normal leaves
-          the terrain plain; Crease shades every edge in as a shadow; Debug
-          outlines the same edges in cyan. The lip under the cursor lights in
-          all three — it is the grab affordance, not the picture. */}
+      {
+}
       <div class="hud-row controls-row">
         <span class="controls-label">Terrain edges</span>
         <select
@@ -290,7 +265,7 @@ export function ControlsPanel(): JSX.Element {
 
       <Show when={shadowedActions(controlBindings()).length > 0}>
         <p class="controls-warning">
-          {/* Same binding twice: only the first (by precedence) ever fires. */}
+          {}
           Duplicate binding —{' '}
           {shadowedActions(controlBindings())
             .map((a) => ACTION_LABEL[a])
@@ -299,13 +274,11 @@ export function ControlsPanel(): JSX.Element {
         </p>
       </Show>
 
-      {/* The interface summary that used to head the info panel: what the
-          live (possibly rebound) gestures do. It lives here, next to the very
-          controls it describes, so changing a binding updates the sentence
-          beside it rather than somewhere across the screen. */}
+      {
+}
       <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
-      {/* Touch capability is static per device, so the guard can be a plain
-          expression — it never needs to re-run. */}
+      {
+}
       <Show when={navigator.maxTouchPoints > 0}>
         <p class="hud-hint">
           1-finger sculpts (tap Mode to switch) · 2-finger{' '}
@@ -313,9 +286,8 @@ export function ControlsPanel(): JSX.Element {
         </p>
       </Show>
 
-      {/* resetBindings clears the buttons, the touch gesture, the wheel AND
-          the celestial void's look — every setting on this panel — so the
-          tooltip promises exactly that. */}
+      {
+}
       <button
         type="button"
         class="controls-reset"

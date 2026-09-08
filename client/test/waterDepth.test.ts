@@ -24,10 +24,6 @@ import {
   writeWaterCurveTexels,
 } from '../src/terrain/waterDepth.ts';
 
-/** 64 cells = 4×4 chunks: matches test/mirror.test.ts's own convention. */
-// Four chunks to a side, whatever a chunk is sampled at — the 2026-08-21
-// re-sample moved the cell figure and left the geometry this suite asserts on
-// exactly where it was.
 const WORLD = CHUNK_SIZE * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
@@ -46,20 +42,12 @@ describe('waterDepthWorldUnits', () => {
   });
 
   it('reaches the full world-unit depth at MIN_HEIGHT', () => {
-    // MIN_HEIGHT is the world's floor (the bottom of the Deep Strata lava
-    // band) — the deepest a water column can ever be asked to render.
     expect(waterDepthWorldUnits(MIN_HEIGHT)).toBeGreaterThan(
       WATER_DEPTH_SATURATION_WORLD_UNITS,
     );
   });
 
   it('reaches exactly WATER_DEPTH_FLOOR_WORLD_UNITS at MIN_HEIGHT (2026-08-20 amendment)', () => {
-    // waterDepth.ts's own deep-strata alpha ramp uses this exact equality
-    // (both are `(SEA_COLUMN_BANDS + DEEP_STRATA_BANDS) * BAND_HEIGHT *
-    // HEIGHT_WORLD_SCALE`, derived independently — MIN_HEIGHT from shared's
-    // constants.ts, WATER_DEPTH_FLOOR_WORLD_UNITS from waterDepth.ts's own
-    // copy of the same strata-stack constants) to know when the deep-strata
-    // ramp has reached its own floor and should stop, not just approach it.
     expect(waterDepthWorldUnits(MIN_HEIGHT)).toBe(WATER_DEPTH_FLOOR_WORLD_UNITS);
   });
 });
@@ -80,22 +68,7 @@ describe('depthToWaterAlpha', () => {
     );
   });
 
-  // AMENDMENT (2026-08-20): "does not climb past WATER_MAX_ALPHA beyond the
-  // saturation depth" and "is monotonically non-decreasing ... past
-  // saturation" — the two tests that stood here — pinned the PRE-fix shape
-  // (flat forever past the sea-column floor). That flatness is exactly the
-  // second half of the milky-water bug this session fixes (see
-  // waterDepth.ts's WATER_DEEP_STRATA_ALPHA comment): capped-but-flat alpha
-  // over seven bands of near-black crust still reads as one smooth dark
-  // sheet. Replaced below with tests pinning the new three-segment shape:
-  // rises to the cap, then descends again past it, never re-climbing.
-
   it('descends from WATER_MAX_ALPHA back down to WATER_DEEP_STRATA_ALPHA past the saturation depth', () => {
-    // The load-bearing behaviour, now the OPPOSITE of the pre-2026-08-20
-    // shape: a lava-floor dig (MIN_HEIGHT) must read as THINNER water than
-    // the ordinary sea floor directly above it, not the same or thicker —
-    // that is what lets the crust's own colour and the lava glow read
-    // through (see the module comment).
     const atSaturation = depthToWaterAlpha(WATER_DEPTH_SATURATION_WORLD_UNITS);
     const atFloor = depthToWaterAlpha(waterDepthWorldUnits(MIN_HEIGHT));
     expect(atSaturation).toBe(WATER_MAX_ALPHA);
@@ -104,9 +77,6 @@ describe('depthToWaterAlpha', () => {
   });
 
   it('holds flat at WATER_DEEP_STRATA_ALPHA for any depth at or beyond the world floor', () => {
-    // MIN_HEIGHT IS the floor in practice, but the function stays total and
-    // does not extrapolate past the sign change for a hypothetically deeper
-    // input (defensive, see the function's own doc comment).
     expect(depthToWaterAlpha(WATER_DEPTH_FLOOR_WORLD_UNITS)).toBe(WATER_DEEP_STRATA_ALPHA);
     expect(depthToWaterAlpha(WATER_DEPTH_FLOOR_WORLD_UNITS * 2)).toBe(WATER_DEEP_STRATA_ALPHA);
   });
@@ -134,10 +104,6 @@ describe('depthToWaterAlpha', () => {
   });
 
   it('the ceiling sits below the pre-fix flat opacity (0.62) it replaces', () => {
-    // Regression pin for the actual bug: the old constant already rendered
-    // fully opaque over the Deep Strata lava band (see water.ts's header), so
-    // a ceiling that only matched it would leave the deep end exactly as
-    // broken. It must be strictly lower.
     expect(WATER_MAX_ALPHA).toBeLessThan(0.62);
   });
 
@@ -147,10 +113,6 @@ describe('depthToWaterAlpha', () => {
   });
 
   it('WATER_DEEP_STRATA_ALPHA sits strictly between WATER_MIN_ALPHA and WATER_MAX_ALPHA', () => {
-    // Per its own comment: below the sea-column plateau (so the crust reads
-    // as thinner-watered than an ordinary deep trench) but above the
-    // waterline value (so the deepest dig still unambiguously reads as
-    // underwater, not a dry pit).
     expect(WATER_DEEP_STRATA_ALPHA).toBeGreaterThan(WATER_MIN_ALPHA);
     expect(WATER_DEEP_STRATA_ALPHA).toBeLessThan(WATER_MAX_ALPHA);
   });
@@ -164,14 +126,6 @@ describe('depthToSpecularFactor', () => {
   it('clamps negative depth to 1 (defensive, not an expected input)', () => {
     expect(depthToSpecularFactor(-5)).toBe(1);
   });
-
-  // REGRESSION (2026-08-20, same-day owner report): the first shipped curve
-  // ramped from depth 0, so it reached WATER_SPECULAR_FLOOR already AT
-  // WATER_DEPTH_SATURATION_WORLD_UNITS — meaning ordinary shallow/mid-depth
-  // sea (every depth in the normal sea column) lost sun-sheen too, not just
-  // the Deep Strata tail. The two tests below replace the ones that pinned
-  // that wrong shape; see waterDepth.ts's "SPECULAR SUPPRESSION"/CORRECTION
-  // comments for the full account.
 
   it('is exactly 1 (byte-identical to pre-fix) for every depth up to and including the sea-column floor', () => {
     const samples = [
@@ -189,7 +143,6 @@ describe('depthToSpecularFactor', () => {
       WATER_SPECULAR_FLOOR,
       10,
     );
-    // And explicitly NOT at the sea-column floor — the exact regression.
     expect(depthToSpecularFactor(WATER_DEPTH_SATURATION_WORLD_UNITS)).not.toBeCloseTo(
       WATER_SPECULAR_FLOOR,
       2,
@@ -197,11 +150,6 @@ describe('depthToSpecularFactor', () => {
   });
 
   it('holds at WATER_SPECULAR_FLOOR for every depth beyond the world floor', () => {
-    // The property depthToWaterAlpha's own curve cannot offer past its cap
-    // (see waterDepth.ts's "SPECULAR SUPPRESSION" comment): this curve never
-    // climbs back up once past the world floor — the crater floor must not
-    // read as MORE sheen-suppressed than a spot just inside the seabed and
-    // less than one just past it; it must read the SAME, fully suppressed.
     expect(depthToSpecularFactor(waterDepthWorldUnits(MIN_HEIGHT))).toBe(WATER_SPECULAR_FLOOR);
     expect(depthToSpecularFactor(WATER_DEPTH_FLOOR_WORLD_UNITS * 2)).toBe(WATER_SPECULAR_FLOOR);
   });
@@ -250,8 +198,6 @@ describe('depthAlphaByte / WATER_DEPTH_ALPHA_DEFAULT_BYTE', () => {
   });
 });
 
-// The packed-texel index of cell (x, y), channel `channel` — the layout
-// render/water.ts uploads as one RGBA DataTexture (2026-09-01, issue #259).
 function texel(x: number, y: number, channel: number): number {
   return (y * WORLD + x) * WATER_CURVE_BYTES_PER_TEXEL + channel;
 }
@@ -259,32 +205,21 @@ function texel(x: number, y: number, channel: number): number {
 describe('writeWaterCurveTexels', () => {
   it('writes only the cells inside the given dirty chunks', () => {
     const mirror = createTerrainMirror(WORLD);
-    // Chunk (1,0): flat at MIN_HEIGHT — the deepest possible dig.
-    // Chunk (0,0) is left untouched (default height 0, i.e. the waterline).
     applySnapshot(mirror, {
       type: 'snapshot',
       worldSize: WORLD,
       chunks: [chunkPayload(1, 0, MIN_HEIGHT)],
     });
 
-    const SENTINEL = 77; // recognisably not any real depth-alpha byte
+    const SENTINEL = 77;
     const out = new Uint8Array(WORLD * WORLD * WATER_CURVE_BYTES_PER_TEXEL).fill(SENTINEL);
-    writeWaterCurveTexels(out, WORLD, mirror, [/* chunk (1,0) */ 1]);
+    writeWaterCurveTexels(out, WORLD, mirror, [ 1]);
 
-    // AMENDMENT (2026-08-20): MIN_HEIGHT is now the FAR end of the deep-
-    // strata ramp (see depthToWaterAlpha), so the cell reads
-    // WATER_DEEP_STRATA_ALPHA, not the WATER_MAX_ALPHA plateau a
-    // pre-Deep-Strata-fix dig would have hit — the old assertion here
-    // (`maxAlphaByte`) pinned the exact flat-ceiling behaviour this session
-    // fixed.
     const deepStrataAlphaByte = Math.round(WATER_DEEP_STRATA_ALPHA * 255);
-    // Inside the dirty chunk (cells CHUNK_SIZE..2*CHUNK_SIZE-1 on x): the
-    // lava-floor depth is past the plateau and rides the deep-strata floor.
     expect(out[texel(CHUNK_SIZE, 0, WATER_CURVE_ALPHA_CHANNEL)]).toBe(deepStrataAlphaByte);
     expect(
       out[texel(2 * CHUNK_SIZE - 1, CHUNK_SIZE - 1, WATER_CURVE_ALPHA_CHANNEL)],
     ).toBe(deepStrataAlphaByte);
-    // Outside the dirty set entirely: untouched.
     expect(out[texel(0, 0, WATER_CURVE_ALPHA_CHANNEL)]).toBe(SENTINEL);
     expect(out[texel(WORLD - 1, WORLD - 1, WATER_CURVE_ALPHA_CHANNEL)]).toBe(SENTINEL);
   });
@@ -299,33 +234,17 @@ describe('writeWaterCurveTexels', () => {
 
     const SENTINEL = 77;
     const out = new Uint8Array(WORLD * WORLD * WATER_CURVE_BYTES_PER_TEXEL).fill(SENTINEL);
-    writeWaterCurveTexels(out, WORLD, mirror, [/* chunk (1,0) */ 1]);
+    writeWaterCurveTexels(out, WORLD, mirror, [ 1]);
 
     const floorSpecularByte = Math.round(WATER_SPECULAR_FLOOR * 255);
     expect(out[texel(CHUNK_SIZE, 0, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(floorSpecularByte);
     expect(
       out[texel(2 * CHUNK_SIZE - 1, CHUNK_SIZE - 1, WATER_CURVE_SPECULAR_CHANNEL)],
     ).toBe(floorSpecularByte);
-    // Outside the dirty set entirely: untouched, same contract as the alpha
-    // channel.
     expect(out[texel(0, 0, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(SENTINEL);
     expect(out[texel(WORLD - 1, WORLD - 1, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(SENTINEL);
   });
 
-  // ADDED (2026-08-20, east-coast investigation): render/water.ts's real
-  // buffer is never sentinel-filled — createWaterCurveBuffer fills a fresh
-  // allocation with each channel's DEFAULT byte (see waterDepth.ts's
-  // WATER_DEPTH_ALPHA_DEFAULT_BYTE, WATER_SPECULAR_FACTOR_DEFAULT_BYTE), and
-  // every subsequent `refresh` only patches the dirty chunks a snapshot or
-  // edit actually touched — exactly water.ts's own refresh() contract
-  // (Water interface doc comment). A cell in a chunk that has NEVER been
-  // revealed to this client (open ocean far from any player's explored
-  // footprint, most of a fresh world) therefore keeps the default byte
-  // forever, not a leftover sentinel — this test pins that directly, using
-  // the SAME defaults the real factory uses, rather than an arbitrary
-  // SENTINEL, so a future change to either default's value or to the
-  // "only touch dirty chunks" contract fails this test instead of only
-  // showing up as a rendering symptom.
   it('a never-written texel keeps the real default byte after a partial refresh, in every channel', () => {
     const mirror = createTerrainMirror(WORLD);
     applySnapshot(mirror, {
@@ -334,14 +253,9 @@ describe('writeWaterCurveTexels', () => {
       chunks: [chunkPayload(1, 0, MIN_HEIGHT)],
     });
 
-    // The real factory render/water.ts's createCurveTexture calls.
     const out = createWaterCurveBuffer(WORLD);
-    writeWaterCurveTexels(out, WORLD, mirror, [/* only chunk (1,0) */ 1]);
+    writeWaterCurveTexels(out, WORLD, mirror, [ 1]);
 
-    // Chunk (2,0) — never in any dirty set, standing in for open ocean past
-    // the frontier of what any player has ever revealed: must still read as
-    // ordinary shallow water (alpha) and full sheen (specular), NOT as a
-    // hole (byte 0) or any other value.
     const untouchedX = 2 * CHUNK_SIZE;
     expect(out[texel(untouchedX, 0, WATER_CURVE_ALPHA_CHANNEL)]).toBe(
       WATER_DEPTH_ALPHA_DEFAULT_BYTE,

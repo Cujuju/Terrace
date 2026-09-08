@@ -1,16 +1,3 @@
-// The AIM BANNER — the second step of an admin action (owner, 2026-09-01).
-//
-// A card in the admin panel ARMS an action; this strip, in the top-centre
-// stack under the world header, says what
-// is armed and that the next ground press fires it there, with a Cancel. The
-// press itself is handled in main.tsx (the placement listener), which sends
-// the request and clears the arm; the receipt that comes back is shown here
-// for a few seconds, because the panel that would otherwise show it is
-// closed — that is the whole point of aiming outside it.
-//
-// SOLID REACTIVITY: every reactive value is read through its accessor at the
-// point of use — see Hud.tsx's header.
-
 import { Show, createEffect, createSignal, on, onCleanup, type JSX } from 'solid-js';
 import {
   armedAction,
@@ -20,12 +7,6 @@ import {
 } from '../state/worldsState.ts';
 import { refusalText } from './worldAdminCopy.ts';
 
-/**
- * How long a receipt stays up after an aimed action, in milliseconds. Long
- * enough to read a two-clause sentence ("slide 3 started at (240, 252): drop
- * 5, run 41 cells"), short enough that it is gone before the next aim — the
- * next arm clears it anyway.
- */
 const RECEIPT_VISIBLE_MS = 6000;
 
 type ActionReceipt = Extract<WorldFeedback, { kind: 'done' | 'refused' }>;
@@ -47,8 +28,6 @@ function receiptText(receipt: ActionReceipt): string {
 }
 
 export function AdminAim(): JSX.Element {
-  // The receipt on screen, if any; set when an actPlugin result arrives and
-  // cleared by the timer or the next arm.
   const [receipt, setReceipt] = createSignal<ActionReceipt | null>(null);
   let timer: ReturnType<typeof setTimeout> | null = null;
   const clearTimer = (): void => {

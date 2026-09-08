@@ -1,7 +1,3 @@
-// Plugin discovery + host behaviour. Discovery runs against real fixture
-// directories under test/fixtures, because the contract being tested IS the
-// filesystem convention.
-
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CHUNK_SIZE } from '@terrace/shared';
@@ -27,10 +23,6 @@ import {
 } from './support/harness.ts';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
-// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
-// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
-// four-chunk world is smaller ground than it was — which is fine here: every
-// assertion in this suite is about chunk mechanics, not about distances.)
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
@@ -38,7 +30,6 @@ describe('discoverPlugins', () => {
   it('loads server halves in deterministic alphabetical directory order', async () => {
     const loaded = await discoverPlugins(join(FIXTURES, 'plugins'));
 
-    // a-first, b-second, d-named-differently — c-client-only has no server half.
     expect(loaded.map((entry) => entry.directory)).toEqual([
       'a-first',
       'b-second',
@@ -56,10 +47,6 @@ describe('discoverPlugins', () => {
   });
 
   it('propagates a real I/O error instead of reporting it as "no plugins directory"', async () => {
-    // "not-a-directory" is a plain file, so readdir() fails with ENOTDIR, not
-    // ENOENT. Only ENOENT (directory genuinely absent) may resolve to [];
-    // any other error is a misconfiguration (e.g. EACCES on a bad mount) and
-    // must abort boot rather than silently come up with zero plugins.
     await expect(discoverPlugins(join(FIXTURES, 'not-a-directory'))).rejects.toThrow();
   });
 
@@ -165,11 +152,9 @@ describe('PluginHost', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     const sink = new RecordingSink();
     world.setSink(sink);
-    // A viewer who has personally earned the unlocked chunk, so the diff a
-    // plugin edit produces has someone to reach (per player since issue #280).
     world.addPlayer(PLAYER);
     grantTokenEveryUnlockedChunk(world, PLAYER.token);
-    sink.clear(); // the grant itself streams chunkUnlock; the messages under test start here
+    sink.clear();
     new PluginHost(world, [plugin].map(asLoadedPlugin)).worldCreate();
 
     expect(api).toBeDefined();
@@ -177,7 +162,6 @@ describe('PluginHost', () => {
 
     expect(api.worldSize).toBe(WORLD_SIZE);
     expect(api.isCellUnlocked(0, 0)).toBe(true);
-    // A cell in chunk (2,2), locked at any sampling density.
     expect(api.isCellUnlocked(CHUNK_SIZE * 2, CHUNK_SIZE * 2)).toBe(false);
 
     api.sculpt(4, 4, 1, 64);
@@ -185,7 +169,7 @@ describe('PluginHost', () => {
     expect(sink.ofType('terrainDiff')).toHaveLength(1);
 
     expect(api.unlockChunk(1, 1)).toBe(true);
-    expect(api.unlockChunk(1, 1)).toBe(false); // idempotent, no second stream
+    expect(api.unlockChunk(1, 1)).toBe(false);
     expect(sink.ofType('chunkUnlock')).toHaveLength(1);
 
     api.broadcast('ready', { ok: true });
@@ -196,13 +180,6 @@ describe('PluginHost', () => {
     expect(targeted).toHaveLength(1);
     expect(targeted[0].target).toBe(PLAYER.id);
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Per-player unlock primitives (issue #17): unlockChunkForToken is the new
-  // WorldApi write; isChunkVisibleTo/isCellVisibleTo are the read primitives
-  // added for the planned fog-of-war follow-up (nothing calls them yet — see
-  // their doc comments in plugins/types.ts and world.ts).
-  // ──────────────────────────────────────────────────────────────────────────
 
   it('exposes unlockChunkForToken and the per-player visibility reads on WorldApi', () => {
     let api: WorldApi | undefined;
@@ -224,16 +201,15 @@ describe('PluginHost', () => {
 
     expect(api.isChunkVisibleTo(PLAYER.id, 2, 2)).toBe(false);
     expect(api.unlockChunkForToken(PLAYER.token, 2, 2)).toBe(true);
-    expect(api.unlockChunkForToken(PLAYER.token, 2, 2)).toBe(false); // idempotent per token
+    expect(api.unlockChunkForToken(PLAYER.token, 2, 2)).toBe(false);
 
     expect(api.isChunkVisibleTo(PLAYER.id, 2, 2)).toBe(true);
     expect(api.isCellVisibleTo(PLAYER.id, 2 * CHUNK_SIZE + 1, 2 * CHUNK_SIZE + 1)).toBe(true);
-    // Nobody connected under this id — the safe default is false, not a throw.
     expect(api.isChunkVisibleTo('no-such-player', 2, 2)).toBe(false);
 
     const targeted = sink.ofType('chunkUnlock');
     expect(targeted).toHaveLength(1);
-    expect(targeted[0].target).toBe(PLAYER.id); // sendTo, never a broadcast
+    expect(targeted[0].target).toBe(PLAYER.id);
   });
 
   it('forwards the sculptor token from a player edit to onTerrainChanged, and omits it for a plugin edit', () => {
@@ -250,23 +226,10 @@ describe('PluginHost', () => {
     host.worldCreate();
 
     host.notifyTerrainChanged([{ x: 1, y: 1, h: 64 }], PLAYER.token);
-    host.notifyTerrainChanged([{ x: 2, y: 2, h: 64 }]); // no sculptor — a plugin's own edit
+    host.notifyTerrainChanged([{ x: 2, y: 2, h: 64 }]);
 
     expect(seen).toEqual([PLAYER.token, undefined]);
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // onTerrainChanged / onPlayerJoin / onPlayerLeave get a WorldApi (issue #15).
-  //
-  // onWorldCreate/onTick/onIntent always carried one; these three did not, which
-  // forced every plugin that reacted to terrain or players (invite, reveal,
-  // flora, mana, monsters, relics, wildlife) to stash the WorldApi from
-  // onWorldCreate in a module-level variable, guard every use of it against
-  // "the hook fired before onWorldCreate", and reset that variable in a test
-  // seam that existed for no other reason. This is the CONTRACT test: one
-  // fixture plugin, asserting the API hooks in favor of the shared behaviour
-  // the host owes every plugin, not a per-plugin wiring check.
-  // ──────────────────────────────────────────────────────────────────────────
 
   it('hands onTerrainChanged, onPlayerJoin and onPlayerLeave a working WorldApi', () => {
     let worldCreateApi: WorldApi | undefined;
@@ -295,22 +258,14 @@ describe('PluginHost', () => {
     host.worldCreate();
     if (worldCreateApi === undefined) throw new Error('onWorldCreate was never called');
 
-    // Drives onTerrainChanged through the real edit path (the same one a
-    // player's own sculpt takes), rather than calling the host method directly
-    // — the contract under test is what a plugin's sculpt actually triggers.
     worldCreateApi.sculpt(4, 4, 1, 64);
     host.playerJoined(PLAYER);
     host.playerLeft(PLAYER);
 
     expect(seenApis).toHaveLength(3);
 
-    // Every hook gets the SAME per-plugin instance onWorldCreate/onTick/onIntent
-    // already receive — not a fresh proxy, not undefined.
     for (const api of seenApis) expect(api).toBe(worldCreateApi);
 
-    // And it is a WORKING WorldApi, not a stub: each one can read the world and
-    // reach `sculpt`/`broadcast` without the plugin stashing anything of its
-    // own — which is the whole point of the fix.
     for (const api of seenApis) {
       expect(api.worldSize).toBe(WORLD_SIZE);
       api.broadcast('ping', {});
@@ -318,14 +273,6 @@ describe('PluginHost', () => {
     expect(sink.ofType('terrain-and-player-hooks:ping')).toHaveLength(3);
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // WorldApi.difficulty (added 2026-08-14). Core's job is to PUBLISH the world's
-  // rating to plugins and nothing else — the mechanics belong to whoever reads
-  // it — so what core owes a test is exactly: the number reaches the plugin, it
-  // is the world's own, and it stays inside the documented band.
-  // ──────────────────────────────────────────────────────────────────────────
-
-  /** Boots one plugin on a world of the given difficulty and hands back its API. */
   function apiForDifficulty(difficulty?: number): WorldApi {
     let api: WorldApi | undefined;
     const plugin: TerracePlugin = {
@@ -344,13 +291,10 @@ describe('PluginHost', () => {
     expect(apiForDifficulty(MIN_WORLD_DIFFICULTY).difficulty).toBe(MIN_WORLD_DIFFICULTY);
     expect(apiForDifficulty(MAX_WORLD_DIFFICULTY).difficulty).toBe(MAX_WORLD_DIFFICULTY);
     expect(apiForDifficulty(37).difficulty).toBe(37);
-    // An unconfigured deployment: the plugin still sees a usable number.
     expect(apiForDifficulty().difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
   });
 
   it('never hands a plugin a difficulty outside the documented band', () => {
-    // The env path cannot produce these (loadConfig clamps first); this is the
-    // second layer, for every OTHER caller that builds a World directly.
     expect(apiForDifficulty(0).difficulty).toBe(MIN_WORLD_DIFFICULTY);
     expect(apiForDifficulty(10_000).difficulty).toBe(MAX_WORLD_DIFFICULTY);
     expect(apiForDifficulty(Number.NaN).difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
@@ -379,19 +323,8 @@ describe('PluginHost', () => {
     expect(() => api?.sculpt(4, 4, 1, 64)).not.toThrow();
     errors.mockRestore();
 
-    // The guard fired: the cascade ran exactly to the cap and stopped there,
-    // instead of recursing until the stack (or the tick) died.
     expect(depth).toBe(MAX_TERRAIN_CHANGE_DEPTH);
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // runIntent — the verdict phase. Issue #278: a plugin that allowed the
-  // ORIGINAL intent must also get to judge the EFFECTIVE one, or a later
-  // plugin's `modify` binds it to a stroke it never saw (mana approving
-  // radius 2, relics widening to 3, mana billed for 3 → overdraft). The
-  // chain re-asks only the plugins that did NOT modify, so an unconditional
-  // widener is never compounded and no plugin needs an idempotence rule.
-  // ──────────────────────────────────────────────────────────────────────────
 
   const INTENT: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 2, dir: 1 };
 
@@ -470,10 +403,6 @@ describe('PluginHost', () => {
   });
 
   it('treats a modify returned on the second look as a deny, and records it as a fault', () => {
-    // A plugin that allowed the original intent but rewrites the effective
-    // one has no third look coming — looping until the chain settles would
-    // hand plugins a way to never settle. The rewrite is refused, not
-    // applied, and the plugin is charged with a fault exactly like a throw.
     const flipFlop: TerracePlugin = {
       name: 'a-flipflop',
       onIntent(intent) {
@@ -497,24 +426,12 @@ describe('PluginHost', () => {
     expect(host.faultCount('a-flipflop')).toBe(1);
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // onIntentApplied — the effect phase of the two-phase intent pipeline
-  // (issue #19). PluginHost's own contract is narrow: notifyIntentApplied is a
-  // plain fan-out, handing every plugin a working WorldApi, the same shape
-  // runIntent (IntentCtx) uses. The GUARANTEE that it only ever gets called
-  // after every interceptor allowed lives one layer up, in the pipeline
-  // (server/test/intent-pipeline.test.ts covers that end to end) — this suite
-  // covers what PluginHost itself owes the call.
-  // ──────────────────────────────────────────────────────────────────────────
-
   it('hands onIntentApplied a working WorldApi and the same player/intent/diff it was given', () => {
     const seen: Array<{ intent: SculptIntent; playerId: string; diffLength: number }> = [];
     const fixture: TerracePlugin = {
       name: 'ledger',
       onIntentApplied(intent, ctx, diff): void {
         seen.push({ intent, playerId: ctx.player.id, diffLength: diff.length });
-        // A WORKING api, not a stub — reachable without the plugin stashing
-        // anything of its own, exactly like onTerrainChanged's contract.
         ctx.world.broadcast('ping', {});
       },
     };
@@ -553,13 +470,6 @@ describe('PluginHost', () => {
 
     expect(calls).toEqual(['a', 'b']);
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // onIntentDenied — the deny-side effect phase (2026-08-19, mana phantom-
-  // debit fix). Same narrow contract as notifyIntentApplied: a plain fan-out
-  // with a working WorldApi; WHEN it fires (only on interceptor deny or a
-  // failed plugin rewrite) is the pipeline's guarantee, covered there.
-  // ──────────────────────────────────────────────────────────────────────────
 
   it('hands onIntentDenied a working WorldApi and the same player/intent it was given', () => {
     const seen: Array<{ intent: SculptIntent; playerId: string }> = [];
@@ -625,18 +535,9 @@ describe('PluginHost', () => {
       host.restorePersistence({ kept: { n: 5 }, removed: { whatever: true } }),
     ).not.toThrow();
     expect(loaded).toEqual([{ n: 5 }]);
-    // Enveloped by the host on the way out — see plugins/slice-envelope.ts.
     expect(host.collectPersistence()).toEqual({ kept: { v: 1, data: { n: 1 } } });
   });
 });
-
-// ──────────────────────────────────────────────────────────────────────────
-// FOG OF WAR (issue #18): CONTRACT tests against a fixture plugin with
-// positioned entities, exercised entirely through the real WorldApi/
-// PluginHost path — no stub for the fan-out itself. Each migrated real
-// plugin (wildlife, monsters, flora, structures) gets its own suite proving
-// it calls through this same contract; this file proves the contract itself.
-// ──────────────────────────────────────────────────────────────────────────
 
 describe('WorldApi.broadcastVisible (issue #18)', () => {
   const PLAYER_A: Player = { id: 'session-a', token: 'token-a', name: 'A' };
@@ -652,7 +553,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
     return { x: item.x, y: item.y };
   }
 
-  /** Boots a fixture plugin (no positioned behaviour of its own) and hands back its WorldApi. */
   function bootFixture(): { world: World; sink: RecordingSink; api: WorldApi } {
     let api: WorldApi | undefined;
     const fixture: TerracePlugin = {
@@ -662,8 +562,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
       },
     };
 
-    // Nothing pre-unlocked: this suite unlocks exactly the chunks it needs,
-    // per token, through the real primitive under test.
     const world = worldWithUnlockedChunks(WORLD_SIZE, []);
     const sink = new RecordingSink();
     world.setSink(sink);
@@ -678,7 +576,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
   it('sends each connected player only the items visible to their own token', () => {
     const { sink, api } = bootFixture();
 
-    // Chunk (0,0) is cells [0,16)×[0,16) — A earns it, B earns nothing.
     expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
 
     const item: PositionedItem = { id: 1, x: 4, y: 4 };
@@ -688,10 +585,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
     const forA = messages.find((m) => m.target === PLAYER_A.id);
     const forB = messages.find((m) => m.target === PLAYER_B.id);
 
-    // FULL-STATE semantics (skipEmpty defaults false): BOTH connected
-    // players are sent a message, even B, whose subset is empty — that
-    // empty send is the disappearance mechanism (see the doc comment on
-    // WorldApi.broadcastVisible).
     expect(forA).toBeDefined();
     expect(forB).toBeDefined();
     expect((forA!.payload as { items: PositionedItem[] }).items).toEqual([item]);
@@ -709,9 +602,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
         .payload as { items: PositionedItem[] }).items,
     ).toEqual([]);
 
-    // B creeps into the SAME chunk. "On the next cycle" is simply calling
-    // broadcastVisible again — it re-reads every player's own mask live, so
-    // no separate join-style snapshot path is needed for this to work.
     sink.clear();
     expect(api.unlockChunkForToken(PLAYER_B.token, 0, 0)).toBe(true);
     api.broadcastVisible('positions', [item], positionOf, (visible) => ({ items: visible }));
@@ -734,8 +624,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
         .payload as { items: PositionedItem[] }).items,
     ).toEqual([inside]);
 
-    // The SAME entity moves into chunk (1,0) — the next chunk east, whatever
-    // a chunk is sampled at — which A has never unlocked for their own token.
     sink.clear();
     const moved: PositionedItem = { ...inside, x: CHUNK_SIZE + 4 };
     api.broadcastVisible('positions', [moved], positionOf, (visible) => ({ items: visible }));
@@ -743,9 +631,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
     const forAAfterMove = sink
       .ofType('positioned-fixture:positions')
       .find((m) => m.target === PLAYER_A.id);
-    // Still sent (full-state, skipEmpty false) — just empty. THIS is the
-    // disappearance: a client that replaces its whole list on every message
-    // sees the entity vanish because the next list simply omits it.
     expect(forAAfterMove).toBeDefined();
     expect((forAAfterMove!.payload as { items: PositionedItem[] }).items).toEqual([]);
   });
@@ -753,7 +638,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
   it('skips a recipient with nothing to say when skipEmpty is set, for a delta-shaped message', () => {
     const { sink, api } = bootFixture();
     expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
-    // PLAYER_B earns nothing.
 
     const item: PositionedItem = { id: 1, x: 4, y: 4 };
     api.broadcastVisible('delta', [item], positionOf, (visible) => ({ items: visible }), {
@@ -762,8 +646,6 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
 
     const messages = sink.ofType('positioned-fixture:delta');
     expect(messages.find((m) => m.target === PLAYER_A.id)).toBeDefined();
-    // B's subset is empty and skipEmpty is set: no message at all, not an
-    // empty one — the documented, safe choice for additive content.
     expect(messages.find((m) => m.target === PLAYER_B.id)).toBeUndefined();
   });
 
@@ -807,8 +689,6 @@ describe('TerracePlugin.onChunkUnlockedForToken (issue #18)', () => {
     if (api === undefined) throw new Error('onWorldCreate was never called');
 
     expect(api.unlockChunkForToken(PLAYER.token, 2, 3)).toBe(true);
-    // A repeat unlock of the SAME chunk for the SAME token is a no-op at the
-    // World layer (idempotent), and must not re-fire the hook.
     expect(api.unlockChunkForToken(PLAYER.token, 2, 3)).toBe(false);
 
     expect(seen).toEqual([{ token: PLAYER.token, cx: 2, cy: 3 }]);

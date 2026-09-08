@@ -1,48 +1,3 @@
-// The world as the lair survey needs to read it: flat typed arrays, kept in
-// step with the terrain instead of re-derived from it.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// WHY THIS FILE EXISTS (2026-08-26, measured).
-//
-// `surveyLairs` used to CLASSIFY while it walked: every cell it touched asked
-// `isLairCell` (a `worldSize` getter, an `isCellUnlocked` and a `heightAt`,
-// each through the plugin host's `bound()` indirection in
-// server/src/plugins/world-api.ts), and after the fit rules landed it asked
-// `isLairPose` once per kind on top — a centre probe plus
-// BODY_RIM_PROBE_COUNT rim probes, so about nineteen `isLairCell` calls per
-// habitat cell. On a 512² world that is a walk of ~100 ms PER SURVEY, not the
-// ~1 ms the old comment claimed, and `onTerrainChanged` asked for one on every
-// applied diff: a held sculpt brush (one intent every ~120 ms) had the server
-// event loop 72 % busy and pushed sculpt round-trips from <1 ms to a 50–70 ms
-// median.
-//
-// The classification is not what is expensive — the RE-classification is. A
-// sculpt moves a handful of cells; the answer for every other cell of the
-// world is exactly what it was a tick ago. So the answers are kept:
-//
-//   * `heights`   — one Int32 per cell, updated from the diff;
-//   * `unlocked`  — one byte per cell, the chunk mask flattened;
-//   * `habitat`   — one byte per cell per REGIME: the `isLairCell` answer;
-//   * `range`     — one byte per cell per FIT RULE: the same answer for that
-//                   rule's RANGE (its kind's own depth demand), aliasing
-//                   `habitat` for every kind that takes the habitat floor;
-//   * `fit`       — one byte per cell per FIT RULE: the `isLairPose` answer for
-//                   a body of that rule's radius centred on the cell, read off
-//                   that rule's `range` bytes.
-//
-// and a diff repairs only the cells it touched (plus, for the fit bitmaps, the
-// window of centres whose body reaches one of them). The survey then floods
-// over `habitat` and counts set bits in `fit`, with no WorldApi call per cell
-// at all.
-//
-// THE FIT BITMAP IS EXACT, NOT AN APPROXIMATION, and one identity is what
-// makes it so: `isLairPose` floors `centreX + ux * radiusCells` where the
-// centre is `x + CELL_CENTRE_OFFSET` and `x` is a whole cell, so
-// `floor(x + 0.5 + ux·r) === x + floor(0.5 + ux·r)`. The eight rim probes are
-// therefore a fixed pair of INTEGER cell offsets per rule, computed once — the
-// bitmap answers the same question the predicate does, cell for cell.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import type { CellDiff } from '@terrace/shared';
 import {
   BODY_RIM_PROBE_OFFSETS,
@@ -55,158 +10,50 @@ import {
   isHabitatHeight,
 } from './habitat.ts';
 
-/**
- * Set/clear values of every bitmap here. One byte per cell, not packed bits:
- * the survey reads these in its innermost loop, and a packed bit would trade a
- * megabyte for a shift and a mask on every read.
- *
- * `HABITAT_BIT_SET` is exported because habitat.ts's flood fill reads the same
- * arrays and must test them against the same value; nothing outside this file
- * WRITES one, so its partner stays local.
- */
 export const HABITAT_BIT_SET = 1;
 const HABITAT_BIT_CLEAR = 0;
 
-/**
- * Last generation `noteTerrainChangedInIndex` may stamp before it resets its
- * scratch. Uint32's ceiling: one generation is spent per fit rule per applied
- * diff, so at four rules and a sculpt every 120 ms this is reached after about
- * forty years of continuous sculpting — the reset exists so that the answer is
- * still right if it ever is, not because it is expected.
- */
 const MAX_REPAIR_GENERATION = 0xffffffff;
 
-/**
- * How much of the board the survey's dirty list may cover before repairing it
- * cell-by-cell stops being cheaper than re-flooding the whole thing.
- *
- * DERIVED, NOT PICKED. A whole-board survey pays about
- * FULL_SURVEY_PASSES_PER_CELL whole-board passes before any flooding — the
- * `fill(UNLABELLED)` and the row-major seed scan — while a repair pays about
- * REPAIR_TOUCHES_PER_DIRTY_CELL touches per listed cell (the cell and its four
- * neighbours) before it floods anything. So the repair can only win while
- *
- *     dirty × REPAIR_TOUCHES_PER_DIRTY_CELL < cells × FULL_SURVEY_PASSES_PER_CELL
- *
- * which is the fraction below. A sculpt diff is tens of cells and an unlocked
- * chunk is CHUNK_SIZE² of them, so the cap is reached only by something
- * board-scale — which is exactly the case a full re-flood should serve.
- */
 const FULL_SURVEY_PASSES_PER_CELL = 2;
 const REPAIR_TOUCHES_PER_DIRTY_CELL = 5;
 
-/**
- * The dirty-list length past which `surveyLairs` re-floods instead of repairing.
- * Writers stop appending one past it, so the list never outgrows its own cap.
- */
 export function repairableDirtyCellCap(cellCount: number): number {
   return Math.floor((cellCount * FULL_SURVEY_PASSES_PER_CELL) / REPAIR_TOUCHES_PER_DIRTY_CELL);
 }
 
-/** One rule's rim probes, as the whole-cell offsets the identity above gives. */
 export interface FitProbe {
-  /** Cell offsets of the rim samples; empty for a rule with no body width. */
   readonly offsets: readonly (readonly [number, number])[];
-  /** Chebyshev reach of those offsets — the fit window a changed cell dirties. */
   readonly windowCells: number;
 }
 
-/** Everything the index holds about ONE habitat regime. */
 export interface RegimeIndex {
   readonly regime: HabitatRegime;
   readonly rules: readonly LairFitRule[];
   readonly probes: readonly FitProbe[];
-  /** The `isLairCell` answer per cell, for the habitat FLOOR. */
   readonly habitat: Uint8Array;
-  /**
-   * The `isLairCell` answer per cell for each rule's RANGE, index-aligned with
-   * `rules` (2026-09-02).
-   *
-   * A rule whose `minReachBands` is the habitat's own threshold — Cthulhu, the
-   * yeti — gets the `habitat` array ITSELF here, not a copy: `habitatRangeOf`
-   * returns the regime object unchanged in that case, so the alias is provable
-   * rather than assumed, and those kinds' fit bitmaps are computed from exactly
-   * the bytes they were computed from before ranges existed.
-   */
   readonly range: readonly Uint8Array[];
-  /**
-   * The DISTINCT range bitmaps that are not the habitat array — what the two
-   * repair paths must recompute after `habitat` and before `fit`.
-   *
-   * Deduped by range object identity (`habitatRangeOf` caches), so two kinds
-   * demanding the same depth share one array and one repair pass; empty for a
-   * regime whose every kind takes the habitat floor, which is why the land
-   * regime pays nothing for the kraken's confinement.
-   */
   readonly derivedRanges: readonly { readonly regime: HabitatRegime; readonly bits: Uint8Array }[];
-  /** The `isLairPose` answer per cell, one array per rule (index-aligned). */
   readonly fit: readonly Uint8Array[];
-  /**
-   * Cells whose height or habitat bit has moved since the lair survey last read
-   * this regime — the survey's repair list, drained by `surveyLairs`.
-   *
-   * PER REGIME AND NOT PER INDEX, because the two regimes are surveyed
-   * independently and one may be gated out (summoning.ts) for many ticks while
-   * the other keeps up: a shared list would be emptied by whichever regime ran
-   * first and the other would repair against nothing.
-   *
-   * Writers stop appending once the list is longer than
-   * `repairableDirtyCellCap`, which the survey reads as "re-flood whole".
-   */
   readonly dirtyCells: number[];
 }
 
-/** The maintained world view a survey reads. */
 export interface HabitatIndex {
   readonly size: number;
-  /**
-   * Cell heights.
-   *
-   * Int32 and not Int16 even though MAX_HEIGHT fits in sixteen bits: heights
-   * are the one field a diff writes straight through from `CellDiff.h`, and a
-   * silent wrap on a future taller world would corrupt the habitat answer
-   * rather than fail. One extra megabyte on a 512² world buys that.
-   */
   readonly heights: Int32Array;
   readonly unlocked: Uint8Array;
   readonly regimes: ReadonlyMap<HabitatRegimeId, RegimeIndex>;
-  /**
-   * Scratch for `noteTerrainChangedInIndex`: the generation each centre cell
-   * was last recomputed at, so one diff recomputes each centre ONCE.
-   *
-   * A STAMP AND NOT A CLEARED FLAG ARRAY, because clearing is the cost being
-   * avoided — a `fill(0)` per rule per diff is a whole-board write for a few
-   * hundred dirty centres. Uint32 with a wrap-around reset (see
-   * MAX_REPAIR_GENERATION) rather than a Set: the inner test is a typed-array
-   * read against an integer, which is what the window loop can afford.
-   */
   readonly repairStamp: Uint32Array;
-  /**
-   * The unlock mask as this index last saw it: one byte per CHUNK, row-major
-   * over `chunksPerEdge²`, or null for a world that cannot report one (a
-   * hand-built test world).
-   *
-   * A MASK AND NOT A COUNT (2026-09-01). It used to be the count of unlocked
-   * chunks, and any change in it threw the whole index away and rebuilt it —
-   * 127-221 ms for ONE newly-opened chunk, and the reveal plugin opens a chunk
-   * for every sculpt that touches locked ground, so a frontier stroke paid it
-   * every time. The mask says WHICH chunks moved, which is what turns the
-   * rebuild into a diff (`applyNewlyUnlockedChunks`).
-   */
   readonly unlockedChunks: Uint8Array | null;
-  /** Chunks per world edge for `unlockedChunks`; 0 when there is no mask. */
   readonly chunksPerEdge: number;
 }
 
-/** One regime and the fit rules the caller wants counted in it. */
 export interface HabitatIndexSpec {
   readonly regime: HabitatRegime;
   readonly fitRules: readonly LairFitRule[];
 }
 
 function fitProbeFor(rule: LairFitRule): FitProbe {
-  // `isLairPose` with a radius of zero degenerates to the centre test, and so
-  // does a probe list with no offsets — the same degeneracy, spelled once.
   if (rule.radiusCells <= 0) return { offsets: [], windowCells: 0 };
 
   const offsets = BODY_RIM_PROBE_OFFSETS.map(
@@ -223,24 +70,6 @@ function fitProbeFor(rule: LairFitRule): FitProbe {
   return { offsets, windowCells };
 }
 
-/**
- * The world's unlock mask, one byte per chunk, or null for a world that cannot
- * report one (a hand-built test world, which has no chunk grid).
- *
- * A MASK AND NOT A COUNT (2026-09-01; it was `unlockGenerationOf`). The count
- * was a sound CHANGE DETECTOR — unlocking is monotonic within one world's life,
- * so the count only ever rises — but it is not a change DESCRIPTION, and the
- * only repair a description-less change admits is a full rebuild. Keeping the
- * bytes costs `chunksPerEdge²` of them (16 KB at 2048² with 16-cell chunks) and
- * tells `syncedHabitatIndex` exactly which chunks to repair.
- *
- * STILL NOT A HOOK, for the reason the count was not: the plugin contract's
- * only unlock hook (`onChunkUnlockedForToken`) fires for per-token reveals and
- * NEVER for `WorldApi.unlockChunk`'s world-wide unlock (server/src/plugins/
- * host.ts), so a plugin that trusted it would miss half the ways
- * `isCellUnlocked` can change — and habitat is defined against the union mask,
- * which both paths grow.
- */
 function readUnlockedChunks(world: LairWorld): Uint8Array | null {
   const perEdge = world.chunksPerEdge;
   const isChunkUnlocked = world.isChunkUnlocked;
@@ -256,18 +85,6 @@ function readUnlockedChunks(world: LairWorld): Uint8Array | null {
   return mask;
 }
 
-/**
- * `isLairCell`'s answer for one cell of an index, from the arrays alone.
- *
- * ONE DEFINITION, because both writers of the habitat bitmap — the full build
- * and the per-diff repair — have to agree with each other AND with
- * habitat.ts's predicate. Two copies of this expression is two chances for the
- * repair to drift from the build, and the drift would only ever show up as a
- * survey reporting a region that is not there.
- *
- * The bounds check `isLairCell` opens with is the caller's job here: every
- * caller is already iterating in-bounds cell indices.
- */
 function habitatBitAt(
   regime: HabitatRegime,
   unlocked: Uint8Array,
@@ -278,15 +95,6 @@ function habitatBitAt(
   return isHabitatHeight(regime, heights[index]!) ? HABITAT_BIT_SET : HABITAT_BIT_CLEAR;
 }
 
-/**
- * Recomputes one rule's fit bit for one centre cell from that rule's RANGE bits
- * (which are the regime's habitat bits for a kind that takes the habitat floor).
- *
- * Returns whether the bit actually MOVED, which is what the lair survey's
- * repair list is built out of: the fit windows a diff dirties are far wider
- * than the answers inside them that change, and listing a cell whose answer is
- * the same as it was costs the survey a whole component re-flood for nothing.
- */
 function recomputeFitBit(
   size: number,
   range: Uint8Array,
@@ -318,14 +126,6 @@ function recomputeFitBit(
   return after !== before;
 }
 
-/**
- * Builds a whole index from the world, one WorldApi call per cell — the cost
- * the maintained bitmaps exist to pay ONCE rather than per survey.
- *
- * Paid on plugin init, on a world switch (a different `worldSize`), on a
- * snapshot restore, and when the unlock mask has moved. All four are
- * human-paced or once-per-process.
- */
 export function buildHabitatIndex(
   world: LairWorld,
   specs: readonly HabitatIndexSpec[],
@@ -350,10 +150,6 @@ export function buildHabitatIndex(
       habitat[index] = habitatBitAt(regime, unlocked, heights, index);
     }
 
-    // One bitmap per DISTINCT range, and the habitat array itself for the rules
-    // whose range is the habitat — see RegimeIndex.range on why the alias is
-    // provable. Keyed by the range object because `habitatRangeOf` caches, so
-    // two kinds asking the same depth are the same key.
     const rangeBits = new Map<HabitatRegime, Uint8Array>([[regime, habitat]]);
     const derivedRanges: { regime: HabitatRegime; bits: Uint8Array }[] = [];
     const range = fitRules.map((rule) => {
@@ -375,9 +171,6 @@ export function buildHabitatIndex(
       const ruleRange = range[rule]!;
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-          // Only range centres can fit anything, so the rim probes are read for
-          // the in-range cells alone — on a world that is mostly land the water
-          // pass never leaves the first branch.
           recomputeFitBit(size, ruleRange, bits, probe, x, y);
         }
       }
@@ -408,15 +201,6 @@ export function buildHabitatIndex(
   };
 }
 
-/**
- * Does this index answer the exact question the caller is about to ask — same
- * world size, same regime, same fit rules?
- *
- * The fit bitmaps are built AGAINST a rule list, so a survey handed a
- * different one must not read them. Compared by value rather than by identity
- * because `lairFitRulesInHabitat` is precomputed and a test may pass a
- * hand-written equivalent.
- */
 export function indexAnswers(
   index: HabitatIndex,
   world: LairWorld,
@@ -437,37 +221,10 @@ export function indexAnswers(
   return true;
 }
 
-// ── The maintained instance ──────────────────────────────────────────────────
-// One per process, matching every other piece of this plugin's module state.
-
 let live: HabitatIndex | null = null;
 
-/**
- * Monotonic stamp for `noteTerrainChangedInIndex`'s dirty-centre union. Lives
- * beside `live` rather than on it because it must keep rising across a rebuild:
- * a fresh index brings a zeroed `repairStamp`, and a counter that restarted at
- * zero with it would collide with stamps this one never wrote.
- */
 let repairGeneration = 0;
 
-/**
- * The maintained index, rebuilt only when it cannot be repaired in place: no
- * index yet, a different world size (a world switch), a fit-rule list this one
- * was not built against, or an unlock mask that moved BACKWARDS.
- *
- * A MOVED UNLOCK MASK IS NOW A REPAIR, NOT A REBUILD (2026-09-01, #267). It
- * used to be the fourth rebuild trigger, on a raw COUNT of unlocked chunks —
- * so one newly-opened chunk threw away 56 MB of exact answers and re-derived
- * every one of them: 223 ms measured on a synthetic 2048² board, and
- * plugins/reveal opens a chunk for every sculpt that touches locked ground, so
- * a player working the frontier paid it about once per stroke. The mask diff
- * names the chunks that opened and `applyNewlyUnlockedChunks` repairs exactly
- * those cells and the fit windows around them: 0.9 ms on the same board, and
- * the arrays it leaves are byte-for-byte what the rebuild produced.
- *
- * Called by the survey, so any surviving rebuild lands on the survey's cadence
- * and never inside a sculpt.
- */
 export function syncedHabitatIndex(
   world: LairWorld,
   specs: readonly HabitatIndexSpec[],
@@ -484,10 +241,7 @@ export function syncedHabitatIndex(
 
   const held = live!;
   const mask = readUnlockedChunks(world);
-  // Neither side has a mask (a hand-built world): nothing can have unlocked.
   if (mask === null && held.unlockedChunks === null) return held;
-  // The world gained or lost its chunk grid, or changed shape under us — the
-  // only honest answer is to read it all again.
   if (mask === null || held.unlockedChunks === null || mask.length !== held.unlockedChunks.length) {
     live = buildHabitatIndex(world, specs);
     return live;
@@ -498,10 +252,6 @@ export function syncedHabitatIndex(
     const now = mask[chunk]!;
     const before = held.unlockedChunks[chunk]!;
     if (now === before) continue;
-    // A chunk that RE-LOCKED. Unlocking is a one-way ratchet within a world's
-    // life (the one event that reverses it is a rollback, which replaces the
-    // world and drops this index outright), so this is a world we do not
-    // understand — rebuild rather than repair half of it.
     if (now !== HABITAT_BIT_SET) {
       live = buildHabitatIndex(world, specs);
       return live;
@@ -513,10 +263,6 @@ export function syncedHabitatIndex(
   return held;
 }
 
-/**
- * A fresh `repairStamp` generation, resetting the scratch on the one wrap that
- * Uint32 allows (see MAX_REPAIR_GENERATION).
- */
 function nextRepairGeneration(repairStamp: Uint32Array): number {
   if (repairGeneration >= MAX_REPAIR_GENERATION) {
     repairStamp.fill(0);
@@ -525,42 +271,10 @@ function nextRepairGeneration(repairStamp: Uint32Array): number {
   return ++repairGeneration;
 }
 
-/**
- * Records, for the lair survey's region repair, one cell of this regime whose
- * ANSWER moved — its height, its habitat bit, or its fit bit for some rule.
- *
- * THOSE THREE AND NOTHING ELSE, because they are exactly what a LairRegion is
- * derived from: which cells are in it (habitat bits), how far into the habitat
- * they reach (heights), and how many of them a body fits on (fit bits). A cell
- * inside a dirtied fit WINDOW whose bit did not actually move is not a repair —
- * listing it would cost the survey a whole component re-flood for an answer
- * that did not change.
- *
- * Appends one past `repairableDirtyCellCap` and no further, which the survey
- * reads as "this change is board-scale, re-flood whole". Duplicates are
- * allowed: a cell may move for two rules, and the repair is idempotent per
- * cell, so deduplicating here would cost more than it saves.
- */
 function markDirtyCell(regimeIndex: RegimeIndex, cellIndex: number, cap: number): void {
   if (regimeIndex.dirtyCells.length <= cap) regimeIndex.dirtyCells.push(cellIndex);
 }
 
-/**
- * Folds newly-unlocked chunks into the maintained index in place — the repair
- * that replaced "any change in the unlocked count rebuilds everything".
- *
- * THREE PASSES, IN THIS ORDER, and the order is the same correctness argument
- * `noteTerrainChangedInIndex` makes one cell at a time: every `unlocked` and
- * `heights` byte the unlock moves has to be settled before any habitat or range
- * bit is derived from it, and every range bit has to be settled before any fit
- * bit reads its rim. Interleaving them would recompute a fit window against a
- * rim that is about to change.
- *
- * COST is bounded by the opened chunks, not by the world: one chunk is
- * (size / chunksPerEdge)² cells for the first two passes, and that square grown
- * by the rule's probe reach for the third. The whole-index build it replaces
- * read every cell of the board through the host's `bound()` indirection.
- */
 function applyNewlyUnlockedChunks(
   index: HabitatIndex,
   world: LairWorld,
@@ -570,7 +284,6 @@ function applyNewlyUnlockedChunks(
   const { size, heights, unlocked, regimes, repairStamp } = index;
   const perEdge = index.chunksPerEdge;
   if (perEdge <= 0) return;
-  /** Cells per chunk edge, derived from this world rather than assumed. */
   const chunkCells = size / perEdge;
   const cap = repairableDirtyCellCap(size * size);
 
@@ -600,15 +313,9 @@ function applyNewlyUnlockedChunks(
         for (let x = x0; x < x0 + chunkCells; x++) {
           const cellIndex = row + x;
           habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
-          // The same pass for every range narrower than the habitat, because a
-          // fit bit reads its rule's RANGE bytes and they must be settled before
-          // the third pass reads them — the same ordering argument the habitat
-          // bits already made, one level down.
           for (const derived of derivedRanges) {
             derived.bits[cellIndex] = habitatBitAt(derived.regime, unlocked, heights, cellIndex);
           }
-          // Every cell of an opened chunk moved: it was locked, so it was not
-          // habitat, and its height was never read against the live world.
           markDirtyCell(regimeIndex, cellIndex, cap);
         }
       }
@@ -646,26 +353,6 @@ function applyNewlyUnlockedChunks(
   index.unlockedChunks?.set(mask);
 }
 
-/**
- * Repairs the maintained index for one applied terrain diff — the whole point
- * of the file, and the reason `onTerrainChanged` no longer costs a survey.
- *
- * TWO PASSES, and they cannot be one: a fit bit reads the range bits of its
- * rim, so every habitat and range bit the diff moves has to be settled before
- * any fit bit is recomputed. Doing both per cell would read a rim that is about
- * to change and leave the answer wrong until the next full rebuild.
- *
- * EACH DIRTY CENTRE IS RECOMPUTED ONCE (2026-08-26, measured). A diff is a
- * brush disc, and the fit windows of its ~37 cells overlap almost completely:
- * recomputing the window per diff cell profiled at 2.5 ms per applied sculpt —
- * the largest single thing this plugin did once the survey stopped being it,
- * and forty per cent of the whole server's busy time under a held brush. The
- * windows are unioned through `repairStamp` instead, which is the same set of
- * centres visited once each.
- *
- * A no-op when no index has been built yet: the first survey builds one from
- * the world as it is by then, which already includes this diff.
- */
 export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
   const index = live;
   if (index === null || diff.length === 0) return;
@@ -688,16 +375,9 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
       if (x < 0 || y < 0 || x >= size || y >= size) continue;
       const cellIndex = y * size + x;
       habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
-      // And every narrower range, in the same pass and for the same reason the
-      // passes are ordered at all: the fit loop below reads its rule's range
-      // bytes across a window, so all of them must be settled first. A sculpt
-      // that raises a trench floor out of the kraken's range but leaves it deep
-      // water moves THIS bit and not the habitat one.
       for (const derived of derivedRanges) {
         derived.bits[cellIndex] = habitatBitAt(derived.regime, unlocked, heights, cellIndex);
       }
-      // The height moved whether or not the habitat bit did, and a region's
-      // extreme cell and summonable count are both read off heights.
       markDirtyCell(regimeIndex, cellIndex, cap);
     }
   }
@@ -708,16 +388,12 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
       const bits = regimeIndex.fit[rule]!;
       const reach = probe.windowCells;
 
-      // A fresh stamp per rule, so one rule's visits never mask another's.
       const generation = nextRepairGeneration(repairStamp);
 
       for (const cell of diff) {
         const x = cell.x;
         const y = cell.y;
         if (x < 0 || y < 0 || x >= size || y >= size) continue;
-        // Every centre whose body could sample this cell — a Chebyshev square
-        // of the probe reach, which is a superset of the eight probe offsets
-        // and far cheaper to iterate than their exact inverse set.
         const minX = Math.max(0, x - reach);
         const maxX = Math.min(size - 1, x + reach);
         const minY = Math.max(0, y - reach);
@@ -737,7 +413,6 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
   }
 }
 
-/** Drops the maintained index (the plugin's reset seam). */
 export function releaseHabitatIndex(): void {
   live = null;
 }

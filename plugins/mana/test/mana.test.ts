@@ -1,7 +1,3 @@
-// mana, driven through the REAL intent pipeline and the REAL plugin host with
-// both shipped example plugins registered — no stubs for either. If the plugin
-// API cannot express a mana economy, these tests are what fails.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BAND_HEIGHT,
@@ -72,31 +68,12 @@ import {
   setManaPerk,
 } from '../server/index.ts';
 
-/**
- * A territory in which every chunk is already the player's, so the gate prices
- * the stroke alone. These cases are about the volume price; the unlock penalty
- * has its own coverage.
- */
 const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true };
 
-
-/** 64² cells = 4×4 chunks — small enough to reason about cell by cell. */
 const WORLD_SIZE = 64;
 
-/** The chunk every stroke in this suite lands in; cells (16..31, 16..31). */
 const HOME_CHUNK: readonly [number, number] = [1, 1];
 
-/**
- * EVERY chunk of the test world, unlocked.
- *
- * This suite is about what a sculpt COSTS, and since 2026-09-06 a sculpt near
- * a locked chunk also buys land (chunkUnlockPenalty). A world with one
- * unlocked chunk would put that surcharge on every stroke here — the reveal
- * reach is a whole chunk, so from the middle of HOME_CHUNK it reaches all
- * eight neighbours — and the volume prices these tests assert would all be
- * measured through it. Unlocking the world removes the surcharge from the
- * arithmetic entirely; the surcharge's own behaviour is reveal's suite.
- */
 const EVERY_CHUNK: ReadonlyArray<readonly [number, number]> = (() => {
   const edge = WORLD_SIZE / CHUNK_SIZE;
   const chunks: Array<readonly [number, number]> = [];
@@ -104,39 +81,21 @@ const EVERY_CHUNK: ReadonlyArray<readonly [number, number]> = (() => {
   return chunks;
 })();
 
-/** Well inside HOME_CHUNK, far enough from every border to spill nowhere. */
 const INTERIOR_CELL = { x: 24, y: 24 } as const;
 
-/** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
 
 const MILLISECONDS_PER_SECOND = 1000;
 
-/** Ticks between two heartbeat pushes to an unchanged pool. */
 const TICKS_PER_HEARTBEAT =
   MANA_BALANCE_HEARTBEAT_MS / MILLISECONDS_PER_SECOND / TICK_DT;
 
-/**
- * The difficulty every test in this file boots at unless it says otherwise.
- * MAX_WORLD_DIFFICULTY gives the whole-number anchor rate, so every "ticks to
- * earn one sculpt back" count stays an exact integer.
- */
 const SUITE_DIFFICULTY = MAX_WORLD_DIFFICULTY;
 
-/** The regen rate SUITE_DIFFICULTY produces. Exact, by the anchor above. */
 const SUITE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
 
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
-/**
- * The cheapest sculpt a PLAYER can make: the point brush — one world unit of
- * ground, moved one band. Most of this suite drains a pool one of these at a
- * time, so its price is named once here and never spelled as a literal.
- *
- * NOT shared's MIN_BRUSH_RADIUS since the 2026-08-21 re-sample: that is the
- * protocol's one-CELL floor, which no UI offers and which prices as rounding
- * (see the server's MANA_COST_PER_MIN_RADIUS_SCULPT).
- */
 const POINT_INTENT: SculptIntent = {
   type: 'sculpt',
   x: INTERIOR_CELL.x,
@@ -145,13 +104,10 @@ const POINT_INTENT: SculptIntent = {
   dir: 1,
 };
 
-/** Price of POINT_INTENT at the standard (unperked) rate. */
 const POINT_COST = MANA_COST_PER_MIN_RADIUS_SCULPT;
 
-/** Whole point stamps a full pool buys; the two do not divide evenly. */
 const POINT_STAMPS_PER_POOL = Math.floor(MANA_CAPACITY / POINT_COST);
 
-/** Part-drained gate fixture: five point stamps, far under the widest. */
 const GATE_FIXTURE_BALANCE = 5 * POINT_COST;
 
 interface Harness {
@@ -160,21 +116,6 @@ interface Harness {
   readonly sink: RecordingSink;
 }
 
-/**
- * Boots a world with both example plugins in their real load order (discovery
- * sorts directories alphabetically: mana, then reveal) and walks the same boot
- * sequence server/src/index.ts does.
- */
-/**
- * Seeds PLAYER's OWN mask with every chunk the test world unlocked, exactly as
- * a real join seeds the starter square (world/initial-unlock.ts's
- * applyInitialUnlockForToken) before anything else runs.
- *
- * It stopped being optional on 2026-09-06: mana now prices the chunks a stroke
- * would OPEN for its sculptor, so a token holding no mask at all would be
- * billed for buying the very ground the test world was set up to have already
- * given it.
- */
 function seedTerritory(world: World, token: string = PLAYER.token): void {
   const edge = world.chunksPerEdge;
   for (let cy = 0; cy < edge; cy++) {
@@ -187,7 +128,6 @@ function seedTerritory(world: World, token: string = PLAYER.token): void {
 function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   resetManaState();
   nextHelperDir = 1;
-  // reveal is stateless since issue #17 (2026-08-19) — no reset needed.
 
   const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, difficulty);
   const sink = new RecordingSink();
@@ -203,18 +143,6 @@ function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   return { world, host, sink };
 }
 
-/**
- * Direction for the next helper-sent stroke, ALTERNATING raise/lower per call
- * (reset in boot() so every test sees the same sequence). WHY (charge-follows-
- * effect, 2026-08-19): a stroke that moves nothing is free, so the old
- * raise-forever drain loops would saturate one cell at the anchor ceiling
- * (~64 raises from height 0) and then spin on free strokes instead of
- * draining. An up-down alternation always moves terrain, so every helper
- * stroke is charged — which is the property all of this file's balance
- * arithmetic actually relies on. Price is direction-independent, so no
- * assertion changes meaning. Tests that care about direction pass it
- * explicitly.
- */
 let nextHelperDir: 1 | -1 = 1;
 function helperDir(): 1 | -1 {
   const dir = nextHelperDir;
@@ -254,7 +182,6 @@ describe('mana plugin', () => {
     expect(pushed[0].payload).toEqual({
       balance: MANA_CAPACITY,
       capacity: MANA_CAPACITY,
-      // A RATE, not a price: the client prices its own intents with it.
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
@@ -270,10 +197,6 @@ describe('mana plugin', () => {
       expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - n * POINT_COST);
     }
 
-    // Not exactly zero since the 2026-08-21 re-sample: the pool is three of
-    // the widest hard stamps and no longer an exact multiple of a point stamp,
-    // so what is left over is less than one more stamp — which is what "cannot
-    // pay" means.
     expect(manaBalanceOf(PLAYER.id)).toBeLessThan(POINT_COST);
 
     const denied = sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
@@ -294,8 +217,6 @@ describe('mana plugin', () => {
 
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
 
-    // The veto happened in the interceptor chain, so core applied nothing and
-    // broadcast nothing — the deny is not a cosmetic rejection after the fact.
     expect(harness.world.heightAt(INTERIOR_CELL.x, INTERIOR_CELL.y)).toBe(heightBefore);
     expect(harness.sink.ofType('terrainDiff')).toHaveLength(0);
   });
@@ -311,9 +232,6 @@ describe('mana plugin', () => {
     const refusals = harness.sink.ofType('mana:denied');
     expect(refusals).toHaveLength(1);
     expect(refusals[0].target).toBe(PLAYER.id);
-    // The refusal names THE REFUSED INTENT'S price, not the rate.
-    // The balance is what the pool could not spend, not necessarily zero (the
-    // pool stopped being an exact multiple of a point stamp on 2026-08-21).
     expect(refusals[0].payload).toEqual({
       balance: MANA_CAPACITY - POINT_STAMPS_PER_POOL * POINT_COST,
       cost: POINT_COST,
@@ -324,7 +242,6 @@ describe('mana plugin', () => {
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
 
-    // Exactly enough simulated time to earn one sculpt back.
     const ticksToRefundOneSculpt = POINT_COST / (SUITE_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToRefundOneSculpt; n++) harness.host.tick(TICK_DT);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
@@ -349,18 +266,11 @@ describe('mana plugin', () => {
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     harness.sink.clear();
 
-    // Two ticks at 10 Hz earn 4 mana — 4 whole-unit steps, so at most 4
-    // messages, and certainly not one per tick per unchanged pool afterwards.
     harness.host.tick(TICK_DT);
     harness.host.tick(TICK_DT);
     const duringRegen = harness.sink.ofType('mana:balance').length;
     expect(duringRegen).toBeGreaterThan(0);
 
-    // Refill completely, then keep ticking: a capped pool drops to the
-    // HEARTBEAT — one push per MANA_BALANCE_HEARTBEAT_MS, not one per tick.
-    // The anti-spam property is the ratio, not silence: the client's gate is a
-    // strict lower bound on this balance, so a pool that goes permanently quiet
-    // strands it (see MANA_BALANCE_HEARTBEAT_MS and client/state.ts).
     for (let n = 0; n < 200; n++) harness.host.tick(TICK_DT);
     harness.sink.clear();
     const ticks = 50;
@@ -377,14 +287,6 @@ describe('mana plugin', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// The perk API: the seam another plugin (relics) extends this economy through.
-// Tested here at the contract level — what setManaPerk promises anyone who
-// calls it — rather than at the relics call site, which is covered by that
-// plugin's own suite.
-// ────────────────────────────────────────────────────────────────────────────
-
-/** A second connection, so perked and unperked players can be compared. */
 const OTHER_PLAYER: Player = { id: 'session-2', token: 'token-2', name: 'Control' };
 
 describe('mana perks', () => {
@@ -402,8 +304,6 @@ describe('mana perks', () => {
     return handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       player,
-      // Alternating direction — see helperDir(): a drain loop must never
-      // saturate the cell into free (zero-effect) strokes.
       {
         type: 'sculpt',
         x: INTERIOR_CELL.x,
@@ -424,9 +324,6 @@ describe('mana perks', () => {
   });
 
   it('scales the RATE, so a perk discounts every brush and not just one', () => {
-    // The perk multiplies mana-per-band-cell, which is what makes it composable
-    // with volume pricing: a half-cost holder pays half for the point brush AND
-    // half for the radius-4 plateau, rather than half for one size of sculpt.
     setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
     expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL * 0.5);
 
@@ -436,7 +333,6 @@ describe('mana perks', () => {
         expect(manaCostFor(PLAYER.id, intent)).toBe(
           sculptManaCost(MANA_PER_BAND_CELL * 0.5, radius, profile, 'stamp'),
         );
-        // Half price, to within the single rounding-up step.
         expect(manaCostFor(PLAYER.id, intent) * 2).toBeGreaterThanOrEqual(
           manaCostFor(OTHER_PLAYER.id, intent),
         );
@@ -452,7 +348,6 @@ describe('mana perks', () => {
     expect(sculptAs(PLAYER).applied).toBe(true);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - discounted);
 
-    // The unperked player in the same world still pays full price.
     expect(sculptAs(OTHER_PLAYER).applied).toBe(true);
     expect(manaBalanceOf(OTHER_PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
   });
@@ -465,8 +360,6 @@ describe('mana perks', () => {
     let plain = 0;
     while (sculptAs(OTHER_PLAYER).applied) plain++;
 
-    // Whole stamps a full pool affords — see POINT_STAMPS_PER_POOL on why the
-    // division no longer comes out even.
     expect(plain).toBe(POINT_STAMPS_PER_POOL);
     expect(perked).toBeGreaterThan(plain);
   });
@@ -474,7 +367,6 @@ describe('mana perks', () => {
   it('reports the perked price in the refusal it sends', () => {
     setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
     while (sculptAs(PLAYER).applied) {
-      /* drain */
     }
     harness.sink.clear();
 
@@ -489,10 +381,6 @@ describe('mana perks', () => {
   it('regenerates a perked player faster, and still caps at capacity', () => {
     setManaPerk(PLAYER.id, { regenMultiplier: 2 });
 
-    // Spend enough that a second of DOUBLED regen still fits under the cap —
-    // otherwise both players simply refill to capacity and the perk is
-    // invisible. Derived, not guessed: enough point stamps to leave more room
-    // than the perked player can earn in the second that follows, plus one.
     const sculptsToDrain = Math.ceil((SUITE_REGEN_PER_SECOND * 2) / POINT_COST) + 1;
     for (let n = 0; n < sculptsToDrain; n++) {
       sculptAs(PLAYER);
@@ -501,7 +389,6 @@ describe('mana perks', () => {
     const spent = sculptsToDrain * POINT_COST;
     expect(manaBalanceOf(PLAYER.id)).toBe(manaBalanceOf(OTHER_PLAYER.id));
 
-    // One second of simulated time.
     for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
 
     const perkedGain = (manaBalanceOf(PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
@@ -509,7 +396,6 @@ describe('mana perks', () => {
     expect(plainGain).toBe(SUITE_REGEN_PER_SECOND);
     expect(perkedGain).toBe(SUITE_REGEN_PER_SECOND * 2);
 
-    // Capacity is deliberately NOT scaled by the perk.
     for (let n = 0; n < 100; n++) harness.host.tick(TICK_DT);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
   });
@@ -528,7 +414,6 @@ describe('mana perks', () => {
     setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
     clearManaPerk(PLAYER.id);
     expect(manaCostFor(PLAYER.id, POINT_INTENT)).toBe(POINT_COST);
-    // Clearing a player who has no perk is a no-op, not an error.
     expect(() => clearManaPerk('never-seen')).not.toThrow();
   });
 
@@ -551,8 +436,6 @@ describe('mana perks', () => {
       regenMultiplier: MANA_PERK_MAX_MULTIPLIER,
     });
 
-    // The floor is what stops a zero multiplier from deleting the economy: a
-    // perked player is still charged, and can still run out.
     expect(manaCostFor(PLAYER.id, POINT_INTENT)).toBeGreaterThan(0);
     let sculpts = 0;
     while (sculptAs(PLAYER).applied) sculpts++;
@@ -565,8 +448,6 @@ describe('mana perks', () => {
   });
 
   it('degrades a non-numeric multiplier to neutral rather than to NaN', () => {
-    // A NaN balance compares false against every threshold, which would leave
-    // the player permanently unable to sculpt and unable to see why.
     setManaPerk(PLAYER.id, {
       costMultiplier: Number.NaN,
       regenMultiplier: 'fast' as unknown as number,
@@ -581,8 +462,6 @@ describe('mana perks', () => {
   });
 
   it('may be set before mana has ever seen the player', () => {
-    // relics can grant a perk from a message handler that runs before this
-    // plugin's lazily-created pool exists; the perk must survive that.
     const latecomer: Player = { id: 'session-3', token: 'token-3', name: 'Late' };
     setManaPerk(latecomer.id, { costMultiplier: 0.5 });
 
@@ -599,21 +478,11 @@ describe('mana perks', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// PER-WORLD REGEN RATE. The rate is deployment configuration (MANA_REGEN_PER_S)
-// over a difficulty-derived default, so the things worth pinning down are: an
-// unconfigured world still works, a configured one is obeyed WHATEVER the
-// difficulty says, and a MIS-configured one can neither freeze the economy nor
-// delete it.
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('mana regen configuration', () => {
   const originalEnv = process.env[MANA_REGEN_ENV];
 
   beforeEach(() => {
     delete process.env[MANA_REGEN_ENV];
-    // The resolver warns on every rejected/clamped value by design; silence it
-    // so a suite full of deliberately bad input is still readable.
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
@@ -628,7 +497,7 @@ describe('mana regen configuration', () => {
     expect(resolveManaRegenPerSecond(undefined, SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
     expect(resolveManaRegenPerSecond('', SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
     expect(resolveManaRegenPerSecond('   ', SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
-    expect(console.warn).not.toHaveBeenCalled(); // not configuring is not an error
+    expect(console.warn).not.toHaveBeenCalled();
 
     const harness = boot();
     expect(manaRegenPerSecond()).toBe(SUITE_REGEN_PER_SECOND);
@@ -646,7 +515,7 @@ describe('mana regen configuration', () => {
 
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
-    for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT); // one second
+    for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
     expect((manaBalanceOf(PLAYER.id) ?? 0) - afterSpend).toBe(configured);
   });
 
@@ -656,12 +525,9 @@ describe('mana regen configuration', () => {
     }
     expect(console.warn).toHaveBeenCalledTimes(7);
 
-    // End to end: a garbage value must leave a WORKING world, not a frozen one.
     process.env[MANA_REGEN_ENV] = 'twenty';
     const harness = boot();
     expect(manaRegenPerSecond()).toBe(SUITE_REGEN_PER_SECOND);
-    // Spend on the biggest brush, so a full second of regen fits in the hole it
-    // leaves rather than being clipped by the capacity cap.
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
     const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
     for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
@@ -671,7 +537,6 @@ describe('mana regen configuration', () => {
   it('clamps a rate outside the supported band into it', () => {
     expect(resolveManaRegenPerSecond('0.0001', SUITE_DIFFICULTY)).toBe(MIN_MANA_REGEN_PER_SECOND);
     expect(resolveManaRegenPerSecond('1e9', SUITE_DIFFICULTY)).toBe(MAX_MANA_REGEN_PER_SECOND);
-    // The band's own edges are configurable values, not rejected ones.
     expect(resolveManaRegenPerSecond(String(MIN_MANA_REGEN_PER_SECOND), SUITE_DIFFICULTY)).toBe(
       MIN_MANA_REGEN_PER_SECOND,
     );
@@ -679,18 +544,11 @@ describe('mana regen configuration', () => {
       MAX_MANA_REGEN_PER_SECOND,
     );
 
-    // Even at the floor the economy still moves: a drained player recovers a
-    // sculpt inside MAX_DRAINED_WAIT_S, which is what the floor is chosen for.
     process.env[MANA_REGEN_ENV] = '0.0001';
     const harness = boot();
     expect(manaRegenPerSecond()).toBe(MIN_MANA_REGEN_PER_SECOND);
     while (sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied) {
-      /* drain */
     }
-    // One tick of slack on top of the minute: the floor is
-    // MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S = 6/60 mana per
-    // second, and accumulating that in 0.1 s steps lands a hair under 6 in IEEE
-    // arithmetic. The claim under test is the wait, not the last ULP.
     for (let n = 0; n <= MAX_DRAINED_WAIT_S / TICK_DT; n++) harness.host.tick(TICK_DT);
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
   });
@@ -702,9 +560,8 @@ describe('mana regen configuration', () => {
     const harness = boot();
     setManaPerk(PLAYER.id, { regenMultiplier: 2 });
     expect(manaRegenFor(PLAYER.id)).toBe(configured * 2);
-    expect(manaRegenFor('never-seen')).toBe(configured); // no perk: world rate
+    expect(manaRegenFor('never-seen')).toBe(configured);
 
-    // The push a spend triggers carries this player's own rate, not the world's.
     harness.sink.clear();
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
@@ -713,15 +570,6 @@ describe('mana regen configuration', () => {
   });
 
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// DIFFICULTY-DERIVED REGEN (owner-settled 2026-08-14: "warm maps 200/s,
-// difficult maps 20/s"). Core publishes a neutral 1–100 scalar and attaches no
-// mechanic to it; mana's interpretation is the pace of the economy. What has to
-// hold: both anchors are exact, the middle is the documented interpolation, an
-// explicit MANA_REGEN_PER_S outranks the whole thing, and the supported band
-// still contains whichever source won.
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('difficulty-derived regen', () => {
   const originalEnv = process.env[MANA_REGEN_ENV];
@@ -737,7 +585,6 @@ describe('difficulty-derived regen', () => {
     else process.env[MANA_REGEN_ENV] = originalEnv;
   });
 
-  /** The rate the joining player was actually told, off the wire. */
   function pushedRegen(harness: Harness): number {
     const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
     expect(pushes.length).toBeGreaterThan(0);
@@ -747,9 +594,6 @@ describe('difficulty-derived regen', () => {
   it('anchors the scale where the owner set it, and names the anchors correctly', () => {
     expect(MANA_REGEN_AT_DIFFICULTY_1).toBe(300);
     expect(MANA_REGEN_AT_DIFFICULTY_100).toBe(30);
-    // The names claim these sit at difficulty 1 and 100. Assert that against
-    // CORE's band, so rescaling WORLD_DIFFICULTY cannot leave them misnamed —
-    // the same plugin-side relation check wildlife uses for the seabed depth.
     expect(MIN_WORLD_DIFFICULTY).toBe(1);
     expect(MAX_WORLD_DIFFICULTY).toBe(100);
   });
@@ -767,8 +611,6 @@ describe('difficulty-derived regen', () => {
   });
 
   it('gives the default world the documented midpoint, ≈166.4/s', () => {
-    // The formula stated independently of the implementation:
-    //   regen(d) = 300 + (d − 1)/(100 − 1) × (30 − 300)
     const expected =
       MANA_REGEN_AT_DIFFICULTY_1 +
       ((DEFAULT_WORLD_DIFFICULTY - MIN_WORLD_DIFFICULTY) /
@@ -778,7 +620,6 @@ describe('difficulty-derived regen', () => {
     const harness = boot(DEFAULT_WORLD_DIFFICULTY);
     expect(manaRegenPerSecond()).toBe(expected);
     expect(pushedRegen(harness)).toBe(expected);
-    // The number the comments and .env.example quote to self-hosters.
     expect(expected).toBeCloseTo(166.364, 3);
   });
 
@@ -786,12 +627,9 @@ describe('difficulty-derived regen', () => {
     let previous = Number.POSITIVE_INFINITY;
     for (let difficulty = MIN_WORLD_DIFFICULTY; difficulty <= MAX_WORLD_DIFFICULTY; difficulty++) {
       const rate = manaRegenForDifficulty(difficulty);
-      // Harder is never faster, and every rate lies between the two anchors...
       expect(rate).toBeLessThan(previous);
       expect(rate).toBeLessThanOrEqual(MANA_REGEN_AT_DIFFICULTY_1);
       expect(rate).toBeGreaterThanOrEqual(MANA_REGEN_AT_DIFFICULTY_100);
-      // ...and inside the band the economy is documented to work at, so the
-      // derivation never needs the clamp to save it.
       expect(rate).toBeGreaterThanOrEqual(MIN_MANA_REGEN_PER_SECOND);
       expect(rate).toBeLessThanOrEqual(MAX_MANA_REGEN_PER_SECOND);
       previous = rate;
@@ -799,12 +637,8 @@ describe('difficulty-derived regen', () => {
   });
 
   it('lets a warm world actually outspend a punishing one', () => {
-    // Not just a number on the wire: the same second of simulated time buys ten
-    // times as much sculpting at difficulty 1 as at difficulty 100.
     function earnedInOneSecond(difficulty: number): number {
       const harness = boot(difficulty);
-      // Twice, so the hole left in the pool is deeper than a second of the
-      // FASTEST anchor — otherwise capacity, not the rate, decides the answer.
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
       const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
@@ -817,8 +651,6 @@ describe('difficulty-derived regen', () => {
   });
 
   it('lets an EXPLICIT MANA_REGEN_PER_S beat the difficulty, in both directions', () => {
-    // A host who writes a number means that number: the world dial supplies the
-    // default and nothing more.
     const configured = 7;
     process.env[MANA_REGEN_ENV] = String(configured);
 
@@ -828,15 +660,12 @@ describe('difficulty-derived regen', () => {
       expect(pushedRegen(harness)).toBe(configured);
     }
 
-    // Explicitly FASTER than the warmest world's default is honoured too — the
-    // anchors bound the derivation, not the setting.
     process.env[MANA_REGEN_ENV] = String(MANA_REGEN_AT_DIFFICULTY_1 * 2);
     boot(MAX_WORLD_DIFFICULTY);
     expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_1 * 2);
   });
 
   it('still clamps an explicit rate, whatever the difficulty', () => {
-    // The band applies to whichever source wins.
     process.env[MANA_REGEN_ENV] = '1e9';
     boot(MIN_WORLD_DIFFICULTY);
     expect(manaRegenPerSecond()).toBe(MAX_MANA_REGEN_PER_SECOND);
@@ -855,8 +684,6 @@ describe('difficulty-derived regen', () => {
   });
 
   it('is total on a difficulty core could never hand it', () => {
-    // WorldApi.difficulty is already clamped to the band; this is the second
-    // layer, so a direct caller cannot poison every pool with NaN.
     expect(manaRegenForDifficulty(Number.NaN)).toBe(
       manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY),
     );
@@ -881,8 +708,6 @@ describe('protocol parse (client half)', () => {
       manaPerBandCell: 6,
       regenPerSecond: 20,
     });
-    // Both rates may be fractional: regen's band floor is 6/60, and a perked
-    // mana-per-band-cell is the base rate times a multiplier as low as 0.25.
     expect(
       parseManaBalancePayload({
         balance: 0,
@@ -900,15 +725,11 @@ describe('protocol parse (client half)', () => {
       { balance: 1, capacity: 0, manaPerBandCell: 6, regenPerSecond: 20 },
       { balance: Number.NaN, capacity: 810, manaPerBandCell: 6, regenPerSecond: 20 },
       { balance: 1, capacity: 810, regenPerSecond: 20 },
-      // The rate field: missing, zero (which would make every sculpt free on the
-      // client only), negative, and not a number at all.
       { balance: 1, capacity: 810, regenPerSecond: 20 },
       { balance: 1, capacity: 810, manaPerBandCell: 0, regenPerSecond: 20 },
       { balance: 1, capacity: 810, manaPerBandCell: -6, regenPerSecond: 20 },
       { balance: 1, capacity: 810, manaPerBandCell: Number.NaN, regenPerSecond: 20 },
       { balance: 1, capacity: 810, manaPerBandCell: '6', regenPerSecond: 20 },
-      // The regen field: missing, zero (an infinite pulse period), negative, and
-      // not a number at all. All-or-nothing — see parseManaBalancePayload.
       { balance: 1, capacity: 810, manaPerBandCell: 6 },
       { balance: 1, capacity: 810, manaPerBandCell: 6, regenPerSecond: 0 },
       { balance: 1, capacity: 810, manaPerBandCell: 6, regenPerSecond: -20 },
@@ -923,7 +744,6 @@ describe('protocol parse (client half)', () => {
     ]) {
       expect(parseManaBalancePayload(bad)).toBeNull();
     }
-    // The refusal still carries a concrete PRICE — the refused intent's.
     expect(parseManaDeniedPayload({ balance: 3, cost: 270 })).toEqual({ balance: 3, cost: 270 });
     for (const bad of [null, {}, { balance: 3 }, { cost: 25 }, { balance: 3, cost: 'x' }]) {
       expect(parseManaDeniedPayload(bad)).toBeNull();
@@ -944,9 +764,7 @@ describe('balance pushes name the last intent seq they account for (2026-09-05)'
     expect(pushes.length).toBeGreaterThan(0);
     expect(pushes[pushes.length - 1].payload).toMatchObject({ asOfSeq: 7 });
 
-    // Drain the pool, then a denied intent's own seq is what its denial names.
     while (sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied) {
-      /* draining */
     }
     harness.sink.clear();
     handleSculptIntent(
@@ -965,42 +783,32 @@ describe('client local intent gate', () => {
     );
 
     setManaPool(null);
-    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // no economy: never veto
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
 
-    // Five point stamps' worth — see GATE_FIXTURE_BALANCE.
     setManaPool({
       balance: GATE_FIXTURE_BALANCE,
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
-    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true); // one stamp off, still affordable
+    expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
     expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - POINT_COST);
 
     const denialsBefore = deniedCount();
-    // The SAME balance that pays for a point stamp cannot pay for the radius-4
-    // hard plateau — the gate prices the intent it was handed, not a constant.
     const bigStamp: SculptIntent = {
       ...POINT_INTENT,
       radius: MAX_BRUSH_RADIUS,
       profile: 'hard',
     };
     expect(gateLocalSculpt(bigStamp, ALL_REVEALED)).toBe(false);
-    expect(deniedCount()).toBe(denialsBefore + 1); // ...flash...
-    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - POINT_COST); // ...and no debit on a veto
+    expect(deniedCount()).toBe(denialsBefore + 1);
+    expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - POINT_COST);
 
-    // ...while the point brush it can still afford goes through, and debits its
-    // own (smaller) price.
     expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
     expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 2 * POINT_COST);
   });
 
   it('a balance push keeps the debits for intents the server has not yet accounted for', async () => {
-    // THE CONTRACT (2026-09-05): the gate debits each intent as it goes out,
-    // and a push carrying `asOfSeq` releases only the debits at or below it.
-    // Without this, the first push of a burst erased the debits of everything
-    // still queued behind it, the gate approved strokes the server then denied,
-    // and the denial tore predicted ground off (large-brush flick).
     const { gateLocalSculpt, setManaPool, manaPool, applyBalancePush, applyDenial, clearInFlightDebits } =
       await import('../client/state.ts');
     clearInFlightDebits();
@@ -1013,16 +821,12 @@ describe('client local intent gate', () => {
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 1 }, ALL_REVEALED)).toBe(true);
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 2 }, ALL_REVEALED)).toBe(true);
 
-    // The server has applied seq 1 only: its balance is one stamp off, and seq 2's
-    // debit must survive the push.
     applyBalancePush({ balance: GATE_FIXTURE_BALANCE - POINT_COST, asOfSeq: 1, ...rate });
     expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 2 * POINT_COST);
 
-    // Seq 2 accounted for: the push lands as sent.
     applyBalancePush({ balance: GATE_FIXTURE_BALANCE - 2 * POINT_COST, asOfSeq: 2, ...rate });
     expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - 2 * POINT_COST);
 
-    // A denial releases the denied intent's own debit and keeps the rest.
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 3 }, ALL_REVEALED)).toBe(true);
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 4 }, ALL_REVEALED)).toBe(true);
     applyDenial({ balance: GATE_FIXTURE_BALANCE - 2 * POINT_COST, cost: POINT_COST, asOfSeq: 3 });
@@ -1030,13 +834,6 @@ describe('client local intent gate', () => {
   });
 
   it('credits itself no regen between pushes — the gate is a LOWER BOUND', async () => {
-    // THE CONTRACT (owner, 2026-09-05: "I don't ever want to see the land snap
-    // back because I don't have enough mana"). Regen the server has not ticked
-    // into its own pool is mana the player does not have, so a gate that spends
-    // it approves a stroke the server then refuses — and the refusal tears the
-    // predicted ground back off. Time passing must not raise what the gate will
-    // approve; only a push may. The GAUGE keeps the friendlier number, and this
-    // pins that the two are genuinely different readings of the same pool.
     const { gateLocalSculpt, setManaPool, manaPool, liveBalance, clearInFlightDebits } =
       await import('../client/state.ts');
     clearInFlightDebits();
@@ -1046,32 +843,19 @@ describe('client local intent gate', () => {
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     };
-    // One mana short of the cheapest stamp, so the verdict turns on the regen
-    // question and on nothing else.
     const now = vi.spyOn(performance, 'now').mockReturnValue(0);
     setManaPool({ balance: POINT_COST - 1, ...rate });
 
-    // A minute of regen at the suite rate is orders of magnitude more than the
-    // one missing unit.
     const A_MINUTE_MS = 60_000;
     now.mockReturnValue(A_MINUTE_MS);
 
-    // The bar shows it filling, because a bar that froze between pushes would
-    // read as a broken economy...
     expect(liveBalance(manaPool()!)).toBeGreaterThan(POINT_COST);
-    // ...and the gate still refuses, because the server has confirmed none of
-    // it. No intent is sent, so nothing is predicted, so nothing snaps back.
     expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(false);
 
     now.mockRestore();
   });
 
   it('a local debit does not rewind the gauge’s regen clock', async () => {
-    // The gate's debit is the one write that must NOT restamp when the
-    // authoritative balance was true (state.ts's `debitLocally`). Restamping
-    // would tell `liveBalance` that the regen since the last push had never
-    // been earned, and the bar would step backwards by more than the stroke
-    // cost every time the player pressed.
     const { gateLocalSculpt, setManaPool, manaPool, liveBalance, clearInFlightDebits } =
       await import('../client/state.ts');
     clearInFlightDebits();
@@ -1088,11 +872,9 @@ describe('client local intent gate', () => {
 
     now.mockReturnValue(HALF_SECOND_MS);
     const shownBeforePress = liveBalance(manaPool()!);
-    expect(shownBeforePress).toBeGreaterThan(HALF_A_POOL); // regen is being shown
+    expect(shownBeforePress).toBeGreaterThan(HALF_A_POOL);
 
     expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
-    // Exactly the stroke's price came off the bar — not the price plus the
-    // half-second of regen the restamp would have thrown away.
     expect(liveBalance(manaPool()!)).toBeCloseTo(shownBeforePress - POINT_COST);
 
     now.mockRestore();
@@ -1126,33 +908,15 @@ describe('client local intent gate', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// VOLUME PRICING (owner-settled 2026-08-14). A sculpt costs mana in proportion
-// to the terrain volume its brush displaces, so the price is a property of the
-// INTENT and no longer a constant. Three things have to hold: the tuning numbers
-// are what the owner asked for, the server charges the right amount for each
-// brush, and the client's local gate agrees with it exactly.
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('the price of a sculpt', () => {
   it('pins the tuning constants and the constraints they were derived from', () => {
-    // THE RATE IS PER SQUARE WORLD UNIT since the 2026-08-21 re-sample, and
-    // that is what keeps every price below where the owner tuned it: the same
-    // disc of ground is sixteen times the cells now, so a rate per CELL would
-    // have multiplied every stroke's price by sixteen. The owner's ≈5–8
-    // constraint was stated on the point stamp of the day, which was one world
-    // unit of ground; the finest brush the PROTOCOL allows is a sixteenth of
-    // that and prices accordingly (0.375, ceil'd to 1 by sculptManaCost).
     expect(MANA_PER_BAND_WORLD_UNIT_SQUARED).toBe(6);
     expect(MANA_PER_BAND_CELL).toBe(
       MANA_PER_BAND_WORLD_UNIT_SQUARED / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS),
     );
     expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(14);
 
-    // The most expensive brush: four world units of ground moved a whole band,
-    // unchanged in price by construction.
     expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(281);
-    // The pool is set outright; the stamp count derives from it.
     expect(MANA_CAPACITY).toBe(5000);
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(17);
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(
@@ -1160,13 +924,10 @@ describe('the price of a sculpt', () => {
     );
     expect(POINT_STAMPS_PER_POOL).toBe(357);
 
-    // Soft and hard fill the same core, so they price alike (#387).
     const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp');
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(softPlateau).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
-    // The regen band is re-derived from the CHEAPEST sculpt: one more point
-    // stamp within a minute at the floor.
     expect(MIN_MANA_REGEN_PER_SECOND).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S);
     expect(MAX_MANA_REGEN_PER_SECOND).toBe(MANA_CAPACITY);
   });
@@ -1175,9 +936,6 @@ describe('the price of a sculpt', () => {
     for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
       for (const profile of SCULPT_PROFILES) {
         const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
-        // Spelled out the long way here, from shared's volume function, rather
-        // than by calling the pricing helper the implementation calls: this test
-        // is the independent statement of the formula.
         const expected = Math.ceil(
           (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, profile, 'stamp')) / BAND_HEIGHT,
         );
@@ -1187,9 +945,6 @@ describe('the price of a sculpt', () => {
   });
 
   it('resolves an intent’s ABSENT profile through the shared normalisation', () => {
-    // An older client sends neither tool nor profile. It must be charged for the
-    // brush the server will actually run — WIRE_DEFAULT_SCULPT_OPTIONS — and
-    // sculptOptionsOf is the one place that decides what absent means.
     const bare: SculptIntent = { type: 'sculpt', x: 1, y: 1, radius: 3, dir: 1 };
     expect(manaCostFor(PLAYER.id, bare)).toBe(
       sculptManaCost(MANA_PER_BAND_CELL, 3, sculptOptionsOf(bare).profile, sculptOptionsOf(bare).tool),
@@ -1231,10 +986,6 @@ describe('charging per intent, through the real pipeline', () => {
   });
 
   it('denies at the threshold of THE INTENT’S cost, not a flat one', () => {
-    // Drain to a balance that can still pay for a point stamp but not for a
-    // radius-4 hard plateau. The old flat price could not tell these apart.
-    // (Helper strokes alternate raise/lower — see helperDir() — so the drain
-    // can never saturate the cell into free zero-effect strokes.)
     while ((manaBalanceOf(PLAYER.id) ?? 0) >= MANA_COST_PER_MAX_RADIUS_HARD_SCULPT) {
       expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
     }
@@ -1247,15 +998,12 @@ describe('charging per intent, through the real pipeline', () => {
       reason: 'plugin-denied',
       detail: INSUFFICIENT_MANA_REASON,
     });
-    // The refusal names the price of the intent that was refused.
     const refusals = harness.sink.ofType(`mana:${MANA_DENIED_MESSAGE}`);
     expect(refusals).toHaveLength(1);
     expect(refusals[0].payload).toEqual({
       balance: stranded,
       cost: MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
     });
-    // Nothing was charged for the refused edit, and the brush they CAN afford
-    // still works — the veto is per intent, not a lock-out.
     expect(manaBalanceOf(PLAYER.id)).toBe(stranded);
     expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
   });
@@ -1267,17 +1015,7 @@ describe('charging per intent, through the real pipeline', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// CHARGE FOLLOWS EFFECT (owner bug report 2026-08-19): sculpting at the world
-// floor "is not changing the landscape … but it's taking my mana". A stroke
-// whose applied diff is EMPTY costs nothing; a stroke that moved even one cell
-// still costs the full nominal price (the 2026-08-14 terrain-independent
-// pricing decision stands — only the degenerate zero-effect case changes, and
-// it is decided in the effect phase, where the authoritative diff is in hand).
-// ────────────────────────────────────────────────────────────────────────────
 describe('charge follows effect — a stroke that changes nothing costs nothing', () => {
-  /** A world already at the absolute floor everywhere: every lowering stroke
-   *  is a genuine terrain no-op, whatever the brush. */
   function bootAtWorldFloor(): Harness {
     resetManaState();
     const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY, MIN_HEIGHT);
@@ -1306,15 +1044,10 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
         harness.sink.clear();
 
         const outcome = lowerAt(harness, MAX_BRUSH_RADIUS, tool, profile);
-        // The intent is legal and APPLIED (not denied) — it simply moved
-        // nothing, so the diff is empty and the charge is zero.
         expect(outcome.applied).toBe(true);
         if (outcome.applied) expect(outcome.diff).toEqual([]);
         expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
 
-        // The balance push still goes out: the client's local gate debited
-        // its estimate on send, and a full pool never regen-pushes, so this
-        // push is what erases the phantom (same shape as the deny path).
         const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
         expect(pushes.length).toBeGreaterThan(0);
         const last = pushes[pushes.length - 1].payload as { balance: number };
@@ -1324,9 +1057,6 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
   });
 
   it('a stroke that moves even one cell still costs the full nominal price', () => {
-    // Floor world, but RAISING: every footprint cell can move, and the price
-    // must be the same nominal volume as anywhere else — no discount for the
-    // clamps and anchors the terrain applies (the 2026-08-14 decision).
     const harness = bootAtWorldFloor();
     const outcome = handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
@@ -1347,20 +1077,7 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// ISSUE #19 — TWO-PHASE INTENT PROCESSING. mana used to charge in the same
-// verdict pass a later interceptor could still veto (monsters denying a raise
-// near a living Cthulhu was the real-world case the issue was filed for).
-// mana now only checks affordability in onIntent and only spends in
-// onIntentApplied, which core fires exclusively after every interceptor in
-// the chain — including a plugin loaded AFTER mana — has allowed. These tests
-// exercise that through the REAL mana plugin and the real pipeline, with a
-// minimal stand-in for "some later plugin vetoes it", so the contract is
-// pinned independent of any one denying plugin's own reasons.
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
-  /** Denies every intent it sees. Stands in for monsters/relics/any plugin. */
   const laterDenier: TerracePlugin = {
     name: 'zzz-later-denier',
     onIntent(): IntentVerdict {
@@ -1368,17 +1085,12 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
     },
   };
 
-  /** Boots mana with an extra plugin appended AFTER it in the chain. */
   function bootWithLaterPlugin(laterPlugin: TerracePlugin): Harness {
     resetManaState();
     const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
     const sink = new RecordingSink();
     world.setSink(sink);
 
-    // manaPlugin FIRST, laterPlugin SECOND — this is the exact ordering
-    // relationship the bug depended on (mana sorts before every other shipped
-    // plugin alphabetically), reproduced explicitly rather than relying on
-    // directory names.
     const host = new PluginHost(world, [manaPlugin, laterPlugin].map(asLoadedPlugin));
     host.worldCreate();
     world.addPlayer(PLAYER);
@@ -1397,9 +1109,6 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
 
     expect(outcome.applied).toBe(false);
     if (!outcome.applied) expect(outcome.reason).toBe('plugin-denied');
-    // The load-bearing assertion: mana's own onIntent allowed (it never got a
-    // chance to deny), yet the pool is untouched because it never charges
-    // until the effect phase, which a deny skips entirely.
     expect(manaBalanceOf(PLAYER.id)).toBe(before);
     expect(harness.world.heightAt(INTERIOR_CELL.x, INTERIOR_CELL.y)).toBe(0);
   });
@@ -1415,8 +1124,6 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
   });
 
   it('the same intent costs zero when denied and exactly POINT_COST when allowed — same pool, same brush', () => {
-    // Denied first, so a bug that charged anyway would be visible as a balance
-    // drop the very next assertion catches.
     const denyHarness = bootWithLaterPlugin(laterDenier);
     expect(sculptAt(denyHarness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
@@ -1427,32 +1134,18 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
   });
 
   it('a later interceptor’s deny still pushes the authoritative balance to the sender (phantom-debit fix, 2026-08-19)', () => {
-    // THE BUG THIS PINS: the client debits its balance estimate on SEND
-    // (gateLocalSculpt) and relies on an authoritative message to correct it.
-    // When a NON-mana plugin denied while the pool sat at FULL capacity,
-    // nothing ever arrived — mana:denied is only mana's own, and regen skips
-    // full pools so no balance push fires — leaving the phantom debit standing
-    // ("sculpt failed and my mana was not refunded"). The deny-side effect
-    // phase (onIntentDenied) must now push the untouched balance.
     const harness = bootWithLaterPlugin(laterDenier);
-    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY); // full pool: the regen path can never rescue the client
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
     harness.sink.clear();
 
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
 
-    // No mana:denied — mana itself allowed; the refusal was someone else's.
     expect(harness.sink.ofType('mana:denied')).toHaveLength(0);
-    // But exactly the authoritative balance, pushed to the sender, uncharged.
     const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
     expect(pushes).toHaveLength(1);
     expect(pushes[0].target).toBe(PLAYER.id);
     expect(pushes[0].payload).toMatchObject({ balance: MANA_CAPACITY });
 
-    // The deny-side push is still the IMMEDIATE correction, and since
-    // 2026-09-05 it is no longer the last one either: a full pool now
-    // re-affirms itself on the heartbeat, so a client whose estimate drifted
-    // low for any other reason recovers without having to send an intent it
-    // believes it cannot pay for.
     harness.sink.clear();
     for (let n = 0; n < TICKS_PER_HEARTBEAT; n++) harness.host.tick(TICK_DT);
     const beats = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
@@ -1462,19 +1155,6 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
 });
 
 describe('gate / server parity — the same intent, the same fee', () => {
-  /**
-   * THE PROPERTY: for every brush the game can send, and every perk rate the
-   * economy can produce, the fee the server takes off the authoritative pool and
-   * the fee the client's local gate takes off its replica are the SAME INTEGER.
-   *
-   * This is the invariant the shared pricing function (../pricing.ts) exists to
-   * guarantee. If it ever fails, the client is letting through strokes the
-   * server will nack — the phantom-stroke bug the local gate was added to fix.
-   *
-   * The multipliers cover neutral, the shipped half-cost relic, and one that
-   * lands the rate on a non-integer (6 × 0.3 = 1.8) so the single rounding step
-   * is exercised on both sides rather than being trivially absent.
-   */
   const PARITY_MULTIPLIERS = [NEUTRAL_MANA_MULTIPLIER, 0.5, 0.3] as const;
 
   it('charges the same fee on both sides for every radius × profile × perk', async () => {
@@ -1489,7 +1169,6 @@ describe('gate / server parity — the same intent, the same fee', () => {
           }
           const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
 
-          // SERVER: the real pipeline, the real interceptor chain.
           const serverBefore = manaBalanceOf(PLAYER.id) ?? 0;
           const outcome = handleSculptIntent(
             { world: harness.world, interceptors: harness.host },
@@ -1499,8 +1178,6 @@ describe('gate / server parity — the same intent, the same fee', () => {
           expect(outcome.applied).toBe(true);
           const serverFee = serverBefore - (manaBalanceOf(PLAYER.id) ?? 0);
 
-          // CLIENT: seeded from the balance push the server actually emitted, so
-          // the rate under test is the one that really travels.
           const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
           const pushed = pushes[pushes.length - 1].payload as {
             manaPerBandCell: number;
@@ -1530,14 +1207,11 @@ describe('gate / server parity — the same intent, the same fee', () => {
       profile: 'hard',
     };
 
-    // Drain the server pool to just under the plateau's price.
     while ((manaBalanceOf(PLAYER.id) ?? 0) >= MANA_COST_PER_MAX_RADIUS_HARD_SCULPT) {
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     }
     const stranded = manaBalanceOf(PLAYER.id) ?? 0;
 
-    // Same balance, same rate, same intent → the client vetoes it locally, so
-    // the request the server would have denied is never sent.
     setManaPool({
       balance: stranded,
       capacity: MANA_CAPACITY,
@@ -1553,7 +1227,6 @@ describe('gate / server parity — the same intent, the same fee', () => {
       ).applied,
     ).toBe(false);
 
-    // And the other side of the threshold: at exactly the price, both allow.
     setManaPool({
       balance: MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
       capacity: MANA_CAPACITY,

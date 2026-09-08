@@ -1,15 +1,3 @@
-// The ground-shade primitive's contract (#284, plan §2.2).
-//
-// THE DEFECT IT ANSWERS: a cloud drawn over the ground does not darken it,
-// and the only tool a plugin had was `modulateSkyRig` — which dims the WHOLE
-// world and cannot show a cloud's edge. The fix is a core-owned disc that the
-// terrain and water shaders project along the sun onto themselves.
-//
-// TWO CONTRACTS, AND BOTH ARE HERE BECAUSE THERE IS NO GL RIG. `groundShadeAt`
-// is the arithmetic the spliced GLSL runs, restated in TypeScript so it can be
-// pinned at all; and the uniform array's bound is Σ of the plugins' declared
-// budgets, the same rule `drawBudget` states for draw calls.
-
 import { describe, expect, it, vi } from 'vitest';
 import { Scene, Vector3 } from 'three';
 import {
@@ -26,9 +14,7 @@ import type { Viewport } from '../src/render/scene.ts';
 import type { World } from '../src/world.ts';
 import type { Connection } from '../src/net/connection.ts';
 
-/** Straight overhead: the shadow lands directly under the disc. */
 const SUN_OVERHEAD = { x: 0, y: 1, z: 0 };
-/** 45° from +X: a disc at height h shadows the ground h units toward −X. */
 const SUN_45_DEGREES = { x: 1, y: 1, z: 0 };
 
 const DISC_HEIGHT = 10;
@@ -62,10 +48,6 @@ describe('groundShadeAt — the projection the shader runs', () => {
   });
 
   it('holds full darkness inside `inner` before the falloff begins', () => {
-    // `inner` is where the falloff STARTS, exactly as plan §2.2's snippet
-    // writes it: smoothstep(inner, 1, d). A cyclone hands it its eye
-    // fraction, so the eye's own width is the part of the disc that does not
-    // yet fade — NOT a hole punched in the middle of the shadow.
     const discs = [disc({ inner: 0.5 })];
     expect(groundShadeAt(0, 0, 0, SUN_OVERHEAD, discs)).toBeCloseTo(0.5, 10);
     expect(
@@ -75,17 +57,12 @@ describe('groundShadeAt — the projection the shader runs', () => {
   });
 
   it('displaces the shadow along the sun, by the disc height over the sun slope', () => {
-    // The whole point of projecting rather than stamping: a low sun slides the
-    // shadow away from what casts it. At 45° a disc DISC_HEIGHT up shadows the
-    // ground DISC_HEIGHT units toward −X (the sun comes FROM +X).
     const discs = [disc()];
     expect(groundShadeAt(0, 0, 0, SUN_45_DEGREES, discs)).toBe(0);
     expect(groundShadeAt(-DISC_HEIGHT, 0, 0, SUN_45_DEGREES, discs)).toBeCloseTo(0.5, 10);
   });
 
   it('measures the drop from the fragment, not from sea level', () => {
-    // A hilltop is closer to the deck, so its shadow is displaced less. The
-    // shader has the fragment's own world Y and must use it.
     const discs = [disc()];
     const hilltopY = DISC_HEIGHT / 2;
     expect(
@@ -94,7 +71,6 @@ describe('groundShadeAt — the projection the shader runs', () => {
   });
 
   it('takes the darkest disc, never the sum', () => {
-    // Two clouds overlapping must not drive the ground to black.
     const discs = [disc({ darkness: 0.2 }), disc({ darkness: 0.45 })];
     expect(groundShadeAt(0, 0, 0, SUN_OVERHEAD, discs)).toBeCloseTo(0.45, 10);
   });
@@ -104,8 +80,6 @@ describe('groundShadeAt — the projection the shader runs', () => {
   });
 
   it('is zero at and below GROUND_SHADE_MIN_SUN_Y, on either side of the horizon', () => {
-    // The projection runs to infinity as the sun reaches the horizon; below
-    // this elevation the shadow has left the map whatever cast it.
     const discs = [disc()];
     const grazing = { x: Math.sqrt(1 - GROUND_SHADE_MIN_SUN_Y ** 2), y: GROUND_SHADE_MIN_SUN_Y, z: 0 };
     expect(groundShadeAt(0, 0, 0, grazing, discs)).toBe(0);
@@ -114,8 +88,6 @@ describe('groundShadeAt — the projection the shader runs', () => {
   });
 
   it('is unchanged by the length of the sun vector', () => {
-    // The host normalises before writing the uniform; the projection itself is
-    // scale-invariant, so the two can never disagree about a lit sun.
     const discs = [disc()];
     expect(groundShadeAt(-DISC_HEIGHT, 0, 0, { x: 7, y: 7, z: 0 }, discs)).toBeCloseTo(
       groundShadeAt(-DISC_HEIGHT, 0, 0, SUN_45_DEGREES, discs),
@@ -136,24 +108,15 @@ describe('groundShadeMaxFor — the uniform array bound', () => {
   });
 
   it('is at least 1, because GLSL forbids a zero-length array', () => {
-    // With no publishers the loop bound is uShadeCount = 0, so the array is
-    // declared and never read.
     expect(groundShadeMaxFor([])).toBe(1);
     expect(groundShadeMaxFor([{ groundShadeBudget: 0 }])).toBe(1);
   });
 
   it('leaves a non-finite budget out rather than poisoning the total', () => {
-    // Same stance as frameDrawBudget: a plugin loaded at runtime is not held
-    // to the compile-time type, and NaN would destroy the array's bound.
     const missing = Number.NaN;
     expect(groundShadeMaxFor([{ groundShadeBudget: 4 }, { groundShadeBudget: missing }])).toBe(4);
   });
 });
-
-// -----------------------------------------------------------------------------
-// Over-publishing, against a real host. Stubs stand in only for the two things
-// a node process cannot have — a WebGLRenderer and its canvas.
-// -----------------------------------------------------------------------------
 
 function stubViewport() {
   const scene = new Scene();
@@ -187,7 +150,6 @@ const stubWorld = {
   revealClipUniforms: () => null,
 } as unknown as World;
 
-/** A plugin that publishes `count` discs against a budget of `budget`. */
 function publisher(
   name: string,
   budget: number | undefined,
@@ -224,9 +186,6 @@ describe('the host gathering ground-shade discs', () => {
   });
 
   it('drops the excess and logs ONE line, rather than throwing', () => {
-    // The draw budget's stance, applied to a uniform array: a plugin over its
-    // budget is a bug to be told about, never a frame to be taken down. And
-    // one line — a message per frame would bury the console it is read in.
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     configureGroundShade(groundShadeMaxFor([{ groundShadeBudget: 2 }]));
     const { frame } = rig(publisher('beta', 2, 5));

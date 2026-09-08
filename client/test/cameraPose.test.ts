@@ -1,13 +1,3 @@
-// Contract tests for camera-pose persistence (render/cameraPose.ts).
-//
-// The module is deliberately three.js-free, so all of this runs in the plain
-// node environment with no GL and no DOM (design doc §8 "Testing"); only
-// localStorage is stubbed, exactly as the control-prefs tests do.
-//
-// What is under test is the guarantee scene.ts leans on: a stored pose is a
-// HINT, and every way it can be wrong resolves to null — meaning "frame the
-// world from scratch" — rather than to a camera pointed at nothing.
-
 import { CHUNK_SIZE, NEIGHBOURHOOD_CELLS } from '@terrace/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -26,16 +16,10 @@ import {
   CELL_WORLD_SIZE,
 } from '../src/config.ts';
 
-// Four NEIGHBOURHOODS to a side — 64 world units, the ground this suite has
-// always covered. Counted that way rather than in chunks because its subject
-// is a distance in the WORLD, and the 2026-08-21 re-sample shrank a chunk to a
-// quarter of the neighbourhood it used to be (shared's CHUNK_SPAN).
 const WORLD = NEIGHBOURHOOD_CELLS * 4;
-/** Highest cell coordinate in a WORLD-cell world, in world units. */
 const WORLD_MAX_COORD = (WORLD - 1) * CELL_WORLD_SIZE;
 const CENTRE = WORLD_MAX_COORD / 2;
 
-/** Minimal in-memory localStorage, installed on globalThis per test. */
 function fakeStorage(initial: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(initial));
   return {
@@ -58,11 +42,6 @@ afterEach(() => {
   delete (globalThis as { localStorage?: Storage }).localStorage;
 });
 
-/**
- * A pose looking at the middle of the world from `distance` away, along a
- * diagonal so all six components are distinct (a pose that happened to be
- * axis-aligned could hide a transposed component).
- */
 function poseAtDistance(distance: number): CameraPose {
   const leg = distance / Math.sqrt(3);
   return {
@@ -71,7 +50,6 @@ function poseAtDistance(distance: number): CameraPose {
   };
 }
 
-/** Serialised payload with one field overridden or removed. */
 function payload(overrides: Record<string, unknown>): string {
   const pose = poseAtDistance(CAMERA_MIN_DISTANCE + 1);
   return JSON.stringify({
@@ -226,8 +204,6 @@ describe('validation rejects', () => {
   });
 
   it('a pose saved for a LARGER world than the one now joined', () => {
-    // Same server rebuilt smaller: the old centre is off the new map. Keys
-    // differ too, so this is the second line of defence, not the first.
     const raw = serialiseCameraPose(poseAtDistance(CAMERA_MIN_DISTANCE + 1));
     expect(parseCameraPose(raw, WORLD)).not.toBeNull();
     expect(parseCameraPose(raw, 8)).toBeNull();
@@ -262,7 +238,6 @@ describe('storage', () => {
   it('falls back to default framing on a corrupted entry', () => {
     const key = cameraPoseStorageKey('ws://localhost:2567', WORLD);
     installStorage(fakeStorage({ [key]: '{"version":1,"target":' }));
-    // null is scene.ts's signal to run focusWorld instead — the fallback.
     expect(loadCameraPose(key, WORLD)).toBeNull();
   });
 

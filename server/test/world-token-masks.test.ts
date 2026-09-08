@@ -1,19 +1,9 @@
-// Per-player unlock masks — the core capability issue #17 (per-player
-// territory) adds to World/WorldApi. The reveal plugin's OWN policy tests
-// (plugins/reveal/test/reveal.test.ts) cover WHEN a chunk unlocks; this file
-// covers the primitive itself: per-token mutation, the union side-effect,
-// per-player streaming/visibility reads, and persistence across a restart.
-
 import { CHUNK_SIZE, NEIGHBOURHOOD_CELLS, chunksPerEdge } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import { applyInitialUnlockForToken, initialUnlockFootprint } from '../src/world/initial-unlock.ts';
 import { World } from '../src/world/world.ts';
 import { RecordingSink, worldWithUnlockedChunks } from './support/harness.ts';
 
-// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
-// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
-// four-chunk world is smaller ground than it was — which is fine here: every
-// assertion in this suite is about chunk mechanics, not about distances.)
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const TOKEN_A = 'token-a';
 const TOKEN_B = 'token-b';
@@ -28,8 +18,8 @@ describe('World per-token unlock', () => {
     expect(world.unlockChunkForToken(TOKEN_A, ...CHUNK)).toBe(true);
 
     expect(world.isChunkUnlockedForToken(TOKEN_A, ...CHUNK)).toBe(true);
-    expect(world.isChunkUnlocked(...CHUNK)).toBe(true); // union OR'd in
-    expect(world.isChunkUnlockedForToken(TOKEN_B, ...CHUNK)).toBe(false); // NOT for an unrelated token
+    expect(world.isChunkUnlocked(...CHUNK)).toBe(true);
+    expect(world.isChunkUnlockedForToken(TOKEN_B, ...CHUNK)).toBe(false);
   });
 
   it('is idempotent per token — a second grant returns false and sends nothing', () => {
@@ -47,7 +37,6 @@ describe('World per-token unlock', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, []);
     world.unlockChunkForToken(TOKEN_A, ...CHUNK);
 
-    // Union-unlocked already, but TOKEN_B has never personally earned it.
     expect(world.isChunkUnlocked(...CHUNK)).toBe(true);
     expect(world.isChunkUnlockedForToken(TOKEN_B, ...CHUNK)).toBe(false);
 
@@ -105,7 +94,6 @@ describe('World per-token unlock', () => {
     expect(payloadsA).toHaveLength(1);
     expect(payloadsA[0]).toMatchObject({ cx: CHUNK[0], cy: CHUNK[1] });
 
-    // An unseen token has nothing yet — not an error, an empty list.
     expect(world.chunkPayloadsForToken(TOKEN_B)).toEqual([]);
   });
 
@@ -124,7 +112,7 @@ describe('World per-token unlock', () => {
 
     it('answers false for a playerId with no connected Player', () => {
       const world = worldWithUnlockedChunks(WORLD_SIZE, []);
-      world.unlockChunkForToken(TOKEN_A, ...CHUNK); // unlocked for the TOKEN, but nobody is connected as it
+      world.unlockChunkForToken(TOKEN_A, ...CHUNK);
       expect(world.isChunkVisibleTo('nobody-here', ...CHUNK)).toBe(false);
       expect(world.isCellVisibleTo('nobody-here', CHUNK[0] * CHUNK_SIZE, CHUNK[1] * CHUNK_SIZE)).toBe(
         false,
@@ -134,7 +122,7 @@ describe('World per-token unlock', () => {
     it('a connected player without this chunk sees false even though the union has it', () => {
       const world = worldWithUnlockedChunks(WORLD_SIZE, []);
       world.addPlayer({ id: 'session-b', token: TOKEN_B, name: 'B' });
-      world.unlockChunkForToken(TOKEN_A, ...CHUNK); // union now has it; B never earned it personally
+      world.unlockChunkForToken(TOKEN_A, ...CHUNK);
 
       expect(world.isChunkUnlocked(...CHUNK)).toBe(true);
       expect(world.isChunkVisibleTo('session-b', ...CHUNK)).toBe(false);
@@ -170,23 +158,19 @@ describe('applyInitialUnlockForToken', () => {
   });
 
   it('a DIFFERENT token starts at the starter square too, independent of an existing token\'s progress', () => {
-    // A world big enough that the starter square (up to INITIAL_UNLOCK_CHUNK_
-    // SPAN chunks) does NOT cover the whole map — at WORLD_SIZE (64, 4×4
-    // chunks) the span clamps to the entire world and there would be no
-    // "outside the starter square" chunk left to test against.
     const LARGE_WORLD_SIZE = NEIGHBOURHOOD_CELLS * 16;
     const world = World.createFresh(LARGE_WORLD_SIZE, undefined, undefined, 1);
     const { startChunk, spanChunks } = initialUnlockFootprint(LARGE_WORLD_SIZE);
-    const outsideStarter: readonly [number, number] = [startChunk + spanChunks, startChunk]; // just past the starter square's east edge
-    expect(startChunk + spanChunks).toBeLessThan(chunksPerEdge(LARGE_WORLD_SIZE)); // precondition: a cell outside really exists
+    const outsideStarter: readonly [number, number] = [startChunk + spanChunks, startChunk];
+    expect(startChunk + spanChunks).toBeLessThan(chunksPerEdge(LARGE_WORLD_SIZE));
 
     applyInitialUnlockForToken(world, TOKEN_A);
-    world.unlockChunkForToken(TOKEN_A, ...outsideStarter); // A has ranged further than the starter square
+    world.unlockChunkForToken(TOKEN_A, ...outsideStarter);
 
     applyInitialUnlockForToken(world, TOKEN_B);
 
     expect(world.isChunkUnlockedForToken(TOKEN_B, startChunk, startChunk)).toBe(true);
-    expect(world.isChunkUnlockedForToken(TOKEN_B, ...outsideStarter)).toBe(false); // B never earned A's extra chunk
+    expect(world.isChunkUnlockedForToken(TOKEN_B, ...outsideStarter)).toBe(false);
   });
 });
 
@@ -212,17 +196,16 @@ describe('World.restore with per-token masks', () => {
     const source = worldWithUnlockedChunks(WORLD_SIZE, []);
     source.unlockChunkForToken(TOKEN_A, ...CHUNK);
 
-    // No sixth argument — exactly what a pre-#17 snapshot's caller passes.
     const restored = World.restore(WORLD_SIZE, source.map.cells, source.mask, undefined, source.name);
 
-    expect(restored.isChunkUnlocked(...CHUNK)).toBe(true); // union preserved
-    expect(restored.isChunkUnlockedForToken(TOKEN_A, ...CHUNK)).toBe(false); // re-creep from nothing
+    expect(restored.isChunkUnlocked(...CHUNK)).toBe(true);
+    expect(restored.isChunkUnlockedForToken(TOKEN_A, ...CHUNK)).toBe(false);
     expect(restored.chunkPayloadsForToken(TOKEN_A)).toEqual([]);
   });
 
   it('drops a per-token row whose mask length does not match this world, without throwing', () => {
     const source = worldWithUnlockedChunks(WORLD_SIZE, []);
-    const corrupt = new Map<string, Uint8Array>([[TOKEN_A, new Uint8Array(3)]]); // wrong length
+    const corrupt = new Map<string, Uint8Array>([[TOKEN_A, new Uint8Array(3)]]);
 
     const restored = World.restore(
       WORLD_SIZE,

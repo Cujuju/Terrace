@@ -1,12 +1,3 @@
-// The plugin's persistence slice: villages and the boats afloat.
-//
-// STRUCTURAL VALIDATION ON LOAD, exactly as every other plugin's slice does:
-// the saved blob comes from a database file that may predate this code, so a
-// shape that does not parse is DISCARDED WHOLE rather than half-applied. A
-// world that comes back with no boats rebuilds them within a minute
-// (BOAT_REBUILD_SECONDS); a world that comes back with half a fleet and a
-// corrupt village list would be wrong forever.
-
 import { fleetSnapshot, restoreFleet, type Boat, type Village } from './fleet.ts';
 import { parseRecordArray } from '@terrace/shared';
 
@@ -43,9 +34,6 @@ function parseBoat(value: unknown): Boat | null {
     x: x as number,
     y: y as number,
     heading: heading as number,
-    // NOT SAVED AS TRUE, whatever the blob says: `fighting` describes a fight
-    // that a restart has ended. It is recomputed on the first tick from the
-    // boat's distance to a kraken that may no longer be there.
     fighting: false,
   };
 }

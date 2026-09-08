@@ -1,29 +1,7 @@
-// shootFirePreview.mjs — screenshot driver for preview-fire.html.
-//
-// Drives chrome-headless-shell over raw CDP, exactly as measureWaterFloat.mjs
-// does and for the same reason: Chrome's --screenshot one-shot flag and
-// --virtual-time-budget both HANG on these WebGL harnesses (they never wait for
-// the requestAnimationFrame loop), and Chrome DevTools MCP cannot get a GL
-// context here at all. Raw CDP plus polling window.__previewReady is the only
-// thing that works.
-//
-// Every shot also reports the frame's DRAW-CALL COUNT, read off the renderer
-// through window.__previewDrawCalls: the flame's budget rule is a fixed small
-// number of calls whatever is burning, and a claim about that which is not read
-// off the renderer is a guess.
-//
-// Usage:
-//   node client/scripts/shootFirePreview.mjs <outDir> [--url-base http://localhost:5477] \
-//        <name>=<preview-fire query string> ...
-//
-// Requires a Vite dev server already serving the client at <url-base>; this
-// script never starts or stops one.
-
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-// Resolved, never written down — see that module's header for why.
 import { resolveChromeHeadlessShell } from './chromeHeadlessShell.mjs';
 
 const CHROME = resolveChromeHeadlessShell();
@@ -73,7 +51,6 @@ async function startChrome() {
     [
       '--no-sandbox',
       '--disable-dev-shm-usage',
-      // Software GL is required in this environment (no real GPU).
       '--enable-unsafe-swiftshader',
       '--use-gl=angle',
       '--use-angle=swiftshader',
@@ -138,7 +115,6 @@ async function shoot(ws, urlBase, name, query, outDir) {
         break;
       }
     } catch {
-      // still navigating; keep polling
     }
   }
   if (stats === null) {
@@ -150,9 +126,6 @@ async function shoot(ws, urlBase, name, query, outDir) {
   const path = join(outDir, `${name}.png`);
   writeFileSync(path, Buffer.from(shot.data, 'base64'));
   await rpc(ws, 'Target.closeTarget', { targetId }).catch(() => {});
-  // The camera distance is reported in WORLD UNITS because smoke's strength is
-  // a function of exactly that, and ?dist is a multiplier of a fitted distance
-  // nobody can read off a picture.
   console.log(
     `${path}  drawCalls=${stats.calls}  smokeColumns=${stats.columns}` +
       `  cameraDistance=${stats.cameraDistance?.toFixed(1)}  ${url}`,

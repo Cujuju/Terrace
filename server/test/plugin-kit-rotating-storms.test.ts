@@ -1,14 +1,3 @@
-// Contract test for server/src/plugins/kit/rotatingStorms.ts — the rotating-
-// storm sim engine, written BEFORE the module it covers.
-//
-// WHAT IS UNDER TEST is the mechanism only: that a storm tracks and veers on
-// the profile it is handed, that the terrain a profile calls hostile decays it,
-// that landfall is reported once and only when asked for, that damage arrives on
-// its own cadence with the eye spared, and that a snapshot restores a storm, its
-// generator and its name counter. The BEHAVIOUR each caller builds on top of it
-// — where a funnel may touch down, what open water means, what a surge does —
-// belongs to the plugins and is tested there.
-
 import { describe, expect, it } from 'vitest';
 import {
   createRotatingStorms,
@@ -18,21 +7,17 @@ import {
   type RotatingStormWorld,
 } from '../src/plugins/kit/rotatingStorms.ts';
 
-/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md). */
 const TICK_SECONDS = 0.1;
 
 const WORLD_SIZE = 256;
 
-/** Above SEA_LEVEL, so `land` reads land; below it, water. */
 const LAND_HEIGHT = 400;
 const WATER_HEIGHT = 0;
 
-/** A world that is land everywhere, or water everywhere — the two pure cases. */
 function uniformWorld(height: number): RotatingStormWorld {
   return { worldSize: WORLD_SIZE, heightAt: () => height };
 }
 
-/** Water in the western half, land in the eastern — one coast, at x = 128. */
 function coastWorld(): RotatingStormWorld {
   const COAST_X = WORLD_SIZE / 2;
   return {
@@ -41,7 +26,6 @@ function coastWorld(): RotatingStormWorld {
   };
 }
 
-/** A profile with no veer and no decay, so a track is exactly predictable. */
 const STRAIGHT: RotatingStormProfile = {
   speedCellsPerSecond: 10,
   veerRadiansPerSecond: 0,
@@ -80,8 +64,6 @@ describe('rotatingStorms track', () => {
     const step = STRAIGHT.speedCellsPerSecond * TICK_SECONDS;
     expect(storm.x).toBeCloseTo(100 + Math.cos(heading) * step, 10);
     expect(storm.y).toBeCloseTo(100 + Math.sin(heading) * step, 10);
-    // Zero veer means the heading is untouched — the veer is a random walk
-    // SCALED by the profile's own rate, not an unconditional wobble.
     expect(storm.heading).toBe(heading);
   });
 
@@ -100,7 +82,6 @@ describe('rotatingStorms track', () => {
   it('forgets a storm that has drifted clear of the world', () => {
     const storms = engine(STRAIGHT);
     const world = uniformWorld(LAND_HEIGHT);
-    // Already past the despawn margin (1.5 radii) on the first tick it is aged.
     storms.spawnAt(world, -100, -100);
     storms.advance(world, TICK_SECONDS);
     expect(storms.count()).toBe(0);
@@ -109,7 +90,6 @@ describe('rotatingStorms track', () => {
 
 describe('rotatingStorms terrain', () => {
   it('decays a storm standing on the terrain its profile calls hostile', () => {
-    // A long spin-up, so what is measured is the decay and not the clamp at 1.
     const SLOW_SPIN_UP_SECONDS = 1000;
     const DECAY_PER_SECOND = 0.25;
     const profile: RotatingStormProfile = {
@@ -119,7 +99,6 @@ describe('rotatingStorms terrain', () => {
       hostileTerrainDecayPerSecond: DECAY_PER_SECOND,
     };
     const storms = engine(profile);
-    // hostileTerrain is 'water', so an all-water world is full exposure.
     const world = uniformWorld(WATER_HEIGHT);
     const storm = storms.spawnAt(world, 100, 100);
     storm.envelope = 1;
@@ -153,10 +132,10 @@ describe('rotatingStorms landfall', () => {
     const storms = engine(profile, { reportsLandfall: true });
     const world = coastWorld();
 
-    const storm = storms.spawnAt(world, 40, 100); // over water
+    const storm = storms.spawnAt(world, 40, 100);
     expect(storms.advance(world, TICK_SECONDS).landfalls).toHaveLength(0);
 
-    storm.x = 200; // ashore
+    storm.x = 200;
     const first = storms.advance(world, TICK_SECONDS);
     expect(first.landfalls).toHaveLength(1);
     expect(first.landfalls[0]?.stormId).toBe(storm.id);
@@ -180,8 +159,6 @@ describe('rotatingStorms damage', () => {
     const storm = storms.spawnAt(world, 100, 100);
     storm.envelope = 1;
 
-    // Half-interval steps, so the debt lands exactly on the interval rather
-    // than a float's-breadth under it.
     const HALF_INTERVAL = ROTATING_STORM_DAMAGE_INTERVAL_SECONDS / 2;
     let events = 0;
     for (let step = 0; step < 4; step++) {
@@ -206,8 +183,6 @@ describe('rotatingStorms damage', () => {
     const event = storms.advance(world, ROTATING_STORM_DAMAGE_INTERVAL_SECONDS).damage[0];
     expect(event).toBeDefined();
     expect(event?.eyeRadius).toBeCloseTo(storm.radius * EYE, 6);
-    // Every reported cell carries real wind: a cell in the calm middle scores
-    // zero and is not worth a consumer's time.
     for (const cell of event?.cells ?? []) {
       expect(cell.severity).toBeGreaterThan(0);
       expect(Math.hypot(cell.x - storm.x, cell.y - storm.y)).toBeGreaterThan(storm.radius * EYE);
@@ -219,7 +194,7 @@ describe('rotatingStorms freeze', () => {
   it('stops movement, ageing and weakening but keeps the damage flowing', () => {
     const profile: RotatingStormProfile = { ...STRAIGHT, hostileTerrainDecayPerSecond: 0.25 };
     const storms = engine(profile);
-    const world = uniformWorld(WATER_HEIGHT); // hostile
+    const world = uniformWorld(WATER_HEIGHT);
     const storm = storms.spawnAt(world, 100, 100);
     storm.envelope = 1;
     storms.freeze(true);
@@ -247,7 +222,6 @@ describe('rotatingStorms snapshot', () => {
     first.spawnAt(world, 120, 100);
     for (let tick = 0; tick < 20; tick++) first.advance(world, TICK_SECONDS);
 
-    // Through JSON, because that is what the host actually writes and reads.
     const parsed = parseRotatingStormsSnapshot(JSON.parse(JSON.stringify(first.snapshot())));
     expect(parsed).not.toBeNull();
 
@@ -256,8 +230,6 @@ describe('rotatingStorms snapshot', () => {
     expect(second.states()).toEqual(first.states());
     expect(second.storms()[1]?.name).toBe('Storm 1');
 
-    // The generator resumed where it left off: the next draw matches, and so
-    // does the next name — a restarted world does not hand out Storm 0 again.
     expect(second.random()).toBe(first.random());
     expect(second.spawnAt(world, 10, 10).name).toBe('Storm 2');
   });

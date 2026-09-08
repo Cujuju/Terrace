@@ -1,14 +1,3 @@
-// rigAsset's load-time contract (client/src/render/rigAsset.ts): a textured
-// part with no UVs is a load error naming the file, and every colour texture
-// that survives the load is sRGB and anisotropic.
-//
-// The fixtures are glTF JSON built inline — no binary file on disk — and go
-// through parseRigAsset, which is loadRigAsset's own GLTFLoader and validation
-// with the transport swapped (rigAsset.ts:81-90). Under plain Node the parser
-// takes the TextureLoader path (GLTFLoader.js:2600), so the DOM `Image` it
-// decodes through is stubbed exactly as plugins/boats/test/models.test.ts:22
-// stubs it, and for the same reason: the texture's PIXELS are never read here.
-
 import { describe, expect, it } from 'vitest';
 import { BoxGeometry, SRGBColorSpace, Mesh, Vector3, type Texture } from 'three';
 import {
@@ -51,21 +40,10 @@ function stubImageLoading(): void {
 
 stubImageLoading();
 
-/** A 1x1 PNG, the smallest thing a glTF image can legally point at. */
 const PIXEL_PNG =
   'data:image/png;base64,' +
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-/**
- * One textured triangle as a GLB. The vertex data rides in the binary chunk
- * rather than a `data:` buffer URI because three's FileLoader fetches even a
- * data URI and reports progress through `ProgressEvent`, which plain Node does
- * not have — a GLB needs no buffer URI at all. (The IMAGE stays a data URI:
- * ImageLoader assigns it straight to `src`, which the stub above answers.)
- *
- * `withUv` is the whole variable: the same file, the same mapped material,
- * with and without the TEXCOORD_0 the loader needs to sample it.
- */
 function texturedTriangle(withUv: boolean): ArrayBuffer {
   const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const uvs = new Float32Array([0, 0, 1, 0, 0, 1]);
@@ -101,12 +79,10 @@ function texturedTriangle(withUv: boolean): ArrayBuffer {
   return packGlb(Buffer.from(JSON.stringify(gltf), 'utf8'), bytes);
 }
 
-/** GLB container magic and chunk tags, from the glTF 2.0 spec's §4.4.3 table. */
 const GLB_MAGIC = 0x46546c67;
 const GLB_VERSION = 2;
 const GLB_CHUNK_JSON = 0x4e4f534a;
 const GLB_CHUNK_BIN = 0x004e4942;
-/** Both chunks are 4-byte aligned: JSON padded with spaces, BIN with zeros. */
 const GLB_CHUNK_ALIGNMENT = 4;
 const GLB_JSON_PAD = 0x20;
 const GLB_BIN_PAD = 0x00;
@@ -138,13 +114,6 @@ function packGlb(json: Buffer, bin: Buffer): ArrayBuffer {
   return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength) as ArrayBuffer;
 }
 
-/**
- * A triangle bound to one joint: the smallest file that is an ARMATURE.
- *
- * Built by hand rather than through GLTFExporter, which needs a browser
- * `FileReader` that plain Node lacks — and by the same packGlb the textured
- * fixture above uses, so the two cannot drift.
- */
 function skinnedTriangle(): ArrayBuffer {
   const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const joints = new Uint16Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -181,7 +150,6 @@ function skinnedTriangle(): ArrayBuffer {
   return packGlb(Buffer.from(JSON.stringify(gltf), 'utf8'), bytes);
 }
 
-/** A stand-in asset whose scene is one box of the given size, centred on the origin. */
 function assetOfSize(size: Vector3): RigAsset {
   const scene = new Mesh(new BoxGeometry(size.x, size.y, size.z));
   return {
@@ -194,8 +162,6 @@ function assetOfSize(size: Vector3): RigAsset {
 
 describe('rigAsset', () => {
   it('rejects a mesh drawn under a mapped material with no uv', async () => {
-    // No silent fallback: an unmapped lookup samples the first texel across the
-    // whole part, which ships as a part painted one flat wrong colour.
     await expect(parseRigAsset(texturedTriangle(false), 'unwrapped.glb')).rejects.toThrow(
       /"unwrapped\.glb".*no uv attribute/s,
     );
@@ -214,8 +180,6 @@ describe('rigAsset', () => {
   });
 
   it('accepts an armature and hands the skinned mesh through', async () => {
-    // Accepted since 2026-09-04: bakeRig keeps the file's own weights, so a
-    // downloaded animal no longer has to be split by dominant weight offline.
     const asset = await parseRigAsset(skinnedTriangle(), 'rigged.glb');
     let skinned = 0;
     asset.scene.traverse((child) => {
@@ -228,9 +192,6 @@ describe('rigAsset', () => {
 
 describe('assertAssetFits', () => {
   it('passes a model exactly one tolerance over its footprint', () => {
-    // The tolerance absorbs float dust in a computed bounding box, so the
-    // boundary itself must be inside — a loft that lands one ulp long is art
-    // that fits.
     const over = 1 + ASSET_FIT_TOLERANCE_WORLD_UNITS;
     expect(() =>
       assertAssetFits(assetOfSize(new Vector3(over, 3, over)), { x: 1, z: 1 }),

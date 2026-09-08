@@ -1,10 +1,3 @@
-// The chronicle, driven through the REAL plugin host. CONTRACT tests: each
-// names a promise the plugin makes — what earns a line and what never does,
-// determinism of names and text, the fog rule (no coordinates on the wire),
-// day-scoped repeat suppression, world-firsts that survive a snapshot, the
-// eviction cap, and the copied race derivation staying in lockstep with
-// structures' via the same golden vectors structures pins.
-
 import { beforeEach, describe, expect, it } from 'vitest';
 import { CHUNK_SIZE } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -58,18 +51,15 @@ function boot(restore?: unknown): Harness {
   return { host, sink };
 }
 
-/** Simulated days passing, at the shipped fixed tick. */
 function advanceDays(harness: Harness, days: number): void {
   const seconds = days * CHRONICLE_SECONDS_PER_DAY;
   for (let elapsed = 0; elapsed < seconds; elapsed += DT) harness.host.tick(DT);
 }
 
-/** All entry texts currently in the log. */
 function texts(): string[] {
   return chronicleEntries().map((entry) => entry.text);
 }
 
-/** Cells inside chunk (cx, cy), offset by `i` along x. */
 function cellIn(cx: number, cy: number, i = 0): { x: number; y: number } {
   return { x: cx * CHUNK_SIZE + i, y: cy * CHUNK_SIZE };
 }
@@ -105,14 +95,14 @@ describe('structures events', () => {
     const payload = { cause: 'generation', seeded: [anchor], upgraded: [], died: [] };
 
     harness.host.notifyWorldEvent('structures:changes', payload);
-    harness.host.notifyWorldEvent('structures:changes', payload); // same day: suppressed
+    harness.host.notifyWorldEvent('structures:changes', payload);
     expect(texts()).toEqual([
       GENESIS_TEXT,
       `${race} settlers pitched a new camp at ${placeName(2, 3)}.`,
     ]);
 
     advanceDays(harness, 1);
-    harness.host.notifyWorldEvent('structures:changes', payload); // next day: history again
+    harness.host.notifyWorldEvent('structures:changes', payload);
     expect(texts()).toHaveLength(3);
   });
 
@@ -122,7 +112,6 @@ describe('structures events', () => {
     harness.host.notifyWorldEvent('structures:changes', {
       cause: 'generation',
       seeded: [],
-      // Deliberately out of order, with a duplicate and a camp (tier 0).
       upgraded: [
         { ...where, tier: 2 },
         { ...cellIn(1, 1, 3), tier: 1 },
@@ -137,7 +126,6 @@ describe('structures events', () => {
     expect(sagaTexts[0]).toContain(`world's first ${STRUCTURE_TIER_NAMES[1]}`);
     expect(sagaTexts[1]).toContain(`world's first ${STRUCTURE_TIER_NAMES[2]}`);
 
-    // Once EVER: the same tiers again — even tomorrow — add nothing.
     advanceDays(harness, 1);
     harness.host.notifyWorldEvent('structures:changes', {
       cause: 'generation',
@@ -161,7 +149,6 @@ describe('structures events', () => {
     expect(texts()[1]).toContain('Ruin took');
     expect(texts()[1]).toContain(placeName(0, 1));
 
-    // The same place cannot be ruined twice in one day, but a HAND is its own story.
     harness.host.notifyWorldEvent('structures:changes', { cause: 'generation', died: lost });
     expect(texts()).toHaveLength(2);
     harness.host.notifyWorldEvent('structures:changes', { cause: 'sculpt', died: lost });
@@ -169,7 +156,6 @@ describe('structures events', () => {
   });
 
   it('a chunk group is one district, so one line is one people (contract with races.ts)', () => {
-    // The claim the calamity line rests on: CHUNK_SIZE === district size.
     const lost = Array.from({ length: CHRONICLE_CALAMITY_MIN_HOMES }, (_, i) => cellIn(4, 4, i));
     const races = new Set(lost.map((cell) => settlementRace(cell.x, cell.y)));
     expect(races.size).toBe(1);
@@ -236,8 +222,6 @@ describe('the wire', () => {
       upgraded: [],
       died: [],
     });
-    // Counts are the only digits a line may carry; cell coordinates here are
-    // all ≥ 80, so any two-digit run would be a leak.
     for (const text of texts()) expect(text).not.toMatch(/\d\d/);
   });
 });
@@ -259,7 +243,6 @@ describe('persistence and the cap', () => {
     const restored = boot(saved);
     expect(chronicleEntries()).toEqual(before);
 
-    // Firsts stay first: the same tier and the same kind add nothing after restore.
     advanceDays(restored, 1);
     restored.host.notifyWorldEvent('structures:changes', {
       cause: 'generation',
@@ -272,24 +255,6 @@ describe('persistence and the cap', () => {
     expect(after.filter((t) => t.includes("world's first")).length).toBe(1);
     expect(after.filter((t) => t.includes('first yeti')).length).toBe(1);
 
-    // Day stamps advanced with the restored clock: three days of saga were
-    // saved and lived, so the newest line is on the saga's fourth day, index 3.
-    //
-    // THIS USED TO BE 4, and the extra one was a boundary artefact rather than
-    // a defect: `advanceDays` overshoots by one tick (0.1 summed 28 800 times
-    // exceeds 2 880), and while the calendar day turned over at DAWN — the same
-    // instant the sim clock starts its lap — that overshoot put genesis 100 ms
-    // on the wrong side of a boundary, making the saga's first 100 ms a day of
-    // its own. Since the day turns over at MIDNIGHT (owner, 2026-08-24) the
-    // boundary sits six world-hours away from sim-time zero, so a few hundred
-    // milliseconds of tick slop cannot reach it and the count is the plain one.
-    //
-    // A day stamp is still which CALENDAR DAY OF THE WORLD'S LIFE a line falls
-    // on — `worldAgeDays` subtracts whole days — and not how many 24-minute
-    // spans have elapsed since genesis. It has to be: the weekday in a heading
-    // comes from the shared calendar, and only a whole-day subtraction makes
-    // the two numbers turn over at the same instant, so a heading can never
-    // read "Tuesday · Day 3" over lines written on Monday.
     const last = chronicleEntries().at(-1) as ChronicleEntry;
     expect(last.day).toBe(3);
   });
@@ -318,7 +283,6 @@ describe('determinism', () => {
   it('place names are pure functions of the chunk', () => {
     expect(placeName(2, 3)).toBe(placeName(2, 3));
     expect(placeName(0, 0)).toMatch(/^[A-Z][a-z]+$/);
-    // Not a constant function: some spread across chunks.
     const names = new Set(
       Array.from({ length: 16 }, (_, i) => placeName(i % 4, Math.floor(i / 4))),
     );
@@ -326,9 +290,6 @@ describe('determinism', () => {
   });
 
   it('the race copy matches structures’ derivation on the shared golden vectors', () => {
-    // The same districts plugins/structures/test pins (pilgrims contract,
-    // 2026-08-19; restated in DISTRICTS rather than cells on 2026-08-21 — see
-    // that suite for why). If either copy drifts, one of the two suites fails.
     for (const [districtX, districtY, race] of [
       [0, 0, 'rudy'],
       [1, 1, 'uno'],
@@ -346,7 +307,6 @@ describe('determinism', () => {
     expect(parseStructuresChanges(null)).toBeNull();
     expect(parseStructuresChanges({ cause: 'generation', died: [{ x: 0.5, y: 0 }] })).toBeNull();
     expect(parseStructuresChanges({ cause: 'generation', upgraded: [{ x: 0, y: 0, tier: -1 }] })).toBeNull();
-    // Absent lists are empty lists (the sculpt emission carries only `died`).
     expect(parseStructuresChanges({ cause: 'sculpt', died: [] })).toEqual({
       cause: 'sculpt',
       seeded: [],

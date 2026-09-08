@@ -1,9 +1,3 @@
-// The client half's pure logic. Rendering is verified manually per design doc
-// ("Client rendering is verified manually in v1; don't build a headless GL test
-// rig"), so what is tested here is everything the meshes are driven FROM: the
-// bob/spin maths, the colour mapping, and the click → relic resolution that
-// decides whether a press is claimed away from the sculpt brush.
-
 import { describe, expect, it } from 'vitest';
 import { SKILLS, type RelicView } from '../protocol.ts';
 import {
@@ -61,9 +55,7 @@ describe('gem animation', () => {
       expect(phase).toBeGreaterThanOrEqual(0);
       expect(phase).toBeLessThan(GEM_BOB_PERIOD_S);
     }
-    // Distinct — the whole point is that gems do not bob in lockstep.
     expect(new Set(phases).size).toBe(phases.length);
-    // …and stable, so a keepalive re-broadcast does not make a gem jump.
     expect(gemPhaseFor('r3')).toBe(phases[2]);
   });
 });

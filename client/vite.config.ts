@@ -1,26 +1,9 @@
-// `vitest/config` re-exports Vite's defineConfig with the `test` block typed,
-// so one file configures both the dev/build pipeline and the test runner.
 import { defineConfig } from 'vitest/config';
 import solid from 'vite-plugin-solid';
 import { execSync, type ExecSyncOptions } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 
-/**
- * Build identity stamped into the bundle as `__CLIENT_VERSION__` (rendered by
- * ui/VersionWatermark.tsx): `<commit count>.<short hash>` derived from git, so
- * it bumps on every commit with no hand-maintained number to forget.
- *
- * Computed ONCE, when this config loads — i.e. at dev-server or build start.
- * That is the honest scope: Vite on this mount never watches (dev-ops note),
- * so "the source as of Vite start" and "what this process serves" are the
- * same thing, and a commit made under a running Vite is exactly the skew the
- * watermark exists to expose. The server derives its stamp the same way at
- * boot (server/src/version.ts — keep the format in sync; the two derivations
- * live in their own build contexts because one runs inside Vite's node
- * process and one at server boot). TERRACE_VERSION overrides for git-less
- * environments (docker, issue #8); no git degrades to 'unversioned'.
- */
 function buildVersion(): string {
   const fromEnv = process.env['TERRACE_VERSION'];
   if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv.trim();
@@ -30,48 +13,19 @@ function buildVersion(): string {
     const hash = execSync('git rev-parse --short HEAD', opts).toString().trim();
     if (/^\d+$/.test(count) && /^[0-9a-f]+$/.test(hash)) return `${count}.${hash}`;
   } catch {
-    // No git here — fall through to the sentinel.
   }
   return 'unversioned';
 }
 
-/**
- * Whether this dev server should watch files, set by the launcher's --watch
- * flag (see run_server.py, which owns the flag for both halves of the stack).
- * Any non-empty value other than "0" counts as on, so `TERRACE_WATCH=1 pnpm dev`
- * works for a hand-started Vite too.
- */
 function watchEnabled(): boolean {
   const raw = process.env['TERRACE_WATCH'];
   return raw !== undefined && raw.trim() !== '' && raw.trim() !== '0';
 }
 
-/**
- * Environment variable naming the file the real-GPU benchmark's samples are
- * appended to, one JSON object per line. REQUIRED to arm the sink, and required
- * to name an ABSOLUTE path: this dev server runs with `client/` as its working
- * directory while `scripts/gpu-bench.sh` polls the same file from the repo
- * root, so a relative path would quietly be two different files.
- */
 const PERF_SINK_ENV = 'TERRACE_PERF_SINK';
 
-/** URL the in-page probe POSTs to — client/src/perfProbe.ts's SINK_PATH. */
 const PERF_SINK_PATH = '/__perf';
 
-/**
- * The real-GPU benchmark's sample sink (client/src/perfProbe.ts writes it, this
- * receives it, scripts/gpu-bench.sh reads the file).
- *
- * IT EXISTS BECAUSE THE MEASURING BROWSER IS ON THE WINDOWS SIDE — only there
- * is there a discrete GPU; every browser inside WSL2 renders on SwiftShader —
- * and Windows → WSL localhost is the only direction of that NAT boundary open
- * without firewall changes. So the page cannot be driven from here; it reports
- * by POSTing back to the dev server that served it.
- *
- * UNSET MEANS OFF, LOUDLY: with no TERRACE_PERF_SINK the route answers 503 and
- * names the variable, rather than defaulting to some path under /tmp that an
- * operator would then poll forever without being told where the samples went.
- */
 function perfSink() {
   const configured = process.env[PERF_SINK_ENV]?.trim();
   const target = configured === undefined || configured === '' ? null : configured;
@@ -115,75 +69,23 @@ function perfSink() {
 
 export default defineConfig({
   plugins: [solid(), perfSink()],
-  // Vite 8's KNOWN_ASSET_TYPES does not include glb, so a `*.glb?url`
-  // import fails without this: authored models (docs/model-assets.md) would
-  // not resolve to a served URL. The pattern is extension-wide on purpose —
-  // every current and future model asset is a .glb by the same convention.
   assetsInclude: ['**/*.glb'],
   define: {
     __CLIENT_VERSION__: JSON.stringify(buildVersion()),
   },
   server: {
-    // THE ONE HEADER THAT MAKES `render()` OPENABLE (issue #378). Chrome gates
-    // the JS Self-Profiling API behind this document policy: with it, the page
-    // can sample its OWN call stacks (render/selfProfile.ts) and post the trace
-    // back here. Without it `window.Profiler` does not exist.
-    //
-    // WHY IT HAD TO BE THIS AND NOT DEVTOOLS. The decay lives inside
-    // `renderer.render`, which cannot be sub-timed from outside three, so the
-    // remaining move was a sampled CPU profile of a page that has already
-    // decayed. Only Windows-side Chrome has the discrete GPU, and the WSL2 NAT
-    // boundary passes Windows -> WSL only, so an inbound CDP socket from here
-    // times out (scripts/gpu-bench.md) and the profile could not be started
-    // from this side. A page that profiles ITSELF needs no inbound socket.
-    //
-    // Dev-server only, and it grants nothing to anyone: it permits this origin
-    // to profile its own JavaScript, which is what a profiler in the browser's
-    // own devtools already does.
     headers: { 'Document-Policy': 'js-profiling' },
-    // Colyseus owns 2567 (design doc §8 "Configuration"); keep the dev server
-    // clear of it so both can run side by side.
     port: 5173,
-    // Listen on all interfaces: this is a multiplayer project, and "a friend
-    // on the LAN opens http://<dev-box>:5173" is a first-class dev workflow.
-    // The client derives its ws endpoint from the page hostname (config.ts),
-    // so a LAN visitor automatically dials this machine's server too.
     host: true,
-    // Vite's DNS-rebinding guard rejects hostnames it does not know. Raw LAN
-    // IPs pass by default; the leading-dot entry allows any mDNS name
-    // (amd.local today, whatever the machine is renamed to tomorrow) while
-    // still refusing arbitrary public domains pointed at this address.
     allowedHosts: ['.local'],
-    // File watching is opt-in per launch, driven by the launcher's --watch
-    // flag (run_server.py sets TERRACE_WATCH=1 for the Vite it spawns). Left
-    // unset, Vite serves the modules it loaded at startup and a restart is
-    // what picks up an edit — the behaviour this checkout had before watching
-    // existed.
     watch: watchEnabled()
       ? {
-          // POLLING IS MANDATORY ON THIS CHECKOUT, not a preference. The repo
-          // lives on /mnt/e — a WSL2 drvfs mount that delivers NO inotify
-          // events at all, not even for writes made from inside Linux
-          // (measured 2026-08-21: `fs.watch('shared/src', {recursive:true})`
-          // saw zero events for an append AND a rewrite over 8 s). Chokidar's
-          // native backend therefore sees nothing, which is why an edit
-          // otherwise requires a full Vite restart before it is visible.
           usePolling: true,
-          // How often each watched file is stat()ed, in milliseconds. 300 ms
-          // is under the threshold where a save feels like it did not take,
-          // and the watched set here is the module graph of one app (hundreds
-          // of files, not the whole tree), so the stat storm is small. Lower
-          // values buy nothing a human can perceive and multiply drvfs stat
-          // cost, which is an order slower than a native mount.
           interval: 300,
         }
       : null,
   },
   test: {
-    // Every client test is pure logic (see test/ — picking math, terrain mirror
-    // diffs, chunk seams, colour ramp). Rendering is verified manually per
-    // design doc §8 "Testing": no headless GL rig. So a plain node environment
-    // is correct here — nothing under test touches the DOM or WebGL.
     environment: 'node',
     include: ['test/**/*.test.ts'],
   },

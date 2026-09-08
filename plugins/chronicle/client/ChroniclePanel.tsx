@@ -1,25 +1,9 @@
-// The chronicle's HUD presence: the top-centre world banner is its entry
-// point (owner move, 2026-08-19 — the info-panel row and latest-line preview
-// are gone). index.ts claims the core world-header action with the book icon
-// and label below; this file keeps the reader overlay and its always-mounted
-// host.
-//
-// SOLID REACTIVITY, THE SAME DISCIPLINE AS EVERY PANEL HERE: the component
-// body runs once; every reactive value is read through an accessor at its use
-// site, never stashed in a plain const.
-//
-// Styling: a plugin cannot add to client/src/ui/hud.css, so the overlay
-// carries its chrome inline, built from the HUD's own custom properties so it
-// follows the core theme; the icon inherits currentColor so core's banner
-// styles own its colour.
-
 import { weekdayOf } from '@terrace/shared';
 import { For, Show, createEffect, onCleanup, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import type { ChronicleEntry } from '../protocol.ts';
 import { entries, genesisDay, readerOpen, setReaderOpen } from './state.ts';
 
-/** The scroll grouped for display: one block per day, oldest first. */
 function dayBlocks(all: readonly ChronicleEntry[]): Array<{ day: number; texts: string[] }> {
   const blocks: Array<{ day: number; texts: string[] }> = [];
   for (const entry of all) {
@@ -33,9 +17,6 @@ function dayBlocks(all: readonly ChronicleEntry[]): Array<{ day: number; texts: 
 function Reader(): JSX.Element {
   let scrollBox: HTMLDivElement | undefined;
 
-  // Escape closes THIS overlay only: capture phase + stopImmediatePropagation,
-  // so no other layer's Escape listener also fires on the same press (the
-  // Cartographer overlay owns Escape the same exclusive way).
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return;
     event.stopImmediatePropagation();
@@ -44,7 +25,6 @@ function Reader(): JSX.Element {
   window.addEventListener('keydown', onKeyDown, { capture: true });
   onCleanup(() => window.removeEventListener('keydown', onKeyDown, { capture: true }));
 
-  // A saga reads oldest → newest; the reader opens at "now".
   createEffect(() => {
     entries();
     if (scrollBox !== undefined) scrollBox.scrollTop = scrollBox.scrollHeight;
@@ -89,8 +69,8 @@ function Reader(): JSX.Element {
             'border-bottom': '1px solid var(--hud-border)',
           }}
         >
-          {/* A plain styled span, NOT .hud-label: that class carries the HUD
-              row's fixed label width, which wraps or overlaps a modal title. */}
+          {
+}
           <span
             style={{
               'font-weight': '650',
@@ -127,25 +107,9 @@ function Reader(): JSX.Element {
                     'text-transform': 'uppercase',
                   }}
                 >
-                  {/*
-                    THE WEEKDAY IS THE HEADING'S POINT, not decoration (owner,
-                    2026-08-23): settlers arrive on Mondays, so a reader who can
-                    see which day is which can see the rhythm.
+                  {
 
-                    TWO DIFFERENT NUMBERS, since the world clock was anchored to
-                    real time: `block.day` is how old the world was, which is
-                    what "Day 57" means, while the weekday belongs to the shared
-                    calendar every world runs on. `genesisDay()` is the offset
-                    between them (protocol.ts) — a world no longer necessarily
-                    begins on a Monday, so the name cannot come from the age.
-
-                    Read through the accessor at the use site, never stashed:
-                    the offset arrives with the first payload, after this
-                    component body has run.
-
-                    Displayed 1-based, as it always was: the world's first day
-                    reads "Day 1", not "Day 0".
-                  */}
+}
                   {weekdayOf(block.day + genesisDay())} · Day {block.day + 1}
                 </div>
                 <For each={block.texts}>
@@ -164,12 +128,6 @@ function Reader(): JSX.Element {
   );
 }
 
-/**
- * The open-book glyph the banner shows right of the world name. Same inline-
- * SVG idiom as the HUD's own icon buttons (stroke currentColor, aria-hidden);
- * sized a step under the name's 17px type so it reads as a suffix, not a
- * second title.
- */
 export function BookIcon(): JSX.Element {
   return (
     <svg
@@ -189,18 +147,6 @@ export function BookIcon(): JSX.Element {
   );
 }
 
-/**
- * The reader's mount. The banner action that OPENS the reader has no mounted
- * component of its own, so this host carries the overlay: registered
- * 'top-center' (children there render bare and are never unmounted by the
- * info panel's collapse — 'panel' placement would wrap it in visible chrome
- * and disappear with a collapsed panel on phones), and it renders nothing at
- * all while the reader is closed.
- *
- * Portal to <body>: the HUD containers' backdrop-filter makes them containing
- * blocks for fixed-position descendants, so a reader rendered in place would
- * be trapped inside its host's box.
- */
 export function ChronicleReaderHost(): JSX.Element {
   return (
     <Show when={readerOpen()}>

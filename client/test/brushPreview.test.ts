@@ -1,12 +1,3 @@
-// Brush-outline geometry tests. Like frontierFog.test.ts these build real
-// Three.js objects but never a WebGLRenderer, so they run headless.
-//
-// The contract under test is the one the player sees: the outline must sit ON
-// the cells the brush edits. Because every brush footprint is symmetric about
-// its centre cell, that reduces to a check the geometry can make on its own —
-// the outline's bounding box is centred on the object's origin, and the object
-// is positioned at the hovered cell's centre.
-
 import { describe, expect, it } from 'vitest';
 import { Scene, type BufferAttribute, LineLoop, LineSegments, Mesh, type Object3D, type Material } from 'three';
 import {
@@ -26,17 +17,8 @@ import {
 } from '../src/render/brushPreview.ts';
 import { createDenialCue } from '../src/render/denialCue.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
-// THE LADDER, NOT THE WIRE RANGE: the preview builds a geometry per rung the
-// Brush row offers, so these loops walk exactly the radii that can be drawn —
-// an off-ladder radius is the `hides for a radius it has no geometry for` case
-// below, not a shape to assert.
 import { BRUSH_RADII } from '../src/state/hudState.ts';
 
-/**
- * Stands in for the canvas: records whether the cursor-hiding class is on, and
- * counts writes so the per-frame call can be shown not to touch the DOM while
- * the state is unchanged.
- */
 function fakeCanvas(): CursorSurface & { on: boolean; writes: number } {
   const surface = {
     on: false,
@@ -51,14 +33,12 @@ function fakeCanvas(): CursorSurface & { on: boolean; writes: number } {
   return surface;
 }
 
-/** The closed outline line the preview adds to the scene (the crosshair is a separate LineSegments). */
 function outlineOf(scene: Scene): LineLoop {
   const loop = scene.children.find((c): c is LineLoop => c instanceof LineLoop);
   expect(loop).toBeDefined();
   return loop as LineLoop;
 }
 
-/** The outline's local vertices as (x, z) pairs, in cells. */
 function outlinePoints(line: LineLoop): { x: number; z: number }[] {
   const position = line.geometry.getAttribute('position') as BufferAttribute;
   const points: { x: number; z: number }[] = [];
@@ -68,7 +48,6 @@ function outlinePoints(line: LineLoop): { x: number; z: number }[] {
   return points;
 }
 
-/** Min/max of the outline's local positions on the X and Z axes. */
 function extent(line: LineLoop): { minX: number; maxX: number; minZ: number; maxZ: number } {
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const { x, z } of outlinePoints(line)) {
@@ -80,7 +59,6 @@ function extent(line: LineLoop): { minX: number; maxX: number; minZ: number; max
   return { minX, maxX, minZ, maxZ };
 }
 
-/** Ray-crossing test against the closed outline. */
 function encloses(points: { x: number; z: number }[], x: number, z: number): boolean {
   let inside = false;
   for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
@@ -92,12 +70,6 @@ function encloses(points: { x: number; z: number }[], x: number, z: number): boo
   return inside;
 }
 
-/**
- * The cells one click of this brush VISIBLY changes on flat band-aligned
- * ground, computed the long way round — a real sculpt on a real heightmap,
- * compared band for band. Deliberately not the preview's own helper: a test
- * that asked the module for its own answer would agree with any bug.
- */
 function renderedCells(
   radius: number,
   tool: 'stamp' | 'smooth',
@@ -113,9 +85,6 @@ function renderedCells(
     centre,
     centre,
     radius,
-    // The sign IS the direction — how the server builds the call
-    // (server/src/intent/pipeline.ts). `sculptOptionsOf` never reads the
-    // intent's `dir`, so passing it there alone would sculpt the same cells.
     DEFAULT_SCULPT_AMOUNT * dir,
     sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
   );
@@ -130,7 +99,6 @@ function renderedCells(
   return changed;
 }
 
-/** How far the footprint reaches from its centre cell, in cells. */
 function footprintReach(radius: number): number {
   let reach = 0;
   forEachFootprintOffset(radius, (dx, dy) => {
@@ -140,47 +108,27 @@ function footprintReach(radius: number): number {
   return reach;
 }
 
-/**
- * A brush selection at the stamp+hard combination — the one the outline was
- * always true for, and the HUD's default since 2026-08-22. Tests that are about
- * radius say so by varying only the radius.
- *
- * Raising, for the same reason: stamp+hard is the one combination whose mark is
- * the same both ways, so the tests below that compare against the FOOTPRINT are
- * true of either direction and say `raise` only because the type requires a
- * direction to be named.
- */
 function brush(radius: number): BrushSelection {
   return { radius, tool: 'stamp', profile: 'hard', dir: 1 };
 }
 
-/** World edge for the tests below: any size works, the clip must follow it. */
 const TEST_WORLD_SIZE_CELLS = 64;
 
-/** Nothing vetoed: the outline draws its ordinary colours. */
 const NEVER_DENIED = createDenialCue(() => false);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CLIPPED AT THE WORLD'S EDGE (issue #281 B). The outline geometry is one per
-// (radius, tool, edge, dir) and position-independent, so at the border it would
-// promise cells the brush cannot edit. The overlay materials carry four
-// world-space clipping planes at the editable extent, [-½, size-½] cells.
 describe('world-edge clipping', () => {
   const hover = { x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false };
   const stamp = { radius: BRUSH_RADII[0]!, tool: 'stamp', profile: 'hard', dir: 1 } as const;
 
-  /** Every overlay drawn for the footprint: ring, skirt, cell grid. */
   function footprintMaterials(scene: Scene): Material[] {
     return scene.children
       .filter((c): c is LineLoop | LineSegments | Mesh => c instanceof LineLoop || c instanceof LineSegments || c instanceof Mesh)
       .map((c) => c.material as Material);
   }
 
-  /** The kept half-space of a plane along an axis, as the world coordinate where it cuts. */
   function cutAt(material: Material, nx: number, nz: number): number {
     const plane = material.clippingPlanes!.find((p) => p.normal.x === nx && p.normal.z === nz);
     expect(plane).toBeDefined();
-    // normal·p + constant = 0 on the plane; with a unit axis normal the cut is at -constant/n.
     return -plane!.constant / (nx !== 0 ? nx : nz);
   }
 
@@ -191,7 +139,7 @@ describe('world-edge clipping', () => {
     preview.update(hover, stamp);
 
     const clipped = footprintMaterials(scene).filter((m) => m.clippingPlanes !== null && m.clippingPlanes.length > 0);
-    expect(clipped).toHaveLength(3); // ring, skirt, cell grid — the crosshair is never clipped
+    expect(clipped).toHaveLength(3);
     for (const material of clipped) {
       expect(material.clippingPlanes).toHaveLength(4);
       expect(cutAt(material, 1, 0)).toBe(-0.5 * CELL_WORLD_SIZE);
@@ -223,11 +171,6 @@ describe('world-edge clipping', () => {
 
 describe('createBrushPreview', () => {
   it('encloses exactly the cells the brush edits, and no others', () => {
-    // The terrain's honesty invariant, applied to the preview: a contour never
-    // crosses a cell centre, so the region it bounds is a set of whole cells.
-    // Asserting membership at cell centres — rather than a bounding box — is
-    // what makes this a test of the PROMISE ("these cells move") instead of a
-    // snapshot of whichever smoothing pass happens to be configured.
     const scene = new Scene();
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
@@ -240,7 +183,7 @@ describe('createBrushPreview', () => {
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
 
-      const scan = footprintReach(radius) + 2; // a ring of clear cells around it
+      const scan = footprintReach(radius) + 2;
       for (let dz = -scan; dz <= scan; dz++) {
         for (let dx = -scan; dx <= scan; dx++) {
           expect({ radius, dx, dz, enclosed: encloses(points, dx, dz) }).toEqual({
@@ -254,24 +197,6 @@ describe('createBrushPreview', () => {
   });
 
   it('outlines exactly what one click renders, for every tool, edge and direction', () => {
-    // THE CONTRACT THE WHOLE MODULE EXISTS FOR (owner, 2026-08-22: "I want the
-    // outline to be exactly the same size as what I'm going to get for a single
-    // click on flat land"). The reference is not the footprint — that is the
-    // set of cells whose stored HEIGHT moves, and it only equals what the
-    // player sees under stamp+hard. It is a real applySculpt on a flat map,
-    // compared band for band, which is what the player actually sees.
-    //
-    // Tool and edge are both varied because both move the answer: measured on
-    // the 0.75 brush, one click renders 0.75 units as a stamp and 0.25 as a
-    // smooth. An outline blind to that was the bug.
-    //
-    // DIRECTION IS VARIED FOR THE SAME REASON, and it was the same bug one axis
-    // over: the preview simulated a raise whatever the Mode toggle said. Raising
-    // off band-aligned ground a soft falloff clears the band above only at the
-    // centre; lowering, any delta at all drops the cell below its band floor —
-    // so Lower renders the whole footprint. On the 7.75 brush that is one cell
-    // outlined against 749 edited. This loop fails on every soft entry and on
-    // smooth+hard if the direction stops reaching the simulation.
     const scene = new Scene();
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
@@ -303,16 +228,6 @@ describe('createBrushPreview', () => {
   });
 
   it('never draws a vertex outside the cells the brush edits', () => {
-    // STRICTER THAN THE TEST ABOVE, and it has to be (owner, 2026-08-22: "draw
-    // the brush outline inside the cells the brush edits, not outside"). Cell-
-    // centre membership tolerates an outline that bulges up to half a cell into
-    // ground the brush will not touch, because a bulge that small never reaches
-    // the next centre. This asserts the promise at the only place it can be
-    // broken — every vertex of the line itself.
-    //
-    // It is a real regression guard, not a restatement: before the clamp in
-    // brushPreview.ts, Chaikin pushed 24 of radius 8's 96 vertices and 48 of
-    // radius 16's 160 over concave steps, overhanging by 0.1875 of a cell.
     const scene = new Scene();
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
@@ -324,10 +239,6 @@ describe('createBrushPreview', () => {
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
 
       for (const { x, z } of outlinePoints(line)) {
-        // A point lies in the union of the edited unit squares exactly when the
-        // cell it rounds into is edited: cell (i, j) covers [i±0.5, j±0.5], and
-        // rounding is what picks that cell. Float slop at an exact cell edge is
-        // absorbed by nudging the point a hair inward before rounding.
         const i = Math.round(x - Math.sign(x) * 1e-9);
         const j = Math.round(z - Math.sign(z) * 1e-9);
         expect({ radius, x, z, inside: edited.has(`${i},${j}`) }).toEqual({
@@ -340,11 +251,6 @@ describe('createBrushPreview', () => {
   });
 
   it('draws the shared edge of every adjacent pair of footprint cells, once', () => {
-    // The cell grid the owner asked to see inside the ring. Interior edges
-    // only: the footprint's own boundary is the ring's line, and emitting it
-    // here too would double its brightness. "Once" is the half of the contract
-    // that a segment count alone would not catch — a grid drawn from all four
-    // edges of every cell looks identical and is twice the geometry.
     const scene = new Scene();
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const grids = scene.children.filter(
@@ -362,9 +268,6 @@ describe('createBrushPreview', () => {
         if (edited.has(`${dx},${dy + 1}`)) expected++;
       });
 
-      // The crosshair is a LineSegments too and never changes with radius, so
-      // the grid is identified as the one whose vertex count tracks the
-      // footprint rather than by its position in the scene.
       const counts = grids.map((g) => g.geometry.getAttribute('position').count / 2);
       expect({ radius, hasGrid: counts.includes(expected) }).toEqual({
         radius, hasGrid: true,
@@ -375,10 +278,6 @@ describe('createBrushPreview', () => {
   });
 
   it('centres every radius outline on the object origin', () => {
-    // Every footprint is symmetric about its centre cell, so the outline of one
-    // must be too. This is what catches a half-cell placement error: it fails
-    // the moment the drawn shape stops agreeing with the cells it stands for,
-    // whatever geometry is used to draw it.
     const scene = new Scene();
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
@@ -389,8 +288,6 @@ describe('createBrushPreview', () => {
       expect(minX).toBeCloseTo(-maxX);
       expect(minZ).toBeCloseTo(-maxZ);
       expect(maxX).toBeCloseTo(maxZ);
-      // It must still reach out over the outermost edited cells: past their
-      // centres, and never past the cell edge beyond them.
       const reach = footprintReach(radius);
       expect(maxX).toBeGreaterThan(reach);
       expect(maxX).toBeLessThanOrEqual(reach + 0.5);
@@ -417,24 +314,18 @@ describe('createBrushPreview', () => {
     const canvas = fakeCanvas();
     const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
 
-    // Nothing hovered yet: the player still has their arrow.
     expect(canvas.on).toBe(false);
 
     preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(true);
 
-    // Off the terrain — sky, off-world, pointer gone. The arrow must come back
-    // rather than leave the player with no pointer and no outline.
     preview.update(null, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(false);
 
-    // An illegal radius hides the outline too, and must restore the arrow on
-    // that path as well.
     preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MAX_BRUSH_RADIUS + 1));
     expect(canvas.on).toBe(false);
 
-    // Disposing must not strand the page with a hidden pointer.
     preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     preview.dispose();
     expect(canvas.on).toBe(false);
@@ -445,7 +336,6 @@ describe('createBrushPreview', () => {
     const canvas = fakeCanvas();
     const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
 
-    // `update` runs every frame; a steady hover must not touch the DOM.
     for (let frame = 0; frame < 60; frame++) {
       preview.update({ x: 2, y: 2, surfaceY: 0, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     }

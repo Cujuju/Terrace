@@ -1,6 +1,3 @@
-// The freshwater transpose: what rivers.ts's per-river courses look like when
-// asked the per-cell question traversal needs (src/freshwater.ts).
-
 import { describe, expect, it } from 'vitest';
 import { NO_FRESHWATER, buildFreshwaterMap, type RiverNetwork } from '../src/index.ts';
 
@@ -34,9 +31,6 @@ describe('buildFreshwaterMap', () => {
   });
 
   it('calls a cell that is both a pool AND a channel a pool', () => {
-    // A basin's spillway is emitted twice — pooled, and as the cell the course
-    // flows on through. Standing water is the stronger claim, and the answer
-    // must not depend on which river was walked first.
     const spillwayFirstAsChannel: RiverNetwork = {
       rivers: [
         {

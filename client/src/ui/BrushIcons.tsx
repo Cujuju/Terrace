@@ -1,26 +1,5 @@
-// THE MODELER DOCK'S FACES (owner, 2026-09-04: "instead of text, it uses an
-// icon" — for the tool row, the edge row and the direction toggle).
-//
-// Eight shaded inline SVGs in the toolbar's own idiom (Toolbar.tsx's
-// SculptIcon): full-colour art on an isometric tile rather than a currentColor
-// glyph, so a dock tile and a toolbar tile read as the same instrument. The
-// design source of each is .claude/orchestration/refs/hud-icons/<name>.svg —
-// those files are the art's home and are NOT imported at runtime; this module
-// is the shipped copy, and an edit to the art is an edit to both.
-//
-// GRADIENT IDS ARE PREFIXED WITH THE ICON'S NAME, and must stay that way: SVG
-// ids are document-global, so two icons on screen at once sharing an id would
-// paint one of them with the other's gradient. Every icon in the dock is on
-// screen at once.
-//
-// Each icon carries `class="hud-tool__icon"`, which is what sizes it, lifts it
-// off its tile with a drop shadow and settles its motion under
-// prefers-reduced-motion (hud.css); the dock's own rules shrink that 32px face
-// to the 26px one a .brush-button holds.
-
 import type { JSX } from 'solid-js';
 
-/** Stamp: a plug of ground pressed straight down into the tile. */
 export function StampIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -77,7 +56,6 @@ export function StampIcon(): JSX.Element {
   );
 }
 
-/** Smooth: the same tile under a rounded, blended mound. */
 export function SmoothIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -129,7 +107,6 @@ export function SmoothIcon(): JSX.Element {
   );
 }
 
-/** Drag: a terrace edge pushed sideways by an arrow. */
 export function DragIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -176,15 +153,6 @@ export function DragIcon(): JSX.Element {
   );
 }
 
-/**
- * Carve: an ARCHED tunnel mouth cut into a standing block, roof left on
- * (owner, 2026-09-04: "make the carve icon more obvious by drawing an arch").
- * The arch is drawn upright in the lit wall's own plane and sheared onto it
- * with skewY — the wall's top and bottom edges fall at 1 in 2, and
- * atan(1/2) is the 26.565° below — so its feet sit on the wall's foot and
- * its crown runs parallel to the roof line, instead of being hand-plotted
- * point by point.
- */
 export function CarveIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -226,9 +194,8 @@ export function CarveIcon(): JSX.Element {
       <polygon points="7,10 16,5.5 25,10 16,14.5" fill="url(#carve-cap)" />
       <polygon points="7,10 16,14.5 16,25 7,20.5" fill="url(#carve-face)" />
       <polygon points="25,10 16,14.5 16,25 25,20.5" fill="#3a2415" />
-      {/* The arch, upright in the wall's plane: the wall is the rectangle
-          x 7–16, y 6.5–17 before the shear. A ring of dressed stone, the
-          dark mouth inside it, and a lit edge along the crown. */}
+      {
+}
       <g transform="skewY(26.565)">
         <path d="M8 17V12.2a3.5 3.5 0 0 1 7 0V17z" fill="url(#carve-ring)" />
         <path d="M9.2 17v-4.8a2.3 2.3 0 0 1 4.6 0V17z" fill="url(#carve-hole)" />
@@ -244,7 +211,6 @@ export function CarveIcon(): JSX.Element {
   );
 }
 
-/** Soft edge: the brush's falloff drawn as one rounded hill on flat ground. */
 export function SoftIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -267,7 +233,6 @@ export function SoftIcon(): JSX.Element {
   );
 }
 
-/** Hard edge: the same silhouette, stepped into terraces. */
 export function HardIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -291,7 +256,6 @@ export function HardIcon(): JSX.Element {
   );
 }
 
-/** Raising: an arrow lifting off the tile, in the accent green. */
 export function RaiseIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
@@ -329,7 +293,6 @@ export function RaiseIcon(): JSX.Element {
   );
 }
 
-/** Lowering: the same arrow driven into the tile, in the lower-orange. */
 export function LowerIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">

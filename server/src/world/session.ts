@@ -1,31 +1,3 @@
-// A WORLD SESSION — one loaded world and everything that belongs to it.
-//
-// A session is the unit that gets swapped when an operator loads a different
-// world: its store, its World, its plugin host and its rollback service are
-// created together, live exactly as long as that world is loaded, and are
-// thrown away together. Nothing outside holds a reference to any of them
-// directly — see world-manager.ts, which owns the current session and hands
-// out access through getters.
-//
-// WHY THE HOST IS PART OF THE SESSION AND NOT THE PROCESS. `createWorldApi`
-// binds a view to one specific World instance, so a PluginHost is permanently
-// bound to the world it was built for. Rebuilding the host per session is
-// therefore not a choice but a consequence — and it is the SAFE consequence:
-// a view that could be RE-POINTED at another world would let a plugin observe
-// the world changing underneath it in the middle of a tick. (Since issue #164
-// that binding lives in a mutable cell, but the only move it can make is to
-// null: `closeSession` revokes, nothing ever re-points.)
-//
-// PLUGIN MODULES ARE STILL PROCESS-WIDE, AND THAT IS THE CONSTRAINT THIS WHOLE
-// DESIGN IS SHAPED BY. Every server plugin keeps its state at module scope
-// (`let entries` in chronicle, `const forest` in flora, ...). A new host over
-// the same modules does NOT get fresh plugin state; what resets that state is
-// `restorePersistence` followed by `worldCreate`, the same pair the boot path
-// and a rollback both run, because every `onWorldCreate` in this repo assigns
-// or zeroes rather than accumulating. That contract is why one world can be
-// closed and another opened in a live process at all — and why two worlds
-// cannot be open AT ONCE (issue #78).
-
 import { logError, logInfo } from '../log.ts';
 import type { ServerConfig } from '../config.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
@@ -40,9 +12,7 @@ import { World } from './world.ts';
 
 const MILLISECONDS_PER_SECOND = 1000;
 
-/** One loaded world: everything that lives and dies with it. */
 export interface WorldSession {
-  /** The registry id — i.e. the basename of the file this world lives in. */
   readonly id: string;
   readonly store: SnapshotStore;
   readonly world: World;
@@ -50,44 +20,16 @@ export interface WorldSession {
   readonly rollback: RollbackService;
 }
 
-/** What opening a session needs from the process. */
 export interface SessionDeps {
   readonly config: ServerConfig;
   readonly registry: WorldRegistry;
-  /**
-   * THE INSTALLED SET, ASKED EACH TIME A SESSION IS BUILT — an object, not the
-   * array it used to be, so that a plugin re-imported in this process (issue
-   * #198) is the one the NEXT session runs. See plugins/installed.ts.
-   */
   readonly plugins: InstalledPlugins;
 }
 
-/** How a caller wants the snapshot written. */
 export interface SnapshotOptions {
-  /**
-   * Hand the write to the writer thread and return, instead of blocking until
-   * it is on disk (issue #273).
-   *
-   * FOR THE CADENCE PATH ONLY. Every other caller — boot, close, world switch,
-   * an operator's explicit save — needs the row on disk before it takes its
-   * next step, and pays the block deliberately. Returning true from a deferred
-   * write means "handed over", not "durable"; SnapshotStore.close() and the
-   * shutdown save both settle the queue, so the only way to lose a handed-off
-   * snapshot is a process death that skips those, which is exactly the window
-   * the synchronous write had while it sat inside its transaction.
-   */
   readonly defer?: boolean;
 }
 
-/**
- * Writes a snapshot if the world changed. Returns true when one was written.
- *
- * The one place the whole process turns "the world moved" into a row, so the
- * set of things a snapshot contains is stated exactly once. Used by the boot
- * path, the periodic scheduler, the shutdown hook and — critically — by
- * `closeSession`, so a world being closed is saved by the same code that saves
- * a world being left running.
- */
 export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions): boolean {
   const { world, host, store } = session;
   if (!world.dirty) return false;
@@ -95,38 +37,22 @@ export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions
     worldSize: world.size,
     name: world.name,
     cells: world.heightsForPersistence(),
-    // The layered columns ride along with the heights they complete: without
-    // them a carved world's snapshot would be unwritable (or worse, silently
-    // flattened on restore). See World.spansForPersistence.
     columnSpans: world.spansForPersistence(),
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
     tokenMasks: world.tokenMasks(),
-    // The world clock rides along with whatever else made this world dirty —
-    // it never dirties the world itself (World.advanceClock's doc comment).
     simMillis: world.simMillis,
-    // The world's birthday, by contrast, never changes after the first write;
-    // it rides along for the same reason and costs nothing to restate.
     genesisMillis: world.genesisMillis,
   };
   if (options?.defer === true) {
-    // OFF THE TICK THREAD (issue #273). The thumbnail is deliberately NOT built
-    // here: it is a full worldSize² pass and the writer thread builds it from
-    // the heightmap copy it is already being handed. See
-    // SnapshotStore.saveSnapshotDeferred.
     store.saveSnapshotDeferred(input, (error) => {
       if (error === null) return;
       logError(`snapshot of world "${session.id}" failed to write: ${error}`);
-      // Back to dirty, so the next cadence tick retries — the same outcome the
-      // synchronous path gets from throwing. See World.markSnapshotFailed.
       world.markSnapshotFailed();
     });
   } else {
     store.saveSnapshot({
       ...input,
-      // The heightmap is already in memory here, so the picture costs only the
-      // averaging pass — the reason thumbnails are written rather than computed
-      // when somebody opens the worlds panel (persistence/thumbnail.ts).
       thumbnail: buildThumbnail(world.map.cells, world.size),
     });
   }
@@ -134,18 +60,6 @@ export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions
   return true;
 }
 
-/**
- * Which of the installed plugins THIS world runs (issue #165).
- *
- * The world file stores what is switched OFF, so the answer is "everything
- * installed, minus that" — a world nobody has configured runs every plugin,
- * and a plugin added to `plugins/` after the fact is live in every existing
- * world without anyone having to opt each one in. See DISABLED_PLUGINS_DDL.
- *
- * Read HERE rather than passed in by the caller, so every path that opens a
- * world — boot, an operator load, a plugin-toggle reopen, a test — gets the
- * same answer from the same place and none of them can forget to ask.
- */
 function enabledPluginNames(
   store: SnapshotStore,
   plugins: readonly LoadedPlugin[],
@@ -156,17 +70,6 @@ function enabledPluginNames(
   );
 }
 
-/**
- * This world's plugin settings, grouped by the plugin that declared them
- * (per-world plugin settings, 2026-08-25).
- *
- * GROUPED HERE, IN THE ONE PLACE A SESSION IS BUILT, for the same reason
- * `enabledPluginNames` is read here: every path that opens a world — boot, an
- * operator load, a reopen after a toggle or a setting change, a test — gets
- * the same answer from the same place, and none of them can forget to ask.
- * The host narrows each group to the plugin it belongs to; see
- * `WorldApi.setting`.
- */
 function pluginSettingsByPlugin(store: SnapshotStore): Record<string, Record<string, string>> {
   const grouped: Record<string, Record<string, string>> = {};
   for (const row of store.pluginSettings()) {
@@ -175,24 +78,6 @@ function pluginSettingsByPlugin(store: SnapshotStore): Record<string, Record<str
   return grouped;
 }
 
-/**
- * Opens a world that already has a file, and brings its plugins up to the
- * state they were in when it was last closed.
- *
- * REPLAYS THE BOOT SEQUENCE — `restorePersistence` then `worldCreate`, in that
- * order — because several plugins split their restore across the pair (`load`
- * stages a slice into a module-level buffer, `onWorldCreate` consumes it).
- * Calling only the first would leave those plugins holding a slice they never
- * applied. This is the same sequence, for the same reason, as the one
- * documented at the head of rollback.ts.
- *
- * Throws when the file cannot be read, when it holds a schema version this
- * build does not understand, or when it has no snapshot at all. A world file
- * with no snapshots is a broken world, not an empty one: `createWorld` writes
- * a genesis snapshot before the file is ever considered a world, so a file
- * without one has lost something, and inventing fresh terrain to fill the gap
- * is exactly the behaviour that costs people their maps.
- */
 export function openSession(deps: SessionDeps, id: string): WorldSession {
   const { config, registry } = deps;
   const plugins = deps.plugins.list;
@@ -214,8 +99,6 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
       `loading world "${id}": snapshot #${snapshot.id} (${snapshot.worldSize}², ${age}s old)`,
     );
 
-    // Difficulty comes from the environment, the NAME comes from the snapshot
-    // — see World.restore for why the two are opposite.
     world = World.restore(
       snapshot.worldSize,
       snapshot.cells,
@@ -227,18 +110,9 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
       snapshot.genesisMillis,
       snapshot.columnSpans,
     );
-    // THE CLOCK MEETS REAL TIME HERE, before any plugin has run: world time is
-    // an offset against the wall clock (shared/src/calendar.ts), so a restored
-    // world resumes at the hour and weekday real time says it should be rather
-    // than where its last tick left it. Also the moment a world snapshotted
-    // before this existed gets its birthday, reconstructed from the age its
-    // row stored — see World.anchorClockToRealTime for all three cases.
     world.anchorClockToRealTime();
     pluginSlices = snapshot.pluginSlices;
   } catch (error) {
-    // Do not leak the file handle when the world inside it turns out to be
-    // unreadable: this path runs while the server is live, and an operator who
-    // tries three broken worlds must not end up with three open databases.
     store.close();
     throw error;
   }
@@ -249,7 +123,6 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
     enabledPluginNames(store, plugins),
     pluginSettingsByPlugin(store),
   );
-  // Restore first, then announce — see this function's doc comment.
   host.restorePersistence(pluginSlices);
   host.worldCreate();
 
@@ -265,49 +138,16 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
   return { id, store, world, host, rollback };
 }
 
-/**
- * Saves and closes a session.
- *
- * SAVE FIRST, ALWAYS, and unconditionally attempt it: this is the last moment
- * the world exists in memory. A failure to write is logged by the caller and
- * must not stop the close — a file handle left open would keep a WAL alive on
- * a world nobody is looking at any more — but it is reported, because it means
- * whatever happened since the last snapshot is gone.
- */
 export function closeSession(session: WorldSession): boolean {
   let saved = false;
   try {
     saved = snapshotIfDirty(session);
   } finally {
-    // In the `finally`, because a snapshot that failed to write must not leave
-    // the outgoing world reachable through some plugin's stale field.
     releaseSession(session);
   }
   return saved;
 }
 
-/**
- * THE WORLD STOPS EXISTING — file closed, plugins told, views revoked.
- *
- * SPLIT OUT OF `closeSession` BECAUSE THERE ARE TWO CLOSE PATHS AND ONLY ONE
- * OF THEM USED TO TELL THE PLUGINS (found on the rig, 2026-08-25). `unload`
- * and `shutdown` go through `closeSession`; a world SWITCH or REOPEN goes
- * through `WorldManager.openInto`, which saves the outgoing world itself —
- * because it must ABORT the switch when that save fails, which `closeSession`
- * cannot express — and then used to close the store and nothing else. So every
- * `onWorldClose` in the repo was skipped on the one path a per-world plugin
- * change actually takes, and every WorldApi handed out to the outgoing world
- * stayed bound to it. One function, called by both paths, is the fix: a close
- * path that forgets the plugins is no longer expressible.
- *
- * THE ORDER IS THE CONTRACT (issues #167 then #164):
- *   1. tell every INSTALLED plugin its world is closing, while its view still
- *      works, so it can drop what it derived from this world;
- *   2. revoke every view, so a plugin that kept one anyway pins a stub rather
- *      than the heightmap and is told loudly if it uses it.
- * The store is closed first and in a `try`, so a file handle that refuses to
- * close cannot cost the plugins their notification.
- */
 export function releaseSession(session: WorldSession): void {
   try {
     session.store.close();
@@ -317,19 +157,6 @@ export function releaseSession(session: WorldSession): void {
   }
 }
 
-/**
- * Creates a brand-new world: its file, its genesis terrain, and the first
- * snapshot that makes it a world rather than an empty database.
- *
- * WRITES THE GENESIS SNAPSHOT BEFORE RETURNING, so a world exists on disk from
- * the instant it is created. The alternative — create the file, wait for the
- * periodic scheduler — leaves a window in which a crash produces a world file
- * with no world in it, which `openSession` (correctly) refuses to open.
- *
- * Plugin slices are deliberately empty: a new world has no forests, no
- * chronicle and no villages, and every plugin's `onWorldCreate` produces
- * exactly that from an absent slice when the world is first loaded.
- */
 export function createWorldFile(
   deps: SessionDeps,
   id: string,
@@ -340,13 +167,6 @@ export function createWorldFile(
   const store = deps.registry.createStore(id, deps.config.snapshotRetention);
   try {
     const world = World.createFresh(worldSize, difficulty, name);
-    // THE ARCH FIXTURE, if this server was asked for it (ARCH_FIXTURE=1). It
-    // is authored HERE — into genesis terrain, before the first snapshot —
-    // rather than into a running world, so the mound reaches clients by the
-    // ordinary path (chunk payload, snapshot blob, restore) and every one of
-    // those is exercised for real. A world that already exists is loaded from
-    // its snapshot and never re-carved, so the flag only ever affects a NEW
-    // world. See arch-fixture.ts.
     if (archFixtureRequested()) {
       const layered = carveArchFixture(world.map);
       logInfo(
@@ -354,10 +174,6 @@ export function createWorldFile(
           (layered === 0 ? ' (nothing opened under the mound; this is a bug)' : ''),
       );
     }
-    // Genesis is NOW, and it is stamped before the genesis snapshot is written
-    // so the world's birthday is on disk from its first row — a world whose
-    // first snapshot carried no genesis would have one reconstructed at its
-    // next boot instead, dating it to whenever that boot happened.
     world.anchorClockToRealTime();
     store.saveSnapshot({
       worldSize: world.size,

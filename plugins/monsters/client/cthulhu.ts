@@ -1,33 +1,3 @@
-// The Cthulhu, built procedurally: sculpted organic masses, swept tentacles and
-// a ribbed wing membrane, smooth-shaded, in a silhouette that is unmistakable at
-// a hundred cells and holds up when the camera comes down to the water.
-//
-// Every rule this builder obeys — no Math.random, no per-model lights (textures
-// and external assets are allowed since 2026-09-04; see ./geometry.ts), shared and
-// disposed-once resources — lives in ./geometry.ts, which is also where the
-// tools come from. ./anatomy.ts owns the numbers. This file owns the CREATURE:
-// which masses there are, how they are rigged, and how they move.
-//
-// FRAME. Every static geometry is authored directly in rig space (the head's
-// forward offset, the wings' shoulder mount and so on are baked into the
-// vertices), so the static meshes all sit at the rig's origin. That is what lets
-// one continuous noise field run across the whole creature: the wrinkles on the
-// head line up with the wrinkles on the neck because they are samples of the
-// same function of the same coordinates. Only the tentacles are exceptions —
-// they hang off animated joints, so their geometry is authored in joint space.
-//
-// The origin is the PIVOT — the base of the visible torso, the point the water
-// closes over — and the model faces +X (see index.ts for the heading →
-// rotation.y mapping).
-//
-// COST, measured off the built model at MONSTER_MODEL_DETAIL = 4: 18,664
-// triangles over 9,686 vertices in 24 meshes — body 3,360, head 2,976, the
-// tentacle fan 6,664, the wings 4,256, eyes and haloes 1,408. There is exactly
-// one monster in a world, and the terrain alone runs to a thousand chunk meshes,
-// so this is noise in the frame budget and it is what buys the thing a face.
-
-// Render kit, reached the same way client/src/plugins/registry.ts reaches this
-// plugin — by path. See that module's header for why it lives there.
 import { bakeRig, instantiateRig } from '../../../client/src/render/rigSkin.ts';
 import {
   AdditiveBlending,
@@ -146,31 +116,21 @@ import {
   type SkinFinish,
 } from './geometry.ts';
 
-/** Base tessellations, in segments at detail 1. Multiplied by the knob. */
 const BODY_SPHERE_SEGMENTS_BASE = 7;
 const BODY_SPHERE_RINGS_BASE = 4;
 const HEAD_SPHERE_SEGMENTS_BASE = 12;
 const HEAD_SPHERE_RINGS_BASE = 8;
 const EYE_SPHERE_SEGMENTS_BASE = 4;
 const EYE_SPHERE_RINGS_BASE = 3;
-/** Tentacles: along the sweep, and around it. */
 const TENTACLE_PATH_SEGMENTS_BASE = 6;
 const TENTACLE_RADIAL_SEGMENTS_BASE = 2;
-/** The knuckle at the tentacle's mid joint, which hides the bend's seam. */
 const KNUCKLE_SEGMENTS_BASE = 3;
 const KNUCKLE_RINGS_BASE = 2;
-/** Wing bones: along the bone, and around it. */
 const WING_RIB_PATH_SEGMENTS_BASE = 3;
 const WING_RIB_RADIAL_SEGMENTS_BASE = 2;
-/** Wing membrane: across a panel (rib to rib), and along the ridges. */
 const WING_PATCH_SPAN_SEGMENTS_BASE = 2;
 const WING_PATCH_RIDGE_SEGMENTS_BASE = 3;
 
-/**
- * This creature's skin, at a given carve depth. One function rather than three
- * literals so the wrinkle and mottle frequencies cannot drift apart between the
- * head and the body — they are one continuous field across the whole animal.
- */
 function cthulhuSkin(wrinkleDepth: number): SkinFinish {
   return {
     wrinkleDepth,
@@ -180,45 +140,20 @@ function cthulhuSkin(wrinkleDepth: number): SkinFinish {
   };
 }
 
-/** Parts that must keep their exact shape: swept limbs, membranes, bones. */
 const CTHULHU_SMOOTH_SKIN = cthulhuSkin(0);
 
-/**
- * Builds the shared Cthulhu geometry and returns the per-instance constructor.
- *
- * Everything expensive happens ONCE, when the plugin attaches: the returned
- * function only assembles Meshes over geometries that already exist.
- */
 export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterModel {
   const { segments, keepGeometry, keepMaterial, lambert, organicSurface } = workshop;
-
-  // ── Shared materials ───────────────────────────────────────────────────────
 
   const bodyMaterial = lambert(CTHULHU_BODY_COLOR);
   const headMaterial = lambert(CTHULHU_HEAD_COLOR);
   const membraneMaterial = lambert(CTHULHU_WING_COLOR, { doubleSided: true });
   const ribMaterial = lambert(CTHULHU_WING_RIB_COLOR);
   const tentacleMaterial = lambert(CTHULHU_TENTACLE_COLOR);
-  /**
-   * The eyes are the only emissive surface. MeshLambertMaterial with an emissive
-   * colour rather than the unlit MeshBasicMaterial the wildlife plugin's
-   * anglerfish lure uses: unlit would be full brightness at every angle, and
-   * these are meant to be a suggestion of light in a dark head, not headlamps.
-   * No vertex colours — the mottle is skin, and an eye is not skin.
-   */
   const eyeMaterial = lambert(CTHULHU_EYE_COLOR, {
     emissive: CTHULHU_EYE_EMISSIVE,
     shaded: false,
   });
-  /**
-   * The halo IS unlit, and that is the difference between the two: it is not a
-   * surface, it is the light the eye is throwing into the water around it.
-   *
-   * Hence additive blending — light adds to what is behind it, and a halo that
-   * blended normally would read as a green marble sitting on the face rather
-   * than as a glow. It writes no depth so the two halos never cut each other or
-   * the skin, and it still TESTS depth so the head occludes the far side of it.
-   */
   const haloMaterial = keepMaterial(
     new MeshBasicMaterial({
       color: CTHULHU_EYE_EMISSIVE,
@@ -228,8 +163,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       depthWrite: false,
     }),
   );
-
-  // ── Body: torso, shoulders and neck, merged into one mass ──────────────────
 
   const bodyGeometry = organicSurface(
     [
@@ -269,30 +202,16 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     cthulhuSkin(CTHULHU_BODY_WRINKLE_DEPTH),
   );
 
-  // ── Head ───────────────────────────────────────────────────────────────────
-
   const headHalfLength = CTHULHU_HEAD_LENGTH / 2;
   const headHalfHeight = CTHULHU_HEAD_HEIGHT / 2;
   const headHalfWidth = CTHULHU_HEAD_WIDTH / 2;
   const headCenter = new Vector3(CTHULHU_HEAD_FORWARD, CTHULHU_HEAD_CENTER_HEIGHT, 0);
 
-  /** How the head's ellipsoid is narrowed into a brow and a muzzle. */
   interface HeadSculpt {
-    /** Multiplier on the half-height at this point. */
     readonly vertical: number;
-    /** Multiplier on the half-width at this point. */
     readonly lateral: number;
   }
 
-  /**
-   * The head's sculpt factors at a normalised forward position `u` ∈ [-1, 1],
-   * `above` telling whether the point is over the head's mid-line.
-   *
-   * ONE function, called both by the vertex loop that builds the skull and by
-   * the projection that puts the eyes on its skin. Two copies of this rule would
-   * be two copies that could disagree, and the way they would tell you is by
-   * burying an eye inside the head.
-   */
   function headSculpt(u: number, above: boolean): HeadSculpt {
     const front = Math.max(0, u);
     const muzzle = 1 - CTHULHU_HEAD_MUZZLE_TAPER * front * front;
@@ -300,7 +219,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     return { vertical: muzzle * brow, lateral: muzzle };
   }
 
-  /** The skull: an ellipsoid narrowed toward the front, then wrinkled. */
   function buildHeadGeometry(): BufferGeometry {
     const skull = ellipsoid(
       CTHULHU_HEAD_LENGTH,
@@ -325,11 +243,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     cthulhuSkin(CTHULHU_HEAD_WRINKLE_DEPTH),
   );
 
-  /**
-   * Where an eye sits: the point on the sculpted skull in the direction of the
-   * anatomy's stated eye point, pushed out by its bulge so the sphere breaks the
-   * surface instead of hiding under it.
-   */
   function eyePosition(side: number): Vector3 {
     const direction = new Vector3(
       (CTHULHU_EYE_FORWARD - headCenter.x) / headHalfLength,
@@ -342,9 +255,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       direction.y * headHalfHeight * sculpt.vertical,
       direction.z * headHalfWidth * sculpt.lateral,
     );
-    // The outward normal of an ellipsoid at a point is that point divided by the
-    // squares of its semi-axes — not the point itself, which is why an eye
-    // placed along the radius of a long head sinks into the cheek.
     const outward = new Vector3(
       surface.x / (headHalfLength * headHalfLength),
       surface.y / (headHalfHeight * headHalfHeight),
@@ -361,36 +271,19 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     ),
   );
 
-  // ── Face tentacles ─────────────────────────────────────────────────────────
-
-  /** One face tentacle's two joints, kept so `animate` can sway them. */
   interface TentacleRig {
-    /** Root joint at the face. Its X rotation is the fan angle plus the sway. */
     readonly root: Group;
-    /** Mid joint. Its Z rotation is the bend plus a lagged sway. */
     readonly mid: Group;
-    /** The fan angle this tentacle rests at, radians. */
     readonly restFan: number;
-    /** Phase offset within the fan, radians — this is what makes it ripple. */
     readonly phase: number;
   }
 
-  /** The two swept segments of one tentacle, and where its mid joint lands. */
   interface TentacleGeometry {
     readonly upper: BufferGeometry;
     readonly lower: BufferGeometry;
-    /** End of the upper segment's curve — where the mid joint has to sit. */
     readonly joint: Vector3;
   }
 
-  /**
-   * Builds tentacle `index`'s two segments.
-   *
-   * Both are arcs, so the rest pose is already a droop and a curl; the joints
-   * add the sway on top. The per-tentacle variation is a sample of the noise
-   * field at the index — deterministic, so the fan is irregular in the same way
-   * on every client, which is the difference between "organic" and "buggy".
-   */
   function buildTentacleGeometry(index: number): TentacleGeometry {
     const variation = organicNoise(index, 0, 0, NOISE_CHANNEL_TENTACLE);
     const pathSegments = segments(TENTACLE_PATH_SEGMENTS_BASE);
@@ -429,10 +322,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       pathSegments,
       radialSegments,
     );
-    // The knuckle. The mid joint bends the lower segment away from the upper's
-    // open end, which would leave a wedge of daylight at the outside of every
-    // bend; a small sphere at the joint closes it and reads as a knuckle, which
-    // is a thing tentacles have.
     const knuckle = ellipsoid(
       CTHULHU_TENTACLE_LOWER_RADIUS * 2,
       CTHULHU_TENTACLE_LOWER_RADIUS * 2,
@@ -453,30 +342,18 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     tentacleGeometries.push(buildTentacleGeometry(index));
   }
 
-  /**
-   * Rigs one tentacle: a root joint on the face carrying the upper segment, and
-   * a mid joint at that segment's END carrying the lower one. The joint sits
-   * where the curve actually finishes rather than at a nominal length, so the
-   * two segments stay welded however hard the upper one is made to curl.
-   */
   function createTentacle(index: number): TentacleRig {
     const geometry = tentacleGeometries[index]!;
     const root = new Group();
     root.position.set(CTHULHU_TENTACLE_ROOT_FORWARD, CTHULHU_TENTACLE_ROOT_HEIGHT, 0);
 
-    // Spread across the face: -half fan … +half fan, evenly. With an odd count
-    // the middle tentacle lands exactly on the centre line. The Math.max keeps a
-    // hypothetical single tentacle from dividing by zero.
     const gaps = Math.max(1, CTHULHU_FACE_TENTACLE_COUNT - 1);
     const spread = (index / gaps - 0.5) * CTHULHU_TENTACLE_FAN_RADIANS;
-    // X spreads the hanging direction sideways; Z pitches the whole fan forward,
-    // away from the chest, so the tentacles hang clear of the torso.
     root.rotation.set(spread, 0, CTHULHU_TENTACLE_PITCH_RADIANS);
     root.add(new Mesh(geometry.upper, tentacleMaterial));
 
     const mid = new Group();
     mid.position.copy(geometry.joint);
-    // Curls back under, toward the body.
     mid.rotation.z = -CTHULHU_TENTACLE_BEND_RADIANS;
     mid.add(new Mesh(geometry.lower, tentacleMaterial));
     root.add(mid);
@@ -484,30 +361,17 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     return { root, mid, restFan: spread, phase: index * CTHULHU_TENTACLE_PHASE_STEP };
   }
 
-  // ── Wings ──────────────────────────────────────────────────────────────────
-
-  /** A wing's ridge fan and the bones laid along the ones that have bones. */
   interface WingSkeleton {
-    /** Neighbouring pairs bound one membrane panel each. */
     readonly ridges: readonly CatmullRomCurve3[];
-    /** Radius profile per boned ridge, indexed as `ridges` is; null = no bone. */
     readonly bones: readonly (((along: number) => number) | null)[];
     readonly wrist: Vector3;
     readonly sagDirection: Vector3;
   }
 
-  /**
-   * Lays out one wing's skeleton. `side` is +1 or -1 (which flank).
-   *
-   * The lean and the rake are SLOPES applied to each point's rise, not a
-   * rotation of the whole wing — see the wing block in anatomy.ts for why the
-   * difference matters to the model's stated height.
-   */
   function wingSkeleton(side: number): WingSkeleton {
     const backPerRise = Math.tan(CTHULHU_WING_RAKE_RADIANS);
     const outPerRise = Math.tan(CTHULHU_WING_LEAN_RADIANS);
 
-    /** A point on this wing, in rig space, from its rise/backset/outboard. */
     function wingPoint(rise: number, back: number, out: number): Vector3 {
       return new Vector3(
         -CTHULHU_WING_BACKSET - back,
@@ -516,9 +380,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       );
     }
 
-    // The arm's far end is buried in the shoulder rather than left standing on
-    // top of it: derived from CTHULHU_SHOULDER_HEIGHT, so a retuned shoulder
-    // takes the wing root with it instead of leaving a bone floating in the air.
     const root = wingPoint(CTHULHU_SHOULDER_HEIGHT - CTHULHU_WING_HEIGHT, 0, 0);
     const elbowRise = CTHULHU_WING_FOLD_RISE * CTHULHU_WING_ELBOW_RISE_FRACTION;
     const elbow = wingPoint(
@@ -532,8 +393,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       CTHULHU_WING_FOLD_RISE * outPerRise,
     );
 
-    // Ridge 0 is the arm, run from the wrist DOWN to the shoulder, so that every
-    // ridge in the fan starts at the wrist and a panel is a fan out of it.
     const ridges: CatmullRomCurve3[] = [new CatmullRomCurve3([wrist, elbow, root])];
     const bones: (((along: number) => number) | null)[] = [
       (along) =>
@@ -564,9 +423,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       fingerLength *= CTHULHU_WING_FINGER_LENGTH_STEP;
     }
 
-    // The free trailing edge: no bone, it just falls down the flank. It is what
-    // closes the membrane against the body instead of leaving the last finger's
-    // panel flapping in space.
     const anchor = wingPoint(
       -CTHULHU_WING_TRAILING_DROP,
       CTHULHU_WING_CHORD,
@@ -589,7 +445,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     };
   }
 
-  /** One wing's two geometries: the membrane sheet and the bones under it. */
   interface WingGeometry {
     readonly membrane: BufferGeometry;
     readonly ribs: BufferGeometry;
@@ -627,8 +482,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       );
     }
 
-    // The knuckle: every bone in the fan starts at the wrist with an open mouth,
-    // and this is the ball that swallows all of them.
     const knuckleRadius =
       Math.max(CTHULHU_WING_WRIST_RADIUS, CTHULHU_WING_FINGER_RADIUS) *
       CTHULHU_WING_KNUCKLE_SWELL;
@@ -643,9 +496,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       ),
     );
 
-    // The membrane is NOT wrinkled: it is a sheet under tension between bones,
-    // and the slack it has is already in its shape. The bones are not wrinkled
-    // either — they are thinner than the carve depth would be interesting at.
     return {
       membrane: organicSurface(panels, CTHULHU_SMOOTH_SKIN),
       ribs: organicSurface(bones, CTHULHU_SMOOTH_SKIN),
@@ -654,22 +504,11 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
 
   const wingGeometries = [buildWingGeometry(1), buildWingGeometry(-1)];
 
-  // ── Assembly ───────────────────────────────────────────────────────────────
-
-  // AUTHORED ONCE, DRAWN AS ONE SURFACE. The rig below is the same one this
-  // builder always made — body, head, two wings, four eye parts and a fan of
-  // two-joint tentacles — but it is built a single time and handed to bakeRig,
-  // which bakes it into one skinned geometry per material class. Each joint
-  // survives as a BONE, so `animate` drives the identical handles it always did.
   const authored = (() => {
     const root = new Group();
-    // The caller owns `root` (position + yaw); everything animated hangs off
-    // `rig`, so the breathing bob cannot fight the placement maths.
     const rig = new Group();
     root.add(rig);
 
-    // Every static geometry is already in rig space, so these all sit at the
-    // rig's origin — there is no per-mesh placement left to get wrong.
     rig.add(new Mesh(bodyGeometry, bodyMaterial));
     rig.add(new Mesh(headGeometry, headMaterial));
     for (const wing of wingGeometries) {
@@ -701,8 +540,6 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
 
   const blueprint = workshop.keepRig(bakeRig(authored.root));
   const rigJoint = blueprint.jointIndex(authored.rig);
-  // A tentacle's rest fan and phase are facts about its PLACE in the fan, not
-  // about the individual, so they are read off the authored rig once and shared.
   const tentacleJoints = authored.tentacles.map((tentacle) => ({
     root: blueprint.jointIndex(tentacle.root),
     mid: blueprint.jointIndex(tentacle.mid),
@@ -723,20 +560,10 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
     return {
       root: instance.root,
       animate(seconds, phase) {
-        // BREATH: a slow rise and a barely-there roll. The roll is what stops
-        // the bob reading as an elevator — a body that only translates is a
-        // sprite, a body that translates and rotates is alive.
         const breath = Math.sin(seconds * CTHULHU_BREATH_HZ * TWO_PI + phase);
         rig.position.y = breath * CTHULHU_BREATH_RISE;
         rig.rotation.z = breath * CTHULHU_BREATH_ROLL_RADIANS;
 
-        // TENTACLES: each sways about its rest fan angle, offset by its own
-        // phase so the fan ripples across the face instead of flapping as one
-        // sheet. The mid joint lags by a radian, which is what sells the whole
-        // thing as slack rather than hinged.
-        //
-        // The sway is still two joint rotations and nothing else: the curl is
-        // baked into the swept geometry, so nothing here re-curves a vertex.
         for (const tentacle of tentacles) {
           const wave = seconds * CTHULHU_TENTACLE_SWAY_HZ * TWO_PI + phase + tentacle.phase;
           tentacle.root.rotation.x =

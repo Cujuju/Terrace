@@ -1,40 +1,3 @@
-// TRAVERSAL — the one predicate for "may this mover stand here / cross here",
-// shared by every plugin that moves something across the heightmap on foot,
-// through water, or over it (wildlife's grazers/fish/whales, pilgrims'
-// pilgrims and wanderers, monsters' yeti and sea kinds, boats' fleet, and
-// whatever moves next).
-//
-// ROOT CAUSE THIS FIXES (2026-08-19, owner report on pilgrims + wildlife
-// parity): two plugins each grew their own answer to "can this thing be here
-// / go there" — wildlife's canTraverse (species.ts + census.ts) got a
-// gradient-aware fix earlier the same day; pilgrims' isWalkableCell still
-// tested only `heightAt > SEA_LEVEL`, the exact rule wildlife shipped with
-// BEFORE its fix, because pilgrims' own doc comment says so. Two independent
-// copies of terrain math is exactly how one drifted behind the other, and a
-// third caller would drift the same way. This file is the contract layer:
-// the predicate lives here ONCE, and every mover plugin adapts a
-// TraversalProfile onto it instead of re-deriving the maths.
-//
-// WIDENED 2026-08-20 (owner: "it would be nice if this pathing code was
-// semi-generic so that we could add the ability to specify certain rules for
-// different objects as to what they should and should not go around … the
-// Yeti should easily be able to traverse water. Same with terrestrial
-// monsters, though the terrestrial monsters should only be able to traverse
-// the rivers, not the lakes. Boats should be able to go anywhere in the
-// water."). The profile used to carry exactly two facts — ONE ground class
-// and a slope limit — and every one of those requests is inexpressible in
-// two facts: "water or land" needs a SET of ground classes, "rivers but not
-// lakes" needs a freshwater axis the sea-derived ground classes know nothing
-// about, and "anywhere in the water" needs both. So the profile now carries
-// four axes (see TraversalProfile), each independently checked, and the
-// archetypes every shipped mover uses are named at the bottom of this file
-// rather than re-derived per plugin.
-//
-// DETERMINISM CONTRACT (same as every other file in shared/): integer-only
-// except heightAt itself (already Int16 in the authoritative heightmap), no
-// wall clock, no RNG, fixed iteration order. Two callers running this against
-// the same heights get byte-identical answers.
-
 import {
   BAND_HEIGHT,
   CELL_WORLD_SIZE,
@@ -47,431 +10,76 @@ import {
 } from './constants.ts';
 import { NO_FRESHWATER, type Freshwater, type FreshwaterMap } from './freshwater.ts';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The world, as this file needs to read it
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The minimal shape a caller must expose. Deliberately NOT the concrete
- * `Heightmap` from heightmap.ts: every plugin already reads terrain through
- * its own narrow view of the server's WorldApi (wildlife's `HabitatWorld`,
- * pilgrims' `PilgrimWorld`), and both already declare `worldSize` and
- * `heightAt(x, y)` with this exact shape — so those interfaces satisfy
- * `TerrainSampler` structurally, with no adapter object to construct.
- */
 export interface TerrainSampler {
   readonly worldSize: number;
   heightAt(x: number, y: number): number;
-  /**
-   * Where the rivers and lakes are, for the freshwater axis of a profile.
-   *
-   * OPTIONAL, and absent means NO_FRESHWATER — "this world has no fresh water
-   * as far as traversal is concerned". That default is what keeps the axis
-   * ADDITIVE: every caller that predates it (every `shared/` unit test,
-   * wildlife's HabitatWorld, boats' BoatWorld) keeps compiling and keeps its
-   * previous answers, and a plugin opts in by handing over a map built from
-   * the network it already computes. It is a `FreshwaterMap`, not a
-   * `RiverNetwork`, because traversal asks a per-cell question and a network
-   * answers a per-river one — see freshwater.ts's header for the cost of
-   * getting that the wrong way round.
-   */
   readonly freshwater?: FreshwaterMap;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Ground classification — moved from wildlife/server/species.ts's `habitatOf`
-// (2026-08-14), which read purely from height and owed nothing to wildlife
-// specifically. `dry`/`shallow`/`deep` name the same three bands that plugin
-// called `land`/`shallow`/`deep`; the renamed `dry` is this file's own word so
-// it never reads as a re-statement of wildlife's `Habitat` union, which stays
-// a plugin-local type mapped onto this one (species.ts's `habitatOf` is now a
-// one-line wrapper).
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type TerrainGround = 'dry' | 'shallow' | 'deep';
 
-/**
- * Depth below sea level, in HEIGHT UNITS, at which water stops being coastal
- * shallows and becomes open sea.
- *
- * A PHYSICAL DEPTH, NOT A BAND COUNT (2026-08-20). It was "three bands", which
- * meant 192 units while BAND_HEIGHT was 64 and would have silently become 48
- * when the world was re-terraced — moving the coastline of every world, and
- * with it every monster's habitat, because the render got finer. The depth is
- * the fact; the number of terraces that fit in it is not.
- *
- * 192 units is what "three bands" bought, kept exactly. It stays meaningful
- * rather than arbitrary for the same reason it always did, restated against
- * the current gradient limit: MAX_STEP is BAND_HEIGHT, so terrain falls at
- * most 16 units per cell and a cell this deep is at least twelve cells from
- * the nearest shoreline. "Deep" is water something can be IN, not a puddle it
- * would be beached in the middle of. (It was six cells before the re-terrace
- * halved the maximum slope; the shore got gentler, so open water starts
- * further out — the same statement about the world, drawn on a finer grid.)
- */
 export const DEEP_WATER_DEPTH = 192;
 
-/** The same depth counted in terrace bands — derived, never restated. */
 export const DEEP_WATER_BANDS_BELOW_SEA = DEEP_WATER_DEPTH / BAND_HEIGHT;
 
-/** Heights at or below this are deep water; above it, up to SEA_LEVEL, shallow. */
 export const DEEP_WATER_MAX_HEIGHT = SEA_LEVEL - DEEP_WATER_DEPTH;
 
-/** Classifies one cell height into dry land / shallow water / deep water. */
 export function groundOf(height: number): TerrainGround {
   if (height > SEA_LEVEL) return 'dry';
   return height <= DEEP_WATER_MAX_HEIGHT ? 'deep' : 'shallow';
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gradient limits — moved from wildlife/server/species.ts (2026-08-19 gradient
-// fix). The reasoning is unchanged; only the names generalise past "grazer"
-// and "aquatic" since a land walker that isn't a grazer (pilgrims, wanderers)
-// needs the exact same number for the exact same reason.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * "No limit at all" for a walker whose ground has no risers — deep or
- * shallow water, where the seabed's steepness never blocks anything that
- * swims. `Number.isFinite` short-circuits every gradient check below to
- * `true` without sampling a height, so a water-ground profile answers the
- * same `maxGradientPerCell` question as a land one and nothing downstream
- * needs a "does this walker care about slope" flag.
- */
 export const UNCONSTRAINED_GRADIENT_PER_CELL = Infinity;
 
-/**
- * The standard land-walker gradient limit: the most height a walker on dry
- * ground will climb or descend in ONE CELL of travel before it must turn
- * along the level instead of crossing.
- *
- * Sized against the terrain's OWN gradient cap, not picked independently:
- * relaxation bounds every 4-neighbor height difference, so that bound is the
- * STEEPEST slope that can exist anywhere in the world — anything steeper is
- * not legal terrain. Half of it means the steepest HALF of legally-possible
- * slopes are impassable to a walker — a terrace riser reads as a riser —
- * while an ordinary rolling ramp still crosses freely.
- *
- * THE BOUND IS MAX_STEP + RELAX_SLACK, NOT MAX_STEP (issue #108, 2026-08-29),
- * and this constant is deliberately still half of MAX_STEP alone. Relaxation
- * splits a pair's excess exactly in half now, so it comes to rest at
- * MAX_STEP + 1 rather than MAX_STEP (constants.ts, RELAX_SLACK) and the
- * steepest legal slope is 5 units per cell. Half of THAT is 2.5, which is not
- * a height: the walker rule has to be an integer number of height units per
- * cell or every caller rounds it differently. Rounding down gives 2, which is
- * this constant unchanged; rounding up gives 3, which would let a walker take
- * slopes it used to refuse. So the tie is broken DOWNWARD and the sentence
- * above holds a fortiori — the walker refuses slightly more than half of the
- * legally-possible slopes, never fewer.
- *
- * WRITTEN AGAINST MAX_STEP, NOT BAND_HEIGHT (2026-08-20). It used to say
- * `BAND_HEIGHT / 4` and note in passing that this equalled MAX_STEP/2. The
- * two stopped being equal the moment MAX_STEP was re-derived as BAND_HEIGHT
- * rather than half of it, and the version that would have survived is the one
- * this comment's own argument uses: HALF THE STEEPEST LEGAL SLOPE. That is
- * now what the code says.
- *
- * ONE NUMBER FOR EVERY LAND WALKER, on purpose: wildlife's grazer and
- * pilgrims'/wanderers' human(-ish) walk are both "a legged thing walking on
- * dry ground", and nothing about that judgement is species-specific. Before
- * this file existed each plugin re-derived (or, for pilgrims, forgot to
- * derive) the same number; a future land species reuses this constant rather
- * than re-deriving half of MAX_STEP a third time.
- */
 export const LAND_WALKER_MAX_GRADIENT_PER_CELL = MAX_STEP / 2;
 
-/**
- * How long one cell of ground is, in HEIGHT units.
- *
- * The world's two scales are not the same number and the slope of a riser is
- * the ratio between them: a cell is CELL_WORLD_SIZE world units across, and a
- * height unit is MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT world units tall. Sixteen
- * today — one cell of run is exactly one BAND_HEIGHT of rise, so a band-tall
- * riser standing in a single cell is a 1:1 face at 45 degrees.
- *
- * DERIVED, NEVER WRITTEN DOWN: both scales are already settled elsewhere, and a
- * hand-written 16 here would be a third place for them to disagree.
- */
 export const HEIGHT_UNITS_PER_CELL_OF_RUN =
   (CELL_WORLD_SIZE * MAX_HEIGHT) / MAX_RELIEF_WORLD_UNITS;
 
-/**
- * What makes a face SHEER: FOUR OF RISE TO ONE OF RUN, and steeper.
- *
- * THE OWNER'S RULE (2026-09-06, deciding it as a slope after seeing the ratios
- * drawn to scale): "I would say a 4:1 ratio would be a climb. Below that, it's
- * a walk." So sheerness is the STEEPNESS of the face and nothing else — not how
- * the ground got there, and not how many band edges it crosses.
- *
- * WHAT IT REPLACED, and why the earlier answer was not wrong so much as a
- * different question. This was MAX_STEP + RELAX_SLACK: the steepest pair
- * relaxation leaves standing, i.e. "steeper than the world can grow, so it was
- * sculpted". That is a true statement about provenance and a 17-degree slope,
- * and it made a climb out of every terrace riser a player had ever cut. The
- * owner asked for a wall, and a wall is an angle.
- *
- * WHAT IT BUYS, in the units of the complaint: 4:1 is 76 degrees, and one cell
- * of run is one band of rise, so a face has to gain FOUR bands inside a single
- * cell before anything climbs it. Everything gentler — a terrace riser, a
- * two-band step, a cut bank — is walked at walking pace, with the drawn body
- * stepping up the riser at client/src/plugins/kit/groundFollow.ts's rate.
- * Measured on frostwick-hollows: 4.2 % of walkable adjacent pairs are climbs,
- * where the provenance rule made 19.7 % of them climbs.
- */
 export const SHEER_RISE_TO_RUN = 4;
 
 export const SHEER_RISE_HEIGHT_UNITS_PER_CELL = SHEER_RISE_TO_RUN * HEIGHT_UNITS_PER_CELL_OF_RUN;
 
-/**
- * The lowest stored height a LAND walker will accept as ground: the floor of
- * band 1.
- *
- * Derived from what the renderer draws, not picked: terrain is drawn snapped
- * DOWN to its band floor (`quantizeToBand`), and the sea plane sits a hair
- * above SEA_LEVEL (client/src/render/water.ts's WATER_SURFACE_LIFT, whose own
- * comment says it exists because "band-0 terrain renders exactly there and
- * would z-fight"). So band 0 — every dry height from SEA_LEVEL + 1 up to
- * BAND_HEIGHT − 1 — is the one dry band drawn AT the waterline, underneath
- * the water. BAND_HEIGHT is the first height that clears it.
- *
- * WHY A WALKER RULE AND NOT A NEW WATER RULE. `groundOf`'s threshold is a
- * settled decision (design record Q3, "height ≤ 0 is water"), and moving it
- * would let fish swim onto dry land — the classes are shared by everything
- * that swims as well as everything that walks. This is the narrower true
- * statement: that fringe is land, and a land walker declines to stand on it
- * because it does not read as land.
- *
- * MEASURED COST, not hidden: 292 of the live world's 4557 dry cells (6.4%,
- * server/data/world.db snapshot #188, 2026-08-20) stop being walkable, all of
- * it coastal fringe. A settlement that lands on one of those cells dispatches
- * no walkers — its own `isWalkableCell` gate already refuses it, so this
- * degrades to a quiet town rather than to a stuck one.
- */
 export const LAND_WALKER_MIN_GROUND_HEIGHT = BAND_HEIGHT;
 
-/**
- * "No minimum at all" — the vacuous value for a profile whose ground is
- * already water, or that is explicitly allowed everywhere. MIN_HEIGHT rather
- * than -Infinity so the whole profile stays in the integer domain the
- * determinism contract asks for.
- */
 export const UNCONSTRAINED_MIN_GROUND_HEIGHT = MIN_HEIGHT;
 
-/**
- * "No maximum at all" — the vacuous value for a profile that may stand on
-ground of any height. MAX_HEIGHT rather than Infinity so the whole profile
-stays in the integer domain the determinism contract asks for (the same
-reason UNCONSTRAINED_MIN_GROUND_HEIGHT is MIN_HEIGHT, not -Infinity): no
-shipped terrain exceeds MAX_HEIGHT, so a ceiling there constrains nothing.
- */
 export const UNCONSTRAINED_MAX_GROUND_HEIGHT = MAX_HEIGHT;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The walker profile and the two predicates every caller adapts onto.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * What kind of thing is walking, expressed as the two facts terrain math
- * needs to know about it: what ground it may stand on, and how steep a step
- * it will accept. Everything else about a species (speed, size, habitat
- * population targets, ...) is plugin business and stays out of `shared/`.
- */
 export interface TraversalProfile {
-  /**
-   * Which ground classifications this mover may occupy — a SET, not one
-   * class, because "the yeti should easily be able to traverse water" and
-   * "boats should be able to go anywhere in the water" are both statements
-   * about more than one band (owner, 2026-08-20). A single-element array is
-   * the ordinary case and reads no worse than the scalar it replaces.
-   */
   readonly grounds: readonly TerrainGround[];
-  /**
-   * The lowest stored height a cell may have and still count as this mover's
-   * ground — the axis that keeps a mover off ground that is legally dry but
-   * DRAWN as sea.
-   *
-   * This exists because `groundOf` classifies by raw height against
-   * SEA_LEVEL (design record Q3: "height ≤ 0 is water"), while the renderer
-   * draws terrain QUANTIZED DOWN to its band floor (heightmap.ts's
-   * quantizeToBand) and floats the sea plane just above SEA_LEVEL
-   * (client/src/render/water.ts). A cell at height 1–63 is therefore dry by
-   * the settled rule and drawn at exactly the waterline underneath the sea
-   * film — 292 of the live world's 4557 dry cells when this was measured
-   * (2026-08-20), all of it shoreline, which is exactly where routes hug. A
-   * land walker standing there reads as wading. LAND_WALKER_MIN_GROUND_HEIGHT
-   * below is the constant that says "band 1 or higher"; MIN_HEIGHT is the
-   * vacuous value for a mover whose ground is water anyway.
-   */
   readonly minGroundHeight: number;
-  /**
-   * The highest stored height a cell may have and still count as this mover's
-   * ground — the axis that keeps a deep-hulled mover off water too shallow to
-   * float it. A cell whose height is ABOVE this is not ground this profile may
-   * stand on. Absent means unconstrained (UNCONSTRAINED_MAX_GROUND_HEIGHT),
-   * which is what keeps the axis ADDITIVE: every profile that predates it
-   * keeps its previous answers.
-   */
   readonly maxGroundHeight?: number;
-  /**
-   * What this mover does about fresh water — the axis that separates "may
-   * cross a river" from "may swim a lake" (owner, 2026-08-20: "terrestrial
-   * monsters should only be able to traverse the rivers, not the lakes").
-   * Checked against `TerrainSampler.freshwater`, and vacuous in a world that
-   * supplies none.
-   */
   readonly freshwater: FreshwaterPassability;
-  /**
-   * Max |height difference| accepted crossing ONE CELL of travel.
-   * UNCONSTRAINED_GRADIENT_PER_CELL (Infinity) for a mover whose ground has
-   * no risers (water); LAND_WALKER_MAX_GRADIENT_PER_CELL for one that walks
-   * dry ground.
-   *
-   * IT IS THE LIMIT ON WALKING, not on going: a profile that also carries a
-   * `climb` rule crosses a steeper rise by climbing it (see `climb` below and
-   * shared/src/climb.ts). For a profile without one, this is still the whole
-   * answer and nothing about it has changed.
-   *
-   * A CLIMBER'S DECLARED FIGURE IS A FLOOR, NOT THE ANSWER: it walks at least
-   * every slope legal terrain can grow (`walkableGradientLimit`), so ask that
-   * function — or `exceedsWalkableGradient`, which does — rather than reading
-   * this field.
-   */
   readonly maxGradientPerCell: number;
-  /**
-   * What this mover does about a rise steeper than it can walk: null (or
-   * absent) to refuse it, a ClimbRule to climb it.
-   *
-   * OPTIONAL SO THE AXIS IS ADDITIVE, exactly like `maxGroundHeight` above:
-   * every profile written before climbing existed keeps its previous answers
-   * to the letter, because absent means "cannot climb", which is what they all
-   * did.
-   */
   readonly climb?: ClimbRule | null;
 }
 
-/**
- * What climbing costs the mover that can do it — one number, because that is
- * the only thing that differs between the climbers (owner, 2026-09-05: "I want
- * Peeps to have a 15% chance. I want Yeti to have a 5% chance. And I want Ibex
- * to have a 1% chance"). HOW FAST a climb goes is one figure for everything
- * that climbs, and it lives with the mechanic in shared/src/climb.ts.
- */
 export interface ClimbRule {
-  /**
-   * Chance in [0, 1] that a climb of a LETHAL wall ends in a fatal fall, rolled
-   * ONCE at the foot of it whatever its height (owner's call, 2026-09-05, over
-   * a roll per band: a cliff is then no more lethal than a step, and what a
-   * player learns to read is the CLIMBER rather than the wall).
-   */
   readonly fallChance: number;
-  /**
-   * WHY THERE IS NO HEIGHT GATE ANY MORE (2026-09-06). This used to be the
-   * climber's own height: nothing dies falling off something shorter than
-   * itself, which kept a 15 % roll off every knee-high bank back when a climb
-   * meant any rise steeper than the walking limit. SHEER_RISE_TO_RUN now does
-   * that job and does it better — a climb is a 4:1 face, four bands inside one
-   * cell, so the shortest climb in the world is 65 height units against a peep
-   * of 34 and an ibex of 33. Measured on frostwick-hollows: 153 of 153 real
-   * climbs cleared the gate, i.e. it had stopped discriminating and every climb
-   * already rolled. Keeping a dead field would only invite the next threshold
-   * change to orphan it again.
-   */
-  /**
-   * Seconds this climber takes over one BAND of wall, or absent for the rate
-   * every climber shares (climb.ts's CLIMB_SECONDS_PER_BAND).
-   *
-   * OPTIONAL, so the axis is additive exactly like `climb` itself: a rule
-   * written before any animal had a speed of its own keeps the default to the
-   * letter. Read it through climb.ts's `climbRiseHeightUnitsPerSecond`, never
-   * directly — that function is where the default lives.
-   */
   readonly secondsPerBand?: number;
-  /**
-   * How far this climber's centre stands off the face, in cells, or absent for
-   * the body every climber shares (climb.ts's CLIMB_BODY_HALF_WIDTH_CELLS).
-   *
-   * OPTIONAL for the same reason `secondsPerBand` is: a wider animal says so
-   * here, and a rule that does not mention it keeps the default exactly. Read
-   * it through climb.ts's `climbBodyHalfWidthCells`, never directly.
-   */
   readonly bodyHalfWidthCells?: number;
 }
 
-/**
- * Is this height difference steeper than `profile` may WALK across one cell?
- *
- * The one expression of the gradient rule. Both segment predicates below and
- * every climb decision (climb.ts, pathing.ts) ask it rather than restating
- * `Math.abs(dh) > profile.maxGradientPerCell` — which is exactly the shape of
- * duplication that let a walker's rule and a planner's rule disagree before
- * this file existed.
- *
- * False for an infinite limit without arithmetic: water has no risers, and
- * `Infinity` compares correctly but says nothing about intent.
- */
 export function exceedsWalkableGradient(profile: TraversalProfile, heightDifference: number): boolean {
   const limit = walkableGradientLimit(profile);
   if (!Number.isFinite(limit)) return false;
   return Math.abs(heightDifference) > limit;
 }
 
-/**
- * The slope this profile actually WALKS, which for a climber is not the one it
- * declares.
- *
- * A CLIMBER WALKS EVERY SLOPE THE WORLD CAN GROW (owner, 2026-09-05: "If a face
- * is not sheer, then the peep should be able to go from one band to the next at
- * the same pace as walking. It's only if it's a sheer face that they need the
- * slower rate."). A mover that will pull itself up a cliff is not the mover that
- * stops at a 3-unit bank and takes four seconds over it; so granting the climb
- * rule IS widening the walk, and the widened figure is
- * SHEER_RISE_HEIGHT_UNITS_PER_CELL — above which the ground was sculpted rather
- * than grown, which is the definition of the sheer face the slow rate is for.
- *
- * DERIVED HERE, NOT STORED ON THE PROFILE, and that is the whole point: a climb
- * rule is attached in two places (`withClimb` in this file, and plugins/wildlife
- * /server/census.ts, which builds a species' profile field by field), and a
- * widening written at either of them is a widening the other forgets. Every
- * consumer — climb.ts's `beginClimb`, pathing.ts's `edgeCost`, steering's
- * sweeps, `canTraverseSegment` — already asks `exceedsWalkableGradient` rather
- * than reading the field, so deriving it inside that one predicate is the only
- * form of this rule a caller cannot get half right.
- *
- * `Math.max`, never a replacement: a water ground has no risers at all
- * (UNCONSTRAINED_GRADIENT_PER_CELL) and an ibex declares a doubled limit of its
- * own — neither may be NARROWED by gaining the ability to climb.
- */
 export function walkableGradientLimit(profile: TraversalProfile): number {
   const limit = profile.maxGradientPerCell;
   if (profile.climb === undefined || profile.climb === null) return limit;
   return Math.max(limit, SHEER_RISE_HEIGHT_UNITS_PER_CELL);
 }
 
-/**
- * How a profile treats fresh water (freshwater.ts's `Freshwater`).
- *
- * - `blocked`  — neither channels nor pools may be entered. The default for
- *                anything that walks: a river is a river.
- * - `channels` — a FLOWING river point may be crossed, a standing pool may
- *                not. The terrestrial-monster rule, stated once.
- * - `all`      — fresh water is no obstacle at all. Amphibious things
- *                (the yeti) and anything that is already in water.
- */
 export type FreshwaterPassability = 'blocked' | 'channels' | 'all';
 
-/** Does `passability` admit a cell carrying this fresh water? */
 function admitsFreshwater(passability: FreshwaterPassability, water: Freshwater): boolean {
   if (water === 'none' || passability === 'all') return true;
   return passability === 'channels' && water === 'channel';
 }
 
-/**
- * Is this single cell somewhere `profile` may stand? Bounds, ground class,
- * minimum ground height and fresh water — no "from" cell, so no gradient
- * term (see `canTraverseSegment` for the predicate that has one). Used for
- * standalone cell queries: a goal cell, a spawn candidate, a viewpoint
- * candidate, and every neighbour A* considers (pathing.ts).
- */
 export function isWalkableCell(
   world: TerrainSampler,
   profile: TraversalProfile,
@@ -488,35 +96,12 @@ export function isWalkableCell(
   return admitsFreshwater(profile.freshwater, freshwater);
 }
 
-/**
- * Is a cell of this stored height ground `profile` may stand on? The height
- * half of `isWalkableCell`: ground class and the min/max ground-height axes,
- * with no bounds, unlock or freshwater question. Also what a habitat census
- * counts with, so a target and the veto cannot disagree about a cell.
- */
 export function admitsHeight(profile: TraversalProfile, height: number): boolean {
   if (height < profile.minGroundHeight) return false;
   if (height > (profile.maxGroundHeight ?? UNCONSTRAINED_MAX_GROUND_HEIGHT)) return false;
   return profile.grounds.includes(groundOf(height));
 }
 
-/**
- * Can `profile` walk in a straight line from (fromX, fromY) to (toX, toY)
- * without crossing a slope steeper than its own `maxGradientPerCell`?
- *
- * SAMPLES ALONG THE WHOLE SEGMENT, not just the two endpoints. An
- * endpoint-only check could step from one terrace level, over a riser, to a
- * DIFFERENT terrace level that happens to sit within limit of the far side —
- * invisible to it, since the two endpoints can be similarly high while the
- * ground between them drops away in a cliff. Steps are spaced ~1 cell apart
- * (`Math.ceil` of the segment length), matching `heightAt`'s own
- * grain, so no riser narrower than a full cell can hide between two
- * consecutive samples.
- *
- * Ground legality of the endpoints is NOT this function's job — callers that
- * need it call `isWalkableCell` too (see `isWalkableCell`'s own doc). This
- * function answers exactly one question: is the SLOPE crossable.
- */
 export function canTraverseSegment(
   world: TerrainSampler,
   profile: TraversalProfile,
@@ -526,24 +111,11 @@ export function canTraverseSegment(
   toY: number,
 ): boolean {
   const limit = walkableGradientLimit(profile);
-  if (!Number.isFinite(limit)) return true; // water-ground: no risers to cross.
+  if (!Number.isFinite(limit)) return true;
 
   const dx = toX - fromX;
   const dy = toY - fromY;
-  // Math.sqrt, NOT Math.hypot, and the result is consumed by Math.ceil on the
-  // very next line. This is the determinism rule in CLAUDE.md being obeyed to
-  // the letter, and it is load-bearing now that this predicate lives in
-  // shared/ and BOTH sides run it: ECMA-262 specifies Math.sqrt as IEEE-754
-  // correctly-rounded, but leaves Math.hypot implementation-approximated — it
-  // is explicitly allowed to differ between engines and versions. One ULP of
-  // disagreement either side of an integer flips `steps`, which moves every
-  // sample position, which can flip this function's verdict; server and client
-  // would then disagree about whether a walker may cross a slope. Harmless
-  // while this code was server-only (it came from plugins/wildlife); a real
-  // divergence risk the moment it moved here.
   const distance = Math.sqrt(dx * dx + dy * dy);
-  // At least one step even for a same-cell probe; otherwise ~1 sample per
-  // cell of travel, per the "no riser can hide between samples" argument above.
   const steps = Math.max(1, Math.ceil(distance));
 
   let previousHeight = world.heightAt(Math.floor(fromX), Math.floor(fromY));
@@ -558,46 +130,6 @@ export function canTraverseSegment(
   return true;
 }
 
-/**
- * Is the straight line from (fromX, fromY) to (toX, toY) somewhere `profile`
- * may GO — ground legality AND slope, sampled the whole way along?
- *
- * ROOT CAUSE THIS FIXES (owner report, 2026-08-24: whales "will do 90-degree
- * turns in place and have a tendency to glitch into the seabed"; fish "get
- * stuck in place"). The steering sweep used to ask two questions about a
- * candidate heading: `isWalkableCell` at the FAR END of the probe, and
- * `canTraverseSegment` along it. For a mover with a finite gradient limit the
- * second one incidentally sampled the interior of the path; for a mover with
- * `UNCONSTRAINED_GRADIENT_PER_CELL` — every swimmer and every boat — it
- * returns `true` on its first line without reading a single height, so
- * NOTHING looked at the ground between the mover and its look-ahead point.
- *
- * A whale therefore probed twenty cells ahead, found deep water at the far
- * end, and swam straight at a shallow ridge sitting ten cells in front of it:
- * invisible until the per-tick destination re-check refused a 0.32-cell step,
- * at which point the only heading left was a hard one. That is the reported
- * "90-degree turn in place", and the frames before it — a five-unit body
- * pressed against a bank its centre had not reached yet — are the reported
- * clipping.
- *
- * ONE PREDICATE, ONE LOOP, and that is the point: "may I be there" and "may I
- * get there" were two functions, so a profile that answered the second one
- * vacuously silently stopped asking the first one anywhere but at the end
- * point. Merging them means a sample is a sample — every point on the path is
- * tested for everything — and the gradient term costs nothing extra because
- * it reuses the height this loop already fetched.
- *
- * THE START CELL IS NOT GROUND-CHECKED, only used as the gradient's first
- * height. A mover already standing somewhere illegal (the terrain was sculpted
- * under it) must still be able to steer OUT; vetoing every heading because the
- * cell under its own body fails would freeze it exactly where it most needs to
- * move.
- *
- * Sample spacing is `canTraverseSegment`'s, unchanged and for its reason: ~1
- * cell, matching `heightAt`'s own grain, so nothing narrower than a full cell
- * can hide between two consecutive samples. `Math.sqrt` rather than
- * `Math.hypot` for the determinism reason spelled out there.
- */
 export function canProceedAlong(
   world: TerrainSampler,
   profile: TraversalProfile,
@@ -636,24 +168,6 @@ export function canProceedAlong(
   return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The archetypes — the shipped answers to "what may this thing cross?"
-//
-// NAMED HERE, ONCE, rather than built per plugin. Before 2026-08-20 each
-// plugin assembled its own profile literal, which is how pilgrims ended up
-// with wildlife's PRE-fix rule (this file's own header) and how "the yeti
-// swims" was a sentence nobody could write down. A plugin now picks the
-// archetype that describes its mover and adds nothing; a mover whose rule is
-// genuinely new earns a new archetype here, where every other rule is visible
-// beside it.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * A legged thing on dry ground: pilgrims, wanderers, wildlife's grazer.
- * Terrace risers are walls (LAND_WALKER_MAX_GRADIENT_PER_CELL), the band-0
- * waterline fringe is not ground (LAND_WALKER_MIN_GROUND_HEIGHT), and a river
- * or a lake is something to go around.
- */
 export const LAND_WALKER_PROFILE: TraversalProfile = {
   grounds: ['dry'],
   minGroundHeight: LAND_WALKER_MIN_GROUND_HEIGHT,
@@ -661,57 +175,19 @@ export const LAND_WALKER_PROFILE: TraversalProfile = {
   maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL,
 };
 
-/**
- * A legged thing that will CLIMB rather than turn back — peeps, the yeti and
- * the ibex (owner, 2026-09-05). Identical to LAND_WALKER_PROFILE but for the
- * one axis that differs, written as a spread so the two can never drift on the
- * axes they share: a climber is still refused water and still refused the
- * band-0 fringe. What it gains is the whole of the steepest ground the world
- * can grow, walked (SHEER_RISE_HEIGHT_UNITS_PER_CELL, via `walkableGradientLimit`),
- * and everything sheerer than that climbed — at climb.ts's speed and this
- * rule's risk.
- *
- * A FUNCTION RATHER THAN THREE CONSTANTS, on `navigableWaterProfile`'s footing:
- * the three shipped climbers differ in exactly one number and nothing else
- * about them is a decision, so naming three near-identical archetypes here
- * would only be a place for two of them to drift. Each plugin names its own
- * chance beside the animal it belongs to — that is where the owner's sentence
- * about that animal lives.
- */
 export function climbingWalkerProfile(fallChance: number): TraversalProfile {
   return withClimb(LAND_WALKER_PROFILE, fallChance);
 }
 
-/**
- * The same ability granted to any other archetype — the yeti climbs, and he is
- * AMPHIBIOUS_WALKER_PROFILE rather than a land walker, so "can climb" has to be
- * composable rather than a fourth archetype that restates the other three.
- */
 export function withClimb(profile: TraversalProfile, fallChance: number): TraversalProfile {
   return { ...profile, climb: { fallChance } };
 }
 
-/**
- * A land animal long-legged enough to ford a river but not to swim a lake —
- * the terrestrial-monster rule (owner, 2026-08-20). Identical to
- * LAND_WALKER_PROFILE but for the one axis that differs, written as a spread
- * so the two can never drift on the axes they share.
- */
 export const RIVER_FORDING_WALKER_PROFILE: TraversalProfile = {
   ...LAND_WALKER_PROFILE,
   freshwater: 'channels',
 };
 
-/**
- * Equally at home wet or dry — the yeti (owner, 2026-08-20: "the Yeti should
- * easily be able to traverse water"). Every ground class, fresh water no
- * obstacle, and NO minimum ground height, because the band-0 fringe reading
- * as water is precisely not a problem for something that swims.
- *
- * The gradient limit STAYS the land walker's: an amphibious animal is still
- * a legged animal on the dry stretches, and a terrace riser it could not
- * climb on land does not become climbable because there is a lake nearby.
- */
 export const AMPHIBIOUS_WALKER_PROFILE: TraversalProfile = {
   grounds: ['dry', 'shallow', 'deep'],
   minGroundHeight: UNCONSTRAINED_MIN_GROUND_HEIGHT,
@@ -719,13 +195,6 @@ export const AMPHIBIOUS_WALKER_PROFILE: TraversalProfile = {
   maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL,
 };
 
-/**
- * Anything that floats on or swims through the sea and treats the whole of it
- * as open: boats (owner, 2026-08-20: "boats should be able to go anywhere in
- * the water"), and the sea monsters that range across both depths. Shallows
- * and deeps alike, no gradient limit (a seabed has no risers to a hull),
- * fresh water passable — an estuary is still water.
- */
 export const OPEN_WATER_PROFILE: TraversalProfile = {
   grounds: ['shallow', 'deep'],
   minGroundHeight: UNCONSTRAINED_MIN_GROUND_HEIGHT,
@@ -733,12 +202,6 @@ export const OPEN_WATER_PROFILE: TraversalProfile = {
   maxGradientPerCell: UNCONSTRAINED_GRADIENT_PER_CELL,
 };
 
-/**
- * Bound to ONE water band — wildlife's coastal and open-sea species, which
- * are placed by a habitat census that means the band literally. Built by
- * function rather than named twice because the two differ in exactly one
- * field and nothing else about them is a decision.
- */
 export function waterBandProfile(ground: 'shallow' | 'deep'): TraversalProfile {
   return {
     grounds: [ground],
@@ -748,20 +211,6 @@ export function waterBandProfile(ground: 'shallow' | 'deep'): TraversalProfile {
   };
 }
 
-/**
- * Water deep enough to float a hull that draws `draftHeightUnits` of water —
- * the boats rule. The draft is the hull's depth below the waterline in height
- * units, and the caller (boats) derives it from its own hull model: this file
- * knows what "deep enough" MEANS, not how deep any particular hull goes.
- *
- * `maxGroundHeight = SEA_LEVEL - draftHeightUnits`: ground shallower than the
- * keel is not ground this profile may stand on, so a deep-hulled mover routes
- * around the shallows while a shallow one still crosses them. Identical to
- * OPEN_WATER_PROFILE but for that one axis, written as a spread so the two
- * can never drift on the axes they share (the RIVER_FORDING_WALKER_PROFILE
- * precedent). A draft of 0 is allowed and equals OPEN_WATER_PROFILE: no water
- * cell is above SEA_LEVEL, so the ceiling constrains nothing.
- */
 export function navigableWaterProfile(draftHeightUnits: number): TraversalProfile {
   return {
     ...OPEN_WATER_PROFILE,
@@ -769,26 +218,6 @@ export function navigableWaterProfile(draftHeightUnits: number): TraversalProfil
   };
 }
 
-/**
- * An eroded view of `world` for a body with lateral half-extent `radiusCells`
- * cells: `heightAt(x, y)` is the MAX of `world.heightAt` over the integer
- * offsets (dx, dy) with dx² + dy² <= radiusCells², skipping offsets that fall
- * outside [0, worldSize). `worldSize` and `freshwater` pass through unchanged.
- *
- * PURPOSE: a body with lateral half-extent `radiusCells` may only centre
- * itself on a cell whose WHOLE neighbourhood is legal. Taking the max height
- * dilates land and erodes water, so `isWalkableCell`, `canProceedAlong`,
- * `findRoute` and the steering sweep all see the same eroded mask with no
- * change to any of them — planner and follower cannot disagree about a wall.
- *
- * The offset list is precomputed once per call, in fixed sorted order (dy
- * outer, dx inner), so every query scans the same offsets in the same order
- * (determinism contract, above). `radiusCells <= 0` returns `world` itself.
- *
- * COST, named: A* on the eroded sampler multiplies height reads by the disc
- * size (5 offsets at radius 1, 13 at radius 2). Callers plan on goal change,
- * not per tick, which is where that multiplication belongs.
- */
 export function withClearance<T extends TerrainSampler>(
   world: T,
   radiusCells: number,

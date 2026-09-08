@@ -1,18 +1,3 @@
-// In-world screenshot driver for the GLB war boat, over raw CDP.
-//
-// Same shape as client/scripts/shootSpeciesPreview.mjs (Chrome's --screenshot
-// and --virtual-time-budget both hang on these WebGL pages), but it drives the
-// REAL app rather than a preview harness: the player token is planted in
-// localStorage before any script runs, the driver waits for window.__terrace
-// and for the boats plugin to have views, then parks the OrbitControls camera
-// on a named world point and captures.
-//
-// Usage: node shoot-boats.mjs <outDir> <name>:<px>,<pz>,<dist>,<height>,<yaw> ...
-//   The camera is placed RELATIVE TO A REAL HULL, never at a fixed point: the
-//   boat nearest world point (px,pz) becomes the orbit target, and the camera
-//   sits `dist` world units away on bearing `yaw` (radians) at `height` above
-//   the sea. A boat is a moving thing — a hardcoded camera point frames empty
-//   water as soon as the fleet re-berths.
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,7 +13,6 @@ const VIEWPORT_HEIGHT = 1000;
 const READY_POLL_INTERVAL_MS = 2000;
 const READY_TIMEOUT_MS = 420_000;
 const CHROME_ENDPOINT_TIMEOUT_MS = 30_000;
-/** Frames to let the swell/oars settle after the camera moves. */
 const SETTLE_MS = 6000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -110,8 +94,6 @@ try {
   await rpc(ws, 'Runtime.enable', {}, sessionId);
   await rpc(ws, 'Emulation.setDeviceMetricsOverride',
     { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false }, sessionId);
-  // The token BEFORE any app script: the per-token chunk mask decides whether
-  // this browser is shown any boats at all.
   await rpc(ws, 'Page.addScriptToEvaluateOnNewDocument',
     { source: `try{localStorage.setItem(${JSON.stringify(TOKEN_STORAGE_KEY)},${JSON.stringify(TOKEN)})}catch(e){}` },
     sessionId);
@@ -134,16 +116,7 @@ try {
   }
   if (!ready) throw new Error('no boats in the scene within the ready timeout');
   console.log('boats in scene:', ready.boats);
-  // The camera-clearance floor (client/src/render/cameraClearance.ts) holds the
-  // camera above the terrain and pushed every close-up back to ~6 world units.
-  // A screenshot rig wants the eye where it asked for it, so the floor comes
-  // off for the shoot — this is the driver's own page, not the shipped app.
   await evaluate(ws, sessionId, 'window.__terrace.viewport.setGroundHeightSampler(null), true');
-  // RIG OVERRIDE, stated plainly: the shipped orbit cannot come closer than
-  // CAMERA_MIN_DISTANCE (~6 world units, client/src/config.ts) and a war boat
-  // is one world unit long, so no in-game camera pose can show hull texture.
-  // The close-ups below are the game's own scene and materials seen through a
-  // relaxed dolly limit — nothing about the boats is changed.
   await evaluate(ws, sessionId, `(() => {
     const c = window.__terrace.viewport.controls;
     c.minDistance = ${Number(process.env.MIN_DISTANCE ?? 0.05)};

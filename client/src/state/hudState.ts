@@ -1,21 +1,3 @@
-// Shared reactive state between the imperative render/input layer and the
-// Solid HUD.
-//
-// The signals live at MODULE scope, not inside a component. That is deliberate
-// on two counts: the imperative layer needs to read and write them without
-// being inside a reactive root, and it sidesteps the project's Solid rule
-// entirely — there is no component body here to freeze a reactive read in.
-// Consumers must call the exported accessors (`brushRadius()`), never store
-// their result in a component-body const.
-//
-// PERSISTENCE: everything the player chose in the HUD survives a reload, under
-// one versioned localStorage key, following the same idiom as
-// state/controlPrefs.ts — load once at module init, every setter writes
-// through, and any failure at either end degrades to a session-only default.
-// Server-derived readouts (connection status, and the plugins' mana pool,
-// relic skills and invite URL) are deliberately NOT persisted: they are re-sent
-// on join, and a cached copy could only ever be a stale lie about the server.
-
 import { createSignal } from 'solid-js';
 import {
   CELL_WORLD_SIZE,
@@ -33,51 +15,6 @@ import {
 import type { ConnectionStatus } from '../net/connection.ts';
 import type { FrameStatsSample } from '../render/frameStats.ts';
 
-/**
- * The brush ladder the player picks from: EVERY radius from 1 to 8 cells
- * (owner, 2026-09-05: "a smooth slider that I could slide from the lowest size
- * up to the largest size in increments … 0.50, 1.00, 2.00, and 4.00 with 0.50
- * increments in between"). Those numbers are the rungs' NOMINAL widths, 2·r
- * cells — half a world unit per cell of radius — so the ladder is one rung per
- * cell of radius and the slider shows the nominal width (brushNominalWidthWorldUnits).
- * The four named sizes are the ANCHORS the slider marks (BRUSH_ANCHOR_RADII);
- * the rungs between them are plain stops. The top rung is 8 cells, half the
- * wire's ceiling: the owner's largest size is 4.00, so the 16-cell brush is
- * no longer offered.
- *
- * SUPERSEDES THE DOUBLING LADDER of 2026-08-22, whose rationale follows as
- * history — the doubling survives as the anchors.
- *
- * A DOUBLING, FROM THE GRID'S FLOOR TO THE WIRE'S CEILING (owner, 2026-08-22,
- * asked for 0.25, 1, 2, 4 and 8 world units, then for "the closest size you can
- * do that is correct to cell sizes"). Those five sizes ARE these five radii —
- * the requested numbers are each rung's NOMINAL diameter, 2·r cells — and the
- * quarter-unit each rung falls short of its nominal is not slack in the ladder
- * but the footprint rule showing through: membership is `dx² + dy² < r·(r−1)`,
- * so a footprint reaches r−1 cells and spans 2r−1 of them, exactly one cell
- * less than 2r, at every radius. See brushWidthWorldUnits, which measures it.
- *
- * WHY NOT THE REQUESTED NUMBERS EXACTLY. A footprint is centred ON a cell, so
- * it always spans an ODD number of them; 1, 2 and 4 world units are 4, 8 and 16
- * cells, all even, and none is reachable by any radius. Landing them would mean
- * centring the brush BETWEEN cells for even widths, which changes what a
- * SculptIntent's centre means on the wire — a real piece of work, not a
- * constant edit, and not what "closest correct size" asked for.
- *
- * SUPERSEDES THE WORLD-UNIT LADDER of 2026-08-21 (radii 4, 8, 12, 16 — one,
- * two, three and four world units of RADIUS). That ladder was arithmetically
- * defensible and read wrong in the hand: its rungs stepped by a constant world
- * unit, so the jump from the smallest usable brush to the next was the same
- * size as the jump between the two largest, and the picker offered nothing
- * between a 1.75-unit brush and a 3.75-unit one. Doubling gives the small end
- * the resolution it needs and the large end the reach.
- *
- * The ceiling is still shared's, and `expect`ed to be the top rung by hudState's
- * own test, so widening the wire bound without revisiting this list fails
- * loudly. The floor is shared's too: the single-cell brush is the finest mark
- * the grid can express, and MIN_BRUSH_RADIUS's note spells out that a click on
- * it polishes rather than builds.
- */
 export const BRUSH_LADDER_TOP_RADIUS = FULL_BRUSH_RADIUS;
 
 export const BRUSH_RADII: readonly number[] = (() => {
@@ -89,53 +26,16 @@ export const BRUSH_RADII: readonly number[] = (() => {
   return rungs;
 })();
 
-/**
- * The ladder's anchors — the doubling from the floor to the top rung — which
- * the slider marks with detents; every other rung is an unmarked stop.
- */
 export const BRUSH_ANCHOR_RADII: readonly number[] = (() => {
   const anchors: number[] = [];
   for (let r = MIN_BRUSH_RADIUS; r <= BRUSH_LADDER_TOP_RADIUS; r *= 2) anchors.push(r);
   return anchors;
 })();
 
-/**
- * A rung's NOMINAL width in world units — 2·r cells — the number the slider
- * shows (owner, 2026-09-05, who named the sizes 0.50 … 4.00). Distinct from
- * brushWidthWorldUnits below, the width actually painted, which is a quarter
- * unit less at every rung because a footprint spans an odd number of cells.
- */
 export function brushNominalWidthWorldUnits(radius: number): number {
   return 2 * radius * CELL_WORLD_SIZE;
 }
 
-/**
- * How wide a brush of `radius` actually paints, in WORLD UNITS — the number
- * the picker shows the player.
- *
- * IT IS NOT THE RADIUS, AND IT IS NOT IN CELLS (owner, 2026-08-22: "the brush
- * sizes for 4, 8, 12 and 16 appear larger than what I would think 4, 8, 12 or
- * 16 units would look like"). The picker used to print the raw ladder value,
- * which is a RADIUS expressed in CELLS — two conflations stacked on one
- * unlabelled number. A player reads a disc's size as its width, and reads
- * "units" as world units, so the button labelled 16 was showing a quarter of
- * the number it appeared to promise: 16 cells of radius is 31 cells across, or
- * 7.75 world units. Both halves of that gap are closed here by measuring the
- * thing the player is actually looking at.
- *
- * MEASURED BY RUNNING THE FOOTPRINT, not by a formula over the radius. The
- * membership rule (`dx² + dy² < r·(r−1)`) lives in one place on purpose — see
- * forEachFootprintOffset's doc for the four consumers that must agree — and a
- * width computed from a second, independent reading of that rule would be a
- * fifth consumer free to drift. This asks the iterator instead.
- *
- * ALWAYS AN ODD NUMBER OF CELLS, hence the awkward quarters on the buttons:
- * the footprint is centred ON a cell rather than between cells, so it spans
- * 2·reach + 1 of them and can never be a round count of world units. 1.75 is
- * the true width of the one-world-unit-radius brush; showing "2" would be a
- * tidier lie, and the whole point of this function is that the number on the
- * button is the number on the ground.
- */
 export function brushWidthWorldUnits(radius: number): number {
   let reachCells = 0;
   forEachFootprintOffset(radius, (dx, dy) => {
@@ -144,22 +44,14 @@ export function brushWidthWorldUnits(radius: number): number {
   return (2 * reachCells + 1) * CELL_WORLD_SIZE;
 }
 
-/** Selectable brush tools / edge profiles, straight from shared's own sets. */
 export const BRUSH_TOOLS: readonly SculptTool[] = SCULPT_TOOLS;
 export const BRUSH_PROFILES: readonly SculptProfile[] = SCULPT_PROFILES;
 
-/** Which way a sculpt stroke moves the land. Mirrors SculptIntent['dir']. */
 export type SculptMode = 'raise' | 'lower';
 
 const [connectionStatus, setConnectionStatus] =
   createSignal<ConnectionStatus>('connecting');
 
-/**
- * Who this world IS, as the join snapshot stated it: its name and its 1–100
- * difficulty rating. Both fields are nullable because both are optional on the
- * wire (JoinSnapshotMessage) — a server built before world names sends neither,
- * and the HUD must show nothing rather than invent either one.
- */
 export interface WorldIdentity {
   readonly name: string | null;
   readonly difficulty: number | null;
@@ -170,17 +62,6 @@ const [worldIdentity, setWorldIdentitySignal] = createSignal<WorldIdentity>({
   difficulty: null,
 });
 
-/**
- * Server-derived and therefore NOT persisted (see the file header): a world's
- * identity arrives on every join, and a cached copy could only ever be a stale
- * lie — the player may have pointed the client at a different world entirely.
- *
- * NORMALISATION LIVES HERE, at the one door into this signal, rather than at
- * the call site: the fields come off the wire, so a blank name or a non-numeric
- * difficulty must become "unknown" exactly once, for every caller. A rating is
- * rounded to an integer because that is what the scale is — the HUD prints it
- * verbatim and must never render "Difficulty 37.4000001".
- */
 export function setWorldIdentity(identity: WorldIdentity): void {
   const name = identity.name?.trim() ?? '';
   const difficulty = identity.difficulty;
@@ -193,15 +74,6 @@ export function setWorldIdentity(identity: WorldIdentity): void {
   });
 }
 
-/**
- * Build identity of the connected server, from the join snapshot's
- * `serverVersion` (see shared/protocol.ts on the field and
- * ui/VersionWatermark.tsx for the why). Server-derived, so NOT persisted (file
- * header rule): a cached stamp for a server this client is no longer talking
- * to could only ever be a stale lie. Null until a snapshot arrives, and null
- * after a snapshot from a server too old to send one — the watermark then
- * shows the client stamp alone rather than inventing a match.
- */
 const [serverVersion, setServerVersionSignal] = createSignal<string | null>(
   null,
 );
@@ -211,45 +83,18 @@ export function setServerVersion(version: string | null | undefined): void {
   setServerVersionSignal(trimmed === '' ? null : trimmed);
 }
 
-/**
- * Measured frames per second, published by render/frameRate.ts once per
- * sampling window (never per frame — a signal written 60 times a second would
- * re-render the HUD 60 times a second to display a number that cannot be read
- * that fast).
- *
- * Null until the first window closes: the meter must show nothing rather than
- * a made-up figure, the same absent-means-unknown contract the server version
- * above and the world header's fields keep. Not persisted, for the same reason
- * as the server stamp — it is a fact about THIS session's rendering, and a
- * cached one could only ever be a stale lie about the machine's health.
- */
 const [frameRate, setFrameRateSignal] = createSignal<number | null>(null);
 
 export function setFrameRate(fps: number): void {
   setFrameRateSignal(fps);
 }
 
-/**
- * The frame's draw accounting, published beside `frameRate` by the plugin
- * host's sampler once per window (part B of
- * docs/plans/frame-budget-growth-and-draw-calls.md).
- *
- * TWO DIFFERENT NUMBERS, DELIBERATELY NOT ONE RATIO. `objects` is what the
- * scene CONTAINS before frustum culling — camera-independent, and therefore
- * the only thing a budget can be written against. `calls` is what the renderer
- * actually submitted for the last frame, which is lower whenever much of the
- * world is off screen. The HUD prints both and says which is which.
- */
 export interface FrameDrawAccounting {
-  /** renderer.info.render.calls — after culling. */
   readonly calls: number;
-  /** Renderable objects across every plugin layer and core's contributors. */
   readonly objects: number;
-  /** Σ mounted plugins' declared budgets + core's named contributors. */
   readonly budget: number;
 }
 
-/** Null until the first sampling window closes — same contract as `frameRate`. */
 const [frameDraw, setFrameDrawSignal] = createSignal<FrameDrawAccounting | null>(
   null,
 );
@@ -258,19 +103,6 @@ export function setFrameDraw(accounting: FrameDrawAccounting): void {
   setFrameDrawSignal(accounting);
 }
 
-/**
- * The frame meter's latest window (render/frameStats.ts), or null while the
- * perf block is closed.
- *
- * WRITTEN ONLY WHILE THE BLOCK IS OPEN. The meter runs unconditionally — it is
- * two clock reads — but publishing it into Solid is what costs a re-render, so
- * main.tsx installs the sink when the block opens and removes it when it
- * closes. A closed block therefore means null here, and `__terracePerf.stats()`
- * remains the way to read the meter without a HUD.
- *
- * Not persisted: like `frameRate`, it is a fact about this session's rendering,
- * and a restored one would be a stale lie about the machine's health.
- */
 const [frameStats, setFrameStatsSignal] = createSignal<FrameStatsSample | null>(
   null,
 );
@@ -279,135 +111,27 @@ export function setFrameStats(sample: FrameStatsSample | null): void {
   setFrameStatsSignal(sample);
 }
 
-/**
- * Whether the perf block is showing, toggled with the backquote key
- * (ui/Hud.tsx). Off by default and NOT persisted: it is a diagnostic the owner
- * opens when a session feels slow, and a page that restored it would print
- * eight numbers at every player who once pressed the key.
- */
 const [perfOpen, setPerfOpenSignal] = createSignal(false);
 
 export function setPerfOpen(open: boolean): void {
   setPerfOpenSignal(open);
 }
 
-// ---------------------------------------------------------------------------
-// Persistence
-//
-// One key holds every persisted HUD field. They are written together (a single
-// setItem per change) because they change together in the player's mind — "how
-// I had the HUD set up" is one thing, not five — and one key is one entry to
-// version, one to orphan on a schema change.
-//
-// The version lives in the KEY, as in controlPrefs.ts and cameraPose.ts, so a
-// future schema change orphans old entries instead of migrating them. There is
-// deliberately no second version stamp inside the payload: every field here is
-// validated against a tiny closed set (a small integer range, or a literal
-// union), so a payload from some other schema cannot masquerade as valid — it
-// simply fails per field and yields defaults. (cameraPose stamps one because
-// its fields are bare numbers, where a foreign schema's numbers WOULD parse.)
-//
-// v1 → v2 (2026-08-22, owner bug report "lowering does not always work"): the
-// 2026-08-21 re-sample changed what a stored `brushRadius` MEANS without
-// changing the schema it is stored under. The numbers 1–4 were world units and
-// became cells, so every player who had ever picked a brush silently got a
-// quarter of the ground they chose — and radius 1–3 is not on the picker's
-// ladder at all, so no brush button rendered as active. A value whose UNIT
-// changes is a schema change; orphaning the old entries is exactly what the
-// versioned key is for.
-// ---------------------------------------------------------------------------
-
 const STORAGE_KEY = 'terrace.hudState.v2';
 
-/**
- * One world unit of ground, the Populous point brush, is the least surprising
- * default. NOT shared's MIN_BRUSH_RADIUS: that is the grid's floor, four times
- * finer since the 2026-08-21 re-sample, and a player who has picked nothing
- * should get the brush the game is tuned around.
- *
- * WRITTEN AS THE CONVERSION, NOT AS `BRUSH_RADII[0]` (2026-08-22). It was the
- * ladder's first rung while the ladder started at one world unit; the moment
- * the single-cell brush was added below it, the index silently became the
- * finest brush in the game. What this constant means is "one world unit", so
- * that is now what it says.
- */
 export const DEFAULT_BRUSH_RADIUS = WORLD_UNIT_CELLS;
 
-/**
- * The tool still defaults to the WIRE default rather than to a literal: the HUD
- * must start on exactly what an intent WITHOUT that field would mean, or the
- * picker would show one thing on load and the server would do another.
- * (Decision 2026-08-14: stamp is the player-facing default.)
- */
 export const DEFAULT_BRUSH_TOOL: SculptTool = WIRE_DEFAULT_SCULPT_OPTIONS.tool;
 
-/**
- * THE EDGE NO LONGER DOES (owner, 2026-08-22: "what the outline says and what I
- * get are completely random").
- *
- * It was not random, and it was worse than random: it was a function of state
- * the player cannot see. Rendering floors a height to its band, so sixteen
- * different stored heights all draw as the same flat plain — and how far a cell
- * sits above its band floor decides how much of a SOFT brush's falloff clears
- * the next boundary. Measured, one click of the 1.75 brush on ground that looks
- * identical in all sixteen cases:
- *
- *   height above the band floor   0–3    4–7    8–11   12–15
- *   soft renders a mark          0.25   0.75   1.25   1.75   world units
- *   hard renders a mark          1.75   1.75   1.75   1.75
- *   the outline promises         1.75   1.75   1.75   1.75
- *
- * The outline cannot track that: the quantity it would have to read is invisible
- * to the player it is drawn for, so an honest soft outline would have to change
- * size as the cursor crossed ground that looks flat. Hard is the edge on which
- * the preview is TRUE — one click, the whole footprint, every radius, whatever
- * lies beneath — so hard is what a player who has chosen nothing now gets.
- *
- * SOFT IS NOT DEPRECATED and its arithmetic is untouched; it is one click away
- * in the Edge row, and over about `radius` clicks its mark still converges on
- * exactly the outline. This changes which of the two a new player starts on,
- * nothing else.
- *
- * SAFE TO DIVERGE FROM THE WIRE DEFAULT, unlike the tool above: the client sends
- * `profile` on every intent whose tool HAS an edge (input/sculptInput.ts), so no
- * player sculpt ever falls back to the wire value. The edgeless tools — the drag
- * and the carve — deliberately send none, and fall not to the wire default but
- * to EDGELESS_SCULPT_PROFILE, which `sculptOptionsOf` gives them whatever the
- * intent carried. That invariant guarded a divergence which
- * cannot occur on this field, and the default now has to answer a different
- * question — which edge makes the preview honest.
- */
 export const DEFAULT_BRUSH_PROFILE: SculptProfile = 'hard';
 
-/** Raise is the default direction; lowering is the deliberate act. */
 export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
-/**
- * The control-settings editor starts hidden — the HUD is a sculpting tool
- * first. (Since the 2026-08-19 layout it is the bottom-right settings POPUP;
- * before that, an inline collapsed section. Same fact persisted either way:
- * "the player has the control settings showing".)
- */
 export const DEFAULT_SHOW_CONTROLS = false;
 
-/**
- * Whether the INFO panel (top left: status, plugin panels, control hints —
- * the whole tools panel, before the 2026-08-19 corner split moved the brush
- * out of it) starts expanded, PER DEVICE CLASS (owner
- * report, 2026-08-14: on an iPhone the open panel covers half the world).
- * A touchscreen starts collapsed to a tab and expands on tap; a desktop, with
- * screen to spare and a hover cursor, starts open as it always has. The
- * device check is static for the life of the page, and the player's own
- * toggle is persisted over this default like every other HUD choice.
- * The predicate is the SAME `maxTouchPoints > 0` the HUD's touch-hint uses —
- * one definition of "this is a touch device" — and it must be the positive
- * form: environments without the field at all (bare node, some DOM stubs)
- * report undefined, which is "not a touchscreen", not "unknown, assume phone".
- */
 export const DEFAULT_PANEL_OPEN: boolean =
   typeof navigator === 'undefined' || !(navigator.maxTouchPoints > 0);
 
-/** Everything persisted, in the shape it is stored and restored in. */
 export interface PersistedHudState {
   readonly brushRadius: number;
   readonly brushTool: SculptTool;
@@ -426,30 +150,6 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   panelOpen: DEFAULT_PANEL_OPEN,
 };
 
-/**
- * FALLBACK GRANULARITY — per field, not whole-object as in controlPrefs.ts.
- *
- * The difference is real, not stylistic. A control-binding table is one
- * INTERDEPENDENT scheme: restoring three of its four bindings and defaulting
- * the fourth can silently shadow an action (see ACTION_PRECEDENCE), so a
- * half-restored table is worse than no table, and it falls back whole.
- *
- * The fields here are INDEPENDENT — nothing about the brush radius changes
- * what a tool or an expanded panel means. So one corrupt field costs exactly
- * itself, and a payload written by an older build that simply lacks a field
- * added later still restores everything it does carry. Falling back whole
- * would throw away four good settings to punish one bad one.
- *
- * THE RADIUS IS VALIDATED AGAINST THE LADDER, NOT THE PROTOCOL BOUNDS
- * (2026-08-22). It used to accept any integer in [MIN_BRUSH_RADIUS,
- * MAX_BRUSH_RADIUS] — the WIRE's range, which is a fact about what an intent
- * may legally carry, not about what this picker can show. Every rung the
- * picker does not offer is a value it cannot render as selected, so restoring
- * one leaves the Brush row with no active button and the player holding a
- * brush no click of theirs could have chosen. The v1 → v2 key bump above
- * clears the entries that already went stale; this is the guard that stops a
- * future change to BRUSH_RADII from re-creating them.
- */
 function readRadius(value: unknown): number {
   return typeof value === 'number' && BRUSH_RADII.includes(value)
     ? value
@@ -480,11 +180,6 @@ function readPanelOpen(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_PANEL_OPEN;
 }
 
-/**
- * Parses a stored payload. Unreadable JSON or a non-object gives the defaults
- * outright (there are no fields to salvage); anything else is salvaged field by
- * field. Exported so the parsing contract can be tested without a storage stub.
- */
 export function parseHudState(raw: string | null): PersistedHudState {
   if (raw === null) return DEFAULT_HUD_STATE;
   let parsed: unknown;
@@ -505,13 +200,10 @@ export function parseHudState(raw: string | null): PersistedHudState {
   };
 }
 
-/** Reads the stored HUD state, or the defaults if storage is unavailable. */
 function loadHudState(): PersistedHudState {
   try {
     return parseHudState(localStorage.getItem(STORAGE_KEY));
   } catch {
-    // Storage unavailable (private mode, disabled, node) — session-only
-    // defaults. Everything below still works, it just does not outlive the tab.
     return DEFAULT_HUD_STATE;
   }
 }
@@ -528,43 +220,18 @@ const [brushProfile, setBrushProfileSignal] = createSignal<SculptProfile>(
   stored.brushProfile,
 );
 
-/**
- * Sculpt direction. On desktop this is CONTINUOUSLY re-derived from the held
- * modifier keys by input/sculptInput.ts (`syncMode`), so the restored value
- * there survives only until the first key event — which is correct, the keys
- * are the truth on a keyboard. It is persisted for TOUCH, where the sticky Mode
- * toggle is the only way to switch direction and re-tapping it after every
- * reload is pure friction. Restoring at load and then letting the existing
- * input logic take over needs no change to that logic at all.
- */
 const [sculptMode, setSculptModeSignal] = createSignal<SculptMode>(
   stored.sculptMode,
 );
 
-/**
- * Whether the Controls panel is expanded. It lives here rather than inside
- * Hud.tsx (where it began as a component-local signal) purely so it can be
- * persisted with the rest: a player who opened the panel to rebind something
- * should not find it shut again on every reload.
- */
 const [showControls, setShowControlsSignal] = createSignal<boolean>(
   stored.showControls,
 );
 
-/**
- * Whether the whole tools panel is expanded, or collapsed to its tab (see
- * DEFAULT_PANEL_OPEN for the per-device default). Persisted like the rest:
- * closing the panel on a phone is a choice about this device, and it should
- * hold across reloads.
- */
 const [panelOpen, setPanelOpenSignal] = createSignal<boolean>(
   stored.panelOpen,
 );
 
-/**
- * Writes the whole persisted record. Best effort: a full or unavailable
- * storage costs only the next reload's memory, never the live session.
- */
 function persist(): void {
   const state: PersistedHudState = {
     brushRadius: brushRadius(),
@@ -577,7 +244,6 @@ function persist(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // Ignored; the in-memory HUD state still applies for this session.
   }
 }
 
@@ -599,15 +265,6 @@ export function setBrushProfile(profile: SculptProfile): void {
   persist();
 }
 
-/**
- * The no-op guard above is load-bearing on THIS setter in particular:
- * sculptInput calls it on every emitted intent (i.e. on the hold-repeat timer,
- * several times a second while a stroke is held) and on every modifier-key
- * event, almost always with the value it already has. Writing through on every
- * such call would mean a synchronous localStorage write per sculpt tick. Only
- * an actual change touches storage, so no debounce is needed — unlike the
- * camera, whose pose streams genuinely new values every frame (cameraPose.ts).
- */
 export function setSculptMode(mode: SculptMode): void {
   if (mode === sculptMode()) return;
   setSculptModeSignal(mode);
@@ -643,7 +300,6 @@ export {
   panelOpen,
 };
 
-/** The `dir` field of a SculptIntent for the current mode. */
 export function sculptDirection(mode: SculptMode): 1 | -1 {
   return mode === 'raise' ? 1 : -1;
 }

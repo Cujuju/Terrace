@@ -1,40 +1,7 @@
-// shootSpeciesPreview.mjs — screenshot driver for preview-species.html.
-//
-// Drives chrome-headless-shell over raw CDP, exactly as measureWaterFloat.mjs
-// does and for the same reason: Chrome's --screenshot one-shot flag and
-// --virtual-time-budget both HANG on these WebGL harnesses (they never wait for
-// the requestAnimationFrame loop), and Chrome DevTools MCP cannot get a GL
-// context here at all. Raw CDP plus polling window.__previewReady is the only
-// thing that works.
-//
-// Every shot also reports the frame's DRAW-CALL COUNT, read off the renderer
-// through window.__previewDrawCalls: the flame's budget rule is a fixed small
-// number of calls whatever is burning, and a claim about that which is not read
-// off the renderer is a guess.
-//
-// Usage:
-//   node client/scripts/shootSpeciesPreview.mjs <outDir> [--url-base http://localhost:5173] \
-//        [--page preview-species.html] <name>=<query string> ...
-//
-// `--page` picks WHICH preview harness is driven. Both wildlife harnesses raise
-// the same `__previewReady` / `__previewStats` flags, so one driver serves both:
-// preview-species.html bakes a species FILE directly, preview-wildlife.html
-// draws it through the real pool (createWildlifeModels) — which is the one that
-// proves the wiring rather than the model.
-//
-// Requires a server already serving preview-species.html at <url-base>; this
-// script never starts or stops one. Vite dev on /mnt/e does not watch files,
-// so the reliable way to see an EDITED model is a static build:
-//   node client/node_modules/vite/bin/vite.js build \
-//        --config client/scripts/buildSpeciesPreview.config.mjs
-//   (cd .smoke-shots/species/site && python3 -m http.server 8765)
-//   node client/scripts/shootSpeciesPreview.mjs <outDir> --url-base http://localhost:8765 ...
-
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-// Resolved, never written down — see that module's header for why.
 import { resolveChromeHeadlessShell } from './chromeHeadlessShell.mjs';
 
 const CHROME = resolveChromeHeadlessShell();
@@ -85,7 +52,6 @@ async function startChrome() {
     [
       '--no-sandbox',
       '--disable-dev-shm-usage',
-      // Software GL is required in this environment (no real GPU).
       '--enable-unsafe-swiftshader',
       '--use-gl=angle',
       '--use-angle=swiftshader',
@@ -150,7 +116,6 @@ async function shoot(ws, urlBase, page, name, query, outDir) {
         break;
       }
     } catch {
-      // still navigating; keep polling
     }
   }
   if (stats === null) {
@@ -162,9 +127,6 @@ async function shoot(ws, urlBase, page, name, query, outDir) {
   const path = join(outDir, `${name}.png`);
   writeFileSync(path, Buffer.from(shot.data, 'base64'));
   await rpc(ws, 'Target.closeTarget', { targetId }).catch(() => {});
-  // The camera distance is reported in WORLD UNITS because smoke's strength is
-  // a function of exactly that, and ?dist is a multiplier of a fitted distance
-  // nobody can read off a picture.
   console.log(`${path}  ${JSON.stringify(stats)}  ${url}`);
 }
 

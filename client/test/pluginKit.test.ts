@@ -1,7 +1,3 @@
-// Contract tests for client/src/plugins/kit — the client half of the plugin
-// kit. Abbreviated on purpose: each plugin keeps its own suite over its own
-// payload, and what is asserted here is only what the kit itself promises.
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PoseInterpolator, type PoseSegment } from '../src/plugins/kit/interpolator.ts';
 import { watchReducedMotion } from '../src/plugins/kit/reducedMotion.ts';
@@ -13,9 +9,6 @@ import {
   puffMaskGlsl,
 } from '../src/plugins/kit/puffDeck.ts';
 
-// ─── interpolator ────────────────────────────────────────────────────────────
-
-/** A one-axis payload, standing in for any plugin's broadcast state. */
 interface DemoState {
   readonly id: number;
   readonly x: number;
@@ -84,7 +77,6 @@ describe('PoseInterpolator', () => {
     interpolator.advance(0.5);
     interpolator.receive([{ id: 1, x: 10, label: 'a' }]);
     interpolator.advance(0.25);
-    // Half the measured 0.5 s window has passed.
     expect(interpolator.sample().get(1)!.x).toBeCloseTo(5, 9);
   });
 
@@ -113,8 +105,6 @@ describe('PoseInterpolator', () => {
   });
 });
 
-// ─── reduced motion ──────────────────────────────────────────────────────────
-
 describe('watchReducedMotion', () => {
   afterEach(() => {
     delete (globalThis as { window?: unknown }).window;
@@ -123,7 +113,6 @@ describe('watchReducedMotion', () => {
   it('reports "not reduced" where matchMedia does not exist (the node runner)', () => {
     const watch = watchReducedMotion();
     expect(watch.matches()).toBe(false);
-    // stop() must be safe when there was nothing to listen to.
     watch.stop();
   });
 
@@ -151,8 +140,6 @@ describe('watchReducedMotion', () => {
     expect(removeEventListener).toHaveBeenCalledTimes(1);
   });
 });
-
-// ─── view reconcile ──────────────────────────────────────────────────────────
 
 describe('reconcileById', () => {
   it('acquires a view for every id that appeared', () => {
@@ -222,8 +209,6 @@ describe('reconcileById', () => {
     expect(views.get(1)).toBe('old');
   });
 });
-
-// ─── puff deck ───────────────────────────────────────────────────────────────
 
 describe('puff deck GLSL', () => {
   it('offsets the vertex AFTER the view transform — that is the billboard', () => {

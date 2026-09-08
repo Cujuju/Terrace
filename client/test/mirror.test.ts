@@ -16,10 +16,6 @@ import {
   sampleRenderHeight,
 } from '../src/terrain/mirror.ts';
 
-/** 64 cells = 4×4 chunks: small enough to reason about, big enough for corners. */
-// Four chunks to a side, whatever a chunk is sampled at — the 2026-08-21
-// re-sample moved the cell figure and left the geometry this suite asserts on
-// exactly where it was.
 const WORLD = CHUNK_SIZE * 4;
 const CHUNKS_PER_EDGE = WORLD / CHUNK_SIZE;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
@@ -49,16 +45,13 @@ describe('sampleHeight', () => {
       worldSize: WORLD,
       chunks: [chunkPayload(0, 0, 300)],
     });
-    // (0,0) is inside chunk (0,0); the clamped reads must land on it too.
     expect(sampleHeight(mirror, 0, 0)).toBe(300);
     expect(sampleHeight(mirror, -5, -5)).toBe(300);
-    // Past the far edge clamps onto the last cell, which is unreceived → 0.
     expect(sampleHeight(mirror, WORLD + 10, WORLD + 10)).toBe(0);
   });
 });
 
 describe('sampleRenderHeight', () => {
-  /** A chunk whose heights come from each cell's own WORLD coordinates. */
   function chunkPayloadFrom(
     cx: number,
     cy: number,
@@ -73,7 +66,6 @@ describe('sampleRenderHeight', () => {
     return { cx, cy, heights };
   }
 
-  /** Distinct-per-cell heights, small enough to be valid at any coordinate. */
   const coordHeight = (x: number, y: number): number => x * 10 + y;
 
   function mirrorWithCoordChunks(chunks: Array<[number, number]>) {
@@ -94,9 +86,6 @@ describe('sampleRenderHeight', () => {
 
   it('pulls a column-seam sample in an unreceived chunk back one cell west', () => {
     const mirror = mirrorWithCoordChunks([[0, 0]]);
-    // (16, 5) is chunk (1,0)'s first column — never received. sampleHeight
-    // reads the phantom zero; the renderer's sampler steps back onto the
-    // received terrain instead (issue #22, no accidental frontier cliff).
     expect(sampleHeight(mirror, CHUNK_SIZE, 5)).toBe(0);
     expect(sampleRenderHeight(mirror, CHUNK_SIZE, 5)).toBe(coordHeight(CHUNK_SIZE - 1, 5));
   });
@@ -107,20 +96,16 @@ describe('sampleRenderHeight', () => {
   });
 
   it('resolves a chunk-corner sample in one fixed order every reader agrees on', () => {
-    const corner = CHUNK_SIZE; // world (16,16): owned by chunk (1,1)
-    // Only the diagonal (0,0) received → falls through to its corner cell.
+    const corner = CHUNK_SIZE;
     expect(
       sampleRenderHeight(mirrorWithCoordChunks([[0, 0]]), corner, corner),
     ).toBe(coordHeight(CHUNK_SIZE - 1, CHUNK_SIZE - 1));
-    // North neighbour (1,0) received → its cell (16,15) wins, first in order.
     expect(
       sampleRenderHeight(mirrorWithCoordChunks([[0, 0], [1, 0]]), corner, corner),
     ).toBe(coordHeight(corner, CHUNK_SIZE - 1));
-    // West neighbour (0,1) received (north not) → its cell (15,16) is next.
     expect(
       sampleRenderHeight(mirrorWithCoordChunks([[0, 0], [0, 1]]), corner, corner),
     ).toBe(coordHeight(CHUNK_SIZE - 1, corner));
-    // Owner (1,1) received → the real sample, untouched.
     expect(
       sampleRenderHeight(mirrorWithCoordChunks([[1, 1]]), corner, corner),
     ).toBe(coordHeight(corner, corner));
@@ -140,10 +125,8 @@ describe('applySnapshot', () => {
     expect(hasChunk(mirror, idx)).toBe(true);
     expect(dirty.has(idx)).toBe(true);
 
-    // Every cell of the sent chunk carries the payload value...
     expect(heightAt(mirror.map, CHUNK_SIZE, CHUNK_SIZE)).toBe(128);
     expect(heightAt(mirror.map, CHUNK_SIZE * 2 - 1, CHUNK_SIZE * 2 - 1)).toBe(128);
-    // ...and nothing outside it was touched: locked chunks stay at sea level.
     expect(heightAt(mirror.map, 0, 0)).toBe(0);
     expect(hasChunk(mirror, chunkIndex(WORLD, 0, 0))).toBe(false);
   });
@@ -156,8 +139,6 @@ describe('applySnapshot', () => {
       chunks: [chunkPayload(2, 2, 64)],
     });
 
-    // The chunk itself plus left, up, and up-left — those meshes each have a
-    // border row/column sampling into chunk (2,2).
     expect([...dirty].sort((a, b) => a - b)).toEqual(
       [
         chunkIndex(WORLD, 2, 2),
@@ -179,10 +160,6 @@ describe('applySnapshot', () => {
   });
 
   it('drops a chunk payload of the wrong length instead of throwing', () => {
-    // writeChunkHeights still throws a RangeError on a wrong-length payload —
-    // applyChunkPayload's boundary catch is what turns that into a drop, same
-    // policy as an invalid-height payload (see "malformed chunk payloads"
-    // below).
     const mirror = createTerrainMirror(WORLD);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(() =>
@@ -207,11 +184,8 @@ describe('malformed chunk payloads', () => {
     const mirror = createTerrainMirror(WORLD);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    // Built before the payload rather than mutated through it: ChunkPayload's
-    // `heights` is the read-only wire union now (ChunkHeights), so the bad
-    // value goes in while the array is still a plain number[].
     const badHeights = new Array<number>(CELLS_PER_CHUNK).fill(0);
-    badHeights[3] = 1.5; // non-integer: invalid height
+    badHeights[3] = 1.5;
     const badChunk: ChunkPayload = { cx: 0, cy: 0, heights: badHeights };
 
     let dirty: Set<number> | undefined;
@@ -223,8 +197,6 @@ describe('malformed chunk payloads', () => {
       });
     }).not.toThrow();
 
-    // The malformed chunk is dropped, not applied: it is never marked
-    // received, and it contributes nothing to the dirty set.
     expect(hasChunk(mirror, chunkIndex(WORLD, 0, 0))).toBe(false);
     expect(dirty?.size).toBe(0);
     expect(warnSpy).toHaveBeenCalledTimes(1);
@@ -267,19 +239,11 @@ describe('applyChunkUnlock', () => {
 
     expect(hasChunk(mirror, chunkIndex(WORLD, 1, 0))).toBe(true);
     expect(heightAt(mirror.map, CHUNK_SIZE, 0)).toBe(200);
-    // The already-drawn chunk to its left must be re-patched or the seam
-    // between them would still show the old (sea level) border heights.
     expect(dirty.has(chunkIndex(WORLD, 0, 0))).toBe(true);
   });
 });
 
 describe('chunksDirtiedByCell', () => {
-  /**
-   * A mirror holding the WHOLE world. The frontier pull-back only redirects a
-   * sample that lands in a chunk we were never sent, so with every chunk
-   * received the answer is the plain border-sampling arithmetic these cases
-   * were written against.
-   */
   const wholeWorld = (): ReturnType<typeof createTerrainMirror> => {
     const mirror = createTerrainMirror(WORLD);
     for (let cy = 0; cy < CHUNKS_PER_EDGE; cy++) {
@@ -388,18 +352,16 @@ describe('applyTerrainDiff', () => {
     const dirty = applyTerrainDiff(mirror, {
       type: 'terrainDiff',
       cells: [
-        { x: 1, y: 1, h: 1.5 }, // invalid: not an integer
-        { x: 2, y: 2, h: 42 }, // valid
+        { x: 1, y: 1, h: 1.5 },
+        { x: 2, y: 2, h: 42 },
       ],
     });
-    expect(heightAt(mirror.map, 1, 1)).toBe(0); // untouched, still sea level
+    expect(heightAt(mirror.map, 1, 1)).toBe(0);
     expect(heightAt(mirror.map, 2, 2)).toBe(42);
     expect(dirty.size).toBe(1);
   });
 
   it('applies diffs to chunks we do not hold without marking them received', () => {
-    // The server should never send these, but a diff must not be able to
-    // fabricate territory the client was never granted.
     const mirror = createTerrainMirror(WORLD);
     applyTerrainDiff(mirror, {
       type: 'terrainDiff',

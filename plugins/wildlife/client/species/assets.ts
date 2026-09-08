@@ -1,5 +1,3 @@
-// THE ONE LIST of asset-sourced species; ../index.ts preload and client/src/previewSpecies.ts
-// both install from it. `.glb?url` typing: types/glb-url.d.ts.
 import type { SpeciesAssetSpec } from './assetSpecies.ts';
 import { FISH_ASSET } from './fish.ts';
 import fishUrl from '../assets/fish.glb?url';

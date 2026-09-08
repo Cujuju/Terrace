@@ -1,21 +1,3 @@
-// WHAT THIS PLUGIN LEAVES BEHIND IN A SIBLING WHEN ITS WORLD CLOSES — the
-// push-direction half of the contract structures' session-lifecycle.test.ts
-// states for the pull direction (issue #208).
-//
-// Plugin modules outlive worlds. A reopen — a plugin toggle, a rollback, an
-// operator switching to another world — builds a NEW host over the SAME
-// modules, and a plugin that is not enabled for the next session never gets an
-// onWorldCreate to reset itself in. This plugin does not merely hold state
-// across that boundary: it has HANDED A CALLBACK TO FIRE, and fire asks that
-// callback every spread step for as long as anything in the world is burning.
-// So a fleet left standing here is offered as fuel to a world it never sailed.
-//
-// FIRE IS IMPORTED HERE, and this is the one place in this suite where a
-// sibling plugin's code is allowed in (structures' session-lifecycle.test.ts
-// holds the same licence for the same reason): the subject IS the cross-plugin
-// contract, and asserting it against a hand-written stand-in would assert
-// something other than what ships.
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { World } from '../../../server/src/world/world.ts';
@@ -34,11 +16,8 @@ import { plugin as boatsPlugin, resetBoatsState } from '../server/index.ts';
 import { resetFireBridge } from '../server/fire-bridge.ts';
 import { livingBoats, restoreFleet } from '../server/fleet.ts';
 
-/** Small enough to build instantly; nothing here reads the terrain. */
 const WORLD_SIZE = 64;
-/** One unlocked chunk is enough for a world to be a world. */
 const UNLOCKED_CHUNKS: ReadonlyArray<readonly [number, number]> = [[0, 0]];
-/** The hull the previous world had afloat, seeded straight into the fleet. */
 const SEEDED_BOAT = {
   id: 1,
   homeX: 10,
@@ -48,20 +27,12 @@ const SEEDED_BOAT = {
   heading: 0,
   fighting: false,
 } as const;
-/** One past the seeded hull's id, as a restore would carry. */
 const SEEDED_NEXT_BOAT_ID = 2;
 
 function flatWorld(): World {
   return worldWithUnlockedChunks(WORLD_SIZE, UNLOCKED_CHUNKS);
 }
 
-/**
- * Opens a session over `world` the way `openSession` does, with fire and boats
- * INSTALLED and exactly `enabled` participating. No persistence is restored:
- * a brand-new world's genesis slices are deliberately empty
- * (server/src/world/session.ts's createWorldFile), which is the wider trigger
- * this suite exists for.
- */
 function openOn(world: World, enabled: readonly string[]): PluginHost {
   const host = new PluginHost(
     world,
@@ -72,7 +43,6 @@ function openOn(world: World, enabled: readonly string[]): PluginHost {
   return host;
 }
 
-/** Closes it the way `releaseSession` does: tell the plugins, then revoke. */
 function closeOn(host: PluginHost): void {
   host.closeWorld();
   host.revokeApis();
@@ -82,11 +52,6 @@ function sourceNames(): string[] {
   return entityFuelSources().map((source) => source.name);
 }
 
-/**
- * Everything fire's spread sweep would be offered this step — the public
- * equivalent of spread.ts's private `flammableNow()`, over the very registry
- * that function reads.
- */
 function offeredAsFuel(): string[] {
   const offered: string[] = [];
   for (const source of entityFuelSources()) {
@@ -96,7 +61,6 @@ function offeredAsFuel(): string[] {
   return offered;
 }
 
-/** Seeds the fleet a previous world had afloat. */
 function seedFleet(): void {
   restoreFleet({ villages: [], boats: [SEEDED_BOAT], nextBoatId: SEEDED_NEXT_BOAT_ID });
 }
@@ -131,11 +95,6 @@ describe('a closed world leaves nothing of this plugin in fire', () => {
     const session = openOn(world, [FIRE_PLUGIN_NAME, BOATS_PLUGIN_NAME]);
     expect(sourceNames()).toContain(BOATS_PLUGIN_NAME);
 
-    // This plugin's close hook ALONE: fire is never told the world is closing,
-    // so the registry can only have been emptied by the bridge that filled it.
-    // Both halves are deliberate — fire clearing its own registries is what
-    // covers a registrant that never withdraws, and this is what covers the day
-    // that half is refactored, or a fire that is not installed at all.
     boatsPlugin.onWorldClose?.(worldWithSibling(FIRE_PLUGIN_NAME, fireExports));
 
     expect(sourceNames()).not.toContain(BOATS_PLUGIN_NAME);
@@ -150,8 +109,6 @@ describe('a closed world leaves nothing of this plugin in fire', () => {
     expect(livingBoats()).toHaveLength(1);
     closeOn(running);
 
-    // Reopened with boats switched off: its onWorldCreate never runs, so the
-    // ONLY thing that can have emptied fire's registry is the close path.
     const withoutBoats = openOn(world, [FIRE_PLUGIN_NAME]);
 
     expect(offeredAsFuel()).toEqual([]);
@@ -166,8 +123,6 @@ describe('a closed world leaves nothing of this plugin in fire', () => {
     expect(livingBoats()).toHaveLength(1);
     closeOn(sessionA);
 
-    // A DIFFERENT world, boats still enabled, and no slice to restore — the
-    // switch that needs no operator toggle at all.
     const sessionB = openOn(flatWorld(), [FIRE_PLUGIN_NAME, BOATS_PLUGIN_NAME]);
 
     expect(livingBoats()).toEqual([]);

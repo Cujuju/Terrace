@@ -1,10 +1,4 @@
-// One world live per process, many on disk. Everything downstream holds the
-// WorldManager, never a world. Shutdown rides Colyseus's own signal handling:
-// never add competing SIGINT/SIGTERM handlers.
-
-import './quiet-boot.ts'; // must precede any Colyseus import — see that file's comment
-// Side effect, and must precede the imports below or their load-time lines
-// go out unstamped.
+import './quiet-boot.ts';
 import './log-timestamps.ts';
 import { Server, type ServerOptions } from '@colyseus/core';
 import { stat } from 'node:fs/promises';
@@ -32,10 +26,6 @@ import { WorldManager } from './world/world-manager.ts';
 
 const MILLISECONDS_PER_SECOND = 1000;
 
-/**
- * Serves a built client on the game port (#20). Uses Colyseus's express hook
- * without express as a dependency — see static/serve-client.ts.
- */
 async function clientStaticExpressHook(
   config: ServerConfig,
 ): Promise<ServerOptions['express'] | undefined> {
@@ -58,7 +48,6 @@ async function clientStaticExpressHook(
   };
 }
 
-/** Built-in defaults are printed on purpose; a key the operator chose never is. */
 function logOperatorKeys(config: ServerConfig): void {
   if (config.rollbackKey === null) {
     logWarn(
@@ -101,18 +90,14 @@ function logOperatorKeys(config: ServerConfig): void {
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  // `newWorlds=`: WORLD_SIZE sizes worlds at CREATION. A loaded world keeps its own.
   logInfo(
     `starting: newWorlds=${config.worldSize}² difficulty=${config.difficulty} ` +
       `port=${config.port} tick=${config.tickHz}Hz snapshot=${config.snapshotIntervalS}s ` +
       `worlds=${config.worldsDir}`,
   );
 
-  // Before any world, so a load failure costs only a boot. An object, not an
-  // array, because a reload replaces one plugin in place (#198).
   const plugins = new InstalledPlugins(await discoverPlugins(config.pluginsDir));
 
-  // Before any world opens: a join snapshot carries it.
   const identity = initBuildIdentity({ plugins: plugins.list, clientDistPath: config.clientDistPath });
   logInfo(`build identity ${identity} (core, plugins and the served client bundle)`);
 
@@ -124,7 +109,6 @@ async function main(): Promise<void> {
     switchCountdownS: config.worldSwitchCountdownS,
   });
 
-  // A missing world never becomes a fresh one — see boot/open-worlds.ts.
   const outcome = openWorlds(config, registry, manager);
   const session = manager.current;
   if (session === null) {
@@ -136,15 +120,12 @@ async function main(): Promise<void> {
     logInfo(`world is "${session.world.name}" (${outcome.loadedId})`);
   }
 
-  // Built before the server it shuts down, because admin needs it. The thunk
-  // breaks the cycle: no connection, and so no restart, can exist before listen.
   let gameServer: Server | null = null;
   const restart = new ServerRestartService({
     shutdown: async () => {
       if (gameServer === null) {
         throw new Error('restart requested before the server was listening');
       }
-      // `false` is mandatory — see server/src/restart.ts's header.
       await gameServer.gracefullyShutdown(false);
     },
     exit: (code) => {
@@ -159,18 +140,12 @@ async function main(): Promise<void> {
   const admin = new WorldAdminService({ manager, registry, config, restart });
   logOperatorKeys(config);
 
-  // Boot can already have changed the world (a restored world just named, a
-  // plugin's onWorldCreate). Without this, a crash inside the first minute
-  // silently re-names it on the next boot.
   try {
     if (manager.snapshotIfDirty()) logInfo('boot snapshot written');
   } catch (error) {
-    // A failed write must not stop a world opening; it stays dirty and retries.
     logError('boot snapshot failed', error);
   }
 
-  // The PROCESS's loop, not a world's: it ticks across a switch and across
-  // having no world, so changing worlds tears nothing down.
   const tickLoop = startTickLoop(config.tickHz, (dt) => {
     timePhase(TICK_TOTAL_PHASE, () => manager.tick(dt));
   });
@@ -181,8 +156,6 @@ async function main(): Promise<void> {
 
   const snapshotTimer = setInterval(() => {
     try {
-      // Deferred: only this one. Every other caller needs the row on disk
-      // before its next step (#273).
       const written = timePhase('snapshot', () => manager.snapshotIfDirty({ defer: true }));
       if (written) logInfo('world snapshot handed to writer');
     } catch (error) {
@@ -190,10 +163,7 @@ async function main(): Promise<void> {
     }
   }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
 
-  // Before define(): a room can exist as soon as the server listens. No plugin
-  // message types here — the room routes each one through the live host (#197).
   bindRoomContext({ manager, admin, restart });
-  // greet: suppresses Colyseus's boot banner.
   const serverOptions: ServerOptions = { greet: false };
   const clientExpressHook = await clientStaticExpressHook(config);
   if (clientExpressHook !== undefined) {
@@ -203,13 +173,10 @@ async function main(): Promise<void> {
   gameServer.define(ROOM_NAME, TerraceRoom);
 
   gameServer.onBeforeShutdown(() => {
-    // Stop simulating first, so the final snapshot is a quiescent world.
     tickLoop.stop();
     tickTiming?.stop();
     clearInterval(snapshotTimer);
     try {
-      // `shutdown`, not `unload`: leaves the active pointer, so the next boot
-      // returns to this world.
       logInfo(manager.shutdown() ? 'shutdown snapshot written' : 'nothing to snapshot');
     } catch (error) {
       logError('shutdown snapshot failed', error);
@@ -226,7 +193,6 @@ async function main(): Promise<void> {
     `an operator restart exits ${TERRACE_RESTART_EXIT_CODE}; ` +
       'a supervisor must relaunch on that code',
   );
-  // The ws:// line above is not a page; without this a browser gets a 404 (#20).
   if (clientExpressHook !== undefined) {
     logInfo(`play at http://localhost:${config.port} (same URL on your LAN address)`);
   } else {
@@ -236,7 +202,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   if (error instanceof ConfigError) {
-    // The message alone: an operator cannot act on a stack trace.
     logError(error.message);
   } else {
     logError('failed to start', error);

@@ -39,8 +39,6 @@ describe('seabedHeight', () => {
   });
 
   it('returns the LOWER span cap when a roof straddles the waterline', () => {
-    // Air at the waterline: the gap between the two spans is flooded, so the
-    // seabed is the solid cap under the gap, not the roof above it.
     const map = world();
     setColumn(map, 7, 8, [
       { floor: BEDROCK_FLOOR, ceiling: -32 },
@@ -51,8 +49,6 @@ describe('seabedHeight', () => {
   });
 
   it('returns the ROOF ceiling when the column is solid at the waterline', () => {
-    // The upper span spans the waterline itself, so there is no water here at
-    // all — the answer is "dry", exactly what a one-span land column returns.
     const map = world();
     setColumn(map, 9, 10, [
       { floor: BEDROCK_FLOOR, ceiling: -100 },
@@ -63,8 +59,6 @@ describe('seabedHeight', () => {
   });
 
   it('returns the ROOF ceiling when the whole column is below the sea', () => {
-    // Every span is submerged: the topmost cap is the seabed, the same answer
-    // plain sea gives, and heightAt agrees.
     const map = world();
     setColumn(map, 11, 12, [
       { floor: BEDROCK_FLOOR, ceiling: -200 },

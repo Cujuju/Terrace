@@ -1,53 +1,18 @@
-// The saga voice: pure functions that turn other plugins' events into
-// chronicle lines. Everything here is deterministic string-building over
-// already-validated data; all state (what counts as a "first", what was
-// already told today) lives in server/index.ts.
-//
-// PARSING IS STRUCTURAL, BY DESIGN. The chronicle subscribes to emitters by
-// NAME ('structures:changes'), never by importing their code — a plugin must
-// build and test with every other plugin deleted (the rule flora's test
-// support states, applied to code). So each event is validated here from
-// `unknown`, exactly as untrusted client messages are, and anything
-// malformed is silently ignored: a missing or newer-versioned emitter must
-// degrade the saga, never crash it.
-
 import { RACE_PLURAL, RACE_SINGULAR, type SettlerRace } from './races.ts';
 
-/** A cell position inside an event payload. */
 export interface EventCell {
   readonly x: number;
   readonly y: number;
 }
 
-/** A cell with the tier it reached. */
 export interface EventTierCell extends EventCell {
   readonly tier: number;
 }
 
-/**
- * Defensive bound on any event's list length. The largest real emitter list
- * is structures' board cap (512); anything past 4096 is a malformed or
- * hostile payload, not a bigger world.
- */
 export const EVENT_LIST_CAP = 4096;
 
-/**
- * Homes lost at once, in one place, before the loss is saga-worthy. Below
- * three, the chronicle would be transcribing ordinary B3/S23 churn — the CA
- * kills isolated cells every generation as a matter of routine. Three homes
- * gone together is the smallest cluster that reads as an EVENT: a hamlet
- * lost, not a shack abandoned.
- */
 export const CHRONICLE_CALAMITY_MIN_HOMES = 3;
 
-/**
- * Display names for structure tiers, BY POSITION. A COPY of the structures
- * plugin's STRUCTURE_TIERS (protocol.ts, six tiers, camp → watchtower) with
- * dashes spaced for prose, not an import — see the module header for the
- * independence rule that forbids the import. If structures someday grows a
- * seventh tier the fallback below keeps lines truthful-if-plain until this
- * list is caught up.
- */
 export const STRUCTURE_TIER_NAMES = [
   'camp',
   'hut',
@@ -60,8 +25,6 @@ export const STRUCTURE_TIER_NAMES = [
 export function tierName(tier: number): string {
   return STRUCTURE_TIER_NAMES[tier] ?? `hall of the ${tier}th order`;
 }
-
-// ── Parsers ──────────────────────────────────────────────────────────────────
 
 function parseCellList(value: unknown): EventCell[] | null {
   if (!Array.isArray(value) || value.length > EVENT_LIST_CAP) return null;
@@ -88,7 +51,6 @@ function parseTierCellList(value: unknown): EventTierCell[] | null {
   return cells;
 }
 
-/** structures:changes — the emitter's cause plus the three lists the saga reads. */
 export interface StructuresChangesEvent {
   readonly cause: 'generation' | 'sculpt';
   readonly seeded: readonly EventCell[];
@@ -106,7 +68,6 @@ export function parseStructuresChanges(payload: unknown): StructuresChangesEvent
   };
   if (cause !== 'generation' && cause !== 'sculpt') return null;
 
-  // Absent lists are empty lists: the sculpt-path emission carries only `died`.
   const seededCells = seeded === undefined ? [] : parseCellList(seeded);
   const upgradedCells = upgraded === undefined ? [] : parseTierCellList(upgraded);
   const diedCells = died === undefined ? [] : parseCellList(died);
@@ -115,7 +76,6 @@ export function parseStructuresChanges(payload: unknown): StructuresChangesEvent
   return { cause, seeded: seededCells, upgraded: upgradedCells, died: diedCells };
 }
 
-/** relics:collected — who took which skill, and where the gem floated. */
 export interface RelicCollectedEvent {
   readonly label: string;
   readonly player: string;
@@ -137,7 +97,6 @@ export function parseRelicCollected(payload: unknown): RelicCollectedEvent | nul
   return { label, player, x: x as number, y: y as number };
 }
 
-/** monsters:arrived / monsters:departed — a kind and where it happened. */
 export interface MonsterEvent {
   readonly kind: string;
   readonly x: number;
@@ -151,13 +110,6 @@ export function parseMonsterEvent(payload: unknown): MonsterEvent | null {
   if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
   return { kind, x: x as number, y: y as number };
 }
-
-// ── Lines ────────────────────────────────────────────────────────────────────
-// Each builder returns one finished sentence. The day is not embedded — the
-// entry carries it as data and the client renders the day heading. Settlement
-// lines name the PEOPLE (races.ts): a district is one race by construction,
-// and every builder below is called with cells from a single chunk, which is
-// exactly one district — so one line is always about one people.
 
 export function seededLine(race: SettlerRace, place: string): string {
   return `${RACE_SINGULAR[race]} settlers pitched a new camp at ${place}.`;
@@ -185,31 +137,16 @@ export function monsterArrivedLine(kind: string, place: string, isFirstEver: boo
     : `A ${kind} returned to the lands near ${place}.`;
 }
 
-/**
- * A wildfire that consumed enough to be worth remembering (see
- * CHRONICLE_WILDFIRE_MIN_CELLS in ./index.ts).
- *
- * The count is of CELLS CONSUMED, which for a forest is trees; the line says
- * "growing things" rather than "trees" because the same fire may have taken a
- * field, and the chronicle does not receive the distinction — fire tells it what
- * burned, not what kind of thing it was.
- */
 export function wildfireLine(consumed: number, place: string): string {
   return `Fire took ${consumed} growing things near ${place}.`;
 }
 
-/** Parsed `fire:burned` — a finished wildfire. */
 export interface FireBurnedEvent {
   readonly consumed: number;
   readonly x: number;
   readonly y: number;
 }
 
-/**
- * Structural parse of fire's `burned` world-event. An own copy of the shape,
- * never an import from the fire plugin — the by-name subscription rule every
- * parser in this file already keeps (see this module's other parsers).
- */
 export function parseFireBurned(payload: unknown): FireBurnedEvent | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const event = payload as { consumed?: unknown; x?: unknown; y?: unknown };
@@ -224,37 +161,16 @@ export function monsterDepartedLine(kind: string): string {
   return `The ${kind} was driven from the world.`;
 }
 
-/**
- * A mudslide worth remembering (see CHRONICLE_MUDSLIDE_MIN_CELLS in ./index.ts).
- *
- * The count is of CELLS THE MUD CROSSED, which is the length of the run — the
- * one number in `mudslides:flow` that means the same thing to a reader as it
- * does to the emitter. `volumeMoved` is in height units, which is a quantity no
- * line of the saga has ever been written in and which a player has no way to
- * calibrate against anything, so it is deliberately not phrased.
- */
 export function mudslideLine(cells: number, place: string): string {
   return `A hillside gave way near ${place} and ran ${cells} paces downhill.`;
 }
 
-/** Parsed `mudslides:flow` — a landslide that has come to rest. */
 export interface MudslideFlowEvent {
   readonly headX: number;
   readonly headY: number;
   readonly cellCount: number;
 }
 
-/**
- * Structural parse of mudslides' `flow` world-event. An own copy of the shape,
- * never an import from the mudslides plugin — the by-name subscription rule
- * every parser in this file already keeps.
- *
- * ONLY THE THREE FIELDS THIS PLUGIN READS are validated. The event also carries
- * the toe, a per-cell delta list and a stop reason; a parse that insisted on them
- * would refuse a perfectly usable event from a version of the emitter that had
- * dropped one, which is the opposite of what a loose cross-plugin contract is
- * for.
- */
 export function parseMudslideFlow(payload: unknown): MudslideFlowEvent | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const event = payload as { headX?: unknown; headY?: unknown; cells?: unknown };

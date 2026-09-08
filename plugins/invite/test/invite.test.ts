@@ -1,6 +1,3 @@
-// invite, driven through the REAL plugin host — the same harness the other
-// plugin suites use — plus the pure client-side fallback logic.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -30,7 +27,6 @@ function boot(): RecordingSink {
   return sink;
 }
 
-/** The invite:info payloads sent to PLAYER, in order. */
 function infoSentTo(sink: RecordingSink): unknown[] {
   return sink
     .ofType('invite:info')
@@ -99,8 +95,6 @@ describe('client copy button', () => {
     });
 
     copy('http://example.test');
-    // Flushes the microtask the rejection settles on; an uncaught rejection
-    // here would otherwise fail the test via Vitest's unhandled-rejection trap.
     await vi.advanceTimersByTimeAsync(0);
 
     expect(writeText).toHaveBeenCalledWith('http://example.test');
@@ -114,19 +108,17 @@ describe('client copy button', () => {
       configurable: true,
     });
 
-    copy('http://example.test'); // click #1 at t=0
-    await vi.advanceTimersByTimeAsync(0); // let its .then run
+    copy('http://example.test');
+    await vi.advanceTimersByTimeAsync(0);
     expect(justCopied()).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(1000); // t=1000
-    copy('http://example.test'); // click #2, well within click #1's flash window
-    await vi.advanceTimersByTimeAsync(0); // let its .then run
+    await vi.advanceTimersByTimeAsync(1000);
+    copy('http://example.test');
+    await vi.advanceTimersByTimeAsync(0);
 
-    // t=1500: click #1's timer would fire here if it were not cleared.
     await vi.advanceTimersByTimeAsync(500);
     expect(justCopied()).toBe(true);
 
-    // t=2500: click #2's own timer, 1500ms after ITS click.
     await vi.advanceTimersByTimeAsync(1000);
     expect(justCopied()).toBe(false);
   });

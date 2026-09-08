@@ -1,22 +1,7 @@
-// The gauge's display arithmetic, tested without a DOM.
-//
-// This is the half of the HUD that can actually be wrong in a way tests can
-// catch: the component is markup, but the smoothing, the clamping and the
-// pulse-period derivation are numbers, and the pulse period in particular is a
-// CLAIM TO THE PLAYER — "one grain = one more sculpt" — that must hold for
-// every rate a deployment can configure.
-
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRoot } from 'solid-js';
 import { MAX_BRUSH_RADIUS, WORLD_UNIT_CELLS } from '@terrace/shared';
 
-/**
- * The brush the HUD starts on — the ladder's first rung, one world unit of
- * ground (client/src/state/hudState.ts's BRUSH_RADII). NOT shared's
- * MIN_BRUSH_RADIUS since the 2026-08-21 re-sample: that is the protocol's
- * one-CELL floor, which no picker offers, so a gauge test driven by it would
- * be reading a brush no player can select.
- */
 const POINT_BRUSH_RADIUS = 1 * WORLD_UNIT_CELLS;
 import {
   setBrushProfile,
@@ -43,13 +28,8 @@ import {
   MIN_MANA_REGEN_PER_SECOND,
 } from '../server/index.ts';
 
-/** A stand-in world rate: the gauge animates whatever the push carries. */
 const EXAMPLE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
 
-/**
- * A rate slow enough that BOTH ends of the brush ladder stay inside the pulse
- * clamp, so a ratio between them is the raw arithmetic and not the floor.
- */
 const UNCLAMPED_REGEN_PER_SECOND =
   MANA_COST_PER_MAX_RADIUS_HARD_SCULPT / (MAX_PULSE_PERIOD_S / 2);
 
@@ -73,7 +53,6 @@ describe('fill level', () => {
 
 describe('pulse period — the rate readout', () => {
   it('is one CURRENT-BRUSH sculpt worth of regen, in seconds', () => {
-    // Cost over rate, floored at the legibility clamp.
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, EXAMPLE_REGEN_PER_SECOND),
     ).toBeCloseTo(
@@ -84,13 +63,10 @@ describe('pulse period — the rate readout', () => {
   });
 
   it('halves when the world regenerates twice as fast', () => {
-    // The animation IS the rate: double the rate, double the grain frequency.
     expect(pulsePeriodSeconds(25, 2)).toBe(pulsePeriodSeconds(25, 1) / 2);
   });
 
   it('stretches 45× when the player picks up the biggest hard brush', () => {
-    // Volume pricing made this the headline case: the same world, the same
-    // regen, but the wait between sculpts is the wait for 45 band-cells.
     const point = pulsePeriodSeconds(
       MANA_COST_PER_MIN_RADIUS_SCULPT,
       UNCLAMPED_REGEN_PER_SECOND,
@@ -107,25 +83,19 @@ describe('pulse period — the rate readout', () => {
   });
 
   it('tracks the cost, so a cheaper sculpt pulses sooner', () => {
-    // Cost is not a constant: it is per-player (perks) AND per-brush (volume).
     expect(pulsePeriodSeconds(13, 20)).toBeLessThan(pulsePeriodSeconds(25, 20));
   });
 
   it('stays inside the legible band at the extremes of the configurable range', () => {
-    // Fastest world the server will accept: the true period is ~7 ms, which
-    // would read as flicker rather than as grains.
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, MAX_MANA_REGEN_PER_SECOND),
     ).toBe(MIN_PULSE_PERIOD_S);
-    // Slowest world: the true period is the full drained wait, still legible.
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, MIN_MANA_REGEN_PER_SECOND),
     ).toBeCloseTo(60, 6);
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, MIN_MANA_REGEN_PER_SECOND),
     ).toBeLessThanOrEqual(MAX_PULSE_PERIOD_S);
-    // ...and the most expensive brush in the slowest world is clamped rather
-    // than drawn as a grain that takes three quarters of an hour to fall.
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT, MIN_MANA_REGEN_PER_SECOND),
     ).toBe(MAX_PULSE_PERIOD_S);
@@ -139,17 +109,7 @@ describe('pulse period — the rate readout', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// THE BRUSH PRICE READOUT. Since volume pricing the gauge shows what the brush
-// in the player's hand costs, and times its falling-grain cue by it. Both are
-// derived from the HUD's live brush signals, so the claim worth testing is that
-// they RE-DERIVE — a value frozen in a component-body const is the project's
-// standard Solid failure and would silently show the price of whatever brush
-// happened to be selected at mount.
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('current-brush cost', () => {
-  /** A pool exactly as the server pushes it: a rate, not a price. */
   const POOL = {
     balance: MANA_CAPACITY,
     capacity: MANA_CAPACITY,
@@ -158,7 +118,6 @@ describe('current-brush cost', () => {
   };
 
   afterEach(() => {
-    // Module-scope signals: leave the HUD as this suite found it.
     setManaPool(null);
     setBrushRadius(POINT_BRUSH_RADIUS);
     setBrushProfile('soft');
@@ -176,23 +135,17 @@ describe('current-brush cost', () => {
       setBrushProfile('soft');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
 
-      // Radius alone.
       setBrushRadius(MAX_BRUSH_RADIUS);
       expect(currentBrushCost()).toBe(
         sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp'),
       );
 
-      // Profile no longer moves the price: both fill the same core (#387).
       setBrushProfile('hard');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
       expect(currentBrushCost()).toBe(
         sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp'),
       );
 
-      // And back down again: nothing here is sticky. BOTH dials have to go
-      // back — the point brush covers a world unit of ground since the
-      // 2026-08-21 re-sample, so soft and hard are no longer the same stroke on
-      // it the way they were on a single cell.
       setBrushRadius(POINT_BRUSH_RADIUS);
       setBrushProfile('soft');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
@@ -205,7 +158,6 @@ describe('current-brush cost', () => {
       setManaPool(POOL);
       setBrushRadius(POINT_BRUSH_RADIUS);
       setBrushProfile('soft');
-      // The unclamped rate, so the ratio below is the cost ratio and not the floor.
       const pointPeriod = pulsePeriodSeconds(currentBrushCost(), UNCLAMPED_REGEN_PER_SECOND);
 
       setBrushRadius(MAX_BRUSH_RADIUS);
@@ -228,7 +180,6 @@ describe('current-brush cost', () => {
       setManaPool(POOL);
       const standard = currentBrushCost();
 
-      // A relic halves this player's rate; the server pushes the new rate.
       setManaPool({ ...POOL, manaPerBandCell: MANA_PER_BAND_CELL * 0.5 });
       expect(currentBrushCost()).toBe(Math.ceil(standard / 2));
       dispose();
@@ -257,7 +208,6 @@ describe('numeric rate readout', () => {
   });
 
   it('never rounds a world that IS refilling down to +0/s', () => {
-    // Floor: one point stamp a minute, 14/60 ≈ 0.23 mana/s.
     expect(formatRegenRate(MIN_MANA_REGEN_PER_SECOND)).toBe('+0.2/s');
     expect(formatRegenRate(0.05)).toBe('+0.1/s');
   });

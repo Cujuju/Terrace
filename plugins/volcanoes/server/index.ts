@@ -1,55 +1,3 @@
-// volcanoes — cones, eruptions and lava flows, as a plugin (issue #214).
-//
-// Core knows nothing about volcanoes, and the design record is explicit that it
-// must not: the Deep Strata decision (docs/DESIGN.md, 2026-08-19) shipped the
-// basalt/obsidian/lava stack into core and closed with "Hazards are NOT core.
-// Heat, eruptions, anything gamey in the deep is a future plugin reading these
-// same boundary constants." This is that plugin. It reads MIN_HEIGHT and
-// DEEP_LAVA_DEPTH (./siting.ts) and nothing else about the strata.
-//
-// SHAPE OF THE TICK:
-//   0. one queued cone ring sculpt is applied (./vents.ts's raiseCone), which
-//      happens even under `none` because the cone's centre is already in the
-//      ground;
-//   1. any vent a player DUG open last tick is opened (see THE DEFERRED BIRTH);
-//   2. the world rolls its rare spontaneous birth, under `active` only;
-//   3. every vent advances — dormancy, eruption, front (./vents.ts);
-//   4. newly molten cells are handed to fire, and announced as world events;
-//   5. clients are told, on the cadence.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// THE ONLY THING IT WRITES TO THE WORLD IS `sculpt`.
-//
-// Cones and flows are ordinary terrain edits through the authoritative path,
-// which is issue #214's own constraint ("terrain changes only via
-// WorldApi.sculpt") and the reason a volcano needs no core support at all: the
-// heights it writes are relaxed, diffed, mask-filtered and persisted by exactly
-// the machinery a player's click goes through. It never denies an intent, never
-// unlocks a chunk, and never writes a raw height — it could not if it wanted to.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// THE DEFERRED BIRTH, and why a dug vent is not opened where it is noticed.
-//
-// Birth route 3 (./siting.ts) fires from `onTerrainChanged`, which is called
-// from inside a sculpt. Opening the vent there would call `sculpt` again — a
-// whole cone of it — from inside that same call, recursively, on a hook the
-// host only guards against runaway depth rather than against being re-entered
-// at all. So the cell is REMEMBERED and the vent is opened at the top of the
-// next tick, where a sculpt is an ordinary thing to do. It costs one tick of
-// latency on a mechanic whose unit of time is an eruption.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// WHAT REACTS TO AN ERUPTION, AND WHAT THIS PLUGIN DOES ABOUT IT.
-//
-// Fire is wired directly, because fire publishes a server-side entry point and
-// this plugin is one more cause of fire (./fire-bridge.ts). Everything else
-// issue #214 lists — flora and structures destroyed, wildlife and pilgrims
-// fleeing, weather dimming the sky with ash, the chronicle recording it — is
-// reached the way plugins always reach each other: this plugin EMITS, and a
-// consumer subscribes by name and validates structurally. No consumer for these
-// events exists yet; they are the seam those follow-ups attach to, and emitting
-// them costs one fan-out per eruption.
-
 import type {
   PersistenceSlice,
   PluginActionOutcome,
@@ -92,52 +40,21 @@ import {
   ventStates,
 } from './vents.ts';
 
-/**
- * Ticks between the FULL-STATE keepalive — 600 → once every 60 s at the shipped
- * TICK_HZ of 10.
- *
- * A REPAIR CADENCE, NOT A SYNC MECHANISM, and the distinction is flora's and
- * structures' (see either plugin's header). Clients are kept current by the
- * delta stream; this exists so that a client which missed a delta — a dropped
- * message, a reconnect that raced the join snapshot — converges within a minute
- * instead of holding a wrong flow until the next eruption.
- */
 export const KEEPALIVE_TICK_INTERVAL = 600;
 
-/** The admin panel's action keys (PluginActionDeclaration). */
 const ERUPT_ACTION = 'erupt';
 const VENT_ACTION = 'vent';
 
-/** Events this plugin emits. Namespaced `volcanoes:` by the host. */
 export const ERUPTION_EVENT = 'eruption';
 export const QUIET_EVENT = 'quiet';
 export const LAVA_EVENT = 'lava';
 
 let tickCount = 0;
 
-/**
- * The world's setting, read ONCE in onWorldCreate.
- *
- * WorldApi.setting's own instruction: the value is fixed for the life of a
- * session (changing it persists the row and REOPENS the world, which replays
- * restore + worldCreate), so a plugin that re-read it every tick would be
- * reading a value that cannot move at a cost that can.
- */
 let activity: VolcanicActivity = DEFAULT_VOLCANIC_ACTIVITY;
 
-/**
- * Cells a sculpt exposed the lava band in, waiting for the next tick — see THE
- * DEFERRED BIRTH above.
- *
- * A SET, so a single stroke that bottoms out a dozen cells against the floor
- * (which one Quake does) proposes each site once rather than a dozen times; the
- * separation rule in ./siting.ts then rejects all but the first of them anyway,
- * and doing that against a set is a handful of comparisons rather than a
- * hundred.
- */
 const pendingDugSites = new Set<number>();
 
-/** Packs a cell for `pendingDugSites`. The world edge is well under 2^16. */
 function siteKey(x: number, y: number): number {
   return y * 0x10000 + x;
 }
@@ -149,12 +66,6 @@ function resetSessionState(): void {
   resetVolcanoes();
 }
 
-/**
- * One item in a fog-of-war broadcast. Categories travel TAGGED and are
- * re-partitioned inside buildPayload — WorldApi.broadcastVisible's own
- * instruction for a message with more than one item category, and the shape
- * flora's grown/felled delta already uses.
- */
 type VisibleItem =
   | { readonly kind: 'vent'; readonly vent: VentState }
   | { readonly kind: 'molten'; readonly cell: LavaCellState }
@@ -165,15 +76,6 @@ function positionOf(item: VisibleItem): { x: number; y: number } {
   return { x: item.cell.x, y: item.cell.y };
 }
 
-/**
- * Sends the complete state to one player (a join) or to everyone (the
- * keepalive).
- *
- * `skipEmpty: false` — a FULL-STATE REPLACE message, so a recipient whose
- * filtered subset is empty must still be sent the empty list. That is the only
- * way a client learns the flow it could see is gone; omitting the send would
- * leave its last non-empty payload standing forever.
- */
 function broadcastAll(world: WorldApi, onlyPlayerId?: string): void {
   const items: VisibleItem[] = [
     ...ventStates().map((vent) => ({ kind: 'vent', vent }) as const),
@@ -192,17 +94,6 @@ function broadcastAll(world: WorldApi, onlyPlayerId?: string): void {
   );
 }
 
-/**
- * Sends one delta.
- *
- * `skipEmpty: true` — safe for exactly the reason WorldApi.broadcastVisible
- * gives for flora's and structures' deltas: per-player masks only ever GROW, so
- * a position invisible to a player right now was equally invisible whenever it
- * last changed, and there is nothing an empty send could have corrected. The
- * `forgotten` list is a removal, which is the case that looks like it breaks
- * the rule and does not: a cell a player cannot see is a cell they were never
- * told about, so there is nothing of theirs to remove.
- */
 function broadcastChanges(
   world: WorldApi,
   vents: readonly VentState[],
@@ -228,7 +119,6 @@ function broadcastChanges(
   );
 }
 
-/** Opens whatever a player's digging exposed last tick. See THE DEFERRED BIRTH. */
 function openDugVents(world: WorldApi): boolean {
   if (pendingDugSites.size === 0) return false;
 
@@ -237,12 +127,8 @@ function openDugVents(world: WorldApi): boolean {
     const x = key % 0x10000;
     const y = Math.floor(key / 0x10000);
     if (ventCount() >= MAX_VENTS_PER_WORLD) break;
-    // Re-checked HERE and not only when it was noticed: the terrain may have
-    // been filled back in during the intervening tick, and a vent opened in
-    // ground that is no longer showing lava is a vent nothing justifies.
     if (!isLavaExposed(world.heightAt(x, y))) continue;
     if (!isSiteClear({ x, y }, ventSites())) continue;
-    // 'deferred': this is a tick — see ./vents.ts's ConeRingTiming.
     if (openVent(world, x, y, GENESIS_CONE_BANDS, 'deferred') !== null) opened = true;
   }
   pendingDugSites.clear();
@@ -269,15 +155,9 @@ function simulate(world: WorldApi, dt: number): void {
   }
 
   if (tick.molten.length > 0) {
-    // Announced as ONE event carrying the tick's cells, not one per cell: a
-    // consumer's question is "what did the lava reach", and a fan-out per cell
-    // would run every installed plugin's onWorldEvent up to
-    // FLOW_SPEED_CELLS_PER_SECOND times a second for the whole eruption.
     world.emitEvent(LAVA_EVENT, {
       cells: tick.molten.map((cell) => ({ x: cell.x, y: cell.y })),
     });
-    // Fire is called rather than notified, because fire owns the one entry
-    // point every cause of fire goes through (./fire-bridge.ts).
     for (const cell of tick.molten) igniteLavaCell(cell.x, cell.y);
   }
 
@@ -309,13 +189,6 @@ export const plugin: TerracePlugin = {
     },
   ],
 
-  // THE ADMIN PANEL'S DEBUG SPAWNS (server plugins/types.ts,
-  // PluginActionDeclaration). Both go through the same functions the tick
-  // uses — `forceEruption` is `beginEruption` with the clock skipped, `openVent`
-  // is what a player's digging opens — so a forced event is an ordinary one
-  // in everything but its timing, and what the operator sees is what a
-  // player would.
-  // Groups this plugin's cards in the admin panel; see TerracePlugin.archetype.
   archetype: 'terrain',
   actions: [
     {
@@ -337,9 +210,6 @@ export const plugin: TerracePlugin = {
       if (!forceEruption(vent, world)) {
         return { ok: false, detail: `vent ${vent.id} at (${vent.x}, ${vent.y}) is already erupting` };
       }
-      // What the tick does for a vent whose clock ran out (simulate): the
-      // event for sibling plugins, and the delta for the clients — sent now
-      // rather than left to the keepalive a minute away.
       world.emitEvent(ERUPTION_EVENT, { ventId: vent.id, x: vent.x, y: vent.y });
       broadcastChanges(world, ventStates(), [], []);
       return { ok: true, detail: `vent ${vent.id} at (${vent.x}, ${vent.y}) is erupting` };
@@ -351,8 +221,6 @@ export const plugin: TerracePlugin = {
       if (ventCount() >= MAX_VENTS_PER_WORLD) {
         return { ok: false, detail: `this world already has its ${MAX_VENTS_PER_WORLD} vents` };
       }
-      // 'deferred', as a dug vent's is: this runs between ticks, and the cone's
-      // ring steps are queued for the ticks that follow (./vents.ts).
       const vent = openVent(world, site.x, site.y, GENESIS_CONE_BANDS, 'deferred');
       if (vent === null) {
         return { ok: false, detail: `(${site.x}, ${site.y}) is too close to another vent` };
@@ -368,9 +236,6 @@ export const plugin: TerracePlugin = {
     activity = parseActivity(world.setting(VOLCANOES_ACTIVITY_SETTING_KEY));
     loadFireBridge(world);
 
-    // The snapshot has already been restored by the time this runs, so `seeded`
-    // is either false (a fresh world) or true (a restored one) and the siting
-    // below happens exactly once per world however many times this replays.
     if (activity === 'none') return;
     const created = seedGenesisVents(world);
     if (created.length > 0) {
@@ -381,17 +246,10 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldClose(): void {
-    // The plugin holds no WorldApi at module scope, so there is nothing to
-    // release — but its sim state belongs to the world that is closing, and
-    // leaving it standing would hand the next world this one's mountains.
     resetSessionState();
   },
 
   onTick(world: WorldApi, dt: number): void {
-    // BEFORE the `none` gate, and it is the only thing here that is: the queue
-    // holds ring steps for cones whose centres this plugin has ALREADY written,
-    // so finishing them is settling a debt rather than simulating a volcano.
-    // See ./vents.ts's drainPendingConeSculpts.
     drainPendingConeSculpts(world);
 
     if (activity === 'none') return;
@@ -401,33 +259,15 @@ export const plugin: TerracePlugin = {
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     if (activity === 'none') return;
 
-    // RESHAPED GROUND SHEDS ITS CRUST (owner, 2026-09-05). Any edit that is not
-    // this plugin's own — a player's stroke, a mudslide, another plugin — drops
-    // the lava overlay on the cells it moved, and clients are told through the
-    // same `forgotten` path the tracker's eviction uses, so the client has one
-    // way to lose a cell. The flow's and the cone's own raises are skipped
-    // (`isSelfSculpting`): they reshape ground that already carries crust by
-    // design. Fire's onTerrainChanged does the same for a burning cell.
-    //
-    // RESIDUAL, NAMED: only cells the diff MOVED are dropped. A stroke whose
-    // edge moves ground inside a flow cell's drawn coverage disc but not the
-    // flow cell itself leaves that cell's cap where it was until the next
-    // message re-stamps it (client lavaFlow.ts's `restamp` states the hole).
     if (!isSelfSculpting()) {
       const forgotten = forgetLavaAt(diff);
       if (forgotten.length > 0) broadcastChanges(world, ventStates(), [], forgotten);
     }
 
-    // BIRTH ROUTE 3 — a dig that reaches core's lava band opens a vent. Under
-    // `dormant` as much as `active`: siting a vent is geology, and only
-    // erupting is an event (./siting.ts's header).
     if (ventCount() >= MAX_VENTS_PER_WORLD) return;
 
     for (const cell of diff) {
       if (!isLavaExposed(cell.h)) continue;
-      // Deferred rather than opened here — see THE DEFERRED BIRTH. The
-      // separation check runs at that point too; doing it now would only
-      // duplicate it, since the set may hold several cells of one stroke.
       pendingDugSites.add(siteKey(cell.x, cell.y));
     }
   },
@@ -440,7 +280,6 @@ export const plugin: TerracePlugin = {
   persistence,
 };
 
-/** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetVolcanoesState(): void {
   resetSessionState();
 }

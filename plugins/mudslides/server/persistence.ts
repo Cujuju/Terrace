@@ -1,27 +1,3 @@
-// The plugin's persistence slice: the watched sites, the slides in mid-run, the
-// debris the client decorates with, and the RNG.
-//
-// WHY A SLIDE IS PERSISTED. It is the only thing in this repo that MOVES THE
-// GROUND on its own, and it does it over several seconds through a sequence of
-// sculpts. A restart in the middle of one would leave a scarp with no run-out —
-// a hole in the world that nothing would ever fill, because the ledger that owed
-// the mass died with the process. Saving the run means the toe still gets built.
-//
-// WHY THE SITES ARE PERSISTED. Saturation is ninety seconds of weather this world
-// has already lived through. Dropping it would mean a server that restarts every
-// few minutes can never have a mudslide at all, which is the kind of bug that
-// only shows up on somebody else's box.
-//
-// STRUCTURAL VALIDATION ON LOAD, exactly as every other plugin's slice does: the
-// saved blob comes from a database file that may predate this code, so a shape
-// that does not parse is DISCARDED WHOLE rather than half-applied.
-//
-// WHAT DISCARDING COSTS, stated rather than assumed: the world forgets which
-// hillsides were wet and abandons any slide in flight — leaving whatever that
-// slide had already sculpted, which is saved by CORE and not by this slice, so
-// nothing is corrupted; the world just has one scar whose run-out is thinner than
-// it should have been. That is cheap enough for this parse to be total.
-
 import { MUDSLIDE_STOPS, type DebrisCell, type MudslideStop } from '../protocol.ts';
 import {
   restoreSlides,
@@ -32,7 +8,6 @@ import {
 } from './slides.ts';
 import { isFiniteNumber, parseRecordArray } from '@terrace/shared';
 
-/** Bumped when `save`'s shape changes in a way `load` cannot read blind. */
 export const MUDSLIDES_SLICE_VERSION = 1;
 
 export function saveSlides(): unknown {
@@ -109,14 +84,10 @@ function parseSlide(value: unknown): SerializedSlide | null {
     if (!isFiniteNumber(number) || number < 0) return null;
   }
 
-  // The stop reason is a closed set on the wire AND here: an unknown string is a
-  // slice written by a newer build, and running it would put a slide into a phase
-  // this code has no rule for.
   const parsedStop = parseStop(stop);
   if (parsedStop === undefined) return null;
 
   const parsedPath = parseRecordArray(path, parseCell);
-  // An EMPTY path is not a slide: the run is the thing being restored.
   if (parsedPath === null || parsedPath.length === 0) return null;
 
   return {
@@ -141,11 +112,6 @@ function parseSlide(value: unknown): SerializedSlide | null {
   };
 }
 
-/**
- * Restores what `save` produced. `fromVersion` is unread: 1 is the only version
- * there has ever been, and the host parks anything higher before this is called
- * (server/src/plugins/slice-envelope.ts).
- */
 export function loadSlides(data: unknown): void {
   if (typeof data !== 'object' || data === null) return;
   const { nextSlideId, rngState, sites, slides, debris } = data as Record<string, unknown>;

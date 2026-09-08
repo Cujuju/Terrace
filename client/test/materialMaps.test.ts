@@ -1,11 +1,3 @@
-// The map-slot contract (client/src/render/materialMaps.ts).
-//
-// This module exists because every consumer used to hand-list `map` and
-// `emissiveMap`, so what is asserted here is the CONTRACT — a full PBR material
-// is answered for completely, a bare one answers empty, and two materials are
-// the same for merging purposes exactly when every slot matches. Nothing here
-// needs a renderer: a Texture is plain data until it is uploaded.
-
 import { describe, expect, it } from 'vitest';
 import { MeshStandardMaterial, NoColorSpace, SRGBColorSpace, Texture } from 'three';
 import {
@@ -15,14 +7,8 @@ import {
   uvChannelsUsed,
 } from '../src/render/materialMaps.ts';
 
-/** The uv channel a second-set map (glTF `texCoord: 1`) reads. */
 const SECOND_UV_CHANNEL = 1;
 
-/**
- * A material with one texture in every slot a glTF PBR export fills, with the
- * metallic-roughness image SHARED between two slots the way GLTFLoader assigns
- * it, and occlusion on the second uv set the way files commonly author it.
- */
 function pbrMaterial(): {
   material: MeshStandardMaterial;
   base: Texture;
@@ -49,8 +35,6 @@ describe('materialMaps', () => {
     const { material, base, normal, metallicRoughness, occlusion } = pbrMaterial();
     const textures = texturesOf(material);
     expect(new Set(textures)).toEqual(new Set([base, normal, metallicRoughness, occlusion]));
-    // Four entries, not five: metalnessMap and roughnessMap are one image, and
-    // a caller disposing the list would otherwise free it twice.
     expect(textures).toHaveLength(4);
   });
 
@@ -77,8 +61,6 @@ describe('materialMaps', () => {
   });
 
   it('separates two materials that differ only in normal map', () => {
-    // The whole point of the rewrite: under the old two-slot signature these
-    // two merged into one surface shaded by whichever arrived first.
     const a = pbrMaterial();
     const b = pbrMaterial();
     b.material.map = a.base;
@@ -102,8 +84,6 @@ describe('materialMaps', () => {
   it('puts colour slots in sRGB and data slots back to linear', () => {
     const { material, base, normal } = pbrMaterial();
     base.colorSpace = NoColorSpace;
-    // The bug this catches: a normal map marked sRGB is gamma-decoded on
-    // upload, so every normal in it tilts and the part looks lit from elsewhere.
     normal.colorSpace = SRGBColorSpace;
     applyMapColourSpaces(material);
     expect(base.colorSpace).toBe(SRGBColorSpace);

@@ -1,6 +1,3 @@
-// Throwaway probe: can a PLAYER still build a mountain? Stacked clicks under
-// the wire defaults (anchor 'clicked', spill 'banded') and under the library
-// defaults (smooth/soft/free/free), old rule vs new.
 import * as OLD from './old-src/index.ts';
 import * as NEW from '../shared/src/index.ts';
 

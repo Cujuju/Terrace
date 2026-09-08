@@ -1,17 +1,3 @@
-// World-admin message containment (issue #210).
-//
-// WHAT THIS PROTECTS: the process. Colyseus does not wrap handler dispatch —
-// `Room._onMessage` try/catches only decode and validation, then emits to the
-// handler unguarded — so anything the room's world-admin handler throws leaves
-// as an uncaughtException, and anything it leaves un-awaited leaves as an
-// unhandled rejection. Node's default for both is to exit. The failing work is
-// a LISTING REFRESH: `pluginListing`/`listing()` open SQLite stores and read
-// the worlds directory, outside the try/catch that `handle` and `reloadPlugin`
-// put around the action itself.
-//
-// So the assertions below are all one assertion: nothing escapes, and the
-// operator is told, in the shape their own request asked for.
-
 import { describe, expect, it } from 'vitest';
 import type {
   WorldAdminRequestMessage,
@@ -58,8 +44,6 @@ describe('containWorldAdminMessage', () => {
   it('contains a rejection from the async path and answers with a refusal', async () => {
     const { sent, reply } = collector();
 
-    // The exact #210 scenario: the reload resolved and its receipt was sent,
-    // then the follow-up listing hit an unreadable worlds directory.
     await expect(
       containWorldAdminMessage(reloadRequest, reply, async () => {
         reply({ type: 'worldAdminResult', action: 'reloadPlugin', ok: true, id: WORLD });

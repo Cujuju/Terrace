@@ -1,20 +1,3 @@
-// previewKraken.ts — THROWAWAY preview harness for the monsters plugin's sea
-// kinds, mirroring previewPilgrims.ts (see previewStructures.ts for the
-// original rationale). Not part of the shipped app: reached only through
-// preview-kraken.html.
-//
-//   ?kind=<kraken|cthulhu>  — defaults to "kraken"
-//   ?view=<iso|side|front|high>  — defaults to "iso"
-//   ?t=<seconds>            — a frozen animation time; defaults to 0
-//
-// THE WATERLINE IS THE POINT. The model is sunk to its true lurk depth
-// (placement.ts's swimmer rule) against a translucent sea plane at y = 0, so a
-// screenshot shows exactly what a player sees standing on the shore: what
-// breaks the surface, what hides under it, and whether the mass above the
-// water could plausibly be held up by the mass below it.
-//
-// A screenshot driver waits for `window.__previewReady === true`.
-
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -35,7 +18,6 @@ import {
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
 import { lurkDepthOf } from '../../plugins/monsters/client/placement.ts';
 
-// ── Lighting rig, copied from previewPilgrims.ts / render/scene.ts ──────────
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
 const HEMISPHERE_LIGHT_INTENSITY = 1.5;
@@ -46,8 +28,6 @@ const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 
 const BACKDROP_COLOR = 0x808080;
-/** The sea sheet: the render water's colour, half transparent so the submerged
- *  half of the animal stays readable while the waterline stays unmistakable. */
 const WATER_COLOR = 0x2f6f9e;
 const WATER_OPACITY = 0.55;
 const WATER_EXTENT = 40;
@@ -99,7 +79,6 @@ sun.position.copy(SUN_DIRECTION);
 scene.add(sun);
 scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
 
-// The sea: y = 0 IS the waterline. The model sinks below it by its own rule.
 const water = new Mesh(
   new PlaneGeometry(WATER_EXTENT, WATER_EXTENT),
   new MeshBasicMaterial({
@@ -119,7 +98,6 @@ model.root.position.y = -lurkDepthOf(kind);
 model.animate(t, 0);
 scene.add(model.root);
 
-// ── Framing: fit the whole animal plus a strip of sea ───────────────────────
 const bounds = new Box3().setFromObject(model.root);
 const center = bounds.getCenter(new Vector3());
 const size = bounds.getSize(new Vector3());

@@ -1,14 +1,3 @@
-// Contract tests for HUD-state persistence (state/hudState.ts): every choice
-// the player makes in the HUD must come back after a reload, and no stored
-// value — however mangled — may be able to leave the HUD in a state it has no
-// button for (a radius with no picker entry, a tool the server would reject).
-//
-// The module holds signals and touches localStorage at import time, so every
-// test imports a fresh copy via vi.resetModules() against its own storage stub
-// — the same idiom as controlPrefs.test.ts, and the only way to exercise "what
-// a page reload sees". The node environment has no localStorage at all; the
-// module must degrade to defaults there too (last describe).
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BRUSH_RADIUS,
@@ -16,54 +5,16 @@ import {
   WORLD_UNIT_CELLS,
 } from '@terrace/shared';
 
-/**
- * The brush ladder's first rung — one WORLD UNIT of ground, which is what the
- * HUD defaults to. NOT shared's DEFAULT_RADIUS since the 2026-08-21
- * re-sample: that is the grid's own floor and is four times finer than any
- * brush the picker offers (see hudState's BRUSH_RADII).
- */
 const DEFAULT_RADIUS = WORLD_UNIT_CELLS;
 
-/**
- * Every rung of that ladder, in cells — restated here rather than imported, on
- * purpose: this is the independent copy that makes a change to BRUSH_RADII show
- * up as a failing test instead of a silently-agreeing one.
- *
- * ONE RUNG PER CELL since 2026-09-05, when the picker became a slider (hudState's
- * BRUSH_RADII, commit 60addf9): every integer radius from the grid's floor to
- * TOP_RADIUS is a stop, and the doubling that used to BE the ladder survives as
- * the slider's marked anchors.
- *
- * It was `[1, 2, 4, 8, 16]` while the ladder doubled from the grid's floor to
- * the wire's ceiling (2026-08-22), and `[1, 2, 3, 4] * WORLD_UNIT_CELLS` before
- * that, while it stepped by a constant world unit of radius.
- */
 const LADDER = [1, 2, 3, 4, 5, 6, 7, 8];
 
-/**
- * The widest brush the picker offers, in cells — restated for the same reason
- * LADDER is.
- *
- * DELIBERATELY NOT shared's MAX_BRUSH_RADIUS since 2026-09-05. The two were the
- * same number until the owner capped the named sizes at 4.00 nominal width, and
- * the ladder stopped at half the wire's ceiling; MAX_BRUSH_RADIUS is still what
- * the WIRE accepts, which is why the 16-cell brush appears below as a stored
- * value the picker cannot offer rather than as a rung.
- */
 const TOP_RADIUS = 8;
 
-/**
- * The edge a player who has chosen nothing gets. NOT the wire default since
- * 2026-08-22: the client sends `profile` on every intent, so the HUD is free to
- * start somewhere else, and it starts on the edge whose mark matches the brush
- * outline on the first click. Restated here rather than imported, like LADDER
- * above, so that changing it is a decision a test makes you take twice.
- */
 const DEFAULT_PROFILE = 'hard';
 
 type HudState = typeof import('../src/state/hudState.ts');
 
-/** Minimal in-memory localStorage; installed before each fresh import. */
 function fakeStorage(initial: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(initial));
   return {
@@ -91,14 +42,12 @@ async function freshHud(initial?: Record<string, string>): Promise<{
   return { hud, storage };
 }
 
-/** Re-imports the module against the same storage: what a reload sees. */
 async function reload(storage: Storage): Promise<HudState> {
   vi.resetModules();
   (globalThis as { localStorage?: Storage }).localStorage = storage;
   return await import('../src/state/hudState.ts');
 }
 
-/** The stored payload, parsed — for asserting on what write-through wrote. */
 function storedState(storage: Storage): Record<string, unknown> {
   const raw = storage.getItem(HUD_KEY);
   expect(raw).not.toBeNull();
@@ -117,8 +66,6 @@ describe('defaults', () => {
     expect(hud.brushProfile()).toBe(DEFAULT_PROFILE);
     expect(hud.sculptMode()).toBe('raise');
     expect(hud.showControls()).toBe(false);
-    // Reading defaults must not write anything: an untouched HUD leaves no
-    // entry behind, so a later schema version has nothing stale to trip on.
     expect(storage.getItem(HUD_KEY)).toBeNull();
   });
 
@@ -130,7 +77,6 @@ describe('defaults', () => {
       brushProfile: DEFAULT_PROFILE,
       sculptMode: 'raise',
       showControls: false,
-      // The test DOM reports no touch points, so this is the desktop default.
       panelOpen: true,
     });
   });
@@ -187,8 +133,6 @@ describe('round-trip through storage', () => {
   it('round-trips the Controls panel in both states', async () => {
     for (const open of [true, false]) {
       const first = await freshHud();
-      // Toggle away from the default and back where needed, so the `false`
-      // case proves a deliberate collapse is stored, not just never written.
       first.hud.setShowControls(true);
       first.hud.setShowControls(open);
       const second = await reload(first.storage);
@@ -199,8 +143,6 @@ describe('round-trip through storage', () => {
   it('round-trips the whole tools panel in both states', async () => {
     for (const open of [true, false]) {
       const first = await freshHud();
-      // Same both-ways discipline as the Controls case: prove the non-default
-      // state is a stored choice, not an accident of never writing.
       first.hud.setPanelOpen(!open);
       first.hud.setPanelOpen(open);
       const second = await reload(first.storage);
@@ -217,7 +159,6 @@ describe('write-through', () => {
 
     hud.setBrushTool('smooth');
     expect(storedState(storage)['brushTool']).toBe('smooth');
-    // The earlier field is still there — a later write must not drop it.
     expect(storedState(storage)['brushRadius']).toBe(TOP_RADIUS);
 
     hud.setBrushProfile('hard');
@@ -229,19 +170,12 @@ describe('write-through', () => {
       brushProfile: 'hard',
       sculptMode: 'lower',
       showControls: true,
-      // Untouched by the setters above: the test env (jsdom, no touch points)
-      // defaults the tools panel open.
       panelOpen: true,
     });
-    // One entry, not five.
     expect(storage.length).toBe(1);
   });
 
   it('a setter called with the value it already has writes nothing', async () => {
-    // Load-bearing for setSculptMode: sculptInput calls it on every emitted
-    // intent (hold-repeat timer) and every modifier event, nearly always with
-    // the current value. Without this guard that is a synchronous storage
-    // write per sculpt tick.
     const { hud, storage } = await freshHud();
     let writes = 0;
     const realSetItem = storage.setItem.bind(storage);
@@ -250,8 +184,8 @@ describe('write-through', () => {
       realSetItem(k, v);
     };
 
-    hud.setSculptMode('raise'); // already 'raise'
-    hud.setBrushRadius(DEFAULT_RADIUS); // already the default
+    hud.setSculptMode('raise');
+    hud.setBrushRadius(DEFAULT_RADIUS);
     hud.setShowControls(false);
     expect(writes).toBe(0);
 
@@ -286,7 +220,6 @@ describe('fallback on corrupt storage', () => {
         }),
       });
       expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
-      // Per-field fallback: one bad field costs exactly itself.
       expect(hud.brushTool()).toBe('smooth');
       expect(hud.brushProfile()).toBe('hard');
       expect(hud.sculptMode()).toBe('lower');
@@ -298,8 +231,8 @@ describe('fallback on corrupt storage', () => {
     const { hud } = await freshHud({
       [HUD_KEY]: JSON.stringify({
         brushRadius: TOP_RADIUS,
-        brushTool: 'erode', // never existed
-        brushProfile: 7, // wrong type entirely
+        brushTool: 'erode',
+        brushProfile: 7,
         sculptMode: 'lower',
         showControls: true,
       }),
@@ -333,29 +266,6 @@ describe('fallback on corrupt storage', () => {
   });
 
   it('a stored radius the picker cannot offer falls back to the default', async () => {
-    // THE CONTRACT (owner bug report 2026-08-22): a restored radius must be a
-    // rung of the ladder the Brush row actually renders. It is not enough for
-    // it to be a legal WIRE radius — that range is about what an intent may
-    // carry, and every value in it that the picker does not offer leaves the
-    // player holding a brush with no button highlighted and no way back to it.
-    //
-    // The concrete case this closes: the 2026-08-21 re-sample re-based the
-    // radius from world units to cells, so a pre-re-sample "1" survived
-    // validation as a one-CELL brush — a quarter of the ground the player had
-    // chosen. The v1 → v2 key bump orphans those entries; this is the guard
-    // that stops the next change to BRUSH_RADII from minting new ones.
-    //
-    // 1 AND 2 LEFT THIS LIST on 2026-08-22 — the single-cell brush became a
-    // rung of its own, and the ladder then became a doubling, which put 2 on it
-    // and took 12 off. The orphaning above is what makes the first safe: the
-    // pre-re-sample "1" this case was written about lived under the v1 key, so
-    // no stored v2 entry can mean anything but a brush the picker offers.
-    //
-    // MAX_BRUSH_RADIUS is the useful case now (2026-09-05): the 16-cell brush
-    // was the ladder's top rung until the slider capped it at 8, so a player who
-    // last used it has it in storage — and it is still WIRE-legal, so nothing
-    // downstream rejects it. The fallback is the only thing keeping them from
-    // holding a brush the slider has no stop for.
     for (const offLadder of [9, 12, 15, MAX_BRUSH_RADIUS]) {
       const { hud } = await freshHud({
         [HUD_KEY]: JSON.stringify({ brushRadius: offLadder }),
@@ -394,7 +304,6 @@ describe('fallback on corrupt storage', () => {
       brushProfile: 'hard',
       sculptMode: 'lower',
       showControls: true,
-      // Absent from the (older-build) payload above → the desktop default.
       panelOpen: true,
     });
   });
@@ -419,7 +328,6 @@ describe('storage that throws', () => {
 
     const hud: HudState = await import('../src/state/hudState.ts');
     expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
-    // A quota-exceeded write must not break the live HUD.
     hud.setBrushRadius(TOP_RADIUS);
     expect(hud.brushRadius()).toBe(TOP_RADIUS);
   });
@@ -428,12 +336,10 @@ describe('storage that throws', () => {
 describe('no localStorage at all', () => {
   it('runs on in-memory defaults (private mode, node)', async () => {
     vi.resetModules();
-    // beforeEach already deleted the stub; import with nothing installed.
     const hud: HudState = await import('../src/state/hudState.ts');
     expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
     expect(hud.sculptMode()).toBe('raise');
     expect(hud.showControls()).toBe(false);
-    // Setting anything with no storage at all must not throw.
     hud.setBrushRadius(TOP_RADIUS);
     hud.setBrushTool('smooth');
     hud.setSculptMode('lower');
@@ -453,8 +359,6 @@ describe('sculptDirection', () => {
   });
 });
 
-// World identity (name + difficulty) is SERVER-derived: it arrives on every
-// join snapshot, so it is normalised at the setter and never persisted.
 describe('world identity', () => {
   it('starts unknown and takes what the snapshot stated', async () => {
     const { hud } = await freshHud();
@@ -466,8 +370,6 @@ describe('world identity', () => {
 
   it('treats a blank or unusable field as unknown rather than as a value', async () => {
     const { hud } = await freshHud();
-    // What an older server — which sends neither field — looks like once the
-    // snapshot handler has mapped its undefineds to null.
     hud.setWorldIdentity({ name: null, difficulty: null });
     expect(hud.worldIdentity()).toEqual({ name: null, difficulty: null });
 

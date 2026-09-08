@@ -1,7 +1,3 @@
-// flattenAssetParts' contract: a loaded model's meshes, as the part list the
-// static families draw. Scenes are built in memory — the adapter's subject is
-// the SHAPE of a scene graph, not any particular file's bytes.
-
 import { describe, expect, it } from 'vitest';
 import {
   BoxGeometry,
@@ -14,11 +10,6 @@ import {
 import { flattenAssetParts } from '../src/render/staticAsset.ts';
 import type { RigAsset } from '../src/render/rigAsset.ts';
 
-/**
- * A RigAsset around a scene built here. Only `scene` is exercised: node(),
- * anchor() and dispose() belong to rigAsset.ts's own tests, and stubbing them
- * to throw is what keeps this file honest about which of them the adapter uses.
- */
 function assetOf(scene: Object3D): RigAsset {
   return {
     scene,
@@ -62,8 +53,6 @@ describe('flattenAssetParts', () => {
 
     const parts = flattenAssetParts(assetOf(scene));
 
-    // updateMatrixWorld is the adapter's job, so the caller having touched
-    // nothing since building the tree must not change the answer.
     expect(parts[0].localMatrices[0].elements).toEqual(mesh.matrixWorld.elements);
     const placed = new Vector3().setFromMatrixPosition(parts[0].localMatrices[0]);
     expect(placed.x).toBeCloseTo(1);

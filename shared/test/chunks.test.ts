@@ -18,11 +18,6 @@ import {
 } from '../src/index.ts';
 
 describe('chunk geometry', () => {
-  // A CHUNK IS 16 CELLS EITHER SIDE OF THE 2026-08-21 RE-SAMPLE, and that is
-  // the point of CHUNK_SPAN: the chunk shrank on the GROUND (16 world units to
-  // 4) precisely so the mesher's per-chunk costs, which are facts about this
-  // cell count, did not have to move. What changed is how many chunks a world
-  // holds — sixteen times as many.
   it('a chunk is 16 cells, and the default world is 128×128 of them', () => {
     expect(CHUNK_SIZE).toBe(16);
     expect(chunksPerEdge(DEFAULT_WORLD_SIZE)).toBe(128);
@@ -39,7 +34,7 @@ describe('chunk geometry', () => {
     expect(chunkIndexOfCell(size, 0, 0)).toBe(0);
     expect(chunkIndexOfCell(size, CHUNK_SIZE - 1, CHUNK_SIZE - 1)).toBe(0);
     expect(chunkIndexOfCell(size, CHUNK_SIZE, 0)).toBe(1);
-    expect(chunkIndexOfCell(size, 0, CHUNK_SIZE)).toBe(8); // second chunk row
+    expect(chunkIndexOfCell(size, 0, CHUNK_SIZE)).toBe(8);
     expect(chunkIndexOfCell(size, size - 1, size - 1)).toBe(63);
   });
 
@@ -71,7 +66,6 @@ describe('unlock mask', () => {
 describe('chunk height streaming', () => {
   it('extract → write round-trips exactly', () => {
     const src = createHeightmap(CHUNK_SIZE * 4);
-    // Distinct deterministic pattern.
     for (let i = 0; i < src.cells.length; i++) src.cells[i] = (i * 7) % 500 - 250;
 
     const dst = createHeightmap(CHUNK_SIZE * 4);
@@ -85,7 +79,6 @@ describe('chunk height streaming', () => {
 
   it('extracts row-major within the chunk', () => {
     const map = createHeightmap(CHUNK_SIZE * 2);
-    // cell (CHUNK_SIZE + 2, CHUNK_SIZE + 1) → chunk (1,1), local (2,1)
     map.cells[(CHUNK_SIZE + 1) * CHUNK_SIZE * 2 + CHUNK_SIZE + 2] = 99;
     const heights = extractChunkHeights(map, 1, 1);
     expect(heights[1 * CHUNK_SIZE + 2]).toBe(99);
@@ -99,7 +92,7 @@ describe('chunk height streaming', () => {
   it('write places heights at the right world position', () => {
     const map = createHeightmap(CHUNK_SIZE * 2);
     const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
-    heights[0] = 42; // local (0,0) of chunk (1,0) → world (CHUNK_SIZE, 0)
+    heights[0] = 42;
     writeChunkHeights(map, 1, 0, heights);
     expect(heightAt(map, CHUNK_SIZE, 0)).toBe(42);
   });
@@ -128,7 +121,7 @@ describe('chunk height streaming', () => {
   it('rejects heights that overflow past Int16 magnitude, naming the offending index', () => {
     const map = createHeightmap(CHUNK_SIZE * 2);
     const tooHigh = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
-    tooHigh[0] = 40000; // would wrap to -25536 in a raw Int16Array assignment
+    tooHigh[0] = 40000;
     expect(() => writeChunkHeights(map, 0, 0, tooHigh)).toThrow(/cell 0.*40000/);
 
     const tooLow = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
@@ -138,12 +131,10 @@ describe('chunk height streaming', () => {
 
   it('leaves the map untouched when a payload is rejected', () => {
     const map = createHeightmap(CHUNK_SIZE * 2);
-    map.cells[0] = 77; // pre-existing value at chunk (0,0) local (0,0)
+    map.cells[0] = 77;
     const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(200);
-    heights[10] = NaN; // invalid entry comes after several valid-looking ones
+    heights[10] = NaN;
     expect(() => writeChunkHeights(map, 0, 0, heights)).toThrow(RangeError);
-    // Not overwritten by any of the valid entries preceding index 10:
-    // validation runs to completion before the write loop starts.
     expect(map.cells[0]).toBe(77);
   });
 
