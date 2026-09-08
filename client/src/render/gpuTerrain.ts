@@ -21,7 +21,7 @@ import {
   cellCoordToWorld,
   chunksPerEdge,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { CHUNK_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { RENDER_HALO_CELLS, type TerrainMirror } from '../terrain/mirror.ts';
 import { createDrawnGroundStore, type DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import type { ArenaLayout, ArenaStats, TerrainMeshes } from './terrainMeshes.ts';
@@ -29,8 +29,6 @@ import { createBandPaletteTexture, createHeightTexture } from './gpuTerrainTextu
 import { createChunkTemplate, createGpuTerrainMaterial } from './gpuTerrainMaterial.ts';
 
 export const GPU_TERRAIN_SMOOTH_DEFAULT = true;
-
-const CHUNK_WORLD_SIZE = CHUNK_SIZE * CELL_WORLD_SIZE;
 
 const NEAR_LOD_WORLD_RADIUS = TERRAIN_LOD_NEAR_RADIUS_CHUNKS * CHUNK_WORLD_SIZE;
 

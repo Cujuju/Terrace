@@ -16,10 +16,12 @@ import {
 import {
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
+  cellCoordToWorld,
   chunksPerEdge,
 } from '@terrace/shared';
 import {
   CELL_WORLD_SIZE,
+  CHUNK_WORLD_SIZE,
   SEA_SURFACE_WORLD_Y,
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
@@ -218,7 +220,6 @@ export function createWater(
     setWorldSize,
     sync(mirror: TerrainMirror): void {
       const chunkCols = chunksPerEdge(mirror.map.size);
-      const chunkWorldSpan = CHUNK_SIZE * CELL_WORLD_SIZE;
       growTo(mirror.received.size);
       let quad = 0;
       let minX = Infinity;
@@ -226,10 +227,10 @@ export function createWater(
       let maxX = -Infinity;
       let maxZ = -Infinity;
       for (const chunkIdx of [...mirror.received].sort((a, b) => a - b)) {
-        const x0 = (chunkIdx % chunkCols) * chunkWorldSpan;
-        const z0 = Math.floor(chunkIdx / chunkCols) * chunkWorldSpan;
-        const x1 = x0 + chunkWorldSpan;
-        const z1 = z0 + chunkWorldSpan;
+        const x0 = cellCoordToWorld((chunkIdx % chunkCols) * CHUNK_SIZE);
+        const z0 = cellCoordToWorld(Math.floor(chunkIdx / chunkCols) * CHUNK_SIZE);
+        const x1 = x0 + CHUNK_WORLD_SIZE;
+        const z1 = z0 + CHUNK_WORLD_SIZE;
         const v = quad * VERTICES_PER_CHUNK_QUAD * 3;
         positions[v] = x0; positions[v + 1] = surfaceY; positions[v + 2] = z0;
         positions[v + 3] = x1; positions[v + 4] = surfaceY; positions[v + 5] = z0;
