@@ -1,11 +1,6 @@
 import { Vector3, type Material } from 'three';
 import { DEFAULT_WORLD_SPAN, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
-import {
-  WORLD_POSITION_VERTEX_ANCHOR,
-  WORLD_POSITION_VERTEX_GLSL,
-  glslFloat,
-  spliceShader,
-} from './shaderSplice.ts';
+import { applyShaderEffect, glslFloat } from './shaderSplice.ts';
 import type { GroundShadeDisc } from '../plugins/types.ts';
 
 export type { GroundShadeDisc };
@@ -130,8 +125,11 @@ export function setGroundShade(
   uniforms.uShadeCount.value = count;
 }
 
-const SHADER_COMMON_ANCHOR = '#include <common>';
 const GROUND_SHADE_FRAGMENT_ANCHOR = '#include <opaque_fragment>';
+
+const GROUND_SHADE_EFFECT_KEY = 'groundShade';
+
+const GROUND_SHADE_VERTEX_GLSL = 'vGroundShadeWorld = world;';
 
 function declarationsGlsl(max: number): string {
   return `#define GROUND_SHADE_MAX ${String(max)}
@@ -157,43 +155,18 @@ const GROUND_SHADE_FRAGMENT_GLSL = `float gsShade = 0.0;
     outgoingLight *= 1.0 - gsShade;`;
 
 export function applyGroundShade(material: Material, label: string): void {
-  const previous = material.onBeforeCompile.bind(material);
-  material.onBeforeCompile = (shader, renderer) => {
-    previous(shader, renderer);
-    compiledAgainstMax = true;
-    shader.uniforms.uShadeCount = uniforms.uShadeCount;
-    shader.uniforms.uShadeSun = uniforms.uShadeSun;
-    shader.uniforms.uShadeA = uniforms.uShadeA;
-    shader.uniforms.uShadeB = uniforms.uShadeB;
-    const declarations = declarationsGlsl(configuredMax);
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${declarations}`,
-        label,
-      ),
-      WORLD_POSITION_VERTEX_ANCHOR,
-      [
-        WORLD_POSITION_VERTEX_ANCHOR,
-        WORLD_POSITION_VERTEX_GLSL,
-        'vGroundShadeWorld = tWorldPosition.xyz;',
-      ].join('\n    '),
-      label,
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        shader.fragmentShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${declarations}`,
-        label,
-      ),
-      GROUND_SHADE_FRAGMENT_ANCHOR,
-      `${GROUND_SHADE_FRAGMENT_GLSL}\n    ${GROUND_SHADE_FRAGMENT_ANCHOR}`,
-      label,
-    );
-  };
-  const previousKey = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${previousKey()}|groundShade`;
-  material.needsUpdate = true;
+  applyShaderEffect(material, {
+    key: GROUND_SHADE_EFFECT_KEY,
+    label,
+    uniforms: { ...uniforms },
+    declarations: () => {
+      // Emitting these is the moment GROUND_SHADE_MAX enters a program.
+      compiledAgainstMax = true;
+      return declarationsGlsl(configuredMax);
+    },
+    worldPositionVertexGlsl: GROUND_SHADE_VERTEX_GLSL,
+    fragmentAnchor: GROUND_SHADE_FRAGMENT_ANCHOR,
+    fragmentGlsl: GROUND_SHADE_FRAGMENT_GLSL,
+    fragmentInsertion: 'before',
+  });
 }
