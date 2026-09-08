@@ -1,35 +1,20 @@
 // monsters — client half. Draws whatever the server's `monsters:state`
-// broadcast says exists, and nothing else.
-//
-// It holds no authority: it never summons, never moves the monster of its own
-// accord, and never predicts. Between the 1 Hz broadcasts it interpolates
-// (./interpolation.ts) and plays the idle animation (./models.ts); both are
-// purely cosmetic, so a client that misses messages looks stiller, never wrong.
-//
-// No HUD panel, deliberately: the entire point of this plugin is a thing you
-// notice in the water. A counter telling you it is there would be the opposite
-// of the feature.
-//
-// The mist and the lightning around it (./atmosphere.ts) are the same kind of
-// thing one step further: pure presentation, invented here, on the client, out
-// of the position the server already sent and the frame clock. Nothing about
-// them is on the wire, and nothing in the world can observe them. They are the
-// SEA's weather and only the sea kinds wear them — see MonsterView.dread.
-//
-// Everything it touches arrives through ClientPluginCtx: its own Group in the
-// scene, the rendered terrain height, the message channel, and the frame clock.
+// broadcast says exists: no authority, no prediction, interpolation and an
+// idle animation as the only cosmetics. No HUD panel, deliberately.
 
 import { Group } from 'three';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
-import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+import {
+  drawnGroundSampler,
+  followGroundY,
+} from '../../../client/src/plugins/kit/groundFollow.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 
 /**
- * World units per stored height unit — client/src/config.ts's
- * HEIGHT_WORLD_SCALE, derived from its own two shared inputs rather than
- * imported (plugins/pilgrims/client/index.ts states the reason: importing that
- * module drags `import.meta.env` into a node typecheck).
+ * World units per stored height unit. Restated from its two @terrace/shared
+ * inputs: importing client/src/config.ts drags `import.meta.env` into a node
+ * typecheck.
  */
 const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
@@ -53,18 +38,12 @@ import { SEA_SURFACE_WORLD_Y, monsterOriginY, placementRuleOf } from './placemen
 /**
  * Per-monster animation phase offset, in radians per unit of id. The golden
  * angle: consecutive ids land as far apart on the cycle as possible.
- *
- * It matters in two places now that a world can hold one monster per habitat:
- * across a banishment and a re-arrival — the newcomer should not resume the
- * departed one's breath mid-stroke — and between two monsters alive at once,
- * whose idle cycles should not be in lockstep even when a player can see both.
  */
 const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
 
 /**
- * Cap on the animation clock's advance per frame, in seconds. `onFrame`'s dt is
- * already capped by the host, but the animation clock is an accumulator: this
- * keeps a pathological frame from jumping the idle animation a full cycle.
+ * Cap on the animation clock's advance per frame, in seconds. The clock is an
+ * accumulator: this keeps a pathological frame from jumping a full cycle.
  */
 const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
@@ -72,38 +51,21 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 interface MonsterView {
   readonly model: MonsterModel;
   /**
-   * The mist and lightning around it (./atmosphere.ts), or null for a kind that
-   * wears no weather.
-   *
-   * IT IS THE SEA'S WEATHER, and that is why the test is the kind's PLACEMENT
-   * rather than a flag: every sheet in the bank is authored at a height above
-   * SEA_SURFACE_WORLD_Y and the whole effect is pinned to the waterline, so it
-   * is meaningful for exactly the kinds that are placed against the sea surface.
-   * On the yeti it would be a bank of mist hanging at sea level under a mountain
-   * nine bands up — not "atmosphere for a land monster" but a visible bug. A
-   * land creature that wants weather wants a DIFFERENT effect (blowing snow),
-   * authored against the ground it stands on; this is not it, and pretending
-   * otherwise by parameterising the height would have made one effect that is
-   * wrong for both.
+   * The mist and lightning around it (./atmosphere.ts), or null for a kind with
+   * no weather. Sea weather pinned to the waterline, so the test is PLACEMENT.
    */
   readonly dread: Dread | null;
   /** Fixed at creation from the id — never recomputed per frame. */
   readonly phase: number;
   /**
-   * WHICH BODY this view was built from (2026-08-26), or undefined for a kind
-   * that has only one.
-   *
-   * Recorded rather than re-derived because the model cannot be asked: a
-   * MonsterModel is a root and an animate(), and nothing in it remembers which
-   * constructor made it. The reconcile compares this against the sampled state
-   * so a monster whose variant CHANGED under a live id is rebuilt rather than
-   * left wearing the old body — see reconcileViews.
+   * WHICH BODY this view was built from, or undefined for a kind with only one.
+   * Recorded because a MonsterModel cannot be asked; the reconcile rebuilds a
+   * monster whose variant changed.
    */
   readonly variant: YetiVariant | undefined;
   /**
-   * Where this monster was DRAWN vertically last frame — the ground follower's
-   * state (client/src/plugins/kit/groundFollow.ts), so crossing a terrace band
-   * is a step rather than a jump. Null before its first drawn frame.
+   * Where this monster was DRAWN vertically last frame, the ground follower's
+   * state, so crossing a band is a step. Null before its first drawn frame.
    */
   drawnY: number | null;
 }
@@ -117,13 +79,8 @@ let models: MonsterModels | null = null;
 let container: Group | null = null;
 const views = new Map<number, MonsterView>();
 /**
- * The weather of monsters that have LEFT, still fading out where they stood.
- *
- * The model goes the instant the server stops listing it — the submersion is the
- * plot (see interpolation.ts) — but a mist bank that vanished on the same frame
- * would be a light switch. These outlive their monster by MIST_FADE_SECONDS and
- * are disposed the moment the fade reaches zero, so the list is empty in every
- * frame but the couple of hundred after a banishment.
+ * The weather of monsters that have LEFT, still fading where they stood. A mist
+ * bank that vanished with its model would be a light switch.
  */
 const retiringDread: Dread[] = [];
 const interpolator = new MonsterInterpolator();
@@ -132,14 +89,9 @@ let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
 /**
- * Adds/removes scene objects so `views` matches the sampled state.
- *
- * Written as a general reconcile over a map rather than as "if there is one,
- * show it": the wire format is a list, and a client that assumed the list's
- * length would be a client that breaks on the day the server's cap changes —
- * while looking, until then, exactly correct. That day arrived when monster
- * slots became one PER HABITAT (a sea horror and a yeti can be alive at once)
- * and this function needed no change at all, which is what it was written for.
+ * Adds/removes scene objects so `views` matches the sampled state. A general
+ * reconcile over a map, because the wire format is a list whose length is the
+ * server's business.
  */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void {
   if (models === null || container === null) return;
@@ -151,10 +103,8 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     acquire: (id, monster) => {
       const model = bank.create(monster.kind, monster.variant);
       scene.add(model.root);
-      // Each swimmer's weather is derived from its OWN anatomy (dreadSpecOf —
-      // 2026-08-19: a bank authored for Cthulhu's 2.4-cell eye height sat over
-      // the kraken's waterline eyes). A kind with no spec gets no dread, which
-      // is the same set as the non-swimmers.
+      // Each swimmer's weather is derived from its OWN anatomy (dreadSpecOf).
+      // A kind with no spec gets no dread, the same set as the non-swimmers.
       const spec = dreadSpecOf(monster.kind);
       const dread = spec !== null ? createDread(spec) : null;
       if (dread !== null) scene.add(dread.root);
@@ -168,19 +118,9 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     },
     replace: (_id, monster, existing) => {
       if (existing.variant === monster.variant) return null;
-      // A LIVE ID WHOSE BODY CHANGED. The server never does this — a variant is
-      // chosen once at summon and is readonly for the monster's life
-      // (server/summoning.ts) — so this is the belt-and-suspenders half of that
-      // rule rather than a mechanic: the one way it can fire in practice is a
-      // client that was watching a yeti through a server upgrade, where the
-      // pre-variant payload defaulted him and the post-upgrade one names the
-      // body he actually has. Rebuilding is the only correct answer available
-      // here, and it costs what an arrival costs.
-      //
-      // The DREAD is deliberately untouched: it is a function of the KIND's
-      // placement, not of the body, and tearing it down would blink the weather
-      // for a change that is invisible on a swimmer anyway (no sea kind has
-      // variants).
+      // A LIVE ID WHOSE BODY CHANGED — belt and suspenders: a variant is
+      // readonly for the monster's life. The DREAD is untouched, following the
+      // KIND's placement.
       scene.remove(existing.model.root);
       existing.model.dispose();
       const rebuilt = bank.create(monster.kind, monster.variant);
@@ -196,26 +136,19 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     release: (_id, view) => {
       scene.remove(view.model.root);
       // Geometries and materials are shared per kind and owned by `models`, so
-      // model.dispose() frees only what this instance owns: its skeleton's bone
-      // texture. Disposing the shared pool here would tear the resource out from
-      // under the next monster of the same kind.
+      // model.dispose() frees only this instance's skeleton bone texture.
       view.model.dispose();
-      //
-      // The dread is the opposite case: it owns its geometry, its materials and
-      // its light outright, so it stays in the scene until it has faded and is
-      // then disposed — by renderFrame, which is the only thing here with a dt.
-      // A kind that wore none leaves nothing behind.
+      // The dread owns its geometry, materials and light outright, so it stays
+      // in the scene until faded and is then disposed by renderFrame.
       if (view.dread !== null) retiringDread.push(view.dread);
     },
   });
 }
 
 /**
- * THE RENDER PATH. Runs once per animation frame.
- *
- * Placement is recomputed every frame rather than cached, because both inputs
- * move: the monster drifts between cells, and the seabed under it can be
- * sculpted at any moment. It is one terrainHeightAt lookup for one entity.
+ * THE RENDER PATH. Runs once per animation frame. Placement is recomputed every
+ * frame: both the monster and the ground under it move. One drawnGroundYAt
+ * lookup per entity.
  */
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const step = Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
@@ -225,31 +158,18 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
+  // One sampler per frame, not per monster: it captures only `ctx`.
+  const groundAt = drawnGroundSampler(ctx);
+
   for (const [id, monster] of sampled) {
     const view = views.get(id);
     if (view === undefined) continue;
 
     const root = view.model.root;
-    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE — 1 until the
-    // 2026-08-21 re-sample, which is why this used to be a bare assignment
-    // (see placement.ts).
-    // The VERTICAL rule is the KIND's: the two sea horrors hang from the surface
-    // at very different depths — which is most of what tells them apart from a
-    // distance — and the yeti stands on the snow. placement.ts owns which is
-    // which and how many terrain samples each needs.
-    // WHERE IT IS VERTICALLY, in three cases and one expression — the walkers'
-    // rule (plugins/pilgrims/client/index.ts), for the same reasons:
-    //   * on a wall — the server says so and says how high (`climbHeight`),
-    //     because a climb and a fall are motions the simulation owns;
-    //   * otherwise the kind's own placement rule, CHASED rather than assigned
-    //     so a yeti crossing a band steps up instead of teleporting;
-    //   * first frame — the target itself, no ease.
-    const placedY = monsterOriginY(
-      monster.kind,
-      (cx, cy) => ctx.terrainHeightAt(cx, cy),
-      monster.x,
-      monster.y,
-    );
+    // WHERE IT IS VERTICALLY, in three cases: on a wall the server's
+    // `climbHeight`; otherwise the kind's own placement rule, chased not
+    // assigned; first frame, the target itself.
+    const placedY = monsterOriginY(monster.kind, groundAt, monster.x, monster.y);
     const targetY =
       monster.climbHeight === null ? placedY : monster.climbHeight * HEIGHT_WORLD_SCALE;
     const drawnY = followGroundY(view.drawnY, targetY, dt);
@@ -269,16 +189,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       moverGaitOf(monster.climbHeight, monster.falling, moverStanceFromWire(monster.stance)),
     );
 
-    // THE MIST FOLLOWS THE SAME INTERPOLATED POSE the model does, so the bank
-    // cannot lag or lead the thing it belongs to. It sits on the SEA SURFACE
-    // rather than at the model's origin (which is down at the lurking depth) and
-    // is never yawed — mist does not turn with the monster. A kind that wears no
-    // weather has none of this (see MonsterView.dread).
-    //
-    // It is advanced by the CAPPED step rather than the raw dt for the same
-    // reason the animation clock is: after a background tab wakes up, a fade
-    // must not jump to its end and the lightning clock must not be handed a
-    // minute of accumulated waiting.
+    // THE MIST FOLLOWS THE SAME INTERPOLATED POSE the model does, sits on the
+    // SEA SURFACE rather than the model's origin, and never yaws. Advanced by
+    // the CAPPED step.
     if (view.dread !== null) {
       view.dread.root.position.set(
         monster.x * CELL_WORLD_SIZE,
@@ -302,16 +215,15 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 }
 
 /**
- * Draw objects one monster's MODEL costs at worst: SIX — the yeti, whose rig
- * bakes to six surfaces (kraken 3, cthulhu 4; measured 2026-08-29).
+ * Draw objects one monster's MODEL costs at worst: SIX, the yeti, whose rig
+ * bakes to six surfaces.
  */
 const MONSTER_MODEL_DRAW_OBJECTS = 6;
 
 /**
- * And its weather: FIVE for a swimmer's dread rig (mist sheets, glow sheet,
- * bolt). Budgeted for every living monster rather than for the swimmers alone,
- * because which kinds carry one is a question for ./dread.ts and not for a
- * ceiling.
+ * And its weather: FIVE for a swimmer's dread rig. Budgeted for every living
+ * monster rather than the swimmers alone; which kinds carry one is a question
+ * for ./dread.ts.
  */
 const MONSTER_DREAD_DRAW_OBJECTS = 5;
 
@@ -328,17 +240,15 @@ export const clientPlugin: TerraceClientPlugin = {
     models = createMonsterModels();
 
     // One child Group of our own inside the host's layer: it keeps the monster
-    // under a single named node, which makes the scene graph legible in the
-    // three.js inspector and gives dispose() one thing to clear.
+    // under a single named node and gives dispose() one thing to clear.
     container = new Group();
     container.name = 'monsters:living';
     ctx.layer.add(container);
 
     unsubscribeMessages = ctx.onMessage(MONSTERS_STATE_MESSAGE, (payload) => {
       const monsters = parseMonstersPayload(payload);
-      // A malformed payload is dropped whole: the previous state keeps rendering
-      // until the next good message, which is a second away. An EMPTY list is
-      // not malformed — it is the despawn, and it is applied.
+      // A malformed payload is dropped whole: the previous state keeps
+      // rendering until the next good message. An EMPTY list is the despawn.
       if (monsters === null) return;
       interpolator.receive(monsters);
     });

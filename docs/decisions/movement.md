@@ -802,3 +802,220 @@ literal.
 **Per-species:** the ibex keeps its own `secondsPerBand` of 0.8 s a band on its
 rule, so it declares its own character rather than inheriting the default. The
 yeti carries no override, so it speeds up with the default.
+
+## Decisions recorded 2026-09-07 (movers draw on the drawn ground; comment migration)
+
+### Movers stand on the drawn cap, not the lattice band
+
+**The root cause.** Ground-standing movers drew themselves at
+`ClientPluginCtx.terrainHeightAt` — the cell LATTICE band — while the terrain
+draws each band's cap over the SMOOTHED MARCHED CONTOUR. The two disagree by a
+full band (a whole world unit of relief) wherever a cell sits on the wrong side
+of its own contour: 430 of 6745 probes on the `fork` fixture, per
+`client/src/terrain/drawnGround.ts`'s header. A walker there was drawn one band
+inside the rock. It was seen descending a mountain; it can happen on any band
+edge.
+
+**The contract change.** One oracle for "where does a mover's foot go",
+`drawnGroundSampler(ctx)` in `client/src/plugins/kit/groundFollow.ts`, which
+reads `ctx.drawnGroundYAt` and never `ctx.terrainHeightAt`. Pilgrims, the
+monsters' yeti, wildlife's walkers and the swimmers' seabed sample all go
+through it. The kit was already the one vertical contract every mover uses
+(`followGroundY`), so the sampler sits beside it rather than in a new module.
+
+**The false premise that is now corrected.** `client/src/plugins/types.ts` used
+to say "Anything that STANDS on the ground (a tree, a flame, a marker ring) can
+use `terrainHeightAt`: a thing standing up is not seen against the surface
+under it." That is wrong — a body standing a band inside the rock is as visible
+as a decal floating over it. Both `types.ts` and `client/src/world.ts` now
+document `terrainHeightAt` as the lattice band FOR LOGIC (site classification,
+gradient tests, ordering) and `drawnGroundYAt` as the only oracle for anything
+DRAWN at ground level, flat on it or standing on it.
+
+**Fractional coordinates for a single-cell mover.** A pilgrim's sample is taken
+at `(pilgrim.x, pilgrim.y)` rather than at the floored cell. `drawnGroundYAt`
+resolves to a quarter cell (`BAND_GRID_CELLS`), so the foot follows the contour
+inside its own cell instead of jumping at the cell edge.
+
+**The footprint samplers keep their flooring, and that is a named residual.**
+`walkerGroundY` and `swimmerSeabedY` (wildlife) and `walkerGroundWorldY`
+(monsters) take the sampler as a parameter and floor each probe —
+`Math.floor(x + dx)` — because the old lattice oracle required integer cells.
+They now read the DRAWN cap at those integer points, which is the whole-band
+fix; but the flooring still quantises each probe to its cell's lattice corner,
+so a multi-cell walker loses the sub-cell contour detail a pilgrim now gets.
+Removing it would change what "the footprint" means and would break the pinned
+fixtures in `plugins/monsters/test/client.test.ts` and
+`plugins/wildlife/test/client.test.ts`, which are written against integer-keyed
+height maps. Flagged, not fixed.
+
+**Cost.** `drawnGroundYAt` is one `Map` read for the chunk's published cap plan
+plus two array reads: `capYAt` resolves through `topLevelIndexAt`, which is an
+index into the store's precomputed `Int8Array` band grid, then an index into
+`levelCapY`. There is no point-in-polygon walk — that was moved into the
+store's rasteriser, once per chunk build. Safe for ~100 wildlife plus pilgrims
+per frame, and no memoisation was added.
+
+**Movers NOT converted, and why.** `plugins/tornado/client/index.ts` (a funnel
+that travels, placed at `terrainHeightAt(round(x), round(y))`) and
+`plugins/mudslides/client/debris.ts` (debris that slides across the ground) are
+drawn movers with the same defect. They sit outside this change's named files
+and outside its verification scope, and each carries its own written argument
+for the old oracle that would have to be revisited. They are the first
+follow-up. The static standing placements — fire, saucers' crash burst,
+volcanoes' vent, temples, relics, structures, flora — rest on the same
+corrected premise and need their own pass.
+
+### Comment migration
+
+Everything below was cut from source comments to bring the touched files under
+the repo's comment budget. It is recorded here because it is reasoning, not
+because it is still load-bearing beside the code.
+
+**`client/src/plugins/kit/groundFollow.ts`.**
+`GROUND_FOLLOW_WORLD_UNITS_PER_SECOND` was a hand-written 1.0, correct when a
+walked step could not exceed MAX_STEP + RELAX_SLACK = 5 height units (0.078
+world units, eased far inside the 0.5 s a walker spends on a cell).
+`SHEER_RISE_TO_RUN` widened a walked step to 64 height units — a whole world
+unit, thirteen times as far — and at 1.0 that took a full second, two cells of
+walking; 2392 walkable pairs on frostwick-hollows (1.69 %) left the body drawn
+more than a whole cell behind the ground. The rate is now derived: the tallest
+legal walked step over one cell of walking. `GROUND_FOLLOW_SNAP_WORLD_UNITS`
+was likewise a hand-written 1.0 justified by "a four-band gap is never
+walking", true until `SHEER_RISE_TO_RUN` made a four-band step exactly a walk,
+at which point 344 walkable pairs teleported. The comparison is strictly
+greater because the maximal walked step is the case the easing exists to
+smooth. `TALLEST_WALKED_STEP_WORLD_UNITS` is written against
+`SHEER_RISE_TO_RUN * CELL_WORLD_SIZE` rather than
+`SHEER_RISE_HEIGHT_UNITS_PER_CELL` and the client's `HEIGHT_WORLD_SCALE`
+because that pairing drags client config, and Vite's `import.meta.env` with it,
+into the node test environment this file stays out of.
+
+**`plugins/pilgrims/client/index.ts`.** `HEIGHT_WORLD_SCALE` is restated from
+its two `@terrace/shared` inputs rather than imported from
+`client/src/config.ts` because that module drags `import.meta.env` into the
+plugin's node typecheck and test run — the trap `plugins/mana` carries an
+`env.d.ts` for. The client half is wildlife's shape exactly: a client that
+misses messages looks stiller, never wrong. `drawnPoseOf` reads off the model's
+own root so it is the pose this frame actually put on screen, never a second
+derivation — and it answers null for a walker hidden because its ground is
+unknown, which is exactly when a flame drawn on it would hang in the air. A
+peep being pickable and being publishable as a mover are the two halves of
+being able to set one alight and watch it run.
+
+**`plugins/monsters/client/index.ts`.** The dread is the SEA's weather: every
+sheet in the bank is authored above `SEA_SURFACE_WORLD_Y` and the effect is
+pinned to the waterline, so it is meaningful for exactly the kinds placed
+against the sea surface. On the yeti it would be mist at sea level under a
+mountain nine bands up — a visible bug, not "atmosphere for a land monster"; a
+land creature wanting weather wants a different effect authored against the
+ground. Parameterising the height would have made one effect wrong for both.
+`MonsterView.variant` is recorded rather than re-derived because a
+`MonsterModel` is a root and an `animate()` and remembers no constructor; the
+one way a live id's body can change in practice is a client watching a yeti
+through a server upgrade, where the pre-variant payload defaulted him. The
+rebuild leaves the dread alone because it follows the KIND's placement, and no
+sea kind has variants. `reconcileViews` is a general reconcile over a map
+because the wire format is a list; the day monster slots became one per habitat
+it needed no change, which is what it was written for. `retiringDread` outlives
+its monster by `MIST_FADE_SECONDS`, so the list is empty in every frame but the
+couple of hundred after a banishment. The per-kind dread spec exists because a
+bank authored for Cthulhu's 2.4-cell eye height sat over the kraken's waterline
+eyes. `MONSTER_MODEL_DRAW_OBJECTS` is six because the yeti's rig bakes to six
+surfaces; kraken three, cthulhu four.
+
+**`plugins/wildlife/client/index.ts`.** The per-species surface table
+(`SINGLE_SURFACE_SPECIES = 11`, `TWO_SURFACE_SPECIES = 1`): fish, ibex, bison,
+ray, shark, eel, angelfish, the three whale bodies and bird each bake to ONE
+surface, because their kit welds every extrusion and `rigSkin`'s material
+signature excludes colour (a vertex colour attribute carries it). The deep-sea
+angler is the one two-surface herd: its lure material carries
+`KHR_materials_unlit`, which three's `GLTFLoader` turns into a
+`MeshBasicMaterial` — a different `material.type` from the body's
+`MeshStandardMaterial`, so two signatures. The grazer and the wolf are
+downloaded files, so their counts are properties of art this repo did not
+write; each was checked separately off `RigBlueprint.surfaceCount` (the deer's
+seven glTF materials and the wolf's four differ only in base colour). The
+budget is a constant rather than `models.objects.length` because `drawBudget`
+is a static field the host reads before `attach` builds a pool; `attach` throws
+on a mismatch so a species that gains a surface fails at boot. `preload` is
+sequential rather than `Promise.all` because the failure a developer actually
+hits is a bad asset, where being told WHICH file broke first is what makes the
+message useful. `CreatureView.drawnX/drawnZ/drawnY` are held rather than read
+back off a transform because a creature is one instance inside its species'
+herd and the instance buffer is rewritten from scratch every frame — the eased
+value has to be the one this loop last committed. A swimmer with no known
+seabed used to be placed against `UNKNOWN_TERRAIN_WORLD_Y`, the sea surface,
+which drew a whale lying on top of the sea whenever its whole hull sampled
+unsent ground; it now skips the frame. The walker stride is three-dimensional
+because measured horizontally it is zero on a climb, where x/y stay pinned at
+the foot of the wall, and a climbing ibex rose on frozen legs. Assets are
+disposed AFTER the blueprints because a baked surface holds a material clone
+that shares the source's texture objects by reference.
+
+**`client/src/plugins/types.ts`.** `SkyRigState` and `GroundShadeDisc` are
+defined in the contract rather than in `render/skyRig.ts` /
+`render/groundShade.ts` because those modules reach `client/src/config.ts` and
+its `import.meta.env`, which a plugin's standalone `tsc`/`vitest` run cannot
+evaluate — and `tsc` resolves and diagnoses every reachable file, type-only or
+not. `MoverPose`'s `bodyBottomY`/`bodyHeight` are published by the owner
+because only the owner knows the drawn scale and where the body sits on its
+origin; for a walker the bottom is its feet, for a swimmer the belly line below
+a centre-origin hull, for a boat the deck rather than the keel.
+`markPickable`'s `occupancy` exists because a raycast descent tests every live
+instance — a mature forest is eight thousand of them, 0.72–0.85 ms per pick,
+paid in full even when the ray hits nothing, because a world-spanning
+population's bounding sphere accepts every ray. `pickWorldCell` exists because
+a tree's canopy is drawn above its cell, so at an orbit camera's angle a ray
+through it meets the ground several cells behind — aiming at things standing on
+the ground was impossible with a terrain-only pick. `cameraPosition` returns a
+scratch object because it is asked once per frame by every plugin with a deck.
+`applyRevealClip` is core's rather than each plugin's because three of the six
+weather plugins draw with stock materials and every one of them wants the same
+clip. `publishMovers` is a lookup rather than a list because a position copied
+out and re-interpolated drifts away from the body it is attached to — the exact
+bug a flame on a running animal would be made of — and it is a neutral
+primitive for the same reason `WorldApi.emitEvent` is on the server: a plugin
+addresses another by name and validates structurally, never by importing it.
+`modulateSkyRig` exists because "who owns the sky" and "who has something to
+say about it" are different questions; before it, a second plugin's only
+options were to fight for the claim or draw its own dark canopy. `drawBudget`
+exists because the per-object cost is `projectObject` to render list to
+`setProgram` to uniforms to `drawArrays`, 1.55 ms for 197 calls and 3.10 ms for
+340 — 44 % of a 140 fps frame's 7.1 ms, at idle — so the frame budget was spent
+by whichever population happened to be largest.
+
+**`client/src/world.ts`.** The sea draws nothing until the first snapshot's
+`water.sync`, which replaced the old "the disconnected boot state is a
+plausible empty ocean" behaviour. The frontier mist mode is kept in step by a
+Solid effect so the panel's `<select>` applies live with no reload, and the fog
+starts hidden so the microtask before the first run cannot flash a layer the
+player turned off. The reveal mask sits beside the fog because they are the
+same fact, synced at the same two call sites; a mask disagreeing with the mist
+would draw a plugin's cloud over the very seam the mist covers. `nowMs` uses
+`performance.now()` rather than `Date.now()` because these timestamps are only
+compared to each other and a wall-clock adjustment must not expire — or
+indefinitely postpone — a pending prediction. `applyDirty`'s empty-set guard is
+there because `water.refresh` re-uploads its whole world-sized texture per
+call, and the authoritative echo of a correctly predicted sculpt arrives with
+an empty set several times a second. `fog` and `water` read the MIRROR, which
+the caller has already written; the lips, the rivers and the sea's curtains
+read the per-chunk CHART, which `meshes.update` only enqueues, so chart readers
+are driven by `onChunkDrawn` and never from the dirty set — driving them from
+it has them reading the pre-edit chart or the blocky MISSING-CHUNKS fallback.
+The prediction sweep is scheduled for the exact moment the oldest outstanding
+prediction times out, with no polling interval, because it covers the intents
+the server answers with SILENCE: an intent rejected by the unlock mask or
+vetoed by a plugin produces no diff by design, so nothing else would take that
+prediction off the screen. `carveBandOfPick` applies the two tests only the
+world can apply — the overlay's lip proximity for a tread hit, and the server's
+own `spanIndexCoveringBand` belt. The arch fixture was once carved into the
+mirror client-side because the wire could only carry one height per cell; it is
+authored server-side at genesis now. `terrainHeightAt` answers null rather than
+band 0 for a never-received cell because band 0 is the sea-surface plane, and a
+footprint reader keeping the highest sample read "ground at the waterline" one
+cell past the fog frontier. `drawnGroundYAt` answers null rather than the
+blocky guess for a received-but-undrawn chunk because the per-chunk revision
+counter is bumped when a chunk is dirtied, not when it is drawn, so a caller
+that memoised a guess would have nothing to invalidate it with — structures'
+survey cache is the case that found this.

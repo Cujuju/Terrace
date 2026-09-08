@@ -1,61 +1,29 @@
-// The CLIENT half of the plugin contract (design doc: "client-side plugins
-// register HUD panels (Solid components) and Three.js scene layers"; decision
-// Q6: client halves are compiled in, against this stable module signature, so
-// runtime loading can be added later without changing plugins).
-//
-// A client plugin is the rendering/UI mirror of a server plugin with the same
-// name. Everything it may touch arrives through the ctx handed to `attach` —
-// a plugin never reaches into the renderer, the connection, or another
-// plugin's layer. Message types are un-namespaced here exactly like the server
-// side's `messages` record: the host prefixes `<name>:` on the wire in both
-// directions, so a plugin cannot collide with core messages or another plugin.
+// The CLIENT half of the plugin contract — the rendering and UI mirror of a
+// server plugin. Everything a plugin touches arrives through `attach`'s ctx.
 
 import type { SculptIntent } from '@terrace/shared';
 import type { Group, Material, Object3D } from 'three';
 import type { Component } from 'solid-js';
 import type { CellOccupancy } from '../terrain/occupancy.ts';
 /**
- * TYPE-ONLY, AND SAFE TO REACH FROM HERE — verified rather than assumed.
- * render/revealMask.ts imports only three, @terrace/shared, terrain/mirror.ts
- * (itself deliberately free of three and the DOM) and render/shaderSplice.ts
- * (no imports at all), so none of the `import.meta.env` chain SkyRigState's
- * comment below warns about is reachable through it.
+ * TYPE-ONLY, AND SAFE TO REACH FROM HERE: nothing in revealMask.ts's import
+ * chain reaches `import.meta.env`.
  */
 import type { RevealClipUniforms } from '../render/revealMask.ts';
 import type { RigAsset } from '../render/rigAsset.ts';
 
 /**
- * RE-EXPORTED so a plugin declaring an occupancy lookup imports one module —
- * this contract — rather than reaching into the client's terrain internals for
- * half its types (GH #252).
+ * RE-EXPORTED so a plugin declaring an occupancy lookup imports this contract
+ * rather than the client's terrain internals.
  */
 export type { CellColumn, CellOccupancy, CellRayChord } from '../terrain/occupancy.ts';
 
 /**
- * The declarative sky/lighting state a plugin may drive core's rig with — see
- * ClientPluginCtx.setSkyRig below for the capability this backs and its
- * single-claimant rule, and client/src/render/skyRig.ts for applySkyRig, the
- * one function that turns this into real Three.js light mutations.
- *
- * DEFINED HERE, NOT IN render/skyRig.ts, DELIBERATELY. skyRig.ts also needs
- * Viewport (client/src/render/scene.ts) to do its job, and scene.ts imports
- * client/src/config.ts, which reads import.meta.env — fine for the real
- * browser build, but fatal to a PLUGIN's standalone `tsc`/`vitest` run the
- * moment any of its files pull that chain in, even through a type-only
- * import (tsc still has to resolve and diagnose every file reachable in the
- * program, type-only or not). This file already has zero such imports (every
- * plugin's client half type-only-imports ClientPluginCtx from here), so the
- * shared TYPE lives on this side of the boundary and skyRig.ts imports it
- * back, instead of the other way around — the same reason plugins/weather/
- * client/sky.ts restates numeric constants rather than importing scene.ts
- * directly (see that file's WORLD_UNITS_PER_BAND comment), just applied to a
- * TYPE instead of a value.
- *
- * Every colour is a 0xRRGGBB int (matching every other colour constant in
- * this codebase — see render/scene.ts's SKY_COLOR); every intensity is in
- * the same unitless scale DirectionalLight/HemisphereLight/AmbientLight
- * already use.
+ * The declarative sky/lighting state a plugin may drive core's rig with; see
+ * ClientPluginCtx.setSkyRig for its single-claimant rule. Colours are 0xRRGGBB
+ * ints, intensities three's own scale.
  */
+
 /**
  * How an authored asset's PBR materials are lit — see
  * ClientPluginCtx.loadRigAsset for why this is a required, explicit choice.
@@ -64,10 +32,8 @@ export type RigLighting = 'sky-environment' | 'lamps-only';
 
 export interface SkyRigState {
   /**
-   * Unit-ish direction the sun shines FROM, in the same convention
-   * DirectionalLight.position already uses (core places the light at this
-   * direction, scaled out to SUN_DISTANCE_WORLD_UNITS, and its target defaults to
-   * the origin) — not the direction the light TRAVELS in.
+   * Unit-ish direction the sun shines FROM, the convention
+   * DirectionalLight.position uses — not the direction the light TRAVELS in.
    */
   readonly sunDirection: { readonly x: number; readonly y: number; readonly z: number };
   readonly sunColor: number;
@@ -81,44 +47,22 @@ export interface SkyRigState {
   readonly ambientColor: number;
   readonly ambientIntensity: number;
   /**
-   * scene.background. Independently settable from hemisphereSkyColor even
-   * though core's boot-time values for the two happen to be equal (both
-   * SKY_COLOR) — nothing forces a claimant to keep them equal, and core has
-   * no opinion either way.
+   * scene.background. Independently settable from hemisphereSkyColor; nothing
+   * forces a claimant to keep the two equal.
    */
   readonly backgroundColor: number;
 }
 
 /**
- * Where something is drawn, in WORLD units — three's own space, the same
- * coordinates `ClientPluginCtx.layer` is in, not cell space.
- *
- * `y` is the point the thing STANDS ON (its feet, a hull's waterline), not its
- * centre or its top: whatever is attached to it AT THE GROUND is attached here.
- *
- * `bodyBottomY` / `bodyHeight` describe the BODY itself — the span a flame
- * drawn on the thing should cover, at the scale it is drawn at. For a walker
- * the bottom is its feet and `bodyBottomY === y`; for a swimmer it is the belly
- * line below a centre-origin hull; for a boat it is the deck, not the keel. The
- * owner publishes these because only the owner knows the drawn scale and where
- * the body sits on its origin (decision record, fire: "the position is not on
- * the wire" — neither is the size, for the same reason).
+ * Where something is drawn, in WORLD units, not cell space. `y` is the point
+ * the thing STANDS ON, not its centre; `bodyBottomY` / `bodyHeight` span the
+ * BODY.
  */
+
 /**
- * One shade in the sky that the terrain and water darken themselves under —
- * `ClientPluginCtx.publishGroundShade`, plan §2.2 of #284. World units;
- * `darkness` and `inner` are fractions in [0, 1].
- *
- * `y` is THIS disc's own height, not a shared cloud base: the decks in this
- * world sit at different heights and a shadow must fall from where the cloud
- * IS. `inner` is where the falloff starts as a fraction of `radius` — 0 fades
- * from the very centre, a larger value holds a flat core and fades only the
- * rim, the same meaning kit/puffDeck.ts's `innerEdge` carries.
- *
- * DEFINED HERE rather than in render/groundShade.ts for the reason
- * SkyRigState above is: a plugin CONSTRUCTS these, so the type must sit on the
- * side of the boundary a plugin's standalone tsc run can reach. groundShade.ts
- * imports it back.
+ * One shade the terrain and water darken under (`publishGroundShade`). World
+ * units. `y` is THIS disc's own height, not a shared cloud base; `inner`
+ * starts the falloff.
  */
 export interface GroundShadeDisc {
   readonly x: number;
@@ -131,12 +75,9 @@ export interface GroundShadeDisc {
 }
 
 /**
- * A point in WORLD units — three's own space, not cell space.
- *
- * Its own type rather than three's `Vector3` because a plugin reading one only
- * ever reads three numbers out of it, and a readonly triple says that where a
- * `Vector3` would offer `set`, `copy` and every other way to write into a
- * scratch object it does not own.
+ * A point in WORLD units, not cell space. A readonly triple rather than three's
+ * `Vector3`, which would offer ways to write into an object the reader does not
+ * own.
  */
 export interface WorldPosition {
   readonly x: number;
@@ -148,25 +89,19 @@ export interface WorldPosition {
 export interface SfxOptions {
   /**
    * Where the sound happens, in WORLD units. Present makes the voice
-   * POSITIONAL; absent makes it a flat voice at full bus level. Read and copied
-   * during the call, so a scratch object is safe.
+   * POSITIONAL; absent, a flat voice at full bus level. Copied during the call.
    */
   readonly at?: WorldPosition;
   /**
-   * Level relative to the bus, 0..1, default 1. NOT an absolute loudness — a
-   * plugin that needs to be louder needs a louder ASSET. Clamped.
+   * Level relative to the bus, 0..1, default 1. NOT absolute loudness: a plugin
+   * that needs to be louder needs a louder ASSET. Clamped.
    */
   readonly gain?: number;
   /** Speed multiplier for variation; pitch moves with it. Default 1. */
   readonly playbackRate?: number;
   /**
-   * Seconds from now until the sound is heard, default 0 — the speed of sound,
-   * which is the strongest cue for how far away a storm is.
-   *
-   * NO TIMER: the voice goes to Web Audio's own scheduler, so a delayed
-   * one-shot costs what an immediate one does. It occupies its pool slot from
-   * the moment it is scheduled, so it can be stolen before it is heard.
-   * Negative and non-finite are treated as 0.
+   * Seconds from now until the sound is heard, default 0. NO TIMER: Web Audio
+   * schedules it, and it holds its pool slot from then.
    */
   readonly delaySeconds?: number;
 }
@@ -184,64 +119,38 @@ export interface MusicGenerator {
 }
 
 /**
- * Everything a plugin may do to the player's ears — one member for the whole
- * capability, as `layer` is for everything it draws.
- *
- * A PLUGIN NEVER TOUCHES WEB AUDIO ITSELF: browsers cap contexts per page, the
- * listener must track the one camera, and the master must be able to silence
- * everything. Core owns the graph; a plugin says what it wants heard.
- *
- * EVERY METHOD IS SAFE TO CALL AT ANY TIME — before the autoplay unlock, before
- * the join snapshot, after detach. None is an error, none logs, none throws.
- *
- * Nothing here is on the frame's critical path: Web Audio mixes on its own
- * thread, and a repeated `ambience` at an unchanged weight is one comparison.
+ * Everything a plugin may do to the player's ears. Core owns the Web Audio
+ * graph; a plugin says what it wants heard. Every method is safe at any time.
  */
 export interface PluginAudio {
   /**
    * Fetches and decodes an asset now. Call it from `attach` for every URL the
-   * plugin can play — without it the FIRST event of every kind is silent, since
-   * `playSfx` drops rather than plays late.
-   *
-   * Idempotent and shared across plugins; never throws. There is no "ready"
-   * signal on purpose: a plugin waiting for one is a loading screen for a sound.
+   * plugin can play, or the FIRST event of each kind is silent. Idempotent.
    */
   preload(url: string): void;
 
   /**
-   * Fires a one-shot on the SFX bus and returns immediately. A URL whose buffer
-   * is not decoded yet starts the decode and plays NOTHING — a late impact is
-   * worse than none, and `preload` above is how that is avoided.
-   *
-   * Bounded by a voice cap core owns: too many one-shots steal the oldest
-   * rather than growing the graph.
+   * Fires a one-shot on the SFX bus and returns. An undecoded URL starts the
+   * decode and plays NOTHING. Too many one-shots steal the oldest voice.
    */
   playSfx(url: string, opts?: SfxOptions): void;
 
   /**
-   * A looping layer faded toward `weight` (0..1) on the ambience bus. Safe to
-   * call every frame: an unchanged weight is one comparison.
-   *
-   * ONE LOOP PER (PLUGIN, URL) — calling again RETARGETS rather than stacking a
-   * second copy. Weight 0 fades out and releases the voice. Never positional:
-   * ambience is rain-under-the-camera, not rain-at-a-cell.
+   * A looping layer faded toward `weight` (0..1) on the ambience bus. ONE LOOP
+   * PER (PLUGIN, URL): calling again RETARGETS. Weight 0 releases the voice.
    */
   ambience(url: string, weight: number): void;
 
   /**
    * Puts a looping track on the music bus, crossfading; `null` fades out.
-   *
-   * SINGLE-CLAIMANT like `setSkyRig`, and for the same reason: two plugins
-   * writing the bus would fight and registration order would decide. The first
-   * caller owns it; a later one is refused ONCE and then ignored. Unmounting
-   * the claimant frees the bus.
+   * SINGLE-CLAIMANT like `setSkyRig`: the first caller owns it. Unmounting the
+   * claimant frees the bus.
    */
   setMusic(url: string | null): void;
 
   /**
    * Drives the music bus from code instead of a file. SAME CLAIMANT SLOT as
-   * `setMusic`; the two replace each other. `start` runs once; null fades out.
-   * The one place a plugin sees Web Audio — plan §8.2(a) for why that is safe.
+   * `setMusic`. `start` runs once; null fades out.
    */
   setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void;
 }
@@ -259,16 +168,14 @@ export interface MoverPose {
 export interface ClientPluginCtx {
   /**
    * Plugin-owned Three.js layer, already parented into the scene. Everything
-   * the plugin renders goes in here — never into the terrain group, whose
-   * children are what the sculpt raycaster treats as terrain.
+   * the plugin renders goes here, never into the terrain group.
    */
   readonly layer: Group;
 
   /**
    * Everything this plugin may make the player hear (PluginAudio, above).
-   *
-   * PER-PLUGIN: the handle knows who holds it, which is what keys ambience,
-   * arbitrates music, and lets a detach release exactly this plugin's voices.
+   * PER-PLUGIN: the handle knows who holds it, so a detach releases exactly
+   * this plugin's voices.
    */
   readonly audio: PluginAudio;
 
@@ -276,78 +183,22 @@ export interface ClientPluginCtx {
   worldSize(): number;
 
   /**
-   * World-space Y of the RENDERED terrain surface at cell (x, y) — the
-   * terraced (band-quantised) height, i.e. where a thing standing on the
-   * ground should stand. Cells in chunks this client was never sent read as
-   * band 0 (sea floor), exactly like the terrain mesh would draw them. Null
-   * until the first snapshot arrives.
-   *
-   * NULL FOR GROUND THIS CLIENT WAS NEVER SENT, too (2026-09-02) — the
-   * "band 0" sentence above is superseded. Band 0 is the sea-surface plane,
-   * and a plugin that samples a footprint and keeps the highest reading (a
-   * whale's hull, a walker's feet) was reading "ground at the waterline" one
-   * cell past the fog frontier and lifting its creature onto it. Treat null as
-   * "no ground here yet" whatever the reason; every existing consumer already
-   * hides or skips on it. `drawnGroundYAt` below answers the same way.
+   * World-space Y of the band the cell LATTICE puts (x, y) in. FOR LOGIC, NOT
+   * FOR A DRAWN Y: anything drawn at ground level asks `drawnGroundYAt`.
    */
   terrainHeightAt(x: number, y: number): number | null;
 
   /**
-   * AN OPAQUE COUNTER THAT CHANGES WHENEVER THE TERRAIN NEAR CELL (x, y) MAY
-   * HAVE CHANGED — the cache key for anything a plugin derives from the ground.
-   *
-   * WHY A PLUGIN WANTS THIS. A plugin that reads a patch of terrain to decide
-   * something (structures classifies each settlement's SITE from a 748-cell
-   * disc, plugins/structures/client/site.ts) otherwise has to redo that read on
-   * every event that could conceivably have moved the ground — which, for a
-   * plugin driven by its own server deltas, means on every delta, however
-   * small. Comparing this value against the one held alongside a cached answer
-   * turns that into one array read per chunk the patch covers.
-   *
-   * PER CHUNK (`CHUNK_SIZE`, @terrace/shared), not per cell: it mirrors the
-   * dirty sets core already derives to patch the terrain meshes. A plugin whose
-   * patch spans more than one chunk asks about each of them — stepping by
-   * CHUNK_SIZE across the patch is enough to touch every one.
-   *
-   * CONSERVATIVE IN THE SAFE DIRECTION: it may report a change where a
-   * particular reader would have seen none (a predicted sculpt, its
-   * authoritative echo, a neighbouring chunk across a shared border). It never
-   * misses one.
-   *
-   * COMPARE FOR EQUALITY ONLY. The value is monotonic within a session, so
-   * summing it over a FIXED set of chunks is a collision-free fingerprint of
-   * that neighbourhood; nothing else about its magnitude or step size is
-   * promised. 0 until the first snapshot arrives.
+   * AN OPAQUE COUNTER THAT CHANGES WHENEVER THE TERRAIN NEAR (x, y) MAY HAVE
+   * CHANGED. PER CHUNK, not per cell, and conservative. COMPARE FOR EQUALITY
+   * ONLY. 0 before the first snapshot.
    */
   terrainRevisionAt(x: number, y: number): number;
 
   /**
    * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
-   * coordinate. Null until the first snapshot arrives.
-   *
-   * WHEN TO USE THIS RATHER THAN `terrainHeightAt`. A band's cap is drawn over
-   * the region enclosed by the terrain's SMOOTHED MARCHED CONTOUR, not over
-   * the cells the lattice assigns to that band, and the two disagree by a full
-   * band — a whole world unit of relief — wherever a cell sits on the wrong
-   * side of its own contour (terrain/drawnGround.ts). Anything a plugin LAYS
-   * FLAT ON the ground — a decal, a scorch mark, a sheet of liquid — is seen
-   * directly against that surface and must ask this one. Anything that STANDS
-   * on the ground (a tree, a flame, a marker ring) can use `terrainHeightAt`:
-   * a thing standing up is not seen against the surface under it, and the
-   * lattice answer costs nothing.
-   *
-   * NULL MEANS "NOT DRAWN YET", NOT ONLY "NOT RECEIVED YET". A chunk is meshed
-   * under a frame budget, so a cell whose chunk is received but still queued
-   * for its build answers null too, until the build lands. Treat it exactly as
-   * the pre-snapshot null: skip and retry. It is deliberately NOT a guess —
-   * `terrainRevisionAt` is bumped when a chunk is dirtied rather than when it
-   * is drawn, so a caller that cached a guess here would have nothing to
-   * invalidate it with.
-   *
-   * COST. The answer is planned per CHUNK and memoised, so the first query in
-   * a chunk pays for that chunk's contour plan and the rest are lookups; the
-   * whole cache is dropped whenever the terrain changes. It is a query for
-   * server-delta moments (something appeared here), not a per-frame one.
+   * coordinate — the region its SMOOTHED MARCHED CONTOUR encloses, not the
+   * lattice band.
    */
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
 
@@ -362,19 +213,14 @@ export interface ClientPluginCtx {
 
   /**
    * Registers a per-frame animation callback (`dt` in seconds, capped by the
-   * host so a background-tab hiccup cannot produce a giant step). Returns an
-   * unregister function.
+   * host). Returns an unregister function.
    */
   onFrame(handler: (dt: number) => void): () => void;
 
   /**
-   * Adds a Solid component to the HUD. Default placement stacks it inside the
-   * corner panel; 'top-center' floats it centred along the top of the screen
-   * for at-a-glance status; 'bottom-center' floats it centred along the
-   * bottom; 'bottom-right' seats it in the bottom-right strip cell, just left
-   * of the settings icon-button column; 'connection' renders inside the
-   * connection popup, below its status row and hint; 'settings' renders inside
-   * the settings popup, below the audio sliders.
+   * Adds a Solid component to the HUD. 'panel' stacks it in the corner panel;
+   * the three edge placements float it there; 'connection' and 'settings'
+   * render inside those popups.
    */
   registerHudPanel(
     component: Component,
@@ -388,42 +234,25 @@ export interface ClientPluginCtx {
         | 'settings';
       /**
        * A one-row summary rendered inside the corner panel's HEADER rather
-       * than its body (owner move: the corner panel is named for its first
-       * plugin's line, so that line belongs in the title bar).
+       * than its body.
        */
       headerSummary?: Component;
       /**
-       * Live label for the corner panel's COLLAPSED tab, read at render time
-       * (e.g. `Relics (3)`). Falls back to the capitalised plugin name when
-       * absent.
+       * Live label for the corner panel's COLLAPSED tab, read at render time.
+       * Falls back to the capitalised plugin name.
        */
       tabSummary?: () => string;
       /**
-       * Live "my body has something to show", read at render time. While
-       * every corner panel answers false the corner shows only its header
-       * lines, with no expansion at all. Absent means always.
+       * Live "my body has something to show", read at render time. While every
+       * panel answers false the corner shows only headers. Absent means always.
        */
       hasBody?: () => boolean;
     },
   ): void;
 
   /**
-   * Adds a TOOL to the bottom toolbar — a mode the player can hold instead of
-   * the sculpt brush (plugins/toolbar.ts owns the selection; read its header
-   * for why core owns it and the plugin does not).
-   *
-   * `id` is namespaced `<plugin>:<id>` by the host, like every message type,
-   * so two plugins may both call theirs `place`. `onSelected` is the plugin's
-   * ONLY view of the selection: it fires with true when this tool becomes the
-   * held one and false when it stops being it — including when another
-   * plugin's tool takes over, or when the player goes back to the brush. A
-   * plugin that shows a placement ghost builds it on true and tears it down
-   * on false.
-   *
-   * TAKING THE PRESS IS STILL THE PLUGIN'S JOB: holding a tool does not route
-   * clicks anywhere by itself. Claim them with `onCanvasPress` while selected
-   * — core suppresses only its OWN brush (the outline preview and the sculpt
-   * press) while any tool is held.
+   * Adds a TOOL to the bottom toolbar — a mode the player holds instead of the
+   * sculpt brush. `id` is namespaced `<plugin>:<id>` by the host.
    */
   registerTool(tool: {
     id: string;
@@ -434,12 +263,9 @@ export interface ClientPluginCtx {
   }): void;
 
   /**
-   * Claims the top-centre world banner as this plugin's entry point: core
-   * renders `icon` to the right of the world name and makes the whole banner
-   * a button firing `onClick`, labelled `label` for tooltip and screen
-   * readers. ONE claimant per client — first registration wins (the same rule
-   * as onCanvasPress); later claims warn and are ignored. Unclaimed, the
-   * banner stays an inert title card.
+   * Claims the top-centre world banner: core renders `icon` beside the world
+   * name and makes the banner a button firing `onClick`. ONE claimant per
+   * client, first registration wins.
    */
   registerWorldHeaderAction(action: {
     icon: Component;
@@ -448,140 +274,47 @@ export interface ClientPluginCtx {
   }): void;
 
   /**
-   * Lets the plugin claim pointer presses on the canvas BEFORE the sculpt
-   * brush or the camera see them (the host listens in the capture phase and
-   * stops a claimed event's propagation). Return true to claim — e.g. a click
-   * that landed on one of the plugin's own meshes — false to let the press
-   * fall through to sculpting/camera. Handlers run in plugin registration
-   * order; the first claim wins. Returns an unregister function.
+   * Claims pointer presses on the canvas BEFORE the sculpt brush or the camera
+   * see them. True claims, false falls through; the first claim wins.
    */
   onCanvasPress(handler: (event: PointerEvent) => boolean): () => void;
 
   /**
-   * The terrain cell under a client-space point, via the app's own camera and
-   * terrain meshes — what a click "on the ground" means. Null when the ray
-   * misses (sea with no terrain, locked territory, off-canvas). Allocates per
-   * call: fine for clicks, not for per-frame use.
+   * The terrain cell under a client-space point — what a click "on the ground"
+   * means. Null when the ray misses. Allocates per call.
    */
   pickTerrainCell(clientX: number, clientY: number): { x: number; y: number } | null;
 
   /**
-   * Declares one of this plugin's objects to be A THING STANDING ON THE GROUND
-   * — a tree, a hut, a boat, an animal — so that `pickWorldCell` can aim at it.
-   * Returns an unregister function.
-   *
-   * OPT-IN, NOT AUTOMATIC, and that is the whole point. A plugin's layer also
-   * holds things that are emphatically NOT aimable: weather's sky dome, the
-   * frontier fog, a flame. An indiscriminate raycast over the layers would hit
-   * the sky before it ever reached a tree, so a plugin says which of its
-   * objects are part of the solid world and the host believes exactly that.
-   *
-   * The object may be a Group or an InstancedMesh: the host descends into it,
-   * so a whole forest is ONE registration. The cell comes from WHERE THE RAY
-   * HIT rather than from which instance it was, so the host needs no
-   * instance-to-cell mapping — and a plugin whose group also holds something
-   * unaimable should register the aimable child instead of the group.
-   *
-   * `occupancy` REPLACES THE RAYCAST FOR THIS SUBTREE, and any population big
-   * enough to be worth drawing with an InstancedMesh should supply one (GH
-   * #252). A raycast descent tests every live instance — a mature forest is
-   * eight thousand of them, measured at 0.72–0.85 ms per pick, paid IN FULL
-   * even when the ray hits nothing, because a world-spanning population's
-   * bounding sphere accepts every ray. With a lookup the host instead marches
-   * the cells the ray crosses (tens of them) and asks this what stands on
-   * each. The plugin already knows: it placed them by cell.
-   *
-   * The lookup answers with the SILHOUETTE over that cell — see CellOccupancy.
+   * Declares one of this plugin's objects to be A THING STANDING ON THE GROUND,
+   * so `pickWorldCell` can aim at it. OPT-IN: a layer also holds things that
+   * are not aimable.
    */
   markPickable(object: Object3D, occupancy?: CellOccupancy): () => void;
 
   /**
-   * The cell the player is POINTING AT — which is not the same question as
-   * `pickTerrainCell`, and the difference is the bug this exists to fix.
-   *
-   * A tree's canopy is drawn ABOVE its cell. At an orbit camera's angle a ray
-   * through the canopy carries on and meets the ground several cells BEHIND
-   * it, so a player who clicks the tree they can plainly see targets bare
-   * ground somewhere past it. Aiming at things standing on the ground was
-   * therefore impossible with a terrain-only pick, however carefully the
-   * player clicked.
-   *
-   * So this asks the objects first (whatever `markPickable` declared, nearest
-   * hit wins) and falls back to the terrain when the ray hits none of them.
-   * Null when it hits nothing at all.
-   *
-   * COSTS ONE CELL MARCH PLUS WHATEVER IS STILL RAYCAST (GH #252). Populations
-   * that supplied an occupancy lookup to `markPickable` cost a handful of
-   * lookups per cell the ray crosses; populations that did not are still
-   * descended in full, per instance. It used to be the second kind only, at
-   * 0.72–0.85 ms per call with a mature forest declared — a tenth of the
-   * frame budget, paid even when the ray hit nothing.
-   *
-   * Still not free, and a tool that follows the cursor should remember the last
-   * coordinates and pick ONCE PER FRAME rather than once per pointer event
-   * (plugins/fire/client/index.ts's torch does exactly this).
+   * The cell the player is POINTING AT, which is not `pickTerrainCell`: a
+   * canopy is drawn ABOVE its cell, so a ray through it meets the ground
+   * several cells behind.
    */
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
 
   /**
-   * WHERE THE CAMERA IS, in WORLD units — three's own space, the same
-   * coordinates `layer` is in.
-   *
-   * WHY A PLUGIN GETS THIS AT ALL, when kit/discRig.ts's header says the sky is
-   * anchored to the mass and never to the viewer: nothing here is drawn from
-   * it. It answers ORDERING questions — which side of a horizontal plane the
-   * viewer is on, and therefore which of two transparent things is in front of
-   * the other on every ray at once (kit/cumulusDeck.ts's
-   * `orderAgainstCamera`). A camera-facing LAYOUT would still be the wrong
-   * shape for this codebase; a camera-dependent draw ORDER is the only thing
-   * that can settle a tie three would otherwise settle by an object's centre.
-   *
-   * THE RETURNED OBJECT IS SCRATCH, refilled by the next call and shared by
-   * every plugin — read the three numbers, never keep the reference. It is
-   * reused because this is asked once per frame by every plugin that has a
-   * deck, and a fresh object per frame per plugin is garbage for nothing.
+   * WHERE THE CAMERA IS, in WORLD units. For ORDERING questions only — which
+   * of two transparent things is in front. Nothing is LAID OUT from it.
    */
   cameraPosition(): WorldPosition;
 
   /**
    * Is cell (x, y) in a chunk this client has been SENT, and inside the world?
-   *
-   * `mirror.received` is the client's whole notion of what exists (design doc:
-   * locked chunks are never on the wire, so "what have we received" IS "what
-   * is there"), and this is core's single definition of it — the same
-   * predicate the reveal mask texture is built from, so a plugin's CPU answer
-   * and its clipped geometry cannot disagree.
-   *
-   * OUTSIDE THE WORLD IS FALSE, unlike `terrainHeightAt`, which answers band 0
-   * for a cell it was never sent. A height must answer something; "is this
-   * revealed" must not, or the infinite margin past the border would read as
-   * revealed ground.
-   *
-   * False before the first snapshot. One `Set` lookup — cheap per frame, but
-   * not per particle: for geometry, clip on the GPU with `applyRevealClip`.
+   * The same predicate the reveal mask texture is built from.
    */
   revealedAt(x: number, y: number): boolean;
 
   /**
-   * CLIPS A STOCK MATERIAL to the received map and the world's edge: its
-   * fragments are discarded wherever `revealedAt` would be false.
-   *
-   * WHY THIS IS CORE'S AND NOT THE PLUGIN'S. Three of the six weather plugins
-   * draw with stock materials they never wrote a line of GLSL for (a `Points`
-   * column, `MeshBasicMaterial` haze sheets), and every one of them wants the
-   * same clip. A splice each would be six copies of one contract; this is the
-   * contract.
-   *
-   * `label` names the material in the exception `spliceShader` throws if a
-   * future three upgrade moves an anchor — make it recognisable
-   * (`'rain haze'`, not `'material'`).
-   *
-   * CHAINS onto an `onBeforeCompile` the material already has. A
-   * `ShaderMaterial` cannot be spliced and does not need to be: paste
-   * kit/revealClip.ts's snippets and merge `revealClipUniforms()`.
-   *
-   * Call it ONCE PER MATERIAL, not per mesh — a pooled material shared by
-   * every rig is patched once and every rig is clipped.
+   * CLIPS A STOCK MATERIAL to the received map and the world's edge: fragments
+   * are discarded wherever `revealedAt` would be false. Call it ONCE PER
+   * MATERIAL, not per mesh.
    */
   applyRevealClip(material: Material, label: string): void;
 
@@ -594,72 +327,26 @@ export interface ClientPluginCtx {
 
   /**
    * Publishes the shades THIS plugin's sky things cast on the ground, so the
-   * terrain and the water darken themselves under them. Returns an unpublish
-   * function.
-   *
-   * NO SHADOW MAP (plan §6, owner's decision): each disc is projected along
-   * the sun by the ground's own shaders, which costs a handful of arithmetic
-   * per fragment, no depth pass, and no second render of anything.
-   *
-   * A LOOKUP, NOT A LIST, for the same reason `publishMovers` takes one: core
-   * reads it during the frame it is drawn, so the discs it gets are this
-   * frame's interpolated ones rather than a copy that has drifted from the
-   * cloud it belongs to.
-   *
-   * PUBLISHING MOVES THIS PLUGIN EARLIER IN THE FRAME, exactly as
-   * `publishMovers` does and with the same consequence: the plugin's frame
-   * callbacks go into the pose phase, ahead of core's gather.
-   *
-   * BOUNDED BY `TerraceClientPlugin.groundShadeBudget`. Publishing more than
-   * that is a logged breach and the excess is dropped — the draw budget's
-   * stance, never a throw. A plugin that declares no budget publishes nothing.
+   * terrain and water darken under them. Returns an unpublish function.
    */
   publishGroundShade(lookup: () => readonly GroundShadeDisc[]): () => void;
 
   /**
-   * Publishes where THIS plugin's movable things are drawn, so that another
-   * plugin can draw something ON one of them. Returns an unpublish function.
-   *
-   * PUBLISHING MOVES THIS PLUGIN EARLIER IN THE FRAME. A pose is read by
-   * somebody else during the SAME frame it is written, so the host puts every
-   * frame callback of a plugin that publishes into the pose phase, ahead of
-   * every plugin that does not (render/scene.ts's FramePhase). Nothing is asked
-   * of the publisher — it is a consequence of calling this — but it is the
-   * reason a reader is entitled to say the pose it gets is the one being drawn
-   * now, rather than the one drawn last frame.
-   *
-   * A NEUTRAL PRIMITIVE, deliberately — core's answer to the same problem
-   * WorldApi.emitEvent solves on the server (design §"World events"): a plugin
-   * addresses another BY NAME and validates what it gets structurally, never by
-   * importing it. Core knows nothing about what is being drawn or why; it holds
-   * one lookup per plugin and hands it to whoever asks.
-   *
-   * WHY A LOOKUP AND NOT A LIST OF POSITIONS. The reader needs the pose the
-   * OWNER IS DRAWING RIGHT NOW, after that plugin's own interpolation — a
-   * position copied out and re-interpolated separately drifts away from the
-   * body it is supposed to be attached to, which is precisely the bug a flame
-   * on a running animal would be made of. Answering per id, per frame, from the
-   * owner's own draw state is what makes that impossible rather than unlikely.
-   *
-   * `id` is the plugin's own id for the thing, the same one its wire protocol
-   * uses. Null for an id it no longer has, or is not currently drawing.
+   * Publishes where THIS plugin's movable things are drawn, so another plugin
+   * can draw something ON one of them. Returns an unpublish function.
    */
   publishMovers(lookup: (id: number) => MoverPose | null): () => void;
 
   /**
    * Where another plugin's movable thing is drawn right now — the reading half
-   * of `publishMovers`. Null when that plugin publishes nothing, does not have
-   * the id, or is not drawing it this frame.
-   *
-   * Cheap enough for a per-frame call: one map lookup and the owner's own
-   * answer.
+   * of `publishMovers`. Null when it publishes nothing or lacks the id.
    */
   moverPose(pluginName: string, id: number): MoverPose | null;
 
   /**
    * Publishes a named scalar this plugin knows — a phase, a weight.
-   * `publishMovers`' rules: own name, last publisher wins, return unpublishes.
-   * NO FRAME-PHASE CONSEQUENCE: a gauge is read off-frame (plan §8.2(b)).
+   * `publishMovers`' rules, but NO FRAME-PHASE CONSEQUENCE: gauges read
+   * off-frame.
    */
   publishGauge(key: string, read: () => number): () => void;
 
@@ -671,104 +358,29 @@ export interface ClientPluginCtx {
   gauge(pluginName: string, key: string): number | null;
 
   /**
-   * The client-side mirror of the server's onIntent interceptor chain: lets a
-   * plugin veto a local sculpt BEFORE it is sent or predicted. Return true to
-   * allow, false to veto — a vetoed intent never leaves the machine, so there
-   * is no phantom stroke and no nack round trip.
-   *
-   * This is UX, not authority: the server runs its own chain regardless, and
-   * a plugin using this hook must gate on REPLICATED server state (e.g. the
-   * mana balance the server pushes), never on rules it invented locally —
-   * otherwise the two chains drift and the visual glitching this hook exists
-   * to remove comes back. Handlers run in plugin registration order; the
-   * first veto wins. Returns an unregister function.
+   * The client mirror of the server's onIntent chain: veto a local sculpt
+   * BEFORE it is sent or predicted. A vetoed intent never leaves the machine.
    */
   onLocalIntent(handler: (intent: SculptIntent) => boolean): () => void;
 
   /**
-   * Drives the scene's sky/lighting rig — the sun's direction, colour and
-   * intensity; the hemisphere and ambient fill lights; and the background
-   * colour (render/scene.ts's SkyLightingRig; the full declarative shape is
-   * SkyRigState, above). ONE claimant per client — the FIRST
-   * plugin to call this in a given frame owns the rig for the rest of the
-   * session; every later call, from any OTHER plugin, is ignored with a
-   * console.warn instead of fighting the first claimant's writes silently.
-   * There is no unclaim: like registerWorldHeaderAction this is a boot-time
-   * configuration decision, not a runtime handoff.
-   *
-   * UNCLAIMED, THE SKY IS EXACTLY WHAT core SET IT TO AT BOOT — today's
-   * static noon look — because core never calls this itself; it only builds
-   * the rig and exposes this one seam onto it. A plugin that wants a static
-   * sky simply never calls it, same as a plugin that skips
-   * registerWorldHeaderAction leaves the banner an inert title card.
-   *
-   * Call this as often as the plugin's own state changes — typically every
-   * frame, from inside its own onFrame handler, the same way weather redraws
-   * its rigs every frame from the interpolated system list rather than only
-   * on each server broadcast.
+   * Drives the scene's sky/lighting rig — sun, hemisphere and ambient fills,
+   * background colour (SkyRigState, above). Call it as often as the plugin's
+   * state changes, typically every frame.
    */
   setSkyRig(state: SkyRigState): void;
 
   /**
-   * Loads an authored model file (a `.glb?url` import) the way every plugin
-   * must: through core, which owns the one thing a plugin cannot build for
-   * itself — the sky environment its PBR materials reflect (render/
-   * skyEnvironment.ts, issue #314).
-   *
-   * `lighting` IS REQUIRED, AND IS A DECISION, NOT A DEFAULT. three's lamps
-   * do not respect object layers, so an asset lit by the environment is lit by
-   * the lamps TOO: its diffuse term receives the sky's irradiance twice. For a
-   * metal — whose diffuse term is close to nothing and whose whole look is the
-   * reflection — that is the right trade and 'sky-environment' is the answer.
-   * For diffuse art authored and eyes-on-verified against the lamps alone
-   * (wood, sailcloth), 'lamps-only' keeps it looking exactly as it was
-   * verified. Making the choice explicit at every load is what stops a new
-   * asset from inheriting whichever default happened to be in force.
-   *
-   * Call from `preload`, where every asset load already lives; the returned
-   * asset is the plugin's to dispose.
+   * Loads an authored model file through core, which owns the sky environment
+   * its PBR materials reflect. Call from `preload`; the asset is the plugin's
+   * to dispose.
    */
   loadRigAsset(url: string, lighting: RigLighting): Promise<RigAsset>;
 
   /**
    * DARKENS, TINTS OR OTHERWISE ADJUSTS THE SKY THE CLAIMANT PRODUCED, without
-   * claiming it (2026-08-27, for the storms plugin's overhead cyclone).
-   *
-   * WHY THIS EXISTS AT ALL, given `setSkyRig` above. The single-claimant rule
-   * there is right and stays: two plugins WRITING the lights would fight, and
-   * the last one to run each frame would win by accident of registration order.
-   * But "who OWNS the sky" and "who has something to say about it" are two
-   * different questions, and only the first of them has one answer. The
-   * day/night plugin owns the sky because it is the thing that knows what time
-   * it is; a hurricane parked overhead has no opinion about the time and every
-   * opinion about how much of the sun gets through. Before this seam existed
-   * the second plugin's only options were to fight for the claim (breaking
-   * whichever of the two lost) or to draw its own dark canopy into the scene
-   * (a second, inconsistent sky). Neither is a contract; this is.
-   *
-   * WHAT A MODIFIER IS. A PURE function from the sky as it stands to the sky as
-   * this plugin would rather have it. It is called once per `setSkyRig`, in
-   * registration order, and each modifier sees the previous one's output — so
-   * two of them compose rather than the last one winning. Returning the state
-   * unchanged is the correct way to say "not right now"; a modifier that is
-   * registered but idle costs one call and one object per frame.
-   *
-   * WHAT IT MUST NOT DO. Touch the scene, keep the state object it was handed
-   * (core does not promise to keep it either), or throw — a modifier that
-   * throws is skipped for that frame and logged, exactly like every other
-   * plugin-supplied callback here. It runs on the render path, so it is a place
-   * for arithmetic and nothing else.
-   *
-   * RESIDUAL, NAMED: modifiers only run when SOMEBODY has claimed the rig,
-   * because core never calls `applySkyRig` on its own — an unclaimed sky is
-   * core's static boot-time look and stays that way. A world running storms
-   * with no day/night plugin installed therefore gets storms it can see and a
-   * sky that does not darken. That is the honest degradation (the plugin that
-   * owns the sky is absent, so the sky does not move) rather than a bug, but it
-   * is worth knowing before wondering why the gloom did nothing.
-   *
-   * Returns an unregister function; the host also drops every modifier a plugin
-   * registered when that plugin is unloaded.
+   * claiming it. Returns an unregister function; the host drops a plugin's
+   * modifiers when it is unloaded.
    */
   modulateSkyRig(modify: (state: SkyRigState) => SkyRigState): () => void;
 }
@@ -778,57 +390,21 @@ export interface TerraceClientPlugin {
   readonly name: string;
 
   /**
-   * The most renderable objects this plugin's layer may hold — its share of
-   * the frame's draw calls (part B of
-   * docs/plans/frame-budget-growth-and-draw-calls.md).
-   *
-   * WHY EVERY PLUGIN DECLARES ONE. Every plugin gets a Group under the scene
-   * and adds whatever it likes, and nothing counted: the per-object cost is
-   * `projectObject` → render list → `setProgram` → uniforms → `drawArrays`,
-   * measured on the owner's world at 1.55 ms for 197 calls and 3.10 ms for
-   * 340 — 44 % of a 140 fps frame's 7.1 ms, at idle. The frame budget was
-   * therefore spent by whichever population happened to be largest.
-   *
-   * WRITTEN AS AN EXPRESSION OF THE PLUGIN'S OWN CAPS — `SCAR_CAP`,
-   * `MAX_FUNNELS`, `STRUCTURES_CAP` … — times the objects each of those costs,
-   * plus its fixed rigs. Never a number copied from one measurement: a budget
-   * set from one instant breaches by construction the next time the population
-   * is larger, whereas the caps are the honest maximum. A plugin whose
-   * population has NO cap needs the cap first — that is the defect, and this
-   * field is where it surfaces.
-   *
-   * COUNTED THE WAY THREE DRAWS (see `countDrawObjects` in ./host.ts): one per
-   * Mesh/Line/Points/Sprite, one for a whole InstancedMesh however many
-   * instances it carries (and none while its `count` is 0), and none for a
-   * subtree whose root is invisible.
-   *
-   * Required at the type level; at runtime a missing or non-finite value is
-   * itself a breach, because a plugin loaded at runtime (design Q6) can supply
-   * one.
+   * The most renderable objects this plugin's layer may hold — its share of the
+   * frame's draw calls. Required; at runtime a missing or non-finite value is
+   * itself a breach.
    */
   readonly drawBudget: number;
 
   /**
-   * The most ground-shade discs this plugin may publish through
-   * `ClientPluginCtx.publishGroundShade` — its share of the shaders' shade
-   * array. Absent means it publishes none.
-   *
-   * WRITTEN AS AN EXPRESSION OF THE PLUGIN'S OWN CAPS, exactly as `drawBudget`
-   * above is: one disc per living mass means the budget IS the mass cap
-   * (`MAX_ACTIVE`, `MAX_SPIRALS`), never a number taken from a measurement. The
-   * shaders' `GROUND_SHADE_MAX` is the SUM of these, compiled in before the
-   * first frame, so a budget invented from one instant would breach by
-   * construction the next time the population was larger — and a plugin whose
-   * sky population has no cap needs the cap first.
-   *
-   * Over-publishing is a logged breach and the excess is dropped (see
-   * publishGroundShade), never a throw and never a frame taken down.
+   * The most ground-shade discs this plugin may publish — its share of the
+   * shaders' shade array. Absent means none; over-publishing drops the excess.
    */
   readonly groundShadeBudget?: number;
 
   /**
-   * NO SERVER HALF, so the live set can never name it (discovery skips it) and
-   * `syncLivePlugins` must not unmount it. Absent: the server's set decides.
+   * NO SERVER HALF, so the live set can never name it and `syncLivePlugins`
+   * must not unmount it. Absent: the server's set decides.
    */
   readonly clientOnly?: boolean;
 
@@ -836,21 +412,8 @@ export interface TerraceClientPlugin {
   attach(ctx: ClientPluginCtx): void;
 
   /**
-   * Optional async bootstrap the host awaits BEFORE attach().
-   *
-   * WHY A SECOND HOOK INSTEAD OF DOING IT IN attach(). Some setup is
-   * promise-based with no sync path — parsing a glTF file, the case this was
-   * added for — and attach() is synchronous, so a plugin that needs such a
-   * setup has nowhere to put it. The host runs preload first and only calls
-   * attach once it resolves, so by the time the plugin's registrations and
-   * frame handlers exist the asset they depend on does too.
-   *
-   * A preload that rejects is a logged breach for that plugin only — the
-   * plugin stays unmounted and the client runs without it — never a throw
-   * that takes the client down, exactly like every other plugin fault the
-   * host contains. A plugin unmounted while its preload is still in flight is
-   * never attached afterwards: its mount went stale and the layer it built is
-   * dropped unseen.
+   * Optional async bootstrap the host awaits BEFORE attach(), for setup with no
+   * sync path — parsing a glTF file.
    */
   preload?(ctx: ClientPluginCtx): Promise<void>;
 

@@ -1,14 +1,5 @@
-// Wires the mirror, the meshes and the network together: one object that owns
-// "the world as this client knows it".
-//
-// CRITICAL CODE — the message → mirror → dirty chunks → patched meshes chain
-// lives here, and it is the only path by which terrain changes.
-//
-// The world size is not known until the join snapshot arrives, and the mirror
-// and mesh set are sized from it, so both are created lazily and replaced
-// wholesale on a (re)join. Everything downstream reads them through accessors
-// for that reason — a stale direct reference would silently keep drawing the
-// previous session's terrain.
+// Wires the mirror, the meshes and the network together: one object that owns "the world as this
+// client knows it".
 
 import {
   CHUNK_SIZE,
@@ -92,60 +83,30 @@ import {
 } from './terrain/picking.ts';
 
 /**
- * How `highlightLayerEdge` should light the lip it finds — the parts of that
- * decision the WORLD cannot make for itself.
- *
- * An options object rather than positional arguments because both fields are
- * about the HIGHLIGHT and neither is about the pick, and a caller reading
- * `{ litSpanWorldUnits: … }` at the call site cannot transpose them.
+ * How `highlightLayerEdge` should light the lip it finds — the parts of that decision the WORLD
+ * cannot make for itself.
  */
 export interface LayerEdgeLight {
   /**
-   * How much of the lip lights up either side of the aimed point, in world
-   * units.
-   *
-   * THE BRUSH RADIUS, in world units, and that is the point of it (owner,
-   * 2026-08-27): the lit stretch is then exactly the run of lip a press would
-   * move, so the pointer stops being a mark the player has to intersect with
-   * the highlight by eye. Passed in because the brush is the HUD's state
-   * (state/hudState.ts) and this module knows nothing about the HUD.
+   * How much of the lip lights up either side of the aimed point, in world units.
    */
   readonly litSpanWorldUnits: number;
   /**
-   * A band to light INSTEAD of the one this pick names — a live stroke's
-   * frozen grab (input/sculptInput.ts's `heldBand`).
-   *
-   * WHY IT OVERRIDES THE PICK. A drag moves the pointer OFF the riser it
-   * grabbed within the first cell of travel, and the pick-derived band is null
-   * everywhere but on a riser — so the lip the player was holding went dark
-   * while they were still holding it. What is held is a fact about the STROKE,
-   * not about the current ray, and only the stroke knows it.
-   *
-   * The overlay's membership guard still applies: it asks whether that band's
-   * contour runs beside the cell now under the pointer, and if the answer is no
-   * then there is no nearby segment to light in the first place.
+   * A band to light INSTEAD of the one this pick names — a live stroke's frozen grab
+   * (input/sculptInput.ts's `heldBand`), which overrides the pick.
    */
   readonly heldBand?: number | null;
   /**
-   * The tool a press would use RIGHT NOW (state/hudState.ts's `brushTool`).
-   *
-   * WHY THE HIGHLIGHT NEEDS IT (D1, owner 2026-09-04: the carve "should work
-   * on either the corner edge or the side face"). The drag grabs risers only,
-   * so a tread under its cursor lights nothing and means "seed". The carve
-   * also cuts from a TREAD near a lip, so on the same pixel the two tools
-   * genuinely have different answers — and the lit lip has to be the one the
-   * press will actually take, or the highlight is advertising the wrong edit.
-   *
-   * Absent means the drag's rule, which is what every non-carve tool wants.
+   * The tool a press would use RIGHT NOW (state/hudState.ts's `brushTool`). The drag grabs risers
+   * only, so a tread under its cursor lights nothing and means "seed".
    */
   readonly tool?: SculptTool;
 }
 
 export interface World extends TerrainSink {
   /**
-   * Applies the local player's sculpt immediately, before the server has
-   * answered (design doc client-side prediction). Call this ONLY for an intent
-   * that actually went out on the wire — see main.tsx.
+   * Applies the local player's sculpt immediately, before the server has answered (design doc
+   * client-side prediction).
    */
   predictSculpt(intent: SculptIntent): void;
   /** 0 until the first snapshot arrives. */
@@ -153,13 +114,6 @@ export interface World extends TerrainSink {
   pickables(): Mesh[];
   /**
    * Is cell (x, y) in a chunk the server has sent us, and inside the world?
-   *
-   * PROMOTED FROM `chartSource`'s CLOSURE (2026-09-02, #284): the chart was
-   * not the only caller any more — every plugin that draws over the ground
-   * wants the same question answered, and the GPU reveal mask below is built
-   * from the same predicate. One definition (render/revealMask.ts's
-   * `revealedAtCell`) is what makes the chart, the mask and a plugin's own CPU
-   * test incapable of disagreeing. False before the first snapshot.
    */
   revealedAt(x: number, y: number): boolean;
   /**
@@ -170,39 +124,18 @@ export interface World extends TerrainSink {
   /** The shared reveal-clip uniform object, for a plugin's ShaderMaterial. */
   revealClipUniforms(): RevealClipUniforms;
   /**
-   * The first terrain cell a world-space ray meets, or null. THE pick: both
-   * the sculpt brush (input/sculptInput.ts) and plugin clicks
-   * (plugins/host.ts) go through here, so there is one answer to "which cell
-   * is under this ray" rather than one per caller.
-   *
-   * Marched over the height mirror, not raycast against the meshes — see
-   * terrain/picking.ts's pickTerrainCellByRay for why. Null before the first
-   * snapshot, and for a ray that meets no revealed terrain.
+   * The first terrain cell a world-space ray meets, or null.
    */
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
-   * THE SAME RAY, RE-ASKED OF ONE PINNED COLUMN — `pickCell` with the march
-   * removed, for the hover cache (input/sculptInput.ts's `hoverTarget`).
-   *
-   * The cell a player aimed at is a fact about the RAY and must survive the
-   * edits they make with it; everything the pick says about the MAP must not.
-   * So the cache pins (x, y) and the ray, and re-derives the pick here every
-   * read, rather than keeping a `spanIndex` that a carve or a weld has since
-   * renumbered (issue #324). Null when the ray meets nothing in that column at
-   * all, which is the caller's signal to march again.
-   *
-   * See terrain/picking.ts's `pickTerrainInColumn` for the ground-under-the-ray
-   * fallback that keeps a held lower digging the same cell.
+   * THE SAME RAY, RE-ASKED OF ONE PINNED COLUMN — `pickCell` with the march removed, for the hover
+   * cache (input/sculptInput.ts's `hoverTarget`).
    */
   pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
-   * The first cell a ray meets that has either something STANDING on it or
-   * terrain under it — `pickCell`'s question with the world's contents
-   * included, for plugins/host.ts's pickWorldCell (GH #252).
-   *
-   * `occupants` is what the plugins have declared standing on the ground; each
-   * is asked once per cell the march crosses. An empty list makes this
-   * `pickCell` with a distance attached.
+   * The first cell a ray meets that has either something STANDING on it or terrain under it —
+   * `pickCell`'s question with the world's contents included, for plugins/host.ts's pickWorldCell
+   * (GH #252).
    */
   pickPointedCell(
     origin: Vec3,
@@ -210,29 +143,13 @@ export interface World extends TerrainSink {
     occupants: readonly CellOccupancy[],
   ): PointedCellPick | null;
   /**
-   * Lights up the terrace lip this PICK is pointing at and returns the band a
-   * drag starting there would grab, or null when there is none
-   * (render/layerEdgeOverlay.ts).
-   *
-   * ONLY A RISER HIT HAS A LIP TO GRAB: the band is the one whose slab contains
-   * the height the ray struck, and the overlay is asked only whether that
-   * band's contour actually bounds this cell or a neighbour — a guard, not a
-   * search. A pick on a tread or on a roof underside returns null.
-   *
-   * It takes the whole pick, not just its cell, because a ray that struck a
-   * riser names WHICH of the lips stacked on that face is meant — the thing a
-   * plan-view distance cannot answer. See the derivation in the implementation.
+   * Lights up the terrace lip this PICK is pointing at and returns the band a drag starting there
+   * would grab, or null when there is none (render/layerEdgeOverlay.ts).
    */
   highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null;
   /**
-   * How the resting terrace lips are drawn — the player's choice
-   * (state/layerEdgePrefs.ts, applied by main.tsx; render/layerEdgeOverlay.ts
-   * owns what each style looks like). The lip under the cursor lights in every
-   * style; see that module for why.
-   *
-   * Remembered here rather than pushed at the overlay directly because a
-   * rejoin REPLACES the overlay (`resetWorld`), and a style applied once to
-   * the old one would be lost at the next world switch.
+   * How the resting terrace lips are drawn — the player's choice (state/layerEdgePrefs.ts, applied
+   * by main.tsx; render/layerEdgeOverlay.ts owns what each style looks like).
    */
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
   /**
@@ -241,175 +158,56 @@ export interface World extends TerrainSink {
    */
   setBrushRefused(refused: boolean): void;
   /**
-   * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored
-   * height, in BAND units, not world units.
-   *
-   * Lives here, beside the other pick derivations, because it is a question
-   * about the height mirror and the mirror is this module's. Its caller
-   * (input/sculptInput.ts's seed) has no heightmap, no `bandOf`, and its only
-   * height accessor is in world units — deriving a band there would be a unit
-   * trap. Read twice, before and after a seed, it says whether the seed
-   * actually raised the ground; an absolute read cannot, because `send`
-   * reports true for intents that predict nothing.
-   *
-   * Null before the first snapshot.
+   * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored height, in BAND units,
+   * not world units.
    */
   bandAtCell(x: number, y: number): number | null;
   /**
-   * The band a stroke starting at this PICK has hold of — `SculptIntent`'s
-   * `spanBand`, or null to mean the topmost span.
-   *
-   * NULL FOR EVERY ORDINARY COLUMN, which is the whole of why step 4.3 changes
-   * no behaviour: a column of one span has one surface, the server already
-   * moves it, and naming it would only be a chance for the two sides to
-   * disagree. The field appears on the wire exactly when the cell picked holds
-   * more than one span.
-   *
-   * Derived here rather than asked of the caller, for the reason
-   * `highlightLayerEdge` gives above: two callers deriving the same aim two
-   * ways is how they end up grabbing different layers.
+   * The band a stroke starting at this PICK has hold of — `SculptIntent`'s `spanBand`, or null to
+   * mean the topmost span.
    */
   graspSpanBand(pick: TerrainRayPick | null): number | null;
   /**
-   * The band a CARVE starting at this pick cuts from — `SculptIntent`'s
-   * `spanBand` for the one tool that needs it on ordinary ground too.
-   *
-   * NO ONE-SPAN SHORTCUT, unlike `graspSpanBand`, and that is the whole reason
-   * it is a second method. `graspSpanBand` says nothing about a column of one
-   * span because every other tool moves that column's only surface whatever
-   * band is named. A carve does not move a surface: it removes a range, and the
-   * range has to start SOMEWHERE, so a carve into a virgin cliff face — the
-   * very first cut of any tunnel, when no layered column exists anywhere in the
-   * world — needs the band the ray actually struck. Folding this into
-   * `graspSpanBand` instead would put a `spanBand` on every stamp and smooth
-   * intent over ordinary ground, which is exactly the byte-identity step 4.3
-   * was built to keep.
-   *
-   * THE CORNER EDGE OR THE SIDE FACE (D1, owner 2026-09-04). A riser hit
-   * carves the band of the face, as the drag grabs it. A TREAD hit carves the
-   * struck span's cap band, but only when that band's lip lies within reach of
-   * the point the ray met the tread — a flat tread far from any lip is not an
-   * edge and carves nothing. An underside hit carves the lowest band the span
-   * draws.
-   *
-   * AND THE BAND IS RE-CHECKED against `spanIndexCoveringBand` — the exact test
-   * the server applies before it acts on a `spanBand` — so the client can never
-   * send a band the server would silently no-op.
-   *
-   * Null when there is no pick, no world yet, the pick does not fit the live
-   * column, or no band survives the two tests above.
+   * The band a CARVE starting at this pick cuts from — `SculptIntent`'s `spanBand` for the one tool
+   * that needs it on ordinary ground too.
    */
   carveBand(pick: TerrainRayPick | null): number | null;
   /**
-   * WHERE A HELD CARVE CUTS NEXT: the first cell along this ray that still has
-   * material at `band` (terrain/picking.ts's `carveReachCell`).
-   *
-   * A SECOND METHOD RATHER THAN A PICK, because a tunnel asks a different
-   * question than a hover does. `pickCell` answers "what surface is the player
-   * looking at", and after the first cut that is the FLOOR of the hole just
-   * made — measured over pitches 20° to 70°, re-picking made every repeat
-   * re-cut an already-open band and change nothing. This answers "where along
-   * the aim is there still something to remove", which is the question a
-   * repeat is actually asking.
-   *
-   * Null before the first snapshot, and when the aim leaves the world without
-   * meeting solid material at that band — the "no more cutting" that ends the
-   * tunnel (owner, 2026-09-05).
+   * WHERE A HELD CARVE CUTS NEXT: the first cell along this ray that still has material at `band`
+   * (terrain/picking.ts's `carveReachCell`).
    */
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   /**
-   * World-space Y of the RENDERED terrain surface at cell (x, y): the
-   * band-quantised height the terrain mesh actually draws, which is where
-   * anything standing on the ground belongs. Cells in never-received chunks
-   * read as band 0, exactly like the mesh renders them. Null before the first
-   * snapshot. Consumed by the client plugin host (plugins/host.ts).
-   * — SUPERSEDED FOR NEVER-RECEIVED CELLS (2026-09-02): those now answer null
-   * too, for the reason given at the implementation. The mesh does not render
-   * them at all (mirror.ts, invariant 1), so "band 0" was never what the
-   * player saw there.
+   * World-space Y of the band the cell LATTICE puts (x, y) in. FOR LOGIC, NOT FOR A DRAWN Y:
+   * anything drawn at ground level asks `drawnGroundYAt`.
    */
   terrainHeightAt(x: number, y: number): number | null;
   /**
-   * AN OPAQUE COUNTER THAT CHANGES WHENEVER THE RENDERED TERRAIN NEAR (x, y)
-   * MAY HAVE CHANGED — the cache key for anything derived from the ground.
-   *
-   * WHAT IT IS FOR. A reader that computes something from a patch of terrain (a
-   * settlement's site classification, say) has no cheap way to ask "is my
-   * answer still good?", so it either recomputes on every event that might have
-   * touched the ground or goes stale. This answers exactly that question, in
-   * one array read: equal values mean the chunk holding this cell has not been
-   * rewritten since; a different value means it may have been.
-   *
-   * PER CHUNK, NOT PER CELL, and deliberately: the dirty sets this file already
-   * derives to patch the terrain meshes are chunk sets, so a chunk-granular
-   * counter is a re-use of work rather than a second derivation of "what
-   * changed" that could disagree with the meshes. A reader whose patch spans
-   * several chunks asks about each of them.
-   *
-   * CONSERVATIVE IN THE SAFE DIRECTION: a chunk is marked whenever the meshes
-   * are, which includes a predicted sculpt and its authoritative echo, and a
-   * chunk's back-neighbours across a shared border. It may therefore report a
-   * change where a particular reader would have seen none; it never misses one.
-   *
-   * COMPARE FOR EQUALITY ONLY. The value is monotonic within a session, but its
-   * magnitude, its step size and its behaviour across a rejoin are not part of
-   * the contract. 0 before the first snapshot.
+   * AN OPAQUE COUNTER THAT CHANGES WHENEVER THE RENDERED TERRAIN NEAR (x, y) MAY HAVE CHANGED — the
+   * cache key for anything derived from the ground. Compare for equality only.
    */
   terrainRevisionAt(x: number, y: number): number;
   /**
-   * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
-   * coordinate — terrain/drawnGround.ts's `capYAt`, read from the plan the
-   * terrain meshes published when they last drew that chunk.
-   *
-   * DISTINCT FROM `terrainHeightAt`, and the difference is the whole reason
-   * drawnGround.ts exists: `terrainHeightAt` answers "which band does the CELL
-   * LATTICE put this cell in", while a band's cap is drawn over the region
-   * enclosed by the SMOOTHED MARCHED CONTOUR at that band's threshold. On the
-   * `fork` fixture the two disagreed by a full band on 430 of 6745 probes
-   * (drawnGround.ts's header), and a full band is a whole world unit of
-   * relief. Anything LAID FLAT ON the drawn surface — a decal, a sheet of
-   * water — must ask this one; anything merely STANDING on the ground can
-   * afford the lattice answer, because a thing standing up is not seen against
-   * the surface it stands on.
-   *
-   * Null before the first snapshot, exactly as `terrainHeightAt` is — and also
-   * for a received chunk whose mesh build has not landed yet, which has drawn
-   * no cap to report. See the implementation for why that is a null rather
-   * than the blocky guess it used to be.
+   * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell. THE ONLY ORACLE FOR
+   * ANYTHING DRAWN AT GROUND LEVEL, flat on it or standing on it.
    */
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
   /**
-   * A read-only window onto the mirror for the Cartographer (ui/Cartographer):
-   * the world size, raw heights, and which cells sit in received chunks. Null
-   * before the first snapshot. The returned source closes over the CURRENT
-   * mirror, so a chart being drawn stays internally consistent even if a
-   * rejoin replaces the world mid-draw — it charts the world it was opened on.
+   * A read-only window onto the mirror for the Cartographer (ui/Cartographer): the world size, raw
+   * heights, and which cells sit in received chunks. Null before the first snapshot.
    */
   chartSource(): ChartSource | null;
   /**
-   * Core's terrain-side share of the frame's draw budget: the terrain
-   * super-meshes, the frontier fog, the sea, the river rig and the layer-edge
-   * overlay (part B of docs/plans/frame-budget-growth-and-draw-calls.md).
-   *
-   * HERE BECAUSE THE RIGS ARE HERE — `createWorld` is what builds all five,
-   * and a budget assembled anywhere else would be a list to keep in sync with
-   * this file. main.tsx adds the two rigs it owns (the brush preview and, when
-   * it exists, the pick-debug overlay) and hands the total to the plugin host.
-   *
-   * LIVE, not a constant: the terrain's and the fog's counts are their
-   * super-mesh counts, and the layer-edge overlay's is one per chunk with lips
-   * — all three grow as a world is revealed. Zero for the terrain-side rigs
-   * before the first snapshot, when there are none.
+   * Core's terrain-side share of the frame's draw budget: the terrain super-meshes, the frontier
+   * fog, the sea, the river rig and the layer-edge overlay (part B of
+   * docs/plans/frame-budget-growth-and-draw-calls.md).
    */
   drawBudget(): number;
   dispose(): void;
 }
 
 /**
- * Monotonic clock for prediction deadlines. `performance.now()` rather than
- * `Date.now()`: these timestamps are only ever compared to each other, and a
- * wall-clock adjustment (NTP step, DST) must not be able to expire — or
- * indefinitely postpone — a pending prediction.
+ * Monotonic clock for prediction deadlines.
  */
 const nowMs = (): number => performance.now();
 
@@ -421,63 +219,34 @@ const nowMs = (): number => performance.now();
 const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
 
 export function createWorld(viewport: Viewport): World {
-  // One sea for the whole session, like the fog and rivers below. It draws
-  // NOTHING until the first snapshot's `water.sync`: since the surface covers
-  // the received chunks and nothing else (render/water.ts), a client that has
-  // received no chunks has no sea — which replaces the old "the disconnected
-  // boot state is a plausible empty ocean rather than a void" behaviour, that
-  // ocean being the very thing the owner asked to be rid of (2026-08-24).
+  // One sea for the whole session, like the fog and rivers below.
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
   // One fog curtain for the whole session, like water — its segments are
   // synced (added/disposed) against whatever mirror currently exists rather
   // than being torn down and recreated on every rejoin.
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
-  // WHETHER THE MIST IS DRAWN AT ALL is a player preference
-  // (state/frontierMistPrefs.ts, default 'off'), kept in step by an effect for
-  // the same reason main.tsx keeps the celestial void's look in step by one:
-  // Solid re-runs it on every change, which is what makes the panel's <select>
-  // apply live with no reload. The fog starts hidden, so the microtask before
-  // this first runs cannot flash a layer the player turned off.
-  // The red boundary line — the default treatment since 2026-09-06. Its own
-  // layer rather than a third profile inside the mist bank: it is a marker
-  // laid on the ground, not a veil standing on it, so it shares the bank's
-  // edge derivation (terrain/frontier.ts) and none of its geometry.
+  // The red boundary line, and its own layer rather than a third mist profile: it is a marker laid
+  // on the ground, not a veil standing on it.
   const frontierLine: FrontierLine = createFrontierLine(viewport.scene);
-  // ONE CHOICE, TWO LAYERS. Both are handed the same mode and each shows
-  // itself for its own value, so the panel can never leave both drawn — see
-  // FrontierMistMode's doc comment for why the type is shared.
+  // ONE CHOICE (state/frontierMistPrefs.ts), TWO LAYERS: both are handed the same mode and each
+  // shows itself for its own value, so the panel can never leave both drawn.
   createEffect(() => {
     const mode = frontierMistMode();
     fog.setMode(mode);
     frontierLine.setVisible(mode === 'line');
   });
-  // THE REVEAL MASK, and it belongs beside the fog rather than anywhere else
-  // because it is the SAME fact: the frontier mist and the mask are both
-  // derived from `received`, they are synced at the same two call sites, and a
-  // mask that disagreed with the mist would draw a plugin's cloud over the
-  // very seam the mist exists to cover. One for the whole session, like water
-  // and fog, resized in place on a rejoin into a different world.
+  // THE REVEAL MASK, and it belongs beside the fog rather than anywhere else because it is the SAME
+  // fact: the frontier mist and the mask are both derived from `received`.
   const revealMask: RevealMask = createRevealMask(DEFAULT_WORLD_SIZE);
-  // Rivers, pools and waterfalls (mechanics cards 27 & 40) — a third derived
-  // layer alongside water and fog, same lifetime, same "one instance for the
-  // whole session" shape. Its own refresh() is throttled internally, so
-  // calling it from applyDirty below (the one place terrain changes) is free
-  // on every call that lands inside the throttle window.
-  // The network recompute is GLOBAL by nature (a scan for local maxima over
-  // every active cell, then a trace from every spring it finds) and measured at
-  // ~24 ms on a revealed 512² world — over the whole 7.1 ms frame budget on its
-  // own — so it runs in a worker. Where one cannot be started (an old browser, a
-  // CSP that forbids module workers), the source falls back to this thread:
-  // slower, never wrong.
+  // Rivers, pools and waterfalls (mechanics cards 27 & 40) — a third derived layer alongside water
+  // and fog, same lifetime, same "one instance for the whole session" shape.
   const rivers: RiverRig = createRiverRig(viewport.scene, viewport.onFrame, {
     networkSource: createWorkerRiverNetworkSource() ?? undefined,
   });
 
   /**
-   * The chunk-geometry worker pool, or null where no Worker could be started
-   * (an old browser, a CSP that forbids module workers) — in which case
-   * `createTerrainMeshes` falls back to building on this thread: slower, never
-   * wrong. One pool for the whole session, like the water and river rigs.
+   * The chunk-geometry worker pool, or null where no Worker could be started (an old browser, a CSP
+   * that forbids module workers).
    */
   const chunkBuildSource = createWorkerChunkBuildSource();
 
@@ -490,47 +259,19 @@ export function createWorld(viewport: Viewport): World {
   let mirror: TerrainMirror | null = null;
   /**
    * The drawn-surface oracle over the CURRENT mirror.
-   *
-   * IT NEEDS NO INVALIDATION ANY MORE, and that is the point of the 2026-08-26
-   * contract fix. It used to memoise a chunk plan of its own, which "MUST NOT
-   * outlive a terrain edit" — so four separate places in this file had to
-   * remember to null it, and a fifth that forgot would have laid decals on
-   * pre-edit contours. It is now a pure reader over the store the terrain
-   * meshes publish into as they draw (terrain/drawnGroundStore.ts): an entry is
-   * replaced by the very act that redraws its chunk, so this may live exactly
-   * as long as the mirror it reads. It is replaced with the mirror, in
-   * `resetWorld`, and nowhere else.
    */
   let drawnGround: DrawnGround | null = null;
   let meshes: TerrainMeshes | null = null;
   let layerEdges: LayerEdgeOverlay | null = null;
   /**
-   * The live value of `setLayerEdgeStyle`, kept so a rejoin's fresh overlay is
-   * created into the same choice. Defaults to the overlay's own resting style;
-   * main.tsx sets it from the stored pref before the first chunk lands.
+   * The live value of `setLayerEdgeStyle`, kept so a rejoin's fresh overlay is created into the
+   * same choice.
    */
   let layerEdgeStyle: LayerEdgeStyle = 'debug';
   let predictions: PredictionStore | null = null;
 
   /**
-   * PER-CHUNK TERRAIN-CHANGE COUNTERS — the cheap "has the ground here moved?"
-   * question, for readers that cache something derived from terrain and need to
-   * know when to throw it away (`terrainRevisionAt` below is the only way to
-   * read them).
-   *
-   * ONE COUNTER PER CHUNK, BUMPED WHEREVER THE DIRTY SET IS ALREADY KNOWN —
-   * `applyDirty`, the snapshot and the chunk unlock, which are the three places
-   * this file changes rendered heights. Every one of them already computes the
-   * chunks that moved (a dirty set is what patches the meshes), so this adds an
-   * increment per dirty chunk and no new derivation that could disagree with
-   * the meshes about what changed.
-   *
-   * MONOTONIC, NEVER RESET IN PLACE. Readers are contracted to compare values
-   * for equality only, and several of them fingerprint a NEIGHBOURHOOD by
-   * summing the counters of the chunks it covers — which is only collision-free
-   * because a counter can never come back down. A rejoin therefore reallocates
-   * the array AND bumps `terrainEpoch`, so every chunk of the new world reads
-   * higher than any value the old one ever showed rather than restarting at 0.
+   * PER-CHUNK TERRAIN-CHANGE COUNTERS — the cheap "has the ground here moved?" question.
    */
   let chunkRevisions: Int32Array | null = null;
   let terrainEpoch = 0;
@@ -552,25 +293,14 @@ export function createWorld(viewport: Viewport): World {
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * The band a ray AIMED AT — `terrain/pickBand.ts`'s derivation against the
-   * LIVE map. One derivation, so `graspSpanBand`, `carveBand` and
-   * `highlightLayerEdge` can never disagree about which layer the player is
-   * pointing at; null rather than a clamp when the pick does not fit the
-   * column it names. See that module for the rules and why they are there.
+   * The band a ray AIMED AT — `terrain/pickBand.ts`'s derivation against the LIVE map.
    */
   const bandOfPick = (pick: TerrainRayPick): number | null =>
     mirror === null ? null : bandOfPickIn(mirror.map, pick);
 
   /**
-   * The band a CARVE press starting at this pick would cut from — the same
-   * derivation plus the two tests only the world can apply: the overlay's lip
-   * proximity for a tread hit (D1, owner 2026-09-04, "it should work on either
-   * the corner edge or the side face") and the server's own
-   * `spanIndexCoveringBand` belt.
-   *
-   * MEASURED FROM THE RAY'S OWN MEETING POINT, which is where the pointer is
-   * drawn — not the cell's lattice position, so the press and the lit lip
-   * cannot disagree about how far the lip is.
+   * The band a CARVE press starting at this pick would cut from, measured from the ray's own
+   * meeting point — where the pointer is drawn, not the cell's lattice position.
    */
   const carveBandOfPick = (pick: TerrainRayPick): number | null => {
     const edges = layerEdges;
@@ -588,68 +318,24 @@ export function createWorld(viewport: Viewport): World {
   };
 
   /**
-   * Schedules the prediction sweep for the exact moment the oldest outstanding
-   * prediction times out — no polling interval, and therefore no timer at all
-   * while nothing is pending.
-   *
-   * The sweep is what covers the intents the server answers with SILENCE: an
-   * intent rejected by the unlock mask or vetoed by a plugin produces no diff
-   * by design (see the server's intent pipeline), so nothing else would ever
-   * take that prediction back off the screen.
-   */
-  /**
-   * The one door every HEIGHT change goes through on its way to the screen:
-   * patches the dirty chunks' terrain meshes, rewrites the frontier-fog
-   * segments standing on them, rewrites the sea's depth-alpha texels over
-   * them (render/water.ts — a sculpt that breaks the surface or digs deeper
-   * must be visible through the water the same frame it lands, not only
-   * after the next rejoin), and ticks the river rig's throttle. Events that
-   * change `received` (snapshot, chunkUnlock) call fog.sync afterwards as
-   * well; that is about WHICH segments exist, not their heights.
-   *
-   * IT NAMES CHUNKS ONLY TO MIRROR READERS. Anything that reads a chunk's
-   * published chart is driven by `onChunkDrawn` instead — see the guard
-   * comments below and the subscription in `resetWorld`.
+   * The one door every HEIGHT change goes through: the dirty chunks' meshes, the fog segments on
+   * them, the sea's depth-alpha texels, and the river rig's throttle.
    */
   const applyDirty = (dirty: Set<number>): void => {
     // AN EMPTY SET IS NOT A CHEAP CALL, so nothing below is asked to make it.
-    // Every mirror consumer here is written to iterate the set, which reads as
-    // "nothing dirty costs nothing" — and is false for `water.refresh`, which
-    // re-uploads its whole world-sized texture per call whatever the set holds
-    // (render/water.ts: an empty dirty set names no upload ranges, and a
-    // range-less `needsUpdate` is three's full-image path). Once the prediction journal stops reporting chunks
-    // whose rendered state did not change, the authoritative echo of a
-    // correctly predicted sculpt arrives with an empty set several times a
-    // second, and this guard is what makes that echo free.
     if (dirty.size > 0) {
       noteTerrainRevisions(dirty);
       meshes?.update(dirty);
-      // WHAT THIS SET IS GOOD FOR, and what it is not. `fog` and `water` read
-      // the MIRROR — heights and `received` — which the caller has already
-      // written, so they are correct the instant the set exists. The lips, the
-      // rivers and the sea's curtains read the per-chunk CHART instead
-      // (terrain/drawnGroundStore.ts), and `meshes.update` above only ENQUEUES:
-      // the chart is published one build later, in the splice. Chart readers
-      // are therefore driven by build completion (`onChunkDrawn`, wired in
-      // resetWorld) and never from here — driving them from this set has them
-      // reading the pre-edit chart, or the blocky MISSING-CHUNKS fallback, for
-      // every chunk whose build has not landed yet.
+      // WHAT THIS SET IS GOOD FOR: `fog` and `water` read the MIRROR, which the caller has already
+      // written. Chart readers are driven by build completion instead, never from here.
       if (mirror !== null) {
         fog.refresh(mirror, dirty);
         frontierLine.refresh(mirror, dirty);
         water.refresh(mirror, dirty);
       }
     }
-    // RIVERS TICK ON EVERY CALL, EMPTY SET INCLUDED, and they are handed no
-    // chunks: the chunks reach them from `onChunkDrawn`. Their refresh is
-    // throttled on ELAPSED TIME and accumulates whatever chunks it has been
-    // handed while inside the window (render/riverRig.ts), so the rebuild
-    // happens on the first call AFTER the window passes, whatever that call's
-    // own set holds. Skipping the empty-set calls would strand the last chunks
-    // of a stroke in `pendingDirty` until some unrelated later edit flushed
-    // them. An empty-set call is genuinely cheap — an elapsed-time compare,
-    // and, when the window has passed, the rebuild the ACCUMULATED set has
-    // already earned.
+    // RIVERS TICK ON EVERY CALL, EMPTY SET INCLUDED, and they are handed no chunks: the chunks
+    // reach them from `onChunkDrawn`.
     if (mirror !== null && drawnGround !== null) {
       rivers.refresh(mirror, NO_CHUNKS, drawnGround);
     }
@@ -671,10 +357,7 @@ export function createWorld(viewport: Viewport): World {
   };
 
   /**
-   * Rebuilds the local world for a newly reported size. Called on every
-   * snapshot: a snapshot is by definition the authoritative starting state for
-   * this session, so any terrain from a previous session must go, even if the
-   * size is unchanged (a server restart can hand back a different world).
+   * Rebuilds the local world for a newly reported size.
    */
   const resetWorld = (
     worldSize: number,
@@ -685,34 +368,25 @@ export function createWorld(viewport: Viewport): World {
     ground: DrawnGround;
   } => {
     meshes?.dispose();
-    // A NEW WORLD IS ENTIRELY NEW TERRAIN. Fresh counters, and an epoch bump so
-    // no chunk of it can read equal to a value the previous world published —
-    // see chunkRevisions' declaration for why that matters to a reader summing
-    // several of them.
+    // A NEW WORLD IS ENTIRELY NEW TERRAIN.
     terrainEpoch++;
     chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
     const nextMirror = createTerrainMirror(worldSize);
-    // The frame hook is what turns chunk meshing into a multi-frame job
-    // (render/terrainMeshes.ts, issue #47): heavy chunks queue instead of
-    // rebuilding a whole brush footprint inside one `update` call. Wrapped
-    // rather than passed by reference so the viewport keeps ownership of how
-    // its frame callbacks are registered.
+    // The frame hook is what turns chunk meshing into a multi-frame job (render/terrainMeshes.ts,
+    // issue #47): heavy chunks queue instead of rebuilding a whole brush footprint inside one
+    // `update` call.
     const nextMeshes = createTerrainMeshes(
       viewport.terrainGroup,
       nextMirror,
       { onFrame: (handler) => viewport.onFrame(handler) },
-      // The chunk build itself runs off this thread where a Worker can be
-      // started (render/chunkBuildSource.ts): a chunk is ~6 ms on a developed
-      // world against a 7.1 ms frame budget, and the contour pipeline is not
-      // resumable mid-chunk, so no frame budget can make one chunk cost less
-      // than one chunk. The pool outlives the mesh set — a rejoin replaces the
-      // meshes and must not terminate and respawn two threads — so it is
-      // created once, above, and disposed with the world.
+      // The chunk build itself runs off this thread where a Worker can be started
+      // (render/chunkBuildSource.ts): a chunk is ~6 ms on a developed world against a 7.1 ms frame
+      // budget.
       chunkBuildSource ?? undefined,
     );
-    // A new session's snapshot is the authoritative starting state, so any
-    // prediction still outstanding against the OLD session is meaningless: the
-    // store is replaced along with the mirror it shadows, which drops them.
+    // A new session's snapshot is the authoritative starting state, so any prediction still
+    // outstanding against the OLD session is meaningless: the store is replaced along with the
+    // mirror it shadows.
     const nextPredictions = createPredictionStore(nextMirror);
     layerEdges?.dispose();
     const nextLayerEdges = createLayerEdgeOverlay(
@@ -723,31 +397,17 @@ export function createWorld(viewport: Viewport): World {
     );
     nextLayerEdges.setStyle(layerEdgeStyle);
     mirror = nextMirror;
-    // The oracle closes over the mirror it was built on AND over that mirror's
-    // mesh store, so a replaced mirror takes both with it. This is the only
-    // place it is ever replaced — see its declaration.
+    // The oracle closes over the mirror it was built on AND over that mirror's mesh store, so a
+    // replaced mirror takes both with it.
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
     drawnGround = nextGround;
-    // EVERY CHART READER IS DRIVEN FROM HERE, chunk by chunk, on the event that
-    // publishes the chart it reads — the lips (layerEdgeOverlay.ts) and the
-    // rivers rig, whose curtains cut the sea and the river tiles from the drawn
-    // contours (render/water/waterCurtain.ts). `meshes.update` only enqueues a
-    // build; the chart lands one build later, in the splice, and `onChunkDrawn`
-    // fires after both the publish and the vertices (render/terrainMeshes.ts).
-    // A reader driven by the dirty set instead reads the pre-edit chart, or the
-    // blocky MISSING-CHUNKS fallback, for every chunk still in the queue.
-    //
-    // Subscribed here rather than passed into `createTerrainMeshes` because the
-    // meshes have to exist before the overlay and the oracle that read their
-    // store do, and a callback closing over a not-yet-assigned reader is a way
-    // to get that ordering wrong silently. The subscription dies with the
-    // meshes, which are disposed at the top of the next reset.
+    // EVERY CHART READER IS DRIVEN FROM HERE, chunk by chunk, on the event that publishes the chart
+    // it reads — the lips (layerEdgeOverlay.ts) and the rivers rig.
     nextMeshes.onChunkDrawn((chunkIdx) => {
       nextLayerEdges.refreshChunk(chunkIdx);
-      // The rig copies the set's elements into its own `pendingDirty` before
-      // returning (render/riverRig.ts), so one scratch set serves every chunk
-      // rather than allocating one per splice. Its time throttle coalesces a
-      // burst of drawn chunks into a single rebuild.
+      // The rig copies the set's elements into its own `pendingDirty` before returning
+      // (render/riverRig.ts), so one scratch set serves every chunk rather than allocating one per
+      // splice.
       drawnChunkScratch.clear();
       drawnChunkScratch.add(chunkIdx);
       rivers.refresh(nextMirror, drawnChunkScratch, nextGround);
@@ -758,16 +418,7 @@ export function createWorld(viewport: Viewport): World {
     clearExpiryTimer();
     water.setWorldSize(worldSize);
 
-    // Point the camera only at a world we have not pointed it at before. A
-    // snapshot also arrives on every reconnect, and re-aiming there would yank
-    // the camera out from under a player who had just lined up a shot.
-    //
-    // "Pointed at" covers both outcomes of restoreOrFocus: restoring the pose
-    // saved for this server + world size, and framing the world from scratch
-    // when there is no usable saved pose. A restored pose therefore counts as
-    // framed — a rejoin at the same size leaves it alone, exactly as it leaves
-    // a framed camera alone, and a rejoin at a NEW size runs the same restore
-    // path afresh against that size's own key.
+    // Point the camera only at a world we have not pointed it at before.
     if (worldSize !== framedWorldSize) {
       viewport.restoreOrFocus(worldSize);
       framedWorldSize = worldSize;
@@ -783,52 +434,29 @@ export function createWorld(viewport: Viewport): World {
 
   return {
     onSnapshot(msg: JoinSnapshotMessage): void {
-      // World identity (name + difficulty) travels on the snapshot and only on
-      // the snapshot, so it is published to the HUD here — on a REJOIN too,
-      // which matters: the client may have been pointed at a different world
-      // while it was away, and the header must follow the terrain it is over.
-      // Writing hudState from the imperative layer is the documented pattern
-      // (see state/hudState.ts's header), not a shortcut around Solid.
+      // World identity (name + difficulty) travels on the snapshot and only on the snapshot, so it
+      // is published to the HUD here — on a REJOIN too, which matters.
       setWorldIdentity({
         name: msg.worldName ?? null,
         difficulty: msg.difficulty ?? null,
       });
-      // A snapshot IS the proof that a world is loaded, and it is the only
-      // proof that arrives without being asked for. It clears the "no world is
-      // loaded" banner on a world SWITCH as well as on a first join, because
-      // the switch re-sends every client exactly this message (multi-world,
-      // 2026-08-22 — see WorldManager.openInto step 7).
+      // A snapshot IS the proof that a world is loaded, and it is the only proof that arrives
+      // without being asked for.
       setWorldLoaded(true);
-      // BACK TO YOUR OWN TERRITORY (owner, 2026-09-06). A snapshot is by
-      // definition "here is the world you may see", and every unasked-for one
-      // — rejoin, rollback, world switch — carries this token's own chunks, so
-      // the show-all button must not stay lit over terrain that is no longer
-      // there. The show-all snapshot passes through here too and would land on
-      // 'mine' as well; its receipt is sent immediately AFTER it and sets the
-      // scope back to 'all' (worldsState.applyWorldAdminResult), which is the
-      // ordering the server half is written to guarantee.
+      // A snapshot is by definition "here is the world you may see", and every unasked-for one —
+      // rejoin, rollback, world switch — carries this token's own chunks.
       setWorldViewScope('mine');
-      // Belt-and-braces against a lost terminal switch notice (reconnect
-      // mid-countdown): the snapshot proves the new world landed, so whatever
-      // countdown the client still believes in is over. Normally this arrives
-      // after the server's secondsRemaining: 0 notice has already cleared it,
-      // making this a no-op — see worldsState.applyWorldSwitchNotice.
+      // Belt-and-braces against a lost terminal switch notice (reconnect mid-countdown): the
+      // snapshot proves the new world landed, so whatever countdown the client still believes in is
+      // over.
       setPendingSwitch(null);
-      // Same, for a restart: the server is demonstrably back, so whatever
-      // "restarting" notice is on screen has been overtaken by events. There
-      // is no terminal message that could clear it instead — the restart's own
-      // last word is sent as the process goes down.
+      // Same, for a restart: the server is demonstrably back, so whatever "restarting" notice is on
+      // screen has been overtaken by events.
       setPendingRestartSeconds(null);
-      // Build identity travels with world identity, and matters on a REJOIN
-      // for the same reason: the server may have been restarted onto a new
-      // commit while this client's bundle stayed put — which is exactly the
-      // skew the watermark exists to expose.
+      // Build identity travels with world identity, and matters on a REJOIN for the same reason.
       setServerVersion(msg.serverVersion);
-      // AND THE RELOAD DECISION, which is a different question from the
-      // watermark's: the watermark asks "are these two halves in step?", this
-      // asks "is the code the server came back on different from the code this
-      // page is running?" — and only the second one may navigate. Keyed on
-      // buildIdentity, never on serverVersion; see net/buildReload.ts.
+      // AND THE RELOAD DECISION, which is a different question from the watermark's: the watermark
+      // asks "are these two halves in step?".
       noteBuildIdentity(msg.buildIdentity);
 
       const fresh = resetWorld(msg.worldSize);
@@ -837,102 +465,48 @@ export function createWorld(viewport: Viewport): World {
       // the empty map the mirror was allocated with.
       const snapshotDirty = fresh.predictions.applyAuthoritative(
         (m) => {
-          // The arch fixture used to be carved into the mirror right here
-          // (#129 step 3, `?arch=1`), because the wire could only carry one
-          // height per cell. Step 4.2 gave it a span, so the fixture is
-          // authored SERVER-SIDE at genesis instead (ARCH_FIXTURE=1,
-          // server/src/world/arch-fixture.ts) and arrives by the ordinary
-          // path. Two authoring routes for one mound would be two things to
-          // keep in agreement, and the client-only one became untestable the
-          // moment the wire could carry the real thing.
+          // The arch fixture is authored SERVER-SIDE at genesis (ARCH_FIXTURE=1,
+          // server/src/world/arch-fixture.ts) and arrives by the ordinary path.
           return applySnapshot(m, msg);
         },
         nowMs(),
       );
       noteTerrainRevisions(snapshotDirty);
       fresh.meshes.update(snapshotDirty);
-      // No lip refresh here: the overlay follows build completion, and these
-      // chunks have only just been queued (see applyDirty's note).
-      // The frontier is a fact about `received`, which the snapshot just
-      // changed — sync unconditionally, whether this is a first join (empty
-      // -> starter footprint) or a rejoin (old world's segments dropped, this
-      // session's rebuilt).
+      // No lip refresh here: the overlay follows build completion, and these chunks have only just
+      // been queued (see applyDirty's note).
       fog.sync(fresh.mirror);
       // Same fact, same call site — see fog.sync above.
       frontierLine.sync(fresh.mirror);
       // Derived from the same `received` the mist above is, at the same call
       // site, so the two can never describe different frontiers.
       revealMask.sync(fresh.mirror);
-      // The sea is drawn over the received chunks and nowhere else (see
-      // render/water.ts's header), so it answers to `received` exactly as the
-      // mist above does — same call site, same reason.
+      // The sea is drawn over the received chunks and nowhere else (see render/water.ts's header),
+      // so it answers to `received` exactly as the mist above does — same call site.
       water.sync(fresh.mirror);
-      // The depth-alpha texture water.setWorldSize just reallocated (inside
-      // resetWorld) is baseline-filled but otherwise empty — this is what
-      // actually paints in every texel the newly-unlocked chunks need, same
-      // dirty set the meshes above were just built from.
+      // The depth-alpha texture water.setWorldSize just reallocated (inside resetWorld) is
+      // baseline-filled but otherwise empty — this is what actually paints in every texel the
+      // newly-unlocked chunks need.
       water.refresh(fresh.mirror, snapshotDirty);
-      // Same reasoning as fog.sync above, and forceRefresh rather than
-      // refresh for the same reason `meshes`/`mirror` are replaced wholesale
-      // on every snapshot rather than patched: a rejoin's mirror belongs to a
-      // possibly brand-new world, and rivers.refresh's own throttle (tuned
-      // for coalescing a HELD STROKE's terrainDiff bursts — see riverRig.ts)
-      // would otherwise leave the PREVIOUS session's tiles on screen for up
-      // to RIVER_RECOMPUTE_INTERVAL_MS after a rejoin that happens to land
-      // inside its window.
+      // Same reasoning as fog.sync above, and forceRefresh rather than refresh for the same reason
+      // `meshes`/`mirror` are replaced wholesale on every snapshot rather than patched.
       rivers.forceRefresh(fresh.mirror, fresh.ground);
     },
 
     onChunkUnlock(msg: ChunkUnlockMessage): void {
-      // Guard, not an expected path: the snapshot always arrives first, so
-      // this can only fire if that ordering contract is broken.
-      //
-      // The contract is real and was worth pinning down, because Colyseus
-      // makes it easy to violate: `Room._onJoin` pushes the client into
-      // `this.clients` BEFORE awaiting the room's `onJoin`, so a client is
-      // broadcast-reachable before its snapshot has been sent, and the tick
-      // loop (which may carry a plugin's chunkUnlock) is a separate
-      // macrotask. Verified with the Phase 1 server agent against a running
-      // server: their `onJoin` sends the snapshot with nothing awaited before
-      // it, and its `: void` return type now makes marking it `async` a
-      // compile error — so the ordering is enforced at the source rather than
-      // merely observed.
-      //
-      // We still drop rather than guess: without a snapshot there is no world
-      // size, so the mirror cannot be allocated and the chunk has nowhere to
-      // go. Dropping loses one reveal; guessing would render the world at the
-      // wrong scale.
+      // Guard, not an expected path: the snapshot always arrives first, so this can only fire if
+      // that ordering contract is broken.
       if (meshes === null || predictions === null || mirror === null) return;
       const unlockDirty = predictions.applyAuthoritative(
         (m) => applyChunkUnlock(m, msg),
         nowMs(),
       );
-      // THE SECOND PLACE TERRAIN CHANGES, and the reason this line is not
-      // covered by applyDirty's: this handler updates the meshes itself rather
-      // than routing through it, because a newly-revealed chunk needs fog,
-      // water and the depth texels resynced as well.
-      //
-      // IT USED TO DROP THE DRAWN-GROUND CACHE HERE TOO, and the reason it no
-      // longer has to is the point of the 2026-08-26 contract fix: the oracle
-      // held a per-chunk memo that "MUST NOT outlive a terrain edit", and
-      // `capYAt` would happily plan a chunk that had NOT arrived — a plan over
-      // empty ground — so a memo that survived an unlock went on placing decals
-      // on the sea floor of terrain that is now dry land. Nothing is memoised
-      // any more: the oracle reads what the meshes published.
-      //
-      // WHAT `meshes.update` ON THE NEXT LINE ACTUALLY DOES is queue these
-      // chunks for a build; the chart each one is read through is published
-      // later, when its finished job is spliced (render/terrainMeshes.ts). So
-      // nothing here may read the oracle for these chunks — every chart reader
-      // (lips, rivers, the sea's curtains) is driven per chunk by
-      // `onChunkDrawn`, wired in resetWorld. The exception is the direct build
-      // source, where `update` flushes and the publish happens inside the call;
-      // that is what the tests and the preview harnesses run on.
+      // THE SECOND PLACE TERRAIN CHANGES, and the reason this line is not covered by applyDirty's:
+      // this handler updates the meshes itself rather than routing through it.
       noteTerrainRevisions(unlockDirty);
       meshes.update(unlockDirty);
-      // Same as the snapshot path: the lips follow the builds, not the queue.
-      // Territory just crept outward — move the mist with it. `received`
-      // changed, which is the only thing the frontier is defined from.
+      // Same as the snapshot path: the lips follow the builds, not the queue. Territory just crept
+      // outward — move the mist with it.
       fog.sync(mirror);
       // ...and the boundary line creeps outward with it.
       frontierLine.sync(mirror);
@@ -940,31 +514,19 @@ export function createWorld(viewport: Viewport): World {
       revealMask.sync(mirror);
       // ...and the sea creeps outward with it, same as on the snapshot path.
       water.sync(mirror);
-      // Newly-unlocked chunks need their depth-alpha texels painted in too —
-      // the texture only holds WATER_DEPTH_ALPHA_DEFAULT_BYTE for a chunk
-      // until something writes real depths into it, same as the snapshot
-      // path above.
+      // Newly-unlocked chunks need their depth-alpha texels painted in too — the texture only holds
+      // WATER_DEPTH_ALPHA_DEFAULT_BYTE for a chunk until something writes real depths into it.
       water.refresh(mirror, unlockDirty);
-      // Newly unlocked ground can carry its own springs/rivers that were
-      // never active before (rivers.ts's isActive bound follows `received`
-      // exactly like this — see riverRig.ts). The ordinary throttle is right
-      // here (unlike the snapshot path below): this is the SAME session's
-      // world growing, not a different one replacing it, so there is no
-      // stale "previous world" tile to worry about outliving.
-      //
-      // NO CHUNKS ARE NAMED, for applyDirty's reason: these chunks have only
-      // just been queued and have no chart yet. They reach the rig from
-      // `onChunkDrawn` as each one is drawn. This call is the throttle tick.
+      // Newly unlocked ground can carry its own springs/rivers that were never active before
+      // (rivers.ts's isActive bound follows `received` exactly like this — see riverRig.ts).
       if (drawnGround !== null) rivers.refresh(mirror, NO_CHUNKS, drawnGround);
       armExpiryTimer();
     },
 
     onTerrainDiff(msg: TerrainDiffMessage): void {
       if (meshes === null || predictions === null) return;
-      // The hot path: write cells (against authoritative state, with local
-      // predictions rolled off and any the server has now confirmed retired),
-      // then patch only the chunk meshes those cells touch — including
-      // neighbours across a shared border.
+      // The hot path: write cells (against authoritative state, with local predictions rolled off
+      // and any the server has now confirmed retired).
       applyDirty(
         predictions.applyCellDiff(msg, nowMs()),
       );
@@ -987,11 +549,8 @@ export function createWorld(viewport: Viewport): World {
 
     onSculptApplied(msg: SculptAppliedMessage): void {
       if (meshes === null || predictions === null) return;
-      // The ack arrives AFTER the terrainDiff it acknowledges (the ordering
-      // contract on SculptAppliedMessage), so the authoritative map already
-      // holds the server's version of this edit and dropping our own copy of
-      // it changes nothing on screen — which is exactly the point: keeping it
-      // would draw the same edit twice until the deadline (issue #21).
+      // The ack arrives AFTER the terrainDiff it acknowledges (the ordering contract on
+      // SculptAppliedMessage).
       applyDirty(predictions.resolveSeq(msg.seq));
       armExpiryTimer();
     },
@@ -1002,23 +561,16 @@ export function createWorld(viewport: Viewport): World {
 
     terrainHeightAt(x: number, y: number): number | null {
       if (mirror === null) return null;
-      // NULL FOR GROUND THIS CLIENT WAS NEVER SENT (2026-09-02), not band 0.
-      // The mirror stores a never-received cell as SEA_LEVEL, and band 0 is the
-      // plane the sea is drawn on — so a reader that took the highest sample
-      // under a body (wildlife's swimmerSeabedY, a whale's nose ten cells past
-      // the fog frontier) read "seabed at the waterline" and floated the whale
-      // on top of the sea. Every consumer already handles null (the
-      // pre-snapshot case); "I don't know this cell" is the same answer.
+      // The mirror stores a never-received cell as SEA_LEVEL, and band 0 is the plane the sea is
+      // drawn on.
       if (!isCellReceived(mirror, x, y)) return null;
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
     terrainRevisionAt(x: number, y: number): number {
       if (mirror === null || chunkRevisions === null) return 0;
-      // CLAMPED EXACTLY AS `sampleHeight` CLAMPS, so that a caller sampling one
-      // cell past the world border gets the revision of the very chunk that
-      // answered its height query. Asking the two for different cells is the
-      // one way this could report "unchanged" over ground that had moved.
+      // CLAMPED EXACTLY AS `sampleHeight` CLAMPS, so that a caller sampling one cell past the world
+      // border gets the revision of the very chunk that answered its height query.
       const max = mirror.map.size - 1;
       const cx = x < 0 ? 0 : x > max ? max : x;
       const cy = y < 0 ? 0 : y > max ? max : y;
@@ -1027,57 +579,19 @@ export function createWorld(viewport: Viewport): World {
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
       if (drawnGround === null || mirror === null) return null;
-      // Same contract as terrainHeightAt: a never-received chunk has no drawn
-      // ground (the renderer draws only received chunks), so its cap is not a
-      // height, it is the mirror's storage zero. Null, like every other
-      // "no ground here yet" answer in this file.
+      // Same contract as terrainHeightAt: a never-received chunk has no drawn ground (the renderer
+      // draws only received chunks), so its cap is not a height, it is the mirror's storage zero.
       if (!isCellReceived(mirror, cellX, cellZ)) return null;
-      // NOR HAS A RECEIVED CHUNK THAT HAS NOT BEEN DRAWN YET (2026-09-04). The
-      // chunk builder drains its queue under a frame budget, and `applyDirty`
-      // above bumps the terrain revision when a chunk is DIRTIED, not when it
-      // is drawn — so "received but not yet drawn" is a state no revision
-      // change announces the end of. `DrawnGround.capYAt` answers for such a
-      // chunk from the blocky per-cell fallback, which is the right answer for
-      // a caller that must draw something THIS frame and the wrong one for a
-      // caller that memoises: it would pin a guess against a fingerprint that
-      // never moves again (plugins/structures/client/site.ts's survey cache is
-      // the case that found this). Answering null hands both callers the truth
-      // and lets each choose — every consumer of this already handles null,
-      // because it is the pre-snapshot answer.
+      // The chunk builder drains its queue under a frame budget, and `applyDirty` above bumps the
+      // terrain revision when a chunk is DIRTIED, not when it is drawn.
       if (!drawnGround.isDrawnAt(cellX, cellZ)) return null;
       return drawnGround.capYAt(cellX, cellZ);
     },
 
     highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null {
-      // THE AIMED BAND IS DERIVED HERE, not asked of the caller. Both callers
-      // — the frame loop that lights the lip and the press that grabs it —
-      // must agree about which layer the cursor is on, and a parameter either
-      // of them could forget to pass is a way for them to disagree. They hand
-      // over the pick; this turns it into the aim.
-      //
-      // FOR THE DRAG, ONLY A RISER HIT NAMES A BAND, and it names it outright:
-      // the face under the cursor is the thing the player gets (owner,
-      // 2026-08-26). A ray that landed on a tread — or on a cave roof's
-      // underside — has no face to grab, so there is nothing to light and
-      // nothing to drag; the tread's own gesture is the seed
-      // (input/sculptInput.ts).
-      //
-      // THE CARVE IS THE EXCEPTION, and it is why `light.tool` exists (D1,
-      // owner 2026-09-04). A carve cuts from the corner edge as well as the
-      // side face, so for that tool the lit lip must come from the SAME
-      // derivation the press uses — `carveBandOfPick`, lip-proximity test and
-      // server belt included — or the highlight would be advertising an edit
-      // the press then refuses to make.
-      //
-      // THE OVERLAY IS NO LONGER ASKED WHICH BAND. It used to search: nearest
-      // lip in plan within a grab radius, tie-broken by the aimed band. A
-      // search is not a function of the pixel under the cursor, so the two
-      // derivations of "what am I aiming at" could disagree. Now `bandOfPick`
-      // decides and the overlay only answers yes/no about that one band.
+      // THE AIMED BAND IS DERIVED HERE, not asked of the caller.
       if (layerEdges === null) return null;
-      // A LIVE STROKE'S GRAB WINS over the current ray — see LayerEdgeLight's
-      // `heldBand`. `?? null` rather than a truthiness test: band 0 is a real
-      // band (the waterline), and it is held like any other.
+      // A LIVE STROKE'S GRAB WINS over the current ray — see LayerEdgeLight's `heldBand`.
       const carving = light.tool === 'carve';
       const band =
         light.heldBand ??
@@ -1088,28 +602,8 @@ export function createWorld(viewport: Viewport): World {
             : pick.hitRiser
               ? bandOfPick(pick)
               : null);
-      // CALLED EVEN WITH NOTHING TO LIGHT, because the overlay holds the
-      // highlight from the last call: returning early on a null pick would
-      // leave the previous frame's lip lit after the pointer had left it.
-      //
-      // THE POINT THE LIP IS MEASURED FROM. On a RISER hit it is where the ray
-      // actually met the face — the better point the phase-1 note above said a
-      // caller could supply, and now does: the pointer is drawn there
-      // (render/brushPreview.ts), so measuring the lit stretch from anywhere
-      // else would light a run of lip that is not centred on the mark the
-      // player is aiming with.
-      //
-      // Everywhere else it stays the cell's own lattice position, which is
-      // where the contour vertices live (the marcher samples the height field
-      // at integer cell coordinates and scales by CELL_WORLD_SIZE) — a
-      // horizontal face has no meeting point more meaningful than the cell.
-      // Ignored entirely when there is no pick, which is why the cell doubles
-      // as the "is there anything here" flag.
-      //
-      // THE CARVE MEASURES FROM THE MEETING POINT ON EVERY FACE, tread
-      // included: `carveBandOfPick` tested lip proximity from exactly that
-      // point, so lighting from the cell lattice instead could light a lip the
-      // press did not admit, or leave the admitted one dark.
+      // CALLED EVEN WITH NOTHING TO LIGHT, because the overlay holds the highlight from the last
+      // call.
       const useHitPoint = carving || (pick !== null && pick.hitRiser);
       const atX = pick === null ? 0 : useHitPoint ? pick.hitX : pick.x * CELL_WORLD_SIZE;
       const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
@@ -1128,9 +622,8 @@ export function createWorld(viewport: Viewport): World {
     },
     graspSpanBand(pick: TerrainRayPick | null): number | null {
       if (pick === null || mirror === null) return null;
-      // One span, one surface: say nothing, and the server moves the only
-      // thing it could have moved anyway. This is what keeps every stroke on
-      // ordinary terrain byte-identical to before the field existed.
+      // One span, one surface: say nothing, and the server moves the only thing it could have moved
+      // anyway.
       if (spanCount(mirror.map, pick.x, pick.y) < 2) return null;
       // WHICH span, said as a band — the shared derivation.
       return bandOfPick(pick);
@@ -1145,11 +638,8 @@ export function createWorld(viewport: Viewport): World {
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
-      // THE DRAWN FACES, so a riser pick names the band the player can see
-      // rather than the band the cell's box face happens to cross first
-      // (terrain/picking.ts's `DrawnRisers`). Null until the overlay exists —
-      // and for every chunk it has not published a contour for — which is the
-      // lattice-only behaviour this had before.
+      // THE DRAWN FACES, so a riser pick names the band the player can see rather than the band the
+      // cell's box face happens to cross first (terrain/picking.ts's `DrawnRisers`).
       return pickTerrainCellByRay(mirror, origin, direction, layerEdges);
     },
     pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null {
@@ -1181,13 +671,9 @@ export function createWorld(viewport: Viewport): World {
         size: m.map.size,
         heightAt: (x: number, y: number): number =>
           m.map.cells[cellIndex(m.map, x, y)],
-        // "Revealed" for the chart is exactly the renderer's own notion of
-        // what exists: the cell's owning chunk is in `received` (mirror.ts
-        // invariant 1). No reveal-plugin knowledge leaks in here.
-        //
-        // IT USED TO RE-DERIVE THAT INLINE, which was the only copy of the
-        // predicate until #284 needed it on the GPU as well; it now calls the
-        // one definition, so the chart and the reveal mask cannot drift apart.
+        // "Revealed" for the chart is exactly the renderer's own notion of what exists: the cell's
+        // owning chunk is in `received` (mirror.ts invariant 1). No reveal-plugin knowledge leaks
+        // in here.
         revealedAt: (x: number, y: number): boolean => revealedAtCell(m, x, y),
       };
     },
