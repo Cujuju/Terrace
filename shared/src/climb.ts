@@ -1,47 +1,8 @@
-// Climbing — what a legged mover does when the way on is a wall.
-//
-// WHY IT EXISTS (owner, 2026-09-05: "peeps need to be able to climb anything …
-// and I think I would even like them to be able to slowly climb sheer walls
-// with maybe a fifteen percent chance of falling and dying"). Measured on the
-// live world (frostwick-hollows, snapshot 990) the land a LAND_WALKER_PROFILE
-// leaves connected is shattered: 35 617 separate regions over 66 255 walkable
-// cells, 28 157 of them a single isolated cell, and the LARGEST reachable
-// region is 4.3 % of the land and spans exactly ONE terrace band. A walker's
-// gradient limit is LAND_WALKER_MAX_GRADIENT_PER_CELL (2 height units per
-// cell) while relaxation leaves adjacent cells differing by up to
-// MAX_STEP + RELAX_SLACK (5) and the renderer draws in steps of BAND_HEIGHT
-// (16) — so 68 % of adjacent land pairs are refused outright, and a band
-// change, which is every visible step in a terraced world, is EIGHT TIMES the
-// limit and can never be crossed at all. That is the "they seem to always be
-// confined to one layer" the owner saw.
-//
-// THE RULE, AND WHERE IT LIVES. A profile that carries a `climb` rule
-// (traversal.ts's ClimbRule) may cross ANY rise, up or down, by climbing it
-// instead of walking it: slowly, at CLIMB_SECONDS_PER_BAND, and with one roll
-// of that rule's `fallChance` at the foot of the wall. Everything about how a
-// climb PROGRESSES is here; everything about WHO may climb is a profile, and
-// everything about what a climb COSTS a route is pathing.ts. Three files, one
-// rule each, so a mover cannot be given the ability without also being priced
-// for it.
-//
-// DESCENT IS A CLIMB TOO. A wall refused on the way up is refused on the way
-// down by the same symmetric |dh| test, so a climber that could only go up
-// would strand itself on the first ledge it reached. Same speed, same roll:
-// letting go of a cliff face is what kills you, and that is as true downward.
-//
-// DETERMINISM. No `Math.random` anywhere: the fall is decided by hashing a
-// caller-supplied seed (rng.ts's `hashToIndex`, the same murmur3 finalizer
-// every seeded thing in this repo uses), so two servers fed the same streams
-// kill the same peep on the same wall — the property plugins/pilgrims'
-// simulation header already promises for everything else it does.
-//
-// THE BODY TRACES THE BAND'S PROFILE (owner, 2026-09-06, rejecting the
-// diagonal this file used to draw: "since it's a sheer face, try to draw it to
-// the profile of the band"). A climb is a VERTICAL leg against the face and a
-// HORIZONTAL leg across the lip, never one diagonal through the rock corner.
-// `advanceClimb`'s leg tables are that shape written down.
+// Climbing — what a legged mover does when the way on is a wall. Vertical leg
+// up the face, horizontal leg across the lip, one fall roll.
+// See docs/decisions/movement.md.
 
-import { BAND_HEIGHT, cellsAcross } from './constants.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, cellsAcross } from './constants.ts';
 import { hashToIndex } from './rng.ts';
 import {
   admitsHeight,
@@ -52,38 +13,29 @@ import {
 } from './traversal.ts';
 
 /**
- * Seconds a climber spends on one BAND of wall.
- *
- * 4 — owner, 2026-09-05, picking "a brisk scramble" over an ordeal. Against
- * the shipped walk it is what makes a wall a decision rather than a shortcut:
- * a peep covers a cell of flat ground in 0.5 s (PILGRIM_WALK_SPEED_CELLS_PER_
- * SECOND, 0.5 world units/s over a CELL_WORLD_SIZE of 0.25), so one band of
- * wall costs the same time as eight cells of walking — and pathing.ts prices
- * it at exactly that, plus the risk.
- *
- * A BAND IS THE UNIT because a band is what a player sees: the terrain draws
- * quantised to band floors, so every wall in the world is a whole number of
- * these, and "four seconds a band" is a sentence about the picture rather than
- * about the height scale underneath it.
+ * Walking speed climbs are measured and priced against, in world units/s.
+ * Restates plugins/pilgrims' PILGRIM_WALK_SPEED_CELLS_PER_SECOND: shared/ may
+ * not import a plugin. See docs/decisions/movement.md.
  */
-export const CLIMB_SECONDS_PER_BAND = 4;
+export const WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND = 0.5;
+
+/** Default climb rate as a fraction of walking speed over the same world distance. */
+export const CLIMB_SPEED_FRACTION_OF_WALK = 1 / 2;
+
+/** One drawn band of wall, in world units. */
+const BAND_WORLD_UNITS = BAND_HEIGHT * (MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT);
+
+/** Seconds a climber spends on one band of wall. Derived; never write it by hand. */
+export const CLIMB_SECONDS_PER_BAND =
+  BAND_WORLD_UNITS / (WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND * CLIMB_SPEED_FRACTION_OF_WALK);
 
 /** The same speed in the height units the sim actually moves in. */
 export const CLIMB_RISE_HEIGHT_UNITS_PER_SECOND = BAND_HEIGHT / CLIMB_SECONDS_PER_BAND;
 
 /**
- * How fast THIS climber goes up, in height units per second.
- *
- * A RATE PER CLIMBER, not one for the world (owner, 2026-09-06: "Ibex are known
- * for being incredible jumpers"). The figure above stays the default and every
- * profile that does not ask for another one keeps it exactly, so this widening
- * costs the peep and the yeti nothing; what it buys is that an animal whose
- * whole character is HOW it gets up a wall can say so in the one place the
- * climb is defined, instead of the client faking a leap over a crawl.
- *
- * ASK THIS, NEVER `CLIMB_RISE_HEIGHT_UNITS_PER_SECOND` DIRECTLY, anywhere a
- * particular climber's speed is meant — the constant is the default, not the
- * answer.
+ * How fast THIS climber goes up, in height units per second. Ask this, never
+ * CLIMB_RISE_HEIGHT_UNITS_PER_SECOND, wherever a particular climber is meant.
+ * See docs/decisions/movement.md.
  */
 export function climbRiseHeightUnitsPerSecond(rule: ClimbRule): number {
   return BAND_HEIGHT / (rule.secondsPerBand ?? CLIMB_SECONDS_PER_BAND);
@@ -98,49 +50,28 @@ export function climbSecondsPerBand(rule: ClimbRule): number {
 export const CELL_CENTRE_OFFSET = 0.5;
 
 /**
- * Half the drawn peep's DEPTH along the axis it faces, in world units.
- *
- * MEASURED OFF THE MODEL, not chosen: Rudy's torso is a sphere of 0.125
- * scaled 0.95 on its facing axis (plugins/pilgrims/client/models.ts), drawn at
- * PILGRIM_MODEL_SCALE 0.85 — so 0.125 * 0.95 * 0.85. Rudy rather than Uno
- * because Rudy is the deeper of the two peeps and neither may enter the rock.
- *
- * A NUMBER, NOT AN IMPORT, because shared/ may not read client geometry. If
- * the peep is remodelled this has to be re-measured; the arithmetic above is
- * written out so the next reader can check it against the model in one look.
+ * Half the peep's depth along its facing axis, in world units. A number, not
+ * an import: shared/ may not read client geometry. Re-measure if remodelled.
+ * See docs/decisions/movement.md.
  */
 const CLIMB_BODY_HALF_DEPTH_WORLD_UNITS = 0.125 * 0.95 * 0.85;
 
 /**
- * How far a climber's centre stands from the face it is holding, in cells.
- *
- * A BODY DIMENSION, AND THE ONLY THING THAT MAY BE PASSED HERE. It used to be
- * an argument, and all three callers handed it a crowding radius —
- * WALKER_PERSONAL_SPACE_CELLS at 0.68, wider than the half-cell it is
- * subtracted from, so the inset went negative and every climber hung 0.68
- * cells out in the air instead of touching the wall (measured 2026-09-06). An
- * argument three callers get wrong the same way is the API's bug, so the
- * argument is gone.
- *
- * It comes to 0.404 of a cell: a peep is nearly as deep as a cell is wide, so
- * a climber's centre barely leaves its own cell centre. A climber that is not
- * a peep says so on its rule rather than at the callsite.
+ * How far a climber's centre stands from the face it holds, in cells. A body
+ * dimension, never a crowding radius. See docs/decisions/movement.md.
  */
 export const CLIMB_BODY_HALF_WIDTH_CELLS = cellsAcross(CLIMB_BODY_HALF_DEPTH_WORLD_UNITS);
 
 /**
  * The widest half-width the inset arithmetic admits: a body at exactly this
- * stands on the shared edge, and anything wider would push the foot back out
- * of the low cell — the negative inset that put every climber in mid-air.
+ * stands on the shared edge, and anything wider hangs off the wall.
  */
 const CLIMB_BODY_HALF_WIDTH_LIMIT_CELLS = CELL_CENTRE_OFFSET;
 
 /**
  * This climber's half-width — the constant above unless its rule overrides it.
- *
- * CLAMPED, because the defect this replaced was a number too wide for the
- * half-cell it is taken from. A future animal that declares a body wider than a
- * cell stands on the edge rather than off the wall.
+ * Clamped, so a body wider than a cell stands on the edge rather than off the
+ * wall.
  */
 export function climbBodyHalfWidthCells(rule: ClimbRule): number {
   const declared = rule.bodyHalfWidthCells ?? CLIMB_BODY_HALF_WIDTH_CELLS;
@@ -149,51 +80,31 @@ export function climbBodyHalfWidthCells(rule: ClimbRule): number {
 
 /**
  * Seconds a descender spends turning its back on the drop before it goes over.
- *
- * A quarter of a band's climb: long enough to read as turning about, short
- * enough not to read as a pause. Ascents never pay it — they already face the
- * wall they walked up to.
+ * A quarter of a band's climb; ascents never pay it.
  */
 export const CLIMB_TURN_SECONDS = CLIMB_SECONDS_PER_BAND / 4;
 
-/**
- * Seconds a climber that has let go takes to drop one band.
- *
- * HALF A SECOND, AND IT BELONGS TO NOBODY. It was written as eight times the
- * climb rate while there was only one climb rate, and that reading breaks the
- * moment a climber gets a rate of its own: a fall is gravity, so the better
- * climber must not also be the faster faller. The value is exactly what that
- * derivation produced (BAND_HEIGHT / 4 s, times eight), so nothing shipped
- * moves — only what the number MEANS does.
- *
- * It still has to read as a fall rather than a controlled descent, which is the
- * one thing it must not look like, and against the default climb it is the same
- * eight-to-one it always was.
- */
-export const FALL_SECONDS_PER_BAND = 0.5;
+/** Gravity: every faller drops at this multiple of walking speed, whatever its climb rate. */
+export const FALL_SPEED_MULTIPLE_OF_WALK = 3;
+
+/** Seconds any faller takes to drop one band. Derived; never write it by hand. */
+export const FALL_SECONDS_PER_BAND =
+  BAND_WORLD_UNITS / (WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND * FALL_SPEED_MULTIPLE_OF_WALK);
 
 /** How fast a climber that has let go drops, in height units per second. */
 export const FALL_DROP_HEIGHT_UNITS_PER_SECOND = BAND_HEIGHT / FALL_SECONDS_PER_BAND;
 
 /**
- * Denominator the fall roll is taken over — basis points.
- *
- * A `fallChance` is a fraction and `hashToIndex` returns an integer, so the
- * comparison needs a scale. 10 000 makes every chance the owner has asked for
- * (15 %, 5 %, 1 %) exact rather than rounded, and leaves three more decimal
- * places for any future one.
+ * Denominator the fall roll is taken over — basis points. `fallChance` is a
+ * fraction and `hashToIndex` returns an integer, so the comparison needs a
+ * scale. See docs/decisions/movement.md.
  */
 export const FALL_ROLL_BASIS_POINTS = 10_000;
 
 /**
- * Where up the wall a doomed climber lets go, as a fraction of the FACE leg.
- *
- * NOT AT THE TOP AND NOT AT THE BOTTOM. A climber that always fell from the
- * last inch would read as being pushed off the ledge, and one that fell in the
- * first inch would read as never having started; both make the fall look like
- * a bug rather than a slip. The fraction is HASHED per climb between these two
- * bounds, so consecutive falls on the same wall let go at visibly different
- * heights.
+ * Where up the wall a doomed climber lets go, as a fraction of the FACE leg —
+ * hashed between these bounds, never the top nor the bottom.
+ * See docs/decisions/movement.md.
  */
 export const FALL_RELEASE_MIN_FRACTION = 0.25;
 export const FALL_RELEASE_MAX_FRACTION = 0.9;
@@ -203,10 +114,7 @@ const FALL_RELEASE_STEPS = 64;
 
 /**
  * The legs of a climb, in travel order — the band's profile, not a diagonal.
- *
- * An ascender walked up to the face, so it starts on it. A descender is
- * standing on the lip facing the drop, so it turns about and backs over the
- * edge first, and steps off the face onto open ground at the bottom.
+ * A descender turns about, backs over the lip, and steps off at the bottom.
  */
 const ASCENT_LEGS = ['face', 'lip'] as const;
 const DESCENT_LEGS = ['turn', 'lip', 'face', 'ground'] as const;
@@ -215,13 +123,8 @@ const DESCENT_LEGS = ['turn', 'lip', 'face', 'ground'] as const;
 export type ClimbLeg = (typeof ASCENT_LEGS)[number] | (typeof DESCENT_LEGS)[number] | 'done';
 
 /**
- * One climb in progress — where the body is on the wall, and which leg it is on.
- *
- * THE FOOT BELONGS TO THE LOW CELL OF THE PAIR, always, up or down. Computing
- * it in the MOVER's cell is correct going up and buries a descender in the rock
- * column it is standing on (measured 2026-09-06: the foot landed inside the
- * high cell, so the body sank through solid rock for the whole descent and
- * appeared at the bottom).
+ * One climb in progress — the body's place on the wall and its current leg.
+ * The foot belongs to the LOW cell of the pair, up or down.
  */
 export interface ClimbState {
   /** The cell being climbed ONTO — entered only when the climb completes. */
@@ -248,9 +151,8 @@ export interface ClimbState {
   /** The heading the mover arrived on, for a descender's turn to rotate from. */
   readonly turnFrom: number;
   /**
-   * This climber's own rise, in height units per second — `climbRiseHeightUnits
-   * PerSecond` of the rule that started it, resolved ONCE at the foot so a tick
-   * never has to go looking for the profile again.
+   * This climber's own rise, in height units per second — resolved ONCE at the
+   * foot so a tick never has to go looking for the profile again.
    */
   readonly risePerSecond: number;
   /** Seconds the two horizontal legs take, resolved with the rate above. */
@@ -275,19 +177,9 @@ export interface ClimbState {
 }
 
 /**
- * The two things a client has to be TOLD about a mover that is off the ground.
- *
- * ONE SHAPE FOR EVERY WIRE, because there are six places a mover's climb is
- * serialised (pilgrims' three walker kinds, monsters, wildlife's population and
- * its flocks) and a field added at five of them is a bug at the sixth. Each
- * protocol still declares its own fields — this only decides what goes in them.
- *
- * `falling` IS NOT INFERRABLE FROM `climbHeight`, which is why it is here: a
- * descent is a climb whose height is also falling, at an eighth of the speed
- * (FALL_DROP_HEIGHT_UNITS_PER_SECOND), so a client watching the height alone
- * would have to guess a rate from two snapshots and would guess wrong at the
- * first tick of every fall — the same argument that put `climbHeight` on the
- * wire rather than deriving it from the ground.
+ * The two things a client has to be TOLD about a mover off the ground. One
+ * shape for every wire; `falling` is not inferrable from `climbHeight`.
+ * See docs/decisions/movement.md.
  */
 export interface ClimbWire {
   /** Stored height while off the ground; null for a mover standing on it. */
@@ -310,11 +202,7 @@ export type ClimbOutcome = 'climbing' | 'arrived' | 'fallen';
 
 /**
  * The fixed geometry of one climb: which cell is low, where the face is, and
- * which way the body faces on it.
- *
- * ONE DERIVATION FOR THE TEST AND THE ACT. `approachAndClimb` needs the foot
- * before a climb exists and `beginClimb` needs it again to start one; deriving
- * it twice is how the two came to disagree about which cell the foot is in.
+ * which way it faces. One derivation for the test and the act.
  */
 interface ClimbGeometry {
   readonly descending: boolean;
@@ -392,26 +280,8 @@ function climbGeometryOf(
 }
 
 /**
- * Starts a climb from the mover's own cell onto (toX, toY), or null if that
- * step is not a climb this profile has to make.
- *
- * NULL FOR EVERY REASON A CLIMB IS NOT THE ANSWER, and the caller treats them
- * all the same way (keep walking, or give up): the profile cannot climb, the
- * target is not ground this mover may stand on at all (water, the wrong band,
- * a river — climbing does not make a lake crossable), or the step was never
- * blocked in the first place and is simply walkable.
- *
- * "WALKABLE" IS THE CLIMBER'S OWN FIGURE, and for a climber that is every slope
- * the world can grow (traversal.ts's `walkableGradientLimit` and
- * SHEER_RISE_HEIGHT_UNITS_PER_CELL), so a band crossed over ordinary ground is
- * WALKED at walking pace and only a sculpted, sheer face is climbed — the
- * owner's rule of 2026-09-05, and the reason this file needs no rate of its own
- * for gentle rises.
- *
- * `seed` decides the fall. It must be stable for THIS climb and different for
- * the next one — a mover id mixed with the cell it is climbing onto and a
- * per-mover climb counter is the shape every caller uses; see plugins/pilgrims'
- * `climbSeedFor`.
+ * Starts a climb onto (toX, toY), or null when that step is not a climb for
+ * this profile. `seed` decides the fall. See docs/decisions/movement.md.
  */
 export function beginClimb(
   world: TerrainSampler,
@@ -427,15 +297,11 @@ export function beginClimb(
   if (geometry === null) return null;
 
   const rule = geometry.rule;
-  // ONE ROLL PER CLIMB, whatever the wall's height — the owner's rule, and the
-  // 4:1 sheer face is what guarantees there is a wall to roll against at all
-  // (ClimbRule's own comment). A climb of forty bands is the same single roll as
-  // a climb of four.
+  // ONE ROLL PER CLIMB, whatever the wall's height: a climb of forty bands is
+  // the same single roll as a climb of four.
   const doomed = hashToIndex(seed, FALL_ROLL_BASIS_POINTS) < rule.fallChance * FALL_ROLL_BASIS_POINTS;
   // A second, independent draw off the same seed: the first decides WHETHER,
-  // this one decides WHERE. `seed + 1` rather than a second seed argument
-  // because hashToIndex's mix is an avalanche — consecutive seeds land far
-  // apart, which is exactly the property its own comment promises.
+  // this one WHERE. `seed + 1` works because hashToIndex's mix is an avalanche.
   const releaseStep = hashToIndex(seed + 1, FALL_RELEASE_STEPS);
   const releaseFraction =
     FALL_RELEASE_MIN_FRACTION +
@@ -506,11 +372,8 @@ function legComplete(state: ClimbState, leg: ClimbLeg): boolean {
 }
 
 /**
- * Runs the vertical leg, and it is the ONLY leg a doomed climber lets go on:
- * the fall is letting go of a face, so a body still on the lip has nothing to
- * let go of yet.
- *
- * Returns the seconds it used.
+ * Runs the vertical leg, the ONLY leg a doomed climber lets go on: a body on
+ * the lip has nothing to let go of. Returns the seconds used.
  */
 function advanceFaceLeg(state: ClimbState, seconds: number): number {
   const direction = state.descending ? -1 : 1;
@@ -550,22 +413,9 @@ function advanceFlatLeg(state: ClimbState, leg: ClimbLeg, seconds: number): numb
 }
 
 /**
- * Advances one climb by `dt` seconds, moving the mover.
- *
- * IT OWNS THE HORIZONTAL TOO, and that is the fix rather than a convenience
- * (owner, 2026-09-06: "I don't want a model sitting in place for 4 s as it
- * climbs only for it to pop to the next level"). Every caller used to place the
- * mover on the target cell itself, in one frame, on the tick that returned
- * 'arrived' — three plugins each writing the same teleport, and no place where
- * topping out could be written once.
- *
- * A TICK MAY SPAN A LEG BOUNDARY, so the legs run in a loop off one budget of
- * seconds: the body does not stall for the remainder of a tick at the corner.
- *
- * 'arrived' means the caller clears the state; 'fallen' means the climber is
- * back at the foot of the wall having let go, and the caller kills it. Both are
- * terminal — a caller that keeps ticking a finished climb gets the same answer
- * again rather than a moving corpse.
+ * Advances one climb by `dt` seconds, moving the mover; it owns the horizontal
+ * legs too. 'arrived' clears the state, 'fallen' kills the mover; both are
+ * terminal. See docs/decisions/movement.md.
  */
 export function advanceClimb(mover: ClimbingMover, dt: number): ClimbOutcome {
   const state = mover.climb;
@@ -573,9 +423,8 @@ export function advanceClimb(mover: ClimbingMover, dt: number): ClimbOutcome {
   let left = Math.max(0, dt);
 
   if (state.falling) {
-    // A FALL GOES DOWN AND LANDS AT THE FOOT OF THE FACE, whichever way the
-    // climb was going — which is what `lowHeight` means and why the direction
-    // is no longer read off `fromHeight`.
+    // A FALL LANDS AT THE FOOT OF THE FACE, whichever way the climb was going
+    // — which is what `lowHeight` means.
     state.height -= FALL_DROP_HEIGHT_UNITS_PER_SECOND * left;
     if (state.height <= state.lowHeight) {
       state.height = state.lowHeight;
@@ -602,12 +451,8 @@ export function advanceClimb(mover: ClimbingMover, dt: number): ClimbOutcome {
 }
 
 /**
- * Puts the mover where its own leg says it is: turning on the lip, crossing it,
- * flat against the face, or stepping off at the bottom.
- *
- * THE FACE LEG PINS x AND y. Only the height moves, and it moves at the foot —
- * which is in the LOW cell, so the body is against the wall in open air rather
- * than inside the rock.
+ * Puts the mover where its leg says it is. The face leg pins x and y at the
+ * foot, in the LOW cell — never inside the rock.
  */
 function placeOnWall(mover: ClimbingMover, state: ClimbState): void {
   switch (climbLegOf(state)) {
@@ -661,30 +506,9 @@ function turnToward(from: number, to: number, fraction: number): number {
 }
 
 /**
- * One tick of "the way on is a wall": walk the last fraction of a cell to where
- * the climb starts, then start it. Null when stepping onto `target` is not a
- * climb for this mover at all, which is the answer almost every tick.
- *
- * WHY THE APPROACH IS HERE AND NOT LEFT TO EACH MOVER'S STEERING. Every steering
- * sweep in this repo looks for a heading that is legal to WALK, and beside a
- * wall there almost always is one — along the foot of it. Left to the sweep a
- * climber with a wall in its way simply slides sideways along the cliff for
- * ever (measured on the pilgrims sim before this existed: 200 of 200 walkers,
- * none climbing, none arriving). So the decision to climb is taken by whatever
- * knows the way on — a route, a goal bearing — and the last fraction of a cell
- * is walked STRAIGHT, unsteered: the destination is a point inside the cell the
- * mover is already standing in, which is ground it has already been certified
- * on, so there is nothing for a sweep to discover.
- *
- * WHERE IT WALKS TO DEPENDS ON THE DIRECTION. Up, that is the foot of the face.
- * Down, it is the middle of the lip the mover is already standing on, so the
- * reverse mantle always has the same width of ledge to back across.
- *
- * `seed` is `beginClimb`'s. The body's half-width is no longer an argument —
- * see CLIMB_BODY_HALF_WIDTH_CELLS for the three callers that got it wrong.
- *
- * Returns 'approaching' while it is still walking, 'climbing' the tick the
- * climb starts.
+ * Walks the last fraction of a cell to where the climb starts, unsteered, then
+ * starts it. Null when `target` is not a climb for this mover.
+ * See docs/decisions/movement.md.
  */
 export function approachAndClimb(
   world: TerrainSampler,
@@ -722,10 +546,8 @@ export function approachAndClimb(
 
 /**
  * Would stepping onto this cell be a CLIMB for this profile — rather than a
- * walk, or something it may not do at all?
- *
- * Asked through the same geometry the act uses, so the test and the act can
- * never disagree about what a climb is.
+ * walk? Asked through the geometry the act uses, so test and act cannot
+ * disagree.
  */
 export function isClimbStep(
   world: TerrainSampler,
@@ -747,18 +569,9 @@ export interface ClimbingMover {
 }
 
 /**
- * The seed a climb's fall is rolled off, from the mover and the wall.
- *
- * ONE RULE FOR EVERY CLIMBER rather than one per plugin, because the property
- * it has to have is subtle enough to be worth writing down once: STABLE for a
- * given mover on a given face (so a climb cannot be re-rolled by re-entering
- * the branch that starts it) and DIFFERENT for the next one (so a mover that
- * meets the same wall twice is not fated to the same outcome). `discriminator`
- * is whatever the caller has that moves on between climbs — a mover id, a route
- * index — and mixing it in is what buys the second half.
- *
- * NO CLOCK TERM anywhere, so a replayed server kills the same mover on the same
- * face: the determinism this file's header promises.
+ * The seed a climb's fall is rolled off: stable for a mover on a face,
+ * different for the next, and with no clock term so replays agree.
+ * See docs/decisions/movement.md.
  */
 export function climbSeed(
   discriminator: number,
@@ -779,13 +592,8 @@ export function climbSeed(
 const SEED_MIX_RANGE = 0x7fffffff;
 
 /**
- * Seconds a whole climb takes, foot to ledge — what pathing.ts prices a climbed
- * edge at.
- *
- * THE LEGS, ADDED UP, so a change to the motion cannot leave the route planner
- * pricing a climb that no longer exists. The face is the rise at the climber's
- * own rate; the lip is one band of that rate; a descent also turns about and
- * steps off at the bottom.
+ * Seconds a whole climb takes — what pathing.ts prices a climbed edge at. The
+ * legs added up, so the planner cannot price a climb that no longer exists.
  */
 export function climbSeconds(rule: ClimbRule, fromHeight: number, toHeight: number): number {
   const rise = Math.abs(toHeight - fromHeight);
