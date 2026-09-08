@@ -13,10 +13,11 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
-import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from './chunkTiling.ts';
 import { DENIED_COLOR } from './denialCue.ts';
+import type { LayerEdgeStyle } from '../state/layerEdgePrefs.ts';
 
-export type LayerEdgeStyle = 'normal' | 'crease' | 'debug';
+export type { LayerEdgeStyle };
 
 const DEBUG_COLOR = 0x35d6e8;
 

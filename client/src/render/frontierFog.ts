@@ -19,7 +19,7 @@ import {
   type FrontierEdge,
 } from '../terrain/frontier.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
-import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from './chunkTiling.ts';
 import { WATER_COLOR } from './water.ts';
 
 const FOG_BANK_RISE = WORLD_UNIT_HEIGHT_UNITS * 1.25;

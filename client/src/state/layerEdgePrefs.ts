@@ -1,7 +1,6 @@
 import { clearPersistedChoice, persistedChoice } from './persistedChoice.ts';
-import type { LayerEdgeStyle } from '../render/layerEdgeOverlay.ts';
 
-export type { LayerEdgeStyle };
+export type LayerEdgeStyle = 'normal' | 'crease' | 'debug';
 
 export const LAYER_EDGE_STYLES: readonly LayerEdgeStyle[] = ['normal', 'crease', 'debug'];
 

@@ -31,6 +31,7 @@ import {
 } from '../terrain/drawnGroundStore.ts';
 import { spliceShader } from './shaderSplice.ts';
 import { applyGroundShade } from './groundShade.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from './chunkTiling.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
@@ -99,8 +100,6 @@ function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
     return [scratch.r, scratch.g, scratch.b] as Rgb;
   });
 }
-
-export const SUPER_MESH_SPAN_CHUNKS = 8;
 
 const VERTICES_PER_TRIANGLE = 3;
 
