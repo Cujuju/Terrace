@@ -11,12 +11,13 @@ import {
 import { CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WORLD_UNIT_HEIGHT_UNITS } from '../config.ts';
 import {
+  frontierEdgeCellGround,
   frontierEdgeSampling,
   frontierEdges,
   neighbourChunkIndex,
   type FrontierEdge,
 } from '../terrain/frontier.ts';
-import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { type TerrainMirror } from '../terrain/mirror.ts';
 
 const FRONTIER_LINE_COLOR = 0xe03127;
 
@@ -68,8 +69,8 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
     const s = frontierEdgeSampling(edge);
     const left = k - 1 < 0 ? 0 : k - 1;
     const right = k >= CHUNK_SIZE ? CHUNK_SIZE - 1 : k;
-    const a = sampleHeight(mirror, s.cellX + left * s.cellStepX, s.cellY + left * s.cellStepY);
-    const b = sampleHeight(mirror, s.cellX + right * s.cellStepX, s.cellY + right * s.cellStepY);
+    const a = frontierEdgeCellGround(mirror, s, left);
+    const b = frontierEdgeCellGround(mirror, s, right);
     const higher = a > b ? a : b;
     return higher > SEA_LEVEL ? higher : SEA_LEVEL;
   };

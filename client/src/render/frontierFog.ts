@@ -13,12 +13,13 @@ import {
 import { CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WORLD_UNIT_HEIGHT_UNITS } from '../config.ts';
 import {
+  frontierEdgeCellGround,
   frontierEdgeKey,
   frontierEdgeSampling,
   frontierEdges,
   type FrontierEdge,
 } from '../terrain/frontier.ts';
-import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { type TerrainMirror } from '../terrain/mirror.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './chunkTiling.ts';
 import { WATER_COLOR } from './water.ts';
 
@@ -70,7 +71,7 @@ function writeSegmentArrays(
   const cellHeights: number[] = [];
   const cellDry: boolean[] = [];
   for (let t = 0; t < CHUNK_SIZE; t++) {
-    const h = sampleHeight(mirror, s.cellX + t * s.cellStepX, s.cellY + t * s.cellStepY);
+    const h = frontierEdgeCellGround(mirror, s, t);
     const dry = h > SEA_LEVEL;
     cellDry.push(dry);
     cellHeights.push(dry ? h : SEA_LEVEL);
