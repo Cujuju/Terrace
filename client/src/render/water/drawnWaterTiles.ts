@@ -1,14 +1,16 @@
 import {
   BAND_HEIGHT,
+  CELL_CENTRE_OFFSET_CELLS,
   CHUNK_SIZE,
   TERRAIN_LOD_NEAR_N,
+  cellCoordToWorld,
   cellIndex,
   chunksPerEdge,
   drawnGroundHeight,
   quantizeToBand,
   type Heightmap,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
+import { HEIGHT_WORLD_SCALE } from '../../config.ts';
 
 export interface WaterRegion {
   isWet(cell: number): boolean;
@@ -24,10 +26,6 @@ const SUBCELLS_PER_CELL = TERRAIN_LOD_NEAR_N;
 const SUBCELL_SIZE_CELLS = 1 / SUBCELLS_PER_CELL;
 
 const SUBCELL_CENTRE_CELLS = SUBCELL_SIZE_CELLS / 2;
-
-const SUBCELL_WORLD_SIZE = SUBCELL_SIZE_CELLS * CELL_WORLD_SIZE;
-
-const CELL_CENTRE_OFFSET_CELLS = 0.5;
 
 const CURTAIN_FOOT_REACH_SUBCELLS = SUBCELLS_PER_CELL;
 
@@ -70,7 +68,7 @@ function subcellCentreCells(lattice: number): number {
 }
 
 function subcellWorldEdge(lattice: number): number {
-  return lattice * SUBCELL_WORLD_SIZE;
+  return cellCoordToWorld(lattice * SUBCELL_SIZE_CELLS);
 }
 
 function pushQuad(
