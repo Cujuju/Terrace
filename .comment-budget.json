@@ -671,7 +671,6 @@
     "shared/test/spring-index.test.ts",
     "shared/test/steering.test.ts",
     "shared/test/traversal.test.ts",
-    "tools/eslint-plugin-terrace/src/analyze.ts",
     "vitest.base.config.ts"
   ]
 }

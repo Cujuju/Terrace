@@ -11,6 +11,9 @@ importers:
       eslint:
         specifier: ^10.10.0
         version: 10.10.0
+      eslint-plugin-comment-budget:
+        specifier: github:Cujuju/eslint-plugin-comment-budget#v1.1.0
+        version: https://codeload.github.com/Cujuju/eslint-plugin-comment-budget/tar.gz/9bcd56915799451d0afe1a296181c3e1bdd586fd(eslint@10.10.0)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -697,24 +700,6 @@ importers:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
-      vitest:
-        specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
-
-  tools/eslint-plugin-terrace:
-    devDependencies:
-      '@types/node':
-        specifier: ^24.13.3
-        version: 24.13.3
-      '@typescript-eslint/parser':
-        specifier: ^8.69.0
-        version: 8.69.0(eslint@10.10.0)(typescript@6.0.3)
-      eslint:
-        specifier: ^10.10.0
-        version: 10.10.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
@@ -1540,6 +1525,14 @@ packages:
   escape-string-regexp@4.0.0:
     resolution: {integrity: sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==}
     engines: {node: '>=10'}
+
+  eslint-plugin-comment-budget@https://codeload.github.com/Cujuju/eslint-plugin-comment-budget/tar.gz/9bcd56915799451d0afe1a296181c3e1bdd586fd:
+    resolution: {tarball: https://codeload.github.com/Cujuju/eslint-plugin-comment-budget/tar.gz/9bcd56915799451d0afe1a296181c3e1bdd586fd}
+    version: 1.1.0
+    engines: {node: '>=20'}
+    hasBin: true
+    peerDependencies:
+      eslint: '>=9'
 
   eslint-scope@9.1.2:
     resolution: {integrity: sha512-xS90H51cKw0jltxmvmHy2Iai1LIqrfbw57b79w/J7MfvDfkIkFZ+kj6zC3BjtUwh150HsSSdxXZcsuv72miDFQ==}
@@ -3148,6 +3141,11 @@ snapshots:
     optional: true
 
   escape-string-regexp@4.0.0: {}
+
+  eslint-plugin-comment-budget@https://codeload.github.com/Cujuju/eslint-plugin-comment-budget/tar.gz/9bcd56915799451d0afe1a296181c3e1bdd586fd(eslint@10.10.0):
+    dependencies:
+      eslint: 10.10.0
+      typescript: 6.0.3
 
   eslint-scope@9.1.2:
     dependencies:
