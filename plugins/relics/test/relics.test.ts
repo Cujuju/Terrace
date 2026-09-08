@@ -1,8 +1,3 @@
-// relics, driven through the REAL plugin host, the REAL intent pipeline and the
-// REAL mana plugin — no stubs for any of the three. The plugin's whole premise
-// is that a skill system, a terraform verb and a cross-plugin dependency all fit
-// behind the shipped API; if any of that is untrue, this file is what fails.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BAND_HEIGHT, MAX_BRUSH_RADIUS } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
@@ -17,8 +12,6 @@ import {
   worldWithSibling,
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
-// The WHOLE mana module, because that is what the host hands relics through
-// WorldApi.sibling — the same object, not a re-import (issue #196).
 import * as manaModule from '../../mana/server/index.ts';
 import {
   MANA_CAPACITY,
@@ -65,27 +58,16 @@ import {
 } from '../server/index.ts';
 import { QUAKE_CORE_DEPTH_BANDS } from '../server/terraform.ts';
 
-/** 64² cells = 4×4 chunks — small enough to reason about, big enough to spawn in. */
 const WORLD_SIZE = 64;
 
-/** Chunks per edge at WORLD_SIZE (CHUNK_SIZE is 16). */
 const CHUNKS_PER_EDGE = 4;
 
-/**
- * The one chunk left LOCKED, so there is somewhere a cast may not target.
- * Everything else is unlocked, which also keeps relic spawning (bounded
- * rejection sampling over the whole grid) from being able to starve.
- */
 const LOCKED_CHUNK: readonly [number, number] = [3, 3];
 
-/** A cell inside LOCKED_CHUNK. */
 const LOCKED_CELL = { x: 56, y: 56 } as const;
 
-/** Well inside unlocked territory, and far enough from every edge that a
- * composed terraform's ±MAX_BRUSH_RADIUS offsets all stay in bounds. */
 const TARGET_CELL = { x: 24, y: 24 } as const;
 
-/** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
 
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
@@ -109,20 +91,9 @@ interface Harness {
   readonly sink: RecordingSink;
 }
 
-/**
- * Boots a world with mana and relics in the order discovery would produce
- * (directories sorted: mana, relics) and walks the same boot sequence
- * server/src/index.ts does — restorePersistence, then worldCreate.
- */
 function boot(
   options: {
-    /**
-     * What the host hands relics when it asks for `mana` — the real module by
-     * default. A suite passes something else to stand in for an older mana, or
-     * a fork, that does not export the perk API.
-     */
     readonly manaExports?: SiblingModule;
-    /** False for a world where mana is installed but switched off (#196). */
     readonly manaEnabled?: boolean;
     readonly slices?: Record<string, unknown>;
   } = {},
@@ -147,11 +118,6 @@ function boot(
   host.worldCreate();
 
   world.addPlayer(PLAYER);
-  // A real join seeds the starter square into the joining token's OWN mask
-  // (world/initial-unlock.ts's applyInitialUnlockForToken) before anything
-  // else runs. Required since 2026-09-06: mana prices the chunks a stroke
-  // would OPEN for its sculptor, so a token holding no mask would be billed
-  // an unlock surcharge for ground this world already unlocked.
   const chunkEdge = world.chunksPerEdge;
   for (let cy = 0; cy < chunkEdge; cy++) {
     for (let cx = 0; cx < chunkEdge; cx++) {
@@ -163,8 +129,6 @@ function boot(
   return { world, host, sink };
 }
 
-/** Delivers a client → server plugin message through the host's own routing,
- * so the `relics:` namespacing is exercised rather than bypassed. */
 function send(harness: Harness, type: string, payload: unknown, player: Player = PLAYER): void {
   const wireType = `relics:${type}`;
   const entry = harness.host.messageHandlers().find(([name]) => name === wireType);
@@ -172,7 +136,6 @@ function send(harness: Harness, type: string, payload: unknown, player: Player =
   entry?.[1](player, payload);
 }
 
-/** Collects the relic currently carrying `skill`. Fails if there is none. */
 function collectSkill(harness: Harness, skill: SkillId): void {
   const relic = currentRelics().find((entry) => entry.skill === skill);
   expect(relic, `no relic carrying ${skill}`).toBeDefined();
@@ -188,8 +151,6 @@ describe('relics plugin', () => {
   let harness: Harness;
 
   afterEach(() => {
-    // The bridge's loader is module state; a test that swapped it must not
-    // leak that into the next file to import this module.
     resetManaBridge();
     vi.restoreAllMocks();
   });
@@ -235,20 +196,11 @@ describe('relics plugin', () => {
       tickFor(harness, RELIC_KEEPALIVE_S - TICK_DT);
       expect(harness.sink.ofType(`relics:${RELICS_MESSAGE}`)).toHaveLength(0);
 
-      // Two ticks, not one: the accumulator is a sum of floating-point tick
-      // periods, so 150 × 0.1 is 14.999…, a hair under the threshold. The
-      // keepalive therefore lands on the first tick at or after the interval —
-      // which is the contract worth asserting. Chasing exactness here would
-      // mean counting ticks instead of seconds, and that would break the moment
-      // a self-hoster changed TICK_HZ.
       tickFor(harness, TICK_DT * 2);
       expect(harness.sink.ofType(`relics:${RELICS_MESSAGE}`).length).toBeGreaterThan(0);
     });
 
     it('retries a spawn that found nowhere to go, instead of losing the skill', () => {
-      // A world with a single unlocked chunk cannot hold five relics comfortably;
-      // one with almost nothing unlocked cannot hold any. The skills that failed
-      // to place must still be pending, or they would leave the game forever.
       resetManaState();
       resetRelicsState();
       resetManaBridge();
@@ -261,10 +213,8 @@ describe('relics plugin', () => {
       );
       crampedHost.worldCreate();
 
-      // Nothing could be placed: every chunk is locked.
       expect(currentRelics()).toHaveLength(0);
 
-      // Unlock the world and let the retry timer come round.
       for (const [cx, cy] of unlockedChunksExcept(LOCKED_CHUNK)) crampedWorld.unlockChunk(cx, cy);
       for (let n = 0; n < Math.round(RELIC_SPAWN_RETRY_S / TICK_DT) + 1; n++) {
         crampedHost.tick(TICK_DT);
@@ -278,14 +228,12 @@ describe('relics plugin', () => {
       collectSkill(harness, 'quake');
       expect(currentRelics().some((relic) => relic.skill === 'quake')).toBe(false);
 
-      // One tick short of the timer: still gone.
       tickFor(harness, RELIC_RESPAWN_S - TICK_DT);
       expect(currentRelics().some((relic) => relic.skill === 'quake')).toBe(false);
 
       tickFor(harness, TICK_DT);
       const after = currentRelics().find((relic) => relic.skill === 'quake');
       expect(after).toBeDefined();
-      // A fresh identity, so a client holding the old id cannot collect twice.
       expect(after?.id).not.toBe(before?.id);
     });
   });
@@ -322,7 +270,6 @@ describe('relics plugin', () => {
       expect(skillsOf(PLAYER.id)).toEqual([]);
       expect(currentRelics()).toHaveLength(RELIC_COUNT);
 
-      // First claim wins; the replay finds nothing and grants nothing.
       send(harness, COLLECT_MESSAGE, { id: relic.id });
       expect(skillsOf(PLAYER.id)).toEqual([relic.skill]);
       send(harness, COLLECT_MESSAGE, { id: relic.id });
@@ -400,13 +347,8 @@ describe('relics plugin', () => {
 
       const after = harness.world.heightAt(TARGET_CELL.x, TARGET_CELL.y);
       expect(after).toBeLessThan(before);
-      // Several terrace bands down at the centre, even after relaxation has
-      // pulled it back up toward its neighbours.
       expect(before - after).toBeGreaterThan(BAND_HEIGHT);
 
-      // Wider than the MAX_BRUSH_RADIUS a single sculpt could reach: the
-      // composed rim brushes sit MAX_BRUSH_RADIUS out, so cells beyond one
-      // brush's footprint must have moved too.
       const rim = harness.world.heightAt(TARGET_CELL.x + MAX_BRUSH_RADIUS + 1, TARGET_CELL.y);
       expect(rim).toBeLessThan(before);
 
@@ -439,7 +381,6 @@ describe('relics plugin', () => {
       });
       expect(harness.world.heightAt(TARGET_CELL.x, TARGET_CELL.y)).toBe(heightAfterFirst);
 
-      // Cooldowns are driven by the host's fixed tick, never by a client clock.
       tickFor(harness, cooldown);
       expect(cooldownOf(PLAYER.id, 'quake')).toBe(0);
 
@@ -454,9 +395,6 @@ describe('relics plugin', () => {
     it('halves the holder’s sculpt cost through mana’s perk API', async () => {
       harness = boot();
       expect(isManaAvailable()).toBe(true);
-      // Since mana prices sculpts by displaced volume, the perk scales the RATE
-      // (mana per band-cell) rather than a per-sculpt constant — so that is what
-      // this bridge is asserted against.
       expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
 
       collectSkill(harness, 'azure-heart');
@@ -505,9 +443,6 @@ describe('relics plugin', () => {
       harness = boot();
       collectSkill(harness, 'azure-heart');
 
-      // At half price the pool affords strictly more sculpts than a full pool
-      // buys at the standard price. The sculpts below are radius-1 point stamps,
-      // so the standard price is MANA_COST_PER_MIN_RADIUS_SCULPT.
       const standardSculpts = MANA_CAPACITY / MANA_COST_PER_MIN_RADIUS_SCULPT;
       let applied = 0;
       for (let n = 0; n < standardSculpts * 2; n++) {
@@ -525,8 +460,6 @@ describe('relics plugin', () => {
   describe('graceful degradation when mana is absent', () => {
     it('still collects perk relics, logs once, and changes no prices', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      // Mana INSTALLED BUT SWITCHED OFF for this world — which the host answers
-      // exactly as it answers a deleted plugins/mana folder: null (#196).
       harness = boot({ manaEnabled: false });
 
       expect(isManaAvailable()).toBe(false);
@@ -534,11 +467,7 @@ describe('relics plugin', () => {
       collectSkill(harness, 'azure-heart');
       collectSkill(harness, 'spring-of-aether');
 
-      // The skills are still granted and still shown — relics does not know or
-      // care whether an economy exists to modify.
       expect(skillsOf(PLAYER.id)).toEqual(['azure-heart', 'spring-of-aether']);
-      // …and mana (whose module is as resident as ever, just not running in
-      // this world) was never told anything.
       expect(manaPerkOf(PLAYER.id)).toEqual({
         costMultiplier: NEUTRAL_MANA_MULTIPLIER,
         regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
@@ -550,7 +479,6 @@ describe('relics plugin', () => {
 
     it('degrades the same way when the module loads but lacks the perk API', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      // An older mana, or a fork: the folder is there, the API is not.
       harness = boot({ manaExports: { plugin: { name: 'mana' } } });
 
       expect(isManaAvailable()).toBe(false);
@@ -560,16 +488,11 @@ describe('relics plugin', () => {
     });
 
     it('replays perks granted while no mana was running, once one is', () => {
-      // Rule 3 (buffer, don't drop) is the caller's job and outlives a session:
-      // a perk granted on a world with mana switched off must reach the mana of
-      // the world that has it switched on, without the player collecting again.
       harness = boot({ manaEnabled: false });
       collectSkill(harness, 'azure-heart');
       expect(isManaAvailable()).toBe(false);
       expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
 
-      // The reopen: onWorldCreate runs again, and this time the host has a mana
-      // to hand back.
       loadManaBridge(worldWithSibling('mana', manaModule));
 
       expect(isManaAvailable()).toBe(true);
@@ -590,15 +513,11 @@ describe('relics plugin', () => {
       const slices = harness.host.collectPersistence();
       expect(slices.relics).toBeDefined();
 
-      // A fresh process: nothing survives except the snapshot.
       const restored = boot({ slices });
 
       expect(currentRelics()).toEqual(before);
-      // Skills are player state with no stable identity to key them by, so they
-      // are deliberately NOT in the slice (design doc).
       expect(skillsOf(PLAYER.id)).toEqual([]);
 
-      // The respawn timer resumed where it left off rather than restarting.
       tickFor(restored, remainingBefore - TICK_DT);
       expect(currentRelics().some((relic) => relic.skill === 'quake')).toBe(false);
       tickFor(restored, TICK_DT);
@@ -625,16 +544,11 @@ describe('relics plugin', () => {
       };
       boot({ slices });
 
-      // The unknown entry is discarded and the top-up refills the world.
       expect(currentRelics()).toHaveLength(RELIC_COUNT);
       expect(currentRelics().some((relic) => relic.id === 'r8')).toBe(false);
     });
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// World events — the emission half of the chronicle contract (2026-08-19).
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe('world events (relics:collected)', () => {
   it('a collection emits the skill, its display label, the collector, and the gem’s cell', () => {
@@ -672,7 +586,6 @@ describe('world events (relics:collected)', () => {
       y: relic?.y,
     });
 
-    // A rejected claim (stale id) emits nothing.
     entry?.[1](PLAYER, { id: relic?.id });
     expect(events.filter((heard) => heard.event === 'relics:collected')).toHaveLength(1);
   });

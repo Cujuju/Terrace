@@ -1,15 +1,3 @@
-// The server sim, driven through the REAL plugin host on a REAL world — the
-// weather plugin's test/weather.test.ts pattern, scaled down to what this
-// plugin actually has: one accumulator and one broadcast cadence.
-//
-// Properties this suite holds:
-//   * THE CLOCK ADVANCES AT REAL TIME and WRAPS at the cycle boundary.
-//   * THE BROADCAST CADENCE is exactly DAYNIGHT_BROADCAST_INTERVAL_SECONDS,
-//     and it carries exactly the one documented key, rounded and parseable
-//     by the client's own parser.
-//   * A RESTART STARTS A FRESH CLOCK — the documented "persistence: none"
-//     decision.
-
 import { describe, expect, it } from 'vitest';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import { World } from '../../../server/src/world/world.ts';
@@ -27,7 +15,6 @@ import {
   resetDayNightState,
 } from '../server/index.ts';
 
-/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md), same as weather's suite. */
 const TICK_SECONDS = 0.1;
 const WORLD_SIZE = 64;
 
@@ -37,7 +24,6 @@ interface Harness {
   readonly sink: RecordingSink;
 }
 
-/** Boots the plugin, through the real host, onto a bare world — no terrain is read. */
 function bootOn(world: World): Harness {
   resetDayNightState();
   const sink = new RecordingSink();
@@ -67,7 +53,6 @@ describe('the clock', () => {
     const { host } = bootOn(worldWithUnlockedChunks(WORLD_SIZE, []));
     const ticksPerDay = DAY_LENGTH_SECONDS / TICK_SECONDS;
     for (let tick = 0; tick < ticksPerDay + 10; tick++) host.tick(TICK_SECONDS);
-    // 10 ticks past a full day is the same as 10 ticks from a fresh world.
     expect(currentPhase()).toBeCloseTo((10 * TICK_SECONDS) / DAY_LENGTH_SECONDS, 6);
     expect(currentPhase()).toBeLessThan(1);
     expect(currentPhase()).toBeGreaterThanOrEqual(0);
@@ -107,8 +92,6 @@ describe('broadcast', () => {
   });
 
   it('does not drift over a long run when dt does not divide the interval evenly', () => {
-    // An odd tick period relative to the broadcast interval: the residual
-    // must carry forward each broadcast rather than being discarded.
     const oddTick = 0.12;
     resetDayNightState();
     const sink = new RecordingSink();
@@ -122,16 +105,10 @@ describe('broadcast', () => {
 
     const messages = sink.ofType(NAMESPACED_TYPE);
     expect(messages.length).toBeGreaterThan(1);
-    // Every broadcast phase should sit within one tick's worth of its ideal,
-    // never accumulating a growing error across the run.
     for (let i = 0; i < messages.length; i++) {
       const payload = messages[i]!.payload as { phase: number };
       const idealSeconds = (i + 1) * DAYNIGHT_BROADCAST_INTERVAL_SECONDS;
       const idealPhase = (idealSeconds / DAY_LENGTH_SECONDS) % 1;
-      // Bounded by one tick's worth of phase PLUS the wire's own quantisation
-      // (DAYNIGHT_PHASE_DECIMALS) — and, critically, that bound does not grow
-      // with `i`: a drifting accumulator would fail this at a LATER message,
-      // not at message 0.
       const toleranceInPhase = oddTick / DAY_LENGTH_SECONDS;
       expect(Math.abs(payload.phase - idealPhase)).toBeLessThan(toleranceInPhase * 3);
     }

@@ -1,14 +1,3 @@
-// THE GROWTH-MODEL SEAM — the contract that lets a second settlement-growth
-// model drive this plugin's board without owning any of it.
-//
-// The subject is the SEAM, not either model: which code the interval runs
-// under each STRUCTURES_MODEL setting, that a registered model's outcome
-// reaches the wire and the persistence slice through the SAME path the CA's
-// own outcome takes, and that population survives a restart (and its absence
-// in an older slice reads as zero). The CA's own behaviour under the default
-// setting is asserted by structures.test.ts, which this file deliberately
-// does not duplicate.
-
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BAND_HEIGHT } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -59,12 +48,6 @@ const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 describe(`${STRUCTURES_MODEL_ENV} validation`, () => {
   it('is read from the environment ONCE, at module load, and never re-read', () => {
-    // The old form of this test compared structuresModel() to
-    // readStructuresModel(process.env) — the same pure function over the same
-    // input the module itself had already applied, so it could only ever
-    // agree. What the module actually promises is that the value is FIXED at
-    // load: a world may not change settlement model under a running server
-    // (index.ts's `selectedModel`), and that is what this asserts.
     const wired = structuresModel();
     const previous = process.env[STRUCTURES_MODEL_ENV];
     process.env[STRUCTURES_MODEL_ENV] = STRUCTURES_MODEL_POPULOUS;
@@ -74,8 +57,6 @@ describe(`${STRUCTURES_MODEL_ENV} validation`, () => {
       if (previous === undefined) delete process.env[STRUCTURES_MODEL_ENV];
       else process.env[STRUCTURES_MODEL_ENV] = previous;
     }
-    // And the suite runs with the variable unset, so the wired value is the
-    // default — the setting under which every OTHER file's tests were written.
     expect(wired).toBe(STRUCTURES_MODEL_LIFE);
   });
 
@@ -113,11 +94,6 @@ describe('the growth-model registry', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Through the REAL plugin host, so the interval, the wire and the persistence
-// slice are exercised exactly as the server runs them.
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface Harness {
   readonly world: World;
   readonly host: PluginHost;
@@ -142,7 +118,6 @@ function advance(harness: Harness, seconds: number): void {
   for (let elapsed = 0; elapsed < seconds; elapsed += DT) harness.host.tick(DT);
 }
 
-/** A model that records what it was handed and plants one house per step. */
 function stubModel(): GrowthModel & {
   readonly calls: Array<{ live: number; buildableHere: boolean }>;
 } {
@@ -176,7 +151,7 @@ describe('STRUCTURES_MODEL=life (the default)', () => {
     const harness = boot();
     advance(harness, CA_GENERATION_INTERVAL_SECONDS * 3);
     expect(model.calls).toEqual([]);
-    expect(currentGeneration()).toBeGreaterThan(0); // the CA did run
+    expect(currentGeneration()).toBeGreaterThan(0);
   });
 });
 
@@ -211,12 +186,6 @@ describe('STRUCTURES_MODEL=populous', () => {
     expect(founded).toContainEqual({ x: 20, y: 20, tier: 1 });
   });
 
-  /**
-   * THE KEEP-CLEAR RULE REACHES EVERY MODEL, not just the CA that used to be
-   * the only thing enforcing it (F2). The seam hands the predicate over; this
-   * asserts the one the model receives really is clearance.ts's, answering
-   * about STRUCTURE_SEPARATION_CELLS rather than about adjacency or nothing.
-   */
   it('hands the model this plugin’s own keep-clear predicate', () => {
     let answered: { near: boolean; far: boolean } | null = null;
     setGrowthModel({
@@ -225,10 +194,6 @@ describe('STRUCTURES_MODEL=populous', () => {
         const board = new Map<number, BoardCellRecord>([
           [structureKey(20, 20), { age: 0, tier: 1 }],
         ]);
-        // The rule is RADIAL AND STRICT (protocol.ts, STRUCTURE_SEPARATION_
-        // CELLS_SQUARED): at exactly the separation the discs are tangent, and
-        // tangent is not overlapping — so the scan bound itself is the first
-        // FREE cell, and one cell inside it is the last held one.
         answered = {
           near: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS - 1, 20),
           far: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS, 20),
@@ -241,13 +206,6 @@ describe('STRUCTURES_MODEL=populous', () => {
     expect(answered).toEqual({ near: true, far: false });
   });
 
-  /**
-   * WHERE A MODEL'S SIDE EFFECTS HAPPEN (F4). A model that wants somebody sent
-   * out of a house reports the cell and this plugin calls back AFTER the board
-   * has been swapped in — so whatever the emission reaches (pilgrims, and
-   * through it a settler who may found the next house) observes the generation
-   * that just completed, never the one it replaced.
-   */
   it('runs the post-swap hook against the swapped board', () => {
     const CELL = structureKey(21, 21);
     let observed: { onBoard: boolean; generation: number; emitted: number } | null = null;
@@ -278,17 +236,6 @@ describe('STRUCTURES_MODEL=populous', () => {
   });
 
   it('does not seed or stir: under this model, houses come only from the model', () => {
-    // WITH A MODEL REGISTERED, and one that plants nothing. The old form of
-    // this test registered NO model at all, so the empty board it asserted was
-    // just advanceGrowthModel's early return — it would have passed even if
-    // this plugin seeded on every generation, because it never reached the
-    // code that would have done so.
-    //
-    // The CA's own anti-starvation backstops (attemptSeed's Monday arrival,
-    // attemptStir's spark) must not fire under a registered model: a model
-    // with no birth-by-neighbour rule has neither failure mode, and sprinkling
-    // unrequested houses into its board would be this plugin overruling the
-    // model it was told to run.
     const inert: GrowthModel = {
       name: 'inert',
       step(_world, live): GrowthStepResult {
@@ -297,11 +244,8 @@ describe('STRUCTURES_MODEL=populous', () => {
     };
     setGrowthModel(inert);
     const harness = boot();
-    // Several generation intervals: under the CA path each of these ticks is
-    // where seeding and stirring would be attempted. Under this path that code
-    // is never reached at all, which is the property being asserted.
     advance(harness, CA_GENERATION_INTERVAL_SECONDS * 8);
-    expect(currentGeneration()).toBeGreaterThan(0); // the model really did run
+    expect(currentGeneration()).toBeGreaterThan(0);
     expect(currentLive().size).toBe(0);
   });
 });
@@ -328,7 +272,6 @@ describe('population persistence', () => {
       live: legacy.live.map(({ x, y, age, tier }) => ({ x, y, age, tier })),
     };
     const restored = loadStructures(withoutPopulation);
-    // ABSENT, not zeroed — and the seam's own reader turns that into zero.
     expect(restored.live.get(structureKey(9, 9))).toEqual({ age: 2, tier: 3 });
     expect(restored.live.get(structureKey(9, 9))!.population ?? 0).toBe(0);
   });

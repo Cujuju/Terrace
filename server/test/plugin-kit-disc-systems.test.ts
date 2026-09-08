@@ -1,14 +1,3 @@
-// Contract test for server/src/plugins/kit/discSystems.ts — the drifting-disc
-// sim engine, written BEFORE the module it covers.
-//
-// WHAT IS UNDER TEST is the mechanism only: how a population cap is derived
-// from a coverage fraction, that every living disc is displaced by exactly the
-// wind vector it is handed, that a siting predicate is retried and then
-// reported, and that the dev override parks one disc over the middle of the
-// world. The BEHAVIOUR each caller builds on top of it — which kinds wet the
-// ground, where snow may sit, what a broadcast looks like — belongs to the
-// plugins and is tested there.
-
 import { describe, expect, it } from 'vitest';
 import { cellsAcross, createSeededRng } from '@terrace/shared';
 import {
@@ -18,13 +7,10 @@ import {
   createDiscSystems,
 } from '../src/plugins/kit/discSystems.ts';
 
-/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md). */
 const TICK_SECONDS = 0.1;
 
-/** The nominal world — 512 world units square, in cells. */
 const WORLD_SIZE = cellsAcross(512);
 
-/** A wind that blows hard enough for one tick's displacement to be measurable. */
 const WIND = { vx: 1.25, vy: -0.5 };
 
 function seeded(seed: number): () => number {
@@ -33,11 +19,6 @@ function seeded(seed: number): () => number {
 
 describe('discSystems cap derivation', () => {
   it('scales the population with the coverage fraction it is given', () => {
-    // Two instances differing ONLY in coverage: half the coverage, half the
-    // population. That proportionality is the whole reason a kind plugin can
-    // carry its own share of one sky.
-    // A ceiling high enough not to bind, so what is measured is the derivation
-    // and not the clamp.
     const NO_CEILING = 100;
     const whole = createDiscSystems({
       coverageFraction: 0.18,
@@ -123,8 +104,6 @@ describe('discSystems siting', () => {
     });
 
     expect(engine.spawnOne(WORLD_SIZE)).toBeNull();
-    // Every attempt the engine allows itself was spent before it gave up, and
-    // the caller was told exactly once.
     expect(attempts).toBe(engine.sitingAttempts);
     expect(unsited).toBe(1);
     expect(engine.systems()).toHaveLength(0);
@@ -165,8 +144,6 @@ describe('discSystems dev override', () => {
     expect(parked).toHaveLength(1);
     expect(parked[0]!.x).toBe(WORLD_SIZE / 2);
     expect(parked[0]!.y).toBe(WORLD_SIZE / 2);
-    // It still GATHERS rather than snapping to full strength — a photograph of
-    // weather that arrived by teleport is not a photograph of the sim.
     expect(parked[0]!.envelope).toBeGreaterThan(0);
     expect(parked[0]!.envelope).toBeLessThanOrEqual(1);
   });

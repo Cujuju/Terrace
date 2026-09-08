@@ -1,20 +1,3 @@
-// Smoothing 5 Hz server truth into 60 Hz motion.
-//
-// The server broadcasts the full entity list every other tick (200 ms). Drawing
-// those positions directly would tick creatures forward five times a second like
-// a stop-motion film. The interpolator keeps the last rendered pose and the
-// newest received one and walks between them.
-//
-// THE MACHINERY IS THE CLIENT KIT'S (client/src/plugins/kit/interpolator.ts):
-// five plugins carried the same class over different payloads — the same window
-// measurement, the same "freeze the rendered pose first" order, the same
-// generation-stamped prune, the same recycled records. What is left here is the
-// part that is actually about creatures: this plugin's window bounds, and which
-// fields walk, turn, or are carried through untouched.
-//
-// Pure logic: no three, no DOM, no clock. Time only enters through `advance(dt)`,
-// which is what makes the whole thing testable in a node environment.
-
 import {
   PoseInterpolator,
   lerp,
@@ -25,60 +8,23 @@ import type { WildlifeEntityState, WildlifeSpecies } from '../protocol.ts';
 
 export { lerp, lerpAngle };
 
-/** A creature's pose for one frame. */
 export interface InterpolatedEntity {
   readonly id: number;
   readonly species: WildlifeSpecies;
   readonly x: number;
   readonly y: number;
   readonly heading: number;
-  /**
-   * Size-class index, carried through untouched. It is not interpolated because
-   * it cannot change: the server draws a creature's size once, at spawn.
-   */
   readonly size: number;
-  /**
-   * Stored height while this creature is off the ground — climbing a wall or
-   * falling off one (protocol.ts's WildlifeEntityState.climbHeight). Null on
-   * the ground. Interpolated like x and y: it is a position sent at the
-   * broadcast cadence and drawn every frame.
-   */
   readonly climbHeight: number | null;
-  /**
-   * True once this mover has LET GO of the wall (protocol.ts's `falling`).
-   *
-   * NOT INTERPOLATED — it is a state, not a position. The newest message is the
-   * answer, so the pose changes on the frame the server says the grip failed.
-   */
   readonly falling: boolean;
-  /**
-   * What this mover is doing on the ground — the INDEX into @terrace/shared's
-   * MOVER_STANCES, or null for walking (protocol.ts's `stance`).
-   *
-   * NOT INTERPOLATED, like `falling` above — it is a state, not a position. The
-   * newest message is the answer, so the pose changes on the frame the server
-   * says the body stopped.
-   */
   readonly stance: number | null;
 }
 
-/**
- * Bounds on the measured inter-message gap used as the interpolation window.
- *
- * The window is measured rather than assumed, so this keeps working if the
- * server's tick rate or BROADCAST_TICK_INTERVAL is retuned — but a measurement
- * taken across a stall must not become the window. The floor is one 60 Hz frame
- * (below it, interpolation has nothing to do); the ceiling is one second, past
- * which a client is better off snapping to truth than gliding through a second
- * of stale extrapolation.
- */
 export const MIN_INTERPOLATION_SECONDS = 1 / 60;
 export const MAX_INTERPOLATION_SECONDS = 1;
 
-/** Nominal window before any two messages have been seen (5 Hz = 200 ms). */
 export const DEFAULT_INTERPOLATION_SECONDS = 0.2;
 
-/** The pose a segment is walked from. */
 interface Pose extends PoseSegment {
   x: number;
   y: number;
@@ -86,12 +32,6 @@ interface Pose extends PoseSegment {
   climbHeight: number | null;
 }
 
-/**
- * One creature's pose record. Mutable and PERSISTENT: the kit refills these in
- * place every frame instead of allocating a Map and an object per creature per
- * frame (perf review 2026-08-29, A5). Consumers see it through the readonly
- * InterpolatedEntity face and must not hold one across frames.
- */
 interface PoseRecord extends InterpolatedEntity {
   x: number;
   y: number;
@@ -103,13 +43,6 @@ interface PoseRecord extends InterpolatedEntity {
   stance: number | null;
 }
 
-/**
- * Two-pose interpolator, keyed by entity id.
- *
- * Entities absent from the newest message are dropped immediately — a despawn is
- * something the server has already decided, and easing a creature out would mean
- * inventing a position no one authorised.
- */
 export class WildlifeInterpolator extends PoseInterpolator<
   WildlifeEntityState,
   Pose,
@@ -142,13 +75,7 @@ export class WildlifeInterpolator extends PoseInterpolator<
         }
         record.x = lerp(segment.x, entity.x, t);
         record.y = lerp(segment.y, entity.y, t);
-        // The short way round, so a creature turning through ±π spins 10°
-        // rather than 350°.
         record.heading = lerpAngle(segment.heading, entity.heading, t);
-        // A climb that has just started or just ended has a height on one side
-        // of the window only, and there is nothing to interpolate between —
-        // the other side is "on the ground", whose height this field does not
-        // carry. The newest truth wins; the ground follower eases the join.
         record.climbHeight =
           segment.climbHeight === null || entity.climbHeight === null
             ? entity.climbHeight

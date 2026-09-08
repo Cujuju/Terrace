@@ -1,7 +1,3 @@
-// Multi-seed cost of one sculpt stroke on fresh genesis terrain (issue #68 / #282).
-// Run from repo root: node --experimental-strip-types .sculpt-audit/bench-smooth-genesis.mjs
-// Each stroke lands on a COLD copy of the genesis map, so the cost is the first
-// stroke a player makes there, not progressively re-graded ground.
 import { pathToFileURL } from 'node:url';
 const g = await import(pathToFileURL('server/src/world/genesis.ts').href);
 const m = await import(pathToFileURL('shared/src/index.ts').href);

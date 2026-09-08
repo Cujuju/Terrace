@@ -1,29 +1,19 @@
-// Swept-surface geometry for smooth-tapered bodies (ibex, bison): elliptical
-// cross-sections whose half-width and half-height vary independently along X.
-// Both ends are always capped; a caller cannot leave the surface open.
 import { BufferGeometry, Float32BufferAttribute } from 'three';
 
 const DEFAULT_CAP_RINGS = 4;
-/** Cap reach along X as a multiple of the end ring's larger radius; 1.0 is a hemisphere. */
 const DEFAULT_NOSE_CAP_REACH = 0.85;
 const DEFAULT_TAIL_CAP_REACH = 0.6;
-/** Superellipse exponent at full boxiness — a rounded square, not a hard box. */
 const MAX_SECTION_EXPONENT = 5;
 
-/** A value that varies along the body: 0 at the nose (+X), 1 at the tail tip. */
 export type BodyProfile = (t: number) => number;
 
 export interface SweptHullOptions {
-  /** Nose-to-tail extent in world units, before any fit scaling. */
   readonly length: number;
-  /** Cross-sections along the body, and vertices around each one. */
   readonly rings: number;
   readonly segments: number;
   readonly halfWidth: BodyProfile;
   readonly halfHeight: BodyProfile;
-  /** Radial relief added per vertex — tubercles, pleats, knuckles, humps. */
   readonly displace?: ((t: number, theta: number) => number) | undefined;
-  /** 0 = elliptical section, 1 = rounded square. */
   readonly boxiness?: BodyProfile | undefined;
   readonly noseCapRings?: number | undefined;
   readonly tailCapRings?: number | undefined;
@@ -31,7 +21,6 @@ export interface SweptHullOptions {
   readonly tailCapReach?: number | undefined;
 }
 
-/** A closed swept body centred on the origin, nose toward +X. */
 export function sweptHull(options: SweptHullOptions): BufferGeometry {
   const {
     length, rings, segments, halfWidth, halfHeight,
@@ -46,7 +35,6 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
   const indices: number[] = [];
   const ringStart: number[] = [];
 
-  /** Seam vertex is wrapped, not duplicated: a duplicate splits normals into a visible crease. */
   function pushRing(x: number, a: number, b: number, t: number, scale: number): void {
     ringStart.push(positions.length / 3);
     const exponent = boxiness
@@ -101,8 +89,6 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
     const next = ringStart[r + 1]!;
     for (let j = 0; j < segments; j++) {
       const k = (j + 1) % segments;
-      // Counter-clockwise from outside (three's front face). Wound the other way,
-      // the flank is culled and parts seated inside the body show through.
       indices.push(cur + j, cur + k, next + j);
       indices.push(next + j, cur + k, next + k);
     }
@@ -119,7 +105,6 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
   return geometry;
 }
 
-/** Control points `[t, value]` nose to tail, Catmull-Rom interpolated and clamped. */
 export function profileFromPoints(points: readonly (readonly [number, number])[]): BodyProfile {
   const ts = points.map((p) => p[0]);
   const vs = points.map((p) => p[1]);

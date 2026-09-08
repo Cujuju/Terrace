@@ -1,26 +1,3 @@
-// The world-manager panel — "which world am I in, and what else is there?"
-// (multi-world, 2026-08-22).
-//
-// WHY THIS PANEL EXISTS. Until now a server had exactly one world and the only
-// way to run another was to stop the process and point DB_PATH somewhere else.
-// Worse, the old single-file layout meant a second world could quietly evict
-// the first one's history. Worlds are now files, and this is the door to them.
-//
-// WHAT MAKES IT SAFE IS THE TRASH, NOT THE CONFIRMATIONS. Archive moves a
-// world's file into `.trash` and says where it went; the only thing that
-// destroys a world is Purge, on the archived tab, and it demands the world's
-// own name typed out. Two separate decisions, separated by however long the
-// operator takes to come back — see world-admin.ts for the server half.
-//
-// DESTRUCTIVE ACTIONS CONFIRM IN PLACE, matching RestorePoints.tsx: the row's
-// button arms, a second differently-labelled button commits, and no dialog is
-// used — the project's UI rule is that a confirm dialog which always says the
-// same thing trains people to dismiss it.
-//
-// SOLID REACTIVITY: every reactive value is read by CALLING its accessor at
-// the point of use, inside JSX or inside an event handler. There are no
-// component-body consts holding a reactive read in this file, by construction.
-
 import { For, Show, createSignal, type JSX } from 'solid-js';
 import {
   slugifyWorldName,
@@ -43,23 +20,18 @@ import {
   worlds,
 } from '../state/worldsState.ts';
 
-/** What the panel can ask the server to do. Supplied by main.tsx. */
 export interface WorldActions {
   send(message: WorldAdminRequestMessage): void;
 }
 
-/** Bytes per KiB/MiB step — named because it is a unit, not a tuning knob. */
 const BYTES_PER_STEP = 1024;
 
-/** Units the size column steps through. Beyond GiB is not a world, it is a bug. */
 const SIZE_UNITS = ['B', 'KiB', 'MiB', 'GiB'] as const;
 
-/** Milliseconds in a day, for the "last played" column. */
 const MS_PER_DAY = 86_400_000;
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_MINUTE = 60_000;
 
-/** Disk size, at one decimal place from KiB up. */
 function formatBytes(bytes: number): string {
   let value = bytes;
   let unit = 0;
@@ -70,7 +42,6 @@ function formatBytes(bytes: number): string {
   return `${unit === 0 ? value : value.toFixed(1)} ${SIZE_UNITS[unit]}`;
 }
 
-/** "3h ago" / "just now" / "never" — the reading an operator navigates by. */
 function formatWhen(epochMs: number | null | undefined, nowMs: number): string {
   if (epochMs === null || epochMs === undefined) return 'never';
   const elapsed = Math.max(0, nowMs - epochMs);
@@ -81,25 +52,15 @@ function formatWhen(epochMs: number | null | undefined, nowMs: number): string {
 }
 
 export function WorldManager(props: { actions: WorldActions }): JSX.Element {
-  // Which world is armed for archiving, by id; null when nothing is armed.
-  // Local to the panel: a property of this operator's current look at it.
   const [armedArchiveId, setArmedArchiveId] = createSignal<string | null>(null);
-  // Whether the restart button has been armed. Local to this look at the
-  // panel, exactly as `armedArchiveId` is.
   const [armedRestart, setArmedRestart] = createSignal(false);
-  // Which archived world's purge form is open, and what has been typed into it.
   const [purgingId, setPurgingId] = createSignal<string | null>(null);
   const [purgeConfirm, setPurgeConfirm] = createSignal('');
-  // Which world's plugin list is expanded, by id; null when none is.
   const [pluginsForId, setPluginsForId] = createSignal<string | null>(null);
-  // Which world is being renamed, and to what.
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [renameTo, setRenameTo] = createSignal('');
-  // The create form.
   const [newName, setNewName] = createSignal('');
   const [showArchived, setShowArchived] = createSignal(false);
-  // Captured when a listing arrives, so every row's age is measured against
-  // one instant instead of each row rendering against a slightly different now.
   const [listedAtMs, setListedAtMs] = createSignal(Date.now());
 
   const send = (message: WorldAdminRequestMessage): void => {
@@ -139,8 +100,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
           Purge, on the Trash tab, ever deletes one.
         </p>
 
-        {/* The key is typed, never stored: see state/worldsState.ts. A
-            password field so it is not shoulder-read off a shared screen. */}
+        {
+}
         <form
           class="restore-key-row"
           onSubmit={(event) => {
@@ -166,8 +127,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
         </form>
 
         <Show when={worldFeedback().kind === 'refused'}>
-          {/* Narrowed through a local, non-reactive read inside the guard: the
-              Show above has already established the kind. */}
+          {
+}
           <p class="restore-refusal">
             {refusalText((worldFeedback() as { reason: WorldAdminRefusal }).reason)}
           </p>
@@ -175,16 +136,14 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
 
         <Show when={worldFeedback().kind === 'done'}>
           <p class="hud-hint">
-            {/* Narrowed the same way as the refusal above; keeping the union
-                intact is what lets doneText's switch be checked exhaustive. */}
+            {
+}
             {doneText(worldFeedback() as Extract<WorldFeedback, { kind: 'done' }>)}
           </p>
         </Show>
 
-        {/* Cancelling is offered HERE as well as being possible from the
-            server, because the operator who started a countdown is the person
-            most likely to want it stopped, and they are already looking at
-            this panel. */}
+        {
+}
         <Show when={pendingSwitch()}>
           {(pending) => (
             <div class="restore-key-row">
@@ -202,11 +161,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
           )}
         </Show>
 
-        {/* RESTART — the update button. Armed then committed, like Archive,
-            because it interrupts everyone on the server; unlike Archive it
-            destroys nothing, so the second press is not styled as a danger.
-            It lives beside the tabs rather than in a world's row on purpose:
-            it is a property of the PROCESS, not of any one world. */}
+        {
+}
         <div class="restore-key-row">
           <span class="status-label">
             Restart the server to pick up plugin or core code that changed on
@@ -320,10 +276,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                     Duplicate
                   </button>
 
-                  {/* Opening the list ASKS the server for it rather than
-                      reading anything the listing carried: the disabled set
-                      lives in each world's own file, and the panel should not
-                      make the server open every world to answer about one. */}
+                  {
+}
                   <button
                     type="button"
                     class="chart-button"
@@ -340,8 +294,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                     Plugins
                   </button>
 
-                  {/* Archive arms, then commits — see this file's header. The
-                      live world cannot be archived at all, so it is not offered. */}
+                  {
+}
                   <Show when={world.id !== activeWorldId()}>
                     <Show
                       when={armedArchiveId() === world.id}
@@ -373,9 +327,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                   </Show>
                 </div>
 
-                {/* Rendered only once the server's answer is IN and is about
-                    THIS world, so a toggle is never offered against another
-                    world's plugin set left over on screen. */}
+                {
+}
                 <Show when={pluginsForId() === world.id && worldPlugins()?.id === world.id}>
                   <div class="restore-row-main">
                     <p class="hud-hint">
@@ -391,30 +344,20 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                         re-snapshotted where they stand, and nobody is disconnected.
                       </p>
                     </Show>
-                    {/* One grid row per plugin: a label column of one shared
-                        width, then the toggle and its reload joined as one
-                        control group, so sixteen rows align instead of
-                        wrapping wherever the names happen to break. */}
+                    {
+}
                     <div class="plugin-list">
                       <For each={worldPlugins()?.installed ?? []}>
                         {(pluginName) => {
-                          // Accessors, never a const holding the read: the lists
-                          // are replaced by the server's answer to every toggle.
                           const isDisabled = (): boolean =>
                             worldPlugins()?.disabled.includes(pluginName) ?? false;
-                          // Which build of this plugin the server loaded, or ''
-                          // from a server too old to say. An accessor, not a
-                          // const, for the reason above it: the listing is
-                          // replaced by the answer to every toggle.
                           const stamp = (): string => worldPlugins()?.versions[pluginName] ?? '';
                           return (
                             <>
                             <span class="plugin-label">
                               {pluginName}
-                              {/* The build, in small type: it answers "is the
-                                  code I just edited live?" and is never
-                                  something to act on, so it must not compete
-                                  with the on/off state beside it. */}
+                              {
+}
                               <Show when={stamp() !== ''}>
                                 <span class="plugin-version"> v{stamp()}</span>
                               </Show>
@@ -441,14 +384,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                             >
                               {isDisabled() ? 'off' : 'on'}
                             </button>
-                            {/* RE-IMPORT THIS PLUGIN'S SERVER CODE (issue
-                                #198). Its own control rather than a modifier on
-                                the toggle beside it: the toggle is about THIS
-                                world, a reload is about the whole server, and
-                                one button that did either depending on how it
-                                was clicked is how an operator reloads a plugin
-                                they meant to switch off. The page reloads
-                                itself afterwards — the build identity moves. */}
+                            {
+}
                             <button
                               type="button"
                               class="chart-button plugin-reload"
@@ -471,13 +408,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                         }}
                       </For>
                     </div>
-                    {/* WHAT EACH PLUGIN OFFERS, RENDERED FROM ITS OWN
-                        DECLARATION. One select per declared key, its options
-                        the values that plugin declared. Nothing here names a
-                        plugin, a key or a value: `life | populous` is
-                        structures' vocabulary arriving over the wire, and a
-                        list of it in core is exactly what this panel must not
-                        grow. */}
+                    {
+}
                     <For each={worldPlugins()?.settings ?? []}>
                       {(setting) => (
                         <label class="restore-row-actions plugin-setting">
@@ -486,10 +418,6 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                           </span>
                           <select
                             class="chart-button"
-                            // An accessor at the point of use, never a const:
-                            // the listing is replaced by the server's answer to
-                            // every change, and a frozen read would leave the
-                            // control showing the value before last.
                             value={
                               worldPlugins()?.settings.find(
                                 (row) => row.plugin === setting.plugin && row.key === setting.key,
@@ -570,8 +498,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
             </button>
           </Show>
 
-          {/* Create. The id preview is computed with the SAME function the
-              server uses (shared/src/protocol.ts), so it cannot lie. */}
+          {
+}
           <form
             class="restore-key-row"
             onSubmit={(event) => {
@@ -691,7 +619,6 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
   );
 }
 
-/** What a successful action says. Kept beside refusalText for the same reason. */
 function doneText(done: Extract<WorldFeedback, { kind: 'done' }>): string {
   switch (done.action) {
     case 'create':
@@ -721,27 +648,16 @@ function doneText(done: Extract<WorldFeedback, { kind: 'done' }>): string {
     case 'configurePlugin':
       return 'That world’s plugin setting was changed.';
     case 'reloadPlugin':
-      // The one action whose whole purpose is confirming which code is live
-      // (issue #211). The stamp beside the plugin's toggle is re-sent by the
-      // server right after this receipt and is the authoritative answer.
       return `Re-imported “${done.plugin ?? 'the plugin'}”. The version beside its toggle is the build that is now live.`;
     case 'restart':
       return 'The server is restarting. It will come back on the code that is on disk now.';
     case 'view':
-      // The show-all toggle's receipt. It is worded for THIS panel, which the
-      // operator is unlikely to have open when they press a button in the
-      // button column — the button's own pressed state is the real feedback,
-      // and this line only ever shows if both are on screen at once.
       return done.detail === 'all'
         ? 'Showing the whole world.'
         : 'Showing your own territory again.';
     case 'actPlugin':
-      // The plugin's own account is the receipt (AdminPanel.tsx shows it in
-      // full); this panel only ever sees one if both are open at once.
       return done.detail ?? `“${done.plugin ?? 'the plugin'}” did that.`;
     default: {
-      // Exhaustiveness check: a new WorldAdminAction with no wording here is
-      // now a compile error — the omission this switch shipped with (#211).
       const missed: never = done.action;
       return missed;
     }

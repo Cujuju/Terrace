@@ -1,15 +1,3 @@
-// CONTRACT TEST for live plugin message routing (issue #197).
-//
-// The contract: the set of `<plugin>:<type>` messages the server can deliver is
-// whatever the CURRENT host claims at the moment the message arrives — never a
-// list snapshotted when the room was created. The room registers one Colyseus
-// wildcard handler and asks `handlerFor` per message, so a plugin whose message
-// types did not exist at room-create time (a reload, Phase 4) is still heard.
-//
-// Stated against the router rather than the room because the room is the
-// Colyseus adapter and holds no logic: what has to hold is the routing
-// DECISION, and that is this module.
-
 import { CHUNK_SIZE } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import { PluginHost } from '../src/plugins/host.ts';
@@ -27,8 +15,6 @@ function hostWith(plugin: TerracePlugin): PluginHost {
 
 describe('routePluginMessage', () => {
   it('delivers to a handler registered after the room was created', () => {
-    // The room exists first, routing against a host that claims no messages at
-    // all — the boot-time picture.
     let host = hostWith({ name: 'early' });
     const currentHost = (): PluginHost | null => host;
     const received: unknown[] = [];
@@ -36,7 +22,6 @@ describe('routePluginMessage', () => {
     routePluginMessage(currentHost, PLAYER, 'late:ping', { n: 1 });
     expect(received).toEqual([]);
 
-    // A later host claims a type nothing knew about at room create.
     host = hostWith({
       name: 'late',
       messages: {
@@ -51,8 +36,6 @@ describe('routePluginMessage', () => {
   });
 
   it('claims namespaced types only', () => {
-    // The room hands everything else back to Colyseus's unregistered-type
-    // treatment, so a core type keeps degrading exactly as it does today.
     expect(isPluginMessageType('late:ping')).toBe(true);
     expect(isPluginMessageType('sculpt')).toBe(false);
     expect(isPluginMessageType('worldList')).toBe(false);

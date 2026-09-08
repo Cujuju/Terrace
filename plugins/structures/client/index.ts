@@ -1,19 +1,3 @@
-// structures — client half. Draws whatever the server's `structures:all` and
-// `structures:changes` messages say is standing, and nothing else.
-//
-// It holds no authority: it never founds, never upgrades, never demolishes —
-// exactly flora's client half, extended with one more delta kind
-// (`upgraded`, alongside `founded`/`demolished`) because a standing structure
-// can change without being added or removed.
-//
-// CARD 33 ("Fishing Villages") ADDS TWO PURELY LOCAL LAYERS on top of the
-// wire cells above, neither of which the server knows exists: site.ts
-// classifies each structure's SITE (coastal or inland) from terrain this
-// client already has, and skiffs.ts/skiffModels.ts float a small fleet near
-// each mature coastal settlement. Both are computed fresh every rebuild()
-// alongside the ordinary building placements — see placement.ts's
-// PlacementResult for the combined shape.
-
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -43,51 +27,25 @@ import {
   type SkiffModels,
 } from './skiffModels.ts';
 
-/**
- * Seconds between retries while some structure's ground is still unknown.
- * Exactly flora's FLORA_GROUND_RETRY_SECONDS and for the same reason: the
- * condition resolves on a network event at human pace (a chunk streaming in),
- * not a per-frame one.
- */
 export const STRUCTURES_GROUND_RETRY_SECONDS = 0.5;
 
-/**
- * Module-level singletons, matching every other plugin's shape here: the
- * client host constructs one instance, and attach/dispose bracket its life.
- */
 let models: StructureModels | null = null;
-/** Card 33 ("Fishing Villages"): the boats coastal settlements float — see skiffs.ts/skiffModels.ts. */
 let skiffModels: SkiffModels | null = null;
-/**
- * Card 33's SITE survey, memoised across rebuilds (GH #258) — see site.ts.
- * Session-scoped exactly like `models`: attach builds it, dispose drops it.
- */
 let siteSurveys: SiteSurveyCache | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 
-/** Standing structures by packed cell key. The client's whole model of the world. */
 const buildings = new Map<number, StructureCell>();
 
 let pendingGround = 0;
-/** Placed structures whose SITE survey (site.ts) was indeterminate — see placement.ts's PlacementResult.pendingSite. */
 let pendingSite = 0;
 let sinceRetrySeconds = 0;
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
-  // EVERY STRUCTURE IS RE-PLACED, AND THAT PART IS CHEAP: a placement is one
-  // ground lookup and some arithmetic. What was not cheap is the SITE SURVEY
-  // each placement used to redo — 748 ground samples per structure, on a delta
-  // that may hold one founding (GH #258). The cache answers from the previous
-  // pass for every structure whose surrounding terrain has not moved, which on
-  // a CA generation or a keepalive is all of them.
   const result = placementsFor(
     buildings.values(),
     (x, y) => ctx.terrainHeightAt(x, y),
-    // THE DRAWN CAP, for the mooring test only — see site.ts's banner. A
-    // structure's own vertical placement still comes from the lattice above:
-    // a building stands on the ground, a boat floats against it.
     (x, y) => ctx.drawnGroundYAt(x, y),
     siteSurveys ?? undefined,
   );
@@ -103,13 +61,6 @@ function replaceAll(cells: readonly StructureCell[]): void {
   for (const cell of cells) buildings.set(structureKey(cell.x, cell.y), cell);
 }
 
-/**
- * Applies one delta. Order: demolitions, then foundings, then upgrades — a
- * cell that (impossibly today, but cheaply guarded) appears in more than one
- * half of the same message ends up in whatever state the LAST list says,
- * matching the server's own event order (a fell always precedes anything
- * that could re-found the same cell within one broadcast).
- */
 function applyChanges(
   founded: readonly StructureCell[],
   upgraded: readonly StructureCell[],
@@ -120,66 +71,15 @@ function applyChanges(
   for (const cell of upgraded) buildings.set(structureKey(cell.x, cell.y), cell);
 }
 
-/**
- * The buildings: THIRTY-FIVE surfaces for the whole world's structures, not per
- * structure — models.ts merges every tier's ~100 authored parts into a handful
- * of surfaces per tier and draws all STRUCTURES_CAP placements through them.
- * Measured 2026-08-29 at 36; it does not scale with the settlement count, which
- * is the whole point of the merge.
- *
- * THIRTY-FIVE SINCE 2026-09-04, re-measured (not adjusted by hand) after tier 2
- * became the imported timber-house asset: that model is one mesh with one
- * textured material, so it merges to ONE surface where the procedural tier it
- * replaced merged to two (its vertex-coloured surface plus its lit windows,
- * which keep their own draw because they glow). Counted as
- * `createStructureModels().root.children.length` with and without the asset
- * installed — a textured tier costs its own surface exactly like the boat hull
- * does, so this number moves with the ASSET and has to be re-measured whenever
- * the asset changes.
- */
 const STRUCTURE_SURFACE_DRAW_OBJECTS = 35;
 
-/**
- * The moored skiffs: ONE surface for the whole fleet, however many boats are
- * afloat — skiff.glb is a single mesh with a single material (skiffModels.ts
- * rejects an asset that is not), so one InstancedMesh draws every skiff in the
- * world.
- */
 const SKIFF_SURFACE_DRAW_OBJECTS = 1;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: STRUCTURES_PLUGIN_NAME,
 
-  /**
-   * Its share of the frame's draw calls, from its own caps — see
-   * TerraceClientPlugin.drawBudget and the constants above.
-   */
   drawBudget: STRUCTURE_SURFACE_DRAW_OBJECTS + SKIFF_SURFACE_DRAW_OBJECTS,
 
-  /**
-   * Loads BOTH of this plugin's model files before attach — one preload is all
-   * the host offers, and this plugin now draws two assets.
-   *
-   * Loads skiff.glb, so createSkiffModels has a hull to draw. A rejected load
-   * is a logged breach for this plugin only — the host never attaches
-   * afterwards, so the whole plugin (buildings included) stays unmounted
-   * rather than drawing a village with no boats.
-   *
-   * Loads the tier-2 building model, so createStructureModels has an asset to
-   * draw that tier from (models.ts's IMPORTED_STRUCTURE_TIER). That one is NOT
-   * fatal in the same way on its own: the tier falls back to its procedural
-   * builder, so every settlement would still stand in primitives — but the
-   * host's contract is one promise per plugin, so a rejection here still keeps
-   * the plugin unmounted, and the fallback is what covers a build that ships
-   * without the file rather than a load that failed.
-   *
-   * IN PARALLEL, and each keeps its OWN fit check and its own error wording
-   * (skiffModels.ts's hull budget, models.ts's footprint contract): the two
-   * loads are independent HTTP fetches of unrelated files, and sequencing them
-   * would add one round trip to every mount for no ordering that matters.
-   * Promise.all rejects with the first failure, which is the behaviour the
-   * host already logs.
-   */
   preload(): Promise<void> {
     return Promise.all([
       preloadSkiffModels(skiffUrl),
@@ -202,8 +102,6 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeMessages = [
       ctx.onMessage(STRUCTURES_ALL_MESSAGE, (payload) => {
         const cells = parseAllPayload(payload);
-        // A malformed payload is dropped whole — the previous state keeps
-        // rendering until the next good message, exactly flora's rule.
         if (cells === null) return;
         replaceAll(cells);
         rebuild(ctx);
@@ -218,10 +116,6 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
-      // The Durand's sign flash and every skiff's bob/orbit run every frame
-      // regardless of pendingGround/pendingSite — neither is gated on the
-      // retry condition below, which exists for a completely different
-      // reason (a chunk that has not streamed in yet).
       models?.animate(dt);
       skiffModels?.animate(dt);
 
@@ -249,9 +143,6 @@ export const clientPlugin: TerraceClientPlugin = {
     models = null;
     skiffModels?.dispose();
     skiffModels = null;
-    // AFTER the fleet: the InstancedMesh draws the asset's own geometry, and
-    // freeing it first would pull the buffers out from under a live mesh (see
-    // RigAsset.dispose's ordering contract).
     disposeSkiffKit();
   },
 };

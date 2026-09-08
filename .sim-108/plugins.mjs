@@ -1,22 +1,3 @@
-// Issue #108, pass 2 — what the conserving relaxation did to the PLUGIN
-// constants that were tuned against the old (height-manufacturing) rule, and
-// what each one has to become to restore the effect its doc comment claims.
-//
-// Run:  node --experimental-strip-types .sim-108/plugins.mjs > .sim-108/plugins.txt
-//
-// OLD is `.sim-108/old-src/` — shared/src exactly as it stood at the commit
-// before the fix (see run.mjs's header for how it was extracted). NEW is the
-// working tree. Both are driven through the SAME plugin arithmetic, transcribed
-// below from the plugin sources, so the only difference between the columns is
-// the relaxation rule.
-//
-// WHY THE PLUGIN ARITHMETIC IS TRANSCRIBED RATHER THAN IMPORTED: every plugin
-// reaches the ground through `WorldApi.sculpt`, which is
-// `applySculpt(..., {tool:'smooth', profile:'soft', spill:'banded'})` plus a
-// broadcast (server/src/plugins/world-api.ts:195-220). Importing the plugin
-// would drag in the whole server host for no extra fidelity in the one thing
-// being measured — the ground.
-
 import * as OLD from './old-src/index.ts';
 import * as NEW from '../shared/src/index.ts';
 import {
@@ -29,7 +10,6 @@ const RULES = [
   { label: 'new', mod: NEW },
 ];
 
-/** server/src/plugins/world-api.ts:27 — PLUGIN_SCULPT_OPTIONS. */
 const PLUGIN_SCULPT = { tool: 'smooth', profile: 'soft', spill: 'banded' };
 
 const BAND_HEIGHT = NEW.BAND_HEIGHT;
@@ -44,17 +24,12 @@ const total = (cells) => {
   return t;
 };
 
-/** A flat world at `base`, the plain a cone or a flow is laid on. */
 function flat(mod, size, base) {
   const map = mod.createHeightmap(size);
   map.cells.fill(base);
   return map;
 }
 
-/**
- * A constant slope falling in +x at `dropPerCell`, the hillside mudslides and
- * surges act on. Legal ground: dropPerCell <= MAX_STEP + RELAX_SLACK.
- */
 function slope(mod, size, top, dropPerCell) {
   const map = mod.createHeightmap(size);
   for (let y = 0; y < size; y++) {
@@ -65,20 +40,6 @@ function slope(mod, size, top, dropPerCell) {
   return map;
 }
 
-/**
- * A REAL fresh world's terrain (server/src/world/world.ts:406-419, verbatim).
- *
- * WHY THIS FIXTURE EXISTS AND THE FLAT ONES ARE NOT ENOUGH: genesis writes
- * BAND-QUANTISED heights — every cell is `bands * BAND_HEIGHT`
- * (genesis.ts:1795-1806) — so a fresh world is full of 16-, 32- and 48-unit
- * steps between neighbours, four to twelve times MAX_STEP. A plugin sculpt
- * anywhere on it therefore seeds a relaxation that regrades the whole hillside
- * around it, and THAT cascade — not the brush — is what the conserving rule
- * changed. On flat or already-legal ground the two rules barely differ.
- *
- * The terrain is a pure function of (size, seed) and of shared constants the
- * fix did not move, so both columns get a BIT-IDENTICAL starting world.
- */
 const genesisCache = new Map();
 function genesis(mod, size, seed) {
   let heights = genesisCache.get(`${size}|${seed}`);
@@ -97,7 +58,6 @@ function genesis(mod, size, seed) {
 
 const heightAt = (map, x, y) => map.cells[y * map.size + x];
 
-/** The steepest-drop site over MUDSLIDE_SLOPE_SPAN_CELLS, the way slopeAt picks one. */
 function steepestSite(map, span, margin) {
   let best = null;
   for (let y = margin; y < map.size - margin; y++) {
@@ -121,7 +81,6 @@ function steepestSite(map, span, margin) {
   return best;
 }
 
-/** A land cell far from the edges — where a vent is sited. */
 function landSite(map, margin) {
   let best = null;
   for (let y = margin; y < map.size - margin; y++) {
@@ -133,7 +92,6 @@ function landSite(map, margin) {
   return best;
 }
 
-/** A cell whose 4-neighbourhood straddles SEA_LEVEL — surge.ts's isShoreline. */
 function shoreSite(map, margin) {
   for (let y = margin; y < map.size - margin; y++) {
     for (let x = margin; x < map.size - margin; x++) {
@@ -151,19 +109,9 @@ function shoreSite(map, margin) {
   return null;
 }
 
-// ═══════════════════════════════════════════════════════════ VOLCANOES ══════
-//
-// plugins/volcanoes/server/vents.ts:382-403 `raiseCone`: the centre takes
-// `bands * BAND_HEIGHT` at MAX_BRUSH_RADIUS, then four ring cells at
-// ±CONE_RING_OFFSET (= MAX_BRUSH_RADIUS) take `floor(bands*BAND_HEIGHT/2)`.
-// The measured intent (vents.ts:177-189) is "after ten eruptions the mountain
-// is visibly taller": the CONE'S PEAK gains one band per eruption.
-
-
 const GENESIS_SIZE = 512;
 const GENESIS_SEED = 108;
 
-/** The fixture world plus the site the plugin would pick on it. */
 function stage(mod, world, pick) {
   if (world === 'flat') {
     const map = flat(mod, 192, 128);
@@ -179,9 +127,8 @@ function stage(mod, world, pick) {
   return { map, site: pick(map) };
 }
 
-const GENESIS_CONE_BANDS = 4; // plugins/volcanoes/protocol.ts:91
+const GENESIS_CONE_BANDS = 4;
 
-/** vents.ts:382-403 raiseCone — the centre, then the four ring cells. */
 function raise(mod, map, c, cy, bands) {
   sculpt(mod, map, c, cy, MAX_BRUSH_RADIUS, bands * BAND_HEIGHT);
   const rim = Math.floor((bands * BAND_HEIGHT) / 2);
@@ -201,11 +148,6 @@ function raise(mod, map, c, cy, bands) {
 function coneRun(mod, { bands, eruptions, world = 'flat' }) {
   const { map, site } = stage(mod, world, (m) => landSite(m, MAX_BRUSH_RADIUS * 2));
   const { x: c, y: cy } = site;
-  // THE VENT ALREADY HAS ITS GENESIS CONE (protocol.ts:91 GENESIS_CONE_BANDS =
-  // 4, raised by `openVent` before the first eruption ever runs), so the
-  // eruption gains below are measured on the shape the plugin really erupts
-  // through — a cone whose own flanks already sit at the gradient limit — and
-  // not on virgin ground.
   raise(mod, map, c, cy, GENESIS_CONE_BANDS);
   const gains = [];
   const base = heightAt(map, c, cy);
@@ -216,9 +158,6 @@ function coneRun(mod, { bands, eruptions, world = 'flat' }) {
     gains.push(now - last);
     last = now;
   }
-  // The FIRST eruption is the one the doc comment is about ("after one it is
-  // not [visibly taller]"); later ones land on a cone the earlier ones built,
-  // which is a different, cone-shape question. Both are reported.
   return {
     first: gains[0],
     peak: heightAt(map, c, cy) - base,
@@ -226,20 +165,12 @@ function coneRun(mod, { bands, eruptions, world = 'flat' }) {
   };
 }
 
-// plugins/volcanoes/server/flow.ts:93 FLOW_THICKNESS, applied per flow cell at
-// FLOW_BRUSH_RADIUS. The intent is a SETTLED thickness of half a band over the
-// ground the flow crossed: thin enough not to draw a contour of its own, thick
-// enough that overlapping cells in a hollow pool and do.
-
-const FLOW_BRUSH_RADIUS = 4; // cellsAcross(1) — plugins/volcanoes/protocol.ts
+const FLOW_BRUSH_RADIUS = 4;
 
 function flowRun(mod, { thickness, cells = 32, world = 'flat' }) {
   const { map, site } = stage(mod, world, (m) => landSite(m, MAX_BRUSH_RADIUS * 2));
   const y = site.y;
   const x0 = site.x - (cells >> 1);
-  // ONE CELL FIRST, well clear of the line below: this is what
-  // FLOW_THICKNESS's doc comment is a statement about — "how much the flow
-  // raises each cell it enters". The line after it is the pooling case.
   const soloX = site.x;
   const soloY = Math.max(0, y - 40);
   const soloBefore = heightAt(map, soloX, soloY);
@@ -253,18 +184,7 @@ function flowRun(mod, { thickness, cells = 32, world = 'flat' }) {
   return { solo, meanThickness: sum / cells, moved: total(map.cells) - total(before) };
 }
 
-// plugins/storms/server/surge.ts:148 — one surge is
-// sculpt(x, y, SURGE_BRUSH_RADIUS_CELLS, -SURGE_SCOUR_HEIGHT_UNITS * intensity)
-// on shoreline. The intent (surge.ts:14-23, 44-52): ONE surge takes the shore
-// down by less than a visible step, and a whole landfall a band or two. The
-// number that expresses it is the GROUND REMOVED per surge.
-
-/**
- * SURGES PER LANDFALL — the number surge.ts's intent sentence is really about
- * ("a storm that sits on a coast for its whole landfall takes it down a band or
- * two"): a cyclone's landfall against SURGE_INTERVAL_SECONDS = 10.
- */
-const LANDFALL_SURGES = 48; // 8 minutes of landfall / 10 s cadence
+const LANDFALL_SURGES = 48;
 
 function surgeRun(mod, { radius, depth, surges = 1, world = 'slope' }) {
   const { map, site } = stage(mod, world, (m) => shoreSite(m, 24) ?? landSite(m, 24));
@@ -280,17 +200,7 @@ function surgeRun(mod, { radius, depth, surges = 1, world = 'slope' }) {
   return { removed, changed, centreDrop: before[site.y * map.size + site.x] - heightAt(map, site.x, site.y) };
 }
 
-// ════════════════════════════════════════════════════════════ MUDSLIDES ═════
-//
-// The ledger from plugins/mudslides/server/slides.ts, transcribed: three head
-// scours of one band (scourHead, :762-812), a track deposit of
-// TRACK_DEPOSIT_FRACTION of the load per sculpt step while the front runs
-// (sculptStep, :892), then TOE_DUMP_STEPS dumps walked back over
-// TOE_LOBE_CELLS (:896-905). `sculptGuarded` (terrain.ts:145-185) measures the
-// NET height change inside a window `margin` cells past the brush edge and
-// counts anything outside it as UNMEASURED.
-
-const MUDSLIDE_BRUSH_RADIUS_CELLS = 6; // cellsAcross(1.5)
+const MUDSLIDE_BRUSH_RADIUS_CELLS = 6;
 
 function guarded(mod, map, x, y, radius, amount, margin) {
   const reach = radius + margin;
@@ -327,7 +237,7 @@ function slideRun(
     toeLobeCells = 4,
     tolerance = 4,
     headScourSteps = 3,
-    pathCells = 96, // MUDSLIDE_MAX_PATH_CELLS = cellsAcross(24)
+    pathCells = 96,
     world = 'slope',
   },
 ) {
@@ -368,9 +278,6 @@ function slideRun(
     carried = Math.max(0, carried - m.net);
   };
 
-  // THE REAL CADENCE. The front moves FRONT_SPEED (4 world units/s = 16
-  // cells/s) while a sculpt op fires every MUDSLIDE_SCULPT_INTERVAL_SECONDS
-  // (0.3 s), so a track deposit lands every 4.8 cells — not every cell.
   const CELLS_PER_SCULPT_OP = 16 * 0.3;
   const path = [];
   let nextOpAt = 0;
@@ -382,7 +289,6 @@ function slideRun(
       nextOpAt += CELLS_PER_SCULPT_OP;
       deposit(fx0, fy0, carried * trackFraction);
     }
-    // Steepest descent over the four neighbours — terrain.ts's nextFlowCell.
     let best = null;
     for (const [dx, dy] of [
       [1, 0],
@@ -396,7 +302,6 @@ function slideRun(
       const h = heightAt(map, nx, ny);
       if (best === null || h < best.h) best = { x: nx, y: ny, h };
     }
-    // A hollow with nowhere lower to go is `stop: 'flat'` — the front halts.
     if (best === null || best.h >= heightAt(map, fx0, fy0)) break;
     fx0 = best.x;
     fy0 = best.y;
@@ -419,8 +324,6 @@ function slideRun(
     maxChanged,
   };
 }
-
-// ═══════════════════════════════════════════════════════════════ REPORT ═════
 
 const pad = (v, w) => String(v).padStart(w);
 const padR = (v, w) => String(v).padEnd(w);
@@ -466,9 +369,6 @@ for (const world of ['flat', 'genesis']) {
       const before = heightAt(map, site.x, site.y);
       raise(mod, map, site.x, site.y, bands);
       const gain = heightAt(map, site.x, site.y) - before;
-      // VENT_MIN_BANDS_ABOVE_SEA (6) is the SITING bar, which the cone is
-      // raised on top of — so the summit the plume is sized against is
-      // 6 bands plus whatever the cone really delivered.
       console.log(
         `${padR(world, 9)}${padR(label, 6)}${padR(bands, 13)}${pad(gain, 11)}` +
           `${pad(fx(gain / BAND_HEIGHT), 10)}${pad(fx(6 + gain / BAND_HEIGHT), 14)}`,

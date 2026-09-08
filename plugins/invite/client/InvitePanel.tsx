@@ -1,18 +1,8 @@
-// The invite HUD panel: the address friends should open, with a copy button.
-//
-// SOLID REACTIVITY: accessors are called at the point of use, per the client's
-// standing rule — no reactive read is ever frozen in a component-body const.
-
 import { Show, type JSX } from 'solid-js';
 import { copy } from './copy.ts';
 import { deriveLocalShareUrl } from './derive.ts';
 import { justCopied, serverShareUrl } from './state.ts';
 
-/**
- * Server-configured URL first; the visitor's own origin as the fallback.
- * location is read inside the accessor, but it is effectively static — a page
- * cannot change origin without a navigation.
- */
 function shareUrl(): string | null {
   return (
     serverShareUrl() ??
@@ -23,7 +13,7 @@ function shareUrl(): string | null {
 export function InvitePanel(): JSX.Element {
   return (
     <Show when={shareUrl() !== null}>
-      {/* One title for the label + URL; the button carries its own below. */}
+      {}
       <div
         class="hud-row"
         title="Invite: this address joins your world"

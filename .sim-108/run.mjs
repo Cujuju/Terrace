@@ -1,29 +1,12 @@
-// Issue #108 — relaxation manufactures height. Side-by-side simulation of the
-// OLD and NEW movePair arithmetic on identical fixtures.
-//
-// Run:  node --experimental-strip-types .sim-108/run.mjs > .sim-108/results.txt
-//
-// OLD is not reproduced by hand: `.sim-108/old-src/` is `shared/src/` exactly
-// as it stood at the commit before this change, extracted with
-// `git archive HEAD shared/src | tar -x -C .sim-108/old-src --strip-components=2`
-// and imported directly. NEW is the working tree's `shared/src/`. Both run
-// through the same fixture builders below, so the only difference between the
-// two columns is the arithmetic under test.
-
 import * as OLD from './old-src/index.ts';
 import * as NEW from '../shared/src/index.ts';
 
 const MAX_STEP = NEW.MAX_STEP;
 
-/** The two implementations, labelled for the table. */
 const RULES = [
   { label: 'old (e>>1 / e-(e>>1))', mod: OLD },
   { label: 'new (e>>1 / e>>1)', mod: NEW },
 ];
-
-// ---------------------------------------------------------------- fixtures --
-// Each fixture returns { size, fill(cells), seed(cells) }. `fill` writes the
-// starting heights; `seed` returns the indices the relaxation bbox starts from.
 
 const allCells = (size) => {
   const s = new Set();
@@ -31,7 +14,6 @@ const allCells = (size) => {
   return s;
 };
 
-/** West half at `height`, east half at 0. */
 const cliff = (size, height) => ({
   name: `cliff ${height} (${size}²)`,
   size,
@@ -47,7 +29,6 @@ const cliff = (size, height) => ({
   },
 });
 
-/** One cell at MAX_HEIGHT on flat ground. */
 const spire = (size) => ({
   name: `spire (${size}²)`,
   size,
@@ -59,11 +40,6 @@ const spire = (size) => ({
   },
 });
 
-/**
- * Rough terrain from a fixed LCG — the "ordinary ground" case, where excesses
- * are small and odd remainders are therefore common (the leak's best feeding
- * ground per unit of relief).
- */
 const rough = (size, amplitude) => ({
   name: `random rough ±${amplitude} (${size}²)`,
   size,
@@ -77,11 +53,6 @@ const rough = (size, amplitude) => ({
   seed: (cells) => allCells(Math.round(Math.sqrt(cells.length))),
 });
 
-/**
- * A mudslide head scour (#239): flat ground at 512, the centre cell pulled
- * down by 64 (four bands), then relaxed. The plugin measures the NET height
- * change over the brush footprint and abandons the slide when it is >= 0.
- */
 const scour = (size, base, depth) => ({
   name: `scour -${depth} on flat ${base} (${size}²)`,
   size,
@@ -104,15 +75,12 @@ const FIXTURES = [
   scour(128, 512, 64),
 ];
 
-// ----------------------------------------------------------------- metrics --
-
 const total = (cells) => {
   let t = 0;
   for (let i = 0; i < cells.length; i++) t += cells[i];
   return t;
 };
 
-/** Largest |height difference| across any 4-neighbour pair. */
 const maxGradient = (cells, size) => {
   let worst = 0;
   for (let y = 0; y < size; y++) {
@@ -125,7 +93,6 @@ const maxGradient = (cells, size) => {
   return worst;
 };
 
-/** How many 4-neighbour pairs sit strictly above MAX_STEP. */
 const pairsOverMaxStep = (cells, size) => {
   let n = 0;
   for (let y = 0; y < size; y++) {
@@ -138,7 +105,6 @@ const pairsOverMaxStep = (cells, size) => {
   return n;
 };
 
-/** Builds the fixture, relaxes it with `mod`, and reports. */
 function run(fixture, mod) {
   const map = mod.createHeightmap(fixture.size);
   fixture.fill(map.cells);
@@ -160,8 +126,6 @@ function run(fixture, mod) {
     pairsOver: pairsOverMaxStep(map.cells, fixture.size),
   };
 }
-
-// ------------------------------------------------------------------- table --
 
 const pad = (v, w) => String(v).padStart(w);
 const padR = (v, w) => String(v).padEnd(w);
@@ -213,13 +177,6 @@ console.log('"!" on a pass count means the sweep hit SMOOTH_PASS_LIMIT: the casc
 console.log('was TRUNCATED, not converged, and the gradient invariant is left locally');
 console.log('violated (documented residual — see SMOOTH_PASS_LIMIT).');
 
-// -------------------------------------------------------- ASCII sections ----
-
-/**
- * One row of the map as a fixed-width ASCII profile. Heights are scaled into
- * `rows` character rows between the profile's own min and max, so the shape is
- * readable regardless of the absolute heights.
- */
 function profile(cells, size, y, x0, x1, rows) {
   const slice = [];
   for (let x = x0; x <= x1; x++) slice.push(cells[y * size + x]);
@@ -272,7 +229,6 @@ for (const key of ['cliff 401 (128²)', 'scour -64 on flat 512 (128²)']) {
   }
 }
 
-// The scour's own headline number: what the mudslide plugin measures.
 console.log('='.repeat(78));
 console.log('THE #239 MEASUREMENT: net height change over the scoured centre cell');
 console.log('='.repeat(78));

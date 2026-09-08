@@ -1,6 +1,3 @@
-// @terrace/shared — terrain math + protocol, the single source of truth
-// imported by both client and server. See docs/DESIGN.md.
-
 export * from './constants.ts';
 export * from './calendar.ts';
 export * from './heightmap.ts';

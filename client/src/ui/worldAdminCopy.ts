@@ -1,10 +1,5 @@
-// Operator-facing wording for world-admin refusals, shared by the Worlds
-// panel (WorldManager.tsx) and the admin panel (AdminPanel.tsx) — one place,
-// so the two screens never explain the same refusal in two ways.
-
 import type { WorldAdminRefusal } from '@terrace/shared';
 
-/** Plain-language reason, so the server never composes player-facing prose. */
 export function refusalText(reason: WorldAdminRefusal): string {
   switch (reason) {
     case 'disabled':
@@ -55,4 +50,3 @@ export function refusalText(reason: WorldAdminRefusal): string {
       return 'The server could not complete that. Nothing was destroyed — check the server log.';
   }
 }
-

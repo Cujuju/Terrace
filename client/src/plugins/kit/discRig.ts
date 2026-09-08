@@ -1,30 +1,3 @@
-// ONE DRIFTING MASS, IN THE SCENE — the rig four plugins draw, and the pool they
-// keep it in.
-//
-// A rig is a Group put at the mass's centre on the X/Z plane and never rotated,
-// holding a haze bank (./hazeBank.ts) and, for a mass that precipitates, one
-// falling column (./precipitation.ts). Everything else a plugin needs — a bolt,
-// a flash, a light — is added to `root` by that plugin and animated by it.
-//
-// RENDERING IS ANCHORED TO THE MASS, NOT TO THE CAMERA. The usual way to draw
-// rain is a small box of particles that follows the viewer, because in most games
-// weather covers the whole world and drawing all of it is impossible. Here it is
-// the other way round: a mass IS a bounded object — a disc of 24 to 56 cells — so
-// the entire thing fits in one pooled rig, and anchoring that rig to the mass is
-// both simpler and more correct. A front is then a body that visibly crosses the
-// landscape and passes over the player, which a camera-locked box cannot show.
-// It is also the only option available: ClientPluginCtx exposes no camera.
-//
-// COST, NAMED: the particle COUNT per rig is fixed while the radius is not, so a
-// 24-cell squall is about five times as dense as a 56-cell front. That reads as a
-// compact shower being heavier than a broad drizzle — a defensible picture, and a
-// consequence rather than a decision.
-//
-// WHY POOL AT ALL when only a handful exist: building one allocates a
-// multi-thousand-float buffer and a fresh material, and weather turns over every
-// few minutes forever, so without a pool a world left running all evening pays
-// that repeatedly. With one it pays it once, and the shared geometry once ever.
-
 import { Group } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type { BufferGeometry, Material } from 'three';
@@ -37,82 +10,21 @@ import {
 } from './precipitation.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
 
-/**
- * Draw order for a mass's transparent parts.
- *
- * The sea is transparent too (render/water.ts) and it is ONE plane the size of
- * the world, so three sorts it by the distance to its centre — the middle of the
- * map, not the water under the weather. Left to the sort, a sheet a unit above
- * the surface can therefore be drawn first and then painted over by the sea. A
- * positive render order puts every sheet after it, unconditionally. Same value
- * and same reasoning as the monsters plugin's DREAD_RENDER_ORDER.
- *
- * THE CLOUD DECK IS ORDERED AGAINST THIS, half a step either side of it, and
- * which side depends on the camera — ./cumulusDeck.ts's
- * DECK_RENDER_ORDER_CAMERA_ABOVE_BASE states the argument. So this number is
- * the middle of the kit's three orders, not its top.
- */
 export const DISC_RENDER_ORDER = 1;
 
-/** One mass's body: the haze, and the column falling through it. */
 export interface DiscRig {
-  /** Put at the mass's centre on the X/Z plane; never rotated. */
   readonly root: Group;
-  /**
-   * One frame. Returns whether the mass is LIT — intensity above zero — so a
-   * caller can skip its own parts on exactly the frames this one does. Nothing
-   * is drawn at zero: a transparent draw call that contributes nothing is still
-   * a transparent draw call, and this is what makes a gathering mass cost
-   * nothing until it is actually visible.
-   *
-   * `elapsed` is the plugin's animation clock, which STOPS ADVANCING under
-   * prefers-reduced-motion — so every fall, sway, spin and bob in here becalms
-   * from that one fact, with no reduced-motion branch of its own.
-   */
   update(disc: InterpolatedDisc, elapsed: number): boolean;
-  /**
-   * Puts out this rig's slot in the plugin's cloud deck.
-   *
-   * MUST BE CALLED WHEN THE RIG LEAVES THE SCENE — `createRigPool`'s
-   * `onRelease` is the place. The deck is drawn from uniforms and not from
-   * this rig's `root`, so unparenting the root does NOT stop the cloud: a
-   * retired mass whose slot was never parked leaves its deck hanging over
-   * ground the server says is clear.
-   */
   park(): void;
-  /** Frees everything this rig OWNS. Shared geometry belongs to its builder. */
   dispose(): void;
 }
 
 export interface DiscRigSpec {
-  /** The shared haze geometry, built once per plugin and freed by it. */
   readonly hazeGeometry: BufferGeometry;
-  /** Multiplier on every haze layer's peak opacity. */
   readonly hazeStrength: number;
-  /** How this mass precipitates, or null for one that does not. */
   readonly profile: PrecipitationProfile | null;
-  /** Node name, for legibility in the three.js inspector. */
   readonly name: string;
-  /**
-   * The plugin's cloud deck, or null for a mass with no cloud over it.
-   *
-   * ONE DECK PER PLUGIN, and a rig holds only a SLOT in it — claimed here and
-   * written by `update` below. The deck is not a child of `root`: it is drawn
-   * in one instanced call for every mass at once, so it hangs off the plugin's
-   * layer and is placed entirely from the slot's uniforms.
-   */
   readonly deck: CumulusDeck | null;
-  /**
-   * `ClientPluginCtx.applyRevealClip`, or null in a context that has none.
-   *
-   * A RIG'S MATERIALS ARE ITS OWN. `createHazeBank` and
-   * `createPrecipitationColumn` build a fresh material per rig rather than
-   * sharing a pooled one, so the clip is applied here, once per material, at
-   * the moment the rig is built — which is the "once per material, never per
-   * mesh" rule `applyRevealClip` states, applied to materials that happen to
-   * be per-rig. Applying it twice to one material would splice its
-   * declarations in twice and fail to compile.
-   */
   readonly applyRevealClip: ((material: Material, label: string) => void) | null;
 }
 
@@ -134,31 +46,17 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
     }
   }
 
-  // CLAIMED ONCE, FOR THE RIG'S WHOLE POOLED LIFE. A rig outlives the mass it
-  // was built for — that is what the pool is — so a slot handed back and
-  // re-claimed per mass would be churn with no gain. -1 when the plugin has
-  // built more rigs than its own cap allows a deck for; such a rig draws its
-  // column and its haze and no cloud, which is a breach of the plugin's cap
-  // rather than a crash.
   const deckSlot = spec.deck === null ? -1 : spec.deck.claimSlot();
 
   return {
     root,
 
     update(disc: InterpolatedDisc, elapsed: number): boolean {
-      // The wire carries a mass's position, radius and velocity in CELLS — the
-      // server sims on the same grid as everything else — and everything below
-      // draws in WORLD UNITS. One conversion at the top, so no line further down
-      // has to remember which space it is in.
       const worldRadius = disc.radius * CELL_WORLD_SIZE;
       root.position.set(disc.x * CELL_WORLD_SIZE, 0, disc.y * CELL_WORLD_SIZE);
 
       const lit = disc.intensity > 0;
       root.visible = lit;
-      // THE DECK IS TOLD EITHER WAY. Its slot is a uniform, not a node under
-      // `root`, so hiding the root does not hide the cloud — parking the slot
-      // is what does, and a mass that has faded out must not leave its cloud
-      // hanging in the sky.
       if (!lit) {
         spec.deck?.park(deckSlot);
         return false;
@@ -187,28 +85,16 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
       root.clear();
       column?.dispose();
       haze.dispose();
-      // The DECK is the plugin's, shared by every rig, and is freed by whoever
-      // built it — the same ownership rule the haze geometry above follows.
     },
   };
 }
 
-/** Rigs, reused as masses come and go. */
 export interface RigPool<T> {
-  /** A rig from the free list if one is waiting, otherwise a fresh one. */
   acquire(): T;
-  /** Returns a rig to the free list. The caller has already unparented it. */
   release(rig: T): void;
-  /** Frees every rig, free or not. */
   dispose(): void;
 }
 
-/**
- * A free list over `create`.
- *
- * `onRelease` runs before a rig re-enters the list — where a plugin puts out
- * anything that must not survive into the next mass to acquire this rig.
- */
 export function createRigPool<T extends { dispose(): void }>(
   create: () => T,
   onRelease?: (rig: T) => void,

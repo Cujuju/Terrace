@@ -1,21 +1,3 @@
-// previewBoats.ts — THROWAWAY preview harness for the boats plugin, mirroring
-// previewPilgrims.ts. Not part of the shipped app: reached only through
-// preview-boats.html, not registered in plugins/registry.ts.
-//
-//   ?state=<sailing|fighting>  — one boat alone; absent, BOTH side by side,
-//                                which is the shot that proves the fighting
-//                                sail actually reads differently
-//   ?view=<iso|side|front|top> — defaults to "iso"
-//   ?t=<seconds>               — animation clock; defaults to 0.6 (mid-stroke)
-//
-// A WATERLINE PLANE, unlike the other harnesses' ground disc: this model's
-// whole vertical contract is BOAT_SHAPE.waterlineLift — the hull is meant to sit
-// half-submerged — and a shot without a water surface cannot show whether it
-// does. Same reason preview-kraken.html grew one.
-//
-// The lighting rig and framing are previewPilgrims.ts's, copied verbatim.
-// A screenshot driver waits for `window.__previewReady === true`.
-
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -41,7 +23,6 @@ import {
   preloadBoatModels,
 } from '../../plugins/boats/client/models.ts';
 
-// ── Lighting rig, copied from previewPilgrims.ts / render/scene.ts ────────
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
 const HEMISPHERE_LIGHT_INTENSITY = 1.5;
@@ -52,22 +33,13 @@ const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 
 const BACKDROP_COLOR = 0x808080;
-/** The sea, at the studio's own scale. Opaque here on purpose: this shot is
- *  about where the waterline cuts the hull, and translucency would blur it. */
 const WATER_COLOR = 0x2f6f8f;
 const WATER_RADIUS = 3;
 const CAMERA_FRAMING_PADDING = 1.3;
 const SETTLE_FRAME_COUNT = 3;
 
-/** Box3's per-vertex mode. A SkinnedMesh's object-level `boundingBox` is skinned
- *  ONCE and cached, so the conservative path frames the rig from whatever pose
- *  the bones happened to hold — and the answer changed when the hull's two baked
- *  surfaces merged into one (GH #393). Per-vertex goes through
- *  SkinnedMesh.getVertexPosition, which skins against the bones' live
- *  matrixWorld and caches nothing. */
 const FRAME_ON_POSED_VERTICES = true;
 
-/** Gap between the two boats in the side-by-side shot, world units. */
 const PAIR_SPACING = 1.1;
 
 const CAMERA_VIEWS = {
@@ -85,8 +57,6 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   const scene = new Scene();
   scene.background = new Color(BACKDROP_COLOR);
 
-  // The waterline, at world Y 0 — exactly where render/water.ts draws the sea
-  // and exactly what BOAT_SHAPE.waterlineLift is measured against.
   const water = new Mesh(
     new CircleGeometry(WATER_RADIUS, 48),
     new MeshLambertMaterial({ color: WATER_COLOR }),
@@ -113,9 +83,6 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
 }
 
 function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraView): void {
-  // Before the box, not after: the per-vertex path reads each bone's
-  // `matrixWorld` and the mesh's `bindMatrixInverse`, and SkinnedMesh derives
-  // that inverse in `updateMatrixWorld`. animate() only moved bone LOCALS.
   subject.updateMatrixWorld(true);
   const box = new Box3().setFromObject(subject, FRAME_ON_POSED_VERTICES);
   const center = box.getCenter(new Vector3());
@@ -143,27 +110,15 @@ async function main(): Promise<void> {
 
   const { scene, camera, renderer } = buildScene();
 
-  // The asset first: createBoatModels bakes from the installed kit.
-  // The preview has no plugin host: it stands in for ctx.loadRigAsset with the
-  // loader itself, at the same 'lamps-only' policy the plugin's preload asks
-  // for (plugins/boats/client/models.ts) — the environment is a metals-only
-  // concern this page has no material for.
   await preloadBoatModels(
     { loadRigAsset: (url) => loadRigAsset(url, null) },
     warBoatUrl,
   );
   const models = createBoatModels();
   const subject = new Group();
-  // The hull herd's surface and the fleet's sails: two instanced meshes for any
-  // number of boats, sharing one parent so each instance matrix is a boat's own
-  // local transform. There are no per-boat nodes to add.
   for (const object of models.objects) subject.add(object);
   models.beginFrame();
   states.forEach((fighting, index) => {
-    // Phase 0 for both boats, so the pair differ ONLY by their fighting state —
-    // which is the comparison this shot exists to make. The whole clock is
-    // handed over as ONE step, which drives the stroke accumulator to exactly
-    // `clock × rate` — the pose the old wall-clock formula gave at `t`.
     models.create().draw(
       0,
       BOAT_SHAPE.waterlineLift,

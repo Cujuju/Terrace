@@ -1,13 +1,3 @@
-// The small geometry vocabulary the species files share, on top of
-// ../whaleHull.ts's swept hull.
-//
-// Everything here returns INDEXED geometry, deliberately. rigSkin.ts groups a
-// rig's parts into surfaces by material signature AND by indexed/non-indexed,
-// so a hull (indexed) beside an extruded fin (three's ExtrudeGeometry is not)
-// costs a second draw call per species. Welding the extrusion's vertices
-// (`mergeVertices`) makes it indexed at no visible cost, and a whole species
-// then bakes to ONE surface — which is the number client/index.ts budgets per
-// species and the number the 140 fps rule is paid in.
 import {
   BufferGeometry,
   CatmullRomCurve3,
@@ -21,18 +11,11 @@ import {
 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-/**
- * Bevel proportions for a fin slab, as fractions of its thickness. A fin is a
- * plate with rounded edges: enough bevel to catch light along the edge, not so
- * much that a thin fin becomes a lens.
- */
 const FIN_BEVEL_THICKNESS_RATIO = 0.3;
 const FIN_BEVEL_SIZE_RATIO = 0.42;
 const FIN_BEVEL_SEGMENTS = 1;
-/** Outline subdivision for the curved fin edges. */
 const FIN_CURVE_SEGMENTS = 7;
 
-/** Welds coincident vertices so an extrusion joins the indexed surfaces. */
 export function indexed(geometry: BufferGeometry): BufferGeometry {
   const welded = mergeVertices(geometry);
   geometry.dispose();
@@ -40,19 +23,11 @@ export function indexed(geometry: BufferGeometry): BufferGeometry {
   return welded;
 }
 
-/**
- * A flat fin, flipper or wing lying in the XZ plane (span along ±Z, thickness
- * along Y), indexed. `sign` mirrors it for the other side of the body.
- */
 export function flatFin(
   buildOutline: (shape: Shape, sign: number) => void,
   sign: number,
   depth: number,
 ): BufferGeometry {
-  // The construction the procedural whale's finGeometry used (retired with
-  // pass 8), at this kit's leaner tessellation: a whale is one of ~20 on
-  // screen, a fish one of hundreds, and the 24-segment / 2-bevel flipper cost
-  // more than the hull it hung on.
   const shape = new Shape();
   buildOutline(shape, sign);
   const geometry = new ExtrudeGeometry(shape, {
@@ -63,23 +38,11 @@ export function flatFin(
     bevelSegments: FIN_BEVEL_SEGMENTS,
     curveSegments: FIN_CURVE_SEGMENTS,
   });
-  // Outline in XY, extruded along +Z; lay it flat with thickness in Y.
   geometry.rotateX(Math.PI / 2);
   geometry.translate(0, -depth / 2, 0);
   return indexed(geometry);
 }
 
-/**
- * An upright fin standing in the XY plane (thickness along Z): a dorsal, a
- * caudal blade, an anal fin. The outline is authored with +X forward and +Y
- * up, exactly as the animal is seen from the side.
- *
- * `bevelDepth` is the plate thickness the edges are bevelled as, and defaults
- * to `depth`. A fin IS its thickness, but a through-body bar (the angelfish's
- * stripes) extrudes far thicker than its edge radius: bevelled as itself, a
- * 0.17 slab grows 0.07 in every direction of the outline and swallows the
- * flank it was meant to stripe. Such a caller names a thin plate here.
- */
 export function uprightFin(
   buildOutline: (shape: Shape) => void,
   depth: number,
@@ -100,20 +63,13 @@ export function uprightFin(
 }
 
 export interface LimbOptions {
-  /** Radius at the hip/shoulder end. */
   readonly rootRadius: number;
-  /** Radius at the hoof/paw end. */
   readonly tipRadius: number;
-  /** Root-to-tip length. */
   readonly length: number;
   readonly radialSegments: number;
   readonly heightSegments: number;
 }
 
-/**
- * A tapered limb hanging DOWN from its root: the root is at the origin and the
- * tip at y = -length, so a Group placed at the hip swings it about the hip.
- */
 export function limb(options: LimbOptions): BufferGeometry {
   const { rootRadius, tipRadius, length, radialSegments, heightSegments } = options;
   const geometry = new CylinderGeometry(
@@ -127,7 +83,6 @@ export function limb(options: LimbOptions): BufferGeometry {
   return geometry;
 }
 
-/** A smooth ellipsoid of the given FULL extents (length along X, height Y, width Z). */
 export function smoothEllipsoid(
   length: number,
   height: number,
@@ -141,7 +96,6 @@ export function smoothEllipsoid(
 }
 
 export interface HornOptions {
-  /** Control points from root to tip, in the parent's space. */
   readonly path: readonly Vector3[];
   readonly rootRadius: number;
   readonly tipRadius: number;
@@ -149,13 +103,6 @@ export interface HornOptions {
   readonly radialSegments: number;
 }
 
-/**
- * A horn, tusk or whip tail: a tube along a Catmull-Rom path that TAPERS from
- * root to tip. TubeGeometry has one radius, so the taper is applied afterwards
- * by scaling each ring about the path — the rings are laid out in path order,
- * `radialSegments + 1` vertices per ring, which is what makes that possible
- * without rebuilding the tube.
- */
 export function taperedTube(options: HornOptions): BufferGeometry {
   const { path, rootRadius, tipRadius, tubularSegments, radialSegments } = options;
   const curve = new CatmullRomCurve3(path.map((p) => p.clone()));
@@ -179,11 +126,6 @@ export function taperedTube(options: HornOptions): BufferGeometry {
   return capTube(geometry, tubularSegments, radialSegments, curve);
 }
 
-/**
- * TubeGeometry is OPEN at both ends — a neck or a tail root shows as a hole
- * you can see the backdrop through. Closes both rings with a fan to a centre
- * vertex on the path.
- */
 function capTube(
   tube: BufferGeometry,
   tubularSegments: number,
@@ -214,11 +156,6 @@ function capTube(
   return capped;
 }
 
-/**
- * Sets the geometry's vertex positions through `fn`, in place. For the small
- * asymmetries a swept body cannot express — a shark's flattened belly, a ray's
- * depressed body.
- */
 export function deform(geometry: BufferGeometry, fn: (v: Vector3) => void): BufferGeometry {
   const positions = geometry.getAttribute('position');
   const v = new Vector3();
@@ -232,7 +169,6 @@ export function deform(geometry: BufferGeometry, fn: (v: Vector3) => void): Buff
   return geometry;
 }
 
-/** Triangle count of an indexed or non-indexed geometry — for the budget notes. */
 export function triangleCount(geometry: BufferGeometry): number {
   const index = geometry.getIndex();
   return (index ? index.count : geometry.getAttribute('position').count) / 3;

@@ -1,9 +1,3 @@
-// World thumbnails (2026-08-22).
-//
-// The contract worth pinning is not "it produces bytes" — it is that the
-// picture is a faithful, cheap reduction of the world, and that a world
-// without one is never broken by that.
-
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +22,6 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** A heightmap whose left half is deep sea and right half is high ground. */
 function splitWorld(size: number, low: number, high: number): Int16Array {
   const cells = new Int16Array(size * size);
   for (let y = 0; y < size; y++) {
@@ -46,7 +39,6 @@ describe('buildThumbnail', () => {
   });
 
   it('keeps left-right structure, so a coastline is recognisable', () => {
-    // The whole point of the picture: shape survives the reduction.
     const low = -8 * BAND_HEIGHT;
     const high = 10 * BAND_HEIGHT;
     const thumb = buildThumbnail(splitWorld(512, low, high), 512);
@@ -59,9 +51,6 @@ describe('buildThumbnail', () => {
   });
 
   it('AVERAGES its block rather than sampling one cell from it', () => {
-    // The moiré guard. A checkerboard alternating every cell averages to its
-    // mean everywhere; a stride sampler would return one extreme or the other
-    // and paint a grid that exists nowhere in the world.
     const size = 512;
     const cells = new Int16Array(size * size);
     const low = 0;
@@ -79,8 +68,6 @@ describe('buildThumbnail', () => {
   });
 
   it('keeps below-sea-level ground negative through the round trip', () => {
-    // Buffer bytes are unsigned; a seabed that came back positive would paint
-    // every ocean as highland.
     const deep = -20 * BAND_HEIGHT;
     const thumb = buildThumbnail(splitWorld(256, deep, deep), 256);
     expect(thumb.readInt8(0)).toBe(bandOf(deep));
@@ -92,7 +79,7 @@ describe('buildThumbnail', () => {
   });
 
   it('handles a world smaller than the thumbnail grid', () => {
-    const size = CHUNK_SIZE; // 16 cells across, drawn at 64px
+    const size = CHUNK_SIZE;
     const thumb = buildThumbnail(splitWorld(size, SEA_LEVEL, 4 * BAND_HEIGHT), size);
     expect(thumb).toHaveLength(THUMBNAIL_BYTES);
     expect(thumb.readInt8(0)).toBe(bandOf(SEA_LEVEL));
@@ -100,7 +87,6 @@ describe('buildThumbnail', () => {
 });
 
 describe('storage and the lazy backfill', () => {
-  /** Writes a world file, optionally without a thumbnail (the legacy case). */
   function makeWorld(name: string, withThumbnail: boolean): string {
     const id = registry.uniqueIdFor(name) as string;
     const store = registry.createStore(id, 5);
@@ -128,8 +114,6 @@ describe('storage and the lazy backfill', () => {
   });
 
   it('lists a legacy world WITHOUT a thumbnail rather than failing', () => {
-    // Absent is a placeholder, never an error: the row must still load,
-    // rename and archive.
     const id = makeWorld('Moonreach', false);
     const store = registry.openStore(id, 5);
     try {
@@ -137,7 +121,6 @@ describe('storage and the lazy backfill', () => {
     } finally {
       store.close();
     }
-    // summaryFor bypasses list()'s backfill, so it sees the undrawn state.
     expect(registry.summaryFor(id, null)?.thumbnail).toBeUndefined();
   });
 
@@ -145,7 +128,6 @@ describe('storage and the lazy backfill', () => {
     const id = makeWorld('Moonreach', false);
 
     expect(registry.ensureThumbnail(id, null)).toBe(true);
-    // Second call is a no-op: the decode is paid once, ever.
     expect(registry.ensureThumbnail(id, null)).toBe(false);
 
     const summary = registry.summaryFor(id, null);
@@ -167,7 +149,6 @@ describe('storage and the lazy backfill', () => {
 
     expect(listed).toHaveLength(2);
     for (const world of listed) expect(world.thumbnail).toBeTypeOf('string');
-    // ...and it persisted, rather than being computed for the listing alone.
     for (const id of [a, b]) {
       const store = registry.openStore(id, 5);
       try {
@@ -180,7 +161,7 @@ describe('storage and the lazy backfill', () => {
 
   it('survives a world file it cannot draw', () => {
     const id = registry.uniqueIdFor('Broken') as string;
-    SnapshotStore.open(registry.pathFor(id)).close(); // a file with no snapshot
+    SnapshotStore.open(registry.pathFor(id)).close();
     expect(registry.ensureThumbnail(id, null)).toBe(false);
     expect(registry.list(null).some((world) => world.id === id)).toBe(true);
   });

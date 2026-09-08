@@ -1,20 +1,3 @@
-// The tread builder for one band's worth of water (client/src/render/water/,
-// unifying pools AND flowing rivers onto the terrain's own marched pipeline).
-//
-// This GENERALIZES render/riverRig.ts's `appendPoolSurface`: instead of a
-// `Lake` whose surface is a spill HEIGHT, it takes a `WaterRegion` whose
-// surface is a BAND index — the horizontal surface of any flooded region,
-// including a river drawn as a narrow one-cell course. A companion module
-// handles the vertical fall surfaces between bands; this one only ever draws
-// flat treads.
-//
-// The geometry is the terrain's own pipeline, unchanged from the lake:
-// loadSampleField → marchLevel → assembleLoops → smoothLoop → groupLoops /
-// bridgeHole / earClip (docs/DESIGN.md 2026-08-21, issue #62 — "a lake is
-// drawn with the terrain's own outline"). Only the FIELD RULE differs, and it
-// is documented at length on `appendRegionSurface` below because that is
-// where the whole shape decision lives.
-
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
@@ -34,12 +17,6 @@ import {
 import { smoothLoop } from '../../terrain/contourSmoothing.ts';
 import { bridgeHole, earClip, groupLoops } from '../../terrain/triangulation.ts';
 
-/**
- * The four cells sharing an edge with a cell — the same neighbourhood the
- * trace flows through (shared/src/rivers.ts keeps its own copy as
- * FLOW_DIRECTIONS, private because ITS order is part of the determinism
- * contract; nothing here depends on the order).
- */
 export const CARDINAL_NEIGHBOURS: readonly (readonly [number, number])[] = [
   [0, -1],
   [1, 0],
@@ -47,27 +24,7 @@ export const CARDINAL_NEIGHBOURS: readonly (readonly [number, number])[] = [
   [-1, 0],
 ];
 
-/**
- * The reach, in cells, of "which tiles must be marched for this flooded cell" —
- * the bounds TILE_LATTICE_OFFSETS is built from, exported separately because a
- * caller that walks TILES rather than cells wants the range, not the sixteen
- * pairs (render/riverRig.ts). One pair of numbers, two views of it.
- */
-/**
- * The cell offsets whose tiles must be marched for a given flooded cell.
- *
- * A tile's lattice covers cells [origin, origin + CHUNK_SIZE] INCLUSIVE, so a
- * cell on a tile's first row or column is also the last sample of the tile
- * before it — hence the reach back to −1. It reaches back to −2 because the
- * field is read one cell PAST the flooded set (`appendRegionSurface` samples
- * the four-neighbours of every wet cell), and a tile missed here would leave
- * a notch of unbuilt water at a tile border.
- *
- * (Copied verbatim from render/riverRig.ts, which will import this from here
- * once both sides of the water unification land.)
- */
 export const TILE_LATTICE_MIN_OFFSET = -2;
-/** @see TILE_LATTICE_MIN_OFFSET */
 export const TILE_LATTICE_MAX_OFFSET = 1;
 
 export const TILE_LATTICE_OFFSETS: readonly (readonly [number, number])[] = (() => {
@@ -80,42 +37,13 @@ export const TILE_LATTICE_OFFSETS: readonly (readonly [number, number])[] = (() 
   return offsets;
 })();
 
-/** One band's worth of water: the wet cells and the band its surface is drawn at. */
 export interface WaterRegion {
-  /**
-   * Whether the cell (a `cellIndex`) is under this region's water.
-   *
-   * A PREDICATE, not a `Set` (2026-08-26). The rig already knows which band of
-   * water stands on every cell — it computes exactly that, into a dense table,
-   * before any region exists — so materialising a Set per region was copying a
-   * membership test it already had, once per wet cell, on every rebuild. On a
-   * network at the trace budget's own ceiling that is ~24.5k Set insertions
-   * twice a second for an answer that was already available in O(1). A harness
-   * that really does start from a cell set has `waterRegionOfCells` below.
-   */
   isWet(cell: number): boolean;
-  /**
-   * Any cell the region certainly covers, for questions whose answer is
-   * per-chunk rather than per-region (band 0's two caps, above all). Regions are
-   * never empty, so there is always one.
-   */
   readonly anchorCell: number;
-  /** Band index; surface height = surfaceBand * BAND_HEIGHT. */
   readonly surfaceBand: number;
-  /**
-   * Origins of the marching tiles this region reaches, as `tileKey` values —
-   * same rule as `Lake.tiles`: every tile whose lattice holds a wet cell,
-   * collected via TILE_LATTICE_OFFSETS so the cost is proportional to the
-   * water rather than to its bounding box.
-   */
   readonly tiles: Set<number>;
 }
 
-/**
- * A region over an explicit cell set — what a harness that has one starts from.
- * The rig itself does not use this: its membership test reads the wet-cell table
- * it already built.
- */
 export function waterRegionOfCells(
   cells: ReadonlySet<number>,
   surfaceBand: number,
@@ -129,79 +57,14 @@ export function waterRegionOfCells(
   };
 }
 
-/**
- * How far OUTSIDE the surface a dry neighbour sitting on the SAME tread is
- * forced, in height units: one unit under the threshold.
- *
- * DECISION (2026-08-22): "outside, by the least amount expressible" — the
- * same reasoning that gave the lake its `beyondLake = threshold - 1`. The
- * `>=` test inside `marchLevel` needs the value strictly under the threshold
- * for the contour to close around the region, and 1 is the smallest integer
- * step the height grid allows.
- *
- * WHY THE ARM EXISTS AT ALL: without it, a dry neighbour on the same tread
- * reads `bandOf(real) === surfaceBand`, i.e. its real height is >= the
- * threshold, and marching would flood it — spreading the water a full extra
- * cell onto ground the river never ran through wherever the course crosses
- * FLAT terrain. Forcing such cells one unit under the threshold puts the
- * waterline near the middle of the lattice edge, and Chaikin then rounds it:
- * the channel stays one cell wide across a flat tread.
- */
 const DRY_SAME_TREAD_FIELD_OFFSET = 1;
 
-/**
- * Appends one region's tread to the triangle soup at world height `surfaceY`,
- * and RETURNS the smoothed boundary loops it emitted (the apron builder
- * consumes them to draw the vertical fall surfaces).
- *
- * THE FIELD IT MARCHES, which is where the shape decision actually lives.
- * `threshold = region.surfaceBand * BAND_HEIGHT`. For lattice sample `(x,y)`:
- *
- *   * WET (`region.isWet(x,y)`): `max(threshold, real)`. The surface,
- *     never below its own band floor — reading the real height would punch a
- *     hole wherever the ground under the water dips below the band.
- *
- *   * FOUR-NEIGHBOUR OF A WET CELL, REAL HEIGHT < THRESHOLD: the real height.
- *     The ground falls away there (spillway, cliff), so the water stops
- *     exactly on the terrain's own cap contour — the edge nothing has to line
- *     up cannot fail to line up (issue #62).
- *
- *   * FOUR-NEIGHBOUR OF A WET CELL, `bandOf(real) > surfaceBand`: the real
- *     height. The bank rises, so the water runs UNDER it and the terrain —
- *     opaque, drawn higher — covers it. DO NOT change this arm: forcing risen
- *     banks under the threshold was measured to stop the lake edge ~0.22 cell
- *     short of the riser foot, regressing an approved look.
- *
- *   * FOUR-NEIGHBOUR OF A WET CELL, DRY ON THE SAME TREAD
- *     (`bandOf(real) === surfaceBand`): `threshold - DRY_SAME_TREAD_FIELD_OFFSET`.
- *     NEW relative to the lake — see the constant's doc comment. A basin has
- *     no such ring by construction, which is why the lake never needed it; a
- *     channel crossing flat ground does.
- *
- *   * ANYTHING ELSE: outside, by the same offset. Only the wet cells and
- *     their four-neighbours are read from the terrain at all, so the region
- *     can never run away along a terrace at its own level.
- *
- * Everything downstream is exactly the lake's pipeline: chunk-sized tiling
- * over `region.tiles` (the tiles share their border samples exactly as
- * neighbouring chunks do, and `smoothLoop` pins border points, so two tiles'
- * halves meet along the border with no gap and no overlap), emission at the
- * caller's `surfaceY`, and the scratch discipline below.
- *
- * SCRATCH DISCIPLINE: `loadSampleField`/`marchLevel`/`assembleLoops` share
- * module-level scratch and must run to completion uninterrupted (see
- * loadSampleField's precondition). ONE TILE is the unit that must not be
- * interrupted, and `appendRegionTile` runs a whole tile synchronously, so a
- * caller marching tiles across several frames (render/riverRig.ts's drain)
- * keeps the precondition just as this whole-region loop does.
- */
 export function appendRegionSurface(
   mirror: TerrainMirror,
   region: WaterRegion,
   surfaceY: number,
   out: number[],
 ): ContourLoop[] {
-  /** Every smoothed loop emitted, across all tiles, in emission order. */
   const emittedLoops: ContourLoop[] = [];
   for (const tile of region.tiles) {
     emittedLoops.push(...appendRegionTile(mirror, region, tile, surfaceY, out));
@@ -209,17 +72,6 @@ export function appendRegionSurface(
   return emittedLoops;
 }
 
-/**
- * One marching tile of `appendRegionSurface` — same field, same pipeline, same
- * emission, for a single member of `region.tiles`.
- *
- * The re-emission unit (2026-09-05, issue #343). A region is one band map-wide,
- * so re-emitting a whole one for a crater that touched nine chunks marched
- * every tile the band reaches. Tiles are independent by construction: they
- * share only border SAMPLES, which both sides read from the mirror, and
- * `smoothLoop` pins border points — so a tile marched on its own emits exactly
- * the triangles it contributed to the whole-region loop.
- */
 export function appendRegionTile(
   mirror: TerrainMirror,
   region: WaterRegion,
@@ -250,13 +102,11 @@ export function appendRegionTile(
   return loops;
 }
 
-/** The field rule documented on `appendRegionSurface`, as a sampler. */
 function regionFieldAt(
   mirror: TerrainMirror,
   region: WaterRegion,
   threshold: number,
 ): (x: number, y: number) => number {
-  /** One unit under the threshold: outside, by the least amount expressible. */
   const beyondRegion = threshold - DRY_SAME_TREAD_FIELD_OFFSET;
 
   const wet = (x: number, y: number): boolean =>
@@ -271,12 +121,8 @@ function regionFieldAt(
     const besideWet = CARDINAL_NEIGHBOURS.some(([dx, dy]) => wet(x + dx, y + dy));
     if (besideWet) {
       const real = sampleHeight(mirror, x, y);
-      // Ground falling away: stop on the terrain's own cap contour.
       if (real < threshold) return real;
-      // Bank rising: run under it; the terrain is opaque and drawn higher.
       if (bandOf(real) > region.surfaceBand) return real;
-      // Dry, same tread: force outside by one unit so the channel does not
-      // spread onto flat land (see DRY_SAME_TREAD_FIELD_OFFSET).
       return beyondRegion;
     }
     return beyondRegion;

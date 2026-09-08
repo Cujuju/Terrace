@@ -1,11 +1,3 @@
-// The cumulus deck's two pieces of pure arithmetic (#284, plan §3.1).
-//
-// THESE ARE THE ONLY TWO THINGS IN THAT MODULE A NODE TEST CAN REACH: everything
-// else it does is GLSL and a `three` material, and this project ships no
-// headless GL rig (docs/DESIGN.md). What is pinned here is what the deck's SHAPE
-// rests on — that puff count follows from puff size rather than being a second
-// number, and that the tiers thin upward while still dealing out every puff.
-
 import { describe, expect, it } from 'vitest';
 import {
   DECK_TIERS,
@@ -18,8 +10,6 @@ describe('puffsForCoverage', () => {
   it('closes the disc: count times a puff’s area is the overlap factor', () => {
     for (const size of [0.08, 0.12, 0.13, 0.2]) {
       const count = puffsForCoverage(size);
-      // count * s^2 is the covered area as a multiple of the disc's own, before
-      // any overlap is taken off — which is what PUFF_COVERAGE_OVERLAP names.
       expect(count * size * size).toBeGreaterThanOrEqual(PUFF_COVERAGE_OVERLAP);
     }
   });
@@ -51,8 +41,6 @@ describe('tierPopulations', () => {
   });
 
   it('gives every tier something to draw at the shipped counts', () => {
-    // A tier dealt zero puffs is a gap in the deck's silhouette, and the
-    // smallest shipped count (snow's) is the case that would hit it first.
     for (const count of tierPopulations(119, DECK_TIERS)) {
       expect(count).toBeGreaterThan(0);
     }

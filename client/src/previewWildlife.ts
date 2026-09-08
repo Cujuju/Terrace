@@ -1,40 +1,3 @@
-// previewWildlife.ts — THROWAWAY preview harness for the wildlife plugin,
-// mirroring previewStructures.ts's own pattern for the structures plugin
-// (see that file's header for the fuller rationale; this restates only what
-// differs). Not part of the shipped app: reached only through
-// preview-wildlife.html (a separate Vite entry point next to index.html,
-// unlinked from it), and not registered in plugins/registry.ts. Exists so
-// any species' model can be screenshotted in isolation against a neutral
-// backdrop, one per page load, driven by this page's own query string:
-//
-//   ?species=<any WildlifeSpecies>   — defaults to "whale"; validated through
-//                                      isWildlifeSpecies, so it accepts every
-//                                      row of WILDLIFE_SPECIES with no list
-//                                      of its own to fall out of date
-//   ?class=<small|medium|large>      — defaults to "medium"
-//   ?view=<iso|side|top>             — defaults to "iso"
-//   ?variant=<n>                     — whale body to draw (0-2)
-//   ?t=<seconds>                     — animation clock, default 0 (the rest
-//                                      pose). A limb only proves it is hinged
-//                                      correctly off the rest pose.
-//   ?zoom=<n>                        — camera pull-back, default 1. Under 1 pulls
-//                                      back, which is what it takes to frame a
-//                                      gait that turns the body off the rest box
-//   ?phase=<radians>                 — animation phase, default 0. A WALKER's
-//                                      legs are paced by ground covered, not
-//                                      the clock, so this is its whole stride
-//                                      beat: mid-stride is ?phase=1.5708.
-//
-// The lighting rig (hemisphere + directional + ambient, ACES tone mapping)
-// and the ground-disc/backdrop/camera-framing choices are copied verbatim
-// from previewStructures.ts, which itself copies the real scene's own recipe
-// — see that file for the tuning history behind each number.
-//
-// A screenshot driver navigates here once per species and waits for
-// `window.__previewReady === true` before capturing the canvas — set at the
-// bottom of this file, only after the frame the creature was actually drawn
-// into has been presented.
-
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -67,10 +30,8 @@ import { loadRigAsset } from './render/rigAsset.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
 import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
 
-/** Creatures this page ever draws at once. It is a portrait: exactly one. */
 const PREVIEW_POPULATION = 1;
 
-// ── Lighting rig, copied from previewStructures.ts / render/scene.ts ──────
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
 const HEMISPHERE_LIGHT_INTENSITY = 1.5;
@@ -80,34 +41,15 @@ const SUN_DIRECTION = new Vector3(0.7, 0.45, 0.55);
 const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 
-// ── Preview-only presentation ────────────────────────────────────────────
-/** Neutral mid-grey backdrop — no sky, no water, just the model. */
 const BACKDROP_COLOR = 0x808080;
-/** A slightly darker neutral disc under the model, purely as a scale reference. */
 const GROUND_COLOR = 0x6c6c6c;
 const GROUND_RADIUS = 4;
-/**
- * How far UNDER the drawn model's lowest point the ground disc is dropped, in
- * world units. A hair, so the disc still reads as a floor rather than as a
- * second object floating away below the animal.
- */
 const GROUND_DROP_WORLD_UNITS = 0.02;
-/** Same framing padding previewStructures.ts uses — "framed close" with a hair of margin. */
 const CAMERA_FRAMING_PADDING = 1.25;
-/** Frames rendered before the screenshot flag is raised — same rationale as previewStructures.ts. */
 const SETTLE_FRAME_COUNT = 3;
 
 const DEFAULT_SPECIES: WildlifeSpecies = 'whale';
 
-/**
- * Named camera directions, unit vectors from the model's centre. 'iso' is the
- * same 3/4 angle previewStructures.ts frames every building from, kept as the
- * default so a wildlife screenshot means the same thing a structures one
- * does. 'side' and 'top' exist only for this plugin's own models — a nearly
- * flat lateral view is what actually checks a tapered body profile, and a
- * near-top-down view is what checks pectoral-fin left/right symmetry —
- * neither of which the 3/4 angle alone can confirm.
- */
 const CAMERA_VIEWS = {
   iso: new Vector3(0.6, 0.45, 0.85),
   side: new Vector3(0.05, 0.12, 1),
@@ -137,28 +79,19 @@ function readView(query: URLSearchParams): CameraView {
   return requested !== null && requested in CAMERA_VIEWS ? (requested as CameraView) : 'iso';
 }
 
-/** `?variant=<n>` — which body to draw where a species has more than one. */
 function readVariant(query: URLSearchParams): number {
   const requested = Number.parseInt(query.get('variant') ?? '', 10);
   return Number.isFinite(requested) ? requested : 0;
 }
 
-/** `?t=<seconds>` — the animation clock the single frame is drawn at. */
 function readSeconds(query: URLSearchParams): number {
   return Number.parseFloat(query.get('t') ?? '0') || 0;
 }
 
-/**
- * `?phase=<radians>` — the animation phase the creature is drawn at. A walker's
- * legs are paced by ground covered, not the clock (plugin placement.ts), so for
- * a walker this is the whole stride beat and `t` moves nothing.
- */
 function readPhase(query: URLSearchParams): number {
   return Number.parseFloat(query.get('phase') ?? '0') || 0;
 }
 
-/** ?gait=walk|climb|fall|stand|sit — the wall and ground poses, for a species
- *  that has them (AuthoredSpecies.posesByGait). */
 function readGait(query: URLSearchParams): MoverGait {
   const named = query.get('gait');
   return MOVER_GAITS.find((gait) => gait === named) ?? 'walk';
@@ -200,23 +133,10 @@ function buildScene(): {
   return { scene, camera, renderer, ground };
 }
 
-/**
- * The bounds of the creature actually DRAWN this frame.
- *
- * NOT `Box3.setFromObject(group)`, which is wrong here and was wrong before
- * (found 2026-09-02, wiring phase): the pool is one InstancedMesh per species
- * surface and exactly one of them has a non-zero `count`, but three caches
- * `InstancedMesh.boundingBox` on first use and computes it over `count`
- * instances — so the empty herds contribute nothing, the first herd ever
- * measured keeps a box from whenever it was measured, and every species framed
- * as if it were the fish. Recomputing over the herds that are drawn is the
- * whole fix, and it is also what lets the ground disc find the model's belly.
- */
 function drawnBounds(objects: readonly Object3D[]): Box3 {
   const box = new Box3();
   for (const object of objects) {
     if (!(object instanceof InstancedMesh) || object.count === 0) continue;
-    // Discard the cache before reading it: `count` changed since three built it.
     object.boundingBox = null;
     object.computeBoundingBox();
     box.union(object.boundingBox!);
@@ -224,18 +144,8 @@ function drawnBounds(objects: readonly Object3D[]): Box3 {
   return box;
 }
 
-/**
- * `?zoom=<n>` — previewSpecies.ts's knob, same name and same meaning.
- *
- * The framing above is the REST pose's box (see drawnBounds: three measures an
- * InstancedMesh from its geometry and its instance matrices, and a skinned pose
- * is in neither). A gait that turns the body — the wall gaits do, see
- * plugins/kit/moverBodyTilt.ts — swings it out of that box, so pulling back is
- * the only way to photograph one.
- */
 let ZOOM = 1;
 
-/** Points `camera` at the drawn creature, filling the frame with `CAMERA_FRAMING_PADDING` of headroom. */
 function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): void {
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
@@ -250,26 +160,7 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, view: CameraView): 
   camera.updateProjectionMatrix();
 }
 
-/**
- * Every asset-sourced species, installed before the pool is built.
- *
- * The pool bakes a species from whatever file was installed for it, so
- * createWildlifeModels throws if one is missing — the shipped plugin does this
- * in its `preload` hook (../../plugins/wildlife/client/index.ts); this harness
- * has no host to give it one, so it awaits the same install function directly,
- * exactly as previewSpecies.ts does.
- *
- * OVER THE ONE LIST (2026-09-04), not over a list of its own. This used to name
- * the fish and the grazer, which was every asset-sourced species when it was
- * written and had been wrong since the ray: createWildlifeModels bakes EVERY
- * species eagerly, so a harness missing one asset does not draw that species
- * badly, it throws before it draws anything. `species/assets.ts` is the table
- * both the plugin's preload and previewSpecies.ts already read, and it exists
- * precisely so a new species is one row and nothing else.
- */
 async function installAssets(): Promise<void> {
-  // Lamps-only (null environment), the same choice the plugin's own preload
-  // makes: these are painted surfaces with nothing on them to reflect a sky.
   for (const { spec, url } of SPECIES_ASSETS) {
     installSpeciesAsset(spec, await loadRigAsset(url, null));
   }
@@ -288,27 +179,11 @@ function main(): void {
   for (const object of models.objects) group.add(object);
   scene.add(group);
 
-  // ONE creature, at the origin, unyawed. Time zero and phase zero are the rest
-  // pose — stated rather than left implicit, so the frame captured is
-  // documented rather than incidental. The variant seed picks between whale
-  // bodies (models.ts); exposing it lets a screenshot driver ask for a specific
-  // one instead of taking whatever id 0 happens to select.
   models.beginFrame(readSeconds(query));
   models.draw(species, sizeClass, readVariant(query), readPhase(query), readGait(query), 0, 0, 0, 0);
   models.endFrame();
 
-  // A SWIMMER'S ORIGIN IS ITS BODY CENTRE, so a disc at y = 0 cuts the animal
-  // in half and hides exactly the anal fin, pelvic fins and pectoral tips a
-  // wiring screenshot is taken to check. Drop the disc under the drawn bounds
-  // — never above y = 0, so a walker still stands on it. previewSpecies.ts does
-  // the same thing for the same reason.
   const drawnBox = drawnBounds(models.objects);
-  // A CLIMBER AND A FALLER ARE OFF THE GROUND, and the wall gaits turn the whole
-  // body about the rig origin (plugins/kit/moverBodyTilt.ts) — an upside-down
-  // faller hangs entirely BELOW that origin, where a disc at zero hides it. Drop
-  // the disc a body clear rather than hiding it, so the shot still says which way
-  // is down. The rest box's own height is the measure: no turn about the origin
-  // can put a vertex further below it than that.
   const bodyHeight = drawnBox.max.y - drawnBox.min.y;
   ground.position.y =
     readGait(query) === 'walk'
@@ -318,9 +193,6 @@ function main(): void {
   ZOOM = Number.parseFloat(query.get('zoom') ?? '1') || 1;
   frameCameraOn(camera, drawnBox, view);
 
-  // What the REAL pool baked, for the screenshot driver to print beside the
-  // image: surfaces are what ../plugins/wildlife/client/index.ts budgets, and
-  // triangles are read off the buffers rather than estimated.
   let triangles = 0;
   for (const object of models.objects) {
     const geometry = (object as Mesh).geometry;
@@ -342,15 +214,10 @@ function main(): void {
     if (framesRendered < SETTLE_FRAME_COUNT) {
       requestAnimationFrame(renderFrame);
     } else {
-      // Signals the screenshot driver: the creature is drawn, the frame is
-      // presented, it is safe to capture the canvas now.
       (window as unknown as { __previewReady: boolean }).__previewReady = true;
     }
   }
   requestAnimationFrame(renderFrame);
 }
 
-// Nothing can be drawn until every .glb is installed, and parsing one is
-// promise-based — so the harness waits, exactly as the plugin host waits on
-// `preload` before `attach`.
 void installAssets().then(main);

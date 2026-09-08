@@ -1,20 +1,3 @@
-// previewSpecies.ts — THROWAWAY preview harness for the per-species model
-// files in plugins/wildlife/client/species/. Mirrors previewWildlife.ts (same
-// lighting rig, backdrop, framing and ready flag) but bakes a species file
-// DIRECTLY through the render kit, so a model can be looked at before it is
-// wired into models.ts. Not part of the shipped app: reached only through
-// preview-species.html.
-//
-//   ?species=<fish|grazer|wolf|ibex|bison|ray|shark|eel|angelfish|whale-humpback|whale-blue|whale-sperm|deepsea> — defaults to "fish"
-//   ?view=<iso|side|top|front>                     — defaults to "iso"
-//   ?t=<seconds>                                   — animation clock, default 0 (swimmers, flyers)
-//   ?gait=walk|climb|fall|stand|sit                — which animation to pose, default walk. Only a
-//                                                    species with posesByGait answers to the others
-//   ?phase=<radians>                               — animation phase, default 0. A WALKER's legs
-//                                                    are paced by ground covered, not the clock,
-//                                                    so this is its whole stride beat: a
-//                                                    mid-stride shot is ?phase=1.5708, not ?t=
-//   ?scale=<n>                                     — instance scale, default 1
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -98,7 +81,6 @@ const CAMERA_VIEWS = {
 } as const;
 type CameraView = keyof typeof CAMERA_VIEWS;
 
-/** The gait named in the query, or the walk every species has. */
 function readGait(query: URLSearchParams): MoverGait {
   const named = query.get('gait');
   return MOVER_GAITS.find((gait) => gait === named) ?? 'walk';
@@ -140,17 +122,7 @@ function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraV
   camera.updateProjectionMatrix();
 }
 
-/**
- * Installs the assets the asset-sourced species files need before any builder
- * runs. The shipped plugin does this in its `preload` hook; this harness has
- * no host to give it one, so it awaits the same install function directly,
- * over the SAME table (species/assets.ts) — a species the plugin can install,
- * the preview can look at, with no second list to forget.
- */
 async function installAssets(): Promise<void> {
-  // Lamps-only (null environment): fish are painted, not metal — see
-  // ClientPluginCtx.loadRigAsset for the choice. The deer is the same kind of
-  // surface: flat vertex colours, nothing on it to reflect a sky.
   for (const { spec, url } of SPECIES_ASSETS) {
     installSpeciesAsset(spec, await loadRigAsset(url, null));
   }
@@ -186,9 +158,6 @@ function main(): void {
   const blueprint = bakeRig(authored.root);
   const jointIndices: Record<string, number> = {};
   for (const [name, node] of Object.entries(authored.joints)) jointIndices[name] = blueprint.jointIndex(node);
-  // Every gait gets a band here whatever the species declares: the preview's
-  // whole job is to pose an animation on demand, including one this species
-  // would never be asked for in the world.
   const herd = createRigHerd(blueprint, {
     capacity: 1,
     poseSlots: POSE_SLOTS,
@@ -216,15 +185,11 @@ function main(): void {
   herd.place(slot, 0, 0, 0, 0, scale);
   herd.endFrame();
 
-  // Frame on the authored tree's rest bounds (the herd's bounding sphere is
-  // pose-invariant and generous, which would frame too far away).
   authored.root.updateMatrixWorld(true);
   const box = new Box3().setFromObject(authored.root);
   const bounds = new Group();
   const size = box.getSize(new Vector3());
   const centre = box.getCenter(new Vector3());
-  // A swimmer's origin is its body centre: drop the ground disc under its belly
-  // so the disc does not hide the lower half of the model.
   ground.position.y = Math.min(0, box.min.y * scale - 0.02);
   bounds.position.copy(centre).multiplyScalar(scale);
   const probe = new Mesh(new CircleGeometry(Math.max(size.x, size.y, size.z) * scale * 0.5, 4));
@@ -251,7 +216,4 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-// Asset-sourced species (species/assetSpecies.ts) cannot be built before their
-// .glb is installed, and parsing one is promise-based — so the harness waits,
-// exactly as the plugin host waits on `preload` before `attach`.
 void installAssets().then(main);

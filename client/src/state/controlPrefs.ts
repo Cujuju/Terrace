@@ -1,27 +1,9 @@
-// User-configurable control bindings.
-//
-// One model serves both input owners: the sculpt brush (input/sculptInput.ts)
-// and the camera (input/cameraBindings.ts wrapping OrbitControls). Each of the
-// four actions — raise, lower, orbit, pan — is bound to a mouse button plus an
-// optional modifier key. A single resolver (`resolvePress`) decides which
-// action owns a given press, so the brush and the camera can never both claim
-// the same drag: whoever the resolver names acts, everyone else stands down.
-//
-// Persistence is localStorage, per browser, versioned key. Bindings are
-// presentation/input state, so they deliberately live client-side only —
-// nothing here is sent to the server.
-//
-// Signals live at module scope for the same reason as hudState.ts: the
-// imperative input layer reads them outside any reactive root, and Solid
-// components must call the exported accessor at point of use.
-
 import { createSignal } from 'solid-js';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
 
 export type MouseButtonName = 'left' | 'middle' | 'right';
-/** 'none' means "no modifier held"; a binding never matches a chord of two. */
 export type BindingModifier = 'none' | 'shift' | 'ctrl' | 'alt';
 
 export type SculptAction = 'raise' | 'lower';
@@ -35,13 +17,6 @@ export interface ControlBinding {
 
 export type ControlBindings = Readonly<Record<ControlAction, ControlBinding>>;
 
-/**
- * When two actions are given the identical binding, the earlier action in
- * this list wins every press and the later one is unreachable (the HUD warns
- * about this). Sculpt precedes camera because a sculpt press that silently
- * turned into a camera drag would edit nothing and confuse; a camera press
- * that sculpts instead is at least visibly wrong and immediately fixable.
- */
 export const ACTION_PRECEDENCE: readonly ControlAction[] = [
   'raise',
   'lower',
@@ -49,7 +24,6 @@ export const ACTION_PRECEDENCE: readonly ControlAction[] = [
   'pan',
 ];
 
-/** The Phase 1 scheme, unchanged: left sculpts, shift lowers, right orbits. */
 export const DEFAULT_BINDINGS: ControlBindings = {
   raise: { button: 'left', modifier: 'none' },
   lower: { button: 'left', modifier: 'shift' },
@@ -67,7 +41,6 @@ const MODIFIER_NAMES: readonly BindingModifier[] = [
   'alt',
 ];
 
-/** `PointerEvent.button` → binding button name (0 left, 1 middle, 2 right). */
 export function buttonName(eventButton: number): MouseButtonName | null {
   switch (eventButton) {
     case 0:
@@ -87,13 +60,6 @@ export interface ModifierState {
   readonly altKey: boolean;
 }
 
-/**
- * Collapses the modifier keys of an event to a single binding modifier.
- * Exactly one held → that modifier; none held → 'none'; a chord of two or
- * more → null, which matches no binding at all (deliberate: chords are
- * reserved, so adding a second modifier always cancels rather than surprises).
- * The meta/Windows key is ignored entirely — the OS owns it.
- */
 export function modifierOf(mods: ModifierState): BindingModifier | null {
   const held = [mods.shiftKey, mods.ctrlKey, mods.altKey].filter(Boolean).length;
   if (held === 0) return 'none';
@@ -112,7 +78,6 @@ function isBinding(value: unknown): value is ControlBinding {
   );
 }
 
-/** Reads stored bindings; any malformed or partial value falls back whole. */
 function loadBindings(): ControlBindings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -129,7 +94,6 @@ function loadBindings(): ControlBindings {
       pan: record['pan'] as ControlBinding,
     };
   } catch {
-    // Storage unavailable (private mode, disabled) — session-only defaults.
     return DEFAULT_BINDINGS;
   }
 }
@@ -148,21 +112,9 @@ export function setBinding(
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
-    // Best effort; the in-memory bindings still apply for this session.
   }
 }
 
-/**
- * Resets every preference the Controls panel shows — one button, whole scheme.
- *
- * That includes prefs this module does not own: ui/ControlsPanel.tsx's reset
- * button is documented, in its own tooltip, as putting "every setting on this
- * panel" back, so a pref that appears on the panel and is not reset here makes
- * that promise false. The celestial void's look (state/voidPrefs.ts, issue
- * #326), its anchor and the frontier mist (state/frontierMistPrefs.ts) are
- * such prefs, as is the terrace-lip overlay's mode
- * (state/layerEdgePrefs.ts); they reset themselves and this calls them.
- */
 export function resetBindings(): void {
   setControlBindingsSignal(DEFAULT_BINDINGS);
   setTwoFingerGestureSignal(DEFAULT_TWO_FINGER_GESTURE);
@@ -175,19 +127,8 @@ export function resetBindings(): void {
     localStorage.removeItem(TOUCH_STORAGE_KEY);
     localStorage.removeItem(WHEEL_STORAGE_KEY);
   } catch {
-    // Ignore, as above.
   }
 }
-
-// ---------------------------------------------------------------------------
-// Touch
-//
-// Touch has no buttons or modifiers, so it gets its own tiny scheme instead of
-// the binding table: one finger always sculpts (direction = the HUD's sticky
-// raise/lower mode), and the two-finger gesture always pinch-zooms while its
-// drag component is configurable — pan (default, the Populous/Godus "move the
-// map" instinct) or orbit.
-// ---------------------------------------------------------------------------
 
 export type TwoFingerGesture = 'pan' | 'orbit';
 
@@ -217,25 +158,8 @@ export function setTwoFingerGesture(gesture: TwoFingerGesture): void {
   try {
     localStorage.setItem(TOUCH_STORAGE_KEY, JSON.stringify({ twoFinger: gesture }));
   } catch {
-    // Best effort; the in-memory setting still applies for this session.
   }
 }
-
-// ---------------------------------------------------------------------------
-// Wheel
-//
-// What a scroll does, pinches aside: 'zoom' (default — owner decision
-// 2026-08-19, issue #24) hands non-pinch wheels to OrbitControls' damped
-// dolly, the reflex a mouse wheel trains. 'pan' translates the map instead,
-// which is what a trackpad's two-finger scroll wants — dollying on it made
-// the camera lurch — so laptop users flip this once in the Controls panel.
-// The stored preference always wins over the default, so nobody who already
-// chose a behaviour is moved by this change.
-//
-// A pinch always zooms in both modes: it is reported separately (ctrlKey, or
-// Safari's gesture events) and needs no heuristic to recognise, so it is never
-// in question.
-// ---------------------------------------------------------------------------
 
 export type WheelBehaviour = 'pan' | 'zoom';
 
@@ -266,15 +190,9 @@ export function setWheelBehaviour(behaviour: WheelBehaviour): void {
   try {
     localStorage.setItem(WHEEL_STORAGE_KEY, JSON.stringify({ wheel: behaviour }));
   } catch {
-    // Best effort; the in-memory setting still applies for this session.
   }
 }
 
-/**
- * The one authority on "who owns this press": returns the highest-precedence
- * action whose binding matches the pressed button and the exact modifier
- * state, or null when nothing matches (the press is inert).
- */
 export function resolvePress(
   eventButton: number,
   mods: ModifierState,
@@ -290,10 +208,6 @@ export function resolvePress(
   return null;
 }
 
-/**
- * Actions hidden by an identical earlier binding (see ACTION_PRECEDENCE).
- * The HUD uses this to warn; resolution itself needs no special case.
- */
 export function shadowedActions(bindings: ControlBindings): ControlAction[] {
   const seen = new Map<string, ControlAction>();
   const shadowed: ControlAction[] = [];

@@ -1,10 +1,3 @@
-// Builds the per-plugin WorldApi view.
-//
-// One instance per plugin, because the instance carries the plugin's message
-// namespace. Everything else delegates straight to the World, so a plugin edit
-// is indistinguishable from a player edit as far as sync and anti-cheat are
-// concerned — that is the point.
-
 import type {
   CellDiff,
   FreshwaterMap,
@@ -17,113 +10,44 @@ import { applyServerSculpt } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
 import type { SiblingModule, WorldApi } from './types.ts';
 
-/**
- * The sculpt options every plugin terraform runs, via WorldApi.sculpt.
- *
- * Exported so the relics footprint tests can run the EXACT options the
- * production path runs, instead of restating them and drifting (the same
- * one-place argument as sculptOptionsOf in shared/src/protocol.ts).
- */
 export const PLUGIN_SCULPT_OPTIONS: SculptOptions = {
   tool: 'smooth',
   profile: 'soft',
   spill: 'banded',
 };
 
-/** Separator between a plugin's name and its message type on the wire. */
 export const PLUGIN_MESSAGE_SEPARATOR = ':';
 
-/** `reveal` + `unlocked` → `reveal:unlocked`. */
 export function namespacedMessageType(pluginName: string, type: string): string {
   return `${pluginName}${PLUGIN_MESSAGE_SEPARATOR}${type}`;
 }
 
-/**
- * The second thing (issue #18, alongside sculpt-service.ts's
- * TerrainChangeListener) a plugin's edits need to reach back into the plugin
- * host for: fanning `onChunkUnlockedForToken` out to every plugin after a
- * successful per-token unlock. Kept as its own interface rather than folded
- * into TerrainChangeListener — that one is sculpt-service.ts's own narrow
- * contract for an unrelated event, and giving it a second, unrelated method
- * would blur what it means to implement it.
- */
 export interface ChunkUnlockListener {
   notifyChunkUnlockedForToken(token: string, cx: number, cy: number): void;
 }
 
-/**
- * The third reach-back (2026-08-19, alongside terrain changes and per-token
- * unlocks): fanning a plugin's `emitEvent` out to every plugin's
- * `onWorldEvent`. Its own interface for the same reason ChunkUnlockListener
- * is — each listener contract names exactly one event, so an implementer
- * cannot half-implement the pair.
- */
 export interface WorldEventListener {
   notifyWorldEvent(event: string, payload: unknown): void;
 }
 
-/**
- * The World + host listener a WorldApi is currently bound to, or null once it
- * has been revoked. Holding BOTH in one cell is what makes revoke a single
- * assignment that provably drops every strong reference the view had.
- */
 interface WorldApiBinding {
   readonly world: World;
   readonly listener: TerrainChangeListener & ChunkUnlockListener & WorldEventListener;
 }
 
-/**
- * A plugin's view of a world, plus the host's handle to switch it off.
- *
- * WHY THE PAIR EXISTS (issue #164). A WorldApi used to close over one World
- * forever, and several plugins stash theirs at module scope, assigned only in
- * `onWorldCreate`. Once a plugin can be disabled for a world, the disabled
- * plugin never reassigns and its stale module-scope reference pins the World
- * it last saw — heightmap, mask and every per-player token mask, ~12.6 MB at
- * DEFAULT_WORLD_SIZE — for the life of the process. So the World is held in a
- * mutable cell that the owner of the view (the PluginHost, via `closeSession`)
- * can clear: a stale reference then pins this small stub and nothing else.
- *
- * `revoke` is idempotent, because the close path may run more than once for a
- * session that failed halfway.
- */
 export interface RevocableWorldApi {
   readonly api: WorldApi;
-  /** Unbinds the view from its World. Safe to call more than once. */
   revoke(): void;
 }
 
-/**
- * The world-file rows recorded for ONE plugin, keyed by setting key.
- *
- * Handed in already narrowed to the plugin this view belongs to — see
- * `WorldApi.setting` for why a view can never see a sibling's rows.
- */
 export type PluginSettings = Readonly<Record<string, string>>;
 
-/** A world nobody has configured: every `setting` read answers undefined. */
 export const NO_PLUGIN_SETTINGS: PluginSettings = Object.freeze({});
 
-/**
- * How a view answers `WorldApi.sibling`: the host's map from plugin name to
- * the module of the plugin RUNNING AS that name in this session, narrowed to
- * the enabled set. Null for every name the host is not running.
- */
 export type SiblingResolver = (name: string) => SiblingModule | null;
 
-/** A view with no siblings to offer — a host of one, and every test that is. */
 export const NO_SIBLINGS: SiblingResolver = () => null;
 
-/**
- * Is this cell inside the world at all? The one question `broadcastVisible` has
- * to answer before a fog-of-war lookup, and the whole of the #291 contract.
- *
- * A FRACTIONAL POSITION IS ALLOWED — plugins broadcast fractional centres — so
- * the test is against the open interval [0, size) the chunk grid covers, exactly
- * as `chunkIndexOfCell` floors it. A non-finite coordinate is outside too: a NaN
- * fails every comparison here, which is the right answer for a position that
- * says nothing about anywhere.
- */
 function isInsideWorld(worldSize: number, x: number, y: number): boolean {
   return x >= 0 && y >= 0 && x < worldSize && y < worldSize;
 }
@@ -137,16 +61,6 @@ export function createWorldApi(
 ): RevocableWorldApi {
   let binding: WorldApiBinding | null = { world, listener };
 
-  /**
-   * The bound world/listener, or a throw naming the plugin and the member it
-   * reached for.
-   *
-   * THROWS RATHER THAN NO-OPS (owner decision, 2026-08-25): a plugin touching
-   * a world that is no longer loaded is a bug in that plugin, and a silent
-   * no-op would let it run on invisibly against nothing. Every plugin call
-   * goes through `PluginHost.safely`, which turns the throw into a logged
-   * skip — loud in the log, harmless to the world that IS loaded.
-   */
   const bound = (member: string): WorldApiBinding => {
     if (binding === null) {
       throw new Error(
@@ -157,28 +71,12 @@ export function createWorldApi(
   };
 
   const api: WorldApi = {
-    // PLAIN DATA, CAPTURED AT CONSTRUCTION — the one deliberate exception to
-    // the throw-after-revoke rule below (owner decision 2026-09-01, #277).
-    // These three are fixed for the World's whole life: `map` is a readonly
-    // field so size and chunksPerEdge cannot move, and difficulty is stamped
-    // in the constructor. Read through a getter they cost a closure call plus
-    // the null test on every hot read — 4.1% of server busy time, mostly the
-    // structures tick reading worldSize once per scanned cell. An integer
-    // that outlives its World is harmless where a stale heightAt would not be,
-    // and three numbers pin nothing (the #164 concern is the heightmap, not
-    // its edge length). simMillis and genesisMillis stay getters: see each.
     worldSize: world.size,
     chunksPerEdge: world.chunksPerEdge,
     difficulty: world.difficulty,
-    // A GETTER, and here that is load-bearing rather than cosmetic: this one
-    // genuinely moves every tick, so a captured value would freeze a plugin's
-    // calendar at whatever time it first read.
     get simMillis(): number {
       return bound('simMillis').world.simMillis;
     },
-    // A getter for the opposite reason to simMillis's: this one is fixed for
-    // the world's whole life, but it is STAMPED at the boot seam after the
-    // World is built, so a captured value could be captured before the stamp.
     get genesisMillis(): number {
       return bound('genesisMillis').world.genesisMillis;
     },
@@ -197,11 +95,6 @@ export function createWorldApi(
     riverNetwork(): RiverNetwork {
       return bound('riverNetwork').world.riverNetwork();
     },
-    // A GETTER, so the freshwater map is resolved at the moment a mover asks
-    // rather than frozen when this view was built. A WorldApi outlives every
-    // sculpt the plugin host will ever see; capturing `world.freshwaterMap()`
-    // into a plain property here would hand every plugin the rivers as they
-    // stood at plugin-load time and never update them again.
     get freshwater(): FreshwaterMap {
       return bound('freshwater').world.freshwaterMap();
     },
@@ -212,19 +105,6 @@ export function createWorldApi(
       return bound('isCellVisibleTo').world.isCellVisibleTo(playerId, x, y);
     },
     sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
-      // Same service the intent pipeline uses: filtered broadcast included.
-      //
-      // Options are EXPLICIT, not the shared library default. The library
-      // default is smooth + soft with 'free' (unbounded) spill — and after
-      // the 2026-08-20 re-terrace halved MAX_STEP, an unbounded relaxation
-      // sweep regrades every now-over-steep pre-existing slope for dozens of
-      // cells around a cast: one Genesis cast measurably changed 11,673 cells
-      // with a max single-cell delta of 1,772 (a player stroke changes 5–108
-      // cells). Banded spill caps every outside-footprint cell to its
-      // pre-stroke terrace band (issue #26's fairness rule), which is the
-      // same containment every PLAYER sculpt already runs. The old "tuned
-      // against free spill" compatibility argument no longer holds — that
-      // tuning was invalidated by the re-terrace itself.
       const live = bound('sculpt');
       return applyServerSculpt(
         live.world,
@@ -242,9 +122,6 @@ export function createWorldApi(
     unlockChunkForToken(token: string, cx: number, cy: number): boolean {
       const live = bound('unlockChunkForToken');
       const unlocked = live.world.unlockChunkForToken(token, cx, cy);
-      // Only on a REAL unlock (see types.ts's doc comment): the World call is
-      // already idempotent per token, and re-running every plugin's targeted
-      // refresh for a chunk that token already had would be pure waste.
       if (unlocked) live.listener.notifyChunkUnlockedForToken(token, cx, cy);
       return unlocked;
     },
@@ -275,14 +152,6 @@ export function createWorldApi(
         const visible: T[] = [];
         for (const item of items) {
           const { x, y } = positionOf(item);
-          // OFF THE MAP IS VISIBLE TO NOBODY (#291). Some things a plugin
-          // broadcasts are legitimately outside the world — a cyclone is born
-          // over the sea beyond the coast and drifts in — and the fog-of-war
-          // test below resolves a chunk index, which throws a RangeError for a
-          // cell that has no chunk (shared/src/chunks.ts). Said ONCE here
-          // rather than clamped at each callsite: a clamp would put the thing
-          // on the edge, which is a different and false statement, and a rule
-          // every plugin has to remember is a rule the next one forgets.
           if (!isInsideWorld(live.world.size, x, y)) continue;
           if (live.world.isCellVisibleTo(player.id, x, y)) visible.push(item);
         }
@@ -292,25 +161,13 @@ export function createWorldApi(
       }
     },
     setting(key: string): string | undefined {
-      // NOT GATED ON `bound`, deliberately, and it is the only member that is
-      // not: a setting is the world's CONFIGURATION, captured when this view
-      // was built, not a read of the World the view can outlive. Answering it
-      // after a close costs nothing and reads nothing that has gone away —
-      // whereas throwing here would punish a plugin for asking, in its own
-      // close hook, which rule it had been running.
       return Object.hasOwn(settings, key) ? settings[key] : undefined;
     },
     sibling(name: string): SiblingModule | null {
-      // GATED ON `bound`, unlike `setting`: a sibling's module is a live thing
-      // to talk to, not this view's captured configuration, so a plugin
-      // holding a stale view must not be able to reach one after its world
-      // went away — the same rule that makes every other member throw there.
       bound('sibling');
       return resolveSibling(name);
     },
     emitEvent(type: string, payload: unknown): void {
-      // Namespaced exactly like broadcast/sendTo, and for the same reason: the
-      // emitter's name is stamped HERE, so no plugin can forge another's events.
       bound('emitEvent').listener.notifyWorldEvent(
         namespacedMessageType(pluginName, type),
         payload,
@@ -320,9 +177,6 @@ export function createWorldApi(
 
   return {
     api,
-    // Drops the World and the host listener together. After this the closure
-    // holds only `pluginName` and the (now null) cell, so a plugin's stale
-    // module-scope reference costs a few bytes instead of a heightmap.
     revoke(): void {
       binding = null;
     },

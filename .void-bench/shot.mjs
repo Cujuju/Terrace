@@ -1,7 +1,3 @@
-// Renders each SHADERS variant in bench.html to PNGs via WSL Chrome (SwiftShader).
-// Two poses per variant: shots/<name>.png (the view anchor, the reference framing) and
-// shots/<name>_hub.png (the same tilt zoomed on the hub, where the bake's texels are largest).
-// Usage: node shot.mjs [names...]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 const html = readFileSync(new URL('./bench.html', import.meta.url), 'utf8');
@@ -10,7 +6,6 @@ const gl2 = readFileSync(new URL('./gl2.js', import.meta.url), 'utf8');
 const names = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(shaders);
 const W = 1280, H = 720;
 for (const name of names) {
-  // rev10 predates DISK_SCALE, so it keeps the reference's own eye distance.
   const dist = name === 'rev10' ? 2.6 : 2.6 / 0.85;
   const variant = typeof shaders[name] === 'string' ? { wheel: shaders[name] } : shaders[name];
   for (const kind of ['view', 'hub']) {

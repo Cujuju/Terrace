@@ -1,31 +1,3 @@
-// The bottom TOOLBAR: what the player's hand is holding (owner, 2026-08-24).
-//
-// Lives in the bottom-centre cell of the HUD's bottom strip, directly under
-// the mana gauge — the two read as one instrument, which is what the owner
-// asked for ("add this to the mana panel"). The brush panel in the
-// bottom-LEFT corner is untouched and stays where it is: it configures the
-// brush, and this bar chooses whether the brush is what you are holding at
-// all.
-//
-// CORE RENDERS IT, PLUGINS FILL IT. The bar knows no particular plugin — the
-// same rule the corner panel's plugin stack keeps (design doc). It renders
-// one built-in face (Sculpt, which is the ABSENCE of a plugin tool) plus
-// whatever plugins registered, in registration order, which is the host's
-// plugin load order and therefore deterministic per server configuration.
-//
-// HIDDEN WHEN THERE IS NOTHING TO CHOOSE: with no plugin tools installed a
-// lone "Sculpt" button is a control with one setting, so the bar renders
-// nothing at all and the gauge sits where it always did.
-//
-// ICON-ONLY (owner, 2026-09-04: "reduce the size of the sculpt, pyro, and
-// temple buttons by removing the text"): each tile is its icon alone, in the
-// modeler dock's idiom; the tool's label lives on in its aria-label and its
-// title, which are the only names a screen reader or a hover ever gets.
-//
-// SOLID REACTIVITY: every reactive value is read by CALLING its accessor
-// inside JSX, per Hud.tsx's own rule — there are no consts here holding a
-// reactive read.
-
 import { For, Show, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import {
@@ -35,12 +7,6 @@ import {
   selectTool,
 } from '../plugins/toolbar.ts';
 
-/**
- * The brush's own face: a trowel driven into a mound of earth on an isometric
- * tile, drawn as a shaded inline SVG (owner, 2026-09-04: "gorgeous 3D
- * icons"). Gradient ids are prefixed with the tool's name because SVG ids are
- * document-global and the toolbar holds several icons at once.
- */
 function SculptIcon(): JSX.Element {
   return (
     <svg
@@ -77,16 +43,16 @@ function SculptIcon(): JSX.Element {
           <stop offset="1" stop-color="#6d4220" />
         </linearGradient>
       </defs>
-      {/* Ground shadow. */}
+      {}
       <ellipse cx="16" cy="27.5" rx="12" ry="3" fill="#000" opacity="0.35" />
-      {/* The tile: grass top, two earth walls. */}
+      {}
       <polygon points="16,13 28,19 16,25 4,19" fill="url(#sculpt-top)" />
       <polygon points="4,19 16,25 16,29 4,23" fill="url(#sculpt-left)" />
       <polygon points="28,19 16,25 16,29 28,23" fill="url(#sculpt-right)" />
-      {/* The mound the brush has raised, with the shade it casts. */}
+      {}
       <ellipse cx="14" cy="18.6" rx="7.2" ry="4.2" fill="#2e5a2e" opacity="0.45" />
       <ellipse cx="14" cy="16.8" rx="7" ry="4.4" fill="url(#sculpt-mound)" />
-      {/* The trowel: wooden handle, steel blade with an edge highlight. */}
+      {}
       <path d="M25.5 3.5l3 2.4-4.2 5.2-3-2.4z" fill="url(#sculpt-handle)" />
       <path
         d="M21.3 8.7l3 2.4-5.8 8.4-4.5-3z"
@@ -127,9 +93,6 @@ export function Toolbar(): JSX.Element {
               aria-label={tool.label}
               title={tool.title}
               onClick={() =>
-                // A second click on the held tool puts the brush back — the
-                // bar must never be a mode you cannot leave from the control
-                // you entered it with.
                 selectTool(activeToolId() === tool.id ? SCULPT_TOOL_ID : tool.id)
               }
             >

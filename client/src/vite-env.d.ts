@@ -1,17 +1,8 @@
 /// <reference types="vite/client" />
 
-// Ambient declarations only — this file must stay import/export free so the
-// interfaces below merge with Vite's globals rather than becoming a module.
-
 interface ImportMetaEnv {
-  /** Colyseus endpoint override, e.g. `ws://192.168.1.10:2567`. */
   readonly VITE_SERVER_URL?: string;
-  /**
-   * Game-server PORT override, leaving the hostname derived from the page —
-   * what a LAN visitor needs. `VITE_SERVER_URL` overrides both and wins.
-   */
   readonly VITE_SERVER_PORT?: string;
-  /** Room name override; must match the server's `gameServer.define()` name. */
   readonly VITE_ROOM_NAME?: string;
 }
 
@@ -19,14 +10,4 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
-/**
- * Build identity of this bundle, replaced at build time by vite.config.ts's
- * `define` (see the `buildVersion` note there). Declared here so the one use
- * site (ui/VersionWatermark.tsx) typechecks; at runtime the identifier no
- * longer exists — the literal has been inlined.
- */
 declare const __CLIENT_VERSION__: string;
-
-// `*.glb?url` used to be declared here as well. It now lives ONCE, in the
-// repo's types/asset-url.d.ts, which tsconfig.base.json's `files` gives to every
-// package — see that file's header.

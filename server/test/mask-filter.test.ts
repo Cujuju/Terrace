@@ -1,7 +1,3 @@
-// The anti-cheat boundary. These tests exist because the failure they guard
-// against is silent: the server would work perfectly while leaking the shape of
-// terrain a player has not unlocked.
-
 import {
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
@@ -26,14 +22,9 @@ import {
   worldWithUnlockedChunks,
 } from './support/harness.ts';
 
-// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
-// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
-// four-chunk world is smaller ground than it was — which is fine here: every
-// assertion in this suite is about chunk mechanics, not about distances.)
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
-/** Last cell of chunk (0,0) — a sculpt here provably spills into neighbours. */
 const EDGE_CELL = { x: CHUNK_SIZE - 1, y: CHUNK_SIZE - 1 };
 
 describe('outgoing diff filtering', () => {
@@ -49,8 +40,6 @@ describe('outgoing diff filtering', () => {
   it('omits cells in locked chunks from the sculptor\'s diff, while keeping them server-side', () => {
     world.addPlayer(PLAYER);
     grantTokenEveryUnlockedChunk(world, PLAYER.token);
-    // Max radius on the very corner of the only unlocked chunk: both the brush
-    // and the gradient relaxation reach into locked chunks (1,0), (0,1), (1,1).
     const outcome = handleSculptIntent(
       { world, interceptors: new PluginHost(world, []) },
       PLAYER,
@@ -60,10 +49,8 @@ describe('outgoing diff filtering', () => {
     expect(outcome.applied).toBe(true);
     if (!outcome.applied) return;
 
-    // Precondition of the test: the spill is real, not hypothetical.
     const spilled = outcome.diff.filter((c) => c.x >= CHUNK_SIZE || c.y >= CHUNK_SIZE);
     expect(spilled.length).toBeGreaterThan(0);
-    // ...and the server really did change that locked terrain.
     expect(world.heightAt(spilled[0].x, spilled[0].y)).not.toBe(0);
 
     const broadcasts = sink.ofType('terrainDiff');
@@ -75,7 +62,6 @@ describe('outgoing diff filtering', () => {
       expect(cell.x).toBeLessThan(CHUNK_SIZE);
       expect(cell.y).toBeLessThan(CHUNK_SIZE);
     }
-    // Nothing was dropped that should have survived.
     expect(cells.length).toBe(outcome.diff.length - spilled.length);
   });
 
@@ -92,13 +78,7 @@ describe('outgoing diff filtering', () => {
   });
 
   it('broadcasts nothing when an edit is entirely invisible to clients', () => {
-    // A plugin may legitimately edit locked terrain (terraforming ahead of a
-    // reveal, say). The edit must happen, and clients must hear nothing at all
-    // about it — not even an empty message that would confirm activity.
     const host = new PluginHost(world, []);
-    // Deep inside chunk (2,2) — a locked chunk at any sampling density, and
-    // far enough from its edges that the relaxation spill cannot reach the
-    // unlocked chunk (0,0).
     const locked = CHUNK_SIZE * 2 + CHUNK_SIZE / 2;
     applyServerSculpt(world, host, locked, locked, 1, DEFAULT_SCULPT_AMOUNT);
 
@@ -107,12 +87,6 @@ describe('outgoing diff filtering', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PER-PLAYER DIFF FILTERING (issue #280). The union mask is what the SIMULATION
-// has revealed to anyone; a diff filtered by it and broadcast tells every
-// client the heights of chunks only some other player earned. Each player must
-// receive exactly the cells inside their OWN mask, and nothing when that is
-// empty.
 describe('per-player diff partition', () => {
   const VIEWER_A = { id: 'session-a', token: 'token-a', name: 'A' };
   const VIEWER_B = { id: 'session-b', token: 'token-b', name: 'B' };
@@ -122,8 +96,6 @@ describe('per-player diff partition', () => {
   const DIFF = [IN_CHUNK_00, IN_CHUNK_10, IN_CHUNK_11];
 
   function twoViewerWorld(): World {
-    // Union has (0,0), (1,0), (1,1); A personally has (0,0) and (1,0); B has
-    // only (1,1). Nobody's own mask equals the union.
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0], [1, 0], [1, 1]]);
     world.addPlayer(VIEWER_A);
     world.addPlayer(VIEWER_B);
@@ -148,8 +120,6 @@ describe('per-player diff partition', () => {
   });
 
   it('a chunk in the union but in nobody\'s own mask reaches no one', () => {
-    // Possible transiently: a chunk unlocked on the union by the legacy
-    // unlockChunk path, or a token that has since disconnected.
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     world.addPlayer(VIEWER_A);
     expect(partitionDiffByViewer(world, [IN_CHUNK_00])).toEqual([]);
@@ -159,8 +129,6 @@ describe('per-player diff partition', () => {
     const world = twoViewerWorld();
     const sink = new RecordingSink();
     world.setSink(sink);
-    // Corner of chunk (1,1) nearest (0,0): the brush reaches (0,0), (1,0),
-    // (0,1) and (1,1) — A and B see disjoint parts of the same edit.
     applyServerSculpt(
       world,
       new PluginHost(world, []),
@@ -198,9 +166,6 @@ describe('join snapshot chunk collection', () => {
       [2, 1],
     ]);
     for (const payload of payloads) {
-      // Through chunkHeightsAsCells: the payload carries little-endian Int16
-      // BYTES since issue #272, so its own `.length` is twice the cell count.
-      // The contract under test is still "a full chunk of heights".
       expect(chunkHeightsAsCells(payload.heights)).toHaveLength(CHUNK_SIZE * CHUNK_SIZE);
     }
   });
@@ -209,8 +174,6 @@ describe('join snapshot chunk collection', () => {
     const size = 512;
     const world = World.createFresh(size);
     const edge = chunksPerEdge(size);
-    // Centred by flooring — the same rule initialUnlockFootprint applies, so
-    // this stays correct for odd spans (5 since 2026-08-19) and even ones.
     const start = Math.floor((edge - INITIAL_UNLOCK_CHUNK_SPAN) / 2);
 
     const payloads = collectUnlockedChunkPayloads(world);

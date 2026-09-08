@@ -1,8 +1,3 @@
-// Verifies the three authored hulls against the convention this plugin's client
-// half relies on: the four mesh names, the two Empties, one material per mesh,
-// and the outer diameter.
-// three's GLTFLoader touches `self` at module scope; Node has no such global.
-// The same shim every headless model check in this repo needs.
 (globalThis as unknown as { self?: unknown }).self ??= globalThis;
 
 import { readFile } from 'node:fs/promises';

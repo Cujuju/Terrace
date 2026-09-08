@@ -1,23 +1,3 @@
-// Does a river down a CONE get water on its risers at all? The unit tests
-// drive the curtain builder with hand-built loops; this drives the REAL pair
-// the rig wires together (riverRig.ts's rebuild) — the region tread builder
-// and the curtain builder — over a terraced cone.
-//
-// RETARGETED 2026-08-24 from the retired apron onto water/waterCurtain.ts
-// (work item W4, docs/plans/water-painted-on-bands.md). The apron took two
-// caller-supplied probes and re-derived ground height from the cell lattice;
-// the curtain takes the DrawnGround oracle and derives nothing, so this test
-// now builds one from the same mirror the tread reads and hands it over — the
-// wiring the rig performs, which is the thing an integration test here exists
-// to guard.
-//
-// HONEST LIMIT, inherited from the apron-era version and still true: this does
-// NOT reproduce the floating defect that motivated the rewrite. That is only
-// measurable against the DRAWN mesh in a browser, which is what
-// client/scripts/measureWaterFloat.mjs is for. What this guards is the coarse
-// regression — a change that stops falls being emitted on ordinary sloping
-// ground at all, the state the `fork` fixture was actually found in (1328 flat
-// triangles, ZERO falling ones).
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, bandOf, cellIndex } from '@terrace/shared';
 import {
@@ -34,28 +14,16 @@ import {
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 
-/**
- * The drawn-ground oracle for a fixture the harness never draws. The app's
- * store is filled by the mesh emitter as it draws each chunk; a test with no
- * meshes publishes the same plans itself.
- */
 function groundOf(mirror: TerrainMirror): DrawnGround {
   const store = createDrawnGroundStore(mirror.map.size);
   publishPlannedWorld(store, mirror);
   return createDrawnGround(mirror, store);
 }
 
-
 const WORLD = 64;
 const SUMMIT = BAND_HEIGHT * 20;
-/** Height units the cone loses per cell of radius: five bands a cell. */
 const DROP_PER_CELL = BAND_HEIGHT * 5;
 
-/**
- * The sea surface for this fixture: sea level itself. The cone never reaches
- * it — its lowest wet cell is many bands up — so it only has to be a number
- * the curtain can compare against, not the rig's exact lifted plane.
- */
 const SEA_WORLD_Y = 0;
 
 describe('a river down a cone', () => {
@@ -69,7 +37,6 @@ describe('a river down a cone', () => {
       }
     }
 
-    // A course running straight down one flank, cell by cell.
     const bandOfCell = new Map<number, number>();
     for (let step = 0; step <= 6; step++) {
       const x = cx + step;
@@ -92,7 +59,7 @@ describe('a river down a cone', () => {
       for (const tile of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) tiles.add(tile);
       regions.set(band, waterRegionOfCells(cells, band, tiles));
     }
-    expect(regions.size).toBeGreaterThan(1); // the course really does step down
+    expect(regions.size).toBeGreaterThan(1);
 
     const ground = groundOf(mirror);
     const triangles: number[] = [];

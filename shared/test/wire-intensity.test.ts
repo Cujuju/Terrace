@@ -1,7 +1,3 @@
-// Contract test for the broadcast intensity rounding that moved out of
-// weather's and storms' protocol.ts into shared/src/wire.ts, where the
-// precision of a wire value belongs (#180's precedent).
-
 import { describe, expect, it } from 'vitest';
 import { BROADCAST_INTENSITY_DECIMALS, roundBroadcastIntensity } from '../src/index.ts';
 

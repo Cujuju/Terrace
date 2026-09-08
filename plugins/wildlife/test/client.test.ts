@@ -1,8 +1,3 @@
-// The client half's PURE logic: payload validation, interpolation, and vertical
-// placement. Rendering is verified by eye per design doc ("no headless GL rig"),
-// so nothing here imports three — which is also what lets this run in the same
-// node environment as the server tests.
-
 import { describe, expect, it } from 'vitest';
 import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import {
@@ -60,19 +55,11 @@ describe('entities payload parsing', () => {
     const parsed = parseEntitiesPayload({
       entities: [
         { id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5, size: 0 },
-        // Version skew is ordinary for a self-hoster: an old server omits the
-        // size entirely, and the right answer is "ordinary medium creatures",
-        // never "drop the whole population".
         { id: 4, species: 'fish', x: 0, y: 0, heading: 0 },
-        // A size index the client does not know falls back to the default class.
         { id: 5, species: 'fish', x: 0, y: 0, heading: 0, size: 99 },
         { id: 6, species: 'fish', x: 0, y: 0, heading: 0, size: -1 },
         { id: 7, species: 'fish', x: 0, y: 0, heading: 0, size: 'big' },
-        // Schools are a server-side steering concept; the client draws
-        // creatures where it is told they are and needs no knowledge of them,
-        // so a school is never carried off the wire.
         { id: 8, species: 'fish', x: 0, y: 0, heading: 0, size: 0, schoolId: 7 },
-        // Malformed entries are dropped one at a time, never the whole message.
         null,
         { id: 1, species: 'dragon', x: 0, y: 0, heading: 0 },
         { id: 2, species: 'fish', x: NaN, y: 0, heading: 0 },
@@ -80,9 +67,6 @@ describe('entities payload parsing', () => {
         { id: 10, species: 'grazer', x: 1, y: 2, heading: 0.5, size: 1 },
       ],
     });
-    // `climbHeight` is null, `falling` false and `stance` null on every row:
-    // absent on the wire means "on the ground, walking", which is what a
-    // pre-climb and a pre-stance server's rows also mean.
     expect(parsed).toEqual([
       { id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5, size: 0, climbHeight: null, falling: false, stance: null },
       { id: 4, species: 'fish', x: 0, y: 0, heading: 0, size: DEFAULT_SIZE_CLASS_INDEX, climbHeight: null, falling: false, stance: null },
@@ -113,10 +97,6 @@ describe('size classes', () => {
   });
 
   it('keeps the largest fish inside its own swim clearance', () => {
-    // A large fish is 1.4 × the authored 0.26-unit body height, so its half
-    // height is 0.182 — the fish profile insists on 0.3 of submergence, so no
-    // clearance in placement.ts has to become size-aware. This is that argument,
-    // pinned: it is what makes "size is a scale on the root" safe.
     const FISH_AUTHORED_BODY_HEIGHT = 0.26;
     const largestHalfHeight = (FISH_AUTHORED_BODY_HEIGHT * WILDLIFE_SIZE_MODEL_SCALE.large) / 2;
     expect(largestHalfHeight).toBeLessThan(SWIM_PROFILES.fish!.minSubmergence);
@@ -126,7 +106,6 @@ describe('size classes', () => {
 
 describe('lerpAngle', () => {
   it('takes the short way round the circle, and is exact at both ends', () => {
-    // 170° → -170° is a 20° step forward, not a 340° step back.
     const from = (170 * Math.PI) / 180;
     const to = (-170 * Math.PI) / 180;
     const half = lerpAngle(from, to, 0.5);
@@ -143,13 +122,11 @@ describe('WildlifeInterpolator', () => {
     interpolator.receive([entity(1, { x: 0, y: 20, heading: 0.5, size: 0 })]);
     expect(interpolator.sample().get(1)).toMatchObject({ x: 0, y: 20, heading: 0.5 });
 
-    // A full window of frames, so the measured gap becomes the next window.
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
     interpolator.receive([entity(1, { x: 10, y: 20, heading: 0.5, size: 0 })]);
     expect(interpolator.sample().get(1)?.x).toBeCloseTo(0, 6);
 
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
-    // Position is halfway; size is a class, not a quantity, so it does not lerp.
     const halfway = interpolator.sample().get(1);
     expect(halfway?.x).toBeCloseTo(5, 6);
     expect(halfway?.size).toBe(0);
@@ -157,7 +134,6 @@ describe('WildlifeInterpolator', () => {
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
     expect(interpolator.sample().get(1)?.x).toBeCloseTo(10, 6);
 
-    // Well past the target it clamps there instead of extrapolating.
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS * 5);
     expect(interpolator.sample().get(1)?.x).toBeCloseTo(10, 6);
     expect(interpolator.progress()).toBe(1);
@@ -169,19 +145,17 @@ describe('WildlifeInterpolator', () => {
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
     interpolator.receive([entity(1, { x: 10 })]);
 
-    // Halfway there, a new message arrives early.
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
     expect(interpolator.sample().get(1)?.x).toBeCloseTo(5, 6);
     interpolator.receive([entity(1, { x: 20 })]);
 
-    // No snap backwards: the new segment begins at 5, not at 0 or 10.
     expect(interpolator.sample().get(1)?.x).toBeCloseTo(5, 6);
   });
 
   it('never adopts a stalled gap as the interpolation window', () => {
     const interpolator = new WildlifeInterpolator();
     interpolator.receive([entity(1, { x: 0 })]);
-    interpolator.advance(30); // a 30-second stall
+    interpolator.advance(30);
     interpolator.receive([entity(1, { x: 10 })]);
 
     interpolator.advance(MAX_INTERPOLATION_SECONDS);
@@ -211,7 +185,6 @@ describe('vertical placement', () => {
   });
 
   it('keeps every swimmer inside the water column, stacked surface → mid → seabed', () => {
-    // The sea surface is world Y 0 because SEA_LEVEL is 0 (see placement.ts).
     expect(SEA_SURFACE_WORLD_Y).toBe(SEA_LEVEL);
     expect(SEA_SURFACE_WORLD_Y).toBe(0);
 
@@ -232,12 +205,6 @@ describe('vertical placement', () => {
   });
 
   it('honours each species clearance when the water is deep enough, scaled by the creature size class', () => {
-    // The bug this pins (2026-08-21): a clearance is the MODEL'S half-height
-    // plus a little water, and the model is uniformly scaled by its size class,
-    // so a clearance that ignored the class placed a large creature as if it
-    // were an adult — belly in the seabed, dorsal through the surface. Deep
-    // water so neither clamp is the one that binds by accident. The medium
-    // class scales by exactly 1, so that iteration is the unscaled clearance.
     const seabedY = -20;
     for (const species of ['fish', 'whale', 'deepsea'] as const) {
       const profile = SWIM_PROFILES[species];
@@ -252,11 +219,6 @@ describe('vertical placement', () => {
   });
 
   it('submerges a large creature deeper than a small one of the same species', () => {
-    // The visible consequence, stated as the relation rather than as three
-    // numbers: a bigger body sits further from the surface it must not breach.
-    // Shallow enough that the submergence clamp is the binding one for the
-    // large class but not for the small, which is exactly where the old code
-    // returned the same Y for both.
     const seabedY = -2;
     const [small, , large] = WILDLIFE_SIZE_CLASSES;
     expect(creatureWorldY('fish', seabedY, large)).toBeLessThan(
@@ -265,8 +227,6 @@ describe('vertical placement', () => {
   });
 
   it('splits the difference when the water is too shallow for both clearances', () => {
-    // A whale insists on 0.7 above the seabed AND 0.7 below the surface; one
-    // world unit of water cannot give it both.
     const seabedY = -1;
     expect(creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS)).toBeCloseTo(-0.5, 6);
   });
@@ -274,66 +234,31 @@ describe('vertical placement', () => {
 
 describe('walkerGroundY — footprint sampling', () => {
   it('stands on the highest band the footprint overlaps, not the centre cell, and returns null only when every sample is null', () => {
-    // Centre cell is band 0; the cell one to the +x is band 2 (world Y 2). A
-    // walker at x = 9.8 overhangs the boundary at x = 10, so it must stand at 2.
     const sample = (cx: number) => (cx >= 10 ? 2 : 0);
     expect(walkerGroundY(sample, 9.8, 5.5, 'grazer')).toBe(2);
-    // Well clear of the boundary the centre cell rules. THE FIXTURE MOVED on
-    // 2026-08-22, from x = 9.0 to x = 8.0, and the move is the bug: a grazer
-    // then reached 1.8 CELLS either side of itself (0.45 world units), so at
-    // x = 9.0 its body genuinely did overhang cell 10 and standing at band 0
-    // there was the clipping this function exists to prevent. The old fixture
-    // passed only because the half-extent was being read as 0.45 cells — a
-    // quarter of the creature. The grazer has since shrunk to 0.18 world units
-    // (0.72 cells, GRAZER_SCALE), so x = 8.0 is clear by an even wider margin
-    // and the fixture stays where it is. See
-    // WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES, which since 2026-09-02 reads the
-    // grazer's own GRAZER_ENVELOPE.bodyHalfLength (0.19) rather than a single
-    // constant shared by every walker.
     expect(walkerGroundY(sample, 8.0, 5.5, 'grazer')).toBe(0);
 
-    // One known cell under the footprint is enough to stand on.
     expect(walkerGroundY(() => null, 5, 5, 'grazer')).toBeNull();
     const halfNull = (cx: number) => (cx >= 5 ? 1 : null);
     expect(walkerGroundY(halfNull, 5.5, 5.5, 'grazer')).toBe(1);
   });
 
   it('probes the ground in CELLS, not in the world units the model is built in', () => {
-    // THE BUG THIS PINS, and its twin lives in the monsters plugin. Model
-    // dimensions have been world units since the 2026-08-21 re-sample cut a
-    // cell to a quarter of one; walkerGroundY adds its half-extent straight to
-    // a CELL coordinate. A raw 0.45 therefore probed a quarter of the ground
-    // the creature covers, which is a plausible-looking number and an invisible
-    // failure — exactly why the conversion is pinned here rather than trusted.
     for (const species of WILDLIFE_SPECIES) {
       const worldUnits = WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES[species];
       const cells = WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES[species];
       expect(cells).toBe(worldUnits === null ? null : cellsAcross(worldUnits));
     }
-    // A grazer still overhangs most of its own cell: a body ~0.44 world units
-    // long is ~1.76 cells, so the probe must reach a good part of a cell either
-    // side of centre — far more than the raw world-unit number would give.
     expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES.grazer).toBeGreaterThan(0.5);
   });
 });
 
 describe('birds fly overhead', () => {
   it('clears the tallest terrain this game can contain, with named headroom, whatever the ground below it is doing', () => {
-    // MAX_HEIGHT is the sculpt ceiling; MAX_TERRAIN_WORLD_Y is that in world
-    // units. The requirement is "well above", not "above", so the headroom is
-    // asserted as a share of the mountain rather than as a bare inequality.
-    // RESTATED, not derived: MAX_HEIGHT / BAND_HEIGHT is the ceiling in BANDS,
-    // which equalled world units only while a band drew one of them. Since
-    // 2026-08-20 the client derives its vertical scale from the world's relief
-    // instead, so this pins that relief — 16 cells — and a change to the
-    // client's MAX_RELIEF_WORLD_UNITS must be followed here deliberately.
     expect(MAX_TERRAIN_WORLD_Y).toBe(16);
     expect(BIRD_FLIGHT_WORLD_Y).toBe(MAX_TERRAIN_WORLD_Y + BIRD_ALTITUDE_HEADROOM_WORLD_UNITS);
     expect(BIRD_ALTITUDE_HEADROOM_WORLD_UNITS).toBeGreaterThanOrEqual(MAX_TERRAIN_WORLD_Y / 2);
 
-    // Including "there is no ground": a bird over a chunk this client has never
-    // been sent must not sag to the unknown-terrain default the way a walker
-    // does — its Y does not come from the terrain at all.
     for (const terrainY of [null, -20, 0, 4, MAX_TERRAIN_WORLD_Y]) {
       expect(creatureWorldY('bird', terrainY, DEFAULT_SIZE_CLASS)).toBe(BIRD_FLIGHT_WORLD_Y);
     }
@@ -347,9 +272,6 @@ describe('birds fly overhead', () => {
     for (const species of ['fish', 'whale', 'deepsea', 'ray', 'shark'] as const) {
       expect(placementKindOf(species)).toBe('swimmer');
     }
-    // A flyer has no swim profile and a swimmer no altitude: the two tables are
-    // disjoint, which is what makes the kind well-defined rather than a
-    // precedence rule that happens to work today.
     for (const species of WILDLIFE_SPECIES) {
       const flies = FLIGHT_ALTITUDES[species] !== null;
       const swims = SWIM_PROFILES[species] !== null;

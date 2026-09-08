@@ -1,29 +1,7 @@
-// measureWaterFloat.mjs — W5 probe: does the river water float above terrain?
-//
-// For each preview scene, opens preview-rivers.html, waits for the harness's
-// own readiness flag, then walks every vertex of every NON-terrain mesh,
-// raycasts the drawn terrain under it with __previewPickY(x,z), and histograms
-// gap = vertexY - groundY in eighths of a band.
-//
-// Drives chrome-headless-shell over raw CDP. IMPORTANT: Chrome's --screenshot
-// one-shot flag and --virtual-time-budget both HANG on these WebGL harnesses
-// (they never wait for the requestAnimationFrame render loop), and Chrome
-// DevTools MCP cannot get a GL context here at all. Raw CDP + polling
-// window.__previewReady (set by previewRivers.ts after SETTLE_FRAME_COUNT
-// frames) is the only thing that works. Node's native WebSocket means no ws
-// dependency.
-//
-// Usage:
-//   node client/scripts/measureWaterFloat.mjs [--url-base http://localhost:5173] [scene ...]
-//
-// Requires a Vite dev server already running at <url-base>; this script never
-// starts or stops servers.
-
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-// Resolved, never written down — see that module's header for why.
 import { resolveChromeHeadlessShell } from './chromeHeadlessShell.mjs';
 
 const CHROME = resolveChromeHeadlessShell();
@@ -31,14 +9,7 @@ const CHROME = resolveChromeHeadlessShell();
 const DEFAULT_URL_BASE = 'http://localhost:5173';
 const DEFAULT_SCENES = ['fork', 'meander', 'terrace', 'basin', 'stairpools'];
 
-/** Histogram bucket width: 1/8 band, so quarter-band offsets are visible. */
 const BUCKET_BANDS = 1 / 8;
-/**
- * Failure threshold: any vertex off the ground by more than twice the intended
- * clearance fails. Mirrors RIVER_SURFACE_LIFT_WORLD_UNITS in
- * client/src/render/riverRig.ts (= 1/64 world unit); that const is
- * module-private so it is restated here rather than imported.
- */
 const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
 const FAIL_GAP_WORLD_UNITS = RIVER_SURFACE_LIFT_WORLD_UNITS * 2;
 
@@ -98,7 +69,6 @@ async function startChrome() {
     [
       '--no-sandbox',
       '--disable-dev-shm-usage',
-      // Software GL is required in this environment (no real GPU).
       '--enable-unsafe-swiftshader',
       '--use-gl=angle',
       '--use-angle=swiftshader',
@@ -109,7 +79,7 @@ async function startChrome() {
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
-  child.stderr.resume(); // drain so chrome never blocks on a full stderr pipe
+  child.stderr.resume();
   const cleanup = () => {
     try {
       child.kill('SIGKILL');
@@ -204,9 +174,6 @@ async function measureScene(ws, urlBase, scene) {
   await rpc(ws, 'Runtime.enable', {}, sessionId);
   await rpc(ws, 'Page.navigate', { url }, sessionId);
 
-  // Poll __previewReady: the harness sets it only after SETTLE_FRAME_COUNT
-  // rendered frames. This poll is exactly what Chrome's --screenshot flag
-  // cannot do (it never waits for rAF, which is why that approach hangs).
   const deadline = Date.now() + READY_TIMEOUT_MS;
   let ready = false;
   while (Date.now() < deadline) {
@@ -223,7 +190,6 @@ async function measureScene(ws, urlBase, scene) {
         break;
       }
     } catch {
-      // page still navigating; keep polling
     }
   }
   if (!ready) {
@@ -231,8 +197,6 @@ async function measureScene(ws, urlBase, scene) {
     throw new Error(`${scene}: __previewReady not set within ${(READY_TIMEOUT_MS / 1000) | 0}s`);
   }
 
-  // BAND_WORLD_HEIGHT lives in client/src/config.ts; read it through Vite so
-  // the script cannot drift from the real value.
   const bandRes = await rpc(
     ws,
     'Runtime.evaluate',
@@ -287,7 +251,6 @@ function report(scene, m) {
 
 const { urlBase, scenes } = parseArgs(process.argv.slice(2));
 
-// Fail clearly if the dev server isn't up; we never start one ourselves.
 try {
   await fetch(urlBase, { method: 'HEAD' });
 } catch {

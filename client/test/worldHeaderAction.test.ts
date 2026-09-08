@@ -1,9 +1,3 @@
-// The world-header action registry's contract (plugins/hudPanels.ts): ONE
-// claimant, first registration wins, later claims warn and are ignored — the
-// precedence rule the banner's behaviour depends on, pinned here because the
-// banner itself is render-side and this project verifies rendering manually
-// (design §8).
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   claimWorldHeaderAction,

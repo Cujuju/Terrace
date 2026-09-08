@@ -1,29 +1,3 @@
-// previewWater.ts — THROWAWAY preview harness for the SEA's depth curves,
-// mirroring previewRivers.ts. Not part of the shipped app: reached only
-// through preview-water.html.
-//
-//   ?scene=<staircase|ocean>  — fixture; defaults to "staircase"
-//   ?view=<iso|side|top>      — camera angle; defaults to "iso"
-//   ?zoom=<number>            — camera distance multiplier; defaults to 1
-//   ?light=<noon|night>       — lighting rig; defaults to "noon" (the static
-//                               rig this harness has always had)
-//
-// WHAT THIS EXISTS TO SHOW, and why the live client could not. The thing under
-// test is a CURVE — how much terrain shows through the sea as a function of the
-// water column's depth (terrain/waterDepth.ts's depthToWaterAlpha, and the
-// shade and specular curves beside it). Reading a curve off the live world
-// means hunting for a cell at each depth, in terrain whose shape is whatever
-// the players sculpted, under lighting the daynight plugin rewrites ten times a
-// second. Here every depth from the waterline down is on screen at once, in a
-// known order, held still.
-//
-// It drives the REAL modules, not a copy: `createTerrainMeshes` for the seabed
-// and `createWater` for the sea, over a real `TerrainMirror`. What it stubs is
-// only what a preview has no business having — a server, a network, and a
-// day/night cycle.
-//
-// A screenshot driver waits for `window.__previewReady === true`.
-
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -43,69 +17,33 @@ import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
 import { createWater } from './render/water.ts';
 import { WATER_SHADE_SPAN_BANDS } from './terrain/waterDepth.ts';
-// The REAL night rig, not a copy of its numbers: ?light=night drives this
-// fixture's three lights from the same function the daynight plugin drives the
-// live client's with, so a night capture here is lit exactly as the game is.
 import { skyStateAtPhase } from '../../plugins/daynight/client/sky.ts';
 import { installWaterBandClock } from './render/water/waterBands.ts';
 import { depthToWaterAlpha, waterDepthWorldUnits } from './terrain/waterDepth.ts';
 
-// ── Lighting rig, copied from previewRivers.ts / render/scene.ts ─────────────
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
 const HEMISPHERE_LIGHT_INTENSITY = 1.5;
 const SUN_LIGHT_INTENSITY = 1.2;
 const AMBIENT_FLOOR_INTENSITY = 0.9;
 const SUN_DIRECTION = new Vector3(0.7, 0.45, 0.55);
-/**
- * How far out the directional light is placed. A DirectionalLight's position
- * sets only its DIRECTION (it has no falloff and this fixture casts no
- * shadows), so the magnitude is arbitrary; it is named here because ?light=
- * now has to re-place the same light and the two must not disagree.
- */
 const SUN_DISTANCE_WORLD_UNITS = 1000;
 const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 const BACKDROP_COLOR = 0x9fc7e8;
 const SETTLE_FRAME_COUNT = 6;
 
-/**
- * The phase the day/night cycle calls midnight. Not a guess: sky.ts models the
- * whole day as one sine, `sunHeight(phase) = sin(phase * 2pi)`, which is -1 —
- * the sun at its lowest, the NIGHT keyframe reached in full — at exactly 0.75.
- */
 const MIDNIGHT_PHASE = 0.75;
 
-/**
- * The fixture world's edge, in cells. Eight chunks, not the four previewRivers
- * uses: the staircase below needs one readable tread per depth band across the
- * whole span the alpha curve is being judged over, and four chunks (64 cells)
- * would give each tread barely two cells.
- */
 const PREVIEW_WORLD_SIZE = CHUNK_SIZE * 8;
 
-/**
- * The deepest tread of the staircase, in bands. Two past the end of the shade
- * ramp (WATER_SHADE_SPAN_BANDS, 48 since 2026-08-28), so the fixture shows the
- * whole ramp AND the start of the flat beyond it — where the curve stops
- * changing is exactly the thing being judged. (Was 26: p99 plus headroom,
- * when the ramp ended at the ordinary floor.)
- */
 const STAIRCASE_MAX_DEPTH_BANDS = WATER_SHADE_SPAN_BANDS + 2;
 
-/** Bands of dry land at the shallow end, so the shot contains a shoreline. */
 const STAIRCASE_DRY_BANDS = 2;
 
-/**
- * The ordinary-ocean fixture's depths, in bands — the MEASURED live-world
- * distribution (frostwick-hollows, 2026-08-25: p25 11, p50 12, p75 12, p95 14),
- * not a guess. This is the shot that answers "what does 94% of the map look
- * like", which a staircase spanning 26 bands deliberately does not.
- */
 const OCEAN_MEDIAN_DEPTH_BANDS = 12;
 const OCEAN_RELIEF_BANDS = 2;
 
-/** Cells per tread. The span divided by the number of treads the scene needs. */
 const STAIRCASE_TREAD_CELLS = Math.floor(
   PREVIEW_WORLD_SIZE / (STAIRCASE_MAX_DEPTH_BANDS + STAIRCASE_DRY_BANDS + 1),
 );
@@ -114,12 +52,6 @@ function setCell(mirror: TerrainMirror, x: number, y: number, height: number): v
   mirror.map.cells[cellIndex(mirror.map, x, y)] = height;
 }
 
-/**
- * A staircase descending east, exactly one band per tread, from dry land down
- * past the deepest depth any real cell reaches. Every depth the alpha curve is
- * defined over appears once, in order, at a known X — so "the curve goes flat
- * here" is read off the picture rather than inferred.
- */
 function buildStaircase(mirror: TerrainMirror): void {
   for (let x = 0; x < PREVIEW_WORLD_SIZE; x++) {
     const tread = Math.floor(x / STAIRCASE_TREAD_CELLS);
@@ -129,12 +61,6 @@ function buildStaircase(mirror: TerrainMirror): void {
   }
 }
 
-/**
- * Ordinary open ocean: a broad flat at the measured median depth with gentle
- * relief either side of it, and a dry island for a shoreline to read against.
- * The relief is a smooth bowl rather than noise so the depth gradient is
- * legible as a gradient.
- */
 function buildOcean(mirror: TerrainMirror): void {
   const centre = PREVIEW_WORLD_SIZE / 2;
   for (let y = 0; y < PREVIEW_WORLD_SIZE; y++) {
@@ -142,10 +68,7 @@ function buildOcean(mirror: TerrainMirror): void {
       const dx = (x - centre) / centre;
       const dy = (y - centre) / centre;
       const r = Math.sqrt(dx * dx + dy * dy);
-      // A cosine bowl: deepest at the rim, shoaling to the island at centre.
       const depthBands = OCEAN_MEDIAN_DEPTH_BANDS + OCEAN_RELIEF_BANDS * Math.cos(Math.PI * r);
-      // The island: the innermost fifth of the radius rises out of the water,
-      // so the frame has a shoreline and dry land to judge the sea against.
       const height =
         r < 0.2
           ? SEA_LEVEL + Math.round((0.2 - r) * 20) * BAND_HEIGHT
@@ -184,11 +107,6 @@ const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
 sun.position.copy(SUN_DIRECTION).multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
 scene.add(sun);
 
-// ?light=night — overwrite the static noon rig above with the day/night
-// plugin's own midnight state. Written out here rather than through
-// render/skyRig.ts's applySkyRig because that takes a Viewport, which this
-// fixture (no scene.ts, no renderer rig) does not have; the STATE still comes
-// from the plugin, so none of its numbers are duplicated.
 if (isNight) {
   const night = skyStateAtPhase(MIDNIGHT_PHASE);
   sun.position
@@ -213,8 +131,6 @@ renderer.outputColorSpace = SRGBColorSpace;
 renderer.toneMapping = ACESFilmicToneMapping;
 renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
 
-// Every chunk marked received: this fixture has no reveal gate, and both the
-// terrain meshes and the sea draw only over received chunks.
 const mirror = createTerrainMirror(PREVIEW_WORLD_SIZE);
 builder(mirror);
 const chunkCols = chunksPerEdge(PREVIEW_WORLD_SIZE);
@@ -232,11 +148,6 @@ scene.add(terrainGroup);
 const meshes = createTerrainMeshes(terrainGroup, mirror);
 meshes.update(allChunks);
 meshes.flush();
-// The world is built and nothing more is coming, which is the moment a client
-// gets from its frame hook and a harness has to name for itself: give the
-// super-meshes their headroom now rather than on a later edit (issue #229).
-// `assumeQuiet` because this harness IS the assertion: the build above is
-// everything this page will ever draw, and the wall clock cannot know that.
 meshes.settle({ assumeQuiet: true });
 
 const frameHandlers: ((dt: number) => void)[] = [];
@@ -246,9 +157,6 @@ const water = createWater(waterGroup, PREVIEW_WORLD_SIZE);
 water.setWorldSize(PREVIEW_WORLD_SIZE);
 water.sync(mirror);
 water.refresh(mirror, allChunks);
-// The painted bands drift on a shared clock the live client installs from the
-// river rig; this harness builds only the sea, so it installs the clock itself
-// (installWaterBandClock is idempotent by design for exactly this case).
 installWaterBandClock((handler) => {
   frameHandlers.push(handler);
   return () => {};
@@ -277,14 +185,9 @@ function animate(): void {
   frames++;
   if (frames === SETTLE_FRAME_COUNT) {
     (window as unknown as { __previewReady?: boolean }).__previewReady = true;
-    // Debug probe for MEASURING rather than eyeballing: the alpha the curve
-    // actually yields at a given depth in bands, read from the shipped
-    // function — so a screenshot and the numbers behind it cannot disagree.
     (window as unknown as { __previewAlphaAtBands?: unknown }).__previewAlphaAtBands = (
       bands: number,
     ): number => depthToWaterAlpha(waterDepthWorldUnits(SEA_LEVEL - bands * BAND_HEIGHT));
-    // Hiding the sea is how "the seabed is dark" is told apart from "the water
-    // is hiding it" — the A/B that isolated the milky-water bug in 2026-08-20.
     (window as unknown as { __previewWater?: unknown }).__previewWater = waterGroup;
   }
 }

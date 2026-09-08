@@ -1,14 +1,3 @@
-// The host's preload contract (client/src/plugins/types.ts:665-681, implemented
-// at client/src/plugins/host.ts:842-877).
-//
-// Three promises, one test each: attach waits for preload, an unmount during
-// preload never attaches, and a rejecting preload is logged and dropped rather
-// than thrown out of the boot loop.
-//
-// No WebGL and no DOM: the host only reads viewport.scene, the canvas's
-// add/removeEventListener and onFrame, so plain stand-ins for those are the
-// whole harness (the same shape client/test/drawBudget.test.ts uses).
-
 import { describe, expect, it, vi } from 'vitest';
 import { Scene } from 'three';
 import { createClientPluginHost } from '../src/plugins/host.ts';
@@ -44,7 +33,6 @@ function hostWith(plugin: TerraceClientPlugin) {
   });
 }
 
-/** A plugin whose preload the test settles by hand. */
 function deferredPlugin(): {
   plugin: TerraceClientPlugin;
   attach: ReturnType<typeof vi.fn>;
@@ -71,9 +59,6 @@ describe("a plugin's preload", () => {
     const { plugin, attach, resolve } = deferredPlugin();
     const host = hostWith(plugin);
 
-    // The whole point of the second hook: attach is synchronous, so a plugin
-    // that parses a glTF has nowhere to put that work — and must not be
-    // attached with its asset still in flight.
     expect(attach).not.toHaveBeenCalled();
     resolve();
     await vi.waitFor(() => expect(attach).toHaveBeenCalledTimes(1));
@@ -85,9 +70,6 @@ describe("a plugin's preload", () => {
     const { plugin, attach, resolve } = deferredPlugin();
     const host = hostWith(plugin);
 
-    // dispose() bumps the pending mount's generation, and the continuation
-    // proceeds only if the generation it captured is still current — so this
-    // load lands in a torn-down host and is dropped unseen.
     host.dispose();
     resolve();
     await Promise.resolve();

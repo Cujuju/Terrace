@@ -1,11 +1,3 @@
-// The audio block in the settings popup: master + mute, then one level per bus.
-//
-// SOLID REACTIVITY: accessors are called at the point of use, never stored in a
-// component-body const (project rule).
-//
-// BESIDE ControlsPanel, not inside it: that panel's reset button promises to
-// reset "every setting on this panel", and audio is not a control binding.
-
 import { For, type JSX } from 'solid-js';
 import {
   AUDIO_BUS_LABEL,
@@ -20,17 +12,14 @@ import {
   setMasterVolume,
 } from '../state/audioPrefs.ts';
 
-/** About the smallest step audible on a linear gain control. */
 const VOLUME_STEP = 0.01;
 
-/** 0..1 → the whole-percent readout beside each slider. */
 const PERCENT_SCALE = 100;
 
 function percentLabel(level: number): string {
   return `${String(Math.round(level * PERCENT_SCALE))}%`;
 }
 
-/** Takes ACCESSORS: a value read in the parent body would freeze (project rule). */
 function SliderRow(props: {
   label: string;
   title: string;
@@ -68,8 +57,6 @@ export function AudioSettingsPanel(): JSX.Element {
         level={masterVolume}
         onLevel={(level) => {
           setMasterVolume(level);
-          // Dragging the master while muted would change nothing audible. The
-          // bus sliders do NOT unmute: the mix is adjustable while silent.
           if (audioMuted()) setAudioMuted(false);
         }}
         readout={() => (
@@ -91,7 +78,7 @@ export function AudioSettingsPanel(): JSX.Element {
         )}
       />
 
-      {/* Levels BEFORE the master: "thunder against rain", not "how loud". */}
+      {}
       <For each={AUDIO_BUS_NAMES}>
         {(bus) => (
           <SliderRow

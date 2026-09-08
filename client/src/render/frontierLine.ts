@@ -1,32 +1,3 @@
-// The frontier line: a red thread laid on the ground wherever revealed
-// territory ends at a chunk that could still be opened.
-//
-// WHY IT EXISTS (owner, 2026-09-06). Since issue #22 the terrain simply runs
-// flat to the reveal boundary and stops — no cliff, no seam — and the mist
-// bank that used to mark it is off by default because it read as a wall. So
-// nothing at all showed where a player's territory ended, and a sculpt aimed
-// at the frontier was aimed at an unmarked line: whether the brush reached
-// across was invisible before the click and unexplained after it. This is the
-// replacement the owner asked for — "draw a red line where that frontier mist
-// border is" — and it is a MARKER, not a veil: it hides nothing and stands
-// no height.
-//
-// ONLY WHERE THERE IS SOMETHING TO OPEN. `frontierEdges` includes the world's
-// own outer rim, which is a frontier by its rule and an opportunity by no
-// rule at all — no chunk exists past it, so no sculpt can ever open it.
-// Drawing the same red there would promise ground that does not exist, so the
-// rim is skipped (neighbourChunkIndex is the one test, shared with the edge
-// derivation itself).
-//
-// ONE DRAW CALL, REBUILT WHOLE. The mist bank packs its segments into
-// super-meshes because it carries FOG_ROW_COUNT × FOG_COLUMNS vertices per
-// edge and grows with how much of the world has been revealed (GH #73). A
-// line carries CHUNK_SIZE + 1 points per edge — a fortieth of that — so the
-// whole frontier fits in one LineSegments and one buffer rewrite, and there
-// is no packing, no slot bookkeeping and no per-edge diffing to keep correct.
-// The buffer grows by doubling and never shrinks, so a steady frontier
-// rewrites in place and allocates nothing.
-
 import {
   BufferAttribute,
   BufferGeometry,
@@ -47,55 +18,22 @@ import {
 } from '../terrain/frontier.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 
-/**
- * The colour of the boundary. Owner's word, 2026-09-06: red — the one hue
- * nothing else in this world wears, so the line cannot be read as terrain,
- * water, a terrace lip or a plugin's own marker.
- */
 const FRONTIER_LINE_COLOR = 0xe03127;
 
-/**
- * How far the thread floats above the ground it traces, in height units.
- *
- * An eighth of a world unit: enough that it never z-fights the cap it lies
- * on at any camera distance, small enough that it still reads as lying ON the
- * ground rather than hovering over it. Measured in world units rather than
- * bands for the reason FOG_BANK_RISE is (frontierFog.ts): "sits on the
- * ground" is a fact about the world, not about the render quantum.
- */
 const FRONTIER_LINE_LIFT = WORLD_UNIT_HEIGHT_UNITS / 8;
 
-/** Lattice points along one chunk side — one per cell boundary, as the mist bank has. */
 const POINTS_PER_EDGE = CHUNK_SIZE + 1;
 
-/** Line segments per edge, each two vertices of three components. */
 const VERTICES_PER_EDGE = (POINTS_PER_EDGE - 1) * 2;
 const POSITION_COMPONENTS_PER_VERTEX = 3;
 
-/** Edges the buffer is born sized for, and the unit it doubles from. */
 const INITIAL_EDGE_CAPACITY = 64;
 
 export interface FrontierLine {
-  /** Shows or hides the line. Geometry stays maintained while hidden. */
   setVisible(visible: boolean): void;
-  /**
-   * Rebuilds from the mirror's CURRENT received set. Call after every event
-   * that can change which chunks are received — a join snapshot, a chunkUnlock.
-   */
   sync(mirror: TerrainMirror): void;
-  /**
-   * Re-traces the ground under the line where heights moved. Call after every
-   * event that changes HEIGHTS without changing `received`, so a sculpt at the
-   * boundary carries the line with it.
-   *
-   * `dirtyChunks` is the same dirty set the terrain meshes were just patched
-   * with; the rebuild is whole and cheap, so this only decides WHETHER to run,
-   * never which part to run.
-   */
   refresh(mirror: TerrainMirror, dirtyChunks: ReadonlySet<number>): void;
-  /** Frontier edges currently drawn — the openable ones, not every edge. */
   edgeCount(): number;
-  /** Draw calls with nothing culled, so a test can hold a budget against it. */
   drawCallCount(): number;
   dispose(): void;
 }
@@ -109,19 +47,13 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', attribute);
   geometry.setDrawRange(0, 0);
-  // The bounding sphere is set by hand on every rebuild (see below), so three
-  // never computes one from a buffer whose tail is stale.
   geometry.boundingSphere = new Sphere(new Vector3(), 0);
 
   const line = new LineSegments(geometry, material);
   line.frustumCulled = false;
-  // Hidden until the pref is applied, for the reason frontierFog starts
-  // hidden: world.ts drives the mode through an effect that Solid flushes a
-  // microtask later, and a layer the player turned off must not flash first.
   line.visible = false;
   parent.add(line);
 
-  /** Edges drawn by the last rebuild, so `refresh` knows whether one is worth doing. */
   let drawnEdges: FrontierEdge[] = [];
 
   const grow = (edges: number): void => {
@@ -132,16 +64,6 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
     geometry.setAttribute('position', attribute);
   };
 
-  /**
-   * Ground height at lattice point k of an edge, in height units.
-   *
-   * The HIGHER of the two border cells the point sits between, so the line
-   * rides on top of whichever cap actually ends there rather than sinking into
-   * it — the same rule the mist bank's opaque row follows. Never below the
-   * waterline: ground under the sea is drawn as sea, and a thread traced along
-   * the seabed would be hidden under the water plane exactly where the player
-   * most needs to see the boundary.
-   */
   const groundAt = (mirror: TerrainMirror, edge: FrontierEdge, k: number): number => {
     const s = frontierEdgeSampling(edge);
     const left = k - 1 < 0 ? 0 : k - 1;
@@ -152,7 +74,6 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
     return higher > SEA_LEVEL ? higher : SEA_LEVEL;
   };
 
-  /** Writes every drawn edge's points into the buffer and sizes the draw range. */
   const write = (mirror: TerrainMirror): void => {
     grow(drawnEdges.length);
 
@@ -166,10 +87,6 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
 
     for (const edge of drawnEdges) {
       const s = frontierEdgeSampling(edge);
-      // Each lattice point is written twice — once ending the previous
-      // segment, once starting the next — because LineSegments draws
-      // independent pairs. One shared strip would have joined this edge to
-      // the next unrelated edge in the buffer.
       let prevX = 0;
       let prevY = 0;
       let prevZ = 0;

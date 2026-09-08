@@ -1,17 +1,4 @@
-// rain — client half. Draws whatever the server's `rain:systems` broadcast says
-// exists, and nothing else.
-//
-// It holds no authority: it never spawns a system, never moves one of its own
-// accord, and never predicts. The wiring — subscribe, interpolate, pool one rig
-// per living system, animate — is core's client kit
-// (client/src/plugins/kit/discSystemsView.ts), which four plugins share; what is
-// here is this plugin's rig and its budget.
-//
-// No HUD panel, deliberately: weather is a thing you look up at. A label saying
-// RAIN would be the opposite of the feature.
-
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-// Synthesised by scripts/audio-weather-sfx.py; seamless loop, faded by weight.
 import rainLoopUrl from './assets/rain-loop.wav?url';
 import type {
   ClientPluginCtx,
@@ -30,24 +17,11 @@ import {
   type RainRigs,
 } from './rig.ts';
 
-/**
- * Module-level singleton, matching the shape of this repo's other plugins. The
- * client host constructs exactly one instance of each plugin
- * (client/src/plugins/host.ts), and `attach`/`dispose` bracket its whole
- * lifetime.
- */
-/**
- * The pool, held here as well as by the view because the deck has to be
- * parented at attach and the shade lookup has to reach it. Null between attach
- * and dispose, exactly like the view's own state — the same shape the
- * thunderstorm plugin's `rigs` has.
- */
 let rigs: RainRigs | null = null;
 let unpublishShade: (() => void) | null = null;
 let unsubscribeAmbience: (() => void) | null = null;
 let unpublishWeight: (() => void) | null = null;
 
-/** Gauge key for how loud it rains where the camera is, 0..1. */
 const WEIGHT_GAUGE_KEY = 'weightUnderCamera';
 
 const view = createDiscSystemsView<DiscRig>({
@@ -60,14 +34,10 @@ const view = createDiscSystemsView<DiscRig>({
   update: (rig, disc, elapsed) => {
     rig.update(disc, elapsed);
   },
-  // The view orders the deck against the camera once per frame — see
-  // DiscSystemsViewSpec.deck.
   deck: () => rigs?.deck ?? null,
   attachExtras: (ctx: ClientPluginCtx) => {
     const pool = rigs;
     if (pool === null) return;
-    // Beside the masses, not inside them: ONE instanced draw carries every
-    // mass's cloud, so it belongs to the plugin's layer and not to any rig.
     ctx.layer.add(pool.deck.object);
   },
   disposeExtras: () => {
@@ -75,14 +45,6 @@ const view = createDiscSystemsView<DiscRig>({
   },
 });
 
-/**
- * The shade this plugin's clouds throw on the ground, rebuilt each frame.
- *
- * REUSED, NEVER REALLOCATED: core reads this during the frame it draws, every
- * frame, and a fresh array per frame would be garbage for nothing. Read from
- * the view's INTERPOLATED poses — the same numbers the decks were drawn from
- * this frame — so a shadow can never be a broadcast behind its cloud.
- */
 const shade: GroundShadeDisc[] = [];
 
 function shadeDiscs(): readonly GroundShadeDisc[] {
@@ -94,14 +56,6 @@ function shadeDiscs(): readonly GroundShadeDisc[] {
   return shade;
 }
 
-/**
- * How loud it rains where the camera is, 0..1. Derived here because nothing
- * else answers it: rigs and ground shade are both per system.
- *
- * LOUDEST SYSTEM WINS, not the sum — two overlapping fronts are the harder of
- * the two, not twice the rain. The falloff stops the loop snapping on at a
- * disc edge. Cells, not world units (kit/discInterpolator.ts:21-26).
- */
 function rainWeightUnderCamera(ctx: ClientPluginCtx): number {
   const camera = ctx.cameraPosition();
   const cameraCellX = camera.x / CELL_WORLD_SIZE;
@@ -116,35 +70,21 @@ function rainWeightUnderCamera(ctx: ClientPluginCtx): number {
     const weight = disc.intensity * (1 - distance / disc.radius);
     if (weight > loudest) loudest = weight;
   }
-  // In range by construction; clamped anyway, belt and suspenders.
   return Math.min(1, Math.max(0, loudest));
 }
 
 export const clientPlugin: TerraceClientPlugin = {
   name: RAIN_PLUGIN_NAME,
 
-  /**
-   * Its share of the frame's draw calls, from its own cap — see
-   * TerraceClientPlugin.drawBudget. One rig per living system, and the sim never
-   * has more than MAX_ACTIVE_SYSTEMS.
-   */
   drawBudget: MAX_ACTIVE_SYSTEMS * RAIN_RIG_DRAW_OBJECTS + RAIN_DECK_DRAW_OBJECTS,
 
-  /**
-   * One shade disc per living mass, so the budget IS the mass cap — an
-   * expression of this plugin's own cap, exactly as `drawBudget` above is.
-   */
   groundShadeBudget: MAX_ACTIVE_SYSTEMS,
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
-    // Decode now, so the rain fades in instead of starting a decode as it does.
     ctx.audio.preload(rainLoopUrl);
     unpublishShade = ctx.publishGroundShade(shadeDiscs);
-    // The same weight the ambience loop is faded to (publishGauge).
     unpublishWeight = ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
-    // EVERY FRAME, deliberately: `ambience` short-circuits an unchanged weight
-    // to one comparison, and the weight drifts continuously with the front.
     unsubscribeAmbience = ctx.onFrame(() => {
       ctx.audio.ambience(rainLoopUrl, rainWeightUnderCamera(ctx));
     });

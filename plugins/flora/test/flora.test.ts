@@ -1,11 +1,3 @@
-// The flora sim, driven through the REAL plugin host and the REAL intent
-// pipeline — no stub for either.
-//
-// These are CONTRACT tests: each one names a rule the plugin promises (only
-// green ground, only stable ground, only unlocked ground, never denser than the
-// cap, felled by any sculpt, survives a restart) and asserts it against the
-// mechanism rather than against a call site.
-
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
@@ -86,40 +78,19 @@ import { FLORA_STABILITY_SECONDS, StabilityMap } from '../server/stability.ts';
 import { loadStructuresBridge, resetStructuresBridge } from '../server/structures-bridge.ts';
 import { worldWithTerrain } from './support/world.ts';
 
-/**
- * 64² WORLD UNITS — small enough to survey thousands of times a suite, and big
- * enough to hold a forest at the shipped density. Counted in world units rather
- * than cells because that density is: FLORA_CELLS_PER_TREE is a tree per four
- * square world units, so a 64-CELL world after the 2026-08-21 re-sample would
- * be sixteen world units of ground and hold almost no trees at all.
- */
 const WORLD_SIZE = cellsAcross(64);
 
-/** Host tick period, matching the shipped TICK_HZ of 10. */
 const DT = 0.1;
 
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
-/** Namespaced message types, as they appear on the RecordingSink. */
 const FOREST_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_FOREST_MESSAGE}`;
 const CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CHANGES_MESSAGE}`;
 const CROPS_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROPS_MESSAGE}`;
 const CROP_CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROP_CHANGES_MESSAGE}`;
 
-/** The middle of the green window — a band that is green but is neither edge. */
 const GREEN_MID_BAND = Math.floor((FLORA_MIN_BAND + FLORA_MAX_BAND) / 2);
 
-/**
- * The bands this fixture world is striped with, in column order: one stripe per
- * entry, left to right.
- *
- * Written as an explicit table rather than as the band indices 0…N because the
- * green window is a HEIGHT window (bands.ts), not a small band index — it spans
- * fourteen bands, and striping one column-block per band from zero would need a
- * world four times this one's width for ground no assertion here looks at. What
- * the contracts below actually need is both edges of the window, its middle,
- * and ineligible ground on both sides of it.
- */
 const STRIPE_BANDS: readonly number[] = [
   FLORA_MIN_BAND - 3,
   FLORA_MIN_BAND - 2,
@@ -131,7 +102,6 @@ const STRIPE_BANDS: readonly number[] = [
   FLORA_MAX_BAND + 2,
 ];
 
-/** Stripe width, so that the stripes tile the world exactly once. */
 const STRIPE_WIDTH = Math.floor(WORLD_SIZE / STRIPE_BANDS.length);
 
 function stripedHeight(x: number, _y: number): number {
@@ -139,18 +109,15 @@ function stripedHeight(x: number, _y: number): number {
   return STRIPE_BANDS[stripe] * BAND_HEIGHT;
 }
 
-/** A column that is squarely inside the given band's stripe. */
 function columnInBand(band: number): number {
   const stripe = STRIPE_BANDS.indexOf(band);
   if (stripe < 0) throw new Error(`band ${band} is not one of the fixture world's stripes`);
   return stripe * STRIPE_WIDTH + Math.floor(STRIPE_WIDTH / 2);
 }
 
-/** The striped bands that are green, and the ones that are not. */
 const GREEN_STRIPE_BANDS = STRIPE_BANDS.filter((band) => isGreenBand(band * BAND_HEIGHT));
 const BARE_STRIPE_BANDS = STRIPE_BANDS.filter((band) => !isGreenBand(band * BAND_HEIGHT));
 
-/** Green cells in the striped world: every green stripe, full height. */
 const GREEN_CELLS = GREEN_STRIPE_BANDS.length * STRIPE_WIDTH * WORLD_SIZE;
 
 const LOCKED_CHUNK_ROW = 0;
@@ -164,7 +131,6 @@ interface Harness {
   readonly sink: RecordingSink;
 }
 
-/** Boots the plugin, through the real host, onto an already-built world. */
 function bootOn(world: World, restore?: unknown): Harness {
   resetFloraState();
 
@@ -172,7 +138,6 @@ function bootOn(world: World, restore?: unknown): Harness {
   world.setSink(sink);
 
   const host = new PluginHost(world, [floraPlugin].map(asLoadedPlugin));
-  // The real boot order: persistence first, then world create (server/src/index.ts).
   if (restore !== undefined) host.restorePersistence({ [FLORA_PLUGIN_NAME]: restore });
   host.worldCreate();
 
@@ -185,22 +150,14 @@ function boot(locked: (cx: number, cy: number) => boolean = isChunkLocked): Harn
 
 function join(harness: Harness): void {
   harness.world.addPlayer(PLAYER);
-  // Fog of war (issue #18): grant PLAYER's own token every chunk this
-  // world's union mask already has unlocked, BEFORE playerJoined fires the
-  // plugin's onPlayerJoin — the same order the real join path seeds a
-  // token's starter square in. Every existing "the joining player gets the
-  // whole forest" assertion below assumes this player can see everything
-  // boot() unlocked, exactly as it did before per-player masks existed.
   grantTokenEveryUnlockedChunk(harness.world, PLAYER.token);
   harness.host.playerJoined(PLAYER);
 }
 
-/** Advances the sim by `seconds` of simulated time at the shipped tick rate. */
 function advance(harness: Harness, seconds: number): void {
   for (let elapsed = 0; elapsed < seconds; elapsed += DT) harness.host.tick(DT);
 }
 
-/** The World as the plugin's own predicates want it (World calls it `size`). */
 function floraView(world: World): FloraWorld {
   return {
     worldSize: world.size,
@@ -211,7 +168,6 @@ function floraView(world: World): FloraWorld {
   };
 }
 
-/** A generator that always returns the same number — for the density maths. */
 function fixedRng(value: number): FloraRng {
   return { next: () => value, state: () => 0 };
 }
@@ -221,12 +177,9 @@ describe('band eligibility', () => {
     for (let band = FLORA_MIN_BAND - 4; band <= FLORA_MAX_BAND + 4; band++) {
       const expected = band >= FLORA_MIN_BAND && band <= FLORA_MAX_BAND;
       expect(isGreenBand(band * BAND_HEIGHT)).toBe(expected);
-      // Anywhere inside the band, not just on its floor.
       expect(isGreenBand(band * BAND_HEIGHT + BAND_HEIGHT - 1)).toBe(expected);
     }
 
-    // The green test carries no isWater branch on purpose (see bands.ts); this
-    // is the assertion that makes its absence safe.
     for (let h = MIN_HEIGHT; h <= SEA_LEVEL; h += 17) {
       expect(isGreenBand(h)).toBe(false);
     }
@@ -237,7 +190,6 @@ describe('band eligibility', () => {
     const world = floraView(worldWithTerrain(WORLD_SIZE, stripedHeight, isChunkLocked));
     const green = columnInBand(FLORA_MIN_BAND);
 
-    // Row 0 is inside the locked chunk row; row CHUNK_SIZE is not.
     expect(isPlantableCell(world, green, 0)).toBe(false);
     expect(isPlantableCell(world, green, CHUNK_SIZE)).toBe(true);
 
@@ -266,7 +218,6 @@ describe('stability tracking', () => {
 
     expect(stability.isStable(3, 4, changedAt + FLORA_STABILITY_SECONDS - 1)).toBe(false);
     expect(stability.isStable(3, 4, changedAt + FLORA_STABILITY_SECONDS)).toBe(true);
-    // Its neighbour was never touched, so it is unaffected.
     expect(stability.isStable(4, 4, changedAt + 1)).toBe(true);
 
     expect(() => stability.markChanged(-1, 0, 5)).not.toThrow();
@@ -289,14 +240,6 @@ describe('stability tracking', () => {
       { type: 'sculpt', x, y, radius: MAX_BRUSH_RADIUS, dir: 1 },
     );
 
-    // Nothing may grow in the disturbed area again until a fresh full window has
-    // passed; two surveys later is far too soon.
-    //
-    // The assertion is scoped to the cells the brush CERTAINLY changed — the
-    // 3×3 around the centre, where a soft falloff is at its strongest. The rim
-    // of a radius-4 disc is deliberately excluded: a soft profile's outermost
-    // ring can round to no change at all, so a tree appearing there would be
-    // correct behaviour and asserting against it would be asserting a flake.
     const CERTAINLY_CHANGED_REACH = 1;
     advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * 2);
     const grownNearby = standingTrees().filter(
@@ -317,15 +260,12 @@ describe('density maths', () => {
   });
 
   it('spreads a deficit over time, rounds a fractional expectation stochastically, and never exceeds the ceiling or the deficit', () => {
-    // Expected arrivals per survey are deficit × interval / mean wait.
     const deficit = 120;
     const expected = deficit * (FLORA_SURVEY_INTERVAL_SECONDS / FLORA_MEAN_SPROUT_WAIT_SECONDS);
     expect(expected).toBe(20);
     expect(sproutCount(deficit, fixedRng(0.99))).toBe(20);
     expect(sproutCount(deficit, fixedRng(0))).toBe(20);
 
-    // Deficit 3 → expectation 0.5: never a whole tree, so the fractional draw is
-    // the only thing that can produce one.
     expect(sproutCount(3, fixedRng(0.4))).toBe(1);
     expect(sproutCount(3, fixedRng(0.6))).toBe(0);
 
@@ -341,14 +281,11 @@ describe('density maths', () => {
     const forest = new Forest();
     const rng = createFloraRng(2);
 
-    // Well past the stability window, and enough surveys to saturate.
     const target = treeTargetFor(GREEN_CELLS);
     for (let n = 0; n < 600; n++) {
       forest.survey(world, stability, FLORA_STABILITY_SECONDS + n * FLORA_SURVEY_INTERVAL_SECONDS, rng);
       expect(forest.count).toBeLessThanOrEqual(target);
     }
-    // The spacing rule can leave the last few slots unfillable, so this asserts
-    // "most of the way there and no further", not an exact count.
     expect(forest.count).toBeGreaterThan(target / 2);
 
     const reach = FLORA_MIN_TREE_SPACING_CELLS - 1;
@@ -363,42 +300,19 @@ describe('density maths', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE ONE GROWTH RUN (2026-09-03). Every forest in this file used to be grown
-// from scratch — FLORA_STABILITY_SECONDS of simulated time before the first
-// tree, at ~2 ms a tick, paid twenty times over. It is paid ONCE here, on the
-// default world (locked chunk row 0, PLAYER joined and granted the rest), and
-// the run's checkpoints are what the growth and delta contracts assert on.
-// Its forest is captured as the plugin's own persistence slice, and every
-// later test that needs standing trees restores it through the real boot path
-// (bootGrown) instead of waiting the window out again.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Simulated time before the window, at which nothing may have grown yet. */
 const RUN_BEFORE_WINDOW_SECONDS = FLORA_STABILITY_SECONDS - FLORA_SURVEY_INTERVAL_SECONDS * 2;
-/**
- * One sweep past the window, so exactly ONE fully-eligible survey has
- * completed. (The sweep that finishes AT the window scanned most of its
- * chunks before it elapsed, so it finds almost nothing — the survey is
- * rolling, not instantaneous. See Forest.advanceSurvey.)
- */
 const RUN_FIRST_SURVEY_SECONDS = FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS + 1;
-/** Survey intervals the run keeps growing for after that first survey. */
 const RUN_GROWTH_INTERVALS = 12;
 
 interface GrowthRun {
-  /** Standing trees and change messages at RUN_BEFORE_WINDOW_SECONDS. */
   readonly treesBeforeWindow: number;
   readonly changesBeforeWindow: number;
-  /** Standing trees and change messages at RUN_FIRST_SURVEY_SECONDS. */
   readonly treesAfterFirstSurvey: number;
   readonly changesAfterFirstSurvey: number;
-  /** The end of the run: RUN_GROWTH_INTERVALS surveys later. */
   readonly trees: readonly TreeCell[];
   readonly changes: readonly RecordedMessage[];
   readonly world: FloraWorld;
   readonly isCellUnlocked: (x: number, y: number) => boolean;
-  /** The forest, as the plugin persists it. */
   readonly slice: unknown;
 }
 
@@ -433,10 +347,6 @@ beforeAll(() => {
   };
 });
 
-/**
- * A fresh, fully-unlocked boot carrying the run's forest, restored through the
- * real persistence path. No player has joined; nothing has ticked.
- */
 function bootGrown(): Harness {
   return bootOn(worldWithTerrain(WORLD_SIZE, stripedHeight, () => false), run.slice);
 }
@@ -459,21 +369,8 @@ describe('growth', () => {
   });
 
   it('completes one survey per interval whatever the world size', () => {
-    // THE AMORTISATION CONTRACT. The sweep is spread over ticks (see
-    // Forest.advanceSurvey), and the thing that must not change is its PERIOD:
-    // every growth rate in this plugin is expressed per survey interval, so a
-    // small world sweeping faster than a large one would silently grow its
-    // forest several times too fast. (It did: the first cut of the budget
-    // rounded up to whole chunks and this 64² world swept every 1.6 s.)
-    //
-    // Surveys are counted via the wire, which needs the run's connected,
-    // fully visible player (issue #18 fog of war: broadcastVisible correctly
-    // sends nothing to nobody).
     const sweeps = run.changes.length - run.changesAfterFirstSurvey;
 
-    // A sweep that grows nothing sends nothing, so this is a bound, not an
-    // equality — but the failure it guards (three sweeps where there should be
-    // one) is nowhere near it.
     expect(sweeps).toBeLessThanOrEqual(RUN_GROWTH_INTERVALS);
     expect(sweeps).toBeGreaterThanOrEqual(RUN_GROWTH_INTERVALS - 2);
   });
@@ -482,8 +379,6 @@ describe('growth', () => {
     for (const tree of run.trees) {
       expect(isPlantableCell(run.world, tree.x, tree.y)).toBe(true);
       expect(run.isCellUnlocked(tree.x, tree.y)).toBe(true);
-      // Nothing in the locked chunk row, which is the anti-leak rule: an
-      // unfiltered broadcast can only ever mention revealed territory.
       expect(tree.y).toBeGreaterThanOrEqual(CHUNK_SIZE);
     }
   });
@@ -491,9 +386,6 @@ describe('growth', () => {
 
 describe('felling', () => {
   it('fells every tree the diff touched, and broadcasts the removals as a delta', () => {
-    // A max-radius brush changes a disc of cells plus its relaxation spill;
-    // every tree inside it must go, or trees are left standing on ground that
-    // moved under them — not just the one under the brush.
     const harness = bootGrown();
     join(harness);
     const victim = standingTrees()[0];
@@ -510,23 +402,17 @@ describe('felling', () => {
     expect(currentForest().has(victim.x, victim.y)).toBe(false);
     expect(standingTrees().length).toBeLessThan(before);
     for (const tree of standingTrees()) {
-      // Everything still standing is still on ground that can hold it.
       expect(isPlantableCell(floraView(harness.world), tree.x, tree.y)).toBe(true);
     }
 
     const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
     expect(changes.length).toBeGreaterThan(0);
     expect(felledOf(changes[0])).toContainEqual({ x: victim.x, y: victim.y });
-    // A fell message carries removals only — it is a delta, not a redraw.
     expect(grownOf(changes[0])).toHaveLength(0);
   });
 });
 
 describe('structure occupancy — buildings always win', () => {
-  // Structures is never installed in this harness (only floraPlugin is), so
-  // every event below is fed straight through PluginHost.notifyWorldEvent —
-  // exactly the seam chronicle's own suite uses for the same reason (a
-  // plugin builds and tests with every other plugin deleted).
 
   afterEach(() => {
     resetStructuresBridge();
@@ -554,9 +440,6 @@ describe('structure occupancy — buildings always win', () => {
     expect(felledOf(changes[0])).toContainEqual({ x: upgradedVictim.x, y: upgradedVictim.y });
     harness.sink.clear();
 
-    // The seeded cell reported dead. Nothing here should plant a tree back —
-    // recolonization is left to ordinary growth, and there is no code path in
-    // onWorldEvent that even reads `died`.
     harness.host.notifyWorldEvent('structures:changes', {
       cause: 'generation',
       died: [{ x: seededVictim.x, y: seededVictim.y }],
@@ -570,11 +453,6 @@ describe('structure occupancy — buildings always win', () => {
     const harness = bootGrown();
     const victim = standingTrees()[0];
 
-    // Simulates a building that already stood over this tree before flora ever
-    // checked. bootOn resolved the bridge against a host with no structures in
-    // it; this re-resolves it against one that has a structures reporting a
-    // building on the tree's cell, which is what a reopen with structures newly
-    // enabled looks like.
     resetStructuresBridge();
     loadStructuresBridge(
       worldWithSibling('structures', {
@@ -582,17 +460,11 @@ describe('structure occupancy — buildings always win', () => {
       }),
     );
 
-    // The cull phase only runs on the tick that completes a sweep — the same
-    // shape as "fells restored trees that no longer stand on green ground"
-    // in the persistence suite.
     advance(harness, FLORA_SURVEY_INTERVAL_SECONDS + DT);
     expect(currentForest().has(victim.x, victim.y)).toBe(false);
   });
 
   it('is deterministic: the same growth, event and occupancy history produces the same forest twice', () => {
-    // The fewest surveys that still leave two trees to name in the event, and
-    // one more sweep afterwards; determinism is a property of every tick, so a
-    // long run proves nothing a short one does not.
     const GROWTH_SURVEYS = 3;
     const SURVEYS_AFTER_EVENT = 1;
 
@@ -613,11 +485,6 @@ describe('structure occupancy — buildings always win', () => {
       return [...standingTrees()];
     }
 
-    // The bridge never resolves inside either synchronous run (see the
-    // reconciliation test's comment above), so both runs see an identical,
-    // permanently-empty occupied set — this asserts the ordinary growth and
-    // event-felling paths are themselves deterministic, the same property
-    // every other terrain-adjacent system in this codebase is held to.
     const first = run();
     const second = run();
     expect(second).toEqual(first);
@@ -626,41 +493,28 @@ describe('structure occupancy — buildings always win', () => {
 
 describe('broadcast model', () => {
   it('sends growth as a delta, and says nothing when nothing changed', () => {
-    // Before the stability window nothing can grow, so nothing may be sent.
     expect(run.changesBeforeWindow).toBe(0);
 
     const firstGrown = grownOf(run.changes[0]);
     expect(firstGrown.length).toBeGreaterThan(0);
     expect(firstGrown.length).toBeLessThanOrEqual(FLORA_MAX_SPROUTS_PER_SURVEY);
 
-    // THE DELTA CONTRACT: across every message, each tree was announced exactly
-    // once. A full-state stream would announce the whole forest every time and
-    // this sum would be several times the standing count.
     let announced = 0;
     for (const message of run.changes) announced += grownOf(message).length;
     expect(announced).toBe(run.trees.length);
     expect(run.changes.length).toBeGreaterThan(1);
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // FOG OF WAR (issue #18). First: two players get different subsets of the
-  // SAME forest through the real broadcastVisible path — on join, and again on
-  // the keepalive that repairs a drifted client. Second: the targeted refresh —
-  // a chunk with trees already in it must reach a player who just earned it,
-  // not wait out FLORA_KEEPALIVE_SECONDS.
-  // ──────────────────────────────────────────────────────────────────────────
   it('sends each connected player only the trees inside their own unlocked view — the whole forest on join and on keepalive, nothing when empty', () => {
     const harness = bootGrown();
     join(harness);
 
-    // The whole forest goes to the joining player, and only to them.
     const joinSnapshots = harness.sink.ofType(FOREST_WIRE_TYPE);
     expect(joinSnapshots).toHaveLength(1);
     expect(joinSnapshots[0].target).toBe(PLAYER.id);
     const joinCells = parseTreeCells((joinSnapshots[0].payload as { trees: number[] }).trees) ?? [];
     expect(joinCells).toHaveLength(standingTrees().length);
 
-    // A second connection whose token has never unlocked anything of its own.
     const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
     harness.world.addPlayer(outsider);
     harness.host.playerJoined(outsider);
@@ -675,23 +529,11 @@ describe('broadcast model', () => {
       .ofType(FOREST_WIRE_TYPE)
       .filter((m) => m.target === outsider.id);
 
-    // The keepalive repairs a drifted client. Some real content to repair: an
-    // empty forest's keepalive is legitimately silent under fog of war
-    // (issue #18) — a recipient whose own visible subset is empty is sent
-    // nothing at all (FLORA_SKIP_EMPTY), same as a delta would be, so this
-    // needs standing trees to prove the keepalive actually carries them.
-    // PLAYER's token was granted the whole unlocked world (join()), so their
-    // keepalive carries the whole forest, in exactly one message addressed to
-    // them — the fan-out is per connected player, never a shared broadcast.
     expect(forPlayer).toHaveLength(1);
     expect(forPlayer[0].target).toBe(PLAYER.id);
     const playerCells = parseTreeCells((forPlayer[0].payload as { trees: number[] }).trees) ?? [];
     expect(playerCells).toHaveLength(standingTrees().length);
 
-    // The outsider's token has unlocked nothing: skipEmpty means their
-    // keepalive is silent rather than an empty message, which is the
-    // documented, safe disappearance-semantics choice for content that never
-    // moves once placed (FLORA_SKIP_EMPTY).
     expect(forOutsider).toHaveLength(0);
   });
 
@@ -703,13 +545,9 @@ describe('broadcast model', () => {
 
     const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
     harness.world.addPlayer(outsider);
-    harness.host.playerJoined(outsider); // nothing to send yet — empty mask
+    harness.host.playerJoined(outsider);
     harness.sink.clear();
 
-    // No reveal plugin is installed in this harness, so drive the same two
-    // steps WorldApi.unlockChunkForToken performs for any real caller: the
-    // World mutation (+ its own core chunkUnlock send), then the plugin
-    // fan-out it triggers (world-api.ts's unlockChunkForToken wrapper).
     expect(harness.world.unlockChunkForToken(outsider.token, cx, cy)).toBe(true);
     harness.host.notifyChunkUnlockedForToken(outsider.token, cx, cy);
 
@@ -730,11 +568,9 @@ describe('persistence', () => {
 
     const slice = first.host.collectPersistence()[FLORA_PLUGIN_NAME];
 
-    // A completely fresh boot of the same world, restoring that slice.
     const second = bootOn(worldWithTerrain(WORLD_SIZE, stripedHeight), slice);
     expect(standingTrees()).toEqual(before);
 
-    // And the restored trees are broadcast to whoever joins next.
     join(second);
     const snapshots = second.sink.ofType(FOREST_WIRE_TYPE).filter((m) => m.target === PLAYER.id);
     const cells = parseTreeCells((snapshots[0].payload as { trees: number[] }).trees) ?? [];
@@ -757,7 +593,6 @@ describe('persistence', () => {
       expect(Number.isInteger(restored.rngState)).toBe(true);
     }
 
-    // Individually bad entries are dropped; the good ones survive.
     const mixed = loadForestSlice({
       version: FLORA_SLICE_VERSION,
       rngState: rng.state(),
@@ -775,14 +610,12 @@ describe('persistence', () => {
   });
 
   it('fells restored trees that no longer stand on green ground', () => {
-    // The run's forest, saved on the striped world, restored onto bare rock.
     const rock = bootOn(
       worldWithTerrain(WORLD_SIZE, () => (FLORA_MAX_BAND + 2) * BAND_HEIGHT),
       run.slice,
     );
     expect(standingTrees().length).toBeGreaterThan(0);
 
-    // The first survey's cull sweep is what removes them.
     advance(rock, FLORA_SURVEY_INTERVAL_SECONDS + DT);
     expect(standingTrees()).toHaveLength(0);
   });
@@ -806,17 +639,10 @@ describe('persistence', () => {
   });
 });
 
-// Card 28, "Terrace Farming". The farmland PREDICATE itself is tested at its
-// contract layer in shared/test/farmland.test.ts — it lives in @terrace/shared
-// (one implementation, two consumers), so the cross-plugin fixture that used to
-// sit here pinning two independent copies to agree no longer has two copies to
-// pin. What remains below is flora's OWN half: the crop survey built on it.
-
 describe('crops (card 28) — the CropField survey', () => {
   const CROP_LAND_BAND = 3;
   const CROP_DEEP = SEA_LEVEL - BAND_HEIGHT;
 
-  /** A single coastline: column 0 is deep water, every other column is flat dry land. Column 1 alone touches it. */
   function coastalHeight(x: number, _y: number): number {
     return x === 0 ? CROP_DEEP : CROP_LAND_BAND * BAND_HEIGHT;
   }
@@ -825,7 +651,6 @@ describe('crops (card 28) — the CropField survey', () => {
     return worldWithTerrain(WORLD_SIZE, coastalHeight);
   }
 
-  /** Ground truth: every cell with room for a whole plot, via the SAME predicate the survey itself calls. */
   function expectedPlots(world: FarmlandWorld, size: number): Set<string> {
     const expected = new Set<string>();
     for (let y = 0; y < size; y++) {
@@ -842,14 +667,10 @@ describe('crops (card 28) — the CropField survey', () => {
     const world = coastalWorld();
     const view = floraView(world);
     const expected = expectedPlots(view, WORLD_SIZE);
-    // Column 1 is farmland by the point test but is the terrace LIP: a plot
-    // there hangs over the drop (see shared/src/farmland.ts's isFarmlandPlot).
-    // Crops therefore stand on column 2, losing the two rows whose own tread
-    // would run off the top and bottom of the world.
     expect(isFarmlandCell(view, 1, 10)).toBe(true);
     expect(expected.has('1,10')).toBe(false);
     expect(expected.has('2,10')).toBe(true);
-    expect(expected.size).toBe(WORLD_SIZE - 2); // every row except y=0 and y=WORLD_SIZE-1
+    expect(expected.size).toBe(WORLD_SIZE - 2);
 
     const field = new CropField();
     const result = field.survey(view, NEVER_OCCUPIED);
@@ -858,22 +679,15 @@ describe('crops (card 28) — the CropField survey', () => {
     expect(result.sprouted).toHaveLength(expected.size);
     expect(result.withered).toHaveLength(0);
 
-    // An amortised sweep spread over many partial-budget calls finds the
-    // identical set a single full survey() does.
     const amortised = new CropField();
     const totalChunks = view.chunksPerEdge * view.chunksPerEdge;
     let outcome = null;
-    // One chunk at a time — the most fragmented budget this API allows.
     for (let i = 0; i < totalChunks && outcome === null; i++) {
       outcome = amortised.advance(view, NEVER_OCCUPIED, 1);
     }
     expect(outcome).not.toBeNull();
     expect(new Set(amortised.cells().map((c) => `${c.x},${c.y}`))).toEqual(expected);
 
-    // Deterministic: a second, independent survey of the same terrain produces
-    // a byte-identical crop set. The whole justification for persisting
-    // nothing (crops.ts's header): a restart re-derives the SAME set from the
-    // SAME heightmap.
     const second = new CropField();
     second.survey(view, NEVER_OCCUPIED);
     expect(second.cells()).toEqual(field.cells());
@@ -885,29 +699,19 @@ describe('crops (card 28) — the CropField survey', () => {
     const field = new CropField();
     field.survey(view, occupied);
     expect(field.has(2, 5)).toBe(false);
-    expect(field.has(2, 6)).toBe(true); // an ordinary, unoccupied plot cell next door still shows one
+    expect(field.has(2, 6)).toBe(true);
 
-    // An edit withers the crop on its own cell at once, and reports null for a
-    // cell with none.
     expect(field.reactToEdit(2, 6)).toEqual({ x: 2, y: 6 });
     expect(field.has(2, 6)).toBe(false);
-    expect(field.reactToEdit(2, 6)).toBeNull(); // already gone
+    expect(field.reactToEdit(2, 6)).toBeNull();
   });
 
   it('never exceeds FLORA_CROP_CAP, even when far more farmland exists', () => {
-    // Water STRIPES four rows apart, so every band of land is three rows
-    // deep: the middle row of each band has a full cell of tread around it
-    // (isFarmlandPlot's ring) while still having water two rows away, which
-    // is the shore ring. A one-row-thick comb would qualify nowhere at all
-    // now that a plot needs ground on both sides of itself — the old fixture
-    // tested the point predicate's reach, not the plot predicate's.
-    // On a 256x256 world that is 64 qualifying rows x 254 columns ≈ 16k
-    // candidate cells, comfortably over FLORA_CROP_CAP (2048).
     const combSize = 256;
     const COMB_PERIOD_ROWS = 4;
     function combHeight(x: number, y: number): number {
-      if (y % COMB_PERIOD_ROWS === 0) return CROP_DEEP; // every fourth row: water
-      return CROP_LAND_BAND * BAND_HEIGHT; // the three rows between: flat land
+      if (y % COMB_PERIOD_ROWS === 0) return CROP_DEEP;
+      return CROP_LAND_BAND * BAND_HEIGHT;
     }
     const view = floraView(worldWithTerrain(combSize, combHeight));
     const field = new CropField();
@@ -940,23 +744,16 @@ describe('crops through the real host (card 28)', () => {
       parseCropCells((changes[0].payload as { sprouted: number[] }).sprouted) ?? [];
     expect(sprouted.length).toBeGreaterThan(0);
 
-    // Column 2 is where a plot stands: column 1 is the terrace lip, which has
-    // no room for the model (shared/src/farmland.ts's isFarmlandPlot).
     const victim = standingCrops().find((c) => c.x === 2) as CropCell;
     expect(victim).toBeDefined();
 
-    // Raise the water column (x=0) up to the land band — the victim's shore
-    // ring no longer reaches water, so it should stop qualifying, but NOT this
-    // tick: the edit is two cells away and reactToEdit only sees its own cell.
     handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
       { type: 'sculpt', x: 0, y: victim.y, radius: 1, dir: 1, tool: 'stamp' },
     );
-    // Still standing immediately after the neighbour-only edit.
     expect(currentCropField().has(victim.x, victim.y)).toBe(true);
 
-    // Its OWN cell sculpted, though, withers it the same tick.
     handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
@@ -1001,40 +798,17 @@ describe('crops through the real host (card 28)', () => {
     expect(before.size).toBeGreaterThan(0);
 
     const slice = first.host.collectPersistence()[FLORA_PLUGIN_NAME];
-    // The slice this plugin actually persists carries no crop data at all —
-    // the explicit contract crops.ts's header states.
     expect(slice).not.toHaveProperty('crops');
 
-    // A fresh boot of the SAME terrain, restoring that (crop-free) slice —
-    // crops must repopulate from the survey alone, not from persistence.
     const second = bootOn(worldWithTerrain(WORLD_SIZE, coastalHeight, () => false), slice);
-    expect(standingCrops()).toHaveLength(0); // nothing yet — no survey has run
+    expect(standingCrops()).toHaveLength(0);
     advance(second, CROP_SURVEY_INTERVAL_SECONDS + DT);
     const after = new Set(standingCrops().map((c) => `${c.x},${c.y}`));
     expect(after).toEqual(before);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE PLOT FOOTPRINT CONTRACT (protocol.ts, owner 2026-08-23)
-//
-// These test the RULE, not the number: "a plot never reaches past the cell it
-// stands on", which is why plots sitting one per cell can never overlap. That
-// a plot also never stands on ground SMALLER than itself is a separate rule
-// with a separate owner — isFarmlandPlot's tread ring in shared/farmland.ts —
-// because a farmland cell turned out not to guarantee a cell of ground.
-// Written against the derivation so that changing the model's size cannot
-// quietly break either property: the assertions are geometric, and none of
-// them names a literal bed width.
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe('crop plot footprint (card 28)', () => {
-  /**
-   * How far the plot's furthest point sits from its own centre, in cells, at a
-   * given scale roll. The cluster occupies a SQUARE the yaw roll may turn to
-   * any angle, so its reach is that square's circumradius — half its diagonal
-   * — never half its edge.
-   */
   function reachAtScale(scale: number): number {
     return (CROP_PLOT_CLUSTER_CELL_SPAN * scale * Math.SQRT2) / 2;
   }
@@ -1042,8 +816,6 @@ describe('crop plot footprint (card 28)', () => {
   it('never reaches past half a cell — at the LARGEST scale roll, the worst yaw, and every roll the hash can produce — so two adjacent plots cannot overlap', () => {
     expect(reachAtScale(CROP_SCALE_MAX)).toBeLessThanOrEqual(CROP_PLOT_MAX_REACH_CELLS);
 
-    // Not just the endpoints: cropVariation's scale comes from a byte, so walk
-    // the whole reachable set rather than trusting the interpolation.
     for (let x = 0; x < 64; x++) {
       for (let y = 0; y < 64; y++) {
         expect(reachAtScale(cropVariation(x, y).scale)).toBeLessThanOrEqual(
@@ -1052,61 +824,34 @@ describe('crop plot footprint (card 28)', () => {
       }
     }
 
-    // The owner rule, as geometry: adjacent cells are one cell apart centre to
-    // centre; two plots overlap exactly when their reaches sum to more than
-    // that distance. Diagonal neighbours are further apart (√2 cells) and so
-    // are covered a fortiori.
     const worstCase = reachAtScale(CROP_SCALE_MAX) * 2;
     expect(worstCase).toBeLessThanOrEqual(1);
   });
 
   it('fills its cell rather than shrinking away from it — a field reads as a field, not as dots', () => {
-    // The other half of the rule: "only next to each other" is a floor as well
-    // as a ceiling, or a run of farmland cells draws as scattered dots. The
-    // floor with no arbitrary number in it: even the SMALLEST scale roll must
-    // cover more than half its cell edge, so the bare gap between two
-    // neighbouring plots is always narrower than the plots themselves.
     const smallestSpanInCells = CROP_PLOT_CLUSTER_CELL_SPAN * CROP_SCALE_MIN;
     expect(smallestSpanInCells).toBeGreaterThan(1 - smallestSpanInCells);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PER-STALK VARIATION (owner, 2026-08-24: "so it looks more organic")
-//
-// The properties a field's look actually rests on, not the numbers: every
-// stalk of a plot differs from its siblings, no stalk leaves the plot, and the
-// whole thing is reproducible so two players see the same field.
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe('per-stalk variation (card 28)', () => {
   const STALK_INDICES = Array.from({ length: CROP_STALKS_PER_PLOT }, (_, i) => i);
 
   it('gives the four stalks of one plot, and neighbouring plots, different rolls — deterministically', () => {
-    // The whole point: four identical stalks on lattice points read as copies.
     const rolls = STALK_INDICES.map((i) => cropStalkVariation(7, 11, i));
     expect(new Set(rolls.map((r) => r.yaw)).size).toBe(CROP_STALKS_PER_PLOT);
     expect(new Set(rolls.map((r) => r.height)).size).toBe(CROP_STALKS_PER_PLOT);
 
-    // A field is many plots; if the roll ignored the cell, every plot would be
-    // the same clump repeated and the grid would come straight back.
     const here = rolls[0];
     expect(cropStalkVariation(8, 11, 0).yaw).not.toBe(here.yaw);
     expect(cropStalkVariation(7, 12, 0).yaw).not.toBe(here.yaw);
 
-    // Deterministic — the same cell and index roll identically every call. Two
-    // players looking at the same field must see the same field; this is also
-    // what lets the preview harness pin a cell and get a stable capture.
     for (const i of STALK_INDICES) {
       for (let n = 0; n < 50; n++) expect(cropStalkVariation(7, 11, i)).toEqual(rolls[i]);
     }
   });
 
   it('keeps every roll inside its declared bounds over a whole board of cells, and those bounds keep every stalk inside its plot', () => {
-    // The bounds are not decorative: wheatVariants.ts asserts each variant's
-    // reach against the plot using exactly CROP_STALK_JITTER_IN_CLUSTER_SPANS
-    // as the worst-case wander, so a roll outside it would put wheat off its
-    // own plot without tripping that guard.
     for (let x = 0; x < 48; x++) {
       for (let y = 0; y < 48; y++) {
         for (const i of STALK_INDICES) {
@@ -1120,9 +865,6 @@ describe('per-stalk variation (card 28)', () => {
       }
     }
 
-    // Every stalk, at its worst wander, is planted inside the plot it belongs
-    // to. The planted corner alone, before any plant is put on it: offset plus
-    // wander, on the diagonal, must still leave room inside half the span.
     const plantedCorner =
       (CROP_STALK_OFFSET_IN_CLUSTER_SPANS + CROP_STALK_JITTER_IN_CLUSTER_SPANS) *
       CROP_PLOT_CLUSTER_CELL_SPAN *

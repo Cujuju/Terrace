@@ -1,7 +1,3 @@
-// Shared test scaffolding: an in-memory World with an exact unlock mask, a
-// recording MessageSink, and a one-line plugin wrapper. Nothing here touches
-// the network or the filesystem.
-
 import { createChunkMask, createHeightmap, chunkIndex, unlockChunk } from '@terrace/shared';
 import type { MessageSink } from '../../src/net/message-sink.ts';
 import type {
@@ -13,7 +9,6 @@ import type {
 import { World } from '../../src/world/world.ts';
 
 export interface RecordedMessage {
-  /** 'broadcast', or the player id for a targeted send. */
   readonly target: string;
   readonly type: string;
   readonly payload: unknown;
@@ -39,29 +34,8 @@ export class RecordingSink implements MessageSink {
   }
 }
 
-/** Stands in for the name a real snapshot carries; fixed so tests read stably. */
 export const TEST_WORLD_NAME = 'Testfall';
 
-/**
- * A flat world with exactly the listed chunks unlocked — bypassing the fresh
- * world's starter region so tests can put a locked chunk exactly where they
- * need one.
- *
- * `difficulty` is the world's WORLD_DIFFICULTY rating; omitted, it is core's
- * default, exactly as an unconfigured deployment would get. Suites whose
- * arithmetic depends on a plugin's difficulty-derived numbers pass one
- * explicitly rather than inheriting whatever the default happens to be.
- *
- * The world is NAMED, because a real snapshot always carries a name and a
- * restore without one is the legacy-upgrade path: that path deliberately mints
- * a name and marks the world dirty (World.restore), which is not the starting
- * state a pipeline or mask test wants to reason about.
- *
- * `fillHeight` starts every cell at that height instead of at SEA_LEVEL, for
- * the suites whose subject is what happens at a height LIMIT (a stroke that
- * clamps everywhere and therefore changes nothing). It lives here rather than
- * in those suites so the mask construction above stays stated once.
- */
 export function worldWithUnlockedChunks(
   size: number,
   chunks: ReadonlyArray<readonly [number, number]>,
@@ -77,33 +51,16 @@ export function worldWithUnlockedChunks(
   return World.restore(size, cells, mask, difficulty, TEST_WORLD_NAME);
 }
 
-/**
- * Wraps a plugin object as if discovery had loaded it from plugins/<name>.
- *
- * DELIBERATELY UNARY, so it stays usable as `[...].map(asLoadedPlugin)` — a
- * second optional parameter would silently receive map's index. A test that
- * needs the plugin to export something siblings can find uses
- * `asLoadedPluginExporting` instead.
- */
 export function asLoadedPlugin(plugin: TerracePlugin): LoadedPlugin {
   return {
     plugin,
-    // Nothing to offer a sibling: a plugin defined inline in a test has no
-    // module namespace, and the suites that need one say so explicitly.
     exports: {},
     directory: plugin.name,
     entryPath: `<test>/${plugin.name}/server/index.ts`,
-    // A fixed stamp: a test's plugin has no directory on disk to derive one
-    // from, and a stable value keeps a listing assertion from depending on git.
     version: '0.0.0+test',
   };
 }
 
-/**
- * The same wrapper, with the module namespace `WorldApi.sibling` hands to
- * consumers of this plugin (issue #196) — how a suite stands in for a sibling
- * plugin's server module without importing the real folder.
- */
 export function asLoadedPluginExporting(
   plugin: TerracePlugin,
   exports: SiblingModule,
@@ -111,19 +68,6 @@ export function asLoadedPluginExporting(
   return { ...asLoadedPlugin(plugin), exports };
 }
 
-/**
- * A WorldApi that answers exactly one thing: `sibling(name)` (issue #196).
- *
- * How a plugin suite stands in for a sibling plugin without installing one —
- * the ported bridges take a WorldApi only to ask that one question, so this is
- * the whole of what they need. EVERY OTHER MEMBER THROWS, deliberately: a
- * bridge that reached past the lookup into the world would be doing something
- * this stub cannot honestly stand in for, and should fail loudly rather than
- * silently see an empty world.
- *
- * `exports` is what the lookup answers with — pass null for "that plugin is
- * not running here", which is both the absent and the disabled case.
- */
 export function worldWithSibling(name: string, exports: SiblingModule | null): WorldApi {
   return new Proxy({} as WorldApi, {
     get(_target, property): unknown {
@@ -137,19 +81,6 @@ export function worldWithSibling(name: string, exports: SiblingModule | null): W
   });
 }
 
-/**
- * Grants ONE token every chunk currently in the world's union mask (issue #18
- * fixture support). Per-player masks (issue #17) mean a token sees nothing
- * until it has personally earned each chunk — but most of this repo's plugin
- * suites were written, and still reason, in terms of one player who can see
- * the whole world they built (`worldWithTerrain`'s or `worldWithUnlockedChunks`'s
- * union mask). Call this once for that player's token, right after
- * `world.addPlayer` and BEFORE `host.playerJoined` — the same order the real
- * join path seeds a token's starter square in (world/initial-unlock.ts's
- * applyInitialUnlockForToken), so a plugin's `onPlayerJoin` fog-of-war
- * filtering (issue #18) sees a mask that already matches the test world's
- * union, exactly as every such suite assumed before per-player masks existed.
- */
 export function grantTokenEveryUnlockedChunk(world: World, token: string): void {
   const edge = world.chunksPerEdge;
   for (let cy = 0; cy < edge; cy++) {

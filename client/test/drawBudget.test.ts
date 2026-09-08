@@ -1,17 +1,3 @@
-// The draw-call budget's contract (part B of
-// docs/plans/frame-budget-growth-and-draw-calls.md).
-//
-// THE DEFECT IT ANSWERS: every plugin gets a Group under the scene and adds
-// whatever it likes, and nothing counted — so the frame's draw calls were spent
-// by whichever population happened to be largest at the moment (measured on the
-// owner's world: 197 calls → 1.55 ms of idle `renderer.render`, 340 calls →
-// 3.10 ms, 44 % of a 140 fps frame's 7.1 ms budget at idle).
-//
-// These test the CONTRACT — the counting rule, the hysteresis, the total — and
-// not the callsites. The per-plugin numbers are pinned by the registry test at
-// the bottom, which is a statement about the runtime shape rather than the
-// compile-time one the type already enforces.
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BufferGeometry,
@@ -67,9 +53,6 @@ describe('countDrawObjects', () => {
   });
 
   it('counts nothing under an invisible node, however visible its children', () => {
-    // VISIBILITY IS INHERITED in three's projectObject, and hiding a subtree
-    // root is how several plugins park a whole rig (pilgrims' model.root,
-    // temples' standing/ghost, monsters' atmosphere).
     const root = new Group();
     const hidden = new Group();
     hidden.visible = false;
@@ -89,10 +72,6 @@ describe('countDrawObjects', () => {
   });
 
   it('counts an InstancedMesh as ONE however many instances, and none at count 0', () => {
-    // Three skips a draw with `primcount === 0`, and parking a pool at 0 is
-    // exactly how flora, fire, storms and mudslides idle — a pool counted as
-    // one object while empty would make every such plugin look permanently
-    // busy.
     const root = new Group();
     const parked = new InstancedMesh(new BufferGeometry(), material, 32);
     parked.count = 0;
@@ -116,11 +95,8 @@ describe('countDrawObjects', () => {
 
 describe('the draw-budget breach hysteresis', () => {
   const BUDGET = 100;
-  /** One object past the ceiling — the smallest real breach. */
   const OVER = BUDGET + 1;
-  /** Comfortably under the clear margin. */
   const LOW = Math.floor(BUDGET * (1 - DRAW_BUDGET_CLEAR_MARGIN)) - 1;
-  /** Exactly ON the clear margin, which counts toward clearing. */
   const AT_MARGIN = BUDGET * (1 - DRAW_BUDGET_CLEAR_MARGIN);
 
   it('does not breach under budget', () => {
@@ -128,10 +104,6 @@ describe('the draw-budget breach hysteresis', () => {
   });
 
   it('does not breach a plugin sitting at EXACTLY its budget', () => {
-    // THE BUDGET IS THE MOST THE LAYER MAY HOLD, so holding it is the healthy
-    // full state, not the failure. Every fixed-pool plugin's budget IS its
-    // fully-populated count (flora 14, weather 99, fire 5): an inclusive test
-    // would report all of them as breached the moment they worked.
     expect(stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, BUDGET, BUDGET).breached).toBe(false);
   });
 
@@ -140,11 +112,6 @@ describe('the draw-budget breach hysteresis', () => {
   });
 
   it('leaves a plugin that draws nothing against a budget of 0 healthy', () => {
-    // mana, invite, chronicle and daynight all declare 0 because they add no
-    // scene geometry at all. Under an inclusive test `0 >= 0` breached on the
-    // first window and the clear branch needed `objects < 0`, so all four sat
-    // permanently red in the HUD and logged on every session — burying the one
-    // real breach the display exists for.
     let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, 0, 0);
     expect(state.breached).toBe(false);
     state = stepDrawBudgetBreach(state, 0, 0);
@@ -152,9 +119,6 @@ describe('the draw-budget breach hysteresis', () => {
   });
 
   it('breaches a zero-budget plugin that draws anything, and lets it clear', () => {
-    // The intent those four plugins' own comments state: the first mesh added
-    // to such a layer is reported. And it must be able to go away again — at a
-    // budget of 0 the clear margin is 0, so the test there has to be inclusive.
     let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, 1, 0);
     expect(state.breached).toBe(true);
     for (let i = 0; i < DRAW_BUDGET_CLEAR_SAMPLES; i++) {
@@ -186,22 +150,17 @@ describe('the draw-budget breach hysteresis', () => {
   });
 
   it('a sample between the margin and the budget restarts the count', () => {
-    // ONE SAMPLE OF POPULATION NOISE MUST NOT CLEAR A BREACH. A plugin sitting
-    // just under its budget is still the plugin that breached.
     const nearBudget = BUDGET - 1;
     expect(nearBudget).toBeGreaterThan(BUDGET * (1 - DRAW_BUDGET_CLEAR_MARGIN));
     let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, OVER, BUDGET);
     state = stepDrawBudgetBreach(state, LOW, BUDGET);
     state = stepDrawBudgetBreach(state, nearBudget, BUDGET);
     expect(state.breached).toBe(true);
-    // And the count really restarted: one more low sample is not enough.
     state = stepDrawBudgetBreach(state, LOW, BUDGET);
     expect(state.breached).toBe(true);
   });
 
   it('treats a missing or non-finite budget as a breach that cannot clear', () => {
-    // A plugin loaded at runtime (design Q6) is not held to the compile-time
-    // type, so "no budget declared" has to be a runtime failure too.
     const missing = undefined as unknown as number;
     let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, 0, missing);
     expect(state.breached).toBe(true);
@@ -210,12 +169,6 @@ describe('the draw-budget breach hysteresis', () => {
     expect(state.breached).toBe(true);
   });
 });
-
-// -----------------------------------------------------------------------------
-// The frame total, against a real host. Stubs stand in for the two things a
-// node process cannot have — a WebGLRenderer and its canvas — and nothing else:
-// the scene, the layers and the plugins are the real ones.
-// -----------------------------------------------------------------------------
 
 function stubViewport(calls = 0) {
   const scene = new Scene();
@@ -266,8 +219,6 @@ describe("the frame's draw budget", () => {
   });
 
   it('follows syncLivePlugins, not the compiled-in registry', () => {
-    // MOUNTED ≠ REGISTERED. A world running only one of the two plugins must
-    // not license the other's draw calls.
     const h = host();
     h.syncLivePlugins(['alpha']);
     expect(h.frameDrawBudget()).toBe(CORE + 10);
@@ -278,8 +229,6 @@ describe("the frame's draw budget", () => {
   });
 
   it('leaves a non-finite budget out of the total rather than poisoning it', () => {
-    // It is a breach in its own row; adding NaN would destroy the one number
-    // the whole frame is judged by.
     const missing = undefined as unknown as number;
     const h = createClientPluginHost([testPlugin('ghost', missing)], {
       viewport: stubViewport().viewport,
@@ -291,19 +240,7 @@ describe("the frame's draw budget", () => {
   });
 });
 
-// THE REGISTRY-DRIVEN TEST IS NOT HERE, and that is a limit of the harness
-// rather than a decision. B6 asks for "every registered plugin's drawBudget is
-// finite", which means importing plugins/registry.ts — and that pulls in every
-// plugin's client half, several of which import Solid `.tsx` panels that this
-// package's vitest transform does not handle for files outside client/
-// (verified: `plugins/chronicle/client/ChroniclePanel.tsx` fails
-// vite:import-analysis). What covers the same ground meanwhile: the TYPE makes
-// the field mandatory on `CLIENT_PLUGINS`, so a plugin cannot be registered
-// without one, and "a missing or non-finite budget is itself a breach" above
-// covers the runtime-loaded case the type cannot reach.
-
 describe("the host's sampler", () => {
-  /** A plugin that fills its layer with `objects` meshes at attach. */
   function filler(name: string, drawBudget: number, objects: number): TerraceClientPlugin {
     return {
       name,
@@ -324,7 +261,6 @@ describe("the host's sampler", () => {
       coreDrawBudget: () => 0,
       now: () => clockMs,
     });
-    /** One sampling window's worth of frames. */
     const window = (): void => {
       clockMs += FPS_SAMPLE_INTERVAL_MS;
       view.frame();
@@ -332,8 +268,6 @@ describe("the host's sampler", () => {
     return { host, window, view, frame: view.frame };
   }
 
-  // The rows are a module-scope signal, exactly like the panels beside them, so
-  // one test's published rows would otherwise be the next one's starting state.
   beforeEach(() => {
     setPluginDrawRows([]);
   });
@@ -369,8 +303,6 @@ describe("the host's sampler", () => {
     expect(message).toContain('3');
     expect(message).toContain('2');
 
-    // Still over budget on the next window, and still one line: a message per
-    // sample would bury the console it is trying to be read in.
     window();
     expect(error).toHaveBeenCalledTimes(1);
     error.mockRestore();

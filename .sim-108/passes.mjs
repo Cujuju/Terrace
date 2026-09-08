@@ -1,15 +1,3 @@
-// Issue #108, pass 2 — re-deriving SMOOTH_PASSES_PER_SPREAD_CELL.
-//
-// Run:  node --experimental-strip-types .sim-108/passes.mjs >> .sim-108/passes.txt
-//
-// The constant's doc comment claims "~2.2 passes per cell of spread, measured
-// on the worst player-constructible single strokes". Those strokes are the #12
-// fixtures, transcribed below from shared/test/heightmap.test.ts's
-// `smooth — cascades from stamped terrain (#12)` block, and this measures them
-// against BOTH relaxation rules: passes actually taken, over the SPREAD the
-// stroke's own relief pays for (relief / MAX_STEP, the same quantity
-// SMOOTH_SPREAD_CELLS is a world-wide bound on).
-
 import * as OLD from './old-src/index.ts';
 import * as NEW from '../shared/src/index.ts';
 
@@ -30,7 +18,6 @@ function stampPlateau(mod, map, x, y, bands) {
   }
 }
 
-/** Height range in the map — the relief the cascade has to walk down. */
 function relief(cells) {
   let lo = Infinity;
   let hi = -Infinity;
@@ -41,7 +28,6 @@ function relief(cells) {
   return hi - lo;
 }
 
-/** The two worst player-constructible single strokes, plus the free-spill path. */
 const CASES = [
   {
     name: '15-band plateau, one smooth stroke',
@@ -66,12 +52,6 @@ const CASES = [
   },
 ];
 
-/**
- * The SYNTHETIC comparison: a bare cliff, no brush, relaxed from every raised
- * cell. Not player-constructible — a 401-unit sheer wall is 25 stamped bands
- * with no tread — but it is what a legacy over-steep world looks like to the
- * sweep, and it is where the passes-per-cell figure actually moved.
- */
 const CLIFFS = [100, 401, 1000];
 
 function cliffRun(mod, height) {
@@ -105,12 +85,7 @@ for (const testCase of CASES) {
     testCase.build(mod, map);
     const before = relief(map.cells);
     const changed = new Set();
-    // The stroke itself: the brush, then the sweep it seeds — applySculpt's own
-    // composition, opened up so the pass count is observable.
     mod.applyLevelFillBrush(map, C, C, 4, NEW.DEFAULT_SCULPT_AMOUNT, changed, 'free', null, null);
-    // A FULLY CLAMPED brush changes nothing, and applySculpt then seeds the
-    // sweep from the FOOTPRINT instead (heightmap.ts, the #12 note) — without
-    // that the clamped cases below measure a no-op rather than the cascade.
     let seed = changed;
     if (changed.size === 0) {
       seed = new Set();
@@ -136,13 +111,6 @@ for (const height of CLIFFS) {
     );
   }
 }
-
-// ─────────────────────────────────────────────── TRUNCATION THRESHOLD ──────
-//
-// The smallest bare cliff that no longer converges inside SMOOTH_PASS_LIMIT,
-// found by bisection. This is the figure SMOOTH_PASS_LIMIT's doc comment and
-// DESIGN.md's #108 entry both quote, so it is produced HERE rather than by
-// hand.
 
 function cliffPassesAndGradient(height) {
   const map = NEW.createHeightmap(SIZE);

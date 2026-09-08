@@ -1,23 +1,3 @@
-// FALLING COLUMNS: the vertical layout of the sky, and one pooled column of
-// particles falling through it.
-//
-// WHAT IS HERE AND WHY IT IS SHARED. Three plugins draw a column of particles
-// falling out of a drifting mass; they differ only in a PROFILE — how many
-// particles, how fast they fall, what shape they are, whether they sway. The
-// column itself is one mechanism: a struct-of-arrays of per-particle constants
-// drawn once, a buffer rewritten in place every frame, and one draw call.
-//
-// The pure maths (`fallFraction`, `driftSeconds`) and every constant live beside
-// it rather than inside the mesh code, so a node test can check how the fall
-// BEHAVES without a GL context — this project ships no headless GL rig
-// (docs/DESIGN.md).
-//
-// NO PER-FRAME ALLOCATIONS. Every geometry, material and buffer is built once
-// when a column is created and mutated in place each frame; the frame path
-// writes numbers into arrays that already exist.
-//
-// UNITS: world units and seconds, except where a name says cells.
-
 import {
   BufferGeometry,
   DynamicDrawUsage,
@@ -33,141 +13,43 @@ import { BAND_HEIGHT, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, WORLD_UNITS_PER_BAND }
 
 const TWO_PI = Math.PI * 2;
 
-// ── The vertical layout of the sky ───────────────────────────────────────────
-
-/** Height units per world unit — the client's WORLD_UNIT_HEIGHT_UNITS. */
 const WORLD_UNIT_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_UNITS;
 
-/**
- * World-space Y of the highest ground this game can contain.
- *
- * MAX_HEIGHT (@terrace/shared) is the sculpt ceiling in HEIGHT UNITS and
- * BAND_HEIGHT is height units per band, so the quotient is the ceiling in BANDS
- * — which is world units only while a band draws one world unit. It does not
- * (WORLD_UNITS_PER_BAND, moved into shared on 2026-08-20), so the relief is
- * applied directly: it is the one number the client's vertical scale is built
- * from.
- */
 export const MAX_GROUND_WORLD_Y = (MAX_HEIGHT / BAND_HEIGHT) * WORLD_UNITS_PER_BAND;
 
-/**
- * Clearance between the highest possible mountain and the cloud base, in world
- * units.
- *
- * Half of MAX_GROUND_WORLD_Y, for the same reason the wildlife plugin's birds
- * keep the same gap: the requirement is that a mass reads as being OVER the
- * world, and that has to hold at the worst case (a player who has built a
- * maximum-height peak and then watches a front cross it) rather than at the
- * typical one. It puts the cloud base at exactly the altitude birds fly at,
- * which is the correct picture and not a collision: a flock crossing under the
- * rim of a falling column is what a sky looks like.
- */
 export const CLOUD_HEADROOM_WORLD_UNITS = MAX_GROUND_WORLD_Y / 2;
 
-/** World-space Y a particle is born at. 24 today. */
 export const CLOUD_BASE_WORLD_Y = MAX_GROUND_WORLD_Y + CLOUD_HEADROOM_WORLD_UNITS;
 
-/**
- * How far below sea level a column keeps falling before it is recycled, in
- * bands.
- *
- * A QUARTER OF A CELL below a fresh world's open-sea floor. Particles are
- * depth-TESTED, so the ground and the sea surface hide everything under them;
- * the column has to reach past the deepest ordinary floor so that it visibly
- * meets the ground everywhere instead of stopping in mid-air over a trench. It
- * does not reach MIN_HEIGHT: a player-dug abyss that deep would show the column
- * ending above its floor, which is a cheaper failure than making every column
- * that tall.
- *
- * STATED IN HEIGHT UNITS, band count derived, so the clearance keeps holding at
- * any terracing. Restated rather than imported because a client plugin cannot
- * pull in the server's world module.
- */
 const FRESH_SEABED_DEPTH_BELOW_SEA = 192;
-/** Clearance under that floor: a quarter cell, enough to read as "past it". */
 const PRECIPITATION_FLOOR_CLEARANCE = WORLD_UNIT_HEIGHT_UNITS / 4;
 export const PRECIPITATION_FLOOR_BANDS_BELOW_SEA =
   (FRESH_SEABED_DEPTH_BELOW_SEA + PRECIPITATION_FLOOR_CLEARANCE) / BAND_HEIGHT;
 
-/** World-space Y at which a particle is recycled to the cloud base. −4 today. */
 export const PRECIPITATION_FLOOR_WORLD_Y =
   -PRECIPITATION_FLOOR_BANDS_BELOW_SEA * WORLD_UNITS_PER_BAND;
 
-/** Height of the falling column, in world units. 28 today. */
 export const PRECIPITATION_COLUMN_WORLD_UNITS =
   CLOUD_BASE_WORLD_Y - PRECIPITATION_FLOOR_WORLD_Y;
 
-// ── The profile ──────────────────────────────────────────────────────────────
-
-/** Everything that decides how one plugin's precipitation falls and looks. */
 export interface PrecipitationProfile {
-  /** Line segments or round sprites. Chooses the mesh built below. */
   readonly form: 'streak' | 'flake';
-  /** Particles in one column. */
   readonly count: number;
-  /** World units per second, downward. */
   readonly fallSpeed: number;
-  /** Length of a streak, in world units. Ignored by 'flake'. */
   readonly streakLength: number;
-  /** Sprite diameter in world units. Ignored by 'streak'. */
   readonly spriteSize: number;
-  /** Peak alpha, reached at intensity 1. */
   readonly opacity: number;
   readonly color: number;
-  /** Horizontal sway amplitude in cells, and its rate. Zero disables it. */
   readonly swayCells: number;
   readonly swayHz: number;
-  /**
-   * The HOLE in the middle of the seed disc, as a fraction of the mass's
-   * radius: particles are seeded over the annulus from here to the rim.
-   *
-   * ZERO IS A FULL DISC and is what every mass whose cloud has a middle passes.
-   * It is a first-class part of the contract rather than a caller's own
-   * post-filter because the seeding below is the only place that knows the
-   * disc's area law, and a caller rejecting samples would quietly change the
-   * density it produced (`seedRadius` states the law).
-   *
-   * A FRACTION, not a length, for the reason the eye's own radius is one
-   * (../../../../plugins/cyclone/protocol.ts's CYCLONE_EYE_RADIUS_FRACTION): it
-   * is a fact about the SHAPE of the cloud, and a shape scales with the thing
-   * it is the shape of.
-   */
   readonly innerRadiusFraction: number;
 }
 
-/**
- * Where one particle is seeded across the mass's disc, as a fraction of the
- * radius, from a uniform sample `u` in [0, 1).
- *
- * UNIFORM AREA OVER THE ANNULUS between `innerRadiusFraction` and the rim.
- * Area grows as r², so the sample has to be spread over r² and taken back to r
- * — which is what the bare `sqrt(u)` of a full disc already is, and this is
- * that same law with the hole's area removed from the bottom of the range. At
- * `inner` 0 it IS `sqrt(u)`, to the last bit, which is why the three
- * full-disc plugins are untouched by the annulus existing.
- *
- * Pure, and exported, so the density law can be checked without a GL context —
- * the same reason `fallFraction` and `driftSeconds` live out here.
- */
 export function seedRadius(u: number, innerRadiusFraction: number): number {
   const innerArea = innerRadiusFraction * innerRadiusFraction;
   return Math.sqrt(innerArea + u * (1 - innerArea));
 }
 
-/**
- * Where in its fall a particle is, as a fraction in [0, 1): 0 at the cloud base,
- * approaching 1 at the floor.
- *
- * `birth` is the particle's own position in the cycle, drawn once when the
- * column is built, so a column's particles are spread through it instead of
- * falling as one sheet. The wrap is per-particle: one that reaches the floor
- * reappears at the cloud base, 28 units above and far from anything a player is
- * looking at.
- *
- * Total for any finite input, including a negative elapsed time — the JS `%`
- * keeps the sign of its left operand, so the `+ 1` is what stops a negative
- * fraction placing a particle above the cloud.
- */
 export function fallFraction(
   elapsedSeconds: number,
   birth: number,
@@ -177,75 +59,28 @@ export function fallFraction(
   return ((cycles % 1) + 1) % 1;
 }
 
-/**
- * Seconds a particle at fall fraction `f` has been in the air.
- *
- * PURE FALL TIME, AND NOTHING ABOUT THE WIND. It used to be multiplied by the
- * mass's velocity to displace a particle downwind inside the rig, and that was
- * the bug fixed on 2026-09-02 (#300): the rig's root is ALREADY carried along
- * by the mass (./discRig.ts), so a drop that drifted again in the rig's local
- * space crossed the ground at twice the wind and the column's foot landed
- * outside its own cloud. In the cloud's frame — which is the frame this
- * column is drawn in — a drop falls straight down, so the only thing the wind
- * does here is tilt the STREAK (see `advance` below).
- *
- * Kept because it is the honest answer to "how long has this particle been
- * falling", which is what fixes the column's height against its fall speed and
- * what plugins/rain/test/client.test.ts checks.
- */
 export function driftSeconds(fraction: number, fallSpeed: number): number {
   return (fraction * PRECIPITATION_COLUMN_WORLD_UNITS) / fallSpeed;
 }
 
-// ── The column ───────────────────────────────────────────────────────────────
-
-/** A pooled column of falling particles. Positions are rewritten every frame. */
 export interface PrecipitationColumn {
   readonly object: Object3D;
   readonly material: Material;
-  /**
-   * Rewrites every particle's position for this frame. `vx`/`vy` are the mass's
-   * velocity in WORLD UNITS per second, and they TILT THE STREAK ONLY: the
-   * column is drawn in the rig's local space, which the mass carries with it,
-   * so a drop's position in here is the straight-down fall it makes in the
-   * cloud's own frame. Its ground-frame velocity — (vx, −fallSpeed, vy) — is
-   * what the streak shows.
-   */
   advance(elapsed: number, radius: number, vx: number, vy: number): void;
   dispose(): void;
 }
 
-/**
- * Builds one falling column in the LOCAL space of its rig — a rig's root is
- * moved to the mass's centre, so nothing here ever holds a world coordinate and
- * the numbers stay small however far across a 512² world the front has drifted.
- *
- * `frustumCulled` is off. three computes a bounding sphere once, from the
- * positions the geometry was created with, and every frame after that these
- * positions move; a stale sphere would cull the column exactly when the camera
- * looked at it. With a handful of columns on screen, always submitting the draw
- * call is cheaper than any correct alternative.
- *
- * `renderOrder` is the caller's: it depends on what else that plugin draws and
- * on the transparent sea underneath (see the callers' RENDER_ORDER constants).
- */
 export function createPrecipitationColumn(
   profile: PrecipitationProfile,
   renderOrder: number,
 ): PrecipitationColumn {
   const verticesPerParticle = profile.form === 'streak' ? 2 : 1;
-  // Per-particle constants, drawn once. Kept in flat arrays rather than an array
-  // of objects: the frame loop reads them `count` times, and a struct-of-arrays
-  // walk is both allocation-free and cache-friendly.
   const discX = new Float32Array(profile.count);
   const discZ = new Float32Array(profile.count);
   const birth = new Float32Array(profile.count);
   const swayPhase = new Float32Array(profile.count);
 
   for (let i = 0; i < profile.count; i++) {
-    // UNIFORM AREA over the profile's annulus — a full disc for every mass that
-    // passes `innerRadiusFraction` 0. Using the uniform sample directly would
-    // crowd every column into its own middle; see `seedRadius`.
     const r = seedRadius(Math.random(), profile.innerRadiusFraction);
     const angle = Math.random() * TWO_PI;
     discX[i] = Math.cos(angle) * r;
@@ -256,25 +91,9 @@ export function createPrecipitationColumn(
 
   const geometry = new BufferGeometry();
   const attribute = new Float32BufferAttribute(profile.count * verticesPerParticle * 3, 3);
-  // Told once that this buffer changes every frame, so the driver can pick the
-  // right storage for it instead of assuming static geometry.
   attribute.setUsage(DynamicDrawUsage);
   geometry.setAttribute('position', attribute);
 
-  // THE BUFFER THE FRAME LOOP WRITES IS THE ATTRIBUTE'S OWN, TAKEN BACK OUT OF
-  // IT — never a Float32Array handed in and kept alongside.
-  //
-  // Fixed 2026-08-28, and it is why no player had ever seen a raindrop.
-  // `Float32BufferAttribute`'s constructor is `super(new Float32Array(array),
-  // …)`, and `new Float32Array(aFloat32Array)` COPIES: the array passed in is
-  // not the array drawn. The rig kept writing into its own copy and setting
-  // `needsUpdate` on an attribute whose buffer stayed zero-filled, so every
-  // particle was a degenerate zero-length line at the rig's centre. Nothing
-  // failed and nothing warned.
-  //
-  // Constructing the attribute from a LENGTH and reading `.array` back is what
-  // makes the two impossible to separate again: there is now only one buffer,
-  // and it is the one the GPU uploads.
   const positions = attribute.array as Float32Array;
 
   const material =
@@ -283,9 +102,6 @@ export function createPrecipitationColumn(
           color: profile.color,
           transparent: true,
           opacity: 0,
-          // Depth TESTED so the ground and the sea occlude the part of the
-          // column below them, not depth WRITTEN so particles never cut each
-          // other or the sheets they fall through.
           depthWrite: false,
         })
       : new PointsMaterial({
@@ -309,13 +125,6 @@ export function createPrecipitationColumn(
     material,
 
     advance(elapsed: number, radius: number, vx: number, vy: number): void {
-      // The streak points along the particle's GROUND-FRAME velocity — down at
-      // fallSpeed, sideways at the wind — so it leans into the wind instead of
-      // hanging vertically in a gale. This is the ONLY place the wind enters
-      // the column: the drop's position is its straight-down fall in the
-      // cloud's frame (#300), and the lean is what a viewer standing on the
-      // ground sees of the two motions added together. One normalisation per
-      // frame, not per particle.
       const speed = Math.hypot(vx, profile.fallSpeed, vy);
       const streakX = (vx / speed) * profile.streakLength;
       const streakY = (-profile.fallSpeed / speed) * profile.streakLength;
@@ -329,13 +138,8 @@ export function createPrecipitationColumn(
             ? 0
             : profile.swayCells * Math.sin(elapsed * profile.swayHz * TWO_PI + swayPhase[i]!);
 
-        // NO WIND TERM. The rig's root moves with the mass, so the drift is
-        // already applied to every one of these coordinates; adding it again
-        // here is what put the column's foot downwind of its own cloud (#300).
         const x = discX[i]! * radius + sway;
         const y = CLOUD_BASE_WORLD_Y - fraction * PRECIPITATION_COLUMN_WORLD_UNITS;
-        // The second sway axis is a quarter cycle out of phase with the first,
-        // so a particle traces a slow ellipse rather than sliding along one line.
         const z =
           discZ[i]! * radius +
           (profile.swayCells === 0

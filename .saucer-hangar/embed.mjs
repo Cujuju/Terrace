@@ -1,7 +1,3 @@
-// Builds .saucer-hangar/saucer-hangar.html from the template: embeds the three
-// GLBs as base64 and inlines the GAME'S sky-environment module (types stripped
-// by Node, no bundler) so the viewer lights the hulls with the same code path.
-//   node .saucer-hangar/embed.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -18,8 +14,6 @@ for (const key of ['a', 'b', 'c']) {
 
 const moduleTs = readFileSync(join(root, 'client/src/render/skyEnvironment.ts'), 'utf8');
 const moduleJs = stripTypeScriptTypes(moduleTs, { mode: 'strip' })
-  // The type-only import of SkyRigState is erased by the strip; nothing else
-  // in the file reaches outside `three`.
   .replace(/^export /gm, '');
 
 const template = readFileSync(join(here, 'hangar.template.html'), 'utf8');

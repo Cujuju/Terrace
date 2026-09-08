@@ -1,15 +1,3 @@
-// World administration: the operator gate and the destructive path
-// (multi-world, 2026-08-22).
-//
-// THE TESTS THAT MATTER HERE ARE THE REFUSALS. Every action in this service is
-// gated by WORLD_ADMIN_KEY and one of them deletes a world permanently, so
-// what is asserted is not that the happy path works — it is that each of the
-// three gates in front of `rm` actually holds:
-//
-//   the key            → wrong key, no action, whatever the action was;
-//   archived-first     → a live world cannot be purged by id;
-//   the typed name     → a mismatch destroys nothing.
-
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,13 +11,6 @@ import { WorldAdminService } from '../src/world/world-admin.ts';
 import { InstalledPlugins } from '../src/plugins/installed.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
 
-/**
- * The smallest world this server will boot (issue #181, 2026-08-25). It used to
- * be CHUNK_SIZE * 4 — four chunks a side — which stopped being a legal world
- * when MIN_WORLD_SIZE was derived from what genesis actually needs. Every world
- * created here goes through the same size validation a real operator's does, so
- * the fixture has to be a size that validation accepts.
- */
 const WORLD_SIZE = MIN_WORLD_SIZE;
 const KEY = 'admin-key-long-enough';
 const CLIENT = 'connection-1';
@@ -63,8 +44,6 @@ function setUp(worldAdminKey: string | null = KEY): void {
   registry = new WorldRegistry(join(root, 'worlds'));
   const config = makeConfig(registry.worldsDir, worldAdminKey);
   manager = new WorldManager({ config, registry, plugins: new InstalledPlugins([]), switchCountdownS: 0 });
-  // A restart service with inert hooks: these tests are about the gate and the
-  // world actions, and a real one would exit the test runner.
   const restart = new ServerRestartService({
     shutdown: () => Promise.resolve(),
     exit: () => {},
@@ -83,7 +62,6 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Creates a world through the service, as the panel would. */
 function create(name: string): string {
   const result = admin.handle(CLIENT, { type: 'worldCreate', key: KEY, name });
   expect(result.ok).toBe(true);
@@ -105,7 +83,6 @@ describe('the gate', () => {
       expect(result.refused).toBe('badKey');
     }
 
-    // Nothing moved, nothing was renamed, nothing was loaded.
     expect(registry.has(id)).toBe(true);
     expect(registry.summaryFor(id, null)?.name).toBe('Frostwick Hollows');
     expect(manager.activeId).toBeNull();
@@ -116,7 +93,6 @@ describe('the gate', () => {
     for (let attempt = 0; attempt < OPERATOR_MAX_FAILED_ATTEMPTS; attempt++) {
       admin.handle(CLIENT, { type: 'worldLoad', key: 'wrong', id });
     }
-    // Even the RIGHT key is refused while the lockout stands.
     expect(admin.handle(CLIENT, { type: 'worldLoad', key: KEY, id }).refused).toBe('throttled');
 
     now += OPERATOR_LOCKOUT_MS + 1;
@@ -132,16 +108,9 @@ describe('the gate', () => {
   });
 
   it('requires no key at all when none is configured', () => {
-    // Owner, 2026-09-06: "if no key is set, then no key is required". An
-    // unkeyed server is OPEN, not off — it used to refuse everything with
-    // 'disabled'. The boot log is what warns about it (index.ts).
     rmSync(root, { recursive: true, force: true });
     setUp(null);
     expect(admin.keyed).toBe(false);
-    // The LISTING, because it is the one entry point whose answer is purely
-    // the gate's verdict: an action would also have to succeed on its own
-    // merits (a world to unload, a name to rename), which is a different
-    // question from whether the key was demanded.
     expect(admin.list(CLIENT, '').refused).toBeUndefined();
   });
 
@@ -209,7 +178,6 @@ describe('purge, the only destructive action', () => {
   });
 
   it('reports where an archived world went', () => {
-    // "Where did my world go" must have an answer on screen, not in a log.
     const id = create('Frostwick Hollows');
     const result = admin.handle(CLIENT, { type: 'worldArchive', key: KEY, id });
     expect(result.archivedPath).toBeTruthy();
@@ -223,7 +191,6 @@ describe('renaming and duplicating', () => {
     expect(admin.handle(CLIENT, { type: 'worldRename', key: KEY, id, name: 'Thornfall' }).ok)
       .toBe(true);
     expect(registry.summaryFor(id, null)?.name).toBe('Thornfall');
-    // The FILE never moves: the id is stable across a rename.
     expect(registry.has(id)).toBe(true);
   });
 
@@ -270,9 +237,6 @@ describe('the protocol validator', () => {
 
   it('rejects a missing or oversized key, and accepts an empty one', () => {
     expect(validateWorldAdminRequest({ type: 'worldList' })).toBeNull();
-    // An EMPTY key is well-formed since the unkeyed ruling (owner,
-    // 2026-09-06): it is what a client sends to a server with no key set, and
-    // whether it is good enough is the gate's business, not the shape's.
     expect(validateWorldAdminRequest({ type: 'worldList', key: '' })).toEqual({
       type: 'worldList',
       key: '',

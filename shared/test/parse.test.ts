@@ -1,6 +1,3 @@
-// Contract tests for shared/src/parse.ts — the guards every plugin's wire
-// parser and persistence slice validates untrusted JSON with.
-
 import { describe, expect, it } from 'vitest';
 import { isFiniteNumber, parseRecordArray } from '../src/index.ts';
 

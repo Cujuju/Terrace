@@ -1,7 +1,3 @@
-// Persistence tests run against a real SQLite file in a temp directory —
-// acceptance criterion 6 ("kill the process, restart, the world comes back")
-// is about a file on disk, so an in-memory database would test the wrong thing.
-
 import DatabaseConstructor from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,13 +15,8 @@ import type { TerracePlugin } from '../src/plugins/types.ts';
 import { World } from '../src/world/world.ts';
 import { asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
 
-// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
-// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
-// four-chunk world is smaller ground than it was — which is fine here: every
-// assertion in this suite is about chunk mechanics, not about distances.)
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
-/** A plugin whose whole state is a counter, so a slice round-trip is visible. */
 function counterPlugin(initial: number): TerracePlugin & { value: number } {
   const plugin = {
     name: 'counter',
@@ -75,7 +66,6 @@ describe('SnapshotStore', () => {
     world.unlockChunk(2, 2);
     const plugin = counterPlugin(7);
 
-    // --- first process ---
     const store = SnapshotStore.open(dbPath);
     const host = new PluginHost(world, [asLoadedPlugin(plugin)]);
     store.saveSnapshot({
@@ -89,7 +79,6 @@ describe('SnapshotStore', () => {
     expect(world.dirty).toBe(false);
     store.close();
 
-    // --- second process, same file ---
     const reopened = SnapshotStore.open(dbPath);
     const snapshot = reopened.loadLatest();
     expect(snapshot).not.toBeNull();
@@ -103,7 +92,6 @@ describe('SnapshotStore', () => {
       undefined,
       snapshot.name,
     );
-    // The world came back as ITSELF: same name, not a newly minted one.
     expect(snapshot.name).toBe(world.name);
     expect(restored.name).toBe(world.name);
     expect(Array.from(restored.map.cells)).toEqual(Array.from(world.map.cells));
@@ -121,10 +109,6 @@ describe('SnapshotStore', () => {
     reopened.close();
   });
 
-  // Per-player unlock masks (issue #17). World-level behaviour (mutation,
-  // streaming, restore validation) is covered in world-token-masks.test.ts;
-  // this is the SnapshotStore-level round trip through a real SQLite file,
-  // matching the pattern every other column/table in this file is tested by.
   it('round-trips per-token unlock masks across a restart', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     world.addPlayer({ id: 'session-a', token: 'token-a', name: 'A' });
@@ -162,8 +146,6 @@ describe('SnapshotStore', () => {
   it('a snapshot saved WITHOUT tokenMasks reads back with an empty map, not undefined', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     const store = SnapshotStore.open(dbPath);
-    // No tokenMasks field at all — the additive/optional case every
-    // pre-issue-#17 caller (and most of this file's other tests) exercises.
     store.saveSnapshot({
       worldSize: world.size,
       name: world.name,
@@ -191,7 +173,6 @@ describe('SnapshotStore', () => {
 
     const ids: number[] = [];
     for (let i = 0; i < SNAPSHOT_RETENTION + extra; i++) {
-      // Distinct terrain per snapshot so "the newest survived" is checkable.
       world.applySculpt(8, 8, 1, 1);
       ids.push(
         store.saveSnapshot({
@@ -210,7 +191,6 @@ describe('SnapshotStore', () => {
     expect(latest?.id).toBe(ids[ids.length - 1]);
     expect(latest?.pluginSlices).toEqual({ counter: { value: SNAPSHOT_RETENTION + extra - 1 } });
 
-    // The pruned snapshots took their plugin slices with them (cascade).
     const raw = new DatabaseConstructor(dbPath);
     const orphans = raw
       .prepare(
@@ -223,17 +203,12 @@ describe('SnapshotStore', () => {
     store.close();
   });
 
-  // Issue #16: a corrupt heightmap row must fail loudly at boot, not load
-  // silently. The corrupt value here is deliberately IN RANGE for the Int16
-  // storage type ([-32768, 32767]) but OUT of the height contract's range
-  // ([MIN_HEIGHT, MAX_HEIGHT]) — the exact case a length/byte-order check
-  // alone cannot catch, and the one isValidHeight (#13) exists for.
   it('refuses a snapshot with an in-Int16, out-of-height-range cell', () => {
     const store = SnapshotStore.open(dbPath);
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     const corruptCells = new Int16Array(world.map.cells);
     const CORRUPT_INDEX = 42;
-    const CORRUPT_VALUE = 5000; // within Int16, outside [-1024, 1024]
+    const CORRUPT_VALUE = 5000;
     corruptCells[CORRUPT_INDEX] = CORRUPT_VALUE;
 
     const id = store.saveSnapshot({
@@ -278,13 +253,9 @@ describe('SnapshotStore', () => {
     expect(() => World.restore(WORLD_SIZE * 2, world.map.cells, world.mask)).toThrow(RangeError);
   });
 
-  // The upgrade path for a self-hoster whose world.db predates world names
-  // (2026-08-14). It must open, not refuse: the name column is additive, so the
-  // schema version is deliberately NOT bumped for it.
   it('migrates a database created before world names, reading its world as unnamed', () => {
     const legacyPath = join(dir, 'legacy.db');
     const legacy = new DatabaseConstructor(legacyPath);
-    // The exact pre-2026-08-14 table: no world_name column at all.
     legacy.exec(`
       CREATE TABLE snapshots (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,15 +290,9 @@ describe('SnapshotStore', () => {
     const store = SnapshotStore.open(legacyPath);
     const snapshot = store.loadLatest();
     expect(snapshot?.name).toBeNull();
-    // The pre-2026-08-14 fixture above predates token_masks too (issue #17)
-    // — open() creates the table fresh, but this snapshot_id has no rows in
-    // it, so per-token state reads back as empty while the UNION mask (read
-    // separately, below) is exactly what it always was.
     expect(snapshot?.tokenMasks.size).toBe(0);
     expect(Array.from(snapshot?.mask ?? [])).toEqual(Array.from(world.mask));
 
-    // …and the next snapshot this build writes carries a name, in the column
-    // the migration added.
     store.saveSnapshot({
       worldSize: world.size,
       name: 'The Sundered Reach',
@@ -363,8 +328,6 @@ describe('World naming', () => {
     for (const stored of [null, '   ']) {
       const restored = World.restore(WORLD_SIZE, source.map.cells, source.mask, undefined, stored);
       expect(restored.name.length).toBeGreaterThan(0);
-      // Without this, the snapshot scheduler (which writes only a dirty world)
-      // would never persist the new name and every boot would re-draw one.
       expect(restored.dirty).toBe(true);
     }
   });

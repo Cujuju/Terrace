@@ -1,5 +1,3 @@
-// The water-tile drain's contract (issue #343): a frame never marches past its
-// budget, and a budgeted drain ends with the same triangles as an unbudgeted one.
 import { describe, expect, it } from 'vitest';
 import { Group, Mesh, type BufferAttribute } from 'three';
 import { BAND_HEIGHT, cellIndex, chunksPerEdge, computeRiverNetwork } from '@terrace/shared';
@@ -12,10 +10,8 @@ import { createTerrainMirror } from '../src/terrain/mirror.ts';
 const WORLD = 64;
 const SUMMIT = BAND_HEIGHT * 20;
 const DROP_PER_CELL = BAND_HEIGHT * 5;
-/** Fake-clock step per `now()` call; the drain calls it once per tile plus once. */
 const CLOCK_STEP_MS = 0.4;
 const MAX_TILES_PER_FRAME = Math.ceil(WATER_TILE_FRAME_BUDGET_MS / CLOCK_STEP_MS);
-/** Frames to pump: more than any drain here needs. */
 const FRAME_LIMIT = 200;
 
 function coneMirror() {
@@ -55,7 +51,6 @@ function rigOn(mirror: ReturnType<typeof coneMirror>, now: () => number) {
   return { rig, ground, pump: () => frame!(1 / 60), triangles };
 }
 
-/** A clock that never reaches the budget: the whole queue drains in one frame. */
 const frozenClock = () => 0;
 
 describe('the water-tile drain', () => {
@@ -68,7 +63,7 @@ describe('the water-tile drain', () => {
     for (let f = 0; f < FRAME_LIMIT; f++) {
       calls = 0;
       pump();
-      if (calls === 0) break; // the finish frame, then idle: no clock reads
+      if (calls === 0) break;
       tilesPerFrame.push(calls - 1);
     }
     expect(tilesPerFrame.length).toBeGreaterThan(1);
@@ -99,8 +94,8 @@ describe('the water-tile drain', () => {
     const budgeted = rigOn(mirror, () => ++calls * CLOCK_STEP_MS);
     const whole = rigOn(mirror, frozenClock);
     budgeted.rig.forceRefresh(mirror, budgeted.ground);
-    budgeted.pump(); // one budgeted frame, queue still pending
-    budgeted.rig.forceRefresh(mirror, budgeted.ground); // supersedes mid-drain
+    budgeted.pump();
+    budgeted.rig.forceRefresh(mirror, budgeted.ground);
     whole.rig.forceRefresh(mirror, whole.ground);
     for (let f = 0; f < FRAME_LIMIT; f++) {
       budgeted.pump();

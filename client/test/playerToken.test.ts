@@ -1,13 +1,7 @@
-// Contract tests for the durable per-browser identity token (issue #17):
-// generated once, persisted, reused — and degrades gracefully with no
-// localStorage at all, exactly like state/controlPrefs.ts (see that file's
-// own test for the established pattern this one follows).
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const STORAGE_KEY = 'terrace.playerToken.v1';
 
-/** Minimal in-memory localStorage; installed before each fresh import. */
 function fakeStorage(initial: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(initial));
   return {
@@ -22,7 +16,6 @@ function fakeStorage(initial: Record<string, string> = {}): Storage {
   } as Storage;
 }
 
-/** A fresh module instance, so the internal module-scope cache never leaks between tests. */
 async function freshModule(initial?: Record<string, string>): Promise<{
   getOrCreatePlayerToken: () => string;
   storage: Storage;
@@ -58,18 +51,10 @@ describe('getOrCreatePlayerToken', () => {
     const { getOrCreatePlayerToken, storage } = await freshModule({ [STORAGE_KEY]: existing });
 
     expect(getOrCreatePlayerToken()).toBe(existing);
-    expect(storage.getItem(STORAGE_KEY)).toBe(existing); // unchanged, not overwritten
+    expect(storage.getItem(STORAGE_KEY)).toBe(existing);
   });
 
   it('two fresh module instances (i.e. two browsers with empty storage) generate DIFFERENT tokens', async () => {
-    // `globalThis.localStorage` is ONE shared binding in this process (there
-    // is only ever one real localStorage in an actual browser), so the first
-    // token must be read out BEFORE the second freshModule() call swaps that
-    // binding to a different backing store — reading both after both swaps
-    // would have both calls observe whichever storage happened to be current
-    // at CALL time, not at each module's own import time, and is not a bug
-    // this module has: it deliberately reads localStorage lazily, on every
-    // call, rather than caching a stale reference (see readStoredToken).
     const first = await freshModule();
     const firstToken = first.getOrCreatePlayerToken();
 
@@ -86,7 +71,6 @@ describe('getOrCreatePlayerToken', () => {
 
     const token = mod.getOrCreatePlayerToken();
     expect(token.length).toBeGreaterThan(0);
-    // Still stable within the session even though nothing was ever stored.
     expect(mod.getOrCreatePlayerToken()).toBe(token);
   });
 
@@ -113,8 +97,6 @@ describe('getOrCreatePlayerToken', () => {
 
 describe('insecure-context fallback (no crypto.randomUUID)', () => {
   it('mints a valid v4 UUID from getRandomValues alone', async () => {
-    // http:// LAN origins have crypto but NOT crypto.randomUUID (secure-context
-    // API) — the exact environment of phone/LAN dev testing. Simulate it.
     const realCrypto = globalThis.crypto;
     vi.stubGlobal('crypto', {
       getRandomValues: realCrypto.getRandomValues.bind(realCrypto),
@@ -126,7 +108,6 @@ describe('insecure-context fallback (no crypto.randomUUID)', () => {
       expect(token).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
-      // Stable across calls, like the primary path.
       expect(mod.getOrCreatePlayerToken()).toBe(token);
     } finally {
       vi.unstubAllGlobals();

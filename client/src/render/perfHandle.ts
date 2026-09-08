@@ -1,7 +1,3 @@
-// Not dev-gated, unlike perfProbe.ts and main.tsx's `__terrace`: the decay in
-// docs/plans/frame-rate-decay-2026-09-05.md §7d took a night of bench runs to
-// characterise, and the next reading should come from a normal session.
-
 import { createEffect, createRoot, createSignal } from 'solid-js';
 import {
   flushFrameStats,
@@ -27,7 +23,6 @@ function queryFlagSet(name: string): boolean {
   return new URLSearchParams(location.search).get(name) !== null;
 }
 
-/** One window per line, fixed field order, so a soak pastes into a sheet and reads as a slope down each column. */
 function logSample(sample: FrameStatsSample): void {
   console.info(
     `[perf] up=${Math.round(sample.uptimeS)}s frames=${sample.frames} ` +
@@ -44,10 +39,6 @@ function logSample(sample: FrameStatsSample): void {
   );
 }
 
-/**
- * An effect, not a call at every toggle site: each new way to open the block
- * would otherwise have to remember to refresh the sink or open showing nothing.
- */
 function trackReadouts(): () => void {
   return createRoot((dispose) => {
     createEffect(() => {
@@ -55,7 +46,6 @@ function trackReadouts(): () => void {
       const logWants = logging();
       if (!hudWants && !logWants) {
         setFrameStatsSink(null);
-        // A reopened block must show the next real window, not a stale one.
         setFrameStats(null);
         return;
       }
@@ -63,41 +53,28 @@ function trackReadouts(): () => void {
         if (logWants) logSample(sample);
         if (hudWants) setFrameStats(sample);
       });
-      // After the sink installs, never before, or the flush goes nowhere and
-      // the block opens empty instead of showing numbers immediately.
       flushFrameStats();
     });
     return dispose;
   });
 }
 
-/**
- * The key is handled here, not in ui/Hud.tsx: this is a diagnostic, not a HUD
- * control, and Hud.tsx's own Escape-key chain has no business inside it.
- */
 export function installPerfHandle(): () => void {
   setLogging(queryFlagSet(PERF_LOG_QUERY_FLAG));
   const disposeReadouts = trackReadouts();
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.code !== PERF_TOGGLE_KEY) return;
-    // Modified backquote belongs to the browser/OS (Ctrl+` opens a terminal
-    // in several editors); only the bare key is ours.
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (isTextEntry(event.target)) return;
     setPerfOpen(!perfOpen());
   };
   window.addEventListener('keydown', onKeyDown);
   (globalThis as unknown as { __terracePerf: unknown }).__terracePerf = {
-    /** The last closed window, or null before the first one closes. */
     stats: (): FrameStatsSample | null => frameStatsSample(),
     hud: (on?: boolean): boolean => {
       setPerfOpen(on ?? !perfOpen());
       return perfOpen();
     },
-    /**
-     * Names what inside `renderer.render` is growing (#378). Run on a page that
-     * has already decayed, foregrounded — Chrome stops sampling hidden tabs.
-     */
     profile: async (seconds = 10): Promise<SelfProfileResult> => {
       const result = await startSelfProfile(seconds * 1000);
       console.info(

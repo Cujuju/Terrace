@@ -1,6 +1,3 @@
-// The intent pipeline is the anti-cheat surface: every test here is a rule a
-// hostile or buggy client (or plugin) must not be able to break.
-
 import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
@@ -14,13 +11,10 @@ import {
   worldWithUnlockedChunks,
 } from './support/harness.ts';
 
-/** 4×4 chunks: chunk (0,0) covers cells [0..CHUNK_SIZE-1]². */
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
-/** A cell well inside the single unlocked chunk. */
 const UNLOCKED_CELL = { x: 4, y: 4 };
-/** A cell inside a locked chunk — chunk (2,2), whatever a chunk is sized at. */
 const LOCKED_CELL = { x: CHUNK_SIZE * 2 + 8, y: CHUNK_SIZE * 2 + 8 };
 
 function makeDeps(world: World, plugins: TerracePlugin[]): IntentPipelineDeps {
@@ -53,13 +47,10 @@ describe('handleSculptIntent', () => {
 
     const broadcasts = sink.ofType('terrainDiff');
     expect(broadcasts).toHaveLength(1);
-    // Per player since issue #280: the sculptor's own share, not a broadcast.
     expect(broadcasts[0].target).toBe(PLAYER.id);
   });
 
   it('uses the server-side sculpt amount and only the direction from the client', () => {
-    // The message carries no amount at all — a hacked client cannot ask for
-    // more. Direction -1 must dig, +1 must raise, both by the same magnitude.
     handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ dir: -1 }));
     const lowered = world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y);
 
@@ -159,7 +150,6 @@ describe('handleSculptIntent', () => {
     if (outcome.applied) {
       expect(outcome.intent).toEqual({ type: 'sculpt', x: moved.x, y: moved.y, radius: 2, dir: 1 });
     }
-    // The second interceptor saw the FIRST one's rewrite, not the original.
     expect(observedBySecond).toHaveLength(1);
     expect(observedBySecond[0].x).toBe(moved.x);
 
@@ -219,10 +209,6 @@ describe('handleSculptIntent', () => {
     expect(seenDiffs[0]).toBeGreaterThan(0);
   });
 
-  // Issue #17: onTerrainChanged's sculptorToken is how the reveal plugin's
-  // per-player creep policy knows WHO to unlock a chunk for. This is the
-  // contract at the pipeline layer — reveal's own tests cover the policy that
-  // consumes it.
   it('hands onTerrainChanged the SCULPTOR\'s token for a player-originated edit', () => {
     const seenTokens: Array<string | undefined> = [];
     const watcher: TerracePlugin = {
@@ -238,15 +224,6 @@ describe('handleSculptIntent', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// THE EFFECT PHASE (issue #19): onIntentApplied fires ONLY after every
-// interceptor in the verdict phase has allowed AND the edit has actually
-// landed. This is the pipeline-level guarantee PluginHost.notifyIntentApplied
-// itself does not enforce (it is a plain fan-out — see plugin-host.test.ts);
-// it holds because pipeline.ts only ever reaches the call on the path where
-// every earlier `return` was skipped.
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('the effect phase runs only after unanimous allow (issue #19)', () => {
   let world: World;
 
@@ -255,7 +232,6 @@ describe('the effect phase runs only after unanimous allow (issue #19)', () => {
     world.setSink(new RecordingSink());
   });
 
-  /** A plugin that would commit an irreversible side effect if ever called. */
   function ledgerPlugin(calls: SculptIntent[]): TerracePlugin {
     return {
       name: 'ledger',
@@ -274,9 +250,6 @@ describe('the effect phase runs only after unanimous allow (issue #19)', () => {
       },
     };
 
-    // Ledger sorts first in the array, so its onIntent (it has none) would run
-    // before the denier's either way — the claim under test is that ITS EFFECT
-    // hook, which only core calls after the whole chain clears, never fires.
     const outcome = handleSculptIntent(
       makeDeps(world, [ledgerPlugin(applied), denier]),
       PLAYER,
@@ -304,8 +277,6 @@ describe('the effect phase runs only after unanimous allow (issue #19)', () => {
 
     expect(outcome.applied).toBe(true);
     expect(applied).toHaveLength(1);
-    // The WIDENED radius, not the radius-1 the client sent — onIntentApplied
-    // describes what was actually built.
     expect(applied[0].radius).toBe(2);
     if (outcome.applied) {
       expect(applied[0]).toEqual(outcome.intent);
@@ -326,7 +297,6 @@ describe('the effect phase runs only after unanimous allow (issue #19)', () => {
 describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => {
   let world: World;
 
-  /** The 4-neighbours of a cell — what relaxation would move and stamp must not. */
   const neighbourHeights = (w: World, x: number, y: number): number[] => [
     w.heightAt(x - 1, y),
     w.heightAt(x + 1, y),
@@ -340,8 +310,6 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
   });
 
   it('an intent naming NO tool is applied as a stamp (the wire default)', () => {
-    // The pipeline normalises through shared's sculptOptionsOf, whose default is
-    // the player-facing stamp — deliberately NOT the library's smooth default.
     handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
 
     expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
@@ -350,9 +318,6 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
 
   it('rejects an intent carrying an unknown tool or profile as malformed', () => {
     const deps = makeDeps(world, []);
-    // Spread over a valid message rather than through sculptMessage's typed
-    // overrides: these values are exactly what the type system forbids, which
-    // is the point — only a hostile or out-of-date client can send them.
     for (const message of [
       { ...(sculptMessage() as object), tool: 'chisel' },
       { ...(sculptMessage() as object), profile: 'medium' },
@@ -396,10 +361,6 @@ describe('sculptDenied nack', () => {
   });
 
   it('nacks a plugin rewrite that failed re-validation, so the prediction is not stranded', () => {
-    // The plugin's bug, not the sender's: leaving this path silent left the
-    // client drawing its predicted stroke over unchanged ground until its
-    // reconciliation deadline, on every stroke, for as long as the plugin
-    // stayed broken.
     const breaker: TerracePlugin = {
       name: 'breaker',
       onIntent(intent): IntentVerdict {
@@ -446,8 +407,6 @@ describe('sculptDenied nack', () => {
   });
 
   it('stays SILENT for a mask rejection even when the intent carried a seq', () => {
-    // The anti-cheat boundary: a locked-centre intent must remain
-    // indistinguishable from a dropped packet (protocol.ts, pipeline step 2).
     const outcome = handleSculptIntent(
       makeDeps(world, [denier]),
       PLAYER,
@@ -459,11 +418,6 @@ describe('sculptDenied nack', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THE ANSWER CONTRACT (issue #21). Every seq-carrying intent gets exactly one
-// answer back to its sender, and the applied answer must be the LAST thing that
-// sender hears about the edit: a client retires its prediction on the answer,
-// so anything still in flight behind it would be drawn over pre-sculpt ground.
 describe('sculptApplied ack', () => {
   let world: World;
   let sink: RecordingSink;
@@ -477,11 +431,10 @@ describe('sculptApplied ack', () => {
   it('acks an applied intent to the sender only, AFTER the diff', () => {
     world.addPlayer(PLAYER);
     grantTokenEveryUnlockedChunk(world, PLAYER.token);
-    sink.clear(); // the grant itself streams chunkUnlock; the transcript under test starts here
+    sink.clear();
     const outcome = handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ seq: 7 }));
     expect(outcome.applied).toBe(true);
 
-    // Order IS the contract, so the whole transcript is asserted, not a filter.
     expect(sink.messages.map((message) => [message.target, message.type])).toEqual([
       [PLAYER.id, 'terrainDiff'],
       [PLAYER.id, 'sculptApplied'],
@@ -493,10 +446,6 @@ describe('sculptApplied ack', () => {
   });
 
   it('acks AFTER the chunkUnlock a frontier sculpt earned for the sculptor', () => {
-    // The per-player creep plugin unlocks from onTerrainChanged, which runs
-    // inside applyServerSculpt — i.e. before the pipeline acks. This is the
-    // ordering that matters most: the ack must not overtake the terrain the
-    // very same stroke just revealed to this player.
     const creeper: TerracePlugin = {
       name: 'creeper',
       onTerrainChanged(api, _diff, sculptorToken): void {
@@ -517,10 +466,6 @@ describe('sculptApplied ack', () => {
   });
 
   it('acks even when the applied edit changed nothing', () => {
-    // "Applied, and it moved nothing" is a real outcome, and it is exactly the
-    // case where a client that predicted movement most needs telling — no diff
-    // will ever arrive to reconcile against. A raise on a world already at
-    // MAX_HEIGHT clamps everywhere and moves no cell at all.
     const ceiling = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]], undefined, MAX_HEIGHT);
     const ceilingSink = new RecordingSink();
     ceiling.setSink(ceilingSink);
@@ -544,9 +489,6 @@ describe('sculptApplied ack', () => {
   });
 
   it("echoes the CLIENT's seq even when a plugin rewrote the intent", () => {
-    // The seq identifies the prediction the client is holding, not the edit the
-    // server ended up making, so a plugin that rewrites (and drops) the field
-    // must not be able to strand that prediction until its deadline.
     const mover: TerracePlugin = {
       name: 'mover',
       onIntent(intent): IntentVerdict {

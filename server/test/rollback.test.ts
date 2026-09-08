@@ -1,15 +1,3 @@
-// World-rollback tests (2026-08-21).
-//
-// THE CONTRACT IS THE SUBJECT, not the callers. Every test below drives
-// RollbackService — the one thing that owns the gate, the ordering and the
-// undo point — rather than the room handler or the CLI, which are both two
-// lines over it. A failure here is a failure of the feature; a failure in the
-// room would only ever be a wiring mistake.
-//
-// The store is a real SQLite file in a temp directory, matching
-// persistence.test.ts's reasoning: a restore point is a row on disk, and an
-// in-memory database would test something adjacent to it.
-
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,19 +22,8 @@ import {
 const WORLD_SIZE = 64;
 const KEY = 'correct-horse-battery';
 const CLIENT = 'session-1';
-/** The snapshot cadence the service reports to the panel; arbitrary here. */
 const INTERVAL_S = 60;
 
-/**
- * The height a test writes to mark "the world moved on".
- *
- * MAX_HEIGHT rather than an arbitrary number, and that is not cosmetic: the
- * snapshot store validates every cell against [MIN_HEIGHT, MAX_HEIGHT] on the
- * way back in (see loadSnapshot), so a marker picked out of the air can be one
- * the store is right to refuse — which is a test failing for a reason that has
- * nothing to do with rollback. Taking it from the bound guarantees a value
- * that is extreme, valid, and never a fresh world's own.
- */
 const MARKER_HEIGHT = MAX_HEIGHT;
 
 let dir: string;
@@ -62,7 +39,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** A plugin whose whole state is one counter, so a slice restore is visible. */
 function counterPlugin(): TerracePlugin & { value: number } {
   const plugin = {
     name: 'counter',
@@ -86,7 +62,6 @@ interface Harness {
   plugin: TerracePlugin & { value: number };
   sink: RecordingSink;
   service: RollbackService;
-  /** Moves the service's injected clock; see RollbackDeps.now. */
   advance(ms: number): void;
 }
 
@@ -118,7 +93,6 @@ function harness(key: string | null = KEY): Harness {
   };
 }
 
-/** Writes the live world as a restore point, the way the scheduler would. */
 function snapshot(h: Harness): number {
   return store.saveSnapshot({
     worldSize: h.world.size,
@@ -132,8 +106,6 @@ function snapshot(h: Harness): number {
 
 describe('the operator gate', () => {
   it('asks for nothing when no key is configured', () => {
-    // Owner, 2026-09-06: an unkeyed gate is open, not off (operator-gate.ts).
-    // This case used to refuse everything with 'disabled'.
     const h = harness(null);
     snapshot(h);
     expect(h.service.keyed).toBe(false);
@@ -148,8 +120,6 @@ describe('the operator gate', () => {
   });
 
   it('refuses a key that is the right prefix but the wrong length', () => {
-    // Pins the length check in secretsMatch: a truncated key must not match,
-    // and must not match "partially" either.
     const h = harness();
     expect(h.service.listRestorePoints(CLIENT, KEY.slice(0, -1)).refused).toBe('badKey');
   });
@@ -160,10 +130,7 @@ describe('the operator gate', () => {
     for (let attempt = 1; attempt < ROLLBACK_MAX_FAILED_ATTEMPTS; attempt++) {
       expect(h.service.listRestorePoints(CLIENT, 'wrong').refused).toBe('badKey');
     }
-    // The attempt that reaches the limit reports the lockout, not another badKey.
     expect(h.service.listRestorePoints(CLIENT, 'wrong').refused).toBe('throttled');
-    // ...and while locked out, even the CORRECT key is refused. That is the
-    // point of a lockout: it is about the connection, not about the guess.
     expect(h.service.listRestorePoints(CLIENT, KEY).refused).toBe('throttled');
 
     h.advance(ROLLBACK_LOCKOUT_MS + 1);
@@ -177,8 +144,6 @@ describe('the operator gate', () => {
       h.service.listRestorePoints('attacker', 'wrong');
     }
     expect(h.service.listRestorePoints('attacker', KEY).refused).toBe('throttled');
-    // A different connection is unaffected — one bad actor must not be able to
-    // lock the operator out of their own world.
     expect(h.service.listRestorePoints(CLIENT, KEY).refused).toBeUndefined();
   });
 
@@ -195,18 +160,16 @@ describe('the operator gate', () => {
 describe('listing restore points', () => {
   it('reports how far the world moved to reach each point', () => {
     const h = harness();
-    snapshot(h); // the baseline; nothing to measure it against
+    snapshot(h);
     h.world.map.cells[0] = MARKER_HEIGHT;
     h.world.map.cells[1] = MARKER_HEIGHT;
     snapshot(h);
 
     const list = h.service.listRestorePoints(CLIENT, KEY);
     expect(list.points).toHaveLength(2);
-    // Newest first.
     expect(list.points[0].cellsChanged).toBe(2);
     expect(list.points[0].maxCellDelta).toBe(MARKER_HEIGHT);
     expect(list.points[0].isCurrent).toBe(true);
-    // The oldest retained point has no predecessor: null, never zero.
     expect(list.points[1].cellsChanged).toBeNull();
     expect(list.points[1].isCurrent).toBe(false);
   });
@@ -225,21 +188,15 @@ describe('rolling the world back', () => {
     h.plugin.value = 1;
     const before = snapshot(h);
 
-    // The "bad edit": terrain and plugin state both move on.
     h.world.map.cells[0] = MARKER_HEIGHT;
     h.plugin.value = 999;
 
     const result = h.service.rollback(CLIENT, KEY, before);
     expect(result).toMatchObject({ ok: true, toId: before });
 
-    // Terrain came back...
     expect(h.world.map.cells[0]).toBe(0);
-    // ...and so did the plugin's own state, which only happens because the
-    // service replays load() AND worldCreate() (see rollback.ts's header).
     expect(h.plugin.value).toBe(1);
 
-    // The world that was rolled AWAY from is a restore point of its own, and
-    // rolling forward to it restores the bad edit — i.e. the undo is real.
     expect(result.undoId).toBeDefined();
     const forward = h.service.rollback(CLIENT, KEY, result.undoId as number);
     expect(forward.ok).toBe(true);
@@ -258,8 +215,6 @@ describe('rolling the world back', () => {
     const snapshots = h.sink.ofType('snapshot');
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0].target).toBe('player-1');
-    // Sent to the player, never broadcast: the chunks in it are that token's
-    // territory alone (see net/join-snapshot.ts).
     expect(h.sink.messages.every((message) => message.target !== 'broadcast')).toBe(true);
   });
 
@@ -273,7 +228,6 @@ describe('rolling the world back', () => {
       refused: 'unknownRestorePoint',
     });
     expect(h.world.map.cells[0]).toBe(MARKER_HEIGHT);
-    // And it did NOT write an undo point for a rollback that never happened.
     expect(store.countSnapshots()).toBe(0);
   });
 
@@ -284,8 +238,6 @@ describe('rolling the world back', () => {
 
     expect(h.service.rollback(CLIENT, KEY, target).ok).toBe(true);
 
-    // A crash right now must come back rolled back: the newest snapshot is the
-    // rewound world, not the one it replaced.
     const latest = store.loadLatest();
     expect(latest?.cells[0]).toBe(0);
     expect(h.world.dirty).toBe(false);
@@ -304,8 +256,6 @@ describe('World.rewindTo', () => {
 
   it('replaces per-token masks rather than merging them', () => {
     const h = harness();
-    // A token that unlocked a chunk AFTER the restore point must not keep it:
-    // the rollback is undoing exactly that grant.
     const emptyMasks = h.world.tokenMasks();
     expect(emptyMasks.size).toBe(0);
     h.world.unlockChunkForToken('token-1', 1, 1);

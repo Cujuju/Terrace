@@ -1,70 +1,3 @@
-// The HUD. Solid owns this and nothing else — the canvas underneath belongs to
-// the imperative renderer (design doc).
-//
-// LAYOUT (owner redesign, 2026-08-19): three sections in three corners —
-//   * TOP LEFT      the info panel: 'panel'-placed plugin panels (relics'
-//                    skills, the invite link) and the control hint text.
-//                    Collapsible to a tab, as the old all-in-one panel was.
-//   * BOTTOM LEFT   the modeler: brush width, tool, edge, mode — the things a
-//                    sculpting hand actually reaches for, on screen whenever
-//                    the brush is the held tool.
-//   * BOTTOM RIGHT  the mana gauge (owner move, 2026-08-25, out of the
-//                    bottom-centre cell) beside a column of equal-sized icon
-//                    buttons, each opening one thing: connection status, the
-//                    Cartographer, and the control-bindings editor.
-// Top CENTRE stays what it was: world header + top-center plugin stack.
-//
-// WHERE THE CONNECTION LIVES (owner, 2026-08-19, superseding the above): the
-// link status moved OUT of the top-left panel and into the bottom-right button
-// column, as a button the same size as the gear and the chart. Two reasons it
-// belongs there and not where it was. First, the top-left panel is a stack of
-// PLUGIN panels; a core readout sitting at the top of it made every plugin
-// panel below read as part of the connection, which is what put the relic
-// skills under a "Connected" heading they had nothing to do with. Second, the
-// status is a one-glance fact with one sentence of detail behind it — exactly
-// the shape of the two buttons it now sits with, and unlike them it needs no
-// room at all until it is asked for.
-//
-// THE INVITE LIVES IN THE CONNECTION POPUP (owner, 2026-08-21, superseding
-// the top-left listing above): the invite address moved out of the info panel
-// and into the connection popup, rendered below the status row and its hint
-// sentence. The plugin owns its markup — core only renders panels registered
-// with the 'connection' placement here — so the info panel is purely plugin
-// content again, and the address sits next to the one thing it is about: the
-// link a friend joins through.
-//
-// THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): the
-// bottom-centre instruments and the gear live in one grid row —
-// `minmax(0,1fr) auto minmax(0,1fr)` — so a desktop keeps the toolbar
-// dead-centre while a phone shrinks the side cells and everything flows along
-// the bottom instead of the absolutely-anchored pieces colliding. (The mana
-// gauge left the centre cell for the right one, 2026-08-25.) Coarse pointers
-// get larger touch targets (hud.css). Every section must stay visible AND
-// operable at iPhone portrait width; that is the requirement this strip
-// exists to meet.
-//
-// THE MODELER IS ALL ICONS (owner, 2026-09-04: "instead of text, it uses an
-// icon … change the mode to be an icon"): the brush panel kept its corner —
-// "I want the center HUD to remain where it was and I want the tool HUD to
-// stay on the left", same day, after seeing it docked over the toolbar — but
-// every control in it became a picture. The four tools, the two edge profiles
-// and the raise/lower toggle wear the shaded art of BrushIcons.tsx, and the
-// five brush-width buttons became one slider snapped to the five rungs of the
-// ladder. Since the owner's inline mockup (same day) the tools, the edge
-// profiles and the direction disc share ONE row, with the slider alone
-// beneath them. Two consequences worth naming. The row labels ("Brush", "Tool",
-// "Edge", "Mode") are gone: with no words on the tiles there is nothing for a
-// word beside them to disambiguate, and each control's own title and
-// aria-label carries its name. And the panel is tied to the HELD TOOL rather
-// than being unconditionally visible: it configures the brush, so it is on
-// screen only while the brush is what the hand holds.
-//
-// SOLID REACTIVITY: every reactive value below is read by CALLING its accessor
-// at the point of use, inside JSX or inside an event handler. A component body
-// runs exactly once, so a `const status = connectionStatus()` here would freeze
-// the dot on whatever the status happened to be at mount. There are no such
-// consts in this file, by construction.
-
 import {
   For,
   Show,
@@ -148,18 +81,6 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   reconnecting: 'Reconnecting',
 };
 
-/**
- * Tooltip copy, in one place per control (native `title`, no tooltip widget).
- *
- * The standard every string below is held to (owner, 2026-09-05, for every
- * HUD item): the control's NAME first, then at most FIVE WORDS for what it
- * does, in plain language stating the CONSEQUENCE for the player rather than
- * the implementation — so a tip fits beside its control instead of running
- * off the screen edge.
- * Anything that depends on live state (the bound lower chord, the status) is
- * built from the same accessors the control itself reads, so a title can never
- * go stale against the control it explains.
- */
 const STATUS_TITLE: Record<ConnectionStatus, string> = {
   offline: 'Offline: nothing is saved or shared',
   connecting: 'Connecting: waiting for the server',
@@ -174,12 +95,6 @@ const TOOL_TITLE: Record<SculptTool, string> = {
   carve: 'Carve: cut a tunnel, roof intact',
 };
 
-// The `hard` title names the level fill (shared/heightmap.ts,
-// applyLevelFillBrush), which is what the player actually sees with the
-// default Stamp tool; the Smooth pairing (one flat lift that then slumps) and
-// the Drag pairing (the edge fills every reachable cell) no longer fit the
-// five words, so the dock's tile tells the common case and the rest is learnt
-// by use.
 const PROFILE_TITLE: Record<SculptProfile, string> = {
   soft: 'Soft: rounded hill fading to nothing',
   hard: 'Hard: one terrace at a time',
@@ -191,12 +106,6 @@ const HINT_BUTTON: Record<string, string> = {
   right: 'Right',
 };
 
-/**
- * The brush-shape toggles' words (decision 2026-08-14). No longer RENDERED —
- * the dock's tiles are icon-only (owner, 2026-09-04) — but still the wording
- * of every one of those tiles' `aria-label`, which is the only name a screen
- * reader or a hover ever gets for them.
- */
 const TOOL_LABEL: Record<SculptTool, string> = {
   stamp: 'Stamp',
   smooth: 'Smooth',
@@ -209,12 +118,6 @@ const PROFILE_LABEL: Record<SculptProfile, string> = {
   hard: 'Hard',
 };
 
-/**
- * The face each tool and each edge profile wears in the dock (BrushIcons.tsx).
- * Keyed by the SAME shared unions the pickers iterate, so a tool added to
- * shared without art here fails to typecheck rather than rendering a blank
- * tile.
- */
 const TOOL_ICON: Record<SculptTool, Component> = {
   stamp: StampIcon,
   smooth: SmoothIcon,
@@ -227,26 +130,12 @@ const PROFILE_ICON: Record<SculptProfile, Component> = {
   hard: HardIcon,
 };
 
-/**
- * The brush-width slider's top index: it spans the ladder by INDEX, not by
- * radius, which is what makes a native range snap to exactly the rungs
- * BRUSH_RADII offers (hudState.ts) instead of to arithmetic in between them.
- * Derived from the ladder, so a rung added there widens the slider by itself.
- */
 const BRUSH_RUNG_MAX = BRUSH_RADII.length - 1;
 
-/**
- * Where the current brush sits on the ladder. A FUNCTION, not a const: it
- * reads `brushRadius()` at call time, per the file header. Clamped at 0
- * because a radius off the ladder (which readRadius in hudState.ts already
- * refuses to load) must still leave the slider on a real rung rather than at
- * -1.
- */
 function brushRungIndex(): number {
   return Math.max(0, BRUSH_RADII.indexOf(brushRadius()));
 }
 
-/** Decimal places the slider's nominal widths carry: "0.50", "4.00". */
 const BRUSH_WIDTH_DECIMALS = 2;
 
 function brushWidthLabel(radius: number): string {
@@ -260,16 +149,7 @@ const HINT_MODIFIER: Record<string, string> = {
   alt: 'Alt+',
 };
 
-/**
- * The Mode button's tooltip. It names the LIVE lower binding rather than a
- * hardcoded "Shift", because that binding is user-editable in the Controls
- * panel — a fixed "Shift lowers" would start lying the moment it is rebound.
- * Tapping the button switches direction too, which is how a device with no
- * modifier keys does it; that is the button's job, so the tip need not say so.
- */
 function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
-  // The chord quoted is the one that does the OPPOSITE of the current mode —
-  // that is the escape hatch the sentence is offering.
   const opposite = mode === 'lower' ? bindings.raise : bindings.lower;
   const chord = `${HINT_MODIFIER[opposite.modifier]}${HINT_BUTTON[opposite.button]}`;
   return mode === 'lower'
@@ -277,63 +157,30 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
     : `Raise: drag piles land (${chord}-drag lowers)`;
 }
 
-/**
- * The corner panel's collapsed-tab word: the first 'panel' plugin's name,
- * capitalised ("relics" → "Relics"); falls back to "Info" when no plugin has
- * claimed the corner, so the tab is never empty.
- */
 function cornerTabName(): string {
   const first = pluginHudPanels().find((p) => p.placement === 'panel');
   if (first === undefined) return 'Info';
-  // A plugin may supply a live tab label (relics: "Relics (3)"); otherwise
-  // the capitalised registration name stands in.
   return first.tabSummary?.() ?? first.pluginName.charAt(0).toUpperCase() + first.pluginName.slice(1);
 }
 
-/** Corner-panel plugins whose body currently has something to show. */
 function cornerBodies(): PluginHudPanel[] {
   return pluginHudPanels().filter((p) => p.placement === 'panel' && (p.hasBody?.() ?? true));
 }
 
-/** Corner-panel plugins with a header line. */
 function cornerHeaders(): PluginHudPanel[] {
   return pluginHudPanels().filter((p) => p.placement === 'panel' && p.headerSummary);
 }
 
 export function Hud(props: {
-  /** What the world-manager panel may ask the server to do (multi-world). */
   worlds: WorldActions;
-  /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
   chartSource: () => ChartSource | null;
-  /**
-   * What the restore-points panel may ask the server to do (world rollback).
-   * Passed in rather than imported so the HUD holds no reference to the
-   * connection — the same arrangement as chartSource above.
-   */
   rollback: RollbackActions;
-  /**
-   * The keyless "restart client + server" button's one action (owner,
-   * 2026-09-04). Passed in for the same reason as the two above: the HUD
-   * holds no reference to the connection.
-   */
   restartStack: () => void;
 }): JSX.Element {
-  // The button column's container, for the click-outside dismissal below. A
-  // plain let-ref (Solid idiom); assigned once when the section renders.
   let settingsRoot: HTMLDivElement | undefined;
 
-  // The connection popup's open state. Component-local rather than in
-  // hudState.ts — unlike showControls (persisted, because a player who opened
-  // the bindings editor should find it open next session), a status readout
-  // answers a question asked in the moment and should never be waiting on the
-  // screen after a reload.
   const [showConnection, setShowConnection] = createSignal(false);
 
-  // ONE POPUP AT A TIME. Both popups grow upward from the same point at the
-  // top of the button column (hud.css), so two open at once would overlap.
-  // Rather than give them separate anchors and a narrower column, opening
-  // either closes the other — which is also what a player expects from a row
-  // of buttons where each opens one thing.
   const openConnection = (open: boolean): void => {
     setShowConnection(open);
     if (open) setShowControls(false);
@@ -343,19 +190,9 @@ export function Hud(props: {
     if (open) setShowConnection(false);
   };
 
-  // DISMISSAL: Escape and click-outside both close whichever popup is open — a
-  // popup that only its own button can close feels stuck. Registered once (the
-  // component body runs once) on window, reading the accessors at EVENT time
-  // rather than tracking them. Neither handler claims the event: a click that
-  // dismisses the popup still reaches whatever it landed on (canvas included),
-  // matching how every native popover behaves.
   const onWindowKeyDown = (event: KeyboardEvent): void => {
-    // The chart overlay owns Escape while it is open (Cartographer.tsx has its
-    // own listener); one press must close one layer, not both.
     if (chartOpen()) return;
     if (event.key !== 'Escape') return;
-    // An armed admin action is put down first, alone: the operator who
-    // pressed Escape mid-aim wants out of the aim, not out of every popup.
     if (armedAction() !== null) {
       setArmedAction(null);
       return;
@@ -380,68 +217,36 @@ export function Hud(props: {
 
   return (
     <div class="hud">
-      {/* Top centre, top to bottom: the world header (core — whose world this
-          is), then the plugin stack (at-a-glance status). The header is first
-          in source order and the container is a column, so it sits ABOVE
-          anything a plugin places here, whatever plugins are installed. */}
+      {
+}
       <div class="hud-top-center">
         <WorldHeader />
-        {/* The admin aim strip, IN THE STACK under the header rather than a
-            fixed banner (owner, 2026-09-01: a fixed one drew over the world
-            name). It exists precisely while the admin panel is closed, so it
-            is never gated on it. */}
+        {
+}
         <AdminAim />
         <For each={pluginHudPanels().filter((p) => p.placement === 'top-center')}>
           {(panel) => <Dynamic component={panel.component} />}
         </For>
       </div>
 
-      {/* TOP RIGHT: the build-identity watermark — core diagnostic chrome,
-          outside every panel so it stays readable however the HUD is
-          collapsed (see VersionWatermark.tsx for the 2026-08-19 skew story
-          it exists to expose). */}
+      {
+}
       <VersionWatermark />
 
-      {/* THE BOTTOM STRIP (owner refinement, 2026-08-19): the bottom-centre
-          instruments and the settings column share ONE grid row —
-          `minmax(0,1fr) auto minmax(0,1fr)` — so the centre cell stays
-          dead-centre on a desktop while a phone-width screen shrinks the side
-          cells and the sections flow along the bottom edge instead of
-          colliding. The strip itself never takes pointer events; each section
-          does. Each section NAMES its column in hud.css rather than relying on
-          auto-placement: the left cell empties whenever a plugin tool is held
-          (below), and auto-placement would then slide the centre cell into it
-          and take the toolbar off centre. */}
+      {
+}
       <div class="hud-bottom-strip">
-        {/* BOTTOM LEFT — the MODELER: what a playing hand reaches for, in the
-            corner it has always been in (owner, 2026-09-04: "I want the center
-            HUD to remain where it was and I want the tool HUD to stay on the
-            left"). Collapsing the info panel never takes the tools away.
+        {
 
-            THIS IS THE BRUSH'S SETTINGS, so it is on screen only while the
-            brush is what the hand is holding: `activeToolId()` is
-            SCULPT_TOOL_ID (plugins/toolbar.ts) exactly then. A plugin tool
-            (Pyro, Temple) configures nothing here, and leaving a brush width
-            and a sculpt direction up beside its toolbar would be offering
-            settings that provably do not touch the press about to be made —
-            the same argument the Edge and Mode rows below make for themselves.
-
-            EVERY CONTROL IS ICON-ONLY and carries its own `title` and
-            `aria-label`; the row labels the panel used to wear are gone with
-            the words on the tiles. */}
+}
         <Show when={activeToolId() === SCULPT_TOOL_ID}>
           <div
             class="hud-modeler hud-anchor-bottom-left"
             role="group"
             aria-label="Brush"
           >
-            {/* ONE INLINE ROW (owner mockup, 2026-09-04: "give me this inline
-                version"): the tool picker, then the edge picker, then the
-                direction disc, side by side, with the width slider alone
-                beneath. Tool and edge are orthogonal by design — hard+smooth
-                stamps a plateau and lets it slump. Every reactive value is
-                read by calling its accessor inline, per the file header; the
-                label and icon maps are static, so they need no accessor. */}
+            {
+}
             <div class="hud-row">
               <div class="brush-picker">
                 <For each={BRUSH_TOOLS}>
@@ -460,21 +265,8 @@ export function Hud(props: {
                 </For>
               </div>
 
-              {/* EDGE and MODE follow on the same row, and each is present
-                  ONLY FOR THE TOOLS THAT HAVE IT (issue #225; owner report,
-                  2026-09-02: "Mode should also not be displayed in the HUD,
-                  much as we do not show hard or smooth for the drag tool").
-                  The drag and the carve have no edge profile at all and the
-                  carve only ever removes — shared says which tools those are,
-                  and its resolver normalises theirs away, so leaving either
-                  control up would offer a choice that provably does nothing.
-                  They are REMOVED rather than disabled: a disabled control
-                  claims the setting is unavailable right now, and these do
-                  not apply. The stored profile and mode are untouched, so
-                  picking Stamp again comes back to whatever the player last
-                  chose. `brushTool()` is called inside the JSX, per the file
-                  header — a `const` here would freeze the row on the
-                  mount-time tool. */}
+              {
+}
               <Show when={!TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool())}>
                 <div class="brush-picker">
                   <For each={BRUSH_PROFILES}>
@@ -495,12 +287,8 @@ export function Hud(props: {
               </Show>
 
               <Show when={!TOOLS_WITHOUT_DIRECTION.includes(brushTool())}>
-                {/* A button, not a label: on touch there are no modifier
-                    keys, so tapping this is how one-finger sculpting
-                    switches direction. It keeps its two colour states —
-                    accent green raising, `--hud-lower` orange lowering —
-                    and now says the same thing twice, in the colour and in
-                    the arrow it wears. */}
+                {
+}
                 <button
                   type="button"
                   class="mode-value"
@@ -518,30 +306,9 @@ export function Hud(props: {
               </Show>
             </div>
 
-            {/* BRUSH WIDTH as a slider (owner, 2026-09-04: "turn it into a
-                slider that goes from least to most values with stops for the
-                two center values"). A NATIVE `input[type=range]` carrying the
-                ladder's INDEX rather than its radius: the rungs are the
-                only reachable values, so the control snaps to them and the
-                arrow keys, Home and End all step rung by rung for free —
-                which a div-and-pointer-handler slider would have had to
-                reimplement, badly.
+            {
 
-                The numbers on show are NOMINAL WIDTHS IN WORLD UNITS (owner,
-                2026-09-05: "0.50, 1.00, 2.00, and 4.00 with 0.50 increments
-                in between"), not the ladder's raw radii — see
-                brushNominalWidthWorldUnits (hudState.ts). The ends caption
-                the ladder's first and last rung; the live width rides under
-                the thumb. `aria-valuetext` says the width actually painted
-                (brushWidthWorldUnits), because the raw index a screen reader
-                would otherwise read out ("3 of 7") means nothing to a
-                player. Only the anchors get detents; the half-unit stops
-                between them are felt, not drawn. No tooltip (owner,
-                2026-09-05: "eliminate the tool tip for the brush size").
-
-                --brush-rung is the index the track's fill, its detents and
-                the caption's position are all derived from in CSS, so there
-                is one number to keep true rather than three. */}
+}
             <div class="hud-row brush-slider">
               <span class="brush-slider__end">
                 {brushWidthLabel(BRUSH_RADII[0])}
@@ -555,8 +322,8 @@ export function Hud(props: {
               >
                 <span class="brush-slider__rail" />
                 <span class="brush-slider__fill" />
-                {/* One detent per ANCHOR, its ring growing with the brush it
-                    stands for, so the width reads before the number does. */}
+                {
+}
                 <For each={BRUSH_ANCHOR_RADII}>
                   {(radius, anchor) => (
                     <span
@@ -593,11 +360,8 @@ export function Hud(props: {
           </div>
         </Show>
 
-        {/* Bottom centre: the tool bar, alone in its cell now that the
-            gauge has moved right (owner move, 2026-08-25) and the modeler
-            stayed left (owner, 2026-09-04). The container is `column-reverse`
-            (hud.css), so plugin 'bottom-center' panels registered later stack
-            above it. */}
+        {
+}
         <div class="hud-bottom-center">
           <Toolbar />
           <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
@@ -605,16 +369,8 @@ export function Hud(props: {
           </For>
         </div>
 
-        {/* BOTTOM RIGHT — the MANA GAUGE (owner move, 2026-08-25: out of the
-            centre cell, whose toolbar no longer shares it) and the BUTTON
-            COLUMN of equal icon buttons, each opening exactly one thing, with
-            the popups that grow upward from the top of the column so no
-            button ever moves under the pointer. The gauge sits to the LEFT of
-            the column, in the same strip cell, so the two read as one corner.
-            Everything below shares the cell; the click-outside dismissal (top
-            of the component) still treats only the button column as one
-            region. Icon-only buttons (owner, 2026-08-19); the aria-label and
-            title carry the words the faces no longer do. */}
+        {
+}
         <div class="hud-bottom-right">
         <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-right')}>
           {(panel) => <Dynamic component={panel.component} />}
@@ -627,23 +383,19 @@ export function Hud(props: {
               aria-label="Control settings"
             >
               <ControlsPanel />
-              {/* Beside the bindings panel: its reset button promises to reset
-                  "every setting on this panel", and audio is not a binding. */}
+              {
+}
               <AudioSettingsPanel />
-              {/* Plugin panels registered with the 'settings' placement (the
-                  music plugin's tuning dials) render under the audio sliders
-                  — same filter pattern as the connection popup below. */}
+              {
+}
               <For each={pluginHudPanels().filter((p) => p.placement === 'settings')}>
                 {(panel) => <Dynamic component={panel.component} />}
               </For>
             </div>
           </Show>
 
-          {/* The connection popup: the same status row that used to head the
-              top-left panel, plus the sentence that was only ever a hover
-              title. Stating it in the popup is the point — a touch device has
-              no hover, so on a phone that sentence was previously unreachable
-              text. */}
+          {
+}
           <Show when={showConnection()}>
             <div
               class="hud-panel hud-settings-popup hud-connection-popup"
@@ -658,19 +410,16 @@ export function Hud(props: {
                 <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
               </div>
               <p class="hud-hint">{STATUS_TITLE[connectionStatus()]}</p>
-              {/* Plugin panels registered with the 'connection' placement
-                  (the invite link) render here, under the status row and its
-                  sentence — same filter pattern as the bottom-centre stack. */}
+              {
+}
               <For each={pluginHudPanels().filter((p) => p.placement === 'connection')}>
                 {(panel) => <Dynamic component={panel.component} />}
               </For>
             </div>
           </Show>
 
-          {/* The connection button. Its face is the status dot and nothing
-              else, so the link stays glanceable at all times without the
-              popup — including its pulse while connecting or reconnecting
-              (hud.css animates the dot by status class). */}
+          {
+}
           <button
             type="button"
             class="hud-panel hud-settings-button hud-connection-button"
@@ -686,10 +435,8 @@ export function Hud(props: {
               classList={{ [`status-${connectionStatus()}`]: true }}
             />
           </button>
-          {/* The Cartographer's door: stacked ABOVE the gear so the bottom
-              strip gains no width — the phone-width flow (file header) is
-              untouched. Icon-only like the gear; an inline stroke SVG rather
-              than an emoji so it takes the HUD's muted colour. */}
+          {
+}
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -705,23 +452,9 @@ export function Hud(props: {
               <path d="M9 4v14M15 6v14" />
             </svg>
           </button>
-          {/* SHOW THE WHOLE WORLD (owner, 2026-09-06). Sits with the chart
-              because it answers the same question the chart does — "what is
-              out there?" — and unlike its neighbours it opens nothing: one
-              press asks the server for every chunk, the next asks for this
-              player's own territory back.
+          {
 
-              aria-pressed, not aria-expanded, for the same reason as the
-              performance meter below: the effect lands on the world, not in a
-              disclosure under the button.
-
-              IT DOES NOT FLIP ITSELF. The pressed state follows the server's
-              receipt (worldsState.worldViewScope), so a refusal — this is an
-              operator action, gated by the world-admin key like the Worlds
-              panel — leaves the button where it was rather than lying about
-              what is on screen. On an unkeyed server (WORLD_ADMIN_KEY=) the
-              empty key this sends is accepted, which is the whole point of
-              that setting. */}
+}
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -743,21 +476,16 @@ export function Hud(props: {
               })
             }
           >
-            {/* A globe with a meridian: the whole world, as opposed to the
-                chart's folded map of the part you know. */}
+            {
+}
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="9" />
               <path d="M3 12h18" />
               <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18Z" />
             </svg>
           </button>
-          {/* Restore points: the door to world rollback. It sits in the same
-              column as the chart and the gear because it is the same shape of
-              control — one icon, one thing behind it — and it is an OPERATOR
-              tool, so it deliberately gets no more prominence than that. The
-              clock-with-an-arrow is the conventional "history" glyph, drawn as
-              an inline stroke SVG so it takes the HUD's muted colour like its
-              neighbours rather than an emoji's own. */}
+          {
+}
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -768,7 +496,7 @@ export function Hud(props: {
             title="Worlds: create, load and archive"
             onClick={() => setWorldPanelOpen(!worldPanelOpen())}
           >
-            {/* A stack of map layers: several worlds, one on top. */}
+            {}
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
               <path d="m3 12 9 4.5L21 12" />
@@ -803,16 +531,8 @@ export function Hud(props: {
           >
             ⚙
           </button>
-          {/* RESTART CLIENT + SERVER (owner, 2026-09-04): the development
-              loop's update button. ONE CLICK, NO KEY, NO ARMING — the owner's
-              ruling ("I just want it to be quick"): it destroys nothing (the
-              world is saved first and comes back, the page reloads itself
-              when the client dev server returns), and it is the only way new
-              CLIENT code arrives, because Vite on this disk does not watch
-              files. The keyed, armed "Restart server" in the Worlds panel
-              restarts the server half only. Same 40px square as its
-              neighbours; a circular arrow with a power-line, the conventional
-              "restart" glyph, as an inline stroke SVG like the rest. */}
+          {
+}
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -825,21 +545,9 @@ export function Hud(props: {
               <path d="M12 3v8" />
             </svg>
           </button>
-          {/* THE FRAME METER'S SWITCH (owner, 2026-09-06). Beside the restart
-              button rather than beside the flask: both are development-loop
-              controls, and both act immediately with nothing behind them —
-              this one opens no popup, it turns four lines on in the top-right
-              diagnostic column where the frame rate and the draw budget
-              already live (ui/VersionWatermark.tsx).
+          {
 
-              NO aria-haspopup, unlike its neighbours: nothing pops up. It IS
-              aria-pressed, because that is what a toggle whose effect lands
-              elsewhere on the screen owes a screen reader — aria-expanded
-              would promise a disclosure this button does not perform.
-
-              Backquote does the same thing from the keyboard
-              (render/perfHandle.ts); the title says so, because a shortcut no
-              one can discover is a shortcut no one uses. */}
+}
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -849,18 +557,14 @@ export function Hud(props: {
             title="Performance: frame time, resource counts (`)"
             onClick={() => setPerfOpen(!perfOpen())}
           >
-            {/* A pulse trace — the conventional glyph for a live meter, and
-                unlike a bar chart it cannot be mistaken for the Cartographer. */}
+            {
+}
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 12h3.5l2.5-6 4 12 2.5-6H21" />
             </svg>
           </button>
-          {/* ADMIN MODE (owner, 2026-09-01): the debug spawn panel's door, at
-              the very bottom of the column — the corner of the screen — so
-              it is the last thing in the row and the first thing under the
-              thumb. An operator tool like the restore points above it, so
-              it gets the same 40px square and no more prominence. A flask:
-              this is where experiments are run. */}
+          {
+}
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -881,20 +585,11 @@ export function Hud(props: {
         </div>
       </div>
 
-      {/* TOP LEFT — the INFO panel: plugin 'panel' panels. The control
-          descriptions moved to the settings popup (owner, 2026-08-21), so
-          this corner is purely plugin content. Collapses to a tab exactly as the old all-in-one panel
-          did (owner, 2026-08-14: on a phone the open panel hides half the
-          world). The connection no longer rides on either face — it is its own
-          button in the bottom-right column now (see this file's header), which
-          is what stops the plugin panels below from reading as part of it. */}
+      {
+}
       <Show
         when={cornerBodies().length > 0}
         fallback={
-          /* NOTHING TO EXPAND (owner, 2026-09-05: no relic held → "just the
-             line about how many relics are in the world"): the header lines
-             stand alone, with no chevron and no collapse — an empty body is
-             not worth a control. */
           <div class="hud-panel hud-panel--compact hud-anchor-top-left">
             <div class="hud-row panel-header panel-header--static">
               <For each={cornerHeaders()}>
@@ -914,19 +609,15 @@ export function Hud(props: {
             title={`${cornerTabName()}: open the panel`}
             onClick={() => setPanelOpen(true)}
           >
-            {/* The tab is named by the panel's first plugin — "Relics", not a
-                generic "Info" — capitalised from the plugin's registration
-                name; with no plugins it falls back to the old word. */}
+            {
+}
             {cornerTabName()}
           </button>
         }
       >
         <div class="hud-panel hud-anchor-top-left">
-          {/* The header row IS the collapse control — the panel's first row on
-              every device, so open and closed toggle in the same place. It
-              carries no word of its own: its content is the plugins'
-              headerSummary lines (relics' "Relics · N in the world"), which
-              also name the collapsed tab below. */}
+          {
+}
           <button
             type="button"
             class="hud-row panel-header"
@@ -940,11 +631,8 @@ export function Hud(props: {
             <span class="panel-chevron">▴</span>
           </button>
 
-          {/* Plugin panels (design doc): each client plugin may register
-              components; 'panel'-placed ones stack inside the info panel —
-              the placement contract's meaning ("the corner panel",
-              client/src/plugins/types.ts) is unchanged, only the corner's
-              contents around them slimmed down. */}
+          {
+}
           <For each={cornerBodies()}>
             {(panel) => (
               <div class="hud-plugin-panel">
@@ -956,34 +644,32 @@ export function Hud(props: {
       </Show>
       </Show>
 
-      {/* The Cartographer overlay, mounted only while open — mounting IS the
-          draw (its onMount charts the world of that moment). */}
+      {
+}
       <Show when={chartOpen()}>
         <Cartographer source={props.chartSource} />
       </Show>
 
-      {/* The restore-points overlay, mounted only while open — the panel asks
-          the server for nothing until the operator types a key and presses
-          List, so mounting it costs one empty sheet. */}
+      {
+}
       <Show when={restorePanelOpen()}>
         <RestorePoints actions={props.rollback} />
       </Show>
 
-      {/* The world-manager overlay, mounted only while open — it asks the
-          server for nothing until the operator types a key and presses List. */}
+      {
+}
       <Show when={worldPanelOpen()}>
         <WorldManager actions={props.worlds} />
       </Show>
 
-      {/* The admin panel, mounted only while open — it asks the server for
-          nothing until a key is in hand, and then only for the listing. */}
+      {
+}
       <Show when={adminPanelOpen()}>
         <AdminPanel actions={props.worlds} />
       </Show>
 
-
-      {/* Not gated on the panel: a switch countdown and "no world loaded" are
-          shown to every player, whether or not they hold a key. */}
+      {
+}
       <WorldSwitchBanner />
 
     </div>

@@ -1,8 +1,3 @@
-// Contract tests for shared/src/rng.ts — the one randomness library the plugins
-// share. Abbreviated on purpose: what is asserted here is the CONTRACT (the
-// exact mulberry32 stream, the Poisson form, the guards), not a statistical
-// survey of the generator.
-
 import { describe, expect, it } from 'vitest';
 import {
   createRandomSource,
@@ -15,11 +10,6 @@ import {
   rollEvent,
 } from '../src/index.ts';
 
-/**
- * The stream the seven copies produced, restated INLINE here rather than
- * imported: a golden vector derived from the thing it guards is not a guard.
- * This is mulberry32 exactly as every copy wrote it.
- */
 function referenceMulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -43,7 +33,6 @@ describe('createSeededRng', () => {
     rng.next();
     const state = rng.state();
     expect(state).toBe(state >>> 0);
-    // The state IS the seed: resuming from it continues the sequence.
     const resumed = createSeededRng(state);
     expect(resumed.next()).toBe(rng.next());
   });
