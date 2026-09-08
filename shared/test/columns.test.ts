@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BAND_HEIGHT,
   BEDROCK_FLOOR,
+  canCarveBandAt,
   createHeightmap,
   heightAt,
   seabedHeight,
   SEA_LEVEL,
+  MAX_SPANS_PER_COLUMN,
   setColumn,
+  spanCount,
   type Heightmap,
+  type Span,
 } from '../src/index.ts';
 
 const WORLD_SIZE = 16;
@@ -66,5 +71,38 @@ describe('seabedHeight', () => {
     ]);
     expect(seabedHeight(map, 11, 12)).toBe(-50);
     expect(seabedHeight(map, 11, 12)).toBe(heightAt(map, 11, 12));
+  });
+});
+
+function stackedSpans(count: number): Span[] {
+  const spans: Span[] = [{ floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT }];
+  for (let k = 1; k < count; k++) {
+    const floor = BEDROCK_FLOOR + k * 2 * BAND_HEIGHT;
+    spans.push({ floor, ceiling: floor + BAND_HEIGHT });
+  }
+  return spans;
+}
+
+describe('MAX_SPANS_PER_COLUMN', () => {
+  it('lets setColumn write a column at the limit', () => {
+    const map = world();
+    setColumn(map, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN));
+    expect(spanCount(map, 4, 4)).toBe(MAX_SPANS_PER_COLUMN);
+  });
+
+  it('makes setColumn throw past the limit', () => {
+    const map = world();
+    expect(() => setColumn(map, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN + 1))).toThrow(RangeError);
+  });
+
+  it('makes canCarveBandAt refuse a column already at the limit', () => {
+    const band = 5;
+    const below = world();
+    setColumn(below, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN - 1));
+    expect(canCarveBandAt(below, 4, 4, band)).toBe(true);
+
+    const atLimit = world();
+    setColumn(atLimit, 4, 4, stackedSpans(MAX_SPANS_PER_COLUMN));
+    expect(canCarveBandAt(atLimit, 4, 4, band)).toBe(false);
   });
 });
