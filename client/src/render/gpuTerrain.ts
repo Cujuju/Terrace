@@ -5,6 +5,7 @@ import {
   InstancedBufferAttribute,
   Matrix4,
   Mesh,
+  Vector2,
   type InstancedBufferGeometry,
   type MeshLambertMaterial,
   type Camera,
@@ -16,10 +17,11 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   TERRAIN_LOD_FAR_N,
+  TERRAIN_LOD_MAX_SCREEN_ERROR_PIXELS,
   TERRAIN_LOD_NEAR_N,
-  TERRAIN_LOD_NEAR_RADIUS_CHUNKS,
   cellCoordToWorld,
   chunksPerEdge,
+  drawnGroundLodError,
 } from '@terrace/shared';
 import { CHUNK_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { RENDER_HALO_CELLS, type TerrainMirror } from '../terrain/mirror.ts';
@@ -29,8 +31,6 @@ import { createBandPaletteTexture, createHeightTexture } from './gpuTerrainTextu
 import { createChunkTemplate, createGpuTerrainMaterial } from './gpuTerrainMaterial.ts';
 
 export const GPU_TERRAIN_SMOOTH_DEFAULT = true;
-
-const NEAR_LOD_WORLD_RADIUS = TERRAIN_LOD_NEAR_RADIUS_CHUNKS * CHUNK_WORLD_SIZE;
 
 /** The bilinear blend floors to a band, so a chunk can drop one band below its cells. */
 const CHUNK_BOUND_SLACK_HEIGHT = BAND_HEIGHT;
@@ -89,8 +89,11 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
   const levels = [near, far];
 
   const built = new Uint8Array(chunkCount);
+  const builtChunks: number[] = [];
   const minY = new Float32Array(chunkCount);
   const maxY = new Float32Array(chunkCount);
+  /** Height a chunk loses at the far level, in world units. */
+  const lodError = new Float32Array(chunkCount);
   const pending = new Set<number>();
   const drawnHandlers = new Set<(chunkIdx: number) => void>();
   const drawnGroundStore = createDrawnGroundStore(map.size);
@@ -98,6 +101,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
   const frustum = new Frustum();
   const viewProjection = new Matrix4();
   const bounds = new Box3();
+  const viewport = new Vector2();
 
   const measureChunk = (cx: number, cy: number, chunkIdx: number): void => {
     const x0 = Math.max(0, cx * CHUNK_SIZE - RENDER_HALO_CELLS);
@@ -116,6 +120,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
     }
     minY[chunkIdx] = (lo - CHUNK_BOUND_SLACK_HEIGHT) * HEIGHT_WORLD_SCALE;
     maxY[chunkIdx] = hi * HEIGHT_WORLD_SCALE;
+    lodError[chunkIdx] = drawnGroundLodError(map, cx, cy) * HEIGHT_WORLD_SCALE;
   };
 
   const flushUploads = (renderer: WebGLRenderer): void => {
@@ -133,26 +138,36 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
     pending.clear();
   };
 
-  const selectChunks = (camera: Camera): void => {
+  const selectChunks = (renderer: WebGLRenderer, camera: Camera): void => {
     viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(viewProjection);
     const eye = camera.matrixWorld;
-    const eyeX = eye.elements[12];
-    const eyeZ = eye.elements[14];
+    const eyeX = eye.elements[12]!;
+    const eyeY = eye.elements[13]!;
+    const eyeZ = eye.elements[14]!;
+    // Perspective row that scales view-space Y into clip space: 1 / tan(fov / 2).
+    const clipScaleY = camera.projectionMatrix.elements[5]!;
+    renderer.getSize(viewport);
+    const pixelsPerWorldAtUnitDistance = (clipScaleY * viewport.y) / 2;
+    // Error and distance both scale linearly, so compare their squares and skip the roots.
+    const errorPerDistanceSq =
+      (TERRAIN_LOD_MAX_SCREEN_ERROR_PIXELS / pixelsPerWorldAtUnitDistance) ** 2;
     near.visible = 0;
     far.visible = 0;
-    for (let chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
-      if (built[chunkIdx] === 0) continue;
+    for (const chunkIdx of builtChunks) {
       const cx = chunkIdx % chunkCols;
       const cy = (chunkIdx - cx) / chunkCols;
       const originX = cellCoordToWorld(cx * CHUNK_SIZE);
       const originZ = cellCoordToWorld(cy * CHUNK_SIZE);
-      bounds.min.set(originX, minY[chunkIdx], originZ);
-      bounds.max.set(originX + CHUNK_WORLD_SIZE, maxY[chunkIdx], originZ + CHUNK_WORLD_SIZE);
+      bounds.min.set(originX, minY[chunkIdx]!, originZ);
+      bounds.max.set(originX + CHUNK_WORLD_SIZE, maxY[chunkIdx]!, originZ + CHUNK_WORLD_SIZE);
       if (!frustum.intersectsBox(bounds)) continue;
       const dx = eyeX - (originX + CHUNK_WORLD_SIZE / 2);
+      const dy = eyeY - (minY[chunkIdx]! + maxY[chunkIdx]!) / 2;
       const dz = eyeZ - (originZ + CHUNK_WORLD_SIZE / 2);
-      const level = Math.hypot(dx, dz) <= NEAR_LOD_WORLD_RADIUS ? near : far;
+      const error = lodError[chunkIdx]!;
+      const level =
+        error * error > errorPerDistanceSq * (dx * dx + dy * dy + dz * dz) ? near : far;
       const slot = level.visible * INSTANCE_COMPONENTS;
       level.origins.array[slot] = cx * CHUNK_SIZE;
       level.origins.array[slot + 1] = cy * CHUNK_SIZE;
@@ -168,7 +183,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
 
   near.mesh.onBeforeRender = (renderer, _scene, camera): void => {
     flushUploads(renderer);
-    selectChunks(camera);
+    selectChunks(renderer, camera);
   };
 
   group.add(near.mesh, far.mesh);
@@ -181,6 +196,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
         const cx = chunkIdx % chunkCols;
         const cy = (chunkIdx - cx) / chunkCols;
         measureChunk(cx, cy, chunkIdx);
+        if (built[chunkIdx] === 0) builtChunks.push(chunkIdx);
         built[chunkIdx] = 1;
         pending.add(chunkIdx);
       }
@@ -192,6 +208,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
     },
     clear(): void {
       built.fill(0);
+      builtChunks.length = 0;
       pending.clear();
       for (const level of levels) {
         level.visible = 0;
@@ -221,9 +238,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
       return [];
     },
     builtChunkCount(): number {
-      let total = 0;
-      for (const flag of built) total += flag;
-      return total;
+      return builtChunks.length;
     },
     dispose(): void {
       for (const level of levels) {

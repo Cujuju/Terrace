@@ -68,8 +68,6 @@ export const TERRAIN_LOD_NEAR_N = 4;
 
 export const TERRAIN_LOD_FAR_N = 1;
 
-export const TERRAIN_LOD_NEAR_RADIUS_CHUNKS = 16;
-
 export const TERRAIN_LOD_MAX_SCREEN_ERROR_PIXELS = 2;
 
 export const MAX_SPANS_PER_COLUMN = 8;
