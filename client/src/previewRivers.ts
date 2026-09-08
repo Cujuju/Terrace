@@ -17,16 +17,29 @@ import {
   CHUNK_SIZE,
   SEA_LEVEL,
   SPRING_MIN_HEIGHT_ABOVE_SEA,
+  TERRAIN_LOD_NEAR_N,
+  cellCentreCoord,
+  cellCoordToWorld,
   cellIndex,
   chunkIndex,
   chunksPerEdge,
   computeRiverNetwork,
+  drawnGroundHeight,
   riverPoints,
+  worldToCellCoord,
+  worldUnitsAcross,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
-import { createTerrainMeshes } from './render/terrainMeshes.ts';
-import { chunkContourLoops } from './terrain/vertexGrid.ts';
+import { createGpuTerrainMeshes } from './render/gpuTerrain.ts';
+import {
+  RECT_NONE,
+  assembleLoops,
+  loadSamples,
+  marchLevel,
+  samples as contourSamples,
+} from './terrain/contours.ts';
+import { smoothLoop } from './terrain/contourSmoothing.ts';
 import { createRiverRig } from './render/riverRig.ts';
 
 const SKY_COLOR = 0x9fc7e8;
@@ -39,6 +52,13 @@ const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 const BACKDROP_COLOR = 0x9fc7e8;
 const SETTLE_FRAME_COUNT = 6;
+const CAMERA_DISTANCE_FRACTION = 0.85;
+const FRAME_SECONDS = 1 / 60;
+const SUN_DISTANCE_WORLD_UNITS = 400;
+const MIN_LOOP_POINTS = 3;
+
+/** One sub-cell of the near LOD: the finest step the drawn surface can change over. */
+const OCCLUSION_STEP_WORLD_UNITS = worldUnitsAcross(1 / TERRAIN_LOD_NEAR_N);
 
 const PREVIEW_WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -288,7 +308,7 @@ scene.background = new Color(BACKDROP_COLOR);
 scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
 scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
 const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
-sun.position.copy(SUN_DIRECTION).multiplyScalar(400);
+sun.position.copy(SUN_DIRECTION).multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
 scene.add(sun);
 
 const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -312,10 +332,8 @@ for (let cy = 0; cy < chunkCols; cy++) {
 
 const terrainGroup = new Group();
 scene.add(terrainGroup);
-const meshes = createTerrainMeshes(terrainGroup, mirror);
+const meshes = createGpuTerrainMeshes(terrainGroup, mirror);
 meshes.update(allChunks);
-meshes.flush();
-meshes.settle({ assumeQuiet: true });
 
 const frameHandlers: ((dt: number) => void)[] = [];
 const rivers = createRiverRig(scene, (handler) => {
@@ -327,14 +345,50 @@ rivers.forceRefresh(mirror);
 const network = computeRiverNetwork(mirror.map);
 const wet = network.rivers.flatMap((river) => riverPoints(river));
 const wetHeights = wet.map((p) => mirror.map.cells[cellIndex(mirror.map, p.x, p.y)]!);
+const centreWorld = cellCoordToWorld(cellCentreCoord(PREVIEW_WORLD_SIZE / 2));
 const centre = new Vector3(
-  (PREVIEW_WORLD_SIZE / 2) * CELL_WORLD_SIZE,
+  centreWorld,
   ((Math.min(...wetHeights) + Math.max(...wetHeights)) / 2) * HEIGHT_WORLD_SCALE,
-  (PREVIEW_WORLD_SIZE / 2) * CELL_WORLD_SIZE,
+  centreWorld,
 );
-const span = PREVIEW_WORLD_SIZE * CELL_WORLD_SIZE;
+const span = worldUnitsAcross(PREVIEW_WORLD_SIZE);
 
-const CELL_CENTRE_OFFSET = 0.5;
+function groundWorldY(worldX: number, worldZ: number): number | null {
+  const cellX = worldToCellCoord(worldX);
+  const cellZ = worldToCellCoord(worldZ);
+  if (cellX < 0 || cellZ < 0 || cellX > PREVIEW_WORLD_SIZE || cellZ > PREVIEW_WORLD_SIZE) {
+    return null;
+  }
+  return drawnGroundHeight(mirror.map, cellX, cellZ) * HEIGHT_WORLD_SCALE;
+}
+
+// The GPU terrain carries no CPU geometry, so occlusion samples the field itself.
+function groundOccludes(from: Vector3, to: Vector3): boolean {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const steps = Math.ceil(Math.hypot(dx, dz) / OCCLUSION_STEP_WORLD_UNITS);
+  for (let step = 1; step < steps; step++) {
+    const t = step / steps;
+    const groundY = groundWorldY(from.x + dx * t, from.z + dz * t);
+    if (groundY !== null && groundY > from.y + (to.y - from.y) * t) return true;
+  }
+  return false;
+}
+
+function contourLoops(
+  cx: number,
+  cy: number,
+  threshold: number,
+): { x: number; z: number; onBorder: boolean }[][] {
+  const originX = cx * CHUNK_SIZE;
+  const originZ = cy * CHUNK_SIZE;
+  loadSamples(mirror, originX, originZ);
+  const segmentCount = marchLevel(threshold, originX, originZ, null);
+  return assembleLoops(segmentCount, originX, originZ, contourSamples[0]! >= threshold)
+    .map(smoothLoop)
+    .filter((loop) => loop.length >= MIN_LOOP_POINTS)
+    .map((loop) => loop.map((p) => ({ x: p.x, z: p.z, onBorder: p.rect !== RECT_NONE })));
+}
 
 function parseLookAtCell(): { x: number; z: number } | null {
   const raw = new URLSearchParams(window.location.search).get('at');
@@ -367,37 +421,27 @@ const lookAt =
   lookAtCell === null
     ? centre
     : new Vector3(
-        (lookAtCell.x + CELL_CENTRE_OFFSET) * CELL_WORLD_SIZE,
+        cellCoordToWorld(cellCentreCoord(lookAtCell.x)),
         mirror.map.cells[cellIndex(mirror.map, Math.floor(lookAtCell.x), Math.floor(lookAtCell.z))]! *
           HEIGHT_WORLD_SCALE,
-        (lookAtCell.z + CELL_CENTRE_OFFSET) * CELL_WORLD_SIZE,
+        cellCoordToWorld(cellCentreCoord(lookAtCell.z)),
       );
 const viewOffset = parseCameraDirection() ?? CAMERA_VIEWS[view as CameraView];
 
 const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.1, 4000);
-camera.position.copy(lookAt).addScaledVector(viewOffset, span * 0.85 * zoom);
+camera.position.copy(lookAt).addScaledVector(viewOffset, span * CAMERA_DISTANCE_FRACTION * zoom);
 camera.lookAt(lookAt);
 
 let frames = 0;
 function animate(): void {
   requestAnimationFrame(animate);
-  for (const handler of frameHandlers) handler(1 / 60);
+  for (const handler of frameHandlers) handler(FRAME_SECONDS);
   renderer.render(scene, camera);
   frames++;
   if (frames === SETTLE_FRAME_COUNT) {
     (window as unknown as { __previewReady?: boolean }).__previewReady = true;
     (window as unknown as { __previewScene?: unknown }).__previewScene = scene;
-    (window as unknown as { __previewPickY?: unknown }).__previewPickY = (
-      worldX: number,
-      worldZ: number,
-    ): number | null => {
-      const ray = new Raycaster(
-        new Vector3(worldX, 10_000, worldZ),
-        new Vector3(0, -1, 0),
-      );
-      const hits = ray.intersectObject(terrainGroup, true);
-      return hits.length > 0 ? hits[0]!.point.y : null;
-    };
+    (window as unknown as { __previewPickY?: unknown }).__previewPickY = groundWorldY;
     (window as unknown as { __previewNetwork?: unknown }).__previewNetwork = network;
     (window as unknown as { __previewTerrain?: unknown }).__previewTerrain = terrainGroup;
     (window as unknown as { __previewHeightAt?: unknown }).__previewHeightAt = (
@@ -420,8 +464,7 @@ function animate(): void {
       cellYCoord: number,
       threshold: number,
     ): { x: number; z: number; onBorder: boolean }[][] =>
-      chunkContourLoops(
-        mirror,
+      contourLoops(
         Math.floor(cellXCoord / CHUNK_SIZE),
         Math.floor(cellYCoord / CHUNK_SIZE),
         threshold,
@@ -449,10 +492,9 @@ function animate(): void {
             );
             const direction = target.clone().sub(camera.position).normalize();
             ray.set(camera.position, direction);
-            const ground = ray.intersectObject(terrainGroup, true)[0];
             const wet = ray.intersectObjects(water, true)[0];
             samples++;
-            const seen = wet !== undefined && (ground === undefined || wet.distance <= ground.distance + 1e-4);
+            const seen = wet !== undefined && !groundOccludes(camera.position, wet.point);
             if (seen) {
               visible++;
               run = null;
