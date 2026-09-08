@@ -125,14 +125,32 @@ export function appendDrawnWaterTile(
   const blendCellOfLattice = (s: number): number =>
     Math.floor(subcellCentreCells(s) - CELL_CENTRE_OFFSET_CELLS);
 
+  const sheetReachesSurface = (x: number, z: number, water: number, drawn: number): boolean => {
+    const sheetHeight = water * BAND_HEIGHT;
+    const bankBuriesIt = drawn > sheetHeight;
+    if (bankBuriesIt) return false;
+    const sitsOnItsOwnCap = drawn === sheetHeight;
+    if (sitsOnItsOwnCap) return true;
+    return quantizeToBand(map.cells[cellIndex(map, x, z)]!) < sheetHeight;
+  };
+
   /** Nearest stencil cell whose sheet reaches the drawn surface owns the sub-cell, so sheets abut. */
   const owningBandAt = (sx: number, sz: number): number | null => {
+    const insideX = clampCell(cellOfLattice(sx));
+    const insideZ = clampCell(cellOfLattice(sz));
+    const insideBand = waterBandAt(insideX, insideZ);
+    let drawn = 0;
+    let drawnKnown = false;
+    if (insideBand !== null) {
+      drawn = groundAt(sx, sz);
+      drawnKnown = true;
+      // The cell the sub-cell sits in is always the nearest of the stencil.
+      if (sheetReachesSurface(insideX, insideZ, insideBand, drawn)) return insideBand;
+    }
     const baseX = blendCellOfLattice(sx);
     const baseZ = blendCellOfLattice(sz);
     const centreX = subcellCentreHalfSubcells(sx);
     const centreZ = subcellCentreHalfSubcells(sz);
-    let drawn = 0;
-    let drawnKnown = false;
     let owner: number | null = null;
     let nearest = 0;
     for (let dz = 0; dz < BLEND_STENCIL_SPAN; dz++) {
@@ -140,6 +158,7 @@ export function appendDrawnWaterTile(
       const offZ = centreZ - cellCentreHalfSubcells(z);
       for (let dx = 0; dx < BLEND_STENCIL_SPAN; dx++) {
         const x = clampCell(baseX + dx);
+        if (x === insideX && z === insideZ) continue;
         const offX = centreX - cellCentreHalfSubcells(x);
         const distance = offX * offX + offZ * offZ;
         if (owner !== null && distance >= nearest) continue;
@@ -149,13 +168,7 @@ export function appendDrawnWaterTile(
           drawn = groundAt(sx, sz);
           drawnKnown = true;
         }
-        const sheetHeight = water * BAND_HEIGHT;
-        const bankBuriesIt = drawn > sheetHeight;
-        if (bankBuriesIt) continue;
-        const sitsOnItsOwnCap = drawn === sheetHeight;
-        if (!sitsOnItsOwnCap && quantizeToBand(map.cells[cellIndex(map, x, z)]!) >= sheetHeight) {
-          continue;
-        }
+        if (!sheetReachesSurface(x, z, water, drawn)) continue;
         owner = water;
         nearest = distance;
       }
