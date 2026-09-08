@@ -10,7 +10,12 @@ import {
   type Span,
 } from '@terrace/shared';
 
-import { chunksDirtiedByCell, hasChunk, type TerrainMirror } from './mirror.ts';
+import {
+  chunksDirtiedByCell,
+  hasChunk,
+  refreshRenderCellsAt,
+  type TerrainMirror,
+} from './mirror.ts';
 
 const ARCH_FIXTURE_QUERY_KEY = 'arch';
 
@@ -129,6 +134,7 @@ export function carveArchFixture(mirror: TerrainMirror): Set<number> {
       }
 
       setColumn(mirror.map, x, z, spans);
+      refreshRenderCellsAt(mirror, x, z);
       for (const idx of chunksDirtiedByCell(mirror, x, z)) dirty.add(idx);
     }
   }
