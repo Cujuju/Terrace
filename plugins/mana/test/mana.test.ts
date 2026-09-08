@@ -937,7 +937,7 @@ describe('the price of a sculpt', () => {
       for (const profile of SCULPT_PROFILES) {
         const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
         const expected = Math.ceil(
-          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, profile, 'stamp')) / BAND_HEIGHT,
+          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, 'stamp')) / BAND_HEIGHT,
         );
         expect(manaCostFor(PLAYER.id, intent)).toBe(expected);
       }
