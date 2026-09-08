@@ -1,15 +1,13 @@
 import {
-  BAND_HEIGHT,
   bandOf,
   isSpanDrawn,
   spanAt,
-  spanCapHeight,
   spanCount,
   spanIndexCoveringBand,
   spanUndersideHeight,
   type Heightmap,
 } from '@terrace/shared';
-import { HEIGHT_WORLD_SCALE } from '../config.ts';
+import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../config.ts';
 import type { TerrainRayPick } from './picking.ts';
 
 export type PickFace = 'riser' | 'tread' | 'underside';
@@ -25,17 +23,17 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   if (pick.spanIndex < 0 || pick.spanIndex >= spanCount(map, pick.x, pick.y)) return null;
   const span = spanAt(map, pick.x, pick.y, pick.spanIndex);
   if (!isSpanDrawn(span)) return null;
-  const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+  const capY = pick.surfaceY;
   const undersideY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
   if (pick.hitY < undersideY || pick.hitY > capY) return null;
 
   const lowestDrawn = bandOf(spanUndersideHeight(span)) + 1;
 
   if (pick.hitRiser) {
-    const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+    const struck = Math.ceil(pick.hitY / BAND_WORLD_HEIGHT);
     return { face: 'riser', band: struck < lowestDrawn ? lowestDrawn : struck };
   }
-  if (pick.hitY === capY) return { face: 'tread', band: bandOf(spanCapHeight(span)) };
+  if (pick.hitY === capY) return { face: 'tread', band: Math.round(capY / BAND_WORLD_HEIGHT) };
   return { face: 'underside', band: lowestDrawn };
 }
 
