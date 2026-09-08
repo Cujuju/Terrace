@@ -1,6 +1,7 @@
 import {
   BAND_HEIGHT,
   CELL_WORLD_SIZE,
+  CHUNK_SIZE,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
   SEA_LEVEL,
@@ -27,6 +28,8 @@ export const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? DEFAULT_SERVER_URL;
 export const ROOM_NAME = import.meta.env.VITE_ROOM_NAME ?? DEFAULT_ROOM_NAME;
 
 export { CELL_WORLD_SIZE };
+
+export const CHUNK_WORLD_SIZE = CHUNK_SIZE * CELL_WORLD_SIZE;
 
 export { MAX_RELIEF_WORLD_UNITS };
 
