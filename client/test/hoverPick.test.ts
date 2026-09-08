@@ -3,7 +3,11 @@ import { PerspectiveCamera } from 'three';
 import {
   BAND_HEIGHT,
   BEDROCK_FLOOR,
+  CELL_CENTRE_OFFSET_CELLS,
   CHUNK_SIZE,
+  TERRAIN_LOD_NEAR_N,
+  cellCentreCoord,
+  drawnGroundHeight,
   spanIndexCoveringBand,
   type ChunkPayload,
   type JoinSnapshotMessage,
@@ -377,6 +381,81 @@ describe('carveReachCell: where a held carve cuts next (#349)', () => {
     const mirror = flatWorld(() => BAND_HEIGHT * GROUND_BAND);
     expect(carveReachCell(mirror, eastward.origin, eastward.direction, GROUND_BAND + 1))
       .toBeNull();
+  });
+});
+
+describe('the foot of a wall carves where the wall is drawn', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+  });
+
+  /** The lowest step of the wall: drawn a band above the near cell's own cap. */
+  const FOOT_BAND = GROUND_BAND + 1;
+  const FOOT_RAY_Y = bandY(GROUND_BAND + 0.5);
+
+  /** Centre of the last sub-cell before the wall, where the blend draws that step. */
+  const LAST_SUBCELL_CENTRE_CELLS =
+    (TERRAIN_LOD_NEAR_N - 1 + CELL_CENTRE_OFFSET_CELLS) / TERRAIN_LOD_NEAR_N;
+
+  const cliff = (): TerrainMirror =>
+    flatWorld((x) => (x >= WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND));
+
+  const atFoot = (): { origin: Vec3; lookAt: Vec3 } => ({
+    origin: { x: cellW(WALL_X - 10), y: FOOT_RAY_Y, z: cellW(AIM_Z) },
+    lookAt: { x: cellW(WALL_X), y: FOOT_RAY_Y, z: cellW(AIM_Z) },
+  });
+
+  it('draws that step over a cell whose own column stops below it', () => {
+    const mirror = cliff();
+    expect(
+      drawnGroundHeight(
+        mirror.renderMap,
+        WALL_X - 1 + LAST_SUBCELL_CENTRE_CELLS,
+        cellCentreCoord(AIM_Z),
+      ),
+    ).toBe(FOOT_BAND * BAND_HEIGHT);
+    expect(spanIndexCoveringBand(mirror.map, WALL_X - 1, AIM_Z, FOOT_BAND)).toBeNull();
+    expect(spanIndexCoveringBand(mirror.map, WALL_X, AIM_Z, FOOT_BAND)).not.toBeNull();
+  });
+
+  it('names the wall column, not the cell the blend drew the step over', () => {
+    const mirror = cliff();
+    const aim = atFoot();
+    const { input, dispose } = driveInput(mirror, aim.origin, aim.lookAt);
+    try {
+      const struck = input.hoverTarget();
+      expect(struck).not.toBeNull();
+      expect(struck!.surfaceY).toBe(bandY(FOOT_BAND));
+      expect(struck!.hitRiser).toBe(true);
+      expect({ x: struck!.x, y: struck!.y }).toEqual({ x: WALL_X, y: AIM_Z });
+      expect(resolvePick(mirror.map, struck!)).toEqual({ face: 'riser', band: FOOT_BAND });
+      expect(spanIndexCoveringBand(mirror.map, struck!.x, struck!.y, FOOT_BAND)).not.toBeNull();
+      expect(carveBandOfPick(mirror.map, struck!, () => false)).toBe(FOOT_BAND);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('sends the carve intent instead of swallowing the press', () => {
+    setBrushTool('carve');
+    setBrushRadius(1);
+    const mirror = cliff();
+    const aim = atFoot();
+    const { sent, fire, dispose } = driveInput(mirror, aim.origin, aim.lookAt);
+    try {
+      fire('pointerdown', {});
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        tool: 'carve',
+        x: WALL_X,
+        y: AIM_Z,
+        spanBand: FOOT_BAND,
+      });
+    } finally {
+      dispose();
+    }
   });
 });
 

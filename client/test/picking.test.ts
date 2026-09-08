@@ -7,6 +7,7 @@ import {
   cellCentreCoord,
   drawnGroundHeight,
   quantizeToBand,
+  spanIndexCoveringBand,
   type ChunkPayload,
   type JoinSnapshotMessage,
 } from '@terrace/shared';
@@ -19,6 +20,7 @@ import {
   type Vec3,
 } from '../src/terrain/picking.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
+import { bandOfPick } from '../src/terrain/pickBand.ts';
 import { setMirrorColumn } from './mirrorEdit.ts';
 
 const RECT = { left: 100, top: 50, width: 800, height: 400 };
@@ -162,15 +164,17 @@ describe('pickTerrainCellByRay', () => {
     const heightOf = (x: number, y: number): number =>
       ((x * 37 + y * 101) % 21) * BAND_HEIGHT - 5 * BAND_HEIGHT + (x % 7);
     const mirror = world(heightOf);
+    let named = 0;
     for (let y = 0; y < WORLD; y++) {
       for (let x = 0; x < WORLD; x++) {
         const drawnY =
           drawnGroundHeight(mirror.renderMap, cellCentreCoord(x), cellCentreCoord(y)) *
           HEIGHT_WORLD_SCALE;
         const hit = pickTerrainCellByRay(mirror, above(x, y), DOWN);
-        expect(hit).toEqual({
-          x,
-          y,
+        expect(hit).not.toBeNull();
+        expect({ ...hit! }).toEqual({
+          x: hit!.x,
+          y: hit!.y,
           surfaceY: drawnY,
           hitRiser: false,
           hitY: drawnY,
@@ -178,8 +182,23 @@ describe('pickTerrainCellByRay', () => {
           hitZ: y * CELL_WORLD_SIZE,
           spanIndex: 0,
         });
+
+        const band = bandOfPick(mirror.map, hit!);
+        expect(band).not.toBeNull();
+        expect(spanIndexCoveringBand(mirror.map, hit!.x, hit!.y, band!)).not.toBeNull();
+
+        if (spanIndexCoveringBand(mirror.map, x, y, band!) !== null) {
+          expect([hit!.x, hit!.y]).toEqual([x, y]);
+          continue;
+        }
+        named++;
+        expect(hit!.x - x).toBeGreaterThanOrEqual(0);
+        expect(hit!.x - x).toBeLessThanOrEqual(1);
+        expect(hit!.y - y).toBeGreaterThanOrEqual(0);
+        expect(hit!.y - y).toBeLessThanOrEqual(1);
       }
     }
+    expect(named).toBeGreaterThan(0);
   });
 
   it('picks the tall cell when a shallow ray strikes its riser', () => {
