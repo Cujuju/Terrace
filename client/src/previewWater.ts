@@ -11,10 +11,20 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellIndex, chunkIndex, chunksPerEdge } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  SEA_LEVEL,
+  cellCentreCoord,
+  cellCoordToWorld,
+  cellIndex,
+  chunkIndex,
+  chunksPerEdge,
+  worldUnitsAcross,
+} from '@terrace/shared';
+import { HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
-import { createTerrainMeshes } from './render/terrainMeshes.ts';
+import { createGpuTerrainMeshes } from './render/gpuTerrain.ts';
 import { createWater } from './render/water.ts';
 import { WATER_SHADE_SPAN_BANDS } from './terrain/waterDepth.ts';
 import { skyStateAtPhase } from '../../plugins/daynight/client/sky.ts';
@@ -32,6 +42,8 @@ const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 const BACKDROP_COLOR = 0x9fc7e8;
 const SETTLE_FRAME_COUNT = 6;
+const CAMERA_DISTANCE_FRACTION = 0.85;
+const FRAME_SECONDS = 1 / 60;
 
 const MIDNIGHT_PHASE = 0.75;
 
@@ -145,10 +157,8 @@ for (let cy = 0; cy < chunkCols; cy++) {
 
 const terrainGroup = new Group();
 scene.add(terrainGroup);
-const meshes = createTerrainMeshes(terrainGroup, mirror);
+const meshes = createGpuTerrainMeshes(terrainGroup, mirror);
 meshes.update(allChunks);
-meshes.flush();
-meshes.settle({ assumeQuiet: true });
 
 const frameHandlers: ((dt: number) => void)[] = [];
 const waterGroup = new Group();
@@ -162,25 +172,24 @@ installWaterBandClock((handler) => {
   return () => {};
 });
 
-const centre = new Vector3(
-  (PREVIEW_WORLD_SIZE / 2) * CELL_WORLD_SIZE,
-  SEA_LEVEL * HEIGHT_WORLD_SCALE,
-  (PREVIEW_WORLD_SIZE / 2) * CELL_WORLD_SIZE,
-);
-const span = PREVIEW_WORLD_SIZE * CELL_WORLD_SIZE;
+const centreWorld = cellCoordToWorld(cellCentreCoord(PREVIEW_WORLD_SIZE / 2));
+const centre = new Vector3(centreWorld, SEA_LEVEL * HEIGHT_WORLD_SCALE, centreWorld);
+const span = worldUnitsAcross(PREVIEW_WORLD_SIZE);
 const camera = new PerspectiveCamera(
   CAMERA_FOV_DEGREES,
   window.innerWidth / window.innerHeight,
   0.1,
   8000,
 );
-camera.position.copy(centre).addScaledVector(CAMERA_VIEWS[view] ?? CAMERA_VIEWS.iso, span * 0.85 * zoom);
+camera.position
+  .copy(centre)
+  .addScaledVector(CAMERA_VIEWS[view] ?? CAMERA_VIEWS.iso, span * CAMERA_DISTANCE_FRACTION * zoom);
 camera.lookAt(centre);
 
 let frames = 0;
 function animate(): void {
   requestAnimationFrame(animate);
-  for (const handler of frameHandlers) handler(1 / 60);
+  for (const handler of frameHandlers) handler(FRAME_SECONDS);
   renderer.render(scene, camera);
   frames++;
   if (frames === SETTLE_FRAME_COUNT) {
