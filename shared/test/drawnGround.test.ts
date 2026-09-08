@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyPackedSpans,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
   bandOf,
@@ -10,10 +11,13 @@ import {
   drawnGroundCoversBand,
   drawnGroundHeight,
   DRAWN_GROUND_FIXPOINT_STEPS,
+  isSpanDrawn,
   MAX_HEIGHT,
   MAX_SPANS_PER_COLUMN,
   setColumn,
+  spanCount,
   TERRAIN_LOD_NEAR_N,
+  topSpan,
   type Heightmap,
   type Span,
 } from '../src/index.ts';
@@ -197,6 +201,35 @@ describe('drawnGroundHeight', () => {
     );
   });
 
+  it('ignores a non-drawn top span that a wire payload seated', () => {
+    const map = flatWorld(0);
+    const seated = applyPackedSpans(map, 4, 4, [BEDROCK_FLOOR, 32, 65, 79]);
+    expect(seated).toBe(true);
+    expect(isSpanDrawn(topSpan(map, 4, 4))).toBe(false);
+    expect(map.cells[cellIndex(map, 4, 4)]).toBe(79);
+    expect(spanCount(map, 4, 4)).toBeGreaterThan(1);
+    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(
+      topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT,
+    );
+  });
+
+  it('clamps non-finite coordinates to the border on both axes', () => {
+    const map = roughWorld();
+    const low = drawnGroundHeight(map, 0, 0);
+    const high = drawnGroundHeight(map, WORLD_SIZE, WORLD_SIZE);
+    for (const bad of [Number.NaN, Number.NEGATIVE_INFINITY] as const) {
+      expect(drawnGroundHeight(map, bad, 0)).toBe(low);
+      expect(drawnGroundHeight(map, 0, bad)).toBe(low);
+      expect(drawnGroundHeight(map, bad, bad)).toBe(low);
+    }
+    expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, WORLD_SIZE)).toBe(high);
+    expect(drawnGroundHeight(map, WORLD_SIZE, Number.POSITIVE_INFINITY)).toBe(high);
+    expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(high);
+    expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, Number.NaN)).toBe(
+      drawnGroundHeight(map, WORLD_SIZE, 0),
+    );
+  });
+
   it('reaches the fixpoint within its bound on a maximally layered column', () => {
     const map = flatWorld(0);
     const spans = maximallyLayeredSpans();
@@ -246,6 +279,21 @@ describe('drawnGroundCoversBand', () => {
     expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_ROOF_CAP))).toBe(true);
     for (let band = bandOf(CAVE_FLOOR_CAP) + 1; band < bandOf(CAVE_ROOF_FLOOR); band++) {
       expect(drawnGroundCoversBand(map, 4.5, 4.5, band)).toBe(false);
+    }
+  });
+
+  it('clamps non-finite coordinates to the border on both axes', () => {
+    const map = roughWorld();
+    for (let band = FLOOR_BAND; band <= TOP_BAND; band++) {
+      const low = drawnGroundCoversBand(map, 0, 0, band);
+      const high = drawnGroundCoversBand(map, WORLD_SIZE, WORLD_SIZE, band);
+      for (const bad of [Number.NaN, Number.NEGATIVE_INFINITY] as const) {
+        expect(drawnGroundCoversBand(map, bad, 0, band)).toBe(low);
+        expect(drawnGroundCoversBand(map, 0, bad, band)).toBe(low);
+      }
+      const far = Number.POSITIVE_INFINITY;
+      expect(drawnGroundCoversBand(map, far, WORLD_SIZE, band)).toBe(high);
+      expect(drawnGroundCoversBand(map, WORLD_SIZE, far, band)).toBe(high);
     }
   });
 
