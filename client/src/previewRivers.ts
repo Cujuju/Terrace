@@ -28,7 +28,6 @@ import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
 import { chunkContourLoops } from './terrain/vertexGrid.ts';
 import { createRiverRig } from './render/riverRig.ts';
-import { createDrawnGround } from './terrain/drawnGround.ts';
 
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
@@ -323,7 +322,7 @@ const rivers = createRiverRig(scene, (handler) => {
   frameHandlers.push(handler);
   return () => {};
 });
-rivers.forceRefresh(mirror, createDrawnGround(mirror, meshes.drawnGround()));
+rivers.forceRefresh(mirror);
 
 const network = computeRiverNetwork(mirror.map);
 const wet = network.rivers.flatMap((river) => riverPoints(river));

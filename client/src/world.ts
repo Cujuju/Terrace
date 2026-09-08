@@ -191,7 +191,7 @@ export function createWorld(viewport: Viewport): World {
       }
     }
     if (mirror !== null && drawnGround !== null) {
-      rivers.refresh(mirror, NO_CHUNKS, drawnGround);
+      rivers.refresh(mirror, NO_CHUNKS);
     }
   };
 
@@ -246,7 +246,7 @@ export function createWorld(viewport: Viewport): World {
       nextLayerEdges.refreshChunk(chunkIdx);
       drawnChunkScratch.clear();
       drawnChunkScratch.add(chunkIdx);
-      rivers.refresh(nextMirror, drawnChunkScratch, nextGround);
+      rivers.refresh(nextMirror, drawnChunkScratch);
     });
     meshes = nextMeshes;
     layerEdges = nextLayerEdges;
@@ -294,7 +294,7 @@ export function createWorld(viewport: Viewport): World {
       revealMask.sync(fresh.mirror);
       water.sync(fresh.mirror);
       water.refresh(fresh.mirror, snapshotDirty);
-      rivers.forceRefresh(fresh.mirror, fresh.ground);
+      rivers.forceRefresh(fresh.mirror);
     },
 
     onChunkUnlock(msg: ChunkUnlockMessage): void {
@@ -310,7 +310,7 @@ export function createWorld(viewport: Viewport): World {
       revealMask.sync(mirror);
       water.sync(mirror);
       water.refresh(mirror, unlockDirty);
-      if (drawnGround !== null) rivers.refresh(mirror, NO_CHUNKS, drawnGround);
+      if (drawnGround !== null) rivers.refresh(mirror, NO_CHUNKS);
       armExpiryTimer();
     },
 
@@ -408,11 +408,11 @@ export function createWorld(viewport: Viewport): World {
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
-      return pickTerrainCellByRay(mirror, origin, direction, layerEdges);
+      return pickTerrainCellByRay(mirror, origin, direction);
     },
     pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
-      return pickTerrainInColumn(mirror, x, y, origin, direction, layerEdges);
+      return pickTerrainInColumn(mirror, x, y, origin, direction);
     },
     pickPointedCell(
       origin: Vec3,
@@ -420,7 +420,7 @@ export function createWorld(viewport: Viewport): World {
       occupants: readonly CellOccupancy[],
     ): PointedCellPick | null {
       if (mirror === null) return null;
-      return pickPointedCellByRay(mirror, origin, direction, occupants, layerEdges);
+      return pickPointedCellByRay(mirror, origin, direction, occupants);
     },
 
     drawBudget(): number {

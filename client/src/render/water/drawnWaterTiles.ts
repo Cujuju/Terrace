@@ -1,0 +1,275 @@
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  TERRAIN_LOD_NEAR_N,
+  cellIndex,
+  chunksPerEdge,
+  drawnGroundHeight,
+  quantizeToBand,
+  type Heightmap,
+} from '@terrace/shared';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
+
+export interface WaterRegion {
+  isWet(cell: number): boolean;
+  readonly anchorCell: number;
+  readonly surfaceBand: number;
+  readonly tiles: Set<number>;
+}
+
+export const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
+
+const SUBCELLS_PER_CELL = TERRAIN_LOD_NEAR_N;
+
+const SUBCELL_SIZE_CELLS = 1 / SUBCELLS_PER_CELL;
+
+const SUBCELL_CENTRE_CELLS = SUBCELL_SIZE_CELLS / 2;
+
+const SUBCELL_WORLD_SIZE = SUBCELL_SIZE_CELLS * CELL_WORLD_SIZE;
+
+const CELL_CENTRE_OFFSET_CELLS = 0.5;
+
+const CURTAIN_FOOT_REACH_SUBCELLS = SUBCELLS_PER_CELL;
+
+const COVER_MARGIN_SUBCELLS = 1;
+
+const TILE_LATTICE_SPAN = CHUNK_SIZE * SUBCELLS_PER_CELL;
+
+const COVER_SPAN = TILE_LATTICE_SPAN + 2 * COVER_MARGIN_SUBCELLS;
+
+const NOT_COVERED = 0;
+
+const COVERED = 1;
+
+const CARDINAL_SUBCELL_STEPS: readonly (readonly [number, number])[] = [
+  [0, -1],
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+];
+
+/** Scratch for one tile's coverage. One tile is meshed at a time, never interleaved. */
+const coverage = new Uint8Array(COVER_SPAN * COVER_SPAN);
+
+interface CoveredRun {
+  readonly startX: number;
+  readonly endX: number;
+  readonly startZ: number;
+}
+
+export function waterSurfaceWorldY(heightUnits: number): number {
+  return heightUnits * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
+}
+
+export function waterBandWorldY(band: number): number {
+  return waterSurfaceWorldY(band * BAND_HEIGHT);
+}
+
+function subcellCentreCells(lattice: number): number {
+  return lattice * SUBCELL_SIZE_CELLS + SUBCELL_CENTRE_CELLS;
+}
+
+function subcellWorldEdge(lattice: number): number {
+  return lattice * SUBCELL_WORLD_SIZE;
+}
+
+function pushQuad(
+  out: number[],
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+): void {
+  out.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+  out.push(ax, ay, az, cx, cy, cz, dx, dy, dz);
+}
+
+export function appendDrawnWaterTile(
+  map: Heightmap,
+  region: WaterRegion,
+  tile: number,
+  surfaceY: number,
+  waterBandAt: (cellX: number, cellZ: number) => number | null,
+  seaWorldY: number,
+  out: number[],
+): void {
+  const band = region.surfaceBand;
+  const surfaceHeight = band * BAND_HEIGHT;
+  const lastCell = map.size - 1;
+
+  const groundAt = (sx: number, sz: number): number =>
+    drawnGroundHeight(map, subcellCentreCells(sx), subcellCentreCells(sz));
+
+  const cellOfLattice = (s: number): number => Math.floor(s * SUBCELL_SIZE_CELLS);
+
+  const clampCell = (i: number): number => (i < 0 ? 0 : i > lastCell ? lastCell : i);
+
+  /** Lower cell of the pair whose centres bracket this lattice line, as the blend reads it. */
+  const blendCellOfLattice = (s: number): number =>
+    Math.floor(subcellCentreCells(s) - CELL_CENTRE_OFFSET_CELLS);
+
+  const blendCellsHold = (
+    sx: number,
+    sz: number,
+    holds: (cell: number) => boolean,
+  ): boolean => {
+    const baseX = blendCellOfLattice(sx);
+    const baseZ = blendCellOfLattice(sz);
+    for (const z of [clampCell(baseZ), clampCell(baseZ + 1)]) {
+      for (const x of [clampCell(baseX), clampCell(baseX + 1)]) {
+        if (holds(cellIndex(map, x, z))) return true;
+      }
+    }
+    return false;
+  };
+
+  const isWet = (cell: number): boolean => region.isWet(cell);
+
+  const isSubmergedCell = (cell: number): boolean =>
+    region.isWet(cell) && quantizeToBand(map.cells[cell]!) < surfaceHeight;
+
+  const carriesWater = (sx: number, sz: number): boolean => {
+    if (!blendCellsHold(sx, sz, isWet)) return false;
+    const drawn = groundAt(sx, sz);
+    const bankBuriesIt = drawn > surfaceHeight;
+    if (bankBuriesIt) return false;
+    const sitsOnItsOwnCap = drawn === surfaceHeight;
+    if (sitsOnItsOwnCap) return true;
+    return blendCellsHold(sx, sz, isSubmergedCell);
+  };
+
+  const footYBeyond = (sx: number, sz: number, dx: number, dz: number): number | null => {
+    let lowestWater: number | null = null;
+    let lowestGround = surfaceHeight;
+    let groundFalling = false;
+    let groundSettled = false;
+
+    for (let step = 1; step <= CURTAIN_FOOT_REACH_SUBCELLS; step++) {
+      const px = sx + dx * step;
+      const pz = sz + dz * step;
+
+      const water = waterBandAt(cellOfLattice(px), cellOfLattice(pz));
+      if (water !== null && water < band && (lowestWater === null || water < lowestWater)) {
+        lowestWater = water;
+      }
+
+      if (groundSettled) continue;
+      const height = groundAt(px, pz);
+      if (height < lowestGround) {
+        lowestGround = height;
+        groundFalling = true;
+        continue;
+      }
+      if (groundFalling || height > lowestGround) groundSettled = true;
+    }
+
+    if (lowestWater !== null) return waterBandWorldY(lowestWater);
+    if (lowestGround >= surfaceHeight) return null;
+    return Math.max(waterSurfaceWorldY(lowestGround), seaWorldY);
+  };
+
+  const tilesPerEdge = chunksPerEdge(map.size);
+  const originX = (tile % tilesPerEdge) * CHUNK_SIZE * SUBCELLS_PER_CELL;
+  const originZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE * SUBCELLS_PER_CELL;
+  const latticeSize = map.size * SUBCELLS_PER_CELL;
+  const endX = Math.min(originX + TILE_LATTICE_SPAN, latticeSize);
+  const endZ = Math.min(originZ + TILE_LATTICE_SPAN, latticeSize);
+  if (originX >= endX || originZ >= endZ) return;
+
+  const coverageAt = (sx: number, sz: number): number =>
+    coverage[
+      (sz - originZ + COVER_MARGIN_SUBCELLS) * COVER_SPAN +
+        (sx - originX + COVER_MARGIN_SUBCELLS)
+    ]!;
+
+  coverage.fill(NOT_COVERED);
+  for (let sz = originZ - COVER_MARGIN_SUBCELLS; sz < endZ + COVER_MARGIN_SUBCELLS; sz++) {
+    if (sz < 0 || sz >= latticeSize) continue;
+    for (let sx = originX - COVER_MARGIN_SUBCELLS; sx < endX + COVER_MARGIN_SUBCELLS; sx++) {
+      if (sx < 0 || sx >= latticeSize) continue;
+      if (!carriesWater(sx, sz)) continue;
+      coverage[
+        (sz - originZ + COVER_MARGIN_SUBCELLS) * COVER_SPAN +
+          (sx - originX + COVER_MARGIN_SUBCELLS)
+      ] = COVERED;
+    }
+  }
+
+  const emitTread = (run: CoveredRun, endZLattice: number): void => {
+    const loX = subcellWorldEdge(run.startX);
+    const hiX = subcellWorldEdge(run.endX);
+    const loZ = subcellWorldEdge(run.startZ);
+    const hiZ = subcellWorldEdge(endZLattice);
+    pushQuad(out, loX, surfaceY, loZ, hiX, surfaceY, loZ, hiX, surfaceY, hiZ, loX, surfaceY, hiZ);
+  };
+
+  let open: CoveredRun[] = [];
+  for (let sz = originZ; sz < endZ; sz++) {
+    const row: CoveredRun[] = [];
+    let runStart = -1;
+    for (let sx = originX; sx <= endX; sx++) {
+      const covered = sx < endX && coverageAt(sx, sz) === COVERED;
+      if (covered && runStart < 0) runStart = sx;
+      if (!covered && runStart >= 0) {
+        row.push({ startX: runStart, endX: sx, startZ: sz });
+        runStart = -1;
+      }
+      if (!covered) continue;
+
+      for (const [dx, dz] of CARDINAL_SUBCELL_STEPS) {
+        if (coverageAt(sx + dx, sz + dz) === COVERED) continue;
+        const bottomY = footYBeyond(sx, sz, dx, dz);
+        if (bottomY === null || bottomY >= surfaceY) continue;
+        const loX = subcellWorldEdge(sx);
+        const hiX = subcellWorldEdge(sx + 1);
+        const loZ = subcellWorldEdge(sz);
+        const hiZ = subcellWorldEdge(sz + 1);
+        const edgeX0 = dx > 0 ? hiX : loX;
+        const edgeZ0 = dz > 0 ? hiZ : loZ;
+        const edgeX1 = dx === 0 ? hiX : edgeX0;
+        const edgeZ1 = dz === 0 ? hiZ : edgeZ0;
+        pushQuad(
+          out,
+          edgeX0, surfaceY, edgeZ0,
+          edgeX1, surfaceY, edgeZ1,
+          edgeX1, bottomY, edgeZ1,
+          edgeX0, bottomY, edgeZ0,
+        );
+      }
+    }
+
+    const next: CoveredRun[] = [];
+    let oi = 0;
+    let ri = 0;
+    while (oi < open.length || ri < row.length) {
+      const held = open[oi];
+      const fresh = row[ri];
+      if (held !== undefined && (fresh === undefined || held.startX < fresh.startX)) {
+        emitTread(held, sz);
+        oi++;
+      } else if (fresh !== undefined && (held === undefined || fresh.startX < held.startX)) {
+        next.push(fresh);
+        ri++;
+      } else if (held !== undefined && fresh !== undefined) {
+        if (held.endX === fresh.endX) {
+          next.push(held);
+        } else {
+          emitTread(held, sz);
+          next.push(fresh);
+        }
+        oi++;
+        ri++;
+      }
+    }
+    open = next;
+  }
+  for (const held of open) emitTread(held, endZ);
+}

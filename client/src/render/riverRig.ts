@@ -10,27 +10,23 @@ import {
   type Object3D,
 } from 'three';
 import {
-  BAND_HEIGHT,
   cellX,
   cellY,
   chunkIndexOfCell,
   chunksPerEdge,
-  CHUNK_SIZE,
-  quantizeToBand,
+  drawnGroundHeight,
   SEA_LEVEL,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../config.ts';
-import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
-import { type DrawnGround } from '../terrain/drawnGround.ts';
+import { type TerrainMirror } from '../terrain/mirror.ts';
 import { WATER_COLOR } from './water.ts';
 import { installWaterBandClock, makeBanded } from './water/waterBands.ts';
 import {
-  TILE_LATTICE_MAX_OFFSET,
-  TILE_LATTICE_MIN_OFFSET,
-  appendRegionTile,
+  RIVER_SURFACE_LIFT_WORLD_UNITS,
+  appendDrawnWaterTile,
+  waterBandWorldY,
   type WaterRegion,
-} from './water/waterTread.ts';
-import { appendCurtains } from './water/waterCurtain.ts';
+} from './water/drawnWaterTiles.ts';
 import {
   directRiverNetworkSource,
   type RiverNetworkSource,
@@ -40,7 +36,7 @@ import { watchReducedMotion } from '../plugins/kit/reducedMotion.ts';
 
 const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 
-const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
+const CELL_CENTRE_OFFSET_CELLS = 0.5;
 
 const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
@@ -53,7 +49,13 @@ const RIVER_ROUGHNESS = 0.85;
 const RIVER_METALNESS = 0;
 
 function plotRadiusCells(mirror: TerrainMirror, x: number, y: number): number {
-  const band = quantizeToBand(sampleHeight(mirror, x, y));
+  const drawnAt = (cx: number, cy: number): number =>
+    drawnGroundHeight(
+      mirror.map,
+      cx + CELL_CENTRE_OFFSET_CELLS,
+      cy + CELL_CENTRE_OFFSET_CELLS,
+    );
+  const height = drawnAt(x, y);
   for (let reach = 1; reach <= SPRING_PLOT_PROBE_CELLS; reach++) {
     for (let dy = -reach; dy <= reach; dy++) {
       for (let dx = -reach; dx <= reach; dx++) {
@@ -63,7 +65,7 @@ function plotRadiusCells(mirror: TerrainMirror, x: number, y: number): number {
         if (nx < 0 || ny < 0 || nx >= mirror.map.size || ny >= mirror.map.size) {
           return reach - 0.5;
         }
-        if (quantizeToBand(sampleHeight(mirror, nx, ny)) !== band) return reach - 0.5;
+        if (drawnAt(nx, ny) !== height) return reach - 0.5;
       }
     }
   }
@@ -146,8 +148,8 @@ interface SpringState {
 }
 
 export interface RiverRig {
-  refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>, ground: DrawnGround): void;
-  forceRefresh(mirror: TerrainMirror, ground: DrawnGround): void;
+  refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>): void;
+  forceRefresh(mirror: TerrainMirror): void;
   dispose(): void;
 }
 
@@ -370,10 +372,8 @@ export function createRiverRig(
 
   interface DrainJob {
     mirror: TerrainMirror;
-    ground: DrawnGround;
     sources: RiverSurface['sources'];
     waterBandAt: (cellX: number, cellZ: number) => number | null;
-    bandWorldY: (band: number, cellX: number, cellZ: number) => number;
   }
 
   const pendingTiles: PendingTile[] = [];
@@ -589,7 +589,6 @@ export function createRiverRig(
 
   const rebuild = (
     mirror: TerrainMirror,
-    ground: DrawnGround,
     surface: RiverSurface,
     dirtyChunks: ReadonlySet<number> | null,
   ): void => {
@@ -637,13 +636,11 @@ export function createRiverRig(
     wetCells.list = wetList;
 
     const regions = new Map<number, WaterRegion>();
-    const lastCell = worldSize - 1;
-    let lastTileRange = -1;
-    let lastTileBand = Number.NaN;
+    let lastBand = Number.NaN;
     let lastRegion: WaterRegion | undefined;
     for (const cell of wetList) {
       const band = wetBand[cell]!;
-      let region = band === lastTileBand ? lastRegion : regions.get(band);
+      let region = band === lastBand ? lastRegion : regions.get(band);
       if (region === undefined) {
         region = {
           isWet: (candidate) =>
@@ -655,23 +652,10 @@ export function createRiverRig(
         regions.set(band, region);
       }
       lastRegion = region;
+      lastBand = band;
       const x = cell % worldSize;
       const y = (cell - x) / worldSize;
-      const tileXLo = Math.floor(Math.max(0, x + TILE_LATTICE_MIN_OFFSET) / CHUNK_SIZE);
-      const tileXHi = Math.floor(Math.min(lastCell, x + TILE_LATTICE_MAX_OFFSET) / CHUNK_SIZE);
-      const tileYLo = Math.floor(Math.max(0, y + TILE_LATTICE_MIN_OFFSET) / CHUNK_SIZE);
-      const tileYHi = Math.floor(Math.min(lastCell, y + TILE_LATTICE_MAX_OFFSET) / CHUNK_SIZE);
-      const tileRange =
-        ((tileYLo * tileCols + tileXLo) * 2 + (tileXHi - tileXLo)) * 2 + (tileYHi - tileYLo);
-      if (tileRange !== lastTileRange || band !== lastTileBand) {
-        lastTileRange = tileRange;
-        lastTileBand = band;
-        for (let tileY = tileYLo; tileY <= tileYHi; tileY++) {
-          for (let tileX = tileXLo; tileX <= tileXHi; tileX++) {
-            region.tiles.add(tileY * tileCols + tileX);
-          }
-        }
-      }
+      region.tiles.add(chunkIndexOfCell(worldSize, x, y));
     }
 
     const waterBandAt = (cellXCoord: number, cellYCoord: number): number | null => {
@@ -682,9 +666,6 @@ export function createRiverRig(
       return wetStamp[cell] === generation ? wetBand[cell]! : null;
     };
 
-    const bandWorldY = (band: number, cellXCoord: number, cellZCoord: number): number =>
-      ground.capYOfBand(band, cellXCoord, cellZCoord) + RIVER_SURFACE_LIFT_WORLD_UNITS;
-
     const carriedKeys = new Set<number>();
     for (let i = pendingCursor; i < pendingTiles.length; i++) {
       carriedKeys.add(pendingTiles[i]!.key);
@@ -694,9 +675,7 @@ export function createRiverRig(
     const tileCount = tileCols * tileCols;
     const currentKeys = new Set<number>();
     for (const region of regions.values()) {
-      const anchorX = region.anchorCell % worldSize;
-      const anchorZ = (region.anchorCell - anchorX) / worldSize;
-      const surfaceY = bandWorldY(region.surfaceBand, anchorX, anchorZ);
+      const surfaceY = waterBandWorldY(region.surfaceBand);
       for (const tile of region.tiles) {
         const key = runKeyOf(region.surfaceBand, tile, tileCount);
         currentKeys.add(key);
@@ -715,7 +694,7 @@ export function createRiverRig(
     }
     emittedRunKeys = currentKeys;
 
-    drainJob = { mirror, ground, sources: surface.sources, waterBandAt, bandWorldY };
+    drainJob = { mirror, sources: surface.sources, waterBandAt };
     publishWaterBuffer();
   };
 
@@ -726,19 +705,11 @@ export function createRiverRig(
 
   const emitPendingTile = (job: DrainJob, entry: PendingTile): void => {
     regionTriangles.length = 0;
-    const loops = appendRegionTile(
-      job.mirror,
+    appendDrawnWaterTile(
+      job.mirror.map,
       entry.region,
       entry.tile,
       entry.surfaceY,
-      regionTriangles,
-    );
-    appendCurtains(
-      job.ground,
-      loops,
-      entry.region.surfaceBand,
-      entry.surfaceY,
-      job.bandWorldY,
       job.waterBandAt,
       SEA_SURFACE_WORLD_Y,
       regionTriangles,
@@ -754,7 +725,7 @@ export function createRiverRig(
     if (job === null) return;
     rebuildSprings(job.mirror, job.sources, (x, y) => {
       const band = job.waterBandAt(x, y);
-      return band === null ? null : job.bandWorldY(band, x, y);
+      return band === null ? null : waterBandWorldY(band);
     });
     applySpringPose(elapsedSeconds);
   };
@@ -772,7 +743,7 @@ export function createRiverRig(
     for (;;) {
       emitPendingTile(job, pendingTiles[pendingCursor]!);
       pendingCursor++;
-      if (pendingCursor >= pendingTiles.length || now() - startedMs >= WATER_TILE_FRAME_BUDGET_MS) {
+      if (now() - startedMs >= WATER_TILE_FRAME_BUDGET_MS || pendingCursor >= pendingTiles.length) {
         publishWaterBuffer();
         return;
       }
@@ -821,15 +792,13 @@ export function createRiverRig(
   const pendingDirty = new Set<number>();
   let pendingEverything = false;
   let pendingMirror: TerrainMirror | null = null;
-  let pendingGround: DrawnGround | null = null;
   let computingFor: TerrainMirror | null = null;
   let recomputeWhenDone = false;
   let disposed = false;
 
   const startCompute = (): void => {
     const mirror = pendingMirror;
-    const ground = pendingGround;
-    if (mirror === null || ground === null) return;
+    if (mirror === null) return;
     if (computingFor !== null) {
       recomputeWhenDone = true;
       return;
@@ -843,7 +812,7 @@ export function createRiverRig(
       computingFor = null;
       if (disposed) return;
       if (pendingMirror !== mirror) return;
-      rebuild(mirror, ground, surface, dirty);
+      rebuild(mirror, surface, dirty);
       if (recomputeWhenDone) {
         recomputeWhenDone = false;
         startCompute();
@@ -856,9 +825,8 @@ export function createRiverRig(
   };
 
   return {
-    refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>, ground: DrawnGround): void {
+    refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>): void {
       pendingMirror = mirror;
-      pendingGround = ground;
       for (const chunkIdx of dirty) pendingDirty.add(chunkIdx);
       const now = performance.now();
       if (now - lastRebuildMs < RIVER_RECOMPUTE_INTERVAL_MS) return;
@@ -866,9 +834,8 @@ export function createRiverRig(
       startCompute();
     },
 
-    forceRefresh(mirror: TerrainMirror, ground: DrawnGround): void {
+    forceRefresh(mirror: TerrainMirror): void {
       pendingMirror = mirror;
-      pendingGround = ground;
       pendingEverything = true;
       clearPendingTiles();
       lastRebuildMs = performance.now();
