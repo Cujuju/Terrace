@@ -21,7 +21,7 @@ import {
   spanAt,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
-import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
+import { createTerrainMirror, refreshRenderMap, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
 import { createLayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { archFixtureAim, carveArchFixture } from './terrain/archFixture.ts';
@@ -115,6 +115,7 @@ for (let cz = 0; cz < chunkCols; cz++) {
     allChunks.push(index);
   }
 }
+refreshRenderMap(mirror);
 
 const carvedChunks = carveArchFixture(mirror);
 
