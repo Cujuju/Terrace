@@ -2,10 +2,12 @@ import {
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
   bandOf,
+  cellCentreCoord,
   cellIndex,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
+  drawnGroundHeight,
   quantizeToBand,
   spanCount,
 } from '@terrace/shared';
@@ -359,10 +361,12 @@ export function createWorld(viewport: Viewport): World {
     },
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
-      if (drawnGround === null || mirror === null) return null;
+      if (mirror === null) return null;
       if (!isCellReceived(mirror, cellX, cellZ)) return null;
-      if (!drawnGround.isDrawnAt(cellX, cellZ)) return null;
-      return drawnGround.capYAt(cellX, cellZ);
+      return (
+        drawnGroundHeight(mirror.map, cellCentreCoord(cellX), cellCentreCoord(cellZ)) *
+        HEIGHT_WORLD_SCALE
+      );
     },
 
     highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null {
