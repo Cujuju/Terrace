@@ -5,7 +5,7 @@ import {
   MeshLambertMaterial,
   type IUniform,
 } from 'three';
-import { CHUNK_SIZE } from '@terrace/shared';
+import { CELL_CENTRE_OFFSET_CELLS, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { glslFloat, spliceShader } from './shaderSplice.ts';
 import { GPU_TERRAIN_FIELD_GLSL } from './gpuTerrainField.ts';
@@ -93,9 +93,14 @@ uniform float uSubdiv;
 uniform float uSmooth;
 const float CELL_WORLD_SIZE = ${glslFloat(CELL_WORLD_SIZE)};
 const float HEIGHT_WORLD_SCALE = ${glslFloat(HEIGHT_WORLD_SCALE)};
+const float CELL_CENTRE_OFFSET_CELLS = ${glslFloat(CELL_CENTRE_OFFSET_CELLS)};
 const int BAND_LUT_MIN_BAND = ${BAND_LUT_MIN_BAND};
 const int BAND_LUT_WIDTH = ${BAND_LUT_WIDTH};
 ${GPU_TERRAIN_FIELD_GLSL}
+// Cell i's centre is world i * CELL_WORLD_SIZE, and its coord is i + 0.5.
+vec2 cellCoordToWorld(vec2 cellCoord) {
+  return (cellCoord - CELL_CENTRE_OFFSET_CELLS) * CELL_WORLD_SIZE;
+}
 vec3 bandColor(int band, float row) {
   int stop = clamp(band - BAND_LUT_MIN_BAND, 0, BAND_LUT_WIDTH - 1);
   return texture(uPalette, vec2((float(stop) + 0.5) / float(BAND_LUT_WIDTH), row)).rgb;
@@ -127,11 +132,8 @@ const VERTEX_BODY_GLSL = `
   vBandFloat = 0.0;
   if (kind < 0.5) {
     vec2 corner = aChunk + (subIJ + aCorner.yx) / uSubdiv;
-    pos = vec3(
-      corner.x * CELL_WORLD_SIZE,
-      float(heightHere) * HEIGHT_WORLD_SCALE,
-      corner.y * CELL_WORLD_SIZE
-    );
+    vec2 capXZ = cellCoordToWorld(corner);
+    pos = vec3(capXZ.x, float(heightHere) * HEIGHT_WORLD_SCALE, capXZ.y);
     nrm = vec3(0.0, 1.0, 0.0);
     vFieldCell = corner;
     vTerrainColor = bandColor(bandOfHeight(heightHere), ${glslFloat(BAND_LUT_TERRAIN_ROW)});
@@ -146,7 +148,8 @@ const VERTEX_BODY_GLSL = `
       : (facing > 0.0 ? aCorner.x : 1.0 - aCorner.x);
     vec2 edge = aChunk + (subIJ + stepDir + along * (1.0 - stepDir)) / uSubdiv;
     float y = mix(min(yHere, yNext), max(yHere, yNext), aCorner.y);
-    pos = vec3(edge.x * CELL_WORLD_SIZE, y, edge.y * CELL_WORLD_SIZE);
+    vec2 wall = cellCoordToWorld(edge);
+    pos = vec3(wall.x, y, wall.y);
     nrm = vec3(stepDir.x * facing, 0.0, stepDir.y * facing);
     vFieldCell = edge;
     vBandFloat = y / (float(FIELD_BAND_HEIGHT) * HEIGHT_WORLD_SCALE);

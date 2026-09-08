@@ -24,6 +24,20 @@ export function worldUnitsAcross(cells: number): number {
   return cells * CELL_WORLD_SIZE;
 }
 
+export const CELL_CENTRE_OFFSET_CELLS = 0.5;
+
+export function cellCentreCoord(cell: number): number {
+  return cell + CELL_CENTRE_OFFSET_CELLS;
+}
+
+export function cellCoordToWorld(cellCoord: number): number {
+  return (cellCoord - CELL_CENTRE_OFFSET_CELLS) * CELL_WORLD_SIZE;
+}
+
+export function worldToCellCoord(worldUnits: number): number {
+  return worldUnits / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET_CELLS;
+}
+
 export const BAND_HEIGHT = 16;
 
 export const SEA_LEVEL = 0;

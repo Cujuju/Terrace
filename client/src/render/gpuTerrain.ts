@@ -18,6 +18,7 @@ import {
   TERRAIN_LOD_FAR_N,
   TERRAIN_LOD_NEAR_N,
   TERRAIN_LOD_NEAR_RADIUS_CHUNKS,
+  cellCoordToWorld,
   chunksPerEdge,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
@@ -145,8 +146,8 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
       if (built[chunkIdx] === 0) continue;
       const cx = chunkIdx % chunkCols;
       const cy = (chunkIdx - cx) / chunkCols;
-      const originX = cx * CHUNK_WORLD_SIZE;
-      const originZ = cy * CHUNK_WORLD_SIZE;
+      const originX = cellCoordToWorld(cx * CHUNK_SIZE);
+      const originZ = cellCoordToWorld(cy * CHUNK_SIZE);
       bounds.min.set(originX, minY[chunkIdx], originZ);
       bounds.max.set(originX + CHUNK_WORLD_SIZE, maxY[chunkIdx], originZ + CHUNK_WORLD_SIZE);
       if (!frustum.intersectsBox(bounds)) continue;
