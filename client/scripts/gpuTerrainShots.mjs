@@ -88,6 +88,31 @@ function resolveWorldsDir() {
 
 const WORLDS_SOURCE_DIR = resolveWorldsDir();
 
+// Anything that moves or changes the light diverges between two separately
+// booted runs, and a pair must differ only by the terrain flag. Disabled in the
+// throwaway copy, so both variants render the same scene under scene.ts's noon
+// sky. Flora is in the list because canopy hides the surface under review.
+const NONDETERMINISTIC_PLUGINS = [
+  'daynight',
+  'weather',
+  'rain',
+  'snow',
+  'fog',
+  'thunderstorm',
+  'tornado',
+  'cyclone',
+  'volcanoes',
+  'mudslides',
+  'fire',
+  'flora',
+  'wildlife',
+  'pilgrims',
+  'boats',
+  'monsters',
+  'saucers',
+  'populous',
+];
+
 const SNAPSHOT_QUERY =
   'select id, world_size, heightmap, mask from snapshots order by id desc limit 1';
 
@@ -123,20 +148,33 @@ const OVERVIEW_ELEVATION_DEGREES = 35;
 const OVERVIEW_AZIMUTH_DEGREES = 45;
 /** The shipped bench's overview distance: eye (110.2, 45.9, 110.2) about (63.875, 0, 63.875). */
 const OVERVIEW_DISTANCE_WORLD_UNITS = 80;
-const SHEER_ELEVATION_DEGREES = 24;
-const SHEER_AZIMUTH_DEGREES = 250;
-/** Frames a whole ~9-world-unit wall; the macro distance frames ten cells of it. */
-const SHEER_DISTANCE_WORLD_UNITS = 16;
-const SHEER_MACRO_DISTANCE_WORLD_UNITS = 2.5;
-const SHEER_MACRO_ELEVATION_DEGREES = 8;
+// Square to the wall, from its low side, low enough to see the face rather than
+// the plateau behind it. The azimuth is the low side's own bearing: +x is 90.
+const SHEER_ELEVATION_DEGREES = 8;
+const SHEER_MACRO_ELEVATION_DEGREES = 5;
+const SHEER_LOW_SIDE_EAST_AZIMUTH_DEGREES = 90;
+const SHEER_LOW_SIDE_WEST_AZIMUTH_DEGREES = 270;
+/** Fits the whole drop with a quarter of its height as margin. */
+const SHEER_FRAMING_MARGIN = 1.25;
+// Mirrors client/src/config.ts, which cannot be imported here: it reads
+// import.meta.env, which plain Node does not define.
+const CAMERA_FOV_DEGREES = 55;
+/** Close enough that one cell of tread structure is a tenth of the frame. */
+const SHEER_MACRO_DISTANCE_WORLD_UNITS = 2;
+
+function distanceFraming(worldUnitsTall) {
+  const halfFov = (CAMERA_FOV_DEGREES * Math.PI) / 180 / 2;
+  return (worldUnitsTall * SHEER_FRAMING_MARGIN) / 2 / Math.tan(halfFov);
+}
 const SHORE_ELEVATION_DEGREES = 18;
 const SHORE_AZIMUTH_DEGREES = 200;
 const SHORE_DISTANCE_WORLD_UNITS = 28;
 /** A grazing eye puts near and far LOD in one frame; 6 degrees is the shallowest
  *  angle that still clears the foreground ridge. */
 const LOD_ELEVATION_DEGREES = 6;
-const LOD_AZIMUTH_DEGREES = 45;
 const LOD_DISTANCE_WORLD_UNITS = 60;
+/** Keeps the grazing view off the world edge, where it would look at sky. */
+const LOD_INTERIOR_FRACTION = 0.3;
 /** Outside the revealed region, looking back in: the quadrant 13068c7 fixed. */
 const FRONTIER_ELEVATION_DEGREES = 22;
 const FRONTIER_AZIMUTH_DEGREES = 225;
@@ -168,8 +206,8 @@ const SCENES = [
     pose: (w) => ({
       target: { cell: w.sheer.centre, height: w.sheer.midHeight },
       elevation: SHEER_ELEVATION_DEGREES,
-      azimuth: SHEER_AZIMUTH_DEGREES,
-      distance: SHEER_DISTANCE_WORLD_UNITS,
+      azimuth: w.sheer.azimuth,
+      distance: distanceFraming(w.sheer.dropWorldUnits),
     }),
   },
   {
@@ -179,7 +217,7 @@ const SCENES = [
     pose: (w) => ({
       target: { cell: w.sheer.centre, height: w.sheer.midHeight },
       elevation: SHEER_MACRO_ELEVATION_DEGREES,
-      azimuth: SHEER_AZIMUTH_DEGREES,
+      azimuth: w.sheer.azimuth,
       distance: SHEER_MACRO_DISTANCE_WORLD_UNITS,
     }),
   },
@@ -203,7 +241,7 @@ const SCENES = [
     pose: (w) => ({
       target: { cell: w.relief.cell, height: w.relief.height },
       elevation: LOD_ELEVATION_DEGREES,
-      azimuth: LOD_AZIMUTH_DEGREES,
+      azimuth: w.relief.outwardAzimuth,
       distance: LOD_DISTANCE_WORLD_UNITS,
     }),
   },
@@ -326,6 +364,7 @@ function findLandmarks(snapshot) {
       if (lo <= WALL_DRY_FLOOR_UNITS || hi <= WALL_DRY_FLOOR_UNITS) continue;
       const drop = Math.abs(hi - lo);
       if (drop < WALL_MIN_DROP_UNITS) continue;
+      const lowSideEast = hi < lo;
       let quiet = 0;
       for (let j = -WALL_QUIET_RADIUS_CELLS; j <= WALL_QUIET_RADIUS_CELLS; j++) {
         if (Math.abs(at(x - WALL_QUIET_RADIUS_CELLS, y + j) - lo) < WALL_QUIET_TOLERANCE_UNITS) quiet++;
@@ -333,7 +372,7 @@ function findLandmarks(snapshot) {
       }
       const score = quiet * WALL_MIN_DROP_UNITS + drop;
       if (wall === null || score > wall.score) {
-        wall = { x, y, drop, lo: Math.min(lo, hi), hi: Math.max(lo, hi), quiet, score };
+        wall = { x, y, drop, lo: Math.min(lo, hi), hi: Math.max(lo, hi), quiet, score, lowSideEast };
       }
     }
   }
@@ -368,9 +407,11 @@ function findLandmarks(snapshot) {
   // The busiest neighbourhood, for the grazing LOD view.
   const RELIEF_RADIUS_CELLS = 24;
   const RELIEF_STEP_CELLS = 8;
+  const insetX = Math.round((maxX - minX) * LOD_INTERIOR_FRACTION);
+  const insetY = Math.round((maxY - minY) * LOD_INTERIOR_FRACTION);
   let relief = null;
-  for (let y = minY + RELIEF_RADIUS_CELLS; y <= maxY - RELIEF_RADIUS_CELLS; y += RELIEF_STEP_CELLS) {
-    for (let x = minX + RELIEF_RADIUS_CELLS; x <= maxX - RELIEF_RADIUS_CELLS; x += RELIEF_STEP_CELLS) {
+  for (let y = minY + insetY; y <= maxY - insetY; y += RELIEF_STEP_CELLS) {
+    for (let x = minX + insetX; x <= maxX - insetX; x += RELIEF_STEP_CELLS) {
       let lo = Infinity;
       let hi = -Infinity;
       for (let j = -RELIEF_RADIUS_CELLS; j <= RELIEF_RADIUS_CELLS; j += SHORE_STEP_CELLS) {
@@ -402,12 +443,24 @@ function findLandmarks(snapshot) {
             centre: { x: wall.x + 1, y: wall.y + 0.5 },
             midHeight: (wall.lo + wall.hi) / 2,
             drop: wall.drop,
+            dropWorldUnits: wall.drop * HEIGHT_WORLD_SCALE,
+            azimuth: wall.lowSideEast
+              ? SHEER_LOW_SIDE_EAST_AZIMUTH_DEGREES
+              : SHEER_LOW_SIDE_WEST_AZIMUTH_DEGREES,
             lo: wall.lo,
             hi: wall.hi,
             cell: { x: wall.x, y: wall.y },
           },
     shore: shore === null ? null : { cell: { x: shore.x + 0.5, y: shore.y + 0.5 }, water: shore.water },
-    relief: { cell: { x: relief.x + 0.5, y: relief.y + 0.5 }, height: relief.height, spread: relief.spread },
+    relief: {
+      cell: { x: relief.x + 0.5, y: relief.y + 0.5 },
+      height: relief.height,
+      spread: relief.spread,
+      // Eye outside the target, looking back through it: the deepest run of
+      // terrain the world can offer, so near and far LOD share the frame.
+      outwardAzimuth:
+        (Math.atan2(relief.x - centre.x, relief.y - centre.y) * 180) / Math.PI,
+    },
     frontier: {
       cell: { x: frontierCell.x + 0.5, y: frontierCell.y + 0.5 },
       height: at(frontierCell.x, frontierCell.y),
@@ -555,8 +608,15 @@ function stageWorld(worldName, stackDir) {
   const worldsDir = join(stackDir, 'worlds');
   mkdirSync(worldsDir, { recursive: true });
   // A COPY, never the live file: the owner's server may be mid-write.
-  copyFileSync(join(WORLDS_SOURCE_DIR, `${worldName}.db`), join(worldsDir, `${worldName}.db`));
+  const copy = join(worldsDir, `${worldName}.db`);
+  copyFileSync(join(WORLDS_SOURCE_DIR, `${worldName}.db`), copy);
   writeFileSync(join(worldsDir, ACTIVE_WORLD_FILE), worldName);
+  const require_ = createRequire(join(REPO_ROOT, 'server/package.json'));
+  const db = new (require_('better-sqlite3'))(copy);
+  db.exec('CREATE TABLE IF NOT EXISTS disabled_plugins (plugin TEXT NOT NULL PRIMARY KEY)');
+  const insert = db.prepare('INSERT OR IGNORE INTO disabled_plugins (plugin) VALUES (?)');
+  for (const plugin of NONDETERMINISTIC_PLUGINS) insert.run(plugin);
+  db.close();
   return worldsDir;
 }
 
