@@ -1,5 +1,6 @@
 {
   "wordCap": 30,
+  "redirect": "docs/decisions/<arc>.md",
   "patterns": [
     "iso-date",
     "owner",
@@ -15,6 +16,7 @@
     "**/out/**",
     "**/__pycache__/**",
     "**/.*/**",
+    "**/.*",
     "**/*.d.ts"
   ],
   "linted": [
@@ -53,7 +55,6 @@
     "client/src/plugins/kit/viewReconcile.ts",
     "client/src/plugins/registry.ts",
     "client/src/plugins/toolbar.ts",
-    "client/src/plugins/types.ts",
     "client/src/previewArch.ts",
     "client/src/previewBoats.ts",
     "client/src/previewCrops.ts",
@@ -154,7 +155,6 @@
     "client/src/ui/WorldManager.tsx",
     "client/src/ui/WorldSwitchBanner.tsx",
     "client/src/ui/WorldThumbnail.tsx",
-    "client/src/world.ts",
     "client/test/bandColors.test.ts",
     "client/test/brushPreview.test.ts",
     "client/test/cameraClearance.test.ts",
@@ -528,14 +528,10 @@
     "plugins/weather/server/wind.ts",
     "plugins/weather/test/hub.test.ts",
     "plugins/weather/test/wind.test.ts",
-    "plugins/wildlife/client/.old-models.ts",
-    "plugins/wildlife/client/.old-whaleSpecies.ts",
     "plugins/wildlife/client/interpolation.ts",
     "plugins/wildlife/client/models.ts",
     "plugins/wildlife/client/modelScale.ts",
     "plugins/wildlife/client/placement.ts",
-    "plugins/wildlife/client/species/.old-angelfish.ts",
-    "plugins/wildlife/client/species/.old-eel.ts",
     "plugins/wildlife/client/species/assetSpecies.ts",
     "plugins/wildlife/client/species/bison.ts",
     "plugins/wildlife/client/species/bodyKit.ts",
