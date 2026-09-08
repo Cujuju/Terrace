@@ -30,13 +30,18 @@ function clampCell(size: number, i: number): number {
   return i < 0 ? 0 : i > size - 1 ? size - 1 : i;
 }
 
+// Ordered so NaN, failing every comparison, lands on the low border.
+function clampCoord(size: number, coord: number): number {
+  return coord > 0 ? (coord < size ? coord : size) : 0;
+}
+
 function latticeOffset(coord: number): number {
   return 2 * Math.floor(coord * TERRAIN_LOD_NEAR_N) + 1 - TERRAIN_LOD_NEAR_N;
 }
 
 function footprintAt(map: Heightmap, x: number, y: number): Footprint {
-  const qx = latticeOffset(x);
-  const qy = latticeOffset(y);
+  const qx = latticeOffset(clampCoord(map.size, x));
+  const qy = latticeOffset(clampCoord(map.size, y));
   const baseX = floorDiv(qx, SUBCELL_DENOM);
   const baseY = floorDiv(qy, SUBCELL_DENOM);
   return {
