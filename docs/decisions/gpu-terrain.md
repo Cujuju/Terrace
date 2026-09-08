@@ -128,14 +128,49 @@ Heights upload as **R16I** and are read through an `isampler2D` with four
 `drawnGround.ts`, including its own floor-toward-minus-infinity divide. Hardware
 bilinear filtering carries roughly 8 bits of sub-texel precision, which is not
 enough to reproduce an exact integer blend, so it is barred from anything that
-decides geometry. It remains fine for the fragment-shader isoline colouring,
-which is where `smoothHeight` uses it.
+decides geometry — and since an integer texture cannot be filtered at all, the
+type enforces the rule rather than a convention doing it. The unquantised field
+the fragment shader uses to colour smooth terraces (`smoothHeight`) is built from
+the *same* integer fetches with an explicit `mix`, so even the colouring path
+never asks the sampler to interpolate.
 
 The negative control that proves the parity gate is not vacuous: replacing GLSL
 `floorDivPositive` with plain `a / b` produces **87,915 mismatches**, 38 of them
 on an all-positive map — the low-edge lattice offsets go negative
 (`latticeOffset` is `−3` in the first quarter-cell) even when no height is, so
 truncation and flooring diverge at the world border regardless of sign.
+
+### The consumers stopped reading the mesh
+
+Three follow-on decisions, all the same move: a consumer that used to read a
+contour or a built mesh now calls the shared function.
+
+- **Risers are analytic** (`035d483`). `picking.ts` kept ~350 lines of
+  `DrawnRisers` derived from the mesher's contour output, so a click on a wall
+  only worked where a mesh had been built. It now marches `drawnGroundHeight`
+  directly and derives the riser from the field — 366 lines out, 112 in. The
+  riser snap stopped being a contour fact.
+- **Water and river tiles sample the shared function** (`16d45fd`, `70539d4`,
+  `78359c5`). They used to be built by the terrain's own mesher so their treads
+  landed on the same outline; that coupling is what made them wrong the moment
+  the outline changed. `70539d4` is the consequence worth remembering: a wet
+  cell moves the drawn surface a full cell beyond itself
+  (`DRAWN_BLEND_REACH_CELLS = 1`), so it must mark every water tile within that
+  reach, not only the tile it sits in. Anything keyed to "the cell" rather than
+  "the cell's blend reach" leaves a gap at a tile seam.
+- **The band palette became a LUT texture** with two rows (terrain and cliff)
+  and self-lit-ness carried in the **alpha channel**, so lava and the
+  underwater seabed keep their emissive look without the per-vertex `selfLit`
+  attribute the mesher supplied. `bandColors.ts` stays the single source; the
+  texture is generated from it.
+- **One splice contract** (`8f6800d`). `groundShade` and `revealMask` each used
+  to compute their own world position and manage their own cache key while
+  splicing onto the same material. `applyShaderEffect` now owns all three —
+  the world position (emitted once, with a marker so later effects append after
+  it rather than before), the declaration site, and the cache key, which each
+  effect extends rather than replaces. The failure it removes is structural: two
+  effects that both replace `customProgramCacheKey` produce materials three
+  cannot tell apart.
 
 ### The span cap is a shader budget, and enforcing it cost two bugs
 
