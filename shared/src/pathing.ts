@@ -1,23 +1,6 @@
-// ROUTING — go AROUND obstacles, not over or through them (owner, 2026-08-19:
-// "anything traveling across the map — whether it be a pilgrim or wildlife —
-// attempts to go around obstacles instead of over or through them. That would
-// also allow us to add roads that actually look like something").
-//
-// This is the layer above traversal.ts. traversal.ts answers "may I stand
-// here / cross this one step"; this file answers "what SEQUENCE of steps gets
-// me from A to B", preferring gentle ground over steep-but-legal ground so
-// the chosen route is the one a road would plausibly follow. A greedy
-// per-tick local probe (the shape both plugins had before this file existed)
-// can only ever react to what is immediately ahead — face a cliff, turn,
-// re-approach, oscillate. A* over the traversal contract plans the whole leg
-// before a single step is taken.
-//
-// DETERMINISM CONTRACT: integer-only cost arithmetic (no Euclidean/√2 in the
-// cost function — see ORTHOGONAL_STEP_COST/DIAGONAL_STEP_COST below), a fixed
-// neighbor scan order, and an explicit, total tie-break in the open-set
-// priority queue (f, then h, then a cell-key ascending fallback) — so two
-// callers searching the same heights from the same start/goal get a
-// byte-identical route, not merely "a shortest route", every time.
+// ROUTING — go AROUND obstacles, not over or through them: A* over the
+// traversal.ts contract, preferring gentle ground to steep-but-legal.
+// Deterministic by contract — see docs/decisions/movement.md.
 
 import {
   exceedsWalkableGradient,
@@ -26,7 +9,7 @@ import {
   type TerrainSampler,
   type TraversalProfile,
 } from './traversal.ts';
-import { climbSeconds } from './climb.ts';
+import { WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND, climbSeconds } from './climb.ts';
 import {
   CELL_WORLD_SIZE,
   NEIGHBOURHOOD_CELLS,
@@ -39,83 +22,33 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Base cost of one orthogonal (N/E/S/W) step. 10 — the classic integer
- * "octile distance" scale (Euclidean step cost ×10, rounded), chosen SPECIFICALLY
- * so the diagonal cost below can be an integer too: √2 has no exact integer
- * ratio to 1, so representing both costs as small integers rather than floats
- * needs a common scale where the rounding error is negligible relative to the
- * cost itself. Kept out of the walker-visible API (RoutePlan.cost is "cost
- * units", not cells or seconds) precisely so this scale is free to change.
+ * Base cost of one orthogonal step. 10 — the classic integer octile scale,
+ * chosen so the diagonal cost below can be an integer too.
+ * See docs/decisions/movement.md.
  */
 export const ORTHOGONAL_STEP_COST = 10;
 
 /**
- * Base cost of one diagonal (NE/NW/SE/SW) step. 14 ≈ 10·√2 (13.94, rounded to
- * the nearest integer) — the standard octile-distance approximation. Chosen
- * over the two obvious alternatives: 10 (equal to orthogonal) would make
- * diagonal movement strictly dominant, producing needlessly diagonal-heavy
- * routes even where a straighter orthogonal jog is just as short; 20 (2×
- * orthogonal) would forbid diagonal cutting entirely, which is worse than
- * Euclidean and produces visible staircase detours around anything a true
- * diagonal could clear in one step.
+ * Base cost of one diagonal step. 14 ≈ 10·√2, the standard octile
+ * approximation — 10 would make diagonals dominant, 20 would forbid them.
+ * See docs/decisions/movement.md.
  */
 export const DIAGONAL_STEP_COST = 14;
 
 /**
- * Extra cost added per unit of |height difference| an edge crosses, on top of
- * its base move cost — the term that makes a route prefer the gentle way
- * round even when the steep way is shorter and still legal.
- *
- * Chosen against MAX_STEP-scale climbs, not against the base move costs
- * directly. The ratio that decides route shape is the penalty for climbing one
- * WORLD UNIT at the steepest legal land grade against what it costs to walk
- * one world unit on the flat, and it is 1.6: before the 2026-08-21 re-sample
- * that was +16 (LAND_WALKER_MAX_GRADIENT_PER_CELL over one cell) on a base 10,
- * and it is the same 1.6 now, spread over the four cells a world unit is
- * sampled by. That is enough that two world units of flat detour already beat
- * one world unit of max-gradient climb, and a short flat detour beats a short
- * steep one by a wide, visible margin, without so overwhelming the base cost
- * that gentle rolling terrain (small height differences) gets penalised into
- * looking like a wall.
- *
- * WHY IT IS DERIVED (2026-08-21). Height units did not get finer and steps
- * did: leaving this at a literal 1 would have quartered the slope term's
- * weight against distance, which is a different pathfinder — walkers taking
- * the steep way because the gentle way now counts four times the steps.
- *
- * Skipped entirely for a water-ground profile (maxGradientPerCell = Infinity,
- * traversal.ts): water has no risers, so there is nothing to penalise.
+ * Extra cost per unit of |height difference| an edge crosses: what makes a
+ * route prefer the gentle way round. Derived, and skipped for water profiles
+ * (no risers). See docs/decisions/movement.md.
  */
 export const SLOPE_COST_PER_HEIGHT_UNIT = WORLD_UNIT_CELLS;
-
-/**
- * The walking speed climb costs are priced against, in world units per second.
- *
- * 0.5 — plugins/pilgrims' PILGRIM_WALK_SPEED_CELLS_PER_SECOND, RESTATED here
- * because a planner may not import a plugin, and the peep is the canonical land
- * walker this cost model has always been reasoned about (see
- * SLOPE_COST_PER_HEIGHT_UNIT above, argued in peep-sized detours). It prices
- * TIME ONLY: a mover that walks at some other speed still climbs at
- * CLIMB_RISE_HEIGHT_UNITS_PER_SECOND, and what this decides is how many cells
- * of ITS OWN walking a climb is worth — a ratio that barely moves across the
- * shipped speeds (a yeti ambles at 0.45, an ibex trots faster) and would only
- * change which of two nearly equal routes wins.
- */
-export const WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND = 0.5;
 
 /** Seconds one cell of flat walking takes at that speed — the unit ORTHOGONAL_STEP_COST buys. */
 const FLAT_CELL_SECONDS = CELL_WORLD_SIZE / WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND;
 
 /**
- * What one SECOND of climbing costs, in the same units as a walked step: a
- * second of walking, priced by what a cell of it buys.
- *
- * PER SECOND RATHER THAN PER HEIGHT UNIT since climbers gained rates of their
- * own (climb.ts's `climbRiseHeightUnitsPerSecond`). At the default rate the
- * arithmetic is unchanged — 5 per height unit, 80 for a band, eight cells of
- * walking, which is the four seconds a band the climb genuinely takes — but the
- * height-unit figure is no longer a constant, because it depends on who is
- * climbing.
+ * What one SECOND of climbing costs, in the same units as a walked step. Per
+ * second, not per height unit, since climbers have rates of their own.
+ * See docs/decisions/movement.md.
  */
 const CLIMB_COST_PER_SECOND = ORTHOGONAL_STEP_COST / FLAT_CELL_SECONDS;
 
@@ -124,126 +57,38 @@ const CLIMB_COST_PER_SECOND = ORTHOGONAL_STEP_COST / FLAT_CELL_SECONDS;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * How far a route may swing from the straight line between start and goal,
- * in cells, on either axis.
- *
- * Two NEIGHBOURHOODS — a fixed, generous multiple of the game's own
- * neighbourhood unit (16 world units of ground: 128 cells since the 2026-08-21
- * re-sample, 32 before it, the same swing across the ground either way) —
- * enough room to clear an obstacle several neighbourhoods wide without letting
- * the search box grow unboundedly with trip length. ASSUMPTION, named because it is not measured: no telemetry
- * exists yet on how wide a player-built obstacle typically gets between two
- * points a walker plugin routes between (tens of cells, per pilgrims'
- * PILGRIMAGE_CATCHMENT_CELLS / wanderers' WANDER_RANGE_CELLS). If a shipped
- * world ever shows a walker giving up on a route that a human would call
- * "obviously reachable by walking a bit further out", this is the constant to
- * retune. Until then: a destination that needs a wider swing than this to
- * reach — circumnavigating a whole lake or peninsula — is DELIBERATELY
- * treated the same as truly unreachable (`findRoute` returns null and the
- * caller's failure contract takes over), because every shipped walker's trip
- * is a short local journey (a viewpoint, a neighbouring town), never a
- * cross-continent trek.
+ * How far a route may swing from the straight start–goal line, in cells. Two
+ * neighbourhoods: enough to clear a wide obstacle without an unbounded search
+ * box. See docs/decisions/movement.md.
  */
 export const ROUTE_SEARCH_MARGIN_CELLS = NEIGHBOURHOOD_CELLS * 2;
 
 /**
  * What a route will pay to avoid a CERTAIN death: the widest detour this
- * planner is capable of planning (ROUTE_SEARCH_MARGIN_CELLS of flat walking).
- *
- * Bounded by the search box on purpose. A larger figure would not buy a longer
- * detour — the box is what limits that — it would only make every climbed edge
- * look infinitely bad next to every walked one, which is the same thing as not
- * being able to climb.
+ * planner can plan (ROUTE_SEARCH_MARGIN_CELLS of flat walking). Bounded by the
+ * search box. See docs/decisions/movement.md.
  */
 const CERTAIN_DEATH_COST = ORTHOGONAL_STEP_COST * ROUTE_SEARCH_MARGIN_CELLS;
 
 /**
- * Hard cap on nodes EXPANDED (popped off the open set) by one `findRoute`
- * call — the "bounded work" requirement: a 512² world is 262 144 cells and
- * terrain changes on every sculpt, so an unbounded search per walker per tick
- * cannot be allowed to exist.
- *
- * Cost model, benchmarked against the census's own measured rate (wildlife's
- * HABITAT_CENSUS_INTERVAL_SECONDS: ~262 144 cells in ~1 ms, i.e. roughly
- * 262 elementary cell-ops per microsecond on the reference hardware that
- * figure was measured on). One expansion here does substantially more work
- * than one census cell: up to 8 neighbour edges, each running an
- * isWalkableCell bounds+ground check and (for finite-gradient profiles) a
- * height read and comparison, plus one binary-heap push and sift
- * (O(log budget) ≈ 12 comparisons at this budget) per surviving edge — call
- * it on the order of 100 elementary ops per expansion, ~10× a census cell.
- * At the census's measured rate that puts 4096 expansions × ~100 ops
- * ≈ 410 000 ops at roughly 1.5 ms — well under one 100 ms tick (TICK_HZ = 10)
- * even if several walkers replan on the same tick.
- *
- * That "several walkers on the same tick" case is a burst, not a steady
- * load: routes are computed on GOAL-CHANGE events (a walker is dispatched, or
- * its leg changes — see pilgrims' pilgrimage.ts/wandering.ts), not once per
- * tick per walker, and a goal change happens at most a handful of times over
- * one walker's whole lifetime. Bounded further by each plugin's own
- * population cap (pilgrims: PILGRIMS_CAP + WANDERERS_CAP = 40; wildlife does
- * not use routing — see the movement.ts contour-following note), so the
- * worst single-tick cost is that cap × this budget's ~1.5 ms, itself only
- * reachable if every capped walker's goal changed on the exact same tick.
- *
- * A TEST SEAM: findRoute takes this as an optional last argument so a suite
- * can force budget exhaustion on a small, fast search rather than construct
- * a full-budget maze.
- *
- * SCALED WITH THE SAMPLING DENSITY (2026-08-21). What the budget really buys
- * is a REACHABLE AREA — the ground A* may explore before giving up — and a
- * given patch of ground is now sixteen cells where it was one. Left at 4096
- * the walkers would have kept the number and lost the range: every trip's
- * reachable radius would have quartered, and "obviously reachable by walking a
- * bit further out" would start failing at a quarter of the distance. The
- * budget is therefore stated as expansions per unit of ground and multiplied
- * by WORLD_UNIT_CELLS², holding the area constant at 65 536 expansions.
- *
- * THE COST IS REAL AND IS THE PRICE OF THE RANGE: the cost model above puts
- * one exhausted search at ~24 ms rather than ~1.5, so the burst case it
- * bounds — every capped walker replanning on one tick — no longer fits in a
- * 100 ms tick. It is reachable only by a search that fails, which is why it is
- * accepted here rather than paid for with range; the fix if a shipped world
- * hits it is to spread replans across ticks (a scheduling change in the walker
- * plugins), not to shrink the area a walker can see.
+ * Hard cap on nodes EXPANDED by one `findRoute` call: an unbounded per-walker
+ * search cannot exist. Stated per unit of ground so the reachable AREA holds.
+ * See docs/decisions/movement.md.
  */
 const ROUTE_NODE_BUDGET_PER_WORLD_UNIT_SQUARED = 4096;
 export const ROUTE_NODE_BUDGET =
   cellsOverArea(ROUTE_NODE_BUDGET_PER_WORLD_UNIT_SQUARED);
 
 /**
- * A pool of node expansions SHARED by every `findRoute` call in one turn of a
- * caller's work.
- *
- * WHY THE PER-CALL BUDGET WAS NOT ENOUGH (2026-08-29 perf review, D1/D2).
- * ROUTE_NODE_BUDGET bounds ONE search. It says nothing about a caller that
- * runs N searches inside a single synchronous call, and that is exactly what
- * a site scan does — pilgrims' `scanSettleSites` walked 768 anchors and asked
- * A* about each one. Every anchor that was walkable but not connected to the
- * walker cost a WHOLE budget (~29 ms measured), so one temple-placement press
- * blocked the server's event loop for seconds. The bound has to be on the
- * turn, not on the call, and a pool is the smallest thing that expresses that:
- * the caller mints one, hands it to every search it makes, and the total spend
- * across all of them can never exceed what it minted.
- *
- * DETERMINISTIC BY CONSTRUCTION, and that is why it is an expansion COUNT and
- * not an elapsed-time budget. A wall-clock bound inside this file would make
- * the route a walker gets depend on how loaded the machine was — the server
- * and a client replaying the same heights would disagree, which is precisely
- * what this module's determinism contract (see the file header) forbids. An
- * integer pool threaded through calls in a fixed order is a pure function of
- * its inputs: the same world, the same start/goal sequence and the same
- * starting `remaining` give byte-identical routes every time, on any machine.
- * A caller that genuinely wants a WALL-CLOCK ceiling converts it to a pool
- * size at ITS OWN layer (outside `shared/`), where non-determinism is allowed
- * because the number chosen is then part of the input, not read mid-search.
+ * A pool of expansions shared by every `findRoute` call in one caller's turn:
+ * a count, not a clock, so routes stay deterministic.
+ * See docs/decisions/movement.md.
  */
 export interface RouteBudget {
   /**
-   * Expansions still available to this pool. Each `findRoute` handed this
-   * object caps itself at this value and subtracts what it actually spent.
-   * An exhausted pool (0) makes every further search return null immediately,
-   * which is the caller's signal that its turn's routing allowance is gone.
+   * Expansions still available. Each `findRoute` handed this object caps
+   * itself at this value and subtracts what it spent; 0 makes every further
+   * search return null.
    */
   remaining: number;
 }
@@ -268,15 +113,9 @@ export interface RouteCell {
 }
 
 /**
- * A planned route: start to goal inclusive, in walking order. `cost` is in
- * the cost-model's own units (see ORTHOGONAL_STEP_COST) — comparable between
- * two routes over the same profile, meaningless outside that comparison.
- *
- * EXPOSED so a future roads feature (mechanics card 29: "long-lived
- * neighbouring settlements wear footpaths between themselves along walkable
- * routes") can read the ordered cell list without this file knowing roads
- * exist — this module never renders or persists a route, it only computes
- * one and hands back the list.
+ * A planned route: start to goal inclusive, in walking order. `cost` is in the
+ * cost model's own units — comparable between two routes over the same
+ * profile, meaningless elsewhere.
  */
 export interface RoutePlan {
   readonly cells: ReadonlyArray<RouteCell>;
@@ -284,11 +123,8 @@ export interface RoutePlan {
 }
 
 /**
- * Fixed neighbour scan order: N, NE, E, SE, S, SW, W, NW — clockwise from
- * north, alternating orthogonal/diagonal. Part of the determinism contract
- * only in the sense that it is FIXED (rivers.ts's FLOW_DIRECTIONS precedent);
- * it does not affect which route wins (the open-set tie-break below is what
- * decides that), only the incidental order candidate edges are relaxed in.
+ * Fixed neighbour scan order: N, NE, E, SE, S, SW, W, NW. Fixed is the point;
+ * it decides only the order edges are relaxed in, never which route wins.
  */
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [dx: number, dy: number, baseCost: number]> = [
   [0, -1, ORTHOGONAL_STEP_COST],
@@ -301,11 +137,8 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [dx: number, dy: number, baseCost
   [-1, -1, DIAGONAL_STEP_COST],
 ];
 
-/** Admissible octile-distance heuristic, using the same integer cost scale
- *  as the edges themselves (ORTHOGONAL/DIAGONAL_STEP_COST) so it never
- *  overestimates the true remaining cost (slope cost only ever ADDS to an
- *  edge's base cost, never subtracts, so ignoring it here keeps the estimate
- *  a lower bound). */
+/** Admissible octile-distance heuristic on the same integer cost scale as the
+ *  edges, so it never overestimates: slope cost only ever ADDS to an edge. */
 function octileHeuristic(dx: number, dy: number): number {
   const ax = Math.abs(dx);
   const ay = Math.abs(dy);
@@ -325,12 +158,9 @@ interface OpenEntry {
 }
 
 /**
- * Total, deterministic priority order: lower f first: ties broken by lower h
- * (prefer the node closer to the goal); ties broken by lower cell key (a
- * fixed, arbitrary-but-stable ordering over the grid). Because `key` is
- * unique per cell, this is a STRICT total order — no two distinct entries
- * ever compare equal — which is what makes the heap's output independent of
- * push order and therefore reproducible byte-for-byte across runs.
+ * Total, deterministic priority order: lower f, then lower h, then lower cell
+ * key. `key` is unique per cell, so this is a STRICT total order, independent
+ * of push order.
  */
 function hasHigherPriority(a: OpenEntry, b: OpenEntry): boolean {
   if (a.f !== b.f) return a.f < b.f;
@@ -381,11 +211,8 @@ class RouteOpenSet {
   }
 }
 
-/** Cost of stepping from (fromX, fromY) to the adjacent (toX, toY), or null
- *  if the step is illegal (wrong ground, or a slope steeper than the
- *  profile's limit). Adjacent cells only — a route edge is always one grid
- *  step, so the segment-sampling canTraverseSegment would degenerate to this
- *  same single comparison; this is that degenerate case written directly. */
+/** Cost of one step to an adjacent cell, or null if the step is illegal:
+ *  wrong ground, or a slope steeper than the profile's limit. */
 function edgeCost(
   world: TerrainSampler,
   profile: TraversalProfile,
@@ -403,7 +230,7 @@ function edgeCost(
   const heightDiff = Math.abs(toHeight - fromHeight);
   if (exceedsWalkableGradient(profile, heightDiff)) {
     const rule = profile.climb;
-    // Not a climber: the wall is the end of this branch, exactly as before.
+    // Not a climber: the wall is the end of this branch.
     if (rule === undefined || rule === null) return null;
     // Signed, not the magnitude: a descent also turns about and steps off at
     // the bottom, so it is the dearer of the two directions.
@@ -413,36 +240,17 @@ function edgeCost(
 }
 
 /**
- * What one climbed edge costs a route, on top of the step itself: the TIME the
- * climb takes, priced in the same currency as walking, plus what the risk of
- * dying on it is worth avoiding.
- *
- * THE TIME TERM IS DERIVED, NOT TUNED. `ORTHOGONAL_STEP_COST` buys one cell of
- * flat walking, which takes CELL_WORLD_SIZE / WALK_SPEED_FOR_COSTING seconds;
- * one height unit of wall takes 1 / CLIMB_RISE_HEIGHT_UNITS_PER_SECOND. The
- * ratio of those two is what a height unit of climbing is worth in cells of
- * walking, and today it comes to 5 per height unit — 80 for a whole band,
- * i.e. eight cells of detour, which is exactly the four seconds a band the
- * climb actually takes against the half second a cell of walking takes.
- *
- * THE RISK TERM IS THE POINT OF HAVING ONE. Without it a route prices a lethal
- * shortcut purely by how long it takes, and a climber walks up a cliff to save
- * four cells. `CERTAIN_DEATH_COST` is what a route would pay to avoid a
- * CERTAIN death — the widest detour the planner is able to plan at all
- * (ROUTE_SEARCH_MARGIN_CELLS of flat walking), because a death it cannot plan
- * around is one it must simply accept — and a fall chance buys that fraction
- * of it. At the shipped chances a peep (15 %) walks up to 19 cells out of its
- * way rather than take a wall, a yeti (5 %) about six, and an ibex (1 %) barely
- * more than one, which is the animal each of them is.
+ * What one climbed edge costs a route: the TIME the climb takes, priced as
+ * walking, plus what its risk of death is worth avoiding.
+ * See docs/decisions/movement.md.
  */
 function climbEdgeCost(rule: ClimbRule, fromHeight: number, toHeight: number): number {
-  // Every climb rolls (climb.ts's `beginClimb`), so every climbed edge is priced
-  // for the risk. No height gate: the 4:1 sheer rule is what keeps a knee-high
-  // ledge from being a climb in the first place.
+  // Every climb rolls (climb.ts's `beginClimb`), so every climbed edge is
+  // priced for the risk. No height gate: the 4:1 sheer rule keeps a knee-high
+  // ledge from being a climb.
   const risk = rule.fallChance * CERTAIN_DEATH_COST;
   // THIS CLIMBER'S OWN SECONDS, and ALL of them: `climbSeconds` adds up the
-  // legs climb.ts actually walks, so a change to the motion cannot leave the
-  // planner pricing a climb that no longer exists.
+  // legs climb.ts walks, so the planner cannot price a climb that is gone.
   return climbSeconds(rule, fromHeight, toHeight) * CLIMB_COST_PER_SECOND + risk;
 }
 
@@ -465,38 +273,8 @@ function reconstructPath(
 
 /**
  * Plans a route from `start` to `goal` over `profile`'s ground, preferring
- * gentle slopes to steep-but-legal ones (see SLOPE_COST_PER_HEIGHT_UNIT).
- * A* with an admissible octile heuristic, an explicit deterministic tie-break
- * (see `hasHigherPriority`), and two hard bounds: `ROUTE_SEARCH_MARGIN_CELLS`
- * (how far the search may swing off the direct line) and `nodeBudget`
- * (CPU). Returns null when no route exists within those bounds — see this
- * module's header and ROUTE_SEARCH_MARGIN_CELLS/ROUTE_NODE_BUDGET for what
- * "within those bounds" means and why that is an accepted scope limit rather
- * than a bug.
- *
- * Diagonal steps may not cut a corner: a diagonal edge is only offered when
- * BOTH of its flanking orthogonal cells are cells the walker could ACTUALLY
- * STEP INTO from here — the standard grid-pathing rule against squeezing
- * diagonally through the corner of an obstacle it could not pass along either
- * straight edge.
- *
- * "Could actually step into" means the full edge test (`edgeCost`), not merely
- * walkable ground, and that distinction is a bug fix (2026-08-20). The ground-
- * only version let A* emit a diagonal whose flanks were legal GROUND but
- * impassable RISERS — e.g. from a cell at height 226 to one at 232 (a 6-unit
- * step, happily legal) with flanks at 258 and 64, both dry land and both far
- * past the gradient limit. On the grid that is a legal move; to anything that
- * moves CONTINUOUSLY it is not, because a body crossing from one cell to its
- * diagonal neighbour passes through one of the two flanks on the way, and both
- * of these are cliffs. A follower handed such a route walks up to the corner
- * and stops — which is exactly the "stuck in the middle of nowhere" the owner
- * reported, arriving by a second road (see shared/src/steering.ts for the
- * first). The planner must only ever emit edges the walker can physically
- * take.
- *
- * `start`/`goal` are floored to their containing cell. Coincident start/goal
- * cells return a trivial one-cell, zero-cost route rather than running the
- * search.
+ * gentle slopes to steep-but-legal ones. Null when no route exists within the
+ * margin and node budget. See docs/decisions/movement.md.
  */
 export function findRoute(
   world: TerrainSampler,
@@ -505,9 +283,8 @@ export function findRoute(
   goal: RouteCell,
   budget: number | RouteBudget = ROUTE_NODE_BUDGET,
 ): RoutePlan | null {
-  // A bare number is this ONE search's allowance (the original contract and
-  // the test seam); a RouteBudget is a pool this search draws from and pays
-  // back into, so N searches in one turn share one allowance (see RouteBudget).
+  // A bare number is this ONE search's allowance and the test seam; a
+  // RouteBudget is a pool this search draws from and pays back into.
   const pool: RouteBudget | null = typeof budget === 'number' ? null : budget;
   const nodeBudget: number = typeof budget === 'number' ? budget : budget.remaining;
   const startX = Math.floor(start.x);
@@ -540,9 +317,8 @@ export function findRoute(
   open.push({ key: startKey, x: startX, y: startY, g: 0, f: startH, h: startH });
 
   let expansions = 0;
-  // `finally` rather than a subtraction before each return: the search has four
-  // exits (budget, empty heap, goal, open-set exhaustion) and a pool that is
-  // only paid back on some of them would drift silently.
+  // `finally` rather than a subtraction before each return: the search has
+  // four exits, and a pool paid back on only some of them would drift.
   try {
     while (open.size > 0) {
       if (expansions >= nodeBudget) return null; // budget exhausted — see ROUTE_NODE_BUDGET.
@@ -565,9 +341,9 @@ export function findRoute(
         if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
 
         if (dx !== 0 && dy !== 0) {
-          // Corner-cutting guard (see this function's doc comment). The SAME
-          // edge test the move itself uses, so a flank that is legal ground but
-          // an illegal climb blocks the corner exactly as a wall would.
+          // Corner-cutting guard: a diagonal is offered only when BOTH
+          // flanking orthogonal steps are legal, by the SAME edge test the
+          // move itself uses.
           const alongX = edgeCost(world, profile, current.x, current.y, current.x + dx, current.y, ORTHOGONAL_STEP_COST);
           const alongY = edgeCost(world, profile, current.x, current.y, current.x, current.y + dy, ORTHOGONAL_STEP_COST);
           if (alongX === null || alongY === null) continue;
@@ -607,24 +383,9 @@ export interface RouteBounds {
 }
 
 /**
- * Which cells one walker can WALK TO — the answer to "is there any route at
- * all", separated from "what is the best route".
- *
- * WHY THIS EXISTS (2026-08-29 perf review, D1/D2). Callers were using
- * `findRoute` as a reachability test, and it is the most expensive possible
- * one: proving a cell unreachable costs a whole node budget, because A* has to
- * exhaust its budget before it can say no. A flood fill answers the same
- * question for a WHOLE BOX at once, in one pass over that box, and then every
- * candidate in the box is an O(1) lookup. A scan that asked A* 768 times now
- * floods once.
- *
- * IT IS A PREFILTER, NOT A REPLACEMENT. `has` true means "a walker can reach
- * this cell somewhere inside the flooded box"; the route itself is still
- * `findRoute`'s to produce, and `findRoute` searches a NARROWER box of its own
- * (ROUTE_SEARCH_MARGIN_CELLS around the start–goal line), so it may still fail
- * on a cell this says is reachable. The reverse cannot happen as long as the
- * caller floods a box containing every search box it will use — see
- * `floodReachableRegion`.
+ * Which cells one walker can WALK TO — "is there any route at all", not "what
+ * is the best route". A PREFILTER: `findRoute` may still fail.
+ * See docs/decisions/movement.md.
  */
 export interface ReachableRegion {
   /** Can the flood's start cell reach the cell containing (x, y)? Cells
@@ -634,8 +395,7 @@ export interface ReachableRegion {
 
 /**
  * Orthogonal steps in the fixed N, E, S, W order the flood relaxes them in.
- * Separate from NEIGHBOR_OFFSETS because the flood must settle all four
- * orthogonal edges BEFORE the diagonals that depend on them (see below).
+ * Separate from NEIGHBOR_OFFSETS: all four must settle before the diagonals.
  */
 const FLOOD_ORTHOGONAL_OFFSETS: ReadonlyArray<readonly [dx: number, dy: number]> = [
   [0, -1],
@@ -646,11 +406,8 @@ const FLOOD_ORTHOGONAL_OFFSETS: ReadonlyArray<readonly [dx: number, dy: number]>
 
 /**
  * Diagonal steps, each carrying the INDICES into FLOOD_ORTHOGONAL_OFFSETS of
- * the two flanking orthogonal edges the corner-cutting guard requires. Same
- * rule `findRoute` applies (see its doc comment): a diagonal is only a step if
- * both flanks are steps, because a body crossing to a diagonal neighbour
- * passes through one of them. Precomputing the four flanks once per cell makes
- * this eight edge tests per cell instead of twelve.
+ * its two flanking edges — the same corner-cutting guard `findRoute` applies,
+ * precomputed once per cell.
  */
 const FLOOD_DIAGONAL_OFFSETS: ReadonlyArray<
   readonly [dx: number, dy: number, flankA: number, flankB: number]
@@ -666,39 +423,9 @@ const FLOOD_DIAGONAL_OFFSETS: ReadonlyArray<
 const EMPTY_REACHABLE_REGION: ReachableRegion = { has: () => false };
 
 /**
- * Floods every cell inside `bounds` a walker on `profile` can reach on foot
- * from `start`, using EXACTLY the step rules `findRoute` uses (`edgeCost`, plus
- * the same corner-cutting guard) so the two can never disagree about what a
- * step is.
- *
- * COST IS THE BOX, NOT A BUDGET: one pass, each cell entered at most once,
- * eight edge tests per entered cell — so `bounds` IS the bound, and the caller
- * sizes it. That is the whole point: a bounded, predictable sweep replaces an
- * unbounded number of budget-exhausting searches.
- *
- * TO KEEP A PREFILTER CONSERVATIVE the caller must flood a box that CONTAINS
- * every `findRoute` search box it will subsequently use — i.e. the box around
- * its start and all its candidate goals, grown by ROUTE_SEARCH_MARGIN_CELLS.
- * Then any route A* could have found lies inside this flood, so this flood
- * reaching nothing proves A* would have found nothing, and no site A* would
- * have accepted is ever refused.
- *
- * DETERMINISTIC: integer-only, a fixed neighbour order, an array-backed FIFO —
- * no Map/Set iteration anywhere, and the answer does not depend on visit order
- * in any case.
- *
- * FLOOD FROM THE SEARCH'S OWN START, NEVER FROM ITS GOAL (issue #266). It is
- * tempting to flood once from a shared destination and let many origins ask
- * about it — pilgrims' "which of these towns can reach that viewpoint" is
- * exactly that shape — but reachability over a profile with a finite gradient
- * limit IS NOT SYMMETRIC: the corner-cutting guard above tests a diagonal's
- * flanks against the height of the cell being stood on, so a corner legal
- * from one end can be illegal from the other. Demonstrated with the shipped
- * code: two diagonal neighbours at base and base+MAX_STEP with both flanks at
- * base−MAX_STEP give `findRoute` A→B a route and a flood from B no way back to
- * A. A goal-side flood is therefore NOT a conservative prefilter for
- * origin-side searches, and using it as one silently refuses trips that are
- * walkable. Issue #266 memoises A*'s own answer instead.
+ * Floods every cell inside `bounds` a walker on `profile` can reach from
+ * `start`, by EXACTLY the step rules `findRoute` uses. One pass; `bounds` is
+ * the bound. See docs/decisions/movement.md.
  */
 export function floodReachableRegion(
   world: TerrainSampler,
@@ -706,6 +433,8 @@ export function floodReachableRegion(
   start: RouteCell,
   bounds: RouteBounds,
 ): ReachableRegion {
+  // Never flood from the goal: reachability is not symmetric under the
+  // corner-cutting guard. See docs/decisions/movement.md.
   const startX = Math.floor(start.x);
   const startY = Math.floor(start.y);
   const worldSize = world.worldSize;
@@ -729,27 +458,18 @@ export function floodReachableRegion(
   const queue = new Int32Array(cells);
   let tail = 0;
 
-  // GROUND CLASSIFIED ONCE PER CELL, NOT ONCE PER EDGE. `edgeCost` re-runs
-  // isWalkableCell and heightAt on its TARGET cell every time it is called, and
-  // a flood looks at every cell from up to eight sides — so calling it per edge
-  // pays for the same ground test eight times over. Caching the two facts an
-  // edge actually needs (may a walker occupy this cell, and how high is it)
-  // leaves the edge test as two array reads and a comparison. Measured on a
-  // 421² box over an Int16 heightmap: 40 ms per flood before, single digits
-  // after. The PREDICATE is unchanged — this is the same isWalkableCell and the
-  // same gradient limit `edgeCost` applies, read from a memo.
+  // GROUND CLASSIFIED ONCE PER CELL, NOT ONCE PER EDGE: a flood sees each cell
+  // from eight sides. The predicate is `edgeCost`'s, memoised — see
+  // docs/decisions/movement.md.
   const UNCLASSIFIED = 0;
   const BLOCKED = 1;
   const OCCUPIABLE = 2;
   const ground = new Uint8Array(cells);
   const heights = new Float64Array(cells);
   const limit = profile.maxGradientPerCell;
-  // A water-ground profile has no risers to climb, so its edges never consult a
-  // height at all — the same branch `edgeCost` takes on a non-finite limit. So
-  // does a CLIMBER: reachability asks whether a mover can get there at all, and
-  // one that climbs what it cannot walk is stopped by no rise, only by ground
-  // it may not stand on. (`edgeCost` still prices those edges — this is the
-  // same predicate, memoised, and it must admit exactly what that admits.)
+  // Neither a water profile nor a CLIMBER is stopped by a rise: reachability
+  // asks whether a mover can get there at all. This must admit exactly what
+  // `edgeCost` prices.
   const climbs = profile.climb !== undefined && profile.climb !== null;
   const checksGradient = Number.isFinite(limit) && !climbs;
 
@@ -776,19 +496,17 @@ export function floodReachableRegion(
 
   for (let head = 0; head < tail; head++) {
     const index = queue[head];
-    // `| 0` is exact integer division here: index and width are both
-    // non-negative integers well under 2^31, so this truncates rather than
-    // rounds — the same value Math.floor gives, without the call.
+    // `| 0` is exact integer division here: index and width are non-negative
+    // integers well under 2^31, so this truncates rather than rounds.
     const row = (index / width) | 0;
     const x = minX + (index - row * width);
     const y = minY + row;
     const fromHeight = heights[index];
 
     for (let i = 0; i < FLOOD_ORTHOGONAL_OFFSETS.length; i++) {
-      // Indexed, not destructured: array destructuring in this loop builds an
-      // iterator per neighbour per cell, and at ~1.4 million neighbours per
-      // flood that machinery outweighed the ground tests it was fetching
-      // offsets for (measured: 21 ms per flood with it, 5 ms without).
+      // Indexed, not destructured: array destructuring here builds an iterator
+      // per neighbour per cell, which outweighed the ground tests it fetched
+      // offsets for. See docs/decisions/movement.md.
       const offset = FLOOD_ORTHOGONAL_OFFSETS[i];
       const dx = offset[0];
       const dy = offset[1];
