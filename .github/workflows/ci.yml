@@ -23,6 +23,18 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # eslint-plugin-comment-budget is a private git dependency. Set the
+      # DEPS_TOKEN secret to a PAT with read access to it, or install fails.
+      - name: authenticate the private git dependency
+        env:
+          DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
+        run: |
+          if [ -n "$DEPS_TOKEN" ]; then
+            git config --global url."https://x-access-token:$DEPS_TOKEN@github.com/".insteadOf "https://github.com/"
+          else
+            echo "::error::DEPS_TOKEN is unset; the private git dependency cannot be installed."
+            exit 1
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       # The exemption list forgives untouched files, so a bypassed pre-commit
