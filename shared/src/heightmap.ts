@@ -34,6 +34,7 @@ import {
   BEDROCK_FLOOR,
   canCarveBandAt,
   canSpreadBandToSpan,
+  carveKeepsSpanCap,
   carveRange,
   columnCoversBand,
   highestCeilingBelow,
@@ -1021,6 +1022,7 @@ function applyCarve(
       }
     }
     if (!overlaps) return;
+    if (!carveKeepsSpanCap(map, x, y, lo, hi)) return;
     for (let band = lowestOpenedBand; band <= highestOpenedBand; band++) {
       if (!canCarveBandAt(map, x, y, band)) return;
     }

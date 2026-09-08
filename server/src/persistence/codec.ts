@@ -1,4 +1,5 @@
-import { parsePackedSpans, type Span } from '@terrace/shared';
+import { MAX_SPANS_PER_COLUMN, parsePackedSpans, type Span } from '@terrace/shared';
+import { logWarn } from '../log.ts';
 
 const BYTES_PER_HEIGHT = 2;
 
@@ -75,6 +76,8 @@ export function decodeColumnSpans(
 
   let offset = 0;
   let previousCellIndex = -1;
+  let mergedColumns = 0;
+  let widestColumn = 0;
   while (offset < blob.byteLength) {
     if (blob.byteLength - offset < BYTES_PER_SPAN_RECORD_HEADER) {
       throw new RangeError(
@@ -124,7 +127,17 @@ export function decodeColumnSpans(
           `${cellIndex}; refusing to restore a corrupt world`,
       );
     }
+    if (spans.length < spanCount) {
+      mergedColumns++;
+      if (spanCount > widestColumn) widestColumn = spanCount;
+    }
     spansByCell.set(cellIndex, spans);
+  }
+  if (mergedColumns > 0) {
+    logWarn(
+      `${context}: merged ${mergedColumns} column(s) holding as many as ${widestColumn} spans ` +
+        `down to the ${MAX_SPANS_PER_COLUMN}-span limit (saved before that limit existed)`,
+    );
   }
   return spansByCell;
 }
