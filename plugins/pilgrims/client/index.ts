@@ -8,6 +8,11 @@ import {
   drawnGroundSampler,
   followGroundY,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
+import {
+  advanceClimbRiserShift,
+  newClimbRiserShift,
+  type ClimbRiserShift,
+} from '../../../client/src/plugins/kit/climbRiser.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 
@@ -50,6 +55,8 @@ interface PilgrimView {
    * Null until its first drawn frame, and reset to null whenever it is hidden.
    */
   drawnY: number | null;
+  /** How far the drawn body sits off the wire while it holds a wall. */
+  readonly riserShift: ClimbRiserShift;
 }
 
 let models: PilgrimModels | null = null;
@@ -73,7 +80,12 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
     // binding the model at first sight is safe.
     const model = models.create(pilgrim.race, pilgrim.kind);
     container.add(model.root);
-    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID, drawnY: null });
+    views.set(id, {
+      model,
+      phase: id * PHASE_RADIANS_PER_ID,
+      drawnY: null,
+      riserShift: newClimbRiserShift(),
+    });
   }
 
   for (const [id, view] of views) {
@@ -109,6 +121,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       view.model.root.visible = false;
       // Nothing to ease from next time: see PilgrimView.drawnY.
       view.drawnY = null;
+      view.riserShift.x = 0;
+      view.riserShift.y = 0;
       continue;
     }
     view.model.root.visible = true;
@@ -119,12 +133,15 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       pilgrim.climbHeight === null ? terrainY : pilgrim.climbHeight * HEIGHT_WORLD_SCALE;
     const drawnY = followGroundY(view.drawnY, targetY, dt);
     view.drawnY = drawnY;
+    // A climber holds the riser the terrain DREW, which is nowhere near the
+    // lattice edge the server pins its foot to (the kit's climbRiser).
+    advanceClimbRiserShift(view.riserShift, ctx, pilgrim, drawnY, dt);
     // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE; the model itself
     // is built in world units and is unaffected by the sampling density.
     view.model.root.position.set(
-      pilgrim.x * CELL_WORLD_SIZE,
+      (pilgrim.x + view.riserShift.x) * CELL_WORLD_SIZE,
       drawnY,
-      pilgrim.y * CELL_WORLD_SIZE,
+      (pilgrim.y + view.riserShift.y) * CELL_WORLD_SIZE,
     );
     // Models face +X; travel is toward (cos heading, sin heading) — the same
     // negation every mover in this repo applies.

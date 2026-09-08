@@ -8,6 +8,11 @@ import {
   drawnGroundSampler,
   followGroundY,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
+import {
+  advanceClimbRiserShift,
+  newClimbRiserShift,
+  type ClimbRiserShift,
+} from '../../../client/src/plugins/kit/climbRiser.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 
@@ -68,6 +73,8 @@ interface MonsterView {
    * state, so crossing a band is a step. Null before its first drawn frame.
    */
   drawnY: number | null;
+  /** How far the drawn body sits off the wire while it holds a wall. */
+  readonly riserShift: ClimbRiserShift;
 }
 
 /**
@@ -114,6 +121,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
         phase: id * PHASE_RADIANS_PER_ID,
         variant: monster.variant,
         drawnY: null,
+        riserShift: newClimbRiserShift(),
       };
     },
     replace: (_id, monster, existing) => {
@@ -131,6 +139,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
         dread: existing.dread,
         phase: existing.phase,
         variant: monster.variant,
+        riserShift: existing.riserShift,
       };
     },
     release: (_id, view) => {
@@ -174,7 +183,14 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       monster.climbHeight === null ? placedY : monster.climbHeight * HEIGHT_WORLD_SCALE;
     const drawnY = followGroundY(view.drawnY, targetY, dt);
     view.drawnY = drawnY;
-    root.position.set(monster.x * CELL_WORLD_SIZE, drawnY, monster.y * CELL_WORLD_SIZE);
+    // A climber holds the riser the terrain DREW, which is nowhere near the
+    // lattice edge the server pins its foot to (the kit's climbRiser).
+    advanceClimbRiserShift(view.riserShift, ctx, monster, drawnY, dt);
+    root.position.set(
+      (monster.x + view.riserShift.x) * CELL_WORLD_SIZE,
+      drawnY,
+      (monster.y + view.riserShift.y) * CELL_WORLD_SIZE,
+    );
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and
     // the monster travels toward (cos heading, 0, sin heading) — hence the
     // negation.

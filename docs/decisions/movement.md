@@ -1019,3 +1019,156 @@ blocky guess for a received-but-undrawn chunk because the per-chunk revision
 counter is bumped when a chunk is dirtied, not when it is drawn, so a caller
 that memoised a guess would have nothing to invalidate it with — structures'
 survey cache is the case that found this.
+
+## Decisions recorded 2026-09-07 (climbers hold the drawn riser)
+
+### The report
+
+Owner: "Peeps are still climbing in free space, away from the face instead of
+on it." Phase 1 (movers stand on the drawn cap) had already landed.
+
+### Two causes, measured
+
+**A. The drawn wall is a staircase, not a plane.** `shared/src/climb.ts` pins a
+climber's foot a fixed inset from the LATTICE cell edge (`climbGeometryOf`: low
+cell centre + normal * (0.5 - halfWidth)), while the terrain draws each band's
+boundary as a marching-squares contour between the two CELL CENTRES, biased by
+`CONTOUR_SAMPLE_CLEARANCE` and clamped by `CONTOUR_CELL_CENTRE_GUARD`. Measured
+on a stamped sheer 4-band wall between cells 7 (height 0) and 8 (height 64),
+through the real `marchLevel` / `smoothLoop` / `groupLoops` pipeline: the four
+risers are drawn at x = 7.300, 7.500, 7.700 and 7.875. One wall's face is
+spread across three quarters of a cell, and no single inset can hold it.
+
+**B. Movers are drawn half a cell off the terrain's own frame.** The terrain
+draws cell `i` CENTRED on `i * CELL_WORLD_SIZE`: `capEmission` writes contour
+points as `point.x * CELL_WORLD_SIZE`, `terrain/picking.ts`'s `worldPointToCell`
+rounds, `terrain/faceFoot.ts` states "a cell owns the half-cell either side of
+its centre", and `plugins/structures` places a building at
+`cell.x * CELL_WORLD_SIZE`. The mover sim indexes a cell at its CORNER
+(`CELL_CENTRE_OFFSET`, "a mover stands in the middle of one"), so a mover at the
+centre of cell `i` has `x = i + 0.5` — and every mover plugin draws it at
+`x * CELL_WORLD_SIZE`, which is the terrain's corner between cells `i` and
+`i+1`. On the wall above, the server's foot (x = 7.596) therefore puts the
+body's front face at x = 8.000: a full cell past the lowest drawn riser and an
+eighth past the highest. Facing the other way the same arithmetic leaves the
+front face 0.3 to 0.9 cells SHORT of the rock — the "climbing in free space"
+the owner reported; facing east the body is inside the hill instead, where it
+cannot be seen to be wrong.
+
+This is a defect of every mover, not only of climbers: a walker standing at the
+centre of a cell beside a cliff samples `drawnGroundYAt` half a cell into the
+cliff's own contour, so phase 1's vertical fix draws it up on the wall's cap.
+It is NOT fixed here — see the residuals.
+
+### The contract
+
+`client/src/plugins/kit/climbRiser.ts` owns where a climbing body is DRAWN
+horizontally, exactly as `groundFollow.ts` owns the vertical. The server still
+owns the climb itself: height, legs, timing, fall, landing cell, the wire x/y.
+The kit answers in the TERRAIN's frame — the low cell of the pair is drawn at
+its own integer coordinate, the riser is `along` cells from there, and the
+body's front face is put on the riser — so the arithmetic never reads the
+wire's own along-axis position and stays right if cause B is ever fixed. Across
+the climb axis the wire stands unchanged.
+
+### Which riser, and how it is found
+
+**The rule: the first drawn ground ABOVE THE FEET, walking from the low cell's
+centre toward the high one's.** It needs no band arithmetic, no threshold
+lookup and no seabed-sink special case, and it is the same rule ascending and
+descending — a body between two caps is against the riser that joins them,
+whichever way it is travelling.
+
+It is asked of `ctx.drawnGroundYAt`, the oracle phase 1 established, at the
+drawn ground's own pitch (`BAND_GRID_CELLS`, a quarter cell): four probes from
+the low cell's centre to the high one's, and the riser is taken as the midpoint
+of the two probes that straddle the step. Measured against the true contours
+above, that lands the front face within an eighth of a cell — 7.375 / 7.375 /
+7.625 / 7.875 for feet in bands 0 to 3, against true risers of 7.300 / 7.500 /
+7.700 / 7.875 — versus 8.000 today. An eighth of a cell is half the grid step
+and is the finest answer the oracle has; nothing finer exists to read.
+
+**Rejected: `DrawnGround.loopsAt` plus a segment/loop intersection.** It is
+exact rather than quantised, but it needs a new `ClientPluginCtx` method
+carrying contour geometry into the plugin contract, it drops holes (`loopsAt`
+returns outer rings only, so a climb into a dug pit reads nothing), it needs
+the chunk-seam segments filtered out by hand (`isSeamSegment` — a probe across
+a chunk border finds the domain edge otherwise, which the fixture shows at
+x = 16), and it answers nothing at all for a BLOCKY chunk, which is exactly a
+chunk under sculpting load. The `drawnGroundYAt` walk gets holes, seams and the
+blocky fallback for free, because the store already resolved them.
+
+**Rejected: computing the crossing from `crossingFraction` in the kit.** That
+restates the renderer's own biasing rule and would not see Chaikin smoothing or
+the blocky fallback — the four ways-to-disagree list in
+`client/src/terrain/drawnGround.ts`'s header.
+
+### Which legs it applies to, without a leg on the wire
+
+The plan offered (a) putting `climbLeg` on the mover wire and (b) inferring the
+face leg from proximity to the server's own foot. Neither was taken. The gate
+used instead is geometric and exact:
+
+* the mover is on a wall at all (`climbHeight !== null`), AND
+* the drawn ground at the LOW CELL'S OWN CENTRE is BELOW the feet — the body
+  has left the ground the wall rises from, AND
+* some probe between the two cell centres is above the feet.
+
+Leg by leg on an ascent: the face leg passes all three; the lip leg fails the
+third the moment the feet reach the top cap (nothing along the pair is above
+them), and once the body crosses into the high cell the second test fails too,
+because the cell under it is then the one it is standing on. On a descent the
+turn leg fails the second test (the body stands on the high cell's cap), the
+face leg passes, and the ground leg fails the second test again, because the
+feet are back on the low cell's own drawn ground. A fall keeps the hold, which
+is right: a body that has let go drops down the face it was on. Every failure
+mode is "no offset, draw where the wire says", never a wrong offset.
+
+Rejected (a) because the gate above answers the same question from the drawn
+ground with no protocol surface, no version-skew story and no extra bytes: the
+wire field would have had to be optional and absent for grounded movers anyway,
+since `plugins/wildlife/test/wildlife.test.ts` pins the exact key set of a
+broadcast row and the three plugins' parse tests pin the exact parsed shape.
+Rejected (b) because proximity to the foot cannot tell a climber at the foot of
+a wall from a body that has just topped out onto the ledge below the next wall
+— the two are the same distance from the same computed foot.
+
+### The chase
+
+The offset is eased, not assigned. `RISER_SHIFT_CELLS_PER_SECOND` is the
+mover's own walking speed in cells (`cellsAcross` of
+`WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND`), so a correction never outruns
+a walk, and the largest correction on the fixture wall (0.625 cells) resolves in
+0.31 s — inside the lip leg's `CLIMB_SECONDS_PER_BAND`. Without it the body
+would jump horizontally by up to a cell at every leg boundary and at every band
+the climb crosses. The state is one `ClimbRiserShift` per view, beside the
+`drawnY` the vertical follower already keeps; pilgrims clear it wherever they
+clear `drawnY`, so a walker that reappears over different ground arrives rather
+than gliding.
+
+A body first seen mid-climb eases onto the wall from the wire position over at
+most half a second, because the shift starts at zero and there is no
+first-frame snap. Bounded and self-correcting, so no snap rule was added.
+
+### Cost
+
+Five `drawnGroundYAt` calls per CLIMBING mover per frame (one at the low cell's
+centre, four along the pair), each a `Map` read plus two array reads. Nothing
+is asked of a mover on the ground, which is what almost every mover is almost
+all of the time.
+
+### Residuals, named
+
+* **The half-cell frame mismatch (cause B) is not fixed.** It is a property of
+  every mover plugin's draw call, not of climbing, and correcting it means
+  moving every mover — and every phase-1 ground sample, every footprint probe,
+  every flame and hover ring drawn on a mover — by half a cell in both axes. It
+  wants its own arc and its own eyes-on. The climb offset here is computed in
+  the terrain's frame and so does not double-count it: fix B and this code
+  still puts the front face on the riser.
+* **Quantisation.** The drawn riser is resolved to the band grid's step, so the
+  front face can sit up to an eighth of a cell inside the rock or off it.
+* **The vertical pop at climb start and arrival (#412)** is untouched.
+* **Multi-cell walkers' floored footprint samples** (phase 1's residual) are
+  untouched: the horizontal offset moves the drawn body, never the ground
+  samples that place it.
