@@ -932,3 +932,5 @@ async function main() {
 }
 
 await main();
+// Vite and the CDP sockets leave handles open; without this the run never exits.
+process.exit(process.exitCode ?? 0);
