@@ -17,6 +17,8 @@ import {
   CLIFF_PALETTE,
   TERRAIN_PALETTE,
   bandPaletteIndex,
+  isEmissivePaletteIndex,
+  isSeabedPaletteIndex,
   type Rgb,
 } from '../terrain/bandColors.ts';
 
@@ -28,18 +30,29 @@ export const BAND_LUT_TERRAIN_ROW = 0.25;
 
 export const BAND_LUT_CLIFF_ROW = 0.75;
 
+/** Alpha carries self-lit-ness: that row's use of the band ignores scene light. */
+const BAND_LUT_SELF_LIT = 1;
+
+const BAND_LUT_LIT_BY_SCENE = 0;
+
 const BAND_LUT_ROWS = 2;
 
 const RGBA_CHANNELS = 4;
 
 const HEIGHT_TEXTURE_INTERNAL_FORMAT = 'R16I';
 
-function writeLinear(target: Float32Array, offset: number, srgb: Rgb, scratch: Color): void {
+function writeEntry(
+  target: Float32Array,
+  offset: number,
+  srgb: Rgb,
+  selfLit: boolean,
+  scratch: Color,
+): void {
   scratch.setRGB(srgb[0], srgb[1], srgb[2], SRGBColorSpace);
   target[offset] = scratch.r;
   target[offset + 1] = scratch.g;
   target[offset + 2] = scratch.b;
-  target[offset + 3] = 1;
+  target[offset + 3] = selfLit ? BAND_LUT_SELF_LIT : BAND_LUT_LIT_BY_SCENE;
 }
 
 export function createBandPaletteTexture(): DataTexture {
@@ -48,8 +61,20 @@ export function createBandPaletteTexture(): DataTexture {
   for (let i = 0; i < BAND_LUT_WIDTH; i++) {
     const height = (BAND_LUT_MIN_BAND + i) * BAND_HEIGHT;
     const stop = bandPaletteIndex(height);
-    writeLinear(data, i * RGBA_CHANNELS, TERRAIN_PALETTE[stop], scratch);
-    writeLinear(data, (BAND_LUT_WIDTH + i) * RGBA_CHANNELS, CLIFF_PALETTE[stop], scratch);
+    writeEntry(
+      data,
+      i * RGBA_CHANNELS,
+      TERRAIN_PALETTE[stop],
+      isEmissivePaletteIndex(stop),
+      scratch,
+    );
+    writeEntry(
+      data,
+      (BAND_LUT_WIDTH + i) * RGBA_CHANNELS,
+      CLIFF_PALETTE[stop],
+      isSeabedPaletteIndex(stop),
+      scratch,
+    );
   }
   const texture = new DataTexture(data, BAND_LUT_WIDTH, BAND_LUT_ROWS, RGBAFormat, FloatType);
   texture.minFilter = NearestFilter;

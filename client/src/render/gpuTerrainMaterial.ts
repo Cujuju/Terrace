@@ -8,6 +8,7 @@ import {
 import { CELL_CENTRE_OFFSET_CELLS, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { glslFloat, spliceShader } from './shaderSplice.ts';
+import { applyGroundShade } from './groundShade.ts';
 import { GPU_TERRAIN_FIELD_GLSL } from './gpuTerrainField.ts';
 import {
   BAND_LUT_CLIFF_ROW,
@@ -101,9 +102,10 @@ ${GPU_TERRAIN_FIELD_GLSL}
 vec2 cellCoordToWorld(vec2 cellCoord) {
   return (cellCoord - CELL_CENTRE_OFFSET_CELLS) * CELL_WORLD_SIZE;
 }
-vec3 bandColor(int band, float row) {
+// rgb is the band's colour for that row; a is 1 where the row is self-lit.
+vec4 bandEntry(int band, float row) {
   int stop = clamp(band - BAND_LUT_MIN_BAND, 0, BAND_LUT_WIDTH - 1);
-  return texture(uPalette, vec2((float(stop) + 0.5) / float(BAND_LUT_WIDTH), row)).rgb;
+  return texture(uPalette, vec2((float(stop) + 0.5) / float(BAND_LUT_WIDTH), row));
 }
 `;
 
@@ -112,6 +114,7 @@ varying vec3 vTerrainColor;
 varying vec2 vFieldCell;
 varying float vIsRiser;
 varying float vBandFloat;
+varying float vSelfLit;
 `;
 
 const VERTEX_HEAD_GLSL = `
@@ -130,13 +133,16 @@ const VERTEX_BODY_GLSL = `
   vec3 nrm;
   vIsRiser = 0.0;
   vBandFloat = 0.0;
+  vSelfLit = 0.0;
   if (kind < 0.5) {
     vec2 corner = aChunk + (subIJ + aCorner.yx) / uSubdiv;
     vec2 capXZ = cellCoordToWorld(corner);
     pos = vec3(capXZ.x, float(heightHere) * HEIGHT_WORLD_SCALE, capXZ.y);
     nrm = vec3(0.0, 1.0, 0.0);
     vFieldCell = corner;
-    vTerrainColor = bandColor(bandOfHeight(heightHere), ${glslFloat(BAND_LUT_TERRAIN_ROW)});
+    vec4 capEntry = bandEntry(bandOfHeight(heightHere), ${glslFloat(BAND_LUT_TERRAIN_ROW)});
+    vTerrainColor = capEntry.rgb;
+    vSelfLit = capEntry.a;
   } else {
     vec2 stepDir = kind < 1.5 ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
     int heightNext = drawnGroundHeight(centre + stepDir / uSubdiv);
@@ -174,16 +180,24 @@ vec3 darkenAtEdge(vec3 base, float bands, float pixels) {
 
 const FRAGMENT_COLOR_GLSL = `
   vec3 terrain = vTerrainColor;
+  float terrainSelfLit = vSelfLit;
   if (vIsRiser > 0.5) {
-    terrain = bandColor(int(ceil(vBandFloat)), ${glslFloat(BAND_LUT_CLIFF_ROW)});
-    terrain = darkenAtEdge(terrain, vBandFloat, ${glslFloat(RISER_LIP_PIXELS)});
+    vec4 riserEntry = bandEntry(int(ceil(vBandFloat)), ${glslFloat(BAND_LUT_CLIFF_ROW)});
+    terrain = darkenAtEdge(riserEntry.rgb, vBandFloat, ${glslFloat(RISER_LIP_PIXELS)});
+    terrainSelfLit = riserEntry.a;
   } else if (uSmooth > 0.5) {
     float bands = smoothHeight(vFieldCell) / float(FIELD_BAND_HEIGHT);
-    terrain = bandColor(int(floor(bands)), ${glslFloat(BAND_LUT_TERRAIN_ROW)});
-    terrain = darkenAtEdge(terrain, bands, ${glslFloat(ISOLINE_PIXELS)});
+    vec4 smoothEntry = bandEntry(int(floor(bands)), ${glslFloat(BAND_LUT_TERRAIN_ROW)});
+    terrain = darkenAtEdge(smoothEntry.rgb, bands, ${glslFloat(ISOLINE_PIXELS)});
+    terrainSelfLit = smoothEntry.a;
   }
   diffuseColor.rgb *= terrain;
 `;
+
+const SELF_LIT_FRAGMENT_ANCHOR = '#include <opaque_fragment>';
+
+const SELF_LIT_FRAGMENT_GLSL =
+  'outgoingLight = mix( outgoingLight, diffuseColor.rgb, terrainSelfLit );';
 
 export function createGpuTerrainMaterial(
   uniforms: Record<string, IUniform>,
@@ -203,12 +217,18 @@ export function createGpuTerrainMaterial(
       MATERIAL_LABEL,
     );
     shader.fragmentShader = spliceShader(
-      FRAGMENT_HEAD_GLSL + shader.fragmentShader,
-      '#include <color_fragment>',
-      FRAGMENT_COLOR_GLSL,
+      spliceShader(
+        FRAGMENT_HEAD_GLSL + shader.fragmentShader,
+        '#include <color_fragment>',
+        FRAGMENT_COLOR_GLSL,
+        MATERIAL_LABEL,
+      ),
+      SELF_LIT_FRAGMENT_ANCHOR,
+      `${SELF_LIT_FRAGMENT_GLSL}\n    ${SELF_LIT_FRAGMENT_ANCHOR}`,
       MATERIAL_LABEL,
     );
   };
   material.customProgramCacheKey = () => PROGRAM_CACHE_KEY;
+  applyGroundShade(material, MATERIAL_LABEL);
   return material;
 }
