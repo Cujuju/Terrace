@@ -13,6 +13,7 @@ import {
   spanUndersideHeight,
   spanCapHeight,
   spanCount,
+  spanIndexBelowBand,
   spanIndexCoveringBand,
   worldToCellCoord,
   type Heightmap,
@@ -206,13 +207,13 @@ function marchCells(
     if (visit(i, j, tEnter, tExit)) return;
 
     if (tExit >= tMax) return;
-    if (tNextU < tNextV) {
+    tEnter = tNextU < tNextV ? tNextU : tNextV;
+    if (tNextU === tEnter) {
       i += stepI;
-      tEnter = tNextU;
       tNextU += tDeltaU;
-    } else {
+    }
+    if (tNextV === tEnter) {
       j += stepJ;
-      tEnter = tNextV;
       tNextV += tDeltaV;
     }
   }
@@ -270,25 +271,61 @@ function marchSubcells(
     if (visit(sampleX, sampleZ, tEnter, tExit)) return;
 
     if (tExit >= tTo) return;
-    if (tNextU < tNextV) {
+    tEnter = tNextU < tNextV ? tNextU : tNextV;
+    if (tNextU === tEnter) {
       su += stepU;
-      tEnter = tNextU;
       tNextU += tDeltaU;
-    } else {
+    }
+    if (tNextV === tEnter) {
       sv += stepV;
-      tEnter = tNextV;
       tNextV += tDeltaV;
     }
     if (su < loU || su > hiU || sv < loV || sv > hiV) return;
   }
 }
 
-function drawnSpanIndexAt(map: Heightmap, i: number, j: number, drawnHeight: number): number {
-  return spanIndexCoveringBand(map, i, j, bandOf(drawnHeight)) ?? spanCount(map, i, j) - 1;
+/**
+ * Which span the drawn surface at `drawnHeight` belongs to: the span covering
+ * that band, else the one it slopes up from, else none — a gap owns no span.
+ */
+function drawnSpanIndexAt(
+  map: Heightmap,
+  i: number,
+  j: number,
+  drawnHeight: number,
+): number | null {
+  const band = bandOf(drawnHeight);
+  return spanIndexCoveringBand(map, i, j, band) ?? spanIndexBelowBand(map, i, j, band);
+}
+
+/** A drawn sample inside a cell blends only cells within one step of that cell. */
+const DRAWN_BLEND_RADIUS_CELLS = 1;
+
+/**
+ * Ceiling of everything pickable in a cell: no span cap, and no drawn height a
+ * sub-cell can blend to, rises above the tallest cell of the blend footprint.
+ */
+function cellCeilingBound(mirror: TerrainMirror, i: number, j: number): number {
+  const size = mirror.map.size;
+  const cells = mirror.renderMap.cells;
+  const x0 = i > DRAWN_BLEND_RADIUS_CELLS ? i - DRAWN_BLEND_RADIUS_CELLS : 0;
+  const y0 = j > DRAWN_BLEND_RADIUS_CELLS ? j - DRAWN_BLEND_RADIUS_CELLS : 0;
+  const x1 = i + DRAWN_BLEND_RADIUS_CELLS < size ? i + DRAWN_BLEND_RADIUS_CELLS : size - 1;
+  const y1 = j + DRAWN_BLEND_RADIUS_CELLS < size ? j + DRAWN_BLEND_RADIUS_CELLS : size - 1;
+  let hi = mirror.map.cells[j * size + i]!;
+  for (let y = y0; y <= y1; y++) {
+    const row = y * size;
+    for (let x = x0; x <= x1; x++) {
+      const h = cells[row + x]!;
+      if (h > hi) hi = h;
+    }
+  }
+  return hi * HEIGHT_WORLD_SCALE;
 }
 
 function terrainHitInCell(
   mirror: TerrainMirror,
+  ray: ScaledRay,
   i: number,
   j: number,
   origin: Vec3,
@@ -297,12 +334,15 @@ function terrainHitInCell(
   tExit: number,
 ): TerrainRayPick | null {
   if (!cellRevealed(mirror, i, j)) return null;
-  const ray = scaleRayToCellSpace(origin, direction);
-  if (ray === null) return null;
 
   const map = mirror.map;
   const oy = origin.y;
   const dy = direction.y;
+  const cellEntryY = oy + tEnter * dy;
+  const cellExitY = oy + tExit * dy;
+  const cellLowY = cellEntryY < cellExitY ? cellEntryY : cellExitY;
+  if (cellLowY > cellCeilingBound(mirror, i, j)) return null;
+
   const count = spanCount(map, i, j);
   let found: TerrainRayPick | null = null;
 
@@ -349,10 +389,12 @@ export function pickTerrainCellByRay(
 ): TerrainRayPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
+  const ray = scaleRayToCellSpace(origin, direction);
+  if (ray === null) return null;
 
   let found: TerrainRayPick | null = null;
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, tEnter, tExit) => {
-    found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
+    found = terrainHitInCell(mirror, ray, i, j, origin, direction, tEnter, tExit);
     return found !== null;
   });
   return found;
@@ -395,7 +437,7 @@ export function pickTerrainInColumn(
   if (clip === null) return null;
   const { tEnter, tExit } = clip;
 
-  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit);
+  const hit = terrainHitInCell(mirror, ray, x, y, origin, direction, tEnter, tExit);
   if (hit !== null) return hit;
 
   const entryY = ray.oy + tEnter * ray.dy;
@@ -441,6 +483,8 @@ export function pickPointedCellByRay(
 
   const dirLength = Math.hypot(direction.x, direction.y, direction.z);
   if (!(dirLength > 0)) return null;
+  const ray = scaleRayToCellSpace(origin, direction);
+  if (ray === null) return null;
 
   const oy = origin.y;
   const dy = direction.y;
@@ -473,7 +517,7 @@ export function pickPointedCellByRay(
       return true;
     }
 
-    const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
+    const terrain = terrainHitInCell(mirror, ray, i, j, origin, direction, tEnter, tExit);
     if (terrain === null) return false;
     found = {
       x: terrain.x,
