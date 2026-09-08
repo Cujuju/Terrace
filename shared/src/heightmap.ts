@@ -516,7 +516,7 @@ function pushLowerLayers(
     for (const i of candidates) {
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
-      const fill = bandFillAt(map, x, y, band);
+      const fill = bandFillAt(map, x, y, band, level);
       if (fill === null || fill.kind !== 'extend') continue;
       if (!canSpreadBandTo(map, x, y, band)) continue;
       record(i);
@@ -706,7 +706,7 @@ function applyDragRegion(
     for (const i of disc) {
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
-      const fill = bandFillAt(map, x, y, targetBand);
+      const fill = bandFillAt(map, x, y, targetBand, targetHeight);
       if (fill === null) continue;
       if (!canSpreadBandTo(map, x, y, targetBand)) continue;
       record(i);
