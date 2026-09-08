@@ -13,7 +13,6 @@ import {
 import { HEIGHT_WORLD_SCALE } from '../../config.ts';
 
 export interface WaterRegion {
-  isWet(cell: number): boolean;
   readonly anchorCell: number;
   readonly surfaceBand: number;
   readonly tiles: Set<number>;
@@ -39,12 +38,16 @@ const NOT_COVERED = 0;
 
 const COVERED = 1;
 
-const CARDINAL_SUBCELL_STEPS: readonly (readonly [number, number])[] = [
-  [0, -1],
-  [1, 0],
-  [0, 1],
-  [-1, 0],
-];
+const CARDINAL_SUBCELL_DX: readonly number[] = [0, 1, 0, -1];
+
+const CARDINAL_SUBCELL_DZ: readonly number[] = [-1, 0, 1, 0];
+
+const BLEND_STENCIL_SPAN = 2;
+
+/** Half-sub-cells: the coarsest unit in which sub-cell and cell centres are both integral. */
+const HALF_SUBCELLS_PER_SUBCELL = 2;
+
+const HALF_SUBCELLS_PER_CELL = HALF_SUBCELLS_PER_SUBCELL * SUBCELLS_PER_CELL;
 
 /** Scratch for one tile's coverage. One tile is meshed at a time, never interleaved. */
 const coverage = new Uint8Array(COVER_SPAN * COVER_SPAN);
@@ -65,6 +68,14 @@ export function waterBandWorldY(band: number): number {
 
 function subcellCentreCells(lattice: number): number {
   return lattice * SUBCELL_SIZE_CELLS + SUBCELL_CENTRE_CELLS;
+}
+
+function subcellCentreHalfSubcells(lattice: number): number {
+  return lattice * HALF_SUBCELLS_PER_SUBCELL + HALF_SUBCELLS_PER_SUBCELL / 2;
+}
+
+function cellCentreHalfSubcells(cell: number): number {
+  return cell * HALF_SUBCELLS_PER_CELL + HALF_SUBCELLS_PER_CELL / 2;
 }
 
 function subcellWorldEdge(lattice: number): number {
@@ -114,35 +125,45 @@ export function appendDrawnWaterTile(
   const blendCellOfLattice = (s: number): number =>
     Math.floor(subcellCentreCells(s) - CELL_CENTRE_OFFSET_CELLS);
 
-  const blendCellsHold = (
-    sx: number,
-    sz: number,
-    holds: (cell: number) => boolean,
-  ): boolean => {
+  /** Nearest stencil cell whose sheet reaches the drawn surface owns the sub-cell, so sheets abut. */
+  const owningBandAt = (sx: number, sz: number): number | null => {
     const baseX = blendCellOfLattice(sx);
     const baseZ = blendCellOfLattice(sz);
-    for (const z of [clampCell(baseZ), clampCell(baseZ + 1)]) {
-      for (const x of [clampCell(baseX), clampCell(baseX + 1)]) {
-        if (holds(cellIndex(map, x, z))) return true;
+    const centreX = subcellCentreHalfSubcells(sx);
+    const centreZ = subcellCentreHalfSubcells(sz);
+    let drawn = 0;
+    let drawnKnown = false;
+    let owner: number | null = null;
+    let nearest = 0;
+    for (let dz = 0; dz < BLEND_STENCIL_SPAN; dz++) {
+      const z = clampCell(baseZ + dz);
+      const offZ = centreZ - cellCentreHalfSubcells(z);
+      for (let dx = 0; dx < BLEND_STENCIL_SPAN; dx++) {
+        const x = clampCell(baseX + dx);
+        const offX = centreX - cellCentreHalfSubcells(x);
+        const distance = offX * offX + offZ * offZ;
+        if (owner !== null && distance >= nearest) continue;
+        const water = waterBandAt(x, z);
+        if (water === null) continue;
+        if (!drawnKnown) {
+          drawn = groundAt(sx, sz);
+          drawnKnown = true;
+        }
+        const sheetHeight = water * BAND_HEIGHT;
+        const bankBuriesIt = drawn > sheetHeight;
+        if (bankBuriesIt) continue;
+        const sitsOnItsOwnCap = drawn === sheetHeight;
+        if (!sitsOnItsOwnCap && quantizeToBand(map.cells[cellIndex(map, x, z)]!) >= sheetHeight) {
+          continue;
+        }
+        owner = water;
+        nearest = distance;
       }
     }
-    return false;
+    return owner;
   };
 
-  const isWet = (cell: number): boolean => region.isWet(cell);
-
-  const isSubmergedCell = (cell: number): boolean =>
-    region.isWet(cell) && quantizeToBand(map.cells[cell]!) < surfaceHeight;
-
-  const carriesWater = (sx: number, sz: number): boolean => {
-    if (!blendCellsHold(sx, sz, isWet)) return false;
-    const drawn = groundAt(sx, sz);
-    const bankBuriesIt = drawn > surfaceHeight;
-    if (bankBuriesIt) return false;
-    const sitsOnItsOwnCap = drawn === surfaceHeight;
-    if (sitsOnItsOwnCap) return true;
-    return blendCellsHold(sx, sz, isSubmergedCell);
-  };
+  const carriesWater = (sx: number, sz: number): boolean => owningBandAt(sx, sz) === band;
 
   const footYBeyond = (sx: number, sz: number, dx: number, dz: number): number | null => {
     let lowestWater: number | null = null;
@@ -222,7 +243,9 @@ export function appendDrawnWaterTile(
       }
       if (!covered) continue;
 
-      for (const [dx, dz] of CARDINAL_SUBCELL_STEPS) {
+      for (let step = 0; step < CARDINAL_SUBCELL_DX.length; step++) {
+        const dx = CARDINAL_SUBCELL_DX[step]!;
+        const dz = CARDINAL_SUBCELL_DZ[step]!;
         if (coverageAt(sx + dx, sz + dz) === COVERED) continue;
         const bottomY = footYBeyond(sx, sz, dx, dz);
         if (bottomY === null || bottomY >= surfaceY) continue;
