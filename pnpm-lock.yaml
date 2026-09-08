@@ -12,8 +12,8 @@ importers:
         specifier: ^10.10.0
         version: 10.10.0
       eslint-plugin-comment-budget:
-        specifier: git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#v2.0.0
-        version: git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#520c29d043b10fec920cb070cd48f35941269087(eslint@10.10.0)
+        specifier: git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#v2.1.0
+        version: git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#d6cd2326a26d9b662b183c1329f1093b312a0f21(eslint@10.10.0)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -1526,9 +1526,9 @@ packages:
     resolution: {integrity: sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==}
     engines: {node: '>=10'}
 
-  eslint-plugin-comment-budget@git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#520c29d043b10fec920cb070cd48f35941269087:
-    resolution: {commit: 520c29d043b10fec920cb070cd48f35941269087, repo: https://github.com/Cujuju/eslint-plugin-comment-budget.git, type: git}
-    version: 2.0.0
+  eslint-plugin-comment-budget@git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#d6cd2326a26d9b662b183c1329f1093b312a0f21:
+    resolution: {commit: d6cd2326a26d9b662b183c1329f1093b312a0f21, repo: https://github.com/Cujuju/eslint-plugin-comment-budget.git, type: git}
+    version: 2.1.0
     engines: {node: '>=20'}
     hasBin: true
     peerDependencies:
@@ -3142,7 +3142,7 @@ snapshots:
 
   escape-string-regexp@4.0.0: {}
 
-  eslint-plugin-comment-budget@git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#520c29d043b10fec920cb070cd48f35941269087(eslint@10.10.0):
+  eslint-plugin-comment-budget@git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#d6cd2326a26d9b662b183c1329f1093b312a0f21(eslint@10.10.0):
     dependencies:
       eslint: 10.10.0
       typescript: 6.0.3
