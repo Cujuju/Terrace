@@ -1,21 +1,20 @@
 // pilgrims — client half. Draws whatever the server's `pilgrims:entities`
-// broadcast says is on the road, and nothing else — wildlife's client shape
-// exactly: no authority, no prediction, interpolation and a walk cycle as the
-// only cosmetics, so a client that misses messages looks stiller, never wrong.
+// broadcast says is on the road: no authority, no prediction, interpolation
+// and a walk cycle as the only cosmetics.
 
 import { Group } from 'three';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
-import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
+import {
+  drawnGroundSampler,
+  followGroundY,
+} from '../../../client/src/plugins/kit/groundFollow.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 
 /**
- * World units per stored height unit — client/src/config.ts's HEIGHT_WORLD_SCALE,
- * DERIVED FROM ITS OWN TWO SHARED INPUTS rather than imported, because importing
- * that module drags `import.meta.env` into this plugin's node typecheck and test
- * run (the trap plugins/wildlife/client/placement.ts documents and plugins/mana
- * carries an env.d.ts for). Both inputs are @terrace/shared constants, so the
- * restatement cannot drift from the expression it copies.
+ * World units per stored height unit. Restated from its two @terrace/shared
+ * inputs rather than imported: client/src/config.ts would drag
+ * `import.meta.env` into this plugin's node typecheck and test run.
  */
 const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
@@ -47,10 +46,8 @@ interface PilgrimView {
   readonly model: PilgrimModel;
   readonly phase: number;
   /**
-   * Where this walker was DRAWN vertically last frame — the follower's state
-   * (client/src/plugins/kit/groundFollow.ts). Null until its first drawn frame,
-   * and reset to null whenever it is hidden, so a walker that reappears over
-   * different ground arrives there rather than gliding to it.
+   * Where this walker was DRAWN vertically last frame, the follower's state.
+   * Null until its first drawn frame, and reset to null whenever it is hidden.
    */
   drawnY: number | null;
 }
@@ -97,16 +94,17 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
+  // One sampler per frame, not per walker: it captures only `ctx`.
+  const groundAt = drawnGroundSampler(ctx);
+
   for (const [id, pilgrim] of sampled) {
     const view = views.get(id);
     if (view === undefined) continue;
 
-    // Single-cell ground sample, unlike wildlife's footprint-corner walkers:
-    // a pilgrim is ~0.2 cells wide, so its body cannot overlap a neighbouring
-    // riser the way a multi-cell yeti or grazer can — the clipping bug that
-    // sample exists for is out of reach here. Unknown ground (chunk not yet
-    // streamed) simply skips the pilgrim this frame.
-    const terrainY = ctx.terrainHeightAt(Math.floor(pilgrim.x), Math.floor(pilgrim.y));
+    // Single-cell sample: a pilgrim is ~0.2 cells wide, unlike wildlife's
+    // footprint corners. FRACTIONAL, NOT FLOORED: the drawn cap resolves to a
+    // quarter cell, so a foot follows the contour.
+    const terrainY = groundAt(pilgrim.x, pilgrim.y);
     if (terrainY === null) {
       view.model.root.visible = false;
       // Nothing to ease from next time: see PilgrimView.drawnY.
@@ -114,13 +112,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       continue;
     }
     view.model.root.visible = true;
-    // WHERE THE WALKER IS VERTICALLY, in three cases and one expression:
-    //   * on a wall — the server says so and says how high (`climbHeight`), and
-    //     that height is the answer, because a climb and a fall are motions the
-    //     simulation owns rather than things to infer from the ground;
-    //   * walking — the drawn band under its feet, CHASED rather than assigned
-    //     (the kit's follower), so crossing a band is a step and not a jump;
-    //   * first frame or just un-hidden — the target itself, no ease.
+    // Three cases, one expression: on a wall the server's `climbHeight` is the
+    // answer; walking, the drawn cap under its feet, chased not assigned; first
+    // frame, the target itself.
     const targetY =
       pilgrim.climbHeight === null ? terrainY : pilgrim.climbHeight * HEIGHT_WORLD_SCALE;
     const drawnY = followGroundY(view.drawnY, targetY, dt);
@@ -135,9 +129,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // Models face +X; travel is toward (cos heading, sin heading) — the same
     // negation every mover in this repo applies.
     view.model.root.rotation.y = -pilgrim.heading;
-    // What the walker is doing decides which pose it plays — a climb and a
-    // fall are not a walk at a different height, and a walker that is not
-    // covering ground is standing or sitting rather than walking on the spot.
+    // What the walker is doing decides its pose: a climb or a fall is not a
+    // walk at another height, and a walker covering no ground is not walking.
     view.model.animate(
       animationSeconds,
       view.phase,
@@ -147,14 +140,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 }
 
 /**
- * Where a walker is DRAWN, for anything that has to be drawn on them — a flame
- * (ClientPluginCtx.publishMovers). wildlife's drawnPoseOf, same reasoning: read
- * off the model's own root so it is the pose this frame actually put on screen,
- * never a second derivation of it.
- *
- * Null for a walker this client is not drawing — including one hidden because
- * the ground under them is not known yet, which is exactly when a flame drawn
- * on them would be hanging in the air.
+ * Where a walker is DRAWN, for anything drawn on them (publishMovers). Read off
+ * the model's root: the pose this frame put on screen. Null when not drawn.
  */
 function drawnPoseOf(id: number): MoverPose | null {
   const view = views.get(id);
@@ -165,9 +152,8 @@ function drawnPoseOf(id: number): MoverPose | null {
 }
 
 /**
- * Draw objects one walker costs: TWO, whatever its race or kind — the rig is
- * baked by material into a fur surface and a gloss surface (models.ts), and
- * props ride on those same two.
+ * Draw objects one walker costs: TWO, whatever its race or kind. A fur surface
+ * and a gloss surface (models.ts), with props on those same two.
  */
 const WALKER_DRAW_OBJECTS = 2;
 
@@ -186,9 +172,8 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'pilgrims:walkers';
     ctx.layer.add(container);
-    // A PEEP IS SOMETHING YOU CAN POINT AT (ClientPluginCtx.pickWorldCell), and
-    // something a flame can be drawn ON (publishMovers) — the two halves of
-    // being able to set one alight and watch them run.
+    // A PEEP IS SOMETHING YOU CAN POINT AT (pickWorldCell), and something a
+    // flame can be drawn ON (publishMovers).
     unmarkPickable = ctx.markPickable(container);
     unpublishMovers = ctx.publishMovers(drawnPoseOf);
 
