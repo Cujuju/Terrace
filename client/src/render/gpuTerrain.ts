@@ -178,6 +178,7 @@ export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): Ter
     update(dirty: Iterable<number>): void {
       for (const chunkIdx of dirty) {
         if (chunkIdx < 0 || chunkIdx >= chunkCount) continue;
+        if (!mirror.received.has(chunkIdx)) continue;
         const cx = chunkIdx % chunkCols;
         const cy = (chunkIdx - cx) / chunkCols;
         measureChunk(cx, cy, chunkIdx);
