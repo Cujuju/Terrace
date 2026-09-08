@@ -13,10 +13,8 @@ import {
   spanUndersideHeight,
   spanCapHeight,
   spanCount,
-  spanIndexBelowBand,
   spanIndexCoveringBand,
   worldToCellCoord,
-  type Heightmap,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
@@ -224,8 +222,8 @@ const SUBCELLS_PER_CELL = TERRAIN_LOD_NEAR_N;
 const SUBCELL_STEP_LIMIT = 2 * SUBCELLS_PER_CELL;
 
 type SubcellVisitor = (
-  sampleX: number,
-  sampleZ: number,
+  su: number,
+  sv: number,
   tEnter: number,
   tExit: number,
 ) => boolean;
@@ -266,9 +264,7 @@ function marchSubcells(
     const tExit = Math.min(tNextU, tNextV, tTo);
     if (tExit < tEnter) return;
 
-    const sampleX = (su + CELL_CENTRE_OFFSET_CELLS) / SUBCELLS_PER_CELL;
-    const sampleZ = (sv + CELL_CENTRE_OFFSET_CELLS) / SUBCELLS_PER_CELL;
-    if (visit(sampleX, sampleZ, tEnter, tExit)) return;
+    if (visit(su, sv, tEnter, tExit)) return;
 
     if (tExit >= tTo) return;
     tEnter = tNextU < tNextV ? tNextU : tNextV;
@@ -284,18 +280,86 @@ function marchSubcells(
   }
 }
 
+interface DrawnOwner {
+  readonly x: number;
+  readonly y: number;
+  readonly spanIndex: number;
+  readonly undersideY: number;
+}
+
+/** Half-sub-cells: the coarsest unit in which sub-cell and cell centres are both integral. */
+const HALF_SUBCELLS_PER_SUBCELL = 2;
+
+const HALF_SUBCELLS_PER_CELL = HALF_SUBCELLS_PER_SUBCELL * SUBCELLS_PER_CELL;
+
+const FOOTPRINT_SPAN_CELLS = 2;
+
+function subcellCentreCells(sub: number): number {
+  return (sub + CELL_CENTRE_OFFSET_CELLS) / SUBCELLS_PER_CELL;
+}
+
+function subcellCentreHalfSubcells(sub: number): number {
+  return sub * HALF_SUBCELLS_PER_SUBCELL + HALF_SUBCELLS_PER_SUBCELL / 2;
+}
+
+function cellCentreHalfSubcells(cell: number): number {
+  return cell * HALF_SUBCELLS_PER_CELL + HALF_SUBCELLS_PER_CELL / 2;
+}
+
+/** Lower cell of the pair whose centres bracket this sub-cell, as the blend reads it. */
+function blendBaseCell(centreHalfSubcells: number): number {
+  return Math.floor(
+    (centreHalfSubcells - HALF_SUBCELLS_PER_CELL / 2) / HALF_SUBCELLS_PER_CELL,
+  );
+}
+
+function clampCell(size: number, cell: number): number {
+  return cell < 0 ? 0 : cell > size - 1 ? size - 1 : cell;
+}
+
 /**
- * Which span the drawn surface at `drawnHeight` belongs to: the span covering
- * that band, else the one it slopes up from, else none — a gap owns no span.
+ * Nearest revealed cell of the sub-cell's blend footprint holding `band`. The
+ * cell a sub-cell sits in is always the nearest of the four.
  */
-function drawnSpanIndexAt(
-  map: Heightmap,
+function drawnBandOwner(
+  mirror: TerrainMirror,
   i: number,
   j: number,
-  drawnHeight: number,
-): number | null {
-  const band = bandOf(drawnHeight);
-  return spanIndexCoveringBand(map, i, j, band) ?? spanIndexBelowBand(map, i, j, band);
+  su: number,
+  sv: number,
+  band: number,
+): DrawnOwner | null {
+  const size = mirror.map.size;
+  const centreX = subcellCentreHalfSubcells(su);
+  const centreZ = subcellCentreHalfSubcells(sv);
+  const baseX = blendBaseCell(centreX);
+  const baseZ = blendBaseCell(centreZ);
+  let owner: DrawnOwner | null = null;
+  let nearest = 0;
+  for (let dz = 0; dz < FOOTPRINT_SPAN_CELLS; dz++) {
+    const y = clampCell(size, baseZ + dz);
+    const offZ = centreZ - cellCentreHalfSubcells(y);
+    for (let dx = 0; dx < FOOTPRINT_SPAN_CELLS; dx++) {
+      const x = clampCell(size, baseX + dx);
+      if (x === i && y === j) continue;
+      const offX = centreX - cellCentreHalfSubcells(x);
+      const distance = offX * offX + offZ * offZ;
+      if (owner !== null && distance >= nearest) continue;
+      if (!cellRevealed(mirror, x, y)) continue;
+      const spanIndex = spanIndexCoveringBand(mirror.map, x, y, band);
+      if (spanIndex === null) continue;
+      const span = spanAt(mirror.map, x, y, spanIndex);
+      if (!isSpanDrawn(span)) continue;
+      owner = {
+        x,
+        y,
+        spanIndex,
+        undersideY: spanUndersideHeight(span) * HEIGHT_WORLD_SCALE,
+      };
+      nearest = distance;
+    }
+  }
+  return owner;
 }
 
 /** A drawn sample inside a cell blends only cells within one step of that cell. */
@@ -345,37 +409,74 @@ function terrainHitInCell(
 
   const count = spanCount(map, i, j);
   let found: TerrainRayPick | null = null;
+  let hitT = Infinity;
+  let tIn = 0;
+  let entryY = 0;
+  let lowY = 0;
+  let highY = 0;
 
-  marchSubcells(ray, i, j, tEnter, tExit, (sampleX, sampleZ, tIn, tOut) => {
-    const entryY = oy + tIn * dy;
-    const exitY = oy + tOut * dy;
-    const lowY = entryY < exitY ? entryY : exitY;
-    const highY = entryY < exitY ? exitY : entryY;
-    const drawnHeight = drawnGroundHeight(mirror.renderMap, sampleX, sampleZ);
-    const drawnSpan = drawnSpanIndexAt(map, i, j, drawnHeight);
-    let hitT = Infinity;
+  const consider = (
+    cellX: number,
+    cellY: number,
+    spanIndex: number,
+    capY: number,
+    baseY: number,
+  ): void => {
+    if (lowY > capY || highY < baseY) return;
+    const insideOnEntry = entryY <= capY && entryY >= baseY;
+    const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
+    const t = insideOnEntry || dy === 0 ? tIn : tIn + (faceY - entryY) / dy;
+    if (t >= hitT) return;
+    hitT = t;
+    found = {
+      x: cellX,
+      y: cellY,
+      surfaceY: capY,
+      spanIndex,
+      hitRiser: insideOnEntry,
+      hitY: faceY,
+      hitX: origin.x + t * direction.x,
+      hitZ: origin.z + t * direction.z,
+    };
+  };
+
+  marchSubcells(ray, i, j, tEnter, tExit, (su, sv, tFrom, tTo) => {
+    tIn = tFrom;
+    entryY = oy + tFrom * dy;
+    const exitY = oy + tTo * dy;
+    lowY = entryY < exitY ? entryY : exitY;
+    highY = entryY < exitY ? exitY : entryY;
+
+    const drawnHeight = drawnGroundHeight(
+      mirror.renderMap,
+      subcellCentreCells(su),
+      subcellCentreCells(sv),
+    );
+    const drawnBand = bandOf(drawnHeight);
+    const drawnSpan = spanIndexCoveringBand(map, i, j, drawnBand);
+    if (drawnSpan === null) {
+      const owner = drawnBandOwner(mirror, i, j, su, sv, drawnBand);
+      if (owner !== null) {
+        consider(
+          owner.x,
+          owner.y,
+          owner.spanIndex,
+          drawnHeight * HEIGHT_WORLD_SCALE,
+          owner.undersideY,
+        );
+      }
+    }
     for (let k = count - 1; k >= 0; k--) {
       const span = spanAt(map, i, j, k);
       if (!isSpanDrawn(span)) continue;
       const capHeight = k === drawnSpan ? drawnHeight : spanCapHeight(span);
-      const capY = capHeight * HEIGHT_WORLD_SCALE;
-      const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
-      if (lowY > capY || highY < baseY) continue;
-      const insideOnEntry = entryY <= capY && entryY >= baseY;
-      const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
-      const t = insideOnEntry || dy === 0 ? tIn : tIn + (faceY - entryY) / dy;
-      if (t >= hitT) continue;
-      hitT = t;
-      found = {
-        x: i,
-        y: j,
-        surfaceY: capY,
-        spanIndex: k,
-        hitRiser: insideOnEntry,
-        hitY: faceY,
-        hitX: origin.x + t * direction.x,
-        hitZ: origin.z + t * direction.z,
-      };
+      consider(
+        i,
+        j,
+        k,
+        capHeight * HEIGHT_WORLD_SCALE,
+        spanUndersideHeight(span) * HEIGHT_WORLD_SCALE,
+      );
     }
     return found !== null;
   });
@@ -445,7 +546,7 @@ export function pickTerrainInColumn(
   const lowY = entryY < exitY ? entryY : exitY;
   const count = spanCount(mirror.map, x, y);
   const drawnHeight = drawnGroundHeight(mirror.renderMap, cellCentreCoord(x), cellCentreCoord(y));
-  const drawnSpan = drawnSpanIndexAt(mirror.map, x, y, drawnHeight);
+  const drawnSpan = spanIndexCoveringBand(mirror.map, x, y, bandOf(drawnHeight));
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, x, y, k);
     if (!isSpanDrawn(span)) continue;
