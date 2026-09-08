@@ -7,9 +7,6 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  COMMENT_BUDGET_REDIRECT: docs/decisions/<arc>.md
-
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -48,7 +45,7 @@ jobs:
           status=0
           while IFS= read -r path; do
             [ -f "$path" ] || continue
-            node_modules/.bin/comment-budget-check "$path" || status=1
+            node node_modules/eslint-plugin-comment-budget/dist/bin/check-file.js "$path" || status=1
           done < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.ts' '*.tsx')
           exit $status
       - run: pnpm typecheck

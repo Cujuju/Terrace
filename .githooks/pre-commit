@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 # Comment budget on staged sources: whoever touches a file brings the whole file
-# to the cap. Checks the working tree, not the index — agents share this
-# checkout. Set TERRACE_SKIP_COMMENT_BUDGET=1 to bypass.
+# to the cap. Checks the working tree, not the index, and invokes the checker
+# through `node` — pnpm writes a POSIX symlink in node_modules/.bin on Linux and
+# a .CMD on Windows, and neither is visible from the other side.
+#
+# SKIP_COMMENT_BUDGET=1 bypasses. It also bypasses when a peer's staged files
+# would fail: this hook sees the whole index, not the paths being committed.
 set -euo pipefail
 
-if [ "${TERRACE_SKIP_COMMENT_BUDGET:-0}" = "1" ]; then
+if [ "${SKIP_COMMENT_BUDGET:-0}" = "1" ]; then
   exit 0
 fi
 
-export COMMENT_BUDGET_REDIRECT="${COMMENT_BUDGET_REDIRECT:-docs/decisions/<arc>.md}"
-
 root="$(git rev-parse --show-toplevel)"
+checker="$root/node_modules/eslint-plugin-comment-budget/dist/bin/check-file.js"
+
+if [ ! -f "$checker" ]; then
+  exit 0
+fi
+
 mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMR -- '*.ts' '*.tsx')
 
 if [ ${#staged[@]} -eq 0 ]; then
@@ -19,11 +27,15 @@ fi
 
 status=0
 for path in "${staged[@]}"; do
-  [ -f "$root/$path" ] || continue
-  (cd "$root" && node_modules/.bin/comment-budget-check "$path") || status=1
+  if [ -f "$root/$path" ]; then
+    if ! (cd "$root" && node "$checker" "$path"); then
+      status=1
+    fi
+  fi
 done
 
 if [ $status -ne 0 ]; then
-  echo "pre-commit: comment budget. Re-run with TERRACE_SKIP_COMMENT_BUDGET=1 only if you mean it." >&2
+  echo "pre-commit: comment budget. SKIP_COMMENT_BUDGET=1 to bypass." >&2
 fi
+
 exit $status

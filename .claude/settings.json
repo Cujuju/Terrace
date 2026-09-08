@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "COMMENT_BUDGET_REDIRECT='docs/decisions/<arc>.md' node_modules/.bin/comment-budget-check",
+            "command": "node node_modules/eslint-plugin-comment-budget/dist/bin/check-file.js",
             "timeout": 15
           }
         ]
