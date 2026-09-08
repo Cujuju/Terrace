@@ -19,6 +19,17 @@
 // up again means no refusal can survive an edit to the ground it was about.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// FINDING THE TEMPLE YOU ALREADY BUILT. Everything below is written around a
+// player who can SEE their temple, and a world sixteen units of relief deep
+// does not guarantee that: the one press that does anything while a temple
+// stands is a press ON it, so a temple behind a ridge left the tool inert with
+// nothing on screen to explain it. Taking the tool up therefore lights a
+// bright spire over the temple (./beacon.ts), tall enough that no terrain in
+// this world can hide its tip, and Ctrl razes the temple from wherever the
+// camera happens to be — the same intent the press sends, minus the need to
+// find the building first. Both live and die with the tool: outside placement
+// mode the temple is a building like any other.
+//
 // THE TOOL'S TWO ACTIONS, AND WHY THE GHOST IS THE ONLY UI.
 //
 // Holding the tool with NO temple standing: a stone ghost follows the cursor,
@@ -48,6 +59,7 @@ import type {
   ClientPluginCtx,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
+import { isTextEntry } from '../../../client/src/plugins/kit/textEntry.ts';
 import {
   TEMPLES_PLUGIN_NAME,
   TEMPLE_PLACE_MESSAGE,
@@ -68,7 +80,8 @@ const TEMPLE_TOOL_ID = 'place';
 
 const TEMPLE_TOOL_LABEL = 'Temple';
 
-const TEMPLE_TOOL_TITLE = 'Temple: place the settlers’ temple';
+const TEMPLE_TOOL_TITLE =
+  'Temple: place the settlers’ temple (Ctrl takes a standing one back down)';
 
 /**
  * The mouse button a placement press is made with. 0 — the primary button
@@ -84,6 +97,28 @@ let temple: TempleCell | null = null;
 let toolHeld = false;
 /** The cell under the cursor, or null when the pointer is off the ground. */
 let hoverCell: TempleCell | null = null;
+
+/**
+ * The key that takes a standing temple down from anywhere — the same intent a
+ * press on the building sends, for a player who cannot see the building.
+ *
+ * `KeyboardEvent.key`, so either Ctrl answers, on every layout.
+ */
+const RAZE_KEY = 'Control';
+
+/**
+ * True while a held Ctrl is still a candidate for the raze.
+ *
+ * IT FIRES ON RELEASE, NOT ON PRESS, and this flag is why. Ctrl is also a
+ * camera modifier here — Ctrl-drag orbits or pans depending on the player's
+ * bindings, and Ctrl-wheel is a pinch zoom — so a raze on keydown would knock
+ * the temple down every time the player so much as looked around with the tool
+ * in hand. Anything that turns the hold into a gesture (a pointer press, a
+ * wheel, another key) disarms it, so what is left to fire on release is a Ctrl
+ * pressed and let go ON ITS OWN. That is the whole rule, and it is what makes
+ * a destructive shortcut safe to put on a modifier key.
+ */
+let ctrlTapArmed = false;
 
 /**
  * Cells the server has refused a placement on this tool-hold, packed x*STRIDE+y.
@@ -124,6 +159,8 @@ let unsubscribeRefusals: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
 let onPointerMove: ((event: PointerEvent) => void) | null = null;
+/** Every window listener this plugin holds, registered and dropped as one. */
+let windowListeners: Array<[string, EventListener]> = [];
 
 /** Cell → world-unit X/Z, the one conversion every placement in this repo makes. */
 function worldX(cell: number): number {
@@ -188,6 +225,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   } else {
     models.standing.visible = true;
     models.standing.position.set(worldX(temple.x), groundY, worldX(temple.y));
+    // The spire is placement mode's own affordance, so it is asked the same
+    // question every frame the temple is: is the tool up?
+    models.setBeaconVisible(toolHeld);
     // Posed only while it is on screen: a hidden crown costs nothing, and
     // because `animate` is pure in the clock it is never out of step when the
     // temple comes back.
@@ -244,6 +284,30 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
 }
 
 /**
+ * Ctrl went down. The tap is armed only if it is bare: no other modifier, not
+ * an auto-repeat, and not in a text field, where Ctrl is the first half of
+ * every editing shortcut there is.
+ */
+function armCtrlTap(event: KeyboardEvent): void {
+  if (event.key !== RAZE_KEY || event.repeat) return;
+  ctrlTapArmed =
+    !event.altKey && !event.shiftKey && !event.metaKey && !isTextEntry(event.target);
+}
+
+/**
+ * Ctrl came up. A tap that survived the hold razes the standing temple — the
+ * same `temples:remove` intent a press on it sends, so the server decides and
+ * this half predicts nothing, exactly as everywhere else in this file.
+ */
+function fireCtrlTap(ctx: ClientPluginCtx, event: KeyboardEvent): void {
+  if (event.key !== RAZE_KEY) return;
+  const armed = ctrlTapArmed;
+  ctrlTapArmed = false;
+  if (!armed || !toolHeld || temple === null) return;
+  ctx.send(TEMPLE_REMOVE_MESSAGE, {});
+}
+
+/**
  * The standing temple: TEN surfaces (the stone shell plus the celestial rig's
  * core, halo, bloom, rings, motes and shaft — ./temple.ts and ./celestial.ts),
  * measured 2026-08-29.
@@ -252,6 +316,13 @@ const TEMPLE_STANDING_DRAW_OBJECTS = 10;
 
 /** The placement ghost: ONE. */
 const TEMPLE_GHOST_DRAW_OBJECTS = 1;
+
+/**
+ * The placement beacon: TWO — the needle and its additive sheath
+ * (./beacon.ts). Drawn only while the tool is held, and budgeted as if it
+ * always were: a budget that only holds while a tool is down is not a budget.
+ */
+const TEMPLE_BEACON_DRAW_OBJECTS = 2;
 
 /**
  * Temples in a world: ONE. The server refuses a placement with
@@ -267,7 +338,9 @@ export const clientPlugin: TerraceClientPlugin = {
    * Its share of the frame's draw calls, from its own caps — see
    * TerraceClientPlugin.drawBudget and the constants above.
    */
-  drawBudget: TEMPLES_PER_WORLD * (TEMPLE_STANDING_DRAW_OBJECTS + TEMPLE_GHOST_DRAW_OBJECTS),
+  drawBudget:
+    TEMPLES_PER_WORLD *
+    (TEMPLE_STANDING_DRAW_OBJECTS + TEMPLE_GHOST_DRAW_OBJECTS + TEMPLE_BEACON_DRAW_OBJECTS),
 
   attach(ctx: ClientPluginCtx): void {
     models = createTempleModels();
@@ -303,11 +376,14 @@ export const clientPlugin: TerraceClientPlugin = {
           refusedCells = new Set();
         }
         if (!selected) {
-          // Dropped the tool: the ghost goes with it THIS INSTANT rather than
-          // on the next frame, so putting the brush back never leaves a stone
-          // pyramid hanging over the cursor for a frame.
+          // Dropped the tool: the ghost and the spire go with it THIS INSTANT
+          // rather than on the next frame, so putting the brush back never
+          // leaves a stone pyramid hanging over the cursor for a frame.
           hoverCell = null;
-          if (models !== null) models.ghost.visible = false;
+          if (models !== null) {
+            models.ghost.visible = false;
+            models.setBeaconVisible(false);
+          }
         }
       },
     });
@@ -320,7 +396,22 @@ export const clientPlugin: TerraceClientPlugin = {
       if (!toolHeld) return;
       hoverCell = ctx.pickTerrainCell(event.clientX, event.clientY);
     };
-    window.addEventListener('pointermove', onPointerMove);
+
+    // THE CTRL TAP, and the four things that disarm it (see `ctrlTapArmed`).
+    // A pointer press, a wheel and any other key all mean the hold was part of
+    // a gesture; losing the window means the release will never be seen.
+    windowListeners = [
+      ['pointermove', onPointerMove as EventListener],
+      ['keydown', ((event: KeyboardEvent) => {
+        if (event.key === RAZE_KEY) armCtrlTap(event);
+        else ctrlTapArmed = false;
+      }) as EventListener],
+      ['keyup', ((event: KeyboardEvent) => fireCtrlTap(ctx, event)) as EventListener],
+      ['pointerdown', (() => { ctrlTapArmed = false; }) as EventListener],
+      ['wheel', (() => { ctrlTapArmed = false; }) as EventListener],
+      ['blur', (() => { ctrlTapArmed = false; }) as EventListener],
+    ];
+    for (const [type, handler] of windowListeners) window.addEventListener(type, handler);
 
     unsubscribePress = ctx.onCanvasPress((event) => handlePress(ctx, event));
     unsubscribeFrames = ctx.onFrame((dt) => renderFrame(ctx, dt));
@@ -336,7 +427,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = null;
     unsubscribePress = null;
 
-    if (onPointerMove !== null) window.removeEventListener('pointermove', onPointerMove);
+    for (const [type, handler] of windowListeners) window.removeEventListener(type, handler);
+    windowListeners = [];
     onPointerMove = null;
 
     models?.dispose();
@@ -346,5 +438,6 @@ export const clientPlugin: TerraceClientPlugin = {
     hoverCell = null;
     refusedCells = new Set();
     crownSeconds = 0;
+    ctrlTapArmed = false;
   },
 };

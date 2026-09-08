@@ -10,6 +10,7 @@ import {
   type FrameStatsSample,
 } from './frameStats.ts';
 import { perfOpen, setFrameStats, setPerfOpen } from '../state/hudState.ts';
+import { isTextEntry } from '../plugins/kit/textEntry.ts';
 import {
   selfProfileAvailable,
   startSelfProfile,
@@ -68,14 +69,6 @@ function trackReadouts(): () => void {
     });
     return dispose;
   });
-}
-
-/** So the bare toggle key types a character in a text field instead of firing. */
-function isTextEntry(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
 
 /**

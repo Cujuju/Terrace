@@ -49,6 +49,7 @@ import {
   TEMPLE_FRONT_APRON_WORLD_UNITS,
 } from '../protocol.ts';
 import { createCelestialCrown, type CelestialCrown } from './celestial.ts';
+import { createPlacementBeacon, type PlacementBeacon } from './beacon.ts';
 
 // ── Proportions, every one derived from the footprint span ──────────────────
 
@@ -401,6 +402,12 @@ export interface TempleModels {
   /** Green while the press would build, red while it would be refused. */
   setGhostLegal(legal: boolean): void;
   /**
+   * Whether the standing temple wears its placement beacon — the bright spire
+   * that makes it findable (./beacon.ts). True only while the tool is held:
+   * outside placement mode the temple is a building like any other.
+   */
+  setBeaconVisible(visible: boolean): void;
+  /**
    * Poses the standing temple's crown for the given elapsed seconds. Pure in
    * `seconds`; the caller need only skip it while the temple is hidden, and
    * the crown picks up mid-turn when it comes back rather than snapping to a
@@ -438,6 +445,11 @@ export function createTempleModels(): TempleModels {
   // that may never be built would answer a different one.
   const crown: CelestialCrown = createCelestialCrown(BASE_SPAN, TEMPLE_HEIGHT);
   standing.add(crown.root);
+  // The beacon rides the standing temple for the same reason the crown does:
+  // it is placed by the temple's own transform, so the plugin positions one
+  // object and both follow. It stays hidden until the tool is picked up.
+  const beacon: PlacementBeacon = createPlacementBeacon(BASE_SPAN, TEMPLE_HEIGHT);
+  standing.add(beacon.root);
   standing.visible = false;
 
   const ghost = new Group();
@@ -451,10 +463,15 @@ export function createTempleModels(): TempleModels {
     setGhostLegal(legal: boolean): void {
       ghostMaterial.color.setHex(legal ? GHOST_LEGAL_COLOR : GHOST_ILLEGAL_COLOR);
     },
+    setBeaconVisible(visible: boolean): void {
+      beacon.setVisible(visible);
+    },
     animate(seconds: number): void {
       crown.animate(seconds);
+      beacon.animate(seconds);
     },
     dispose(): void {
+      beacon.dispose();
       crown.dispose();
       standing.clear();
       ghost.clear();
