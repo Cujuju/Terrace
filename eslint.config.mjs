@@ -1,10 +1,14 @@
+import { readFileSync } from 'node:fs'
 import tseslint from 'typescript-eslint'
-import budget, { IGNORED_GLOBS } from 'eslint-plugin-comment-budget'
+import budget from 'eslint-plugin-comment-budget'
+
+// One policy, read by the rule, the CLI and this config alike.
+const policy = JSON.parse(readFileSync(new URL('.comment-budget.json', import.meta.url), 'utf8'))
 
 const commentRules = { 'budget/comment-budget': 'error' }
 
 export default [
-  { ignores: IGNORED_GLOBS },
+  { ignores: policy.ignore },
   {
     files: ['**/*.ts'],
     languageOptions: { parser: tseslint.parser },
