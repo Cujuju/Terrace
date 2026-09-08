@@ -1,4 +1,5 @@
-import { CHUNK_SIZE } from '@terrace/shared';
+import { CHUNK_SIZE, cellCentreCoord, drawnGroundHeight } from '@terrace/shared';
+import type { TerrainMirror } from './mirror.ts';
 
 export type FrontierDirection = 'N' | 'E' | 'S' | 'W';
 
@@ -107,4 +108,17 @@ export function frontierEdgeSampling(edge: FrontierEdge): FrontierEdgeSampling {
         lineX: x0, lineZ: y0, lineStepX: 0, lineStepZ: 1,
       };
   }
+}
+
+/** Frontier decoration sits on the drawn surface, not on the raw cell height. */
+export function frontierEdgeCellGround(
+  mirror: TerrainMirror,
+  sampling: FrontierEdgeSampling,
+  t: number,
+): number {
+  return drawnGroundHeight(
+    mirror.renderMap,
+    cellCentreCoord(sampling.cellX + t * sampling.cellStepX),
+    cellCentreCoord(sampling.cellY + t * sampling.cellStepY),
+  );
 }
