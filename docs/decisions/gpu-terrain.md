@@ -204,6 +204,10 @@ those chunks. Two fixes:
   upload rectangles are grown by the halo so a chunk's arrival also repairs its
   neighbours' borrowed cells.
 
+(The `renderMap` half was still uncommitted in the working tree when this was
+written; `13068c7` is the committed half. If the shipped shape differs, the
+reasoning below is what it has to satisfy.)
+
 **This is deliberately not in `shared/`.** The parity gate only means something
 if the shader and the TypeScript read literally the same bytes; a
 "received-ness" notion inside `drawnGround.ts` would be a client concept the
