@@ -3,6 +3,7 @@
 //
 //   node client/scripts/gpuTerrainShots.mjs [--browser=windows|linux] [--scene=<id>,...]
 //                                           [--world=<name>,...] [--out=<dir>]
+//                                           [--cdp=<host>:<port>]
 //
 // WHY THE PAGE DRIVES ITSELF. Only Windows -> WSL localhost is open across the
 // WSL2 NAT boundary (scripts/gpu-bench.md), so an inbound CDP socket to the
@@ -154,6 +155,13 @@ const BROWSERS = {
     id: 'windows',
     label: 'Windows headless Chrome (discrete GPU)',
     binary: '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe',
+    host: 'localhost',
+  },
+  // Already running and reached over CDP, so it keeps its own window size and flags.
+  cdp: {
+    id: 'cdp',
+    label: 'attached Chrome over CDP',
+    binary: null,
     host: 'localhost',
   },
 };
@@ -317,7 +325,7 @@ const SCENES = [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function parseArgs(argv) {
-  const out = { browser: 'windows', scenes: null, worlds: null, out: null, coreOnly: false };
+  const out = { browser: 'windows', scenes: null, worlds: null, out: null, coreOnly: false, cdp: null };
   for (const arg of argv) {
     const [key, value] = arg.startsWith('--') ? arg.slice(2).split('=') : [null, null];
     if (key === 'browser') out.browser = value;
@@ -325,8 +333,10 @@ function parseArgs(argv) {
     else if (key === 'world') out.worlds = value.split(',');
     else if (key === 'out') out.out = value;
     else if (key === 'core-only') out.coreOnly = true;
+    else if (key === 'cdp') out.cdp = value;
     else throw new Error(`unknown argument "${arg}"`);
   }
+  if (out.cdp !== null) out.browser = 'cdp';
   if (BROWSERS[out.browser] === undefined) {
     throw new Error(`--browser must be one of ${Object.keys(BROWSERS).join(', ')}`);
   }
@@ -857,6 +867,24 @@ function launchBrowser(browser, url, profileDir) {
   return child;
 }
 
+async function openCdpTab(browser, url) {
+  const version = await (await fetch(`http://${browser.endpoint}/json/version`)).json();
+  console.log(`  attached to ${version.Browser}`);
+  const target = await (
+    await fetch(`http://${browser.endpoint}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' })
+  ).json();
+  if (target.id === undefined) {
+    throw new Error(`no target from ${browser.endpoint}: ${JSON.stringify(target)}`);
+  }
+  return { cdpTargetId: target.id };
+}
+
+async function closeCdpTab(browser, child) {
+  try {
+    await fetch(`http://${browser.endpoint}/json/close/${child.cdpTargetId}`);
+  } catch {}
+}
+
 function killBrowser(browser, child, profileDir) {
   try {
     child.kill('SIGKILL');
@@ -881,6 +909,7 @@ function killBrowser(browser, child, profileDir) {
 
 function makeProfileDir(browser, runId) {
   const leaf = `terrace-shots-${runId}`;
+  if (browser.id === 'cdp') return { leaf, posix: null, windows: null, cleanup: () => {} };
   if (browser.id === 'linux') {
     const posix = join(tmpdir(), leaf);
     mkdirSync(posix, { recursive: true });
@@ -976,7 +1005,8 @@ async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheD
       const url = `http://${browser.host}:${VITE_PORT}/?${query}`;
       const profileDir = makeProfileDir(browser, `${worldName}-${variant.id}-${process.pid}`);
       console.log(`${worldName} / ${variant.id} / ${browser.id}: ${url}`);
-      const child = launchBrowser(browser, url, profileDir);
+      const child =
+        browser.id === 'cdp' ? await openCdpTab(browser, url) : launchBrowser(browser, url, profileDir);
       try {
         const outcome = await Promise.race([
           finished,
@@ -987,7 +1017,8 @@ async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheD
           console.error(`  FAILED: ${outcome.error}`);
         }
       } finally {
-        killBrowser(browser, child, profileDir);
+        if (browser.id === 'cdp') await closeCdpTab(browser, child);
+        else killBrowser(browser, child, profileDir);
         profileDir.cleanup();
         await vite.close();
         vite = null;
@@ -1027,7 +1058,8 @@ function caveLandmark(snapshot, landmarks) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const browser = BROWSERS[args.browser];
-  if (!existsSync(browser.binary)) throw new Error(`no browser at ${browser.binary}`);
+  if (args.cdp !== null) browser.endpoint = args.cdp;
+  else if (!existsSync(browser.binary)) throw new Error(`no browser at ${browser.binary}`);
 
   const sha = execFileSync('git', ['-C', REPO_ROOT, 'rev-parse', '--short', 'HEAD'], {
     encoding: 'utf8',
