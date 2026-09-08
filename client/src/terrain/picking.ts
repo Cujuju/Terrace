@@ -1,20 +1,23 @@
 import {
-  BAND_HEIGHT,
+  CELL_CENTRE_OFFSET_CELLS,
   CHUNK_SIZE,
   MAX_HEIGHT,
   MIN_HEIGHT,
+  TERRAIN_LOD_NEAR_N,
   bandOf,
+  cellCentreCoord,
   chunkIndex,
+  drawnGroundHeight,
   isSpanDrawn,
   spanAt,
   spanUndersideHeight,
   spanCapHeight,
   spanCount,
   spanIndexCoveringBand,
-  type Span,
+  worldToCellCoord,
+  type Heightmap,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import { crossRayWithWallPlan } from './drawnFace.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
 import type { CellOccupancy, CellRayChord } from './occupancy.ts';
 
@@ -85,8 +88,6 @@ export interface TerrainRayPick {
 const MAX_TERRAIN_WORLD_Y = MAX_HEIGHT * HEIGHT_WORLD_SCALE;
 const MIN_TERRAIN_WORLD_Y = MIN_HEIGHT * HEIGHT_WORLD_SCALE;
 
-const CELL_CENTRE_OFFSET = 0.5;
-
 const marchStepLimit = (worldSize: number): number => 2 * worldSize + 2;
 
 function cellRevealed(mirror: TerrainMirror, x: number, y: number): boolean {
@@ -114,8 +115,8 @@ interface ScaledRay {
 }
 
 function scaleRayToCellSpace(origin: Vec3, direction: Vec3): ScaledRay | null {
-  const ox = origin.x / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET;
-  const oz = origin.z / CELL_WORLD_SIZE + CELL_CENTRE_OFFSET;
+  const ox = worldToCellCoord(origin.x);
+  const oz = worldToCellCoord(origin.z);
   const dx = direction.x / CELL_WORLD_SIZE;
   const dz = direction.z / CELL_WORLD_SIZE;
   const oy = origin.y;
@@ -217,226 +218,73 @@ function marchCells(
   }
 }
 
-export interface DrawnRisers {
-  segmentsOf(chunkIdx: number, band: number): Float32Array | undefined;
-}
+const SUBCELLS_PER_CELL = TERRAIN_LOD_NEAR_N;
 
-const FLOATS_PER_DRAWN_SEGMENT = 4;
+const SUBCELL_STEP_LIMIT = 2 * SUBCELLS_PER_CELL;
 
-const DRAWN_FACE_MARGIN_CELLS = 0.5;
+type SubcellVisitor = (
+  sampleX: number,
+  sampleZ: number,
+  tEnter: number,
+  tExit: number,
+) => boolean;
 
-function forEachDrawnSegment(
-  risers: DrawnRisers,
-  size: number,
-  chunksPerEdge: number,
-  chunkX: number,
-  chunkY: number,
-  band: number,
-  visit: (ax: number, az: number, bx: number, bz: number) => void,
+function marchSubcells(
+  ray: ScaledRay,
+  i: number,
+  j: number,
+  tFrom: number,
+  tTo: number,
+  visit: SubcellVisitor,
 ): void {
-  for (let dy = -1; dy <= 1; dy++) {
-    const cy = chunkY + dy;
-    if (cy < 0 || cy >= chunksPerEdge) continue;
-    for (let dx = -1; dx <= 1; dx++) {
-      const cx = chunkX + dx;
-      if (cx < 0 || cx >= chunksPerEdge) continue;
-      const flat = risers.segmentsOf(chunkIndex(size, cx, cy), band);
-      if (flat === undefined) continue;
-      for (
-        let s = 0;
-        s + FLOATS_PER_DRAWN_SEGMENT - 1 < flat.length;
-        s += FLOATS_PER_DRAWN_SEGMENT
-      ) {
-        visit(flat[s]!, flat[s + 1]!, flat[s + 2]!, flat[s + 3]!);
-      }
+  const du = ray.dx * SUBCELLS_PER_CELL;
+  const dv = ray.dz * SUBCELLS_PER_CELL;
+  const u = (ray.ox + tFrom * ray.dx) * SUBCELLS_PER_CELL;
+  const v = (ray.oz + tFrom * ray.dz) * SUBCELLS_PER_CELL;
+  const loU = i * SUBCELLS_PER_CELL;
+  const loV = j * SUBCELLS_PER_CELL;
+  const hiU = loU + SUBCELLS_PER_CELL - 1;
+  const hiV = loV + SUBCELLS_PER_CELL - 1;
+
+  let su = Math.floor(u);
+  let sv = Math.floor(v);
+  if (su < loU) su = loU;
+  else if (su > hiU) su = hiU;
+  if (sv < loV) sv = loV;
+  else if (sv > hiV) sv = hiV;
+
+  const stepU = du > 0 ? 1 : du < 0 ? -1 : 0;
+  const stepV = dv > 0 ? 1 : dv < 0 ? -1 : 0;
+  let tNextU = stepU === 0 ? Infinity : tFrom + ((stepU > 0 ? su + 1 : su) - u) / du;
+  let tNextV = stepV === 0 ? Infinity : tFrom + ((stepV > 0 ? sv + 1 : sv) - v) / dv;
+  const tDeltaU = stepU === 0 ? Infinity : Math.abs(1 / du);
+  const tDeltaV = stepV === 0 ? Infinity : Math.abs(1 / dv);
+
+  let tEnter = tFrom;
+  for (let step = 0; step < SUBCELL_STEP_LIMIT; step++) {
+    const tExit = Math.min(tNextU, tNextV, tTo);
+    if (tExit < tEnter) return;
+
+    const sampleX = (su + CELL_CENTRE_OFFSET_CELLS) / SUBCELLS_PER_CELL;
+    const sampleZ = (sv + CELL_CENTRE_OFFSET_CELLS) / SUBCELLS_PER_CELL;
+    if (visit(sampleX, sampleZ, tEnter, tExit)) return;
+
+    if (tExit >= tTo) return;
+    if (tNextU < tNextV) {
+      su += stepU;
+      tEnter = tNextU;
+      tNextU += tDeltaU;
+    } else {
+      sv += stepV;
+      tEnter = tNextV;
+      tNextV += tDeltaV;
     }
+    if (su < loU || su > hiU || sv < loV || sv > hiV) return;
   }
 }
 
-function orient(
-  px: number, pz: number, qx: number, qz: number, rx: number, rz: number,
-): number {
-  return (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
-}
-
-function probeCrossesSegment(
-  ax: number, az: number, bx: number, bz: number,
-  cx: number, cz: number, dx: number, dz: number,
-): boolean {
-  const cSide = orient(ax, az, bx, bz, cx, cz) > 0;
-  const dSide = orient(ax, az, bx, bz, dx, dz) > 0;
-  if (cSide === dSide) return false;
-  const d3 = orient(cx, cz, dx, dz, ax, az);
-  const d4 = orient(cx, cz, dx, dz, bx, bz);
-  return (d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0);
-}
-
-function capPointIsOverStrip(
-  risers: DrawnRisers,
-  size: number,
-  chunksPerEdge: number,
-  chunkX: number,
-  chunkY: number,
-  band: number,
-  i: number,
-  j: number,
-  hitX: number,
-  hitZ: number,
-): boolean {
-  const centreX = i * CELL_WORLD_SIZE;
-  const centreZ = j * CELL_WORLD_SIZE;
-  let crossings = 0;
-  forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
-    if (probeCrossesSegment(centreX, centreZ, hitX, hitZ, ax, az, bx, bz)) crossings++;
-  });
-  return (crossings & 1) === 1;
-}
-
-function refineRiserToDrawnFace(
-  mirror: TerrainMirror,
-  i: number,
-  j: number,
-  origin: Vec3,
-  direction: Vec3,
-  tEnter: number,
-  tExit: number,
-  hit: TerrainRayPick,
-  span: Span,
-  risers: DrawnRisers,
-): TerrainRayPick {
-  const size = mirror.map.size;
-  const chunksPerEdge = Math.ceil(size / CHUNK_SIZE);
-  const chunkX = Math.floor(i / CHUNK_SIZE);
-  const chunkY = Math.floor(j / CHUNK_SIZE);
-  const lowestBand = bandOf(spanUndersideHeight(span)) + 1;
-  const highestBand = bandOf(spanCapHeight(span));
-
-  const ray = scaleRayToCellSpace(origin, direction);
-  const window = ray === null ? null : clipRayToBox(
-    ray,
-    i - DRAWN_FACE_MARGIN_CELLS,
-    i + 1 + DRAWN_FACE_MARGIN_CELLS,
-    j - DRAWN_FACE_MARGIN_CELLS,
-    j + 1 + DRAWN_FACE_MARGIN_CELLS,
-    MAX_TERRAIN_WORLD_Y,
-  );
-  const fromT = window === null ? tEnter : window.tEnter;
-  const toT = window === null ? tExit : window.tExit;
-
-  const yA = origin.y + fromT * direction.y;
-  const yB = origin.y + toT * direction.y;
-  const yMin = yA < yB ? yA : yB;
-  const yMax = yA < yB ? yB : yA;
-  const bandSlab = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
-  const firstBand = Math.max(lowestBand, Math.ceil(yMin / bandSlab));
-  const lastBand = Math.min(highestBand, Math.floor(yMax / bandSlab) + 1);
-
-  if (lastBand < firstBand) return hit;
-
-  if (!hit.hitRiser && !capPointIsOverStrip(
-    risers, size, chunksPerEdge, chunkX, chunkY, highestBand, i, j, hit.hitX, hit.hitZ,
-  )) {
-    return hit;
-  }
-
-  const contourT = new Float64Array(lastBand - firstBand + 1).fill(Infinity);
-  for (let band = firstBand; band <= lastBand; band++) {
-    forEachDrawnSegment(risers, size, chunksPerEdge, chunkX, chunkY, band, (ax, az, bx, bz) => {
-      const t = crossRayWithWallPlan(origin, direction, ax, az, bx, bz);
-      if (t === null || t < fromT || t > toT) return;
-      if (t < contourT[band - firstBand]!) contourT[band - firstBand] = t;
-    });
-  }
-
-  let footT = Infinity;
-  for (let band = firstBand; band <= lastBand; band++) {
-    const t = contourT[band - firstBand]!;
-    if (t < footT) footT = t;
-  }
-  if (footT === Infinity) return hit;
-
-  let bestT = Infinity;
-  let bestLedgeBand: number | null = null;
-  for (let band = firstBand; band <= lastBand; band++) {
-    const tc = contourT[band - firstBand]!;
-    if (tc === Infinity) continue;
-    const yHi = band * bandSlab;
-    const yLo = (band - 1) * bandSlab;
-    const yAt = origin.y + tc * direction.y;
-    if (yAt >= yLo && yAt <= yHi && tc < bestT) {
-      bestT = tc;
-      bestLedgeBand = null;
-    }
-    if (band >= highestBand || direction.y === 0) continue;
-    const tPlane = (yHi - origin.y) / direction.y;
-    if (!(tPlane > tc) || tPlane < fromT || tPlane > toT || tPlane >= bestT) continue;
-    const above = band + 1 <= lastBand ? contourT[band + 1 - firstBand]! : Infinity;
-    if (tPlane >= above) continue;
-    bestT = tPlane;
-    bestLedgeBand = band;
-  }
-
-  if (bestT < Infinity) {
-    return {
-      ...hit,
-      hitRiser: true,
-      hitY: bestLedgeBand === null ? origin.y + bestT * direction.y : bestLedgeBand * bandSlab,
-      hitX: origin.x + bestT * direction.x,
-      hitZ: origin.z + bestT * direction.z,
-    };
-  }
-  return treadOfEnteredNeighbour(
-    mirror, i, j, origin, direction, tEnter, tExit, footT, hit.surfaceY,
-  ) ?? hit;
-}
-
-function treadOfEnteredNeighbour(
-  mirror: TerrainMirror,
-  i: number,
-  j: number,
-  origin: Vec3,
-  direction: Vec3,
-  tEnter: number,
-  tExit: number,
-  footContourT: number,
-  ownCapY: number,
-): TerrainRayPick | null {
-  const dy = direction.y;
-  if (!(dy < 0)) return null;
-  const ray = scaleRayToCellSpace(origin, direction);
-  if (ray === null) return null;
-
-  const tx = ray.dx === 0 ? -Infinity : ((ray.dx > 0 ? i : i + 1) - ray.ox) / ray.dx;
-  const tz = ray.dz === 0 ? -Infinity : ((ray.dz > 0 ? j : j + 1) - ray.oz) / ray.dz;
-  if (tx <= 0 && tz <= 0) return null;
-  const ni = tx > tz ? i - Math.sign(ray.dx) : i;
-  const nj = tx > tz ? j : j - Math.sign(ray.dz);
-  const size = mirror.map.size;
-  if (ni < 0 || nj < 0 || ni >= size || nj >= size) return null;
-  if (!cellRevealed(mirror, ni, nj)) return null;
-
-  const entryY = origin.y + tEnter * dy;
-  const treadCeilingY = entryY < ownCapY ? entryY : ownCapY;
-  const count = spanCount(mirror.map, ni, nj);
-  for (let k = count - 1; k >= 0; k--) {
-    const nSpan = spanAt(mirror.map, ni, nj, k);
-    if (!isSpanDrawn(nSpan)) continue;
-    const capY = spanCapHeight(nSpan) * HEIGHT_WORLD_SCALE;
-    if (!(capY < treadCeilingY)) continue;
-    const t = tEnter + (capY - entryY) / dy;
-    if (t > tExit || !(t < footContourT)) return null;
-    return {
-      x: ni,
-      y: nj,
-      surfaceY: capY,
-      spanIndex: k,
-      hitRiser: false,
-      hitY: capY,
-      hitX: origin.x + t * direction.x,
-      hitZ: origin.z + t * direction.z,
-    };
-  }
-  return null;
+function drawnSpanIndexAt(map: Heightmap, i: number, j: number, drawnHeight: number): number {
+  return spanIndexCoveringBand(map, i, j, bandOf(drawnHeight)) ?? spanCount(map, i, j) - 1;
 }
 
 function terrainHitInCell(
@@ -447,62 +295,64 @@ function terrainHitInCell(
   direction: Vec3,
   tEnter: number,
   tExit: number,
-  risers: DrawnRisers | null,
 ): TerrainRayPick | null {
   if (!cellRevealed(mirror, i, j)) return null;
+  const ray = scaleRayToCellSpace(origin, direction);
+  if (ray === null) return null;
 
+  const map = mirror.map;
   const oy = origin.y;
   const dy = direction.y;
-  const entryY = oy + tEnter * dy;
-  const exitY = oy + tExit * dy;
-  const count = spanCount(mirror.map, i, j);
-  let hit: TerrainRayPick | null = null;
-  let hitT = Infinity;
-  let hitSpan: Span | null = null;
-  for (let k = count - 1; k >= 0; k--) {
-    const span = spanAt(mirror.map, i, j, k);
-    if (!isSpanDrawn(span)) continue;
-    const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
-    const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
+  const count = spanCount(map, i, j);
+  let found: TerrainRayPick | null = null;
+
+  marchSubcells(ray, i, j, tEnter, tExit, (sampleX, sampleZ, tIn, tOut) => {
+    const entryY = oy + tIn * dy;
+    const exitY = oy + tOut * dy;
     const lowY = entryY < exitY ? entryY : exitY;
     const highY = entryY < exitY ? exitY : entryY;
-    if (lowY > capY || highY < baseY) continue;
-    const insideOnEntry = entryY <= capY && entryY >= baseY;
-    const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
-    const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
-    if (t >= hitT) continue;
-    hitT = t;
-    hit = {
-      x: i,
-      y: j,
-      surfaceY: capY,
-      spanIndex: k,
-      hitRiser: insideOnEntry,
-      hitY: faceY,
-      hitX: origin.x + t * direction.x,
-      hitZ: origin.z + t * direction.z,
-    };
-    hitSpan = span;
-  }
-  const refinable = hit !== null && (hit.hitRiser || hit.hitY === hit.surfaceY);
-  if (hit === null || !refinable || risers === null || hitSpan === null) return hit;
-  return refineRiserToDrawnFace(
-    mirror, i, j, origin, direction, tEnter, tExit, hit, hitSpan, risers,
-  );
+    const drawnHeight = drawnGroundHeight(map, sampleX, sampleZ);
+    const drawnSpan = drawnSpanIndexAt(map, i, j, drawnHeight);
+    let hitT = Infinity;
+    for (let k = count - 1; k >= 0; k--) {
+      const span = spanAt(map, i, j, k);
+      if (!isSpanDrawn(span)) continue;
+      const capHeight = k === drawnSpan ? drawnHeight : spanCapHeight(span);
+      const capY = capHeight * HEIGHT_WORLD_SCALE;
+      const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
+      if (lowY > capY || highY < baseY) continue;
+      const insideOnEntry = entryY <= capY && entryY >= baseY;
+      const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
+      const t = insideOnEntry || dy === 0 ? tIn : tIn + (faceY - entryY) / dy;
+      if (t >= hitT) continue;
+      hitT = t;
+      found = {
+        x: i,
+        y: j,
+        surfaceY: capY,
+        spanIndex: k,
+        hitRiser: insideOnEntry,
+        hitY: faceY,
+        hitX: origin.x + t * direction.x,
+        hitZ: origin.z + t * direction.z,
+      };
+    }
+    return found !== null;
+  });
+  return found;
 }
 
 export function pickTerrainCellByRay(
   mirror: TerrainMirror,
   origin: Vec3,
   direction: Vec3,
-  risers: DrawnRisers | null = null,
 ): TerrainRayPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
 
   let found: TerrainRayPick | null = null;
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, tEnter, tExit) => {
-    found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
+    found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
     return found !== null;
   });
   return found;
@@ -533,7 +383,6 @@ export function pickTerrainInColumn(
   y: number,
   origin: Vec3,
   direction: Vec3,
-  risers: DrawnRisers | null = null,
 ): TerrainRayPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
@@ -546,17 +395,19 @@ export function pickTerrainInColumn(
   if (clip === null) return null;
   const { tEnter, tExit } = clip;
 
-  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit, risers);
+  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit);
   if (hit !== null) return hit;
 
   const entryY = ray.oy + tEnter * ray.dy;
   const exitY = ray.oy + tExit * ray.dy;
   const lowY = entryY < exitY ? entryY : exitY;
   const count = spanCount(mirror.map, x, y);
+  const drawnHeight = drawnGroundHeight(mirror.map, cellCentreCoord(x), cellCentreCoord(y));
+  const drawnSpan = drawnSpanIndexAt(mirror.map, x, y, drawnHeight);
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, x, y, k);
     if (!isSpanDrawn(span)) continue;
-    const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+    const capY = (k === drawnSpan ? drawnHeight : spanCapHeight(span)) * HEIGHT_WORLD_SCALE;
     if (capY >= lowY) continue;
     const tMid = (tEnter + tExit) / 2;
     return {
@@ -584,7 +435,6 @@ export function pickPointedCellByRay(
   origin: Vec3,
   direction: Vec3,
   occupants: readonly CellOccupancy[],
-  risers: DrawnRisers | null = null,
 ): PointedCellPick | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
@@ -623,7 +473,7 @@ export function pickPointedCellByRay(
       return true;
     }
 
-    const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
+    const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
     if (terrain === null) return false;
     found = {
       x: terrain.x,
