@@ -14,7 +14,7 @@ import {
 } from '../src/terrain/mirror.ts';
 import { createTerrainMeshes } from '../src/render/terrainMeshes.ts';
 import { pickTerrainCellByRay } from '../src/terrain/picking.ts';
-import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/terrainMeshes.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/chunkTiling.ts';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 
 const WORLD = cellsAcross(64);

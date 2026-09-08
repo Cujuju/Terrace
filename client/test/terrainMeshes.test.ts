@@ -19,6 +19,7 @@ import {
   applyTerrainDiff,
   createTerrainMirror,
 } from '../src/terrain/mirror.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/chunkTiling.ts';
 import {
   ARENA_COMPACT_IDLE_BUDGET_MS,
   ARENA_COMPACT_STROKE_BUDGET_MS,
@@ -26,7 +27,6 @@ import {
   ARENA_HEADROOM_RUN_MULTIPLE,
   ARENA_TRANSFER_MS_PER_VERTEX,
   CHUNK_SPLICE_FRAME_BUDGET_MS,
-  SUPER_MESH_SPAN_CHUNKS,
   TERRAIN_QUIET_MS,
   createTerrainMeshes,
   type ArenaLayout,

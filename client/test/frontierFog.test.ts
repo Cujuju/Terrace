@@ -7,7 +7,7 @@ import {
   VERTICES_PER_SEGMENT,
   createFrontierFog,
 } from '../src/render/frontierFog.ts';
-import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/terrainMeshes.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/chunkTiling.ts';
 
 const WORLD_CHUNKS = 4;
 const WORLD = CHUNK_SIZE * WORLD_CHUNKS;
