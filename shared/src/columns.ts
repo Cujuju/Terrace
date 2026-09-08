@@ -199,13 +199,16 @@ export function bandFillAt(
   x: number,
   y: number,
   band: number,
+  ceiling: number,
 ): BandFill | null {
   if (columnCoversBand(map, x, y, band)) return null;
   const below = spanIndexBelowBand(map, x, y, band);
   const count = spanCount(map, x, y);
   const firstAbove = below === null ? 0 : below + 1;
   if (firstAbove < count) {
-    return count >= MAX_SPANS_PER_COLUMN ? null : { kind: 'overhang' };
+    const spans = spansAfterOverhang(readSpans(map, x, y), ceiling);
+    if (spans === null || spans.length > MAX_SPANS_PER_COLUMN) return null;
+    return { kind: 'overhang' };
   }
   if (below === null) return null;
   return { kind: 'extend', spanIndex: below };
@@ -222,18 +225,24 @@ export function applyBandFill(
     moveSpanCeiling(map, x, y, fill.spanIndex, ceiling);
     return;
   }
+  const spans = spansAfterOverhang(readSpans(map, x, y), ceiling);
+  if (spans === null) return;
+  setColumn(map, x, y, spans);
+}
+
+function spansAfterOverhang(spans: readonly Span[], ceiling: number): Span[] | null {
   const floor = Math.max(BEDROCK_FLOOR, ceiling - BAND_HEIGHT + HEIGHT_UNIT);
-  if (floor >= ceiling) return;
-  const spans = readSpans(map, x, y);
-  let at = spans.length;
-  for (let k = 0; k < spans.length; k++) {
-    if (spans[k]!.floor > floor) {
+  if (floor >= ceiling) return null;
+  const out = spans.slice();
+  let at = out.length;
+  for (let k = 0; k < out.length; k++) {
+    if (out[k]!.floor > floor) {
       at = k;
       break;
     }
   }
-  spans.splice(at, 0, { floor, ceiling });
-  setColumn(map, x, y, canonicaliseColumn(spans));
+  out.splice(at, 0, { floor, ceiling });
+  return canonicaliseColumn(out);
 }
 
 export function highestCeilingBelow(
