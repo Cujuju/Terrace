@@ -3,8 +3,6 @@ import { Group, Mesh, type BufferAttribute } from 'three';
 import { BAND_HEIGHT, cellIndex, chunksPerEdge, computeRiverNetwork } from '@terrace/shared';
 import { createRiverRig, WATER_TILE_FRAME_BUDGET_MS } from '../src/render/riverRig.ts';
 import { flattenRiverNetwork } from '../src/render/water/riverSurface.ts';
-import { createDrawnGround } from '../src/terrain/drawnGround.ts';
-import { createDrawnGroundStore, publishPlannedWorld } from '../src/terrain/drawnGroundStore.ts';
 import { createTerrainMirror } from '../src/terrain/mirror.ts';
 
 const WORLD = 64;
@@ -35,9 +33,6 @@ function rigOn(mirror: ReturnType<typeof coneMirror>, now: () => number) {
     networkSource: { compute: () => flattenRiverNetwork(mirror.map, computeRiverNetwork(mirror.map)), dispose: () => {} },
     now,
   });
-  const store = createDrawnGroundStore(WORLD);
-  publishPlannedWorld(store, mirror);
-  const ground = createDrawnGround(mirror, store);
   const water = parent.children.find((c): c is Mesh => c instanceof Mesh)!;
   const triangles = (): string[] => {
     const pos = water.geometry.getAttribute('position') as BufferAttribute;
@@ -48,7 +43,7 @@ function rigOn(mirror: ReturnType<typeof coneMirror>, now: () => number) {
     }
     return out.sort();
   };
-  return { rig, ground, pump: () => frame!(1 / 60), triangles };
+  return { rig, pump: () => frame!(1 / 60), triangles };
 }
 
 const frozenClock = () => 0;
@@ -57,8 +52,8 @@ describe('the water-tile drain', () => {
   it('never marches more tiles than the budget allows, and always one', () => {
     const mirror = coneMirror();
     let calls = 0;
-    const { rig, ground, pump } = rigOn(mirror, () => ++calls * CLOCK_STEP_MS);
-    rig.forceRefresh(mirror, ground);
+    const { rig, pump } = rigOn(mirror, () => ++calls * CLOCK_STEP_MS);
+    rig.forceRefresh(mirror);
     const tilesPerFrame: number[] = [];
     for (let f = 0; f < FRAME_LIMIT; f++) {
       calls = 0;
@@ -78,8 +73,8 @@ describe('the water-tile drain', () => {
     let calls = 0;
     const budgeted = rigOn(mirror, () => ++calls * CLOCK_STEP_MS);
     const whole = rigOn(mirror, frozenClock);
-    budgeted.rig.forceRefresh(mirror, budgeted.ground);
-    whole.rig.forceRefresh(mirror, whole.ground);
+    budgeted.rig.forceRefresh(mirror);
+    whole.rig.forceRefresh(mirror);
     for (let f = 0; f < FRAME_LIMIT; f++) {
       budgeted.pump();
       whole.pump();
@@ -93,10 +88,10 @@ describe('the water-tile drain', () => {
     let calls = 0;
     const budgeted = rigOn(mirror, () => ++calls * CLOCK_STEP_MS);
     const whole = rigOn(mirror, frozenClock);
-    budgeted.rig.forceRefresh(mirror, budgeted.ground);
+    budgeted.rig.forceRefresh(mirror);
     budgeted.pump();
-    budgeted.rig.forceRefresh(mirror, budgeted.ground);
-    whole.rig.forceRefresh(mirror, whole.ground);
+    budgeted.rig.forceRefresh(mirror);
+    whole.rig.forceRefresh(mirror);
     for (let f = 0; f < FRAME_LIMIT; f++) {
       budgeted.pump();
       whole.pump();
