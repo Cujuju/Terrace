@@ -693,7 +693,11 @@ const DRIVER_SCRIPT = `
     for (const scene of plan.scenes) {
       pinned = { eye: scene.eye, target: scene.target };
       await settle(plan.poseSettleMinMs, plan.poseSettleMaxMs);
-      const timing = await sampleTiming();
+      // GPU_DISJOINT_EXT can invalidate a whole window (e.g. another process on
+      // this GPU forcing a clock/power-state change mid-sample); one retry
+      // recovers it rather than reporting a silent zero.
+      let timing = await sampleTiming();
+      if (timing.gpuTimerSupported && timing.gpuFrames === 0) timing = await sampleTiming();
       const shot = await grab();
       await post(${JSON.stringify(SHOT_FRAME_PATH)}, {
         scene: scene.id,
@@ -824,6 +828,10 @@ function launchBrowser(browser, url, profileDir) {
     '--disable-features=CalculateNativeWinOcclusion',
     '--force-device-scale-factor=1',
     '--hide-scrollbars',
+    // Matches scripts/gpu-bench.sh: with vsync on, frame time pins to the
+    // display's refresh rate and a timing sample stops meaning anything.
+    '--disable-gpu-vsync',
+    '--disable-frame-rate-limit',
   ];
   if (browser.id === 'linux') {
     flags.push('--no-sandbox', '--enable-unsafe-swiftshader', `--user-data-dir=${profileDir.posix}`);
