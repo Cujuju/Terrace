@@ -119,6 +119,18 @@ const NONDETERMINISTIC_PLUGINS = [
   'populous',
 ];
 
+// Everything else the registry ships; --core-only leaves nothing but the terrain and sea.
+const CORE_ONLY_EXTRA_PLUGINS = [
+  'mana',
+  'invite',
+  'relics',
+  'hydro',
+  'structures',
+  'temples',
+  'chronicle',
+  'music',
+];
+
 const SNAPSHOT_QUERY =
   'select id, world_size, heightmap, mask from snapshots order by id desc limit 1';
 
@@ -305,13 +317,14 @@ const SCENES = [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function parseArgs(argv) {
-  const out = { browser: 'windows', scenes: null, worlds: null, out: null };
+  const out = { browser: 'windows', scenes: null, worlds: null, out: null, coreOnly: false };
   for (const arg of argv) {
     const [key, value] = arg.startsWith('--') ? arg.slice(2).split('=') : [null, null];
     if (key === 'browser') out.browser = value;
     else if (key === 'scene') out.scenes = value.split(',');
     else if (key === 'world') out.worlds = value.split(',');
     else if (key === 'out') out.out = value;
+    else if (key === 'core-only') out.coreOnly = true;
     else throw new Error(`unknown argument "${arg}"`);
   }
   if (BROWSERS[out.browser] === undefined) {
@@ -720,7 +733,7 @@ const DRIVER_SCRIPT = `
 
 // --- the stack --------------------------------------------------------------
 
-function stageWorld(worldName, stackDir) {
+function stageWorld(worldName, stackDir, coreOnly) {
   const worldsDir = join(stackDir, 'worlds');
   mkdirSync(worldsDir, { recursive: true });
   // A COPY, never the live file: the owner's server may be mid-write.
@@ -732,6 +745,7 @@ function stageWorld(worldName, stackDir) {
   db.exec('CREATE TABLE IF NOT EXISTS disabled_plugins (plugin TEXT NOT NULL PRIMARY KEY)');
   const insert = db.prepare('INSERT OR IGNORE INTO disabled_plugins (plugin) VALUES (?)');
   for (const plugin of NONDETERMINISTIC_PLUGINS) insert.run(plugin);
+  if (coreOnly) for (const plugin of CORE_ONLY_EXTRA_PLUGINS) insert.run(plugin);
   db.close();
   return worldsDir;
 }
@@ -882,7 +896,7 @@ function makeProfileDir(browser, runId) {
 
 // --- the run ----------------------------------------------------------------
 
-async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheDir, sha, results }) {
+async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheDir, sha, results, coreOnly }) {
   const snapshot = readSnapshot(worldName);
   const landmarks = findLandmarks(snapshot);
   landmarks.cave = caveLandmark(snapshot, landmarks);
@@ -896,7 +910,7 @@ async function shootWorld({ worldName, scenes, browser, outDir, stackDir, cacheD
   });
   if (usable.length === 0) return;
 
-  const worldsDir = stageWorld(worldName, stackDir);
+  const worldsDir = stageWorld(worldName, stackDir, coreOnly);
   const serverLogs = [];
   let gameServer = null;
   let vite = null;
@@ -1042,6 +1056,7 @@ async function main() {
         cacheDir,
         sha,
         results,
+        coreOnly: args.coreOnly,
       });
     }
   } finally {
