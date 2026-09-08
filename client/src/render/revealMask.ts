@@ -13,12 +13,7 @@ import {
   chunkIndex,
 } from '@terrace/shared';
 import type { TerrainMirror } from '../terrain/mirror.ts';
-import {
-  WORLD_POSITION_VERTEX_ANCHOR,
-  WORLD_POSITION_VERTEX_GLSL,
-  glslFloat,
-  spliceShader,
-} from './shaderSplice.ts';
+import { applyShaderEffect, glslFloat } from './shaderSplice.ts';
 
 export function revealedAtCell(mirror: TerrainMirror, x: number, y: number): boolean {
   const size = mirror.map.size;
@@ -59,7 +54,7 @@ export const REVEAL_CLIP_FRAGMENT_GLSL = `vec2 revealUv = vRevealXZ / ( uRevealC
 
 const REVEAL_CLIP_FRAGMENT_ANCHOR = '#include <clipping_planes_fragment>';
 
-const SHADER_COMMON_ANCHOR = '#include <common>';
+const REVEAL_CLIP_EFFECT_KEY = 'revealClip';
 
 function emptyMask(worldSize: number): DataTexture {
   const edge = chunksPerEdge(worldSize);
@@ -110,43 +105,16 @@ export function createRevealMask(worldSize: number): RevealMask {
     },
 
     applyRevealClip(material: Material, label: string): void {
-      const previous = material.onBeforeCompile.bind(material);
-      material.onBeforeCompile = (shader, renderer) => {
-        previous(shader, renderer);
-        shader.uniforms.uRevealMask = uniforms.uRevealMask;
-        shader.uniforms.uRevealChunksPerEdge = uniforms.uRevealChunksPerEdge;
-        shader.uniforms.uWorldUnitsPerChunk = uniforms.uWorldUnitsPerChunk;
-        shader.vertexShader = spliceShader(
-          spliceShader(
-            shader.vertexShader,
-            SHADER_COMMON_ANCHOR,
-            `${SHADER_COMMON_ANCHOR}\n${REVEAL_CLIP_UNIFORMS_GLSL}`,
-            label,
-          ),
-          WORLD_POSITION_VERTEX_ANCHOR,
-          [
-            WORLD_POSITION_VERTEX_ANCHOR,
-            WORLD_POSITION_VERTEX_GLSL,
-            'vec3 world = tWorldPosition.xyz;',
-            REVEAL_CLIP_VERTEX_GLSL,
-          ].join('\n    '),
-          label,
-        );
-        shader.fragmentShader = spliceShader(
-          spliceShader(
-            shader.fragmentShader,
-            SHADER_COMMON_ANCHOR,
-            `${SHADER_COMMON_ANCHOR}\n${REVEAL_CLIP_UNIFORMS_GLSL}`,
-            label,
-          ),
-          REVEAL_CLIP_FRAGMENT_ANCHOR,
-          `${REVEAL_CLIP_FRAGMENT_ANCHOR}\n    ${REVEAL_CLIP_FRAGMENT_GLSL}`,
-          label,
-        );
-      };
-      const previousKey = material.customProgramCacheKey.bind(material);
-      material.customProgramCacheKey = () => `${previousKey()}|revealClip`;
-      material.needsUpdate = true;
+      applyShaderEffect(material, {
+        key: REVEAL_CLIP_EFFECT_KEY,
+        label,
+        uniforms: { ...uniforms },
+        declarations: () => REVEAL_CLIP_UNIFORMS_GLSL,
+        worldPositionVertexGlsl: REVEAL_CLIP_VERTEX_GLSL,
+        fragmentAnchor: REVEAL_CLIP_FRAGMENT_ANCHOR,
+        fragmentGlsl: REVEAL_CLIP_FRAGMENT_GLSL,
+        fragmentInsertion: 'after',
+      });
     },
 
     dispose(): void {
