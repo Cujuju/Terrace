@@ -1,0 +1,238 @@
+import {
+  Box3,
+  DynamicDrawUsage,
+  Frustum,
+  InstancedBufferAttribute,
+  Matrix4,
+  Mesh,
+  type InstancedBufferGeometry,
+  type MeshLambertMaterial,
+  type Camera,
+  type Group,
+  type IUniform,
+  type WebGLRenderer,
+} from 'three';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  TERRAIN_LOD_FAR_N,
+  TERRAIN_LOD_NEAR_N,
+  TERRAIN_LOD_NEAR_RADIUS_CHUNKS,
+  chunksPerEdge,
+} from '@terrace/shared';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import type { TerrainMirror } from '../terrain/mirror.ts';
+import { createDrawnGroundStore, type DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
+import type { ArenaLayout, ArenaStats, TerrainMeshes } from './terrainMeshes.ts';
+import { createBandPaletteTexture, createHeightTexture } from './gpuTerrainTextures.ts';
+import { createChunkTemplate, createGpuTerrainMaterial } from './gpuTerrainMaterial.ts';
+
+export const GPU_TERRAIN_SMOOTH_DEFAULT = true;
+
+const CHUNK_WORLD_SIZE = CHUNK_SIZE * CELL_WORLD_SIZE;
+
+const NEAR_LOD_WORLD_RADIUS = TERRAIN_LOD_NEAR_RADIUS_CHUNKS * CHUNK_WORLD_SIZE;
+
+/** The bilinear blend floors to a band, so a chunk can drop one band below its cells. */
+const CHUNK_BOUND_SLACK_HEIGHT = BAND_HEIGHT;
+
+/** A chunk's drawn surface reads one cell past its own edge on every side. */
+const CHUNK_BOUND_MARGIN_CELLS = 1;
+
+const INSTANCE_COMPONENTS = 2;
+
+interface LodLevel {
+  readonly mesh: Mesh;
+  readonly geometry: InstancedBufferGeometry;
+  readonly material: MeshLambertMaterial;
+  readonly origins: InstancedBufferAttribute;
+  visible: number;
+}
+
+function createLevel(
+  subdivision: number,
+  chunkCount: number,
+  uniforms: Record<string, IUniform>,
+  renderOrder: number,
+): LodLevel {
+  const { geometry } = createChunkTemplate(subdivision);
+  const origins = new InstancedBufferAttribute(
+    new Float32Array(chunkCount * INSTANCE_COMPONENTS),
+    INSTANCE_COMPONENTS,
+  );
+  origins.setUsage(DynamicDrawUsage);
+  geometry.setAttribute('aChunk', origins);
+  geometry.instanceCount = 0;
+  const material = createGpuTerrainMaterial({
+    ...uniforms,
+    uSubdiv: { value: subdivision },
+  });
+  const mesh = new Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = renderOrder;
+  return { mesh, geometry, material, origins, visible: 0 };
+}
+
+export function createGpuTerrainMeshes(group: Group, mirror: TerrainMirror): TerrainMeshes {
+  const map = mirror.map;
+  const chunkCols = chunksPerEdge(map.size);
+  const chunkCount = chunkCols * chunkCols;
+
+  const height = createHeightTexture(map);
+  const palette = createBandPaletteTexture();
+  const smooth: IUniform<number> = { value: GPU_TERRAIN_SMOOTH_DEFAULT ? 1 : 0 };
+  const shared: Record<string, IUniform> = {
+    uHeight: { value: height.texture },
+    uPalette: { value: palette },
+    uSizeCells: { value: map.size },
+    uSmooth: smooth,
+  };
+
+  const near = createLevel(TERRAIN_LOD_NEAR_N, chunkCount, shared, 0);
+  const far = createLevel(TERRAIN_LOD_FAR_N, chunkCount, shared, 1);
+  const levels = [near, far];
+
+  const built = new Uint8Array(chunkCount);
+  const minY = new Float32Array(chunkCount);
+  const maxY = new Float32Array(chunkCount);
+  const pending = new Set<number>();
+  const drawnHandlers = new Set<(chunkIdx: number) => void>();
+  const drawnGroundStore = createDrawnGroundStore(map.size);
+
+  const frustum = new Frustum();
+  const viewProjection = new Matrix4();
+  const bounds = new Box3();
+
+  const measureChunk = (cx: number, cy: number, chunkIdx: number): void => {
+    const x0 = Math.max(0, cx * CHUNK_SIZE - CHUNK_BOUND_MARGIN_CELLS);
+    const y0 = Math.max(0, cy * CHUNK_SIZE - CHUNK_BOUND_MARGIN_CELLS);
+    const x1 = Math.min(map.size - 1, (cx + 1) * CHUNK_SIZE + CHUNK_BOUND_MARGIN_CELLS - 1);
+    const y1 = Math.min(map.size - 1, (cy + 1) * CHUNK_SIZE + CHUNK_BOUND_MARGIN_CELLS - 1);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let y = y0; y <= y1; y++) {
+      const row = y * map.size;
+      for (let x = x0; x <= x1; x++) {
+        const h = map.cells[row + x];
+        if (h < lo) lo = h;
+        if (h > hi) hi = h;
+      }
+    }
+    minY[chunkIdx] = (lo - CHUNK_BOUND_SLACK_HEIGHT) * HEIGHT_WORLD_SCALE;
+    maxY[chunkIdx] = hi * HEIGHT_WORLD_SCALE;
+  };
+
+  const flushUploads = (renderer: WebGLRenderer): void => {
+    if (pending.size === 0) return;
+    for (const chunkIdx of pending) {
+      const cx = chunkIdx % chunkCols;
+      const cy = (chunkIdx - cx) / chunkCols;
+      height.uploadRect(renderer, cx * CHUNK_SIZE, cy * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE);
+      for (const handler of drawnHandlers) handler(chunkIdx);
+    }
+    pending.clear();
+  };
+
+  const selectChunks = (camera: Camera): void => {
+    viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(viewProjection);
+    const eye = camera.matrixWorld;
+    const eyeX = eye.elements[12];
+    const eyeZ = eye.elements[14];
+    near.visible = 0;
+    far.visible = 0;
+    for (let chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
+      if (built[chunkIdx] === 0) continue;
+      const cx = chunkIdx % chunkCols;
+      const cy = (chunkIdx - cx) / chunkCols;
+      const originX = cx * CHUNK_WORLD_SIZE;
+      const originZ = cy * CHUNK_WORLD_SIZE;
+      bounds.min.set(originX, minY[chunkIdx], originZ);
+      bounds.max.set(originX + CHUNK_WORLD_SIZE, maxY[chunkIdx], originZ + CHUNK_WORLD_SIZE);
+      if (!frustum.intersectsBox(bounds)) continue;
+      const dx = eyeX - (originX + CHUNK_WORLD_SIZE / 2);
+      const dz = eyeZ - (originZ + CHUNK_WORLD_SIZE / 2);
+      const level = Math.hypot(dx, dz) <= NEAR_LOD_WORLD_RADIUS ? near : far;
+      const slot = level.visible * INSTANCE_COMPONENTS;
+      level.origins.array[slot] = cx * CHUNK_SIZE;
+      level.origins.array[slot + 1] = cy * CHUNK_SIZE;
+      level.visible++;
+    }
+    for (const level of levels) {
+      level.origins.clearUpdateRanges();
+      level.origins.addUpdateRange(0, level.visible * INSTANCE_COMPONENTS);
+      level.origins.needsUpdate = true;
+      level.geometry.instanceCount = level.visible;
+    }
+  };
+
+  near.mesh.onBeforeRender = (renderer, _scene, camera): void => {
+    flushUploads(renderer);
+    selectChunks(camera);
+  };
+
+  group.add(near.mesh, far.mesh);
+
+  return {
+    update(dirty: Iterable<number>): void {
+      for (const chunkIdx of dirty) {
+        if (chunkIdx < 0 || chunkIdx >= chunkCount) continue;
+        const cx = chunkIdx % chunkCols;
+        const cy = (chunkIdx - cx) / chunkCols;
+        measureChunk(cx, cy, chunkIdx);
+        built[chunkIdx] = 1;
+        pending.add(chunkIdx);
+      }
+    },
+    flush(): void {},
+    settle(): void {},
+    pendingCount(): number {
+      return pending.size;
+    },
+    clear(): void {
+      built.fill(0);
+      pending.clear();
+      for (const level of levels) {
+        level.visible = 0;
+        level.geometry.instanceCount = 0;
+      }
+    },
+    pickables(): Mesh[] {
+      return [];
+    },
+    drawnGround(): DrawnGroundStore {
+      return drawnGroundStore;
+    },
+    onChunkDrawn(handler: (chunkIdx: number) => void): () => void {
+      drawnHandlers.add(handler);
+      return () => drawnHandlers.delete(handler);
+    },
+    drawCallCount(): number {
+      return levels.reduce((total, level) => total + (level.visible > 0 ? 1 : 0), 0);
+    },
+    medianSpliceMs(): number | null {
+      return null;
+    },
+    arenaStats(): ArenaStats[] {
+      return [];
+    },
+    arenaLayout(): ArenaLayout[] {
+      return [];
+    },
+    builtChunkCount(): number {
+      let total = 0;
+      for (const flag of built) total += flag;
+      return total;
+    },
+    dispose(): void {
+      for (const level of levels) {
+        group.remove(level.mesh);
+        level.geometry.dispose();
+        level.material.dispose();
+      }
+      height.dispose();
+      palette.dispose();
+      drawnHandlers.clear();
+    },
+  };
+}

@@ -41,6 +41,7 @@ import {
   type PredictionStore,
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
+import { createGpuTerrainMeshes } from './render/gpuTerrain.ts';
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import {
   createLayerEdgeOverlay,
@@ -117,6 +118,11 @@ export interface World extends TerrainSink {
 const nowMs = (): number => performance.now();
 
 const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
+
+const GPU_TERRAIN_QUERY_FLAG = 'gpuTerrain';
+
+const gpuTerrainRequested = (): boolean =>
+  new URLSearchParams(window.location.search).get(GPU_TERRAIN_QUERY_FLAG) === '1';
 
 export function createWorld(viewport: Viewport): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
@@ -216,12 +222,14 @@ export function createWorld(viewport: Viewport): World {
     terrainEpoch++;
     chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
     const nextMirror = createTerrainMirror(worldSize);
-    const nextMeshes = createTerrainMeshes(
-      viewport.terrainGroup,
-      nextMirror,
-      { onFrame: (handler) => viewport.onFrame(handler) },
-      chunkBuildSource ?? undefined,
-    );
+    const nextMeshes = gpuTerrainRequested()
+      ? createGpuTerrainMeshes(viewport.terrainGroup, nextMirror)
+      : createTerrainMeshes(
+          viewport.terrainGroup,
+          nextMirror,
+          { onFrame: (handler) => viewport.onFrame(handler) },
+          chunkBuildSource ?? undefined,
+        );
     const nextPredictions = createPredictionStore(nextMirror);
     layerEdges?.dispose();
     const nextLayerEdges = createLayerEdgeOverlay(
