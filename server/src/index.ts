@@ -25,6 +25,7 @@ import { InstalledPlugins } from './plugins/installed.ts';
 import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
+import { TICK_TOTAL_PHASE, startTickTimingReport, timePhase } from './tick-timing.ts';
 import { ROOM_NAME, TerraceRoom, bindRoomContext } from './net/terrace-room.ts';
 import { WorldAdminService } from './world/world-admin.ts';
 import { WorldManager } from './world/world-manager.ts';
@@ -170,13 +171,20 @@ async function main(): Promise<void> {
 
   // The PROCESS's loop, not a world's: it ticks across a switch and across
   // having no world, so changing worlds tears nothing down.
-  const tickLoop = startTickLoop(config.tickHz, (dt) => manager.tick(dt));
+  const tickLoop = startTickLoop(config.tickHz, (dt) => {
+    timePhase(TICK_TOTAL_PHASE, () => manager.tick(dt));
+  });
+  const tickTiming = startTickTimingReport({
+    tickHz: config.tickHz,
+    worldSize: () => manager.current?.world.size ?? null,
+  });
 
   const snapshotTimer = setInterval(() => {
     try {
       // Deferred: only this one. Every other caller needs the row on disk
       // before its next step (#273).
-      if (manager.snapshotIfDirty({ defer: true })) logInfo('world snapshot handed to writer');
+      const written = timePhase('snapshot', () => manager.snapshotIfDirty({ defer: true }));
+      if (written) logInfo('world snapshot handed to writer');
     } catch (error) {
       logError('periodic snapshot failed', error);
     }
@@ -197,6 +205,7 @@ async function main(): Promise<void> {
   gameServer.onBeforeShutdown(() => {
     // Stop simulating first, so the final snapshot is a quiescent world.
     tickLoop.stop();
+    tickTiming?.stop();
     clearInterval(snapshotTimer);
     try {
       // `shutdown`, not `unload`: leaves the active pointer, so the next boot
