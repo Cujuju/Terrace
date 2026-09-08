@@ -33,11 +33,6 @@ const REF_MIN_HEIGHT = -1536;
 const REF_MAX_HEIGHT = 1024;
 const REF_CELL_WORLD_SIZE = 1 / 4;
 const REF_CELL_CENTRE_OFFSET = 0.5;
-const REF_MAX_SPANS = 8;
-const REF_BEDROCK_FLOOR = REF_MIN_HEIGHT;
-const REF_OPEN_COLUMN_SAMPLE = REF_BEDROCK_FLOOR - REF_BAND_HEIGHT;
-const REF_FIXPOINT_STEPS = 4 * REF_MAX_SPANS;
-const REF_SPAN_STRIDE = 2;
 
 const SUBDIV_NEAR = 4;
 const SUBDIV_FAR = 1;
@@ -66,59 +61,16 @@ function refAxis(size, coord) {
   };
 }
 
-function refQuantise(height) {
-  return refFloorDiv(height, REF_BAND_HEIGHT) * REF_BAND_HEIGHT;
-}
-
-/** The band-k sample of one column: its cap where band k is solid, else the cap below. */
-function refColumnSample(cells, size, spans, x, y, band) {
-  const threshold = band * REF_BAND_HEIGHT;
-  const packed = spans.get(y * size + x);
-  if (packed === undefined) {
-    return threshold < REF_BEDROCK_FLOOR ? REF_OPEN_COLUMN_SAMPLE : cells[y * size + x];
-  }
-  let below = REF_OPEN_COLUMN_SAMPLE;
-  for (let k = 0; k < packed.length; k += REF_SPAN_STRIDE) {
-    const floor = packed[k];
-    const ceiling = packed[k + 1];
-    const cap = refQuantise(ceiling);
-    const lowest = refQuantise(floor) === floor ? floor : refQuantise(floor) + REF_BAND_HEIGHT;
-    if (lowest > cap) continue;
-    if (floor <= threshold && threshold <= cap) return ceiling;
-    if (cap < threshold) below = ceiling;
-  }
-  return below;
-}
-
-function refSurfaceHeight(cells, size, spans, x, y, floorDiv = refFloorDiv) {
+function refSurfaceHeight(cells, size, x, y, floorDiv = refFloorDiv) {
   const ax = refAxis(size, x);
   const ay = refAxis(size, y);
   const d = REF_SUBCELL_DENOM;
-  const blend = (h00, h10, h01, h11) =>
-    floorDiv(
-      (d - ax.f) * (d - ay.f) * h00 +
-        ax.f * (d - ay.f) * h10 +
-        (d - ax.f) * ay.f * h01 +
-        ax.f * ay.f * h11,
-      REF_BAND_BLEND_DENOM,
-    );
-  let band = blend(
-    cells[ay.i0 * size + ax.i0],
-    cells[ay.i0 * size + ax.i1],
-    cells[ay.i1 * size + ax.i0],
-    cells[ay.i1 * size + ax.i1],
-  );
-  for (let step = 0; spans.size > 0 && step < REF_FIXPOINT_STEPS; step++) {
-    const next = blend(
-      refColumnSample(cells, size, spans, ax.i0, ay.i0, band),
-      refColumnSample(cells, size, spans, ax.i1, ay.i0, band),
-      refColumnSample(cells, size, spans, ax.i0, ay.i1, band),
-      refColumnSample(cells, size, spans, ax.i1, ay.i1, band),
-    );
-    if (next === band) break;
-    band = next;
-  }
-  return band * REF_BAND_HEIGHT;
+  const numerator =
+    (d - ax.f) * (d - ay.f) * cells[ay.i0 * size + ax.i0] +
+    ax.f * (d - ay.f) * cells[ay.i0 * size + ax.i1] +
+    (d - ax.f) * ay.f * cells[ay.i1 * size + ax.i0] +
+    ax.f * ay.f * cells[ay.i1 * size + ax.i1];
+  return floorDiv(numerator, REF_BAND_BLEND_DENOM) * REF_BAND_HEIGHT;
 }
 
 /** Deliberately wrong: truncates toward zero, the classic negative-height trap. */
