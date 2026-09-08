@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Comment budget on staged sources. Checks the working tree, not the index:
-# agents share this checkout, and the file an agent is about to commit is the
-# one on disk. Set TERRACE_SKIP_COMMENT_BUDGET=1 to bypass.
+# Comment budget on staged sources: whoever touches a file brings the whole file
+# to the cap. Checks the working tree, not the index — agents share this
+# checkout. Set TERRACE_SKIP_COMMENT_BUDGET=1 to bypass.
 set -euo pipefail
 
 if [ "${TERRACE_SKIP_COMMENT_BUDGET:-0}" = "1" ]; then
   exit 0
 fi
+
+export COMMENT_BUDGET_REDIRECT="${COMMENT_BUDGET_REDIRECT:-docs/decisions/<arc>.md}"
 
 root="$(git rev-parse --show-toplevel)"
 mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMR -- '*.ts' '*.tsx')

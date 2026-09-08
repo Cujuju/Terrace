@@ -1,45 +1,24 @@
 import { readFileSync } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, isAbsolute, resolve } from 'node:path'
 import { analyze, COMMENT_WORD_CAP } from '../src/analyze.ts'
 import { commentsOf } from '../src/comments.ts'
-import { budgetFor, fileBudget, RATIO_EPSILON } from '../src/baseline.ts'
+import { REDIRECT } from '../src/redirect.ts'
 import { isLintedFile } from '../src/targets.ts'
 
 /**
- * One file, no eslint startup: the same verdict the rule gives, fast enough to
- * run after every edit. Prints nothing when the file is within budget.
+ * One file, no eslint startup and no exemption list: whoever touches a file
+ * brings it to the cap. Prints nothing when the file is clean.
  */
-const DECISIONS = 'docs/decisions/<arc>.md'
-
-function report(root: string, path: string): string[] {
-  const absolute = isAbsolute(path) ? path : resolve(root, path)
-  const key = relative(root, absolute).split(sep).join('/')
-  if (!isLintedFile(key) || key.startsWith('..')) return []
+function report(path: string): string[] {
+  const absolute = isAbsolute(path) ? path : resolve(process.cwd(), path)
+  if (!isLintedFile(basename(absolute))) return []
 
   const source = readFileSync(absolute, 'utf8')
-  const { violations, ratio, commentLines, nonBlankLines } = analyze(source, commentsOf(source, key))
-
-  const budget = budgetFor(root)
-  const recorded = fileBudget(budget, key)
-  const grandfathered = new Set(recorded?.grandfathered ?? [])
-  const ceiling = recorded?.ratio ?? budget.newFileRatioCeiling
-
-  const lines: string[] = []
-  for (const violation of violations) {
-    if (grandfathered.has(violation.fingerprint)) continue
-    lines.push(
-      violation.kind === 'over-cap'
-        ? `${key}:${violation.line} — ${violation.words} words, cap is ${COMMENT_WORD_CAP}.`
-        : `${key}:${violation.line} — carries ${violation.label}.`,
-    )
-  }
-  if (ratio > ceiling + RATIO_EPSILON) {
-    const percent = (value: number): string => `${(value * 100).toFixed(1)}%`
-    lines.push(
-      `${key} — comments are ${percent(ratio)} of the file (${commentLines} of ${nonBlankLines} lines); ceiling is ${percent(ceiling)}.`,
-    )
-  }
-  return lines
+  return analyze(source, commentsOf(source, absolute)).map((violation) =>
+    violation.kind === 'over-cap'
+      ? `${path}:${violation.line} — ${violation.words} words, cap is ${COMMENT_WORD_CAP}.`
+      : `${path}:${violation.line} — carries ${violation.label}.`,
+  )
 }
 
 /** A PostToolUse hook hands the edited path on stdin; a shell hands it on argv. */
@@ -58,16 +37,16 @@ function pathFromStdin(): string | undefined {
 const path = process.argv[2] ?? pathFromStdin()
 if (path === undefined) process.exit(0)
 
-let lines: string[]
+let lines: string[] = []
 try {
-  lines = report(process.cwd(), path)
+  lines = report(path)
 } catch {
   process.exit(0)
 }
 
 if (lines.length > 0) {
   process.stderr.write(
-    `Comment budget — put the reasoning in ${DECISIONS}, not in the source:\n${lines.map((line) => `  ${line}`).join('\n')}\n`,
+    `Comment budget — put the reasoning in ${REDIRECT}, not in the source:\n${lines.map((line) => `  ${line}`).join('\n')}\n`,
   )
   process.exit(2)
 }

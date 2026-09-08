@@ -1,39 +1,34 @@
-import { readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { dirname, join, parse } from 'node:path'
 import { BUDGET_FILE } from './targets.ts'
-
-export type FileBudget = {
-  /** Comment-only lines over non-blank lines, as of the last seed. May never rise. */
-  ratio: number
-  /** Violations that predate the rule; editing the comment drops its fingerprint. */
-  grandfathered: string[]
-}
 
 export type Budget = {
   /**
-   * The repo's own aggregate comment ratio at seed time. A file the budget has
-   * never seen may not be denser than the codebase already is.
+   * Files that predate the rule, repo-relative. A whole-tree run skips them;
+   * touching one does not. Cleaning a file means deleting its line here.
    */
-  newFileRatioCeiling: number
-  files: Record<string, FileBudget>
+  exempt: string[]
 }
 
-/** Float compare slack, wider than the four decimals the budget file stores. */
-export const RATIO_EPSILON = 1e-4
-
-export const EMPTY_BUDGET: Budget = { newFileRatioCeiling: 0, files: {} }
+export const EMPTY_BUDGET: Budget = { exempt: [] }
 
 type CacheEntry = { mtimeMs: number; budget: Budget }
 const cache = new Map<string, CacheEntry>()
 
-export function budgetFor(root: string): Budget {
-  const path = join(root, BUDGET_FILE)
-  let mtimeMs: number
-  try {
-    mtimeMs = statSync(path).mtimeMs
-  } catch {
-    return EMPTY_BUDGET
+/** The budget sits at the repo root; a linter may be pointed anywhere below it. */
+export function findBudgetFile(from: string): string | undefined {
+  let directory = from
+  for (;;) {
+    const candidate = join(directory, BUDGET_FILE)
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(directory)
+    if (parent === directory || directory === parse(directory).root) return undefined
+    directory = parent
   }
+}
+
+export function budgetAt(path: string): Budget {
+  const mtimeMs = statSync(path).mtimeMs
   const cached = cache.get(path)
   if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.budget
 
@@ -42,6 +37,8 @@ export function budgetFor(root: string): Budget {
   return budget
 }
 
-export function fileBudget(budget: Budget, relativePath: string): FileBudget | undefined {
-  return budget.files[relativePath]
+export function budgetFor(from: string): { budget: Budget; root: string } {
+  const path = findBudgetFile(from)
+  if (path === undefined) return { budget: EMPTY_BUDGET, root: from }
+  return { budget: budgetAt(path), root: dirname(path) }
 }

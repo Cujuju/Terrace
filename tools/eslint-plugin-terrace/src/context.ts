@@ -1,30 +1,28 @@
-import { relative, sep } from 'node:path'
+import { dirname, relative, sep } from 'node:path'
 import type { Rule } from 'eslint'
-import { analyze, type CommentNode, type FileAnalysis } from './analyze.ts'
-import { budgetFor, EMPTY_BUDGET, type Budget } from './baseline.ts'
+import { analyze, type CommentNode, type Violation } from './analyze.ts'
+import { budgetFor, type Budget } from './baseline.ts'
 
-/** Tests inject a budget; a real run reads `.comment-budget.json` beside the config. */
-export type RuleOptions = { budget?: Budget }
+/** Tests inject a budget and a root; a real run walks up for `.comment-budget.json`. */
+export type RuleOptions = { budget?: Budget; root?: string }
 
 export const OPTIONS_SCHEMA = [
   {
     type: 'object',
-    properties: { budget: { type: 'object' } },
+    properties: { budget: { type: 'object' }, root: { type: 'string' } },
     additionalProperties: false,
   },
 ]
 
-export function budgetOf(context: Rule.RuleContext): Budget {
-  const injected = (context.options[0] as RuleOptions | undefined)?.budget
-  if (injected !== undefined) return injected
-  return context.cwd === undefined ? EMPTY_BUDGET : budgetFor(context.cwd)
+export function isExempt(context: Rule.RuleContext): boolean {
+  const options = (context.options[0] as RuleOptions | undefined) ?? {}
+  const found = budgetFor(dirname(context.filename))
+  const budget = options.budget ?? found.budget
+  const root = options.root ?? found.root
+  return budget.exempt.includes(relative(root, context.filename).split(sep).join('/'))
 }
 
-export function relativePathOf(context: Rule.RuleContext): string {
-  return relative(context.cwd ?? '', context.filename).split(sep).join('/')
-}
-
-export function analyzeFile(context: Rule.RuleContext): FileAnalysis {
+export function violationsOf(context: Rule.RuleContext): Violation[] {
   const source = context.sourceCode
   return analyze(source.getText(), source.getAllComments() as unknown as CommentNode[])
 }
