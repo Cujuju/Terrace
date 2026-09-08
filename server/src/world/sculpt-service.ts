@@ -7,6 +7,7 @@
 // audit, and it is in this file.
 
 import type { CellDiff, SculptOptions } from '@terrace/shared';
+import { timePhase } from '../tick-timing.ts';
 import { partitionDiffByViewer } from './mask-filter.ts';
 import type { World } from './world.ts';
 
@@ -61,13 +62,17 @@ export function applyServerSculpt(
   options?: SculptOptions,
   sculptorToken?: string,
 ): CellDiff[] {
-  const diff = world.applySculpt(x, y, radius, amount, options);
+  const diff = timePhase('sculpt.relax', () => world.applySculpt(x, y, radius, amount, options));
   if (diff.length === 0) return diff;
 
-  for (const { playerId, cells } of partitionDiffByViewer(world, diff)) {
-    world.sendTo(playerId, { type: 'terrainDiff', cells });
-  }
+  timePhase('sculpt.broadcast', () => {
+    for (const { playerId, cells } of partitionDiffByViewer(world, diff)) {
+      world.sendTo(playerId, { type: 'terrainDiff', cells });
+    }
+  });
 
-  listener.notifyTerrainChanged(diff, sculptorToken);
+  timePhase('sculpt.listeners', () => {
+    listener.notifyTerrainChanged(diff, sculptorToken);
+  });
   return diff;
 }

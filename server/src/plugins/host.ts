@@ -14,6 +14,7 @@ import { logError, logInfo, logWarn } from '../log.ts';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
+import { timePhase, timePluginPhase } from '../tick-timing.ts';
 import { readSlice, wrapSlice } from './slice-envelope.ts';
 import {
   ALLOW,
@@ -303,11 +304,13 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    * reads it as the time it is now rather than one tick ago.
    */
   tick(dt: number): void {
-    this.world.advanceClock(dt);
+    timePhase('clock', () => this.world.advanceClock(dt));
     for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onTick) continue;
-      this.safely(plugin, 'onTick', () => plugin.onTick?.(api, dt));
+      timePluginPhase(plugin.name, () => {
+        this.safely(plugin, 'onTick', () => plugin.onTick?.(api, dt));
+      });
     }
   }
 
