@@ -9,6 +9,7 @@
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
     "lint": "eslint .",
+    "parity": "pnpm -r --if-present run parity",
     "lint:seed": "comment-budget-seed"
   },
   "devDependencies": {
