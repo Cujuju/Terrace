@@ -5,7 +5,12 @@ import {
   MeshLambertMaterial,
   type IUniform,
 } from 'three';
-import { CELL_CENTRE_OFFSET_CELLS, CHUNK_SIZE } from '@terrace/shared';
+import {
+  CELL_CENTRE_OFFSET_CELLS,
+  CHUNK_SIZE,
+  TERRAIN_LOD_FAR_N,
+  TERRAIN_LOD_NEAR_N,
+} from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { glslFloat, spliceShader } from './shaderSplice.ts';
 import { applyGroundShade } from './groundShade.ts';
@@ -20,13 +25,20 @@ import {
 const KIND_CAP = 0;
 const KIND_SKIRT_X = 1;
 const KIND_SKIRT_Z = 2;
+const KIND_LOW_EDGE_X = 3;
+const KIND_LOW_EDGE_Z = 4;
 const QUAD_KINDS = [KIND_CAP, KIND_SKIRT_X, KIND_SKIRT_Z] as const;
+const LOW_EDGE_KINDS = [KIND_LOW_EDGE_X, KIND_LOW_EDGE_Z] as const;
 
 const CORNERS_PER_QUAD = 4;
 const INDICES_PER_QUAD = 6;
-const VERTICES_PER_SUBCELL = QUAD_KINDS.length * CORNERS_PER_QUAD;
-const INDICES_PER_SUBCELL = QUAD_KINDS.length * INDICES_PER_QUAD;
-const TRIANGLES_PER_SUBCELL = QUAD_KINDS.length * 2;
+const TRIANGLES_PER_QUAD = 2;
+
+/** Subdivisions a chunk can be drawn at; a boundary wall must reach any of them. */
+const LOD_LEVELS = [TERRAIN_LOD_NEAR_N, TERRAIN_LOD_FAR_N] as const;
+
+/** Far-side caps one wall can face, when the far side is the finest level. */
+const MAX_BOUNDARY_SAMPLES = Math.ceil(Math.max(...LOD_LEVELS) / Math.min(...LOD_LEVELS));
 
 /** Riser-lip width in device pixels, standing in for the LineSegments overlay. */
 const RISER_LIP_PIXELS = 1.4;
@@ -52,9 +64,10 @@ export interface ChunkTemplate {
 export function createChunkTemplate(subdivision: number): ChunkTemplate {
   const span = CHUNK_SIZE * subdivision;
   const subCells = span * span;
-  const lattice = new Float32Array(subCells * VERTICES_PER_SUBCELL * 3);
-  const corners = new Float32Array(subCells * VERTICES_PER_SUBCELL * 2);
-  const indices = new Uint32Array(subCells * INDICES_PER_SUBCELL);
+  const quads = subCells * QUAD_KINDS.length + span * LOW_EDGE_KINDS.length;
+  const lattice = new Float32Array(quads * CORNERS_PER_QUAD * 3);
+  const corners = new Float32Array(quads * CORNERS_PER_QUAD * 2);
+  const indices = new Uint32Array(quads * INDICES_PER_QUAD);
   let vertex = 0;
   let cursor = 0;
   const push = (i: number, j: number, kind: number, cu: number, cv: number): number => {
@@ -65,27 +78,33 @@ export function createChunkTemplate(subdivision: number): ChunkTemplate {
     corners[vertex * 2 + 1] = cv;
     return vertex++;
   };
+  const quad = (i: number, j: number, kind: number): void => {
+    const base = push(i, j, kind, 0, 0);
+    push(i, j, kind, 1, 0);
+    push(i, j, kind, 1, 1);
+    push(i, j, kind, 0, 1);
+    indices[cursor++] = base;
+    indices[cursor++] = base + 1;
+    indices[cursor++] = base + 2;
+    indices[cursor++] = base;
+    indices[cursor++] = base + 2;
+    indices[cursor++] = base + 3;
+  };
   for (let j = 0; j < span; j++) {
     for (let i = 0; i < span; i++) {
-      for (const kind of QUAD_KINDS) {
-        const base = push(i, j, kind, 0, 0);
-        push(i, j, kind, 1, 0);
-        push(i, j, kind, 1, 1);
-        push(i, j, kind, 0, 1);
-        indices[cursor++] = base;
-        indices[cursor++] = base + 1;
-        indices[cursor++] = base + 2;
-        indices[cursor++] = base;
-        indices[cursor++] = base + 2;
-        indices[cursor++] = base + 3;
-      }
+      for (const kind of QUAD_KINDS) quad(i, j, kind);
     }
+  }
+  // A sub-cell's skirt sits at its high edge, so the chunk's low edges get their own.
+  for (let k = 0; k < span; k++) {
+    quad(0, k, KIND_LOW_EDGE_X);
+    quad(k, 0, KIND_LOW_EDGE_Z);
   }
   const geometry = new InstancedBufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(lattice, 3));
   geometry.setAttribute('aCorner', new BufferAttribute(corners, 2));
   geometry.setIndex(new BufferAttribute(indices, 1));
-  return { geometry, trianglesPerChunk: subCells * TRIANGLES_PER_SUBCELL };
+  return { geometry, trianglesPerChunk: quads * TRIANGLES_PER_QUAD };
 }
 
 const COMMON_GLSL = `
@@ -95,6 +114,7 @@ uniform float uSmooth;
 const float CELL_WORLD_SIZE = ${glslFloat(CELL_WORLD_SIZE)};
 const float HEIGHT_WORLD_SCALE = ${glslFloat(HEIGHT_WORLD_SCALE)};
 const float CELL_CENTRE_OFFSET_CELLS = ${glslFloat(CELL_CENTRE_OFFSET_CELLS)};
+const float CHUNK_CELLS = ${glslFloat(CHUNK_SIZE)};
 const int BAND_LUT_MIN_BAND = ${BAND_LUT_MIN_BAND};
 const int BAND_LUT_WIDTH = ${BAND_LUT_WIDTH};
 ${GPU_TERRAIN_FIELD_GLSL}
@@ -117,11 +137,31 @@ varying float vBandFloat;
 varying float vSelfLit;
 `;
 
+const BOUNDARY_LEVELS_GLSL = LOD_LEVELS.map(
+  (level) => `      lowest = min(lowest, lowestCapAtLevel(face, away, crossDir, ${glslFloat(level)}));`,
+).join('\n');
+
 const VERTEX_HEAD_GLSL = `
 attribute vec2 aCorner;
 attribute vec2 aChunk;
 ${VARYINGS_GLSL}
 ${COMMON_GLSL}
+const int MAX_BOUNDARY_SAMPLES = ${MAX_BOUNDARY_SAMPLES};
+// Lowest cap a neighbour drawn at this level could put against this wall's span.
+float lowestCapAtLevel(vec2 face, vec2 away, vec2 crossDir, float level) {
+  float pitch = 1.0 / level;
+  float across = dot(face, crossDir);
+  float first = floor((across - 0.5 / uSubdiv) * level) * pitch + 0.5 * pitch;
+  vec2 origin = face + away * (0.5 * pitch) + crossDir * (first - across);
+  int count = int(max(1.0, level / uSubdiv));
+  float lowest = float(drawnGroundHeight(origin)) * HEIGHT_WORLD_SCALE;
+  for (int k = 1; k < MAX_BOUNDARY_SAMPLES; k++) {
+    if (k >= count) break;
+    vec2 at = origin + crossDir * (pitch * float(k));
+    lowest = min(lowest, float(drawnGroundHeight(at)) * HEIGHT_WORLD_SCALE);
+  }
+  return lowest;
+}
 `;
 
 const VERTEX_BODY_GLSL = `
@@ -144,16 +184,36 @@ const VERTEX_BODY_GLSL = `
     vTerrainColor = capEntry.rgb;
     vSelfLit = capEntry.a;
   } else {
-    vec2 stepDir = kind < 1.5 ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-    int heightNext = drawnGroundHeight(centre + stepDir / uSubdiv);
+    float lowEdge = kind > ${glslFloat((KIND_SKIRT_Z + KIND_LOW_EDGE_X) / 2)} ? 1.0 : 0.0;
+    float axis = kind - float(${KIND_SKIRT_X}) - float(${KIND_LOW_EDGE_X - KIND_SKIRT_X}) * lowEdge;
+    vec2 stepDir = axis < 0.5 ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    float outward = lowEdge > 0.5 ? -1.0 : 1.0;
+    vec2 away = stepDir * outward;
     float yHere = float(heightHere) * HEIGHT_WORLD_SCALE;
-    float yNext = float(heightNext) * HEIGHT_WORLD_SCALE;
-    float facing = yHere > yNext ? 1.0 : -1.0;
-    float along = kind < 1.5
+    float yLo;
+    float yHi;
+    float facing;
+    if (lowEdge > 0.5 || dot(subIJ, stepDir) > CHUNK_CELLS * uSubdiv - 1.5) {
+      // The wall hangs from this chunk's own cap, so it never rises above the ground.
+      vec2 crossDir = vec2(stepDir.y, stepDir.x);
+      vec2 face = centre + away * (0.5 / uSubdiv);
+      float lowest = yHere;
+${BOUNDARY_LEVELS_GLSL}
+      yLo = lowest;
+      yHi = yHere;
+      facing = outward;
+    } else {
+      float yNext = float(drawnGroundHeight(centre + away / uSubdiv)) * HEIGHT_WORLD_SCALE;
+      yLo = min(yHere, yNext);
+      yHi = max(yHere, yNext);
+      facing = yHere > yNext ? 1.0 : -1.0;
+    }
+    float along = axis < 0.5
       ? (facing > 0.0 ? 1.0 - aCorner.x : aCorner.x)
       : (facing > 0.0 ? aCorner.x : 1.0 - aCorner.x);
-    vec2 edge = aChunk + (subIJ + stepDir + along * (1.0 - stepDir)) / uSubdiv;
-    float y = mix(min(yHere, yNext), max(yHere, yNext), aCorner.y);
+    vec2 edge =
+      aChunk + (subIJ + stepDir * (1.0 - lowEdge) + along * (1.0 - stepDir)) / uSubdiv;
+    float y = mix(yLo, yHi, aCorner.y);
     vec2 wall = cellCoordToWorld(edge);
     pos = vec3(wall.x, y, wall.y);
     nrm = vec3(stepDir.x * facing, 0.0, stepDir.y * facing);
