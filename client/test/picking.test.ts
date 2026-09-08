@@ -4,8 +4,9 @@ import {
   BEDROCK_FLOOR,
   CHUNK_SIZE,
   MAX_HEIGHT,
+  cellCentreCoord,
+  drawnGroundHeight,
   quantizeToBand,
-  setColumn,
   type ChunkPayload,
   type JoinSnapshotMessage,
 } from '@terrace/shared';
@@ -18,6 +19,7 @@ import {
   type Vec3,
 } from '../src/terrain/picking.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
+import { setMirrorColumn } from './mirrorEdit.ts';
 
 const RECT = { left: 100, top: 50, width: 800, height: 400 };
 
@@ -162,13 +164,16 @@ describe('pickTerrainCellByRay', () => {
     const mirror = world(heightOf);
     for (let y = 0; y < WORLD; y++) {
       for (let x = 0; x < WORLD; x++) {
+        const drawnY =
+          drawnGroundHeight(mirror.renderMap, cellCentreCoord(x), cellCentreCoord(y)) *
+          HEIGHT_WORLD_SCALE;
         const hit = pickTerrainCellByRay(mirror, above(x, y), DOWN);
         expect(hit).toEqual({
           x,
           y,
-          surfaceY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          surfaceY: drawnY,
           hitRiser: false,
-          hitY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          hitY: drawnY,
           hitX: x * CELL_WORLD_SIZE,
           hitZ: y * CELL_WORLD_SIZE,
           spanIndex: 0,
@@ -179,41 +184,46 @@ describe('pickTerrainCellByRay', () => {
 
   it('picks the tall cell when a shallow ray strikes its riser', () => {
     const TOP = BAND_HEIGHT * 10;
-    const mirror = world((x) => (x >= 32 ? TOP : 0));
+    const WALL_CELL = 32;
+    const mirror = world((x) => (x >= WALL_CELL ? TOP : 0));
     const rayY = (BAND_HEIGHT * 5) * HEIGHT_WORLD_SCALE;
     const hit = pickTerrainCellByRay(
       mirror,
       { x: 20 * CELL_WORLD_SIZE, y: rayY, z: 20 * CELL_WORLD_SIZE },
       { x: 1, y: 0, z: 0 },
     );
-    expect(hit).toEqual({
-      x: 32,
+    expect(hit).toMatchObject({
+      x: WALL_CELL,
       y: 20,
-      surfaceY: TOP * HEIGHT_WORLD_SCALE,
       hitRiser: true,
       hitY: rayY,
-      hitX: (32 - 0.5) * CELL_WORLD_SIZE,
+      hitX: (WALL_CELL - 0.5) * CELL_WORLD_SIZE,
       hitZ: 20 * CELL_WORLD_SIZE,
       spanIndex: 0,
     });
+    expect(hit!.surfaceY).toBeGreaterThan(rayY);
+    expect(hit!.surfaceY).toBeLessThanOrEqual(TOP * HEIGHT_WORLD_SCALE);
   });
 
   it('walks over a lower plateau to land on the higher ground behind it', () => {
-    const NEAR_TOP_Y = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
-    const FAR_TOP_Y = BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE;
-    const mirror = world((x) => (x >= 40 ? BAND_HEIGHT * 8 : BAND_HEIGHT));
+    const NEAR_TOP = BAND_HEIGHT;
+    const FAR_TOP = BAND_HEIGHT * 8;
+    const FAR_TOP_Y = FAR_TOP * HEIGHT_WORLD_SCALE;
+    const WALL_CELL = 40;
+    const mirror = world((x) => (x >= WALL_CELL ? FAR_TOP : NEAR_TOP));
 
+    // Aimed past the cliff's stepped face, onto the flat top behind it.
+    const LANDING_CELL = 44;
     const startX = 10 * CELL_WORLD_SIZE;
-    const wallX = 40 * CELL_WORLD_SIZE;
-    const arriveY = (NEAR_TOP_Y + FAR_TOP_Y) / 2;
     const startY = FAR_TOP_Y * 2;
 
     const hit = pickTerrainCellByRay(
       mirror,
       { x: startX, y: startY, z: 30 * CELL_WORLD_SIZE },
-      { x: wallX - startX, y: arriveY - startY, z: 0 },
+      { x: LANDING_CELL * CELL_WORLD_SIZE - startX, y: FAR_TOP_Y - startY, z: 0 },
     );
-    expect(hit!.x).toBeGreaterThanOrEqual(40);
+    expect(hit!.x).toBeGreaterThan(WALL_CELL);
+    expect(hit!.hitRiser).toBe(false);
     expect(hit!.surfaceY).toBe(FAR_TOP_Y);
   });
 
@@ -378,7 +388,7 @@ describe('pickTerrainInColumn', () => {
     const before = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
     expect(before).not.toBeNull();
 
-    setColumn(mirror.map, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: LOW }]);
+    setMirrorColumn(mirror, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: LOW }]);
     const after = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
     expect(after).not.toBeNull();
     expect(after!.x).toBe(CELL_X);
@@ -397,7 +407,7 @@ describe('pickTerrainInColumn', () => {
     const ROOF_BASE = BAND_HEIGHT * 6;
     const ROOF_TOP = BAND_HEIGHT * 9;
     const mirror = world(() => ROOF_TOP);
-    setColumn(mirror.map, CELL_X, CELL_Z, [
+    setMirrorColumn(mirror, CELL_X, CELL_Z, [
       { floor: BEDROCK_FLOOR, ceiling: FLOOR_TOP },
       { floor: ROOF_BASE, ceiling: ROOF_TOP },
     ]);
