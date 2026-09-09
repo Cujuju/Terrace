@@ -164,7 +164,6 @@ describe('pickTerrainCellByRay', () => {
     const heightOf = (x: number, y: number): number =>
       ((x * 37 + y * 101) % 21) * BAND_HEIGHT - 5 * BAND_HEIGHT + (x % 7);
     const mirror = world(heightOf);
-    let named = 0;
     for (let y = 0; y < WORLD; y++) {
       for (let x = 0; x < WORLD; x++) {
         const drawnY =
@@ -183,29 +182,22 @@ describe('pickTerrainCellByRay', () => {
           spanIndex: 0,
         });
 
+        // The chord surface at a cell centre is that cell's own band, so the pick names it.
         const band = bandOfPick(mirror.map, hit!);
         expect(band).not.toBeNull();
-        expect(spanIndexCoveringBand(mirror.map, hit!.x, hit!.y, band!)).not.toBeNull();
-
-        if (spanIndexCoveringBand(mirror.map, x, y, band!) !== null) {
-          expect([hit!.x, hit!.y]).toEqual([x, y]);
-          continue;
-        }
-        named++;
-        expect(hit!.x - x).toBeGreaterThanOrEqual(0);
-        expect(hit!.x - x).toBeLessThanOrEqual(1);
-        expect(hit!.y - y).toBeGreaterThanOrEqual(0);
-        expect(hit!.y - y).toBeLessThanOrEqual(1);
+        expect(spanIndexCoveringBand(mirror.map, x, y, band!)).not.toBeNull();
+        expect([hit!.x, hit!.y]).toEqual([x, y]);
       }
     }
-    expect(named).toBeGreaterThan(0);
   });
 
   it('picks the tall cell when a shallow ray strikes its riser', () => {
     const TOP = BAND_HEIGHT * 10;
     const WALL_CELL = 32;
     const mirror = world((x) => (x >= WALL_CELL ? TOP : 0));
-    const rayY = (BAND_HEIGHT * 5) * HEIGHT_WORLD_SCALE;
+    // Between a 0 and a 10-band cell the contour surface is ten risers, one per
+    // threshold; the fifth stands at the cell boundary. Aim mid-riser, not at its lip.
+    const rayY = (BAND_HEIGHT * 4.5) * HEIGHT_WORLD_SCALE;
     const hit = pickTerrainCellByRay(
       mirror,
       { x: 20 * CELL_WORLD_SIZE, y: rayY, z: 20 * CELL_WORLD_SIZE },
@@ -220,8 +212,7 @@ describe('pickTerrainCellByRay', () => {
       hitZ: 20 * CELL_WORLD_SIZE,
       spanIndex: 0,
     });
-    expect(hit!.surfaceY).toBeGreaterThan(rayY);
-    expect(hit!.surfaceY).toBeLessThanOrEqual(TOP * HEIGHT_WORLD_SCALE);
+    expect(hit!.surfaceY).toBe(BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE);
   });
 
   it('walks over a lower plateau to land on the higher ground behind it', () => {
