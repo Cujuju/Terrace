@@ -309,9 +309,6 @@ const PARITY_CHORD_MARGIN_SUBCELLS = 1 / 256;
  */
 const PARITY_MAX_EXCLUDED_PER_CHORD = 4 * PARITY_CHORD_MARGIN_SUBCELLS;
 
-/** A saddle threshold has two chords, so a sub-cell holds at most this many per band. */
-const PARITY_CHORDS_PER_BAND = 2;
-
 /** Clear value, below every drawable height, so a bare texel cannot read as one. */
 const PARITY_EMPTY_HEIGHT = MIN_HEIGHT - 1;
 
@@ -330,7 +327,6 @@ const PROBE_PAGE = `<!doctype html><meta charset="utf-8"><title>gpu terrain pari
 const PROBE_SCRIPT = `
 import * as THREE from 'three';
 import {
-  BAND_HEIGHT,
   CELL_CENTRE_OFFSET_CELLS,
   drawnGroundChunkBandSpans,
   drawnGroundFarHeight,
@@ -364,7 +360,6 @@ const LATTICE_N = ${TERRAIN_LOD_NEAR_N};
 const TEXELS_PER_SUBCELL = ${PARITY_TEXELS_PER_SUBCELL};
 const TILE_SUBCELLS = ${PARITY_TILE_SUBCELLS};
 const CHORD_MARGIN = ${PARITY_CHORD_MARGIN_SUBCELLS};
-const CHORDS_PER_BAND = ${PARITY_CHORDS_PER_BAND};
 const EMPTY_HEIGHT = ${PARITY_EMPTY_HEIGHT};
 const RISER_HEIGHT = ${PARITY_RISER_HEIGHT};
 const CAMERA_HEIGHT = ${CAMERA_HEIGHT_WORLD};
@@ -517,43 +512,20 @@ const classOf = (bandSpan, layered) => {
   return overlayClassCap(bandSpan);
 };
 
-/** Corner 0 of the far sub-cell at (fx, fz): the band of the lattice corner they share. */
-const farCornerBand = (map, fx, fz) => drawnGroundFarHeight(map, fx, fz) / BAND_HEIGHT;
-
-const bandSpanAt = (map, sx, sz, subdiv, nearSpans, i, j) => {
-  if (subdiv === LATTICE_N) return nearSpans[j * CHUNK_CELLS * LATTICE_N + i];
-  const a = farCornerBand(map, sx, sz);
-  const b = farCornerBand(map, sx, sz + 1);
-  const c = farCornerBand(map, sx + 1, sz + 1);
-  const d = farCornerBand(map, sx + 1, sz);
-  return Math.max(a, b, c, d) - Math.min(a, b, c, d);
-};
-
-/** A sub-cell blends exactly the cells its near sub-cells blend, so OR them. */
-const isLayeredAt = (map, sx, sz, subdiv) => {
-  const stride = LATTICE_N / subdiv;
-  for (let j = 0; j < stride; j++) {
-    for (let i = 0; i < stride; i++) {
-      if (drawnGroundSubcellIsLayered(map, sx * stride + i, sz * stride + j)) return true;
-    }
-  }
-  return false;
-};
-
 const referenceHeight = (subdiv) =>
   subdiv === LATTICE_N ? drawnGroundHeight : drawnGroundFarHeight;
 
 /** Base instance for the chunk, plus one overlay instance per sub-cell that needs a class. */
 function passesFor(map, cx, cy, subdiv) {
   const span = CHUNK_CELLS * subdiv;
-  const nearSpans = subdiv === LATTICE_N ? drawnGroundChunkBandSpans(map, cx, cy) : null;
+  const spans = drawnGroundChunkBandSpans(map, cx, cy, subdiv);
   const byClass = new Map();
   for (let j = 0; j < span; j++) {
     for (let i = 0; i < span; i++) {
       const sx = cx * span + i;
       const sz = cy * span + j;
-      const layered = isLayeredAt(map, sx, sz, subdiv);
-      const steps = classOf(bandSpanAt(map, sx, sz, subdiv, nearSpans, i, j), layered);
+      const layered = drawnGroundSubcellIsLayered(map, sx, sz, subdiv);
+      const steps = classOf(spans[j * span + i], layered);
       if (steps === BASE_CLASS_STEPS && !layered) continue;
       const list = byClass.get(steps) ?? [];
       list.push(sx / subdiv, sz / subdiv);
@@ -602,32 +574,18 @@ function buildScene(passes, subdiv) {
   return { scene, disposables };
 }
 
-/** Chords of one near sub-cell, in sub-cell local units, as flat [ax, az, bx, bz, ...]. */
-function localChords(map, sx, sz) {
+/** Chords of one sub-cell, in sub-cell local units, as flat [ax, az, bx, bz, ...]. */
+function localChords(map, sx, sz, subdiv) {
   const flat = [];
-  for (const riser of drawnGroundSubcell(map, sx, sz).risers) {
+  for (const riser of drawnGroundSubcell(map, sx, sz, subdiv).risers) {
     flat.push(
-      riser.from.x * LATTICE_N - sx,
-      riser.from.y * LATTICE_N - sz,
-      riser.to.x * LATTICE_N - sx,
-      riser.to.y * LATTICE_N - sz,
+      riser.from.x * subdiv - sx,
+      riser.from.y * subdiv - sz,
+      riser.to.x * subdiv - sx,
+      riser.to.y * subdiv - sz,
     );
   }
   return flat;
-}
-
-/**
- * The same margin as the chord test, measured against the reference: a chord
- * within it crosses the box, so a corner disagrees. The far level has no
- * exported sub-cell to read chords from.
- */
-function referenceVariesNearby(reference, map, x, z, margin, want) {
-  return (
-    reference(map, x - margin, z - margin) !== want ||
-    reference(map, x + margin, z - margin) !== want ||
-    reference(map, x - margin, z + margin) !== want ||
-    reference(map, x + margin, z + margin) !== want
-  );
 }
 
 /** Each chord is four numbers: both ends, in sub-cell local units. */
@@ -652,8 +610,6 @@ function nearAChord(flat, lx, lz) {
 window.__parity = (subdiv, cx, cy) => {
   const map = state.map;
   const reference = referenceHeight(subdiv);
-  const chordsExported = subdiv === LATTICE_N;
-  const margin = CHORD_MARGIN / subdiv;
   const { scene, disposables } = buildScene(passesFor(map, cx, cy, subdiv), subdiv);
   const target = new THREE.WebGLRenderTarget(TARGET_SIDE, TARGET_SIDE, {
     format: THREE.RGBAIntegerFormat,
@@ -701,11 +657,7 @@ window.__parity = (subdiv, cx, cy) => {
       for (let j = 0; j < TILE_SUBCELLS; j++) {
         for (let i = 0; i < TILE_SUBCELLS; i++) {
           subcells++;
-          if (!chordsExported) {
-            chords += CHORDS_PER_BAND * bandSpanAt(map, subX + i, subZ + j, subdiv, null, i, j);
-            continue;
-          }
-          const flat = localChords(map, subX + i, subZ + j);
+          const flat = localChords(map, subX + i, subZ + j, subdiv);
           chords += flat.length / CHORD_POINT_STRIDE;
           tileChords.push(flat);
         }
@@ -719,16 +671,12 @@ window.__parity = (subdiv, cx, cy) => {
           samples++;
           const si = (px / TEXELS_PER_SUBCELL) | 0;
           const lx = (px % TEXELS_PER_SUBCELL + 0.5) / TEXELS_PER_SUBCELL;
-          if (chordsExported && nearAChord(tileChords[sj * TILE_SUBCELLS + si], lx, lz)) {
+          if (nearAChord(tileChords[sj * TILE_SUBCELLS + si], lx, lz)) {
             excluded++;
             continue;
           }
           const cellX = x0 + (px + 0.5) * cellsPerTexel;
           const want = reference(map, cellX, cellZ);
-          if (!chordsExported && referenceVariesNearby(reference, map, cellX, cellZ, margin, want)) {
-            excluded++;
-            continue;
-          }
           const got = raw[(py * TARGET_SIDE + px) * 4];
           if (got === want) continue;
           mismatches++;
