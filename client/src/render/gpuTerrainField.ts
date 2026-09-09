@@ -67,6 +67,7 @@ const int MAX_TREAD_POINTS = ${MAX_TREAD_POINTS};
 const int MAX_TREAD_PIECES = ${MAX_TREAD_PIECES};
 const int MAX_TREAD_CROSSINGS = ${MAX_TREAD_CROSSINGS};
 const int FIELD_SAMPLE_TOP = ${FIELD_SAMPLE_TOP};
+const int FIELD_SAMPLE_AT_BAND = ${FIELD_SAMPLE_AT_BAND};
 
 // Sub-cell corners in perimeter order; the next corner closes each edge.
 const vec2 FIELD_CORNER_POS[4] =
@@ -85,10 +86,6 @@ int cellHeight(int cx, int cy) {
 
 int clampCell(int i) {
   return clamp(i, 0, ${SIZE_CELLS_UNIFORM} - 1);
-}
-
-int latticeOffset(float coord) {
-  return 2 * int(floor(coord * float(LATTICE_N))) + 1 - LATTICE_N;
 }
 
 int bandOfHeight(int height) {
@@ -166,10 +163,9 @@ int latticeFirstCell(int l) {
   return floorDivPositive(2 * l - LATTICE_N, SUBCELL_DENOM);
 }
 
-// Exact bilinear numerator at lattice corner (lx, ly), over BLEND_DENOM.
-int cornerNumerator(int lx, int ly, int mode, int band) {
-  int qx = 2 * lx - LATTICE_N;
-  int qy = 2 * ly - LATTICE_N;
+// The blend at a half-lattice offset, over BLEND_DENOM. A lattice corner sits
+// at q = 2l - LATTICE_N; a sub-cell centre sits half a stride past its low corner.
+int numeratorAtOffset(int qx, int qy, int mode, int band) {
   int baseX = floorDivPositive(qx, SUBCELL_DENOM);
   int baseY = floorDivPositive(qy, SUBCELL_DENOM);
   int fx = qx - baseX * SUBCELL_DENOM;
@@ -183,6 +179,11 @@ int cornerNumerator(int lx, int ly, int mode, int band) {
     fx * (SUBCELL_DENOM - fy) * cellSample(x1, y0, mode, band) +
     (SUBCELL_DENOM - fx) * fy * cellSample(x0, y1, mode, band) +
     fx * fy * cellSample(x1, y1, mode, band);
+}
+
+// Exact bilinear numerator at lattice corner (lx, ly).
+int cornerNumerator(int lx, int ly, int mode, int band) {
+  return numeratorAtOffset(2 * lx - LATTICE_N, 2 * ly - LATTICE_N, mode, band);
 }
 
 int bandOfNumerator(int numerator) {
@@ -438,52 +439,19 @@ vec2 treadFanVertex(TreadFan fan, int tri, int role) {
   return fan.points[0];
 }
 
-int blendBand(int fx, int fy, int h00, int h10, int h01, int h11) {
-  int numerator =
-    (SUBCELL_DENOM - fx) * (SUBCELL_DENOM - fy) * h00 +
-    fx * (SUBCELL_DENOM - fy) * h10 +
-    (SUBCELL_DENOM - fx) * fy * h01 +
-    fx * fy * h11;
-  return floorDivPositive(numerator, BAND_BLEND_DENOM);
-}
-
-// The lattice rule at a sub-cell centre. Layered sub-cells draw a flat cap from
-// it, and every curtain and skirt drops to it; the contour path never calls it.
-int drawnGroundHeight(vec2 cell) {
-  int qx = latticeOffset(cell.x);
-  int qy = latticeOffset(cell.y);
-  int baseX = floorDivPositive(qx, SUBCELL_DENOM);
-  int baseY = floorDivPositive(qy, SUBCELL_DENOM);
-  int fx = qx - baseX * SUBCELL_DENOM;
-  int fy = qy - baseY * SUBCELL_DENOM;
-  int x0 = clampCell(baseX);
-  int x1 = clampCell(baseX + 1);
-  int y0 = clampCell(baseY);
-  int y1 = clampCell(baseY + 1);
-  int band = blendBand(
-    fx, fy,
-    cellHeight(x0, y0), cellHeight(x1, y0), cellHeight(x0, y1), cellHeight(x1, y1)
-  );
-  if (${WORLD_HAS_SPANS_UNIFORM} != 0) {
-    int b00 = chunkSpanBlock(x0, y0);
-    int b10 = chunkSpanBlock(x1, y0);
-    int b01 = chunkSpanBlock(x0, y1);
-    int b11 = chunkSpanBlock(x1, y1);
-    if ((b00 | b10 | b01 | b11) != 0) {
-      for (int step = 0; step < FIELD_FIXPOINT_STEPS; step++) {
-        int next = blendBand(
-          fx, fy,
-          columnSampleAtBand(x0, y0, b00, band),
-          columnSampleAtBand(x1, y0, b10, band),
-          columnSampleAtBand(x0, y1, b01, band),
-          columnSampleAtBand(x1, y1, b11, band)
-        );
-        if (next == band) break;
-        band = next;
-      }
-    }
+// drawnGround.ts settleAtCentre: a layered sub-cell's one settled band, read at
+// its own centre, so a far sub-cell settles over its own stride-4 footprint.
+int subcellSettledBand(int lx0, int ly0, int stride) {
+  int qx = 2 * lx0 + stride - LATTICE_N;
+  int qy = 2 * ly0 + stride - LATTICE_N;
+  int band = bandOfNumerator(numeratorAtOffset(qx, qy, FIELD_SAMPLE_TOP, 0));
+  if (${WORLD_HAS_SPANS_UNIFORM} == 0) return band;
+  for (int step = 0; step < FIELD_FIXPOINT_STEPS; step++) {
+    int next = bandOfNumerator(numeratorAtOffset(qx, qy, FIELD_SAMPLE_AT_BAND, band));
+    if (next == band) break;
+    band = next;
   }
-  return band * FIELD_BAND_HEIGHT;
+  return band;
 }
 
 // The unquantised field, from the same integer fetches, for fragment colouring.
