@@ -40,6 +40,10 @@ export function drawnSampleIsInside(height: number, threshold: number): boolean 
   return height + DRAWN_GROUND_BAND_BIAS >= threshold;
 }
 
+export const DRAWN_GROUND_CENTRE_CLEARANCE = 1 / DRAWN_GROUND_COORD_DENOM;
+
+export const DRAWN_GROUND_SIMPLIFY_EPSILON = DRAWN_GROUND_CENTRE_CLEARANCE / 4;
+
 export function drawnCrossingFraction(
   outsideHeight: number,
   insideHeight: number,
@@ -47,12 +51,15 @@ export function drawnCrossingFraction(
 ): number {
   const rise = insideHeight - outsideHeight;
   if (!(rise > 0)) return DRAWN_GROUND_CROSSING_MIDPOINT;
-  const s = (threshold - DRAWN_GROUND_BAND_BIAS - outsideHeight) / rise;
-  if (rise <= SHEER_RISE_HEIGHT_UNITS_PER_CELL) return s;
-  return (
-    DRAWN_GROUND_CROSSING_MIDPOINT +
-    (s - DRAWN_GROUND_CROSSING_MIDPOINT) * SHEER_WALL_SPREAD_CELLS
-  );
+  const exact = (threshold - DRAWN_GROUND_BAND_BIAS - outsideHeight) / rise;
+  const s =
+    rise <= SHEER_RISE_HEIGHT_UNITS_PER_CELL
+      ? exact
+      : DRAWN_GROUND_CROSSING_MIDPOINT +
+        (exact - DRAWN_GROUND_CROSSING_MIDPOINT) * SHEER_WALL_SPREAD_CELLS;
+  if (s < DRAWN_GROUND_CENTRE_CLEARANCE) return DRAWN_GROUND_CENTRE_CLEARANCE;
+  if (s > 1 - DRAWN_GROUND_CENTRE_CLEARANCE) return 1 - DRAWN_GROUND_CENTRE_CLEARANCE;
+  return s;
 }
 
 export function quantizeDrawnCoord(v: number): number {
@@ -70,6 +77,19 @@ function sampleOf(map: Heightmap, x: number, y: number, band: number | null): nu
     : columnSampleAtBand(map, x, y, band);
 }
 
+export function drawnCornerNumerator(
+  northWest: number,
+  northEast: number,
+  southWest: number,
+  southEast: number,
+  tx: number,
+  tz: number,
+): number {
+  const west = DRAWN_GROUND_COORD_DENOM - tx;
+  const north = DRAWN_GROUND_COORD_DENOM - tz;
+  return (northWest * west + northEast * tx) * north + (southWest * west + southEast * tx) * tz;
+}
+
 export function drawnFieldNumerator(
   map: Heightmap,
   qx: number,
@@ -78,17 +98,58 @@ export function drawnFieldNumerator(
 ): number {
   const i0 = Math.floor(qx / DRAWN_GROUND_COORD_DENOM);
   const j0 = Math.floor(qz / DRAWN_GROUND_COORD_DENOM);
-  const tx = qx - i0 * DRAWN_GROUND_COORD_DENOM;
-  const tz = qz - j0 * DRAWN_GROUND_COORD_DENOM;
-  const west = DRAWN_GROUND_COORD_DENOM - tx;
-  const north = DRAWN_GROUND_COORD_DENOM - tz;
   const x0 = clampCell(i0, map.size);
   const x1 = clampCell(i0 + 1, map.size);
   const z0 = clampCell(j0, map.size);
   const z1 = clampCell(j0 + 1, map.size);
-  const northRow = sampleOf(map, x0, z0, band) * west + sampleOf(map, x1, z0, band) * tx;
-  const southRow = sampleOf(map, x0, z1, band) * west + sampleOf(map, x1, z1, band) * tx;
-  return northRow * north + southRow * tz;
+  return drawnCornerNumerator(
+    sampleOf(map, x0, z0, band),
+    sampleOf(map, x1, z0, band),
+    sampleOf(map, x0, z1, band),
+    sampleOf(map, x1, z1, band),
+    qx - i0 * DRAWN_GROUND_COORD_DENOM,
+    qz - j0 * DRAWN_GROUND_COORD_DENOM,
+  );
+}
+
+export const ISOLINE_SOLVE_DENOM = 1 << 16;
+
+const SOLVE_PER_COORD_UNIT = ISOLINE_SOLVE_DENOM / DRAWN_GROUND_COORD_DENOM;
+
+const SOLVE_WEIGHT_TOTAL = ISOLINE_SOLVE_DENOM * ISOLINE_SOLVE_DENOM;
+
+export function drawnIsolineAt(
+  northWest: number,
+  northEast: number,
+  southWest: number,
+  southEast: number,
+  threshold: number,
+  fixedUnits: number,
+  alongX: boolean,
+): number | null {
+  const target = (threshold - DRAWN_GROUND_BAND_BIAS) * SOLVE_WEIGHT_TOTAL;
+  const fixed = fixedUnits * SOLVE_PER_COORD_UNIT;
+  const insideAt = (units: number): boolean => {
+    const tx = alongX ? fixed : units;
+    const tz = alongX ? units : fixed;
+    const west = ISOLINE_SOLVE_DENOM - tx;
+    const north = ISOLINE_SOLVE_DENOM - tz;
+    const value =
+      (northWest * west + northEast * tx) * north +
+      (southWest * west + southEast * tx) * tz;
+    return value >= target;
+  };
+
+  const insideLow = insideAt(0);
+  if (insideLow === insideAt(ISOLINE_SOLVE_DENOM)) return null;
+  let low = 0;
+  let high = ISOLINE_SOLVE_DENOM;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (insideAt(mid) === insideLow) low = mid;
+    else high = mid;
+  }
+  return (insideLow ? low : high) / ISOLINE_SOLVE_DENOM;
 }
 
 function bandOfNumerator(numerator: number): number {

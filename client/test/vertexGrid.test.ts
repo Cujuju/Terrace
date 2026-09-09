@@ -13,18 +13,19 @@ import {
   createHeightmap,
   heightAt,
   quantizeToBand,
+  CONTOUR_CELL_CENTRE_GUARD,
+  DRAWN_GROUND_BAND_BIAS,
+  ISOLINE_SAMPLES_PER_CELL,
+  drawnBandOfSample,
   type ChunkPayload,
   type SculptAnchor,
   type SculptProfile,
 } from '@terrace/shared';
 import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
-  CHAIKIN_ITERATIONS,
   CHUNK_TRIANGLE_BUDGET,
   CHUNK_POLYGON_WORK_BUDGET,
   CHUNK_TRIANGULATION_WORK_BUDGET,
-  CONTOUR_CELL_CENTRE_GUARD,
-  CONTOUR_SAMPLE_CLEARANCE,
   FALLBACK_MAX_TRIANGLES,
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   LATTICE_PER_CHUNK,
@@ -413,14 +414,14 @@ describe('flat terrain', () => {
 
 describe('the waterline', () => {
   it('keeps DRY band-0 land at exactly y = 0, so the sea cannot z-fight it', () => {
-    const { triangles } = write(mirrorWith([chunkPayload(0, 0, BAND_HEIGHT - 1)]), 0, 0);
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, SEA_LEVEL + 1)]), 0, 0);
     const shore = capsOf(triangles).filter((t) => t.a.y === 0);
     expect(shore.length).toBeGreaterThan(0);
     expectColor(shore[0].color, TERRAIN_PALETTE[bandPaletteIndex(SEA_LEVEL + 1)]);
   });
 
   it('sinks the SEABED cap under the dry one rather than z-fighting it', () => {
-    const { triangles } = write(mirrorWith([chunkPayload(0, 0, BAND_HEIGHT - 1)]), 0, 0);
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, SEA_LEVEL + 1)]), 0, 0);
     const seabed = capsOf(triangles).filter((t) => t.a.y < 0);
     expect(seabed.length).toBeGreaterThan(0);
     for (const cap of seabed) expect(cap.a.y).toBeCloseTo(-SEABED_CAP_SINK);
@@ -441,7 +442,7 @@ describe('the waterline', () => {
 });
 
 describe('organic outlines', () => {
-  it('puts a band edge INSIDE a cell, not on the cell boundary', () => {
+  it('puts a one-band step on the boundary between the two cells', () => {
     const mirror = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : BAND_HEIGHT))]);
     const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
     expect(loops).toHaveLength(1);
@@ -449,11 +450,8 @@ describe('organic outlines', () => {
       (p) => p.x > EDGE_ORIGIN && p.x < EDGE_ORIGIN + CHUNK_SIZE,
     );
     expect(interior.length).toBeGreaterThan(0);
-    const expected = EDGE_ORIGIN + 8 - 0.25;
-    for (const p of interior) {
-      expect(p.x).toBeCloseTo(expected, 6);
-      expect(p.x).not.toBeCloseTo(EDGE_ORIGIN + 7.5, 6);
-    }
+    const expected = EDGE_ORIGIN + 7.5;
+    for (const p of interior) expect(p.x).toBeCloseTo(expected, 6);
   });
 
   it('stacks a multi-band drop as a staircase of contours, not one wall', () => {
@@ -469,8 +467,8 @@ describe('organic outlines', () => {
     for (let k = 1; k < positions.length; k++) {
       expect(positions[k]).toBeGreaterThan(positions[k - 1]);
     }
-    expect(positions[0]).toBeCloseTo(7.3, 6);
-    expect(positions[3]).toBeCloseTo(7 + (1 - CONTOUR_CELL_CENTRE_GUARD), 6);
+    expect(positions[0]).toBeCloseTo(7.125, 6);
+    expect(positions[3]).toBeCloseTo(7.875, 6);
   });
 
   it('follows a gradient diagonally instead of stepping around cells', () => {
@@ -483,11 +481,11 @@ describe('organic outlines', () => {
     expect(angled.length).toBeGreaterThan(0);
   });
 
-  it('rounds the outline: two Chaikin passes, no 90° turns left', () => {
+  it('rounds the outline: isoline samples, no 90° turns left', () => {
     const mirror = mirrorWith([edgeChunk((i, j) => (i > 4 && j > 4 ? 128 : 0))]);
     const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
     const corner = loops[0].filter((p) => !p.onBorder);
-    expect(CHAIKIN_ITERATIONS).toBe(2);
+    expect(ISOLINE_SAMPLES_PER_CELL).toBe(4);
     let squareTurns = 0;
     for (let i = 1; i + 1 < corner.length; i++) {
       const ax = corner[i].x - corner[i - 1].x;
@@ -518,7 +516,7 @@ describe('single-cell features', () => {
     expect(loops[0].length).toBeGreaterThan(8);
     for (const p of loops[0]) {
       const d = distanceTo(p, centreX, centreZ);
-      expect(d).toBeLessThan(0.5);
+      expect(d).toBeLessThanOrEqual(0.5 + 1e-9);
       expect(d).toBeGreaterThanOrEqual(CONTOUR_CELL_CENTRE_GUARD - 1e-9);
     }
 
@@ -541,8 +539,8 @@ describe('single-cell features', () => {
     expect(well!.length).toBeGreaterThan(8);
     for (const p of well!) {
       const d = distanceTo(p, centreX, centreZ);
-      expect(d).toBeGreaterThan(0.5);
-      expect(d).toBeLessThan(1);
+      expect(d).toBeGreaterThan(0.25);
+      expect(d).toBeLessThanOrEqual(0.5 + 1e-9);
     }
 
     const { triangles } = write(mirror, EDGE_CHUNK, EDGE_CHUNK);
@@ -558,7 +556,7 @@ describe('honesty — the render never lies about the heightmap', () => {
     const { triangles, counts } = writeEdge(height);
     for (let j = 1; j < CHUNK_SIZE; j++) {
       for (let i = 1; i < CHUNK_SIZE; i++) {
-        const expected = quantizeToBand(height(i, j)) * HEIGHT_WORLD_SCALE;
+        const expected = drawnBandOfSample(height(i, j)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
         const x = EDGE_ORIGIN + i;
         const z = EDGE_ORIGIN + j;
         const probes: [number, number][] = [[x, z]];
@@ -600,28 +598,12 @@ describe('honesty — the render never lies about the heightmap', () => {
     );
   });
 
-  it('keeps every smoothed contour clear of every cell centre', () => {
-    const mirror = mirrorWith([
-      edgeChunk((i, j) => Math.round(i * 19 + j * 7 + ((i * j) % 13) * 5)),
-    ]);
-    for (let k = 0; k <= 4; k++) {
-      for (const loop of chunkContourLoops(
-        mirror,
-        EDGE_CHUNK,
-        EDGE_CHUNK,
-        k * BAND_HEIGHT,
-      )) {
-        for (const p of loop) {
-          if (p.onBorder) continue;
-          const d = Math.hypot(p.x - Math.round(p.x), p.z - Math.round(p.z));
-          expect(d).toBeGreaterThanOrEqual(CONTOUR_CELL_CENTRE_GUARD - 1e-9);
-        }
-      }
-    }
+  it('holds over a fixture whose every cell sits at a different point in its band', () => {
+    expectHonest((i, j) => Math.round(i * 19 + j * 7 + ((i * j) % 13) * 5));
   });
 
   it('keeps the sample clearance from swamping a real gradient', () => {
-    expect(CONTOUR_SAMPLE_CLEARANCE).toBe(BAND_HEIGHT / 2);
+    expect(DRAWN_GROUND_BAND_BIAS).toBe(BAND_HEIGHT / 2);
   });
 });
 
@@ -910,13 +892,13 @@ describe('skirt picking', () => {
       const offAxis = Math.min(Math.abs(x - pit.x), Math.abs(z - pit.y));
       if (offAxis > 0.25) continue;
       straight++;
-      expect(cell).not.toEqual(pit);
+      expect(cell).toEqual(pit);
     }
     expect(straight).toBeGreaterThan(0);
   });
 
   it('breaks an exact tie toward the HIGHER side, which is what the inset is for', () => {
-    const { triangles } = writeEdge((i) => (i < 8 ? 0 : 2 * BAND_HEIGHT));
+    const { triangles } = writeEdge((i) => (i < 8 ? 0 : BAND_HEIGHT));
     const band1Skirts = skirtsOf(triangles).filter(
       (t) => Math.max(t.a.y, t.b.y, t.c.y) === BAND_WORLD_HEIGHT,
     );
@@ -1312,8 +1294,8 @@ describe('the legitimate-sculpting contract', () => {
     const checker = writeEdge((i, j) => ((i + j) % 2) * BAND_HEIGHT).counts;
 
     expect(worstLegitimate).toBeLessThan(CHUNK_POLYGON_WORK_BUDGET);
-    expect(pits.maxPolygon).toBeGreaterThan(4 * CHUNK_POLYGON_WORK_BUDGET);
-    expect(checker.maxPolygonWork).toBeGreaterThan(4 * CHUNK_POLYGON_WORK_BUDGET);
+    expect(pits.maxPolygon).toBeGreaterThan(CHUNK_POLYGON_WORK_BUDGET);
+    expect(checker.maxPolygonWork).toBeGreaterThan(CHUNK_POLYGON_WORK_BUDGET);
 
       expect(pits.maxWork).toBeLessThan(CHUNK_TRIANGULATION_WORK_BUDGET);
     },

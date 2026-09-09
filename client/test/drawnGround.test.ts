@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, bandOf, chunkIndex } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  bandOf,
+  chunkIndex,
+  drawnBandOfSample,
+} from '@terrace/shared';
 import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 import {
   createDrawnGround,
@@ -10,8 +16,13 @@ import {
   publishPlannedWorld,
 } from '../src/terrain/drawnGroundStore.ts';
 import { createTerrainMirror, sampleHeight, type TerrainMirror } from '../src/terrain/mirror.ts';
-import { assembleLoops, loadSamples, marchLevel, samples } from '../src/terrain/contours.ts';
-import { smoothLoop } from '../src/terrain/contourSmoothing.ts';
+import {
+  assembleLoops,
+  domainInside,
+  loadSamples,
+  marchLevel,
+} from '../src/terrain/contours.ts';
+import { simplifyLoop } from '../src/terrain/contourSmoothing.ts';
 import { groupLoops, type CapPolygon } from '../src/terrain/triangulation.ts';
 
 function groundOf(mirror: TerrainMirror): DrawnGround {
@@ -65,15 +76,15 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
   const originZ = cz * CHUNK_SIZE;
   let highest = -Infinity;
   for (let i = 0; i < mirror.map.cells.length; i++) {
-    highest = Math.max(highest, bandOf(mirror.map.cells[i]));
+    highest = Math.max(highest, drawnBandOfSample(mirror.map.cells[i]));
   }
   for (let band = highest; band >= 0; band--) {
     loadSamples(mirror, originX, originZ);
     const segmentCount = marchLevel(band * BAND_HEIGHT, originX, originZ, null);
-    const wholeInside = samples[0] >= band * BAND_HEIGHT;
+    const wholeInside = domainInside(band * BAND_HEIGHT, null);
     const polygons: CapPolygon[] = groupLoops(
       assembleLoops(segmentCount, originX, originZ, wholeInside)
-        .map(smoothLoop)
+        .map(simplifyLoop)
         .filter((loop) => loop.length >= 3),
     );
     for (const polygon of polygons) {

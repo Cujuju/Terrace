@@ -127,7 +127,7 @@ describe('water region tread', () => {
       'the rim cell itself must be under water',
     ).toBeGreaterThan(0);
     expect(
-      coverCount(triangles, rim + 0.5 * CELL_WORLD_SIZE, worldOfCell(6)),
+      coverCount(triangles, rim + 0.5 * CELL_WORLD_SIZE, worldOfCell(6), true),
       'water is drawn out over the cliff edge',
     ).toBe(0);
   });

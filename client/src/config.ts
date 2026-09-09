@@ -14,17 +14,18 @@ const pageHostname =
 const pageHost =
   typeof location === 'undefined' ? `${pageHostname}:${DEFAULT_SERVER_PORT}` : location.host;
 
-const serverPort: string =
-  import.meta.env.VITE_SERVER_PORT ?? String(DEFAULT_SERVER_PORT);
+const bundlerEnv = import.meta.env as ImportMetaEnv | undefined;
 
-export const DEFAULT_SERVER_URL = import.meta.env.DEV
+const serverPort: string = bundlerEnv?.VITE_SERVER_PORT ?? String(DEFAULT_SERVER_PORT);
+
+export const DEFAULT_SERVER_URL = bundlerEnv?.DEV
   ? `ws://${pageHostname}:${serverPort}`
   : `ws://${pageHost}`;
 
 export const DEFAULT_ROOM_NAME = 'world';
 
-export const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? DEFAULT_SERVER_URL;
-export const ROOM_NAME = import.meta.env.VITE_ROOM_NAME ?? DEFAULT_ROOM_NAME;
+export const SERVER_URL = bundlerEnv?.VITE_SERVER_URL ?? DEFAULT_SERVER_URL;
+export const ROOM_NAME = bundlerEnv?.VITE_ROOM_NAME ?? DEFAULT_ROOM_NAME;
 
 export { CELL_WORLD_SIZE };
 
