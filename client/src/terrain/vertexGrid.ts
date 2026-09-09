@@ -1,14 +1,5 @@
-export {
-  CONTOUR_CELL_CENTRE_GUARD,
-  CONTOUR_SAMPLE_CLEARANCE,
-  LATTICE_PER_CHUNK,
-  SHORE_EDGE_CROSSING,
-} from './contours.ts';
-export {
-  CHAIKIN_CUT,
-  CHAIKIN_ITERATIONS,
-  CONTOUR_SIMPLIFY_EPSILON,
-} from './contourSmoothing.ts';
+export { LATTICE_PER_CHUNK, SHORE_EDGE_CROSSING } from './contours.ts';
+export { CONTOUR_SIMPLIFY_EPSILON } from './contourSmoothing.ts';
 export {
   CHUNK_POLYGON_WORK_BUDGET,
   CHUNK_TRIANGLE_BUDGET,

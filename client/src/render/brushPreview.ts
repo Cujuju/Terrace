@@ -41,7 +41,7 @@ import {
   marchLevel,
   type ContourLoop,
 } from '../terrain/contours.ts';
-import { smoothLoop } from '../terrain/contourSmoothing.ts';
+import { simplifyLoop } from '../terrain/contourSmoothing.ts';
 import { BRUSH_RADII } from '../state/hudState.ts';
 
 const OUTLINE_LIFT_WORLD_UNITS = 0.05;
@@ -217,7 +217,7 @@ function markOutline(radius: number, mark: Mark): ContourLoop {
     origin,
     FOOTPRINT_EDGE_CROSSING,
   );
-  const loops = assembleLoops(segmentCount, origin, origin, false).map(smoothLoop);
+  const loops = assembleLoops(segmentCount, origin, origin, false).map(simplifyLoop);
 
   if (loops.length !== 1) {
     throw new RangeError(

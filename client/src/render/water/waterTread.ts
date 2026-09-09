@@ -1,20 +1,20 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
-  bandOf,
   cellIndex,
   chunksPerEdge,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import { sampleHeight, type TerrainMirror } from '../../terrain/mirror.ts';
 import {
   assembleLoops,
+  domainInside,
   loadSampleField,
   marchLevel,
-  samples,
   type ContourLoop,
 } from '../../terrain/contours.ts';
-import { smoothLoop } from '../../terrain/contourSmoothing.ts';
+import { simplifyLoop } from '../../terrain/contourSmoothing.ts';
 import { bridgeHole, earClip, groupLoops } from '../../terrain/triangulation.ts';
 
 export const CARDINAL_NEIGHBOURS: readonly (readonly [number, number])[] = [
@@ -57,7 +57,7 @@ export function waterRegionOfCells(
   };
 }
 
-const DRY_SAME_TREAD_FIELD_OFFSET = 1;
+const DRY_SAME_TREAD_FIELD_OFFSET = BAND_HEIGHT;
 
 export function appendRegionSurface(
   mirror: TerrainMirror,
@@ -87,8 +87,8 @@ export function appendRegionTile(
   const tileZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE;
   loadSampleField((i, j) => fieldAt(tileX + i, tileZ + j));
   const segmentCount = marchLevel(threshold, tileX, tileZ, null);
-  const loops = assembleLoops(segmentCount, tileX, tileZ, samples[0]! >= threshold)
-    .map(smoothLoop)
+  const loops = assembleLoops(segmentCount, tileX, tileZ, domainInside(threshold, null))
+    .map(simplifyLoop)
     .filter((loop) => loop.length >= 3);
   for (const polygon of groupLoops(loops)) {
     let merged = polygon.outer;
@@ -121,8 +121,7 @@ function regionFieldAt(
     const besideWet = CARDINAL_NEIGHBOURS.some(([dx, dy]) => wet(x + dx, y + dy));
     if (besideWet) {
       const real = sampleHeight(mirror, x, y);
-      if (real < threshold) return real;
-      if (bandOf(real) > region.surfaceBand) return real;
+      if (drawnBandOfSample(real) !== region.surfaceBand) return real;
       return beyondRegion;
     }
     return beyondRegion;

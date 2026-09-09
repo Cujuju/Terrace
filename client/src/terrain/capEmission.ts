@@ -5,6 +5,7 @@ import {
   anyColumnLayered,
   bandOf,
   columnCoversBand,
+  drawnBandOfSample,
   isSpanDrawn,
   spanAt,
   spanCapHeight,
@@ -32,6 +33,7 @@ import {
   SAMPLE_COUNT,
   SHORE_EDGE_CROSSING,
   assembleLoops,
+  domainInside,
   isSeamSegment,
   loadSampleField,
   loadSamples,
@@ -40,7 +42,7 @@ import {
   type ContourLoop,
   type ContourPoint,
 } from './contours.ts';
-import { smoothLoop } from './contourSmoothing.ts';
+import { simplifyLoop } from './contourSmoothing.ts';
 import { bridgeHole, earClip, groupLoops, type CapPolygon } from './triangulation.ts';
 
 export const SKIRT_PICK_INSET = 1 / 1024;
@@ -140,7 +142,7 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
   let lowestBand = Infinity;
   let highestBand = -Infinity;
   for (let i = 0; i < SAMPLE_COUNT; i++) {
-    const band = bandOf(samples[i]);
+    const band = drawnBandOfSample(samples[i]);
     if (band < lowestBand) lowestBand = band;
     if (band > highestBand) highestBand = band;
   }
@@ -316,7 +318,7 @@ export const FALLBACK_MAX_TRIANGLES =
   FALLBACK_CAP_TRIANGLES + FALLBACK_WALL_TRIANGLES + FALLBACK_CURTAIN_TRIANGLES;
 
 export function blockyCellCapY(height: number): number {
-  const band = bandOf(height);
+  const band = drawnBandOfSample(height);
   if (band === 0 && height <= SEA_LEVEL) return -SEABED_CAP_SINK;
   return band * BAND_WORLD_HEIGHT;
 }
@@ -496,9 +498,9 @@ function marchCeiling(
     CHUNK_SIZE,
   );
   const segmentCount = marchLevel(CEILING_INSIDE, originX, originZ, CEILING_EDGE_CROSSING);
-  const wholeInside = samples[0] >= CEILING_INSIDE;
+  const wholeInside = domainInside(CEILING_INSIDE, CEILING_EDGE_CROSSING);
   const loops = assembleLoops(segmentCount, originX, originZ, wholeInside)
-    .map(smoothLoop)
+    .map(simplifyLoop)
     .filter((loop) => loop.length >= 3);
   return groupLoops(loops);
 }
@@ -552,9 +554,9 @@ export function planChunkCaps(
       originZ,
       level.crossingOverride,
     );
-    const wholeInside = samples[0] >= level.threshold;
+    const wholeInside = domainInside(level.threshold, level.crossingOverride);
     const rawLoops = assembleLoops(segmentCount, originX, originZ, wholeInside);
-    level.loops = rawLoops.map(smoothLoop).filter((loop) => loop.length >= 3);
+    level.loops = rawLoops.map(simplifyLoop).filter((loop) => loop.length >= 3);
 
     const polygons = groupLoops(level.loops);
     polygonsPerLevel.push(polygons);
@@ -778,8 +780,8 @@ export function chunkCapTriangles(
   const originZ = cy * CHUNK_SIZE;
   loadSamples(mirror, originX, originZ);
   const segmentCount = marchLevel(threshold, originX, originZ, null);
-  const loops = assembleLoops(segmentCount, originX, originZ, samples[0] >= threshold)
-    .map(smoothLoop)
+  const loops = assembleLoops(segmentCount, originX, originZ, domainInside(threshold, null))
+    .map(simplifyLoop)
     .filter((loop) => loop.length >= 3);
   const triangles: { x: number; z: number }[][] = [];
   for (const polygon of groupLoops(loops)) {
@@ -803,7 +805,7 @@ function finishLoops(
   wholeInside: boolean,
 ): { x: number; z: number; onBorder: boolean }[][] {
   return assembleLoops(segmentCount, originX, originZ, wholeInside)
-    .map(smoothLoop)
+    .map(simplifyLoop)
     .filter((loop) => loop.length >= 3)
     .map((loop) =>
       loop.map((p) => ({ x: p.x, z: p.z, onBorder: p.rect !== RECT_NONE })),
@@ -821,7 +823,7 @@ export function chunkContourLoops(
   const originZ = cy * CHUNK_SIZE;
   loadSamples(mirror, originX, originZ);
   const segmentCount = marchLevel(threshold, originX, originZ, crossingOverride);
-  return finishLoops(segmentCount, originX, originZ, samples[0] >= threshold);
+  return finishLoops(segmentCount, originX, originZ, domainInside(threshold, crossingOverride));
 }
 
 export function chunkBandContourLoops(
@@ -838,5 +840,5 @@ export function chunkBandContourLoops(
   );
   const threshold = band * BAND_HEIGHT;
   const segmentCount = marchLevel(threshold, originX, originZ, null);
-  return finishLoops(segmentCount, originX, originZ, samples[0] >= threshold);
+  return finishLoops(segmentCount, originX, originZ, domainInside(threshold, null));
 }

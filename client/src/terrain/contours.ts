@@ -1,18 +1,17 @@
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
-  CONTOUR_CELL_CENTRE_GUARD,
+  DRAWN_GROUND_BAND_BIAS,
+  DRAWN_GROUND_COORD_DENOM,
+  ISOLINE_SAMPLES_PER_CELL,
   MAX_BRUSH_RADIUS,
+  drawnCrossingFraction,
+  drawnIsolineAt,
 } from '@terrace/shared';
 import { sampleRenderHeight, type TerrainMirror } from './mirror.ts';
 
 export const LATTICE_PER_CHUNK = CHUNK_SIZE + 1;
 
-export const CONTOUR_SAMPLE_CLEARANCE = BAND_HEIGHT / 2;
-
 export const SHORE_EDGE_CROSSING = 0.5;
-
-export { CONTOUR_CELL_CENTRE_GUARD };
 
 export const RECT_NONE = 0;
 const RECT_WEST = 1;
@@ -55,6 +54,11 @@ const segmentTo = new Int32Array(MAX_SEGMENTS);
 const segmentUsed = new Uint8Array(MAX_SEGMENTS);
 const segmentLeaving = new Int32Array(EDGE_COUNT);
 const edgeHasEntry = new Uint8Array(EDGE_COUNT);
+
+const ISOLINE_POINTS_PER_SEGMENT = ISOLINE_SAMPLES_PER_CELL - 1;
+const segmentIsoX = new Float64Array(MAX_SEGMENTS * ISOLINE_POINTS_PER_SEGMENT);
+const segmentIsoZ = new Float64Array(MAX_SEGMENTS * ISOLINE_POINTS_PER_SEGMENT);
+const segmentIsoCount = new Int32Array(MAX_SEGMENTS);
 
 export function loadSamples(mirror: TerrainMirror, originX: number, originZ: number): void {
   activeSpan = CHUNK_SIZE;
@@ -129,12 +133,15 @@ function crossingFraction(
   override: number | null,
 ): number {
   if (override !== null) return override;
-  const toBoundary = threshold - outsideHeight + CONTOUR_SAMPLE_CLEARANCE;
-  const span = insideHeight - outsideHeight + 2 * CONTOUR_SAMPLE_CLEARANCE;
-  const s = toBoundary / span;
-  if (s < CONTOUR_CELL_CENTRE_GUARD) return CONTOUR_CELL_CENTRE_GUARD;
-  if (s > 1 - CONTOUR_CELL_CENTRE_GUARD) return 1 - CONTOUR_CELL_CENTRE_GUARD;
-  return s;
+  return drawnCrossingFraction(outsideHeight, insideHeight, threshold);
+}
+
+export function levelBandBias(crossingOverride: number | null): number {
+  return crossingOverride === null ? DRAWN_GROUND_BAND_BIAS : 0;
+}
+
+export function domainInside(threshold: number, crossingOverride: number | null): boolean {
+  return samples[0] + levelBandBias(crossingOverride) >= threshold;
 }
 
 export function marchLevel(
@@ -147,10 +154,66 @@ export function marchLevel(
   edgeHasEntry.fill(0);
   edgeCrossed.fill(0);
 
+  const bias = levelBandBias(crossingOverride);
   const inside = (i: number, j: number): boolean =>
-    samples[j * activeLattice + i] >= threshold;
+    samples[j * activeLattice + i] + bias >= threshold;
   const heightAt = (i: number, j: number): number =>
     samples[j * activeLattice + i];
+
+  const traceIsoline = (
+    segment: number,
+    i: number,
+    j: number,
+    fromKey: number,
+    toKey: number,
+  ): void => {
+    segmentIsoCount[segment] = 0;
+    if (crossingOverride !== null) return;
+    const ax = edgeX[fromKey] - originX - i;
+    const az = edgeZ[fromKey] - originZ - j;
+    const bx = edgeX[toKey] - originX - i;
+    const bz = edgeZ[toKey] - originZ - j;
+    const spanU = Math.abs(bx - ax);
+    const spanV = Math.abs(bz - az);
+    if (spanU + spanV < ISOLINE_SAMPLES_PER_CELL / DRAWN_GROUND_COORD_DENOM) return;
+    const alongX = spanU >= spanV;
+    const northWest = heightAt(i, j);
+    const northEast = heightAt(i + 1, j);
+    const southWest = heightAt(i, j + 1);
+    const southEast = heightAt(i + 1, j + 1);
+    const base = segment * ISOLINE_POINTS_PER_SEGMENT;
+    const chordLengthSquared = (bx - ax) * (bx - ax) + (bz - az) * (bz - az);
+    let written = 0;
+    let advanced = 0;
+    for (let k = 1; k < ISOLINE_SAMPLES_PER_CELL; k++) {
+      const t = k / ISOLINE_SAMPLES_PER_CELL;
+      const fixedUnits = clampUnits(
+        Math.round(
+          (alongX ? ax + (bx - ax) * t : az + (bz - az) * t) * DRAWN_GROUND_COORD_DENOM,
+        ),
+      );
+      const solved = drawnIsolineAt(
+        northWest,
+        northEast,
+        southWest,
+        southEast,
+        threshold,
+        fixedUnits,
+        alongX,
+      );
+      if (solved === null || solved <= 0 || solved >= 1) continue;
+      const fixed = fixedUnits / DRAWN_GROUND_COORD_DENOM;
+      const u = alongX ? fixed : solved;
+      const v = alongX ? solved : fixed;
+      const along = ((u - ax) * (bx - ax) + (v - az) * (bz - az)) / chordLengthSquared;
+      if (!(along > advanced) || !(along < 1)) continue;
+      advanced = along;
+      segmentIsoX[base + written] = originX + i + u;
+      segmentIsoZ[base + written] = originZ + j + v;
+      written++;
+    }
+    segmentIsoCount[segment] = written;
+  };
 
   for (let j = 0; j < activeLattice; j++) {
     for (let i = 0; i < activeSpan; i++) {
@@ -197,7 +260,7 @@ export function marchLevel(
             heightAt(i + 1, j + 1) +
             heightAt(i, j + 1)) /
           4;
-        const joined = mean >= threshold;
+        const joined = mean + bias >= threshold;
         pairs =
           caseIndex === 5
             ? joined
@@ -214,11 +277,17 @@ export function marchLevel(
         segmentTo[count] = toKey;
         segmentLeaving[fromKey] = count;
         edgeHasEntry[toKey] = 1;
+        traceIsoline(count, i, j, fromKey, toKey);
         count++;
       }
     }
   }
   return count;
+}
+
+function clampUnits(units: number): number {
+  if (!(units > 0)) return 0;
+  return units > DRAWN_GROUND_COORD_DENOM ? DRAWN_GROUND_COORD_DENOM : units;
 }
 
 function squareEdgeKey(i: number, j: number, slot: number): number {
@@ -269,6 +338,27 @@ function pointOfEdge(key: number, x0: number, z0: number): ContourPoint {
   return { x, z, rect: rectMaskOf(x, z, x0, z0) };
 }
 
+function pushDistinct(points: ContourPoint[], point: ContourPoint): void {
+  const last = points.length > 0 ? points[points.length - 1] : null;
+  if (last !== null && samePoint(last, point)) return;
+  points.push(point);
+}
+
+function pushIsoline(
+  points: ContourPoint[],
+  segment: number,
+  x0: number,
+  z0: number,
+): void {
+  const base = segment * ISOLINE_POINTS_PER_SEGMENT;
+  for (let k = 0; k < segmentIsoCount[segment]; k++) {
+    const x = segmentIsoX[base + k];
+    const z = segmentIsoZ[base + k];
+    if (rectMaskOf(x, z, x0, z0) !== RECT_NONE) continue;
+    pushDistinct(points, { x, z, rect: RECT_NONE });
+  }
+}
+
 export function assembleLoops(
   segmentCount: number,
   x0: number,
@@ -295,8 +385,9 @@ export function assembleLoops(
     let cursor = s;
     for (;;) {
       segmentUsed[cursor] = 1;
+      pushIsoline(points, cursor, x0, z0);
       const toKey = segmentTo[cursor];
-      points.push(pointOfEdge(toKey, x0, z0));
+      pushDistinct(points, pointOfEdge(toKey, x0, z0));
       const next = segmentLeaving[toKey];
       if (next < 0 || segmentUsed[next] === 1) break;
       cursor = next;
@@ -314,10 +405,11 @@ export function assembleLoops(
     let cursor = s;
     for (;;) {
       segmentUsed[cursor] = 1;
+      pushIsoline(points, cursor, x0, z0);
       const toKey = segmentTo[cursor];
       const next = segmentLeaving[toKey];
       if (next < 0 || segmentUsed[next] === 1) break;
-      points.push(pointOfEdge(toKey, x0, z0));
+      pushDistinct(points, pointOfEdge(toKey, x0, z0));
       cursor = next;
     }
     if (points.length >= 3) loops.push(points);
