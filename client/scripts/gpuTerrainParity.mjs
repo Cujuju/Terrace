@@ -315,7 +315,7 @@ const PARITY_CHORDS_PER_BAND = 2;
 /** Clear value, below every drawable height, so a bare texel cannot read as one. */
 const PARITY_EMPTY_HEIGHT = MIN_HEIGHT - 1;
 
-/** Risers say nothing from above; they carry this and the fragment drops them. */
+/** Risers and curtains say nothing from above; they carry this and the fragment drops them. */
 const PARITY_RISER_HEIGHT = MIN_HEIGHT - 2;
 
 const CAMERA_HEIGHT_WORLD = 128;
@@ -348,7 +348,6 @@ import {
   BASE_CLASS_STEPS,
   CLASS_STEPS_UNIFORM,
   DRAWS_LAYERED_UNIFORM,
-  GPU_TERRAIN_NON_TREAD_BAND,
   GPU_TERRAIN_VERTEX_ATTRIBUTES_GLSL,
   GPU_TERRAIN_VERTEX_BODY_GLSL,
   GPU_TERRAIN_VERTEX_HEAD_GLSL,
@@ -367,7 +366,7 @@ const TILE_SUBCELLS = ${PARITY_TILE_SUBCELLS};
 const CHORD_MARGIN = ${PARITY_CHORD_MARGIN_SUBCELLS};
 const CHORDS_PER_BAND = ${PARITY_CHORDS_PER_BAND};
 const EMPTY_HEIGHT = ${PARITY_EMPTY_HEIGHT};
-const NON_TREAD_BAND = GPU_TERRAIN_NON_TREAD_BAND;
+const RISER_HEIGHT = ${PARITY_RISER_HEIGHT};
 const CAMERA_HEIGHT = ${CAMERA_HEIGHT_WORLD};
 const CAMERA_NEAR = ${CAMERA_NEAR_WORLD};
 const CAMERA_FAR = ${CAMERA_FAR_WORLD};
@@ -388,21 +387,24 @@ const PARITY_VERTEX =
   GPU_TERRAIN_VERTEX_ATTRIBUTES_GLSL +
   GPU_TERRAIN_VERTEX_HEAD_GLSL +
   \`
-flat out int vParityBand;
+flat out int vParityHeight;
 void main() {
 \${GPU_TERRAIN_VERTEX_BODY_GLSL}
-  vParityBand = treadBand;
+  // worldY covers the layered flat cap too, which carries no tread band.
+  vParityHeight = vIsRiser > 0.5
+    ? \${RISER_HEIGHT}
+    : int(floor(worldY / HEIGHT_WORLD_SCALE + 0.5));
   gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }
 \`;
 
 const PARITY_FRAGMENT = \`precision highp float;
 precision highp int;
-flat in int vParityBand;
+flat in int vParityHeight;
 layout(location = 0) out ivec4 outHeight;
 void main() {
-  if (vParityBand == \${NON_TREAD_BAND}) discard;
-  outHeight = ivec4(vParityBand * \${BAND_HEIGHT}, 0, 0, 0);
+  if (vParityHeight == \${RISER_HEIGHT}) discard;
+  outHeight = ivec4(vParityHeight, 0, 0, 0);
 }
 \`;
 
