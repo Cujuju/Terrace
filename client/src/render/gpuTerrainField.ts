@@ -44,6 +44,9 @@ export const FIELD_SAMPLE_TOP = 0;
 /** `cellSample` mode: read the column at a band, as `bandSample` does. */
 export const FIELD_SAMPLE_AT_BAND = 1;
 
+/** Euclid on 2·stride and the lattice N; both are single digits, so this never binds. */
+const MAX_GCD_STEPS = 8;
+
 const GLSL_INT_MAX = 2 ** 31 - 1;
 
 /** Largest denominator of a crossing after `reduceChords`, at the level with stride `stride`. */
@@ -88,6 +91,7 @@ const int MAX_TREAD_PIECES = ${MAX_TREAD_PIECES};
 const int MAX_TREAD_CROSSINGS = ${MAX_TREAD_CROSSINGS};
 const int FIELD_SAMPLE_TOP = ${FIELD_SAMPLE_TOP};
 const int FIELD_SAMPLE_AT_BAND = ${FIELD_SAMPLE_AT_BAND};
+const int MAX_GCD_STEPS = ${MAX_GCD_STEPS};
 
 // Sub-cell corners in perimeter order; the next corner closes each edge.
 const vec2 FIELD_CORNER_POS[4] =
@@ -461,7 +465,8 @@ vec2 treadFanVertex(TreadFan fan, int tri, int role) {
 int crossingUnit(int stride) {
   int a = 2 * stride;
   int b = LATTICE_N;
-  while (b != 0) {
+  for (int step = 0; step < MAX_GCD_STEPS; step++) {
+    if (b == 0) break;
     int t = a % b;
     a = b;
     b = t;
@@ -469,83 +474,139 @@ int crossingUnit(int stride) {
   return a * a;
 }
 
-Chords reduceChords(Chords c, int unit) {
-  for (int i = 0; i < FIELD_CORNERS; i++) {
-    if (i >= c.count) break;
-    c.nums[i] /= unit;
-    c.dens[i] /= unit;
-  }
-  return c;
+// The centre test runs inside the fixpoint loop, where Direct3D refuses a loop
+// it must unroll: every index below is static, so no array is indexed at runtime.
+int cornerX(int corner) {
+  int c = corner % FIELD_CORNERS;
+  return (c == 2 || c == 3) ? 1 : 0;
 }
 
-// drawnGround.ts crossingXNum / crossingYNum: the crossing scaled by its denominator.
-int crossingXNum(Chords c, int i) {
-  int edge = c.edges[i];
-  int from = int(FIELD_CORNER_POS[edge].x);
-  int to = int(FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS].x);
-  return from * c.dens[i] + (to - from) * c.nums[i];
+int cornerY(int corner) {
+  int c = corner % FIELD_CORNERS;
+  return (c == 1 || c == 2) ? 1 : 0;
 }
 
-int crossingYNum(Chords c, int i) {
-  int edge = c.edges[i];
-  int from = int(FIELD_CORNER_POS[edge].y);
-  int to = int(FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS].y);
-  return from * c.dens[i] + (to - from) * c.nums[i];
+int fieldAt(int field[4], int corner) {
+  int c = corner % FIELD_CORNERS;
+  if (c == 0) return field[0];
+  if (c == 1) return field[1];
+  if (c == 2) return field[2];
+  return field[3];
 }
 
-bool crossingsCoincide(Chords c, int a, int b) {
-  return crossingXNum(c, a) * c.dens[b] == crossingXNum(c, b) * c.dens[a] &&
-    crossingYNum(c, a) * c.dens[b] == crossingYNum(c, b) * c.dens[a];
+struct CentreCrossing {
+  int edge;
+  int num;
+  int den;
+};
+
+// drawnGround.ts chordsAt, one edge at a time, reduced by unit.
+bool edgeCrossing(int here, int next, int threshold, int edge, int unit, out CentreCrossing c) {
+  c.edge = edge;
+  c.num = 0;
+  c.den = 1;
+  if ((here < threshold) == (next < threshold)) return false;
+  int num = threshold - here;
+  int den = next - here;
+  c.num = (den < 0 ? -num : num) / unit;
+  c.den = (den < 0 ? -den : den) / unit;
+  return true;
+}
+
+int crossingXNum(CentreCrossing c) {
+  int from = cornerX(c.edge);
+  int to = cornerX(c.edge + 1);
+  return from * c.den + (to - from) * c.num;
+}
+
+int crossingYNum(CentreCrossing c) {
+  int from = cornerY(c.edge);
+  int to = cornerY(c.edge + 1);
+  return from * c.den + (to - from) * c.num;
+}
+
+bool crossingsCoincide(CentreCrossing a, CentreCrossing b) {
+  return crossingXNum(a) * b.den == crossingXNum(b) * a.den &&
+    crossingYNum(a) * b.den == crossingYNum(b) * a.den;
 }
 
 // The sub-cell centre as drawnGround.ts sees it: (px, py) / steps.
 const int CENTRE_NUM = 1;
 const int CENTRE_STEPS = 2;
 
-bool centreIsCrossing(Chords c, int a) {
-  return CENTRE_NUM * c.dens[a] == crossingXNum(c, a) * CENTRE_STEPS &&
-    CENTRE_NUM * c.dens[a] == crossingYNum(c, a) * CENTRE_STEPS;
+bool centreIsCrossing(CentreCrossing a) {
+  return CENTRE_NUM * a.den == crossingXNum(a) * CENTRE_STEPS &&
+    CENTRE_NUM * a.den == crossingYNum(a) * CENTRE_STEPS;
 }
 
 // drawnGround.ts chordSide at the centre: sign of (b − a) × (centre − a).
-int chordSideOfCentre(Chords c, int a, int b) {
-  int ax = crossingXNum(c, a);
-  int ay = crossingYNum(c, a);
-  int bx = crossingXNum(c, b);
-  int by = crossingYNum(c, b);
-  int aden = c.dens[a];
-  int bden = c.dens[b];
-  int edge = c.edges[a];
-  vec2 from = FIELD_CORNER_POS[edge];
-  vec2 to = FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS];
-  if (from.x == to.x) {
-    int x0 = int(from.x);
-    return (bx - x0 * bden) * (CENTRE_NUM * aden - ay * CENTRE_STEPS) -
-      (by * aden - ay * bden) * (CENTRE_NUM - x0 * CENTRE_STEPS);
+int chordSideOfCentre(CentreCrossing a, CentreCrossing b) {
+  int ax = crossingXNum(a);
+  int ay = crossingYNum(a);
+  int bx = crossingXNum(b);
+  int by = crossingYNum(b);
+  if (cornerX(a.edge) == cornerX(a.edge + 1)) {
+    int x0 = cornerX(a.edge);
+    return (bx - x0 * b.den) * (CENTRE_NUM * a.den - ay * CENTRE_STEPS) -
+      (by * a.den - ay * b.den) * (CENTRE_NUM - x0 * CENTRE_STEPS);
   }
-  int y0 = int(from.y);
-  return (bx * aden - ax * bden) * (CENTRE_NUM - y0 * CENTRE_STEPS) -
-    (by - y0 * bden) * (CENTRE_NUM * aden - ax * CENTRE_STEPS);
+  int y0 = cornerY(a.edge);
+  return (bx * a.den - ax * b.den) * (CENTRE_NUM - y0 * CENTRE_STEPS) -
+    (by - y0 * b.den) * (CENTRE_NUM * a.den - ax * CENTRE_STEPS);
+}
+
+// One pair of drawnGround.ts capCovers; true when it settles the answer.
+bool pairDecides(CentreCrossing a, CentreCrossing b, bool arcHigh, out bool covered) {
+  covered = false;
+  if (crossingsCoincide(a, b)) {
+    if (centreIsCrossing(a)) {
+      covered = true;
+      return true;
+    }
+    return !arcHigh;
+  }
+  int side = chordSideOfCentre(a, b);
+  if (arcHigh) {
+    covered = side >= 0;
+    return covered;
+  }
+  return side > 0;
 }
 
 // drawnGround.ts capCovers, asked at the sub-cell centre.
 bool capCoversCentre(int field[4], int band, int unit) {
-  Chords c = reduceChords(chordsAt(field, band), unit);
-  if (c.count == 0) return field[0] >= band * BAND_BLEND_DENOM;
-  for (int k = 0; k < 2; k++) {
-    if (k >= c.pairCount) break;
-    int a = c.pairA[k];
-    int b = c.pairB[k];
-    if (crossingsCoincide(c, a, b)) {
-      if (centreIsCrossing(c, a)) return true;
-      if (!c.arcHigh) return false;
-    } else if (c.arcHigh) {
-      if (chordSideOfCentre(c, a, b) >= 0) return true;
-    } else if (chordSideOfCentre(c, a, b) > 0) {
-      return false;
+  int threshold = band * BAND_BLEND_DENOM;
+  CentreCrossing c0, c1, c2, c3;
+  bool h0 = edgeCrossing(field[0], field[1], threshold, 0, unit, c0);
+  bool h1 = edgeCrossing(field[1], field[2], threshold, 1, unit, c1);
+  bool h2 = edgeCrossing(field[2], field[3], threshold, 2, unit, c2);
+  bool h3 = edgeCrossing(field[3], field[0], threshold, 3, unit, c3);
+  int count = (h0 ? 1 : 0) + (h1 ? 1 : 0) + (h2 ? 1 : 0) + (h3 ? 1 : 0);
+  if (count == 0) return field[0] >= threshold;
+  CentreCrossing a, b, a2, b2;
+  bool arcHigh;
+  bool saddle = count == FIELD_CORNERS;
+  if (!saddle) {
+    if (h0) a = c0; else if (h1) a = c1; else a = c2;
+    if (h3) b = c3; else if (h2) b = c2; else b = c1;
+    arcHigh = fieldAt(field, a.edge + 1) >= threshold;
+    a2 = a;
+    b2 = b;
+  } else {
+    // A saddle: the centre decides whether the high corners join through it.
+    bool centreHigh = field[0] + field[1] + field[2] + field[3] >= FIELD_CORNERS * threshold;
+    arcHigh = !centreHigh;
+    bool corner1High = field[1] >= threshold;
+    if (corner1High == arcHigh) {
+      a = c0; b = c1; a2 = c2; b2 = c3;
+    } else {
+      a = c1; b = c2; a2 = c3; b2 = c0;
     }
   }
-  return !c.arcHigh;
+  bool covered;
+  if (pairDecides(a, b, arcHigh, covered)) return covered;
+  if (saddle && pairDecides(a2, b2, arcHigh, covered)) return covered;
+  return !arcHigh;
 }
 
 // drawnGround.ts bandAtPoint at the centre: the highest band whose cap covers it.
