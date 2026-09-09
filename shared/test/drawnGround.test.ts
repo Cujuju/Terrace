@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 import {
   applyPackedSpans,
   BAND_HEIGHT,
@@ -15,6 +15,7 @@ import {
   drawnGroundHeight,
   drawnGroundLodError,
   drawnGroundSubcell,
+  drawnGroundSubcellBands,
   drawnGroundSubcellIsLayered,
   DRAWN_GROUND_COORD_DENOM,
   DRAWN_GROUND_FIXPOINT_STEPS,
@@ -29,7 +30,7 @@ import {
   topSpan,
   type Heightmap,
   type Span,
-} from "../src/index.ts";
+} from '../src/index.ts';
 
 const WORLD_SIZE = 8;
 
@@ -64,9 +65,7 @@ function roughWorld(): Heightmap {
         map,
         x,
         y,
-        Math.floor(rng.next() * (MAX_HEIGHT - BEDROCK_FLOOR)) +
-          BEDROCK_FLOOR +
-          1,
+        Math.floor(rng.next() * (MAX_HEIGHT - BEDROCK_FLOOR)) + BEDROCK_FLOOR + 1,
       );
     }
   }
@@ -85,16 +84,13 @@ const LATTICE_N = DRAWN_GROUND_LATTICE_N;
 const CHORD_TIE_MARGIN = 1e-9;
 
 function quantise(coord: number): number {
-  return (
-    Math.floor(coord * DRAWN_GROUND_COORD_DENOM) / DRAWN_GROUND_COORD_DENOM
-  );
+  return Math.floor(coord * DRAWN_GROUND_COORD_DENOM) / DRAWN_GROUND_COORD_DENOM;
 }
 
 /** The unquantised bilinear field, in doubles, straight from the definition. */
 function bilinear(map: Heightmap, x: number, y: number): number {
   const clamp = (i: number): number => Math.min(WORLD_SIZE - 1, Math.max(0, i));
-  const h = (i: number, j: number): number =>
-    map.cells[cellIndex(map, clamp(i), clamp(j))]!;
+  const h = (i: number, j: number): number => map.cells[cellIndex(map, clamp(i), clamp(j))]!;
   const tx = x - 0.5;
   const ty = y - 0.5;
   const x0 = Math.floor(tx);
@@ -156,8 +152,7 @@ function chordReference(map: Heightmap, x: number, y: number): number | null {
       pairs = [[0, 1]];
       arcHigh = heights[(crossings[0]!.edge + 1) % 4]! >= threshold;
     } else {
-      const centreHigh =
-        heights[0]! + heights[1]! + heights[2]! + heights[3]! >= 4 * threshold;
+      const centreHigh = heights[0]! + heights[1]! + heights[2]! + heights[3]! >= 4 * threshold;
       arcHigh = !centreHigh;
       const corner1High = heights[1]! >= threshold;
       pairs =
@@ -257,8 +252,8 @@ function maximallyLayeredSpans(): Span[] {
   return spans;
 }
 
-describe("drawnGroundHeight", () => {
-  it("is deterministic across repeated calls", () => {
+describe('drawnGroundHeight', () => {
+  it('is deterministic across repeated calls', () => {
     const map = roughWorld();
     forEachSample((x, y) => {
       const first = drawnGroundHeight(map, x, y);
@@ -267,20 +262,18 @@ describe("drawnGroundHeight", () => {
     });
   });
 
-  it("equals the banded bilinear at every lattice corner", () => {
+  it('equals the banded bilinear at every lattice corner', () => {
     const map = roughWorld();
     for (let ly = 0; ly <= WORLD_SIZE * LATTICE_N; ly++) {
       for (let lx = 0; lx <= WORLD_SIZE * LATTICE_N; lx++) {
         const x = lx / LATTICE_N;
         const y = ly / LATTICE_N;
-        expect(drawnGroundHeight(map, x, y)).toBe(
-          bandOf(bilinear(map, x, y)) * BAND_HEIGHT,
-        );
+        expect(drawnGroundHeight(map, x, y)).toBe(bandOf(bilinear(map, x, y)) * BAND_HEIGHT);
       }
     }
   });
 
-  it("matches the float chord model away from chord ties on an unlayered world", () => {
+  it('matches the float chord model away from chord ties on an unlayered world', () => {
     const map = roughWorld();
     const rng = createSeededRng(99);
     let checked = 0;
@@ -295,7 +288,7 @@ describe("drawnGroundHeight", () => {
     expect(checked).toBeGreaterThan(19000);
   });
 
-  it("reads the same height anywhere inside one coordinate step", () => {
+  it('reads the same height anywhere inside one coordinate step', () => {
     const map = roughWorld();
     const rng = createSeededRng(7);
     const step = 1 / DRAWN_GROUND_COORD_DENOM;
@@ -304,60 +297,40 @@ describe("drawnGroundHeight", () => {
       const y = rng.next() * WORLD_SIZE;
       const at = drawnGroundHeight(map, x, y);
       expect(drawnGroundHeight(map, quantise(x), quantise(y))).toBe(at);
-      expect(
-        drawnGroundHeight(
-          map,
-          quantise(x) + step * 0.999,
-          quantise(y) + step * 0.999,
-        ),
-      ).toBe(at);
+      expect(drawnGroundHeight(map, quantise(x) + step * 0.999, quantise(y) + step * 0.999)).toBe(
+        at,
+      );
     }
   });
 
-  it("joins the high corners of a saddle through a high centre", () => {
+  it('joins the high corners of a saddle through a high centre', () => {
     const map = saddleWorld(SADDLE_JOINED_CORNER);
-    const centre = drawnGroundHeight(
-      map,
-      SADDLE_SUBCELL_CENTRE,
-      SADDLE_SUBCELL_CENTRE,
-    );
+    const centre = drawnGroundHeight(map, SADDLE_SUBCELL_CENTRE, SADDLE_SUBCELL_CENTRE);
     expect(centre).toBe(SADDLE_BAND * BAND_HEIGHT);
     const sub = drawnGroundSubcell(map, SADDLE_SUBCELL, SADDLE_SUBCELL);
-    expect(sub.treads.find((t) => t.band === SADDLE_BAND)?.pieces).toHaveLength(
-      1,
-    );
-    expect(
-      sub.treads.find((t) => t.band === SADDLE_BAND - 1)?.pieces,
-    ).toHaveLength(2);
+    expect(sub.treads.find((t) => t.band === SADDLE_BAND)?.pieces).toHaveLength(1);
+    expect(sub.treads.find((t) => t.band === SADDLE_BAND - 1)?.pieces).toHaveLength(2);
     expect(sub.risers.filter((r) => r.band === SADDLE_BAND)).toHaveLength(2);
   });
 
-  it("separates the high corners of a saddle across a low centre", () => {
+  it('separates the high corners of a saddle across a low centre', () => {
     const map = saddleWorld(SADDLE_SPLIT_CORNER);
-    const centre = drawnGroundHeight(
-      map,
-      SADDLE_SUBCELL_CENTRE,
-      SADDLE_SUBCELL_CENTRE,
-    );
+    const centre = drawnGroundHeight(map, SADDLE_SUBCELL_CENTRE, SADDLE_SUBCELL_CENTRE);
     expect(centre).toBe((SADDLE_BAND - 1) * BAND_HEIGHT);
     const sub = drawnGroundSubcell(map, SADDLE_SUBCELL, SADDLE_SUBCELL);
-    expect(sub.treads.find((t) => t.band === SADDLE_BAND)?.pieces).toHaveLength(
-      2,
-    );
-    expect(
-      sub.treads.find((t) => t.band === SADDLE_BAND - 1)?.pieces,
-    ).toHaveLength(1);
+    expect(sub.treads.find((t) => t.band === SADDLE_BAND)?.pieces).toHaveLength(2);
+    expect(sub.treads.find((t) => t.band === SADDLE_BAND - 1)?.pieces).toHaveLength(1);
     expect(sub.risers.filter((r) => r.band === SADDLE_BAND)).toHaveLength(2);
   });
 
-  it("returns the flat band exactly on a flat world", () => {
+  it('returns the flat band exactly on a flat world', () => {
     for (const h of [0, 16, 48, 512]) {
       const map = flatWorld(h);
       forEachSample((x, y) => expect(drawnGroundHeight(map, x, y)).toBe(h));
     }
   });
 
-  it("floors negative heights toward minus infinity", () => {
+  it('floors negative heights toward minus infinity', () => {
     for (const [h, expected] of [
       [-1, -16],
       [-8, -16],
@@ -370,16 +343,14 @@ describe("drawnGroundHeight", () => {
     }
   });
 
-  it("always returns a multiple of BAND_HEIGHT", () => {
+  it('always returns a multiple of BAND_HEIGHT', () => {
     const map = roughWorld();
     forEachSample((x, y) => {
-      expect(Number.isInteger(drawnGroundHeight(map, x, y) / BAND_HEIGHT)).toBe(
-        true,
-      );
+      expect(Number.isInteger(drawnGroundHeight(map, x, y) / BAND_HEIGHT)).toBe(true);
     });
   });
 
-  it("clamps to the border instead of reading out of bounds", () => {
+  it('clamps to the border instead of reading out of bounds', () => {
     const map = roughWorld();
     const corner = drawnGroundHeight(map, 0, 0);
     for (const [x, y] of [
@@ -399,15 +370,13 @@ describe("drawnGroundHeight", () => {
     }
   });
 
-  it("returns the top drawn cap over a carved column", () => {
+  it('returns the top drawn cap over a carved column', () => {
     const map = cavedWorld();
     expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(CAVE_ROOF_CAP);
-    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(
-      topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT,
-    );
+    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT);
   });
 
-  it("descends past an overhang whose cell height is not a drawn cap", () => {
+  it('descends past an overhang whose cell height is not a drawn cap', () => {
     const map = flatWorld(0);
     setColumn(map, 4, 4, [
       { floor: BEDROCK_FLOOR, ceiling: CAVE_FLOOR_CAP },
@@ -415,24 +384,20 @@ describe("drawnGroundHeight", () => {
     ]);
     expect(map.cells[cellIndex(map, 4, 4)]).toBe(CAVE_ROOF_CAP);
     expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(BAND_HEIGHT);
-    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(
-      topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT,
-    );
+    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT);
   });
 
-  it("ignores a non-drawn top span that a wire payload seated", () => {
+  it('ignores a non-drawn top span that a wire payload seated', () => {
     const map = flatWorld(0);
     const seated = applyPackedSpans(map, 4, 4, [BEDROCK_FLOOR, 32, 65, 79]);
     expect(seated).toBe(true);
     expect(isSpanDrawn(topSpan(map, 4, 4))).toBe(false);
     expect(map.cells[cellIndex(map, 4, 4)]).toBe(79);
     expect(spanCount(map, 4, 4)).toBeGreaterThan(1);
-    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(
-      topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT,
-    );
+    expect(drawnGroundHeight(map, 4.5, 4.5)).toBe(topDrawnBandByScan(map, 4.5, 4.5) * BAND_HEIGHT);
   });
 
-  it("clamps non-finite coordinates to the border on both axes", () => {
+  it('clamps non-finite coordinates to the border on both axes', () => {
     const map = roughWorld();
     const low = drawnGroundHeight(map, 0, 0);
     const high = drawnGroundHeight(map, WORLD_SIZE, WORLD_SIZE);
@@ -441,42 +406,28 @@ describe("drawnGroundHeight", () => {
       expect(drawnGroundHeight(map, 0, bad)).toBe(low);
       expect(drawnGroundHeight(map, bad, bad)).toBe(low);
     }
-    expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, WORLD_SIZE)).toBe(
-      high,
-    );
-    expect(drawnGroundHeight(map, WORLD_SIZE, Number.POSITIVE_INFINITY)).toBe(
-      high,
-    );
-    expect(
-      drawnGroundHeight(
-        map,
-        Number.POSITIVE_INFINITY,
-        Number.POSITIVE_INFINITY,
-      ),
-    ).toBe(high);
+    expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, WORLD_SIZE)).toBe(high);
+    expect(drawnGroundHeight(map, WORLD_SIZE, Number.POSITIVE_INFINITY)).toBe(high);
+    expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(high);
     expect(drawnGroundHeight(map, Number.POSITIVE_INFINITY, Number.NaN)).toBe(
       drawnGroundHeight(map, WORLD_SIZE, 0),
     );
   });
 
-  it("reaches the fixpoint within its bound on a maximally layered column", () => {
+  it('reaches the fixpoint within its bound on a maximally layered column', () => {
     const map = flatWorld(0);
     const spans = maximallyLayeredSpans();
     expect(spans.length).toBe(MAX_SPANS_PER_COLUMN);
     setColumn(map, 4, 4, spans);
     forEachSample((x, y) => {
-      expect(drawnGroundHeight(map, x, y)).toBe(
-        topDrawnBandByScan(map, x, y) * BAND_HEIGHT,
-      );
+      expect(drawnGroundHeight(map, x, y)).toBe(topDrawnBandByScan(map, x, y) * BAND_HEIGHT);
     });
-    expect(DRAWN_GROUND_FIXPOINT_STEPS).toBeGreaterThanOrEqual(
-      4 * MAX_SPANS_PER_COLUMN,
-    );
+    expect(DRAWN_GROUND_FIXPOINT_STEPS).toBeGreaterThanOrEqual(4 * MAX_SPANS_PER_COLUMN);
   });
 });
 
-describe("drawnGroundCoversBand", () => {
-  it("is monotone in band on an unlayered world", () => {
+describe('drawnGroundCoversBand', () => {
+  it('is monotone in band on an unlayered world', () => {
     const map = roughWorld();
     forEachSample((x, y) => {
       let seenTrue = false;
@@ -488,7 +439,7 @@ describe("drawnGroundCoversBand", () => {
     });
   });
 
-  it("rests on a sample field that never falls as the band rises", () => {
+  it('rests on a sample field that never falls as the band rises', () => {
     const map = cavedWorld();
     setColumn(map, 2, 2, maximallyLayeredSpans());
     for (const [cx, cy] of [
@@ -505,27 +456,17 @@ describe("drawnGroundCoversBand", () => {
     }
   });
 
-  it("covers the cave floor and roof but not the gap between them", () => {
+  it('covers the cave floor and roof but not the gap between them', () => {
     const map = cavedWorld();
-    expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_FLOOR_CAP))).toBe(
-      true,
-    );
-    expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_ROOF_FLOOR))).toBe(
-      true,
-    );
-    expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_ROOF_CAP))).toBe(
-      true,
-    );
-    for (
-      let band = bandOf(CAVE_FLOOR_CAP) + 1;
-      band < bandOf(CAVE_ROOF_FLOOR);
-      band++
-    ) {
+    expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_FLOOR_CAP))).toBe(true);
+    expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_ROOF_FLOOR))).toBe(true);
+    expect(drawnGroundCoversBand(map, 4.5, 4.5, bandOf(CAVE_ROOF_CAP))).toBe(true);
+    for (let band = bandOf(CAVE_FLOOR_CAP) + 1; band < bandOf(CAVE_ROOF_FLOOR); band++) {
       expect(drawnGroundCoversBand(map, 4.5, 4.5, band)).toBe(false);
     }
   });
 
-  it("clamps non-finite coordinates to the border on both axes", () => {
+  it('clamps non-finite coordinates to the border on both axes', () => {
     const map = roughWorld();
     for (let band = FLOOR_BAND; band <= TOP_BAND; band++) {
       const low = drawnGroundCoversBand(map, 0, 0, band);
@@ -540,7 +481,7 @@ describe("drawnGroundCoversBand", () => {
     }
   });
 
-  it("agrees with drawnGroundHeight on an unlayered world", () => {
+  it('agrees with drawnGroundHeight on an unlayered world', () => {
     const map = roughWorld();
     forEachSample((x, y) => {
       const band = drawnGroundHeight(map, x, y) / BAND_HEIGHT;
@@ -550,8 +491,8 @@ describe("drawnGroundCoversBand", () => {
   });
 });
 
-describe("drawnGroundSubcell", () => {
-  it("tiles every sub-cell with its treads", () => {
+describe('drawnGroundSubcell', () => {
+  it('tiles every sub-cell with its treads', () => {
     const map = roughWorld();
     for (let sy = 0; sy < WORLD_SIZE * LATTICE_N; sy++) {
       for (let sx = 0; sx < WORLD_SIZE * LATTICE_N; sx++) {
@@ -561,16 +502,13 @@ describe("drawnGroundSubcell", () => {
           for (const piece of tread.pieces) area += polygonArea(piece);
         expect(area).toBeCloseTo(1 / (LATTICE_N * LATTICE_N), 12);
         expect(sub.treads.map((t) => t.band)).toEqual(
-          Array.from(
-            { length: sub.highBand - sub.lowBand + 1 },
-            (_, i) => sub.lowBand + i,
-          ),
+          Array.from({ length: sub.highBand - sub.lowBand + 1 }, (_, i) => sub.lowBand + i),
         );
       }
     }
   });
 
-  it("puts every riser end on the sub-cell boundary", () => {
+  it('puts every riser end on the sub-cell boundary', () => {
     const map = roughWorld();
     for (let sy = 0; sy < WORLD_SIZE * LATTICE_N; sy++) {
       for (let sx = 0; sx < WORLD_SIZE * LATTICE_N; sx++) {
@@ -585,9 +523,7 @@ describe("drawnGroundSubcell", () => {
             expect(u).toBeLessThanOrEqual(1 + 1e-12);
             expect(v).toBeGreaterThanOrEqual(-1e-12);
             expect(v).toBeLessThanOrEqual(1 + 1e-12);
-            const onEdge = [u, v].some(
-              (c) => Math.abs(c) < 1e-12 || Math.abs(c - 1) < 1e-12,
-            );
+            const onEdge = [u, v].some((c) => Math.abs(c) < 1e-12 || Math.abs(c - 1) < 1e-12);
             expect(onEdge).toBe(true);
           }
         }
@@ -595,7 +531,7 @@ describe("drawnGroundSubcell", () => {
     }
   });
 
-  it("reports each near sub-cell band span of a chunk", () => {
+  it('reports each near sub-cell band span of a chunk', () => {
     const map = roughWorld();
     const perSide = CHUNK_SIZE * LATTICE_N;
     const spans = drawnGroundChunkBandSpans(map, 0, 0);
@@ -608,41 +544,82 @@ describe("drawnGroundSubcell", () => {
     }
   });
 
-  it("flags the sub-cells whose corners blend from a layered column", () => {
+  it('describes a far-level sub-cell on the same lattice', () => {
+    const map = roughWorld();
+    const stride = LATTICE_N / TERRAIN_LOD_FAR_N;
+    for (let sy = 0; sy < WORLD_SIZE * TERRAIN_LOD_FAR_N; sy++) {
+      for (let sx = 0; sx < WORLD_SIZE * TERRAIN_LOD_FAR_N; sx++) {
+        const sub = drawnGroundSubcell(map, sx, sy, TERRAIN_LOD_FAR_N);
+        const bands = drawnGroundSubcellBands(map, sx, sy, TERRAIN_LOD_FAR_N);
+        expect(bands).toEqual({ lowBand: sub.lowBand, highBand: sub.highBand });
+        let area = 0;
+        for (const tread of sub.treads)
+          for (const piece of tread.pieces) area += polygonArea(piece);
+        expect(area).toBeCloseTo(1 / (TERRAIN_LOD_FAR_N * TERRAIN_LOD_FAR_N), 12);
+        const corners = [
+          [0, 0],
+          [0, 1],
+          [1, 1],
+          [1, 0],
+        ] as const;
+        const cornerBands = corners.map(([u, v]) =>
+          bandOf(bilinear(map, ((sx + u) * stride) / LATTICE_N, ((sy + v) * stride) / LATTICE_N)),
+        );
+        expect(sub.lowBand).toBe(Math.min(...cornerBands));
+        expect(sub.highBand).toBe(Math.max(...cornerBands));
+      }
+    }
+    const farSpans = drawnGroundChunkBandSpans(map, 0, 0, TERRAIN_LOD_FAR_N);
+    expect(farSpans).toHaveLength(CHUNK_SIZE * CHUNK_SIZE);
+    for (let sy = 0; sy < CHUNK_SIZE; sy++) {
+      for (let sx = 0; sx < CHUNK_SIZE; sx++) {
+        const bands = drawnGroundSubcellBands(map, sx, sy, TERRAIN_LOD_FAR_N);
+        expect(farSpans[sy * CHUNK_SIZE + sx]).toBe(bands.highBand - bands.lowBand);
+      }
+    }
+  });
+
+  it('rejects a level off the lattice', () => {
+    const map = flatWorld(0);
+    expect(() => drawnGroundSubcell(map, 0, 0, 3)).toThrow(RangeError);
+    expect(() => drawnGroundSubcellBands(map, 0, 0, 8)).toThrow(RangeError);
+  });
+
+  it('flags the sub-cells whose corners blend from a layered column', () => {
     const map = cavedWorld();
     expect(drawnGroundSubcellIsLayered(map, 18, 18)).toBe(true);
     expect(drawnGroundSubcellIsLayered(map, 0, 0)).toBe(false);
     expect(drawnGroundSubcellIsLayered(map, 30, 30)).toBe(false);
+    expect(drawnGroundSubcellIsLayered(map, 4, 4, TERRAIN_LOD_FAR_N)).toBe(true);
+    expect(drawnGroundSubcellIsLayered(map, 0, 0, TERRAIN_LOD_FAR_N)).toBe(false);
   });
 });
 
-describe("drawnGroundFarHeight", () => {
-  it("equals the near height at far lattice corners", () => {
+describe('drawnGroundFarHeight', () => {
+  it('equals the near height at far lattice corners', () => {
     const map = roughWorld();
     const stride = LATTICE_N / TERRAIN_LOD_FAR_N;
     for (let ly = 0; ly <= WORLD_SIZE * LATTICE_N; ly += stride) {
       for (let lx = 0; lx <= WORLD_SIZE * LATTICE_N; lx += stride) {
         const x = lx / LATTICE_N;
         const y = ly / LATTICE_N;
-        expect(drawnGroundFarHeight(map, x, y)).toBe(
-          drawnGroundHeight(map, x, y),
-        );
+        expect(drawnGroundFarHeight(map, x, y)).toBe(drawnGroundHeight(map, x, y));
       }
     }
   });
 
-  it("is the flat band on a flat world", () => {
+  it('is the flat band on a flat world', () => {
     const map = flatWorld(48);
     forEachSample((x, y) => expect(drawnGroundFarHeight(map, x, y)).toBe(48));
   });
 });
 
-describe("drawnGroundLodError", () => {
-  it("is zero on a flat world", () => {
+describe('drawnGroundLodError', () => {
+  it('is zero on a flat world', () => {
     expect(drawnGroundLodError(flatWorld(32), 0, 0)).toBe(0);
   });
 
-  it("is the worst near-versus-far gap at the near sub-cell centres", () => {
+  it('is the worst near-versus-far gap at the near sub-cell centres', () => {
     for (const map of [roughWorld(), cavedWorld()]) {
       let worst = 0;
       for (let sy = 0; sy < CHUNK_SIZE * LATTICE_N; sy++) {
@@ -651,9 +628,7 @@ describe("drawnGroundLodError", () => {
           const y = (sy + 0.5) / LATTICE_N;
           worst = Math.max(
             worst,
-            Math.abs(
-              drawnGroundHeight(map, x, y) - drawnGroundFarHeight(map, x, y),
-            ),
+            Math.abs(drawnGroundHeight(map, x, y) - drawnGroundFarHeight(map, x, y)),
           );
         }
       }

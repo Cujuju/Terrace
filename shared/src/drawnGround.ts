@@ -5,13 +5,9 @@ import {
   MAX_SPANS_PER_COLUMN,
   TERRAIN_LOD_FAR_N,
   TERRAIN_LOD_NEAR_N,
-} from "./constants.ts";
-import { cellIndex, type Heightmap } from "./grid.ts";
-import {
-  OPEN_COLUMN_SAMPLE,
-  columnSampleAtBand,
-  spanCount,
-} from "./columns.ts";
+} from './constants.ts';
+import { cellIndex, type Heightmap } from './grid.ts';
+import { OPEN_COLUMN_SAMPLE, columnSampleAtBand, spanCount } from './columns.ts';
 
 /** Lattice corners per cell. Every drawn level's corners lie on this lattice. */
 export const DRAWN_GROUND_LATTICE_N = TERRAIN_LOD_NEAR_N;
@@ -28,8 +24,7 @@ export const DRAWN_GROUND_COORD_DENOM = 1024;
 
 const FIXPOINT_STEPS_PER_SPAN = 4;
 
-export const DRAWN_GROUND_FIXPOINT_STEPS =
-  FIXPOINT_STEPS_PER_SPAN * MAX_SPANS_PER_COLUMN;
+export const DRAWN_GROUND_FIXPOINT_STEPS = FIXPOINT_STEPS_PER_SPAN * MAX_SPANS_PER_COLUMN;
 
 /** Sub-cell corners in perimeter order; the next corner closes each edge. */
 const CORNER_X = [0, 0, 1, 1] as const;
@@ -42,26 +37,21 @@ const MAX_TREAD_POINTS = CORNERS + 2 * MAX_CROSSINGS;
 /** Lowest sample any corner can carry: the open-column sentinel sits below bedrock. */
 const LOWEST_SAMPLE = OPEN_COLUMN_SAMPLE;
 
-const COORD_STEPS_PER_LATTICE =
-  DRAWN_GROUND_COORD_DENOM / DRAWN_GROUND_LATTICE_N;
+const COORD_STEPS_PER_LATTICE = DRAWN_GROUND_COORD_DENOM / DRAWN_GROUND_LATTICE_N;
 
 if (
   !Number.isInteger(COORD_STEPS_PER_LATTICE) ||
   COORD_STEPS_PER_LATTICE % 2 !== 0 ||
   TERRAIN_LOD_NEAR_N % TERRAIN_LOD_FAR_N !== 0
 ) {
-  throw new Error(
-    "drawn ground levels must nest inside the coordinate lattice",
-  );
+  throw new Error('drawn ground levels must nest inside the coordinate lattice');
 }
 
 {
   const edgeDenom = DRAWN_GROUND_BLEND_DENOM * (MAX_HEIGHT - LOWEST_SAMPLE);
   const subcellSteps = DRAWN_GROUND_COORD_DENOM / TERRAIN_LOD_FAR_N;
   if (2 * edgeDenom * edgeDenom * subcellSteps > Number.MAX_SAFE_INTEGER) {
-    throw new Error(
-      "drawn ground side tests would leave the exact integer range",
-    );
+    throw new Error('drawn ground side tests would leave the exact integer range');
   }
 }
 
@@ -90,12 +80,7 @@ function bandSample(map: Heightmap, band: number): CellSample {
 }
 
 /** Exact bilinear numerator at lattice corner (lx, ly), over DRAWN_GROUND_BLEND_DENOM. */
-function cornerNumerator(
-  size: number,
-  sample: CellSample,
-  lx: number,
-  ly: number,
-): number {
+function cornerNumerator(size: number, sample: CellSample, lx: number, ly: number): number {
   const qx = 2 * lx - DRAWN_GROUND_LATTICE_N;
   const qy = 2 * ly - DRAWN_GROUND_LATTICE_N;
   const baseX = floorDiv(qx, SUBCELL_DENOM);
@@ -147,6 +132,8 @@ function highBand(field: SubcellField): number {
 interface Crossing {
   /** Edge from corner `edge` to the next corner. */
   edge: number;
+  /** Slot in a tread walk's crossing list; meaningful only during `treadPieces`. */
+  id: number;
   /** Position along the edge is num / den, den > 0. */
   num: number;
   den: number;
@@ -181,6 +168,7 @@ function createChords(): Chords {
   return {
     crossings: Array.from({ length: MAX_CROSSINGS }, () => ({
       edge: 0,
+      id: -1,
       num: 0,
       den: 1,
     })),
@@ -220,8 +208,7 @@ function chordsAt(field: SubcellField, band: number, into: Chords): Chords {
     return into;
   }
   // A saddle: the centre decides whether the high corners join through it.
-  const centreHigh =
-    field[0] + field[1] + field[2] + field[3] >= CORNERS * threshold;
+  const centreHigh = field[0] + field[1] + field[2] + field[3] >= CORNERS * threshold;
   const arcHigh = !centreHigh;
   const corner1High = field[1] >= threshold;
   into.pairs = corner1High === arcHigh ? SADDLE_PAIRS_ODD : SADDLE_PAIRS_EVEN;
@@ -249,26 +236,12 @@ function crossingsCoincide(a: Crossing, b: Crossing): boolean {
   );
 }
 
-function pointIsCrossing(
-  a: Crossing,
-  px: number,
-  py: number,
-  steps: number,
-): boolean {
-  return (
-    px * a.den === crossingXNum(a) * steps &&
-    py * a.den === crossingYNum(a) * steps
-  );
+function pointIsCrossing(a: Crossing, px: number, py: number, steps: number): boolean {
+  return px * a.den === crossingXNum(a) * steps && py * a.den === crossingYNum(a) * steps;
 }
 
 /** Sign of (b − a) × (p − a), p = (px, py) / steps. Exact: a's whole coordinate divides its denominator out. */
-function chordSide(
-  a: Crossing,
-  b: Crossing,
-  px: number,
-  py: number,
-  steps: number,
-): number {
+function chordSide(a: Crossing, b: Crossing, px: number, py: number, steps: number): number {
   const ax = crossingXNum(a);
   const ay = crossingYNum(a);
   const bx = crossingXNum(b);
@@ -277,14 +250,12 @@ function chordSide(
   if (edgeRunsAlongY) {
     const x0 = CORNER_X[a.edge]!;
     return (
-      (bx - x0 * b.den) * (py * a.den - ay * steps) -
-      (by * a.den - ay * b.den) * (px - x0 * steps)
+      (bx - x0 * b.den) * (py * a.den - ay * steps) - (by * a.den - ay * b.den) * (px - x0 * steps)
     );
   }
   const y0 = CORNER_Y[a.edge]!;
   return (
-    (bx * a.den - ax * b.den) * (py - y0 * steps) -
-    (by - y0 * b.den) * (px * a.den - ax * steps)
+    (bx * a.den - ax * b.den) * (py - y0 * steps) - (by - y0 * b.den) * (px * a.den - ax * steps)
   );
 }
 
@@ -314,12 +285,7 @@ function capCovers(
 }
 
 /** Highest band whose cap covers the point; the field's bands bound the search. */
-function bandAtPoint(
-  field: SubcellField,
-  px: number,
-  py: number,
-  steps: number,
-): number {
+function bandAtPoint(field: SubcellField, px: number, py: number, steps: number): number {
   const lo = lowBand(field);
   for (let band = highBand(field); band > lo; band--) {
     if (capCovers(field, band, px, py, steps)) return band;
@@ -363,8 +329,7 @@ function queryField(size: number, sample: CellSample, q: Query): SubcellField {
 /** Whether any cell a sub-cell's corners blend from carries more than one span. */
 function queryIsLayered(map: Heightmap, q: Query): boolean {
   if (map.columnSpans.size === 0) return false;
-  const first = (l: number): number =>
-    floorDiv(2 * l - DRAWN_GROUND_LATTICE_N, SUBCELL_DENOM);
+  const first = (l: number): number => floorDiv(2 * l - DRAWN_GROUND_LATTICE_N, SUBCELL_DENOM);
   const x0 = clampCell(map.size, first(q.lx0));
   const x1 = clampCell(map.size, first(q.lx0 + q.stride) + 1);
   const y0 = clampCell(map.size, first(q.ly0));
@@ -394,69 +359,73 @@ function settleAtCentre(map: Heightmap, q: Query, seed: number): number {
   return band;
 }
 
-function heightAtLevel(
-  map: Heightmap,
-  level: number,
-  x: number,
-  y: number,
-): number {
+function heightAtLevel(map: Heightmap, level: number, x: number, y: number): number {
   const q = queryAt(map.size, level, x, y);
   const top = queryField(map.size, topSample(map), q);
-  if (!queryIsLayered(map, q))
-    return bandAtPoint(top, q.px, q.py, q.steps) * BAND_HEIGHT;
+  if (!queryIsLayered(map, q)) return bandAtPoint(top, q.px, q.py, q.steps) * BAND_HEIGHT;
   const centre = q.steps / 2;
-  return (
-    settleAtCentre(map, q, bandAtPoint(top, centre, centre, q.steps)) *
-    BAND_HEIGHT
-  );
+  return settleAtCentre(map, q, bandAtPoint(top, centre, centre, q.steps)) * BAND_HEIGHT;
 }
 
-export function drawnGroundCoversBand(
-  map: Heightmap,
-  x: number,
-  y: number,
-  band: number,
-): boolean {
+export function drawnGroundCoversBand(map: Heightmap, x: number, y: number, band: number): boolean {
   const q = queryAt(map.size, DRAWN_GROUND_LATTICE_N, x, y);
   const field = queryField(map.size, bandSample(map, band), q);
   if (band <= lowBand(field)) return true;
   if (band > highBand(field)) return false;
-  if (!queryIsLayered(map, q))
-    return capCovers(field, band, q.px, q.py, q.steps);
+  if (!queryIsLayered(map, q)) return capCovers(field, band, q.px, q.py, q.steps);
   const centre = q.steps / 2;
   return capCovers(field, band, centre, centre, q.steps);
 }
 
-export function drawnGroundHeight(
-  map: Heightmap,
-  x: number,
-  y: number,
-): number {
+export function drawnGroundHeight(map: Heightmap, x: number, y: number): number {
   return heightAtLevel(map, DRAWN_GROUND_LATTICE_N, x, y);
 }
 
-/** Whether a near sub-cell's corners blend from any cell with more than one span. */
+function strideOf(level: number): number {
+  const stride = DRAWN_GROUND_LATTICE_N / level;
+  if (!Number.isInteger(stride) || stride < 1) {
+    throw new RangeError(`drawn ground level ${level} is not on the lattice`);
+  }
+  return stride;
+}
+
+/** Whether a level's sub-cell corners blend from any cell with more than one span. */
 export function drawnGroundSubcellIsLayered(
   map: Heightmap,
   subX: number,
   subY: number,
+  level: number = DRAWN_GROUND_LATTICE_N,
 ): boolean {
+  const stride = strideOf(level);
   return queryIsLayered(map, {
-    lx0: subX,
-    ly0: subY,
-    stride: 1,
+    lx0: subX * stride,
+    ly0: subY * stride,
+    stride,
     px: 0,
     py: 0,
     steps: 1,
   });
 }
 
-/** Height of the surface a chunk drawn at the far level shows. */
-export function drawnGroundFarHeight(
+export interface DrawnGroundBands {
+  readonly lowBand: number;
+  readonly highBand: number;
+}
+
+/** Band range of a level's sub-cell, top surface only; cheap enough for a hot loop. */
+export function drawnGroundSubcellBands(
   map: Heightmap,
-  x: number,
-  y: number,
-): number {
+  subX: number,
+  subY: number,
+  level: number = DRAWN_GROUND_LATTICE_N,
+): DrawnGroundBands {
+  const stride = strideOf(level);
+  const field = subcellField(map.size, topSample(map), subX * stride, subY * stride, stride);
+  return { lowBand: lowBand(field), highBand: highBand(field) };
+}
+
+/** Height of the surface a chunk drawn at the far level shows. */
+export function drawnGroundFarHeight(map: Heightmap, x: number, y: number): number {
   return heightAtLevel(map, TERRAIN_LOD_FAR_N, x, y);
 }
 
@@ -518,14 +487,13 @@ function treadPieces(
   below: Chords,
 ): (readonly DrawnGroundPoint[])[] {
   const crossings: TreadCrossing[] = [];
-  const indexOf = new Map<Crossing, number>();
   const register = (chords: Chords, arcInside: boolean): void => {
     for (const [ia, ib] of chords.pairs) {
       const a = chords.crossings[ia]!;
       const b = chords.crossings[ib]!;
       const base = crossings.length;
-      indexOf.set(a, base);
-      indexOf.set(b, base + 1);
+      a.id = base;
+      b.id = base + 1;
       crossings.push({
         partner: base + 1,
         forwardInside: arcInside,
@@ -549,11 +517,9 @@ function treadPieces(
       ...below.crossings.slice(0, below.count),
       ...above.crossings.slice(0, above.count),
     ].filter((c) => c.edge === edge);
-    onEdge.sort((a, b) =>
-      crossingBefore(a, b) ? -1 : crossingBefore(b, a) ? 1 : 0,
-    );
+    onEdge.sort((a, b) => (crossingBefore(a, b) ? -1 : crossingBefore(b, a) ? 1 : 0));
     for (const c of onEdge) {
-      const index = indexOf.get(c)!;
+      const index = c.id;
       boundary.push({
         x: crossings[index]!.x,
         y: crossings[index]!.y,
@@ -594,24 +560,24 @@ function treadPieces(
   return pieces;
 }
 
-/** The treads and risers one near-level sub-cell draws, in cell coordinates. Top surface only. */
+/** The treads and risers one sub-cell of a level draws, in cell coordinates. Top surface only. */
 export function drawnGroundSubcell(
   map: Heightmap,
   subX: number,
   subY: number,
+  level: number = DRAWN_GROUND_LATTICE_N,
 ): DrawnGroundSubcell {
-  const field = subcellField(map.size, topSample(map), subX, subY, 1);
+  const stride = strideOf(level);
+  const field = subcellField(map.size, topSample(map), subX * stride, subY * stride, stride);
   const lo = lowBand(field);
   const hi = highBand(field);
   const toCell = (p: DrawnGroundPoint): DrawnGroundPoint => ({
-    x: (subX + p.x) / DRAWN_GROUND_LATTICE_N,
-    y: (subY + p.y) / DRAWN_GROUND_LATTICE_N,
+    x: (subX + p.x) / level,
+    y: (subY + p.y) / level,
   });
   const chordsByBand: Chords[] = [];
   for (let band = lo; band <= hi + 1; band++) {
-    chordsByBand.push(
-      band === lo ? NO_CHORDS : chordsAt(field, band, createChords()),
-    );
+    chordsByBand.push(band === lo ? NO_CHORDS : chordsAt(field, band, createChords()));
   }
   const treads: DrawnGroundTread[] = [];
   const risers: DrawnGroundRiser[] = [];
@@ -620,9 +586,7 @@ export function drawnGroundSubcell(
     const above = band === hi ? NO_CHORDS : chordsByBand[band - lo + 1]!;
     treads.push({
       band,
-      pieces: treadPieces(field, band, above, below).map((piece) =>
-        piece.map(toCell),
-      ),
+      pieces: treadPieces(field, band, above, below).map((piece) => piece.map(toCell)),
     });
     if (band === lo) continue;
     for (const [ia, ib] of below.pairs) {
@@ -648,23 +612,13 @@ function chunkLattice(map: Heightmap, cx: number, cy: number): Int32Array {
   const out = new Int32Array(NEAR_LATTICE_PER_CHUNK * NEAR_LATTICE_PER_CHUNK);
   for (let j = 0; j < NEAR_LATTICE_PER_CHUNK; j++) {
     for (let i = 0; i < NEAR_LATTICE_PER_CHUNK; i++) {
-      out[j * NEAR_LATTICE_PER_CHUNK + i] = cornerNumerator(
-        map.size,
-        sample,
-        lx0 + i,
-        ly0 + j,
-      );
+      out[j * NEAR_LATTICE_PER_CHUNK + i] = cornerNumerator(map.size, sample, lx0 + i, ly0 + j);
     }
   }
   return out;
 }
 
-function latticeField(
-  lattice: Int32Array,
-  i: number,
-  j: number,
-  stride: number,
-): SubcellField {
+function latticeField(lattice: Int32Array, i: number, j: number, stride: number): SubcellField {
   const row = NEAR_LATTICE_PER_CHUNK;
   return [
     lattice[j * row + i]!,
@@ -688,31 +642,28 @@ function chunkIsLayered(map: Heightmap, cx: number, cy: number): boolean {
   return false;
 }
 
-/** Bands each near sub-cell of a chunk spans (high − low), row-major. Top surface only. */
+/** Bands each sub-cell of a chunk spans (high − low) at a level, row-major. Top surface only. */
 export function drawnGroundChunkBandSpans(
   map: Heightmap,
   cx: number,
   cy: number,
+  level: number = DRAWN_GROUND_LATTICE_N,
 ): Uint16Array {
+  const stride = strideOf(level);
+  const perSide = CHUNK_SIZE * level;
   const lattice = chunkLattice(map, cx, cy);
-  const out = new Uint16Array(
-    NEAR_SUBCELLS_PER_CHUNK * NEAR_SUBCELLS_PER_CHUNK,
-  );
-  for (let j = 0; j < NEAR_SUBCELLS_PER_CHUNK; j++) {
-    for (let i = 0; i < NEAR_SUBCELLS_PER_CHUNK; i++) {
-      const field = latticeField(lattice, i, j, 1);
-      out[j * NEAR_SUBCELLS_PER_CHUNK + i] = highBand(field) - lowBand(field);
+  const out = new Uint16Array(perSide * perSide);
+  for (let j = 0; j < perSide; j++) {
+    for (let i = 0; i < perSide; i++) {
+      const field = latticeField(lattice, i * stride, j * stride, stride);
+      out[j * perSide + i] = highBand(field) - lowBand(field);
     }
   }
   return out;
 }
 
 /** Worst gap, at near sub-cell centres, between a chunk's near and far surfaces. */
-export function drawnGroundLodError(
-  map: Heightmap,
-  cx: number,
-  cy: number,
-): number {
+export function drawnGroundLodError(map: Heightmap, cx: number, cy: number): number {
   let worst = 0;
   const note = (near: number, far: number): void => {
     const gap = near > far ? near - far : far - near;
@@ -720,11 +671,9 @@ export function drawnGroundLodError(
   };
   if (chunkIsLayered(map, cx, cy)) {
     for (let j = 0; j < NEAR_SUBCELLS_PER_CHUNK; j++) {
-      const y =
-        (cy * NEAR_SUBCELLS_PER_CHUNK + j + 0.5) / DRAWN_GROUND_LATTICE_N;
+      const y = (cy * NEAR_SUBCELLS_PER_CHUNK + j + 0.5) / DRAWN_GROUND_LATTICE_N;
       for (let i = 0; i < NEAR_SUBCELLS_PER_CHUNK; i++) {
-        const x =
-          (cx * NEAR_SUBCELLS_PER_CHUNK + i + 0.5) / DRAWN_GROUND_LATTICE_N;
+        const x = (cx * NEAR_SUBCELLS_PER_CHUNK + i + 0.5) / DRAWN_GROUND_LATTICE_N;
         note(drawnGroundHeight(map, x, y), drawnGroundFarHeight(map, x, y));
       }
     }
@@ -738,12 +687,7 @@ export function drawnGroundLodError(
     const fj = j - (j % FAR_STRIDE);
     for (let i = 0; i < NEAR_SUBCELLS_PER_CHUNK; i++) {
       const fi = i - (i % FAR_STRIDE);
-      const near = bandAtPoint(
-        latticeField(lattice, i, j, 1),
-        centre,
-        centre,
-        nearSteps,
-      );
+      const near = bandAtPoint(latticeField(lattice, i, j, 1), centre, centre, nearSteps);
       const far = bandAtPoint(
         latticeField(lattice, fi, fj, FAR_STRIDE),
         (i - fi) * nearSteps + centre,
