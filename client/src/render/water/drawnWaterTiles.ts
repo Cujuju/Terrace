@@ -8,6 +8,7 @@ import {
   chunksPerEdge,
   drawnGroundHeight,
   drawnGroundSubcell,
+  drawnGroundSubcellBands,
   drawnGroundSubcellIsLayered,
   quantizeToBand,
   type DrawnGroundPoint,
@@ -191,7 +192,7 @@ export function appendDrawnWaterTile(
   const coverKindAt = (sx: number, sz: number): number => {
     if (!carriesWater(sx, sz)) return NOT_COVERED;
     if (drawnGroundSubcellIsLayered(map, sx, sz)) return FULLY_COVERED;
-    return drawnGroundSubcell(map, sx, sz).highBand < band ? FULLY_COVERED : PARTLY_COVERED;
+    return drawnGroundSubcellBands(map, sx, sz).highBand < band ? FULLY_COVERED : PARTLY_COVERED;
   };
 
   const footYBeyond = (sx: number, sz: number, dx: number, dz: number): number | null => {

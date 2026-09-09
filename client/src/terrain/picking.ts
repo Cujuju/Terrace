@@ -12,6 +12,7 @@ import {
   columnSampleAtBand,
   drawnGroundHeight,
   drawnGroundSubcell,
+  drawnGroundSubcellBands,
   drawnGroundSubcellIsLayered,
   isSpanDrawn,
   spanAt,
@@ -555,9 +556,12 @@ function terrainHitInCell(
   marchSubcells(ray, i, j, tEnter, tExit, (su, sv, tFrom, tTo) => {
     // A layered sub-cell is one settled band, flat across it, so no riser cuts it.
     const layered = drawnGroundSubcellIsLayered(mirror.renderMap, su, sv);
-    const splits = layered
-      ? 0
-      : riserSplits(drawnGroundSubcell(mirror.renderMap, su, sv).risers, ray, tFrom, tTo);
+    const bands = layered ? null : drawnGroundSubcellBands(mirror.renderMap, su, sv);
+    // Only a sub-cell that spans a threshold can hold a riser, and only then is the walk worth it.
+    const splits =
+      bands === null || bands.highBand === bands.lowBand
+        ? 0
+        : riserSplits(drawnGroundSubcell(mirror.renderMap, su, sv).risers, ray, tFrom, tTo);
     for (let tread = 0; tread <= splits; tread++) {
       considerTread(
         su,
