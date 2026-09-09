@@ -351,7 +351,8 @@ export const GPU_TERRAIN_VERTEX_BODY_GLSL = `
         : (role == 0 ? 0 : (role == 1 ? 2 : 3));
       local = FIELD_CORNER_POS[corner];
       worldY = capY;
-      vec4 capEntry = bandEntry(bandOfHeight(capHeight), ${glslFloat(BAND_LUT_TERRAIN_ROW)});
+      treadBand = bandOfHeight(capHeight);
+      vec4 capEntry = bandEntry(treadBand, ${glslFloat(BAND_LUT_TERRAIN_ROW)});
       vTerrainColor = capEntry.rgb;
       vSelfLit = capEntry.a;
     } else if (kind == KIND_RISER && slot >= 1 && slot <= 2) {
