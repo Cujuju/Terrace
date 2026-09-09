@@ -7,7 +7,10 @@ import {
   cellIndex,
   chunksPerEdge,
   drawnGroundHeight,
+  drawnGroundSubcell,
+  drawnGroundSubcellIsLayered,
   quantizeToBand,
+  type DrawnGroundPoint,
   type Heightmap,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE } from '../../config.ts';
@@ -36,13 +39,19 @@ const COVER_SPAN = TILE_LATTICE_SPAN + 2 * COVER_MARGIN_SUBCELLS;
 
 const NOT_COVERED = 0;
 
-const COVERED = 1;
+/** The sub-cell carries water over only the tread pieces below the surface band. */
+const PARTLY_COVERED = 1;
+
+/** Every tread of the sub-cell is below the surface band, so the whole square is water. */
+const FULLY_COVERED = 2;
 
 const CARDINAL_SUBCELL_DX: readonly number[] = [0, 1, 0, -1];
 
 const CARDINAL_SUBCELL_DZ: readonly number[] = [-1, 0, 1, 0];
 
 const BLEND_STENCIL_SPAN = 2;
+
+const TRIANGLE_POINTS = 3;
 
 /** Half-sub-cells: the coarsest unit in which sub-cell and cell centres are both integral. */
 const HALF_SUBCELLS_PER_SUBCELL = 2;
@@ -178,6 +187,13 @@ export function appendDrawnWaterTile(
 
   const carriesWater = (sx: number, sz: number): boolean => owningBandAt(sx, sz) === band;
 
+  /** A layered sub-cell keeps the centre rule, so its whole square carries the sheet. */
+  const coverKindAt = (sx: number, sz: number): number => {
+    if (!carriesWater(sx, sz)) return NOT_COVERED;
+    if (drawnGroundSubcellIsLayered(map, sx, sz)) return FULLY_COVERED;
+    return drawnGroundSubcell(map, sx, sz).highBand < band ? FULLY_COVERED : PARTLY_COVERED;
+  };
+
   const footYBeyond = (sx: number, sz: number, dx: number, dz: number): number | null => {
     let lowestWater: number | null = null;
     let lowestGround = surfaceHeight;
@@ -227,13 +243,32 @@ export function appendDrawnWaterTile(
     if (sz < 0 || sz >= latticeSize) continue;
     for (let sx = originX - COVER_MARGIN_SUBCELLS; sx < endX + COVER_MARGIN_SUBCELLS; sx++) {
       if (sx < 0 || sx >= latticeSize) continue;
-      if (!carriesWater(sx, sz)) continue;
       coverage[
         (sz - originZ + COVER_MARGIN_SUBCELLS) * COVER_SPAN +
           (sx - originX + COVER_MARGIN_SUBCELLS)
-      ] = COVERED;
+      ] = coverKindAt(sx, sz);
     }
   }
+
+  /** The sheet's share of a partly covered sub-cell: its treads below the surface band. */
+  const emitSheetPieces = (sx: number, sz: number): void => {
+    const push = (p: DrawnGroundPoint): void => {
+      out.push(cellCoordToWorld(p.x), surfaceY, cellCoordToWorld(p.y));
+    };
+    for (const tread of drawnGroundSubcell(map, sx, sz).treads) {
+      if (tread.band >= band) continue;
+      for (const piece of tread.pieces) {
+        if (piece.length < TRIANGLE_POINTS) continue;
+        // Reversed: the contract walks a tread the other way round from a water quad.
+        const fan = piece[piece.length - 1]!;
+        for (let k = piece.length - 2; k >= 1; k--) {
+          push(fan);
+          push(piece[k]!);
+          push(piece[k - 1]!);
+        }
+      }
+    }
+  };
 
   const emitTread = (run: CoveredRun, endZLattice: number): void => {
     const loX = subcellWorldEdge(run.startX);
@@ -248,18 +283,20 @@ export function appendDrawnWaterTile(
     const row: CoveredRun[] = [];
     let runStart = -1;
     for (let sx = originX; sx <= endX; sx++) {
-      const covered = sx < endX && coverageAt(sx, sz) === COVERED;
-      if (covered && runStart < 0) runStart = sx;
-      if (!covered && runStart >= 0) {
+      const cover = sx < endX ? coverageAt(sx, sz) : NOT_COVERED;
+      const whole = cover === FULLY_COVERED;
+      if (whole && runStart < 0) runStart = sx;
+      if (!whole && runStart >= 0) {
         row.push({ startX: runStart, endX: sx, startZ: sz });
         runStart = -1;
       }
-      if (!covered) continue;
+      if (cover === NOT_COVERED) continue;
+      if (cover === PARTLY_COVERED) emitSheetPieces(sx, sz);
 
       for (let step = 0; step < CARDINAL_SUBCELL_DX.length; step++) {
         const dx = CARDINAL_SUBCELL_DX[step]!;
         const dz = CARDINAL_SUBCELL_DZ[step]!;
-        if (coverageAt(sx + dx, sz + dz) === COVERED) continue;
+        if (coverageAt(sx + dx, sz + dz) !== NOT_COVERED) continue;
         const bottomY = footYBeyond(sx, sz, dx, dz);
         if (bottomY === null || bottomY >= surfaceY) continue;
         const loX = subcellWorldEdge(sx);
