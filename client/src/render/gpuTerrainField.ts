@@ -3,8 +3,10 @@ import {
   BEDROCK_FLOOR,
   CHUNK_SIZE,
   DRAWN_GROUND_FIXPOINT_STEPS,
+  MAX_HEIGHT,
   MAX_SPANS_PER_COLUMN,
   OPEN_COLUMN_SAMPLE,
+  TERRAIN_LOD_FAR_N,
   TERRAIN_LOD_NEAR_N,
 } from '@terrace/shared';
 
@@ -41,6 +43,24 @@ export const FIELD_SAMPLE_TOP = 0;
 
 /** `cellSample` mode: read the column at a band, as `bandSample` does. */
 export const FIELD_SAMPLE_AT_BAND = 1;
+
+const GLSL_INT_MAX = 2 ** 31 - 1;
+
+/** Largest denominator of a crossing after `reduceChords`, at the level with stride `stride`. */
+function maxReducedCrossingDen(stride: number): number {
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const unit = gcd(2 * stride, TERRAIN_LOD_NEAR_N) ** 2;
+  const heightRange = MAX_HEIGHT - OPEN_COLUMN_SAMPLE;
+  return (2 * stride * SUBCELL_DENOM * heightRange) / unit;
+}
+
+// chordSideOfCentre is a difference of two products of reduced denominators.
+for (const stride of [1, TERRAIN_LOD_NEAR_N / TERRAIN_LOD_FAR_N]) {
+  const den = maxReducedCrossingDen(stride);
+  if (2 * den * den > GLSL_INT_MAX) {
+    throw new Error('drawn ground centre tests would overflow GLSL int at this height range');
+  }
+}
 
 /**
  * Mirrors shared/src/drawnGround.ts in GLSL integer arithmetic. Any change to
