@@ -1,6 +1,8 @@
 import {
+  BAND_HEIGHT,
   CELL_CENTRE_OFFSET_CELLS,
   CHUNK_SIZE,
+  DRAWN_GROUND_COORD_DENOM,
   MAX_HEIGHT,
   MIN_HEIGHT,
   TERRAIN_LOD_NEAR_N,
@@ -9,6 +11,8 @@ import {
   chunkIndex,
   columnSampleAtBand,
   drawnGroundHeight,
+  drawnGroundSubcell,
+  drawnGroundSubcellIsLayered,
   isSpanDrawn,
   spanAt,
   spanUndersideHeight,
@@ -16,6 +20,7 @@ import {
   spanCount,
   spanIndexCoveringBand,
   worldToCellCoord,
+  type DrawnGroundRiser,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
@@ -392,6 +397,58 @@ function cellCeilingBound(mirror: TerrainMirror, i: number, j: number): number {
   return hi * HEIGHT_WORLD_SCALE;
 }
 
+const SUBCELL_SIZE_CELLS = 1 / SUBCELLS_PER_CELL;
+
+/** The drawn contract floors every query to this grid, so this stays inside the sub-cell. */
+const COORD_QUANTUM_CELLS = 1 / DRAWN_GROUND_COORD_DENOM;
+
+/** Clamps a cell coordinate into the sub-cell the drawn contract reads it as. */
+function subcellInteriorCells(coord: number, sub: number): number {
+  const lo = sub * SUBCELL_SIZE_CELLS;
+  const hi = lo + SUBCELL_SIZE_CELLS - COORD_QUANTUM_CELLS;
+  return coord < lo ? lo : coord > hi ? hi : coord;
+}
+
+const MAX_BANDS_PER_SUBCELL = Math.ceil((MAX_HEIGHT - MIN_HEIGHT) / BAND_HEIGHT) + 1;
+
+/** A saddle threshold pairs its four crossings into two chords. */
+const MAX_CHORDS_PER_THRESHOLD = 2;
+
+const riserCrossings = new Float64Array(MAX_BANDS_PER_SUBCELL * MAX_CHORDS_PER_THRESHOLD);
+
+/**
+ * Ray parameters, ascending, where the sub-cell's risers cut the ray. Between
+ * them the drawn ground is one flat tread.
+ */
+function riserSplits(
+  risers: readonly DrawnGroundRiser[],
+  ray: ScaledRay,
+  tFrom: number,
+  tTo: number,
+): number {
+  let count = 0;
+  for (const riser of risers) {
+    if (count >= riserCrossings.length) break;
+    const rx = riser.to.x - riser.from.x;
+    const rz = riser.to.y - riser.from.y;
+    const denom = ray.dx * rz - ray.dz * rx;
+    if (denom === 0) continue;
+    const ax = riser.from.x - ray.ox;
+    const az = riser.from.y - ray.oz;
+    const t = (ax * rz - az * rx) / denom;
+    if (!(t > tFrom && t < tTo)) continue;
+    const along = (ax * ray.dz - az * ray.dx) / denom;
+    if (along < 0 || along > 1) continue;
+    let slot = count++;
+    while (slot > 0 && riserCrossings[slot - 1]! > t) {
+      riserCrossings[slot] = riserCrossings[slot - 1]!;
+      slot--;
+    }
+    riserCrossings[slot] = t;
+  }
+  return count;
+}
+
 function terrainHitInCell(
   mirror: TerrainMirror,
   ray: ScaledRay,
@@ -445,18 +502,28 @@ function terrainHitInCell(
     };
   };
 
-  marchSubcells(ray, i, j, tEnter, tExit, (su, sv, tFrom, tTo) => {
-    tIn = tFrom;
-    entryY = oy + tFrom * dy;
-    const exitY = oy + tTo * dy;
+  /** One flat tread of the sub-cell, over the ray span that crosses it. */
+  const considerTread = (
+    su: number,
+    sv: number,
+    layered: boolean,
+    treadFrom: number,
+    treadTo: number,
+  ): void => {
+    tIn = treadFrom;
+    entryY = oy + treadFrom * dy;
+    const exitY = oy + treadTo * dy;
     lowY = entryY < exitY ? entryY : exitY;
     highY = entryY < exitY ? exitY : entryY;
 
-    const drawnHeight = drawnGroundHeight(
-      mirror.renderMap,
-      subcellCentreCells(su),
-      subcellCentreCells(sv),
-    );
+    const midT = (treadFrom + treadTo) / 2;
+    const drawnHeight = layered
+      ? drawnGroundHeight(mirror.renderMap, subcellCentreCells(su), subcellCentreCells(sv))
+      : drawnGroundHeight(
+          mirror.renderMap,
+          subcellInteriorCells(ray.ox + midT * ray.dx, su),
+          subcellInteriorCells(ray.oz + midT * ray.dz, sv),
+        );
     const drawnBand = bandOf(drawnHeight);
     const drawnSpan = spanIndexCoveringBand(map, i, j, drawnBand);
     if (drawnSpan === null) {
@@ -483,7 +550,25 @@ function terrainHitInCell(
         spanUndersideHeight(span) * HEIGHT_WORLD_SCALE,
       );
     }
-    return found !== null;
+  };
+
+  marchSubcells(ray, i, j, tEnter, tExit, (su, sv, tFrom, tTo) => {
+    // A layered sub-cell is one settled band, flat across it, so no riser cuts it.
+    const layered = drawnGroundSubcellIsLayered(mirror.renderMap, su, sv);
+    const splits = layered
+      ? 0
+      : riserSplits(drawnGroundSubcell(mirror.renderMap, su, sv).risers, ray, tFrom, tTo);
+    for (let tread = 0; tread <= splits; tread++) {
+      considerTread(
+        su,
+        sv,
+        layered,
+        tread === 0 ? tFrom : riserCrossings[tread - 1]!,
+        tread === splits ? tTo : riserCrossings[tread]!,
+      );
+      if (found !== null) return true;
+    }
+    return false;
   });
   return found;
 }

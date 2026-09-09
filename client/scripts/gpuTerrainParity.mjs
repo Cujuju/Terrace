@@ -1,5 +1,7 @@
-// Renders the GPU terrain height field into an integer target and compares every
-// texel to shared/src/drawnGround.ts. Zero mismatches is the bar.
+// Renders the shipped contour geometry top-down into an integer target and
+// compares every texel centre to shared/src/drawnGround.ts. Texel centres within
+// PARITY_CHORD_MARGIN_SUBCELLS of a chord are excluded and counted. Zero
+// mismatches among the rest is the bar.
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +21,6 @@ import {
 import { cellIndex, createHeightmap } from '../../shared/src/grid.ts';
 import { BEDROCK_FLOOR, setColumn } from '../../shared/src/columns.ts';
 import { chunkIndex, chunksPerEdge } from '../../shared/src/chunks.ts';
-import { drawnGroundHeight } from '../../shared/src/drawnGround.ts';
 import { carveArchFixture } from '../src/terrain/archFixture.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -288,94 +289,187 @@ function spanEntries(map) {
   return Array.from(map.columnSpans, ([index, packed]) => [index, Array.from(packed)]);
 }
 
-function expectedHeights(map, subdivision) {
-  const span = CHUNK_SIZE * subdivision;
-  const side = map.size * subdivision;
-  const out = new Int32Array(side * side);
-  for (let py = 0; py < side; py++) {
-    const cy = Math.floor(py / span);
-    const y = cy * CHUNK_SIZE + (py - cy * span + 0.5) / subdivision;
-    for (let px = 0; px < side; px++) {
-      const cx = Math.floor(px / span);
-      const x = cx * CHUNK_SIZE + (px - cx * span + 0.5) / subdivision;
-      out[py * side + px] = drawnGroundHeight(map, x, y);
-    }
-  }
-  return out;
-}
+// ---------------------------------------------------------------------------
+// The gate. The page renders the shipped contour geometry top-down into an
+// RGBA32I target and compares every texel centre with the drawn contract.
+// ---------------------------------------------------------------------------
+
+/** Texels per sub-cell edge. A vertex misplaced by a texel has to show up here. */
+const PARITY_TEXELS_PER_SUBCELL = 64;
+
+/** Sub-cells per render pass, so one target stays at 1024 x 1024 RGBA32I. */
+const PARITY_TILE_SUBCELLS = 16;
+
+/** A quarter texel: well above the rasteriser's 1/256-pixel snap, well below a texel. */
+const PARITY_CHORD_MARGIN_SUBCELLS = 1 / 256;
+
+/**
+ * Per chord in a sub-cell: its excluded strip is at most 2 * sqrt(2) * margin
+ * wide over at most sqrt(2) of length, so this much of the sub-cell's area.
+ */
+const PARITY_MAX_EXCLUDED_PER_CHORD = 4 * PARITY_CHORD_MARGIN_SUBCELLS;
+
+/** A saddle threshold has two chords, so a sub-cell holds at most this many per band. */
+const PARITY_CHORDS_PER_BAND = 2;
+
+/** Clear value, below every drawable height, so a bare texel cannot read as one. */
+const PARITY_EMPTY_HEIGHT = MIN_HEIGHT - 1;
+
+/** Risers say nothing from above; they carry this and the fragment drops them. */
+const PARITY_RISER_HEIGHT = MIN_HEIGHT - 2;
+
+const CAMERA_HEIGHT_WORLD = 128;
+const CAMERA_NEAR_WORLD = 1;
+const CAMERA_FAR_WORLD = 256;
+
+const INSTANCE_COMPONENTS = 2;
 
 const PROBE_PAGE = `<!doctype html><meta charset="utf-8"><title>gpu terrain parity</title>
 <script type="module" src="/probe.js"></script>`;
 
 const PROBE_SCRIPT = `
 import * as THREE from 'three';
-import { GPU_TERRAIN_FIELD_GLSL } from 'gpuTerrainField';
-import { createColumnSpanTextures, createHeightTexture } from 'gpuTerrainTextures';
+import {
+  BAND_HEIGHT,
+  CELL_CENTRE_OFFSET_CELLS,
+  drawnGroundChunkBandSpans,
+  drawnGroundFarHeight,
+  drawnGroundHeight,
+  drawnGroundSubcell,
+  drawnGroundSubcellIsLayered,
+} from '@terrace/shared';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from 'clientConfig';
+import {
+  createBandPaletteTexture,
+  createColumnSpanTextures,
+  createHeightTexture,
+} from 'gpuTerrainTextures';
+import {
+  BASE_CLASS_STEPS,
+  CLASS_STEPS_UNIFORM,
+  DRAWS_LAYERED_UNIFORM,
+  GPU_TERRAIN_NON_TREAD_BAND,
+  GPU_TERRAIN_VERTEX_ATTRIBUTES_GLSL,
+  GPU_TERRAIN_VERTEX_BODY_GLSL,
+  GPU_TERRAIN_VERTEX_HEAD_GLSL,
+  LAYERED_OVERLAY_CLASS,
+  PALETTE_UNIFORM,
+  SMOOTH_UNIFORM,
+  SUBDIVISION_UNIFORM,
+  createChunkTemplate,
+  overlayClassCap,
+} from 'gpuTerrainMaterial';
 
-const VERTEX = \`in vec3 position;
-void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }\`;
+const CHUNK_CELLS = ${CHUNK_SIZE};
+const LATTICE_N = ${TERRAIN_LOD_NEAR_N};
+const TEXELS_PER_SUBCELL = ${PARITY_TEXELS_PER_SUBCELL};
+const TILE_SUBCELLS = ${PARITY_TILE_SUBCELLS};
+const CHORD_MARGIN = ${PARITY_CHORD_MARGIN_SUBCELLS};
+const CHORDS_PER_BAND = ${PARITY_CHORDS_PER_BAND};
+const EMPTY_HEIGHT = ${PARITY_EMPTY_HEIGHT};
+const NON_TREAD_BAND = GPU_TERRAIN_NON_TREAD_BAND;
+const CAMERA_HEIGHT = ${CAMERA_HEIGHT_WORLD};
+const CAMERA_NEAR = ${CAMERA_NEAR_WORLD};
+const CAMERA_FAR = ${CAMERA_FAR_WORLD};
+const INSTANCE_COMPONENTS = ${INSTANCE_COMPONENTS};
+const TARGET_SIDE = TILE_SUBCELLS * TEXELS_PER_SUBCELL;
 
-const FRAGMENT = \`precision highp float;
+const VERTEX_PREAMBLE = \`precision highp float;
 precision highp int;
-uniform float uSubdiv;
-uniform float uChunkCells;
-\${GPU_TERRAIN_FIELD_GLSL}
+#define attribute in
+#define varying out
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+attribute vec3 position;
+\`;
+
+const PARITY_VERTEX =
+  VERTEX_PREAMBLE +
+  GPU_TERRAIN_VERTEX_ATTRIBUTES_GLSL +
+  GPU_TERRAIN_VERTEX_HEAD_GLSL +
+  \`
+flat out int vParityBand;
+void main() {
+\${GPU_TERRAIN_VERTEX_BODY_GLSL}
+  vParityBand = treadBand;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+\`;
+
+const PARITY_FRAGMENT = \`precision highp float;
+precision highp int;
+flat in int vParityBand;
 layout(location = 0) out ivec4 outHeight;
 void main() {
-  int span = int(uChunkCells * uSubdiv);
-  ivec2 px = ivec2(gl_FragCoord.xy);
-  int cx = px.x / span;
-  int cy = px.y / span;
-  vec2 chunkOrigin = vec2(float(cx), float(cy)) * uChunkCells;
-  vec2 sub = vec2(float(px.x - cx * span), float(px.y - cy * span));
-  outHeight = ivec4(drawnGroundHeight(chunkOrigin + (sub + 0.5) / uSubdiv), 0, 0, 0);
-}\`;
+  if (vParityBand == \${NON_TREAD_BAND}) discard;
+  outHeight = ivec4(vParityBand * \${BAND_HEIGHT}, 0, 0, 0);
+}
+\`;
+
+// An integer target cannot be gl.clear()ed, so a quad lays the sentinel down first.
+const EMPTY_VERTEX = \`precision highp float;
+in vec3 position;
+void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
+\`;
+
+const EMPTY_FRAGMENT = \`precision highp float;
+precision highp int;
+layout(location = 0) out ivec4 outHeight;
+void main() { outHeight = ivec4(\${EMPTY_HEIGHT}, 0, 0, 0); }
+\`;
+
+const errors = [];
+window.addEventListener('error', (e) => errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+// three reports a failed shader compile through console.error and nowhere else.
+const baseConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  errors.push(args.map(String).join(' '));
+  baseConsoleError(...args);
+};
+window.__errors = () => errors;
 
 const canvas = document.createElement('canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
 renderer.autoClear = false;
-const scene = new THREE.Scene();
-const camera = new THREE.Camera();
-const uniforms = {
-  uSubdiv: { value: 1 },
-  uChunkCells: { value: 0 },
-  uSizeCells: { value: 0 },
-  uHeight: { value: null },
-  uChunkSpanBlock: { value: null },
-  uColumnSpans: { value: null },
-  uWorldHasSpans: { value: 0 },
-};
-const material = new THREE.RawShaderMaterial({
-  vertexShader: VERTEX,
-  fragmentShader: FRAGMENT,
+
+const emptyMaterial = new THREE.RawShaderMaterial({
+  vertexShader: EMPTY_VERTEX,
+  fragmentShader: EMPTY_FRAGMENT,
   glslVersion: THREE.GLSL3,
   blending: THREE.NoBlending,
   depthTest: false,
   depthWrite: false,
-  uniforms,
 });
-scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+const emptyMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), emptyMaterial);
+emptyMesh.frustumCulled = false;
+emptyMesh.renderOrder = -1;
+
+const palette = createBandPaletteTexture();
+const cellCoordToWorld = (c) => (c - CELL_CENTRE_OFFSET_CELLS) * CELL_WORLD_SIZE;
 
 let state = null;
 
 // The span store re-points its own sampler when it grows, so re-read every time.
 const syncSpanUniforms = () => {
   for (const name of ['uChunkSpanBlock', 'uColumnSpans', 'uWorldHasSpans']) {
-    uniforms[name].value = state.spans.uniforms[name].value;
+    state.uniforms[name] = state.spans.uniforms[name];
   }
 };
 
 const uploadChunksOver = (x, y, w, h) => {
-  const chunkCells = state.chunkCells;
-  const first = { x: Math.floor(x / chunkCells), y: Math.floor(y / chunkCells) };
-  const last = { x: Math.floor((x + w - 1) / chunkCells), y: Math.floor((y + h - 1) / chunkCells) };
+  const first = { x: Math.floor(x / CHUNK_CELLS), y: Math.floor(y / CHUNK_CELLS) };
+  const last = {
+    x: Math.floor((x + w - 1) / CHUNK_CELLS),
+    y: Math.floor((y + h - 1) / CHUNK_CELLS),
+  };
   for (let cy = first.y; cy <= last.y; cy++) {
     for (let cx = first.x; cx <= last.x; cx++) state.spans.uploadChunk(renderer, cx, cy);
   }
   syncSpanUniforms();
 };
 
-window.__load = (cells, size, chunkCells, spans) => {
+window.__load = (cells, size, spans) => {
   if (state !== null) {
     state.height.dispose();
     state.spans.dispose();
@@ -383,10 +477,18 @@ window.__load = (cells, size, chunkCells, spans) => {
   const columnSpans = new Map(spans.map(([index, packed]) => [index, Int16Array.from(packed)]));
   const map = { size, cells: Int16Array.from(cells), columnSpans };
   const height = createHeightTexture(map);
-  state = { map, height, spans: createColumnSpanTextures(map), chunkCells };
-  uniforms.uHeight.value = height.texture;
-  uniforms.uSizeCells.value = size;
-  uniforms.uChunkCells.value = chunkCells;
+  const spanTextures = createColumnSpanTextures(map);
+  state = {
+    map,
+    height,
+    spans: spanTextures,
+    uniforms: {
+      uHeight: { value: height.texture },
+      uSizeCells: { value: size },
+      [PALETTE_UNIFORM]: { value: palette },
+      [SMOOTH_UNIFORM]: { value: 0 },
+    },
+  };
   uploadChunksOver(0, 0, size, size);
   return true;
 };
@@ -406,27 +508,240 @@ window.__writeRect = (x, y, w, h, cells, spans) => {
   return true;
 };
 
-window.__probe = (subdiv) => {
-  const side = state.map.size * subdiv;
-  const target = new THREE.WebGLRenderTarget(side, side, {
+/** Smallest class that draws a sub-cell: the base pass, the layered class, or an overlay. */
+const classOf = (bandSpan, layered) => {
+  if (layered) return LAYERED_OVERLAY_CLASS;
+  if (bandSpan <= BASE_CLASS_STEPS) return BASE_CLASS_STEPS;
+  return overlayClassCap(bandSpan);
+};
+
+/** Corner 0 of the far sub-cell at (fx, fz): the band of the lattice corner they share. */
+const farCornerBand = (map, fx, fz) => drawnGroundFarHeight(map, fx, fz) / BAND_HEIGHT;
+
+const bandSpanAt = (map, sx, sz, subdiv, nearSpans, i, j) => {
+  if (subdiv === LATTICE_N) return nearSpans[j * CHUNK_CELLS * LATTICE_N + i];
+  const a = farCornerBand(map, sx, sz);
+  const b = farCornerBand(map, sx, sz + 1);
+  const c = farCornerBand(map, sx + 1, sz + 1);
+  const d = farCornerBand(map, sx + 1, sz);
+  return Math.max(a, b, c, d) - Math.min(a, b, c, d);
+};
+
+/** A sub-cell blends exactly the cells its near sub-cells blend, so OR them. */
+const isLayeredAt = (map, sx, sz, subdiv) => {
+  const stride = LATTICE_N / subdiv;
+  for (let j = 0; j < stride; j++) {
+    for (let i = 0; i < stride; i++) {
+      if (drawnGroundSubcellIsLayered(map, sx * stride + i, sz * stride + j)) return true;
+    }
+  }
+  return false;
+};
+
+const referenceHeight = (subdiv) =>
+  subdiv === LATTICE_N ? drawnGroundHeight : drawnGroundFarHeight;
+
+/** Base instance for the chunk, plus one overlay instance per sub-cell that needs a class. */
+function passesFor(map, cx, cy, subdiv) {
+  const span = CHUNK_CELLS * subdiv;
+  const nearSpans = subdiv === LATTICE_N ? drawnGroundChunkBandSpans(map, cx, cy) : null;
+  const byClass = new Map();
+  for (let j = 0; j < span; j++) {
+    for (let i = 0; i < span; i++) {
+      const sx = cx * span + i;
+      const sz = cy * span + j;
+      const layered = isLayeredAt(map, sx, sz, subdiv);
+      const steps = classOf(bandSpanAt(map, sx, sz, subdiv, nearSpans, i, j), layered);
+      if (steps === BASE_CLASS_STEPS && !layered) continue;
+      const list = byClass.get(steps) ?? [];
+      list.push(sx / subdiv, sz / subdiv);
+      byClass.set(steps, list);
+    }
+  }
+  const passes = [
+    { steps: BASE_CLASS_STEPS, cells: CHUNK_CELLS, origins: [cx * CHUNK_CELLS, cy * CHUNK_CELLS] },
+  ];
+  for (const [steps, origins] of Array.from(byClass).sort((a, b) => a[0] - b[0])) {
+    passes.push({ steps, cells: 1 / subdiv, origins });
+  }
+  return passes;
+}
+
+function buildScene(passes, subdiv) {
+  const scene = new THREE.Scene();
+  scene.add(emptyMesh);
+  const disposables = [];
+  for (const pass of passes) {
+    const { geometry } = createChunkTemplate(subdiv, pass.steps, pass.cells);
+    const origins = new THREE.InstancedBufferAttribute(
+      Float32Array.from(pass.origins),
+      INSTANCE_COMPONENTS,
+    );
+    geometry.setAttribute('aChunk', origins);
+    geometry.instanceCount = pass.origins.length / INSTANCE_COMPONENTS;
+    const material = new THREE.RawShaderMaterial({
+      vertexShader: PARITY_VERTEX,
+      fragmentShader: PARITY_FRAGMENT,
+      glslVersion: THREE.GLSL3,
+      side: THREE.DoubleSide,
+      blending: THREE.NoBlending,
+      uniforms: {
+        ...state.uniforms,
+        [SUBDIVISION_UNIFORM]: { value: subdiv },
+        [CLASS_STEPS_UNIFORM]: { value: pass.steps },
+        [DRAWS_LAYERED_UNIFORM]: { value: pass.steps === LAYERED_OVERLAY_CLASS ? 1 : 0 },
+      },
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    disposables.push(geometry, material);
+  }
+  return { scene, disposables };
+}
+
+/** Chords of one near sub-cell, in sub-cell local units, as flat [ax, az, bx, bz, ...]. */
+function localChords(map, sx, sz) {
+  const flat = [];
+  for (const riser of drawnGroundSubcell(map, sx, sz).risers) {
+    flat.push(
+      riser.from.x * LATTICE_N - sx,
+      riser.from.y * LATTICE_N - sz,
+      riser.to.x * LATTICE_N - sx,
+      riser.to.y * LATTICE_N - sz,
+    );
+  }
+  return flat;
+}
+
+/**
+ * The same margin as the chord test, measured against the reference: a chord
+ * within it crosses the box, so a corner disagrees. The far level has no
+ * exported sub-cell to read chords from.
+ */
+function referenceVariesNearby(reference, map, x, z, margin, want) {
+  return (
+    reference(map, x - margin, z - margin) !== want ||
+    reference(map, x + margin, z - margin) !== want ||
+    reference(map, x - margin, z + margin) !== want ||
+    reference(map, x + margin, z + margin) !== want
+  );
+}
+
+/** Each chord is four numbers: both ends, in sub-cell local units. */
+const CHORD_POINT_STRIDE = 4;
+
+function nearAChord(flat, lx, lz) {
+  for (let k = 0; k < flat.length; k += CHORD_POINT_STRIDE) {
+    const ax = flat[k];
+    const az = flat[k + 1];
+    const ex = flat[k + 2] - ax;
+    const ez = flat[k + 3] - az;
+    const len2 = ex * ex + ez * ez;
+    let t = len2 === 0 ? 0 : ((lx - ax) * ex + (lz - az) * ez) / len2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = lx - (ax + t * ex);
+    const dz = lz - (az + t * ez);
+    if (dx * dx + dz * dz < CHORD_MARGIN * CHORD_MARGIN) return true;
+  }
+  return false;
+}
+
+window.__parity = (subdiv, cx, cy) => {
+  const map = state.map;
+  const reference = referenceHeight(subdiv);
+  const chordsExported = subdiv === LATTICE_N;
+  const margin = CHORD_MARGIN / subdiv;
+  const { scene, disposables } = buildScene(passesFor(map, cx, cy, subdiv), subdiv);
+  const target = new THREE.WebGLRenderTarget(TARGET_SIDE, TARGET_SIDE, {
     format: THREE.RGBAIntegerFormat,
     type: THREE.IntType,
     internalFormat: 'RGBA32I',
     minFilter: THREE.NearestFilter,
     magFilter: THREE.NearestFilter,
-    depthBuffer: false,
+    depthBuffer: true,
     stencilBuffer: false,
   });
-  uniforms.uSubdiv.value = subdiv;
-  renderer.setRenderTarget(target);
-  renderer.render(scene, camera);
-  const raw = new Int32Array(side * side * 4);
-  renderer.readRenderTargetPixels(target, 0, 0, side, side, raw);
-  renderer.setRenderTarget(null);
+  const raw = new Int32Array(TARGET_SIDE * TARGET_SIDE * 4);
+  const cellsPerTile = TILE_SUBCELLS / subdiv;
+  const cellsPerTexel = cellsPerTile / TARGET_SIDE;
+  const tiles = (CHUNK_CELLS * subdiv) / TILE_SUBCELLS;
+  const half = (cellsPerTile * CELL_WORLD_SIZE) / 2;
+
+  let samples = 0;
+  let excluded = 0;
+  let mismatches = 0;
+  let chords = 0;
+  let subcells = 0;
+  let worst = null;
+
+  for (let tj = 0; tj < tiles; tj++) {
+    for (let ti = 0; ti < tiles; ti++) {
+      const subX = (cx * CHUNK_CELLS * subdiv) + ti * TILE_SUBCELLS;
+      const subZ = (cy * CHUNK_CELLS * subdiv) + tj * TILE_SUBCELLS;
+      const x0 = subX / subdiv;
+      const z0 = subZ / subdiv;
+
+      // Top and bottom are swapped so readback row 0 is the low-Z edge.
+      const camera = new THREE.OrthographicCamera(-half, half, -half, half, CAMERA_NEAR, CAMERA_FAR);
+      camera.position.set(cellCoordToWorld(x0) + half, CAMERA_HEIGHT, cellCoordToWorld(z0) + half);
+      camera.rotation.set(-Math.PI / 2, 0, 0);
+      camera.updateMatrixWorld(true);
+      camera.updateProjectionMatrix();
+
+      renderer.setRenderTarget(target);
+      renderer.clear(false, true, false);
+      renderer.render(scene, camera);
+      renderer.readRenderTargetPixels(target, 0, 0, TARGET_SIDE, TARGET_SIDE, raw);
+      renderer.setRenderTarget(null);
+
+      const tileChords = [];
+      for (let j = 0; j < TILE_SUBCELLS; j++) {
+        for (let i = 0; i < TILE_SUBCELLS; i++) {
+          subcells++;
+          if (!chordsExported) {
+            chords += CHORDS_PER_BAND * bandSpanAt(map, subX + i, subZ + j, subdiv, null, i, j);
+            continue;
+          }
+          const flat = localChords(map, subX + i, subZ + j);
+          chords += flat.length / CHORD_POINT_STRIDE;
+          tileChords.push(flat);
+        }
+      }
+
+      for (let py = 0; py < TARGET_SIDE; py++) {
+        const cellZ = z0 + (py + 0.5) * cellsPerTexel;
+        const sj = (py / TEXELS_PER_SUBCELL) | 0;
+        const lz = (py % TEXELS_PER_SUBCELL + 0.5) / TEXELS_PER_SUBCELL;
+        for (let px = 0; px < TARGET_SIDE; px++) {
+          samples++;
+          const si = (px / TEXELS_PER_SUBCELL) | 0;
+          const lx = (px % TEXELS_PER_SUBCELL + 0.5) / TEXELS_PER_SUBCELL;
+          if (chordsExported && nearAChord(tileChords[sj * TILE_SUBCELLS + si], lx, lz)) {
+            excluded++;
+            continue;
+          }
+          const cellX = x0 + (px + 0.5) * cellsPerTexel;
+          const want = reference(map, cellX, cellZ);
+          if (!chordsExported && referenceVariesNearby(reference, map, cellX, cellZ, margin, want)) {
+            excluded++;
+            continue;
+          }
+          const got = raw[(py * TARGET_SIDE + px) * 4];
+          if (got === want) continue;
+          mismatches++;
+          const delta = Math.abs(got - want);
+          if (worst === null || delta > worst.delta) {
+            worst = { x: cellX, y: cellZ, gpu: got, expected: want, delta };
+          }
+        }
+      }
+    }
+  }
+
   target.dispose();
-  const out = new Int32Array(side * side);
-  for (let i = 0; i < out.length; i++) out[i] = raw[i * 4];
-  return Array.from(out);
+  for (const item of disposables) item.dispose();
+  return { samples, excluded, mismatches, chords, subcells, worst };
 };
 
 window.__renderer = () => {
@@ -451,7 +766,9 @@ async function startVite(scratch) {
       alias: {
         three: join(CLIENT_ROOT, 'node_modules/three/build/three.module.js'),
         '@terrace/shared': join(REPO_ROOT, 'shared/src/index.ts'),
+        clientConfig: join(CLIENT_ROOT, 'src/config.ts'),
         gpuTerrainField: join(CLIENT_ROOT, 'src/render/gpuTerrainField.ts'),
+        gpuTerrainMaterial: join(CLIENT_ROOT, 'src/render/gpuTerrainMaterial.ts'),
         gpuTerrainTextures: join(CLIENT_ROOT, 'src/render/gpuTerrainTextures.ts'),
       },
     },
@@ -522,18 +839,10 @@ async function startChrome() {
   return { ws, cleanup };
 }
 
-function compare(label, gpu, expected) {
-  let mismatches = 0;
-  let worst = null;
-  for (let i = 0; i < expected.length; i++) {
-    if (gpu[i] === expected[i]) continue;
-    mismatches++;
-    const delta = Math.abs(gpu[i] - expected[i]);
-    if (worst === null || delta > worst.delta) {
-      worst = { index: i, gpu: gpu[i], expected: expected[i], delta };
-    }
-  }
-  return { label, samples: expected.length, mismatches, worst };
+/** Every layered fixture centres its feature, so the centre chunk is the interesting one. */
+function parityChunk(size) {
+  const middle = Math.floor(chunksPerEdge(size) / 2);
+  return { cx: middle, cy: middle };
 }
 
 async function main() {
@@ -555,7 +864,9 @@ async function main() {
   ws.addEventListener('message', (event) => {
     const msg = JSON.parse(event.data);
     if (msg.method === 'Runtime.exceptionThrown') {
-      pageErrors.push(msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text);
+      pageErrors.push(
+        msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text,
+      );
     }
   });
   await rpc(ws, 'Page.navigate', { url: `http://127.0.0.1:${port}/` }, sessionId);
@@ -587,7 +898,7 @@ async function main() {
 
   const load = (map) =>
     evaluate(
-      `window.__load(${JSON.stringify(Array.from(map.cells))}, ${map.size}, ${CHUNK_SIZE},` +
+      `window.__load(${JSON.stringify(Array.from(map.cells))}, ${map.size},` +
         ` ${JSON.stringify(spanEntries(map))})`,
     );
   const writeChunk = (rect) =>
@@ -597,17 +908,24 @@ async function main() {
     );
 
   const results = [];
+  const blocked = new Set();
+  const probe = async (label, subdiv, chunk) => {
+    try {
+      const r = await evaluate(`window.__parity(${subdiv}, ${chunk.cx}, ${chunk.cy})`);
+      results.push({ label: `${label} N=${subdiv}`, ...r });
+    } catch (error) {
+      blocked.add(`N=${subdiv}: ${String(error.message).split('\n')[0]}`);
+    }
+  };
+
   for (const { name, map } of [...patchMaps(), ...layeredMaps()]) {
     await load(map);
-    for (const subdiv of SUBDIVISIONS) {
-      const gpu = await evaluate(`window.__probe(${subdiv})`);
-      results.push(compare(`${name} N=${subdiv}`, gpu, expectedHeights(map, subdiv)));
-    }
+    const chunk = parityChunk(map.size);
+    for (const subdiv of SUBDIVISIONS) await probe(name, subdiv, chunk);
   }
 
   const { map } = patchMaps()[0];
   await load(map);
-  await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
   const rect = { x: SCULPT_CHUNK.cx * CHUNK_SIZE, y: SCULPT_CHUNK.cy * CHUNK_SIZE };
   const patchCells = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
   for (let j = 0; j < CHUNK_SIZE; j++) {
@@ -618,50 +936,60 @@ async function main() {
     }
   }
   await writeChunk({ x: rect.x, y: rect.y, cells: patchCells, spans: [] });
-  const sculpted = await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
-  results.push(
-    compare('frostwick after rect upload N=4', sculpted, expectedHeights(map, TERRAIN_LOD_NEAR_N)),
-  );
+  await probe('frostwick after rect upload', TERRAIN_LOD_NEAR_N, SCULPT_CHUNK);
 
   // Freeing a chunk's span block and allocating one for a chunk that had none.
   const layered = overhangPlateau(baseTerrain(LAYERED_SIZE));
   await load(layered);
-  await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
   await writeChunk(sculptChunk(layered, SPAN_FREED_CHUNK, flattenColumn));
   await writeChunk(sculptChunk(layered, SPAN_ADDED_CHUNK, raiseOverhang));
-  const relayered = await evaluate(`window.__probe(${TERRAIN_LOD_NEAR_N})`);
-  results.push(
-    compare(
-      'overhangs after span upload N=4',
-      relayered,
-      expectedHeights(layered, TERRAIN_LOD_NEAR_N),
-    ),
-  );
+  await probe('overhangs after span free', TERRAIN_LOD_NEAR_N, SPAN_FREED_CHUNK);
+  await probe('overhangs after span add', TERRAIN_LOD_NEAR_N, SPAN_ADDED_CHUNK);
 
+  const pageLog = await evaluate('window.__errors()');
   shutdown();
 
   let samples = 0;
+  let excluded = 0;
   let mismatches = 0;
+  let overExcluded = 0;
   let worst = null;
   for (const r of results) {
     samples += r.samples;
+    excluded += r.excluded;
     mismatches += r.mismatches;
+    const fraction = r.excluded / r.samples;
+    const allowed = Math.min(1, (PARITY_MAX_EXCLUDED_PER_CHORD * r.chords) / r.subcells);
+    if (fraction > allowed) overExcluded++;
     if (r.worst !== null && (worst === null || r.worst.delta > worst.delta)) {
       worst = { ...r.worst, label: r.label };
     }
     console.log(
-      `${r.label.padEnd(34)} samples ${String(r.samples).padStart(6)}  mismatches ${r.mismatches}`,
+      `${r.label.padEnd(34)} samples ${String(r.samples).padStart(9)}` +
+        `  excluded ${(fraction * 100).toFixed(3)}% of ${(allowed * 100).toFixed(3)}%` +
+        `  mismatches ${r.mismatches}`,
     );
   }
-  console.log(`\ntotal samples ${samples}, mismatches ${mismatches}`);
+  const excludedPercent = samples === 0 ? 0 : (excluded / samples) * 100;
+  console.log(
+    `\ntotal samples ${samples}, excluded ${excludedPercent.toFixed(3)}%,` +
+      ` mismatches ${mismatches}`,
+  );
+  if (overExcluded > 0) {
+    console.log(`${overExcluded} label(s) excluded more than their chords can account for`);
+  }
   if (worst !== null) {
     console.log(
-      `worst: ${worst.label} texel ${worst.index} gpu ${worst.gpu} expected ${worst.expected} (delta ${worst.delta})`,
+      `worst: ${worst.label} at cell ${worst.x.toFixed(5)},${worst.y.toFixed(5)}` +
+        ` gpu ${worst.gpu} expected ${worst.expected} (delta ${worst.delta})`,
     );
   }
+  for (const reason of blocked) console.log(`blocked ${reason}`);
+  for (const message of pageLog) console.log(`page: ${message}`);
   if (pageErrors.length > 0) console.log(`page errors: ${pageErrors.join(' | ')}`);
-  console.log(mismatches === 0 ? 'PASS' : 'FAIL');
-  process.exit(mismatches === 0 ? 0 : 1);
+  const passed = mismatches === 0 && overExcluded === 0 && blocked.size === 0 && results.length > 0;
+  console.log(passed ? 'PASS' : 'FAIL');
+  process.exit(passed ? 0 : 1);
 }
 
 await main();
