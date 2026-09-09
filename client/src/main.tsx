@@ -105,7 +105,12 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
 viewport.start();
 bindCameraControls(canvas, viewport.controls);
 
-const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
+/** `?plugins=0` mounts no client plugins; pair it with an empty PLUGINS_DIR on the server. */
+const NO_PLUGINS_QUERY_FLAG = 'plugins';
+const pluginsDisabled =
+  new URLSearchParams(window.location.search).get(NO_PLUGINS_QUERY_FLAG) === '0';
+
+const pluginHost = createClientPluginHost(pluginsDisabled ? [] : CLIENT_PLUGINS, {
   viewport,
   world,
   connection: () => connection,
