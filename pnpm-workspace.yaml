@@ -3,3 +3,13 @@ packages:
   - client
   - server
   - plugins/*
+
+supportedArchitectures:
+  os:
+    - win32
+    - linux
+  cpu:
+    - x64
+
+onlyBuiltDependencies:
+  - better-sqlite3
