@@ -343,36 +343,40 @@ export const GPU_TERRAIN_VERTEX_BODY_GLSL = `
 
   if (mine && layered) {
     // The lattice rule: one settled band, flat across the sub-cell, four skirts.
-    int capHeight = drawnGroundHeight(originCell + pitch * 0.5);
-    float capY = float(capHeight) * HEIGHT_WORLD_SCALE;
+    int capBand = subcellSettledBand(lx0, ly0, stride);
+    float capY = float(capBand * FIELD_BAND_HEIGHT) * HEIGHT_WORLD_SCALE;
     if (kind == KIND_TREAD && slot == 0 && part < 2) {
       int corner = part == 0
         ? (role == 0 ? 0 : (role == 1 ? 1 : 2))
         : (role == 0 ? 0 : (role == 1 ? 2 : 3));
       local = FIELD_CORNER_POS[corner];
       worldY = capY;
-      treadBand = bandOfHeight(capHeight);
+      treadBand = capBand;
       vec4 capEntry = bandEntry(treadBand, ${glslFloat(BAND_LUT_TERRAIN_ROW)});
       vTerrainColor = capEntry.rgb;
       vSelfLit = capEntry.a;
     } else if (kind == KIND_RISER && slot >= 1 && slot <= 2) {
       int edge = (slot - 1) * 2 + part;
       vec2 outward = EDGE_OUTWARD[edge];
-      float neighbourY =
-        float(drawnGroundHeight(originCell + pitch * 0.5 + outward * pitch)) * HEIGHT_WORLD_SCALE;
-      float skirtLow = min(capY, neighbourY);
-      if (onChunkBorder(subIndex, edge)) {
-        ivec2 pA = ivec2(
-          lx0 + int(FIELD_CORNER_POS[edge].x) * stride,
-          ly0 + int(FIELD_CORNER_POS[edge].y) * stride
-        );
-        int nextCorner = (edge + 1) % FIELD_CORNERS;
-        ivec2 pB = ivec2(
-          lx0 + int(FIELD_CORNER_POS[nextCorner].x) * stride,
-          ly0 + int(FIELD_CORNER_POS[nextCorner].y) * stride
-        );
-        skirtLow = min(skirtLow, lowestSurfaceAlongEdge(pA, pB));
-      }
+      int neighbourBand = subcellSettledBand(
+        lx0 + int(outward.x) * stride,
+        ly0 + int(outward.y) * stride,
+        stride
+      );
+      // The wall hangs from this sub-cell's cap to whatever either side can show.
+      int nextCorner = (edge + 1) % FIELD_CORNERS;
+      ivec2 pA = ivec2(
+        lx0 + int(FIELD_CORNER_POS[edge].x) * stride,
+        ly0 + int(FIELD_CORNER_POS[edge].y) * stride
+      );
+      ivec2 pB = ivec2(
+        lx0 + int(FIELD_CORNER_POS[nextCorner].x) * stride,
+        ly0 + int(FIELD_CORNER_POS[nextCorner].y) * stride
+      );
+      float skirtLow = min(
+        min(capY, float(neighbourBand * FIELD_BAND_HEIGHT) * HEIGHT_WORLD_SCALE),
+        lowestSurfaceAlongEdge(pA, pB)
+      );
       vec2 p0 = FIELD_CORNER_POS[edge];
       vec2 p1 = FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS];
       local = (role == 0 || role == 3) ? p0 : p1;
