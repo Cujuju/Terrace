@@ -163,9 +163,10 @@ int latticeFirstCell(int l) {
   return floorDivPositive(2 * l - LATTICE_N, SUBCELL_DENOM);
 }
 
-// The blend at a half-lattice offset, over BLEND_DENOM. A lattice corner sits
-// at q = 2l - LATTICE_N; a sub-cell centre sits half a stride past its low corner.
-int numeratorAtOffset(int qx, int qy, int mode, int band) {
+// Exact bilinear numerator at lattice corner (lx, ly), over BLEND_DENOM.
+int cornerNumerator(int lx, int ly, int mode, int band) {
+  int qx = 2 * lx - LATTICE_N;
+  int qy = 2 * ly - LATTICE_N;
   int baseX = floorDivPositive(qx, SUBCELL_DENOM);
   int baseY = floorDivPositive(qy, SUBCELL_DENOM);
   int fx = qx - baseX * SUBCELL_DENOM;
@@ -179,11 +180,6 @@ int numeratorAtOffset(int qx, int qy, int mode, int band) {
     fx * (SUBCELL_DENOM - fy) * cellSample(x1, y0, mode, band) +
     (SUBCELL_DENOM - fx) * fy * cellSample(x0, y1, mode, band) +
     fx * fy * cellSample(x1, y1, mode, band);
-}
-
-// Exact bilinear numerator at lattice corner (lx, ly).
-int cornerNumerator(int lx, int ly, int mode, int band) {
-  return numeratorAtOffset(2 * lx - LATTICE_N, 2 * ly - LATTICE_N, mode, band);
 }
 
 int bandOfNumerator(int numerator) {
@@ -439,15 +435,120 @@ vec2 treadFanVertex(TreadFan fan, int tri, int role) {
   return fan.points[0];
 }
 
-// drawnGround.ts settleAtCentre: a layered sub-cell's one settled band, read at
-// its own centre, so a far sub-cell settles over its own stride-4 footprint.
+// Every corner numerator at this level carries the lattice weight factor
+// gcd(2·stride, LATTICE_N)², so crossings reduce by it and the centre tests
+// below multiply reduced values that fit a 32-bit int.
+int crossingUnit(int stride) {
+  int a = 2 * stride;
+  int b = LATTICE_N;
+  while (b != 0) {
+    int t = a % b;
+    a = b;
+    b = t;
+  }
+  return a * a;
+}
+
+Chords reduceChords(Chords c, int unit) {
+  for (int i = 0; i < FIELD_CORNERS; i++) {
+    if (i >= c.count) break;
+    c.nums[i] /= unit;
+    c.dens[i] /= unit;
+  }
+  return c;
+}
+
+// drawnGround.ts crossingXNum / crossingYNum: the crossing scaled by its denominator.
+int crossingXNum(Chords c, int i) {
+  int edge = c.edges[i];
+  int from = int(FIELD_CORNER_POS[edge].x);
+  int to = int(FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS].x);
+  return from * c.dens[i] + (to - from) * c.nums[i];
+}
+
+int crossingYNum(Chords c, int i) {
+  int edge = c.edges[i];
+  int from = int(FIELD_CORNER_POS[edge].y);
+  int to = int(FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS].y);
+  return from * c.dens[i] + (to - from) * c.nums[i];
+}
+
+bool crossingsCoincide(Chords c, int a, int b) {
+  return crossingXNum(c, a) * c.dens[b] == crossingXNum(c, b) * c.dens[a] &&
+    crossingYNum(c, a) * c.dens[b] == crossingYNum(c, b) * c.dens[a];
+}
+
+// The sub-cell centre as drawnGround.ts sees it: (px, py) / steps.
+const int CENTRE_NUM = 1;
+const int CENTRE_STEPS = 2;
+
+bool centreIsCrossing(Chords c, int a) {
+  return CENTRE_NUM * c.dens[a] == crossingXNum(c, a) * CENTRE_STEPS &&
+    CENTRE_NUM * c.dens[a] == crossingYNum(c, a) * CENTRE_STEPS;
+}
+
+// drawnGround.ts chordSide at the centre: sign of (b − a) × (centre − a).
+int chordSideOfCentre(Chords c, int a, int b) {
+  int ax = crossingXNum(c, a);
+  int ay = crossingYNum(c, a);
+  int bx = crossingXNum(c, b);
+  int by = crossingYNum(c, b);
+  int aden = c.dens[a];
+  int bden = c.dens[b];
+  int edge = c.edges[a];
+  vec2 from = FIELD_CORNER_POS[edge];
+  vec2 to = FIELD_CORNER_POS[(edge + 1) % FIELD_CORNERS];
+  if (from.x == to.x) {
+    int x0 = int(from.x);
+    return (bx - x0 * bden) * (CENTRE_NUM * aden - ay * CENTRE_STEPS) -
+      (by * aden - ay * bden) * (CENTRE_NUM - x0 * CENTRE_STEPS);
+  }
+  int y0 = int(from.y);
+  return (bx * aden - ax * bden) * (CENTRE_NUM - y0 * CENTRE_STEPS) -
+    (by - y0 * bden) * (CENTRE_NUM * aden - ax * CENTRE_STEPS);
+}
+
+// drawnGround.ts capCovers, asked at the sub-cell centre.
+bool capCoversCentre(int field[4], int band, int unit) {
+  Chords c = reduceChords(chordsAt(field, band), unit);
+  if (c.count == 0) return field[0] >= band * BAND_BLEND_DENOM;
+  for (int k = 0; k < 2; k++) {
+    if (k >= c.pairCount) break;
+    int a = c.pairA[k];
+    int b = c.pairB[k];
+    if (crossingsCoincide(c, a, b)) {
+      if (centreIsCrossing(c, a)) return true;
+      if (!c.arcHigh) return false;
+    } else if (c.arcHigh) {
+      if (chordSideOfCentre(c, a, b) >= 0) return true;
+    } else if (chordSideOfCentre(c, a, b) > 0) {
+      return false;
+    }
+  }
+  return !c.arcHigh;
+}
+
+// drawnGround.ts bandAtPoint at the centre: the highest band whose cap covers it.
+int bandAtCentre(int field[4], int unit) {
+  int lo = fieldLowBand(field);
+  for (int band = fieldHighBand(field); band > lo; band--) {
+    if (capCoversCentre(field, band, unit)) return band;
+  }
+  return lo;
+}
+
+// drawnGround.ts settleAtCentre: a layered sub-cell's one settled band, the
+// chord surface read at its own centre, so a far sub-cell settles over its
+// own stride footprint.
 int subcellSettledBand(int lx0, int ly0, int stride) {
-  int qx = 2 * lx0 + stride - LATTICE_N;
-  int qy = 2 * ly0 + stride - LATTICE_N;
-  int band = bandOfNumerator(numeratorAtOffset(qx, qy, FIELD_SAMPLE_TOP, 0));
+  int unit = crossingUnit(stride);
+  int field[4];
+  subcellField(lx0, ly0, stride, FIELD_SAMPLE_TOP, 0, field);
+  int band = bandAtCentre(field, unit);
   if (${WORLD_HAS_SPANS_UNIFORM} == 0) return band;
   for (int step = 0; step < FIELD_FIXPOINT_STEPS; step++) {
-    int next = bandOfNumerator(numeratorAtOffset(qx, qy, FIELD_SAMPLE_AT_BAND, band));
+    subcellField(lx0, ly0, stride, FIELD_SAMPLE_AT_BAND, band, field);
+    int next = bandAtCentre(field, unit);
     if (next == band) break;
     band = next;
   }
