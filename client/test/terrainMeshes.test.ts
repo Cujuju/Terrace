@@ -25,6 +25,7 @@ import {
   ARENA_HEADROOM_FLOOR_TRIANGLES,
   ARENA_HEADROOM_RUN_MULTIPLE,
   ARENA_TRANSFER_MS_PER_VERTEX,
+  CHUNK_ANSWER_BACKLOG_CAP,
   CHUNK_SPLICE_FRAME_BUDGET_MS,
   SUPER_MESH_SPAN_CHUNKS,
   TERRAIN_QUIET_MS,
@@ -668,6 +669,79 @@ describe('multi-frame chunk meshing', () => {
     meshes.flush();
     expect(meshes.builtChunkCount()).toBe(4);
     expect(meshes.pendingCount()).toBe(0);
+  });
+
+  const BACKLOG_SOURCE_CONCURRENCY = 3;
+  const BACKLOG_STARVED_FRAMES = 12;
+  const BACKLOG_CHUNK_ROWS = 4;
+
+  function backlogSetup() {
+    const direct = createDirectChunkBuildSource();
+    const owed: (() => void)[] = [];
+    let started = 0;
+    let resolved = 0;
+    const source: ChunkBuildSource = {
+      concurrency: BACKLOG_SOURCE_CONCURRENCY,
+      build(mirror, chunkIdx, generation) {
+        started++;
+        const answer = direct.build(mirror, chunkIdx, generation) as ChunkJobAnswer | null;
+        return new Promise<ChunkJobAnswer | null>((resolve) => {
+          owed.push(() => {
+            resolved++;
+            resolve(answer);
+          });
+        });
+      },
+      dispose(): void {},
+    };
+
+    const chunks: ChunkPayload[] = [];
+    for (let cy = 0; cy < BACKLOG_CHUNK_ROWS; cy++) {
+      for (let cx = 0; cx < WORLD / CHUNK_SIZE; cx++) chunks.push(chunkPayload(cx, cy, 100));
+    }
+    const mirror = createTerrainMirror(WORLD);
+    const group = new Group();
+    const clock = fakeScheduler(CHUNK_SPLICE_FRAME_BUDGET_MS);
+    const meshes = createTerrainMeshes(group, mirror, clock.scheduling, source);
+    meshes.update(applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks }));
+
+    return {
+      meshes,
+      clock,
+      inFlight: (): number => started - resolved,
+      ready: (): number => resolved - meshes.loadTrace().chunksSpliced,
+      async releaseAll(): Promise<void> {
+        for (const finish of owed.splice(0)) finish();
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      },
+    };
+  }
+
+  it('refills the build pool while spliced answers wait, and caps the answer backlog', async () => {
+    const jobs = backlogSetup();
+
+    jobs.clock.frame();
+    expect(jobs.inFlight()).toBe(BACKLOG_SOURCE_CONCURRENCY);
+    expect(jobs.ready()).toBe(0);
+
+    await jobs.releaseAll();
+    jobs.clock.frame();
+
+    expect(jobs.meshes.loadTrace().chunksSpliced).toBe(1);
+    expect(jobs.ready()).toBe(BACKLOG_SOURCE_CONCURRENCY - 1);
+    expect(jobs.inFlight()).toBe(BACKLOG_SOURCE_CONCURRENCY);
+
+    let maxReady = jobs.ready();
+    for (let frame = 0; frame < BACKLOG_STARVED_FRAMES; frame++) {
+      await jobs.releaseAll();
+      jobs.clock.frame();
+      maxReady = Math.max(maxReady, jobs.ready());
+      expect(jobs.ready() + jobs.inFlight()).toBeLessThanOrEqual(CHUNK_ANSWER_BACKLOG_CAP);
+    }
+    expect(maxReady).toBeGreaterThan(BACKLOG_SOURCE_CONCURRENCY);
+    expect(maxReady).toBeLessThanOrEqual(CHUNK_ANSWER_BACKLOG_CAP);
   });
 
   const DEAR_RUN_VERTICES = 60000;
