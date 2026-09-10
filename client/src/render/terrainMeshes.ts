@@ -3,8 +3,6 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
-  DoubleSide,
-  DynamicDrawUsage,
   Mesh,
   MeshStandardMaterial,
   Sphere,
@@ -29,8 +27,7 @@ import {
   createDrawnGroundStore,
   type DrawnGroundStore,
 } from '../terrain/drawnGroundStore.ts';
-import { spliceShader } from './shaderSplice.ts';
-import { applyGroundShade } from './groundShade.ts';
+import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
@@ -51,49 +48,6 @@ export const ARENA_HEADROOM_FLOOR_TRIANGLES =
   ARENA_HEADROOM_RUN_MULTIPLE * ARENA_P90_RUN_TRIANGLES;
 
 export const TERRAIN_QUIET_MS = 2 * SCULPT_REPEAT_DELAY_MS;
-
-const TERRAIN_ROUGHNESS = 0.95;
-const TERRAIN_METALNESS = 0;
-
-const SELF_LIT_ATTRIBUTE = 'selfLit';
-
-function makeSelfLitAware(material: MeshStandardMaterial): void {
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        '#include <common>',
-        `#include <common>\nattribute float ${SELF_LIT_ATTRIBUTE};\nvarying float vSelfLit;`,
-        'terrain',
-      ),
-      '#include <begin_vertex>',
-      `vSelfLit = ${SELF_LIT_ATTRIBUTE};\n#include <begin_vertex>`,
-      'terrain',
-    );
-    shader.vertexShader = spliceShader(
-      shader.vertexShader,
-      '#include <color_vertex>',
-      `#include <color_vertex>
-      vColor.rgb = mix(
-        vColor.rgb / 12.92,
-        pow( ( vColor.rgb + 0.055 ) / 1.055, vec3( 2.4 ) ),
-        step( vec3( 0.04045 ), vColor.rgb )
-      );`,
-      'terrain',
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        shader.fragmentShader,
-        '#include <common>',
-        '#include <common>\nvarying float vSelfLit;',
-        'terrain',
-      ),
-      '#include <opaque_fragment>',
-      'outgoingLight = mix( outgoingLight, diffuseColor.rgb, vSelfLit );\n#include <opaque_fragment>',
-      'terrain',
-    );
-  };
-}
 
 function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   const scratch = new Color();
@@ -210,19 +164,13 @@ export function createTerrainMeshes(
   mirror: TerrainMirror,
   scheduling?: MeshScheduling,
   buildSource: ChunkBuildSource = createDirectChunkBuildSource(),
+  sharedMaterial?: MeshStandardMaterial,
 ): TerrainMeshes {
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
   const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
-  const material = new MeshStandardMaterial({
-    vertexColors: true,
-    flatShading: true,
-    roughness: TERRAIN_ROUGHNESS,
-    metalness: TERRAIN_METALNESS,
-    side: DoubleSide,
-  });
-  makeSelfLitAware(material);
-  applyGroundShade(material, 'terrain');
+  const material = sharedMaterial ?? createTerrainMaterial();
+  const ownsMaterial = sharedMaterial === undefined;
 
   const superMeshes = new Map<number, SuperMesh>();
 
@@ -240,20 +188,8 @@ export function createTerrainMeshes(
 
   const bindGeometry = (sm: SuperMesh): void => {
     sm.reallocatedThisPass = true;
-    const positionAttribute = new BufferAttribute(sm.buffers.positions, 3);
-    const normalAttribute = new BufferAttribute(sm.buffers.normals, 3, true);
-    const colorAttribute = new BufferAttribute(sm.buffers.colors, 3, true);
-    const selfLitAttribute = new BufferAttribute(sm.buffers.selfLit, 1, true);
-    positionAttribute.setUsage(DynamicDrawUsage);
-    normalAttribute.setUsage(DynamicDrawUsage);
-    colorAttribute.setUsage(DynamicDrawUsage);
-    selfLitAttribute.setUsage(DynamicDrawUsage);
-
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', positionAttribute);
-    geometry.setAttribute('normal', normalAttribute);
-    geometry.setAttribute('color', colorAttribute);
-    geometry.setAttribute(SELF_LIT_ATTRIBUTE, selfLitAttribute);
+    const { geometry, positionAttribute, normalAttribute, colorAttribute, selfLitAttribute } =
+      createArenaGeometry(sm.buffers);
     geometry.setDrawRange(0, sm.liveEnd);
 
     const previous = sm.mesh.geometry;
@@ -883,7 +819,7 @@ export function createTerrainMeshes(
     dispose(): void {
       stopDraining?.();
       clear();
-      material.dispose();
+      if (ownsMaterial) material.dispose();
     },
   };
 }
