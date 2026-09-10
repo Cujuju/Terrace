@@ -70,9 +70,10 @@ export const COMPONENTS_PER_COLOR = 4;
 export const VERTICES_PER_TRIANGLE = 3;
 
 export const LIT_BY_SCENE = 0;
-// A float, not a normalised byte: WebGPU has no one-component 8-bit vertex format
-// (three's typeArraysToVertexFormatPrefixForItemSize1 lists none).
-export const SELF_LIT = 1;
+// Colour attribute's alpha byte: self-lit is 0/1, so it rides the unused channel.
+export const SELF_LIT_ALPHA_BYTE = 255;
+// Alpha is the 4th colour component (R, G, B, A), zero-indexed.
+export const COLOR_ALPHA_INDEX = COMPONENTS_PER_COLOR - 1;
 
 export interface DrawnCapLevel {
   readonly threshold: number;
@@ -104,7 +105,6 @@ export interface ChunkGeometryBuffers {
   positions: Float32Array;
   normals: Int8Array;
   colors: Uint8Array;
-  selfLit: Float32Array;
   triangleCapacity: number;
 }
 
@@ -121,7 +121,6 @@ export function createChunkGeometryBuffers(
     positions: new Float32Array(vertices * COMPONENTS_PER_POSITION),
     normals: new Int8Array(vertices * COMPONENTS_PER_NORMAL),
     colors: new Uint8Array(vertices * COMPONENTS_PER_COLOR),
-    selfLit: new Float32Array(vertices),
     triangleCapacity,
   };
 }
@@ -209,11 +208,11 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
 }
 
 function selfLitFor(paletteIndex: number): number {
-  return isSeabedPaletteIndex(paletteIndex) ? SELF_LIT : LIT_BY_SCENE;
+  return isSeabedPaletteIndex(paletteIndex) ? SELF_LIT_ALPHA_BYTE : LIT_BY_SCENE;
 }
 
 function capSelfLitFor(paletteIndex: number): number {
-  return isEmissivePaletteIndex(paletteIndex) ? SELF_LIT : LIT_BY_SCENE;
+  return isEmissivePaletteIndex(paletteIndex) ? SELF_LIT_ALPHA_BYTE : LIT_BY_SCENE;
 }
 
 const SIGNED_BYTE_SCALE = 127;
@@ -243,7 +242,6 @@ function pushVertex(
   selfLit: number,
 ): void {
   const buffers = outBuffers as ChunkGeometryBuffers;
-  buffers.selfLit[outVertex] = selfLit;
   let p = outVertex * COMPONENTS_PER_POSITION;
   buffers.positions[p++] = x;
   buffers.positions[p++] = y;
@@ -252,10 +250,11 @@ function pushVertex(
   buffers.normals[n++] = quantizeNormal(nx);
   buffers.normals[n++] = quantizeNormal(ny);
   buffers.normals[n] = quantizeNormal(nz);
-  let c = outVertex * COMPONENTS_PER_COLOR;
-  buffers.colors[c++] = quantizeChannel(color[0]);
-  buffers.colors[c++] = quantizeChannel(color[1]);
-  buffers.colors[c] = quantizeChannel(color[2]);
+  const c = outVertex * COMPONENTS_PER_COLOR;
+  buffers.colors[c] = quantizeChannel(color[0]);
+  buffers.colors[c + 1] = quantizeChannel(color[1]);
+  buffers.colors[c + 2] = quantizeChannel(color[2]);
+  buffers.colors[c + COLOR_ALPHA_INDEX] = selfLit;
   outVertex++;
 }
 
@@ -773,7 +772,6 @@ function ensureCapacity(buffers: ChunkGeometryBuffers, triangles: number): boole
   buffers.positions = grown.positions;
   buffers.normals = grown.normals;
   buffers.colors = grown.colors;
-  buffers.selfLit = grown.selfLit;
   buffers.triangleCapacity = capacity;
   return true;
 }
