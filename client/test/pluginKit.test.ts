@@ -235,7 +235,7 @@ function has(node: Node, entry: GraphEntry): boolean {
 }
 
 describe('puff deck nodes', () => {
-  it('offsets the vertex AFTER the view transform — that is the billboard', () => {
+  it('offsets the vertex AFTER the view transform â€” that is the billboard', () => {
     const billboard = puffBillboard(vec3(1, 2, 3), float(2));
     expect(graphOf(billboard).root).toBe('SplitNode');
     expect(has(billboard, { type: 'OperatorNode', op: '+' })).toBe(true);
