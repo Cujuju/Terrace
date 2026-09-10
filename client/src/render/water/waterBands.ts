@@ -1,6 +1,7 @@
-import type { MeshStandardMaterial } from 'three';
+import type { NodeMaterial, Node } from 'three/webgpu';
+import { float, mix, positionWorld, step, uniform, vec2 } from 'three/tsl';
 import { CELL_WORLD_SIZE } from '../../config.ts';
-import { spliceShader } from '../shaderSplice.ts';
+import { compose } from '../materialSlots.ts';
 
 const BAND_STEPS = 5;
 
@@ -18,7 +19,11 @@ const BAND_SHADE_MAX = 1.25;
 const BAND_CREST_GAIN = 1.1;
 const BAND_CREST_THRESHOLD = 0.8;
 
-const bandTimeUniform = { value: 0 };
+// The wave sum is signed; this maps it onto [0,1] before it is quantised.
+const BAND_FIELD_UNIT_SCALE = 0.5;
+const BAND_FIELD_UNIT_OFFSET = 0.5;
+
+const bandTimeNode = uniform(0);
 
 let clockInstalled = false;
 
@@ -28,69 +33,28 @@ export function installWaterBandClock(
   if (clockInstalled) return;
   clockInstalled = true;
   onFrame((dt: number) => {
-    bandTimeUniform.value += dt;
+    bandTimeNode.value += dt;
   });
 }
 
-function glslFloat(value: number): string {
-  return value.toFixed(6);
+function bandField(q: Node<'vec2'>): Node<'float'> {
+  let sum: Node<'float'> = float(0);
+  for (const wave of BAND_WAVES) {
+    sum = sum.add(
+      q.dot(vec2(wave.dir[0], wave.dir[1])).mul(wave.k).sub(bandTimeNode.mul(wave.speed)).sin()
+        .mul(wave.amplitude),
+    );
+  }
+  return sum;
 }
 
-function wavesGlsl(): string {
-  const terms = BAND_WAVES.map(
-    (w) =>
-      `  s += sin( dot( q, vec2( ${glslFloat(w.dir[0])}, ${glslFloat(w.dir[1])} ) ) * ` +
-      `${glslFloat(w.k)} - t * ${glslFloat(w.speed)} ) * ${glslFloat(w.amplitude)};`,
-  );
-  return ['float waterBandField( vec2 q, float t ) {', '  float s = 0.0;', ...terms, '  return s;', '}'].join(
-    '\n',
-  );
-}
-
-export function makeBanded(material: MeshStandardMaterial): void {
-  const existing = material.onBeforeCompile.bind(material);
-  material.onBeforeCompile = (shader, renderer) => {
-    existing(shader, renderer);
-    shader.uniforms.uWaterBandTime = bandTimeUniform;
-
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        '#include <common>',
-        '#include <common>\nvarying vec2 vWaterBandXZ;',
-        'waterBands',
-      ),
-      '#include <begin_vertex>',
-      `#include <begin_vertex>\nvWaterBandXZ = ( modelMatrix * vec4( transformed, 1.0 ) ).xz / ${glslFloat(
-        CELL_WORLD_SIZE,
-      )};`,
-      'waterBands',
-    );
-
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        shader.fragmentShader,
-        '#include <common>',
-        `#include <common>\nvarying vec2 vWaterBandXZ;\nuniform float uWaterBandTime;\n${wavesGlsl()}`,
-        'waterBands',
-      ),
-      '#include <color_fragment>',
-      [
-        '#include <color_fragment>',
-        `float wbHeight = waterBandField( vWaterBandXZ * ${glslFloat(
-          BAND_WAVE_SCALE_CELLS,
-        )}, uWaterBandTime ) * 0.5 + 0.5;`,
-        `float wbBand = floor( wbHeight * ${glslFloat(BAND_STEPS)} ) / ${glslFloat(
-          BAND_STEPS - 1,
-        )};`,
-        `diffuseColor.rgb *= mix( ${glslFloat(BAND_SHADE_MIN)}, ${glslFloat(
-          BAND_SHADE_MAX,
-        )}, clamp( wbBand, 0.0, 1.0 ) );`,
-        `diffuseColor.rgb *= mix( 1.0, ${glslFloat(
-          BAND_CREST_GAIN,
-        )}, step( ${glslFloat(BAND_CREST_THRESHOLD)}, wbBand ) );`,
-      ].join('\n'),
-      'waterBands',
-    );
-  };
+export function makeBanded(material: NodeMaterial): void {
+  const cellXZ = positionWorld.xz.div(CELL_WORLD_SIZE);
+  const height = bandField(cellXZ.mul(BAND_WAVE_SCALE_CELLS))
+    .mul(BAND_FIELD_UNIT_SCALE)
+    .add(BAND_FIELD_UNIT_OFFSET);
+  const band = height.mul(BAND_STEPS).floor().div(BAND_STEPS - 1);
+  const shade = mix(BAND_SHADE_MIN, BAND_SHADE_MAX, band.clamp(0, 1));
+  const crest = mix(1, BAND_CREST_GAIN, step(BAND_CREST_THRESHOLD, band));
+  compose(material, 'color', (previous) => previous.mul(shade).mul(crest));
 }

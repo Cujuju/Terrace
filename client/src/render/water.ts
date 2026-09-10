@@ -5,7 +5,6 @@ import {
   DataTexture,
   DoubleSide,
   Mesh,
-  MeshStandardMaterial,
   NearestFilter,
   RGBAFormat,
   Sphere,
@@ -13,6 +12,16 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
+import { MeshPhysicalNodeMaterial, type UniformNode } from 'three/webgpu';
+import {
+  diffuseColor,
+  mix,
+  positionWorld,
+  select,
+  texture,
+  uniform,
+  vec3,
+} from 'three/tsl';
 import {
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
@@ -33,7 +42,7 @@ import {
   createWaterCurveBuffer,
   writeWaterCurveTexels,
 } from '../terrain/waterDepth.ts';
-import { spliceShader } from './shaderSplice.ts';
+import { compose } from './materialSlots.ts';
 import { applyGroundShade } from './groundShade.ts';
 import { makeBanded } from './water/waterBands.ts';
 
@@ -61,77 +70,39 @@ function createCurveTexture(worldSize: number): { texture: DataTexture; buffer: 
   return { texture, buffer };
 }
 
-function glslFloat(value: number): string {
-  return value.toFixed(6);
-}
+const TEXEL_CENTRE_CELLS = 0.5;
 
-function glslVec3(value: readonly [number, number, number]): string {
-  return `vec3( ${value.map(glslFloat).join(', ')} )`;
+function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
+  const trenchSide = mix(
+    vec3(...WATER_TRENCH_TINT),
+    vec3(...WATER_DEEP_TINT),
+    shadeMix.div(WATER_SHADE_FLOOR_MIX).clamp(0, 1),
+  );
+  const ordinarySide = mix(
+    vec3(...WATER_DEEP_TINT),
+    vec3(...WATER_SHALLOW_TINT),
+    shadeMix.sub(WATER_SHADE_FLOOR_MIX).div(1 - WATER_SHADE_FLOOR_MIX).clamp(0, 1),
+  );
+  return select(shadeMix.lessThan(WATER_SHADE_FLOOR_MIX), trenchSide, ordinarySide);
 }
 
 function makeDepthAware(
-  material: MeshStandardMaterial,
+  material: MeshPhysicalNodeMaterial,
   curveTexture: DataTexture,
-  worldSizeUniform: { value: number },
+  worldSizeCells: UniformNode<'float', number>,
 ): void {
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uWaterCurves = { value: curveTexture };
-    shader.uniforms.uWorldSizeCells = worldSizeUniform;
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        '#include <common>',
-        '#include <common>\nvarying vec2 vWaterCellXZ;',
-        'water',
-      ),
-      '#include <begin_vertex>',
-      `#include <begin_vertex>\nvWaterCellXZ = ( modelMatrix * vec4( transformed, 1.0 ) ).xz / ${glslFloat(CELL_WORLD_SIZE)};`,
-      'water',
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        spliceShader(
-          shader.fragmentShader,
-          '#include <common>',
-          '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterCurves;\nuniform float uWorldSizeCells;',
-          'water',
-        ),
-        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;',
-        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterCurves, wDepthUv ).g;',
-        'water',
-      ),
-      '#include <color_fragment>',
-      [
-        '#include <color_fragment>',
-        'vec2 wDepthUv = ( vWaterCellXZ + 0.5 ) / uWorldSizeCells;',
-        'float wDepthAlpha = texture2D( uWaterCurves, wDepthUv ).r;',
-        'float wShadeMix = texture2D( uWaterCurves, wDepthUv ).b;',
-        `float wFloorMix = ${glslFloat(WATER_SHADE_FLOOR_MIX)};`,
-        `vec3 wTrenchSide = mix( ${glslVec3(WATER_TRENCH_TINT)}, ${glslVec3(
-          WATER_DEEP_TINT,
-        )}, clamp( wShadeMix / wFloorMix, 0.0, 1.0 ) );`,
-        `vec3 wOrdinarySide = mix( ${glslVec3(WATER_DEEP_TINT)}, ${glslVec3(
-          WATER_SHALLOW_TINT,
-        )}, clamp( ( wShadeMix - wFloorMix ) / ( 1.0 - wFloorMix ), 0.0, 1.0 ) );`,
-        'diffuseColor.rgb *= wShadeMix < wFloorMix ? wTrenchSide : wOrdinarySide;',
-      ].join('\n'),
-      'water',
-    );
-    shader.fragmentShader = spliceShader(
-      shader.fragmentShader,
-      '#include <emissivemap_fragment>',
-      `#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * ${glslFloat(
-        WATER_SELF_LIGHT_RADIANCE,
-      )};`,
-      'water',
-    );
-    shader.fragmentShader = spliceShader(
-      shader.fragmentShader,
-      '#include <opaque_fragment>',
-      'diffuseColor.a *= wDepthAlpha;\n#include <opaque_fragment>',
-      'water',
-    );
-  };
+  const depthUv = positionWorld.xz
+    .div(CELL_WORLD_SIZE)
+    .add(TEXEL_CENTRE_CELLS)
+    .div(worldSizeCells);
+  const curves = texture(curveTexture, depthUv);
+  compose(material, 'color', (previous) => previous.mul(tintOf(curves.b)));
+  compose(material, 'opacity', (previous) => previous.mul(curves.r));
+  compose(material, 'emissive', (previous) =>
+    previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)),
+  );
+  // The GLSL scaled totalSpecular, which has no slot; F0 is the nearest hook.
+  material.specularColorNode = vec3(curves.g);
 }
 
 export interface WaterOptions {}
@@ -151,10 +122,10 @@ export function createWater(
   const { texture: curveTexture, buffer: initialCurveBuffer } =
     createCurveTexture(initialWorldSize);
   let curveBuffer = initialCurveBuffer;
-  const worldSizeUniform = { value: initialWorldSize };
+  const worldSizeCells = uniform(initialWorldSize);
   const dirtyChunkScratch: number[] = [];
 
-  const material = new MeshStandardMaterial({
+  const material = new MeshPhysicalNodeMaterial({
     color: WATER_COLOR,
     transparent: true,
     roughness: WATER_ROUGHNESS,
@@ -162,7 +133,7 @@ export function createWater(
     depthWrite: false,
     side: DoubleSide,
   });
-  makeDepthAware(material, curveTexture, worldSizeUniform);
+  makeDepthAware(material, curveTexture, worldSizeCells);
   applyGroundShade(material, 'water');
   makeBanded(material);
 
@@ -209,7 +180,7 @@ export function createWater(
     curveTexture.image = { data: curveBuffer, width: worldSize, height: worldSize };
     curveTexture.clearUpdateRanges();
     curveTexture.needsUpdate = true;
-    worldSizeUniform.value = worldSize;
+    worldSizeCells.value = worldSize;
   };
 
   setWorldSize(initialWorldSize);
@@ -264,7 +235,7 @@ export function createWater(
       dirtyChunkScratch.length = 0;
       for (const chunkIdx of dirty) dirtyChunkScratch.push(chunkIdx);
       if (dirtyChunkScratch.length === 0) return;
-      const worldSize = worldSizeUniform.value;
+      const worldSize = worldSizeCells.value;
       writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
       if (dirtyChunkScratch.length > MAX_RANGED_REFRESH_CHUNKS) {
         curveTexture.clearUpdateRanges();
