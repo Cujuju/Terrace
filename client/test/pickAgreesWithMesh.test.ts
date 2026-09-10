@@ -3,8 +3,10 @@ import { Group, Raycaster, Vector3, type Mesh } from 'three';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  DRAWN_GROUND_BAND_BIAS,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  drawnBandOfSample,
   type ChunkPayload,
 } from '@terrace/shared';
 import {
@@ -32,6 +34,10 @@ function terrainHeight(cellX: number, cellY: number): number {
   return Math.round(
     (Math.sin(x / 9) * Math.cos(y / 7) * 6 + Math.sin((x + y) / 13) * 4) * BAND_HEIGHT,
   );
+}
+
+function aimInsideDrawnBand(height: number): number {
+  return drawnBandOfSample(height) * BAND_HEIGHT - DRAWN_GROUND_BAND_BIAS;
 }
 
 function worldChunks(): ChunkPayload[] {
@@ -147,7 +153,7 @@ function sweep(
         for (let tz = TARGET_MARGIN_CELLS; tz < TARGET_LIMIT_CELLS; tz += TARGET_STEP_Z_CELLS) {
           const direction = new Vector3(
             tx * CELL_WORLD_SIZE,
-            terrainHeight(tx, tz) * HEIGHT_WORLD_SCALE,
+            aimInsideDrawnBand(terrainHeight(tx, tz)) * HEIGHT_WORLD_SCALE,
             tz * CELL_WORLD_SIZE,
           )
             .sub(camera)

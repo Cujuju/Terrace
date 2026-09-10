@@ -1,9 +1,13 @@
-import { BAND_HEIGHT, CHUNK_SIZE, bandOf } from '@terrace/shared';
-import { blockyCellCapY } from './capEmission.ts';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  DRAWN_GROUND_CELL_CENTRE,
+  drawnBandAt,
+} from '@terrace/shared';
+import { blockyCellCapY, drawnBandCapY } from './capEmission.ts';
 import { type ContourLoop } from './contours.ts';
 import {
   polygonsOfLevel,
-  topLevelIndexAt,
   type ChunkChart,
   type DrawnGroundStore,
 } from './drawnGroundStore.ts';
@@ -31,25 +35,22 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
   const chartAt = (cellX: number, cellZ: number): ChunkChart | null =>
     store.chartOf(chunkOf(cellX), chunkOf(cellZ));
 
-  const topmostLevelAt = (chart: ChunkChart, cellX: number, cellZ: number): number | null => {
-    const index = topLevelIndexAt(chart, cellX, cellZ);
-    if (index === null || index >= chart.plan.levelThreshold.length) return null;
-    return index;
-  };
-
   const blockyHeightAt = (cellX: number, cellZ: number): number =>
     sampleHeight(mirror, Math.round(cellX), Math.round(cellZ));
 
   const hasNoContours = (chart: ChunkChart | null): chart is null =>
     chart === null || chart.plan.blocky;
 
+  const drawnBandOf = (cellX: number, cellZ: number): number =>
+    drawnBandAt(
+      mirror.map,
+      cellX + DRAWN_GROUND_CELL_CENTRE,
+      cellZ + DRAWN_GROUND_CELL_CENTRE,
+    );
+
   return {
     capYAt(cellX: number, cellZ: number): number {
-      const chart = chartAt(cellX, cellZ);
-      if (hasNoContours(chart)) return blockyCellCapY(blockyHeightAt(cellX, cellZ));
-      const level = topmostLevelAt(chart, cellX, cellZ);
-      if (level !== null) return chart.plan.levelCapY[level]!;
-      return chart.plan.levelCapY.length > 0 ? chart.plan.levelCapY[0]! : 0;
+      return drawnBandCapY(drawnBandOf(cellX, cellZ), blockyHeightAt(cellX, cellZ));
     },
 
     capYOfBand(band: number, cellX: number, cellZ: number): number {
@@ -64,11 +65,7 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
     },
 
     bandAt(cellX: number, cellZ: number): number {
-      const chart = chartAt(cellX, cellZ);
-      if (hasNoContours(chart)) return bandOf(blockyHeightAt(cellX, cellZ));
-      const level = topmostLevelAt(chart, cellX, cellZ);
-      if (level !== null) return chart.plan.levelSampleBand[level]!;
-      return chart.plan.levelSampleBand.length > 0 ? chart.plan.levelSampleBand[0]! : 0;
+      return drawnBandOf(cellX, cellZ);
     },
 
     nearestOnContour(threshold, cellX, cellZ) {

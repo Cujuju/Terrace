@@ -1,19 +1,24 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  ISOLINE_SAMPLES_PER_CELL,
   MAX_HEIGHT,
   MIN_HEIGHT,
   bandOf,
+  cellIndex,
   chunkIndex,
+  drawnBandAt,
+  drawnBandOfSample,
+  drawnSpanCapHeight,
   isSpanDrawn,
   spanAt,
   spanUndersideHeight,
-  spanCapHeight,
   spanCount,
   spanIndexCoveringBand,
   type Span,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { blockyCellCapY, drawnBandCapY } from './capEmission.ts';
 import { crossRayWithWallPlan } from './drawnFace.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
 import type { CellOccupancy, CellRayChord } from './occupancy.ts';
@@ -309,7 +314,7 @@ function refineRiserToDrawnFace(
   const chunkX = Math.floor(i / CHUNK_SIZE);
   const chunkY = Math.floor(j / CHUNK_SIZE);
   const lowestBand = bandOf(spanUndersideHeight(span)) + 1;
-  const highestBand = bandOf(spanCapHeight(span));
+  const highestBand = drawnBandOfSample(span.ceiling);
 
   const ray = scaleRayToCellSpace(origin, direction);
   const window = ray === null ? null : clipRayToBox(
@@ -421,7 +426,7 @@ function treadOfEnteredNeighbour(
   for (let k = count - 1; k >= 0; k--) {
     const nSpan = spanAt(mirror.map, ni, nj, k);
     if (!isSpanDrawn(nSpan)) continue;
-    const capY = spanCapHeight(nSpan) * HEIGHT_WORLD_SCALE;
+    const capY = drawnSpanCapHeight(nSpan) * HEIGHT_WORLD_SCALE;
     if (!(capY < treadCeilingY)) continue;
     const t = tEnter + (capY - entryY) / dy;
     if (t > tExit || !(t < footContourT)) return null;
@@ -435,6 +440,39 @@ function treadOfEnteredNeighbour(
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
     };
+  }
+  return null;
+}
+
+const DRAWN_CAP_SAMPLES_PER_CELL = 2 * ISOLINE_SAMPLES_PER_CELL;
+
+interface DrawnCap {
+  readonly t: number;
+  readonly capY: number;
+  readonly drawnY: number;
+}
+
+function nearestCellHeight(mirror: TerrainMirror, u: number, v: number): number {
+  const map = mirror.map;
+  const last = map.size - 1;
+  const clamp = (n: number): number => (n < 0 ? 0 : n > last ? last : n);
+  return map.cells[cellIndex(map, clamp(Math.floor(u)), clamp(Math.floor(v)))]!;
+}
+
+function drawnCapMet(
+  mirror: TerrainMirror,
+  ray: ScaledRay,
+  tEnter: number,
+  tExit: number,
+): DrawnCap | null {
+  const reach = tExit - tEnter;
+  for (let s = 0; s <= DRAWN_CAP_SAMPLES_PER_CELL; s++) {
+    const t = tEnter + (reach * s) / DRAWN_CAP_SAMPLES_PER_CELL;
+    const u = ray.ox + t * ray.dx;
+    const v = ray.oz + t * ray.dz;
+    const band = drawnBandAt(mirror.map, u, v);
+    const drawnY = drawnBandCapY(band, nearestCellHeight(mirror, u, v));
+    if (ray.oy + t * ray.dy <= drawnY) return { t, capY: band * BAND_WORLD_HEIGHT, drawnY };
   }
   return null;
 }
@@ -456,20 +494,27 @@ function terrainHitInCell(
   const entryY = oy + tEnter * dy;
   const exitY = oy + tExit * dy;
   const count = spanCount(mirror.map, i, j);
+  const ray = scaleRayToCellSpace(origin, direction);
   let hit: TerrainRayPick | null = null;
   let hitT = Infinity;
   let hitSpan: Span | null = null;
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, i, j, k);
     if (!isSpanDrawn(span)) continue;
-    const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+    const met =
+      k === count - 1 && ray !== null ? drawnCapMet(mirror, ray, tEnter, tExit) : null;
+    if (k === count - 1 && ray !== null && met === null) continue;
+    const capY = met === null ? drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE : met.capY;
+    const drawnY = met === null ? blockyCellCapY(span.ceiling) : met.drawnY;
     const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
     const lowY = entryY < exitY ? entryY : exitY;
     const highY = entryY < exitY ? exitY : entryY;
-    if (lowY > capY || highY < baseY) continue;
-    const insideOnEntry = entryY <= capY && entryY >= baseY;
-    const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
-    const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
+    if (lowY > drawnY || highY < baseY) continue;
+    const insideOnEntry = entryY <= drawnY && entryY >= baseY;
+    const faceY = insideOnEntry ? entryY : entryY > drawnY ? capY : baseY;
+    const metY = insideOnEntry ? entryY : entryY > drawnY ? drawnY : baseY;
+    const planeT = insideOnEntry || dy === 0 ? tEnter : tEnter + (metY - entryY) / dy;
+    const t = met !== null && insideOnEntry && planeT < met.t ? met.t : planeT;
     if (t >= hitT) continue;
     hitT = t;
     hit = {
@@ -556,7 +601,7 @@ export function pickTerrainInColumn(
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, x, y, k);
     if (!isSpanDrawn(span)) continue;
-    const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+    const capY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
     if (capY >= lowY) continue;
     const tMid = (tEnter + tExit) / 2;
     return {

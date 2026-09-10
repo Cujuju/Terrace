@@ -4,6 +4,7 @@ import {
   BEDROCK_FLOOR,
   CHUNK_SIZE,
   MAX_HEIGHT,
+  drawnBandOfSample,
   quantizeToBand,
   setColumn,
   type ChunkPayload,
@@ -152,8 +153,8 @@ describe('pickTerrainCellByRay', () => {
     const raw = BAND_HEIGHT * 3 + BAND_HEIGHT / 2;
     const mirror = world(() => raw);
     const hit = pickTerrainCellByRay(mirror, above(4, 4), DOWN);
-    expect(hit!.surfaceY).toBe(quantizeToBand(raw) * HEIGHT_WORLD_SCALE);
-    expect(hit!.surfaceY).toBe(BAND_HEIGHT * 3 * HEIGHT_WORLD_SCALE);
+    expect(hit!.surfaceY).toBe(drawnBandOfSample(raw) * BAND_HEIGHT * HEIGHT_WORLD_SCALE);
+    expect(hit!.surfaceY).toBe(BAND_HEIGHT * 4 * HEIGHT_WORLD_SCALE);
   });
 
   it('agrees with the renderer everywhere, over a varied height field', () => {
