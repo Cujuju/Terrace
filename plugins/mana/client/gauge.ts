@@ -13,6 +13,17 @@ export function fillFraction(displayed: number, capacity: number): number {
   return displayed >= capacity ? 1 : displayed / capacity;
 }
 
+// Finest step the antialiased sand surface can show, in CSS pixels of bulb height.
+export const SAND_SURFACE_QUANTUM_PX = 0.25;
+
+// Rounds a fill fraction to that step, so the gauge rewrites SVG geometry only when the drawn
+// surface actually moves, not on every animation frame of continuous regen.
+export function quantiseFill(fraction: number, bulbHeightPx: number): number {
+  if (!usable(fraction) || !usable(bulbHeightPx) || bulbHeightPx <= 0) return fraction;
+  const steps = Math.max(1, Math.round(bulbHeightPx / SAND_SURFACE_QUANTUM_PX));
+  return Math.round(fraction * steps) / steps;
+}
+
 export function isPoolFull(displayed: number, capacity: number): boolean {
   if (!usable(displayed) || !usable(capacity) || capacity <= 0) return false;
   return displayed >= capacity;
