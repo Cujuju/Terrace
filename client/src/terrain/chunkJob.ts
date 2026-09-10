@@ -1,6 +1,8 @@
 import { CHUNK_SIZE, applyPackedSpans, chunkIndex, chunksPerEdge } from '@terrace/shared';
 import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
 import {
+  COMPONENTS_PER_COLOR,
+  COMPONENTS_PER_NORMAL,
   createChunkGeometryBuffers,
   writeChunkVertexData,
   type ChunkGeometryBuffers,
@@ -211,8 +213,8 @@ export function buildChunkAnswer(
   const vertexCount = counts.vertexCount;
 
   const positions = scratch.positions.slice(0, vertexCount * 3);
-  const normals = scratch.normals.slice(0, vertexCount * 3);
-  const colors = scratch.colors.slice(0, vertexCount * 3);
+  const normals = scratch.normals.slice(0, vertexCount * COMPONENTS_PER_NORMAL);
+  const colors = scratch.colors.slice(0, vertexCount * COMPONENTS_PER_COLOR);
   const selfLit = scratch.selfLit.slice(0, vertexCount);
 
   const bounds = new Float32Array(6);
