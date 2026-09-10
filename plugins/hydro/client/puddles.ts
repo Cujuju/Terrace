@@ -5,9 +5,24 @@ import {
   Matrix4,
   PlaneGeometry,
   Quaternion,
-  ShaderMaterial,
   Vector3,
 } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Discard,
+  Fn,
+  attribute,
+  float,
+  length,
+  mix,
+  positionGeometry,
+  sin,
+  smoothstep,
+  uniform,
+  vec3,
+  vec4,
+} from 'three/tsl';
+import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 import {
   HYDRO_PATCH_CAP,
   HYDRO_PATCH_CORE_FRACTION,
@@ -22,6 +37,7 @@ const PUDDLE_DEEP_COLOR: readonly [number, number, number] = [0.05, 0.09, 0.13];
 const PUDDLE_SHEEN_COLOR: readonly [number, number, number] = [0.42, 0.58, 0.68];
 
 const PUDDLE_ALPHA_PEAK = 0.55;
+const PUDDLE_ALPHA_DISCARD_THRESHOLD = 0.004;
 
 const PUDDLE_SHEEN_AT_RIM = 0.75;
 
@@ -45,54 +61,6 @@ export interface Puddles {
   dispose(): void;
 }
 
-const PUDDLE_VERTEX_SHADER =  `
-  attribute float aWetness;
-
-  varying vec2 vPlan;
-  varying float vWetness;
-
-  void main() {
-    // The quad is authored two units across and lying in XZ, so position.xz IS
-    // the offset from the patch's centre in radii — no division, no uniform.
-    vPlan = position.xz;
-    vWetness = aWetness;
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
-  }
-`;
-
-const PUDDLE_FRAGMENT_SHADER =  `
-  uniform float uElapsed;
-
-  varying vec2 vPlan;
-  varying float vWetness;
-
-  void main() {
-    // Distance from the centre in NOMINAL RADII — the same input
-    // ../protocol.ts's hydroFalloff takes, and the same curve applied to it, so
-    // what is drawn here and what the server douses inside cannot disagree.
-    float radius = length(vPlan);
-    float falloff = 1.0 - smoothstep(${HYDRO_PATCH_CORE_FRACTION.toFixed(2)}, 1.0, radius);
-    if (falloff <= 0.0) discard;
-
-    // Rings travelling outward. They ride ON TOP of the falloff rather than
-    // being multiplied into it, so the ripple can never move the patch's edge —
-    // which is the one thing about this disc that is not a rendering decision.
-    float ripple = sin(
-      (radius * ${PUDDLE_RIPPLE_CYCLES.toFixed(2)} - uElapsed * ${PUDDLE_RIPPLE_HZ.toFixed(2)})
-      * 6.2831853);
-
-    vec3 color = mix(
-      vec3(${PUDDLE_DEEP_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-      vec3(${PUDDLE_SHEEN_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-      radius * ${PUDDLE_SHEEN_AT_RIM.toFixed(2)});
-
-    float alpha = falloff * vWetness * ${PUDDLE_ALPHA_PEAK.toFixed(2)}
-      * (1.0 + ripple * ${PUDDLE_RIPPLE_DEPTH.toFixed(2)});
-    if (alpha <= 0.004) discard;
-    gl_FragColor = vec4(color, alpha);
-  }
-`;
-
 export function createPuddles(): Puddles {
   const root = new Group();
   root.name = 'hydro:puddles';
@@ -105,14 +73,42 @@ export function createPuddles(): Puddles {
   );
   geometry.rotateX(-Math.PI / 2);
 
-  const uniforms = { uElapsed: { value: 0 } };
-  const material = new ShaderMaterial({
-    uniforms,
-    vertexShader: PUDDLE_VERTEX_SHADER,
-    fragmentShader: PUDDLE_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: false,
-  });
+  const material = new NodeMaterial();
+  material.transparent = true;
+  material.depthWrite = false;
+
+  const elapsedUniform = uniform(0);
+  const aWetness = attribute<'float'>('aWetness', 'float');
+
+  // The quad lies in XZ, two units across, so position.xz is the offset from the centre in radii.
+  const vPlan = positionGeometry.xz;
+
+  // The vertex stage is three's own: projection * modelView * instanceMatrix * position.
+  material.fragmentNode = Fn(() => {
+    // Nominal radii, through hydroFalloff's own curve, so the drawn patch and the doused one agree.
+    const radius = length(vPlan);
+    const falloff = float(1.0).sub(smoothstep(HYDRO_PATCH_CORE_FRACTION, 1.0, radius));
+    Discard(falloff.lessThanEqual(0.0));
+
+    // Rings ride on top of the falloff, never multiplied in, so the ripple cannot move the edge.
+    const ripple = sin(
+      radius.mul(PUDDLE_RIPPLE_CYCLES).sub(elapsedUniform.mul(PUDDLE_RIPPLE_HZ)).mul(6.2831853),
+    );
+
+    const color = mix(
+      vec3(...PUDDLE_DEEP_COLOR),
+      vec3(...PUDDLE_SHEEN_COLOR),
+      radius.mul(PUDDLE_SHEEN_AT_RIM),
+    );
+
+    const alpha = falloff
+      .mul(aWetness)
+      .mul(PUDDLE_ALPHA_PEAK)
+      .mul(float(1.0).add(ripple.mul(PUDDLE_RIPPLE_DEPTH)));
+    Discard(alpha.lessThanEqual(PUDDLE_ALPHA_DISCARD_THRESHOLD));
+    // The GLSL wrote display bytes straight to the framebuffer, bypassing tone mapping.
+    return vec4(radianceForDisplay(color), alpha);
+  })();
 
   const mesh = new InstancedMesh(geometry, material, HYDRO_PATCH_CAP);
   mesh.name = 'hydro:puddles:discs';
@@ -148,7 +144,7 @@ export function createPuddles(): Puddles {
     },
 
     update(elapsed: number): void {
-      uniforms.uElapsed.value = elapsed;
+      elapsedUniform.value = elapsed;
     },
 
     dispose(): void {

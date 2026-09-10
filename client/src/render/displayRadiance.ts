@@ -1,6 +1,7 @@
 import { ACESFilmicToneMapping, Matrix3 } from 'three';
 import {
   Fn,
+  clamp,
   float,
   mat3,
   max,
@@ -97,11 +98,11 @@ function rrtAndOdtFitInverseNode(y: Node<'float'>): Node<'float'> {
   return select(a.equal(0), linear, root);
 }
 
-// WebGPU tone-maps every pixel. A displayed sRGB colour becomes the radiance that maps back to it;
-// colours ACES cannot reach clamp at zero radiance.
+// WebGPU tone-maps every pixel. A displayed sRGB colour, clipped to the 8-bit range as WebGL's
+// framebuffer did, becomes the radiance that maps back to it; unreachable colours clamp at zero.
 export const radianceForDisplay = (displayed: Node<'vec3'>): Node<'vec3'> =>
   Fn((builder) => {
-    const linear = sRGBTransferEOTF(displayed) as Node<'vec3'>;
+    const linear = sRGBTransferEOTF(clamp(displayed, 0, 1)) as Node<'vec3'>;
     if (builder.renderer.toneMapping !== ACESFilmicToneMapping) return linear;
     const fitted = mat3Node(ACES_OUTPUT_INVERSE).mul(linear);
     const mixed = vec3(
