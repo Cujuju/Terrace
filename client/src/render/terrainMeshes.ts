@@ -12,7 +12,6 @@ import {
 } from 'three';
 import { MeshStandardNodeMaterial, type Node } from 'three/webgpu';
 import {
-  attribute,
   colorSpaceToWorking,
   diffuseColor,
   mix,
@@ -66,8 +65,6 @@ export const TERRAIN_QUIET_MS = 2 * SCULPT_REPEAT_DELAY_MS;
 const TERRAIN_ROUGHNESS = 0.95;
 const TERRAIN_METALNESS = 0;
 
-const SELF_LIT_ATTRIBUTE = 'selfLit';
-
 // @types/three types the colour-space helpers as a bare Node; the decode is a vec3.
 function srgbToWorking(node: Node<'vec3'>): Node<'vec3'> {
   return colorSpaceToWorking(node, SRGBColorSpace) as unknown as Node<'vec3'>;
@@ -78,10 +75,7 @@ function srgbToWorking(node: Node<'vec3'>): Node<'vec3'> {
 function makeSelfLitAware(material: MeshStandardNodeMaterial): void {
   compose(material, 'color', (previous) => previous.mul(srgbToWorking(vertexColor().rgb)));
   compose(material, 'output', (previous) =>
-    vec4(
-      mix(previous.rgb, diffuseColor.rgb, attribute(SELF_LIT_ATTRIBUTE, 'float')),
-      previous.a,
-    ),
+    vec4(mix(previous.rgb, diffuseColor.rgb, vertexColor().a), previous.a),
   );
 }
 
@@ -144,7 +138,6 @@ interface SuperMesh {
   positionAttribute: BufferAttribute;
   normalAttribute: BufferAttribute;
   colorAttribute: BufferAttribute;
-  selfLitAttribute: BufferAttribute;
   slots: Map<number, ChunkSlot>;
   holes: Hole[];
   liveEnd: number;
@@ -232,13 +225,11 @@ export function createTerrainMeshes(
     const positionAttribute = new BufferAttribute(sm.buffers.positions, 3);
     const normalAttribute = new BufferAttribute(sm.buffers.normals, COMPONENTS_PER_NORMAL, true);
     const colorAttribute = new BufferAttribute(sm.buffers.colors, COMPONENTS_PER_COLOR, true);
-    const selfLitAttribute = new BufferAttribute(sm.buffers.selfLit, 1);
 
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', positionAttribute);
     geometry.setAttribute('normal', normalAttribute);
     geometry.setAttribute('color', colorAttribute);
-    geometry.setAttribute(SELF_LIT_ATTRIBUTE, selfLitAttribute);
     geometry.setDrawRange(0, sm.liveEnd);
 
     const previous = sm.mesh.geometry;
@@ -248,7 +239,6 @@ export function createTerrainMeshes(
     sm.positionAttribute = positionAttribute;
     sm.normalAttribute = normalAttribute;
     sm.colorAttribute = colorAttribute;
-    sm.selfLitAttribute = selfLitAttribute;
 
     updateBounds(sm);
   };
@@ -269,7 +259,6 @@ export function createTerrainMeshes(
     grown.positions.set(sm.buffers.positions.subarray(0, sm.liveEnd * 3));
     grown.normals.set(sm.buffers.normals.subarray(0, sm.liveEnd * COMPONENTS_PER_NORMAL));
     grown.colors.set(sm.buffers.colors.subarray(0, sm.liveEnd * COMPONENTS_PER_COLOR));
-    grown.selfLit.set(sm.buffers.selfLit.subarray(0, sm.liveEnd));
     sm.buffers = grown;
     sm.growths++;
     if (site === 'splice') sm.strokeGrowths++;
@@ -326,7 +315,6 @@ export function createTerrainMeshes(
     sm.positionAttribute.needsUpdate = true;
     sm.normalAttribute.needsUpdate = true;
     sm.colorAttribute.needsUpdate = true;
-    sm.selfLitAttribute.needsUpdate = true;
   };
 
   const addRange = (sm: SuperMesh, startVertex: number, vertexCount: number): void => {
@@ -337,16 +325,14 @@ export function createTerrainMeshes(
     addVertexRange(sm.positionAttribute, start, end - start);
     addVertexRange(sm.normalAttribute, start, end - start);
     addVertexRange(sm.colorAttribute, start, end - start);
-    addVertexRange(sm.selfLitAttribute, start, end - start);
   };
 
   const zeroVertices = (sm: SuperMesh, startVertex: number, vertexCount: number): void => {
     if (vertexCount <= 0) return;
-    const { positions, normals, colors, selfLit } = sm.buffers;
+    const { positions, normals, colors } = sm.buffers;
     positions.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
     normals.fill(0, startVertex * COMPONENTS_PER_NORMAL, (startVertex + vertexCount) * COMPONENTS_PER_NORMAL);
     colors.fill(0, startVertex * COMPONENTS_PER_COLOR, (startVertex + vertexCount) * COMPONENTS_PER_COLOR);
-    selfLit.fill(0, startVertex, startVertex + vertexCount);
   };
 
   const retreatFromLiveEnd = (sm: SuperMesh): void => {
@@ -408,11 +394,10 @@ export function createTerrainMeshes(
     const from = run.offset;
     const runEnd = from + run.capacity;
     const to = hole.offset;
-    const { positions, normals, colors, selfLit } = sm.buffers;
+    const { positions, normals, colors } = sm.buffers;
     positions.copyWithin(to * 3, from * 3, runEnd * 3);
     normals.copyWithin(to * COMPONENTS_PER_NORMAL, from * COMPONENTS_PER_NORMAL, runEnd * COMPONENTS_PER_NORMAL);
     colors.copyWithin(to * COMPONENTS_PER_COLOR, from * COMPONENTS_PER_COLOR, runEnd * COMPONENTS_PER_COLOR);
-    selfLit.copyWithin(to, from, runEnd);
     run.offset = to;
 
     const vacated = to + run.capacity;
@@ -471,7 +456,6 @@ export function createTerrainMeshes(
       positionAttribute: placeholder,
       normalAttribute: placeholder,
       colorAttribute: placeholder,
-      selfLitAttribute: placeholder,
       slots: new Map(),
       holes: [],
       liveEnd: 0,
@@ -550,11 +534,10 @@ export function createTerrainMeshes(
       insertHole(sm, freedOffset, freedCapacity);
     }
 
-    const { positions, normals, colors, selfLit } = sm.buffers;
+    const { positions, normals, colors } = sm.buffers;
     positions.set(answer.positions, slot.offset * 3);
     normals.set(answer.normals, slot.offset * COMPONENTS_PER_NORMAL);
     colors.set(answer.colors, slot.offset * COMPONENTS_PER_COLOR);
-    selfLit.set(answer.selfLit, slot.offset);
 
     slot.minX = answer.bounds[0]!;
     slot.minY = answer.bounds[1]!;
