@@ -282,6 +282,23 @@ function resetGlUpload(): void {
 
 const suppressedUploadShapes = new Set<string>();
 
+const TEX_SUB_IMAGE_SOURCE_FORM_ARGS = 7;
+const RGBA_COMPONENTS = 4;
+const TEX_FORMAT_COMPONENTS: ReadonlyMap<number, number> = new Map([
+  [WebGL2RenderingContext.RGBA, 4],
+  [WebGL2RenderingContext.RGB, 3],
+  [WebGL2RenderingContext.RG, 2],
+  [WebGL2RenderingContext.RED, 1],
+  [WebGL2RenderingContext.RGBA_INTEGER, 4],
+  [WebGL2RenderingContext.RED_INTEGER, 1],
+]);
+const TEX_TYPE_BYTES: ReadonlyMap<number, number> = new Map([
+  [WebGL2RenderingContext.UNSIGNED_BYTE, 1],
+  [WebGL2RenderingContext.HALF_FLOAT, 2],
+  [WebGL2RenderingContext.FLOAT, 4],
+  [WebGL2RenderingContext.UNSIGNED_INT, 4],
+]);
+
 function installGlUploadAccounting(): void {
   const proto = WebGL2RenderingContext.prototype;
   const viewBytes = (value: unknown): number =>
@@ -346,16 +363,29 @@ function installGlUploadAccounting(): void {
     const full = args[1] === 0 && bytes === arrayBytes;
     recordUploadOwner(`bufferSubData ${uploadOwnerOf(args[2])}`, ms, bytes, arrayBytes, full);
   });
-  const texShape = (args: unknown[]): string =>
-    typeof args[4] === 'number' && typeof args[5] === 'number'
-      ? `${String(args[4])}x${String(args[5])}`
-      : 'unknown';
+  // The 7-argument source form has format and type at 4 and 5 and its size on the source;
+  // the longer forms carry width and height there instead.
+  const texSubImage = (args: unknown[]): { width: number; height: number; bytes: number } => {
+    const sourceForm = args.length <= TEX_SUB_IMAGE_SOURCE_FORM_ARGS;
+    const source = sourceForm ? (args[6] as { width?: number; height?: number } | undefined) : null;
+    const width = sourceForm ? (source?.width ?? 0) : typeof args[4] === 'number' ? args[4] : 0;
+    const height = sourceForm ? (source?.height ?? 0) : typeof args[5] === 'number' ? args[5] : 0;
+    const format = (sourceForm ? args[4] : args[6]) as number;
+    const type = (sourceForm ? args[5] : args[7]) as number;
+    const bytesPerPixel =
+      (TEX_FORMAT_COMPONENTS.get(format) ?? RGBA_COMPONENTS) * (TEX_TYPE_BYTES.get(type) ?? 1);
+    return { width, height, bytes: width * height * bytesPerPixel };
+  };
+  const texShape = (args: unknown[]): string => {
+    const { width, height } = texSubImage(args);
+    return `${String(width)}x${String(height)}`;
+  };
   wrap(
     'texSubImage2D',
-    (args) => (typeof args[4] === 'number' && typeof args[5] === 'number' ? args[4] * args[5] : 0),
+    (args) => texSubImage(args).bytes,
     texShape,
-    (args, pixels, ms) =>
-      recordUploadOwner(`texSubImage2D ${texShape(args)}`, ms, pixels, pixels, true),
+    (args, bytes, ms) =>
+      recordUploadOwner(`texSubImage2D ${texShape(args)}`, ms, bytes, bytes, true),
   );
 }
 
