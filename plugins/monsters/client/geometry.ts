@@ -211,9 +211,28 @@ function triplanarFurSample(furMap: Texture, furFrequency: Node<'float'>): Node<
     .add(texture(furMap, vec2(furAt.x, furAt.y)).r.mul(furAxis.z));
 }
 
-function applyFurShader(material: MeshLambertNodeMaterial, texture: Texture, frequency: number): void {
-  const furSample = triplanarFurSample(texture, uniform(frequency));
-  compose(material, 'color', (previous) => previous.mul(furSample));
+// bakeRig merges parts whose materials share a program key, which NodeMaterial hashes from node
+// identity; fur of one frequency therefore reuses one node, as it once reused one program key.
+interface FurNodeCache {
+  readonly furColors: Map<string, Node<'vec3'>>;
+  readonly shellConditions: Map<string, Node<'bool'>>;
+}
+
+function applyFurShader(
+  material: MeshLambertNodeMaterial,
+  texture: Texture,
+  frequency: number,
+  { furColors }: FurNodeCache,
+): void {
+  compose(material, 'color', (previous) => {
+    const key = `${previous.id}|${frequency}`;
+    let furColor = furColors.get(key);
+    if (furColor === undefined) {
+      furColor = previous.mul(triplanarFurSample(texture, uniform(frequency)));
+      furColors.set(key, furColor);
+    }
+    return furColor;
+  });
 }
 
 const FUR_STRAND_SHARPNESS = 2.2;
@@ -269,8 +288,15 @@ function applyShellShader(
   texture: Texture,
   frequency: number,
   threshold: number,
+  { shellConditions }: FurNodeCache,
 ): void {
-  discard(material, triplanarFurSample(texture, uniform(frequency)).lessThan(threshold));
+  const key = `${frequency}|${threshold}`;
+  let condition = shellConditions.get(key);
+  if (condition === undefined) {
+    condition = triplanarFurSample(texture, uniform(frequency)).lessThan(threshold);
+    shellConditions.set(key, condition);
+  }
+  discard(material, condition);
 }
 
 export function ellipsoid(
@@ -458,6 +484,7 @@ export function createWorkshop(): ModelWorkshop {
   const rigs: RigBlueprint[] = [];
   let furTexture: DataTexture | undefined;
   let strandTexture: DataTexture | undefined;
+  const furNodes: FurNodeCache = { furColors: new Map(), shellConditions: new Map() };
 
   function keepGeometry<T extends BufferGeometry>(geometry: T): T {
     geometries.push(geometry);
@@ -494,7 +521,7 @@ export function createWorkshop(): ModelWorkshop {
       const material = new MeshLambertNodeMaterial(parameters);
       if (options.furFrequency !== undefined) {
         if (furTexture === undefined) furTexture = furShadeTexture();
-        applyFurShader(material, furTexture, options.furFrequency);
+        applyFurShader(material, furTexture, options.furFrequency, furNodes);
       }
       return keepMaterial(material);
     },
@@ -516,6 +543,7 @@ export function createWorkshop(): ModelWorkshop {
         strandTexture,
         furFrequency,
         SHELL_ALPHA_THRESHOLD_BASE + (layer / layers) * SHELL_ALPHA_THRESHOLD_RANGE,
+        furNodes,
       );
       return keepMaterial(material);
     },
@@ -542,6 +570,8 @@ export function createWorkshop(): ModelWorkshop {
       furTexture = undefined;
       strandTexture?.dispose();
       strandTexture = undefined;
+      furNodes.furColors.clear();
+      furNodes.shellConditions.clear();
       rigs.length = 0;
       geometries.length = 0;
       materials.length = 0;
