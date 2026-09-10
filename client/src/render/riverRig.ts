@@ -2,13 +2,13 @@ import {
   BufferAttribute,
   BufferGeometry,
   DoubleSide,
-  DynamicDrawUsage,
   Mesh,
   MeshStandardMaterial,
   Sphere,
   Vector3,
   type Object3D,
 } from 'three';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   BAND_HEIGHT,
   cellX,
@@ -167,7 +167,7 @@ export function createRiverRig(
 ): RiverRig {
   const networkSource = options?.networkSource ?? directRiverNetworkSource;
   const now = options?.now ?? ((): number => performance.now());
-  const waterMaterial = new MeshStandardMaterial({
+  const waterMaterial = new MeshStandardNodeMaterial({
     color: WATER_COLOR,
     transparent: true,
     opacity: WATER_OPACITY,
@@ -214,8 +214,6 @@ export function createRiverRig(
   const bindWaterGeometry = (): void => {
     waterPositionAttribute = new BufferAttribute(waterPositions, 3);
     waterNormalAttribute = new BufferAttribute(waterNormals, 3);
-    waterPositionAttribute.setUsage(DynamicDrawUsage);
-    waterNormalAttribute.setUsage(DynamicDrawUsage);
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', waterPositionAttribute);
     geometry.setAttribute('normal', waterNormalAttribute);
@@ -561,7 +559,6 @@ export function createRiverRig(
 
     const ringGeometry = new BufferGeometry();
     const ringPositionAttribute = new BufferAttribute(ringPositions, 3);
-    ringPositionAttribute.setUsage(DynamicDrawUsage);
     ringGeometry.setAttribute('position', ringPositionAttribute);
     ringGeometry.setAttribute('normal', new BufferAttribute(ringNormals, 3));
     ringGeometry.setIndex(new BufferAttribute(ringIndices, 1));
@@ -571,7 +568,6 @@ export function createRiverRig(
 
     const domeGeometry = new BufferGeometry();
     const domePositionAttribute = new BufferAttribute(domePositions, 3);
-    domePositionAttribute.setUsage(DynamicDrawUsage);
     domeGeometry.setAttribute('position', domePositionAttribute);
     domeGeometry.setIndex(new BufferAttribute(domeIndices, 1));
     domeGeometry.computeVertexNormals();
