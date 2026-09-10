@@ -7,7 +7,7 @@ import {
   Vector2,
   type Object3D,
 } from 'three';
-import { MeshLambertNodeMaterial } from 'three/webgpu';
+import { MeshLambertNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
   attribute,
   cameraViewMatrix,
@@ -34,13 +34,13 @@ import {
   PUFF_QUAD,
   puffAlphaDiscard,
   puffBillboard,
-  puffInstanceBase,
   puffLobeScale,
   puffMask,
 } from './puffDeck.ts';
 import { CLOUD_BASE_WORLD_Y, CLOUD_HEADROOM_WORLD_UNITS } from './precipitation.ts';
 import { DISC_RENDER_ORDER } from './discRig.ts';
 import { compose, discard } from '../../render/materialSlots.ts';
+import { instanceMatrix } from '../../render/instanceMatrix.ts';
 import type { GroundShadeDisc } from '../types.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
 
@@ -130,7 +130,7 @@ export interface CumulusDeckSpec {
   readonly puffSizeFraction: number;
   readonly color: number;
   readonly name: string;
-  readonly applyRevealClip: (material: MeshLambertNodeMaterial, label: string) => void;
+  readonly applyRevealClip: (material: NodeMaterial, label: string) => void;
 }
 
 export interface CumulusDeck {
@@ -216,7 +216,10 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
     side: DoubleSide,
   });
 
-  const centre = transformed.add(puffInstanceBase());
+  const geometry = new PlaneGeometry(2, 2, 1, 1);
+  const mesh = new InstancedMesh(geometry, material, capacity);
+
+  const centre = instanceMatrix(mesh).mul(vec4(transformed, 1)).xyz;
   // A parked or dark slot collapses its quad to one point: zero area, so no fragment is raised.
   compose(material, 'position', () =>
     select(puffFade.lessThanEqual(0), centre, puffBillboard(centre, puffExtent)),
@@ -230,8 +233,6 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   material.name = label;
   spec.applyRevealClip(material, label);
 
-  const geometry = new PlaneGeometry(2, 2, 1, 1);
-  const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = `${spec.name}:puffs`;
   mesh.renderOrder = DECK_RENDER_ORDER_CAMERA_ABOVE_BASE;
   mesh.visible = false;

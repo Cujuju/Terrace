@@ -33,6 +33,7 @@ import {
   puffMask,
 } from '../../../client/src/plugins/kit/puffDeck.ts';
 import { compose, discard } from '../../../client/src/render/materialSlots.ts';
+import { instanceMatrix } from '../../../client/src/render/instanceMatrix.ts';
 import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 
 export const PARTICLES_PER_PLUME = 48;
@@ -117,7 +118,8 @@ export function createPlume(): PlumeRenderer {
   const wobble = vec2(cos(scatterAngle), sin(scatterAngle)).mul(scatter);
 
   // The instance matrix carries only the vent's position.
-  const world = puffInstanceBase().add(vec3(lean.x.add(wobble.x), rise, lean.y.add(wobble.y)));
+  const mesh = new InstancedMesh(geometry, material, capacity);
+  const world = puffInstanceBase(instanceMatrix(mesh)).add(vec3(lean.x.add(wobble.x), rise, lean.y.add(wobble.y)));
 
   const size = mix(float(PLUME_START_SIZE), PLUME_END_SIZE, life);
   compose(material, 'position', () => puffBillboard(world, size));
@@ -141,7 +143,6 @@ export function createPlume(): PlumeRenderer {
   // The GLSL wrote display bytes straight to the framebuffer, bypassing tone mapping.
   compose(material, 'output', (previous) => vec4(radianceForDisplay(previous.rgb), previous.a));
 
-  const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = 'volcanoes:plume:particles';
   mesh.count = 0;
   mesh.renderOrder = PLUME_RENDER_ORDER;
