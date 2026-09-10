@@ -6,6 +6,7 @@ import {
   spanAt,
   spanCapHeight,
   spanCount,
+  type Span,
 } from './columns.ts';
 import { bandOf, cellIndex, type Heightmap } from './grid.ts';
 import { SHEER_RISE_HEIGHT_UNITS_PER_CELL } from './traversal.ts';
@@ -34,6 +35,10 @@ const TOP_CEILING_FIELD = null;
 
 export function drawnBandOfSample(height: number): number {
   return Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
+}
+
+export function drawnSpanCapHeight(span: Span): number {
+  return drawnBandOfSample(span.ceiling) * BAND_HEIGHT;
 }
 
 export function drawnSampleIsInside(height: number, threshold: number): boolean {
