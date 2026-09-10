@@ -8,7 +8,7 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
-import { MeshLambertNodeMaterial } from 'three/webgpu';
+import { MeshLambertNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
   attribute,
   cameraViewMatrix,
@@ -34,7 +34,6 @@ import {
   PUFF_QUAD,
   puffAlphaDiscard,
   puffBillboard,
-  puffInstanceBase,
   puffMask,
 } from '../../../client/src/plugins/kit/puffDeck.ts';
 import {
@@ -46,6 +45,7 @@ import {
   PUFF_SOFT_EDGE_FRACTION,
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { compose, discard } from '../../../client/src/render/materialSlots.ts';
+import { instanceMatrix } from '../../../client/src/render/instanceMatrix.ts';
 
 export const ARMS_PER_SPIRAL = 9;
 export const POSITIONS_PER_ARM = 90;
@@ -189,7 +189,7 @@ function unitFromId(id: number): number {
 }
 
 export function createSpiral(
-  applyRevealClip: (material: MeshLambertNodeMaterial, label: string) => void,
+  applyRevealClip: (material: NodeMaterial, label: string) => void,
 ): SpiralRenderer {
   const root = new Group();
   root.name = 'cyclone:spiral';
@@ -242,8 +242,9 @@ export function createSpiral(
     .mul(float(1).add(wall.mul(CYCLONE_EYEWALL_PUFF_GROWTH)))
     .mul(float(PUFF_SIZE_SEED_MIN).add(fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(PUFF_SIZE_SEED_SPAN)));
 
+  const mesh = new InstancedMesh(geometry, material, capacity);
   compose(material, 'position', () =>
-    puffBillboard(transformed.add(puffInstanceBase()), puffSize),
+    puffBillboard(instanceMatrix(mesh).mul(vec4(transformed, 1)).xyz, puffSize),
   );
 
   // Solid at the eyewall, a smear at the rim, so the wall occludes rather than tints.
@@ -270,7 +271,6 @@ export function createSpiral(
   material.name = label;
   applyRevealClip(material, label);
 
-  const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.name = 'cyclone:spiral:puffs';
   mesh.count = 0;
   mesh.renderOrder = SPIRAL_RENDER_ORDER_CAMERA_ABOVE_BASE;

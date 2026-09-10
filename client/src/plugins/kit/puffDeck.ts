@@ -7,7 +7,6 @@ import {
   modelViewMatrix,
   modelWorldMatrixInverse,
   positionGeometry,
-  positionLocal,
   sin,
   smoothstep,
   vec4,
@@ -17,10 +16,8 @@ import type { Node } from 'three/webgpu';
 // The quad is authored two units across, so this is the offset from its centre in half-widths.
 export const PUFF_QUAD = positionGeometry.xy;
 
-// (instanceMatrix * vec4(0, 0, 0, 1)).xyz, read back from three's instanced position. Exact because
-// every puff instance matrix is a pure translation (identity rotation, unit scale).
-export function puffInstanceBase(): Node<'vec3'> {
-  return positionLocal.sub(positionGeometry);
+export function puffInstanceBase(instanceMatrix: Node<'mat4'>): Node<'vec3'> {
+  return instanceMatrix.mul(vec4(0, 0, 0, 1)).xyz;
 }
 
 // viewPosition = viewMatrix * world; viewPosition.xy += quad * size; returned in the position

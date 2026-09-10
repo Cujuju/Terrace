@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PoseInterpolator, type PoseSegment } from '../src/plugins/kit/interpolator.ts';
 import { watchReducedMotion } from '../src/plugins/kit/reducedMotion.ts';
 import { reconcileById } from '../src/plugins/kit/viewReconcile.ts';
-import { float, vec3 } from 'three/tsl';
+import { Matrix4 } from 'three';
+import { float, mat4, vec3 } from 'three/tsl';
 import type { Node } from 'three/webgpu';
 import {
   puffAlphaDiscard,
@@ -244,10 +245,10 @@ describe('puff deck nodes', () => {
   });
 
   it('reads the instance matrix as a position only', () => {
-    const base = puffInstanceBase();
-    expect(has(base, { type: 'OperatorNode', op: '-' })).toBe(true);
-    expect(has(base, { type: 'VaryingNode' })).toBe(true);
-    expect(has(base, { type: 'AttributeNode' })).toBe(true);
+    const base = puffInstanceBase(mat4(new Matrix4()));
+    expect(graphOf(base).root).toBe('SplitNode');
+    expect(has(base, { type: 'OperatorNode', op: '*' })).toBe(true);
+    expect(has(base, { type: 'ConstNode', value: [0, 0, 0, 1] })).toBe(true);
   });
 
   it('builds a radial mask that discards outside the quad, at the given inner edge', () => {
