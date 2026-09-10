@@ -3,6 +3,7 @@ import {
   bandOf,
   isSpanDrawn,
   spanAt,
+  drawnSpanCapHeight,
   spanCapHeight,
   spanCount,
   spanIndexCoveringBand,
@@ -25,7 +26,7 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   if (pick.spanIndex < 0 || pick.spanIndex >= spanCount(map, pick.x, pick.y)) return null;
   const span = spanAt(map, pick.x, pick.y, pick.spanIndex);
   if (!isSpanDrawn(span)) return null;
-  const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+  const capY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
   const undersideY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
   if (pick.hitY < undersideY || pick.hitY > capY) return null;
 

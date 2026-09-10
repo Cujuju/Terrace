@@ -6,6 +6,7 @@ import {
   bandOf,
   columnCoversBand,
   drawnBandOfSample,
+  drawnBandOfSpan,
   isSpanDrawn,
   spanAt,
   spanCapHeight,
@@ -478,7 +479,7 @@ function buriedFloorBand(
       for (let k = 0; k < count; k++) {
         const span = spanAt(mirror.map, x, y, k);
         if (!isSpanDrawn(span)) continue;
-        const band = bandOf(spanCapHeight(span));
+        const band = drawnBandOfSpan(span);
         if (band < lowest) lowest = band;
       }
     }
