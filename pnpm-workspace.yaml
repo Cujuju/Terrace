@@ -8,8 +8,10 @@ supportedArchitectures:
   os:
     - win32
     - linux
+    - darwin
   cpu:
     - x64
+    - arm64
 
 onlyBuiltDependencies:
   - better-sqlite3
