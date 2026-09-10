@@ -24,11 +24,13 @@ export function worldUnitsAcross(cells: number): number {
   return cells * CELL_WORLD_SIZE;
 }
 
-export const BAND_HEIGHT = 16;
-
 export const SEA_LEVEL = 0;
 
 export const MAX_HEIGHT = 1024;
+
+export const TERRACE_BAND_COUNT = 64;
+
+export const BAND_HEIGHT = MAX_HEIGHT / TERRACE_BAND_COUNT;
 
 export const SEA_COLUMN_DEPTH = MAX_HEIGHT;
 export const DEEP_STRATA_DEPTH = MAX_HEIGHT / 2;
@@ -82,6 +84,22 @@ export const MAX_RELIEF_WORLD_UNITS = 16;
 export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
 
 export const SNOW_LINE_HEIGHT = 576;
+
+const BAND_ALIGNED_SPANS: readonly number[] = [MAX_HEIGHT, SNOW_LINE_HEIGHT, DEEP_LAVA_DEPTH];
+
+for (const span of BAND_ALIGNED_SPANS) {
+  if (span % BAND_HEIGHT !== 0) {
+    throw new Error(
+      `TERRACE_BAND_COUNT ${TERRACE_BAND_COUNT} makes BAND_HEIGHT ${BAND_HEIGHT}, which does not divide ${span}`,
+    );
+  }
+}
+
+if (BAND_HEIGHT % WORLD_UNIT_CELLS !== 0) {
+  throw new Error(
+    `TERRACE_BAND_COUNT ${TERRACE_BAND_COUNT} makes BAND_HEIGHT ${BAND_HEIGHT}, which is not a whole number of MAX_STEP rises`,
+  );
+}
 
 export const LAND_RAMP_ANCHOR_COUNT = 10;
 
