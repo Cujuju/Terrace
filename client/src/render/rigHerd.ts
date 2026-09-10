@@ -9,9 +9,8 @@ import {
   RGBAFormat,
   Sphere,
   Vector3,
-  type Material,
 } from 'three';
-import type { Node, NodeMaterial } from 'three/webgpu';
+import { StorageInstancedBufferAttribute, type Node, type NodeMaterial } from 'three/webgpu';
 import {
   Fn,
   attribute,
@@ -22,6 +21,7 @@ import {
   textureLoad,
   vec4,
 } from 'three/tsl';
+import { instanceMatrix as instanceMatrixNode } from './instanceMatrix.ts';
 import { compose } from './materialSlots.ts';
 import { toNodeMaterial } from './nodeMaterialFrom.ts';
 import type { RigBlueprint } from './rigSkin.ts';
@@ -94,10 +94,7 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   const captured = new Uint8Array(poseRows);
   let capturedThisFrame = 0;
 
-  const instanceMatrix = new InstancedBufferAttribute(
-    new Float32Array(capacity * MATRIX_ELEMENTS),
-    MATRIX_ELEMENTS,
-  );
+  const instanceMatrix = new StorageInstancedBufferAttribute(capacity, MATRIX_ELEMENTS);
   const instanceMatrices = instanceMatrix.array as Float32Array;
 
   const poseSlotAttribute = new InstancedBufferAttribute(new Float32Array(capacity), 1);
@@ -112,10 +109,11 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     }
     surface.geometry.setAttribute(POSE_SLOT_ATTRIBUTE, poseSlotAttribute);
 
-    const material = poseSkinnedMaterial(surface.material, palette);
+    const material = toNodeMaterial(surface.material.clone());
     materials.push(material);
     const mesh = new InstancedMesh(surface.geometry, material, capacity);
     mesh.instanceMatrix = instanceMatrix;
+    poseSkin(material, mesh, palette);
     mesh.count = 0;
     mesh.boundingSphere = bounds;
     meshes.push(mesh);
@@ -286,14 +284,16 @@ function poseMatrix(palette: DataTexture) {
     .add(poseBone(palette, index.w, row).mul(weight.w));
 }
 
-function poseSkinnedMaterial(source: Material, palette: DataTexture): NodeMaterial {
-  const material = toNodeMaterial(source.clone());
-  compose(material, 'position', (previous) =>
+// three has already placed positionLocal by the instance matrix when the slot runs, so the
+// pose is applied to the raw vertex and the instance transform re-applied outside it.
+function poseSkin(material: NodeMaterial, mesh: InstancedMesh, palette: DataTexture): void {
+  compose(material, 'position', () =>
     Fn(() => {
       const pose = poseMatrix(palette);
-      normalLocal.assign(pose.mul(vec4(normalLocal, 0)).xyz);
-      return pose.mul(vec4(previous, 1)).xyz;
+      const instance = instanceMatrixNode(mesh);
+      const normal = attribute<'vec3'>('normal', 'vec3');
+      normalLocal.assign(instance.mul(pose.mul(vec4(normal, 0))).xyz);
+      return instance.mul(pose.mul(vec4(attribute<'vec3'>('position', 'vec3'), 1))).xyz;
     })(),
   );
-  return material;
 }
