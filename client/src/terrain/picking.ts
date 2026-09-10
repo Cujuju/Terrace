@@ -10,10 +10,11 @@ import {
   drawnBandAt,
   drawnBandOfSample,
   drawnSpanCapHeight,
+  drawnSpanIndexCoveringBand,
   isSpanDrawn,
   spanAt,
-  spanUndersideHeight,
   spanCount,
+  spanUndersideHeight,
   spanIndexCoveringBand,
   type Span,
 } from '@terrace/shared';
@@ -448,8 +449,11 @@ const DRAWN_CAP_SAMPLES_PER_CELL = 2 * ISOLINE_SAMPLES_PER_CELL;
 
 interface DrawnCap {
   readonly t: number;
+  readonly band: number;
   readonly capY: number;
   readonly drawnY: number;
+  readonly u: number;
+  readonly v: number;
 }
 
 function nearestCellHeight(mirror: TerrainMirror, u: number, v: number): number {
@@ -472,9 +476,72 @@ function drawnCapMet(
     const v = ray.oz + t * ray.dz;
     const band = drawnBandAt(mirror.map, u, v);
     const drawnY = drawnBandCapY(band, nearestCellHeight(mirror, u, v));
-    if (ray.oy + t * ray.dy <= drawnY) return { t, capY: band * BAND_WORLD_HEIGHT, drawnY };
+    if (ray.oy + t * ray.dy <= drawnY) {
+      return { t, band, capY: band * BAND_WORLD_HEIGHT, drawnY, u, v };
+    }
   }
   return null;
+}
+
+const NEIGHBOUR_STEPS: readonly (readonly [number, number])[] = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
+
+interface BandOwner {
+  readonly x: number;
+  readonly y: number;
+  readonly spanIndex: number;
+}
+
+function spanStruckAt(
+  mirror: TerrainMirror,
+  x: number,
+  y: number,
+  band: number,
+  faceY: number,
+): number | null {
+  const threshold = band * BAND_HEIGHT;
+  const count = spanCount(mirror.map, x, y);
+  for (let k = 0; k < count; k++) {
+    const span = spanAt(mirror.map, x, y, k);
+    if (!isSpanDrawn(span)) continue;
+    if (span.floor > threshold || threshold > drawnSpanCapHeight(span)) continue;
+    if (faceY < spanUndersideHeight(span) * HEIGHT_WORLD_SCALE) continue;
+    if (faceY > drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE) continue;
+    return k;
+  }
+  return null;
+}
+
+function columnOwningBand(
+  mirror: TerrainMirror,
+  i: number,
+  j: number,
+  u: number,
+  v: number,
+  band: number,
+  faceY: number,
+): BandOwner | null {
+  const last = mirror.map.size - 1;
+  let owner: BandOwner | null = null;
+  let nearest = Infinity;
+  for (const [dx, dz] of NEIGHBOUR_STEPS) {
+    const x = i + dx;
+    const y = j + dz;
+    if (x < 0 || y < 0 || x > last || y > last) continue;
+    const spanIndex = spanStruckAt(mirror, x, y, band, faceY);
+    if (spanIndex === null) continue;
+    const offX = x + CELL_CENTRE_OFFSET - u;
+    const offZ = y + CELL_CENTRE_OFFSET - v;
+    const distance = offX * offX + offZ * offZ;
+    if (distance >= nearest) continue;
+    nearest = distance;
+    owner = { x, y, spanIndex };
+  }
+  return owner;
 }
 
 function terrainHitInCell(
@@ -498,6 +565,7 @@ function terrainHitInCell(
   let hit: TerrainRayPick | null = null;
   let hitT = Infinity;
   let hitSpan: Span | null = null;
+  let hitMet: DrawnCap | null = null;
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, i, j, k);
     if (!isSpanDrawn(span)) continue;
@@ -528,6 +596,22 @@ function terrainHitInCell(
       hitZ: origin.z + t * direction.z,
     };
     hitSpan = span;
+    hitMet = met;
+  }
+  if (hit !== null && hitMet !== null && hit.spanIndex === count - 1) {
+    const owner =
+      drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band) === null
+        ? columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY)
+        : { x: i, y: j, spanIndex: hit.spanIndex };
+    if (owner === null) return null;
+    hitSpan = spanAt(mirror.map, owner.x, owner.y, owner.spanIndex);
+    hit = {
+      ...hit,
+      x: owner.x,
+      y: owner.y,
+      spanIndex: owner.spanIndex,
+      surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
+    };
   }
   const refinable = hit !== null && (hit.hitRiser || hit.hitY === hit.surfaceY);
   if (hit === null || !refinable || risers === null || hitSpan === null) return hit;
@@ -591,7 +675,13 @@ export function pickTerrainInColumn(
   if (clip === null) return null;
   const { tEnter, tExit } = clip;
 
-  const hit = terrainHitInCell(mirror, x, y, origin, direction, tEnter, tExit, risers);
+  let hit: TerrainRayPick | null = null;
+  marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, from, to) => {
+    const struck = terrainHitInCell(mirror, i, j, origin, direction, from, to, risers);
+    if (struck === null || struck.x !== x || struck.y !== y) return false;
+    hit = struck;
+    return true;
+  });
   if (hit !== null) return hit;
 
   const entryY = ray.oy + tEnter * ray.dy;
