@@ -54,6 +54,27 @@ if (canvas === null || hudRoot === null) {
   throw new Error('index.html must provide #viewport and #hud');
 }
 
+// The join goes out first so its round trip overlaps viewport creation, which waits on the
+// first shader links; every callback below reaches its target lazily.
+const connection = connect({
+  sink: () => world,
+  operator: {
+    onRestorePointList: (msg) => applyRestorePointList(msg),
+    onRollbackResult: (msg) => applyRollbackResult(msg),
+  },
+  worldAdmin: {
+    onWorldListing: (msg) => applyWorldListing(msg),
+    onWorldPluginListing: (msg) => applyWorldPluginListing(msg),
+    onWorldAdminResult: (msg) => applyWorldAdminResult(msg),
+    onWorldSwitchNotice: (msg) => applyWorldSwitchNotice(msg),
+    onWorldUnloaded: () => setWorldLoaded(false),
+    onServerRestartNotice: (msg) => setPendingRestartSeconds(msg.secondsRemaining),
+  },
+  onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
+  onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
+  onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
+});
+
 const viewport = createViewport(canvas);
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
 const world = createWorld(viewport);
@@ -116,24 +137,6 @@ const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
     (pickDebug === null ? 0 : PICK_DEBUG_OVERLAY_DRAW_OBJECTS),
 });
 
-const connection = connect({
-  sink: world,
-  operator: {
-    onRestorePointList: (msg) => applyRestorePointList(msg),
-    onRollbackResult: (msg) => applyRollbackResult(msg),
-  },
-  worldAdmin: {
-    onWorldListing: (msg) => applyWorldListing(msg),
-    onWorldPluginListing: (msg) => applyWorldPluginListing(msg),
-    onWorldAdminResult: (msg) => applyWorldAdminResult(msg),
-    onWorldSwitchNotice: (msg) => applyWorldSwitchNotice(msg),
-    onWorldUnloaded: () => setWorldLoaded(false),
-    onServerRestartNotice: (msg) => setPendingRestartSeconds(msg.secondsRemaining),
-  },
-  onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
-  onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
-  onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
-});
 
 const PICK_DEBUG_QUERY_FLAG = 'pickdebug';
 
