@@ -1,10 +1,11 @@
-import { Show, createEffect, createSignal, onCleanup, type JSX } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from 'solid-js';
 import {
   fillFraction,
   formatRegenRate,
   formatSculptCost,
   isPoolFull,
   pulsePeriodSeconds,
+  quantiseFill,
 } from './gauge.ts';
 import { currentBrushCost, deniedCount, liveBalance, manaPool } from './state.ts';
 
@@ -192,10 +193,13 @@ export function ManaGauge(): JSX.Element {
     onCleanup(() => cancelAnimationFrame(frame));
   });
 
-  const fill = () => {
+  // Quantised memo: regen advances `displayed` every frame, but the drawn surface moves in steps.
+  const fill = createMemo(() => {
     const pool = manaPool();
-    return pool === null ? 0 : fillFraction(displayed(), pool.capacity);
-  };
+    return pool === null
+      ? 0
+      : quantiseFill(fillFraction(displayed(), pool.capacity), BULB_HEIGHT * GAUGE_DISPLAY_SCALE);
+  });
   const fillHeight = () => fill() * BULB_HEIGHT;
   const fillTopY = () => BULB_BOTTOM_Y - fillHeight();
   const full = () => {
