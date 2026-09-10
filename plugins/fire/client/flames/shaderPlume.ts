@@ -6,11 +6,34 @@ import {
   InstancedMesh,
   Matrix4,
   Quaternion,
-  ShaderMaterial,
   Vector3,
 } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Discard,
+  Fn,
+  atan,
+  attribute,
+  cameraProjectionMatrix,
+  clamp,
+  float,
+  mix,
+  modelViewMatrix,
+  positionGeometry,
+  pow,
+  select,
+  sin,
+  smoothstep,
+  uniform,
+  varying,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { FIRE_FLAME_INSTANCE_CAP } from '../../protocol.ts';
-import { VALUE_NOISE_GLSL } from '../valueNoiseGlsl.ts';
+import { fnoise } from '../valueNoise.ts';
+import { instanceMatrix } from '../../../../client/src/render/instanceMatrix.ts';
+import { radianceForDisplay } from '../../../../client/src/render/displayRadiance.ts';
 import type { FireInstance, FlameRenderer, FlameRendererBuilder } from './types.ts';
 
 const PLUME_RADIAL_SEGMENTS = 10;
@@ -35,6 +58,7 @@ const PLUME_BELLY_GAIN = 0.75;
 const PLUME_BELLY_BIAS = 1.4;
 const PLUME_ALPHA_PEAK = 0.92;
 const PLUME_GAIN = 1.0;
+const PLUME_ALPHA_DISCARD_THRESHOLD = 0.01;
 
 const FLAME_HEIGHT_PER_FUEL = 1.4;
 const FLAME_RADIUS_PER_FUEL = 0.24;
@@ -47,100 +71,6 @@ function unitFromSeed(seed: number, salt: number): number {
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
-
-const PLUME_VERTEX_SHADER =  `
-  uniform float uTime;
-
-  attribute float aSeed;
-  attribute float aIntensity;
-  attribute float aPresence;
-
-  varying float vHeight;
-  varying float vSeed;
-  varying float vAngle;
-  varying float vIntensity;
-  varying float vPresence;
-
-  ${VALUE_NOISE_GLSL}
-
-  void main() {
-    // The sleeve is authored with its foot at y = 0 and unit height, so
-    // position.y IS the height fraction — no division, no uniform.
-    float height = clamp(position.y, 0.0, 1.0);
-    vHeight = height;
-    vSeed = aSeed;
-    vIntensity = aIntensity;
-    vPresence = aPresence;
-    vAngle = atan(position.z, position.x);
-
-    // Anchor the foot, free the tip.
-    float bias = pow(height, ${WARP_HEIGHT_BIAS.toFixed(2)});
-    float travel = height * ${WARP_FREQUENCY.toFixed(2)} - uTime * ${WARP_SCROLL_SPEED.toFixed(2)};
-
-    // Two decorrelated lookups so x and z lean independently — one lookup
-    // shared between them would make the plume sway along a single diagonal.
-    float leanX = fnoise(vec2(travel, aSeed * 37.0));
-    float leanZ = fnoise(vec2(travel, aSeed * 37.0 + 19.7));
-    float pinch = fnoise(vec2(travel * 1.6, aSeed * 37.0 + 5.1));
-
-    // Flame silhouette: waist, belly, taper. Applied before the noise, so
-    // the noise deforms the flame shape rather than the cone.
-    float belly = sin(3.14159265 * pow(height, ${PLUME_BELLY_BIAS.toFixed(2)}));
-    float shape = ${PLUME_WAIST.toFixed(2)} + ${PLUME_BELLY_GAIN.toFixed(2)} * belly;
-
-    vec3 warped = position;
-    warped.xz *= shape * (1.0 + pinch * ${WARP_RADIUS_AMPLITUDE.toFixed(2)} * bias);
-    warped.x += leanX * ${WARP_LATERAL_AMPLITUDE.toFixed(2)} * bias;
-    warped.z += leanZ * ${WARP_LATERAL_AMPLITUDE.toFixed(2)} * bias;
-
-    // A fiercer fire is a taller one, applied here rather than in the instance
-    // matrix so intensity can change without a rebuild of the matrices.
-    warped.y *= mix(0.72, 1.0, aIntensity);
-
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(warped, 1.0);
-  }
-`;
-
-const PLUME_FRAGMENT_SHADER =  `
-  uniform float uTime;
-
-  varying float vHeight;
-  varying float vSeed;
-  varying float vAngle;
-  varying float vIntensity;
-  varying float vPresence;
-
-  ${VALUE_NOISE_GLSL}
-
-  void main() {
-    // Colour by height: white-hot at the fuel, orange through the body, dark
-    // red where it is going out.
-    vec3 color = vHeight < ${PLUME_MID_HEIGHT.toFixed(2)}
-      ? mix(
-          vec3(${PLUME_CORE_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          vec3(${PLUME_MID_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          vHeight / ${PLUME_MID_HEIGHT.toFixed(2)})
-      : mix(
-          vec3(${PLUME_MID_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          vec3(${PLUME_TIP_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          (vHeight - ${PLUME_MID_HEIGHT.toFixed(2)}) / ${(1 - PLUME_MID_HEIGHT).toFixed(2)});
-
-    // The plume thins out towards the tip and is solid at the foot.
-    float body = 1.0 - smoothstep(${PLUME_GUTTER_HEIGHT.toFixed(2)}, 1.0, vHeight);
-
-    // Flicker, sampled around the plume AND up it, so the guttering crawls
-    // around the surface instead of pulsing the whole sleeve at once. Stronger
-    // near the tip: the foot of a fire is steady, the tip is where it tatters.
-    float gutter = fnoise(vec2(
-      vAngle * 1.9 + vSeed * 13.0,
-      vHeight * 5.0 - uTime * ${PLUME_FLICKER_SPEED.toFixed(2)}));
-    float flicker = 1.0 - ${PLUME_FLICKER_DEPTH.toFixed(2)} * vHeight * (0.5 - 0.5 * gutter) * 2.0;
-
-    float alpha = body * clamp(flicker, 0.0, 1.0) * vIntensity * vPresence * ${PLUME_ALPHA_PEAK.toFixed(2)};
-    if (alpha <= 0.01) discard;
-    gl_FragColor = vec4(color * ${PLUME_GAIN.toFixed(2)}, alpha);
-  }
-`;
 
 export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer => {
   const root = new Group();
@@ -156,20 +86,88 @@ export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer =>
   );
   geometry.translate(0, 0.5, 0);
 
-  const material = new ShaderMaterial({
-    uniforms: { uTime: { value: 0 } },
-    vertexShader: PLUME_VERTEX_SHADER,
-    fragmentShader: PLUME_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-  });
+  const material = new NodeMaterial();
+  material.transparent = true;
+  material.depthWrite = false;
+  material.side = DoubleSide;
 
   const mesh = new InstancedMesh(geometry, material, FIRE_FLAME_INSTANCE_CAP);
   mesh.name = 'fire:shaderPlume:plumes';
   mesh.count = 0;
   mesh.frustumCulled = false;
   root.add(mesh);
+
+  const timeUniform = uniform(0);
+  const aSeed = attribute<'float'>('aSeed', 'float');
+  const aIntensity = attribute<'float'>('aIntensity', 'float');
+  const aPresence = attribute<'float'>('aPresence', 'float');
+
+  // The sleeve is authored with its foot at y = 0 and unit height, so position.y is the height fraction.
+  const height = clamp(positionGeometry.y, 0.0, 1.0);
+  const vHeight = varying(height, 'vHeight');
+  const vAngle = varying(atan(positionGeometry.z, positionGeometry.x), 'vAngle');
+
+  // Anchor the foot, free the tip.
+  const bias = pow(height, WARP_HEIGHT_BIAS);
+  const travel = height.mul(WARP_FREQUENCY).sub(timeUniform.mul(WARP_SCROLL_SPEED));
+
+  // Two decorrelated lookups so x and z lean independently rather than along one diagonal.
+  const leanX = fnoise(vec2(travel, aSeed.mul(37.0)));
+  const leanZ = fnoise(vec2(travel, aSeed.mul(37.0).add(19.7)));
+  const pinch = fnoise(vec2(travel.mul(1.6), aSeed.mul(37.0).add(5.1)));
+
+  // Flame silhouette: waist, belly, taper, applied before the noise so the noise deforms the flame.
+  const belly = sin(float(3.14159265).mul(pow(height, PLUME_BELLY_BIAS)));
+  const shape = float(PLUME_WAIST).add(belly.mul(PLUME_BELLY_GAIN));
+
+  const radial = shape.mul(float(1.0).add(pinch.mul(WARP_RADIUS_AMPLITUDE).mul(bias)));
+  // A fiercer fire is a taller one, here rather than in the matrix so intensity needs no rebuild.
+  const warped = vec3(
+    positionGeometry.x.mul(radial).add(leanX.mul(WARP_LATERAL_AMPLITUDE).mul(bias)),
+    positionGeometry.y.mul(mix(float(0.72), 1.0, aIntensity)),
+    positionGeometry.z.mul(radial).add(leanZ.mul(WARP_LATERAL_AMPLITUDE).mul(bias)),
+  );
+
+  material.vertexNode = cameraProjectionMatrix
+    .mul(modelViewMatrix)
+    .mul(instanceMatrix(mesh))
+    .mul(vec4(warped, 1.0));
+
+  material.fragmentNode = Fn(() => {
+    // Colour by height: white-hot at the fuel, orange through the body, dark red going out.
+    const color = select(
+      vHeight.lessThan(PLUME_MID_HEIGHT),
+      mix(vec3(...PLUME_CORE_COLOR), vec3(...PLUME_MID_COLOR), vHeight.div(PLUME_MID_HEIGHT)),
+      mix(
+        vec3(...PLUME_MID_COLOR),
+        vec3(...PLUME_TIP_COLOR),
+        vHeight.sub(PLUME_MID_HEIGHT).div(1 - PLUME_MID_HEIGHT),
+      ),
+    );
+
+    // The plume thins out towards the tip and is solid at the foot.
+    const body = float(1.0).sub(smoothstep(PLUME_GUTTER_HEIGHT, 1.0, vHeight));
+
+    // Flicker sampled around and up the plume so the guttering crawls; stronger near the tip.
+    const gutter = fnoise(
+      vec2(
+        vAngle.mul(1.9).add(aSeed.mul(13.0)),
+        vHeight.mul(5.0).sub(timeUniform.mul(PLUME_FLICKER_SPEED)),
+      ),
+    );
+    const flicker = float(1.0).sub(
+      vHeight.mul(PLUME_FLICKER_DEPTH).mul(float(0.5).sub(gutter.mul(0.5))).mul(2.0),
+    );
+
+    const alpha = body
+      .mul(clamp(flicker, 0.0, 1.0))
+      .mul(aIntensity)
+      .mul(aPresence)
+      .mul(PLUME_ALPHA_PEAK);
+    Discard(alpha.lessThanEqual(PLUME_ALPHA_DISCARD_THRESHOLD));
+    // The GLSL wrote display bytes straight to the framebuffer, bypassing tone mapping.
+    return vec4(radianceForDisplay(color.mul(PLUME_GAIN)), alpha);
+  })();
 
   const seeds = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
   const intensities = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
@@ -227,7 +225,7 @@ export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer =>
 
     update(_dt: number, elapsed: number): void {
       if (mesh.count === 0) return;
-      material.uniforms['uTime']!.value = elapsed;
+      timeUniform.value = elapsed;
     },
 
     dispose(): void {

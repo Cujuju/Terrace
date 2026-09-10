@@ -10,11 +10,33 @@ import {
   InstancedMesh,
   Matrix4,
   Quaternion,
-  ShaderMaterial,
   Vector3,
 } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Discard,
+  Fn,
+  attribute,
+  cameraProjectionMatrix,
+  cos,
+  float,
+  int,
+  mix,
+  modelViewMatrix,
+  positionGeometry,
+  pow,
+  select,
+  sin,
+  smoothstep,
+  uniform,
+  uniformArray,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { FIRE_FLAME_INSTANCE_CAP } from '../../protocol.ts';
 import type { FireInstance, FlameRenderer, FlameRendererBuilder } from './types.ts';
+import { instanceMatrix } from '../../../../client/src/render/instanceMatrix.ts';
+import { radianceForDisplay } from '../../../../client/src/render/displayRadiance.ts';
 
 const RIBBON_COUNT = 5;
 const RIBBON_SEGMENTS = 14;
@@ -63,6 +85,7 @@ const RIBBON_FLICKER_RATE = 5.3;
 const RIBBON_FLICKER_DEPTH = 0.3;
 const RIBBON_GAIN = 1.3;
 const RIBBON_ALPHA_PEAK = 0.75;
+const RIBBON_ALPHA_DISCARD_THRESHOLD = 0.01;
 
 const FLAME_HEIGHT_PER_FUEL = 1.35;
 const FLAME_RADIUS_PER_FUEL = 0.42;
@@ -144,124 +167,104 @@ function buildRibbonGeometry(): BufferGeometry {
 
 const RIBBON_SPIN_RATES = new Float32Array(RIBBON_PROFILES.map((p) => p.spinRate));
 
-const RIBBON_VERTEX_SHADER =  `
-  uniform float uTime;
-  uniform float uSpinRates[${RIBBON_COUNT}];
-
-  attribute float aSeed;
-  attribute float aIntensity;
-  attribute float aPresence;
-  attribute float aRibbon;
-  attribute float aAlong;
-  attribute float aEdge;
-
-  varying float vAlong;
-  varying float vEdge;
-  varying float vSeed;
-  varying float vIntensity;
-  varying float vPresence;
-  varying float vRibbon;
-
-  void main() {
-    vAlong = aAlong;
-    vEdge = aEdge;
-    vSeed = aSeed;
-    vIntensity = aIntensity;
-    vPresence = aPresence;
-    vRibbon = aRibbon;
-
-    int ribbon = int(aRibbon + 0.5);
-    float spin = uSpinRates[ribbon];
-
-    // Two rotations about the fire's axis, summed: a steady spin for the whole
-    // strip, and a whip that only the upper part of the strip feels.
-    float phase = uTime * spin + vSeed;
-    float whip = sin(uTime * ${WHIP_RATE.toFixed(2)} + vSeed * 7.0 + aRibbon * 1.7)
-      * ${WHIP_TURNS.toFixed(2)} * pow(aAlong, ${WHIP_HEIGHT_BIAS.toFixed(2)});
-    float angle = (phase + whip) * ${TURN.toFixed(6)};
-
-    float c = cos(angle);
-    float s = sin(angle);
-    vec3 turned = vec3(
-      position.x * c - position.z * s,
-      position.y,
-      position.x * s + position.z * c);
-
-    // Breathing, weighted the same way — the roots stay where the fuel is.
-    float breathe = 1.0 + sin(uTime * ${BREATHE_RATE.toFixed(2)} + vSeed * 3.0 + aRibbon)
-      * ${BREATHE_DEPTH.toFixed(2)};
-    turned.y *= mix(1.0, breathe, aAlong) * mix(0.74, 1.0, aIntensity);
-
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(turned, 1.0);
-  }
-`;
-
-const RIBBON_FRAGMENT_SHADER =  `
-  uniform float uTime;
-
-  varying float vAlong;
-  varying float vEdge;
-  varying float vSeed;
-  varying float vIntensity;
-  varying float vPresence;
-  varying float vRibbon;
-
-  void main() {
-    vec3 color = vAlong < ${RIBBON_MID_HEIGHT.toFixed(2)}
-      ? mix(
-          vec3(${RIBBON_ROOT_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          vec3(${RIBBON_MID_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          vAlong / ${RIBBON_MID_HEIGHT.toFixed(2)})
-      : mix(
-          vec3(${RIBBON_MID_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          vec3(${RIBBON_TIP_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-          (vAlong - ${RIBBON_MID_HEIGHT.toFixed(2)}) / ${(1 - RIBBON_MID_HEIGHT).toFixed(2)});
-
-    // Fade along the strip, and across it: a burning sheet has no hard side
-    // edge either, and feathering the sides is what keeps five overlapping
-    // strips from reading as five ribbons of paper.
-    float lengthwise = 1.0 - smoothstep(${RIBBON_FADE_START.toFixed(2)}, 1.0, vAlong);
-    float across = 1.0 - vEdge * vEdge * 0.85;
-
-    // Flicker travelling UP the strip, keyed to the strip index so no two of
-    // the five gutter together.
-    float flicker = 1.0 - ${RIBBON_FLICKER_DEPTH.toFixed(2)} *
-      (0.5 + 0.5 * sin((vAlong * 9.0 - uTime * ${RIBBON_FLICKER_RATE.toFixed(2)}) * ${TURN.toFixed(6)}
-        + vRibbon * 2.1 + vSeed * 5.0));
-
-    float alpha = lengthwise * across * flicker * vIntensity * vPresence * ${RIBBON_ALPHA_PEAK.toFixed(2)};
-    if (alpha <= 0.01) discard;
-    // Premultiplied: the colour is scaled by its own alpha before it leaves
-    // the shader, which is what the ONE/1−srcAlpha blend above expects.
-    gl_FragColor = vec4(color * ${RIBBON_GAIN.toFixed(2)} * alpha, alpha);
-  }
-`;
-
 export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
   const root = new Group();
   root.name = 'fire:flames:ribbons';
 
   const geometry = buildRibbonGeometry();
-  const material = new ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uSpinRates: { value: RIBBON_SPIN_RATES },
-    },
-    vertexShader: RIBBON_VERTEX_SHADER,
-    fragmentShader: RIBBON_FRAGMENT_SHADER,
-    transparent: true,
-    blending: CustomBlending,
-    blendSrc: OneFactor,
-    blendDst: OneMinusSrcAlphaFactor,
-    depthWrite: false,
-    side: DoubleSide,
-  });
+  const material = new NodeMaterial();
+  material.transparent = true;
+  material.blending = CustomBlending;
+  material.blendSrc = OneFactor;
+  material.blendDst = OneMinusSrcAlphaFactor;
+  material.depthWrite = false;
+  material.side = DoubleSide;
 
   const mesh = new InstancedMesh(geometry, material, FIRE_FLAME_INSTANCE_CAP);
   mesh.name = 'fire:ribbons:tongues';
   mesh.count = 0;
   mesh.frustumCulled = false;
   root.add(mesh);
+
+  const timeUniform = uniform(0);
+  const spinRatesUniform = uniformArray<'float'>(Array.from(RIBBON_SPIN_RATES), 'float');
+  const aSeed = attribute<'float'>('aSeed', 'float');
+  const aIntensity = attribute<'float'>('aIntensity', 'float');
+  const aPresence = attribute<'float'>('aPresence', 'float');
+  const aRibbon = attribute<'float'>('aRibbon', 'float');
+  const aAlong = attribute<'float'>('aAlong', 'float');
+  const aEdge = attribute<'float'>('aEdge', 'float');
+
+  const ribbon = int(aRibbon.add(0.5));
+  const spin = spinRatesUniform.element(ribbon);
+
+  // Two rotations about the fire's axis, summed: a steady spin, and a whip only the upper strip feels.
+  const phase = timeUniform.mul(spin).add(aSeed);
+  const whip = sin(timeUniform.mul(WHIP_RATE).add(aSeed.mul(7.0)).add(aRibbon.mul(1.7)))
+    .mul(WHIP_TURNS)
+    .mul(pow(aAlong, WHIP_HEIGHT_BIAS));
+  const angle = phase.add(whip).mul(TURN);
+
+  const c = cos(angle);
+  const s = sin(angle);
+
+  // Breathing, weighted the same way: the roots stay where the fuel is.
+  const breathe = float(1.0).add(
+    sin(timeUniform.mul(BREATHE_RATE).add(aSeed.mul(3.0)).add(aRibbon)).mul(BREATHE_DEPTH),
+  );
+  const turned = vec3(
+    positionGeometry.x.mul(c).sub(positionGeometry.z.mul(s)),
+    positionGeometry.y.mul(mix(float(1.0), breathe, aAlong)).mul(mix(float(0.74), 1.0, aIntensity)),
+    positionGeometry.x.mul(s).add(positionGeometry.z.mul(c)),
+  );
+
+  material.vertexNode = cameraProjectionMatrix
+    .mul(modelViewMatrix)
+    .mul(instanceMatrix(mesh))
+    .mul(vec4(turned, 1.0));
+
+  material.fragmentNode = Fn(() => {
+    const color = select(
+      aAlong.lessThan(RIBBON_MID_HEIGHT),
+      mix(vec3(...RIBBON_ROOT_COLOR), vec3(...RIBBON_MID_COLOR), aAlong.div(RIBBON_MID_HEIGHT)),
+      mix(
+        vec3(...RIBBON_MID_COLOR),
+        vec3(...RIBBON_TIP_COLOR),
+        aAlong.sub(RIBBON_MID_HEIGHT).div(1 - RIBBON_MID_HEIGHT),
+      ),
+    );
+
+    // Fade along the strip and across it, so five overlapping strips do not read as paper.
+    const lengthwise = float(1.0).sub(smoothstep(RIBBON_FADE_START, 1.0, aAlong));
+    const across = float(1.0).sub(aEdge.mul(aEdge).mul(0.85));
+
+    // Flicker travelling up the strip, keyed to the strip index so no two gutter together.
+    const flicker = float(1.0).sub(
+      float(0.5)
+        .add(
+          sin(
+            aAlong
+              .mul(9.0)
+              .sub(timeUniform.mul(RIBBON_FLICKER_RATE))
+              .mul(TURN)
+              .add(aRibbon.mul(2.1))
+              .add(aSeed.mul(5.0)),
+          ).mul(0.5),
+        )
+        .mul(RIBBON_FLICKER_DEPTH),
+    );
+
+    const alpha = lengthwise
+      .mul(across)
+      .mul(flicker)
+      .mul(aIntensity)
+      .mul(aPresence)
+      .mul(RIBBON_ALPHA_PEAK);
+    Discard(alpha.lessThanEqual(RIBBON_ALPHA_DISCARD_THRESHOLD));
+    // Premultiplied for the ONE/1-srcAlpha blend. The GLSL's display colour is inverted before the
+    // premultiply, since WebGPU tone-maps what the GLSL wrote straight to the framebuffer.
+    return vec4(radianceForDisplay(color.mul(RIBBON_GAIN)).mul(alpha), alpha);
+  })();
 
   const seeds = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
   const intensities = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
@@ -319,7 +322,7 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
 
     update(_dt: number, elapsed: number): void {
       if (mesh.count === 0) return;
-      material.uniforms['uTime']!.value = elapsed;
+      timeUniform.value = elapsed;
     },
 
     dispose(): void {

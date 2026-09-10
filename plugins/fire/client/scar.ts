@@ -5,12 +5,32 @@ import {
   Matrix4,
   PlaneGeometry,
   Quaternion,
-  ShaderMaterial,
   Vector3,
 } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Discard,
+  Fn,
+  attribute,
+  cameraPosition,
+  cameraProjectionMatrix,
+  distance,
+  float,
+  length,
+  mix,
+  modelViewMatrix,
+  modelWorldMatrix,
+  positionGeometry,
+  smoothstep,
+  varying,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { FIRE_FLAME_INSTANCE_CAP } from '../protocol.ts';
-import { VALUE_NOISE_GLSL } from './valueNoiseGlsl.ts';
+import { fnoise } from './valueNoise.ts';
+import { instanceMatrix } from '../../../client/src/render/instanceMatrix.ts';
+import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 import {
   SMOKE_AFTERLIFE_SECONDS,
   SMOKE_CLOSEST_ZOOM_FRAME_HEIGHT_WORLD_UNITS,
@@ -41,6 +61,7 @@ const SCAR_MOTTLE_FREQUENCY = 5.2;
 const SCAR_CHAR_COLOR: readonly [number, number, number] = [0.07, 0.055, 0.048];
 const SCAR_ASH_COLOR: readonly [number, number, number] = [0.3, 0.28, 0.26];
 const SCAR_ALPHA_PEAK = 0.82;
+const SCAR_ALPHA_DISCARD_THRESHOLD = 0.004;
 
 const SCAR_RENDER_ORDER = SMOKE_RENDER_ORDER - 1;
 
@@ -50,81 +71,6 @@ function unitFromSeed(seed: number, salt: number): number {
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
-
-const SCAR_VERTEX_SHADER =  `
-  attribute float aSeed;
-  attribute float aStrength;
-
-  varying vec2 vPlan;
-  varying float vSeed;
-  varying float vStrength;
-  varying float vDistanceFade;
-
-  void main() {
-    // The quad is authored two units across and lying in XZ, so position.xz IS
-    // the offset from the scar's centre in radii — no division, no uniform.
-    vPlan = position.xz;
-    vSeed = aSeed;
-    vStrength = aStrength;
-
-    // DISTANCE MEASURED TO THE SCAR'S CENTRE, not per-vertex: ./smoke.ts's rule
-    // and its reason — the whole mark must fade as one body, and a per-vertex
-    // distance would fade a scar's near edge differently from its far one.
-    vec4 centre = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-    float cameraDistance = distance(cameraPosition, centre.xyz);
-    // THE EXACT COMPLEMENT OF ./smoke.ts's vDistanceFade, over the same two
-    // distances: full inside the closest zoom, where a column is drawn at
-    // nothing, and gone by the default orbit, where a column is at full. One
-    // signature, two halves, and the sum of the two is what the player sees.
-    vDistanceFade = 1.0 - smoothstep(
-      ${SMOKE_SILENT_DISTANCE.toFixed(2)},
-      ${SMOKE_FULL_STRENGTH_DISTANCE.toFixed(2)},
-      cameraDistance);
-
-    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
-  }
-`;
-
-const SCAR_FRAGMENT_SHADER =  `
-  varying vec2 vPlan;
-  varying float vSeed;
-  varying float vStrength;
-  varying float vDistanceFade;
-
-  ${VALUE_NOISE_GLSL}
-
-  void main() {
-    // Distance from the scar's centre in NOMINAL RADII: the outline sits at 1,
-    // the quad reaches SCAR_QUAD_HALF_WIDTH along its axes so the eroded rim can
-    // bulge past 1 without being sliced flat, and everything past the outline —
-    // including all four corners — discards below.
-    float radius = length(vPlan);
-
-    // No hard outline, and no outline the eye can trace either. The noise moves
-    // the boundary in and out, so what falls off is a ragged front rather than
-    // an arc — a circle is the one shape a fire never burns.
-    float outline = fnoise(vPlan * ${SCAR_OUTLINE_FREQUENCY.toFixed(2)} + vSeed);
-    float body = 1.0 - smoothstep(
-      ${SCAR_CORE_FRACTION.toFixed(2)},
-      1.0,
-      radius + outline * ${SCAR_RIM_ROUGHNESS.toFixed(2)});
-    if (body <= 0.0) discard;
-
-    // Char and ash, mottled. Decorrelated from the outline by frequency AND by
-    // seed offset: sampled at the same phase, the pale patches would sit in the
-    // same places as the outline's lobes and the whole mark would read as one
-    // stencil scaled twice.
-    float mottle = fnoise(vPlan * ${SCAR_MOTTLE_FREQUENCY.toFixed(2)} + vSeed + 37.4);
-    vec3 color = mix(
-      vec3(${SCAR_CHAR_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-      vec3(${SCAR_ASH_COLOR.map((c) => c.toFixed(3)).join(', ')}),
-      0.5 + 0.5 * mottle);
-
-    float alpha = body * vStrength * vDistanceFade * ${SCAR_ALPHA_PEAK.toFixed(2)};
-    if (alpha <= 0.004) discard;
-    gl_FragColor = vec4(color, alpha);
-  }
-`;
 
 interface BurnScar {
   x: number;
@@ -158,13 +104,9 @@ export const createFireScar = (): FireScar => {
   );
   geometry.rotateX(-Math.PI / 2);
 
-  const material = new ShaderMaterial({
-    uniforms: {},
-    vertexShader: SCAR_VERTEX_SHADER,
-    fragmentShader: SCAR_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: false,
-  });
+  const material = new NodeMaterial();
+  material.transparent = true;
+  material.depthWrite = false;
 
   const mesh = new InstancedMesh(geometry, material, SCAR_CAP);
   mesh.name = 'fire:scar:marks';
@@ -172,6 +114,52 @@ export const createFireScar = (): FireScar => {
   mesh.renderOrder = SCAR_RENDER_ORDER;
   mesh.frustumCulled = false;
   root.add(mesh);
+
+  const aSeed = attribute<'float'>('aSeed', 'float');
+  const aStrength = attribute<'float'>('aStrength', 'float');
+  const matrix4 = instanceMatrix(mesh);
+
+  // The quad lies in XZ, two units across, so position.xz is the offset from the centre in radii.
+  const vPlan = positionGeometry.xz;
+
+  // Distance to the scar's centre, not per vertex, so the whole mark fades as one body.
+  const centre = modelWorldMatrix.mul(matrix4.mul(vec4(0.0, 0.0, 0.0, 1.0)));
+  const cameraDistance = distance(cameraPosition, centre.xyz);
+  // The exact complement of the smoke's fade over the same two distances.
+  const vDistanceFade = varying(
+    float(1.0).sub(smoothstep(SMOKE_SILENT_DISTANCE, SMOKE_FULL_STRENGTH_DISTANCE, cameraDistance)),
+    'vDistanceFade',
+  );
+
+  material.vertexNode = cameraProjectionMatrix
+    .mul(modelViewMatrix)
+    .mul(matrix4)
+    .mul(vec4(positionGeometry, 1.0));
+
+  material.fragmentNode = Fn(() => {
+    // Nominal radii: the outline sits at 1; the quad reaches past it so the eroded rim can bulge.
+    const radius = length(vPlan);
+
+    // Noise moves the boundary in and out, so the edge is a ragged front rather than an arc.
+    const outline = fnoise(vPlan.mul(SCAR_OUTLINE_FREQUENCY).add(aSeed));
+    const body = float(1.0).sub(
+      smoothstep(SCAR_CORE_FRACTION, 1.0, radius.add(outline.mul(SCAR_RIM_ROUGHNESS))),
+    );
+    Discard(body.lessThanEqual(0.0));
+
+    // Char and ash, mottled, decorrelated from the outline by frequency and seed offset.
+    const mottle = fnoise(vPlan.mul(SCAR_MOTTLE_FREQUENCY).add(aSeed).add(37.4));
+    const color = mix(
+      vec3(...SCAR_CHAR_COLOR),
+      vec3(...SCAR_ASH_COLOR),
+      float(0.5).add(mottle.mul(0.5)),
+    );
+
+    const alpha = body.mul(aStrength).mul(vDistanceFade).mul(SCAR_ALPHA_PEAK);
+    Discard(alpha.lessThanEqual(SCAR_ALPHA_DISCARD_THRESHOLD));
+    // The GLSL wrote display bytes straight to the framebuffer, bypassing tone mapping.
+    return vec4(radianceForDisplay(color), alpha);
+  })();
 
   const seeds = new InstancedBufferAttribute(new Float32Array(SCAR_CAP), 1);
   const strengths = new InstancedBufferAttribute(new Float32Array(SCAR_CAP), 1);

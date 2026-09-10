@@ -4,8 +4,31 @@ import {
   DoubleSide,
   Group,
   Mesh,
-  ShaderMaterial,
 } from 'three';
+import { NodeMaterial, type Node } from 'three/webgpu';
+import {
+  Discard,
+  Fn,
+  abs,
+  attribute,
+  cameraProjectionMatrix,
+  clamp,
+  dot,
+  float,
+  floor,
+  fract,
+  mix,
+  modelViewMatrix,
+  positionGeometry,
+  pow,
+  sin,
+  smoothstep,
+  uniform,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
+import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
 import {
   FLOW_RADIUS_WORLD_UNITS,
@@ -52,116 +75,30 @@ export const LAVA_VERTEX_CAP = 54_000;
 
 export const LAVA_RENDER_ORDER = 1;
 
-const LAVA_CRUST_RGB = '0.043, 0.045, 0.052';
-const LAVA_MOLTEN_RGB = '1.0, 0.42, 0.06';
-const LAVA_CORE_RGB = '1.0, 0.80, 0.33';
+const LAVA_CRUST_RGB: readonly [number, number, number] = [0.043, 0.045, 0.052];
+const LAVA_MOLTEN_RGB: readonly [number, number, number] = [1.0, 0.42, 0.06];
+const LAVA_CORE_RGB: readonly [number, number, number] = [1.0, 0.8, 0.33];
 
 const LAVA_PULSE_RATE = 0.9;
 const LAVA_PULSE_DEPTH = 0.1;
 
-const LAVA_VERTEX_SHADER =  `
-  attribute float aBirth;
-  attribute float aStrength;
+const hash21 = Fn(([q]: [Node<'vec2'>]) => {
+  const p = fract(q.mul(vec2(123.34, 456.21))).toVar();
+  p.addAssign(dot(p, p.add(45.32)));
+  return fract(p.x.mul(p.y));
+}).setLayout({ name: 'lavaHash21', type: 'float', inputs: [{ name: 'q', type: 'vec2' }] });
 
-  varying vec2 vPlan;
-  varying float vBirth;
-  varying float vStrength;
+const vnoise = Fn(([p]: [Node<'vec2'>]) => {
+  const i = floor(p);
+  const f = fract(p);
+  const u = f.mul(f).mul(vec2(3.0).sub(f.mul(2.0)));
+  const a = hash21(i);
+  const b = hash21(i.add(vec2(1.0, 0.0)));
+  const c = hash21(i.add(vec2(0.0, 1.0)));
+  const d = hash21(i.add(vec2(1.0, 1.0)));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}).setLayout({ name: 'lavaNoise', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
 
-  void main() {
-    // The geometry is authored in WORLD space, so position.xz IS the world
-    // plan coordinate — which is what makes the crust pattern below continuous
-    // across the whole flow instead of restarting in every cell.
-    vPlan = position.xz;
-    vBirth = aBirth;
-    vStrength = aStrength;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const LAVA_NOISE_GLSL =  `
-  float hash21(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-  }
-
-  float vnoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = hash21(i);
-    float b = hash21(i + vec2(1.0, 0.0));
-    float c = hash21(i + vec2(0.0, 1.0));
-    float d = hash21(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-  }
-`;
-
-const LAVA_FRAGMENT_SHADER =  `
-  uniform float uElapsed;
-
-  varying vec2 vPlan;
-  varying float vBirth;
-  varying float vStrength;
-
-  ${LAVA_NOISE_GLSL}
-
-  void main() {
-    if (vStrength <= 0.0) discard;
-
-    // THE COOLING CURVE, RUN IN THE SHADER — protocol.ts's heatFromAge, restated
-    // in GLSL. This is why nothing is written per frame: aBirth is when this
-    // cell went molten and uElapsed is now, so the heat falls out of one
-    // subtraction and no buffer has to be touched as a flow goes out.
-    float age = uElapsed - vBirth;
-    float heat = clamp(1.0 - age / ${LAVA_COOL_SECONDS.toFixed(1)}, 0.0, 1.0);
-
-    // THE CRUST. Cold plates floating on molten rock: the noise field is the
-    // plates, and what shows between them is the glow.
-    float plates = vnoise(vPlan * 2.6);
-    float seam = 1.0 - abs(plates - 0.5) * 2.0;
-
-    // THE VEINS NARROW AS IT COOLS, rather than the colour washing out — and
-    // that is the whole reason there is no brown anywhere in this shader
-    // (owner, 2026-08-27). Fading hot orange toward dark rock passes THROUGH
-    // brown, and a flow spends most of its life in exactly that middle. So the
-    // lit colour never changes; only how much of the surface is lit does. A
-    // half-cooled flow is thin bright cracks on near-black, which is both what
-    // the real thing looks like and the one version of it that is never muddy.
-    //
-    // The exponent runs 2 (fresh: broad rivers of lava with plates riding on
-    // them) to 18 (cold: hairline seams), so what changes across a flow's life
-    // is the AREA that is lit and never the colour of it.
-    float veins = pow(seam, 2.0 + (1.0 - heat) * 16.0);
-
-    // A slow, shallow pulse, offset by position so a hillside breathes unevenly
-    // rather than strobing in unison. Lava is a heavy liquid with a skin that
-    // breaks and heals; it does not flicker like flame.
-    float pulse = 1.0 + ${LAVA_PULSE_DEPTH.toFixed(2)} *
-      sin(uElapsed * ${LAVA_PULSE_RATE.toFixed(2)} + vPlan.x * 1.7 + vPlan.y * 1.3);
-
-    // Tightened with a smoothstep so most of the surface is decisively crust or
-    // decisively lava and the band between them is thin — the other half of
-    // keeping the midtones out of the mud.
-    float lit = smoothstep(0.12, 0.62, veins * heat * pulse);
-
-    vec3 color = mix(vec3(${LAVA_CRUST_RGB}), vec3(${LAVA_MOLTEN_RGB}), lit);
-    // The hottest seams glow through toward yellow, which is what stops a fresh
-    // flow reading as a single flat orange.
-    color = mix(color, vec3(${LAVA_CORE_RGB}), smoothstep(0.86, 1.0, lit) * 0.7);
-
-    // OPAQUE MATTER, AND THE ALPHA IS COVERAGE. This is new ground: nothing it
-    // buried should read through it, so the alpha here is never a see-through
-    // factor. The material is opaque with alphaToCoverage on, so this value is
-    // consumed as the FRACTION OF THE PIXEL'S MSAA SAMPLES the flow occupies —
-    // 1 across the body of the flow, easing to 0 at the rim, which resolves to
-    // a soft edge made of geometry coverage rather than of blending. Full
-    // strength therefore writes a fully opaque pixel (the 0.96 that used to sit
-    // here existed only to let the terrace lip read through, which the owner
-    // settled against on 2026-09-01).
-    gl_FragColor = vec4(color, vStrength);
-  }
-`;
 interface CoveredCell {
   x: number;
   y: number;
@@ -225,15 +162,56 @@ export function createLavaFlow(): LavaFlowRenderer {
   geometry.setAttribute('aStrength', strengthAttribute);
   geometry.setDrawRange(0, 0);
 
-  const material = new ShaderMaterial({
-    uniforms: { uElapsed: { value: 0 } },
-    vertexShader: LAVA_VERTEX_SHADER,
-    fragmentShader: LAVA_FRAGMENT_SHADER,
-    transparent: false,
-    depthWrite: true,
-    alphaToCoverage: true,
-    side: DoubleSide,
-  });
+  const material = new NodeMaterial();
+  material.transparent = false;
+  material.depthWrite = true;
+  material.alphaToCoverage = true;
+  material.side = DoubleSide;
+
+  const elapsedUniform = uniform(0);
+  const aBirth = attribute<'float'>('aBirth', 'float');
+  const aStrength = attribute<'float'>('aStrength', 'float');
+
+  // Authored in world space, so position.xz is the world plan: the crust is continuous across cells.
+  const vPlan = positionGeometry.xz;
+
+  material.vertexNode = cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(positionGeometry, 1.0));
+
+  material.fragmentNode = Fn(() => {
+    Discard(aStrength.lessThanEqual(0.0));
+
+    // The cooling curve, protocol.ts's heatFromAge restated: nothing is written per frame.
+    const age = elapsedUniform.sub(aBirth);
+    const heat = clamp(float(1.0).sub(age.div(LAVA_COOL_SECONDS)), 0.0, 1.0);
+
+    // The crust: cold plates floating on molten rock; the glow shows between them.
+    const plates = vnoise(vPlan.mul(2.6));
+    const seam = float(1.0).sub(abs(plates.sub(0.5)).mul(2.0));
+
+    // The veins narrow as it cools rather than the colour washing through brown: exponent 2 to 18.
+    const veins = pow(seam, float(2.0).add(float(1.0).sub(heat).mul(16.0)));
+
+    // A slow, shallow pulse, offset by position so a hillside breathes unevenly.
+    const pulse = float(1.0).add(
+      sin(elapsedUniform.mul(LAVA_PULSE_RATE).add(vPlan.x.mul(1.7)).add(vPlan.y.mul(1.3))).mul(
+        LAVA_PULSE_DEPTH,
+      ),
+    );
+
+    // Tightened so the surface is decisively crust or lava, keeping midtones out of the mud.
+    const lit = smoothstep(0.12, 0.62, veins.mul(heat).mul(pulse));
+
+    // The hottest seams glow through toward yellow.
+    const color = mix(
+      mix(vec3(...LAVA_CRUST_RGB), vec3(...LAVA_MOLTEN_RGB), lit),
+      vec3(...LAVA_CORE_RGB),
+      smoothstep(0.86, 1.0, lit).mul(0.7),
+    );
+
+    // Opaque matter: alpha is MSAA coverage, 1 across the body and easing to 0 at the rim.
+    // The GLSL wrote display bytes straight to the framebuffer, bypassing tone mapping.
+    return vec4(radianceForDisplay(color), aStrength);
+  })();
 
   const mesh = new Mesh(geometry, material);
   mesh.name = 'volcanoes:flow:crust';
@@ -594,7 +572,7 @@ export function createLavaFlow(): LavaFlowRenderer {
     },
 
     update(elapsed): void {
-      material.uniforms.uElapsed!.value = elapsed;
+      elapsedUniform.value = elapsed;
     },
 
     dispose(): void {
