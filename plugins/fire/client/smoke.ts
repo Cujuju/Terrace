@@ -1,7 +1,6 @@
 import {
   CylinderGeometry,
   DoubleSide,
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -302,8 +301,6 @@ export const createFireSmoke = (): FireSmoke => {
 
   const seeds = new InstancedBufferAttribute(new Float32Array(SMOKE_COLUMN_CAP), 1);
   const strengths = new InstancedBufferAttribute(new Float32Array(SMOKE_COLUMN_CAP), 1);
-  seeds.setUsage(DynamicDrawUsage);
-  strengths.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aSeed', seeds);
   geometry.setAttribute('aStrength', strengths);
 

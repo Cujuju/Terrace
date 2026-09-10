@@ -1,6 +1,5 @@
 import {
   DoubleSide,
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -201,9 +200,6 @@ export function createPlume(): PlumeRenderer {
   const phases = new InstancedBufferAttribute(new Float32Array(capacity), 1);
   const seeds = new InstancedBufferAttribute(new Float32Array(capacity), 1);
   const strengths = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-  phases.setUsage(DynamicDrawUsage);
-  seeds.setUsage(DynamicDrawUsage);
-  strengths.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aPhase', phases);
   geometry.setAttribute('aSeed', seeds);
   geometry.setAttribute('aStrength', strengths);

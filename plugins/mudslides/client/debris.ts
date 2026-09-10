@@ -1,7 +1,6 @@
 import {
   Color,
   DodecahedronGeometry,
-  DynamicDrawUsage,
   InstancedMesh,
   MeshLambertMaterial,
   Object3D,
@@ -67,7 +66,6 @@ function createClumpField(color: number, capacity: number): ClumpField {
   const material: Material = new MeshLambertMaterial({ color: new Color(color) });
   const mesh = new InstancedMesh(geometry, material, capacity);
   mesh.count = 0;
-  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
   mesh.frustumCulled = false;
   mesh.castShadow = false;
   mesh.receiveShadow = false;

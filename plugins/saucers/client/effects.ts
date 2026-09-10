@@ -5,7 +5,6 @@ import {
   BufferGeometry,
   Color,
   CylinderGeometry,
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -61,7 +60,6 @@ function addInstancedAlpha(
   label: string,
 ): InstancedBufferAttribute {
   const alpha = new InstancedBufferAttribute(new Float32Array(capacity).fill(1), 1);
-  alpha.setUsage(DynamicDrawUsage);
   geometry.setAttribute('instancedAlpha', alpha);
 
   material.onBeforeCompile = (shader) => {
@@ -138,7 +136,6 @@ export function createLaserPool(): LaserPool {
   const mesh = new InstancedMesh(geometry, material, MAX_LASER_BOLTS);
   mesh.name = 'saucers:bolts:pool';
   mesh.count = 0;
-  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
   mesh.frustumCulled = false;
   root.add(mesh);
 
@@ -254,7 +251,6 @@ export function createCrashBursts(): CrashBursts {
   const ball = new InstancedMesh(sphere, ballMaterial, BURST_POOL_SIZE);
   ball.name = 'saucers:bursts:ball';
   ball.count = 0;
-  ball.instanceMatrix.setUsage(DynamicDrawUsage);
   ball.frustumCulled = false;
   root.add(ball);
 
@@ -267,7 +263,6 @@ export function createCrashBursts(): CrashBursts {
   const core = new InstancedMesh(sphere, coreMaterial, BURST_POOL_SIZE);
   core.name = 'saucers:bursts:core';
   core.count = 0;
-  core.instanceMatrix.setUsage(DynamicDrawUsage);
   core.frustumCulled = false;
   root.add(core);
 
@@ -403,7 +398,6 @@ export function createCrashSplashes(): CrashSplashes {
   const plume = new InstancedMesh(sphere, plumeMaterial, SPLASH_POOL_SIZE);
   plume.name = 'saucers:splashes:plume';
   plume.count = 0;
-  plume.instanceMatrix.setUsage(DynamicDrawUsage);
   plume.frustumCulled = false;
   root.add(plume);
 
@@ -418,7 +412,6 @@ export function createCrashSplashes(): CrashSplashes {
   const ring = new InstancedMesh(ringGeometry, ringMaterial, SPLASH_POOL_SIZE);
   ring.name = 'saucers:splashes:ring';
   ring.count = 0;
-  ring.instanceMatrix.setUsage(DynamicDrawUsage);
   ring.frustumCulled = false;
   root.add(ring);
 
