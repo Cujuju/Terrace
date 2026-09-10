@@ -3,21 +3,13 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
-  DoubleSide,
   Mesh,
   Sphere,
   SRGBColorSpace,
   Vector3,
   type Group,
 } from 'three';
-import { MeshStandardNodeMaterial, type Node } from 'three/webgpu';
-import {
-  colorSpaceToWorking,
-  diffuseColor,
-  mix,
-  vec4,
-  vertexColor,
-} from 'three/tsl';
+import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import { chunksPerEdge } from '@terrace/shared';
 import { SCULPT_REPEAT_DELAY_MS } from '../config.ts';
 import {
@@ -35,12 +27,8 @@ import {
   createDrawnGroundStore,
   type DrawnGroundStore,
 } from '../terrain/drawnGroundStore.ts';
-import {
-  COMPONENTS_PER_COLOR,
-  COMPONENTS_PER_NORMAL,
-} from '../terrain/capEmission.ts';
-import { compose } from './materialSlots.ts';
-import { applyGroundShade } from './groundShade.ts';
+import { COMPONENTS_PER_COLOR, COMPONENTS_PER_NORMAL } from '../terrain/capEmission.ts';
+import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
@@ -61,23 +49,6 @@ export const ARENA_HEADROOM_FLOOR_TRIANGLES =
   ARENA_HEADROOM_RUN_MULTIPLE * ARENA_P90_RUN_TRIANGLES;
 
 export const TERRAIN_QUIET_MS = 2 * SCULPT_REPEAT_DELAY_MS;
-
-const TERRAIN_ROUGHNESS = 0.95;
-const TERRAIN_METALNESS = 0;
-
-// @types/three types the colour-space helpers as a bare Node; the decode is a vec3.
-function srgbToWorking(node: Node<'vec3'>): Node<'vec3'> {
-  return colorSpaceToWorking(node, SRGBColorSpace) as unknown as Node<'vec3'>;
-}
-
-// The colour attribute holds sRGB bytes, so the graph decodes them where the vertex
-// splice used to, rather than changing what the mesher writes.
-function makeSelfLitAware(material: MeshStandardNodeMaterial): void {
-  compose(material, 'color', (previous) => previous.mul(srgbToWorking(vertexColor().rgb)));
-  compose(material, 'output', (previous) =>
-    vec4(mix(previous.rgb, diffuseColor.rgb, vertexColor().a), previous.a),
-  );
-}
 
 function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   const scratch = new Color();
@@ -193,18 +164,13 @@ export function createTerrainMeshes(
   mirror: TerrainMirror,
   scheduling?: MeshScheduling,
   buildSource: ChunkBuildSource = createDirectChunkBuildSource(),
+  sharedMaterial?: MeshStandardNodeMaterial,
 ): TerrainMeshes {
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
   const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
-  const material = new MeshStandardNodeMaterial({
-    flatShading: true,
-    roughness: TERRAIN_ROUGHNESS,
-    metalness: TERRAIN_METALNESS,
-    side: DoubleSide,
-  });
-  makeSelfLitAware(material);
-  applyGroundShade(material, 'terrain');
+  const material = sharedMaterial ?? createTerrainMaterial();
+  const ownsMaterial = sharedMaterial === undefined;
 
   const superMeshes = new Map<number, SuperMesh>();
 
@@ -222,14 +188,8 @@ export function createTerrainMeshes(
 
   const bindGeometry = (sm: SuperMesh): void => {
     sm.reallocatedThisPass = true;
-    const positionAttribute = new BufferAttribute(sm.buffers.positions, 3);
-    const normalAttribute = new BufferAttribute(sm.buffers.normals, COMPONENTS_PER_NORMAL, true);
-    const colorAttribute = new BufferAttribute(sm.buffers.colors, COMPONENTS_PER_COLOR, true);
-
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', positionAttribute);
-    geometry.setAttribute('normal', normalAttribute);
-    geometry.setAttribute('color', colorAttribute);
+    const { geometry, positionAttribute, normalAttribute, colorAttribute } =
+      createArenaGeometry(sm.buffers);
     geometry.setDrawRange(0, sm.liveEnd);
 
     const previous = sm.mesh.geometry;
@@ -851,7 +811,7 @@ export function createTerrainMeshes(
     dispose(): void {
       stopDraining?.();
       clear();
-      material.dispose();
+      if (ownsMaterial) material.dispose();
     },
   };
 }

@@ -47,6 +47,7 @@ import {
   type TerrainMeshes,
 } from './render/terrainMeshes.ts';
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
+import { createTerrainMaterial, warmTerrainMaterial } from './render/terrainMaterial.ts';
 import {
   createLayerEdgeOverlay,
   type LayerEdgeOverlay,
@@ -140,6 +141,9 @@ export function createWorld(viewport: Viewport): World {
 
   const chunkBuildSource = createWorkerChunkBuildSource();
 
+  const terrainMaterial = createTerrainMaterial();
+  const terrainMaterialWarmUp = warmTerrainMaterial(viewport.terrainGroup, terrainMaterial);
+
   const drawnChunkScratch = new Set<number>();
 
   let mirror: TerrainMirror | null = null;
@@ -227,6 +231,7 @@ export function createWorld(viewport: Viewport): World {
       nextMirror,
       { onFrame: (handler) => viewport.onFrame(handler) },
       chunkBuildSource ?? undefined,
+      terrainMaterial,
     );
     const nextPredictions = createPredictionStore(nextMirror);
     layerEdges?.dispose();
@@ -464,6 +469,8 @@ export function createWorld(viewport: Viewport): World {
     dispose(): void {
       clearExpiryTimer();
       meshes?.dispose();
+      terrainMaterialWarmUp.removeFromParent();
+      terrainMaterial.dispose();
       meshes = null;
       mirror = null;
       drawnGround = null;
