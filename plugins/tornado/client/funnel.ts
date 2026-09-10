@@ -1,7 +1,6 @@
 import {
   CylinderGeometry,
   DoubleSide,
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -326,8 +325,6 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
 
   const coneSeeds = new InstancedBufferAttribute(new Float32Array(MAX_FUNNELS), 1);
   const coneStrengths = new InstancedBufferAttribute(new Float32Array(MAX_FUNNELS), 1);
-  coneSeeds.setUsage(DynamicDrawUsage);
-  coneStrengths.setUsage(DynamicDrawUsage);
   coneGeometry.setAttribute('aSeed', coneSeeds);
   coneGeometry.setAttribute('aStrength', coneStrengths);
 
@@ -352,7 +349,6 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
   const debrisSeeds = new InstancedBufferAttribute(new Float32Array(debrisCapacity), 1);
   const debrisStrengths = new InstancedBufferAttribute(new Float32Array(debrisCapacity), 1);
   for (const attribute of [debrisPhases, debrisSeeds, debrisStrengths]) {
-    attribute.setUsage(DynamicDrawUsage);
   }
   debrisGeometry.setAttribute('aPhase', debrisPhases);
   debrisGeometry.setAttribute('aSeed', debrisSeeds);

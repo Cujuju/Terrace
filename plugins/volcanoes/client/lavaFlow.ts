@@ -2,7 +2,6 @@ import {
   BufferAttribute,
   BufferGeometry,
   DoubleSide,
-  DynamicDrawUsage,
   Group,
   Mesh,
   ShaderMaterial,
@@ -215,9 +214,9 @@ export function createLavaFlow(): LavaFlowRenderer {
   const births = new Float32Array(LAVA_VERTEX_CAP);
   const strengths = new Float32Array(LAVA_VERTEX_CAP);
 
-  const positionAttribute = new BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
-  const birthAttribute = new BufferAttribute(births, 1).setUsage(DynamicDrawUsage);
-  const strengthAttribute = new BufferAttribute(strengths, 1).setUsage(DynamicDrawUsage);
+  const positionAttribute = new BufferAttribute(positions, 3);
+  const birthAttribute = new BufferAttribute(births, 1);
+  const strengthAttribute = new BufferAttribute(strengths, 1);
   const attributes = [positionAttribute, birthAttribute, strengthAttribute];
 
   const geometry = new BufferGeometry();

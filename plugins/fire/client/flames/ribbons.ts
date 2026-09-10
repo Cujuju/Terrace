@@ -3,7 +3,6 @@ import {
   BufferGeometry,
   CustomBlending,
   DoubleSide,
-  DynamicDrawUsage,
   OneFactor,
   OneMinusSrcAlphaFactor,
   Group,
@@ -266,13 +265,10 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
 
   const seeds = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
   const intensities = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
-  seeds.setUsage(DynamicDrawUsage);
-  intensities.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aSeed', seeds);
   geometry.setAttribute('aIntensity', intensities);
 
   const presences = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
-  presences.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aPresence', presences);
 
   const matrix = new Matrix4();

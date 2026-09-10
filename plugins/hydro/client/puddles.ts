@@ -1,5 +1,4 @@
 import {
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -123,7 +122,6 @@ export function createPuddles(): Puddles {
   root.add(mesh);
 
   const wetness = new InstancedBufferAttribute(new Float32Array(HYDRO_PATCH_CAP), 1);
-  wetness.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aWetness', wetness);
 
   const matrix = new Matrix4();

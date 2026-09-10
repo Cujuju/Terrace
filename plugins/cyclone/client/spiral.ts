@@ -1,6 +1,5 @@
 import {
   DoubleSide,
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -352,7 +351,6 @@ export function createSpiral(
   const strengths = new InstancedBufferAttribute(new Float32Array(capacity), 1);
   const rises = new InstancedBufferAttribute(new Float32Array(capacity), 1);
   for (const attribute of [arms, alongs, seeds, radii, strengths, rises]) {
-    attribute.setUsage(DynamicDrawUsage);
   }
   geometry.setAttribute('aArm', arms);
   geometry.setAttribute('aAlong', alongs);

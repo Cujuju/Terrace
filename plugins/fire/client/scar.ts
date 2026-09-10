@@ -1,5 +1,4 @@
 import {
-  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -176,8 +175,6 @@ export const createFireScar = (): FireScar => {
 
   const seeds = new InstancedBufferAttribute(new Float32Array(SCAR_CAP), 1);
   const strengths = new InstancedBufferAttribute(new Float32Array(SCAR_CAP), 1);
-  seeds.setUsage(DynamicDrawUsage);
-  strengths.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aSeed', seeds);
   geometry.setAttribute('aStrength', strengths);
 
