@@ -62,7 +62,10 @@ Why chunk-local: the gate's world-quantized u16 at 1/512 world unit
 `DEFAULT_WORLD_SIZE` = 2,048 cells = 512 world units (`shared/src/constants.ts`).
 Chunk-local at the function's own denominator is exact at every world size and
 strictly finer than the gate's grid (1/1024 cell vs 1/128 cell). The chunk
-origin reaches the vertex shader as a per-draw uniform (§5).
+origin comes from a per-slot origin table indexed by
+`vertex_index >> log2(classVertices)` (slots are fixed-size within a class and
+`vertex_index` includes the indirect `firstVertex`), so no per-draw bind group
+or first-instance feature is needed (§5).
 
 Effect: 15.6 M vertices × 8 B = **125 MB** exact for Frostwick (from
 `vertices` in results.json), against 187.5 MB at 12 B. Draw time can only fall
@@ -158,11 +161,13 @@ shipped 938 ms single-threaded build.
 
 Slots are not contiguous, so the world is not one draw. Per chunk:
 `drawIndirect(args, chunk * 16)` with `firstVertex = slotBase`, `vertexCount`
-from the chunk record. All 1,024 draws are recorded once into a
-`GPURenderBundle` grouped by class (one `setVertexBuffer` per class, one
-`setBindGroup` with a dynamic offset per chunk for its origin uniform);
-re-recorded only when a chunk changes class. Per frame the host executes the
-bundle: one call.
+from the chunk record. In three 0.185 (`client/node_modules/three`, verified
+2026-09-10) this is one `Mesh` per class whose geometry has the class buffer as
+a `StorageBufferAttribute` and `geometry.setIndirect(args, offsets[])` with the
+offsets of that class's chunks — the WebGPU backend issues one `drawIndirect`
+per offset (`src/renderers/webgpu/WebGPUBackend.js:1845-1850`). The six meshes
+sit in a `BundleGroup` so the draws are recorded once and replayed per frame;
+the offsets array is rewritten only when a chunk changes class.
 
 Culling comes free: a 1,024-thread compute pass per frame tests each chunk's
 `(originXZ, minY, maxY)` box against the frustum and writes `vertexCount` or 0
@@ -323,8 +328,11 @@ accepted.
   `capYOfBand` / `isDrawnAt` are answerable from the function plus the blocky
   flag. If a consumer for loops appears, it marches the function on the CPU on
   demand for that chunk; the mesher no longer produces loops.
-- The client must be on the WebGPU renderer (compute passes, storage vertex
-  buffers, render bundles with `drawIndirect`). That is #446's migration.
+- The client must be on three's WebGPU renderer: the emit kernel stays raw WGSL
+  (`wgslFn` compute, the gate's code), the class buffers are
+  `StorageBufferAttribute`s, draws go through `setIndirect` and `BundleGroup`,
+  and the ground material decodes the 8-byte vertex in its `positionNode`
+  (#446 defines that material). That is #446's migration.
 - Timestamp queries (owner's adapter has them; gate 2 tells for the laptop)
   are wanted for the edit budget check in the perf probe, not required.
 
