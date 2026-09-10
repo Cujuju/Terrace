@@ -104,7 +104,6 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
   if (cell === null) return null;
   return world.terrainHeightAt(cell.x, cell.y);
 });
-viewport.start();
 bindCameraControls(canvas, viewport.controls);
 
 const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
@@ -201,6 +200,10 @@ viewport.onFrame(() => {
 
 startFrameRateMeter(viewport.onFrame);
 installPerfHandle();
+
+// Last: start() draws a frame synchronously, and that frame bakes shader constants the
+// plugin host is still configuring — nothing may render until the scene is fully wired.
+viewport.start();
 
 render(
   () => (
