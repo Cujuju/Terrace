@@ -317,10 +317,13 @@ const FALLBACK_CURTAIN_TRIANGLES = 2 * (4 * LATTICE_PER_CHUNK);
 export const FALLBACK_MAX_TRIANGLES =
   FALLBACK_CAP_TRIANGLES + FALLBACK_WALL_TRIANGLES + FALLBACK_CURTAIN_TRIANGLES;
 
-export function blockyCellCapY(height: number): number {
-  const band = drawnBandOfSample(height);
+export function drawnBandCapY(band: number, height: number): number {
   if (band === 0 && height <= SEA_LEVEL) return -SEABED_CAP_SINK;
   return band * BAND_WORLD_HEIGHT;
+}
+
+export function blockyCellCapY(height: number): number {
+  return drawnBandCapY(drawnBandOfSample(height), height);
 }
 
 function writeBlockyFallback(

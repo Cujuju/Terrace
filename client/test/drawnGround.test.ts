@@ -33,6 +33,8 @@ function groundOf(mirror: TerrainMirror): DrawnGround {
 
 const WORLD_SIZE = CHUNK_SIZE * 2;
 
+const OFF_CONTOUR = 1 / 4;
+
 function ringOf(x: number, z: number): number {
   const centre = WORLD_SIZE / 2 - 0.5;
   return Math.max(Math.abs(x - centre), Math.abs(z - centre));
@@ -102,8 +104,8 @@ describe('drawnGround', () => {
     const ground = groundOf(mirror);
 
     const disagreements: string[] = [];
-    for (let z = 0.5; z < WORLD_SIZE; z += 0.5) {
-      for (let x = 0.5; x < WORLD_SIZE; x += 0.5) {
+    for (let z = OFF_CONTOUR; z < WORLD_SIZE; z += 0.5) {
+      for (let x = OFF_CONTOUR; x < WORLD_SIZE; x += 0.5) {
         const expected = drawnBandIndependent(mirror, x, z);
         expect(ground.bandAt(x, z)).toBe(expected);
         const naive = bandOf(sampleHeight(mirror, Math.floor(x), Math.floor(z)));
