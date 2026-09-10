@@ -18,6 +18,9 @@ const CHROME_BY_PLATFORM = {
 const CHROME = process.env.GATE1_CHROME ?? CHROME_BY_PLATFORM[process.platform];
 // D3D11 is the ANGLE backend the shipped bench recorded; only Windows has it.
 const PLATFORM_CHROME_FLAGS = process.platform === 'win32' ? ['--use-angle=d3d11'] : [];
+// `--visible`: a real window instead of --headless=new. Headless pacing is
+// not a display's, so timings that matter for the record come from this mode.
+const VISIBLE = process.argv.includes('--visible');
 // `--serve [port]`: serve the page for a visible browser and stay up. No
 // self-checks, no Chrome, no results. For the gate 2 battery run.
 const SERVE_FLAG_INDEX = process.argv.indexOf('--serve');
@@ -73,7 +76,7 @@ const port = server.address().port;
 const cdpPort = CDP_PORT_BASE + Math.floor(Math.random() * CDP_PORT_SPAN);
 const profile = mkdtempSync(join(tmpdir(), 'gate1-'));
 const chrome = spawn(CHROME, [
-  '--headless=new', '--enable-unsafe-webgpu', ...PLATFORM_CHROME_FLAGS,
+  ...(VISIBLE ? ['--window-position=0,0'] : ['--headless=new']), '--enable-unsafe-webgpu', ...PLATFORM_CHROME_FLAGS,
   '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`,
   `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
   `--remote-debugging-port=${cdpPort}`, 'about:blank',
@@ -238,7 +241,7 @@ const screenshot = async (sessionId, name) => {
 };
 
 // --------------------------------------------------------------------- runs
-const results = { world: meta, sources: {}, pageLogs: [] };
+const results = { world: meta, chromeMode: VISIBLE ? 'visible' : 'headless', sources: {}, pageLogs: [] };
 
 const gpu = await openPage('gpu');
 await awaitReady(gpu.sessionId);
