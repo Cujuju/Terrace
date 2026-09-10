@@ -1,0 +1,246 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>renderer A/B</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#000}canvas{display:block;width:100vw;height:100vh}</style>
+<script type="importmap">
+{"imports":{"three":"/three/three.webgpu.js","three/webgpu":"/three/three.webgpu.js","three/tsl":"/three/three.tsl.js","three-webgl":"/three/three.module.js"}}
+</script>
+<canvas id="c"></canvas>
+<script type="module">
+// Same scene, same geometry layout as the client's terrain arena, same lights,
+// same tone mapping; only the renderer differs (?r=webgl | ?r=webgpu).
+// ?stroke=<frames> replays the post-fix stroke upload pattern for that many
+// frames after ?idle=<frames> idle frames, then reports both blocks.
+const params = new URLSearchParams(location.search);
+const RENDERER = params.get('r') ?? 'webgl';
+const IDLE_FRAMES = Number(params.get('idle') ?? 600);
+const STROKE_FRAMES = Number(params.get('stroke') ?? 600);
+const WARMUP_FRAMES = 120;
+const ANTIALIAS = params.get('aa') !== '0';
+// ?pad=1: store the 8-bit normal and colour attributes as 4 components. WebGPU
+// has no 8-bit x3 vertex format; three pads x3 arrays to x4 in JS over the whole
+// array on every update (WebGPUAttributeUtils.js:200-212).
+const SMALL_ITEM_SIZE = params.get('pad') === '1' ? 4 : 3;
+// ?extra=N: N small meshes with distinct materials, to price the renderer's
+// per-object CPU cost at the app's draw count (104–163 draws measured).
+const EXTRA_MESHES = Number(params.get('extra') ?? 0);
+
+// client/src/render/scene.ts, client/src/config.ts, client/src/render/terrainMeshes.ts
+const SKY_COLOR = 0x9fc7e8, GROUND_BOUNCE_COLOR = 0x9a948a;
+const HEMISPHERE_LIGHT_INTENSITY = 1.5, SUN_LIGHT_INTENSITY = 1.2, AMBIENT_FLOOR_INTENSITY = 0.9;
+const SUN_DIRECTION_NOON = [0.7, 0.45, 0.55], SUN_DISTANCE_WORLD_UNITS = 200;
+const TONE_MAPPING_EXPOSURE = 1.25, MAX_PIXEL_RATIO = 2;
+const CAMERA_FOV_DEGREES = 55, CAMERA_NEAR = 0.1, CAMERA_FAR = 4000, CAMERA_INITIAL_DISTANCE = 80;
+const INITIAL_AZIMUTH_DEGREES = 45, INITIAL_POLAR_DEGREES = 55;
+const TERRAIN_ROUGHNESS = 0.95, TERRAIN_METALNESS = 0;
+const SUPER_MESH_SPAN_CHUNKS = 8;
+// Arena headroom as shipped for Frostwick: 18.87 MB of positions per super-mesh
+// (upload-stall summary), i.e. 1.57 M vertices of capacity for ~0.73 M live.
+const ARENA_CAPACITY_VERTICES = 18.87e6 / 12;
+// Post-fix stroke traffic: 1.0–1.3 MB/frame of ranged arena writes across the
+// four attributes (upload-stall summary §1, stroke-trace summary §5).
+const STROKE_BYTES_PER_FRAME = 1.2e6;
+const BYTES_PER_VERTEX = 12 + SMALL_ITEM_SIZE + SMALL_ITEM_SIZE + 1;
+const STROKE_VERTICES_PER_FRAME = Math.floor(STROKE_BYTES_PER_FRAME / BYTES_PER_VERTEX);
+const STROKE_RANGES_PER_FRAME = 4;
+
+window.__error = null;
+window.__ready = null;
+addEventListener('error', (e) => { window.__error = String(e.error?.stack ?? e.message); });
+addEventListener('unhandledrejection', (e) => { window.__error = String(e.reason?.stack ?? e.reason); });
+
+const THREE = RENDERER === 'webgpu' ? await import('three') : await import('three-webgl');
+const meta = await (await fetch('/webgpu-mesher/meta.json')).json();
+const cpuBytes = await (await fetch('/webgpu-mesher/cpu-mesh.bin')).arrayBuffer();
+
+// cpu-mesh.bin: 12 B per vertex — u16 qx, u16 qz, i16 qy, pad, u8 rgb, u8 selfLit
+// (bench/webgpu-mesher/dump.mjs). Dequantize into the client's arena layout:
+// f32 position ×3, i8 normal ×3 (flat, per triangle), u8 colour ×3, u8 selfLit.
+const view = new DataView(cpuBytes);
+const CPU_MESH_BYTES_PER_VERTEX = 12;
+const totalVertices = cpuBytes.byteLength / CPU_MESH_BYTES_PER_VERTEX;
+const invPos = 1 / meta.positionScale, invHeight = 1 / meta.heightScale;
+const chunksPerEdge = meta.chunksPerEdge;
+const superCols = Math.ceil(chunksPerEdge / SUPER_MESH_SPAN_CHUNKS);
+const cellWorld = meta.cellWorldSize, chunkWorld = meta.chunkSize * cellWorld;
+const superWorld = SUPER_MESH_SPAN_CHUNKS * chunkWorld;
+
+// Bucket triangles into super-meshes by centroid (the arena groups by chunk;
+// centroid-by-super-mesh is the same partition for a watertight terrace mesh).
+const tri = new Float32Array(9);
+const counts = new Uint32Array(superCols * superCols);
+const superOfTriangle = new Uint16Array(totalVertices / 3);
+for (let t = 0; t < totalVertices / 3; t++) {
+  let cx = 0, cz = 0;
+  for (let k = 0; k < 3; k++) {
+    const o = (t * 3 + k) * CPU_MESH_BYTES_PER_VERTEX;
+    cx += view.getUint16(o, true) * invPos; cz += view.getUint16(o + 2, true) * invPos;
+  }
+  const sx = Math.min(superCols - 1, Math.floor(cx / 3 / superWorld));
+  const sz = Math.min(superCols - 1, Math.floor(cz / 3 / superWorld));
+  const s = sz * superCols + sx; superOfTriangle[t] = s; counts[s] += 3;
+}
+const supers = [];
+for (let s = 0; s < superCols * superCols; s++) {
+  const capacity = Math.max(ARENA_CAPACITY_VERTICES, counts[s]) | 0;
+  supers.push({
+    live: counts[s], capacity, cursor: 0,
+    positions: new Float32Array(capacity * 3), normals: new Int8Array(capacity * SMALL_ITEM_SIZE),
+    colors: new Uint8Array(capacity * SMALL_ITEM_SIZE), selfLit: new Uint8Array(capacity),
+  });
+}
+const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3(), ab = new THREE.Vector3();
+for (let t = 0; t < totalVertices / 3; t++) {
+  const sm = supers[superOfTriangle[t]];
+  for (let k = 0; k < 3; k++) {
+    const o = (t * 3 + k) * CPU_MESH_BYTES_PER_VERTEX;
+    tri[k * 3] = view.getUint16(o, true) * invPos;
+    tri[k * 3 + 1] = view.getInt16(o + 4, true) * invHeight;
+    tri[k * 3 + 2] = view.getUint16(o + 2, true) * invPos;
+  }
+  a.fromArray(tri, 0); b.fromArray(tri, 3); c.fromArray(tri, 6);
+  n.subVectors(c, b).cross(ab.subVectors(a, b)).normalize();
+  for (let k = 0; k < 3; k++) {
+    const o = (t * 3 + k) * CPU_MESH_BYTES_PER_VERTEX, v = sm.cursor++;
+    sm.positions.set(tri.subarray(k * 3, k * 3 + 3), v * 3);
+    const w = v * SMALL_ITEM_SIZE;
+    sm.normals[w] = Math.round(n.x * 127); sm.normals[w + 1] = Math.round(n.y * 127); sm.normals[w + 2] = Math.round(n.z * 127);
+    sm.colors[w] = view.getUint8(o + 8); sm.colors[w + 1] = view.getUint8(o + 9); sm.colors[w + 2] = view.getUint8(o + 10);
+    sm.selfLit[v] = view.getUint8(o + 11);
+  }
+}
+
+const canvas = document.getElementById('c');
+const renderer = RENDERER === 'webgpu'
+  ? new THREE.WebGPURenderer({ canvas, antialias: ANTIALIAS })
+  : new THREE.WebGLRenderer({ canvas, antialias: ANTIALIAS });
+if (RENDERER === 'webgpu') await renderer.init();
+renderer.setPixelRatio(Math.min(devicePixelRatio, MAX_PIXEL_RATIO));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(SKY_COLOR);
+scene.add(new THREE.HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
+scene.add(new THREE.AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
+const sun = new THREE.DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
+sun.position.set(...SUN_DIRECTION_NOON).normalize().multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
+scene.add(sun);
+
+const material = new THREE.MeshStandardMaterial({
+  vertexColors: true, flatShading: true, roughness: TERRAIN_ROUGHNESS, metalness: TERRAIN_METALNESS, side: THREE.DoubleSide,
+});
+// The client decodes vColor from sRGB in a vertex splice; here the colour
+// attribute is declared linear on both renderers alike, so the two images are
+// comparable to each other, not to the client.
+for (const sm of supers) {
+  const geometry = new THREE.BufferGeometry();
+  sm.position = new THREE.BufferAttribute(sm.positions, 3);
+  sm.normal = new THREE.BufferAttribute(sm.normals, SMALL_ITEM_SIZE, true);
+  sm.color = new THREE.BufferAttribute(sm.colors, SMALL_ITEM_SIZE, true);
+  sm.self = new THREE.BufferAttribute(sm.selfLit, 1, true);
+  geometry.setAttribute('position', sm.position);
+  geometry.setAttribute('normal', sm.normal);
+  geometry.setAttribute('color', sm.color);
+  geometry.setAttribute('selfLit', sm.self);
+  geometry.setDrawRange(0, sm.live);
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e6);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+}
+
+{
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  for (let i = 0; i < EXTRA_MESHES; i++) {
+    const m = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: (i * 2654435761) >>> 8, roughness: 0.6 }));
+    m.position.set(20 + (i % 15) * 6, 8 + Math.floor(i / 15) * 2, 20 + (i % 10) * 6);
+    scene.add(m);
+  }
+}
+
+const camera = new THREE.PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR);
+const centre = ((meta.size - 1) * cellWorld) / 2;
+{
+  const azimuth = THREE.MathUtils.degToRad(INITIAL_AZIMUTH_DEGREES);
+  const polar = THREE.MathUtils.degToRad(INITIAL_POLAR_DEGREES);
+  camera.position.set(
+    centre + CAMERA_INITIAL_DISTANCE * Math.sin(polar) * Math.cos(azimuth),
+    CAMERA_INITIAL_DISTANCE * Math.cos(polar),
+    centre + CAMERA_INITIAL_DISTANCE * Math.sin(polar) * Math.sin(azimuth),
+  );
+  camera.lookAt(centre, 0, centre);
+}
+const resize = () => {
+  camera.aspect = canvas.clientWidth / canvas.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+};
+resize();
+
+// Stroke replay: each frame rewrites STROKE_RANGES_PER_FRAME ranges inside one
+// super-mesh's live region, the same bytes across the four attributes the
+// client dirties, through addUpdateRange + needsUpdate (the client's path).
+let seed = 12345;
+const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+const JITTER_WORLD_UNITS = 1e-4;
+const strokeFrame = () => {
+  const sm = supers[Math.floor(rand() * supers.length)];
+  const per = Math.floor(STROKE_VERTICES_PER_FRAME / STROKE_RANGES_PER_FRAME);
+  const delta = frame % 2 === 0 ? JITTER_WORLD_UNITS : -JITTER_WORLD_UNITS;
+  for (let r = 0; r < STROKE_RANGES_PER_FRAME; r++) {
+    const start = Math.floor(rand() * Math.max(1, sm.live - per));
+    for (let v = start; v < start + per; v++) sm.positions[v * 3 + 1] += delta;
+    sm.position.addUpdateRange(start * 3, per * 3);
+    sm.normal.addUpdateRange(start * SMALL_ITEM_SIZE, per * SMALL_ITEM_SIZE);
+    sm.color.addUpdateRange(start * SMALL_ITEM_SIZE, per * SMALL_ITEM_SIZE);
+    sm.self.addUpdateRange(start, per);
+  }
+  sm.position.needsUpdate = sm.normal.needsUpdate = sm.color.needsUpdate = sm.self.needsUpdate = true;
+};
+
+const stats = (samples) => {
+  const s = Float64Array.from(samples).sort();
+  const q = (f) => s[Math.min(s.length - 1, Math.floor(f * s.length))];
+  const mean = s.reduce((x, y) => x + y, 0) / s.length;
+  return { n: s.length, p50: q(0.5), p95: q(0.95), p99: q(0.99), max: s[s.length - 1], mean, fps: 1000 / mean };
+};
+
+const intervals = { idle: [], stroke: [] };
+const renderJs = { idle: [], stroke: [] };
+let frame = 0, last = 0, phase = 'warmup';
+let resolveDone; const done = new Promise((r) => { resolveDone = r; });
+const tick = (now) => {
+  frame++;
+  if (frame > WARMUP_FRAMES) {
+    if (frame <= WARMUP_FRAMES + IDLE_FRAMES) phase = 'idle';
+    else if (frame <= WARMUP_FRAMES + IDLE_FRAMES + STROKE_FRAMES) phase = 'stroke';
+    else { phase = 'done'; resolveDone(); return; }
+    if (last !== 0) intervals[phase].push(now - last);
+  }
+  last = now;
+  if (phase === 'stroke') strokeFrame();
+  const t0 = performance.now();
+  renderer.render(scene, camera);
+  if (phase !== 'warmup') renderJs[phase].push(performance.now() - t0);
+  requestAnimationFrame(tick);
+};
+window.__present = async () => { renderer.render(scene, camera); await new Promise((r) => requestAnimationFrame(r)); };
+window.__result = async () => {
+  await done;
+  const info = renderer.info.render;
+  const adapter = RENDERER === 'webgpu' ? await navigator.gpu.requestAdapter() : null;
+  const adapterInfo = adapter ? { vendor: adapter.info.vendor, architecture: adapter.info.architecture, description: adapter.info.description, fallback: adapter.info.isFallbackAdapter ?? adapter.isFallbackAdapter } : null;
+  return JSON.stringify({
+    renderer: RENDERER, vertices: totalVertices, superMeshes: supers.length, adapter: adapterInfo, smallItemSize: SMALL_ITEM_SIZE, antialias: ANTIALIAS, extraMeshes: EXTRA_MESHES,
+    drawCalls: info.drawCalls ?? info.calls, triangles: info.triangles, info,
+    pixel: [renderer.domElement.width, renderer.domElement.height],
+    strokeBytesPerFrame: STROKE_VERTICES_PER_FRAME * BYTES_PER_VERTEX,
+    idle: stats(intervals.idle), stroke: stats(intervals.stroke),
+    renderJsIdle: stats(renderJs.idle), renderJsStroke: stats(renderJs.stroke),
+  });
+};
+requestAnimationFrame(tick);
+window.__ready = { renderer: RENDERER, vertices: totalVertices };
+</script>
