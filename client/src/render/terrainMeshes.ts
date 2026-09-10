@@ -107,9 +107,17 @@ export const SUPER_MESH_SPAN_CHUNKS = 8;
 
 const VERTICES_PER_TRIANGLE = 3;
 
+/** Spare capacity a reallocated slot reserves, so a chunk that keeps growing under a held
+ *  stroke re-meshes in place instead of relocating. */
+export const SLOT_SLACK_FACTOR = 1.25;
+
+const slackCapacity = (count: number): number =>
+  Math.ceil((count * SLOT_SLACK_FACTOR) / VERTICES_PER_TRIANGLE) * VERTICES_PER_TRIANGLE;
+
 interface ChunkSlot {
   offset: number;
   count: number;
+  capacity: number;
   minX: number;
   minY: number;
   minZ: number;
@@ -126,6 +134,7 @@ interface Hole {
 export interface ArenaStats {
   liveEnd: number;
   liveCount: number;
+  paddingVertices: number;
   deadVertices: number;
   holeCount: number;
   growths: number;
@@ -133,7 +142,7 @@ export interface ArenaStats {
 }
 
 export interface ArenaLayout {
-  slots: { chunkIdx: number; offset: number; count: number }[];
+  slots: { chunkIdx: number; offset: number; count: number; capacity: number }[];
   holes: { offset: number; length: number }[];
 }
 
@@ -382,10 +391,8 @@ export function createTerrainMeshes(
     retreatFromLiveEnd(sm);
   };
 
-  const takeHole = (
-    sm: SuperMesh,
-    count: number,
-  ): { offset: number; surplus: number } | null => {
+  // What the taker does not use stays a hole, already zero on the GPU, so never re-sent.
+  const takeHole = (sm: SuperMesh, count: number): number | null => {
     for (let i = 0; i < sm.holes.length; i++) {
       const hole = sm.holes[i]!;
       if (hole.length < count) continue;
@@ -396,21 +403,23 @@ export function createTerrainMeshes(
         hole.offset = offset + count;
         hole.length = surplus;
       }
-      return { offset, surplus };
+      return offset;
     }
     return null;
   };
 
   const runStartingAt = (sm: SuperMesh, offset: number): ChunkSlot | undefined => {
     for (const slot of sm.slots.values()) {
-      if (slot.count > 0 && slot.offset === offset) return slot;
+      if (slot.capacity > 0 && slot.offset === offset) return slot;
     }
     return undefined;
   };
 
+  // A run is its whole slot, padding included: the move overlaps, so the padding landing
+  // on vacated live vertices has to reach the GPU as zeros.
   const moveRunDown = (sm: SuperMesh, hole: Hole, run: ChunkSlot): void => {
     const from = run.offset;
-    const runEnd = from + run.count;
+    const runEnd = from + run.capacity;
     const to = hole.offset;
     const { positions, normals, colors, selfLit } = sm.buffers;
     positions.copyWithin(to * 3, from * 3, runEnd * 3);
@@ -419,7 +428,7 @@ export function createTerrainMeshes(
     selfLit.copyWithin(to, from, runEnd);
     run.offset = to;
 
-    const vacated = to + run.count;
+    const vacated = to + run.capacity;
     zeroVertices(sm, vacated, runEnd - vacated);
     sm.holes.splice(sm.holes.indexOf(hole), 1);
     insertHole(sm, vacated, runEnd - vacated);
@@ -434,7 +443,7 @@ export function createTerrainMeshes(
       for (const hole of sm.holes) {
         const run = runStartingAt(sm, hole.offset + hole.length);
         if (run === undefined) continue;
-        const costMs = (hole.length + run.count) * ARENA_TRANSFER_MS_PER_VERTEX;
+        const costMs = (hole.length + run.capacity) * ARENA_TRANSFER_MS_PER_VERTEX;
         if (spentMs + costMs > budgetMs) continue;
         moveRunDown(sm, hole, run);
         spentMs += costMs;
@@ -493,10 +502,13 @@ export function createTerrainMeshes(
   const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkJobAnswer): void => {
     const count = answer.vertexCount;
     let slot = sm.slots.get(chunkIdx);
+    // A chunk's first build takes no slack: load-time layout and residency stay as they were.
+    const firstBuild = slot === undefined;
     if (slot === undefined) {
       slot = {
         offset: 0,
         count: 0,
+        capacity: 0,
         minX: Infinity,
         minY: Infinity,
         minZ: Infinity,
@@ -510,38 +522,45 @@ export function createTerrainMeshes(
     const old = slot.count;
     const dirtied: [number, number][] = [];
 
-    if (count <= old) {
+    if (count <= slot.capacity) {
       zeroVertices(sm, slot.offset + count, old - count);
-      dirtied.push([slot.offset, old]);
       slot.count = count;
-      insertHole(sm, slot.offset + count, old - count);
-    } else if (slot.offset + old === sm.liveEnd) {
-      ensureSuperCapacity(sm, slot.offset + count, 'splice');
-      sm.liveEnd = slot.offset + count;
+      dirtied.push([slot.offset, Math.max(count, old)]);
+    } else if (slot.offset + slot.capacity === sm.liveEnd) {
+      const capacity = firstBuild ? count : slackCapacity(count);
+      ensureSuperCapacity(sm, slot.offset + capacity, 'splice');
+      sm.liveEnd = slot.offset + capacity;
       slot.count = count;
-      dirtied.push([slot.offset, count]);
+      slot.capacity = capacity;
+      // The padding lay beyond the old live end, where the GPU may hold stale vertices.
+      zeroVertices(sm, slot.offset + count, capacity - count);
+      dirtied.push([slot.offset, capacity]);
     } else {
-      const reused = takeHole(sm, count);
+      const capacity = firstBuild ? count : slackCapacity(count);
+      const reusedOffset = takeHole(sm, capacity);
       let freedOffset: number;
-      if (reused !== null) {
+      if (reusedOffset !== null) {
         freedOffset = slot.offset;
-        slot.offset = reused.offset;
-        dirtied.push([reused.offset, count]);
-        if (reused.surplus > 0) dirtied.push([reused.offset + count, reused.surplus]);
+        slot.offset = reusedOffset;
+        // A hole is zero on the GPU already, so the padding taken from it is not sent.
+        dirtied.push([reusedOffset, count]);
       } else {
-        if (sm.liveEnd + count > capacityVertices(sm) && sm.holes.length > 0) {
+        if (sm.liveEnd + capacity > capacityVertices(sm) && sm.holes.length > 0) {
           compactSuperMesh(sm, Infinity);
         }
-        ensureSuperCapacity(sm, sm.liveEnd + count, 'splice');
+        ensureSuperCapacity(sm, sm.liveEnd + capacity, 'splice');
         freedOffset = slot.offset;
         slot.offset = sm.liveEnd;
-        sm.liveEnd += count;
-        dirtied.push([slot.offset, count]);
+        sm.liveEnd += capacity;
+        zeroVertices(sm, slot.offset + count, capacity - count);
+        dirtied.push([slot.offset, capacity]);
       }
+      const freedCapacity = slot.capacity;
       slot.count = count;
+      slot.capacity = capacity;
       zeroVertices(sm, freedOffset, old);
       dirtied.push([freedOffset, old]);
-      insertHole(sm, freedOffset, old);
+      insertHole(sm, freedOffset, freedCapacity);
     }
 
     const { positions, normals, colors, selfLit } = sm.buffers;
@@ -734,11 +753,27 @@ export function createTerrainMeshes(
     return false;
   };
 
+  // Slack is transient. Once the terrain is quiet the padding goes back on the free list,
+  // for compaction and the live end to reclaim.
+  const reclaimSlack = (sm: SuperMesh): boolean => {
+    let reclaimed = false;
+    for (const slot of sm.slots.values()) {
+      const padding = slot.capacity - slot.count;
+      if (padding <= 0) continue;
+      slot.capacity = slot.count;
+      insertHole(sm, slot.offset + slot.count, padding);
+      reclaimed = true;
+    }
+    return reclaimed;
+  };
+
   const settle = (options?: SettleOptions): void => {
     if (options?.assumeQuiet !== true && now() - lastUpdateMs < TERRAIN_QUIET_MS) return;
     for (const [superIdx, sm] of superMeshes) {
-      if (capacityVertices(sm) - sm.liveEnd >= headroom(sm)) continue;
       if (superMeshHasChunkQueued(superIdx)) continue;
+      // One super-mesh per call, the bound a growth already takes.
+      if (reclaimSlack(sm)) return;
+      if (capacityVertices(sm) - sm.liveEnd >= headroom(sm)) continue;
       ensureSuperCapacity(sm, sm.liveEnd + headroom(sm), 'settle');
       return;
     }
@@ -810,10 +845,13 @@ export function createTerrainMeshes(
     arenaStats(): ArenaStats[] {
       return Array.from(superMeshes.values(), (sm) => {
         const live = liveCount(sm);
+        let padding = 0;
+        for (const slot of sm.slots.values()) padding += slot.capacity - slot.count;
         return {
           liveEnd: sm.liveEnd,
           liveCount: live,
-          deadVertices: sm.liveEnd - live,
+          paddingVertices: padding,
+          deadVertices: sm.liveEnd - live - padding,
           holeCount: sm.holes.length,
           growths: sm.growths,
           strokeGrowths: sm.strokeGrowths,
@@ -826,6 +864,7 @@ export function createTerrainMeshes(
           chunkIdx,
           offset: slot.offset,
           count: slot.count,
+          capacity: slot.capacity,
         })),
         holes: sm.holes.map((hole) => ({ offset: hole.offset, length: hole.length })),
       }));
