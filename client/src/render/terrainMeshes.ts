@@ -145,6 +145,7 @@ interface SuperMesh {
   holes: Hole[];
   liveEnd: number;
   reallocatedThisPass: boolean;
+  splicedThisPass: boolean;
   growths: number;
   strokeGrowths: number;
 }
@@ -419,7 +420,7 @@ export function createTerrainMeshes(
       for (const hole of sm.holes) {
         const run = runStartingAt(sm, hole.offset + hole.length);
         if (run === undefined) continue;
-        const costMs = run.count * ARENA_TRANSFER_MS_PER_VERTEX;
+        const costMs = (hole.length + run.count) * ARENA_TRANSFER_MS_PER_VERTEX;
         if (spentMs + costMs > budgetMs) continue;
         moveRunDown(sm, hole, run);
         spentMs += costMs;
@@ -430,10 +431,17 @@ export function createTerrainMeshes(
     }
   };
 
+  const busy = (superIdx: number, sm: SuperMesh): boolean =>
+    sm.splicedThisPass || superMeshHasChunkQueued(superIdx);
+
+  // Compaction re-uploads every vertex it moves. While chunks are still arriving it
+  // runs only to keep the headroom a growth would otherwise need; growth re-uploads
+  // the whole arena.
   const compact = (budgetMs: number): void => {
     let spentMs = 0;
-    for (const sm of superMeshes.values()) {
+    for (const [superIdx, sm] of superMeshes) {
       if (sm.holes.length === 0) continue;
+      if (busy(superIdx, sm) && capacityVertices(sm) - sm.liveEnd >= headroom(sm)) continue;
       spentMs += compactSuperMesh(sm, budgetMs - spentMs);
       if (spentMs >= budgetMs) return;
     }
@@ -458,6 +466,7 @@ export function createTerrainMeshes(
       holes: [],
       liveEnd: 0,
       reallocatedThisPass: false,
+      splicedThisPass: false,
       growths: 0,
       strokeGrowths: 0,
     };
@@ -537,6 +546,7 @@ export function createTerrainMeshes(
     markDirty(sm);
     for (const [startVertex, vertexCount] of dirtied) addRange(sm, startVertex, vertexCount);
 
+    sm.splicedThisPass = true;
     sm.mesh.geometry.setDrawRange(0, sm.liveEnd);
     updateBounds(sm);
   };
@@ -631,7 +641,10 @@ export function createTerrainMeshes(
 
   const flush = (): void => {
     takeRetries();
-    for (const sm of superMeshes.values()) sm.reallocatedThisPass = false;
+    for (const sm of superMeshes.values()) {
+      sm.reallocatedThisPass = false;
+      sm.splicedThisPass = false;
+    }
     for (;;) {
       const chunkIdx = nextSubmittable();
       if (chunkIdx !== undefined) {
@@ -641,6 +654,7 @@ export function createTerrainMeshes(
       if (ready.length > 0) spliceAnswer(ready.shift()!);
       else if (chunkIdx === undefined) break;
     }
+    for (const sm of superMeshes.values()) sm.splicedThisPass = false;
     compact(Infinity);
   };
 
@@ -701,7 +715,10 @@ export function createTerrainMeshes(
   };
 
   const stopDraining = scheduling?.onFrame(() => {
-    for (const sm of superMeshes.values()) sm.reallocatedThisPass = false;
+    for (const sm of superMeshes.values()) {
+      sm.reallocatedThisPass = false;
+      sm.splicedThisPass = false;
+    }
     const spliced = drain(CHUNK_SPLICE_FRAME_BUDGET_MS);
     compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
     settle();
