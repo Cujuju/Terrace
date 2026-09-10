@@ -100,18 +100,20 @@ Per chunk, one workgroup of 256 threads, one thread per cell square (the page
 uses four workgroups of 64; the change is so the allocator is workgroup-local).
 Each thread marches its square's levels and, per polygon or riser run, reserves
 `n` vertices with `atomicAdd` on a workgroup-shared counter, then writes them at
-`slotBase + reserved`. If `reserved + n > capacity` it writes nothing and keeps
-counting. After the workgroup barrier, thread 0 writes the chunk record:
+`slotBase + reserved`. If `reserved + n > capacity` it zero-fills the part of
+its range that lies inside the slot (a zero vertex is a degenerate triangle)
+and keeps counting. After the workgroup barrier, thread 0 writes the chunk
+record:
 
 ```
 struct ChunkRecord { vertexCount: u32, needed: u32, minY: i32, maxY: i32 }
 ```
 
-`needed` is the exact count; `vertexCount` = `needed` if it fit, else the
-**previous** record's `vertexCount` (the slot still holds the previous emit,
-which is complete and consistent). The host's status readback (§4.3) sees
-`needed > capacity` and reacts. The count is exact and computed in the same
-walk that emits; nothing is re-counted.
+`needed` is the exact count; `vertexCount` = `min(needed, capacity)`. On
+overflow the slot therefore holds every square that fit plus degenerate
+padding — never stale vertices from the previous emit — and the host's status
+readback (§4.3) sees `needed > capacity` and regrows. The count is exact and
+computed in the same walk that emits; nothing is re-counted.
 
 Vertex order within a slot is allocation order, so it differs run to run. That
 is not a contract: the draw is order-independent (opaque, depth-tested, no
@@ -137,8 +139,18 @@ For a chunk with `needed > capacity`:
 
 1. `needed ≤ SLOT_CLASS_MAX_VERTICES`: allocate a slot in the smallest class
    that fits, re-dispatch emit for that chunk only, free the old slot, update
-   the draw record (§5). The chunk shows its previous shape for one round trip.
+   the draw record (§5). For one round trip the chunk draws with the squares
+   that did not fit missing.
 2. `needed > SLOT_CLASS_MAX_VERTICES`: over budget → §6.
+
+Grow ahead so the overflow path is the exception, not the rule: when a stroke
+step leaves `needed > capacity × SLOT_GROW_AHEAD_FRACTION` (7/8), the host
+promotes the chunk to the next class and re-emits it there while the old slot
+keeps drawing; the swap is atomic from the draw's point of view (offsets array
+rewrite, §5). Overflow then needs a single stroke step to add more than an
+eighth of the slot, which on a 3×3 window at brush cadence is a class crossing
+from a large jump only (*unverified*; the gate's edit benchmark with per-step
+`needed` logging measures how often).
 
 Shrink only at idle: when a chunk's `needed` has been below half its class for
 `SLOT_SHRINK_IDLE_MS` (proposal: 2,000 ms — long enough that a stroke never
@@ -146,8 +158,9 @@ thrashes across a class boundary; the value is a design choice to confirm with
 the owner, not a measurement), move it down one class. Never shrink during a
 stroke.
 
-Residual, stated: during a stroke that crosses a class boundary the chunk is
-stale for one readback round trip (~3 ms wall, desktop), once per crossing.
+Residual, stated: a stroke step that overflows a slot despite grow-ahead draws
+that chunk with missing squares for one readback round trip (~3 ms wall,
+desktop), once per crossing.
 
 ### 4.4 World load
 
