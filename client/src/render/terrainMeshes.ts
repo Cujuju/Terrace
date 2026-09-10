@@ -103,7 +103,9 @@ function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   });
 }
 
-export const SUPER_MESH_SPAN_CHUNKS = 8;
+/** Chunks per side of one super-mesh. ANGLE charges a ranged bufferSubData by the whole
+ *  buffer's size, so a quarter-size arena splices about twice as cheaply. */
+export const SUPER_MESH_SPAN_CHUNKS = 4;
 
 const VERTICES_PER_TRIANGLE = 3;
 
