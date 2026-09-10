@@ -34,6 +34,9 @@ import { applyGroundShade } from './groundShade.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
+/** Built-or-building answers held at once: two frames of splices (~4 per 1.5 ms) at ~1.6 MB each. */
+export const CHUNK_ANSWER_BACKLOG_CAP = 8;
+
 export const ARENA_TRANSFER_MS_PER_VERTEX = 19 / 1e6;
 
 export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
@@ -650,7 +653,10 @@ export function createTerrainMeshes(
     const startedMs = now();
     for (;;) {
 
-      while (inFlight.size + ready.length < buildSource.concurrency) {
+      while (
+        inFlight.size < buildSource.concurrency &&
+        inFlight.size + ready.length < CHUNK_ANSWER_BACKLOG_CAP
+      ) {
         const chunkIdx = nextSubmittable();
         if (chunkIdx === undefined) break;
         pending.delete(chunkIdx);
