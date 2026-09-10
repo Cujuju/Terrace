@@ -32,8 +32,9 @@ import {
   LIT_BY_SCENE,
   SEABED_CAP_SINK,
   SEABED_RISER_BORDER_WORLD_HEIGHT,
-  SELF_LIT,
+  SELF_LIT_ALPHA_BYTE,
   SKIRT_PICK_INSET,
+  COLOR_ALPHA_INDEX,
   COMPONENTS_PER_COLOR,
   COMPONENTS_PER_NORMAL,
   VERTICES_PER_TRIANGLE,
@@ -149,10 +150,22 @@ function trianglesOf(
   return out;
 }
 
+function colorAlphaOf(buffers: ChunkGeometryBuffers, vertex: number): number {
+  return buffers.colors[vertex * COMPONENTS_PER_COLOR + COLOR_ALPHA_INDEX];
+}
+
+function colorAlphasFrom(buffers: ChunkGeometryBuffers, fromVertex: number): number[] {
+  const alphas: number[] = [];
+  for (let v = fromVertex; v * COMPONENTS_PER_COLOR < buffers.colors.length; v++) {
+    alphas.push(colorAlphaOf(buffers, v));
+  }
+  return alphas;
+}
+
 function selfLitOf(buffers: ChunkGeometryBuffers, base: number): number {
-  const value = buffers.selfLit[base];
-  expect(buffers.selfLit[base + 1]).toBe(value);
-  expect(buffers.selfLit[base + 2]).toBe(value);
+  const value = colorAlphaOf(buffers, base);
+  expect(colorAlphaOf(buffers, base + 1)).toBe(value);
+  expect(colorAlphaOf(buffers, base + 2)).toBe(value);
   return value;
 }
 
@@ -955,7 +968,7 @@ describe('colour attribution', () => {
     expect(borders.length).toBeGreaterThan(0);
     for (const border of borders) {
       expectColor(border.color, TERRAIN_PALETTE[bandPaletteIndex(-2 * BAND_HEIGHT)]);
-      expect(border.selfLit).toBe(SELF_LIT);
+      expect(border.selfLit).toBe(SELF_LIT_ALPHA_BYTE);
     }
 
     const faces = skirts.filter(
@@ -968,7 +981,7 @@ describe('colour attribution', () => {
         6,
       );
       expectColor(face.color, CLIFF_PALETTE[bandPaletteIndex(-BAND_HEIGHT)]);
-      expect(face.selfLit).toBe(SELF_LIT);
+      expect(face.selfLit).toBe(SELF_LIT_ALPHA_BYTE);
     }
   });
 
@@ -1016,7 +1029,7 @@ describe('self-lit seabed rims', () => {
     let seabedFaces = 0;
     for (const skirt of skirts) {
       const seabed = isSeabedColored(skirt);
-      expect(skirt.selfLit).toBe(seabed ? SELF_LIT : LIT_BY_SCENE);
+      expect(skirt.selfLit).toBe(seabed ? SELF_LIT_ALPHA_BYTE : LIT_BY_SCENE);
       if (seabed) seabedFaces++;
     }
     expect(seabedFaces).toBeGreaterThan(0);
@@ -1037,7 +1050,7 @@ describe('self-lit seabed rims', () => {
     expect(counts.usedFallback).toBe(true);
     const skirts = skirtsOf(triangles);
     expect(skirts.length).toBeGreaterThan(0);
-    for (const skirt of skirts) expect(skirt.selfLit).toBe(SELF_LIT);
+    for (const skirt of skirts) expect(skirt.selfLit).toBe(SELF_LIT_ALPHA_BYTE);
     for (const cap of capsOf(triangles)) expect(cap.selfLit).toBe(LIT_BY_SCENE);
   });
 
@@ -1049,10 +1062,10 @@ describe('self-lit seabed rims', () => {
 
   it('leaves the flag on the unused tail alone, like every other attribute', () => {
     const { buffers, counts } = writeEdge(coast);
-    const litBefore = Array.from(buffers.selfLit.subarray(counts.vertexCount));
+    const litBefore = colorAlphasFrom(buffers, counts.vertexCount);
     const flat = mirrorWith([edgeChunk(() => 0)]);
     const after = writeChunkVertexData(flat, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
-    expect(Array.from(buffers.selfLit.subarray(counts.vertexCount))).toEqual(litBefore);
+    expect(colorAlphasFrom(buffers, counts.vertexCount)).toEqual(litBefore);
     expect(after.vertexCount).toBeLessThan(counts.vertexCount);
   });
 
@@ -1061,13 +1074,13 @@ describe('self-lit seabed rims', () => {
     const mirror = mirrorWith([edgeChunk(coast)]);
     const grown = writeChunkVertexData(mirror, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
     expect(grown.capacityGrew).toBe(true);
-    expect(buffers.selfLit.length).toBe(
-      buffers.triangleCapacity * VERTICES_PER_TRIANGLE,
+    expect(buffers.colors.length).toBe(
+      buffers.triangleCapacity * VERTICES_PER_TRIANGLE * COMPONENTS_PER_COLOR,
     );
     expect(
-      Array.from(buffers.selfLit.subarray(0, grown.vertexCount)).some(
-        (flag) => flag === SELF_LIT,
-      ),
+      colorAlphasFrom(buffers, 0)
+        .slice(0, grown.vertexCount)
+        .some((flag) => flag === SELF_LIT_ALPHA_BYTE),
     ).toBe(true);
   });
 });
