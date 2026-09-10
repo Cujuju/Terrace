@@ -9,10 +9,10 @@ import {
   PMREMGenerator,
   RGBAFormat,
   Vector3,
+  type RenderTarget,
+  type Renderer,
   type Texture,
-  type WebGLRenderer,
-  type WebGLRenderTarget,
-} from 'three';
+} from 'three/webgpu';
 import type { SkyRigState } from '../plugins/types.ts';
 
 export const SKY_ENVIRONMENT_WIDTH = 256;
@@ -42,7 +42,7 @@ export interface SkyEnvironment {
 }
 
 export function createSkyEnvironment(
-  renderer: WebGLRenderer,
+  renderer: Renderer,
   initial: SkyRigState,
   nowMs: number,
 ): SkyEnvironment {
@@ -131,7 +131,7 @@ export function createSkyEnvironment(
     ].join(',');
 
   paint(initial);
-  let target: WebGLRenderTarget = pmrem.fromEquirectangular(source);
+  let target: RenderTarget = pmrem.fromEquirectangular(source);
   let painted = fingerprintOf(initial);
   let lastPaintMs = nowMs;
   let pending: SkyRigState | null = null;
@@ -177,12 +177,29 @@ const ACES_OUTPUT = [
 ] as const;
 const ACES_EXPOSURE_PRESCALE = 1 / 0.6;
 
+const RRT_NUMERATOR_OFFSET = 0.0245786;
+const RRT_NUMERATOR_BIAS = 0.000090537;
+const RRT_DENOMINATOR_SCALE = 0.983729;
+const RRT_DENOMINATOR_OFFSET = 0.432951;
+const RRT_DENOMINATOR_BIAS = 0.238081;
+
 const acesScratch = new Color();
 
 function rrtAndOdtFit(v: number): number {
-  const a = v * (v + 0.0245786) - 0.000090537;
-  const b = v * (0.983729 * v + 0.432951) + 0.238081;
+  const a = v * (v + RRT_NUMERATOR_OFFSET) - RRT_NUMERATOR_BIAS;
+  const b = v * (RRT_DENOMINATOR_SCALE * v + RRT_DENOMINATOR_OFFSET) + RRT_DENOMINATOR_BIAS;
   return a / b;
+}
+
+// The positive root of a·v² + b·v + c = 0, the fit rearranged for a known y.
+function rrtAndOdtFitInverse(y: number): number {
+  const a = 1 - RRT_DENOMINATOR_SCALE * y;
+  const b = RRT_NUMERATOR_OFFSET - RRT_DENOMINATOR_OFFSET * y;
+  const c = -(RRT_NUMERATOR_BIAS + RRT_DENOMINATOR_BIAS * y);
+  if (a === 0) return b === 0 ? 0 : -c / b;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return 0;
+  return (-b + Math.sqrt(discriminant)) / (2 * a);
 }
 
 function acesFilmic(color: Color, exposure: number): Color {
@@ -203,7 +220,56 @@ function luminance(color: Color): number {
   return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
 }
 
-function radianceMatchingDisplay(displayed: Color, renderer: WebGLRenderer): number {
+type Vec3 = readonly [number, number, number];
+type Mat3 = readonly [Vec3, Vec3, Vec3];
+
+function transform3(m: Mat3, v: Vec3): Vec3 {
+  return [
+    m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+    m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+    m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+  ];
+}
+
+function invert3(m: Mat3): Mat3 {
+  const cofactor = (r: number, c: number): number => {
+    const rows = [0, 1, 2].filter((i) => i !== r);
+    const cols = [0, 1, 2].filter((i) => i !== c);
+    const minor =
+      m[rows[0]!]![cols[0]!]! * m[rows[1]!]![cols[1]!]! -
+      m[rows[0]!]![cols[1]!]! * m[rows[1]!]![cols[0]!]!;
+    return (r + c) % 2 === 0 ? minor : -minor;
+  };
+  const determinant =
+    m[0][0] * cofactor(0, 0) + m[0][1] * cofactor(0, 1) + m[0][2] * cofactor(0, 2);
+  return [
+    [cofactor(0, 0) / determinant, cofactor(1, 0) / determinant, cofactor(2, 0) / determinant],
+    [cofactor(0, 1) / determinant, cofactor(1, 1) / determinant, cofactor(2, 1) / determinant],
+    [cofactor(0, 2) / determinant, cofactor(1, 2) / determinant, cofactor(2, 2) / determinant],
+  ];
+}
+
+const ACES_INPUT_INVERSE = invert3(ACES_INPUT);
+const ACES_OUTPUT_INVERSE = invert3(ACES_OUTPUT);
+
+// WebGPU tone-maps every pixel, the clear colour included
+// (`_getFrameBufferTarget`). A background authored as a display colour must be
+// handed over as the radiance that tone-maps back to it.
+export function backgroundRadiance(displayedHex: number, renderer: Renderer): Color {
+  const displayed = new Color().setHex(displayedHex);
+  if (renderer.toneMapping !== ACESFilmicToneMapping) return displayed;
+  const fitted = transform3(ACES_OUTPUT_INVERSE, [displayed.r, displayed.g, displayed.b]);
+  const mixed: Vec3 = [
+    rrtAndOdtFitInverse(fitted[0]),
+    rrtAndOdtFitInverse(fitted[1]),
+    rrtAndOdtFitInverse(fitted[2]),
+  ];
+  const exposed = transform3(ACES_INPUT_INVERSE, mixed);
+  const k = renderer.toneMappingExposure * ACES_EXPOSURE_PRESCALE;
+  return displayed.setRGB(exposed[0] / k, exposed[1] / k, exposed[2] / k, LinearSRGBColorSpace);
+}
+
+function radianceMatchingDisplay(displayed: Color, renderer: Renderer): number {
   if (renderer.toneMapping !== ACESFilmicToneMapping) return 1;
   const target = luminance(displayed);
   let low = 0;
