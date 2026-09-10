@@ -5,10 +5,9 @@ import {
   Float32BufferAttribute,
   Group,
   Mesh,
-  MeshBasicMaterial,
   PointLight,
-  type Material,
 } from 'three';
+import { MeshBasicNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
   buildHazeGeometry,
   HAZE_LAYERS,
@@ -120,7 +119,7 @@ function createThunderstormRig(
   boltGeometry: BufferGeometry,
   lentLight: PointLight | null,
   deck: CumulusDeck,
-  applyRevealClip: (material: Material, label: string) => void,
+  applyRevealClip: (material: NodeMaterial, label: string) => void,
 ): ThunderstormRig {
   const body: DiscRig = createDiscRig({
     hazeGeometry,
@@ -134,7 +133,7 @@ function createThunderstormRig(
 
   const lightning = new LightningSchedule();
 
-  const glowMaterial = new MeshBasicMaterial({
+  const glowMaterial = new MeshBasicNodeMaterial({
     color: FLASH_COLOR,
     transparent: true,
     opacity: 0,
@@ -148,7 +147,7 @@ function createThunderstormRig(
   glowSheet.visible = false;
   root.add(glowSheet);
 
-  const boltMaterial = new MeshBasicMaterial({
+  const boltMaterial = new MeshBasicNodeMaterial({
     color: FLASH_COLOR,
     transparent: true,
     opacity: 0,
@@ -233,12 +232,12 @@ export interface DryBoltRig {
 
 export function createDryBoltRig(
   boltGeometry: BufferGeometry,
-  applyRevealClip: (material: Material, label: string) => void,
+  applyRevealClip: (material: NodeMaterial, label: string) => void,
 ): DryBoltRig {
   const root = new Group();
   root.name = `${THUNDERSTORM_PLUGIN_NAME}:dry-bolt`;
 
-  const material = new MeshBasicMaterial({
+  const material = new MeshBasicNodeMaterial({
     color: FLASH_COLOR,
     transparent: true,
     opacity: 0,
@@ -300,7 +299,7 @@ export interface ThunderstormRigs {
 export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
   const hazeGeometry = buildHazeGeometry();
   const boltGeometry = buildBoltGeometry();
-  const clip = (material: Material, label: string): void => {
+  const clip = (material: NodeMaterial, label: string): void => {
     ctx.applyRevealClip(material, label);
   };
   const dryBolt = createDryBoltRig(boltGeometry, clip);

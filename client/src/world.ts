@@ -18,7 +18,8 @@ import type {
   SculptTool,
   TerrainDiffMessage,
 } from '@terrace/shared';
-import type { Material, Mesh } from 'three';
+import type { Mesh } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import {
   applyChunkUnlock,
   applySnapshot,
@@ -94,7 +95,7 @@ export interface World extends TerrainSink {
   worldSize(): number;
   pickables(): Mesh[];
   revealedAt(x: number, y: number): boolean;
-  applyRevealClip(material: Material, label: string): void;
+  applyRevealClip(material: NodeMaterial, label: string): void;
   revealClipUniforms(): RevealClipUniforms;
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
   pickInColumn(x: number, y: number, origin: Vec3, direction: Vec3): TerrainRayPick | null;
@@ -452,7 +453,7 @@ export function createWorld(viewport: Viewport): World {
       return m === null ? false : revealedAtCell(m, x, y);
     },
 
-    applyRevealClip(material: Material, label: string): void {
+    applyRevealClip(material: NodeMaterial, label: string): void {
       revealMask.applyRevealClip(material, label);
     },
 

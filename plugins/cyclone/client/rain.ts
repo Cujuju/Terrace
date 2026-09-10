@@ -1,5 +1,5 @@
 import { Group } from 'three';
-import type { Material } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import {
   createPrecipitationColumn,
   type PrecipitationColumn,
@@ -58,7 +58,7 @@ interface RainRig {
 }
 
 export function createCycloneRainField(
-  applyRevealClip: (material: Material, label: string) => void,
+  applyRevealClip: (material: NodeMaterial, label: string) => void,
 ): CycloneRainField {
   const root = new Group();
   root.name = `${CYCLONE_PLUGIN_NAME}:rain`;

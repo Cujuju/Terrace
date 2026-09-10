@@ -4,8 +4,9 @@ import {
   LinearFilter,
   RedFormat,
   UnsignedByteType,
-  type Material,
 } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
+import { any, positionWorld, texture, uniform, vec2 } from 'three/tsl';
 import {
   CELL_WORLD_SIZE,
   CHUNK_SIZE,
@@ -13,12 +14,7 @@ import {
   chunkIndex,
 } from '@terrace/shared';
 import type { TerrainMirror } from '../terrain/mirror.ts';
-import {
-  WORLD_POSITION_VERTEX_ANCHOR,
-  WORLD_POSITION_VERTEX_GLSL,
-  glslFloat,
-  spliceShader,
-} from './shaderSplice.ts';
+import { discard } from './materialSlots.ts';
 
 export function revealedAtCell(mirror: TerrainMirror, x: number, y: number): boolean {
   const size = mirror.map.size;
@@ -41,25 +37,9 @@ export interface RevealClipUniforms {
 export interface RevealMask {
   uniforms(): RevealClipUniforms;
   sync(mirror: TerrainMirror): void;
-  applyRevealClip(material: Material, label: string): void;
+  applyRevealClip(material: NodeMaterial, label: string): void;
   dispose(): void;
 }
-
-export const REVEAL_CLIP_UNIFORMS_GLSL = `uniform sampler2D uRevealMask;
-uniform float uRevealChunksPerEdge;
-uniform float uWorldUnitsPerChunk;
-varying vec2 vRevealXZ;
-#define REVEAL_CLIP_THRESHOLD ${glslFloat(REVEAL_CLIP_THRESHOLD)}`;
-
-export const REVEAL_CLIP_VERTEX_GLSL = `vRevealXZ = world.xz;`;
-
-export const REVEAL_CLIP_FRAGMENT_GLSL = `vec2 revealUv = vRevealXZ / ( uRevealChunksPerEdge * uWorldUnitsPerChunk );
-    if ( any( lessThan( revealUv, vec2( 0.0 ) ) ) || any( greaterThan( revealUv, vec2( 1.0 ) ) ) ) discard;
-    if ( texture2D( uRevealMask, revealUv ).r < REVEAL_CLIP_THRESHOLD ) discard;`;
-
-const REVEAL_CLIP_FRAGMENT_ANCHOR = '#include <clipping_planes_fragment>';
-
-const SHADER_COMMON_ANCHOR = '#include <common>';
 
 function emptyMask(worldSize: number): DataTexture {
   const edge = chunksPerEdge(worldSize);
@@ -86,6 +66,8 @@ export function createRevealMask(worldSize: number): RevealMask {
     uRevealChunksPerEdge: { value: chunksPerEdge(worldSize) },
     uWorldUnitsPerChunk: { value: worldUnitsPerChunk },
   };
+  const maskNode = texture(uniforms.uRevealMask.value);
+  const spanNode = uniform(uniforms.uRevealChunksPerEdge.value * worldUnitsPerChunk);
 
   return {
     uniforms: () => uniforms,
@@ -96,6 +78,8 @@ export function createRevealMask(worldSize: number): RevealMask {
         uniforms.uRevealMask.value.dispose();
         uniforms.uRevealMask.value = emptyMask(mirror.map.size);
         uniforms.uRevealChunksPerEdge.value = edge;
+        maskNode.value = uniforms.uRevealMask.value;
+        spanNode.value = edge * worldUnitsPerChunk;
       }
       const texture = uniforms.uRevealMask.value;
       const data = texture.image.data as Uint8Array;
@@ -109,43 +93,14 @@ export function createRevealMask(worldSize: number): RevealMask {
       if (changed) texture.needsUpdate = true;
     },
 
-    applyRevealClip(material: Material, label: string): void {
-      const previous = material.onBeforeCompile.bind(material);
-      material.onBeforeCompile = (shader, renderer) => {
-        previous(shader, renderer);
-        shader.uniforms.uRevealMask = uniforms.uRevealMask;
-        shader.uniforms.uRevealChunksPerEdge = uniforms.uRevealChunksPerEdge;
-        shader.uniforms.uWorldUnitsPerChunk = uniforms.uWorldUnitsPerChunk;
-        shader.vertexShader = spliceShader(
-          spliceShader(
-            shader.vertexShader,
-            SHADER_COMMON_ANCHOR,
-            `${SHADER_COMMON_ANCHOR}\n${REVEAL_CLIP_UNIFORMS_GLSL}`,
-            label,
-          ),
-          WORLD_POSITION_VERTEX_ANCHOR,
-          [
-            WORLD_POSITION_VERTEX_ANCHOR,
-            WORLD_POSITION_VERTEX_GLSL,
-            'vec3 world = tWorldPosition.xyz;',
-            REVEAL_CLIP_VERTEX_GLSL,
-          ].join('\n    '),
-          label,
-        );
-        shader.fragmentShader = spliceShader(
-          spliceShader(
-            shader.fragmentShader,
-            SHADER_COMMON_ANCHOR,
-            `${SHADER_COMMON_ANCHOR}\n${REVEAL_CLIP_UNIFORMS_GLSL}`,
-            label,
-          ),
-          REVEAL_CLIP_FRAGMENT_ANCHOR,
-          `${REVEAL_CLIP_FRAGMENT_ANCHOR}\n    ${REVEAL_CLIP_FRAGMENT_GLSL}`,
-          label,
-        );
-      };
-      const previousKey = material.customProgramCacheKey.bind(material);
-      material.customProgramCacheKey = () => `${previousKey()}|revealClip`;
+    applyRevealClip(material: NodeMaterial, label: string): void {
+      material.name = label;
+      const revealUv = positionWorld.xz.div(spanNode);
+      discard(
+        material,
+        any(revealUv.lessThan(vec2(0))).or(any(revealUv.greaterThan(vec2(1)))),
+      );
+      discard(material, maskNode.sample(revealUv).r.lessThan(REVEAL_CLIP_THRESHOLD));
       material.needsUpdate = true;
     },
 

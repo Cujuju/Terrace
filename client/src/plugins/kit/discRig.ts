@@ -1,6 +1,7 @@
 import { Group } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import type { BufferGeometry, Material } from 'three';
+import type { BufferGeometry } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import { createHazeBank, type HazeBank } from './hazeBank.ts';
 import type { CumulusDeck } from './cumulusDeck.ts';
 import {
@@ -25,7 +26,7 @@ export interface DiscRigSpec {
   readonly profile: PrecipitationProfile | null;
   readonly name: string;
   readonly deck: CumulusDeck | null;
-  readonly applyRevealClip: ((material: Material, label: string) => void) | null;
+  readonly applyRevealClip: ((material: NodeMaterial, label: string) => void) | null;
 }
 
 export function createDiscRig(spec: DiscRigSpec): DiscRig {
@@ -42,7 +43,7 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
   if (spec.applyRevealClip !== null) {
     if (column !== null) spec.applyRevealClip(column.material, `${spec.name} column`);
     for (const sheet of haze.sheets) {
-      spec.applyRevealClip(sheet.material as Material, `${spec.name} haze`);
+      spec.applyRevealClip(sheet.material, `${spec.name} haze`);
     }
   }
 

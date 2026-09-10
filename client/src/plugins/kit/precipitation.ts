@@ -1,13 +1,11 @@
 import {
   BufferGeometry,
   Float32BufferAttribute,
-  LineBasicMaterial,
   LineSegments,
   Points,
-  PointsMaterial,
-  type Material,
   type Object3D,
 } from 'three';
+import { LineBasicNodeMaterial, PointsNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import { BAND_HEIGHT, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 const TWO_PI = Math.PI * 2;
@@ -64,7 +62,7 @@ export function driftSeconds(fraction: number, fallSpeed: number): number {
 
 export interface PrecipitationColumn {
   readonly object: Object3D;
-  readonly material: Material;
+  readonly material: NodeMaterial;
   advance(elapsed: number, radius: number, vx: number, vy: number): void;
   dispose(): void;
 }
@@ -96,13 +94,13 @@ export function createPrecipitationColumn(
 
   const material =
     profile.form === 'streak'
-      ? new LineBasicMaterial({
+      ? new LineBasicNodeMaterial({
           color: profile.color,
           transparent: true,
           opacity: 0,
           depthWrite: false,
         })
-      : new PointsMaterial({
+      : new PointsNodeMaterial({
           color: profile.color,
           size: profile.spriteSize,
           sizeAttenuation: true,
@@ -113,8 +111,8 @@ export function createPrecipitationColumn(
 
   const object =
     profile.form === 'streak'
-      ? new LineSegments(geometry, material as LineBasicMaterial)
-      : new Points(geometry, material as PointsMaterial);
+      ? new LineSegments(geometry, material)
+      : new Points(geometry, material);
   object.frustumCulled = false;
   object.renderOrder = renderOrder;
 

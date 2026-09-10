@@ -7,16 +7,33 @@ import {
   Matrix4,
   PlaneGeometry,
   Quaternion,
-  ShaderMaterial,
   Vector3,
 } from 'three';
+import { NodeMaterial, type Node } from 'three/webgpu';
+import {
+  attribute,
+  cos,
+  float,
+  fract,
+  mix,
+  sin,
+  smoothstep,
+  uniform,
+  uv,
+  varying,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
-  REVEAL_CLIP_FRAGMENT_GLSL,
-  REVEAL_CLIP_UNIFORMS_GLSL,
-  REVEAL_CLIP_VERTEX_GLSL,
-  type RevealClipUniforms,
-} from '../../../client/src/plugins/kit/revealClip.ts';
+  puffBillboard,
+  puffInstanceBase,
+  puffMask,
+} from '../../../client/src/plugins/kit/puffDeck.ts';
+import { compose, discard } from '../../../client/src/render/materialSlots.ts';
+import { instanceMatrix } from '../../../client/src/render/instanceMatrix.ts';
+import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 import {
   TORNADO_HEIGHT_WORLD_UNITS,
   TORNADO_RADIUS_CELLS,
@@ -51,215 +68,6 @@ export const DEBRIS_LIFE_SECONDS = 1.4;
 
 export const FUNNEL_RENDER_ORDER = 2;
 export const DEBRIS_RENDER_ORDER = 3;
-
-const CONE_VERTEX_SHADER =  `
-  ${REVEAL_CLIP_UNIFORMS_GLSL}
-
-  uniform float uElapsed;
-
-  attribute float aSeed;
-  attribute float aStrength;
-
-  varying float vLife;
-  varying float vStrength;
-  varying float vSeed;
-  varying vec2 vSurface;
-
-  void main() {
-    // The geometry is a UNIT open cylinder: uv.y runs 0 at the bottom rim to 1
-    // at the top, and uv.x runs once around. Everything about the funnel's real
-    // shape happens here, so the same geometry serves every tornado.
-    float life = uv.y;
-    vLife = life;
-    vStrength = aStrength;
-    vSeed = aSeed;
-    vSurface = uv;
-
-    // The instance matrix carries ONLY where the tornado is standing.
-    vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-
-    // THE TAPER. Quadratic rather than linear so the funnel is PINCHED near the
-    // ground and flares late — the shape a tornado actually has. A linear cone
-    // is a megaphone.
-    float taper = life * life;
-    float radius = mix(
-      ${FUNNEL_GROUND_RADIUS_WORLD_UNITS.toFixed(4)},
-      ${FUNNEL_CLOUD_RADIUS_WORLD_UNITS.toFixed(4)},
-      taper);
-
-    // THE TWIST AND THE SPIN. Each ring is rotated by a different amount, which
-    // shears the whole cone into a helix — the mesh stays intact because every
-    // vertex in a ring shares its own life value and therefore its rotation.
-    //
-    // uv.x IS THE ANGLE, not atan(position.z, position.x): the seam vertices
-    // are duplicated with uv.x = 0 and 1, which is exactly what makes the two
-    // sides of the seam land on the same point. Deriving the angle from the
-    // position would work too, but it would recompute what the geometry
-    // already knows and it would put a discontinuity at the seam.
-    float angle = 6.28318 * (
-      uv.x +
-      life * ${FUNNEL_TWIST_TURNS.toFixed(2)} +
-      uElapsed * ${FUNNEL_SPIN_TURNS_PER_SECOND.toFixed(2)} +
-      aSeed);
-
-    // A WOBBLE OF THE WHOLE AXIS, so the funnel snakes instead of standing
-    // plumb. Two sines at incommensurate rates, which never visibly repeat, and
-    // scaled by the taper so the foot stays planted while the top wanders.
-    float sway = ${(FUNNEL_GROUND_RADIUS_WORLD_UNITS * 0.55).toFixed(4)} * taper;
-    vec2 axis = vec2(
-      sin(uElapsed * 0.7 + aSeed * 6.28318) * sway,
-      cos(uElapsed * 0.53 + aSeed * 3.14159) * sway);
-
-    vec3 world = base + vec3(
-      cos(angle) * radius + axis.x,
-      life * ${TORNADO_HEIGHT_WORLD_UNITS.toFixed(2)},
-      sin(angle) * radius + axis.y);
-
-    // NOTHING IS DRAWN OFF THE RECEIVED MAP (#284). The funnel is one of the
-    // two kinds the server already filters on its CENTRE (broadcastVisible),
-    // and this is the other half of that: a funnel standing near the frontier
-    // is a 28-unit column, so its top can lean over ground this client has
-    // never been sent even when its foot is on ground it has.
-    ${REVEAL_CLIP_VERTEX_GLSL}
-
-    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
-  }
-`;
-
-const CONE_FRAGMENT_SHADER =  `
-  ${REVEAL_CLIP_UNIFORMS_GLSL}
-
-  // See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
-  // own light has to reach it as a number, or a funnel under a cyclone stays
-  // sunlit while the ground around it does not.
-  uniform float uDaylight;
-  uniform float uElapsed;
-
-  varying float vLife;
-  varying float vStrength;
-  varying float vSeed;
-  varying vec2 vSurface;
-
-  void main() {
-    // The clip FIRST, so a discarded fragment does no other work.
-    ${REVEAL_CLIP_FRAGMENT_GLSL}
-
-    // THE CHURN, painted rather than modelled. Two bands of streaks at
-    // incommensurate frequencies scrolling in opposite directions: one is the
-    // condensation spiralling up the wall, the other tears holes in it. Their
-    // beat is what makes a smooth cone look turbulent without a single extra
-    // triangle or a texture fetch.
-    float climb = sin(6.28318 * (
-      vSurface.x * ${FUNNEL_STREAK_COUNT.toFixed(1)} +
-      vLife * 2.0 +
-      uElapsed * 1.7 +
-      vSeed));
-    float tear = sin(6.28318 * (
-      vSurface.x * 5.0 -
-      vLife * 3.3 +
-      uElapsed * 0.9 +
-      vSeed * 2.0));
-    // THE FLOORS ARE HIGH, and that is what makes this a sheet with texture
-    // rather than a lattice of gaps. Two sines multiplied average about a third
-    // of their peak, so the first values here (0.58 and 0.62) put the whole
-    // funnel at a third of its nominal alpha — in world, against a bright sea,
-    // it read as a smear of glass. Raising the floors keeps the streaks and
-    // gives the surface a body.
-    float churn = (0.74 + 0.26 * climb) * (0.78 + 0.22 * tear);
-
-    // DIRT AT THE BOTTOM, CLOUD AT THE TOP. What a funnel picks up is the
-    // colour of the ground it is standing on; the top of it is the storm base
-    // it hangs from. One smoothstep between the two is what makes a grey cone
-    // read as a tornado rather than as a chimney.
-    vec3 debris = vec3(0.40, 0.32, 0.23);
-    vec3 cloud = vec3(0.62, 0.63, 0.68);
-    vec3 color = mix(debris, cloud, smoothstep(0.04, 0.62, vLife)) * uDaylight;
-
-    // DENSER AT THE FOOT, DISSOLVING INTO THE CLOUD AT THE TOP. Without the top
-    // fade the cone ends on a hard rim, which reads as a cut-off pipe rather
-    // than as a funnel going up into a storm.
-    float body = (1.0 - 0.35 * vLife) * (1.0 - smoothstep(0.72, 1.0, vLife));
-
-    float alpha = churn * body * vStrength * 0.85;
-    if (alpha <= 0.01) discard;
-    gl_FragColor = vec4(color, alpha);
-  }
-`;
-
-const DEBRIS_VERTEX_SHADER =  `
-  ${REVEAL_CLIP_UNIFORMS_GLSL}
-
-  uniform float uElapsed;
-
-  attribute float aPhase;
-  attribute float aSeed;
-  attribute float aStrength;
-
-  varying float vLife;
-  varying float vStrength;
-  varying vec2 vQuad;
-
-  void main() {
-    float life = fract(uElapsed / ${DEBRIS_LIFE_SECONDS.toFixed(2)} + aPhase);
-    vLife = life;
-    vStrength = aStrength;
-    vQuad = position.xy;
-
-    vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-
-    // Thrown OUTWARD and up, then falling back — a parabola in height against a
-    // radius that only ever grows. That asymmetry is what reads as debris being
-    // flung out rather than as a ring pulsing.
-    float radius = ${FUNNEL_GROUND_RADIUS_WORLD_UNITS.toFixed(4)} *
-      (0.5 + ${DEBRIS_SPREAD_RADII.toFixed(1)} * life * fract(aSeed * 3.7 + 0.2));
-    float angle = 6.28318 * (fract(aSeed * 61.7) + life * 0.35 +
-      uElapsed * ${(FUNNEL_SPIN_TURNS_PER_SECOND * 0.6).toFixed(2)});
-    float height = ${(TORNADO_HEIGHT_WORLD_UNITS * DEBRIS_HEIGHT_FRACTION).toFixed(3)} *
-      4.0 * life * (1.0 - life) * fract(aSeed * 13.1 + 0.5);
-
-    vec3 world = base + vec3(cos(angle) * radius, height, sin(angle) * radius);
-
-    // Clipped like the cone above: debris thrown across the frontier is
-    // geometry over floor this client was never sent.
-    ${REVEAL_CLIP_VERTEX_GLSL}
-
-    // BILLBOARD IN VIEW SPACE — faces the camera exactly, for free, with no
-    // rotation written from the CPU and no chance of lagging it by a frame.
-    float size = ${(WORLD_UNITS_PER_BAND * 0.55).toFixed(4)} * (0.5 + fract(aSeed * 29.3));
-    vec4 viewPosition = viewMatrix * vec4(world, 1.0);
-    viewPosition.xy += position.xy * size;
-    gl_Position = projectionMatrix * viewPosition;
-  }
-`;
-
-const DEBRIS_FRAGMENT_SHADER =  `
-  ${REVEAL_CLIP_UNIFORMS_GLSL}
-
-  uniform float uDaylight;
-
-  varying float vLife;
-  varying float vStrength;
-  varying vec2 vQuad;
-
-  void main() {
-    ${REVEAL_CLIP_FRAGMENT_GLSL}
-
-    // The quad is authored two units across, so vQuad is the offset from its
-    // centre in half-widths. Harder-edged than the cloud puffs elsewhere in
-    // this plugin: this is dirt and chaff, not vapour.
-    float radius = length(vQuad);
-    float chip = 1.0 - smoothstep(0.35, 1.0, radius);
-    if (chip <= 0.0) discard;
-
-    vec3 color = vec3(0.34, 0.27, 0.19) * uDaylight;
-    // In fast, out slow, and gone before it lands: a sprite that reached the
-    // ground at full opacity would pile into a solid ring.
-    float fade = smoothstep(0.0, 0.12, vLife) * (1.0 - smoothstep(0.45, 1.0, vLife));
-    float alpha = chip * fade * vStrength * 0.8;
-    if (alpha <= 0.01) discard;
-    gl_FragColor = vec4(color, alpha);
-  }
-`;
 
 interface Funnel {
   x: number;
@@ -296,7 +104,14 @@ function unitFromId(id: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
 
-export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
+// The GLSL wrote display bytes straight to the framebuffer, bypassing tone mapping.
+function displayedOutput(previous: Node<'vec4'>): Node<'vec4'> {
+  return vec4(radianceForDisplay(previous.rgb), previous.a);
+}
+
+export function createFunnel(
+  applyRevealClip: (material: NodeMaterial, label: string) => void,
+): FunnelRenderer {
   const root = new Group();
   root.name = 'tornado:funnel';
 
@@ -308,15 +123,97 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
     FUNNEL_HEIGHT_SEGMENTS,
     true,
   );
-  const coneMaterial = new ShaderMaterial({
-    uniforms: { ...revealClip, uElapsed: { value: 0 }, uDaylight: { value: 1 } },
-    vertexShader: CONE_VERTEX_SHADER,
-    fragmentShader: CONE_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-  });
+  const elapsedUniform = uniform(0);
+  const daylightUniform = uniform(1);
+  const aSeed = attribute<'float'>('aSeed', 'float');
+  const aStrength = attribute<'float'>('aStrength', 'float');
+
+  const coneMaterial = new NodeMaterial();
+  coneMaterial.transparent = true;
+  coneMaterial.depthWrite = false;
+  coneMaterial.side = DoubleSide;
+
+  // A unit open cylinder: uv.y runs 0 at the bottom rim to 1 at the top, uv.x once around.
+  const surface = uv();
+  const coneLife = surface.y;
+
+  // The taper is quadratic so the funnel is pinched near the ground and flares late.
+  const taper = coneLife.mul(coneLife);
+  const coneRadius = mix(
+    float(FUNNEL_GROUND_RADIUS_WORLD_UNITS),
+    FUNNEL_CLOUD_RADIUS_WORLD_UNITS,
+    taper,
+  );
+
+  // Twist and spin shear the cone into a helix. uv.x is the angle, so the seam's duplicates meet.
+  const coneAngle = float(6.28318).mul(
+    surface.x
+      .add(coneLife.mul(FUNNEL_TWIST_TURNS))
+      .add(elapsedUniform.mul(FUNNEL_SPIN_TURNS_PER_SECOND))
+      .add(aSeed),
+  );
+
+  // The whole axis wobbles on two incommensurate sines, scaled by the taper so the foot stays put.
+  const sway = taper.mul(FUNNEL_GROUND_RADIUS_WORLD_UNITS * 0.55);
+  const axis = vec2(
+    sin(elapsedUniform.mul(0.7).add(aSeed.mul(6.28318))).mul(sway),
+    cos(elapsedUniform.mul(0.53).add(aSeed.mul(3.14159))).mul(sway),
+  );
+
+  // The instance matrix carries only where the tornado is standing.
   const cone = new InstancedMesh(coneGeometry, coneMaterial, MAX_FUNNELS);
+  compose(coneMaterial, 'position', () =>
+    puffInstanceBase(instanceMatrix(cone)).add(
+      vec3(
+        cos(coneAngle).mul(coneRadius).add(axis.x),
+        coneLife.mul(TORNADO_HEIGHT_WORLD_UNITS),
+        sin(coneAngle).mul(coneRadius).add(axis.y),
+      ),
+    ),
+  );
+
+  // Nothing is drawn off the received map: the column's top can lean over unsent ground.
+  applyRevealClip(coneMaterial, 'tornado funnel');
+
+  // The churn: two streak bands at incommensurate frequencies scrolling in opposite directions.
+  const climb = sin(
+    float(6.28318).mul(
+      surface.x
+        .mul(FUNNEL_STREAK_COUNT)
+        .add(coneLife.mul(2.0))
+        .add(elapsedUniform.mul(1.7))
+        .add(aSeed),
+    ),
+  );
+  const tear = sin(
+    float(6.28318).mul(
+      surface.x
+        .mul(5.0)
+        .sub(coneLife.mul(3.3))
+        .add(elapsedUniform.mul(0.9))
+        .add(aSeed.mul(2.0)),
+    ),
+  );
+  // High floors keep the streaks and give the sheet a body instead of a lattice of gaps.
+  const churn = float(0.74).add(climb.mul(0.26)).mul(float(0.78).add(tear.mul(0.22)));
+
+  // Dirt at the bottom, cloud at the top; unlit, so daylight arrives as a number.
+  const coneDebris = vec3(0.4, 0.32, 0.23);
+  const cloud = vec3(0.62, 0.63, 0.68);
+  compose(coneMaterial, 'color', () =>
+    mix(coneDebris, cloud, smoothstep(0.04, 0.62, coneLife)).mul(daylightUniform),
+  );
+
+  // Denser at the foot, dissolving into the cloud at the top rather than ending on a hard rim.
+  const body = float(1)
+    .sub(coneLife.mul(0.35))
+    .mul(float(1).sub(smoothstep(0.72, 1.0, coneLife)));
+
+  const coneAlpha = churn.mul(body).mul(aStrength).mul(0.85);
+  discard(coneMaterial, coneAlpha.lessThanEqual(0.01));
+  compose(coneMaterial, 'opacity', () => coneAlpha);
+  compose(coneMaterial, 'output', displayedOutput);
+
   cone.name = 'tornado:funnel:vortex';
   cone.count = 0;
   cone.renderOrder = FUNNEL_RENDER_ORDER;
@@ -330,15 +227,52 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
 
   const debrisCapacity = MAX_FUNNELS * DEBRIS_PER_FUNNEL;
   const debrisGeometry = new PlaneGeometry(2, 2, 1, 1);
-  const debrisMaterial = new ShaderMaterial({
-    uniforms: { ...revealClip, uElapsed: { value: 0 }, uDaylight: { value: 1 } },
-    vertexShader: DEBRIS_VERTEX_SHADER,
-    fragmentShader: DEBRIS_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-  });
+  const debrisMaterial = new NodeMaterial();
+  debrisMaterial.transparent = true;
+  debrisMaterial.depthWrite = false;
+  debrisMaterial.side = DoubleSide;
+
+  const aPhase = attribute<'float'>('aPhase', 'float');
+  const debrisLife = varying(fract(elapsedUniform.div(DEBRIS_LIFE_SECONDS).add(aPhase)), 'vLife');
+
+  // Thrown outward and up, then falling back: a parabola in height against a growing radius.
+  const debrisRadius = float(FUNNEL_GROUND_RADIUS_WORLD_UNITS).mul(
+    float(0.5).add(debrisLife.mul(DEBRIS_SPREAD_RADII).mul(fract(aSeed.mul(3.7).add(0.2)))),
+  );
+  const debrisAngle = float(6.28318).mul(
+    fract(aSeed.mul(61.7))
+      .add(debrisLife.mul(0.35))
+      .add(elapsedUniform.mul(FUNNEL_SPIN_TURNS_PER_SECOND * 0.6)),
+  );
+  const height = float(TORNADO_HEIGHT_WORLD_UNITS * DEBRIS_HEIGHT_FRACTION)
+    .mul(4.0)
+    .mul(debrisLife)
+    .mul(float(1).sub(debrisLife))
+    .mul(fract(aSeed.mul(13.1).add(0.5)));
+
   const debris = new InstancedMesh(debrisGeometry, debrisMaterial, debrisCapacity);
+  const world = puffInstanceBase(instanceMatrix(debris)).add(
+    vec3(cos(debrisAngle).mul(debrisRadius), height, sin(debrisAngle).mul(debrisRadius)),
+  );
+
+  const size = float(WORLD_UNITS_PER_BAND * 0.55).mul(float(0.5).add(fract(aSeed.mul(29.3))));
+  compose(debrisMaterial, 'position', () => puffBillboard(world, size));
+
+  // Clipped like the cone: debris thrown across the frontier is over floor never sent.
+  applyRevealClip(debrisMaterial, 'tornado debris');
+
+  // Harder-edged than the cloud puffs: this is dirt and chaff, not vapour.
+  const chip = puffMask(0.35);
+  discard(debrisMaterial, chip.discarded);
+
+  compose(debrisMaterial, 'color', () => vec3(0.34, 0.27, 0.19).mul(daylightUniform));
+  // In fast, out slow, and gone before it lands, or the sprites pile into a solid ring.
+  const fade = smoothstep(0.0, 0.12, debrisLife).mul(float(1).sub(smoothstep(0.45, 1.0, debrisLife)));
+  const debrisAlpha = chip.puff.mul(fade).mul(aStrength).mul(0.8);
+  discard(debrisMaterial, debrisAlpha.lessThanEqual(0.01));
+  compose(debrisMaterial, 'opacity', () => debrisAlpha);
+  compose(debrisMaterial, 'output', displayedOutput);
+
   debris.name = 'tornado:funnel:debris';
   debris.count = 0;
   debris.renderOrder = DEBRIS_RENDER_ORDER;
@@ -451,10 +385,8 @@ export function createFunnel(revealClip: RevealClipUniforms): FunnelRenderer {
     },
 
     update(dt, elapsed, daylight): void {
-      coneMaterial.uniforms.uElapsed!.value = elapsed;
-      coneMaterial.uniforms.uDaylight!.value = daylight;
-      debrisMaterial.uniforms.uElapsed!.value = elapsed;
-      debrisMaterial.uniforms.uDaylight!.value = daylight;
+      elapsedUniform.value = elapsed;
+      daylightUniform.value = daylight;
 
       if (funnels.size === 0) {
         cone.count = 0;
