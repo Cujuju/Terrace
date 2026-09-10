@@ -198,6 +198,8 @@ export function createRiverRig(
   let waterPositionAttribute = new BufferAttribute(waterPositions, 3);
   let waterNormalAttribute = new BufferAttribute(waterNormals, 3);
   let liveWaterVertices = 0;
+  let waterDirtyFrom = Number.POSITIVE_INFINITY;
+  let waterDirtyTo = 0;
   const waterRunOrder: number[] = [];
   const waterRuns = new Map<number, RegionRun>();
 
@@ -221,8 +223,15 @@ export function createRiverRig(
     const previous = waterMesh.geometry;
     waterMesh.geometry = geometry;
     if (previous !== geometry) previous.dispose();
+    waterDirtyFrom = Number.POSITIVE_INFINITY;
+    waterDirtyTo = 0;
   };
   bindWaterGeometry();
+
+  const noteWaterDirty = (fromVertex: number, toVertex: number): void => {
+    if (fromVertex < waterDirtyFrom) waterDirtyFrom = fromVertex;
+    if (toVertex > waterDirtyTo) waterDirtyTo = toVertex;
+  };
 
   const ensureWaterCapacity = (vertices: number): void => {
     const capacity = waterPositions.length / 3;
@@ -256,6 +265,7 @@ export function createRiverRig(
 
     const delta = count - run.count;
     if (delta > 0) ensureWaterCapacity(liveWaterVertices + delta);
+    noteWaterDirty(run.offset, Math.max(liveWaterVertices, liveWaterVertices + delta));
 
     const tailStart = run.offset + run.count;
     const tailLength = liveWaterVertices - tailStart;
@@ -721,7 +731,15 @@ export function createRiverRig(
 
   const publishWaterBuffer = (): void => {
     waterMesh.geometry.setDrawRange(0, liveWaterVertices);
+    if (waterDirtyTo <= waterDirtyFrom) return;
+    const stride = waterPositionAttribute.itemSize;
+    waterPositionAttribute.addUpdateRange(
+      waterDirtyFrom * stride,
+      (waterDirtyTo - waterDirtyFrom) * stride,
+    );
     waterPositionAttribute.needsUpdate = true;
+    waterDirtyFrom = Number.POSITIVE_INFINITY;
+    waterDirtyTo = 0;
   };
 
   const emitPendingTile = (job: DrainJob, entry: PendingTile): void => {
