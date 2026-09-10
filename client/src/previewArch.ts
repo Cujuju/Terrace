@@ -1,7 +1,6 @@
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -9,8 +8,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
@@ -90,19 +90,20 @@ function buildGround(mirror: TerrainMirror): void {
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
 const scene = new Scene();
-scene.background = new Color(BACKDROP_COLOR);
 scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
 scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
 const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
 sun.position.copy(SUN_DIRECTION).multiplyScalar(1000);
 scene.add(sun);
 
-const renderer = new WebGLRenderer({ canvas, antialias: true });
+const renderer = new WebGPURenderer({ canvas, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.outputColorSpace = SRGBColorSpace;
 renderer.toneMapping = ACESFilmicToneMapping;
 renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+await renderer.init();
+scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
 
 const mirror = createTerrainMirror(PREVIEW_WORLD_SIZE);
 buildGround(mirror);

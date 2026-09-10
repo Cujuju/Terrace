@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   HemisphereLight,
   Group,
@@ -13,10 +12,11 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
   type BufferGeometry,
   type Material,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   CROP_PLOT_CLUSTER_CELL_SPAN,
@@ -66,11 +66,10 @@ function readOption(): number {
     : 0;
 }
 
-function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer } {
+function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
 
   const ground = new Mesh(
     new CircleGeometry(GROUND_RADIUS, 32),
@@ -87,11 +86,12 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
 
   const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.005, 100);
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   return { scene, camera, renderer };
@@ -111,12 +111,13 @@ function frameCameraOn(camera: PerspectiveCamera, root: Group): void {
   camera.updateProjectionMatrix();
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const option = readOption();
   const name = WHEAT_VARIANT_NAMES[option];
   document.title = `Crop preview — ${name}`;
 
   const { scene, camera, renderer } = buildScene();
+  await renderer.init();
 
   const plot = new Group();
   plot.name = `preview:wheat-${option}`;
@@ -169,4 +170,4 @@ function main(): void {
   });
 }
 
-main();
+void main();

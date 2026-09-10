@@ -1,7 +1,6 @@
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -9,8 +8,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellIndex, chunkIndex, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
@@ -98,7 +98,6 @@ const builder = SCENE_BUILDERS[sceneName] ?? buildStaircase;
 const isNight = params.get('light') === 'night';
 
 const scene = new Scene();
-scene.background = new Color(BACKDROP_COLOR);
 const hemisphere = new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY);
 scene.add(hemisphere);
 const ambient = new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY);
@@ -107,6 +106,7 @@ const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
 sun.position.copy(SUN_DIRECTION).multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
 scene.add(sun);
 
+let backdropColor = BACKDROP_COLOR;
 if (isNight) {
   const night = skyStateAtPhase(MIDNIGHT_PHASE);
   sun.position
@@ -120,16 +120,18 @@ if (isNight) {
   hemisphere.intensity = night.hemisphereIntensity;
   ambient.color.setHex(night.ambientColor);
   ambient.intensity = night.ambientIntensity;
-  (scene.background as Color).setHex(night.backgroundColor);
+  backdropColor = night.backgroundColor;
 }
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
-const renderer = new WebGLRenderer({ canvas, antialias: true });
+const renderer = new WebGPURenderer({ canvas, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = SRGBColorSpace;
 renderer.toneMapping = ACESFilmicToneMapping;
 renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+await renderer.init();
+scene.background = backgroundRadiance(backdropColor, renderer);
 
 const mirror = createTerrainMirror(PREVIEW_WORLD_SIZE);
 builder(mirror);

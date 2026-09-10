@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -13,8 +12,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { DEFAULT_YETI_VARIANT, isYetiVariant } from '../../plugins/monsters/protocol.ts';
 import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
@@ -69,15 +69,16 @@ const peepParam = query.get('peep');
 const showPeep = peepParam === null ? view !== 'face' && view !== 'hips' : peepParam === '1';
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
-const renderer = new WebGLRenderer({ canvas, antialias: true });
+const renderer = new WebGPURenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = SRGBColorSpace;
 renderer.toneMapping = ACESFilmicToneMapping;
 renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+await renderer.init();
 
 const scene = new Scene();
-scene.background = new Color(BACKDROP_COLOR);
+scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
 
 const ground = new Mesh(
   new CircleGeometry(GROUND_RADIUS, GROUND_SEGMENTS),

@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -14,11 +13,12 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
   type BufferGeometry,
   type Material,
   type Object3D,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { bakeRig } from './render/rigSkin.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
 import { createRigHerd } from './render/rigHerd.ts';
@@ -86,10 +86,9 @@ function readGait(query: URLSearchParams): MoverGait {
   return MOVER_GAITS.find((gait) => gait === named) ?? 'walk';
 }
 
-function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer; ground: Mesh } {
+function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer; ground: Mesh } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
   const ground = new Mesh(new CircleGeometry(GROUND_RADIUS, 32), new MeshLambertMaterial({ color: GROUND_COLOR }));
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
@@ -99,11 +98,12 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   sun.position.copy(SUN_DIRECTION).multiplyScalar(20);
   scene.add(sun);
   const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.05, 100);
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
   return { scene, camera, renderer, ground };
 }
@@ -128,7 +128,7 @@ async function installAssets(): Promise<void> {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   const species = query.get('species') ?? 'fish';
   const viewName = query.get('view') ?? 'iso';
@@ -174,6 +174,7 @@ function main(): void {
   }
 
   const { scene, camera, renderer, ground } = buildScene();
+  await renderer.init();
   const group = new Group();
   for (const object of herd.meshes) group.add(object);
   scene.add(group);

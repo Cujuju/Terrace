@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   HemisphereLight,
   Mesh,
@@ -12,9 +11,10 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
   type Group,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURE_TIER_COUNT,
@@ -73,11 +73,10 @@ function findCoastalCell(variant: number): { x: number; y: number } {
   throw new Error(`preview: no cell in the first ${SCAN_EDGE}x${SCAN_EDGE} rolls fishing hut ${variant}`);
 }
 
-function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer } {
+function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
 
   const ground = new Mesh(
     new CircleGeometry(GROUND_RADIUS, 32),
@@ -94,11 +93,12 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
 
   const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.05, 100);
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   return { scene, camera, renderer };
@@ -145,6 +145,7 @@ async function main(): Promise<void> {
     : Math.min(Math.max(requestedTier, 0), STRUCTURE_TIER_COUNT - 1);
 
   const { scene, camera, renderer } = buildScene();
+  await renderer.init();
 
   await preloadStructureModels(timberHouseUrl);
   const models = createStructureModels();
@@ -212,7 +213,7 @@ async function main(): Promise<void> {
       (window as unknown as { __previewStats: unknown }).__previewStats = {
         tiers: placements.map((placed) => placed.tier),
         race,
-        drawCalls: renderer.info.render.calls,
+        drawCalls: renderer.info.render.drawCalls,
         triangles: renderer.info.render.triangles,
       };
       (window as unknown as { __previewReady: boolean }).__previewReady = true;

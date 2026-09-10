@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -13,8 +12,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
 import { isSettlerRace, type SettlerRace } from '../../plugins/pilgrims/protocol.ts';
@@ -44,11 +44,10 @@ const CAMERA_VIEWS = {
 
 type CameraView = keyof typeof CAMERA_VIEWS;
 
-function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer } {
+function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
 
   const ground = new Mesh(
     new CircleGeometry(GROUND_RADIUS, 32),
@@ -65,11 +64,12 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
 
   const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.05, 100);
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   return { scene, camera, renderer };
@@ -92,7 +92,7 @@ function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraVi
   camera.updateProjectionMatrix();
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   const raceParam = query.get('race');
   const races: SettlerRace[] = isSettlerRace(raceParam) ? [raceParam] : ['rudy', 'uno'];
@@ -104,6 +104,7 @@ function main(): void {
   const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
 
   const { scene, camera, renderer } = buildScene();
+  await renderer.init();
 
   const models = createPilgrimModels();
   const subject = new Group();
@@ -131,4 +132,4 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+void main();

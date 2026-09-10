@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -15,8 +14,9 @@ import {
   SRGBColorSpace,
   type Object3D,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import {
   DEFAULT_SIZE_CLASS,
   isWildlifeSpecies,
@@ -100,13 +100,12 @@ function readGait(query: URLSearchParams): MoverGait {
 function buildScene(): {
   scene: Scene;
   camera: PerspectiveCamera;
-  renderer: WebGLRenderer;
+  renderer: WebGPURenderer;
   ground: Mesh;
 } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
 
   const ground = new Mesh(
     new CircleGeometry(GROUND_RADIUS, 32),
@@ -123,11 +122,12 @@ function buildScene(): {
 
   const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.05, 100);
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   return { scene, camera, renderer, ground };
@@ -166,13 +166,14 @@ async function installAssets(): Promise<void> {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const query = readQuery();
   const species = readSpecies(query);
   const sizeClass = readSizeClass(query);
   const view = readView(query);
 
   const { scene, camera, renderer, ground } = buildScene();
+  await renderer.init();
 
   const models = createWildlifeModels(PREVIEW_POPULATION);
   const group = new Group();

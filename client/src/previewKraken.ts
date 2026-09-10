@@ -2,7 +2,6 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   Box3,
-  Color,
   DirectionalLight,
   DoubleSide,
   HemisphereLight,
@@ -13,8 +12,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
 import { lurkDepthOf } from '../../plugins/monsters/client/placement.ts';
 
@@ -58,15 +58,16 @@ function readParams(): { kind: 'kraken' | 'cthulhu'; view: CameraView; t: number
 const { kind, view, t } = readParams();
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
-const renderer = new WebGLRenderer({ canvas, antialias: true });
+const renderer = new WebGPURenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = SRGBColorSpace;
 renderer.toneMapping = ACESFilmicToneMapping;
 renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+await renderer.init();
 
 const scene = new Scene();
-scene.background = new Color(BACKDROP_COLOR);
+scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
 
 const hemisphere = new HemisphereLight(
   SKY_COLOR,
