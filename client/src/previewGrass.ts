@@ -1,7 +1,6 @@
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  Color,
   DirectionalLight,
   HemisphereLight,
   Mesh,
@@ -11,8 +10,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { grassCoversCell, type CropCell, type GrassCell } from '../../plugins/flora/protocol.ts';
 import { createGrassModels } from '../../plugins/flora/client/grassModels.ts';
@@ -43,14 +43,13 @@ function readNumber(name: string, fallback: number): number {
   return Number.isFinite(raw) && raw > 0 ? raw : fallback;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const frameWorldUnits = readNumber('frame', DEFAULT_FRAME_WORLD_UNITS);
   const patchCells = Math.round(readNumber('cells', DEFAULT_PATCH_CELLS));
   document.title = `Grass preview — ${patchCells} cells, ${frameWorldUnits} world units framed`;
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const scene = new Scene();
-  scene.background = new Color(SKY_COLOR);
 
   const patchWorld = patchCells * CELL_WORLD_SIZE;
   const ground = new Mesh(
@@ -100,11 +99,13 @@ function main(): void {
   camera.lookAt(centre);
   camera.updateProjectionMatrix();
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  await renderer.init();
+  scene.background = backgroundRadiance(SKY_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   let framesRendered = 0;
@@ -125,4 +126,4 @@ function main(): void {
   });
 }
 
-main();
+void main();

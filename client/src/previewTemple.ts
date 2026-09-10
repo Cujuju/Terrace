@@ -3,7 +3,6 @@ import {
   AmbientLight,
   Box3,
   CircleGeometry,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -13,8 +12,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   TEMPLE_DOOR_OFFSET_CELLS,
@@ -69,15 +69,16 @@ const peepAtDoor = peepParam === 'door';
 const span = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS;
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
-const renderer = new WebGLRenderer({ canvas, antialias: true });
+const renderer = new WebGPURenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = SRGBColorSpace;
 renderer.toneMapping = ACESFilmicToneMapping;
 renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+await renderer.init();
 
 const scene = new Scene();
-scene.background = new Color(dusk ? DUSK_SKY_COLOR : SKY_COLOR);
+scene.background = backgroundRadiance(dusk ? DUSK_SKY_COLOR : SKY_COLOR, renderer);
 
 const ground = new Mesh(
   new CircleGeometry(span * GROUND_RADIUS_SPANS, GROUND_SEGMENTS),

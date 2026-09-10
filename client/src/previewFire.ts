@@ -3,7 +3,6 @@ import {
   AmbientLight,
   BoxGeometry,
   Box3,
-  Color,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -13,10 +12,11 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
   type BufferGeometry,
   type Material,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { createFloraModels, type TreePlacement } from '../../plugins/flora/client/models.ts';
 import { SHIPPED_FLAMES } from '../../plugins/fire/client/flames/index.ts';
 import { createFireSmoke } from '../../plugins/fire/client/smoke.ts';
@@ -189,7 +189,7 @@ function frameCameraOn(
   return center;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const sceneName = readScene(params);
   const intensityOverride = readIntensityOverride(params);
@@ -200,7 +200,6 @@ function main(): void {
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
 
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
@@ -271,11 +270,13 @@ function main(): void {
     0.05,
     200,
   );
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  await renderer.init();
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   const cameraFocus = frameCameraOn(
@@ -305,7 +306,7 @@ function main(): void {
     } else {
       (
         window as unknown as { __previewDrawCalls: number; __previewSmokeColumns: number }
-      ).__previewDrawCalls = renderer.info.render.calls;
+      ).__previewDrawCalls = renderer.info.render.drawCalls;
       (
         window as unknown as { __previewDrawCalls: number; __previewSmokeColumns: number }
       ).__previewSmokeColumns = smoke.drawnCount;
@@ -327,4 +328,4 @@ function main(): void {
   });
 }
 
-main();
+void main();

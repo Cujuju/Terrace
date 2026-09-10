@@ -14,8 +14,9 @@ import {
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer,
 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { BAND_HEIGHT, CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
 import {
   FLOW_RADIUS_WORLD_UNITS,
@@ -200,7 +201,7 @@ const CAMERA_VIEWS: Record<ViewName, { direction: Vector3; distance: number; tar
   top: { direction: new Vector3(0.01, 1, 0.02), distance: 26, targetY: 0 },
 };
 
-function main(): void {
+async function main(): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   const sceneName = (query.get('scene') ?? 'erupting') as SceneName;
   const viewName = (query.get('view') ?? 'iso') as ViewName;
@@ -208,7 +209,6 @@ function main(): void {
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const scene = new Scene();
-  scene.background = new Color(BACKDROP_COLOR);
 
   scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
   scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
@@ -264,11 +264,13 @@ function main(): void {
   camera.lookAt(centre);
   camera.updateProjectionMatrix();
 
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  await renderer.init();
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   let framesRendered = 0;
@@ -284,6 +286,6 @@ function main(): void {
   requestAnimationFrame(renderFrame);
 }
 
-main();
+void main();
 
 void FLOW_RADIUS_WORLD_UNITS;
