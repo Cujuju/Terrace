@@ -41,14 +41,7 @@ function instanceMatrixAt(
 }
 
 function paletteOf(herd: ReturnType<typeof createRigHerd>): DataTexture {
-  const material = herd.meshes[0]!.material as Material;
-  const shader = {
-    uniforms: {} as Record<string, { value: unknown }>,
-    vertexShader: '#include <common>\n#include <begin_vertex>\n#include <beginnormal_vertex>',
-    fragmentShader: '',
-  };
-  material.onBeforeCompile(shader as never, null as never);
-  const palette = shader.uniforms.rigPosePalette?.value;
+  const palette = herd.posePalette;
   if (!(palette instanceof DataTexture)) throw new Error('the herd exposed no pose palette');
   return palette;
 }

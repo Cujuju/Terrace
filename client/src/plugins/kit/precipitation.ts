@@ -1,6 +1,5 @@
 import {
   BufferGeometry,
-  DynamicDrawUsage,
   Float32BufferAttribute,
   LineBasicMaterial,
   LineSegments,
@@ -91,7 +90,6 @@ export function createPrecipitationColumn(
 
   const geometry = new BufferGeometry();
   const attribute = new Float32BufferAttribute(profile.count * verticesPerParticle * 3, 3);
-  attribute.setUsage(DynamicDrawUsage);
   geometry.setAttribute('position', attribute);
 
   const positions = attribute.array as Float32Array;

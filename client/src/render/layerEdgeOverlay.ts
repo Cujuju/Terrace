@@ -1,7 +1,6 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  DynamicDrawUsage,
   LineBasicMaterial,
   LineSegments,
   Sphere,
@@ -142,7 +141,6 @@ export function createLayerEdgeOverlay(
 
   const bindTile = (tile: EdgeTile): void => {
     const attribute = new BufferAttribute(tile.positions, POSITION_FLOATS_PER_VERTEX);
-    attribute.setUsage(DynamicDrawUsage);
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', attribute);
     geometry.setDrawRange(0, tile.liveEnd);

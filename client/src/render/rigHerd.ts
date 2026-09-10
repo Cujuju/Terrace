@@ -1,7 +1,6 @@
 import {
   Bone,
   DataTexture,
-  DynamicDrawUsage,
   FloatType,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -12,6 +11,19 @@ import {
   Vector3,
   type Material,
 } from 'three';
+import type { Node, NodeMaterial } from 'three/webgpu';
+import {
+  Fn,
+  attribute,
+  int,
+  ivec2,
+  mat4,
+  normalLocal,
+  textureLoad,
+  vec4,
+} from 'three/tsl';
+import { compose } from './materialSlots.ts';
+import { toNodeMaterial } from './nodeMaterialFrom.ts';
 import type { RigBlueprint } from './rigSkin.ts';
 
 const MATRIX_ELEMENTS = 16;
@@ -20,41 +32,6 @@ const MATRIX_TEXELS = 4;
 const RGBA_COMPONENTS = 4;
 
 const POSE_SLOT_ATTRIBUTE = 'rigPoseSlot';
-const POSE_PALETTE_UNIFORM = 'rigPosePalette';
-
-const POSE_PROGRAM_KEY = 'rigHerd:posePalette';
-
-const POSE_SHADER_PARS = `
-attribute vec4 skinIndex;
-attribute vec4 skinWeight;
-attribute float ${POSE_SLOT_ATTRIBUTE};
-uniform highp sampler2D ${POSE_PALETTE_UNIFORM};
-
-// One bone matrix, from the row this instance names and the bone named by one
-// component of skinIndex. Four RGBA texels, column-major — exactly the layout
-// three's own <skinning_pars_vertex> reads its bone texture with.
-mat4 rigPoseBone( const in float bone, const in int row ) {
-\tint col = int( bone ) * ${MATRIX_TEXELS};
-\treturn mat4(
-\t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col, row ), 0 ),
-\t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col + 1, row ), 0 ),
-\t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col + 2, row ), 0 ),
-\t\ttexelFetch( ${POSE_PALETTE_UNIFORM}, ivec2( col + 3, row ), 0 ) );
-}
-
-// The weighted blend of this vertex's four influences, in the pose this
-// instance names. A zero weight still costs its four texel fetches: a branch
-// per influence would cost more than the fetch on every GPU this runs on, and
-// the fetch is from a row already resident.
-mat4 rigPoseMatrix() {
-\tint row = int( ${POSE_SLOT_ATTRIBUTE} );
-\tmat4 blended = rigPoseBone( skinIndex.x, row ) * skinWeight.x;
-\tblended += rigPoseBone( skinIndex.y, row ) * skinWeight.y;
-\tblended += rigPoseBone( skinIndex.z, row ) * skinWeight.z;
-\tblended += rigPoseBone( skinIndex.w, row ) * skinWeight.w;
-\treturn blended;
-}
-`;
 
 const TWO_PI = Math.PI * 2;
 
@@ -68,6 +45,7 @@ export interface RigHerdOptions {
 export interface RigHerd {
   readonly meshes: readonly InstancedMesh[];
   readonly joints: readonly Bone[];
+  readonly posePalette: DataTexture;
   beginFrame(): void;
   poseSlotOf(phase: number, variant?: number): number;
   poseSlotPhase(slot: number): number;
@@ -120,16 +98,14 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     new Float32Array(capacity * MATRIX_ELEMENTS),
     MATRIX_ELEMENTS,
   );
-  instanceMatrix.setUsage(DynamicDrawUsage);
   const instanceMatrices = instanceMatrix.array as Float32Array;
 
   const poseSlotAttribute = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-  poseSlotAttribute.setUsage(DynamicDrawUsage);
   const slotValues = poseSlotAttribute.array as Float32Array;
 
   const bounds = new Sphere(new Vector3(0, 0, 0), 0);
   const meshes: InstancedMesh[] = [];
-  const materials: Material[] = [];
+  const materials: NodeMaterial[] = [];
   for (const surface of blueprint.surfaces) {
     if (surface.geometry.getAttribute(POSE_SLOT_ATTRIBUTE) !== undefined) {
       throw new Error('createRigHerd: this blueprint already drives a herd');
@@ -173,6 +149,7 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   return {
     meshes,
     joints,
+    posePalette: palette,
 
     beginFrame(): void {
       count = 0;
@@ -284,25 +261,39 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   };
 }
 
-function poseSkinnedMaterial(source: Material, palette: DataTexture): Material {
-  const material = source.clone();
-  const inherited = source.onBeforeCompile;
-  const inheritedKey = source.customProgramCacheKey;
-  material.onBeforeCompile = (shader, renderer): void => {
-    inherited.call(material, shader, renderer);
-    shader.uniforms[POSE_PALETTE_UNIFORM] = { value: palette };
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${POSE_SHADER_PARS}`)
-      .replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\n\ttransformed = ( rigPoseMatrix() * vec4( transformed, 1.0 ) ).xyz;',
-      )
-      .replace(
-        '#include <beginnormal_vertex>',
-        '#include <beginnormal_vertex>\n\tobjectNormal = mat3( rigPoseMatrix() ) * objectNormal;',
-      );
-  };
-  material.customProgramCacheKey = (): string =>
-    `${inheritedKey.call(source)}|${POSE_PROGRAM_KEY}`;
+// One bone matrix, from the row this instance names and the bone named by one
+// component of skinIndex. Four RGBA texels, column-major.
+function poseBone(palette: DataTexture, bone: Node<'float'>, row: Node<'int'>) {
+  const column = int(bone).mul(MATRIX_TEXELS);
+  return mat4(
+    textureLoad(palette, ivec2(column, row)),
+    textureLoad(palette, ivec2(column.add(1), row)),
+    textureLoad(palette, ivec2(column.add(2), row)),
+    textureLoad(palette, ivec2(column.add(3), row)),
+  );
+}
+
+// The weighted blend of this vertex's four influences, in the pose this instance
+// names. A zero weight still costs its four texel fetches; a branch would cost more.
+function poseMatrix(palette: DataTexture) {
+  const row = int(attribute<'float'>(POSE_SLOT_ATTRIBUTE, 'float'));
+  const index = attribute<'vec4'>('skinIndex', 'vec4');
+  const weight = attribute<'vec4'>('skinWeight', 'vec4');
+  return poseBone(palette, index.x, row)
+    .mul(weight.x)
+    .add(poseBone(palette, index.y, row).mul(weight.y))
+    .add(poseBone(palette, index.z, row).mul(weight.z))
+    .add(poseBone(palette, index.w, row).mul(weight.w));
+}
+
+function poseSkinnedMaterial(source: Material, palette: DataTexture): NodeMaterial {
+  const material = toNodeMaterial(source.clone());
+  compose(material, 'position', (previous) =>
+    Fn(() => {
+      const pose = poseMatrix(palette);
+      normalLocal.assign(pose.mul(vec4(normalLocal, 0)).xyz);
+      return pose.mul(vec4(previous, 1)).xyz;
+    })(),
+  );
   return material;
 }
