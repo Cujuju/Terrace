@@ -54,7 +54,7 @@ if (canvas === null || hudRoot === null) {
   throw new Error('index.html must provide #viewport and #hud');
 }
 
-const viewport = createViewport(canvas);
+const viewport = await createViewport(canvas);
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
 const world = createWorld(viewport);
 const celestialVoid = createCelestialVoid(

@@ -525,9 +525,9 @@ uniform float u_starGrid;
 // along the ray — and only once per star, at the star's own screen position. Bilinear, no mips, so
 // a vertex-shader texture2D is well defined under GLSL ES 1.00.
 uniform sampler2D u_gasHalf;
-// The driver's ALIASED_POINT_SIZE_RANGE maximum. A sprite wider than this is clamped by the GL
-// silently, and the fragment's falloff is measured across the sprite, so the clamp has to happen
-// here where both the size and the varying that carries it can see it.
+// The widest a sprite may be: the drawing buffer's long edge. The fragment's falloff is measured
+// across the sprite, so the clamp has to happen here where both the size and the varying that
+// carries it can see it.
 uniform float u_pointSizeMax;
 // Per star: radius in disk units, kind on [0,1), brightness on [0.5,1) - the three draws the voxel
 // hashes used to make, now generated once (render/celestialVoidStars.ts).
@@ -824,16 +824,13 @@ export function createCelestialVoid(
     const previousCubeFace = renderer.getActiveCubeFace();
     const previousMipmap = renderer.getActiveMipmapLevel();
     const previousXrEnabled = renderer.xr.enabled;
-    const previousShadowAutoUpdate = renderer.shadowMap.autoUpdate;
     const previousInfoAutoReset = renderer.info.autoReset;
     renderer.xr.enabled = false;
-    renderer.shadowMap.autoUpdate = false;
     renderer.info.autoReset = false;
     renderer.setRenderTarget(gasTarget);
     renderer.render(gasScene, gasCamera);
     renderer.info.autoReset = previousInfoAutoReset;
     renderer.xr.enabled = previousXrEnabled;
-    renderer.shadowMap.autoUpdate = previousShadowAutoUpdate;
     renderer.setRenderTarget(previousTarget, previousCubeFace, previousMipmap);
   };
 
@@ -841,9 +838,10 @@ export function createCelestialVoid(
 
   const createStarPoints = (): void => {
     const { renderer } = viewport;
-    const gl = renderer.getContext();
-    const sizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array;
-    const pointSizeMax: IUniform<number> = { value: sizeRange[1] ?? 1 };
+    renderer.getDrawingBufferSize(drawingBuffer);
+    const pointSizeMax: IUniform<number> = {
+      value: Math.max(drawingBuffer.x, drawingBuffer.y),
+    };
     starPoints = STAR_GRIDS.map((spec, grid) => {
       const buffers = generateStarGrid(spec);
       const starGeometry = new BufferGeometry();

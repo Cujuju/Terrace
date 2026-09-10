@@ -8,8 +8,8 @@ import {
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
-  WebGLRenderer,
-} from 'three';
+  WebGPURenderer,
+} from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   CAMERA_FAR,
@@ -65,7 +65,7 @@ export type FramePhase = 'pose' | 'draw';
 export interface Viewport {
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
-  readonly renderer: WebGLRenderer;
+  readonly renderer: WebGPURenderer;
   readonly controls: OrbitControls;
   readonly terrainGroup: Group;
   readonly lighting: SkyLightingRig;
@@ -83,26 +83,30 @@ const MS_PER_S = 1000;
 
 const scene0Holder: { scene: unknown } = { scene: null };
 
-export function createViewport(canvas: HTMLCanvasElement): Viewport {
-  const renderer = new WebGLRenderer({ canvas, antialias: true });
+export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewport> {
+  const renderer = new WebGPURenderer({
+    canvas,
+    antialias: true,
+    trackTimestamp: true,
+  });
+  await renderer.init();
   if (import.meta.env.DEV) {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
     (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
   }
-  const gpuTimer = createGpuTimer(renderer.getContext());
+  const gpuTimer = createGpuTimer(renderer);
   setGpuSampleSource(() => gpuTimer.drain());
   setFrameCounterSource(() => ({
     pixelWidth: renderer.domElement.width,
     pixelHeight: renderer.domElement.height,
     cameraDistance: camera.position.distanceTo(controls.target),
-    drawCalls: renderer.info.render.calls,
+    drawCalls: renderer.info.render.drawCalls,
     triangles: renderer.info.render.triangles,
     geometries: renderer.info.memory.geometries,
     textures: renderer.info.memory.textures,
-    programs: renderer.info.programs?.length ?? 0,
+    programs: renderer.info.memory.programs,
   }));
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
-  renderer.localClippingEnabled = true;
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;

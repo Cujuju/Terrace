@@ -1,6 +1,8 @@
-const NANOSECONDS_PER_MS = 1_000_000;
+import type { Renderer } from 'three/webgpu';
 
-const MAX_PENDING_QUERIES = 8;
+const MAX_BUFFERED_SAMPLES = 8;
+
+export const TIMESTAMP_QUERY_FEATURE = 'timestamp-query';
 
 export interface GpuTimer {
   readonly supported: boolean;
@@ -21,57 +23,29 @@ function probeOwnsTheClock(): boolean {
   return new URLSearchParams(location.search).get(PROBE_QUERY_FLAG) !== null;
 }
 
-export function createGpuTimer(
-  context: WebGLRenderingContext | WebGL2RenderingContext,
-): GpuTimer {
+export function createGpuTimer(renderer: Renderer): GpuTimer {
   if (probeOwnsTheClock()) return UNSUPPORTED;
-  const gl = context instanceof WebGL2RenderingContext ? context : null;
-  const ext =
-    gl === null
-      ? null
-      : (gl.getExtension('EXT_disjoint_timer_query_webgl2') as {
-          TIME_ELAPSED_EXT: number;
-          GPU_DISJOINT_EXT: number;
-        } | null);
-  if (gl === null || ext === null) return UNSUPPORTED;
+  if (!renderer.hasFeature(TIMESTAMP_QUERY_FEATURE)) return UNSUPPORTED;
 
   let resolved: number[] = [];
-  let pending: WebGLQuery[] = [];
-  let open: WebGLQuery | null = null;
-
-  const collect = (): void => {
-    const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) === true;
-    const kept: WebGLQuery[] = [];
-    for (const query of pending) {
-      if (gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE) !== true) {
-        kept.push(query);
-        continue;
-      }
-      if (!disjoint) {
-        resolved.push(Number(gl.getQueryParameter(query, gl.QUERY_RESULT)) / NANOSECONDS_PER_MS);
-      }
-      gl.deleteQuery(query);
-    }
-    pending = kept;
-  };
+  let inFlight = false;
 
   return {
     supported: true,
     mark(): void {
-      collect();
-      if (open !== null) {
-        gl.endQuery(ext.TIME_ELAPSED_EXT);
-        pending.push(open);
-        open = null;
-        while (pending.length > MAX_PENDING_QUERIES) {
-          const dropped = pending.shift();
-          if (dropped !== undefined) gl.deleteQuery(dropped);
-        }
-      }
-      const query = gl.createQuery();
-      if (query === null) return;
-      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
-      open = query;
+      if (inFlight) return;
+      inFlight = true;
+      void renderer.resolveTimestampsAsync('render').then(
+        (ms) => {
+          inFlight = false;
+          if (ms === undefined) return;
+          resolved.push(ms);
+          while (resolved.length > MAX_BUFFERED_SAMPLES) resolved.shift();
+        },
+        () => {
+          inFlight = false;
+        },
+      );
     },
     drain(): number[] {
       const out = resolved;

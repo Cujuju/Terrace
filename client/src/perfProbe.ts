@@ -1,4 +1,6 @@
 import { Vector3, type Object3D } from 'three';
+import type { Renderer } from 'three/webgpu';
+import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
 import { CAMERA_MIN_DISTANCE, CELL_WORLD_SIZE, SCULPT_REPEAT_INTERVAL_MS } from './config.ts';
 import type { Connection } from './net/connection.ts';
 import type { ClientPluginHost } from './plugins/host.ts';
@@ -110,13 +112,9 @@ function censusOf(root: Object3D): {
   };
 }
 
-function programCacheKeys(renderer: { info: { programs: unknown } }): string[] {
-  const programs = renderer.info.programs;
-  if (!Array.isArray(programs)) return [];
-  return programs.map((program: unknown) => {
-    const key = (program as { cacheKey?: unknown }).cacheKey;
-    return typeof key === 'string' ? key : '<no cacheKey>';
-  });
+// WebGPURenderer keeps no enumerable program list, so the drift scenario has no keys to diff.
+function programCacheKeys(): string[] {
+  return [];
 }
 
 const PLUGIN_LAYER_PREFIX = 'plugin:';
@@ -437,9 +435,6 @@ function installTaskTiming(): void {
   };
 }
 
-const NANOSECONDS_PER_MS = 1e6;
-const MAX_PENDING_GPU_QUERIES = 64;
-
 interface GpuTimer {
   readonly supported: boolean;
   mark(): void;
@@ -449,102 +444,43 @@ interface GpuTimer {
   startupError(): string | null;
 }
 
-const GL_ERROR_NAMES: Readonly<Record<number, string>> = {
-  0x0500: 'INVALID_ENUM',
-  0x0501: 'INVALID_VALUE',
-  0x0502: 'INVALID_OPERATION',
-  0x0505: 'OUT_OF_MEMORY',
-  0x0506: 'INVALID_FRAMEBUFFER_OPERATION',
-  0x0507: 'CONTEXT_LOST_WEBGL',
-};
-
-function createGpuTimer(context: WebGLRenderingContext | WebGL2RenderingContext): GpuTimer {
-  const gl = context instanceof WebGL2RenderingContext ? context : null;
-  const ext =
-    gl === null
-      ? null
-      : (gl.getExtension('EXT_disjoint_timer_query_webgl2') as {
-          TIME_ELAPSED_EXT: number;
-          GPU_DISJOINT_EXT: number;
-        } | null);
-  if (gl === null || ext === null) {
+function createGpuTimer(renderer: Renderer): GpuTimer {
+  if (!renderer.hasFeature(TIMESTAMP_QUERY_FEATURE)) {
     return {
       supported: false,
       mark: () => {},
       stop: () => {},
       samples: () => [],
       disjointDrops: () => 0,
-      startupError: () => (gl === null ? 'not a WebGL2 context' : 'extension absent'),
+      startupError: () => 'timestamp queries unsupported',
     };
   }
   const resolved: number[] = [];
-  let pending: WebGLQuery[] = [];
-  let open: WebGLQuery | null = null;
-  let drops = 0;
-  let started = false;
-  let startupError: string | null = null;
-
-  const closeOpen = (): void => {
-    if (open === null) return;
-    gl.endQuery(ext.TIME_ELAPSED_EXT);
-    pending.push(open);
-    open = null;
-    while (pending.length > MAX_PENDING_GPU_QUERIES) {
-      const dropped = pending.shift();
-      if (dropped !== undefined) gl.deleteQuery(dropped);
-    }
-  };
-
-  const collect = (): void => {
-    const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) === true;
-    const kept: WebGLQuery[] = [];
-    for (const query of pending) {
-      if (gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE) !== true) {
-        kept.push(query);
-        continue;
-      }
-      if (disjoint) drops++;
-      else resolved.push(Number(gl.getQueryParameter(query, gl.QUERY_RESULT)) / NANOSECONDS_PER_MS);
-      gl.deleteQuery(query);
-    }
-    pending = kept;
-  };
+  let inFlight = false;
+  let stopped = false;
 
   return {
     supported: true,
     mark(): void {
-      collect();
-      closeOpen();
-      const query = gl.createQuery();
-      if (query === null) {
-        startupError ??= 'createQuery returned null';
-        return;
-      }
-      if (!started) {
-        started = true;
-        gl.getError();
-        gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
-        const code = gl.getError();
-        if (code !== 0) {
-          startupError = GL_ERROR_NAMES[code] ?? `GL error 0x${code.toString(16)}`;
-          gl.deleteQuery(query);
-          return;
-        }
-        open = query;
-        return;
-      }
-      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
-      open = query;
+      if (stopped || inFlight) return;
+      inFlight = true;
+      void renderer.resolveTimestampsAsync('render').then(
+        (ms) => {
+          inFlight = false;
+          if (ms !== undefined) resolved.push(ms);
+        },
+        () => {
+          inFlight = false;
+        },
+      );
     },
     stop(): void {
-      closeOpen();
-      collect();
-      for (const query of pending) gl.deleteQuery(query);
-      pending = [];
+      stopped = true;
     },
     samples: () => resolved,
-    disjointDrops: () => drops,
-    startupError: () => startupError,
+    // The timestamp query pool reports no disjoint frames; the counter stays for the report shape.
+    disjointDrops: () => 0,
+    startupError: () => null,
   };
 }
 
@@ -633,7 +569,7 @@ function createSampler(viewport: Viewport): Sampler {
   ) as Record<UploadKind, { calls: number; ms: number; bytes: number }>;
   let maxCallBytes = 0;
   let last = performance.now();
-  const gpu = createGpuTimer(renderer.getContext());
+  const gpu = createGpuTimer(renderer);
   frameCost.clear();
   resetGlUpload();
   glUpload.byShape.clear();
@@ -649,7 +585,7 @@ function createSampler(viewport: Viewport): Sampler {
       const now = performance.now();
       intervals.push(now - last);
       last = now;
-      calls.push(renderer.info.render.calls);
+      calls.push(renderer.info.render.drawCalls);
       triangles.push(renderer.info.render.triangles);
       uploadMs.push(glUpload.ms);
       uploadBytes.push(glUpload.bytes);
@@ -1031,7 +967,7 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
       uploadMsPerFrame: block.uploadMsTotal / Math.max(1, block.frames),
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
-      programs: renderer.info.programs === null ? 0 : renderer.info.programs.length,
+      programs: renderer.info.memory.programs,
       uploadTopShapes: Object.fromEntries(
         Object.entries(block.uploadByShape)
           .slice(0, 6)
@@ -1078,8 +1014,8 @@ const makeDriftScenario = (freezeSim: boolean): Scenario => async (ctx) => {
           }),
       ),
     });
-    if (index === 0) firstKeys = programCacheKeys(renderer);
-    lastKeys = programCacheKeys(renderer);
+    if (index === 0) firstKeys = programCacheKeys();
+    lastKeys = programCacheKeys();
     ctx.postPartial({ blockIndex: index, blockCount, frozen: freezeSim, block: blocks[blocks.length - 1] });
     ctx.beat(`drift-${String(index + 1)}-of-${String(blockCount)}`);
   }
@@ -1241,8 +1177,10 @@ export function installPerfProbe(deps: {
     originalRoute(type, payload);
   };
 
+  // WebGPU exposes no adapter string synchronously; a throwaway GL context still names the device.
   const gpuName = (): string => {
-    const gl = renderer.getContext();
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (gl === null) return 'unknown';
     const debug = gl.getExtension('WEBGL_debug_renderer_info');
     return String(
       debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
@@ -1298,7 +1236,7 @@ export function installPerfProbe(deps: {
           pixelHeight: renderer.domElement.height,
           settleMs,
           cameraDistance: camera.position.distanceTo(controls.target),
-          programs: renderer.info.programs === null ? null : renderer.info.programs.length,
+          programs: renderer.info.memory.programs,
           geometries: renderer.info.memory.geometries,
           textures: renderer.info.memory.textures,
           ...result.detail,
