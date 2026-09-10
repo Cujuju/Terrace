@@ -12,6 +12,7 @@ export function instanceMatrix(mesh: InstancedMesh): Node<'mat4'> {
     current instanceof StorageInstancedBufferAttribute
       ? current
       : new StorageInstancedBufferAttribute(current.array as Float32Array, MATRIX_ELEMENTS);
+  // Replaces the attribute object: code still holding the old one would update a dead copy.
   mesh.instanceMatrix = matrices;
   return storage(matrices, 'mat4', matrices.count).element(instanceIndex);
 }
