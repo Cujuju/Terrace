@@ -134,7 +134,125 @@ const glUpload = {
   byKind: Object.fromEntries(UPLOAD_KINDS.map((kind) => [kind, { calls: 0, ms: 0, bytes: 0 }])) as
     Record<UploadKind, { calls: number; ms: number; bytes: number }>,
   byShape: new Map<string, { calls: number; ms: number; bytes: number }>(),
+  byOwner: new Map<string, OwnerUpload>(),
 };
+
+interface OwnerUpload {
+  calls: number;
+  ms: number;
+  bytes: number;
+  fullCalls: number;
+  fullBytes: number;
+  arrayBytes: number;
+  maxArrayBytes: number;
+  maxMs: number;
+  slowCalls: number;
+  slowMs: number;
+}
+
+interface SlowUpload {
+  owner: string;
+  ms: number;
+  bytes: number;
+  arrayBytes: number;
+  full: boolean;
+}
+
+const SLOW_UPLOAD_MS = 1;
+const SLOW_UPLOAD_LOG_LIMIT = 40;
+
+let slowUploadLog: SlowUpload[] = [];
+
+const uploadOwners = new WeakMap<ArrayBufferLike, string>();
+let uploadOwnerRoot: Object3D | null = null;
+let uploadOwnerEpoch = 0;
+let uploadOwnerIndexedEpoch = -1;
+
+interface OwnerGeometry {
+  attributes?: Record<string, { array?: ArrayBufferView; data?: { array?: ArrayBufferView } }>;
+  index?: { array?: ArrayBufferView } | null;
+}
+
+function uploadOwnerPath(node: Object3D): string {
+  const parts: string[] = [];
+  for (let cursor: Object3D | null = node; cursor !== null; cursor = cursor.parent) {
+    if (cursor.name !== '') {
+      parts.unshift(cursor.name);
+      continue;
+    }
+    const siblings = cursor.parent?.children;
+    const at = siblings === undefined ? -1 : siblings.indexOf(cursor);
+    parts.unshift(at < 0 ? cursor.type : `${cursor.type}[${String(at)}]`);
+  }
+  return parts.join('/');
+}
+
+// Maps every geometry array's backing buffer to its scene path; re-run at most once per frame.
+function indexUploadOwners(): void {
+  const root = uploadOwnerRoot;
+  if (root === null) return;
+  uploadOwnerIndexedEpoch = uploadOwnerEpoch;
+  root.traverse((node: Object3D) => {
+    const geometry = (node as Object3D & { geometry?: OwnerGeometry }).geometry;
+    if (geometry === undefined) return;
+    const path = uploadOwnerPath(node);
+    const note = (view: ArrayBufferView | undefined, attribute: string): void => {
+      if (view === undefined) return;
+      uploadOwners.set(view.buffer, `${path}.${attribute} (${String(view.byteLength)}B)`);
+    };
+    for (const [attribute, value] of Object.entries(geometry.attributes ?? {})) {
+      note(value.array ?? value.data?.array, attribute);
+    }
+    note(geometry.index?.array, 'index');
+  });
+}
+
+function uploadOwnerOf(view: unknown): string {
+  if (!ArrayBuffer.isView(view)) return 'non-view';
+  const known = uploadOwners.get(view.buffer);
+  if (known !== undefined) return known;
+  if (uploadOwnerIndexedEpoch !== uploadOwnerEpoch) indexUploadOwners();
+  return uploadOwners.get(view.buffer) ?? `unregistered (${String(view.byteLength)}B)`;
+}
+
+function recordUploadOwner(
+  owner: string,
+  ms: number,
+  bytes: number,
+  arrayBytes: number,
+  full: boolean,
+): void {
+  const row = glUpload.byOwner.get(owner) ?? {
+    calls: 0,
+    ms: 0,
+    bytes: 0,
+    fullCalls: 0,
+    fullBytes: 0,
+    arrayBytes: 0,
+    maxArrayBytes: 0,
+    maxMs: 0,
+    slowCalls: 0,
+    slowMs: 0,
+  };
+  row.calls++;
+  row.ms += ms;
+  row.bytes += bytes;
+  row.arrayBytes += arrayBytes;
+  if (arrayBytes > row.maxArrayBytes) row.maxArrayBytes = arrayBytes;
+  if (ms > row.maxMs) row.maxMs = ms;
+  if (ms >= SLOW_UPLOAD_MS) {
+    row.slowCalls++;
+    row.slowMs += ms;
+    if (slowUploadLog.length < SLOW_UPLOAD_LOG_LIMIT) {
+      slowUploadLog.push({ owner, ms, bytes, arrayBytes, full });
+    }
+  }
+  if (full) {
+    row.fullCalls++;
+    row.fullBytes += bytes;
+  }
+  glUpload.byOwner.set(owner, row);
+}
 
 function byteBucket(bytes: number): string {
   if (bytes <= 0) return '0B';
@@ -172,10 +290,22 @@ function installGlUploadAccounting(): void {
       : typeof value === 'number'
         ? value
         : 0;
+  const elementBytes = (view: unknown): number =>
+    ArrayBuffer.isView(view) ? ((view as { BYTES_PER_ELEMENT?: number }).BYTES_PER_ELEMENT ?? 1) : 1;
+  // WebGL2 bufferSubData(target, dstByteOffset, srcData, srcOffset, length); length 0 means to the end.
+  const subDataBytes = (args: unknown[]): number => {
+    const view = args[2];
+    const arrayBytes = viewBytes(view);
+    const bpe = elementBytes(view);
+    const srcOffset = typeof args[3] === 'number' ? args[3] : 0;
+    const length = typeof args[4] === 'number' ? args[4] : 0;
+    return length > 0 ? length * bpe : arrayBytes - srcOffset * bpe;
+  };
   const wrap = (
     name: UploadKind,
     sizeOf: (args: unknown[]) => number,
     shapeOf: (args: unknown[], bytes: number) => string,
+    ownerOf: (args: unknown[], bytes: number, ms: number) => void,
   ): void => {
     const original = proto[name] as (...args: unknown[]) => unknown;
     (proto as unknown as Record<string, unknown>)[name] = function (
@@ -200,18 +330,32 @@ function installGlUploadAccounting(): void {
       kind.ms += ms;
       kind.bytes += bytes;
       recordUploadShape(`${name} ${shapeOf(args, bytes)}`, ms, bytes);
+      ownerOf(args, bytes, ms);
       return result;
     };
   };
-  wrap('bufferData', (args) => viewBytes(args[1]), (_args, bytes) => byteBucket(bytes));
-  wrap('bufferSubData', (args) => viewBytes(args[2]), (_args, bytes) => byteBucket(bytes));
+  wrap(
+    'bufferData',
+    (args) => viewBytes(args[1]),
+    (_args, bytes) => byteBucket(bytes),
+    (args, bytes, ms) =>
+      recordUploadOwner(`bufferData ${uploadOwnerOf(args[1])}`, ms, bytes, bytes, true),
+  );
+  wrap('bufferSubData', subDataBytes, (_args, bytes) => byteBucket(bytes), (args, bytes, ms) => {
+    const arrayBytes = viewBytes(args[2]);
+    const full = args[1] === 0 && bytes === arrayBytes;
+    recordUploadOwner(`bufferSubData ${uploadOwnerOf(args[2])}`, ms, bytes, arrayBytes, full);
+  });
+  const texShape = (args: unknown[]): string =>
+    typeof args[4] === 'number' && typeof args[5] === 'number'
+      ? `${String(args[4])}x${String(args[5])}`
+      : 'unknown';
   wrap(
     'texSubImage2D',
     (args) => (typeof args[4] === 'number' && typeof args[5] === 'number' ? args[4] * args[5] : 0),
-    (args) =>
-      typeof args[4] === 'number' && typeof args[5] === 'number'
-        ? `${String(args[4])}x${String(args[5])}`
-        : 'unknown',
+    texShape,
+    (args, pixels, ms) =>
+      recordUploadOwner(`texSubImage2D ${texShape(args)}`, ms, pixels, pixels, true),
   );
 }
 
@@ -429,6 +573,22 @@ export interface FrameBlock {
   uploadMaxCallMB: number;
   uploadPerFrameByKind: Record<UploadKind, { calls: number; ms: number; MB: number }>;
   uploadByShape: Record<string, { calls: number; ms: number; MB: number }>;
+  uploadByOwner: Record<
+    string,
+    {
+      calls: number;
+      ms: number;
+      MB: number;
+      fullCalls: number;
+      fullMB: number;
+      arrayMB: number;
+      maxArrayMB: number;
+      maxMs: number;
+      slowCalls: number;
+      slowMs: number;
+    }
+  >;
+  slowUploads: SlowUpload[];
   slowBreakdown: Record<string, number>;
   allBreakdown: Record<string, number>;
 }
@@ -477,8 +637,14 @@ function createSampler(viewport: Viewport): Sampler {
   frameCost.clear();
   resetGlUpload();
   glUpload.byShape.clear();
+  uploadOwnerRoot = viewport.scene;
+  const byOwner = new Map<string, OwnerUpload>();
+  glUpload.byOwner = byOwner;
+  const slowLog: SlowUpload[] = [];
+  slowUploadLog = slowLog;
   return {
     tick(): void {
+      uploadOwnerEpoch++;
       gpu.mark();
       const now = performance.now();
       intervals.push(now - last);
@@ -552,6 +718,26 @@ function createSampler(viewport: Viewport): Sampler {
               { calls: total.calls, ms: total.ms, MB: total.bytes / 1e6 },
             ]),
         ),
+        uploadByOwner: Object.fromEntries(
+          [...byOwner]
+            .sort((a, b) => b[1].bytes - a[1].bytes)
+            .map(([key, total]) => [
+              key,
+              {
+                calls: total.calls,
+                ms: total.ms,
+                MB: total.bytes / 1e6,
+                fullCalls: total.fullCalls,
+                fullMB: total.fullBytes / 1e6,
+                arrayMB: total.arrayBytes / 1e6,
+                maxArrayMB: total.maxArrayBytes / 1e6,
+                maxMs: total.maxMs,
+                slowCalls: total.slowCalls,
+                slowMs: total.slowMs,
+              },
+            ]),
+        ),
+        slowUploads: slowLog,
         slowBreakdown: breakdown(intervals, costs, 0.01),
         allBreakdown: breakdown(intervals, costs, 1),
       };
@@ -1116,6 +1302,7 @@ export function installPerfProbe(deps: {
           geometries: renderer.info.memory.geometries,
           textures: renderer.info.memory.textures,
           ...result.detail,
+          terrainLoad: world.terrainLoadTrace(),
           sample: result.sample,
           fpsMean: result.sample.fpsMean,
         });
