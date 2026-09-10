@@ -3,8 +3,8 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   Mesh,
-  MeshBasicMaterial,
 } from 'three';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
 
 const TWO_PI = Math.PI * 2;
 
@@ -91,7 +91,7 @@ export function buildHazeGeometry(): BufferGeometry {
 }
 
 export interface HazeBank {
-  readonly sheets: readonly Mesh[];
+  readonly sheets: readonly Mesh<BufferGeometry, MeshBasicNodeMaterial>[];
   update(worldRadius: number, intensity: number, elapsed: number): void;
   dispose(): void;
 }
@@ -101,11 +101,11 @@ export function createHazeBank(
   strength: number,
   renderOrder: number,
 ): HazeBank {
-  const materials: MeshBasicMaterial[] = [];
-  const sheets: Mesh[] = [];
+  const materials: MeshBasicNodeMaterial[] = [];
+  const sheets: Mesh<BufferGeometry, MeshBasicNodeMaterial>[] = [];
 
   for (const _layer of HAZE_LAYERS) {
-    const material = new MeshBasicMaterial({
+    const material = new MeshBasicNodeMaterial({
       color: HAZE_COLOR,
       transparent: true,
       opacity: 0,

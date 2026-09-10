@@ -51,7 +51,7 @@ export const clientPlugin: TerraceClientPlugin = {
     elapsedSeconds = 0;
     reducedMotion = watchReducedMotion();
 
-    funnel = createFunnel(ctx.revealClipUniforms());
+    funnel = createFunnel((material, label) => ctx.applyRevealClip(material, label));
     ctx.layer.add(funnel.root);
 
     unsubscribes = [

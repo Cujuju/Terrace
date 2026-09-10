@@ -1,5 +1,6 @@
 import type { SculptIntent } from '@terrace/shared';
-import type { Group, Material, Object3D } from 'three';
+import type { Group, Object3D } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import type { Component } from 'solid-js';
 import type { CellOccupancy } from '../terrain/occupancy.ts';
 import type { RevealClipUniforms } from '../render/revealMask.ts';
@@ -133,7 +134,7 @@ export interface ClientPluginCtx {
 
   revealedAt(x: number, y: number): boolean;
 
-  applyRevealClip(material: Material, label: string): void;
+  applyRevealClip(material: NodeMaterial, label: string): void;
 
   revealClipUniforms(): RevealClipUniforms;
 
