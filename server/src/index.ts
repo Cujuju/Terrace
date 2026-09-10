@@ -170,6 +170,8 @@ async function main(): Promise<void> {
     serverOptions.express = clientExpressHook;
   }
   gameServer = new Server(serverOptions);
+  // Windows delivers Ctrl-Break as SIGBREAK; Colyseus binds only SIGINT/SIGTERM/SIGUSR2.
+  process.once('SIGBREAK', () => void gameServer?.gracefullyShutdown());
   gameServer.define(ROOM_NAME, TerraceRoom);
 
   gameServer.onBeforeShutdown(() => {
