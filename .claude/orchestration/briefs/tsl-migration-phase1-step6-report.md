@@ -46,6 +46,26 @@ table holds what its message says.
    (`WGSLNodeBuilder.js:1191-1203`), and the WebGL fallback reads storage through PBO
    textures (`StorageBufferNode.js:371-386`). Used by the puff decks, plume, tornado,
    fire and (via `cf8e906`) rigHerd.
+
+   Why storage and not the alternatives. Four-`vec4` interleaved attributes over the
+   same array would upload the matrix a second time, because three keeps its own
+   interleaved copy in a private WeakMap (`Instance.js:17, 49-55`). A per-instance
+   `vec3` placement attribute would change the data layout, and the GLSL consumed
+   `instanceMatrix` itself, so the layout stays. `updateRanges` apply to storage
+   attributes on the WebGPU backend (`WebGPUAttributeUtils.js:225-260`; itemSize 16 is
+   never padded).
+
+   **Hazard:** `mesh.instanceMatrix = matrices` replaces the attribute object, so code
+   still holding the original `InstancedBufferAttribute` would update a dead copy. It is
+   stated in the helper's comment. The puff decks, plume, tornado and fire all write
+   through `mesh.instanceMatrix`. rigHerd (`cf8e906`) constructs its shared attribute as
+   `StorageInstancedBufferAttribute`, so the helper keeps it as is.
+
+   **Contract clarification for the owner** (no change to `materialSlots.ts`): on an
+   `InstancedMesh` the `position` slot runs after instancing. Pre-instancing work must
+   read the raw vertex (`attribute('position')` / `positionGeometry`) and re-apply the
+   matrix through `instanceMatrix(mesh)`, as every placement here does, preserving
+   inst·placement·p. Overriding `setupPosition` would also work.
 2. **`bakeRig` merges parts by `material.customProgramCacheKey()`
    (`rigSkin.ts:54`).** For a `NodeMaterial` that key hashes node *identity*
    (`NodeMaterial.js:426-437`, `Node.js:470-474` uses `this.id`). Two fur materials
@@ -62,34 +82,43 @@ table holds what its message says.
 "Slots" is the lit-material route (contract rule 7 "everything else"); "vertexNode /
 fragmentNode" is the full-custom-program route.
 
-| file | GLSL site | now | not reproduced exactly |
-|---|---|---|---|
-| `client/src/plugins/kit/puffDeck.ts` | 5 GLSL strings | `puffInstanceBase(instanceMatrix)`, `puffBillboard(world, size)`, `puffMask(innerEdge, lobing?)` → `{ puff, discarded }`, `puffLobeScale(lobing)`, `puffAlphaDiscard(alpha)`, plus `PUFF_QUAD`. The names lost their `Glsl`/`_GLSL` suffix. Parameters: the GLSL's implicit `vQuad`, `world`, `size`, `alpha` are explicit, and `seedVarying: string` became `seed: Node` | The billboard returns a position-slot position (`modelWorldMatrixInverse * cameraWorldMatrix * billboardedView`), so three's own MVP lands it where `gl_Position` was |
-| `client/src/plugins/kit/cumulusDeck.ts` | `onBeforeCompile` on `MeshLambertMaterial` | `MeshLambertNodeMaterial`: `position` (placement + billboard), `normal` (fake sphere), `opacity` (alpha), two `discard`s (puff mask, faint alpha); mass arrays became `uniformArray` of `Vector2` | A parked slot used to write `gl_Position = vec4(2,2,2,1)`. The slot now collapses the quad to its centre: zero area, no fragments, same result. The reveal clip now tests each fragment's world position; the GLSL tested the puff centre (`transformed`), so a puff that straddles the reveal edge is cut rather than kept or dropped whole |
-| `plugins/cyclone/client/spiral.ts` | `onBeforeCompile` | `MeshLambertNodeMaterial`: `position`, `normal`, `color` (eyewall shade), `opacity`, 2 `discard`s | Same reveal-clip note as the deck |
-| `plugins/volcanoes/client/plume.ts` | `ShaderMaterial` | `NodeMaterial` (unlit) with slots: `position`, `color`, `opacity`, 2 `discard`s, `output` (display inversion) | Blending happens in linear light before tone mapping, not on display bytes (see Tone mapping) |
-| `client/src/render/revealMask.ts` | `applyRevealClip` splice | `discard` effect: `positionWorld.xz / span`, out-of-range uv, mask texel `< REVEAL_CLIP_THRESHOLD`. One `texture()` node and a span `uniform` per mask, re-pointed in `sync()` on a resize. `.sample()` clones reference the base's value (`TextureNode.js:678-686, 205-207`) | — |
-| `client/src/plugins/types.ts:136`, `client/src/world.ts:455`, `kit/discRig.ts`, `kit/hazeBank.ts`, `kit/precipitation.ts`, `plugins/cyclone/client/rain.ts`, `plugins/thunderstorm/client/rig.ts` | parameter `Material` | parameter `NodeMaterial`. The haze sheets, precipitation line/points and thunderstorm glow/bolt materials are now built as `MeshBasicNodeMaterial`, `LineBasicNodeMaterial` and `PointsNodeMaterial`: the same classes `NodeLibrary.fromMaterial` would substitute at render | — |
-| `plugins/tornado/client/funnel.ts` | 2 `ShaderMaterial`s with hand-merged reveal uniforms | two `NodeMaterial`s with slots (`position`, `color`, `opacity`, `discard`, `output`) and two `applyRevealClip` calls (rule 8). `createFunnel` takes `applyRevealClip` instead of the uniforms. The cone and debris share one `uElapsed` and one `uDaylight` uniform node | The debris' reveal clip is per fragment (see the deck) |
-| `client/src/plugins/kit/revealClip.ts` | GLSL re-exports | deleted | — |
-| `plugins/monsters/client/geometry.ts` | 2 `onBeforeCompile` (fur `color_fragment`, shell `discard`) | `MeshLambertNodeMaterial`: `color` (× triplanar fur) and `discard` (shell threshold). The triplanar sample reads `positionGeometry` / `normalGeometry` | The GLSL read `transformed` and `objectNormal` at `begin_vertex`. For an unskinned mesh those are the same attributes |
-| `plugins/saucers/client/effects.ts` | 1 `onBeforeCompile` | `opacity` slot × `attribute('instancedAlpha')`. All five `MeshBasicMaterial`s in the file are `MeshBasicNodeMaterial` | — |
-| `plugins/fire/client/smoke.ts` | `ShaderMaterial` | `NodeMaterial`, **vertexNode / fragmentNode**. The foot distance and the instance scale read `instanceMatrix(mesh)`; GLSL's `normalMatrix` is written as `cameraViewMatrix * (modelNormalMatrix * n)` | Blending (see Tone mapping) |
-| `plugins/fire/client/scar.ts` | `ShaderMaterial` | **vertexNode / fragmentNode** | Blending |
-| `plugins/fire/client/flames/ribbons.ts` | `ShaderMaterial`, premultiplied custom blend | **vertexNode / fragmentNode**, same `CustomBlending` One / OneMinusSrcAlpha. `uSpinRates` became a `uniformArray` | The display inversion runs before the premultiply. `RIBBON_GAIN` pushes the root colour past 1, which WebGL clipped at the framebuffer; see the round-trip table |
-| `plugins/fire/client/flames/shaderPlume.ts` | `ShaderMaterial` | **vertexNode / fragmentNode** | Blending |
-| `plugins/fire/client/valueNoiseGlsl.ts` → `valueNoise.ts` | GLSL string | `hash21`, `vnoise`, `fnoise` as `Fn`s with `setLayout` (real WGSL functions) | — |
-| `plugins/volcanoes/client/lavaFlow.ts` | `ShaderMaterial`, opaque, alpha-to-coverage | **vertexNode / fragmentNode**. The lava noise is local `Fn`s named `lavaHash21` / `lavaNoise`. Alpha to coverage stays on, and three enables it only when MSAA is on (`WebGPUPipelineUtils.js:213`) | The three `LAVA_*_RGB` strings became number tuples with the same values |
-| `plugins/hydro/client/puddles.ts` | `ShaderMaterial` | **fragmentNode** only: its GLSL vertex stage was exactly three's `P * MV * instanceMatrix * position`, so `vertexNode` stays null | Blending |
-| `plugins/relics/client/gemMaterial.ts` | `ShaderMaterial`, `toneMapped: false`, `colorspace_fragment` | **vertexNode / fragmentNode**, fragment → `radianceForDisplay(srgb)`. `dFdy` keeps GL's sign (three emits `- dpdy`, `WGSLNodeBuilder.js:221`) | — |
-| `plugins/relics/client/relicSpire.ts` | `ShaderMaterial`, `toneMapped: false` | **vertexNode / fragmentNode**. The pulsing `uAlpha` is `material.opacity` through `materialOpacity`, and `index.ts` sets `opacity` | — |
-| `client/src/render/celestialVoid.ts` | 4 `ShaderMaterial`s (bake, gas half-res, nebula/wheel composite, stars) | bake, gas and composite are `NodeMaterial`s with **vertexNode / fragmentNode** (full-screen triangle). Stars are **`PointsNodeMaterial` with `sizeNode`** on a `Sprite` with `count`. `WebGLRenderTarget` → `RenderTarget` | See "Celestial void" below |
-| `client/src/render/displayRadiance.ts` | — (new) | the ACES constants, inverse matrices and fit inverse (moved from `skyEnvironment.ts`), plus `radianceForDisplay(displayed)` | — |
-| `client/src/render/instanceMatrix.ts` | — (new) | see the contract gaps above | — |
-| `client/src/render/materialSlots.ts` | — | `discard` memoises its mask nodes | — |
-| `client/src/render/shaderSplice.ts` | — | deleted | — |
-| `client/src/render/rigSkin.ts:421` | `clone.onBeforeCompile = material.onBeforeCompile` | removed | — |
-| `client/src/preview*.ts` (15) | `WebGLRenderer` | `WebGPURenderer` from `three/webgpu`, `await renderer.init()` before the first frame (top-level await, or `main` made async), `scene.background = backgroundRadiance(hex, renderer)` set after the tone-mapping configuration. `previewWater`'s night backdrop goes through the same call. `info.render.calls` → `drawCalls` (previewFire, previewStructures). `previewMusic.ts` has no renderer | — |
+Tone case, by the chunks the GLSL included (the WebGPU output pass tone-maps and then
+sRGB-encodes everything):
+
+- **A**: neither `tonemapping_fragment` nor `colorspace_fragment`, so raw display bytes.
+  The new output is inverse ACES of the sRGB-decoded old value.
+- **B**: `colorspace_fragment` without tone mapping (or `toneMapped: false`). The new
+  output is inverse ACES of the old linear value.
+- **C**: both chunks. No inversion.
+
+| file | GLSL site | now | not reproduced exactly | tone case |
+|---|---|---|---|---|
+| `client/src/plugins/kit/puffDeck.ts` | 5 GLSL strings | `puffInstanceBase(instanceMatrix)`, `puffBillboard(world, size)`, `puffMask(innerEdge, lobing?)` → `{ puff, discarded }`, `puffLobeScale(lobing)`, `puffAlphaDiscard(alpha)`, plus `PUFF_QUAD`. The names lost their `Glsl`/`_GLSL` suffix. Parameters: the GLSL's implicit `vQuad`, `world`, `size`, `alpha` are explicit, and `seedVarying: string` became `seed: Node` | The billboard returns a position-slot position (`modelWorldMatrixInverse * cameraWorldMatrix * billboardedView`), so three's own MVP lands it where `gl_Position` was | — |
+| `client/src/plugins/kit/cumulusDeck.ts` | `onBeforeCompile` on `MeshLambertMaterial` | `MeshLambertNodeMaterial`: `position` (placement + billboard), `normal` (fake sphere), `opacity` (alpha), two `discard`s (puff mask, faint alpha); mass arrays became `uniformArray` of `Vector2` | A parked slot used to write `gl_Position = vec4(2,2,2,1)`. The slot now collapses the quad to its centre: zero area, no fragments, same result. The reveal clip now tests each fragment's world position; the GLSL tested the puff centre (`transformed`), so a puff that straddles the reveal edge is cut rather than kept or dropped whole | C (lit Lambert): none |
+| `plugins/cyclone/client/spiral.ts` | `onBeforeCompile` | `MeshLambertNodeMaterial`: `position`, `normal`, `color` (eyewall shade), `opacity`, 2 `discard`s | Same reveal-clip note as the deck | C (lit Lambert): none |
+| `plugins/volcanoes/client/plume.ts` | `ShaderMaterial` | `NodeMaterial` (unlit) with slots: `position`, `color`, `opacity`, 2 `discard`s, `output` (display inversion) | Blending happens in linear light before tone mapping, not on display bytes (see Tone mapping) | A: decode + inverse ACES |
+| `client/src/render/revealMask.ts` | `applyRevealClip` splice | `discard` effect: `positionWorld.xz / span`, out-of-range uv, mask texel `< REVEAL_CLIP_THRESHOLD`. One `texture()` node and a span `uniform` per mask, re-pointed in `sync()` on a resize. `.sample()` clones reference the base's value (`TextureNode.js:678-686, 205-207`) | — | — |
+| `client/src/plugins/types.ts:136`, `client/src/world.ts:455`, `kit/discRig.ts`, `kit/hazeBank.ts`, `kit/precipitation.ts`, `plugins/cyclone/client/rain.ts`, `plugins/thunderstorm/client/rig.ts` | parameter `Material` | parameter `NodeMaterial`. The haze sheets, precipitation line/points and thunderstorm glow/bolt materials are now built as `MeshBasicNodeMaterial`, `LineBasicNodeMaterial` and `PointsNodeMaterial`: the same classes `NodeLibrary.fromMaterial` would substitute at render | — | C (stock basic/line/points): none |
+| `plugins/tornado/client/funnel.ts` | 2 `ShaderMaterial`s with hand-merged reveal uniforms | two `NodeMaterial`s with slots (`position`, `color`, `opacity`, `discard`, `output`) and two `applyRevealClip` calls (rule 8). `createFunnel` takes `applyRevealClip` instead of the uniforms. The cone and debris share one `uElapsed` and one `uDaylight` uniform node | The debris' reveal clip is per fragment (see the deck) | A ×2 |
+| `client/src/plugins/kit/revealClip.ts` | GLSL re-exports | deleted | — | — |
+| `plugins/monsters/client/geometry.ts` | 2 `onBeforeCompile` (fur `color_fragment`, shell `discard`) | `MeshLambertNodeMaterial`: `color` (× triplanar fur) and `discard` (shell threshold). The triplanar sample reads `positionGeometry` / `normalGeometry` | The GLSL read `transformed` and `objectNormal` at `begin_vertex`. For an unskinned mesh those are the same attributes | C (lit Lambert): none |
+| `plugins/saucers/client/effects.ts` | 1 `onBeforeCompile` | `opacity` slot × `attribute('instancedAlpha')`. All five `MeshBasicMaterial`s in the file are `MeshBasicNodeMaterial` | — | C (stock basic): none |
+| `plugins/fire/client/smoke.ts` | `ShaderMaterial` | `NodeMaterial`, **vertexNode / fragmentNode**. The foot distance and the instance scale read `instanceMatrix(mesh)`; GLSL's `normalMatrix` is written as `cameraViewMatrix * (modelNormalMatrix * n)` | Blending (see Tone mapping) | A |
+| `plugins/fire/client/scar.ts` | `ShaderMaterial` | **vertexNode / fragmentNode** | Blending | A |
+| `plugins/fire/client/flames/ribbons.ts` | `ShaderMaterial`, premultiplied custom blend | **vertexNode / fragmentNode**, same `CustomBlending` One / OneMinusSrcAlpha. `uSpinRates` became a `uniformArray` | The display inversion runs before the premultiply. `RIBBON_GAIN` pushes the root colour past 1, which WebGL clipped at the framebuffer; see the round-trip table | A |
+| `plugins/fire/client/flames/shaderPlume.ts` | `ShaderMaterial` | **vertexNode / fragmentNode** | Blending | A |
+| `plugins/fire/client/valueNoiseGlsl.ts` → `valueNoise.ts` | GLSL string | `hash21`, `vnoise`, `fnoise` as `Fn`s with `setLayout` (real WGSL functions) | — | — |
+| `plugins/volcanoes/client/lavaFlow.ts` | `ShaderMaterial`, opaque, alpha-to-coverage | **vertexNode / fragmentNode**. The lava noise is local `Fn`s named `lavaHash21` / `lavaNoise`. Alpha to coverage stays on, and three enables it only when MSAA is on (`WebGPUPipelineUtils.js:213`) | The three `LAVA_*_RGB` strings became number tuples with the same values | A |
+| `plugins/hydro/client/puddles.ts` | `ShaderMaterial` | **fragmentNode** only: its GLSL vertex stage was exactly three's `P * MV * instanceMatrix * position`, so `vertexNode` stays null | Blending | A |
+| `plugins/relics/client/gemMaterial.ts` | `ShaderMaterial`, `toneMapped: false`, `colorspace_fragment` | **vertexNode / fragmentNode**, fragment → `radianceForDisplay(srgb)`. `dFdy` keeps GL's sign (three emits `- dpdy`, `WGSLNodeBuilder.js:221`) | — | B: inverse ACES of the linear value (it is `EOTF(srgb)`, so the call takes `srgb`) |
+| `plugins/relics/client/relicSpire.ts` | `ShaderMaterial`, `toneMapped: false` | **vertexNode / fragmentNode**. The pulsing `uAlpha` is `material.opacity` through `materialOpacity`, and `index.ts` sets `opacity` | — | A (`toneMapped: false`, no chunks) |
+| `client/src/render/celestialVoid.ts` | 4 `ShaderMaterial`s (bake, gas half-res, nebula/wheel composite, stars) | bake, gas and composite are `NodeMaterial`s with **vertexNode / fragmentNode** (full-screen triangle). Stars are **`PointsNodeMaterial` with `sizeNode`** on a `Sprite` with `count`. `WebGLRenderTarget` → `RenderTarget` | See "Celestial void" below | A for the nebula/wheel composite and the stars; bake and gas are off-screen data, none |
+| `client/src/render/displayRadiance.ts` | — (new) | the ACES constants, inverse matrices and fit inverse (moved from `skyEnvironment.ts`), plus `radianceForDisplay(displayed)` | — | — |
+| `client/src/render/instanceMatrix.ts` | — (new) | see the contract gaps above | — | — |
+| `client/src/render/materialSlots.ts` | — | `discard` memoises its mask nodes | — | — |
+| `client/src/render/shaderSplice.ts` | — | deleted | — | — |
+| `client/src/render/rigSkin.ts:421` | `clone.onBeforeCompile = material.onBeforeCompile` | removed | — | — |
+| `client/src/preview*.ts` (15) | `WebGLRenderer` | `WebGPURenderer` from `three/webgpu`, `await renderer.init()` before the first frame (top-level await, or `main` made async), `scene.background = backgroundRadiance(hex, renderer)` set after the tone-mapping configuration. `previewWater`'s night backdrop goes through the same call. `info.render.calls` → `drawCalls` (previewFire, previewStructures). `previewMusic.ts` has no renderer | — | backdrop: the CPU `backgroundRadiance` (decode + inverse ACES) |
 
 Dropped as dead code: the void's `dstars()`, which nothing called, and the `t` argument
 of `stars()`, which was never read.
@@ -98,8 +127,10 @@ of `stars()`, which was never read.
 
 - **Stars, and why a `Sprite`.** `PointsNodeMaterial.setupVertex` expands a sized quad
   only when `builder.object.isPoints` is false. For a `Points` object it draws plain
-  1-pixel points and ignores `sizeNode` (`PointsNodeMaterial.js`, `setupVertex` /
-  `setupVertexSprite`). So each grid is a `Sprite` with `count` = its star count.
+  1-pixel points and ignores `sizeNode` (`PointsNodeMaterial.js:163-172`; the quad
+  expansion is `setupVertexSprite`, `:89-157`). A `Sprite` with `count` was chosen over
+  an `InstancedMesh`: the mesh would add a 64-byte instance matrix per star and three's
+  instancing pass, which the stars never use. So each grid is a `Sprite` with `count` = its star count.
   Its geometry is a unit `PlaneGeometry` carrying `starPosition` / `starShape` as
   `InstancedBufferAttribute`s, and the renderer draws `object.count` instances
   (`RenderObject.js:610-612`).
@@ -147,7 +178,9 @@ of `stars()`, which was never read.
 
 It returns the decoded colour unchanged when `renderer.toneMapping` is not ACES. The
 matrices are the CPU inverses computed once, fed to `mat3`, which is row-major for nine
-numbers (`NodeUtils.js:322`).
+numbers (`NodeUtils.js:322`). The decode is three's own `sRGBTransferEOTF` node
+(`nodes/display/ColorSpaceFunctions.js:12`), the same curve `colorSpaceToWorking`
+applies for sRGB. The curve is not hand-written. Alpha is never touched.
 
 **Applied to the six the brief names:** celestial void nebula, wheel and stars (the
 bake and gas passes are off-screen data), relic gem, relic spire.
@@ -195,10 +228,24 @@ What the table shows:
 This is a limit of tone-mapping these materials at all, not of the inverse. A
 radiance that ACES maps to it does not exist.
 
-**Blending cannot match exactly either.** WebGL blended these transparent programs on
-display bytes. WebGPU blends in linear light before the output pass tone-maps. An
-opaque pixel over black matches, but a half-transparent smoke puff over a bright sky
-will not. The same holds for the stars, which are added over the gas.
+**Blended materials: mode, and why the match is inexact.** WebGL blended these on
+display bytes, so it showed `a·c + (1−a)·d`. WebGPU blends radiance before the output
+pass, so it shows `D(a·R(c) + (1−a)·R(d))`, where R is the inversion and D is
+ACES + encode. The two agree only where `a` is 0 or 1. No blend-space workaround was
+attempted; the owner judges these on screen.
+
+| material | blending | inexact where |
+|---|---|---|
+| volcano plume | Normal, transparent | every partly transparent puff over the sky |
+| tornado cone, debris | Normal, transparent | the churned sheet (alpha ≤ 0.85) |
+| fire smoke | Normal, transparent | the whole column (alpha ≤ 0.5) |
+| fire scar | Normal, transparent | the eroded rim; the body (alpha 0.82) slightly |
+| fire ribbons | Custom One / OneMinusSrcAlpha (premultiplied) | everywhere below full alpha; the inversion runs before the premultiply |
+| fire shader plume | Normal, transparent | the guttering tip |
+| puddles | Normal, transparent | the whole disc (alpha ≤ 0.55 × ripple) |
+| relic spire | Normal, transparent | the whole beam (alpha ≤ 0.28) |
+| void stars | Custom One / One (additive) | stars over gas: display-space addition vs radiance addition |
+| lava | opaque, alpha to coverage | only the MSAA-resolved rim; the body is exact |
 
 ## Test expectations changed (the contract was the reason)
 
@@ -388,7 +435,7 @@ shows those compositions are untouched.
 6. **Comments.** The GLSL template strings carried long prose (owner quotes, dates,
    "was 0.75" history) that the repo's comment-budget hook rejects as TS comments. Each
    one is condensed to a ≤30-word comment where it explains non-obvious math; the
-   originals are in `git show e7490c7:<file>`. Say if any should be restored into
+   originals are verbatim in the appendix below. Say if any should be restored into
    `docs/decisions/`.
 7. **Literals that were literals in the GLSL stayed literals** in the node code, for
    side-by-side review (plume 1.25 / 31.7 / 0.28, tornado churn floors, smoke hash
@@ -404,3 +451,792 @@ shows those compositions are untouched.
    instance scale.
 10. **Server tests.** 25 server tests fail in this checkout (plugin reload / world
     switch). Nothing here touches the server. Worth a look separately.
+
+## Appendix: GLSL comment prose, verbatim
+
+Every `//` comment in the migrated files as they stood at `e7490c7` (nearly all of it inside GLSL template strings). The node code keeps a condensed ≤30-word version where the math needs one; this appendix keeps the rest.
+
+### `client/src/plugins/kit/cumulusDeck.ts`
+
+```text
+A dome: each tier is drawn over a smaller disc than the one below it.
+
+The rim fades, so the deck has no edge; the mass's own intensity fades
+the whole thing, so a gathering front costs nothing until it is there.
+
+NOTHING IS DRAWN FOR A PARKED OR DARK SLOT. Every vertex of the quad
+lands on the same point outside the clip volume, so the primitive is
+culled before it reaches a fragment — the deck's equivalent of
+discRig.ts's "a transparent draw call that contributes nothing is still
+a transparent draw call".
+
+Bigger toward the top, and never twice the same size in a row.
+
+Oblong, per seed, and area-neutral: stretched along x by the aspect,
+squashed along y by the same — see PUFF_ASPECT_SEED_VARIATION.
+```
+
+### `plugins/cyclone/client/spiral.ts`
+
+```text
+THE EYEWALL PROFILE: 1 at the eyewall, 0 at the rim, and the puff's
+size, solidity and shade are read off it. See the TOWER block above —
+the deck's depth is a separate linear funnel and is already in aRise,
+computed once per layout because the STACK COUNT is what varies with it
+and a count cannot be produced in a vertex shader.
+
+THE LOGARITHMIC SPIRAL. aAlong runs 0 at the eyewall to 1 at the rim; the
+radius interpolates from the innermost band's centre line to the storm's
+edge, and the angle is the arm's own starting angle plus the wrap, MINUS
+the whole deck's slow rotation: +angle runs +X towards +Z, which is
+CLOCKWISE seen from above, and a cyclone turns anticlockwise (owner,
+2026-09-05 — it spun the wrong way). With the wrap positive and the spin
+negative the arms TRAIL the rotation, as real bands do; the same sign on
+both had them leading. The inner end is the EYE PLUS A PUFF
+(CYCLONE_BAND_INNER_RADIUS_FRACTION), so the cloud's inner edge is the
+eye rather than its centre line.
+
+A scatter across the arm's width, so an arm is a BAND of cloud and not a
+wire. It widens outward, which is what real arms do and what stops the
+eyewall being swallowed.
+
+The band an arm covers, narrow at the eyewall and wide at the rim. Kept
+narrow for the reason the puff size is: at a wider band the scatter alone
+fills the gaps between two arms and the deck is a disc again.
+
+THE OFFSET FROM THE EYE, not the world position: the instance matrix
+carries the eye and the project_vertex chunk applies it two lines later.
+The Y is absolute because the matrix carries no height — the deck is a
+cloud layer at a fixed base, and where the ground under it happens to be
+is irrelevant (see ./index.ts's header).
+
+BIGGER AT THE EYEWALL, and varying with the seed so the deck is not a
+grid of clones.
+
+This is what makes the wall OCCLUDE rather than merely tint: a puff with
+a flat core hides what is behind it, and a hundred puffs that are all
+gradient average out into something the far coast shows through.
+
+DARKEST AT THE EYEWALL, THINNING TO THE RIM — see CYCLONE_EYEWALL_SHADE.
+A multiplier on the ALBEDO: the deck is lit, so the sun still moves
+across it and the storm's own gloom still reaches it.
+
+The outer tenth fades out, so the deck has no edge — the one thing that
+would give away that this is a finite set of quads rather than a sky.
+```
+
+### `plugins/volcanoes/client/plume.ts`
+
+```text
+0 at the mouth, 1 at the top of the column. fract() is what makes one
+instance a REPEATING particle rather than a single puff — the phase
+attribute spaces the instances evenly around that cycle, so the column is
+continuous with no CPU respawning anything.
+
+The instance matrix carries ONLY the vent's position; everything else
+about where this particle is happens here.
+
+Rise, eased so particles bunch near the MOUTH and thin out at the top —
+a column dense where it leaves the vent, which is what a real one looks
+like and what a linear rise conspicuously does not.
+
+THE EXPONENT WAS 0.75 AND THAT BUNCHED THEM AT THE WRONG END: above 1,
+pow(life, e) < life, so particles climb slowly at first and spread out
+near the top; below 1 they shoot up and pile at the ceiling, which —
+with additive blending and a size that grows with life — stacked forty
+large bright quads on top of each other and blew the whole column out to
+a white ball. Verified in preview-volcano.html, which is what a preview
+harness is for.
+
+Lean, fixed per vent by its seed. Quadratic in life so the column goes up
+before it goes sideways, instead of setting off at an angle.
+
+Per-particle scatter, so the column is a COLUMN and not a rope. It widens
+with life for the same reason the size does: the plume spreads as it
+goes. The first value here was half a summit and left the plume a
+vertical thread — at this world's vertical scale the spread has to be
+comparable to the mountain, not to a cell.
+
+A FLOOR ON THE SPREAD, not pure growth: with scatter proportional to life
+alone every particle leaves the mouth on the same axis, and forty
+additive quads on one axis is a searchlight beam, not a vent. The floor
+is what gives the column a throat.
+
+BILLBOARD IN VIEW SPACE: offset the vertex after the view transform, so
+the quad faces the camera exactly, with no rotation written from the CPU
+and no chance of lagging the camera by a frame.
+
+A soft round puff. The quad is authored two units across, so vQuad is the
+offset from its centre in half-widths and everything past 1 discards.
+
+GLOWING AT THE MOUTH, ASH ABOVE IT. The first fifth of the column is
+lit by what it came out of; past that it is cooling dust. Two colours
+and one smoothstep, because the transition is the whole picture: a
+uniformly grey column reads as smoke from a chimney, and a uniformly
+orange one as a fire that happens to be very tall.
+
+In fast, out slow — a particle that appears at full opacity pops.
+FADE IN SLOWLY. A fast ramp puts every particle at full strength while it
+is still bunched at the mouth, and additive blending turns that into a
+clipped white disc sitting on the summit.
+
+Far higher than the additive version's, and that is the blend mode's doing:
+under normal blending each particle CONTRIBUTES ITS OWN COLOUR rather than
+adding light, so a column of forty converges on the ash colour instead of
+running away to white. Still well under 1 so the column is something you
+see the sky through, which is what fire's smoke means by a thin volume.
+```
+
+### `plugins/tornado/client/funnel.ts`
+
+```text
+The geometry is a UNIT open cylinder: uv.y runs 0 at the bottom rim to 1
+at the top, and uv.x runs once around. Everything about the funnel's real
+shape happens here, so the same geometry serves every tornado.
+
+The instance matrix carries ONLY where the tornado is standing.
+
+THE TAPER. Quadratic rather than linear so the funnel is PINCHED near the
+ground and flares late — the shape a tornado actually has. A linear cone
+is a megaphone.
+
+THE TWIST AND THE SPIN. Each ring is rotated by a different amount, which
+shears the whole cone into a helix — the mesh stays intact because every
+vertex in a ring shares its own life value and therefore its rotation.
+
+uv.x IS THE ANGLE, not atan(position.z, position.x): the seam vertices
+are duplicated with uv.x = 0 and 1, which is exactly what makes the two
+sides of the seam land on the same point. Deriving the angle from the
+position would work too, but it would recompute what the geometry
+already knows and it would put a discontinuity at the seam.
+
+A WOBBLE OF THE WHOLE AXIS, so the funnel snakes instead of standing
+plumb. Two sines at incommensurate rates, which never visibly repeat, and
+scaled by the taper so the foot stays planted while the top wanders.
+
+NOTHING IS DRAWN OFF THE RECEIVED MAP (#284). The funnel is one of the
+two kinds the server already filters on its CENTRE (broadcastVisible),
+and this is the other half of that: a funnel standing near the frontier
+is a 28-unit column, so its top can lean over ground this client has
+never been sent even when its foot is on ground it has.
+
+See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
+own light has to reach it as a number, or a funnel under a cyclone stays
+sunlit while the ground around it does not.
+
+The clip FIRST, so a discarded fragment does no other work.
+
+THE CHURN, painted rather than modelled. Two bands of streaks at
+incommensurate frequencies scrolling in opposite directions: one is the
+condensation spiralling up the wall, the other tears holes in it. Their
+beat is what makes a smooth cone look turbulent without a single extra
+triangle or a texture fetch.
+
+THE FLOORS ARE HIGH, and that is what makes this a sheet with texture
+rather than a lattice of gaps. Two sines multiplied average about a third
+of their peak, so the first values here (0.58 and 0.62) put the whole
+funnel at a third of its nominal alpha — in world, against a bright sea,
+it read as a smear of glass. Raising the floors keeps the streaks and
+gives the surface a body.
+
+DIRT AT THE BOTTOM, CLOUD AT THE TOP. What a funnel picks up is the
+colour of the ground it is standing on; the top of it is the storm base
+it hangs from. One smoothstep between the two is what makes a grey cone
+read as a tornado rather than as a chimney.
+
+DENSER AT THE FOOT, DISSOLVING INTO THE CLOUD AT THE TOP. Without the top
+fade the cone ends on a hard rim, which reads as a cut-off pipe rather
+than as a funnel going up into a storm.
+
+Thrown OUTWARD and up, then falling back — a parabola in height against a
+radius that only ever grows. That asymmetry is what reads as debris being
+flung out rather than as a ring pulsing.
+
+Clipped like the cone above: debris thrown across the frontier is
+geometry over floor this client was never sent.
+
+BILLBOARD IN VIEW SPACE — faces the camera exactly, for free, with no
+rotation written from the CPU and no chance of lagging it by a frame.
+
+The quad is authored two units across, so vQuad is the offset from its
+centre in half-widths. Harder-edged than the cloud puffs elsewhere in
+this plugin: this is dirt and chaff, not vapour.
+
+In fast, out slow, and gone before it lands: a sprite that reached the
+ground at full opacity would pile into a solid ring.
+```
+
+### `plugins/fire/client/smoke.ts`
+
+```text
+The sleeve is authored with its foot at y = 0 and unit height, so
+position.y IS the height fraction — no division, no uniform.
+
+Anchor the foot over the fire, free the top.
+
+Two decorrelated lookups so x and z wander independently — one lookup
+shared between them would make every column sway along one diagonal.
+
+Neck and swell BEFORE the lean, so the billows are carried sideways with
+the column rather than being stretched across a shape that already leant.
+
+The shared draught, on top of the per-column wander: this is what makes a
+wood full of fires read as one event rather than as many. Swung off that
+shared bearing by a bounded, seed-stable amount per column, because five
+columns leaning IDENTICALLY are five parallel pillars and no column of
+gas has ever been parallel to the one next to it. Two decorrelated hashes
+so bearing and length do not vary together.
+
+Rotating the shared unit bearing, rather than jittering x and z apart,
+keeps every column's lean the same LENGTH it was asked for — a component
+jitter would quietly make diagonal leans longer than axis-aligned ones.
+
+DISTANCE FADE, measured to the COLUMN'S FOOT and not per-vertex: the
+whole column must fade as one body. A per-vertex distance would fade a
+column's near side differently from its far side, which is a gradient
+across a single object that nothing in the world justifies.
+
+...and it runs from NOTHING at the closest zoom to full at the default
+orbit. No floor under it: inside SMOKE_SILENT_DISTANCE the flame is a
+fifth of the frame on its own and the column is only in the way.
+
+HOW SQUARELY THIS PIECE OF WALL FACES THE CAMERA, 0 at the silhouette and
+1 head-on. This is the term the whole no-visible-billboard problem rests
+on, and getting it from the AUTHORED normal — which is what this file
+shipped first — is why the sleeve read as a quad.
+
+The normal that matters is the normal of the surface ACTUALLY DRAWN, and
+two transforms stand between the two:
+
+  THE WARP, which is a SHEAR. Every stretch above displaces xz by an
+  amount that grows with height, so the wall is not the wall the cone
+  authored: it is tilted by the rate at which that displacement changes
+  with height. At the lean this column now carries that is on the order
+  of fifteen degrees, and it tilts the two sides of the column in
+  OPPOSITE directions — which is exactly what the renders showed, one
+  silhouette edge softening correctly and the other staying hard.
+
+  THE INSTANCE MATRIX, which is a non-uniform SCALE: this sleeve is
+  stretched about four times harder up (SMOKE_HEIGHT_PER_FUEL) than out
+  (SMOKE_TIP_RADIUS_PER_FUEL), and three's normalMatrix is built from the
+  modelView matrix ALONE, with the instance matrix nowhere in it.
+
+Both are undone here, in order, and BOTH ARE EXACT rather than
+approximated, because a normal is transformed by the INVERSE TRANSPOSE of
+the map that moved the surface and both maps are known in closed form.
+The only thing left out is the noise's own dependence on position, which
+is a second-order wobble on a term feeding a soft falloff — and recovering
+it would mean three more noise evaluations per vertex.
+
+The shear's Jacobian is [[s, gx, 0], [0, 1, 0], [0, gz, s]]: s is the
+radial swell, and gx/gz are how fast the lateral displacement grows with
+height — the same drift, swell and lean already computed above, times the
+slope of the height bias. Its inverse transpose is what the three lines
+below apply, at the cost of two multiplies and a divide.
+
+Sooty at the fire, pale where it has cooled and spread.
+
+In off the foot, out into nothing at the top.
+
+Billow, sampled around the column AND up it, so the turning-over crawls
+across the surface instead of pulsing the whole sleeve at once. Stronger
+near the top: the foot of a column is a coherent stream, the top is where
+it breaks up.
+
+No hard outline: the column thins to nothing at its silhouette, which is
+the difference between gas and a pane of grey glass.
+
+...and no outline the eye can TRACE either. the billow noise is the same slow noise
+the billows are made of, reused rather than sampled again, so the ragged
+boundary crawls with the body it belongs to instead of shimmering against
+it. (0.5 - 0.5 * turn) maps the noise's -1…1 onto 0…1, deepest where the
+noise is darkest.
+```
+
+### `plugins/fire/client/scar.ts`
+
+```text
+The quad is authored two units across and lying in XZ, so position.xz IS
+the offset from the scar's centre in radii — no division, no uniform.
+
+DISTANCE MEASURED TO THE SCAR'S CENTRE, not per-vertex: ./smoke.ts's rule
+and its reason — the whole mark must fade as one body, and a per-vertex
+distance would fade a scar's near edge differently from its far one.
+
+THE EXACT COMPLEMENT OF ./smoke.ts's vDistanceFade, over the same two
+distances: full inside the closest zoom, where a column is drawn at
+nothing, and gone by the default orbit, where a column is at full. One
+signature, two halves, and the sum of the two is what the player sees.
+
+Distance from the scar's centre in NOMINAL RADII: the outline sits at 1,
+the quad reaches SCAR_QUAD_HALF_WIDTH along its axes so the eroded rim can
+bulge past 1 without being sliced flat, and everything past the outline —
+including all four corners — discards below.
+
+No hard outline, and no outline the eye can trace either. The noise moves
+the boundary in and out, so what falls off is a ragged front rather than
+an arc — a circle is the one shape a fire never burns.
+
+Char and ash, mottled. Decorrelated from the outline by frequency AND by
+seed offset: sampled at the same phase, the pale patches would sit in the
+same places as the outline's lobes and the whole mark would read as one
+stencil scaled twice.
+```
+
+### `plugins/fire/client/flames/ribbons.ts`
+
+```text
+Two rotations about the fire's axis, summed: a steady spin for the whole
+strip, and a whip that only the upper part of the strip feels.
+
+Breathing, weighted the same way — the roots stay where the fuel is.
+
+Fade along the strip, and across it: a burning sheet has no hard side
+edge either, and feathering the sides is what keeps five overlapping
+strips from reading as five ribbons of paper.
+
+Flicker travelling UP the strip, keyed to the strip index so no two of
+the five gutter together.
+
+Premultiplied: the colour is scaled by its own alpha before it leaves
+the shader, which is what the ONE/1−srcAlpha blend above expects.
+```
+
+### `plugins/fire/client/flames/shaderPlume.ts`
+
+```text
+The sleeve is authored with its foot at y = 0 and unit height, so
+position.y IS the height fraction — no division, no uniform.
+
+Anchor the foot, free the tip.
+
+Two decorrelated lookups so x and z lean independently — one lookup
+shared between them would make the plume sway along a single diagonal.
+
+Flame silhouette: waist, belly, taper. Applied before the noise, so
+the noise deforms the flame shape rather than the cone.
+
+A fiercer fire is a taller one, applied here rather than in the instance
+matrix so intensity can change without a rebuild of the matrices.
+
+Colour by height: white-hot at the fuel, orange through the body, dark
+red where it is going out.
+
+The plume thins out towards the tip and is solid at the foot.
+
+Flicker, sampled around the plume AND up it, so the guttering crawls
+around the surface instead of pulsing the whole sleeve at once. Stronger
+near the tip: the foot of a fire is steady, the tip is where it tatters.
+```
+
+### `plugins/volcanoes/client/lavaFlow.ts`
+
+```text
+The geometry is authored in WORLD space, so position.xz IS the world
+plan coordinate — which is what makes the crust pattern below continuous
+across the whole flow instead of restarting in every cell.
+
+THE COOLING CURVE, RUN IN THE SHADER — protocol.ts's heatFromAge, restated
+in GLSL. This is why nothing is written per frame: aBirth is when this
+cell went molten and uElapsed is now, so the heat falls out of one
+subtraction and no buffer has to be touched as a flow goes out.
+
+THE CRUST. Cold plates floating on molten rock: the noise field is the
+plates, and what shows between them is the glow.
+
+THE VEINS NARROW AS IT COOLS, rather than the colour washing out — and
+that is the whole reason there is no brown anywhere in this shader
+(owner, 2026-08-27). Fading hot orange toward dark rock passes THROUGH
+brown, and a flow spends most of its life in exactly that middle. So the
+lit colour never changes; only how much of the surface is lit does. A
+half-cooled flow is thin bright cracks on near-black, which is both what
+the real thing looks like and the one version of it that is never muddy.
+
+The exponent runs 2 (fresh: broad rivers of lava with plates riding on
+them) to 18 (cold: hairline seams), so what changes across a flow's life
+is the AREA that is lit and never the colour of it.
+
+A slow, shallow pulse, offset by position so a hillside breathes unevenly
+rather than strobing in unison. Lava is a heavy liquid with a skin that
+breaks and heals; it does not flicker like flame.
+
+Tightened with a smoothstep so most of the surface is decisively crust or
+decisively lava and the band between them is thin — the other half of
+keeping the midtones out of the mud.
+
+The hottest seams glow through toward yellow, which is what stops a fresh
+flow reading as a single flat orange.
+
+OPAQUE MATTER, AND THE ALPHA IS COVERAGE. This is new ground: nothing it
+buried should read through it, so the alpha here is never a see-through
+factor. The material is opaque with alphaToCoverage on, so this value is
+consumed as the FRACTION OF THE PIXEL'S MSAA SAMPLES the flow occupies —
+1 across the body of the flow, easing to 0 at the rim, which resolves to
+a soft edge made of geometry coverage rather than of blending. Full
+strength therefore writes a fully opaque pixel (the 0.96 that used to sit
+here existed only to let the terrace lip read through, which the owner
+settled against on 2026-09-01).
+```
+
+### `plugins/hydro/client/puddles.ts`
+
+```text
+The quad is authored two units across and lying in XZ, so position.xz IS
+the offset from the patch's centre in radii — no division, no uniform.
+
+Distance from the centre in NOMINAL RADII — the same input
+../protocol.ts's hydroFalloff takes, and the same curve applied to it, so
+what is drawn here and what the server douses inside cannot disagree.
+
+Rings travelling outward. They ride ON TOP of the falloff rather than
+being multiplied into it, so the ripple can never move the patch's edge —
+which is the one thing about this disc that is not a rendering decision.
+```
+
+### `plugins/relics/client/gemMaterial.ts`
+
+```text
+0 at the top of the gem on screen, 1 at its bottom: the icon's vertical
+gradient, spanning the whole gem rather than each face.
+
+The face's own normal, from screen-space derivatives: flat shading with
+no normal attribute, as three's own flatShading does it.
+
+A vertex with its own blend (the tile) is painted with it; the rest are
+lit. A face is all one or all the other, so the varying never straddles.
+
+The paints are sRGB and the icon blends them as sRGB; blend the same,
+then hand three linear light to write out.
+```
+
+### `client/src/render/celestialVoid.ts`
+
+```text
+The anchor frame (see the header): focal length in screen heights, the
+rotation taking a view-space direction into disk space, and the eye's
+position in disk space (disk units, z up, plane at z = 0).
+
+1.0 in the world anchor, 0.0 in the view anchor: whether a look that has no
+plane to intersect (the nebula's clouds, the wheel's sky above its horizon)
+maps the ray onto a dome around the world instead of the view's image plane.
+
+Lambert azimuthal equal-area projection of a direction, from the nadir: a
+smooth 2-D domain over every direction but straight up (|p| = 2 there), with
+no seam and no stretch at the horizon (|p| = sqrt 2). Near the nadir it is
+d.xy to first order, so it matches the plane mapping where the two meet. The
+zenith is the one singular point, and the orbit's polar cap
+(CAMERA_MAX_POLAR_ANGLE_DEGREES) keeps it off screen.
+
+The same fbm cut to FBM_LOW_OCTAVES, for fields read only on the broad scale (their fine octaves
+were below a filament wide and invisible); the same first octaves, so the look is unchanged.
+
+The same noise, periodic in y with period per cells: the lattice row wraps, so a domain
+whose y is an angle has no seam. Lacunarity exactly 2 and no y offset keep every octave periodic.
+
+Star layer: one candidate per grid cell, soft falloff, steady (stars do not twinkle here).
+
+drift clock scale; owner set 3x the original 0.05
+
+reference: p = uv*2.2
+
+World anchor only: how much of the eye's offset from the hub (disk units)
+slides the clouds. A quarter: panning across the whole default map (±1.28
+disk units) moves them by about a third of a screen, which reads as far
+away but still attached to the world.
+
+World anchor: clouds on a dome around the world, so orbiting turns them
+with the terrain and no camera angle can see them stretch; panning
+slides them a little (NEBULA_PARALLAX).
+
+View anchor: the cloud plane is z = 0 in disk space with the eye
+u_origin.z = NEBULA_ZOOM*focal above it and u_toDisk the identity, which
+makes p exactly the reference's uv*NEBULA_ZOOM.
+
+the reference's screen coordinate, for the star layers
+
+Disk stars: steady points in the disk plane with a screen-space size floor so far stars
+never shrink below a pixel and shimmer. minSize is in cell units, from the ray length.
+
+rad/s (2*pi/300 = ~5.0 min per turn); rev 7 owner 2026-09-04: 'about five minutes per turn'; negative = clockwise from above
+
+Depth fade, as multiples of the eye's height above the plane so it is the
+same at every zoom in the world anchor: the reference faded between ray
+lengths DISK_DIST (2.6) and FAR_FADE (12.0) with the eye 2.6*cos(60deg) = 1.3
+above the plane, i.e. between 2.0 and ~9.23 heights. The end is a TS constant
+as well: the star field's extents are derived from it.
+
+four gas arms; owner 2026-09-04: 'more than two'
+
+how tightly the arms wind (log-spiral pitch); rev 6: 3.2 -> 6.0 'more circular', rev 7: 8.0
+
+arm cross-section exponent; rev 6: 2.2 -> 1.2 'thicker arms', rev 7: 1.0, rev 14: 1.4 'more definition between the arms'
+
+brightness of the gas arms; rev 6: 1.5 -> 1.2 'a little darker', rev 7: 1.0
+
+warm hub glow; rev 6: 0.55 -> 0.25 and the white core removed, 'get rid of the bright center'
+
+rad of low-frequency phase wander; rev 9: 2.0 'too rigid', rev 10 owner 2026-09-04: 'not random squiggly lines' - arms follow the spiral again
+
+floor under the arm profile so gas spills across the gaps; rev 10: 0.35 'bleed into each other', rev 14: 0.18 'too homogeneous'
+
+disk units per wobble feature: the arms bend on a scale near the disk radius
+
+grain cells per e-fold of radius ALONG an arm (long filaments)
+
+grain cells around the full circle ACROSS the arms (fine filaments); integer, the y period
+
+disk units per hue-drift feature between the deep blue and the violet
+
+e-folding radius of the gas disk, plane units; TS: the in-arm stars' extent is derived from it
+
+Rev 13 (owner 2026-09-05: 'the gas should look diffuse in three dimensions, and the stars should be
+placed in three dimensions', and 'don't make the disk any thicker than four world units'). The
+gas is a volume under the plane, ray-marched: the arm pattern runs through it as columns
+(gasPattern, once per ray), a vertical profile makes it diffuse about each patch's own level,
+and 3-D puff noise breaks it up through the thickness (gasDepthProfile, per sample). The stars are
+points in three 3-D grids: the in-arm stars inside the gas, the field and fine grids on down to
+STAR_FIELD_DEPTH under it, each dimmed by the gas in front of it. They used to be found by walking
+those grids per fragment; since issue #342 they are a point cloud drawn after this program (see
+STARS_VERT_GLSL and the header), and the numbers below that describe them are its numbers too. The
+in-arm grid is the exception: its walk broke before its first voxel, so it has never drawn, and
+STAR_ARM_GRID_ENABLED keeps it off until the owner has seen it.
+Nothing is above the plane, so the clearance to the map is unchanged.
+
+DISK_THICKNESS_WORLD in disk units; gas and stars both stay within it
+
+march samples through the thickness; rev 16 bench: 10 -> 6 saves ~0.5 ms at 1440p, no visible banding
+
+Rev 14 (owner: 'needs more 3-D variability, still a flat disk'): the depth of peak density is not one
+number but a field - each patch of gas sits at its own level between GAS_TOP_Z and GAS_BOTTOM_Z, in
+a thin layer, so patches above hide and shade the patches below.
+
+shallowest layer centre
+
+deepest layer centre
+
+sech^2 scale height of each patch about its own level
+
+level-field features per disk unit: patches change level on about the filament scale
+
+gas at the bottom of the slab is this much darker than at the top (a depth cue the eye reads)
+
+optical depth per unit density per disk unit; 160 read like the rev 10 sheet; rev 17 'colors a little more transparent, maybe 20%' 128; rev 18 owner 2026-09-05 'more transparent' 100
+
+3-D puff noise features per disk unit across the disk
+
+... and about three through the thickness, so the puffs vary with depth
+
+how much the puffs modulate the density (0 = columnar gas); rev 14: 0.35 -> 0.7
+
+weight of the second, finer puff octave (0 drops it: one vnoise3 per march step)
+
+The grids' depths (STAR_FIELD_DEPTH, STAR_FINE_DEPTH) and their density boost (STAR_POINT_BOOST)
+are TS/JS constants since issue #342: nothing in GLSL reads them now that the point cloud, not the
+fragment, decides where the stars are. STAR_WALK went with the walk itself; the ~80% of the coarse
+depth it reached at 60 degrees was a bench compromise, and the cloud draws every star instead.
+
+how much fully overlying gas dims a star (1 = hidden)
+
+smallest star radius on screen, px
+
+star cells narrower than this on screen fade out (anti-shimmer); TS too, for the per-frame guard
+
+Rev 17 (owner 2026-09-05: 'make some of the floating stars glow a little bit, and others twinkle just a
+little bit'). Each star draws one kind from its own hash: the first GLOW_FRACTION carry a soft halo
+GLOW_RADIUS times their core, the next TWINKLE_FRACTION breathe in brightness by TWINKLE_DEPTH at
+TWINKLE_RATE with a per-star phase, the rest are steady. u_time is frozen under reduced motion.
+
+halo radius as a multiple of the core radius
+
+halo peak brightness relative to the core
+
+brightness swing, peak to trough, as a fraction of the star
+
+rad/s: about one breath every three seconds
+
+--- the log-polar bake (perf, issue #340) --------------------------------------------------
+gasPattern and gasLevel below depend only on rf, the rotating-frame plane position, so they are
+evaluated once into two textures at startup (BAKE_GLSL) and read back per fragment. The grid is
+the arms' own coordinate: theta across u, wrapping, and s = log(r + S_LOG_EPS) up v, in which a
+log spiral is a straight line - so a texel keeps the same shape across an arm at every radius
+(its aspect is TAU/BAKE_S_SPAN, a constant) and the grain stays resolved out to the rim.
+
+radius over which the gas ramps in from the hub (a ramp, not a floor)
+
+the offset in s = log(r + eps); keeps s finite at the hub
+
+texels per axis; the TS constant carries the Nyquist derivation
+
+s at the hub: log(S_LOG_EPS)
+
+log(R_BAKE_MAX + S_LOG_EPS) - BAKE_S_MIN
+
+The gas pattern on the plane in the rotating frame: the arms, their grain, lanes and colour.
+It is columnar - the same at every depth of the four-unit slab, whose parallax across the
+thickness is under a filament wide - so it is baked ONCE into the log-polar texture above and
+read back per fragment, and the march below only
+varies the vertical profile and the 3-D puffs (rev 16: 6.1 ms -> see the bench in .void-bench).
+ARMS log-spiral arms. The arm's own coordinates: s = log r runs ALONG an arm (a log spiral is a
+straight line in log-polar space) and thw, the angle in the frame wound so every arm is radial,
+runs ACROSS it - an arm sits at a fixed thw. The grain is sampled in (s, thw) with long cells
+along and short cells across, so the filaments run along the curve of each arm.
+
+Unwind by MINUS the arm's own twist so the wound angle is phase/ARMS - constant along an arm.
+
+dark dust lanes cut through the arms
+
+Rev 9 palette: deeper and more saturated - a deep blue drifting into violet across the disk,
+rose where the grain is dense, a touch of teal in the haze; the warm bulge keeps its colour.
+
+This patch's depth in the slab: the level field of rev 14, baked alongside the pattern.
+
+rf -> bake texture coordinate. u wraps with theta (RepeatWrapping, so the two sides of atan's
+branch cut still filter into each other); v spans the hub to R_BAKE_MAX and clamps beyond it,
+where the gas is under 1e-3 of its peak.
+
+...and back: the rf that a bake texel centre stands for. Exactly the inverse of gasBakeUv, so a
+lookup lands on the texel that was written for it.
+
+Reads the bake through whichever branch of atan has its cut a quarter turn away. RepeatWrapping
+gets the VALUE right across the cut, but u jumps by 1 there, and the quad that straddles the
+jump derives a huge du/dx and drops to the coarsest mip - a blurred radial line along -x, plain
+to see in the hub shot. u+1 reaches the same texel through the branch that is continuous there,
+so its cut lies along +x instead; each fragment takes the branch whose cut it is far from.
+The two branches sample the same texel wherever both are valid, so the switch itself is unseen.
+
+0: colour and pattern; 1: level
+
+The baked fields: gasPattern's colour in rgb and its pattern in a, gasLevel in the second
+texture's r. Half float, so the pattern's ~1.55 peak needs no scaling on the way through.
+
+This pass's own resolution in texels; u_res stays the FULL-res drawing buffer in both programs.
+
+Declared for the bench harness, which lifts it to size its own target (.void-bench/gl2.js); the
+app sizes the render target from the TS constant of the same name. The pass itself needs only
+the two resolutions, because ceil() rounding makes the ratio not exactly the divisor.
+
+The gas's variation through the thickness at a point: a sech^2 layer about this patch's own level,
+broken up by 3-D puffs. Multiplies gasPattern.
+
+sech^2 (no cosh in GLSL ES 1.00): diffuse both ways about the level
+
+mean 1
+
+The full-res pixel this texel stands for. Scaling the texel centre by the exact ratio of the
+two buffers — not by GAS_RES_DIVISOR — is what keeps the two passes on the same uv when the
+drawing buffer has an odd dimension and the target was rounded up. The wheel reads back at
+gl_FragCoord.xy/u_res, which is this mapping inverted exactly.
+
+disk space: plane z = 0, hub at the origin
+
+above the plane's horizon: no gas to march
+
+ray length to the plane
+
+disk coordinates, hub at the origin
+
+rotating frame: everything sampled here turns rigidly
+
+--- gas: the plane pattern once, then march the thickness front to back ---
+
+this patch's depth
+
+lit weight so far
+
+transmittance so far
+
+deeper gas is darker
+
+lit colour before GAS_GAIN; alpha = total gas opacity
+
+The half-res gas pass's output (issue #341): rgb = gasCol*gasAcc before GAS_GAIN, a = the gas
+opacity. Bilinear, so a full-res pixel between texel centres gets the interpolated field.
+
+disk space: plane z = 0, hub at the origin
+
+ray length to the plane
+
+disk coordinates, hub at the origin
+
+rotating frame: everything sampled here turns rigidly
+
+fully faded: nothing below would show
+
+--- gas: marched at half resolution into u_gasHalf (issue #341), read back here ---
+The exact inverse of the gas pass's own mapping, so the texel a pixel lands on is the one
+written for it; between centres the bilinear filter interpolates a field that is smooth
+everywhere below the horizon, which is why the fade and the gain stay out of it.
+
+lit gas colour (gasCol*gasAcc), before GAS_GAIN
+
+The stars under the plane are no longer found here: they are a point cloud drawn straight
+over this program's output, additively (issue #342, STARS_VERT_GLSL below). col += stars
+was already the composite, so the arithmetic is unchanged.
+
+Above the plane's horizon (never in the view anchor at 60deg; the world anchor at a flat
+orbit): a still, sparse field so the void is not empty, fixed to the sky direction.
+
+Which grid this Points object is: 0 the coarse field, 1 the fine field, 2 the in-arm stars (which
+STAR_ARM_GRID_ENABLED keeps off - the branch below is kept because it is the intended design, not
+because anything reaches it today). It is a property of the OBJECT, not of the vertex, so it is a
+uniform and the materials differ in nothing else (see createStarPoints).
+
+The half-res gas pass's output (issue #341). Only its alpha is read here — the total gas opacity
+along the ray — and only once per star, at the star's own screen position. Bilinear, no mips, so
+a vertex-shader texture2D is well defined under GLSL ES 1.00.
+
+The widest a sprite may be: the drawing buffer's long edge. The fragment's falloff is measured
+across the sprite, so the clamp has to happen here where both the size and the varying that
+carries it can see it.
+
+Per star: radius in disk units, kind on [0,1), brightness on [0.5,1) - the three draws the voxel
+hashes used to make, now generated once (render/celestialVoidStars.ts).
+
+the star's colour, everything but the falloff already applied
+
+core radius in px, 1 for a glow star, and the sprite's width in px
+
+the cell fade's own measure, for the in-arm grid as well as the fine one
+
+the fine field's stars are drawn dimmer than the coarse field's
+
+a field star keeps this much of itself with no gas in front of it...
+
+...and gains this much where the gas is thickest
+
+in-arm stars are revealed BY the gas: bright only where it is
+
+so the smoothstep's tail is not clipped by the sprite's edge
+
+Clip space well outside the frustum, for a star that must not rasterise at all.
+
+The rotating frame back into disk space: the wheel samples at rot(pp,-a), so this is that
+inverted, and the field turns rigidly with the gas exactly as before.
+
+Disk space back into view space. u_toDisk is a rotation, so its inverse is its transpose, and
+rel*u_toDisk is that product (a row vector times the matrix). viewRay is the same map the
+other way: u_toDisk*normalize(vec3(uv,-u_focal)).
+
+behind the eye
+
+Screen heights, the wheel's own uv convention. Named suv, not uv: three declares an attribute
+vec2 uv in every ShaderMaterial's vertex prefix and shadowing it here would only confuse.
+
+disk units along the ray from the eye (the walk's tBase+along/scale)
+
+ray length to the plane along THIS star's ray
+
+The walk's max(size, minPerT*t*scale) projected: a star never shrinks below STAR_MIN_PX.
+
+Faded out, or off screen by more than the sprite's own half width: no fragment, and no fetch.
+At the reference pose over nine tenths of the coarse field is off screen and the fetch is by
+far the most expensive thing here, so the order matters.
+
+total gas opacity along the ray
+
+The field grids are dimmed by the gas over them and lifted by the gas in front of them; the
+in-arm stars are INSIDE the gas, so nothing is over them and the gas is what reveals them.
+
+Rev 17's kinds, unchanged: the first GLOW_FRACTION carry a halo (the fragment adds it), the
+next TWINKLE_FRACTION breathe, the rest are steady. u_time is frozen under reduced motion.
+```
