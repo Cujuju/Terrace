@@ -9,6 +9,7 @@ import {
   Scene,
   SRGBColorSpace,
   WebGLRenderer,
+  type Material,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
@@ -184,6 +185,28 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     }
   };
 
+  // three links a program on the draw call that first uses it, blocking on the compile join
+  // once per program. Batching pending links first lets ANGLE's pool run them together.
+  const linkedMaterials = new WeakSet<Material>();
+
+  const noteMaterial = (material: Material): boolean => {
+    if (linkedMaterials.has(material)) return false;
+    linkedMaterials.add(material);
+    return true;
+  };
+
+  const linkPendingPrograms = (): void => {
+    let pending = false;
+    scene.traverse((object) => {
+      const material = (object as { material?: Material | Material[] }).material;
+      if (material === undefined) return;
+      if (Array.isArray(material)) {
+        for (const entry of material) if (noteMaterial(entry)) pending = true;
+      } else if (noteMaterial(material)) pending = true;
+    });
+    if (pending) renderer.compile(scene, camera);
+  };
+
   let frameHandle = 0;
   let lastFrameMs = 0;
   let frameIntervalMs: number | null = null;
@@ -215,6 +238,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     }
     skyEnvironment.flush(nowMs);
     const renderStartMs = performance.now();
+    linkPendingPrograms();
     renderer.render(scene, camera);
     recordFrame(nowMs, renderStartMs, performance.now());
   };
