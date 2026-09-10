@@ -175,6 +175,20 @@ CLIENT_DIR = os.path.join(REPO_ROOT, "client")
 CLIENT_INDEX = os.path.join(CLIENT_DIR, "dist", "index.html")
 # Windows CreateProcess ignores PATHEXT, so a bare "pnpm" misses pnpm.cmd.
 PNPM = shutil.which("pnpm") or "pnpm"
+NODE = shutil.which("node") or "node"
+# The long-lived children run node directly, not `pnpm start` / `pnpm dev`:
+# on Windows pnpm.cmd wraps two cmd.exe layers, and a console signal to that
+# tree raises "Terminate batch job (Y/N)?" instead of reaching node. Source of
+# truth: server/package.json "start" and client/package.json "dev".
+SERVER_ENTRY = "src/index.ts"
+VITE_ENTRY = os.path.join(CLIENT_DIR, "node_modules", "vite", "bin", "vite.js")
+# Each child gets its own process group so a signal reaches node and anything
+# it spawned. POSIX: a new session. Windows: a new console group, the only
+# unit GenerateConsoleCtrlEvent can target.
+CHILD_GROUP_KWARGS = (
+    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+    else {"start_new_session": True}
+)
 
 # Everything that ends up INSIDE the client bundle, relative to the repo root.
 # Not the same set as WATCH_ROOTS: that one is what a SERVER restart follows
@@ -340,8 +354,8 @@ def describe_worlds(worlds_dir):
 
 def spawn_server(env) -> subprocess.Popen:
     """Start the game server in its own session, so it can be killed as a group."""
-    return subprocess.Popen([PNPM, "start"], cwd=SERVER_DIR, env=env,
-                            start_new_session=True)
+    return subprocess.Popen([NODE, SERVER_ENTRY], cwd=SERVER_DIR, env=env,
+                            **CHILD_GROUP_KWARGS)
 
 
 def start_control_reader(state) -> threading.Thread:
@@ -543,11 +557,22 @@ def main(watch: bool) -> int:
     def reap(proc, sig):
         # pnpm spawns node as a child; signalling pnpm alone orphans it, so
         # each child runs in its own session and is killed as a whole group.
-        if proc.poll() is None:
+        if proc.poll() is not None:
+            return
+        if os.name == "nt":
+            # Windows has no SIGINT to send: Ctrl-Break is the one console
+            # signal deliverable to a single group. Node surfaces it as
+            # SIGBREAK, which the server binds to the same clean shutdown.
+            os.kill(proc.pid, signal_module.CTRL_BREAK_EVENT)
+        else:
             os.killpg(proc.pid, sig)
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                subprocess.call(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
                 os.killpg(proc.pid, signal_module.SIGKILL)
 
     # Keyboard control. One daemon thread scans stdin for the whole run; the
@@ -595,8 +620,8 @@ def main(watch: bool) -> int:
         if CLIENT_MODE == "static" and not prepare_static_client():
             return None
         if CLIENT_MODE == "dev":
-            vite = subprocess.Popen([PNPM, "dev"], cwd=CLIENT_DIR, env=env,
-                                    start_new_session=True)
+            vite = subprocess.Popen([NODE, VITE_ENTRY], cwd=CLIENT_DIR, env=env,
+                                    **CHILD_GROUP_KWARGS)
             children.append(vite)
             print("[run_server] client dev server starting - "
                   "open the Local: URL Vite prints below")
@@ -714,7 +739,8 @@ def main(watch: bool) -> int:
         # Ctrl-C: the finally below shuts every child down; not an error.
         return 0
     except FileNotFoundError:
-        print("pnpm not found on PATH - install pnpm (or run: corepack enable)", file=sys.stderr)
+        print("node or pnpm not found on PATH - install Node 24 and pnpm (or run: corepack enable)",
+              file=sys.stderr)
         return 1
     except SystemExit:
         # SIGTERM/SIGHUP, via the handler installed above. Not an error, and
