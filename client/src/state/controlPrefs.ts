@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { resetFrameRatePrefs } from './frameRatePrefs.ts';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
@@ -122,6 +123,7 @@ export function resetBindings(): void {
   resetVoidPrefs();
   resetFrontierMistPrefs();
   resetLayerEdgePrefs();
+  resetFrameRatePrefs();
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);

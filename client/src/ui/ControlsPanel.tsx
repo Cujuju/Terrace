@@ -33,6 +33,12 @@ import {
   type VoidStyle,
 } from '../state/voidPrefs.ts';
 import {
+  FRAME_RATE_TARGETS,
+  frameRateTarget,
+  setFrameRateTarget,
+  type FrameRateTarget,
+} from '../state/frameRatePrefs.ts';
+import {
   LAYER_EDGE_STYLES,
   layerEdgeStyle,
   setLayerEdgeStyle,
@@ -59,6 +65,15 @@ const LAYER_EDGE_STYLE_LABEL: Record<LayerEdgeStyle, string> = {
   normal: 'Normal',
   crease: 'Crease lines',
   debug: 'Debug (cyan lines)',
+};
+
+const FRAME_RATE_LABEL: Record<FrameRateTarget, string> = {
+  unlimited: 'Unlimited (display refresh)',
+  '144': '144 fps',
+  '120': '120 fps',
+  '90': '90 fps',
+  '60': '60 fps',
+  '30': '30 fps',
 };
 
 const ACTION_LABEL: Record<ControlAction, string> = {
@@ -259,6 +274,23 @@ export function ControlsPanel(): JSX.Element {
         >
           <For each={LAYER_EDGE_STYLES}>
             {(style) => <option value={style}>{LAYER_EDGE_STYLE_LABEL[style]}</option>}
+          </For>
+        </select>
+      </div>
+
+      {
+}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Frame rate</span>
+        <select
+          class="controls-select"
+          aria-label="Frame rate target"
+          title="Unlimited renders every display refresh. A fixed target skips frames to hold that rate and saves power; it never exceeds the display refresh."
+          value={frameRateTarget()}
+          onChange={(e) => setFrameRateTarget(e.currentTarget.value as FrameRateTarget)}
+        >
+          <For each={FRAME_RATE_TARGETS}>
+            {(target) => <option value={target}>{FRAME_RATE_LABEL[target]}</option>}
           </For>
         </select>
       </div>
