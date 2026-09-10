@@ -25,6 +25,7 @@ WORLDS_DIR/.active, i.e. whichever you were last in.
 import argparse
 import contextlib
 import os
+import shutil
 import threading
 import signal as signal_module
 import sqlite3
@@ -172,6 +173,8 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 SERVER_DIR = os.path.join(REPO_ROOT, "server")
 CLIENT_DIR = os.path.join(REPO_ROOT, "client")
 CLIENT_INDEX = os.path.join(CLIENT_DIR, "dist", "index.html")
+# Windows CreateProcess ignores PATHEXT, so a bare "pnpm" misses pnpm.cmd.
+PNPM = shutil.which("pnpm") or "pnpm"
 
 # Everything that ends up INSIDE the client bundle, relative to the repo root.
 # Not the same set as WATCH_ROOTS: that one is what a SERVER restart follows
@@ -238,7 +241,7 @@ def prepare_static_client() -> bool:
         return True
     reason = "dist missing" if not os.path.isfile(CLIENT_INDEX) else "sources are newer than dist"
     print(f"[run_server] building client ({reason})...")
-    result = subprocess.call(["pnpm", "build"], cwd=CLIENT_DIR)
+    result = subprocess.call([PNPM, "build"], cwd=CLIENT_DIR)
     if result != 0:
         print("[run_server] client build failed - fix the build or set "
               "CLIENT_MODE = \"none\" to start the server anyway",
@@ -337,7 +340,7 @@ def describe_worlds(worlds_dir):
 
 def spawn_server(env) -> subprocess.Popen:
     """Start the game server in its own session, so it can be killed as a group."""
-    return subprocess.Popen(["pnpm", "start"], cwd=SERVER_DIR, env=env,
+    return subprocess.Popen([PNPM, "start"], cwd=SERVER_DIR, env=env,
                             start_new_session=True)
 
 
@@ -592,7 +595,7 @@ def main(watch: bool) -> int:
         if CLIENT_MODE == "static" and not prepare_static_client():
             return None
         if CLIENT_MODE == "dev":
-            vite = subprocess.Popen(["pnpm", "dev"], cwd=CLIENT_DIR, env=env,
+            vite = subprocess.Popen([PNPM, "dev"], cwd=CLIENT_DIR, env=env,
                                     start_new_session=True)
             children.append(vite)
             print("[run_server] client dev server starting - "
