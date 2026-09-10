@@ -12,3 +12,5 @@ page.log
 # Measured results are the deliverable and are tracked.
 !results/
 !results/**
+*.db-shm
+*.db-wal

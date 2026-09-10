@@ -1,0 +1,254 @@
+{
+  "world": {
+    "size": 512,
+    "sampleLattice": 2049,
+    "samplesPerCell": 4,
+    "sampleWorldSize": 0.0625,
+    "cellWorldSize": 0.25,
+    "chunkSize": 16,
+    "chunksPerEdge": 32,
+    "bandHeight": 16,
+    "bandWorldHeight": 0.25,
+    "bandBias": 8,
+    "coordDenom": 1024,
+    "seabedCapSink": 0.015625,
+    "seabedRiserBorderWorldHeight": 0.015625,
+    "shoreThreshold": 1,
+    "shoreEdgeCrossing": 0.5,
+    "crossingMidpoint": 0.5,
+    "sheerWallSpreadCells": 1,
+    "sheerRiseHeightUnitsPerCell": 64,
+    "bedrockFloor": -1536,
+    "openColumnSample": -1552,
+    "spanCountShift": 24,
+    "spanDescBytes": 1048576,
+    "spanDataPairs": 2369,
+    "layeredCells": 1134,
+    "minHeight": -1505,
+    "maxHeight": 1024,
+    "maxCellStep": 1393,
+    "bytesPerVertex": 12,
+    "positionScale": 511.9609375,
+    "heightScale": 256,
+    "cpuVertexCount": 11753733,
+    "cpuTriangleCount": 3917911,
+    "cpuFallbackChunks": [
+      1,
+      131,
+      727,
+      773,
+      867,
+      936
+    ],
+    "cpuFallbackChunkCount": 6,
+    "cpuBuildMs": 1389.9,
+    "cpuVertexBytes": 141044796,
+    "isolineCaseCount": 4096,
+    "holeBand": -128
+  },
+  "chromeMode": "visible",
+  "sources": {
+    "gpu": {
+      "source": "gpu",
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "ampere",
+        "device": "",
+        "description": "",
+        "timestampQuery": true,
+        "maxStorageBufferBindingSize": 2147483644
+      },
+      "triangles": 5207401,
+      "vertices": 15622203,
+      "residentBytes": {
+        "vertex": 187466436,
+        "height": 1048576,
+        "span": 1067528,
+        "table": 1296,
+        "total": 189583836
+      },
+      "timingMethod": "timestamp-query",
+      "rebuildSerialWallMs": 174.5,
+      "rebuildWallMs": 5,
+      "rebuildGpuMs": 2.99008,
+      "firstRebuildWallMs": 200,
+      "countPassMs": 694.8000000007451,
+      "emittedVertices": 15622203,
+      "computePerChunkMs": {
+        "p50": 0.078848,
+        "p99": 0.986112,
+        "max": 1.317888,
+        "sum": 166.12044799999973
+      },
+      "isoline": {
+        "cases": 4096,
+        "mismatches": 0,
+        "examples": []
+      },
+      "edit": {
+        "heaviest": {
+          "centreChunk": 401,
+          "chunks": 9,
+          "windowVertices": 466860,
+          "uploadBytes": 100352,
+          "iterations": 100,
+          "gpuMs": {
+            "p50": 2.07952,
+            "p95": 2.741376,
+            "max": 2.8434559999999998
+          },
+          "wallMs": {
+            "p50": 3.2999999970197678,
+            "p95": 5,
+            "max": 6.100000001490116
+          }
+        },
+        "median": {
+          "centreChunk": 734,
+          "chunks": 9,
+          "windowVertices": 115635,
+          "uploadBytes": 100352,
+          "iterations": 100,
+          "gpuMs": {
+            "p50": 0.44489599999999996,
+            "p95": 0.698464,
+            "max": 1.095008
+          },
+          "wallMs": {
+            "p50": 3,
+            "p95": 4.199999999254942,
+            "max": 4.899999998509884
+          }
+        }
+      },
+      "drawMs": {
+        "p50": 0.690176,
+        "p99": 0.692224,
+        "frames": 120
+      }
+    },
+    "cpu": {
+      "source": "cpu",
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "ampere",
+        "device": "",
+        "description": "",
+        "timestampQuery": true,
+        "maxStorageBufferBindingSize": 2147483644
+      },
+      "triangles": 3917911,
+      "vertices": 11753733,
+      "residentBytes": {
+        "vertex": 141044796,
+        "total": 141044796
+      },
+      "timingMethod": "timestamp-query",
+      "drawMs": {
+        "p50": 0.688128,
+        "p99": 0.694272,
+        "frames": 120
+      }
+    }
+  },
+  "pageLogs": [
+    "warning The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127",
+    "warning The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127",
+    "warning The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127"
+  ],
+  "parity": {
+    "samples": 4198401,
+    "mismatches": 157,
+    "exempt": 73654,
+    "holes": 0,
+    "examples": [
+      "sample (1494, 26): mesh band -11, function band -12",
+      "sample (1482, 38): mesh band -11, function band -12",
+      "sample (1122, 46): mesh band -8, function band -9",
+      "sample (1742, 58): mesh band -12, function band -13",
+      "sample (1490, 106): mesh band -11, function band -12",
+      "sample (554, 114): mesh band -12, function band -13",
+      "sample (1498, 114): mesh band -11, function band -12",
+      "sample (1486, 118): mesh band -11, function band -12"
+    ]
+  },
+  "parityCpu": {
+    "samples": 4198401,
+    "mismatches": 573,
+    "exempt": 66783,
+    "holes": 4097,
+    "examples": [
+      "sample (90, 2): mesh band -10, function band -11",
+      "sample (98, 6): mesh band -11, function band -12",
+      "sample (70, 10): mesh band -11, function band -10",
+      "sample (102, 10): mesh band -11, function band -12",
+      "sample (74, 14): mesh band -11, function band -10",
+      "sample (106, 14): mesh band -11, function band -12",
+      "sample (110, 22): mesh band -11, function band -12",
+      "sample (1494, 26): mesh band -11, function band -12"
+    ]
+  },
+  "pixels": {
+    "width": 1200,
+    "height": 900,
+    "pixels": 1080000,
+    "mismatched": 2379,
+    "mismatchFraction": 0.002202777777777778,
+    "tolerance": 8,
+    "neighbourhood": 3,
+    "metricFloorMismatched": 2066,
+    "metricFloorFraction": 0.0019129629629629629
+  },
+  "criteria": [
+    {
+      "name": "band parity mismatches",
+      "value": 157,
+      "limit": 0,
+      "pass": false
+    },
+    {
+      "name": "band parity holes",
+      "value": 0,
+      "limit": 0,
+      "pass": true
+    },
+    {
+      "name": "isoline port mismatches",
+      "value": 0,
+      "limit": 0,
+      "pass": true
+    },
+    {
+      "name": "pixel mismatch fraction",
+      "value": 0.002202777777777778,
+      "limit": 0.001,
+      "pass": false
+    },
+    {
+      "name": "compute per chunk p50 ms",
+      "value": 0.078848,
+      "limit": 0.1,
+      "pass": true
+    },
+    {
+      "name": "full-world rebuild ms",
+      "value": 5,
+      "limit": 50,
+      "pass": true
+    },
+    {
+      "name": "draw p50 ms",
+      "value": 0.690176,
+      "limit": 1,
+      "pass": true
+    },
+    {
+      "name": "resident GPU bytes",
+      "value": 189583836,
+      "limit": 207000000,
+      "pass": true
+    }
+  ],
+  "verdict": "kill",
+  "firstFailure": "band parity mismatches"
+}
