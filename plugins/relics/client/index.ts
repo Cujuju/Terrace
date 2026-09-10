@@ -1,4 +1,5 @@
-import { Color, Mesh, type BufferGeometry, type ShaderMaterial } from 'three';
+import { Color, Mesh, type BufferGeometry } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
   CAST_DENIED_MESSAGE,
@@ -65,7 +66,7 @@ const gems = new Map<string, GemEntry>();
 function disposeGem(entry: GemEntry): void {
   for (const mesh of [entry.mesh, entry.spire]) {
     mesh.removeFromParent();
-    (mesh.material as ShaderMaterial).dispose();
+    (mesh.material as NodeMaterial).dispose();
   }
 }
 
@@ -126,7 +127,7 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
       ground,
       entry.relic.y * CELL_WORLD_SIZE,
     );
-    (entry.spire.material as ShaderMaterial).uniforms.uAlpha!.value = spireAlpha(
+    (entry.spire.material as NodeMaterial).opacity = spireAlpha(
       elapsedS,
       entry.phaseS,
     );

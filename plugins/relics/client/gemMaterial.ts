@@ -1,4 +1,27 @@
-import { ShaderMaterial, Vector3 } from 'three';
+import { Vector3 } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Fn,
+  attribute,
+  cameraProjectionMatrix,
+  clamp,
+  cross,
+  dFdx,
+  dFdy,
+  dot,
+  float,
+  floor,
+  min,
+  mix,
+  modelViewMatrix,
+  normalize,
+  positionGeometry,
+  select,
+  uniform,
+  varying,
+  vec4,
+} from 'three/tsl';
+import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 
 export const ICON_LIGHT_UVH = [-0.35, 0.55, 0.75] as const;
 
@@ -15,66 +38,47 @@ function iconLightInViewSpace(): Vector3 {
 
 const LIGHT_DIR_VIEW = iconLightInViewSpace();
 
-const VERTEX_SHADER =  `
-attribute vec3 paintLight;
-attribute vec3 paintDark;
-attribute float paintBlend;
-uniform float uRadius;
-varying vec3 vViewPosition;
-varying vec3 vPaintLight;
-varying vec3 vPaintDark;
-varying float vPaintBlend;
-varying float vDownward;
+export function createGemMaterial(radius: number): NodeMaterial {
+  const material = new NodeMaterial();
 
-void main() {
-  vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
-  vec4 viewCentre = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-  vViewPosition = viewPosition.xyz;
-  // 0 at the top of the gem on screen, 1 at its bottom: the icon's vertical
-  // gradient, spanning the whole gem rather than each face.
-  vDownward = clamp((viewCentre.y + uRadius - viewPosition.y) / (2.0 * uRadius), 0.0, 1.0);
-  vPaintLight = paintLight;
-  vPaintDark = paintDark;
-  vPaintBlend = paintBlend;
-  gl_Position = projectionMatrix * viewPosition;
-}
-`;
+  const lightDirUniform = uniform(LIGHT_DIR_VIEW.clone());
+  const levelsUniform = uniform(ICON_LIGHT_LEVELS);
+  const radiusUniform = uniform(radius);
+  const paintLight = attribute<'vec3'>('paintLight', 'vec3');
+  const paintDark = attribute<'vec3'>('paintDark', 'vec3');
+  const paintBlend = attribute<'float'>('paintBlend', 'float');
 
-const FRAGMENT_SHADER =  `
-uniform vec3 uLightDir;
-uniform float uLevels;
-varying vec3 vViewPosition;
-varying vec3 vPaintLight;
-varying vec3 vPaintDark;
-varying float vPaintBlend;
-varying float vDownward;
+  const viewPosition = modelViewMatrix.mul(vec4(positionGeometry, 1.0));
+  const viewCentre = modelViewMatrix.mul(vec4(0.0, 0.0, 0.0, 1.0));
+  const vViewPosition = varying(viewPosition.xyz, 'vViewPosition');
+  // 0 at the top of the gem on screen, 1 at its bottom: one gradient across the whole gem.
+  const vDownward = varying(
+    clamp(
+      viewCentre.y.add(radiusUniform).sub(viewPosition.y).div(radiusUniform.mul(2.0)),
+      0.0,
+      1.0,
+    ),
+    'vDownward',
+  );
 
-void main() {
-  // The face's own normal, from screen-space derivatives: flat shading with
-  // no normal attribute, as three's own flatShading does it.
-  vec3 normal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
-  float lit = (dot(normal, uLightDir) + 1.0) * 0.5;
-  float level = min(uLevels - 1.0, floor((1.0 - lit) * uLevels));
-  // A vertex with its own blend (the tile) is painted with it; the rest are
-  // lit. A face is all one or all the other, so the varying never straddles.
-  float t = vPaintBlend < 0.0 ? (level + vDownward) / uLevels : vPaintBlend;
-  // The paints are sRGB and the icon blends them as sRGB; blend the same,
-  // then hand three linear light to write out.
-  vec4 srgb = vec4(mix(vPaintLight, vPaintDark, t), 1.0);
-  gl_FragColor = sRGBTransferEOTF(srgb);
-  #include <colorspace_fragment>
-}
-`;
+  material.vertexNode = cameraProjectionMatrix.mul(viewPosition);
 
-export function createGemMaterial(radius: number): ShaderMaterial {
-  return new ShaderMaterial({
-    vertexShader: VERTEX_SHADER,
-    fragmentShader: FRAGMENT_SHADER,
-    uniforms: {
-      uLightDir: { value: LIGHT_DIR_VIEW.clone() },
-      uLevels: { value: ICON_LIGHT_LEVELS },
-      uRadius: { value: radius },
-    },
-    toneMapped: false,
-  });
+  material.fragmentNode = Fn(() => {
+    // The face's own normal from screen-space derivatives: flat shading with no normal attribute.
+    const normal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
+    const lit = dot(normal, lightDirUniform).add(1.0).mul(0.5);
+    const level = min(levelsUniform.sub(1.0), floor(float(1.0).sub(lit).mul(levelsUniform)));
+    // A vertex with its own blend (the tile) is painted with it; the rest are lit.
+    const t = select(
+      paintBlend.lessThan(0.0),
+      level.add(vDownward).div(levelsUniform),
+      paintBlend,
+    );
+    // The paints are sRGB and blend as sRGB, which is the displayed colour the icon shows.
+    const srgb = mix(paintLight, paintDark, t);
+    // toneMapped: false is inert on WebGPU, so the displayed colour is inverted through ACES.
+    return vec4(radianceForDisplay(srgb), 1.0);
+  })();
+
+  return material;
 }
