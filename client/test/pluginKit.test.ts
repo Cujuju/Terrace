@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PoseInterpolator, type PoseSegment } from '../src/plugins/kit/interpolator.ts';
 import { watchReducedMotion } from '../src/plugins/kit/reducedMotion.ts';
 import { reconcileById } from '../src/plugins/kit/viewReconcile.ts';
+import { float, vec3 } from 'three/tsl';
+import type { Node } from 'three/webgpu';
 import {
-  PUFF_ALPHA_DISCARD_GLSL,
-  PUFF_BILLBOARD_GLSL,
-  PUFF_INSTANCE_BASE_GLSL,
-  puffMaskGlsl,
+  puffAlphaDiscard,
+  puffBillboard,
+  puffInstanceBase,
+  puffMask,
 } from '../src/plugins/kit/puffDeck.ts';
 
 interface DemoState {
@@ -210,24 +212,55 @@ describe('reconcileById', () => {
   });
 });
 
-describe('puff deck GLSL', () => {
-  it('offsets the vertex AFTER the view transform â€” that is the billboard', () => {
-    expect(PUFF_BILLBOARD_GLSL).toContain('vec4 viewPosition = viewMatrix * vec4(world, 1.0);');
-    expect(PUFF_BILLBOARD_GLSL).toContain('viewPosition.xy += position.xy * size;');
-    expect(PUFF_BILLBOARD_GLSL).toContain('gl_Position = projectionMatrix * viewPosition;');
+interface GraphEntry {
+  readonly type: string;
+  readonly op?: string;
+  readonly value?: unknown;
+  readonly method?: string;
+  readonly components?: string;
+}
+
+function graphOf(node: Node): { root: string; nodes: readonly GraphEntry[] } {
+  const json = node.toJSON() as { type: string; nodes?: GraphEntry[] };
+  return { root: json.type, nodes: json.nodes ?? [] };
+}
+
+function has(node: Node, entry: GraphEntry): boolean {
+  return graphOf(node).nodes.some((candidate) =>
+    Object.entries(entry).every(
+      ([key, value]) => JSON.stringify(candidate[key as keyof GraphEntry]) === JSON.stringify(value),
+    ),
+  );
+}
+
+describe('puff deck nodes', () => {
+  it('offsets the vertex AFTER the view transform — that is the billboard', () => {
+    const billboard = puffBillboard(vec3(1, 2, 3), float(2));
+    expect(graphOf(billboard).root).toBe('SplitNode');
+    expect(has(billboard, { type: 'OperatorNode', op: '+' })).toBe(true);
+    expect(has(billboard, { type: 'SplitNode', components: 'xy' })).toBe(true);
+    expect(has(billboard, { type: 'SplitNode', components: 'zw' })).toBe(true);
+    expect(has(billboard, { type: 'ConstNode', value: 2 })).toBe(true);
   });
 
   it('reads the instance matrix as a position only', () => {
-    expect(PUFF_INSTANCE_BASE_GLSL).toContain('(instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz');
+    const base = puffInstanceBase();
+    expect(has(base, { type: 'OperatorNode', op: '-' })).toBe(true);
+    expect(has(base, { type: 'VaryingNode' })).toBe(true);
+    expect(has(base, { type: 'AttributeNode' })).toBe(true);
   });
 
   it('builds a radial mask that discards outside the quad, at the given inner edge', () => {
-    expect(puffMaskGlsl('0.15')).toContain('smoothstep(0.15, 1.0, radius)');
-    expect(puffMaskGlsl('0.0')).toContain('smoothstep(0.0, 1.0, radius)');
-    expect(puffMaskGlsl('0.0')).toContain('if (puff <= 0.0) discard;');
+    const inner = puffMask(0.15);
+    expect(has(inner.puff, { type: 'MathNode', method: 'smoothstep' })).toBe(true);
+    expect(has(inner.puff, { type: 'ConstNode', value: 0.15 })).toBe(true);
+    expect(has(puffMask(0).puff, { type: 'ConstNode', value: 0 })).toBe(true);
+    expect(has(inner.discarded, { type: 'OperatorNode', op: '<=' })).toBe(true);
   });
 
   it('discards a puff too faint to be worth blending', () => {
-    expect(PUFF_ALPHA_DISCARD_GLSL).toContain('if (alpha <= 0.004) discard;');
+    const discarded = puffAlphaDiscard(float(1));
+    expect(has(discarded, { type: 'OperatorNode', op: '<=' })).toBe(true);
+    expect(has(discarded, { type: 'ConstNode', value: 0.004 })).toBe(true);
   });
 });

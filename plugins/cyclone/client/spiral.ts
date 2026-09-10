@@ -4,17 +4,38 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
-  MeshLambertMaterial,
   PlaneGeometry,
   Quaternion,
   Vector3,
-  type Material,
 } from 'three';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import {
+  attribute,
+  cameraViewMatrix,
+  cos,
+  dot,
+  float,
+  fract,
+  max,
+  mix,
+  normalize,
+  pow,
+  sin,
+  smoothstep,
+  sqrt,
+  uniform,
+  varying,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { CYCLONE_EYE_RADIUS_FRACTION, CYCLONE_RADIUS_CELLS } from '../protocol.ts';
 import {
-  PUFF_ALPHA_DISCARD_GLSL,
-  puffMaskGlsl,
+  PUFF_QUAD,
+  puffAlphaDiscard,
+  puffBillboard,
+  puffInstanceBase,
+  puffMask,
 } from '../../../client/src/plugins/kit/puffDeck.ts';
 import {
   DECK_BASE_WORLD_Y,
@@ -24,7 +45,7 @@ import {
   PUFF_NORMAL_FLATNESS,
   PUFF_SOFT_EDGE_FRACTION,
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
-import { glslFloat, spliceShader } from '../../../client/src/render/shaderSplice.ts';
+import { compose, discard } from '../../../client/src/render/materialSlots.ts';
 
 export const ARMS_PER_SPIRAL = 9;
 export const POSITIONS_PER_ARM = 90;
@@ -130,116 +151,6 @@ function seedHash(seed: number, multiplier: number): number {
   return (seed * multiplier) % 1;
 }
 
-const SHADER_COMMON_ANCHOR = '#include <common>';
-const BEGIN_VERTEX_ANCHOR = '#include <begin_vertex>';
-const PROJECT_VERTEX_ANCHOR = '#include <project_vertex>';
-const ALPHATEST_FRAGMENT_ANCHOR = '#include <alphatest_fragment>';
-const NORMAL_FRAGMENT_ANCHOR = '#include <normal_fragment_begin>';
-
-const SPIRAL_SHARED_DECLARATIONS =  `
-varying float vAlong;
-varying float vWall;
-varying float vStrength;
-varying vec2 vQuad;
-#define PUFF_NORMAL_FLATNESS ${glslFloat(PUFF_NORMAL_FLATNESS)}`;
-
-const SPIRAL_VERTEX_DECLARATIONS =  `${SPIRAL_SHARED_DECLARATIONS}
-uniform float uElapsed;
-attribute float aArm;
-attribute float aAlong;
-attribute float aSeed;
-attribute float aRadius;
-attribute float aStrength;
-attribute float aRise;`;
-
-const SPIRAL_PLACEMENT =  `vAlong = aAlong;
-    vStrength = aStrength;
-    vQuad = position.xy;
-
-    // THE EYEWALL PROFILE: 1 at the eyewall, 0 at the rim, and the puff's
-    // size, solidity and shade are read off it. See the TOWER block above —
-    // the deck's depth is a separate linear funnel and is already in aRise,
-    // computed once per layout because the STACK COUNT is what varies with it
-    // and a count cannot be produced in a vertex shader.
-    float wall = 1.0 - pow(aAlong, ${glslFloat(CYCLONE_TOWER_FALLOFF_EXPONENT)});
-    vWall = wall;
-
-    // THE LOGARITHMIC SPIRAL. aAlong runs 0 at the eyewall to 1 at the rim; the
-    // radius interpolates from the innermost band's centre line to the storm's
-    // edge, and the angle is the arm's own starting angle plus the wrap, MINUS
-    // the whole deck's slow rotation: +angle runs +X towards +Z, which is
-    // CLOCKWISE seen from above, and a cyclone turns anticlockwise (owner,
-    // 2026-09-05 — it spun the wrong way). With the wrap positive and the spin
-    // negative the arms TRAIL the rotation, as real bands do; the same sign on
-    // both had them leading. The inner end is the EYE PLUS A PUFF
-    // (CYCLONE_BAND_INNER_RADIUS_FRACTION), so the cloud's inner edge is the
-    // eye rather than its centre line.
-    float radius = aRadius * mix(${glslFloat(CYCLONE_BAND_INNER_RADIUS_FRACTION)}, 1.0, aAlong);
-    float angle = ${glslFloat(TWO_PI)} * (
-      aArm +
-      aAlong * ${glslFloat(ARM_WRAP_TURNS)} -
-      uElapsed * ${glslFloat(SPIRAL_SPIN_TURNS_PER_SECOND)});
-
-    // A scatter across the arm's width, so an arm is a BAND of cloud and not a
-    // wire. It widens outward, which is what real arms do and what stops the
-    // eyewall being swallowed.
-    float scatterAngle = fract(aSeed * ${glslFloat(SEED_HASH_SCATTER_BEARING)}) *
-      ${glslFloat(TWO_PI)};
-    // The band an arm covers, narrow at the eyewall and wide at the rim. Kept
-    // narrow for the reason the puff size is: at a wider band the scatter alone
-    // fills the gaps between two arms and the deck is a disc again.
-    float scatter = aRadius *
-      mix(${glslFloat(BAND_HALF_WIDTH_EYEWALL_FRACTION)},
-          ${glslFloat(BAND_HALF_WIDTH_RIM_FRACTION)}, aAlong) *
-      fract(aSeed * ${glslFloat(SEED_HASH_SCATTER_SPAN)} +
-            ${glslFloat(SEED_HASH_SCATTER_SPAN_OFFSET)});
-
-    // THE OFFSET FROM THE EYE, not the world position: the instance matrix
-    // carries the eye and the project_vertex chunk applies it two lines later.
-    // The Y is absolute because the matrix carries no height — the deck is a
-    // cloud layer at a fixed base, and where the ground under it happens to be
-    // is irrelevant (see ./index.ts's header).
-    transformed = vec3(
-      cos(angle) * radius + cos(scatterAngle) * scatter,
-      ${glslFloat(CYCLONE_DECK_BASE_WORLD_Y)} + aRise,
-      sin(angle) * radius + sin(scatterAngle) * scatter);
-
-    // BIGGER AT THE EYEWALL, and varying with the seed so the deck is not a
-    // grid of clones.
-    float puffSize = aRadius * ${glslFloat(PUFF_SIZE_RADIUS_FRACTION)} *
-      (1.0 + ${glslFloat(CYCLONE_EYEWALL_PUFF_GROWTH)} * wall) *
-      (${glslFloat(PUFF_SIZE_SEED_MIN)} +
-       ${glslFloat(PUFF_SIZE_SEED_SPAN)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_SIZE)}));`;
-
-const SPIRAL_BILLBOARD =  `mvPosition.xy += position.xy * puffSize;
-    gl_Position = projectionMatrix * mvPosition;`;
-
-const SPIRAL_MASK =  `// SOLID AT THE EYEWALL, A SMEAR AT THE RIM — see CYCLONE_EYEWALL_SOFT_EDGE.
-    // This is what makes the wall OCCLUDE rather than merely tint: a puff with
-    // a flat core hides what is behind it, and a hundred puffs that are all
-    // gradient average out into something the far coast shows through.
-    float softEdge = mix(${glslFloat(CYCLONE_RIM_SOFT_EDGE)},
-      ${glslFloat(CYCLONE_EYEWALL_SOFT_EDGE)}, vWall);
-    ${puffMaskGlsl('softEdge')}
-
-    // DARKEST AT THE EYEWALL, THINNING TO THE RIM — see CYCLONE_EYEWALL_SHADE.
-    // A multiplier on the ALBEDO: the deck is lit, so the sun still moves
-    // across it and the storm's own gloom still reaches it.
-    diffuseColor.rgb *= mix(1.0, ${glslFloat(CYCLONE_EYEWALL_SHADE)}, vWall);
-
-    // The outer tenth fades out, so the deck has no edge — the one thing that
-    // would give away that this is a finite set of quads rather than a sky.
-    float edge = 1.0 - smoothstep(${glslFloat(SPIRAL_RIM_FADE_START)}, 1.0, vAlong);
-
-    float alpha = puff * edge * vStrength;
-    ${PUFF_ALPHA_DISCARD_GLSL}
-    diffuseColor.a *= alpha;`;
-
-const SPIRAL_SPHERE_NORMAL =  `vec3 puffSphere =
-      vec3(vQuad, sqrt(max(0.0, 1.0 - dot(vQuad, vQuad))));
-    vec3 puffUp = (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
-    normal = normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS));`;
-
 interface Spiral {
   x: number;
   z: number;
@@ -278,7 +189,7 @@ function unitFromId(id: number): number {
 }
 
 export function createSpiral(
-  applyRevealClip: (material: Material, label: string) => void,
+  applyRevealClip: (material: MeshLambertNodeMaterial, label: string) => void,
 ): SpiralRenderer {
   const root = new Group();
   root.name = 'cyclone:spiral';
@@ -286,7 +197,7 @@ export function createSpiral(
   const capacity = MAX_SPIRALS * PUFFS_PER_SPIRAL;
   const geometry = new PlaneGeometry(2, 2, 1, 1);
 
-  const material = new MeshLambertMaterial({
+  const material = new MeshLambertNodeMaterial({
     color: CYCLONE_DECK_COLOR,
     opacity: CYCLONE_DECK_PEAK_OPACITY,
     transparent: true,
@@ -294,47 +205,69 @@ export function createSpiral(
     side: DoubleSide,
   });
 
-  const elapsedUniform = { value: 0 };
+  const elapsedUniform = uniform(0);
+
+  const aArm = attribute<'float'>('aArm', 'float');
+  const aAlong = attribute<'float'>('aAlong', 'float');
+  const aSeed = attribute<'float'>('aSeed', 'float');
+  const aRadius = attribute<'float'>('aRadius', 'float');
+  const aStrength = attribute<'float'>('aStrength', 'float');
+  const aRise = attribute<'float'>('aRise', 'float');
+
+  // The eyewall profile: 1 at the eyewall, 0 at the rim; size, solidity and shade read off it.
+  const wall = varying(float(1).sub(pow(aAlong, CYCLONE_TOWER_FALLOFF_EXPONENT)), 'vWall');
+
+  // The logarithmic spiral: wrap positive, spin negative, so the arms trail an anticlockwise turn.
+  const radius = aRadius.mul(mix(float(CYCLONE_BAND_INNER_RADIUS_FRACTION), 1, aAlong));
+  const angle = float(TWO_PI).mul(
+    aArm.add(aAlong.mul(ARM_WRAP_TURNS)).sub(elapsedUniform.mul(SPIRAL_SPIN_TURNS_PER_SECOND)),
+  );
+
+  // A scatter across the arm's width, narrow at the eyewall and wide at the rim.
+  const scatterAngle = fract(aSeed.mul(SEED_HASH_SCATTER_BEARING)).mul(TWO_PI);
+  const scatter = aRadius
+    .mul(mix(float(BAND_HALF_WIDTH_EYEWALL_FRACTION), BAND_HALF_WIDTH_RIM_FRACTION, aAlong))
+    .mul(fract(aSeed.mul(SEED_HASH_SCATTER_SPAN).add(SEED_HASH_SCATTER_SPAN_OFFSET)));
+
+  // The offset from the eye; the instance matrix carries the eye. Y is absolute: a fixed cloud base.
+  const transformed = vec3(
+    cos(angle).mul(radius).add(cos(scatterAngle).mul(scatter)),
+    float(CYCLONE_DECK_BASE_WORLD_Y).add(aRise),
+    sin(angle).mul(radius).add(sin(scatterAngle).mul(scatter)),
+  );
+
+  // Bigger at the eyewall, and varying with the seed so the deck is not a grid of clones.
+  const puffSize = aRadius
+    .mul(PUFF_SIZE_RADIUS_FRACTION)
+    .mul(float(1).add(wall.mul(CYCLONE_EYEWALL_PUFF_GROWTH)))
+    .mul(float(PUFF_SIZE_SEED_MIN).add(fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(PUFF_SIZE_SEED_SPAN)));
+
+  compose(material, 'position', () =>
+    puffBillboard(transformed.add(puffInstanceBase()), puffSize),
+  );
+
+  // Solid at the eyewall, a smear at the rim, so the wall occludes rather than tints.
+  const softEdge = mix(float(CYCLONE_RIM_SOFT_EDGE), CYCLONE_EYEWALL_SOFT_EDGE, wall);
+  const mask = puffMask(softEdge);
+  discard(material, mask.discarded);
+
+  // Darkest at the eyewall: a multiplier on the albedo, so the deck is still lit.
+  compose(material, 'color', (previous) =>
+    previous.mul(mix(float(1), CYCLONE_EYEWALL_SHADE, wall)),
+  );
+
+  // The outer tenth fades out, so the deck has no edge.
+  const edge = float(1).sub(smoothstep(SPIRAL_RIM_FADE_START, 1, aAlong));
+  const alpha = mask.puff.mul(edge).mul(aStrength);
+  discard(material, puffAlphaDiscard(alpha));
+  compose(material, 'opacity', (previous) => previous.mul(alpha));
+
+  const puffSphere = vec3(PUFF_QUAD, sqrt(max(0, float(1).sub(dot(PUFF_QUAD, PUFF_QUAD)))));
+  const puffUp = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz;
+  compose(material, 'normal', () => normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS)));
 
   const label = 'cyclone spiral';
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uElapsed = elapsedUniform;
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        spliceShader(
-          shader.vertexShader,
-          SHADER_COMMON_ANCHOR,
-          `${SHADER_COMMON_ANCHOR}\n${SPIRAL_VERTEX_DECLARATIONS}`,
-          label,
-        ),
-        BEGIN_VERTEX_ANCHOR,
-        `${BEGIN_VERTEX_ANCHOR}\n    ${SPIRAL_PLACEMENT}`,
-        label,
-      ),
-      PROJECT_VERTEX_ANCHOR,
-      `${PROJECT_VERTEX_ANCHOR}\n    ${SPIRAL_BILLBOARD}`,
-      label,
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        spliceShader(
-          shader.fragmentShader,
-          SHADER_COMMON_ANCHOR,
-          `${SHADER_COMMON_ANCHOR}\n${SPIRAL_SHARED_DECLARATIONS}`,
-          label,
-        ),
-        ALPHATEST_FRAGMENT_ANCHOR,
-        `${ALPHATEST_FRAGMENT_ANCHOR}\n    ${SPIRAL_MASK}`,
-        label,
-      ),
-      NORMAL_FRAGMENT_ANCHOR,
-      `${NORMAL_FRAGMENT_ANCHOR}\n    ${SPIRAL_SPHERE_NORMAL}`,
-      label,
-    );
-  };
-  const stockCacheKey = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${stockCacheKey()}|cycloneSpiral`;
-
+  material.name = label;
   applyRevealClip(material, label);
 
   const mesh = new InstancedMesh(geometry, material, capacity);
