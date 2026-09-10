@@ -46,7 +46,6 @@ export interface ChunkJobAnswer {
   readonly positions: Float32Array;
   readonly normals: Int8Array;
   readonly colors: Uint8Array;
-  readonly selfLit: Float32Array;
   readonly bounds: Float32Array;
   readonly plan: FlatCapPlan;
   readonly topLevel: Int8Array;
@@ -58,7 +57,6 @@ export function chunkJobTransfers(answer: ChunkJobAnswer): ArrayBufferLike[] {
     answer.positions.buffer,
     answer.normals.buffer,
     answer.colors.buffer,
-    answer.selfLit.buffer,
     answer.bounds.buffer,
     answer.plan.levelThreshold.buffer,
     answer.plan.levelSampleBand.buffer,
@@ -215,7 +213,6 @@ export function buildChunkAnswer(
   const positions = scratch.positions.slice(0, vertexCount * 3);
   const normals = scratch.normals.slice(0, vertexCount * COMPONENTS_PER_NORMAL);
   const colors = scratch.colors.slice(0, vertexCount * COMPONENTS_PER_COLOR);
-  const selfLit = scratch.selfLit.slice(0, vertexCount);
 
   const bounds = new Float32Array(6);
   measureBounds(positions, vertexCount, bounds);
@@ -235,7 +232,6 @@ export function buildChunkAnswer(
       positions,
       normals,
       colors,
-      selfLit,
       bounds,
       plan,
       topLevel,
