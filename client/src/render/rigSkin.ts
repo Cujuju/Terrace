@@ -418,7 +418,6 @@ function stripUnbakeableAttributes(geometry: BufferGeometry, material: Material)
 
 function vertexColoured(material: Material): Material {
   const clone = material.clone();
-  clone.onBeforeCompile = material.onBeforeCompile;
   clone.customProgramCacheKey = material.customProgramCacheKey;
   clone.vertexColors = true;
   const tinted = clone as Material & { color?: Color };
