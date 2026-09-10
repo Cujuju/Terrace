@@ -9,7 +9,6 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
-  MeshBasicMaterial,
   Points,
   PointsMaterial,
   Quaternion,
@@ -26,7 +25,9 @@ import {
   MAX_LASER_BOLTS,
   MAX_SAUCERS_PER_ENCOUNTER,
 } from '../protocol.ts';
-import { spliceShader } from '../../../client/src/render/shaderSplice.ts';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { attribute } from 'three/tsl';
+import { compose } from '../../../client/src/render/materialSlots.ts';
 
 function worldUnitsAcross(cells: number): number {
   return cells * CELL_WORLD_SIZE;
@@ -43,51 +44,19 @@ const CYLINDER_AXIS = new Vector3(0, 1, 0);
 
 const UNIT_SCALE = new Vector3(1, 1, 1);
 
-const SHADER_COMMON_ANCHOR = '#include <common>';
-const BEGIN_VERTEX_ANCHOR = '#include <begin_vertex>';
-const ALPHATEST_FRAGMENT_ANCHOR = '#include <alphatest_fragment>';
-
-const INSTANCED_ALPHA_VERTEX_DECLARATIONS =  `varying float vInstancedAlpha;
-attribute float instancedAlpha;`;
-const INSTANCED_ALPHA_FRAGMENT_DECLARATIONS =  `varying float vInstancedAlpha;`;
-const INSTANCED_ALPHA_ASSIGN =  `vInstancedAlpha = instancedAlpha;`;
-const INSTANCED_ALPHA_APPLY =  `diffuseColor.a *= vInstancedAlpha;`;
-
 function addInstancedAlpha(
   geometry: BufferGeometry,
-  material: MeshBasicMaterial,
+  material: MeshBasicNodeMaterial,
   capacity: number,
   label: string,
 ): InstancedBufferAttribute {
   const alpha = new InstancedBufferAttribute(new Float32Array(capacity).fill(1), 1);
   geometry.setAttribute('instancedAlpha', alpha);
 
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${INSTANCED_ALPHA_VERTEX_DECLARATIONS}`,
-        label,
-      ),
-      BEGIN_VERTEX_ANCHOR,
-      `${BEGIN_VERTEX_ANCHOR}\n    ${INSTANCED_ALPHA_ASSIGN}`,
-      label,
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        shader.fragmentShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${INSTANCED_ALPHA_FRAGMENT_DECLARATIONS}`,
-        label,
-      ),
-      ALPHATEST_FRAGMENT_ANCHOR,
-      `${ALPHATEST_FRAGMENT_ANCHOR}\n    ${INSTANCED_ALPHA_APPLY}`,
-      label,
-    );
-  };
-  const stockCacheKey = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${stockCacheKey()}|instancedAlpha:${label}`;
+  material.name = label;
+  compose(material, 'opacity', (previous) =>
+    previous.mul(attribute<'float'>('instancedAlpha', 'float')),
+  );
 
   return alpha;
 }
@@ -125,7 +94,7 @@ export function createLaserPool(): LaserPool {
   const root = new Group();
   root.name = 'saucers:bolts';
 
-  const material = new MeshBasicMaterial({
+  const material = new MeshBasicNodeMaterial({
     transparent: true,
     opacity: 1,
     blending: NormalBlending,
@@ -242,7 +211,7 @@ export function createCrashBursts(): CrashBursts {
 
   const sphere = new SphereGeometry(1, BURST_RADIAL_SEGMENTS, BURST_HEIGHT_SEGMENTS);
 
-  const ballMaterial = new MeshBasicMaterial({
+  const ballMaterial = new MeshBasicNodeMaterial({
     transparent: true,
     opacity: 1,
     blending: AdditiveBlending,
@@ -254,7 +223,7 @@ export function createCrashBursts(): CrashBursts {
   ball.frustumCulled = false;
   root.add(ball);
 
-  const coreMaterial = new MeshBasicMaterial({
+  const coreMaterial = new MeshBasicNodeMaterial({
     transparent: true,
     opacity: 1,
     blending: AdditiveBlending,
@@ -387,7 +356,7 @@ export function createCrashSplashes(): CrashSplashes {
   const ringGeometry = new TorusGeometry(1, worldUnitsAcross(RING_TUBE_CELLS), RING_RADIAL_SEGMENTS, RING_TUBULAR_SEGMENTS);
   ringGeometry.rotateX(Math.PI / 2);
 
-  const plumeMaterial = new MeshBasicMaterial({
+  const plumeMaterial = new MeshBasicNodeMaterial({
     color: SPLASH_COLOUR,
     transparent: true,
     opacity: 1,
@@ -401,7 +370,7 @@ export function createCrashSplashes(): CrashSplashes {
   plume.frustumCulled = false;
   root.add(plume);
 
-  const ringMaterial = new MeshBasicMaterial({
+  const ringMaterial = new MeshBasicNodeMaterial({
     color: SPLASH_COLOUR,
     transparent: true,
     opacity: 1,

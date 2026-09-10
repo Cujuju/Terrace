@@ -7,7 +7,6 @@ import {
   Group,
   LinearFilter,
   LinearMipmapLinearFilter,
-  MeshLambertMaterial,
   RGBAFormat,
   RepeatWrapping,
   SphereGeometry,
@@ -17,6 +16,20 @@ import {
   type MeshLambertMaterialParameters,
 } from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { MeshLambertNodeMaterial, type Node } from 'three/webgpu';
+import {
+  abs,
+  max,
+  normalGeometry,
+  normalize,
+  positionGeometry,
+  pow,
+  texture,
+  uniform,
+  vec2,
+  vec3,
+} from 'three/tsl';
+import { compose, discard } from '../../../client/src/render/materialSlots.ts';
 import type { MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import type { RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 
@@ -183,53 +196,24 @@ export function furShadeTexture(): DataTexture {
   return texture;
 }
 
-const FUR_PROGRAM_KEY = 'monster-fur-triplanar';
+const FUR_AXIS_WEIGHT_FLOOR = 1e-5;
 
-const TRIPLANAR_VERTEX_DECLARATIONS = `
-varying vec3 vFurPosition;
-varying vec3 vFurNormal;`;
-const TRIPLANAR_VERTEX_ASSIGNMENTS = `
-vFurPosition = transformed;
-vFurNormal = objectNormal;`;
-const TRIPLANAR_FRAGMENT_DECLARATIONS = `
-uniform sampler2D furMap;
-uniform float furFrequency;
-varying vec3 vFurPosition;
-varying vec3 vFurNormal;`;
-const TRIPLANAR_FRAGMENT_SAMPLE = `
-  vec3 furAxis = pow(abs(normalize(vFurNormal)), vec3(${FUR_BLEND_SHARPNESS}.0));
-  furAxis /= max(furAxis.x + furAxis.y + furAxis.z, 1e-5);
-  vec3 furAt = vFurPosition * furFrequency;
-  float furSample =
-      texture2D(furMap, vec2(furAt.z, furAt.y)).r * furAxis.x
-    + texture2D(furMap, vec2(furAt.x, furAt.z)).r * furAxis.y
-    + texture2D(furMap, vec2(furAt.x, furAt.y)).r * furAxis.z;`;
-
-function injectTriplanarVaryings(shader: { vertexShader: string; fragmentShader: string }): void {
-  shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', `#include <common>${TRIPLANAR_VERTEX_DECLARATIONS}`)
-    .replace('#include <begin_vertex>', `#include <begin_vertex>${TRIPLANAR_VERTEX_ASSIGNMENTS}`);
-  shader.fragmentShader = shader.fragmentShader.replace(
-    '#include <common>',
-    `#include <common>${TRIPLANAR_FRAGMENT_DECLARATIONS}`,
+// Object-space triplanar: the fur texture projected along each axis, blended by the normal's facing.
+function triplanarFurSample(furMap: Texture, furFrequency: Node<'float'>): Node<'float'> {
+  const furAxisRaw = pow(abs(normalize(normalGeometry)), vec3(FUR_BLEND_SHARPNESS));
+  const furAxis = furAxisRaw.div(
+    max(furAxisRaw.x.add(furAxisRaw.y).add(furAxisRaw.z), FUR_AXIS_WEIGHT_FLOOR),
   );
+  const furAt = positionGeometry.mul(furFrequency);
+  return texture(furMap, vec2(furAt.z, furAt.y))
+    .r.mul(furAxis.x)
+    .add(texture(furMap, vec2(furAt.x, furAt.z)).r.mul(furAxis.y))
+    .add(texture(furMap, vec2(furAt.x, furAt.y)).r.mul(furAxis.z));
 }
 
-function applyFurShader(material: MeshLambertMaterial, texture: Texture, frequency: number): void {
-  material.customProgramCacheKey = () => FUR_PROGRAM_KEY;
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.furMap = { value: texture };
-    shader.uniforms.furFrequency = { value: frequency };
-    injectTriplanarVaryings(shader);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <color_fragment>',
-      `#include <color_fragment>
-{
-${TRIPLANAR_FRAGMENT_SAMPLE}
-  diffuseColor.rgb *= furSample;
-}`,
-    );
-  };
+function applyFurShader(material: MeshLambertNodeMaterial, texture: Texture, frequency: number): void {
+  const furSample = triplanarFurSample(texture, uniform(frequency));
+  compose(material, 'color', (previous) => previous.mul(furSample));
 }
 
 const FUR_STRAND_SHARPNESS = 2.2;
@@ -280,31 +264,13 @@ export function furStrandAlphaTexture(): DataTexture {
 const SHELL_ALPHA_THRESHOLD_BASE = 0.16;
 const SHELL_ALPHA_THRESHOLD_RANGE = 0.52;
 
-const SHELL_PROGRAM_KEY = 'monster-fur-shell';
-
 function applyShellShader(
-  material: MeshLambertMaterial,
+  material: MeshLambertNodeMaterial,
   texture: Texture,
   frequency: number,
   threshold: number,
-  layer: number,
-  layers: number,
 ): void {
-  const key = `${SHELL_PROGRAM_KEY}-${layer}-of-${layers}`;
-  material.customProgramCacheKey = () => key;
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.furMap = { value: texture };
-    shader.uniforms.furFrequency = { value: frequency };
-    injectTriplanarVaryings(shader);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <color_fragment>',
-      `#include <color_fragment>
-{
-${TRIPLANAR_FRAGMENT_SAMPLE}
-  if (furSample < ${threshold.toFixed(4)}) discard;
-}`,
-    );
-  };
+  discard(material, triplanarFurSample(texture, uniform(frequency)).lessThan(threshold));
 }
 
 export function ellipsoid(
@@ -475,13 +441,13 @@ export interface ModelWorkshop {
   keepGeometry<T extends BufferGeometry>(geometry: T): T;
   keepMaterial<T extends Material>(material: T): T;
   keepRig<T extends RigBlueprint>(blueprint: T): T;
-  lambert(color: number, options?: LambertOptions): MeshLambertMaterial;
+  lambert(color: number, options?: LambertOptions): MeshLambertNodeMaterial;
   shellMaterial(
     color: number,
     layer: number,
     layers: number,
     furFrequency: number,
-  ): MeshLambertMaterial;
+  ): MeshLambertNodeMaterial;
   organicSurface(parts: BufferGeometry[], skin: SkinFinish): BufferGeometry;
   dispose(): void;
 }
@@ -517,7 +483,7 @@ export function createWorkshop(): ModelWorkshop {
     keepMaterial,
     keepRig,
 
-    lambert(color: number, options: LambertOptions = {}): MeshLambertMaterial {
+    lambert(color: number, options: LambertOptions = {}): MeshLambertNodeMaterial {
       const parameters: MeshLambertMaterialParameters = {
         color,
         flatShading: false,
@@ -525,7 +491,7 @@ export function createWorkshop(): ModelWorkshop {
       };
       if (options.emissive !== undefined) parameters.emissive = options.emissive;
       if (options.doubleSided === true) parameters.side = DoubleSide;
-      const material = new MeshLambertMaterial(parameters);
+      const material = new MeshLambertNodeMaterial(parameters);
       if (options.furFrequency !== undefined) {
         if (furTexture === undefined) furTexture = furShadeTexture();
         applyFurShader(material, furTexture, options.furFrequency);
@@ -538,9 +504,9 @@ export function createWorkshop(): ModelWorkshop {
       layer: number,
       layers: number,
       furFrequency: number,
-    ): MeshLambertMaterial {
+    ): MeshLambertNodeMaterial {
       if (strandTexture === undefined) strandTexture = furStrandAlphaTexture();
-      const material = new MeshLambertMaterial({
+      const material = new MeshLambertNodeMaterial({
         color,
         flatShading: false,
         vertexColors: true,
@@ -550,8 +516,6 @@ export function createWorkshop(): ModelWorkshop {
         strandTexture,
         furFrequency,
         SHELL_ALPHA_THRESHOLD_BASE + (layer / layers) * SHELL_ALPHA_THRESHOLD_RANGE,
-        layer,
-        layers,
       );
       return keepMaterial(material);
     },
