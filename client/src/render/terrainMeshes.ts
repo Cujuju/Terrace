@@ -27,6 +27,7 @@ import {
   createDrawnGroundStore,
   type DrawnGroundStore,
 } from '../terrain/drawnGroundStore.ts';
+import { COMPONENTS_PER_COLOR, COMPONENTS_PER_NORMAL } from '../terrain/capEmission.ts';
 import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
@@ -218,8 +219,8 @@ export function createTerrainMeshes(
 
     const grown = createChunkGeometryBuffers(triangles);
     grown.positions.set(sm.buffers.positions.subarray(0, sm.liveEnd * 3));
-    grown.normals.set(sm.buffers.normals.subarray(0, sm.liveEnd * 3));
-    grown.colors.set(sm.buffers.colors.subarray(0, sm.liveEnd * 3));
+    grown.normals.set(sm.buffers.normals.subarray(0, sm.liveEnd * COMPONENTS_PER_NORMAL));
+    grown.colors.set(sm.buffers.colors.subarray(0, sm.liveEnd * COMPONENTS_PER_COLOR));
     grown.selfLit.set(sm.buffers.selfLit.subarray(0, sm.liveEnd));
     sm.buffers = grown;
     sm.growths++;
@@ -295,8 +296,8 @@ export function createTerrainMeshes(
     if (vertexCount <= 0) return;
     const { positions, normals, colors, selfLit } = sm.buffers;
     positions.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
-    normals.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
-    colors.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
+    normals.fill(0, startVertex * COMPONENTS_PER_NORMAL, (startVertex + vertexCount) * COMPONENTS_PER_NORMAL);
+    colors.fill(0, startVertex * COMPONENTS_PER_COLOR, (startVertex + vertexCount) * COMPONENTS_PER_COLOR);
     selfLit.fill(0, startVertex, startVertex + vertexCount);
   };
 
@@ -361,8 +362,8 @@ export function createTerrainMeshes(
     const to = hole.offset;
     const { positions, normals, colors, selfLit } = sm.buffers;
     positions.copyWithin(to * 3, from * 3, runEnd * 3);
-    normals.copyWithin(to * 3, from * 3, runEnd * 3);
-    colors.copyWithin(to * 3, from * 3, runEnd * 3);
+    normals.copyWithin(to * COMPONENTS_PER_NORMAL, from * COMPONENTS_PER_NORMAL, runEnd * COMPONENTS_PER_NORMAL);
+    colors.copyWithin(to * COMPONENTS_PER_COLOR, from * COMPONENTS_PER_COLOR, runEnd * COMPONENTS_PER_COLOR);
     selfLit.copyWithin(to, from, runEnd);
     run.offset = to;
 
@@ -503,8 +504,8 @@ export function createTerrainMeshes(
 
     const { positions, normals, colors, selfLit } = sm.buffers;
     positions.set(answer.positions, slot.offset * 3);
-    normals.set(answer.normals, slot.offset * 3);
-    colors.set(answer.colors, slot.offset * 3);
+    normals.set(answer.normals, slot.offset * COMPONENTS_PER_NORMAL);
+    colors.set(answer.colors, slot.offset * COMPONENTS_PER_COLOR);
     selfLit.set(answer.selfLit, slot.offset);
 
     slot.minX = answer.bounds[0]!;

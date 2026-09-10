@@ -63,8 +63,10 @@ export const CHUNK_POLYGON_WORK_BUDGET =
   MAX_MERGED_POLYGON_VERTICES * MAX_MERGED_POLYGON_VERTICES;
 
 const COMPONENTS_PER_POSITION = 3;
-const COMPONENTS_PER_NORMAL = 3;
-const COMPONENTS_PER_COLOR = 3;
+// Four components, not three: D3D11 has no 8-bit x3 vertex format, so ANGLE
+// translates x3 attributes on the CPU per upload (bench/webgpu-renderer-ab).
+export const COMPONENTS_PER_NORMAL = 4;
+export const COMPONENTS_PER_COLOR = 4;
 export const VERTICES_PER_TRIANGLE = 3;
 
 export const LIT_BY_SCENE = 0;

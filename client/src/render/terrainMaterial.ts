@@ -8,6 +8,8 @@ import {
   MeshStandardMaterial,
 } from 'three';
 import {
+  COMPONENTS_PER_COLOR,
+  COMPONENTS_PER_NORMAL,
   createChunkGeometryBuffers,
   type ChunkGeometryBuffers,
 } from '../terrain/capEmission.ts';
@@ -80,8 +82,8 @@ export interface ArenaGeometry {
 
 export function createArenaGeometry(buffers: ChunkGeometryBuffers): ArenaGeometry {
   const positionAttribute = new BufferAttribute(buffers.positions, 3);
-  const normalAttribute = new BufferAttribute(buffers.normals, 3, true);
-  const colorAttribute = new BufferAttribute(buffers.colors, 3, true);
+  const normalAttribute = new BufferAttribute(buffers.normals, COMPONENTS_PER_NORMAL, true);
+  const colorAttribute = new BufferAttribute(buffers.colors, COMPONENTS_PER_COLOR, true);
   const selfLitAttribute = new BufferAttribute(buffers.selfLit, 1, true);
   positionAttribute.setUsage(DynamicDrawUsage);
   normalAttribute.setUsage(DynamicDrawUsage);
