@@ -1,0 +1,1407 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>Gate 1 — WebGPU terrace mesher</title>
+<style>
+  html, body { margin: 0; background: #10131a; }
+  canvas { display: block; width: 1200px; height: 900px; }
+  #err { position: fixed; inset: 0; color: #ffb4b4; font: 13px monospace; padding: 12px; white-space: pre-wrap; }
+</style>
+<canvas id="view" width="1200" height="900"></canvas>
+<pre id="err"></pre>
+<script type="module">
+const REPORT = document.getElementById('err');
+const fail = (message) => { REPORT.textContent += message + '\n'; window.__error = String(message); };
+
+// ---------------------------------------------------------------- constants
+const [VIEWPORT_WIDTH, VIEWPORT_HEIGHT] = [1200, 900];
+const [CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR] = [55, 0.1, 4000];
+// The shipped bench pose. `s` rescales the recorded eye, which was captured
+// against a 63.875 world-unit half-extent, onto this world's half-extent.
+const [BENCH_EYE_X, BENCH_EYE_Y] = [110.21323722716554, 45.88611490808369];
+const BENCH_EYE_REFERENCE_HALF = 63.875;
+const LIGHT_DIRECTION = [0.45, 0.8, 0.35];
+const [AMBIENT_INTENSITY, DIFFUSE_INTENSITY] = [0.42, 0.58];
+const CLEAR_COLOR = { r: 0.043, g: 0.055, b: 0.075, a: 1 };
+const [DEPTH_FORMAT, BAND_TEXTURE_FORMAT, BAND_PASS_DEPTH_FORMAT] = ['depth32float', 'r32sint', 'depth32float'];
+// Ortho depth range for the top-down band pass, in world units. The world's
+// caps live in [-24, 16]; this pads both ends.
+const [ORTHO_Y_MIN, ORTHO_Y_MAX] = [-64, 64];
+const WORKGROUP_THREADS = 64;
+// A sculpt stroke dirties at most a 3x3 chunk neighbourhood; the timed edit
+// re-uploads every height row that window reads and re-emits those chunks.
+const EDIT_WINDOW_CHUNKS = 3;
+const EDIT_WARMUP = 10;
+const EDIT_ITERATIONS = 100;
+const [CHUNK_UNIFORM_STRIDE, BYTES_PER_ROW_ALIGNMENT] = [256, 256];
+const WRITE_CHUNK_BYTES = 64 * 1024 * 1024;
+const [DRAW_WARMUP_FRAMES, DRAW_MEASURED_FRAMES] = [60, 120];
+const [MODE_EMIT, MODE_COUNT_ONLY] = [0, 1];
+const [MARCH_MAX_POLYS, MARCH_MAX_POLY_REFS, MARCH_CASE_COUNT] = [2, 8, 18];
+const [MARCH_SADDLE_5_SPLIT, MARCH_SADDLE_10_SPLIT] = [16, 17];
+const TIMESTAMP_PERIOD_NS = 1e-6; // nanoseconds -> milliseconds
+const [LUT_CAP_BASE, LUT_CLIFF_BASE, LUT_BORDER_BASE] = [0, 256, 512];
+const [LUT_SHORE_CAP, LUT_SHORE_CLIFF, LUT_VEC4_COUNT] = [768, 769, 770];
+const EXEMPT_NEIGHBOUR_OFFSETS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const MAX_MISMATCH_EXAMPLES = 8;
+
+const params = new URLSearchParams(location.search);
+const SOURCE = params.get('src') === 'cpu' ? 'cpu' : 'gpu';
+// ?loop=1 renders every frame until the tab closes; ?edit=<ms> adds one 3x3
+// window re-emit at that interval on a random interior chunk (gpu source
+// only), modelling a moving sculpt stroke for the battery run.
+const LOOP = params.get('loop') === '1';
+const EDIT_INTERVAL_MS = Number(params.get('edit') ?? 0);
+// ?shift=1 re-renders the same mesh moved half a position-quantization step,
+// which is 0.01 px at this camera. Diffing a source against its own shifted
+// self measures how much of the pixel metric is sub-pixel phase rather than a
+// real difference in what was drawn.
+const POSITION_SHIFT_STEPS = params.get('shift') === '1' ? 0.5 : 0;
+
+// ------------------------------------------------------------------- matrix
+// Reversed-Z: clip.z' = clip.w - clip.z, so the near plane maps to 1 and the far
+// plane to 0. With a float depth buffer that spends the mantissa where the
+// geometry is, which is what keeps sub-pixel cap treads from z-fighting.
+const perspective = (fovDegrees, aspect, near, far) => {
+  const f = 1 / Math.tan(((fovDegrees * Math.PI) / 180) / 2);
+  const depthScale = far / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, -1 - depthScale, -1,
+    0, 0, -(far * near) / (near - far), 0];
+};
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const norm3 = (a) => { const l = Math.hypot(a[0], a[1], a[2]); return [a[0] / l, a[1] / l, a[2] / l]; };
+const lookAt = (eye, target, up) => {
+  const z = norm3(sub3(eye, target));
+  const x = norm3(cross3(up, z));
+  const y = cross3(z, x);
+  return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
+    -dot3(x, eye), -dot3(y, eye), -dot3(z, eye), 1];
+};
+const multiply = (a, b) => {
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      let sum = 0;
+      for (let k = 0; k < 4; k++) sum += a[k * 4 + r] * b[c * 4 + k];
+      out[c * 4 + r] = sum;
+    }
+  }
+  return out;
+};
+// Column-major orthographic box -> WebGPU clip space (z in [0, 1]).
+const orthographic = (left, right, bottom, top, near, far) => [
+  2 / (right - left), 0, 0, 0,
+  0, 2 / (top - bottom), 0, 0,
+  0, 0, 1 / (near - far), 0,
+  (left + right) / (left - right), (bottom + top) / (bottom - top), near / (near - far), 1,
+];
+
+// -------------------------------------------------------------------- WGSL
+const ISOLINE_FNS = (meta) => `
+// --- drawnIsolineAt, ported exactly ----------------------------------------
+// The TypeScript bisects at denominator 2^16 over products that reach 2^43,
+// which i32 cannot hold. The field is linear along the solve axis, so the
+// bisection collapses to one exact division; see README.md.
+const ISOLINE_SOLVE_SHIFT : u32 = 16u;
+const ISOLINE_SOLVE_DENOM : i32 = 65536;
+const SOLVE_PER_COORD_UNIT : i32 = 64;
+const ISOLINE_NO_CROSSING : i32 = -1;
+const DRAWN_GROUND_BAND_BIAS : i32 = ${meta.bandBias};
+
+// floor(a * 2^16 / d) for 0 <= a < d, by restoring division: every
+// intermediate stays under 2^30, so i32 is exact.
+fn scaledQuotient(a : i32, d : i32) -> vec2i {
+  var rem = a;
+  var q = 0;
+  for (var bit = 0u; bit < ISOLINE_SOLVE_SHIFT; bit++) {
+    rem = rem * 2;
+    q = q * 2;
+    if (rem >= d) { rem -= d; q += 1; }
+  }
+  return vec2i(q, rem);
+}
+
+fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
+                fixedUnits : i32, alongX : bool) -> i32 {
+  let fixedScaled = fixedUnits * SOLVE_PER_COORD_UNIT;
+  let targetHeight = threshold - DRAWN_GROUND_BAND_BIAS;
+  // low/high are the corner pairs at units = 0 and units = 2^16, each already
+  // shifted by targetHeight so the whole expression is a small signed number.
+  var lowNear = nw;
+  var lowFar = ne;
+  var highNear = sw;
+  var highFar = se;
+  if (!alongX) {
+    // units drives tx: the pair at tx = 0 is (nw, sw), at tx = 2^16 is (ne, se).
+    lowFar = sw;
+    highNear = ne;
+  }
+  let other = ISOLINE_SOLVE_DENOM - fixedScaled;
+  let a = lowNear * other + lowFar * fixedScaled - targetHeight * ISOLINE_SOLVE_DENOM;
+  let b = highNear * other + highFar * fixedScaled - targetHeight * ISOLINE_SOLVE_DENOM;
+  let insideLow = a >= 0;
+  if (insideLow == (b >= 0)) { return ISOLINE_NO_CROSSING; }
+  let c = b - a;
+  if (insideLow) {
+    // a >= 0 and a + c < 0: the crossing is floor(a * 2^16 / -c).
+    return scaledQuotient(a, -c).x;
+  }
+  let solved = scaledQuotient(-a, c);
+  return select(solved.x, solved.x + 1, solved.y != 0);
+}
+`;
+
+const workgroupsPerChunk = (meta) => Math.max(1, Math.ceil((meta.chunkSize * meta.chunkSize) / WORKGROUP_THREADS));
+
+const MESH_WGSL = (meta) => `
+${ISOLINE_FNS(meta)}
+const BAND_HEIGHT : i32 = ${meta.bandHeight};
+const BAND_HEIGHT_SHIFT : u32 = 4u;
+const BAND_BIAS : i32 = ${meta.bandBias};
+const COORD_DENOM : i32 = ${meta.coordDenom};
+const BEDROCK_BAND : i32 = ${meta.bedrockFloor >> 4};
+const OPEN_COLUMN_SAMPLE : i32 = ${meta.openColumnSample};
+const BEDROCK_FLOOR : i32 = ${meta.bedrockFloor};
+const SPAN_COUNT_SHIFT : u32 = ${meta.spanCountShift}u;
+const SPAN_OFFSET_MASK : u32 = ${(1 << meta.spanCountShift) - 1}u;
+const CELL_WORLD_SIZE : f32 = ${meta.cellWorldSize};
+const BAND_WORLD_HEIGHT : f32 = ${meta.bandWorldHeight};
+const SEABED_CAP_SINK : f32 = ${meta.seabedCapSink};
+const SEABED_RIM_HEIGHT : f32 = ${meta.seabedRiserBorderWorldHeight};
+const SHORE_THRESHOLD : i32 = ${meta.shoreThreshold};
+const SHORE_EDGE_CROSSING : f32 = ${meta.shoreEdgeCrossing};
+const SHORE_LEVEL : i32 = -1000000;
+const BAND_LUT_OFFSET : i32 = ${meta.bandLutOffset};
+const LUT_CAP_BASE : i32 = ${LUT_CAP_BASE};
+const LUT_CLIFF_BASE : i32 = ${LUT_CLIFF_BASE};
+const LUT_BORDER_BASE : i32 = ${LUT_BORDER_BASE};
+const LUT_SHORE_CAP : i32 = ${LUT_SHORE_CAP};
+const LUT_SHORE_CLIFF : i32 = ${LUT_SHORE_CLIFF};
+const CHUNK_CELLS : i32 = ${meta.chunkSize};
+const CHUNK_LATTICE : i32 = ${meta.chunkSize + 1};
+const LATTICE_CELLS : u32 = ${(meta.chunkSize + 1) * (meta.chunkSize + 1)}u;
+const SQUARES_PER_CHUNK : u32 = ${meta.chunkSize * meta.chunkSize}u;
+const WORKGROUP_THREADS : u32 = ${WORKGROUP_THREADS}u;
+// A chunk is split across workgroups so every square gets its own thread.
+const WORKGROUPS_PER_CHUNK : u32 = ${workgroupsPerChunk(meta)}u;
+const SQUARES_PER_WORKGROUP : u32 = SQUARES_PER_CHUNK / WORKGROUPS_PER_CHUNK;
+const MAX_POLYS : i32 = ${MARCH_MAX_POLYS};
+const MAX_POLY_REFS : i32 = ${MARCH_MAX_POLY_REFS};
+const MARCH_REF_BASE : i32 = ${MARCH_CASE_COUNT * MARCH_MAX_POLYS};
+const CORNER_REFS : i32 = 4;
+const SADDLE_5_SPLIT_CASE : i32 = ${MARCH_SADDLE_5_SPLIT};
+const SADDLE_10_SPLIT_CASE : i32 = ${MARCH_SADDLE_10_SPLIT};
+const ISOLINE_SAMPLES_PER_CELL : i32 = ${meta.samplesPerCell};
+const CROSSING_CLEARANCE : f32 = ${1 / meta.coordDenom};
+const SIMPLIFY_EPSILON : f32 = ${1 / meta.coordDenom / 4};
+const SHEER_RISE_HEIGHT_UNITS_PER_CELL : f32 = ${meta.sheerRiseHeightUnitsPerCell};
+const SHEER_WALL_SPREAD_CELLS : f32 = ${meta.sheerWallSpreadCells};
+const CROSSING_MIDPOINT : f32 = 0.5;
+const BORDER_EPSILON : f32 = ${4 / meta.positionScale};
+const MAX_POLYLINE : u32 = 16u;
+const VERTICES_PER_QUAD : u32 = 6u;
+const POSITION_SCALE : f32 = ${meta.positionScale};
+const POSITION_MAX : f32 = 65535.0;
+const HEIGHT_SCALE : f32 = ${meta.heightScale};
+const MODE_COUNT_ONLY : i32 = 1;
+
+struct Params { size : i32, chunksPerEdge : i32, globalLayered : i32, mode : i32 };
+
+@group(0) @binding(0) var<storage, read> heights : array<i32>;
+@group(0) @binding(1) var<storage, read> spanDesc : array<u32>;
+@group(0) @binding(2) var<storage, read> spanData : array<i32>;
+@group(0) @binding(3) var<storage, read> marchTable : array<i32>;
+@group(0) @binding(4) var<storage, read_write> verts : array<u32>;
+@group(0) @binding(5) var<storage, read_write> counter : array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read> lut : array<vec4f>;
+@group(0) @binding(7) var<uniform> params : Params;
+// Per-square vertex counts after the count pass, turned into exclusive prefix
+// sums before the emit pass, so a timed rebuild never counts a square twice.
+@group(0) @binding(8) var<storage, read_write> squareBase : array<u32>;
+@group(1) @binding(0) var<uniform> chunkBase : vec4i;
+
+var<workgroup> cellHeight : array<i32, LATTICE_CELLS>;
+var<workgroup> cellDesc : array<u32, LATTICE_CELLS>;
+var<workgroup> chunkLayered : atomic<u32>;
+
+fn clampCell(i : i32) -> i32 { return clamp(i, 0, params.size - 1); }
+fn quantizeToBand(h : i32) -> i32 { return (h >> BAND_HEIGHT_SHIFT) << BAND_HEIGHT_SHIFT; }
+fn drawnBandOfSample(h : i32) -> i32 { return (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT; }
+
+fn spanCountOf(local : i32) -> i32 {
+  let packedCount = i32(cellDesc[local] >> SPAN_COUNT_SHIFT);
+  return select(packedCount, 1, packedCount == 0);
+}
+fn spanFloor(local : i32, k : i32) -> i32 {
+  let desc = cellDesc[local];
+  if (desc == 0u) { return BEDROCK_FLOOR; }
+  return spanData[(i32(desc & SPAN_OFFSET_MASK) + k) * 2];
+}
+fn spanCeiling(local : i32, k : i32) -> i32 {
+  let desc = cellDesc[local];
+  if (desc == 0u) { return cellHeight[local]; }
+  return spanData[(i32(desc & SPAN_OFFSET_MASK) + k) * 2 + 1];
+}
+fn spanLowestBandHeight(floorHeight : i32) -> i32 {
+  let q = quantizeToBand(floorHeight);
+  return select(q + BAND_HEIGHT, q, q == floorHeight);
+}
+fn isSpanDrawn(floorHeight : i32, ceiling : i32) -> bool {
+  return spanLowestBandHeight(floorHeight) <= quantizeToBand(ceiling);
+}
+
+fn columnSampleAtBand(local : i32, band : i32) -> i32 {
+  let threshold = band * BAND_HEIGHT;
+  let count = spanCountOf(local);
+  var below = OPEN_COLUMN_SAMPLE;
+  for (var k = 0; k < count; k++) {
+    let floorHeight = spanFloor(local, k);
+    let ceiling = spanCeiling(local, k);
+    if (!isSpanDrawn(floorHeight, ceiling)) { continue; }
+    let capHeight = quantizeToBand(ceiling);
+    if (floorHeight <= threshold && threshold <= capHeight) { return ceiling; }
+    if (capHeight < threshold) { below = ceiling; }
+  }
+  return below;
+}
+
+// The field a level marches on: the plain cell height, or the column's sample
+// at that band once the chunk holds a layered column, exactly as the shipped
+// mesher's loadSamples / loadLevel pair does.
+fn levelHeight(local : i32, band : i32, layered : bool) -> i32 {
+  if (!layered) { return cellHeight[local]; }
+  return columnSampleAtBand(local, band);
+}
+
+// drawnBandAt at a cell centre, where the bilinear weights collapse onto the
+// cell's own sample. Kept faithful so the parity oracle holds at cell centres.
+fn drawnBandAtCell(local : i32, lx : i32, lz : i32, layered : bool) -> i32 {
+  let top = drawnBandOfSample(cellHeight[local]);
+  if (!layered) { return top; }
+  var anyLayered = false;
+  var lowest = BEDROCK_BAND;
+  var found = false;
+  for (var dz = 0; dz <= 1; dz++) {
+    for (var dx = 0; dx <= 1; dx++) {
+      let near = clamp(lz + dz, 0, CHUNK_LATTICE - 1) * CHUNK_LATTICE
+        + clamp(lx + dx, 0, CHUNK_LATTICE - 1);
+      if (cellDesc[near] != 0u) { anyLayered = true; }
+      let count = spanCountOf(near);
+      for (var k = 0; k < count; k++) {
+        if (!isSpanDrawn(spanFloor(near, k), spanCeiling(near, k))) { continue; }
+        let band = spanCeiling(near, k) >> BAND_HEIGHT_SHIFT;
+        if (!found || band < lowest) { lowest = band; }
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!anyLayered) { return top; }
+  for (var candidate = top; candidate > lowest; candidate--) {
+    if (drawnBandOfSample(columnSampleAtBand(local, candidate)) >= candidate) { return candidate; }
+  }
+  return lowest;
+}
+
+// drawnCrossingFraction, ported from drawnGround.ts. SHEER_WALL_SPREAD_CELLS is
+// 1 in the shipped constants, which makes the sheer branch the identity; it is
+// written out anyway so the port stays honest if that constant moves.
+fn crossingFraction(outsideHeight : i32, insideHeight : i32, threshold : i32) -> f32 {
+  let rise = f32(insideHeight - outsideHeight);
+  if (!(rise > 0.0)) { return CROSSING_MIDPOINT; }
+  let exact = f32(threshold - BAND_BIAS - outsideHeight) / rise;
+  var s = exact;
+  if (rise > SHEER_RISE_HEIGHT_UNITS_PER_CELL) {
+    s = CROSSING_MIDPOINT + (exact - CROSSING_MIDPOINT) * SHEER_WALL_SPREAD_CELLS;
+  }
+  return clamp(s, CROSSING_CLEARANCE, 1.0 - CROSSING_CLEARANCE);
+}
+
+fn capYOfBand(band : i32) -> f32 {
+  return select(f32(band) * BAND_WORLD_HEIGHT, -SEABED_CAP_SINK, band == 0);
+}
+fn levelCapY(level : i32) -> f32 {
+  return select(capYOfBand(level), 0.0, level == SHORE_LEVEL);
+}
+fn levelCapRgba(level : i32) -> u32 {
+  let slot = select(LUT_CAP_BASE + level + BAND_LUT_OFFSET, LUT_SHORE_CAP, level == SHORE_LEVEL);
+  return pack4x8unorm(lut[slot]);
+}
+
+fn writeVertex(at : u32, x : f32, y : f32, z : f32, rgba : u32) {
+  let qx = u32(clamp(round(x * POSITION_SCALE), 0.0, POSITION_MAX));
+  let qz = u32(clamp(round(z * POSITION_SCALE), 0.0, POSITION_MAX));
+  let qy = u32(i32(round(y * HEIGHT_SCALE)) & 0xffff);
+  verts[at * 3u + 0u] = qx | (qz << 16u);
+  verts[at * 3u + 1u] = qy;
+  verts[at * 3u + 2u] = rgba;
+}
+fn writeTriangle(at : u32, a : vec2f, b : vec2f, c : vec2f, y : f32, rgba : u32) {
+  writeVertex(at + 0u, a.x, y, a.y, rgba);
+  writeVertex(at + 1u, b.x, y, b.y, rgba);
+  writeVertex(at + 2u, c.x, y, c.y, rgba);
+}
+fn writeRiser(at : u32, p : vec2f, q : vec2f, topY : f32, botY : f32, rgba : u32) {
+  writeVertex(at + 0u, p.x, topY, p.y, rgba);
+  writeVertex(at + 1u, q.x, topY, q.y, rgba);
+  writeVertex(at + 2u, q.x, botY, q.y, rgba);
+  writeVertex(at + 3u, p.x, topY, p.y, rgba);
+  writeVertex(at + 4u, q.x, botY, q.y, rgba);
+  writeVertex(at + 5u, p.x, botY, p.y, rgba);
+}
+
+// One riser per contour sub-segment, from this level's cap down to the level
+// below, split into a rim quad and the rest where the shipped mesher's
+// skirtBorderColor rule applies.
+fn riserQuadsPerSegment(level : i32) -> u32 {
+  if (level == SHORE_LEVEL) { return 1u; }
+  return select(1u, 2u, lut[LUT_BORDER_BASE + level + BAND_LUT_OFFSET].w > 0.5);
+}
+fn emitRiser(at : u32, p : vec2f, q : vec2f, level : i32, belowY : f32) {
+  let topY = levelCapY(level);
+  if (level == SHORE_LEVEL) {
+    writeRiser(at, p, q, topY, belowY, pack4x8unorm(lut[LUT_SHORE_CLIFF]));
+    return;
+  }
+  let slot = level + BAND_LUT_OFFSET;
+  let cliff = lut[LUT_CLIFF_BASE + slot];
+  let border = lut[LUT_BORDER_BASE + slot];
+  if (border.w > 0.5) {
+    let rim = topY - SEABED_RIM_HEIGHT;
+    writeRiser(at, p, q, topY, rim, pack4x8unorm(vec4f(border.xyz, cliff.w)));
+    writeRiser(at + VERTICES_PER_QUAD, p, q, rim, belowY, pack4x8unorm(cliff));
+    return;
+  }
+  writeRiser(at, p, q, topY, belowY, pack4x8unorm(cliff));
+}
+
+// Per-square scratch: the four corner heights of the level being marched, the
+// crossing on each side, and the polyline the polygon and its risers share.
+var<private> cornerHeight : array<i32, 4>;
+var<private> crossing : array<vec2f, 4>;
+var<private> corner : array<vec2f, 4>;
+var<private> candidate : array<vec2f, ${meta.samplesPerCell - 1}>;
+var<private> line : array<vec2f, MAX_POLYLINE>;
+var<private> lineIsContour : array<bool, MAX_POLYLINE>;
+
+fn refPosition(r : i32) -> vec2f {
+  if (r < CORNER_REFS) { return corner[r]; }
+  return crossing[r - CORNER_REFS];
+}
+
+// traceIsoline from contours.ts: up to ISOLINE_SAMPLES_PER_CELL - 1 points on
+// the true isoline between the two edge crossings, with contourSmoothing's
+// dropCollinear test applied against the chord.
+fn buildPolyline(polyCase : i32, polyIndex : i32, threshold : i32,
+                 originX : f32, originZ : f32) -> u32 {
+  let base = (polyCase * MAX_POLYS + polyIndex) * MAX_POLY_REFS;
+  let count = marchTable[polyCase * MAX_POLYS + polyIndex];
+  var n = 0u;
+  for (var v = 0; v < count; v++) {
+    let here = marchTable[MARCH_REF_BASE + base + v];
+    let next = marchTable[MARCH_REF_BASE + base + (v + 1) % count];
+    let a = refPosition(here);
+    let isContour = here >= CORNER_REFS && next >= CORNER_REFS;
+    line[n] = a;
+    lineIsContour[n] = isContour;
+    n += 1u;
+    if (!isContour) { continue; }
+    let b = refPosition(next);
+    let localA = vec2f(a.x - originX, a.y - originZ) / CELL_WORLD_SIZE;
+    let localB = vec2f(b.x - originX, b.y - originZ) / CELL_WORLD_SIZE;
+    let span = abs(localB - localA);
+    if (span.x + span.y < f32(ISOLINE_SAMPLES_PER_CELL) / f32(COORD_DENOM)) { continue; }
+    let alongX = span.x >= span.y;
+    let chordSquared = dot(localB - localA, localB - localA);
+    var advanced = 0.0;
+    var candidates = 0;
+    for (var k = 1; k < ISOLINE_SAMPLES_PER_CELL; k++) {
+      let t = f32(k) / f32(ISOLINE_SAMPLES_PER_CELL);
+      let mid = localA + (localB - localA) * t;
+      let fixedUnits = clamp(i32(round(select(mid.y, mid.x, alongX) * f32(COORD_DENOM))),
+        0, COORD_DENOM);
+      let units = isolineUnits(cornerHeight[0], cornerHeight[1], cornerHeight[3],
+        cornerHeight[2], threshold, fixedUnits, alongX);
+      if (units <= 0 || units >= ISOLINE_SOLVE_DENOM) { continue; }
+      let solved = f32(units) / f32(ISOLINE_SOLVE_DENOM);
+      let fixedCoord = f32(fixedUnits) / f32(COORD_DENOM);
+      let point = select(vec2f(solved, fixedCoord), vec2f(fixedCoord, solved), alongX);
+      let along = dot(point - localA, localB - localA) / chordSquared;
+      if (!(along > advanced) || !(along < 1.0)) { continue; }
+      advanced = along;
+      candidate[candidates] = point;
+      candidates += 1;
+    }
+    // dropCollinear from contourSmoothing.ts, in the lattice units it is
+    // written for and against each point's own neighbours, not the chord.
+    var prev = localA;
+    for (var c = 0; c < candidates; c++) {
+      let here = candidate[c];
+      let next = select(localB, candidate[c + 1], c + 1 < candidates);
+      let area = abs((here.x - prev.x) * (next.y - prev.y) - (here.y - prev.y) * (next.x - prev.x));
+      let chordLength = length(next - prev);
+      if (chordLength > 0.0 && area / chordLength < SIMPLIFY_EPSILON) { continue; }
+      if (n + 1u >= MAX_POLYLINE) { break; }
+      prev = here;
+      line[n] = vec2f(originX, originZ) + here * CELL_WORLD_SIZE;
+      lineIsContour[n] = true;
+      n += 1u;
+    }
+  }
+  return n;
+}
+
+// A square clipped by one contour is convex; only an inward bulge from the
+// isoline refinement can make it concave, and only then is a vertex fan wrong.
+fn polygonIsConvex(n : u32) -> bool {
+  var sign = 0.0;
+  for (var v = 0u; v < n; v++) {
+    let a = line[v];
+    let b = line[(v + 1u) % n];
+    let c = line[(v + 2u) % n];
+    let turn = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (turn == 0.0) { continue; }
+    if (sign == 0.0) { sign = turn; } else if (sign * turn < 0.0) { return false; }
+  }
+  return true;
+}
+
+fn emitPolygon(at : u32, n : u32, level : i32, belowY : f32, withRiser : bool,
+               emit : bool) -> u32 {
+  let capY = levelCapY(level);
+  let rgba = levelCapRgba(level);
+  var cursor = at;
+  if (n == 3u) {
+    if (emit) { writeTriangle(cursor, line[0], line[1], line[2], capY, rgba); }
+    cursor += 3u;
+  } else if (n > 3u && polygonIsConvex(n)) {
+    for (var v = 1u; v + 1u < n; v++) {
+      if (emit) { writeTriangle(cursor, line[0], line[v], line[v + 1u], capY, rgba); }
+      cursor += 3u;
+    }
+  } else if (n > 3u) {
+    // Fanned from the centroid, not from a vertex: the isoline refinement can
+    // bulge the contour inward, and a vertex fan would then span the chord and
+    // push cap over the top of its own riser.
+    var centre = vec2f(0.0, 0.0);
+    for (var v = 0u; v < n; v++) { centre += line[v]; }
+    centre /= f32(n);
+    for (var v = 0u; v < n; v++) {
+      if (emit) { writeTriangle(cursor, centre, line[v], line[(v + 1u) % n], capY, rgba); }
+      cursor += 3u;
+    }
+  }
+  if (!withRiser) { return cursor - at; }
+  let riserVerts = riserQuadsPerSegment(level) * VERTICES_PER_QUAD;
+  for (var v = 0u; v < n; v++) {
+    if (!lineIsContour[v]) { continue; }
+    if (emit) { emitRiser(cursor, line[v], line[(v + 1u) % n], level, belowY); }
+    cursor += riserVerts;
+  }
+  return cursor - at;
+}
+
+fn emitLevel(level : i32, lo : i32, localRef : array<i32, 4>, bands : array<i32, 4>,
+             layered : bool, originX : f32, originZ : f32, emit : bool, at : u32) -> u32 {
+  let isShore = level == SHORE_LEVEL;
+  let threshold = select(level * BAND_HEIGHT, SHORE_THRESHOLD, isShore);
+  let bias = select(BAND_BIAS, 0, isShore);
+  var mask = 0;
+  for (var c = 0; c < 4; c++) {
+    cornerHeight[c] = levelHeight(localRef[c], select(level, 0, isShore), layered);
+    var inside = bands[c] >= level;
+    if (isShore) { inside = cornerHeight[c] + bias >= threshold; }
+    if (inside) { mask |= 1 << u32(c); }
+  }
+  if (mask == 0) { return 0u; }
+  // Crossings run from the outside corner toward the inside one, exactly as
+  // marchLevel does.
+  for (var side = 0; side < 4; side++) {
+    let to = (side + 1) % 4;
+    let inFrom = (mask & (1 << u32(side))) != 0;
+    if (inFrom == ((mask & (1 << u32(to))) != 0)) { continue; }
+    var t = SHORE_EDGE_CROSSING;
+    if (!isShore) {
+      if (inFrom) {
+        t = 1.0 - crossingFraction(cornerHeight[to], cornerHeight[side], threshold);
+      } else {
+        t = crossingFraction(cornerHeight[side], cornerHeight[to], threshold);
+      }
+    }
+    crossing[side] = mix(corner[side], corner[to], t);
+  }
+  var polyCase = mask;
+  if (mask == 5 || mask == 10) {
+    let sum = cornerHeight[0] + cornerHeight[1] + cornerHeight[2] + cornerHeight[3];
+    let joined = sum + 4 * bias >= 4 * threshold;
+    let splitCase = select(SADDLE_10_SPLIT_CASE, SADDLE_5_SPLIT_CASE, mask == 5);
+    polyCase = select(splitCase, mask, joined);
+  }
+  let withRiser = level != lo;
+  let belowY = select(capYOfBand(level - 1), capYOfBand(0), isShore);
+  var cursor = at;
+  for (var p = 0; p < MAX_POLYS; p++) {
+    if (marchTable[polyCase * MAX_POLYS + p] == 0) { continue; }
+    let n = buildPolyline(polyCase, p, threshold, originX, originZ);
+    cursor += emitPolygon(cursor, n, level, belowY, withRiser, emit);
+  }
+  return cursor - at;
+}
+
+fn emitSquare(square : i32, chunkX : i32, chunkZ : i32, layered : bool,
+              emit : bool, base : u32) -> u32 {
+  let lx = square % CHUNK_CELLS;
+  let lz = square / CHUNK_CELLS;
+  let nw = lz * CHUNK_LATTICE + lx;
+  let localRef = array<i32, 4>(nw, nw + 1, nw + CHUNK_LATTICE + 1, nw + CHUNK_LATTICE);
+  let originX = f32(chunkX + lx) * CELL_WORLD_SIZE;
+  let originZ = f32(chunkZ + lz) * CELL_WORLD_SIZE;
+  let farX = originX + CELL_WORLD_SIZE
+    + select(0.0, BORDER_EPSILON, chunkX + lx == params.size - 1);
+  let farZ = originZ + CELL_WORLD_SIZE
+    + select(0.0, BORDER_EPSILON, chunkZ + lz == params.size - 1);
+  corner[0] = vec2f(originX, originZ);
+  corner[1] = vec2f(farX, originZ);
+  corner[2] = vec2f(farX, farZ);
+  corner[3] = vec2f(originX, farZ);
+
+  var bands = array<i32, 4>(0, 0, 0, 0);
+  for (var c = 0; c < 4; c++) {
+    let cx = lx + select(0, 1, c == 1 || c == 2);
+    let cz = lz + select(0, 1, c == 2 || c == 3);
+    bands[c] = drawnBandAtCell(localRef[c], cx, cz, layered);
+  }
+  let lo = min(min(bands[0], bands[1]), min(bands[2], bands[3]));
+  let hi = max(max(bands[0], bands[1]), max(bands[2], bands[3]));
+
+  var cursor = base;
+  for (var level = lo; level <= hi; level++) {
+    cursor += emitLevel(level, lo, localRef, bands, layered, originX, originZ, emit, cursor);
+    // The shipped mesher slots its shoreline level directly after band 0.
+    if (level == 0) {
+      cursor += emitLevel(SHORE_LEVEL, lo, localRef, bands, layered, originX, originZ,
+        emit, cursor);
+    }
+  }
+  return cursor - base;
+}
+
+@compute @workgroup_size(${WORKGROUP_THREADS})
+fn meshChunk(@builtin(workgroup_id) wid : vec3u, @builtin(local_invocation_index) tid : u32) {
+  let chunk = chunkBase.x + i32(wid.x / WORKGROUPS_PER_CHUNK);
+  let part = wid.x % WORKGROUPS_PER_CHUNK;
+  let countOnly = params.mode == MODE_COUNT_ONLY;
+  let chunkX = (chunk % params.chunksPerEdge) * CHUNK_CELLS;
+  let chunkZ = (chunk / params.chunksPerEdge) * CHUNK_CELLS;
+  if (tid == 0u) { atomicStore(&chunkLayered, 0u); }
+  workgroupBarrier();
+  for (var at = tid; at < LATTICE_CELLS; at += WORKGROUP_THREADS) {
+    let lx = i32(at) % CHUNK_LATTICE;
+    let lz = i32(at) / CHUNK_LATTICE;
+    let cell = clampCell(chunkZ + lz) * params.size + clampCell(chunkX + lx);
+    cellHeight[at] = heights[cell];
+    cellDesc[at] = spanDesc[cell];
+    if (params.globalLayered != 0 && spanDesc[cell] != 0u) { atomicStore(&chunkLayered, 1u); }
+  }
+  workgroupBarrier();
+  let layered = atomicLoad(&chunkLayered) != 0u;
+  for (var at = part * SQUARES_PER_WORKGROUP + tid; at < (part + 1u) * SQUARES_PER_WORKGROUP; at += WORKGROUP_THREADS) {
+    let slot = u32(chunk) * SQUARES_PER_CHUNK + at;
+    if (countOnly) {
+      let needed = emitSquare(i32(at), chunkX, chunkZ, layered, false, 0u);
+      squareBase[slot] = needed;
+      atomicAdd(&counter[0], needed);
+      continue;
+    }
+    let wrote = emitSquare(i32(at), chunkX, chunkZ, layered, true, squareBase[slot]);
+    atomicAdd(&counter[0], wrote);
+  }
+}
+`;
+
+const ISOLINE_WGSL = (meta) => `
+${ISOLINE_FNS(meta)}
+struct IsolineCase {
+  nw : i32, ne : i32, sw : i32, se : i32,
+  threshold : i32, fixedUnits : i32, alongX : i32, expected : i32,
+};
+@group(0) @binding(0) var<storage, read> isolineCases : array<IsolineCase>;
+@group(0) @binding(1) var<storage, read_write> isolineOut : array<i32>;
+
+@compute @workgroup_size(${WORKGROUP_THREADS})
+fn isolineSelfCheck(@builtin(global_invocation_id) gid : vec3u) {
+  let i = gid.x;
+  if (i >= arrayLength(&isolineCases)) { return; }
+  let c = isolineCases[i];
+  isolineOut[i] = isolineUnits(c.nw, c.ne, c.sw, c.se, c.threshold, c.fixedUnits, c.alongX != 0);
+}
+`;
+
+const DRAW_WGSL = (meta, shiftSteps) => `
+struct Camera { viewProj : mat4x4f, eye : vec4f };
+@group(0) @binding(0) var<uniform> camera : Camera;
+
+const INV_POSITION_SCALE : f32 = ${1 / meta.positionScale};
+const INV_HEIGHT_SCALE : f32 = ${1 / meta.heightScale};
+const POSITION_SHIFT : f32 = ${shiftSteps / meta.positionScale};
+const LIGHT_DIRECTION : vec3f = vec3f(${LIGHT_DIRECTION.join(', ')});
+const AMBIENT_INTENSITY : f32 = ${AMBIENT_INTENSITY};
+const DIFFUSE_INTENSITY : f32 = ${DIFFUSE_INTENSITY};
+const SELF_LIT_CUTOFF : f32 = 0.5;
+const DEGENERATE_FACE_EPSILON : f32 = 1e-20;
+
+struct VsOut {
+  @builtin(position) clip : vec4f,
+  @location(0) world : vec3f,
+  @location(1) color : vec4f,
+};
+
+fn worldOf(xz : vec2u, yq : vec2i) -> vec3f {
+  return vec3f(f32(xz.x) * INV_POSITION_SCALE + POSITION_SHIFT, f32(yq.x) * INV_HEIGHT_SCALE,
+    f32(xz.y) * INV_POSITION_SCALE + POSITION_SHIFT);
+}
+
+@vertex
+fn vs(@location(0) xz : vec2u, @location(1) yq : vec2i, @location(2) color : vec4f) -> VsOut {
+  var out : VsOut;
+  out.world = worldOf(xz, yq);
+  out.clip = camera.viewProj * vec4f(out.world, 1.0);
+  out.color = color;
+  return out;
+}
+
+@fragment
+fn fs(in : VsOut) -> @location(0) vec4f {
+  // Flat face normal from the screen-space derivatives of the world position.
+  // For a planar triangle this is the exact geometric normal at any triangle
+  // size, so no normal attribute is stored.
+  let face = cross(dpdx(in.world), dpdy(in.world));
+  let faceLength = length(face);
+  var n = vec3f(0.0, 1.0, 0.0);
+  if (faceLength > DEGENERATE_FACE_EPSILON) { n = face / faceLength; }
+  if (dot(n, camera.eye.xyz - in.world) < 0.0) { n = -n; }
+  let lambert = AMBIENT_INTENSITY
+    + DIFFUSE_INTENSITY * max(dot(n, normalize(LIGHT_DIRECTION)), 0.0);
+  let shade = select(lambert, 1.0, in.color.a > SELF_LIT_CUTOFF);
+  return vec4f(in.color.rgb * shade, 1.0);
+}
+`;
+
+const BAND_WGSL = (meta) => `
+struct Ortho { viewProj : mat4x4f };
+@group(0) @binding(0) var<uniform> ortho : Ortho;
+const INV_POSITION_SCALE : f32 = ${1 / meta.positionScale};
+const INV_HEIGHT_SCALE : f32 = ${1 / meta.heightScale};
+const BAND_WORLD_HEIGHT : f32 = ${meta.bandWorldHeight};
+
+struct VsOut {
+  @builtin(position) clip : vec4f,
+  @location(0) @interpolate(flat) band : i32,
+};
+
+@vertex
+fn vs(@location(0) xz : vec2u, @location(1) yq : vec2i, @location(2) color : vec4f) -> VsOut {
+  var out : VsOut;
+  let world = vec3f(f32(xz.x) * INV_POSITION_SCALE, f32(yq.x) * INV_HEIGHT_SCALE,
+    f32(xz.y) * INV_POSITION_SCALE);
+  out.clip = ortho.viewProj * vec4f(world, 1.0);
+  // Cap height determines the band exactly: caps sit at band * BAND_WORLD_HEIGHT,
+  // with band 0 sunk by SEABED_CAP_SINK and the shore cap at y 0, both of which
+  // round back to 0. Risers are vertical and rasterize no fragments here.
+  out.band = i32(round(world.y / BAND_WORLD_HEIGHT));
+  return out;
+}
+
+@fragment
+fn fs(in : VsOut) -> @location(0) i32 { return in.band; }
+`;
+
+// -------------------------------------------------------------------- setup
+const fetchBuffer = async (name) => (await fetch(name)).arrayBuffer();
+const fetchJson = async (name) => (await fetch(name)).json();
+
+const uploadInChunks = (device, buffer, bytes) => {
+  const view = new Uint8Array(bytes);
+  for (let offset = 0; offset < view.byteLength; offset += WRITE_CHUNK_BYTES) {
+    const slice = view.subarray(offset, Math.min(offset + WRITE_CHUNK_BYTES, view.byteLength));
+    device.queue.writeBuffer(buffer, offset, slice, 0, slice.byteLength);
+  }
+};
+
+const state = {};
+
+const boot = async () => {
+  if (!navigator.gpu) throw new Error('navigator.gpu missing — Chrome needs --enable-unsafe-webgpu');
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) throw new Error('no WebGPU adapter');
+  const wantsTimestamps = adapter.features.has('timestamp-query');
+  const device = await adapter.requestDevice({
+    requiredFeatures: wantsTimestamps ? ['timestamp-query'] : [],
+    requiredLimits: {
+      maxBufferSize: adapter.limits.maxBufferSize,
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+    },
+  });
+  device.addEventListener('uncapturederror', (event) => fail('WebGPU: ' + event.error.message));
+  state.device = device;
+  state.timestamps = wantsTimestamps;
+  const info = adapter.info ?? {};
+  state.adapterInfo = {
+    vendor: info.vendor ?? '', architecture: info.architecture ?? '', device: info.device ?? '',
+    description: info.description ?? '', timestampQuery: wantsTimestamps,
+    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+  };
+
+  const meta = await fetchJson('meta.json');
+  const palette = await fetchJson('palette.json');
+  meta.bandLutOffset = palette.bandLutOffset;
+  state.meta = meta;
+
+  const canvas = document.getElementById('view');
+  const context = canvas.getContext('webgpu');
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format, alphaMode: 'opaque' });
+  state.context = context;
+  state.format = format;
+
+  const depth = device.createTexture({
+    size: [VIEWPORT_WIDTH, VIEWPORT_HEIGHT], format: DEPTH_FORMAT,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  state.depthView = depth.createView();
+
+  const half = (meta.size * meta.cellWorldSize) / 2;
+  const scale = half / BENCH_EYE_REFERENCE_HALF;
+  const eye = [BENCH_EYE_X * scale, BENCH_EYE_Y * scale, BENCH_EYE_X * scale];
+  const view = lookAt(eye, [half, 0, half], [0, 1, 0]);
+  const proj = perspective(CAMERA_FOV_DEGREES, VIEWPORT_WIDTH / VIEWPORT_HEIGHT, CAMERA_NEAR, CAMERA_FAR);
+  const cameraData = Float32Array.from([...multiply(proj, view), ...eye, 1]);
+  const cameraBuffer = device.createBuffer({ size: cameraData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(cameraBuffer, 0, cameraData);
+
+  const drawModule = device.createShaderModule({ code: DRAW_WGSL(meta, POSITION_SHIFT_STEPS) });
+  const vertexLayout = {
+    arrayStride: meta.bytesPerVertex,
+    attributes: [
+      { shaderLocation: 0, offset: 0, format: 'uint16x2' },
+      { shaderLocation: 1, offset: 4, format: 'sint16x2' },
+      { shaderLocation: 2, offset: 8, format: 'unorm8x4' },
+    ],
+  };
+  state.drawPipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module: drawModule, entryPoint: 'vs', buffers: [vertexLayout] },
+    fragment: { module: drawModule, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
+  });
+  state.drawBind = device.createBindGroup({
+    layout: state.drawPipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: cameraBuffer } }],
+  });
+
+  if (SOURCE === 'cpu') {
+    const bytes = await fetchBuffer('cpu-mesh.bin');
+    const buffer = device.createBuffer({
+      size: bytes.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    uploadInChunks(device, buffer, bytes);
+    state.vertexBuffer = buffer;
+    state.vertexCount = meta.cpuVertexCount;
+    state.residentBytes = { vertex: bytes.byteLength, total: bytes.byteLength };
+  } else {
+    await buildGpuMesher(meta, palette);
+  }
+
+  {
+    // One texel per sample, its centre exactly on the sample point, so the
+    // parity pass reads the band the oracle asks about and not a nearby one.
+    const readTexels = meta.sampleLattice;
+    const extent = meta.sampleLattice * meta.sampleWorldSize;
+    const originMin = -meta.sampleWorldSize / 2;
+    const orthoProj = orthographic(originMin, originMin + extent, originMin + extent,
+      originMin, ORTHO_Y_MAX, ORTHO_Y_MIN);
+    // World (x, y, z) -> ortho box (x, z, -y): negating y puts the highest cap
+    // nearest, so the depth test keeps the topmost of the stacked levels.
+    const swizzle = [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
+    const bandCamera = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(bandCamera, 0, new Float32Array(multiply(orthoProj, swizzle)));
+    const bandModule = device.createShaderModule({ code: BAND_WGSL(meta) });
+    state.bandPipeline = device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module: bandModule, entryPoint: 'vs', buffers: [vertexLayout] },
+      fragment: { module: bandModule, entryPoint: 'fs', targets: [{ format: BAND_TEXTURE_FORMAT }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: { format: BAND_PASS_DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
+    });
+    state.bandBind = device.createBindGroup({
+      layout: state.bandPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: bandCamera } }],
+    });
+    state.readTexels = readTexels;
+  }
+};
+
+const buildGpuMesher = async (meta, palette) => {
+  const device = state.device;
+  const worldBytes = await fetchBuffer('world.bin');
+  const spanBytes = await fetchBuffer('spans.bin');
+  const marching = await fetchJson('marching.json');
+  const heights = new Int32Array(new Int16Array(worldBytes));
+  const spanDesc = new Uint32Array(spanBytes, 0, meta.spanDescBytes / 4);
+  const spanData = new Int32Array(spanBytes, meta.spanDescBytes, meta.spanDataPairs * 2);
+
+  const storage = (bytes) => device.createBuffer({
+    size: Math.max(bytes, 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  const upload = (data) => {
+    const buffer = storage(data.byteLength);
+    if (data.byteLength > 0) device.queue.writeBuffer(buffer, 0, data);
+    return buffer;
+  };
+  const heightBuffer = upload(heights);
+  const descBuffer = upload(spanDesc);
+  const dataBuffer = upload(spanData);
+  const marchBuffer = upload(Int32Array.from([...marching.len, ...marching.ref]));
+
+  const lutData = new Float32Array(LUT_VEC4_COUNT * 4);
+  lutData.set(palette.capLut, LUT_CAP_BASE * 4);
+  lutData.set(palette.cliffLut, LUT_CLIFF_BASE * 4);
+  lutData.set(palette.borderLut, LUT_BORDER_BASE * 4);
+  lutData.set(palette.shoreCap, LUT_SHORE_CAP * 4);
+  lutData.set(palette.shoreCliff, LUT_SHORE_CLIFF * 4);
+  const lutBuffer = upload(lutData);
+
+  const paramsBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const writeParams = (mode) => device.queue.writeBuffer(paramsBuffer, 0, new Int32Array([
+    meta.size, meta.chunksPerEdge, meta.layeredCells > 0 ? 1 : 0, mode,
+  ]));
+
+  const counterBuffer = device.createBuffer({
+    size: 16,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+  const counterRead = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+
+  const chunkCount = meta.chunksPerEdge * meta.chunksPerEdge;
+  const chunkUniform = device.createBuffer({
+    size: chunkCount * CHUNK_UNIFORM_STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const chunkData = new Int32Array((chunkCount * CHUNK_UNIFORM_STRIDE) / 4);
+  for (let i = 0; i < chunkCount; i++) chunkData[(i * CHUNK_UNIFORM_STRIDE) / 4] = i;
+  device.queue.writeBuffer(chunkUniform, 0, chunkData);
+
+  const module = device.createShaderModule({ code: MESH_WGSL(meta) });
+  const compiled = await module.getCompilationInfo();
+  const errors = compiled.messages.filter((m) => m.type === 'error');
+  if (errors.length) throw new Error('WGSL: ' + errors.map((m) => `${m.lineNum}: ${m.message}`).join(' | '));
+
+  const READ = 'read-only-storage';
+  const bindingTypes = [READ, READ, READ, READ, 'storage', 'storage', READ, 'uniform', 'storage'];
+  const meshLayout = device.createBindGroupLayout({
+    entries: bindingTypes.map((type, binding) => ({
+      binding, visibility: GPUShaderStage.COMPUTE, buffer: { type },
+    })),
+  });
+  const chunkLayout = device.createBindGroupLayout({
+    entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 16 } }],
+  });
+  const meshPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout, chunkLayout] }),
+    compute: { module, entryPoint: 'meshChunk' },
+  });
+  const chunkBind = device.createBindGroup({
+    layout: chunkLayout,
+    entries: [{ binding: 0, resource: { buffer: chunkUniform, offset: 0, size: 16 } }],
+  });
+  const squareCount = meta.chunksPerEdge * meta.chunksPerEdge * meta.chunkSize * meta.chunkSize;
+  const baseBuffer = device.createBuffer({
+    size: squareCount * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+  const baseRead = device.createBuffer({
+    size: squareCount * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const bindWith = (vertexBuffer) => device.createBindGroup({
+    layout: meshLayout,
+    entries: [heightBuffer, descBuffer, dataBuffer, marchBuffer, vertexBuffer,
+      counterBuffer, lutBuffer, paramsBuffer, baseBuffer]
+      .map((buffer, binding) => ({ binding, resource: { buffer } })),
+  });
+
+  const runPass = async (timestampSet) => {
+    device.queue.writeBuffer(counterBuffer, 0, new Uint32Array([0, 0, 0, 0]));
+    const encoder = device.createCommandEncoder();
+    for (let i = 0; i < chunkCount; i++) {
+      const pass = encoder.beginComputePass(timestampSet
+        ? { timestampWrites: { querySet: timestampSet, beginningOfPassWriteIndex: i * 2, endOfPassWriteIndex: i * 2 + 1 } }
+        : {});
+      pass.setPipeline(meshPipeline);
+      pass.setBindGroup(0, state.meshBind);
+      pass.setBindGroup(1, chunkBind, [i * CHUNK_UNIFORM_STRIDE]);
+      pass.dispatchWorkgroups(workgroupsPerChunk(meta));
+      pass.end();
+    }
+    encoder.copyBufferToBuffer(counterBuffer, 0, counterRead, 0, 16);
+    const start = performance.now();
+    device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const wall = performance.now() - start;
+    await counterRead.mapAsync(GPUMapMode.READ);
+    const emitted = new Uint32Array(counterRead.getMappedRange().slice(0))[0];
+    counterRead.unmap();
+    return { wall, emitted };
+  };
+
+  // The whole world in one dispatch, one workgroup per chunk. runPass keeps a
+  // pass per chunk for the per-chunk timestamps; this is the practical rebuild.
+  const runParallel = async (timestampSet) => {
+    device.queue.writeBuffer(counterBuffer, 0, new Uint32Array([0, 0, 0, 0]));
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass(timestampSet
+      ? { timestampWrites: { querySet: timestampSet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } }
+      : {});
+    pass.setPipeline(meshPipeline);
+    pass.setBindGroup(0, state.meshBind);
+    pass.setBindGroup(1, chunkBind, [0]);
+    pass.dispatchWorkgroups(chunkCount * workgroupsPerChunk(meta));
+    pass.end();
+    encoder.copyBufferToBuffer(counterBuffer, 0, counterRead, 0, 16);
+    const start = performance.now();
+    device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const wall = performance.now() - start;
+    await counterRead.mapAsync(GPUMapMode.READ);
+    const emitted = new Uint32Array(counterRead.getMappedRange().slice(0))[0];
+    counterRead.unmap();
+    return { wall, emitted };
+  };
+
+  // Pass one counts, so the vertex buffer is allocated at exactly the size the
+  // mesh needs. Every timed rebuild afterwards runs the emit pass only.
+  state.meshBind = bindWith(storage(4));
+  writeParams(MODE_COUNT_ONLY);
+  const counted = await runPass(null);
+  state.countPassMs = counted.wall;
+  // Exclusive prefix sum on the host, once: the emit pass then writes each
+  // square straight at its own offset.
+  const sumEncoder = device.createCommandEncoder();
+  sumEncoder.copyBufferToBuffer(baseBuffer, 0, baseRead, 0, squareCount * 4);
+  device.queue.submit([sumEncoder.finish()]);
+  await baseRead.mapAsync(GPUMapMode.READ);
+  const counts = new Uint32Array(baseRead.getMappedRange().slice(0));
+  baseRead.unmap();
+  const squaresPerChunk = meta.chunkSize * meta.chunkSize;
+  const chunkVertexCounts = new Uint32Array(chunkCount);
+  for (let i = 0; i < counts.length; i++) chunkVertexCounts[(i / squaresPerChunk) | 0] += counts[i];
+  let running = 0;
+  for (let i = 0; i < counts.length; i++) {
+    const here = counts[i];
+    counts[i] = running;
+    running += here;
+  }
+  if (running !== counted.emitted) throw new Error(`prefix sum ${running} != counted ${counted.emitted}`);
+  device.queue.writeBuffer(baseBuffer, 0, counts);
+  state.vertexCount = counted.emitted;
+  const vertexBytes = counted.emitted * meta.bytesPerVertex;
+  if (vertexBytes > device.limits.maxStorageBufferBindingSize) {
+    throw new Error(`vertex buffer ${vertexBytes} B exceeds maxStorageBufferBindingSize ${device.limits.maxStorageBufferBindingSize}`);
+  }
+  const vertexBuffer = device.createBuffer({
+    size: vertexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX,
+  });
+  state.meshBind = bindWith(vertexBuffer);
+  state.vertexBuffer = vertexBuffer;
+  writeParams(MODE_EMIT);
+
+  const cases = await fetchJson('isoline-cases.json');
+  const CASE_FIELDS = 8;
+  const caseData = Int32Array.from(cases.flatMap(
+    (c) => [c.nw, c.ne, c.sw, c.se, c.threshold, c.fixedUnits, c.alongX, c.units]));
+  const caseBuffer = upload(caseData);
+  const caseOut = device.createBuffer({
+    size: cases.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  });
+  const caseRead = device.createBuffer({ size: cases.length * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const isolineModule = device.createShaderModule({ code: ISOLINE_WGSL(meta) });
+  const isolineCompiled = await isolineModule.getCompilationInfo();
+  const isolineErrors = isolineCompiled.messages.filter((m) => m.type === 'error');
+  if (isolineErrors.length) {
+    throw new Error('WGSL isoline: ' + isolineErrors.map((m) => `${m.lineNum}: ${m.message}`).join(' | '));
+  }
+  const isolinePipeline = device.createComputePipeline({ layout: 'auto', compute: { module: isolineModule, entryPoint: 'isolineSelfCheck' } });
+  const isolineBind = device.createBindGroup({
+    layout: isolinePipeline.getBindGroupLayout(0),
+    entries: [caseBuffer, caseOut].map((buffer, binding) => ({ binding, resource: { buffer } })),
+  });
+
+  // One edit: upload the height rows the window's lattice reads (one cell past
+  // the last chunk), then re-emit the window's chunks in one compute pass.
+  // Heights are unchanged, so every chunk still fits its prefix-sum slot;
+  // the upload and compute cost is that of a real stroke.
+  const runEdit = async (chunkIndices, timestampSet, slot) => {
+    const zs = chunkIndices.map((c) => (c / meta.chunksPerEdge) | 0);
+    const rowFrom = Math.min(...zs) * meta.chunkSize;
+    const rowTo = Math.min(meta.size, (Math.max(...zs) + 1) * meta.chunkSize + 1);
+    const start = performance.now();
+    device.queue.writeBuffer(heightBuffer, rowFrom * meta.size * 4, heights, rowFrom * meta.size, (rowTo - rowFrom) * meta.size);
+    device.queue.writeBuffer(counterBuffer, 0, new Uint32Array([0, 0, 0, 0]));
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass(timestampSet
+      ? { timestampWrites: { querySet: timestampSet, beginningOfPassWriteIndex: slot * 2, endOfPassWriteIndex: slot * 2 + 1 } }
+      : {});
+    pass.setPipeline(meshPipeline);
+    pass.setBindGroup(0, state.meshBind);
+    // One workgroup per chunk, a dispatch per run of consecutive chunk indices
+    // (one chunk row of the window), so the window's chunks run concurrently.
+    const sorted = [...chunkIndices].sort((a, b) => a - b);
+    for (let i = 0; i < sorted.length;) {
+      let n = 1;
+      while (i + n < sorted.length && sorted[i + n] === sorted[i] + n) n++;
+      pass.setBindGroup(1, chunkBind, [sorted[i] * CHUNK_UNIFORM_STRIDE]);
+      pass.dispatchWorkgroups(n * workgroupsPerChunk(meta));
+      i += n;
+    }
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    return { wall: performance.now() - start, uploadBytes: (rowTo - rowFrom) * meta.size * 4 };
+  };
+  const editWindow = (centre) => {
+    const cx = centre % meta.chunksPerEdge;
+    const cz = (centre / meta.chunksPerEdge) | 0;
+    const half = (EDIT_WINDOW_CHUNKS - 1) / 2;
+    const out = [];
+    for (let dz = -half; dz <= half; dz++) {
+      for (let dx = -half; dx <= half; dx++) {
+        const x = cx + dx;
+        const z = cz + dz;
+        if (x >= 0 && z >= 0 && x < meta.chunksPerEdge && z < meta.chunksPerEdge) out.push(z * meta.chunksPerEdge + x);
+      }
+    }
+    return out;
+  };
+  // Worst case: the 3x3 window with the most vertices. Typical: the median window.
+  const windowWeights = [];
+  for (let c = 0; c < chunkCount; c++) {
+    windowWeights.push({ centre: c, vertices: editWindow(c).reduce((sum, i) => sum + chunkVertexCounts[i], 0) });
+  }
+  windowWeights.sort((a, b) => a.vertices - b.vertices);
+  const editWindows = {
+    heaviest: windowWeights[windowWeights.length - 1],
+    median: windowWeights[windowWeights.length >> 1],
+  };
+
+  Object.assign(state, {
+    chunkCount, isolinePipeline, isolineBind, caseOut, caseRead, cases,
+    chunksPerEdge: meta.chunksPerEdge,
+    chunksPerEdgeInterior: { from: 1, span: meta.chunksPerEdge - 2 },
+    rebuild: runPass, rebuildParallel: runParallel, runEdit, editWindow, editWindows,
+  });
+  const spanBytesTotal = spanDesc.byteLength + spanData.byteLength;
+  const tableBytes = marching.len.length * 4 + marching.ref.length * 4;
+  state.residentBytes = {
+    vertex: vertexBytes, height: heights.byteLength, span: spanBytesTotal, table: tableBytes,
+    total: vertexBytes + heights.byteLength + spanBytesTotal + tableBytes,
+  };
+
+  const first = await runPass(null);
+  if (first.emitted !== counted.emitted) {
+    fail(`emit pass wrote ${first.emitted} vertices, count pass said ${counted.emitted}`);
+  }
+  state.firstRebuildMs = first.wall;
+};
+
+// ------------------------------------------------------------------ drawing
+const renderFrame = (timestampSet, slot) => {
+  const device = state.device;
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: state.context.getCurrentTexture().createView(),
+      clearValue: CLEAR_COLOR, loadOp: 'clear', storeOp: 'store',
+    }],
+    depthStencilAttachment: {
+      view: state.depthView, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store',
+    },
+    ...(timestampSet ? { timestampWrites: { querySet: timestampSet, beginningOfPassWriteIndex: slot * 2, endOfPassWriteIndex: slot * 2 + 1 } } : {}),
+  });
+  pass.setPipeline(state.drawPipeline);
+  pass.setBindGroup(0, state.drawBind);
+  pass.setVertexBuffer(0, state.vertexBuffer);
+  pass.draw(state.vertexCount);
+  pass.end();
+  device.queue.submit([encoder.finish()]);
+};
+
+const readTimestamps = async (querySet, count) => {
+  const device = state.device;
+  const resolve = device.createBuffer({ size: count * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+  const read = device.createBuffer({ size: count * 8, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const encoder = device.createCommandEncoder();
+  encoder.resolveQuerySet(querySet, 0, count, resolve, 0);
+  encoder.copyBufferToBuffer(resolve, 0, read, 0, count * 8);
+  device.queue.submit([encoder.finish()]);
+  await read.mapAsync(GPUMapMode.READ);
+  const stamps = new BigUint64Array(read.getMappedRange().slice(0));
+  read.unmap();
+  resolve.destroy();
+  read.destroy();
+  const out = [];
+  for (let i = 0; i + 1 < stamps.length; i += 2) {
+    out.push(Number(stamps[i + 1] - stamps[i]) * TIMESTAMP_PERIOD_NS);
+  }
+  return out;
+};
+
+const percentile = (values, p) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+};
+
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+window.__timings = async () => {
+  if (window.__error !== undefined) throw new Error('device error: ' + window.__error);
+  const device = state.device;
+  const out = {
+    source: SOURCE,
+    adapter: state.adapterInfo,
+    triangles: state.vertexCount / 3,
+    vertices: state.vertexCount,
+    residentBytes: state.residentBytes,
+    timingMethod: state.timestamps ? 'timestamp-query' : 'performance.now around onSubmittedWorkDone',
+  };
+
+  if (SOURCE === 'gpu') {
+    let perChunk = [];
+    let rebuild = null;
+    if (state.timestamps) {
+      const querySet = device.createQuerySet({ type: 'timestamp', count: state.chunkCount * 2 });
+      rebuild = await state.rebuild(querySet);
+      perChunk = await readTimestamps(querySet, state.chunkCount * 2);
+      querySet.destroy();
+    } else {
+      rebuild = await state.rebuild(null);
+    }
+    out.rebuildSerialWallMs = rebuild.wall;
+    {
+      const querySet = state.timestamps ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null;
+      const parallel = await state.rebuildParallel(querySet);
+      if (parallel.emitted !== rebuild.emitted) throw new Error(`parallel rebuild emitted ${parallel.emitted}, serial ${rebuild.emitted}`);
+      out.rebuildWallMs = parallel.wall;
+      out.rebuildGpuMs = querySet ? (await readTimestamps(querySet, 2))[0] : null;
+      querySet?.destroy();
+    }
+    out.firstRebuildWallMs = state.firstRebuildMs;
+    out.countPassMs = state.countPassMs;
+    out.emittedVertices = rebuild.emitted;
+    out.computePerChunkMs = perChunk.length
+      ? { p50: percentile(perChunk, 0.5), p99: percentile(perChunk, 0.99), max: Math.max(...perChunk), sum: perChunk.reduce((a, b) => a + b, 0) }
+      : null;
+    out.isoline = await window.__isolineSelfCheck();
+    out.edit = {};
+    for (const [name, window_] of Object.entries(state.editWindows)) {
+      const chunks = state.editWindow(window_.centre);
+      const total = EDIT_WARMUP + EDIT_ITERATIONS;
+      const querySet = state.timestamps ? device.createQuerySet({ type: 'timestamp', count: total * 2 }) : null;
+      const walls = [];
+      let uploadBytes = 0;
+      for (let i = 0; i < total; i++) {
+        const run = await state.runEdit(chunks, querySet, i);
+        walls.push(run.wall);
+        uploadBytes = run.uploadBytes;
+      }
+      const gpu = querySet ? (await readTimestamps(querySet, total * 2)).slice(EDIT_WARMUP) : null;
+      querySet?.destroy();
+      const wall = walls.slice(EDIT_WARMUP);
+      const stats = (v) => ({ p50: percentile(v, 0.5), p95: percentile(v, 0.95), max: Math.max(...v) });
+      out.edit[name] = {
+        centreChunk: window_.centre, chunks: chunks.length, windowVertices: window_.vertices, uploadBytes,
+        iterations: EDIT_ITERATIONS, gpuMs: gpu ? stats(gpu) : null, wallMs: stats(wall),
+      };
+    }
+  }
+
+  const frames = DRAW_WARMUP_FRAMES + DRAW_MEASURED_FRAMES;
+  if (state.timestamps) {
+    const querySet = device.createQuerySet({ type: 'timestamp', count: frames * 2 });
+    for (let f = 0; f < frames; f++) { renderFrame(querySet, f); await nextFrame(); }
+    await device.queue.onSubmittedWorkDone();
+    const all = await readTimestamps(querySet, frames * 2);
+    querySet.destroy();
+    const measured = all.slice(DRAW_WARMUP_FRAMES);
+    out.drawMs = { p50: percentile(measured, 0.5), p99: percentile(measured, 0.99), frames: measured.length };
+  } else {
+    const measured = [];
+    for (let f = 0; f < frames; f++) {
+      const start = performance.now();
+      renderFrame(null, 0);
+      await device.queue.onSubmittedWorkDone();
+      if (f >= DRAW_WARMUP_FRAMES) measured.push(performance.now() - start);
+      await nextFrame();
+    }
+    out.drawMs = { p50: percentile(measured, 0.5), p99: percentile(measured, 0.99), frames: measured.length };
+  }
+  renderFrame(null, 0);
+  await device.queue.onSubmittedWorkDone();
+  return out;
+};
+
+// Draws one more frame and lets the compositor pick it up, so a screenshot
+// taken straight after a measurement run shows the finished image.
+window.__present = async () => {
+  renderFrame(null, 0);
+  await state.device.queue.onSubmittedWorkDone();
+  await nextFrame();
+  await nextFrame();
+  return true;
+};
+
+window.__isolineSelfCheck = async () => {
+  const device = state.device;
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(state.isolinePipeline);
+  pass.setBindGroup(0, state.isolineBind);
+  pass.dispatchWorkgroups(Math.ceil(state.cases.length / WORKGROUP_THREADS));
+  pass.end();
+  encoder.copyBufferToBuffer(state.caseOut, 0, state.caseRead, 0, state.cases.length * 4);
+  device.queue.submit([encoder.finish()]);
+  await state.caseRead.mapAsync(GPUMapMode.READ);
+  const got = new Int32Array(state.caseRead.getMappedRange().slice(0));
+  state.caseRead.unmap();
+  let mismatches = 0;
+  const examples = [];
+  for (let i = 0; i < state.cases.length; i++) {
+    if (got[i] === state.cases[i].units) continue;
+    mismatches++;
+    if (examples.length < MAX_MISMATCH_EXAMPLES) examples.push({ ...state.cases[i], wgsl: got[i] });
+  }
+  return { cases: state.cases.length, mismatches, examples };
+};
+
+window.__bandPass = async () => {
+  const device = state.device;
+  const meta = state.meta;
+  const lattice = meta.sampleLattice;
+  const texels = state.readTexels;
+  const bytesPerRow = Math.ceil(texels * 4 / BYTES_PER_ROW_ALIGNMENT) * BYTES_PER_ROW_ALIGNMENT;
+  const bandTexture = device.createTexture({
+    size: [texels, texels], format: BAND_TEXTURE_FORMAT,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
+  const bandDepth = device.createTexture({
+    size: [texels, texels], format: BAND_PASS_DEPTH_FORMAT,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  const readback = device.createBuffer({
+    size: bytesPerRow * texels, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: bandTexture.createView(),
+      clearValue: { r: meta.holeBand, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store',
+    }],
+    depthStencilAttachment: {
+      view: bandDepth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store',
+    },
+  });
+  pass.setPipeline(state.bandPipeline);
+  pass.setBindGroup(0, state.bandBind);
+  pass.setVertexBuffer(0, state.vertexBuffer);
+  pass.draw(state.vertexCount);
+  pass.end();
+  encoder.copyTextureToBuffer(
+    { texture: bandTexture }, { buffer: readback, bytesPerRow, rowsPerImage: texels },
+    [texels, texels],
+  );
+  device.queue.submit([encoder.finish()]);
+  await readback.mapAsync(GPUMapMode.READ);
+  const raw = new Int32Array(readback.getMappedRange());
+
+  const expected = new Int8Array(await fetchBuffer('expected.bin'));
+  const stride = bytesPerRow / 4;
+  const report = { samples: 0, mismatches: 0, exempt: 0, holes: 0, examples: [] };
+  const bandAt = (sx, sz) => expected[sz * lattice + sx];
+  for (let sz = 0; sz < lattice; sz++) {
+    const row = sz * stride;
+    for (let sx = 0; sx < lattice; sx++) {
+      report.samples++;
+      const drawn = raw[row + sx];
+      const want = bandAt(sx, sz);
+      if (drawn === meta.holeBand) { report.holes++; continue; }
+      if (drawn === want) continue;
+      let nearContour = false;
+      for (const [dx, dz] of EXEMPT_NEIGHBOUR_OFFSETS) {
+        const nx = sx + dx;
+        const nz = sz + dz;
+        if (nx < 0 || nz < 0 || nx >= lattice || nz >= lattice) continue;
+        if (bandAt(nx, nz) !== want) { nearContour = true; break; }
+      }
+      if (nearContour) { report.exempt++; continue; }
+      report.mismatches++;
+      if (report.examples.length < MAX_MISMATCH_EXAMPLES) {
+        report.examples.push(`sample (${sx}, ${sz}): mesh band ${drawn}, function band ${want}`);
+      }
+    }
+  }
+  readback.unmap();
+  readback.destroy();
+  bandTexture.destroy();
+  bandDepth.destroy();
+  return report;
+};
+
+const loopStats = { frames: 0, edits: 0, startedAt: 0, editGpuMs: [] };
+window.__loopStats = () => ({
+  ...loopStats,
+  seconds: (performance.now() - loopStats.startedAt) / 1000,
+  fps: loopStats.frames / ((performance.now() - loopStats.startedAt) / 1000),
+  editGpuMs: loopStats.editGpuMs.length ? { p50: percentile(loopStats.editGpuMs, 0.5), p95: percentile(loopStats.editGpuMs, 0.95), max: Math.max(...loopStats.editGpuMs) } : null,
+});
+const runLoop = async () => {
+  loopStats.startedAt = performance.now();
+  let lastEdit = loopStats.startedAt;
+  let editing = null;
+  const inner = state.chunksPerEdgeInterior;
+  for (;;) {
+    renderFrame(null, 0);
+    loopStats.frames++;
+    const now = performance.now();
+    if (SOURCE === 'gpu' && EDIT_INTERVAL_MS > 0 && editing === null && now - lastEdit >= EDIT_INTERVAL_MS) {
+      lastEdit = now;
+      const centre = inner.from + Math.floor(Math.random() * inner.span) + (inner.from + Math.floor(Math.random() * inner.span)) * state.chunksPerEdge;
+      const querySet = state.timestamps ? state.device.createQuerySet({ type: 'timestamp', count: 2 }) : null;
+      editing = state.runEdit(state.editWindow(centre), querySet, 0).then(async () => {
+        if (querySet) { loopStats.editGpuMs.push((await readTimestamps(querySet, 2))[0]); querySet.destroy(); }
+        loopStats.edits++;
+        editing = null;
+      });
+    }
+    if (loopStats.frames % 30 === 0) {
+      const s = window.__loopStats();
+      REPORT.textContent = `${SOURCE} loop  ${s.seconds.toFixed(0)} s  ${s.fps.toFixed(0)} fps  edits ${s.edits}` +
+        (s.editGpuMs ? `  edit gpu p50 ${s.editGpuMs.p50.toFixed(2)} p95 ${s.editGpuMs.p95.toFixed(2)} ms` : '');
+    }
+    await nextFrame();
+  }
+};
+
+window.__ready = (async () => {
+  try {
+    await boot();
+    renderFrame(null, 0);
+    await state.device.queue.onSubmittedWorkDone();
+    await nextFrame();
+    if (LOOP) void runLoop();
+    return true;
+  } catch (error) {
+    fail(error.stack ?? String(error));
+    throw error;
+  }
+})();
+</script>
