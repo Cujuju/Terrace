@@ -40,7 +40,11 @@ import {
   createPredictionStore,
   type PredictionStore,
 } from './terrain/prediction.ts';
-import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
+import {
+  createTerrainMeshes,
+  type TerrainLoadTrace,
+  type TerrainMeshes,
+} from './render/terrainMeshes.ts';
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import {
   createLayerEdgeOverlay,
@@ -111,6 +115,7 @@ export interface World extends TerrainSink {
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
   chartSource(): ChartSource | null;
   drawBudget(): number;
+  terrainLoadTrace(): TerrainLoadTrace | null;
   dispose(): void;
 }
 
@@ -423,6 +428,9 @@ export function createWorld(viewport: Viewport): World {
         RIVER_RIG_DRAW_OBJECTS +
         (layerEdges?.drawCallCount() ?? 0)
       );
+    },
+    terrainLoadTrace(): TerrainLoadTrace | null {
+      return meshes?.loadTrace() ?? null;
     },
     chartSource(): ChartSource | null {
       const m = mirror;

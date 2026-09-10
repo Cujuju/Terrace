@@ -163,6 +163,16 @@ export interface SettleOptions {
   readonly assumeQuiet?: boolean;
 }
 
+export interface TerrainLoadTrace {
+  readonly firstUpdateMs: number | null;
+  readonly queueEmptyAfterMs: number | null;
+  readonly chunksAtQueueEmpty: number | null;
+  readonly chunksSpliced: number;
+  readonly spliceWallMs: number;
+  readonly medianSpliceMs: number | null;
+  readonly maxSpliceMs: number | null;
+}
+
 export interface TerrainMeshes {
   update(dirty: Iterable<number>): void;
   flush(): void;
@@ -174,6 +184,7 @@ export interface TerrainMeshes {
   onChunkDrawn(handler: (chunkIdx: number) => void): () => void;
   drawCallCount(): number;
   medianSpliceMs(): number | null;
+  loadTrace(): TerrainLoadTrace;
   arenaStats(): ArenaStats[];
   arenaLayout(): ArenaLayout[];
   builtChunkCount(): number;
@@ -562,6 +573,17 @@ export function createTerrainMeshes(
   const SPLICE_SAMPLE_WINDOW = 64;
   const spliceMs: number[] = [];
   let spliceMsNext = 0;
+  let firstUpdateMs: number | null = null;
+  let queueEmptyAfterMs: number | null = null;
+  let chunksAtQueueEmpty: number | null = null;
+  let chunksSpliced = 0;
+  let spliceWallMs = 0;
+
+  const medianSplice = (): number | null => {
+    if (spliceMs.length === 0) return null;
+    const sorted = [...spliceMs].sort((a, b) => a - b);
+    return sorted[sorted.length >> 1]!;
+  };
 
   let generation = 0;
 
@@ -597,6 +619,8 @@ export function createTerrainMeshes(
     spliceChunk(sm, answer.chunkIdx, answer);
     for (const handler of chunkDrawnHandlers) handler(answer.chunkIdx);
     const elapsedMs = now() - startedMs;
+    chunksSpliced++;
+    spliceWallMs += elapsedMs;
     if (spliceMs.length < SPLICE_SAMPLE_WINDOW) spliceMs.push(elapsedMs);
     else {
       spliceMs[spliceMsNext] = elapsedMs;
@@ -720,6 +744,16 @@ export function createTerrainMeshes(
       sm.splicedThisPass = false;
     }
     const spliced = drain(CHUNK_SPLICE_FRAME_BUDGET_MS);
+    if (
+      firstUpdateMs !== null &&
+      queueEmptyAfterMs === null &&
+      pending.size === 0 &&
+      inFlight.size === 0 &&
+      ready.length === 0
+    ) {
+      queueEmptyAfterMs = now() - firstUpdateMs;
+      chunksAtQueueEmpty = chunksSpliced;
+    }
     compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
     settle();
   });
@@ -731,6 +765,7 @@ export function createTerrainMeshes(
         if (!mirror.received.has(chunkIdx)) continue;
         pending.add(chunkIdx);
       }
+      if (firstUpdateMs === null && pending.size > 0) firstUpdateMs = now();
       if (stopDraining === undefined) flush();
     },
     flush,
@@ -751,9 +786,19 @@ export function createTerrainMeshes(
     },
 
     medianSpliceMs(): number | null {
-      if (spliceMs.length === 0) return null;
-      const sorted = [...spliceMs].sort((a, b) => a - b);
-      return sorted[sorted.length >> 1]!;
+      return medianSplice();
+    },
+
+    loadTrace(): TerrainLoadTrace {
+      return {
+        firstUpdateMs,
+        queueEmptyAfterMs,
+        chunksAtQueueEmpty,
+        chunksSpliced,
+        spliceWallMs,
+        medianSpliceMs: medianSplice(),
+        maxSpliceMs: spliceMs.length === 0 ? null : Math.max(...spliceMs),
+      };
     },
 
     arenaStats(): ArenaStats[] {
