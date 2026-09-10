@@ -37,8 +37,28 @@ export function drawnBandOfSample(height: number): number {
   return Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
 }
 
+export function drawnBandOfSpan(span: Span): number {
+  return drawnBandOfSample(span.ceiling);
+}
+
 export function drawnSpanCapHeight(span: Span): number {
-  return drawnBandOfSample(span.ceiling) * BAND_HEIGHT;
+  return drawnBandOfSpan(span) * BAND_HEIGHT;
+}
+
+export function drawnSpanIndexCoveringBand(
+  map: Heightmap,
+  x: number,
+  y: number,
+  band: number,
+): number | null {
+  const threshold = band * BAND_HEIGHT;
+  const count = spanCount(map, x, y);
+  for (let k = 0; k < count; k++) {
+    const span = spanAt(map, x, y, k);
+    if (!isSpanDrawn(span)) continue;
+    if (span.floor <= threshold && threshold <= drawnSpanCapHeight(span)) return k;
+  }
+  return null;
 }
 
 export function drawnSampleIsInside(height: number, threshold: number): boolean {
@@ -65,6 +85,10 @@ export function drawnCrossingFraction(
   if (s < DRAWN_GROUND_CENTRE_CLEARANCE) return DRAWN_GROUND_CENTRE_CLEARANCE;
   if (s > 1 - DRAWN_GROUND_CENTRE_CLEARANCE) return 1 - DRAWN_GROUND_CENTRE_CLEARANCE;
   return s;
+}
+
+function drawnCornerIndex(quantized: number): number {
+  return Math.floor(quantized / DRAWN_GROUND_COORD_DENOM);
 }
 
 export function quantizeDrawnCoord(v: number): number {
@@ -101,8 +125,8 @@ export function drawnFieldNumerator(
   qz: number,
   band: number | null = TOP_CEILING_FIELD,
 ): number {
-  const i0 = Math.floor(qx / DRAWN_GROUND_COORD_DENOM);
-  const j0 = Math.floor(qz / DRAWN_GROUND_COORD_DENOM);
+  const i0 = drawnCornerIndex(qx);
+  const j0 = drawnCornerIndex(qz);
   const x0 = clampCell(i0, map.size);
   const x1 = clampCell(i0 + 1, map.size);
   const z0 = clampCell(j0, map.size);
@@ -162,8 +186,8 @@ function bandOfNumerator(numerator: number): number {
 }
 
 function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
-  const i0 = Math.floor(qx / DRAWN_GROUND_COORD_DENOM);
-  const j0 = Math.floor(qz / DRAWN_GROUND_COORD_DENOM);
+  const i0 = drawnCornerIndex(qx);
+  const j0 = drawnCornerIndex(qz);
   let lowest = bandOf(BEDROCK_FLOOR);
   let found = false;
   for (let dz = 0; dz <= 1; dz++) {
@@ -185,8 +209,8 @@ function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
 }
 
 function anyCellLayered(map: Heightmap, qx: number, qz: number): boolean {
-  const i0 = Math.floor(qx / DRAWN_GROUND_COORD_DENOM);
-  const j0 = Math.floor(qz / DRAWN_GROUND_COORD_DENOM);
+  const i0 = drawnCornerIndex(qx);
+  const j0 = drawnCornerIndex(qz);
   for (let dz = 0; dz <= 1; dz++) {
     for (let dx = 0; dx <= 1; dx++) {
       const x = clampCell(i0 + dx, map.size);
