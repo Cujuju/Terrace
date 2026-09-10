@@ -10,6 +10,7 @@ import { createViewport } from './render/scene.ts';
 import { createCelestialVoid } from './render/celestialVoid.ts';
 import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
 import { layerEdgeStyle } from './state/layerEdgePrefs.ts';
+import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
@@ -66,6 +67,7 @@ createEffect(() => celestialVoid.setStyle(voidStyle()));
 createEffect(() => celestialVoid.setAnchor(voidAnchor()));
 
 createEffect(() => world.setLayerEdgeStyle(layerEdgeStyle()));
+createEffect(() => viewport.setFrameRateTarget(frameRateTargetFps(frameRateTarget())));
 
 const placementRaycaster = new Raycaster();
 const placementNdc = new Vector2();

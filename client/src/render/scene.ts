@@ -73,11 +73,13 @@ export interface Viewport {
   restoreOrFocus(worldSize: number): boolean;
   onFrame(handler: (dt: number) => void, phase?: FramePhase): () => void;
   setGroundHeightSampler(sampler: GroundHeightSampler | null): void;
+  setFrameRateTarget(fps: number | null): void;
   start(): void;
   dispose(): void;
 }
 
 const FRAME_DELTA_CAP_S = 0.1;
+const MS_PER_S = 1000;
 
 const scene0Holder: { scene: unknown } = { scene: null };
 
@@ -184,9 +186,21 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
 
   let frameHandle = 0;
   let lastFrameMs = 0;
+  let frameIntervalMs: number | null = null;
+  let nextDueMs = 0;
+  let lastTickMs = 0;
+  const shouldRenderTick = (nowMs: number): boolean => {
+    const tickGapMs = lastTickMs === 0 ? 0 : nowMs - lastTickMs;
+    lastTickMs = nowMs;
+    if (frameIntervalMs === null) return true;
+    if (nowMs + tickGapMs / 2 < nextDueMs) return false;
+    nextDueMs = Math.max(nextDueMs + frameIntervalMs, nowMs);
+    return true;
+  };
   const renderFrame = (): void => {
     frameHandle = requestAnimationFrame(renderFrame);
     const nowMs = performance.now();
+    if (!shouldRenderTick(nowMs)) return;
     gpuTimer.mark();
     const dt =
       lastFrameMs === 0
@@ -289,6 +303,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     },
     setGroundHeightSampler(sampler: GroundHeightSampler | null): void {
       groundHeightSampler = sampler;
+    },
+    setFrameRateTarget(fps: number | null): void {
+      frameIntervalMs = fps === null || !(fps > 0) ? null : MS_PER_S / fps;
+      nextDueMs = 0;
     },
     start(): void {
       if (frameHandle === 0) renderFrame();
