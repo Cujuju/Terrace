@@ -3,18 +3,44 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
-  MeshLambertMaterial,
   PlaneGeometry,
+  Vector2,
   type Object3D,
 } from 'three';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import {
+  attribute,
+  cameraViewMatrix,
+  cos,
+  dot,
+  float,
+  fract,
+  int,
+  max,
+  mix,
+  normalize,
+  select,
+  sin,
+  smoothstep,
+  sqrt,
+  uniformArray,
+  varying,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
-  PUFF_ALPHA_DISCARD_GLSL,
-  puffMaskGlsl,
+  PUFF_QUAD,
+  puffAlphaDiscard,
+  puffBillboard,
+  puffInstanceBase,
+  puffLobeScale,
+  puffMask,
 } from './puffDeck.ts';
 import { CLOUD_BASE_WORLD_Y, CLOUD_HEADROOM_WORLD_UNITS } from './precipitation.ts';
 import { DISC_RENDER_ORDER } from './discRig.ts';
-import { glslFloat, spliceShader } from '../../render/shaderSplice.ts';
+import { compose, discard } from '../../render/materialSlots.ts';
 import type { GroundShadeDisc } from '../types.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
 
@@ -104,7 +130,7 @@ export interface CumulusDeckSpec {
   readonly puffSizeFraction: number;
   readonly color: number;
   readonly name: string;
-  readonly applyRevealClip: (material: MeshLambertMaterial, label: string) => void;
+  readonly applyRevealClip: (material: MeshLambertNodeMaterial, label: string) => void;
 }
 
 export interface CumulusDeck {
@@ -123,137 +149,85 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const puffsPerMass = puffsForCoverage(spec.puffSizeFraction);
   const capacity = spec.maxMasses * puffsPerMass;
 
-  const massXZ = new Float32Array(spec.maxMasses * 2);
-  const massSize = new Float32Array(spec.maxMasses * 2);
+  const massXZ = Array.from({ length: spec.maxMasses }, () => new Vector2());
+  const massSize = Array.from({ length: spec.maxMasses }, () => new Vector2());
+  const massXZNode = uniformArray<'vec2'>(massXZ, 'vec2');
+  const massSizeNode = uniformArray<'vec2'>(massSize, 'vec2');
 
-  const sharedDeclarations =  `
-varying vec2 vQuad;
-varying float vPuffFade;
-varying float vSeed;
-#define PUFF_NORMAL_FLATNESS ${glslFloat(PUFF_NORMAL_FLATNESS)}`;
+  const aSlot = attribute<'float'>('aSlot', 'float');
+  const aSeed = attribute<'float'>('aSeed', 'float');
+  const aTier = attribute<'float'>('aTier', 'float');
+  const aPolar = attribute<'vec2'>('aPolar', 'vec2');
 
-  const vertexDeclarations =  `${sharedDeclarations}
-uniform vec2 uMassXZ[${spec.maxMasses}];
-uniform vec2 uMassSize[${spec.maxMasses}];
-attribute float aSlot;
-attribute float aSeed;
-attribute float aTier;
-attribute vec2 aPolar;`;
+  const massSlot = int(aSlot.add(0.5));
+  const massCentre = massXZNode.element(massSlot);
+  const massRadius = massSizeNode.element(massSlot).x;
+  const massFade = massSizeNode.element(massSlot).y;
 
-  const placement =  `int massSlot = int(aSlot + 0.5);
-    vec2 massCentre = uMassXZ[massSlot];
-    float massRadius = uMassSize[massSlot].x;
-    float massFade = uMassSize[massSlot].y;
+  // A dome: each tier is drawn over a smaller disc than the one below it.
+  const tierRadius = massRadius.mul(mix(float(1), DECK_TOP_RADIUS_FRACTION, aTier));
+  const outward = aPolar.x.mul(tierRadius);
 
-    // A dome: each tier is drawn over a smaller disc than the one below it.
-    float tierRadius = massRadius * mix(1.0, ${glslFloat(DECK_TOP_RADIUS_FRACTION)}, aTier);
-    float outward = aPolar.x * tierRadius;
+  // The rim fades, so the deck has no edge; the mass's intensity fades the whole deck.
+  const puffFade = varying(
+    massFade.mul(float(1).sub(smoothstep(DECK_RIM_FADE_START, 1, aPolar.x))),
+    'vPuffFade',
+  );
 
-    // The rim fades, so the deck has no edge; the mass's own intensity fades
-    // the whole thing, so a gathering front costs nothing until it is there.
-    vPuffFade = massFade *
-      (1.0 - smoothstep(${glslFloat(DECK_RIM_FADE_START)}, 1.0, aPolar.x));
-    vQuad = position.xy;
-    vSeed = aSeed;
+  const tierJitter = fract(aSeed.mul(SEED_HASH_TIER_JITTER))
+    .mul(2)
+    .sub(1)
+    .mul(DECK_TIER_JITTER_WORLD_UNITS);
 
-    // NOTHING IS DRAWN FOR A PARKED OR DARK SLOT. Every vertex of the quad
-    // lands on the same point outside the clip volume, so the primitive is
-    // culled before it reaches a fragment — the deck's equivalent of
-    // discRig.ts's "a transparent draw call that contributes nothing is still
-    // a transparent draw call".
-    if (vPuffFade <= 0.0) {
-      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-      return;
-    }
+  const transformed = vec3(
+    massCentre.x.add(cos(aPolar.y).mul(outward)),
+    float(DECK_BASE_WORLD_Y).add(aTier.mul(DECK_THICKNESS_WORLD_UNITS)).add(tierJitter),
+    massCentre.y.add(sin(aPolar.y).mul(outward)),
+  );
 
-    float tierJitter = (fract(aSeed * ${glslFloat(SEED_HASH_TIER_JITTER)}) * 2.0 - 1.0) *
-      ${glslFloat(DECK_TIER_JITTER_WORLD_UNITS)};
+  // Bigger toward the top, and never twice the same size in a row.
+  const puffSize = massRadius
+    .mul(spec.puffSizeFraction)
+    .mul(float(1).add(aTier.mul(PUFF_SIZE_TOP_GROWTH)))
+    .mul(
+      float(1 - PUFF_SIZE_SEED_VARIATION).add(
+        fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(2 * PUFF_SIZE_SEED_VARIATION),
+      ),
+    );
 
-    transformed = vec3(
-      massCentre.x + cos(aPolar.y) * outward,
-      ${glslFloat(DECK_BASE_WORLD_Y)} +
-        aTier * ${glslFloat(DECK_THICKNESS_WORLD_UNITS)} + tierJitter,
-      massCentre.y + sin(aPolar.y) * outward);
+  // Oblong per seed and area-neutral: stretched along x by the aspect, squashed along y by the same.
+  const aspect = float(1 - PUFF_ASPECT_SEED_VARIATION).add(
+    fract(aSeed.mul(SEED_HASH_PUFF_ASPECT)).mul(2 * PUFF_ASPECT_SEED_VARIATION),
+  );
+  const puffExtent = vec2(aspect, float(1).div(aspect)).mul(puffSize);
 
-    // Bigger toward the top, and never twice the same size in a row.
-    float puffSize = massRadius * ${glslFloat(spec.puffSizeFraction)} *
-      (1.0 + ${glslFloat(PUFF_SIZE_TOP_GROWTH)} * aTier) *
-      (${glslFloat(1 - PUFF_SIZE_SEED_VARIATION)} +
-       ${glslFloat(2 * PUFF_SIZE_SEED_VARIATION)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_SIZE)}));
+  const lobing = { amplitude: PUFF_LOBE_AMPLITUDE, seed: aSeed };
+  const mask = puffMask(PUFF_SOFT_EDGE_FRACTION, lobing);
+  const alpha = mask.puff.mul(puffFade);
 
-    // Oblong, per seed, and area-neutral: stretched along x by the aspect,
-    // squashed along y by the same — see PUFF_ASPECT_SEED_VARIATION.
-    float aspect = ${glslFloat(1 - PUFF_ASPECT_SEED_VARIATION)} +
-      ${glslFloat(2 * PUFF_ASPECT_SEED_VARIATION)} * fract(aSeed * ${glslFloat(SEED_HASH_PUFF_ASPECT)});
-    vec2 puffExtent = puffSize * vec2(aspect, 1.0 / aspect);`;
+  const lobedQuad = PUFF_QUAD.div(puffLobeScale(lobing));
+  const puffSphere = vec3(lobedQuad, sqrt(max(0, float(1).sub(dot(lobedQuad, lobedQuad)))));
+  const puffUp = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz;
 
-  const billboard =  `mvPosition.xy += position.xy * puffExtent;
-    gl_Position = projectionMatrix * mvPosition;`;
-
-  const mask =  `${puffMaskGlsl(glslFloat(PUFF_SOFT_EDGE_FRACTION), {
-    amplitude: PUFF_LOBE_AMPLITUDE,
-    seedVarying: 'vSeed',
-  })}
-    float alpha = puff * vPuffFade;
-    ${PUFF_ALPHA_DISCARD_GLSL}
-    diffuseColor.a *= alpha;`;
-
-  const sphereNormal =  `vec2 lobedQuad = vQuad / lobeScale;
-    vec3 puffSphere =
-      vec3(lobedQuad, sqrt(max(0.0, 1.0 - dot(lobedQuad, lobedQuad))));
-    vec3 puffUp = (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
-    normal = normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS));`;
-
-  const material = new MeshLambertMaterial({
+  const material = new MeshLambertNodeMaterial({
     color: spec.color,
     transparent: true,
     depthWrite: false,
     side: DoubleSide,
   });
 
+  const centre = transformed.add(puffInstanceBase());
+  // A parked or dark slot collapses its quad to one point: zero area, so no fragment is raised.
+  compose(material, 'position', () =>
+    select(puffFade.lessThanEqual(0), centre, puffBillboard(centre, puffExtent)),
+  );
+  discard(material, mask.discarded);
+  discard(material, puffAlphaDiscard(alpha));
+  compose(material, 'opacity', (previous) => previous.mul(alpha));
+  compose(material, 'normal', () => normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS)));
+
   const label = `${spec.name} deck`;
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uMassXZ = { value: massXZ };
-    shader.uniforms.uMassSize = { value: massSize };
-
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${vertexDeclarations}`,
-        label,
-      ),
-      BEGIN_VERTEX_ANCHOR,
-      `${BEGIN_VERTEX_ANCHOR}\n    ${placement}`,
-      label,
-    );
-    shader.vertexShader = spliceShader(
-      shader.vertexShader,
-      PROJECT_VERTEX_ANCHOR,
-      `${PROJECT_VERTEX_ANCHOR}\n    ${billboard}`,
-      label,
-    );
-
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        spliceShader(
-          shader.fragmentShader,
-          SHADER_COMMON_ANCHOR,
-          `${SHADER_COMMON_ANCHOR}\n${sharedDeclarations}`,
-          label,
-        ),
-        ALPHATEST_FRAGMENT_ANCHOR,
-        `${ALPHATEST_FRAGMENT_ANCHOR}\n    ${mask}`,
-        label,
-      ),
-      NORMAL_FRAGMENT_ANCHOR,
-      `${NORMAL_FRAGMENT_ANCHOR}\n    ${sphereNormal}`,
-      label,
-    );
-  };
-  const stockCacheKey = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${stockCacheKey()}|cumulusDeck:${spec.name}`;
-
+  material.name = label;
   spec.applyRevealClip(material, label);
 
   const geometry = new PlaneGeometry(2, 2, 1, 1);
@@ -310,11 +284,9 @@ attribute vec2 aPolar;`;
     update(slot: number, disc: InterpolatedDisc): void {
       if (slot < 0) return;
       const intensity = Math.max(0, disc.intensity);
-      const wasDark = massSize[slot * 2 + 1] === 0;
-      massXZ[slot * 2] = disc.x * CELL_WORLD_SIZE;
-      massXZ[slot * 2 + 1] = disc.y * CELL_WORLD_SIZE;
-      massSize[slot * 2] = disc.radius * CELL_WORLD_SIZE;
-      massSize[slot * 2 + 1] = intensity;
+      const wasDark = massSize[slot]!.y === 0;
+      massXZ[slot]!.set(disc.x * CELL_WORLD_SIZE, disc.y * CELL_WORLD_SIZE);
+      massSize[slot]!.set(disc.radius * CELL_WORLD_SIZE, intensity);
       if (wasDark && intensity > 0) live++;
       if (!wasDark && intensity === 0) live--;
       mesh.visible = live > 0;
@@ -322,8 +294,8 @@ attribute vec2 aPolar;`;
 
     park(slot: number): void {
       if (slot < 0) return;
-      if (massSize[slot * 2 + 1] !== 0) live--;
-      massSize[slot * 2 + 1] = 0;
+      if (massSize[slot]!.y !== 0) live--;
+      massSize[slot]!.y = 0;
       mesh.visible = live > 0;
     },
 
@@ -343,9 +315,3 @@ attribute vec2 aPolar;`;
     },
   };
 }
-
-const SHADER_COMMON_ANCHOR = '#include <common>';
-const BEGIN_VERTEX_ANCHOR = '#include <begin_vertex>';
-const PROJECT_VERTEX_ANCHOR = '#include <project_vertex>';
-const ALPHATEST_FRAGMENT_ANCHOR = '#include <alphatest_fragment>';
-const NORMAL_FRAGMENT_ANCHOR = '#include <normal_fragment_begin>';

@@ -1,21 +1,50 @@
-export const PUFF_INSTANCE_BASE_GLSL = `vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;`;
+import {
+  atan,
+  cameraWorldMatrix,
+  float,
+  fract,
+  length,
+  modelViewMatrix,
+  modelWorldMatrixInverse,
+  positionGeometry,
+  positionLocal,
+  sin,
+  smoothstep,
+  vec4,
+} from 'three/tsl';
+import type { Node } from 'three/webgpu';
 
-export const PUFF_BILLBOARD_GLSL = `vec4 viewPosition = viewMatrix * vec4(world, 1.0);
-    viewPosition.xy += position.xy * size;
-    gl_Position = projectionMatrix * viewPosition;`;
+// The quad is authored two units across, so this is the offset from its centre in half-widths.
+export const PUFF_QUAD = positionGeometry.xy;
 
-export function puffMaskGlsl(innerEdge: string, lobing?: PuffLobing): string {
-  const lobed = lobing ? `${puffLobeScaleGlsl(lobing)}
-    ` : '';
-  const radius = lobing ? 'length(vQuad) / lobeScale' : 'length(vQuad)';
-  return `${lobed}float radius = ${radius};
-    float puff = 1.0 - smoothstep(${innerEdge}, 1.0, radius);
-    if (puff <= 0.0) discard;`;
+// (instanceMatrix * vec4(0, 0, 0, 1)).xyz, read back from three's instanced position. Exact because
+// every puff instance matrix is a pure translation (identity rotation, unit scale).
+export function puffInstanceBase(): Node<'vec3'> {
+  return positionLocal.sub(positionGeometry);
+}
+
+// viewPosition = viewMatrix * world; viewPosition.xy += quad * size; returned in the position
+// slot's space (after the instance matrix), so three's own model-view-projection lands it there.
+export function puffBillboard(world: Node<'vec3'>, size: Node<'vec2'> | Node<'float'>): Node<'vec3'> {
+  const viewPosition = modelViewMatrix.mul(vec4(world, 1));
+  const billboarded = vec4(viewPosition.xy.add(PUFF_QUAD.mul(size)), viewPosition.zw);
+  return modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(billboarded)).xyz;
+}
+
+export interface PuffMask {
+  readonly puff: Node<'float'>;
+  readonly discarded: Node<'bool'>;
+}
+
+export function puffMask(innerEdge: Node<'float'> | number, lobing?: PuffLobing): PuffMask {
+  const radius = lobing ? length(PUFF_QUAD).div(puffLobeScale(lobing)) : length(PUFF_QUAD);
+  const puff = float(1).sub(smoothstep(innerEdge, 1, radius));
+  return { puff, discarded: puff.lessThanEqual(0) };
 }
 
 export interface PuffLobing {
   readonly amplitude: number;
-  readonly seedVarying: string;
+  readonly seed: Node<'float'>;
 }
 
 const PUFF_LOBE_HARMONICS: ReadonlyArray<{ readonly k: number; readonly phaseHash: number }> = [
@@ -26,16 +55,17 @@ const PUFF_LOBE_HARMONICS: ReadonlyArray<{ readonly k: number; readonly phaseHas
 
 const TWO_PI = Math.PI * 2;
 
-export function puffLobeScaleGlsl(lobing: PuffLobing): string {
+export function puffLobeScale(lobing: PuffLobing): Node<'float'> {
   const perHarmonic = 1 / PUFF_LOBE_HARMONICS.length;
-  const terms = PUFF_LOBE_HARMONICS.map(
-    ({ k, phaseHash }) =>
-      `sin(${k.toFixed(1)} * lobeAngle + fract(${lobing.seedVarying} * ${phaseHash.toFixed(2)}) * ${TWO_PI.toFixed(6)})`,
-  ).join(' +\n      ');
-  return `float lobeAngle = atan(vQuad.y, vQuad.x);
-    float lobeScale = 1.0 + ${(lobing.amplitude * perHarmonic).toFixed(4)} * (${terms});`;
+  const lobeAngle = atan(PUFF_QUAD.y, PUFF_QUAD.x);
+  const terms = PUFF_LOBE_HARMONICS.map(({ k, phaseHash }) =>
+    sin(lobeAngle.mul(k).add(fract(lobing.seed.mul(phaseHash)).mul(TWO_PI))),
+  ).reduce((sum, term) => sum.add(term));
+  return float(1).add(terms.mul(lobing.amplitude * perHarmonic));
 }
 
 const PUFF_ALPHA_DISCARD_THRESHOLD = 0.004;
 
-export const PUFF_ALPHA_DISCARD_GLSL = `if (alpha <= ${PUFF_ALPHA_DISCARD_THRESHOLD.toFixed(3)}) discard;`;
+export function puffAlphaDiscard(alpha: Node<'float'>): Node<'bool'> {
+  return alpha.lessThanEqual(PUFF_ALPHA_DISCARD_THRESHOLD);
+}
