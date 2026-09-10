@@ -10,13 +10,16 @@ import {
 } from 'three/tsl';
 import type { Node, NodeMaterial } from 'three/webgpu';
 
-export type MaterialSlot =
-  | 'position'
-  | 'normal'
-  | 'color'
-  | 'opacity'
-  | 'emissive'
-  | 'output';
+export interface SlotNodeType {
+  position: 'vec3';
+  normal: 'vec3';
+  color: 'vec3';
+  opacity: 'float';
+  emissive: 'vec3';
+  output: 'vec4';
+}
+
+export type MaterialSlot = keyof SlotNodeType;
 
 type SlotProperty =
   | 'positionNode'
@@ -50,14 +53,15 @@ const SLOT_DEFAULT: Readonly<Record<MaterialSlot, () => Node>> = {
 // contract composes all six uniformly.
 type SlotNodes = Record<SlotProperty, Node | null>;
 
-export function compose(
+export function compose<S extends MaterialSlot>(
   material: NodeMaterial,
-  slot: MaterialSlot,
-  effect: (previous: Node) => Node,
+  slot: S,
+  effect: (previous: Node<SlotNodeType[S]>) => Node,
 ): void {
   const nodes = material as unknown as SlotNodes;
   const property = SLOT_PROPERTY[slot];
-  nodes[property] = effect(nodes[property] ?? SLOT_DEFAULT[slot]());
+  const previous = (nodes[property] ?? SLOT_DEFAULT[slot]()) as Node<SlotNodeType[S]>;
+  nodes[property] = effect(previous);
 }
 
 // `Discard` stacks where called, so it cannot be built outside a shader build.

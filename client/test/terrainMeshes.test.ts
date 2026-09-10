@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   BufferAttribute,
   Group,
-  ShaderLib,
   type BufferGeometry,
   type Material,
-  type MeshStandardMaterial,
 } from 'three';
+import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
@@ -112,7 +111,7 @@ function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
       const positions = new Float32Array(want * 3);
       const normals = new Int8Array(want * 3);
       const colors = new Uint8Array(want * 3);
-      const selfLit = new Uint8Array(want);
+      const selfLit = new Float32Array(want);
       for (let v = 0; v < want; v++) {
         positions[v * 3] = chunkIdx + 1;
         positions[v * 3 + 1] = v + 1;
@@ -452,18 +451,18 @@ describe('createTerrainMeshes', () => {
     );
   });
 
-  function terrainMaterial(mesh: { material: Material | Material[] }): MeshStandardMaterial {
+  function terrainMaterial(mesh: { material: Material | Material[] }): MeshStandardNodeMaterial {
     const material = mesh.material;
     if (Array.isArray(material)) throw new Error('expected a single material');
-    return material as MeshStandardMaterial;
+    return material as MeshStandardNodeMaterial;
   }
 
-  it('binds the self-lit flag as a normalised one-byte attribute', () => {
+  it('binds the self-lit flag as a one-component float attribute', () => {
     const { meshes } = setup([chunkPayload(0, 0, 0)]);
     const attribute = plainAttribute(meshes.pickables()[0].geometry, 'selfLit');
     expect(attribute.itemSize).toBe(1);
-    expect(attribute.normalized).toBe(true);
-    expect(attribute.array).toBeInstanceOf(Uint8Array);
+    expect(attribute.normalized).toBe(false);
+    expect(attribute.array).toBeInstanceOf(Float32Array);
     expect(attribute.count).toBe(
       INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
     );
@@ -493,38 +492,13 @@ describe('createTerrainMeshes', () => {
     expect(grown.count).toBeGreaterThanOrEqual(mesh.geometry.drawRange.count);
   });
 
-  it('patches the terrain shader so a flagged vertex is shaded unlit', () => {
+  it('composes the terrain colour and output slots instead of vertex colours', () => {
     const { meshes } = setup([chunkPayload(0, 0, 0)]);
     const material = terrainMaterial(meshes.pickables()[0]);
-    const shader = {
-      uniforms: {},
-      vertexShader: ShaderLib.physical.vertexShader,
-      fragmentShader: ShaderLib.physical.fragmentShader,
-    };
-    material.onBeforeCompile(shader as never, null as never);
-
-    expect(shader.vertexShader).toContain('attribute float selfLit;');
-    expect(shader.vertexShader).toContain('vSelfLit = selfLit;');
-    expect(shader.fragmentShader).toContain('varying float vSelfLit;');
-    const mixAt = shader.fragmentShader.indexOf(
-      'outgoingLight = mix( outgoingLight, diffuseColor.rgb, vSelfLit );',
-    );
-    const opaqueAt = shader.fragmentShader.indexOf('#include <opaque_fragment>');
-    const fogAt = shader.fragmentShader.indexOf('#include <fog_fragment>');
-    expect(mixAt).toBeGreaterThan(-1);
-    expect(mixAt).toBeLessThan(opaqueAt);
-    expect(opaqueAt).toBeLessThan(fogAt);
-  });
-
-  it('refuses to silently no-op when three moves an anchor', () => {
-    const { meshes } = setup([chunkPayload(0, 0, 0)]);
-    const material = terrainMaterial(meshes.pickables()[0]);
-    expect(() =>
-      material.onBeforeCompile(
-        { uniforms: {}, vertexShader: 'void main() {}', fragmentShader: '' } as never,
-        null as never,
-      ),
-    ).toThrow(/shader patch failed/);
+    expect(material.isNodeMaterial).toBe(true);
+    expect(material.vertexColors).toBe(false);
+    expect(material.colorNode).not.toBeNull();
+    expect(material.outputNode).not.toBeNull();
   });
 
   it('drops every mesh on clear', () => {
