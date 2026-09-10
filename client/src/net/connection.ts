@@ -71,7 +71,7 @@ export interface WorldAdminSink {
 }
 
 export interface ConnectionOptions {
-  sink: TerrainSink;
+  sink: () => TerrainSink;
   operator?: OperatorSink;
   worldAdmin?: WorldAdminSink;
   onStatus: (status: ConnectionStatus) => void;
@@ -126,20 +126,20 @@ export function connect(options: ConnectionOptions): Connection {
     retryDelay = RECONNECT_MIN_DELAY_MS;
 
     joined.onMessage<JoinSnapshotMessage>(MSG_SNAPSHOT, (msg) => {
-      options.sink.onSnapshot(msg);
+      options.sink().onSnapshot(msg);
       options.onLivePlugins?.(msg.livePlugins);
     });
     joined.onMessage<ChunkUnlockMessage>(MSG_CHUNK_UNLOCK, (msg) => {
-      options.sink.onChunkUnlock(msg);
+      options.sink().onChunkUnlock(msg);
     });
     joined.onMessage<TerrainDiffMessage>(MSG_TERRAIN_DIFF, (msg) => {
-      options.sink.onTerrainDiff(msg);
+      options.sink().onTerrainDiff(msg);
     });
     joined.onMessage<SculptDeniedMessage>(MSG_SCULPT_DENIED, (msg) => {
-      options.sink.onSculptDenied(msg);
+      options.sink().onSculptDenied(msg);
     });
     joined.onMessage<SculptAppliedMessage>(MSG_SCULPT_APPLIED, (msg) => {
-      options.sink.onSculptApplied(msg);
+      options.sink().onSculptApplied(msg);
     });
 
     joined.onMessage<RestorePointListMessage>(MSG_RESTORE_POINT_LIST, (msg) => {
