@@ -1001,6 +1001,155 @@ describe('the vertex arena', () => {
   });
 });
 
+const ARENA_ATTRIBUTES = ['position', 'normal', 'color', 'selfLit'] as const;
+
+interface AttributeShadow {
+  attribute: BufferAttribute;
+  bytes: Float64Array;
+  version: number;
+}
+
+// Mirrors three's WebGLAttributes: a fresh attribute uploads whole, a dirtied one uploads
+// its update ranges — or whole, if it has none — and clears them.
+function gpuShadow(meshes: TerrainMeshes) {
+  const shadows = new Map<string, AttributeShadow>();
+  const copyWhole = (into: Float64Array, attribute: BufferAttribute): void => {
+    for (let i = 0; i < attribute.array.length; i++) into[i] = attribute.array[i]!;
+  };
+  return {
+    present(): void {
+      const drawn = meshes.pickables();
+      for (let s = 0; s < drawn.length; s++) {
+        for (const name of ARENA_ATTRIBUTES) {
+          const attribute = plainAttribute(drawn[s]!.geometry, name);
+          const seen = shadows.get(`${s}:${name}`);
+          if (seen === undefined || seen.attribute !== attribute) {
+            const bytes = new Float64Array(attribute.array.length);
+            copyWhole(bytes, attribute);
+            shadows.set(`${s}:${name}`, { attribute, bytes, version: attribute.version });
+            continue;
+          }
+          if (seen.version >= attribute.version) continue;
+          seen.version = attribute.version;
+          if (attribute.updateRanges.length === 0) copyWhole(seen.bytes, attribute);
+          else {
+            for (const range of attribute.updateRanges) {
+              for (let i = range.start; i < range.start + range.count; i++) {
+                seen.bytes[i] = attribute.array[i]!;
+              }
+            }
+            attribute.clearUpdateRanges();
+          }
+        }
+      }
+    },
+    verify(label: string): void {
+      const layouts = meshes.arenaLayout();
+      const stats = meshes.arenaStats();
+      const drawn = meshes.pickables();
+      for (let s = 0; s < drawn.length; s++) {
+        const { liveEnd } = stats[s]!;
+        expect(drawn[s]!.geometry.drawRange.count, `${label}: draw range`).toBe(liveEnd);
+        const live = new Uint8Array(liveEnd);
+        for (const slot of layouts[s]!.slots) {
+          live.fill(1, slot.offset, slot.offset + slot.count);
+        }
+        for (const name of ARENA_ATTRIBUTES) {
+          const attribute = plainAttribute(drawn[s]!.geometry, name);
+          const bytes = shadows.get(`${s}:${name}`)!.bytes;
+          const stride = attribute.itemSize;
+          for (let v = 0; v < liveEnd; v++) {
+            for (let c = 0; c < stride; c++) {
+              const at = v * stride + c;
+              if (bytes[at] !== attribute.array[at]) {
+                expect.fail(
+                  `${label}: super ${String(s)} ${name} vertex ${String(v)} is ` +
+                    `${String(bytes[at])} on the GPU and ${String(attribute.array[at])} on the CPU`,
+                );
+              }
+              if (live[v] === 0 && bytes[at] !== 0) {
+                expect.fail(
+                  `${label}: super ${String(s)} ${name} vertex ${String(v)} is in the draw ` +
+                    `range and in no slot, but ${String(bytes[at])} on the GPU`,
+                );
+              }
+            }
+          }
+        }
+      }
+    },
+  };
+}
+
+describe('the GPU shadow of the arena', () => {
+  const SHADOW_CHUNKS = 3;
+  /** Dearer than the stroke compaction budget, so a hole under it outlives the frame. */
+  const SHADOW_UNMOVABLE_RUN_VERTICES =
+    (Math.floor(
+      ARENA_COMPACT_STROKE_BUDGET_MS / ARENA_TRANSFER_MS_PER_VERTEX / VERTICES_PER_TRIANGLE,
+    ) +
+      1) *
+    VERTICES_PER_TRIANGLE;
+  const SHADOW_START_VERTICES = [1002, SHADOW_UNMOVABLE_RUN_VERTICES, 2004];
+  const SHADOW_QUIET_FRAMES = 4;
+  /** One chunk's ratio sequence, rotated per chunk so the three never move together. */
+  const RATIO_ROTATION = 7;
+  const STROKE_RATIOS = [
+    1, 1.006, 1, 1.012, 0.994, 1.017, 1, 1.009, 1.015, 1, 1.004, 1.011,
+    1.5, 1.002, 1, 1.013, 1.007, 1, 0.5, 1.018, 1, 1.006, 1.014, 1.001,
+  ];
+
+  const wholeTriangles = (vertices: number): number =>
+    Math.max(VERTICES_PER_TRIANGLE, Math.round(vertices / VERTICES_PER_TRIANGLE) * VERTICES_PER_TRIANGLE);
+
+  function shadowSetup(sizes: Map<number, number>) {
+    const mirror = createTerrainMirror(WORLD);
+    const group = new Group();
+    const clock = fakeScheduler(0);
+    const meshes = createTerrainMeshes(group, mirror, clock.scheduling, sizedSource(sizes));
+    const dirty = applySnapshot(mirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: arenaChunks(SHADOW_CHUNKS),
+    });
+    meshes.update([...dirty].sort((a, b) => a - b));
+    return { meshes, clock };
+  }
+
+  it('keeps the GPU byte-for-byte equal to the CPU below the live end, all stroke long', () => {
+    const at = (chunk: number): number => chunkIndex(WORLD, chunk, 0);
+    const sizes = new Map<number, number>();
+    for (let c = 0; c < SHADOW_CHUNKS; c++) sizes.set(at(c), SHADOW_START_VERTICES[c]!);
+    const { meshes, clock } = shadowSetup(sizes);
+    const gpu = gpuShadow(meshes);
+
+    clock.frame();
+    gpu.present();
+    gpu.verify('load');
+
+    for (let intent = 0; intent < STROKE_RATIOS.length; intent++) {
+      const dirty: number[] = [];
+      for (let c = 0; c < SHADOW_CHUNKS; c++) {
+        const ratio = STROKE_RATIOS[(intent + c * RATIO_ROTATION) % STROKE_RATIOS.length]!;
+        sizes.set(at(c), wholeTriangles(sizes.get(at(c))! * ratio));
+        dirty.push(at(c));
+      }
+      meshes.update(dirty);
+      clock.frame();
+      gpu.present();
+      gpu.verify(`intent ${String(intent)}`);
+    }
+
+    for (let pass = 0; pass < SHADOW_QUIET_FRAMES; pass++) {
+      meshes.settle({ assumeQuiet: true });
+      clock.frame();
+      gpu.present();
+      gpu.verify(`quiet ${String(pass)}`);
+    }
+    expect(meshes.arenaStats()[0]!.growths).toBeGreaterThan(0);
+  });
+});
+
 function settleScheduler() {
   const handlers = new Set<(dt: number) => void>();
   let clockMs = 0;

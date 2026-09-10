@@ -382,10 +382,8 @@ export function createTerrainMeshes(
     retreatFromLiveEnd(sm);
   };
 
-  const takeHole = (
-    sm: SuperMesh,
-    count: number,
-  ): { offset: number; surplus: number } | null => {
+  // What the taker does not use stays a hole, already zero on the GPU, so never re-sent.
+  const takeHole = (sm: SuperMesh, count: number): number | null => {
     for (let i = 0; i < sm.holes.length; i++) {
       const hole = sm.holes[i]!;
       if (hole.length < count) continue;
@@ -396,7 +394,7 @@ export function createTerrainMeshes(
         hole.offset = offset + count;
         hole.length = surplus;
       }
-      return { offset, surplus };
+      return offset;
     }
     return null;
   };
@@ -521,13 +519,12 @@ export function createTerrainMeshes(
       slot.count = count;
       dirtied.push([slot.offset, count]);
     } else {
-      const reused = takeHole(sm, count);
+      const reusedOffset = takeHole(sm, count);
       let freedOffset: number;
-      if (reused !== null) {
+      if (reusedOffset !== null) {
         freedOffset = slot.offset;
-        slot.offset = reused.offset;
-        dirtied.push([reused.offset, count]);
-        if (reused.surplus > 0) dirtied.push([reused.offset + count, reused.surplus]);
+        slot.offset = reusedOffset;
+        dirtied.push([reusedOffset, count]);
       } else {
         if (sm.liveEnd + count > capacityVertices(sm) && sm.holes.length > 0) {
           compactSuperMesh(sm, Infinity);
