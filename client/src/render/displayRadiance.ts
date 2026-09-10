@@ -100,7 +100,7 @@ function rrtAndOdtFitInverseNode(y: Node<'float'>): Node<'float'> {
 
 // WebGPU tone-maps every pixel. A displayed sRGB colour, clipped to the 8-bit range as WebGL's
 // framebuffer did, becomes the radiance that maps back to it; unreachable colours clamp at zero.
-export const radianceForDisplay = (displayed: Node<'vec3'>): Node<'vec3'> =>
+export const radianceForDisplay = (displayed: Node<'vec3'> | Node<'color'>): Node<'vec3'> =>
   Fn((builder) => {
     const linear = sRGBTransferEOTF(clamp(displayed, 0, 1)) as Node<'vec3'>;
     if (builder.renderer.toneMapping !== ACESFilmicToneMapping) return linear;

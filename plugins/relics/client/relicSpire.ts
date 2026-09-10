@@ -1,10 +1,24 @@
 import {
   CylinderGeometry,
   DoubleSide,
-  ShaderMaterial,
   type BufferGeometry,
   type Color,
 } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Fn,
+  cameraProjectionMatrix,
+  clamp,
+  float,
+  materialOpacity,
+  modelViewMatrix,
+  positionGeometry,
+  pow,
+  smoothstep,
+  uniform,
+  vec4,
+} from 'three/tsl';
+import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
 
 export const SPIRE_HEIGHT_WORLD = 14;
 
@@ -23,30 +37,6 @@ const SPIRE_PULSE_DEPTH = 0.18;
 
 export const SPIRE_RENDER_ORDER = 10;
 
-const VERTEX_SHADER =  `
-varying float vHeight;
-
-void main() {
-  vHeight = position.y;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-const FRAGMENT_SHADER =  `
-uniform vec3 uColor;
-uniform float uHeight;
-uniform float uFootFade;
-uniform float uFalloff;
-uniform float uAlpha;
-varying float vHeight;
-
-void main() {
-  float up = clamp(vHeight / uHeight, 0.0, 1.0);
-  float fade = pow(1.0 - up, uFalloff) * smoothstep(0.0, uFootFade, vHeight);
-  gl_FragColor = vec4(uColor, uAlpha * fade);
-}
-`;
-
 export function spireGeometry(): BufferGeometry {
   const geometry = new CylinderGeometry(
     SPIRE_RADIUS_WORLD,
@@ -60,22 +50,29 @@ export function spireGeometry(): BufferGeometry {
   return geometry;
 }
 
-export function createSpireMaterial(color: Color): ShaderMaterial {
-  return new ShaderMaterial({
-    vertexShader: VERTEX_SHADER,
-    fragmentShader: FRAGMENT_SHADER,
-    uniforms: {
-      uColor: { value: color },
-      uHeight: { value: SPIRE_HEIGHT_WORLD },
-      uFootFade: { value: SPIRE_FOOT_FADE_WORLD },
-      uFalloff: { value: SPIRE_FALLOFF_EXPONENT },
-      uAlpha: { value: SPIRE_BASE_ALPHA },
-    },
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-    toneMapped: false,
-  });
+// The pulsing alpha is the material's opacity, set each frame from spireAlpha.
+export function createSpireMaterial(color: Color): NodeMaterial {
+  const material = new NodeMaterial();
+  material.transparent = true;
+  material.depthWrite = false;
+  material.side = DoubleSide;
+  material.opacity = SPIRE_BASE_ALPHA;
+
+  const colorUniform = uniform(color);
+  const vHeight = positionGeometry.y;
+
+  material.vertexNode = cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(positionGeometry, 1.0));
+
+  material.fragmentNode = Fn(() => {
+    const up = clamp(vHeight.div(SPIRE_HEIGHT_WORLD), 0.0, 1.0);
+    const fade = pow(float(1.0).sub(up), SPIRE_FALLOFF_EXPONENT).mul(
+      smoothstep(0.0, SPIRE_FOOT_FADE_WORLD, vHeight),
+    );
+    // toneMapped: false is inert on WebGPU, so the displayed colour is inverted through ACES.
+    return vec4(radianceForDisplay(colorUniform), materialOpacity.mul(fade));
+  })();
+
+  return material;
 }
 
 export function spireAlpha(elapsedS: number, phaseS: number): number {
