@@ -39,6 +39,7 @@ import {
 } from '../src/render/chunkBuildSource.ts';
 import type { ChunkJobAnswer } from '../src/terrain/chunkJob.ts';
 import {
+  COMPONENTS_PER_COLOR,
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   VERTICES_PER_TRIANGLE,
 } from '../src/terrain/vertexGrid.ts';
@@ -85,7 +86,7 @@ function expectSlotsEqual(patched: TerrainMeshes, reference: TerrainMeshes): voi
       const mirrorSlot = referenceSlots.get(slot.chunkIdx);
       expect(mirrorSlot, `chunk ${slot.chunkIdx} is missing from the reference`).toBeDefined();
       expect(slot.count, `chunk ${slot.chunkIdx} vertex count`).toBe(mirrorSlot!.count);
-      for (const name of ['position', 'normal', 'color', 'selfLit'] as const) {
+      for (const name of ['position', 'normal', 'color'] as const) {
         const a = plainAttribute(patchedGeometry, name);
         const b = plainAttribute(referenceGeometry, name);
         const stride = a.itemSize;
@@ -113,7 +114,6 @@ function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
       const positions = new Float32Array(want * 3);
       const normals = new Int8Array(want * 3);
       const colors = new Uint8Array(want * 3);
-      const selfLit = new Float32Array(want);
       for (let v = 0; v < want; v++) {
         positions[v * 3] = chunkIdx + 1;
         positions[v * 3 + 1] = v + 1;
@@ -124,7 +124,6 @@ function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
         colors[v * 3] = 7;
         colors[v * 3 + 1] = 8;
         colors[v * 3 + 2] = 9;
-        selfLit[v] = 1;
       }
       return {
         ...real,
@@ -132,7 +131,6 @@ function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
         positions,
         normals,
         colors,
-        selfLit,
         bounds: new Float32Array([1, 1, 1, chunkIdx + 1, want, 1]),
       };
     },
@@ -179,7 +177,7 @@ function expectHoleInvariants(meshes: TerrainMeshes): void {
     expect(claimed.indexOf(0), 'a vertex under the live end belongs to no slot and no hole')
       .toBe(-1);
     const geometry = meshes.pickables()[s]!.geometry;
-    for (const name of ['position', 'normal', 'color', 'selfLit'] as const) {
+    for (const name of ['position', 'normal', 'color'] as const) {
       const attribute = plainAttribute(geometry, name);
       const stride = attribute.itemSize;
       for (let v = 0; v < liveEnd; v++) {
@@ -476,27 +474,27 @@ describe('createTerrainMeshes', () => {
     return material as MeshStandardNodeMaterial;
   }
 
-  it('binds the self-lit flag as a one-component float attribute', () => {
+  it('carries the self-lit flag in the colour attribute alpha byte', () => {
     const { meshes } = setup([chunkPayload(0, 0, 0)]);
-    const attribute = plainAttribute(meshes.pickables()[0].geometry, 'selfLit');
-    expect(attribute.itemSize).toBe(1);
-    expect(attribute.normalized).toBe(false);
-    expect(attribute.array).toBeInstanceOf(Float32Array);
+    const attribute = plainAttribute(meshes.pickables()[0].geometry, 'color');
+    expect(attribute.itemSize).toBe(COMPONENTS_PER_COLOR);
+    expect(attribute.normalized).toBe(true);
+    expect(attribute.array).toBeInstanceOf(Uint8Array);
     expect(attribute.count).toBe(
       INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
     );
   });
 
-  it('re-uploads and rebinds the flag alongside the other attributes', () => {
+  it('re-uploads and rebinds the colour attribute, flag included, alongside the others', () => {
     const { meshes, mirror } = setup([chunkPayload(0, 0, 0)]);
     const mesh = meshes.pickables()[0];
-    const before = plainAttribute(mesh.geometry, 'selfLit');
+    const before = plainAttribute(mesh.geometry, 'color');
     const versionBefore = before.version;
 
     meshes.update(
       applyTerrainDiff(mirror, { type: 'terrainDiff', cells: [{ x: 2, y: 3, h: 256 }] }),
     );
-    expect(plainAttribute(mesh.geometry, 'selfLit')).toBe(before);
+    expect(plainAttribute(mesh.geometry, 'color')).toBe(before);
     expect(before.version).toBeGreaterThan(versionBefore);
 
     const cells = [];
@@ -506,7 +504,7 @@ describe('createTerrainMeshes', () => {
       }
     }
     meshes.update(applyTerrainDiff(mirror, { type: 'terrainDiff', cells }));
-    const grown = plainAttribute(mesh.geometry, 'selfLit');
+    const grown = plainAttribute(mesh.geometry, 'color');
     expect(grown).not.toBe(before);
     expect(grown.count).toBeGreaterThanOrEqual(mesh.geometry.drawRange.count);
   });
@@ -837,7 +835,7 @@ describe('the vertex arena', () => {
     const offsetBefore = layoutBefore.slots.find((slot) => slot.chunkIdx === first)!.offset;
 
     const geometry = meshes.pickables()[0]!.geometry;
-    const attributes = (['position', 'normal', 'color', 'selfLit'] as const).map((name) =>
+    const attributes = (['position', 'normal', 'color'] as const).map((name) =>
       plainAttribute(geometry, name),
     );
     for (const attribute of attributes) attribute.clearUpdateRanges();
@@ -1091,7 +1089,7 @@ describe('slot slack', () => {
   });
 });
 
-const ARENA_ATTRIBUTES = ['position', 'normal', 'color', 'selfLit'] as const;
+const ARENA_ATTRIBUTES = ['position', 'normal', 'color'] as const;
 
 interface AttributeShadow {
   attribute: BufferAttribute;
