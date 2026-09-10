@@ -64,11 +64,32 @@ export function compose<S extends MaterialSlot>(
   nodes[property] = effect(previous);
 }
 
+const keeps = new WeakMap<Node, Node<'bool'>>();
+const joinedKeeps = new WeakMap<Node, WeakMap<Node, Node<'bool'>>>();
+
+// One node per input: materials given the same discards share a mask, so their program keys agree.
+function memo<K extends Node>(cache: WeakMap<K, Node<'bool'>>, key: K, make: () => Node<'bool'>) {
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const made = make();
+  cache.set(key, made);
+  return made;
+}
+
 // `Discard` stacks where called, so it cannot be built outside a shader build.
 // `maskNode` is the declarative equivalent: three discards where the mask is
 // false, so conditions AND their keeps.
 export function discard(material: NodeMaterial, condition: Node<'bool'>): void {
   const previous = material.maskNode as Node<'bool'> | null;
-  const keep = not(condition);
-  material.maskNode = previous === null ? keep : and(previous, keep);
+  const keep = memo(keeps, condition, () => not(condition));
+  if (previous === null) {
+    material.maskNode = keep;
+    return;
+  }
+  let joined = joinedKeeps.get(previous);
+  if (joined === undefined) {
+    joined = new WeakMap();
+    joinedKeeps.set(previous, joined);
+  }
+  material.maskNode = memo(joined, keep, () => and(previous, keep));
 }
