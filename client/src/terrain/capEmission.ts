@@ -70,7 +70,9 @@ export const COMPONENTS_PER_COLOR = 4;
 export const VERTICES_PER_TRIANGLE = 3;
 
 export const LIT_BY_SCENE = 0;
-export const SELF_LIT = 255;
+// A float, not a normalised byte: WebGPU has no one-component 8-bit vertex format
+// (three's typeArraysToVertexFormatPrefixForItemSize1 lists none).
+export const SELF_LIT = 1;
 
 export interface DrawnCapLevel {
   readonly threshold: number;
@@ -102,7 +104,7 @@ export interface ChunkGeometryBuffers {
   positions: Float32Array;
   normals: Int8Array;
   colors: Uint8Array;
-  selfLit: Uint8Array;
+  selfLit: Float32Array;
   triangleCapacity: number;
 }
 
@@ -119,7 +121,7 @@ export function createChunkGeometryBuffers(
     positions: new Float32Array(vertices * COMPONENTS_PER_POSITION),
     normals: new Int8Array(vertices * COMPONENTS_PER_NORMAL),
     colors: new Uint8Array(vertices * COMPONENTS_PER_COLOR),
-    selfLit: new Uint8Array(vertices),
+    selfLit: new Float32Array(vertices),
     triangleCapacity,
   };
 }

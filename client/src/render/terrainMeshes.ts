@@ -4,14 +4,21 @@ import {
   BufferGeometry,
   Color,
   DoubleSide,
-  DynamicDrawUsage,
   Mesh,
-  MeshStandardMaterial,
   Sphere,
   SRGBColorSpace,
   Vector3,
   type Group,
 } from 'three';
+import { MeshStandardNodeMaterial, type Node } from 'three/webgpu';
+import {
+  attribute,
+  colorSpaceToWorking,
+  diffuseColor,
+  mix,
+  vec4,
+  vertexColor,
+} from 'three/tsl';
 import { chunksPerEdge } from '@terrace/shared';
 import { SCULPT_REPEAT_DELAY_MS } from '../config.ts';
 import {
@@ -33,7 +40,7 @@ import {
   COMPONENTS_PER_COLOR,
   COMPONENTS_PER_NORMAL,
 } from '../terrain/capEmission.ts';
-import { spliceShader } from './shaderSplice.ts';
+import { compose } from './materialSlots.ts';
 import { applyGroundShade } from './groundShade.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
@@ -58,42 +65,21 @@ const TERRAIN_METALNESS = 0;
 
 const SELF_LIT_ATTRIBUTE = 'selfLit';
 
-function makeSelfLitAware(material: MeshStandardMaterial): void {
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        '#include <common>',
-        `#include <common>\nattribute float ${SELF_LIT_ATTRIBUTE};\nvarying float vSelfLit;`,
-        'terrain',
-      ),
-      '#include <begin_vertex>',
-      `vSelfLit = ${SELF_LIT_ATTRIBUTE};\n#include <begin_vertex>`,
-      'terrain',
-    );
-    shader.vertexShader = spliceShader(
-      shader.vertexShader,
-      '#include <color_vertex>',
-      `#include <color_vertex>
-      vColor.rgb = mix(
-        vColor.rgb / 12.92,
-        pow( ( vColor.rgb + 0.055 ) / 1.055, vec3( 2.4 ) ),
-        step( vec3( 0.04045 ), vColor.rgb )
-      );`,
-      'terrain',
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        shader.fragmentShader,
-        '#include <common>',
-        '#include <common>\nvarying float vSelfLit;',
-        'terrain',
-      ),
-      '#include <opaque_fragment>',
-      'outgoingLight = mix( outgoingLight, diffuseColor.rgb, vSelfLit );\n#include <opaque_fragment>',
-      'terrain',
-    );
-  };
+// @types/three types the colour-space helpers as a bare Node; the decode is a vec3.
+function srgbToWorking(node: Node<'vec3'>): Node<'vec3'> {
+  return colorSpaceToWorking(node, SRGBColorSpace) as unknown as Node<'vec3'>;
+}
+
+// The colour attribute holds sRGB bytes, so the graph decodes them where the vertex
+// splice used to, rather than changing what the mesher writes.
+function makeSelfLitAware(material: MeshStandardNodeMaterial): void {
+  compose(material, 'color', (previous) => previous.mul(srgbToWorking(vertexColor().rgb)));
+  compose(material, 'output', (previous) =>
+    vec4(
+      mix(previous.rgb, diffuseColor.rgb, attribute(SELF_LIT_ATTRIBUTE, 'float')),
+      previous.a,
+    ),
+  );
 }
 
 function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
@@ -204,8 +190,7 @@ export function createTerrainMeshes(
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
   const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
-  const material = new MeshStandardMaterial({
-    vertexColors: true,
+  const material = new MeshStandardNodeMaterial({
     flatShading: true,
     roughness: TERRAIN_ROUGHNESS,
     metalness: TERRAIN_METALNESS,
@@ -233,11 +218,7 @@ export function createTerrainMeshes(
     const positionAttribute = new BufferAttribute(sm.buffers.positions, 3);
     const normalAttribute = new BufferAttribute(sm.buffers.normals, COMPONENTS_PER_NORMAL, true);
     const colorAttribute = new BufferAttribute(sm.buffers.colors, COMPONENTS_PER_COLOR, true);
-    const selfLitAttribute = new BufferAttribute(sm.buffers.selfLit, 1, true);
-    positionAttribute.setUsage(DynamicDrawUsage);
-    normalAttribute.setUsage(DynamicDrawUsage);
-    colorAttribute.setUsage(DynamicDrawUsage);
-    selfLitAttribute.setUsage(DynamicDrawUsage);
+    const selfLitAttribute = new BufferAttribute(sm.buffers.selfLit, 1);
 
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', positionAttribute);

@@ -1,11 +1,20 @@
-import { Vector3, type Material } from 'three';
-import { DEFAULT_WORLD_SPAN, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import { Vector3 } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
 import {
-  WORLD_POSITION_VERTEX_ANCHOR,
-  WORLD_POSITION_VERTEX_GLSL,
-  glslFloat,
-  spliceShader,
-} from './shaderSplice.ts';
+  Break,
+  Fn,
+  If,
+  Loop,
+  float,
+  max,
+  positionWorld,
+  smoothstep as smoothstepNode,
+  uniform,
+  uniformArray,
+  vec4,
+} from 'three/tsl';
+import { DEFAULT_WORLD_SPAN, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import { compose } from './materialSlots.ts';
 import type { GroundShadeDisc } from '../plugins/types.ts';
 
 export type { GroundShadeDisc };
@@ -112,8 +121,13 @@ export function groundShadeUniforms(): GroundShadeUniforms {
   return uniforms;
 }
 
+function setShadeCount(count: number): void {
+  uniforms.uShadeCount.value = count;
+  shadeCountNode.value = count;
+}
+
 export function clearGroundShade(): void {
-  uniforms.uShadeCount.value = 0;
+  setShadeCount(0);
 }
 
 export function setGroundShade(
@@ -127,73 +141,38 @@ export function setGroundShade(
     uniforms.uShadeA.value[i].set(disc.x, disc.z, disc.y);
     uniforms.uShadeB.value[i].set(disc.darkness, disc.inner, disc.radius);
   }
-  uniforms.uShadeCount.value = count;
+  setShadeCount(count);
 }
 
-const SHADER_COMMON_ANCHOR = '#include <common>';
-const GROUND_SHADE_FRAGMENT_ANCHOR = '#include <opaque_fragment>';
+const shadeCountNode = uniform(0, 'int');
+const shadeSunNode = uniform(uniforms.uShadeSun.value);
+const shadeANode = uniformArray<'vec3'>(uniforms.uShadeA.value, 'vec3');
+const shadeBNode = uniformArray<'vec3'>(uniforms.uShadeB.value, 'vec3');
 
-function declarationsGlsl(max: number): string {
-  return `#define GROUND_SHADE_MAX ${String(max)}
-#define GROUND_SHADE_MIN_SUN_Y ${glslFloat(GROUND_SHADE_MIN_SUN_Y)}
-uniform int uShadeCount;
-uniform vec3 uShadeSun;
-uniform vec3 uShadeA[ GROUND_SHADE_MAX ];
-uniform vec3 uShadeB[ GROUND_SHADE_MAX ];
-varying vec3 vGroundShadeWorld;`;
-}
+// uShadeA is (x, z, deckY); uShadeB is (darkness, inner, radius).
+const shadeAt = Fn(() => {
+  compiledAgainstMax = true;
+  const shade = float(0).toVar();
+  If(shadeSunNode.y.greaterThan(GROUND_SHADE_MIN_SUN_Y), () => {
+    Loop(configuredMax, ({ i }) => {
+      If(i.greaterThanEqual(shadeCountNode), () => {
+        Break();
+      });
+      const disc = shadeANode.element(i);
+      const shape = shadeBNode.element(i);
+      const travel = disc.z.sub(positionWorld.y).div(shadeSunNode.y);
+      const hit = positionWorld.add(shadeSunNode.mul(travel));
+      const reach = hit.xz.distance(disc.xy).div(shape.z);
+      shade.assign(max(shade, shape.x.mul(smoothstepNode(shape.y, 1, reach).oneMinus())));
+    });
+  });
+  return shade;
+});
 
-const GROUND_SHADE_FRAGMENT_GLSL = `float gsShade = 0.0;
-    if ( uShadeSun.y > GROUND_SHADE_MIN_SUN_Y ) {
-        for ( int i = 0; i < GROUND_SHADE_MAX; i ++ ) {
-            if ( i >= uShadeCount ) break;
-            vec3 gsA = uShadeA[ i ];
-            vec3 gsB = uShadeB[ i ];
-            vec3 gsHit = vGroundShadeWorld + uShadeSun * ( ( gsA.z - vGroundShadeWorld.y ) / uShadeSun.y );
-            float gsD = distance( gsHit.xz, gsA.xy ) / gsB.z;
-            gsShade = max( gsShade, gsB.x * ( 1.0 - smoothstep( gsB.y, 1.0, gsD ) ) );
-        }
-    }
-    outgoingLight *= 1.0 - gsShade;`;
-
-export function applyGroundShade(material: Material, label: string): void {
-  const previous = material.onBeforeCompile.bind(material);
-  material.onBeforeCompile = (shader, renderer) => {
-    previous(shader, renderer);
-    compiledAgainstMax = true;
-    shader.uniforms.uShadeCount = uniforms.uShadeCount;
-    shader.uniforms.uShadeSun = uniforms.uShadeSun;
-    shader.uniforms.uShadeA = uniforms.uShadeA;
-    shader.uniforms.uShadeB = uniforms.uShadeB;
-    const declarations = declarationsGlsl(configuredMax);
-    shader.vertexShader = spliceShader(
-      spliceShader(
-        shader.vertexShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${declarations}`,
-        label,
-      ),
-      WORLD_POSITION_VERTEX_ANCHOR,
-      [
-        WORLD_POSITION_VERTEX_ANCHOR,
-        WORLD_POSITION_VERTEX_GLSL,
-        'vGroundShadeWorld = tWorldPosition.xyz;',
-      ].join('\n    '),
-      label,
-    );
-    shader.fragmentShader = spliceShader(
-      spliceShader(
-        shader.fragmentShader,
-        SHADER_COMMON_ANCHOR,
-        `${SHADER_COMMON_ANCHOR}\n${declarations}`,
-        label,
-      ),
-      GROUND_SHADE_FRAGMENT_ANCHOR,
-      `${GROUND_SHADE_FRAGMENT_GLSL}\n    ${GROUND_SHADE_FRAGMENT_ANCHOR}`,
-      label,
-    );
-  };
-  const previousKey = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${previousKey()}|groundShade`;
+export function applyGroundShade(material: NodeMaterial, label: string): void {
+  material.name = label;
+  compose(material, 'output', (previous) =>
+    vec4(previous.rgb.mul(shadeAt().oneMinus()), previous.a),
+  );
   material.needsUpdate = true;
 }

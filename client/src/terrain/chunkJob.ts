@@ -46,7 +46,7 @@ export interface ChunkJobAnswer {
   readonly positions: Float32Array;
   readonly normals: Int8Array;
   readonly colors: Uint8Array;
-  readonly selfLit: Uint8Array;
+  readonly selfLit: Float32Array;
   readonly bounds: Float32Array;
   readonly plan: FlatCapPlan;
   readonly topLevel: Int8Array;
