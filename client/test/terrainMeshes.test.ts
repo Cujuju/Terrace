@@ -24,7 +24,9 @@ import {
   ARENA_HEADROOM_FLOOR_TRIANGLES,
   ARENA_HEADROOM_RUN_MULTIPLE,
   ARENA_TRANSFER_MS_PER_VERTEX,
+  CHUNK_ANSWER_BACKLOG_CAP,
   CHUNK_SPLICE_FRAME_BUDGET_MS,
+  SLOT_SLACK_FACTOR,
   SUPER_MESH_SPAN_CHUNKS,
   TERRAIN_QUIET_MS,
   createTerrainMeshes,
@@ -160,12 +162,22 @@ function expectHoleInvariants(meshes: TerrainMeshes): void {
     expect(total).toBe(deadVertices);
 
     const live = new Uint8Array(liveEnd);
+    const claimed = new Uint8Array(liveEnd);
+    for (const hole of holes) claimed.fill(1, hole.offset, hole.offset + hole.length);
     for (const slot of slots) {
       expect(slot.offset % VERTICES_PER_TRIANGLE).toBe(0);
       expect(slot.count % VERTICES_PER_TRIANGLE).toBe(0);
-      expect(slot.offset + slot.count).toBeLessThanOrEqual(liveEnd);
+      expect(slot.capacity % VERTICES_PER_TRIANGLE).toBe(0);
+      expect(slot.capacity).toBeGreaterThanOrEqual(slot.count);
+      expect(slot.offset + slot.capacity).toBeLessThanOrEqual(liveEnd);
+      for (let v = slot.offset; v < slot.offset + slot.capacity; v++) {
+        expect(claimed[v], `vertex ${v} is claimed twice`).toBe(0);
+        claimed[v] = 1;
+      }
       live.fill(1, slot.offset, slot.offset + slot.count);
     }
+    expect(claimed.indexOf(0), 'a vertex under the live end belongs to no slot and no hole')
+      .toBe(-1);
     const geometry = meshes.pickables()[s]!.geometry;
     for (const name of ['position', 'normal', 'color', 'selfLit'] as const) {
       const attribute = plainAttribute(geometry, name);
@@ -360,8 +372,15 @@ describe('createTerrainMeshes', () => {
     );
     const levelled = meshes.arenaStats()[0]!;
     expect(geometry.drawRange.count).toBe(levelled.liveEnd);
-    expect(levelled.liveEnd).toBe(FLAT_CHUNK_VERTEX_COUNT);
     expect(levelled.liveCount).toBe(FLAT_CHUNK_VERTEX_COUNT);
+    expect(levelled.paddingVertices).toBeGreaterThan(0);
+    expect(levelled.liveEnd).toBe(levelled.liveCount + levelled.paddingVertices);
+
+    meshes.settle({ assumeQuiet: true });
+    const reclaimed = meshes.arenaStats()[0]!;
+    expect(reclaimed.paddingVertices).toBe(0);
+    expect(reclaimed.liveEnd).toBe(FLAT_CHUNK_VERTEX_COUNT);
+    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
   });
 
   it('writes the new height into the patched chunk', () => {
@@ -644,6 +663,79 @@ describe('multi-frame chunk meshing', () => {
     expect(meshes.pendingCount()).toBe(0);
   });
 
+  const BACKLOG_SOURCE_CONCURRENCY = 3;
+  const BACKLOG_STARVED_FRAMES = 12;
+  const BACKLOG_CHUNK_ROWS = 4;
+
+  function backlogSetup() {
+    const direct = createDirectChunkBuildSource();
+    const owed: (() => void)[] = [];
+    let started = 0;
+    let resolved = 0;
+    const source: ChunkBuildSource = {
+      concurrency: BACKLOG_SOURCE_CONCURRENCY,
+      build(mirror, chunkIdx, generation) {
+        started++;
+        const answer = direct.build(mirror, chunkIdx, generation) as ChunkJobAnswer | null;
+        return new Promise<ChunkJobAnswer | null>((resolve) => {
+          owed.push(() => {
+            resolved++;
+            resolve(answer);
+          });
+        });
+      },
+      dispose(): void {},
+    };
+
+    const chunks: ChunkPayload[] = [];
+    for (let cy = 0; cy < BACKLOG_CHUNK_ROWS; cy++) {
+      for (let cx = 0; cx < WORLD / CHUNK_SIZE; cx++) chunks.push(chunkPayload(cx, cy, 100));
+    }
+    const mirror = createTerrainMirror(WORLD);
+    const group = new Group();
+    const clock = fakeScheduler(CHUNK_SPLICE_FRAME_BUDGET_MS);
+    const meshes = createTerrainMeshes(group, mirror, clock.scheduling, source);
+    meshes.update(applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks }));
+
+    return {
+      meshes,
+      clock,
+      inFlight: (): number => started - resolved,
+      ready: (): number => resolved - meshes.loadTrace().chunksSpliced,
+      async releaseAll(): Promise<void> {
+        for (const finish of owed.splice(0)) finish();
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      },
+    };
+  }
+
+  it('refills the build pool while spliced answers wait, and caps the answer backlog', async () => {
+    const jobs = backlogSetup();
+
+    jobs.clock.frame();
+    expect(jobs.inFlight()).toBe(BACKLOG_SOURCE_CONCURRENCY);
+    expect(jobs.ready()).toBe(0);
+
+    await jobs.releaseAll();
+    jobs.clock.frame();
+
+    expect(jobs.meshes.loadTrace().chunksSpliced).toBe(1);
+    expect(jobs.ready()).toBe(BACKLOG_SOURCE_CONCURRENCY - 1);
+    expect(jobs.inFlight()).toBe(BACKLOG_SOURCE_CONCURRENCY);
+
+    let maxReady = jobs.ready();
+    for (let frame = 0; frame < BACKLOG_STARVED_FRAMES; frame++) {
+      await jobs.releaseAll();
+      jobs.clock.frame();
+      maxReady = Math.max(maxReady, jobs.ready());
+      expect(jobs.ready() + jobs.inFlight()).toBeLessThanOrEqual(CHUNK_ANSWER_BACKLOG_CAP);
+    }
+    expect(maxReady).toBeGreaterThan(BACKLOG_SOURCE_CONCURRENCY);
+    expect(maxReady).toBeLessThanOrEqual(CHUNK_ANSWER_BACKLOG_CAP);
+  });
+
   const DEAR_RUN_VERTICES = 60000;
 
   function compactionSetup() {
@@ -683,6 +775,12 @@ describe('multi-frame chunk meshing', () => {
     sizes.set(chunkIndex(WORLD, 0, 0), 3);
     meshes.update([chunkIndex(WORLD, 0, 0)]);
     clock.frame();
+    expect(meshes.arenaStats()[0]).toMatchObject({
+      paddingVertices: 297,
+      deadVertices: 0,
+      holeCount: 0,
+    });
+    meshes.settle({ assumeQuiet: true });
     expect(meshes.arenaStats()[0]).toMatchObject({ deadVertices: 297, holeCount: 1 });
 
     const sphereBefore = meshes.pickables()[0]!.geometry.boundingSphere!.clone();
@@ -712,10 +810,14 @@ describe('multi-frame chunk meshing', () => {
     const stats = meshes.arenaStats()[0]!;
     expect(stats.deadVertices).toBe(0);
     expect(stats.holeCount).toBe(0);
-    expect(stats.liveEnd).toBe(stats.liveCount);
+    expect(stats.liveEnd).toBe(stats.liveCount + stats.paddingVertices);
     expect(frames).toBeLessThan(MAX_SWEEP_FRAMES);
   });
 });
+
+function slackVertices(count: number): number {
+  return Math.ceil((count * SLOT_SLACK_FACTOR) / VERTICES_PER_TRIANGLE) * VERTICES_PER_TRIANGLE;
+}
 
 describe('the vertex arena', () => {
   const RUN = 100 * VERTICES_PER_TRIANGLE;
@@ -751,7 +853,7 @@ describe('the vertex arena', () => {
     for (let a = 0; a < attributes.length; a++) {
       const stride = attributes[a]!.itemSize;
       expect(ranges[a], `${attributes[a]!.itemSize}-component attribute`).toEqual([
-        { start: liveEndBefore * stride, count: RUN * 2 * stride },
+        { start: liveEndBefore * stride, count: slackVertices(RUN * 2) * stride },
         { start: offsetBefore * stride, count: RUN * stride },
       ]);
     }
@@ -800,7 +902,8 @@ describe('the vertex arena', () => {
     const stats = meshes.arenaStats()[0]!;
     expect(stats.deadVertices).toBe(0);
     expect(stats.holeCount).toBe(0);
-    expect(stats.liveEnd).toBe(stats.liveCount);
+    expect(stats.paddingVertices).toBeGreaterThan(0);
+    expect(stats.liveEnd).toBe(stats.liveCount + stats.paddingVertices);
   });
 
   it('extends a run in place when it already ends at the live end', () => {
@@ -814,11 +917,13 @@ describe('the vertex arena', () => {
     meshes.onChunkDrawn(() => seen.push(meshes.arenaLayout()[0]!));
     meshes.update([first]);
 
+    const capacity = slackVertices(RUN * 3);
     expect(seen[0]!.holes).toEqual([]);
-    expect(seen[0]!.slots).toEqual([{ chunkIdx: first, offset: 0, count: RUN * 3 }]);
+    expect(seen[0]!.slots).toEqual([{ chunkIdx: first, offset: 0, count: RUN * 3, capacity }]);
     expect(meshes.arenaStats()[0]).toMatchObject({
-      liveEnd: RUN * 3,
+      liveEnd: capacity,
       liveCount: RUN * 3,
+      paddingVertices: capacity - RUN * 3,
       holeCount: 0,
       growths: 0,
     });
@@ -837,22 +942,27 @@ describe('the vertex arena', () => {
     expect(meshes.arenaStats()[0]!.liveEnd).toBe(1500);
 
     sizes.set(a, 3);
-    sizes.set(b, 450);
     const seen: ArenaLayout[] = [];
     const liveEnds: number[] = [];
     meshes.onChunkDrawn(() => {
       seen.push(meshes.arenaLayout()[0]!);
       liveEnds.push(meshes.arenaStats()[0]!.liveEnd);
     });
-    meshes.update([a, b]);
+    meshes.update([a]);
+    // A shrink keeps its capacity, so the hole b first-fits into opens only at settle.
+    meshes.settle({ assumeQuiet: true });
+    sizes.set(b, 450);
+    meshes.update([b]);
 
+    const capacity = slackVertices(450);
     const afterFirstFit = seen[1]!;
     expect(afterFirstFit.slots.find((slot) => slot.chunkIdx === b)).toEqual({
       chunkIdx: b,
       offset: 3,
       count: 450,
+      capacity,
     });
-    expect(afterFirstFit.holes).toEqual([{ offset: 453, length: 447 }]);
+    expect(afterFirstFit.holes).toEqual([{ offset: 3 + capacity, length: 900 - (3 + capacity) }]);
     expect(liveEnds).toEqual([1500, 1500]);
   });
 
@@ -877,27 +987,256 @@ describe('the vertex arena', () => {
   it('compacts before it grows, so a fragmented arena reuses its own dead space', () => {
     const a = chunkIndex(WORLD, 0, 0);
     const b = chunkIndex(WORLD, 1, 0);
+    const THREE_RUNS = RUN * 3;
+    const REGROWN = 1005;
     const sizes = new Map<number, number>([
-      [a, 1002],
-      [b, 1002],
-      [chunkIndex(WORLD, 2, 0), 1002],
+      [a, THREE_RUNS],
+      [b, THREE_RUNS],
+      [chunkIndex(WORLD, 2, 0), THREE_RUNS],
     ]);
     const { meshes } = arenaSetup(3, sizes);
-    expect(meshes.arenaStats()[0]).toMatchObject({ liveEnd: 3006, growths: 0 });
+    expect(meshes.arenaStats()[0]).toMatchObject({ liveEnd: THREE_RUNS * 3, growths: 0 });
 
     sizes.set(b, 3);
-    sizes.set(a, 1050);
     const seen: ArenaLayout[] = [];
     meshes.onChunkDrawn(() => seen.push(meshes.arenaLayout()[0]!));
-    meshes.update([b, a]);
+    meshes.update([b]);
+    meshes.settle({ assumeQuiet: true });
+    sizes.set(a, REGROWN);
+    meshes.update([a]);
 
+    const capacity = slackVertices(REGROWN);
+    expect(THREE_RUNS * 3 + capacity).toBeGreaterThan(
+      INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
+    );
     expect(meshes.arenaStats()[0]!.growths).toBe(0);
     expect(seen[1]!.slots.find((slot) => slot.chunkIdx === a)).toEqual({
       chunkIdx: a,
-      offset: 2007,
-      count: 1050,
+      offset: THREE_RUNS * 2 + 3,
+      count: REGROWN,
+      capacity,
     });
     expectHoleInvariants(meshes);
+  });
+});
+
+describe('slot slack', () => {
+  const START_VERTICES = 300;
+  const STEP_GROWTH = 1.1;
+  const IN_PLACE_STEPS = 3;
+  /** Dearer than the stroke compaction budget, so no run moves while the stroke runs. */
+  const UNMOVABLE_RUN_VERTICES =
+    (Math.floor(
+      ARENA_COMPACT_STROKE_BUDGET_MS / ARENA_TRANSFER_MS_PER_VERTEX / VERTICES_PER_TRIANGLE,
+    ) +
+      1) *
+    VERTICES_PER_TRIANGLE;
+
+  it('relocates once, then keeps a growing chunk in place until the terrain is quiet', () => {
+    const grower = chunkIndex(WORLD, 0, 0);
+    const tail = chunkIndex(WORLD, 2, 0);
+    const sizes = new Map<number, number>([
+      [grower, START_VERTICES],
+      [chunkIndex(WORLD, 1, 0), UNMOVABLE_RUN_VERTICES],
+      [tail, START_VERTICES],
+    ]);
+    const mirror = createTerrainMirror(WORLD);
+    const clock = fakeScheduler(0);
+    const meshes = createTerrainMeshes(new Group(), mirror, clock.scheduling, sizedSource(sizes));
+    const dirty = applySnapshot(mirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: arenaChunks(3),
+    });
+    meshes.update([...dirty].sort((a, b) => a - b));
+    clock.frame();
+
+    const slotOf = (chunkIdx: number) =>
+      meshes.arenaLayout()[0]!.slots.find((slot) => slot.chunkIdx === chunkIdx)!;
+    expect(slotOf(grower)).toMatchObject({ count: START_VERTICES, capacity: START_VERTICES });
+
+    const offsets: number[] = [];
+    const capacities: number[] = [];
+    let vertices = START_VERTICES;
+    for (let step = 0; step < IN_PLACE_STEPS; step++) {
+      vertices = Math.round((vertices * STEP_GROWTH) / VERTICES_PER_TRIANGLE) *
+        VERTICES_PER_TRIANGLE;
+      sizes.set(grower, vertices);
+      meshes.update([grower]);
+      clock.frame();
+      offsets.push(slotOf(grower).offset);
+      capacities.push(slotOf(grower).capacity);
+    }
+
+    const relocated = slackVertices(START_VERTICES * STEP_GROWTH);
+    expect(offsets[0]).not.toBe(0);
+    expect(offsets).toEqual([offsets[0], offsets[0], offsets[0]]);
+    expect(capacities).toEqual([relocated, relocated, relocated]);
+    expect(vertices).toBeLessThanOrEqual(relocated);
+    expect(meshes.arenaStats()[0]).toMatchObject({
+      paddingVertices: relocated - vertices,
+      deadVertices: START_VERTICES,
+      holeCount: 1,
+    });
+
+    // Quiet: the padding goes back on the free list. This slot ends the arena, so the
+    // live end swallows it rather than leaving a hole.
+    meshes.settle({ assumeQuiet: true });
+    const settled = meshes.arenaStats()[0]!;
+    expect(settled.paddingVertices).toBe(0);
+    expect(settled.deadVertices).toBe(START_VERTICES);
+    expect(settled.holeCount).toBe(1);
+    expect(settled.liveEnd).toBe(settled.liveCount + settled.deadVertices);
+    expect(slotOf(grower)).toMatchObject({ count: vertices, capacity: vertices });
+  });
+});
+
+const ARENA_ATTRIBUTES = ['position', 'normal', 'color', 'selfLit'] as const;
+
+interface AttributeShadow {
+  attribute: BufferAttribute;
+  bytes: Float64Array;
+  version: number;
+}
+
+// Mirrors three's WebGLAttributes: a fresh attribute uploads whole, a dirtied one uploads
+// its update ranges — or whole, if it has none — and clears them.
+function gpuShadow(meshes: TerrainMeshes) {
+  const shadows = new Map<string, AttributeShadow>();
+  const copyWhole = (into: Float64Array, attribute: BufferAttribute): void => {
+    for (let i = 0; i < attribute.array.length; i++) into[i] = attribute.array[i]!;
+  };
+  return {
+    present(): void {
+      const drawn = meshes.pickables();
+      for (let s = 0; s < drawn.length; s++) {
+        for (const name of ARENA_ATTRIBUTES) {
+          const attribute = plainAttribute(drawn[s]!.geometry, name);
+          const seen = shadows.get(`${s}:${name}`);
+          if (seen === undefined || seen.attribute !== attribute) {
+            const bytes = new Float64Array(attribute.array.length);
+            copyWhole(bytes, attribute);
+            shadows.set(`${s}:${name}`, { attribute, bytes, version: attribute.version });
+            continue;
+          }
+          if (seen.version >= attribute.version) continue;
+          seen.version = attribute.version;
+          if (attribute.updateRanges.length === 0) copyWhole(seen.bytes, attribute);
+          else {
+            for (const range of attribute.updateRanges) {
+              for (let i = range.start; i < range.start + range.count; i++) {
+                seen.bytes[i] = attribute.array[i]!;
+              }
+            }
+            attribute.clearUpdateRanges();
+          }
+        }
+      }
+    },
+    verify(label: string): void {
+      const layouts = meshes.arenaLayout();
+      const stats = meshes.arenaStats();
+      const drawn = meshes.pickables();
+      for (let s = 0; s < drawn.length; s++) {
+        const { liveEnd } = stats[s]!;
+        expect(drawn[s]!.geometry.drawRange.count, `${label}: draw range`).toBe(liveEnd);
+        const live = new Uint8Array(liveEnd);
+        for (const slot of layouts[s]!.slots) {
+          live.fill(1, slot.offset, slot.offset + slot.count);
+        }
+        for (const name of ARENA_ATTRIBUTES) {
+          const attribute = plainAttribute(drawn[s]!.geometry, name);
+          const bytes = shadows.get(`${s}:${name}`)!.bytes;
+          const stride = attribute.itemSize;
+          for (let v = 0; v < liveEnd; v++) {
+            for (let c = 0; c < stride; c++) {
+              const at = v * stride + c;
+              if (bytes[at] !== attribute.array[at]) {
+                expect.fail(
+                  `${label}: super ${String(s)} ${name} vertex ${String(v)} is ` +
+                    `${String(bytes[at])} on the GPU and ${String(attribute.array[at])} on the CPU`,
+                );
+              }
+              if (live[v] === 0 && bytes[at] !== 0) {
+                expect.fail(
+                  `${label}: super ${String(s)} ${name} vertex ${String(v)} is in the draw ` +
+                    `range and in no slot, but ${String(bytes[at])} on the GPU`,
+                );
+              }
+            }
+          }
+        }
+      }
+    },
+  };
+}
+
+describe('the GPU shadow of the arena', () => {
+  const SHADOW_CHUNKS = 3;
+  /** Dearer than the stroke compaction budget, so a hole under it outlives the frame. */
+  const SHADOW_UNMOVABLE_RUN_VERTICES =
+    (Math.floor(
+      ARENA_COMPACT_STROKE_BUDGET_MS / ARENA_TRANSFER_MS_PER_VERTEX / VERTICES_PER_TRIANGLE,
+    ) +
+      1) *
+    VERTICES_PER_TRIANGLE;
+  const SHADOW_START_VERTICES = [1002, SHADOW_UNMOVABLE_RUN_VERTICES, 2004];
+  const SHADOW_QUIET_FRAMES = 4;
+  /** One chunk's ratio sequence, rotated per chunk so the three never move together. */
+  const RATIO_ROTATION = 7;
+  const STROKE_RATIOS = [
+    1, 1.006, 1, 1.012, 0.994, 1.017, 1, 1.009, 1.015, 1, 1.004, 1.011,
+    1.5, 1.002, 1, 1.013, 1.007, 1, 0.5, 1.018, 1, 1.006, 1.014, 1.001,
+  ];
+
+  const wholeTriangles = (vertices: number): number =>
+    Math.max(VERTICES_PER_TRIANGLE, Math.round(vertices / VERTICES_PER_TRIANGLE) * VERTICES_PER_TRIANGLE);
+
+  function shadowSetup(sizes: Map<number, number>) {
+    const mirror = createTerrainMirror(WORLD);
+    const group = new Group();
+    const clock = fakeScheduler(0);
+    const meshes = createTerrainMeshes(group, mirror, clock.scheduling, sizedSource(sizes));
+    const dirty = applySnapshot(mirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: arenaChunks(SHADOW_CHUNKS),
+    });
+    meshes.update([...dirty].sort((a, b) => a - b));
+    return { meshes, clock };
+  }
+
+  it('keeps the GPU byte-for-byte equal to the CPU below the live end, all stroke long', () => {
+    const at = (chunk: number): number => chunkIndex(WORLD, chunk, 0);
+    const sizes = new Map<number, number>();
+    for (let c = 0; c < SHADOW_CHUNKS; c++) sizes.set(at(c), SHADOW_START_VERTICES[c]!);
+    const { meshes, clock } = shadowSetup(sizes);
+    const gpu = gpuShadow(meshes);
+
+    clock.frame();
+    gpu.present();
+    gpu.verify('load');
+
+    for (let intent = 0; intent < STROKE_RATIOS.length; intent++) {
+      const dirty: number[] = [];
+      for (let c = 0; c < SHADOW_CHUNKS; c++) {
+        const ratio = STROKE_RATIOS[(intent + c * RATIO_ROTATION) % STROKE_RATIOS.length]!;
+        sizes.set(at(c), wholeTriangles(sizes.get(at(c))! * ratio));
+        dirty.push(at(c));
+      }
+      meshes.update(dirty);
+      clock.frame();
+      gpu.present();
+      gpu.verify(`intent ${String(intent)}`);
+    }
+
+    for (let pass = 0; pass < SHADOW_QUIET_FRAMES; pass++) {
+      meshes.settle({ assumeQuiet: true });
+      clock.frame();
+      gpu.present();
+      gpu.verify(`quiet ${String(pass)}`);
+    }
+    expect(meshes.arenaStats()[0]!.growths).toBeGreaterThan(0);
   });
 });
 
@@ -1263,7 +1602,10 @@ describe('headroom at settle', () => {
     };
     const { meshes, clock } = build();
     const reference = build();
-    expect(meshes.arenaStats()[0]!.holeCount).toBe(1);
+    expect(meshes.arenaStats()[0]).toMatchObject({
+      holeCount: 0,
+      paddingVertices: SMALL_RUN,
+    });
     expect(meshes.arenaStats()[0]!.liveEnd).toBeGreaterThan(
       meshes.arenaStats()[0]!.liveCount,
     );
@@ -1271,6 +1613,13 @@ describe('headroom at settle', () => {
     const streamed = meshes.arenaStats()[0]!.growths;
     const streamedInSplice = meshes.arenaStats()[0]!.strokeGrowths;
     clock.advance(TERRAIN_QUIET_MS);
+    // The first quiet settle reclaims the slack; the growth is the settle after it.
+    meshes.settle();
+    expect(meshes.arenaStats()[0]).toMatchObject({
+      holeCount: 1,
+      paddingVertices: 0,
+      growths: streamed,
+    });
     meshes.settle();
     expect(meshes.arenaStats()[0]!.growths).toBe(streamed + 1);
     expect(meshes.arenaStats()[0]!.strokeGrowths).toBe(streamedInSplice);
