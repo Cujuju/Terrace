@@ -2,8 +2,8 @@
 
 ## The one command
 
-```powershell
-node E:\Development\Projects\Terrace\.gpu-perf\gate1-webgpu-mesher\run.mjs
+```bash
+node bench/webgpu-mesher/run.mjs
 ```
 
 It dumps the inputs if they are missing, runs the Node self-checks, serves this
