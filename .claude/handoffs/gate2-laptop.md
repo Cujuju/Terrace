@@ -1,6 +1,6 @@
 # Gate 2 on the laptop: WebGPU mesher power versus the shipped client
 
-Handoff for a Claude session running on the owner's laptop (Apple M4 Max, macOS). Self-contained. Every path is relative to the clone unless absolute.
+Handoff for a Claude session running on the owner's laptop (Apple M4 Max, macOS). Self-contained. Every path is relative to the clone unless absolute. The page, driver and inputs are in `bench/webgpu-mesher/` (its `README.md` documents the page internals).
 
 ## Orchestration
 
