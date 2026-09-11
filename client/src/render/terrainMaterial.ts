@@ -27,7 +27,7 @@ import {
 } from 'three/tsl';
 import {
   COMPONENTS_PER_COLOR,
-  COMPONENTS_PER_NORMAL,
+  // COMPONENTS_PER_NORMAL,
   VERTICES_PER_TRIANGLE,
   createChunkGeometryBuffers,
   type ChunkGeometryBuffers,
@@ -48,7 +48,6 @@ import { applyGroundShade } from './groundShade.ts';
 const TERRAIN_ROUGHNESS = 0.95;
 const TERRAIN_METALNESS = 0;
 
-/** How the arena's vertex positions are stored: world-unit floats, or quantized i16 units. */
 export type TerrainVertexLayout = 'float32' | 'snorm16';
 
 // @types/three types the colour-space helpers as a bare Node; the decode is a vec3.
@@ -70,7 +69,6 @@ function terrainKey(): Node<'vec2'> {
   return attribute(TERRAIN_KEY_ATTRIBUTE, 'vec2');
 }
 
-/** One row of RGBA8 slots, one texel per LUT entry. */
 const BAND_LUT_TEXTURE_HEIGHT = 1;
 
 /** Samples the middle of the single row, and the centre of the slot's own texel. */
@@ -142,20 +140,20 @@ export function createTerrainMaterial(
 export interface ArenaGeometry {
   readonly geometry: BufferGeometry;
   readonly positionAttribute: BufferAttribute;
-  readonly normalAttribute: BufferAttribute;
+  // readonly normalAttribute: BufferAttribute;
   readonly colorAttribute: BufferAttribute;
 }
 
 export function createArenaGeometry(buffers: ChunkGeometryBuffers): ArenaGeometry {
   const positionAttribute = new BufferAttribute(buffers.positions, 3);
-  const normalAttribute = new BufferAttribute(buffers.normals, COMPONENTS_PER_NORMAL, true);
+  // const normalAttribute = new BufferAttribute(buffers.normals, COMPONENTS_PER_NORMAL, true);
   const colorAttribute = new BufferAttribute(buffers.colors, COMPONENTS_PER_COLOR, true);
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', positionAttribute);
-  geometry.setAttribute('normal', normalAttribute);
+  // geometry.setAttribute('normal', normalAttribute);
   geometry.setAttribute('color', colorAttribute);
-  return { geometry, positionAttribute, normalAttribute, colorAttribute };
+  return { geometry, positionAttribute, /* normalAttribute, */ colorAttribute };
 }
 
 export interface PackedArenaGeometry {

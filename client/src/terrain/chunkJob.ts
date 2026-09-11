@@ -2,7 +2,7 @@ import { CHUNK_SIZE, applyPackedSpans, chunkIndex, chunksPerEdge } from '@terrac
 import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
 import {
   COMPONENTS_PER_COLOR,
-  COMPONENTS_PER_NORMAL,
+  // COMPONENTS_PER_NORMAL,
   createChunkGeometryBuffers,
   writeChunkVertexData,
   type ChunkGeometryBuffers,
@@ -45,7 +45,7 @@ export interface ChunkJobAnswer {
   readonly chunkIdx: number;
   readonly vertexCount: number;
   readonly positions: Float32Array;
-  readonly normals: Int8Array;
+  // readonly normals: Int8Array;
   readonly colors: Uint8Array;
   readonly bounds: Float32Array;
   readonly plan: FlatCapPlan;
@@ -56,7 +56,7 @@ export interface ChunkJobAnswer {
 export function chunkJobTransfers(answer: ChunkJobAnswer): ArrayBufferLike[] {
   return [
     answer.positions.buffer,
-    answer.normals.buffer,
+    // answer.normals.buffer,
     answer.colors.buffer,
     answer.bounds.buffer,
     answer.plan.levelThreshold.buffer,
@@ -212,7 +212,7 @@ export function buildChunkAnswer(
   const vertexCount = counts.vertexCount;
 
   const positions = scratch.positions.slice(0, vertexCount * 3);
-  const normals = scratch.normals.slice(0, vertexCount * COMPONENTS_PER_NORMAL);
+  // const normals = scratch.normals.slice(0, vertexCount * COMPONENTS_PER_NORMAL);
   const colors = scratch.colors.slice(0, vertexCount * COMPONENTS_PER_COLOR);
 
   const bounds = new Float32Array(6);
@@ -232,7 +232,7 @@ export function buildChunkAnswer(
       chunkIdx,
       vertexCount,
       positions,
-      normals,
+      // normals,
       colors,
       bounds,
       plan,
