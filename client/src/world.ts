@@ -47,7 +47,12 @@ import {
   type TerrainMeshes,
 } from './render/terrainMeshes.ts';
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
-import { createTerrainMaterial, warmTerrainMaterial } from './render/terrainMaterial.ts';
+import {
+  createTerrainMaterial,
+  warmTerrainMaterial,
+  type TerrainVertexLayout,
+} from './render/terrainMaterial.ts';
+import { createCpuArenaStore } from './render/arenaStore.ts';
 import {
   createLayerEdgeOverlay,
   type LayerEdgeOverlay,
@@ -125,6 +130,9 @@ const nowMs = (): number => performance.now();
 
 const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
 
+/** The CPU mesher's arena layout; a GPU mesher arrives with a store that brings its own. */
+const TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
+
 export function createWorld(viewport: Viewport): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
@@ -141,8 +149,13 @@ export function createWorld(viewport: Viewport): World {
 
   const chunkBuildSource = createWorkerChunkBuildSource();
 
-  const terrainMaterial = createTerrainMaterial();
-  const terrainMaterialWarmUp = warmTerrainMaterial(viewport.terrainGroup, terrainMaterial);
+  const terrainMaterial = createTerrainMaterial(TERRAIN_VERTEX_LAYOUT);
+  const terrainStore = createCpuArenaStore(terrainMaterial);
+  const terrainMaterialWarmUp = warmTerrainMaterial(
+    viewport.terrainGroup,
+    terrainMaterial,
+    TERRAIN_VERTEX_LAYOUT,
+  );
 
   const drawnChunkScratch = new Set<number>();
 
@@ -231,7 +244,7 @@ export function createWorld(viewport: Viewport): World {
       nextMirror,
       { onFrame: (handler) => viewport.onFrame(handler) },
       chunkBuildSource ?? undefined,
-      terrainMaterial,
+      terrainStore,
     );
     const nextPredictions = createPredictionStore(nextMirror);
     layerEdges?.dispose();
@@ -470,7 +483,7 @@ export function createWorld(viewport: Viewport): World {
       clearExpiryTimer();
       meshes?.dispose();
       terrainMaterialWarmUp.removeFromParent();
-      terrainMaterial.dispose();
+      terrainStore.destroy();
       meshes = null;
       mirror = null;
       drawnGround = null;

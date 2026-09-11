@@ -1,6 +1,5 @@
 import {
   Box3,
-  BufferAttribute,
   BufferGeometry,
   Color,
   Mesh,
@@ -9,35 +8,34 @@ import {
   Vector3,
   type Group,
 } from 'three';
-import type { MeshStandardNodeMaterial } from 'three/webgpu';
-import { chunksPerEdge } from '@terrace/shared';
-import { SCULPT_REPEAT_DELAY_MS } from '../config.ts';
+import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { CELL_WORLD_SIZE, SCULPT_REPEAT_DELAY_MS } from '../config.ts';
 import {
   CHUNK_ANSWER_BACKLOG_CAP,
   createDirectChunkBuildSource,
   type ChunkAnswer,
   type ChunkBuildSource,
 } from './chunkBuildSource.ts';
-import { releaseAnswer } from './arenaStore.ts';
-import type { ChunkJobAnswer } from '../terrain/chunkJob.ts';
+import {
+  ARENA_TRANSFER_MS_PER_VERTEX,
+  createCpuArenaStore,
+  releaseAnswer,
+  type ArenaStore,
+  type ArenaSuperBuffers,
+} from './arenaStore.ts';
 import { type Rgb } from '../terrain/bandColors.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
-import {
-  createChunkGeometryBuffers,
-  type ChunkGeometryBuffers,
-} from '../terrain/vertexGrid.ts';
+import { INITIAL_CHUNK_TRIANGLE_CAPACITY } from '../terrain/vertexGrid.ts';
 import {
   createDrawnGroundStore,
   type DrawnGroundStore,
 } from '../terrain/drawnGroundStore.ts';
-import { COMPONENTS_PER_COLOR, COMPONENTS_PER_NORMAL } from '../terrain/capEmission.ts';
-import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts';
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
 export { CHUNK_ANSWER_BACKLOG_CAP };
 
-export const ARENA_TRANSFER_MS_PER_VERTEX = 19 / 1e6;
+export { ARENA_TRANSFER_MS_PER_VERTEX };
 
 export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
 
@@ -60,9 +58,13 @@ function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   });
 }
 
-/** Chunks per side of one super-mesh. WebGPU writeBuffer is charged by the range, not the
+/** Chunks per side of one super-mesh. WebGPU writeBuffer is charged by range, not by
  *  buffer, so a larger arena splices no dearer and halves the draws and bindings per frame. */
 export const SUPER_MESH_SPAN_CHUNKS = 8;
+
+/** One super-mesh's side in world units; a local-frame store quantizes against its centre. */
+export const SUPER_MESH_SPAN_WORLD_UNITS =
+  SUPER_MESH_SPAN_CHUNKS * CHUNK_SIZE * CELL_WORLD_SIZE;
 
 const VERTICES_PER_TRIANGLE = 3;
 
@@ -106,11 +108,9 @@ export interface ArenaLayout {
 }
 
 interface SuperMesh {
+  superIdx: number;
   mesh: Mesh;
-  buffers: ChunkGeometryBuffers;
-  positionAttribute: BufferAttribute;
-  normalAttribute: BufferAttribute;
-  colorAttribute: BufferAttribute;
+  buffers: ArenaSuperBuffers;
   slots: Map<number, ChunkSlot>;
   holes: Hole[];
   liveEnd: number;
@@ -166,13 +166,13 @@ export function createTerrainMeshes(
   mirror: TerrainMirror,
   scheduling?: MeshScheduling,
   buildSource: ChunkBuildSource = createDirectChunkBuildSource(),
-  sharedMaterial?: MeshStandardNodeMaterial,
+  sharedStore?: ArenaStore,
 ): TerrainMeshes {
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
   const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
-  const material = sharedMaterial ?? createTerrainMaterial();
-  const ownsMaterial = sharedMaterial === undefined;
+  const store = sharedStore ?? createCpuArenaStore();
+  const ownsStore = sharedStore === undefined;
 
   const superMeshes = new Map<number, SuperMesh>();
 
@@ -188,19 +188,18 @@ export function createTerrainMeshes(
     return sy * superCols + sx;
   };
 
-  const bindGeometry = (sm: SuperMesh): void => {
+  // The store decides where the mesh sits: a superLocal store keeps its slot bounds — and
+  // the vertices behind them — relative to the super-mesh centre.
+  const bindGeometry = (sm: SuperMesh, buffers: ArenaSuperBuffers): void => {
     sm.reallocatedThisPass = true;
-    const { geometry, positionAttribute, normalAttribute, colorAttribute } =
-      createArenaGeometry(sm.buffers);
+    sm.buffers = buffers;
+    const geometry = buffers.geometry;
     geometry.setDrawRange(0, sm.liveEnd);
 
     const previous = sm.mesh.geometry;
     sm.mesh.geometry = geometry;
     if (previous !== geometry) previous.dispose();
-
-    sm.positionAttribute = positionAttribute;
-    sm.normalAttribute = normalAttribute;
-    sm.colorAttribute = colorAttribute;
+    sm.mesh.position.copy(buffers.localOrigin);
 
     updateBounds(sm);
   };
@@ -217,14 +216,10 @@ export function createTerrainMeshes(
     let triangles = Math.max(sm.buffers.triangleCapacity, 1);
     while (triangles * VERTICES_PER_TRIANGLE < vertices) triangles *= 2;
 
-    const grown = createChunkGeometryBuffers(triangles);
-    grown.positions.set(sm.buffers.positions.subarray(0, sm.liveEnd * 3));
-    grown.normals.set(sm.buffers.normals.subarray(0, sm.liveEnd * COMPONENTS_PER_NORMAL));
-    grown.colors.set(sm.buffers.colors.subarray(0, sm.liveEnd * COMPONENTS_PER_COLOR));
-    sm.buffers = grown;
+    const grown = store.grow(sm.superIdx, triangles, sm.liveEnd);
     sm.growths++;
     if (site === 'splice') sm.strokeGrowths++;
-    bindGeometry(sm);
+    bindGeometry(sm, grown);
     return true;
   };
 
@@ -263,38 +258,19 @@ export function createTerrainMeshes(
     );
   };
 
-  const addVertexRange = (
-    attribute: BufferAttribute,
-    startVertex: number,
-    vertexCount: number,
-  ): void => {
-    if (vertexCount <= 0) return;
-    const stride = attribute.itemSize;
-    attribute.addUpdateRange(startVertex * stride, vertexCount * stride);
-  };
-
-  const markDirty = (sm: SuperMesh): void => {
-    sm.positionAttribute.needsUpdate = true;
-    sm.normalAttribute.needsUpdate = true;
-    sm.colorAttribute.needsUpdate = true;
-  };
-
+  // A reallocated super-mesh carries brand-new attributes, which the renderer uploads
+  // whole; ranges recorded against them would be redundant.
   const addRange = (sm: SuperMesh, startVertex: number, vertexCount: number): void => {
     if (sm.reallocatedThisPass) return;
     const start = Math.max(0, startVertex);
     const end = Math.min(sm.liveEnd, startVertex + vertexCount);
     if (end <= start) return;
-    addVertexRange(sm.positionAttribute, start, end - start);
-    addVertexRange(sm.normalAttribute, start, end - start);
-    addVertexRange(sm.colorAttribute, start, end - start);
+    store.markRange(sm.superIdx, start, end - start);
   };
 
   const zeroVertices = (sm: SuperMesh, startVertex: number, vertexCount: number): void => {
     if (vertexCount <= 0) return;
-    const { positions, normals, colors } = sm.buffers;
-    positions.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
-    normals.fill(0, startVertex * COMPONENTS_PER_NORMAL, (startVertex + vertexCount) * COMPONENTS_PER_NORMAL);
-    colors.fill(0, startVertex * COMPONENTS_PER_COLOR, (startVertex + vertexCount) * COMPONENTS_PER_COLOR);
+    store.zero(sm.superIdx, startVertex, vertexCount);
   };
 
   const retreatFromLiveEnd = (sm: SuperMesh): void => {
@@ -356,17 +332,13 @@ export function createTerrainMeshes(
     const from = run.offset;
     const runEnd = from + run.capacity;
     const to = hole.offset;
-    const { positions, normals, colors } = sm.buffers;
-    positions.copyWithin(to * 3, from * 3, runEnd * 3);
-    normals.copyWithin(to * COMPONENTS_PER_NORMAL, from * COMPONENTS_PER_NORMAL, runEnd * COMPONENTS_PER_NORMAL);
-    colors.copyWithin(to * COMPONENTS_PER_COLOR, from * COMPONENTS_PER_COLOR, runEnd * COMPONENTS_PER_COLOR);
+    store.copyWithin(sm.superIdx, to, from, run.capacity);
     run.offset = to;
 
     const vacated = to + run.capacity;
     zeroVertices(sm, vacated, runEnd - vacated);
     sm.holes.splice(sm.holes.indexOf(hole), 1);
     insertHole(sm, vacated, runEnd - vacated);
-    markDirty(sm);
     addRange(sm, to, runEnd - to);
   };
 
@@ -377,7 +349,8 @@ export function createTerrainMeshes(
       for (const hole of sm.holes) {
         const run = runStartingAt(sm, hole.offset + hole.length);
         if (run === undefined) continue;
-        const costMs = (hole.length + run.capacity) * ARENA_TRANSFER_MS_PER_VERTEX;
+        const costMs =
+          store.moveOverheadMs + (hole.length + run.capacity) * store.transferMsPerVertex;
         if (spentMs + costMs > budgetMs) continue;
         moveRunDown(sm, hole, run);
         spentMs += costMs;
@@ -411,13 +384,14 @@ export function createTerrainMeshes(
   };
 
   const createSuperMesh = (superIdx: number): SuperMesh => {
-    const placeholder = new BufferAttribute(new Float32Array(0), 3);
+    const sx = superIdx % superCols;
+    const sy = (superIdx - sx) / superCols;
+    const originX = sx * SUPER_MESH_SPAN_WORLD_UNITS;
+    const originZ = sy * SUPER_MESH_SPAN_WORLD_UNITS;
     const sm: SuperMesh = {
-      mesh: new Mesh(new BufferGeometry(), material),
-      buffers: createChunkGeometryBuffers(),
-      positionAttribute: placeholder,
-      normalAttribute: placeholder,
-      colorAttribute: placeholder,
+      superIdx,
+      mesh: new Mesh(new BufferGeometry(), store.material),
+      buffers: store.createSuper(superIdx, originX, originZ, INITIAL_CHUNK_TRIANGLE_CAPACITY),
       slots: new Map(),
       holes: [],
       liveEnd: 0,
@@ -426,13 +400,13 @@ export function createTerrainMeshes(
       growths: 0,
       strokeGrowths: 0,
     };
-    bindGeometry(sm);
+    bindGeometry(sm, sm.buffers);
     group.add(sm.mesh);
     superMeshes.set(superIdx, sm);
     return sm;
   };
 
-  const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkJobAnswer): void => {
+  const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkAnswer): void => {
     const count = answer.vertexCount;
     let slot = sm.slots.get(chunkIdx);
     // A chunk's first build takes no slack: load-time layout and residency stay as they were.
@@ -496,19 +470,15 @@ export function createTerrainMeshes(
       insertHole(sm, freedOffset, freedCapacity);
     }
 
-    const { positions, normals, colors } = sm.buffers;
-    positions.set(answer.positions, slot.offset * 3);
-    normals.set(answer.normals, slot.offset * COMPONENTS_PER_NORMAL);
-    colors.set(answer.colors, slot.offset * COMPONENTS_PER_COLOR);
+    const bounds = store.write(sm.superIdx, slot.offset, answer);
 
-    slot.minX = answer.bounds[0]!;
-    slot.minY = answer.bounds[1]!;
-    slot.minZ = answer.bounds[2]!;
-    slot.maxX = answer.bounds[3]!;
-    slot.maxY = answer.bounds[4]!;
-    slot.maxZ = answer.bounds[5]!;
+    slot.minX = bounds.minX;
+    slot.minY = bounds.minY;
+    slot.minZ = bounds.minZ;
+    slot.maxX = bounds.maxX;
+    slot.maxY = bounds.maxY;
+    slot.maxZ = bounds.maxZ;
 
-    markDirty(sm);
     for (const [startVertex, vertexCount] of dirtied) addRange(sm, startVertex, vertexCount);
 
     sm.splicedThisPass = true;
@@ -520,7 +490,7 @@ export function createTerrainMeshes(
 
   const inFlight = new Set<number>();
 
-  const ready: ChunkJobAnswer[] = [];
+  const ready: ChunkAnswer[] = [];
 
   const retry = new Set<number>();
 
@@ -551,11 +521,6 @@ export function createTerrainMeshes(
       releaseAnswer(answer);
       return;
     }
-    // GPU answers need the ArenaStore splice path (arena refactor); until then they are dropped.
-    if (answer.kind !== 'cpu') {
-      releaseAnswer(answer);
-      return;
-    }
     ready.push(answer);
   };
 
@@ -567,7 +532,7 @@ export function createTerrainMeshes(
     else receive(chunkIdx, answer);
   };
 
-  const spliceAnswer = (answer: ChunkJobAnswer): void => {
+  const spliceAnswer = (answer: ChunkAnswer): void => {
     const startedMs = now();
     drawnGroundStore.publishRastered(
       answer.chunkIdx,
@@ -604,11 +569,14 @@ export function createTerrainMeshes(
     retry.clear();
   };
 
+  // Two budgets, two timelines: the wall clock bounds the main-thread splice loop, and the
+  // store's write budget bounds the GPU time this frame's writes will take.
   const drain = (budgetMs: number): number => {
     takeRetries();
     let spliced = 0;
     if (pending.size === 0 && ready.length === 0) return spliced;
     const startedMs = now();
+    let writeMs = 0;
     for (;;) {
 
       while (
@@ -621,7 +589,12 @@ export function createTerrainMeshes(
         submit(chunkIdx);
       }
       if (ready.length === 0) return spliced;
-      spliceAnswer(ready.shift()!);
+      const next = ready[0]!;
+      const writeCostMs = store.writeCostMs(next);
+      if (spliced > 0 && writeMs + writeCostMs > store.frameWriteBudgetMs) return spliced;
+      ready.shift();
+      spliceAnswer(next);
+      writeMs += writeCostMs;
       spliced++;
       if (now() - startedMs >= budgetMs) return spliced;
     }
@@ -644,14 +617,18 @@ export function createTerrainMeshes(
     }
     for (const sm of superMeshes.values()) sm.splicedThisPass = false;
     compact(Infinity);
+    store.commit();
   };
 
   const clear = (): void => {
     for (const sm of superMeshes.values()) {
       group.remove(sm.mesh);
       sm.mesh.geometry.dispose();
+      store.dispose(sm.superIdx);
     }
+    store.disposeAll();
     superMeshes.clear();
+    for (const answer of ready) releaseAnswer(answer);
     drawnGroundStore.clear();
     pending.clear();
     retry.clear();
@@ -736,6 +713,7 @@ export function createTerrainMeshes(
     }
     compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
     settle();
+    store.commit();
   });
 
   return {
@@ -820,7 +798,7 @@ export function createTerrainMeshes(
     dispose(): void {
       stopDraining?.();
       clear();
-      if (ownsMaterial) material.dispose();
+      if (ownsStore) store.destroy();
     },
   };
 }
