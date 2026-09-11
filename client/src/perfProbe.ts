@@ -1,12 +1,37 @@
-import { Vector3, type Object3D } from 'three';
-import type { Renderer } from 'three/webgpu';
+import {
+  Color,
+  DoubleSide,
+  LinearSRGBColorSpace,
+  NoToneMapping,
+  Vector3,
+  type Material,
+  type Mesh,
+  type Object3D,
+} from 'three';
+import { MeshBasicNodeMaterial, type NodeMaterial, type Renderer } from 'three/webgpu';
+import { positionWorld, vec3 } from 'three/tsl';
 import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
-import { CAMERA_MIN_DISTANCE, CELL_WORLD_SIZE, SCULPT_REPEAT_INTERVAL_MS } from './config.ts';
+import { clearGroundShade } from './render/groundShade.ts';
+import {
+  BAND_WORLD_HEIGHT,
+  CAMERA_MIN_DISTANCE,
+  CELL_WORLD_SIZE,
+  SCULPT_REPEAT_INTERVAL_MS,
+} from './config.ts';
 import type { Connection } from './net/connection.ts';
 import type { ClientPluginHost } from './plugins/host.ts';
-import type { Viewport } from './render/scene.ts';
+import {
+  AMBIENT_FLOOR_INTENSITY,
+  GROUND_BOUNCE_COLOR,
+  HEMISPHERE_LIGHT_INTENSITY,
+  SKY_COLOR,
+  SUN_DIRECTION_NOON,
+  SUN_DISTANCE_WORLD_UNITS,
+  SUN_LIGHT_INTENSITY,
+  type Viewport,
+} from './render/scene.ts';
 import type { World } from './world.ts';
-import type { SculptIntent } from '@terrace/shared';
+import { CHUNK_SIZE, chunksPerEdge, type SculptIntent } from '@terrace/shared';
 import {
   CYCLONE_ALL_MESSAGE,
   CYCLONE_PLUGIN_NAME,
@@ -31,6 +56,24 @@ const HEARTBEAT_INTERVAL_MS = 5000;
 const STROKE_ZOOM_FACTOR = 1.05;
 const STROKE_HOLD_MS = 5000;
 const STROKE_RADIUS = 4;
+
+const PARITY_HOLD_MS = 20_000;
+const PARITY_SETTLE_FRAMES = 2;
+const TERRAIN_QUEUE_POLL_MS = 100;
+const TERRAIN_QUEUE_TIMEOUT_MS = 180_000;
+const HUD_ELEMENT_SELECTOR = '#hud';
+
+/** Bands run negative; the bias puts every one of them inside a byte. */
+const BAND_ID_BIAS = 128;
+const BYTE_MAX = 255;
+const CHUNK_INDEX_BYTE_SPAN = 256;
+const CHUNK_WORLD_SPAN = CHUNK_SIZE * CELL_WORLD_SIZE;
+
+/** Pure blue: no chunk index reaches a high byte of 255, so background never reads as terrain. */
+const PARITY_BACKGROUND_RGB: readonly [number, number, number] = [0, 0, 1];
+
+/** The sun and the ambient floor are white at noon (scene.ts). */
+const NOON_LIGHT_COLOR = 0xffffff;
 
 const CYCLONE_WAIT_MS = 30000;
 const CYCLONE_POLL_MS = 250;
@@ -802,6 +845,7 @@ const overviewScenario: Scenario = async (ctx) => {
     sample: sampler.block(),
     detail: {
       worldSize: ctx.world.worldSize(),
+      blockyChunks: ctx.world.blockyChunks(),
       orbitTarget: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
       eye: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
     },
@@ -838,8 +882,171 @@ const sculptScenario: Scenario = async (ctx) => {
   window.clearInterval(timer);
   return {
     sample: stroke.block(),
-    detail: { cell, intentsSent: sent, idle: idle.block() },
+    detail: {
+      cell,
+      intentsSent: sent,
+      idle: idle.block(),
+      blockyChunks: ctx.world.blockyChunks(),
+      gpuMesher: ctx.world.gpuMesherStats(),
+    },
   };
+};
+
+async function waitForTerrainDrawn(ctx: ProbeContext): Promise<void> {
+  const deadlineMs = performance.now() + TERRAIN_QUEUE_TIMEOUT_MS;
+  for (;;) {
+    const trace = ctx.world.terrainLoadTrace();
+    if (
+      trace !== null &&
+      trace.queueEmptyAfterMs !== null &&
+      ctx.world.pendingTerrainCount() === 0
+    ) {
+      break;
+    }
+    if (performance.now() > deadlineMs) {
+      throw new Error(`terrain still building after ${String(TERRAIN_QUEUE_TIMEOUT_MS)} ms`);
+    }
+    await wait(TERRAIN_QUEUE_POLL_MS);
+  }
+  await waitFrames(PARITY_SETTLE_FRAMES);
+}
+
+function isDrawable(node: Object3D): boolean {
+  const flags = node as Object3D & {
+    isMesh?: boolean;
+    isLine?: boolean;
+    isPoints?: boolean;
+    isSprite?: boolean;
+  };
+  return (
+    flags.isMesh === true ||
+    flags.isLine === true ||
+    flags.isPoints === true ||
+    flags.isSprite === true
+  );
+}
+
+// Terrain alone, on a background no id can be mistaken for, under pinned noon light: two
+// runs of a world must differ only where the meshers do.
+function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
+  const { scene, lighting } = ctx.viewport;
+  const { sun, hemisphere, ambient } = lighting;
+  const terrain = new Set<Object3D>(ctx.world.pickables());
+  const wasVisible = new Map<Object3D, boolean>();
+  scene.traverse((node) => {
+    if (!isDrawable(node) || terrain.has(node)) return;
+    wasVisible.set(node, node.visible);
+    node.visible = false;
+  });
+
+  const hud = document.querySelector<HTMLElement>(HUD_ELEMENT_SELECTOR);
+  const hudDisplay = hud === null ? null : hud.style.display;
+  if (hud !== null) hud.style.display = 'none';
+
+  const background = scene.background;
+  const parityBackground = new Color(...PARITY_BACKGROUND_RGB);
+  scene.background = parityBackground;
+
+  // Last in the frame set, so it lands after every plugin's handler. The day-night rig
+  // retints the lights and copies into the background Color in place (skyRig.ts).
+  const unpin = ctx.viewport.onFrame(() => {
+    sun.position.set(...SUN_DIRECTION_NOON).normalize().multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
+    sun.color.setHex(NOON_LIGHT_COLOR);
+    sun.intensity = SUN_LIGHT_INTENSITY;
+    hemisphere.color.setHex(SKY_COLOR);
+    hemisphere.groundColor.setHex(GROUND_BOUNCE_COLOR);
+    hemisphere.intensity = HEMISPHERE_LIGHT_INTENSITY;
+    ambient.color.setHex(NOON_LIGHT_COLOR);
+    ambient.intensity = AMBIENT_FLOOR_INTENSITY;
+    parityBackground.setRGB(...PARITY_BACKGROUND_RGB);
+    clearGroundShade();
+  });
+
+  return {
+    restore(): void {
+      unpin();
+      scene.background = background;
+      if (hud !== null && hudDisplay !== null) hud.style.display = hudDisplay;
+      for (const [node, visible] of wasVisible) node.visible = visible;
+    },
+  };
+}
+
+// R: band id, biased into a byte. G and B: the chunk index, low byte then high, so the
+// harness can exempt a blocky chunk pixel by pixel.
+function swapBandMaterials(ctx: ProbeContext): () => void {
+  const chunkCols = chunksPerEdge(ctx.world.worldSize());
+  const bandId = positionWorld.y.div(BAND_WORLD_HEIGHT).round().add(BAND_ID_BIAS).div(BYTE_MAX);
+  const chunkId = positionWorld.x
+    .div(CHUNK_WORLD_SPAN)
+    .floor()
+    .add(positionWorld.z.div(CHUNK_WORLD_SPAN).floor().mul(chunkCols));
+  const chunkHigh = chunkId.div(CHUNK_INDEX_BYTE_SPAN).floor();
+  const chunkLow = chunkId.sub(chunkHigh.mul(CHUNK_INDEX_BYTE_SPAN));
+  const colorNode = vec3(bandId, chunkLow.div(BYTE_MAX), chunkHigh.div(BYTE_MAX));
+
+  const swapped: { mesh: Mesh; material: Material | Material[] }[] = [];
+  for (const mesh of ctx.world.pickables()) {
+    const previous = mesh.material as NodeMaterial;
+    const banded = new MeshBasicNodeMaterial({ side: DoubleSide });
+    // The arena's vertex layout decodes in positionNode; the band id must read that vertex.
+    banded.positionNode = previous.positionNode;
+    banded.colorNode = colorNode;
+    swapped.push({ mesh, material: mesh.material });
+    mesh.material = banded;
+  }
+
+  return (): void => {
+    for (const entry of swapped) {
+      const banded = entry.mesh.material as NodeMaterial;
+      entry.mesh.material = entry.material;
+      banded.dispose();
+    }
+  };
+}
+
+function parityDetail(ctx: ProbeContext): Record<string, unknown> {
+  return {
+    blockyChunks: ctx.world.blockyChunks(),
+    meshersActive: ctx.world.terrainMesherActive(),
+  };
+}
+
+const bandParityScenario: Scenario = async (ctx) => {
+  await waitForTerrainDrawn(ctx);
+  const { renderer } = ctx.viewport;
+  const stage = isolateTerrain(ctx);
+  const toneMapping = renderer.toneMapping;
+  const outputColorSpace = renderer.outputColorSpace;
+  renderer.toneMapping = NoToneMapping;
+  renderer.outputColorSpace = LinearSRGBColorSpace;
+  const restoreMaterials = swapBandMaterials(ctx);
+  await waitFrames(PARITY_SETTLE_FRAMES);
+  ctx.beat('band-ready');
+
+  const sampler = ctx.sampler();
+  await sampleUntil(sampler, wait(PARITY_HOLD_MS));
+  const detail = parityDetail(ctx);
+
+  restoreMaterials();
+  renderer.toneMapping = toneMapping;
+  renderer.outputColorSpace = outputColorSpace;
+  stage.restore();
+  return { sample: sampler.block(), detail };
+};
+
+const terrainStillScenario: Scenario = async (ctx) => {
+  await waitForTerrainDrawn(ctx);
+  const stage = isolateTerrain(ctx);
+  await waitFrames(PARITY_SETTLE_FRAMES);
+  ctx.beat('still-ready');
+
+  const sampler = ctx.sampler();
+  await sampleUntil(sampler, wait(PARITY_HOLD_MS));
+  const detail = parityDetail(ctx);
+
+  stage.restore();
+  return { sample: sampler.block(), detail };
 };
 
 const cycloneScenario: Scenario = async (ctx) => {
@@ -1091,7 +1298,14 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = {
   'drift-frozen': makeDriftScenario(true),
   sculpt: sculptScenario,
   cyclone: cycloneScenario,
+  bandParity: bandParityScenario,
+  terrainStill: terrainStillScenario,
 };
+
+function rendererBackendName(renderer: Renderer): 'webgpu' | 'webgl2' {
+  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
+  return backend.isWebGPUBackend === true ? 'webgpu' : 'webgl2';
+}
 
 function requestedScenario(): string | null {
   const raw = new URLSearchParams(location.search).get(PROBE_QUERY_FLAG);
@@ -1269,6 +1483,9 @@ export function installPerfProbe(deps: {
           programs: renderer.info.memory.programs,
           geometries: renderer.info.memory.geometries,
           textures: renderer.info.memory.textures,
+          rendererBackend: rendererBackendName(renderer),
+          terrainMesher: world.terrainMesherActive(),
+          gpuMesher: world.gpuMesherStats(),
           ...result.detail,
           terrainLoad: world.terrainLoadTrace(),
           sample: result.sample,
