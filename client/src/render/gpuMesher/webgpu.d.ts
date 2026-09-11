@@ -207,6 +207,8 @@ interface GPUSupportedLimits {
   readonly minStorageBufferOffsetAlignment: number;
   readonly maxBindGroups: number;
   readonly maxStorageBuffersPerShaderStage: number;
+  readonly maxUniformBuffersPerShaderStage: number;
+  readonly maxUniformBufferBindingSize: number;
 }
 
 interface GPUSupportedFeatures {

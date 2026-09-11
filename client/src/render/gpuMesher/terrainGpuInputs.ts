@@ -38,6 +38,32 @@ export const LIP_ENTRY = 0;
 export const LIP_BAND = 1;
 export const LIP_AX = 2;
 
+/** Chunks counted in one dispatch. Also the arena's backlog cap, so one drain is one batch. */
+export const GPU_BATCH_CHUNKS = 64;
+
+/** Two batches of entries stay resident, so an emit reads exactly what its count counted. */
+export const GPU_WINDOW_POOL = 2 * GPU_BATCH_CHUNKS;
+
+// Every read-only per-entry input shares one storage buffer: WebGPU guarantees only eight
+// storage buffers a stage, and a binding apiece needed eleven.
+export const WINDOW_LATTICE_AT = 0;
+const WINDOW_LATTICE_WORDS = GPU_WINDOW_POOL * WINDOW_LATTICE_SAMPLES;
+export const WINDOW_LATTICE_DESC_AT = WINDOW_LATTICE_AT + WINDOW_LATTICE_WORDS;
+export const WINDOW_SPAN_PAIRS_AT = WINDOW_LATTICE_DESC_AT + WINDOW_LATTICE_WORDS;
+const WINDOW_SPAN_PAIR_WORDS = GPU_WINDOW_POOL * WINDOW_SPAN_PAIRS * SPAN_PAIR_WORDS;
+export const WINDOW_ENTRIES_AT = WINDOW_SPAN_PAIRS_AT + WINDOW_SPAN_PAIR_WORDS;
+export const WINDOW_BATCH_LIST_AT = WINDOW_ENTRIES_AT + GPU_WINDOW_POOL * ENTRY_HEADER_WORDS;
+export const WINDOW_BUFFER_WORDS = WINDOW_BATCH_LIST_AT + GPU_BATCH_CHUNKS;
+
+/** squareBase then chunkStats, so both read-write count outputs cost one binding. */
+export const STATS_SQUARE_BASE_AT = 0;
+export const STATS_CHUNK_AT = STATS_SQUARE_BASE_AT + GPU_WINDOW_POOL * SQUARES_PER_CHUNK;
+export const STATS_BUFFER_WORDS = STATS_CHUNK_AT + GPU_WINDOW_POOL * CHUNK_STATS_WORDS;
+
+/** The append counter is word 0 of the lips buffer; records follow it. */
+export const LIP_COUNTER_AT = 0;
+export const LIP_RECORDS_AT = 1;
+
 export const OVER_BUDGET = 'overBudget';
 
 export interface WindowEntryData {
