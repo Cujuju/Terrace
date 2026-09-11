@@ -84,10 +84,18 @@ const MS_PER_S = 1000;
 
 const scene0Holder: { scene: unknown } = { scene: null };
 
+/** DEV `?antialias=0` renders without MSAA, so a mesher parity capture is judged on coverage. */
+const ANTIALIAS_QUERY_FLAG = 'antialias';
+
+function antialiasRequested(): boolean {
+  if (!import.meta.env.DEV) return true;
+  return new URLSearchParams(window.location.search).get(ANTIALIAS_QUERY_FLAG) !== '0';
+}
+
 export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewport> {
   const renderer = new WebGPURenderer({
     canvas,
-    antialias: true,
+    antialias: antialiasRequested(),
     trackTimestamp: true,
   });
   await renderer.init();
