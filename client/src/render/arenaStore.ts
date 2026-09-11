@@ -65,8 +65,9 @@ export interface ArenaStore {
   ): ArenaSuperBuffers;
   /** Reallocates, keeping the first `liveEnd` vertices; the caller disposes the old geometry. */
   grow(superIdx: number, triangleCapacity: number, liveEnd: number): ArenaSuperBuffers;
-  /** Writes the answer at `vertexOffset`; returns slot bounds in `frame`. Releases a GPU answer. */
-  write(superIdx: number, vertexOffset: number, answer: ChunkAnswer): ArenaSlotBounds;
+  /** Writes the answer at `vertexOffset`; returns slot bounds in `frame`. Releases a GPU
+   *  answer. `null` when nothing was written: the slot range is left zeroed. */
+  write(superIdx: number, vertexOffset: number, answer: ChunkAnswer): ArenaSlotBounds | null;
   copyWithin(superIdx: number, toVertex: number, fromVertex: number, vertexCount: number): void;
   zero(superIdx: number, startVertex: number, vertexCount: number): void;
   /** A changed vertex range, clamped to the live end. CPU: update ranges + needsUpdate. GPU: no-op. */
@@ -101,15 +102,6 @@ const CPU_ARENA_WRITE_COST_MS = 0;
 /** World-frame stores leave the mesh at the origin, so their bounds are world bounds. */
 const WORLD_FRAME_ORIGIN = new Vector3(0, 0, 0);
 
-/** Degenerate, so `updateBounds` grows nothing around a slot that took no vertices. */
-const EMPTY_SLOT_BOUNDS: ArenaSlotBounds = {
-  minX: 0,
-  minY: 0,
-  minZ: 0,
-  maxX: 0,
-  maxY: 0,
-  maxZ: 0,
-};
 
 interface CpuSuper {
   buffers: ChunkGeometryBuffers;
@@ -198,8 +190,8 @@ export function createCpuArenaStore(
 
     // `accepts` turns a GPU answer away before the arena commits a slot to it, so this is a
     // type guard, not a failure path.
-    write(superIdx, vertexOffset, answer): ArenaSlotBounds {
-      if (answer.kind !== 'cpu') return EMPTY_SLOT_BOUNDS;
+    write(superIdx, vertexOffset, answer): ArenaSlotBounds | null {
+      if (answer.kind !== 'cpu') return null;
       const { positions, normals, colors } = superAt(superIdx).buffers;
       positions.set(answer.positions, vertexOffset * COMPONENTS_PER_POSITION);
       normals.set(answer.normals, vertexOffset * COMPONENTS_PER_NORMAL);

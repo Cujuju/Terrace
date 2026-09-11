@@ -576,10 +576,10 @@ export async function createGpuChunkBuildSource(
       maxY,
       originX,
       originZ,
-      emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): void {
+      emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): boolean {
         if (released || disposed || deviceLost) {
           release();
-          return;
+          return false;
         }
         let acc = vertexOffset;
         for (let i = 0; i < SQUARES_PER_CHUNK; i++) {
@@ -618,6 +618,7 @@ export async function createGpuChunkBuildSource(
         pass.dispatchWorkgroups(WORKGROUPS_PER_CHUNK);
         pass.end();
         release();
+        return true;
       },
       release,
     };
