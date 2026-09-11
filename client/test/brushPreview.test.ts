@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Scene, type BufferAttribute, LineLoop, LineSegments, Mesh, type Object3D, type Material } from 'three';
+import { Scene, type BufferAttribute, Line, LineSegments, Mesh, type Object3D, type Material } from 'three';
 import {
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
@@ -33,13 +33,15 @@ function fakeCanvas(): CursorSurface & { on: boolean; writes: number } {
   return surface;
 }
 
-function outlineOf(scene: Scene): LineLoop {
-  const loop = scene.children.find((c): c is LineLoop => c instanceof LineLoop);
+function outlineOf(scene: Scene): Line {
+  const loop = scene.children.find(
+    (c): c is Line => c instanceof Line && !(c instanceof LineSegments),
+  );
   expect(loop).toBeDefined();
-  return loop as LineLoop;
+  return loop as Line;
 }
 
-function outlinePoints(line: LineLoop): { x: number; z: number }[] {
+function outlinePoints(line: Line): { x: number; z: number }[] {
   const position = line.geometry.getAttribute('position') as BufferAttribute;
   const points: { x: number; z: number }[] = [];
   for (let i = 0; i < position.count; i++) {
@@ -48,7 +50,7 @@ function outlinePoints(line: LineLoop): { x: number; z: number }[] {
   return points;
 }
 
-function extent(line: LineLoop): { minX: number; maxX: number; minZ: number; maxZ: number } {
+function extent(line: Line): { minX: number; maxX: number; minZ: number; maxZ: number } {
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const { x, z } of outlinePoints(line)) {
     if (x < minX) minX = x;
@@ -122,7 +124,7 @@ describe('world-edge clipping', () => {
 
   function footprintMaterials(scene: Scene): Material[] {
     return scene.children
-      .filter((c): c is LineLoop | LineSegments | Mesh => c instanceof LineLoop || c instanceof LineSegments || c instanceof Mesh)
+      .filter((c): c is Line | LineSegments | Mesh => c instanceof Line || c instanceof Mesh)
       .map((c) => c.material as Material);
   }
 
