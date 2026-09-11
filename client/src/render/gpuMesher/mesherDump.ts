@@ -391,7 +391,12 @@ export function installMesherDump(sources: MesherDumpSources): () => void {
     if (slot === null || mesh === undefined) return `chunk ${String(chunkIdx)} has no arena slot`;
     const localOriginX = mesh.position.x;
     const localOriginZ = mesh.position.z;
-    const positions = backend.get(mesh.geometry.getAttribute('position')).buffer;
+    // Interleaved attributes keep their GPU buffer on the InterleavedBuffer they share
+    // (WebGPUAttributeUtils._getBufferAttribute), which is what the store injects into.
+    const positionAttribute = mesh.geometry.getAttribute('position');
+    const positions = backend.get(
+      'isInterleavedBufferAttribute' in positionAttribute ? positionAttribute.data : positionAttribute,
+    ).buffer;
     if (positions === undefined) return `arena super-mesh ${String(superAt)} has no GPU buffer`;
 
     const gpu = await readGpuSlot(device, positions, slot.offset, slot.count);
