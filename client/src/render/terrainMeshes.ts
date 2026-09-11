@@ -620,7 +620,10 @@ export function createTerrainMeshes(
     store.commit();
   };
 
+  // Everything the store recorded goes out before a geometry dispose can free the buffers
+  // those commands name.
   const clear = (): void => {
+    store.commit();
     for (const sm of superMeshes.values()) {
       group.remove(sm.mesh);
       sm.mesh.geometry.dispose();
