@@ -133,6 +133,7 @@ const reportFacts = (report) => ({
   meshersActive: report.meshersActive ?? null,
   blockyChunks: report.blockyChunks ?? null,
   gpuMesher: report.gpuMesher ?? null,
+  terrainResidentBytes: report.terrainResidentBytes ?? null,
 });
 
 const results = {
