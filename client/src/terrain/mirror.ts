@@ -79,7 +79,7 @@ export function sampleRenderBandSolid(
   return columnCoversBand(mirror.map, cell.x, cell.y, band);
 }
 
-function renderSampleCell(
+export function renderSampleCell(
   mirror: TerrainMirror,
   x: number,
   y: number,
