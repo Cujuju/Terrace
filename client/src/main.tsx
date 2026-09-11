@@ -54,8 +54,9 @@ if (canvas === null || hudRoot === null) {
   throw new Error('index.html must provide #viewport and #hud');
 }
 
-// The join goes out first so its round trip overlaps viewport creation, which waits on the
-// first shader links; every callback below reaches its target lazily.
+const viewport = await createViewport(canvas);
+// The join is issued right after the only await, so its round trip overlaps the rest of
+// boot; every callback below reaches its target lazily, and nothing runs before wiring.
 const connection = connect({
   sink: () => world,
   operator: {
@@ -75,7 +76,6 @@ const connection = connect({
   onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
 });
 
-const viewport = await createViewport(canvas);
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
 const world = createWorld(viewport);
 const celestialVoid = createCelestialVoid(
