@@ -768,7 +768,9 @@ integration) and fixes.
 2. Whether GPU chunks that the CPU would draw blocky (work-budget fallback)
    may stay full-resolution (default: yes; reported, excluded from parity).
 3. `GPU_MESH_FRAME_BUDGET_MS = 3.0` (default stands; §7 reasoning).
-4. Dropping the dead normal attribute from the CPU arena (47 MB) is a separate
+4. Dropping the dead normal attribute from the CPU arena (42.5 MB: 4 of the
+   20 B/vertex of the measured 212,336,640 B resident; JS heap only, three
+   never uploads an attribute the shader graph does not reference) is a separate
    change; not done here. **Ruled 2026-09-11: leave it** (fallback-path-only
    benefit; revisit if the CPU path's memory matters).
 5. Shaded parity floor: gate 1's rigid half-step shift (passes at 0.076 %
