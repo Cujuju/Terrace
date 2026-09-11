@@ -7,7 +7,11 @@ import {
   createChunkGeometryBuffers,
   type ChunkGeometryBuffers,
 } from '../terrain/vertexGrid.ts';
-import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts';
+import {
+  createArenaGeometry,
+  createTerrainMaterial,
+  type TerrainVertexLayout,
+} from './terrainMaterial.ts';
 
 /** Where slot bounds and `mesh.position` live: world coordinates, or relative to the super-mesh centre. */
 export type ArenaFrame = 'world' | 'superLocal';
@@ -41,6 +45,8 @@ export interface ArenaStore {
   /** GPU-time budget per frame for `write`; drain stops splicing when spent. CPU: Infinity. */
   readonly frameWriteBudgetMs: number;
   readonly material: MeshStandardNodeMaterial;
+  /** How the store stores vertex positions; the material is warmed against it. */
+  readonly layout: TerrainVertexLayout;
   /** Whether `write` can take this answer's layout. A rejected answer never reaches a slot. */
   accepts(answer: ChunkAnswer): boolean;
   /** Estimated GPU-time cost of `write(answer)`; 0 for the CPU store. */
@@ -105,8 +111,11 @@ interface CpuSuper {
   colorAttribute: BufferAttribute;
 }
 
+/** The CPU mesher writes world-unit floats; the GPU store brings the packed layout. */
+const CPU_ARENA_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
+
 export function createCpuArenaStore(
-  material: MeshStandardNodeMaterial = createTerrainMaterial('float32'),
+  material: MeshStandardNodeMaterial = createTerrainMaterial(CPU_ARENA_VERTEX_LAYOUT),
 ): ArenaStore {
   const supers = new Map<number, CpuSuper>();
 
@@ -146,6 +155,7 @@ export function createCpuArenaStore(
     moveOverheadMs: CPU_ARENA_MOVE_OVERHEAD_MS,
     frameWriteBudgetMs: Infinity,
     material,
+    layout: CPU_ARENA_VERTEX_LAYOUT,
 
     accepts(answer): boolean {
       return answer.kind === 'cpu';

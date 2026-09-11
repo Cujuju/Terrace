@@ -51,7 +51,7 @@ import {
   createWorkerChunkBuildSource,
   type ChunkBuildSource,
 } from './render/chunkBuildSource.ts';
-import { warmTerrainMaterial, type TerrainVertexLayout } from './render/terrainMaterial.ts';
+import { warmTerrainMaterial } from './render/terrainMaterial.ts';
 import { createCpuArenaStore, type ArenaStore } from './render/arenaStore.ts';
 import {
   GpuArenaUnavailableError,
@@ -147,11 +147,6 @@ export interface World extends TerrainSink {
 const nowMs = (): number => performance.now();
 
 const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
-
-/** The CPU mesher's arena layout; the GPU mesher's store brings the packed one. */
-const CPU_TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
-
-const GPU_TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'snorm16';
 
 /** The store, the build source and the warm-up mesh of one mesher choice, disposed together. */
 interface TerrainMesherRig {
@@ -279,11 +274,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   const createCpuRig = (reason: string): TerrainMesherRig => {
     const store = createCpuArenaStore();
-    const warmUp = warmTerrainMaterial(
-      viewport.terrainGroup,
-      store.material,
-      CPU_TERRAIN_VERTEX_LAYOUT,
-    );
+    const warmUp = warmTerrainMaterial(viewport.terrainGroup, store.material, store.layout);
     logMesher('cpu', reason);
     return {
       kind: 'cpu',
@@ -312,11 +303,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       if (!(error instanceof GpuArenaUnavailableError)) throw error;
       return error.message;
     }
-    const warmUp = warmTerrainMaterial(
-      viewport.terrainGroup,
-      store.material,
-      GPU_TERRAIN_VERTEX_LAYOUT,
-    );
+    const warmUp = warmTerrainMaterial(viewport.terrainGroup, store.material, store.layout);
     logMesher('gpu', `setting "${terrainMesher()}" on the WebGPU backend`);
     return {
       kind: 'gpu',
