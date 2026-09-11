@@ -11,6 +11,7 @@ import {
   type Material,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { weldFlatShaded } from '../../../client/src/render/weld.ts';
 import {
   FLORA_FRINGE_CAP,
   FRINGE_CLUSTER_CELL_SPAN,
@@ -110,8 +111,7 @@ interface StemGeometries {
 function triangleSoup(positions: number[]): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-  geometry.computeVertexNormals();
-  return geometry;
+  return weldFlatShaded(geometry);
 }
 
 function buildStem(shape: StemShape): StemGeometries {
