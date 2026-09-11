@@ -431,6 +431,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   const stopMesherDump = import.meta.env.DEV
     ? installMesherDump({
+        camera: viewport.camera,
         renderer: viewport.renderer,
         mirror: () => mirror,
         meshes: () => meshes,
