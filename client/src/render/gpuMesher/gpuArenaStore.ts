@@ -330,6 +330,11 @@ export function createGpuArenaStore(
     frameWriteBudgetMs: GPU_MESH_FRAME_BUDGET_MS,
     material,
 
+    /** Both layouts land in the packed buffers: a GPU answer by emit, a CPU one by queue write. */
+    accepts(): boolean {
+      return true;
+    },
+
     writeCostMs(answer): number {
       if (answer.kind !== 'gpu') return GPU_ARENA_CPU_WRITE_COST_MS;
       return answer.vertexCount * GPU_EMIT_MS_PER_VERTEX;
