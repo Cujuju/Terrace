@@ -1,6 +1,6 @@
 import {
   BufferGeometry,
-  Camera,
+  OrthographicCamera,
   ClampToEdgeWrapping,
   CustomBlending,
   Float32BufferAttribute,
@@ -441,6 +441,10 @@ const rot = Fn(([p, a]: [Node<'vec2'>, Node<'float'>]) => {
 
 // A full-screen pass: the triangle is authored in clip space.
 const FULLSCREEN_VERTEX = vec4(positionGeometry.xy, 0.0, 1.0);
+
+// The fullscreen vertex ignores the camera, but WebGPURenderer still calls
+// updateProjectionMatrix on it, which a bare Camera lacks (QuadMesh.js:7 uses this one).
+const fullscreenCamera = (): OrthographicCamera => new OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
 function nebulaFragment(u: VoidUniforms): Node<'vec4'> {
   return Fn(() => {
@@ -892,7 +896,7 @@ export function createCelestialVoid(
     const bakeMesh = new Mesh(geometry, material);
     bakeMesh.frustumCulled = false;
     const bakeScene = new Scene().add(bakeMesh);
-    const bakeCamera = new Camera();
+    const bakeCamera = fullscreenCamera();
     const { renderer } = viewport;
     const previous = renderer.getRenderTarget();
     const previousCubeFace = renderer.getActiveCubeFace();
@@ -912,7 +916,7 @@ export function createCelestialVoid(
   let gasTarget: RenderTarget | null = null;
   let gasMaterial: NodeMaterial | null = null;
   let gasScene: Scene | null = null;
-  let gasCamera: Camera | null = null;
+  let gasCamera: OrthographicCamera | null = null;
   const drawingBuffer = new Vector2();
 
   const sizeGasTarget = (width: number, height: number): void => {
@@ -950,7 +954,7 @@ export function createCelestialVoid(
     const gasMesh = new Mesh(geometry, gasMaterial);
     gasMesh.frustumCulled = false;
     gasScene = new Scene().add(gasMesh);
-    gasCamera = new Camera();
+    gasCamera = fullscreenCamera();
   };
 
   const renderGasPass = (): void => {
