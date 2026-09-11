@@ -3,12 +3,17 @@ import {
   Color,
   DoubleSide,
   FrontSide,
+  Frustum,
   LinearSRGBColorSpace,
+  Matrix4,
   Mesh,
   NoToneMapping,
+  Sphere,
   Vector3,
+  type BufferGeometry,
   type Material,
   type Object3D,
+  type PerspectiveCamera,
 } from 'three';
 import { MeshBasicNodeMaterial, type NodeMaterial, type Renderer } from 'three/webgpu';
 import { positionWorld, vec3 } from 'three/tsl';
@@ -1357,17 +1362,25 @@ const cycloneScenario: Scenario = async (ctx) => {
   };
 };
 
-const ablateScenario: Scenario = async (ctx) => {
-  const layers = ctx.viewport.scene.children.filter((child) =>
+function ablatableLayers(ctx: ProbeContext): Object3D[] {
+  return ctx.viewport.scene.children.filter((child) =>
     ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix)),
   );
-  const rigName = (child: { name: string }): string => {
-    const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
-    return prefix === undefined ? child.name : child.name.slice(prefix.length);
-  };
-  ctx.freeze(true);
-  ctx.beat(`ablating-${String(layers.length)}-layers-frozen`);
+}
 
+function rigName(child: { name: string }): string {
+  const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
+  return prefix === undefined ? child.name : child.name.slice(prefix.length);
+}
+
+interface AblationBench {
+  readonly baselines: FrameBlock[];
+  readonly measure: () => Promise<FrameBlock>;
+  readonly ablate: (name: string, apply: () => void, undo: () => void) => Promise<Record<string, unknown>>;
+  readonly noise: () => Record<string, number | null>;
+}
+
+async function createAblationBench(ctx: ProbeContext): Promise<AblationBench> {
   const measure = async (): Promise<FrameBlock> => {
     await waitFrames(ABLATION_SETTLE_FRAMES);
     const sampler = ctx.sampler();
@@ -1411,6 +1424,29 @@ const ablateScenario: Scenario = async (ctx) => {
       drawCallsSaved: bracket((block) => block.drawCalls) - step.drawCalls,
     };
   };
+
+  const noise = (): Record<string, number | null> => {
+    const baselineGpu = baselines.map(gpuOf).filter((ms): ms is number => ms !== null);
+    const steps = baselineGpu.slice(1).map((ms, index) => Math.abs(ms - baselineGpu[index]!));
+    return {
+      baselineGpuMsMin: baselineGpu.length === 0 ? null : Math.min(...baselineGpu),
+      baselineGpuMsMax: baselineGpu.length === 0 ? null : Math.max(...baselineGpu),
+      baselineGpuMsMeanStep:
+        steps.length === 0 ? null : steps.reduce((sum, ms) => sum + ms, 0) / steps.length,
+      baselineDrawCallsMin: Math.min(...baselines.map((block) => block.drawCalls)),
+      baselineDrawCallsMax: Math.max(...baselines.map((block) => block.drawCalls)),
+    };
+  };
+
+  return { baselines, measure, ablate, noise };
+}
+
+const ablateScenario: Scenario = async (ctx) => {
+  const layers = ablatableLayers(ctx);
+  ctx.freeze(true);
+  ctx.beat(`ablating-${String(layers.length)}-layers-frozen`);
+
+  const { baselines, measure, ablate, noise: benchNoise } = await createAblationBench(ctx);
 
   const rows: Record<string, unknown>[] = [];
   for (const layer of layers) {
@@ -1477,16 +1513,7 @@ const ablateScenario: Scenario = async (ctx) => {
   for (const layer of layers) layer.visible = true;
   ctx.freeze(false);
 
-  const baselineGpu = baselines.map(gpuOf).filter((ms): ms is number => ms !== null);
-  const steps = baselineGpu.slice(1).map((ms, index) => Math.abs(ms - baselineGpu[index]!));
-  const noise = {
-    baselineGpuMsMin: baselineGpu.length === 0 ? null : Math.min(...baselineGpu),
-    baselineGpuMsMax: baselineGpu.length === 0 ? null : Math.max(...baselineGpu),
-    baselineGpuMsMeanStep:
-      steps.length === 0 ? null : steps.reduce((sum, ms) => sum + ms, 0) / steps.length,
-    baselineDrawCallsMin: Math.min(...baselines.map((block) => block.drawCalls)),
-    baselineDrawCallsMax: Math.max(...baselines.map((block) => block.drawCalls)),
-  };
+  const noise = benchNoise();
 
   rows.sort((a, b) => Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1));
   coreRows.sort((a, b) => Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1));
@@ -1506,6 +1533,241 @@ const ablateScenario: Scenario = async (ctx) => {
         triangles: allHidden.triangles,
         drawCalls: allHidden.drawCalls,
       },
+    },
+  };
+};
+
+const MESH_ABLATE_LAYERS_QUERY_FLAG = 'meshes';
+// A model whose projected radius is under a pixel or two cannot resolve its tessellation.
+const SCREEN_RADIUS_BUCKETS_PX = [1, 2, 4, 8, 16] as const;
+const INSTANCE_MATRIX_ELEMENTS = 16;
+
+// Per-drawable census at the current pose: what each mesh draws, how much of it the
+// frustum keeps, and how many of its instances are too small on screen to resolve.
+function drawableCensus(
+  node: Object3D,
+  camera: PerspectiveCamera,
+  pixelHeight: number,
+): Record<string, unknown> {
+  const mesh = node as Object3D & {
+    isInstancedMesh?: boolean;
+    count?: number;
+    geometry?: BufferGeometry;
+    material?: Material;
+    instanceMatrix?: { array: ArrayLike<number> };
+    boundingSphere?: Sphere | null;
+  };
+  const geometry = mesh.geometry;
+  const vertices = geometry?.index?.count ?? geometry?.attributes['position']?.count ?? 0;
+  const trisPerInstance = vertices / 3;
+  const instanced = mesh.isInstancedMesh === true;
+  const instances = instanced ? (mesh.count ?? 0) : 1;
+  const material = mesh.material;
+
+  const projection = new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const frustum = new Frustum().setFromProjectionMatrix(projection);
+  const pixelsPerUnitAtUnitDistance = pixelHeight / 2 / Math.tan((camera.fov / 2) * (Math.PI / 180));
+
+  if (geometry !== undefined && geometry.boundingSphere === null) geometry.computeBoundingSphere();
+  const geometryRadius = geometry?.boundingSphere?.radius ?? 0;
+  const geometryCentre = geometry?.boundingSphere?.center ?? new Vector3();
+
+  let worldSphere: Sphere | null = null;
+  if (instanced) {
+    worldSphere = mesh.boundingSphere ?? null;
+  } else if (geometry?.boundingSphere) {
+    worldSphere = geometry.boundingSphere.clone().applyMatrix4(node.matrixWorld);
+  }
+  const inFrustum = worldSphere === null || worldSphere.radius <= 0 ? null : frustum.intersectsSphere(worldSphere);
+  const centreDistance = worldSphere === null ? null : worldSphere.center.distanceTo(camera.position);
+
+  const buckets = SCREEN_RADIUS_BUCKETS_PX.map(() => ({ instances: 0, triangles: 0 }));
+  let instancesInFrustum = 0;
+  let trianglesInFrustum = 0;
+  let nearestInstance = Number.POSITIVE_INFINITY;
+  let farthestInstance = 0;
+  if (instanced && mesh.instanceMatrix !== undefined) {
+    const array = mesh.instanceMatrix.array;
+    const local = new Matrix4();
+    const world = new Matrix4();
+    const centre = new Vector3();
+    const scale = new Vector3();
+    const sphere = new Sphere();
+    for (let i = 0; i < instances; i++) {
+      const base = i * INSTANCE_MATRIX_ELEMENTS;
+      local.fromArray(array as number[], base);
+      world.multiplyMatrices(node.matrixWorld, local);
+      scale.set(array[base]!, array[base + 1]!, array[base + 2]!);
+      centre.copy(geometryCentre).applyMatrix4(world);
+      sphere.set(centre, geometryRadius * scale.length());
+      if (!frustum.intersectsSphere(sphere)) continue;
+      instancesInFrustum++;
+      trianglesInFrustum += trisPerInstance;
+      const distance = centre.distanceTo(camera.position);
+      nearestInstance = Math.min(nearestInstance, distance);
+      farthestInstance = Math.max(farthestInstance, distance);
+      const screenRadiusPx = (sphere.radius / Math.max(distance, Number.EPSILON)) * pixelsPerUnitAtUnitDistance;
+      for (let b = 0; b < SCREEN_RADIUS_BUCKETS_PX.length; b++) {
+        if (screenRadiusPx < SCREEN_RADIUS_BUCKETS_PX[b]!) {
+          buckets[b]!.instances++;
+          buckets[b]!.triangles += trisPerInstance;
+        }
+      }
+    }
+  }
+
+  return {
+    name: node.name === '' ? `${node.type}#${String(node.id)}` : node.name,
+    type: node.type,
+    material: material === undefined ? null : `${material.type}${material.side === DoubleSide ? ' DoubleSide' : ''}`,
+    frustumCulled: node.frustumCulled,
+    instanced,
+    instances,
+    trisPerInstance: Math.round(trisPerInstance),
+    uniqueVertices: geometry?.attributes['position']?.count ?? 0,
+    indexed: geometry?.index !== null && geometry?.index !== undefined,
+    trianglesDrawn: Math.round(trisPerInstance * instances),
+    boundingRadius: worldSphere?.radius ?? null,
+    centreDistance,
+    inFrustum,
+    instancesInFrustum: instanced ? instancesInFrustum : null,
+    trianglesInFrustum: instanced ? Math.round(trianglesInFrustum) : null,
+    nearestInstance: instanced && instancesInFrustum > 0 ? nearestInstance : null,
+    farthestInstance: instanced && instancesInFrustum > 0 ? farthestInstance : null,
+    underScreenRadiusPx: instanced
+      ? Object.fromEntries(SCREEN_RADIUS_BUCKETS_PX.map((px, b) => [String(px), buckets[b]]))
+      : null,
+  };
+}
+
+const MESH_ABLATE_REPEATS_QUERY_FLAG = 'repeats';
+const MESH_ABLATE_PICK_QUERY_FLAG = 'pick';
+const MESH_ABLATE_POSE_QUERY_FLAG = 'pose';
+const MESH_ABLATE_CLOSE_POSE = 'close';
+// `&unweld=1`: each group is also measured with its indexed geometry swapped for a
+// non-indexed copy (same triangles), pricing vertex welding in-run.
+const MESH_ABLATE_UNWELD_QUERY_FLAG = 'unweld';
+const MESH_ABLATE_GROUP_SEPARATOR = '~';
+
+// The same step repeated; the mean saving resolves below the single-step noise.
+async function ablateRepeated(
+  bench: AblationBench,
+  repeats: number,
+  name: string,
+  apply: () => void,
+  undo: () => void,
+): Promise<Record<string, unknown>> {
+  const steps: Record<string, unknown>[] = [];
+  for (let i = 0; i < repeats; i++) steps.push(await bench.ablate(name, apply, undo));
+  const savings = steps
+    .map((step) => step['gpuMsSaved'])
+    .filter((ms): ms is number => typeof ms === 'number');
+  const mean = savings.length === 0 ? null : savings.reduce((sum, ms) => sum + ms, 0) / savings.length;
+  const spread = mean === null ? null : Math.max(...savings) - Math.min(...savings);
+  return { ...steps[0]!, gpuMsSaved: mean, gpuMsSavedSpread: spread, gpuMsSavedSteps: savings };
+}
+
+// `?perfprobe=ablate-meshes&meshes=structures,flora[&repeats=N][&pick=a~b,c]`: one ablation
+// step per drawable inside the named plugin layers (or per `pick` group of drawable names),
+// each with its census, then the whole layer.
+const ablateMeshesScenario: Scenario = async (ctx) => {
+  const query = new URLSearchParams(location.search);
+  const wanted = new Set(
+    (query.get(MESH_ABLATE_LAYERS_QUERY_FLAG) ?? '').split(',').filter((name) => name !== ''),
+  );
+  const repeats = Math.max(1, Number(query.get(MESH_ABLATE_REPEATS_QUERY_FLAG) ?? '1'));
+  const picks = (query.get(MESH_ABLATE_PICK_QUERY_FLAG) ?? '')
+    .split(',')
+    .filter((group) => group !== '')
+    .map((group) => group.split(MESH_ABLATE_GROUP_SEPARATOR));
+  const layers = ablatableLayers(ctx).filter((layer) => wanted.has(rigName(layer)));
+  const unweld = query.get(MESH_ABLATE_UNWELD_QUERY_FLAG) === '1';
+  const pose = query.get(MESH_ABLATE_POSE_QUERY_FLAG);
+  if (pose === MESH_ABLATE_CLOSE_POSE) {
+    const cell = centreCell(ctx);
+    ctx.dollyTo(cell.x, cell.y, CAMERA_MIN_DISTANCE * STROKE_ZOOM_FACTOR);
+  }
+  ctx.freeze(true);
+  ctx.beat(`ablating-meshes-in-${String(layers.length)}-layers-frozen`);
+  const bench = await createAblationBench(ctx);
+  const { camera, renderer } = ctx.viewport;
+  camera.updateMatrixWorld();
+  const pixelHeight = renderer.domElement.height;
+
+  const byLayer: Record<string, unknown>[] = [];
+  for (const layer of layers) {
+    const drawables: Object3D[] = [];
+    layer.traverseVisible((node: Object3D) => {
+      if (isDrawable(node)) drawables.push(node);
+    });
+    const censusOf = new Map(drawables.map((node) => [node, drawableCensus(node, camera, pixelHeight)]));
+    const groups: Object3D[][] =
+      picks.length === 0
+        ? drawables.map((node) => [node])
+        : picks
+            .map((names) => drawables.filter((node) => names.includes(String(censusOf.get(node)!['name']))))
+            .filter((group) => group.length > 0);
+    const meshes: Record<string, unknown>[] = [];
+    for (const group of groups) {
+      const name = group.map((node) => String(censusOf.get(node)!['name'])).join(MESH_ABLATE_GROUP_SEPARATOR);
+      const step = await ablateRepeated(
+        bench,
+        repeats,
+        `${rigName(layer)}/${name}`,
+        () => { for (const node of group) node.visible = false; },
+        () => { for (const node of group) node.visible = true; },
+      );
+      const census = group.length === 1 ? censusOf.get(group[0]!)! : { name, members: group.map((node) => censusOf.get(node)) };
+      let unwelded: Record<string, unknown> | null = null;
+      if (unweld) {
+        const meshesOf = group.filter((node): node is Mesh => (node as Mesh).isMesh === true && (node as Mesh).geometry.index !== null);
+        const welded = new Map(meshesOf.map((mesh) => [mesh, mesh.geometry]));
+        const copies = new Map(meshesOf.map((mesh) => [mesh, mesh.geometry.toNonIndexed()]));
+        unwelded = await ablateRepeated(
+          bench,
+          repeats,
+          `${rigName(layer)}/${name} unwelded`,
+          () => { for (const [mesh, copy] of copies) mesh.geometry = copy; },
+          () => { for (const [mesh, geometry] of welded) mesh.geometry = geometry; },
+        );
+        // The copies stay allocated: disposing one still referenced by an in-flight command
+        // buffer raises a WebGPU validation error and stalls the timestamp queries.
+        unwelded = {
+          ...unwelded,
+          indexedVertices: meshesOf.reduce((sum, mesh) => sum + mesh.geometry.getAttribute('position').count, 0),
+          unindexedVertices: meshesOf.reduce((sum, mesh) => sum + mesh.geometry.index!.count, 0),
+        };
+      }
+      meshes.push({ ...census, ...step, unwelded });
+    }
+    meshes.sort((a, b) => Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1));
+    const whole = await ablateRepeated(
+      bench,
+      repeats,
+      rigName(layer),
+      () => { layer.visible = false; },
+      () => { layer.visible = true; },
+    );
+    byLayer.push({
+      layer: rigName(layer),
+      drawables: drawables.length,
+      whole,
+      meshes,
+      census: picks.length === 0 ? undefined : [...censusOf.values()],
+    });
+  }
+  ctx.freeze(false);
+
+  return {
+    sample: bench.baselines[0]!,
+    detail: {
+      layers: layers.map(rigName),
+      pose: pose ?? 'default',
+      repeats,
+      baselineBlocks: bench.baselines.length,
+      noise: bench.noise(),
+      eye: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+      byLayer,
     },
   };
 };
@@ -1629,6 +1891,7 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = {
   idle: idleScenario,
   overview: overviewScenario,
   ablate: ablateScenario,
+  'ablate-meshes': ablateMeshesScenario,
   drift: makeDriftScenario(false),
   'drift-frozen': makeDriftScenario(true),
   sculpt: sculptScenario,
