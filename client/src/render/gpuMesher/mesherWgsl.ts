@@ -50,6 +50,7 @@ import {
   CHUNK_STATS_VERTEX_COUNT,
   CHUNK_STATS_WORDS,
   COUNT_PASS_STAMP,
+  ENTRY_EXPOSED_EDGES,
   ENTRY_HEADER_WORDS,
   ENTRY_LAYERED,
   ENTRY_LOCAL_ORIGIN_X_UNITS,
@@ -58,6 +59,10 @@ import {
   ENTRY_ORIGIN_X_CELLS,
   ENTRY_ORIGIN_Z_CELLS,
   ENTRY_VERTEX_LIMIT,
+  EXPOSED_EAST,
+  EXPOSED_NORTH,
+  EXPOSED_SOUTH,
+  EXPOSED_WEST,
   LIP_COUNTER_AT,
   LIP_RECORDS_AT,
   LIP_WORDS,
@@ -185,6 +190,10 @@ const WORKGROUP_THREADS : u32 = ${wgslI32(WORKGROUP_THREADS)}u;
 const WORKGROUPS_PER_CHUNK : u32 = ${wgslI32(WORKGROUPS_PER_CHUNK)}u;
 const SQUARES_PER_WORKGROUP : u32 = ${wgslI32(squaresPerWorkgroup)}u;
 const ENTRY_HEADER_WORDS : i32 = ${wgslI32(ENTRY_HEADER_WORDS)};
+const EXPOSED_WEST : i32 = ${wgslI32(EXPOSED_WEST)};
+const EXPOSED_EAST : i32 = ${wgslI32(EXPOSED_EAST)};
+const EXPOSED_NORTH : i32 = ${wgslI32(EXPOSED_NORTH)};
+const EXPOSED_SOUTH : i32 = ${wgslI32(EXPOSED_SOUTH)};
 const CHUNK_STATS_WORDS : u32 = ${wgslI32(CHUNK_STATS_WORDS)}u;
 const CHUNK_STATS_VERTEX_COUNT : u32 = ${wgslI32(CHUNK_STATS_VERTEX_COUNT)}u;
 const CHUNK_STATS_COUNT_STAMP : u32 = ${wgslI32(CHUNK_STATS_COUNT_STAMP)}u;
@@ -249,6 +258,7 @@ var<workgroup> cellHeight : array<i32, LATTICE_CELLS>;
 var<workgroup> cellDesc : array<u32, LATTICE_CELLS>;
 
 var<private> chunkLayered : bool;
+var<private> chunkExposedEdges : i32;
 var<private> chunkLowestBand : i32;
 var<private> originCellX : i32;
 var<private> originCellZ : i32;
@@ -691,15 +701,24 @@ fn emitSquare(square : i32, base : u32) -> u32 {
   corner[2] = vec2f(eastX, southZ);
   corner[3] = vec2f(westX, southZ);
 
-  var highCorner = drawnBandOfSample(cellHeight[localRef[0]]);
+  var lowCorner = drawnBandOfSample(cellHeight[localRef[0]]);
+  var highCorner = lowCorner;
   for (var c = 1; c < 4; c++) {
-    highCorner = max(highCorner, drawnBandOfSample(cellHeight[localRef[c]]));
+    let band = drawnBandOfSample(cellHeight[localRef[c]]);
+    lowCorner = min(lowCorner, band);
+    highCorner = max(highCorner, band);
   }
+  // Caps under a square's own corners cover it whole. A layered chunk re-enters them
+  // through columnSampleAtBand, and a square on an exposed edge shows them stacked, in
+  // perspective, where the drawn terrain ends; elsewhere the neighbour's risers hide them.
+  let onExposedEdge = (lx == 0 && (chunkExposedEdges & EXPOSED_WEST) != 0)
+    || (lx == CHUNK_CELLS - 1 && (chunkExposedEdges & EXPOSED_EAST) != 0)
+    || (lz == 0 && (chunkExposedEdges & EXPOSED_NORTH) != 0)
+    || (lz == CHUNK_CELLS - 1 && (chunkExposedEdges & EXPOSED_SOUTH) != 0);
+  let lo = select(lowCorner, chunkLowestBand, chunkLayered || onExposedEdge);
 
-  // makeLevels' range, every square. A cap below the square's own corners covers it whole
-  // but is not hidden: it projects clear of the cap above where the drawn terrain ends.
   var cursor = base;
-  for (var level = chunkLowestBand; level <= highCorner; level++) {
+  for (var level = lo; level <= highCorner; level++) {
     cursor += emitLevel(level, localRef, cursor);
     if (chunkLayered) { cursor += emitCeilingLevel(level, localRef, cursor); }
     // The shipped mesher slots its shoreline level directly after band 0.
@@ -724,6 +743,7 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
 
   let header = entry * ENTRY_HEADER_WORDS;
   chunkLayered = entryWord(header + ${wgslI32(ENTRY_LAYERED)}) != 0;
+  chunkExposedEdges = entryWord(header + ${wgslI32(ENTRY_EXPOSED_EDGES)});
   chunkLowestBand = entryWord(header + ${wgslI32(ENTRY_LOWEST_BAND)});
   originCellX = entryWord(header + ${wgslI32(ENTRY_ORIGIN_X_CELLS)});
   originCellZ = entryWord(header + ${wgslI32(ENTRY_ORIGIN_Z_CELLS)});

@@ -381,12 +381,22 @@ for layered ones, `bias = BAND_BIAS` (0 for shore) — the CPU's
 (`capEmission.ts:539-544, 557`). Gate 1's `bands[c] >= level` is removed;
 `drawnBandAtCell` is no longer needed.
 
-Why the square can keep `lo = min corner band` when unlayered: every level
-below a square's minimum corner band covers the square entirely and the CPU
-emits that full cap too; both meshers draw it hidden under the higher cap,
-with no risers since a fully-inside square has no contour (README "What the
-mesher does"). Layered chunks need the chunk-wide floor because a lower
-span's cap re-enters through `columnSampleAtBand`.
+Why the square can keep `lo = min corner band` when unlayered and interior:
+every level below a square's minimum corner band covers the square entirely
+and the CPU emits that full cap too, with no risers since a fully-inside
+square has no contour. Such a cap is only ever seen through an edge that
+borders nothing: in perspective the stack projects clear of the top cap
+where the drawn terrain ends (measured 2026-09-11: 10,237 background pixels
+at the rim of the received region before the rule below). Behind a received
+neighbour the neighbour square's own risers hide it. So a square on a chunk
+side whose neighbour chunk is unreceived or off-world (`ENTRY_EXPOSED_EDGES`,
+computed by `extractWindowEntry` from `mirror.received`) marches from
+`chunkLowestBand` like a layered square; every other square keeps its own
+minimum. Marching every square from the chunk floor instead costs 1.79× the
+vertices (396 MB on the bench world). Known slack: when a neighbour unlocks
+later, the chunks east and south of it are not dirtied (`mirror.ts:192-197`
+dirties west/north readers only), so they keep their exposed-edge stack,
+hidden and harmless, until their next rebuild.
 
 ### 5.3 Shoreline level
 
