@@ -33,7 +33,7 @@ const [CONTEXT_POLL_MS, CONTEXT_POLL_LIMIT] = [100, 300];
 // The pixel limit is judged above the metric's own floor (shipped mesh diffed
 // against itself shifted half a quantization step), which alone scores ~0.19 %.
 const [PIXEL_TOLERANCE, MAX_MISMATCH_FRACTION, NEIGHBOURHOOD_RADIUS] = [8, 0.001, 1];
-// Owner ruling 2026-09-10: band parity passes at <= 0.5 % of samples mismatched (was 0).
+// Owner ruling 2026-09-10 (#465): band parity passes at <= 0.5 % of non-exempt samples mismatched (was 0).
 const MAX_PARITY_MISMATCH_FRACTION = 0.005;
 const CHANNELS = 4;
 const [DIFF_DIM_FACTOR, DIFF_MARK] = [0.35, [255, 32, 32]];
@@ -331,7 +331,7 @@ results.pixels = {
 // ------------------------------------------------------------------ verdict
 const gpuOut = results.sources.gpu;
 const criteria = [
-  ['band parity mismatch fraction', results.parity.mismatches / results.parity.samples, MAX_PARITY_MISMATCH_FRACTION, (v, l) => v <= l],
+  ['band parity mismatch fraction', results.parity.mismatches / (results.parity.samples - results.parity.exempt), MAX_PARITY_MISMATCH_FRACTION, (v, l) => v <= l],
   ['band parity holes', results.parity.holes, 0, (v, l) => v <= l],
   ['isoline port mismatches', gpuOut.isoline?.mismatches ?? 0, 0, (v, l) => v <= l],
   ['pixel mismatch fraction above metric floor', results.pixels.mismatchFraction - results.pixels.metricFloorFraction, MAX_MISMATCH_FRACTION, (v, l) => v <= l],
