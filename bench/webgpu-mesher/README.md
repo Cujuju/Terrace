@@ -89,7 +89,7 @@ run.
 
 | criterion | measured | limit | |
 |---|---|---|---|
-| band parity mismatches | 157 | 0 | kill |
+| band parity mismatch fraction | 0.004 % (157 of 4,198,401) | 0.5 % | pass |
 | band parity holes | 0 | 0 | pass |
 | isoline port mismatches | 0 | 0 | pass |
 | pixel mismatch fraction | 0.220 % | 0.1 % | kill |
@@ -97,6 +97,11 @@ run.
 | full-world rebuild | 360 ms | 50 ms | kill |
 | draw p50 | 0.689 ms | 1 ms | pass |
 | resident GPU bytes | 189.6 MB | 207 MB | pass |
+
+Band parity limit was 0 until 2026-09-10; the owner ruled it passes at <= 0.5 % of
+samples mismatched (desktop 157, laptop 158 of 4,198,401). The first failing
+criterion is now the pixel fraction; whether the 0.5 % ruling extends to it is
+an open question (#447).
 
 GPU 5,207,401 triangles against the shipped mesher's 3,917,911; GPU draw p50
 0.689 ms against 0.688 ms; GPU rebuild 360 ms against the shipped mesher's 938 ms
