@@ -105,6 +105,9 @@ const LIP_POSITION_FLOATS_PER_SEGMENT = 6;
 const LIP_FLAT_FLOATS_PER_SEGMENT = 4;
 const LIP_BAND_TRIPLE_WORDS = 3;
 
+/** ax, az, bx, bz: the record words the sort compares after the band. */
+const LIP_COORD_WORDS = 4;
+
 const NO_ENTRY = -1;
 
 const CHUNK_SPAN_WORLD_UNITS = CHUNK_SIZE * CELL_WORLD_SIZE;
@@ -139,12 +142,11 @@ interface WebGpuBackendInternals {
   readonly device?: GPUDevice;
 }
 
-interface LipRecord {
-  band: number;
-  ax: number;
-  az: number;
-  bx: number;
-  bz: number;
+/** One batch's lip records, mapped straight off the readback: no per-segment objects. */
+interface LipReadback {
+  readonly words: Int32Array;
+  readonly floats: Float32Array;
+  readonly count: number;
 }
 
 interface QueuedChunk {
@@ -207,43 +209,58 @@ function chunkCornerZ(mirror: TerrainMirror, chunkIdx: number): number {
   return ((chunkIdx - (chunkIdx % chunkCols)) / chunkCols) * CHUNK_SPAN_WORLD_UNITS;
 }
 
-function compareLips(a: LipRecord, b: LipRecord): number {
-  if (a.band !== b.band) return a.band - b.band;
-  if (a.ax !== b.ax) return a.ax - b.ax;
-  if (a.az !== b.az) return a.az - b.az;
-  if (a.bx !== b.bx) return a.bx - b.bx;
-  return a.bz - b.bz;
+/** Sorts record indices in place, reading the coordinates through the mapped views. */
+function sortLipOrder(order: number[], lips: LipReadback): void {
+  const { words, floats } = lips;
+  order.sort((a, b) => {
+    const x = a * LIP_WORDS;
+    const y = b * LIP_WORDS;
+    if (words[x + LIP_BAND] !== words[y + LIP_BAND]) {
+      return words[x + LIP_BAND]! - words[y + LIP_BAND]!;
+    }
+    for (let c = 0; c < LIP_COORD_WORDS; c++) {
+      const difference = floats[x + LIP_AX + c]! - floats[y + LIP_AX + c]!;
+      if (difference !== 0) return difference;
+    }
+    return 0;
+  });
 }
 
-function buildLipSegments(records: LipRecord[]): ChunkLipSegments {
-  records.sort(compareLips);
-  const positions = new Float32Array(records.length * LIP_POSITION_FLOATS_PER_SEGMENT);
-  const flat = new Float32Array(records.length * LIP_FLAT_FLOATS_PER_SEGMENT);
+function buildLipSegments(order: number[], lips: LipReadback): ChunkLipSegments {
+  sortLipOrder(order, lips);
+  const { words, floats } = lips;
+  const positions = new Float32Array(order.length * LIP_POSITION_FLOATS_PER_SEGMENT);
+  const flat = new Float32Array(order.length * LIP_FLAT_FLOATS_PER_SEGMENT);
   const bands: number[] = [];
   let runBand = 0;
   let runStart = 0;
-  for (let i = 0; i < records.length; i++) {
-    const lip = records[i]!;
-    const y = lip.band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
+  for (let i = 0; i < order.length; i++) {
+    const at = order[i]! * LIP_WORDS;
+    const band = words[at + LIP_BAND]!;
+    const ax = floats[at + LIP_AX]!;
+    const az = floats[at + LIP_AX + 1]!;
+    const bx = floats[at + LIP_AX + 2]!;
+    const bz = floats[at + LIP_AX + 3]!;
+    const y = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
     const p = i * LIP_POSITION_FLOATS_PER_SEGMENT;
-    positions[p] = lip.ax;
+    positions[p] = ax;
     positions[p + 1] = y;
-    positions[p + 2] = lip.az;
-    positions[p + 3] = lip.bx;
+    positions[p + 2] = az;
+    positions[p + 3] = bx;
     positions[p + 4] = y;
-    positions[p + 5] = lip.bz;
+    positions[p + 5] = bz;
     const f = i * LIP_FLAT_FLOATS_PER_SEGMENT;
-    flat[f] = lip.ax;
-    flat[f + 1] = lip.az;
-    flat[f + 2] = lip.bx;
-    flat[f + 3] = lip.bz;
-    if (i === 0 || lip.band !== runBand) {
+    flat[f] = ax;
+    flat[f + 1] = az;
+    flat[f + 2] = bx;
+    flat[f + 3] = bz;
+    if (i === 0 || band !== runBand) {
       if (i > 0) bands.push(runBand, runStart, i - runStart);
-      runBand = lip.band;
+      runBand = band;
       runStart = i;
     }
   }
-  if (records.length > 0) bands.push(runBand, runStart, records.length - runStart);
+  if (order.length > 0) bands.push(runBand, runStart, order.length - runStart);
   return { positions, flat, bands: Int32Array.from(bands) };
 }
 
@@ -468,44 +485,63 @@ export async function createGpuChunkBuildSource(
       )
     : null;
 
+  // The counts readback is fixed size and always mapped; the lips readback is copied and
+  // mapped afterwards, over exactly the records the counter reported.
   const statsBytes = STATS_BUFFER_WORDS * BYTES_PER_WORD;
   const readbackStatsAt = 0;
   const readbackLipCounterAt = alignUp(statsBytes, READBACK_SECTION_ALIGNMENT);
-  const readbackLipsAt = readbackLipCounterAt + READBACK_SECTION_ALIGNMENT;
-  const readbackBytes = (): number => readbackLipsAt + lipCapacity * LIP_WORDS * BYTES_PER_WORD;
+  const countsReadbackBytes = readbackLipCounterAt + READBACK_SECTION_ALIGNMENT;
+  const lipsReadbackBytes = (): number => lipCapacity * LIP_WORDS * BYTES_PER_WORD;
 
-  const readbackPool: GPUBuffer[] = [];
-  let readbackLive = 0;
-  /** After the lips buffer doubles the free readbacks are the wrong size; in-flight ones
-   *  are dropped when they come back. */
-  const dropFreeReadbacks = (): void => {
-    for (const buffer of readbackPool.splice(0, readbackPool.length)) {
-      buffer.destroy();
-      readbackLive--;
-    }
-  };
-  const takeReadback = (): GPUBuffer | null => {
-    const free = readbackPool.pop();
+  const READBACK_USAGE = GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ;
+
+  interface ReadbackPool {
+    readonly free: GPUBuffer[];
+    live: number;
+  }
+  const countsPool: ReadbackPool = { free: [], live: 0 };
+  const lipsPool: ReadbackPool = { free: [], live: 0 };
+
+  const takeFrom = (pool: ReadbackPool, label: string, bytes: number): GPUBuffer | null => {
+    const free = pool.free.pop();
     if (free !== undefined) return free;
-    if (readbackLive >= GPU_READBACK_POOL_MAX) return null;
-    readbackLive++;
-    return create(
-      `readback${readbackLive}`,
-      readbackBytes(),
-      GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    );
+    if (pool.live >= GPU_READBACK_POOL_MAX) return null;
+    pool.live++;
+    return create(`${label}${pool.live}`, bytes, READBACK_USAGE);
   };
-  const giveBackReadback = (buffer: GPUBuffer): void => {
-    if (buffer.size !== readbackBytes() || readbackPool.length >= GPU_READBACK_POOL_MAX) {
+  const giveBackTo = (pool: ReadbackPool, buffer: GPUBuffer, bytes: number): void => {
+    if (buffer.size !== bytes || pool.free.length >= GPU_READBACK_POOL_MAX) {
       buffer.destroy();
-      readbackLive--;
+      pool.live--;
       return;
     }
-    readbackPool.push(buffer);
+    pool.free.push(buffer);
+  };
+
+  const takeReadback = (): GPUBuffer | null =>
+    takeFrom(countsPool, 'countsReadback', countsReadbackBytes);
+  const giveBackReadback = (buffer: GPUBuffer): void => {
+    giveBackTo(countsPool, buffer, countsReadbackBytes);
+  };
+  const takeLipsReadback = (): GPUBuffer | null =>
+    takeFrom(lipsPool, 'lipsReadback', lipsReadbackBytes());
+  const giveBackLipsReadback = (buffer: GPUBuffer): void => {
+    giveBackTo(lipsPool, buffer, lipsReadbackBytes());
+  };
+
+  /** After the lips buffer doubles the free lip readbacks are the wrong size; in-flight ones
+   *  are dropped when they come back. */
+  const dropFreeReadbacks = (): void => {
+    for (const buffer of lipsPool.free.splice(0, lipsPool.free.length)) {
+      buffer.destroy();
+      lipsPool.live--;
+    }
   };
   for (let i = 0; i < GPU_READBACK_POOL_MIN; i++) {
-    const buffer = takeReadback();
-    if (buffer !== null) readbackPool.push(buffer);
+    countsPool.live++;
+    countsPool.free.push(
+      create(`countsReadback${countsPool.live}`, countsReadbackBytes, READBACK_USAGE),
+    );
   }
 
   const freeEntries: number[] = [];
@@ -710,20 +746,35 @@ export async function createGpuChunkBuildSource(
       readbackLipCounterAt,
       BYTES_PER_WORD,
     );
-    encoder.copyBufferToBuffer(
-      lipsBuffer,
-      LIP_RECORDS_AT * BYTES_PER_WORD,
-      readback,
-      readbackLipsAt,
-      lipCapacity * LIP_WORDS * BYTES_PER_WORD,
-    );
     const resolving = resolveTimestamps(encoder);
     queue.submit([encoder.finish()]);
     if (resolving) readTimestamps();
     return readback;
   };
 
-  const settleBatch = (members: BatchMember[], mapped: ArrayBuffer, lipTotal: number): void => {
+  /** Only what the counter reported is worth copying: the buffer holds a quarter-million slots. */
+  const copyLips = (lipCount: number): GPUBuffer | null => {
+    const readback = takeLipsReadback();
+    if (readback === null) return null;
+    const encoder = device.createCommandEncoder({ label: 'terrace.gpuMesher.lips' });
+    encoder.copyBufferToBuffer(
+      lipsBuffer,
+      LIP_RECORDS_AT * BYTES_PER_WORD,
+      readback,
+      0,
+      lipCount * LIP_WORDS * BYTES_PER_WORD,
+    );
+    queue.submit([encoder.finish()]);
+    return readback;
+  };
+
+  const NO_LIPS: LipReadback = {
+    words: new Int32Array(0),
+    floats: new Float32Array(0),
+    count: 0,
+  };
+
+  const settleBatch = (members: BatchMember[], mapped: ArrayBuffer, lips: LipReadback): void => {
     const squareBases = new Uint32Array(
       mapped,
       readbackStatsAt + STATS_SQUARE_BASE_AT * BYTES_PER_WORD,
@@ -734,26 +785,15 @@ export async function createGpuChunkBuildSource(
       readbackStatsAt + STATS_CHUNK_AT * BYTES_PER_WORD,
       GPU_WINDOW_POOL * CHUNK_STATS_WORDS,
     );
-    const lipCount = Math.min(lipTotal, lipCapacity);
-    const lipWords = new Int32Array(mapped, readbackLipsAt, lipCount * LIP_WORDS);
-    const lipFloats = new Float32Array(mapped, readbackLipsAt, lipCount * LIP_WORDS);
-
-    const lipsByEntry = new Map<number, LipRecord[]>();
-    for (let i = 0; i < lipCount; i++) {
-      const at = i * LIP_WORDS;
-      const entry = lipWords[at + LIP_ENTRY]!;
-      let list = lipsByEntry.get(entry);
-      if (list === undefined) {
-        list = [];
-        lipsByEntry.set(entry, list);
+    const lipsByEntry = new Map<number, number[]>();
+    for (let i = 0; i < lips.count; i++) {
+      const entry = lips.words[i * LIP_WORDS + LIP_ENTRY]!;
+      let order = lipsByEntry.get(entry);
+      if (order === undefined) {
+        order = [];
+        lipsByEntry.set(entry, order);
       }
-      list.push({
-        band: lipWords[at + LIP_BAND]!,
-        ax: lipFloats[at + LIP_AX]!,
-        az: lipFloats[at + LIP_AX + 1]!,
-        bx: lipFloats[at + LIP_AX + 2]!,
-        bz: lipFloats[at + LIP_AX + 3]!,
-      });
+      order.push(i);
     }
 
     for (const member of members) {
@@ -779,7 +819,7 @@ export async function createGpuChunkBuildSource(
         vertexCount,
         plan: flattenCapPlan(caps),
         topLevel: new Int8Array(0),
-        lips: buildLipSegments(lipsByEntry.get(entry) ?? []),
+        lips: buildLipSegments(lipsByEntry.get(entry) ?? [], lips),
         gpu: makeHandle(
           entry,
           counts,
@@ -795,13 +835,19 @@ export async function createGpuChunkBuildSource(
     }
   };
 
+  const fallbackBatch = (members: BatchMember[]): void => {
+    for (const member of members) {
+      releaseEntry(member.entry);
+      runFallback(member.queued);
+    }
+  };
+
+  // Two maps, in order: the counts say how many lip records exist, and only then is that
+  // many bytes of them copied and mapped. Answers resolve after the second map.
   const runBatch = (members: BatchMember[]): void => {
     const readback = dispatchCount(members);
     if (readback === null) {
-      for (const member of members) {
-        releaseEntry(member.entry);
-        runFallback(member.queued);
-      }
+      fallbackBatch(members);
       return;
     }
     batches++;
@@ -809,20 +855,51 @@ export async function createGpuChunkBuildSource(
       () => {
         const mapped = readback.getMappedRange();
         const lipTotal = new Uint32Array(mapped, readbackLipCounterAt, 1)[0]!;
-        const overflow = lipTotal > lipCapacity && !disposed && !deviceLost;
-        if (!overflow) settleBatch(members, mapped, lipTotal);
-        readback.unmap();
-        giveBackReadback(readback);
-        if (!overflow) return;
-        growLips();
-        runBatch(members);
+        const releaseCounts = (): void => {
+          readback.unmap();
+          giveBackReadback(readback);
+        };
+        if (lipTotal > lipCapacity && !disposed && !deviceLost) {
+          releaseCounts();
+          growLips();
+          runBatch(members);
+          return;
+        }
+        const lipCount = Math.min(lipTotal, lipCapacity);
+        if (lipCount === 0) {
+          settleBatch(members, mapped, NO_LIPS);
+          releaseCounts();
+          return;
+        }
+        const lipsReadback = copyLips(lipCount);
+        if (lipsReadback === null) {
+          releaseCounts();
+          fallbackBatch(members);
+          return;
+        }
+        const lipBytes = lipCount * LIP_WORDS * BYTES_PER_WORD;
+        void lipsReadback.mapAsync(GPUMapMode.READ, 0, lipBytes).then(
+          () => {
+            const lipMapped = lipsReadback.getMappedRange(0, lipBytes);
+            settleBatch(members, mapped, {
+              words: new Int32Array(lipMapped, 0, lipCount * LIP_WORDS),
+              floats: new Float32Array(lipMapped, 0, lipCount * LIP_WORDS),
+              count: lipCount,
+            });
+            lipsReadback.unmap();
+            giveBackLipsReadback(lipsReadback);
+            releaseCounts();
+          },
+          () => {
+            giveBackLipsReadback(lipsReadback);
+            releaseCounts();
+            fallbackBatch(members);
+          },
+        );
       },
       () => {
         giveBackReadback(readback);
-        for (const member of members) {
-          releaseEntry(member.entry);
-          runFallback(member.queued);
-        }
+        fallbackBatch(members);
       },
     );
   };
@@ -919,6 +996,10 @@ export async function createGpuChunkBuildSource(
       disposed = true;
       for (let e = 0; e < GPU_WINDOW_POOL; e++) releaseEntry(e);
       dropFreeReadbacks();
+      for (const buffer of countsPool.free.splice(0, countsPool.free.length)) {
+        buffer.destroy();
+        countsPool.live--;
+      }
       for (const buffer of ownedBuffers()) buffer.destroy();
       timestampResolve?.destroy();
       timestampReadback?.destroy();
