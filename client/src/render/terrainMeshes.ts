@@ -626,6 +626,8 @@ export function createTerrainMeshes(
     store.commit();
     for (const sm of superMeshes.values()) {
       group.remove(sm.mesh);
+      // three destroys these buffers only if it rendered the geometry; the store always
+      // does, and a second GPUBuffer.destroy is a no-op.
       sm.mesh.geometry.dispose();
       store.dispose(sm.superIdx);
     }
