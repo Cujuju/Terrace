@@ -691,19 +691,15 @@ fn emitSquare(square : i32, base : u32) -> u32 {
   corner[2] = vec2f(eastX, southZ);
   corner[3] = vec2f(westX, southZ);
 
-  var lowCorner = drawnBandOfSample(cellHeight[localRef[0]]);
-  var highCorner = lowCorner;
+  var highCorner = drawnBandOfSample(cellHeight[localRef[0]]);
   for (var c = 1; c < 4; c++) {
-    let band = drawnBandOfSample(cellHeight[localRef[c]]);
-    lowCorner = min(lowCorner, band);
-    highCorner = max(highCorner, band);
+    highCorner = max(highCorner, drawnBandOfSample(cellHeight[localRef[c]]));
   }
-  // A layered chunk re-enters lower bands through columnSampleAtBand, so it marches
-  // from the chunk floor; an unlayered square's lower levels only cover it whole.
-  let lo = select(lowCorner, chunkLowestBand, chunkLayered);
 
+  // makeLevels' range, every square. A cap below the square's own corners covers it whole
+  // but is not hidden: it projects clear of the cap above where the drawn terrain ends.
   var cursor = base;
-  for (var level = lo; level <= highCorner; level++) {
+  for (var level = chunkLowestBand; level <= highCorner; level++) {
     cursor += emitLevel(level, localRef, cursor);
     if (chunkLayered) { cursor += emitCeilingLevel(level, localRef, cursor); }
     // The shipped mesher slots its shoreline level directly after band 0.

@@ -16,15 +16,28 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const WORKTREE = resolve(HERE, '..', '..');
 export const REPO_ROOT = 'E:/Development/Projects/Terrace';
 
-// Agent H's private resources. Never the owner's 2567 / 5173.
-export const SERVER_PORT = 2611;
-export const VITE_PORT = 5211;
-export const RUN_DIR = join(REPO_ROOT, '.gpu-bench-run', 'gpu-mesher');
-export const WORLDS_DIR = join(RUN_DIR, 'worlds');
-export const RESULTS_DIR = join(REPO_ROOT, '.gpu-perf', 'results', '2026-09-10-gpu-mesher');
+// Agent H's private resources, the default. Never the owner's 2567 / 5173. A second agent
+// on the same machine must not share them, so each is overridable from the environment.
+const DEFAULT_SERVER_PORT = 2611;
+const DEFAULT_VITE_PORT = 5211;
+const DEFAULT_RUN_DIR = join(REPO_ROOT, '.gpu-bench-run', 'gpu-mesher');
+const DEFAULT_RESULTS_DIR = join(REPO_ROOT, '.gpu-perf', 'results', '2026-09-10-gpu-mesher');
+const DEFAULT_AGENT_NAME = 'agent-H';
 
+const fromEnv = (name, fallback) => {
+  const value = process.env[name];
+  return value === undefined || value === '' ? fallback : value;
+};
+
+export const SERVER_PORT = Number(fromEnv('TERRACE_MESHER_SERVER_PORT', DEFAULT_SERVER_PORT));
+export const VITE_PORT = Number(fromEnv('TERRACE_MESHER_VITE_PORT', DEFAULT_VITE_PORT));
+export const RUN_DIR = fromEnv('TERRACE_MESHER_RUN_DIR', DEFAULT_RUN_DIR);
+export const WORLDS_DIR = join(RUN_DIR, 'worlds');
+export const RESULTS_DIR = fromEnv('TERRACE_MESHER_RESULTS_DIR', DEFAULT_RESULTS_DIR);
+
+// The lock is machine-wide by design: every agent's Chrome takes the same one.
 export const GPU_LOCK_DIR = join(REPO_ROOT, '.gpu-bench-run', 'gpu-lock');
-export const AGENT_NAME = 'agent-H';
+export const AGENT_NAME = fromEnv('TERRACE_MESHER_AGENT', DEFAULT_AGENT_NAME);
 
 // The world both meshers must see: a Frostwick Hollows snapshot, copied fresh
 // for every capture because the server simulates and mutates terrain.
