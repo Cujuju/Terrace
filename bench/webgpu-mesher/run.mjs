@@ -16,6 +16,9 @@ const CHROME_BY_PLATFORM = {
   linux: 'google-chrome',
 };
 const CHROME = process.env.GATE1_CHROME ?? CHROME_BY_PLATFORM[process.platform];
+// Chromium builds without a usable headless mode (Vivaldi) need a visible
+// window: GATE1_HEADLESS=0 launches one. Default stays headless.
+const HEADLESS = process.env.GATE1_HEADLESS !== '0';
 // D3D11 is the ANGLE backend the shipped bench recorded; only Windows has it.
 const PLATFORM_CHROME_FLAGS = process.platform === 'win32' ? ['--use-angle=d3d11'] : [];
 // `--visible`: a real window instead of --headless=new. Headless pacing is
@@ -30,6 +33,7 @@ const [CDP_PORT_BASE, CDP_PORT_SPAN] = [9500, 400];
 const [READY_POLL_MS, READY_POLL_LIMIT, READY_SLICE_MS] = [500, 600, 5000];
 const [ENDPOINT_POLL_MS, ENDPOINT_POLL_LIMIT] = [250, 200];
 const [CONTEXT_POLL_MS, CONTEXT_POLL_LIMIT] = [100, 300];
+const [REUSE_POLL_MS, REUSE_POLL_LIMIT] = [250, 120];
 // The pixel limit is judged above the metric's own floor (shipped mesh diffed
 // against itself shifted half a quantization step), which alone scores ~0.19 %.
 const [PIXEL_TOLERANCE, MAX_MISMATCH_FRACTION, NEIGHBOURHOOD_RADIUS] = [8, 0.001, 1];
@@ -78,9 +82,14 @@ const port = server.address().port;
 
 // ------------------------------------------------------------------- chrome
 const cdpPort = CDP_PORT_BASE + Math.floor(Math.random() * CDP_PORT_SPAN);
-const profile = mkdtempSync(join(tmpdir(), 'gate1-'));
+// A fresh profile makes Vivaldi run its first-run wizard on every launch,
+// which needs a human mid-measurement. GATE1_PROFILE reuses a profile that
+// has already been through setup; only a temp profile is deleted after.
+const PROFILE = process.env.GATE1_PROFILE ?? null;
+const profile = PROFILE ?? mkdtempSync(join(tmpdir(), 'gate1-'));
 const chrome = spawn(CHROME, [
-  ...(VISIBLE ? ['--window-position=0,0'] : ['--headless=new']), '--enable-unsafe-webgpu', ...PLATFORM_CHROME_FLAGS,
+  ...(VISIBLE ? ['--window-position=0,0'] : HEADLESS ? ['--headless=new'] : []),
+  '--enable-unsafe-webgpu', ...PLATFORM_CHROME_FLAGS,
   '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`,
   `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
   `--remote-debugging-port=${cdpPort}`, 'about:blank',
@@ -89,7 +98,7 @@ chrome.stderr.resume();
 
 const cleanup = () => {
   try { chrome.kill('SIGKILL'); } catch { /* already gone */ }
-  try { rmSync(profile, { recursive: true, force: true }); } catch { /* transient lock */ }
+  if (!PROFILE) try { rmSync(profile, { recursive: true, force: true }); } catch { /* transient lock */ }
   try { server.close(); } catch { /* already closed */ }
 };
 process.on('exit', cleanup);
@@ -107,11 +116,19 @@ if (!wsUrl) throw new Error('chrome devtools endpoint never came up');
 const socket = new WebSocket(wsUrl);
 await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
 let nextId = 1;
+// A protocol stall otherwise hangs the driver silently; a wedged Vivaldi tab
+// once held a run for 38 minutes. Generous, so the longest evaluate still fits.
+const RPC_TIMEOUT_MS = 300_000;
 const rpc = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
   const id = nextId++;
+  const timer = setTimeout(() => {
+    socket.removeEventListener('message', listener);
+    reject(new Error(`${method}: no reply in ${RPC_TIMEOUT_MS / 1000} s`));
+  }, RPC_TIMEOUT_MS);
   const listener = (event) => {
     const message = JSON.parse(event.data);
     if (message.id !== id) return;
+    clearTimeout(timer);
     socket.removeEventListener('message', listener);
     if (message.error) reject(new Error(`${method}: ${message.error.message}`));
     else resolve(message.result);
@@ -159,11 +176,45 @@ const fatal = (error) => {
 process.on('unhandledRejection', fatal);
 process.on('uncaughtException', fatal);
 
+// Vivaldi hands Target.createTarget a tab with no renderer behind it: the
+// session attaches but no session-scoped command ever answers. Tabs the
+// browser opened itself are fine, so GATE1_REUSE_TAB=1 attaches to the one it
+// launched with and navigates that for every page instead. Pages open and
+// close strictly one at a time, so a single tab serves all of them.
+const REUSE_TAB = process.env.GATE1_REUSE_TAB === '1';
+let reusedTarget = null;
+const acquireTarget = async () => {
+  if (!REUSE_TAB) {
+    const { targetId } = await rpc('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await rpc('Target.attachToTarget', { targetId, flatten: true });
+    return { targetId, sessionId };
+  }
+  if (reusedTarget) return reusedTarget;
+  // Vivaldi builds its window asynchronously and the first tab lands seconds
+  // after the devtools endpoint answers, so wait for it rather than look once.
+  let page = null;
+  for (let i = 0; i < REUSE_POLL_LIMIT && !page; i++) {
+    const { targetInfos } = await rpc('Target.getTargets');
+    // An empty url is a target with no committed document behind it, which is
+    // the same dead tab Target.createTarget hands out: attaching succeeds and
+    // then every session command hangs. Only take a tab that has committed.
+    page = targetInfos.find((t) => t.type === 'page' && t.url
+      && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('devtools://')) ?? null;
+    if (!page) await sleep(REUSE_POLL_MS);
+  }
+  if (!page) throw new Error('GATE1_REUSE_TAB: the browser opened no reusable tab');
+  const { sessionId } = await rpc('Target.attachToTarget', { targetId: page.targetId, flatten: true });
+  reusedTarget = { targetId: page.targetId, sessionId };
+  return reusedTarget;
+};
+const closePage = async (targetId) => {
+  if (!REUSE_TAB) await rpc('Target.closeTarget', { targetId });
+};
+
 const openPage = async (query) => {
   // The blank first document exists so Page/Runtime/Log are enabled before the
   // real one loads and no early log entry is missed.
-  const { targetId } = await rpc('Target.createTarget', { url: 'about:blank' });
-  const { sessionId } = await rpc('Target.attachToTarget', { targetId, flatten: true });
+  const { targetId, sessionId } = await acquireTarget();
   await rpc('Page.enable', {}, sessionId);
   await rpc('Runtime.enable', {}, sessionId);
   await rpc('Log.enable', {}, sessionId).catch(() => {});
@@ -245,7 +296,7 @@ const screenshot = async (sessionId, name) => {
 };
 
 // --------------------------------------------------------------------- runs
-const results = { world: meta, chromeMode: VISIBLE ? 'visible' : 'headless', sources: {}, pageLogs: [] };
+const results = { world: meta, chromeMode: VISIBLE || !HEADLESS ? 'visible' : 'headless', sources: {}, pageLogs: [] };
 
 const gpu = await openPage('gpu');
 await awaitReady(gpu.sessionId);
@@ -254,7 +305,7 @@ results.parity = await evaluate(gpu.sessionId, 'window.__bandPass()');
 await assertNoPageError(gpu.sessionId, 'the gpu measurement');
 if (results.sources.gpu.triangles === 0) throw new Error('gpu mesh is empty');
 const gpuImage = await screenshot(gpu.sessionId, 'gpu.png');
-await rpc('Target.closeTarget', { targetId: gpu.targetId });
+await closePage(gpu.targetId);
 
 const cpu = await openPage('cpu');
 await awaitReady(cpu.sessionId);
@@ -263,11 +314,11 @@ results.sources.cpu = await evaluate(cpu.sessionId, 'window.__timings()');
 // mismatch can be attributed to the cell lattice rather than to this port.
 results.parityCpu = await evaluate(cpu.sessionId, 'window.__bandPass()');
 const cpuImage = await screenshot(cpu.sessionId, 'cpu.png');
-await rpc('Target.closeTarget', { targetId: cpu.targetId });
+await closePage(cpu.targetId);
 const shifted = await openPage('cpu&shift=1');
 await awaitReady(shifted.sessionId);
 const shiftImage = await screenshot(shifted.sessionId, 'cpu-shift.png');
-await rpc('Target.closeTarget', { targetId: shifted.targetId });
+await closePage(shifted.targetId);
 results.pageLogs = logs.slice(0, 40);
 
 // ------------------------------------------------------------- pixel compare

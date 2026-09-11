@@ -1,0 +1,9 @@
+27839  32.8 Vivaldi Helper  
+27843  21.7 Vivaldi Helper (
+27844  1.5  Vivaldi Helper (
+27831  1.1  Vivaldi         
+27846  0.2  Vivaldi Helper  
+27840  0.1  Vivaldi Helper  
+27841  0.0  Vivaldi Helper  
+27911  0.0  Vivaldi Helper (
+gate instance total CPU 57.4%
