@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import type { BufferAttribute } from 'three';
 import type { Renderer } from 'three/webgpu';
-import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import type { ChunkJobAnswer } from '../../terrain/chunkJob.ts';
 import { COMPONENTS_PER_COLOR, VERTICES_PER_TRIANGLE } from '../../terrain/vertexGrid.ts';
@@ -19,6 +19,7 @@ import {
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
   POSITION_Y_UNITS_PER_WORLD_UNIT,
   SNORM16_MAX,
+  type GpuEmitHandle,
   type GpuEmitTarget,
 } from './gpuChunkAnswer.ts';
 
@@ -92,7 +93,6 @@ export interface GpuArenaStoreOptions {
 
 export function createGpuArenaStore(
   renderer: Renderer,
-  worldSize: number,
   options?: GpuArenaStoreOptions,
 ): ArenaStore {
   const backend = renderer.backend as unknown as WebGpuBackendInternals;
@@ -109,7 +109,6 @@ export function createGpuArenaStore(
   const SCRATCH_BUFFER_USAGE = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
 
   const material = createTerrainMaterial('snorm16');
-  const chunkCols = chunksPerEdge(worldSize);
   const supers = new Map<number, GpuSuper>();
   /** superIdx to `info.render.calls` when the buffer was injected. */
   const uncheckedInjections = new Map<number, number>();
@@ -292,22 +291,15 @@ export function createGpuArenaStore(
 
   // The kernel draws a chunk's caps over its own cells and nothing beyond them, so the
   // footprint and the level range bound every vertex it emits.
-  const chunkBounds = (
-    gpu: GpuSuper,
-    chunkIdx: number,
-    minY: number,
-    maxY: number,
-  ): ArenaSlotBounds => {
-    const cx = chunkIdx % chunkCols;
-    const cy = (chunkIdx - cx) / chunkCols;
-    const minX = cx * CHUNK_SPAN_WORLD_UNITS - gpu.localOrigin.x;
-    const minZ = cy * CHUNK_SPAN_WORLD_UNITS - gpu.localOrigin.z;
+  const chunkBounds = (gpu: GpuSuper, handle: GpuEmitHandle): ArenaSlotBounds => {
+    const minX = handle.originX - gpu.localOrigin.x;
+    const minZ = handle.originZ - gpu.localOrigin.z;
     return {
       minX,
-      minY,
+      minY: handle.minY,
       minZ,
       maxX: minX + CHUNK_SPAN_WORLD_UNITS,
-      maxY,
+      maxY: handle.maxY,
       maxZ: minZ + CHUNK_SPAN_WORLD_UNITS,
     };
   };
@@ -384,7 +376,7 @@ export function createGpuArenaStore(
       if (answer.kind !== 'gpu') return packCpuAnswer(gpu, vertexOffset, answer);
       answer.gpu.emit(frameEncoder(), gpu.target, vertexOffset);
       releaseAnswer(answer);
-      return chunkBounds(gpu, answer.chunkIdx, answer.gpu.minY, answer.gpu.maxY);
+      return chunkBounds(gpu, answer.gpu);
     },
 
     // WebGPU forbids a copy that overlaps itself within one buffer, so a move bounces off

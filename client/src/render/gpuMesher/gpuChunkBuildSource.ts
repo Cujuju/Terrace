@@ -1,6 +1,6 @@
-import { BAND_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
 import type { Renderer } from 'three/webgpu';
-import { HEIGHT_WORLD_SCALE } from '../../config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import {
   CHUNK_TRIANGLE_BUDGET,
   VERTICES_PER_TRIANGLE,
@@ -107,6 +107,8 @@ const LIP_BAND_TRIPLE_WORDS = 3;
 
 const NO_ENTRY = -1;
 
+const CHUNK_SPAN_WORLD_UNITS = CHUNK_SIZE * CELL_WORLD_SIZE;
+
 /** Group 0's window, stats and lips, plus group 1's positions and colours. */
 const STORAGE_BUFFERS_PER_STAGE = 5;
 
@@ -194,6 +196,15 @@ function levelRangeMaxY(lowestBand: number, highestBand: number): number {
   const top = drawnBandCapY(highestBand, highestBand * BAND_HEIGHT);
   const hasShore = lowestBand <= 0 && highestBand >= 0;
   return hasShore ? Math.max(top, drawnBandCapY(0, SHORE_THRESHOLD)) : top;
+}
+
+function chunkCornerX(mirror: TerrainMirror, chunkIdx: number): number {
+  return (chunkIdx % chunksPerEdge(mirror.map.size)) * CHUNK_SPAN_WORLD_UNITS;
+}
+
+function chunkCornerZ(mirror: TerrainMirror, chunkIdx: number): number {
+  const chunkCols = chunksPerEdge(mirror.map.size);
+  return ((chunkIdx - (chunkIdx % chunkCols)) / chunkCols) * CHUNK_SPAN_WORLD_UNITS;
 }
 
 function compareLips(a: LipRecord, b: LipRecord): number {
@@ -551,6 +562,8 @@ export async function createGpuChunkBuildSource(
     vertexCount: number,
     minY: number,
     maxY: number,
+    originX: number,
+    originZ: number,
   ): GpuEmitHandle => {
     let released = false;
     const release = (): void => {
@@ -561,6 +574,8 @@ export async function createGpuChunkBuildSource(
     return {
       minY,
       maxY,
+      originX,
+      originZ,
       emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): void {
         if (released || disposed || deviceLost) {
           release();
@@ -770,6 +785,8 @@ export async function createGpuChunkBuildSource(
           vertexCount,
           levelRangeMinY(member.lowestBand),
           levelRangeMaxY(member.lowestBand, member.highestBand),
+          chunkCornerX(queued.mirror, queued.chunkIdx),
+          chunkCornerZ(queued.mirror, queued.chunkIdx),
         ),
       };
       chunks++;

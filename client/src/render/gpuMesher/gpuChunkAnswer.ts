@@ -14,6 +14,9 @@ export interface GpuEmitHandle {
   /** World-unit y range of every vertex: caps of the lowest and highest level. */
   readonly minY: number;
   readonly maxY: number;
+  /** The chunk's north-west corner in world units; its footprint bounds every vertex. */
+  readonly originX: number;
+  readonly originZ: number;
   /** Records the emit dispatch at `vertexOffset` of `target`; releases the entry. */
   emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): void;
   /** Returns the window entry to the pool. Idempotent. */
