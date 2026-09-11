@@ -1,0 +1,8 @@
+25311  20.4 Vivaldi Helper  
+25315  9.7  Vivaldi Helper (
+25303  0.2  Vivaldi         
+25312  0.1  Vivaldi Helper  
+25316  0.0  Vivaldi Helper (
+25313  0.0  Vivaldi Helper  
+25318  0.0  Vivaldi Helper (
+gate instance total CPU 30.4%

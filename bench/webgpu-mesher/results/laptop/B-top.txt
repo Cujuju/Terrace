@@ -1,0 +1,9 @@
+26612  26.5 Vivaldi Helper  
+26616  11.7 Vivaldi Helper (
+26604  0.1  Vivaldi         
+26613  0.0  Vivaldi Helper  
+26617  0.0  Vivaldi Helper (
+26691  0.0  Vivaldi Helper (
+26684  0.0  Vivaldi Helper  
+26614  0.0  Vivaldi Helper  
+gate instance total CPU 38.3%

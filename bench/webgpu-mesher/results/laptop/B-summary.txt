@@ -1,0 +1,1 @@
+samples 600  CPU 7398 mW  GPU 38397 mW  combined 45796 mW  GPU active 99.7%

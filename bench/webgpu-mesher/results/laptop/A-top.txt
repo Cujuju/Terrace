@@ -1,0 +1,8 @@
+24006  17.4 Vivaldi Helper  
+24010  8.9  Vivaldi Helper (
+23998  0.0  Vivaldi         
+24014  0.0  Vivaldi Helper (
+24011  0.0  Vivaldi Helper (
+24008  0.0  Vivaldi Helper  
+24007  0.0  Vivaldi Helper  
+gate instance total CPU 26.3%
