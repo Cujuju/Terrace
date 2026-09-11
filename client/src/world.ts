@@ -432,6 +432,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     });
   }
 
+  // A lost device takes every later build to the workers; the same rebuild the injection
+  // guard uses moves what is already drawn.
+  const stopDeviceLostWatch = gpuMesher?.onDeviceLost((reason) => demoteToCpu(reason));
+
   createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
 
   return {
@@ -644,6 +648,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     dispose(): void {
       clearExpiryTimer();
+      stopDeviceLostWatch?.();
       meshes?.dispose();
       rig?.dispose();
       rig = null;

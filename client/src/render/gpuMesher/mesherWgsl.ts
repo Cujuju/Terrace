@@ -46,8 +46,10 @@ import {
   marchingTableBuffer,
 } from './marchingTable.ts';
 import {
+  CHUNK_STATS_COUNT_STAMP,
   CHUNK_STATS_VERTEX_COUNT,
   CHUNK_STATS_WORDS,
+  COUNT_PASS_STAMP,
   ENTRY_HEADER_WORDS,
   ENTRY_LAYERED,
   ENTRY_LOCAL_ORIGIN_X_UNITS,
@@ -178,6 +180,8 @@ const SQUARES_PER_WORKGROUP : u32 = ${wgslI32(squaresPerWorkgroup)}u;
 const ENTRY_HEADER_WORDS : i32 = ${wgslI32(ENTRY_HEADER_WORDS)};
 const CHUNK_STATS_WORDS : u32 = ${wgslI32(CHUNK_STATS_WORDS)}u;
 const CHUNK_STATS_VERTEX_COUNT : u32 = ${wgslI32(CHUNK_STATS_VERTEX_COUNT)}u;
+const CHUNK_STATS_COUNT_STAMP : u32 = ${wgslI32(CHUNK_STATS_COUNT_STAMP)}u;
+const COUNT_PASS_STAMP : u32 = ${wgslI32(COUNT_PASS_STAMP)}u;
 const LIP_WORDS : u32 = ${wgslI32(LIP_WORDS)}u;
 const LIP_COUNTER_AT : u32 = ${wgslI32(LIP_COUNTER_AT)}u;
 const LIP_RECORDS_AT : u32 = ${wgslI32(LIP_RECORDS_AT)}u;
@@ -724,6 +728,11 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
   lipEntry = u32(entry);
   let chunkVertexLimit = u32(entryWord(header + ${wgslI32(ENTRY_VERTEX_LIMIT)}));
   let squareSlot = u32(entry) * SQUARES_PER_CHUNK;
+  let chunkStatsSlot = STATS_CHUNK_AT + u32(entry) * CHUNK_STATS_WORDS;
+  // Proof the count pass ran: a cleared slot the GPU never reached still reads zero.
+  if (!emit && tid == 0u) {
+    atomicStore(&stats[chunkStatsSlot + CHUNK_STATS_COUNT_STAMP], COUNT_PASS_STAMP);
+  }
 
   for (var s = part * SQUARES_PER_WORKGROUP + tid;
        s < (part + 1u) * SQUARES_PER_WORKGROUP;
@@ -732,8 +741,7 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
       emitLimit = 0u;
       let needed = emitSquare(i32(s), 0u);
       atomicStore(&stats[STATS_SQUARE_BASE_AT + squareSlot + s], needed);
-      atomicAdd(&stats[STATS_CHUNK_AT + u32(entry) * CHUNK_STATS_WORDS
-        + CHUNK_STATS_VERTEX_COUNT], needed);
+      atomicAdd(&stats[chunkStatsSlot + CHUNK_STATS_VERTEX_COUNT], needed);
       continue;
     }
     let isLast = s + 1u >= SQUARES_PER_CHUNK;
