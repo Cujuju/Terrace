@@ -11,6 +11,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { weldFlatShaded } from '../../../client/src/render/weld.ts';
 import {
   CROP_PLOT_CLUSTER_CELL_SPAN,
   CROP_STALK_JITTER_IN_CLUSTER_SPANS,
@@ -94,7 +95,8 @@ function buildLeaves(stemHeightInCells: number): BufferGeometry[] {
 function mergeAndDispose(parts: BufferGeometry[]): BufferGeometry {
   const merged = mergeGeometries(parts)!;
   for (const part of parts) part.dispose();
-  return merged;
+  merged.deleteAttribute('uv');
+  return weldFlatShaded(merged);
 }
 
 export interface WheatStalkGeometries {

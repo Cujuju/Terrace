@@ -9,6 +9,7 @@ import {
   type Color,
   type Material,
 } from 'three';
+import { weldFlatShaded, weldIdentical } from '../../../client/src/render/weld.ts';
 import {
   mapIdentitySignature,
   uvAttributeName,
@@ -163,7 +164,7 @@ function bakeInto(
   baked.dispose();
 }
 
-function geometryOf(group: MergeGroupData): BufferGeometry {
+function geometryOf(group: MergeGroupData, flatShaded: boolean): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(group.positions), 3));
   if (group.normals.length === group.positions.length) {
@@ -177,7 +178,7 @@ function geometryOf(group: MergeGroupData): BufferGeometry {
   for (const [attribute, values] of group.uvs ?? []) {
     geometry.setAttribute(attribute, new BufferAttribute(new Float32Array(values), UV_COMPONENTS));
   }
-  return geometry;
+  return flatShaded ? weldFlatShaded(geometry) : weldIdentical(geometry);
 }
 
 export function mergeSharedSurface(parts: readonly StructurePart[]): StructurePart[] {
@@ -207,7 +208,7 @@ function collapseSharedSurface(
   for (const material of spentMaterials) material.dispose();
   return {
     surface: {
-      geometry: geometryOf(surface),
+      geometry: geometryOf(surface, true),
       material: new MeshLambertMaterial({ vertexColors: true, flatShading: true }),
       localMatrices: [new Matrix4()],
     },
@@ -242,7 +243,11 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
   }
 
   for (const group of groups.values()) {
-    merged.push({ geometry: geometryOf(group), material: group.material, localMatrices: [new Matrix4()] });
+    merged.push({
+      geometry: geometryOf(group, (group.material as MeshLambertMaterial).flatShading === true),
+      material: group.material,
+      localMatrices: [new Matrix4()],
+    });
   }
 
   for (const geometry of spentGeometries) geometry.dispose();
