@@ -118,6 +118,7 @@ export function createGpuArenaStore(
   let scratchColors: GPUBuffer | null = null;
   let scratchVertices = 0;
   let cpuPositions = new Int16Array(0);
+  let destroyed = false;
 
   const superAt = (superIdx: number): GpuSuper => {
     const gpu = supers.get(superIdx);
@@ -342,8 +343,9 @@ export function createGpuArenaStore(
       return allocate(superIdx, triangleCapacity, localOrigin).buffers;
     },
 
-    // Everything recorded still names the old buffers, so it goes out before the copy; the
-    // arena disposes the old geometry next, which is what destroys them.
+    // Everything recorded still names the old buffers, so it goes out before the copy.
+    // The store destroys them: three's dispose listener comes from initGeometry, which
+    // runs only once rendered.
     grow(superIdx, triangleCapacity, liveEnd): ArenaSuperBuffers {
       const previous = superAt(superIdx);
       commit();
@@ -366,6 +368,9 @@ export function createGpuArenaStore(
         );
       }
       device.queue.submit([growEncoder.finish()]);
+      // Legal after submit: the submitted commands keep their own reference to the buffers.
+      previous.positions.destroy();
+      previous.colors.destroy();
       return grown.buffers;
     },
 
@@ -447,6 +452,8 @@ export function createGpuArenaStore(
     disposeAll,
 
     destroy(): void {
+      if (destroyed) return;
+      destroyed = true;
       disposeAll();
       material.dispose();
     },
