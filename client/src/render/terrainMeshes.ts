@@ -17,6 +17,8 @@ import {
   type ChunkBuildSource,
 } from './chunkBuildSource.ts';
 import {
+  ARENA_COMPACT_IDLE_BUDGET_MS,
+  ARENA_COMPACT_STROKE_BUDGET_MS,
   ARENA_TRANSFER_MS_PER_VERTEX,
   createCpuArenaStore,
   releaseAnswer,
@@ -37,9 +39,7 @@ export { CHUNK_ANSWER_BACKLOG_CAP };
 
 export { ARENA_TRANSFER_MS_PER_VERTEX };
 
-export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
-
-export const ARENA_COMPACT_IDLE_BUDGET_MS = 3.0;
+export { ARENA_COMPACT_STROKE_BUDGET_MS, ARENA_COMPACT_IDLE_BUDGET_MS };
 
 const ARENA_P90_RUN_TRIANGLES = 13_653;
 
@@ -472,12 +472,19 @@ export function createTerrainMeshes(
 
     const bounds = store.write(sm.superIdx, slot.offset, answer);
 
-    slot.minX = bounds.minX;
-    slot.minY = bounds.minY;
-    slot.minZ = bounds.minZ;
-    slot.maxX = bounds.maxX;
-    slot.maxY = bounds.maxY;
-    slot.maxZ = bounds.maxZ;
+    // Nothing was written: the slot keeps its capacity, draws no vertices, and the chunk
+    // goes back on the queue.
+    if (bounds === null) {
+      slot.count = 0;
+      retry.add(chunkIdx);
+    } else {
+      slot.minX = bounds.minX;
+      slot.minY = bounds.minY;
+      slot.minZ = bounds.minZ;
+      slot.maxX = bounds.maxX;
+      slot.maxY = bounds.maxY;
+      slot.maxZ = bounds.maxZ;
+    }
 
     for (const [startVertex, vertexCount] of dirtied) addRange(sm, startVertex, vertexCount);
 
@@ -511,6 +518,8 @@ export function createTerrainMeshes(
 
   let generation = 0;
 
+  let loggedUnacceptedAnswer = false;
+
   const receive = (chunkIdx: number, answer: ChunkAnswer | null): void => {
     inFlight.delete(chunkIdx);
     if (answer === null) {
@@ -519,6 +528,16 @@ export function createTerrainMeshes(
     }
     if (answer.generation !== generation || !mirror.received.has(answer.chunkIdx)) {
       releaseAnswer(answer);
+      return;
+    }
+    // A build source paired with a store that cannot take its layout is a wiring bug, and
+    // the answer is dropped before any slot is committed to it.
+    if (!store.accepts(answer)) {
+      releaseAnswer(answer);
+      if (!loggedUnacceptedAnswer) {
+        loggedUnacceptedAnswer = true;
+        console.error(`[terrace] the terrain arena store rejects ${answer.kind} chunk answers`);
+      }
       return;
     }
     ready.push(answer);
@@ -600,6 +619,8 @@ export function createTerrainMeshes(
     }
   };
 
+  // Drains what is already answered. An async source (worker or GPU) settles later, so its
+  // chunks splice on a later frame, not inside this call.
   const flush = (): void => {
     takeRetries();
     for (const sm of superMeshes.values()) {
@@ -626,6 +647,8 @@ export function createTerrainMeshes(
     store.commit();
     for (const sm of superMeshes.values()) {
       group.remove(sm.mesh);
+      // three destroys these buffers only if it rendered the geometry; the store always
+      // does, and a second GPUBuffer.destroy is a no-op.
       sm.mesh.geometry.dispose();
       store.dispose(sm.superIdx);
     }
@@ -714,7 +737,7 @@ export function createTerrainMeshes(
       queueEmptyAfterMs = now() - firstUpdateMs;
       chunksAtQueueEmpty = chunksSpliced;
     }
-    compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
+    compact(spliced > 0 ? store.compactStrokeBudgetMs : store.compactIdleBudgetMs);
     settle();
     store.commit();
   });

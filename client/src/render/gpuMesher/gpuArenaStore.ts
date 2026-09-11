@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import type { BufferAttribute } from 'three';
 import type { Renderer } from 'three/webgpu';
-import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import type { ChunkJobAnswer } from '../../terrain/chunkJob.ts';
 import { COMPONENTS_PER_COLOR, VERTICES_PER_TRIANGLE } from '../../terrain/vertexGrid.ts';
@@ -11,7 +11,11 @@ import {
   type ArenaStore,
   type ArenaSuperBuffers,
 } from '../arenaStore.ts';
-import { createPackedArenaGeometry, createTerrainMaterial } from '../terrainMaterial.ts';
+import {
+  createPackedArenaGeometry,
+  createTerrainMaterial,
+  type TerrainVertexLayout,
+} from '../terrainMaterial.ts';
 import { SUPER_MESH_SPAN_WORLD_UNITS } from '../terrainMeshes.ts';
 import {
   GPU_COLOR_BYTES_PER_VERTEX,
@@ -19,6 +23,7 @@ import {
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
   POSITION_Y_UNITS_PER_WORLD_UNIT,
   SNORM16_MAX,
+  type GpuEmitHandle,
   type GpuEmitTarget,
 } from './gpuChunkAnswer.ts';
 
@@ -49,8 +54,17 @@ export const GPU_MESH_FRAME_BUDGET_MS = 3.0;
 // third dearer and still fits one window in a frame (design section 7).
 export const GPU_EMIT_MS_PER_VERTEX = 4.5e-6;
 
-/** A CPU-fallback chunk costs no emit dispatch: its vertices arrive by queue write. */
-const GPU_ARENA_CPU_WRITE_COST_MS = 0;
+// A twelfth of the emit budget: compaction is pure copy and must not crowd out the emits
+// a held stroke is queueing behind it.
+export const GPU_ARENA_COMPACT_STROKE_BUDGET_MS = 0.25;
+
+// Four times the stroke budget, still a third of the emit budget: an idle frame has the
+// whole GPU-time slice, and compaction moves are cheap copies.
+export const GPU_ARENA_COMPACT_IDLE_BUDGET_MS = 1.0;
+
+// 12 B a vertex written through the queue at a conservative 4 GB/s, so a CPU-fallback
+// chunk is charged its upload instead of nothing.
+export const GPU_ARENA_UPLOAD_MS_PER_VERTEX = 3e-6;
 
 const POSITION_COMPONENTS_PER_VERTEX = GPU_POSITION_BYTES_PER_VERTEX / Int16Array.BYTES_PER_ELEMENT;
 
@@ -58,6 +72,9 @@ const POSITION_COMPONENTS_PER_VERTEX = GPU_POSITION_BYTES_PER_VERTEX / Int16Arra
 const PACKED_POSITION_SPARE = 0;
 
 const COMPONENTS_PER_CPU_POSITION = 3;
+
+/** The kernel writes i16 units from the super-mesh centre; the material decodes them. */
+const GPU_ARENA_VERTEX_LAYOUT: TerrainVertexLayout = 'snorm16';
 
 const FRAME_ENCODER_LABEL = 'terrace-arena-frame';
 
@@ -88,11 +105,13 @@ export interface GpuArenaStoreOptions {
   /** Reports a GpuArenaInjectionError instead of throwing it. The guard fires inside the
    *  arena's frame callback, which scene.ts mutes forever once it throws. */
   readonly onFailure?: (error: Error) => void;
+  /** Last commands on the frame encoder before it is submitted; the mesher resolves the
+   *  timestamp queries its emit passes wrote into it. */
+  readonly onFrameCommands?: (encoder: GPUCommandEncoder) => void;
 }
 
 export function createGpuArenaStore(
   renderer: Renderer,
-  worldSize: number,
   options?: GpuArenaStoreOptions,
 ): ArenaStore {
   const backend = renderer.backend as unknown as WebGpuBackendInternals;
@@ -108,16 +127,17 @@ export function createGpuArenaStore(
     GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
   const SCRATCH_BUFFER_USAGE = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
 
-  const material = createTerrainMaterial('snorm16');
-  const chunkCols = chunksPerEdge(worldSize);
+  const material = createTerrainMaterial(GPU_ARENA_VERTEX_LAYOUT);
   const supers = new Map<number, GpuSuper>();
-  const uncheckedInjections = new Set<number>();
+  /** superIdx to `info.render.calls` when the buffer was injected. */
+  const uncheckedInjections = new Map<number, number>();
 
   let encoder: GPUCommandEncoder | null = null;
   let scratchPositions: GPUBuffer | null = null;
   let scratchColors: GPUBuffer | null = null;
   let scratchVertices = 0;
   let cpuPositions = new Int16Array(0);
+  let destroyed = false;
 
   const superAt = (superIdx: number): GpuSuper => {
     const gpu = supers.get(superIdx);
@@ -128,8 +148,13 @@ export function createGpuArenaStore(
   const injectedBuffer = (attribute: BufferAttribute): GPUBuffer | undefined =>
     backend.get(attribute).buffer;
 
+  // three fills an empty attribute slot in createAttribute, which only a render reaches.
+  // Checking before then would pass on our own injection and never look again.
   const verifyInjections = (): void => {
-    for (const superIdx of uncheckedInjections) {
+    const calls = renderer.info.render.calls;
+    for (const [superIdx, injectedAtCalls] of uncheckedInjections) {
+      if (calls <= injectedAtCalls) continue;
+      uncheckedInjections.delete(superIdx);
       const gpu = superAt(superIdx);
       if (
         injectedBuffer(gpu.positionAttribute) !== gpu.positions ||
@@ -140,10 +165,10 @@ export function createGpuArenaStore(
         );
       }
     }
-    uncheckedInjections.clear();
   };
 
   const onFailure = options?.onFailure;
+  const onFrameCommands = options?.onFrameCommands;
   let reportedFailure = false;
 
   const commit = (): void => {
@@ -159,6 +184,7 @@ export function createGpuArenaStore(
       }
     }
     if (encoder === null) return;
+    onFrameCommands?.(encoder);
     const commands = encoder.finish();
     encoder = null;
     device.queue.submit([commands]);
@@ -205,7 +231,7 @@ export function createGpuArenaStore(
       localOrigin,
     };
     supers.set(superIdx, gpu);
-    uncheckedInjections.add(superIdx);
+    uncheckedInjections.set(superIdx, renderer.info.render.calls);
 
     return {
       gpu,
@@ -286,24 +312,32 @@ export function createGpuArenaStore(
 
   // The kernel draws a chunk's caps over its own cells and nothing beyond them, so the
   // footprint and the level range bound every vertex it emits.
-  const chunkBounds = (
-    gpu: GpuSuper,
-    chunkIdx: number,
-    minY: number,
-    maxY: number,
-  ): ArenaSlotBounds => {
-    const cx = chunkIdx % chunkCols;
-    const cy = (chunkIdx - cx) / chunkCols;
-    const minX = cx * CHUNK_SPAN_WORLD_UNITS - gpu.localOrigin.x;
-    const minZ = cy * CHUNK_SPAN_WORLD_UNITS - gpu.localOrigin.z;
+  const chunkBounds = (gpu: GpuSuper, handle: GpuEmitHandle): ArenaSlotBounds => {
+    const minX = handle.originX - gpu.localOrigin.x;
+    const minZ = handle.originZ - gpu.localOrigin.z;
     return {
       minX,
-      minY,
+      minY: handle.minY,
       minZ,
       maxX: minX + CHUNK_SPAN_WORLD_UNITS,
-      maxY,
+      maxY: handle.maxY,
       maxZ: minZ + CHUNK_SPAN_WORLD_UNITS,
     };
+  };
+
+  const zeroRange = (gpu: GpuSuper, startVertex: number, vertexCount: number): void => {
+    if (vertexCount <= 0) return;
+    const frame = frameEncoder();
+    frame.clearBuffer(
+      gpu.positions,
+      startVertex * GPU_POSITION_BYTES_PER_VERTEX,
+      vertexCount * GPU_POSITION_BYTES_PER_VERTEX,
+    );
+    frame.clearBuffer(
+      gpu.colors,
+      startVertex * GPU_COLOR_BYTES_PER_VERTEX,
+      vertexCount * GPU_COLOR_BYTES_PER_VERTEX,
+    );
   };
 
   const disposeSuper = (superIdx: number): void => {
@@ -329,12 +363,26 @@ export function createGpuArenaStore(
     frame: 'superLocal',
     transferMsPerVertex: GPU_ARENA_COPY_MS_PER_VERTEX,
     moveOverheadMs: GPU_ARENA_MOVE_OVERHEAD_MS,
+    compactStrokeBudgetMs: GPU_ARENA_COMPACT_STROKE_BUDGET_MS,
+    compactIdleBudgetMs: GPU_ARENA_COMPACT_IDLE_BUDGET_MS,
     frameWriteBudgetMs: GPU_MESH_FRAME_BUDGET_MS,
     material,
+    layout: GPU_ARENA_VERTEX_LAYOUT,
+
+    /** Both layouts land in the packed buffers: a GPU answer by emit, a CPU one by queue write. */
+    accepts(): boolean {
+      return true;
+    },
 
     writeCostMs(answer): number {
-      if (answer.kind !== 'gpu') return GPU_ARENA_CPU_WRITE_COST_MS;
+      if (answer.kind !== 'gpu') return answer.vertexCount * GPU_ARENA_UPLOAD_MS_PER_VERTEX;
       return answer.vertexCount * GPU_EMIT_MS_PER_VERTEX;
+    },
+
+    residentBytes(): number {
+      let bytes = (scratchPositions?.size ?? 0) + (scratchColors?.size ?? 0);
+      for (const gpu of supers.values()) bytes += gpu.positions.size + gpu.colors.size;
+      return bytes;
     },
 
     createSuper(superIdx, originX, originZ, triangleCapacity): ArenaSuperBuffers {
@@ -342,8 +390,9 @@ export function createGpuArenaStore(
       return allocate(superIdx, triangleCapacity, localOrigin).buffers;
     },
 
-    // Everything recorded still names the old buffers, so it goes out before the copy; the
-    // arena disposes the old geometry next, which is what destroys them.
+    // Everything recorded still names the old buffers, so it goes out before the copy.
+    // The store destroys them: three's dispose listener comes from initGeometry, which
+    // runs only once rendered.
     grow(superIdx, triangleCapacity, liveEnd): ArenaSuperBuffers {
       const previous = superAt(superIdx);
       commit();
@@ -366,15 +415,23 @@ export function createGpuArenaStore(
         );
       }
       device.queue.submit([growEncoder.finish()]);
+      // Legal after submit: the submitted commands keep their own reference to the buffers.
+      previous.positions.destroy();
+      previous.colors.destroy();
       return grown.buffers;
     },
 
-    write(superIdx, vertexOffset, answer): ArenaSlotBounds {
+    write(superIdx, vertexOffset, answer): ArenaSlotBounds | null {
       const gpu = superAt(superIdx);
       if (answer.kind !== 'gpu') return packCpuAnswer(gpu, vertexOffset, answer);
-      answer.gpu.emit(frameEncoder(), gpu.target, vertexOffset);
+      if (answer.gpu.emit(frameEncoder(), gpu.target, vertexOffset)) {
+        releaseAnswer(answer);
+        return chunkBounds(gpu, answer.gpu);
+      }
+      // No dispatch was recorded, so the range would otherwise show whatever it held before.
       releaseAnswer(answer);
-      return chunkBounds(gpu, answer.chunkIdx, answer.gpu.minY, answer.gpu.maxY);
+      zeroRange(gpu, vertexOffset, answer.vertexCount);
+      return null;
     },
 
     // WebGPU forbids a copy that overlaps itself within one buffer, so a move bounces off
@@ -419,19 +476,7 @@ export function createGpuArenaStore(
     },
 
     zero(superIdx, startVertex, vertexCount): void {
-      if (vertexCount <= 0) return;
-      const gpu = superAt(superIdx);
-      const frame = frameEncoder();
-      frame.clearBuffer(
-        gpu.positions,
-        startVertex * GPU_POSITION_BYTES_PER_VERTEX,
-        vertexCount * GPU_POSITION_BYTES_PER_VERTEX,
-      );
-      frame.clearBuffer(
-        gpu.colors,
-        startVertex * GPU_COLOR_BYTES_PER_VERTEX,
-        vertexCount * GPU_COLOR_BYTES_PER_VERTEX,
-      );
+      zeroRange(superAt(superIdx), startVertex, vertexCount);
     },
 
     /** Vertices land in the buffer the attribute already binds; three has nothing to upload. */
@@ -447,6 +492,8 @@ export function createGpuArenaStore(
     disposeAll,
 
     destroy(): void {
+      if (destroyed) return;
+      destroyed = true;
       disposeAll();
       material.dispose();
     },
