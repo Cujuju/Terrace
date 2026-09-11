@@ -1,16 +1,20 @@
 import {
+  BufferAttribute,
   Color,
   DoubleSide,
   LinearSRGBColorSpace,
+  Mesh,
   NoToneMapping,
   Vector3,
   type Material,
-  type Mesh,
   type Object3D,
 } from 'three';
 import { MeshBasicNodeMaterial, type NodeMaterial, type Renderer } from 'three/webgpu';
 import { positionWorld, vec3 } from 'three/tsl';
-import { POSITION_XZ_UNITS_PER_WORLD_UNIT } from './render/gpuMesher/gpuChunkAnswer.ts';
+import {
+  POSITION_XZ_UNITS_PER_WORLD_UNIT,
+  POSITION_Y_UNITS_PER_WORLD_UNIT,
+} from './render/gpuMesher/gpuChunkAnswer.ts';
 import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
 import { clearGroundShade } from './render/groundShade.ts';
 import {
@@ -67,6 +71,11 @@ const PARITY_SETTLE_FRAMES = 2;
 /** `?parityShift=<steps>`: slides the terrain by that many GPU position steps, so a
  *  mesher can be diffed against itself moved below a pixel (gate 1's metric floor). */
 const PARITY_SHIFT_QUERY_FLAG = 'parityShift';
+
+/** `?parityQuantize=1`: snaps a float32 arena onto the GPU position grid for the hold, so the
+ *  CPU mesh in the GPU's own format measures the storage's pixel cost. */
+const PARITY_QUANTIZE_QUERY_FLAG = 'parityQuantize';
+const POSITION_COMPONENTS = 3;
 const TERRAIN_QUEUE_POLL_MS = 100;
 const TERRAIN_QUEUE_TIMEOUT_MS = 180_000;
 const HUD_ELEMENT_SELECTOR = '#hud';
@@ -973,6 +982,24 @@ function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
     }
   }
 
+  const quantize = new URLSearchParams(location.search).get(PARITY_QUANTIZE_QUERY_FLAG) === '1';
+  const unquantized = new Map<BufferAttribute, Float32Array>();
+  if (quantize) {
+    for (const node of terrain) {
+      if (!(node instanceof Mesh)) continue;
+      const attribute = node.geometry.getAttribute('position');
+      if (!(attribute instanceof BufferAttribute) || !(attribute.array instanceof Float32Array)) continue;
+      const array = attribute.array;
+      unquantized.set(attribute, array.slice());
+      for (let i = 0; i < array.length; i += POSITION_COMPONENTS) {
+        array[i] = Math.round(array[i]! * POSITION_XZ_UNITS_PER_WORLD_UNIT) / POSITION_XZ_UNITS_PER_WORLD_UNIT;
+        array[i + 1] = Math.round(array[i + 1]! * POSITION_Y_UNITS_PER_WORLD_UNIT) / POSITION_Y_UNITS_PER_WORLD_UNIT;
+        array[i + 2] = Math.round(array[i + 2]! * POSITION_XZ_UNITS_PER_WORLD_UNIT) / POSITION_XZ_UNITS_PER_WORLD_UNIT;
+      }
+      attribute.needsUpdate = true;
+    }
+  }
+
   const hud = document.querySelector<HTMLElement>(HUD_ELEMENT_SELECTOR);
   const hudDisplay = hud === null ? null : hud.style.display;
   if (hud !== null) hud.style.display = 'none';
@@ -1005,6 +1032,10 @@ function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
       camera.layers.mask = cameraMask;
       for (const [node, mask] of layerMasks) node.layers.mask = mask;
       for (const [node, position] of shiftedPositions) node.position.copy(position);
+      for (const [attribute, array] of unquantized) {
+        (attribute.array as Float32Array).set(array);
+        attribute.needsUpdate = true;
+      }
     },
   };
 }

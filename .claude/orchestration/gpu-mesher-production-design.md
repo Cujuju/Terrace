@@ -381,22 +381,26 @@ for layered ones, `bias = BAND_BIAS` (0 for shore) — the CPU's
 (`capEmission.ts:539-544, 557`). Gate 1's `bands[c] >= level` is removed;
 `drawnBandAtCell` is no longer needed.
 
-Why the square can keep `lo = min corner band` when unlayered and interior:
-every level below a square's minimum corner band covers the square entirely
-and the CPU emits that full cap too, with no risers since a fully-inside
-square has no contour. Such a cap is only ever seen through an edge that
-borders nothing: in perspective the stack projects clear of the top cap
-where the drawn terrain ends (measured 2026-09-11: 10,237 background pixels
-at the rim of the received region before the rule below). Behind a received
-neighbour the neighbour square's own risers hide it. So a square on a chunk
-side whose neighbour chunk is unreceived or off-world (`ENTRY_EXPOSED_EDGES`,
-computed by `extractWindowEntry` from `mirror.received`) marches from
-`chunkLowestBand` like a layered square; every other square keeps its own
-minimum. Marching every square from the chunk floor instead costs 1.79× the
-vertices (396 MB on the bench world). Known slack: when a neighbour unlocks
-later, the chunks east and south of it are not dirtied (`mirror.ts:192-197`
-dirties west/north readers only), so they keep their exposed-edge stack,
-hidden and harmless, until their next rebuild.
+Why an interior square can keep `lo = min corner band` when unlayered: every
+level below a square's minimum corner band covers the square entirely and
+the CPU emits that full cap too, with no risers since a fully-inside square
+has no contour. Such a cap is seen only where drawn terrain ends: in
+perspective the stack of lower caps projects clear of the top cap, and the
+missing stack showed as background at the rim of the received region
+(10,237 pixels, 2026-09-11). Ray-casting those pixels against the CPU
+triangles showed the exposure is a property of the chunk, not of a chunk
+side: the leak runs toward the undrawn diagonal the camera looks from, and
+reaches two to four squares in, a view-angle function no lattice inset
+bounds. So a chunk with any of its eight neighbours unreceived or off-world
+(`ENTRY_EXPOSED`, `exposedChunk` in `terrainGpuInputs.ts`, from
+`mirror.received`) marches every square from `chunkLowestBand`, like a
+layered chunk; every other square keeps its own minimum. Cost is the drawn
+region's perimeter (264 MB against 226 MB with no rule and 396 MB marching
+every chunk from its floor, bench world at the default pose), and only the
+world-edge ring pays once a world is fully revealed. Known slack: when a
+neighbour unlocks later, chunks east and south of it are not dirtied
+(`mirror.ts:192-197` dirties west/north readers only), so they keep their
+stack, hidden and harmless, until their next rebuild.
 
 ### 5.3 Shoreline level
 
