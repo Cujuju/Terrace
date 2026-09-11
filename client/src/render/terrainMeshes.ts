@@ -511,6 +511,8 @@ export function createTerrainMeshes(
 
   let generation = 0;
 
+  let loggedUnacceptedAnswer = false;
+
   const receive = (chunkIdx: number, answer: ChunkAnswer | null): void => {
     inFlight.delete(chunkIdx);
     if (answer === null) {
@@ -519,6 +521,16 @@ export function createTerrainMeshes(
     }
     if (answer.generation !== generation || !mirror.received.has(answer.chunkIdx)) {
       releaseAnswer(answer);
+      return;
+    }
+    // A build source paired with a store that cannot take its layout is a wiring bug, and
+    // the answer is dropped before any slot is committed to it.
+    if (!store.accepts(answer)) {
+      releaseAnswer(answer);
+      if (!loggedUnacceptedAnswer) {
+        loggedUnacceptedAnswer = true;
+        console.error(`[terrace] the terrain arena store rejects ${answer.kind} chunk answers`);
+      }
       return;
     }
     ready.push(answer);

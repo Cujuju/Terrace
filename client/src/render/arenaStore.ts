@@ -41,6 +41,8 @@ export interface ArenaStore {
   /** GPU-time budget per frame for `write`; drain stops splicing when spent. CPU: Infinity. */
   readonly frameWriteBudgetMs: number;
   readonly material: MeshStandardNodeMaterial;
+  /** Whether `write` can take this answer's layout. A rejected answer never reaches a slot. */
+  accepts(answer: ChunkAnswer): boolean;
   /** Estimated GPU-time cost of `write(answer)`; 0 for the CPU store. */
   writeCostMs(answer: ChunkAnswer): number;
   /** `originX/originZ`: super-mesh corner, world units. A superLocal store positions the mesh. */
@@ -83,6 +85,16 @@ const CPU_ARENA_WRITE_COST_MS = 0;
 
 /** World-frame stores leave the mesh at the origin, so their bounds are world bounds. */
 const WORLD_FRAME_ORIGIN = new Vector3(0, 0, 0);
+
+/** Degenerate, so `updateBounds` grows nothing around a slot that took no vertices. */
+const EMPTY_SLOT_BOUNDS: ArenaSlotBounds = {
+  minX: 0,
+  minY: 0,
+  minZ: 0,
+  maxX: 0,
+  maxY: 0,
+  maxZ: 0,
+};
 
 interface CpuSuper {
   buffers: ChunkGeometryBuffers;
@@ -133,6 +145,10 @@ export function createCpuArenaStore(
     frameWriteBudgetMs: Infinity,
     material,
 
+    accepts(answer): boolean {
+      return answer.kind === 'cpu';
+    },
+
     writeCostMs(): number {
       return CPU_ARENA_WRITE_COST_MS;
     },
@@ -150,10 +166,10 @@ export function createCpuArenaStore(
       return bind(superIdx, grown);
     },
 
+    // `accepts` turns a GPU answer away before the arena commits a slot to it, so this is a
+    // type guard, not a failure path.
     write(superIdx, vertexOffset, answer): ArenaSlotBounds {
-      if (answer.kind !== 'cpu') {
-        throw new TypeError('a GPU chunk answer cannot be written into the CPU arena store');
-      }
+      if (answer.kind !== 'cpu') return EMPTY_SLOT_BOUNDS;
       const { positions, normals, colors } = superAt(superIdx).buffers;
       positions.set(answer.positions, vertexOffset * COMPONENTS_PER_POSITION);
       normals.set(answer.normals, vertexOffset * COMPONENTS_PER_NORMAL);
