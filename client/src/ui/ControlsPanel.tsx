@@ -39,6 +39,12 @@ import {
   type FrameRateTarget,
 } from '../state/frameRatePrefs.ts';
 import {
+  MULTISAMPLE_SETTINGS,
+  multisampleSetting,
+  setMultisampleSetting,
+  type MultisampleSetting,
+} from '../state/multisamplePrefs.ts';
+import {
   LAYER_EDGE_STYLES,
   layerEdgeStyle,
   setLayerEdgeStyle,
@@ -80,6 +86,11 @@ const FRAME_RATE_LABEL: Record<FrameRateTarget, string> = {
   '90': '90 fps',
   '60': '60 fps',
   '30': '30 fps',
+};
+
+const MULTISAMPLE_LABEL: Record<MultisampleSetting, string> = {
+  '4x': '4x MSAA',
+  off: 'Off',
 };
 
 const TERRAIN_MESHER_LABEL: Record<TerrainMesher, string> = {
@@ -303,6 +314,23 @@ export function ControlsPanel(): JSX.Element {
         >
           <For each={FRAME_RATE_TARGETS}>
             {(target) => <option value={target}>{FRAME_RATE_LABEL[target]}</option>}
+          </For>
+        </select>
+      </div>
+
+      {
+}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Anti-aliasing</span>
+        <select
+          class="controls-select"
+          aria-label="Anti-aliasing"
+          title="4x MSAA smooths terrace and cliff edges. Off saves GPU time and power at the cost of jagged edges."
+          value={multisampleSetting()}
+          onChange={(e) => setMultisampleSetting(e.currentTarget.value as MultisampleSetting)}
+        >
+          <For each={MULTISAMPLE_SETTINGS}>
+            {(setting) => <option value={setting}>{MULTISAMPLE_LABEL[setting]}</option>}
           </For>
         </select>
       </div>

@@ -2,6 +2,7 @@ import { createSignal } from 'solid-js';
 import { resetFrameRatePrefs } from './frameRatePrefs.ts';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
+import { resetMultisamplePrefs } from './multisamplePrefs.ts';
 import { resetTerrainMesherPrefs } from './terrainMesherPrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
 
@@ -125,6 +126,7 @@ export function resetBindings(): void {
   resetFrontierMistPrefs();
   resetLayerEdgePrefs();
   resetFrameRatePrefs();
+  resetMultisamplePrefs();
   resetTerrainMesherPrefs();
   try {
     localStorage.removeItem(STORAGE_KEY);

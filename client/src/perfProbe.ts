@@ -20,6 +20,7 @@ import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
 import { clearGroundShade } from './render/groundShade.ts';
 import {
   BAND_WORLD_HEIGHT,
+  CAMERA_MAX_POLAR_ANGLE_DEGREES,
   CAMERA_MIN_DISTANCE,
   CELL_WORLD_SIZE,
   SCULPT_REPEAT_INTERVAL_MS,
@@ -53,6 +54,16 @@ const RENDER_SCALE_QUERY_FLAG = 'renderScale';
 const NO_INSTRUMENT_QUERY_FLAG = 'noInstrument';
 const LIGHTS_QUERY_FLAG = 'lights';
 const PROBE_LIGHT_INTENSITY = 1;
+/** `?terrainSide=front`: the terrain material culls back faces for the run. */
+const TERRAIN_SIDE_QUERY_FLAG = 'terrainSide';
+const TERRAIN_SIDE_FRONT = 'front';
+/** `?pose=edge`: camera at the max polar angle looking up a cliff, where back faces would show. */
+const POSE_QUERY_FLAG = 'pose';
+const POSE_EDGE = 'edge';
+const EDGE_POSE_SAMPLE_STRIDE_CELLS = 4;
+const EDGE_POSE_DISTANCE = CAMERA_MIN_DISTANCE * 3;
+/** Frames for a knob's pipeline recompiles to land before a scenario samples. */
+const KNOB_SETTLE_FRAMES = 12;
 
 function instrumentationDisabled(): boolean {
   return new URLSearchParams(location.search).get(NO_INSTRUMENT_QUERY_FLAG) === '1';
@@ -102,6 +113,11 @@ const CYCLONE_FRAME_MARGIN = 1.15;
 
 const ABLATION_SAMPLE_FRAMES = 90;
 const ABLATION_SETTLE_FRAMES = 6;
+const SIDES_ROUNDS = 3;
+const SIDES_SAMPLE_FRAMES = 120;
+/** The driver polls the sink every 250 ms; the page holds the shot state at least this long. */
+const SHOT_HOLD_MS = 1500;
+const SHOT_BEAT_PREFIX = 'shot:';
 /** Quarter of the pixels: the saving names the fill-rate share of the frame. */
 const ABLATION_HALF_RENDER_SCALE = 0.5;
 const MAIN_PASS_LABEL = 'main -> screen';
@@ -187,6 +203,12 @@ function programCacheKeys(): string[] {
 const PLUGIN_LAYER_PREFIX = 'plugin:';
 const CORE_RIG_PREFIX = 'core:';
 const ABLATABLE_PREFIXES = [PLUGIN_LAYER_PREFIX, CORE_RIG_PREFIX] as const;
+
+function ablatableLayers(scene: Object3D): Object3D[] {
+  return scene.children.filter((child) =>
+    ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix)),
+  );
+}
 
 // Visible drawables outside the ablatable layers, grouped by material: terrain shares one
 // material per store, the edge overlay, water, fog and rivers each have their own.
@@ -490,7 +512,30 @@ const WRITE_BUFFER_SIZE_ARG = 4;
 const WRITE_TEXTURE_LAYOUT_ARG = 2;
 const WRITE_TEXTURE_SIZE_ARG = 3;
 
-function installGpuQueueAccounting(): void {
+interface UniformBinding {
+  readonly name: string;
+  readonly buffer: ArrayBufferView;
+}
+
+// Names every uniform buffer three re-writes, so writeBuffer owners resolve past "unregistered".
+function labelUniformBindings(renderer: Renderer): void {
+  const backend = renderer.backend as unknown as {
+    bindingUtils?: { updateBinding(binding: UniformBinding): void };
+  };
+  const utils = backend.bindingUtils;
+  if (utils === undefined) return;
+  const original = utils.updateBinding.bind(utils);
+  utils.updateBinding = (binding: UniformBinding): void => {
+    const array = binding.buffer;
+    if (!uploadOwners.has(array.buffer)) {
+      uploadOwners.set(array.buffer, `uniform ${binding.name} (${String(array.byteLength)}B)`);
+    }
+    original(binding);
+  };
+}
+
+function installGpuQueueAccounting(renderer: Renderer): void {
+  labelUniformBindings(renderer);
   const queueProto = (globalThis as unknown as { GPUQueue?: { prototype: Record<string, unknown> } })
     .GPUQueue?.prototype;
   if (queueProto === undefined) return;
@@ -1357,10 +1402,130 @@ const cycloneScenario: Scenario = async (ctx) => {
   };
 };
 
+// Sets the terrain material's face culling; returns the undo.
+function setTerrainSide(ctx: ProbeContext, side: Material['side']): () => void {
+  const materials = new Set(ctx.world.pickables().map((mesh) => mesh.material as Material));
+  const previous = new Map<Material, Material['side']>();
+  for (const material of materials) {
+    previous.set(material, material.side);
+    material.side = side;
+    material.needsUpdate = true;
+  }
+  return (): void => {
+    for (const [material, restored] of previous) {
+      material.side = restored;
+      material.needsUpdate = true;
+    }
+  };
+}
+
+// Double- against single-sided terrain, alternated in one frozen page; round one also holds each
+// state terrain-only for the driver's `shot:<name>` screenshots.
+const sidesScenario: Scenario = async (ctx) => {
+  const layers = ablatableLayers(ctx.viewport.scene);
+  const terrain = new Set<Object3D>(ctx.world.pickables());
+  const nonTerrain = [...coreDrawGroups(ctx.viewport.scene).values()]
+    .flat()
+    .filter((object) => !terrain.has(object));
+  ctx.freeze(true);
+  const shoot = async (name: string): Promise<void> => {
+    for (const layer of layers) layer.visible = false;
+    for (const object of nonTerrain) object.visible = false;
+    await waitFrames(ABLATION_SETTLE_FRAMES);
+    ctx.beat(`${SHOT_BEAT_PREFIX}${name}`);
+    await wait(SHOT_HOLD_MS);
+    for (const object of nonTerrain) object.visible = true;
+    for (const layer of layers) layer.visible = true;
+  };
+  const measure = async (): Promise<FrameBlock> => {
+    await waitFrames(ABLATION_SETTLE_FRAMES);
+    const sampler = ctx.sampler();
+    await sampleFrames(sampler, SIDES_SAMPLE_FRAMES);
+    return sampler.block();
+  };
+  const mainOf = (block: FrameBlock): number | null =>
+    block.gpuPasses[MAIN_PASS_LABEL]?.msP50 ?? null;
+  const rounds: Record<string, unknown>[] = [];
+  let first: FrameBlock | null = null;
+  for (let round = 0; round < SIDES_ROUNDS; round++) {
+    if (round === 0) await shoot('double');
+    const double = await measure();
+    first ??= double;
+    const restore = setTerrainSide(ctx, FrontSide);
+    if (round === 0) await shoot('front');
+    const front = await measure();
+    restore();
+    // Water, springs and the HUD clock keep animating under freeze; a second double-sided shot
+    // gives the diff a noise floor so only pixels stable across both `double`s count.
+    if (round === 0) await shoot('double-again');
+    rounds.push({
+      round,
+      doubleGpuMsP50: double.gpuMsP50,
+      frontGpuMsP50: front.gpuMsP50,
+      doubleMainMsP50: mainOf(double),
+      frontMainMsP50: mainOf(front),
+      gpuMsSaved:
+        double.gpuMsP50 === null || front.gpuMsP50 === null
+          ? null
+          : double.gpuMsP50 - front.gpuMsP50,
+      drawCalls: double.drawCalls,
+      triangles: double.triangles,
+    });
+  }
+  ctx.freeze(false);
+  const savings = rounds
+    .map((row) => row['gpuMsSaved'])
+    .filter((ms): ms is number => typeof ms === 'number');
+  const { camera, controls } = ctx.viewport;
+  return {
+    sample: first!,
+    detail: {
+      rounds,
+      meanGpuMsSaved:
+        savings.length === 0 ? null : savings.reduce((sum, ms) => sum + ms, 0) / savings.length,
+      orbitTarget: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      eye: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    },
+  };
+};
+
+// Parks the camera at the steepest sampled drop, on its low side, at the max polar angle.
+function poseAtEdge(ctx: ProbeContext): void {
+  const size = ctx.world.worldSize();
+  const stride = EDGE_POSE_SAMPLE_STRIDE_CELLS;
+  let best: { x: number; y: number; dx: number; dy: number; drop: number } | null = null;
+  for (let y = 0; y + stride < size; y += stride) {
+    for (let x = 0; x + stride < size; x += stride) {
+      const here = ctx.world.terrainHeightAt(x, y);
+      if (here === null) continue;
+      for (const [dx, dy] of [[stride, 0], [0, stride]] as const) {
+        const there = ctx.world.terrainHeightAt(x + dx, y + dy);
+        if (there === null) continue;
+        const drop = here - there;
+        if (best === null || Math.abs(drop) > best.drop) {
+          best = drop >= 0
+            ? { x, y, dx, dy, drop }
+            : { x: x + dx, y: y + dy, dx: -dx, dy: -dy, drop: -drop };
+        }
+      }
+    }
+  }
+  if (best === null) return;
+  const { camera, controls } = ctx.viewport;
+  const height = ctx.world.terrainHeightAt(best.x, best.y) ?? 0;
+  const target = new Vector3(best.x * CELL_WORLD_SIZE, height, best.y * CELL_WORLD_SIZE);
+  const bearing = new Vector3(best.dx, 0, best.dy).normalize();
+  const polar = (CAMERA_MAX_POLAR_ANGLE_DEGREES * Math.PI) / 180;
+  controls.target.copy(target);
+  camera.position
+    .copy(target)
+    .addScaledVector(bearing, Math.sin(polar) * EDGE_POSE_DISTANCE)
+    .add(new Vector3(0, Math.cos(polar) * EDGE_POSE_DISTANCE, 0));
+  controls.update();
+}
+
 const ablateScenario: Scenario = async (ctx) => {
-  const layers = ctx.viewport.scene.children.filter((child) =>
-    ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix)),
-  );
+  const layers = ablatableLayers(ctx.viewport.scene);
   const rigName = (child: { name: string }): string => {
     const prefix = ABLATABLE_PREFIXES.find((candidate) => child.name.startsWith(candidate));
     return prefix === undefined ? child.name : child.name.slice(prefix.length);
@@ -1629,6 +1794,7 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = {
   idle: idleScenario,
   overview: overviewScenario,
   ablate: ablateScenario,
+  sides: sidesScenario,
   drift: makeDriftScenario(false),
   'drift-frozen': makeDriftScenario(true),
   sculpt: sculptScenario,
@@ -1757,7 +1923,7 @@ export function installPerfProbe(deps: {
   }
   if (!instrumentationDisabled()) {
     installGlUploadAccounting();
-    installGpuQueueAccounting();
+    installGpuQueueAccounting(renderer);
     wrapSinkTiming(world);
   }
 
@@ -1820,12 +1986,22 @@ export function installPerfProbe(deps: {
 
   window.setTimeout(() => {
     beat('settled');
-    const probeLights = Number(new URLSearchParams(location.search).get(LIGHTS_QUERY_FLAG) ?? '0');
+    const query = new URLSearchParams(location.search);
+    const probeLights = Number(query.get(LIGHTS_QUERY_FLAG) ?? '0');
     if (Number.isFinite(probeLights) && probeLights > 0) {
       const armed = activateProbeLights(viewport.scene, probeLights);
       beat(`lights-armed-${String(armed)}-of-${String(probeLights)}`);
     }
-    scenario(ctx)
+    if (query.get(TERRAIN_SIDE_QUERY_FLAG) === TERRAIN_SIDE_FRONT) {
+      setTerrainSide(ctx, FrontSide);
+      beat('terrain-side-front');
+    }
+    if (query.get(POSE_QUERY_FLAG) === POSE_EDGE) {
+      poseAtEdge(ctx);
+      beat('posed-edge');
+    }
+    waitFrames(KNOB_SETTLE_FRAMES)
+      .then(() => scenario(ctx))
       .then((result) => {
         post({
           scenario: name,
