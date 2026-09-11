@@ -61,6 +61,7 @@ import type {
   GpuChunkBuildSource,
   GpuMesherStats,
 } from './render/gpuMesher/gpuChunkBuildSource.ts';
+import { installMesherDump } from './render/gpuMesher/mesherDump.ts';
 import { terrainMesher } from './state/terrainMesherPrefs.ts';
 import {
   createLayerEdgeOverlay,
@@ -428,6 +429,16 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
 
+  const stopMesherDump = import.meta.env.DEV
+    ? installMesherDump({
+        renderer: viewport.renderer,
+        mirror: () => mirror,
+        meshes: () => meshes,
+        store: () => rig?.store ?? null,
+        gpuMesher,
+      })
+    : null;
+
   return {
     onSnapshot(msg: JoinSnapshotMessage): void {
       setWorldIdentity({
@@ -641,6 +652,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     dispose(): void {
       clearExpiryTimer();
+      stopMesherDump?.();
       stopDeviceLostWatch?.();
       meshes?.dispose();
       rig?.dispose();
