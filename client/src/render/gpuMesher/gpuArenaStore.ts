@@ -105,6 +105,9 @@ export interface GpuArenaStoreOptions {
   /** Reports a GpuArenaInjectionError instead of throwing it. The guard fires inside the
    *  arena's frame callback, which scene.ts mutes forever once it throws. */
   readonly onFailure?: (error: Error) => void;
+  /** Last commands on the frame encoder before it is submitted; the mesher resolves the
+   *  timestamp queries its emit passes wrote into it. */
+  readonly onFrameCommands?: (encoder: GPUCommandEncoder) => void;
 }
 
 export function createGpuArenaStore(
@@ -165,6 +168,7 @@ export function createGpuArenaStore(
   };
 
   const onFailure = options?.onFailure;
+  const onFrameCommands = options?.onFrameCommands;
   let reportedFailure = false;
 
   const commit = (): void => {
@@ -180,6 +184,7 @@ export function createGpuArenaStore(
       }
     }
     if (encoder === null) return;
+    onFrameCommands?.(encoder);
     const commands = encoder.finish();
     encoder = null;
     device.queue.submit([commands]);
