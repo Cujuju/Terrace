@@ -31,8 +31,10 @@ import {
   buildMesherWgsl,
 } from './mesherWgsl.ts';
 import {
+  CHUNK_STATS_COUNT_STAMP,
   CHUNK_STATS_VERTEX_COUNT,
   CHUNK_STATS_WORDS,
+  COUNT_PASS_STAMP,
   ENTRY_CHUNK_IDX,
   ENTRY_HEADER_WORDS,
   ENTRY_HIGHEST_BAND,
@@ -125,6 +127,9 @@ export interface GpuMesherStats {
 
 export interface GpuChunkBuildSource extends ChunkBuildSource {
   stats(): GpuMesherStats;
+  /** Fires once when the device is lost; every later build takes the fallback regardless.
+   *  Returns the unsubscribe. */
+  onDeviceLost(handler: (reason: string) => void): () => void;
 }
 
 interface WebGpuBackendInternals {
@@ -517,8 +522,11 @@ export async function createGpuChunkBuildSource(
 
   let disposed = false;
   let deviceLost = false;
-  void device.lost.then(() => {
+  const deviceLostHandlers = new Set<(reason: string) => void>();
+  void device.lost.then((info) => {
     deviceLost = true;
+    const reason = `the WebGPU device was lost (${info.reason}: ${info.message})`;
+    for (const handler of deviceLostHandlers) handler(reason);
   });
 
   let batches = 0;
@@ -734,8 +742,11 @@ export async function createGpuChunkBuildSource(
 
     for (const member of members) {
       const { entry, queued } = member;
-      const vertexCount = stats[entry * CHUNK_STATS_WORDS + CHUNK_STATS_VERTEX_COUNT]!;
-      if (vertexCount > GPU_CHUNK_VERTEX_BUDGET) {
+      const statsAt = entry * CHUNK_STATS_WORDS;
+      const vertexCount = stats[statsAt + CHUNK_STATS_VERTEX_COUNT]!;
+      // No stamp means the count pass never ran for this entry, so its counts are stale.
+      const counted = stats[statsAt + CHUNK_STATS_COUNT_STAMP] === COUNT_PASS_STAMP;
+      if (!counted || vertexCount > GPU_CHUNK_VERTEX_BUDGET) {
         releaseEntry(entry);
         runFallback(queued);
         continue;
@@ -879,6 +890,10 @@ export async function createGpuChunkBuildSource(
     },
     stats(): GpuMesherStats {
       return { countMs, emitMs, batches, chunks };
+    },
+    onDeviceLost(handler): () => void {
+      deviceLostHandlers.add(handler);
+      return () => deviceLostHandlers.delete(handler);
     },
     /** The fallback is the caller's: it outlives this source and every world. */
     dispose(): void {

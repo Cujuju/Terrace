@@ -31,6 +31,10 @@ export const SQUARES_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
 export const CHUNK_STATS_WORDS = 4;
 export const CHUNK_STATS_VERTEX_COUNT = 0;
+export const CHUNK_STATS_COUNT_STAMP = 1;
+
+/** The count pass stamps this; a cleared slot that still reads zero means it never ran. */
+export const COUNT_PASS_STAMP = 0x5445_524d;
 
 /** Words per appended lip: entry, band, then ax, az, bx, bz as bitcast f32. */
 export const LIP_WORDS = 6;
