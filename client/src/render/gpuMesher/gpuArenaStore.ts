@@ -111,7 +111,8 @@ export function createGpuArenaStore(
   const material = createTerrainMaterial('snorm16');
   const chunkCols = chunksPerEdge(worldSize);
   const supers = new Map<number, GpuSuper>();
-  const uncheckedInjections = new Set<number>();
+  /** superIdx to `info.render.calls` when the buffer was injected. */
+  const uncheckedInjections = new Map<number, number>();
 
   let encoder: GPUCommandEncoder | null = null;
   let scratchPositions: GPUBuffer | null = null;
@@ -129,8 +130,13 @@ export function createGpuArenaStore(
   const injectedBuffer = (attribute: BufferAttribute): GPUBuffer | undefined =>
     backend.get(attribute).buffer;
 
+  // three fills an empty attribute slot in createAttribute, which only a render reaches.
+  // Checking before then would pass on our own injection and never look again.
   const verifyInjections = (): void => {
-    for (const superIdx of uncheckedInjections) {
+    const calls = renderer.info.render.calls;
+    for (const [superIdx, injectedAtCalls] of uncheckedInjections) {
+      if (calls <= injectedAtCalls) continue;
+      uncheckedInjections.delete(superIdx);
       const gpu = superAt(superIdx);
       if (
         injectedBuffer(gpu.positionAttribute) !== gpu.positions ||
@@ -141,7 +147,6 @@ export function createGpuArenaStore(
         );
       }
     }
-    uncheckedInjections.clear();
   };
 
   const onFailure = options?.onFailure;
@@ -206,7 +211,7 @@ export function createGpuArenaStore(
       localOrigin,
     };
     supers.set(superIdx, gpu);
-    uncheckedInjections.add(superIdx);
+    uncheckedInjections.set(superIdx, renderer.info.render.calls);
 
     return {
       gpu,
