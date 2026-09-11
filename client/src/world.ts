@@ -57,9 +57,9 @@ import {
   GpuArenaUnavailableError,
   createGpuArenaStore,
 } from './render/gpuMesher/gpuArenaStore.ts';
-import {
-  createGpuChunkBuildSource,
-  type GpuMesherStats,
+import type {
+  GpuChunkBuildSource,
+  GpuMesherStats,
 } from './render/gpuMesher/gpuChunkBuildSource.ts';
 import { terrainMesher } from './state/terrainMesherPrefs.ts';
 import {
@@ -168,13 +168,14 @@ function isWebGpuBackend(renderer: Viewport['renderer']): boolean {
   return (renderer.backend as unknown as RendererBackendFlags).isWebGPUBackend === true;
 }
 
-// The worker pool outlives any one mesher, but a GPU source disposes the fallback it is
-// given. Neither source's methods read `this`, so a spread lends them safely.
-function borrowBuildSource(source: ChunkBuildSource): ChunkBuildSource {
-  return { ...source, dispose: (): void => {} };
+export interface WorldOptions {
+  /** The session's CPU mesher, also the GPU mesher's fallback; the world disposes it. */
+  readonly chunkBuildSource?: ChunkBuildSource;
+  /** The session's GPU mesher, built once in main.tsx; `null` demotes every world. */
+  readonly gpuMesher?: GpuChunkBuildSource | null;
 }
 
-export function createWorld(viewport: Viewport): World {
+export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
   const frontierLine: FrontierLine = createFrontierLine(viewport.scene);
@@ -189,7 +190,9 @@ export function createWorld(viewport: Viewport): World {
   });
 
   const chunkBuildSource: ChunkBuildSource =
-    createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
+    options?.chunkBuildSource ?? createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
+
+  const gpuMesher: GpuChunkBuildSource | null = options?.gpuMesher ?? null;
 
   const drawnChunkScratch = new Set<number>();
 
@@ -294,6 +297,7 @@ export function createWorld(viewport: Viewport): World {
 
   /** The rig, or the reason the GPU path was refused. */
   const createGpuRig = (worldSize: number): TerrainMesherRig | string => {
+    if (gpuMesher === null) return 'the session has no GPU terrain mesher';
     if (!isWebGpuBackend(viewport.renderer)) {
       return 'the renderer is not running the WebGPU backend';
     }
@@ -306,17 +310,6 @@ export function createWorld(viewport: Viewport): World {
       if (!(error instanceof GpuArenaUnavailableError)) throw error;
       return error.message;
     }
-    const source = createGpuChunkBuildSource(
-      viewport.renderer,
-      borrowBuildSource(chunkBuildSource),
-    );
-    if (source === null) {
-      store.destroy();
-      return 'the GPU build source refused the renderer';
-    }
-    void source.ready().catch((error: unknown) => {
-      demoteToCpu(`the mesher WGSL failed to compile (${String(error)})`);
-    });
     const warmUp = warmTerrainMaterial(
       viewport.terrainGroup,
       store.material,
@@ -326,11 +319,11 @@ export function createWorld(viewport: Viewport): World {
     return {
       kind: 'gpu',
       store,
-      source,
-      gpuStats: (): GpuMesherStats | null => source.stats(),
+      source: gpuMesher,
+      gpuStats: (): GpuMesherStats | null => gpuMesher.stats(),
+      // The mesher is the session's, not the rig's: a swap back to the GPU reuses it.
       dispose(): void {
         warmUp.removeFromParent();
-        source.dispose();
         store.destroy();
       },
     };
@@ -663,6 +656,7 @@ export function createWorld(viewport: Viewport): World {
       frontierLine.dispose();
       revealMask.dispose();
       rivers.dispose();
+      gpuMesher?.dispose();
       chunkBuildSource.dispose();
     },
   };

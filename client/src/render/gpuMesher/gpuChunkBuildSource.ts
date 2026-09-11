@@ -125,9 +125,6 @@ export interface GpuMesherStats {
 
 export interface GpuChunkBuildSource extends ChunkBuildSource {
   stats(): GpuMesherStats;
-  /** Settles when the WGSL module has compiled; rejects with the compile errors, which
-   *  route every chunk to the fallback and so demote the whole session. */
-  ready(): Promise<void>;
 }
 
 interface WebGpuBackendInternals {
@@ -234,14 +231,18 @@ function buildLipSegments(records: LipRecord[]): ChunkLipSegments {
   return { positions, flat, bands: Int32Array.from(bands) };
 }
 
-export function createGpuChunkBuildSource(
+/** World-independent, so one session builds one source; `null` demotes the session to
+ *  `fallback`, which the caller keeps owning. */
+export async function createGpuChunkBuildSource(
   renderer: Renderer,
   fallback: ChunkBuildSource,
-): GpuChunkBuildSource | null {
+): Promise<GpuChunkBuildSource | null> {
   const backend = renderer.backend as unknown as WebGpuBackendInternals;
-  if (backend.isWebGPUBackend !== true) return null;
+  if (backend.isWebGPUBackend !== true) {
+    return demote('the renderer is not running the WebGPU backend');
+  }
   const device = backend.device;
-  if (device === undefined) return null;
+  if (device === undefined) return demote('the WebGPU backend has no device yet');
 
   const limits = device.limits;
   if (limits.maxStorageBuffersPerShaderStage < STORAGE_BUFFERS_PER_STAGE) {
@@ -305,6 +306,22 @@ export function createGpuChunkBuildSource(
   };
   writeParams();
 
+  const ownedBuffers = (): readonly GPUBuffer[] => [
+    windowBuffer,
+    statsBuffer,
+    lutBuffer,
+    paramsBuffer,
+    lipsBuffer,
+    dummyPositions,
+    dummyColors,
+  ];
+
+  /** Every path that gives up before the source exists hands the buffers back first. */
+  const refuse = (reason: string): null => {
+    for (const buffer of ownedBuffers()) buffer.destroy();
+    return demote(reason);
+  };
+
   const storageEntry = (
     binding: number,
     type: 'storage' | 'read-only-storage',
@@ -314,6 +331,22 @@ export function createGpuChunkBuildSource(
     buffer: { type },
   });
 
+  const module = device.createShaderModule({
+    label: 'terrace.gpuMesher.mesher',
+    code: buildMesherWgsl(),
+  });
+  // A device that will not report compilation info has not failed to compile.
+  const compilation = await module.getCompilationInfo().catch(() => null);
+  const compileErrors = (compilation?.messages ?? []).filter((m) => m.type === 'error');
+  if (compileErrors.length > 0) {
+    return refuse(
+      `the WGSL failed to compile:\n${compileErrors
+        .map((m) => `${String(m.lineNum)}:${String(m.linePos)} ${m.message}`)
+        .join('\n')}`,
+    );
+  }
+
+  device.pushErrorScope('validation');
   const group0Layout = device.createBindGroupLayout({
     label: 'terrace.gpuMesher.group0',
     entries: [
@@ -337,39 +370,9 @@ export function createGpuChunkBuildSource(
     entries: [storageEntry(0, 'storage'), storageEntry(1, 'storage')],
   });
 
-  const module = device.createShaderModule({
-    label: 'terrace.gpuMesher.mesher',
-    code: buildMesherWgsl(),
+  const pipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [group0Layout, group1Layout],
   });
-  const pipeline = device.createComputePipeline({
-    label: 'terrace.gpuMesher.pipeline',
-    layout: device.createPipelineLayout({ bindGroupLayouts: [group0Layout, group1Layout] }),
-    compute: { module, entryPoint: MESHER_ENTRY_POINT },
-  });
-
-  let compileFailure: string | null = null;
-  let compiled!: () => void;
-  let compileFailed!: (error: Error) => void;
-  const compilation = new Promise<void>((resolve, reject) => {
-    compiled = resolve;
-    compileFailed = reject;
-  });
-  void module.getCompilationInfo().then(
-    (info) => {
-      const errors = info.messages.filter((m) => m.type === 'error');
-      if (errors.length === 0) {
-        compiled();
-        return;
-      }
-      compileFailure = errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n');
-      console.error(`[terrace] GPU mesher WGSL failed to compile:\n${compileFailure}`);
-      compileFailed(new Error(compileFailure));
-    },
-    // A device that will not report compilation info has not failed to compile.
-    () => {
-      compiled();
-    },
-  );
 
   const createGroup0 = (): GPUBindGroup =>
     device.createBindGroup({
@@ -392,6 +395,21 @@ export function createGpuChunkBuildSource(
       { binding: 1, resource: { buffer: dummyColors } },
     ],
   });
+  const layoutError = await device.popErrorScope();
+  if (layoutError !== null) {
+    return refuse(`the bind groups were refused (${layoutError.message})`);
+  }
+
+  let pipeline: GPUComputePipeline;
+  try {
+    pipeline = await device.createComputePipelineAsync({
+      label: 'terrace.gpuMesher.pipeline',
+      layout: pipelineLayout,
+      compute: { module, entryPoint: MESHER_ENTRY_POINT },
+    });
+  } catch (error) {
+    return refuse(`the compute pipeline was refused (${String(error)})`);
+  }
 
   const emitGroups = new WeakMap<GPUBuffer, WeakMap<GPUBuffer, GPUBindGroup>>();
   const emitGroupFor = (target: GpuEmitTarget): GPUBindGroup => {
@@ -818,7 +836,7 @@ export function createGpuChunkBuildSource(
       const slice = queued.splice(0, GPU_BATCH_CHUNKS);
       const members: BatchMember[] = [];
       for (const item of slice) {
-        if (disposed || deviceLost || compileFailure !== null) {
+        if (disposed || deviceLost) {
           runFallback(item);
           continue;
         }
@@ -849,7 +867,7 @@ export function createGpuChunkBuildSource(
     concurrency: GPU_BATCH_CHUNKS,
     backlogCap: GPU_BATCH_CHUNKS,
     build(mirror, chunkIdx, generation): Promise<ChunkAnswer | null> {
-      if (disposed || deviceLost || compileFailure !== null) {
+      if (disposed || deviceLost) {
         return Promise.resolve(fallback.build(mirror, chunkIdx, generation));
       }
       return new Promise<ChunkAnswer | null>((resolve) => {
@@ -862,29 +880,16 @@ export function createGpuChunkBuildSource(
     stats(): GpuMesherStats {
       return { countMs, emitMs, batches, chunks };
     },
-    ready(): Promise<void> {
-      return compilation;
-    },
+    /** The fallback is the caller's: it outlives this source and every world. */
     dispose(): void {
       if (disposed) return;
       disposed = true;
       for (let e = 0; e < GPU_WINDOW_POOL; e++) releaseEntry(e);
       dropFreeReadbacks();
-      for (const buffer of [
-        windowBuffer,
-        statsBuffer,
-        lutBuffer,
-        paramsBuffer,
-        lipsBuffer,
-        dummyPositions,
-        dummyColors,
-      ]) {
-        buffer.destroy();
-      }
+      for (const buffer of ownedBuffers()) buffer.destroy();
       timestampResolve?.destroy();
       timestampReadback?.destroy();
       querySet?.destroy();
-      fallback.dispose();
     },
   };
 }

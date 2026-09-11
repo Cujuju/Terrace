@@ -14,6 +14,11 @@ import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
+import {
+  createDirectChunkBuildSource,
+  createWorkerChunkBuildSource,
+} from './render/chunkBuildSource.ts';
+import { createGpuChunkBuildSource } from './render/gpuMesher/gpuChunkBuildSource.ts';
 import { installPerfProbe, installPerfProbeEarly } from './perfProbe.ts';
 import {
   brushProfile,
@@ -55,7 +60,11 @@ if (canvas === null || hudRoot === null) {
 }
 
 const viewport = await createViewport(canvas);
-// The join is issued right after the only await, so its round trip overlaps the rest of
+// Both meshers are world-independent, so the session builds them once. A GPU mesher that
+// cannot compile or bind returns null, and every world then meshes on the workers.
+const chunkBuildSource = createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
+const gpuMesher = await createGpuChunkBuildSource(viewport.renderer, chunkBuildSource);
+// The join is issued right after the last await, so its round trip overlaps the rest of
 // boot; every callback below reaches its target lazily, and nothing runs before wiring.
 const connection = connect({
   sink: () => world,
@@ -77,7 +86,7 @@ const connection = connect({
 });
 
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
-const world = createWorld(viewport);
+const world = createWorld(viewport, { chunkBuildSource, gpuMesher });
 const celestialVoid = createCelestialVoid(
   viewport,
   voidStyle(),
