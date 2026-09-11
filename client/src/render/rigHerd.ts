@@ -1,18 +1,37 @@
-import { Bone, InstancedBufferAttribute, InstancedMesh, Matrix4, Sphere, Vector3 } from 'three';
 import {
-  StorageBufferAttribute,
-  StorageInstancedBufferAttribute,
-  type Node,
-  type NodeMaterial,
-  type StorageBufferNode,
-} from 'three/webgpu';
-import { Fn, attribute, int, normalLocal, storage, vec4 } from 'three/tsl';
+  Bone,
+  DataArrayTexture,
+  FloatType,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  Matrix4,
+  NearestFilter,
+  RGBAFormat,
+  Sphere,
+  Vector3,
+} from 'three';
+import { StorageInstancedBufferAttribute, type Node, type NodeMaterial } from 'three/webgpu';
+import {
+  Fn,
+  attribute,
+  int,
+  ivec2,
+  mat4,
+  normalLocal,
+  textureLoad,
+  vec4,
+} from 'three/tsl';
 import { instanceMatrix as instanceMatrixNode } from './instanceMatrix.ts';
 import { compose } from './materialSlots.ts';
 import { toNodeMaterial } from './nodeMaterialFrom.ts';
 import type { RigBlueprint } from './rigSkin.ts';
 
 const MATRIX_ELEMENTS = 16;
+const MATRIX_TEXELS = 4;
+
+const RGBA_COMPONENTS = 4;
+
+const PALETTE_LAYER_HEIGHT = 1;
 
 const POSE_SLOT_ATTRIBUTE = 'rigPoseSlot';
 
@@ -28,7 +47,7 @@ export interface RigHerdOptions {
 export interface RigHerd {
   readonly meshes: readonly InstancedMesh[];
   readonly joints: readonly Bone[];
-  readonly posePalette: StorageBufferAttribute;
+  readonly posePalette: DataArrayTexture;
   beginFrame(): void;
   poseSlotOf(phase: number, variant?: number): number;
   poseSlotPhase(slot: number): number;
@@ -67,13 +86,17 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
   const boneWorlds = joints.map(() => new Matrix4());
   const boneScratch = new Matrix4();
 
-  // One row of boneCount mat4s per pose slot; only rows captured this frame are uploaded.
-  const rowElements = boneCount * MATRIX_ELEMENTS;
-  const palette = new StorageBufferAttribute(poseRows * boneCount, MATRIX_ELEMENTS);
-  const paletteData = palette.array as Float32Array;
+  // One layer per pose slot, so a captured slot uploads its own layer and nothing else.
+  const paletteWidth = boneCount * MATRIX_TEXELS;
+  const paletteData = new Float32Array(paletteWidth * RGBA_COMPONENTS * poseRows);
+  const palette = new DataArrayTexture(paletteData, paletteWidth, PALETTE_LAYER_HEIGHT, poseRows);
+  palette.format = RGBAFormat;
+  palette.type = FloatType;
+  palette.minFilter = NearestFilter;
+  palette.magFilter = NearestFilter;
+  palette.generateMipmaps = false;
 
   const captured = new Uint8Array(poseRows);
-  const capturedRows = new Uint8Array(poseRows);
   let capturedThisFrame = 0;
 
   const instanceMatrix = new StorageInstancedBufferAttribute(capacity, MATRIX_ELEMENTS);
@@ -95,7 +118,7 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     materials.push(material);
     const mesh = new InstancedMesh(surface.geometry, material, capacity);
     mesh.instanceMatrix = instanceMatrix;
-    poseSkin(material, mesh, palette, boneCount);
+    poseSkin(material, mesh, palette);
     mesh.count = 0;
     mesh.boundingSphere = bounds;
     meshes.push(mesh);
@@ -136,8 +159,6 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
       maxScale = 0;
       if (capturedThisFrame > 0) {
         if (!staticPoses) captured.fill(0);
-        capturedRows.fill(0);
-        palette.clearUpdateRanges();
         capturedThisFrame = 0;
       }
     },
@@ -174,7 +195,7 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
         target += MATRIX_ELEMENTS;
       }
       captured[slot] = 1;
-      capturedRows[slot] = 1;
+      palette.addLayerUpdate(slot);
       capturedThisFrame++;
     },
 
@@ -214,10 +235,7 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     },
 
     endFrame(): void {
-      if (capturedThisFrame > 0) {
-        addCapturedRowRanges(palette, capturedRows, rowElements);
-        palette.needsUpdate = true;
-      }
+      if (capturedThisFrame > 0) palette.needsUpdate = true;
 
       const halfX = (maxX - minX) / 2;
       const halfY = (maxY - minY) / 2;
@@ -240,65 +258,41 @@ export function createRigHerd(blueprint: RigBlueprint, options: RigHerdOptions):
     },
 
     dispose(): void {
+      palette.dispose();
       for (const material of materials) material.dispose();
       for (const mesh of meshes) mesh.dispose();
     },
   };
 }
 
-// Each run of captured rows becomes one update range, so a frame uploads a few
-// contiguous writes instead of the whole palette.
-function addCapturedRowRanges(
-  palette: StorageBufferAttribute,
-  capturedRows: Uint8Array,
-  rowElements: number,
-): void {
-  let runStart = -1;
-  for (let row = 0; row <= capturedRows.length; row++) {
-    const hit = row < capturedRows.length && capturedRows[row] === 1;
-    if (hit && runStart < 0) runStart = row;
-    if (!hit && runStart >= 0) {
-      palette.addUpdateRange(runStart * rowElements, (row - runStart) * rowElements);
-      runStart = -1;
-    }
-  }
-}
-
-// One bone matrix, from the row this instance names and the bone named by one
-// component of skinIndex.
-function poseBone(
-  palette: StorageBufferNode<'mat4'>,
-  bone: Node<'float'>,
-  row: Node<'int'>,
-  boneCount: number,
-): Node<'mat4'> {
-  return palette.element(row.mul(boneCount).add(int(bone)));
+// One bone matrix, from the layer this instance names and the bone named by one
+// component of skinIndex. Four RGBA texels, column-major.
+function poseBone(palette: DataArrayTexture, bone: Node<'float'>, layer: Node<'int'>) {
+  const column = int(bone).mul(MATRIX_TEXELS);
+  const texel = (offset: number) =>
+    textureLoad(palette, ivec2(column.add(offset), 0)).depth(layer);
+  return mat4(texel(0), texel(1), texel(2), texel(3));
 }
 
 // The weighted blend of this vertex's four influences, in the pose this instance
-// names. A zero weight still costs its matrix fetch; a branch would cost more.
-function poseMatrix(palette: StorageBufferNode<'mat4'>, boneCount: number): Node<'mat4'> {
-  const row = int(attribute<'float'>(POSE_SLOT_ATTRIBUTE, 'float'));
+// names. A zero weight still costs its four texel fetches; a branch would cost more.
+function poseMatrix(palette: DataArrayTexture) {
+  const layer = int(attribute<'float'>(POSE_SLOT_ATTRIBUTE, 'float'));
   const index = attribute<'vec4'>('skinIndex', 'vec4');
   const weight = attribute<'vec4'>('skinWeight', 'vec4');
-  return poseBone(palette, index.x, row, boneCount)
+  return poseBone(palette, index.x, layer)
     .mul(weight.x)
-    .add(poseBone(palette, index.y, row, boneCount).mul(weight.y))
-    .add(poseBone(palette, index.z, row, boneCount).mul(weight.z))
-    .add(poseBone(palette, index.w, row, boneCount).mul(weight.w));
+    .add(poseBone(palette, index.y, layer).mul(weight.y))
+    .add(poseBone(palette, index.z, layer).mul(weight.z))
+    .add(poseBone(palette, index.w, layer).mul(weight.w));
 }
 
 // three has already placed positionLocal by the instance matrix when the slot runs, so the
 // pose is applied to the raw vertex and the instance transform re-applied outside it.
-function poseSkin(
-  material: NodeMaterial,
-  mesh: InstancedMesh,
-  palette: StorageBufferAttribute,
-  boneCount: number,
-): void {
+function poseSkin(material: NodeMaterial, mesh: InstancedMesh, palette: DataArrayTexture): void {
   compose(material, 'position', () =>
     Fn(() => {
-      const pose = poseMatrix(storage(palette, 'mat4', palette.count), boneCount);
+      const pose = poseMatrix(palette);
       const instance = instanceMatrixNode(mesh);
       const normal = attribute<'vec3'>('normal', 'vec3');
       normalLocal.assign(instance.mul(pose.mul(vec4(normal, 0))).xyz);
