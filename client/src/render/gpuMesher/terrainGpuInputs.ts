@@ -1,0 +1,123 @@
+import { CHUNK_SIZE, cellIndex, chunksPerEdge } from '@terrace/shared';
+import { buriedFloorBand, sampleBandRange } from '../../terrain/capEmission.ts';
+import { LATTICE_PER_CHUNK, SAMPLE_COUNT } from '../../terrain/contours.ts';
+import { renderSampleCell, type TerrainMirror } from '../../terrain/mirror.ts';
+
+export const WINDOW_LATTICE_SAMPLES = SAMPLE_COUNT;
+
+/** Layered (floor, ceiling) pairs one chunk window may carry; past it the chunk is CPU work. */
+export const WINDOW_SPAN_PAIRS = 2048;
+
+export const SPAN_PAIR_WORDS = 2;
+
+/** latticeDesc packs spanCount in the high half and the entry-local pair offset in the low. */
+export const SPAN_COUNT_SHIFT = 16;
+export const SPAN_OFFSET_MASK = (1 << SPAN_COUNT_SHIFT) - 1;
+
+export const ENTRY_HEADER_WORDS = 16;
+
+export const ENTRY_CHUNK_IDX = 0;
+export const ENTRY_LAYERED = 1;
+export const ENTRY_LOWEST_BAND = 2;
+export const ENTRY_HIGHEST_BAND = 3;
+export const ENTRY_ORIGIN_X_CELLS = 4;
+export const ENTRY_ORIGIN_Z_CELLS = 5;
+export const ENTRY_LOCAL_ORIGIN_X_UNITS = 6;
+export const ENTRY_LOCAL_ORIGIN_Z_UNITS = 7;
+export const ENTRY_VERTEX_BASE = 8;
+export const ENTRY_VERTEX_LIMIT = 9;
+
+export const SQUARES_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
+
+export const CHUNK_STATS_WORDS = 4;
+export const CHUNK_STATS_VERTEX_COUNT = 0;
+
+/** Words per appended lip: entry, band, then ax, az, bx, bz as bitcast f32. */
+export const LIP_WORDS = 6;
+export const LIP_ENTRY = 0;
+export const LIP_BAND = 1;
+export const LIP_AX = 2;
+
+export const OVER_BUDGET = 'overBudget';
+
+export interface WindowEntryData {
+  readonly chunkIdx: number;
+  readonly layered: boolean;
+  readonly chunkLowestBand: number;
+  readonly highestBand: number;
+  readonly originXCells: number;
+  readonly originZCells: number;
+  readonly lattice: Int32Array;
+  readonly latticeDesc: Uint32Array;
+  readonly spanPairs: Int32Array;
+}
+
+interface ExtractScratch {
+  readonly lattice: Int32Array;
+  readonly latticeDesc: Uint32Array;
+  readonly spanPairs: Int32Array;
+}
+
+function createScratch(): ExtractScratch {
+  return {
+    lattice: new Int32Array(WINDOW_LATTICE_SAMPLES),
+    latticeDesc: new Uint32Array(WINDOW_LATTICE_SAMPLES),
+    spanPairs: new Int32Array(WINDOW_SPAN_PAIRS * SPAN_PAIR_WORDS),
+  };
+}
+
+const scratch = createScratch();
+
+/**
+ * The 17x17 lattice the CPU mesher would march, resolved through the same seam
+ * pull-back, plus the chunk-level values makeLevels derives.
+ */
+export function extractWindowEntry(
+  mirror: TerrainMirror,
+  chunkIdx: number,
+): WindowEntryData | typeof OVER_BUDGET {
+  const map = mirror.map;
+  const chunkCols = chunksPerEdge(map.size);
+  const cx = chunkIdx % chunkCols;
+  const cy = (chunkIdx - cx) / chunkCols;
+  const originXCells = cx * CHUNK_SIZE;
+  const originZCells = cy * CHUNK_SIZE;
+
+  const { lattice, latticeDesc, spanPairs } = scratch;
+  let pairsUsed = 0;
+  for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
+    for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
+      const cell = renderSampleCell(mirror, originXCells + i, originZCells + j);
+      const index = cellIndex(map, cell.x, cell.y);
+      const at = j * LATTICE_PER_CHUNK + i;
+      lattice[at] = map.cells[index]!;
+      const packed = map.columnSpans.get(index);
+      if (packed === undefined) {
+        latticeDesc[at] = 0;
+        continue;
+      }
+      const count = packed.length / SPAN_PAIR_WORDS;
+      if (pairsUsed + count > WINDOW_SPAN_PAIRS) return OVER_BUDGET;
+      spanPairs.set(packed, pairsUsed * SPAN_PAIR_WORDS);
+      latticeDesc[at] = (count << SPAN_COUNT_SHIFT) | pairsUsed;
+      pairsUsed += count;
+    }
+  }
+
+  const floorBand = buriedFloorBand(mirror, originXCells, originZCells);
+  const range = sampleBandRange(lattice, WINDOW_LATTICE_SAMPLES);
+  const chunkLowestBand =
+    floorBand !== null && floorBand < range.lowestBand ? floorBand : range.lowestBand;
+
+  return {
+    chunkIdx,
+    layered: floorBand !== null,
+    chunkLowestBand,
+    highestBand: range.highestBand,
+    originXCells,
+    originZCells,
+    lattice,
+    latticeDesc,
+    spanPairs: spanPairs.subarray(0, pairsUsed * SPAN_PAIR_WORDS),
+  };
+}

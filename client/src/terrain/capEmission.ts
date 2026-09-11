@@ -142,14 +142,30 @@ interface ContourLevel {
   loops: ContourLoop[];
 }
 
-function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourLevel[] {
+export interface SampleBandRange {
+  readonly lowestBand: number;
+  readonly highestBand: number;
+}
+
+/** The band span a level list covers, before a buried floor widens it. */
+export function sampleBandRange(
+  values: ArrayLike<number>,
+  count: number = SAMPLE_COUNT,
+): SampleBandRange {
   let lowestBand = Infinity;
   let highestBand = -Infinity;
-  for (let i = 0; i < SAMPLE_COUNT; i++) {
-    const band = drawnBandOfSample(samples[i]);
+  for (let i = 0; i < count; i++) {
+    const band = drawnBandOfSample(values[i]!);
     if (band < lowestBand) lowestBand = band;
     if (band > highestBand) highestBand = band;
   }
+  return { lowestBand, highestBand };
+}
+
+function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourLevel[] {
+  const range = sampleBandRange(samples);
+  let lowestBand = range.lowestBand;
+  const highestBand = range.highestBand;
   if (floorBand !== null && floorBand < lowestBand) lowestBand = floorBand;
 
   const levels: ContourLevel[] = [];
@@ -467,7 +483,7 @@ function chunkLatticeRect(
   return { x0, y0, width: x1 - x0, height: y1 - y0 };
 }
 
-function buriedFloorBand(
+export function buriedFloorBand(
   mirror: TerrainMirror,
   originX: number,
   originZ: number,
