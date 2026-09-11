@@ -3,7 +3,12 @@
 //
 //   node client/scripts/mesherParity.mjs [--meshers cpu,cpu-shift,cpu-quant,gpu]
 //                                        [--shadedScenario terrainStill] [--settle 5000]
-//                                        [--shiftSteps 0.5]
+//                                        [--shiftSteps 0.5] [--antialias 0|1]
+//
+// `--antialias 0` renders every pass without MSAA and writes to a `-noaa`
+// results directory. Gate 1 measured 4x MSAA turning every speck into a blend
+// outside the tolerance (0.22 % -> 0.76 %), so the shaded limit is only
+// measurable with coverage antialiasing off.
 //
 // One pass per mesher entry, each on its own fresh world, fresh server and fresh
 // Chrome under the GPU lock, taking a band-ID capture and a shaded capture.
@@ -15,7 +20,7 @@
 //      identically but which riser wins a grazing tread pixel flips;
 //   a repeated `cpu` is the repeat floor, what an identical stack scores
 //      against itself.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decodePng, encodePng } from '../../bench/webgpu-mesher/png.mjs';
 import {
@@ -35,6 +40,9 @@ const QUANT_SUFFIX = '-quant';
 // Half a GPU position step (POSITION_XZ_UNITS_PER_WORLD_UNIT = 1024), gate 1's
 // offset for measuring the metric's own floor.
 const DEFAULT_SHIFT_STEPS = 0.5;
+// MSAA on by default, matching how the app renders.
+const DEFAULT_ANTIALIAS = 1;
+const NO_ANTIALIAS_DIR_SUFFIX = '-noaa';
 const BAND_SCENARIO = 'bandParity';
 const BAND_READY_BEAT = 'band-ready';
 const DEFAULT_SHADED_SCENARIO = 'terrainStill';
@@ -62,9 +70,14 @@ const shadedScenario = argValue(argv, '--shadedScenario', DEFAULT_SHADED_SCENARI
 const shadedReadyBeat = shadedScenario === DEFAULT_SHADED_SCENARIO ? SHADED_READY_BEAT : null;
 const settleMs = Number(argValue(argv, '--settle', String(DEFAULT_SETTLE_MS)));
 const shiftSteps = Number(argValue(argv, '--shiftSteps', String(DEFAULT_SHIFT_STEPS)));
+const antialias = argValue(argv, '--antialias', String(DEFAULT_ANTIALIAS)) !== '0';
+// Captures without MSAA are a different measurement, so they get their own
+// directory rather than overwriting the antialiased ones.
+const resultsDir = antialias ? RESULTS_DIR : `${RESULTS_DIR}${NO_ANTIALIAS_DIR_SUFFIX}`;
 
-const log = makeLogger(join(RESULTS_DIR, 'parity.log'));
 ensureDirs();
+mkdirSync(resultsDir, { recursive: true });
+const log = makeLogger(join(resultsDir, 'parity.log'));
 
 /**
  * `cpu, cpu-shift, cpu-quant, gpu` -> ids of the same names; a repeated token is
@@ -101,7 +114,8 @@ async function capture({ mesher, shift, quantize, scenario, readyBeat, pngPath, 
     const offset = sinkOffset();
     const url = devUrl(`perfprobe=${scenario}&settle=${settleMs}&mesher=${mesher}`
       + (shift === 0 ? '' : `&parityShift=${shift}`)
-      + (quantize ? '&parityQuantize=1' : ''));
+      + (quantize ? '&parityQuantize=1' : '')
+      + (antialias ? '' : '&antialias=0'));
 
     return await underGpuLock(log, async () => {
       const chrome = await launchChrome();
@@ -136,7 +150,7 @@ async function capture({ mesher, shift, quantize, scenario, readyBeat, pngPath, 
         return { ok: true, png, report: report.line };
       } finally {
         const lines = chrome.pageLogs();
-        writeFileSync(join(RESULTS_DIR, logName), `${lines.join('\n')}\n`);
+        writeFileSync(join(resultsDir, logName), `${lines.join('\n')}\n`);
         for (const line of lines.filter((l) => INTERESTING_LOG.test(l))) log(`page: ${line}`);
         await chrome.close();
       }
@@ -167,7 +181,7 @@ const reportFacts = (report) => ({
 
 const results = {
   startedAt: new Date().toISOString(),
-  meshers, shadedScenario, settleMs, shiftSteps,
+  meshers, shadedScenario, settleMs, shiftSteps, antialias,
   passes: {}, failures: [],
 };
 
@@ -180,7 +194,7 @@ try {
 
     const band = await capture({
       mesher, shift, quantize, scenario: BAND_SCENARIO, readyBeat: BAND_READY_BEAT,
-      pngPath: join(RESULTS_DIR, `band-${id}.png`), logName: `page-band-${id}.log`,
+      pngPath: join(resultsDir, `band-${id}.png`), logName: `page-band-${id}.log`,
     });
     results.passes[id].band = band.ok
       ? { ok: true, png: `band-${id}.png`, log: `page-band-${id}.log`, ...reportFacts(band.report) }
@@ -193,7 +207,7 @@ try {
 
     const shaded = await capture({
       mesher, shift, quantize, scenario: shadedScenario, readyBeat: shadedReadyBeat,
-      pngPath: join(RESULTS_DIR, `shaded-${id}.png`), logName: `page-shaded-${id}.log`,
+      pngPath: join(resultsDir, `shaded-${id}.png`), logName: `page-shaded-${id}.log`,
     });
     results.passes[id].shaded = shaded.ok
       ? {
@@ -214,7 +228,7 @@ try {
 const readImage = (id, kind) => {
   const pass = results.passes[id];
   if (pass === undefined || pass[kind] === null || !pass[kind].ok) return null;
-  return decodePng(readFileSync(join(RESULTS_DIR, pass[kind].png)));
+  return decodePng(readFileSync(join(resultsDir, pass[kind].png)));
 };
 
 // The reference pass is the first unshifted cpu pass; the repeat floor is a
@@ -241,7 +255,7 @@ const bandAgainstRef = (id, diffName) => {
   if (other === null || bandRef === null) return null;
   sameSize(other, bandRef, `band images (${id})`);
   const r = compareBands(other, bandRef, blockyChunks);
-  writeFileSync(join(RESULTS_DIR, diffName), encodePng(r.width, r.height, r.diff));
+  writeFileSync(join(resultsDir, diffName), encodePng(r.width, r.height, r.diff));
   delete r.diff;
   return r;
 };
@@ -258,7 +272,7 @@ const shadedAgainstRef = (id, diffName) => {
   sameSize(other, shadedRef, `shaded images (${id})`);
   const paint = new Uint8Array(other.width * other.height * CHANNELS);
   const r = compareShaded(other, shadedRef, paint);
-  writeFileSync(join(RESULTS_DIR, diffName), encodePng(other.width, other.height, paint));
+  writeFileSync(join(resultsDir, diffName), encodePng(other.width, other.height, paint));
   return r;
 };
 const gpuVsCpu = shadedAgainstRef(GPU, 'diff-shaded.png');
@@ -300,7 +314,7 @@ results.verdict = results.failures.length > 0 ? 'incomplete'
   : results.criteria.some((c) => c.pass === null) ? 'incomplete'
     : results.criteria.every((c) => c.pass) ? 'pass' : 'fail';
 
-writeFileSync(join(RESULTS_DIR, 'parity.json'), JSON.stringify(results, null, 2));
+writeFileSync(join(resultsDir, 'parity.json'), JSON.stringify(results, null, 2));
 
 // --------------------------------------------------------------------- md
 // Counts stay exact; only fractional values are rounded for the table.
@@ -321,11 +335,11 @@ const passRows = Object.entries(results.passes).map(([id, p]) =>
 const bandFloorRow = (label, r) => `| ${label} | ${fmt(r?.mismatched)} | ${fmt(r?.consideredSamples)}`
   + ` | ${pct(r?.mismatchFraction)} | ${fmt(r?.holes)} |`;
 
-writeFileSync(join(RESULTS_DIR, 'parity.md'), `# GPU mesher parity — design §11.2
+writeFileSync(join(resultsDir, 'parity.md'), `# GPU mesher parity — design §11.2
 
 Started ${results.startedAt}. Meshers: \`${meshers.join(', ')}\`. Shaded scenario:
 \`${shadedScenario}\`. Chrome window ${CHROME_WINDOW}. Shift floor: \`parityShift=${shiftSteps}\`
-(${shiftSteps} of a 1/1024 wu GPU position step).
+(${shiftSteps} of a 1/1024 wu GPU position step). Antialiasing: **${antialias ? 'on (MSAA, as the app renders)' : 'off (`?antialias=0`)'}**.
 
 Verdict: **${results.verdict}**
 
