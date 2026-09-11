@@ -1485,6 +1485,7 @@ export function installPerfProbe(deps: {
           textures: renderer.info.memory.textures,
           rendererBackend: rendererBackendName(renderer),
           terrainMesher: world.terrainMesherActive(),
+          terrainResidentBytes: world.terrainResidentBytes(),
           gpuMesher: world.gpuMesherStats(),
           ...result.detail,
           terrainLoad: world.terrainLoadTrace(),

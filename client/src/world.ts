@@ -138,6 +138,8 @@ export interface World extends TerrainSink {
   blockyChunks(): number[];
   /** What is meshing right now, which a runtime demotion can move away from the setting. */
   terrainMesherActive(): 'gpu' | 'cpu';
+  /** Vertex bytes the terrain arena holds, whichever mesher owns it. */
+  terrainResidentBytes(): number;
   gpuMesherStats(): GpuMesherStats | null;
   dispose(): void;
 }
@@ -614,6 +616,9 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     terrainMesherActive(): 'gpu' | 'cpu' {
       return rig?.kind ?? 'cpu';
+    },
+    terrainResidentBytes(): number {
+      return rig?.store.residentBytes() ?? 0;
     },
     gpuMesherStats(): GpuMesherStats | null {
       return rig?.gpuStats() ?? null;
