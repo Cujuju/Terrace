@@ -2,6 +2,10 @@ import type { Renderer } from 'three/webgpu';
 
 const MAX_BUFFERED_SAMPLES = 8;
 
+/** Frames per resolve. A resolve costs ~2-3 ms of frame time on WebGPU, so the pool is
+ *  drained on a cadence and each sample is that window's per-frame mean. */
+const RESOLVE_EVERY_FRAMES = 16;
+
 export const TIMESTAMP_QUERY_FEATURE = 'timestamp-query';
 
 export interface GpuTimer {
@@ -16,30 +20,28 @@ const UNSUPPORTED: GpuTimer = {
   drain: () => [],
 };
 
-const PROBE_QUERY_FLAG = 'perfprobe';
-
-function probeOwnsTheClock(): boolean {
-  if (typeof location === 'undefined') return false;
-  return new URLSearchParams(location.search).get(PROBE_QUERY_FLAG) !== null;
-}
-
+// Drains the pool the renderer fills every frame, on a cadence; a concurrent resolver (the
+// perf probe) shares the pending resolve, so nothing competes.
 export function createGpuTimer(renderer: Renderer): GpuTimer {
-  if (probeOwnsTheClock()) return UNSUPPORTED;
   if (!renderer.hasFeature(TIMESTAMP_QUERY_FEATURE)) return UNSUPPORTED;
 
   let resolved: number[] = [];
   let inFlight = false;
+  let framesSinceResolve = 0;
 
   return {
     supported: true,
     mark(): void {
-      if (inFlight) return;
+      framesSinceResolve++;
+      if (inFlight || framesSinceResolve < RESOLVE_EVERY_FRAMES) return;
       inFlight = true;
+      const framesCovered = framesSinceResolve;
+      framesSinceResolve = 0;
       void renderer.resolveTimestampsAsync('render').then(
         (ms) => {
           inFlight = false;
           if (ms === undefined) return;
-          resolved.push(ms);
+          resolved.push(ms / framesCovered);
           while (resolved.length > MAX_BUFFERED_SAMPLES) resolved.shift();
         },
         () => {
