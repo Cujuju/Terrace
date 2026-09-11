@@ -1,0 +1,6 @@
+Now drawing from 'Battery Power'
+ -InternalBattery-0 (id=35848291)	80%; discharging; 3:25 remaining present: true
+2026-09-10T21:28:36-0700
+      "AppleRawCurrentCapacity" = 6548
+      "InstantAmperage" = 18446744073709544792
+      "Voltage" = 11759
