@@ -2,6 +2,7 @@ import { createSignal } from 'solid-js';
 import { resetFrameRatePrefs } from './frameRatePrefs.ts';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
+import { resetTerrainMesherPrefs } from './terrainMesherPrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
 
 export type MouseButtonName = 'left' | 'middle' | 'right';
@@ -124,6 +125,7 @@ export function resetBindings(): void {
   resetFrontierMistPrefs();
   resetLayerEdgePrefs();
   resetFrameRatePrefs();
+  resetTerrainMesherPrefs();
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);
