@@ -63,16 +63,14 @@ export const CHUNK_POLYGON_WORK_BUDGET =
   MAX_MERGED_POLYGON_VERTICES * MAX_MERGED_POLYGON_VERTICES;
 
 const COMPONENTS_PER_POSITION = 3;
-// Four components, not three: D3D11 has no 8-bit x3 vertex format, so ANGLE
-// translates x3 attributes on the CPU per upload (bench/webgpu-renderer-ab).
-export const COMPONENTS_PER_NORMAL = 4;
+// Dead: flat shading derives its normal from position derivatives, so no vertex carries one.
+// export const COMPONENTS_PER_NORMAL = 4;
 export const COMPONENTS_PER_COLOR = 4;
 export const VERTICES_PER_TRIANGLE = 3;
 
 export const LIT_BY_SCENE = 0;
 // Colour attribute's alpha byte: self-lit is 0/1, so it rides the unused channel.
 export const SELF_LIT_ALPHA_BYTE = 255;
-// Alpha is the 4th colour component (R, G, B, A), zero-indexed.
 export const COLOR_ALPHA_INDEX = COMPONENTS_PER_COLOR - 1;
 
 export interface DrawnCapLevel {
@@ -103,7 +101,7 @@ export interface ChunkGeometryCounts {
 
 export interface ChunkGeometryBuffers {
   positions: Float32Array;
-  normals: Int8Array;
+  // normals: Int8Array;
   colors: Uint8Array;
   triangleCapacity: number;
 }
@@ -119,7 +117,7 @@ export function createChunkGeometryBuffers(
   const vertices = triangleCapacity * VERTICES_PER_TRIANGLE;
   return {
     positions: new Float32Array(vertices * COMPONENTS_PER_POSITION),
-    normals: new Int8Array(vertices * COMPONENTS_PER_NORMAL),
+    // normals: new Int8Array(vertices * COMPONENTS_PER_NORMAL),
     colors: new Uint8Array(vertices * COMPONENTS_PER_COLOR),
     triangleCapacity,
   };
@@ -231,13 +229,13 @@ function capSelfLitFor(paletteIndex: number): number {
   return isEmissivePaletteIndex(paletteIndex) ? SELF_LIT_ALPHA_BYTE : LIT_BY_SCENE;
 }
 
-const SIGNED_BYTE_SCALE = 127;
+// const SIGNED_BYTE_SCALE = 127;
 
 const UNSIGNED_BYTE_SCALE = 255;
 
-function quantizeNormal(component: number): number {
-  return Math.round(component * SIGNED_BYTE_SCALE);
-}
+// function quantizeNormal(component: number): number {
+//   return Math.round(component * SIGNED_BYTE_SCALE);
+// }
 
 /** The colour attribute's byte rule; the GPU band LUT quantizes with it too. */
 export function quantizeChannel(channel: number): number {
@@ -252,9 +250,9 @@ function pushVertex(
   x: number,
   y: number,
   z: number,
-  nx: number,
-  ny: number,
-  nz: number,
+  // nx: number,
+  // ny: number,
+  // nz: number,
   color: Rgb,
   selfLit: number,
 ): void {
@@ -263,10 +261,10 @@ function pushVertex(
   buffers.positions[p++] = x;
   buffers.positions[p++] = y;
   buffers.positions[p] = z;
-  let n = outVertex * COMPONENTS_PER_NORMAL;
-  buffers.normals[n++] = quantizeNormal(nx);
-  buffers.normals[n++] = quantizeNormal(ny);
-  buffers.normals[n] = quantizeNormal(nz);
+  // let n = outVertex * COMPONENTS_PER_NORMAL;
+  // buffers.normals[n++] = quantizeNormal(nx);
+  // buffers.normals[n++] = quantizeNormal(ny);
+  // buffers.normals[n] = quantizeNormal(nz);
   const c = outVertex * COMPONENTS_PER_COLOR;
   buffers.colors[c] = quantizeChannel(color[0]);
   buffers.colors[c + 1] = quantizeChannel(color[1]);
@@ -283,9 +281,9 @@ function emitCapTriangle(
   color: Rgb,
   selfLit: number,
 ): void {
-  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
-  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
-  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
+  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, /* normal was 0, 1, 0 */ color, selfLit);
+  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, /* normal was 0, 1, 0 */ color, selfLit);
+  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, /* normal was 0, 1, 0 */ color, selfLit);
 }
 
 function emitCeilingTriangle(
@@ -296,9 +294,9 @@ function emitCeilingTriangle(
   color: Rgb,
   selfLit: number,
 ): void {
-  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, -1, 0, color, selfLit);
-  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, -1, 0, color, selfLit);
-  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, -1, 0, color, selfLit);
+  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, /* normal was 0, -1, 0 */ color, selfLit);
+  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, /* normal was 0, -1, 0 */ color, selfLit);
+  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, /* normal was 0, -1, 0 */ color, selfLit);
 }
 
 function emitSkirtQuad(
@@ -321,13 +319,13 @@ function emitSkirtQuad(
   const qz = (q.z - outZ * SKIRT_PICK_INSET) * CELL_WORLD_SIZE;
   const bottomY = topY - drop;
 
-  pushVertex(px, topY, pz, outX, 0, outZ, color, selfLit);
-  pushVertex(qx, topY, qz, outX, 0, outZ, color, selfLit);
-  pushVertex(qx, bottomY, qz, outX, 0, outZ, color, selfLit);
+  pushVertex(px, topY, pz, /* normal was outX, 0, outZ */ color, selfLit);
+  pushVertex(qx, topY, qz, /* normal was outX, 0, outZ */ color, selfLit);
+  pushVertex(qx, bottomY, qz, /* normal was outX, 0, outZ */ color, selfLit);
 
-  pushVertex(px, topY, pz, outX, 0, outZ, color, selfLit);
-  pushVertex(qx, bottomY, qz, outX, 0, outZ, color, selfLit);
-  pushVertex(px, bottomY, pz, outX, 0, outZ, color, selfLit);
+  pushVertex(px, topY, pz, /* normal was outX, 0, outZ */ color, selfLit);
+  pushVertex(qx, bottomY, qz, /* normal was outX, 0, outZ */ color, selfLit);
+  pushVertex(px, bottomY, pz, /* normal was outX, 0, outZ */ color, selfLit);
 }
 
 const CELL_HALF_EXTENT = 0.5;
@@ -787,7 +785,7 @@ function ensureCapacity(buffers: ChunkGeometryBuffers, triangles: number): boole
   while (capacity < triangles) capacity *= 2;
   const grown = createChunkGeometryBuffers(capacity);
   buffers.positions = grown.positions;
-  buffers.normals = grown.normals;
+  // buffers.normals = grown.normals;
   buffers.colors = grown.colors;
   buffers.triangleCapacity = capacity;
   return true;
