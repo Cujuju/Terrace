@@ -123,11 +123,11 @@ tab, viewport 1200x900 CSS px at devicePixelRatio 2, not fullscreen.
 
 | run | what | fps | battery start -> end | CPU mW | GPU mW | combined mW | Vivaldi CPU % | fans |
 |---|---|---|---|---|---|---|---|---|
-| A | page gpu, edit=100 | 119.9 | 100% -> 100% (mAh not recorded) | 223 | 3,927 | 4,150 | 26.3 | not recorded |
-| A-idle | page gpu, no edits | 120.0 | 100% -> 99%, 8295 -> 8074 mAh | 204 | 3,615 | 3,819 | 29.0 | not recorded |
-| A-cpu | page cpu mesh, no edits | 120.0 | 99% -> 96%, 8051 -> 7863 mAh | 244 | 2,799 | 3,043 | 30.4 | not recorded |
-| B | client, probe overview, idle | 56.8 | 94% -> 80%, 7676 -> 6548 mAh | 7,398 | 38,397 | 45,796 | 38.3 | not recorded |
-| C | client, sculpting (synthetic) | not measured | 75% -> 60%, 6144 -> 4830 mAh | 8,091 | 35,710 | 43,801 | 57.4 | not recorded |
+| A | page gpu, edit=100 | 119.9 | 100% -> 100% (mAh not recorded) | 223 | 3,927 | 4,150 | 26.3 | see note |
+| A-idle | page gpu, no edits | 120.0 | 100% -> 99%, 8295 -> 8074 mAh | 204 | 3,615 | 3,819 | 29.0 | see note |
+| A-cpu | page cpu mesh, no edits | 120.0 | 99% -> 96%, 8051 -> 7863 mAh | 244 | 2,799 | 3,043 | 30.4 | see note |
+| B | client, probe overview, idle | 56.8 | 94% -> 80%, 7676 -> 6548 mAh | 7,398 | 38,397 | 45,796 | 38.3 | see note |
+| C | client, sculpting (synthetic) | not measured | 75% -> 60%, 6144 -> 4830 mAh | 8,091 | 35,710 | 43,801 | 57.4 | see note |
 
 GPU active residency, mean over the run: A 80.4%, A-idle 81.8%, A-cpu 79.2%,
 B 99.7%, C 99.7%.
@@ -211,7 +211,10 @@ shipped client costs while being sculpted. Step 1 passed. Gate 2 passes.
   volcanoes, mudslides), as the shipped game does. One server process served
   both B and C; world state carried over from B into C.
 - The client played audio (Vivaldi held a "Playing audio" assertion).
-- **Fans not recorded.** The owner was not asked to listen per run.
+- **Fans: heard in several runs, not attributed per run.** Reported by the
+  owner after the session; the owner's estimate is that fans ran in whichever
+  runs drew more than 15 W. On combined CPU + GPU mW only B and C exceed that;
+  on whole-system draw from the battery A-idle (17.1 W) does too.
 - Battery ran from 100% to 60% across the session; the later runs (B, C) ran at
   lower charge and voltage than the A runs.
 
