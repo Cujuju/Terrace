@@ -4,7 +4,7 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   LineBasicMaterial,
-  LineLoop,
+  Line,
   LineSegments,
   Mesh,
   MeshBasicMaterial,
@@ -270,8 +270,9 @@ function brushGeometry(
   const outline = markOutline(radius, mark);
   const drop = skirtDropWorldUnits(mark);
 
+  // Closed by repeating the first point: WebGPURenderer draws Line, not LineLoop.
   const ringPositions: number[] = [];
-  for (const point of outline) {
+  for (const point of [...outline, outline[0]!]) {
     ringPositions.push(point.x * CELL_WORLD_SIZE, 0, point.z * CELL_WORLD_SIZE);
   }
   const ring = new BufferGeometry();
@@ -375,7 +376,7 @@ export function createBrushPreview(
     clippingPlanes: [...edgeClip.planes],
   });
 
-  const line = new LineLoop(initial.ring, material);
+  const line = new Line(initial.ring, material);
   line.renderOrder = 998;
   line.visible = false;
   scene.add(line);
