@@ -1,372 +1,741 @@
-# GPU mesher: production design (document only)
+# GPU mesher production design (implementation level)
 
-Issue #445, arc `arc/gpu-mesher-gates`. Written 2026-09-10 from the gate 1 page
-(`bench/webgpu-mesher/`), its desktop results (`bench/webgpu-mesher/results.json`,
-`results/desktop/results-visible.json`), the shipped mesher
-(`client/src/terrain/capEmission.ts`) and the drawn-ground store
-(`client/src/terrain/drawnGroundStore.ts`). No client code. Gate 4 does not start
-before gate 2 (#447) and the stroke-tail tracing report.
+Issue #445. Revision 2 (2026-09-10, updated 2026-09-11 after the review fix
+pass): owner asked for implementation, so this is no longer "document only".
+Supersedes revision 1 and the 2026-09-10 orchestration draft in full. Every number is a
+file:line citation or a measurement; estimates are marked **[estimate]**,
+unverified facts **[unverified]**, assumptions **Assumption:**.
 
-Every number below is from a primary source named in place, or is labelled
-*estimate* / *unverified*.
+Completion criterion (owner, this session): the GPU mesher renders at
+near-identical parity to the CPU mesher, and beats it on speed and efficiency.
+§11 defines both measurably.
 
-## 1. What the gate page is and is not
+## 0. What revision 1 got wrong, and what changed
 
-The page (`mesher.html`) runs the shipped mesher's algorithm per cell square in
-WGSL: one count pass at startup, a host prefix sum over 262,144 squares, then
-emit passes writing each square at its exact precomputed offset. Vertex 12 bytes
-(`qx|qz` u32, `qy` u32, `rgba` u32); flat normals from screen-space derivatives
-in the fragment shader, no normal attribute (`mesher.html` `fs`).
+1. **Gate 1's headline numbers were stale.** `bench/webgpu-mesher/README.md`
+   reports compute p50 0.173 ms / rebuild 360 ms (headless run); the tracked
+   desktop record `results/desktop/results-visible.json` says p50 0.079 ms,
+   rebuild 5 ms wall / 3.0 ms GPU, and both pass. The laptop record
+   (`origin/gate2-laptop:.../laptop/notes.md`) says 3.5 ms wall / 3.3 ms GPU.
+   The 938 ms CPU figure is the Node single-thread build; the shipped client
+   builds on a 2-worker pool and takes 7.2 s wall to an empty queue at load
+   (`.gpu-perf/results/2026-09-09-worker-mesher-baseline/SUMMARY.md` §0).
+2. **The §5 "edit budget overrun" was a category error.** The 2.08 ms heaviest
+   3×3 window is GPU time; `CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5`
+   (`terrainMeshes.ts:33`) is main-thread time. They are different budgets on
+   different timelines. §7 gives the GPU path its own GPU-time budget.
+3. **`ChunkGpuAnswer` with `vertexBuffer + copyBufferToBuffer` into the
+   existing arena cannot work.** The arena's three.js attributes carry CPU
+   shadow arrays that three re-uploads on `needsUpdate`, and compaction moves
+   bytes with `copyWithin` on those arrays (`terrainMeshes.ts:353-369`). A GPU
+   write into the attribute's buffer is overwritten by the next CPU-side move.
+   The storage layer under the arena has to be swappable (§3).
+4. **The normal attribute is dead on both paths.** `flatShading: true`
+   (`terrainMaterial.ts:39`) makes three derive the normal from position
+   derivatives (`NodeBuilder.js:510`, `Normal.js:43`); the attribute is never
+   read. The GPU vertex carries no normal.
+5. **`drawnGroundStore` cannot be "decoupled" (rev 1 §8 Q2).** Its charts feed
+   the layer-edge overlay (`layerEdgeOverlay.ts:298-300`, lips) and river
+   surfaces (`riverRig.ts:692`, `capYOfBand`), and lips feed carve picking
+   (`world.ts:175`). The GPU path emits lip segments itself (§5.6) so no CPU
+   contour march remains on the hot path.
+6. **Gate 1 skipped things the CPU mesher does that production cannot skip:**
+   ceilings (README known difference 1), per-level layered inside tests
+   (difference 4), the unreceived-chunk seam pull-back
+   (`mirror.ts:82-101`), the shoreline level's no-refinement rule
+   (`contours.ts:171`), the chunk-wide level range for layered chunks
+   (`capEmission.ts:145-156, 470-491`). §5 ports each.
 
-Measured on the RTX 3090 with the owner's stack on the same GPU
-(`results-visible.json`): 15,622,203 vertices, 187.5 MB vertex bytes, draw p50
-0.69 ms, full-world emit 3.0 ms GPU, heaviest 3×3-chunk edit window 466,860
-vertices at 2.08 / 2.74 / 2.84 ms GPU (p50 / p95 / max), median window 115,635
-vertices at 0.44 / 0.70 / 1.10 ms. Startup count pass plus host prefix sum:
-695 ms wall (`countPassMs`).
+## 1. Facts this design stands on
 
-Missing for production (README "Known differences"): overhang undersides
-(`marchCeiling`), the over-budget fallback, per-level solid test on layered
-columns (difference 4), and any way to grow a chunk after an edit without
-re-counting the world.
-
-## 2. Contract
-
-1. **The mesh draws the shared drawn-ground function.** Vertex positions are the
-   function's own quantized coordinates (`DRAWN_GROUND_COORD_DENOM` = 1024 per
-   cell); parity against `drawnBandAt` is the repo gate
-   (`client/scripts/drawnGroundParity.mjs`), and the 157 exact-cell-centre
-   mismatches are the function's zero-area regions, exempt there and shared with
-   the CPU mesher (573 under the same pass).
-2. **An edit runs one emit dispatch per dirty chunk and nothing else.** No count
-   pass, no readback on the critical path, no host prefix sum. The only count
-   pass is at world load.
-3. **Consumers never read vertex buffers.** Movers, picking, rivers and the
-   brush preview query the drawn-ground function plus one per-chunk flag
-   (§6). The CPU no longer builds contour loops for rendering.
-4. **Memory and edit budgets are stated (§7, §8) and enforced by the allocator,
-   not by hope.**
-
-## 3. Vertex format: 8 bytes
-
-| word | bits | field | range / rule |
-|---|---|---|---|
-| 0 | 0–15 | `x` chunk-local, cell/1024 | 0 … 16·1024 = 16,384 (u16) |
-| 0 | 16–31 | `z` chunk-local, cell/1024 | same |
-| 1 | 0–15 | `y` height units × 4 (i16) | `MIN_HEIGHT`·4 … `MAX_HEIGHT`·4 = −6,144 … 4,096; the seabed cap sink and riser border (1/64 world unit = 1 height unit) are exact |
-| 1 | 16–23 | palette index (u8) | index into the bound `lut` (`palettes.top` / `.cliff`), replaces the literal rgba |
-| 1 | 24–31 | flags (u8) | bit 0 self-lit (`SELF_LIT`), bit 1 ceiling (winding hint for the drawn-ground/picking helpers, not used by the draw) |
-
-Why chunk-local: the gate's world-quantized u16 at 1/512 world unit
-(`positionScale` 511.96) only fits a 128-world-unit world; the server default is
-`DEFAULT_WORLD_SIZE` = 2,048 cells = 512 world units (`shared/src/constants.ts`).
-Chunk-local at the function's own denominator is exact at every world size and
-strictly finer than the gate's grid (1/1024 cell vs 1/128 cell). The chunk
-origin comes from a per-slot origin table indexed by
-`vertex_index >> log2(classVertices)` (slots are fixed-size within a class and
-`vertex_index` includes the indirect `firstVertex`), so no per-draw bind group
-or first-instance feature is needed (§5).
-
-Effect: 15.6 M vertices × 8 B = **125 MB** exact for Frostwick (from
-`vertices` in results.json), against 187.5 MB at 12 B. Draw time can only fall
-(vertex fetch is the draw's bandwidth term; triangles unchanged).
-
-## 4. Per-chunk capacity: slot classes, single-walk atomic allocation
-
-### 4.1 Slots
-
-Each chunk owns one slot in a class buffer. Classes are power-of-two vertex
-counts:
-
-| constant | value | reason |
-|---|---|---|
-| `SLOT_CLASS_MIN_VERTICES` | 2¹³ = 8,192 | the blocky fallback needs ≤ 7,680 (§6), so the smallest class always holds it |
-| `SLOT_CLASS_MAX_VERTICES` | 2¹⁸ = 262,144 | 2.5× the heaviest Frostwick chunk, *estimate* from 466,860 verts / 9 chunks in the heaviest window ≈ 52 k mean, ≤ ~105 k max (per-chunk counts were not dumped by the page; measure, §10) |
-| classes | 6 (2¹³ … 2¹⁸) | |
-
-One `GPUBuffer` per class, `slots × class × 8 B`, `STORAGE | VERTEX`. A chunk's
-slot is `(class, index)`. Class buffers grow by doubling their slot count
-(`copyBufferToBuffer`, off the stroke path — triggered at the first overflow
-into a full class, so at most once per class per session in practice;
-*unverified*, measure).
-
-There is no slack constant. The slack is the unused part of the power-of-two
-slot: 0–50 %, mean 25 % if counts are uniform in log space (*estimate*; §7
-carries the resulting memory figure and its verification).
-
-### 4.2 Emit is one walk with a chunk-local bump allocator
-
-Per chunk, one workgroup of 256 threads, one thread per cell square (the page
-uses four workgroups of 64; the change is so the allocator is workgroup-local).
-Each thread marches its square's levels and, per polygon or riser run, reserves
-`n` vertices with `atomicAdd` on a workgroup-shared counter, then writes them at
-`slotBase + reserved`. If `reserved + n > capacity` it zero-fills the part of
-its range that lies inside the slot (a zero vertex is a degenerate triangle)
-and keeps counting. After the workgroup barrier, thread 0 writes the chunk
-record:
-
-```
-struct ChunkRecord { vertexCount: u32, needed: u32, minY: i32, maxY: i32 }
-```
-
-`needed` is the exact count; `vertexCount` = `min(needed, capacity)`. On
-overflow the slot therefore holds every square that fit plus degenerate
-padding — never stale vertices from the previous emit — and the host's status
-readback (§4.3) sees `needed > capacity` and regrows. The count is exact and
-computed in the same walk that emits; nothing is re-counted.
-
-Vertex order within a slot is allocation order, so it differs run to run. That
-is not a contract: the draw is order-independent (opaque, depth-tested, no
-coplanar overlaps in a watertight terrace mesh), and verification hashes the
-sorted triangle set instead of the raw buffer. Terrain determinism
-(`docs/DESIGN.md`) is about heights and the function, which are untouched.
-
-**Rejected: two walks (count, workgroup prefix scan, emit) for a deterministic
-layout.** It doubles the marching cost, which is the whole emit cost: the
-heaviest window would go from 2.08 ms toward ~4 ms GPU (*estimate*), and the
-deterministic order buys nothing a sorted hash does not.
-
-**Rejected: exact count pass + host prefix sum per edit (the page's startup
-path).** 695 ms wall at world load; per-edit it would also move every later
-chunk's offset, i.e. re-emit the world.
-
-### 4.3 Overflow and growth
-
-The host reads the chunk records for the dirty chunks after each stroke step
-(`mapAsync` on a copy of ≤ 9 × 16 B; the gate measured the submit-to-completion
-round trip at ~3 ms wall, `edit.heaviest.wallMs.p50` 3.3 minus `gpuMs` 2.1).
-For a chunk with `needed > capacity`:
-
-1. `needed ≤ SLOT_CLASS_MAX_VERTICES`: allocate a slot in the smallest class
-   that fits, re-dispatch emit for that chunk only, free the old slot, update
-   the draw record (§5). For one round trip the chunk draws with the squares
-   that did not fit missing.
-2. `needed > SLOT_CLASS_MAX_VERTICES`: over budget → §6.
-
-Grow ahead so the overflow path is the exception, not the rule: when a stroke
-step leaves `needed > capacity × SLOT_GROW_AHEAD_FRACTION` (7/8), the host
-promotes the chunk to the next class and re-emits it there while the old slot
-keeps drawing; the swap is atomic from the draw's point of view (offsets array
-rewrite, §5). Overflow then needs a single stroke step to add more than an
-eighth of the slot, which on a 3×3 window at brush cadence is a class crossing
-from a large jump only (*unverified*; the gate's edit benchmark with per-step
-`needed` logging measures how often).
-
-Shrink only at idle: when a chunk's `needed` has been below half its class for
-`SLOT_SHRINK_IDLE_MS` (proposal: 2,000 ms — long enough that a stroke never
-thrashes across a class boundary; the value is a design choice to confirm with
-the owner, not a measurement), move it down one class. Never shrink during a
-stroke.
-
-Residual, stated: a stroke step that overflows a slot despite grow-ahead draws
-that chunk with missing squares for one readback round trip (~3 ms wall,
-desktop), once per crossing.
-
-### 4.4 World load
-
-Count-only dispatch for all chunks (mode `MODE_COUNT_ONLY` exists in the page,
-3 ms GPU for the world), readback of 1,024 records (16 KB), class assignment,
-then one emit dispatch for the world. This is the only count pass and the only
-host-side allocation sweep. *Estimate*: ≤ 20 ms wall end to end, against the
-shipped 938 ms single-threaded build.
-
-## 5. Draw: one indirect draw per chunk in a render bundle
-
-Slots are not contiguous, so the world is not one draw. Per chunk:
-`drawIndirect(args, chunk * 16)` with `firstVertex = slotBase`, `vertexCount`
-from the chunk record. In three 0.185 (`client/node_modules/three`, verified
-2026-09-10) this is one `Mesh` per class whose geometry has the class buffer as
-a `StorageBufferAttribute` and `geometry.setIndirect(args, offsets[])` with the
-offsets of that class's chunks — the WebGPU backend issues one `drawIndirect`
-per offset (`src/renderers/webgpu/WebGPUBackend.js:1845-1850`). The six meshes
-sit in a `BundleGroup` so the draws are recorded once and replayed per frame;
-the offsets array is rewritten only when a chunk changes class.
-
-Culling comes free: a 1,024-thread compute pass per frame tests each chunk's
-`(originXZ, minY, maxY)` box against the frustum and writes `vertexCount` or 0
-into the indirect args. Chunks off screen cost nothing; this is the draw-power
-lever for the laptop (gate 2) that a single world-sized draw cannot offer.
-
-**Rejected: single draw with degenerate-filled slack.** Fetches the slack every
-frame (~25 % of vertex bandwidth, *estimate*) and cannot cull.
-
-**Rejected: `multiDrawIndirect`.** Not core WebGPU
-(`chromium-experimental-multi-draw-indirect`); the bundle gives the same
-per-frame CPU cost without the dependency.
-
-### 5.8 Accepted divergences from the shipped CPU mesher
-
-Raised by the two adversarial reviews (2026-09-10) and kept as they are:
-
-- **Per-square fans instead of ear clipping.** A square clipped by one contour is
-  convex, so a fan is correct; only an inward bulge from isoline refinement makes
-  it concave, and the kernel already fans those from the centroid.
-- **`dropCollinear` over refined points only.** The CPU mesher also thins shared
-  edge crossings. Dropping them on the GPU would open ε-cracks between squares,
-  which have no shared assembly step to close them (R1-6).
-- **`SKIRT_PICK_INSET` is not applied.** The GPU riser quad uses
-  `emitSkirtQuad`'s vertex order without its pick inset.
-- **Work-budget blocky chunks are drawn at full resolution.** The GPU path has no
-  blocky fallback of its own; an over-budget chunk goes to the CPU mesher whole.
-
-## 6. Over-budget fallback: blocky, decided on the GPU
-
-The shipped mesher's three budgets (`CHUNK_TRIANGLE_BUDGET` 131,072,
-`CHUNK_TRIANGULATION_WORK_BUDGET` 4,194,304, `CHUNK_POLYGON_WORK_BUDGET` 512²,
-`capEmission.ts:57-63`) guard ear-clipping cost, which is quadratic in polygon
-size. The GPU emits per-square fans, so the quadratic term does not exist;
-the six Frostwick chunks the CPU dropped to blocky (`meta.json`
-`cpuFallbackChunks`) have 300–756 square-levels each, low by this world's
-standard (p50 439, max 2,458; computed from `expected.bin` cell-centre bands,
-2026-09-10), and the page draws them terraced.
-
-The only GPU budget is memory: `needed > SLOT_CLASS_MAX_VERTICES`. Then the
-emit dispatch itself switches the chunk to the blocky path in the same
-dispatch (all threads read the counter after the barrier; if over, the slot is
-rewritten blocky): per cell one cap quad at `blockyCellCapY` and up to four
-curtains where a neighbour is lower — ≤ 256 × (6 + 4 × 6) = 7,680 vertices,
-always fits, no round trip for the visual. The record carries a `blocky` bit.
-
-The drawn-ground store keeps exactly one thing the function cannot give: this
-per-chunk flag (`ChunkChart.plan.blocky` today,
-`client/src/terrain/drawnGround.ts:42`). It is fed from the same status
-readback as §4.3, so consumers switch to the blocky query one round trip after
-the draw does.
-
-Residual, stated: on an adversarial chunk, movers and picking query terraced
-ground for ~3 ms while the chunk already draws blocky. Only adversarial
-sculpting reaches this path (`docs/decisions/mesh-budgets.md`: legitimate
-chunks are far below the budget).
-
-**Rejected: a CPU-side predicate (Σ square-levels × a per-square-level vertex
-bound) so the flag is known before the emit.** The bound is loose (~96 verts per
-square-level against ~30–45 measured on Frostwick: 115,635 / (9 × 435) and
-466,860 / (9 × 1,249)), so it would blocky-ify a chunk-wide sheer wall that
-actually fits, and it is a second implementation of the counter that must be
-kept in lockstep. Exact-on-GPU plus a bounded stale window is the smaller
-contract.
-
-**Rejected: a "coarse" intermediate look (no isoline refinement) before
-blocky.** A third terrain look for a case that only adversarial input reaches.
-
-## 7. Memory budget
-
-Budget: `TERRAIN_RESIDENT_BUDGET_BYTES` = **207 MB** on the desktop — the
-shipped client's terrain vertex residency
-(`.claude/handoffs/terrain-renderer-options.md`, 2026-09-09). The laptop budget
-is gate 2's to set.
-
-Ledger, Frostwick 512², from results.json counts:
-
-| item | bytes |
+| fact | source |
 |---|---|
-| vertices, exact, 8 B | 125 MB |
-| vertices, slotted | **≈ 167 MB** (*estimate*: 125 / 0.75; verify from per-chunk counts, §10) |
-| heights (i32 per cell, as the page) | 1.0 MB |
-| span descriptors + span data | 1.1 MB |
-| chunk records, indirect args, origins | < 0.1 MB |
-| total | ≈ 169 MB (≤ 207) |
+| Arena = one `Mesh` per 8×8 chunks, non-indexed, attributes `position` f32×3, `normal` i8×4 (normalized), `color` u8×4 (normalized) | `terrainMeshes.ts:63`, `terrainMaterial.ts:56-65`, `capEmission.ts:65-69` |
+| `spliceChunk` decides slot capacity from `vertexCount`, first build zero slack, later builds `SLOT_SLACK_FACTOR = 1.25` | `terrainMeshes.ts:69-72, 433-515` |
+| Byte movement inside the arena: `positions.set`, `copyWithin`, `fill(0)`, `addUpdateRange` + `needsUpdate` | `terrainMeshes.ts:290-296, 353-369, 497-510` |
+| three r185 WebGPU: an attribute's GPU buffer lives at `backend.get(attribute).buffer`; `createAttribute` only allocates when that slot is empty; `updateAttribute` uploads from `attribute.array` only when `attribute.version` moves; `destroyAttribute` destroys the buffer on geometry dispose | `WebGPUAttributeUtils.js:69-180, 187-275, 396-405`, `Attributes.js:69-113` |
+| three draws `min(drawRange, geometry.attributes.position.count)` vertices; only attributes the node graph references are bound; `BufferAttribute.count` is a plain field | `RenderObject.js:513-560, 590-660`, `BufferAttribute.js:89` |
+| Vertex formats derive from the array type and `normalized`; `Int16Array` ×4 normalized → `snorm16x4`, `Uint8Array` ×4 normalized → `unorm8x4`; non-normalized 16-bit is rewritten to 32-bit (unusable for a packed layout) | `WebGPUAttributeUtils.js:12-38, 84-107, 296-300, _getVertexFormat` |
+| An attribute wider than the shader input is fine: the arena already binds a ×4 normal to `attribute('normal','vec3')` | shipped today |
+| `positionLocal` is a varying of `positionGeometry = attribute('position','vec3')`; `material.positionNode` is assigned over it | `Position.js:33-45`, `NodeMaterial.js:802-808` |
+| `renderer.backend.device` is the `GPUDevice`; `backend.isWebGPUBackend` / `isWebGLBackend` flags | `WebGPUBackend.js:88, 292`, `webglInstanceUpload.ts:14-17` |
+| No WebGPU types in TS 7.0.2's lib; `@webgpu/types` is not installed; `@types/three` references `GPUDevice` under `skipLibCheck` | `tsconfig.base.json`, pnpm store listing |
+| Picking never raycasts the terrain mesh | `docs/decisions/picking.md` (2026-08-21), `world.ts:pickCell` |
+| `chunksDirtiedByCell` dirties every chunk whose lattice reads the cell, including the owner | `mirror.ts:103-121` |
+| A chunk's lattice is 17×17 samples; the 17th row/column belongs to the neighbour | `contours.ts:12, 63-75` |
+| Layered columns: `columnSampleAtBand`, `columnCoversBand`, `spanLowestBandHeight`, `spanUndersideHeight` | `shared/src/columns.ts:365-380, 483-498` |
+| Owner rulings: both renderer backends and both meshers stay supported; band parity passes at ≤ 0.5 % mismatched non-exempt samples | handoff `..._c_webgpu-two-mesher-tracks.md`, #465 |
+| Desktop GPU mesh: 5,207,401 tris, 187.5 MB at 12 B/vertex; CPU mesh 3,917,911 tris | `results-visible.json` |
+| Desktop edit: heaviest 3×3 window 466,860 verts, 2.08 ms GPU p50 → 4.5 ns/vertex; median 115,635 verts, 0.445 ms → 3.8 ns/vertex | `results-visible.json` `/sources/gpu/edit` |
+| Client stroke today (CPU worker path, desktop): p50 7.2 / p95 10.5 / p99 14.1 / max 45 ms; load 7.2 s to queue empty | baseline SUMMARY.md §0-1 |
 
-Enforcement: a class growth that would push the slotted total over the budget is
-refused; the requesting chunk goes blocky instead (§6) and the refusal is
-logged with the chunk index. This is the only path by which memory can fail,
-and it fails to a drawn chunk, not a hole.
+## 2. Architecture in one paragraph
 
-Worlds larger than 512²: the 2,048-cell server default is 16× the cells; at the
-same relief density that is ≈ 2 GB of vertices (*estimate*), outside any budget.
-The slot allocator already makes "not resident" a chunk state (no slot → not
-drawn, not counted), so a residency window (slots only for chunks within
-`RESIDENT_RADIUS_CHUNKS` of the camera target; option 3's idea) is an allocation
-policy on top of this design, not a new mechanism. **Not designed here**:
-decision yes/no deferred until the owner picks the shipped world size; the
-gate world is 512² and the budget above is for it.
+The terrain arena keeps its slot, hole, slack, compaction and scheduling logic
+unchanged, but moves every byte operation behind an `ArenaStore` contract with
+two implementations: the existing CPU typed-array store, and a GPU store whose
+super-mesh buffers are `GPUBuffer`s injected into three.js attributes. A
+`ChunkBuildSource` for WebGPU runs gate 1's compute mesher, extended to full
+CPU parity, in two passes per batch of dirty chunks: a count pass whose
+per-chunk totals come back asynchronously, and an emit pass that writes
+directly into the arena slot the store chose. Nothing about vertices crosses
+the CPU. Lips (layer-edge overlay, carve picking) are appended by the count pass
+and read back with the counts. Chunks the GPU cannot take (span-page or
+triangle budget) go through the existing CPU worker source and are written
+into the GPU store by a CPU upload of the packed format. Machines without a
+WebGPU adapter run today's CPU path unchanged.
 
-## 8. Edit budget
+## 3. Arena storage contract
 
-`STROKE_EMIT_BUDGET_MS` = **3 ms GPU per stroke step** for the dirty window.
+### 3.1 `ArenaStore` (new file `client/src/render/arenaStore.ts`)
 
-Basis: heaviest legitimate 3×3 window measured 2.08 / 2.74 / 2.84 ms
-(p50 / p95 / max) emit-only with 12 B writes and no ceilings. Production
-changes: single-walk atomics (same marching, one atomic per polygon or riser
-run — *estimate* ≤ +10 %), 8 B writes (−33 % write bandwidth), ceilings only in
-layered chunks (§9). The budget holds the measured max with margin; it is
-verified by re-running the gate's edit benchmark against the production
-kernel, same window, same iterations.
+```ts
+export type ArenaFrame = 'world' | 'superLocal';
 
-Frame interplay: the GPU queue is shared with rendering (app GPU p50 2.57 ms,
-options handoff). Worst case 3 + 2.6 ≈ 5.6 ms leaves the 7 ms line
-(`docs/DESIGN.md` ≥ 140 fps) intact on the heaviest window.
+export interface ArenaSlotBounds {
+  minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number;
+}
 
-Dirty rule: a chunk is dirty for a frame iff a cell in its 17×17 footprint
-changed in the height or span upload since its last emit. One emit per dirty
-chunk per frame; predicted and confirmed edits that upload identical bytes do
-not dirty twice. This is the "dirty-footprint coalescing" decision the owner
-still holds (upload-stall summary §2) — the design assumes it lands; if it does
-not, the budget is per emit and a stroke step may cost two.
+export interface ArenaSuperBuffers {
+  /** three attributes the geometry binds; `position` always present. */
+  readonly geometry: BufferGeometry;
+  readonly positionAttribute: BufferAttribute;
+  readonly colorAttribute: BufferAttribute;
+  readonly normalAttribute: BufferAttribute | null;
+  readonly triangleCapacity: number;
+}
 
-Upload: the gate uploaded 100,352 B per 3×3 window (`edit.heaviest.uploadBytes`,
-whole rows). Production uploads the changed cells' rows within the footprint
-only (`writeBuffer` per row, ≤ 48 rows × 192 B ≈ 9 KB; *estimate*).
+export interface ArenaStore {
+  readonly frame: ArenaFrame;
+  /** Cost model for compaction budgets: ms per vertex moved, plus a per-move floor. */
+  readonly transferMsPerVertex: number;
+  readonly moveOverheadMs: number;
+  readonly material: MeshStandardNodeMaterial;
+  createSuper(superIdx: number, originX: number, originZ: number, triangleCapacity: number): ArenaSuperBuffers;
+  grow(superIdx: number, triangleCapacity: number, liveEnd: number): ArenaSuperBuffers;
+  /** Writes an answer at `vertexOffset`; returns the slot bounds in `frame`. */
+  write(superIdx: number, vertexOffset: number, answer: ChunkAnswer): ArenaSlotBounds;
+  copyWithin(superIdx: number, toVertex: number, fromVertex: number, vertexCount: number): void;
+  zero(superIdx: number, startVertex: number, vertexCount: number): void;
+  /** The arena's `addRange` (clamped, skipped after a reallocation) lands here. CPU: update ranges + needsUpdate. GPU: no-op. */
+  markRange(superIdx: number, startVertex: number, vertexCount: number): void;
+  /** Estimated GPU-time cost of `write(answer)`, charged by `drain` against `frameWriteBudgetMs`. CPU store: 0 / Infinity. */
+  writeCostMs(answer: ChunkAnswer): number;
+  readonly frameWriteBudgetMs: number;
+  /** Called by the arena at the end of its frame callback and of `flush()`; GPU store submits its encoder. */
+  commit(): void;
+  dispose(superIdx: number): void;
+  disposeAll(): void;
+  /** Frees the material; called by whoever created the store. */
+  destroy(): void;
+}
+```
 
-## 9. Overhang undersides and layered columns
+The arena also calls `releaseAnswer(answer)` (`answer.kind === 'gpu' &&
+answer.gpu.release()`) on every answer it discards: generation mismatch or
+unreceived chunk in `receive()` (`terrainMeshes.ts:548-549`), `ready` answers
+dropped by `clear()`, and on `dispose()`. The store releases after `write`.
 
-Layered chunks (any cell with `spanDesc != 0`; Frostwick has 1,134 layered
-cells of 262,144) take the shipped per-level solid test for caps:
-inside(k) ⇔ the column has a span covering band k (`sampleRenderBandSolid`
-semantics), instead of the page's `drawnBandAt(cell) >= k` (README difference
-4). Non-layered chunks keep the cheaper test; the results are identical there
-by construction (one span `[BEDROCK_FLOOR, h)`).
+Rules:
+- `terrainMeshes.ts` never touches typed arrays or `needsUpdate` again; every
+  such line moves into `createCpuArenaStore` (same file `arenaStore.ts`),
+  byte-for-byte the code at `terrainMeshes.ts:189-227, 264-296, 353-369,
+  497-510` so the existing `client/test/terrainMeshes.test.ts` (which reads
+  the three attributes and their update ranges through `gpuShadow`) keeps
+  passing with the CPU store.
+- The CPU store's `transferMsPerVertex = ARENA_TRANSFER_MS_PER_VERTEX`
+  (19e-6, `terrainMeshes.ts:38`) and `moveOverheadMs = 0`, unchanged.
+- `frame` decides what `updateBounds` writes: `superLocal` stores set
+  `mesh.position` to the super-mesh centre at `createSuper` and keep bounds
+  local; `world` stores leave `mesh.position` at the origin.
+- `commit()` is called once at the end of the arena's frame callback (after
+  `drain`, `compact`, `settle`) and at the end of `flush()`, so one frame's
+  emits, copies and clears go out in one `queue.submit`. The arena keeps its
+  own `reallocatedThisPass`/`addRange` logic (`terrainMeshes.ts:280-288`) and
+  forwards accepted ranges to `markRange`.
+- `drain` charges `store.writeCostMs(answer)` per splice against
+  `store.frameWriteBudgetMs` in addition to the wall-clock splice budget; when
+  the GPU budget is spent the remaining `ready` answers wait for the next frame.
+- The store owns its material for its whole life (`destroy()`), across world
+  resets (`disposeAll()` per reset); `createTerrainMeshes` destroys the store
+  only when it created the default one (today's `ownsMaterial` rule,
+  `terrainMeshes.ts:172-173, 814`). `warmTerrainMaterial` (`world.ts:145`)
+  takes the layout so the hidden warm-up mesh carries the same attribute set.
 
-Ceilings, per level k in a layered chunk whose threshold is `k · BAND_HEIGHT`
-(the shoreline level is excluded, `capEmission.ts:587`): field per cell =
-solid(k) ∧ ¬solid(k−1); marched with `CEILING_EDGE_CROSSING` 0.5 on the binary
-field, no isoline refinement (as `marchCeiling`, `capEmission.ts:490-510`);
-emitted at `undersideY` = (k−1) · `BAND_WORLD_HEIGHT` (the lowest level uses its
-own `capY`), colour `palettes.cliff[ceilingIndex]` with the seabed rule at
-`capEmission.ts:161-165`, winding reversed. Lighting needs no normal
-attribute: the derivative normal is the face normal; the TSL ground material
-(#446) takes it from `positionView` derivatives, so undersides light from
-below as the shipped mesh does.
+### 3.2 `createTerrainMeshes` signature
 
-Cost: bounded by the number of layered chunks × their level count; zero for
-non-layered chunks. Frostwick: *unverified* count of layered chunks — dump it
-with the per-chunk counts (§10).
+```ts
+createTerrainMeshes(group, mirror, scheduling?, buildSource = createDirectChunkBuildSource(),
+                    store: ArenaStore = createCpuArenaStore())
+```
+`createCpuArenaStore(material = createTerrainMaterial('float32'))`.
+`sharedMaterial` (today's 5th parameter, `terrainMeshes.ts:167`) moves into
+the store: the material belongs to the vertex layout. `world.ts:229-235`
+passes the store it built for the chosen mesher.
 
-Parity: the gate's band pass is top-down and cannot see undersides. Add a
-ceiling parity pass to the page (same lattice, sample "is there a ceiling at
-band k above this sample" from the span list) before the production kernel is
-accepted.
+### 3.3 The GPU store (`client/src/render/gpuMesher/gpuArenaStore.ts`)
 
-## 10. Measurements owed before implementation
+Per super-mesh: two `GPUBuffer`s, usage `VERTEX | STORAGE | COPY_SRC |
+COPY_DST`:
 
-1. Per-chunk `needed` for all 1,024 Frostwick chunks (add a dump of the page's
-   `squareBase` differences). Sets `SLOT_CLASS_MAX_VERTICES` from data and
-   turns the 167 MB slotted figure from an estimate into a number.
-2. Number of layered chunks in Frostwick and in the owner's other worlds.
-3. Gate 2 (#447): laptop draw and emit power; sets the laptop memory and edit
-   budgets and decides whether the frustum cull pass is day-one.
-4. Tracing report on the stroke tail (worker-mesher agent): gate 4 precondition.
+| buffer | per vertex | three attribute | WGSL view |
+|---|---|---|---|
+| positions | 8 B: `i16 x, i16 y, i16 z, i16 spare` | `BufferAttribute(new Int16Array(0), 4, true)` → `snorm16x4` | `array<u32>` 2 words/vertex: `x \| y<<16`, `z \| spare<<16` |
+| colours | 4 B: `u8 r,g,b, selfLit` | `BufferAttribute(new Uint8Array(0), 4, true)` → `unorm8x4` | `array<u32>` 1 word/vertex, `pack4x8unorm` |
 
-## 11. Dependencies on the client
+12 B/vertex. No normal attribute (§0 item 4).
 
-- The drawn-ground store loses `FlatCapPlan`, level polygons, `topLevel` and
-  lips as inputs; `loopsAt` / `nearestOnContour` on `DrawnGround` have no
-  consumer outside `client/src/terrain/drawnGround.ts` today (grep 2026-09-10:
-  only `riverRig.ts:696` uses `capYOfBand`), and `capYAt` / `bandAt` /
-  `capYOfBand` / `isDrawnAt` are answerable from the function plus the blocky
-  flag. If a consumer for loops appears, it marches the function on the CPU on
-  demand for that chunk; the mesher no longer produces loops.
-- The client must be on three's WebGPU renderer: the emit kernel stays raw WGSL
-  (`wgslFn` compute, the gate's code), the class buffers are
-  `StorageBufferAttribute`s, draws go through `setIndirect` and `BundleGroup`,
-  and the ground material decodes the 8-byte vertex in its `positionNode`
-  (#446 defines that material). That is #446's migration.
-- Timestamp queries (owner's adapter has them; gate 2 tells for the laptop)
-  are wanted for the edit budget check in the perf probe, not required.
+Injection: after constructing each attribute, `backend.get(attribute).buffer =
+gpuBuffer` and `attribute.count = triangleCapacity * 3`; the backing array
+stays empty so no CPU shadow exists. `createAttribute` then finds the buffer
+and allocates nothing (`WebGPUAttributeUtils.js:76-78`); `needsUpdate` is never
+set so `updateAttribute` never runs; geometry dispose destroys the buffer
+through three's own `destroyAttribute`, which is why `grow` copies old → new
+**before** disposing the old geometry.
 
-## 12. Open owner decisions this design assumes
+Guard (belt and braces): at the first `commit()` after `createSuper`, the store
+asserts `backend.get(attribute).buffer === gpuBuffer` for both attributes; on
+mismatch it throws `GpuArenaInjectionError`, which `world.ts` catches once at
+mesher construction to fall back to the CPU store (§9.1). This pins the
+private-API dependency to a single checked line.
 
-1. Dirty-footprint coalescing lands (§8). Otherwise state the budget per emit.
-2. `SLOT_SHRINK_IDLE_MS` = 2,000 ms (§4.3) — design choice, confirm.
-3. World size for the shipped product (§7) — decides whether the residency
-   window is in scope.
+Operations:
+- `write(answer: ChunkGpuAnswer)`: records `answer.gpu.emit(encoder, target,
+  vertexOffset)` (§6.4) into the frame encoder, then `answer.gpu.release()`;
+  bounds = chunk footprint in the local frame × `[answer.gpu.minY,
+  answer.gpu.maxY]` where the source sets `minY = capYOfBand(chunkLowestBand)`,
+  `maxY = capYOfBand(highestBand)` (§5.2): every cap, riser bottom, rim and
+  ceiling lies in that range, so the box is at most one band looser than the
+  CPU's measured bounds.
+- `write(answer: ChunkJobAnswer)` (CPU fallback chunk): packs positions →
+  local snorm16 units and colours → u32 on the CPU (`packCpuAnswer`, ≤
+  `FALLBACK_MAX_TRIANGLES` × 3 vertices for blocky chunks, a full chunk
+  otherwise), `queue.writeBuffer` both ranges; bounds from `answer.bounds`
+  shifted into the local frame.
+- `copyWithin`: WebGPU forbids overlapping `copyBufferToBuffer` within one
+  buffer, so moves bounce through a scratch buffer (`GPU_ARENA_SCRATCH`, grown
+  to the largest run moved): two copies per move.
+- `zero`: `encoder.clearBuffer(buffer, byteOffset, byteLength)` on both buffers.
+- `grow`: create new buffers at the doubled capacity, `copyBufferToBuffer` the
+  first `liveEnd` vertices, build new attributes + geometry, inject, return;
+  the arena disposes the previous geometry (`bindGeometry`, `terrainMeshes.ts:195-197`).
+- `transferMsPerVertex = GPU_ARENA_COPY_MS_PER_VERTEX = 1e-6` (12 B at a
+  conservative 12 GB/s = 1 ns; measured desktop/laptop bandwidth is ≥ 8× that
+  **[estimate]**), `moveOverheadMs = GPU_ARENA_MOVE_OVERHEAD_MS = 0.005`
+  (two copy commands + JS; **[estimate]**, revisit with §11 numbers).
+
+Position frame: `superLocal`. Local origin = super-mesh centre
+`(originX + SUPER_HALF_EXTENT, 0, originZ + SUPER_HALF_EXTENT)`,
+`SUPER_HALF_EXTENT = SUPER_MESH_SPAN_CHUNKS * CHUNK_SIZE * CELL_WORLD_SIZE / 2`
+= 16 world units. Quantization:
+
+| axis | unit | constant | range used |
+|---|---|---|---|
+| x, z | 1/1024 wu = 1/256 cell | `POSITION_XZ_UNITS_PER_WORLD_UNIT = 1024` | ±16384 of ±32767 |
+| y | 1/64 wu = `BAND_WORLD_HEIGHT / 16` | `POSITION_Y_UNITS_PER_WORLD_UNIT = 64` | [-1536, 1024] |
+
+Why these: every y the mesher emits is a multiple of `BAND_WORLD_HEIGHT/16`
+(caps `k·BWH`, seabed sink `1/64`, rim `capY − 1/64`, shore 0), so y is exact;
+x/z at 1/256 cell keeps the same world point rounding identically in two
+neighbouring super-meshes because chunk origins are whole multiples of the
+step; 1/2048 wu would need 65537 values across the 32 wu extent and does not
+fit i16. 1/256 cell against the contour's 1/1024-cell corner clearance means
+the thinnest tread collapses to a zero-width sliver, which is 0.07 px at the
+closest camera (`CAMERA_CLOSEST_VIEW_WORLD_UNITS = 10`, 55° FOV, 1200 px →
+0.0035 wu/px).
+
+Material (`createTerrainMaterial('snorm16')`): `compose(material, 'position',
+() => positionGeometry.mul(SNORM16_MAX).round().mul(vec3(1/1024, 1/64, 1/1024)))`
+with `SNORM16_MAX = 32767`; `round` recovers the integer exactly since the
+hardware returns `n / 32767` in f32. Colour, self-lit alpha, ground shade and
+reveal clip compose exactly as today (`terrainMaterial.ts:30-46`) because the
+`color` attribute is the same `unorm8x4`.
+
+## 4. Build-source contract
+
+### 4.1 `chunkBuildSource.ts` changes
+
+```ts
+export interface ChunkBuildSource {
+  build(mirror, chunkIdx, generation): ChunkAnswer | null | Promise<ChunkAnswer | null>;
+  readonly concurrency: number;
+  /** Answers held (in flight + ready) before the arena stops submitting. */
+  readonly backlogCap: number;
+  dispose(): void;
+}
+export type ChunkAnswer = ChunkJobAnswer | ChunkGpuAnswer;
+```
+Existing sources set `backlogCap = CHUNK_ANSWER_BACKLOG_CAP` (8, `terrainMeshes.ts:36`,
+the constant moves to `chunkBuildSource.ts`). The arena reads
+`buildSource.backlogCap` at `terrainMeshes.ts:607`.
+
+### 4.2 `ChunkGpuAnswer` (`client/src/render/gpuMesher/gpuChunkAnswer.ts`)
+
+```ts
+export interface GpuEmitTarget {
+  readonly positions: GPUBuffer; readonly colors: GPUBuffer;
+  readonly localOriginX: number; readonly localOriginZ: number; // world units, super-mesh centre
+}
+export interface GpuEmitHandle {
+  readonly minY: number; readonly maxY: number;                 // world units, from the level range
+  emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): void;
+  /** Returns the batch window entry to the pool. Idempotent; emit() releases implicitly. */
+  release(): void;
+}
+export interface ChunkGpuAnswer {
+  readonly kind: 'gpu';
+  readonly generation: number; readonly chunkIdx: number;
+  readonly vertexCount: number;
+  readonly plan: FlatCapPlan;          // levels only, no polygons (§5.6)
+  readonly topLevel: Int8Array;        // empty; `topLevelIndexAt` has no consumer
+  readonly lips: ChunkLipSegments;     // from the count-pass readback
+  readonly gpu: GpuEmitHandle;
+}
+```
+`ChunkJobAnswer` gains `readonly kind: 'cpu'` (set in `buildChunkAnswer`,
+`chunkJob.ts:226`). `spliceAnswer` (`terrainMeshes.ts:561-581`) is unchanged
+apart from the type: it publishes `plan/topLevel/lips` and calls
+`spliceChunk`, which calls `store.write`.
+
+### 4.3 Batching
+
+`build()` is called once per chunk inside `drain()`'s submit loop
+(`terrainMeshes.ts:605-613`). The GPU source appends to `pendingBatch` and
+schedules `queueMicrotask(flushBatch)` once; all `build()` calls of one drain
+therefore share one count dispatch. `concurrency = backlogCap =
+GPU_BATCH_CHUNKS = 64`: at load this is 16 batches for a 512² world; a 3×3
+stroke window (9 chunks) is one batch. Justification for 64: count-pass GPU
+cost is ~4.5 ns/vertex (§1) and the world's mean chunk is ~15,000 vertices
+(15.6 M / 1,024), so a full batch counts in ~4.5 ms GPU — one frame of GPU
+time at load, where the CPU path already hitches (max splice 6.2 ms).
+
+## 5. The kernel: gate 1 plus parity
+
+Source: gate 1's `MESH_WGSL` (`mesher.html:158-622`) transliterated into
+`client/src/render/gpuMesher/mesherWgsl.ts` as a template over the shared
+constants (`BAND_HEIGHT`, `DRAWN_GROUND_BAND_BIAS`, `CELL_WORLD_SIZE`,
+`BAND_WORLD_HEIGHT`, `SEABED_CAP_SINK`, `SEABED_RISER_BORDER_WORLD_HEIGHT`,
+`SHEER_RISE_HEIGHT_UNITS_PER_CELL`, `SHEER_WALL_SPREAD_CELLS`,
+`ISOLINE_SAMPLES_PER_CELL`, `DRAWN_GROUND_COORD_DENOM`, `BEDROCK_FLOOR`,
+`OPEN_COLUMN_SAMPLE`, `SEA_LEVEL`, `CHUNK_SIZE`, `SUPER_MESH_SPAN_CHUNKS`).
+`bench/webgpu-mesher/` stays untouched. The marching table
+(`marching.mjs`) is ported to `marchingTable.ts`; the band LUTs
+(`dump.mjs:167-190`) to `bandLut.ts`, built from `TERRAIN_PALETTE`,
+`CLIFF_PALETTE`, `bandPaletteIndex`, `isSeabedPaletteIndex`,
+`isEmissivePaletteIndex` (`bandColors.ts`).
+
+Changes from gate 1, each one a parity item:
+
+### 5.1 Inputs: one resolved lattice per chunk, per batch
+
+The kernel reads no world-sized buffer. For every chunk in a batch the CPU
+extracts the 17×17 lattice the CPU mesher would march — `sampleRenderHeight`
+and the resolved cell's spans through `renderSampleCell` (`mirror.ts:57-101`,
+the unreceived-neighbour seam pull-back included) — plus the chunk-level
+values `makeLevels`/`planChunkCaps` derive (`capEmission.ts:145-156,
+470-491, 535-546`): `layered`, `floorBand`, `chunkLowestBand`, `highestBand`.
+Those are computed with the CPU's own functions on the main thread (289
+samples, ≈ 20 µs **[estimate]**) and uploaded into a **window entry**:
+
+| region (per entry) | size | content |
+|---|---|---|
+| `lattice` | 289 × i32 | resolved sample heights |
+| `latticeDesc` | 289 × u32 | `spanCount << 16 \| pairOffset` within the entry's pairs; 0 = single implicit span `[BEDROCK_FLOOR, height)` |
+| `spanPairs` | `WINDOW_SPAN_PAIRS = 2048` × 2 i32 | `(floor, ceiling)` of layered samples; a window needing more is over budget (§9.2) |
+| `entry` header | 16 × i32 | `chunkIdx, layered, chunkLowestBand, highestBand, originXCells, originZCells, localOriginXUnits, localOriginZUnits, vertexBase, …` |
+| `squareBase` | 256 × u32 | count pass writes per-square vertex counts; emit pass reads bases |
+| `chunkStats` | 4 × atomic u32 | `vertexCount, lipCount` |
+
+Entries live in a pool of `GPU_WINDOW_POOL = 2 × GPU_BATCH_CHUNKS` (128,
+≈ 2.6 MB) and are held from the count dispatch until `release()`, so the emit
+pass reads exactly the inputs the count pass counted, whatever later batches
+upload. This closes the race where a chunk dirtied again between count and
+emit would be re-marched on newer heights against stale per-square counts
+(a slot overrun). Belt and braces in the kernel regardless: the emit pass
+never writes past a square's counted range and zero-fills any unused
+remainder, so a mismatch can only ever produce degenerate triangles.
+
+Bindings (group 0): `0 lattice`, `1 latticeDesc`, `2 spanPairs`, `3 entries`,
+`4 squareBase`, `5 chunkStats`, `6 marchTable`, `7 lut`, `8 params`
+(`mode`), `9 lips` (append: `entry, band, ax, az, bx, bz`), `10 lipCounter`.
+Group 1 (emit only): `positions`, `colors` of the destination super-mesh.
+Gate 1's `clampCell`, `globalLayered`, `chunkLayered` atomics and
+`BORDER_EPSILON` are gone: the CPU resolved the lattice, and the world's far
+edge needs no nudge in a local frame with i16 headroom (the nudge served the
+bench page's world-frame clamp and its band pass).
+
+### 5.2 Level range and inside test (README differences 4 + chunk range)
+
+Chunk-level values come from the entry header (§5.1): `layered =
+buriedFloorBand(...) !== null`, `chunkLowestBand = min(lowest sample band,
+floorBand)` when layered else the lowest sample band, `highestBand` — exactly
+`makeLevels`' `lowestBand`/`highestBand` (`capEmission.ts:145-153`), computed
+by calling those same CPU functions.
+
+Per square: `lo = layered ? chunkLowestBand : min corner bands`,
+`hi = max corner bands`. Levels `lo..hi`, shore after level 0. Inside test
+for every level: `levelHeight(corner, level) + bias >= threshold` where
+`levelHeight` is `cellHeight` for unlayered chunks and `columnSampleAtBand`
+for layered ones, `bias = BAND_BIAS` (0 for shore) — the CPU's
+`marchLevel` inside test (`contours.ts:158-159`) on the CPU's per-level field
+(`capEmission.ts:539-544, 557`). Gate 1's `bands[c] >= level` is removed;
+`drawnBandAtCell` is no longer needed.
+
+Why the square can keep `lo = min corner band` when unlayered: every level
+below a square's minimum corner band covers the square entirely and the CPU
+emits that full cap too; both meshers draw it hidden under the higher cap,
+with no risers since a fully-inside square has no contour (README "What the
+mesher does"). Layered chunks need the chunk-wide floor because a lower
+span's cap re-enters through `columnSampleAtBand`.
+
+### 5.3 Shoreline level
+
+`buildPolyline` skips isoline refinement when `level == SHORE_LEVEL`
+(`contours.ts:171` returns before tracing when `crossingOverride !== null`).
+Gate 1 refined the shore contour — a visible deviation from the CPU's
+midpoint shoreline that the pixel diff paid for.
+
+### 5.4 Crossings in canonical direction
+
+Gate 1 computes each square's crossing from its own traversal direction
+(`mesher.html:521-534`); the neighbour computes the same edge reversed, so
+`mix(a,b,t)` and `mix(b,a,1-t)` can differ in the last f32 bit and round to
+different quantization steps. Production computes every crossing from the
+lower-index corner of the edge (north→south, west→east), identically in both
+squares, so shared crossings are bit-identical before quantization.
+Watertight by construction, not by luck.
+
+### 5.5 Ceilings (`marchCeiling`, `capEmission.ts:493-513, 589-602, 669-676`)
+
+Only when `chunkLayered` and only at levels with `threshold == band ·
+BAND_HEIGHT` (never shore). Ceiling field per corner:
+`coversBand(k) && !coversBand(k-1)` (port of `columnCoversBand`,
+`columns.ts:483-485`) as 1/0; marched with `CEILING_EDGE_CROSSING = 0.5`,
+no refinement, bias 0, saddles read from the mean of the 0/1 samples (always
+split, `contours.ts:256-272` with samples in {0,1}). Polygon emitted at
+`undersideY = k == chunkLowestBand ? capY(k) : capY(k-1)`, reversed winding
+(`emitCeilingTriangle`, `capEmission.ts:274-285`), no risers, colour
+`cliff[ceilingIndex]` with `ceilingIndex = isSeabed(undersideIndex) ?
+undersideIndex : paletteIndex`, `undersideIndex = bandPaletteIndex((k ==
+chunkLowestBand ? k : k-1) · BAND_HEIGHT)`, self-lit `selfLitFor(ceilingIndex)`
+(`capEmission.ts:164-168, 181-183`). LUT gains a `ceiling` table indexed by
+`(band, isLowest)`.
+
+Level range for ceilings: the same `lo..hi` as §5.2 with `lo =
+chunkLowestBand`; a level whose four ceiling corners are all 0 costs four span
+walks and nothing else. `isLowest` for the LUT is `k == chunkLowestBand`.
+
+### 5.6 Lips
+
+In the count pass (`mode == COUNT`), every riser sub-segment of a non-shore
+level (`lineIsContour[v]` edges, `mesher.html:498-501`) appends
+`{slot, band, ax, az, bx, bz}` to `lips` via `atomicAdd(&lipCounter, 1)`; the
+CPU regroups per chunk and band and sorts within a band by `(ax, az, bx, bz)`
+so `ChunkLipSegments` is deterministic. This is `emitLipSegments`
+(`capPlanFlat.ts:318-361`): every loop edge that is not a seam segment, at
+`y = band · BAND_HEIGHT · HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS`. The
+GPU's contour edges are never seam segments (a seam edge has at least one
+corner endpoint). Capacity: `LIP_APPEND_CAPACITY = 262_144` segments
+(6.3 MB); if `lipCounter` exceeds it the batch is re-counted after doubling
+the buffer (rare: the heaviest desktop 3×3 window has 466,860 vertices, at
+most one lip per riser quad → ≤ 78 k).
+
+`plan` for a GPU answer = `flattenCapPlan` of the level list only
+(`levelThreshold/SampleBand/CapY` from `chunkLowestBand..highestBand` with
+the shore level, known before dispatch from the entry header; polygon arrays
+empty). `capYOfBand` (`drawnGround.ts:721-730`) then answers exactly
+as today, including the shore level at band 0.
+
+### 5.7 Positions
+
+`writeVertex` quantizes into the super-mesh local frame (§3.3):
+`units = round((world - localOrigin) · 1024)` for x/z, `round(y · 64)` for y,
+clamped to i16, packed two per word. No far-edge nudge (§5.1).
+
+### 5.8 What stays as gate 1, and accepted divergences from the CPU mesher
+
+Isoline port (`ISOLINE_FNS`, proven bit-exact by 4,096 cases), crossing
+fraction, saddle rule, refinement and `dropCollinear`, convex/centroid fan,
+riser and rim quads, shore level slotting, count-then-emit with per-square
+bases, 64-thread workgroups × `WORKGROUPS_PER_CHUNK = 4`, lattice in
+workgroup memory. `SKIRT_PICK_INSET` (`capEmission.ts:49`) is not applied:
+its purpose was mesh raycast picking, which no longer exists (§1).
+
+Accepted divergences, raised by the two adversarial reviews (2026-09-10/11)
+and kept deliberately:
+
+- **Per-square fans instead of ear clipping.** A square clipped by one contour
+  is convex, so a fan is correct; an inward bulge from isoline refinement is
+  fanned from the centroid. Same surface, more triangles (§8).
+- **`dropCollinear` over refined points only.** The CPU also thins shared edge
+  crossings from the assembled loop. Dropping a crossing on the GPU would open
+  an ε-crack between squares, which have no shared assembly step to close it.
+- **Work-budget blocky chunks drawn at full resolution.** The CPU's
+  triangulation work budgets have no GPU analogue; only the triangle budget
+  hands a chunk to the CPU path (§9.2).
+- **Refined points on a square edge are skipped** (`fixedUnits` 0 or
+  `COORD_DENOM`), a strict subset of `pushIsoline`'s chunk-rect filter.
+
+## 6. The GPU build source (`gpuChunkBuildSource.ts`)
+
+### 6.1 Construction
+
+```ts
+createGpuChunkBuildSource(renderer: Renderer, store: GpuArenaStore, fallback: ChunkBuildSource): ChunkBuildSource | null
+```
+Returns `null` unless `renderer.backend.isWebGPUBackend === true`. Compiles
+the module once; `getCompilationInfo()` errors throw at construction (so
+`world.ts` falls back, §9.1).
+
+### 6.2 Window extraction (`terrainGpuInputs.ts`)
+
+`extractWindowEntry(mirror, chunkIdx) → WindowEntryData | 'overBudget'`:
+resolves the 17×17 lattice with `renderSampleCell` semantics, gathers each
+resolved cell's packed spans (`map.columnSpans`), packs `latticeDesc` and
+`spanPairs` (returns `'overBudget'` past `WINDOW_SPAN_PAIRS`), and computes
+the header with `buriedFloorBand`'s rule and `makeLevels`' range. To keep
+one source of truth these CPU helpers are exported from `capEmission.ts`
+(`buriedFloorBand` already exists; the lowest/highest band scan is lifted out
+of `makeLevels` into `sampleBandRange(samples)`); no math is duplicated. Per
+batch: `queue.writeBuffer` per region for the batch's entries (contiguous
+entry indices when possible; otherwise one write per entry, ≤ 64 × 4 writes).
+
+### 6.3 Count pass and readback
+
+Per batch: upload the batch's entries (§6.2) and a `batchList` of entry
+indices, `params.mode = COUNT`, zero the entries' `chunkStats` and
+`lipCounter`, dispatch `batchChunks · WORKGROUPS_PER_CHUNK`, copy the
+entries' `squareBase` and `chunkStats`, `lipCounter` and `lips[0..cap)` into a
+readback buffer from a pool (`GPU_READBACK_POOL_MIN = 2`, grown on demand up
+to `GPU_READBACK_POOL_MAX = 8`), `submit`, `mapAsync`. On resolve: per chunk,
+`vertexCount = chunkStats.vertexCount`; if `vertexCount > GPU_CHUNK_VERTEX_BUDGET
+= CHUNK_TRIANGLE_BUDGET · 3` (393,216, `capEmission.ts:57`) the chunk is
+handed to `fallback.build(mirror, chunkIdx, generation)` and that promise is
+returned instead; otherwise resolve `ChunkGpuAnswer` with the per-square
+counts kept for `emit`. Generation and `mirror.received` checks stay in
+`receive()` (`terrainMeshes.ts:542-551`).
+
+### 6.4 Emit
+
+`GpuEmitHandle.emit(encoder, target, vertexOffset)`: exclusive prefix over the
+256 per-square counts plus `vertexOffset` → `writeBuffer(squareBase[entry])`
+(1 KB), patch the entry header (`vertexBase`, local origin from `target`),
+`params.mode = EMIT`, bind group 1 = `target` buffers (cached per buffer
+pair), dispatch `WORKGROUPS_PER_CHUNK` for that entry, then release the
+entry. Params/mode per dispatch use a dynamic-offset uniform so count and
+emit dispatches can share one command encoder. Emits for one frame share the
+store's encoder and go out in `store.commit()`, ahead of three's render
+submit on the same queue, so the render pass reads finished vertices.
+
+### 6.5 Timing
+
+When the device has `timestamp-query` (three requests it when
+`trackTimestamp`, `scene.ts:91`), count and emit passes carry
+`timestampWrites`; resolved every `GPU_MESHER_RESOLVE_EVERY_BATCHES = 8`
+batches into `gpuMesherStats(): { countMs, emitMs, batches, chunks }`
+exposed on the perf handle (DEV) and the probe report (§11).
+
+## 7. Budgets
+
+| budget | value | where it applies |
+|---|---|---|
+| `CHUNK_SPLICE_FRAME_BUDGET_MS` | 1.5, unchanged | main-thread splice loop; a GPU splice is bookkeeping + 1 KB upload + one dispatch record (~0.02 ms **[estimate]**) |
+| `GPU_MESH_FRAME_BUDGET_MS` | 3.0 | GPU time the arena may schedule per frame for emits: `drain` charges each GPU answer `vertexCount · GPU_EMIT_MS_PER_VERTEX` and defers the rest to the next frame |
+| `GPU_EMIT_MS_PER_VERTEX` | 4.5e-6 | heaviest window measured 2.08 ms / 466,860 vertices (desktop); laptop 1.3× |
+| `GPU_BATCH_CHUNKS` | 64 | count-pass batch and backlog cap (§4.3) |
+
+Why 3.0 ms: the standing rule is ≥ 140 fps ≈ 7 ms; render GPU p50 is 2.57 ms
+at the default pose (`terrain-renderer-options.md`); 7 − 2.57 − 3.0 leaves
+1.4 ms for the count pass of the next batch and jitter. The heaviest desktop
+3×3 window (2.08 ms) fits in one frame; on the laptop (2.7 ms) it fits with
+0.3 ms to spare. Both are strictly better than the CPU path's 10.5 ms p95
+stroke frames, whose cost is main-thread splice + upload.
+
+Slack: `SLOT_SLACK_FACTOR = 1.25` stays. The `2026-09-10-slot-slack`
+measurement directory exists (`.gpu-perf/results/`); the GPU path changes
+nothing about growth statistics because counts are the same function of the
+same heights. Worst-case resident vertex bytes = live × 1.25 during a stroke,
+reclaimed by `settle()` (`terrainMeshes.ts:686-710`) when quiet.
+
+## 8. Memory
+
+Desktop, bench world, GPU path, resident:
+
+| buffer | bytes | basis |
+|---|---|---|
+| arena positions + colours | 187.5 MB + ceilings (**[estimate]** < 1 %: 1,134 layered columns) | 15.62 M vertices × 12 B |
+| window entry pool | 2.6 MB | 128 entries × (lattice 1.2 KB + desc 1.2 KB + pairs 16 KB + bases 1 KB) |
+| lips append | 6.3 MB | `LIP_APPEND_CAPACITY` |
+| readback pool | 2 × 6.6 MB | copies of the above |
+| scratch (compaction bounce) | ≤ largest run (4.7 MB at the triangle budget) | |
+| **total** | **≈ 208 MB** exact-count, **≈ 255 MB** with every chunk at max slack | |
+
+CPU arena today in its own format: 11.75 M × 20 B = 235 MB (+ slack). The GPU
+path is below the CPU baseline at exact count and 4 % below it with the
+normal attribute counted out. The 207 MB gate-1 limit was set for the bench
+page; production's bound is "no worse than the CPU path", which holds.
+Reducing the GPU triangle count (per-chunk polygon triangulation instead of
+per-square fans) is a later optimisation, not part of parity.
+
+## 9. Fallbacks
+
+### 9.1 Whole-session
+
+`world.ts`: `terrainMesher()` preference (§10) → if `'cpu'` or the renderer
+backend is WebGL2 or `createGpuChunkBuildSource` returns null/throws
+(compile error, injection guard) → today's `createWorkerChunkBuildSource()`
++ `createCpuArenaStore`. Logged once with the reason.
+
+### 9.2 Per-chunk
+
+Inside the GPU source, transparently: vertex count over
+`GPU_CHUNK_VERTEX_BUDGET`, a window over `WINDOW_SPAN_PAIRS`, or a lost
+device → `fallback.build()` (the worker pool, which applies the CPU's own
+budgets and blocky fallback) and the CPU answer is written into the GPU store
+by `packCpuAnswer` (§3.3). Because every chunk carries its own resolved
+lattice, a fallback chunk's neighbours are unaffected.
+
+Known accepted difference: the CPU also falls back on its triangulation work
+budgets (`capEmission.ts:59-63, 603-607`); the GPU has no ear-clipping cost so
+it draws those chunks at full resolution. The parity harness reports these
+chunk indices (as gate 1's `report.md` does) and excludes them from the pixel
+criterion.
+
+## 10. Selection and settings
+
+`client/src/state/terrainMesherPrefs.ts`, same shape as `frameRatePrefs.ts`:
+`TerrainMesher = 'auto' | 'gpu' | 'cpu'`, default `'auto'` (GPU when the
+renderer runs WebGPU), storage key `terrace.terrainMesher.v1`. ControlsPanel
+row "Terrain mesher" next to "Frame rate" (`ControlsPanel.tsx:283-297`). A
+change rebuilds the terrain meshes from the current mirror (`world.ts`
+`resetWorld`-style: dispose meshes + layer edges, recreate with the new
+source/store, `update(all received)`), so it applies live. DEV URL override
+`?mesher=cpu|gpu` for the harness, read where `?perfprobe` is
+(`perfProbe.ts:1097`).
+
+## 11. Verification (the completion criterion)
+
+### 11.1 Static
+- `pnpm typecheck`, `pnpm test`: all existing tests pass with the CPU store
+  (no new tests: permission not granted this session).
+- `node client/scripts/drawnGroundParity.mjs`: unchanged, CPU oracle.
+
+### 11.2 Parity harness `client/scripts/mesherParity.mjs`
+Isolated stack (recipe in `.claude/orchestration/bench-rules-parallel-agents.md`;
+never the owner's ports; GPU lock), world `bench/webgpu-mesher/frostwick-gate.db`.
+Drives real Chrome over CDP, `?perfprobe=bandParity&mesher=cpu` then
+`mesher=gpu`. The `bandParity` probe scenario (DEV): parks at the default
+pose, hides every scene object except the terrain group, swaps the terrain
+material's colour for `round(positionWorld.y / BAND_WORLD_HEIGHT)` encoded in
+RGB with a distinct background, renders one frame, and the driver screenshots
+it. Also `?perfprobe=overview` screenshots under normal shading with plugins
+frozen (`ctx.freeze(true)`, `perfProbe.ts:891`).
+
+Criteria (owner's rulings applied):
+
+| criterion | limit |
+|---|---|
+| band-ID image mismatch fraction, gpu vs cpu, outside CPU-blocky chunks and outside a 1-px contour exemption | ≤ 0.5 % |
+| band-ID holes (background where the cpu image has terrain) | 0 |
+| shaded pixel mismatch fraction above the metric floor, 3×3 window, tolerance 8 (gate 1's compare, `run.mjs:277-315`), floor = cpu vs cpu after a re-splice | ≤ 0.1 % |
+| locked-neighbour fixture (a world with one chunk not received): same two criteria | same |
+
+### 11.3 Speed and efficiency
+Same stack, `?perfprobe=sculpt&settle=45000&mesher=…`, three runs each, and
+`?perfprobe=overview` for load. Pass means the GPU path beats the CPU path on
+every row:
+
+| metric | CPU today (desktop) | GPU must |
+|---|---|---|
+| stroke frame p95 / p99 / max | 10.5 / 14.1 / 45 ms | lower on all three |
+| load: first update → queue empty | 7.2 s | lower |
+| main-thread ms/frame in terrain path during a stroke | (profile) | lower |
+| GPU ms/frame during a stroke (renderer timestamps + `gpuMesherStats`) | render only | render + mesher ≤ 7 ms p95 |
+| resident arena bytes | 235 MB + slack | ≤ CPU path's |
+
+Laptop numbers are collected by the owner's laptop session with the same
+script (`gate2-laptop.md` conditions); desktop numbers gate the merge.
+
+## 12. File map and ownership (four Opus agents, own worktrees)
+
+Contract files written by the orchestrator before the agents start, so every
+worktree compiles against the same interfaces: `client/src/render/arenaStore.ts`
+(interface + CPU store extracted verbatim), `client/src/render/chunkBuildSource.ts`
+(`backlogCap`, `ChunkAnswer`), `client/src/render/gpuMesher/gpuChunkAnswer.ts`,
+`client/src/render/gpuMesher/webgpu.d.ts` (ambient WebGPU API subset used —
+`GPUDevice, GPUBuffer, GPUQueue, GPUCommandEncoder, GPUComputePassEncoder,
+GPUBindGroup(Layout), GPUComputePipeline, GPUShaderModule, GPUQuerySet,
+GPUBufferUsage, GPUShaderStage, GPUMapMode`; swap for `@webgpu/types` when
+the owner approves that dev dependency).
+
+| agent | owns | verifies with |
+|---|---|---|
+| K (kernel + inputs + source) | `gpuMesher/mesherWgsl.ts`, `marchingTable.ts`, `bandLut.ts`, `terrainGpuInputs.ts`, `gpuChunkBuildSource.ts`; exports `buriedFloorBand`/`sampleBandRange` from `capEmission.ts` | typecheck; a DEV self-check that compiles the module on the live renderer and runs the isoline cases (port of `__isolineSelfCheck`) |
+| A (arena + store + material) | `terrainMeshes.ts` refactor onto `ArenaStore`, `gpuMesher/gpuArenaStore.ts`, `terrainMaterial.ts` layouts | `pnpm test` (existing arena tests, CPU store), typecheck |
+| W (wiring + prefs + probe) | `world.ts`, `state/terrainMesherPrefs.ts`, `ui/ControlsPanel.tsx`, `perfProbe.ts` (`?mesher=`, `bandParity`, `gpuMesherStats`), `main.tsx` | typecheck, `pnpm test` |
+| H (harness + measurement) | `client/scripts/mesherParity.mjs`, `client/scripts/mesherBench.mjs` (sculpt/overview driver reusing `probe-run-win.mjs`), results under `.gpu-perf/results/2026-09-10-gpu-mesher/` | runs §11.2 and §11.3 after K/A/W merge; cpu-vs-cpu first as the zero baseline |
+
+Merge order: contracts → A and K in parallel → W → H. Then two Opus reviewers
+(kernel parity vs `capEmission.ts`/`contours.ts`; arena/store/three
+integration) and fixes.
+
+## 13. Rejected alternatives
+
+- **Copy from a mesher-owned buffer into three-managed attributes** (rev 1
+  §1.3): rejected, §0 item 3.
+- **`StorageBufferAttribute` + TSL `wgslFn` compute through
+  `renderer.compute()`**: keeps three in charge of buffers but still allocates
+  from a CPU array (`WebGPUAttributeUtils.js:113-178`), and wrapping ~600
+  lines of integer-exact WGSL in TSL adds a translation layer to verify for no
+  gain. Raw WebGPU on `backend.device` is the direct route.
+- **Packed 12-B interleaved vertex (u16 xz, i16 y, rgba) decoded from one
+  attribute**: three's node material always reads `position` as `vec3<f32>`
+  and rewrites non-normalized 16-bit formats (§1); `snorm16x4` + `unorm8x4` in
+  two buffers is the same 12 B with no private-API surface beyond injection.
+- **Float32 positions (16 B)**: 250 MB on the bench world, over the CPU
+  baseline; the 4 B saved per vertex is 62 MB.
+- **World-frame quantization** (gate 1): 1/32 cell on a 2048² world; local
+  frame keeps 1/256 cell at any world size for the price of one
+  `mesh.position` per super-mesh.
+- **Indirect draw, no count readback**: needs GPU-side slot allocation and
+  hole management; the async readback costs one frame of latency and no
+  stall, and keeps the arena's proven bookkeeping. Deferred, not ruled out.
+- **Single emit pass into staging + copy**: same readback dependency for slot
+  placement, plus a staging buffer sized at the per-chunk budget × batch (up
+  to 300 MB for 64 chunks) or a second sync; two passes cost ~2× compute of
+  one pass (still ≤ 3 ms for the heaviest window) and no staging.
+- **CPU planning for lips, GPU for triangles**: leaves the contour march (the
+  larger half of `writeChunkVertexData` **[estimate]**) on the worker; the
+  GPU already walks every contour edge, so lips are free there.
+- **World-sized height/span buffers on the GPU with per-edit row uploads and
+  a span page pool** (revision 2 draft): a chunk re-dirtied between its count
+  and emit would be emitted from newer inputs against stale counts, and halo
+  cells needed a page-ownership protocol; per-batch resolved windows remove
+  both and let the CPU's own seam/lowest-band functions do the resolving.
+- **Drawing nothing / whole-session demotion on an over-budget chunk**: rev 1
+  §7, still rejected.
+
+## 14. Open items for the owner (non-blocking; defaults stated)
+
+1. `@webgpu/types` as a dev dependency instead of the local ambient
+   declaration (default: local declaration until approved).
+2. Whether GPU chunks that the CPU would draw blocky (work-budget fallback)
+   may stay full-resolution (default: yes; reported, excluded from parity).
+3. `GPU_MESH_FRAME_BUDGET_MS = 3.0` (default stands; §7 reasoning).
+4. Dropping the dead normal attribute from the CPU arena (47 MB) is a separate
+   change; not done here.
+
+## Pre-Check checklist
+
+| item | answer |
+|---|---|
+| 1 Magic numbers | Every literal is a named constant with its derivation in §3.3, §4.3, §5.6, §6, §7 |
+| 2 Duplication = wrong contract | Byte movement was duplicated across splice/compact/zero; it moves behind `ArenaStore` once |
+| 3 Symptom vs root cause | Root cause: the arena owned its bytes as CPU arrays; the contract change makes storage a swappable store |
+| 4 Diagnosis from primary source | Every mechanism re-read this session: three r185 attribute utils, arena, mesher, gate 1 page and records |
+| 5 "More than one" signal | Owner asked for full parity + beating CPU; the design elevates from "copy into the arena" to a storage contract and a full kernel port |
+| 6 Rejected alternatives | §13, nine alternatives with reasons |
+| 7 Punts named | §14 lists four with defaults; indirect draw deferred with reason in §13 |
+| 8 Defaults reasoned | Quantization, budgets, batch size, page classes each derived from a measurement or a hardware bound (§3.3, §4.3, §6.2, §7) |
+| 9 Tests cover the contract | Existing arena tests run through the CPU store (contract preserved); GPU store verified by the parity harness at the render level; no new unit tests (permission not granted) |
+| 10 One-sentence framing | The arena's storage was its own CPU arrays, so no GPU producer could feed it; an `ArenaStore` contract with a GPU implementation lets the compute mesher write vertices in place, and the kernel is ported to full CPU parity |
