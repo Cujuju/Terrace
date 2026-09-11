@@ -237,11 +237,24 @@ export async function launchChrome() {
   await new Promise((r) => socket.addEventListener('open', r, { once: true }));
   let nextId = 0;
   const waiting = new Map();
+  // A WGSL compile error or a WebGPU validation error only ever appears here.
+  const pageLogs = [];
+  const argText = (arg) => arg.value ?? arg.description ?? arg.unserializableValue ?? '';
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data);
     if (message.id && waiting.has(message.id)) {
       waiting.get(message.id)(message);
       waiting.delete(message.id);
+      return;
+    }
+    const { method, params } = message;
+    if (method === 'Log.entryAdded') {
+      pageLogs.push(`LOG ${params.entry.level} ${params.entry.text}`);
+    } else if (method === 'Runtime.consoleAPICalled') {
+      pageLogs.push(`CONSOLE ${params.type} ${(params.args ?? []).map(argText).join(' ')}`);
+    } else if (method === 'Runtime.exceptionThrown') {
+      const { exceptionDetails } = params;
+      pageLogs.push(`EXCEPTION ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
     }
   });
   const call = (method, params = {}, sessionId) => new Promise((r) => {
@@ -253,10 +266,13 @@ export async function launchChrome() {
   const { result: { targetId } } = await call('Target.createTarget', { url: 'about:blank' });
   const { result: { sessionId } } = await call('Target.attachToTarget', { targetId, flatten: true });
   await call('Page.enable', {}, sessionId);
+  await call('Runtime.enable', {}, sessionId);
+  await call('Log.enable', {}, sessionId);
   await call('Page.bringToFront', {}, sessionId);
 
   return {
     call: (method, params) => call(method, params, sessionId),
+    pageLogs: () => [...pageLogs],
     screenshot: async () => {
       const shot = await call('Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
       return Buffer.from(shot.result.data, 'base64');

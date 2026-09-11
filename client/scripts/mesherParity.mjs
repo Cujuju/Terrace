@@ -38,6 +38,8 @@ const MAX_HOLES = 0;
 const MAX_SHADED_FRACTION_ABOVE_FLOOR = 0.001;
 
 const PERCENT = 100;
+// Echoed to the console as they happen; the full page log is written per capture.
+const INTERESTING_LOG = /terrace|wgsl|webgpu|gpu|mesher|EXCEPTION|error|warn/i;
 
 const argv = process.argv.slice(2);
 const meshers = argValue(argv, '--meshers', DEFAULT_MESHERS).split(',').map((m) => m.trim());
@@ -64,7 +66,7 @@ const passIds = (() => {
  * the scenario's ready heartbeat, then its report. `readyBeat === null` means
  * the scenario posts no ready beat, so the screenshot is taken at the report.
  */
-async function capture({ mesher, scenario, readyBeat, pngPath }) {
+async function capture({ mesher, scenario, readyBeat, pngPath, logName }) {
   let server = null;
   try {
     server = startServer(log);
@@ -104,6 +106,9 @@ async function capture({ mesher, scenario, readyBeat, pngPath }) {
         }
         return { ok: true, png, report: report.line };
       } finally {
+        const lines = chrome.pageLogs();
+        writeFileSync(join(RESULTS_DIR, logName), `${lines.join('\n')}\n`);
+        for (const line of lines.filter((l) => INTERESTING_LOG.test(l))) log(`page: ${line}`);
         await chrome.close();
       }
     });
@@ -120,6 +125,16 @@ const sameSize = (a, b, what) => {
 };
 
 // -------------------------------------------------------------------- main
+/** What the report says about which paths actually ran. Never invented. */
+const reportFacts = (report) => ({
+  clientVersion: report.clientVersion ?? null,
+  rendererBackend: report.rendererBackend ?? null,
+  terrainMesher: report.terrainMesher ?? null,
+  meshersActive: report.meshersActive ?? null,
+  blockyChunks: report.blockyChunks ?? null,
+  gpuMesher: report.gpuMesher ?? null,
+});
+
 const results = {
   startedAt: new Date().toISOString(),
   meshers, shadedScenario, settleMs,
@@ -135,11 +150,11 @@ try {
 
     const band = await capture({
       mesher, scenario: BAND_SCENARIO, readyBeat: BAND_READY_BEAT,
-      pngPath: join(RESULTS_DIR, `band-${id}.png`),
+      pngPath: join(RESULTS_DIR, `band-${id}.png`), logName: `page-band-${id}.log`,
     });
     results.passes[id].band = band.ok
-      ? { ok: true, png: `band-${id}.png`, clientVersion: band.report.clientVersion }
-      : { ok: false, stage: band.stage, detail: band.detail };
+      ? { ok: true, png: `band-${id}.png`, log: `page-band-${id}.log`, ...reportFacts(band.report) }
+      : { ok: false, stage: band.stage, detail: band.detail, log: `page-band-${id}.log` };
     if (!band.ok) {
       // Design §11.2 requires the band scenario; a missing scenario must be loud.
       results.failures.push(`${id}/${BAND_SCENARIO}: ${JSON.stringify(band.detail)}`);
@@ -148,15 +163,14 @@ try {
 
     const shaded = await capture({
       mesher, scenario: shadedScenario, readyBeat: shadedReadyBeat,
-      pngPath: join(RESULTS_DIR, `shaded-${id}.png`),
+      pngPath: join(RESULTS_DIR, `shaded-${id}.png`), logName: `page-shaded-${id}.log`,
     });
     results.passes[id].shaded = shaded.ok
       ? {
         ok: true, png: `shaded-${id}.png`, scenario: shadedScenario,
-        clientVersion: shaded.report.clientVersion,
-        blockyChunks: shaded.report.blockyChunks ?? null,
+        log: `page-shaded-${id}.log`, ...reportFacts(shaded.report),
       }
-      : { ok: false, stage: shaded.stage, detail: shaded.detail };
+      : { ok: false, stage: shaded.stage, detail: shaded.detail, log: `page-shaded-${id}.log` };
     if (!shaded.ok) {
       results.failures.push(`${id}/${shadedScenario}: ${JSON.stringify(shaded.detail)}`);
       log(`FAIL ${id}/${shadedScenario} at ${shaded.stage}: ${JSON.stringify(shaded.detail)}`);
@@ -173,11 +187,15 @@ const readImage = (id, kind) => {
   return decodePng(readFileSync(join(RESULTS_DIR, pass[kind].png)));
 };
 
+// The CPU's own blocky fallback, from the cpu band pass that produced the image.
+const blockyChunks = results.passes.cpu?.band?.blockyChunks
+  ?? results.passes.cpu?.shaded?.blockyChunks ?? null;
+
 const bandGpu = readImage('gpu', 'band');
 const bandCpu = readImage('cpu', 'band');
 if (bandGpu !== null && bandCpu !== null) {
   sameSize(bandGpu, bandCpu, 'band images');
-  const band = compareBands(bandGpu, bandCpu);
+  const band = compareBands(bandGpu, bandCpu, blockyChunks);
   writeFileSync(join(RESULTS_DIR, 'diff-band.png'), encodePng(band.width, band.height, band.diff));
   delete band.diff;
   results.band = band;
@@ -214,15 +232,15 @@ if (shadedCpu !== null && shadedCpu2 !== null) {
 }
 results.shaded = results.shaded ?? null;
 
-// Blocky-chunk exemption: the CPU's work-budget fallback (design §9.2). The
-// band image carries no chunk id, so the list is reported, not spatially applied.
-const blockyChunks = results.passes.cpu?.shaded?.blockyChunks ?? null;
+// Blocky-chunk exemption: the CPU's work-budget fallback (design §9.2),
+// applied per pixel from the chunk index the cpu band image carries in G and B.
 results.blockyChunks = blockyChunks;
 results.blockyExemption = blockyChunks === null
-  ? 'not applied: the client exposes no `blockyChunks` field on the shaded report'
+  ? 'not applied: no `blockyChunks` field on the cpu band report'
   : blockyChunks.length === 0
     ? 'vacuous: the CPU path drew no chunk blocky'
-    : `not applied: ${blockyChunks.length} blocky chunks listed, but the band image carries no chunk id to mask them by`;
+    : `applied per pixel from the cpu band image chunk id, dilated 3x3: `
+      + `${blockyChunks.length} chunks, ${results.band?.blockyExemptSamples ?? 0} samples exempt`;
 
 // ------------------------------------------------------------------ verdict
 const criteria = [
@@ -247,8 +265,11 @@ const fmt = (v) => (v === null || v === undefined ? 'n/a'
 const pct = (v) => (v === null || v === undefined ? 'n/a' : `${(v * PERCENT).toFixed(4)} %`);
 const mark = (p) => (p === null ? 'n/a' : p ? 'pass' : 'FAIL');
 
+const capsule = (c) => (c?.ok
+  ? `${c.png} (backend ${fmt(c.rendererBackend)}, mesher ${fmt(c.terrainMesher)})`
+  : `FAILED (${c?.stage})`);
 const passRows = Object.entries(results.passes).map(([id, p]) =>
-  `| ${id} | ${p.mesher} | ${p.band?.ok ? p.band.png : `FAILED (${p.band?.stage})`} | ${p.shaded?.ok ? p.shaded.png : `FAILED (${p.shaded?.stage})`} |`).join('\n');
+  `| ${id} | ${p.mesher} | ${capsule(p.band)} | ${capsule(p.shaded)} |`).join('\n');
 
 writeFileSync(join(RESULTS_DIR, 'parity.md'), `# GPU mesher parity — design §11.2
 
@@ -268,7 +289,7 @@ Verdict: **${results.verdict}**
 Band image (${fmt(results.band?.width)}x${fmt(results.band?.height)} = ${fmt(results.band?.pixels)} px):
 
 - covered non-exempt samples: ${fmt(results.band?.consideredSamples)}
-- exempt (3x3 contour adjacency in the cpu image): ${fmt(results.band?.exemptSamples)}
+- exempt, total: ${fmt(results.band?.exemptSamples)} (of which blocky-chunk: ${fmt(results.band?.blockyExemptSamples)})
 - mismatched: ${fmt(results.band?.mismatched)}
 - holes, non-exempt: ${fmt(results.band?.holes)}; over all pixels: ${fmt(results.band?.holesAllPixels)}
 
