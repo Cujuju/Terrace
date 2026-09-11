@@ -17,6 +17,8 @@ import {
   type ChunkBuildSource,
 } from './chunkBuildSource.ts';
 import {
+  ARENA_COMPACT_IDLE_BUDGET_MS,
+  ARENA_COMPACT_STROKE_BUDGET_MS,
   ARENA_TRANSFER_MS_PER_VERTEX,
   createCpuArenaStore,
   releaseAnswer,
@@ -37,9 +39,7 @@ export { CHUNK_ANSWER_BACKLOG_CAP };
 
 export { ARENA_TRANSFER_MS_PER_VERTEX };
 
-export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
-
-export const ARENA_COMPACT_IDLE_BUDGET_MS = 3.0;
+export { ARENA_COMPACT_STROKE_BUDGET_MS, ARENA_COMPACT_IDLE_BUDGET_MS };
 
 const ARENA_P90_RUN_TRIANGLES = 13_653;
 
@@ -728,7 +728,7 @@ export function createTerrainMeshes(
       queueEmptyAfterMs = now() - firstUpdateMs;
       chunksAtQueueEmpty = chunksSpliced;
     }
-    compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
+    compact(spliced > 0 ? store.compactStrokeBudgetMs : store.compactIdleBudgetMs);
     settle();
     store.commit();
   });

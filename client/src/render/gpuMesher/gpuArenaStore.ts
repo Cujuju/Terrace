@@ -54,8 +54,17 @@ export const GPU_MESH_FRAME_BUDGET_MS = 3.0;
 // third dearer and still fits one window in a frame (design section 7).
 export const GPU_EMIT_MS_PER_VERTEX = 4.5e-6;
 
-/** A CPU-fallback chunk costs no emit dispatch: its vertices arrive by queue write. */
-const GPU_ARENA_CPU_WRITE_COST_MS = 0;
+// A twelfth of the emit budget: compaction is pure copy and must not crowd out the emits
+// a held stroke is queueing behind it.
+export const GPU_ARENA_COMPACT_STROKE_BUDGET_MS = 0.25;
+
+// Four times the stroke budget, still a third of the emit budget: an idle frame has the
+// whole GPU-time slice, and compaction moves are cheap copies.
+export const GPU_ARENA_COMPACT_IDLE_BUDGET_MS = 1.0;
+
+// 12 B a vertex written through the queue at a conservative 4 GB/s, so a CPU-fallback
+// chunk is charged its upload instead of nothing.
+export const GPU_ARENA_UPLOAD_MS_PER_VERTEX = 3e-6;
 
 const POSITION_COMPONENTS_PER_VERTEX = GPU_POSITION_BYTES_PER_VERTEX / Int16Array.BYTES_PER_ELEMENT;
 
@@ -334,6 +343,8 @@ export function createGpuArenaStore(
     frame: 'superLocal',
     transferMsPerVertex: GPU_ARENA_COPY_MS_PER_VERTEX,
     moveOverheadMs: GPU_ARENA_MOVE_OVERHEAD_MS,
+    compactStrokeBudgetMs: GPU_ARENA_COMPACT_STROKE_BUDGET_MS,
+    compactIdleBudgetMs: GPU_ARENA_COMPACT_IDLE_BUDGET_MS,
     frameWriteBudgetMs: GPU_MESH_FRAME_BUDGET_MS,
     material,
     layout: GPU_ARENA_VERTEX_LAYOUT,
@@ -344,7 +355,7 @@ export function createGpuArenaStore(
     },
 
     writeCostMs(answer): number {
-      if (answer.kind !== 'gpu') return GPU_ARENA_CPU_WRITE_COST_MS;
+      if (answer.kind !== 'gpu') return answer.vertexCount * GPU_ARENA_UPLOAD_MS_PER_VERTEX;
       return answer.vertexCount * GPU_EMIT_MS_PER_VERTEX;
     },
 
