@@ -194,6 +194,21 @@ frame (~25 % of vertex bandwidth, *estimate*) and cannot cull.
 (`chromium-experimental-multi-draw-indirect`); the bundle gives the same
 per-frame CPU cost without the dependency.
 
+### 5.8 Accepted divergences from the shipped CPU mesher
+
+Raised by the two adversarial reviews (2026-09-10) and kept as they are:
+
+- **Per-square fans instead of ear clipping.** A square clipped by one contour is
+  convex, so a fan is correct; only an inward bulge from isoline refinement makes
+  it concave, and the kernel already fans those from the centroid.
+- **`dropCollinear` over refined points only.** The CPU mesher also thins shared
+  edge crossings. Dropping them on the GPU would open ε-cracks between squares,
+  which have no shared assembly step to close them (R1-6).
+- **`SKIRT_PICK_INSET` is not applied.** The GPU riser quad uses
+  `emitSkirtQuad`'s vertex order without its pick inset.
+- **Work-budget blocky chunks are drawn at full resolution.** The GPU path has no
+  blocky fallback of its own; an over-budget chunk goes to the CPU mesher whole.
+
 ## 6. Over-budget fallback: blocky, decided on the GPU
 
 The shipped mesher's three budgets (`CHUNK_TRIANGLE_BUDGET` 131,072,
