@@ -1,0 +1,11 @@
+60 s  {"sent":550,"received":3012,"sentBytes":56930,"receivedBytes":2161460,"strokes":601}
+120 s  {"sent":1087,"received":6242,"sentBytes":112644,"receivedBytes":5214684,"strokes":1201}
+180 s  {"sent":1633,"received":9213,"sentBytes":169462,"receivedBytes":7831240,"strokes":1801}
+240 s  {"sent":2079,"received":11821,"sentBytes":215832,"receivedBytes":10026628,"strokes":2401}
+300 s  {"sent":2528,"received":14481,"sentBytes":262486,"receivedBytes":12357504,"strokes":3001}
+360 s  {"sent":3074,"received":18150,"sentBytes":319216,"receivedBytes":15815616,"strokes":3598}
+420 s  {"sent":3631,"received":21994,"sentBytes":377210,"receivedBytes":19616688,"strokes":4186}
+480 s  {"sent":4204,"received":25851,"sentBytes":436764,"receivedBytes":23061032,"strokes":4799}
+540 s  {"sent":4755,"received":29395,"sentBytes":494178,"receivedBytes":26614036,"strokes":5401}
+done 575 s  {"sent":5072,"received":31418,"sentBytes":527225,"receivedBytes":28492212,"strokes":5750}
+received types {"binary":31418}
