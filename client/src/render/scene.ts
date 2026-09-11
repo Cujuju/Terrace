@@ -6,10 +6,12 @@ import {
   HemisphereLight,
   MathUtils,
   PerspectiveCamera,
+  PointLight,
   Scene,
   SRGBColorSpace,
   WebGPURenderer,
 } from 'three/webgpu';
+import { GatedPointLightNode } from './gatedPointLightNode.ts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   CAMERA_FAR,
@@ -92,6 +94,13 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     trackTimestamp: true,
   });
   await renderer.init();
+  // StandardNodeLibrary (three/src/renderers/webgpu/nodes/StandardNodeLibrary.js)
+  // pre-registers PointLight in the constructor, and addLight() silently
+  // no-ops on an already-registered class -- write the WeakMap directly.
+  // Untyped: NodeLibrary.d.ts declares no members at all.
+  (
+    renderer.library as unknown as { lightNodes: WeakMap<typeof PointLight, unknown> }
+  ).lightNodes.set(PointLight, GatedPointLightNode);
   routeInstancesThroughAttributes(renderer.backend);
   if (import.meta.env.DEV) {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
