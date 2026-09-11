@@ -11,7 +11,11 @@ import {
   type ArenaStore,
   type ArenaSuperBuffers,
 } from '../arenaStore.ts';
-import { createPackedArenaGeometry, createTerrainMaterial } from '../terrainMaterial.ts';
+import {
+  createPackedArenaGeometry,
+  createTerrainMaterial,
+  type TerrainVertexLayout,
+} from '../terrainMaterial.ts';
 import { SUPER_MESH_SPAN_WORLD_UNITS } from '../terrainMeshes.ts';
 import {
   GPU_COLOR_BYTES_PER_VERTEX,
@@ -59,6 +63,9 @@ const POSITION_COMPONENTS_PER_VERTEX = GPU_POSITION_BYTES_PER_VERTEX / Int16Arra
 const PACKED_POSITION_SPARE = 0;
 
 const COMPONENTS_PER_CPU_POSITION = 3;
+
+/** The kernel writes i16 units from the super-mesh centre; the material decodes them. */
+const GPU_ARENA_VERTEX_LAYOUT: TerrainVertexLayout = 'snorm16';
 
 const FRAME_ENCODER_LABEL = 'terrace-arena-frame';
 
@@ -108,7 +115,7 @@ export function createGpuArenaStore(
     GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
   const SCRATCH_BUFFER_USAGE = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
 
-  const material = createTerrainMaterial('snorm16');
+  const material = createTerrainMaterial(GPU_ARENA_VERTEX_LAYOUT);
   const supers = new Map<number, GpuSuper>();
   /** superIdx to `info.render.calls` when the buffer was injected. */
   const uncheckedInjections = new Map<number, number>();
@@ -329,6 +336,7 @@ export function createGpuArenaStore(
     moveOverheadMs: GPU_ARENA_MOVE_OVERHEAD_MS,
     frameWriteBudgetMs: GPU_MESH_FRAME_BUDGET_MS,
     material,
+    layout: GPU_ARENA_VERTEX_LAYOUT,
 
     /** Both layouts land in the packed buffers: a GPU answer by emit, a CPU one by queue write. */
     accepts(): boolean {
