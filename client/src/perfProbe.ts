@@ -20,6 +20,8 @@ const SETTLE_QUERY_FLAG = 'settle';
 const SUPPRESS_UPLOADS_QUERY_FLAG = 'suppressUploads';
 const RENDER_SCALE_QUERY_FLAG = 'renderScale';
 const NO_INSTRUMENT_QUERY_FLAG = 'noInstrument';
+const LIGHTS_QUERY_FLAG = 'lights';
+const PROBE_LIGHT_INTENSITY = 1;
 
 function instrumentationDisabled(): boolean {
   return new URLSearchParams(location.search).get(NO_INSTRUMENT_QUERY_FLAG) === '1';
@@ -1200,6 +1202,20 @@ function requestedScenario(): string | null {
   return raw === null || raw === '' ? null : raw;
 }
 
+// Lights the first `count` PointLights found in the scene, for measuring the
+// lit-path GPU cost without a live fire/thunderstorm; leaves the rest dark.
+function activateProbeLights(scene: Viewport['scene'], count: number): number {
+  let armed = 0;
+  scene.traverse((node: Object3D) => {
+    if (armed >= count) return;
+    const light = node as Object3D & { isPointLight?: boolean; intensity?: number };
+    if (light.isPointLight !== true) return;
+    light.intensity = PROBE_LIGHT_INTENSITY;
+    armed++;
+  });
+  return armed;
+}
+
 export function installPerfProbeEarly(viewport: Viewport): void {
   if (requestedScenario() === null) return;
   if (instrumentationDisabled()) return;
@@ -1358,6 +1374,11 @@ export function installPerfProbe(deps: {
 
   window.setTimeout(() => {
     beat('settled');
+    const probeLights = Number(new URLSearchParams(location.search).get(LIGHTS_QUERY_FLAG) ?? '0');
+    if (Number.isFinite(probeLights) && probeLights > 0) {
+      const armed = activateProbeLights(viewport.scene, probeLights);
+      beat(`lights-armed-${String(armed)}-of-${String(probeLights)}`);
+    }
     scenario(ctx)
       .then((result) => {
         post({
