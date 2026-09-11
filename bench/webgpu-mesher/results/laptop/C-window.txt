@@ -1,0 +1,2 @@
+{"innerWidth":1200,"innerHeight":900,"devicePixelRatio":2}
+["http://localhost:5173/"]
