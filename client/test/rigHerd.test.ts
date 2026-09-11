@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BoxGeometry,
+  DataArrayTexture,
   Euler,
   Group,
   Matrix4,
@@ -9,7 +10,6 @@ import {
   Vector3,
   type Material,
 } from 'three';
-import { StorageBufferAttribute } from 'three/webgpu';
 import { bakeRig, type RigBlueprint } from '../src/render/rigSkin.ts';
 import { createRigHerd } from '../src/render/rigHerd.ts';
 
@@ -40,11 +40,9 @@ function instanceMatrixAt(
   return Array.from(array.subarray(index * MATRIX_ELEMENTS, (index + 1) * MATRIX_ELEMENTS));
 }
 
-function paletteOf(herd: ReturnType<typeof createRigHerd>): StorageBufferAttribute {
+function paletteOf(herd: ReturnType<typeof createRigHerd>): DataArrayTexture {
   const palette = herd.posePalette;
-  if (!(palette instanceof StorageBufferAttribute)) {
-    throw new Error('the herd exposed no pose palette');
-  }
+  if (!(palette instanceof DataArrayTexture)) throw new Error('the herd exposed no pose palette');
   return palette;
 }
 
