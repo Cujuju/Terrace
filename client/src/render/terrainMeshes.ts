@@ -58,9 +58,9 @@ function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   });
 }
 
-/** Chunks per side of one super-mesh. ANGLE charges a ranged bufferSubData by the whole
- *  buffer's size, so a quarter-size arena splices about twice as cheaply. */
-export const SUPER_MESH_SPAN_CHUNKS = 4;
+/** Chunks per side of one super-mesh. WebGPU writeBuffer is charged by the range, not the
+ *  buffer, so a larger arena splices no dearer and halves the draws and bindings per frame. */
+export const SUPER_MESH_SPAN_CHUNKS = 8;
 
 const VERTICES_PER_TRIANGLE = 3;
 
