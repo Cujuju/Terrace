@@ -320,6 +320,21 @@ export function createGpuArenaStore(
     };
   };
 
+  const zeroRange = (gpu: GpuSuper, startVertex: number, vertexCount: number): void => {
+    if (vertexCount <= 0) return;
+    const frame = frameEncoder();
+    frame.clearBuffer(
+      gpu.positions,
+      startVertex * GPU_POSITION_BYTES_PER_VERTEX,
+      vertexCount * GPU_POSITION_BYTES_PER_VERTEX,
+    );
+    frame.clearBuffer(
+      gpu.colors,
+      startVertex * GPU_COLOR_BYTES_PER_VERTEX,
+      vertexCount * GPU_COLOR_BYTES_PER_VERTEX,
+    );
+  };
+
   const disposeSuper = (superIdx: number): void => {
     const gpu = supers.get(superIdx);
     if (gpu === undefined) return;
@@ -401,12 +416,17 @@ export function createGpuArenaStore(
       return grown.buffers;
     },
 
-    write(superIdx, vertexOffset, answer): ArenaSlotBounds {
+    write(superIdx, vertexOffset, answer): ArenaSlotBounds | null {
       const gpu = superAt(superIdx);
       if (answer.kind !== 'gpu') return packCpuAnswer(gpu, vertexOffset, answer);
-      answer.gpu.emit(frameEncoder(), gpu.target, vertexOffset);
+      if (answer.gpu.emit(frameEncoder(), gpu.target, vertexOffset)) {
+        releaseAnswer(answer);
+        return chunkBounds(gpu, answer.gpu);
+      }
+      // No dispatch was recorded, so the range would otherwise show whatever it held before.
       releaseAnswer(answer);
-      return chunkBounds(gpu, answer.gpu);
+      zeroRange(gpu, vertexOffset, answer.vertexCount);
+      return null;
     },
 
     // WebGPU forbids a copy that overlaps itself within one buffer, so a move bounces off
@@ -451,19 +471,7 @@ export function createGpuArenaStore(
     },
 
     zero(superIdx, startVertex, vertexCount): void {
-      if (vertexCount <= 0) return;
-      const gpu = superAt(superIdx);
-      const frame = frameEncoder();
-      frame.clearBuffer(
-        gpu.positions,
-        startVertex * GPU_POSITION_BYTES_PER_VERTEX,
-        vertexCount * GPU_POSITION_BYTES_PER_VERTEX,
-      );
-      frame.clearBuffer(
-        gpu.colors,
-        startVertex * GPU_COLOR_BYTES_PER_VERTEX,
-        vertexCount * GPU_COLOR_BYTES_PER_VERTEX,
-      );
+      zeroRange(superAt(superIdx), startVertex, vertexCount);
     },
 
     /** Vertices land in the buffer the attribute already binds; three has nothing to upload. */

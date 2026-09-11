@@ -472,12 +472,19 @@ export function createTerrainMeshes(
 
     const bounds = store.write(sm.superIdx, slot.offset, answer);
 
-    slot.minX = bounds.minX;
-    slot.minY = bounds.minY;
-    slot.minZ = bounds.minZ;
-    slot.maxX = bounds.maxX;
-    slot.maxY = bounds.maxY;
-    slot.maxZ = bounds.maxZ;
+    // Nothing was written: the slot keeps its capacity, draws no vertices, and the chunk
+    // goes back on the queue.
+    if (bounds === null) {
+      slot.count = 0;
+      retry.add(chunkIdx);
+    } else {
+      slot.minX = bounds.minX;
+      slot.minY = bounds.minY;
+      slot.minZ = bounds.minZ;
+      slot.maxX = bounds.maxX;
+      slot.maxY = bounds.maxY;
+      slot.maxZ = bounds.maxZ;
+    }
 
     for (const [startVertex, vertexCount] of dirtied) addRange(sm, startVertex, vertexCount);
 

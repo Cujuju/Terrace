@@ -17,8 +17,9 @@ export interface GpuEmitHandle {
   /** The chunk's north-west corner in world units; its footprint bounds every vertex. */
   readonly originX: number;
   readonly originZ: number;
-  /** Records the emit dispatch at `vertexOffset` of `target`; releases the entry. */
-  emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): void;
+  /** Records the emit dispatch at `vertexOffset` of `target`; releases the entry. `false`
+   *  when no dispatch was recorded, so the slot holds whatever it held before. */
+  emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): boolean;
   /** Returns the window entry to the pool. Idempotent. */
   release(): void;
 }
