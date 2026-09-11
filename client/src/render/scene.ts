@@ -6,10 +6,12 @@ import {
   HemisphereLight,
   MathUtils,
   PerspectiveCamera,
+  PointLight,
   Scene,
   SRGBColorSpace,
   WebGPURenderer,
 } from 'three/webgpu';
+import { GatedPointLightNode } from './gatedPointLightNode.ts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   CAMERA_FAR,
@@ -38,6 +40,7 @@ import { recordFrame, setFrameCounterSource, setGpuSampleSource } from './frameS
 import { createGpuTimer } from './gpuTimer.ts';
 import { routeInstancesThroughAttributes } from './webglInstanceUpload.ts';
 import type { SkyRigState } from '../plugins/types.ts';
+import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 
 export const SKY_COLOR = 0x9fc7e8;
 export const GROUND_BOUNCE_COLOR = 0x9a948a;
@@ -99,6 +102,13 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     trackTimestamp: true,
   });
   await renderer.init();
+  // StandardNodeLibrary (three/src/renderers/webgpu/nodes/StandardNodeLibrary.js)
+  // pre-registers PointLight in the constructor, and addLight() silently
+  // no-ops on an already-registered class -- write the WeakMap directly.
+  // Untyped: NodeLibrary.d.ts declares no members at all.
+  (
+    renderer.library as unknown as { lightNodes: WeakMap<typeof PointLight, unknown> }
+  ).lightNodes.set(PointLight, GatedPointLightNode);
   routeInstancesThroughAttributes(renderer.backend);
   if (import.meta.env.DEV) {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
@@ -216,10 +226,8 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     const nowMs = performance.now();
     if (!shouldRenderTick(nowMs)) return;
     gpuTimer.mark();
-    const dt =
-      lastFrameMs === 0
-        ? 0
-        : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
+    const firstFrame = lastFrameMs === 0;
+    const dt = firstFrame ? 0 : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
     lastFrameMs = nowMs;
     for (const cb of poseFrameCallbacks) runFrameCallback(cb, dt);
     for (const cb of frameCallbacks) runFrameCallback(cb, dt);
@@ -230,6 +238,7 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     skyEnvironment.flush(nowMs);
     const renderStartMs = performance.now();
     renderer.render(scene, camera);
+    if (firstFrame) markBoot(BOOT_MARKS.firstFrame);
     recordFrame(nowMs, renderStartMs, performance.now());
   };
 

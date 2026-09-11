@@ -88,17 +88,6 @@ function yetiSkin(wrinkleDepth: number): SkinFinish {
 
 const FURRED_SURFACES: ReadonlySet<YetiSurface> = new Set<YetiSurface>(['coat', 'saddle']);
 
-export function createYetiFactory(
-  workshop: ModelWorkshop,
-): Readonly<Record<YetiVariant, () => MonsterModel>> {
-  return {
-    silverback: buildVariant(workshop, 'silverback'),
-    ram: buildVariant(workshop, 'ram'),
-    ibex: buildVariant(workshop, 'ibex'),
-    fanged: buildVariant(workshop, 'fanged'),
-  };
-}
-
 type PartTarget = 'upper' | 'head' | 'legLeft' | 'legRight' | 'armLeft' | 'armRight' | 'ankleLeft' | 'ankleRight';
 
 function targetOf(part: YetiPart): PartTarget {
@@ -113,7 +102,7 @@ function vector(at: YetiPoint): Vector3 {
   return new Vector3(at.forward, at.height, at.lateral);
 }
 
-function buildVariant(workshop: ModelWorkshop, variant: YetiVariant): () => MonsterModel {
+export function buildYetiVariant(workshop: ModelWorkshop, variant: YetiVariant): () => MonsterModel {
   const { segments, lambert, shellMaterial, organicSurface } = workshop;
   const spec = YETI_VARIANT_SPECS[variant];
   const metrics = YETI_VARIANT_METRICS[variant];

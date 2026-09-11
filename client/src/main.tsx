@@ -20,6 +20,7 @@ import {
 } from './render/chunkBuildSource.ts';
 import { createGpuChunkBuildSource } from './render/gpuMesher/gpuChunkBuildSource.ts';
 import { installPerfProbe, installPerfProbeEarly } from './perfProbe.ts';
+import { BOOT_MARKS, markBoot } from './bootMarks.ts';
 import {
   brushProfile,
   brushRadius,
@@ -60,6 +61,7 @@ if (canvas === null || hudRoot === null) {
 }
 
 const viewport = await createViewport(canvas);
+markBoot(BOOT_MARKS.viewportReady);
 // Both meshers are world-independent, so the session builds them once. A GPU mesher that
 // cannot compile or bind returns null, and every world then meshes on the workers.
 const chunkBuildSource = createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
