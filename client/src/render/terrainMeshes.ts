@@ -12,6 +12,7 @@ import {
 import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import { chunksPerEdge } from '@terrace/shared';
 import { SCULPT_REPEAT_DELAY_MS } from '../config.ts';
+import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 import {
   createDirectChunkBuildSource,
   type ChunkBuildSource,
@@ -724,6 +725,7 @@ export function createTerrainMeshes(
     ) {
       queueEmptyAfterMs = now() - firstUpdateMs;
       chunksAtQueueEmpty = chunksSpliced;
+      markBoot(BOOT_MARKS.terrainQueueEmpty);
     }
     compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
     settle();
@@ -736,7 +738,10 @@ export function createTerrainMeshes(
         if (!mirror.received.has(chunkIdx)) continue;
         pending.add(chunkIdx);
       }
-      if (firstUpdateMs === null && pending.size > 0) firstUpdateMs = now();
+      if (firstUpdateMs === null && pending.size > 0) {
+        firstUpdateMs = now();
+        markBoot(BOOT_MARKS.firstTerrainUpdate);
+      }
       if (stopDraining === undefined) flush();
     },
     flush,

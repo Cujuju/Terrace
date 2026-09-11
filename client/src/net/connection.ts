@@ -17,6 +17,7 @@ import type {
   WorldUnloadedMessage,
 } from '@terrace/shared';
 import { ROOM_NAME, SERVER_URL } from '../config.ts';
+import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 import { getOrCreatePlayerToken } from '../state/playerToken.ts';
 import {
   MSG_CHUNK_UNLOCK,
@@ -121,11 +122,13 @@ export function connect(options: ConnectionOptions): Connection {
   const live = (): Room | null => (room !== null && !dropped ? room : null);
 
   const wireRoom = (joined: Room): void => {
+    markBoot(BOOT_MARKS.roomJoined);
     room = joined;
     dropped = false;
     retryDelay = RECONNECT_MIN_DELAY_MS;
 
     joined.onMessage<JoinSnapshotMessage>(MSG_SNAPSHOT, (msg) => {
+      markBoot(BOOT_MARKS.snapshot);
       options.sink().onSnapshot(msg);
       options.onLivePlugins?.(msg.livePlugins);
     });
@@ -206,6 +209,7 @@ export function connect(options: ConnectionOptions): Connection {
       } catch (error) {
         console.warn('player token unavailable — joining with session-scoped identity', error);
       }
+      markBoot(BOOT_MARKS.joinIssued);
       const joined = await client.joinOrCreate(roomName, joinOptions);
       if (disposed) {
         void joined.leave();

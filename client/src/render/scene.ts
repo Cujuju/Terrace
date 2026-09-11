@@ -38,6 +38,7 @@ import { recordFrame, setFrameCounterSource, setGpuSampleSource } from './frameS
 import { createGpuTimer } from './gpuTimer.ts';
 import { routeInstancesThroughAttributes } from './webglInstanceUpload.ts';
 import type { SkyRigState } from '../plugins/types.ts';
+import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 
 export const SKY_COLOR = 0x9fc7e8;
 export const GROUND_BOUNCE_COLOR = 0x9a948a;
@@ -208,10 +209,8 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     const nowMs = performance.now();
     if (!shouldRenderTick(nowMs)) return;
     gpuTimer.mark();
-    const dt =
-      lastFrameMs === 0
-        ? 0
-        : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
+    const firstFrame = lastFrameMs === 0;
+    const dt = firstFrame ? 0 : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
     lastFrameMs = nowMs;
     for (const cb of poseFrameCallbacks) runFrameCallback(cb, dt);
     for (const cb of frameCallbacks) runFrameCallback(cb, dt);
@@ -222,6 +221,7 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     skyEnvironment.flush(nowMs);
     const renderStartMs = performance.now();
     renderer.render(scene, camera);
+    if (firstFrame) markBoot(BOOT_MARKS.firstFrame);
     recordFrame(nowMs, renderStartMs, performance.now());
   };
 

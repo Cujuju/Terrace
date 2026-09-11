@@ -1,6 +1,7 @@
 import { Vector3, type Object3D } from 'three';
 import type { Renderer } from 'three/webgpu';
 import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
+import { readBootMarks } from './bootMarks.ts';
 import { CAMERA_MIN_DISTANCE, CELL_WORLD_SIZE, SCULPT_REPEAT_INTERVAL_MS } from './config.ts';
 import type { Connection } from './net/connection.ts';
 import type { ClientPluginHost } from './plugins/host.ts';
@@ -470,8 +471,52 @@ interface GpuTimer {
   mark(): void;
   stop(): void;
   samples(): readonly number[];
+  /** Per-frame GPU ms of every render pass, keyed by the pass label. */
+  passSamples(): ReadonlyMap<string, readonly number[]>;
   disjointDrops(): number;
   startupError(): string | null;
+}
+
+// Render calls labelled by (frameCalls, frame): three folds the same pair into each pass's
+// timestamp UID (`r:<frameCalls>:<contextId>:f<frame>`), so a resolved pass maps back to a label.
+const LABELLED_FRAMES_KEPT = 64;
+const passLabelsByFrame = new Map<number, Map<number, string>>();
+const passLabelByContext = new Map<string, string>();
+const TIMESTAMP_UID_PATTERN = /^r:(\d+):(\d+):f(\d+)$/;
+
+function labelRenderCall(renderer: Renderer, root: Object3D, mainScene: Object3D): void {
+  const frame = renderer.info.frame;
+  const call = renderer.info.render.frameCalls + 1;
+  const target = renderer.getRenderTarget();
+  const rootName =
+    root === mainScene ? 'main' : root.name === '' ? `${root.type}#${String(root.id)}` : root.name;
+  const targetName =
+    target === null
+      ? 'screen'
+      : `${target.texture.name === '' ? 'rt' : target.texture.name} ${String(target.width)}x${String(target.height)}`;
+  let calls = passLabelsByFrame.get(frame);
+  if (calls === undefined) {
+    calls = new Map();
+    passLabelsByFrame.set(frame, calls);
+    while (passLabelsByFrame.size > LABELLED_FRAMES_KEPT) {
+      const oldest = passLabelsByFrame.keys().next().value;
+      if (oldest === undefined) break;
+      passLabelsByFrame.delete(oldest);
+    }
+  }
+  calls.set(call, `${rootName} -> ${targetName}`);
+}
+
+interface TimestampPool {
+  readonly timestamps: ReadonlyMap<string, number>;
+}
+
+// three keeps the per-context durations of the last resolve on the backend's pool; internal API.
+function renderTimestampPool(renderer: Renderer): TimestampPool | undefined {
+  const backend = renderer.backend as unknown as {
+    timestampQueryPool?: Record<string, TimestampPool | undefined>;
+  };
+  return backend.timestampQueryPool?.['render'];
 }
 
 function createGpuTimer(renderer: Renderer): GpuTimer {
@@ -481,13 +526,50 @@ function createGpuTimer(renderer: Renderer): GpuTimer {
       mark: () => {},
       stop: () => {},
       samples: () => [],
+      passSamples: () => new Map(),
       disjointDrops: () => 0,
       startupError: () => 'timestamp queries unsupported',
     };
   }
   const resolved: number[] = [];
+  const passes = new Map<string, number[]>();
+  let lastPassFrame = renderer.info.frame;
   let inFlight = false;
   let stopped = false;
+
+  const collectPasses = (): void => {
+    const pool = renderTimestampPool(renderer);
+    if (pool === undefined) return;
+    const byFrame = new Map<number, Map<string, number>>();
+    for (const [uid, ms] of pool.timestamps) {
+      const match = TIMESTAMP_UID_PATTERN.exec(uid);
+      if (match === null) continue;
+      const call = Number(match[1]);
+      const context = match[2] ?? '';
+      const frame = Number(match[3]);
+      if (frame <= lastPassFrame) continue;
+      let label = passLabelByContext.get(context);
+      if (label === undefined) {
+        label = passLabelsByFrame.get(frame)?.get(call);
+        if (label !== undefined) passLabelByContext.set(context, label);
+      }
+      label ??= `context#${context}`;
+      let frameRow = byFrame.get(frame);
+      if (frameRow === undefined) {
+        frameRow = new Map();
+        byFrame.set(frame, frameRow);
+      }
+      frameRow.set(label, (frameRow.get(label) ?? 0) + ms);
+    }
+    for (const [frame, frameRow] of byFrame) {
+      if (frame > lastPassFrame) lastPassFrame = frame;
+      for (const [label, ms] of frameRow) {
+        const row = passes.get(label);
+        if (row === undefined) passes.set(label, [ms]);
+        else row.push(ms);
+      }
+    }
+  };
 
   return {
     supported: true,
@@ -497,7 +579,9 @@ function createGpuTimer(renderer: Renderer): GpuTimer {
       void renderer.resolveTimestampsAsync('render').then(
         (ms) => {
           inFlight = false;
-          if (ms !== undefined) resolved.push(ms);
+          if (ms === undefined) return;
+          resolved.push(ms);
+          collectPasses();
         },
         () => {
           inFlight = false;
@@ -508,6 +592,7 @@ function createGpuTimer(renderer: Renderer): GpuTimer {
       stopped = true;
     },
     samples: () => resolved,
+    passSamples: () => passes,
     // The timestamp query pool reports no disjoint frames; the counter stays for the report shape.
     disjointDrops: () => 0,
     startupError: () => null,
@@ -531,6 +616,7 @@ export interface FrameBlock {
   gpuTimerError: string | null;
   gpuFrames: number;
   gpuDisjointDrops: number;
+  gpuPasses: Record<string, { frames: number; msP50: number; msMean: number }>;
   drawCalls: number;
   drawCallsMax: number;
   triangles: number;
@@ -660,6 +746,22 @@ function createSampler(viewport: Viewport): Sampler {
         gpuTimerError: gpu.startupError(),
         gpuFrames: gpuSorted.length,
         gpuDisjointDrops: gpu.disjointDrops(),
+        gpuPasses: Object.fromEntries(
+          [...gpu.passSamples()]
+            .map(([label, samples]) => {
+              const passSorted = samples.slice().sort((a, b) => a - b);
+              return [
+                label,
+                {
+                  frames: passSorted.length,
+                  msP50: passSorted[Math.floor(passSorted.length / 2)] ?? 0,
+                  msMean:
+                    passSorted.reduce((sum, ms) => sum + ms, 0) / Math.max(1, passSorted.length),
+                },
+              ] as const;
+            })
+            .sort((a, b) => b[1].msP50 - a[1].msP50),
+        ),
         drawCalls: median(calls),
         drawCallsMax: Math.max(0, ...calls),
         triangles: median(triangles),
@@ -1114,6 +1216,7 @@ export function installPerfProbeEarly(viewport: Viewport): void {
   const { renderer } = viewport;
   const originalRender = renderer.render.bind(renderer);
   renderer.render = ((...args: Parameters<typeof originalRender>) => {
+    labelRenderCall(renderer, args[0], viewport.scene);
     const started = performance.now();
     const out = originalRender(...args);
     addCost('renderer.render', performance.now() - started);
@@ -1271,6 +1374,7 @@ export function installPerfProbe(deps: {
           textures: renderer.info.memory.textures,
           ...result.detail,
           terrainLoad: world.terrainLoadTrace(),
+          bootMarks: readBootMarks(),
           sample: result.sample,
           fpsMean: result.sample.fpsMean,
         });

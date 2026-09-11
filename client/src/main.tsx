@@ -15,6 +15,7 @@ import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
 import { installPerfProbe, installPerfProbeEarly } from './perfProbe.ts';
+import { BOOT_MARKS, markBoot } from './bootMarks.ts';
 import {
   brushProfile,
   brushRadius,
@@ -55,6 +56,7 @@ if (canvas === null || hudRoot === null) {
 }
 
 const viewport = await createViewport(canvas);
+markBoot(BOOT_MARKS.viewportReady);
 // The join is issued right after the only await, so its round trip overlaps the rest of
 // boot; every callback below reaches its target lazily, and nothing runs before wiring.
 const connection = connect({
