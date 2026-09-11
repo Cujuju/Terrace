@@ -19,6 +19,8 @@ export const ENTRY_HEADER_WORDS = 16;
 export const ENTRY_CHUNK_IDX = 0;
 export const ENTRY_LAYERED = 1;
 export const ENTRY_LOWEST_BAND = 2;
+/** Bit set per chunk side whose neighbour is unreceived or off-world; see exposedEdgesOf. */
+export const ENTRY_EXPOSED_EDGES = 3;
 export const ENTRY_ORIGIN_X_CELLS = 4;
 export const ENTRY_ORIGIN_Z_CELLS = 5;
 export const ENTRY_LOCAL_ORIGIN_X_UNITS = 6;
@@ -68,8 +70,28 @@ export const LIP_RECORDS_AT = 1;
 
 export const OVER_BUDGET = 'overBudget';
 
+export const EXPOSED_WEST = 1;
+export const EXPOSED_EAST = 2;
+export const EXPOSED_NORTH = 4;
+export const EXPOSED_SOUTH = 8;
+
+// Nothing stands beyond such an edge, so a view from there reaches the caps under a
+// square's own band range; everywhere else the neighbour square's risers hide them.
+function exposedEdgesOf(mirror: TerrainMirror, cx: number, cy: number, chunkCols: number): number {
+  const received = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < chunkCols && y < chunkCols &&
+    mirror.received.has(y * chunkCols + x);
+  let edges = 0;
+  if (!received(cx - 1, cy)) edges |= EXPOSED_WEST;
+  if (!received(cx + 1, cy)) edges |= EXPOSED_EAST;
+  if (!received(cx, cy - 1)) edges |= EXPOSED_NORTH;
+  if (!received(cx, cy + 1)) edges |= EXPOSED_SOUTH;
+  return edges;
+}
+
 export interface WindowEntryData {
   readonly layered: boolean;
+  readonly exposedEdges: number;
   readonly chunkLowestBand: number;
   readonly highestBand: number;
   readonly originXCells: number;
@@ -139,6 +161,7 @@ export function extractWindowEntry(
   // The arrays alias a module-level scratch: the caller must upload before extracting again.
   return {
     layered: floorBand !== null,
+    exposedEdges: exposedEdgesOf(mirror, cx, cy, chunkCols),
     chunkLowestBand,
     highestBand: range.highestBand,
     originXCells,
