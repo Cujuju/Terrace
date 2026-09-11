@@ -1,9 +1,8 @@
 import type { ChunkLipSegments, FlatCapPlan } from '../../terrain/capPlanFlat.ts';
 
-/** The destination super-mesh buffers an emit writes into. */
+/** The destination super-mesh buffer an emit writes into. */
 export interface GpuEmitTarget {
   readonly positions: GPUBuffer;
-  readonly colors: GPUBuffer;
   /** Super-mesh centre, world units; positions are quantized relative to it. */
   readonly localOriginX: number;
   readonly localOriginZ: number;
@@ -46,6 +45,8 @@ export const POSITION_Y_UNITS_PER_WORLD_UNIT = 64;
 /** snorm16 decode factor: the GPU hands the shader `units / SNORM16_MAX`. */
 export const SNORM16_MAX = 32767;
 
+/** i16 x, y, z and the band-LUT slot the colour lives in: the whole vertex. */
 export const GPU_POSITION_BYTES_PER_VERTEX = 8;
 
-export const GPU_COLOR_BYTES_PER_VERTEX = 4;
+/** Geometry attribute over the packed vertex's second word: z, then the LUT slot. */
+export const TERRAIN_KEY_ATTRIBUTE = 'terrainKey';

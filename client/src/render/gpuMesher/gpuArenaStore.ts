@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import type { BufferAttribute } from 'three';
+import type { InterleavedBuffer } from 'three';
 import type { Renderer } from 'three/webgpu';
 import { CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
@@ -17,8 +17,8 @@ import {
   type TerrainVertexLayout,
 } from '../terrainMaterial.ts';
 import { SUPER_MESH_SPAN_WORLD_UNITS } from '../terrainMeshes.ts';
+import { buildBandLutSlotByColor, packColorKey } from './bandLut.ts';
 import {
-  GPU_COLOR_BYTES_PER_VERTEX,
   GPU_POSITION_BYTES_PER_VERTEX,
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
   POSITION_Y_UNITS_PER_WORLD_UNIT,
@@ -38,7 +38,7 @@ const SUPER_HALF_EXTENT = SUPER_MESH_SPAN_WORLD_UNITS / 2;
 
 const CHUNK_SPAN_WORLD_UNITS = CHUNK_SIZE * CELL_WORLD_SIZE;
 
-// 12 B a vertex at a conservative 12 GB/s copy rate is a nanosecond; both machines
+// 8 B a vertex at a conservative 12 GB/s copy rate is under a nanosecond; both machines
 // clear that eightfold, so compaction never binds (design section 3.3).
 export const GPU_ARENA_COPY_MS_PER_VERTEX = 1e-6;
 
@@ -62,16 +62,21 @@ export const GPU_ARENA_COMPACT_STROKE_BUDGET_MS = 0.25;
 // whole GPU-time slice, and compaction moves are cheap copies.
 export const GPU_ARENA_COMPACT_IDLE_BUDGET_MS = 1.0;
 
-// 12 B a vertex written through the queue at a conservative 4 GB/s, so a CPU-fallback
+// 8 B a vertex written through the queue at a conservative 4 GB/s, so a CPU-fallback
 // chunk is charged its upload instead of nothing.
 export const GPU_ARENA_UPLOAD_MS_PER_VERTEX = 3e-6;
 
-const POSITION_COMPONENTS_PER_VERTEX = GPU_POSITION_BYTES_PER_VERTEX / Int16Array.BYTES_PER_ELEMENT;
+const PACKED_COMPONENTS_PER_VERTEX = GPU_POSITION_BYTES_PER_VERTEX / Int16Array.BYTES_PER_ELEMENT;
 
-/** The fourth position component pads the vertex to two words and is never read. */
-const PACKED_POSITION_SPARE = 0;
+/** The fourth component is the band-LUT slot the material samples its colour from. */
+const PACKED_KEY_COMPONENT = PACKED_COMPONENTS_PER_VERTEX - 1;
 
 const COMPONENTS_PER_CPU_POSITION = 3;
+
+const COLOR_RED = 0;
+const COLOR_GREEN = 1;
+const COLOR_BLUE = 2;
+const COLOR_ALPHA = 3;
 
 /** The kernel writes i16 units from the super-mesh centre; the material decodes them. */
 const GPU_ARENA_VERTEX_LAYOUT: TerrainVertexLayout = 'snorm16';
@@ -84,8 +89,8 @@ interface BackendAttributeData {
   buffer?: GPUBuffer;
 }
 
-// three r185 keeps an attribute's GPU buffer here; createAttribute allocates only when the
-// slot is empty (WebGPUAttributeUtils.js:76-78), so filling it first hands three ours.
+// three r185 keeps an interleaved buffer's GPU buffer here; createAttribute allocates only
+// when that slot is empty (WebGPUAttributeUtils.js:76-78), so filling it hands three ours.
 interface WebGpuBackendInternals {
   readonly isWebGPUBackend?: boolean;
   readonly device?: GPUDevice;
@@ -94,11 +99,30 @@ interface WebGpuBackendInternals {
 
 interface GpuSuper {
   positions: GPUBuffer;
-  colors: GPUBuffer;
-  positionAttribute: BufferAttribute;
-  colorAttribute: BufferAttribute;
+  vertexBuffer: InterleavedBuffer;
   target: GpuEmitTarget;
   localOrigin: Vector3;
+}
+
+/** Every CPU colour is a palette entry the LUT already holds, so a miss is a wiring bug. */
+const lutSlotByColor = buildBandLutSlotByColor();
+
+function lutSlotOfColor(colors: Uint8Array, at: number): number {
+  const key = packColorKey(
+    colors[at + COLOR_RED]!,
+    colors[at + COLOR_GREEN]!,
+    colors[at + COLOR_BLUE]!,
+    colors[at + COLOR_ALPHA]!,
+  );
+  const slot = lutSlotByColor.get(key);
+  if (slot === undefined) {
+    throw new Error(
+      `no band LUT slot holds the CPU vertex colour ` +
+        `${colors[at + COLOR_RED]!}, ${colors[at + COLOR_GREEN]!}, ` +
+        `${colors[at + COLOR_BLUE]!}, ${colors[at + COLOR_ALPHA]!}`,
+    );
+  }
+  return slot;
 }
 
 export interface GpuArenaStoreOptions {
@@ -134,9 +158,8 @@ export function createGpuArenaStore(
 
   let encoder: GPUCommandEncoder | null = null;
   let scratchPositions: GPUBuffer | null = null;
-  let scratchColors: GPUBuffer | null = null;
   let scratchVertices = 0;
-  let cpuPositions = new Int16Array(0);
+  let cpuPacked = new Int16Array(0);
   let destroyed = false;
 
   const superAt = (superIdx: number): GpuSuper => {
@@ -145,8 +168,8 @@ export function createGpuArenaStore(
     return gpu;
   };
 
-  const injectedBuffer = (attribute: BufferAttribute): GPUBuffer | undefined =>
-    backend.get(attribute).buffer;
+  const injectedBuffer = (vertexBuffer: InterleavedBuffer): GPUBuffer | undefined =>
+    backend.get(vertexBuffer).buffer;
 
   // three fills an empty attribute slot in createAttribute, which only a render reaches.
   // Checking before then would pass on our own injection and never look again.
@@ -156,12 +179,9 @@ export function createGpuArenaStore(
       if (calls <= injectedAtCalls) continue;
       uncheckedInjections.delete(superIdx);
       const gpu = superAt(superIdx);
-      if (
-        injectedBuffer(gpu.positionAttribute) !== gpu.positions ||
-        injectedBuffer(gpu.colorAttribute) !== gpu.colors
-      ) {
+      if (injectedBuffer(gpu.vertexBuffer) !== gpu.positions) {
         throw new GpuArenaInjectionError(
-          `three replaced the injected buffers of arena super-mesh ${superIdx}`,
+          `three replaced the injected buffer of arena super-mesh ${superIdx}`,
         );
       }
     }
@@ -202,29 +222,19 @@ export function createGpuArenaStore(
   ): { gpu: GpuSuper; buffers: ArenaSuperBuffers } => {
     const vertexCapacity = triangleCapacity * VERTICES_PER_TRIANGLE;
     const positions = device.createBuffer({
-      label: `terrace-arena-positions-${superIdx}`,
+      label: `terrace-arena-vertices-${superIdx}`,
       size: vertexCapacity * GPU_POSITION_BYTES_PER_VERTEX,
       usage: ARENA_BUFFER_USAGE,
     });
-    const colors = device.createBuffer({
-      label: `terrace-arena-colors-${superIdx}`,
-      size: vertexCapacity * GPU_COLOR_BYTES_PER_VERTEX,
-      usage: ARENA_BUFFER_USAGE,
-    });
 
-    const { geometry, positionAttribute, colorAttribute } =
-      createPackedArenaGeometry(vertexCapacity);
-    backend.get(positionAttribute).buffer = positions;
-    backend.get(colorAttribute).buffer = colors;
+    const { geometry, vertexBuffer, positionAttribute } = createPackedArenaGeometry(vertexCapacity);
+    backend.get(vertexBuffer).buffer = positions;
 
     const gpu: GpuSuper = {
       positions,
-      colors,
-      positionAttribute,
-      colorAttribute,
+      vertexBuffer,
       target: {
         positions,
-        colors,
         localOriginX: localOrigin.x,
         localOriginZ: localOrigin.z,
       },
@@ -238,7 +248,7 @@ export function createGpuArenaStore(
       buffers: {
         geometry,
         positionAttribute,
-        colorAttribute,
+        colorAttribute: null,
         normalAttribute: null,
         triangleCapacity,
         localOrigin,
@@ -250,15 +260,9 @@ export function createGpuArenaStore(
     if (vertexCount <= scratchVertices) return;
     commit();
     scratchPositions?.destroy();
-    scratchColors?.destroy();
     scratchPositions = device.createBuffer({
-      label: 'terrace-arena-scratch-positions',
+      label: 'terrace-arena-scratch-vertices',
       size: vertexCount * GPU_POSITION_BYTES_PER_VERTEX,
-      usage: SCRATCH_BUFFER_USAGE,
-    });
-    scratchColors = device.createBuffer({
-      label: 'terrace-arena-scratch-colors',
-      size: vertexCount * GPU_COLOR_BYTES_PER_VERTEX,
       usage: SCRATCH_BUFFER_USAGE,
     });
     scratchVertices = vertexCount;
@@ -275,13 +279,13 @@ export function createGpuArenaStore(
     answer: ChunkJobAnswer,
   ): ArenaSlotBounds => {
     const count = answer.vertexCount;
-    if (cpuPositions.length < count * POSITION_COMPONENTS_PER_VERTEX) {
-      cpuPositions = new Int16Array(count * POSITION_COMPONENTS_PER_VERTEX);
+    if (cpuPacked.length < count * PACKED_COMPONENTS_PER_VERTEX) {
+      cpuPacked = new Int16Array(count * PACKED_COMPONENTS_PER_VERTEX);
     }
-    const packed = cpuPositions.subarray(0, count * POSITION_COMPONENTS_PER_VERTEX);
+    const packed = cpuPacked.subarray(0, count * PACKED_COMPONENTS_PER_VERTEX);
     for (let v = 0; v < count; v++) {
       const source = v * COMPONENTS_PER_CPU_POSITION;
-      const target = v * POSITION_COMPONENTS_PER_VERTEX;
+      const target = v * PACKED_COMPONENTS_PER_VERTEX;
       packed[target] = quantize(
         (answer.positions[source]! - gpu.localOrigin.x) * POSITION_XZ_UNITS_PER_WORLD_UNIT,
       );
@@ -289,16 +293,12 @@ export function createGpuArenaStore(
       packed[target + 2] = quantize(
         (answer.positions[source + 2]! - gpu.localOrigin.z) * POSITION_XZ_UNITS_PER_WORLD_UNIT,
       );
-      packed[target + 3] = PACKED_POSITION_SPARE;
+      packed[target + PACKED_KEY_COMPONENT] =
+        lutSlotOfColor(answer.colors, v * COMPONENTS_PER_COLOR);
     }
 
     commit();
     device.queue.writeBuffer(gpu.positions, vertexOffset * GPU_POSITION_BYTES_PER_VERTEX, packed);
-    device.queue.writeBuffer(
-      gpu.colors,
-      vertexOffset * GPU_COLOR_BYTES_PER_VERTEX,
-      answer.colors.subarray(0, count * COMPONENTS_PER_COLOR),
-    );
 
     return {
       minX: answer.bounds[0]! - gpu.localOrigin.x,
@@ -333,18 +333,12 @@ export function createGpuArenaStore(
       startVertex * GPU_POSITION_BYTES_PER_VERTEX,
       vertexCount * GPU_POSITION_BYTES_PER_VERTEX,
     );
-    frame.clearBuffer(
-      gpu.colors,
-      startVertex * GPU_COLOR_BYTES_PER_VERTEX,
-      vertexCount * GPU_COLOR_BYTES_PER_VERTEX,
-    );
   };
 
   const disposeSuper = (superIdx: number): void => {
     const gpu = supers.get(superIdx);
     if (gpu === undefined) return;
     gpu.positions.destroy();
-    gpu.colors.destroy();
     supers.delete(superIdx);
     uncheckedInjections.delete(superIdx);
   };
@@ -353,9 +347,7 @@ export function createGpuArenaStore(
     commit();
     for (const superIdx of [...supers.keys()]) disposeSuper(superIdx);
     scratchPositions?.destroy();
-    scratchColors?.destroy();
     scratchPositions = null;
-    scratchColors = null;
     scratchVertices = 0;
   };
 
@@ -380,8 +372,8 @@ export function createGpuArenaStore(
     },
 
     residentBytes(): number {
-      let bytes = (scratchPositions?.size ?? 0) + (scratchColors?.size ?? 0);
-      for (const gpu of supers.values()) bytes += gpu.positions.size + gpu.colors.size;
+      let bytes = scratchPositions?.size ?? 0;
+      for (const gpu of supers.values()) bytes += gpu.positions.size;
       return bytes;
     },
 
@@ -406,18 +398,10 @@ export function createGpuArenaStore(
           0,
           liveEnd * GPU_POSITION_BYTES_PER_VERTEX,
         );
-        growEncoder.copyBufferToBuffer(
-          previous.colors,
-          0,
-          grown.gpu.colors,
-          0,
-          liveEnd * GPU_COLOR_BYTES_PER_VERTEX,
-        );
       }
       device.queue.submit([growEncoder.finish()]);
       // Legal after submit: the submitted commands keep their own reference to the buffers.
       previous.positions.destroy();
-      previous.colors.destroy();
       return grown.buffers;
     },
 
@@ -441,9 +425,7 @@ export function createGpuArenaStore(
       const gpu = superAt(superIdx);
       ensureScratch(vertexCount);
       const bouncePositions = scratchPositions!;
-      const bounceColors = scratchColors!;
       const positionBytes = vertexCount * GPU_POSITION_BYTES_PER_VERTEX;
-      const colorBytes = vertexCount * GPU_COLOR_BYTES_PER_VERTEX;
       const frame = frameEncoder();
       frame.copyBufferToBuffer(
         gpu.positions,
@@ -458,20 +440,6 @@ export function createGpuArenaStore(
         gpu.positions,
         toVertex * GPU_POSITION_BYTES_PER_VERTEX,
         positionBytes,
-      );
-      frame.copyBufferToBuffer(
-        gpu.colors,
-        fromVertex * GPU_COLOR_BYTES_PER_VERTEX,
-        bounceColors,
-        0,
-        colorBytes,
-      );
-      frame.copyBufferToBuffer(
-        bounceColors,
-        0,
-        gpu.colors,
-        toVertex * GPU_COLOR_BYTES_PER_VERTEX,
-        colorBytes,
       );
     },
 
