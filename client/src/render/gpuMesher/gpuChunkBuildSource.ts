@@ -117,8 +117,8 @@ const NO_ENTRY = -1;
 
 const CHUNK_SPAN_WORLD_UNITS = CHUNK_SIZE * CELL_WORLD_SIZE;
 
-/** Group 0's window, stats and lips, plus group 1's positions and colours. */
-const STORAGE_BUFFERS_PER_STAGE = 5;
+/** Group 0's window, stats and lips, plus group 1's packed vertices. */
+const STORAGE_BUFFERS_PER_STAGE = 4;
 
 /** Group 0's params and lut. */
 const UNIFORM_BUFFERS_PER_STAGE = 2;
@@ -322,7 +322,6 @@ export async function createGpuChunkBuildSource(
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
   const dummyPositions = create('dummyPositions', BYTES_PER_WORD, STORAGE_RW);
-  const dummyColors = create('dummyColors', BYTES_PER_WORD, STORAGE_RW);
 
   const lipsBufferWords = (capacity: number): number => LIP_RECORDS_AT + capacity * LIP_WORDS;
 
@@ -354,7 +353,6 @@ export async function createGpuChunkBuildSource(
     paramsBuffer,
     lipsBuffer,
     dummyPositions,
-    dummyColors,
   ];
 
   /** Every path that gives up before the source exists hands the buffers back first. */
@@ -408,7 +406,7 @@ export async function createGpuChunkBuildSource(
   });
   const group1Layout = device.createBindGroupLayout({
     label: 'terrace.gpuMesher.group1',
-    entries: [storageEntry(0, 'storage'), storageEntry(1, 'storage')],
+    entries: [storageEntry(0, 'storage')],
   });
 
   const pipelineLayout = device.createPipelineLayout({
@@ -431,10 +429,7 @@ export async function createGpuChunkBuildSource(
   const countGroup1 = device.createBindGroup({
     label: 'terrace.gpuMesher.bind1.count',
     layout: group1Layout,
-    entries: [
-      { binding: 0, resource: { buffer: dummyPositions } },
-      { binding: 1, resource: { buffer: dummyColors } },
-    ],
+    entries: [{ binding: 0, resource: { buffer: dummyPositions } }],
   });
   const layoutError = await device.popErrorScope();
   if (layoutError !== null) {
@@ -452,24 +447,16 @@ export async function createGpuChunkBuildSource(
     return refuse(`the compute pipeline was refused (${String(error)})`);
   }
 
-  const emitGroups = new WeakMap<GPUBuffer, WeakMap<GPUBuffer, GPUBindGroup>>();
+  const emitGroups = new WeakMap<GPUBuffer, GPUBindGroup>();
   const emitGroupFor = (target: GpuEmitTarget): GPUBindGroup => {
-    let byColor = emitGroups.get(target.positions);
-    if (byColor === undefined) {
-      byColor = new WeakMap<GPUBuffer, GPUBindGroup>();
-      emitGroups.set(target.positions, byColor);
-    }
-    const cached = byColor.get(target.colors);
+    const cached = emitGroups.get(target.positions);
     if (cached !== undefined) return cached;
     const group = device.createBindGroup({
       label: 'terrace.gpuMesher.bind1.emit',
       layout: group1Layout,
-      entries: [
-        { binding: 0, resource: { buffer: target.positions } },
-        { binding: 1, resource: { buffer: target.colors } },
-      ],
+      entries: [{ binding: 0, resource: { buffer: target.positions } }],
     });
-    byColor.set(target.colors, group);
+    emitGroups.set(target.positions, group);
     return group;
   };
 
