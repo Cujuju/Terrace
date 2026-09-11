@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import type { BufferAttribute, BufferGeometry } from 'three';
+import type { BufferAttribute, BufferGeometry, InterleavedBufferAttribute } from 'three';
 import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import type { ChunkAnswer } from './chunkBuildSource.ts';
 import { COMPONENTS_PER_COLOR, COMPONENTS_PER_NORMAL } from '../terrain/capEmission.ts';
@@ -27,8 +27,9 @@ export interface ArenaSlotBounds {
 
 export interface ArenaSuperBuffers {
   readonly geometry: BufferGeometry;
-  readonly positionAttribute: BufferAttribute;
-  readonly colorAttribute: BufferAttribute;
+  readonly positionAttribute: BufferAttribute | InterleavedBufferAttribute;
+  /** null when the layout carries colour as a palette key inside the position attribute. */
+  readonly colorAttribute: BufferAttribute | null;
   readonly normalAttribute: BufferAttribute | null;
   readonly triangleCapacity: number;
   /** Where the arena puts `mesh.position`, so the slot bounds it stores read as local. */
