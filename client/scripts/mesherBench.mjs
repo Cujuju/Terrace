@@ -94,6 +94,8 @@ const rowOf = (report) => {
     rendererGpuMsP99: sample.gpuMsP99 ?? null,
     rendererGpuMsMax: sample.gpuMsMax ?? null,
     gpuTimerSupported: sample.gpuTimerSupported ?? null,
+    // The arena's own accounting; renderer.info does not see injected GPU buffers.
+    terrainResidentBytes: report.terrainResidentBytes ?? null,
     terrainLoad: {
       firstUpdateMs: load.firstUpdateMs ?? null,
       queueEmptyAfterMs: load.queueEmptyAfterMs ?? null,
@@ -123,6 +125,7 @@ const medianRow = (rows) => {
     drawCalls: pick('drawCalls'), triangles: pick('triangles'),
     rendererGpuMsP50: pick('rendererGpuMsP50'), rendererGpuMsP99: pick('rendererGpuMsP99'),
     rendererGpuMsMax: pick('rendererGpuMsMax'),
+    terrainResidentBytes: pick('terrainResidentBytes'),
     terrainLoad: {
       queueEmptyAfterMs: median(rows.map((r) => r.terrainLoad.queueEmptyAfterMs)),
       chunksSpliced: median(rows.map((r) => r.terrainLoad.chunksSpliced)),
@@ -172,6 +175,8 @@ try {
 // Design §11.3: the GPU path must beat the CPU path on every row.
 const lower = (gpuValue, cpuValue) =>
   (typeof gpuValue === 'number' && typeof cpuValue === 'number' ? gpuValue < cpuValue : null);
+const notHigher = (gpuValue, cpuValue) =>
+  (typeof gpuValue === 'number' && typeof cpuValue === 'number' ? gpuValue <= cpuValue : null);
 
 const gpuMedian = results.sculpt.gpu?.median ?? null;
 const cpuMedian = results.sculpt.cpu?.median ?? null;
@@ -191,6 +196,8 @@ results.criteria = [
   { name: 'stroke max lower than cpu', gpu: gpuMedian?.strokeMax ?? null, cpu: cpuMedian?.strokeMax ?? null, pass: lower(gpuMedian?.strokeMax, cpuMedian?.strokeMax) },
   { name: 'load queue-empty lower than cpu', gpu: gpuOverview?.terrainLoad.queueEmptyAfterMs ?? null, cpu: cpuOverview?.terrainLoad.queueEmptyAfterMs ?? null, pass: lower(gpuOverview?.terrainLoad.queueEmptyAfterMs, cpuOverview?.terrainLoad.queueEmptyAfterMs) },
   { name: `render + mesher GPU ms <= ${GPU_FRAME_BUDGET_MS}`, gpu: renderPlusMesher(gpuMedian), cpu: null, pass: renderPlusMesher(gpuMedian) === null ? null : renderPlusMesher(gpuMedian) <= GPU_FRAME_BUDGET_MS },
+  // Design §11.3: resident arena bytes no worse than the CPU path's.
+  { name: 'terrain resident bytes <= cpu', gpu: gpuMedian?.terrainResidentBytes ?? null, cpu: cpuMedian?.terrainResidentBytes ?? null, pass: notHigher(gpuMedian?.terrainResidentBytes, cpuMedian?.terrainResidentBytes) },
 ];
 results.verdict = results.failures.length > 0 ? 'incomplete'
   : results.criteria.some((c) => c.pass === null) ? 'incomplete'
@@ -208,7 +215,9 @@ const gpuMesherCell = (row) => (row?.gpuMesher === null || row?.gpuMesher === un
   ? 'n/a'
   : `count ${row.gpuMesher.countMs} / emit ${row.gpuMesher.emitMs} ms, ${row.gpuMesher.batches} batches, ${row.gpuMesher.chunks} chunks`);
 
-const runRow = (label, r) => `| ${label} | ${fmt(r.strokeP50)} | ${fmt(r.strokeP95)} | ${fmt(r.strokeP99)} | ${fmt(r.strokeMax)} | ${fmt(r.idleP50)} | ${fmt(r.fpsMean)} | ${fmt(r.drawCalls)} | ${fmt(r.triangles)} | ${fmt(r.rendererGpuMsP50)} | ${fmt(r.rendererGpuMsP99)} | ${fmt(r.terrainLoad.queueEmptyAfterMs)} | ${fmt(r.terrainLoad.chunksSpliced)} | ${fmt(r.terrainLoad.medianSpliceMs)} | ${fmt(r.terrainLoad.maxSpliceMs)} | ${gpuMesherCell(r)} |`;
+const MB = 1e6;
+const mb = (v) => (typeof v === 'number' ? `${(v / MB).toFixed(1)} MB` : 'n/a');
+const runRow = (label, r) => `| ${label} | ${fmt(r.strokeP50)} | ${fmt(r.strokeP95)} | ${fmt(r.strokeP99)} | ${fmt(r.strokeMax)} | ${fmt(r.idleP50)} | ${fmt(r.fpsMean)} | ${fmt(r.drawCalls)} | ${fmt(r.triangles)} | ${fmt(r.rendererGpuMsP50)} | ${fmt(r.rendererGpuMsP99)} | ${fmt(r.terrainLoad.firstUpdateMs)} | ${fmt(r.terrainLoad.queueEmptyAfterMs)} | ${fmt(r.terrainLoad.chunksSpliced)} | ${fmt(r.terrainLoad.medianSpliceMs)} | ${fmt(r.terrainLoad.maxSpliceMs)} | ${mb(r.terrainResidentBytes)} | ${gpuMesherCell(r)} |`;
 
 const sculptRows = [];
 for (const mesher of meshers) {
@@ -222,8 +231,8 @@ const overviewRows = meshers
   .filter((m) => results.overview[m] !== null && results.overview[m] !== undefined)
   .map((m) => runRow(`${m} overview`, results.overview[m]));
 
-const HEADER = '| run | stroke p50 | p95 | p99 | max | idle p50 | fpsMean | draws | tris | rGPU p50 | rGPU p99 | load queue-empty ms | chunks spliced | median splice | max splice | gpuMesher |';
-const RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
+const HEADER = '| run | stroke p50 | p95 | p99 | max | idle p50 | fpsMean | draws | tris | rGPU p50 | rGPU p99 | first update ms | load queue-empty ms | chunks spliced | median splice | max splice | terrain resident | gpuMesher |';
+const RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
 
 writeFileSync(join(RESULTS_DIR, 'bench.md'), `# GPU mesher speed and efficiency — design §11.3
 
