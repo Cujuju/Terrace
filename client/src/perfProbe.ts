@@ -58,6 +58,9 @@ const STROKE_HOLD_MS = 5000;
 const STROKE_RADIUS = 4;
 
 const PARITY_HOLD_MS = 20_000;
+
+/** A three.js layer nothing in the app uses (0 is the default; 31 is the last). */
+const PARITY_RENDER_LAYER = 31;
 const PARITY_SETTLE_FRAMES = 2;
 const TERRAIN_QUEUE_POLL_MS = 100;
 const TERRAIN_QUEUE_TIMEOUT_MS = 180_000;
@@ -929,7 +932,7 @@ function isDrawable(node: Object3D): boolean {
 // Terrain alone, on a background no id can be mistaken for, under pinned noon light: two
 // runs of a world must differ only where the meshers do.
 function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
-  const { scene, lighting } = ctx.viewport;
+  const { scene, lighting, camera } = ctx.viewport;
   const { sun, hemisphere, ambient } = lighting;
   const terrain = new Set<Object3D>(ctx.world.pickables());
   const wasVisible = new Map<Object3D, boolean>();
@@ -938,6 +941,20 @@ function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
     wasVisible.set(node, node.visible);
     node.visible = false;
   });
+
+  // Objects a plugin creates or re-shows during the hold (weather decks) never join this
+  // layer, so the camera cannot see them whatever their visibility.
+  const layerMasks = new Map<Object3D, number>();
+  const admit = (node: Object3D): void => {
+    layerMasks.set(node, node.layers.mask);
+    node.layers.enable(PARITY_RENDER_LAYER);
+  };
+  for (const node of terrain) admit(node);
+  admit(sun);
+  admit(hemisphere);
+  admit(ambient);
+  const cameraMask = camera.layers.mask;
+  camera.layers.set(PARITY_RENDER_LAYER);
 
   const hud = document.querySelector<HTMLElement>(HUD_ELEMENT_SELECTOR);
   const hudDisplay = hud === null ? null : hud.style.display;
@@ -968,6 +985,8 @@ function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
       scene.background = background;
       if (hud !== null && hudDisplay !== null) hud.style.display = hudDisplay;
       for (const [node, visible] of wasVisible) node.visible = visible;
+      camera.layers.mask = cameraMask;
+      for (const [node, mask] of layerMasks) node.layers.mask = mask;
     },
   };
 }
