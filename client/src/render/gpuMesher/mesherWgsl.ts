@@ -28,6 +28,7 @@ import {
   LUT_CLIFF_BASE,
   LUT_SHORE_CAP,
   LUT_SHORE_CLIFF,
+  LUT_VEC4_COUNT,
   SHORE_THRESHOLD,
 } from './bandLut.ts';
 import {
@@ -41,6 +42,8 @@ import {
   MARCH_REF_BASE,
   MARCH_SADDLE_10_SPLIT_CASE,
   MARCH_SADDLE_5_SPLIT_CASE,
+  MARCH_TABLE_WORDS,
+  marchingTableBuffer,
 } from './marchingTable.ts';
 import {
   CHUNK_STATS_VERTEX_COUNT,
@@ -53,12 +56,21 @@ import {
   ENTRY_ORIGIN_X_CELLS,
   ENTRY_ORIGIN_Z_CELLS,
   ENTRY_VERTEX_LIMIT,
+  LIP_COUNTER_AT,
+  LIP_RECORDS_AT,
   LIP_WORDS,
   SPAN_COUNT_SHIFT,
   SPAN_OFFSET_MASK,
   SQUARES_PER_CHUNK,
+  STATS_CHUNK_AT,
+  STATS_SQUARE_BASE_AT,
+  WINDOW_BATCH_LIST_AT,
+  WINDOW_ENTRIES_AT,
+  WINDOW_LATTICE_AT,
+  WINDOW_LATTICE_DESC_AT,
   WINDOW_LATTICE_SAMPLES,
   WINDOW_SPAN_PAIRS,
+  WINDOW_SPAN_PAIRS_AT,
 } from './terrainGpuInputs.ts';
 
 export const WORKGROUP_THREADS = 64;
@@ -102,6 +114,14 @@ function wgslF32(value: number): string {
   if (!Number.isFinite(value)) throw new RangeError(`${value} is not an f32 literal`);
   const text = Number.isInteger(value) ? `${value}.0` : `${value}`;
   return text.includes('e') || text.includes('E') ? value.toFixed(20) : text;
+}
+
+// The table is 324 words. A module-scope const keeps it off the storage-buffer budget,
+// which WebGPU guarantees is only eight bindings a stage.
+function wgslMarchTable(): string {
+  const literals = Array.from(marchingTableBuffer(), (word) => wgslI32(word)).join(', ');
+  const type = `array<i32, ${wgslI32(MARCH_TABLE_WORDS)}>`;
+  return `const marchTable : ${type} = ${type}(${literals});`;
 }
 
 function bandHeightShift(): number {
@@ -159,6 +179,15 @@ const ENTRY_HEADER_WORDS : i32 = ${wgslI32(ENTRY_HEADER_WORDS)};
 const CHUNK_STATS_WORDS : u32 = ${wgslI32(CHUNK_STATS_WORDS)}u;
 const CHUNK_STATS_VERTEX_COUNT : u32 = ${wgslI32(CHUNK_STATS_VERTEX_COUNT)}u;
 const LIP_WORDS : u32 = ${wgslI32(LIP_WORDS)}u;
+const LIP_COUNTER_AT : u32 = ${wgslI32(LIP_COUNTER_AT)}u;
+const LIP_RECORDS_AT : u32 = ${wgslI32(LIP_RECORDS_AT)}u;
+const WINDOW_LATTICE_AT : u32 = ${wgslI32(WINDOW_LATTICE_AT)}u;
+const WINDOW_LATTICE_DESC_AT : u32 = ${wgslI32(WINDOW_LATTICE_DESC_AT)}u;
+const WINDOW_SPAN_PAIRS_AT : u32 = ${wgslI32(WINDOW_SPAN_PAIRS_AT)}u;
+const WINDOW_ENTRIES_AT : u32 = ${wgslI32(WINDOW_ENTRIES_AT)}u;
+const WINDOW_BATCH_LIST_AT : u32 = ${wgslI32(WINDOW_BATCH_LIST_AT)}u;
+const STATS_SQUARE_BASE_AT : u32 = ${wgslI32(STATS_SQUARE_BASE_AT)}u;
+const STATS_CHUNK_AT : u32 = ${wgslI32(STATS_CHUNK_AT)}u;
 const MAX_POLYS : i32 = ${wgslI32(MARCH_MAX_POLYS)};
 const MAX_POLY_REFS : i32 = ${wgslI32(MARCH_MAX_POLY_REFS)};
 const MARCH_REF_BASE : i32 = ${wgslI32(MARCH_REF_BASE)};
@@ -189,20 +218,21 @@ struct Params {
   lipCapacity : u32,
 };
 
-@group(0) @binding(0) var<storage, read> lattice : array<i32>;
-@group(0) @binding(1) var<storage, read> latticeDesc : array<u32>;
-@group(0) @binding(2) var<storage, read> spanPairs : array<i32>;
-@group(0) @binding(3) var<storage, read> entries : array<i32>;
-@group(0) @binding(4) var<storage, read_write> squareBase : array<u32>;
-@group(0) @binding(5) var<storage, read_write> chunkStats : array<atomic<u32>>;
-@group(0) @binding(6) var<storage, read> marchTable : array<i32>;
-@group(0) @binding(7) var<storage, read> lut : array<vec4f>;
-@group(0) @binding(8) var<uniform> params : Params;
-@group(0) @binding(9) var<storage, read_write> lips : array<u32>;
-@group(0) @binding(10) var<storage, read_write> lipCounter : array<atomic<u32>>;
-@group(0) @binding(11) var<storage, read> batchList : array<i32>;
+${wgslMarchTable()}
+
+// Three storage buffers and two uniforms: the floor every WebGPU device guarantees a
+// compute stage is eight storage buffers, and group 1 takes two of them.
+@group(0) @binding(0) var<storage, read> window : array<u32>;
+@group(0) @binding(1) var<storage, read_write> stats : array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> lips : array<atomic<u32>>;
+@group(0) @binding(3) var<uniform> params : Params;
+@group(0) @binding(4) var<uniform> lut : array<vec4f, ${wgslI32(LUT_VEC4_COUNT)}>;
 @group(1) @binding(0) var<storage, read_write> outPositions : array<u32>;
 @group(1) @binding(1) var<storage, read_write> outColors : array<u32>;
+
+fn entryWord(at : i32) -> i32 { return bitcast<i32>(window[WINDOW_ENTRIES_AT + u32(at)]); }
+fn spanPairWord(at : i32) -> i32 { return bitcast<i32>(window[WINDOW_SPAN_PAIRS_AT + u32(at)]); }
+fn squareBaseAt(at : u32) -> u32 { return atomicLoad(&stats[STATS_SQUARE_BASE_AT + at]); }
 
 var<workgroup> cellHeight : array<i32, LATTICE_CELLS>;
 var<workgroup> cellDesc : array<u32, LATTICE_CELLS>;
@@ -272,12 +302,12 @@ fn spanCountOf(local : i32) -> i32 {
 fn spanFloor(local : i32, k : i32) -> i32 {
   let desc = cellDesc[local];
   if (desc == 0u) { return BEDROCK_FLOOR; }
-  return spanPairs[(entryPairBase + i32(desc & SPAN_OFFSET_MASK) + k) * 2];
+  return spanPairWord((entryPairBase + i32(desc & SPAN_OFFSET_MASK) + k) * 2);
 }
 fn spanCeiling(local : i32, k : i32) -> i32 {
   let desc = cellDesc[local];
   if (desc == 0u) { return cellHeight[local]; }
-  return spanPairs[(entryPairBase + i32(desc & SPAN_OFFSET_MASK) + k) * 2 + 1];
+  return spanPairWord((entryPairBase + i32(desc & SPAN_OFFSET_MASK) + k) * 2 + 1);
 }
 fn spanLowestBandHeight(floorHeight : i32) -> i32 {
   let q = quantizeToBand(floorHeight);
@@ -538,15 +568,15 @@ fn appendLips(n : u32, band : i32) {
     if (!lineIsContour[v]) { continue; }
     let a = line[v] * CELL_WORLD_SIZE;
     let b = line[(v + 1u) % n] * CELL_WORLD_SIZE;
-    let at = atomicAdd(&lipCounter[0], 1u);
+    let at = atomicAdd(&lips[LIP_COUNTER_AT], 1u);
     if (at >= params.lipCapacity) { continue; }
-    let o = at * LIP_WORDS;
-    lips[o + 0u] = lipEntry;
-    lips[o + 1u] = bitcast<u32>(band);
-    lips[o + 2u] = bitcast<u32>(a.x);
-    lips[o + 3u] = bitcast<u32>(a.y);
-    lips[o + 4u] = bitcast<u32>(b.x);
-    lips[o + 5u] = bitcast<u32>(b.y);
+    let o = LIP_RECORDS_AT + at * LIP_WORDS;
+    atomicStore(&lips[o + 0u], lipEntry);
+    atomicStore(&lips[o + 1u], bitcast<u32>(band));
+    atomicStore(&lips[o + 2u], bitcast<u32>(a.x));
+    atomicStore(&lips[o + 3u], bitcast<u32>(a.y));
+    atomicStore(&lips[o + 4u], bitcast<u32>(b.x));
+    atomicStore(&lips[o + 5u], bitcast<u32>(b.y));
   }
 }
 
@@ -673,26 +703,26 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
                          @builtin(local_invocation_index) tid : u32) {
   let emit = params.mode == MODE_EMIT;
   let part = wid.x % WORKGROUPS_PER_CHUNK;
-  let entry = select(batchList[params.batchBase + i32(wid.x / WORKGROUPS_PER_CHUNK)],
-    params.entry, emit);
+  let batchSlot = WINDOW_BATCH_LIST_AT + u32(params.batchBase) + wid.x / WORKGROUPS_PER_CHUNK;
+  let entry = select(bitcast<i32>(window[batchSlot]), params.entry, emit);
   let latticeBase = u32(entry) * LATTICE_CELLS;
   for (var at = tid; at < LATTICE_CELLS; at += WORKGROUP_THREADS) {
-    cellHeight[at] = lattice[latticeBase + at];
-    cellDesc[at] = latticeDesc[latticeBase + at];
+    cellHeight[at] = bitcast<i32>(window[WINDOW_LATTICE_AT + latticeBase + at]);
+    cellDesc[at] = window[WINDOW_LATTICE_DESC_AT + latticeBase + at];
   }
   workgroupBarrier();
 
   let header = entry * ENTRY_HEADER_WORDS;
-  chunkLayered = entries[header + ${wgslI32(ENTRY_LAYERED)}] != 0;
-  chunkLowestBand = entries[header + ${wgslI32(ENTRY_LOWEST_BAND)}];
-  originCellX = entries[header + ${wgslI32(ENTRY_ORIGIN_X_CELLS)}];
-  originCellZ = entries[header + ${wgslI32(ENTRY_ORIGIN_Z_CELLS)}];
-  localOriginX = f32(entries[header + ${wgslI32(ENTRY_LOCAL_ORIGIN_X_UNITS)}]) / POSITION_XZ_UNITS;
-  localOriginZ = f32(entries[header + ${wgslI32(ENTRY_LOCAL_ORIGIN_Z_UNITS)}]) / POSITION_XZ_UNITS;
+  chunkLayered = entryWord(header + ${wgslI32(ENTRY_LAYERED)}) != 0;
+  chunkLowestBand = entryWord(header + ${wgslI32(ENTRY_LOWEST_BAND)});
+  originCellX = entryWord(header + ${wgslI32(ENTRY_ORIGIN_X_CELLS)});
+  originCellZ = entryWord(header + ${wgslI32(ENTRY_ORIGIN_Z_CELLS)});
+  localOriginX = f32(entryWord(header + ${wgslI32(ENTRY_LOCAL_ORIGIN_X_UNITS)})) / POSITION_XZ_UNITS;
+  localOriginZ = f32(entryWord(header + ${wgslI32(ENTRY_LOCAL_ORIGIN_Z_UNITS)})) / POSITION_XZ_UNITS;
   entryPairBase = entry * WINDOW_SPAN_PAIRS;
   emitEnabled = emit;
   lipEntry = u32(entry);
-  let chunkVertexLimit = u32(entries[header + ${wgslI32(ENTRY_VERTEX_LIMIT)}]);
+  let chunkVertexLimit = u32(entryWord(header + ${wgslI32(ENTRY_VERTEX_LIMIT)}));
   let squareSlot = u32(entry) * SQUARES_PER_CHUNK;
 
   for (var s = part * SQUARES_PER_WORKGROUP + tid;
@@ -701,14 +731,15 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
     if (!emit) {
       emitLimit = 0u;
       let needed = emitSquare(i32(s), 0u);
-      squareBase[squareSlot + s] = needed;
-      atomicAdd(&chunkStats[u32(entry) * CHUNK_STATS_WORDS + CHUNK_STATS_VERTEX_COUNT], needed);
+      atomicStore(&stats[STATS_SQUARE_BASE_AT + squareSlot + s], needed);
+      atomicAdd(&stats[STATS_CHUNK_AT + u32(entry) * CHUNK_STATS_WORDS
+        + CHUNK_STATS_VERTEX_COUNT], needed);
       continue;
     }
     let isLast = s + 1u >= SQUARES_PER_CHUNK;
-    let base = squareBase[squareSlot + s];
+    let base = squareBaseAt(squareSlot + s);
     let nextSlot = select(squareSlot + s + 1u, squareSlot + s, isLast);
-    let limit = select(squareBase[nextSlot], chunkVertexLimit, isLast);
+    let limit = select(squareBaseAt(nextSlot), chunkVertexLimit, isLast);
     emitLimit = limit;
     let wrote = emitSquare(i32(s), base);
     for (var v = base + wrote; v < limit; v++) { writeZeroVertex(v); }
