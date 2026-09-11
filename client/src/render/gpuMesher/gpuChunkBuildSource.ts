@@ -37,14 +37,12 @@ import {
   COUNT_PASS_STAMP,
   ENTRY_CHUNK_IDX,
   ENTRY_HEADER_WORDS,
-  ENTRY_HIGHEST_BAND,
   ENTRY_LAYERED,
   ENTRY_LOCAL_ORIGIN_X_UNITS,
   ENTRY_LOCAL_ORIGIN_Z_UNITS,
   ENTRY_LOWEST_BAND,
   ENTRY_ORIGIN_X_CELLS,
   ENTRY_ORIGIN_Z_CELLS,
-  ENTRY_VERTEX_BASE,
   ENTRY_VERTEX_LIMIT,
   GPU_BATCH_CHUNKS,
   GPU_WINDOW_POOL,
@@ -652,7 +650,6 @@ export async function createGpuChunkBuildSource(
           prefix,
         );
         const at = entry * ENTRY_HEADER_WORDS;
-        headers[at + ENTRY_VERTEX_BASE] = vertexOffset;
         headers[at + ENTRY_VERTEX_LIMIT] = vertexOffset + vertexCount;
         headers[at + ENTRY_LOCAL_ORIGIN_X_UNITS] = Math.round(
           target.localOriginX * POSITION_XZ_UNITS_PER_WORLD_UNIT,
@@ -1013,7 +1010,6 @@ export async function createGpuChunkBuildSource(
     headers[at + ENTRY_CHUNK_IDX] = chunkIdx;
     headers[at + ENTRY_LAYERED] = data.layered ? 1 : 0;
     headers[at + ENTRY_LOWEST_BAND] = data.chunkLowestBand;
-    headers[at + ENTRY_HIGHEST_BAND] = data.highestBand;
     headers[at + ENTRY_ORIGIN_X_CELLS] = data.originXCells;
     headers[at + ENTRY_ORIGIN_Z_CELLS] = data.originZCells;
     uploadHeader(entry);

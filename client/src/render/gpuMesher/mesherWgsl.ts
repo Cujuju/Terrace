@@ -136,6 +136,13 @@ function bandHeightShift(): number {
 
 export function buildMesherWgsl(): string {
   const shift = bandHeightShift();
+  // Every workgroup walks the same square count, so the split has to be exact.
+  if (SQUARES_PER_CHUNK % WORKGROUPS_PER_CHUNK !== 0) {
+    throw new RangeError(
+      `${String(SQUARES_PER_CHUNK)} squares do not divide over ` +
+        `${String(WORKGROUPS_PER_CHUNK)} workgroups`,
+    );
+  }
   const squaresPerWorkgroup = SQUARES_PER_CHUNK / WORKGROUPS_PER_CHUNK;
 
   return `

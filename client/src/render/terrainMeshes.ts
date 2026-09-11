@@ -619,6 +619,8 @@ export function createTerrainMeshes(
     }
   };
 
+  // Drains what is already answered. An async source (worker or GPU) settles later, so its
+  // chunks splice on a later frame, not inside this call.
   const flush = (): void => {
     takeRetries();
     for (const sm of superMeshes.values()) {

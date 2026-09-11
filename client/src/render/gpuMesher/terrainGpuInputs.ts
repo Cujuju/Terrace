@@ -19,12 +19,10 @@ export const ENTRY_HEADER_WORDS = 16;
 export const ENTRY_CHUNK_IDX = 0;
 export const ENTRY_LAYERED = 1;
 export const ENTRY_LOWEST_BAND = 2;
-export const ENTRY_HIGHEST_BAND = 3;
 export const ENTRY_ORIGIN_X_CELLS = 4;
 export const ENTRY_ORIGIN_Z_CELLS = 5;
 export const ENTRY_LOCAL_ORIGIN_X_UNITS = 6;
 export const ENTRY_LOCAL_ORIGIN_Z_UNITS = 7;
-export const ENTRY_VERTEX_BASE = 8;
 export const ENTRY_VERTEX_LIMIT = 9;
 
 export const SQUARES_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
@@ -71,7 +69,6 @@ export const LIP_RECORDS_AT = 1;
 export const OVER_BUDGET = 'overBudget';
 
 export interface WindowEntryData {
-  readonly chunkIdx: number;
   readonly layered: boolean;
   readonly chunkLowestBand: number;
   readonly highestBand: number;
@@ -139,8 +136,8 @@ export function extractWindowEntry(
   const chunkLowestBand =
     floorBand !== null && floorBand < range.lowestBand ? floorBand : range.lowestBand;
 
+  // The arrays alias a module-level scratch: the caller must upload before extracting again.
   return {
-    chunkIdx,
     layered: floorBand !== null,
     chunkLowestBand,
     highestBand: range.highestBand,
