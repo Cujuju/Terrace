@@ -340,6 +340,12 @@ export function createGpuArenaStore(
       return answer.vertexCount * GPU_EMIT_MS_PER_VERTEX;
     },
 
+    residentBytes(): number {
+      let bytes = (scratchPositions?.size ?? 0) + (scratchColors?.size ?? 0);
+      for (const gpu of supers.values()) bytes += gpu.positions.size + gpu.colors.size;
+      return bytes;
+    },
+
     createSuper(superIdx, originX, originZ, triangleCapacity): ArenaSuperBuffers {
       const localOrigin = new Vector3(originX + SUPER_HALF_EXTENT, 0, originZ + SUPER_HALF_EXTENT);
       return allocate(superIdx, triangleCapacity, localOrigin).buffers;

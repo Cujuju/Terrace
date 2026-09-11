@@ -45,6 +45,8 @@ export interface ArenaStore {
   accepts(answer: ChunkAnswer): boolean;
   /** Estimated GPU-time cost of `write(answer)`; 0 for the CPU store. */
   writeCostMs(answer: ChunkAnswer): number;
+  /** Vertex bytes the arena holds, capacity not live count; scratch included. */
+  residentBytes(): number;
   /** `originX/originZ`: super-mesh corner, world units. A superLocal store positions the mesh. */
   createSuper(
     superIdx: number,
@@ -151,6 +153,15 @@ export function createCpuArenaStore(
 
     writeCostMs(): number {
       return CPU_ARENA_WRITE_COST_MS;
+    },
+
+    residentBytes(): number {
+      let bytes = 0;
+      for (const cpu of supers.values()) {
+        const { positions, normals, colors } = cpu.buffers;
+        bytes += positions.byteLength + normals.byteLength + colors.byteLength;
+      }
+      return bytes;
     },
 
     createSuper(superIdx, _originX, _originZ, triangleCapacity): ArenaSuperBuffers {
