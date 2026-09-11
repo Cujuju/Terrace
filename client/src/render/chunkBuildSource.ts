@@ -7,14 +7,22 @@ import {
   type ChunkJobRequest,
 } from '../terrain/chunkJob.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
+import type { ChunkGpuAnswer } from './gpuMesher/gpuChunkAnswer.ts';
+
+export type ChunkAnswer = ChunkJobAnswer | ChunkGpuAnswer;
+
+/** Built-or-building answers held at once: two frames of splices (~4 per 1.5 ms) at ~1.6 MB each. */
+export const CHUNK_ANSWER_BACKLOG_CAP = 8;
 
 export interface ChunkBuildSource {
   build(
     mirror: TerrainMirror,
     chunkIdx: number,
     generation: number,
-  ): ChunkJobAnswer | null | Promise<ChunkJobAnswer | null>;
+  ): ChunkAnswer | null | Promise<ChunkAnswer | null>;
   readonly concurrency: number;
+  /** Answers held (in flight + ready) before the arena stops submitting; default CHUNK_ANSWER_BACKLOG_CAP. */
+  readonly backlogCap?: number;
   dispose(): void;
 }
 
@@ -24,6 +32,7 @@ export function createDirectChunkBuildSource(): ChunkBuildSource {
   const scratch = createChunkGeometryBuffers();
   return {
     concurrency: 1,
+    backlogCap: CHUNK_ANSWER_BACKLOG_CAP,
     build(mirror, chunkIdx, generation): ChunkJobAnswer {
       return buildChunkAnswer(mirror, scratch, chunkIdx, generation).answer;
     },
@@ -73,7 +82,8 @@ export function createWorkerChunkBuildSource(): ChunkBuildSource | null {
 
   return {
     concurrency: CHUNK_WORKER_POOL_SIZE,
-    build(mirror, chunkIdx, generation): ChunkJobAnswer | null | Promise<ChunkJobAnswer | null> {
+    backlogCap: CHUNK_ANSWER_BACKLOG_CAP,
+    build(mirror, chunkIdx, generation): ChunkAnswer | null | Promise<ChunkAnswer | null> {
       let index = -1;
       for (let i = 0; i < owed.length; i++) {
         if (dead[i]) continue;
