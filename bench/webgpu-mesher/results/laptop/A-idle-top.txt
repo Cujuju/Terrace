@@ -1,0 +1,8 @@
+24673  19.6 Vivaldi Helper  
+24677  9.3  Vivaldi Helper (
+24665  0.1  Vivaldi         
+24678  0.0  Vivaldi Helper (
+24675  0.0  Vivaldi Helper  
+24674  0.0  Vivaldi Helper  
+24744  0.0  Vivaldi Helper (
+gate instance total CPU 29.0%
