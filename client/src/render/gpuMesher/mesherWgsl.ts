@@ -477,6 +477,9 @@ fn buildPolyline(polyCase : i32, polyIndex : i32, threshold : i32, refine : bool
       let mid = localA + (localB - localA) * t;
       let fixedUnits = clamp(i32(round(select(mid.y, mid.x, alongX) * f32(COORD_DENOM))),
         0, COORD_DENOM);
+      // pushIsoline's rect filter: a refined point on a square edge is dropped, and the
+      // solved axis is filtered by the units test below.
+      if (fixedUnits <= 0 || fixedUnits >= COORD_DENOM) { continue; }
       let units = isolineUnits(cornerHeight[0], cornerHeight[1], cornerHeight[3],
         cornerHeight[2], threshold, fixedUnits, alongX);
       if (units <= 0 || units >= ISOLINE_SOLVE_DENOM) { continue; }
