@@ -768,6 +768,72 @@ integration) and fixes.
 3. `GPU_MESH_FRAME_BUDGET_MS = 3.0` (default stands; §7 reasoning).
 4. Dropping the dead normal attribute from the CPU arena (47 MB) is a separate
    change; not done here.
+5. Shaded parity floor: gate 1's rigid half-step shift (passes at 0.076 %
+   without MSAA) or the snap-to-grid floor (0.114 %); see §15.1.
+
+## 15. Results (2026-09-11, desktop RTX 3090, Frostwick Hollows bench world, default pose, 1404×1205)
+
+Tip measured: `3d847e9`. Harness: `client/scripts/mesherParity.mjs`,
+`client/scripts/mesherBench.mjs` (isolated stack, fresh world per capture,
+GPU lock). Raw records under `.gpu-perf/results/2026-09-10-gpu-mesher/`
+(`-noaa/` for the MSAA-off run), `RUN_LOG.md` in each.
+
+### 15.1 Parity
+
+Band-ID image (geometry): gpu vs cpu **1 mismatched pixel of 494,245
+judged, 0 holes**, coverage asymmetry 1 px (an edge-blend artefact). The
+CPU mesh scores exactly the same against itself moved half a position step
+(shift floor) and against itself snapped to the GPU grid (quant floor). The
+GPU geometry is at the measurement floor.
+
+Shaded image (the look), 3×3 window, tolerance 8/255:
+
+| configuration | gpu vs cpu | shift floor | quant floor | above shift | above quant |
+|---|---|---|---|---|---|
+| MSAA on (shipped) | 0.6270 % | 0.3527 % | 0.2172 % | 0.2743 % | 0.4097 % |
+| MSAA off (`?antialias=0`) | 0.1906 % | 0.1150 % | 0.0761 % | **0.0756 %** | 0.1144 % |
+
+Reading: MSAA turns every sub-pixel tread flip into a blend outside the
+tolerance and lifts measurement and floor together (gate 1 README recorded
+the same 3.4× effect and reverted MSAA for its own criterion). Without MSAA
+the GPU sits 0.076 % above gate 1's floor definition (a rigid half-step
+shift, the metric's own noise) and 0.114 % above the stricter quant floor,
+which isolates the storage format but not retessellation (per-square fans vs
+ear-clipped polygons, §5.8). The residual is single-pixel speckle on cliff
+faces; the two shaded captures are indistinguishable by eye.
+
+**Owner decision (§14 item 5):** which floor the 0.1 % shaded criterion is
+judged above. Gate 1's precedent is the shift floor (pass, 0.076 %).
+
+### 15.2 Speed and efficiency (bench, 5 runs each, medians; min–max in RUN_LOG)
+
+| metric | CPU workers | GPU compute | |
+|---|---|---|---|
+| stroke frame p50 / p95 / p99 (ms) | 6.90 / 9.20 / 13.10 | 6.90 / 9.00 / 13.00 | GPU ≤ on all |
+| stroke frame max (ms) | 50.5 (39.7–63.1) | 57.3 (44.0–59.9) | overlapping ranges, noise |
+| idle p50 (ms) / fps | 6.90 / 140.9 | 6.90 / 141.3 | tie |
+| load: first update → queue empty (ms) | 6153 | **4664** | −24 % |
+| median / max splice (ms) | 0.20 / 0.30 | **0.10 / 0.20** | |
+| renderer GPU p50 / p99 (ms) | 5.70 / 6.68 | **4.26 / 5.31** | −25 % / −20 % |
+| triangles drawn | 5.37 M | 6.50 M | +21 % (fans, stacked rim caps) |
+| terrain resident bytes | 212.3 MB | **177.5 MB** | −16 % (8 B/vertex) |
+| mesher GPU time per batch | n/a | count 0.7–1.1 ms, emit 1.9 ms | ~100 batches per 5 s stroke |
+
+Overview scenario: load 6026 → 4626 ms, max splice 2.90 → 0.20 ms, renderer
+GPU p99 7.86 → 5.24 ms, resident 212.3 → 176.2 MB.
+
+### 15.3 What changed from revision 2 during implementation
+
+- Bind groups folded to 3 storage + 2 uniform (default device limit is 8,
+  the draft needed 11).
+- The build source is created asynchronously once per session in
+  `main.tsx`; any WebGPU validation failure demotes to the CPU pair before
+  the first frame; a failed injection or lost device demotes the live world.
+- Exposure rule for stacked caps (§5.2) and the 8-byte vertex (§3.3).
+- The LUT bytes are quantized from f64 palette values (an f32 round trip
+  shifted a channel by one).
+- DEV probe scenarios `bandParity`/`terrainStill` and flags `mesher`,
+  `parityShift`, `parityQuantize`, `antialias`; DEV `__terraceMesherDump`.
 
 ## Pre-Check checklist
 
