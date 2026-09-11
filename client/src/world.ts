@@ -46,19 +46,28 @@ import {
   type TerrainLoadTrace,
   type TerrainMeshes,
 } from './render/terrainMeshes.ts';
-import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import {
-  createTerrainMaterial,
-  warmTerrainMaterial,
-  type TerrainVertexLayout,
-} from './render/terrainMaterial.ts';
-import { createCpuArenaStore } from './render/arenaStore.ts';
+  createDirectChunkBuildSource,
+  createWorkerChunkBuildSource,
+  type ChunkBuildSource,
+} from './render/chunkBuildSource.ts';
+import { warmTerrainMaterial, type TerrainVertexLayout } from './render/terrainMaterial.ts';
+import { createCpuArenaStore, type ArenaStore } from './render/arenaStore.ts';
+import {
+  GpuArenaUnavailableError,
+  createGpuArenaStore,
+} from './render/gpuMesher/gpuArenaStore.ts';
+import {
+  createGpuChunkBuildSource,
+  type GpuMesherStats,
+} from './render/gpuMesher/gpuChunkBuildSource.ts';
+import { terrainMesher } from './state/terrainMesherPrefs.ts';
 import {
   createLayerEdgeOverlay,
   type LayerEdgeOverlay,
   type LayerEdgeStyle,
 } from './render/layerEdgeOverlay.ts';
-import { createEffect } from 'solid-js';
+import { createEffect, on } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createFrontierLine, type FrontierLine } from './render/frontierLine.ts';
 import { frontierMistMode } from './state/frontierMistPrefs.ts';
@@ -123,6 +132,13 @@ export interface World extends TerrainSink {
   chartSource(): ChartSource | null;
   drawBudget(): number;
   terrainLoadTrace(): TerrainLoadTrace | null;
+  /** Chunks queued, in flight or waiting to be spliced; 0 once the terrain is fully drawn. */
+  pendingTerrainCount(): number;
+  /** Chunks the mesher drew blocky, ascending. */
+  blockyChunks(): number[];
+  /** What is meshing right now, which a runtime demotion can move away from the setting. */
+  terrainMesherActive(): 'gpu' | 'cpu';
+  gpuMesherStats(): GpuMesherStats | null;
   dispose(): void;
 }
 
@@ -130,8 +146,33 @@ const nowMs = (): number => performance.now();
 
 const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
 
-/** The CPU mesher's arena layout; a GPU mesher arrives with a store that brings its own. */
-const TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
+/** The CPU mesher's arena layout; the GPU mesher's store brings the packed one. */
+const CPU_TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
+
+const GPU_TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'snorm16';
+
+/** The store, the build source and the warm-up mesh of one mesher choice, disposed together. */
+interface TerrainMesherRig {
+  readonly kind: 'gpu' | 'cpu';
+  readonly store: ArenaStore;
+  readonly source: ChunkBuildSource;
+  readonly gpuStats: () => GpuMesherStats | null;
+  dispose(): void;
+}
+
+interface RendererBackendFlags {
+  readonly isWebGPUBackend?: boolean;
+}
+
+function isWebGpuBackend(renderer: Viewport['renderer']): boolean {
+  return (renderer.backend as unknown as RendererBackendFlags).isWebGPUBackend === true;
+}
+
+// The worker pool outlives any one mesher, but a GPU source disposes the fallback it is
+// given. Neither source's methods read `this`, so a spread lends them safely.
+function borrowBuildSource(source: ChunkBuildSource): ChunkBuildSource {
+  return { ...source, dispose: (): void => {} };
+}
 
 export function createWorld(viewport: Viewport): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
@@ -147,17 +188,14 @@ export function createWorld(viewport: Viewport): World {
     networkSource: createWorkerRiverNetworkSource() ?? undefined,
   });
 
-  const chunkBuildSource = createWorkerChunkBuildSource();
-
-  const terrainMaterial = createTerrainMaterial(TERRAIN_VERTEX_LAYOUT);
-  const terrainStore = createCpuArenaStore(terrainMaterial);
-  const terrainMaterialWarmUp = warmTerrainMaterial(
-    viewport.terrainGroup,
-    terrainMaterial,
-    TERRAIN_VERTEX_LAYOUT,
-  );
+  const chunkBuildSource: ChunkBuildSource =
+    createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
 
   const drawnChunkScratch = new Set<number>();
+
+  let rig: TerrainMesherRig | null = null;
+  /** Set once by a runtime demotion; the GPU path is not retried for the rest of the session. */
+  let gpuDemotedReason: string | null = null;
 
   let mirror: TerrainMirror | null = null;
   let drawnGround: DrawnGround | null = null;
@@ -227,27 +265,104 @@ export function createWorld(viewport: Viewport): World {
     );
   };
 
-  const resetWorld = (
-    worldSize: number,
-  ): {
-    mirror: TerrainMirror;
-    meshes: TerrainMeshes;
-    predictions: PredictionStore;
-    ground: DrawnGround;
-  } => {
+  const logMesher = (kind: 'gpu' | 'cpu', reason: string): void => {
+    console.info(
+      `[terrace] terrain mesher: ${kind === 'gpu' ? 'GPU compute' : 'CPU workers'}`,
+      reason,
+    );
+  };
+
+  const createCpuRig = (reason: string): TerrainMesherRig => {
+    const store = createCpuArenaStore();
+    const warmUp = warmTerrainMaterial(
+      viewport.terrainGroup,
+      store.material,
+      CPU_TERRAIN_VERTEX_LAYOUT,
+    );
+    logMesher('cpu', reason);
+    return {
+      kind: 'cpu',
+      store,
+      source: chunkBuildSource,
+      gpuStats: (): GpuMesherStats | null => null,
+      dispose(): void {
+        warmUp.removeFromParent();
+        store.destroy();
+      },
+    };
+  };
+
+  /** The rig, or the reason the GPU path was refused. */
+  const createGpuRig = (worldSize: number): TerrainMesherRig | string => {
+    if (!isWebGpuBackend(viewport.renderer)) {
+      return 'the renderer is not running the WebGPU backend';
+    }
+    let store: ArenaStore;
+    try {
+      store = createGpuArenaStore(viewport.renderer, worldSize, {
+        onFailure: (error) => demoteToCpu(error.message),
+      });
+    } catch (error) {
+      if (!(error instanceof GpuArenaUnavailableError)) throw error;
+      return error.message;
+    }
+    const source = createGpuChunkBuildSource(
+      viewport.renderer,
+      borrowBuildSource(chunkBuildSource),
+    );
+    if (source === null) {
+      store.destroy();
+      return 'the GPU build source refused the renderer';
+    }
+    void source.ready().catch((error: unknown) => {
+      demoteToCpu(`the mesher WGSL failed to compile (${String(error)})`);
+    });
+    const warmUp = warmTerrainMaterial(
+      viewport.terrainGroup,
+      store.material,
+      GPU_TERRAIN_VERTEX_LAYOUT,
+    );
+    logMesher('gpu', `setting "${terrainMesher()}" on the WebGPU backend`);
+    return {
+      kind: 'gpu',
+      store,
+      source,
+      gpuStats: (): GpuMesherStats | null => source.stats(),
+      dispose(): void {
+        warmUp.removeFromParent();
+        source.dispose();
+        store.destroy();
+      },
+    };
+  };
+
+  const createMesherRig = (worldSize: number): TerrainMesherRig => {
+    if (terrainMesher() === 'cpu') {
+      return createCpuRig('the terrain mesher setting is CPU workers');
+    }
+    if (gpuDemotedReason !== null) return createCpuRig(gpuDemotedReason);
+    const gpu = createGpuRig(worldSize);
+    return typeof gpu === 'string' ? createCpuRig(gpu) : gpu;
+  };
+
+  // One wiring path for a fresh world and for a live mesher swap. The mirror is the
+  // caller's: a swap keeps the one it already has.
+  const buildTerrain = (
+    nextMirror: TerrainMirror,
+  ): { meshes: TerrainMeshes; ground: DrawnGround } => {
+    const worldSize = nextMirror.map.size;
     meshes?.dispose();
-    terrainEpoch++;
-    chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
-    const nextMirror = createTerrainMirror(worldSize);
+    layerEdges?.dispose();
+    rig?.dispose();
+    const nextRig = createMesherRig(worldSize);
+    rig = nextRig;
     const nextMeshes = createTerrainMeshes(
       viewport.terrainGroup,
       nextMirror,
       { onFrame: (handler) => viewport.onFrame(handler) },
-      chunkBuildSource ?? undefined,
-      terrainStore,
+      nextRig.source,
+      nextRig.store,
     );
-    const nextPredictions = createPredictionStore(nextMirror);
-    layerEdges?.dispose();
     const nextLayerEdges = createLayerEdgeOverlay(
       viewport.terrainGroup,
       nextMirror,
@@ -255,9 +370,7 @@ export function createWorld(viewport: Viewport): World {
       nextMeshes.drawnGround(),
     );
     nextLayerEdges.setStyle(layerEdgeStyle);
-    mirror = nextMirror;
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
-    drawnGround = nextGround;
     nextMeshes.onChunkDrawn((chunkIdx) => {
       nextLayerEdges.refreshChunk(chunkIdx);
       drawnChunkScratch.clear();
@@ -266,6 +379,24 @@ export function createWorld(viewport: Viewport): World {
     });
     meshes = nextMeshes;
     layerEdges = nextLayerEdges;
+    drawnGround = nextGround;
+    return { meshes: nextMeshes, ground: nextGround };
+  };
+
+  const resetWorld = (
+    worldSize: number,
+  ): {
+    mirror: TerrainMirror;
+    meshes: TerrainMeshes;
+    predictions: PredictionStore;
+    ground: DrawnGround;
+  } => {
+    terrainEpoch++;
+    chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
+    const nextMirror = createTerrainMirror(worldSize);
+    mirror = nextMirror;
+    const built = buildTerrain(nextMirror);
+    const nextPredictions = createPredictionStore(nextMirror);
     predictions = nextPredictions;
     clearExpiryTimer();
     water.setWorldSize(worldSize);
@@ -277,11 +408,38 @@ export function createWorld(viewport: Viewport): World {
 
     return {
       mirror: nextMirror,
-      meshes: nextMeshes,
+      meshes: built.meshes,
       predictions: nextPredictions,
-      ground: nextGround,
+      ground: built.ground,
     };
   };
+
+  // Everything downstream of the arena is rebuilt from the mirror the world already holds.
+  const rebuildTerrain = (): void => {
+    const current = mirror;
+    if (current === null) return;
+    const built = buildTerrain(current);
+    built.meshes.update(current.received);
+    fog.sync(current);
+    frontierLine.sync(current);
+    revealMask.sync(current);
+    water.sync(current);
+    water.refresh(current, current.received);
+    rivers.forceRefresh(current, built.ground);
+  };
+
+  // Both demotion signals arrive inside a frame callback or a promise, so the rebuild waits
+  // for the stack to unwind rather than disposing the arena mid-frame.
+  function demoteToCpu(reason: string): void {
+    if (gpuDemotedReason !== null) return;
+    gpuDemotedReason = reason;
+    console.warn(`[terrace] terrain mesher: demoted to CPU workers — ${reason}`);
+    queueMicrotask(() => {
+      if (rig?.kind === 'gpu') rebuildTerrain();
+    });
+  }
+
+  createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
 
   return {
     onSnapshot(msg: JoinSnapshotMessage): void {
@@ -451,6 +609,18 @@ export function createWorld(viewport: Viewport): World {
     terrainLoadTrace(): TerrainLoadTrace | null {
       return meshes?.loadTrace() ?? null;
     },
+    pendingTerrainCount(): number {
+      return meshes?.pendingCount() ?? 0;
+    },
+    blockyChunks(): number[] {
+      return meshes?.drawnGround().blockyChunkIndices() ?? [];
+    },
+    terrainMesherActive(): 'gpu' | 'cpu' {
+      return rig?.kind ?? 'cpu';
+    },
+    gpuMesherStats(): GpuMesherStats | null {
+      return rig?.gpuStats() ?? null;
+    },
     chartSource(): ChartSource | null {
       const m = mirror;
       if (m === null) return null;
@@ -482,8 +652,8 @@ export function createWorld(viewport: Viewport): World {
     dispose(): void {
       clearExpiryTimer();
       meshes?.dispose();
-      terrainMaterialWarmUp.removeFromParent();
-      terrainStore.destroy();
+      rig?.dispose();
+      rig = null;
       meshes = null;
       mirror = null;
       drawnGround = null;
@@ -493,7 +663,7 @@ export function createWorld(viewport: Viewport): World {
       frontierLine.dispose();
       revealMask.dispose();
       rivers.dispose();
-      chunkBuildSource?.dispose();
+      chunkBuildSource.dispose();
     },
   };
 }

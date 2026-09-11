@@ -39,6 +39,8 @@ export interface DrawnGroundStore {
     lips: ChunkLipSegments,
   ): void;
   chartOf(chunkX: number, chunkZ: number): ChunkChart | null;
+  /** Chunks the mesher drew blocky, ascending. The parity harness exempts their pixels. */
+  blockyChunkIndices(): number[];
   clear(): void;
   size(): number;
 }
@@ -110,6 +112,13 @@ export function createDrawnGroundStore(worldSize: number): DrawnGroundStore {
     chartOf(chunkX: number, chunkZ: number): ChunkChart | null {
       if (chunkX < 0 || chunkZ < 0 || chunkX >= chunkCols || chunkZ >= chunkCols) return null;
       return charts.get(chunkZ * chunkCols + chunkX) ?? null;
+    },
+    blockyChunkIndices(): number[] {
+      const blocky: number[] = [];
+      for (const [chunkIdx, chart] of charts) {
+        if (chart.plan.blocky) blocky.push(chunkIdx);
+      }
+      return blocky.sort((a, b) => a - b);
     },
     clear(): void {
       charts.clear();

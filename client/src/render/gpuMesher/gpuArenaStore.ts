@@ -84,7 +84,17 @@ interface GpuSuper {
   localOrigin: Vector3;
 }
 
-export function createGpuArenaStore(renderer: Renderer, worldSize: number): ArenaStore {
+export interface GpuArenaStoreOptions {
+  /** Reports a GpuArenaInjectionError instead of throwing it. The guard fires inside the
+   *  arena's frame callback, which scene.ts mutes forever once it throws. */
+  readonly onFailure?: (error: Error) => void;
+}
+
+export function createGpuArenaStore(
+  renderer: Renderer,
+  worldSize: number,
+  options?: GpuArenaStoreOptions,
+): ArenaStore {
   const backend = renderer.backend as unknown as WebGpuBackendInternals;
   if (backend.isWebGPUBackend !== true) {
     throw new GpuArenaUnavailableError('the renderer is not running the WebGPU backend');
@@ -133,8 +143,21 @@ export function createGpuArenaStore(renderer: Renderer, worldSize: number): Aren
     uncheckedInjections.clear();
   };
 
+  const onFailure = options?.onFailure;
+  let reportedFailure = false;
+
   const commit = (): void => {
-    verifyInjections();
+    try {
+      verifyInjections();
+    } catch (error) {
+      if (!(error instanceof GpuArenaInjectionError) || onFailure === undefined) throw error;
+      // Cleared so the guard stops re-throwing every frame until the owner has rebuilt.
+      uncheckedInjections.clear();
+      if (!reportedFailure) {
+        reportedFailure = true;
+        onFailure(error);
+      }
+    }
     if (encoder === null) return;
     const commands = encoder.finish();
     encoder = null;
