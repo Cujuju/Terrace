@@ -771,8 +771,10 @@ integration) and fixes.
 4. Dropping the dead normal attribute from the CPU arena (42.5 MB: 4 of the
    20 B/vertex of the measured 212,336,640 B resident; JS heap only, three
    never uploads an attribute the shader graph does not reference) is a separate
-   change; not done here. **Ruled 2026-09-11: leave it** (fallback-path-only
-   benefit; revisit if the CPU path's memory matters).
+   change; not done here. **Ruled 2026-09-11: leave it**, then reversed the
+   same day: the attribute path is commented out, not deleted, on the CPU
+   arena and mesher; the CPU vertex is 16 B. Tests derive the face normal
+   from the winding.
 5. Shaded parity floor: gate 1's rigid half-step shift (passes at 0.076 %
    without MSAA) or the snap-to-grid floor (0.114 %); see §15.1.
    **Ruled 2026-09-11: the shift floor.** The criterion in §11.2 is judged
