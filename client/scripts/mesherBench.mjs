@@ -25,6 +25,8 @@ const RUN_TIMEOUT_MS = 300_000;
 
 // Design §11.3: render + mesher GPU time must stay inside one 140 fps frame.
 const GPU_FRAME_BUDGET_MS = 7;
+// Echoed as they happen; the full page log is written per run.
+const INTERESTING_LOG = /terrace|wgsl|webgpu|gpu|mesher|EXCEPTION|error|warn/i;
 
 const argv = process.argv.slice(2);
 const meshers = argValue(argv, '--meshers', DEFAULT_MESHERS).split(',').map((m) => m.trim());
@@ -34,7 +36,7 @@ const log = makeLogger(join(RESULTS_DIR, 'bench.log'));
 ensureDirs();
 
 /** One run: fresh world + server, Chrome under the GPU lock, the probe report. */
-async function runOnce({ mesher, scenario, settleMs, label }) {
+async function runOnce({ mesher, scenario, settleMs, label, logName }) {
   let server = null;
   try {
     server = startServer(log);
@@ -57,6 +59,9 @@ async function runOnce({ mesher, scenario, settleMs, label }) {
         log(`${label}: p50 ${report.line.sample?.msP50} p95 ${report.line.sample?.msP95} fps ${report.line.fpsMean}`);
         return { ok: true, report: report.line };
       } finally {
+        const lines = chrome.pageLogs();
+        writeFileSync(join(RESULTS_DIR, logName), `${lines.join('\n')}\n`);
+        for (const line of lines.filter((l) => INTERESTING_LOG.test(l))) log(`${label} page: ${line}`);
         await chrome.close();
       }
     });
@@ -74,6 +79,8 @@ const rowOf = (report) => {
   return {
     clientVersion: report.clientVersion ?? null,
     gpu: report.gpu ?? null,
+    rendererBackend: report.rendererBackend ?? null,
+    terrainMesher: report.terrainMesher ?? null,
     pixel: `${report.pixelWidth}x${report.pixelHeight}@${report.pixelRatio}`,
     strokeP50: sample.msP50 ?? null,
     strokeP95: sample.msP95 ?? null,
@@ -142,6 +149,7 @@ try {
       const label = `${mesher}/sculpt/${run}`;
       const out = await runOnce({
         mesher, scenario: SCULPT_SCENARIO, settleMs: SCULPT_SETTLE_MS, label,
+        logName: `page-${mesher}-sculpt-${run}.log`,
       });
       if (out.ok) results.sculpt[mesher].runs.push(rowOf(out.report));
       else results.failures.push(`${label}: ${JSON.stringify(out.detail)}`);
@@ -151,6 +159,7 @@ try {
     const label = `${mesher}/overview`;
     const out = await runOnce({
       mesher, scenario: OVERVIEW_SCENARIO, settleMs: OVERVIEW_SETTLE_MS, label,
+      logName: `page-${mesher}-overview.log`,
     });
     results.overview[mesher] = out.ok ? rowOf(out.report) : null;
     if (!out.ok) results.failures.push(`${label}: ${JSON.stringify(out.detail)}`);

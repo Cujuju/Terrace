@@ -2,11 +2,15 @@
 // metric can be reviewed and exercised apart from the stack that captures the
 // images. Driver: mesherParity.mjs.
 
-// Band-ID encoding (client contract): R = round(worldY / BAND_WORLD_HEIGHT) + 128,
-// G = B = 0; background is pure blue. Terrain pixels therefore have B = 0.
-export const BACKGROUND_BLUE_MIN = 128;
+// Band-ID encoding (perfProbe.ts swapBandMaterials): R = round(worldY /
+// BAND_WORLD_HEIGHT) + 128, G = chunk index low byte, B = chunk index high
+// byte. The background is exactly pure blue, which no terrain pixel can be:
+// the band bias keeps R well away from 0 over the world's height range.
+const BACKGROUND_RGB = [0, 0, 255];
 const BAND_CHANNEL = 0;
-const BLUE_CHANNEL = 2;
+const CHUNK_LOW_CHANNEL = 1;
+const CHUNK_HIGH_CHANNEL = 2;
+const CHUNK_INDEX_BYTE_SPAN = 256;
 export const CHANNELS = 4;
 
 // Gate 1's shaded metric, unchanged (bench/webgpu-mesher/run.mjs).
@@ -14,9 +18,16 @@ export const PIXEL_TOLERANCE = 8;
 export const NEIGHBOURHOOD_RADIUS = 1;
 
 const [DIFF_DIM_FACTOR, DIFF_MARK_RGB, DIFF_EXEMPT_RGB] = [0.35, [255, 32, 32], [40, 40, 80]];
+const DIFF_BLOCKY_RGB = [90, 70, 20];
 const OPAQUE = 255;
 
-const isBackground = (rgba, at) => rgba[at + BLUE_CHANNEL] >= BACKGROUND_BLUE_MIN;
+export const isBackground = (rgba, at) =>
+  rgba[at] === BACKGROUND_RGB[0]
+  && rgba[at + CHUNK_LOW_CHANNEL] === BACKGROUND_RGB[1]
+  && rgba[at + CHUNK_HIGH_CHANNEL] === BACKGROUND_RGB[2];
+
+export const chunkIndexAt = (rgba, at) =>
+  rgba[at + CHUNK_LOW_CHANNEL] + rgba[at + CHUNK_HIGH_CHANNEL] * CHUNK_INDEX_BYTE_SPAN;
 
 /**
  * Contour-adjacency exemption: a pixel whose 3x3 neighbourhood in the CPU image
@@ -49,20 +60,54 @@ export function buildExemptMask(cpu, width, height) {
 }
 
 /**
+ * Design §9.2: chunks the CPU drew blocky are excluded from the pixel
+ * criterion. Dilated by the same 3x3 radius because a chunk-seam pixel's
+ * antialiased G/B decodes to neither neighbour's index.
+ */
+export function buildBlockyMask(cpu, width, height, blockyChunks) {
+  const mask = new Uint8Array(width * height);
+  if (blockyChunks === null || blockyChunks.length === 0) return mask;
+  const blocky = new Set(blockyChunks);
+  const hit = new Uint8Array(width * height);
+  for (let p = 0; p < width * height; p++) {
+    const at = p * CHANNELS;
+    if (!isBackground(cpu, at) && blocky.has(chunkIndexAt(cpu, at))) hit[p] = 1;
+  }
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let near = 0;
+      for (let dy = -NEIGHBOURHOOD_RADIUS; dy <= NEIGHBOURHOOD_RADIUS && near === 0; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -NEIGHBOURHOOD_RADIUS; dx <= NEIGHBOURHOOD_RADIUS; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          if (hit[ny * width + nx] === 1) { near = 1; break; }
+        }
+      }
+      mask[y * width + x] = near;
+    }
+  }
+  return mask;
+}
+
+/**
  * Band-ID parity. Samples are pixels covered by terrain in either image; a
  * covered pixel under the contour exemption is counted as exempt, not judged.
  * Holes are reported both over judged samples and over every pixel.
  */
-export function compareBands(gpuImage, cpuImage) {
+export function compareBands(gpuImage, cpuImage, blockyChunks = null) {
   const { width, height } = cpuImage;
   const gpu = gpuImage.rgba;
   const cpu = cpuImage.rgba;
   const exempt = buildExemptMask(cpu, width, height);
+  const blockyMask = buildBlockyMask(cpu, width, height, blockyChunks);
   const diff = new Uint8Array(width * height * CHANNELS);
 
   let considered = 0;
   let mismatched = 0;
   let exemptCovered = 0;
+  let blockyCovered = 0;
   let holes = 0;
   let holesAllPixels = 0;
   for (let p = 0; p < width * height; p++) {
@@ -73,9 +118,10 @@ export function compareBands(gpuImage, cpuImage) {
     if (gpuBackground && !cpuBackground) holesAllPixels++;
 
     let mark = null;
-    if (covered && exempt[p] === 1) {
+    if (covered && (exempt[p] === 1 || blockyMask[p] === 1)) {
       exemptCovered++;
-      mark = DIFF_EXEMPT_RGB;
+      if (blockyMask[p] === 1) blockyCovered++;
+      mark = blockyMask[p] === 1 ? DIFF_BLOCKY_RGB : DIFF_EXEMPT_RGB;
     } else if (covered) {
       considered++;
       const bad = cpuBackground !== gpuBackground
@@ -95,6 +141,7 @@ export function compareBands(gpuImage, cpuImage) {
   return {
     width, height, pixels: width * height,
     consideredSamples: considered, exemptSamples: exemptCovered,
+    blockyExemptSamples: blockyCovered,
     mismatched, mismatchFraction: considered === 0 ? null : mismatched / considered,
     holes, holesAllPixels,
     diff,
