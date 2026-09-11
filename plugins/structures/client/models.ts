@@ -1880,11 +1880,12 @@ export function createStructureModels(): StructureModels {
   const root = new Group();
   root.name = 'structures:buildings';
 
-  const meshesByTier: InstancedMesh[][] = tierParts.map((parts) =>
-    parts.map((part) => {
+  const meshesByTier: InstancedMesh[][] = tierParts.map((parts, tier) =>
+    parts.map((part, partIndex) => {
       geometries.push(part.geometry);
       materials.push(part.material);
       const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
+      mesh.name = `structures:tier${String(tier)}:part${String(partIndex)}`;
       mesh.count = 0;
       root.add(mesh);
       return mesh;
@@ -1895,10 +1896,11 @@ export function createStructureModels(): StructureModels {
   const durandsParts = mergeSharedSurface(
     fitToRadius(durands.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
   );
-  const durandsMeshes: InstancedMesh[] = durandsParts.map((part) => {
+  const durandsMeshes: InstancedMesh[] = durandsParts.map((part, partIndex) => {
     geometries.push(part.geometry);
     materials.push(part.material);
     const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
+    mesh.name = `structures:durands:part${String(partIndex)}`;
     mesh.count = 0;
     root.add(mesh);
     return mesh;
@@ -1909,11 +1911,12 @@ export function createStructureModels(): StructureModels {
   for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
     const built = SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build());
     siteVariantParts[siteKind] = built;
-    siteVariantMeshes[siteKind] = built.map((parts) =>
-      parts.map((part) => {
+    siteVariantMeshes[siteKind] = built.map((parts, variant) =>
+      parts.map((part, partIndex) => {
         geometries.push(part.geometry);
         materials.push(part.material);
         const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
+        mesh.name = `structures:${siteKind}${String(variant)}:part${String(partIndex)}`;
         mesh.count = 0;
         root.add(mesh);
         return mesh;

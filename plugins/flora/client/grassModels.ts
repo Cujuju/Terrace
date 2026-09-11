@@ -13,6 +13,7 @@ import {
   type Material,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { weldFlatShaded } from '../../../client/src/render/weld.ts';
 import {
   FLORA_GRASS_CAP,
   GRASS_BLADES_PER_TUFT,
@@ -109,8 +110,7 @@ interface BladeGeometries {
 function triangleSoup(positions: number[]): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-  geometry.computeVertexNormals();
-  return geometry;
+  return weldFlatShaded(geometry);
 }
 
 function buildBlade(): BladeGeometries {

@@ -10,6 +10,7 @@ import {
   Vector3,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { weldFlatShaded } from '../../../client/src/render/weld.ts';
 import { FLORA_STUMP_CAP, FLORA_STUMP_SCALE_MAX, STUMP_MAX_REACH_CELLS } from '../protocol.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
@@ -53,8 +54,7 @@ export interface StumpModels {
 function triangleSoup(positions: number[]): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-  geometry.computeVertexNormals();
-  return geometry;
+  return weldFlatShaded(geometry);
 }
 
 interface Rim {
