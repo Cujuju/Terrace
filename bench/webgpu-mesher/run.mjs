@@ -109,11 +109,19 @@ if (!wsUrl) throw new Error('chrome devtools endpoint never came up');
 const socket = new WebSocket(wsUrl);
 await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
 let nextId = 1;
+// A protocol stall otherwise hangs the driver silently; a wedged Vivaldi tab
+// once held a run for 38 minutes. Generous, so the longest evaluate still fits.
+const RPC_TIMEOUT_MS = 300_000;
 const rpc = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
   const id = nextId++;
+  const timer = setTimeout(() => {
+    socket.removeEventListener('message', listener);
+    reject(new Error(`${method}: no reply in ${RPC_TIMEOUT_MS / 1000} s`));
+  }, RPC_TIMEOUT_MS);
   const listener = (event) => {
     const message = JSON.parse(event.data);
     if (message.id !== id) return;
+    clearTimeout(timer);
     socket.removeEventListener('message', listener);
     if (message.error) reject(new Error(`${method}: ${message.error.message}`));
     else resolve(message.result);
