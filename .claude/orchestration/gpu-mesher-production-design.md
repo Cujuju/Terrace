@@ -99,8 +99,9 @@ export interface ArenaSlotBounds {
 export interface ArenaSuperBuffers {
   /** three attributes the geometry binds; `position` always present. */
   readonly geometry: BufferGeometry;
-  readonly positionAttribute: BufferAttribute;
-  readonly colorAttribute: BufferAttribute;
+  readonly positionAttribute: BufferAttribute | InterleavedBufferAttribute;
+  /** null when the layout carries colour as a palette key inside the position (§3.3). */
+  readonly colorAttribute: BufferAttribute | null;
   readonly normalAttribute: BufferAttribute | null;
   readonly triangleCapacity: number;
 }
@@ -175,26 +176,34 @@ passes the store it built for the chosen mesher.
 
 ### 3.3 The GPU store (`client/src/render/gpuMesher/gpuArenaStore.ts`)
 
-Per super-mesh: two `GPUBuffer`s, usage `VERTEX | STORAGE | COPY_SRC |
-COPY_DST`:
+Per super-mesh: one `GPUBuffer`, usage `VERTEX | STORAGE | COPY_SRC |
+COPY_DST`, holding the whole vertex.
 
-| buffer | per vertex | three attribute | WGSL view |
-|---|---|---|---|
-| positions | 8 B: `i16 x, i16 y, i16 z, i16 spare` | `BufferAttribute(new Int16Array(0), 4, true)` → `snorm16x4` | `array<u32>` 2 words/vertex: `x \| y<<16`, `z \| spare<<16` |
-| colours | 4 B: `u8 r,g,b, selfLit` | `BufferAttribute(new Uint8Array(0), 4, true)` → `unorm8x4` | `array<u32>` 1 word/vertex, `pack4x8unorm` |
+| per vertex | three attributes | WGSL view |
+|---|---|---|
+| 8 B: `i16 x, i16 y, i16 z, i16 key` | one `InterleavedBuffer(new Int16Array(0), 4)`; `position` = `InterleavedBufferAttribute(buffer, 2, 0, true)` → `snorm16x2` at byte 0, `terrainKey` = `(buffer, 2, 2, true)` → `snorm16x2` at byte 4 | `array<u32>` 2 words/vertex: `x \| y<<16`, `z \| key<<16` |
 
-12 B/vertex. No normal attribute (§0 item 4).
+8 B/vertex. No normal attribute (§0 item 4) and no colour attribute: `key` is a
+slot in the band LUT (`bandLut.ts`, `LUT_VEC4_COUNT` = 1282), which the material
+samples for both the colour and the self-lit flag (measured 2026-09-11, §8).
+`position` is declared `vec3` in the shader against a two-component format,
+which WebGPU fills with the format's defaults; the third component is unused
+because `terrainKey.x` carries z. The two attributes share one `arrayStride` of
+8 with offsets 0 and 4 (`WebGPUAttributeUtils.createShaderVertexBuffers`).
 
-Injection: after constructing each attribute, `backend.get(attribute).buffer =
-gpuBuffer` and `attribute.count = triangleCapacity * 3`; the backing array
-stays empty so no CPU shadow exists. `createAttribute` then finds the buffer
-and allocates nothing (`WebGPUAttributeUtils.js:76-78`); `needsUpdate` is never
-set so `updateAttribute` never runs; geometry dispose destroys the buffer
-through three's own `destroyAttribute`, which is why `grow` copies old → new
-**before** disposing the old geometry.
+Injection: after constructing the interleaved buffer,
+`backend.get(interleavedBuffer).buffer = gpuBuffer` and
+`interleavedBuffer.count = triangleCapacity * 3`; the backing array stays empty
+so no CPU shadow exists. The injection target is the `InterleavedBuffer`, not
+either attribute, because that is what `_getBufferAttribute` resolves an
+interleaved attribute to. `createAttribute` then finds the buffer and allocates
+nothing (`WebGPUAttributeUtils.js:76-78`); `needsUpdate` is never set so
+`updateAttribute` never runs; geometry dispose destroys the buffer through
+three's own `destroyAttribute`, which is why `grow` copies old → new **before**
+disposing the old geometry.
 
 Guard (belt and braces): at the first `commit()` after `createSuper`, the store
-asserts `backend.get(attribute).buffer === gpuBuffer` for both attributes; on
+asserts `backend.get(interleavedBuffer).buffer === gpuBuffer`; on
 mismatch it throws `GpuArenaInjectionError`, which `world.ts` catches once at
 mesher construction to fall back to the CPU store (§9.1). This pins the
 private-API dependency to a single checked line.
@@ -208,21 +217,21 @@ Operations:
   ceiling lies in that range, so the box is at most one band looser than the
   CPU's measured bounds.
 - `write(answer: ChunkJobAnswer)` (CPU fallback chunk): packs positions →
-  local snorm16 units and colours → u32 on the CPU (`packCpuAnswer`, ≤
+  local snorm16 units and colours → LUT slots on the CPU (`packCpuAnswer`, ≤
   `FALLBACK_MAX_TRIANGLES` × 3 vertices for blocky chunks, a full chunk
-  otherwise), `queue.writeBuffer` both ranges; bounds from `answer.bounds`
+  otherwise), one `queue.writeBuffer`; bounds from `answer.bounds`
   shifted into the local frame.
 - `copyWithin`: WebGPU forbids overlapping `copyBufferToBuffer` within one
   buffer, so moves bounce through a scratch buffer (`GPU_ARENA_SCRATCH`, grown
   to the largest run moved): two copies per move.
-- `zero`: `encoder.clearBuffer(buffer, byteOffset, byteLength)` on both buffers.
-- `grow`: create new buffers at the doubled capacity, `copyBufferToBuffer` the
+- `zero`: `encoder.clearBuffer(buffer, byteOffset, byteLength)`.
+- `grow`: create a new buffer at the doubled capacity, `copyBufferToBuffer` the
   first `liveEnd` vertices, build new attributes + geometry, inject, return;
   the arena disposes the previous geometry (`bindGeometry`, `terrainMeshes.ts:195-197`).
-- `transferMsPerVertex = GPU_ARENA_COPY_MS_PER_VERTEX = 1e-6` (12 B at a
-  conservative 12 GB/s = 1 ns; measured desktop/laptop bandwidth is ≥ 8× that
-  **[estimate]**), `moveOverheadMs = GPU_ARENA_MOVE_OVERHEAD_MS = 0.005`
-  (two copy commands + JS; **[estimate]**, revisit with §11 numbers).
+- `transferMsPerVertex = GPU_ARENA_COPY_MS_PER_VERTEX = 1e-6` (8 B at a
+  conservative 12 GB/s is under a nanosecond; measured desktop/laptop bandwidth
+  is ≥ 8× that **[estimate]**), `moveOverheadMs = GPU_ARENA_MOVE_OVERHEAD_MS =
+  0.005` (one copy pair + JS; **[estimate]**, revisit with §11 numbers).
 
 Position frame: `superLocal`. Local origin = super-mesh centre
 `(originX + SUPER_HALF_EXTENT, 0, originZ + SUPER_HALF_EXTENT)`,
@@ -245,11 +254,20 @@ closest camera (`CAMERA_CLOSEST_VIEW_WORLD_UNITS = 10`, 55° FOV, 1200 px →
 0.0035 wu/px).
 
 Material (`createTerrainMaterial('snorm16')`): `compose(material, 'position',
-() => positionGeometry.mul(SNORM16_MAX).round().mul(vec3(1/1024, 1/64, 1/1024)))`
-with `SNORM16_MAX = 32767`; `round` recovers the integer exactly since the
-hardware returns `n / 32767` in f32. Colour, self-lit alpha, ground shade and
-reveal clip compose exactly as today (`terrainMaterial.ts:30-46`) because the
-`color` attribute is the same `unorm8x4`.
+() => vec3(position.x, position.y, terrainKey.x).mul(SNORM16_MAX).round()
+.mul(vec3(1/1024, 1/64, 1/1024)))` with `SNORM16_MAX = 32767`; `round` recovers
+the integer exactly since the hardware returns `n / 32767` in f32. Colour and
+self-lit alpha come from an RGBA8 `DataTexture` of `LUT_VEC4_COUNT` × 1 texels,
+`NearestFilter`, no colour space, sampled at
+`(round(terrainKey.y · SNORM16_MAX) + 0.5) / LUT_VEC4_COUNT`: rgb replaces
+`vertexColor().rgb` and alpha replaces `vertexColor().a` for this layout only,
+so ground shade and reveal clip compose exactly as today. Its bytes are
+`quantizeChannel` of the palette floats, which is the CPU path's own rule, so a
+slot decodes to the byte triple the CPU mesher would have written. A triangle's
+three vertices always carry the same key, and the `round` absorbs any
+interpolation error before the texel is picked. `packCpuAnswer` maps a CPU
+vertex's RGBA bytes back to a slot through a reverse map built once from those
+bytes; a quadruple the map does not hold is a programming error and throws.
 
 ## 4. Build-source contract
 
@@ -573,23 +591,35 @@ reclaimed by `settle()` (`terrainMeshes.ts:686-710`) when quiet.
 
 ## 8. Memory
 
-Desktop, bench world, GPU path, resident:
+Desktop, bench world (`frostwick-gate.db`, default pose), resident. The arena
+row is measured, not derived: `terrainResidentBytes` from the probe report,
+which is the arena's buffers plus its compaction scratch.
 
 | buffer | bytes | basis |
 |---|---|---|
-| arena positions + colours | 187.5 MB + ceilings (**[estimate]** < 1 %: 1,134 layered columns) | 15.62 M vertices × 12 B |
+| arena vertices | **176,160,768** (2026-09-11, run under `2026-09-11-gpu-mesher-vertex`) | 22.02 M vertices of capacity × 8 B |
 | window entry pool | 2.6 MB | 128 entries × (lattice 1.2 KB + desc 1.2 KB + pairs 16 KB + bases 1 KB) |
 | lips append | 6.3 MB | `LIP_APPEND_CAPACITY` |
 | readback pool | 2 × 6.6 MB | copies of the above |
-| scratch (compaction bounce) | ≤ largest run (4.7 MB at the triangle budget) | |
-| **total** | **≈ 208 MB** exact-count, **≈ 255 MB** with every chunk at max slack | |
+| band LUT texture | 5.1 KB | `LUT_VEC4_COUNT` × 1 RGBA8 texels |
+| **total** | **≈ 198 MB** at the capacity that run reached | |
 
-CPU arena today in its own format: 11.75 M × 20 B = 235 MB (+ slack). The GPU
-path is below the CPU baseline at exact count and 4 % below it with the
-normal attribute counted out. The 207 MB gate-1 limit was set for the bench
-page; production's bound is "no worse than the CPU path", which holds.
-Reducing the GPU triangle count (per-chunk polygon triangulation instead of
-per-square fans) is a later optimisation, not part of parity.
+Measured, same world and pose, same probe field:
+
+| path | arena resident | per vertex |
+|---|---|---|
+| CPU workers | 212,336,640 | 20 B (`f32` × 3 + `i8` × 4 + `u8` × 4) |
+| GPU, positions + colours (run 6, 2026-09-10) | 264,241,152 | 12 B |
+| GPU, palette key in the position (this design) | 176,160,768 | 8 B |
+
+The vertex capacity is identical across the two GPU runs, so the drop is
+exactly the colour buffer: the GPU path goes from 24 % above the CPU arena to
+17 % below it, while the parity numbers stay put (band 1 mismatched sample of
+494,245 either way, shaded raw 0.6252 % → 0.6269 %). The 207 MB gate-1 limit
+was set for the bench page; production's bound is "no worse than the CPU path",
+which now holds with room. Reducing the GPU triangle count (per-chunk polygon
+triangulation instead of per-square fans) is a later optimisation, not part of
+parity.
 
 ## 9. Fallbacks
 

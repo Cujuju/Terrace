@@ -233,14 +233,13 @@ struct Params {
 ${wgslMarchTable()}
 
 // Three storage buffers and two uniforms: the floor every WebGPU device guarantees a
-// compute stage is eight storage buffers, and group 1 takes two of them.
+// compute stage is eight storage buffers, and group 1 takes one of them.
 @group(0) @binding(0) var<storage, read> window : array<u32>;
 @group(0) @binding(1) var<storage, read_write> stats : array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read_write> lips : array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> params : Params;
 @group(0) @binding(4) var<uniform> lut : array<vec4f, ${wgslI32(LUT_VEC4_COUNT)}>;
 @group(1) @binding(0) var<storage, read_write> outPositions : array<u32>;
-@group(1) @binding(1) var<storage, read_write> outColors : array<u32>;
 
 fn entryWord(at : i32) -> i32 { return bitcast<i32>(window[WINDOW_ENTRIES_AT + u32(at)]); }
 fn spanPairWord(at : i32) -> i32 { return bitcast<i32>(window[WINDOW_SPAN_PAIRS_AT + u32(at)]); }
@@ -381,17 +380,17 @@ fn capYOfBand(band : i32) -> f32 {
 fn levelCapY(level : i32) -> f32 {
   return select(capYOfBand(level), 0.0, level == SHORE_LEVEL);
 }
-fn levelCapRgba(level : i32) -> u32 {
-  let slot = select(LUT_CAP_BASE + level + BAND_LUT_OFFSET, LUT_SHORE_CAP, level == SHORE_LEVEL);
-  return pack4x8unorm(lut[slot]);
+fn levelCapSlot(level : i32) -> i32 {
+  return select(LUT_CAP_BASE + level + BAND_LUT_OFFSET, LUT_SHORE_CAP, level == SHORE_LEVEL);
 }
-fn ceilingRgba(band : i32, isLowest : bool) -> u32 {
+fn ceilingSlot(band : i32, isLowest : bool) -> i32 {
   let base = select(LUT_CEILING_INNER_BASE, LUT_CEILING_LOWEST_BASE, isLowest);
-  return pack4x8unorm(lut[base + band + BAND_LUT_OFFSET]);
+  return base + band + BAND_LUT_OFFSET;
 }
 
-// Positions are i16 units from the super-mesh centre; y lands on an exact band step.
-fn writeVertex(at : u32, p : vec2f, y : f32, rgba : u32) {
+// Positions are i16 units from the super-mesh centre; y lands on an exact band step. The
+// fourth half is the LUT slot, which the material samples its colour from.
+fn writeVertex(at : u32, p : vec2f, y : f32, slot : i32) {
   if (!emitEnabled || at >= emitLimit) { return; }
   let ux = i32(round((p.x * CELL_WORLD_SIZE - localOriginX) * POSITION_XZ_UNITS));
   let uz = i32(round((p.y * CELL_WORLD_SIZE - localOriginZ) * POSITION_XZ_UNITS));
@@ -399,32 +398,31 @@ fn writeVertex(at : u32, p : vec2f, y : f32, rgba : u32) {
   let qx = u32(clamp(ux, POSITION_UNITS_MIN, POSITION_UNITS_MAX) & LOW_HALF_MASK);
   let qy = u32(clamp(uy, POSITION_UNITS_MIN, POSITION_UNITS_MAX) & LOW_HALF_MASK);
   let qz = u32(clamp(uz, POSITION_UNITS_MIN, POSITION_UNITS_MAX) & LOW_HALF_MASK);
+  let qk = u32(slot & LOW_HALF_MASK);
   outPositions[at * POSITION_WORDS + 0u] = qx | (qy << HIGH_HALF_SHIFT);
-  outPositions[at * POSITION_WORDS + 1u] = qz;
-  outColors[at] = rgba;
+  outPositions[at * POSITION_WORDS + 1u] = qz | (qk << HIGH_HALF_SHIFT);
 }
 
 // A counted slot the emit pass did not fill collapses to a degenerate triangle.
 fn writeZeroVertex(at : u32) {
   outPositions[at * POSITION_WORDS + 0u] = 0u;
   outPositions[at * POSITION_WORDS + 1u] = 0u;
-  outColors[at] = 0u;
 }
 
-fn writeTriangle(at : u32, a : vec2f, b : vec2f, c : vec2f, y : f32, rgba : u32) {
-  writeVertex(at + 0u, a, y, rgba);
-  writeVertex(at + 1u, b, y, rgba);
-  writeVertex(at + 2u, c, y, rgba);
+fn writeTriangle(at : u32, a : vec2f, b : vec2f, c : vec2f, y : f32, slot : i32) {
+  writeVertex(at + 0u, a, y, slot);
+  writeVertex(at + 1u, b, y, slot);
+  writeVertex(at + 2u, c, y, slot);
 }
 
 // emitSkirtQuad's vertex order, without its pick inset.
-fn writeRiser(at : u32, p : vec2f, q : vec2f, topY : f32, botY : f32, rgba : u32) {
-  writeVertex(at + 0u, p, topY, rgba);
-  writeVertex(at + 1u, q, topY, rgba);
-  writeVertex(at + 2u, q, botY, rgba);
-  writeVertex(at + 3u, p, topY, rgba);
-  writeVertex(at + 4u, q, botY, rgba);
-  writeVertex(at + 5u, p, botY, rgba);
+fn writeRiser(at : u32, p : vec2f, q : vec2f, topY : f32, botY : f32, slot : i32) {
+  writeVertex(at + 0u, p, topY, slot);
+  writeVertex(at + 1u, q, topY, slot);
+  writeVertex(at + 2u, q, botY, slot);
+  writeVertex(at + 3u, p, topY, slot);
+  writeVertex(at + 4u, q, botY, slot);
+  writeVertex(at + 5u, p, botY, slot);
 }
 
 fn riserQuadsPerSegment(level : i32) -> u32 {
@@ -432,22 +430,22 @@ fn riserQuadsPerSegment(level : i32) -> u32 {
   return select(1u, 2u, lut[LUT_BORDER_BASE + level + BAND_LUT_OFFSET].w > 0.5);
 }
 
+// A bordered riser is seabed, so the border slot's alpha already is the cliff's self-lit
+// flag and the rim vertex can take the slot whole (bandLut.ts asserts it).
 fn emitRiser(at : u32, p : vec2f, q : vec2f, level : i32, belowY : f32) {
   let topY = levelCapY(level);
   if (level == SHORE_LEVEL) {
-    writeRiser(at, p, q, topY, belowY, pack4x8unorm(lut[LUT_SHORE_CLIFF]));
+    writeRiser(at, p, q, topY, belowY, LUT_SHORE_CLIFF);
     return;
   }
   let slot = level + BAND_LUT_OFFSET;
-  let cliff = lut[LUT_CLIFF_BASE + slot];
-  let border = lut[LUT_BORDER_BASE + slot];
-  if (border.w > 0.5) {
+  if (lut[LUT_BORDER_BASE + slot].w > 0.5) {
     let rim = topY - SEABED_RIM_HEIGHT;
-    writeRiser(at, p, q, topY, rim, pack4x8unorm(vec4f(border.xyz, cliff.w)));
-    writeRiser(at + VERTICES_PER_QUAD, p, q, rim, belowY, pack4x8unorm(cliff));
+    writeRiser(at, p, q, topY, rim, LUT_BORDER_BASE + slot);
+    writeRiser(at + VERTICES_PER_QUAD, p, q, rim, belowY, LUT_CLIFF_BASE + slot);
     return;
   }
-  writeRiser(at, p, q, topY, belowY, pack4x8unorm(cliff));
+  writeRiser(at, p, q, topY, belowY, LUT_CLIFF_BASE + slot);
 }
 
 fn refPosition(r : i32) -> vec2f {
@@ -536,17 +534,17 @@ fn polygonIsConvex(n : u32) -> bool {
 
 // flip reverses the polyline: caps wind as emitCapTriangle does, ceilings as
 // emitCeilingTriangle does. flatShading reads the winding, so it is load bearing.
-fn emitPolygon(at : u32, n : u32, y : f32, rgba : u32, flip : bool) -> u32 {
+fn emitPolygon(at : u32, n : u32, y : f32, slot : i32, flip : bool) -> u32 {
   var cursor = at;
   if (n == 3u) {
     writeTriangle(cursor, line[0], select(line[1], line[2], flip),
-      select(line[2], line[1], flip), y, rgba);
+      select(line[2], line[1], flip), y, slot);
     cursor += 3u;
   } else if (n > 3u && polygonIsConvex(n)) {
     for (var v = 1u; v + 1u < n; v++) {
       let b = line[v];
       let c = line[v + 1u];
-      writeTriangle(cursor, line[0], select(b, c, flip), select(c, b, flip), y, rgba);
+      writeTriangle(cursor, line[0], select(b, c, flip), select(c, b, flip), y, slot);
       cursor += 3u;
     }
   } else if (n > 3u) {
@@ -558,7 +556,7 @@ fn emitPolygon(at : u32, n : u32, y : f32, rgba : u32, flip : bool) -> u32 {
     for (var v = 0u; v < n; v++) {
       let b = line[v];
       let c = line[(v + 1u) % n];
-      writeTriangle(cursor, centre, select(b, c, flip), select(c, b, flip), y, rgba);
+      writeTriangle(cursor, centre, select(b, c, flip), select(c, b, flip), y, slot);
       cursor += 3u;
     }
   }
@@ -643,12 +641,12 @@ fn emitLevel(level : i32, localRef : array<i32, 4>, at : u32) -> u32 {
   let withRiser = level != chunkLowestBand;
   let capY = levelCapY(level);
   let belowY = select(capYOfBand(level - 1), capYOfBand(0), isShore);
-  let rgba = levelCapRgba(level);
+  let capSlot = levelCapSlot(level);
   var cursor = at;
   for (var p = 0; p < MAX_POLYS; p++) {
     if (marchTable[polyCase * MAX_POLYS + p] == 0) { continue; }
     let n = buildPolyline(polyCase, p, threshold, !isShore);
-    cursor += emitPolygon(cursor, n, capY, rgba, true);
+    cursor += emitPolygon(cursor, n, capY, capSlot, true);
     if (withRiser) { cursor += emitRisers(cursor, n, level, belowY); }
     if (!isShore) { appendLips(n, sampleBand); }
   }
@@ -669,12 +667,12 @@ fn emitCeilingLevel(band : i32, localRef : array<i32, 4>, at : u32) -> u32 {
   let polyCase = saddleCase(mask, 0, CEILING_INSIDE);
   let isLowest = band == chunkLowestBand;
   let undersideY = select(capYOfBand(band - 1), capYOfBand(band), isLowest);
-  let rgba = ceilingRgba(band, isLowest);
+  let slot = ceilingSlot(band, isLowest);
   var cursor = at;
   for (var p = 0; p < MAX_POLYS; p++) {
     if (marchTable[polyCase * MAX_POLYS + p] == 0) { continue; }
     let n = buildPolyline(polyCase, p, CEILING_INSIDE, false);
-    cursor += emitPolygon(cursor, n, undersideY, rgba, false);
+    cursor += emitPolygon(cursor, n, undersideY, slot, false);
   }
   return cursor - at;
 }

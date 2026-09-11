@@ -239,7 +239,8 @@ function quantizeNormal(component: number): number {
   return Math.round(component * SIGNED_BYTE_SCALE);
 }
 
-function quantizeChannel(channel: number): number {
+/** The colour attribute's byte rule; the GPU band LUT quantizes with it too. */
+export function quantizeChannel(channel: number): number {
   const scaled = Math.round(channel * UNSIGNED_BYTE_SCALE);
   return scaled < 0 ? 0 : scaled > UNSIGNED_BYTE_SCALE ? UNSIGNED_BYTE_SCALE : scaled;
 }
