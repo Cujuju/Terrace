@@ -36,6 +36,7 @@ import {
 import { createSkyEnvironment, type SkyEnvironment } from './skyEnvironment.ts';
 import { recordFrame, setFrameCounterSource, setGpuSampleSource } from './frameStats.ts';
 import { createGpuTimer } from './gpuTimer.ts';
+import { routeInstancesThroughAttributes } from './webglInstanceUpload.ts';
 import type { SkyRigState } from '../plugins/types.ts';
 
 export const SKY_COLOR = 0x9fc7e8;
@@ -90,6 +91,7 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     trackTimestamp: true,
   });
   await renderer.init();
+  routeInstancesThroughAttributes(renderer.backend);
   if (import.meta.env.DEV) {
     (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
     (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
