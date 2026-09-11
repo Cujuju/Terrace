@@ -298,6 +298,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     try {
       store = createGpuArenaStore(viewport.renderer, {
         onFailure: (error) => demoteToCpu(error.message),
+        onFrameCommands: (encoder) => gpuMesher.recordEmitTimestamps(encoder),
       });
     } catch (error) {
       if (!(error instanceof GpuArenaUnavailableError)) throw error;

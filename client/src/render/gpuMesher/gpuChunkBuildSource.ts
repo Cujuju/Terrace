@@ -93,13 +93,19 @@ const PARAMS_BATCH_BASE = 2;
 const PARAMS_LIP_CAPACITY = 3;
 const READBACK_SECTION_ALIGNMENT = 256;
 
+const TIMESTAMPS_PER_PASS = 2;
 const TIMESTAMP_COUNT_BEGIN = 0;
 const TIMESTAMP_COUNT_END = 1;
-const TIMESTAMP_EMIT_BEGIN = 2;
-const TIMESTAMP_EMIT_END = 3;
-const TIMESTAMP_QUERY_COUNT = 4;
+const TIMESTAMP_EMIT_BASE = 2;
+
+/** Emit passes a frame can time. A frame splices a handful; beyond this they run untimed. */
+export const GPU_EMIT_QUERY_PAIRS = 16;
+
+const TIMESTAMP_QUERY_COUNT = TIMESTAMP_EMIT_BASE + GPU_EMIT_QUERY_PAIRS * TIMESTAMPS_PER_PASS;
 const TIMESTAMP_BYTES_PER_QUERY = 8;
 const NANOSECONDS_PER_MS = 1e6;
+
+const NO_QUERY_PAIR = -1;
 
 const LIP_POSITION_FLOATS_PER_SEGMENT = 6;
 const LIP_FLAT_FLOATS_PER_SEGMENT = 4;
@@ -132,6 +138,9 @@ export interface GpuMesherStats {
 
 export interface GpuChunkBuildSource extends ChunkBuildSource {
   stats(): GpuMesherStats;
+  /** Records the frame's emit-query resolve. The arena store calls it on the encoder the
+   *  emits were recorded into, so the queries resolve in the command buffer that wrote them. */
+  recordEmitTimestamps(encoder: GPUCommandEncoder): void;
   /** Fires once when the device is lost; every later build takes the fallback regardless.
    *  Returns the unsubscribe. */
   onDeviceLost(handler: (reason: string) => void): () => void;
@@ -470,20 +479,31 @@ export async function createGpuChunkBuildSource(
   const querySet = timestampsSupported
     ? device.createQuerySet({ label: 'terrace.gpuMesher.timestamps', type: 'timestamp', count: TIMESTAMP_QUERY_COUNT })
     : null;
-  const timestampResolve = timestampsSupported
-    ? create(
-        'timestampResolve',
-        TIMESTAMP_QUERY_COUNT * TIMESTAMP_BYTES_PER_QUERY,
-        GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
-      )
-    : null;
-  const timestampReadback = timestampsSupported
-    ? create(
-        'timestampReadback',
-        TIMESTAMP_QUERY_COUNT * TIMESTAMP_BYTES_PER_QUERY,
-        GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      )
-    : null;
+  // Count and emit resolve into separate buffers: each pass's queries have to be resolved
+  // in the command buffer that wrote them, and those are two different encoders.
+  const timestampPair = (
+    label: string,
+    queries: number,
+  ): { resolve: GPUBuffer; readback: GPUBuffer } | null =>
+    timestampsSupported
+      ? {
+          resolve: create(
+            `${label}Resolve`,
+            queries * TIMESTAMP_BYTES_PER_QUERY,
+            GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+          ),
+          readback: create(
+            `${label}Readback`,
+            queries * TIMESTAMP_BYTES_PER_QUERY,
+            GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+          ),
+        }
+      : null;
+  const countTimestamps = timestampPair('countTimestamp', TIMESTAMPS_PER_PASS);
+  const emitTimestamps = timestampPair(
+    'emitTimestamp',
+    GPU_EMIT_QUERY_PAIRS * TIMESTAMPS_PER_PASS,
+  );
 
   // The counts readback is fixed size and always mapped; the lips readback is copied and
   // mapped afterwards, over exactly the records the counter reported.
@@ -581,7 +601,11 @@ export async function createGpuChunkBuildSource(
   let countMs = 0;
   let emitMs = 0;
   let batchesSinceResolve = 0;
-  let timestampInFlight = false;
+  let countTimestampInFlight = false;
+  let emitTimestampInFlight = false;
+  /** Emit query pairs this frame has written, reset when the store resolves them. */
+  let emitPairsUsed = 0;
+  let emitPairsResolving = 0;
 
   const growLips = (): void => {
     lipCapacity *= 2;
@@ -637,15 +661,20 @@ export async function createGpuChunkBuildSource(
           target.localOriginZ * POSITION_XZ_UNITS_PER_WORLD_UNIT,
         );
         uploadHeader(entry);
+        // Its own query pair, so a frame's emits sum instead of the last one overwriting.
+        const pair =
+          querySet === null || emitPairsUsed >= GPU_EMIT_QUERY_PAIRS
+            ? NO_QUERY_PAIR
+            : emitPairsUsed++;
         const pass = encoder.beginComputePass({
           label: 'terrace.gpuMesher.emit',
           timestampWrites:
-            querySet === null
+            querySet === null || pair === NO_QUERY_PAIR
               ? undefined
               : {
                   querySet,
-                  beginningOfPassWriteIndex: TIMESTAMP_EMIT_BEGIN,
-                  endOfPassWriteIndex: TIMESTAMP_EMIT_END,
+                  beginningOfPassWriteIndex: TIMESTAMP_EMIT_BASE + pair * TIMESTAMPS_PER_PASS,
+                  endOfPassWriteIndex: TIMESTAMP_EMIT_BASE + pair * TIMESTAMPS_PER_PASS + 1,
                 },
         });
         pass.setPipeline(pipeline);
@@ -661,39 +690,93 @@ export async function createGpuChunkBuildSource(
   };
 
   const resolveTimestamps = (encoder: GPUCommandEncoder): boolean => {
-    if (querySet === null || timestampResolve === null || timestampReadback === null) return false;
-    if (timestampInFlight || timestampReadback.mapState !== 'unmapped') return false;
+    if (querySet === null || countTimestamps === null) return false;
     batchesSinceResolve++;
     if (batchesSinceResolve < GPU_MESHER_RESOLVE_EVERY_BATCHES) return false;
+    if (countTimestampInFlight || countTimestamps.readback.mapState !== 'unmapped') return false;
     batchesSinceResolve = 0;
-    timestampInFlight = true;
-    encoder.resolveQuerySet(querySet, 0, TIMESTAMP_QUERY_COUNT, timestampResolve, 0);
+    countTimestampInFlight = true;
+    encoder.resolveQuerySet(
+      querySet,
+      TIMESTAMP_COUNT_BEGIN,
+      TIMESTAMPS_PER_PASS,
+      countTimestamps.resolve,
+      0,
+    );
     encoder.copyBufferToBuffer(
-      timestampResolve,
+      countTimestamps.resolve,
       0,
-      timestampReadback,
+      countTimestamps.readback,
       0,
-      TIMESTAMP_QUERY_COUNT * TIMESTAMP_BYTES_PER_QUERY,
+      TIMESTAMPS_PER_PASS * TIMESTAMP_BYTES_PER_QUERY,
     );
     return true;
   };
 
   const readTimestamps = (): void => {
-    if (timestampReadback === null) return;
-    void timestampReadback.mapAsync(GPUMapMode.READ).then(
+    if (countTimestamps === null) return;
+    const readback = countTimestamps.readback;
+    void readback.mapAsync(GPUMapMode.READ).then(
       () => {
-        const stamps = new BigUint64Array(timestampReadback.getMappedRange().slice(0));
-        timestampReadback.unmap();
-        timestampInFlight = false;
+        const stamps = new BigUint64Array(readback.getMappedRange().slice(0));
+        readback.unmap();
+        countTimestampInFlight = false;
         const count = stamps[TIMESTAMP_COUNT_END]! - stamps[TIMESTAMP_COUNT_BEGIN]!;
-        const emit = stamps[TIMESTAMP_EMIT_END]! - stamps[TIMESTAMP_EMIT_BEGIN]!;
         if (count > 0n) countMs = Number(count) / NANOSECONDS_PER_MS;
-        if (emit > 0n) emitMs = Number(emit) / NANOSECONDS_PER_MS;
       },
       () => {
-        timestampInFlight = false;
+        countTimestampInFlight = false;
       },
     );
+  };
+
+  const readEmitTimestamps = (): void => {
+    if (emitTimestamps === null) return;
+    const readback = emitTimestamps.readback;
+    const pairs = emitPairsResolving;
+    const bytes = pairs * TIMESTAMPS_PER_PASS * TIMESTAMP_BYTES_PER_QUERY;
+    void readback.mapAsync(GPUMapMode.READ, 0, bytes).then(
+      () => {
+        const stamps = new BigUint64Array(readback.getMappedRange(0, bytes).slice(0));
+        readback.unmap();
+        emitTimestampInFlight = false;
+        let total = 0n;
+        for (let p = 0; p < pairs; p++) {
+          const span = stamps[p * TIMESTAMPS_PER_PASS + 1]! - stamps[p * TIMESTAMPS_PER_PASS]!;
+          if (span > 0n) total += span;
+        }
+        emitMs = Number(total) / NANOSECONDS_PER_MS;
+      },
+      () => {
+        emitTimestampInFlight = false;
+      },
+    );
+  };
+
+  const recordEmitTimestamps = (encoder: GPUCommandEncoder): void => {
+    if (querySet === null || emitTimestamps === null) return;
+    const pairs = emitPairsUsed;
+    emitPairsUsed = 0;
+    if (pairs === 0) return;
+    if (emitTimestampInFlight || emitTimestamps.readback.mapState !== 'unmapped') return;
+    emitTimestampInFlight = true;
+    emitPairsResolving = pairs;
+    encoder.resolveQuerySet(
+      querySet,
+      TIMESTAMP_EMIT_BASE,
+      pairs * TIMESTAMPS_PER_PASS,
+      emitTimestamps.resolve,
+      0,
+    );
+    encoder.copyBufferToBuffer(
+      emitTimestamps.resolve,
+      0,
+      emitTimestamps.readback,
+      0,
+      pairs * TIMESTAMPS_PER_PASS * TIMESTAMP_BYTES_PER_QUERY,
+    );
+    // The store submits this encoder as soon as it returns, and a map must not outrun its copy.
+    queueMicrotask(readEmitTimestamps);
   };
 
   const runFallback = (queued: QueuedChunk): void => {
@@ -986,6 +1069,7 @@ export async function createGpuChunkBuildSource(
     stats(): GpuMesherStats {
       return { countMs, emitMs, batches, chunks };
     },
+    recordEmitTimestamps,
     onDeviceLost(handler): () => void {
       deviceLostHandlers.add(handler);
       return () => deviceLostHandlers.delete(handler);
@@ -1001,8 +1085,10 @@ export async function createGpuChunkBuildSource(
         countsPool.live--;
       }
       for (const buffer of ownedBuffers()) buffer.destroy();
-      timestampResolve?.destroy();
-      timestampReadback?.destroy();
+      countTimestamps?.resolve.destroy();
+      countTimestamps?.readback.destroy();
+      emitTimestamps?.resolve.destroy();
+      emitTimestamps?.readback.destroy();
       querySet?.destroy();
     },
   };
