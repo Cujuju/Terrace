@@ -11,6 +11,7 @@ import { createCelestialVoid } from './render/celestialVoid.ts';
 import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
 import { layerEdgeStyle } from './state/layerEdgePrefs.ts';
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
+import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
@@ -60,7 +61,9 @@ if (canvas === null || hudRoot === null) {
   throw new Error('index.html must provide #viewport and #hud');
 }
 
-const viewport = await createViewport(canvas);
+const viewport = await createViewport(canvas, {
+  multisampling: multisampleEnabled(multisampleSetting()),
+});
 markBoot(BOOT_MARKS.viewportReady);
 // Both meshers are world-independent, so the session builds them once. A GPU mesher that
 // cannot compile or bind returns null, and every world then meshes on the workers.
@@ -100,6 +103,7 @@ createEffect(() => celestialVoid.setAnchor(voidAnchor()));
 
 createEffect(() => world.setLayerEdgeStyle(layerEdgeStyle()));
 createEffect(() => viewport.setFrameRateTarget(frameRateTargetFps(frameRateTarget())));
+createEffect(() => viewport.setMultisampling(multisampleEnabled(multisampleSetting())));
 
 const placementRaycaster = new Raycaster();
 const placementNdc = new Vector2();

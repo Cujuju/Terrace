@@ -78,9 +78,18 @@ export interface Viewport {
   onFrame(handler: (dt: number) => void, phase?: FramePhase): () => void;
   setGroundHeightSampler(sampler: GroundHeightSampler | null): void;
   setFrameRateTarget(fps: number | null): void;
+  setMultisampling(on: boolean): void;
   start(): void;
   dispose(): void;
 }
+
+export interface ViewportOptions {
+  readonly multisampling: boolean;
+}
+
+/** three r185 renders with 4 samples or none (`Renderer.js:275`). */
+const MSAA_SAMPLES = 4;
+const NO_MSAA_SAMPLES = 0;
 
 const FRAME_DELTA_CAP_S = 0.1;
 const MS_PER_S = 1000;
@@ -95,10 +104,13 @@ function antialiasRequested(): boolean {
   return new URLSearchParams(window.location.search).get(ANTIALIAS_QUERY_FLAG) !== '0';
 }
 
-export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewport> {
+export async function createViewport(
+  canvas: HTMLCanvasElement,
+  options: ViewportOptions,
+): Promise<Viewport> {
   const renderer = new WebGPURenderer({
     canvas,
-    antialias: antialiasRequested(),
+    antialias: options.multisampling && antialiasRequested(),
     trackTimestamp: true,
   });
   await renderer.init();
@@ -330,6 +342,14 @@ export async function createViewport(canvas: HTMLCanvasElement): Promise<Viewpor
     setFrameRateTarget(fps: number | null): void {
       frameIntervalMs = fps === null || !(fps > 0) ? null : MS_PER_S / fps;
       nextDueMs = 0;
+    },
+    setMultisampling(on: boolean): void {
+      const samples = on && antialiasRequested() ? MSAA_SAMPLES : NO_MSAA_SAMPLES;
+      if (renderer.samples === samples) return;
+      // `samples` is a getter over the constructor's field; the tone-mapped frame renders into a
+      // frame-buffer target cached with it, which `_resetXRState` also drops this way.
+      (renderer as unknown as { _samples: number })._samples = samples;
+      renderer.getCanvasTarget().dispose();
     },
     start(): void {
       if (frameHandle === 0) renderFrame();
