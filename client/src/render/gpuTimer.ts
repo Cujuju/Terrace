@@ -3,7 +3,7 @@ import type { Renderer } from 'three/webgpu';
 const MAX_BUFFERED_SAMPLES = 8;
 
 /** Frames per resolve. A resolve costs ~2-3 ms of frame time on WebGPU, so the pool is
- *  drained on a cadence and each sample is that window's per-frame mean. */
+ *  drained on a cadence; three reports the window's last frame, so that frame is the sample. */
 const RESOLVE_EVERY_FRAMES = 16;
 
 export const TIMESTAMP_QUERY_FEATURE = 'timestamp-query';
@@ -35,13 +35,12 @@ export function createGpuTimer(renderer: Renderer): GpuTimer {
       framesSinceResolve++;
       if (inFlight || framesSinceResolve < RESOLVE_EVERY_FRAMES) return;
       inFlight = true;
-      const framesCovered = framesSinceResolve;
       framesSinceResolve = 0;
       void renderer.resolveTimestampsAsync('render').then(
         (ms) => {
           inFlight = false;
           if (ms === undefined) return;
-          resolved.push(ms / framesCovered);
+          resolved.push(ms);
           while (resolved.length > MAX_BUFFERED_SAMPLES) resolved.shift();
         },
         () => {
