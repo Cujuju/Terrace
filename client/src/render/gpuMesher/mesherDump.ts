@@ -1,11 +1,23 @@
-import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, chunksPerEdge, drawnBandOfSample } from '@terrace/shared';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  DoubleSide,
+  Mesh,
+  MeshBasicMaterial,
+  Raycaster,
+  Vector2,
+  type PerspectiveCamera,
+} from 'three';
 import type { Renderer } from 'three/webgpu';
-import { CELL_WORLD_SIZE } from '../../config.ts';
+import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../../config.ts';
+import { LATTICE_PER_CHUNK } from '../../terrain/contours.ts';
 import type { TerrainMirror } from '../../terrain/mirror.ts';
 import { VERTICES_PER_TRIANGLE } from '../../terrain/vertexGrid.ts';
 import type { ArenaStore } from '../arenaStore.ts';
 import { createDirectChunkBuildSource } from '../chunkBuildSource.ts';
 import type { TerrainMeshes } from '../terrainMeshes.ts';
+import { OVER_BUDGET, extractWindowEntry } from './terrainGpuInputs.ts';
 import {
   GPU_POSITION_BYTES_PER_VERTEX,
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
@@ -23,6 +35,9 @@ const UNITS_PER_TRIANGLE = VERTICES_PER_TRIANGLE * AXES;
 
 /** Examples the report carries for the worst square; enough to name the missing wall. */
 const DUMP_EXAMPLE_LIMIT = 8;
+
+/** A ray is cast through the centre of the pixel, not its corner. */
+const HALF_PIXEL = 0.5;
 
 /** A triangle whose three vertices share one y is a cap; anything else is a riser. */
 const CAP_TRIANGLE_Y_SPREAD_UNITS = 0;
@@ -77,7 +92,45 @@ export interface MesherDumpReport {
   readonly missingExamples: readonly MesherDumpExample[];
 }
 
+/** Which side neighbours a chunk has, and the per-square data the exposure rule reads. */
+export interface MesherDumpFacts {
+  readonly chunkIdx: number;
+  readonly cx: number;
+  readonly cy: number;
+  readonly layered: boolean;
+  readonly exposed: boolean;
+  readonly chunkLowestBand: number;
+  readonly highestBand: number;
+  /** `west,east,north,south,nw,ne,sw,se` -> whether that neighbour chunk is received. */
+  readonly neighbours: Readonly<Record<string, boolean>>;
+  /** Band of every lattice sample, row-major over `LATTICE_PER_CHUNK` squared. */
+  readonly latticeBands: readonly number[];
+}
+
+/** The CPU triangle the camera sees at one pixel, tagged by square, level and kind. */
+export interface MesherDumpHit {
+  readonly px: number;
+  readonly py: number;
+  readonly chunkIdx: number;
+  readonly lx: number;
+  readonly lz: number;
+  readonly y: number;
+  readonly band: number;
+  readonly kind: string;
+  /** Signed XZ area of the triangle: caps wind one way, ceilings the other. */
+  readonly facing: number;
+  readonly distance: number;
+}
+
+export interface MesherDumpHitReport {
+  readonly drawingBuffer: readonly [number, number];
+  readonly chunks: readonly MesherDumpFacts[];
+  readonly triangles: number;
+  readonly hits: readonly (MesherDumpHit | null)[];
+}
+
 export interface MesherDumpSources {
+  readonly camera: PerspectiveCamera;
   readonly renderer: Renderer;
   readonly mirror: () => TerrainMirror | null;
   readonly meshes: () => TerrainMeshes | null;
@@ -225,6 +278,77 @@ function buildCpuTriangles(
   return { count: triangles, units };
 }
 
+const NEIGHBOUR_OFFSETS: readonly (readonly [string, number, number])[] = [
+  ['west', -1, 0], ['east', 1, 0], ['north', 0, -1], ['south', 0, 1],
+  ['nw', -1, -1], ['ne', 1, -1], ['sw', -1, 1], ['se', 1, 1],
+];
+
+function chunkFacts(mirror: TerrainMirror, chunkIdx: number): MesherDumpFacts | null {
+  const chunkCols = chunksPerEdge(mirror.map.size);
+  const cx = chunkIdx % chunkCols;
+  const cy = (chunkIdx - cx) / chunkCols;
+  const entry = extractWindowEntry(mirror, chunkIdx);
+  if (entry === OVER_BUDGET) return null;
+  const neighbours: Record<string, boolean> = {};
+  for (const [name, dx, dy] of NEIGHBOUR_OFFSETS) {
+    const nx = cx + dx;
+    const ny = cy + dy;
+    neighbours[name] =
+      nx >= 0 && ny >= 0 && nx < chunkCols && ny < chunkCols &&
+      mirror.received.has(ny * chunkCols + nx);
+  }
+  const latticeBands: number[] = [];
+  for (let at = 0; at < LATTICE_PER_CHUNK * LATTICE_PER_CHUNK; at++) {
+    latticeBands.push(drawnBandOfSample(entry.lattice[at]!));
+  }
+  return {
+    chunkIdx, cx, cy,
+    layered: entry.layered,
+    exposed: entry.exposed,
+    chunkLowestBand: entry.chunkLowestBand,
+    highestBand: entry.highestBand,
+    neighbours,
+    latticeBands,
+  };
+}
+
+/** One mesh over several chunks' CPU triangles, with the chunk each triangle came from.
+ *  Unreceived chunks are skipped: the CPU mesher would build them, but nothing draws them. */
+function cpuMeshOf(mirror: TerrainMirror, chunkIdxs: readonly number[]): {
+  mesh: Mesh;
+  owner: Int32Array;
+} {
+  const source = createDirectChunkBuildSource();
+  const parts: { positions: Float32Array; chunkIdx: number }[] = [];
+  let vertices = 0;
+  for (const chunkIdx of chunkIdxs) {
+    if (!mirror.received.has(chunkIdx)) continue;
+    const answer = source.build(mirror, chunkIdx, 0);
+    if (answer === null || answer instanceof Promise || answer.kind !== 'cpu') continue;
+    const used = answer.positions.slice(0, answer.vertexCount * COMPONENTS_PER_CPU_POSITION);
+    parts.push({ positions: used, chunkIdx });
+    vertices += answer.vertexCount;
+  }
+  source.dispose();
+
+  const positions = new Float32Array(vertices * COMPONENTS_PER_CPU_POSITION);
+  const owner = new Int32Array(vertices / VERTICES_PER_TRIANGLE);
+  let at = 0;
+  let triangle = 0;
+  for (const part of parts) {
+    positions.set(part.positions, at * COMPONENTS_PER_CPU_POSITION);
+    const count = part.positions.length / (COMPONENTS_PER_CPU_POSITION * VERTICES_PER_TRIANGLE);
+    owner.fill(part.chunkIdx, triangle, triangle + count);
+    at += part.positions.length / COMPONENTS_PER_CPU_POSITION;
+    triangle += count;
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(positions, COMPONENTS_PER_CPU_POSITION));
+  const mesh = new Mesh(geometry, new MeshBasicMaterial({ side: DoubleSide }));
+  mesh.updateMatrixWorld();
+  return { mesh, owner };
+}
+
 export function installMesherDump(sources: MesherDumpSources): () => void {
   const built = (): number[] => {
     const meshes = sources.meshes();
@@ -359,8 +483,71 @@ export function installMesherDump(sources: MesherDumpSources): () => void {
     };
   };
 
+  /** First CPU triangle each pixel's camera ray meets, over `chunkIdxs` only. */
+  const hits = (
+    chunkIdxs: readonly number[],
+    pixels: readonly (readonly [number, number])[],
+  ): MesherDumpHitReport | string => {
+    const mirror = sources.mirror();
+    if (mirror === null) return 'the world has no terrain yet';
+    const chunkCols = chunksPerEdge(mirror.map.size);
+    const { mesh, owner } = cpuMeshOf(mirror, chunkIdxs);
+    const buffer = sources.renderer.domElement;
+    const width = buffer.width;
+    const height = buffer.height;
+    const raycaster = new Raycaster();
+    const ndc = new Vector2();
+    const position = mesh.geometry.getAttribute('position');
+
+    const found: (MesherDumpHit | null)[] = [];
+    for (const [px, py] of pixels) {
+      ndc.set(((px + HALF_PIXEL) / width) * 2 - 1, -(((py + HALF_PIXEL) / height) * 2 - 1));
+      raycaster.setFromCamera(ndc, sources.camera);
+      const first = raycaster.intersectObject(mesh, false)[0];
+      const face = first?.faceIndex ?? null;
+      if (first === undefined || face === null) {
+        found.push(null);
+        continue;
+      }
+      const base = face * VERTICES_PER_TRIANGLE;
+      const y = [0, 1, 2].map((v) => position.getY(base + v));
+      const x = [0, 1, 2].map((v) => position.getX(base + v));
+      const z = [0, 1, 2].map((v) => position.getZ(base + v));
+      const flat = y[0] === y[1] && y[1] === y[2];
+      const chunkIdx = owner[face]!;
+      const originCellX = (chunkIdx % chunkCols) * CHUNK_SIZE;
+      const originCellZ = ((chunkIdx - (chunkIdx % chunkCols)) / chunkCols) * CHUNK_SIZE;
+      found.push({
+        px, py, chunkIdx,
+        lx: Math.floor(first.point.x / CELL_WORLD_SIZE) - originCellX,
+        lz: Math.floor(first.point.z / CELL_WORLD_SIZE) - originCellZ,
+        y: first.point.y,
+        band: Math.round(Math.max(...y) / BAND_WORLD_HEIGHT),
+        kind: flat ? 'cap' : 'riser',
+        facing: Math.sign(
+          (x[1]! - x[0]!) * (z[2]! - z[0]!) - (z[1]! - z[0]!) * (x[2]! - x[0]!),
+        ),
+        distance: first.distance,
+      });
+    }
+    mesh.geometry.dispose();
+    (mesh.material as MeshBasicMaterial).dispose();
+
+    const chunks: MesherDumpFacts[] = [];
+    for (const chunkIdx of chunkIdxs) {
+      const facts = chunkFacts(mirror, chunkIdx);
+      if (facts !== null) chunks.push(facts);
+    }
+    return {
+      drawingBuffer: [width, height],
+      chunks,
+      triangles: owner.length,
+      hits: found,
+    };
+  };
+
   const holder = globalThis as unknown as Record<string, unknown>;
-  holder[DUMP_HANDLE] = { chunk, built };
+  holder[DUMP_HANDLE] = { chunk, built, hits };
   return () => {
     delete holder[DUMP_HANDLE];
   };

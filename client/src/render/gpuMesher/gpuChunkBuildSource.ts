@@ -37,7 +37,7 @@ import {
   COUNT_PASS_STAMP,
   ENTRY_CHUNK_IDX,
   ENTRY_HEADER_WORDS,
-  ENTRY_EXPOSED_EDGES,
+  ENTRY_EXPOSED,
   ENTRY_LAYERED,
   ENTRY_LOCAL_ORIGIN_X_UNITS,
   ENTRY_LOCAL_ORIGIN_Z_UNITS,
@@ -1010,7 +1010,7 @@ export async function createGpuChunkBuildSource(
     headers.fill(0, at, at + ENTRY_HEADER_WORDS);
     headers[at + ENTRY_CHUNK_IDX] = chunkIdx;
     headers[at + ENTRY_LAYERED] = data.layered ? 1 : 0;
-    headers[at + ENTRY_EXPOSED_EDGES] = data.exposedEdges;
+    headers[at + ENTRY_EXPOSED] = data.exposed ? 1 : 0;
     headers[at + ENTRY_LOWEST_BAND] = data.chunkLowestBand;
     headers[at + ENTRY_ORIGIN_X_CELLS] = data.originXCells;
     headers[at + ENTRY_ORIGIN_Z_CELLS] = data.originZCells;
