@@ -106,6 +106,9 @@ export interface GpuMesherStats {
 
 export interface GpuChunkBuildSource extends ChunkBuildSource {
   stats(): GpuMesherStats;
+  /** Settles when the WGSL module has compiled; rejects with the compile errors, which
+   *  route every chunk to the fallback and so demote the whole session. */
+  ready(): Promise<void>;
 }
 
 interface WebGpuBackendInternals {
@@ -346,12 +349,28 @@ export function createGpuChunkBuildSource(
   });
 
   let compileFailure: string | null = null;
-  void module.getCompilationInfo().then((info) => {
-    const errors = info.messages.filter((m) => m.type === 'error');
-    if (errors.length === 0) return;
-    compileFailure = errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n');
-    console.error(`[terrace] GPU mesher WGSL failed to compile:\n${compileFailure}`);
+  let compiled!: () => void;
+  let compileFailed!: (error: Error) => void;
+  const compilation = new Promise<void>((resolve, reject) => {
+    compiled = resolve;
+    compileFailed = reject;
   });
+  void module.getCompilationInfo().then(
+    (info) => {
+      const errors = info.messages.filter((m) => m.type === 'error');
+      if (errors.length === 0) {
+        compiled();
+        return;
+      }
+      compileFailure = errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n');
+      console.error(`[terrace] GPU mesher WGSL failed to compile:\n${compileFailure}`);
+      compileFailed(new Error(compileFailure));
+    },
+    // A device that will not report compilation info has not failed to compile.
+    () => {
+      compiled();
+    },
+  );
 
   let group0 = device.createBindGroup({
     label: 'terrace.gpuMesher.bind0',
@@ -863,6 +882,9 @@ export function createGpuChunkBuildSource(
     },
     stats(): GpuMesherStats {
       return { countMs, emitMs, batches, chunks };
+    },
+    ready(): Promise<void> {
+      return compilation;
     },
     dispose(): void {
       if (disposed) return;

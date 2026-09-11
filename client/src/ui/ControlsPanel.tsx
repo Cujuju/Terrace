@@ -44,6 +44,12 @@ import {
   setLayerEdgeStyle,
   type LayerEdgeStyle,
 } from '../state/layerEdgePrefs.ts';
+import {
+  TERRAIN_MESHERS,
+  setTerrainMesher,
+  terrainMesher,
+  type TerrainMesher,
+} from '../state/terrainMesherPrefs.ts';
 
 const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
   off: 'None',
@@ -74,6 +80,12 @@ const FRAME_RATE_LABEL: Record<FrameRateTarget, string> = {
   '90': '90 fps',
   '60': '60 fps',
   '30': '30 fps',
+};
+
+const TERRAIN_MESHER_LABEL: Record<TerrainMesher, string> = {
+  auto: 'Auto (GPU when available)',
+  gpu: 'GPU compute',
+  cpu: 'CPU workers',
 };
 
 const ACTION_LABEL: Record<ControlAction, string> = {
@@ -291,6 +303,23 @@ export function ControlsPanel(): JSX.Element {
         >
           <For each={FRAME_RATE_TARGETS}>
             {(target) => <option value={target}>{FRAME_RATE_LABEL[target]}</option>}
+          </For>
+        </select>
+      </div>
+
+      {
+}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Terrain mesher</span>
+        <select
+          class="controls-select"
+          aria-label="Which mesher builds the terrain"
+          title="Which mesher turns heights into terrain: Auto picks GPU compute when the renderer runs WebGPU, otherwise CPU workers. Applies immediately and rebuilds the terrain."
+          value={terrainMesher()}
+          onChange={(e) => setTerrainMesher(e.currentTarget.value as TerrainMesher)}
+        >
+          <For each={TERRAIN_MESHERS}>
+            {(mesher) => <option value={mesher}>{TERRAIN_MESHER_LABEL[mesher]}</option>}
           </For>
         </select>
       </div>
