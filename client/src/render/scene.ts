@@ -38,7 +38,7 @@ import {
 import { createSkyEnvironment, type SkyEnvironment } from './skyEnvironment.ts';
 import { recordFrame, setFrameCounterSource, setGpuSampleSource } from './frameStats.ts';
 import { createGpuTimer } from './gpuTimer.ts';
-import { routeInstancesThroughAttributes } from './webglInstanceUpload.ts';
+import { routeInstancesThroughAttributes } from './instanceUpload.ts';
 import type { SkyRigState } from '../plugins/types.ts';
 import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 
