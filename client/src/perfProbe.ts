@@ -10,6 +10,7 @@ import {
 } from 'three';
 import { MeshBasicNodeMaterial, type NodeMaterial, type Renderer } from 'three/webgpu';
 import { positionWorld, vec3 } from 'three/tsl';
+import { POSITION_XZ_UNITS_PER_WORLD_UNIT } from './render/gpuMesher/gpuChunkAnswer.ts';
 import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
 import { clearGroundShade } from './render/groundShade.ts';
 import {
@@ -62,6 +63,10 @@ const PARITY_HOLD_MS = 20_000;
 /** A three.js layer nothing in the app uses (0 is the default; 31 is the last). */
 const PARITY_RENDER_LAYER = 31;
 const PARITY_SETTLE_FRAMES = 2;
+
+/** `?parityShift=<steps>`: slides the terrain by that many GPU position steps, so a
+ *  mesher can be diffed against itself moved below a pixel (gate 1's metric floor). */
+const PARITY_SHIFT_QUERY_FLAG = 'parityShift';
 const TERRAIN_QUEUE_POLL_MS = 100;
 const TERRAIN_QUEUE_TIMEOUT_MS = 180_000;
 const HUD_ELEMENT_SELECTOR = '#hud';
@@ -956,6 +961,18 @@ function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
   const cameraMask = camera.layers.mask;
   camera.layers.set(PARITY_RENDER_LAYER);
 
+  const shiftSteps = Number(new URLSearchParams(location.search).get(PARITY_SHIFT_QUERY_FLAG) ?? '0');
+  const shift = Number.isFinite(shiftSteps) ? shiftSteps / POSITION_XZ_UNITS_PER_WORLD_UNIT : 0;
+  const shiftedPositions = new Map<Object3D, Vector3>();
+  if (shift !== 0) {
+    for (const node of terrain) {
+      shiftedPositions.set(node, node.position.clone());
+      node.position.x += shift;
+      node.position.z += shift;
+      node.updateMatrixWorld(true);
+    }
+  }
+
   const hud = document.querySelector<HTMLElement>(HUD_ELEMENT_SELECTOR);
   const hudDisplay = hud === null ? null : hud.style.display;
   if (hud !== null) hud.style.display = 'none';
@@ -987,6 +1004,7 @@ function isolateTerrain(ctx: ProbeContext): { restore: () => void } {
       for (const [node, visible] of wasVisible) node.visible = visible;
       camera.layers.mask = cameraMask;
       for (const [node, mask] of layerMasks) node.layers.mask = mask;
+      for (const [node, position] of shiftedPositions) node.position.copy(position);
     },
   };
 }
