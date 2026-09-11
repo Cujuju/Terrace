@@ -1,6 +1,6 @@
-import { BAND_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
 import type { Renderer } from 'three/webgpu';
-import { HEIGHT_WORLD_SCALE } from '../../config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import {
   CHUNK_TRIANGLE_BUDGET,
   VERTICES_PER_TRIANGLE,
@@ -16,14 +16,13 @@ import {
 import type { TerrainMirror } from '../../terrain/mirror.ts';
 import type { ChunkAnswer, ChunkBuildSource } from '../chunkBuildSource.ts';
 import { TIMESTAMP_QUERY_FEATURE } from '../gpuTimer.ts';
-import { SHORE_THRESHOLD, buildBandLut, LUT_VEC4_COUNT } from './bandLut.ts';
+import { SHORE_THRESHOLD, buildBandLut, LUT_COMPONENTS, LUT_VEC4_COUNT } from './bandLut.ts';
 import {
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
   type ChunkGpuAnswer,
   type GpuEmitHandle,
   type GpuEmitTarget,
 } from './gpuChunkAnswer.ts';
-import { marchingTableBuffer, MARCH_TABLE_WORDS } from './marchingTable.ts';
 import {
   MESHER_ENTRY_POINT,
   MODE_COUNT,
@@ -32,37 +31,46 @@ import {
   buildMesherWgsl,
 } from './mesherWgsl.ts';
 import {
+  CHUNK_STATS_COUNT_STAMP,
   CHUNK_STATS_VERTEX_COUNT,
   CHUNK_STATS_WORDS,
+  COUNT_PASS_STAMP,
   ENTRY_CHUNK_IDX,
   ENTRY_HEADER_WORDS,
-  ENTRY_HIGHEST_BAND,
   ENTRY_LAYERED,
   ENTRY_LOCAL_ORIGIN_X_UNITS,
   ENTRY_LOCAL_ORIGIN_Z_UNITS,
   ENTRY_LOWEST_BAND,
   ENTRY_ORIGIN_X_CELLS,
   ENTRY_ORIGIN_Z_CELLS,
-  ENTRY_VERTEX_BASE,
   ENTRY_VERTEX_LIMIT,
+  GPU_BATCH_CHUNKS,
+  GPU_WINDOW_POOL,
   LIP_AX,
   LIP_BAND,
+  LIP_COUNTER_AT,
   LIP_ENTRY,
+  LIP_RECORDS_AT,
   LIP_WORDS,
   OVER_BUDGET,
   SPAN_PAIR_WORDS,
   SQUARES_PER_CHUNK,
+  STATS_BUFFER_WORDS,
+  STATS_CHUNK_AT,
+  STATS_SQUARE_BASE_AT,
+  WINDOW_BATCH_LIST_AT,
+  WINDOW_BUFFER_WORDS,
+  WINDOW_ENTRIES_AT,
+  WINDOW_LATTICE_AT,
+  WINDOW_LATTICE_DESC_AT,
   WINDOW_LATTICE_SAMPLES,
   WINDOW_SPAN_PAIRS,
+  WINDOW_SPAN_PAIRS_AT,
   extractWindowEntry,
   type WindowEntryData,
 } from './terrainGpuInputs.ts';
 
-/** Chunks counted in one dispatch. Also the arena's backlog cap, so one drain is one batch. */
-export const GPU_BATCH_CHUNKS = 64;
-
-/** Two batches of entries stay resident, so an emit reads exactly what its count counted. */
-export const GPU_WINDOW_POOL = 2 * GPU_BATCH_CHUNKS;
+export { GPU_BATCH_CHUNKS, GPU_WINDOW_POOL };
 
 export const GPU_CHUNK_VERTEX_BUDGET = CHUNK_TRIANGLE_BUDGET * VERTICES_PER_TRIANGLE;
 
@@ -83,19 +91,41 @@ const PARAMS_BATCH_BASE = 2;
 const PARAMS_LIP_CAPACITY = 3;
 const READBACK_SECTION_ALIGNMENT = 256;
 
+const TIMESTAMPS_PER_PASS = 2;
 const TIMESTAMP_COUNT_BEGIN = 0;
 const TIMESTAMP_COUNT_END = 1;
-const TIMESTAMP_EMIT_BEGIN = 2;
-const TIMESTAMP_EMIT_END = 3;
-const TIMESTAMP_QUERY_COUNT = 4;
+const TIMESTAMP_EMIT_BASE = 2;
+
+/** Emit passes a frame can time. A frame splices a handful; beyond this they run untimed. */
+export const GPU_EMIT_QUERY_PAIRS = 16;
+
+const TIMESTAMP_QUERY_COUNT = TIMESTAMP_EMIT_BASE + GPU_EMIT_QUERY_PAIRS * TIMESTAMPS_PER_PASS;
 const TIMESTAMP_BYTES_PER_QUERY = 8;
 const NANOSECONDS_PER_MS = 1e6;
+
+const NO_QUERY_PAIR = -1;
 
 const LIP_POSITION_FLOATS_PER_SEGMENT = 6;
 const LIP_FLAT_FLOATS_PER_SEGMENT = 4;
 const LIP_BAND_TRIPLE_WORDS = 3;
 
+/** ax, az, bx, bz: the record words the sort compares after the band. */
+const LIP_COORD_WORDS = 4;
+
 const NO_ENTRY = -1;
+
+const CHUNK_SPAN_WORLD_UNITS = CHUNK_SIZE * CELL_WORLD_SIZE;
+
+/** Group 0's window, stats and lips, plus group 1's positions and colours. */
+const STORAGE_BUFFERS_PER_STAGE = 5;
+
+/** Group 0's params and lut. */
+const UNIFORM_BUFFERS_PER_STAGE = 2;
+
+function demote(reason: string): null {
+  console.warn(`[terrace] terrain mesher: ${reason}`);
+  return null;
+}
 
 export interface GpuMesherStats {
   readonly countMs: number;
@@ -106,9 +136,12 @@ export interface GpuMesherStats {
 
 export interface GpuChunkBuildSource extends ChunkBuildSource {
   stats(): GpuMesherStats;
-  /** Settles when the WGSL module has compiled; rejects with the compile errors, which
-   *  route every chunk to the fallback and so demote the whole session. */
-  ready(): Promise<void>;
+  /** Records the frame's emit-query resolve. The arena store calls it on the encoder the
+   *  emits were recorded into, so the queries resolve in the command buffer that wrote them. */
+  recordEmitTimestamps(encoder: GPUCommandEncoder): void;
+  /** Fires once when the device is lost; every later build takes the fallback regardless.
+   *  Returns the unsubscribe. */
+  onDeviceLost(handler: (reason: string) => void): () => void;
 }
 
 interface WebGpuBackendInternals {
@@ -116,12 +149,11 @@ interface WebGpuBackendInternals {
   readonly device?: GPUDevice;
 }
 
-interface LipRecord {
-  band: number;
-  ax: number;
-  az: number;
-  bx: number;
-  bz: number;
+/** One batch's lip records, mapped straight off the readback: no per-segment objects. */
+interface LipReadback {
+  readonly words: Int32Array;
+  readonly floats: Float32Array;
+  readonly count: number;
 }
 
 interface QueuedChunk {
@@ -175,54 +207,99 @@ function levelRangeMaxY(lowestBand: number, highestBand: number): number {
   return hasShore ? Math.max(top, drawnBandCapY(0, SHORE_THRESHOLD)) : top;
 }
 
-function compareLips(a: LipRecord, b: LipRecord): number {
-  if (a.band !== b.band) return a.band - b.band;
-  if (a.ax !== b.ax) return a.ax - b.ax;
-  if (a.az !== b.az) return a.az - b.az;
-  if (a.bx !== b.bx) return a.bx - b.bx;
-  return a.bz - b.bz;
+function chunkCornerX(mirror: TerrainMirror, chunkIdx: number): number {
+  return (chunkIdx % chunksPerEdge(mirror.map.size)) * CHUNK_SPAN_WORLD_UNITS;
 }
 
-function buildLipSegments(records: LipRecord[]): ChunkLipSegments {
-  records.sort(compareLips);
-  const positions = new Float32Array(records.length * LIP_POSITION_FLOATS_PER_SEGMENT);
-  const flat = new Float32Array(records.length * LIP_FLAT_FLOATS_PER_SEGMENT);
+function chunkCornerZ(mirror: TerrainMirror, chunkIdx: number): number {
+  const chunkCols = chunksPerEdge(mirror.map.size);
+  return ((chunkIdx - (chunkIdx % chunkCols)) / chunkCols) * CHUNK_SPAN_WORLD_UNITS;
+}
+
+/** Sorts record indices in place, reading the coordinates through the mapped views. */
+function sortLipOrder(order: number[], lips: LipReadback): void {
+  const { words, floats } = lips;
+  order.sort((a, b) => {
+    const x = a * LIP_WORDS;
+    const y = b * LIP_WORDS;
+    if (words[x + LIP_BAND] !== words[y + LIP_BAND]) {
+      return words[x + LIP_BAND]! - words[y + LIP_BAND]!;
+    }
+    for (let c = 0; c < LIP_COORD_WORDS; c++) {
+      const difference = floats[x + LIP_AX + c]! - floats[y + LIP_AX + c]!;
+      if (difference !== 0) return difference;
+    }
+    return 0;
+  });
+}
+
+function buildLipSegments(order: number[], lips: LipReadback): ChunkLipSegments {
+  sortLipOrder(order, lips);
+  const { words, floats } = lips;
+  const positions = new Float32Array(order.length * LIP_POSITION_FLOATS_PER_SEGMENT);
+  const flat = new Float32Array(order.length * LIP_FLAT_FLOATS_PER_SEGMENT);
   const bands: number[] = [];
   let runBand = 0;
   let runStart = 0;
-  for (let i = 0; i < records.length; i++) {
-    const lip = records[i]!;
-    const y = lip.band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
+  for (let i = 0; i < order.length; i++) {
+    const at = order[i]! * LIP_WORDS;
+    const band = words[at + LIP_BAND]!;
+    const ax = floats[at + LIP_AX]!;
+    const az = floats[at + LIP_AX + 1]!;
+    const bx = floats[at + LIP_AX + 2]!;
+    const bz = floats[at + LIP_AX + 3]!;
+    const y = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
     const p = i * LIP_POSITION_FLOATS_PER_SEGMENT;
-    positions[p] = lip.ax;
+    positions[p] = ax;
     positions[p + 1] = y;
-    positions[p + 2] = lip.az;
-    positions[p + 3] = lip.bx;
+    positions[p + 2] = az;
+    positions[p + 3] = bx;
     positions[p + 4] = y;
-    positions[p + 5] = lip.bz;
+    positions[p + 5] = bz;
     const f = i * LIP_FLAT_FLOATS_PER_SEGMENT;
-    flat[f] = lip.ax;
-    flat[f + 1] = lip.az;
-    flat[f + 2] = lip.bx;
-    flat[f + 3] = lip.bz;
-    if (i === 0 || lip.band !== runBand) {
+    flat[f] = ax;
+    flat[f + 1] = az;
+    flat[f + 2] = bx;
+    flat[f + 3] = bz;
+    if (i === 0 || band !== runBand) {
       if (i > 0) bands.push(runBand, runStart, i - runStart);
-      runBand = lip.band;
+      runBand = band;
       runStart = i;
     }
   }
-  if (records.length > 0) bands.push(runBand, runStart, records.length - runStart);
+  if (order.length > 0) bands.push(runBand, runStart, order.length - runStart);
   return { positions, flat, bands: Int32Array.from(bands) };
 }
 
-export function createGpuChunkBuildSource(
+/** World-independent, so one session builds one source; `null` demotes the session to
+ *  `fallback`, which the caller keeps owning. */
+export async function createGpuChunkBuildSource(
   renderer: Renderer,
   fallback: ChunkBuildSource,
-): GpuChunkBuildSource | null {
+): Promise<GpuChunkBuildSource | null> {
   const backend = renderer.backend as unknown as WebGpuBackendInternals;
-  if (backend.isWebGPUBackend !== true) return null;
+  if (backend.isWebGPUBackend !== true) {
+    return demote('the renderer is not running the WebGPU backend');
+  }
   const device = backend.device;
-  if (device === undefined) return null;
+  if (device === undefined) return demote('the WebGPU backend has no device yet');
+
+  const limits = device.limits;
+  if (limits.maxStorageBuffersPerShaderStage < STORAGE_BUFFERS_PER_STAGE) {
+    return demote(
+      `the device allows ${String(limits.maxStorageBuffersPerShaderStage)} storage buffers a ` +
+        `compute stage; the kernel binds ${String(STORAGE_BUFFERS_PER_STAGE)}`,
+    );
+  }
+  if (limits.maxUniformBuffersPerShaderStage < UNIFORM_BUFFERS_PER_STAGE) {
+    return demote(
+      `the device allows ${String(limits.maxUniformBuffersPerShaderStage)} uniform buffers a ` +
+        `compute stage; the kernel binds ${String(UNIFORM_BUFFERS_PER_STAGE)}`,
+    );
+  }
+  if (limits.maxUniformBufferBindingSize < LUT_VEC4_COUNT * LUT_COMPONENTS * BYTES_PER_WORD) {
+    return demote('the band LUT does not fit the device uniform-buffer binding size');
+  }
 
   const queue = device.queue;
   const STORAGE_READ = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
@@ -231,60 +308,26 @@ export function createGpuChunkBuildSource(
   const create = (label: string, size: number, usage: number): GPUBuffer =>
     device.createBuffer({ label: `terrace.gpuMesher.${label}`, size, usage });
 
-  const latticeBuffer = create(
-    'lattice',
-    GPU_WINDOW_POOL * WINDOW_LATTICE_SAMPLES * BYTES_PER_WORD,
-    STORAGE_READ,
+  const windowBuffer = create('window', WINDOW_BUFFER_WORDS * BYTES_PER_WORD, STORAGE_READ);
+  const statsBuffer = create('stats', STATS_BUFFER_WORDS * BYTES_PER_WORD, STORAGE_RW);
+  const lutBuffer = create(
+    'lut',
+    LUT_VEC4_COUNT * LUT_COMPONENTS * BYTES_PER_WORD,
+    GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
-  const latticeDescBuffer = create(
-    'latticeDesc',
-    GPU_WINDOW_POOL * WINDOW_LATTICE_SAMPLES * BYTES_PER_WORD,
-    STORAGE_READ,
-  );
-  const spanPairsBuffer = create(
-    'spanPairs',
-    GPU_WINDOW_POOL * WINDOW_SPAN_PAIRS * SPAN_PAIR_WORDS * BYTES_PER_WORD,
-    STORAGE_READ,
-  );
-  const entriesBuffer = create(
-    'entries',
-    GPU_WINDOW_POOL * ENTRY_HEADER_WORDS * BYTES_PER_WORD,
-    STORAGE_READ,
-  );
-  const squareBaseBuffer = create(
-    'squareBase',
-    GPU_WINDOW_POOL * SQUARES_PER_CHUNK * BYTES_PER_WORD,
-    STORAGE_RW,
-  );
-  const chunkStatsBuffer = create(
-    'chunkStats',
-    GPU_WINDOW_POOL * CHUNK_STATS_WORDS * BYTES_PER_WORD,
-    STORAGE_RW,
-  );
-  const marchTableBuffer = create(
-    'marchTable',
-    MARCH_TABLE_WORDS * BYTES_PER_WORD,
-    STORAGE_READ,
-  );
-  const lutBuffer = create('lut', LUT_VEC4_COUNT * PARAMS_WORDS * BYTES_PER_WORD, STORAGE_READ);
   const paramsBuffer = create(
     'params',
     (GPU_WINDOW_POOL + 1) * PARAMS_SLOT_BYTES,
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
-  const lipCounterBuffer = create('lipCounter', PARAMS_SLOT_BYTES, STORAGE_RW);
-  const batchListBuffer = create(
-    'batchList',
-    GPU_BATCH_CHUNKS * BYTES_PER_WORD,
-    STORAGE_READ,
-  );
   const dummyPositions = create('dummyPositions', BYTES_PER_WORD, STORAGE_RW);
   const dummyColors = create('dummyColors', BYTES_PER_WORD, STORAGE_RW);
 
-  let lipCapacity = LIP_APPEND_CAPACITY;
-  let lipsBuffer = create('lips', lipCapacity * LIP_WORDS * BYTES_PER_WORD, STORAGE_RW);
+  const lipsBufferWords = (capacity: number): number => LIP_RECORDS_AT + capacity * LIP_WORDS;
 
-  queue.writeBuffer(marchTableBuffer, 0, marchingTableBuffer());
+  let lipCapacity = LIP_APPEND_CAPACITY;
+  let lipsBuffer = create('lips', lipsBufferWords(lipCapacity) * BYTES_PER_WORD, STORAGE_RW);
+
   queue.writeBuffer(lutBuffer, 0, buildBandLut());
 
   const COUNT_PARAMS_SLOT = GPU_WINDOW_POOL;
@@ -303,6 +346,22 @@ export function createGpuChunkBuildSource(
   };
   writeParams();
 
+  const ownedBuffers = (): readonly GPUBuffer[] => [
+    windowBuffer,
+    statsBuffer,
+    lutBuffer,
+    paramsBuffer,
+    lipsBuffer,
+    dummyPositions,
+    dummyColors,
+  ];
+
+  /** Every path that gives up before the source exists hands the buffers back first. */
+  const refuse = (reason: string): null => {
+    for (const buffer of ownedBuffers()) buffer.destroy();
+    return demote(reason);
+  };
+
   const storageEntry = (
     binding: number,
     type: 'storage' | 'read-only-storage',
@@ -312,25 +371,38 @@ export function createGpuChunkBuildSource(
     buffer: { type },
   });
 
+  const module = device.createShaderModule({
+    label: 'terrace.gpuMesher.mesher',
+    code: buildMesherWgsl(),
+  });
+  // A device that will not report compilation info has not failed to compile.
+  const compilation = await module.getCompilationInfo().catch(() => null);
+  const compileErrors = (compilation?.messages ?? []).filter((m) => m.type === 'error');
+  if (compileErrors.length > 0) {
+    return refuse(
+      `the WGSL failed to compile:\n${compileErrors
+        .map((m) => `${String(m.lineNum)}:${String(m.linePos)} ${m.message}`)
+        .join('\n')}`,
+    );
+  }
+
+  device.pushErrorScope('validation');
   const group0Layout = device.createBindGroupLayout({
     label: 'terrace.gpuMesher.group0',
     entries: [
       storageEntry(0, 'read-only-storage'),
-      storageEntry(1, 'read-only-storage'),
-      storageEntry(2, 'read-only-storage'),
-      storageEntry(3, 'read-only-storage'),
-      storageEntry(4, 'storage'),
-      storageEntry(5, 'storage'),
-      storageEntry(6, 'read-only-storage'),
-      storageEntry(7, 'read-only-storage'),
+      storageEntry(1, 'storage'),
+      storageEntry(2, 'storage'),
       {
-        binding: 8,
+        binding: 3,
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: PARAMS_WORDS * BYTES_PER_WORD },
       },
-      storageEntry(9, 'storage'),
-      storageEntry(10, 'storage'),
-      storageEntry(11, 'read-only-storage'),
+      {
+        binding: 4,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: 'uniform' },
+      },
     ],
   });
   const group1Layout = device.createBindGroupLayout({
@@ -338,58 +410,23 @@ export function createGpuChunkBuildSource(
     entries: [storageEntry(0, 'storage'), storageEntry(1, 'storage')],
   });
 
-  const module = device.createShaderModule({
-    label: 'terrace.gpuMesher.mesher',
-    code: buildMesherWgsl(),
-  });
-  const pipeline = device.createComputePipeline({
-    label: 'terrace.gpuMesher.pipeline',
-    layout: device.createPipelineLayout({ bindGroupLayouts: [group0Layout, group1Layout] }),
-    compute: { module, entryPoint: MESHER_ENTRY_POINT },
+  const pipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [group0Layout, group1Layout],
   });
 
-  let compileFailure: string | null = null;
-  let compiled!: () => void;
-  let compileFailed!: (error: Error) => void;
-  const compilation = new Promise<void>((resolve, reject) => {
-    compiled = resolve;
-    compileFailed = reject;
-  });
-  void module.getCompilationInfo().then(
-    (info) => {
-      const errors = info.messages.filter((m) => m.type === 'error');
-      if (errors.length === 0) {
-        compiled();
-        return;
-      }
-      compileFailure = errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n');
-      console.error(`[terrace] GPU mesher WGSL failed to compile:\n${compileFailure}`);
-      compileFailed(new Error(compileFailure));
-    },
-    // A device that will not report compilation info has not failed to compile.
-    () => {
-      compiled();
-    },
-  );
-
-  let group0 = device.createBindGroup({
-    label: 'terrace.gpuMesher.bind0',
-    layout: group0Layout,
-    entries: [
-      { binding: 0, resource: { buffer: latticeBuffer } },
-      { binding: 1, resource: { buffer: latticeDescBuffer } },
-      { binding: 2, resource: { buffer: spanPairsBuffer } },
-      { binding: 3, resource: { buffer: entriesBuffer } },
-      { binding: 4, resource: { buffer: squareBaseBuffer } },
-      { binding: 5, resource: { buffer: chunkStatsBuffer } },
-      { binding: 6, resource: { buffer: marchTableBuffer } },
-      { binding: 7, resource: { buffer: lutBuffer } },
-      { binding: 8, resource: { buffer: paramsBuffer, size: PARAMS_WORDS * BYTES_PER_WORD } },
-      { binding: 9, resource: { buffer: lipsBuffer } },
-      { binding: 10, resource: { buffer: lipCounterBuffer } },
-      { binding: 11, resource: { buffer: batchListBuffer } },
-    ],
-  });
+  const createGroup0 = (): GPUBindGroup =>
+    device.createBindGroup({
+      label: 'terrace.gpuMesher.bind0',
+      layout: group0Layout,
+      entries: [
+        { binding: 0, resource: { buffer: windowBuffer } },
+        { binding: 1, resource: { buffer: statsBuffer } },
+        { binding: 2, resource: { buffer: lipsBuffer } },
+        { binding: 3, resource: { buffer: paramsBuffer, size: PARAMS_WORDS * BYTES_PER_WORD } },
+        { binding: 4, resource: { buffer: lutBuffer } },
+      ],
+    });
+  let group0 = createGroup0();
   const countGroup1 = device.createBindGroup({
     label: 'terrace.gpuMesher.bind1.count',
     layout: group1Layout,
@@ -398,6 +435,21 @@ export function createGpuChunkBuildSource(
       { binding: 1, resource: { buffer: dummyColors } },
     ],
   });
+  const layoutError = await device.popErrorScope();
+  if (layoutError !== null) {
+    return refuse(`the bind groups were refused (${layoutError.message})`);
+  }
+
+  let pipeline: GPUComputePipeline;
+  try {
+    pipeline = await device.createComputePipelineAsync({
+      label: 'terrace.gpuMesher.pipeline',
+      layout: pipelineLayout,
+      compute: { module, entryPoint: MESHER_ENTRY_POINT },
+    });
+  } catch (error) {
+    return refuse(`the compute pipeline was refused (${String(error)})`);
+  }
 
   const emitGroups = new WeakMap<GPUBuffer, WeakMap<GPUBuffer, GPUBindGroup>>();
   const emitGroupFor = (target: GpuEmitTarget): GPUBindGroup => {
@@ -425,64 +477,89 @@ export function createGpuChunkBuildSource(
   const querySet = timestampsSupported
     ? device.createQuerySet({ label: 'terrace.gpuMesher.timestamps', type: 'timestamp', count: TIMESTAMP_QUERY_COUNT })
     : null;
-  const timestampResolve = timestampsSupported
-    ? create(
-        'timestampResolve',
-        TIMESTAMP_QUERY_COUNT * TIMESTAMP_BYTES_PER_QUERY,
-        GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
-      )
-    : null;
-  const timestampReadback = timestampsSupported
-    ? create(
-        'timestampReadback',
-        TIMESTAMP_QUERY_COUNT * TIMESTAMP_BYTES_PER_QUERY,
-        GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      )
-    : null;
-
-  const squareBaseBytes = GPU_WINDOW_POOL * SQUARES_PER_CHUNK * BYTES_PER_WORD;
-  const chunkStatsBytes = GPU_WINDOW_POOL * CHUNK_STATS_WORDS * BYTES_PER_WORD;
-  const readbackSquareBaseAt = 0;
-  const readbackChunkStatsAt = alignUp(squareBaseBytes, READBACK_SECTION_ALIGNMENT);
-  const readbackLipCounterAt = alignUp(
-    readbackChunkStatsAt + chunkStatsBytes,
-    READBACK_SECTION_ALIGNMENT,
+  // Count and emit resolve into separate buffers: each pass's queries have to be resolved
+  // in the command buffer that wrote them, and those are two different encoders.
+  const timestampPair = (
+    label: string,
+    queries: number,
+  ): { resolve: GPUBuffer; readback: GPUBuffer } | null =>
+    timestampsSupported
+      ? {
+          resolve: create(
+            `${label}Resolve`,
+            queries * TIMESTAMP_BYTES_PER_QUERY,
+            GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+          ),
+          readback: create(
+            `${label}Readback`,
+            queries * TIMESTAMP_BYTES_PER_QUERY,
+            GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+          ),
+        }
+      : null;
+  const countTimestamps = timestampPair('countTimestamp', TIMESTAMPS_PER_PASS);
+  const emitTimestamps = timestampPair(
+    'emitTimestamp',
+    GPU_EMIT_QUERY_PAIRS * TIMESTAMPS_PER_PASS,
   );
-  const readbackLipsAt = readbackLipCounterAt + READBACK_SECTION_ALIGNMENT;
-  const readbackBytes = (): number => readbackLipsAt + lipCapacity * LIP_WORDS * BYTES_PER_WORD;
 
-  const readbackPool: GPUBuffer[] = [];
-  let readbackLive = 0;
-  /** After the lips buffer doubles the free readbacks are the wrong size; in-flight ones
-   *  are dropped when they come back. */
-  const dropFreeReadbacks = (): void => {
-    for (const buffer of readbackPool.splice(0, readbackPool.length)) {
-      buffer.destroy();
-      readbackLive--;
-    }
-  };
-  const takeReadback = (): GPUBuffer | null => {
-    const free = readbackPool.pop();
+  // The counts readback is fixed size and always mapped; the lips readback is copied and
+  // mapped afterwards, over exactly the records the counter reported.
+  const statsBytes = STATS_BUFFER_WORDS * BYTES_PER_WORD;
+  const readbackStatsAt = 0;
+  const readbackLipCounterAt = alignUp(statsBytes, READBACK_SECTION_ALIGNMENT);
+  const countsReadbackBytes = readbackLipCounterAt + READBACK_SECTION_ALIGNMENT;
+  const lipsReadbackBytes = (): number => lipCapacity * LIP_WORDS * BYTES_PER_WORD;
+
+  const READBACK_USAGE = GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ;
+
+  interface ReadbackPool {
+    readonly free: GPUBuffer[];
+    live: number;
+  }
+  const countsPool: ReadbackPool = { free: [], live: 0 };
+  const lipsPool: ReadbackPool = { free: [], live: 0 };
+
+  const takeFrom = (pool: ReadbackPool, label: string, bytes: number): GPUBuffer | null => {
+    const free = pool.free.pop();
     if (free !== undefined) return free;
-    if (readbackLive >= GPU_READBACK_POOL_MAX) return null;
-    readbackLive++;
-    return create(
-      `readback${readbackLive}`,
-      readbackBytes(),
-      GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    );
+    if (pool.live >= GPU_READBACK_POOL_MAX) return null;
+    pool.live++;
+    return create(`${label}${pool.live}`, bytes, READBACK_USAGE);
   };
-  const giveBackReadback = (buffer: GPUBuffer): void => {
-    if (buffer.size !== readbackBytes() || readbackPool.length >= GPU_READBACK_POOL_MAX) {
+  const giveBackTo = (pool: ReadbackPool, buffer: GPUBuffer, bytes: number): void => {
+    if (buffer.size !== bytes || pool.free.length >= GPU_READBACK_POOL_MAX) {
       buffer.destroy();
-      readbackLive--;
+      pool.live--;
       return;
     }
-    readbackPool.push(buffer);
+    pool.free.push(buffer);
+  };
+
+  const takeReadback = (): GPUBuffer | null =>
+    takeFrom(countsPool, 'countsReadback', countsReadbackBytes);
+  const giveBackReadback = (buffer: GPUBuffer): void => {
+    giveBackTo(countsPool, buffer, countsReadbackBytes);
+  };
+  const takeLipsReadback = (): GPUBuffer | null =>
+    takeFrom(lipsPool, 'lipsReadback', lipsReadbackBytes());
+  const giveBackLipsReadback = (buffer: GPUBuffer): void => {
+    giveBackTo(lipsPool, buffer, lipsReadbackBytes());
+  };
+
+  /** After the lips buffer doubles the free lip readbacks are the wrong size; in-flight ones
+   *  are dropped when they come back. */
+  const dropFreeReadbacks = (): void => {
+    for (const buffer of lipsPool.free.splice(0, lipsPool.free.length)) {
+      buffer.destroy();
+      lipsPool.live--;
+    }
   };
   for (let i = 0; i < GPU_READBACK_POOL_MIN; i++) {
-    const buffer = takeReadback();
-    if (buffer !== null) readbackPool.push(buffer);
+    countsPool.live++;
+    countsPool.free.push(
+      create(`countsReadback${countsPool.live}`, countsReadbackBytes, READBACK_USAGE),
+    );
   }
 
   const freeEntries: number[] = [];
@@ -500,8 +577,8 @@ export function createGpuChunkBuildSource(
   const batchList = new Int32Array(GPU_BATCH_CHUNKS);
   const uploadHeader = (entry: number): void => {
     queue.writeBuffer(
-      entriesBuffer,
-      entry * ENTRY_HEADER_WORDS * BYTES_PER_WORD,
+      windowBuffer,
+      (WINDOW_ENTRIES_AT + entry * ENTRY_HEADER_WORDS) * BYTES_PER_WORD,
       headers,
       entry * ENTRY_HEADER_WORDS,
       ENTRY_HEADER_WORDS,
@@ -510,8 +587,11 @@ export function createGpuChunkBuildSource(
 
   let disposed = false;
   let deviceLost = false;
-  void device.lost.then(() => {
+  const deviceLostHandlers = new Set<(reason: string) => void>();
+  void device.lost.then((info) => {
     deviceLost = true;
+    const reason = `the WebGPU device was lost (${info.reason}: ${info.message})`;
+    for (const handler of deviceLostHandlers) handler(reason);
   });
 
   let batches = 0;
@@ -519,30 +599,17 @@ export function createGpuChunkBuildSource(
   let countMs = 0;
   let emitMs = 0;
   let batchesSinceResolve = 0;
-  let timestampInFlight = false;
+  let countTimestampInFlight = false;
+  let emitTimestampInFlight = false;
+  /** Emit query pairs this frame has written, reset when the store resolves them. */
+  let emitPairsUsed = 0;
+  let emitPairsResolving = 0;
 
   const growLips = (): void => {
     lipCapacity *= 2;
     lipsBuffer.destroy();
-    lipsBuffer = create('lips', lipCapacity * LIP_WORDS * BYTES_PER_WORD, STORAGE_RW);
-    group0 = device.createBindGroup({
-      label: 'terrace.gpuMesher.bind0',
-      layout: group0Layout,
-      entries: [
-        { binding: 0, resource: { buffer: latticeBuffer } },
-        { binding: 1, resource: { buffer: latticeDescBuffer } },
-        { binding: 2, resource: { buffer: spanPairsBuffer } },
-        { binding: 3, resource: { buffer: entriesBuffer } },
-        { binding: 4, resource: { buffer: squareBaseBuffer } },
-        { binding: 5, resource: { buffer: chunkStatsBuffer } },
-        { binding: 6, resource: { buffer: marchTableBuffer } },
-        { binding: 7, resource: { buffer: lutBuffer } },
-        { binding: 8, resource: { buffer: paramsBuffer, size: PARAMS_WORDS * BYTES_PER_WORD } },
-        { binding: 9, resource: { buffer: lipsBuffer } },
-        { binding: 10, resource: { buffer: lipCounterBuffer } },
-        { binding: 11, resource: { buffer: batchListBuffer } },
-      ],
-    });
+    lipsBuffer = create('lips', lipsBufferWords(lipCapacity) * BYTES_PER_WORD, STORAGE_RW);
+    group0 = createGroup0();
     writeParams();
     dropFreeReadbacks();
   };
@@ -553,6 +620,8 @@ export function createGpuChunkBuildSource(
     vertexCount: number,
     minY: number,
     maxY: number,
+    originX: number,
+    originZ: number,
   ): GpuEmitHandle => {
     let released = false;
     const release = (): void => {
@@ -563,10 +632,12 @@ export function createGpuChunkBuildSource(
     return {
       minY,
       maxY,
-      emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): void {
+      originX,
+      originZ,
+      emit(encoder: GPUCommandEncoder, target: GpuEmitTarget, vertexOffset: number): boolean {
         if (released || disposed || deviceLost) {
           release();
-          return;
+          return false;
         }
         let acc = vertexOffset;
         for (let i = 0; i < SQUARES_PER_CHUNK; i++) {
@@ -574,12 +645,11 @@ export function createGpuChunkBuildSource(
           acc += counts[i]!;
         }
         queue.writeBuffer(
-          squareBaseBuffer,
-          entry * SQUARES_PER_CHUNK * BYTES_PER_WORD,
+          statsBuffer,
+          (STATS_SQUARE_BASE_AT + entry * SQUARES_PER_CHUNK) * BYTES_PER_WORD,
           prefix,
         );
         const at = entry * ENTRY_HEADER_WORDS;
-        headers[at + ENTRY_VERTEX_BASE] = vertexOffset;
         headers[at + ENTRY_VERTEX_LIMIT] = vertexOffset + vertexCount;
         headers[at + ENTRY_LOCAL_ORIGIN_X_UNITS] = Math.round(
           target.localOriginX * POSITION_XZ_UNITS_PER_WORLD_UNIT,
@@ -588,15 +658,20 @@ export function createGpuChunkBuildSource(
           target.localOriginZ * POSITION_XZ_UNITS_PER_WORLD_UNIT,
         );
         uploadHeader(entry);
+        // Its own query pair, so a frame's emits sum instead of the last one overwriting.
+        const pair =
+          querySet === null || emitPairsUsed >= GPU_EMIT_QUERY_PAIRS
+            ? NO_QUERY_PAIR
+            : emitPairsUsed++;
         const pass = encoder.beginComputePass({
           label: 'terrace.gpuMesher.emit',
           timestampWrites:
-            querySet === null
+            querySet === null || pair === NO_QUERY_PAIR
               ? undefined
               : {
                   querySet,
-                  beginningOfPassWriteIndex: TIMESTAMP_EMIT_BEGIN,
-                  endOfPassWriteIndex: TIMESTAMP_EMIT_END,
+                  beginningOfPassWriteIndex: TIMESTAMP_EMIT_BASE + pair * TIMESTAMPS_PER_PASS,
+                  endOfPassWriteIndex: TIMESTAMP_EMIT_BASE + pair * TIMESTAMPS_PER_PASS + 1,
                 },
         });
         pass.setPipeline(pipeline);
@@ -605,45 +680,100 @@ export function createGpuChunkBuildSource(
         pass.dispatchWorkgroups(WORKGROUPS_PER_CHUNK);
         pass.end();
         release();
+        return true;
       },
       release,
     };
   };
 
   const resolveTimestamps = (encoder: GPUCommandEncoder): boolean => {
-    if (querySet === null || timestampResolve === null || timestampReadback === null) return false;
-    if (timestampInFlight || timestampReadback.mapState !== 'unmapped') return false;
+    if (querySet === null || countTimestamps === null) return false;
     batchesSinceResolve++;
     if (batchesSinceResolve < GPU_MESHER_RESOLVE_EVERY_BATCHES) return false;
+    if (countTimestampInFlight || countTimestamps.readback.mapState !== 'unmapped') return false;
     batchesSinceResolve = 0;
-    timestampInFlight = true;
-    encoder.resolveQuerySet(querySet, 0, TIMESTAMP_QUERY_COUNT, timestampResolve, 0);
+    countTimestampInFlight = true;
+    encoder.resolveQuerySet(
+      querySet,
+      TIMESTAMP_COUNT_BEGIN,
+      TIMESTAMPS_PER_PASS,
+      countTimestamps.resolve,
+      0,
+    );
     encoder.copyBufferToBuffer(
-      timestampResolve,
+      countTimestamps.resolve,
       0,
-      timestampReadback,
+      countTimestamps.readback,
       0,
-      TIMESTAMP_QUERY_COUNT * TIMESTAMP_BYTES_PER_QUERY,
+      TIMESTAMPS_PER_PASS * TIMESTAMP_BYTES_PER_QUERY,
     );
     return true;
   };
 
   const readTimestamps = (): void => {
-    if (timestampReadback === null) return;
-    void timestampReadback.mapAsync(GPUMapMode.READ).then(
+    if (countTimestamps === null) return;
+    const readback = countTimestamps.readback;
+    void readback.mapAsync(GPUMapMode.READ).then(
       () => {
-        const stamps = new BigUint64Array(timestampReadback.getMappedRange().slice(0));
-        timestampReadback.unmap();
-        timestampInFlight = false;
+        const stamps = new BigUint64Array(readback.getMappedRange().slice(0));
+        readback.unmap();
+        countTimestampInFlight = false;
         const count = stamps[TIMESTAMP_COUNT_END]! - stamps[TIMESTAMP_COUNT_BEGIN]!;
-        const emit = stamps[TIMESTAMP_EMIT_END]! - stamps[TIMESTAMP_EMIT_BEGIN]!;
         if (count > 0n) countMs = Number(count) / NANOSECONDS_PER_MS;
-        if (emit > 0n) emitMs = Number(emit) / NANOSECONDS_PER_MS;
       },
       () => {
-        timestampInFlight = false;
+        countTimestampInFlight = false;
       },
     );
+  };
+
+  const readEmitTimestamps = (): void => {
+    if (emitTimestamps === null) return;
+    const readback = emitTimestamps.readback;
+    const pairs = emitPairsResolving;
+    const bytes = pairs * TIMESTAMPS_PER_PASS * TIMESTAMP_BYTES_PER_QUERY;
+    void readback.mapAsync(GPUMapMode.READ, 0, bytes).then(
+      () => {
+        const stamps = new BigUint64Array(readback.getMappedRange(0, bytes).slice(0));
+        readback.unmap();
+        emitTimestampInFlight = false;
+        let total = 0n;
+        for (let p = 0; p < pairs; p++) {
+          const span = stamps[p * TIMESTAMPS_PER_PASS + 1]! - stamps[p * TIMESTAMPS_PER_PASS]!;
+          if (span > 0n) total += span;
+        }
+        emitMs = Number(total) / NANOSECONDS_PER_MS;
+      },
+      () => {
+        emitTimestampInFlight = false;
+      },
+    );
+  };
+
+  const recordEmitTimestamps = (encoder: GPUCommandEncoder): void => {
+    if (querySet === null || emitTimestamps === null) return;
+    const pairs = emitPairsUsed;
+    emitPairsUsed = 0;
+    if (pairs === 0) return;
+    if (emitTimestampInFlight || emitTimestamps.readback.mapState !== 'unmapped') return;
+    emitTimestampInFlight = true;
+    emitPairsResolving = pairs;
+    encoder.resolveQuerySet(
+      querySet,
+      TIMESTAMP_EMIT_BASE,
+      pairs * TIMESTAMPS_PER_PASS,
+      emitTimestamps.resolve,
+      0,
+    );
+    encoder.copyBufferToBuffer(
+      emitTimestamps.resolve,
+      0,
+      emitTimestamps.readback,
+      0,
+      pairs * TIMESTAMPS_PER_PASS * TIMESTAMP_BYTES_PER_QUERY,
+    );
+    // The store submits this encoder as soon as it returns, and a map must not outrun its copy.
+    queueMicrotask(readEmitTimestamps);
   };
 
   const runFallback = (queued: QueuedChunk): void => {
@@ -654,14 +784,20 @@ export function createGpuChunkBuildSource(
     const readback = takeReadback();
     if (readback === null) return null;
     for (let i = 0; i < members.length; i++) batchList[i] = members[i]!.entry;
-    queue.writeBuffer(batchListBuffer, 0, batchList, 0, members.length);
+    queue.writeBuffer(
+      windowBuffer,
+      WINDOW_BATCH_LIST_AT * BYTES_PER_WORD,
+      batchList,
+      0,
+      members.length,
+    );
 
     const encoder = device.createCommandEncoder({ label: 'terrace.gpuMesher.count' });
-    encoder.clearBuffer(lipCounterBuffer, 0, BYTES_PER_WORD);
+    encoder.clearBuffer(lipsBuffer, LIP_COUNTER_AT * BYTES_PER_WORD, BYTES_PER_WORD);
     for (const member of members) {
       encoder.clearBuffer(
-        chunkStatsBuffer,
-        member.entry * CHUNK_STATS_WORDS * BYTES_PER_WORD,
+        statsBuffer,
+        (STATS_CHUNK_AT + member.entry * CHUNK_STATS_WORDS) * BYTES_PER_WORD,
         CHUNK_STATS_WORDS * BYTES_PER_WORD,
       );
     }
@@ -682,27 +818,13 @@ export function createGpuChunkBuildSource(
     pass.dispatchWorkgroups(members.length * WORKGROUPS_PER_CHUNK);
     pass.end();
 
-    encoder.copyBufferToBuffer(squareBaseBuffer, 0, readback, readbackSquareBaseAt, squareBaseBytes);
+    encoder.copyBufferToBuffer(statsBuffer, 0, readback, readbackStatsAt, statsBytes);
     encoder.copyBufferToBuffer(
-      chunkStatsBuffer,
-      0,
-      readback,
-      readbackChunkStatsAt,
-      chunkStatsBytes,
-    );
-    encoder.copyBufferToBuffer(
-      lipCounterBuffer,
-      0,
+      lipsBuffer,
+      LIP_COUNTER_AT * BYTES_PER_WORD,
       readback,
       readbackLipCounterAt,
       BYTES_PER_WORD,
-    );
-    encoder.copyBufferToBuffer(
-      lipsBuffer,
-      0,
-      readback,
-      readbackLipsAt,
-      lipCapacity * LIP_WORDS * BYTES_PER_WORD,
     );
     const resolving = resolveTimestamps(encoder);
     queue.submit([encoder.finish()]);
@@ -710,35 +832,57 @@ export function createGpuChunkBuildSource(
     return readback;
   };
 
-  const settleBatch = (members: BatchMember[], mapped: ArrayBuffer, lipTotal: number): void => {
-    const squareBases = new Uint32Array(mapped, readbackSquareBaseAt, GPU_WINDOW_POOL * SQUARES_PER_CHUNK);
-    const stats = new Uint32Array(mapped, readbackChunkStatsAt, GPU_WINDOW_POOL * CHUNK_STATS_WORDS);
-    const lipCount = Math.min(lipTotal, lipCapacity);
-    const lipWords = new Int32Array(mapped, readbackLipsAt, lipCount * LIP_WORDS);
-    const lipFloats = new Float32Array(mapped, readbackLipsAt, lipCount * LIP_WORDS);
+  /** Only what the counter reported is worth copying: the buffer holds a quarter-million slots. */
+  const copyLips = (lipCount: number): GPUBuffer | null => {
+    const readback = takeLipsReadback();
+    if (readback === null) return null;
+    const encoder = device.createCommandEncoder({ label: 'terrace.gpuMesher.lips' });
+    encoder.copyBufferToBuffer(
+      lipsBuffer,
+      LIP_RECORDS_AT * BYTES_PER_WORD,
+      readback,
+      0,
+      lipCount * LIP_WORDS * BYTES_PER_WORD,
+    );
+    queue.submit([encoder.finish()]);
+    return readback;
+  };
 
-    const lipsByEntry = new Map<number, LipRecord[]>();
-    for (let i = 0; i < lipCount; i++) {
-      const at = i * LIP_WORDS;
-      const entry = lipWords[at + LIP_ENTRY]!;
-      let list = lipsByEntry.get(entry);
-      if (list === undefined) {
-        list = [];
-        lipsByEntry.set(entry, list);
+  const NO_LIPS: LipReadback = {
+    words: new Int32Array(0),
+    floats: new Float32Array(0),
+    count: 0,
+  };
+
+  const settleBatch = (members: BatchMember[], mapped: ArrayBuffer, lips: LipReadback): void => {
+    const squareBases = new Uint32Array(
+      mapped,
+      readbackStatsAt + STATS_SQUARE_BASE_AT * BYTES_PER_WORD,
+      GPU_WINDOW_POOL * SQUARES_PER_CHUNK,
+    );
+    const stats = new Uint32Array(
+      mapped,
+      readbackStatsAt + STATS_CHUNK_AT * BYTES_PER_WORD,
+      GPU_WINDOW_POOL * CHUNK_STATS_WORDS,
+    );
+    const lipsByEntry = new Map<number, number[]>();
+    for (let i = 0; i < lips.count; i++) {
+      const entry = lips.words[i * LIP_WORDS + LIP_ENTRY]!;
+      let order = lipsByEntry.get(entry);
+      if (order === undefined) {
+        order = [];
+        lipsByEntry.set(entry, order);
       }
-      list.push({
-        band: lipWords[at + LIP_BAND]!,
-        ax: lipFloats[at + LIP_AX]!,
-        az: lipFloats[at + LIP_AX + 1]!,
-        bx: lipFloats[at + LIP_AX + 2]!,
-        bz: lipFloats[at + LIP_AX + 3]!,
-      });
+      order.push(i);
     }
 
     for (const member of members) {
       const { entry, queued } = member;
-      const vertexCount = stats[entry * CHUNK_STATS_WORDS + CHUNK_STATS_VERTEX_COUNT]!;
-      if (vertexCount > GPU_CHUNK_VERTEX_BUDGET) {
+      const statsAt = entry * CHUNK_STATS_WORDS;
+      const vertexCount = stats[statsAt + CHUNK_STATS_VERTEX_COUNT]!;
+      // No stamp means the count pass never ran for this entry, so its counts are stale.
+      const counted = stats[statsAt + CHUNK_STATS_COUNT_STAMP] === COUNT_PASS_STAMP;
+      if (!counted || vertexCount > GPU_CHUNK_VERTEX_BUDGET) {
         releaseEntry(entry);
         runFallback(queued);
         continue;
@@ -755,13 +899,15 @@ export function createGpuChunkBuildSource(
         vertexCount,
         plan: flattenCapPlan(caps),
         topLevel: new Int8Array(0),
-        lips: buildLipSegments(lipsByEntry.get(entry) ?? []),
+        lips: buildLipSegments(lipsByEntry.get(entry) ?? [], lips),
         gpu: makeHandle(
           entry,
           counts,
           vertexCount,
           levelRangeMinY(member.lowestBand),
           levelRangeMaxY(member.lowestBand, member.highestBand),
+          chunkCornerX(queued.mirror, queued.chunkIdx),
+          chunkCornerZ(queued.mirror, queued.chunkIdx),
         ),
       };
       chunks++;
@@ -769,13 +915,19 @@ export function createGpuChunkBuildSource(
     }
   };
 
+  const fallbackBatch = (members: BatchMember[]): void => {
+    for (const member of members) {
+      releaseEntry(member.entry);
+      runFallback(member.queued);
+    }
+  };
+
+  // Two maps, in order: the counts say how many lip records exist, and only then is that
+  // many bytes of them copied and mapped. Answers resolve after the second map.
   const runBatch = (members: BatchMember[]): void => {
     const readback = dispatchCount(members);
     if (readback === null) {
-      for (const member of members) {
-        releaseEntry(member.entry);
-        runFallback(member.queued);
-      }
+      fallbackBatch(members);
       return;
     }
     batches++;
@@ -783,20 +935,51 @@ export function createGpuChunkBuildSource(
       () => {
         const mapped = readback.getMappedRange();
         const lipTotal = new Uint32Array(mapped, readbackLipCounterAt, 1)[0]!;
-        const overflow = lipTotal > lipCapacity && !disposed && !deviceLost;
-        if (!overflow) settleBatch(members, mapped, lipTotal);
-        readback.unmap();
-        giveBackReadback(readback);
-        if (!overflow) return;
-        growLips();
-        runBatch(members);
+        const releaseCounts = (): void => {
+          readback.unmap();
+          giveBackReadback(readback);
+        };
+        if (lipTotal > lipCapacity && !disposed && !deviceLost) {
+          releaseCounts();
+          growLips();
+          runBatch(members);
+          return;
+        }
+        const lipCount = Math.min(lipTotal, lipCapacity);
+        if (lipCount === 0) {
+          settleBatch(members, mapped, NO_LIPS);
+          releaseCounts();
+          return;
+        }
+        const lipsReadback = copyLips(lipCount);
+        if (lipsReadback === null) {
+          releaseCounts();
+          fallbackBatch(members);
+          return;
+        }
+        const lipBytes = lipCount * LIP_WORDS * BYTES_PER_WORD;
+        void lipsReadback.mapAsync(GPUMapMode.READ, 0, lipBytes).then(
+          () => {
+            const lipMapped = lipsReadback.getMappedRange(0, lipBytes);
+            settleBatch(members, mapped, {
+              words: new Int32Array(lipMapped, 0, lipCount * LIP_WORDS),
+              floats: new Float32Array(lipMapped, 0, lipCount * LIP_WORDS),
+              count: lipCount,
+            });
+            lipsReadback.unmap();
+            giveBackLipsReadback(lipsReadback);
+            releaseCounts();
+          },
+          () => {
+            giveBackLipsReadback(lipsReadback);
+            releaseCounts();
+            fallbackBatch(members);
+          },
+        );
       },
       () => {
         giveBackReadback(readback);
-        for (const member of members) {
-          releaseEntry(member.entry);
-          runFallback(member.queued);
-        }
+        fallbackBatch(members);
       },
     );
   };
@@ -806,19 +989,19 @@ export function createGpuChunkBuildSource(
 
   const uploadEntry = (entry: number, chunkIdx: number, data: WindowEntryData): void => {
     queue.writeBuffer(
-      latticeBuffer,
-      entry * WINDOW_LATTICE_SAMPLES * BYTES_PER_WORD,
+      windowBuffer,
+      (WINDOW_LATTICE_AT + entry * WINDOW_LATTICE_SAMPLES) * BYTES_PER_WORD,
       data.lattice,
     );
     queue.writeBuffer(
-      latticeDescBuffer,
-      entry * WINDOW_LATTICE_SAMPLES * BYTES_PER_WORD,
+      windowBuffer,
+      (WINDOW_LATTICE_DESC_AT + entry * WINDOW_LATTICE_SAMPLES) * BYTES_PER_WORD,
       data.latticeDesc,
     );
     if (data.spanPairs.length > 0) {
       queue.writeBuffer(
-        spanPairsBuffer,
-        entry * WINDOW_SPAN_PAIRS * SPAN_PAIR_WORDS * BYTES_PER_WORD,
+        windowBuffer,
+        (WINDOW_SPAN_PAIRS_AT + entry * WINDOW_SPAN_PAIRS * SPAN_PAIR_WORDS) * BYTES_PER_WORD,
         data.spanPairs,
       );
     }
@@ -827,7 +1010,6 @@ export function createGpuChunkBuildSource(
     headers[at + ENTRY_CHUNK_IDX] = chunkIdx;
     headers[at + ENTRY_LAYERED] = data.layered ? 1 : 0;
     headers[at + ENTRY_LOWEST_BAND] = data.chunkLowestBand;
-    headers[at + ENTRY_HIGHEST_BAND] = data.highestBand;
     headers[at + ENTRY_ORIGIN_X_CELLS] = data.originXCells;
     headers[at + ENTRY_ORIGIN_Z_CELLS] = data.originZCells;
     uploadHeader(entry);
@@ -839,7 +1021,7 @@ export function createGpuChunkBuildSource(
       const slice = queued.splice(0, GPU_BATCH_CHUNKS);
       const members: BatchMember[] = [];
       for (const item of slice) {
-        if (disposed || deviceLost || compileFailure !== null) {
+        if (disposed || deviceLost) {
           runFallback(item);
           continue;
         }
@@ -870,7 +1052,7 @@ export function createGpuChunkBuildSource(
     concurrency: GPU_BATCH_CHUNKS,
     backlogCap: GPU_BATCH_CHUNKS,
     build(mirror, chunkIdx, generation): Promise<ChunkAnswer | null> {
-      if (disposed || deviceLost || compileFailure !== null) {
+      if (disposed || deviceLost) {
         return Promise.resolve(fallback.build(mirror, chunkIdx, generation));
       }
       return new Promise<ChunkAnswer | null>((resolve) => {
@@ -883,36 +1065,27 @@ export function createGpuChunkBuildSource(
     stats(): GpuMesherStats {
       return { countMs, emitMs, batches, chunks };
     },
-    ready(): Promise<void> {
-      return compilation;
+    recordEmitTimestamps,
+    onDeviceLost(handler): () => void {
+      deviceLostHandlers.add(handler);
+      return () => deviceLostHandlers.delete(handler);
     },
+    /** The fallback is the caller's: it outlives this source and every world. */
     dispose(): void {
       if (disposed) return;
       disposed = true;
       for (let e = 0; e < GPU_WINDOW_POOL; e++) releaseEntry(e);
       dropFreeReadbacks();
-      for (const buffer of [
-        latticeBuffer,
-        latticeDescBuffer,
-        spanPairsBuffer,
-        entriesBuffer,
-        squareBaseBuffer,
-        chunkStatsBuffer,
-        marchTableBuffer,
-        lutBuffer,
-        paramsBuffer,
-        lipsBuffer,
-        lipCounterBuffer,
-        batchListBuffer,
-        dummyPositions,
-        dummyColors,
-      ]) {
+      for (const buffer of countsPool.free.splice(0, countsPool.free.length)) {
         buffer.destroy();
+        countsPool.live--;
       }
-      timestampResolve?.destroy();
-      timestampReadback?.destroy();
+      for (const buffer of ownedBuffers()) buffer.destroy();
+      countTimestamps?.resolve.destroy();
+      countTimestamps?.readback.destroy();
+      emitTimestamps?.resolve.destroy();
+      emitTimestamps?.readback.destroy();
       querySet?.destroy();
-      fallback.dispose();
     },
   };
 }

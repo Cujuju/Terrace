@@ -28,7 +28,8 @@ export const LUT_SHORE_CAP = 5 * BAND_LUT_SIZE;
 export const LUT_SHORE_CLIFF = LUT_SHORE_CAP + 1;
 export const LUT_VEC4_COUNT = LUT_SHORE_CLIFF + 1;
 
-const LUT_COMPONENTS = 4;
+/** vec4f: rgb plus the alpha byte the kernel packs as a flag. */
+export const LUT_COMPONENTS = 4;
 
 /** Alpha byte the material reads as "self lit": 1 becomes 255 through pack4x8unorm. */
 const SELF_LIT_ON = 1;

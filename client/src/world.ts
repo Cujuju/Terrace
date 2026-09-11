@@ -51,15 +51,15 @@ import {
   createWorkerChunkBuildSource,
   type ChunkBuildSource,
 } from './render/chunkBuildSource.ts';
-import { warmTerrainMaterial, type TerrainVertexLayout } from './render/terrainMaterial.ts';
+import { warmTerrainMaterial } from './render/terrainMaterial.ts';
 import { createCpuArenaStore, type ArenaStore } from './render/arenaStore.ts';
 import {
   GpuArenaUnavailableError,
   createGpuArenaStore,
 } from './render/gpuMesher/gpuArenaStore.ts';
-import {
-  createGpuChunkBuildSource,
-  type GpuMesherStats,
+import type {
+  GpuChunkBuildSource,
+  GpuMesherStats,
 } from './render/gpuMesher/gpuChunkBuildSource.ts';
 import { terrainMesher } from './state/terrainMesherPrefs.ts';
 import {
@@ -138,6 +138,8 @@ export interface World extends TerrainSink {
   blockyChunks(): number[];
   /** What is meshing right now, which a runtime demotion can move away from the setting. */
   terrainMesherActive(): 'gpu' | 'cpu';
+  /** Vertex bytes the terrain arena holds, whichever mesher owns it. */
+  terrainResidentBytes(): number;
   gpuMesherStats(): GpuMesherStats | null;
   dispose(): void;
 }
@@ -145,11 +147,6 @@ export interface World extends TerrainSink {
 const nowMs = (): number => performance.now();
 
 const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
-
-/** The CPU mesher's arena layout; the GPU mesher's store brings the packed one. */
-const CPU_TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
-
-const GPU_TERRAIN_VERTEX_LAYOUT: TerrainVertexLayout = 'snorm16';
 
 /** The store, the build source and the warm-up mesh of one mesher choice, disposed together. */
 interface TerrainMesherRig {
@@ -168,13 +165,14 @@ function isWebGpuBackend(renderer: Viewport['renderer']): boolean {
   return (renderer.backend as unknown as RendererBackendFlags).isWebGPUBackend === true;
 }
 
-// The worker pool outlives any one mesher, but a GPU source disposes the fallback it is
-// given. Neither source's methods read `this`, so a spread lends them safely.
-function borrowBuildSource(source: ChunkBuildSource): ChunkBuildSource {
-  return { ...source, dispose: (): void => {} };
+export interface WorldOptions {
+  /** The session's CPU mesher, also the GPU mesher's fallback; the world disposes it. */
+  readonly chunkBuildSource?: ChunkBuildSource;
+  /** The session's GPU mesher, built once in main.tsx; `null` demotes every world. */
+  readonly gpuMesher?: GpuChunkBuildSource | null;
 }
 
-export function createWorld(viewport: Viewport): World {
+export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
   const frontierLine: FrontierLine = createFrontierLine(viewport.scene);
@@ -189,7 +187,9 @@ export function createWorld(viewport: Viewport): World {
   });
 
   const chunkBuildSource: ChunkBuildSource =
-    createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
+    options?.chunkBuildSource ?? createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
+
+  const gpuMesher: GpuChunkBuildSource | null = options?.gpuMesher ?? null;
 
   const drawnChunkScratch = new Set<number>();
 
@@ -274,11 +274,7 @@ export function createWorld(viewport: Viewport): World {
 
   const createCpuRig = (reason: string): TerrainMesherRig => {
     const store = createCpuArenaStore();
-    const warmUp = warmTerrainMaterial(
-      viewport.terrainGroup,
-      store.material,
-      CPU_TERRAIN_VERTEX_LAYOUT,
-    );
+    const warmUp = warmTerrainMaterial(viewport.terrainGroup, store.material, store.layout);
     logMesher('cpu', reason);
     return {
       kind: 'cpu',
@@ -293,55 +289,42 @@ export function createWorld(viewport: Viewport): World {
   };
 
   /** The rig, or the reason the GPU path was refused. */
-  const createGpuRig = (worldSize: number): TerrainMesherRig | string => {
+  const createGpuRig = (): TerrainMesherRig | string => {
+    if (gpuMesher === null) return 'the session has no GPU terrain mesher';
     if (!isWebGpuBackend(viewport.renderer)) {
       return 'the renderer is not running the WebGPU backend';
     }
     let store: ArenaStore;
     try {
-      store = createGpuArenaStore(viewport.renderer, worldSize, {
+      store = createGpuArenaStore(viewport.renderer, {
         onFailure: (error) => demoteToCpu(error.message),
+        onFrameCommands: (encoder) => gpuMesher.recordEmitTimestamps(encoder),
       });
     } catch (error) {
       if (!(error instanceof GpuArenaUnavailableError)) throw error;
       return error.message;
     }
-    const source = createGpuChunkBuildSource(
-      viewport.renderer,
-      borrowBuildSource(chunkBuildSource),
-    );
-    if (source === null) {
-      store.destroy();
-      return 'the GPU build source refused the renderer';
-    }
-    void source.ready().catch((error: unknown) => {
-      demoteToCpu(`the mesher WGSL failed to compile (${String(error)})`);
-    });
-    const warmUp = warmTerrainMaterial(
-      viewport.terrainGroup,
-      store.material,
-      GPU_TERRAIN_VERTEX_LAYOUT,
-    );
+    const warmUp = warmTerrainMaterial(viewport.terrainGroup, store.material, store.layout);
     logMesher('gpu', `setting "${terrainMesher()}" on the WebGPU backend`);
     return {
       kind: 'gpu',
       store,
-      source,
-      gpuStats: (): GpuMesherStats | null => source.stats(),
+      source: gpuMesher,
+      gpuStats: (): GpuMesherStats | null => gpuMesher.stats(),
+      // The mesher is the session's, not the rig's: a swap back to the GPU reuses it.
       dispose(): void {
         warmUp.removeFromParent();
-        source.dispose();
         store.destroy();
       },
     };
   };
 
-  const createMesherRig = (worldSize: number): TerrainMesherRig => {
+  const createMesherRig = (): TerrainMesherRig => {
     if (terrainMesher() === 'cpu') {
       return createCpuRig('the terrain mesher setting is CPU workers');
     }
     if (gpuDemotedReason !== null) return createCpuRig(gpuDemotedReason);
-    const gpu = createGpuRig(worldSize);
+    const gpu = createGpuRig();
     return typeof gpu === 'string' ? createCpuRig(gpu) : gpu;
   };
 
@@ -354,7 +337,7 @@ export function createWorld(viewport: Viewport): World {
     meshes?.dispose();
     layerEdges?.dispose();
     rig?.dispose();
-    const nextRig = createMesherRig(worldSize);
+    const nextRig = createMesherRig();
     rig = nextRig;
     const nextMeshes = createTerrainMeshes(
       viewport.terrainGroup,
@@ -438,6 +421,10 @@ export function createWorld(viewport: Viewport): World {
       if (rig?.kind === 'gpu') rebuildTerrain();
     });
   }
+
+  // A lost device takes every later build to the workers; the same rebuild the injection
+  // guard uses moves what is already drawn.
+  const stopDeviceLostWatch = gpuMesher?.onDeviceLost((reason) => demoteToCpu(reason));
 
   createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
 
@@ -618,6 +605,9 @@ export function createWorld(viewport: Viewport): World {
     terrainMesherActive(): 'gpu' | 'cpu' {
       return rig?.kind ?? 'cpu';
     },
+    terrainResidentBytes(): number {
+      return rig?.store.residentBytes() ?? 0;
+    },
     gpuMesherStats(): GpuMesherStats | null {
       return rig?.gpuStats() ?? null;
     },
@@ -651,6 +641,7 @@ export function createWorld(viewport: Viewport): World {
 
     dispose(): void {
       clearExpiryTimer();
+      stopDeviceLostWatch?.();
       meshes?.dispose();
       rig?.dispose();
       rig = null;
@@ -663,6 +654,7 @@ export function createWorld(viewport: Viewport): World {
       frontierLine.dispose();
       revealMask.dispose();
       rivers.dispose();
+      gpuMesher?.dispose();
       chunkBuildSource.dispose();
     },
   };

@@ -7,7 +7,11 @@ import {
   createChunkGeometryBuffers,
   type ChunkGeometryBuffers,
 } from '../terrain/vertexGrid.ts';
-import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts';
+import {
+  createArenaGeometry,
+  createTerrainMaterial,
+  type TerrainVertexLayout,
+} from './terrainMaterial.ts';
 
 /** Where slot bounds and `mesh.position` live: world coordinates, or relative to the super-mesh centre. */
 export type ArenaFrame = 'world' | 'superLocal';
@@ -38,11 +42,20 @@ export interface ArenaStore {
   /** Compaction cost model: ms per vertex moved, plus a fixed cost per move. */
   readonly transferMsPerVertex: number;
   readonly moveOverheadMs: number;
+  /** Compaction budgets in the store's own currency: wall-clock for CPU, GPU time for GPU. */
+  readonly compactStrokeBudgetMs: number;
+  readonly compactIdleBudgetMs: number;
   /** GPU-time budget per frame for `write`; drain stops splicing when spent. CPU: Infinity. */
   readonly frameWriteBudgetMs: number;
   readonly material: MeshStandardNodeMaterial;
+  /** How the store stores vertex positions; the material is warmed against it. */
+  readonly layout: TerrainVertexLayout;
+  /** Whether `write` can take this answer's layout. A rejected answer never reaches a slot. */
+  accepts(answer: ChunkAnswer): boolean;
   /** Estimated GPU-time cost of `write(answer)`; 0 for the CPU store. */
   writeCostMs(answer: ChunkAnswer): number;
+  /** Vertex bytes the arena holds, capacity not live count; scratch included. */
+  residentBytes(): number;
   /** `originX/originZ`: super-mesh corner, world units. A superLocal store positions the mesh. */
   createSuper(
     superIdx: number,
@@ -52,8 +65,9 @@ export interface ArenaStore {
   ): ArenaSuperBuffers;
   /** Reallocates, keeping the first `liveEnd` vertices; the caller disposes the old geometry. */
   grow(superIdx: number, triangleCapacity: number, liveEnd: number): ArenaSuperBuffers;
-  /** Writes the answer at `vertexOffset`; returns slot bounds in `frame`. Releases a GPU answer. */
-  write(superIdx: number, vertexOffset: number, answer: ChunkAnswer): ArenaSlotBounds;
+  /** Writes the answer at `vertexOffset`; returns slot bounds in `frame`. Releases a GPU
+   *  answer. `null` when nothing was written: the slot range is left zeroed. */
+  write(superIdx: number, vertexOffset: number, answer: ChunkAnswer): ArenaSlotBounds | null;
   copyWithin(superIdx: number, toVertex: number, fromVertex: number, vertexCount: number): void;
   zero(superIdx: number, startVertex: number, vertexCount: number): void;
   /** A changed vertex range, clamped to the live end. CPU: update ranges + needsUpdate. GPU: no-op. */
@@ -73,6 +87,10 @@ export function releaseAnswer(answer: ChunkAnswer): void {
 
 export const ARENA_TRANSFER_MS_PER_VERTEX = 19 / 1e6;
 
+export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
+
+export const ARENA_COMPACT_IDLE_BUDGET_MS = 3.0;
+
 const COMPONENTS_PER_POSITION = 3;
 
 /** A typed-array move has no fixed floor; its whole cost is linear in the vertices moved. */
@@ -84,6 +102,7 @@ const CPU_ARENA_WRITE_COST_MS = 0;
 /** World-frame stores leave the mesh at the origin, so their bounds are world bounds. */
 const WORLD_FRAME_ORIGIN = new Vector3(0, 0, 0);
 
+
 interface CpuSuper {
   buffers: ChunkGeometryBuffers;
   positionAttribute: BufferAttribute;
@@ -91,8 +110,11 @@ interface CpuSuper {
   colorAttribute: BufferAttribute;
 }
 
+/** The CPU mesher writes world-unit floats; the GPU store brings the packed layout. */
+const CPU_ARENA_VERTEX_LAYOUT: TerrainVertexLayout = 'float32';
+
 export function createCpuArenaStore(
-  material: MeshStandardNodeMaterial = createTerrainMaterial('float32'),
+  material: MeshStandardNodeMaterial = createTerrainMaterial(CPU_ARENA_VERTEX_LAYOUT),
 ): ArenaStore {
   const supers = new Map<number, CpuSuper>();
 
@@ -130,11 +152,27 @@ export function createCpuArenaStore(
     frame: 'world',
     transferMsPerVertex: ARENA_TRANSFER_MS_PER_VERTEX,
     moveOverheadMs: CPU_ARENA_MOVE_OVERHEAD_MS,
+    compactStrokeBudgetMs: ARENA_COMPACT_STROKE_BUDGET_MS,
+    compactIdleBudgetMs: ARENA_COMPACT_IDLE_BUDGET_MS,
     frameWriteBudgetMs: Infinity,
     material,
+    layout: CPU_ARENA_VERTEX_LAYOUT,
+
+    accepts(answer): boolean {
+      return answer.kind === 'cpu';
+    },
 
     writeCostMs(): number {
       return CPU_ARENA_WRITE_COST_MS;
+    },
+
+    residentBytes(): number {
+      let bytes = 0;
+      for (const cpu of supers.values()) {
+        const { positions, normals, colors } = cpu.buffers;
+        bytes += positions.byteLength + normals.byteLength + colors.byteLength;
+      }
+      return bytes;
     },
 
     createSuper(superIdx, _originX, _originZ, triangleCapacity): ArenaSuperBuffers {
@@ -150,10 +188,10 @@ export function createCpuArenaStore(
       return bind(superIdx, grown);
     },
 
-    write(superIdx, vertexOffset, answer): ArenaSlotBounds {
-      if (answer.kind !== 'cpu') {
-        throw new TypeError('a GPU chunk answer cannot be written into the CPU arena store');
-      }
+    // `accepts` turns a GPU answer away before the arena commits a slot to it, so this is a
+    // type guard, not a failure path.
+    write(superIdx, vertexOffset, answer): ArenaSlotBounds | null {
+      if (answer.kind !== 'cpu') return null;
       const { positions, normals, colors } = superAt(superIdx).buffers;
       positions.set(answer.positions, vertexOffset * COMPONENTS_PER_POSITION);
       normals.set(answer.normals, vertexOffset * COMPONENTS_PER_NORMAL);
