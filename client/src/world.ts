@@ -296,14 +296,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   };
 
   /** The rig, or the reason the GPU path was refused. */
-  const createGpuRig = (worldSize: number): TerrainMesherRig | string => {
+  const createGpuRig = (): TerrainMesherRig | string => {
     if (gpuMesher === null) return 'the session has no GPU terrain mesher';
     if (!isWebGpuBackend(viewport.renderer)) {
       return 'the renderer is not running the WebGPU backend';
     }
     let store: ArenaStore;
     try {
-      store = createGpuArenaStore(viewport.renderer, worldSize, {
+      store = createGpuArenaStore(viewport.renderer, {
         onFailure: (error) => demoteToCpu(error.message),
       });
     } catch (error) {
@@ -329,12 +329,12 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     };
   };
 
-  const createMesherRig = (worldSize: number): TerrainMesherRig => {
+  const createMesherRig = (): TerrainMesherRig => {
     if (terrainMesher() === 'cpu') {
       return createCpuRig('the terrain mesher setting is CPU workers');
     }
     if (gpuDemotedReason !== null) return createCpuRig(gpuDemotedReason);
-    const gpu = createGpuRig(worldSize);
+    const gpu = createGpuRig();
     return typeof gpu === 'string' ? createCpuRig(gpu) : gpu;
   };
 
@@ -347,7 +347,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     meshes?.dispose();
     layerEdges?.dispose();
     rig?.dispose();
-    const nextRig = createMesherRig(worldSize);
+    const nextRig = createMesherRig();
     rig = nextRig;
     const nextMeshes = createTerrainMeshes(
       viewport.terrainGroup,
