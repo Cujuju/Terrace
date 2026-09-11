@@ -10,6 +10,7 @@ import {
 } from 'three';
 import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, SCULPT_REPEAT_DELAY_MS } from '../config.ts';
+import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 import {
   CHUNK_ANSWER_BACKLOG_CAP,
   createDirectChunkBuildSource,
@@ -736,6 +737,7 @@ export function createTerrainMeshes(
     ) {
       queueEmptyAfterMs = now() - firstUpdateMs;
       chunksAtQueueEmpty = chunksSpliced;
+      markBoot(BOOT_MARKS.terrainQueueEmpty);
     }
     compact(spliced > 0 ? store.compactStrokeBudgetMs : store.compactIdleBudgetMs);
     settle();
@@ -749,7 +751,10 @@ export function createTerrainMeshes(
         if (!mirror.received.has(chunkIdx)) continue;
         pending.add(chunkIdx);
       }
-      if (firstUpdateMs === null && pending.size > 0) firstUpdateMs = now();
+      if (firstUpdateMs === null && pending.size > 0) {
+        firstUpdateMs = now();
+        markBoot(BOOT_MARKS.firstTerrainUpdate);
+      }
       if (stopDraining === undefined) flush();
     },
     flush,
