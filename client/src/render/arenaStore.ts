@@ -42,6 +42,9 @@ export interface ArenaStore {
   /** Compaction cost model: ms per vertex moved, plus a fixed cost per move. */
   readonly transferMsPerVertex: number;
   readonly moveOverheadMs: number;
+  /** Compaction budgets in the store's own currency: wall-clock for CPU, GPU time for GPU. */
+  readonly compactStrokeBudgetMs: number;
+  readonly compactIdleBudgetMs: number;
   /** GPU-time budget per frame for `write`; drain stops splicing when spent. CPU: Infinity. */
   readonly frameWriteBudgetMs: number;
   readonly material: MeshStandardNodeMaterial;
@@ -82,6 +85,10 @@ export function releaseAnswer(answer: ChunkAnswer): void {
 }
 
 export const ARENA_TRANSFER_MS_PER_VERTEX = 19 / 1e6;
+
+export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
+
+export const ARENA_COMPACT_IDLE_BUDGET_MS = 3.0;
 
 const COMPONENTS_PER_POSITION = 3;
 
@@ -153,6 +160,8 @@ export function createCpuArenaStore(
     frame: 'world',
     transferMsPerVertex: ARENA_TRANSFER_MS_PER_VERTEX,
     moveOverheadMs: CPU_ARENA_MOVE_OVERHEAD_MS,
+    compactStrokeBudgetMs: ARENA_COMPACT_STROKE_BUDGET_MS,
+    compactIdleBudgetMs: ARENA_COMPACT_IDLE_BUDGET_MS,
     frameWriteBudgetMs: Infinity,
     material,
     layout: CPU_ARENA_VERTEX_LAYOUT,
