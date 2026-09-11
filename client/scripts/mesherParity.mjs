@@ -1,18 +1,20 @@
 // Pixel-level parity of the WebGPU terrain mesher against the CPU mesher.
 // Design: .claude/plans/gpu-mesher-production-design.md §11.2.
 //
-//   node client/scripts/mesherParity.mjs [--meshers cpu,cpu-shift,gpu]
+//   node client/scripts/mesherParity.mjs [--meshers cpu,cpu-shift,cpu-quant,gpu]
 //                                        [--shadedScenario terrainStill] [--settle 5000]
 //                                        [--shiftSteps 0.5]
 //
-// One pass per mesher entry. A repeated `cpu` gives the repeat floor (what an
-// identical stack scores against itself). A `-shift` suffix gives the
-// quantization floor: the same mesher slid half a GPU position step, which is
-// gate 1's method for the sub-pixel tread phenomenon, where identical geometry
-// rasterizes identically but which riser wins a grazing tread pixel flips below
-// the 1/1024 wu step. The shaded criterion is judged above that floor when the
-// pass is present. Every pass takes a band-ID capture and a shaded capture, each
-// on its own fresh world, fresh server and fresh Chrome under the GPU lock.
+// One pass per mesher entry, each on its own fresh world, fresh server and fresh
+// Chrome under the GPU lock, taking a band-ID capture and a shaded capture.
+// Three floors, in the order the shaded criterion prefers them:
+//   `-quant` snaps the float32 CPU arena onto the GPU position grid, so it
+//      isolates everything the grid itself costs;
+//   `-shift` slides the same mesh half a grid step, gate 1's method for the
+//      sub-pixel tread phenomenon, where identical geometry rasterizes
+//      identically but which riser wins a grazing tread pixel flips;
+//   a repeated `cpu` is the repeat floor, what an identical stack scores
+//      against itself.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decodePng, encodePng } from '../../bench/webgpu-mesher/png.mjs';
@@ -25,9 +27,11 @@ import {
   stopProcess, underGpuLock, waitForSinkLine,
 } from './mesherHarness.mjs';
 
-const DEFAULT_MESHERS = 'cpu,cpu-shift,gpu';
+const DEFAULT_MESHERS = 'cpu,cpu-shift,cpu-quant,gpu';
 // A mesher token ending in this runs the same mesher with `?parityShift`.
 const SHIFT_SUFFIX = '-shift';
+// ... and in this, with `?parityQuantize=1`.
+const QUANT_SUFFIX = '-quant';
 // Half a GPU position step (POSITION_XZ_UNITS_PER_WORLD_UNIT = 1024), gate 1's
 // offset for measuring the metric's own floor.
 const DEFAULT_SHIFT_STEPS = 0.5;
@@ -63,18 +67,23 @@ const log = makeLogger(join(RESULTS_DIR, 'parity.log'));
 ensureDirs();
 
 /**
- * `cpu, cpu-shift, gpu` -> ids `cpu`, `cpu-shift`, `gpu`; a repeated token is
- * numbered (`cpu`, `cpu2`). A `-shift` token keeps its mesher and carries the
- * shift, so it is a distinct pass rather than a duplicate.
+ * `cpu, cpu-shift, cpu-quant, gpu` -> ids of the same names; a repeated token is
+ * numbered (`cpu`, `cpu2`). A `-shift` or `-quant` token keeps its mesher and
+ * carries the flag, so it is a distinct pass rather than a duplicate.
  */
 const passes = (() => {
   const seen = new Map();
   return meshers.map((token) => {
     const shifted = token.endsWith(SHIFT_SUFFIX);
-    const mesher = shifted ? token.slice(0, -SHIFT_SUFFIX.length) : token;
+    const quantized = token.endsWith(QUANT_SUFFIX);
+    const suffix = shifted ? SHIFT_SUFFIX : quantized ? QUANT_SUFFIX : '';
+    const mesher = suffix === '' ? token : token.slice(0, -suffix.length);
     const n = (seen.get(token) ?? 0) + 1;
     seen.set(token, n);
-    return { token, mesher, shift: shifted ? shiftSteps : 0, id: n === 1 ? token : `${token}${n}` };
+    return {
+      token, mesher, shift: shifted ? shiftSteps : 0, quantize: quantized,
+      id: n === 1 ? token : `${token}${n}`,
+    };
   });
 })();
 
@@ -84,14 +93,15 @@ const passes = (() => {
  * the scenario's ready heartbeat, then its report. `readyBeat === null` means
  * the scenario posts no ready beat, so the screenshot is taken at the report.
  */
-async function capture({ mesher, shift, scenario, readyBeat, pngPath, logName }) {
+async function capture({ mesher, shift, quantize, scenario, readyBeat, pngPath, logName }) {
   let server = null;
   try {
     server = startServer(log);
     await sleep(serverSettleWaitMs);
     const offset = sinkOffset();
     const url = devUrl(`perfprobe=${scenario}&settle=${settleMs}&mesher=${mesher}`
-      + (shift === 0 ? '' : `&parityShift=${shift}`));
+      + (shift === 0 ? '' : `&parityShift=${shift}`)
+      + (quantize ? '&parityQuantize=1' : ''));
 
     return await underGpuLock(log, async () => {
       const chrome = await launchChrome();
@@ -165,11 +175,11 @@ let vite = null;
 try {
   vite = await startVite(log);
 
-  for (const { mesher, shift, id } of passes) {
-    results.passes[id] = { mesher, shift, band: null, shaded: null };
+  for (const { mesher, shift, quantize, id } of passes) {
+    results.passes[id] = { mesher, shift, quantize, band: null, shaded: null };
 
     const band = await capture({
-      mesher, shift, scenario: BAND_SCENARIO, readyBeat: BAND_READY_BEAT,
+      mesher, shift, quantize, scenario: BAND_SCENARIO, readyBeat: BAND_READY_BEAT,
       pngPath: join(RESULTS_DIR, `band-${id}.png`), logName: `page-band-${id}.log`,
     });
     results.passes[id].band = band.ok
@@ -182,7 +192,7 @@ try {
     }
 
     const shaded = await capture({
-      mesher, shift, scenario: shadedScenario, readyBeat: shadedReadyBeat,
+      mesher, shift, quantize, scenario: shadedScenario, readyBeat: shadedReadyBeat,
       pngPath: join(RESULTS_DIR, `shaded-${id}.png`), logName: `page-shaded-${id}.log`,
     });
     results.passes[id].shaded = shaded.ok
@@ -210,11 +220,15 @@ const readImage = (id, kind) => {
 // The reference pass is the first unshifted cpu pass; the repeat floor is a
 // second one; the quantization floor is the first shifted pass.
 const idOf = (pick) => passes.find(pick)?.id ?? null;
-const REFERENCE = idOf((p) => p.mesher === 'cpu' && p.shift === 0);
-const REPEAT = passes.filter((p) => p.mesher === 'cpu' && p.shift === 0)[1]?.id ?? null;
+const plain = (p) => p.mesher === 'cpu' && p.shift === 0 && !p.quantize;
+const REFERENCE = idOf(plain);
+const REPEAT = passes.filter(plain)[1]?.id ?? null;
 const SHIFTED = idOf((p) => p.shift !== 0);
+const QUANT = idOf((p) => p.quantize);
 const GPU = idOf((p) => p.mesher === 'gpu');
-results.roles = { reference: REFERENCE, repeatFloor: REPEAT, shiftFloor: SHIFTED, gpu: GPU };
+results.roles = {
+  reference: REFERENCE, repeatFloor: REPEAT, shiftFloor: SHIFTED, quantFloor: QUANT, gpu: GPU,
+};
 
 // The CPU's own blocky fallback, from the reference pass that produced the image.
 const blockyChunks = results.passes[REFERENCE]?.band?.blockyChunks
@@ -234,6 +248,7 @@ const bandAgainstRef = (id, diffName) => {
 results.band = bandAgainstRef(GPU, 'diff-band.png');
 results.bandFloorRepeat = bandAgainstRef(REPEAT, 'diff-band-floor-repeat.png');
 results.bandFloorShift = bandAgainstRef(SHIFTED, 'diff-band-floor-shift.png');
+results.bandFloorQuant = bandAgainstRef(QUANT, 'diff-band-floor-quant.png');
 
 const shadedRef = readImage(REFERENCE, 'shaded');
 /** Shaded comparison against the reference, with the diff written out. */
@@ -249,12 +264,15 @@ const shadedAgainstRef = (id, diffName) => {
 const gpuVsCpu = shadedAgainstRef(GPU, 'diff-shaded.png');
 const floorRepeat = shadedAgainstRef(REPEAT, 'diff-shaded-floor-repeat.png');
 const floorShift = shadedAgainstRef(SHIFTED, 'diff-shaded-floor-shift.png');
-// Gate 1's rule: judge above the quantization floor when it was measured,
-// because the sub-pixel tread flip is the metric's own noise, not disagreement.
-const floorUsed = floorShift !== null ? 'shift' : floorRepeat !== null ? 'repeat' : null;
-const floorFraction = floorShift?.fraction ?? floorRepeat?.fraction ?? null;
+const floorQuant = shadedAgainstRef(QUANT, 'diff-shaded-floor-quant.png');
+// Prefer the quantize floor: it is the same mesh on the GPU's own position
+// grid, so it charges the metric for everything the grid costs, of which the
+// shift floor's tread flip is one part.
+const floorUsed = floorQuant !== null ? 'quant'
+  : floorShift !== null ? 'shift' : floorRepeat !== null ? 'repeat' : null;
+const floorFraction = floorQuant?.fraction ?? floorShift?.fraction ?? floorRepeat?.fraction ?? null;
 results.shaded = gpuVsCpu === null && floorUsed === null ? null : {
-  gpuVsCpu, floorRepeat, floorShift, floorUsed,
+  gpuVsCpu, floorRepeat, floorShift, floorQuant, floorUsed,
   fractionAboveFloor: gpuVsCpu === null || floorFraction === null
     ? null : gpuVsCpu.fraction - floorFraction,
 };
@@ -298,7 +316,8 @@ const capsule = (c) => (c?.ok
 const roleOf = (id) => Object.entries(results.roles)
   .filter(([, v]) => v === id).map(([k]) => k).join(', ') || '-';
 const passRows = Object.entries(results.passes).map(([id, p]) =>
-  `| ${id} | ${p.mesher} | ${p.shift} | ${roleOf(id)} | ${capsule(p.band)} | ${capsule(p.shaded)} |`).join('\n');
+  `| ${id} | ${p.mesher} | ${p.shift} | ${p.quantize ? 'yes' : 'no'} | ${roleOf(id)}`
+  + ` | ${capsule(p.band)} | ${capsule(p.shaded)} |`).join('\n');
 const bandFloorRow = (label, r) => `| ${label} | ${fmt(r?.mismatched)} | ${fmt(r?.consideredSamples)}`
   + ` | ${pct(r?.mismatchFraction)} | ${fmt(r?.holes)} |`;
 
@@ -332,6 +351,7 @@ Band, each comparison against the \`${REFERENCE}\` reference:
 ${bandFloorRow(`gpu vs ${REFERENCE}`, results.band)}
 ${bandFloorRow(`repeat floor (${REPEAT ?? 'not run'})`, results.bandFloorRepeat)}
 ${bandFloorRow(`shift floor (${SHIFTED ?? 'not run'})`, results.bandFloorShift)}
+${bandFloorRow(`quant floor (${QUANT ?? 'not run'})`, results.bandFloorQuant)}
 
 Shaded (gate 1 metric: 3x3 window, tolerance ${PIXEL_TOLERANCE}, both directions),
 each against \`${REFERENCE}\`:
@@ -341,6 +361,7 @@ each against \`${REFERENCE}\`:
 | gpu | ${fmt(results.shaded?.gpuVsCpu?.mismatched)} | ${fmt(results.shaded?.gpuVsCpu?.pixels)} | ${pct(results.shaded?.gpuVsCpu?.fraction)} |
 | repeat floor (${REPEAT ?? 'not run'}) | ${fmt(results.shaded?.floorRepeat?.mismatched)} | ${fmt(results.shaded?.floorRepeat?.pixels)} | ${pct(results.shaded?.floorRepeat?.fraction)} |
 | shift floor (${SHIFTED ?? 'not run'}) | ${fmt(results.shaded?.floorShift?.mismatched)} | ${fmt(results.shaded?.floorShift?.pixels)} | ${pct(results.shaded?.floorShift?.fraction)} |
+| quant floor (${QUANT ?? 'not run'}) | ${fmt(results.shaded?.floorQuant?.mismatched)} | ${fmt(results.shaded?.floorQuant?.pixels)} | ${pct(results.shaded?.floorQuant?.fraction)} |
 
 Judged above the **${results.shaded?.floorUsed ?? 'n/a'}** floor: ${pct(results.shaded?.fractionAboveFloor)}
 
@@ -352,8 +373,8 @@ Exemption: ${results.blockyExemption}
 
 ## Passes
 
-| pass | mesher | shift steps | role | band capture | shaded capture |
-|---|---|---|---|---|---|
+| pass | mesher | shift steps | quantized | role | band capture | shaded capture |
+|---|---|---|---|---|---|---|
 ${passRows}
 
 ## Failures
@@ -365,9 +386,10 @@ for (const line of [
   `verdict ${results.verdict}`,
   `band: ${fmt(results.band?.mismatched)} / ${fmt(results.band?.consideredSamples)} = ${pct(results.band?.mismatchFraction)}, holes ${fmt(results.band?.holes)}, exempt ${fmt(results.band?.exemptSamples)}`,
   `band floors: repeat ${pct(results.bandFloorRepeat?.mismatchFraction)} (holes ${fmt(results.bandFloorRepeat?.holes)}),`
-    + ` shift ${pct(results.bandFloorShift?.mismatchFraction)} (holes ${fmt(results.bandFloorShift?.holes)})`,
+    + ` shift ${pct(results.bandFloorShift?.mismatchFraction)} (holes ${fmt(results.bandFloorShift?.holes)}),`
+    + ` quant ${pct(results.bandFloorQuant?.mismatchFraction)} (holes ${fmt(results.bandFloorQuant?.holes)})`,
   `shaded: gpu-vs-cpu ${pct(results.shaded?.gpuVsCpu?.fraction)}, repeat floor ${pct(results.shaded?.floorRepeat?.fraction)},`
-    + ` shift floor ${pct(results.shaded?.floorShift?.fraction)}`,
+    + ` shift floor ${pct(results.shaded?.floorShift?.fraction)}, quant floor ${pct(results.shaded?.floorQuant?.fraction)}`,
   `shaded above ${results.shaded?.floorUsed ?? 'n/a'} floor: ${pct(results.shaded?.fractionAboveFloor)}`,
   ...results.failures.map((f) => `FAILURE ${f}`),
 ]) console.log(line);
