@@ -13,9 +13,12 @@ import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import { chunksPerEdge } from '@terrace/shared';
 import { SCULPT_REPEAT_DELAY_MS } from '../config.ts';
 import {
+  CHUNK_ANSWER_BACKLOG_CAP,
   createDirectChunkBuildSource,
+  type ChunkAnswer,
   type ChunkBuildSource,
 } from './chunkBuildSource.ts';
+import { releaseAnswer } from './arenaStore.ts';
 import type { ChunkJobAnswer } from '../terrain/chunkJob.ts';
 import { type Rgb } from '../terrain/bandColors.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
@@ -32,8 +35,7 @@ import { createArenaGeometry, createTerrainMaterial } from './terrainMaterial.ts
 
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
-/** Built-or-building answers held at once: two frames of splices (~4 per 1.5 ms) at ~1.6 MB each. */
-export const CHUNK_ANSWER_BACKLOG_CAP = 8;
+export { CHUNK_ANSWER_BACKLOG_CAP };
 
 export const ARENA_TRANSFER_MS_PER_VERTEX = 19 / 1e6;
 
@@ -539,14 +541,21 @@ export function createTerrainMeshes(
 
   let generation = 0;
 
-  const receive = (chunkIdx: number, answer: ChunkJobAnswer | null): void => {
+  const receive = (chunkIdx: number, answer: ChunkAnswer | null): void => {
     inFlight.delete(chunkIdx);
     if (answer === null) {
       if (mirror.received.has(chunkIdx)) retry.add(chunkIdx);
       return;
     }
-    if (answer.generation !== generation) return;
-    if (!mirror.received.has(answer.chunkIdx)) return;
+    if (answer.generation !== generation || !mirror.received.has(answer.chunkIdx)) {
+      releaseAnswer(answer);
+      return;
+    }
+    // GPU answers need the ArenaStore splice path (arena refactor); until then they are dropped.
+    if (answer.kind !== 'cpu') {
+      releaseAnswer(answer);
+      return;
+    }
     ready.push(answer);
   };
 
@@ -604,7 +613,7 @@ export function createTerrainMeshes(
 
       while (
         inFlight.size < buildSource.concurrency &&
-        inFlight.size + ready.length < CHUNK_ANSWER_BACKLOG_CAP
+        inFlight.size + ready.length < (buildSource.backlogCap ?? CHUNK_ANSWER_BACKLOG_CAP)
       ) {
         const chunkIdx = nextSubmittable();
         if (chunkIdx === undefined) break;

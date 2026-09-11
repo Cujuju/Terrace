@@ -40,6 +40,7 @@ export interface ChunkJobRequest {
 }
 
 export interface ChunkJobAnswer {
+  readonly kind: 'cpu';
   readonly generation: number;
   readonly chunkIdx: number;
   readonly vertexCount: number;
@@ -226,6 +227,7 @@ export function buildChunkAnswer(
   return {
     scratch,
     answer: {
+      kind: 'cpu',
       generation,
       chunkIdx,
       vertexCount,
