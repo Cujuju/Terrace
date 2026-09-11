@@ -86,7 +86,7 @@ function expectSlotsEqual(patched: TerrainMeshes, reference: TerrainMeshes): voi
       const mirrorSlot = referenceSlots.get(slot.chunkIdx);
       expect(mirrorSlot, `chunk ${slot.chunkIdx} is missing from the reference`).toBeDefined();
       expect(slot.count, `chunk ${slot.chunkIdx} vertex count`).toBe(mirrorSlot!.count);
-      for (const name of ['position', 'normal', 'color'] as const) {
+      for (const name of ['position', /* 'normal', */ 'color'] as const) {
         const a = plainAttribute(patchedGeometry, name);
         const b = plainAttribute(referenceGeometry, name);
         const stride = a.itemSize;
@@ -112,15 +112,15 @@ function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
       const want = sizes.get(chunkIdx);
       if (real === null || want === undefined) return real;
       const positions = new Float32Array(want * 3);
-      const normals = new Int8Array(want * 3);
+      // const normals = new Int8Array(want * 3);
       const colors = new Uint8Array(want * 3);
       for (let v = 0; v < want; v++) {
         positions[v * 3] = chunkIdx + 1;
         positions[v * 3 + 1] = v + 1;
         positions[v * 3 + 2] = 1;
-        normals[v * 3] = 1;
-        normals[v * 3 + 1] = 2;
-        normals[v * 3 + 2] = 3;
+        // dead attribute: normals[v * 3] = 1;
+        // dead attribute: normals[v * 3 + 1] = 2;
+        // dead attribute: normals[v * 3 + 2] = 3;
         colors[v * 3] = 7;
         colors[v * 3 + 1] = 8;
         colors[v * 3 + 2] = 9;
@@ -129,7 +129,7 @@ function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
         ...real,
         vertexCount: want,
         positions,
-        normals,
+        // normals,
         colors,
         bounds: new Float32Array([1, 1, 1, chunkIdx + 1, want, 1]),
       };
@@ -177,7 +177,7 @@ function expectHoleInvariants(meshes: TerrainMeshes): void {
     expect(claimed.indexOf(0), 'a vertex under the live end belongs to no slot and no hole')
       .toBe(-1);
     const geometry = meshes.pickables()[s]!.geometry;
-    for (const name of ['position', 'normal', 'color'] as const) {
+    for (const name of ['position', /* 'normal', */ 'color'] as const) {
       const attribute = plainAttribute(geometry, name);
       const stride = attribute.itemSize;
       for (let v = 0; v < liveEnd; v++) {
@@ -236,12 +236,12 @@ describe('createTerrainMeshes', () => {
     const mesh = meshes.pickables()[0];
     const geometryBefore = mesh.geometry;
     const positionBefore = plainAttribute(mesh.geometry, 'position');
-    const normalBefore = plainAttribute(mesh.geometry, 'normal');
+    // const normalBefore = plainAttribute(mesh.geometry, 'normal');
     const colorBefore = plainAttribute(mesh.geometry, 'color');
     const positionArrayBefore = positionBefore.array;
-    const normalArrayBefore = normalBefore.array;
+    // const normalArrayBefore = normalBefore.array;
     const positionVersionBefore = positionBefore.version;
-    const normalVersionBefore = normalBefore.version;
+    // const normalVersionBefore = normalBefore.version;
     const colorVersionBefore = colorBefore.version;
 
     meshes.update(
@@ -254,13 +254,13 @@ describe('createTerrainMeshes', () => {
     expect(group.children).toHaveLength(1);
     expect(mesh.geometry).toBe(geometryBefore);
     expect(mesh.geometry.getAttribute('position')).toBe(positionBefore);
-    expect(mesh.geometry.getAttribute('normal')).toBe(normalBefore);
+    // expect(mesh.geometry.getAttribute('normal')).toBe(normalBefore);
     expect(mesh.geometry.getAttribute('color')).toBe(colorBefore);
     expect(mesh.geometry.getAttribute('position').array).toBe(positionArrayBefore);
-    expect(mesh.geometry.getAttribute('normal').array).toBe(normalArrayBefore);
+    // expect(mesh.geometry.getAttribute('normal').array).toBe(normalArrayBefore);
 
     expect(positionBefore.version).toBeGreaterThan(positionVersionBefore);
-    expect(normalBefore.version).toBeGreaterThan(normalVersionBefore);
+    // expect(normalBefore.version).toBeGreaterThan(normalVersionBefore);
     expect(colorBefore.version).toBeGreaterThan(colorVersionBefore);
   });
 
@@ -835,7 +835,7 @@ describe('the vertex arena', () => {
     const offsetBefore = layoutBefore.slots.find((slot) => slot.chunkIdx === first)!.offset;
 
     const geometry = meshes.pickables()[0]!.geometry;
-    const attributes = (['position', 'normal', 'color'] as const).map((name) =>
+    const attributes = (['position', /* 'normal', */ 'color'] as const).map((name) =>
       plainAttribute(geometry, name),
     );
     for (const attribute of attributes) attribute.clearUpdateRanges();
@@ -1089,7 +1089,7 @@ describe('slot slack', () => {
   });
 });
 
-const ARENA_ATTRIBUTES = ['position', 'normal', 'color'] as const;
+const ARENA_ATTRIBUTES = ['position', /* 'normal', */ 'color'] as const;
 
 interface AttributeShadow {
   attribute: BufferAttribute;

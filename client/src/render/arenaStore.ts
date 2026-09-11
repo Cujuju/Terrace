@@ -2,7 +2,7 @@ import { Vector3 } from 'three';
 import type { BufferAttribute, BufferGeometry, InterleavedBufferAttribute } from 'three';
 import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import type { ChunkAnswer } from './chunkBuildSource.ts';
-import { COMPONENTS_PER_COLOR, COMPONENTS_PER_NORMAL } from '../terrain/capEmission.ts';
+import { COMPONENTS_PER_COLOR /* , COMPONENTS_PER_NORMAL */ } from '../terrain/capEmission.ts';
 import {
   createChunkGeometryBuffers,
   type ChunkGeometryBuffers,
@@ -107,7 +107,7 @@ const WORLD_FRAME_ORIGIN = new Vector3(0, 0, 0);
 interface CpuSuper {
   buffers: ChunkGeometryBuffers;
   positionAttribute: BufferAttribute;
-  normalAttribute: BufferAttribute;
+  // normalAttribute: BufferAttribute;
   colorAttribute: BufferAttribute;
 }
 
@@ -126,13 +126,13 @@ export function createCpuArenaStore(
   };
 
   const bind = (superIdx: number, buffers: ChunkGeometryBuffers): ArenaSuperBuffers => {
-    const { geometry, positionAttribute, normalAttribute, colorAttribute } =
+    const { geometry, positionAttribute, /* normalAttribute, */ colorAttribute } =
       createArenaGeometry(buffers);
-    supers.set(superIdx, { buffers, positionAttribute, normalAttribute, colorAttribute });
+    supers.set(superIdx, { buffers, positionAttribute, /* normalAttribute, */ colorAttribute });
     return {
       geometry,
       positionAttribute,
-      normalAttribute,
+      normalAttribute: null,
       colorAttribute,
       triangleCapacity: buffers.triangleCapacity,
       localOrigin: WORLD_FRAME_ORIGIN,
@@ -170,8 +170,8 @@ export function createCpuArenaStore(
     residentBytes(): number {
       let bytes = 0;
       for (const cpu of supers.values()) {
-        const { positions, normals, colors } = cpu.buffers;
-        bytes += positions.byteLength + normals.byteLength + colors.byteLength;
+        const { positions, /* normals, */ colors } = cpu.buffers;
+        bytes += positions.byteLength + /* normals.byteLength + */ colors.byteLength;
       }
       return bytes;
     },
@@ -184,7 +184,7 @@ export function createCpuArenaStore(
       const previous = superAt(superIdx).buffers;
       const grown = createChunkGeometryBuffers(triangleCapacity);
       grown.positions.set(previous.positions.subarray(0, liveEnd * COMPONENTS_PER_POSITION));
-      grown.normals.set(previous.normals.subarray(0, liveEnd * COMPONENTS_PER_NORMAL));
+      // grown.normals.set(previous.normals.subarray(0, liveEnd * COMPONENTS_PER_NORMAL));
       grown.colors.set(previous.colors.subarray(0, liveEnd * COMPONENTS_PER_COLOR));
       return bind(superIdx, grown);
     },
@@ -193,9 +193,9 @@ export function createCpuArenaStore(
     // type guard, not a failure path.
     write(superIdx, vertexOffset, answer): ArenaSlotBounds | null {
       if (answer.kind !== 'cpu') return null;
-      const { positions, normals, colors } = superAt(superIdx).buffers;
+      const { positions, /* normals, */ colors } = superAt(superIdx).buffers;
       positions.set(answer.positions, vertexOffset * COMPONENTS_PER_POSITION);
-      normals.set(answer.normals, vertexOffset * COMPONENTS_PER_NORMAL);
+      // normals.set(answer.normals, vertexOffset * COMPONENTS_PER_NORMAL);
       colors.set(answer.colors, vertexOffset * COMPONENTS_PER_COLOR);
       return {
         minX: answer.bounds[0]!,
@@ -208,18 +208,18 @@ export function createCpuArenaStore(
     },
 
     copyWithin(superIdx, toVertex, fromVertex, vertexCount): void {
-      const { positions, normals, colors } = superAt(superIdx).buffers;
+      const { positions, /* normals, */ colors } = superAt(superIdx).buffers;
       const fromEnd = fromVertex + vertexCount;
       positions.copyWithin(
         toVertex * COMPONENTS_PER_POSITION,
         fromVertex * COMPONENTS_PER_POSITION,
         fromEnd * COMPONENTS_PER_POSITION,
       );
-      normals.copyWithin(
-        toVertex * COMPONENTS_PER_NORMAL,
-        fromVertex * COMPONENTS_PER_NORMAL,
-        fromEnd * COMPONENTS_PER_NORMAL,
-      );
+      // normals.copyWithin(
+      //   toVertex * COMPONENTS_PER_NORMAL,
+      //   fromVertex * COMPONENTS_PER_NORMAL,
+      //   fromEnd * COMPONENTS_PER_NORMAL,
+      // );
       colors.copyWithin(
         toVertex * COMPONENTS_PER_COLOR,
         fromVertex * COMPONENTS_PER_COLOR,
@@ -229,17 +229,17 @@ export function createCpuArenaStore(
 
     zero(superIdx, startVertex, vertexCount): void {
       if (vertexCount <= 0) return;
-      const { positions, normals, colors } = superAt(superIdx).buffers;
+      const { positions, /* normals, */ colors } = superAt(superIdx).buffers;
       positions.fill(
         0,
         startVertex * COMPONENTS_PER_POSITION,
         (startVertex + vertexCount) * COMPONENTS_PER_POSITION,
       );
-      normals.fill(
-        0,
-        startVertex * COMPONENTS_PER_NORMAL,
-        (startVertex + vertexCount) * COMPONENTS_PER_NORMAL,
-      );
+      // normals.fill(
+      //   0,
+      //   startVertex * COMPONENTS_PER_NORMAL,
+      //   (startVertex + vertexCount) * COMPONENTS_PER_NORMAL,
+      // );
       colors.fill(
         0,
         startVertex * COMPONENTS_PER_COLOR,
@@ -250,10 +250,10 @@ export function createCpuArenaStore(
     markRange(superIdx, startVertex, vertexCount): void {
       const cpu = superAt(superIdx);
       addVertexRange(cpu.positionAttribute, startVertex, vertexCount);
-      addVertexRange(cpu.normalAttribute, startVertex, vertexCount);
+      // addVertexRange(cpu.normalAttribute, startVertex, vertexCount);
       addVertexRange(cpu.colorAttribute, startVertex, vertexCount);
       cpu.positionAttribute.needsUpdate = true;
-      cpu.normalAttribute.needsUpdate = true;
+      // cpu.normalAttribute.needsUpdate = true;
       cpu.colorAttribute.needsUpdate = true;
     },
 
