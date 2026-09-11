@@ -2,6 +2,7 @@ import {
   BufferAttribute,
   Color,
   DoubleSide,
+  FrontSide,
   LinearSRGBColorSpace,
   Mesh,
   NoToneMapping,
@@ -101,6 +102,9 @@ const CYCLONE_FRAME_MARGIN = 1.15;
 
 const ABLATION_SAMPLE_FRAMES = 90;
 const ABLATION_SETTLE_FRAMES = 6;
+/** Quarter of the pixels: the saving names the fill-rate share of the frame. */
+const ABLATION_HALF_RENDER_SCALE = 0.5;
+const MAIN_PASS_LABEL = 'main -> screen';
 const DRIFT_BLOCKS_DEFAULT = 12;
 const DRIFT_INTERVAL_MS_DEFAULT = 20000;
 const DRIFT_BLOCKS_QUERY_FLAG = 'blocks';
@@ -184,8 +188,34 @@ const PLUGIN_LAYER_PREFIX = 'plugin:';
 const CORE_RIG_PREFIX = 'core:';
 const ABLATABLE_PREFIXES = [PLUGIN_LAYER_PREFIX, CORE_RIG_PREFIX] as const;
 
-const UPLOAD_KINDS = ['bufferData', 'bufferSubData', 'texSubImage2D'] as const;
-type UploadKind = (typeof UPLOAD_KINDS)[number];
+// Visible drawables outside the ablatable layers, grouped by material: terrain shares one
+// material per store, the edge overlay, water, fog and rivers each have their own.
+function coreDrawGroups(scene: Object3D): Map<string, Object3D[]> {
+  const groups = new Map<string, Object3D[]>();
+  for (const child of scene.children) {
+    if (ABLATABLE_PREFIXES.some((prefix) => child.name.startsWith(prefix))) continue;
+    child.traverseVisible((node: Object3D) => {
+      if (!isDrawable(node)) return;
+      const material = (node as Object3D & { material?: unknown }).material as
+        | { type?: string; id?: number; name?: string }
+        | undefined;
+      if (material === undefined) return;
+      const materialName = material.name === undefined || material.name === '' ? '' : ` ${material.name}`;
+      const key = `${node.type}/${material.type ?? '?'}#${String(material.id ?? '?')}${materialName}`;
+      const group = groups.get(key);
+      if (group === undefined) groups.set(key, [node]);
+      else group.push(node);
+    });
+  }
+  return groups;
+}
+
+const GL_UPLOAD_KINDS = ['bufferData', 'bufferSubData', 'texSubImage2D'] as const;
+type GlUploadKind = (typeof GL_UPLOAD_KINDS)[number];
+const GPU_QUEUE_UPLOAD_KINDS = ['writeBuffer', 'writeTexture'] as const;
+type GpuQueueUploadKind = (typeof GPU_QUEUE_UPLOAD_KINDS)[number];
+const UPLOAD_KINDS = [...GL_UPLOAD_KINDS, ...GPU_QUEUE_UPLOAD_KINDS] as const;
+type UploadKind = GlUploadKind | GpuQueueUploadKind;
 
 const glUpload = {
   ms: 0,
@@ -265,6 +295,8 @@ function indexUploadOwners(): void {
       note(value.array ?? value.data?.array, attribute);
     }
     note(geometry.index?.array, 'index');
+    const instanced = node as Object3D & { instanceMatrix?: { array?: ArrayBufferView } };
+    note(instanced.instanceMatrix?.array, 'instanceMatrix');
   });
 }
 
@@ -380,7 +412,7 @@ function installGlUploadAccounting(): void {
     return length > 0 ? length * bpe : arrayBytes - srcOffset * bpe;
   };
   const wrap = (
-    name: UploadKind,
+    name: GlUploadKind,
     sizeOf: (args: unknown[]) => number,
     shapeOf: (args: unknown[], bytes: number) => string,
     ownerOf: (args: unknown[], bytes: number, ms: number) => void,
@@ -448,6 +480,72 @@ function installGlUploadAccounting(): void {
     (args, bytes, ms) =>
       recordUploadOwner(`texSubImage2D ${texShape(args)}`, ms, bytes, bytes, true),
   );
+}
+
+// GPUQueue.writeBuffer(buffer, bufferOffset, data, dataOffset?, size?): size and dataOffset are
+// in elements of a typed array, bytes of an ArrayBuffer. writeTexture's size is in the layout.
+const WRITE_BUFFER_DATA_ARG = 2;
+const WRITE_BUFFER_DATA_OFFSET_ARG = 3;
+const WRITE_BUFFER_SIZE_ARG = 4;
+const WRITE_TEXTURE_LAYOUT_ARG = 2;
+const WRITE_TEXTURE_SIZE_ARG = 3;
+
+function installGpuQueueAccounting(): void {
+  const queueProto = (globalThis as unknown as { GPUQueue?: { prototype: Record<string, unknown> } })
+    .GPUQueue?.prototype;
+  if (queueProto === undefined) return;
+  const record = (
+    name: GpuQueueUploadKind,
+    owner: string,
+    bytes: number,
+    arrayBytes: number,
+    ms: number,
+    full: boolean,
+  ): void => {
+    glUpload.ms += ms;
+    glUpload.bytes += bytes;
+    glUpload.calls++;
+    if (bytes > glUpload.maxBytes) glUpload.maxBytes = bytes;
+    const kind = glUpload.byKind[name];
+    kind.calls++;
+    kind.ms += ms;
+    kind.bytes += bytes;
+    recordUploadShape(`${name} ${byteBucket(bytes)}`, ms, bytes);
+    recordUploadOwner(`${name} ${owner}`, ms, bytes, arrayBytes, full);
+  };
+  const originalWriteBuffer = queueProto['writeBuffer'] as (...args: unknown[]) => unknown;
+  queueProto['writeBuffer'] = function (this: unknown, ...args: unknown[]): unknown {
+    const started = performance.now();
+    const result = originalWriteBuffer.apply(this, args);
+    const ms = performance.now() - started;
+    const data = args[WRITE_BUFFER_DATA_ARG];
+    const view = ArrayBuffer.isView(data) ? data : null;
+    const arrayBytes =
+      view !== null ? view.byteLength : data instanceof ArrayBuffer ? data.byteLength : 0;
+    const bpe = view !== null ? ((view as { BYTES_PER_ELEMENT?: number }).BYTES_PER_ELEMENT ?? 1) : 1;
+    const dataOffset = typeof args[WRITE_BUFFER_DATA_OFFSET_ARG] === 'number' ? args[WRITE_BUFFER_DATA_OFFSET_ARG] : 0;
+    const size = args[WRITE_BUFFER_SIZE_ARG];
+    const bytes = typeof size === 'number' ? size * bpe : arrayBytes - dataOffset * bpe;
+    record('writeBuffer', uploadOwnerOf(data), bytes, arrayBytes, ms, bytes === arrayBytes);
+    return result;
+  };
+  const originalWriteTexture = queueProto['writeTexture'] as (...args: unknown[]) => unknown;
+  queueProto['writeTexture'] = function (this: unknown, ...args: unknown[]): unknown {
+    const started = performance.now();
+    const result = originalWriteTexture.apply(this, args);
+    const ms = performance.now() - started;
+    const layout = args[WRITE_TEXTURE_LAYOUT_ARG] as { bytesPerRow?: number; rowsPerImage?: number } | undefined;
+    const size = args[WRITE_TEXTURE_SIZE_ARG] as
+      | { width?: number; height?: number; depthOrArrayLayers?: number }
+      | number[]
+      | undefined;
+    const width = Array.isArray(size) ? (size[0] ?? 0) : (size?.width ?? 0);
+    const height = Array.isArray(size) ? (size[1] ?? 1) : (size?.height ?? 1);
+    const layers = Array.isArray(size) ? (size[2] ?? 1) : (size?.depthOrArrayLayers ?? 1);
+    const bytes = (layout?.bytesPerRow ?? 0) * (layout?.rowsPerImage ?? height) * layers;
+    record('writeTexture', `${String(width)}x${String(height)}x${String(layers)}`, bytes, bytes, ms, true);
+    return result;
+  };
 }
 
 const frameCost = new Map<string, number>();
@@ -1280,17 +1378,17 @@ const ablateScenario: Scenario = async (ctx) => {
   const baselines: FrameBlock[] = [await measure()];
   const gpuOf = (block: FrameBlock): number | null => block.gpuMsP50;
 
-  const rows: Record<string, unknown>[] = [];
-  for (const layer of layers) {
-    const name = rigName(layer);
-    if (!layer.visible) {
-      rows.push({ plugin: name, skipped: 'already hidden' });
-      continue;
-    }
+  // One step: apply the change, measure, undo it, measure again; the saving is read
+  // against the bracket of the two surrounding baselines.
+  const ablate = async (
+    name: string,
+    apply: () => void,
+    undo: () => void,
+  ): Promise<Record<string, unknown>> => {
     const before = baselines[baselines.length - 1]!;
-    layer.visible = false;
+    apply();
     const step = await measure();
-    layer.visible = true;
+    undo();
     const after = await measure();
     baselines.push(after);
     ctx.beat(`ablated-${name}`);
@@ -1300,18 +1398,79 @@ const ablateScenario: Scenario = async (ctx) => {
     const beforeGpu = gpuOf(before);
     const afterGpu = gpuOf(after);
     const stepGpu = gpuOf(step);
-    rows.push({
+    return {
       plugin: name,
       gpuMsSaved:
         beforeGpu === null || afterGpu === null || stepGpu === null
           ? null
           : (beforeGpu + afterGpu) / 2 - stepGpu,
       gpuMsP50: stepGpu,
+      mainPassMsP50: step.gpuPasses[MAIN_PASS_LABEL]?.msP50 ?? null,
       frameMsSaved: bracket((block) => block.msP50) - step.msP50,
       trianglesSaved: bracket((block) => block.triangles) - step.triangles,
       drawCallsSaved: bracket((block) => block.drawCalls) - step.drawCalls,
-    });
+    };
+  };
+
+  const rows: Record<string, unknown>[] = [];
+  for (const layer of layers) {
+    const name = rigName(layer);
+    if (!layer.visible) {
+      rows.push({ plugin: name, skipped: 'already hidden' });
+      continue;
+    }
+    rows.push(
+      await ablate(
+        name,
+        () => { layer.visible = false; },
+        () => { layer.visible = true; },
+      ),
+    );
   }
+
+  // What the plugin layers leave behind (terrain, water, edges, fog, rivers), one step per
+  // material, so the terrain-side residual is itemised the same way.
+  const coreRows: Record<string, unknown>[] = [];
+  for (const [name, objects] of coreDrawGroups(ctx.viewport.scene)) {
+    coreRows.push(
+      await ablate(
+        name,
+        () => { for (const object of objects) object.visible = false; },
+        () => { for (const object of objects) object.visible = true; },
+      ),
+    );
+  }
+
+  // The terrain material is double-sided; the step prices the back faces the rasterizer
+  // would otherwise cull (a pipeline recompile lands in the settle frames).
+  const terrainMaterials = new Set(
+    ctx.world.pickables().map((mesh) => mesh.material as Material),
+  );
+  const sides = new Map<Material, Material['side']>();
+  const singleSided = await ablate(
+    'terrain single-sided',
+    () => {
+      for (const material of terrainMaterials) {
+        sides.set(material, material.side);
+        material.side = FrontSide;
+        material.needsUpdate = true;
+      }
+    },
+    () => {
+      for (const [material, side] of sides) {
+        material.side = side;
+        material.needsUpdate = true;
+      }
+    },
+  );
+
+  const { renderer } = ctx.viewport;
+  const pixelRatio = renderer.getPixelRatio();
+  const halfScale = await ablate(
+    `renderScale ${String(ABLATION_HALF_RENDER_SCALE)}`,
+    () => { renderer.setPixelRatio(pixelRatio * ABLATION_HALF_RENDER_SCALE); },
+    () => { renderer.setPixelRatio(pixelRatio); },
+  );
 
   for (const layer of layers) layer.visible = false;
   const allHidden = await measure();
@@ -1330,6 +1489,7 @@ const ablateScenario: Scenario = async (ctx) => {
   };
 
   rows.sort((a, b) => Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1));
+  coreRows.sort((a, b) => Number(b['gpuMsSaved'] ?? -1) - Number(a['gpuMsSaved'] ?? -1));
   return {
     sample: baselines[0]!,
     detail: {
@@ -1337,6 +1497,9 @@ const ablateScenario: Scenario = async (ctx) => {
       baselineBlocks: baselines.length,
       noise,
       ablation: rows,
+      coreAblation: coreRows,
+      singleSided,
+      halfScale,
       allHidden: {
         gpuMsP50: allHidden.gpuMsP50,
         frameMsP50: allHidden.msP50,
@@ -1594,6 +1757,7 @@ export function installPerfProbe(deps: {
   }
   if (!instrumentationDisabled()) {
     installGlUploadAccounting();
+    installGpuQueueAccounting();
     wrapSinkTiming(world);
   }
 
