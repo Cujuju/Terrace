@@ -1,6 +1,10 @@
 import { CloseCode, ErrorCode, Room, isDevMode, type Client } from '@colyseus/core';
 import {
+  PERF_LOGGING_MESSAGE_TYPE,
+  PERF_LOGGING_STATE_MESSAGE_TYPE,
   STACK_RESTART_MESSAGE_TYPE,
+  validatePerfLoggingRequest,
+  type PerfLoggingStateMessage,
   validateRestorePointsRequest,
   validateRollbackRequest,
   validateStackRestartRequest,
@@ -18,11 +22,12 @@ import {
   type WorldSwitchNoticeMessage,
   type WorldUnloadedMessage,
 } from '@terrace/shared';
-import { logInfo, logWarn } from '../log.ts';
+import { logError, logInfo, logWarn } from '../log.ts';
 import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
 import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { ServerRestartService } from '../restart.ts';
+import type { PerfLoggingSetting } from '../perf-logging-setting.ts';
 import { containWorldAdminMessage, type WorldAdminService } from '../world/world-admin.ts';
 import type { WorldManager } from '../world/world-manager.ts';
 import { buildJoinSnapshot, buildShowAllSnapshot } from './join-snapshot.ts';
@@ -74,6 +79,7 @@ export interface TerraceServerMessages {
   worldSwitchNotice: WorldSwitchNoticeMessage;
   serverRestartNotice: ServerRestartNoticeMessage;
   worldUnloaded: WorldUnloadedMessage;
+  perfLoggingState: PerfLoggingStateMessage;
   [pluginMessage: string]: unknown;
 }
 
@@ -86,6 +92,7 @@ export interface RoomContext {
   readonly manager: WorldManager;
   readonly admin: WorldAdminService;
   readonly restart: ServerRestartService;
+  readonly perfLogging: PerfLoggingSetting;
 }
 
 let processRoomContext: RoomContext | null = null;
@@ -158,6 +165,23 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       if (validateStackRestartRequest(message) === null) return;
       logInfo(`stack restart requested by ${client.sessionId}`);
       this.context.restart.request('stack');
+    });
+
+    this.onMessage(PERF_LOGGING_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+      const request = validatePerfLoggingRequest(message);
+      if (request === null) return;
+      const { perfLogging } = this.context;
+      try {
+        perfLogging.set(request.enabled);
+      } catch (error) {
+        logError('could not store the performance logging setting', error);
+        return;
+      }
+      logInfo(
+        `performance logging ${request.enabled ? 'enabled' : 'disabled'} by ${client.sessionId}` +
+          (perfLogging.enabled === perfLogging.live ? '' : ' (takes effect on restart)'),
+      );
+      this.broadcast(PERF_LOGGING_STATE_MESSAGE_TYPE, this.perfLoggingState());
     });
 
     this.onMessage(ROLLBACK_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
@@ -308,6 +332,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       name: sanitizePlayerName(options?.name, client.sessionId),
     };
     client.userData = { player };
+    client.send(PERF_LOGGING_STATE_MESSAGE_TYPE, this.perfLoggingState());
 
     const session = this.context.manager.current;
     if (session === null) {
@@ -325,6 +350,15 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
 
     session.host.playerJoined(player);
     logInfo(`player "${player.name}" joined (${snapshot.chunks.length} chunks sent)`);
+  }
+
+  private perfLoggingState(): PerfLoggingStateMessage {
+    const { perfLogging } = this.context;
+    return {
+      type: PERF_LOGGING_STATE_MESSAGE_TYPE,
+      enabled: perfLogging.enabled,
+      live: perfLogging.live,
+    };
   }
 
   private notePluginRewriteFailure(detail?: string): void {

@@ -1,7 +1,5 @@
 import { logInfo } from './log.ts';
 
-const TICK_TIMING_ENV_VAR = 'TERRACE_TICK_TIMING';
-const TICK_TIMING_ENABLED_VALUE = '1';
 const SAMPLE_RING_CAPACITY = 1024;
 const TICK_TIMING_REPORT_INTERVAL_MS = 10_000;
 const P99_QUANTILE = 0.99;
@@ -18,8 +16,12 @@ const PLUGIN_PHASE_PREFIX = 'plugin:';
 
 export const TICK_TOTAL_PHASE = 'total';
 
-export const tickTimingEnabled: boolean =
-  process.env[TICK_TIMING_ENV_VAR] === TICK_TIMING_ENABLED_VALUE;
+let tickTimingEnabled = false;
+
+/** Decided once at boot from the perf-logging setting; a change needs a restart. */
+export function setTickTimingEnabled(enabled: boolean): void {
+  tickTimingEnabled = enabled;
+}
 
 interface PhaseStats {
   count: number;
@@ -112,6 +114,7 @@ export interface TickTimingReport {
 
 export interface TickTimingReportDeps {
   readonly tickHz: number;
+  readonly source: string;
   worldSize(): number | null;
 }
 
@@ -163,7 +166,7 @@ export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingRep
   poll.unref();
 
   logInfo(
-    `${REPORT_PREFIX} timing is on (${TICK_TIMING_ENV_VAR}=${TICK_TIMING_ENABLED_VALUE}); ` +
+    `${REPORT_PREFIX} timing is on (${deps.source}); ` +
       `reporting every ${TICK_TIMING_REPORT_INTERVAL_MS / MILLISECONDS_PER_SECOND}s; ` +
       `${STALL_PREFIX} lines fire immediately for blocks ≥ ${formatMs(stallThresholdMs)}`,
   );
