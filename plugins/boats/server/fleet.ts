@@ -42,6 +42,7 @@ import {
   SQUADRON_LEG_MIN_LENGTH_CELLS,
   SQUADRON_WAYPOINT_ATTEMPTS,
   advanceSquadrons,
+  hashCell,
   resetSquadrons,
   squadronCount,
   squadronMembers,
@@ -496,6 +497,22 @@ function surveyedLaunch(
   return shipyard.launch;
 }
 
+/** Deterministic 1-or-0 launch quota per village (average 0.5): the hash is
+ * stable across ticks and reboots, so the same villages always host boats. */
+function villageBoatQuota(homeX: number, homeY: number): number {
+  return hashCell(homeX, homeY) % 2 === 0 ? 1 : 0;
+}
+
+function scuttleSurplus(homeX: number, homeY: number, surplus: number): void {
+  const doomed = boats
+    .filter((boat) => boat.homeX === homeX && boat.homeY === homeY)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, surplus);
+  const gone = new Set(doomed.map((boat) => boat.id));
+  for (const id of gone) dropVoyage(id);
+  boats = boats.filter((boat) => !gone.has(boat.id));
+}
+
 export function advanceShipyards(world: BoatWorld, dt: number): void {
   tallyFleetHomes();
 
@@ -503,8 +520,16 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
     const shipyard = shipyards.get(key);
     if (shipyard === undefined) continue;
 
+    const quota = villageBoatQuota(village.x, village.y);
+    if (shipyard.afloat > quota) {
+      scuttleSurplus(village.x, village.y, shipyard.afloat - quota);
+      shipyard.afloat = quota;
+      village.rebuildSeconds = 0;
+      continue;
+    }
+
     const launch = surveyedLaunch(world, village, shipyard, dt);
-    if (shipyard.afloat >= BOATS_PER_VILLAGE) {
+    if (shipyard.afloat >= quota) {
       village.rebuildSeconds = 0;
       continue;
     }
