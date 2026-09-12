@@ -33,6 +33,11 @@ export interface FrameStatsSample {
 }
 
 type FrameStatsSink = (sample: FrameStatsSample) => void;
+type HitchSink = (intervalMs: number, typicalMs: number) => void;
+
+// A gap this many times the smoothed interval is a hitch; smoothing tracks caps and refresh rate.
+const HITCH_INTERVAL_FACTOR = 2;
+const HITCH_BASELINE_SMOOTHING = 0.05;
 
 const EMPTY_COUNTERS: FrameCounters = {
   pixelWidth: 0,
@@ -58,6 +63,8 @@ let firstFrameMs = 0;
 let prevStartMs = 0;
 let latestSample: FrameStatsSample | null = null;
 let sink: FrameStatsSink | null = null;
+let hitchSink: HitchSink | null = null;
+let typicalIntervalMs = 0;
 let readCounters: (() => FrameCounters) | null = null;
 let drainGpu: (() => number[]) | null = null;
 let gpuMs: number[] = [];
@@ -74,6 +81,23 @@ export function setGpuSampleSource(drain: () => number[]): void {
 
 export function setFrameStatsSink(next: FrameStatsSink | null): void {
   sink = next;
+}
+
+export function setHitchSink(next: HitchSink | null): void {
+  hitchSink = next;
+}
+
+function noteInterval(intervalMs: number): void {
+  if (hitchSink === null || intervalMs <= 0) return;
+  if (typicalIntervalMs === 0) {
+    typicalIntervalMs = intervalMs;
+    return;
+  }
+  if (intervalMs >= typicalIntervalMs * HITCH_INTERVAL_FACTOR) {
+    hitchSink(intervalMs, typicalIntervalMs);
+    return;
+  }
+  typicalIntervalMs += (intervalMs - typicalIntervalMs) * HITCH_BASELINE_SMOOTHING;
 }
 
 export function frameStatsSample(): FrameStatsSample | null {
@@ -152,6 +176,7 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
   frameMs[slot] = endMs - startMs;
   renderMs[slot] = endMs - renderStartMs;
   intervalMs[slot] = startMs === prevStartMs ? 0 : startMs - prevStartMs;
+  noteInterval(intervalMs[slot]);
   prevStartMs = startMs;
   writeCursor++;
   windowFrames++;
@@ -177,6 +202,7 @@ export function resetFrameStats(): void {
   firstFrameMs = 0;
   prevStartMs = 0;
   latestSample = null;
+  typicalIntervalMs = 0;
   pluginMs.clear();
   gpuMs = [];
 }

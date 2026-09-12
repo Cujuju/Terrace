@@ -472,6 +472,32 @@ export function validateStackRestartRequest(msg: unknown): StackRestartRequestMe
   return { type: STACK_RESTART_MESSAGE_TYPE };
 }
 
+/** Operator switch for the server's timestamped stall log and the client's hitch log. */
+export interface PerfLoggingRequestMessage {
+  type: 'perfLogging';
+  enabled: boolean;
+}
+
+export const PERF_LOGGING_MESSAGE_TYPE: PerfLoggingRequestMessage['type'] = 'perfLogging';
+
+export function validatePerfLoggingRequest(msg: unknown): PerfLoggingRequestMessage | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (m.type !== PERF_LOGGING_MESSAGE_TYPE) return null;
+  if (typeof m.enabled !== 'boolean') return null;
+  return { type: PERF_LOGGING_MESSAGE_TYPE, enabled: m.enabled };
+}
+
+/** `enabled` is what is stored; `live` is what this server process runs with. */
+export interface PerfLoggingStateMessage {
+  type: 'perfLoggingState';
+  enabled: boolean;
+  live: boolean;
+}
+
+export const PERF_LOGGING_STATE_MESSAGE_TYPE: PerfLoggingStateMessage['type'] =
+  'perfLoggingState';
+
 export interface WorldSwitchCancelRequestMessage {
   type: 'worldSwitchCancel';
   key: string;

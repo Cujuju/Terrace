@@ -7,6 +7,7 @@ import type {
   SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
+  PerfLoggingStateMessage,
   ServerRestartNoticeMessage,
   TerrainDiffMessage,
   WorldAdminRequestMessage,
@@ -29,6 +30,8 @@ import {
   MSG_SCULPT_APPLIED,
   MSG_SCULPT_DENIED,
   MSG_SERVER_RESTART_NOTICE,
+  MSG_PERF_LOGGING,
+  MSG_PERF_LOGGING_STATE,
   MSG_STACK_RESTART,
   MSG_SNAPSHOT,
   MSG_TERRAIN_DIFF,
@@ -78,6 +81,7 @@ export interface ConnectionOptions {
   onStatus: (status: ConnectionStatus) => void;
   onPluginMessage?: (type: string, payload: unknown) => void;
   onLivePlugins?: (names: readonly string[] | undefined) => void;
+  onPerfLoggingState?: (msg: PerfLoggingStateMessage) => void;
   serverUrl?: string;
   roomName?: string;
 }
@@ -89,6 +93,7 @@ export interface Connection {
   requestRollback(key: string, toId: number): void;
   sendWorldAdmin(message: WorldAdminRequestMessage): void;
   sendStackRestart(): void;
+  sendPerfLogging(enabled: boolean): void;
   dispose(): void;
 }
 
@@ -170,6 +175,9 @@ export function connect(options: ConnectionOptions): Connection {
     joined.onMessage<ServerRestartNoticeMessage>(MSG_SERVER_RESTART_NOTICE, (msg) => {
       options.worldAdmin?.onServerRestartNotice(msg);
     });
+    joined.onMessage<PerfLoggingStateMessage>(MSG_PERF_LOGGING_STATE, (msg) => {
+      options.onPerfLoggingState?.(msg);
+    });
 
     joined.onMessage('*', (type: string | number, payload: unknown) => {
       if (typeof type === 'string' && type.includes(':')) {
@@ -241,6 +249,9 @@ export function connect(options: ConnectionOptions): Connection {
     },
     sendStackRestart(): void {
       live()?.send(MSG_STACK_RESTART, { type: MSG_STACK_RESTART });
+    },
+    sendPerfLogging(enabled: boolean): void {
+      live()?.send(MSG_PERF_LOGGING, { type: MSG_PERF_LOGGING, enabled });
     },
     sendPlugin(type: string, payload: unknown): void {
       live()?.send(type, payload);

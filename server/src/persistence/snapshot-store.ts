@@ -24,6 +24,7 @@ import {
   type SnapshotSettledCallback,
   type SnapshotWriterThread,
 } from './snapshot-writer.ts';
+import { timePhase } from '../tick-timing.ts';
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -366,11 +367,8 @@ export class SnapshotStore {
 
   saveSnapshot(input: SnapshotInput): number {
     this.settle();
-    return writeSnapshot(
-      this.db,
-      this.writeStatements,
-      this.retention,
-      snapshotWritePayloadOf(input),
+    return timePhase('store.write', () =>
+      writeSnapshot(this.db, this.writeStatements, this.retention, snapshotWritePayloadOf(input)),
     );
   }
 
@@ -622,7 +620,9 @@ export class SnapshotStore {
   }
 
   private settle(): void {
-    this.deferredWriter?.settle();
+    if (this.deferredWriter === null) return;
+    const writer = this.deferredWriter;
+    timePhase('store.settle', () => writer.settle());
   }
 
   private writer(): SnapshotWriterThread | null {
