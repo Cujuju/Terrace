@@ -169,13 +169,24 @@ function reconstructPath(
   return cells;
 }
 
-export function findRoute(
+export type RouteSearchStatus = 'found' | 'exhausted' | 'unreachable';
+
+export interface RouteSearchOutcome {
+  readonly status: RouteSearchStatus;
+  readonly plan: RoutePlan | null;
+}
+
+/** Same search as {@link findRoute}, but the miss is labelled: `exhausted` spent
+ * (or never had) node budget and may succeed later; `unreachable` searched its
+ * bounds dry and will answer identically until the terrain changes. Starved
+ * calls (empty pool on entry) report `exhausted`, never `unreachable`. */
+export function findRouteWithStatus(
   world: TerrainSampler,
   profile: TraversalProfile,
   start: RouteCell,
   goal: RouteCell,
   budget: number | RouteBudget = ROUTE_NODE_BUDGET,
-): RoutePlan | null {
+): RouteSearchOutcome {
   const pool: RouteBudget | null = typeof budget === 'number' ? null : budget;
   const nodeBudget: number = typeof budget === 'number' ? budget : budget.remaining;
   const startX = Math.floor(start.x);
@@ -183,10 +194,12 @@ export function findRoute(
   const goalX = Math.floor(goal.x);
   const goalY = Math.floor(goal.y);
 
-  if (!isWalkableCell(world, profile, startX, startY)) return null;
-  if (!isWalkableCell(world, profile, goalX, goalY)) return null;
+  if (!isWalkableCell(world, profile, startX, startY))
+    return { status: 'unreachable', plan: null };
+  if (!isWalkableCell(world, profile, goalX, goalY))
+    return { status: 'unreachable', plan: null };
   if (startX === goalX && startY === goalY) {
-    return { cells: [{ x: startX, y: startY }], cost: 0 };
+    return { status: 'found', plan: { cells: [{ x: startX, y: startY }], cost: 0 } };
   }
 
   const minX = Math.min(startX, goalX) - ROUTE_SEARCH_MARGIN_CELLS;
@@ -210,7 +223,7 @@ export function findRoute(
   let expansions = 0;
   try {
     while (open.size > 0) {
-      if (expansions >= nodeBudget) return null;
+      if (expansions >= nodeBudget) return { status: 'exhausted', plan: null };
       const current = open.pop();
       if (current === undefined) break;
       expansions++;
@@ -219,7 +232,10 @@ export function findRoute(
       if (bestKnown === undefined || current.g > bestKnown) continue;
 
       if (current.key === goalKey) {
-        return { cells: reconstructPath(cameFrom, startKey, goalKey, worldSize), cost: current.g };
+        return {
+          status: 'found',
+          plan: { cells: reconstructPath(cameFrom, startKey, goalKey, worldSize), cost: current.g },
+        };
       }
 
       for (const [dx, dy, baseCost] of NEIGHBOR_OFFSETS) {
@@ -248,10 +264,20 @@ export function findRoute(
       }
     }
 
-    return null;
+    return { status: 'unreachable', plan: null };
   } finally {
     if (pool !== null) pool.remaining -= expansions;
   }
+}
+
+export function findRoute(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  start: RouteCell,
+  goal: RouteCell,
+  budget: number | RouteBudget = ROUTE_NODE_BUDGET,
+): RoutePlan | null {
+  return findRouteWithStatus(world, profile, start, goal, budget).plan;
 }
 
 export interface RouteBounds {
@@ -388,4 +414,111 @@ export function floodReachableRegion(
       return reached[cy * width + cx] === 1;
     },
   };
+}
+
+export interface SeaRegions {
+  readonly labels: Int32Array;
+  readonly regionCount: number;
+}
+
+export function regionAt(
+  regions: SeaRegions,
+  worldSize: number,
+  x: number,
+  y: number,
+): number {
+  const cx = Math.floor(x);
+  const cy = Math.floor(y);
+  if (cx < 0 || cy < 0 || cx >= worldSize || cy >= worldSize) return 0;
+  return regions.labels[cy * worldSize + cx];
+}
+
+/** Labels every walkable cell with its connected-region id (0 = not walkable).
+ * Same movement rules as {@link floodReachableRegion} (orthogonal steps plus
+ * flank-checked diagonals, gradient enforced only when the profile demands
+ * it), so `regionAt(a) !== regionAt(b)` with both non-zero means A* would
+ * search dry: a sound prune. Fixed scan order and fixed neighbour order make
+ * the labels deterministic: identical inputs give identical outputs. */
+export function labelSeaRegions(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+): SeaRegions {
+  const worldSize = world.worldSize;
+  const labels = new Int32Array(worldSize * worldSize);
+  let regionCount = 0;
+
+  const UNCLASSIFIED = 0;
+  const BLOCKED = 1;
+  const OCCUPIABLE = 2;
+  const ground = new Uint8Array(worldSize * worldSize);
+  const heights = new Float64Array(worldSize * worldSize);
+  const limit = profile.maxGradientPerCell;
+  const climbs = profile.climb !== undefined && profile.climb !== null;
+  const checksGradient = Number.isFinite(limit) && !climbs;
+  const queue = new Int32Array(worldSize * worldSize);
+  const orthogonalLegal = [false, false, false, false];
+
+  const classify = (index: number, cx: number, cy: number): number => {
+    const known = ground[index];
+    if (known !== UNCLASSIFIED) return known;
+    if (!isWalkableCell(world, profile, cx, cy)) {
+      ground[index] = BLOCKED;
+      return BLOCKED;
+    }
+    if (checksGradient) heights[index] = world.heightAt(cx, cy);
+    ground[index] = OCCUPIABLE;
+    return OCCUPIABLE;
+  };
+
+  for (let y = 0; y < worldSize; y++) {
+    for (let x = 0; x < worldSize; x++) {
+      const startIndex = y * worldSize + x;
+      if (labels[startIndex] !== 0) continue;
+      if (classify(startIndex, x, y) !== OCCUPIABLE) continue;
+      regionCount++;
+      labels[startIndex] = regionCount;
+      queue[0] = startIndex;
+      let head = 0;
+      let tail = 1;
+      while (head < tail) {
+        const index = queue[head++];
+        const row = (index / worldSize) | 0;
+        const cx = index - row * worldSize;
+        const cy = row;
+        const fromHeight = heights[index];
+        for (let i = 0; i < FLOOD_ORTHOGONAL_OFFSETS.length; i++) {
+          const offset = FLOOD_ORTHOGONAL_OFFSETS[i];
+          const nx = cx + offset[0];
+          const ny = cy + offset[1];
+          if (nx < 0 || nx >= worldSize || ny < 0 || ny >= worldSize) {
+            orthogonalLegal[i] = false;
+            continue;
+          }
+          const neighborIndex = ny * worldSize + nx;
+          const legal =
+            labels[neighborIndex] === 0 &&
+            classify(neighborIndex, nx, ny) === OCCUPIABLE &&
+            (!checksGradient || Math.abs(heights[neighborIndex] - fromHeight) <= limit);
+          orthogonalLegal[i] = legal;
+          if (!legal) continue;
+          labels[neighborIndex] = regionCount;
+          queue[tail++] = neighborIndex;
+        }
+        for (let i = 0; i < FLOOD_DIAGONAL_OFFSETS.length; i++) {
+          const offset = FLOOD_DIAGONAL_OFFSETS[i];
+          if (!orthogonalLegal[offset[2]] || !orthogonalLegal[offset[3]]) continue;
+          const nx = cx + offset[0];
+          const ny = cy + offset[1];
+          if (nx < 0 || nx >= worldSize || ny < 0 || ny >= worldSize) continue;
+          const neighborIndex = ny * worldSize + nx;
+          if (labels[neighborIndex] !== 0) continue;
+          if (classify(neighborIndex, nx, ny) !== OCCUPIABLE) continue;
+          if (checksGradient && Math.abs(heights[neighborIndex] - fromHeight) > limit) continue;
+          labels[neighborIndex] = regionCount;
+          queue[tail++] = neighborIndex;
+        }
+      }
+    }
+  }
+  return { labels, regionCount };
 }
