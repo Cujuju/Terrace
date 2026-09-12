@@ -4,6 +4,7 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import {
   CHUNK_TRIANGLE_BUDGET,
   VERTICES_PER_TRIANGLE,
+  SHORE_THRESHOLD,
   drawnBandCapY,
   type ChunkDrawnCaps,
   type DrawnCapLevel,
@@ -17,7 +18,7 @@ import type { TerrainMirror } from '../../terrain/mirror.ts';
 import type { ChunkAnswer, ChunkBuildSource } from '../chunkBuildSource.ts';
 import { TIMESTAMP_QUERY_FEATURE } from '../gpuTimer.ts';
 import { rendererBackendName } from '../rendererBackend.ts';
-import { SHORE_THRESHOLD, buildBandLut, LUT_COMPONENTS, LUT_VEC4_COUNT } from './bandLut.ts';
+import { buildBandLut, LUT_COMPONENTS, LUT_VEC4_COUNT } from './bandLut.ts';
 import {
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
   type ChunkGpuAnswer,

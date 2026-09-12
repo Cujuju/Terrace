@@ -17,8 +17,9 @@ import { BAND_WORLD_HEIGHT } from '../../config.ts';
 import {
   SEABED_CAP_SINK,
   SEABED_RISER_BORDER_WORLD_HEIGHT,
+  SHORE_THRESHOLD,
 } from '../../terrain/capEmission.ts';
-import { LATTICE_PER_CHUNK, SHORE_EDGE_CROSSING } from '../../terrain/contours.ts';
+import { LATTICE_PER_CHUNK } from '../../terrain/contours.ts';
 import {
   BAND_LUT_OFFSET,
   LUT_BORDER_BASE,
@@ -29,7 +30,6 @@ import {
   LUT_SHORE_CAP,
   LUT_SHORE_CLIFF,
   LUT_VEC4_COUNT,
-  SHORE_THRESHOLD,
 } from './bandLut.ts';
 import {
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
@@ -165,7 +165,6 @@ const BAND_WORLD_HEIGHT : f32 = ${wgslF32(BAND_WORLD_HEIGHT)};
 const SEABED_CAP_SINK : f32 = ${wgslF32(SEABED_CAP_SINK)};
 const SEABED_RIM_HEIGHT : f32 = ${wgslF32(SEABED_RISER_BORDER_WORLD_HEIGHT)};
 const SHORE_THRESHOLD : i32 = ${wgslI32(SHORE_THRESHOLD)};
-const SHORE_EDGE_CROSSING : f32 = ${wgslF32(SHORE_EDGE_CROSSING)};
 const SHORE_LEVEL : i32 = ${wgslI32(SHORE_LEVEL)};
 const CEILING_EDGE_CROSSING : f32 = ${wgslF32(CEILING_EDGE_CROSSING)};
 const CEILING_INSIDE : i32 = ${wgslI32(CEILING_INSIDE)};
@@ -645,7 +644,15 @@ fn appendLips(n : u32, band : i32) {
 
 // Crossings run along the canonical edge direction (north to south, west to
 // east), so two squares sharing an edge produce the same f32 point.
-fn computeCrossings(mask : i32, useFixed : bool, fixedCrossing : f32, threshold : i32) {
+fn computeCrossings(mask : i32, threshold : i32) {
+  crossingsOf(mask, false, 0.0, threshold);
+}
+
+fn computeFixedCrossings(mask : i32, fixedCrossing : f32) {
+  crossingsOf(mask, true, fixedCrossing, 0);
+}
+
+fn crossingsOf(mask : i32, useFixed : bool, fixedCrossing : f32, threshold : i32) {
   var lowOf = array<i32, 4>(0, 1, 3, 0);
   var highOf = array<i32, 4>(1, 2, 2, 3);
   for (var side = 0; side < 4; side++) {
@@ -677,16 +684,15 @@ fn saddleCase(mask : i32, bias : i32, threshold : i32) -> i32 {
 fn emitLevel(level : i32, localRef : array<i32, 4>, at : u32) -> u32 {
   let isShore = level == SHORE_LEVEL;
   let threshold = select(level * BAND_HEIGHT, SHORE_THRESHOLD, isShore);
-  let bias = select(BAND_BIAS, 0, isShore);
   let sampleBand = select(level, 0, isShore);
   var mask = 0;
   for (var c = 0; c < 4; c++) {
     cornerHeight[c] = levelHeight(localRef[c], sampleBand);
-    if (cornerHeight[c] + bias >= threshold) { mask |= 1 << u32(c); }
+    if (cornerHeight[c] + BAND_BIAS >= threshold) { mask |= 1 << u32(c); }
   }
   if (mask == 0) { return 0u; }
-  computeCrossings(mask, isShore, SHORE_EDGE_CROSSING, threshold);
-  let polyCase = saddleCase(mask, bias, threshold);
+  computeCrossings(mask, threshold);
+  let polyCase = saddleCase(mask, BAND_BIAS, threshold);
   let withRiser = level != chunkLowestBand;
   let capY = levelCapY(level);
   let belowY = select(capYOfBand(level - 1), capYOfBand(0), isShore);
@@ -694,10 +700,10 @@ fn emitLevel(level : i32, localRef : array<i32, 4>, at : u32) -> u32 {
   var cursor = at;
   for (var p = 0; p < MAX_POLYS; p++) {
     if (marchTable[polyCase * MAX_POLYS + p] == 0) { continue; }
-    let n = buildPolyline(polyCase, p, threshold, !isShore);
+    let n = buildPolyline(polyCase, p, threshold, true);
     cursor += emitPolygon(cursor, n, capY, capSlot, true);
     if (withRiser) { cursor += emitRisers(cursor, n, level, belowY); }
-    if (!isShore) { appendLips(n, sampleBand); }
+    appendLips(n, sampleBand);
   }
   return cursor - at;
 }
@@ -712,7 +718,7 @@ fn emitCeilingLevel(band : i32, localRef : array<i32, 4>, at : u32) -> u32 {
     if (cornerHeight[c] >= CEILING_INSIDE) { mask |= 1 << u32(c); }
   }
   if (mask == 0) { return 0u; }
-  computeCrossings(mask, true, CEILING_EDGE_CROSSING, CEILING_INSIDE);
+  computeFixedCrossings(mask, CEILING_EDGE_CROSSING);
   let polyCase = saddleCase(mask, 0, CEILING_INSIDE);
   let isLowest = band == chunkLowestBand;
   let undersideY = select(capYOfBand(band - 1), capYOfBand(band), isLowest);
