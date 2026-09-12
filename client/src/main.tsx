@@ -142,7 +142,13 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
 });
 bindCameraControls(canvas, viewport.controls);
 
-const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
+// `?plugins=off` boots a core-only client (terrain, water, sky) for engine debugging.
+const PLUGINS_QUERY_FLAG = 'plugins';
+const PLUGINS_QUERY_OFF = 'off';
+const clientPluginsRequested =
+  new URLSearchParams(window.location.search).get(PLUGINS_QUERY_FLAG) !== PLUGINS_QUERY_OFF;
+
+const pluginHost = createClientPluginHost(clientPluginsRequested ? CLIENT_PLUGINS : [], {
   viewport,
   world,
   connection: () => connection,
