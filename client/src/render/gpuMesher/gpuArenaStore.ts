@@ -16,6 +16,7 @@ import {
   createTerrainMaterial,
   type TerrainVertexLayout,
 } from '../terrainMaterial.ts';
+import { rendererBackendName } from '../rendererBackend.ts';
 import { SUPER_MESH_SPAN_WORLD_UNITS } from '../terrainMeshes.ts';
 import { buildBandLutSlotByColor, packColorKey } from './bandLut.ts';
 import {
@@ -92,7 +93,6 @@ interface BackendAttributeData {
 // three r185 keeps an interleaved buffer's GPU buffer here; createAttribute allocates only
 // when that slot is empty (WebGPUAttributeUtils.js:76-78), so filling it hands three ours.
 interface WebGpuBackendInternals {
-  readonly isWebGPUBackend?: boolean;
   readonly device?: GPUDevice;
   get(object: object): BackendAttributeData;
 }
@@ -138,10 +138,10 @@ export function createGpuArenaStore(
   renderer: Renderer,
   options?: GpuArenaStoreOptions,
 ): ArenaStore {
-  const backend = renderer.backend as unknown as WebGpuBackendInternals;
-  if (backend.isWebGPUBackend !== true) {
+  if (rendererBackendName(renderer) !== 'webgpu') {
     throw new GpuArenaUnavailableError('the renderer is not running the WebGPU backend');
   }
+  const backend = renderer.backend as unknown as WebGpuBackendInternals;
   const device = backend.device;
   if (device === undefined) {
     throw new GpuArenaUnavailableError('the WebGPU backend has no device yet');

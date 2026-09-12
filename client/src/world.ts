@@ -77,6 +77,7 @@ import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
 import { createWorkerRiverNetworkSource } from './render/water/riverNetworkSource.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
+import { rendererBackendName } from './render/rendererBackend.ts';
 import { createWater, WATER_DRAW_OBJECTS, type Water } from './render/water.ts';
 import {
   createRevealMask,
@@ -156,14 +157,6 @@ interface TerrainMesherRig {
   readonly source: ChunkBuildSource;
   readonly gpuStats: () => GpuMesherStats | null;
   dispose(): void;
-}
-
-interface RendererBackendFlags {
-  readonly isWebGPUBackend?: boolean;
-}
-
-function isWebGpuBackend(renderer: Viewport['renderer']): boolean {
-  return (renderer.backend as unknown as RendererBackendFlags).isWebGPUBackend === true;
 }
 
 export interface WorldOptions {
@@ -292,7 +285,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   /** The rig, or the reason the GPU path was refused. */
   const createGpuRig = (): TerrainMesherRig | string => {
     if (gpuMesher === null) return 'the session has no GPU terrain mesher';
-    if (!isWebGpuBackend(viewport.renderer)) {
+    if (rendererBackendName(viewport.renderer) !== 'webgpu') {
       return 'the renderer is not running the WebGPU backend';
     }
     let store: ArenaStore;

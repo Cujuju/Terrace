@@ -1370,6 +1370,11 @@ button.world-header {
   color: rgb(255 138 128 / 90%);
 }
 
+/* The render path (backend · mesher), the same quiet colour as the fps line. */
+.hud-version__path {
+  color: rgb(255 255 255 / 55%);
+}
+
 /* The frame meter's rows (render/frameStats.ts; the pulse button or backquote
    toggles them). ONE READING PER ROW, LABELS AND VALUES BOTH LEFT-ALIGNED
    (owner, 2026-09-06). Two fixed grid columns, so every label starts at the
