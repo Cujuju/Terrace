@@ -94,6 +94,7 @@ function makeConfig(worldsDir: string): ServerConfig {
     worldsDir,
     worldAdminKey: 'admin-key-long-enough',
     worldSwitchCountdownS: 0,
+    pluginsEnabled: null,
   };
 }
 

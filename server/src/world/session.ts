@@ -1,4 +1,4 @@
-import { logError, logInfo } from '../log.ts';
+import { logError, logInfo, logWarn } from '../log.ts';
 import type { ServerConfig } from '../config.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildThumbnail } from '../persistence/thumbnail.ts';
@@ -63,11 +63,17 @@ export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions
 function enabledPluginNames(
   store: SnapshotStore,
   plugins: readonly LoadedPlugin[],
+  pluginsEnabled: ReadonlySet<string> | null,
 ): ReadonlySet<string> {
+  const installed = plugins.map((loaded) => loaded.plugin.name);
+  if (pluginsEnabled !== null) {
+    for (const name of pluginsEnabled) {
+      if (!installed.includes(name)) logWarn(`PLUGINS_ENABLED names "${name}", which is not installed`);
+    }
+    return new Set(installed.filter((name) => pluginsEnabled.has(name)));
+  }
   const disabled = new Set(store.disabledPlugins());
-  return new Set(
-    plugins.map((loaded) => loaded.plugin.name).filter((name) => !disabled.has(name)),
-  );
+  return new Set(installed.filter((name) => !disabled.has(name)));
 }
 
 function pluginSettingsByPlugin(store: SnapshotStore): Record<string, Record<string, string>> {
@@ -120,7 +126,7 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
   const host = new PluginHost(
     world,
     plugins,
-    enabledPluginNames(store, plugins),
+    enabledPluginNames(store, plugins, config.pluginsEnabled),
     pluginSettingsByPlugin(store),
   );
   host.restorePersistence(pluginSlices);

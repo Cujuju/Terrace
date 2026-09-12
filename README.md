@@ -97,6 +97,7 @@ world hours later.
 | `SNAPSHOT_INTERVAL_S` | `60` | How often a changed world is written, 1–3600. An idle world writes nothing. |
 | `SNAPSHOT_RETENTION` | `10` | Restore points kept per world, 1–100. With the default cadence that's ten minutes of undo. Pinned points don't count. |
 | `PLUGINS_DIR` | `<repo>/plugins` | Scanned at boot. `/app/plugins` in the image; leave it unless you mount plugins from elsewhere. |
+| `PLUGINS_ENABLED` | *(unset)* | Overrides every world's plugin enablement for this run: a comma-separated allow-list of plugin names, or `none` for a core-only world (terrain, water, sky). Unset, each world's own settings apply. Plugins stay installed either way, so their saved slices are kept. |
 | `PUBLIC_WS_URL` | `ws://localhost:2567` | *Compose only.* Baked into the client bundle, so changing it needs `--build`. |
 | `CLIENT_PORT` | `8080` | *Compose only.* Host port serving the client page. |
 | `TERRACE_VERSION` | *(unset)* | *Compose only.* Build stamp, e.g. `TERRACE_VERSION=$(git rev-parse --short HEAD) docker compose up --build`. Open pages compare it across a restart to decide whether to reload. Unset, every restart looks new and pages reload once. |
