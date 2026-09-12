@@ -41,6 +41,7 @@ import {
   SUN_DIRECTION_NOON,
   SUN_DISTANCE_WORLD_UNITS,
   SUN_LIGHT_INTENSITY,
+  rendererBackendName,
   type Viewport,
 } from './render/scene.ts';
 import type { World } from './world.ts';
@@ -2061,11 +2062,6 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = {
   bandParity: bandParityScenario,
   terrainStill: terrainStillScenario,
 };
-
-function rendererBackendName(renderer: Renderer): 'webgpu' | 'webgl2' {
-  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
-  return backend.isWebGPUBackend === true ? 'webgpu' : 'webgl2';
-}
 
 function requestedScenario(): string | null {
   const raw = new URLSearchParams(location.search).get(PROBE_QUERY_FLAG);

@@ -10,6 +10,7 @@ import {
   Scene,
   SRGBColorSpace,
   WebGPURenderer,
+  type Renderer,
 } from 'three/webgpu';
 import { GatedPointLightNode } from './gatedPointLightNode.ts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -65,6 +66,14 @@ export interface SkyLightingRig {
 }
 
 export type FramePhase = 'pose' | 'draw';
+
+export type RendererBackendName = 'webgpu' | 'webgl2';
+
+/** WebGPURenderer falls back to WebGL2 silently; the backend flag is the only witness. */
+export function rendererBackendName(renderer: Renderer): RendererBackendName {
+  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
+  return backend.isWebGPUBackend === true ? 'webgpu' : 'webgl2';
+}
 
 export interface Viewport {
   readonly scene: Scene;
