@@ -3,9 +3,11 @@ import {
   frameDraw,
   frameRate,
   frameStats,
+  hoverPick,
   perfOpen,
   renderPath,
   serverVersion,
+  type HoverPickSample,
 } from '../state/hudState.ts';
 import { pluginDrawRows } from '../plugins/hudPanels.ts';
 
@@ -28,6 +30,12 @@ function PerfMsRow(props: { label: string; ms: number }): JSX.Element {
       value={`${props.ms.toFixed(2)} ms${fps() === '' ? '' : ` (${fps()})`}`}
     />
   );
+}
+
+function pickText(pick: HoverPickSample | null): string {
+  if (pick === null) return 'none';
+  const face = pick.hitRiser ? `riser${pick.band === null ? '' : ` b${String(pick.band)}`}` : 'tread';
+  return `${String(pick.x)}, ${String(pick.y)} ${face}`;
 }
 
 function PerfRow(props: { label: string; value: string }): JSX.Element {
@@ -79,6 +87,7 @@ export function VersionWatermark(): JSX.Element {
         {(stat) => (
 
           <div class="hud-version__perf-panel">
+            <PerfRow label="pick" value={pickText(hoverPick())} />
             {
 
 }

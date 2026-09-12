@@ -126,6 +126,27 @@ export function setFrameStats(sample: FrameStatsSample | null): void {
 
 const [perfOpen, setPerfOpenSignal] = createSignal(false);
 
+/** The terrain cell under the pointer, for the performance panel's top row. */
+export interface HoverPickSample {
+  readonly x: number;
+  readonly y: number;
+  readonly hitRiser: boolean;
+  readonly band: number | null;
+}
+
+const [hoverPick, setHoverPickSignal] = createSignal<HoverPickSample | null>(null);
+
+const sameHoverPick = (a: HoverPickSample | null, b: HoverPickSample | null): boolean =>
+  a === b
+  || (a !== null && b !== null && a.x === b.x && a.y === b.y
+    && a.hitRiser === b.hitRiser && a.band === b.band);
+
+/** Called every frame; only a changed pick notifies the HUD. */
+export function setHoverPick(sample: HoverPickSample | null): void {
+  if (sameHoverPick(hoverPick(), sample)) return;
+  setHoverPickSignal(sample);
+}
+
 export function setPerfOpen(open: boolean): void {
   setPerfOpenSignal(open);
 }
@@ -306,6 +327,7 @@ export {
   renderPath,
   frameStats,
   perfOpen,
+  hoverPick,
   brushRadius,
   brushTool,
   brushProfile,

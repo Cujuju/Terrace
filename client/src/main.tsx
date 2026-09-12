@@ -29,6 +29,7 @@ import {
   sculptDirection,
   sculptMode,
   setConnectionStatus,
+  setHoverPick,
 } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
 import {
@@ -220,6 +221,9 @@ viewport.onFrame(() => {
     },
   );
   pickDebug?.update(pick, grabbedBand);
+  setHoverPick(
+    pick === null ? null : { x: pick.x, y: pick.y, hitRiser: pick.hitRiser, band: grabbedBand },
+  );
 });
 
 startFrameRateMeter(viewport.onFrame);
