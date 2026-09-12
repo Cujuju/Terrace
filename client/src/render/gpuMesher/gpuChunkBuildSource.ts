@@ -16,6 +16,7 @@ import {
 import type { TerrainMirror } from '../../terrain/mirror.ts';
 import type { ChunkAnswer, ChunkBuildSource } from '../chunkBuildSource.ts';
 import { TIMESTAMP_QUERY_FEATURE } from '../gpuTimer.ts';
+import { rendererBackendName } from '../rendererBackend.ts';
 import { SHORE_THRESHOLD, buildBandLut, LUT_COMPONENTS, LUT_VEC4_COUNT } from './bandLut.ts';
 import {
   POSITION_XZ_UNITS_PER_WORLD_UNIT,
@@ -146,7 +147,6 @@ export interface GpuChunkBuildSource extends ChunkBuildSource {
 }
 
 interface WebGpuBackendInternals {
-  readonly isWebGPUBackend?: boolean;
   readonly device?: GPUDevice;
 }
 
@@ -278,10 +278,10 @@ export async function createGpuChunkBuildSource(
   renderer: Renderer,
   fallback: ChunkBuildSource,
 ): Promise<GpuChunkBuildSource | null> {
-  const backend = renderer.backend as unknown as WebGpuBackendInternals;
-  if (backend.isWebGPUBackend !== true) {
+  if (rendererBackendName(renderer) !== 'webgpu') {
     return demote('the renderer is not running the WebGPU backend');
   }
+  const backend = renderer.backend as unknown as WebGpuBackendInternals;
   const device = backend.device;
   if (device === undefined) return demote('the WebGPU backend has no device yet');
 

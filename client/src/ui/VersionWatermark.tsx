@@ -1,5 +1,12 @@
 import { For, Show, type JSX } from 'solid-js';
-import { frameDraw, frameRate, frameStats, perfOpen, serverVersion } from '../state/hudState.ts';
+import {
+  frameDraw,
+  frameRate,
+  frameStats,
+  perfOpen,
+  renderPath,
+  serverVersion,
+} from '../state/hudState.ts';
 import { pluginDrawRows } from '../plugins/hudPanels.ts';
 
 const CLIENT_VERSION: string =
@@ -55,6 +62,13 @@ export function VersionWatermark(): JSX.Element {
             }}
           >
             {draw().objects}/{draw().budget} objects · {draw().calls} calls
+          </span>
+        )}
+      </Show>
+      <Show when={renderPath()}>
+        {(path) => (
+          <span class="hud-version__path">
+            {path().backend} · {path().mesher} mesher
           </span>
         )}
       </Show>
