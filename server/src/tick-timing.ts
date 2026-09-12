@@ -10,6 +10,9 @@ const PERCENT_DECIMALS = 1;
 const PERCENT_SCALE = 100;
 const MILLISECONDS_PER_SECOND = 1000;
 const REPORT_PREFIX = '[tick]';
+const STALL_PREFIX = '[stall]';
+// Poll finer than any allowed tick interval so a stall's length is resolved, not quantised.
+const EVENT_LOOP_POLL_MS = 5;
 const PHASE_COLUMN_WIDTH = 24;
 const PLUGIN_PHASE_PREFIX = 'plugin:';
 
@@ -29,6 +32,9 @@ interface PhaseStats {
 
 const phases = new Map<string, PhaseStats>();
 
+// A block at least one tick long is a lost tick; before the tick loop exists nothing is lost.
+let stallThresholdMs = Number.POSITIVE_INFINITY;
+
 function statsFor(phase: string): PhaseStats {
   const existing = phases.get(phase);
   if (existing !== undefined) return existing;
@@ -45,6 +51,9 @@ function statsFor(phase: string): PhaseStats {
 }
 
 function record(phase: string, elapsedMs: number): void {
+  if (elapsedMs >= stallThresholdMs) {
+    logInfo(`${STALL_PREFIX} ${phase} took ${formatMs(elapsedMs)}`);
+  }
   const stats = statsFor(phase);
   stats.count += 1;
   stats.totalMs += elapsedMs;
@@ -110,6 +119,7 @@ export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingRep
   if (!tickTimingEnabled) return null;
 
   const tickIntervalMs = MILLISECONDS_PER_SECOND / deps.tickHz;
+  stallThresholdMs = tickIntervalMs;
   let worldLineWritten = false;
 
   const emit = (): void => {
@@ -139,14 +149,29 @@ export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingRep
 
   const timer = setInterval(emit, TICK_TIMING_REPORT_INTERVAL_MS);
   timer.unref();
+
+  // Lateness of a short timer is main-thread blocking from any cause, wrapped or not.
+  let pollDueMs = performance.now() + EVENT_LOOP_POLL_MS;
+  const poll = setInterval(() => {
+    const nowMs = performance.now();
+    const lateMs = nowMs - pollDueMs;
+    if (lateMs >= stallThresholdMs) {
+      logInfo(`${STALL_PREFIX} event loop blocked ~${formatMs(lateMs)}`);
+    }
+    pollDueMs = nowMs + EVENT_LOOP_POLL_MS;
+  }, EVENT_LOOP_POLL_MS);
+  poll.unref();
+
   logInfo(
     `${REPORT_PREFIX} timing is on (${TICK_TIMING_ENV_VAR}=${TICK_TIMING_ENABLED_VALUE}); ` +
-      `reporting every ${TICK_TIMING_REPORT_INTERVAL_MS / MILLISECONDS_PER_SECOND}s`,
+      `reporting every ${TICK_TIMING_REPORT_INTERVAL_MS / MILLISECONDS_PER_SECOND}s; ` +
+      `${STALL_PREFIX} lines fire immediately for blocks ≥ ${formatMs(stallThresholdMs)}`,
   );
 
   return {
     stop(): void {
       clearInterval(timer);
+      clearInterval(poll);
     },
   };
 }
