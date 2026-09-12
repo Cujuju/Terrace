@@ -36,6 +36,7 @@ function makeConfig(worldsDir: string, worldAdminKey: string | null): ServerConf
     worldsDir,
     worldAdminKey,
     worldSwitchCountdownS: 0,
+    pluginsEnabled: null,
   };
 }
 

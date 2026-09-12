@@ -29,6 +29,10 @@ export const MAX_SNAPSHOT_RETENTION = 100;
 export const DEFAULT_ROLLBACK_KEY = 'terrace';
 export const MIN_ROLLBACK_KEY_LENGTH = 8;
 
+/** `PLUGINS_ENABLED=none`: install every plugin, enable none (core-only worlds). */
+export const PLUGINS_ENABLED_NONE = 'none';
+const PLUGINS_ENABLED_SEPARATOR = ',';
+
 export const MIN_WORLD_DIFFICULTY = 1;
 export const MAX_WORLD_DIFFICULTY = 100;
 export const DEFAULT_WORLD_DIFFICULTY = 50;
@@ -53,6 +57,8 @@ export interface ServerConfig {
 
   readonly worldAdminKey: string | null;
   readonly worldSwitchCountdownS: number;
+  /** Plugin names every world may run; `null` leaves it to each world's own settings. */
+  readonly pluginsEnabled: ReadonlySet<string> | null;
 }
 
 export class ConfigError extends Error {
@@ -196,5 +202,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       DEFAULT_WORLD_SWITCH_COUNTDOWN_S,
       { min: MIN_WORLD_SWITCH_COUNTDOWN_S, max: MAX_WORLD_SWITCH_COUNTDOWN_S },
     ),
+    pluginsEnabled: readPluginsEnabled(env),
   };
+}
+
+function readPluginsEnabled(env: NodeJS.ProcessEnv): ReadonlySet<string> | null {
+  const raw = env.PLUGINS_ENABLED?.trim();
+  if (!raw) return null;
+  if (raw === PLUGINS_ENABLED_NONE) return new Set();
+  return new Set(
+    raw
+      .split(PLUGINS_ENABLED_SEPARATOR)
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
 }
