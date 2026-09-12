@@ -41,9 +41,9 @@ import {
   SUN_DIRECTION_NOON,
   SUN_DISTANCE_WORLD_UNITS,
   SUN_LIGHT_INTENSITY,
-  rendererBackendName,
   type Viewport,
 } from './render/scene.ts';
+import { rendererBackendName } from './render/rendererBackend.ts';
 import type { World } from './world.ts';
 import { CHUNK_SIZE, chunksPerEdge, type SculptIntent } from '@terrace/shared';
 import {

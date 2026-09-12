@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js';
-import type { RendererBackendName } from '../render/scene.ts';
+import type { RendererBackendName } from '../render/rendererBackend.ts';
 import {
   CELL_WORLD_SIZE,
   FULL_BRUSH_RADIUS,
