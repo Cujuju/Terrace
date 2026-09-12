@@ -60,6 +60,10 @@ function record(phase: string, elapsedMs: number): void {
   if (stats.sampleCount < SAMPLE_RING_CAPACITY) stats.sampleCount += 1;
 }
 
+export function isTickTimingEnabled(): boolean {
+  return tickTimingEnabled;
+}
+
 export function timePhase<T>(phase: string, run: () => T): T {
   if (!tickTimingEnabled) return run();
   const startedMs = performance.now();
