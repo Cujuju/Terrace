@@ -679,9 +679,11 @@ const UNREACHABLE_CACHE_CAP = 4096;
 const SEA_REGIONS_REBUILD_COOLDOWN_MS = 15_000;
 
 let terrainVersion = 0;
+let terrainChangeBumps = 0;
 
 function noteTerrainChanged(): void {
   terrainVersion++;
+  terrainChangeBumps++;
 }
 
 const unreachableCache = new Map<string, number>();
@@ -730,6 +732,8 @@ interface FleetRouteDebug {
   sailDeferred: number;
   cacheHits: number;
   regionHits: number;
+  bumps: number;
+  tver: number;
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
@@ -747,6 +751,8 @@ function createFleetRouteDebug(): FleetRouteDebug {
     sailDeferred: 0,
     cacheHits: 0,
     regionHits: 0,
+    bumps: 0,
+    tver: 0,
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
@@ -1236,6 +1242,9 @@ export function advanceFleet(
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
   maybeRebuildSeaRegions(eroded);
   const debug: FleetRouteDebug = createFleetRouteDebug();
+  debug.bumps = terrainChangeBumps;
+  terrainChangeBumps = 0;
+  debug.tver = terrainVersion;
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
   const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt, debug);
   const homeGoals = assignHomeBerths(kraken, squadronGoals);
@@ -1278,6 +1287,7 @@ export function advanceFleet(
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
         `cache=${debug.cacheHits} region=${debug.regionHits} ` +
+        `bumps=${debug.bumps} tv=${debug.tver} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
