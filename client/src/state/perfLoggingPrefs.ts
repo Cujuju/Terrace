@@ -1,4 +1,3 @@
-import { createSignal } from 'solid-js';
 import type { PerfLoggingStateMessage } from '@terrace/shared';
 import { persistedChoice } from './persistedChoice.ts';
 
@@ -16,36 +15,29 @@ const [perfLoggingChoice, setPerfLoggingChoice] = persistedChoice<PerfLoggingCho
   DEFAULT_PERF_LOGGING,
 );
 
-/** The client's own hitch log; applies immediately. */
+/** One switch for both sides; the server's stored value wins whenever it speaks. */
 export const perfLoggingEnabled = (): boolean => perfLoggingChoice() === 'on';
 
-export interface ServerPerfLogging {
-  readonly enabled: boolean;
-  readonly live: boolean;
-}
-
-const [serverPerfLogging, setServerPerfLogging] = createSignal<ServerPerfLogging | null>(null);
-
-export { serverPerfLogging };
-
 export function applyServerPerfLogging(message: PerfLoggingStateMessage): void {
-  setServerPerfLogging({ enabled: message.enabled, live: message.live });
+  setPerfLoggingChoice(message.enabled ? 'on' : 'off');
 }
 
-/** The stored server choice differs from what the running server uses. */
-export const serverPerfLoggingNeedsRestart = (): boolean => {
-  const state = serverPerfLogging();
-  return state !== null && state.enabled !== state.live;
-};
-
-let sendToServer: ((enabled: boolean) => void) | null = null;
-
-export function bindPerfLoggingSender(send: (enabled: boolean) => void): void {
-  sendToServer = send;
+export interface PerfLoggingSender {
+  setEnabled(enabled: boolean): void;
+  reportHitch(intervalMs: number, typicalMs: number): void;
 }
 
-/** One switch for both halves: the client applies now, the server stores it for its next boot. */
+let sender: PerfLoggingSender | null = null;
+
+export function bindPerfLoggingSender(next: PerfLoggingSender): void {
+  sender = next;
+}
+
 export function setPerfLogging(enabled: boolean): void {
   setPerfLoggingChoice(enabled ? 'on' : 'off');
-  sendToServer?.(enabled);
+  sender?.setEnabled(enabled);
+}
+
+export function reportHitch(intervalMs: number, typicalMs: number): void {
+  sender?.reportHitch(intervalMs, typicalMs);
 }

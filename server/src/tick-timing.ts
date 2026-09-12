@@ -1,4 +1,4 @@
-import { logInfo } from './log.ts';
+import { perfLogLine } from './perf-log.ts';
 
 const SAMPLE_RING_CAPACITY = 1024;
 const TICK_TIMING_REPORT_INTERVAL_MS = 10_000;
@@ -17,11 +17,6 @@ const PLUGIN_PHASE_PREFIX = 'plugin:';
 export const TICK_TOTAL_PHASE = 'total';
 
 let tickTimingEnabled = false;
-
-/** Decided once at boot from the perf-logging setting; a change needs a restart. */
-export function setTickTimingEnabled(enabled: boolean): void {
-  tickTimingEnabled = enabled;
-}
 
 interface PhaseStats {
   count: number;
@@ -54,7 +49,7 @@ function statsFor(phase: string): PhaseStats {
 
 function record(phase: string, elapsedMs: number): void {
   if (elapsedMs >= stallThresholdMs) {
-    logInfo(`${STALL_PREFIX} ${phase} took ${formatMs(elapsedMs)}`);
+    perfLogLine(`${STALL_PREFIX} ${phase} took ${formatMs(elapsedMs)}`);
   }
   const stats = statsFor(phase);
   stats.count += 1;
@@ -114,15 +109,19 @@ export interface TickTimingReport {
 
 export interface TickTimingReportDeps {
   readonly tickHz: number;
-  readonly source: string;
   worldSize(): number | null;
 }
 
-export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingReport | null {
-  if (!tickTimingEnabled) return null;
+interface RunningTimers {
+  readonly report: NodeJS.Timeout;
+  readonly poll: NodeJS.Timeout;
+}
 
-  const tickIntervalMs = MILLISECONDS_PER_SECOND / deps.tickHz;
-  stallThresholdMs = tickIntervalMs;
+let deps: TickTimingReportDeps | null = null;
+let timers: RunningTimers | null = null;
+
+function startTimers(active: TickTimingReportDeps): RunningTimers {
+  const tickIntervalMs = MILLISECONDS_PER_SECOND / active.tickHz;
   let worldLineWritten = false;
 
   const emit = (): void => {
@@ -130,28 +129,28 @@ export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingRep
     if (total === undefined || total.count === 0) return;
 
     if (!worldLineWritten) {
-      const size = deps.worldSize();
+      const size = active.worldSize();
       if (size !== null) {
-        logInfo(`${REPORT_PREFIX} world ${size}² = ${size * size} heightmap cells`);
+        perfLogLine(`${REPORT_PREFIX} world ${size}² = ${size * size} heightmap cells`);
         worldLineWritten = true;
       }
     }
 
     const utilPercent = (total.totalMs / total.count / tickIntervalMs) * PERCENT_SCALE;
-    logInfo(
+    perfLogLine(
       `${REPORT_PREFIX} interval ${formatMs(tickIntervalMs)} | ticks ${total.count}` +
         ` | total p99 ${formatMs(quantileMs(total, P99_QUANTILE))}` +
         ` max ${formatMs(total.maxMs)} util ${utilPercent.toFixed(PERCENT_DECIMALS)}%`,
     );
     for (const [phase, stats] of phases) {
       if (phase === TICK_TOTAL_PHASE || stats.count === 0) continue;
-      logInfo(phaseRow(phase, stats));
+      perfLogLine(phaseRow(phase, stats));
     }
     for (const stats of phases.values()) resetWindow(stats);
   };
 
-  const timer = setInterval(emit, TICK_TIMING_REPORT_INTERVAL_MS);
-  timer.unref();
+  const report = setInterval(emit, TICK_TIMING_REPORT_INTERVAL_MS);
+  report.unref();
 
   // Lateness of a short timer is main-thread blocking from any cause, wrapped or not.
   let pollDueMs = performance.now() + EVENT_LOOP_POLL_MS;
@@ -159,22 +158,45 @@ export function startTickTimingReport(deps: TickTimingReportDeps): TickTimingRep
     const nowMs = performance.now();
     const lateMs = nowMs - pollDueMs;
     if (lateMs >= stallThresholdMs) {
-      logInfo(`${STALL_PREFIX} event loop blocked ~${formatMs(lateMs)}`);
+      perfLogLine(`${STALL_PREFIX} event loop blocked ~${formatMs(lateMs)}`);
     }
     pollDueMs = nowMs + EVENT_LOOP_POLL_MS;
   }, EVENT_LOOP_POLL_MS);
   poll.unref();
 
-  logInfo(
-    `${REPORT_PREFIX} timing is on (${deps.source}); ` +
+  perfLogLine(
+    `${REPORT_PREFIX} timing is on; ` +
       `reporting every ${TICK_TIMING_REPORT_INTERVAL_MS / MILLISECONDS_PER_SECOND}s; ` +
       `${STALL_PREFIX} lines fire immediately for blocks ≥ ${formatMs(stallThresholdMs)}`,
   );
+  return { report, poll };
+}
 
+function stopTimers(): void {
+  if (timers === null) return;
+  clearInterval(timers.report);
+  clearInterval(timers.poll);
+  timers = null;
+  for (const stats of phases.values()) resetWindow(stats);
+  perfLogLine(`${REPORT_PREFIX} timing is off`);
+}
+
+/** Flips live: the wrappers check the flag per call and the timers start or stop here. */
+export function setTickTimingEnabled(enabled: boolean): void {
+  tickTimingEnabled = enabled;
+  if (deps === null) return;
+  if (enabled && timers === null) timers = startTimers(deps);
+  if (!enabled) stopTimers();
+}
+
+export function startTickTimingReport(next: TickTimingReportDeps): TickTimingReport {
+  deps = next;
+  stallThresholdMs = MILLISECONDS_PER_SECOND / next.tickHz;
+  if (tickTimingEnabled && timers === null) timers = startTimers(next);
   return {
     stop(): void {
-      clearInterval(timer);
-      clearInterval(poll);
+      stopTimers();
+      deps = null;
     },
   };
 }

@@ -1,7 +1,9 @@
 import { CloseCode, ErrorCode, Room, isDevMode, type Client } from '@colyseus/core';
 import {
+  PERF_HITCH_MESSAGE_TYPE,
   PERF_LOGGING_MESSAGE_TYPE,
   PERF_LOGGING_STATE_MESSAGE_TYPE,
+  validatePerfHitch,
   STACK_RESTART_MESSAGE_TYPE,
   validatePerfLoggingRequest,
   type PerfLoggingStateMessage,
@@ -28,6 +30,8 @@ import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { ServerRestartService } from '../restart.ts';
 import type { PerfLoggingSetting } from '../perf-logging-setting.ts';
+import { perfLogLine } from '../perf-log.ts';
+import { setTickTimingEnabled } from '../tick-timing.ts';
 import { containWorldAdminMessage, type WorldAdminService } from '../world/world-admin.ts';
 import type { WorldManager } from '../world/world-manager.ts';
 import { buildJoinSnapshot, buildShowAllSnapshot } from './join-snapshot.ts';
@@ -64,6 +68,8 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
 ] as const;
 
 const UNREGISTERED_MESSAGE_REASON_PREFIX = 'room onMessage for ';
+const HITCH_PREFIX = '[hitch]';
+const HITCH_MS_DECIMALS = 1;
 
 const PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS = 10_000;
 
@@ -177,11 +183,21 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         logError('could not store the performance logging setting', error);
         return;
       }
-      logInfo(
-        `performance logging ${request.enabled ? 'enabled' : 'disabled'} by ${client.sessionId}` +
-          (perfLogging.enabled === perfLogging.live ? '' : ' (takes effect on restart)'),
-      );
+      logInfo(`performance logging ${request.enabled ? 'enabled' : 'disabled'} by ${client.sessionId}`);
+      setTickTimingEnabled(request.enabled);
       this.broadcast(PERF_LOGGING_STATE_MESSAGE_TYPE, this.perfLoggingState());
+    });
+
+    this.onMessage(PERF_HITCH_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+      if (!this.context.perfLogging.enabled) return;
+      const hitch = validatePerfHitch(message);
+      if (hitch === null) return;
+      const player = client.userData?.player;
+      if (!player) return;
+      perfLogLine(
+        `${HITCH_PREFIX} ${player.name} frame gap ${hitch.intervalMs.toFixed(HITCH_MS_DECIMALS)}ms` +
+          ` (typical ${hitch.typicalMs.toFixed(HITCH_MS_DECIMALS)}ms)`,
+      );
     });
 
     this.onMessage(ROLLBACK_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
@@ -354,11 +370,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
 
   private perfLoggingState(): PerfLoggingStateMessage {
     const { perfLogging } = this.context;
-    return {
-      type: PERF_LOGGING_STATE_MESSAGE_TYPE,
-      enabled: perfLogging.enabled,
-      live: perfLogging.live,
-    };
+    return { type: PERF_LOGGING_STATE_MESSAGE_TYPE, enabled: perfLogging.enabled };
   }
 
   private notePluginRewriteFailure(detail?: string): void {

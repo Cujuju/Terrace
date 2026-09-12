@@ -56,6 +56,7 @@ function makeConfig(worldsDir: string): ServerConfig {
     rollbackKey: 'rollback-key-long-enough',
     worldsDir,
     serverSettingsPath: join(worldsDir, 'server-settings.json'),
+    perfLogPath: join(worldsDir, 'perf.log'),
     worldAdminKey: 'admin-key-long-enough',
     worldSwitchCountdownS: 0,
     pluginsEnabled: null,

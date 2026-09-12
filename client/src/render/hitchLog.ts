@@ -1,5 +1,5 @@
 import { createEffect } from 'solid-js';
-import { perfLoggingEnabled } from '../state/perfLoggingPrefs.ts';
+import { perfLoggingEnabled, reportHitch } from '../state/perfLoggingPrefs.ts';
 import { setHitchSink } from './frameStats.ts';
 
 const LOG_PREFIX = '[hitch]';
@@ -14,7 +14,7 @@ function localStamp(): string {
   return `${hh}:${mm}:${ss}.${ms}`;
 }
 
-// Same local HH:MM:SS.mmm stamp as the server log, so the two can be lined up by eye.
+// Same local HH:MM:SS.mmm stamp as the server log; each hitch is also relayed to the server's file.
 export function installHitchLog(): void {
   createEffect(() => {
     if (!perfLoggingEnabled()) {
@@ -26,6 +26,7 @@ export function installHitchLog(): void {
         `${localStamp()} ${LOG_PREFIX} frame gap ${intervalMs.toFixed(MS_DECIMALS)}ms` +
           ` (typical ${typicalMs.toFixed(MS_DECIMALS)}ms)`,
       );
+      reportHitch(intervalMs, typicalMs);
     });
     console.log(`${localStamp()} ${LOG_PREFIX} logging is on (Settings → Performance logging)`);
   });
