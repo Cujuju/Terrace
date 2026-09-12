@@ -10,6 +10,7 @@ import {
   cellsAcross,
   createRouteBudget,
   findRoute,
+  findRouteWithStatus,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
   steerWithShorteningProbe,
@@ -59,6 +60,12 @@ export const LOOKAHEAD_SECONDS = 0.6;
 export const ARRIVAL_RADIUS_CELLS = cellsAcross(0.75);
 
 export const PILGRIM_DISPATCH_EXPANSION_POOL = ROUTE_NODE_BUDGET;
+
+/** Trial expansions per pilgrim search (~2ms). Catchment-local and homebound
+ * routes complete far below this; maze searches exhaust the trial and defer
+ * instead of eating a full pool solo. Callers that pass a real pool keep
+ * exact fallback semantics (see planRoute). */
+export const PILGRIM_ROUTE_TRIAL_EXPANSIONS = 1024;
 
 const SETTLEMENT_KEY_STRIDE = 65536;
 
@@ -159,6 +166,18 @@ export function planRoute(
   toY: number,
   budget?: RouteBudget,
 ): RouteCell[] | null {
+  const trial = createRouteBudget(PILGRIM_ROUTE_TRIAL_EXPANSIONS);
+  const attempt = findRouteWithStatus(
+    world,
+    PILGRIM_WALKER_PROFILE,
+    { x: fromX, y: fromY },
+    { x: toX, y: toY },
+    trial,
+  );
+  if (attempt.status !== 'exhausted') {
+    return attempt.plan === null ? null : [...attempt.plan.cells];
+  }
+  if (budget === undefined) return null;
   const plan = findRoute(
     world,
     PILGRIM_WALKER_PROFILE,
@@ -303,6 +322,7 @@ export function advanceWalker(
     goalY: walker.goalY,
     occupants,
     selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS,
+    replanNodeBudget: PILGRIM_ROUTE_TRIAL_EXPANSIONS,
   });
   if (result.progressed) return 'progressed';
 
