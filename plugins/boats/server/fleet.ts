@@ -738,6 +738,16 @@ interface FleetRouteDebug {
   tver: number;
   rver: number;
   rcount: number;
+  probe: null | {
+    sx: number;
+    sy: number;
+    gx: number;
+    gy: number;
+    fr: number;
+    gr: number;
+    status: string;
+    spent: number;
+  };
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
@@ -759,6 +769,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     tver: 0,
     rver: -1,
     rcount: -1,
+    probe: null,
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
@@ -1088,6 +1099,7 @@ function sailBoat(tick: SailTick, index: number): void {
         } else {
           tick.searchesLeft--;
           debug.sailSearches++;
+          const before = budget.remaining;
           const outcome = findRouteWithStatus(
             eroded,
             HULL_PROFILE,
@@ -1095,6 +1107,18 @@ function sailBoat(tick: SailTick, index: number): void {
             { x: goalX, y: goalY },
             budget,
           );
+          if (debug.probe === null) {
+            debug.probe = {
+              sx: boat.x,
+              sy: boat.y,
+              gx: goalX,
+              gy: goalY,
+              fr: fromRegion,
+              gr: goalRegion,
+              status: outcome.status,
+              spent: before - budget.remaining,
+            };
+          }
           if (outcome.status === 'unreachable') rememberUnreachable(key);
           plan = outcome.plan;
         }
@@ -1300,6 +1324,14 @@ export function advanceFleet(
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
     );
+    if (debug.probe !== null) {
+      const p = debug.probe;
+      perfLogLine(
+        `[tick] boats probe from=(${p.sx.toFixed(1)},${p.sy.toFixed(1)}) ` +
+          `to=(${p.gx.toFixed(1)},${p.gy.toFixed(1)}) regions=${p.fr}>${p.gr} ` +
+          `${p.status} spent=${p.spent}`,
+      );
+    }
   }
 
   if (kraken === null || engaged === 0) {
