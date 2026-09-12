@@ -1,4 +1,4 @@
-export { LATTICE_PER_CHUNK, SHORE_EDGE_CROSSING } from './contours.ts';
+export { LATTICE_PER_CHUNK } from './contours.ts';
 export { CONTOUR_SIMPLIFY_EPSILON } from './contourSmoothing.ts';
 export {
   COMPONENTS_PER_COLOR,

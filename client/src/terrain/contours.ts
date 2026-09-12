@@ -11,8 +11,6 @@ import { sampleRenderHeight, type TerrainMirror } from './mirror.ts';
 
 export const LATTICE_PER_CHUNK = CHUNK_SIZE + 1;
 
-export const SHORE_EDGE_CROSSING = 0.5;
-
 export const RECT_NONE = 0;
 const RECT_WEST = 1;
 const RECT_EAST = 2;

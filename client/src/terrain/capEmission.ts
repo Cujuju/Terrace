@@ -1,6 +1,7 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  DRAWN_GROUND_BAND_BIAS,
   SEA_LEVEL,
   anyColumnLayered,
   bandOf,
@@ -32,7 +33,6 @@ import {
   LATTICE_PER_CHUNK,
   RECT_NONE,
   SAMPLE_COUNT,
-  SHORE_EDGE_CROSSING,
   assembleLoops,
   domainInside,
   isSeamSegment,
@@ -49,6 +49,12 @@ import { bridgeHole, earClip, groupLoops, type CapPolygon } from './triangulatio
 export const SKIRT_PICK_INSET = 1 / 1024;
 
 export const SEABED_CAP_SINK = WATER_SURFACE_LIFT / 2;
+
+/** The first dry height; the shoreline level's colour and the isoline its contour follows. */
+export const SHORE_HEIGHT = SEA_LEVEL + 1;
+
+/** Marched like any band level: inside is `h + bias >= threshold`, the contour on `h = SHORE_HEIGHT`. */
+export const SHORE_THRESHOLD = SHORE_HEIGHT + DRAWN_GROUND_BAND_BIAS;
 
 export const SEABED_RISER_BORDER_WORLD_HEIGHT = BAND_WORLD_HEIGHT / 16;
 
@@ -199,9 +205,9 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
       loops: [],
     });
     if (k === 0) {
-      const shoreIndex = bandPaletteIndex(SEA_LEVEL + 1);
+      const shoreIndex = bandPaletteIndex(SHORE_HEIGHT);
       levels.push({
-        threshold: SEA_LEVEL + 1,
+        threshold: SHORE_THRESHOLD,
         sampleBand: 0,
         capY: 0,
         undersideY: 0,
@@ -213,7 +219,7 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
         skirtSelfLit: selfLitFor(shoreIndex),
         ceilingColor: palettes.cliff[shoreIndex],
         ceilingSelfLit: selfLitFor(shoreIndex),
-        crossingOverride: SHORE_EDGE_CROSSING,
+        crossingOverride: null,
         loops: [],
       });
     }

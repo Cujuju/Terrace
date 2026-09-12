@@ -99,7 +99,6 @@ export function emitLipSegments(caps: ChunkDrawnCaps): ChunkLipSegments {
   const bands: number[] = [];
   if (!caps.blocky) {
     for (const level of caps.levels) {
-      if (level.threshold !== level.sampleBand * BAND_HEIGHT) continue;
       const firstSegment = flat.length / 4;
       const y = level.sampleBand * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
       for (const polygon of level.polygons) {

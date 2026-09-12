@@ -1,8 +1,9 @@
-import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL, bandOf } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, bandOf } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT } from '../../config.ts';
 import {
   SEABED_CAP_SINK,
   SEABED_RISER_BORDER_WORLD_HEIGHT,
+  SHORE_HEIGHT,
   quantizeChannel,
 } from '../../terrain/capEmission.ts';
 import {
@@ -39,8 +40,6 @@ const SELF_LIT_OFF = 0;
 /** Border slot alpha doubles as the rim flag, the CPU's `bordered` test. */
 const BORDERED_ON = 1;
 const BORDERED_OFF = 0;
-
-export const SHORE_THRESHOLD = SEA_LEVEL + 1;
 
 function capYOfBand(band: number): number {
   return band === 0 ? -SEABED_CAP_SINK : band * BAND_WORLD_HEIGHT;
@@ -108,7 +107,7 @@ function buildBandLutValues(): Float64Array {
     write(out, LUT_CEILING_INNER_BASE + slot, innerCeiling.color, innerCeiling.alpha);
   }
 
-  const shoreIndex = bandPaletteIndex(SHORE_THRESHOLD);
+  const shoreIndex = bandPaletteIndex(SHORE_HEIGHT);
   write(out, LUT_SHORE_CAP, TERRAIN_PALETTE[shoreIndex]!, capSelfLitFor(shoreIndex));
   write(out, LUT_SHORE_CLIFF, CLIFF_PALETTE[shoreIndex]!, selfLitFor(shoreIndex));
   return out;
