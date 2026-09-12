@@ -757,6 +757,10 @@ function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
 
 let sailCursor = 0;
 
+let routeLogCooldownMs = 0;
+
+const ROUTE_LOG_INTERVAL_MS = 2000;
+
 /** Per-tick route-search counters, emitted to perf.log when perf logging is on. */
 interface FleetRouteDebug {
   sailPlans: number;
@@ -1355,7 +1359,9 @@ export function advanceFleet(
 
   resolveOverlaps(world, eroded, kraken, step);
 
-  if (isPerfLoggingEnabled()) {
+  routeLogCooldownMs -= dt * 1000;
+  if (isPerfLoggingEnabled() && routeLogCooldownMs <= 0) {
+    routeLogCooldownMs += ROUTE_LOG_INTERVAL_MS;
     perfLogLine(
       `[tick] boats routes budget=${budget.remaining}/${ROUTE_NODE_BUDGET} ` +
         `leg=${legBudget.remaining}/${ROUTE_NODE_BUDGET} ` +
