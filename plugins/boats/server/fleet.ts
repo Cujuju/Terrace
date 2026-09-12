@@ -2,6 +2,7 @@ import {
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
   OPEN_WATER_PROFILE,
+  ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
   cellsAcross,
   createRouteBudget,
@@ -23,6 +24,10 @@ import {
   tangentialWindAt,
   type ParsedStormDamage,
 } from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
+import {
+  isPerfLoggingEnabled,
+  perfLogLine,
+} from '../../../server/src/plugins/kit/perf-logging.ts';
 import {
   BOAT_WIND_PUSH_CELLS_PER_SEVERITY_SECOND,
   BOAT_WIND_PUSH_STEP_CELLS,
@@ -657,10 +662,38 @@ const SQUADRON_LEG_SHORTEN_STEP_CELLS = BOAT_HULL_LENGTH_CELLS;
 
 const FULL_TURN_RADIANS = 2 * Math.PI;
 
+/** Per-tick route-search counters, emitted to perf.log when perf logging is on. */
+interface FleetRouteDebug {
+  sailPlans: number;
+  sailRepeat: number;
+  sailDrift: number;
+  sailStuck: number;
+  sailNulls: number;
+  readonly sailNullBoats: Set<number>;
+  followReplans: number;
+  legFromCalls: number;
+  legFromNulls: number;
+}
+
+function createFleetRouteDebug(): FleetRouteDebug {
+  return {
+    sailPlans: 0,
+    sailRepeat: 0,
+    sailDrift: 0,
+    sailStuck: 0,
+    sailNulls: 0,
+    sailNullBoats: new Set<number>(),
+    followReplans: 0,
+    legFromCalls: 0,
+    legFromNulls: 0,
+  };
+}
+
 function squadronNavigator(
   world: BoatWorld,
   eroded: TerrainSampler,
   legBudget: RouteBudget,
+  debug: FleetRouteDebug,
 ): SquadronNavigator {
   return {
     rendezvousFor(homeX: number, homeY: number): SquadronWaypoint | null {
@@ -690,6 +723,7 @@ function squadronNavigator(
         const x = fromX + dx * reach;
         const y = fromY + dy * reach;
         if (!isManoeuvrablePose(world, eroded, x, y, bearing)) continue;
+        debug.legFromCalls++;
         const plan = findRoute(
           eroded,
           HULL_PROFILE,
@@ -697,7 +731,8 @@ function squadronNavigator(
           { x, y },
           legBudget,
         );
-        if (plan !== null) return { x, y };
+        if (plan === null) debug.legFromNulls++;
+        else return { x, y };
       }
       return null;
     },
@@ -722,6 +757,7 @@ function assignSquadronGoals(
   kraken: KrakenTarget | null,
   legBudget: RouteBudget,
   dt: number,
+  debug: FleetRouteDebug,
 ): Map<number, StationGoal> {
   const ranks = villageRanks();
   const candidates: SquadronBoat[] = [];
@@ -741,7 +777,7 @@ function assignSquadronGoals(
   }
   const waypoints = advanceSquadrons(
     candidates,
-    squadronNavigator(world, eroded, legBudget),
+    squadronNavigator(world, eroded, legBudget, debug),
     dt,
   );
   const goals = new Map<number, StationGoal>();
@@ -799,6 +835,7 @@ interface SailTick {
   maxTurnRadians: number;
   stationRadius: number;
   budget: RouteBudget;
+  debug: FleetRouteDebug;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
@@ -948,6 +985,11 @@ function sailBoat(tick: SailTick, index: number): void {
     distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS ||
     voyage.noProgressSeconds > BOAT_STUCK_SECONDS
   ) {
+    const debug = tick.debug;
+    debug.sailPlans++;
+    if (voyage.route === null) debug.sailRepeat++;
+    else if (voyage.noProgressSeconds > BOAT_STUCK_SECONDS) debug.sailStuck++;
+    else debug.sailDrift++;
     const plan = findRoute(
       eroded,
       HULL_PROFILE,
@@ -955,6 +997,10 @@ function sailBoat(tick: SailTick, index: number): void {
       { x: goalX, y: goalY },
       budget,
     );
+    if (plan === null) {
+      debug.sailNulls++;
+      debug.sailNullBoats.add(boat.id);
+    }
     voyage.route = plan === null ? null : [...plan.cells];
     voyage.routeIndex = 0;
     voyage.goalX = goalX;
@@ -1017,6 +1063,7 @@ function sailBoat(tick: SailTick, index: number): void {
   boat.y = helm.y;
   voyage.route = helm.route;
   voyage.routeIndex = helm.routeIndex;
+  if (result.replanned) tick.debug.followReplans++;
   if (result.replanned || result.progressed) voyage.noProgressSeconds = 0;
   else voyage.noProgressSeconds += dt;
 }
@@ -1096,8 +1143,9 @@ export function advanceFleet(
     kraken === null
       ? null
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
+  const debug: FleetRouteDebug = createFleetRouteDebug();
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
-  const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt);
+  const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt, debug);
   const homeGoals = assignHomeBerths(kraken, squadronGoals);
 
   const tick: SailTick = {
@@ -1115,6 +1163,7 @@ export function advanceFleet(
     goals,
     squadronGoals,
     homeGoals,
+    debug,
   };
 
   let engaged = 0;
@@ -1124,6 +1173,18 @@ export function advanceFleet(
   }
 
   resolveOverlaps(world, eroded, kraken, step);
+
+  if (isPerfLoggingEnabled()) {
+    perfLogLine(
+      `[tick] boats routes budget=${budget.remaining}/${ROUTE_NODE_BUDGET} ` +
+        `leg=${legBudget.remaining}/${ROUTE_NODE_BUDGET} ` +
+        `sailPlans=${debug.sailPlans} sailNulls=${debug.sailNulls} ` +
+        `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
+        `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
+        `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
+        `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
+    );
+  }
 
   if (kraken === null || engaged === 0) {
     krakenWounds = Math.max(0, krakenWounds - KRAKEN_WOUND_HEAL_PER_SECOND * dt);
