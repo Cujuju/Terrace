@@ -56,6 +56,12 @@ import {
   terrainMesher,
   type TerrainMesher,
 } from '../state/terrainMesherPrefs.ts';
+import {
+  perfLoggingEnabled,
+  serverPerfLogging,
+  serverPerfLoggingNeedsRestart,
+  setPerfLogging,
+} from '../state/perfLoggingPrefs.ts';
 
 const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
   off: 'None',
@@ -351,6 +357,28 @@ export function ControlsPanel(): JSX.Element {
           </For>
         </select>
       </div>
+
+      {
+}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Performance logging</span>
+        <select
+          class="controls-select"
+          aria-label="Performance logging"
+          title="On: the browser console logs each frame hitch and the server log marks each main-thread stall, both with a local time stamp. The client half applies now; the server half at its next restart."
+          value={perfLoggingEnabled() ? 'on' : 'off'}
+          onChange={(e) => setPerfLogging(e.currentTarget.value === 'on')}
+        >
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <Show when={serverPerfLoggingNeedsRestart()}>
+        <p class="controls-warning">
+          Server logging turns {serverPerfLogging()?.enabled ? 'on' : 'off'} after a restart (the ↻
+          button).
+        </p>
+      </Show>
 
       <Show when={shadowedActions(controlBindings()).length > 0}>
         <p class="controls-warning">

@@ -25,6 +25,8 @@ import type {
   WorldPurgeRequestMessage,
   ServerRestartNoticeMessage,
   ServerRestartRequestMessage,
+  PerfLoggingRequestMessage,
+  PerfLoggingStateMessage,
   StackRestartRequestMessage,
   WorldRenameRequestMessage,
   WorldSwitchCancelRequestMessage,
@@ -97,6 +99,10 @@ export const MSG_WORLD_PLUGIN_RELOAD: WorldPluginReloadRequestMessage['type'] =
 export const MSG_SERVER_RESTART: ServerRestartRequestMessage['type'] = 'serverRestart';
 
 export const MSG_STACK_RESTART: StackRestartRequestMessage['type'] = 'stackRestart';
+
+export const MSG_PERF_LOGGING: PerfLoggingRequestMessage['type'] = 'perfLogging';
+
+export const MSG_PERF_LOGGING_STATE: PerfLoggingStateMessage['type'] = 'perfLoggingState';
 
 export const MSG_SERVER_RESTART_NOTICE: ServerRestartNoticeMessage['type'] =
   'serverRestartNotice';

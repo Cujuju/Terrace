@@ -34,6 +34,7 @@ function makeConfig(worldsDir: string, worldAdminKey: string | null): ServerConf
     snapshotRetention: 5,
     rollbackKey: 'rollback-key-long-enough',
     worldsDir,
+    serverSettingsPath: join(worldsDir, 'server-settings.json'),
     worldAdminKey,
     worldSwitchCountdownS: 0,
     pluginsEnabled: null,
