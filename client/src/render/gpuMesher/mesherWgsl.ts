@@ -266,6 +266,7 @@ var<private> corner : array<vec2f, 4>;
 var<private> candidate : array<vec2f, ${wgslI32(ISOLINE_SAMPLES_PER_CELL - 1)}>;
 var<private> line : array<vec2f, MAX_POLYLINE>;
 var<private> lineIsContour : array<bool, MAX_POLYLINE>;
+var<private> live : array<u32, MAX_POLYLINE>;
 
 // floor(a * 2^16 / d) for 0 <= a < d by restoring division; every step stays exact in i32.
 fn scaledQuotient(a : i32, d : i32) -> vec2i {
@@ -548,17 +549,65 @@ fn emitPolygon(at : u32, n : u32, y : f32, slot : i32, flip : bool) -> u32 {
       cursor += 3u;
     }
   } else if (n > 3u) {
-    // Fanned from the centroid: a vertex fan would span an inward bulge and push
-    // the cap over the top of its own riser.
-    var centre = vec2f(0.0, 0.0);
-    for (var v = 0u; v < n; v++) { centre += line[v]; }
-    centre /= f32(n);
-    for (var v = 0u; v < n; v++) {
-      let b = line[v];
-      let c = line[(v + 1u) % n];
-      writeTriangle(cursor, centre, select(b, c, flip), select(c, b, flip), y, slot);
+    cursor += emitConcavePolygon(cursor, n, y, slot, flip);
+  }
+  return cursor - at;
+}
+
+fn signedTurn(a : vec2f, b : vec2f, c : vec2f) -> f32 {
+  return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+}
+
+// Ear clipping, as triangulation.ts clipEars: an ear turns with the polygon's winding
+// and holds no other live vertex. A thin L clipped from a sheer cliff keeps its centroid
+// outside itself, so a centroid fan spilled the cap over its own riser.
+fn emitConcavePolygon(at : u32, n : u32, y : f32, slot : i32, flip : bool) -> u32 {
+  var cursor = at;
+  var area = 0.0;
+  for (var v = 0u; v < n; v++) {
+    let a = line[v];
+    let b = line[(v + 1u) % n];
+    area += a.x * b.y - b.x * a.y;
+    live[v] = v;
+  }
+  let winding = select(-1.0, 1.0, area >= 0.0);
+  var count = n;
+  var guard = n * n + n;
+  loop {
+    if (count <= 3u || guard == 0u) { break; }
+    guard -= 1u;
+    var clipped = false;
+    for (var k = 0u; k < count; k++) {
+      let before = (k + count - 1u) % count;
+      let after = (k + 1u) % count;
+      let a = line[live[before]];
+      let b = line[live[k]];
+      let c = line[live[after]];
+      if (signedTurn(a, b, c) * winding <= 0.0) { continue; }
+      var blocked = false;
+      for (var m = 0u; m < count; m++) {
+        if (m == k || m == before || m == after) { continue; }
+        let p = line[live[m]];
+        if (signedTurn(a, b, p) * winding >= 0.0 && signedTurn(b, c, p) * winding >= 0.0
+          && signedTurn(c, a, p) * winding >= 0.0) { blocked = true; break; }
+      }
+      if (blocked) { continue; }
+      writeTriangle(cursor, a, select(b, c, flip), select(c, b, flip), y, slot);
       cursor += 3u;
+      for (var m = k; m + 1u < count; m++) { live[m] = live[m + 1u]; }
+      count -= 1u;
+      clipped = true;
+      break;
     }
+    if (!clipped) { break; }
+  }
+  // The last three vertices, or a stalled remainder, fan from the first live one.
+  for (var v = 1u; v + 1u < count; v++) {
+    let a = line[live[0]];
+    let b = line[live[v]];
+    let c = line[live[v + 1u]];
+    writeTriangle(cursor, a, select(b, c, flip), select(c, b, flip), y, slot);
+    cursor += 3u;
   }
   return cursor - at;
 }
