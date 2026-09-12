@@ -2,7 +2,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from './constants.ts';
-import { findRoute, type RouteCell } from './pathing.ts';
+import { findRoute, type RouteBudget, type RouteCell } from './pathing.ts';
 import { canProceedAlong, type TerrainSampler, type TraversalProfile } from './traversal.ts';
 
 const TWO_PI = Math.PI * 2;
@@ -157,7 +157,7 @@ export interface FollowRouteOptions extends SteerOptions {
   readonly lookaheadCells: number;
   readonly goalX: number;
   readonly goalY: number;
-  readonly replanNodeBudget?: number;
+  readonly replanNodeBudget?: number | RouteBudget;
   readonly maxTurnRadians?: number;
   readonly aimAheadCells?: number;
 }
