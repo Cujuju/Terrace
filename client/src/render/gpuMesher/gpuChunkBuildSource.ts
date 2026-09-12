@@ -910,11 +910,40 @@ export async function createGpuChunkBuildSource(
     }
   };
 
-  // Two maps, in order: the counts say how many lip records exist, and only then is that
-  // many bytes of them copied and mapped. Answers resolve after the second map.
+  // One lips buffer serves every batch, and a count pass clears its counter and overwrites
+  // its records. So a batch holds the buffer from its count dispatch until its lips copy is
+  // enqueued (or it needs none); later batches queue behind it. Emission never touches lips.
+  let lipsHeld = false;
+  const batchesAwaitingLips: BatchMember[][] = [];
+
+  const releaseLips = (): void => {
+    lipsHeld = false;
+    const next = batchesAwaitingLips.shift();
+    if (next === undefined) return;
+    if (disposed || deviceLost) {
+      fallbackBatch(next);
+      releaseLips();
+      return;
+    }
+    runBatch(next);
+  };
+
   const runBatch = (members: BatchMember[]): void => {
+    if (lipsHeld) {
+      batchesAwaitingLips.push(members);
+      return;
+    }
+    lipsHeld = true;
+    dispatchBatch(members);
+  };
+
+  // Two maps, in order: the counts say how many lip records exist, and only then is that
+  // many bytes of them copied and mapped. Answers resolve after the second map. Every path
+  // out of the count map releases the lips buffer exactly once.
+  const dispatchBatch = (members: BatchMember[]): void => {
     const readback = dispatchCount(members);
     if (readback === null) {
+      releaseLips();
       fallbackBatch(members);
       return;
     }
@@ -930,21 +959,25 @@ export async function createGpuChunkBuildSource(
         if (lipTotal > lipCapacity && !disposed && !deviceLost) {
           releaseCounts();
           growLips();
-          runBatch(members);
+          dispatchBatch(members);
           return;
         }
         const lipCount = Math.min(lipTotal, lipCapacity);
         if (lipCount === 0) {
+          releaseLips();
           settleBatch(members, mapped, NO_LIPS);
           releaseCounts();
           return;
         }
         const lipsReadback = copyLips(lipCount);
         if (lipsReadback === null) {
+          releaseLips();
           releaseCounts();
           fallbackBatch(members);
           return;
         }
+        // The copy is on the queue ahead of any later count pass, so the buffer is free now.
+        releaseLips();
         const lipBytes = lipCount * LIP_WORDS * BYTES_PER_WORD;
         void lipsReadback.mapAsync(GPUMapMode.READ, 0, lipBytes).then(
           () => {
@@ -966,6 +999,7 @@ export async function createGpuChunkBuildSource(
         );
       },
       () => {
+        releaseLips();
         giveBackReadback(readback);
         fallbackBatch(members);
       },
@@ -1063,6 +1097,9 @@ export async function createGpuChunkBuildSource(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      for (const waiting of batchesAwaitingLips.splice(0, batchesAwaitingLips.length)) {
+        fallbackBatch(waiting);
+      }
       for (let e = 0; e < GPU_WINDOW_POOL; e++) releaseEntry(e);
       dropFreeReadbacks();
       for (const buffer of countsPool.free.splice(0, countsPool.free.length)) {
