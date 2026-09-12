@@ -674,6 +674,11 @@ const FULL_TURN_RADIANS = 2 * Math.PI;
 
 const TICK_ROUTE_SEARCH_CAP = 8;
 
+/** Beyond this chebyshev distance A* boxes dwarf the node pool, so boats steer
+ * direct (today's null-route behavior) until they close within range. Far
+ * open-water legs need no route; far maze legs cannot fit the pool anyway. */
+const ROUTE_DIRECT_RANGE_CELLS = 300;
+
 const UNREACHABLE_CACHE_CAP = 4096;
 
 const SEA_REGIONS_REBUILD_COOLDOWN_MS = 15_000;
@@ -734,6 +739,7 @@ interface FleetRouteDebug {
   sailDeferred: number;
   cacheHits: number;
   regionHits: number;
+  farSkips: number;
   bumps: number;
   tver: number;
   rver: number;
@@ -765,6 +771,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     sailDeferred: 0,
     cacheHits: 0,
     regionHits: 0,
+    farSkips: 0,
     bumps: 0,
     tver: 0,
     rver: -1,
@@ -1081,6 +1088,10 @@ function sailBoat(tick: SailTick, index: number): void {
     let plan: { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null = null;
     if (tick.searchesLeft <= 0) {
       debug.sailDeferred++;
+    } else if (
+      Math.max(Math.abs(boat.x - goalX), Math.abs(boat.y - goalY)) > ROUTE_DIRECT_RANGE_CELLS
+    ) {
+      debug.farSkips++;
     } else {
       const key =
         `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
@@ -1319,6 +1330,7 @@ export function advanceFleet(
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
         `cache=${debug.cacheHits} region=${debug.regionHits} ` +
+        `far=${debug.farSkips} ` +
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
