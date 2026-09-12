@@ -11,7 +11,7 @@ import { createCelestialVoid } from './render/celestialVoid.ts';
 import { installHitchLog } from './render/hitchLog.ts';
 import { applyServerPerfLogging, bindPerfLoggingSender } from './state/perfLoggingPrefs.ts';
 import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
-import { layerEdgeStyle } from './state/layerEdgePrefs.ts';
+import { creaseLook, layerEdgeStyle } from './state/layerEdgePrefs.ts';
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
@@ -93,7 +93,10 @@ const connection = connect({
   onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
   onPerfLoggingState: applyServerPerfLogging,
 });
-bindPerfLoggingSender((enabled) => connection.sendPerfLogging(enabled));
+bindPerfLoggingSender({
+  setEnabled: (enabled) => connection.sendPerfLogging(enabled),
+  reportHitch: (intervalMs, typicalMs) => connection.sendPerfHitch(intervalMs, typicalMs),
+});
 
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
 installHitchLog();
@@ -108,6 +111,7 @@ createEffect(() => celestialVoid.setStyle(voidStyle()));
 createEffect(() => celestialVoid.setAnchor(voidAnchor()));
 
 createEffect(() => world.setLayerEdgeStyle(layerEdgeStyle()));
+createEffect(() => world.setCreaseLook(creaseLook()));
 createEffect(() => viewport.setFrameRateTarget(frameRateTargetFps(frameRateTarget())));
 createEffect(() => viewport.setMultisampling(multisampleEnabled(multisampleSetting())));
 

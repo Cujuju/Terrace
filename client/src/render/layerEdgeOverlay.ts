@@ -21,9 +21,12 @@ const DEBUG_COLOR = 0x35d6e8;
 
 const DEBUG_OPACITY = 0.9;
 
-const CREASE_COLOR = 0x000000;
+export interface CreaseLook {
+  readonly color: number;
+  readonly opacity: number;
+}
 
-const CREASE_OPACITY = 0.33;
+export const DEFAULT_CREASE_LOOK: CreaseLook = { color: 0x000000, opacity: 0.33 };
 
 const FLOATS_PER_SEGMENT = 6;
 
@@ -76,6 +79,7 @@ export interface LayerEdgeOverlay {
     litSpanWorldUnits: number,
   ): boolean;
   setStyle(style: LayerEdgeStyle): void;
+  setCreaseLook(look: CreaseLook): void;
   setRefused(refused: boolean): void;
   clear(): void;
   drawCallCount(): number;
@@ -93,6 +97,7 @@ export function createLayerEdgeOverlay(
   const tiles = new Map<number, EdgeTile>();
   const segmentsByChunk = new Map<number, Map<number, Float32Array>>();
   let style: LayerEdgeStyle = 'debug';
+  let creaseLook: CreaseLook = DEFAULT_CREASE_LOOK;
   const restingVisible = (): boolean => style !== 'normal';
   const material = new LineBasicMaterial({
     color: DEBUG_COLOR,
@@ -450,12 +455,18 @@ export function createLayerEdgeOverlay(
       const visible = restingVisible();
       for (const tile of tiles.values()) tile.mesh.visible = visible;
       if (next === 'crease') {
-        material.color.setHex(CREASE_COLOR);
-        material.opacity = CREASE_OPACITY;
+        material.color.setHex(creaseLook.color);
+        material.opacity = creaseLook.opacity;
       } else if (next === 'debug') {
         material.color.setHex(DEBUG_COLOR);
         material.opacity = DEBUG_OPACITY;
       }
+    },
+    setCreaseLook(look) {
+      creaseLook = look;
+      if (style !== 'crease') return;
+      material.color.setHex(look.color);
+      material.opacity = look.opacity;
     },
     clear() {
       clearGrabbed();

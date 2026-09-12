@@ -45,8 +45,15 @@ import {
   type MultisampleSetting,
 } from '../state/multisamplePrefs.ts';
 import {
+  CREASE_OPACITY_STEP,
   LAYER_EDGE_STYLES,
+  MAX_CREASE_OPACITY,
+  MIN_CREASE_OPACITY,
+  creaseColorHex,
+  creaseLook,
   layerEdgeStyle,
+  setCreaseColor,
+  setCreaseOpacity,
   setLayerEdgeStyle,
   type LayerEdgeStyle,
 } from '../state/layerEdgePrefs.ts';
@@ -56,12 +63,7 @@ import {
   terrainMesher,
   type TerrainMesher,
 } from '../state/terrainMesherPrefs.ts';
-import {
-  perfLoggingEnabled,
-  serverPerfLogging,
-  serverPerfLoggingNeedsRestart,
-  setPerfLogging,
-} from '../state/perfLoggingPrefs.ts';
+import { perfLoggingEnabled, setPerfLogging } from '../state/perfLoggingPrefs.ts';
 
 const FRONTIER_MIST_LABEL: Record<FrontierMistMode, string> = {
   off: 'None',
@@ -78,6 +80,8 @@ const VOID_ANCHOR_LABEL: Record<VoidAnchor, string> = {
   view: 'Follows the camera',
   world: 'Locked to the world',
 };
+
+const PERCENT_SCALE = 100;
 
 const LAYER_EDGE_STYLE_LABEL: Record<LayerEdgeStyle, string> = {
   normal: 'Normal',
@@ -307,6 +311,37 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
+      <Show when={layerEdgeStyle() === 'crease'}>
+        <div class="hud-row controls-row">
+          <span class="controls-label">Crease colour</span>
+          <input
+            type="color"
+            class="controls-color"
+            aria-label="Crease line colour"
+            title="Crease colour: the colour every layer edge is drawn in"
+            value={creaseColorHex(creaseLook().color)}
+            onInput={(e) => setCreaseColor(e.currentTarget.value)}
+          />
+        </div>
+        <div class="hud-row controls-row">
+          <span class="controls-label">Crease opacity</span>
+          <input
+            type="range"
+            class="controls-slider"
+            aria-label="Crease line opacity"
+            title="Crease opacity: how strongly the lines show over the terrain"
+            min={MIN_CREASE_OPACITY}
+            max={MAX_CREASE_OPACITY}
+            step={CREASE_OPACITY_STEP}
+            value={creaseLook().opacity}
+            onInput={(e) => setCreaseOpacity(e.currentTarget.valueAsNumber)}
+          />
+          <span class="controls-readout">
+            {Math.round(creaseLook().opacity * PERCENT_SCALE)}%
+          </span>
+        </div>
+      </Show>
+
       {
 }
       <div class="hud-row controls-row">
@@ -365,7 +400,7 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="Performance logging"
-          title="On: the browser console logs each frame hitch and the server log marks each main-thread stall, both with a local time stamp. The client half applies now; the server half at its next restart."
+          title="On: the browser console logs each frame hitch and the server marks each main-thread stall, both with a local time stamp. Both go to the server's data/perf.log. Applies immediately on both sides."
           value={perfLoggingEnabled() ? 'on' : 'off'}
           onChange={(e) => setPerfLogging(e.currentTarget.value === 'on')}
         >
@@ -373,13 +408,6 @@ export function ControlsPanel(): JSX.Element {
           <option value="off">Off</option>
         </select>
       </div>
-      <Show when={serverPerfLoggingNeedsRestart()}>
-        <p class="controls-warning">
-          Server logging turns {serverPerfLogging()?.enabled ? 'on' : 'off'} after a restart (the ↻
-          button).
-        </p>
-      </Show>
-
       <Show when={shadowedActions(controlBindings()).length > 0}>
         <p class="controls-warning">
           {}
