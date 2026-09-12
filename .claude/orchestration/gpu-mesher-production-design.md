@@ -681,7 +681,7 @@ Criteria (owner's rulings applied):
 |---|---|
 | band-ID image mismatch fraction, gpu vs cpu, outside CPU-blocky chunks and outside a 1-px contour exemption | ≤ 0.5 % |
 | band-ID holes (background where the cpu image has terrain) | 0 |
-| shaded pixel mismatch fraction above the metric floor, 3×3 window, tolerance 8 (gate 1's compare, `run.mjs:277-315`), floor = cpu vs cpu after a re-splice | ≤ 0.1 % |
+| shaded pixel mismatch fraction above the metric floor, 3×3 window, tolerance 8 (gate 1's compare, `run.mjs:277-315`), floor = cpu vs cpu moved a rigid half position step (gate 1's shift floor; owner ruling 2026-09-11, §14 item 5) | ≤ 0.1 % |
 | locked-neighbour fixture (a world with one chunk not received): same two criteria | same |
 
 ### 11.3 Speed and efficiency
@@ -762,14 +762,23 @@ integration) and fixes.
 ## 14. Open items for the owner (non-blocking; defaults stated)
 
 1. `@webgpu/types` as a dev dependency instead of the local ambient
-   declaration (default: local declaration until approved).
+   declaration. **Ruled 2026-09-11: add the package.** `@webgpu/types`
+   ^0.1.72 is a client dev dependency wired through `tsconfig` `types`; the
+   local `gpuMesher/webgpu.d.ts` is deleted.
 2. Whether GPU chunks that the CPU would draw blocky (work-budget fallback)
    may stay full-resolution (default: yes; reported, excluded from parity).
 3. `GPU_MESH_FRAME_BUDGET_MS = 3.0` (default stands; §7 reasoning).
-4. Dropping the dead normal attribute from the CPU arena (47 MB) is a separate
-   change; not done here.
+4. Dropping the dead normal attribute from the CPU arena (42.5 MB: 4 of the
+   20 B/vertex of the measured 212,336,640 B resident; JS heap only, three
+   never uploads an attribute the shader graph does not reference) is a separate
+   change; not done here. **Ruled 2026-09-11: leave it**, then reversed the
+   same day: the attribute path is commented out, not deleted, on the CPU
+   arena and mesher; the CPU vertex is 16 B. Tests derive the face normal
+   from the winding.
 5. Shaded parity floor: gate 1's rigid half-step shift (passes at 0.076 %
    without MSAA) or the snap-to-grid floor (0.114 %); see §15.1.
+   **Ruled 2026-09-11: the shift floor.** The criterion in §11.2 is judged
+   above it; the GPU mesher passes.
 
 ## 15. Results (2026-09-11, desktop RTX 3090, Frostwick Hollows bench world, default pose, 1404×1205)
 
