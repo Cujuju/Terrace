@@ -7,16 +7,20 @@ import {
   cellsAcross,
   createRouteBudget,
   findRoute,
+  findRouteWithStatus,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
+  labelSeaRegions,
   navigableWaterProfile,
   nearestWithinReach,
   normalizeAngle,
+  regionAt,
   withClearance,
   withoutSelf,
   type Occupant,
   type RouteBudget,
   type RouteCell,
+  type SeaRegions,
   type TerrainSampler,
 } from '@terrace/shared';
 import {
@@ -266,11 +270,13 @@ function unsurveyedShipyard(): Shipyard {
 }
 
 export function resurveyAllShipyards(): void {
+  noteTerrainChanged();
   for (const shipyard of shipyards.values()) shipyard.surveyedSeconds = null;
 }
 
 export function resurveyShipyardsNear(diff: readonly { readonly x: number; readonly y: number }[]): void {
   if (diff.length === 0) return;
+  noteTerrainChanged();
 
   let minX = Infinity;
   let minY = Infinity;
@@ -307,6 +313,10 @@ export function resetFleet(): void {
   voyages.clear();
   boats = [];
   nextBoatId = 1;
+  noteTerrainChanged();
+  seaRegions = null;
+  seaRegionsDemand = false;
+  sailCursor = 0;
   krakenWounds = 0;
   sinceLastSinking = 0;
   pendingWinds.length = 0;
@@ -662,6 +672,52 @@ const SQUADRON_LEG_SHORTEN_STEP_CELLS = BOAT_HULL_LENGTH_CELLS;
 
 const FULL_TURN_RADIANS = 2 * Math.PI;
 
+const TICK_ROUTE_SEARCH_CAP = 8;
+
+const UNREACHABLE_CACHE_CAP = 4096;
+
+const SEA_REGIONS_REBUILD_COOLDOWN_MS = 15_000;
+
+let terrainVersion = 0;
+
+function noteTerrainChanged(): void {
+  terrainVersion++;
+}
+
+const unreachableCache = new Map<string, number>();
+
+function rememberUnreachable(key: string): void {
+  if (!unreachableCache.has(key) && unreachableCache.size >= UNREACHABLE_CACHE_CAP) {
+    const oldest = unreachableCache.keys().next();
+    if (!oldest.done) unreachableCache.delete(oldest.value);
+  }
+  unreachableCache.set(key, terrainVersion);
+}
+
+let seaRegions: SeaRegions | null = null;
+let seaRegionsVersion = -1;
+let seaRegionsDemand = false;
+let seaRegionsLastBuildMs = 0;
+
+function currentSeaRegions(): SeaRegions | null {
+  if (seaRegions !== null && seaRegionsVersion === terrainVersion) return seaRegions;
+  seaRegionsDemand = true;
+  return null;
+}
+
+function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
+  if (seaRegions !== null && seaRegionsVersion === terrainVersion) return;
+  if (!seaRegionsDemand) return;
+  const nowMs = performance.now();
+  if (nowMs - seaRegionsLastBuildMs < SEA_REGIONS_REBUILD_COOLDOWN_MS) return;
+  seaRegionsDemand = false;
+  seaRegionsLastBuildMs = nowMs;
+  seaRegions = labelSeaRegions(eroded, HULL_PROFILE);
+  seaRegionsVersion = terrainVersion;
+}
+
+let sailCursor = 0;
+
 /** Per-tick route-search counters, emitted to perf.log when perf logging is on. */
 interface FleetRouteDebug {
   sailPlans: number;
@@ -670,6 +726,10 @@ interface FleetRouteDebug {
   sailStuck: number;
   sailNulls: number;
   readonly sailNullBoats: Set<number>;
+  sailSearches: number;
+  sailDeferred: number;
+  cacheHits: number;
+  regionHits: number;
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
@@ -683,6 +743,10 @@ function createFleetRouteDebug(): FleetRouteDebug {
     sailStuck: 0,
     sailNulls: 0,
     sailNullBoats: new Set<number>(),
+    sailSearches: 0,
+    sailDeferred: 0,
+    cacheHits: 0,
+    regionHits: 0,
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
@@ -836,6 +900,7 @@ interface SailTick {
   stationRadius: number;
   budget: RouteBudget;
   debug: FleetRouteDebug;
+  searchesLeft: number;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
@@ -990,13 +1055,39 @@ function sailBoat(tick: SailTick, index: number): void {
     if (voyage.route === null) debug.sailRepeat++;
     else if (voyage.noProgressSeconds > BOAT_STUCK_SECONDS) debug.sailStuck++;
     else debug.sailDrift++;
-    const plan = findRoute(
-      eroded,
-      HULL_PROFILE,
-      { x: boat.x, y: boat.y },
-      { x: goalX, y: goalY },
-      budget,
-    );
+    let plan: { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null = null;
+    if (tick.searchesLeft <= 0) {
+      debug.sailDeferred++;
+    } else {
+      const key =
+        `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
+        `${Math.floor(goalX)},${Math.floor(goalY)}`;
+      if (unreachableCache.get(key) === terrainVersion) {
+        debug.cacheHits++;
+      } else {
+        const regions = currentSeaRegions();
+        const fromRegion =
+          regions === null ? 0 : regionAt(regions, world.worldSize, boat.x, boat.y);
+        const goalRegion =
+          regions === null ? 0 : regionAt(regions, world.worldSize, goalX, goalY);
+        if (regions !== null && fromRegion !== 0 && goalRegion !== 0 && fromRegion !== goalRegion) {
+          debug.regionHits++;
+          rememberUnreachable(key);
+        } else {
+          tick.searchesLeft--;
+          debug.sailSearches++;
+          const outcome = findRouteWithStatus(
+            eroded,
+            HULL_PROFILE,
+            { x: boat.x, y: boat.y },
+            { x: goalX, y: goalY },
+            budget,
+          );
+          if (outcome.status === 'unreachable') rememberUnreachable(key);
+          plan = outcome.plan;
+        }
+      }
+    }
     if (plan === null) {
       debug.sailNulls++;
       debug.sailNullBoats.add(boat.id);
@@ -1055,7 +1146,7 @@ function sailBoat(tick: SailTick, index: number): void {
     permits: (x, y, heading) => isHullPose(world, eroded, x, y, heading),
     maxTurnRadians: turnThisTick,
     aimAheadCells: BOAT_AIM_AHEAD_CELLS,
-    replanNodeBudget: budget.remaining,
+    replanNodeBudget: budget,
   });
   voyage.sailedFrom = { x: boat.x, y: boat.y };
   boat.heading = helm.heading;
@@ -1143,6 +1234,7 @@ export function advanceFleet(
     kraken === null
       ? null
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
+  maybeRebuildSeaRegions(eroded);
   const debug: FleetRouteDebug = createFleetRouteDebug();
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
   const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt, debug);
@@ -1164,13 +1256,17 @@ export function advanceFleet(
     squadronGoals,
     homeGoals,
     debug,
+    searchesLeft: TICK_ROUTE_SEARCH_CAP,
   };
 
   let engaged = 0;
-  for (let index = 0; index < boats.length; index++) {
+  const fleetSize = boats.length;
+  for (let n = 0; n < fleetSize; n++) {
+    const index = fleetSize === 0 ? 0 : (sailCursor + n) % fleetSize;
     sailBoat(tick, index);
     if (boats[index].fighting) engaged++;
   }
+  if (fleetSize > 0) sailCursor = (sailCursor + 1) % fleetSize;
 
   resolveOverlaps(world, eroded, kraken, step);
 
@@ -1180,6 +1276,8 @@ export function advanceFleet(
         `leg=${legBudget.remaining}/${ROUTE_NODE_BUDGET} ` +
         `sailPlans=${debug.sailPlans} sailNulls=${debug.sailNulls} ` +
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
+        `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
+        `cache=${debug.cacheHits} region=${debug.regionHits} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
