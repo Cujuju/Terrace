@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import type { RendererBackendName } from '../render/scene.ts';
 import {
   CELL_WORLD_SIZE,
   FULL_BRUSH_RADIUS,
@@ -101,6 +102,18 @@ const [frameDraw, setFrameDrawSignal] = createSignal<FrameDrawAccounting | null>
 
 export function setFrameDraw(accounting: FrameDrawAccounting): void {
   setFrameDrawSignal(accounting);
+}
+
+/** What is drawing and what is meshing, sampled: a runtime demotion moves the mesher. */
+export interface RenderPath {
+  readonly backend: RendererBackendName;
+  readonly mesher: 'gpu' | 'cpu';
+}
+
+const [renderPath, setRenderPathSignal] = createSignal<RenderPath | null>(null);
+
+export function setRenderPath(path: RenderPath): void {
+  setRenderPathSignal(path);
 }
 
 const [frameStats, setFrameStatsSignal] = createSignal<FrameStatsSample | null>(
@@ -290,6 +303,7 @@ export {
   serverVersion,
   frameRate,
   frameDraw,
+  renderPath,
   frameStats,
   perfOpen,
   brushRadius,

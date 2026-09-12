@@ -4,9 +4,9 @@ import type { Component } from 'solid-js';
 import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
 import { createAudioEngine } from '../audio/audioEngine.ts';
 import type { Connection } from '../net/connection.ts';
-import type { FramePhase, Viewport } from '../render/scene.ts';
+import { rendererBackendName, type FramePhase, type Viewport } from '../render/scene.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
-import { recordPluginFrame } from '../render/frameStats.ts';
+import { frameStatsSample, recordPluginFrame } from '../render/frameStats.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import {
   clearGroundShade,
@@ -14,7 +14,7 @@ import {
   groundShadeMaxFor,
   setGroundShade,
 } from '../render/groundShade.ts';
-import { setFrameDraw } from '../state/hudState.ts';
+import { setFrameDraw, setRenderPath } from '../state/hudState.ts';
 import { pointerToNdc, worldPointToCell, type CellOccupancy } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import {
@@ -593,10 +593,16 @@ export function createClientPluginHost(
       rows.push({ pluginName: name, objects, budget, breached: after.breached });
     }
     setPluginDrawRows(rows);
+    // Frame handlers run before render, after three's own loop has reset the per-frame
+    // counters; frameStats reads them after render, so its draw calls are the frame's.
     setFrameDraw({
-      calls: viewport.renderer.info.render.calls,
+      calls: frameStatsSample()?.counters.drawCalls ?? 0,
       objects: countDrawObjects(viewport.scene),
       budget: frameDrawBudget(),
+    });
+    setRenderPath({
+      backend: rendererBackendName(viewport.renderer),
+      mesher: world.terrainMesherActive(),
     });
   };
 

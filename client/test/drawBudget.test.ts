@@ -21,7 +21,8 @@ import {
 } from '../src/plugins/host.ts';
 import { pluginDrawRows, setPluginDrawRows } from '../src/plugins/hudPanels.ts';
 import { frameDraw } from '../src/state/hudState.ts';
-import { FPS_SAMPLE_INTERVAL_MS } from '../src/config.ts';
+import { FPS_SAMPLE_INTERVAL_MS, FRAME_STATS_WINDOW_MS } from '../src/config.ts';
+import { recordFrame, resetFrameStats, setFrameCounterSource } from '../src/render/frameStats.ts';
 import type { TerraceClientPlugin } from '../src/plugins/types.ts';
 import type { Viewport } from '../src/render/scene.ts';
 import type { World } from '../src/world.ts';
@@ -170,7 +171,7 @@ describe('the draw-budget breach hysteresis', () => {
   });
 });
 
-function stubViewport(calls = 0) {
+function stubViewport() {
   const scene = new Scene();
   const listeners = new Set<() => void>();
   const canvas = {
@@ -180,7 +181,7 @@ function stubViewport(calls = 0) {
   return {
     viewport: {
       scene,
-      renderer: { domElement: canvas, info: { render: { calls } } },
+      renderer: { domElement: canvas, backend: {} },
       onFrame: (handler: () => void) => {
         listeners.add(handler);
         return () => listeners.delete(handler);
@@ -195,6 +196,7 @@ function stubViewport(calls = 0) {
 
 const stubWorld = {
   worldSize: () => 0,
+  terrainMesherActive: () => 'cpu',
   terrainHeightAt: () => null,
   drawnGroundYAt: () => null,
   pickCell: () => null,
@@ -251,8 +253,20 @@ describe("the host's sampler", () => {
     };
   }
 
-  function rig(plugin: TerraceClientPlugin, calls = 7) {
-    const view = stubViewport(calls);
+  function rig(plugin: TerraceClientPlugin, drawCalls = 7) {
+    const view = stubViewport();
+    resetFrameStats();
+    setFrameCounterSource(() => ({
+      pixelWidth: 0,
+      pixelHeight: 0,
+      cameraDistance: 0,
+      drawCalls,
+      triangles: 0,
+      geometries: 0,
+      textures: 0,
+      programs: 0,
+    }));
+    recordFrame(0, 0, FRAME_STATS_WINDOW_MS);
     let clockMs = 0;
     const host = createClientPluginHost([plugin], {
       viewport: view.viewport,
