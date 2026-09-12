@@ -18,8 +18,14 @@ import { discoverPlugins } from './plugins/discovery.ts';
 import { InstalledPlugins } from './plugins/installed.ts';
 import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
+import { PerfLoggingSetting } from './perf-logging-setting.ts';
 import { startTickLoop } from './tick.ts';
-import { TICK_TOTAL_PHASE, startTickTimingReport, timePhase } from './tick-timing.ts';
+import {
+  TICK_TOTAL_PHASE,
+  setTickTimingEnabled,
+  startTickTimingReport,
+  timePhase,
+} from './tick-timing.ts';
 import { ROOM_NAME, TerraceRoom, bindRoomContext } from './net/terrace-room.ts';
 import { WorldAdminService } from './world/world-admin.ts';
 import { WorldManager } from './world/world-manager.ts';
@@ -96,6 +102,10 @@ async function main(): Promise<void> {
       `worlds=${config.worldsDir}`,
   );
 
+  const perfLogging = new PerfLoggingSetting(config.serverSettingsPath);
+  setTickTimingEnabled(perfLogging.live);
+  if (!perfLogging.live) logInfo(`performance logging is off (${perfLogging.describe()})`);
+
   const plugins = new InstalledPlugins(await discoverPlugins(config.pluginsDir));
 
   const identity = initBuildIdentity({ plugins: plugins.list, clientDistPath: config.clientDistPath });
@@ -151,6 +161,7 @@ async function main(): Promise<void> {
   });
   const tickTiming = startTickTimingReport({
     tickHz: config.tickHz,
+    source: perfLogging.describe(),
     worldSize: () => manager.current?.world.size ?? null,
   });
 
@@ -163,7 +174,7 @@ async function main(): Promise<void> {
     }
   }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
 
-  bindRoomContext({ manager, admin, restart });
+  bindRoomContext({ manager, admin, restart, perfLogging });
   const serverOptions: ServerOptions = { greet: false };
   const clientExpressHook = await clientStaticExpressHook(config);
   if (clientExpressHook !== undefined) {

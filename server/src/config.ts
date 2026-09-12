@@ -10,6 +10,7 @@ export const DEFAULT_PORT = 2567;
 
 export const DEFAULT_DB_PATH = './data/world.db';
 export const DEFAULT_WORLDS_DIR = './data/worlds';
+const SERVER_SETTINGS_FILE_NAME = 'server-settings.json';
 export const MIN_WORLD_SIZE =
   INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE + 2 * NEIGHBOURHOOD_CELLS;
 export const MAX_WORLD_SIZE = 4096;
@@ -54,6 +55,8 @@ export interface ServerConfig {
   readonly snapshotRetention: number;
   readonly rollbackKey: string | null;
   readonly worldsDir: string;
+  /** Operator switches that outlive a restart; sits beside the worlds directory. */
+  readonly serverSettingsPath: string;
 
   readonly worldAdminKey: string | null;
   readonly worldSwitchCountdownS: number;
@@ -171,6 +174,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const clientDistPath = env.CLIENT_DIST_PATH?.trim()
     ? resolve(env.CLIENT_DIST_PATH.trim())
     : defaultClientDistPath();
+  const worldsDir = env.WORLDS_DIR?.trim()
+    ? resolve(env.WORLDS_DIR.trim())
+    : resolve(DEFAULT_WORLDS_DIR);
   return {
     worldSize,
     port: readInteger(env, 'PORT', DEFAULT_PORT, { min: MIN_PORT, max: MAX_PORT }),
@@ -194,7 +200,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       max: MAX_SNAPSHOT_RETENTION,
     }),
     rollbackKey: readRollbackKey(env),
-    worldsDir: env.WORLDS_DIR?.trim() ? resolve(env.WORLDS_DIR.trim()) : resolve(DEFAULT_WORLDS_DIR),
+    worldsDir,
+    serverSettingsPath: resolve(worldsDir, '..', SERVER_SETTINGS_FILE_NAME),
     worldAdminKey: readWorldAdminKey(env),
     worldSwitchCountdownS: readClampedInteger(
       env,
