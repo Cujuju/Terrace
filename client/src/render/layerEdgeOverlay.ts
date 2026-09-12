@@ -279,14 +279,30 @@ export function createLayerEdgeOverlay(
     writeRun(tileIdx, tile, idx, NO_LIP_POSITIONS);
   };
 
+  const NEIGHBOUR_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const;
+
   const neighboursKnown = (cx: number, cy: number): boolean => {
-    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+    for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= chunksPerEdge || ny >= chunksPerEdge) continue;
       if (!hasChunk(mirror, ny * chunksPerEdge + nx)) return false;
     }
     return true;
+  };
+
+  // A chunk's lips gate on its neighbours being received, but a west or north arrival
+  // never remeshes it; re-evaluate the gate for every neighbour on each draw.
+  const rebuildNeighbours = (idx: number): void => {
+    const cx = idx % chunksPerEdge;
+    const cy = Math.floor(idx / chunksPerEdge);
+    for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= chunksPerEdge || ny >= chunksPerEdge) continue;
+      const neighbour = ny * chunksPerEdge + nx;
+      if (!segmentsByChunk.has(neighbour)) rebuild(neighbour);
+    }
   };
 
   const rebuild = (idx: number): void => {
@@ -383,6 +399,7 @@ export function createLayerEdgeOverlay(
   return {
     refreshChunk(chunkIdx) {
       rebuild(chunkIdx);
+      rebuildNeighbours(chunkIdx);
       clearGrabbed();
     },
 

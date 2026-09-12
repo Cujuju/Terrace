@@ -2,7 +2,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   DataTexture,
-  DoubleSide,
+  FrontSide,
   type Group,
   InterleavedBuffer,
   InterleavedBufferAttribute,
@@ -123,7 +123,8 @@ export function createTerrainMaterial(
     flatShading: true,
     roughness: TERRAIN_ROUGHNESS,
     metalness: TERRAIN_METALNESS,
-    side: DoubleSide,
+    // Undersides (overhang ceilings) are wound to face down; culled from above.
+    side: FrontSide,
   });
   if (layout === 'snorm16') {
     const lut = createBandLutTexture();
