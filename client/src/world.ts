@@ -67,6 +67,8 @@ import {
   createLayerEdgeOverlay,
   type LayerEdgeOverlay,
   type LayerEdgeStyle,
+  DEFAULT_CREASE_LOOK,
+  type CreaseLook,
 } from './render/layerEdgeOverlay.ts';
 import { createEffect, on } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
@@ -123,6 +125,7 @@ export interface World extends TerrainSink {
   ): PointedCellPick | null;
   highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null;
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
+  setCreaseLook(look: CreaseLook): void;
   setBrushRefused(refused: boolean): void;
   bandAtCell(x: number, y: number): number | null;
   graspSpanBand(pick: TerrainRayPick | null): number | null;
@@ -196,6 +199,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let meshes: TerrainMeshes | null = null;
   let layerEdges: LayerEdgeOverlay | null = null;
   let layerEdgeStyle: LayerEdgeStyle = 'debug';
+  let creaseLook: CreaseLook = DEFAULT_CREASE_LOOK;
   let predictions: PredictionStore | null = null;
 
   let chunkRevisions: Int32Array | null = null;
@@ -346,6 +350,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       worldSize,
       nextMeshes.drawnGround(),
     );
+    nextLayerEdges.setCreaseLook(creaseLook);
     nextLayerEdges.setStyle(layerEdgeStyle);
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
     nextMeshes.onChunkDrawn((chunkIdx) => {
@@ -551,6 +556,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setLayerEdgeStyle(style: LayerEdgeStyle): void {
       layerEdgeStyle = style;
       layerEdges?.setStyle(style);
+    },
+    setCreaseLook(look: CreaseLook): void {
+      creaseLook = look;
+      layerEdges?.setCreaseLook(look);
     },
     setBrushRefused(refused: boolean): void {
       layerEdges?.setRefused(refused);

@@ -709,6 +709,28 @@ body {
   border-color: var(--hud-accent);
 }
 
+.controls-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--hud-accent);
+}
+
+.controls-readout {
+  min-width: 36px;
+  text-align: right;
+  color: var(--hud-muted);
+  font-size: 11px;
+}
+
+.controls-color {
+  width: 44px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 /* Native dropdown lists render on the OS layer; dark text on dark panel would
    be unreadable, so give the options an explicit opaque background. */
 .controls-select option {
