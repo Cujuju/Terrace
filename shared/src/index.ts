@@ -19,3 +19,4 @@ export * from './farmland.ts';
 export * from './pathing.ts';
 export * from './steering.ts';
 export * from './targeting.ts';
+export * from './waypoints.ts';
