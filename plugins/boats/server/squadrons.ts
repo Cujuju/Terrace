@@ -1,7 +1,7 @@
 import { cellsAcross } from '@terrace/shared';
 import { BOATS_PER_VILLAGE, VILLAGE_PATROL_RANGE_CELLS } from '../protocol.ts';
 
-export const HOME_GUARD_BOATS_PER_VILLAGE = 1;
+export const HOME_GUARD_BOATS_PER_VILLAGE = 0;
 
 export const EXPLORERS_PER_VILLAGE = BOATS_PER_VILLAGE - HOME_GUARD_BOATS_PER_VILLAGE;
 
