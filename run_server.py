@@ -189,6 +189,11 @@ CHILD_GROUP_KWARGS = (
     {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
     else {"start_new_session": True}
 )
+# Children never read the keyboard: this script is the only stdin reader.
+# Vite's shortcut reader otherwise competes for the same console input, so a
+# keystroke lands in whichever process read first (`k` swallowed, `r`
+# restarting Vite alone) - observed on Windows 2026-09-11.
+CHILD_SPAWN_KWARGS = {"stdin": subprocess.DEVNULL, **CHILD_GROUP_KWARGS}
 
 # Everything that ends up INSIDE the client bundle, relative to the repo root.
 # Not the same set as WATCH_ROOTS: that one is what a SERVER restart follows
@@ -355,7 +360,7 @@ def describe_worlds(worlds_dir):
 def spawn_server(env) -> subprocess.Popen:
     """Start the game server in its own session, so it can be killed as a group."""
     return subprocess.Popen([NODE, SERVER_ENTRY], cwd=SERVER_DIR, env=env,
-                            **CHILD_GROUP_KWARGS)
+                            **CHILD_SPAWN_KWARGS)
 
 
 def start_control_reader(state) -> threading.Thread:
@@ -384,10 +389,20 @@ def start_control_reader(state) -> threading.Thread:
     interpreter kills a daemon thread abruptly without running its `finally`,
     leaving the shell with -ECHO -ICANON. This thread only reads.
     """
+    if os.name == "nt" and sys.stdin.isatty():
+        # No termios on Windows: the console stays line-buffered, so
+        # sys.stdin.read(1) only returns after Enter. getwch() reads one
+        # keypress straight from the console.
+        import msvcrt
+        read_one = msvcrt.getwch
+    else:
+        def read_one():
+            return sys.stdin.read(1)
+
     def read_keys():
         try:
             while not state["stop"]:
-                key = sys.stdin.read(1)
+                key = read_one()
                 if not key:  # EOF - no more input is coming
                     return
                 key = key.strip().lower()
@@ -621,7 +636,7 @@ def main(watch: bool) -> int:
             return None
         if CLIENT_MODE == "dev":
             vite = subprocess.Popen([NODE, VITE_ENTRY], cwd=CLIENT_DIR, env=env,
-                                    **CHILD_GROUP_KWARGS)
+                                    **CHILD_SPAWN_KWARGS)
             children.append(vite)
             print("[run_server] client dev server starting - "
                   "open the Local: URL Vite prints below")
