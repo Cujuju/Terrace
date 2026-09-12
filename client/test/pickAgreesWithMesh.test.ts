@@ -22,7 +22,9 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 const WORLD = cellsAcross(64);
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
-const MAX_CELL_DISAGREEMENT = cellsAcross(0.5);
+/** Half a world unit for a riser at a band's midpoint, plus the shoreline riser's reach:
+ *  band 0's contour (drawnLevelThreshold(0)) can stand almost a whole cell from its land cell. */
+const MAX_CELL_DISAGREEMENT = cellsAcross(0.5) + 1;
 
 const MIN_EXACT_AGREEMENT = 0.95;
 

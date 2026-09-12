@@ -1,10 +1,9 @@
-import { BAND_HEIGHT, CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, chunksPerEdge, drawnLevelThreshold } from '@terrace/shared';
 import type { Renderer } from 'three/webgpu';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import {
   CHUNK_TRIANGLE_BUDGET,
   VERTICES_PER_TRIANGLE,
-  SHORE_THRESHOLD,
   drawnBandCapY,
   type ChunkDrawnCaps,
   type DrawnCapLevel,
@@ -179,34 +178,14 @@ function alignUp(value: number, alignment: number): number {
 function gpuCapPlan(lowestBand: number, highestBand: number): ChunkDrawnCaps {
   const levels: DrawnCapLevel[] = [];
   for (let k = lowestBand; k <= highestBand; k++) {
-    const threshold = k * BAND_HEIGHT;
     levels.push({
-      threshold,
+      threshold: drawnLevelThreshold(k),
       sampleBand: k,
-      capY: drawnBandCapY(k, threshold),
+      capY: drawnBandCapY(k),
       polygons: [],
     });
-    if (k === 0) {
-      levels.push({
-        threshold: SHORE_THRESHOLD,
-        sampleBand: 0,
-        capY: drawnBandCapY(0, SHORE_THRESHOLD),
-        polygons: [],
-      });
-    }
   }
   return { blocky: false, levels };
-}
-
-function levelRangeMinY(lowestBand: number): number {
-  return drawnBandCapY(lowestBand, lowestBand * BAND_HEIGHT);
-}
-
-/** The shoreline level caps at world y 0, above band 0's sunken cap. */
-function levelRangeMaxY(lowestBand: number, highestBand: number): number {
-  const top = drawnBandCapY(highestBand, highestBand * BAND_HEIGHT);
-  const hasShore = lowestBand <= 0 && highestBand >= 0;
-  return hasShore ? Math.max(top, drawnBandCapY(0, SHORE_THRESHOLD)) : top;
 }
 
 function chunkCornerX(mirror: TerrainMirror, chunkIdx: number): number {
@@ -893,8 +872,8 @@ export async function createGpuChunkBuildSource(
           entry,
           counts,
           vertexCount,
-          levelRangeMinY(member.lowestBand),
-          levelRangeMaxY(member.lowestBand, member.highestBand),
+          drawnBandCapY(member.lowestBand),
+          drawnBandCapY(member.highestBand),
           chunkCornerX(queued.mirror, queued.chunkIdx),
           chunkCornerZ(queued.mirror, queued.chunkIdx),
         ),

@@ -1,4 +1,4 @@
-import { BAND_HEIGHT } from './constants.ts';
+import { BAND_HEIGHT, SEA_LEVEL } from './constants.ts';
 import {
   BEDROCK_FLOOR,
   columnSampleAtBand,
@@ -14,6 +14,14 @@ import { SHEER_RISE_HEIGHT_UNITS_PER_CELL } from './traversal.ts';
 export const DRAWN_GROUND_COORD_DENOM = 1024;
 
 export const DRAWN_GROUND_BAND_BIAS = BAND_HEIGHT / 2;
+
+/** The first dry height. Band 0 starts here: a sea sample never rounds up to the waterline. */
+export const DRAWN_SHORE_HEIGHT = SEA_LEVEL + 1;
+
+/** Band k's threshold in the biased field (`height + DRAWN_GROUND_BAND_BIAS`). */
+export function drawnLevelThreshold(band: number): number {
+  return band === 0 ? DRAWN_SHORE_HEIGHT + DRAWN_GROUND_BAND_BIAS : band * BAND_HEIGHT;
+}
 
 export const ISOLINE_SAMPLES_PER_CELL = 4;
 
@@ -31,10 +39,13 @@ const BAND_NUMERATOR = BAND_HEIGHT * WEIGHT_TOTAL;
 
 const BIAS_NUMERATOR = DRAWN_GROUND_BAND_BIAS * WEIGHT_TOTAL;
 
+const SHORE_NUMERATOR = drawnLevelThreshold(0) * WEIGHT_TOTAL;
+
 const TOP_CEILING_FIELD = null;
 
 export function drawnBandOfSample(height: number): number {
-  return Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
+  const band = Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
+  return band === 0 && height + DRAWN_GROUND_BAND_BIAS < drawnLevelThreshold(0) ? -1 : band;
 }
 
 export function drawnBandOfSpan(span: Span): number {
@@ -182,7 +193,8 @@ export function drawnIsolineAt(
 }
 
 function bandOfNumerator(numerator: number): number {
-  return Math.floor((numerator + BIAS_NUMERATOR) / BAND_NUMERATOR);
+  const band = Math.floor((numerator + BIAS_NUMERATOR) / BAND_NUMERATOR);
+  return band === 0 && numerator + BIAS_NUMERATOR < SHORE_NUMERATOR ? -1 : band;
 }
 
 function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {

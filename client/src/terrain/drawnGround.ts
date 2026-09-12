@@ -11,7 +11,7 @@ import {
   type ChunkChart,
   type DrawnGroundStore,
 } from './drawnGroundStore.ts';
-import { sampleHeight, type TerrainMirror } from './mirror.ts';
+import { type TerrainMirror } from './mirror.ts';
 import { type CapPolygon } from './triangulation.ts';
 
 function chunkOf(cell: number): number {
@@ -35,9 +35,6 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
   const chartAt = (cellX: number, cellZ: number): ChunkChart | null =>
     store.chartOf(chunkOf(cellX), chunkOf(cellZ));
 
-  const blockyHeightAt = (cellX: number, cellZ: number): number =>
-    sampleHeight(mirror, Math.round(cellX), Math.round(cellZ));
-
   const hasNoContours = (chart: ChunkChart | null): chart is null =>
     chart === null || chart.plan.blocky;
 
@@ -50,7 +47,7 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
 
   return {
     capYAt(cellX: number, cellZ: number): number {
-      return drawnBandCapY(drawnBandOf(cellX, cellZ), blockyHeightAt(cellX, cellZ));
+      return drawnBandCapY(drawnBandOf(cellX, cellZ));
     },
 
     capYOfBand(band: number, cellX: number, cellZ: number): number {

@@ -1,9 +1,8 @@
-import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, bandOf } from '@terrace/shared';
+import { MAX_HEIGHT, MIN_HEIGHT, bandOf } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT } from '../../config.ts';
 import {
-  SEABED_CAP_SINK,
   SEABED_RISER_BORDER_WORLD_HEIGHT,
-  SHORE_HEIGHT,
+  levelPaletteHeight,
   quantizeChannel,
 } from '../../terrain/capEmission.ts';
 import {
@@ -26,9 +25,7 @@ export const LUT_BORDER_BASE = 2 * BAND_LUT_SIZE;
 /** Ceiling colour when the level is the chunk's lowest band, and when it is not. */
 export const LUT_CEILING_LOWEST_BASE = 3 * BAND_LUT_SIZE;
 export const LUT_CEILING_INNER_BASE = 4 * BAND_LUT_SIZE;
-export const LUT_SHORE_CAP = 5 * BAND_LUT_SIZE;
-export const LUT_SHORE_CLIFF = LUT_SHORE_CAP + 1;
-export const LUT_VEC4_COUNT = LUT_SHORE_CLIFF + 1;
+export const LUT_VEC4_COUNT = 5 * BAND_LUT_SIZE;
 
 /** vec4f: rgb plus the alpha byte the kernel packs as a flag. */
 export const LUT_COMPONENTS = 4;
@@ -40,10 +37,6 @@ const SELF_LIT_OFF = 0;
 /** Border slot alpha doubles as the rim flag, the CPU's `bordered` test. */
 const BORDERED_ON = 1;
 const BORDERED_OFF = 0;
-
-function capYOfBand(band: number): number {
-  return band === 0 ? -SEABED_CAP_SINK : band * BAND_WORLD_HEIGHT;
-}
 
 function selfLitFor(paletteIndex: number): number {
   return isSeabedPaletteIndex(paletteIndex) ? SELF_LIT_ON : SELF_LIT_OFF;
@@ -62,8 +55,8 @@ function write(out: Float64Array, slot: number, color: Rgb, alpha: number): void
 }
 
 function ceilingSlot(band: number, isLowest: boolean): { color: Rgb; alpha: number } {
-  const paletteIndex = bandPaletteIndex(band * BAND_HEIGHT);
-  const undersideIndex = bandPaletteIndex((isLowest ? band : band - 1) * BAND_HEIGHT);
+  const paletteIndex = bandPaletteIndex(levelPaletteHeight(band));
+  const undersideIndex = bandPaletteIndex(levelPaletteHeight(isLowest ? band : band - 1));
   const index = isSeabedPaletteIndex(undersideIndex) ? undersideIndex : paletteIndex;
   return { color: CLIFF_PALETTE[index]!, alpha: selfLitFor(index) };
 }
@@ -80,11 +73,11 @@ function buildBandLutValues(): Float64Array {
 
   for (let band = -BAND_LUT_OFFSET; band < BAND_LUT_SIZE - BAND_LUT_OFFSET; band++) {
     const slot = band + BAND_LUT_OFFSET;
-    const paletteIndex = bandPaletteIndex(band * BAND_HEIGHT);
+    const paletteIndex = bandPaletteIndex(levelPaletteHeight(band));
     const riserSelfLit = selfLitFor(paletteIndex);
     const bordered =
       isSeabedPaletteIndex(paletteIndex) &&
-      capYOfBand(band) - capYOfBand(band - 1) > SEABED_RISER_BORDER_WORLD_HEIGHT;
+      BAND_WORLD_HEIGHT > SEABED_RISER_BORDER_WORLD_HEIGHT;
 
     // The rim vertex takes the border slot whole, alpha included, so a bordered riser's
     // border alpha has to be the self-lit flag the cliff slot carries.
@@ -97,7 +90,7 @@ function buildBandLutValues(): Float64Array {
     write(
       out,
       LUT_BORDER_BASE + slot,
-      TERRAIN_PALETTE[bandPaletteIndex((band - 1) * BAND_HEIGHT)]!,
+      TERRAIN_PALETTE[bandPaletteIndex(levelPaletteHeight(band - 1))]!,
       bordered ? BORDERED_ON : BORDERED_OFF,
     );
 
@@ -107,9 +100,6 @@ function buildBandLutValues(): Float64Array {
     write(out, LUT_CEILING_INNER_BASE + slot, innerCeiling.color, innerCeiling.alpha);
   }
 
-  const shoreIndex = bandPaletteIndex(SHORE_HEIGHT);
-  write(out, LUT_SHORE_CAP, TERRAIN_PALETTE[shoreIndex]!, capSelfLitFor(shoreIndex));
-  write(out, LUT_SHORE_CLIFF, CLIFF_PALETTE[shoreIndex]!, selfLitFor(shoreIndex));
   return out;
 }
 

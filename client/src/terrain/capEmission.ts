@@ -1,13 +1,13 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
-  DRAWN_GROUND_BAND_BIAS,
-  SEA_LEVEL,
+  DRAWN_SHORE_HEIGHT,
   anyColumnLayered,
   bandOf,
   columnCoversBand,
   drawnBandOfSample,
   drawnBandOfSpan,
+  drawnLevelThreshold,
   isSpanDrawn,
   spanAt,
   spanCapHeight,
@@ -16,7 +16,6 @@ import {
 import {
   BAND_WORLD_HEIGHT,
   CELL_WORLD_SIZE,
-  WATER_SURFACE_LIFT,
 } from '../config.ts';
 import {
   bandPaletteIndex,
@@ -48,13 +47,10 @@ import { bridgeHole, earClip, groupLoops, type CapPolygon } from './triangulatio
 
 export const SKIRT_PICK_INSET = 1 / 1024;
 
-export const SEABED_CAP_SINK = WATER_SURFACE_LIFT / 2;
-
-/** The first dry height; the shoreline level's colour and the isoline its contour follows. */
-export const SHORE_HEIGHT = SEA_LEVEL + 1;
-
-/** Marched like any band level: inside is `h + bias >= threshold`, the contour on `h = SHORE_HEIGHT`. */
-export const SHORE_THRESHOLD = SHORE_HEIGHT + DRAWN_GROUND_BAND_BIAS;
+/** The height whose palette entry colours band k; band 0 is dry land from the shoreline up. */
+export function levelPaletteHeight(band: number): number {
+  return band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT;
+}
 
 export const SEABED_RISER_BORDER_WORLD_HEIGHT = BAND_WORLD_HEIGHT / 16;
 
@@ -174,20 +170,19 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
 
   const levels: ContourLevel[] = [];
   for (let k = lowestBand; k <= highestBand; k++) {
-    const paletteIndex = bandPaletteIndex(k * BAND_HEIGHT);
-    const capY = k === 0 ? -SEABED_CAP_SINK : k * BAND_WORLD_HEIGHT;
-    const below = k - 1 === 0 ? -SEABED_CAP_SINK : (k - 1) * BAND_WORLD_HEIGHT;
+    const paletteIndex = bandPaletteIndex(levelPaletteHeight(k));
+    const capY = drawnBandCapY(k);
+    const below = drawnBandCapY(k - 1);
     const skirtDrop = k === lowestBand ? 0 : capY - below;
     const bordered =
       isSeabedPaletteIndex(paletteIndex) &&
       skirtDrop > SEABED_RISER_BORDER_WORLD_HEIGHT;
-    const undersideHeight = (k === lowestBand ? k : k - 1) * BAND_HEIGHT;
-    const undersideIndex = bandPaletteIndex(undersideHeight);
+    const undersideIndex = bandPaletteIndex(levelPaletteHeight(k === lowestBand ? k : k - 1));
     const ceilingIndex = isSeabedPaletteIndex(undersideIndex)
       ? undersideIndex
       : paletteIndex;
     levels.push({
-      threshold: k * BAND_HEIGHT,
+      threshold: drawnLevelThreshold(k),
       sampleBand: k,
       capY,
       undersideY: k === lowestBand ? capY : below,
@@ -196,7 +191,7 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
       capSelfLit: capSelfLitFor(paletteIndex),
       skirtColor: palettes.cliff[paletteIndex],
       skirtBorderColor: bordered
-        ? palettes.top[bandPaletteIndex((k - 1) * BAND_HEIGHT)]
+        ? palettes.top[bandPaletteIndex(levelPaletteHeight(k - 1))]
         : null,
       skirtSelfLit: selfLitFor(paletteIndex),
       ceilingColor: palettes.cliff[ceilingIndex],
@@ -204,25 +199,6 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
       crossingOverride: null,
       loops: [],
     });
-    if (k === 0) {
-      const shoreIndex = bandPaletteIndex(SHORE_HEIGHT);
-      levels.push({
-        threshold: SHORE_THRESHOLD,
-        sampleBand: 0,
-        capY: 0,
-        undersideY: 0,
-        skirtDrop: SEABED_CAP_SINK,
-        capColor: palettes.top[shoreIndex],
-        capSelfLit: capSelfLitFor(shoreIndex),
-        skirtColor: palettes.cliff[shoreIndex],
-        skirtBorderColor: null,
-        skirtSelfLit: selfLitFor(shoreIndex),
-        ceilingColor: palettes.cliff[shoreIndex],
-        ceilingSelfLit: selfLitFor(shoreIndex),
-        crossingOverride: null,
-        loops: [],
-      });
-    }
   }
   return levels;
 }
@@ -342,13 +318,12 @@ const FALLBACK_CURTAIN_TRIANGLES = 2 * (4 * LATTICE_PER_CHUNK);
 export const FALLBACK_MAX_TRIANGLES =
   FALLBACK_CAP_TRIANGLES + FALLBACK_WALL_TRIANGLES + FALLBACK_CURTAIN_TRIANGLES;
 
-export function drawnBandCapY(band: number, height: number): number {
-  if (band === 0 && height <= SEA_LEVEL) return -SEABED_CAP_SINK;
+export function drawnBandCapY(band: number): number {
   return band * BAND_WORLD_HEIGHT;
 }
 
 export function blockyCellCapY(height: number): number {
-  return drawnBandCapY(drawnBandOfSample(height), height);
+  return drawnBandCapY(drawnBandOfSample(height));
 }
 
 function writeBlockyFallback(

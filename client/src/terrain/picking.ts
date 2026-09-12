@@ -5,7 +5,6 @@ import {
   MAX_HEIGHT,
   MIN_HEIGHT,
   bandOf,
-  cellIndex,
   chunkIndex,
   drawnBandAt,
   drawnBandOfSample,
@@ -456,13 +455,6 @@ interface DrawnCap {
   readonly v: number;
 }
 
-function nearestCellHeight(mirror: TerrainMirror, u: number, v: number): number {
-  const map = mirror.map;
-  const last = map.size - 1;
-  const clamp = (n: number): number => (n < 0 ? 0 : n > last ? last : n);
-  return map.cells[cellIndex(map, clamp(Math.floor(u)), clamp(Math.floor(v)))]!;
-}
-
 function drawnCapMet(
   mirror: TerrainMirror,
   ray: ScaledRay,
@@ -475,7 +467,7 @@ function drawnCapMet(
     const u = ray.ox + t * ray.dx;
     const v = ray.oz + t * ray.dz;
     const band = drawnBandAt(mirror.map, u, v);
-    const drawnY = drawnBandCapY(band, nearestCellHeight(mirror, u, v));
+    const drawnY = drawnBandCapY(band);
     if (ray.oy + t * ray.dy <= drawnY) {
       return { t, band, capY: band * BAND_WORLD_HEIGHT, drawnY, u, v };
     }
