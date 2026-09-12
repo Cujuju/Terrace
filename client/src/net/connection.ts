@@ -30,6 +30,7 @@ import {
   MSG_SCULPT_APPLIED,
   MSG_SCULPT_DENIED,
   MSG_SERVER_RESTART_NOTICE,
+  MSG_PERF_HITCH,
   MSG_PERF_LOGGING,
   MSG_PERF_LOGGING_STATE,
   MSG_STACK_RESTART,
@@ -94,6 +95,7 @@ export interface Connection {
   sendWorldAdmin(message: WorldAdminRequestMessage): void;
   sendStackRestart(): void;
   sendPerfLogging(enabled: boolean): void;
+  sendPerfHitch(intervalMs: number, typicalMs: number): void;
   dispose(): void;
 }
 
@@ -252,6 +254,9 @@ export function connect(options: ConnectionOptions): Connection {
     },
     sendPerfLogging(enabled: boolean): void {
       live()?.send(MSG_PERF_LOGGING, { type: MSG_PERF_LOGGING, enabled });
+    },
+    sendPerfHitch(intervalMs: number, typicalMs: number): void {
+      live()?.send(MSG_PERF_HITCH, { type: MSG_PERF_HITCH, intervalMs, typicalMs });
     },
     sendPlugin(type: string, payload: unknown): void {
       live()?.send(type, payload);

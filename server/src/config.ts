@@ -11,6 +11,7 @@ export const DEFAULT_PORT = 2567;
 export const DEFAULT_DB_PATH = './data/world.db';
 export const DEFAULT_WORLDS_DIR = './data/worlds';
 const SERVER_SETTINGS_FILE_NAME = 'server-settings.json';
+const PERF_LOG_FILE_NAME = 'perf.log';
 export const MIN_WORLD_SIZE =
   INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE + 2 * NEIGHBOURHOOD_CELLS;
 export const MAX_WORLD_SIZE = 4096;
@@ -57,6 +58,8 @@ export interface ServerConfig {
   readonly worldsDir: string;
   /** Operator switches that outlive a restart; sits beside the worlds directory. */
   readonly serverSettingsPath: string;
+  /** Stall, tick and client-hitch lines for this boot; truncated at every start. */
+  readonly perfLogPath: string;
 
   readonly worldAdminKey: string | null;
   readonly worldSwitchCountdownS: number;
@@ -202,6 +205,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     rollbackKey: readRollbackKey(env),
     worldsDir,
     serverSettingsPath: resolve(worldsDir, '..', SERVER_SETTINGS_FILE_NAME),
+    perfLogPath: resolve(worldsDir, '..', PERF_LOG_FILE_NAME),
     worldAdminKey: readWorldAdminKey(env),
     worldSwitchCountdownS: readClampedInteger(
       env,

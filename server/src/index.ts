@@ -18,6 +18,7 @@ import { discoverPlugins } from './plugins/discovery.ts';
 import { InstalledPlugins } from './plugins/installed.ts';
 import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
+import { closePerfLog, openPerfLog } from './perf-log.ts';
 import { PerfLoggingSetting } from './perf-logging-setting.ts';
 import { startTickLoop } from './tick.ts';
 import {
@@ -102,9 +103,10 @@ async function main(): Promise<void> {
       `worlds=${config.worldsDir}`,
   );
 
+  openPerfLog(config.perfLogPath);
   const perfLogging = new PerfLoggingSetting(config.serverSettingsPath);
-  setTickTimingEnabled(perfLogging.live);
-  if (!perfLogging.live) logInfo(`performance logging is off (${perfLogging.describe()})`);
+  setTickTimingEnabled(perfLogging.enabled);
+  logInfo(`performance logging is ${perfLogging.enabled ? 'on' : 'off'} (${perfLogging.source})`);
 
   const plugins = new InstalledPlugins(await discoverPlugins(config.pluginsDir));
 
@@ -161,7 +163,6 @@ async function main(): Promise<void> {
   });
   const tickTiming = startTickTimingReport({
     tickHz: config.tickHz,
-    source: perfLogging.describe(),
     worldSize: () => manager.current?.world.size ?? null,
   });
 
@@ -187,7 +188,7 @@ async function main(): Promise<void> {
 
   gameServer.onBeforeShutdown(() => {
     tickLoop.stop();
-    tickTiming?.stop();
+    tickTiming.stop();
     clearInterval(snapshotTimer);
     try {
       logInfo(manager.shutdown() ? 'shutdown snapshot written' : 'nothing to snapshot');
@@ -197,6 +198,7 @@ async function main(): Promise<void> {
   });
 
   gameServer.onShutdown(() => {
+    closePerfLog();
     logInfo('shutdown complete');
   });
 

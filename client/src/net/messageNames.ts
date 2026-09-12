@@ -25,6 +25,7 @@ import type {
   WorldPurgeRequestMessage,
   ServerRestartNoticeMessage,
   ServerRestartRequestMessage,
+  PerfHitchMessage,
   PerfLoggingRequestMessage,
   PerfLoggingStateMessage,
   StackRestartRequestMessage,
@@ -103,6 +104,8 @@ export const MSG_STACK_RESTART: StackRestartRequestMessage['type'] = 'stackResta
 export const MSG_PERF_LOGGING: PerfLoggingRequestMessage['type'] = 'perfLogging';
 
 export const MSG_PERF_LOGGING_STATE: PerfLoggingStateMessage['type'] = 'perfLoggingState';
+
+export const MSG_PERF_HITCH: PerfHitchMessage['type'] = 'perfHitch';
 
 export const MSG_SERVER_RESTART_NOTICE: ServerRestartNoticeMessage['type'] =
   'serverRestartNotice';
