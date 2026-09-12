@@ -43,6 +43,7 @@ import {
   SUN_LIGHT_INTENSITY,
   type Viewport,
 } from './render/scene.ts';
+import { rendererBackendName } from './render/rendererBackend.ts';
 import type { World } from './world.ts';
 import { CHUNK_SIZE, chunksPerEdge, type SculptIntent } from '@terrace/shared';
 import {
@@ -2061,11 +2062,6 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = {
   bandParity: bandParityScenario,
   terrainStill: terrainStillScenario,
 };
-
-function rendererBackendName(renderer: Renderer): 'webgpu' | 'webgl2' {
-  const backend = renderer.backend as unknown as { isWebGPUBackend?: boolean };
-  return backend.isWebGPUBackend === true ? 'webgpu' : 'webgl2';
-}
 
 function requestedScenario(): string | null {
   const raw = new URLSearchParams(location.search).get(PROBE_QUERY_FLAG);
