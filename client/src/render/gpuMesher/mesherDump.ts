@@ -16,6 +16,7 @@ import type { TerrainMirror } from '../../terrain/mirror.ts';
 import { VERTICES_PER_TRIANGLE } from '../../terrain/vertexGrid.ts';
 import type { ArenaStore } from '../arenaStore.ts';
 import { createDirectChunkBuildSource } from '../chunkBuildSource.ts';
+import { rendererBackendName } from '../rendererBackend.ts';
 import type { TerrainMeshes } from '../terrainMeshes.ts';
 import { OVER_BUDGET, extractWindowEntry } from './terrainGpuInputs.ts';
 import {
@@ -139,7 +140,6 @@ export interface MesherDumpSources {
 }
 
 interface WebGpuBackendInternals {
-  readonly isWebGPUBackend?: boolean;
   readonly device?: GPUDevice;
   get(object: object): { buffer?: GPUBuffer };
 }
@@ -366,7 +366,7 @@ export function installMesherDump(sources: MesherDumpSources): () => void {
     if (mirror === null || meshes === null) return 'the world has no terrain yet';
     const backend = sources.renderer.backend as unknown as WebGpuBackendInternals;
     const device = backend.device;
-    if (backend.isWebGPUBackend !== true || device === undefined) {
+    if (rendererBackendName(sources.renderer) !== 'webgpu' || device === undefined) {
       return 'the renderer is not running the WebGPU backend';
     }
 
