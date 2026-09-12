@@ -8,6 +8,7 @@ import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { createCelestialVoid } from './render/celestialVoid.ts';
+import { installHitchLog } from './render/hitchLog.ts';
 import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
 import { layerEdgeStyle } from './state/layerEdgePrefs.ts';
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
@@ -91,6 +92,7 @@ const connection = connect({
 });
 
 if (import.meta.env.DEV) installPerfProbeEarly(viewport);
+installHitchLog();
 const world = createWorld(viewport, { chunkBuildSource, gpuMesher });
 const celestialVoid = createCelestialVoid(
   viewport,
