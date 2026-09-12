@@ -674,6 +674,11 @@ const FULL_TURN_RADIANS = 2 * Math.PI;
 
 const TICK_ROUTE_SEARCH_CAP = 8;
 
+/** Trial expansions per sail search (~2ms). Near and open-water routes complete
+ * far below this (probes show 3-15); maze searches that would eat the whole
+ * pool exhaust the trial instead and defer, retrying as the boat moves. */
+const TRIAL_NODE_BUDGET = 1024;
+
 /** Beyond this chebyshev distance A* boxes dwarf the node pool, so boats steer
  * direct (today's null-route behavior) until they close within range. Far
  * open-water legs need no route; far maze legs cannot fit the pool anyway. */
@@ -740,6 +745,7 @@ interface FleetRouteDebug {
   cacheHits: number;
   regionHits: number;
   farSkips: number;
+  expensive: number;
   bumps: number;
   tver: number;
   rver: number;
@@ -772,6 +778,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     cacheHits: 0,
     regionHits: 0,
     farSkips: 0,
+    expensive: 0,
     bumps: 0,
     tver: 0,
     rver: -1,
@@ -1110,14 +1117,15 @@ function sailBoat(tick: SailTick, index: number): void {
         } else {
           tick.searchesLeft--;
           debug.sailSearches++;
-          const before = budget.remaining;
+          const trial = createRouteBudget(TRIAL_NODE_BUDGET);
           const outcome = findRouteWithStatus(
             eroded,
             HULL_PROFILE,
             { x: boat.x, y: boat.y },
             { x: goalX, y: goalY },
-            budget,
+            trial,
           );
+          if (outcome.status === 'exhausted') debug.expensive++;
           if (debug.probe === null) {
             debug.probe = {
               sx: boat.x,
@@ -1127,7 +1135,7 @@ function sailBoat(tick: SailTick, index: number): void {
               fr: fromRegion,
               gr: goalRegion,
               status: outcome.status,
-              spent: before - budget.remaining,
+              spent: TRIAL_NODE_BUDGET - trial.remaining,
             };
           }
           if (outcome.status === 'unreachable') rememberUnreachable(key);
@@ -1193,7 +1201,7 @@ function sailBoat(tick: SailTick, index: number): void {
     permits: (x, y, heading) => isHullPose(world, eroded, x, y, heading),
     maxTurnRadians: turnThisTick,
     aimAheadCells: BOAT_AIM_AHEAD_CELLS,
-    replanNodeBudget: budget,
+    replanNodeBudget: Math.min(budget.remaining, TRIAL_NODE_BUDGET),
   });
   voyage.sailedFrom = { x: boat.x, y: boat.y };
   boat.heading = helm.heading;
@@ -1331,6 +1339,7 @@ export function advanceFleet(
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
         `cache=${debug.cacheHits} region=${debug.regionHits} ` +
         `far=${debug.farSkips} ` +
+        `expensive=${debug.expensive} ` +
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
