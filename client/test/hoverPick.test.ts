@@ -161,7 +161,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
     try {
       const before = input.hoverTarget();
       expect(before).not.toBeNull();
-      expect(before!.surfaceY).toBe(0);
+      expect(before!.surfaceY).toBe(bandY(-1));
       const cell = { x: before!.x, y: before!.y };
 
       setColumn(mirror.map, cell.x, cell.y, [
@@ -194,7 +194,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       expect({ x: after!.x, y: after!.y }).toEqual(cell);
       expect(after!.hitRiser).toBe(false);
       expect(after!.hitY).toBe(after!.surfaceY);
-      expect(after!.surfaceY).toBe(0);
+      expect(after!.surfaceY).toBe(bandY(-1));
     } finally {
       dispose();
     }

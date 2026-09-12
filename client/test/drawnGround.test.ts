@@ -5,6 +5,7 @@ import {
   bandOf,
   chunkIndex,
   drawnBandOfSample,
+  drawnLevelThreshold,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 import {
@@ -33,7 +34,8 @@ function groundOf(mirror: TerrainMirror): DrawnGround {
 
 const WORLD_SIZE = CHUNK_SIZE * 2;
 
-const OFF_CONTOUR = 1 / 4;
+/** Off every isoline the fixture has: band k crossings sit at uv = 1/2, the shoreline at uv = 1/16. */
+const OFF_CONTOUR = 1 / 3;
 
 function ringOf(x: number, z: number): number {
   const centre = WORLD_SIZE / 2 - 0.5;
@@ -77,13 +79,15 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
   const originX = cx * CHUNK_SIZE;
   const originZ = cz * CHUNK_SIZE;
   let highest = -Infinity;
+  let lowest = Infinity;
   for (let i = 0; i < mirror.map.cells.length; i++) {
     highest = Math.max(highest, drawnBandOfSample(mirror.map.cells[i]));
+    lowest = Math.min(lowest, drawnBandOfSample(mirror.map.cells[i]));
   }
-  for (let band = highest; band >= 0; band--) {
+  for (let band = highest; band >= lowest; band--) {
     loadSamples(mirror, originX, originZ);
-    const segmentCount = marchLevel(band * BAND_HEIGHT, originX, originZ, null);
-    const wholeInside = domainInside(band * BAND_HEIGHT, null);
+    const segmentCount = marchLevel(drawnLevelThreshold(band), originX, originZ, null);
+    const wholeInside = domainInside(drawnLevelThreshold(band), null);
     const polygons: CapPolygon[] = groupLoops(
       assembleLoops(segmentCount, originX, originZ, wholeInside)
         .map(simplifyLoop)
@@ -95,7 +99,7 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
       return band;
     }
   }
-  return 0;
+  return lowest;
 }
 
 describe('drawnGround', () => {
@@ -107,7 +111,7 @@ describe('drawnGround', () => {
     for (let z = OFF_CONTOUR; z < WORLD_SIZE; z += 0.5) {
       for (let x = OFF_CONTOUR; x < WORLD_SIZE; x += 0.5) {
         const expected = drawnBandIndependent(mirror, x, z);
-        expect(ground.bandAt(x, z)).toBe(expected);
+        expect(ground.bandAt(x, z), `${x},${z} h=${sampleHeight(mirror, Math.floor(x), Math.floor(z))}`).toBe(expected);
         const naive = bandOf(sampleHeight(mirror, Math.floor(x), Math.floor(z)));
         if (naive !== expected) disagreements.push(`${x},${z}`);
       }

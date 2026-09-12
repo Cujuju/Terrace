@@ -12,13 +12,10 @@ import {
   OPEN_COLUMN_SAMPLE,
   SHEER_RISE_HEIGHT_UNITS_PER_CELL,
   SHEER_WALL_SPREAD_CELLS,
+  drawnLevelThreshold,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT } from '../../config.ts';
-import {
-  SEABED_CAP_SINK,
-  SEABED_RISER_BORDER_WORLD_HEIGHT,
-  SHORE_THRESHOLD,
-} from '../../terrain/capEmission.ts';
+import { SEABED_RISER_BORDER_WORLD_HEIGHT } from '../../terrain/capEmission.ts';
 import { LATTICE_PER_CHUNK } from '../../terrain/contours.ts';
 import {
   BAND_LUT_OFFSET,
@@ -27,8 +24,6 @@ import {
   LUT_CEILING_INNER_BASE,
   LUT_CEILING_LOWEST_BASE,
   LUT_CLIFF_BASE,
-  LUT_SHORE_CAP,
-  LUT_SHORE_CLIFF,
   LUT_VEC4_COUNT,
 } from './bandLut.ts';
 import {
@@ -95,9 +90,6 @@ const CEILING_EDGE_CROSSING = 0.5;
 const CEILING_INSIDE = 1;
 const CEILING_OUTSIDE = 0;
 
-/** Below any real band, so no band level ever collides with the shoreline level. */
-const SHORE_LEVEL = -1000000;
-
 const VERTICES_PER_QUAD = 6;
 
 /** Refs the polyline can hold: the case's own refs plus refined isoline points. */
@@ -162,10 +154,8 @@ const SPAN_OFFSET_MASK : u32 = ${wgslI32(SPAN_OFFSET_MASK)}u;
 const WINDOW_SPAN_PAIRS : i32 = ${wgslI32(WINDOW_SPAN_PAIRS)};
 const CELL_WORLD_SIZE : f32 = ${wgslF32(CELL_WORLD_SIZE)};
 const BAND_WORLD_HEIGHT : f32 = ${wgslF32(BAND_WORLD_HEIGHT)};
-const SEABED_CAP_SINK : f32 = ${wgslF32(SEABED_CAP_SINK)};
 const SEABED_RIM_HEIGHT : f32 = ${wgslF32(SEABED_RISER_BORDER_WORLD_HEIGHT)};
-const SHORE_THRESHOLD : i32 = ${wgslI32(SHORE_THRESHOLD)};
-const SHORE_LEVEL : i32 = ${wgslI32(SHORE_LEVEL)};
+const SHORE_THRESHOLD : i32 = ${wgslI32(drawnLevelThreshold(0))};
 const CEILING_EDGE_CROSSING : f32 = ${wgslF32(CEILING_EDGE_CROSSING)};
 const CEILING_INSIDE : i32 = ${wgslI32(CEILING_INSIDE)};
 const CEILING_OUTSIDE : i32 = ${wgslI32(CEILING_OUTSIDE)};
@@ -175,8 +165,6 @@ const LUT_CLIFF_BASE : i32 = ${wgslI32(LUT_CLIFF_BASE)};
 const LUT_BORDER_BASE : i32 = ${wgslI32(LUT_BORDER_BASE)};
 const LUT_CEILING_LOWEST_BASE : i32 = ${wgslI32(LUT_CEILING_LOWEST_BASE)};
 const LUT_CEILING_INNER_BASE : i32 = ${wgslI32(LUT_CEILING_INNER_BASE)};
-const LUT_SHORE_CAP : i32 = ${wgslI32(LUT_SHORE_CAP)};
-const LUT_SHORE_CLIFF : i32 = ${wgslI32(LUT_SHORE_CLIFF)};
 const CHUNK_CELLS : i32 = ${wgslI32(LATTICE_PER_CHUNK - 1)};
 const CHUNK_LATTICE : i32 = ${wgslI32(LATTICE_PER_CHUNK)};
 const LATTICE_CELLS : u32 = ${wgslI32(WINDOW_LATTICE_SAMPLES)}u;
@@ -305,7 +293,13 @@ fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
 }
 
 fn quantizeToBand(h : i32) -> i32 { return (h >> BAND_HEIGHT_SHIFT) << BAND_HEIGHT_SHIFT; }
-fn drawnBandOfSample(h : i32) -> i32 { return (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT; }
+fn drawnBandOfSample(h : i32) -> i32 {
+  let band = (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT;
+  return select(band, -1, band == 0 && h + BAND_BIAS < SHORE_THRESHOLD);
+}
+fn levelThreshold(level : i32) -> i32 {
+  return select(level * BAND_HEIGHT, SHORE_THRESHOLD, level == 0);
+}
 
 fn spanCountOf(local : i32) -> i32 {
   let packedCount = i32(cellDesc[local] >> SPAN_COUNT_SHIFT);
@@ -374,15 +368,7 @@ fn crossingFraction(outsideHeight : i32, insideHeight : i32, threshold : i32) ->
   return clamp(s, CROSSING_CLEARANCE, 1.0 - CROSSING_CLEARANCE);
 }
 
-fn capYOfBand(band : i32) -> f32 {
-  return select(f32(band) * BAND_WORLD_HEIGHT, -SEABED_CAP_SINK, band == 0);
-}
-fn levelCapY(level : i32) -> f32 {
-  return select(capYOfBand(level), 0.0, level == SHORE_LEVEL);
-}
-fn levelCapSlot(level : i32) -> i32 {
-  return select(LUT_CAP_BASE + level + BAND_LUT_OFFSET, LUT_SHORE_CAP, level == SHORE_LEVEL);
-}
+fn capYOfBand(band : i32) -> f32 { return f32(band) * BAND_WORLD_HEIGHT; }
 fn ceilingSlot(band : i32, isLowest : bool) -> i32 {
   let base = select(LUT_CEILING_INNER_BASE, LUT_CEILING_LOWEST_BASE, isLowest);
   return base + band + BAND_LUT_OFFSET;
@@ -426,18 +412,13 @@ fn writeRiser(at : u32, p : vec2f, q : vec2f, topY : f32, botY : f32, slot : i32
 }
 
 fn riserQuadsPerSegment(level : i32) -> u32 {
-  if (level == SHORE_LEVEL) { return 1u; }
   return select(1u, 2u, lut[LUT_BORDER_BASE + level + BAND_LUT_OFFSET].w > 0.5);
 }
 
 // A bordered riser is seabed, so the border slot's alpha already is the cliff's self-lit
 // flag and the rim vertex can take the slot whole (bandLut.ts asserts it).
 fn emitRiser(at : u32, p : vec2f, q : vec2f, level : i32, belowY : f32) {
-  let topY = levelCapY(level);
-  if (level == SHORE_LEVEL) {
-    writeRiser(at, p, q, topY, belowY, LUT_SHORE_CLIFF);
-    return;
-  }
+  let topY = capYOfBand(level);
   let slot = level + BAND_LUT_OFFSET;
   if (lut[LUT_BORDER_BASE + slot].w > 0.5) {
     let rim = topY - SEABED_RIM_HEIGHT;
@@ -682,28 +663,26 @@ fn saddleCase(mask : i32, bias : i32, threshold : i32) -> i32 {
 }
 
 fn emitLevel(level : i32, localRef : array<i32, 4>, at : u32) -> u32 {
-  let isShore = level == SHORE_LEVEL;
-  let threshold = select(level * BAND_HEIGHT, SHORE_THRESHOLD, isShore);
-  let sampleBand = select(level, 0, isShore);
+  let threshold = levelThreshold(level);
   var mask = 0;
   for (var c = 0; c < 4; c++) {
-    cornerHeight[c] = levelHeight(localRef[c], sampleBand);
+    cornerHeight[c] = levelHeight(localRef[c], level);
     if (cornerHeight[c] + BAND_BIAS >= threshold) { mask |= 1 << u32(c); }
   }
   if (mask == 0) { return 0u; }
   computeCrossings(mask, threshold);
   let polyCase = saddleCase(mask, BAND_BIAS, threshold);
   let withRiser = level != chunkLowestBand;
-  let capY = levelCapY(level);
-  let belowY = select(capYOfBand(level - 1), capYOfBand(0), isShore);
-  let capSlot = levelCapSlot(level);
+  let capY = capYOfBand(level);
+  let belowY = capYOfBand(level - 1);
+  let capSlot = LUT_CAP_BASE + level + BAND_LUT_OFFSET;
   var cursor = at;
   for (var p = 0; p < MAX_POLYS; p++) {
     if (marchTable[polyCase * MAX_POLYS + p] == 0) { continue; }
     let n = buildPolyline(polyCase, p, threshold, true);
     cursor += emitPolygon(cursor, n, capY, capSlot, true);
     if (withRiser) { cursor += emitRisers(cursor, n, level, belowY); }
-    appendLips(n, sampleBand);
+    appendLips(n, level);
   }
   return cursor - at;
 }
@@ -762,8 +741,6 @@ fn emitSquare(square : i32, base : u32) -> u32 {
   for (var level = lo; level <= highCorner; level++) {
     cursor += emitLevel(level, localRef, cursor);
     if (chunkLayered) { cursor += emitCeilingLevel(level, localRef, cursor); }
-    // The shipped mesher slots its shoreline level directly after band 0.
-    if (level == 0) { cursor += emitLevel(SHORE_LEVEL, localRef, cursor); }
   }
   return cursor - base;
 }

@@ -140,9 +140,9 @@ describe('pickTerrainCellByRay', () => {
     expect(pickTerrainCellByRay(mirror, above(7, 11), DOWN)).toEqual({
       x: 7,
       y: 11,
-      surfaceY: 0,
+      surfaceY: -BAND_HEIGHT * HEIGHT_WORLD_SCALE,
       hitRiser: false,
-      hitY: 0,
+      hitY: -BAND_HEIGHT * HEIGHT_WORLD_SCALE,
       hitX: 7 * CELL_WORLD_SIZE,
       hitZ: 11 * CELL_WORLD_SIZE,
       spanIndex: 0,
@@ -167,9 +167,9 @@ describe('pickTerrainCellByRay', () => {
         expect(hit).toEqual({
           x,
           y,
-          surfaceY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          surfaceY: drawnBandOfSample(heightOf(x, y)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
           hitRiser: false,
-          hitY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          hitY: drawnBandOfSample(heightOf(x, y)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
           hitX: x * CELL_WORLD_SIZE,
           hitZ: y * CELL_WORLD_SIZE,
           spanIndex: 0,

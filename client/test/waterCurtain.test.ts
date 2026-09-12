@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  bandOf,
+  cellIndex,
+  cellX,
+  cellY,
+  drawnBandOfSample,
+} from '@terrace/shared';
 import {
   appendRegionSurface,
   waterRegionOfCells,
@@ -24,6 +32,7 @@ const WORLD_SIZE = CHUNK_SIZE * 4;
 
 const PLATEAU_HEIGHT = 3 * BAND_HEIGHT;
 const PIT_HEIGHT = 0;
+const PIT_FLOOR_BAND = drawnBandOfSample(PIT_HEIGHT);
 const bandCapY = (band: number): number => band * BAND_WORLD_HEIGHT;
 
 const RIVER_LIFT_WORLD_UNITS = 1 / 64;
@@ -123,7 +132,7 @@ describe('waterfall curtains', () => {
 
   it('places every vertex Y exactly on some band drawn cap', () => {
     const triangles = curtainsFor(cliffFixture(), BELOW_EVERYTHING);
-    const allowed = new Set<number>([0, 1, 2, 3].map(bandSurfaceY));
+    const allowed = new Set<number>([PIT_FLOOR_BAND, 0, 1, 2, 3].map(bandSurfaceY));
     for (let i = 1; i < triangles.length; i += 3) {
       expect(
         allowed.has(triangles[i]!),
@@ -145,12 +154,12 @@ describe('waterfall curtains', () => {
     }
 
     expect(
-      quadsBetween(triangles, topY, bandSurfaceY(0)),
+      quadsBetween(triangles, topY, bandSurfaceY(PIT_FLOOR_BAND)),
       'no sheet reached the pit floor — the falls stop short',
     ).toBeGreaterThan(0);
 
-    const fullDrop = topY - bandSurfaceY(0);
-    expect(fullDrop).toBe(surfaceBand * BAND_WORLD_HEIGHT);
+    const fullDrop = topY - bandSurfaceY(PIT_FLOOR_BAND);
+    expect(fullDrop).toBe((surfaceBand - PIT_FLOOR_BAND) * BAND_WORLD_HEIGHT);
   });
 
   it('loses no vertex between the rows: every quad is exactly vertical', () => {

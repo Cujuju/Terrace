@@ -30,7 +30,6 @@ import {
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   LATTICE_PER_CHUNK,
   LIT_BY_SCENE,
-  SEABED_CAP_SINK,
   SEABED_RISER_BORDER_WORLD_HEIGHT,
   SELF_LIT_ALPHA_BYTE,
   SKIRT_PICK_INSET,
@@ -58,7 +57,6 @@ import {
   BAND_WORLD_HEIGHT,
   CELL_WORLD_SIZE,
   HEIGHT_WORLD_SCALE,
-  WATER_SURFACE_LIFT,
 } from '../src/config.ts';
 
 const WORLD = NEIGHBOURHOOD_CELLS * 4;
@@ -455,23 +453,13 @@ describe('the waterline', () => {
     expectColor(shore[0].color, TERRAIN_PALETTE[bandPaletteIndex(SEA_LEVEL + 1)]);
   });
 
-  it('sinks the SEABED cap under the dry one rather than z-fighting it', () => {
-    const { triangles } = write(mirrorWith([chunkPayload(0, 0, SEA_LEVEL + 1)]), 0, 0);
-    const seabed = capsOf(triangles).filter((t) => t.a.y < 0);
-    expect(seabed.length).toBeGreaterThan(0);
-    for (const cap of seabed) expect(cap.a.y).toBeCloseTo(-SEABED_CAP_SINK);
-    expectColor(seabed[0].color, TERRAIN_PALETTE[bandPaletteIndex(SEA_LEVEL)]);
-    expect(SEABED_CAP_SINK).toBeGreaterThan(0);
-    expect(SEABED_CAP_SINK).toBeLessThan(WATER_SURFACE_LIFT);
-  });
-
-  it('paints a freshly generated (all-zero) world as seabed, never beach', () => {
+  it('paints a freshly generated (all-zero) world as seabed a band down, never at the waterline', () => {
     const { triangles } = write(mirrorWith([chunkPayload(0, 0, 0)]), 0, 0);
     const caps = capsOf(triangles);
     expect(caps.length).toBe(2);
     for (const cap of caps) {
-      expectColor(cap.color, TERRAIN_PALETTE[bandPaletteIndex(0)]);
-      expect(cap.a.y).toBeCloseTo(-SEABED_CAP_SINK);
+      expectColor(cap.color, TERRAIN_PALETTE[bandPaletteIndex(-BAND_HEIGHT)]);
+      expect(cap.a.y).toBeCloseTo(-BAND_WORLD_HEIGHT);
     }
   });
 });
@@ -579,7 +567,7 @@ describe('single-cell features', () => {
     }
 
     const { triangles } = write(mirror, EDGE_CHUNK, EDGE_CHUNK);
-    expect(topmostCapY(triangles, centreX, centreZ)).toBeCloseTo(-SEABED_CAP_SINK);
+    expect(topmostCapY(triangles, centreX, centreZ)).toBeCloseTo(-BAND_WORLD_HEIGHT);
   });
 });
 
@@ -606,7 +594,7 @@ describe('honesty — the render never lies about the heightmap', () => {
         for (const [px, pz] of probes) {
           const actual = topmostCapY(triangles, px, pz);
           expect(actual, `cell (${i},${j}) at (${px},${pz})`).not.toBeNull();
-          const tolerance = SEABED_CAP_SINK + 1e-6;
+          const tolerance = 1e-6;
           expect(Math.abs((actual as number) - expected)).toBeLessThanOrEqual(tolerance);
         }
       }
@@ -628,7 +616,7 @@ describe('honesty — the render never lies about the heightmap', () => {
 
   it('holds over a whole guard disc around each centre, not just the point', () => {
     expectHonest(
-      (i, j) => ((i * 7 + j * 3) % 3) * BAND_HEIGHT,
+      (i, j) => (((i * 7 + j * 3) % 3) + 1) * BAND_HEIGHT,
       CONTOUR_CELL_CENTRE_GUARD / 2,
     );
   });
@@ -776,9 +764,7 @@ describe('the blocky fallback', () => {
     expect(counts.usedFallback).toBe(true);
     for (let j = 1; j < CHUNK_SIZE; j++) {
       for (let i = 1; i < CHUNK_SIZE; i++) {
-        const expected =
-          quantizeToBand(checkerboard(i, j)) * HEIGHT_WORLD_SCALE -
-          (checkerboard(i, j) === 0 ? SEABED_CAP_SINK : 0);
+        const expected = drawnBandOfSample(checkerboard(i, j)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
         expect(topmostCapY(triangles, EDGE_ORIGIN + i, EDGE_ORIGIN + j)).toBeCloseTo(
           expected,
           6,
@@ -883,7 +869,7 @@ describe('skirt picking', () => {
     return skirtsOf(triangles).filter(
       (t) =>
         Math.max(t.a.y, t.b.y, t.c.y) - Math.min(t.a.y, t.b.y, t.c.y) >
-        SEABED_CAP_SINK * 2,
+        SEABED_RISER_BORDER_WORLD_HEIGHT,
     );
   }
 
@@ -903,7 +889,9 @@ describe('skirt picking', () => {
   }
 
   it('resolves every point of a spire wall to the spire itself', () => {
-    const { triangles } = writeEdge((i, j) => (i === 5 && j === 6 ? BAND_HEIGHT : 0));
+    const { triangles } = writeEdge((i, j) =>
+      i === 5 && j === 6 ? 2 * BAND_HEIGHT : BAND_HEIGHT,
+    );
     expect(cellsUnderSkirts(triangles)).toEqual([
       `${EDGE_ORIGIN + 5},${EDGE_ORIGIN + 6}`,
     ]);
