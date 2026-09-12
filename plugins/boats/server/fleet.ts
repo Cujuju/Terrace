@@ -711,7 +711,9 @@ function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
   if (seaRegions !== null && seaRegionsVersion === terrainVersion) return;
   if (!seaRegionsDemand) return;
   const nowMs = performance.now();
-  if (nowMs - seaRegionsLastBuildMs < SEA_REGIONS_REBUILD_COOLDOWN_MS) return;
+  if (seaRegions !== null && nowMs - seaRegionsLastBuildMs < SEA_REGIONS_REBUILD_COOLDOWN_MS) {
+    return;
+  }
   seaRegionsDemand = false;
   seaRegionsLastBuildMs = nowMs;
   seaRegions = labelSeaRegions(eroded, HULL_PROFILE);
@@ -734,6 +736,8 @@ interface FleetRouteDebug {
   regionHits: number;
   bumps: number;
   tver: number;
+  rver: number;
+  rcount: number;
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
@@ -753,6 +757,8 @@ function createFleetRouteDebug(): FleetRouteDebug {
     regionHits: 0,
     bumps: 0,
     tver: 0,
+    rver: -1,
+    rcount: -1,
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
@@ -1245,6 +1251,8 @@ export function advanceFleet(
   debug.bumps = terrainChangeBumps;
   terrainChangeBumps = 0;
   debug.tver = terrainVersion;
+  debug.rver = seaRegions === null ? -1 : seaRegionsVersion;
+  debug.rcount = seaRegions === null ? -1 : seaRegions.regionCount;
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
   const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt, debug);
   const homeGoals = assignHomeBerths(kraken, squadronGoals);
@@ -1287,7 +1295,7 @@ export function advanceFleet(
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
         `cache=${debug.cacheHits} region=${debug.regionHits} ` +
-        `bumps=${debug.bumps} tv=${debug.tver} ` +
+        `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
