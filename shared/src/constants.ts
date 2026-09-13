@@ -26,6 +26,9 @@ export function worldUnitsAcross(cells: number): number {
 
 export const SEA_LEVEL = 0;
 
+/** The first dry height. Band 0 starts here: a sea sample never rounds up to the waterline. */
+export const DRAWN_SHORE_HEIGHT = SEA_LEVEL + 1;
+
 export const MAX_HEIGHT = 1024;
 
 export const TERRACE_BAND_COUNT = 64;
