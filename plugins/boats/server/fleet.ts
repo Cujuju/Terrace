@@ -344,6 +344,10 @@ interface Voyage {
   goalX: number;
   goalY: number;
   noProgressSeconds: number;
+  /** Seconds since any route was held. Direct-steer creep counts as progress
+   * for stuck detection but never produces a route; without this, a boat
+   * creeping along a shore never escalates to rescue. */
+  nullSeconds: number;
   poolTried: boolean;
   slot: number | null;
   slotList: BerthList | null;
@@ -1263,6 +1267,9 @@ interface SailTick {
   debug: FleetRouteDebug;
   searchesLeft: number;
   fleetRoutes: Map<number, { hopX: number; hopY: number; cells: RouteCell[] | null }>;
+  /** Squadrons that already spent a trial this tick: one attempt per fleet
+   * per tick, whoever sails first. Members hold once anyone has tried. */
+  fleetSearched: Set<number>;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
@@ -1318,6 +1325,21 @@ function rescueRoute(
     );
   }
   return outcome.plan;
+}
+
+/** Rescue is due when a cruising boat is definitionally failing: physically
+ * stuck, or chronically routeless (creeping without a route never clears
+ * this). Station approaches never rescue: shuffling into engagement is
+ * tactical crowd behavior, and a pool route to a drifting station slot
+ * changes combat dynamics. */
+function rescueDue(tick: SailTick, voyage: Voyage, cruising: boolean): boolean {
+  return (
+    cruising &&
+    (voyage.noProgressSeconds > BOAT_STUCK_SECONDS ||
+      voyage.nullSeconds > BOAT_STUCK_SECONDS) &&
+    !voyage.poolTried &&
+    tick.budget.remaining > 0
+  );
 }
 
 function sailBoat(tick: SailTick, index: number): void {
@@ -1447,6 +1469,7 @@ function sailBoat(tick: SailTick, index: number): void {
       goalX,
       goalY,
       noProgressSeconds: 0,
+      nullSeconds: 0,
       poolTried: false,
       slot: null,
       slotList: null,
@@ -1507,7 +1530,8 @@ function sailBoat(tick: SailTick, index: number): void {
     } else if (
       squadron !== undefined &&
       squadronId !== null &&
-      squadronRank !== 0
+      squadronRank !== 0 &&
+      (tick.fleetSearched.has(squadronId) || tick.searchesLeft <= 0)
     ) {
       // Fleet members never search: the flagship pathfinds once per hop and
       // the fleet adopts. Hold formation on the current route; null it only
@@ -1526,13 +1550,9 @@ function sailBoat(tick: SailTick, index: number): void {
     } else if (
       Math.max(Math.abs(boat.x - goalX), Math.abs(boat.y - goalY)) > ROUTE_DIRECT_RANGE_CELLS
     ) {
-      // Whole-journey spans never fit a trial; a stuck boat may spend one
+      // Whole-journey spans never fit a trial; a failing boat may spend one
       // capped rescue from the pool instead of burning trials on them.
-      if (
-        voyage.noProgressSeconds > BOAT_STUCK_SECONDS &&
-        !voyage.poolTried &&
-        tick.budget.remaining > 0
-      ) {
+      if (rescueDue(tick, voyage, target === null)) {
         voyage.poolTried = true;
         debug.sailRescue++;
         plan = rescueRoute(tick, eroded, boat, goalX, goalY);
@@ -1545,12 +1565,7 @@ function sailBoat(tick: SailTick, index: number): void {
         `${Math.floor(goalX)},${Math.floor(goalY)}`;
       if (unreachableCache.get(key) === terrainVersion) {
         debug.cacheHits++;
-      } else if (
-        exhaustedCache.get(key) === terrainVersion &&
-        (voyage.noProgressSeconds <= BOAT_STUCK_SECONDS ||
-          voyage.poolTried ||
-          tick.budget.remaining <= 0)
-      ) {
+      } else if (exhaustedCache.get(key) === terrainVersion && !rescueDue(tick, voyage, target === null)) {
         // Same span filled the box on this terrain version and no rescue is
         // due: re-spending the trial would starve routable searches.
         debug.exhaustedHits++;
@@ -1566,6 +1581,7 @@ function sailBoat(tick: SailTick, index: number): void {
         } else {
           tick.searchesLeft--;
           debug.sailSearches++;
+          if (squadronId !== null) tick.fleetSearched.add(squadronId);
           const trial = createRouteBudget(TRIAL_NODE_BUDGET);
           const outcome = findRouteWithStatus(
             eroded,
@@ -1592,13 +1608,7 @@ function sailBoat(tick: SailTick, index: number): void {
           }
           if (outcome.status === 'unreachable') rememberUnreachable(key);
           plan = outcome.plan;
-          if (
-            plan === null &&
-            outcome.status === 'exhausted' &&
-            voyage.noProgressSeconds > BOAT_STUCK_SECONDS &&
-            !voyage.poolTried &&
-            tick.budget.remaining > 0
-          ) {
+          if (plan === null && outcome.status === 'exhausted' && rescueDue(tick, voyage, target === null)) {
             voyage.poolTried = true;
             debug.sailRescue++;
             plan = rescueRoute(tick, eroded, boat, goalX, goalY);
@@ -1698,8 +1708,13 @@ function sailBoat(tick: SailTick, index: number): void {
   if (result.replanned || result.progressed) {
     voyage.noProgressSeconds = 0;
     voyage.poolTried = false;
+  } else {
+    voyage.noProgressSeconds += dt;
   }
-  else voyage.noProgressSeconds += dt;
+  if (!boat.fighting) {
+    if (voyage.route === null) voyage.nullSeconds += dt;
+    else voyage.nullSeconds = 0;
+  }
 }
 
 function resolveOverlaps(
@@ -1805,6 +1820,7 @@ export function advanceFleet(
     debug,
     searchesLeft: TICK_ROUTE_SEARCH_CAP,
     fleetRoutes: new Map(),
+    fleetSearched: new Set(),
   };
 
   let engaged = 0;
