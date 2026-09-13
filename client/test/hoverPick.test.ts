@@ -437,4 +437,39 @@ describe('a held carve keeps the band it pressed on and tunnels inward (#349)', 
       dispose();
     }
   });
+
+  it('exposes the latched band to the preview while the stroke is armed', () => {
+    vi.useFakeTimers();
+    setBrushTool('carve');
+    setBrushRadius(1);
+    const mirror = flatWorld((x) =>
+      x >= WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND,
+    );
+    const rayY = bandY(GROUND_BAND + 0.5);
+    const { input, sent, fire, dispose } = driveInput(
+      mirror,
+      { x: cellW(WALL_X - 10), y: rayY, z: cellW(AIM_Z) },
+      { x: cellW(WALL_X), y: rayY, z: cellW(AIM_Z) },
+    );
+    try {
+      const k = GROUND_BAND + 1;
+      expect(input.carveHeldBand()).toBeNull();
+
+      fire('pointerdown', {});
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.spanBand).toBe(k);
+      expect(input.carveHeldBand()).toBe(k);
+      expect(input.heldBand()).toBeNull();
+
+      applyLast(mirror, sent);
+      vi.advanceTimersByTime(repeatDelayMs(0));
+      expect(sent.map((i) => i.spanBand)).toEqual([k, k]);
+      expect(input.carveHeldBand()).toBe(k);
+
+      fire('pointerup', {});
+      expect(input.carveHeldBand()).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
 });
