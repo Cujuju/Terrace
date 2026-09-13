@@ -128,6 +128,10 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   readout.className = 'hud-version';
   readout.style.zIndex = '50';
   readout.style.gap = '8px';
+  // Left side: undo .hud-version's right anchor and end alignment.
+  readout.style.right = 'auto';
+  readout.style.left = '16px';
+  readout.style.alignItems = 'flex-start';
   /** Two stacked panels: waypoints and boats above, squadron chains below.
    * The chain rows carry the longest values, and sharing one panel would
    * stretch it wide enough to cover the world header. */
@@ -174,56 +178,39 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   };
 
   /**
-   * The open performance panel, if any: a .hud-version__perf-panel outside
-   * this readout. While it is open the readout docks to the left
-   * of the performance HUD's column; while it is closed the readout parks
-   * below the version lines, which it would otherwise cover.
+   * The stack hangs below the top-left corner panel, measured live: that
+   * panel collapses to a tab or opens to full height, and the stack must
+   * clear it either way without covering it.
    */
-  const openPerfPanel = (): Element | null => {
-    for (const panel of document.querySelectorAll('.hud-version__perf-panel')) {
-      if (!readout.contains(panel)) return panel;
-    }
-    return null;
-  };
-
-  let perfDocked: boolean | null = null;
-
-  /**
-   * Parked right offset: just left of the bottom-right settings column
-   * (connection button and its popups), measured live so open popups count
-   * too. The tall stack would otherwise cover that column.
-   */
-  const parkedRightPx = (): number => {
-    const settings = document.querySelector('.hud-settings');
-    if (!(settings instanceof HTMLElement)) return 60;
-    const gap = Math.ceil(window.innerWidth - settings.getBoundingClientRect().left) + 8;
-    return Math.max(60, gap);
-  };
-
   const updateReadoutPosition = (): void => {
-    const perf = openPerfPanel();
-    if (perf !== null) {
-      const anchor = perf.closest('.hud-version') ?? perf;
-      const width = anchor.getBoundingClientRect().width;
-      // Same 10px top as .hud-version, right of the readout clearing the
-      // performance column (its 12px anchor) plus an 8px gap.
-      readout.style.top = '10px';
-      readout.style.right = `${String(Math.ceil(width) + 12 + 8)}px`;
-      perfDocked = true;
-    } else {
-      readout.style.top = '120px';
-      readout.style.right = `${String(parkedRightPx())}px`;
-      perfDocked = false;
-    }
+    const corner = document.querySelector('.hud-anchor-top-left');
+    const top =
+      corner instanceof HTMLElement
+        ? Math.ceil(corner.getBoundingClientRect().bottom) + 8
+        : 10;
+    readout.style.top = `${String(top)}px`;
   };
 
   /**
-   * Re-dock when the performance panel opens or closes underneath us. Frames
-   * already reposition on every render; this covers a toggle between frames.
-   * The presence check is cheap and the measuring update runs only on a flip.
+   * Re-hang when the corner panel collapses or opens underneath us. Frames
+   * already reposition on every render; this covers a toggle between
+   * frames. Only DOM structure is inspected here, never geometry, so idle
+   * document churn costs no layout.
    */
-  const positionObserver = new MutationObserver(() => {
-    if ((openPerfPanel() !== null) === perfDocked) return;
+  const cornered = (node: Node): boolean =>
+    node instanceof Element &&
+    (node.matches('.hud-anchor-top-left') ||
+      node.querySelector('.hud-anchor-top-left') !== null);
+
+  const positionObserver = new MutationObserver((records) => {
+    const touched = records.some(
+      (record) =>
+        (record.target instanceof Element &&
+          record.target.closest('.hud-anchor-top-left') !== null) ||
+        [...record.addedNodes].some(cornered) ||
+        [...record.removedNodes].some(cornered),
+    );
+    if (!touched) return;
     updateReadoutPosition();
   });
   positionObserver.observe(document.documentElement, {
