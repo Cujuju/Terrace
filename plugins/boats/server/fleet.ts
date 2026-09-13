@@ -117,6 +117,11 @@ export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
  * cell leg never could. */
 const FLEET_HOP_LENGTH_CELLS = 48;
 
+/** Cap for one leg-level route search when a fleet (re)builds its chain.
+ * One routed leg subdivides into walkable-by-construction hops, so this
+ * single search amortizes over the whole leg lifetime. One attempt per tick. */
+const LEG_ROUTE_NODE_CAP = 32768;
+
 /** Lattice spacing between station slots around a fleet hop. Rank 0 is the
  * flagship on the hop; the rest fan out instead of stacking. */
 const FLEET_FORMATION_SPACING_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
@@ -916,6 +921,8 @@ interface FleetRouteDebug {
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
+  legRouted: number;
+  legStraight: number;
   sailRescue: number;
   fleetChains: number;
   fleetShared: number;
@@ -946,6 +953,8 @@ function createFleetRouteDebug(): FleetRouteDebug {
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
+    legRouted: 0,
+    legStraight: 0,
     fleetChains: 0,
     fleetShared: 0,
     fleetSearches: 0,
@@ -1011,12 +1020,65 @@ function villageRanks(): number[] {
   return ranks;
 }
 
+/** Route a fleet leg once and stride the route into hops. Returns null
+ * when the leg won't route (different sea regions, no pool left, search
+ * fails) so the caller falls back to straight subdivision. Hops sampled
+ * from route cells are walkable by construction. */
+function routeLegPoints(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  flagship: { x: number; y: number },
+  leg: SquadronWaypoint,
+  budget: RouteBudget,
+  debug: FleetRouteDebug,
+): Waypoint[] | null {
+  if (budget.remaining <= 0) return null;
+  const regions = currentSeaRegions();
+  const fromRegion =
+    regions === null ? 0 : regionAt(regions, world.worldSize, flagship.x, flagship.y);
+  const goalRegion =
+    regions === null ? 0 : regionAt(regions, world.worldSize, leg.x, leg.y);
+  if (regions !== null && fromRegion !== 0 && goalRegion !== 0 && fromRegion !== goalRegion) {
+    return null;
+  }
+  const allowance = Math.min(budget.remaining, LEG_ROUTE_NODE_CAP);
+  const legBudget = createRouteBudget(allowance);
+  const outcome = findRouteWithStatus(
+    eroded,
+    HULL_PROFILE,
+    { x: flagship.x, y: flagship.y },
+    { x: leg.x, y: leg.y },
+    legBudget,
+  );
+  budget.remaining -= allowance - legBudget.remaining;
+  if (outcome.plan === null) {
+    if (outcome.status === 'unreachable') {
+      rememberUnreachable(
+        `${Math.floor(flagship.x)},${Math.floor(flagship.y)}>` +
+          `${Math.floor(leg.x)},${Math.floor(leg.y)}`,
+      );
+    }
+    return null;
+  }
+  const points: Waypoint[] = [];
+  for (let i = 0; i < outcome.plan.cells.length; i += FLEET_HOP_LENGTH_CELLS) {
+    points.push({ x: outcome.plan.cells[i].x, y: outcome.plan.cells[i].y });
+  }
+  const last = outcome.plan.cells[outcome.plan.cells.length - 1];
+  const tail = points[points.length - 1];
+  if (tail === undefined || tail.x !== last.x || tail.y !== last.y) {
+    points.push({ x: last.x, y: last.y });
+  }
+  return points.length > 0 ? points : null;
+}
+
 function assignSquadronGoals(
   world: BoatWorld,
   eroded: TerrainSampler,
   kraken: KrakenTarget | null,
   dt: number,
   debug: FleetRouteDebug,
+  budget: RouteBudget,
 ): Map<number, StationGoal> {
   const ranks = villageRanks();
   const candidates: SquadronBoat[] = [];
@@ -1053,25 +1115,39 @@ function assignSquadronGoals(
     if (!fleetChains.has(squadronId)) fleetSharedRoutes.delete(squadronId);
   }
   // One shared chain per fleet: the squadron draws the coarse leg, the
-  // fleet subdivides it, and the flagship cursor drives every member.
+  // fleet routes it once around barriers, and the flagship cursor drives
+  // every member along the subdivided route. Hops sampled from route cells
+  // are walkable by construction; straight subdivision is only the fallback
+  // when the leg itself won't route.
   const arrivalSquared = SQUADRON_MUSTER_RADIUS_CELLS * SQUADRON_MUSTER_RADIUS_CELLS;
   const hops = new Map<number, SquadronWaypoint>();
-  for (const squadronId of liveSquadrons) {
+  let legRoutedThisTick = false;
+  for (const squadronId of [...liveSquadrons].sort((a, b) => a - b)) {
     const members = squadronMembers(squadronId);
     const flagship = positionOf.get(members[0]);
     const leg = flagship === undefined ? undefined : waypoints.get(flagship.id);
     if (flagship === undefined || leg === undefined) continue;
     let chain = fleetChains.get(squadronId);
     if (chain === undefined || chain.legX !== leg.x || chain.legY !== leg.y) {
-      const built = buildWaypointChain(
-        { x: flagship.x, y: flagship.y },
-        [leg],
-        FLEET_HOP_LENGTH_CELLS,
-      );
-      const raw = built.length > 0 ? built : [{ x: leg.x, y: leg.y }];
-      const points = raw.map((hop) =>
-        snapWaypointToWalkable(eroded, HULL_PROFILE, hop.x, hop.y, FLEET_SNAP_RADIUS_CELLS),
-      );
+      let points: Waypoint[] | null = null;
+      if (!legRoutedThisTick) {
+        legRoutedThisTick = true;
+        points = routeLegPoints(world, eroded, flagship, leg, budget, debug);
+      }
+      if (points === null) {
+        const built = buildWaypointChain(
+          { x: flagship.x, y: flagship.y },
+          [leg],
+          FLEET_HOP_LENGTH_CELLS,
+        );
+        const raw = built.length > 0 ? built : [{ x: leg.x, y: leg.y }];
+        points = raw.map((hop) =>
+          snapWaypointToWalkable(eroded, HULL_PROFILE, hop.x, hop.y, FLEET_SNAP_RADIUS_CELLS),
+        );
+        debug.legStraight++;
+      } else {
+        debug.legRouted++;
+      }
       chain = {
         legX: leg.x,
         legY: leg.y,
@@ -1660,7 +1736,7 @@ export function advanceFleet(
   debug.rver = seaRegions === null ? -1 : seaRegionsVersion;
   debug.rcount = seaRegions === null ? -1 : seaRegions.regionCount;
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
-  const squadronGoals = assignSquadronGoals(world, eroded, kraken, dt, debug);
+  const squadronGoals = assignSquadronGoals(world, eroded, kraken, dt, debug, budget);
   const homeGoals = assignHomeBerths(kraken, squadronGoals);
 
   const tick: SailTick = {
@@ -1718,6 +1794,7 @@ export function advanceFleet(
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
+        `legroute=${debug.legRouted}/${debug.legStraight} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()} ` +
         `form=${formationStats().candidates}/${formationStats().inHarbour}/` +
         `${formationStats().moored}/${formationStats().crews}/${formationStats().affiliated}`,
