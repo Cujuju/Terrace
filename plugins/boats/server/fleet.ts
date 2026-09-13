@@ -1267,8 +1267,9 @@ interface SailTick {
   debug: FleetRouteDebug;
   searchesLeft: number;
   fleetRoutes: Map<number, { hopX: number; hopY: number; cells: RouteCell[] | null }>;
-  /** Squadrons that already spent a trial this tick: one attempt per fleet
-   * per tick, whoever sails first. Members hold once anyone has tried. */
+  /** Squadrons with a shared route this tick: members hold once anyone
+   * has shared. Failed attempts do NOT mark, so a fleet whose flagship
+   * cannot bridge its span still sails when any member can. */
   fleetSearched: Set<number>;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
@@ -1581,7 +1582,6 @@ function sailBoat(tick: SailTick, index: number): void {
         } else {
           tick.searchesLeft--;
           debug.sailSearches++;
-          if (squadronId !== null) tick.fleetSearched.add(squadronId);
           const trial = createRouteBudget(TRIAL_NODE_BUDGET);
           const outcome = findRouteWithStatus(
             eroded,
@@ -1629,6 +1629,7 @@ function sailBoat(tick: SailTick, index: number): void {
       if (plan !== null) voyage.poolTried = false;
       if (squadron !== undefined && squadronId !== null && voyage.route !== null) {
         const cells = [...voyage.route];
+        tick.fleetSearched.add(squadronId);
         tick.fleetRoutes.set(squadronId, {
           hopX: squadron.x,
           hopY: squadron.y,
