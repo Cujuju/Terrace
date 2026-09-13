@@ -44,15 +44,20 @@ function seaWorld(land: ReadonlyArray<readonly [number, number]>): BoatWorld {
   };
 }
 
-const VILLAGE_X = 40;
-const VILLAGE_Y = 40;
+const VILLAGE_X = 39;
+const VILLAGE_Y = 38;
+const FLEET_VILLAGES = [
+  [VILLAGE_X, VILLAGE_Y],
+  [VILLAGE_X, VILLAGE_Y + 1],
+  [VILLAGE_X + 1, VILLAGE_Y],
+] as const;
 function coastWorld(): BoatWorld {
-  return seaWorld([[VILLAGE_X, VILLAGE_Y]]);
+  return seaWorld(FLEET_VILLAGES.map(([x, y]) => [x, y] as const));
 }
 
 function buildFullFleet(world: BoatWorld): void {
-  rememberVillage(VILLAGE_X, VILLAGE_Y);
-  const ticks = Math.ceil((BOAT_REBUILD_SECONDS * BOATS_PER_VILLAGE + 1) / TICK_DT);
+  for (const [x, y] of FLEET_VILLAGES) rememberVillage(x, y);
+  const ticks = Math.ceil((BOAT_REBUILD_SECONDS + 1) / TICK_DT);
   for (let n = 0; n < ticks; n++) advanceFleet(world, null, TICK_DT);
 }
 
@@ -77,11 +82,8 @@ describe('the fight is the arithmetic protocol.ts claims', () => {
         const y = kraken.y + Math.sin(bearing) * (BOAT_ENGAGEMENT_RANGE_CELLS - 1);
         return { ...boat, x, y, heading: bearing + Math.PI };
       });
-    restoreFleet({
-      villages: [{ x: VILLAGE_X, y: VILLAGE_Y, rebuildSeconds: 0 }],
-      boats: stationed,
-      nextBoatId: 99,
-    });
+    // Pure combat math: restore no villages, so no rebuilds reinforce.
+    restoreFleet({ villages: [], boats: stationed, nextBoatId: 99 });
 
     let seconds = 0;
     for (let n = 0; n < 1200; n++) {
@@ -170,14 +172,14 @@ describe('villages and their shipyards', () => {
     expect(livingBoats()).toHaveLength(BOATS_PER_VILLAGE);
   });
 
-  it('builds one boat per rebuild interval, not a stockpiled burst', () => {
+  it('caps the village at its quota instead of stockpiling a burst', () => {
     const world = coastWorld();
     rememberVillage(VILLAGE_X, VILLAGE_Y);
     const oneInterval = Math.ceil(BOAT_REBUILD_SECONDS / TICK_DT);
     for (let n = 0; n < oneInterval; n++) advanceFleet(world, null, TICK_DT);
     expect(livingBoats()).toHaveLength(1);
     for (let n = 0; n < oneInterval; n++) advanceFleet(world, null, TICK_DT);
-    expect(livingBoats()).toHaveLength(2);
+    expect(livingBoats()).toHaveLength(1);
   });
 
   it('an inland village keeps no boats at all', () => {
@@ -221,11 +223,11 @@ describe('villages and their shipyards', () => {
     expect(launchCell(world, { x: VILLAGE_X, y: VILLAGE_Y, rebuildSeconds: 0 })).toBeNull();
   });
 
-  it('scuttles the boats of a village that is demolished', () => {
+  it('scuttles the boats of villages that are demolished', () => {
     const world = coastWorld();
     buildFullFleet(world);
     expect(livingBoats().length).toBeGreaterThan(0);
-    forgetVillage(VILLAGE_X, VILLAGE_Y);
+    for (const [x, y] of FLEET_VILLAGES) forgetVillage(x, y);
     expect(villageCount()).toBe(0);
     expect(livingBoats()).toHaveLength(0);
   });

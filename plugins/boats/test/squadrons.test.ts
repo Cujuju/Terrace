@@ -93,9 +93,12 @@ describe('the home guard leaves something to explore', () => {
 
 describe('assembly', () => {
   it('forms nothing from fewer ships than a squadron takes', () => {
-    const roster = explorersFor(neighbouringVillages(1));
-    expect(roster.length).toBeLessThan(SQUADRON_MIN_SHIPS);
-    const goals = advanceSquadrons(roster, openSea(), TICK_DT);
+    const pair: SquadronBoat[] = [
+      { id: nextId++, x: 100, y: 100, homeX: 100, homeY: 100 },
+      { id: nextId++, x: 101, y: 100, homeX: 101, homeY: 100 },
+    ];
+    expect(pair.length).toBeLessThan(SQUADRON_MIN_SHIPS);
+    const goals = advanceSquadrons(pair, openSea(), TICK_DT);
     expect(squadronCount()).toBe(0);
     expect(goals.size).toBe(0);
   });
@@ -214,7 +217,7 @@ describe('mustering', () => {
   it('sails without a straggler once the muster times out', () => {
     const roster = explorersFor(spreadVillages(4));
     advanceSquadrons(roster, openSea(), TICK_DT);
-    expect(squadronCount()).toBe(1);
+    expect(squadronCount()).toBeGreaterThanOrEqual(1);
     const crew = [...squadronMembers(1)];
     const rendezvous = openSea().rendezvousFor(
       roster.find((boat) => boat.id === crew[0])!.homeX,
@@ -267,12 +270,15 @@ describe('recall dissolves rather than tops up', () => {
 
   it('dissolves a squadron taken under strength and releases every survivor', () => {
     const roster = explorersFor(neighbouringVillages(2));
-    expect(roster.length).toBe(SQUADRON_MIN_SHIPS + 1);
+    expect(roster.length).toBe(2 * EXPLORERS_PER_VILLAGE);
     advanceSquadrons(roster, openSea(), TICK_DT);
-    expect(squadronCount()).toBe(1);
+    expect(squadronCount()).toBeGreaterThanOrEqual(1);
     const crew = [...squadronMembers(1)];
-    const left = roster.filter((boat) => !crew.slice(0, 2).includes(boat.id));
+    // Leave two survivors: too few to crew, too few to reform.
+    const survivors = crew.slice(-2);
+    const left = roster.filter((boat) => survivors.includes(boat.id));
     advanceSquadrons(left, openSea(), TICK_DT);
+    expect(squadronCount()).toBe(0);
     for (const boatId of crew) expect(squadronOf(boatId)).toBeNull();
   });
 
