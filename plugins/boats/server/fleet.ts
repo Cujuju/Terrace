@@ -339,6 +339,7 @@ interface Voyage {
   goalX: number;
   goalY: number;
   noProgressSeconds: number;
+  poolTried: boolean;
   slot: number | null;
   slotList: BerthList | null;
   heldTicks: number;
@@ -820,6 +821,13 @@ const TICK_ROUTE_SEARCH_CAP = 8;
  * pool exhaust the trial instead and defer, retrying as the boat moves. */
 const TRIAL_NODE_BUDGET = 1024;
 
+/** Rescue budget for stuck boats: a capped draw from the shared tick pool.
+ * Whole-journey spans (a boat 300 cells from home) can never fit a trial;
+ * one capped pool search per stuck episode either brings it home or proves
+ * the span needs subdivision. Capped (not the whole pool) so one rescue
+ * cannot eat the tick; once-per-episode so failures cannot burn it yearly. */
+const STUCK_POOL_NODES = 8192;
+
 /** Beyond this chebyshev distance A* boxes dwarf the node pool, so boats steer
  * direct (today's null-route behavior) until they close within range. Far
  * open-water legs need no route; far maze legs cannot fit the pool anyway. */
@@ -908,6 +916,7 @@ interface FleetRouteDebug {
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
+  sailRescue: number;
   fleetChains: number;
   fleetShared: number;
   fleetSearches: number;
@@ -942,6 +951,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     fleetSearches: 0,
     fleetHold: 0,
     fleetCohesion: 0,
+    sailRescue: 0,
   };
 }
 
@@ -1169,6 +1179,35 @@ function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: num
 
 const CELL_CENTRE_OFFSET = 0.5;
 
+/** One capped rescue search from the shared tick pool for a stuck boat. The
+ * caller gates this to once per stuck episode; the cap keeps one rescue from
+ * eating the tick. Deducts what it spends so later searches see the pool. */
+function rescueRoute(
+  tick: SailTick,
+  eroded: TerrainSampler,
+  boat: Boat,
+  goalX: number,
+  goalY: number,
+): { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null {
+  const allowance = Math.min(tick.budget.remaining, STUCK_POOL_NODES);
+  const rescue = createRouteBudget(allowance);
+  const outcome = findRouteWithStatus(
+    eroded,
+    HULL_PROFILE,
+    { x: boat.x, y: boat.y },
+    { x: goalX, y: goalY },
+    rescue,
+  );
+  tick.budget.remaining -= allowance - rescue.remaining;
+  if (outcome.status === 'unreachable') {
+    rememberUnreachable(
+      `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
+        `${Math.floor(goalX)},${Math.floor(goalY)}`,
+    );
+  }
+  return outcome.plan;
+}
+
 function sailBoat(tick: SailTick, index: number): void {
   const {
     world,
@@ -1266,6 +1305,7 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalX = holdX;
       voyage.goalY = holdY;
       voyage.noProgressSeconds = 0;
+      voyage.poolTried = false;
       voyage.slot = slotIndex;
       voyage.slotList = slotList;
     }
@@ -1295,6 +1335,7 @@ function sailBoat(tick: SailTick, index: number): void {
       goalX,
       goalY,
       noProgressSeconds: 0,
+      poolTried: false,
       slot: null,
       slotList: null,
       heldTicks: 0,
@@ -1350,6 +1391,7 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalX = goalX;
       voyage.goalY = goalY;
       voyage.noProgressSeconds = 0;
+      voyage.poolTried = false;
     } else if (
       squadron !== undefined &&
       squadronId !== null &&
@@ -1372,7 +1414,19 @@ function sailBoat(tick: SailTick, index: number): void {
     } else if (
       Math.max(Math.abs(boat.x - goalX), Math.abs(boat.y - goalY)) > ROUTE_DIRECT_RANGE_CELLS
     ) {
-      debug.farSkips++;
+      // Whole-journey spans never fit a trial; a stuck boat may spend one
+      // capped rescue from the pool instead of burning trials on them.
+      if (
+        voyage.noProgressSeconds > BOAT_STUCK_SECONDS &&
+        !voyage.poolTried &&
+        tick.budget.remaining > 0
+      ) {
+        voyage.poolTried = true;
+        debug.sailRescue++;
+        plan = rescueRoute(tick, eroded, boat, goalX, goalY);
+      } else {
+        debug.farSkips++;
+      }
     } else {
       const key =
         `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
@@ -1414,6 +1468,17 @@ function sailBoat(tick: SailTick, index: number): void {
           }
           if (outcome.status === 'unreachable') rememberUnreachable(key);
           plan = outcome.plan;
+          if (
+            plan === null &&
+            outcome.status === 'exhausted' &&
+            voyage.noProgressSeconds > BOAT_STUCK_SECONDS &&
+            !voyage.poolTried &&
+            tick.budget.remaining > 0
+          ) {
+            voyage.poolTried = true;
+            debug.sailRescue++;
+            plan = rescueRoute(tick, eroded, boat, goalX, goalY);
+          }
         }
       }
     }
@@ -1427,6 +1492,7 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalX = goalX;
       voyage.goalY = goalY;
       voyage.noProgressSeconds = 0;
+      if (plan !== null) voyage.poolTried = false;
       if (squadron !== undefined && squadronId !== null && voyage.route !== null) {
         const cells = [...voyage.route];
         tick.fleetRoutes.set(squadronId, {
@@ -1505,7 +1571,10 @@ function sailBoat(tick: SailTick, index: number): void {
   voyage.route = helm.route;
   voyage.routeIndex = helm.routeIndex;
   if (result.replanned) tick.debug.followReplans++;
-  if (result.replanned || result.progressed) voyage.noProgressSeconds = 0;
+  if (result.replanned || result.progressed) {
+    voyage.noProgressSeconds = 0;
+    voyage.poolTried = false;
+  }
   else voyage.noProgressSeconds += dt;
 }
 
@@ -1645,6 +1714,7 @@ export function advanceFleet(
         `expensive=${debug.expensive} ` +
         `fleets=${debug.fleetChains} shared=${debug.fleetShared} fsearch=${debug.fleetSearches} ` +
         `hold=${debug.fleetHold} cohere=${debug.fleetCohesion} ` +
+        `rescue=${debug.sailRescue} ` +
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
