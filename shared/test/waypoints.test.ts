@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_DEBUG_CHAINS_PER_FRAME,
+  MAX_DEBUG_SAILED_CELLS_PER_CHAIN,
   advanceWaypointChain,
   buildWaypointChain,
   createWaypointChain,
@@ -10,11 +11,14 @@ import {
   parseWaypointDebugFrame,
   resetWaypointChain,
   slotOffsetForMember,
+  snapWaypointToWalkable,
   subdivideLeg,
   waypointChainComplete,
   waypointChainCurrent,
   waypointChainRemaining,
   waypointForMember,
+  type TerrainSampler,
+  type TraversalProfile,
   type Waypoint,
   type WaypointDebugFrame,
 } from '../src/index.ts';
@@ -224,6 +228,7 @@ describe('parseWaypointDebugFrame', () => {
         cursor: 1,
         members: 5,
         spacing: 3,
+        sailed: [{ x: 60.5, y: 20.5 }],
       },
     ],
   };
@@ -252,5 +257,62 @@ describe('parseWaypointDebugFrame', () => {
       (_, id) => ({ ...frame.chains[0], id }),
     );
     expect(parseWaypointDebugFrame({ chains: tooMany })).toBeNull();
+    const tooMuchSailed = Array.from(
+      { length: MAX_DEBUG_SAILED_CELLS_PER_CHAIN + 1 },
+      () => ({ x: 0, y: 0 }),
+    );
+    expect(
+      parseWaypointDebugFrame({
+        chains: [{ ...frame.chains[0], sailed: tooMuchSailed }],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('snapWaypointToWalkable', () => {
+  const LAND: TraversalProfile = {
+    grounds: ['dry'],
+    minGroundHeight: 1,
+    freshwater: 'blocked',
+    maxGradientPerCell: 2,
+  };
+  const worldAt = (walkable: (x: number, y: number) => boolean): TerrainSampler => ({
+    worldSize: 32,
+    heightAt: (x, y) => (walkable(x, y) ? 8 : -8),
+  });
+
+  it('returns the point unchanged when its own cell is walkable', () => {
+    const world = worldAt(() => true);
+    expect(snapWaypointToWalkable(world, LAND, 10.2, 11.7, 4)).toEqual({
+      x: 10.2,
+      y: 11.7,
+    });
+  });
+
+  it('slides to the first walkable ring cell in fixed order', () => {
+    const world = worldAt((x, y) => x === 9 && y === 9);
+    expect(snapWaypointToWalkable(world, LAND, 10.2, 10.8, 4)).toEqual({
+      x: 9.5,
+      y: 9.5,
+    });
+    expect(snapWaypointToWalkable(world, LAND, 10.2, 10.8, 4)).toEqual(
+      snapWaypointToWalkable(world, LAND, 10.2, 10.8, 4),
+    );
+  });
+
+  it('returns the point unchanged when nothing within radius is walkable', () => {
+    const world = worldAt(() => false);
+    expect(snapWaypointToWalkable(world, LAND, 10.2, 10.8, 4)).toEqual({
+      x: 10.2,
+      y: 10.8,
+    });
+  });
+
+  it('a zero radius never leaves the starting cell', () => {
+    const world = worldAt((x, y) => x === 11 && y === 10);
+    expect(snapWaypointToWalkable(world, LAND, 10.2, 10.8, 0)).toEqual({
+      x: 10.2,
+      y: 10.8,
+    });
   });
 });

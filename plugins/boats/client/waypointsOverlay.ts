@@ -17,11 +17,12 @@ import {
  * Follows the `pickDebugOverlay` pattern: three.js objects in the scene plus a
  * fixed text readout. Four draw objects total, fixed: one line set for the
  * chain polylines, one point set each for hops, formation slots and cursors. */
-export const WAYPOINTS_DEBUG_DRAW_OBJECTS = 4;
+export const WAYPOINTS_DEBUG_DRAW_OBJECTS = 5;
 
 const WAYPOINT_LIFT_WORLD_UNITS = 0.02;
 
 const CHAIN_LINE_COLOR = 0x7fd4ff;
+const SAILED_LINE_COLOR = 0xffffff;
 const HOP_POINT_COLOR = 0xffffff;
 const SLOT_POINT_COLOR = 0xffb347;
 const CURSOR_POINT_COLOR = 0x6fbf73;
@@ -50,6 +51,19 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   lines.renderOrder = 998;
   lines.frustumCulled = false;
 
+  const sailed = new LineSegments(
+    new BufferGeometry(),
+    new LineBasicMaterial({
+      color: SAILED_LINE_COLOR,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  sailed.renderOrder = 998;
+  sailed.frustumCulled = false;
+
   const makePoints = (color: number, size: number): Points => {
     const points = new Points(
       new BufferGeometry(),
@@ -71,7 +85,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const hopPoints = makePoints(HOP_POINT_COLOR, 5);
   const slotPoints = makePoints(SLOT_POINT_COLOR, 6);
   const cursorPoints = makePoints(CURSOR_POINT_COLOR, 8);
-  container.add(lines, hopPoints, slotPoints, cursorPoints);
+  container.add(lines, sailed, hopPoints, slotPoints, cursorPoints);
 
   const readout = document.createElement('div');
   readout.style.cssText = [
@@ -112,6 +126,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       }
 
       const segments: number[] = [];
+      const sailedSegments: number[] = [];
       const hops: number[] = [];
       const slots: number[] = [];
       const cursors: number[] = [];
@@ -120,7 +135,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         const last = chain.hops.length - 1;
         summary.push(
           `#${chain.id} ${chain.label} cursor ${chain.cursor}/${chain.hops.length} ` +
-            `hops ${chain.hops.length} members ${chain.members}`,
+            `hops ${chain.hops.length} sailed ${chain.sailed.length} members ${chain.members}`,
         );
         let prevX = chain.anchor.x;
         let prevY = chain.anchor.y;
@@ -138,8 +153,19 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
           prevX = hop.x;
           prevY = hop.y;
         }
-        if (last >= 0) {
-          const goal = chain.hops[last];
+        for (let s = 1; s < chain.sailed.length; s++) {
+          const prev = chain.sailed[s - 1];
+          const cur = chain.sailed[s];
+          sailedSegments.push(
+            prev.x * CELL_WORLD_SIZE,
+            WAYPOINT_LIFT_WORLD_UNITS,
+            prev.y * CELL_WORLD_SIZE,
+            cur.x * CELL_WORLD_SIZE,
+            WAYPOINT_LIFT_WORLD_UNITS,
+            cur.y * CELL_WORLD_SIZE,
+          );
+        }
+        if (last >= 0) {          const goal = chain.hops[last];
           const at = Math.max(0, Math.min(chain.cursor, last));
           const cursor = chain.hops[at];
           cursors.push(
@@ -158,6 +184,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         }
       }
       setPositions(lines, segments);
+      setPositions(sailed, sailedSegments);
       setPositions(hopPoints, hops);
       setPositions(slotPoints, slots);
       setPositions(cursorPoints, cursors);
@@ -170,6 +197,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       container.removeFromParent();
       lines.geometry.dispose();
       (lines.material as LineBasicMaterial).dispose();
+      sailed.geometry.dispose();
+      (sailed.material as LineBasicMaterial).dispose();
       for (const points of [hopPoints, slotPoints, cursorPoints]) {
         points.geometry.dispose();
         (points.material as PointsMaterial).dispose();
