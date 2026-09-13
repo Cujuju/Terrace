@@ -33,6 +33,10 @@ export const CONIFER_CROWN_RADIUS = 0.38;
 export const CONIFER_CROWN_HEIGHT = 1.05;
 export const CONIFER_CROWN_SEGMENTS = 6;
 
+export const PINE_CROWN_RADIUS = 0.3;
+export const PINE_CROWN_HEIGHT = 1.3;
+export const PINE_CROWN_SEGMENTS = 6;
+
 export const BROADLEAF_CROWN_RADIUS = 0.46;
 export const BROADLEAF_CROWN_SEGMENTS = 6;
 const BROADLEAF_CROWN_RINGS = 4;
@@ -40,10 +44,12 @@ const BROADLEAF_CROWN_RINGS = 4;
 const BROADLEAF_CROWN_TRUNK_OVERLAP = 0.95;
 
 const CONIFER_CROWN_CENTRE_Y = TRUNK_HEIGHT + CONIFER_CROWN_HEIGHT / 2;
+export const PINE_CROWN_CENTRE_Y = TRUNK_HEIGHT + PINE_CROWN_HEIGHT / 2;
 export const BROADLEAF_CROWN_CENTRE_Y = TRUNK_HEIGHT + BROADLEAF_CROWN_RADIUS * BROADLEAF_CROWN_TRUNK_OVERLAP;
 
 export const TRUNK_COLOR = 0x5a4632;
 const CONIFER_CROWN_COLOR = 0x24503a;
+const PINE_CROWN_COLOR = 0x1f5140;
 const BROADLEAF_CROWN_COLOR = 0x3d6b2c;
 
 export interface TreePlacement {
@@ -83,6 +89,13 @@ export function createFloraModels(): FloraModels {
   );
   coniferGeometry.translate(0, CONIFER_CROWN_CENTRE_Y, 0);
 
+  const pineGeometry = new ConeGeometry(
+    PINE_CROWN_RADIUS,
+    PINE_CROWN_HEIGHT,
+    PINE_CROWN_SEGMENTS,
+  );
+  pineGeometry.translate(0, PINE_CROWN_CENTRE_Y, 0);
+
   const broadleafGeometry = new SphereGeometry(
     BROADLEAF_CROWN_RADIUS,
     BROADLEAF_CROWN_SEGMENTS,
@@ -90,20 +103,23 @@ export function createFloraModels(): FloraModels {
   );
   broadleafGeometry.translate(0, BROADLEAF_CROWN_CENTRE_Y, 0);
 
-  const geometries: BufferGeometry[] = [trunkGeometry, coniferGeometry, broadleafGeometry];
+  const geometries: BufferGeometry[] = [trunkGeometry, coniferGeometry, pineGeometry, broadleafGeometry];
   const materials: Material[] = [
     lambert(TRUNK_COLOR),
     lambert(CONIFER_CROWN_COLOR),
+    lambert(PINE_CROWN_COLOR),
     lambert(BROADLEAF_CROWN_COLOR),
   ];
 
   const trunks = new InstancedMesh(trunkGeometry, materials[0], FLORA_TREE_CAP);
   const conifers = new InstancedMesh(coniferGeometry, materials[1], FLORA_TREE_CAP);
-  const broadleaves = new InstancedMesh(broadleafGeometry, materials[2], FLORA_TREE_CAP);
+  const pines = new InstancedMesh(pineGeometry, materials[2], FLORA_TREE_CAP);
+  const broadleaves = new InstancedMesh(broadleafGeometry, materials[3], FLORA_TREE_CAP);
 
-  const meshes = [trunks, conifers, broadleaves];
+  const meshes = [trunks, conifers, pines, broadleaves];
   trunks.name = 'flora:trunks';
   conifers.name = 'flora:conifers';
+  pines.name = 'flora:pines';
   broadleaves.name = 'flora:broadleaves';
 
   const root = new Group();
@@ -129,6 +145,7 @@ export function createFloraModels(): FloraModels {
     apply(placements: readonly TreePlacement[]): void {
       let trunkCount = 0;
       let coniferCount = 0;
+      let pineCount = 0;
       let broadleafCount = 0;
       for (const extent of extents) clearPlacementExtent(extent);
 
@@ -145,14 +162,18 @@ export function createFloraModels(): FloraModels {
         if (placement.kind === 'conifer') {
           conifers.setMatrixAt(coniferCount++, matrix);
           includePlacement(extents[1]!, placement.x, placement.groundY, placement.z);
+        } else if (placement.kind === 'pine') {
+          pines.setMatrixAt(pineCount++, matrix);
+          includePlacement(extents[2]!, placement.x, placement.groundY, placement.z);
         } else {
           broadleaves.setMatrixAt(broadleafCount++, matrix);
-          includePlacement(extents[2]!, placement.x, placement.groundY, placement.z);
+          includePlacement(extents[3]!, placement.x, placement.groundY, placement.z);
         }
       }
 
       trunks.count = trunkCount;
       conifers.count = coniferCount;
+      pines.count = pineCount;
       broadleaves.count = broadleafCount;
 
       for (let i = 0; i < meshes.length; i++) {
