@@ -1460,11 +1460,16 @@ function sailBoat(tick: SailTick, index: number): void {
   let voyage = voyages.get(boat.id);
   const settle = (holdX: number, holdY: number): void => {
     if (voyage !== undefined) {
-      voyage.goalX = holdX;
-      voyage.goalY = holdY;
+      adoptGoal(holdX, holdY);
       voyage.noProgressSeconds = 0;
       voyage.nullSeconds = 0;
       voyage.poolTried = false;
+    }
+  };
+  const adoptGoal = (holdX: number, holdY: number): void => {
+    if (voyage !== undefined) {
+      voyage.goalX = holdX;
+      voyage.goalY = holdY;
       voyage.slot = slotIndex;
       voyage.slotList = slotList;
     }
@@ -1699,7 +1704,10 @@ function sailBoat(tick: SailTick, index: number): void {
     const probeX = boat.x + ((goalX - boat.x) / range) * stride;
     const probeY = boat.y + ((goalY - boat.y) / range) * stride;
     if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
-      settle(goalX, goalY);
+      // Blocked, not arrived: adopt the goal (so drift tracking stays
+      // honest) but hold position WITHOUT settling, so starvation clocks
+      // keep running and rescue / leg re-plans can answer a persistent block.
+      adoptGoal(goalX, goalY);
       return;
     }
   }
