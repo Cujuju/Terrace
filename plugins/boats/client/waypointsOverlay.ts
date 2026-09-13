@@ -32,6 +32,9 @@ const FLEET_BOAT_COLORS = [
   0x7fd4ff, 0xffb347, 0x6fbf73, 0xe07ad4, 0xf2e35c, 0x8f7bff, 0xff7a6b, 0x5ce8d0,
 ];
 
+/** Marker for boats sailing outside any fleet. */
+const UNAFFILIATED_GRAY: [number, number, number] = [0.45, 0.47, 0.45];
+
 function fleetBoatColor(fleetId: number): [number, number, number] {
   const hex = FLEET_BOAT_COLORS[fleetId % FLEET_BOAT_COLORS.length];
   return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
@@ -134,6 +137,14 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   let disposed = false;
   const fleetOfBoat = new Map<number, number>();
   let lastBoats: BoatState[] = [];
+  let chainLines: string[] = ['waypoints: waiting for frame'];
+
+  const renderReadout = (): void => {
+    const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
+    readout.textContent =
+      `${chainLines[0]} · boats ${lastBoats.length} (${crewed} crewed)\n` +
+      chainLines.slice(1).join('\n');
+  };
 
   const setPositions = (target: LineSegments | Points, positions: number[]): void => {
     target.geometry.dispose();
@@ -147,13 +158,12 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
     const colors: number[] = [];
     for (const boat of lastBoats) {
       const fleet = fleetOfBoat.get(boat.id);
-      if (fleet === undefined) continue;
       positions.push(
         boat.x * CELL_WORLD_SIZE,
         WAYPOINT_LIFT_WORLD_UNITS,
         boat.y * CELL_WORLD_SIZE,
       );
-      colors.push(...fleetBoatColor(fleet));
+      colors.push(...(fleet === undefined ? UNAFFILIATED_GRAY : fleetBoatColor(fleet)));
     }
     boatPoints.geometry.dispose();
     const geometry = new BufferGeometry();
@@ -241,7 +251,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       setPositions(cursorPoints, cursors);
       redrawBoats();
       container.visible = frame.chains.length > 0;
-      readout.textContent = summary.join('\n');
+      chainLines = summary;
+      renderReadout();
     },
 
     receiveBoats(payload: unknown): void {
@@ -250,6 +261,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       if (boats === null) return;
       lastBoats = boats;
       redrawBoats();
+      renderReadout();
     },
 
     dispose(): void {
