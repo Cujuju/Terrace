@@ -1,13 +1,17 @@
 import {
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
+  bandFloorHeight,
   bandOf,
   cellIndex,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
+  highestCeilingBelow,
   quantizeToBand,
+  spanAt,
   spanCount,
+  spanIndexCoveringBand,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -127,7 +131,8 @@ export interface World extends TerrainSink {
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
   setCreaseLook(look: CreaseLook): void;
   setBrushRefused(refused: boolean): void;
-  bandAtCell(x: number, y: number): number | null;
+  /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
+  bandAtCell(x: number, y: number, spanBand: number | null): number | null;
   graspSpanBand(pick: TerrainRayPick | null): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
@@ -564,9 +569,15 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setBrushRefused(refused: boolean): void {
       layerEdges?.setRefused(refused);
     },
-    bandAtCell(x: number, y: number): number | null {
+    bandAtCell(x: number, y: number, spanBand: number | null): number | null {
       if (mirror === null) return null;
-      return bandOf(sampleHeight(mirror, x, y));
+      if (spanBand === null) return bandOf(sampleHeight(mirror, x, y));
+      const k = spanIndexCoveringBand(mirror.map, x, y, spanBand);
+      const ceiling =
+        k !== null
+          ? spanAt(mirror.map, x, y, k).ceiling
+          : highestCeilingBelow(mirror.map, x, y, bandFloorHeight(spanBand));
+      return ceiling === null ? null : bandOf(ceiling);
     },
     graspSpanBand(pick: TerrainRayPick | null): number | null {
       if (pick === null || mirror === null) return null;

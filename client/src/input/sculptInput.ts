@@ -52,7 +52,7 @@ export interface SculptInputOptions {
   ) => TerrainRayPick | null;
   worldSize: () => number;
   riserBand: (pick: TerrainRayPick | null) => number | null;
-  bandAtCell: (x: number, y: number) => number | null;
+  bandAtCell: (x: number, y: number, spanBand: number | null) => number | null;
   graspSpanBand: (pick: TerrainRayPick | null) => number | null;
   carveBand: (pick: TerrainRayPick | null) => number | null;
   carveReach: (
@@ -362,7 +362,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     scheduleRepeat(0);
   };
 
-  const seedLayer = (cell: { x: number; y: number }, action: SculptAction): boolean =>
+  const seedLayer = (
+    cell: { x: number; y: number },
+    action: SculptAction,
+    spanBand: number | null,
+  ): boolean =>
     send({
       type: 'sculpt',
       x: cell.x,
@@ -371,6 +375,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       dir: sculptDirection(action),
       tool: 'stamp',
       profile: 'hard',
+      ...(spanBand !== null ? { spanBand } : {}),
       seq: nextSeq++,
     });
 
@@ -381,9 +386,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
     if (hover === null || hover.face !== 'tread') return;
-    const before = bandAtCell(hover.x, hover.y);
-    if (!seedLayer(hover, action)) return;
-    const after = bandAtCell(hover.x, hover.y);
+    const spanBand = graspSpanBand(hover);
+    const before = bandAtCell(hover.x, hover.y, spanBand);
+    if (!seedLayer(hover, action, spanBand)) return;
+    const after = bandAtCell(hover.x, hover.y, spanBand);
     if (before === null || after === null) return;
     if (action === 'raise') {
       if (after <= before) return;
