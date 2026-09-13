@@ -64,6 +64,31 @@ const squadrons = new Map<number, Squadron>();
 const squadronOfBoat = new Map<number, number>();
 let nextSquadronId = 1;
 
+export interface SquadronFormationStats {
+  /** Boats considered for affiliation this tick. */
+  readonly candidates: number;
+  /** Candidates sitting in their home harbour (formation filter 1). */
+  readonly inHarbour: number;
+  /** In-harbour candidates whose home village has a rendezvous mooring (filter 2). */
+  readonly moored: number;
+  /** Crews currently live (formation needs 3+ neighbouring homes). */
+  readonly crews: number;
+  /** Boats currently affiliated into crews. */
+  readonly affiliated: number;
+}
+
+let lastFormation: SquadronFormationStats = {
+  candidates: 0,
+  inHarbour: 0,
+  moored: 0,
+  crews: 0,
+  affiliated: 0,
+};
+
+export function formationStats(): SquadronFormationStats {
+  return lastFormation;
+}
+
 export function resetSquadrons(): void {
   squadrons.clear();
   squadronOfBoat.clear();
@@ -131,10 +156,15 @@ function formSquadrons(
   candidates: readonly SquadronBoat[],
   nav: SquadronNavigator,
 ): void {
+  let inHarbour = 0;
+  let moored = 0;
   const unassigned = candidates.filter((boat) => {
     if (squadronOfBoat.has(boat.id)) return false;
+    if (!nav.isInHarbour(boat.homeX, boat.homeY, boat.x, boat.y)) return false;
+    inHarbour++;
     if (nav.rendezvousFor(boat.homeX, boat.homeY) === null) return false;
-    return nav.isInHarbour(boat.homeX, boat.homeY, boat.x, boat.y);
+    moored++;
+    return true;
   });
   const ordered = [...unassigned].sort((a, b) => {
     const ka = zOrderKey(a.homeX, a.homeY);
@@ -180,6 +210,13 @@ function formSquadrons(
     for (const boatId of crew) squadronOfBoat.set(boatId, id);
     index = scan;
   }
+  lastFormation = {
+    candidates: candidates.length,
+    inHarbour,
+    moored,
+    crews: squadrons.size,
+    affiliated: squadronOfBoat.size,
+  };
 }
 
 function advanceSquadron(
