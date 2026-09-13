@@ -106,6 +106,8 @@ function renderFrame(dt: number): void {
   }
 
   models?.commitFrame();
+
+  if (waypointsOverlay !== null) waypointsOverlay.updateMarkers(sampled);
 }
 
 function drawnPoseOf(id: number): MoverPose | null {
