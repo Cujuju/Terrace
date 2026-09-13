@@ -1911,7 +1911,8 @@ export function advanceFleet(
           `hop=(${hop === undefined ? '?,?' : `${hop.x.toFixed(0)},${hop.y.toFixed(0)}`}) ` +
           `sailed=${chain.sailed.length} members=${chain.members} ` +
           `crew=[${(chain.crew ?? []).join(',')}] ` +
-          `flag=${flagId} null=${flagVoyage?.nullSeconds.toFixed(0) ?? '?'} ` +
+          `flag=${flagId} null=${flagVoyage?.nullSeconds.toFixed(1) ?? '?'} ` +
+          `stuck=${flagVoyage?.noProgressSeconds.toFixed(1) ?? '?'} ` +
           `route=${flagVoyage?.route?.length ?? 0} dist=${flagDist}`,
       );
     }
