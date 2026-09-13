@@ -267,6 +267,14 @@ describe('parseWaypointDebugFrame', () => {
       }),
     ).toBeNull();
   });
+  it('accepts frames from older servers without sailed routes', () => {
+    const { sailed: _dropped, ...withoutSailed } = frame.chains[0];
+    void _dropped;
+    const revived = parseWaypointDebugFrame({ chains: [withoutSailed] });
+    expect(revived).not.toBeNull();
+    expect(revived!.chains[0].sailed).toEqual([]);
+    expect(revived!.chains[0].hops).toEqual(frame.chains[0].hops);
+  });
 });
 
 describe('snapWaypointToWalkable', () => {
