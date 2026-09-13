@@ -42,7 +42,7 @@ const UNAFFILIATED_GRAY_HEX = 0x8a918a;
 
 /** Small world-unit marker: a dot on each boat, not a balloon. */
 const FLEET_MARKER_RADIUS_WORLD_UNITS = 0.1;
-const FLEET_MARKER_LIFT_WORLD_UNITS = 0.55;
+const FLEET_MARKER_LIFT_WORLD_UNITS = 0.8;
 
 function fleetBoatColorHex(fleetId: number): number {
   return FLEET_BOAT_COLORS[fleetId % FLEET_BOAT_COLORS.length]!;
