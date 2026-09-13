@@ -51,6 +51,7 @@ import {
   advanceSquadrons,
   formationStats,
   hashCell,
+  replanSquadronLeg,
   resetSquadrons,
   squadronCount,
   squadronMembers,
@@ -121,6 +122,12 @@ const FLEET_HOP_LENGTH_CELLS = 48;
  * One routed leg subdivides into walkable-by-construction hops, so this
  * single search amortizes over the whole leg lifetime. One attempt per tick. */
 const LEG_ROUTE_NODE_CAP = 32768;
+
+/** Seconds a flagship goes without holding any route before its cruising
+ * leg is declared blocked and re-planned from where it sits. Some legs
+ * point across water that only connects via detours no boxed search can
+ * fit; facing another spoke beats retrying the same span forever. */
+const SQUADRON_LEG_STALE_SECONDS = 60;
 
 /** Lattice spacing between station slots around a fleet hop. Rank 0 is the
  * flagship on the hop; the rest fan out instead of stacking. */
@@ -941,6 +948,7 @@ interface FleetRouteDebug {
   legFromNulls: number;
   legRouted: number;
   legStraight: number;
+  legReplans: number;
   sailRescue: number;
   fleetChains: number;
   fleetShared: number;
@@ -974,6 +982,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     legFromNulls: 0,
     legRouted: 0,
     legStraight: 0,
+    legReplans: 0,
     fleetChains: 0,
     fleetShared: 0,
     fleetSearches: 0,
@@ -1136,11 +1145,8 @@ function assignSquadronGoals(
     });
     indexOfBoat.set(boat.id, index);
   }
-  const waypoints = advanceSquadrons(
-    candidates,
-    squadronNavigator(world, eroded, debug),
-    dt,
-  );
+  const nav = squadronNavigator(world, eroded, debug);
+  const waypoints = advanceSquadrons(candidates, nav, dt);
   const positionOf = new Map<number, SquadronBoat>();
   for (const boat of candidates) positionOf.set(boat.id, boat);
   const liveSquadrons = new Set<number>();
@@ -1165,8 +1171,24 @@ function assignSquadronGoals(
   for (const squadronId of [...liveSquadrons].sort((a, b) => a - b)) {
     const members = squadronMembers(squadronId);
     const flagship = positionOf.get(members[0]);
-    const leg = flagship === undefined ? undefined : waypoints.get(flagship.id);
+    let leg = flagship === undefined ? undefined : waypoints.get(flagship.id);
     if (flagship === undefined || leg === undefined) continue;
+    const flagshipVoyage = voyages.get(flagship.id);
+    if (
+      flagshipVoyage !== undefined &&
+      flagshipVoyage.nullSeconds > SQUADRON_LEG_STALE_SECONDS
+    ) {
+      const fresh = replanSquadronLeg(
+        squadronId,
+        { x: flagship.x, y: flagship.y },
+        flagship,
+        nav,
+      );
+      if (fresh !== null && (fresh.x !== leg.x || fresh.y !== leg.y)) {
+        leg = fresh;
+        debug.legReplans++;
+      }
+    }
     let chain = fleetChains.get(squadronId);
     if (chain === undefined || chain.legX !== leg.x || chain.legY !== leg.y) {
       let points: Waypoint[] | null = null;
@@ -1859,7 +1881,7 @@ export function advanceFleet(
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
-        `legroute=${debug.legRouted}/${debug.legStraight} ` +
+        `legroute=${debug.legRouted}/${debug.legStraight} legreplan=${debug.legReplans} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()} ` +
         `form=${formationStats().candidates}/${formationStats().inHarbour}/` +
         `${formationStats().moored}/${formationStats().crews}/${formationStats().affiliated}`,

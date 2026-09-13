@@ -293,6 +293,26 @@ function planLeg(
   return null;
 }
 
+/** Abandon a cruising squadron's current leg and plan the next spoke from
+ * `from`. Returns the fresh leg, or null when the squadron is not cruising
+ * (mustering squadrons gather first) or no spoke lands. Used when the
+ * flagship is chronically routeless: the leg points somewhere no boxed
+ * search can reach from here, so facing another direction beats retrying
+ * the same span. */
+export function replanSquadronLeg(
+  squadronId: number,
+  from: SquadronWaypoint,
+  flagshipHome: SquadronBoat,
+  nav: SquadronNavigator,
+): SquadronWaypoint | null {
+  const squadron = squadrons.get(squadronId);
+  if (squadron === undefined || squadron.phase !== 'cruising') return null;
+  const leg = planLeg(squadron, from, flagshipHome, nav);
+  if (leg === null) return null;
+  squadron.leg = leg;
+  return leg;
+}
+
 export function advanceSquadrons(
   candidates: readonly SquadronBoat[],
   nav: SquadronNavigator,
