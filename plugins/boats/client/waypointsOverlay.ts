@@ -125,38 +125,45 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   readout.id = 'boats-waypoints-readout';
   readout.className = 'hud-version';
   readout.style.zIndex = '50';
-  const readoutPanel = document.createElement('div');
-  readoutPanel.className = 'hud-version__perf-panel';
-  readout.appendChild(readoutPanel);
+  readout.style.gap = '8px';
+  /** Two stacked panels: waypoints and boats above, squadron chains below.
+   * The chain rows carry the longest values, and sharing one panel would
+   * stretch it wide enough to cover the world header. */
+  const boatPanel = document.createElement('div');
+  boatPanel.className = 'hud-version__perf-panel';
+  const chainPanel = document.createElement('div');
+  chainPanel.className = 'hud-version__perf-panel';
+  chainPanel.style.display = 'none';
+  readout.append(boatPanel, chainPanel);
   document.body.appendChild(readout);
 
   type ReadoutRow = readonly [label: string, value: string];
 
-  const setReadoutRows = (rows: readonly ReadoutRow[]): void => {
-    readoutPanel.replaceChildren(
-      ...rows.map(([label, value]) => {
-        const row = document.createElement('span');
-        row.className = 'hud-version__perf';
-        const labelCell = document.createElement('span');
-        labelCell.className = 'hud-version__perf-label';
-        labelCell.textContent = label;
-        const valueCell = document.createElement('span');
-        valueCell.textContent = value;
-        row.append(labelCell, valueCell);
-        return row;
-      }),
-    );
+  const makeReadoutRow = ([label, value]: ReadoutRow): HTMLSpanElement => {
+    const row = document.createElement('span');
+    row.className = 'hud-version__perf';
+    const labelCell = document.createElement('span');
+    labelCell.className = 'hud-version__perf-label';
+    labelCell.textContent = label;
+    const valueCell = document.createElement('span');
+    valueCell.textContent = value;
+    row.append(labelCell, valueCell);
+    return row;
+  };
+
+  const setPanelRows = (panel: HTMLElement, rows: readonly ReadoutRow[]): void => {
+    panel.replaceChildren(...rows.map(makeReadoutRow));
   };
 
   /**
-   * The open performance panel, if any: a .hud-version__perf-panel that is
-   * not this readout's own. While it is open the readout docks to the left
+   * The open performance panel, if any: a .hud-version__perf-panel outside
+   * this readout. While it is open the readout docks to the left
    * of the performance HUD's column; while it is closed the readout parks
    * below the version lines, which it would otherwise cover.
    */
   const openPerfPanel = (): Element | null => {
     for (const panel of document.querySelectorAll('.hud-version__perf-panel')) {
-      if (panel !== readoutPanel) return panel;
+      if (!readout.contains(panel)) return panel;
     }
     return null;
   };
@@ -224,11 +231,13 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   };
 
   const renderReadout = (): void => {
-    setReadoutRows([readoutHead, ...boatRows(), ...chainRows]);
+    setPanelRows(boatPanel, [readoutHead, ...boatRows()]);
+    setPanelRows(chainPanel, chainRows);
+    chainPanel.style.display = chainRows.length > 0 ? '' : 'none';
     updateReadoutPosition();
   };
 
-  setReadoutRows([readoutHead]);
+  setPanelRows(boatPanel, [readoutHead]);
   updateReadoutPosition();
 
   const setPositions = (target: LineSegments | Points, positions: number[]): void => {
@@ -241,7 +250,13 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const redrawBoats = (): void => {
     const positions: number[] = [];
     const colors: number[] = [];
-    for (const boat of lastBoats) {
+    // TEMP probe: fixed cross at island center + live boats.
+    const probe: BoatState[] = [
+      { id: 9001, x: 252, y: 256, heading: 0, fighting: false },
+      { id: 9002, x: 260, y: 256, heading: 0, fighting: false },
+      ...lastBoats,
+    ];
+    for (const boat of probe) {
       const fleet = fleetOfBoat.get(boat.id);
       positions.push(
         boat.x * CELL_WORLD_SIZE,
@@ -264,7 +279,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       if (frame === null) {
         rejected++;
         readoutHead = ['waypoints', `rejected frame (${String(rejected)})`];
-        setReadoutRows([readoutHead]);
+        setPanelRows(boatPanel, [readoutHead]);
         updateReadoutPosition();
         return;
       }
@@ -280,9 +295,12 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         const last = chain.hops.length - 1;
         const crew = chain.crew ?? [];
         for (const boatId of crew) fleetOfBoat.set(boatId, chain.id);
+        // Short `#id` label: the label column is fixed width, so a longer
+        // label would overflow it and paint over the value (`#5 squadron`
+        // colliding with `cursor ...`). The chain name leads the value.
         rows.push([
-          `#${chain.id} ${chain.label}`,
-          `cursor ${chain.cursor}/${chain.hops.length} hops ${chain.hops.length} ` +
+          `#${chain.id}`,
+          `${chain.label} cursor ${chain.cursor}/${chain.hops.length} hops ${chain.hops.length} ` +
             `sailed ${chain.sailed.length} members ${chain.members} ` +
             `crew [${crew.join(',')}]`,
         ]);
