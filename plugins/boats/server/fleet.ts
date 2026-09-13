@@ -49,6 +49,7 @@ import {
   SQUADRON_MUSTER_RADIUS_CELLS,
   SQUADRON_WAYPOINT_ATTEMPTS,
   advanceSquadrons,
+  formationStats,
   hashCell,
   resetSquadrons,
   squadronCount,
@@ -1647,7 +1648,9 @@ export function advanceFleet(
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
-        `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
+        `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()} ` +
+        `form=${formationStats().candidates}/${formationStats().inHarbour}/` +
+        `${formationStats().moored}/${formationStats().crews}/${formationStats().affiliated}`,
     );
     if (debug.probe !== null) {
       const p = debug.probe;
