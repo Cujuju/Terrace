@@ -1067,6 +1067,39 @@ describe('world events (structures:changes)', () => {
     expect(payload.died).toHaveLength(4);
     expect(payload.died).toContainEqual({ x: 40, y: 40 });
   });
+
+  it('a diff that leaves the resting band untouched (carve tunnel below) leaves settlements standing', () => {
+    const { host, events } = bootWithRecorder([
+      [40, 40],
+      [41, 40],
+      [40, 41],
+      [41, 41],
+    ]);
+
+    // A carve tunnel below emits a diff for the column (spans change) while the
+    // surface height — and therefore the resting band — is untouched.
+    host.notifyTerrainChanged([
+      { x: 40, y: 40, h: OPEN_BAND * BAND_HEIGHT, spans: [0, OPEN_BAND * BAND_HEIGHT] },
+      { x: 41, y: 40, h: OPEN_BAND * BAND_HEIGHT, spans: [0, OPEN_BAND * BAND_HEIGHT] },
+    ]);
+
+    expect(standingStructures()).toHaveLength(4);
+    expect(events.filter((heard) => heard.event === 'structures:changes')).toHaveLength(0);
+  });
+
+  it('a diff on a neighbouring cell alone leaves the settlement standing', () => {
+    const { host, events } = bootWithRecorder([
+      [40, 40],
+      [41, 40],
+      [40, 41],
+      [41, 41],
+    ]);
+
+    host.notifyTerrainChanged([{ x: 10, y: 10, h: (OPEN_BAND + 1) * BAND_HEIGHT }]);
+
+    expect(standingStructures()).toHaveLength(4);
+    expect(events.filter((heard) => heard.event === 'structures:changes')).toHaveLength(0);
+  });
 });
 
 describe('farmland predicate (card 28)', () => {

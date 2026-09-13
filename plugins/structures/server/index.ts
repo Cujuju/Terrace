@@ -346,6 +346,10 @@ let fuelWorld: WorldApi | null = null;
 function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (diff.length === 0) return;
 
+  // Own-cell scope is a known pre-existing limitation: a sculpt that touches
+  // only neighbouring cells never reaches this loop, even when it breaks the
+  // flatness a settlement was founded on.
+
   const demolished: Array<{ x: number; y: number }> = [];
   for (const cell of diff) {
     const key = structureKey(cell.x, cell.y);
@@ -432,6 +436,7 @@ export const plugin: TerracePlugin = {
     console.info(structuresModelMessage(selectedModel));
 
     live = new Map();
+    supportBands.clear();
     for (const [key, record] of restoredLive) {
       const cell = cellOfKey(key);
       if (isBuildableCell(world, cell.x, cell.y)) {
