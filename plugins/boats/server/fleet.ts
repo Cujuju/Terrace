@@ -1856,8 +1856,10 @@ export function advanceFleet(
       );
     }
     for (const chain of fleetWaypointDebug().chains) {
+      const hop = chain.hops[Math.min(chain.cursor, chain.hops.length - 1)];
       perfLogLine(
         `[tick] boats squadron #${chain.id} cursor=${chain.cursor}/${chain.hops.length} ` +
+          `hop=(${hop === undefined ? '?,?' : `${hop.x.toFixed(0)},${hop.y.toFixed(0)}`}) ` +
           `sailed=${chain.sailed.length} members=${chain.members}`,
       );
     }
