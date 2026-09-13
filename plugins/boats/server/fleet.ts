@@ -4,9 +4,9 @@ import {
   OPEN_WATER_PROFILE,
   ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
+  buildWaypointChain,
   cellsAcross,
   createRouteBudget,
-  findRoute,
   findRouteWithStatus,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
@@ -15,6 +15,7 @@ import {
   nearestWithinReach,
   normalizeAngle,
   regionAt,
+  waypointForMember,
   withClearance,
   withoutSelf,
   type Occupant,
@@ -22,6 +23,7 @@ import {
   type RouteCell,
   type SeaRegions,
   type TerrainSampler,
+  type Waypoint,
 } from '@terrace/shared';
 import {
   severityAt,
@@ -40,6 +42,7 @@ import {
   HOME_GUARD_BOATS_PER_VILLAGE,
   SQUADRON_LEG_LENGTH_CELLS,
   SQUADRON_LEG_MIN_LENGTH_CELLS,
+  SQUADRON_MUSTER_RADIUS_CELLS,
   SQUADRON_WAYPOINT_ATTEMPTS,
   advanceSquadrons,
   hashCell,
@@ -102,6 +105,47 @@ export interface KrakenTarget {
 }
 
 export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
+
+/** Cruiser legs split into hops of at most this span. Short hops fit one
+ * budgeted trial search; a whole 256-512 cell leg never could. */
+const FLEET_HOP_LENGTH_CELLS = 96;
+
+/** Lattice spacing between station slots around a fleet hop. Rank 0 is the
+ * flagship on the hop; the rest fan out instead of stacking. */
+const FLEET_FORMATION_SPACING_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
+
+/** Adoption radius for a shared fleet route: members farther than this from
+ * every shared cell fall back to their own search. */
+const FLEET_ROUTE_REJOIN_CELLS = 8;
+
+interface FleetChain {
+  legX: number;
+  legY: number;
+  points: Waypoint[];
+  index: number;
+}
+
+const fleetChains = new Map<number, FleetChain>();
+
+function nearestRouteIndex(
+  cells: readonly RouteCell[],
+  x: number,
+  y: number,
+  capCells: number,
+): number {
+  let best = 0;
+  let bestSquared = Infinity;
+  for (let i = 0; i < cells.length; i++) {
+    const dx = cells[i].x + 0.5 - x;
+    const dy = cells[i].y + 0.5 - y;
+    const d = dx * dx + dy * dy;
+    if (d < bestSquared) {
+      bestSquared = d;
+      best = i;
+    }
+  }
+  return bestSquared <= capCells * capCells ? best : 0;
+}
 
 const BOAT_LOOKAHEAD_SECONDS = 1;
 
@@ -312,6 +356,7 @@ export function resetFleet(): void {
   villages.clear();
   shipyards.clear();
   voyages.clear();
+  fleetChains.clear();
   boats = [];
   nextBoatId = 1;
   noteTerrainChanged();
@@ -792,6 +837,9 @@ interface FleetRouteDebug {
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
+  fleetChains: number;
+  fleetShared: number;
+  fleetSearches: number;
 }
 
 function createFleetRouteDebug(): FleetRouteDebug {
@@ -816,13 +864,15 @@ function createFleetRouteDebug(): FleetRouteDebug {
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
+    fleetChains: 0,
+    fleetShared: 0,
+    fleetSearches: 0,
   };
 }
 
 function squadronNavigator(
   world: BoatWorld,
   eroded: TerrainSampler,
-  legBudget: RouteBudget,
   debug: FleetRouteDebug,
 ): SquadronNavigator {
   return {
@@ -841,6 +891,8 @@ function squadronNavigator(
       seed: number,
       attempt: number,
     ): SquadronWaypoint | null {
+      // Pose-only draw: the fleet subdivides the leg into short hops and
+      // pathfinds once per hop, so no long A* runs here.
       const spoke = (seed + attempt) % SQUADRON_WAYPOINT_ATTEMPTS;
       const bearing = (spoke * FULL_TURN_RADIANS) / SQUADRON_WAYPOINT_ATTEMPTS;
       const dx = Math.cos(bearing);
@@ -854,16 +906,9 @@ function squadronNavigator(
         const y = fromY + dy * reach;
         if (!isManoeuvrablePose(world, eroded, x, y, bearing)) continue;
         debug.legFromCalls++;
-        const plan = findRoute(
-          eroded,
-          HULL_PROFILE,
-          { x: fromX, y: fromY },
-          { x, y },
-          legBudget,
-        );
-        if (plan === null) debug.legFromNulls++;
-        else return { x, y };
+        return { x, y };
       }
+      debug.legFromNulls++;
       return null;
     },
   };
@@ -885,7 +930,6 @@ function assignSquadronGoals(
   world: BoatWorld,
   eroded: TerrainSampler,
   kraken: KrakenTarget | null,
-  legBudget: RouteBudget,
   dt: number,
   debug: FleetRouteDebug,
 ): Map<number, StationGoal> {
@@ -907,14 +951,61 @@ function assignSquadronGoals(
   }
   const waypoints = advanceSquadrons(
     candidates,
-    squadronNavigator(world, eroded, legBudget, debug),
+    squadronNavigator(world, eroded, debug),
     dt,
   );
+  const positionOf = new Map<number, SquadronBoat>();
+  for (const boat of candidates) positionOf.set(boat.id, boat);
+  const liveSquadrons = new Set<number>();
+  for (const boatId of waypoints.keys()) {
+    const squadronId = squadronOf(boatId);
+    if (squadronId !== null) liveSquadrons.add(squadronId);
+  }
+  for (const squadronId of [...fleetChains.keys()]) {
+    if (!liveSquadrons.has(squadronId)) fleetChains.delete(squadronId);
+  }
+  // One shared chain per fleet: the squadron draws the coarse leg, the
+  // fleet subdivides it, and the flagship cursor drives every member.
+  const arrivalSquared = SQUADRON_MUSTER_RADIUS_CELLS * SQUADRON_MUSTER_RADIUS_CELLS;
+  const hops = new Map<number, SquadronWaypoint>();
+  for (const squadronId of liveSquadrons) {
+    const members = squadronMembers(squadronId);
+    const flagship = positionOf.get(members[0]);
+    const leg = flagship === undefined ? undefined : waypoints.get(flagship.id);
+    if (flagship === undefined || leg === undefined) continue;
+    let chain = fleetChains.get(squadronId);
+    if (chain === undefined || chain.legX !== leg.x || chain.legY !== leg.y) {
+      const built = buildWaypointChain(
+        { x: flagship.x, y: flagship.y },
+        [leg],
+        FLEET_HOP_LENGTH_CELLS,
+      );
+      chain = {
+        legX: leg.x,
+        legY: leg.y,
+        points: built.length > 0 ? built : [{ x: leg.x, y: leg.y }],
+        index: 0,
+      };
+      fleetChains.set(squadronId, chain);
+    }
+    while (chain.index < chain.points.length) {
+      const hop = chain.points[chain.index];
+      const dx = flagship.x - hop.x;
+      const dy = flagship.y - hop.y;
+      if (dx * dx + dy * dy > arrivalSquared) break;
+      chain.index++;
+    }
+    hops.set(squadronId, chain.points[Math.min(chain.index, chain.points.length - 1)]);
+  }
+  debug.fleetChains = fleetChains.size;
   const goals = new Map<number, StationGoal>();
-  for (const [boatId, waypoint] of waypoints) {
+  for (const boatId of waypoints.keys()) {
+    const squadronId = squadronOf(boatId);
+    const hop = squadronId === null ? undefined : hops.get(squadronId);
+    if (hop === undefined) continue;
     const index = indexOfBoat.get(boatId);
     if (index === undefined) continue;
-    goals.set(index, { x: waypoint.x, y: waypoint.y, standoff: 0, slot: null });
+    goals.set(index, { x: hop.x, y: hop.y, standoff: 0, slot: null });
   }
   return goals;
 }
@@ -967,6 +1058,7 @@ interface SailTick {
   budget: RouteBudget;
   debug: FleetRouteDebug;
   searchesLeft: number;
+  fleetRoutes: Map<number, { hopX: number; hopY: number; cells: RouteCell[] | null }>;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
@@ -1044,9 +1136,18 @@ function sailBoat(tick: SailTick, index: number): void {
   const squadron = target === null ? squadronGoals.get(index) : undefined;
   const slotList: BerthList =
     target !== null ? 'station' : squadron !== undefined ? 'squadron' : 'home';
+  const squadronId = squadron !== undefined ? squadronOf(boat.id) : null;
+  let squadronRank = 0;
+  if (squadron !== undefined && squadronId !== null) {
+    const rank = squadronMembers(squadronId).indexOf(boat.id);
+    squadronRank = rank < 0 ? 0 : rank;
+  }
   if (squadron !== undefined) {
-    goalX = squadron.x;
-    goalY = squadron.y;
+    // Fleet station: flagship takes the hop, members fan out on lattice
+    // slots. Slots clamp in-bounds; edge offsets would route off the map.
+    const berth = waypointForMember(squadron, squadronRank, FLEET_FORMATION_SPACING_CELLS);
+    goalX = Math.min(Math.max(berth.x, 0.5), world.worldSize - 0.5);
+    goalY = Math.min(Math.max(berth.y, 0.5), world.worldSize - 0.5);
     standoff = squadron.standoff;
     slotIndex = squadron.slot;
   } else if (target === null) {
@@ -1122,7 +1223,37 @@ function sailBoat(tick: SailTick, index: number): void {
     else if (voyage.noProgressSeconds > BOAT_STUCK_SECONDS) debug.sailStuck++;
     else debug.sailDrift++;
     let plan: { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null = null;
-    if (tick.searchesLeft <= 0) {
+    const shared =
+      squadron !== undefined && squadronId !== null
+        ? tick.fleetRoutes.get(squadronId)
+        : undefined;
+    const fresh =
+      shared !== undefined &&
+      squadron !== undefined &&
+      shared.hopX === squadron.x &&
+      shared.hopY === squadron.y;
+    if (fresh) {
+      // Fleet pathfinds once: the first mover searched this hop, the rest
+      // adopt its cells at their nearest index and steer to station slots.
+      debug.fleetShared++;
+      if (shared.cells !== null) {
+        voyage.route = [...shared.cells];
+        voyage.routeIndex = nearestRouteIndex(
+          shared.cells,
+          boat.x,
+          boat.y,
+          FLEET_ROUTE_REJOIN_CELLS,
+        );
+      } else {
+        voyage.route = null;
+        voyage.routeIndex = 0;
+        debug.sailNulls++;
+        debug.sailNullBoats.add(boat.id);
+      }
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
+      voyage.noProgressSeconds = 0;
+    } else if (tick.searchesLeft <= 0) {
       debug.sailDeferred++;
     } else if (
       Math.max(Math.abs(boat.x - goalX), Math.abs(boat.y - goalY)) > ROUTE_DIRECT_RANGE_CELLS
@@ -1172,15 +1303,25 @@ function sailBoat(tick: SailTick, index: number): void {
         }
       }
     }
-    if (plan === null) {
-      debug.sailNulls++;
-      debug.sailNullBoats.add(boat.id);
+    if (!fresh) {
+      if (plan === null) {
+        debug.sailNulls++;
+        debug.sailNullBoats.add(boat.id);
+      }
+      voyage.route = plan === null ? null : [...plan.cells];
+      voyage.routeIndex = 0;
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
+      voyage.noProgressSeconds = 0;
+      if (squadron !== undefined && squadronId !== null) {
+        tick.fleetRoutes.set(squadronId, {
+          hopX: squadron.x,
+          hopY: squadron.y,
+          cells: voyage.route === null ? null : [...voyage.route],
+        });
+        debug.fleetSearches++;
+      }
     }
-    voyage.route = plan === null ? null : [...plan.cells];
-    voyage.routeIndex = 0;
-    voyage.goalX = goalX;
-    voyage.goalY = goalY;
-    voyage.noProgressSeconds = 0;
   }
   voyage.slot = slotIndex;
   voyage.slotList = slotList;
@@ -1313,7 +1454,6 @@ export function advanceFleet(
   const maxTurnRadians = BOAT_TURN_RADIANS_PER_SECOND * dt;
   const stationRadius = boatStationRadiusCells(dt);
   const budget: RouteBudget = createRouteBudget();
-  const legBudget: RouteBudget = createRouteBudget();
   const krakenOccupant: Occupant | null =
     kraken === null
       ? null
@@ -1326,7 +1466,7 @@ export function advanceFleet(
   debug.rver = seaRegions === null ? -1 : seaRegionsVersion;
   debug.rcount = seaRegions === null ? -1 : seaRegions.regionCount;
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
-  const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt, debug);
+  const squadronGoals = assignSquadronGoals(world, eroded, kraken, dt, debug);
   const homeGoals = assignHomeBerths(kraken, squadronGoals);
 
   const tick: SailTick = {
@@ -1346,6 +1486,7 @@ export function advanceFleet(
     homeGoals,
     debug,
     searchesLeft: TICK_ROUTE_SEARCH_CAP,
+    fleetRoutes: new Map(),
   };
 
   let engaged = 0;
@@ -1364,13 +1505,13 @@ export function advanceFleet(
     routeLogCooldownMs += ROUTE_LOG_INTERVAL_MS;
     perfLogLine(
       `[tick] boats routes budget=${budget.remaining}/${ROUTE_NODE_BUDGET} ` +
-        `leg=${legBudget.remaining}/${ROUTE_NODE_BUDGET} ` +
         `sailPlans=${debug.sailPlans} sailNulls=${debug.sailNulls} ` +
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
         `cache=${debug.cacheHits} region=${debug.regionHits} ` +
         `far=${debug.farSkips} ` +
         `expensive=${debug.expensive} ` +
+        `fleets=${debug.fleetChains} shared=${debug.fleetShared} fsearch=${debug.fleetSearches} ` +
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
