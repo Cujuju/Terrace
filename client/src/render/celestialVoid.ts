@@ -755,7 +755,9 @@ function starProgram(
       core.addAssign(smoothstep(vShape.x.mul(GLOW_RADIUS), 0.0, d).mul(GLOW_GAIN));
     });
     // toneMapped: false is inert on WebGPU, so the displayed colour is inverted through ACES.
-    return vec4(radianceForDisplay(vCol.mul(core)), 0.0);
+    // Blended before tone mapping: black inverts above zero, so subtract it or every covered pixel glows.
+    const blackRadiance = radianceForDisplay(vec3(0.0));
+    return vec4(max(radianceForDisplay(vCol.mul(core)).sub(blackRadiance), vec3(0.0)), 0.0);
   })();
 
   return { positionNode, sizeNode, fragmentNode };
