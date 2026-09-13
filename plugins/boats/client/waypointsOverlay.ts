@@ -397,7 +397,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       sailed.geometry.dispose();
       (sailed.material as LineBasicMaterial).dispose();
       boatMarkers.geometry.dispose();
-      (boatMarkers.material as MeshBasicMaterial).dispose();
+      (boatMarkers.material as MeshStandardMaterial).dispose();
       for (const points of [hopPoints, slotPoints, cursorPoints]) {
         points.geometry.dispose();
         (points.material as PointsMaterial).dispose();
