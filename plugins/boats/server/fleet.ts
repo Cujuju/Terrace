@@ -52,6 +52,7 @@ import {
   formationStats,
   hashCell,
   replanSquadronLeg,
+  squadronPhase,
   resetSquadrons,
   squadronCount,
   squadronMembers,
@@ -1924,6 +1925,7 @@ export function advanceFleet(
           `crew=[${(chain.crew ?? []).join(',')}] ` +
           `flag=${flagId} null=${flagVoyage?.nullSeconds.toFixed(1) ?? '?'} ` +
           `stuck=${flagVoyage?.noProgressSeconds.toFixed(1) ?? '?'} ` +
+          `phase=${squadronPhase(chain.id) ?? '?'} ` +
           `route=${flagVoyage?.route?.length ?? 0} dist=${flagDist}`,
       );
     }
