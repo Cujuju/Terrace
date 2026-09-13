@@ -1082,6 +1082,12 @@ function routeLegPoints(
           `${Math.floor(leg.x)},${Math.floor(leg.y)}`,
       );
     }
+    if (isPerfLoggingEnabled()) {
+      perfLogLine(
+        `[tick] boats legroute failed status=${outcome.status} ` +
+          `spent=${allowance - legBudget.remaining} regions=${fromRegion}>${goalRegion}`,
+      );
+    }
     return null;
   }
   const points: Waypoint[] = [];
@@ -1093,7 +1099,13 @@ function routeLegPoints(
   if (tail === undefined || tail.x !== last.x || tail.y !== last.y) {
     points.push({ x: last.x, y: last.y });
   }
-  return points.length > 0 ? points : null;
+  if (points.length === 0) return null;
+  if (isPerfLoggingEnabled()) {
+    perfLogLine(
+      `[tick] boats legroute ok cells=${outcome.plan.cells.length} hops=${points.length}`,
+    );
+  }
+  return points;
 }
 
 function assignSquadronGoals(
