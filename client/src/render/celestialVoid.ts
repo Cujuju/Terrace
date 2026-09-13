@@ -260,6 +260,8 @@ const GLOW_GAIN = 0.35;
 const TWINKLE_FRACTION = 0.3;
 const TWINKLE_DEPTH = 0.35;
 const TWINKLE_RATE = 2.2;
+// Star colour falls off as depthFade to this power, thinning the far field; was 2.
+const STAR_DEPTH_FADE_POWER = 3.0;
 
 const FBM_OCTAVES = 5;
 // Fields read only on the broad scale keep the first octaves, so the look is unchanged.
@@ -733,8 +735,7 @@ function starProgram(
       .mul(twinkle)
       .mul(weight)
       .mul(outer)
-      .mul(depthFade)
-      .mul(depthFade),
+      .mul(pow(depthFade, STAR_DEPTH_FADE_POWER)),
     'v_col',
   );
   const vShape = varying(vec3(rPx, glow, size), 'v_shape');
