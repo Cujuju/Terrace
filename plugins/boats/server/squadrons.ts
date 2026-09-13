@@ -47,7 +47,7 @@ export interface SquadronNavigator {
   ): SquadronWaypoint | null;
 }
 
-type SquadronPhase = 'mustering' | 'cruising';
+export type SquadronPhase = 'mustering' | 'cruising';
 
 interface Squadron {
   readonly id: number;
@@ -105,6 +105,10 @@ export function squadronCount(): number {
 
 export function squadronMembers(squadronId: number): readonly number[] {
   return squadrons.get(squadronId)?.members ?? [];
+}
+
+export function squadronPhase(squadronId: number): SquadronPhase | null {
+  return squadrons.get(squadronId)?.phase ?? null;
 }
 
 export function hashCell(x: number, y: number): number {
