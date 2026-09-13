@@ -3,12 +3,14 @@ import {
   applyBrush,
   applyLevelFillBrush,
   applySculpt,
+  bandFloorHeight,
   bandOf,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
   canSpreadBandTo,
   carveRange,
   cellIndex,
+  columnCoversBand,
   cellX,
   cellY,
   createHeightmap,
@@ -38,6 +40,7 @@ import {
   quantizeToBand,
   readSpans,
   RELAX_SLACK,
+  SEA_LEVEL,
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
   sculptDisplacementUnits,
@@ -644,7 +647,7 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     }
     let lowestBand = Number.POSITIVE_INFINITY;
     for (const i of footprint) lowestBand = Math.min(lowestBand, bandOf(before[i]));
-    const target = (lowestBand + 1) * BAND_HEIGHT;
+    const target = bandFloorHeight(lowestBand + 1);
     for (const i of footprint) {
       const expected =
         before[i] >= target ? before[i] : Math.min(before[i] + DEFAULT_SCULPT_AMOUNT, target);
@@ -2137,7 +2140,7 @@ describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-0
       const map = poleOnPlain();
       pullIn(map, grab);
       expect(eastEdgeBand(map)).toBe(grab - 1);
-      expect(heightAt(map, CX + POLE_REACH, CY)).toBe((grab - 1) * BAND_HEIGHT);
+      expect(heightAt(map, CX + POLE_REACH, CY)).toBe(bandFloorHeight(grab - 1));
     }
   });
 
@@ -2299,5 +2302,52 @@ describe('applySculpt — raises out of the sea break the surface', () => {
     });
     expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
     expect(drawnBandOfSample(at(map))).toBe(0);
+  });
+});
+
+describe('band coverage agrees with drawing at the waterline (2026-09-12)', () => {
+  const NEAR_BANDS = 2;
+  const HEIGHT_REACH = 3 * BAND_HEIGHT;
+
+  it('band 0 starts at the shore; every other band at band × BAND_HEIGHT', () => {
+    expect(bandFloorHeight(0)).toBe(DRAWN_SHORE_HEIGHT);
+    for (const band of [-NEAR_BANDS, -1, 1, NEAR_BANDS]) expect(bandFloorHeight(band)).toBe(band * BAND_HEIGHT);
+  });
+
+  it('a column that covers a band draws at that band or above', () => {
+    const map = createHeightmap(1);
+    for (let h = -HEIGHT_REACH; h <= HEIGHT_REACH; h++) {
+      map.cells[0] = h;
+      for (let band = -NEAR_BANDS; band <= NEAR_BANDS; band++) {
+        if (columnCoversBand(map, 0, 0, band)) expect(drawnBandOfSample(h)).toBeGreaterThanOrEqual(band);
+      }
+    }
+  });
+
+  it('a band-0 drag lifts sea-level cells to the shore, not only cells below the sea', () => {
+    const SIZE = 16;
+    const SHORE_EDGE_X = 4;
+    const DEEP_X = 6;
+    const ROW = 8;
+    const END_X = 8;
+    const RADIUS = 3;
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        map.cells[cellIndex(map, x, y)] =
+          x < SHORE_EDGE_X ? DRAWN_SHORE_HEIGHT : x === DEEP_X ? -BAND_HEIGHT : SEA_LEVEL;
+      }
+    }
+    applySculpt(map, END_X, ROW, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'drag',
+      profile: 'hard',
+      anchor: 'band',
+      targetBand: 0,
+      sweepFrom: { x: SHORE_EDGE_X, y: ROW },
+    });
+    for (let x = SHORE_EDGE_X; x <= END_X; x++) {
+      expect(heightAt(map, x, ROW)).toBe(DRAWN_SHORE_HEIGHT);
+      expect(drawnBandOfSample(heightAt(map, x, ROW))).toBe(0);
+    }
   });
 });

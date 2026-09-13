@@ -1,4 +1,4 @@
-import { BAND_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { BAND_HEIGHT, DRAWN_SHORE_HEIGHT } from './constants.ts';
 import {
   BEDROCK_FLOOR,
   columnSampleAtBand,
@@ -14,9 +14,6 @@ import { SHEER_RISE_HEIGHT_UNITS_PER_CELL } from './traversal.ts';
 export const DRAWN_GROUND_COORD_DENOM = 1024;
 
 export const DRAWN_GROUND_BAND_BIAS = BAND_HEIGHT / 2;
-
-/** The first dry height. Band 0 starts here: a sea sample never rounds up to the waterline. */
-export const DRAWN_SHORE_HEIGHT = SEA_LEVEL + 1;
 
 /** Band k's threshold in the biased field (`height + DRAWN_GROUND_BAND_BIAS`). */
 export function drawnLevelThreshold(band: number): number {

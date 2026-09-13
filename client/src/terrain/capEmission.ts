@@ -1,7 +1,7 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
-  DRAWN_SHORE_HEIGHT,
+  bandFloorHeight,
   anyColumnLayered,
   bandOf,
   columnCoversBand,
@@ -49,7 +49,7 @@ export const SKIRT_PICK_INSET = 1 / 1024;
 
 /** The height whose palette entry colours band k; band 0 is dry land from the shoreline up. */
 export function levelPaletteHeight(band: number): number {
-  return band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT;
+  return bandFloorHeight(band);
 }
 
 export const SEABED_RISER_BORDER_WORLD_HEIGHT = BAND_WORLD_HEIGHT / 16;

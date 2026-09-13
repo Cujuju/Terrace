@@ -31,12 +31,14 @@ import {
   anyColumnLayered,
   applyBandFill,
   bandFillAt,
+  bandFloorHeight,
   BEDROCK_FLOOR,
   canCarveBandAt,
   canSpreadBandToSpan,
   carveRange,
   columnCoversBand,
   highestCeilingBelow,
+  isHeightInBand,
   isSpanDrawn,
   moveSpanCeiling,
   readSpans,
@@ -124,7 +126,7 @@ function layerSpanIndex(map: Heightmap, i: number, spanBand: number | null): num
   if (spanBand === null) return top;
   const k = spanIndexCoveringBand(map, x, y, spanBand);
   if (k !== null) return k;
-  return spanBand * BAND_HEIGHT > spanAt(map, x, y, top).ceiling ? top : null;
+  return bandFloorHeight(spanBand) > spanAt(map, x, y, top).ceiling ? top : null;
 }
 
 function graspedCeiling(map: Heightmap, i: number, k: number): number {
@@ -263,14 +265,12 @@ function anchoredTargetHeight(
   targetBand: number | null = null,
   spanBand: number | null = null,
 ): number {
-  if (targetBand !== null) return clampHeight(targetBand * BAND_HEIGHT);
+  if (targetBand !== null) return clampHeight(bandFloorHeight(targetBand));
   const centre = cellIndex(map, cx, cy);
   const k = graspedSpanIndex(map, centre, spanBand);
   const here = k === null ? map.cells[centre]! : graspedCeiling(map, centre, k);
-  const target = (bandOf(here) + (raising ? 1 : -1)) * BAND_HEIGHT;
-  // A raise out of the sea must break the surface: SEA_LEVEL still draws as sea.
-  if (raising && target === SEA_LEVEL) return SEA_LEVEL + 1;
-  return clampHeight(target);
+  // A raise out of the sea must break the surface: SEA_LEVEL still draws as sea; bandFloorHeight(0) is the shore.
+  return clampHeight(bandFloorHeight(bandOf(here) + (raising ? 1 : -1)));
 }
 
 export function applyBrush(
@@ -366,7 +366,7 @@ export function applyLevelFillBrush(
     if (!surveyed) return;
   }
 
-  const targetHeight = clampHeight((extremeBand + (raising ? 1 : -1)) * BAND_HEIGHT);
+  const targetHeight = clampHeight(bandFloorHeight(extremeBand + (raising ? 1 : -1)));
   fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
 }
 
@@ -488,7 +488,7 @@ function pushLowerLayers(
 
   const band = topBand - 1;
   if (band <= MIN_BAND || raisedAtBand.length === 0) return;
-  const level = clampHeight(band * BAND_HEIGHT);
+  const level = clampHeight(bandFloorHeight(band));
 
   const candidates: number[] = [];
   const seen = new Set<number>();
@@ -558,7 +558,7 @@ function retreatHeightAt(
   cy: number,
   band: number,
 ): number | null {
-  const floor = band * BAND_HEIGHT;
+  const floor = bandFloorHeight(band);
   let best: number | null = null;
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
@@ -583,7 +583,7 @@ function admitRimEnclaves(
 ): void {
   const alreadyAtBand = (x: number, y: number): boolean => {
     const k = spanIndexCoveringBand(map, x, y, targetBand);
-    return k !== null && bandOf(spanAt(map, x, y, k).ceiling) === targetBand;
+    return k !== null && isHeightInBand(spanAt(map, x, y, k).ceiling, targetBand);
   };
   const passable = (x: number, y: number): boolean =>
     inBounds(map, x, y) && refused.has(cellIndex(map, x, y)) && !alreadyAtBand(x, y);
@@ -634,9 +634,8 @@ function applyDragRegion(
   sweepFrom: SweepOrigin | null,
   changed: Set<number>,
 ): void {
-  const level = targetBand * BAND_HEIGHT;
   // Like anchoredTargetHeight: a drag-raise to the waterline breaks the surface.
-  const targetHeight = clampHeight(raising && level === SEA_LEVEL ? level + 1 : level);
+  const targetHeight = clampHeight(bandFloorHeight(targetBand));
   const ragged = profile === 'soft';
 
   const priorSpans = new Map<number, readonly Span[]>();
@@ -650,7 +649,7 @@ function applyDragRegion(
     const y = cellY(map.size, i);
     const count = spanCount(map, x, y);
     for (let k = 0; k < count; k++) {
-      if (bandOf(spanAt(map, x, y, k).ceiling) === band) return true;
+      if (isHeightInBand(spanAt(map, x, y, k).ceiling, band)) return true;
     }
     return false;
   };
@@ -688,10 +687,10 @@ function applyDragRegion(
         const k = spanIndexCoveringBand(map, x, y, targetBand);
         if (k === null) continue;
         const span = spanAt(map, x, y, k);
-        if (bandOf(span.ceiling) < targetBand) continue;
+        if (span.ceiling < bandFloorHeight(targetBand)) continue;
         const ground = retreatHeightAt(map, x, y, targetBand);
         if (ground === null) continue;
-        const exposed = Math.max(ground, (targetBand - 1) * BAND_HEIGHT);
+        const exposed = Math.max(ground, bandFloorHeight(targetBand - 1));
         if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
           continue;
         }
@@ -1007,8 +1006,8 @@ function applyCarve(
 ): void {
   const lowestOpenedBand = spanBand;
   const highestOpenedBand = spanBand + CARVE_BANDS_PER_STROKE - 2;
-  const lo = (lowestOpenedBand - 1) * BAND_HEIGHT;
-  const hi = (highestOpenedBand + 1) * BAND_HEIGHT;
+  const lo = bandFloorHeight(lowestOpenedBand - 1);
+  const hi = bandFloorHeight(highestOpenedBand + 1);
 
   if (lo <= BEDROCK_FLOOR) return;
 
