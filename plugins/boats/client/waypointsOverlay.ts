@@ -40,8 +40,8 @@ const FLEET_BOAT_COLORS = [
 /** Marker for boats sailing outside any fleet. */
 const UNAFFILIATED_GRAY_HEX = 0x8a918a;
 
-/** World-unit marker size: readable at full-island zoom, unmissable closer. */
-const FLEET_MARKER_RADIUS_WORLD_UNITS = 0.5;
+/** Small world-unit marker: a dot on each boat, not a balloon. */
+const FLEET_MARKER_RADIUS_WORLD_UNITS = 0.2;
 const FLEET_MARKER_LIFT_WORLD_UNITS = 0.35;
 
 function fleetBoatColorHex(fleetId: number): number {
@@ -108,7 +108,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const slotPoints = makePoints(SLOT_POINT_COLOR, 6);
   const cursorPoints = makePoints(CURSOR_POINT_COLOR, 8);
   const boatMarkers = new InstancedMesh(
-    new SphereGeometry(FLEET_MARKER_RADIUS_WORLD_UNITS, 10, 8),
+    new SphereGeometry(FLEET_MARKER_RADIUS_WORLD_UNITS, 8, 6),
     new MeshStandardMaterial({ roughness: 1, metalness: 0 }),
     BOATS_PAYLOAD_CAP,
   );
