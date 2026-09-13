@@ -33,6 +33,7 @@ import {
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../config.ts';
 import { bandColorOf } from '../terrain/bandColors.ts';
+import type { PickFace } from '../terrain/picking.ts';
 import { DENIED_COLOR, type DenialCue } from './denialCue.ts';
 import {
   MAX_LATTICE_SPAN,
@@ -72,7 +73,7 @@ export interface BrushHover {
   readonly x: number;
   readonly y: number;
   readonly surfaceY: number;
-  readonly hitRiser: boolean;
+  readonly face: PickFace;
   readonly grabbable: boolean;
   readonly hitX?: number;
   readonly hitY?: number;
@@ -486,11 +487,11 @@ export function createBrushPreview(
       const atY = hover.hitY ?? hover.surfaceY;
       const atZ = hover.hitZ ?? hover.y * CELL_WORLD_SIZE;
 
-      const onTread = !hover.hitRiser && atY === hover.surfaceY;
+      const onTread = hover.face === 'tread';
       const seeding = brush.tool === 'drag' && onTread;
 
       if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
-        if (hover.hitRiser) {
+        if (hover.face === 'riser') {
           const band = hover.band ?? null;
           const held = band !== null && (brush.tool !== 'drag' || hover.grabbable);
           paintRiserMark(held ? band : null);
@@ -517,12 +518,12 @@ export function createBrushPreview(
         cellGrid.geometry = geometry.cellGrid;
         shownKey = wanted;
       }
-      material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
-      skirtMaterial.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+      material.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+      skirtMaterial.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
       paintFlatMark();
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
-      if (hover.hitRiser) {
+      if (hover.face === 'riser') {
         crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
       } else {
         crosshair.position.copy(line.position);

@@ -15,7 +15,7 @@ describe('footOfFaceCell', () => {
       x: CELL_X,
       y: CELL_Z,
       spanIndex: 0,
-      hitRiser: true,
+      face: 'riser',
       hitY: STRUCK_HEIGHT * HEIGHT_WORLD_SCALE,
       surfaceY: STRUCK_HEIGHT * HEIGHT_WORLD_SCALE,
       hitX: FACE_X,
@@ -28,7 +28,7 @@ describe('footOfFaceCell', () => {
       x: CELL_X - 1,
       y: CELL_Z,
     });
-    expect(footOfFaceCell({ ...pick, hitRiser: false }, direction, WORLD)).toEqual({
+    expect(footOfFaceCell({ ...pick, face: 'tread' }, direction, WORLD)).toEqual({
       x: CELL_X,
       y: CELL_Z,
     });

@@ -34,7 +34,7 @@ function PerfMsRow(props: { label: string; ms: number }): JSX.Element {
 
 function pickText(pick: HoverPickSample | null): string {
   if (pick === null) return 'none';
-  const face = pick.hitRiser ? `riser${pick.band === null ? '' : ` b${String(pick.band)}`}` : 'tread';
+  const face = pick.face === 'riser' ? `riser${pick.band === null ? '' : ` b${String(pick.band)}`}` : pick.face;
   return `${String(pick.x)}, ${String(pick.y)} ${face}`;
 }
 

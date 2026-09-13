@@ -11,9 +11,7 @@ import {
   type Heightmap,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE } from '../config.ts';
-import type { TerrainRayPick } from './picking.ts';
-
-export type PickFace = 'riser' | 'tread' | 'underside';
+import type { PickFace, TerrainRayPick } from './picking.ts';
 
 export interface ResolvedPick {
   readonly face: PickFace;
@@ -32,11 +30,11 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
 
   const lowestDrawn = bandOf(spanUndersideHeight(span)) + 1;
 
-  if (pick.hitRiser) {
+  if (pick.face === 'riser') {
     const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
     return { face: 'riser', band: struck < lowestDrawn ? lowestDrawn : struck };
   }
-  if (pick.hitY === capY) return { face: 'tread', band: bandOf(spanCapHeight(span)) };
+  if (pick.face === 'tread') return { face: 'tread', band: bandOf(spanCapHeight(span)) };
   return { face: 'underside', band: lowestDrawn };
 }
 

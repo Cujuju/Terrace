@@ -230,8 +230,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     } else {
       const cell = hoverTarget();
       if (cell === null) return;
-      const underside = !cell.hitRiser && cell.hitY < cell.surfaceY;
-      if (underside && sculptDirection(action) > 0) return;
+      if (cell.face === 'underside' && sculptDirection(action) > 0) return;
       spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
       if (strokeTool === 'carve') {
         if (spanBand === null) return;
@@ -380,7 +379,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const hover = hoverTarget();
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
-    if (hover === null || hover.hitRiser || hover.hitY !== hover.surfaceY) return;
+    if (hover === null || hover.face !== 'tread') return;
     const before = bandAtCell(hover.x, hover.y);
     if (!seedLayer(hover, action)) return;
     const after = bandAtCell(hover.x, hover.y);

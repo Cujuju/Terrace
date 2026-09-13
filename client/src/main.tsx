@@ -231,7 +231,7 @@ viewport.onFrame(() => {
   );
   pickDebug?.update(pick, grabbedBand);
   setHoverPick(
-    pick === null ? null : { x: pick.x, y: pick.y, hitRiser: pick.hitRiser, band: grabbedBand },
+    pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
   );
 });
 
