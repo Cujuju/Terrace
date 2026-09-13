@@ -33,7 +33,7 @@ const FLEET_BOAT_COLORS = [
 ];
 
 /** Marker for boats sailing outside any fleet. */
-const UNAFFILIATED_GRAY: [number, number, number] = [0.45, 0.47, 0.45];
+const UNAFFILIATED_GRAY: [number, number, number] = [1, 0, 1];
 
 function fleetBoatColor(fleetId: number): [number, number, number] {
   const hex = FLEET_BOAT_COLORS[fleetId % FLEET_BOAT_COLORS.length];
@@ -102,7 +102,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const boatPoints = new Points(
     new BufferGeometry(),
     new PointsMaterial({
-      size: 7,
+      size: 40,
       sizeAttenuation: false,
       vertexColors: true,
       transparent: true,
@@ -115,36 +115,109 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   boatPoints.frustumCulled = false;
   container.add(lines, sailed, hopPoints, slotPoints, cursorPoints, boatPoints);
 
+  /**
+   * The readout wears the performance HUD's own classes (.hud-version for the
+   * corner typography, .hud-version__perf-panel for the panel chrome,
+   * .hud-version__perf rows inside), so it matches that styling exactly by
+   * sharing it rather than by copying its values.
+   */
   const readout = document.createElement('div');
-  readout.style.cssText = [
-    'position:fixed',
-    'right:16px',
-    'top:120px',
-    'z-index:50',
-    'pointer-events:none',
-    'font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace',
-    'white-space:pre',
-    'padding:10px 14px',
-    'border-radius:6px',
-    'background:rgba(10,16,13,0.82)',
-    'color:#e7eee8',
-    'border:1px solid rgba(255,255,255,0.14)',
-  ].join(';');
-  readout.textContent = 'waypoints: waiting for frame';
+  readout.id = 'boats-waypoints-readout';
+  readout.className = 'hud-version';
+  readout.style.zIndex = '50';
+  const readoutPanel = document.createElement('div');
+  readoutPanel.className = 'hud-version__perf-panel';
+  readout.appendChild(readoutPanel);
   document.body.appendChild(readout);
+
+  type ReadoutRow = readonly [label: string, value: string];
+
+  const setReadoutRows = (rows: readonly ReadoutRow[]): void => {
+    readoutPanel.replaceChildren(
+      ...rows.map(([label, value]) => {
+        const row = document.createElement('span');
+        row.className = 'hud-version__perf';
+        const labelCell = document.createElement('span');
+        labelCell.className = 'hud-version__perf-label';
+        labelCell.textContent = label;
+        const valueCell = document.createElement('span');
+        valueCell.textContent = value;
+        row.append(labelCell, valueCell);
+        return row;
+      }),
+    );
+  };
+
+  /**
+   * The open performance panel, if any: a .hud-version__perf-panel that is
+   * not this readout's own. While it is open the readout docks to the left
+   * of the performance HUD's column; while it is closed the readout parks
+   * below the version lines, which it would otherwise cover.
+   */
+  const openPerfPanel = (): Element | null => {
+    for (const panel of document.querySelectorAll('.hud-version__perf-panel')) {
+      if (panel !== readoutPanel) return panel;
+    }
+    return null;
+  };
+
+  let perfDocked: boolean | null = null;
+
+  const updateReadoutPosition = (): void => {
+    const perf = openPerfPanel();
+    if (perf !== null) {
+      const anchor = perf.closest('.hud-version') ?? perf;
+      const width = anchor.getBoundingClientRect().width;
+      // Same 10px top as .hud-version, right of the readout clearing the
+      // performance column (its 12px anchor) plus an 8px gap.
+      readout.style.top = '10px';
+      readout.style.right = `${String(Math.ceil(width) + 12 + 8)}px`;
+      perfDocked = true;
+    } else {
+      readout.style.top = '120px';
+      readout.style.right = '16px';
+      perfDocked = false;
+    }
+  };
+
+  /**
+   * Re-dock when the performance panel opens or closes underneath us. Frames
+   * already reposition on every render; this covers a toggle between frames.
+   * The presence check is cheap and the measuring update runs only on a flip.
+   */
+  const positionObserver = new MutationObserver(() => {
+    if ((openPerfPanel() !== null) === perfDocked) return;
+    updateReadoutPosition();
+  });
+  positionObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
 
   let rejected = 0;
   let disposed = false;
   const fleetOfBoat = new Map<number, number>();
   let lastBoats: BoatState[] = [];
-  let chainLines: string[] = ['waypoints: waiting for frame'];
+  let lastChainCount = 0;
+  let readoutHead: ReadoutRow = ['waypoints', 'waiting for frame'];
+  let chainRows: ReadoutRow[] = [];
+
+  const boatsRow = (): ReadoutRow => {
+    const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
+    const positions = lastBoats.map((boat) => `${boat.id}@${boat.x.toFixed(0)},${boat.y.toFixed(0)}`);
+    return [
+      'boats',
+      `${String(lastBoats.length)} (${String(crewed)} crewed)${positions.length > 0 ? ` ${positions.join(' ')}` : ''}`,
+    ];
+  };
 
   const renderReadout = (): void => {
-    const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
-    readout.textContent =
-      `${chainLines[0]} · boats ${lastBoats.length} (${crewed} crewed)\n` +
-      chainLines.slice(1).join('\n');
+    setReadoutRows([readoutHead, boatsRow(), ...chainRows]);
+    updateReadoutPosition();
   };
+
+  setReadoutRows([readoutHead]);
+  updateReadoutPosition();
 
   const setPositions = (target: LineSegments | Points, positions: number[]): void => {
     target.geometry.dispose();
@@ -178,7 +251,9 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       const frame = parseWaypointDebugFrame(payload);
       if (frame === null) {
         rejected++;
-        readout.textContent = `waypoints: rejected frame (${rejected})`;
+        readoutHead = ['waypoints', `rejected frame (${String(rejected)})`];
+        setReadoutRows([readoutHead]);
+        updateReadoutPosition();
         return;
       }
 
@@ -187,17 +262,18 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       const hops: number[] = [];
       const slots: number[] = [];
       const cursors: number[] = [];
-      const summary: string[] = [`waypoints: ${frame.chains.length} chains`];
+      const rows: ReadoutRow[] = [];
       fleetOfBoat.clear();
       for (const chain of frame.chains) {
         const last = chain.hops.length - 1;
         const crew = chain.crew ?? [];
         for (const boatId of crew) fleetOfBoat.set(boatId, chain.id);
-        summary.push(
-          `#${chain.id} ${chain.label} cursor ${chain.cursor}/${chain.hops.length} ` +
-            `hops ${chain.hops.length} sailed ${chain.sailed.length} members ${chain.members} ` +
+        rows.push([
+          `#${chain.id} ${chain.label}`,
+          `cursor ${chain.cursor}/${chain.hops.length} hops ${chain.hops.length} ` +
+            `sailed ${chain.sailed.length} members ${chain.members} ` +
             `crew [${crew.join(',')}]`,
-        );
+        ]);
         let prevX = chain.anchor.x;
         let prevY = chain.anchor.y;
         hops.push(chain.anchor.x * CELL_WORLD_SIZE, WAYPOINT_LIFT_WORLD_UNITS, chain.anchor.y * CELL_WORLD_SIZE);
@@ -250,8 +326,10 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       setPositions(slotPoints, slots);
       setPositions(cursorPoints, cursors);
       redrawBoats();
-      container.visible = frame.chains.length > 0;
-      chainLines = summary;
+      lastChainCount = frame.chains.length;
+      container.visible = lastChainCount > 0 || lastBoats.length > 0;
+      readoutHead = ['waypoints', `${frame.chains.length} chains`];
+      chainRows = rows;
       renderReadout();
     },
 
@@ -261,11 +339,13 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       if (boats === null) return;
       lastBoats = boats;
       redrawBoats();
+      container.visible = lastChainCount > 0 || lastBoats.length > 0;
       renderReadout();
     },
 
     dispose(): void {
       disposed = true;
+      positionObserver.disconnect();
       container.removeFromParent();
       lines.geometry.dispose();
       (lines.material as LineBasicMaterial).dispose();
