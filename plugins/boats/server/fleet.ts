@@ -1898,11 +1898,21 @@ export function advanceFleet(
     }
     for (const chain of fleetWaypointDebug().chains) {
       const hop = chain.hops[Math.min(chain.cursor, chain.hops.length - 1)];
+      const members = squadronMembers(chain.id);
+      const flagId = members.length > 0 ? members[0] : -1;
+      const flagVoyage = voyages.get(flagId);
+      const flagPos = boatPosition(flagId);
+      const flagDist =
+        flagPos === null || hop === undefined
+          ? '?'
+          : Math.hypot(flagPos.x - hop.x, flagPos.y - hop.y).toFixed(0);
       perfLogLine(
         `[tick] boats squadron #${chain.id} cursor=${chain.cursor}/${chain.hops.length} ` +
           `hop=(${hop === undefined ? '?,?' : `${hop.x.toFixed(0)},${hop.y.toFixed(0)}`}) ` +
           `sailed=${chain.sailed.length} members=${chain.members} ` +
-          `crew=[${(chain.crew ?? []).join(',')}]`,
+          `crew=[${(chain.crew ?? []).join(',')}] ` +
+          `flag=${flagId} null=${flagVoyage?.nullSeconds.toFixed(0) ?? '?'} ` +
+          `route=${flagVoyage?.route?.length ?? 0} dist=${flagDist}`,
       );
     }
   }
