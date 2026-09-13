@@ -134,7 +134,7 @@ export function createFloraModels(): FloraModels {
   const rotation = new Quaternion();
   const scale = new Vector3();
 
-  const extents = [createPlacementExtent(), createPlacementExtent(), createPlacementExtent()];
+  const extents = geometries.map(() => createPlacementExtent());
   const reaches: InstanceReach[] = geometries.map(
     (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_TREE_SCALE_MAX),
   );
