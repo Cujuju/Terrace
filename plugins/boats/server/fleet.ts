@@ -1705,9 +1705,12 @@ function sailBoat(tick: SailTick, index: number): void {
     const probeY = boat.y + ((goalY - boat.y) / range) * stride;
     if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
       // Blocked, not arrived: adopt the goal (so drift tracking stays
-      // honest) but hold position WITHOUT settling, so starvation clocks
-      // keep running and rescue / leg re-plans can answer a persistent block.
+      // honest) but hold position WITHOUT settling. A blocked tick is a
+      // starving tick: advance the clocks here (this branch returns before
+      // the helm) so rescue / leg re-plans can answer a persistent block.
       adoptGoal(goalX, goalY);
+      voyage.noProgressSeconds += dt;
+      if (!boat.fighting) voyage.nullSeconds += dt;
       return;
     }
   }
