@@ -38,6 +38,22 @@ function pickText(pick: HoverPickSample | null): string {
   return `${String(pick.x)}, ${String(pick.y)} ${face}`;
 }
 
+/**
+ * Width the pick line always reserves, so the panel never snaps as the
+ * pointer moves: `8888, 8888 underside` — four-digit cells (a 2048-cell
+ * world) plus the longest face text (`underside`, tied with `riser bNN`).
+ * Shorter lines are padded with spaces (the row keeps `white-space: pre`),
+ * and the reserve only ever grows, so a bigger world can't reintroduce
+ * the snapping — the line assumes the maximum length it has ever needed.
+ */
+let pickWidthReserve = '8888, 8888 underside'.length;
+
+function pickValue(pick: HoverPickSample | null): string {
+  const text = pickText(pick);
+  if (text.length > pickWidthReserve) pickWidthReserve = text.length;
+  return text.padEnd(pickWidthReserve);
+}
+
 function PerfRow(props: { label: string; value: string }): JSX.Element {
   return (
     <span class="hud-version__perf">
@@ -87,7 +103,7 @@ export function VersionWatermark(): JSX.Element {
         {(stat) => (
 
           <div class="hud-version__perf-panel">
-            <PerfRow label="pick" value={pickText(hoverPick())} />
+            <PerfRow label="pick" value={pickValue(hoverPick())} />
             {
 
 }
