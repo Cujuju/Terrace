@@ -315,9 +315,9 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         // abbreviated like the rest of the row to keep the panel narrow.
         rows.push([
           `#${chain.id}`,
-          `${chain.label === 'squadron' ? 'sq' : chain.label} cur ${chain.cursor}/${chain.hops.length} hops ${chain.hops.length} ` +
+          `${chain.label.replace(/^squadron (\d+)$/, 'sq$1')} cur ${chain.cursor}/${chain.hops.length} ` +
             `sailed ${chain.sailed.length} mem ${chain.members} ` +
-            `crew [${crew.join(',')}]`,
+            `crew ${crew.length}`,
         ]);
         let prevX = chain.anchor.x;
         let prevY = chain.anchor.y;
