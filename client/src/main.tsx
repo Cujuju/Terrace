@@ -181,7 +181,7 @@ const sculptInput = createSculptInput({
   worldSize: () => world.worldSize(),
   riserBand: (pick) =>
     world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan(), tool: brushTool() }),
-  bandAtCell: (x, y) => world.bandAtCell(x, y),
+  bandAtCell: (x, y, spanBand) => world.bandAtCell(x, y, spanBand),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
   carveBand: (pick) => world.carveBand(pick),
   carveReach: (origin, direction, band) => world.carveReach(origin, direction, band),
