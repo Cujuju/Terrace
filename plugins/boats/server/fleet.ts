@@ -128,6 +128,52 @@ const FLEET_ROUTE_REJOIN_CELLS = 8;
  * direct-steer fallback rather than dragging the aim across the map. */
 const FLEET_SNAP_RADIUS_CELLS = 12;
 
+/** Cohesion margin around the flagship: members this far ahead slow down to
+ * let the fleet catch up, and the flagship slows when its worst straggler
+ * trails beyond it. Full hold at twice the margin. Sized to clear formation
+ * slots plus snap drift, so holding station never reads as straggling. */
+const FLEET_COHESION_MARGIN_CELLS = 24;
+
+function cohesionSlowdown(offsetCells: number): number {
+  if (offsetCells <= FLEET_COHESION_MARGIN_CELLS) return 1;
+  if (offsetCells >= FLEET_COHESION_MARGIN_CELLS * 2) return 0;
+  return 1 - (offsetCells - FLEET_COHESION_MARGIN_CELLS) / FLEET_COHESION_MARGIN_CELLS;
+}
+
+/** Speed factor keeping a fleet together. Members ahead of the flagship along
+ * the fleet bearing ease off; the flagship eases off for stragglers behind.
+ * No hard gate: one stuck boat slows its fleet, never freezes it. */
+function fleetCohesion(boat: Boat, squadronId: number, goalX: number, goalY: number): number {
+  const members = squadronMembers(squadronId);
+  if (members.length < 2) return 1;
+  const flagship = boatPosition(members[0]);
+  if (flagship === null) return 1;
+  let dx = goalX - flagship.x;
+  let dy = goalY - flagship.y;
+  let length = Math.hypot(dx, dy);
+  if (length <= 0) {
+    dx = boat.x - flagship.x;
+    dy = boat.y - flagship.y;
+    length = Math.hypot(dx, dy);
+    if (length <= 0) return 1;
+  }
+  dx /= length;
+  dy /= length;
+  if (boat.id === members[0]) {
+    let worstBehind = 0;
+    for (const id of members) {
+      if (id === boat.id) continue;
+      const pos = boatPosition(id);
+      if (pos === null) continue;
+      const behind = -((pos.x - flagship.x) * dx + (pos.y - flagship.y) * dy);
+      if (behind > worstBehind) worstBehind = behind;
+    }
+    return cohesionSlowdown(worstBehind);
+  }
+  const ahead = (boat.x - flagship.x) * dx + (boat.y - flagship.y) * dy;
+  return cohesionSlowdown(ahead);
+}
+
 interface FleetChain {
   legX: number;
   legY: number;
@@ -136,6 +182,12 @@ interface FleetChain {
 }
 
 const fleetChains = new Map<number, FleetChain>();
+
+/** Last successful hop search per squadron, shared fleet-wide across ticks.
+ * The flagship writes it when its search lands; every member adopts from it
+ * instead of searching. Keyed by squadron; entries die with their chain, so
+ * a hop change can never serve a previous hop's cells. */
+const fleetSharedRoutes = new Map<number, { hopX: number; hopY: number; cells: RouteCell[] }>();
 
 /** Last searched hop route per squadron, for the `?waypoints` overlay's sailed
  * lines. Written at the end of every tick from that tick's shared searches;
@@ -856,6 +908,8 @@ interface FleetRouteDebug {
   fleetChains: number;
   fleetShared: number;
   fleetSearches: number;
+  fleetHold: number;
+  fleetCohesion: number;
 }
 
 function createFleetRouteDebug(): FleetRouteDebug {
@@ -883,6 +937,8 @@ function createFleetRouteDebug(): FleetRouteDebug {
     fleetChains: 0,
     fleetShared: 0,
     fleetSearches: 0,
+    fleetHold: 0,
+    fleetCohesion: 0,
   };
 }
 
@@ -979,6 +1035,9 @@ function assignSquadronGoals(
   }
   for (const squadronId of [...fleetChains.keys()]) {
     if (!liveSquadrons.has(squadronId)) fleetChains.delete(squadronId);
+  }
+  for (const squadronId of [...fleetSharedRoutes.keys()]) {
+    if (!fleetChains.has(squadronId)) fleetSharedRoutes.delete(squadronId);
   }
   // One shared chain per fleet: the squadron draws the coarse leg, the
   // fleet subdivides it, and the flagship cursor drives every member.
@@ -1256,19 +1315,25 @@ function sailBoat(tick: SailTick, index: number): void {
       squadron !== undefined && squadronId !== null
         ? tick.fleetRoutes.get(squadronId)
         : undefined;
+    const persisted =
+      shared !== undefined || squadron === undefined || squadronId === null
+        ? undefined
+        : fleetSharedRoutes.get(squadronId);
+    const live = shared ?? persisted;
     const fresh =
-      shared !== undefined &&
+      live !== undefined &&
       squadron !== undefined &&
-      shared.hopX === squadron.x &&
-      shared.hopY === squadron.y;
+      live.hopX === squadron.x &&
+      live.hopY === squadron.y;
     if (fresh) {
-      // Fleet pathfinds once: the first mover searched this hop, the rest
-      // adopt its cells at their nearest index and steer to station slots.
+      // Pathfound once per fleet: the flagship searched this hop (this tick
+      // or an earlier one) and everyone adopts its cells at their nearest
+      // index, steering to their own station slots from there.
       debug.fleetShared++;
-      if (shared.cells !== null) {
-        voyage.route = [...shared.cells];
+      if (live.cells !== null) {
+        voyage.route = [...live.cells];
         voyage.routeIndex = nearestRouteIndex(
-          shared.cells,
+          live.cells,
           boat.x,
           boat.y,
           FLEET_ROUTE_REJOIN_CELLS,
@@ -1282,6 +1347,23 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalX = goalX;
       voyage.goalY = goalY;
       voyage.noProgressSeconds = 0;
+    } else if (
+      squadron !== undefined &&
+      squadronId !== null &&
+      squadronRank !== 0
+    ) {
+      // Fleet members never search: the flagship pathfinds once per hop and
+      // the fleet adopts. Hold formation on the current route; null it only
+      // when the hop moved on (goal drift), so a stale route never leads a
+      // member at the previous hop. A failed flagship search stays local
+      // instead of nulling the whole fleet for a tick.
+      debug.fleetHold++;
+      if (distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS) {
+        voyage.route = null;
+        voyage.routeIndex = 0;
+      }
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
     } else if (tick.searchesLeft <= 0) {
       debug.sailDeferred++;
     } else if (
@@ -1342,11 +1424,17 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalX = goalX;
       voyage.goalY = goalY;
       voyage.noProgressSeconds = 0;
-      if (squadron !== undefined && squadronId !== null) {
+      if (squadron !== undefined && squadronId !== null && voyage.route !== null) {
+        const cells = [...voyage.route];
         tick.fleetRoutes.set(squadronId, {
           hopX: squadron.x,
           hopY: squadron.y,
-          cells: voyage.route === null ? null : [...voyage.route],
+          cells,
+        });
+        fleetSharedRoutes.set(squadronId, {
+          hopX: squadron.x,
+          hopY: squadron.y,
+          cells,
         });
         debug.fleetSearches++;
       }
@@ -1372,7 +1460,12 @@ function sailBoat(tick: SailTick, index: number): void {
     aimBearing = Math.atan2(goalY - boat.y, goalX - boat.x);
   }
   const advance = strideFactorFor(Math.abs(normalizeAngle(aimBearing - boat.heading)));
-  const stride = Math.min(step, range - standoff) * advance;
+  let cohesion = 1;
+  if (squadron !== undefined && squadronId !== null) {
+    cohesion = fleetCohesion(boat, squadronId, goalX, goalY);
+    if (cohesion < 1) tick.debug.fleetCohesion++;
+  }
+  const stride = Math.min(step, range - standoff) * advance * cohesion;
   const turnThisTick = Math.min(maxTurnRadians, stride / BOAT_TIGHTEST_TURN_RADIUS_CELLS);
   if (voyage.route === null && range > 0) {
     const probeX = boat.x + ((goalX - boat.x) / range) * stride;
@@ -1548,6 +1641,7 @@ export function advanceFleet(
         `far=${debug.farSkips} ` +
         `expensive=${debug.expensive} ` +
         `fleets=${debug.fleetChains} shared=${debug.fleetShared} fsearch=${debug.fleetSearches} ` +
+        `hold=${debug.fleetHold} cohere=${debug.fleetCohesion} ` +
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
