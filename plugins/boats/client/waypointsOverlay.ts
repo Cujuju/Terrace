@@ -18,6 +18,7 @@ import {
   waypointForMember,
 } from '@terrace/shared';
 import { BOATS_PAYLOAD_CAP, parseBoatsPayload, type BoatState } from '../protocol.ts';
+import type { InterpolatedBoat } from './interpolation.ts';
 
 /** Fleet-chain debug overlay (the `?waypoints` flag). Six fixed draw objects:
  * chain lines, sailed lines, hop/slot/cursor points, and one instanced
@@ -51,6 +52,7 @@ function fleetBoatColorHex(fleetId: number): number {
 export interface WaypointsOverlay {
   receive(payload: unknown): void;
   receiveBoats(payload: unknown): void;
+  updateMarkers(sampled: ReadonlyMap<number, InterpolatedBoat>): void;
   dispose(): void;
 }
 
@@ -266,11 +268,14 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
 
   const markerMatrix = new Matrix4();
   const markerColor = new Color();
+  const slotOfBoat = new Map<number, number>();
 
   const redrawBoats = (): void => {
     let drawn = 0;
+    slotOfBoat.clear();
     for (const boat of lastBoats) {
       if (drawn >= BOATS_PAYLOAD_CAP) break;
+      slotOfBoat.set(boat.id, drawn);
       markerMatrix.makeTranslation(
         boat.x * CELL_WORLD_SIZE,
         FLEET_MARKER_LIFT_WORLD_UNITS,
@@ -387,6 +392,25 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       redrawBoats();
       container.visible = lastChainCount > 0 || lastBoats.length > 0;
       renderReadout();
+    },
+
+    // Glide the markers from the same interpolated samples as the models,
+    // so they never lead, lag, or step between server snapshots.
+    updateMarkers(sampled: ReadonlyMap<number, InterpolatedBoat>): void {
+      if (disposed || slotOfBoat.size === 0) return;
+      let moved = false;
+      for (const [id, pose] of sampled) {
+        const slot = slotOfBoat.get(id);
+        if (slot === undefined) continue;
+        markerMatrix.makeTranslation(
+          pose.x * CELL_WORLD_SIZE,
+          FLEET_MARKER_LIFT_WORLD_UNITS,
+          pose.y * CELL_WORLD_SIZE,
+        );
+        boatMarkers.setMatrixAt(slot, markerMatrix);
+        moved = true;
+      }
+      if (moved) boatMarkers.instanceMatrix.needsUpdate = true;
     },
 
     dispose(): void {
