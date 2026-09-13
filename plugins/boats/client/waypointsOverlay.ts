@@ -158,6 +158,22 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   };
 
   /**
+   * Single-cell lines for the squadron panel: no label column. The `#id`
+   * plus `sqN` pair duplicated the number and left the fixed label column
+   * mostly empty, so each chain renders as one short line instead.
+   */
+  const setPanelLines = (panel: HTMLElement, lines: readonly string[]): void => {
+    panel.replaceChildren(
+      ...lines.map((line) => {
+        const row = document.createElement('span');
+        row.style.whiteSpace = 'pre';
+        row.textContent = line;
+        return row;
+      }),
+    );
+  };
+
+  /**
    * The open performance panel, if any: a .hud-version__perf-panel outside
    * this readout. While it is open the readout docks to the left
    * of the performance HUD's column; while it is closed the readout parks
@@ -221,7 +237,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   let lastBoats: BoatState[] = [];
   let lastChainCount = 0;
   let readoutHead: ReadoutRow = ['waypoints', 'waiting for frame'];
-  let chainRows: ReadoutRow[] = [];
+  let chainLines: string[] = [];
 
   /** One reading per row, like the performance panel: a count row plus one
    * short row per boat. A single row carrying every boat's position grows
@@ -246,8 +262,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
 
   const renderReadout = (): void => {
     setPanelRows(boatPanel, [readoutHead, ...boatRows()]);
-    setPanelRows(chainPanel, chainRows);
-    chainPanel.style.display = chainRows.length > 0 ? '' : 'none';
+    setPanelLines(chainPanel, chainLines);
+    chainPanel.style.display = chainLines.length > 0 ? '' : 'none';
     updateReadoutPosition();
   };
 
@@ -303,22 +319,20 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       const hops: number[] = [];
       const slots: number[] = [];
       const cursors: number[] = [];
-      const rows: ReadoutRow[] = [];
+      const rows: string[] = [];
       fleetOfBoat.clear();
       for (const chain of frame.chains) {
         const last = chain.hops.length - 1;
         const crew = chain.crew ?? [];
         for (const boatId of crew) fleetOfBoat.set(boatId, chain.id);
-        // Short `#id` label: the label column is fixed width, so a longer
-        // label would overflow it and paint over the value (`#5 squadron`
-        // colliding with `cursor ...`). The chain name leads the value,
-        // abbreviated like the rest of the row to keep the panel narrow.
-        rows.push([
-          `#${chain.id}`,
-          `${chain.label.replace(/^squadron (\d+)$/, 'sq$1')} cur ${chain.cursor}/${chain.hops.length} ` +
-            `sailed ${chain.sailed.length} mem ${chain.members} ` +
-            `crew ${crew.length}`,
-        ]);
+        // One line per chain, no label column: `sq5` already carries the
+        // squadron number, so a separate `#5` cell only bought dead space.
+        // Non-squadron labels keep their `#id` prefix.
+        const tag = chain.label.replace(/^squadron (\d+)$/, 'sq$1');
+        rows.push(
+          `${tag === chain.label ? `#${chain.id} ` : ''}${tag} cur ${chain.cursor}/${chain.hops.length} ` +
+            `sailed ${chain.sailed.length} mem ${chain.members} crew ${crew.length}`,
+        );
         let prevX = chain.anchor.x;
         let prevY = chain.anchor.y;
         hops.push(chain.anchor.x * CELL_WORLD_SIZE, WAYPOINT_LIFT_WORLD_UNITS, chain.anchor.y * CELL_WORLD_SIZE);
@@ -374,7 +388,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       lastChainCount = frame.chains.length;
       container.visible = lastChainCount > 0 || lastBoats.length > 0;
       readoutHead = ['waypoints', `${frame.chains.length} chains`];
-      chainRows = rows;
+      chainLines = rows;
       renderReadout();
     },
 
