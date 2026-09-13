@@ -1663,6 +1663,7 @@ export function fleetWaypointDebug(): WaypointDebugFrame {
       cursor: Math.max(0, Math.min(chain.index, chain.points.length)),
       members: members.length,
       spacing: FLEET_FORMATION_SPACING_CELLS,
+      crew: [...members],
       sailed:
         sailed === null
           ? []
