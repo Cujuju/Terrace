@@ -66,6 +66,7 @@ export interface SculptInputOptions {
 export interface SculptInput {
   hoverTarget(): TerrainRayPick | null;
   heldBand(): number | null;
+  carveHeldBand(): number | null;
   releaseStroke(): void;
   refusedHold(): boolean;
   dispose(): void;
@@ -504,6 +505,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   return {
     hoverTarget,
     heldBand: (): number | null => strokeGrab,
+    carveHeldBand: (): number | null => strokeCarveBand,
     releaseStroke: releaseRefusedStroke,
     refusedHold: (): boolean => refusedPointerId !== null,
     dispose(): void {

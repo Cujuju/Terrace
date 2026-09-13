@@ -209,10 +209,11 @@ const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUE
 viewport.onFrame(() => {
   const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   world.setBrushRefused(denialCue.isRed());
+  const tool = brushTool();
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
-    heldBand: sculptInput.heldBand(),
-    tool: brushTool(),
+    heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
+    tool,
   });
   brushPreview.update(
     pick === null

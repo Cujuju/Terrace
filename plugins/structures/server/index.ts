@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, dayOfSimMillis, type CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, bandOf, dayOfSimMillis, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   SliceLoadOutcome,
@@ -63,6 +63,27 @@ export const NO_GROWTH_MODEL_WARNING =
   '[structures] configured for a non-default growth model, but none was registered — the board will not change';
 
 let live: Map<number, BoardCellRecord> = new Map();
+
+/** Resting band of each standing structure, keyed by structureKey. A sculpt
+ *  demolishes a structure only when the band it rests on changes, so a carve
+ *  tunnel below (surface height and band untouched) leaves it standing. */
+let supportBands = new Map<number, number>();
+
+function noteSupportBand(world: StructuresWorld, x: number, y: number): void {
+  supportBands.set(structureKey(x, y), bandOf(world.heightAt(x, y)));
+}
+
+function syncSupportBands(world: StructuresWorld): void {
+  for (const key of supportBands.keys()) {
+    if (!live.has(key)) supportBands.delete(key);
+  }
+  for (const key of live.keys()) {
+    if (!supportBands.has(key)) {
+      const cell = cellOfKey(key);
+      noteSupportBand(world, cell.x, cell.y);
+    }
+  }
+}
 
 let generation = 0;
 let lastSeedDay = -1;
@@ -200,6 +221,7 @@ function advanceLife(world: WorldApi, dt: number): void {
       }
 
       broadcastChanges(world, [...outcome.born, ...seeded, ...stirred], outcome.upgraded, outcome.died);
+      syncSupportBands(world);
 
       if (seeded.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
         world.emitEvent('changes', {
@@ -237,6 +259,7 @@ function advanceGrowthModel(world: WorldApi): void {
 
   live = outcome.nextLive;
   generation++;
+  syncSupportBands(world);
   broadcastChanges(world, outcome.born, outcome.upgraded, outcome.died);
   if (outcome.born.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
     world.emitEvent('changes', {
@@ -284,6 +307,7 @@ function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: n
     const key = structureKey(cell.x, cell.y);
     if (!live.delete(key)) continue;
     survey.evict(key);
+    supportBands.delete(key);
     burned.push({ x: cell.x, y: cell.y });
   }
   if (burned.length === 0) return;
@@ -310,6 +334,7 @@ function reactToCycloneDamage(world: WorldApi, payload: unknown): void {
     const key = structureKey(cell.x, cell.y);
     live.delete(key);
     survey.evict(key);
+    supportBands.delete(key);
   }
 
   broadcastChanges(world, [], [], demolished);
@@ -324,8 +349,12 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   const demolished: Array<{ x: number; y: number }> = [];
   for (const cell of diff) {
     const key = structureKey(cell.x, cell.y);
+    if (!live.has(key)) continue;
+    const resting = supportBands.get(key);
+    if (resting !== undefined && bandOf(world.heightAt(cell.x, cell.y)) === resting) continue;
     if (!live.delete(key)) continue;
     survey.evict(key);
+    supportBands.delete(key);
     demolished.push({ x: cell.x, y: cell.y });
   }
   broadcastChanges(world, [], [], demolished);
@@ -405,7 +434,10 @@ export const plugin: TerracePlugin = {
     live = new Map();
     for (const [key, record] of restoredLive) {
       const cell = cellOfKey(key);
-      if (isBuildableCell(world, cell.x, cell.y)) live.set(key, record);
+      if (isBuildableCell(world, cell.x, cell.y)) {
+        live.set(key, record);
+        noteSupportBand(world, cell.x, cell.y);
+      }
     }
     generation = restoredGeneration;
     lastSeedDay = restoredLastSeedDay;
@@ -466,6 +498,7 @@ export function foundStructure(world: StructuresWorld, x: number, y: number): bo
   if (!canFoundStructure(world, x, y)) return false;
 
   live.set(structureKey(x, y), { age: 0, tier: 0 });
+  noteSupportBand(world, x, y);
   pendingFounded.push({ x, y, tier: 0 });
   return true;
 }
@@ -512,6 +545,7 @@ export function currentGeneration(): number {
 export function resetStructuresState(): void {
   resetSessionState();
   live = new Map();
+  supportBands = new Map();
   generation = 0;
   lastSeedDay = -1;
   resetBlessings();
