@@ -1877,7 +1877,8 @@ export function advanceFleet(
       perfLogLine(
         `[tick] boats squadron #${chain.id} cursor=${chain.cursor}/${chain.hops.length} ` +
           `hop=(${hop === undefined ? '?,?' : `${hop.x.toFixed(0)},${hop.y.toFixed(0)}`}) ` +
-          `sailed=${chain.sailed.length} members=${chain.members}`,
+          `sailed=${chain.sailed.length} members=${chain.members} ` +
+          `crew=[${(chain.crew ?? []).join(',')}]`,
       );
     }
   }
