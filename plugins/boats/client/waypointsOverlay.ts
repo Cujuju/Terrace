@@ -170,6 +170,18 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
 
   let perfDocked: boolean | null = null;
 
+  /**
+   * Parked right offset: just left of the bottom-right settings column
+   * (connection button and its popups), measured live so open popups count
+   * too. The tall stack would otherwise cover that column.
+   */
+  const parkedRightPx = (): number => {
+    const settings = document.querySelector('.hud-settings');
+    if (!(settings instanceof HTMLElement)) return 60;
+    const gap = Math.ceil(window.innerWidth - settings.getBoundingClientRect().left) + 8;
+    return Math.max(60, gap);
+  };
+
   const updateReadoutPosition = (): void => {
     const perf = openPerfPanel();
     if (perf !== null) {
@@ -182,7 +194,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       perfDocked = true;
     } else {
       readout.style.top = '120px';
-      readout.style.right = '16px';
+      readout.style.right = `${String(parkedRightPx())}px`;
       perfDocked = false;
     }
   };
@@ -214,9 +226,11 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
    * the panel to the viewport width, since perf rows never wrap. */
   const boatRows = (): ReadoutRow[] => {
     const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
+    // TEMP probe: live vertex count of the marker geometry.
+    const vertices = boatPoints.geometry.getAttribute('position')?.count ?? -1;
     const head: ReadoutRow = [
       'boats',
-      `${String(lastBoats.length)} (${String(crewed)} crewed)`,
+      `${String(lastBoats.length)} (${String(crewed)} crewed) v${String(vertices)}`,
     ];
     return [
       head,
@@ -224,7 +238,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         const fleet = fleetOfBoat.get(boat.id);
         return [
           `boat ${boat.id}`,
-          `${boat.x.toFixed(0)},${boat.y.toFixed(0)} · ${fleet === undefined ? 'unaffiliated' : `fleet ${fleet}`}`,
+          `${boat.x.toFixed(0)},${boat.y.toFixed(0)} · ${fleet === undefined ? 'unaf' : `fleet ${fleet}`}`,
         ];
       }),
     ];
@@ -250,12 +264,13 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const redrawBoats = (): void => {
     const positions: number[] = [];
     const colors: number[] = [];
-    // TEMP probe: fixed cross at island center + live boats.
-    const probe: BoatState[] = [
-      { id: 9001, x: 252, y: 256, heading: 0, fighting: false },
-      { id: 9002, x: 260, y: 256, heading: 0, fighting: false },
-      ...lastBoats,
-    ];
+    // TEMP probe: grid across the map + live boats.
+    const probe: BoatState[] = [...lastBoats];
+    for (let gx = 64; gx < 512; gx += 64) {
+      for (let gy = 64; gy < 512; gy += 64) {
+        probe.push({ id: 9000 + gx, x: gx, y: gy, heading: 0, fighting: false });
+      }
+    }
     for (const boat of probe) {
       const fleet = fleetOfBoat.get(boat.id);
       positions.push(
@@ -297,11 +312,12 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         for (const boatId of crew) fleetOfBoat.set(boatId, chain.id);
         // Short `#id` label: the label column is fixed width, so a longer
         // label would overflow it and paint over the value (`#5 squadron`
-        // colliding with `cursor ...`). The chain name leads the value.
+        // colliding with `cursor ...`). The chain name leads the value,
+        // abbreviated like the rest of the row to keep the panel narrow.
         rows.push([
           `#${chain.id}`,
-          `${chain.label} cursor ${chain.cursor}/${chain.hops.length} hops ${chain.hops.length} ` +
-            `sailed ${chain.sailed.length} members ${chain.members} ` +
+          `${chain.label === 'squadron' ? 'sq' : chain.label} cur ${chain.cursor}/${chain.hops.length} hops ${chain.hops.length} ` +
+            `sailed ${chain.sailed.length} mem ${chain.members} ` +
             `crew [${crew.join(',')}]`,
         ]);
         let prevX = chain.anchor.x;
