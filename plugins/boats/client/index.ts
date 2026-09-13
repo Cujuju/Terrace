@@ -9,9 +9,15 @@ import {
   BOATS_PAYLOAD_CAP,
   BOATS_PLUGIN_NAME,
   BOATS_STATE_MESSAGE,
+  BOATS_WAYPOINTS_MESSAGE,
   parseBoatsPayload,
 } from '../protocol.ts';
 import { BoatInterpolator } from './interpolation.ts';
+import {
+  WAYPOINTS_DEBUG_DRAW_OBJECTS,
+  createWaypointsOverlay,
+  type WaypointsOverlay,
+} from './waypointsOverlay.ts';
 import warBoatUrl from './assets/war-boat.glb?url';
 import {
   BOAT_SHAPE,
@@ -29,6 +35,9 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
 const PHASE_PER_ID = 0.618;
 
+/** URL flag enabling the fleet-chain debug overlay (`?waypoints`). */
+const WAYPOINTS_DEBUG_QUERY_FLAG = 'waypoints';
+
 interface BoatView {
   readonly model: BoatModel;
   readonly phase: number;
@@ -44,6 +53,8 @@ let container: Group | null = null;
 let unmarkPickable: (() => void) | null = null;
 let unpublishMovers: (() => void) | null = null;
 let unsubscribeMessages: (() => void) | null = null;
+let unsubscribeWaypoints: (() => void) | null = null;
+let waypointsOverlay: WaypointsOverlay | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let animationSeconds = 0;
 
@@ -113,7 +124,11 @@ export const clientPlugin: TerraceClientPlugin = {
   name: BOATS_PLUGIN_NAME,
 
   get drawBudget(): number {
-    return BOAT_SHAPE.drawObjects + FLEET_SAIL_DRAW_OBJECTS;
+    return (
+      BOAT_SHAPE.drawObjects +
+      FLEET_SAIL_DRAW_OBJECTS +
+      (waypointsOverlay === null ? 0 : WAYPOINTS_DEBUG_DRAW_OBJECTS)
+    );
   },
 
   preload(ctx: ClientPluginCtx): Promise<void> {
@@ -136,6 +151,14 @@ export const clientPlugin: TerraceClientPlugin = {
       interpolator.receive(boats);
     });
 
+    if (new URLSearchParams(window.location.search).has(WAYPOINTS_DEBUG_QUERY_FLAG)) {
+      waypointsOverlay = createWaypointsOverlay(container);
+      const overlay = waypointsOverlay;
+      unsubscribeWaypoints = ctx.onMessage(BOATS_WAYPOINTS_MESSAGE, (payload) => {
+        overlay.receive(payload);
+      });
+    }
+
     unsubscribeFrames = ctx.onFrame(renderFrame);
   },
 
@@ -144,6 +167,10 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unsubscribeWaypoints?.();
+    unsubscribeWaypoints = null;
+    waypointsOverlay?.dispose();
+    waypointsOverlay = null;
     unmarkPickable?.();
     unmarkPickable = null;
     unpublishMovers?.();

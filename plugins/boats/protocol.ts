@@ -9,6 +9,10 @@ export const BOATS_PLUGIN_NAME = 'boats';
 
 export const BOATS_STATE_MESSAGE = 'state';
 
+/** Debug-only live fleet-chain geometry for the `?waypoints` overlay. Broadcast
+ * alongside state; carries no authority and is never read back. */
+export const BOATS_WAYPOINTS_MESSAGE = 'waypoints';
+
 export interface BoatState {
   readonly id: number;
   readonly x: number;
