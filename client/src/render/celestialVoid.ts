@@ -687,8 +687,11 @@ function starProgram(
     float(1.0),
     select(starGrid.lessThan(STAR_GRID_ARM), cellFade.mul(FINE_GRID_WEIGHT), cellFade),
   );
-  // A star never shrinks below STAR_MIN_PX.
-  const rPx = max(starShape.x.mul(u.focal).mul(u.res.y).div(t), STAR_MIN_PX);
+  // A star never shrinks below STAR_MIN_PX; an enlarged one is dimmed by its area ratio so its light holds.
+  const trueRPx = starShape.x.mul(u.focal).mul(u.res.y).div(t);
+  const rPx = max(trueRPx, STAR_MIN_PX);
+  const radiusRatio = trueRPx.div(rPx);
+  const enlargedDim = radiusRatio.mul(radiusRatio);
   const glow = select(starShape.y.lessThan(GLOW_FRACTION), float(1.0), float(0.0));
   const size = min(
     rPx.mul(2.0).mul(mix(float(1.0), GLOW_RADIUS, glow)).add(POINT_SPRITE_MARGIN_PX),
@@ -735,6 +738,7 @@ function starProgram(
       .mul(twinkle)
       .mul(weight)
       .mul(outer)
+      .mul(enlargedDim)
       .mul(pow(depthFade, STAR_DEPTH_FADE_POWER)),
     'v_col',
   );
