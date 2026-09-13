@@ -1,22 +1,27 @@
 import {
   BufferGeometry,
+  Color,
   Float32BufferAttribute,
   Group,
+  InstancedMesh,
   LineBasicMaterial,
   LineSegments,
+  Matrix4,
+  MeshStandardMaterial,
   Points,
   PointsMaterial,
+  SphereGeometry,
 } from 'three';
 import {
   CELL_WORLD_SIZE,
   parseWaypointDebugFrame,
   waypointForMember,
 } from '@terrace/shared';
-import { parseBoatsPayload, type BoatState } from '../protocol.ts';
+import { BOATS_PAYLOAD_CAP, parseBoatsPayload, type BoatState } from '../protocol.ts';
 
 /** Fleet-chain debug overlay (the `?waypoints` flag). Six fixed draw objects:
- * chain lines, sailed lines, hop/slot/cursor points, and one coloured point
- * per crewed boat showing its fleet. */
+ * chain lines, sailed lines, hop/slot/cursor points, and one instanced
+ * sphere per boat showing its fleet. */
 export const WAYPOINTS_DEBUG_DRAW_OBJECTS = 6;
 
 const WAYPOINT_LIFT_WORLD_UNITS = 0.02;
@@ -33,11 +38,14 @@ const FLEET_BOAT_COLORS = [
 ];
 
 /** Marker for boats sailing outside any fleet. */
-const UNAFFILIATED_GRAY: [number, number, number] = [1, 1, 0];
+const UNAFFILIATED_GRAY_HEX = 0x8a918a;
 
-function fleetBoatColor(fleetId: number): [number, number, number] {
-  const hex = FLEET_BOAT_COLORS[fleetId % FLEET_BOAT_COLORS.length];
-  return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+/** World-unit marker size: readable at full-island zoom, unmissable closer. */
+const FLEET_MARKER_RADIUS_WORLD_UNITS = 0.5;
+const FLEET_MARKER_LIFT_WORLD_UNITS = 0.35;
+
+function fleetBoatColorHex(fleetId: number): number {
+  return FLEET_BOAT_COLORS[fleetId % FLEET_BOAT_COLORS.length]!;
 }
 
 export interface WaypointsOverlay {
@@ -99,21 +107,15 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const hopPoints = makePoints(HOP_POINT_COLOR, 5);
   const slotPoints = makePoints(SLOT_POINT_COLOR, 6);
   const cursorPoints = makePoints(CURSOR_POINT_COLOR, 8);
-  const boatPoints = new Points(
-    new BufferGeometry(),
-    new PointsMaterial({
-      size: 500,
-      sizeAttenuation: false,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.95,
-      depthTest: false,
-      depthWrite: false,
-    }),
+  const boatMarkers = new InstancedMesh(
+    new SphereGeometry(FLEET_MARKER_RADIUS_WORLD_UNITS, 10, 8),
+    new MeshStandardMaterial({ roughness: 1, metalness: 0 }),
+    BOATS_PAYLOAD_CAP,
   );
-  boatPoints.renderOrder = 998;
-  boatPoints.frustumCulled = false;
-  container.add(lines, sailed, hopPoints, slotPoints, cursorPoints, boatPoints);
+  boatMarkers.renderOrder = 998;
+  boatMarkers.frustumCulled = false;
+  boatMarkers.count = 0;
+  container.add(lines, sailed, hopPoints, slotPoints, cursorPoints, boatMarkers);
 
   /**
    * The readout wears the performance HUD's own classes (.hud-version for the
@@ -226,11 +228,9 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
    * the panel to the viewport width, since perf rows never wrap. */
   const boatRows = (): ReadoutRow[] => {
     const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
-    // TEMP probe: live vertex count of the marker geometry.
-    const vertices = boatPoints.geometry.getAttribute('position')?.count ?? -1;
     const head: ReadoutRow = [
       'boats',
-      `${String(lastBoats.length)} (${String(crewed)} crewed) v${String(vertices)}`,
+      `${String(lastBoats.length)} (${String(crewed)} crewed)`,
     ];
     return [
       head,
@@ -261,30 +261,29 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
     target.geometry = geometry;
   };
 
+  const markerMatrix = new Matrix4();
+  const markerColor = new Color();
+
   const redrawBoats = (): void => {
-    const positions: number[] = [];
-    const colors: number[] = [];
-    // TEMP probe: grid across the map + live boats.
-    const probe: BoatState[] = [...lastBoats];
-    for (let gx = 64; gx < 512; gx += 64) {
-      for (let gy = 64; gy < 512; gy += 64) {
-        probe.push({ id: 9000 + gx, x: gx, y: gy, heading: 0, fighting: false });
-      }
-    }
-    for (const boat of probe) {
-      const fleet = fleetOfBoat.get(boat.id);
-      positions.push(
+    let drawn = 0;
+    for (const boat of lastBoats) {
+      if (drawn >= BOATS_PAYLOAD_CAP) break;
+      markerMatrix.makeTranslation(
         boat.x * CELL_WORLD_SIZE,
-        WAYPOINT_LIFT_WORLD_UNITS,
+        FLEET_MARKER_LIFT_WORLD_UNITS,
         boat.y * CELL_WORLD_SIZE,
       );
-      colors.push(...(fleet === undefined ? UNAFFILIATED_GRAY : fleetBoatColor(fleet)));
+      boatMarkers.setMatrixAt(drawn, markerMatrix);
+      const fleet = fleetOfBoat.get(boat.id);
+      markerColor.setHex(
+        fleet === undefined ? UNAFFILIATED_GRAY_HEX : fleetBoatColorHex(fleet),
+      );
+      boatMarkers.setColorAt(drawn, markerColor);
+      drawn++;
     }
-    boatPoints.geometry.dispose();
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
-    boatPoints.geometry = geometry;
+    boatMarkers.count = drawn;
+    boatMarkers.instanceMatrix.needsUpdate = true;
+    if (boatMarkers.instanceColor !== null) boatMarkers.instanceColor.needsUpdate = true;
   };
 
   return {
@@ -397,7 +396,9 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       (lines.material as LineBasicMaterial).dispose();
       sailed.geometry.dispose();
       (sailed.material as LineBasicMaterial).dispose();
-      for (const points of [hopPoints, slotPoints, cursorPoints, boatPoints]) {
+      boatMarkers.geometry.dispose();
+      (boatMarkers.material as MeshBasicMaterial).dispose();
+      for (const points of [hopPoints, slotPoints, cursorPoints]) {
         points.geometry.dispose();
         (points.material as PointsMaterial).dispose();
       }
