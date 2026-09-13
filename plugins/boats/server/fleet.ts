@@ -111,8 +111,10 @@ export interface KrakenTarget {
 export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
 
 /** Cruiser legs split into hops of at most this span. Short hops fit one
- * budgeted trial search; a whole 256-512 cell leg never could. */
-const FLEET_HOP_LENGTH_CELLS = 96;
+ * budgeted trial search AND keep the search box hugging the leg, so coastal
+ * detours stay inside the box instead of exhausting it; a whole 256-512
+ * cell leg never could. */
+const FLEET_HOP_LENGTH_CELLS = 48;
 
 /** Lattice spacing between station slots around a fleet hop. Rank 0 is the
  * flagship on the hop; the rest fan out instead of stacking. */
