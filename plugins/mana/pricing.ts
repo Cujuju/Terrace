@@ -15,9 +15,10 @@ export function sculptManaCost(
   tool: SculptTool,
   sweepSteps: number = 1,
 ): number {
-  return Math.ceil(
+  const base = Math.ceil(
     (manaPerBandCell * sculptDisplacementUnits(radius, tool) * sweepSteps) / BAND_HEIGHT,
   );
+  return tool === 'carve' ? Math.ceil(base / 2) : base;
 }
 
 export function chunkUnlockPenalty(
