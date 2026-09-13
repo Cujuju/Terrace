@@ -33,7 +33,7 @@ const FLEET_BOAT_COLORS = [
 ];
 
 /** Marker for boats sailing outside any fleet. */
-const UNAFFILIATED_GRAY: [number, number, number] = [1, 0, 1];
+const UNAFFILIATED_GRAY: [number, number, number] = [1, 1, 0];
 
 function fleetBoatColor(fleetId: number): [number, number, number] {
   const hex = FLEET_BOAT_COLORS[fleetId % FLEET_BOAT_COLORS.length];
@@ -102,7 +102,7 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   const boatPoints = new Points(
     new BufferGeometry(),
     new PointsMaterial({
-      size: 40,
+      size: 500,
       sizeAttenuation: false,
       vertexColors: true,
       transparent: true,
@@ -202,17 +202,29 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   let readoutHead: ReadoutRow = ['waypoints', 'waiting for frame'];
   let chainRows: ReadoutRow[] = [];
 
-  const boatsRow = (): ReadoutRow => {
+  /** One reading per row, like the performance panel: a count row plus one
+   * short row per boat. A single row carrying every boat's position grows
+   * the panel to the viewport width, since perf rows never wrap. */
+  const boatRows = (): ReadoutRow[] => {
     const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
-    const positions = lastBoats.map((boat) => `${boat.id}@${boat.x.toFixed(0)},${boat.y.toFixed(0)}`);
-    return [
+    const head: ReadoutRow = [
       'boats',
-      `${String(lastBoats.length)} (${String(crewed)} crewed)${positions.length > 0 ? ` ${positions.join(' ')}` : ''}`,
+      `${String(lastBoats.length)} (${String(crewed)} crewed)`,
+    ];
+    return [
+      head,
+      ...lastBoats.map((boat): ReadoutRow => {
+        const fleet = fleetOfBoat.get(boat.id);
+        return [
+          `boat ${boat.id}`,
+          `${boat.x.toFixed(0)},${boat.y.toFixed(0)} · ${fleet === undefined ? 'unaffiliated' : `fleet ${fleet}`}`,
+        ];
+      }),
     ];
   };
 
   const renderReadout = (): void => {
-    setReadoutRows([readoutHead, boatsRow(), ...chainRows]);
+    setReadoutRows([readoutHead, ...boatRows(), ...chainRows]);
     updateReadoutPosition();
   };
 
