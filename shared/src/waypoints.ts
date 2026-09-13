@@ -325,8 +325,11 @@ export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | 
     if (!Number.isInteger(members) || (members as number) < 0) return null;
     if (!isFiniteNumber(spacing) || (spacing as number) < 0) return null;
     const { sailed } = chain;
-    if (!isDebugWaypointList(sailed, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)) return null;
-    const sailedList = sailed as Waypoint[];
+    let sailedList: Waypoint[] = [];
+    if (sailed !== undefined) {
+      if (!isDebugWaypointList(sailed, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)) return null;
+      sailedList = (sailed as Waypoint[]).map((cell) => ({ x: cell.x, y: cell.y }));
+    }
     const { crew } = chain;
     let crewList: number[] | null = null;
     if (crew !== undefined) {
@@ -345,7 +348,7 @@ export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | 
       cursor: cursor as number,
       members: members as number,
       spacing: spacing as number,
-      sailed: sailedList.map((cell) => ({ x: cell.x, y: cell.y })),
+      sailed: sailedList,
       ...(crewList === null ? {} : { crew: crewList }),
     });
   }

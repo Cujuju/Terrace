@@ -54,6 +54,7 @@ let unmarkPickable: (() => void) | null = null;
 let unpublishMovers: (() => void) | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeWaypoints: (() => void) | null = null;
+let unsubscribeBoatMirror: (() => void) | null = null;
 let waypointsOverlay: WaypointsOverlay | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let animationSeconds = 0;
@@ -157,6 +158,9 @@ export const clientPlugin: TerraceClientPlugin = {
       unsubscribeWaypoints = ctx.onMessage(BOATS_WAYPOINTS_MESSAGE, (payload) => {
         overlay.receive(payload);
       });
+      unsubscribeBoatMirror = ctx.onMessage(BOATS_STATE_MESSAGE, (payload) => {
+        overlay.receiveBoats(payload);
+      });
     }
 
     unsubscribeFrames = ctx.onFrame(renderFrame);
@@ -169,6 +173,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = null;
     unsubscribeWaypoints?.();
     unsubscribeWaypoints = null;
+    unsubscribeBoatMirror?.();
+    unsubscribeBoatMirror = null;
     waypointsOverlay?.dispose();
     waypointsOverlay = null;
     unmarkPickable?.();
