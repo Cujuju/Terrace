@@ -351,9 +351,10 @@ interface Voyage {
   goalX: number;
   goalY: number;
   noProgressSeconds: number;
-  /** Seconds since any route was held. Direct-steer creep counts as progress
-   * for stuck detection but never produces a route; without this, a boat
-   * creeping along a shore never escalates to rescue. */
+  /** Seconds without useful route progress: no route held, or a parked
+   * route that never advances. Any movement counts for stuck detection, so
+   * direct-steer creep and parked routes need their own starvation clock to
+   * escalate rescue and leg re-plans. */
   nullSeconds: number;
   poolTried: boolean;
   slot: number | null;
@@ -1462,6 +1463,7 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalX = holdX;
       voyage.goalY = holdY;
       voyage.noProgressSeconds = 0;
+      voyage.nullSeconds = 0;
       voyage.poolTried = false;
       voyage.slot = slotIndex;
       voyage.slotList = slotList;
@@ -1735,8 +1737,8 @@ function sailBoat(tick: SailTick, index: number): void {
     voyage.noProgressSeconds += dt;
   }
   if (!boat.fighting) {
-    if (voyage.route === null) voyage.nullSeconds += dt;
-    else voyage.nullSeconds = 0;
+    if (voyage.route !== null && (result.replanned || result.progressed)) voyage.nullSeconds = 0;
+    else voyage.nullSeconds += dt;
   }
 }
 
