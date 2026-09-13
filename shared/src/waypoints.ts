@@ -1,3 +1,5 @@
+import { isFiniteNumber } from './parse.ts';
+
 /** Generic waypoint chains for long-range travel.
  *
  * A waypoint chain is an ordered list of cell-space goals with a cursor. A
@@ -245,4 +247,79 @@ export function groupArrived(
     if (!complete) return false;
   }
   return true;
+}
+
+/** Debug wire: one group's live chain geometry, for visualisation only. `anchor`
+ * is where the chain was built from (usually the flagship's position at build
+ * time), `hops` are the subdivided points ending at the goal, `cursor` is the
+ * leader's current hop, and `members`/`spacing` let the overlay draw formation
+ * slots around the goal via `waypointForMember`. Carries no authority: the
+ * simulation never reads a snapshot back. */
+export interface WaypointChainSnapshot {
+  readonly id: number;
+  readonly label: string;
+  readonly anchor: Waypoint;
+  readonly hops: readonly Waypoint[];
+  readonly cursor: number;
+  readonly members: number;
+  readonly spacing: number;
+}
+
+export interface WaypointDebugFrame {
+  readonly chains: readonly WaypointChainSnapshot[];
+}
+
+export const MAX_DEBUG_CHAINS_PER_FRAME = 64;
+
+export const MAX_DEBUG_HOPS_PER_CHAIN = 64;
+
+export const MAX_DEBUG_LABEL_LENGTH = 64;
+
+function isDebugWaypoint(value: unknown): value is Waypoint {
+  if (typeof value !== 'object' || value === null) return false;
+  const point = value as Record<string, unknown>;
+  return isFiniteNumber(point.x) && isFiniteNumber(point.y);
+}
+
+function isDebugWaypointList(value: unknown, cap: number): value is Waypoint[] {
+  if (!Array.isArray(value) || value.length > cap) return false;
+  for (const item of value) {
+    if (!isDebugWaypoint(item)) return false;
+  }
+  return true;
+}
+
+/** Validates an untrusted debug frame (e.g. off the plugin wire), returning a
+ * deep copy or null. Bounds mirror `parseBoatsPayload`'s caps: a frame can
+ * never carry more than a few dozen chains of a few dozen hops. */
+export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const { chains } = payload as { chains?: unknown };
+  if (!Array.isArray(chains) || chains.length > MAX_DEBUG_CHAINS_PER_FRAME) return null;
+  const parsed: WaypointChainSnapshot[] = [];
+  for (const item of chains) {
+    if (typeof item !== 'object' || item === null) return null;
+    const chain = item as Record<string, unknown>;
+    const { id, label, anchor, hops, cursor, members, spacing } = chain;
+    if (!Number.isInteger(id) || (id as number) < 0) return null;
+    if (typeof label !== 'string' || label.length > MAX_DEBUG_LABEL_LENGTH) return null;
+    if (!isDebugWaypoint(anchor)) return null;
+    if (!isDebugWaypointList(hops, MAX_DEBUG_HOPS_PER_CHAIN)) return null;
+    const hopList = hops as Waypoint[];
+    if (!Number.isInteger(cursor) || (cursor as number) < 0 || (cursor as number) > hopList.length) {
+      return null;
+    }
+    if (!Number.isInteger(members) || (members as number) < 0) return null;
+    if (!isFiniteNumber(spacing) || (spacing as number) < 0) return null;
+    parsed.push({
+      id: id as number,
+      label,
+      anchor: { x: (anchor as Waypoint).x, y: (anchor as Waypoint).y },
+      hops: hopList.map((hop) => ({ x: hop.x, y: hop.y })),
+      cursor: cursor as number,
+      members: members as number,
+      spacing: spacing as number,
+    });
+  }
+  return { chains: parsed };
 }

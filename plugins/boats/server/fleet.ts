@@ -24,6 +24,8 @@ import {
   type SeaRegions,
   type TerrainSampler,
   type Waypoint,
+  type WaypointChainSnapshot,
+  type WaypointDebugFrame,
 } from '@terrace/shared';
 import {
   severityAt,
@@ -1606,12 +1608,36 @@ export function boatStates(worldSize: number): BoatState[] {
   }));
 }
 
+/** Debug-only snapshot of every live fleet chain for the `?waypoints` overlay.
+ * Read-only over the chains `assignSquadronGoals` already maintains: the
+ * anchor is the flagship's current position (what the chain was built from),
+ * `hops` are the subdivided points ending at the leg goal, and `cursor` is
+ * the flagship's hop. Never read back; visualisation only. */
+export function fleetWaypointDebug(): WaypointDebugFrame {
+  const chains: WaypointChainSnapshot[] = [];
+  for (const [squadronId, chain] of fleetChains) {
+    const members = squadronMembers(squadronId);
+    const flagship = members.length > 0 ? boatPosition(members[0]) : null;
+    const firstHop = chain.points[0];
+    const anchor = flagship ?? firstHop ?? { x: chain.legX, y: chain.legY };
+    chains.push({
+      id: squadronId,
+      label: `squadron ${squadronId}`,
+      anchor: { x: anchor.x, y: anchor.y },
+      hops: chain.points.map((hop) => ({ x: hop.x, y: hop.y })),
+      cursor: Math.max(0, Math.min(chain.index, chain.points.length)),
+      members: members.length,
+      spacing: FLEET_FORMATION_SPACING_CELLS,
+    });
+  }
+  return { chains };
+}
+
 export function fleetSnapshot(): {
   villages: Village[];
   boats: Boat[];
   nextBoatId: number;
-} {
-  return { villages: [...villages.values()], boats: [...boats], nextBoatId };
+} {  return { villages: [...villages.values()], boats: [...boats], nextBoatId };
 }
 
 export function restoreFleet(saved: {
