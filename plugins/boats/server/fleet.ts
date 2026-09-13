@@ -852,6 +852,19 @@ function noteTerrainChanged(): void {
 
 const unreachableCache = new Map<string, number>();
 
+/** Spans that exhausted the trial, keyed like unreachableCache. A span that
+ * fills the box once fills it every tick until the terrain or the endpoints
+ * move; re-spending trials on it starves routable searches. Same cap. */
+const exhaustedCache = new Map<string, number>();
+
+function rememberExhausted(key: string): void {
+  if (!exhaustedCache.has(key) && exhaustedCache.size >= UNREACHABLE_CACHE_CAP) {
+    const oldest = exhaustedCache.keys().next();
+    if (!oldest.done) exhaustedCache.delete(oldest.value);
+  }
+  exhaustedCache.set(key, terrainVersion);
+}
+
 function rememberUnreachable(key: string): void {
   if (!unreachableCache.has(key) && unreachableCache.size >= UNREACHABLE_CACHE_CAP) {
     const oldest = unreachableCache.keys().next();
@@ -901,6 +914,7 @@ interface FleetRouteDebug {
   sailSearches: number;
   sailDeferred: number;
   cacheHits: number;
+  exhaustedHits: number;
   regionHits: number;
   farSkips: number;
   expensive: number;
@@ -942,6 +956,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     sailSearches: 0,
     sailDeferred: 0,
     cacheHits: 0,
+    exhaustedHits: 0,
     regionHits: 0,
     farSkips: 0,
     expensive: 0,
@@ -986,7 +1001,12 @@ function squadronNavigator(
       attempt: number,
     ): SquadronWaypoint | null {
       // Pose-only draw: the fleet subdivides the leg into short hops and
-      // pathfinds once per hop, so no long A* runs here.
+      // pathfinds once per hop, so no long A* runs here. Legs stay inside
+      // the departure sea region: a leg no boat can sail only builds chains
+      // whose hops sit on land.
+      const regions = currentSeaRegions();
+      const fromRegion =
+        regions === null ? 0 : regionAt(regions, world.worldSize, fromX, fromY);
       const spoke = (seed + attempt) % SQUADRON_WAYPOINT_ATTEMPTS;
       const bearing = (spoke * FULL_TURN_RADIANS) / SQUADRON_WAYPOINT_ATTEMPTS;
       const dx = Math.cos(bearing);
@@ -999,6 +1019,10 @@ function squadronNavigator(
         const x = fromX + dx * reach;
         const y = fromY + dy * reach;
         if (!isManoeuvrablePose(world, eroded, x, y, bearing)) continue;
+        if (regions !== null && fromRegion !== 0) {
+          const goalRegion = regionAt(regions, world.worldSize, x, y);
+          if (goalRegion !== 0 && goalRegion !== fromRegion) continue;
+        }
         debug.legFromCalls++;
         return { x, y };
       }
@@ -1509,6 +1533,15 @@ function sailBoat(tick: SailTick, index: number): void {
         `${Math.floor(goalX)},${Math.floor(goalY)}`;
       if (unreachableCache.get(key) === terrainVersion) {
         debug.cacheHits++;
+      } else if (
+        exhaustedCache.get(key) === terrainVersion &&
+        (voyage.noProgressSeconds <= BOAT_STUCK_SECONDS ||
+          voyage.poolTried ||
+          tick.budget.remaining <= 0)
+      ) {
+        // Same span filled the box on this terrain version and no rescue is
+        // due: re-spending the trial would starve routable searches.
+        debug.exhaustedHits++;
       } else {
         const regions = currentSeaRegions();
         const fromRegion =
@@ -1529,7 +1562,10 @@ function sailBoat(tick: SailTick, index: number): void {
             { x: goalX, y: goalY },
             trial,
           );
-          if (outcome.status === 'exhausted') debug.expensive++;
+          if (outcome.status === 'exhausted') {
+            debug.expensive++;
+            rememberExhausted(key);
+          }
           if (debug.probe === null) {
             debug.probe = {
               sx: boat.x,
@@ -1785,7 +1821,7 @@ export function advanceFleet(
         `sailPlans=${debug.sailPlans} sailNulls=${debug.sailNulls} ` +
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
-        `cache=${debug.cacheHits} region=${debug.regionHits} ` +
+        `cache=${debug.cacheHits} xcache=${debug.exhaustedHits} region=${debug.regionHits} ` +
         `far=${debug.farSkips} ` +
         `expensive=${debug.expensive} ` +
         `fleets=${debug.fleetChains} shared=${debug.fleetShared} fsearch=${debug.fleetSearches} ` +
@@ -1805,6 +1841,12 @@ export function advanceFleet(
         `[tick] boats probe from=(${p.sx.toFixed(1)},${p.sy.toFixed(1)}) ` +
           `to=(${p.gx.toFixed(1)},${p.gy.toFixed(1)}) regions=${p.fr}>${p.gr} ` +
           `${p.status} spent=${p.spent}`,
+      );
+    }
+    for (const chain of fleetWaypointDebug().chains) {
+      perfLogLine(
+        `[tick] boats squadron #${chain.id} cursor=${chain.cursor}/${chain.hops.length} ` +
+          `sailed=${chain.sailed.length} members=${chain.members}`,
       );
     }
   }
