@@ -1,4 +1,9 @@
 import { isFiniteNumber } from './parse.ts';
+import {
+  isWalkableCell,
+  type TerrainSampler,
+  type TraversalProfile,
+} from './traversal.ts';
 
 /** Generic waypoint chains for long-range travel.
  *
@@ -252,9 +257,10 @@ export function groupArrived(
 /** Debug wire: one group's live chain geometry, for visualisation only. `anchor`
  * is where the chain was built from (usually the flagship's position at build
  * time), `hops` are the subdivided points ending at the goal, `cursor` is the
- * leader's current hop, and `members`/`spacing` let the overlay draw formation
- * slots around the goal via `waypointForMember`. Carries no authority: the
- * simulation never reads a snapshot back. */
+ * leader's current hop, `members`/`spacing` let the overlay draw formation
+ * slots around the goal via `waypointForMember`, and `sailed` is the hop
+ * route the group is actually steering (cell centres, truncated to its cap).
+ * Carries no authority: the simulation never reads a snapshot back. */
 export interface WaypointChainSnapshot {
   readonly id: number;
   readonly label: string;
@@ -263,6 +269,9 @@ export interface WaypointChainSnapshot {
   readonly cursor: number;
   readonly members: number;
   readonly spacing: number;
+  readonly sailed: readonly Waypoint[];
+  /** Member mover ids, when the producer tracks them. Absent on old frames. */
+  readonly crew?: readonly number[];
 }
 
 export interface WaypointDebugFrame {
@@ -272,6 +281,10 @@ export interface WaypointDebugFrame {
 export const MAX_DEBUG_CHAINS_PER_FRAME = 64;
 
 export const MAX_DEBUG_HOPS_PER_CHAIN = 64;
+
+export const MAX_DEBUG_SAILED_CELLS_PER_CHAIN = 256;
+
+export const MAX_DEBUG_CREW_PER_CHAIN = 16;
 
 export const MAX_DEBUG_LABEL_LENGTH = 64;
 
@@ -311,6 +324,19 @@ export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | 
     }
     if (!Number.isInteger(members) || (members as number) < 0) return null;
     if (!isFiniteNumber(spacing) || (spacing as number) < 0) return null;
+    const { sailed } = chain;
+    if (!isDebugWaypointList(sailed, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)) return null;
+    const sailedList = sailed as Waypoint[];
+    const { crew } = chain;
+    let crewList: number[] | null = null;
+    if (crew !== undefined) {
+      if (!Array.isArray(crew) || crew.length > MAX_DEBUG_CREW_PER_CHAIN) return null;
+      crewList = [];
+      for (const member of crew) {
+        if (!Number.isInteger(member) || (member as number) < 0) return null;
+        crewList.push(member as number);
+      }
+    }
     parsed.push({
       id: id as number,
       label,
@@ -319,7 +345,54 @@ export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | 
       cursor: cursor as number,
       members: members as number,
       spacing: spacing as number,
+      sailed: sailedList.map((cell) => ({ x: cell.x, y: cell.y })),
+      ...(crewList === null ? {} : { crew: crewList }),
     });
   }
   return { chains: parsed };
+}
+
+/** Slides a blind chain point onto nearby ground the caller may stand on.
+ * Returns the point unchanged when its own cell is already walkable; otherwise
+ * walks square rings out to `radiusCells` in fixed order (top edge left to
+ * right, right edge, bottom edge, left edge) and returns the first walkable
+ * cell's centre. Returns the point unchanged when nothing within radius is
+ * walkable, so the caller falls back exactly as it would without a snap.
+ * Deterministic: identical terrain, profile and inputs give identical output. */
+export function snapWaypointToWalkable(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  x: number,
+  y: number,
+  radiusCells: number,
+): Waypoint {
+  const size = world.worldSize;
+  if (size <= 0) return { x, y };
+  const clampCell = (v: number): number => (v < 0 ? 0 : v >= size ? size - 1 : v);
+  const cx = clampCell(Math.floor(x));
+  const cy = clampCell(Math.floor(y));
+  if (isWalkableCell(world, profile, cx, cy)) return { x, y };
+  const radius = Math.max(0, Math.floor(radiusCells));
+  for (let ring = 1; ring <= radius; ring++) {
+    const sideLength = 2 * ring;
+    for (let step = 0; step < sideLength; step++) {
+      const topX = clampCell(cx - ring + step);
+      if (isWalkableCell(world, profile, topX, clampCell(cy - ring))) {
+        return { x: topX + 0.5, y: clampCell(cy - ring) + 0.5 };
+      }
+      const rightY = clampCell(cy - ring + step);
+      if (isWalkableCell(world, profile, clampCell(cx + ring), rightY)) {
+        return { x: clampCell(cx + ring) + 0.5, y: rightY + 0.5 };
+      }
+      const bottomX = clampCell(cx + ring - step);
+      if (isWalkableCell(world, profile, bottomX, clampCell(cy + ring))) {
+        return { x: bottomX + 0.5, y: clampCell(cy + ring) + 0.5 };
+      }
+      const leftY = clampCell(cy + ring - step);
+      if (isWalkableCell(world, profile, clampCell(cx - ring), leftY)) {
+        return { x: clampCell(cx - ring) + 0.5, y: leftY + 0.5 };
+      }
+    }
+  }
+  return { x, y };
 }

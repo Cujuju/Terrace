@@ -1,4 +1,5 @@
 import {
+  MAX_DEBUG_SAILED_CELLS_PER_CHAIN,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
   OPEN_WATER_PROFILE,
@@ -15,6 +16,7 @@ import {
   nearestWithinReach,
   normalizeAngle,
   regionAt,
+  snapWaypointToWalkable,
   waypointForMember,
   withClearance,
   withoutSelf,
@@ -120,6 +122,12 @@ const FLEET_FORMATION_SPACING_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
  * every shared cell fall back to their own search. */
 const FLEET_ROUTE_REJOIN_CELLS = 8;
 
+/** Snap radius for blind chain points and formation slots: hops and berths
+ * land on the nearest sailable cell within this many cells, so a leg drawn
+ * across a peninsula still aims at water. Anything farther out keeps the old
+ * direct-steer fallback rather than dragging the aim across the map. */
+const FLEET_SNAP_RADIUS_CELLS = 12;
+
 interface FleetChain {
   legX: number;
   legY: number;
@@ -128,6 +136,12 @@ interface FleetChain {
 }
 
 const fleetChains = new Map<number, FleetChain>();
+
+/** Last searched hop route per squadron, for the `?waypoints` overlay's sailed
+ * lines. Written at the end of every tick from that tick's shared searches;
+ * entries for dissolved squadrons are pruned alongside the chains. Debug
+ * only: steering reads voyage routes, never this map. */
+const lastSailedBySquadron = new Map<number, readonly RouteCell[] | null>();
 
 function nearestRouteIndex(
   cells: readonly RouteCell[],
@@ -982,10 +996,14 @@ function assignSquadronGoals(
         [leg],
         FLEET_HOP_LENGTH_CELLS,
       );
+      const raw = built.length > 0 ? built : [{ x: leg.x, y: leg.y }];
+      const points = raw.map((hop) =>
+        snapWaypointToWalkable(eroded, HULL_PROFILE, hop.x, hop.y, FLEET_SNAP_RADIUS_CELLS),
+      );
       chain = {
         legX: leg.x,
         legY: leg.y,
-        points: built.length > 0 ? built : [{ x: leg.x, y: leg.y }],
+        points,
         index: 0,
       };
       fleetChains.set(squadronId, chain);
@@ -1147,7 +1165,16 @@ function sailBoat(tick: SailTick, index: number): void {
   if (squadron !== undefined) {
     // Fleet station: flagship takes the hop, members fan out on lattice
     // slots. Slots clamp in-bounds; edge offsets would route off the map.
-    const berth = waypointForMember(squadron, squadronRank, FLEET_FORMATION_SPACING_CELLS);
+    // Both are snapped to sailable water: a lattice offset past a shoreline
+    // is an unreachable search goal, which is how boats park on beaches.
+    const slot = waypointForMember(squadron, squadronRank, FLEET_FORMATION_SPACING_CELLS);
+    const berth = snapWaypointToWalkable(
+      eroded,
+      HULL_PROFILE,
+      slot.x,
+      slot.y,
+      FLEET_SNAP_RADIUS_CELLS,
+    );
     goalX = Math.min(Math.max(berth.x, 0.5), world.worldSize - 0.5);
     goalY = Math.min(Math.max(berth.y, 0.5), world.worldSize - 0.5);
     standoff = squadron.standoff;
@@ -1500,6 +1527,13 @@ export function advanceFleet(
   }
   if (fleetSize > 0) sailCursor = (sailCursor + 1) % fleetSize;
 
+  for (const [squadronId, shared] of tick.fleetRoutes) {
+    lastSailedBySquadron.set(squadronId, shared.cells);
+  }
+  for (const squadronId of [...lastSailedBySquadron.keys()]) {
+    if (!fleetChains.has(squadronId)) lastSailedBySquadron.delete(squadronId);
+  }
+
   resolveOverlaps(world, eroded, kraken, step);
 
   routeLogCooldownMs -= dt * 1000;
@@ -1620,6 +1654,7 @@ export function fleetWaypointDebug(): WaypointDebugFrame {
     const flagship = members.length > 0 ? boatPosition(members[0]) : null;
     const firstHop = chain.points[0];
     const anchor = flagship ?? firstHop ?? { x: chain.legX, y: chain.legY };
+    const sailed = lastSailedBySquadron.get(squadronId) ?? null;
     chains.push({
       id: squadronId,
       label: `squadron ${squadronId}`,
@@ -1628,6 +1663,12 @@ export function fleetWaypointDebug(): WaypointDebugFrame {
       cursor: Math.max(0, Math.min(chain.index, chain.points.length)),
       members: members.length,
       spacing: FLEET_FORMATION_SPACING_CELLS,
+      sailed:
+        sailed === null
+          ? []
+          : sailed
+              .slice(0, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)
+              .map((cell) => ({ x: cell.x + 0.5, y: cell.y + 0.5 })),
     });
   }
   return { chains };
