@@ -15,6 +15,7 @@ import {
 } from '@terrace/shared';
 import type { ConnectionStatus } from '../net/connection.ts';
 import type { FrameStatsSample } from '../render/frameStats.ts';
+import type { PickFace } from '../terrain/picking.ts';
 
 export const BRUSH_LADDER_TOP_RADIUS = FULL_BRUSH_RADIUS;
 
@@ -130,7 +131,7 @@ const [perfOpen, setPerfOpenSignal] = createSignal(false);
 export interface HoverPickSample {
   readonly x: number;
   readonly y: number;
-  readonly hitRiser: boolean;
+  readonly face: PickFace;
   readonly band: number | null;
 }
 
@@ -139,7 +140,7 @@ const [hoverPick, setHoverPickSignal] = createSignal<HoverPickSample | null>(nul
 const sameHoverPick = (a: HoverPickSample | null, b: HoverPickSample | null): boolean =>
   a === b
   || (a !== null && b !== null && a.x === b.x && a.y === b.y
-    && a.hitRiser === b.hitRiser && a.band === b.band);
+    && a.face === b.face && a.band === b.band);
 
 /** Called every frame; only a changed pick notifies the HUD. */
 export function setHoverPick(sample: HoverPickSample | null): void {

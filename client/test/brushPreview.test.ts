@@ -119,7 +119,7 @@ const TEST_WORLD_SIZE_CELLS = 64;
 const NEVER_DENIED = createDenialCue(() => false);
 
 describe('world-edge clipping', () => {
-  const hover = { x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false };
+  const hover = { x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false } as const;
   const stamp = { radius: BRUSH_RADII[0]!, tool: 'stamp', profile: 'hard', dir: 1 } as const;
 
   function footprintMaterials(scene: Scene): Material[] {
@@ -178,7 +178,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
       const points = outlinePoints(line);
       expect(points.length).toBeGreaterThanOrEqual(3);
 
@@ -207,7 +207,7 @@ describe('createBrushPreview', () => {
       for (const tool of ['stamp', 'smooth'] as const) {
         for (const profile of ['soft', 'hard'] as const) {
           for (const dir of [1, -1] as const) {
-            preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, { radius, tool, profile, dir });
+            preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, { radius, tool, profile, dir });
             const points = outlinePoints(line);
 
             const rendered = renderedCells(radius, tool, profile, dir);
@@ -235,7 +235,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
@@ -260,7 +260,7 @@ describe('createBrushPreview', () => {
     );
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
@@ -285,7 +285,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
       const { minX, maxX, minZ, maxZ } = extent(line);
       expect(minX).toBeCloseTo(-maxX);
       expect(minZ).toBeCloseTo(-maxZ);
@@ -303,7 +303,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
-    preview.update({ x: 7, y: 11, surfaceY: 3, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 7, y: 11, surfaceY: 3, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(line.position.x).toBeCloseTo(7 * CELL_WORLD_SIZE);
     expect(line.position.z).toBeCloseTo(11 * CELL_WORLD_SIZE);
     expect(line.visible).toBe(true);
@@ -318,17 +318,17 @@ describe('createBrushPreview', () => {
 
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(true);
 
     preview.update(null, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MAX_BRUSH_RADIUS + 1));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MAX_BRUSH_RADIUS + 1));
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     preview.dispose();
     expect(canvas.on).toBe(false);
   });
@@ -339,7 +339,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
 
     for (let frame = 0; frame < 60; frame++) {
-      preview.update({ x: 2, y: 2, surfaceY: 0, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+      preview.update({ x: 2, y: 2, surfaceY: 0, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     }
     expect(canvas.writes).toBe(1);
 

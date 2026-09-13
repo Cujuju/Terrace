@@ -141,7 +141,7 @@ describe('pickTerrainCellByRay', () => {
       x: 7,
       y: 11,
       surfaceY: -BAND_HEIGHT * HEIGHT_WORLD_SCALE,
-      hitRiser: false,
+      face: 'tread',
       hitY: -BAND_HEIGHT * HEIGHT_WORLD_SCALE,
       hitX: 7 * CELL_WORLD_SIZE,
       hitZ: 11 * CELL_WORLD_SIZE,
@@ -168,7 +168,7 @@ describe('pickTerrainCellByRay', () => {
           x,
           y,
           surfaceY: drawnBandOfSample(heightOf(x, y)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
-          hitRiser: false,
+          face: 'tread',
           hitY: drawnBandOfSample(heightOf(x, y)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
           hitX: x * CELL_WORLD_SIZE,
           hitZ: y * CELL_WORLD_SIZE,
@@ -191,7 +191,7 @@ describe('pickTerrainCellByRay', () => {
       x: 32,
       y: 20,
       surfaceY: TOP * HEIGHT_WORLD_SCALE,
-      hitRiser: true,
+      face: 'riser',
       hitY: rayY,
       hitX: (32 - 0.5) * CELL_WORLD_SIZE,
       hitZ: 20 * CELL_WORLD_SIZE,
@@ -384,7 +384,7 @@ describe('pickTerrainInColumn', () => {
     expect(after).not.toBeNull();
     expect(after!.x).toBe(CELL_X);
     expect(after!.y).toBe(CELL_Z);
-    expect(after!.hitRiser).toBe(false);
+    expect(after!.face).toBe('tread');
     expect(after!.surfaceY).toBe(LOW * HEIGHT_WORLD_SCALE);
     expect(after!.hitY).toBe(after!.surfaceY);
     expect(Math.abs(after!.hitX / CELL_WORLD_SIZE - CELL_X)).toBeLessThanOrEqual(0.5);
@@ -408,7 +408,7 @@ describe('pickTerrainInColumn', () => {
     const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
     expect(pick).not.toBeNull();
     expect(pick!.spanIndex).toBe(0);
-    expect(pick!.hitRiser).toBe(false);
+    expect(pick!.face).toBe('tread');
     expect(pick!.surfaceY).toBe(FLOOR_TOP * HEIGHT_WORLD_SCALE);
     expect(pick!.hitY).toBe(pick!.surfaceY);
   });
@@ -443,7 +443,7 @@ describe('pickTerrainInColumn', () => {
     };
     const pick = pickTerrainInColumn(mirror, 32, 20, origin, { x: 1, y: 0, z: 0 });
     expect(pick).not.toBeNull();
-    expect(pick!.hitRiser).toBe(true);
+    expect(pick!.face).toBe('riser');
     expect(pick!.hitY).toBe(BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE);
   });
 });

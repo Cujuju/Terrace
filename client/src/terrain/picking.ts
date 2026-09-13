@@ -76,12 +76,14 @@ export interface Vec3 {
   readonly z: number;
 }
 
+export type PickFace = 'riser' | 'tread' | 'underside';
+
 export interface TerrainRayPick {
   readonly x: number;
   readonly y: number;
   readonly surfaceY: number;
   readonly spanIndex: number;
-  readonly hitRiser: boolean;
+  readonly face: PickFace;
   readonly hitY: number;
   readonly hitX: number;
   readonly hitZ: number;
@@ -338,7 +340,7 @@ function refineRiserToDrawnFace(
 
   if (lastBand < firstBand) return hit;
 
-  if (!hit.hitRiser && !capPointIsOverStrip(
+  if (hit.face !== 'riser' && !capPointIsOverStrip(
     risers, size, chunksPerEdge, chunkX, chunkY, highestBand, i, j, hit.hitX, hit.hitZ,
   )) {
     return hit;
@@ -384,7 +386,7 @@ function refineRiserToDrawnFace(
   if (bestT < Infinity) {
     return {
       ...hit,
-      hitRiser: true,
+      face: 'riser',
       hitY: bestLedgeBand === null ? origin.y + bestT * direction.y : bestLedgeBand * bandSlab,
       hitX: origin.x + bestT * direction.x,
       hitZ: origin.z + bestT * direction.z,
@@ -435,7 +437,7 @@ function treadOfEnteredNeighbour(
       y: nj,
       surfaceY: capY,
       spanIndex: k,
-      hitRiser: false,
+      face: 'tread',
       hitY: capY,
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
@@ -582,7 +584,7 @@ function terrainHitInCell(
       y: j,
       surfaceY: capY,
       spanIndex: k,
-      hitRiser: insideOnEntry,
+      face: insideOnEntry ? 'riser' : entryY > drawnY ? 'tread' : 'underside',
       hitY: faceY,
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
@@ -605,7 +607,7 @@ function terrainHitInCell(
       surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
     };
   }
-  const refinable = hit !== null && (hit.hitRiser || hit.hitY === hit.surfaceY);
+  const refinable = hit !== null && hit.face !== 'underside';
   if (hit === null || !refinable || risers === null || hitSpan === null) return hit;
   return refineRiserToDrawnFace(
     mirror, i, j, origin, direction, tEnter, tExit, hit, hitSpan, risers,
@@ -691,7 +693,7 @@ export function pickTerrainInColumn(
       y,
       surfaceY: capY,
       spanIndex: k,
-      hitRiser: false,
+      face: 'tread',
       hitY: capY,
       hitX: origin.x + tMid * direction.x,
       hitZ: origin.z + tMid * direction.z,

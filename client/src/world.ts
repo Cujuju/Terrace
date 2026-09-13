@@ -545,10 +545,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
           ? null
           : carving
             ? carveBandOfPick(pick)
-            : pick.hitRiser
+            : pick.face === 'riser'
               ? bandOfPick(pick)
               : null);
-      const useHitPoint = carving || (pick !== null && pick.hitRiser);
+      const useHitPoint = carving || (pick !== null && pick.face === 'riser');
       const atX = pick === null ? 0 : useHitPoint ? pick.hitX : pick.x * CELL_WORLD_SIZE;
       const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
       return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;

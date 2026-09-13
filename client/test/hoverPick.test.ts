@@ -192,7 +192,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
       expect({ x: after!.x, y: after!.y }).toEqual(cell);
-      expect(after!.hitRiser).toBe(false);
+      expect(after!.face).toBe('tread');
       expect(after!.hitY).toBe(after!.surfaceY);
       expect(after!.surfaceY).toBe(bandY(-1));
     } finally {
@@ -214,7 +214,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       const struck = input.hoverTarget();
       expect(struck).not.toBeNull();
       expect(struck!.x).toBe(WALL_X);
-      expect(struck!.hitRiser).toBe(true);
+      expect(struck!.face).toBe('riser');
       const grabbed = resolvePick(mirror.map, struck!);
       const k = GROUND_BAND + 1;
       expect(grabbed).toEqual({ face: 'riser', band: k });
@@ -229,7 +229,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       const next = input.hoverTarget();
       expect(next).not.toBeNull();
       expect({ x: next!.x, y: next!.y }).toEqual({ x: struck!.x, y: struck!.y });
-      expect(next!.hitRiser).toBe(false);
+      expect(next!.face).toBe('tread');
       expect(next!.hitY).toBe(next!.surfaceY);
       expect(next!.spanIndex).toBe(0);
 
@@ -307,7 +307,7 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
     try {
       const struck = input.hoverTarget();
       expect(struck!.x).toBe(WALL_X);
-      expect(struck!.hitRiser).toBe(true);
+      expect(struck!.face).toBe('riser');
 
       fire('pointerdown', {});
       const CARVE_RADIUS_CELLS = 1;
