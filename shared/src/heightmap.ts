@@ -267,7 +267,10 @@ function anchoredTargetHeight(
   const centre = cellIndex(map, cx, cy);
   const k = graspedSpanIndex(map, centre, spanBand);
   const here = k === null ? map.cells[centre]! : graspedCeiling(map, centre, k);
-  return clampHeight((bandOf(here) + (raising ? 1 : -1)) * BAND_HEIGHT);
+  const target = (bandOf(here) + (raising ? 1 : -1)) * BAND_HEIGHT;
+  // A raise out of the sea must break the surface: SEA_LEVEL still draws as sea.
+  if (raising && target === SEA_LEVEL) return SEA_LEVEL + 1;
+  return clampHeight(target);
 }
 
 export function applyBrush(
@@ -631,7 +634,9 @@ function applyDragRegion(
   sweepFrom: SweepOrigin | null,
   changed: Set<number>,
 ): void {
-  const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
+  const level = targetBand * BAND_HEIGHT;
+  // Like anchoredTargetHeight: a drag-raise to the waterline breaks the surface.
+  const targetHeight = clampHeight(raising && level === SEA_LEVEL ? level + 1 : level);
   const ragged = profile === 'soft';
 
   const priorSpans = new Map<number, readonly Span[]>();

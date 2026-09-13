@@ -21,6 +21,8 @@ import {
   DEEP_STRATA_BANDS,
   DEEP_STRATA_DEPTH,
   DEFAULT_SCULPT_AMOUNT,
+  drawnBandOfSample,
+  DRAWN_SHORE_HEIGHT,
   forEachFootprintOffset,
   heightAt,
   isValidHeight,
@@ -2224,5 +2226,78 @@ describe('a drag sweeps its footprint along the cursor path — no gaps on a fli
       expect(bandOf(heightAt(map, x, CY))).toBe(LIP_BAND);
     }
     expect(bandOf(heightAt(map, toX + RADIUS, CY))).toBe(PLAIN_BAND);
+  });
+});
+
+describe('applySculpt — raises out of the sea break the surface', () => {
+  const SIZE = 32;
+  const CX = 16;
+  const CY = 16;
+  const flat = (h: number): Heightmap => {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(h);
+    return map;
+  };
+  const at = (map: Heightmap): number => map.cells[cellIndex(map, CX, CY)]!;
+  // What the client sends for a single-span stamp raise (no spanBand).
+  const STAMP_RAISE: SculptOptions = {
+    tool: 'stamp',
+    profile: 'soft',
+    spill: 'banded',
+    anchor: 'clicked',
+    targetBand: null,
+    spanBand: null,
+    sweepFrom: null,
+  };
+
+  it('a stamp raise from h=-7 lands at the shore height, not at 0', () => {
+    const map = flat(-7);
+    applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
+    expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
+  });
+
+  it('the raised cell draws as beach (band 0), not sea (band -1)', () => {
+    const map = flat(-7);
+    applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
+    expect(drawnBandOfSample(at(map))).toBe(0);
+  });
+
+  it('a stamp raise from the waterline still reaches the next raw band', () => {
+    const map = flat(0);
+    applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
+    expect(at(map)).toBe(BAND_HEIGHT);
+  });
+
+  it('a stamp raise from the beach still reaches the next raw band', () => {
+    const map = flat(2);
+    applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
+    expect(at(map)).toBe(BAND_HEIGHT);
+  });
+
+  it('a stamp lower from the waterline still drops one raw band', () => {
+    const map = flat(0);
+    applySculpt(map, CX, CY, 2, -DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
+    expect(at(map)).toBe(-BAND_HEIGHT);
+  });
+
+  it('a drag-raise toward band 0 extends the beach to the shore height', () => {
+    // Drag spreads from an edge: beach west, sea east.
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        map.cells[cellIndex(map, x, y)] = x < CX ? 2 : -7;
+      }
+    }
+    applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'drag',
+      profile: 'soft',
+      spill: 'banded',
+      anchor: 'band',
+      targetBand: 0,
+      spanBand: null,
+      sweepFrom: null,
+    });
+    expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(drawnBandOfSample(at(map))).toBe(0);
   });
 });
