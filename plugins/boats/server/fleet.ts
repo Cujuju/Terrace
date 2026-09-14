@@ -18,6 +18,7 @@ import {
   regionAt,
   snapWaypointToWalkable,
   waypointForMember,
+  withCachedClearance,
   withClearance,
   withoutSelf,
   type Occupant,
@@ -607,7 +608,7 @@ function surveyedLaunch(
     shipyard.surveyedSeconds += dt;
     if (shipyard.surveyedSeconds < COASTAL_RESURVEY_SECONDS) return shipyard.launch;
   }
-  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
+  const eroded = withCachedClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
 
   let launch: KrakenTarget | null = null;
   let shoreCells = 0;
@@ -962,7 +963,7 @@ function currentSeaRegions(): SeaRegions | null {
   return null;
 }
 
-function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
+function maybeRebuildSeaRegions(world: BoatWorld): void {
   if (seaRegions !== null && seaRegionsVersion === terrainVersion) return;
   if (!seaRegionsDemand) return;
   const nowMs = performance.now();
@@ -971,6 +972,10 @@ function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
   }
   seaRegionsDemand = false;
   seaRegionsLastBuildMs = nowMs;
+  // Uncached wrapper: a full-map scan touches each cell once, so a memo
+  // cache would be all insert cost and no hits. The per-tick wrapper stays
+  // cached; both dilate identically.
+  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
   seaRegions = labelSeaRegions(eroded, HULL_PROFILE);
   seaRegionsVersion = terrainVersion;
 }
@@ -1952,7 +1957,7 @@ export function advanceFleet(
 ): FleetOutcome {
   advanceShipyards(world, dt);
 
-  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
+  const eroded = withCachedClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
 
   applyStormWind(world, eroded);
 
@@ -1967,7 +1972,7 @@ export function advanceFleet(
     kraken === null
       ? null
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
-  maybeRebuildSeaRegions(eroded);
+  maybeRebuildSeaRegions(world);
   const debug: FleetRouteDebug = createFleetRouteDebug();
   debug.bumps = terrainChangeBumps;
   terrainChangeBumps = 0;
