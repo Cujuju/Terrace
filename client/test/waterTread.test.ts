@@ -2,20 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
-  DRAWN_GROUND_SIMPLIFY_EPSILON,
   bandOf,
   cellIndex,
   cellX,
   cellY,
-  drawnLevelThreshold,
 } from '@terrace/shared';
 import {
   appendRegionSurface,
-  appendRegionTile,
   waterRegionOfCells,
   type WaterRegion,
 } from '../src/render/water/waterTread.ts';
-import { chunkContourLoops } from '../src/terrain/capEmission.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 
@@ -221,68 +217,12 @@ describe('water region tread', () => {
   });
 });
 
-describe('shoreline tread (surfaceBand 0)', () => {
-  // A slope with deterministic ripple crossing the drawn shore (heights
-  // straddle DRAWN_SHORE_HEIGHT), so chunk (1, 1) holds a real shoreline.
-  function shoreMirror(): TerrainMirror {
-    const mirror = createTerrainMirror(WORLD_SIZE);
-    for (let y = 0; y < WORLD_SIZE; y++) {
-      for (let x = 0; x < WORLD_SIZE; x++) {
-        mirror.map.cells[cellIndex(layout, x, y)] = x + y - 40 + ((x * 7 + y * 13) % 5);
-      }
-    }
-    return mirror;
-  }
-
-  it('marches the same shoreline isoline the land caps march', () => {
-    const mirror = shoreMirror();
-    // Land pipeline: the mirror sample field at the drawn shore threshold.
-    const landLoops = chunkContourLoops(mirror, 1, 1, drawnLevelThreshold(0));
-    expect(landLoops.length, 'fixture holds no shoreline — the test is vacuous').toBeGreaterThan(0);
-
-    // Water pipeline: same shared mirror, shoreline band, covering tile.
-    const tilesPerEdge = WORLD_SIZE / CHUNK_SIZE;
-    const tileX = CHUNK_SIZE;
-    const tileZ = CHUNK_SIZE;
-    const tile = 1 * tilesPerEdge + 1;
-    const wet = new Set<number>([cellIndex(layout, 20, 20)]);
-    const region = waterRegionOfCells(wet, 0, new Set<number>([tile]));
-    const triangles: number[] = [];
-    const waterLoops = appendRegionTile(mirror, region, tile, SURFACE_Y, triangles);
-
-    expect(triangles.length, 'no water sheet emitted over a shoreline tile').toBeGreaterThan(0);
-    expect(waterLoops.length, 'no water edge loops over a shoreline tile').toBeGreaterThan(0);
-
-    // Border chains close around opposite sides, so loop GROUPING differs
-    // between the pipelines. What must coincide is the marched geometry:
-    // edge crossings (loop vertices with an exact-integer lattice
-    // coordinate — the deterministic marching output, unlike the cosmetic
-    // isoline-refinement subdivisions, which may sample the same curve at
-    // different spots). Compare them as multisets on a grid far finer
-    // than simplify epsilon; the pipelines deviate only by mirror
-    // rounding (~1e-7).
-    const isCorner = (p: { x: number; z: number }): boolean =>
-      (p.x === tileX || p.x === tileX + CHUNK_SIZE) &&
-      (p.z === tileZ || p.z === tileZ + CHUNK_SIZE);
-    const isCrossing = (p: { x: number; z: number }): boolean =>
-      Number.isInteger(p.x) || Number.isInteger(p.z);
-    const gridStep = DRAWN_GROUND_SIMPLIFY_EPSILON / 2;
-    const keyOf = (p: { x: number; z: number }): string =>
-      `${Math.round(p.x / gridStep)},${Math.round(p.z / gridStep)}`;
-    const landKeys = landLoops
-      .flatMap((loop) => loop.filter((p) => !isCorner(p) && isCrossing(p)).map(keyOf))
-      .sort();
-    const waterKeys = waterLoops
-      .flatMap((loop) => loop.filter((p) => !isCorner(p) && isCrossing(p)).map(keyOf))
-      .sort();
-    expect(waterKeys.length, 'water edge holds no crossings — the test is vacuous').toBeGreaterThan(0);
-    expect(waterKeys).toStrictEqual(landKeys);
-  });
-
-  it('sheets the below-shore side of the drawn threshold, not the raw plane', () => {
-    // Both halves sit in raw band 0, but the drawn shore splits them: 0
-    // draws as sea (below drawnLevelThreshold(0)) while 1 draws as shore.
-    // The old raw-plane edge (0) would have split this fixture nowhere.
+describe('band-0 regions emit no water', () => {
+  // Band 0 is the ocean's own level: the sea plane already draws every
+  // below-sea surface, so a region sheet here can only double-draw the sea
+  // (or float above it on cap+lift). Emission stops at the choke point;
+  // higher-band curtains still fall to the sea.
+  it('emits neither sheet nor loops for a below-shore region', () => {
     const mirror = createTerrainMirror(WORLD_SIZE);
     for (let y = 0; y < WORLD_SIZE; y++) {
       for (let x = 0; x < WORLD_SIZE; x++) {
@@ -290,16 +230,12 @@ describe('shoreline tread (surfaceBand 0)', () => {
       }
     }
     const tilesPerEdge = WORLD_SIZE / CHUNK_SIZE;
-    const wetTile = 1 * tilesPerEdge + 1;
-    const dryTile = 1 * tilesPerEdge + 2;
+    const tiles = new Set<number>([1 * tilesPerEdge + 1, 1 * tilesPerEdge + 2]);
     const wet = new Set<number>([cellIndex(layout, 20, 20)]);
-    const region = waterRegionOfCells(wet, 0, new Set<number>([wetTile, dryTile]));
+    const region = waterRegionOfCells(wet, 0, tiles);
     const triangles: number[] = [];
-    appendRegionSurface(mirror, region, SURFACE_Y, triangles);
-    expect(triangles.length).toBeGreaterThan(0);
-
-    // Deep on the sea side: covered. Deep on the shore side: open ground.
-    expect(coverCount(triangles, worldOfCell(20), worldOfCell(20))).toBeGreaterThan(0);
-    expect(coverCount(triangles, worldOfCell(40), worldOfCell(20))).toBe(0);
+    const loops = appendRegionSurface(mirror, region, SURFACE_Y, triangles);
+    expect(triangles).toStrictEqual([]);
+    expect(loops).toStrictEqual([]);
   });
 });
