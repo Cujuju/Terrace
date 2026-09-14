@@ -7,6 +7,7 @@ import {
   SEA_COLUMN_BANDS,
   SEA_LEVEL,
   bandOf,
+  drawnBandOfSample,
   isWater,
 } from '@terrace/shared';
 import { ORDINARY_SEA_DEPTH_BANDS } from '../src/config.ts';
@@ -173,9 +174,9 @@ describe('bandPaletteIndex', () => {
     expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
   });
 
-  it('colours the dry remainder of band 0 as land', () => {
+  it('colours the dry remainder of band 0 as land (drawn band 0: heights 1..7)', () => {
     expect(bandPaletteIndex(1)).toBe(FIRST_LAND_PALETTE_INDEX);
-    expect(bandPaletteIndex(BAND_HEIGHT - 1)).toBe(FIRST_LAND_PALETTE_INDEX);
+    expect(bandPaletteIndex(BAND_HEIGHT - 1)).toBe(FIRST_LAND_PALETTE_INDEX + 1);
   });
 
   it('advances one palette step per terrace band', () => {
@@ -208,12 +209,14 @@ describe('bandPaletteIndex', () => {
     }
   });
 
-  it('changes colour only at a band edge or at the waterline', () => {
+  it('changes colour only at a drawn band edge or at the waterline', () => {
     for (let h = MIN_HEIGHT + 1; h <= MAX_HEIGHT; h++) {
       if (bandPaletteIndex(h) === bandPaletteIndex(h - 1)) continue;
-      const atBandEdge = bandOf(h) !== bandOf(h - 1);
+      // Water keeps raw depth stops; dry land follows the drawn band.
+      const atWaterEdge = isWater(h) && bandOf(h) !== bandOf(h - 1);
+      const atDrawnEdge = drawnBandOfSample(h) !== drawnBandOfSample(h - 1);
       const atWaterline = isWater(h - 1) && !isWater(h);
-      expect(atBandEdge || atWaterline).toBe(true);
+      expect(atWaterEdge || atDrawnEdge || atWaterline).toBe(true);
     }
   });
 

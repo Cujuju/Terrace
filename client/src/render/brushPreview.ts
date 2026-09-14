@@ -34,7 +34,7 @@ import {
 import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../config.ts';
 import { bandColorOf } from '../terrain/bandColors.ts';
 import type { PickFace } from '../terrain/picking.ts';
-import { DENIED_COLOR, type DenialCue } from './denialCue.ts';
+import { DENIED_COLOR, GHOST_OPACITY_SCALE, OFFLINE_COLOR, type DenialCue } from './denialCue.ts';
 import {
   MAX_LATTICE_SPAN,
   assembleLoops,
@@ -459,17 +459,41 @@ export function createBrushPreview(
   let shownKey = initialKey;
 
   let showing = false;
+  // The four cue states only: refused=red, offline=grey/hollow (never red),
+  // ghost=unpredicted (hollow, dimmed), flat=posture flat-mark (crosshair only).
+  // Hollow keeps the ring but hides the skirt fill and cell grid.
   const show = (visible: boolean, crosshairOnly = false): void => {
-    const footprint = visible && !crosshairOnly;
-    line.visible = footprint;
-    skirt.visible = footprint;
-    cellGrid.visible = footprint;
+    const isOffline = denial.offline();
+    const isGhost = denial.ghost();
+    const flatPosture = denial.flat();
+    const hollow = isOffline || isGhost;
+    const flatMark = crosshairOnly || flatPosture;
+    const footprint = visible && !flatMark;
+    line.visible = footprint || (visible && hollow && !flatMark);
+    skirt.visible = footprint && !hollow;
+    cellGrid.visible = footprint && !hollow;
     crosshair.visible = visible;
-    const red = denial.isRed();
-    if (visible && red) {
-      material.color.setHex(DENIED_COLOR);
-      skirtMaterial.color.setHex(DENIED_COLOR);
-      crosshairMaterial.color.setHex(DENIED_COLOR);
+    if (visible) {
+      // Offline never renders red, even while a refused hold is latched.
+      const red = !isOffline && denial.isRed();
+      if (isOffline) {
+        material.color.setHex(OFFLINE_COLOR);
+        crosshairMaterial.color.setHex(OFFLINE_COLOR);
+        material.opacity = OUTLINE_OPACITY;
+        crosshairMaterial.opacity = CROSSHAIR_OPACITY;
+      } else if (red) {
+        material.color.setHex(DENIED_COLOR);
+        skirtMaterial.color.setHex(DENIED_COLOR);
+        crosshairMaterial.color.setHex(DENIED_COLOR);
+        material.opacity = OUTLINE_OPACITY;
+        crosshairMaterial.opacity = CROSSHAIR_OPACITY;
+      } else if (isGhost) {
+        material.opacity = OUTLINE_OPACITY * GHOST_OPACITY_SCALE;
+        crosshairMaterial.opacity = CROSSHAIR_OPACITY * GHOST_OPACITY_SCALE;
+      } else {
+        material.opacity = OUTLINE_OPACITY;
+        crosshairMaterial.opacity = CROSSHAIR_OPACITY;
+      }
     }
     if (visible === showing) return;
     showing = visible;
