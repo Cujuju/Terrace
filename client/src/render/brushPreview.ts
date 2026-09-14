@@ -23,7 +23,6 @@ import {
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   applySculpt,
-  bandOf,
   createHeightmap,
   forEachFootprintOffset,
   sculptOptionsOf,
@@ -153,7 +152,6 @@ function oneClickMark(
   const centre = SIMULATION_SPAN_CELLS >> 1;
   map.cells.fill(SIMULATION_GROUND_HEIGHT);
 
-  const before = bandOf(SIMULATION_GROUND_HEIGHT);
   applySculpt(
     map,
     centre,
@@ -167,7 +165,10 @@ function oneClickMark(
   const cells: (readonly [number, number])[] = [];
   for (let j = 0; j < SIMULATION_SPAN_CELLS; j++) {
     for (let i = 0; i < SIMULATION_SPAN_CELLS; i++) {
-      if (bandOf(map.cells[j * SIMULATION_SPAN_CELLS + i]!) === before) continue;
+      // Drawn-contract footprint: a click can move heights within one drawn
+      // band (sea 0 -> shore 1, sea 0 -> band -1 level -16), so edited cells
+      // are detected by height change, not band change.
+      if (map.cells[j * SIMULATION_SPAN_CELLS + i]! === SIMULATION_GROUND_HEIGHT) continue;
       const dx = i - centre;
       const dy = j - centre;
       keys.add(`${dx},${dy}`);

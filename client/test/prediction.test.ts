@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
+  DRAWN_SHORE_HEIGHT,
   MAX_HEIGHT,
   MIN_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
@@ -94,7 +95,7 @@ describe('predict', () => {
 
     expect(store.pendingCount()).toBe(1);
     expect(mirror.map.cells).toEqual(expected.cells);
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(store.authoritativeHeightAt(CENTRE.x, CENTRE.y)).toBe(0);
     expect(dirty.has(chunkIndex(WORLD, 1, 1))).toBe(true);
   });
@@ -232,7 +233,7 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
 
     store.predict({ ...raise(CENTRE.x, CENTRE.y, MIN_BRUSH_RADIUS), tool: 'stamp' }, 0);
 
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1)).toBe(0);
   });
@@ -243,7 +244,7 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
     const pointBrush = WORLD_UNIT_CELLS;
     store.predict({ ...raise(CENTRE.x, CENTRE.y, pointBrush), tool: 'smooth' }, 0);
 
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(bandOf(heightAt(mirror.map, CENTRE.x + pointBrush + 1, CENTRE.y))).toBe(0);
   });
 
@@ -260,7 +261,7 @@ describe('expiry', () => {
     const { mirror, store } = createClient();
 
     store.predict(raise(), 0);
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(store.nextExpiryAtMs()).toBe(PREDICTION_TTL_MS);
 
     const dirty = store.expire(PREDICTION_TTL_MS);
@@ -281,7 +282,7 @@ describe('expiry', () => {
 
     expect(store.pendingCount()).toBe(1);
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(0);
-    expect(heightAt(mirror.map, 40, 40)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, 40, 40)).toBe(DRAWN_SHORE_HEIGHT);
   });
 
   it('drops a stale prediction on the next authoritative message too', () => {
