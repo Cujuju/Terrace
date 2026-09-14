@@ -69,9 +69,17 @@ export function sculptSweepSteps(intent: SculptIntent): number {
   return Math.max(1, chebyshevDistance(intent.fromX, intent.fromY, intent.x, intent.y));
 }
 
+export type SculptDeniedReason =
+  | 'malformed'
+  | 'locked'
+  | 'plugin-denied'
+  | 'plugin-modified-invalid';
+
 export interface SculptDeniedMessage {
   type: 'sculptDenied';
   seq: number;
+  reason?: SculptDeniedReason;
+  detail?: string;
 }
 
 export interface SculptAppliedMessage {

@@ -84,6 +84,41 @@ describe('handleSculptIntent', () => {
     expect(sink.messages).toHaveLength(0);
   });
 
+  it('nacks a malformed intent when a routable seq can be extracted', () => {
+    const outcome = handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ x: 1.5, seq: 21 }),
+    );
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('malformed');
+    expect(world.dirty).toBe(false);
+    expect(sink.messages).toEqual([
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: { type: 'sculptDenied', seq: 21, reason: 'malformed' },
+      },
+    ]);
+  });
+
+  it('stays silent for a malformed intent with no routable seq', () => {
+    const deps = makeDeps(world, []);
+    const unroutable: unknown[] = [
+      null,
+      'sculpt',
+      sculptMessage({ x: 1.5 }),
+      sculptMessage({ x: 1.5, seq: 1.5 }),
+    ];
+
+    for (const message of unroutable) {
+      handleSculptIntent(deps, PLAYER, message);
+    }
+    expect(world.dirty).toBe(false);
+    expect(sink.messages).toHaveLength(0);
+  });
+
   it('rejects an intent whose brush centre is in a locked chunk', () => {
     const outcome = handleSculptIntent(
       makeDeps(world, []),
@@ -95,6 +130,25 @@ describe('handleSculptIntent', () => {
     if (!outcome.applied) expect(outcome.reason).toBe('locked');
     expect(world.heightAt(LOCKED_CELL.x, LOCKED_CELL.y)).toBe(0);
     expect(sink.messages).toHaveLength(0);
+  });
+
+  it('nacks a locked-centre intent that carried a seq, so the prediction rolls back loudly', () => {
+    const outcome = handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ x: LOCKED_CELL.x, y: LOCKED_CELL.y, seq: 43 }),
+    );
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('locked');
+    expect(world.heightAt(LOCKED_CELL.x, LOCKED_CELL.y)).toBe(0);
+    expect(sink.messages).toEqual([
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: { type: 'sculptDenied', seq: 43, reason: 'locked' },
+      },
+    ]);
   });
 
   it('lets a plugin deny an intent, and the first deny stops the chain', () => {
@@ -351,7 +405,11 @@ describe('sculptDenied nack', () => {
     const outcome = handleSculptIntent(makeDeps(world, [denier]), PLAYER, sculptMessage({ seq: 42 }));
     expect(outcome.applied).toBe(false);
     expect(sink.messages).toEqual([
-      { target: PLAYER.id, type: 'sculptDenied', payload: { type: 'sculptDenied', seq: 42 } },
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: { type: 'sculptDenied', seq: 42, reason: 'plugin-denied', detail: 'no mana' },
+      },
     ]);
   });
 
@@ -372,7 +430,11 @@ describe('sculptDenied nack', () => {
     expect(outcome.applied).toBe(false);
     if (!outcome.applied) expect(outcome.reason).toBe('plugin-modified-invalid');
     expect(sink.messages).toEqual([
-      { target: PLAYER.id, type: 'sculptDenied', payload: { type: 'sculptDenied', seq: 7 } },
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: { type: 'sculptDenied', seq: 7, reason: 'plugin-modified-invalid' },
+      },
     ]);
   });
 
@@ -391,7 +453,16 @@ describe('sculptDenied nack', () => {
 
     expect(outcome.applied).toBe(false);
     expect(sink.messages).toEqual([
-      { target: PLAYER.id, type: 'sculptDenied', payload: { type: 'sculptDenied', seq: 8 } },
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: {
+          type: 'sculptDenied',
+          seq: 8,
+          reason: 'plugin-modified-invalid',
+          detail: 'centre is locked',
+        },
+      },
     ]);
   });
 
@@ -406,7 +477,7 @@ describe('sculptDenied nack', () => {
     expect(sink.messages).toHaveLength(0);
   });
 
-  it('stays SILENT for a mask rejection even when the intent carried a seq', () => {
+  it('nacks a locked-centre intent even when a plugin would also deny it', () => {
     const outcome = handleSculptIntent(
       makeDeps(world, [denier]),
       PLAYER,
@@ -414,7 +485,13 @@ describe('sculptDenied nack', () => {
     );
     expect(outcome.applied).toBe(false);
     if (!outcome.applied) expect(outcome.reason).toBe('locked');
-    expect(sink.messages).toHaveLength(0);
+    expect(sink.messages).toEqual([
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: { type: 'sculptDenied', seq: 42, reason: 'locked' },
+      },
+    ]);
   });
 });
 
