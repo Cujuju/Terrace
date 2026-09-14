@@ -67,6 +67,12 @@ export const DECK_RADIAL_EXPONENT = 0.75;
 
 export const DECK_RIM_FADE_START = 0.8;
 
+// Crown for the cap: fraction of a tier's puff size added as height at the
+// top-centre of the stack, falling to zero at the base and at each tier's
+// rim. Without it the top tier is a flat disc of coplanar puffs whose union
+// ceiling is a plane, which reads as a cut-flat top when seen edge-on.
+export const DECK_DOME_LIFT_FRACTION = 0.5;
+
 export const PUFF_SIZE_TOP_GROWTH = 0.9;
 
 export const PUFF_SIZE_SEED_VARIATION = 0.25;
@@ -179,12 +185,6 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
     .sub(1)
     .mul(DECK_TIER_JITTER_WORLD_UNITS);
 
-  const transformed = vec3(
-    massCentre.x.add(cos(aPolar.y).mul(outward)),
-    float(DECK_BASE_WORLD_Y).add(aTier.mul(DECK_THICKNESS_WORLD_UNITS)).add(tierJitter),
-    massCentre.y.add(sin(aPolar.y).mul(outward)),
-  );
-
   // Bigger toward the top, and never twice the same size in a row.
   const puffSize = massRadius
     .mul(spec.puffSizeFraction)
@@ -194,6 +194,24 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
         fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(2 * PUFF_SIZE_SEED_VARIATION),
       ),
     );
+
+  // Crown the cap toward the middle of each tier, most at the top of the
+  // stack: proportional to the puff's own size so the crown scales with the
+  // storm. The base tier is untouched, so the precipitation ceiling stays flat.
+  const domeLift = aTier
+    .mul(aTier)
+    .mul(float(1).sub(aPolar.x.mul(aPolar.x)))
+    .mul(puffSize)
+    .mul(DECK_DOME_LIFT_FRACTION);
+
+  const transformed = vec3(
+    massCentre.x.add(cos(aPolar.y).mul(outward)),
+    float(DECK_BASE_WORLD_Y)
+      .add(aTier.mul(DECK_THICKNESS_WORLD_UNITS))
+      .add(tierJitter)
+      .add(domeLift),
+    massCentre.y.add(sin(aPolar.y).mul(outward)),
+  );
 
   // Oblong per seed and area-neutral: stretched along x by the aspect, squashed along y by the same.
   const aspect = float(1 - PUFF_ASPECT_SEED_VARIATION).add(
