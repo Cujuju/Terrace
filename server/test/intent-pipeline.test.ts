@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
+import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, DRAWN_SHORE_HEIGHT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
 import { PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
@@ -57,8 +57,10 @@ describe('handleSculptIntent', () => {
     const raised = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     handleSculptIntent(makeDeps(raised, []), PLAYER, sculptMessage({ dir: 1 }));
 
-    expect(lowered).toBeLessThan(0);
-    expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(-lowered);
+    // Drawn contract: from genesis sea (0, band -1) a raise lands on the
+    // shore level while a lower lands on the band -1 level.
+    expect(lowered).toBe(-DEFAULT_SCULPT_AMOUNT);
+    expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(Math.abs(lowered)).toBeLessThanOrEqual(DEFAULT_SCULPT_AMOUNT);
   });
 
@@ -366,7 +368,7 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
   it('an intent naming NO tool is applied as a stamp (the wire default)', () => {
     handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
 
-    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
   });
 

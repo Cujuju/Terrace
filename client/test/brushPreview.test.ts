@@ -5,7 +5,6 @@ import {
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   applySculpt,
-  bandOf,
   createHeightmap,
   forEachFootprintOffset,
   sculptOptionsOf,
@@ -81,7 +80,6 @@ function renderedCells(
   const span = 2 * (MAX_BRUSH_RADIUS + 2);
   const centre = span >> 1;
   const map = createHeightmap(span);
-  const before = map.cells.map(bandOf);
   applySculpt(
     map,
     centre,
@@ -93,7 +91,9 @@ function renderedCells(
   const changed = new Set<string>();
   for (let j = 0; j < span; j++) {
     for (let i = 0; i < span; i++) {
-      if (bandOf(map.cells[j * span + i]!) !== before[j * span + i]) {
+      // Same drawn-contract oracle as the preview probe: edited cells are
+      // detected by height change (a click can stay inside one drawn band).
+      if (map.cells[j * span + i]! !== 0) {
         changed.add(`${i - centre},${j - centre}`);
       }
     }
