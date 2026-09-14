@@ -1,7 +1,7 @@
 import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
-import { PluginHost } from '../src/plugins/host.ts';
+import { PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
 import type { IntentVerdict, TerracePlugin } from '../src/plugins/types.ts';
 import type { World } from '../src/world/world.ts';
 import {
@@ -595,5 +595,96 @@ describe('sculptApplied ack', () => {
 
     expect(outcome.applied).toBe(false);
     expect(sink.ofType('sculptApplied')).toHaveLength(0);
+  });
+});
+
+describe('plugin denial reasons ride the wire detail (lane B)', () => {
+  let world: World;
+  let sink: RecordingSink;
+
+  beforeEach(() => {
+    world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    sink = new RecordingSink();
+    world.setSink(sink);
+  });
+
+  it('threads the frozen monsters/relics denial reasons into sculptDenied detail', () => {
+    // Literals, not imports: server core must not import plugin halves.
+    // 'monster occupies the ground' is RAISE_BLOCKED_REASON
+    // (plugins/monsters/server/protection.ts); 'warded' is CAST_DENIED_WARDED
+    // (plugins/relics/protocol.ts). Both strings are frozen.
+    for (const reason of ['monster occupies the ground', 'warded']) {
+      const fresh = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+      const freshSink = new RecordingSink();
+      fresh.setSink(freshSink);
+      const denier: TerracePlugin = {
+        name: 'denier',
+        onIntent(): IntentVerdict {
+          return { kind: 'deny', reason };
+        },
+      };
+
+      const outcome = handleSculptIntent(
+        makeDeps(fresh, [denier]),
+        PLAYER,
+        sculptMessage({ seq: 99 }),
+      );
+
+      expect(outcome.applied).toBe(false);
+      if (!outcome.applied) {
+        expect(outcome.reason).toBe('plugin-denied');
+        expect(outcome.detail).toBe(reason);
+      }
+      expect(freshSink.messages).toEqual([
+        {
+          target: PLAYER.id,
+          type: 'sculptDenied',
+          payload: { type: 'sculptDenied', seq: 99, reason: 'plugin-denied', detail: reason },
+        },
+      ]);
+    }
+  });
+
+  it('surfaces a second-look modify as a plugin-denied nack naming the fault', () => {
+    const flipFlop: TerracePlugin = {
+      name: 'a-flipflop',
+      onIntent(intent) {
+        return intent.radius === 1
+          ? { kind: 'allow' }
+          : { kind: 'modify', intent: { ...intent, radius: 1 } };
+      },
+    };
+    const widener: TerracePlugin = {
+      name: 'b-widener',
+      onIntent(intent) {
+        return { kind: 'modify', intent: { ...intent, radius: intent.radius + 1 } };
+      },
+    };
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = handleSculptIntent(
+      makeDeps(world, [flipFlop, widener]),
+      PLAYER,
+      sculptMessage({ radius: 1, seq: 5 }),
+    );
+    errors.mockRestore();
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) {
+      expect(outcome.reason).toBe('plugin-denied');
+      expect(outcome.detail).toBe(SECOND_LOOK_MODIFY_REASON);
+    }
+    expect(sink.messages).toEqual([
+      {
+        target: PLAYER.id,
+        type: 'sculptDenied',
+        payload: {
+          type: 'sculptDenied',
+          seq: 5,
+          reason: 'plugin-denied',
+          detail: SECOND_LOOK_MODIFY_REASON,
+        },
+      },
+    ]);
   });
 });
