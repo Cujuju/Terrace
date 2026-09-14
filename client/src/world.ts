@@ -18,6 +18,7 @@ import type {
   JoinSnapshotMessage,
   SculptAppliedMessage,
   SculptDeniedMessage,
+  SculptDeniedReason,
   SculptIntent,
   SculptTool,
   TerrainDiffMessage,
@@ -113,8 +114,41 @@ export interface LayerEdgeLight {
   readonly tool?: SculptTool;
 }
 
+/**
+ * The hint text a sculpt denial selects. The frozen Day-0 reasons
+ * (malformed|locked|plugin-denied|plugin-modified-invalid) say *why core refused;
+ * the plugin detail says *what* to tell the hand:
+ *
+ * - `locked` — core-locked ground, a malformed intent, or a plugin rewrite core
+ *   had to refuse (including 'centre is locked'). The default.
+ * - `nest` — a monsters protection denial ('monster occupies the ground').
+ * - `ward` — a relics bedrock-ward denial ('warded').
+ * - `mana-with-cost` — a mana denial ('insufficient mana'); the hint carries the cost.
+ */
+export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost';
+
+export function denialHintFor(
+  reason: SculptDeniedReason | undefined,
+  detail: string | undefined,
+): DenialHint {
+  const text = detail ?? '';
+  if (text.includes('ward')) return 'ward';
+  if (text.includes('mana')) return 'mana-with-cost';
+  if (text.includes('monster') || text.includes('occupies') || text.includes('nest')) {
+    return 'nest';
+  }
+  void reason;
+  return 'locked';
+}
+
 export interface World extends TerrainSink {
   predictSculpt(intent: SculptIntent): void;
+  /** Hint text the last sculpt denial selected; null before the first denial. */
+  denialHint(): DenialHint | null;
+  /** How many sculpt denials have arrived; every one pulses the refused hold. */
+  deniedPulse(): number;
+  /** Seqs sent but predicting no-ops: lane E renders these as ghosts. */
+  ghostSeqs(): readonly number[];
   worldSize(): number;
   pickables(): Mesh[];
   revealedAt(x: number, y: number): boolean;
@@ -219,6 +253,18 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   let framedWorldSize = 0;
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // The last sculpt denial and how many have arrived. ANY denial (whatever its
+  // reason) pulses the red-brush refused hold — that pulse itself is fanned out by
+  // the main sink wrapper via sculptInput.releaseStroke(); this record only
+  // selects the hint text lane E shows alongside it.
+  let lastDenial: {
+    readonly seq: number;
+    readonly reason: SculptDeniedReason | undefined;
+    readonly detail: string | undefined;
+    readonly hint: DenialHint;
+  } | null = null;
+  let deniedPulses = 0;
 
   const bandOfPick = (pick: TerrainRayPick): number | null =>
     mirror === null ? null : bandOfPickIn(mirror.map, pick);
@@ -504,10 +550,30 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       armExpiryTimer();
     },
 
+    denialHint(): DenialHint | null {
+      return lastDenial === null ? null : lastDenial.hint;
+    },
+
+    deniedPulse(): number {
+      return deniedPulses;
+    },
+
+    ghostSeqs(): readonly number[] {
+      return predictions?.ghostSeqs() ?? [];
+    },
+
     onSculptDenied(msg: SculptDeniedMessage): void {
-      if (meshes === null || predictions === null) return;
-      applyDirty(predictions.resolveSeq(msg.seq));
-      armExpiryTimer();
+      if (meshes !== null && predictions !== null) {
+        applyDirty(predictions.resolveSeq(msg.seq));
+        armExpiryTimer();
+      }
+      deniedPulses++;
+      lastDenial = {
+        seq: msg.seq,
+        reason: msg.reason,
+        detail: msg.detail,
+        hint: denialHintFor(msg.reason, msg.detail),
+      };
     },
 
     onSculptApplied(msg: SculptAppliedMessage): void {

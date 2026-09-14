@@ -88,6 +88,10 @@ export interface ConnectionOptions {
 }
 
 export interface Connection {
+  /**
+   * False means the room is gone and the intent never left: the caller latches the
+   * offline cue (grey/hollow brush, never red) and must NOT predict the intent.
+   */
   sendSculpt(intent: SculptIntent): boolean;
   sendPlugin(type: string, payload: unknown): void;
   requestRestorePoints(key: string): void;
