@@ -3,7 +3,7 @@ import { BOATS_PER_VILLAGE, VILLAGE_PATROL_RANGE_CELLS } from '../protocol.ts';
 import {
   EXPLORERS_PER_VILLAGE,
   HOME_GUARD_BOATS_PER_VILLAGE,
-  SQUADRON_HOME_SPREAD_CELLS,
+  SQUADRON_FORMATION_SPREAD_CELLS,
   SQUADRON_MAX_SHIPS,
   SQUADRON_MIN_SHIPS,
   SQUADRON_MUSTER_RADIUS_CELLS,
@@ -24,22 +24,12 @@ const LEG_END: SquadronWaypoint = { x: 10_000, y: 10_000 };
 
 function openSea(): SquadronNavigator {
   return {
-    rendezvousFor: (homeX, homeY) => ({ x: homeX, y: homeY }),
-    isInHarbour: () => true,
     legFrom: () => LEG_END,
   };
 }
 
-function landlocked(): SquadronNavigator {
-  return { rendezvousFor: () => null, isInHarbour: () => true, legFrom: () => null };
-}
-
 function noWayOut(): SquadronNavigator {
-  return {
-    rendezvousFor: (homeX, homeY) => ({ x: homeX, y: homeY }),
-    isInHarbour: () => true,
-    legFrom: () => null,
-  };
+  return { legFrom: () => null };
 }
 
 let nextId = 1;
@@ -60,7 +50,7 @@ function neighbouringVillages(count: number): Array<readonly [number, number]> {
 
 function spreadVillages(count: number): Array<readonly [number, number]> {
   const spacing = Math.ceil(SQUADRON_MUSTER_RADIUS_CELLS) * 3;
-  expect(spacing * (count - 1)).toBeLessThan(SQUADRON_HOME_SPREAD_CELLS);
+  expect(spacing * (count - 1)).toBeLessThan(SQUADRON_FORMATION_SPREAD_CELLS);
   return Array.from({ length: count }, (_unused, n) => [100 + n * spacing, 100] as const);
 }
 
@@ -86,24 +76,33 @@ describe('the home guard leaves something to explore', () => {
     expect(villagesNeeded * EXPLORERS_PER_VILLAGE).toBeGreaterThanOrEqual(SQUADRON_MAX_SHIPS);
   });
 
-  it('crews a full squadron from villages inside one recall range', () => {
-    expect(SQUADRON_HOME_SPREAD_CELLS).toBe(VILLAGE_PATROL_RANGE_CELLS);
+  it('crews a fleet from boats inside one formation range', () => {
+    expect(SQUADRON_FORMATION_SPREAD_CELLS).toBe(VILLAGE_PATROL_RANGE_CELLS);
   });
 });
 
 describe('assembly', () => {
-  it('forms nothing from fewer ships than a squadron takes', () => {
-    const pair: SquadronBoat[] = [
+  it('forms nothing from a lone boat', () => {
+    const solo: SquadronBoat[] = [
       { id: nextId++, x: 100, y: 100, homeX: 100, homeY: 100 },
-      { id: nextId++, x: 101, y: 100, homeX: 101, homeY: 100 },
     ];
-    expect(pair.length).toBeLessThan(SQUADRON_MIN_SHIPS);
-    const goals = advanceSquadrons(pair, openSea(), TICK_DT);
+    const goals = advanceSquadrons(solo, openSea(), TICK_DT);
     expect(squadronCount()).toBe(0);
     expect(goals.size).toBe(0);
   });
 
-  it('never forms a squadron outside three to seven ships', () => {
+  it('crews the smallest fleet from a pair', () => {
+    const pair: SquadronBoat[] = [
+      { id: nextId++, x: 100, y: 100, homeX: 100, homeY: 100 },
+      { id: nextId++, x: 101, y: 100, homeX: 101, homeY: 100 },
+    ];
+    expect(pair.length).toBe(SQUADRON_MIN_SHIPS);
+    advanceSquadrons(pair, openSea(), TICK_DT);
+    expect(squadronCount()).toBe(1);
+    expect(squadronOf(pair[0].id)).toBe(squadronOf(pair[1].id));
+  });
+
+  it('never forms a fleet outside two to five ships', () => {
     const roster = explorersFor(neighbouringVillages(12));
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBeGreaterThan(0);
@@ -115,41 +114,59 @@ describe('assembly', () => {
     }
   });
 
-  it('never puts one ship in two squadrons', () => {
+  it('puts every boat in a fleet, with no singleton left behind', () => {
+    const roster = explorersFor(neighbouringVillages(7));
+    advanceSquadrons(roster, openSea(), TICK_DT);
+    for (const boat of roster) expect(squadronOf(boat.id)).not.toBeNull();
+  });
+
+  it('attaches a loner to the nearest fleet', () => {
+    const roster = explorersFor(neighbouringVillages(4));
+    const loner: SquadronBoat = {
+      id: nextId++,
+      x: 100 + SQUADRON_FORMATION_SPREAD_CELLS * 10,
+      y: 100,
+      homeX: 100,
+      homeY: 100,
+    };
+    advanceSquadrons([...roster, loner], openSea(), TICK_DT);
+    expect(squadronOf(loner.id)).not.toBeNull();
+    expect(squadronMembers(squadronOf(loner.id)!)).toContain(loner.id);
+  });
+
+  it('never puts one ship in two fleets', () => {
     const roster = explorersFor(neighbouringVillages(12));
     advanceSquadrons(roster, openSea(), TICK_DT);
     const members = allSquadronMembers();
     expect(new Set(members).size).toBe(members.length);
   });
 
-  it('crews a squadron only from homes inside the spread', () => {
-    const far = SQUADRON_HOME_SPREAD_CELLS * 4;
+  it('crews nearby boats together but never mixes distant clusters', () => {
+    const far = SQUADRON_FORMATION_SPREAD_CELLS * 4;
     const homes = [
       ...neighbouringVillages(4),
       ...neighbouringVillages(4).map(([x, y]) => [x + far, y] as const),
     ];
     const roster = explorersFor(homes);
-    const homeOf = new Map(roster.map((boat) => [boat.id, boat]));
+    const clusterOf = new Map(roster.map((boat) => [boat.id, boat.homeX < 100 + far / 2 ? 0 : 1]));
     advanceSquadrons(roster, openSea(), TICK_DT);
     for (let id = 1; id <= nextId; id++) {
       const members = squadronMembers(id);
       if (members.length === 0) continue;
-      const flagship = homeOf.get(members[0]);
-      expect(flagship).toBeDefined();
-      for (const boatId of members) {
-        const ship = homeOf.get(boatId);
-        expect(ship).toBeDefined();
-        const dx = ship!.homeX - flagship!.homeX;
-        const dy = ship!.homeY - flagship!.homeY;
-        expect(Math.sqrt(dx * dx + dy * dy)).toBeLessThanOrEqual(SQUADRON_HOME_SPREAD_CELLS);
-      }
+      const clusters = new Set(members.map((boatId) => clusterOf.get(boatId)));
+      expect(clusters.size).toBe(1);
     }
   });
 
-  it('forms nothing when no village has water to muster on', () => {
-    const roster = explorersFor(neighbouringVillages(12));
-    advanceSquadrons(roster, landlocked(), TICK_DT);
-    expect(squadronCount()).toBe(0);
+  it('forms fleets wherever boats gather, not only in harbour', () => {
+    const roster = explorersFor(neighbouringVillages(4)).map((boat) => ({
+      ...boat,
+      x: boat.x + 1000,
+      y: boat.y - 500,
+    }));
+    advanceSquadrons(roster, openSea(), TICK_DT);
+    expect(squadronCount()).toBeGreaterThan(0);
+    for (const boat of roster) expect(squadronOf(boat.id)).not.toBeNull();
   });
 
   it('assembles the same fleet twice from the same roster', () => {
@@ -203,7 +220,7 @@ describe('mustering', () => {
     for (const boat of sailing) expect(goals.get(boat.id)).toEqual(LEG_END);
   });
 
-  it('gives every ship of a squadron the same waypoint', () => {
+  it('gives every ship of a fleet the same waypoint', () => {
     const roster = explorersFor(neighbouringVillages(12));
     const goals = advanceSquadrons(roster, openSea(), TICK_DT);
     for (let id = 1; id <= nextId; id++) {
@@ -219,14 +236,11 @@ describe('mustering', () => {
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBeGreaterThanOrEqual(1);
     const crew = [...squadronMembers(1)];
-    const rendezvous = openSea().rendezvousFor(
-      roster.find((boat) => boat.id === crew[0])!.homeX,
-      roster.find((boat) => boat.id === crew[0])!.homeY,
-    )!;
+    const flagship = roster.find((boat) => boat.id === crew[0])!;
     const stragglers = crew.filter((boatId) => {
       const ship = roster.find((boat) => boat.id === boatId)!;
-      const dx = ship.x - rendezvous.x;
-      const dy = ship.y - rendezvous.y;
+      const dx = ship.x - flagship.x;
+      const dy = ship.y - flagship.y;
       return Math.sqrt(dx * dx + dy * dy) > SQUADRON_MUSTER_RADIUS_CELLS;
     });
     expect(stragglers.length).toBeGreaterThan(0);
@@ -256,33 +270,33 @@ describe('mustering', () => {
   });
 });
 
-describe('recall dissolves rather than tops up', () => {
-  it('drops a ship the fleet has taken back', () => {
+describe('pruning dissolves rather than tops up', () => {
+  it('drops a ship that is gone', () => {
     const roster = explorersFor(neighbouringVillages(12));
     advanceSquadrons(roster, openSea(), TICK_DT);
-    const recalled = roster.find((boat) => squadronOf(boat.id) !== null);
-    expect(recalled).toBeDefined();
-    const remaining = roster.filter((boat) => boat.id !== recalled!.id);
+    const gone = roster.find((boat) => squadronOf(boat.id) !== null);
+    expect(gone).toBeDefined();
+    const remaining = roster.filter((boat) => boat.id !== gone!.id);
     advanceSquadrons(remaining, openSea(), TICK_DT);
-    expect(squadronOf(recalled!.id)).toBeNull();
-    expect(allSquadronMembers()).not.toContain(recalled!.id);
+    expect(squadronOf(gone!.id)).toBeNull();
+    expect(allSquadronMembers()).not.toContain(gone!.id);
   });
 
-  it('dissolves a squadron taken under strength and releases every survivor', () => {
+  it('dissolves a fleet taken under strength and releases every survivor', () => {
     const roster = explorersFor(neighbouringVillages(2));
     expect(roster.length).toBe(2 * EXPLORERS_PER_VILLAGE);
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBeGreaterThanOrEqual(1);
     const crew = [...squadronMembers(1)];
-    // Leave two survivors: too few to crew, too few to reform.
-    const survivors = crew.slice(-2);
+    // Leave one survivor: too few to crew, and nothing to attach to.
+    const survivors = crew.slice(-1);
     const left = roster.filter((boat) => survivors.includes(boat.id));
     advanceSquadrons(left, openSea(), TICK_DT);
     expect(squadronCount()).toBe(0);
     for (const boatId of crew) expect(squadronOf(boatId)).toBeNull();
   });
 
-  it('never leaves a ship pointing at a squadron that is gone', () => {
+  it('never leaves a ship pointing at a fleet that is gone', () => {
     const roster = explorersFor(neighbouringVillages(12));
     advanceSquadrons(roster, openSea(), TICK_DT);
     advanceSquadrons([], openSea(), TICK_DT);
@@ -305,8 +319,6 @@ describe('cruising', () => {
       { x: 30_000, y: 0 },
     ];
     const wandering: SquadronNavigator = {
-      rendezvousFor: (homeX, homeY) => ({ x: homeX, y: homeY }),
-      isInHarbour: () => true,
       legFrom: () => legs[Math.min(drawn++, legs.length - 1)],
     };
     resetSquadrons();
@@ -332,8 +344,6 @@ describe('cruising', () => {
     expect(goals.get(flagshipId)).toEqual(LEG_END);
 
     const barred: SquadronNavigator = {
-      rendezvousFor: (homeX, homeY) => ({ x: homeX, y: homeY }),
-      isInHarbour: () => true,
       legFrom: () => null,
     };
     const arrived = roster.map((boat) =>

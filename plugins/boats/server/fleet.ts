@@ -55,6 +55,7 @@ import {
   squadronPhase,
   resetSquadrons,
   squadronCount,
+  squadronIds,
   squadronMembers,
   squadronOf,
   type SquadronBoat,
@@ -706,12 +707,36 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
   }
 }
 
-function targetFor(boat: Boat, kraken: KrakenTarget | null): KrakenTarget | null {
-  if (kraken === null) return null;
-  if (distance(boat.homeX, boat.homeY, kraken.x, kraken.y) > VILLAGE_PATROL_RANGE_CELLS) {
-    return null;
+/** A kraken within one patrol range of a village answers with the nearest
+ * fleet: that fleet returns to attack it. Boats the kraken is already on
+ * top of fight back in self-defence whether or not a village is near. */
+function krakenNearVillage(kraken: KrakenTarget): boolean {
+  for (const village of villages.values()) {
+    if (distance(village.x, village.y, kraken.x, kraken.y) <= VILLAGE_PATROL_RANGE_CELLS) {
+      return true;
+    }
   }
-  return kraken;
+  return false;
+}
+
+/** Nearest live squadron to a point, by flagship position (ties: lower id). */
+function nearestSquadronTo(x: number, y: number): number | null {
+  let best: number | null = null;
+  let bestSquared = Infinity;
+  for (const squadronId of squadronIds()) {
+    const members = squadronMembers(squadronId);
+    if (members.length === 0) continue;
+    const flagship = boats.find((boat) => boat.id === members[0]);
+    if (flagship === undefined) continue;
+    const dx = flagship.x - x;
+    const dy = flagship.y - y;
+    const squared = dx * dx + dy * dy;
+    if (squared < bestSquared) {
+      bestSquared = squared;
+      best = squadronId;
+    }
+  }
+  return best;
 }
 
 export interface FleetOutcome {
@@ -736,6 +761,28 @@ function assignStationGoals(
 ): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
   if (kraken === null) return goals;
+  // Boats answering the kraken: any boat it is already on top of, plus the
+  // whole of the nearest fleet when a village is threatened. No boat is
+  // recalled by home: fleets stay together and answer as fleets.
+  const answering = new Set<number>();
+  for (let index = 0; index < boats.length; index++) {
+    if (
+      distance(boats[index].x, boats[index].y, kraken.x, kraken.y) <=
+      BOAT_ENGAGEMENT_RANGE_CELLS
+    ) {
+      answering.add(index);
+    }
+  }
+  if (krakenNearVillage(kraken)) {
+    const responder = nearestSquadronTo(kraken.x, kraken.y);
+    if (responder !== null) {
+      const wanted = new Set(squadronMembers(responder));
+      for (let index = 0; index < boats.length; index++) {
+        if (wanted.has(boats[index].id)) answering.add(index);
+      }
+    }
+  }
+  if (answering.size === 0) return goals;
   const slots = slotCountFor(stationRadius);
   const taken = new Set<number>();
   const pointOf = (slot: number): { x: number; y: number } => {
@@ -752,7 +799,7 @@ function assignStationGoals(
   };
   for (let index = 0; index < boats.length; index++) {
     const boat = boats[index];
-    if (targetFor(boat, kraken) === null) continue;
+    if (!answering.has(index)) continue;
     const prev = stickySlotIn(boat.id, 'station');
     if (prev !== null && prev < slots && !taken.has(prev)) {
       const pose = poseOf(prev);
@@ -785,12 +832,10 @@ function assignStationGoals(
 
 function homeBerthFor(
   index: number,
-  kraken: KrakenTarget | null,
   atSea: ReadonlyMap<number, StationGoal>,
   taken: KrakenTarget[],
 ): StationGoal | null {
   const boat = boats[index];
-  if (targetFor(boat, kraken) !== null) return null;
   if (atSea.has(index)) return null;
   const key = villageKey(boat.homeX, boat.homeY);
   const moorings = shipyards.get(key)?.moorings ?? [];
@@ -830,13 +875,14 @@ function homeBerthFor(
 }
 
 function assignHomeBerths(
-  kraken: KrakenTarget | null,
-  atSea: ReadonlyMap<number, StationGoal>,
+  station: ReadonlyMap<number, StationGoal>,
+  cruising: ReadonlyMap<number, StationGoal>,
 ): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
   const taken: KrakenTarget[] = [];
+  const atSea = new Map<number, StationGoal>([...station, ...cruising]);
   for (let index = 0; index < boats.length; index++) {
-    const goal = homeBerthFor(index, kraken, atSea, taken);
+    const goal = homeBerthFor(index, atSea, taken);
     if (goal !== null) goals.set(index, goal);
   }
   return goals;
@@ -1035,15 +1081,6 @@ function squadronNavigator(
   debug: FleetRouteDebug,
 ): SquadronNavigator {
   return {
-    rendezvousFor(homeX: number, homeY: number): SquadronWaypoint | null {
-      const moorings = shipyards.get(villageKey(homeX, homeY))?.moorings ?? [];
-      return moorings.length === 0 ? null : moorings[0];
-    },
-
-    isInHarbour(homeX: number, homeY: number, x: number, y: number): boolean {
-      return distance(x, y, homeX, homeY) <= BERTH_SEARCH_RADIUS_CELLS;
-    },
-
     legFrom(
       fromX: number,
       fromY: number,
@@ -1161,7 +1198,6 @@ function routeLegPoints(
 function assignSquadronGoals(
   world: BoatWorld,
   eroded: TerrainSampler,
-  kraken: KrakenTarget | null,
   dt: number,
   debug: FleetRouteDebug,
   budget: RouteBudget,
@@ -1172,7 +1208,6 @@ function assignSquadronGoals(
   for (let index = 0; index < boats.length; index++) {
     const boat = boats[index];
     if (ranks[index] < HOME_GUARD_BOATS_PER_VILLAGE) continue;
-    if (targetFor(boat, kraken) !== null) continue;
     candidates.push({
       id: boat.id,
       x: boat.x,
@@ -1462,11 +1497,14 @@ function sailBoat(tick: SailTick, index: number): void {
   if (earlier !== undefined && earlier.restSeconds > 0) {
     earlier.restSeconds -= dt;
     tick.debug.tmpRest++;
-    boat.fighting = targetFor(boat, kraken) !== null &&
-      distance(boat.x, boat.y, kraken!.x, kraken!.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
+    boat.fighting =
+      kraken !== null &&
+      goals.has(index) &&
+      distance(boat.x, boat.y, kraken.x, kraken.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
     return;
   }
-  const target = targetFor(boat, kraken);
+  const station = goals.get(index);
+  const target = station !== undefined && kraken !== null ? kraken : null;
   let goalX: number;
   let goalY: number;
   let standoff: number;
@@ -1918,9 +1956,10 @@ export function advanceFleet(
   debug.tver = terrainVersion;
   debug.rver = seaRegions === null ? -1 : seaRegionsVersion;
   debug.rcount = seaRegions === null ? -1 : seaRegions.regionCount;
+  // Squadrons form first: the kraken answer needs live fleets to choose from.
+  const squadronGoals = assignSquadronGoals(world, eroded, dt, debug, budget);
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
-  const squadronGoals = assignSquadronGoals(world, eroded, kraken, dt, debug, budget);
-  const homeGoals = assignHomeBerths(kraken, squadronGoals);
+  const homeGoals = assignHomeBerths(goals, squadronGoals);
 
   const tick: SailTick = {
     world,
@@ -1985,8 +2024,8 @@ export function advanceFleet(
         `maxmove=${debug.tmpMaxMove.toFixed(3)} bigmove=${debug.tmpBigMove} ` +
         `TMPM ${boats.map((b) => `${b.id}:${b.x.toFixed(1)},${b.y.toFixed(1)}`).join(' ')} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()} ` +
-        `form=${formationStats().candidates}/${formationStats().inHarbour}/` +
-        `${formationStats().moored}/${formationStats().crews}/${formationStats().affiliated}`,
+        `form=${formationStats().candidates}/crews=${formationStats().crews}/` +
+        `affiliated=${formationStats().affiliated}/stray=${formationStats().unaffiliated}`,
     );
     if (debug.probe !== null) {
       const p = debug.probe;

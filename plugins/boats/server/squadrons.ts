@@ -5,11 +5,14 @@ export const HOME_GUARD_BOATS_PER_VILLAGE = 0;
 
 export const EXPLORERS_PER_VILLAGE = BOATS_PER_VILLAGE - HOME_GUARD_BOATS_PER_VILLAGE;
 
-export const SQUADRON_MIN_SHIPS = 3;
+export const SQUADRON_MIN_SHIPS = 2;
 
-export const SQUADRON_MAX_SHIPS = 7;
+export const SQUADRON_MAX_SHIPS = 5;
 
-export const SQUADRON_HOME_SPREAD_CELLS = VILLAGE_PATROL_RANGE_CELLS;
+/** Boats within this range of each other (current positions, not homes)
+ * crew into the same squadron. Every boat joins a fleet: stragglers with
+ * no neighbours attach to the nearest crew. */
+export const SQUADRON_FORMATION_SPREAD_CELLS = VILLAGE_PATROL_RANGE_CELLS;
 
 const BOAT_PERSONAL_SPACE_WORLD_UNITS = 0.5;
 export const SQUADRON_MUSTER_RADIUS_CELLS =
@@ -37,8 +40,6 @@ export interface SquadronBoat {
 }
 
 export interface SquadronNavigator {
-  rendezvousFor(homeX: number, homeY: number): SquadronWaypoint | null;
-  isInHarbour(homeX: number, homeY: number, x: number, y: number): boolean;
   legFrom(
     fromX: number,
     fromY: number,
@@ -67,22 +68,19 @@ let nextSquadronId = 1;
 export interface SquadronFormationStats {
   /** Boats considered for affiliation this tick. */
   readonly candidates: number;
-  /** Candidates sitting in their home harbour (formation filter 1). */
-  readonly inHarbour: number;
-  /** In-harbour candidates whose home village has a rendezvous mooring (filter 2). */
-  readonly moored: number;
-  /** Crews currently live (formation needs 3+ neighbouring homes). */
+  /** Crews currently live. */
   readonly crews: number;
   /** Boats currently affiliated into crews. */
   readonly affiliated: number;
+  /** Candidates in no crew (only when no crew exists to join). */
+  readonly unaffiliated: number;
 }
 
 let lastFormation: SquadronFormationStats = {
   candidates: 0,
-  inHarbour: 0,
-  moored: 0,
   crews: 0,
   affiliated: 0,
+  unaffiliated: 0,
 };
 
 export function formationStats(): SquadronFormationStats {
@@ -105,6 +103,10 @@ export function squadronCount(): number {
 
 export function squadronMembers(squadronId: number): readonly number[] {
   return squadrons.get(squadronId)?.members ?? [];
+}
+
+export function squadronIds(): readonly number[] {
+  return [...squadrons.keys()].sort((a, b) => a - b);
 }
 
 export function squadronPhase(squadronId: number): SquadronPhase | null {
@@ -137,9 +139,15 @@ function distanceSquared(ax: number, ay: number, bx: number, by: number): number
   return dx * dx + dy * dy;
 }
 
-function targetSizeFor(homeX: number, homeY: number): number {
-  const span = SQUADRON_MAX_SHIPS - SQUADRON_MIN_SHIPS + 1;
-  return SQUADRON_MIN_SHIPS + (hashCell(homeX, homeY) % span);
+/** Split n boats into crews of SQUADRON_MIN_SHIPS..SQUADRON_MAX_SHIPS.
+ * Balanced (never strands a singleton) for every n >= MIN. */
+function chunkSizes(n: number): number[] {
+  const groups = Math.max(1, Math.ceil(n / SQUADRON_MAX_SHIPS));
+  const base = Math.floor(n / groups);
+  const extra = n % groups;
+  const sizes: number[] = [];
+  for (let g = 0; g < groups; g++) sizes.push(base + (g < extra ? 1 : 0));
+  return sizes;
 }
 
 function pruneSquadrons(candidates: ReadonlySet<number>): void {
@@ -156,70 +164,117 @@ function pruneSquadrons(candidates: ReadonlySet<number>): void {
   }
 }
 
-function formSquadrons(
-  candidates: readonly SquadronBoat[],
-  nav: SquadronNavigator,
-): void {
-  let inHarbour = 0;
-  let moored = 0;
-  const unassigned = candidates.filter((boat) => {
-    if (squadronOfBoat.has(boat.id)) return false;
-    if (!nav.isInHarbour(boat.homeX, boat.homeY, boat.x, boat.y)) return false;
-    inHarbour++;
-    if (nav.rendezvousFor(boat.homeX, boat.homeY) === null) return false;
-    moored++;
-    return true;
-  });
+function formSquadrons(candidates: readonly SquadronBoat[]): void {
+  const byId = new Map<number, SquadronBoat>();
+  for (const boat of candidates) byId.set(boat.id, boat);
+  const unassigned = candidates.filter((boat) => !squadronOfBoat.has(boat.id));
+  // z-order of CURRENT positions: nearby boats crew together, and the
+  // grouping is independent of roster order.
   const ordered = [...unassigned].sort((a, b) => {
-    const ka = zOrderKey(a.homeX, a.homeY);
-    const kb = zOrderKey(b.homeX, b.homeY);
+    const ka = zOrderKey(Math.floor(a.x), Math.floor(a.y));
+    const kb = zOrderKey(Math.floor(b.x), Math.floor(b.y));
     return ka === kb ? a.id - b.id : ka - kb;
   });
 
-  let index = 0;
-  while (index < ordered.length) {
-    const flagship = ordered[index];
-    const rendezvous = nav.rendezvousFor(flagship.homeX, flagship.homeY);
-    if (rendezvous === null) {
-      index++;
-      continue;
+  // Connected components by formation spread (union-find, deterministic).
+  const spreadSquared =
+    SQUADRON_FORMATION_SPREAD_CELLS * SQUADRON_FORMATION_SPREAD_CELLS;
+  const parent = ordered.map((_boat, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[index] !== root) {
+      const next = parent[index];
+      parent[index] = root;
+      index = next;
     }
-    const wanted = targetSizeFor(flagship.homeX, flagship.homeY);
-    const spread = SQUADRON_HOME_SPREAD_CELLS * SQUADRON_HOME_SPREAD_CELLS;
-    const crew: number[] = [];
-    let scan = index;
-    while (scan < ordered.length && crew.length < wanted) {
-      const ship = ordered[scan];
-      const near =
-        distanceSquared(ship.homeX, ship.homeY, flagship.homeX, flagship.homeY) <= spread;
-      if (!near) break;
-      crew.push(ship.id);
-      scan++;
+    return root;
+  };
+  for (let i = 0; i < ordered.length; i++) {
+    for (let j = i + 1; j < ordered.length; j++) {
+      const dx = ordered[i].x - ordered[j].x;
+      const dy = ordered[i].y - ordered[j].y;
+      if (dx * dx + dy * dy <= spreadSquared) {
+        const ri = find(i);
+        const rj = find(j);
+        if (ri !== rj) parent[rj] = ri;
+      }
     }
-    if (crew.length < SQUADRON_MIN_SHIPS) {
-      index++;
-      continue;
-    }
+  }
+  const components = new Map<number, number[]>();
+  for (let i = 0; i < ordered.length; i++) {
+    const root = find(i);
+    const group = components.get(root);
+    if (group === undefined) components.set(root, [i]);
+    else group.push(i);
+  }
+  // Deterministic crew order: by earliest member in z-order.
+  const batches = [...components.values()].sort((a, b) => a[0] - b[0]);
+
+  const createCrew = (memberIds: number[]): void => {
+    const flagship = byId.get(memberIds[0]);
+    if (flagship === undefined) return;
     const id = nextSquadronId++;
     squadrons.set(id, {
       id,
-      members: crew,
-      rendezvous,
+      members: memberIds,
+      rendezvous: { x: flagship.x, y: flagship.y },
       phase: 'mustering',
       musteringSeconds: 0,
       leg: null,
       legsSailed: 0,
       legSeedStep: 0,
     });
-    for (const boatId of crew) squadronOfBoat.set(boatId, id);
-    index = scan;
+    for (const boatId of memberIds) squadronOfBoat.set(boatId, id);
+  };
+
+  const strays: SquadronBoat[] = [];
+  for (const batch of batches) {
+    if (batch.length < SQUADRON_MIN_SHIPS) {
+      for (const index of batch) strays.push(ordered[index]);
+      continue;
+    }
+    let cursor = 0;
+    for (const size of chunkSizes(batch.length)) {
+      const memberIds: number[] = [];
+      for (let n = 0; n < size; n++) memberIds.push(ordered[batch[cursor++]].id);
+      createCrew(memberIds);
+    }
+  }
+  // Every boat joins a fleet: loners attach to the nearest crew with room,
+  // or the nearest crew outright when all are full.
+  for (const stray of strays) {
+    let bestId: number | null = null;
+    let bestFullId: number | null = null;
+    let bestSquared = Infinity;
+    let bestFullSquared = Infinity;
+    for (const squadronId of squadronIds()) {
+      const members = squadrons.get(squadronId)?.members;
+      if (members === undefined || members.length === 0) continue;
+      const flagship = byId.get(members[0]);
+      if (flagship === undefined) continue;
+      const dx = stray.x - flagship.x;
+      const dy = stray.y - flagship.y;
+      const squared = dx * dx + dy * dy;
+      if (squared < bestFullSquared) {
+        bestFullSquared = squared;
+        bestFullId = squadronId;
+      }
+      if (members.length < SQUADRON_MAX_SHIPS && squared < bestSquared) {
+        bestSquared = squared;
+        bestId = squadronId;
+      }
+    }
+    const join = bestId ?? bestFullId;
+    if (join === null) continue;
+    squadrons.get(join)?.members.push(stray.id);
+    squadronOfBoat.set(stray.id, join);
   }
   lastFormation = {
     candidates: candidates.length,
-    inHarbour,
-    moored,
     crews: squadrons.size,
     affiliated: squadronOfBoat.size,
+    unaffiliated: candidates.filter((boat) => !squadronOfBoat.has(boat.id)).length,
   };
 }
 
@@ -326,7 +381,7 @@ export function advanceSquadrons(
   for (const boat of candidates) byId.set(boat.id, boat);
 
   pruneSquadrons(new Set(byId.keys()));
-  formSquadrons(candidates, nav);
+  formSquadrons(candidates);
 
   const goals = new Map<number, SquadronWaypoint>();
   for (const squadron of squadrons.values()) {
