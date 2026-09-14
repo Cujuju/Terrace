@@ -14,6 +14,7 @@ import {
   SEA_LEVEL,
   SNOW_LINE_HEIGHT as WORLD_SNOW_LINE_HEIGHT,
   bandOf,
+  drawnBandOfSample,
   isWater,
 } from '@terrace/shared';
 import { SEA_DEPTH_CUE_FLOOR_HEIGHT } from '../config.ts';
@@ -176,7 +177,12 @@ export function bandPaletteIndex(height: number): number {
     const depth = 0 - bandOf(height);
     return depth >= SEABED_DEPTH_STOPS ? SEABED_DEPTH_STOPS - 1 : depth;
   }
-  const index = FIRST_LAND_PALETTE_INDEX + bandOf(height);
+  // Drawn land: the cap a height renders on is its drawn band, not its raw band.
+  // Heights 8..15 draw on band 1 (height + bias crosses the threshold), so they
+  // take band 1's palette entry. Water keeps raw depth stops (see SEABED tests).
+  const drawn = drawnBandOfSample(height);
+  const band = drawn < 0 ? 0 : drawn;
+  const index = FIRST_LAND_PALETTE_INDEX + band;
   return index > LAST_PALETTE_INDEX ? LAST_PALETTE_INDEX : index;
 }
 

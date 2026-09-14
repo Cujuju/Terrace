@@ -7,7 +7,7 @@ import {
   pulsePeriodSeconds,
   quantiseFill,
 } from './gauge.ts';
-import { currentBrushCost, deniedCount, liveBalance, manaPool } from './state.ts';
+import { currentBrushCost, deniedCount, lastDeniedCost, liveBalance, manaPool } from './state.ts';
 
 const DENIAL_FLASH_MS = 600;
 
@@ -220,6 +220,13 @@ export function ManaGauge(): JSX.Element {
     return pool === null ? 0 : pulsePeriodSeconds(currentBrushCost(), pool.regenPerSecond);
   };
   const grainFall = () => Math.max(0, fillTopY() - GRAIN_START_Y);
+  // Cost hint: the brush cost, plus the last denied cost once a denial pulses.
+  const costHint = () => {
+    const denied = lastDeniedCost();
+    return denied === null
+      ? 'Cost: one click of this brush'
+      : `Cost: one click of this brush — last denied cost ${formatSculptCost(denied)}`;
+  };
 
   return (
     <Show when={manaPool() !== null}>
@@ -434,7 +441,7 @@ export function ManaGauge(): JSX.Element {
 }
           <span
             class="mana-gauge__cost"
-            title="Cost: one click of this brush"
+            title={costHint()}
           >
             {formatSculptCost(currentBrushCost())}
           </span>
