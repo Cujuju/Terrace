@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyBandFill,
+  bandFillAt,
+  bandLevelHeight,
+  BAND_HEIGHT,
   BEDROCK_FLOOR,
   createHeightmap,
   heightAt,
+  readSpans,
   seabedHeight,
   SEA_LEVEL,
   setColumn,
@@ -66,5 +71,75 @@ describe('seabedHeight', () => {
     ]);
     expect(seabedHeight(map, 11, 12)).toBe(-50);
     expect(seabedHeight(map, 11, 12)).toBe(heightAt(map, 11, 12));
+  });
+});
+
+describe('bandFillAt — drag-fill material reach (lane/drag-fill)', () => {
+  // Fill admission is material reach toward the write level, not drawn
+  // coverage: spanIndexCoveringBand rounds caps UP to the drawn level, so a
+  // ceiling that merely touches a drawn band floor must still fill toward
+  // the target. bandFillAt keeps its own raw-ceiling check for this reason.
+  const BAND = 2;
+  const LEVEL = BAND * BAND_HEIGHT;
+
+  it('writes band levels at raw multiples of the band height', () => {
+    expect(LEVEL).toBe(32);
+    expect(bandLevelHeight(BAND)).toBe(LEVEL);
+  });
+
+  it('fills toward the write level when the ceiling only touches the drawn floor', () => {
+    // Drawn floor of band 2 is 24; ceilings 24..31 touch but do not reach 32.
+    for (const h of [24, 25, 31]) {
+      const map = world();
+      setHeight(map, 0, 0, h);
+      const fill = bandFillAt(map, 0, 0, BAND);
+      expect(fill).toEqual({ kind: 'extend', spanIndex: 0 });
+      applyBandFill(map, 0, 0, fill!, LEVEL);
+      expect(heightAt(map, 0, 0)).toBe(LEVEL);
+    }
+  });
+
+  it('skips when solid material already meets or exceeds the write level', () => {
+    for (const h of [LEVEL, LEVEL + BAND_HEIGHT]) {
+      const map = world();
+      setHeight(map, 0, 0, h);
+      expect(bandFillAt(map, 0, 0, BAND)).toBeNull();
+    }
+    // A straddling upper span also reaches the level.
+    const map = world();
+    setColumn(map, 0, 0, [
+      { floor: BEDROCK_FLOOR, ceiling: 16 },
+      { floor: 24, ceiling: 48 },
+    ]);
+    expect(bandFillAt(map, 0, 0, BAND)).toBeNull();
+  });
+
+  it('inserts an overhang across a true gap', () => {
+    const map = world();
+    setColumn(map, 0, 0, [
+      { floor: BEDROCK_FLOOR, ceiling: 16 },
+      { floor: 40, ceiling: 48 },
+    ]);
+    const fill = bandFillAt(map, 0, 0, BAND);
+    expect(fill).toEqual({ kind: 'overhang' });
+    applyBandFill(map, 0, 0, fill!, LEVEL);
+    // Inserted material reaches the write level.
+    const spans = readSpans(map, 0, 0);
+    expect(spans.some((s) => s.floor <= LEVEL && LEVEL <= s.ceiling)).toBe(true);
+  });
+
+  it('keeps a drawn gap layered after the overhang insert', () => {
+    const map = world();
+    setColumn(map, 0, 0, [
+      { floor: BEDROCK_FLOOR, ceiling: 16 },
+      { floor: 64, ceiling: 80 },
+    ]);
+    const fill = bandFillAt(map, 0, 0, BAND);
+    expect(fill).toEqual({ kind: 'overhang' });
+    applyBandFill(map, 0, 0, fill!, LEVEL);
+    expect(readSpans(map, 0, 0)).toEqual([
+      { floor: BEDROCK_FLOOR, ceiling: LEVEL },
+      { floor: 64, ceiling: 80 },
+    ]);
   });
 });
