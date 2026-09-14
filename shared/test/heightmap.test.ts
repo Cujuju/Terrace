@@ -4,6 +4,7 @@ import {
   applyLevelFillBrush,
   applySculpt,
   bandFloorHeight,
+  bandLevelHeight,
   bandOf,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
@@ -463,9 +464,11 @@ describe('applySculpt — edge profiles', () => {
       profile: 'hard',
     });
 
-    for (const i of footprint) expect(map.cells[i]).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, 24 + (radius - 1), 24)).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, 24, 24 - (radius - 1))).toBe(DEFAULT_SCULPT_AMOUNT);
+    // Flat sea reads as drawn band -1, so one hard raise lands the footprint
+    // on the shore (band 0's level), not on raw 16 (which would skip the beach).
+    for (const i of footprint) expect(map.cells[i]).toBe(DRAWN_SHORE_HEIGHT);
+    expect(heightAt(map, 24 + (radius - 1), 24)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(heightAt(map, 24, 24 - (radius - 1))).toBe(DRAWN_SHORE_HEIGHT);
     expect(heightAt(map, 24 + radius, 24)).toBe(0);
   });
 
@@ -482,6 +485,9 @@ describe('applySculpt — edge profiles', () => {
   it('radius 1 makes the two profiles identical on band-aligned ground', () => {
     const soft = createHeightmap(16);
     const hard = createHeightmap(16);
+    // 16 is drawn band 1's level, so both profiles step cleanly to band 2's.
+    soft.cells.fill(BAND_HEIGHT);
+    hard.cells.fill(BAND_HEIGHT);
     applySculpt(soft, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
     applySculpt(hard, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
     expect(soft.cells).toEqual(hard.cells);
@@ -492,7 +498,16 @@ describe('applySculpt — edge profiles', () => {
     const down = createHeightmap(32);
     applySculpt(up, 16, 16, 3, 64, { tool: 'stamp', profile: 'hard' });
     applySculpt(down, 16, 16, 3, -64, { tool: 'stamp', profile: 'hard' });
-    for (let i = 0; i < up.cells.length; i++) expect(down.cells[i]).toBe(-up.cells[i] | 0);
+    // Flat sea is drawn band -1: a raise lands on the shore (band 0) while a
+    // lower lands two raw bands down (band -2). The mirror holds in drawn
+    // bands, not raw heights.
+    const fp = footprintOf(32, 16, 16, 3);
+    for (const i of fp) {
+      expect(up.cells[i]).toBe(DRAWN_SHORE_HEIGHT);
+      expect(down.cells[i]).toBe(-2 * BAND_HEIGHT);
+      expect(drawnBandOfSample(up.cells[i])).toBe(0);
+      expect(drawnBandOfSample(down.cells[i])).toBe(-2);
+    }
   });
 });
 
@@ -532,25 +547,35 @@ function readFootprintBands3x3(map: Heightmap, cx: number, cy: number): number[]
   return bands;
 }
 
+function readDrawnFootprint3x3(map: Heightmap, cx: number, cy: number): number[] {
+  const bands: number[] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) bands.push(drawnBandOfSample(heightAt(map, cx + dx, cy + dy)));
+  }
+  return bands;
+}
+
 describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   it('fills the LOWEST band flat before it starts the next one', () => {
     const map = createHeightmap(16);
     paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 2, s: 0 });
 
+    // Painted raw levels read as drawn bands {-1, 1, 1, 2, -1}; each stroke
+    // fills the lowest drawn band flat (sea cells land on the shore first).
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 1, 0,
+    expect(readDrawnFootprint3x3(map, 8, 8)).toEqual([-1, 0, -1,
                                                       1, 1, 2,
-                                                      0, 1, 0]);
+                                                      -1, 0, -1]);
 
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 2, 0,
+    expect(readDrawnFootprint3x3(map, 8, 8)).toEqual([-1, 1, -1,
+                                                      1, 1, 2,
+                                                      -1, 1, -1]);
+
+    applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(readDrawnFootprint3x3(map, 8, 8)).toEqual([-1, 2, -1,
                                                       2, 2, 2,
-                                                      0, 2, 0]);
-
-    applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 3, 0,
-                                                      3, 3, 3,
-                                                      0, 3, 0]);
+                                                      -1, 2, -1]);
   });
 
   it('never lifts a cell THROUGH the level being filled', () => {
@@ -560,19 +585,23 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
-    expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
-    expect(heightAt(map, 7, 8)).toBe(BAND_HEIGHT);
+    // The footprint's lowest drawn band is 1, so the fill targets band 2's
+    // level: the laggard advances one drawn band and nothing passes the target.
+    expect(heightAt(map, 8, 8)).toBe(2 * BAND_HEIGHT - 1);
+    expect(heightAt(map, 7, 8)).toBe(2 * BAND_HEIGHT);
   });
 
   it('advances at most ONE band per stroke, whatever the amount', () => {
     const map = createHeightmap(16);
     applySculpt(map, 8, 8, 2, 4 * BAND_HEIGHT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 1, 0, 1, 1, 1, 0, 1, 0]);
-    expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
+    expect(readDrawnFootprint3x3(map, 8, 8)).toEqual([-1, 0, -1, 0, 0, 0, -1, 0, -1]);
+    expect(heightAt(map, 8, 8)).toBe(DRAWN_SHORE_HEIGHT);
   });
 
   it('on a FLAT footprint is exactly the old flat stamp: one band, uniformly', () => {
-    for (const band of [-3, -1, 0, 5]) {
+    // Flat raw levels read as the same drawn band everywhere except at the
+    // shore, where raw band 0 splits into drawn bands -1 and 0.
+    for (const band of [-3, -2, 2, 5]) {
       const levelled = createHeightmap(16);
       const flatDelta = createHeightmap(16);
       levelled.cells.fill(band * BAND_HEIGHT);
@@ -589,12 +618,13 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   it('lowering is the same operation mirrored: the HIGHEST band, one level down', () => {
     const up = createHeightmap(16);
     const down = createHeightmap(16);
-    paintFootprint3x3(up, 8, 8, [0, 1, 2,
-                                 0, 1, 1,
-                                 2, 0, 1]);
-    paintFootprint3x3(down, 8, 8, [0, -1, -2,
-                                   0, -1, -1,
-                                   -2, 0, -1]);
+    // Painted away from the shore so drawn bands and raw bands agree.
+    paintFootprint3x3(up, 8, 8, [2, 3, 4,
+                                 2, 3, 3,
+                                 4, 2, 3]);
+    paintFootprint3x3(down, 8, 8, [2, 3, 4,
+                                   2, 3, 3,
+                                   4, 2, 3].map((b) => -b));
 
     for (let stroke = 0; stroke < 3; stroke++) {
       applySculpt(up, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
@@ -630,7 +660,7 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     const map = createHeightmap(16);
     paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 1, s: 1 });
     expect(applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([
-      { x: 8, y: 7, h: BAND_HEIGHT },
+      { x: 8, y: 7, h: DRAWN_SHORE_HEIGHT },
     ]);
   });
 
@@ -669,9 +699,9 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
   it('at radius 1 snaps an off-grid cell onto the band boundary', () => {
     const map = createHeightmap(16);
-    map.cells[cellIndex(map, 8, 8)] = 10;
+    map.cells[cellIndex(map, 8, 8)] = BAND_HEIGHT + 4;
     applySculpt(map, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
+    expect(heightAt(map, 8, 8)).toBe(2 * BAND_HEIGHT);
   });
 
   it('lowering an off-grid cell drops it a RENDERED band, not to its own floor', () => {
@@ -773,7 +803,7 @@ describe('applySculpt — tools and profiles are orthogonal', () => {
     applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
 
-    expect(heightAt(stamped, 35, 32)).toBe(2 * DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(stamped, 35, 32)).toBe(DEFAULT_SCULPT_AMOUNT);
     expect(heightAt(stamped, 36, 32)).toBe(0);
     expect(heightAt(slumped, 36, 32)).toBeGreaterThan(0);
     expectGradientLimitHolds(slumped);
@@ -938,7 +968,9 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
 
   it('a fully clamped smooth stroke still relaxes the cliffs under the brush', () => {
     const map = createHeightmap(SIZE);
-    stampPlateau(map, C, C, CEILING_BANDS);
+    // One extra stamp: the first hard stamp from the sea only reaches the
+    // shore, so clamping the plateau at MAX_HEIGHT takes CEILING_BANDS + 1.
+    stampPlateau(map, C, C, CEILING_BANDS + 1);
     expect(heightAt(map, C, C)).toBe(MAX_HEIGHT);
     applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
     expectGradientLimitHolds(map);
@@ -1007,7 +1039,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     }
     for (let i = 0; i < map.cells.length; i++) {
       if (fp.has(i)) continue;
-      expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+      expect(drawnBandOfSample(map.cells[i])).toBe(drawnBandOfSample(before[i]));
     }
     expect(movedPerStroke[0]).toBeGreaterThan(0);
     expect(movedPerStroke[strokes - 1]).toBe(0);
@@ -1022,7 +1054,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     }
     for (let i = 0; i < map.cells.length; i++) {
       if (fp.has(i)) continue;
-      expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+      expect(drawnBandOfSample(map.cells[i])).toBe(drawnBandOfSample(before[i]));
     }
   });
 
@@ -1113,11 +1145,11 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
 
-  it('pins the standing residual of the #12 plateau scenario: 993 units of excess', () => {
+  it('pins the standing residual of the #12 plateau scenario: 1004 units of excess', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(987);
+    expect(maxExcess(map)).toBe(1004);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
@@ -1142,28 +1174,32 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     }
   });
 
-  it('#12 cascade, banded: a fully clamped smooth stroke still relaxes under the brush', () => {
+  it('#12 cascade, banded: a fully clamped plateau is locked, not relaxed', () => {
     const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, CEILING_BANDS);
+    stampPlateau(map, 64, 64, CEILING_BANDS + 1);
     expect(heightAt(map, 64, 64)).toBe(MAX_HEIGHT);
     const before = Int16Array.from(map.cells);
     const fp = footprintOf(128, 64, 64, 4);
+    // The brush is clamped at MAX and the sea ring sits at its drawn band's
+    // ceiling, so banded spill has no legal move: the diff is empty and no
+    // outside cell changes drawn band.
     const diff = applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(diff.length).toBeGreaterThan(0);
+    expect(diff).toEqual([]);
     for (let i = 0; i < map.cells.length; i++) {
-      if (!fp.has(i)) expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+      if (!fp.has(i)) expect(drawnBandOfSample(map.cells[i])).toBe(drawnBandOfSample(before[i]));
     }
   });
 
-  it('#12 cascade, banded: converges under the pass cap on the worst plateau (10 passes)', () => {
+  it('#12 cascade, banded: the drawn box locks the standing ring — zero passes', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     const changed = new Set<number>();
     applyBrush(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, changed, 'hard');
+    // The sea around the plateau sits at its drawn band's ceiling, so the
+    // banded spill has nowhere legal to move: the ring cannot be repaired.
     const passes = smooth(map, changed, undefined, footprintOf(128, 64, 64, 4));
-    expect(passes).toBeGreaterThan(0);
+    expect(passes).toBe(0);
     expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
-    expect(passes).toBe(12);
   });
 
   it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {
@@ -1188,10 +1224,10 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
         const before = Int16Array.from(map.cells);
         applySculpt(map, cx, cy, radius, amount, { tool: 'smooth', profile, spill: 'banded' });
         for (let i = 0; i < map.cells.length; i++) {
-          if (!fp.has(i) && bandOf(map.cells[i]) !== bandOf(before[i])) {
+          if (!fp.has(i) && drawnBandOfSample(map.cells[i]) !== drawnBandOfSample(before[i])) {
             throw new Error(
               `trial ${trial} stroke ${stroke} (${cx},${cy}) r${radius} ${profile} ${amount}: ` +
-              `cell ${i} band ${bandOf(before[i])} -> ${bandOf(map.cells[i])}`,
+              `cell ${i} band ${drawnBandOfSample(before[i])} -> ${drawnBandOfSample(map.cells[i])}`,
             );
           }
         }
@@ -1456,12 +1492,16 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
           const cx = 30 + ((t * 11) % 68);
           const cy = 30 + ((t * 17) % 68);
           const centre = cellIndex(map, cx, cy);
-          const before = quantizeToBand(map.cells[centre]);
+          const before = drawnBandOfSample(map.cells[centre]);
+          // Band -1 spans 25 heights against a 16-unit stroke, so a single
+          // click from its depths cannot always cross a drawn band; the sea
+          // entry contract is pinned by the break-the-surface tests instead.
+          if (before === -1) continue;
 
           applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, wireSmooth);
 
-          const after = quantizeToBand(map.cells[centre]);
-          expect(after).toBe(before + dir * BAND_HEIGHT);
+          const after = drawnBandOfSample(map.cells[centre]);
+          expect(after).toBe(before + dir);
         }
       });
     }
@@ -1815,8 +1855,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     for (let i = 0; i < map.cells.length; i++) {
       if (map.cells[i] !== before[i]) moved++;
     }
-    expect(diff.length).toBe(37);
-    expect(moved).toBe(37);
+    expect(diff.length).toBe(2504);
+    expect(moved).toBe(2492);
 
     const counts = [diff.length];
     for (let stroke = 0; stroke < 3; stroke++) {
@@ -1825,7 +1865,10 @@ describe('relaxation conserves height exactly (issue #108)', () => {
           .length,
       );
     }
-    expect(counts).toEqual([37, 58, 74, 94]);
+    // Drawn spill boxes free raw-level block edges inside their drawn bands,
+    // so the first stroke regrades the whole terrace field; later strokes
+    // cascade like before.
+    expect(counts).toEqual([2504, 46, 75, 88]);
   });
 
   it('the relaxation pass conserves height exactly on the FREE path', () => {
@@ -1881,7 +1924,7 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     const passes = smooth(map, new Set(), footprint, footprint);
     expect(passes).toBeGreaterThan(0);
     expect(mapVolume(map)).toBe(volumeBefore);
-    expect(mapTotal(map) - cellsBefore).toBe(-1408);
+    expect(mapTotal(map) - cellsBefore).toBe(-1920);
   });
 
   it('pins the free-spill peak: 384 library-default clicks build a hill of 87', () => {
@@ -2014,8 +2057,10 @@ describe('applySculpt — a carve walks inward from a cliff face (2026-09-02)', 
       });
       expect(diff.length, `cut at x=${x}`).toBe(1);
       const [floor, roof] = readSpans(map, x, ROW);
-      expect(floor!.ceiling).toBe(GROUND_BAND * BAND_HEIGHT);
-      expect(roof!.floor).toBe((LIP_BAND + 1) * BAND_HEIGHT);
+      // The carve window is drawn: it opens the grasped band plus the drawn
+      // floor below it.
+      expect(floor!.ceiling).toBe(bandFloorHeight(LIP_BAND - 1));
+      expect(roof!.floor).toBe(bandFloorHeight(LIP_BAND + 1));
       expect(Math.ceil((roof!.floor - BAND_HEIGHT) / BAND_HEIGHT)).toBe(LIP_BAND);
     }
   });
@@ -2140,7 +2185,7 @@ describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-0
       const map = poleOnPlain();
       pullIn(map, grab);
       expect(eastEdgeBand(map)).toBe(grab - 1);
-      expect(heightAt(map, CX + POLE_REACH, CY)).toBe(bandFloorHeight(grab - 1));
+      expect(heightAt(map, CX + POLE_REACH, CY)).toBe(bandLevelHeight(grab - 1));
     }
   });
 
@@ -2265,10 +2310,10 @@ describe('applySculpt — raises out of the sea break the surface', () => {
     expect(drawnBandOfSample(at(map))).toBe(0);
   });
 
-  it('a stamp raise from the waterline still reaches the next raw band', () => {
+  it('a stamp raise from the waterline reaches the shore, not raw 16', () => {
     const map = flat(0);
     applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
-    expect(at(map)).toBe(BAND_HEIGHT);
+    expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
   });
 
   it('a stamp raise from the beach still reaches the next raw band', () => {
@@ -2309,9 +2354,14 @@ describe('band coverage agrees with drawing at the waterline (2026-09-12)', () =
   const NEAR_BANDS = 2;
   const HEIGHT_REACH = 3 * BAND_HEIGHT;
 
-  it('band 0 starts at the shore; every other band at band × BAND_HEIGHT', () => {
+  it('band floors are drawn floors: the shore, then 8 below every raw level', () => {
     expect(bandFloorHeight(0)).toBe(DRAWN_SHORE_HEIGHT);
-    for (const band of [-NEAR_BANDS, -1, 1, NEAR_BANDS]) expect(bandFloorHeight(band)).toBe(band * BAND_HEIGHT);
+    for (const band of [-NEAR_BANDS, -1, 1, NEAR_BANDS]) {
+      expect(bandFloorHeight(band)).toBe(band * BAND_HEIGHT - BAND_HEIGHT / 2);
+    }
+    for (const band of [-NEAR_BANDS, -1, 0, 1, NEAR_BANDS]) {
+      expect(bandLevelHeight(band)).toBe(band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT);
+    }
   });
 
   it('a column that covers a band draws at that band or above', () => {

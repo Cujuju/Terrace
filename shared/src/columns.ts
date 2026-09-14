@@ -1,5 +1,13 @@
-import { BAND_HEIGHT, DRAWN_SHORE_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
-import { cellIndex, cellX, cellY, quantizeToBand, type Heightmap } from './grid.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { cellIndex, cellX, cellY, type Heightmap } from './grid.ts';
+import {
+  bandFloorHeight,
+  bandLevelHeight,
+  drawnBandOfSample,
+  isHeightInBand,
+} from './bands.ts';
+
+export { bandFloorHeight, isHeightInBand } from './bands.ts';
 
 export const BEDROCK_FLOOR = MIN_HEIGHT;
 
@@ -124,13 +132,20 @@ export function assertSingleSpanWorld(map: Heightmap, context: string): void {
   );
 }
 
+/** Canonical drawn cap of a span: the write level of its ceiling's drawn band. */
 export function spanCapHeight(span: Span): number {
-  return quantizeToBand(span.ceiling);
+  return bandLevelHeight(drawnBandOfSample(span.ceiling));
 }
 
+/**
+ * Lowest write level at or above a span's floor: the ceiling of the level
+ * grid the span reaches. A span is drawn exactly when this clears its cap,
+ * which holds exactly when the span covers some band (see
+ * spanIndexCoveringBand).
+ */
 export function spanLowestBandHeight(span: Span): number {
-  const quantized = quantizeToBand(span.floor);
-  return quantized === span.floor ? quantized : quantized + BAND_HEIGHT;
+  const level = bandLevelHeight(drawnBandOfSample(span.floor));
+  return level >= span.floor ? level : bandLevelHeight(drawnBandOfSample(span.floor) + 1);
 }
 
 export function spanUndersideHeight(span: Span): number {
@@ -147,26 +162,18 @@ export function isGapDrawn(lower: Span, upper: Span): boolean {
 
 export const OPEN_COLUMN_SAMPLE = BEDROCK_FLOOR - BAND_HEIGHT;
 
-/** Lowest height inside band k. Band 0 starts at the shore, so a sea-level column is below it, as drawn. */
-export function bandFloorHeight(band: number): number {
-  return band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT;
-}
-
-export function isHeightInBand(height: number, band: number): boolean {
-  return height >= bandFloorHeight(band) && height < bandFloorHeight(band + 1);
-}
-
 export function spanIndexCoveringBand(
   map: Heightmap,
   x: number,
   y: number,
   band: number,
 ): number | null {
-  const threshold = bandFloorHeight(band);
+  const threshold = bandLevelHeight(band);
   const count = spanCount(map, x, y);
   for (let k = 0; k < count; k++) {
     const span = spanAt(map, x, y, k);
-    if (span.floor <= threshold && threshold <= span.ceiling) return k;
+    if (!isSpanDrawn(span)) continue;
+    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return k;
   }
   return null;
 }
@@ -255,13 +262,13 @@ export function columnCoversBand(map: Heightmap, x: number, y: number, band: num
 }
 
 export function columnSampleAtBand(map: Heightmap, x: number, y: number, band: number): number {
-  const threshold = bandFloorHeight(band);
+  const threshold = bandLevelHeight(band);
   const count = spanCount(map, x, y);
   let below = OPEN_COLUMN_SAMPLE;
   for (let k = 0; k < count; k++) {
     const span = spanAt(map, x, y, k);
     if (!isSpanDrawn(span)) continue;
-    if (span.floor <= threshold && threshold <= span.ceiling) return span.ceiling;
+    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return span.ceiling;
     if (span.ceiling < threshold) below = span.ceiling;
   }
   return below;

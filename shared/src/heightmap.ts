@@ -28,6 +28,11 @@ export {
 } from './grid.ts';
 
 import {
+  bandLevelHeight,
+  drawnBandOfSample,
+  stepTowardBand,
+} from './bands.ts';
+import {
   anyColumnLayered,
   applyBandFill,
   bandFillAt,
@@ -57,7 +62,6 @@ import {
   cellY,
   forEachLineCell,
   inBounds,
-  quantizeToBand,
   type Heightmap,
 } from './grid.ts';
 
@@ -265,12 +269,13 @@ function anchoredTargetHeight(
   targetBand: number | null = null,
   spanBand: number | null = null,
 ): number {
-  if (targetBand !== null) return clampHeight(bandFloorHeight(targetBand));
+  if (targetBand !== null) return clampHeight(bandLevelHeight(targetBand));
   const centre = cellIndex(map, cx, cy);
   const k = graspedSpanIndex(map, centre, spanBand);
   const here = k === null ? map.cells[centre]! : graspedCeiling(map, centre, k);
-  // A raise out of the sea must break the surface: SEA_LEVEL still draws as sea; bandFloorHeight(0) is the shore.
-  return clampHeight(bandFloorHeight(bandOf(here) + (raising ? 1 : -1)));
+  // A raise out of the sea must break the surface: SEA_LEVEL still draws as
+  // sea, and stepTowardBand crosses at least one drawn band per press.
+  return clampHeight(stepTowardBand(here, raising));
 }
 
 export function applyBrush(
@@ -355,7 +360,7 @@ export function applyLevelFillBrush(
     forEachFootprintCell(map, cx, cy, radius, (i) => {
       const k = graspedSpanIndex(map, i, spanBand);
       if (k === null) return;
-      const band = bandOf(graspedCeiling(map, i, k));
+      const band = drawnBandOfSample(graspedCeiling(map, i, k));
       if (!surveyed) {
         extremeBand = band;
         surveyed = true;
@@ -366,7 +371,7 @@ export function applyLevelFillBrush(
     if (!surveyed) return;
   }
 
-  const targetHeight = clampHeight(bandFloorHeight(extremeBand + (raising ? 1 : -1)));
+  const targetHeight = clampHeight(bandLevelHeight(extremeBand + (raising ? 1 : -1)));
   fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
 }
 
@@ -405,6 +410,7 @@ function applySoftApron(
   if (amount === 0) return;
   const raising = amount > 0;
   const reach = softApronReachCells(radius);
+  const coreBand = drawnBandOfSample(coreTarget);
   forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, 'soft', 'stamp', 'clicked'), (i) => {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
@@ -419,7 +425,7 @@ function applySoftApron(
       }
     }
     const target = clampHeight(
-      coreTarget + (raising ? -1 : 1) * softApronBandDrop(dist) * BAND_HEIGHT,
+      bandLevelHeight(coreBand + (raising ? -softApronBandDrop(dist) : softApronBandDrop(dist))),
     );
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
@@ -488,7 +494,7 @@ function pushLowerLayers(
 
   const band = topBand - 1;
   if (band <= MIN_BAND || raisedAtBand.length === 0) return;
-  const level = clampHeight(bandFloorHeight(band));
+  const level = clampHeight(bandLevelHeight(band));
 
   const candidates: number[] = [];
   const seen = new Set<number>();
@@ -635,7 +641,7 @@ function applyDragRegion(
   changed: Set<number>,
 ): void {
   // Like anchoredTargetHeight: a drag-raise to the waterline breaks the surface.
-  const targetHeight = clampHeight(bandFloorHeight(targetBand));
+  const targetHeight = clampHeight(bandLevelHeight(targetBand));
   const ragged = profile === 'soft';
 
   const priorSpans = new Map<number, readonly Span[]>();
@@ -690,7 +696,7 @@ function applyDragRegion(
         if (span.ceiling < bandFloorHeight(targetBand)) continue;
         const ground = retreatHeightAt(map, x, y, targetBand);
         if (ground === null) continue;
-        const exposed = Math.max(ground, bandFloorHeight(targetBand - 1));
+        const exposed = Math.max(ground, bandLevelHeight(targetBand - 1));
         if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
           continue;
         }
@@ -930,8 +936,9 @@ export function smooth(
       if (spillFree === undefined || spillFree.has(index)) return null;
       let band = captured.get(index);
       if (band === undefined) {
-        const lo = bandOf(cells[index - viewBase]) * BAND_HEIGHT;
-        band = { lo, hi: lo + BAND_HEIGHT - 1 };
+        const sampled = drawnBandOfSample(cells[index - viewBase]);
+        const lo = bandFloorHeight(sampled);
+        band = { lo, hi: bandFloorHeight(sampled + 1) - 1 };
         captured.set(index, band);
       }
       return band;
