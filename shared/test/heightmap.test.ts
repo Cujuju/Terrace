@@ -849,7 +849,7 @@ describe('sculptDisplacementUnits', () => {
   it('equals the volume applyBrush actually moves, for every radius × profile', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, 'stamp')).toBe(
+        expect(sculptDisplacementUnits(radius, 'stamp', profile)).toBe(
           observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),
         );
       }
@@ -859,7 +859,7 @@ describe('sculptDisplacementUnits', () => {
   it('prices a lower exactly like the raise that undoes it', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, 'stamp')).toBe(
+        expect(sculptDisplacementUnits(radius, 'stamp', profile)).toBe(
           observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT),
         );
       }

@@ -140,45 +140,47 @@ interface Mark {
 const SIMULATION_SPAN_CELLS =
   2 * (sculptSweepRadius(MAX_BRUSH_RADIUS, 'soft', 'stamp', 'clicked') + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
 
-const SIMULATION_GROUND_HEIGHT = 0;
+// Dry band-aligned simulation ground: at sea level, raise and lower
+// simulate different footprints, so the outline used to change size with
+// sculpt direction. Mid-terrain ground behaves the same both ways.
+const SIMULATION_GROUND_HEIGHT = 8 * BAND_HEIGHT;
 
-function oneClickMark(
-  radius: number,
-  tool: SculptTool,
-  profile: SculptProfile,
-  dir: SculptDir,
-): Mark {
-  const map = createHeightmap(SIMULATION_SPAN_CELLS);
-  const centre = SIMULATION_SPAN_CELLS >> 1;
-  map.cells.fill(SIMULATION_GROUND_HEIGHT);
-
-  applySculpt(
-    map,
-    centre,
-    centre,
-    radius,
-    DEFAULT_SCULPT_AMOUNT * dir,
-    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
-  );
-
+function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile): Mark {
   const keys = new Set<string>();
   const cells: (readonly [number, number])[] = [];
-  for (let j = 0; j < SIMULATION_SPAN_CELLS; j++) {
-    for (let i = 0; i < SIMULATION_SPAN_CELLS; i++) {
-      // Drawn-contract footprint: a click can move heights within one drawn
-      // band (sea 0 -> shore 1, sea 0 -> band -1 level -16), so edited cells
-      // are detected by height change, not band change.
-      if (map.cells[j * SIMULATION_SPAN_CELLS + i]! === SIMULATION_GROUND_HEIGHT) continue;
-      const dx = i - centre;
-      const dy = j - centre;
-      keys.add(`${dx},${dy}`);
-      cells.push([dx, dy]);
+  // The outline is direction-independent: a raise and a lower stamp the
+  // same cells on typical terrain, so the mark unions both directions and
+  // never changes size with the sculpt mode.
+  for (const dir of SCULPT_DIRECTIONS) {
+    const map = createHeightmap(SIMULATION_SPAN_CELLS);
+    const centre = SIMULATION_SPAN_CELLS >> 1;
+    map.cells.fill(SIMULATION_GROUND_HEIGHT);
+
+    applySculpt(
+      map,
+      centre,
+      centre,
+      radius,
+      DEFAULT_SCULPT_AMOUNT * dir,
+      sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
+    );
+
+    for (let j = 0; j < SIMULATION_SPAN_CELLS; j++) {
+      for (let i = 0; i < SIMULATION_SPAN_CELLS; i++) {
+        // Edited cells are detected by height change, not band change: a
+        // soft edge can move heights within one drawn band.
+        if (map.cells[j * SIMULATION_SPAN_CELLS + i]! === SIMULATION_GROUND_HEIGHT) continue;
+        const dx = i - centre;
+        const dy = j - centre;
+        const key = `${dx},${dy}`;
+        if (keys.has(key)) continue;
+        keys.add(key);
+        cells.push([dx, dy]);
+      }
     }
   }
   if (cells.length === 0) {
-    throw new RangeError(
-      `brush radius ${radius} (${tool}, ${profile}, dir ${dir}) renders no change`,
-    );
+    throw new RangeError(`brush radius ${radius} (${tool}, ${profile}) renders no change`);
   }
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
@@ -262,13 +264,8 @@ interface BrushGeometry {
   readonly cellGrid: BufferGeometry;
 }
 
-function brushGeometry(
-  radius: number,
-  tool: SculptTool,
-  profile: SculptProfile,
-  dir: SculptDir,
-): BrushGeometry {
-  const mark = oneClickMark(radius, tool, profile, dir);
+function brushGeometry(radius: number, tool: SculptTool, profile: SculptProfile): BrushGeometry {
+  const mark = oneClickMark(radius, tool, profile);
   const outline = markOutline(radius, mark);
   const drop = skirtDropWorldUnits(mark);
 
@@ -345,28 +342,17 @@ export function createBrushPreview(
 ): BrushPreview {
   const edgeClip = createWorldEdgeClip();
   const geometries = new Map<string, BrushGeometry>();
-  const key = (
-    radius: number,
-    tool: SculptTool,
-    profile: SculptProfile,
-    dir: SculptDir,
-  ): string => `${radius}|${tool}|${profile}|${dir}`;
+  const key = (radius: number, tool: SculptTool, profile: SculptProfile): string =>
+    `${radius}|${tool}|${profile}`;
   for (const r of BRUSH_RADII) {
     for (const tool of SCULPT_TOOLS) {
       if (tool === 'drag' || tool === 'carve') continue;
       for (const profile of SCULPT_PROFILES) {
-        for (const dir of SCULPT_DIRECTIONS) {
-          geometries.set(key(r, tool, profile, dir), brushGeometry(r, tool, profile, dir));
-        }
+        geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
       }
     }
   }
-  const initialKey = key(
-    MIN_BRUSH_RADIUS,
-    SCULPT_TOOLS[0]!,
-    SCULPT_PROFILES[0]!,
-    SCULPT_DIRECTIONS[0]!,
-  );
+  const initialKey = key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!);
   const initial = geometries.get(initialKey)!;
 
   const material = new LineBasicMaterial({
@@ -543,7 +529,7 @@ export function createBrushPreview(
       };
 
       if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
-        if (!useFootprint(key(brush.radius, SEED_TOOL, SEED_PROFILE, brush.dir))) return;
+        if (!useFootprint(key(brush.radius, SEED_TOOL, SEED_PROFILE))) return;
         tintFootprint();
         placeFootprint();
         if (hover.face === 'riser') {
@@ -559,8 +545,8 @@ export function createBrushPreview(
         return;
       }
       const wanted = seeding
-        ? key(brush.radius, SEED_TOOL, SEED_PROFILE, brush.dir)
-        : key(brush.radius, brush.tool, brush.profile, brush.dir);
+        ? key(brush.radius, SEED_TOOL, SEED_PROFILE)
+        : key(brush.radius, brush.tool, brush.profile);
       if (!useFootprint(wanted)) return;
       tintFootprint();
       paintFlatMark();
