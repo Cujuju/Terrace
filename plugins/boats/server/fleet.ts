@@ -352,10 +352,10 @@ interface Voyage {
   goalX: number;
   goalY: number;
   noProgressSeconds: number;
-  /** Seconds without useful route progress: no route held, or a parked
-   * route that never advances. Any movement counts for stuck detection, so
-   * direct-steer creep and parked routes need their own starvation clock to
-   * escalate rescue and leg re-plans. */
+  /** Seconds with no route AND no net motion. Per-tick movement lies:
+   * dithering boats take full strides that sum to zero, and resync
+   * reports progress without displacement. Only a multi-tick window of
+   * net displacement is honest, so this accrues in whole windows. */
   nullSeconds: number;
   poolTried: boolean;
   slot: number | null;
@@ -363,6 +363,15 @@ interface Voyage {
   heldTicks: number;
   sailedFrom: { x: number; y: number } | null;
   restSeconds: number;
+  /** Goal-closure window: range to the goal and route progress at the
+   * window start, plus its age in ticks. A routed boat progresses by
+   * following its route (index advances); a routeless boat progresses by
+   * closing on the goal. Orbiting a slot advances neither: the index sits
+   * at zero while the boat circles off-route. Displacement alone lies
+   * (dithering takes full strides summing to zero). */
+  anchorRange: number;
+  anchorRouteIndex: number;
+  anchorTicks: number;
 }
 
 const HELD_DISPLACEMENT_FRACTION = STRIDE_MIN_FRACTION / 2;
@@ -370,6 +379,11 @@ const HELD_DISPLACEMENT_FRACTION = STRIDE_MIN_FRACTION / 2;
 const CROWD_REST_SECONDS = 5;
 
 const HELD_TICKS_BEFORE_KEDGE = 5;
+
+/** Starvation window: goal closure is judged over this many ticks, so
+ * orbiting a slot (full strides, zero closure) cannot pass as progress.
+ * Fighting boats are exempt: holding station is tactical. */
+const STARVATION_WINDOW_TICKS = 40;
 
 type BerthList = 'station' | 'home' | 'squadron';
 
@@ -957,6 +971,17 @@ interface FleetRouteDebug {
   fleetSearches: number;
   fleetHold: number;
   fleetCohesion: number;
+  /** TEMP-DEBUG (revert): sailBoat outcome histogram per tick. */
+  tmpRefloat: number;
+  tmpRest: number;
+  tmpSettle: number;
+  tmpProbe: number;
+  tmpRoute: number;
+  tmpDirect: number;
+  tmpNoMove: number;
+  tmpStrideZero: number;
+  tmpMaxMove: number;
+  tmpBigMove: number;
 }
 
 function createFleetRouteDebug(): FleetRouteDebug {
@@ -990,6 +1015,16 @@ function createFleetRouteDebug(): FleetRouteDebug {
     fleetSearches: 0,
     fleetHold: 0,
     fleetCohesion: 0,
+    tmpRefloat: 0,
+    tmpRest: 0,
+    tmpSettle: 0,
+    tmpProbe: 0,
+    tmpRoute: 0,
+    tmpDirect: 0,
+    tmpNoMove: 0,
+    tmpStrideZero: 0,
+    tmpMaxMove: 0,
+    tmpBigMove: 0,
     sailRescue: 0,
   };
 }
@@ -1391,10 +1426,32 @@ function sailBoat(tick: SailTick, index: number): void {
     earlier.heldTicks = moved < step * HELD_DISPLACEMENT_FRACTION ? earlier.heldTicks + 1 : 0;
     earlier.sailedFrom = null;
   }
+  if (earlier !== undefined && !boat.fighting) {
+    earlier.anchorTicks++;
+    if (earlier.anchorTicks >= STARVATION_WINDOW_TICKS) {
+      const range = distance(boat.x, boat.y, earlier.goalX, earlier.goalY);
+      const closed = earlier.anchorRange - range;
+      const followed =
+        earlier.route !== null && earlier.routeIndex > earlier.anchorRouteIndex;
+      const progressed = earlier.route === null ? closed >= step : followed;
+      if (!progressed) {
+        earlier.noProgressSeconds += STARVATION_WINDOW_TICKS * dt;
+        if (earlier.route === null) earlier.nullSeconds += STARVATION_WINDOW_TICKS * dt;
+      } else {
+        earlier.noProgressSeconds = 0;
+        earlier.nullSeconds = 0;
+        earlier.poolTried = false;
+      }
+      earlier.anchorRange = range;
+      earlier.anchorRouteIndex = earlier.routeIndex;
+      earlier.anchorTicks = 0;
+    }
+  }
   const manoeuvrable = isManoeuvrablePose(world, eroded, boat.x, boat.y, boat.heading, step);
   if (!manoeuvrable) {
     boat.fighting = false;
     refloat(world, eroded, boat, step);
+    tick.debug.tmpRefloat++;
     if (earlier !== undefined) earlier.heldTicks = 0;
     return;
   }
@@ -1404,6 +1461,7 @@ function sailBoat(tick: SailTick, index: number): void {
   }
   if (earlier !== undefined && earlier.restSeconds > 0) {
     earlier.restSeconds -= dt;
+    tick.debug.tmpRest++;
     boat.fighting = targetFor(boat, kraken) !== null &&
       distance(boat.x, boat.y, kraken!.x, kraken!.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
     return;
@@ -1460,11 +1518,15 @@ function sailBoat(tick: SailTick, index: number): void {
 
   let voyage = voyages.get(boat.id);
   const settle = (holdX: number, holdY: number): void => {
+    tick.debug.tmpSettle++;
     if (voyage !== undefined) {
       adoptGoal(holdX, holdY);
       voyage.noProgressSeconds = 0;
       voyage.nullSeconds = 0;
       voyage.poolTried = false;
+      voyage.anchorRange = 0;
+      voyage.anchorRouteIndex = 0;
+      voyage.anchorTicks = 0;
     }
   };
   const adoptGoal = (holdX: number, holdY: number): void => {
@@ -1507,13 +1569,19 @@ function sailBoat(tick: SailTick, index: number): void {
       heldTicks: 0,
       sailedFrom: null,
       restSeconds: 0,
+      anchorRange: distance(boat.x, boat.y, goalX, goalY),
+      anchorRouteIndex: 0,
+      anchorTicks: 0,
     };
     voyages.set(boat.id, voyage);
   }
+  // The stuck gate is inclusive: windowed accrual lands on exactly
+  // BOAT_STUCK_SECONDS after two stagnant windows, matching the old
+  // per-tick cadence that kept approaches fresh.
   if (
     voyage.route === null ||
     distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS ||
-    voyage.noProgressSeconds > BOAT_STUCK_SECONDS
+    voyage.noProgressSeconds >= BOAT_STUCK_SECONDS
   ) {
     const debug = tick.debug;
     debug.sailPlans++;
@@ -1556,8 +1624,10 @@ function sailBoat(tick: SailTick, index: number): void {
       }
       voyage.goalX = goalX;
       voyage.goalY = goalY;
-      voyage.noProgressSeconds = 0;
-      voyage.poolTried = false;
+      if (live.cells !== null) {
+        voyage.noProgressSeconds = 0;
+        voyage.poolTried = false;
+      }
     } else if (
       squadron !== undefined &&
       squadronId !== null &&
@@ -1655,8 +1725,10 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.routeIndex = 0;
       voyage.goalX = goalX;
       voyage.goalY = goalY;
-      voyage.noProgressSeconds = 0;
-      if (plan !== null) voyage.poolTried = false;
+      if (plan !== null) {
+        voyage.noProgressSeconds = 0;
+        voyage.poolTried = false;
+      }
       if (squadron !== undefined && squadronId !== null && voyage.route !== null) {
         const cells = [...voyage.route];
         tick.fleetSearched.add(squadronId);
@@ -1706,12 +1778,11 @@ function sailBoat(tick: SailTick, index: number): void {
     const probeY = boat.y + ((goalY - boat.y) / range) * stride;
     if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
       // Blocked, not arrived: adopt the goal (so drift tracking stays
-      // honest) but hold position WITHOUT settling. A blocked tick is a
-      // starving tick: advance the clocks here (this branch returns before
-      // the helm) so rescue / leg re-plans can answer a persistent block.
+      // honest) but hold position WITHOUT settling. Starvation is judged
+      // by the net-motion window at the top of sailBoat, which already ran
+      // this tick, so a persistent block escalates to rescue / re-plan.
       adoptGoal(goalX, goalY);
-      voyage.noProgressSeconds += dt;
-      if (!boat.fighting) voyage.nullSeconds += dt;
+      tick.debug.tmpProbe++;
       return;
     }
   }
@@ -1742,16 +1813,28 @@ function sailBoat(tick: SailTick, index: number): void {
   voyage.route = helm.route;
   voyage.routeIndex = helm.routeIndex;
   if (result.replanned) tick.debug.followReplans++;
-  if (result.replanned || result.progressed) {
+  if (voyage.route !== null &&
+    voyage.sailedFrom !== null &&
+    distance(boat.x, boat.y, voyage.sailedFrom.x, voyage.sailedFrom.y) < 0.001) {
+    tick.debug.tmpNoMove++;
+  }
+  if (voyage.route !== null && voyage.sailedFrom !== null) {
+    const tmpMove = distance(boat.x, boat.y, voyage.sailedFrom.x, voyage.sailedFrom.y);
+    if (tmpMove > tick.debug.tmpMaxMove) tick.debug.tmpMaxMove = tmpMove;
+    if (tmpMove > 0.1) tick.debug.tmpBigMove++;
+  }
+  if (stride < 0.001) tick.debug.tmpStrideZero++;
+  if (voyage.route !== null) tick.debug.tmpRoute++;
+  else tick.debug.tmpDirect++;
+  // Only a genuine replan resets the stuck clock: resync "progress" without
+  // displacement is the lie that hid dithering fleets. Net motion is judged
+  // by the window at the top of sailBoat.
+  if (result.replanned) {
     voyage.noProgressSeconds = 0;
     voyage.poolTried = false;
-  } else {
-    voyage.noProgressSeconds += dt;
   }
-  if (!boat.fighting) {
-    if (voyage.route !== null && (result.replanned || result.progressed)) voyage.nullSeconds = 0;
-    else voyage.nullSeconds += dt;
-  }
+  // Routeless time accrues in the net-motion window above; per-tick
+  // accrual here would re-arm the dithering lie.
 }
 
 function resolveOverlaps(
@@ -1896,6 +1979,11 @@ export function advanceFleet(
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
         `legroute=${debug.legRouted}/${debug.legStraight} legreplan=${debug.legReplans} ` +
+        `TMP reflow=${debug.tmpRefloat} rest=${debug.tmpRest} settle=${debug.tmpSettle} ` +
+        `probe=${debug.tmpProbe} route=${debug.tmpRoute} direct=${debug.tmpDirect} ` +
+        `nomove=${debug.tmpNoMove} stride0=${debug.tmpStrideZero} ` +
+        `maxmove=${debug.tmpMaxMove.toFixed(3)} bigmove=${debug.tmpBigMove} ` +
+        `TMPM ${boats.map((b) => `${b.id}:${b.x.toFixed(1)},${b.y.toFixed(1)}`).join(' ')} ` +
         `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()} ` +
         `form=${formationStats().candidates}/${formationStats().inHarbour}/` +
         `${formationStats().moored}/${formationStats().crews}/${formationStats().affiliated}`,
@@ -1926,6 +2014,7 @@ export function advanceFleet(
           `flag=${flagId} null=${flagVoyage?.nullSeconds.toFixed(1) ?? '?'} ` +
           `stuck=${flagVoyage?.noProgressSeconds.toFixed(1) ?? '?'} ` +
           `phase=${squadronPhase(chain.id) ?? '?'} ` +
+          `TMP fpos=${flagPos === null ? '?' : `${flagPos.x.toFixed(2)},${flagPos.y.toFixed(2)}`} ` +
           `route=${flagVoyage?.route?.length ?? 0} dist=${flagDist}`,
       );
     }
@@ -1990,6 +2079,30 @@ export function* flammableBoats(): Generator<{
 export function boatPosition(id: number): { x: number; y: number } | null {
   const boat = boats.find((candidate) => candidate.id === id);
   return boat === undefined ? null : { x: boat.x, y: boat.y };
+}
+
+/** TEMP-DEBUG (revert): voyage internals for engagement tracing. */
+export function tmpVoyageOf(id: number): {
+  route: number;
+  routeIndex: number;
+  noProgress: number;
+  nullSeconds: number;
+  poolTried: boolean;
+  goalX: number;
+  goalY: number;
+} | null {
+  const v = voyages.get(id);
+  return v === undefined
+    ? null
+    : {
+        route: v.route?.length ?? 0,
+        routeIndex: v.routeIndex,
+        noProgress: v.noProgressSeconds,
+        nullSeconds: v.nullSeconds,
+        poolTried: v.poolTried,
+        goalX: v.goalX,
+        goalY: v.goalY,
+      };
 }
 
 export function burnBoats(ids: readonly number[]): number {
