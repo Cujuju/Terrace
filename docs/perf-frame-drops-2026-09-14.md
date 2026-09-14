@@ -174,6 +174,21 @@ Fixed-script verification (same stack, fresh tab, overview cam 80): isolated `dr
 full-frame 128 ≥ max isolated 76. Old field gave 302→497 rising and ~19900 cumulative on the
 same kind of run. Fix confirmed; prior tables stay discarded.
 
+## Phase B2 — flora double-draw hunt: NO BUG (no code change)
+
+Verdict: flora draws ≈ drawables (≈13–15 live). The 2× was probe noise. Three measures agree:
+
+1. Differencing ablation, hide-flora-alone, 3 symmetric rounds: 247→234 (Δ13) every round.
+2. Same-session isolation: 77 − 64 baseline = 13.
+3. Drawables census: 15 visible meshes (2 culled or count-0).
+
+The E/G "30" readings (83−53, 94−64) were single-sample isolation transients — same class
+as the void-stars +18 re-bake artifact already noted in Caveats. Lesson: for single layers,
+trust symmetric differencing over one-shot isolation. Code inspection corroborates: single
+materials per mesh, no geometry groups, no second pass anywhere (picking is raycast-only,
+reveal/ground-shade add no renders, flora never calls applyRevealClip).
+No fix committed; nothing to optimize here — flora's 15 draws are legitimate.
+
 ## Phase B1 — precipitation 30 Hz + bounds (client/src/plugins/kit/precipitation.ts)
 
 Gated `advance()` position rewrites to 30 Hz (opacity/haze/deck still per-frame),
