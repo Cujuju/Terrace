@@ -9,12 +9,18 @@ import {
   positionGeometry,
   sin,
   smoothstep,
+  varying,
   vec4,
 } from 'three/tsl';
 import type { Node } from 'three/webgpu';
 
 // The quad is authored two units across, so this is the offset from its centre in half-widths.
+// Vertex stage only: puffBillboard reads the raw attribute.
 export const PUFF_QUAD = positionGeometry.xy;
+
+// Fragment-stage copy of the offset above, on an explicit varying: sharing one
+// node between positionNode and the fragment draws full quads on WebGPU.
+export const PUFF_QUAD_FRAGMENT = varying(PUFF_QUAD, 'puffQuad');
 
 export function puffInstanceBase(instanceMatrix: Node<'mat4'>): Node<'vec3'> {
   return instanceMatrix.mul(vec4(0, 0, 0, 1)).xyz;
@@ -34,7 +40,9 @@ export interface PuffMask {
 }
 
 export function puffMask(innerEdge: Node<'float'> | number, lobing?: PuffLobing): PuffMask {
-  const radius = lobing ? length(PUFF_QUAD).div(puffLobeScale(lobing)) : length(PUFF_QUAD);
+  const radius = lobing
+    ? length(PUFF_QUAD_FRAGMENT).div(puffLobeScale(lobing))
+    : length(PUFF_QUAD_FRAGMENT);
   const puff = float(1).sub(smoothstep(innerEdge, 1, radius));
   return { puff, discarded: puff.lessThanEqual(0) };
 }
@@ -54,7 +62,7 @@ const TWO_PI = Math.PI * 2;
 
 export function puffLobeScale(lobing: PuffLobing): Node<'float'> {
   const perHarmonic = 1 / PUFF_LOBE_HARMONICS.length;
-  const lobeAngle = atan(PUFF_QUAD.y, PUFF_QUAD.x);
+  const lobeAngle = atan(PUFF_QUAD_FRAGMENT.y, PUFF_QUAD_FRAGMENT.x);
   const terms = PUFF_LOBE_HARMONICS.map(({ k, phaseHash }) =>
     sin(lobeAngle.mul(k).add(fract(lobing.seed.mul(phaseHash)).mul(TWO_PI))),
   ).reduce((sum, term) => sum.add(term));

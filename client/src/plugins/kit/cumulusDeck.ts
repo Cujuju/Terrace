@@ -31,7 +31,7 @@ import {
 } from 'three/tsl';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
-  PUFF_QUAD,
+  PUFF_QUAD_FRAGMENT,
   puffAlphaDiscard,
   puffBillboard,
   puffLobeScale,
@@ -205,7 +205,7 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const mask = puffMask(PUFF_SOFT_EDGE_FRACTION, lobing);
   const alpha = mask.puff.mul(puffFade);
 
-  const lobedQuad = PUFF_QUAD.div(puffLobeScale(lobing));
+  const lobedQuad = PUFF_QUAD_FRAGMENT.div(puffLobeScale(lobing));
   const puffSphere = vec3(lobedQuad, sqrt(max(0, float(1).sub(dot(lobedQuad, lobedQuad)))));
   const puffUp = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz;
 

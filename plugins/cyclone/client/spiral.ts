@@ -31,7 +31,7 @@ import {
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { CYCLONE_EYE_RADIUS_FRACTION, CYCLONE_RADIUS_CELLS } from '../protocol.ts';
 import {
-  PUFF_QUAD,
+  PUFF_QUAD_FRAGMENT,
   puffAlphaDiscard,
   puffBillboard,
   puffMask,
@@ -263,7 +263,10 @@ export function createSpiral(
   discard(material, puffAlphaDiscard(alpha));
   compose(material, 'opacity', (previous) => previous.mul(alpha));
 
-  const puffSphere = vec3(PUFF_QUAD, sqrt(max(0, float(1).sub(dot(PUFF_QUAD, PUFF_QUAD)))));
+  const puffSphere = vec3(
+    PUFF_QUAD_FRAGMENT,
+    sqrt(max(0, float(1).sub(dot(PUFF_QUAD_FRAGMENT, PUFF_QUAD_FRAGMENT)))),
+  );
   const puffUp = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz;
   compose(material, 'normal', () => normalize(mix(puffSphere, puffUp, PUFF_NORMAL_FLATNESS)));
 
