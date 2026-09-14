@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Scene, type BufferAttribute, Line, LineSegments, Mesh, type Object3D, type Material } from 'three';
 import {
+  BAND_HEIGHT,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
@@ -75,26 +76,31 @@ function renderedCells(
   radius: number,
   tool: 'stamp' | 'smooth',
   profile: 'soft' | 'hard',
-  dir: 1 | -1,
 ): Set<string> {
+  // Mirrors the preview probe: dry band-aligned ground, union of both
+  // directions, so the outline never changes with sculpt mode.
+  const DRY_GROUND = 8 * BAND_HEIGHT;
   const span = 2 * (MAX_BRUSH_RADIUS + 2);
   const centre = span >> 1;
-  const map = createHeightmap(span);
-  applySculpt(
-    map,
-    centre,
-    centre,
-    radius,
-    DEFAULT_SCULPT_AMOUNT * dir,
-    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
-  );
   const changed = new Set<string>();
-  for (let j = 0; j < span; j++) {
-    for (let i = 0; i < span; i++) {
-      // Same drawn-contract oracle as the preview probe: edited cells are
-      // detected by height change (a click can stay inside one drawn band).
-      if (map.cells[j * span + i]! !== 0) {
-        changed.add(`${i - centre},${j - centre}`);
+  for (const dir of [1, -1] as const) {
+    const map = createHeightmap(span);
+    map.cells.fill(DRY_GROUND);
+    applySculpt(
+      map,
+      centre,
+      centre,
+      radius,
+      DEFAULT_SCULPT_AMOUNT * dir,
+      sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
+    );
+    for (let j = 0; j < span; j++) {
+      for (let i = 0; i < span; i++) {
+        // Edited cells are detected by height change, not band change: a
+        // soft edge can move heights within one drawn band.
+        if (map.cells[j * span + i]! !== DRY_GROUND) {
+          changed.add(`${i - centre},${j - centre}`);
+        }
       }
     }
   }
@@ -210,7 +216,7 @@ describe('createBrushPreview', () => {
             preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, { radius, tool, profile, dir });
             const points = outlinePoints(line);
 
-            const rendered = renderedCells(radius, tool, profile, dir);
+            const rendered = renderedCells(radius, tool, profile);
             const scan = footprintReach(radius) + 2;
             for (let dz = -scan; dz <= scan; dz++) {
               for (let dx = -scan; dx <= scan; dx++) {

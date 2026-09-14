@@ -65,6 +65,11 @@ export const MAX_MERGED_POLYGON_VERTICES = 512;
 export const CHUNK_POLYGON_WORK_BUDGET =
   MAX_MERGED_POLYGON_VERTICES * MAX_MERGED_POLYGON_VERTICES;
 
+// Largest plan/emission triangle shortfall that still renders organically.
+// Observed sliver stalls miss 2-4 triangles of several thousand; anything
+// larger keeps the blocky-fallback containment.
+const CAP_SLIVER_SHORTFALL = 8;
+
 const COMPONENTS_PER_POSITION = 3;
 // Dead: flat shading derives its normal from position derivatives, so no vertex carries one.
 // export const COMPONENTS_PER_NORMAL = 4;
@@ -721,12 +726,15 @@ export function writeChunkVertexData(
     }
   }
 
+  // Ear clipping can stall on a sub-guard sliver and cover fewer triangles
+  // than planned. Fewer cannot overflow capacity, so only a gross shortfall
+  // still falls back; over-budget never gets here.
+  const plannedTotal = capTriangles + skirtTriangles + ceilingTriangles;
+  const emittedTotal = capEmitted + skirtEmitted + ceilingEmitted;
   let usedFallback = overBudget;
   if (
     !overBudget &&
-    (capEmitted !== capTriangles ||
-      skirtEmitted !== skirtTriangles ||
-      ceilingEmitted !== ceilingTriangles)
+    (emittedTotal > plannedTotal || plannedTotal - emittedTotal > CAP_SLIVER_SHORTFALL)
   ) {
     usedFallback = true;
   }

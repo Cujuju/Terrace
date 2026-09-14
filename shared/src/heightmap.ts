@@ -729,7 +729,11 @@ function applyDragRegion(
   if (raised.length > 0) pushLowerLayers(map, raised, targetBand, hadCapAtBandBefore, record, changed);
 }
 
-export function sculptDisplacementUnits(radius: number, tool: SculptTool): number {
+export function sculptDisplacementUnits(
+  radius: number,
+  tool: SculptTool,
+  profile: SculptProfile = 'hard',
+): number {
   assertBrushRadius(radius);
 
   if (tool === 'carve') {
@@ -740,12 +744,22 @@ export function sculptDisplacementUnits(radius: number, tool: SculptTool): numbe
     return cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
   }
 
+  const perCell =
+    DEFAULT_SCULPT_AMOUNT < 0 ? -DEFAULT_SCULPT_AMOUNT : DEFAULT_SCULPT_AMOUNT;
+  // A soft clicked stamp moves the linear falloff amount per cell, not the
+  // full fill, so its price is the graduated volume it actually moves.
+  if (tool === 'stamp' && profile === 'soft') {
+    let total = 0;
+    forEachFootprintOffset(radius, (_dx, _dy, dist) => {
+      total += Math.trunc((perCell * (radius - dist)) / radius);
+    });
+    return total;
+  }
+
   let cells = 0;
   forEachFootprintOffset(radius, () => {
     cells++;
   });
-  const perCell =
-    DEFAULT_SCULPT_AMOUNT < 0 ? -DEFAULT_SCULPT_AMOUNT : DEFAULT_SCULPT_AMOUNT;
   return cells * perCell;
 }
 
@@ -1098,7 +1112,10 @@ export function applySculpt(
   const skirtCoreTarget = softCore
     ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
     : 0;
-  if (profile === 'hard' || softCore) {
+  // A soft clicked stamp keeps the anchor ceiling but moves each cell by
+  // the linear falloff: the centre reaches the target, the edge moves
+  // partway. Hard stays a flat fill.
+  if (profile === 'hard') {
     applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
   } else {
     applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
