@@ -9,7 +9,7 @@ import {
   MIN_WORLD_DIFFICULTY,
 } from '../src/config.ts';
 import { PluginLoadError, discoverPlugins } from '../src/plugins/discovery.ts';
-import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost } from '../src/plugins/host.ts';
+import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
 import { ALLOW } from '../src/plugins/types.ts';
 import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { namespacedMessageType } from '../src/plugins/world-api.ts';
@@ -422,7 +422,7 @@ describe('PluginHost', () => {
     const verdict = host.runIntent(INTENT, PLAYER);
     errors.mockRestore();
 
-    expect(verdict.kind).toBe('deny');
+    expect(verdict).toEqual({ kind: 'deny', reason: SECOND_LOOK_MODIFY_REASON });
     expect(host.faultCount('a-flipflop')).toBe(1);
   });
 
