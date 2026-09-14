@@ -3,6 +3,7 @@ import {
   sculptOptionsOf,
   validateSculptIntent,
   type CellDiff,
+  type SculptDeniedReason,
   type SculptIntent,
 } from '@terrace/shared';
 import type { Player } from '../player.ts';
@@ -10,11 +11,7 @@ import type { IntentVerdict } from '../plugins/types.ts';
 import { applyServerSculpt, type TerrainChangeListener } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
 
-export type IntentRejection =
-  | 'malformed'
-  | 'locked'
-  | 'plugin-denied'
-  | 'plugin-modified-invalid';
+export type IntentRejection = SculptDeniedReason;
 
 export type IntentOutcome =
   | { readonly applied: true; readonly intent: SculptIntent; readonly diff: CellDiff[] }
@@ -37,21 +34,36 @@ export function handleSculptIntent(
   const { world, interceptors } = deps;
 
   const intent = validateSculptIntent(message, world.size);
-  if (intent === null) return { applied: false, reason: 'malformed' };
-
-  if (!world.isCellUnlocked(intent.x, intent.y)) {
-    return { applied: false, reason: 'locked' };
+  if (intent === null) {
+    // No valid intent exists, so there is nothing to notify plugins about.
+    // Still nack when a seq can be extracted so the sender's prediction is
+    // not stranded. A missing or non-integer seq is unroutable by
+    // construction and stays silent.
+    const seq = extractMessageSeq(message);
+    if (seq !== undefined) {
+      world.sendTo(player.id, { type: 'sculptDenied', seq, reason: 'malformed' });
+    }
+    return { applied: false, reason: 'malformed' };
   }
 
   const refuse = (reason: IntentRejection, detail?: string): IntentOutcome => {
     if (intent.seq !== undefined) {
-      world.sendTo(player.id, { type: 'sculptDenied', seq: intent.seq });
+      world.sendTo(player.id, {
+        type: 'sculptDenied',
+        seq: intent.seq,
+        reason,
+        ...(detail !== undefined ? { detail } : {}),
+      });
     }
     interceptors.notifyIntentDenied(intent, player);
     return detail === undefined
       ? { applied: false, reason }
       : { applied: false, reason, detail };
   };
+
+  if (!world.isCellUnlocked(intent.x, intent.y)) {
+    return refuse('locked');
+  }
 
   const verdict = interceptors.runIntent(intent, player);
   if (verdict.kind === 'deny') {
@@ -89,4 +101,10 @@ export function handleSculptIntent(
   }
 
   return { applied: true, intent: effective, diff };
+}
+
+function extractMessageSeq(message: unknown): number | undefined {
+  if (typeof message !== 'object' || message === null) return undefined;
+  const { seq } = message as Record<string, unknown>;
+  return typeof seq === 'number' && Number.isSafeInteger(seq) ? seq : undefined;
 }
