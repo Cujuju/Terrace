@@ -100,8 +100,24 @@ export function VersionWatermark(): JSX.Element {
 
 }
       <Show when={perfOpen() ? frameStats() : null}>
-        {(stat) => (
-
+        {(stat) => {
+          // Submission ms per draw, calibrated per window from the
+          // render-wall remainder after GPU time. Null without draws or
+          // GPU data — rows then show draws with no ms estimate.
+          const draws = stat().counters.drawCalls;
+          const gpuMs = stat().gpuMsP50;
+          const submissionMsPerDraw =
+            draws > 0 && gpuMs !== null
+              ? Math.max(0, stat().renderMsP50 - gpuMs) / draws
+              : null;
+          // Visible drawables per layer ≈ draws owned (InstancedMesh draws
+          // once; culled objects still count, so this is an upper bound).
+          const drawObjects = new Map(
+            pluginDrawRows().map((row) => [row.pluginName, row.objects]),
+          );
+          const uploadKbPerFrame = stat().uploadBytesPerFrame / 1024;
+          const activeUploadKinds = stat().uploadByKind.filter((row) => row.bytes > 0);
+          return (
           <div class="hud-version__perf-panel">
             <PerfRow label="pick" value={pickValue(hoverPick())} />
             {
@@ -137,19 +153,41 @@ export function VersionWatermark(): JSX.Element {
             <PerfRow label="geometries" value={String(stat().counters.geometries)} />
             <PerfRow label="textures" value={String(stat().counters.textures)} />
             <PerfRow label="programs" value={String(stat().counters.programs)} />
+            <PerfRow
+              label="upload"
+              value={`~${uploadKbPerFrame.toFixed(1)} KB/frame (${stat().uploadCallsPerFrame.toFixed(1)} calls)`}
+            />
+            <Show when={activeUploadKinds.length > 0}>
+              <PerfRow
+                label="up kinds"
+                value={activeUploadKinds
+                  .map((row) => `${row.kind} ${(row.bytes / 1024).toFixed(1)} KB`)
+                  .join(' · ')}
+              />
+            </Show>
             {
 
 }
             <For each={stat().plugins}>
-              {(row) => (
-                <PerfRow
-                  label={row.name}
-                  value={`${row.msPerFrame.toFixed(2)} ms (${String(Math.round(row.shareOfFrame * 100))}%)`}
-                />
-              )}
+              {(row) => {
+                const objects = drawObjects.get(row.name);
+                const attributed =
+                  objects === undefined
+                    ? ''
+                    : submissionMsPerDraw === null
+                      ? ` · ~${String(objects)} draws`
+                      : ` · ~${String(objects)} draws (~${(objects * submissionMsPerDraw).toFixed(2)} ms)`;
+                return (
+                  <PerfRow
+                    label={row.name}
+                    value={`${row.msPerFrame.toFixed(2)} ms (${String(Math.round(row.shareOfFrame * 100))}%)${attributed}`}
+                  />
+                );
+              }}
             </For>
           </div>
-        )}
+          );
+        }}
       </Show>
       {
 }

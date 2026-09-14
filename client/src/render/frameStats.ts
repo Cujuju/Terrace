@@ -1,4 +1,5 @@
 import { FRAME_STATS_CAPACITY, FRAME_STATS_WINDOW_MS } from '../config.ts';
+import { drainUploadMeter, type UploadKind } from './uploadMeter.ts';
 
 export interface FrameCounters {
   readonly pixelWidth: number;
@@ -17,6 +18,12 @@ export interface PluginFrameCost {
   readonly shareOfFrame: number;
 }
 
+export interface UploadKindCost {
+  readonly kind: UploadKind;
+  readonly calls: number;
+  readonly bytes: number;
+}
+
 export interface FrameStatsSample {
   readonly uptimeS: number;
   readonly frames: number;
@@ -30,6 +37,10 @@ export interface FrameStatsSample {
   readonly gpuMsP50: number | null;
   readonly counters: FrameCounters;
   readonly plugins: readonly PluginFrameCost[];
+  /** GPU upload bytes/calls per frame over the window (uploadMeter; zeros when unmetered). */
+  readonly uploadBytesPerFrame: number;
+  readonly uploadCallsPerFrame: number;
+  readonly uploadByKind: readonly UploadKindCost[];
 }
 
 type FrameStatsSink = (sample: FrameStatsSample) => void;
@@ -146,6 +157,15 @@ function closeWindow(nowMs: number): void {
   }
   plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
   for (let i = 0; i < kept; i++) outsideMs[i] = (frameMs[i] ?? 0) - (renderMs[i] ?? 0);
+  const upload = drainUploadMeter();
+  const uploadByKind: UploadKindCost[] =
+    kept === 0
+      ? []
+      : upload.byKind.map((row) => ({
+          kind: row.kind,
+          calls: row.calls / kept,
+          bytes: row.bytes / kept,
+        }));
   latestSample = {
     uptimeS: (nowMs - firstFrameMs) / 1000,
     frames: windowFrames,
@@ -159,6 +179,9 @@ function closeWindow(nowMs: number): void {
     gpuMsP50,
     counters: readCounters?.() ?? EMPTY_COUNTERS,
     plugins,
+    uploadBytesPerFrame: kept === 0 ? 0 : upload.bytes / kept,
+    uploadCallsPerFrame: kept === 0 ? 0 : upload.calls / kept,
+    uploadByKind,
   };
   windowFrames = 0;
   writeCursor = 0;
