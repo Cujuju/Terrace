@@ -299,16 +299,13 @@ function advanceSquadron(
     });
     const timedOut = squadron.musteringSeconds >= SQUADRON_MUSTER_TIMEOUT_SECONDS;
     const complete = gathered.length === squadron.members.length;
-    if (timedOut && !complete && gathered.length < SQUADRON_MIN_SHIPS) return null;
     if (!complete && !timedOut) {
       return squadron.rendezvous;
     }
-    if (timedOut && !complete) {
-      for (const boatId of squadron.members) {
-        if (!gathered.includes(boatId)) squadronOfBoat.delete(boatId);
-      }
-      squadron.members = gathered;
-    }
+    // Complete or timed out: sail with the whole crew. Stragglers chase the
+    // moving fleet instead of churning dissolve/reform loops that leave both
+    // sides stationary. Only a crew reduced below strength dissolves.
+    if (squadron.members.length < SQUADRON_MIN_SHIPS) return null;
     const leg = planLeg(squadron, squadron.rendezvous, flagshipHome, nav);
     if (leg === null) return squadron.rendezvous;
     squadron.leg = leg;
