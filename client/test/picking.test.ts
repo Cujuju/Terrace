@@ -19,6 +19,7 @@ import {
   worldPointToCell,
   type Vec3,
 } from '../src/terrain/picking.ts';
+import { resolvePick } from '../src/terrain/pickBand.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 
 const RECT = { left: 100, top: 50, width: 800, height: 400 };
@@ -586,5 +587,38 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     setColumn(mirror.map, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 2 }]);
     const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, { x: 1, y: 0, z: 0 });
     expect(pick).toBeNull();
+  });
+
+  it('B0 shore riser: skirt hits resolve to the drawn band of the span cap', () => {
+    // The drawn mesh flattens sub-band shore relief (a tread at 5 draws its
+    // cap at y=0), so the visible waterline step is the skirt below the cap
+    // and the march can only strike it at hitY <= 0. Raw ceil names 0 there
+    // and the old shore rule mapped that to water (-1) — but the span draws
+    // band 0 and the only nearby lip is the drawn band-0 waterline loop, so
+    // -1 starves lipNear and the drag grab silently fails.
+    const mirror = world((x) => (x >= 32 ? 5 : 0));
+    const skirtHit = {
+      x: 32,
+      y: 20,
+      surfaceY: 0,
+      spanIndex: 0,
+      face: 'riser' as const,
+      hitY: -5 * HEIGHT_WORLD_SCALE,
+      hitX: 32 * CELL_WORLD_SIZE,
+      hitZ: 20 * CELL_WORLD_SIZE,
+    };
+    expect(resolvePick(mirror.map, skirtHit)?.band).toBe(0);
+    // Control: a skirt hit on a span that itself draws water still maps to -1.
+    // (Flat -20 draws band -1 with its cap at -16; the hit sits inside its wall.)
+    const sea = world(() => -20);
+    const seaHit = {
+      ...skirtHit,
+      x: 4,
+      y: 4,
+      hitY: -18 * HEIGHT_WORLD_SCALE,
+      hitX: 4 * CELL_WORLD_SIZE,
+      hitZ: 4 * CELL_WORLD_SIZE,
+    };
+    expect(resolvePick(sea.map, seaHit)?.band).toBe(-1);
   });
 });

@@ -155,4 +155,30 @@ describe('lane E: brush preview cue states', () => {
     expect(crosshair.visible).toBe(true);
     preview.dispose();
   });
+
+  it('drag keeps the radius outline up on both faces, tinted by face', () => {
+    const scene = new Scene();
+    const preview = createBrushPreview(
+      scene,
+      fakeCanvas(),
+      () => WORLD_SIZE,
+      createDenialCue(() => false),
+    );
+    const drag: BrushSelection = {
+      radius: BRUSH_RADII[0]!,
+      tool: 'drag',
+      profile: 'hard',
+      dir: 1,
+    };
+    // The old path hid the ring for drag/carve (crosshair only); the outline
+    // must stay up so the brush never bounces away at a face flip.
+    preview.update({ ...HOVER, face: 'riser' }, drag);
+    expect(ringOf(scene).visible).toBe(true);
+    expect(skirtOf(scene).visible).toBe(true);
+    expect(colorOf(ringOf(scene))).toBe(0xffb347);
+    preview.update(HOVER, drag);
+    expect(ringOf(scene).visible).toBe(true);
+    expect(colorOf(ringOf(scene))).toBe(0xffffff);
+    preview.dispose();
+  });
 });

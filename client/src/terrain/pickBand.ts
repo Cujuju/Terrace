@@ -1,8 +1,6 @@
 import {
   BAND_HEIGHT,
-  DRAWN_GROUND_BAND_BIAS,
   drawnBandOfSample,
-  drawnLevelThreshold,
   isSpanDrawn,
   spanAt,
   drawnSpanCapHeight,
@@ -40,16 +38,18 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   const lowestDrawn = drawnBandOfSample(spanUndersideHeight(span)) + 1;
 
   if (pick.face === 'riser') {
-    let struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
-    // Shore: band 0 draws only at/above the shoreline; below it is water (-1).
-    if (
-      struck === 0 &&
-      pick.hitY + DRAWN_GROUND_BAND_BIAS * HEIGHT_WORLD_SCALE <
-        drawnLevelThreshold(0) * HEIGHT_WORLD_SCALE
-    ) {
-      struck = -1;
-    }
-    return { face: 'riser', band: struck < lowestDrawn ? lowestDrawn : struck };
+    const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+    if (struck < lowestDrawn) return { face: 'riser', band: lowestDrawn };
+    // Never name above the struck span's own cap. Raw ceil overshoots two
+    // ways at the shore: a skirt hit below a drawn-0 cap names 0-then-water
+    // (hitY <= 0 ceils to 0, and the old shore rule mapped that to -1), while
+    // the wall's only nearby lip is the drawn band-0 waterline loop. The lip
+    // overlay is keyed by drawn band, so the cap's drawn band is the grabbable
+    // one — otherwise lipNear misses and the grab silently fails.
+    const capDrawn = drawnBandOfSample(span.ceiling);
+    const band = capDrawn < struck ? capDrawn : struck;
+    // Normalize -0 (ceil of a negative fraction): band ids are compared exactly.
+    return { face: 'riser', band: band + 0 };
   }
   // F3: tread ceilings resolve in the drawn banding, so a bias-shifted cap
   // names the band the mesh emitted.
