@@ -1,24 +1,24 @@
-import { BAND_HEIGHT, DRAWN_SHORE_HEIGHT } from './constants.ts';
+import { BAND_HEIGHT } from './constants.ts';
 import {
   BEDROCK_FLOOR,
   columnSampleAtBand,
   isSpanDrawn,
   spanAt,
-  spanCapHeight,
   spanCount,
+  spanIndexCoveringBand,
   type Span,
 } from './columns.ts';
-import { bandOf, cellIndex, type Heightmap } from './grid.ts';
+import { cellIndex, type Heightmap } from './grid.ts';
 import { SHEER_RISE_HEIGHT_UNITS_PER_CELL } from './traversal.ts';
 
+export {
+  DRAWN_GROUND_BAND_BIAS,
+  drawnBandOfSample,
+  drawnLevelThreshold,
+} from './bands.ts';
+import { DRAWN_GROUND_BAND_BIAS, drawnBandOfSample, drawnLevelThreshold } from './bands.ts';
+
 export const DRAWN_GROUND_COORD_DENOM = 1024;
-
-export const DRAWN_GROUND_BAND_BIAS = BAND_HEIGHT / 2;
-
-/** Band k's threshold in the biased field (`height + DRAWN_GROUND_BAND_BIAS`). */
-export function drawnLevelThreshold(band: number): number {
-  return band === 0 ? DRAWN_SHORE_HEIGHT + DRAWN_GROUND_BAND_BIAS : band * BAND_HEIGHT;
-}
 
 export const ISOLINE_SAMPLES_PER_CELL = 4;
 
@@ -40,9 +40,13 @@ const SHORE_NUMERATOR = drawnLevelThreshold(0) * WEIGHT_TOTAL;
 
 const TOP_CEILING_FIELD = null;
 
-export function drawnBandOfSample(height: number): number {
-  const band = Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
-  return band === 0 && height + DRAWN_GROUND_BAND_BIAS < drawnLevelThreshold(0) ? -1 : band;
+export function drawnSpanIndexCoveringBand(
+  map: Heightmap,
+  x: number,
+  y: number,
+  band: number,
+): number | null {
+  return spanIndexCoveringBand(map, x, y, band);
 }
 
 export function drawnBandOfSpan(span: Span): number {
@@ -51,22 +55,6 @@ export function drawnBandOfSpan(span: Span): number {
 
 export function drawnSpanCapHeight(span: Span): number {
   return drawnBandOfSpan(span) * BAND_HEIGHT;
-}
-
-export function drawnSpanIndexCoveringBand(
-  map: Heightmap,
-  x: number,
-  y: number,
-  band: number,
-): number | null {
-  const threshold = band * BAND_HEIGHT;
-  const count = spanCount(map, x, y);
-  for (let k = 0; k < count; k++) {
-    const span = spanAt(map, x, y, k);
-    if (!isSpanDrawn(span)) continue;
-    if (span.floor <= threshold && threshold <= drawnSpanCapHeight(span)) return k;
-  }
-  return null;
 }
 
 export function drawnSampleIsInside(height: number, threshold: number): boolean {
@@ -197,7 +185,7 @@ function bandOfNumerator(numerator: number): number {
 function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
   const i0 = drawnCornerIndex(qx);
   const j0 = drawnCornerIndex(qz);
-  let lowest = bandOf(BEDROCK_FLOOR);
+  let lowest = drawnBandOfSample(BEDROCK_FLOOR);
   let found = false;
   for (let dz = 0; dz <= 1; dz++) {
     for (let dx = 0; dx <= 1; dx++) {
@@ -207,7 +195,7 @@ function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
       for (let k = 0; k < count; k++) {
         const span = spanAt(map, x, y, k);
         if (!isSpanDrawn(span)) continue;
-        const band = bandOf(spanCapHeight(span));
+        const band = drawnBandOfSample(span.ceiling);
         if (!found || band < lowest) lowest = band;
         found = true;
         break;
