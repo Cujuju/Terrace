@@ -46,7 +46,7 @@ import { BRUSH_RADII } from '../state/hudState.ts';
 
 const OUTLINE_LIFT_WORLD_UNITS = 0.05;
 
-const OUTLINE_OPACITY = 0.45;
+const OUTLINE_OPACITY = 0.28;
 
 const SKIRT_OPACITY = OUTLINE_OPACITY / 3;
 
@@ -514,37 +514,55 @@ export function createBrushPreview(
 
       const onTread = hover.face === 'tread';
       const seeding = brush.tool === 'drag' && onTread;
-
-      if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
-        if (hover.face === 'riser') {
-          const band = hover.band ?? null;
-          const held = band !== null && (brush.tool !== 'drag' || hover.grabbable);
-          paintRiserMark(held ? band : null);
-          crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
-          show(true, true);
-          return;
-        }
-        paintFlatMark();
-        crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
-        show(true, true);
-        return;
-      }
-      const wanted = seeding
-        ? key(brush.radius, SEED_TOOL, SEED_PROFILE, brush.dir)
-        : key(brush.radius, brush.tool, brush.profile, brush.dir);
-      if (wanted !== shownKey) {
+      // The radius outline stays up for every tool. Drag and carve precompute
+      // no footprint of their own, so they borrow the seed-geometry disc.
+      // Only the deliberate flat-posture refusal collapses to the crosshair
+      // (show()'s flatMark) — the ring bouncing away is what hid the brush.
+      const useFootprint = (wanted: string): boolean => {
+        if (wanted === shownKey) return true;
         const geometry = geometries.get(wanted);
         if (geometry === undefined) {
           show(false);
-          return;
+          return false;
         }
         line.geometry = geometry.ring;
         skirt.geometry = geometry.skirt;
         cellGrid.geometry = geometry.cellGrid;
         shownKey = wanted;
+        return true;
+      };
+      const tintFootprint = (): void => {
+        material.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+        skirtMaterial.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+      };
+      const placeFootprint = (): void => {
+        const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
+        line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
+        skirt.position.copy(line.position);
+        cellGrid.position.copy(line.position);
+      };
+
+      if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
+        if (!useFootprint(key(brush.radius, SEED_TOOL, SEED_PROFILE, brush.dir))) return;
+        tintFootprint();
+        placeFootprint();
+        if (hover.face === 'riser') {
+          const band = hover.band ?? null;
+          const held = band !== null && (brush.tool !== 'drag' || hover.grabbable);
+          paintRiserMark(held ? band : null);
+          crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
+        } else {
+          paintFlatMark();
+          crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
+        }
+        show(true);
+        return;
       }
-      material.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
-      skirtMaterial.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+      const wanted = seeding
+        ? key(brush.radius, SEED_TOOL, SEED_PROFILE, brush.dir)
+        : key(brush.radius, brush.tool, brush.profile, brush.dir);
+      if (!useFootprint(wanted)) return;
+      tintFootprint();
       paintFlatMark();
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
