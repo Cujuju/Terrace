@@ -1,6 +1,6 @@
 import {
   CHUNK_SIZE,
-  bandFloorHeight,
+  bandLevelHeight,
   anyColumnLayered,
   bandOf,
   columnCoversBand,
@@ -46,9 +46,11 @@ import { bridgeHole, earClip, groupLoops, type CapPolygon } from './triangulatio
 
 export const SKIRT_PICK_INSET = 1 / 1024;
 
-/** The height whose palette entry colours band k; band 0 is dry land from the shoreline up. */
+/** The height whose palette entry colours band k; band 0 is dry land from the shoreline up.
+ * Canonical level (not the lowest-drawn floor): palette entries are authored per
+ * raw level, so this intentionally uses bandLevelHeight. */
 export function levelPaletteHeight(band: number): number {
-  return bandFloorHeight(band);
+  return bandLevelHeight(band);
 }
 
 export const SEABED_RISER_BORDER_WORLD_HEIGHT = BAND_WORLD_HEIGHT / 16;
