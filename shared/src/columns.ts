@@ -204,10 +204,23 @@ export function bandFillAt(
   y: number,
   band: number,
 ): BandFill | null {
-  if (columnCoversBand(map, x, y, band)) return null;
-  const below = spanIndexBelowBand(map, x, y, band);
+  // Drag-fill admission is material reach, not drawn coverage: skip only when
+  // solid material already meets/exceeds the write level. A ceiling that
+  // merely touches a drawn band floor still needs fill toward the target
+  // (lane/drag-fill restores the pre-lane predicate; drawn coverage in
+  // spanIndexCoveringBand stays render-sense for picking/carving).
+  const threshold = bandLevelHeight(band);
+  const count = spanCount(map, x, y);
+  for (let k = 0; k < count; k++) {
+    const span = spanAt(map, x, y, k);
+    if (span.floor <= threshold && threshold <= span.ceiling) return null;
+  }
+  let below: number | null = null;
+  for (let k = 0; k < count; k++) {
+    if (spanAt(map, x, y, k).ceiling < threshold) below = k;
+  }
   const firstAbove = below === null ? 0 : below + 1;
-  if (firstAbove < spanCount(map, x, y)) return { kind: 'overhang' };
+  if (firstAbove < count) return { kind: 'overhang' };
   if (below === null) return null;
   return { kind: 'extend', spanIndex: below };
 }
