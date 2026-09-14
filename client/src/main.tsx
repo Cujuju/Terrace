@@ -188,13 +188,15 @@ const sculptInput = createSculptInput({
   carveBand: (pick) => world.carveBand(pick),
   carveReach: (origin, direction, band) => world.carveReach(origin, direction, band),
   send: (intent) => {
+    // A local veto pulses red via releaseStroke and reports 'refused' so the
+    // input does not also latch the grey offline cue for it.
     if (!pluginHost.allowLocalIntent(intent)) {
       sculptInput.releaseStroke();
-      return false;
+      return 'refused';
     }
-    if (!connection.sendSculpt(intent)) return false;
+    if (!connection.sendSculpt(intent)) return 'offline';
     world.predictSculpt(intent);
-    return true;
+    return 'sent';
   },
 });
 

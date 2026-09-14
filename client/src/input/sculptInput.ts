@@ -46,7 +46,7 @@ const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth'];
  *
  * - `refused` — the server (or a local plugin) refused the stroke. Red brush.
  *   Pulsed by releaseStroke(); read via refusedHold().
- * - `offline` — a send() returned false: the room is gone, so the intent never
+ * - `offline` — send() returned 'offline': the room is gone, so the intent never
  *   left. Grey/hollow brush, never red. Latched for the stroke; read via
  *   offlineHold().
  * - `ghost` — the stroke grabbed a band but the prediction was a no-op (held
@@ -59,6 +59,14 @@ const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth'];
  *   dragDescentFrozen().
  */
 export type SculptCue = 'refused' | 'offline' | 'ghost' | 'flat';
+
+/**
+ * What the host did with an intent. 'sent' reached the room (predict it);
+ * 'refused' died to a local plugin veto whose red pulse the host already latched
+ * via releaseStroke(), so the input must not blink grey for it; 'offline' never
+ * left (grey/hollow cue here, never red).
+ */
+export type SendOutcome = 'sent' | 'refused' | 'offline';
 
 /**
  * Consecutive silent repeat ticks before the held button blinks the flat cue
@@ -86,7 +94,7 @@ export interface SculptInputOptions {
     direction: Vec3,
     band: number,
   ) => { x: number; y: number } | null;
-  send: (intent: SculptIntent) => boolean;
+  send: (intent: SculptIntent) => SendOutcome;
 }
 
 export interface SculptInput {
@@ -95,7 +103,7 @@ export interface SculptInput {
   carveHeldBand(): number | null;
   releaseStroke(): void;
   refusedHold(): boolean;
-  /** Grey/hollow brush: a send() returned false during this stroke. Never red. */
+  /** Grey/hollow brush: send() returned 'offline' during this stroke. Never red. */
   offlineHold(): boolean;
   /** The drag plane left the held band: freeze the stroke, grey the highlight. */
   dragDescentFrozen(): boolean;
@@ -351,10 +359,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
           : null;
       anchor = foot ?? { x: cell.x, y: cell.y };
     }
-    // Every emit path honors the send() boolean like emitDragLeg does: false is the
-    // offline cue (grey/hollow, never red), and the intent must not be predicted.
-    if (
-      !send({
+    // Every emit path honors the send() outcome like emitDragLeg does: 'offline'
+    // is the connection-down cue (grey/hollow, never red), 'refused' is a local
+    // plugin veto whose red pulse is already latched, and the intent must not
+    // be predicted in either case.
+    const outcome = send({
         type: 'sculpt',
         x: anchor.x,
         y: anchor.y,
@@ -366,13 +375,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
           : { profile: brushProfile() }),
         ...(spanBand !== null ? { spanBand } : {}),
         seq: nextSeq++,
-      })
-    ) {
-      markUnsent();
-      return 'unsent';
-    }
-    noteSent();
-    return 'sent';
+      });
+      if (outcome === 'offline') {
+        markUnsent();
+        return 'unsent';
+      }
+      // A local veto ends the emit without touching the grey latch.
+      if (outcome === 'refused') return 'unsent';
+      noteSent();
+      return 'sent';
   };
 
   const emitDragOutcome = (
@@ -393,9 +404,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       return 'absent-silent';
     }
     if (!haveDragTo || (lastDragToX === toX && lastDragToY === toY)) {
-      if (!emitDragLeg(toX, toY, dir, radius, band, null)) {
-        // A dropped first leg is one offline blink for the whole sweep.
-        markUnsent();
+      const firstLeg = emitDragLeg(toX, toY, dir, radius, band, null);
+      if (firstLeg !== 'sent') {
+        // A dropped first leg is one offline blink for the whole sweep; a local
+        // veto is already red and never blinks grey.
+        if (firstLeg === 'offline') markUnsent();
         return 'unsent';
       }
       noteSent();
@@ -408,10 +421,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     for (let leg = 1; leg <= legs; leg++) {
       const legX = fromX + Math.round(((toX - fromX) * leg) / legs);
       const legY = fromY + Math.round(((toY - fromY) * leg) / legs);
-      if (!emitDragLeg(legX, legY, dir, radius, band, { x: lastDragToX, y: lastDragToY })) {
+      const legOutcome = emitDragLeg(legX, legY, dir, radius, band, { x: lastDragToX, y: lastDragToY });
+      if (legOutcome !== 'sent') {
         // Sweep truncation: the tail legs are dropped (emitDragLeg leaves the last
-        // sent leg current), with one offline blink for the whole sweep.
-        markUnsent();
+        // sent leg current), with one offline blink for the whole sweep. A local
+        // veto is already red and never blinks grey.
+        if (legOutcome === 'offline') markUnsent();
         return sentAny ? 'sent' : 'unsent';
       }
       sentAny = true;
@@ -429,8 +444,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     radius: number,
     band: number,
     from: { x: number; y: number } | null,
-  ): boolean => {
-    const sent = send({
+  ): SendOutcome => {
+    const outcome = send({
       type: 'sculpt',
       x: toX,
       y: toY,
@@ -441,13 +456,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       ...(from !== null ? { fromX: from.x, fromY: from.y } : {}),
       seq: nextSeq++,
     });
-    if (!sent) return false;
+    if (outcome !== 'sent') return outcome;
     lastDragToX = toX;
     lastDragToY = toY;
     lastDragDir = dir;
     lastDragRadius = radius;
     haveDragTo = true;
-    return true;
+    return 'sent';
   };
 
   const stopRepeat = (): void => {
@@ -512,7 +527,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     cell: { x: number; y: number },
     action: SculptAction,
     spanBand: number | null,
-  ): boolean =>
+  ): SendOutcome =>
     send({
       type: 'sculpt',
       x: cell.x,
@@ -553,11 +568,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (hover === null || hover.face !== 'tread') return;
     const spanBand = graspSpanBand(hover);
     const before = readSeedBand(hover.x, hover.y, spanBand);
-    // A press-time seed failure latches offline and blinks once.
-    if (!seedLayer(hover, action, spanBand)) {
+    // A press-time seed failure latches offline and blinks once; a local veto
+    // is already red and never blinks grey.
+    const seeded = seedLayer(hover, action, spanBand);
+    if (seeded === 'offline') {
       markUnsent();
       return;
     }
+    if (seeded === 'refused') return;
     const after = readSeedBand(hover.x, hover.y, spanBand);
     if (before === null || after === null) return;
     if (action === 'raise') {

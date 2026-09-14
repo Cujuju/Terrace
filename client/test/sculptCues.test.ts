@@ -15,6 +15,7 @@ import {
   createSculptInput,
   repeatDelayMs,
   type SculptInput,
+  type SendOutcome,
 } from '../src/input/sculptInput.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 import {
@@ -63,7 +64,7 @@ function flatWorld(): TerrainMirror {
 }
 
 interface DriveKnobs {
-  send?: (intent: SculptIntent) => boolean;
+  send?: (intent: SculptIntent) => SendOutcome;
   attempts?: SculptIntent[];
   pickCell?: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   pickInColumn?: (x: number, y: number, origin: Vec3, direction: Vec3) => TerrainRayPick | null;
@@ -113,7 +114,7 @@ function driveInput(mirror: TerrainMirror, knobs: DriveKnobs = {}): {
   camera.updateMatrixWorld(true);
 
   const attempts = knobs.attempts ?? [];
-  const send = knobs.send ?? (() => true);
+  const send = knobs.send ?? (() => 'sent');
   const input = createSculptInput({
     canvas,
     camera,
@@ -191,7 +192,7 @@ describe('offline cue (grey/hollow, never red)', () => {
   it('a press that never leaves latches offline, blinks once, and gates the repeat', () => {
     vi.useFakeTimers();
     const mirror = flatWorld();
-    const { input, attempts, fire, dispose } = driveInput(mirror, { send: () => false });
+    const { input, attempts, fire, dispose } = driveInput(mirror, { send: () => 'offline' });
     try {
       fire('pointerdown', {});
       expect(attempts).toHaveLength(1);
@@ -210,12 +211,28 @@ describe('offline cue (grey/hollow, never red)', () => {
 
   it('pointerup releases the offline latch', () => {
     const mirror = flatWorld();
-    const { input, fire, dispose } = driveInput(mirror, { send: () => false });
+    const { input, fire, dispose } = driveInput(mirror, { send: () => 'offline' });
     try {
       fire('pointerdown', {});
       expect(input.offlineHold()).toBe(true);
       fire('pointerup', {});
       expect(input.offlineHold()).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a local plugin veto ends the emit red without latching offline', () => {
+    const mirror = flatWorld();
+    const { input, attempts, fire, dispose } = driveInput(mirror, { send: () => 'refused' });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(1);
+      // The host pulses red via releaseStroke (main.tsx owns that half); the
+      // input side must not also latch grey or spend the offline blink.
+      expect(input.offlineHold()).toBe(false);
+      expect(input.offlineBlinks()).toBe(0);
+      expect(input.refusedHold()).toBe(false);
     } finally {
       dispose();
     }
@@ -228,7 +245,7 @@ describe('offline cue (grey/hollow, never red)', () => {
     const { input, attempts, fire, dispose } = driveInput(mirror, {
       send: () => {
         calls++;
-        return calls < 2;
+        return calls < 2 ? 'sent' : 'offline';
       },
     });
     try {
@@ -442,7 +459,7 @@ describe('sweep truncation', () => {
       lookAt: { x: cellW(56), y: 0, z: cellW(32) },
       send: () => {
         calls++;
-        return calls < 3;
+        return calls < 3 ? 'sent' : 'offline';
       },
     });
     try {
