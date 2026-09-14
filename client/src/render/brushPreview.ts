@@ -566,11 +566,10 @@ export function createBrushPreview(
       paintFlatMark();
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
-      if (hover.face === 'riser') {
-        crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
-      } else {
-        crosshair.position.copy(line.position);
-      }
+      // The crosshair glides on the continuous ray-hit point, not the cell
+      // centre: copying the ring position here made it snap wall-point to
+      // centre on every riser/tread flip at a staircase boundary.
+      crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
       skirt.position.copy(line.position);
       cellGrid.position.copy(line.position);
       show(true);
