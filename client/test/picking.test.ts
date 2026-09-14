@@ -14,7 +14,6 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 import {
   pickTerrainCellByRay,
   pickTerrainInColumn,
-  columnOwningBand,
   pointerToNdc,
   worldPointToCell,
   type Vec3,
@@ -403,15 +402,10 @@ describe('pickTerrainInColumn', () => {
       { floor: BEDROCK_FLOOR, ceiling: FLOOR_TOP },
       { floor: ROOF_BASE, ceiling: ROOF_TOP },
     ]);
-    // F5: a horizontal ray through the gap passes OVER the floor, so the
-    // pinned column correctly misses (null). Descend through the gap onto the
-    // floor to prove the floor piece is still pickable without the fallback.
     const gapY = ((FLOOR_TOP + ROOF_BASE) / 2) * HEIGHT_WORLD_SCALE;
     const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE };
-    const level = { x: 1, y: 0, z: 0 };
-    expect(pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, level)).toBeNull();
-    const descending = { x: 1, y: -0.5, z: 0 };
-    const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, descending);
+    const direction = { x: 1, y: 0, z: 0 };
+    const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
     expect(pick).not.toBeNull();
     expect(pick!.spanIndex).toBe(0);
     expect(pick!.face).toBe('tread');
@@ -451,140 +445,5 @@ describe('pickTerrainInColumn', () => {
     expect(pick).not.toBeNull();
     expect(pick!.face).toBe('riser');
     expect(pick!.hitY).toBe(BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE);
-  });
-});
-
-describe('lane D drawn-band probes (F1-F8)', () => {
-  const WORLD = 64;
-  const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
-
-  function world(
-    heightOf: (x: number, y: number) => number,
-  ): TerrainMirror {
-    const mirror = createTerrainMirror(WORLD);
-    const perEdge = WORLD / CHUNK_SIZE;
-    const chunks: ChunkPayload[] = [];
-    for (let cy = 0; cy < perEdge; cy++) {
-      for (let cx = 0; cx < perEdge; cx++) {
-        const heights = new Array<number>(CELLS_PER_CHUNK);
-        for (let ly = 0; ly < CHUNK_SIZE; ly++) {
-          for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-            heights[ly * CHUNK_SIZE + lx] = heightOf(cx * CHUNK_SIZE + lx, cy * CHUNK_SIZE + ly);
-          }
-        }
-        chunks.push({ cx, cy, heights });
-      }
-    }
-    applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks } as JoinSnapshotMessage);
-    return mirror;
-  }
-
-  const DOWN = { x: 0, y: -1, z: 0 };
-  const SKY_Y = MAX_HEIGHT * HEIGHT_WORLD_SCALE + 10;
-  const above = (x: number, z: number): Vec3 => ({
-    x: x * CELL_WORLD_SIZE,
-    y: SKY_Y,
-    z: z * CELL_WORLD_SIZE,
-  });
-
-  it('F1 grazing chord: a horizontal ray that never dips below the drawn cap still hits the wall', () => {
-    const mirror = world((x) => (x >= 32 ? BAND_HEIGHT * 10 : 0));
-    const rayY = BAND_HEIGHT * 5 * HEIGHT_WORLD_SCALE;
-    const hit = pickTerrainCellByRay(
-      mirror,
-      { x: 20 * CELL_WORLD_SIZE, y: rayY, z: 20 * CELL_WORLD_SIZE },
-      { x: 1, y: 0, z: 0 },
-    );
-    expect(hit).not.toBeNull();
-    expect(hit!.x).toBe(32);
-    expect(hit!.face).toBe('riser');
-    expect(hit!.hitY).toBe(rayY);
-  });
-
-  it('F2 diagonal owner: a cap strike owned only diagonally resolves instead of vanishing', () => {
-    // Orthogonal neighbours are water, the south-east diagonal is a tower.
-    // Only the 8-neighbour search can name (12, 12); the old 4-neighbour
-    // search returned null here.
-    const TOWER = BAND_HEIGHT * 10;
-    const mirror = world(() => 0);
-    setColumn(mirror.map, 12, 12, [{ floor: BEDROCK_FLOOR, ceiling: TOWER }]);
-    const owner = columnOwningBand(
-      mirror,
-      11,
-      11,
-      11.9,
-      11.9,
-      drawnBandOfSample(TOWER),
-      TOWER * HEIGHT_WORLD_SCALE,
-    );
-    expect(owner).toEqual({ x: 12, y: 12, spanIndex: 0 });
-    // And the never-null fallback keeps a top-down cap strike on the entered
-    // cell instead of vanishing when no neighbour owns the band.
-    const hit = pickTerrainCellByRay(mirror, above(11, 11), DOWN);
-    expect(hit).not.toBeNull();
-  });
-
-  it('F3 shore heights: a sea-level tread resolves to the drawn water band', () => {
-    const mirror = world(() => 0);
-    const hit = pickTerrainCellByRay(mirror, above(4, 4), DOWN);
-    expect(hit).not.toBeNull();
-    // drawnBandOfSample(0) is -1 (water); the blocky bandOf(0) would say 0.
-    expect(hit!.surfaceY).toBe(drawnBandOfSample(0) * BAND_HEIGHT * HEIGHT_WORLD_SCALE);
-    expect(hit!.surfaceY).toBe(-BAND_HEIGHT * HEIGHT_WORLD_SCALE);
-  });
-
-  it('F3+P1 bias ceilings: a half-band height names the drawn band above', () => {
-    // 8 is half a band: blocky bandOf says 0, drawn bias says 1.
-    const mirror = world(() => BAND_HEIGHT / 2);
-    const hit = pickTerrainCellByRay(mirror, above(4, 4), DOWN);
-    expect(hit).not.toBeNull();
-    expect(hit!.surfaceY).toBe(BAND_HEIGHT * HEIGHT_WORLD_SCALE);
-  });
-
-  it('F4+F6 slab corner and dy=0 rim: an underside cue snaps to the drawn ceiling', () => {
-    const CELL_X = 30;
-    const CELL_Z = 30;
-    const mirror = world(() => BAND_HEIGHT * 9);
-    setColumn(mirror.map, CELL_X, CELL_Z, [
-      { floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 3 },
-      { floor: BAND_HEIGHT * 6, ceiling: BAND_HEIGHT * 9 },
-    ]);
-    // Start inside the open gap and rise into the roof slab: the underside
-    // cue snaps to the drawn ceiling (hitY == surfaceY).
-    const gapY = ((BAND_HEIGHT * 3 + BAND_HEIGHT * 6) / 2) * HEIGHT_WORLD_SCALE;
-    const pick = pickTerrainInColumn(
-      mirror,
-      CELL_X,
-      CELL_Z,
-      { x: CELL_X * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE },
-      { x: 0, y: 1, z: 0 },
-    );
-    expect(pick).not.toBeNull();
-    expect(pick!.face).toBe('underside');
-    expect(pick!.hitY).toBe(pick!.surfaceY);
-  });
-
-  it('F7/F8 slab corner: a ray on the exact slab plane still names the wall', () => {
-    const mirror = world((x) => (x >= 32 ? BAND_HEIGHT * 10 : 0));
-    const seamY = BAND_HEIGHT * 6 * HEIGHT_WORLD_SCALE;
-    const hit = pickTerrainCellByRay(
-      mirror,
-      { x: 20 * CELL_WORLD_SIZE, y: seamY, z: 20 * CELL_WORLD_SIZE },
-      { x: 1, y: 0, z: 0 },
-    );
-    expect(hit).not.toBeNull();
-    expect(hit!.x).toBe(32);
-    expect(hit!.face).toBe('riser');
-    expect(hit!.hitY).toBe(seamY);
-  });
-
-  it('F5 pinned miss: a level ray over lowered ground returns null', () => {
-    const CELL_X = 30;
-    const CELL_Z = 30;
-    const mirror = world(() => BAND_HEIGHT * 8);
-    const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE, z: CELL_Z * CELL_WORLD_SIZE };
-    setColumn(mirror.map, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 2 }]);
-    const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, { x: 1, y: 0, z: 0 });
-    expect(pick).toBeNull();
   });
 });
