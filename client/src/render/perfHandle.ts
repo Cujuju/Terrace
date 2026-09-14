@@ -6,6 +6,7 @@ import {
   type FrameStatsSample,
 } from './frameStats.ts';
 import { perfOpen, setFrameStats, setPerfOpen } from '../state/hudState.ts';
+import { installUploadMeter, setUploadMeterEnabled } from './uploadMeter.ts';
 import { isTextEntry } from '../plugins/kit/textEntry.ts';
 import {
   selfProfileAvailable,
@@ -34,7 +35,8 @@ function logSample(sample: FrameStatsSample): void {
       `gpu=${sample.gpuMsP50 === null ? 'n/a' : sample.gpuMsP50.toFixed(2)} ` +
       `max=${sample.frameMsMax.toFixed(2)} interval=${sample.intervalMsP50.toFixed(2)} ` +
       `draws=${sample.counters.drawCalls} geo=${sample.counters.geometries} ` +
-      `tex=${sample.counters.textures} prog=${sample.counters.programs}` +
+      `tex=${sample.counters.textures} prog=${sample.counters.programs} ` +
+      `up=${(sample.uploadBytesPerFrame / 1024).toFixed(1)}KB` +
       sample.plugins.map((p) => ` ${p.name}=${p.msPerFrame.toFixed(2)}`).join(''),
   );
 }
@@ -44,6 +46,7 @@ function trackReadouts(): () => void {
     createEffect(() => {
       const hudWants = perfOpen();
       const logWants = logging();
+      setUploadMeterEnabled(hudWants || logWants);
       if (!hudWants && !logWants) {
         setFrameStatsSink(null);
         setFrameStats(null);
@@ -60,6 +63,7 @@ function trackReadouts(): () => void {
 }
 
 export function installPerfHandle(): () => void {
+  installUploadMeter();
   setLogging(queryFlagSet(PERF_LOG_QUERY_FLAG));
   const disposeReadouts = trackReadouts();
   const onKeyDown = (event: KeyboardEvent): void => {
