@@ -1,4 +1,5 @@
 export * from './constants.ts';
+export * from './bands.ts';
 export * from './calendar.ts';
 export * from './heightmap.ts';
 export * from './columns.ts';
