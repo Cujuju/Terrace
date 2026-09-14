@@ -174,6 +174,29 @@ Fixed-script verification (same stack, fresh tab, overview cam 80): isolated `dr
 full-frame 128 ≥ max isolated 76. Old field gave 302→497 rising and ~19900 cumulative on the
 same kind of run. Fix confirmed; prior tables stay discarded.
 
+## Phase B1 — precipitation 30 Hz + bounds (client/src/plugins/kit/precipitation.ts)
+
+Gated `advance()` position rewrites to 30 Hz (opacity/haze/deck still per-frame),
+gave every column an explicit bounding sphere refreshed per call, deleted
+`frustumCulled = false`. No signature changes; fog/thunderstorm share `discRig` untouched.
+Far view cam ~900 (dolly overshoot; draws 239–246 ≈ Phase-A 237–248, comparable), clean
+meter windows (no layer hiding ±20 s), vs Phase-A baseline:
+
+| | Phase-A baseline | B1 after | delta |
+|---|---|---|---|
+| upload | 395–403 KB/f | 274–287 KB/f | **−~120 KB/f (−30%)** |
+| writeBuffer | 245–265 KB (~360 calls) | 152–157 KB (~390 calls) | **−~100 KB/f (−40%)** |
+| writeTexture | 138–151 KB (~32–37 calls) | 122–130 KB (~33–37 calls) | flat (noise) — precip positions were never textures; palettes remain suspect #1 |
+| frame p50 | 7.8 → 8.7 | 7.7 → 8.0 | −0.7 at close window |
+| render p50 | 6.0 → 6.9 | 6.2 → 6.4 | flat-to-better |
+| precip ablation (3×, symmetric) | Δ30 (run G) | 247→217 ×3 | unchanged (on-screen systems draw the same; savings are upload + culling) |
+| snow/rain JS rows | 0.19 / 0.14 | 0.05 / 0.04 | −3–4× (advance loop halved) |
+| programs | 134 | 151 | +17 session variance (weather mix; B1 creates no materials) |
+
+Read: upload churn cut nearly a third with zero visual change (30 Hz fall aliases
+invisibly; opacity/haze untouched). writeTexture flat confirms it is a separate stream —
+wildlife pose palettes stay the prime suspect (B3 should collapse it; verify via upload rows).
+
 ## Evidence index (all untracked, all kept per instruction)
 
 - `.census/census-perfprobe-G-farview-drawcalls.json` — far-view census + stats + profile (main exhibit)

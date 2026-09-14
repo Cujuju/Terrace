@@ -3,12 +3,19 @@ import {
   Float32BufferAttribute,
   LineSegments,
   Points,
+  Sphere,
+  Vector3,
   type Object3D,
 } from 'three';
 import { LineBasicNodeMaterial, PointsNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import { BAND_HEIGHT, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 const TWO_PI = Math.PI * 2;
+
+/** Particle positions refresh at half frame rate: fall motion aliases invisibly
+ *  at 30 Hz while the rewrite + upload cost (the dominant precip expense) halves.
+ *  Opacity, haze spin and deck slots still update every frame. */
+const POSITION_UPDATE_INTERVAL_S = 1 / 30;
 
 const WORLD_UNIT_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_UNITS;
 
@@ -90,6 +97,16 @@ export function createPrecipitationColumn(
   const attribute = new Float32BufferAttribute(profile.count * verticesPerParticle * 3, 3);
   geometry.setAttribute('position', attribute);
 
+  // Explicit bounds so the column frustum-culls like any other mesh. Spans the
+  // full fall column in Y by construction; X/Z track the disc radius per advance.
+  // (Previously frustumCulled = false: every system drew and uploaded every frame
+  // even fully off-screen.)
+  const bounds = new Sphere(
+    new Vector3(0, PRECIPITATION_FLOOR_WORLD_Y + PRECIPITATION_COLUMN_WORLD_UNITS / 2, 0),
+    PRECIPITATION_COLUMN_WORLD_UNITS / 2,
+  );
+  geometry.boundingSphere = bounds;
+
   const positions = attribute.array as Float32Array;
 
   const material =
@@ -113,14 +130,29 @@ export function createPrecipitationColumn(
     profile.form === 'streak'
       ? new LineSegments(geometry, material)
       : new Points(geometry, material);
-  object.frustumCulled = false;
   object.renderOrder = renderOrder;
+
+  let lastPositionsAt = Number.NEGATIVE_INFINITY;
+
+  function refreshBounds(radius: number): void {
+    const halfH = PRECIPITATION_COLUMN_WORLD_UNITS / 2;
+    const margin =
+      (profile.form === 'streak' ? profile.streakLength : profile.spriteSize) +
+      profile.swayCells;
+    const r = radius + margin;
+    bounds.radius = Math.sqrt(r * r + halfH * halfH);
+  }
 
   return {
     object,
     material,
 
     advance(elapsed: number, radius: number, vx: number, vy: number): void {
+      // Bounds track the disc every call (a few flops); the particle rewrite
+      // below is gated to POSITION_UPDATE_INTERVAL_S.
+      refreshBounds(radius);
+      if (elapsed - lastPositionsAt < POSITION_UPDATE_INTERVAL_S) return;
+      lastPositionsAt = elapsed;
       const speed = Math.hypot(vx, profile.fallSpeed, vy);
       const streakX = (vx / speed) * profile.streakLength;
       const streakY = (-profile.fallSpeed / speed) * profile.streakLength;
