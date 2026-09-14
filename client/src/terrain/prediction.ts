@@ -56,6 +56,14 @@ export interface PredictionStore {
 
   pendingCount(): number;
 
+  /**
+   * Seqs the client sent (they hold a seq the server will ack/nack) that predicted
+   * a no-op: unknown chunk, unfaithful footprint, or settled ground. Lane E renders
+   * these as a ghost — deliberately not a held-unsent brush, because the intent did
+   * leave the client; there is just nothing to show until the server answers.
+   */
+  ghostSeqs(): readonly number[];
+
   authoritativeHeightAt(x: number, y: number): number;
 }
 
@@ -87,6 +95,27 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   };
 
   let pending: PendingPrediction[] = [];
+
+  // Ghost seqs: sent intents (seq-holders) with no visible prediction. Bounded like
+  // pending and pruned by the same TTL, so a stranded ghost cannot outlive its ack window.
+  const ghosts = new Map<number, number>();
+
+  const markGhost = (seq: number | undefined, nowMs: number): void => {
+    if (seq === undefined) return;
+    ghosts.delete(seq);
+    ghosts.set(seq, nowMs);
+    while (ghosts.size > MAX_PENDING_PREDICTIONS) {
+      const oldest = ghosts.keys().next();
+      if (oldest.done) break;
+      ghosts.delete(oldest.value);
+    }
+  };
+
+  const pruneGhosts = (nowMs: number): void => {
+    for (const [seq, at] of ghosts) {
+      if (nowMs - at >= PREDICTION_TTL_MS) ghosts.delete(seq);
+    }
+  };
 
   const chunkOfCell = (x: number, y: number): number =>
     chunkIndex(size, Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE));
@@ -244,6 +273,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
     pending = pending.filter(
       (p) => !isConfirmed(p) && nowMs - p.createdAtMs < PREDICTION_TTL_MS,
     );
+    pruneGhosts(nowMs);
     replayPending();
 
     collectChanged(dirty);
@@ -256,8 +286,16 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
 
       const validated = validateSculptIntent(intent, size);
       if (validated === null) return dirty;
-      if (!hasChunk(mirror, chunkOfCell(validated.x, validated.y))) return dirty;
-      if (!canPredictFaithfully(validated)) return dirty;
+      // A grabbed stroke into a chunk never received: ghost, not held-unsent.
+      if (!hasChunk(mirror, chunkOfCell(validated.x, validated.y))) {
+        markGhost(validated.seq, nowMs);
+        return dirty;
+      }
+      // A sweep whose footprint reads terrain never sent: ghost, not held-unsent.
+      if (!canPredictFaithfully(validated)) {
+        markGhost(validated.seq, nowMs);
+        return dirty;
+      }
 
       beginChangePass();
 
@@ -277,7 +315,11 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       pending.push(prediction);
       applyPrediction(prediction);
 
-      if (prediction.indices.length === 0) pending.pop();
+      // Settled ground: the intent left the client but changes nothing visible.
+      if (prediction.indices.length === 0) {
+        pending.pop();
+        markGhost(validated.seq, nowMs);
+      }
 
       collectChanged(dirty);
       return dirty;
@@ -296,6 +338,8 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
 
     resolveSeq(seq: number): Set<number> {
       const dirty = new Set<number>();
+      // The server answered (applied or denied): the ghost, if any, is settled.
+      ghosts.delete(seq);
       const index = pending.findIndex((p) => p.intent.seq === seq);
       if (index === -1) return dirty;
 
@@ -309,6 +353,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
 
     expire(nowMs: number): Set<number> {
       const dirty = new Set<number>();
+      pruneGhosts(nowMs);
       const survivors = pending.filter((p) => nowMs - p.createdAtMs < PREDICTION_TTL_MS);
       if (survivors.length === pending.length) return dirty;
 
@@ -326,6 +371,10 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
 
     pendingCount(): number {
       return pending.length;
+    },
+
+    ghostSeqs(): readonly number[] {
+      return [...ghosts.keys()];
     },
 
     authoritativeHeightAt(x: number, y: number): number {

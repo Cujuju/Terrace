@@ -1,7 +1,7 @@
 import { createEffect } from 'solid-js';
 import { render } from 'solid-js/web';
 import { Raycaster, Vector2 } from 'three';
-import { connect, type ConnectionStatus } from './net/connection.ts';
+import { connect, type ConnectionStatus, type TerrainSink } from './net/connection.ts';
 import { bindCameraControls } from './input/cameraBindings.ts';
 import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
@@ -75,7 +75,9 @@ const gpuMesher = await createGpuChunkBuildSource(viewport.renderer, chunkBuildS
 // The join is issued right after the last await, so its round trip overlaps the rest of
 // boot; every callback below reaches its target lazily, and nothing runs before wiring.
 const connection = connect({
-  sink: () => world,
+  // ANY sculptDenied pulses the red-brush refused hold (the releaseStroke path);
+  // world.onSculptDenied resolves the prediction and selects the hint text.
+  sink: () => deniedAwareSink,
   operator: {
     onRestorePointList: (msg) => applyRestorePointList(msg),
     onRollbackResult: (msg) => applyRollbackResult(msg),
@@ -196,6 +198,20 @@ const sculptInput = createSculptInput({
   },
 });
 
+// The connection's sink closure runs lazily (after this module finishes), so it can
+// fan server denials out to both the world (resolve + hint) and the input
+// (pulse the red-brush refused hold) even though both are built after connect().
+const deniedAwareSink: TerrainSink = {
+  onSnapshot: (msg) => world.onSnapshot(msg),
+  onChunkUnlock: (msg) => world.onChunkUnlock(msg),
+  onTerrainDiff: (msg) => world.onTerrainDiff(msg),
+  onSculptDenied: (msg) => {
+    world.onSculptDenied(msg);
+    sculptInput.releaseStroke();
+  },
+  onSculptApplied: (msg) => world.onSculptApplied(msg),
+};
+
 const denialCue = createDenialCue(() => sculptInput.refusedHold());
 const brushPreview = createBrushPreview(
   viewport.scene,
@@ -206,9 +222,20 @@ const brushPreview = createBrushPreview(
 const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUERY_FLAG)
   ? createPickDebugOverlay(viewport.scene, canvas)
   : null;
+let frozenCursorShown = false;
 viewport.onFrame(() => {
   const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   world.setBrushRefused(denialCue.isRed());
+  // Descent gate, cue-only half: while the held drag plane is off the ray the stroke
+  // is frozen, so the cursor goes flat-mark crosshair. Lane E greys the held
+  // highlight itself off sculptInput.dragDescentFrozen().
+  if (sculptInput.dragDescentFrozen()) {
+    frozenCursorShown = true;
+    canvas.style.cursor = 'crosshair';
+  } else if (frozenCursorShown) {
+    frozenCursorShown = false;
+    canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
+  }
   const tool = brushTool();
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
