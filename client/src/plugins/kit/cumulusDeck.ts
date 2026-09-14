@@ -70,8 +70,10 @@ export const DECK_RIM_FADE_START = 0.8;
 // Crown for the cap: fraction of a tier's puff size added as height at the
 // top-centre of the stack, falling to zero at the base and at each tier's
 // rim. Without it the top tier is a flat disc of coplanar puffs whose union
-// ceiling is a plane, which reads as a cut-flat top when seen edge-on.
-export const DECK_DOME_LIFT_FRACTION = 0.5;
+// ceiling is a plane, which reads as a cut-flat top when seen edge-on. The
+// fraction must clear a full top-tier puff radius (~1.0): the rim puffs keep
+// their radius above the plane, so anything less leaves the mesa.
+export const DECK_DOME_LIFT_FRACTION = 1.5;
 
 export const PUFF_SIZE_TOP_GROWTH = 0.9;
 
