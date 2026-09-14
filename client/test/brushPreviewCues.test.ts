@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Line, LineSegments, Mesh, Scene, type Material } from 'three';
 import { BRUSH_RADII } from '../src/state/hudState.ts';
+import { CELL_WORLD_SIZE } from '../src/config.ts';
 import { createBrushPreview, type BrushSelection } from '../src/render/brushPreview.ts';
 import {
   DENIED_COLOR,
@@ -179,6 +180,28 @@ describe('lane E: brush preview cue states', () => {
     preview.update(HOVER, drag);
     expect(ringOf(scene).visible).toBe(true);
     expect(colorOf(ringOf(scene))).toBe(0xffffff);
+    preview.dispose();
+  });
+
+  it('tread crosshair glides on the ray-hit point, not the cell centre', () => {
+    const scene = new Scene();
+    const preview = createBrushPreview(
+      scene,
+      fakeCanvas(),
+      () => WORLD_SIZE,
+      createDenialCue(() => false),
+    );
+    // A tread hit a quarter-cell off-centre: the crosshair must sit on the
+    // hit, or every riser/tread flip strobes it back to the ring centre.
+    const offCentre = {
+      ...HOVER,
+      hitX: (HOVER.x + 0.4) * CELL_WORLD_SIZE,
+      hitZ: (HOVER.y - 0.3) * CELL_WORLD_SIZE,
+    };
+    preview.update(offCentre, BRUSH);
+    const { crosshair } = segmentsOf(scene);
+    expect(crosshair.position.x).toBeCloseTo((HOVER.x + 0.4) * CELL_WORLD_SIZE, 6);
+    expect(crosshair.position.z).toBeCloseTo((HOVER.y - 0.3) * CELL_WORLD_SIZE, 6);
     preview.dispose();
   });
 });
