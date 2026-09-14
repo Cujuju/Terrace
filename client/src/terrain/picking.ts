@@ -1,20 +1,20 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  DRAWN_GROUND_BAND_BIAS,
   ISOLINE_SAMPLES_PER_CELL,
   MAX_HEIGHT,
   MIN_HEIGHT,
-  bandOf,
   chunkIndex,
   drawnBandAt,
   drawnBandOfSample,
+  drawnLevelThreshold,
   drawnSpanCapHeight,
   drawnSpanIndexCoveringBand,
   isSpanDrawn,
   spanAt,
   spanCount,
   spanUndersideHeight,
-  spanIndexCoveringBand,
   type Span,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
@@ -315,7 +315,9 @@ function refineRiserToDrawnFace(
   const chunksPerEdge = Math.ceil(size / CHUNK_SIZE);
   const chunkX = Math.floor(i / CHUNK_SIZE);
   const chunkY = Math.floor(j / CHUNK_SIZE);
-  const lowestBand = bandOf(spanUndersideHeight(span)) + 1;
+  // F7: both riser-window bounds come from the drawn banding (bias + shore),
+  // not the blocky quantize, so the window matches the emitted skirts.
+  const lowestBand = drawnBandOfSample(spanUndersideHeight(span)) + 1;
   const highestBand = drawnBandOfSample(span.ceiling);
 
   const ray = scaleRayToCellSpace(origin, direction);
@@ -335,8 +337,12 @@ function refineRiserToDrawnFace(
   const yMin = yA < yB ? yA : yB;
   const yMax = yA < yB ? yB : yA;
   const bandSlab = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
-  const firstBand = Math.max(lowestBand, Math.ceil(yMin / bandSlab));
-  const lastBand = Math.min(highestBand, Math.floor(yMax / bandSlab) + 1);
+  // F7: the ray-Y window is also drawn-banded (bias + shore), via
+  // drawnBandOfSample, so a bias-shifted ceiling does not open a phantom band.
+  const drawnFirst = drawnBandOfSample(yMin / HEIGHT_WORLD_SCALE);
+  const drawnLast = drawnBandOfSample(yMax / HEIGHT_WORLD_SCALE) + 1;
+  const firstBand = Math.max(lowestBand, drawnFirst);
+  const lastBand = Math.min(highestBand, drawnLast);
 
   if (lastBand < firstBand) return hit;
 
@@ -384,6 +390,25 @@ function refineRiserToDrawnFace(
   }
 
   if (bestT < Infinity) {
+    // F8: guard the e26b445 tread->riser promotion (do not revert it). Promote
+    // only when the wall crossing strictly precedes the cap strike AND the
+    // refined candidate still fails capPointIsOverStrip (it is not drawn tread).
+    if (hit.face !== 'riser') {
+      const tHit = direction.y === 0
+        ? tEnter
+        : tEnter + (hit.hitY - (origin.y + tEnter * direction.y)) / direction.y;
+      const candX = origin.x + bestT * direction.x;
+      const candZ = origin.z + bestT * direction.z;
+      const wallFirst = footT < tHit;
+      const candOffStrip = !capPointIsOverStrip(
+        risers, size, chunksPerEdge, chunkX, chunkY, highestBand, i, j, candX, candZ,
+      );
+      if (!wallFirst || !candOffStrip) {
+        return treadOfEnteredNeighbour(
+          mirror, i, j, origin, direction, tEnter, tExit, footT, hit.surfaceY,
+        ) ?? hit;
+      }
+    }
     return {
       ...hit,
       face: 'riser',
@@ -409,7 +434,10 @@ function treadOfEnteredNeighbour(
   ownCapY: number,
 ): TerrainRayPick | null {
   const dy = direction.y;
-  if (!(dy < 0)) return null;
+  // F6: horizontal rays run parallel to treads, so the rim is unreachable;
+  // upward rays can never strike a tread from above. Both miss explicitly.
+  if (dy === 0) return null;
+  if (dy > 0) return null;
   const ray = scaleRayToCellSpace(origin, direction);
   if (ray === null) return null;
 
@@ -477,11 +505,17 @@ function drawnCapMet(
   return null;
 }
 
+// F2: the drawn contour can sit diagonally across the cell, so the owner
+// search covers all 8 neighbours by centre distance.
 const NEIGHBOUR_STEPS: readonly (readonly [number, number])[] = [
+  [-1, -1],
   [-1, 0],
-  [1, 0],
+  [-1, 1],
   [0, -1],
   [0, 1],
+  [1, -1],
+  [1, 0],
+  [1, 1],
 ];
 
 interface BandOwner {
@@ -497,20 +531,24 @@ function spanStruckAt(
   band: number,
   faceY: number,
 ): number | null {
-  const threshold = band * BAND_HEIGHT;
+  // F3: drawn thresholds — the biased shoreline threshold in raw-height form,
+  // the drawn cap above. The cue floor stays the blocky underside so a wall
+  // whose foot was carved keeps owning its upper bands (agreement sweep).
+  const threshold = drawnLevelThreshold(band) - DRAWN_GROUND_BAND_BIAS;
   const count = spanCount(mirror.map, x, y);
   for (let k = 0; k < count; k++) {
     const span = spanAt(mirror.map, x, y, k);
     if (!isSpanDrawn(span)) continue;
     if (span.floor > threshold || threshold > drawnSpanCapHeight(span)) continue;
+    const drawnCapWorld = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
     if (faceY < spanUndersideHeight(span) * HEIGHT_WORLD_SCALE) continue;
-    if (faceY > drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE) continue;
+    if (faceY > drawnCapWorld) continue;
     return k;
   }
   return null;
 }
 
-function columnOwningBand(
+export function columnOwningBand(
   mirror: TerrainMirror,
   i: number,
   j: number,
@@ -563,9 +601,23 @@ function terrainHitInCell(
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, i, j, k);
     if (!isSpanDrawn(span)) continue;
-    const met =
-      k === count - 1 && ray !== null ? drawnCapMet(mirror, ray, tEnter, tExit) : null;
-    if (k === count - 1 && ray !== null && met === null) continue;
+    // F1: test the wall crossing BEFORE the drawnCapMet gate. A grazing ray
+    // can enter the cell through its side wall inside [baseY, drawnTop] while
+    // never dipping below the drawn cap along its chord; the gate is then only
+    // the fast path for rays that miss both cap and wall.
+    let met: DrawnCap | null = null;
+    if (k === count - 1 && ray !== null) {
+      met = drawnCapMet(mirror, ray, tEnter, tExit);
+      if (met === null) {
+        const drawnTopY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
+        // Drawn wall foot, not the blocky underside: a carved gap must read
+        // as open so the ray passes to the cell beyond.
+        const wallBaseY = drawnBandOfSample(span.floor) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+        const horizontal = ray.dx !== 0 || ray.dz !== 0;
+        const entersThroughWall = horizontal && entryY <= drawnTopY && entryY >= wallBaseY;
+        if (!entersThroughWall) continue;
+      }
+    }
     const capY = met === null ? drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE : met.capY;
     const drawnY = met === null ? blockyCellCapY(span.ceiling) : met.drawnY;
     const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
@@ -573,8 +625,12 @@ function terrainHitInCell(
     const highY = entryY < exitY ? exitY : entryY;
     if (lowY > drawnY || highY < baseY) continue;
     const insideOnEntry = entryY <= drawnY && entryY >= baseY;
-    const faceY = insideOnEntry ? entryY : entryY > drawnY ? capY : baseY;
-    const metY = insideOnEntry ? entryY : entryY > drawnY ? drawnY : baseY;
+    // F4: snap underside cues to the drawn ceiling. The mesh draws the gap
+    // floor as a ceiling polygon at the drawn cap, so reporting the drawn cap
+    // matches the polygon refinement without walking any polygons.
+    const drawnCeilingY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
+    const faceY = insideOnEntry ? entryY : entryY > drawnY ? capY : drawnCeilingY;
+    const metY = insideOnEntry ? entryY : entryY > drawnY ? drawnY : drawnCeilingY;
     const planeT = insideOnEntry || dy === 0 ? tEnter : tEnter + (metY - entryY) / dy;
     const t = met !== null && insideOnEntry && planeT < met.t ? met.t : planeT;
     if (t >= hitT) continue;
@@ -593,19 +649,30 @@ function terrainHitInCell(
     hitMet = met;
   }
   if (hit !== null && hitMet !== null && hit.spanIndex === count - 1) {
-    const owner =
-      drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band) === null
-        ? columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY)
-        : { x: i, y: j, spanIndex: hit.spanIndex };
-    if (owner === null) return null;
-    hitSpan = spanAt(mirror.map, owner.x, owner.y, owner.spanIndex);
-    hit = {
-      ...hit,
-      x: owner.x,
-      y: owner.y,
-      spanIndex: owner.spanIndex,
-      surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
-    };
+    // F2: never-null fallback for cap strikes from above. drawnBandAt produced
+    // this hit, so when no neighbour owns the band the hit stays on the
+    // entered cell's top span instead of vanishing. Horizontal grazing rays
+    // keep the old miss (null) so a carved gap still reads as open passage.
+    if (drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band) !== null) {
+      hitSpan = spanAt(mirror.map, i, j, hit.spanIndex);
+      hit = { ...hit, surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE };
+    } else if (direction.y < 0) {
+      const found = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY) ?? {
+        x: i,
+        y: j,
+        spanIndex: count - 1,
+      };
+      hitSpan = spanAt(mirror.map, found.x, found.y, found.spanIndex);
+      hit = {
+        ...hit,
+        x: found.x,
+        y: found.y,
+        spanIndex: found.spanIndex,
+        surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
+      };
+    } else {
+      return null;
+    }
   }
   const refinable = hit !== null && hit.face !== 'underside';
   if (hit === null || !refinable || risers === null || hitSpan === null) return hit;
@@ -643,7 +710,8 @@ export function carveReachCell(
   let found: { x: number; y: number } | null = null;
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j) => {
     if (!cellRevealed(mirror, i, j)) return true;
-    if (spanIndexCoveringBand(mirror.map, i, j, band) === null) return false;
+    // F3: carve reach queries the drawn banding, matching the emitted caps.
+    if (drawnSpanIndexCoveringBand(mirror.map, i, j, band) === null) return false;
     found = { x: i, y: j };
     return true;
   });
@@ -667,7 +735,6 @@ export function pickTerrainInColumn(
   if (ray === null) return null;
   const clip = clipRayToBox(ray, x, x + 1, y, y + 1, MAX_TERRAIN_WORLD_Y);
   if (clip === null) return null;
-  const { tEnter, tExit } = clip;
 
   let hit: TerrainRayPick | null = null;
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, from, to) => {
@@ -678,27 +745,9 @@ export function pickTerrainInColumn(
   });
   if (hit !== null) return hit;
 
-  const entryY = ray.oy + tEnter * ray.dy;
-  const exitY = ray.oy + tExit * ray.dy;
-  const lowY = entryY < exitY ? entryY : exitY;
-  const count = spanCount(mirror.map, x, y);
-  for (let k = count - 1; k >= 0; k--) {
-    const span = spanAt(mirror.map, x, y, k);
-    if (!isSpanDrawn(span)) continue;
-    const capY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-    if (capY >= lowY) continue;
-    const tMid = (tEnter + tExit) / 2;
-    return {
-      x,
-      y,
-      surfaceY: capY,
-      spanIndex: k,
-      face: 'tread',
-      hitY: capY,
-      hitX: origin.x + tMid * direction.x,
-      hitZ: origin.z + tMid * direction.z,
-    };
-  }
+  // F5 (chosen): a pinned-column miss returns null. Falling back to the tread
+  // below the ray would name a cell the march never struck, so sculpt would
+  // cut a band the cursor is not on.
   return null;
 }
 
