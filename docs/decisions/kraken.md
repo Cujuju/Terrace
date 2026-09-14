@@ -22,4 +22,5 @@ Settled with the owner; do not relitigate without new information.
 - Fleets of 2–5, crewed by current-position proximity (within formation spread = patrol range). No harbour, mooring, or home requirement. Every boat joins a fleet; loners attach to the nearest crew.
 - Muster at the flagship's position; 60 s timeout sails with the whole crew, stragglers chasing the moving fleet. Only a crew reduced below strength dissolves.
 - No per-boat recall. A kraken within patrol range of a village is answered by the nearest fleet (by flagship position), which returns to attack it. Boats the kraken is already on top of fight in self-defence.
-- One shared hop per fleet: the flagship takes the hop, members take lattice slots around it (snapped to sailable water) and plan their own routes. One leg routed per tick from the shared pool.
+- Short cruising legs (1/4 patrol range, 16-cell hops): sail one, arrive, draw the next from where the fleet sits. Map-spanning legs flip faster than hulls converge.
+- One shared hop per fleet: the flagship takes the hop raw, members take lattice slots around it (snapped to sailable water) and plan their own routes. One leg routed per tick from the shared pool.
