@@ -305,18 +305,11 @@ function commitCharge(
   noteSeq(pool, intent);
 
   const opened = openedChunksFor(world, ctx.player.token, intent);
-  const options = sculptOptionsOf(intent);
-  const claimed =
-    opened *
-    chunkUnlockPenalty(
-      manaPerBandCellFor(ctx.player.id),
-      intent.radius,
-      options.profile,
-      options.tool,
-    );
 
   if (diff.length === 0) {
-    if (claimed > 0) pool.balance -= claimed;
+    // Charge follows effect: a no-op sculpt changed nothing, so not even
+    // the unlock penalty is debited. Still push the balance so its asOfSeq
+    // tracks this intent.
     sendBalance(world, ctx.player.id, pool);
     return;
   }
