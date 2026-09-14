@@ -390,20 +390,18 @@ function refineRiserToDrawnFace(
   }
 
   if (bestT < Infinity) {
-    // F8: guard the e26b445 tread->riser promotion (do not revert it). Promote
-    // only when the wall crossing strictly precedes the cap strike AND the
-    // refined candidate still fails capPointIsOverStrip (it is not drawn tread).
+    // Owner rule: the nearer surface wins, period. A drawn wall crossing
+    // strictly before the cap strike means the cursor is on a sheer face, so
+    // it reports riser even over the cap strip (smoothing can inset drawn
+    // walls up to half a cell from the blocky wall). Only a level-face-first
+    // strike stays tread. (The old capPointIsOverStrip veto is gone: it kept
+    // wall-first hits tread and made sheer faces unselectable.)
     if (hit.face !== 'riser') {
       const tHit = direction.y === 0
         ? tEnter
         : tEnter + (hit.hitY - (origin.y + tEnter * direction.y)) / direction.y;
-      const candX = origin.x + bestT * direction.x;
-      const candZ = origin.z + bestT * direction.z;
       const wallFirst = footT < tHit;
-      const candOffStrip = !capPointIsOverStrip(
-        risers, size, chunksPerEdge, chunkX, chunkY, highestBand, i, j, candX, candZ,
-      );
-      if (!wallFirst || !candOffStrip) {
+      if (!wallFirst) {
         return treadOfEnteredNeighbour(
           mirror, i, j, origin, direction, tEnter, tExit, footT, hit.surfaceY,
         ) ?? hit;
