@@ -20,9 +20,13 @@ export const SQUADRON_MUSTER_RADIUS_CELLS =
 
 export const SQUADRON_MUSTER_TIMEOUT_SECONDS = 60;
 
-export const SQUADRON_LEG_LENGTH_CELLS = 2 * VILLAGE_PATROL_RANGE_CELLS;
+/** Cruising legs stay short: sail one, arrive, draw the next. Map-spanning
+ * legs outrun the hulls chasing them and flip faster than boats converge. */
+export const SQUADRON_LEG_LENGTH_CELLS = Math.floor(VILLAGE_PATROL_RANGE_CELLS / 4);
 
-export const SQUADRON_LEG_MIN_LENGTH_CELLS = VILLAGE_PATROL_RANGE_CELLS;
+/** Shortest leg before the spoke search gives up and the fleet holds. Kept
+ * well above the muster/arrival radius so a drawn leg always means travel. */
+export const SQUADRON_LEG_MIN_LENGTH_CELLS = Math.floor(VILLAGE_PATROL_RANGE_CELLS / 8);
 
 export const SQUADRON_WAYPOINT_ATTEMPTS = 8;
 

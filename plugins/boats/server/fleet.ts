@@ -116,9 +116,9 @@ export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
 
 /** Cruiser legs split into hops of at most this span. Short hops fit one
  * budgeted trial search AND keep the search box hugging the leg, so coastal
- * detours stay inside the box instead of exhausting it; a whole 256-512
- * cell leg never could. */
-const FLEET_HOP_LENGTH_CELLS = 48;
+ * detours stay inside the box instead of exhausting it. Short legs route
+ * cheap and arrive; arrival draws the next leg from where the fleet sits. */
+const FLEET_HOP_LENGTH_CELLS = 16;
 
 /** Cap for one leg-level route search when a fleet (re)builds its chain.
  * One routed leg subdivides into walkable-by-construction hops, so this
