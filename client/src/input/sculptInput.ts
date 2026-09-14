@@ -40,6 +40,32 @@ import type { SculptIntent, SculptTool } from '@terrace/shared';
 
 const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth'];
 
+/**
+ * The four sculpt-brush cue states the input path reports for lane E to render.
+ * Lane C owns the transitions; lane E owns the pixels.
+ *
+ * - `refused` — the server (or a local plugin) refused the stroke. Red brush.
+ *   Pulsed by releaseStroke(); read via refusedHold().
+ * - `offline` — a send() returned false: the room is gone, so the intent never
+ *   left. Grey/hollow brush, never red. Latched for the stroke; read via
+ *   offlineHold().
+ * - `ghost` — the stroke grabbed a band but the prediction was a no-op (held
+ *   drag into unknown or already-settled ground). Tracked by the prediction
+ *   store (ghostSeqs), not here: the intent WAS sent, so the brush must not
+ *   read as unsent-held.
+ * - `flat` — a posture refusal: the aim geometry cannot take this tool
+ *   (underside raise, carve with no span, seed that moves nothing, the drag
+ *   plane leaving the held band). Flat-mark; read via flatBlinks() and
+ *   dragDescentFrozen().
+ */
+export type SculptCue = 'refused' | 'offline' | 'ghost' | 'flat';
+
+/**
+ * Consecutive silent repeat ticks before the held button blinks the flat cue
+ * once. Press-time failures blink immediately instead of counting here.
+ */
+export const SILENT_REPEAT_BLINK_AFTER = 3;
+
 export interface SculptInputOptions {
   canvas: HTMLCanvasElement;
   camera: Camera;
@@ -69,6 +95,16 @@ export interface SculptInput {
   carveHeldBand(): number | null;
   releaseStroke(): void;
   refusedHold(): boolean;
+  /** Grey/hollow brush: a send() returned false during this stroke. Never red. */
+  offlineHold(): boolean;
+  /** The drag plane left the held band: freeze the stroke, grey the highlight. */
+  dragDescentFrozen(): boolean;
+  /** Press-time offline failures plus one blink per dropped sweep, transition-only. */
+  offlineBlinks(): number;
+  /** Press-time posture failures plus one blink per silent repeat streak. */
+  flatBlinks(): number;
+  /** Hits on the dead directionless-raise guard: logged, never cued. */
+  deadGuardHits(): number;
   dispose(): void;
 }
 
@@ -208,33 +244,105 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   let nextSeq = 1;
 
-  const emitIntent = (): void => {
+  // Cue bookkeeping for the four SculptCue states. Blinks are counters, not
+  // timers: lane E renders the flash, and tests assert the budget exactly.
+  let offlineLatched = false;
+  let offlineBlinkCount = 0;
+  let flatBlinkCount = 0;
+  let silentRepeatTicks = 0;
+  let repeatStreakBlinked = false;
+  let descentFrozen = false;
+  let deadDirectionlessRaiseHits = 0;
+
+  type EmitOrigin = 'press' | 'repeat' | 'move';
+  type EmitOutcome = 'sent' | 'flat-silent' | 'absent-silent' | 'unsent';
+
+  /** A send() returned false: latch the offline (grey/hollow, never red) cue, blinking once per latch. */
+  const markUnsent = (): void => {
+    if (offlineLatched) return;
+    offlineLatched = true;
+    offlineBlinkCount++;
+  };
+
+  const noteSent = (): void => {
+    silentRepeatTicks = 0;
+    repeatStreakBlinked = false;
+  };
+
+  /**
+   * A posture refusal that sent nothing. Press-time failures blink once; repeat
+   * ticks count toward one blink per SILENT_REPEAT_BLINK_AFTER streak; pointer
+   * moves stay silent (the descent-frozen flag is their cue).
+   */
+  const noteFlatSilent = (origin: EmitOrigin): EmitOutcome => {
+    if (origin === 'press') flatBlinkCount++;
+    else if (origin === 'repeat') {
+      silentRepeatTicks++;
+      if (silentRepeatTicks >= SILENT_REPEAT_BLINK_AFTER && !repeatStreakBlinked) {
+        repeatStreakBlinked = true;
+        silentRepeatTicks = 0;
+        flatBlinkCount++;
+      }
+    }
+    return 'flat-silent';
+  };
+
+  /** Raising with a directionless tool (carve): dead by construction, counted, never cued. */
+  const isDirectionlessRaise = (action: SculptAction): boolean =>
+    TOOLS_WITHOUT_DIRECTION.includes(strokeTool) && sculptDirection(action) > 0;
+
+  /** Raising into an underside face: a posture refusal, cues flat. */
+  const isUndersideRaise = (cell: TerrainRayPick, action: SculptAction): boolean =>
+    cell.face === 'underside' && sculptDirection(action) > 0;
+
+  /** Carving with no span under the aim: a posture refusal, cues flat. */
+  const isCarveWithoutSpan = (spanBand: number | null): boolean =>
+    strokeTool === 'carve' && spanBand === null;
+
+  const emitIntent = (origin: EmitOrigin): EmitOutcome => {
     const action = currentStrokeAction();
     if (!TOOLS_WITHOUT_DIRECTION.includes(strokeTool)) setSculptMode(action);
-    if (strokeTool === 'drag' && strokeGrab === null) return;
-    if (TOOLS_WITHOUT_DIRECTION.includes(strokeTool) && sculptDirection(action) > 0) return;
+    // No grab, no stroke: the takeHold seed already cued any failure, so this stays silent.
+    if (strokeTool === 'drag' && strokeGrab === null) return 'absent-silent';
+    // Dead by construction — startStroke/currentStrokeAction never arm a
+    // directionless tool with raise. Counted for the log, never cued, no behavior change.
+    if (isDirectionlessRaise(action)) {
+      deadDirectionlessRaiseHits++;
+      console.debug('[terrace] sculpt: directionless-raise guard hit (dead by construction)');
+      return 'absent-silent';
+    }
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
-      if (to === null) return;
-      emitDrag(to.x, to.y, action, strokeGrab);
-      return;
+      if (to === null) {
+        // Descent gate: the held band's plane left the ray (aimed too shallow), so
+        // freeze the stroke and mark it for the flat-mark crosshair. Cue-only: the
+        // MIN_DRAG_PLANE_DESCENT pitch threshold keeps the settled 08-21 low-pitch
+        // accuracy exactly as it was.
+        descentFrozen = true;
+        return noteFlatSilent(origin);
+      }
+      descentFrozen = false;
+      return emitDragOutcome(to.x, to.y, action, strokeGrab);
     }
+    descentFrozen = false;
     let anchor: { x: number; y: number };
     let spanBand: number | null;
 
     if (strokeTool === 'carve' && strokeCarveBand !== null) {
-      if (hoverRay === null) return;
+      // No aim yet, or the tunnel broke through: no-target frames stay silent.
+      if (hoverRay === null) return 'absent-silent';
       const reach = carveReach(hoverRay.origin, hoverRay.direction, strokeCarveBand);
-      if (reach === null) return;
+      if (reach === null) return 'absent-silent';
       anchor = reach;
       spanBand = strokeCarveBand;
     } else {
       const cell = hoverTarget();
-      if (cell === null) return;
-      if (cell.face === 'underside' && sculptDirection(action) > 0) return;
+      // No-target frame stays silent.
+      if (cell === null) return 'absent-silent';
+      if (isUndersideRaise(cell, action)) return noteFlatSilent(origin);
       spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
       if (strokeTool === 'carve') {
-        if (spanBand === null) return;
+        if (isCarveWithoutSpan(spanBand)) return noteFlatSilent(origin);
         strokeCarveBand = spanBand;
       }
       const foot =
@@ -243,22 +351,36 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
           : null;
       anchor = foot ?? { x: cell.x, y: cell.y };
     }
-    send({
-      type: 'sculpt',
-      x: anchor.x,
-      y: anchor.y,
-      radius: brushRadius(),
-      dir: sculptDirection(action),
-      tool: strokeTool,
-      ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(strokeTool)
-        ? {}
-        : { profile: brushProfile() }),
-      ...(spanBand !== null ? { spanBand } : {}),
-      seq: nextSeq++,
-    });
+    // Every emit path honors the send() boolean like emitDragLeg does: false is the
+    // offline cue (grey/hollow, never red), and the intent must not be predicted.
+    if (
+      !send({
+        type: 'sculpt',
+        x: anchor.x,
+        y: anchor.y,
+        radius: brushRadius(),
+        dir: sculptDirection(action),
+        tool: strokeTool,
+        ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(strokeTool)
+          ? {}
+          : { profile: brushProfile() }),
+        ...(spanBand !== null ? { spanBand } : {}),
+        seq: nextSeq++,
+      })
+    ) {
+      markUnsent();
+      return 'unsent';
+    }
+    noteSent();
+    return 'sent';
   };
 
-  const emitDrag = (toX: number, toY: number, action: SculptAction, band: number): void => {
+  const emitDragOutcome = (
+    toX: number,
+    toY: number,
+    action: SculptAction,
+    band: number,
+  ): EmitOutcome => {
     const dir = sculptDirection(action);
     const radius = brushRadius();
     if (
@@ -268,20 +390,36 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       dir === lastDragDir &&
       radius === lastDragRadius
     ) {
-      return;
+      return 'absent-silent';
     }
     if (!haveDragTo || (lastDragToX === toX && lastDragToY === toY)) {
-      emitDragLeg(toX, toY, dir, radius, band, null);
-      return;
+      if (!emitDragLeg(toX, toY, dir, radius, band, null)) {
+        // A dropped first leg is one offline blink for the whole sweep.
+        markUnsent();
+        return 'unsent';
+      }
+      noteSent();
+      return 'sent';
     }
     const fromX = lastDragToX;
     const fromY = lastDragToY;
     const legs = Math.ceil(chebyshevDistance(fromX, fromY, toX, toY) / MAX_DRAG_SWEEP_CELLS);
+    let sentAny = false;
     for (let leg = 1; leg <= legs; leg++) {
       const legX = fromX + Math.round(((toX - fromX) * leg) / legs);
       const legY = fromY + Math.round(((toY - fromY) * leg) / legs);
-      if (!emitDragLeg(legX, legY, dir, radius, band, { x: lastDragToX, y: lastDragToY })) return;
+      if (!emitDragLeg(legX, legY, dir, radius, band, { x: lastDragToX, y: lastDragToY })) {
+        // Sweep truncation: the tail legs are dropped (emitDragLeg leaves the last
+        // sent leg current), with one offline blink for the whole sweep.
+        markUnsent();
+        return sentAny ? 'sent' : 'unsent';
+      }
+      sentAny = true;
     }
+    // The sweep can legally round to zero legs; that frame stays silent.
+    if (!sentAny) return 'absent-silent';
+    noteSent();
+    return 'sent';
   };
 
   const emitDragLeg = (
@@ -323,6 +461,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     hoverKey = '';
     hoverCell = null;
     hoverRay = null;
+    offlineLatched = false;
+    silentRepeatTicks = 0;
+    repeatStreakBlinked = false;
+    descentFrozen = false;
     if (repeatTimer !== null) {
       clearTimeout(repeatTimer);
       repeatTimer = null;
@@ -346,8 +488,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   const scheduleRepeat = (repeatIndex: number): void => {
     repeatTimer = setTimeout(() => {
       repeatTimer = null;
-      emitIntent();
+      const outcome = emitIntent('repeat');
       if (!strokeIsLive()) return;
+      // Gate the repeat on the connection: while offline the held button holds its
+      // cue instead of spamming intents the room will never see.
+      if (outcome === 'unsent') return;
       scheduleRepeat(repeatIndex + 1);
     }, repeatDelayMs(repeatIndex));
   };
@@ -356,7 +501,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (strokeIsTouch) takeHold(currentStrokeAction());
     if (!strokeIsLive()) return;
     strokeArmed = true;
-    emitIntent();
+    // A press-time send failure latches the offline cue and skips the repeat.
+    if (emitIntent('press') === 'unsent') return;
     if (strokeTool === 'drag') return;
     if (!strokeIsLive()) return;
     scheduleRepeat(0);
@@ -379,6 +525,25 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       seq: nextSeq++,
     });
 
+  /**
+   * The seed-band reading takeHold compares before/after the seed intent. A null
+   * spanBand reads the column top; a banded one reads that layer; null is the
+   * unknown column (open air or a chunk never received) and aborts the grab.
+   */
+  type SeedBandReading =
+    | { readonly kind: 'top'; readonly band: number }
+    | { readonly kind: 'layer'; readonly band: number };
+
+  const readSeedBand = (
+    x: number,
+    y: number,
+    spanBand: number | null,
+  ): SeedBandReading | null => {
+    const band = bandAtCell(x, y, spanBand);
+    if (band === null) return null;
+    return spanBand === null ? { kind: 'top', band } : { kind: 'layer', band };
+  };
+
   const takeHold = (action: SculptAction): void => {
     strokeGrab = null;
     if (strokeTool !== 'drag') return;
@@ -387,16 +552,28 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (strokeGrab !== null) return;
     if (hover === null || hover.face !== 'tread') return;
     const spanBand = graspSpanBand(hover);
-    const before = bandAtCell(hover.x, hover.y, spanBand);
-    if (!seedLayer(hover, action, spanBand)) return;
-    const after = bandAtCell(hover.x, hover.y, spanBand);
+    const before = readSeedBand(hover.x, hover.y, spanBand);
+    // A press-time seed failure latches offline and blinks once.
+    if (!seedLayer(hover, action, spanBand)) {
+      markUnsent();
+      return;
+    }
+    const after = readSeedBand(hover.x, hover.y, spanBand);
     if (before === null || after === null) return;
     if (action === 'raise') {
-      if (after <= before) return;
-      strokeGrab = after;
+      // The seed raised nothing: blink the flat cue once.
+      if (after.band <= before.band) {
+        flatBlinkCount++;
+        return;
+      }
+      strokeGrab = after.band;
     } else {
-      if (after >= before) return;
-      strokeGrab = before;
+      // Lowers grab the pre-seed band: the seed lowers it away, so the drag plane rides the starting band.
+      if (after.band >= before.band) {
+        flatBlinkCount++;
+        return;
+      }
+      strokeGrab = before.band;
     }
   };
 
@@ -467,7 +644,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       pointerClientX = event.clientX;
       pointerClientY = event.clientY;
       havePointer = true;
-      if (strokeArmed && strokeGrab !== null) emitIntent();
+      if (strokeArmed && strokeGrab !== null) emitIntent('move');
     }
     if (event.pointerType !== 'touch') syncMode(event);
   };
@@ -478,7 +655,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (event.pointerId !== strokePointerId) return;
     if (graceTimer !== null) {
       takeHold(currentStrokeAction());
-      emitIntent();
+      emitIntent('press');
     }
     stopRepeat();
   };
@@ -514,6 +691,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     carveHeldBand: (): number | null => strokeCarveBand,
     releaseStroke: releaseRefusedStroke,
     refusedHold: (): boolean => refusedPointerId !== null,
+    offlineHold: (): boolean => offlineLatched,
+    dragDescentFrozen: (): boolean => descentFrozen,
+    offlineBlinks: (): number => offlineBlinkCount,
+    flatBlinks: (): number => flatBlinkCount,
+    deadGuardHits: (): number => deadDirectionlessRaiseHits,
     dispose(): void {
       refusedPointerId = null;
       stopRepeat();
