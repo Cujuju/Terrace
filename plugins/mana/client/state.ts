@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import { sculptOptionsOf, sculptProfileOf, sculptSweepSteps, type SculptIntent } from '@terrace/shared';
 import { chunkOriginCell, chunkUnlockPenalty, openedChunkCount, sculptManaCost } from '../pricing.ts';
-import type { ManaBalanceMessage, ManaDeniedMessage } from '../protocol.ts';
+import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
 import { brushProfile, brushRadius, brushTool } from '../../../client/src/state/hudState.ts';
 
 export interface ManaPool {
@@ -71,15 +71,37 @@ export function applyDenial(denied: ManaDeniedMessage): void {
   );
 }
 
+/**
+ * Server `mana:denied` handler shared by index.ts and tests (kept in state.ts so
+ * tests can cover it without pulling in ManaGauge.tsx). Returns false for a
+ * malformed payload, recording nothing.
+ */
+export function handleManaDenied(payload: unknown): boolean {
+  const denied = parseManaDeniedPayload(payload);
+  if (denied === null) return false;
+  applyDenial(denied);
+  recordDenial(denied.cost);
+  return true;
+}
+
 export function clearInFlightDebits(): void {
   inFlight = [];
 }
 
 const [deniedCount, setDeniedCount] = createSignal(0);
 
-export { manaPool, setManaPool, deniedCount };
+const [lastDeniedCost, setLastDeniedCost] = createSignal<number | null>(null);
 
-export function recordDenial(): void {
+export { manaPool, setManaPool, deniedCount, lastDeniedCost };
+
+/**
+ * Brush-refused pulse shared with the gauge flash: every denial (local gate or
+ * server `mana:denied`) bumps deniedCount and records the denied cost for the
+ * hint. The brush preview's red blink itself is wired at merge time (lane C
+ * accessors); this counter is the pulse it reads.
+ */
+export function recordDenial(cost?: number): void {
+  if (cost !== undefined) setLastDeniedCost(cost);
   setDeniedCount((n) => n + 1);
 }
 
@@ -130,7 +152,7 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
       chunkUnlockPenalty(pool.manaPerBandCell, intent.radius, options.profile, options.tool);
 
   if (pool.balance < cost) {
-    recordDenial();
+    recordDenial(cost);
     return false;
   }
   debitLocally(pool, cost);

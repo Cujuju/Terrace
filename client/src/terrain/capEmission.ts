@@ -1,5 +1,4 @@
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
   bandFloorHeight,
   anyColumnLayered,
@@ -349,7 +348,9 @@ function writeBlockyFallback(
     for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
       const height = heightAt(i, j);
       const y = blockyCellCapY(height);
-      const capIndex = bandPaletteIndex(height);
+      // Colour by the drawn band's palette entry (the Y the cap sits on),
+      // not the raw sample height: heights 8..15 draw on band 1.
+      const capIndex = bandPaletteIndex(levelPaletteHeight(drawnBandOfSample(height)));
       const color = palettes.top[capIndex];
       const capLit = capSelfLitFor(capIndex);
       const west = { x: loX(i), z: loZ(j), rect: RECT_NONE };
@@ -371,7 +372,9 @@ function writeBlockyFallback(
       if (hereY === nextY) continue;
       const westHigher = hereY > nextY;
       const planeX = originX + i + CELL_HALF_EXTENT;
-      const index = bandPaletteIndex(westHigher ? here : next);
+      // The riser wears the upper cap's drawn-band colour.
+      const higherHeight = westHigher ? here : next;
+      const index = bandPaletteIndex(levelPaletteHeight(drawnBandOfSample(higherHeight)));
       const a = { x: planeX, z: westHigher ? loZ(j) : hiZ(j), rect: RECT_NONE };
       const b = { x: planeX, z: westHigher ? hiZ(j) : loZ(j), rect: RECT_NONE };
       emitSkirtQuad(
@@ -394,7 +397,9 @@ function writeBlockyFallback(
       if (hereY === nextY) continue;
       const northHigher = hereY > nextY;
       const planeZ = originZ + j + CELL_HALF_EXTENT;
-      const index = bandPaletteIndex(northHigher ? here : next);
+      // The riser wears the upper cap's drawn-band colour.
+      const higherHeight = northHigher ? here : next;
+      const index = bandPaletteIndex(levelPaletteHeight(drawnBandOfSample(higherHeight)));
       const a = { x: northHigher ? hiX(i) : loX(i), z: planeZ, rect: RECT_NONE };
       const b = { x: northHigher ? loX(i) : hiX(i), z: planeZ, rect: RECT_NONE };
       emitSkirtQuad(
@@ -418,7 +423,8 @@ function writeBlockyFallback(
     height: number,
   ): void => {
     if (topY <= floorY) return;
-    const index = bandPaletteIndex(height);
+    // Curtain hangs from the drawn band's palette entry, matching the cap above it.
+    const index = bandPaletteIndex(levelPaletteHeight(drawnBandOfSample(height)));
     emitSkirtQuad(
       { x: ax, z: az, rect: RECT_NONE },
       { x: bx, z: bz, rect: RECT_NONE },
@@ -583,7 +589,11 @@ export function planChunkCaps(
       }
     }
     ceilingsPerLevel.push(
-      layered && level.threshold === level.sampleBand * BAND_HEIGHT
+      // The GPU emits a ceiling for every layered level (emitSquare); the old
+      // `threshold === sampleBand * BAND_HEIGHT` test is never true for band 0
+      // (its drawn threshold is the shore threshold), so band-0 ceilings
+      // silently vanished. Restore parity: layered chunks ceiling every level.
+      layered
         ? marchCeiling(mirror, originX, originZ, level.sampleBand)
         : [],
     );
@@ -840,7 +850,7 @@ export function chunkBandContourLoops(
     (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
     CHUNK_SIZE,
   );
-  const threshold = band * BAND_HEIGHT;
+  const threshold = drawnLevelThreshold(band);
   const segmentCount = marchLevel(threshold, originX, originZ, null);
   return finishLoops(segmentCount, originX, originZ, domainInside(threshold, null));
 }
