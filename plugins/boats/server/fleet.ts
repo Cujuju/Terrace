@@ -147,9 +147,14 @@ const FLEET_SNAP_RADIUS_CELLS = 12;
 
 /** Cohesion margin around the flagship: members this far ahead slow down to
  * let the fleet catch up, and the flagship slows when its worst straggler
- * trails beyond it. Full hold at twice the margin. Sized to clear formation
+ * trails beyond it. Never a full hold (see the floor below): zero stride is
+ * a freeze no timeout clears — a member past twice the margin during muster
+ * would sit forever while the flagship waits on it. Sized to clear formation
  * slots plus snap drift, so holding station never reads as straggling. */
 const FLEET_COHESION_MARGIN_CELLS = 24;
+
+/** Floor under the cohesion slowdown: a fleet slows together, never to zero. */
+const FLEET_COHESION_MIN_FACTOR = 0.25;
 
 function cohesionSlowdown(offsetCells: number): number {
   if (offsetCells <= FLEET_COHESION_MARGIN_CELLS) return 1;
@@ -1520,17 +1525,22 @@ function sailBoat(tick: SailTick, index: number): void {
   }
   if (squadron !== undefined) {
     // Fleet station: flagship takes the hop, members fan out on lattice
-    // slots. Slots clamp in-bounds; edge offsets would route off the map.
-    // Both are snapped to sailable water: a lattice offset past a shoreline
-    // is an unreachable search goal, which is how boats park on beaches.
+    // slots. Member slots snap to sailable water: a lattice offset past a
+    // shoreline is an unreachable search goal, which is how boats park on
+    // beaches. The flagship takes the hop raw — chain points are walkable
+    // by construction, and re-snapping here can drift its goal outside the
+    // chain-arrival radius, freezing the cursor (and the fleet) forever.
     const slot = waypointForMember(squadron, squadronRank, FLEET_FORMATION_SPACING_CELLS);
-    const berth = snapWaypointToWalkable(
-      eroded,
-      HULL_PROFILE,
-      slot.x,
-      slot.y,
-      FLEET_SNAP_RADIUS_CELLS,
-    );
+    const berth =
+      slot.x === squadron.x && slot.y === squadron.y
+        ? slot
+        : snapWaypointToWalkable(
+            eroded,
+            HULL_PROFILE,
+            slot.x,
+            slot.y,
+            FLEET_SNAP_RADIUS_CELLS,
+          );
     goalX = Math.min(Math.max(berth.x, 0.5), world.worldSize - 0.5);
     goalY = Math.min(Math.max(berth.y, 0.5), world.worldSize - 0.5);
     standoff = squadron.standoff;
@@ -1806,7 +1816,15 @@ function sailBoat(tick: SailTick, index: number): void {
   const advance = strideFactorFor(Math.abs(normalizeAngle(aimBearing - boat.heading)));
   let cohesion = 1;
   if (squadron !== undefined && squadronId !== null) {
-    cohesion = fleetCohesion(boat, squadronId, goalX, goalY);
+    // Muster gathers at full speed: cohesion would only slow members down on
+    // their way to the rendezvous. Cruising holds formation but never to
+    // zero stride.
+    if (squadronPhase(squadronId) === 'cruising') {
+      cohesion = Math.max(
+        fleetCohesion(boat, squadronId, goalX, goalY),
+        FLEET_COHESION_MIN_FACTOR,
+      );
+    }
     if (cohesion < 1) tick.debug.fleetCohesion++;
   }
   const stride = Math.min(step, range - standoff) * advance * cohesion;

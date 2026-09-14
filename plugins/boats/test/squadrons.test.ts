@@ -231,7 +231,7 @@ describe('mustering', () => {
     }
   });
 
-  it('sails without a straggler once the muster times out', () => {
+  it('sails with the whole crew once the muster times out; stragglers chase', () => {
     const roster = explorersFor(spreadVillages(4));
     advanceSquadrons(roster, openSea(), TICK_DT);
     expect(squadronCount()).toBeGreaterThanOrEqual(1);
@@ -249,14 +249,11 @@ describe('mustering', () => {
     let goals = new Map<number, SquadronWaypoint>();
     for (let n = 0; n < ticks; n++) goals = advanceSquadrons(roster, openSea(), TICK_DT);
 
+    // Nobody is kicked: the fleet sails and the stragglers chase the same leg.
     const sailed = squadronMembers(1);
-    if (sailed.length > 0) {
-      expect(sailed.length).toBeGreaterThanOrEqual(SQUADRON_MIN_SHIPS);
-      for (const boatId of stragglers) expect(sailed).not.toContain(boatId);
-      expect(goals.get(sailed[0])).toEqual(LEG_END);
-    } else {
-      expect(squadronMembers(1)).toHaveLength(0);
-    }
+    expect(sailed.length).toBe(crew.length);
+    for (const boatId of stragglers) expect(sailed).toContain(boatId);
+    expect(goals.get(sailed[0])).toEqual(LEG_END);
   });
 
   it('holds the rendezvous rather than sailing nowhere when no leg draws', () => {

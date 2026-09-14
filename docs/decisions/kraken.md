@@ -20,6 +20,6 @@ Settled with the owner; do not relitigate without new information.
 ## 2026-09-05 — squadrons, revised 2026-09-14
 
 - Fleets of 2–5, crewed by current-position proximity (within formation spread = patrol range). No harbour, mooring, or home requirement. Every boat joins a fleet; loners attach to the nearest crew.
-- Muster at the flagship's position; 60 s timeout sails with whoever gathered (kicking the rest) if 2+ gathered, else the fleet dissolves. Kicked boats re-attach on later ticks.
+- Muster at the flagship's position; 60 s timeout sails with the whole crew, stragglers chasing the moving fleet. Only a crew reduced below strength dissolves.
 - No per-boat recall. A kraken within patrol range of a village is answered by the nearest fleet (by flagship position), which returns to attack it. Boats the kraken is already on top of fight in self-defence.
 - One shared hop per fleet: the flagship takes the hop, members take lattice slots around it (snapped to sailable water) and plan their own routes. One leg routed per tick from the shared pool.
