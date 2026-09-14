@@ -105,7 +105,7 @@ function driveInput(
     carveReach: (o, d, band) => carveReachCell(mirror, o, d, band),
     send: (intent) => {
       sent.push(intent);
-      return true;
+      return 'sent';
     },
   });
 
@@ -176,7 +176,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
     }
   });
 
-  it('keeps the aimed cell when the ground is LOWERED clear of the ray', () => {
+  it('re-marches past the aimed cell when the ground is LOWERED clear of the ray (F5)', () => {
     const mirror = flatWorld((x) => (x >= WALL_X ? BAND_HEIGHT * WALL_BAND : 0));
     const { input, dispose } = driveInput(
       mirror,
@@ -191,10 +191,10 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       setColumn(mirror.map, cell.x, cell.y, [{ floor: BEDROCK_FLOOR, ceiling: 0 }]);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
-      expect({ x: after!.x, y: after!.y }).toEqual(cell);
-      expect(after!.face).toBe('tread');
-      expect(after!.hitY).toBe(after!.surfaceY);
-      expect(after!.surfaceY).toBe(bandY(-1));
+      // F5: the lowered column no longer fabricates a tread below the ray, so
+      // hover re-marches to the ray-true surface: the next wall riser.
+      expect({ x: after!.x, y: after!.y }).toEqual({ x: cell.x + 1, y: cell.y });
+      expect(after!.face).toBe('riser');
     } finally {
       dispose();
     }
@@ -228,16 +228,15 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
 
       const next = input.hoverTarget();
       expect(next).not.toBeNull();
-      expect({ x: next!.x, y: next!.y }).toEqual({ x: struck!.x, y: struck!.y });
-      expect(next!.face).toBe('tread');
-      expect(next!.hitY).toBe(next!.surfaceY);
-      expect(next!.spanIndex).toBe(0);
-
-      const noLipInReach = (): boolean => false;
-      expect(carveBandOfPick(mirror.map, next!, noLipInReach)).toBeNull();
-      const asTread = resolvePick(mirror.map, next!);
-      expect(asTread?.face).toBe('tread');
-      expect(asTread?.band).toBe(k - 1);
+      // F5: the carved-open column reads as open passage, so hover continues
+      // to the next ray-true surface instead of naming the tread below the
+      // cut. The #324 guarantee holds in the stronger form: the named band is
+      // the aimed band, never below it.
+      expect({ x: next!.x, y: next!.y }).toEqual({ x: struck!.x + 1, y: struck!.y });
+      expect(next!.face).toBe('riser');
+      const stillAimed = resolvePick(mirror.map, next!);
+      expect(stillAimed?.face).toBe('riser');
+      expect(stillAimed?.band).toBe(k);
     } finally {
       dispose();
     }
@@ -315,7 +314,9 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
         tool: 'carve',
         spanBand: GROUND_BAND + 1,
       });
-      expect(input.hoverTarget()!.x).toBe(WALL_X);
+      // F5: the carved-open pinned column reads as open passage, so the preview
+      // re-marches past it. The stroke anchor was seeded at press and is unaffected.
+      expect(input.hoverTarget()!.x).toBe(WALL_X + 1);
 
       fire('pointerup', {});
       const after = input.hoverTarget();
