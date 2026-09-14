@@ -173,9 +173,15 @@ describe('validateRestorePointsRequest', () => {
     });
   });
 
-  it('rejects a missing, empty, non-string or over-long key', () => {
+  it('accepts an empty key (an unkeyed server allows anything)', () => {
+    expect(validateRestorePointsRequest({ type: 'restorePoints', key: '' })).toEqual({
+      type: 'restorePoints',
+      key: '',
+    });
+  });
+
+  it('rejects a missing, non-string or over-long key', () => {
     expect(validateRestorePointsRequest({ type: 'restorePoints' })).toBeNull();
-    expect(validateRestorePointsRequest({ type: 'restorePoints', key: '' })).toBeNull();
     expect(validateRestorePointsRequest({ type: 'restorePoints', key: 42 })).toBeNull();
     expect(
       validateRestorePointsRequest({
@@ -213,8 +219,22 @@ describe('validateRollbackRequest', () => {
     }
   });
 
+  it('accepts an empty key (an unkeyed server allows anything)', () => {
+    expect(validateRollbackRequest({ type: 'rollback', key: '', toId: 7 })).toEqual({
+      type: 'rollback',
+      key: '',
+      toId: 7,
+    });
+  });
+
   it('rejects a bad key even when the id is fine', () => {
-    expect(validateRollbackRequest({ type: 'rollback', key: '', toId: 7 })).toBeNull();
+    expect(
+      validateRollbackRequest({
+        type: 'rollback',
+        key: 'x'.repeat(MAX_ROLLBACK_KEY_LENGTH + 1),
+        toId: 7,
+      }),
+    ).toBeNull();
   });
 });
 

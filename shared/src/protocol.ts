@@ -259,7 +259,7 @@ export interface RollbackResultMessage {
 
 function validateRollbackKey(value: unknown): string | null {
   if (typeof value !== 'string') return null;
-  if (value.length === 0 || value.length > MAX_ROLLBACK_KEY_LENGTH) return null;
+  if (value.length > MAX_ROLLBACK_KEY_LENGTH) return null;
   return value;
 }
 
