@@ -218,11 +218,14 @@ export function navigableWaterProfile(draftHeightUnits: number): TraversalProfil
   };
 }
 
-export function withClearance<T extends TerrainSampler>(
-  world: T,
-  radiusCells: number,
-): TerrainSampler {
-  if (radiusCells <= 0) return world;
+/** Clearance discs shared by every `withClearance` wrapper with the same
+ * radius, instead of one offset list per call. Fixed construction order (dy
+ * outer, dx inner), so sharing never changes query results. */
+const clearanceDiscs = new Map<number, ReadonlyArray<readonly [dx: number, dy: number]>>();
+
+function discForClearance(radiusCells: number): ReadonlyArray<readonly [dx: number, dy: number]> {
+  const cached = clearanceDiscs.get(radiusCells);
+  if (cached !== undefined) return cached;
   const radiusSquared = radiusCells * radiusCells;
   const bound = Math.ceil(radiusCells);
   const offsets: Array<readonly [dx: number, dy: number]> = [];
@@ -231,20 +234,81 @@ export function withClearance<T extends TerrainSampler>(
       if (dx * dx + dy * dy <= radiusSquared) offsets.push([dx, dy]);
     }
   }
+  clearanceDiscs.set(radiusCells, offsets);
+  return offsets;
+}
+
+export function withClearance<T extends TerrainSampler>(
+  world: T,
+  radiusCells: number,
+): TerrainSampler {
+  if (radiusCells <= 0) return world;
+  const offsets = discForClearance(radiusCells);
   const size = world.worldSize;
   return {
     worldSize: size,
     freshwater: world.freshwater,
     heightAt(x: number, y: number): number {
+      // Integer offsets commute with the floor the backing store applies,
+      // so flooring once matches per-offset flooring exactly on every
+      // integer input (all shared callers floor first) while keeping each
+      // downstream read on integer cells.
+      const cx = Math.floor(x);
+      const cy = Math.floor(y);
       let max = -Infinity;
-      for (const [dx, dy] of offsets) {
-        const nx = x + dx;
-        const ny = y + dy;
+      for (let i = 0; i < offsets.length; i++) {
+        const nx = cx + offsets[i][0];
+        const ny = cy + offsets[i][1];
         if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
         const height = world.heightAt(nx, ny);
         if (height > max) max = height;
       }
       return max;
+    },
+  };
+}
+
+/** Default bound for `withCachedClearance`: holds a busy tick's working set
+ * (trials, steering probes and hull checks re-query the same cells) in well
+ * under a megabyte. Full-map scans stay on the uncached wrapper, where a
+ * cache would be all insert cost and no hits. */
+export const CLEARANCE_CACHE_DEFAULT_MAX_ENTRIES = 16384;
+
+/** Memoizing `withClearance`: the same dilation, but each in-bounds cell's
+ * max is computed once per wrapper and served from a bounded map after.
+ * A* re-queries a cell once per incoming edge (up to 8x per search), so one
+ * tick of boat searches hits the same cells thousands of times; this turns
+ * the repeats into single map lookups. Pure memo: identical values for
+ * identical base terrain, and clear-on-overflow is deterministic given the
+ * callers' fixed query order.
+ *
+ * The cache is per-wrapper with no invalidation: re-wrap after the backing
+ * terrain mutates (the boats plugin wraps fresh every tick). Out-of-bounds
+ * queries bypass the cache. */
+export function withCachedClearance(
+  world: TerrainSampler,
+  radiusCells: number,
+  maxEntries: number = CLEARANCE_CACHE_DEFAULT_MAX_ENTRIES,
+): TerrainSampler {
+  if (radiusCells <= 0) return world;
+  const base = withClearance(world, radiusCells);
+  const size = world.worldSize;
+  const cap = Math.max(1, Math.floor(maxEntries));
+  const cache = new Map<number, number>();
+  return {
+    worldSize: size,
+    freshwater: world.freshwater,
+    heightAt(x: number, y: number): number {
+      const cx = Math.floor(x);
+      const cy = Math.floor(y);
+      if (cx < 0 || cy < 0 || cx >= size || cy >= size) return base.heightAt(cx, cy);
+      const key = cy * size + cx;
+      const hit = cache.get(key);
+      if (hit !== undefined) return hit;
+      const height = base.heightAt(cx, cy);
+      if (cache.size >= cap) cache.clear();
+      cache.set(key, height);
+      return height;
     },
   };
 }
