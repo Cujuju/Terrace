@@ -57,7 +57,7 @@ export const DECK_THICKNESS_WORLD_UNITS = CLOUD_HEADROOM_WORLD_UNITS / 2;
 
 export const DECK_TIERS: number = 5;
 
-export const DECK_TIER_POPULATION_TAPER = 0.7;
+export const DECK_TIER_POPULATION_TAPER = 0.45;
 
 export const DECK_TOP_RADIUS_FRACTION = 0.55;
 
@@ -67,7 +67,7 @@ export const DECK_RADIAL_EXPONENT = 0.75;
 
 export const DECK_RIM_FADE_START = 0.8;
 
-export const PUFF_SIZE_TOP_GROWTH = 0.6;
+export const PUFF_SIZE_TOP_GROWTH = 0.9;
 
 export const PUFF_SIZE_SEED_VARIATION = 0.25;
 
