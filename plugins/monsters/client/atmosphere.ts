@@ -5,7 +5,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
-  PointLight,
+  type PointLight,
   DoubleSide,
 } from 'three';
 import {
@@ -18,7 +18,6 @@ import {
   FLASH_GLOW_LAYER_INDEX,
   FLASH_GLOW_OPACITY,
   FLASH_LIGHT_PEAK_INTENSITY,
-  FLASH_LIGHT_RANGE_CELLS,
   LightningSchedule,
   MIST_COLOR,
   MIST_EDGE_LOBES_A,
@@ -136,6 +135,10 @@ function buildBoltGeometry(bottomCells: number): BufferGeometry {
 export interface Dread {
   readonly root: Group;
 
+  reset(): void;
+
+  setFlashLight(light: PointLight | null): void;
+
   update(seconds: number, dt: number, present: boolean): void;
 
   isFaded(): boolean;
@@ -143,16 +146,42 @@ export interface Dread {
   dispose(): void;
 }
 
-export function createDreadFlashLight(): PointLight {
-  return new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
+export interface DreadRigs {
+  readonly rigs: readonly Dread[];
+
+  dispose(): void;
 }
 
-export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dread {
-  const root = new Group();
-  root.name = 'monsters:dread';
-
+// Every geometry and material a kind's dreads will ever need, built once: spawning
+// one built five materials and two geometries, and spawns are not rare.
+export function createDreadRigs(spec: SwimmerDreadSpec, count: number): DreadRigs {
   const mistGeometry = buildMistGeometry();
   const boltGeometry = buildBoltGeometry(spec.boltBottomCells);
+
+  const rigs: Dread[] = [];
+  for (let index = 0; index < count; index++) {
+    rigs.push(createDread(spec, mistGeometry, boltGeometry));
+  }
+
+  return {
+    rigs,
+
+    dispose(): void {
+      for (const rig of rigs) rig.dispose();
+      rigs.length = 0;
+      mistGeometry.dispose();
+      boltGeometry.dispose();
+    },
+  };
+}
+
+function createDread(
+  spec: SwimmerDreadSpec,
+  mistGeometry: BufferGeometry,
+  boltGeometry: BufferGeometry,
+): Dread {
+  const root = new Group();
+  root.name = 'monsters:dread';
 
   const mistMaterials: MeshBasicMaterial[] = [];
   const mistSheets: Mesh[] = [];
@@ -169,6 +198,7 @@ export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dre
     sheet.scale.setScalar(layer.radiusScale);
     sheet.position.y = layer.height;
     sheet.renderOrder = DREAD_RENDER_ORDER;
+    sheet.visible = false;
     root.add(sheet);
     mistMaterials.push(material);
     mistSheets.push(sheet);
@@ -204,18 +234,36 @@ export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dre
   boltPivot.add(bolt);
   root.add(boltPivot);
 
-  // Borrowed from the plugin's fixed bank (one per living monster, permanently parented
-  // to the scene): adding/removing scene lights rebuilds every lit pipeline, so dreads
-  // borrow and return them instead of allocating their own.
-  flashLight.position.y = spec.flashLightHeightCells;
-  root.add(flashLight);
+  // The flash light stays parented to the plugin's bank, never to this rig: reparenting
+  // reorders the scene's lights, and three keys every lit pipeline on that order.
+  let flashLight: PointLight | null = null;
+  let flashOffsetX = 0;
+  let flashOffsetZ = 0;
 
   const reducedMotion = watchReducedMotion();
-  const lightning = new LightningSchedule();
+  let lightning = new LightningSchedule();
   let envelope = 0;
 
   return {
     root,
+
+    reset(): void {
+      envelope = 0;
+      lightning = new LightningSchedule();
+      flashOffsetX = 0;
+      flashOffsetZ = 0;
+      boltPivot.position.set(0, 0, 0);
+      boltPivot.rotation.y = 0;
+      bolt.visible = false;
+      glowSheet.visible = false;
+      for (const sheet of mistSheets) sheet.visible = false;
+      if (flashLight !== null) flashLight.intensity = 0;
+    },
+
+    setFlashLight(light: PointLight | null): void {
+      if (flashLight !== null && flashLight !== light) flashLight.intensity = 0;
+      flashLight = light;
+    },
 
     update(seconds: number, dt: number, present: boolean): void {
       const reduced = reducedMotion.matches();
@@ -249,7 +297,8 @@ export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dre
         const z = Math.sin(strike.bearing) * distance;
         boltPivot.position.set(x, 0, z);
         boltPivot.rotation.y = strike.yaw;
-        flashLight.position.set(x, spec.flashLightHeightCells, z);
+        flashOffsetX = x;
+        flashOffsetZ = z;
       }
 
       const brightness = reduced ? 0 : lightning.brightness() * envelope;
@@ -260,7 +309,14 @@ export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dre
         boltMaterial.opacity = brightness;
         glowMaterial.opacity = brightness * FLASH_GLOW_OPACITY;
       }
-      flashLight.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+      if (flashLight !== null) {
+        flashLight.position.set(
+          root.position.x + flashOffsetX,
+          root.position.y + spec.flashLightHeightCells,
+          root.position.z + flashOffsetZ,
+        );
+        flashLight.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+      }
     },
 
     isFaded(): boolean {
@@ -269,9 +325,8 @@ export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dre
 
     dispose(): void {
       reducedMotion.stop();
+      flashLight = null;
       root.clear();
-      mistGeometry.dispose();
-      boltGeometry.dispose();
       for (const material of mistMaterials) material.dispose();
       glowMaterial.dispose();
       boltMaterial.dispose();
