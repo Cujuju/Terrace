@@ -1,6 +1,6 @@
 import { sculptOptionsOf, sculptSweepSteps } from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
-import { chunkUnlockPenalty, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
 import { MANA_DENIED_MESSAGE } from '../protocol.ts';
 import type { IntentCtx, IntentVerdict, WorldApi } from '../../../server/src/plugins/types.ts';
 import { manaPerBandCellFor } from './perks.ts';
@@ -16,25 +16,6 @@ import {
 
 export const INSUFFICIENT_MANA_REASON = 'insufficient mana';
 
-/** The territory half of a price: what the chunks this stroke opened cost. */
-export function territoryFeeFor(
-  playerId: string,
-  intent: SculptIntent,
-  openedChunks: number,
-): number {
-  if (openedChunks === 0) return 0;
-  const options = sculptOptionsOf(intent);
-  return (
-    openedChunks *
-    chunkUnlockPenalty(
-      manaPerBandCellFor(playerId),
-      intent.radius,
-      options.profile,
-      options.tool,
-    )
-  );
-}
-
 export function manaCostFor(
   playerId: string,
   intent: SculptIntent,
@@ -48,7 +29,7 @@ export function manaCostFor(
     options.tool,
     sculptSweepSteps(intent),
   );
-  return stroke + territoryFeeFor(playerId, intent, openedChunks);
+  return stroke + chunkUnlockFee(openedChunks);
 }
 
 function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number {
@@ -93,12 +74,12 @@ export function commitCharge(
   const opened = quoted ?? openedChunksFor(world, ctx.player.token, intent);
   pool.quote = null;
 
-  // Charge follows effect: a no-op waives the stroke price. Territory is a
-  // separate effect — reveal opens the footprint whatever the diff — so the
-  // territory fee still stands.
+  // Charge follows effect: a no-op waives the displacement price. Opening the
+  // frontier is a separate effect — reveal opens the footprint whatever the
+  // diff — so the unlock fee still stands.
   const cost =
     diff.length === 0
-      ? territoryFeeFor(ctx.player.id, intent, opened)
+      ? chunkUnlockFee(opened)
       : manaCostFor(ctx.player.id, intent, opened);
   pool.balance -= cost;
   sendBalance(world, ctx.player.id, pool);

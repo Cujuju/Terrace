@@ -1,7 +1,6 @@
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
-  FULL_BRUSH_RADIUS,
   chunksPerEdge,
   revealChunkIndices,
   sculptDisplacementUnits,
@@ -21,15 +20,15 @@ export function sculptManaCost(
   return tool === 'carve' ? Math.ceil(base / 4) : base;
 }
 
-export function chunkUnlockPenalty(
-  manaPerBandCell: number,
-  radius: number,
-  profile: SculptProfile,
-  tool: SculptTool,
-): number {
-  const full = sculptManaCost(manaPerBandCell, FULL_BRUSH_RADIUS, profile, tool);
-  const own = sculptManaCost(manaPerBandCell, radius, profile, tool);
-  return full > own ? full - own : 0;
+/**
+ * Flat and perk-free: one chunk of frontier costs what a radius-2 hard stamp
+ * costs, about 2% of raising that chunk's cells one band. Retune here.
+ */
+export const CHUNK_UNLOCK_MANA = 2;
+
+/** The unlock half of a price: what the frontier a stroke opens costs. */
+export function chunkUnlockFee(openedChunks: number): number {
+  return openedChunks * CHUNK_UNLOCK_MANA;
 }
 
 export function openedChunkCount(
