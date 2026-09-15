@@ -20,6 +20,16 @@ export class LogThrottle {
   }
 }
 
+/** Reports a repeating fault at most once per the throttle's interval. */
+export function throttledLog(
+  throttle: LogThrottle,
+  report: () => void,
+  nowMs: number = Date.now(),
+): void {
+  if (!throttle.due(nowMs)) return;
+  report();
+}
+
 /**
  * Runs one room message handler. Colyseus has no handler of its own, so a throw
  * escaping here would end the process for every player.

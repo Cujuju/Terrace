@@ -10,7 +10,11 @@ import {
   type SculptOptions,
 } from '@terrace/shared';
 import { logError } from '../log.ts';
-import { LogThrottle, ROOM_FAILURE_LOG_INTERVAL_MS } from '../net/contain-message.ts';
+import {
+  LogThrottle,
+  ROOM_FAILURE_LOG_INTERVAL_MS,
+  throttledLog,
+} from '../net/contain-message.ts';
 import { timePhase } from '../tick-timing.ts';
 import { chunkPayloadOf, partitionDiffByViewer, type ViewerDiff } from './mask-filter.ts';
 import type { World } from './world.ts';
@@ -83,8 +87,9 @@ function broadcastDiff(
 }
 
 function noteDiffSendFailure(error: unknown): void {
-  if (!diffSendLog.due(Date.now())) return;
-  logError('a terrain diff could not be delivered; resending the authoritative chunks', error);
+  throttledLog(diffSendLog, () => {
+    logError('a terrain diff could not be delivered; resending the authoritative chunks', error);
+  });
 }
 
 /**
