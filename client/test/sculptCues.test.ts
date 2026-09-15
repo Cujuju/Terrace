@@ -479,6 +479,22 @@ describe('descent gate', () => {
     }
   });
 
+  it('a nack lets go of the grabbed band, so no leg targets a rolled-back seed', () => {
+    setBrushTool('drag');
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror, { riserBand: () => 2 });
+    try {
+      fire('pointerdown', {});
+      expect(input.heldBand()).toBe(2);
+      // What main.tsx does on sculptDenied.
+      input.releaseStroke();
+      expect(input.heldBand()).toBeNull();
+      expect(input.refusedHold()).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
   it('a second finger lets go of the held band', () => {
     vi.useFakeTimers();
     setBrushTool('drag');
