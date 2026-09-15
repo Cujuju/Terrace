@@ -967,3 +967,45 @@ describe('an intent the terrain engine cannot finish is refused, not run', () =>
     ).toBe(true);
   });
 });
+
+describe('a carve names the span it grasps', () => {
+  function bootWithFace(): { world: World; sink: RecordingSink } {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    return { world, sink };
+  }
+
+  it('rejects a carve that asks to raise', () => {
+    const { world } = bootWithFace();
+    const outcome = handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ tool: 'carve', dir: 1, spanBand: 2, seq: 40 }),
+    );
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('malformed');
+  });
+
+  // Today a spanBand-less carve is acked with an empty diff: applySculpt has no
+  // span to cut and refuses the whole stroke. It should be refused on the wire,
+  // the way a drag is refused without its targetBand.
+  it('acks a carve carrying no spanBand, having changed nothing', () => {
+    const { world, sink } = bootWithFace();
+    sink.clear();
+
+    const outcome = handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ tool: 'carve', dir: -1, seq: 41 }),
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff).toHaveLength(0);
+    expect(sink.ofType('sculptApplied')).toHaveLength(1);
+  });
+
+  it.todo('refuses a carve carrying no spanBand as malformed (needs spanBand required on the wire)');
+});

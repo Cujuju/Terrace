@@ -1511,8 +1511,4 @@ describe('a stroke that moves nothing still pays for the land it opened', () => 
     if (outcome.applied) expect(outcome.diff).toEqual([]);
     expect(manaBalanceOf(PLAYER.id) ?? 0).toBe(before);
   });
-
-  it.todo(
-    'a carve with no spanBand is refused as malformed — needs spanBand required on the wire, like the drag’s targetBand',
-  );
 });
