@@ -130,7 +130,7 @@ export function applySculpt(
   const changed = new Set<number>();
   // 'smooth' relaxes only; 'settle' deposits first and then relaxes.
   const relaxes = tool === 'smooth' || tool === LIBRARY_SCULPT_TOOL;
-  const deposits = tool !== 'smooth';
+  const deposits = tool === 'stamp' || tool === LIBRARY_SCULPT_TOOL;
   const anchoredSmooth = relaxes && anchor !== 'free' && amount !== 0;
   const anchorTarget = anchoredSmooth
     ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand, spanBand)
@@ -194,7 +194,7 @@ export function applySculpt(
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
       spanBand,
-      meltRoom === undefined ? null : { toward: amount, room: meltRoom },
+      meltRoom === undefined ? null : { toward: amount, room: meltRoom, spent: new Map() },
     );
   }
 

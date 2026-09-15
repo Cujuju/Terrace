@@ -157,6 +157,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
 
   const TERRACE_SIZE = 96;
   const TERRACE_CENTRE = 48;
+  const CASCADE_TAIL_PRESSES = 11;
+  const CASCADE_TAIL_LIMIT = 4 * CASCADE_TAIL_PRESSES;
 
   it('the PLAYER smooth tool on genesis terraces: real cascade, pinned', () => {
     const map = genesisTerraces(TERRACE_SIZE);
@@ -175,8 +177,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     for (let i = 0; i < map.cells.length; i++) {
       if (map.cells[i] !== before[i]) moved++;
     }
-    expect(diff.length).toBe(2499);
-    expect(moved).toBe(2487);
+    expect(diff.length).toBe(2487);
+    expect(moved).toBe(2475);
 
     const counts = [diff.length];
     for (let stroke = 0; stroke < 3; stroke++) {
@@ -185,10 +187,22 @@ describe('relaxation conserves height exactly (issue #108)', () => {
           .length,
       );
     }
-    // Drawn spill boxes free raw-level block edges inside their drawn bands,
-    // so the first stroke regrades the whole terrace field; with no deposit
-    // to chase, later strokes converge to nothing.
-    expect(counts).toEqual([2499, 0, 0, 0]);
+    // Drawn spill boxes free raw-level block edges, so the first stroke regrades
+    // the whole terrace field; the melt ledger caps a cell at one band-step,
+    // leaving a tail.
+    expect(counts).toEqual([2487, 24, 26, 28]);
+
+    let tail = 0;
+    while (tail < CASCADE_TAIL_LIMIT) {
+      if (
+        applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, 4, DEFAULT_SCULPT_AMOUNT, PLAYER_SMOOTH)
+          .length === 0
+      ) {
+        break;
+      }
+      tail++;
+    }
+    expect(tail).toBe(CASCADE_TAIL_PRESSES);
   });
 
   it('the relaxation pass conserves height exactly on the FREE path', () => {

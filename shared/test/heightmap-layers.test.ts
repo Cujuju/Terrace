@@ -6,6 +6,7 @@ import {
   BEDROCK_FLOOR,
   carveRange,
   createHeightmap,
+  createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
   DRAWN_GROUND_BAND_BIAS,
@@ -19,6 +20,7 @@ import {
   WIRE_DEFAULT_SCULPT_OPTIONS,
   type Heightmap,
   type SculptOptions,
+  type SeededRng,
 } from '../src/index.ts';
 
 describe('smooth builds the layer view only where the sweep meets a layered column', () => {
@@ -134,12 +136,29 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
   const TOWER_RADIUS = 3;
   const TOWER_PRESSES = 6;
   const TRENCH_DEPTHS = [6, 20, 40];
-  const CONVERGENCE_LIMIT = 40;
+  // Measured against the ledgered melt; the limit below is only a hang guard.
+  const CONVERGED_PRESSES = 43;
+  const CONVERGENCE_LIMIT = 4 * CONVERGED_PRESSES;
   // The furthest one melt can lift a cell: a band's floor to the next band's level.
   const MELT_ROOM_PER_CELL = BAND_HEIGHT + DRAWN_GROUND_BAND_BIAS;
   const SMOOTH_RAISE = sculptOptionsOf({
     type: 'sculpt', x: CLICK_X, y: ROW, radius: MAX_BRUSH_RADIUS, dir: 1, tool: 'smooth',
   });
+  const RANDOM_SEED = 0x5eed;
+  const RANDOM_SIZE = 64;
+  const RANDOM_MAPS = 10;
+  const RANDOM_PRESSES_PER_MAP = 20;
+  const RANDOM_MARGIN = 6;
+  const NOISE_LOW_BAND = 8;
+  const NOISE_HIGH_BAND = 52;
+  // Straddles the waterline: band -1 is 25 tall and band 0 starts at the shore.
+  const SHORE_LOW_BAND = -3;
+  const SHORE_HIGH_BAND = 4;
+  const BUILT_GROUND_BAND = 30;
+  const BUILT_SITES = 6;
+  const BUILT_PRESSES_PER_SITE = 6;
+  const BUILT_SITE_MARGIN = 8;
+  const BUILT_RADIUS = 4;
 
   const trenchAndTower = (digs: number): Heightmap => {
     const map = createHeightmap(SIZE);
@@ -155,14 +174,40 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
   const totalOf = (map: Heightmap): number => map.cells.reduce((sum, h) => sum + h, 0);
   const press = (map: Heightmap): number =>
     applySculpt(map, CLICK_X, ROW, MAX_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, SMOOTH_RAISE).length;
-  const footprintCells = (): number => {
+  const footprintCells = (radius: number): number => {
     let cells = 0;
-    forEachFootprintOffset(MAX_BRUSH_RADIUS, () => cells++);
+    forEachFootprintOffset(radius, () => cells++);
     return cells;
   };
 
+  const noiseMapOver = (rng: SeededRng, lowBand: number, highBand: number): Heightmap => {
+    const map = createHeightmap(RANDOM_SIZE);
+    const bands = highBand - lowBand;
+    for (let i = 0; i < map.cells.length; i++) {
+      map.cells[i] = bandLevelHeight(lowBand + Math.floor(rng.next() * bands));
+    }
+    return map;
+  };
+  const noiseMap = (rng: SeededRng): Heightmap => noiseMapOver(rng, NOISE_LOW_BAND, NOISE_HIGH_BAND);
+  const shoreMap = (rng: SeededRng): Heightmap => noiseMapOver(rng, SHORE_LOW_BAND, SHORE_HIGH_BAND);
+
+  const builtMap = (rng: SeededRng): Heightmap => {
+    const map = createHeightmap(RANDOM_SIZE);
+    map.cells.fill(bandLevelHeight(BUILT_GROUND_BAND));
+    const span = RANDOM_SIZE - 2 * BUILT_SITE_MARGIN;
+    for (let site = 0; site < BUILT_SITES; site++) {
+      const x = BUILT_SITE_MARGIN + Math.floor(rng.next() * span);
+      const y = BUILT_SITE_MARGIN + Math.floor(rng.next() * span);
+      const dir = rng.next() < 0.5 ? 1 : -1;
+      for (let k = 0; k < BUILT_PRESSES_PER_SITE; k++) {
+        applySculpt(map, x, y, BUILT_RADIUS, dir * DEFAULT_SCULPT_AMOUNT, WIRE_DEFAULT_SCULPT_OPTIONS);
+      }
+    }
+    return map;
+  };
+
   it('is bounded by the brush, not by how deep the pit under it is', () => {
-    const cap = footprintCells() * MELT_ROOM_PER_CELL;
+    const cap = footprintCells(MAX_BRUSH_RADIUS) * MELT_ROOM_PER_CELL;
     for (const digs of TRENCH_DEPTHS) {
       const map = trenchAndTower(digs);
       const before = totalOf(map);
@@ -171,11 +216,45 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
     }
   });
 
+  it.each([
+    ['random', noiseMap],
+    ['player-built', builtMap],
+    ['waterline', shoreMap],
+  ])('no press on %s ground moves more than the brush may manufacture', (_kind, make) => {
+    const rng = createSeededRng(RANDOM_SEED);
+    const span = RANDOM_SIZE - 2 * RANDOM_MARGIN;
+    let pressed = 0;
+    let moved = 0;
+    const breaches: unknown[] = [];
+    for (let m = 0; m < RANDOM_MAPS; m++) {
+      const map = make(rng);
+      for (let k = 0; k < RANDOM_PRESSES_PER_MAP; k++) {
+        const cx = RANDOM_MARGIN + Math.floor(rng.next() * span);
+        const cy = RANDOM_MARGIN + Math.floor(rng.next() * span);
+        const radius = 1 + Math.floor(rng.next() * MAX_BRUSH_RADIUS);
+        const dir = rng.next() < 0.5 ? 1 : -1;
+        const cap = footprintCells(radius) * MELT_ROOM_PER_CELL;
+        const before = totalOf(map);
+        const smoothPress = sculptOptionsOf({
+          type: 'sculpt', x: cx, y: cy, radius, dir, tool: 'smooth',
+        });
+        const diff = applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, smoothPress);
+        const flux = Math.abs(totalOf(map) - before);
+        pressed++;
+        if (diff.length > 0) moved++;
+        if (flux > cap) breaches.push({ m, cx, cy, radius, dir, flux, cap });
+      }
+    }
+    expect(pressed).toBe(RANDOM_MAPS * RANDOM_PRESSES_PER_MAP);
+    expect(moved).toBeGreaterThan(0);
+    expect(breaches).toEqual([]);
+  });
+
   it('converges: repeats stop changing the ground and report an empty diff', () => {
     const map = trenchAndTower(TRENCH_DEPTHS[1]!);
     let presses = 0;
     while (presses < CONVERGENCE_LIMIT && press(map) > 0) presses++;
-    expect(presses).toBeGreaterThan(0);
-    expect(presses).toBeLessThan(CONVERGENCE_LIMIT);
+    expect(presses).toBe(CONVERGED_PRESSES);
+    expect(press(map)).toBe(0);
   });
 });
