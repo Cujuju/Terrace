@@ -4,6 +4,7 @@ import {
   TORNADO_ALL_MESSAGE,
   TORNADO_PLUGIN_NAME,
   parseAllPayload,
+  MAX_ACTIVE_TORNADOES,
   type TornadoState,
 } from '../protocol.ts';
 import { createFunnel, type FunnelRenderer, type FunnelSource } from './funnel.ts';
@@ -19,26 +20,42 @@ let receivedAtSeconds = 0;
 
 let elapsedSeconds = 0;
 
-function funnelSources(ctx: ClientPluginCtx): FunnelSource[] {
-  const sources: FunnelSource[] = [];
+type MutableFunnelSource = { -readonly [K in keyof FunnelSource]: FunnelSource[K] };
+
+function blankSource(): MutableFunnelSource {
+  return { id: 0, x: 0, groundY: 0, z: 0, intensity: 0 };
+}
+
+const sourcePool: MutableFunnelSource[] = [];
+const sources: FunnelSource[] = [];
+
+// Refilled in place over a pool: this runs every frame and must allocate nothing.
+function funnelSources(ctx: ClientPluginCtx): readonly FunnelSource[] {
+  sources.length = 0;
   for (const storm of storms) {
     const at = extrapolate(storm, elapsedSeconds - receivedAtSeconds);
     const groundY = ctx.terrainHeightAt(Math.round(at.x), Math.round(at.y));
     if (groundY === null) continue;
-    sources.push({
-      id: storm.id,
-      x: at.x * CELL_WORLD_SIZE,
-      groundY,
-      z: at.y * CELL_WORLD_SIZE,
-      intensity: storm.intensity,
-    });
+    while (sourcePool.length <= sources.length) sourcePool.push(blankSource());
+    const filled = sourcePool[sources.length]!;
+    filled.id = storm.id;
+    filled.x = at.x * CELL_WORLD_SIZE;
+    filled.groundY = groundY;
+    filled.z = at.y * CELL_WORLD_SIZE;
+    filled.intensity = storm.intensity;
+    sources.push(filled);
   }
   return sources;
 }
 
 const FUNNEL_DRAW_OBJECTS = 2;
 
-const FULL_DAYLIGHT = 1;
+function forgetStorms(): void {
+  storms = [];
+  receivedAtSeconds = 0;
+  elapsedSeconds = 0;
+  sources.length = 0;
+}
 
 export const clientPlugin: TerraceClientPlugin = {
   name: TORNADO_PLUGIN_NAME,
@@ -46,9 +63,7 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: FUNNEL_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    storms = [];
-    receivedAtSeconds = 0;
-    elapsedSeconds = 0;
+    forgetStorms();
     reducedMotion = watchReducedMotion();
 
     funnel = createFunnel((material, label) => ctx.applyRevealClip(material, label));
@@ -56,17 +71,22 @@ export const clientPlugin: TerraceClientPlugin = {
 
     unsubscribes = [
       ctx.onMessage(TORNADO_ALL_MESSAGE, (payload) => {
-        const all = parseAllPayload(payload);
+        const all = parseAllPayload(payload, MAX_ACTIVE_TORNADOES);
         if (all === null) return;
         storms = all.storms;
         receivedAtSeconds = elapsedSeconds;
+      }),
+
+      ctx.onWorldReset(() => {
+        forgetStorms();
+        funnel?.clear();
       }),
 
       ctx.onFrame((dt) => {
         if (!(reducedMotion?.matches() ?? false)) elapsedSeconds += dt;
 
         funnel?.apply(funnelSources(ctx));
-        funnel?.update(dt, elapsedSeconds, FULL_DAYLIGHT);
+        funnel?.update(dt, elapsedSeconds);
       }),
     ];
   },
@@ -75,9 +95,7 @@ export const clientPlugin: TerraceClientPlugin = {
     for (const unsubscribe of unsubscribes) unsubscribe();
     unsubscribes = [];
 
-    storms = [];
-    receivedAtSeconds = 0;
-    elapsedSeconds = 0;
+    forgetStorms();
 
     funnel?.dispose();
     funnel = null;

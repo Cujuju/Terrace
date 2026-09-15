@@ -8,7 +8,7 @@ import {
 } from '../../../client/src/plugins/kit/precipitationField.ts';
 import { DISC_RENDER_ORDER } from '../../../client/src/plugins/kit/discRig.ts';
 import { CYCLONE_EYE_RADIUS_FRACTION, CYCLONE_PLUGIN_NAME } from '../protocol.ts';
-import { CYCLONE_NOMINAL_RADIUS_WORLD_UNITS, MAX_SPIRALS } from './spiral.ts';
+import { CYCLONE_NOMINAL_RADIUS_WORLD_UNITS, MAX_SPIRALS } from './spiralLayout.ts';
 
 export const CYCLONE_RAIN_DROPS_PER_WORLD_AREA = 1;
 
@@ -50,6 +50,7 @@ export interface CycloneRainSource {
 export interface CycloneRainField {
   readonly root: Group;
   apply(live: readonly CycloneRainSource[], elapsed: number): void;
+  reset(): void;
   dispose(): void;
 }
 
@@ -100,6 +101,14 @@ export function createCycloneRainField(
           elapsed,
         );
       }
+    },
+
+    reset(): void {
+      for (const slot of slotOf.values()) {
+        field.park(slot);
+        freeSlots.push(slot);
+      }
+      slotOf.clear();
     },
 
     dispose(): void {

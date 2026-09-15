@@ -1,4 +1,4 @@
-import { SEA_LEVEL, cellsAcross, eyewallWindFalloff } from '@terrace/shared';
+import { cellsAcross, eyewallWindFalloff } from '@terrace/shared';
 import { interpolateByDifficulty } from '../../../server/src/plugins/kit/difficultyCurve.ts';
 import {
   createRotatingStorms,
@@ -9,6 +9,7 @@ import {
 } from '../../../server/src/plugins/kit/rotatingStorms.ts';
 import {
   CYCLONE_EYE_RADIUS_FRACTION,
+  MAX_ACTIVE_CYCLONES,
   cycloneNameFor,
   cycloneRadiusFor,
 } from '../protocol.ts';
@@ -33,13 +34,11 @@ const CYCLONE_PROFILE: RotatingStormProfile = {
   hostileTerrainDecayPerSecond: 0.018,
   minPeakIntensity: 0.6,
   maxPeakIntensity: 1,
-  maxActive: 1,
+  maxActive: MAX_ACTIVE_CYCLONES,
   hostileTerrain: 'land',
   eyeRadiusFraction: CYCLONE_EYE_RADIUS_FRACTION,
   windFalloff: (r: number) => eyewallWindFalloff(r, CYCLONE_EYE_RADIUS_FRACTION),
 };
-
-export const MAX_ACTIVE_CYCLONES = CYCLONE_PROFILE.maxActive;
 
 export const CYCLONE_MIN_OPEN_WATER_FRACTION = 0.85;
 
@@ -53,10 +52,6 @@ export const cyclones = createRotatingStorms({
   reportsLandfall: true,
 });
 
-export function isWaterAt(world: RotatingStormWorld, x: number, y: number): boolean {
-  return world.heightAt(x, y) <= SEA_LEVEL;
-}
-
 export function isOpenWater(
   world: RotatingStormWorld,
   x: number,
@@ -64,6 +59,11 @@ export function isOpenWater(
   radius: number,
 ): boolean {
   return waterFractionUnder(world, x, y, radius) >= CYCLONE_MIN_OPEN_WATER_FRACTION;
+}
+
+// The one siting rule: a cyclone forms only where its own disc is open water.
+export function isCycloneSite(world: RotatingStormWorld, x: number, y: number): boolean {
+  return isOpenWater(world, x, y, cycloneRadiusFor(world.worldSize));
 }
 
 export function trySpawnCyclone(world: RotatingStormWorld): RotatingStorm | null {

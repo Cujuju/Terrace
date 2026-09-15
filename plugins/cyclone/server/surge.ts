@@ -44,7 +44,7 @@ export function tickSurge(
 ): { x: number; y: number } | null {
   storm.ownerDebtSeconds += dt;
   if (storm.ownerDebtSeconds < SURGE_INTERVAL_SECONDS) return null;
-  storm.ownerDebtSeconds = 0;
+  storm.ownerDebtSeconds -= SURGE_INTERVAL_SECONDS;
   if (intensity < SURGE_MIN_INTENSITY) return null;
 
   for (let attempt = 0; attempt < SURGE_SITING_ATTEMPTS; attempt++) {

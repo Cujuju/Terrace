@@ -1,4 +1,9 @@
-import type { RotatingStorm } from '../../../server/src/plugins/kit/rotatingStorms.ts';
+import { devForceEnvName } from '../../../server/src/plugins/kit/devForce.ts';
+import {
+  createRotatingStormDev,
+  isRotatingStormRefusal,
+  summonRotatingStorm,
+} from '../../../server/src/plugins/kit/rotatingStormSummon.ts';
 import type {
   PersistenceSlice,
   Player,
@@ -19,20 +24,20 @@ import {
   DEFAULT_CYCLONE_FREQUENCY,
   DEFAULT_CYCLONE_SURGE_MODE,
   FREQUENCY_INTERVAL_MULTIPLIERS,
+  MAX_ACTIVE_CYCLONES,
   parseFrequency,
   parseSurgeMode,
   type CycloneFrequency,
   type CycloneState,
   type CycloneSurgeMode,
 } from '../protocol.ts';
-import { CYCLONE_SLICE_VERSION, loadCyclones, saveCyclones } from './persistence.ts';
 import {
-  MAX_ACTIVE_CYCLONES,
-  cyclones,
-  meanSpawnIntervalSeconds,
-  trySpawnCyclone,
-} from './sim.ts';
-import { forceCycloneNear, forceSpawnFromEnv } from './dev.ts';
+  CYCLONE_SLICE_VERSION,
+  loadCyclones,
+  saveCyclones,
+  takeRestoredThisCreate,
+} from './persistence.ts';
+import { cyclones, isCycloneSite, meanSpawnIntervalSeconds, trySpawnCyclone } from './sim.ts';
 import { tickSurge } from './surge.ts';
 import { scourStruckGround } from './wind-scour.ts';
 
@@ -40,7 +45,20 @@ export const BROADCAST_TICK_INTERVAL = 2;
 
 export { CYCLONE_DAMAGE_EVENT, CYCLONE_LANDFALL_EVENT };
 
-export { MAX_ACTIVE_CYCLONES };
+const CYCLONE_DEV_FORCE_ENV = devForceEnvName(CYCLONE_PLUGIN_NAME);
+
+const CYCLONE_NOUN = 'cyclone';
+
+const CYCLONE_SITING_NOUN = 'open water';
+
+const dev = createRotatingStormDev({
+  storms: cyclones,
+  pluginName: CYCLONE_PLUGIN_NAME,
+  accepts: isCycloneSite,
+  noun: CYCLONE_NOUN,
+  sitingNoun: CYCLONE_SITING_NOUN,
+  envName: CYCLONE_DEV_FORCE_ENV,
+});
 
 let tickCount = 0;
 
@@ -51,10 +69,10 @@ let surgeMode: CycloneSurgeMode = DEFAULT_CYCLONE_SURGE_MODE;
 
 function resetSessionState(): void {
   tickCount = 0;
+  broadcastPending = false;
   frequency = DEFAULT_CYCLONE_FREQUENCY;
   surgeMode = DEFAULT_CYCLONE_SURGE_MODE;
   cyclones.reset();
-  cyclones.freeze(false);
 }
 
 function intervalMultiplier(): number {
@@ -142,6 +160,10 @@ export const plugin: TerracePlugin = {
 
   onWorldCreate(world: WorldApi): void {
     tickCount = 0;
+    if (!takeRestoredThisCreate()) {
+      cyclones.reset();
+      broadcastPending = false;
+    }
     cyclones.freeze(false);
 
     frequency = parseFrequency(world.setting(CYCLONE_FREQUENCY_SETTING_KEY));
@@ -149,7 +171,7 @@ export const plugin: TerracePlugin = {
 
     if (frequency === 'off') return;
 
-    forceSpawnFromEnv(world, process.env);
+    dev.forceFromEnv(world, process.env);
 
     console.info(
       `[${CYCLONE_PLUGIN_NAME}] frequency: ${frequency}, surge: ${surgeMode}, ` +
@@ -178,17 +200,24 @@ export const plugin: TerracePlugin = {
     if (frequency === 'off') {
       return { ok: false, detail: 'cyclones are off for this world — set the frequency first' };
     }
-    if (cyclones.count() >= MAX_ACTIVE_CYCLONES) {
-      return {
-        ok: false,
-        detail: `${MAX_ACTIVE_CYCLONES} cyclone${MAX_ACTIVE_CYCLONES === 1 ? ' is' : 's are'} already in the air`,
-      };
-    }
-    const { storm, detail } = forceCycloneNear(world, site);
-    if (storm === null) return { ok: false, detail };
+    const summoned = summonRotatingStorm({
+      storms: cyclones,
+      world,
+      site,
+      accepts: isCycloneSite,
+      forcedEnv: CYCLONE_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_CYCLONES,
+      noun: CYCLONE_NOUN,
+      sitingNoun: CYCLONE_SITING_NOUN,
+    });
+    if (isRotatingStormRefusal(summoned)) return summoned;
+
     broadcastPending = false;
     broadcastCyclones(world);
-    return { ok: true, detail };
+    return {
+      ok: true,
+      detail: `${summoned.name ?? 'a cyclone'} spawned at (${summoned.x}, ${summoned.y})`,
+    };
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -203,11 +232,3 @@ export const plugin: TerracePlugin = {
 
   persistence,
 };
-
-export function resetCycloneState(): void {
-  resetSessionState();
-}
-
-export function livingCyclones(): readonly RotatingStorm[] {
-  return cyclones.storms();
-}
