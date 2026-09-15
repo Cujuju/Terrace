@@ -11,6 +11,7 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 import {
+  REFUSED_PULSE_MS,
   SILENT_REPEAT_BLINK_AFTER,
   createSculptInput,
   repeatDelayMs,
@@ -532,6 +533,77 @@ describe('refused pulse path', () => {
       expect(input.refusedHold()).toBe(false);
     } finally {
       dispose();
+    }
+  });
+
+  it('a refusal that lands after the click is over still shows, then clears', () => {
+    vi.useFakeTimers();
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror);
+    try {
+      fire('pointerdown', {});
+      fire('pointerup', {});
+      // A server nack for a quick click arrives with no button left to hold it.
+      input.releaseStroke();
+      expect(input.refusedHold()).toBe(true);
+      vi.advanceTimersByTime(REFUSED_PULSE_MS - 1);
+      expect(input.refusedHold()).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(input.refusedHold()).toBe(false);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('the re-click clears a pulsing refusal', () => {
+    vi.useFakeTimers();
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror);
+    try {
+      fire('pointerdown', {});
+      fire('pointerup', {});
+      input.releaseStroke();
+      expect(input.refusedHold()).toBe(true);
+      fire('pointerdown', {});
+      expect(input.refusedHold()).toBe(false);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('a held refusal outlasts the pulse — the button is what ends it', () => {
+    vi.useFakeTimers();
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror);
+    try {
+      fire('pointerdown', {});
+      input.releaseStroke();
+      vi.advanceTimersByTime(REFUSED_PULSE_MS * 2);
+      expect(input.refusedHold()).toBe(true);
+      fire('pointerup', {});
+      expect(input.refusedHold()).toBe(false);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('dispose and blur drop a pulsing refusal', () => {
+    vi.useFakeTimers();
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror);
+    try {
+      fire('pointerdown', {});
+      fire('pointerup', {});
+      input.releaseStroke();
+      expect(input.refusedHold()).toBe(true);
+      fire('blur', {});
+      expect(input.refusedHold()).toBe(false);
+    } finally {
+      dispose();
+      vi.useRealTimers();
     }
   });
 });
