@@ -30,7 +30,12 @@ export interface SculptIntent {
   seq?: number;
 }
 
-export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
+/** What an intent resolves to: only the wire-reachable tools, never a library one. */
+export interface ResolvedWireSculptOptions extends ResolvedSculptOptions {
+  readonly tool: SculptTool;
+}
+
+export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   tool: 'stamp',
   profile: 'soft',
   spill: 'banded',
@@ -46,7 +51,7 @@ export function sculptProfileOf(tool: SculptTool, profile: SculptProfile): Sculp
   return TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? EDGELESS_SCULPT_PROFILE : profile;
 }
 
-export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
+export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions {
   const tool = intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
   const targetBand =
     tool === 'drag' ? (intent.targetBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.targetBand;
