@@ -74,6 +74,9 @@ export type SendOutcome = 'sent' | 'refused' | 'offline';
  */
 export const SILENT_REPEAT_BLINK_AFTER = 3;
 
+/** Red for this long when no button is left to hold it: a server nack lands after the click. */
+export const REFUSED_PULSE_MS = 400;
+
 export interface SculptInputOptions {
   canvas: HTMLCanvasElement;
   camera: Camera;
@@ -493,11 +496,22 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   const strokeIsLive = (): boolean => strokePointerId !== null;
 
   let refusedPointerId: number | null = null;
+  let refusedUntilMs = Number.NEGATIVE_INFINITY;
+
+  const refusedIsShowing = (): boolean =>
+    refusedPointerId !== null || performance.now() < refusedUntilMs;
+
+  const clearRefused = (): void => {
+    refusedPointerId = null;
+    refusedUntilMs = Number.NEGATIVE_INFINITY;
+  };
 
   const releaseRefusedStroke = (): void => {
     const refused = strokePointerId;
     stopRepeat();
     refusedPointerId = refused;
+    // A nack that outlived its click has no button to hold the cue: pulse instead.
+    if (refused === null) refusedUntilMs = performance.now() + REFUSED_PULSE_MS;
   };
 
   const scheduleRepeat = (repeatIndex: number): void => {
@@ -597,7 +611,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   const startStroke = (event: PointerEvent, action: SculptAction): void => {
     stopRepeat();
-    refusedPointerId = null;
+    clearRefused();
 
     strokeButton = event.button;
     strokePointerId = event.pointerId;
@@ -690,7 +704,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   const onWindowBlur = (): void => {
     activeTouchIds.clear();
-    refusedPointerId = null;
+    clearRefused();
     stopRepeat();
   };
 
@@ -708,14 +722,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     heldBand: (): number | null => strokeGrab,
     carveHeldBand: (): number | null => strokeCarveBand,
     releaseStroke: releaseRefusedStroke,
-    refusedHold: (): boolean => refusedPointerId !== null,
+    refusedHold: refusedIsShowing,
     offlineHold: (): boolean => offlineLatched,
     dragDescentFrozen: (): boolean => descentFrozen,
     offlineBlinks: (): number => offlineBlinkCount,
     flatBlinks: (): number => flatBlinkCount,
     deadGuardHits: (): number => deadDirectionlessRaiseHits,
     dispose(): void {
-      refusedPointerId = null;
+      clearRefused();
       stopRepeat();
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
