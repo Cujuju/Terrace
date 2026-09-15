@@ -9,13 +9,20 @@ import {
   spanUndersideHeight,
   type Span,
 } from '@terrace/shared';
-import { HEIGHT_WORLD_SCALE } from '../../config.ts';
+import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import { blockyCellCapY } from '../capEmission.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import { columnOwningBand, drawnCapMet } from './bandOwner.ts';
 import { refineRiserToDrawnFace } from './drawnFaceRefine.ts';
 import { cellRevealed, scaleRayToCellSpace } from './rayMarch.ts';
 import type { DrawnCap, DrawnRisers, TerrainRayPick, Vec3 } from './types.ts';
+
+/**
+ * Slack for "the entry sits ON the cap": the entry y is marched, the cap
+ * derived. A millionth of a band clears that rounding, far below any
+ * aimable depth.
+ */
+const ON_CAP_WORLD_SLACK = BAND_WORLD_HEIGHT / 1_000_000;
 
 export function terrainHitInCell(
   mirror: TerrainMirror,
@@ -43,9 +50,7 @@ export function terrainHitInCell(
     const span = spanAt(mirror.map, i, j, k);
     if (!isSpanDrawn(span)) continue;
     // F1: test the wall crossing BEFORE the drawnCapMet gate. A grazing ray
-    // can enter the cell through its side wall inside [baseY, drawnTop] while
-    // never dipping below the drawn cap along its chord; the gate is then only
-    // the fast path for rays that miss both cap and wall.
+    // can enter through the side wall without dipping below the drawn cap.
     let met: DrawnCap | null = null;
     if (k === count - 1 && ray !== null) {
       met = drawnCapMet(mirror, ray, tEnter, tExit);
@@ -66,12 +71,13 @@ export function terrainHitInCell(
     const highY = entryY < exitY ? exitY : entryY;
     if (lowY > drawnY || highY < baseY) continue;
     // F4: snap underside cues to the drawn ceiling. The mesh draws the gap
-    // floor as a ceiling polygon at the drawn cap, so reporting the drawn cap
-    // matches the polygon refinement without walking any polygons.
+    // floor as a ceiling polygon there, so reporting it matches the polygon
+    // refinement without walking polygons.
     const drawnCeilingY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-    // F8: an entry exactly ON the column's own drawn cap is a level face. A
-    // flat cap picks as tread whatever its height.
-    const onOwnCap = entryY === drawnY && drawnY === drawnCeilingY;
+    // F8: an entry ON the column's own drawn cap is a level face. A flat cap
+    // picks as tread whatever its height.
+    const onOwnCap =
+      Math.abs(entryY - drawnY) <= ON_CAP_WORLD_SLACK && drawnY === drawnCeilingY;
     const insideOnEntry = !onOwnCap && entryY <= drawnY && entryY >= baseY;
     const onOrAboveCap = !insideOnEntry && entryY >= drawnY;
     const faceY = insideOnEntry ? entryY : onOrAboveCap ? capY : drawnCeilingY;
@@ -94,10 +100,9 @@ export function terrainHitInCell(
     hitMet = met;
   }
   if (hit !== null && hitMet !== null && hit.spanIndex === count - 1) {
-    // F2: never-null fallback for cap strikes from above. drawnBandAt produced
-    // this hit, so when no neighbour owns the band the hit stays on the
-    // entered cell's top span instead of vanishing. Horizontal grazing rays
-    // keep the old miss (null) so a carved gap still reads as open passage.
+    // F2: never-null fallback for cap strikes from above. With no neighbour
+    // owning the band the hit stays on the entered cell's top span; grazers
+    // miss, so carved gaps stay open.
     if (drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band) !== null) {
       hitSpan = spanAt(mirror.map, i, j, hit.spanIndex);
       hit = { ...hit, surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE };
