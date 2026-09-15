@@ -7,6 +7,7 @@ import {
   DEFAULT_SCULPT_AMOUNT,
   MAX_DRAG_SWEEP_CELLS,
   applySculpt,
+  cellIndex,
   chebyshevDistance,
   sculptOptionsOf,
   setColumn,
@@ -25,7 +26,7 @@ import {
   type SendOutcome,
 } from '../src/input/sculptInput.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
-import { graspSpanBandIn } from '../src/terrain/pickBand.ts';
+import { bandAtCellIn, graspSpanBandIn } from '../src/terrain/pickBand.ts';
 import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
   CUE_BLINK_ON_MS,
@@ -1038,6 +1039,81 @@ describe('a foot-anchored grasp on a layered column', () => {
       fire('pointerdown', {});
       expect(attempts).toHaveLength(1);
       expect(attempts[0]!.spanBand).toBe(WALL_RISER_BAND);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+// A terrace wall cell: genesis steps walls by MAX_STEP, so its cap sits inside a
+// drawn band instead of on a canonical band level.
+const WALL_STEP_HEIGHT = 8;
+const WALL_STEP_DRAWN_BAND = 1;
+const WALL_STEP_RAISED_DRAWN_BAND = 2;
+
+function wallStepWorld(): TerrainMirror {
+  const mirror = flatWorld();
+  mirror.map.cells[cellIndex(mirror.map, 30, 30)] = WALL_STEP_HEIGHT;
+  return mirror;
+}
+
+function driveDragSeed(mirror: TerrainMirror, shiftKey: boolean): {
+  input: SculptInput;
+  attempts: SculptIntent[];
+  dispose: () => void;
+} {
+  const { input, attempts, fire, dispose } = driveInput(mirror, {
+    bandAtCell: (x, y, spanBand) => bandAtCellIn(mirror, x, y, spanBand),
+    send: (intent) => {
+      applySculpt(
+        mirror.map,
+        intent.x,
+        intent.y,
+        intent.radius,
+        DEFAULT_SCULPT_AMOUNT * intent.dir,
+        sculptOptionsOf(intent),
+      );
+      return 'sent';
+    },
+  });
+  fire('pointerdown', { shiftKey });
+  return { input, attempts, dispose };
+}
+
+describe('a drag seed on ground that is not at a canonical band level', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  const mode = sculptMode();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    setSculptMode(mode);
+    vi.useRealTimers();
+  });
+
+  it('a raise grabs the band the seed drew, not the band its raw height floors to', () => {
+    setBrushTool('drag');
+    setBrushRadius(1);
+    const mirror = wallStepWorld();
+    const { input, attempts, dispose } = driveDragSeed(mirror, false);
+    try {
+      expect(input.heldBand()).toBe(WALL_STEP_RAISED_DRAWN_BAND);
+      const leg = attempts.find((intent) => intent.tool === 'drag');
+      expect(leg?.targetBand).toBe(WALL_STEP_RAISED_DRAWN_BAND);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a lower grabs the starting band instead of blinking flat at a real drop', () => {
+    setBrushTool('drag');
+    setBrushRadius(1);
+    const mirror = wallStepWorld();
+    const { input, attempts, dispose } = driveDragSeed(mirror, true);
+    try {
+      expect(input.flatBlinks()).toBe(0);
+      expect(input.heldBand()).toBe(WALL_STEP_DRAWN_BAND);
+      const leg = attempts.find((intent) => intent.tool === 'drag');
+      expect(leg?.targetBand).toBe(WALL_STEP_DRAWN_BAND);
     } finally {
       dispose();
     }
