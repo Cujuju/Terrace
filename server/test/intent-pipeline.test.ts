@@ -7,6 +7,7 @@ import {
   chunkHeightsAsCells,
   drawnBandOfSample,
   stepTowardBand,
+  type CellDiff,
   type ChunkPayload,
   type ChunkUnlockMessage,
   type SculptDeniedMessage,
@@ -761,6 +762,9 @@ describe('a contained sculpt fault leaves no client diverged', () => {
   const FAULT = 'terrain engine fault';
   const OTHER = { id: 'session-2', token: 'token-2', name: 'Watcher' };
   const SEQ = 9;
+  const BROKEN_SOCKET = 'socket already closed';
+  /** Far enough from the brush that only a diff-derived resync can reach it. */
+  const FAR_CHUNK = 3;
 
   function worldThatHalfApplies(world: World): World {
     return new Proxy(world, {
@@ -775,6 +779,28 @@ describe('a contained sculpt fault leaves no client diverged', () => {
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });
+  }
+
+  function worldWhoseSculptReturns(world: World, diff: CellDiff[]): World {
+    return new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'applySculpt') return () => diff;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  }
+
+  function sinkThatStrandsDiffsFor(sink: RecordingSink, playerId: string): MessageSink {
+    return {
+      broadcast: (type, payload) => sink.broadcast(type, payload),
+      sendTo: (target, type, payload) => {
+        if (target === playerId && type === 'terrainDiff') {
+          throw new Error(BROKEN_SOCKET);
+        }
+        sink.sendTo(target, type, payload);
+      },
+    };
   }
 
   function heightsOf(payload: ChunkPayload): ArrayLike<number> {
@@ -859,6 +885,63 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     expect(chunks.map((chunk) => chunk.cx).sort()).toEqual([0, 1, 2]);
   });
 
+  it('resends every chunk a wide diff touched, not just the brush that started it', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [
+      [0, 0],
+      [FAR_CHUNK, FAR_CHUNK],
+    ]);
+    const sink = new RecordingSink();
+    world.setSink(sinkThatStrandsDiffsFor(sink, PLAYER.id));
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear();
+
+    // Relaxation carries a smooth chunks past its footprint, so only the diff
+    // knows how far the sculpt actually wrote.
+    const wide: CellDiff[] = [
+      { x: UNLOCKED_CELL.x, y: UNLOCKED_CELL.y, h: DRAWN_SHORE_HEIGHT },
+      { x: FAR_CHUNK * CHUNK_SIZE + 1, y: FAR_CHUNK * CHUNK_SIZE + 1, h: DRAWN_SHORE_HEIGHT },
+    ];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outcome = handleSculptIntent(
+      makeDeps(worldWhoseSculptReturns(world, wide), []),
+      PLAYER,
+      sculptMessage({ seq: SEQ }),
+    );
+    errors.mockRestore();
+
+    expect(outcome.applied).toBe(true);
+    const { chunks } = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
+    expect(chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
+      [0, 0],
+      [FAR_CHUNK, FAR_CHUNK],
+    ]);
+  });
+
+  it('covers a faulted smooth\'s worst-case reach, which a stamp never needs', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [
+      [0, 0],
+      [FAR_CHUNK, FAR_CHUNK],
+    ]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear();
+
+    refuseFaultedSculpt(world, sculptMessage({ seq: SEQ, tool: 'stamp' }), () => {});
+    const stamped = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
+    expect(stamped.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([[0, 0]]);
+    sink.clear();
+
+    refuseFaultedSculpt(world, sculptMessage({ seq: SEQ, tool: 'smooth' }), () => {});
+    const smoothed = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
+    expect(smoothed.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
+      [0, 0],
+      [FAR_CHUNK, FAR_CHUNK],
+    ]);
+  });
+
   it('sends the resync only to viewers who can see those chunks', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     const sink = new RecordingSink();
@@ -876,16 +959,7 @@ describe('a contained sculpt fault leaves no client diverged', () => {
   it('keeps one viewer\'s broken socket from stranding the others', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     const sink = new RecordingSink();
-    const brokenSink: MessageSink = {
-      broadcast: (type, payload) => sink.broadcast(type, payload),
-      sendTo: (playerId, type, payload) => {
-        if (playerId === PLAYER.id && type === 'terrainDiff') {
-          throw new Error('socket already closed');
-        }
-        sink.sendTo(playerId, type, payload);
-      },
-    };
-    world.setSink(brokenSink);
+    world.setSink(sinkThatStrandsDiffsFor(sink, PLAYER.id));
     world.addPlayer(PLAYER);
     world.addPlayer(OTHER);
     grantTokenEveryUnlockedChunk(world, PLAYER.token);

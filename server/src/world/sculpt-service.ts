@@ -1,5 +1,7 @@
 import {
   CHUNK_SIZE,
+  LIBRARY_SCULPT_TOOL,
+  SMOOTH_SPREAD_CELLS,
   chunksPerEdge,
   sculptOptionsOf,
   sculptSweepRadius,
@@ -23,8 +25,15 @@ export interface TerrainChangeListener {
   notifyTerrainChanged(diff: readonly CellDiff[], sculptorToken?: string): void;
 }
 
-/** Relaxation can nudge cells just outside the footprint, so the resync overshoots by a chunk. */
-const SCULPT_FAULT_RESYNC_HALO_CELLS = CHUNK_SIZE;
+/** An edit on a chunk's rim moves its neighbour's mesh seam, so a resync overshoots by one chunk. */
+const MESH_SEAM_HALO_CHUNKS = 1;
+
+/**
+ * A faulted sculpt leaves no diff to measure, so its resync must cover what
+ * relaxation could have reached: a full-span height difference unwinds one
+ * MAX_STEP per cell, which is exactly the ramp SMOOTH_SPREAD_CELLS counts.
+ */
+const RELAXATION_WORST_CASE_REACH_CELLS = SMOOTH_SPREAD_CELLS;
 
 const diffSendLog = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
 
@@ -42,7 +51,7 @@ export function applyServerSculpt(
   if (diff.length === 0) return diff;
 
   timePhase('sculpt.broadcast', () => {
-    broadcastDiff(world, diff, x, y, radius, options);
+    broadcastDiff(world, diff);
   });
 
   timePhase('sculpt.listeners', () => {
@@ -55,20 +64,13 @@ export function applyServerSculpt(
  * One viewer's failed send is that viewer's problem: the others still get the
  * diff, and the one that failed gets the authoritative chunks instead.
  */
-function broadcastDiff(
-  world: World,
-  diff: readonly CellDiff[],
-  x: number,
-  y: number,
-  radius: number,
-  options?: SculptOptions,
-): void {
+function broadcastDiff(world: World, diff: readonly CellDiff[]): void {
   let shares: ViewerDiff[];
   try {
     shares = partitionDiffByViewer(world, diff);
   } catch (error) {
     noteDiffSendFailure(error);
-    resendSculptFootprint(world, x, y, radius, options);
+    resendDiffChunks(world, diff);
     return;
   }
 
@@ -82,7 +84,7 @@ function broadcastDiff(
     }
   }
   if (stranded.length > 0) {
-    resendSculptFootprint(world, x, y, radius, options, stranded);
+    resendDiffChunks(world, diff, stranded);
   }
 }
 
@@ -93,10 +95,43 @@ function noteDiffSendFailure(error: unknown): void {
 }
 
 /**
- * Re-sends the authoritative heights of every chunk a sculpt could have edited,
- * so a half-applied or undelivered edit cannot leave a viewer diverged.
+ * Re-sends the authoritative heights of every chunk the sculpt actually wrote.
+ * The diff is the only honest account of reach: a smooth's relaxation cascade
+ * runs far past the brush that started it.
  */
-export function resendSculptFootprint(
+function resendDiffChunks(
+  world: World,
+  diff: readonly CellDiff[],
+  toPlayerIds?: readonly string[],
+): void {
+  const edge = chunksPerEdge(world.size);
+  const touched = new Set<number>();
+  for (const cell of diff) {
+    const cx = chunkOfCell(cell.x);
+    const cy = chunkOfCell(cell.y);
+    for (let hy = -MESH_SEAM_HALO_CHUNKS; hy <= MESH_SEAM_HALO_CHUNKS; hy++) {
+      for (let hx = -MESH_SEAM_HALO_CHUNKS; hx <= MESH_SEAM_HALO_CHUNKS; hx++) {
+        const nx = cx + hx;
+        const ny = cy + hy;
+        if (nx < 0 || ny < 0 || nx > edge - 1 || ny > edge - 1) continue;
+        touched.add(ny * edge + nx);
+      }
+    }
+  }
+  sendChunkResync(
+    world,
+    [...touched].sort((a, b) => a - b),
+    edge,
+    toPlayerIds,
+  );
+}
+
+/**
+ * Re-sends the authoritative heights of every chunk a sculpt whose handling
+ * threw could have edited. No diff exists for a fault, so the rectangle is the
+ * stroke's worst case rather than its measured reach.
+ */
+function resendSculptFootprint(
   world: World,
   x: number,
   y: number,
@@ -104,35 +139,58 @@ export function resendSculptFootprint(
   options?: SculptOptions,
   toPlayerIds?: readonly string[],
 ): void {
-  const tool = options?.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
-  const profile = options?.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile;
-  const anchor = options?.anchor ?? WIRE_DEFAULT_SCULPT_OPTIONS.anchor;
+  const reach = faultedSculptReachCells(radius, options);
   const sweepFrom = options?.sweepFrom ?? null;
-  const reach =
-    (tool === 'stamp' ? sculptSweepRadius(radius, profile, tool, anchor) : radius) +
-    SCULPT_FAULT_RESYNC_HALO_CELLS;
-
   const fromX = sweepFrom?.x ?? x;
   const fromY = sweepFrom?.y ?? y;
-  const edge = chunksPerEdge(world.size);
-  const first = chunkOfCell(Math.min(x, fromX) - reach, edge);
-  const last = chunkOfCell(Math.max(x, fromX) + reach, edge);
-  const firstRow = chunkOfCell(Math.min(y, fromY) - reach, edge);
-  const lastRow = chunkOfCell(Math.max(y, fromY) + reach, edge);
 
-  const audience =
-    toPlayerIds ?? world.players().map((player) => player.id);
+  const edge = chunksPerEdge(world.size);
+  const first = clampChunk(chunkOfCell(Math.min(x, fromX) - reach) - MESH_SEAM_HALO_CHUNKS, edge);
+  const last = clampChunk(chunkOfCell(Math.max(x, fromX) + reach) + MESH_SEAM_HALO_CHUNKS, edge);
+  const firstRow = clampChunk(chunkOfCell(Math.min(y, fromY) - reach) - MESH_SEAM_HALO_CHUNKS, edge);
+  const lastRow = clampChunk(chunkOfCell(Math.max(y, fromY) + reach) + MESH_SEAM_HALO_CHUNKS, edge);
+
+  const keys: number[] = [];
+  for (let cy = firstRow; cy <= lastRow; cy++) {
+    for (let cx = first; cx <= last; cx++) keys.push(cy * edge + cx);
+  }
+  sendChunkResync(world, keys, edge, toPlayerIds);
+}
+
+/**
+ * How far past the brush a stroke could have written when nothing measured it.
+ * Only smooth and settle relax, and relaxation is the one effect that is not
+ * bounded by the footprint.
+ */
+function faultedSculptReachCells(radius: number, options?: SculptOptions): number {
+  const tool = options?.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
+  if (tool === 'smooth' || tool === LIBRARY_SCULPT_TOOL) {
+    return radius + RELAXATION_WORST_CASE_REACH_CELLS;
+  }
+  const profile = options?.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile;
+  const anchor = options?.anchor ?? WIRE_DEFAULT_SCULPT_OPTIONS.anchor;
+  return sculptSweepRadius(radius, profile, tool, anchor);
+}
+
+/** Sends each named chunk to every player in the audience who can see it. */
+function sendChunkResync(
+  world: World,
+  chunkKeys: readonly number[],
+  edge: number,
+  toPlayerIds?: readonly string[],
+): void {
+  const audience = toPlayerIds ?? world.players().map((player) => player.id);
   const chunksByPlayer = new Map<string, ChunkPayload[]>();
   for (const playerId of audience) chunksByPlayer.set(playerId, []);
 
-  for (let cy = firstRow; cy <= lastRow; cy++) {
-    for (let cx = first; cx <= last; cx++) {
-      let payload: ChunkPayload | null = null;
-      for (const [playerId, chunks] of chunksByPlayer) {
-        if (!world.isChunkVisibleTo(playerId, cx, cy)) continue;
-        payload ??= chunkPayloadOf(world, cx, cy);
-        chunks.push(payload);
-      }
+  for (const key of chunkKeys) {
+    const cx = key % edge;
+    const cy = (key - cx) / edge;
+    let payload: ChunkPayload | null = null;
+    for (const [playerId, chunks] of chunksByPlayer) {
+      if (!world.isChunkVisibleTo(playerId, cx, cy)) continue;
+      payload ??= chunkPayloadOf(world, cx, cy);
+      chunks.push(payload);
     }
   }
 
@@ -150,8 +208,11 @@ export function resendIntentFootprint(world: World, intent: SculptIntent): void 
   resendSculptFootprint(world, intent.x, intent.y, intent.radius, sculptOptionsOf(intent));
 }
 
-function chunkOfCell(cell: number, edge: number): number {
-  const index = Math.floor(cell / CHUNK_SIZE);
+function chunkOfCell(cell: number): number {
+  return Math.floor(cell / CHUNK_SIZE);
+}
+
+function clampChunk(index: number, edge: number): number {
   if (index < 0) return 0;
   return index > edge - 1 ? edge - 1 : index;
 }
