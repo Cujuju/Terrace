@@ -1328,6 +1328,68 @@ describe('the frontier price is quoted once, at verdict time', () => {
     expect(clientFee).toBe(before - (manaBalanceOf(PLAYER.id) ?? 0));
   });
 
+  it('a faulted stroke leaves no quote behind for the next seq to spend', () => {
+    const SCULPT_FAULT = 'terrain engine fault';
+    const TERRITORY_FAULT = 'territory lookup fault';
+    const armed = { on: false };
+
+    resetManaState();
+    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+    world.setSink(new RecordingSink());
+    // Mana reads territory through this world; arming it makes that read throw
+    // once, which the host contains, so the verdict runs on a stale quote.
+    const flaky = new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'isChunkUnlockedForToken' && armed.on) {
+          return (): never => {
+            armed.on = false;
+            throw new Error(TERRITORY_FAULT);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const host = new PluginHost(flaky, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    world.seedChunkForToken(PLAYER.token, ...HOME_CHUNK);
+    host.playerJoined(PLAYER);
+
+    const faulting = new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'applySculpt') {
+          return (): never => {
+            throw new Error(SCULPT_FAULT);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      handleSculptIntent({ world: faulting, interceptors: host }, PLAYER, FRONTIER_INTENT),
+    ).toThrow(SCULPT_FAULT);
+
+    // The territory that quote priced is now owned outright.
+    const edge = world.chunksPerEdge;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+
+    const repeat = { ...FRONTIER_INTENT, seq: (FRONTIER_INTENT.seq ?? 0) + 1 };
+    armed.on = true;
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(handleSculptIntent({ world, interceptors: host }, PLAYER, repeat).applied).toBe(true);
+    errors.mockRestore();
+
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
+      sculptManaCost(MANA_PER_BAND_CELL, repeat.radius, 'hard', 'stamp'),
+    );
+  });
+
   it('a denial leaves no quote behind for a later stroke to spend', () => {
     const harness = bootOnTheFrontier();
     const denied = { ...FRONTIER_INTENT };
