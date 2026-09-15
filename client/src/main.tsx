@@ -214,7 +214,14 @@ const deniedAwareSink: TerrainSink = {
   onSculptApplied: (msg) => world.onSculptApplied(msg),
 };
 
-const denialCue = createDenialCue(() => sculptInput.refusedHold());
+// The four brush cues: refused (red), offline (grey/hollow, never red), ghost
+// (the intent left but predicted nothing), flat (posture refusal, crosshair only).
+const denialCue = createDenialCue(() => sculptInput.refusedHold(), {
+  offline: () => sculptInput.offlineHold(),
+  ghost: () => world.ghostSeqs().length > 0,
+  flat: () => sculptInput.dragDescentFrozen(),
+  flatBlinks: () => sculptInput.flatBlinks(),
+});
 const brushPreview = createBrushPreview(
   viewport.scene,
   canvas,

@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Line, LineSegments, Mesh, Scene, type Material } from 'three';
 import { BRUSH_RADII } from '../src/state/hudState.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 import { createBrushPreview, type BrushSelection } from '../src/render/brushPreview.ts';
 import {
+  CUE_BLINK_ON_MS,
   DENIED_COLOR,
   OFFLINE_COLOR,
+  createBlinkFlash,
   createDenialCue,
 } from '../src/render/denialCue.ts';
 
@@ -203,5 +205,55 @@ describe('lane E: brush preview cue states', () => {
     expect(crosshair.position.x).toBeCloseTo((HOVER.x + 0.4) * CELL_WORLD_SIZE, 6);
     expect(crosshair.position.z).toBeCloseTo((HOVER.y - 0.3) * CELL_WORLD_SIZE, 6);
     preview.dispose();
+  });
+});
+
+describe('createBlinkFlash: a blink counter read as a timed level', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('stays dark while the counter holds still', () => {
+    vi.useFakeTimers();
+    const lit = createBlinkFlash(() => 0);
+    expect(lit()).toBe(false);
+    vi.advanceTimersByTime(CUE_BLINK_ON_MS * 10);
+    expect(lit()).toBe(false);
+  });
+
+  it('ignores whatever the counter already stood at', () => {
+    vi.useFakeTimers();
+    let blinks = 7;
+    const lit = createBlinkFlash(() => blinks);
+    expect(lit()).toBe(false);
+    blinks = 8;
+    expect(lit()).toBe(true);
+  });
+
+  it('lights for exactly one blink per increment', () => {
+    vi.useFakeTimers();
+    let blinks = 0;
+    const lit = createBlinkFlash(() => blinks);
+    blinks++;
+    expect(lit()).toBe(true);
+    vi.advanceTimersByTime(CUE_BLINK_ON_MS - 1);
+    expect(lit()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(lit()).toBe(false);
+  });
+
+  it('extends the lit window when a second blink lands inside it', () => {
+    vi.useFakeTimers();
+    let blinks = 0;
+    const lit = createBlinkFlash(() => blinks);
+    blinks++;
+    expect(lit()).toBe(true);
+    vi.advanceTimersByTime(CUE_BLINK_ON_MS - 1);
+    blinks++;
+    expect(lit()).toBe(true);
+    vi.advanceTimersByTime(CUE_BLINK_ON_MS - 1);
+    expect(lit()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(lit()).toBe(false);
   });
 });
