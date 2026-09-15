@@ -6,6 +6,8 @@ import {
   bandCrossingStep,
   bandFloorHeight,
   chunkHeightsAsCells,
+  MAX_BAND,
+  MIN_BAND,
   drawnBandOfSample,
   type ChunkPayload,
   type ChunkUnlockMessage,
@@ -14,6 +16,7 @@ import {
 } from '@terrace/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BEDROCK_DRAG_REFUSAL,
   handleSculptIntent,
   refuseFaultedSculpt,
   sculptMessageSeq,
@@ -913,5 +916,54 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     expect(applied).toEqual([SEQ]);
     expect(sink.ofType('chunkUnlock').map((message) => message.target)).toEqual([PLAYER.id]);
     expect(sink.ofType('sculptApplied')).toHaveLength(1);
+  });
+});
+
+describe('an intent the terrain engine cannot finish is refused, not run', () => {
+  const DEEP_DRAG: Partial<SculptIntent> = {
+    tool: 'drag',
+    dir: -1,
+    targetBand: MIN_BAND,
+    seq: 3,
+  };
+
+  it('refuses a lower-drag that would retreat past bedrock', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear();
+
+    const outcome = handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage(DEEP_DRAG));
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.detail).toBe(BEDROCK_DRAG_REFUSAL);
+    expect(sink.ofType('sculptDenied')).toHaveLength(1);
+    expect(sink.ofType('terrainDiff')).toHaveLength(0);
+  });
+
+  it('leaves every other drag band alone, in both directions', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.setSink(new RecordingSink());
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    const deps = makeDeps(world, []);
+
+    for (const band of [MIN_BAND + 1, 0, MAX_BAND]) {
+      for (const dir of [1, -1] as const) {
+        const outcome = handleSculptIntent(
+          deps,
+          PLAYER,
+          sculptMessage({ tool: 'drag', dir, targetBand: band, seq: band * 2 + dir }),
+        );
+        expect(outcome.applied).toBe(true);
+      }
+    }
+
+    expect(
+      handleSculptIntent(deps, PLAYER, sculptMessage({ tool: 'drag', dir: 1, targetBand: MIN_BAND }))
+        .applied,
+    ).toBe(true);
   });
 });

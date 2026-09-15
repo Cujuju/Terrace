@@ -1,5 +1,6 @@
 import {
   DEFAULT_SCULPT_AMOUNT,
+  MIN_BAND,
   sculptOptionsOf,
   validateSculptIntent,
   type CellDiff,
@@ -69,6 +70,10 @@ export function handleSculptIntent(
     return refuse('locked');
   }
 
+  if (hangsTheTerrainEngine(intent)) {
+    return refuse('malformed', BEDROCK_DRAG_REFUSAL);
+  }
+
   const verdict = interceptors.runIntent(intent, player);
   if (verdict.kind === 'deny') {
     return refuse('plugin-denied', verdict.reason);
@@ -105,6 +110,16 @@ export function handleSculptIntent(
   }
 
   return { applied: true, intent: effective, diff };
+}
+
+export const BEDROCK_DRAG_REFUSAL = 'a drag cannot retreat past bedrock';
+
+/**
+ * Guard, not a fix: applyDragRegion never terminates for a lower-drag at
+ * MIN_BAND, because bedrock re-flooring restores the ceiling it just cut.
+ */
+function hangsTheTerrainEngine(intent: SculptIntent): boolean {
+  return intent.tool === 'drag' && intent.dir === -1 && intent.targetBand === MIN_BAND;
 }
 
 /**
