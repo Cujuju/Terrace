@@ -1,6 +1,6 @@
 import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, DRAWN_SHORE_HEIGHT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
+import { handleSculptIntent, sculptMessageSeq, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
 import { PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
 import type { IntentVerdict, TerracePlugin } from '../src/plugins/types.ts';
 import type { World } from '../src/world/world.ts';
@@ -688,5 +688,50 @@ describe('plugin denial reasons ride the wire detail (lane B)', () => {
         },
       },
     ]);
+  });
+});
+
+describe('a pipeline fault is the caller\'s to contain', () => {
+  const WORLD_FAULT = 'terrain engine fault';
+
+  function throwingWorld(world: World): World {
+    return new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'applySculpt') {
+          return () => {
+            throw new Error(WORLD_FAULT);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  }
+
+  it('lets a throw out rather than acking an edit that never landed', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+
+    expect(() =>
+      handleSculptIntent(
+        makeDeps(throwingWorld(world), []),
+        PLAYER,
+        sculptMessage({ seq: 9 }),
+      ),
+    ).toThrow(WORLD_FAULT);
+
+    expect(sink.ofType('sculptApplied')).toHaveLength(0);
+    expect(sink.ofType('terrainDiff')).toHaveLength(0);
+  });
+
+  it('hands the sender\'s seq to whoever contains that throw, and nothing else', () => {
+    expect(sculptMessageSeq(sculptMessage({ seq: 9 }))).toBe(9);
+    expect(sculptMessageSeq(sculptMessage())).toBeUndefined();
+    expect(sculptMessageSeq({ seq: 1.5 })).toBeUndefined();
+    expect(sculptMessageSeq(null)).toBeUndefined();
+    expect(sculptMessageSeq('sculpt')).toBeUndefined();
   });
 });

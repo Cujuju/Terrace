@@ -15,6 +15,7 @@ import {
   type JoinSnapshotMessage,
   type RestorePointListMessage,
   type RollbackResultMessage,
+  type SculptDeniedMessage,
   type ServerRestartNoticeMessage,
   type TerrainDiffMessage,
   type WorldAdminRequestMessage,
@@ -26,7 +27,7 @@ import {
 } from '@terrace/shared';
 import { logError, logInfo, logWarn } from '../log.ts';
 import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
-import { handleSculptIntent } from '../intent/pipeline.ts';
+import { handleSculptIntent, sculptMessageSeq } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { ServerRestartService } from '../restart.ts';
 import type { PerfLoggingSetting } from '../perf-logging-setting.ts';
@@ -71,7 +72,18 @@ const UNREGISTERED_MESSAGE_REASON_PREFIX = 'room onMessage for ';
 const HITCH_PREFIX = '[hitch]';
 const HITCH_MS_DECIMALS = 1;
 
-const PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS = 10_000;
+const INTENT_FAILURE_LOG_INTERVAL_MS = 10_000;
+
+/** Keeps a failure that repeats at intent rate from drowning the log. */
+class LogThrottle {
+  private lastMs = Number.NEGATIVE_INFINITY;
+
+  due(nowMs: number): boolean {
+    if (nowMs - this.lastMs < INTENT_FAILURE_LOG_INTERVAL_MS) return false;
+    this.lastMs = nowMs;
+    return true;
+  }
+}
 
 export interface TerraceServerMessages {
   snapshot: JoinSnapshotMessage;
@@ -112,7 +124,9 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
 
   private readonly sculptRate = new SculptRateLimiter();
 
-  private lastPluginRewriteLogMs = Number.NEGATIVE_INFINITY;
+  private readonly pluginRewriteLog = new LogThrottle();
+
+  private readonly sculptFaultLog = new LogThrottle();
 
   override onCreate(): void {
     if (processRoomContext === null) {
@@ -138,13 +152,17 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       if (!player) return;
       const session = this.context.manager.current;
       if (session === null) return;
-      const outcome = handleSculptIntent(
-        { world: session.world, interceptors: session.host },
-        player,
-        message,
-      );
-      if (!outcome.applied && outcome.reason === 'plugin-modified-invalid') {
-        this.notePluginRewriteFailure(outcome.detail);
+      try {
+        const outcome = handleSculptIntent(
+          { world: session.world, interceptors: session.host },
+          player,
+          message,
+        );
+        if (!outcome.applied && outcome.reason === 'plugin-modified-invalid') {
+          this.notePluginRewriteFailure(outcome.detail);
+        }
+      } catch (error) {
+        this.noteSculptFault(client, message, error);
       }
     });
 
@@ -374,13 +392,26 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
   }
 
   private notePluginRewriteFailure(detail?: string): void {
-    const nowMs = Date.now();
-    if (nowMs - this.lastPluginRewriteLogMs < PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS) return;
-    this.lastPluginRewriteLogMs = nowMs;
+    if (!this.pluginRewriteLog.due(Date.now())) return;
     logWarn(
       'a plugin rewrote a sculpt intent into one core had to refuse ' +
         `(${detail ?? 'failed re-validation'}); those players cannot sculpt until it is fixed`,
     );
+  }
+
+  /**
+   * Colyseus has no handler of its own here, so an escaping throw would take the
+   * process down for everyone. Contain it, and nack the sender so their
+   * prediction rolls back now instead of waiting out its TTL.
+   */
+  private noteSculptFault(client: TerraceClient, message: unknown, error: unknown): void {
+    if (this.sculptFaultLog.due(Date.now())) {
+      logError('a sculpt intent threw on its way through the pipeline', error);
+    }
+    const seq = sculptMessageSeq(message);
+    if (seq === undefined) return;
+    const nack: SculptDeniedMessage = { type: 'sculptDenied', seq };
+    client.send(nack.type, nack);
   }
 
   override onLeave(client: TerraceClient): void {
