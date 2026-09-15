@@ -6,7 +6,7 @@ import {
   type FrameStatsSample,
 } from './frameStats.ts';
 import { perfOpen, setFrameStats, setPerfOpen } from '../state/hudState.ts';
-import { installUploadMeter, setUploadMeterEnabled } from './uploadMeter.ts';
+import { setUploadMeterEnabled } from './uploadMeter.ts';
 import { isTextEntry } from '../plugins/kit/textEntry.ts';
 import {
   selfProfileAvailable,
@@ -46,8 +46,8 @@ function trackReadouts(): () => void {
     createEffect(() => {
       const hudWants = perfOpen();
       const logWants = logging();
-      setUploadMeterEnabled(hudWants || logWants);
       if (!hudWants && !logWants) {
+        setUploadMeterEnabled(false);
         setFrameStatsSink(null);
         setFrameStats(null);
         return;
@@ -56,14 +56,16 @@ function trackReadouts(): () => void {
         if (logWants) logSample(sample);
         if (hudWants) setFrameStats(sample);
       });
+      // Flush the unmetered window first so the panel fills immediately, then
+      // enable: the meter starts exactly at the first fully metered window.
       flushFrameStats();
+      setUploadMeterEnabled(true);
     });
     return dispose;
   });
 }
 
 export function installPerfHandle(): () => void {
-  installUploadMeter();
   setLogging(queryFlagSet(PERF_LOG_QUERY_FLAG));
   const disposeReadouts = trackReadouts();
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -107,5 +109,6 @@ export function installPerfHandle(): () => void {
     window.removeEventListener('keydown', onKeyDown);
     disposeReadouts();
     setFrameStatsSink(null);
+    setUploadMeterEnabled(false);
   };
 }

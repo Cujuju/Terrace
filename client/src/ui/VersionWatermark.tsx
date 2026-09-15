@@ -1,4 +1,4 @@
-import { For, Show, type JSX } from 'solid-js';
+import { For, Show, createMemo, type JSX } from 'solid-js';
 import {
   frameDraw,
   frameRate,
@@ -39,12 +39,9 @@ function pickText(pick: HoverPickSample | null): string {
 }
 
 /**
- * Width the pick line always reserves, so the panel never snaps as the
- * pointer moves: `8888, 8888 underside` — four-digit cells (a 2048-cell
- * world) plus the longest face text (`underside`, tied with `riser bNN`).
- * Shorter lines are padded with spaces (the row keeps `white-space: pre`),
- * and the reserve only ever grows, so a bigger world can't reintroduce
- * the snapping — the line assumes the maximum length it has ever needed.
+ * Reserved pick-line width so the panel never snaps; shorter lines pad (the
+ * row is white-space: pre) and the reserve only grows. Longest is
+ * `8888, 8888 underside`.
  */
 let pickWidthReserve = '8888, 8888 underside'.length;
 
@@ -101,22 +98,24 @@ export function VersionWatermark(): JSX.Element {
 }
       <Show when={perfOpen() ? frameStats() : null}>
         {(stat) => {
-          // Submission ms per draw, calibrated per window from the
-          // render-wall remainder after GPU time. Null without draws or
-          // GPU data — rows then show draws with no ms estimate.
-          const draws = stat().counters.drawCalls;
-          const gpuMs = stat().gpuMsP50;
-          const submissionMsPerDraw =
-            draws > 0 && gpuMs !== null
-              ? Math.max(0, stat().renderMsP50 - gpuMs) / draws
-              : null;
+          // Per-draw share of the CPU render wall left after GPU time — an
+          // estimate, not measured submission cost. Null without draws or
+          // GPU data.
+          const cpuRenderMsPerDraw = createMemo<number | null>(() => {
+            const draws = stat().counters.drawCalls;
+            const gpuMs = stat().gpuMsP50;
+            if (draws === 0 || gpuMs === null) return null;
+            return Math.max(0, stat().renderMsP50 - gpuMs) / draws;
+          });
           // Visible drawables per layer ≈ draws owned (InstancedMesh draws
           // once; culled objects still count, so this is an upper bound).
-          const drawObjects = new Map(
-            pluginDrawRows().map((row) => [row.pluginName, row.objects]),
+          const drawObjects = createMemo(
+            () => new Map(pluginDrawRows().map((row) => [row.pluginName, row.objects])),
           );
-          const uploadKbPerFrame = stat().uploadBytesPerFrame / 1024;
-          const activeUploadKinds = stat().uploadByKind.filter((row) => row.bytes > 0);
+          const uploadKbPerFrame = (): number => stat().uploadBytesPerFrame / 1024;
+          const activeUploadKinds = createMemo(() =>
+            stat().uploadByKind.filter((row) => row.bytes > 0),
+          );
           return (
           <div class="hud-version__perf-panel">
             <PerfRow label="pick" value={pickValue(hoverPick())} />
@@ -154,15 +153,21 @@ export function VersionWatermark(): JSX.Element {
             <PerfRow label="textures" value={String(stat().counters.textures)} />
             <PerfRow label="programs" value={String(stat().counters.programs)} />
             <PerfRow
-              label="upload"
-              value={`~${uploadKbPerFrame.toFixed(1)} KB/frame (${stat().uploadCallsPerFrame.toFixed(1)} calls)`}
+              label="queue.write*"
+              value={`~${uploadKbPerFrame().toFixed(1)} KB/frame (${stat().uploadCallsPerFrame.toFixed(1)} calls)`}
             />
-            <Show when={activeUploadKinds.length > 0}>
+            <Show when={activeUploadKinds().length > 0}>
               <PerfRow
                 label="up kinds"
-                value={activeUploadKinds
+                value={activeUploadKinds()
                   .map((row) => `${row.kind} ${(row.bytes / 1024).toFixed(1)} KB`)
                   .join(' · ')}
+              />
+            </Show>
+            <Show when={stat().uploadUnparsedCallsPerFrame > 0}>
+              <PerfRow
+                label="up unsized"
+                value={`${stat().uploadUnparsedCallsPerFrame.toFixed(1)} calls/frame`}
               />
             </Show>
             {
@@ -170,17 +175,18 @@ export function VersionWatermark(): JSX.Element {
 }
             <For each={stat().plugins}>
               {(row) => {
-                const objects = drawObjects.get(row.name);
-                const attributed =
-                  objects === undefined
-                    ? ''
-                    : submissionMsPerDraw === null
-                      ? ` · ~${String(objects)} draws`
-                      : ` · ~${String(objects)} draws (~${(objects * submissionMsPerDraw).toFixed(2)} ms)`;
+                const attributed = (): string => {
+                  const objects = drawObjects().get(row.name);
+                  if (objects === undefined) return '';
+                  const msPerDraw = cpuRenderMsPerDraw();
+                  const draws = ` · ~${String(objects)} draws`;
+                  if (msPerDraw === null) return draws;
+                  return `${draws} · est. ${(objects * msPerDraw).toFixed(2)} ms cpu-render share`;
+                };
                 return (
                   <PerfRow
                     label={row.name}
-                    value={`${row.msPerFrame.toFixed(2)} ms (${String(Math.round(row.shareOfFrame * 100))}%)${attributed}`}
+                    value={`${row.msPerFrame.toFixed(2)} ms (${String(Math.round(row.shareOfFrame * 100))}%)${attributed()}`}
                   />
                 );
               }}

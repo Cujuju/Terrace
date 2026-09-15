@@ -1,14 +1,8 @@
-// Global + by-kind GPU upload byte counts, lightweight v1. No per-owner
-// indexing, no timing calls: one branch per upload. Accumulates only while
-// enabled (see perfHandle.ts).
+// GPU upload byte/call counts, lightweight v1. Scope: GPUQueue.writeBuffer and
+// writeTexture only — copyExternalImageToTexture and command-encoder copies are
+// not measured. Patched on first enable (see perfHandle.ts); off costs nothing.
 
-export const UPLOAD_KINDS = [
-  'writeBuffer',
-  'writeTexture',
-  'bufferData',
-  'bufferSubData',
-  'texSubImage2D',
-] as const;
+export const UPLOAD_KINDS = ['writeBuffer', 'writeTexture'] as const;
 
 export type UploadKind = (typeof UPLOAD_KINDS)[number];
 
@@ -21,6 +15,8 @@ export interface UploadKindTotal {
 export interface UploadWindowTotal {
   readonly bytes: number;
   readonly calls: number;
+  /** Calls whose byte size could not be parsed; counted, bytes unknown. */
+  readonly unparsedCalls: number;
   readonly byKind: readonly UploadKindTotal[];
 }
 
@@ -30,44 +26,20 @@ const WRITE_BUFFER_SIZE_ARG = 4;
 const WRITE_TEXTURE_LAYOUT_ARG = 2;
 const WRITE_TEXTURE_SIZE_ARG = 3;
 
-const TEX_SUB_IMAGE_SOURCE_FORM_ARGS = 7;
-const RGBA_COMPONENTS = 4;
-// WebGL2 enum values; kept local so this module needs no GL import.
-const TEX_FORMAT_COMPONENTS: ReadonlyMap<number, number> = new Map([
-  [0x1908, 4], // RGBA
-  [0x1907, 3], // RGB
-  [0x8227, 2], // RG
-  [0x1903, 1], // RED
-  [0x8d99, 4], // RGBA_INTEGER
-  [0x8d94, 1], // RED_INTEGER
-]);
-const TEX_TYPE_BYTES: ReadonlyMap<number, number> = new Map([
-  [0x1401, 1], // UNSIGNED_BYTE
-  [0x140b, 2], // HALF_FLOAT
-  [0x1406, 4], // FLOAT
-  [0x1405, 4], // UNSIGNED_INT
-]);
+const SIZE_TUPLE_HEIGHT_INDEX = 1;
+const SIZE_TUPLE_LAYERS_INDEX = 2;
 
 let enabled = false;
 let installed = false;
 let totalBytes = 0;
 let totalCalls = 0;
-const kindCalls: Record<UploadKind, number> = {
-  writeBuffer: 0,
-  writeTexture: 0,
-  bufferData: 0,
-  bufferSubData: 0,
-  texSubImage2D: 0,
-};
-const kindBytes: Record<UploadKind, number> = {
-  writeBuffer: 0,
-  writeTexture: 0,
-  bufferData: 0,
-  bufferSubData: 0,
-  texSubImage2D: 0,
-};
+let unparsedCalls = 0;
+const kindCalls: Record<UploadKind, number> = { writeBuffer: 0, writeTexture: 0 };
+const kindBytes: Record<UploadKind, number> = { writeBuffer: 0, writeTexture: 0 };
 
+/** Enabling patches the prototypes on first use, so a disabled meter is free. */
 export function setUploadMeterEnabled(on: boolean): void {
+  if (on) installUploadMeter();
   enabled = on;
 }
 
@@ -76,6 +48,7 @@ export function drainUploadMeter(): UploadWindowTotal {
   const total: UploadWindowTotal = {
     bytes: totalBytes,
     calls: totalCalls,
+    unparsedCalls,
     byKind: UPLOAD_KINDS.map((kind) => ({
       kind,
       calls: kindCalls[kind],
@@ -84,6 +57,7 @@ export function drainUploadMeter(): UploadWindowTotal {
   };
   totalBytes = 0;
   totalCalls = 0;
+  unparsedCalls = 0;
   for (const kind of UPLOAD_KINDS) {
     kindCalls[kind] = 0;
     kindBytes[kind] = 0;
@@ -91,11 +65,16 @@ export function drainUploadMeter(): UploadWindowTotal {
   return total;
 }
 
+// The call always counts; only its bytes are dropped when unparseable, so an
+// upload shape this module cannot size stays visible instead of vanishing.
 function record(kind: UploadKind, bytes: number): void {
-  if (!Number.isFinite(bytes) || bytes < 0) return;
-  totalBytes += bytes;
   totalCalls++;
   kindCalls[kind]++;
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    unparsedCalls++;
+    return;
+  }
+  totalBytes += bytes;
   kindBytes[kind] += bytes;
 }
 
@@ -131,6 +110,8 @@ function writeBufferBytes(args: readonly unknown[]): number {
   return Math.max(0, bytes);
 }
 
+// rowsPerImage is optional and 0 means "unspecified", which WebGPU resolves to
+// the copy height — taking it literally would zero the row.
 function writeTextureBytes(args: readonly unknown[]): number {
   const layout = args[WRITE_TEXTURE_LAYOUT_ARG] as
     | { bytesPerRow?: unknown; rowsPerImage?: unknown }
@@ -141,60 +122,27 @@ function writeTextureBytes(args: readonly unknown[]): number {
     | undefined;
   const bytesPerRow =
     typeof layout?.bytesPerRow === 'number' ? layout.bytesPerRow : 0;
-  const height = Array.isArray(size)
-    ? typeof size[1] === 'number'
-      ? (size[1] as number)
-      : 1
-    : typeof (size as { height?: unknown } | undefined)?.height === 'number'
-      ? ((size as { height?: unknown }).height as number)
-      : 1;
+  const height = sizeDimension(size, SIZE_TUPLE_HEIGHT_INDEX, 'height');
   const rowsPerImage =
-    typeof layout?.rowsPerImage === 'number' ? layout.rowsPerImage : height;
-  const layers = Array.isArray(size)
-    ? typeof size[2] === 'number'
-      ? (size[2] as number)
-      : 1
-    : typeof (size as { depthOrArrayLayers?: unknown } | undefined)?.depthOrArrayLayers ===
-        'number'
-      ? ((size as { depthOrArrayLayers?: unknown }).depthOrArrayLayers as number)
-      : 1;
+    typeof layout?.rowsPerImage === 'number' && layout.rowsPerImage > 0
+      ? layout.rowsPerImage
+      : height;
+  const layers = sizeDimension(size, SIZE_TUPLE_LAYERS_INDEX, 'depthOrArrayLayers');
   return Math.max(0, bytesPerRow * rowsPerImage * layers);
 }
 
-// WebGL2 bufferSubData(target, dstByteOffset, srcData, srcOffset?, length?);
-// length 0/absent means to the end of the source.
-function bufferSubDataBytes(args: readonly unknown[]): number {
-  const view = args[2];
-  const arrayBytes = viewBytes(view);
-  const bpe = bytesPerElementOf(view);
-  const srcOffset = typeof args[3] === 'number' ? (args[3] as number) : 0;
-  const length = typeof args[4] === 'number' ? (args[4] as number) : 0;
-  return Math.max(0, length > 0 ? length * bpe : arrayBytes - srcOffset * bpe);
-}
-
-// The short (source-element) form carries format/type at 4/5 with the size on
-// the source; the longer forms carry width/height there instead.
-function texSubImageBytes(args: readonly unknown[]): number {
-  const sourceForm = args.length <= TEX_SUB_IMAGE_SOURCE_FORM_ARGS;
-  if (sourceForm) {
-    const source = args[6] as { width?: unknown; height?: unknown } | undefined;
-    const width = typeof source?.width === 'number' ? source.width : 0;
-    const height = typeof source?.height === 'number' ? source.height : 0;
-    const format = args[4] as number;
-    const type = args[5] as number;
-    const bytesPerPixel =
-      (TEX_FORMAT_COMPONENTS.get(format) ?? RGBA_COMPONENTS) *
-      (TEX_TYPE_BYTES.get(type) ?? 1);
-    return Math.max(0, width * height * bytesPerPixel);
+// GPUExtent3D is either a [w, h, layers] tuple or a dict; absent means 1.
+function sizeDimension(
+  size: unknown,
+  index: number,
+  field: 'height' | 'depthOrArrayLayers',
+): number {
+  if (Array.isArray(size)) {
+    const value: unknown = size[index];
+    return typeof value === 'number' ? value : 1;
   }
-  const width = typeof args[4] === 'number' ? (args[4] as number) : 0;
-  const height = typeof args[5] === 'number' ? (args[5] as number) : 0;
-  const format = args[6] as number;
-  const type = args[7] as number;
-  const bytesPerPixel =
-    (TEX_FORMAT_COMPONENTS.get(format) ?? RGBA_COMPONENTS) *
-    (TEX_TYPE_BYTES.get(type) ?? 1);
-  return Math.max(0, width * height * bytesPerPixel);
+  const value: unknown = (size as Record<string, unknown> | undefined)?.[field];
+  return typeof value === 'number' ? value : 1;
 }
 
 type PatchedThis = unknown;
@@ -220,8 +168,8 @@ function patchMethod(
   holder[name] = wrapped;
 }
 
-/** Idempotent: safe to call on every boot; patches prototypes once. */
-export function installUploadMeter(): void {
+/** Idempotent; called from setUploadMeterEnabled(true), not from boot. */
+function installUploadMeter(): void {
   if (installed) return;
   installed = true;
   const queueProto = (
@@ -229,12 +177,4 @@ export function installUploadMeter(): void {
   ).GPUQueue?.prototype;
   patchMethod(queueProto, 'writeBuffer', writeBufferBytes, 'writeBuffer');
   patchMethod(queueProto, 'writeTexture', writeTextureBytes, 'writeTexture');
-  const glProto = (
-    globalThis as unknown as {
-      WebGL2RenderingContext?: { prototype: Record<string, unknown> };
-    }
-  ).WebGL2RenderingContext?.prototype;
-  patchMethod(glProto, 'bufferData', (args) => viewBytes(args[1]), 'bufferData');
-  patchMethod(glProto, 'bufferSubData', bufferSubDataBytes, 'bufferSubData');
-  patchMethod(glProto, 'texSubImage2D', texSubImageBytes, 'texSubImage2D');
 }
