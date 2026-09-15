@@ -804,6 +804,16 @@ interface SpillBand {
 
 type SpillBoundsOf = (index: number) => SpillBand | null;
 
+/**
+ * An anchored stroke's melt: which cells the stroke bounds, and the direction
+ * it melts them. A bounded pair that cannot exchange still moves its free side
+ * this way.
+ */
+interface AnchoredMelt {
+  readonly toward: number;
+  readonly bounds: ReadonlyMap<number, SpillBand>;
+}
+
 function movePair(
   cells: Int16Array,
   base: number,
@@ -812,7 +822,7 @@ function movePair(
   e: number,
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
-  pinnedIndex: number | null = null,
+  melt: AnchoredMelt | null = null,
 ): boolean {
   const hi = hiIdx - base;
   const lo = loIdx - base;
@@ -830,21 +840,16 @@ function movePair(
     if (dropCap < drop || riseCap < rise) {
       const t = Math.min(dropCap, riseCap);
       if (t <= 0) {
-        // The cursor holds one side while the free side still moves toward it.
-        if (pinnedIndex === hiIdx || pinnedIndex === loIdx) {
-          if (dropCap <= 0 && riseCap > 0) {
-            const solo = riseCap < rise ? riseCap : rise;
-            if (solo > 0) {
-              cells[lo] += solo;
-              return true;
-            }
+        // A held side stops the exchange; the free side still melts toward the
+        // stroke's target, and only a cell the stroke itself bounds may do it.
+        if (melt !== null) {
+          if (melt.toward > 0 && dropCap <= 0 && riseCap > 0 && melt.bounds.has(loIdx)) {
+            cells[lo] += riseCap;
+            return true;
           }
-          if (riseCap <= 0 && dropCap > 0) {
-            const solo = dropCap < drop ? dropCap : drop;
-            if (solo > 0) {
-              cells[hi] -= solo;
-              return true;
-            }
+          if (melt.toward < 0 && riseCap <= 0 && dropCap > 0 && melt.bounds.has(hiIdx)) {
+            cells[hi] -= dropCap;
+            return true;
           }
         }
         return false;
@@ -867,7 +872,7 @@ function relaxPair(
   changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
-  pinnedIndex: number | null = null,
+  melt: AnchoredMelt | null = null,
 ): boolean {
   if (layer !== null && (layer.excluded[i - base] === 1 || layer.excluded[j - base] === 1)) return false;
   const spanCaps = layer === null ? null : layer.spanCaps;
@@ -876,9 +881,9 @@ function relaxPair(
   const d = beforeI - beforeJ;
   let moved = false;
   if (d > MAX_STEP + RELAX_SLACK) {
-    moved = movePair(cells, base, i, j, d - MAX_STEP, boundsOf, spanCaps, pinnedIndex);
+    moved = movePair(cells, base, i, j, d - MAX_STEP, boundsOf, spanCaps, melt);
   } else if (d < -(MAX_STEP + RELAX_SLACK)) {
-    moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps, pinnedIndex);
+    moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps, melt);
   }
   if (moved) {
     if (cells[i - base] !== beforeI) changed.add(i);
@@ -955,7 +960,7 @@ export function smooth(
   spillFree?: ReadonlySet<number>,
   anchorBounds?: ReadonlyMap<number, SpillBand>,
   spanBand: number | null = null,
-  pinnedIndex: number | null = null,
+  melt: AnchoredMelt | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -1050,8 +1055,8 @@ export function smooth(
       const row = y * size;
       for (let x = minX; x <= maxX; x++) {
         const i = row + x;
-        if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer, pinnedIndex)) changedThisPass = true;
-        if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer, pinnedIndex)) changedThisPass = true;
+        if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer, melt)) changedThisPass = true;
+        if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer, melt)) changedThisPass = true;
       }
     }
 
@@ -1222,7 +1227,7 @@ export function applySculpt(
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
       spanBand,
-      anchoredSmooth ? cellIndex(map, cx, cy) : null,
+      anchorBounds === undefined ? null : { toward: amount, bounds: anchorBounds },
     );
   }
 

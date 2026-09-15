@@ -1945,8 +1945,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     for (let i = 0; i < map.cells.length; i++) {
       if (map.cells[i] !== before[i]) moved++;
     }
-    expect(diff.length).toBe(2469);
-    expect(moved).toBe(2457);
+    expect(diff.length).toBe(2499);
+    expect(moved).toBe(2487);
 
     const counts = [diff.length];
     for (let stroke = 0; stroke < 3; stroke++) {
@@ -1958,7 +1958,7 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     // Drawn spill boxes free raw-level block edges inside their drawn bands,
     // so the first stroke regrades the whole terrace field; with no deposit
     // to chase, later strokes converge to nothing.
-    expect(counts).toEqual([2469, 0, 0, 0]);
+    expect(counts).toEqual([2499, 0, 0, 0]);
   });
 
   it('the relaxation pass conserves height exactly on the FREE path', () => {
@@ -2122,6 +2122,68 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
     applySculpt(carved, CARVED_X + STROKE_RADIUS, CARVED_Y + STROKE_RADIUS, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
     expect(copies()).toBe(1);
   });
+});
+
+describe('an anchored smooth melts a wall from wherever it is clicked', () => {
+  const SIZE = 64;
+  const WALL_X = 32;
+  const ROW = 32;
+  const LOW = 320;
+  const RADIUS = 4;
+  const PRESSES = 10;
+  const REACHING_CLICKS = [WALL_X, WALL_X + 1, WALL_X + 2];
+
+  function wall(bands: number): Heightmap {
+    const map = createHeightmap(SIZE);
+    const high = LOW + bands * BAND_HEIGHT;
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = x < WALL_X ? high : LOW;
+    }
+    return map;
+  }
+
+  function press(map: Heightmap, cx: number): number {
+    const options = sculptOptionsOf({
+      type: 'sculpt', x: cx, y: ROW, radius: RADIUS, dir: 1, tool: 'smooth',
+    });
+    return applySculpt(map, cx, ROW, RADIUS, DEFAULT_SCULPT_AMOUNT, options).length;
+  }
+
+  function footprintOfPress(map: Heightmap, cx: number): Set<number> {
+    const cells = new Set<number>();
+    forEachFootprintOffset(RADIUS, (dx, dy) => {
+      cells.add(cellIndex(map, cx + dx, ROW + dy));
+    });
+    return cells;
+  }
+
+  for (const bands of [1, 2, 3]) {
+    it(`a ${bands}-band step melts and converges from every click that reaches it`, () => {
+      const high = LOW + bands * BAND_HEIGHT;
+      for (const cx of REACHING_CLICKS) {
+        const map = wall(bands);
+        const before = Int16Array.from(map.cells);
+        const footprint = footprintOfPress(map, cx);
+
+        expect(press(map, cx)).toBeGreaterThan(0);
+        let movedUnderBrush = 0;
+        for (const i of footprint) if (map.cells[i] !== before[i]) movedUnderBrush++;
+        expect(movedUnderBrush).toBeGreaterThan(0);
+
+        let last = -1;
+        for (let k = 1; k < PRESSES; k++) last = press(map, cx);
+        expect(last).toBe(0);
+
+        expect(heightAt(map, WALL_X, ROW)).toBeGreaterThan(LOW);
+        // nothing outside every footprint is cut, and a raise never digs
+        expect(heightAt(map, WALL_X - RADIUS - 2, ROW)).toBe(high);
+        for (let x = 0; x < SIZE; x++) {
+          expect(heightAt(map, x, ROW)).toBeGreaterThanOrEqual(LOW);
+          expect(heightAt(map, x, ROW)).toBeLessThanOrEqual(high);
+        }
+      }
+    });
+  }
 });
 
 describe('a smooth grasping a lower layer never swallows the cave above it', () => {
