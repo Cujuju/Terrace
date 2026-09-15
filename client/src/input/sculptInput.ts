@@ -301,6 +301,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     repeatStreakBlinked = false;
   };
 
+  /** One flat blink. A press that sends nothing must always cue. */
+  const blinkFlat = (): void => {
+    flatBlinkCount++;
+  };
+
   /**
    * A posture refusal that sent nothing. Press-time failures blink once; repeat
    * ticks count toward one blink per SILENT_REPEAT_BLINK_AFTER streak; pointer
@@ -610,7 +615,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const hover = hoverTarget();
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
-    if (hover === null || hover.face !== 'tread') return;
+    // The seed cues its own send failures below; every other refusal to take
+    // hold blinks here, so a press is never silent.
+    if (hover === null || hover.face !== 'tread') {
+      blinkFlat();
+      return;
+    }
     const spanBand = graspSpanBand(hover, hover.x, hover.y);
     const before = readSeedBand(hover.x, hover.y, spanBand);
     // A press-time seed failure latches offline and blinks once; a local veto
@@ -622,18 +632,21 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
     if (seeded === 'refused') return;
     const after = readSeedBand(hover.x, hover.y, spanBand);
-    if (before === null || after === null) return;
+    if (before === null || after === null) {
+      blinkFlat();
+      return;
+    }
     if (action === 'raise') {
       // The seed raised nothing: blink the flat cue once.
       if (after.band <= before.band) {
-        flatBlinkCount++;
+        blinkFlat();
         return;
       }
       strokeGrab = after.band;
     } else {
       // Lowers grab the pre-seed band: the seed lowers it away, so the drag plane rides the starting band.
       if (after.band >= before.band) {
-        flatBlinkCount++;
+        blinkFlat();
         return;
       }
       strokeGrab = before.band;
@@ -708,13 +721,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   const onPointerMove = (event: PointerEvent): void => {
+    // Sync the chord BEFORE the leg: a modifier change must steer the leg it
+    // arrived on, not the next one.
+    if (event.pointerType !== 'touch') syncMode(event);
     if (strokePointerId === null || event.pointerId === strokePointerId) {
       pointerClientX = event.clientX;
       pointerClientY = event.clientY;
       havePointer = true;
       if (strokeArmed && strokeGrab !== null) emitIntent('move');
     }
-    if (event.pointerType !== 'touch') syncMode(event);
   };
 
   const onPointerUp = (event: PointerEvent): void => {
