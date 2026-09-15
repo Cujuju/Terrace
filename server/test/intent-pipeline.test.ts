@@ -937,10 +937,7 @@ describe('a carve names the span it grasps', () => {
     if (!outcome.applied) expect(outcome.reason).toBe('malformed');
   });
 
-  // Today a spanBand-less carve is acked with an empty diff: applySculpt has no
-  // span to cut and refuses the whole stroke. It should be refused on the wire,
-  // the way a drag is refused without its targetBand.
-  it('acks a carve carrying no spanBand, having changed nothing', () => {
+  it('refuses a carve carrying no spanBand as malformed, the way a drag needs its targetBand', () => {
     const { world, sink } = bootWithFace();
     sink.clear();
 
@@ -950,10 +947,8 @@ describe('a carve names the span it grasps', () => {
       sculptMessage({ tool: 'carve', dir: -1, seq: 41 }),
     );
 
-    expect(outcome.applied).toBe(true);
-    if (outcome.applied) expect(outcome.diff).toHaveLength(0);
-    expect(sink.ofType('sculptApplied')).toHaveLength(1);
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('malformed');
+    expect(sink.ofType('sculptApplied')).toHaveLength(0);
   });
-
-  it.todo('refuses a carve carrying no spanBand as malformed (needs spanBand required on the wire)');
 });

@@ -198,6 +198,10 @@ export function validateSculptIntent(
   // cell, so a spanBand on one would be wrong where it mattered.
   if (spanBand !== undefined && tool === 'drag') return null;
 
+  // A carve cuts the band it grasps: without one it names nothing to open and
+  // would apply as a silent, acked no-op. Optional on a stamp or smooth.
+  if (spanBand === undefined && tool === 'carve') return null;
+
   const { fromX, fromY } = m;
   if (fromX !== undefined || fromY !== undefined) {
     if (tool !== 'drag') return null;
