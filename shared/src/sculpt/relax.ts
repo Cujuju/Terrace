@@ -5,6 +5,22 @@ import { cellX, cellY, type Heightmap } from '../grid.ts';
 import { buildLayerView, commitLayerView, LAYER_VIEW_SLACK_ROWS } from './layerView.ts';
 import type { AnchoredMelt, LayerView, SpillBand, SpillBoundsOf } from './layerView.ts';
 
+/**
+ * Units the melt may still manufacture at one cell: the free side's headroom,
+ * what is left of that cell's one-band budget, and its distance to the ceiling.
+ */
+function meltGrant(melt: AnchoredMelt, index: number, headroom: number, height: number): number {
+  const room = melt.room.get(index);
+  if (room === undefined) return 0;
+  const spent = melt.spent.get(index) ?? 0;
+  const budget = room.hi - room.lo - spent;
+  const reach = melt.toward > 0 ? room.hi - height : height - room.lo;
+  const grant = Math.min(headroom, budget, reach);
+  if (grant <= 0) return 0;
+  melt.spent.set(index, spent + grant);
+  return grant;
+}
+
 function movePair(
   cells: Int16Array,
   base: number,
@@ -35,16 +51,14 @@ function movePair(
         // stroke's target, and only a cell the stroke itself bounds may do it.
         if (melt !== null) {
           if (melt.toward > 0 && dropCap <= 0 && riseCap > 0) {
-            const room = melt.room.get(loIdx);
-            const gain = room === undefined ? 0 : Math.min(riseCap, room.hi - cells[lo]);
+            const gain = meltGrant(melt, loIdx, riseCap, cells[lo]);
             if (gain > 0) {
               cells[lo] += gain;
               return true;
             }
           }
           if (melt.toward < 0 && riseCap <= 0 && dropCap > 0) {
-            const room = melt.room.get(hiIdx);
-            const loss = room === undefined ? 0 : Math.min(dropCap, cells[hi] - room.lo);
+            const loss = meltGrant(melt, hiIdx, dropCap, cells[hi]);
             if (loss > 0) {
               cells[hi] -= loss;
               return true;

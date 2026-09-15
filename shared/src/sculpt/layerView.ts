@@ -17,13 +17,15 @@ export interface SpillBand {
 export type SpillBoundsOf = (index: number) => SpillBand | null;
 
 /**
- * An anchored stroke's melt: the direction it melts, and how far out of
- * nothing it may move each cell — one drawn band from where that cell
- * started.
+ * An anchored stroke's melt: the direction it melts, one drawn band of room
+ * per cell from where it started, and the ledger of what it already spent
+ * there.
  */
 export interface AnchoredMelt {
   readonly toward: number;
   readonly room: ReadonlyMap<number, SpillBand>;
+  /** Units manufactured per cell this press. Keyed by index, looked up, never iterated. */
+  readonly spent: Map<number, number>;
 }
 
 export interface LayerView {
