@@ -1,4 +1,5 @@
 import { BufferGeometry, Float32BufferAttribute } from 'three';
+import { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 const TWO_PI = Math.PI * 2;
 
@@ -15,6 +16,10 @@ export interface HazeLayerSpec {
 }
 
 export const HAZE_COLOR = 0xa9b8c2;
+
+const HAZE_CEILING_BANDS = 12;
+
+export const HAZE_CEILING_WORLD_UNITS = HAZE_CEILING_BANDS * WORLD_UNITS_PER_BAND;
 
 export const HAZE_LAYERS: readonly HazeLayerSpec[] = [
   { height: 0.25, radiusScale: 1, opacity: 0.3, spinHz: 0.013, bobUnits: 0.1, bobHz: 0.043 },

@@ -25,7 +25,7 @@ import {
   type DiscKindDeckSpec,
   type DiscKindRigs,
 } from '../../../client/src/plugins/kit/discKindRigs.ts';
-import { puffsForCoverage, type CumulusDeck } from '../../../client/src/plugins/kit/cumulusDeck.ts';
+import type { CumulusDeck } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { InterpolatedDisc } from '../../../client/src/plugins/kit/discInterpolator.ts';
@@ -55,14 +55,12 @@ export const THUNDERSTORM_PROFILE: PrecipitationProfile = {
   spriteSize: 0,
   opacity: 0.55,
   color: 0x8fa8bd,
-  swayCells: 0,
+  swayWorldUnits: 0,
   swayHz: 0,
   innerRadiusFraction: 0,
 };
 
 export const THUNDERSTORM_PUFF_SIZE_FRACTION = 0.12;
-
-export const THUNDERSTORM_PUFFS_PER_MASS = puffsForCoverage(THUNDERSTORM_PUFF_SIZE_FRACTION);
 
 export const THUNDERSTORM_DECK_COLOR = 0x51565f;
 

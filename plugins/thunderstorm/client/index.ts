@@ -4,12 +4,13 @@ import thunderSfxUrl1 from './assets/thunder-1.wav?url';
 import thunderSfxUrl2 from './assets/thunder-2.wav?url';
 import type {
   ClientPluginCtx,
-  GroundShadeDisc,
   TerraceClientPlugin,
   WorldPosition,
 } from '../../../client/src/plugins/types.ts';
-import { deckShadeDisc } from '../../../client/src/plugins/kit/cumulusDeck.ts';
-import { createDiscSystemsView } from '../../../client/src/plugins/kit/discSystemsView.ts';
+import {
+  createDiscSystemsView,
+  deckShadeFrom,
+} from '../../../client/src/plugins/kit/discSystemsView.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
   STRIKE_NO_SYSTEM,
@@ -33,9 +34,6 @@ import {
 const governor = new LightningGovernor();
 
 let rigs: ThunderstormRigs | null = null;
-let unsubscribeStrikes: (() => void) | null = null;
-let unpublishShade: (() => void) | null = null;
-let unpublishWeight: (() => void) | null = null;
 
 const WEIGHT_GAUGE_KEY = 'weightUnderCamera';
 
@@ -118,7 +116,6 @@ function applyStrike(systemId: number, cellX: number, cellY: number): void {
   rig.strike((cellX - disc.x) * CELL_WORLD_SIZE, (cellY - disc.y) * CELL_WORLD_SIZE, governor);
 }
 
-const shade: GroundShadeDisc[] = [];
 
 function stormWeightUnderCamera(ctx: ClientPluginCtx): number {
   const camera = ctx.cameraPosition();
@@ -137,15 +134,6 @@ function stormWeightUnderCamera(ctx: ClientPluginCtx): number {
   return Math.min(1, Math.max(0, loudest));
 }
 
-function shadeDiscs(): readonly GroundShadeDisc[] {
-  shade.length = 0;
-  for (const disc of view.poses().values()) {
-    if (disc.intensity <= 0) continue;
-    shade.push(deckShadeDisc(disc, THUNDERSTORM_SHADE_DARKNESS));
-  }
-  return shade;
-}
-
 export const clientPlugin: TerraceClientPlugin = {
   name: THUNDERSTORM_PLUGIN_NAME,
 
@@ -160,10 +148,10 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
     for (const url of THUNDER_SFX_URLS) ctx.audio.preload(url);
-    unpublishShade = ctx.publishGroundShade(shadeDiscs);
-    unpublishWeight = ctx.publishGauge(WEIGHT_GAUGE_KEY, () => stormWeightUnderCamera(ctx));
+    ctx.publishGroundShade(deckShadeFrom(view, THUNDERSTORM_SHADE_DARKNESS));
+    ctx.publishGauge(WEIGHT_GAUGE_KEY, () => stormWeightUnderCamera(ctx));
 
-    unsubscribeStrikes = ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
+    ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
       const strikes = parseStrikesPayload(payload);
       if (strikes === null) return;
       for (const strike of strikes) playThunder(ctx, strike.x, strike.y);
@@ -173,12 +161,6 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
-    unsubscribeStrikes?.();
-    unsubscribeStrikes = null;
-    unpublishShade?.();
-    unpublishShade = null;
-    unpublishWeight?.();
-    unpublishWeight = null;
     view.dispose();
   },
 };

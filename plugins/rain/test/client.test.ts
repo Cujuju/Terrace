@@ -13,7 +13,7 @@ import {
   MAX_INTERPOLATION_SECONDS,
   MIN_INTERPOLATION_SECONDS,
 } from '../../../client/src/plugins/kit/discInterpolator.ts';
-import { EARLY_MESSAGE_WINDOW_FRACTION } from '../../../client/src/plugins/kit/interpolator.ts';
+import { CADENCE_SAMPLE_COUNT } from '../../../client/src/plugins/kit/interpolator.ts';
 import {
   CLOUD_BASE_WORLD_Y,
   MAX_GROUND_WORLD_Y,
@@ -147,14 +147,55 @@ describe('DiscInterpolator', () => {
 
     const fast = new DiscInterpolator();
     fast.receive([system(1, { x: 0 })]);
-    let gap = DEFAULT_INTERPOLATION_SECONDS;
-    while (gap > MIN_INTERPOLATION_SECONDS) {
-      gap *= EARLY_MESSAGE_WINDOW_FRACTION;
-      fast.advance(gap);
+    for (let n = 0; n < CADENCE_SAMPLE_COUNT; n++) {
+      fast.advance(1e-9);
       fast.receive([system(1, { x: 10 })]);
     }
     fast.advance(MIN_INTERPOLATION_SECONDS);
     expect(fast.progress()).toBe(1);
+  });
+
+  it('keeps every disc moving through an out-of-band broadcast, early or late in the window', () => {
+    for (const phase of [0.2, 0.6]) {
+      const interpolator = new DiscInterpolator();
+      const SPEED = 5;
+      const FRAME = 1 / 60;
+      let serverX = 0;
+      let clock = 0;
+      let lastDrawn: number | null = null;
+      let frozen = 0;
+      let frames = 0;
+      const send = () => interpolator.receive([system(1, { x: serverX })]);
+      send();
+      for (let second = 0; second < 6; second++) {
+        for (let frame = 0; frame < 60; frame++) {
+          interpolator.advance(FRAME);
+          clock += FRAME;
+          serverX = SPEED * clock;
+          if (second === 2 && Math.abs(frame / 60 - phase) < 1e-9) send();
+          if (frame === 59) send();
+          const drawn = interpolator.sample().get(1)!.x;
+          if (second >= 2 && lastDrawn !== null) {
+            frames++;
+            if (drawn === lastDrawn) frozen++;
+          }
+          lastDrawn = drawn;
+        }
+      }
+      expect(frozen / frames).toBeLessThan(0.05);
+    }
+  });
+
+  it('adapts to a sustained faster cadence within a few messages', () => {
+    const interpolator = new DiscInterpolator();
+    const CADENCE = 0.25;
+    interpolator.receive([system(1, { x: 0 })]);
+    for (let n = 0; n < CADENCE_SAMPLE_COUNT + 1; n++) {
+      interpolator.advance(CADENCE);
+      interpolator.receive([system(1, { x: n })]);
+    }
+    interpolator.advance(CADENCE);
+    expect(interpolator.progress()).toBeCloseTo(1, 9);
   });
 
   it('holds the learned window when a message arrives early (an action broadcast)', () => {
@@ -236,7 +277,7 @@ describe('the falling column', () => {
 
   it('draws rain as streaks that do not sway — a swaying streak would smear', () => {
     expect(RAIN_PROFILE.form).toBe('streak');
-    expect(RAIN_PROFILE.swayCells).toBe(0);
+    expect(RAIN_PROFILE.swayWorldUnits).toBe(0);
     expect(RAIN_PROFILE.count).toBe(RAIN_DROP_COUNT);
   });
 });

@@ -34,7 +34,7 @@ function hostWith(...plugins: TerraceClientPlugin[]) {
 }
 
 describe('onWorldReset', () => {
-  it('fires every subscribed plugin on resetWorld, once each', () => {
+  it('fires on a new world generation, not on a re-snapshot of the same one', () => {
     const reset = vi.fn();
     const host = hostWith({
       name: 'sky',
@@ -43,9 +43,35 @@ describe('onWorldReset', () => {
         ctx.onWorldReset(reset);
       },
     });
+    host.resetWorld(1);
+    host.resetWorld(1);
+    expect(reset).toHaveBeenCalledTimes(1);
+    host.resetWorld(2);
+    expect(reset).toHaveBeenCalledTimes(2);
+  });
+
+  it('always fires when the server sends no generation (an older server)', () => {
+    const reset = vi.fn();
+    const host = hostWith({
+      name: 'sky',
+      drawBudget: 0,
+      attach: (ctx) => void ctx.onWorldReset(reset),
+    });
     host.resetWorld();
     host.resetWorld();
     expect(reset).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets every handler on dispose', () => {
+    const reset = vi.fn();
+    const host = hostWith({
+      name: 'sky',
+      drawBudget: 0,
+      attach: (ctx) => void ctx.onWorldReset(reset),
+    });
+    host.dispose();
+    host.resetWorld();
+    expect(reset).not.toHaveBeenCalled();
   });
 
   it('stops firing once the plugin is unmounted, and a throwing handler cannot block the rest', () => {

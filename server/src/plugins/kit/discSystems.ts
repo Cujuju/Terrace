@@ -186,8 +186,8 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     },
 
     force(next: boolean): void {
+      if (next && !forced) systems.length = 0;
       forced = next;
-      systems.length = 0;
     },
 
     isForced(): boolean {

@@ -7,10 +7,6 @@ import type { InterpolatedDisc } from './discInterpolator.ts';
 
 export const DISC_RENDER_ORDER = 1;
 
-// A rig owns no draw objects: it holds one slot in each of its kind's
-// instanced decks and forwards the disc to them. Draw cost is per kind.
-export const DISC_RIG_DRAW_OBJECTS = 0;
-
 export interface DiscRig {
   readonly root: Group;
   update(disc: InterpolatedDisc, elapsed: number): boolean;

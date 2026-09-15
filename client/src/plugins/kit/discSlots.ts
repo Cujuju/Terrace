@@ -30,6 +30,26 @@ export function createMassSlots(maxMasses: number): MassSlots {
   let claimed = 0;
   let live = 0;
 
+  function updateWorld(
+    slot: number,
+    x: number,
+    z: number,
+    radius: number,
+    rawIntensity: number,
+    vx: number,
+    vz: number,
+  ): boolean {
+    if (slot < 0) return live > 0;
+    const intensity = Math.max(0, rawIntensity);
+    const wasDark = massSize[slot]!.y === 0;
+    massXZ[slot]!.set(x, z);
+    massSize[slot]!.set(radius, intensity);
+    massVelocity[slot]!.set(vx, vz);
+    if (wasDark && intensity > 0) live++;
+    if (!wasDark && intensity === 0) live--;
+    return live > 0;
+  }
+
   return {
     massXZ,
     massSize,
@@ -41,7 +61,7 @@ export function createMassSlots(maxMasses: number): MassSlots {
     },
 
     update(slot: number, disc: InterpolatedDisc): boolean {
-      return this.updateWorld(
+      return updateWorld(
         slot,
         disc.x * CELL_WORLD_SIZE,
         disc.y * CELL_WORLD_SIZE,
@@ -52,17 +72,7 @@ export function createMassSlots(maxMasses: number): MassSlots {
       );
     },
 
-    updateWorld(slot, x, z, radius, rawIntensity, vx, vz): boolean {
-      if (slot < 0) return live > 0;
-      const intensity = Math.max(0, rawIntensity);
-      const wasDark = massSize[slot]!.y === 0;
-      massXZ[slot]!.set(x, z);
-      massSize[slot]!.set(radius, intensity);
-      massVelocity[slot]!.set(vx, vz);
-      if (wasDark && intensity > 0) live++;
-      if (!wasDark && intensity === 0) live--;
-      return live > 0;
-    },
+    updateWorld,
 
     park(slot: number): boolean {
       if (slot < 0) return live > 0;

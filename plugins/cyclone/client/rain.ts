@@ -30,7 +30,7 @@ export const CYCLONE_RAIN_PROFILE: PrecipitationProfile = {
   spriteSize: 0,
   opacity: 0.5,
   color: 0x8ea3b8,
-  swayCells: 0,
+  swayWorldUnits: 0,
   swayHz: 0,
   innerRadiusFraction: CYCLONE_EYE_RADIUS_FRACTION,
 };

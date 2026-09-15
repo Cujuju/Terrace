@@ -27,7 +27,7 @@ export interface PrecipitationProfile {
   readonly spriteSize: number;
   readonly opacity: number;
   readonly color: number;
-  readonly swayCells: number;
+  readonly swayWorldUnits: number;
   readonly swayHz: number;
   readonly innerRadiusFraction: number;
 }

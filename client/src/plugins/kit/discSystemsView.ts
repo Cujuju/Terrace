@@ -1,8 +1,8 @@
 import { Group, type Object3D } from 'three';
-import type { ClientPluginCtx } from '../types.ts';
+import type { ClientPluginCtx, GroundShadeDisc } from '../types.ts';
 import { DiscInterpolator, type InterpolatedDisc } from './discInterpolator.ts';
 import type { RigPool } from './discRig.ts';
-import type { CumulusDeck } from './cumulusDeck.ts';
+import { deckShadeDisc, type CumulusDeck } from './cumulusDeck.ts';
 import { reconcileById } from './viewReconcile.ts';
 import { watchReducedMotion } from './reducedMotion.ts';
 import { parseDiscSystemsPayload } from '@terrace/shared';
@@ -97,8 +97,6 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
       container.name = spec.containerName;
       ctx.layer.add(container);
 
-      const deck = spec.deck?.()?.object;
-      if (deck !== undefined) kindObjects.push(deck);
       for (const object of spec.kindObjects?.() ?? []) kindObjects.push(object);
       for (const object of kindObjects) ctx.layer.add(object);
 
@@ -130,6 +128,7 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
       interpolator.clear();
 
       container?.clear();
+      container?.removeFromParent();
       container = null;
 
       for (const object of kindObjects) object.removeFromParent();
@@ -160,5 +159,21 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
     isReduced(): boolean {
       return reducedMotion?.matches() ?? false;
     },
+  };
+}
+
+// One ground-shade disc per lit system, over a reused array.
+export function deckShadeFrom(
+  view: DiscSystemsView<unknown>,
+  darkness: number,
+): () => readonly GroundShadeDisc[] {
+  const shade: GroundShadeDisc[] = [];
+  return () => {
+    shade.length = 0;
+    for (const disc of view.poses().values()) {
+      if (disc.intensity <= 0) continue;
+      shade.push(deckShadeDisc(disc, darkness));
+    }
+    return shade;
   };
 }
