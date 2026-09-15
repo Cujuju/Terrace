@@ -251,13 +251,28 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
   if (surface !== null) merged.push(surface);
 
   const groups = new Map<string, MergeGroupData & { material: Material }>();
-  for (const part of rest) {
-    const blind = colorBlindSignature(part.material);
-    const signature = blind === null ? `exact|${materialSignature(part.material)}` : `blind|${blind}`;
+  const blinds = rest.map((part) => colorBlindSignature(part.material));
+  const signatures = blinds.map((blind, index) =>
+    blind === null ? `exact|${materialSignature(rest[index]!.material)}` : `blind|${blind}`,
+  );
+  const partsPerSignature = new Map<string, number>();
+  for (const signature of signatures) {
+    partsPerSignature.set(signature, (partsPerSignature.get(signature) ?? 0) + 1);
+  }
+
+  for (let index = 0; index < rest.length; index++) {
+    const part = rest[index]!;
+    const signature = signatures[index]!;
     let group = groups.get(signature);
     if (group === undefined) {
+      const blind = blinds[index] ?? null;
+      // A lone part is already one call, so baking a colour into it buys no call
+      // and costs an attribute: it keeps its own material, like the shared surface.
       const shared =
-        blind === null ? null : sharedWhiteMaterial(part.material as MeshLambertMaterial);
+        blind === null ||
+        partsPerSignature.get(signature)! < SURFACE_MERGE_MINIMUM_PARTS
+          ? null
+          : sharedWhiteMaterial(part.material as MeshLambertMaterial);
       group = {
         material: shared ?? part.material,
         positions: [],
@@ -269,7 +284,7 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
     }
     if (group.material !== part.material) spentMaterials.add(part.material);
     const diffuse =
-      blind === null ? undefined : (part.material as MeshLambertMaterial).color;
+      group.colors === undefined ? undefined : (part.material as MeshLambertMaterial).color;
     for (const local of part.localMatrices) bakeInto(group, part.geometry, local, diffuse);
     spentGeometries.add(part.geometry);
   }
