@@ -42,6 +42,7 @@ import {
   type StructurePart,
 } from './parts.ts';
 import type { SiteKind } from './site.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 
 const Z_AXIS = new Vector3(0, 0, 1);
 const Y_AXIS = new Vector3(0, 1, 0);
@@ -119,7 +120,7 @@ const WINDOW_EMISSIVE_INTENSITY = 0.5;
 
 function windowMaterial(): MeshLambertMaterial {
   return new MeshLambertMaterial({
-    color: WINDOW_FRAME_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: WINDOW_GLOW_COLOR,
     emissiveIntensity: WINDOW_EMISSIVE_INTENSITY,
@@ -660,7 +661,7 @@ function buildTierParts(): StructurePart[][] {
     const WINDOW_X = 0.16;
     const WINDOW_Y = 0.3;
     const windows: StructurePart = {
-      geometry: new BoxGeometry(WINDOW_WIDTH, WINDOW_HEIGHT, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(WINDOW_WIDTH, WINDOW_HEIGHT, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: [at(WINDOW_X, WINDOW_Y, openingZ), at(-WINDOW_X, WINDOW_Y, openingZ)],
     };
@@ -689,7 +690,7 @@ function buildTierParts(): StructurePart[][] {
 
     const LOFT_WINDOW_RISE_FRACTION = 0.35;
     const loftWindow: StructurePart = {
-      geometry: new BoxGeometry(0.06, 0.07, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(0.06, 0.07, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: [at(0, wallHeight + ridgeRise * LOFT_WINDOW_RISE_FRACTION, wallHalfDepth + GABLE_END_THICKNESS / 2 + 0.012)],
     };
@@ -762,7 +763,7 @@ function buildTierParts(): StructurePart[][] {
     const WINDOW_X = 0.22;
     const WINDOW_Y = 0.24;
     const windows: StructurePart = {
-      geometry: new BoxGeometry(0.09, 0.1, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(0.09, 0.1, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: [
         at(WINDOW_X, WINDOW_Y, openingZ),
@@ -838,7 +839,7 @@ function buildTierParts(): StructurePart[][] {
     const loftQuarterTurn = new Quaternion().setFromAxisAngle(Y_AXIS, Math.PI / 2);
     const loftWindowX = wallHalfLength + GABLE_END_THICKNESS / 2 + 0.012;
     const loftWindows: StructurePart = {
-      geometry: new BoxGeometry(0.055, 0.065, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(0.055, 0.065, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: [loftWindowX, -loftWindowX].map((x) =>
         new Matrix4().compose(new Vector3(x, wallHeight + ridgeRise * LOFT_WINDOW_RISE_FRACTION, 0), loftQuarterTurn, new Vector3(1, 1, 1)),
@@ -920,7 +921,7 @@ function buildTierParts(): StructurePart[][] {
     const WINDOW_X = 0.17;
     const WINDOW_Y = 0.34;
     const windows: StructurePart = {
-      geometry: new BoxGeometry(WINDOW_WIDTH, WINDOW_HEIGHT, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(WINDOW_WIDTH, WINDOW_HEIGHT, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: [
         at(WINDOW_X, WINDOW_Y, cottageOpeningZ),
@@ -973,7 +974,7 @@ function buildTierParts(): StructurePart[][] {
 
     const LOFT_WINDOW_RISE_FRACTION = 0.35;
     const loftWindow: StructurePart = {
-      geometry: new BoxGeometry(0.06, 0.07, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(0.06, 0.07, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: [at(0, wallHeight + ridgeRise * LOFT_WINDOW_RISE_FRACTION, wallHalfDepth + GABLE_END_THICKNESS / 2 + 0.012)],
     };
@@ -1079,7 +1080,7 @@ function buildTierParts(): StructurePart[][] {
       );
     }
     const arrowSlits: StructurePart = {
-      geometry: new BoxGeometry(0.035, 0.16, 0.02),
+      geometry: bakeSolidColor(new BoxGeometry(0.035, 0.16, 0.02), WINDOW_FRAME_COLOR),
       material: windowMaterial(),
       localMatrices: arrowSlitMatrices,
     };
@@ -1540,7 +1541,7 @@ function buildDurandsParts(): DurandsBuilding {
   const sideWindowAt = (x: number, y: number, z: number): Matrix4 =>
     new Matrix4().compose(new Vector3(x, y, z), sideWindowQuarterTurn, new Vector3(1, 1, 1));
   const windows: StructurePart = {
-    geometry: new BoxGeometry(0.11, 0.13, 0.02),
+    geometry: bakeSolidColor(new BoxGeometry(0.11, 0.13, 0.02), WINDOW_FRAME_COLOR),
     material: windowMaterial(),
     localMatrices: [
       at(0.24, upstairsWindowY, windowZ),
@@ -1601,7 +1602,10 @@ function buildDurandsParts(): DurandsBuilding {
   const marqueeBulbZ = signZ + signThickness / 2 + DURANDS_MARQUEE_BULB_GAP;
   const marqueeBorder = rectangleBorderPoints(marqueeBulbCount, marqueeHalfWidth, marqueeHalfHeight);
 
-  const marqueeBulbGeometry = new SphereGeometry(DURANDS_MARQUEE_BULB_RADIUS, 6, 4);
+  const marqueeBulbGeometry = bakeSolidColor(
+    new SphereGeometry(DURANDS_MARQUEE_BULB_RADIUS, 6, 4),
+    DURANDS_MARQUEE_BULB_SOCKET_COLOR,
+  );
   const marqueePhaseAMatrices: Matrix4[] = [];
   const marqueePhaseBMatrices: Matrix4[] = [];
   marqueeBorder.forEach((point, index) => {
@@ -1610,13 +1614,13 @@ function buildDurandsParts(): DurandsBuilding {
   });
 
   const marqueePhaseAMaterial = new MeshLambertMaterial({
-    color: DURANDS_MARQUEE_BULB_SOCKET_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: DURANDS_MARQUEE_BULB_COLOR,
     emissiveIntensity: DURANDS_MARQUEE_BULB_EMISSIVE_MAX,
   });
   const marqueePhaseBMaterial = new MeshLambertMaterial({
-    color: DURANDS_MARQUEE_BULB_SOCKET_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: DURANDS_MARQUEE_BULB_COLOR,
     emissiveIntensity: DURANDS_MARQUEE_BULB_EMISSIVE_MIN,
@@ -1657,7 +1661,7 @@ function buildDurandsParts(): DurandsBuilding {
   const dancerZ = dancerBoardZ + dancerBoardThickness / 2 + DURANDS_DANCER_TUBE_RADIUS;
 
   const dancerFrameMaterial = new MeshLambertMaterial({
-    color: DURANDS_DANCER_TUBE_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: DURANDS_DANCER_FRAME_COLOR,
     emissiveIntensity: DURANDS_DANCER_FRAME_EMISSIVE_INTENSITY,
@@ -1666,11 +1670,14 @@ function buildDurandsParts(): DurandsBuilding {
   const frameTop = dancerBoardY + dancerBoardHalfHeight - DURANDS_DANCER_FRAME_INSET;
   const frameBottom = dancerBoardY - dancerBoardHalfHeight + DURANDS_DANCER_FRAME_INSET;
   const dancerFrameTubes: StructurePart = {
-    geometry: new CylinderGeometry(
-      DURANDS_DANCER_FRAME_TUBE_RADIUS,
-      DURANDS_DANCER_FRAME_TUBE_RADIUS,
-      DURANDS_DANCER_SEGMENT_UNIT,
-      5,
+    geometry: bakeSolidColor(
+      new CylinderGeometry(
+        DURANDS_DANCER_FRAME_TUBE_RADIUS,
+        DURANDS_DANCER_FRAME_TUBE_RADIUS,
+        DURANDS_DANCER_SEGMENT_UNIT,
+        5,
+      ),
+      DURANDS_DANCER_TUBE_COLOR,
     ),
     material: dancerFrameMaterial,
     localMatrices: [
@@ -1682,14 +1689,17 @@ function buildDurandsParts(): DurandsBuilding {
   };
 
   const dancerPole: StructurePart = {
-    geometry: new CylinderGeometry(
-      DURANDS_DANCER_POLE_RADIUS,
-      DURANDS_DANCER_POLE_RADIUS,
-      dancerBoardHalfHeight * 2 - 0.04,
-      6,
+    geometry: bakeSolidColor(
+      new CylinderGeometry(
+        DURANDS_DANCER_POLE_RADIUS,
+        DURANDS_DANCER_POLE_RADIUS,
+        dancerBoardHalfHeight * 2 - 0.04,
+        6,
+      ),
+      DURANDS_DANCER_TUBE_COLOR,
     ),
     material: new MeshLambertMaterial({
-      color: DURANDS_DANCER_TUBE_COLOR,
+      vertexColors: true,
       flatShading: true,
       emissive: DURANDS_DANCER_POLE_COLOR,
       emissiveIntensity: DURANDS_DANCER_POLE_EMISSIVE_INTENSITY,
@@ -1698,13 +1708,13 @@ function buildDurandsParts(): DurandsBuilding {
   };
 
   const dancerBodyMaterial = new MeshLambertMaterial({
-    color: DURANDS_DANCER_TUBE_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: DURANDS_DANCER_NEON_COLOR,
     emissiveIntensity: DURANDS_DANCER_BODY_EMISSIVE_INTENSITY,
   });
   const dancerPoseAMaterial = new MeshLambertMaterial({
-    color: DURANDS_DANCER_TUBE_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: DURANDS_DANCER_NEON_COLOR,
     emissiveIntensity: DURANDS_DANCER_EMISSIVE_MAX,
@@ -1713,7 +1723,7 @@ function buildDurandsParts(): DurandsBuilding {
     depthWrite: false,
   });
   const dancerPoseBMaterial = new MeshLambertMaterial({
-    color: DURANDS_DANCER_TUBE_COLOR,
+    vertexColors: true,
     flatShading: true,
     emissive: DURANDS_DANCER_NEON_COLOR,
     emissiveIntensity: DURANDS_DANCER_EMISSIVE_MIN,
@@ -1721,13 +1731,19 @@ function buildDurandsParts(): DurandsBuilding {
     opacity: 0,
     depthWrite: false,
   });
-  const dancerSegmentGeometry = new CylinderGeometry(
-    DURANDS_DANCER_TUBE_RADIUS,
-    DURANDS_DANCER_TUBE_RADIUS,
-    DURANDS_DANCER_SEGMENT_UNIT,
-    5,
+  const dancerSegmentGeometry = bakeSolidColor(
+    new CylinderGeometry(
+      DURANDS_DANCER_TUBE_RADIUS,
+      DURANDS_DANCER_TUBE_RADIUS,
+      DURANDS_DANCER_SEGMENT_UNIT,
+      5,
+    ),
+    DURANDS_DANCER_TUBE_COLOR,
   );
-  const dancerCircleGeometry = new SphereGeometry(DURANDS_DANCER_HEAD_RADIUS, 8, 6);
+  const dancerCircleGeometry = bakeSolidColor(
+    new SphereGeometry(DURANDS_DANCER_HEAD_RADIUS, 8, 6),
+    DURANDS_DANCER_TUBE_COLOR,
+  );
 
   const body = buildDancerStrokes(DURANDS_DANCER_BODY_STROKES, 0, dancerFigureBaseY, dancerZ);
   body.circles.push(

@@ -24,6 +24,7 @@ import {
   type InstanceReach,
 } from './instanceBounds.ts';
 import { TRUNK_BOTTOM_RADIUS, TRUNK_COLOR, TRUNK_HEIGHT } from './models.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 
 const STUMP_HEIGHT = TRUNK_HEIGHT / 3;
 
@@ -130,8 +131,8 @@ function assertStumpFitsCell(horizontalReachInCells: number): void {
   }
 }
 
-function lambert(color: number): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color, flatShading: true });
+function lambert(): MeshLambertMaterial {
+  return new MeshLambertMaterial({ vertexColors: true, flatShading: true });
 }
 
 function charred(): number {
@@ -142,8 +143,11 @@ export function createStumpModels(): StumpModels {
   const built = buildStump();
   assertStumpFitsCell(built.horizontalReachInCells);
 
-  const barkMaterial = lambert(charred());
-  const coreMaterial = lambert(CORE_COLOR);
+  bakeSolidColor(built.bark, charred());
+  bakeSolidColor(built.core, CORE_COLOR);
+  const sharedMaterial = lambert();
+  const barkMaterial = sharedMaterial;
+  const coreMaterial = sharedMaterial;
   const bark = new InstancedMesh(built.bark, barkMaterial, FLORA_STUMP_CAP);
   const core = new InstancedMesh(built.core, coreMaterial, FLORA_STUMP_CAP);
   bark.name = 'flora:stump-bark';

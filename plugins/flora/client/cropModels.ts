@@ -32,6 +32,7 @@ import {
   type InstanceReach,
 } from './instanceBounds.ts';
 import { SHIPPED_WHEAT_VARIANT, WHEAT_VARIANT_BUILDERS } from './wheatVariants.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 
 const cells = (n: number): number => n * CELL_WORLD_SIZE;
 
@@ -59,14 +60,17 @@ export interface CropModels {
   dispose(): void;
 }
 
-function lambert(color: number): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color, flatShading: true });
+function lambert(): MeshLambertMaterial {
+  return new MeshLambertMaterial({ vertexColors: true, flatShading: true });
 }
 
 export function createCropModels(): CropModels {
   const built = WHEAT_VARIANT_BUILDERS[SHIPPED_WHEAT_VARIANT]!();
   const geometries: BufferGeometry[] = [built.stalk, built.ear];
-  const materials: Material[] = [lambert(STALK_COLOR), lambert(EAR_COLOR)];
+  bakeSolidColor(built.stalk, STALK_COLOR);
+  bakeSolidColor(built.ear, EAR_COLOR);
+  const sharedMaterial = lambert();
+  const materials: Material[] = [sharedMaterial, sharedMaterial];
 
   const stalkCapacity = FLORA_CROP_CAP * CROP_STALKS_PER_PLOT;
   const stalks = new InstancedMesh(built.stalk, materials[0], stalkCapacity);
