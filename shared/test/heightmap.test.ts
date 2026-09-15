@@ -38,6 +38,7 @@ import {
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
+  MAX_BAND,
   MIN_BAND,
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
@@ -545,9 +546,8 @@ describe('applySculpt — edge profiles', () => {
     const down = createHeightmap(32);
     applySculpt(up, 16, 16, 3, 64, { tool: 'stamp', profile: 'hard' });
     applySculpt(down, 16, 16, 3, -64, { tool: 'stamp', profile: 'hard' });
-    // Flat sea is drawn band -1: a raise lands on the shore (band 0) while a
-    // lower lands two raw bands down (band -2). The mirror holds in drawn
-    // bands, not raw heights.
+    // Flat sea is drawn band -1: a raise lands on the shore (band 0), a lower
+    // two raw bands down (band -2). The mirror holds in drawn bands.
     const fp = footprintOf(32, 16, 16, 3);
     for (const i of fp) {
       expect(up.cells[i]).toBe(DRAWN_SHORE_HEIGHT);
@@ -1231,8 +1231,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     const before = Int16Array.from(map.cells);
     const fp = footprintOf(128, 64, 64, 4);
     // The brush is clamped at MAX and the sea ring sits at its drawn band's
-    // ceiling, so banded spill has no legal move: the diff is empty and no
-    // outside cell changes drawn band.
+    // ceiling, so banded spill has no legal move: the diff is empty.
     const diff = applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
     expect(diff).toEqual([]);
     for (let i = 0; i < map.cells.length; i++) {
@@ -1584,9 +1583,9 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
           const cy = 30 + ((t * 17) % 68);
           const centre = cellIndex(map, cx, cy);
           const before = drawnBandOfSample(map.cells[centre]);
-          // Band -1 spans 25 heights against a 16-unit stroke, so a single
-          // click from its depths cannot always cross a drawn band; the sea
-          // entry contract is pinned by the break-the-surface tests instead.
+          // Band -1 spans 25 heights against a 16-unit stroke, so one click
+          // from its depths cannot always cross a drawn band;
+          // break-the-surface tests pin sea entry.
           if (before === -1) continue;
 
           applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, wireSmooth);
@@ -2603,5 +2602,72 @@ describe('band coverage agrees with drawing at the waterline (2026-09-12)', () =
       expect(heightAt(map, x, ROW)).toBe(DRAWN_SHORE_HEIGHT);
       expect(drawnBandOfSample(heightAt(map, x, ROW))).toBe(0);
     }
+  });
+});
+
+describe('a drag finishes, at every band it can name and in both directions', () => {
+  const SIZE = 24;
+  const GROUND_BAND = 1;
+  const ROOF_FLOOR_BAND = 4;
+  const ROOF_CAP_BAND = 6;
+  const CX = 12;
+  const CY = 12;
+  const RADIUS = 3;
+  const DRAG = { tool: 'drag', profile: 'hard', anchor: 'band' } as const;
+
+  const layeredWorld = (): Heightmap => {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(bandLevelHeight(GROUND_BAND));
+    for (let y = CY - 4; y <= CY + 4; y++) {
+      for (let x = CX - 4; x <= CX + 4; x++) {
+        setColumn(map, x, y, [
+          { floor: BEDROCK_FLOOR, ceiling: bandLevelHeight(GROUND_BAND) },
+          { floor: bandLevelHeight(ROOF_FLOOR_BAND), ceiling: bandLevelHeight(ROOF_CAP_BAND) },
+        ]);
+      }
+    }
+    return map;
+  };
+
+  const expectValidColumns = (map: Heightmap, where: string): void => {
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const spans = readSpans(map, x, y);
+        expect(spans[0]!.floor, where).toBe(BEDROCK_FLOOR);
+        for (let k = 0; k < spans.length; k++) {
+          expect(spans[k]!.floor, where).toBeLessThan(spans[k]!.ceiling);
+          if (k > 0) expect(spans[k - 1]!.ceiling, where).toBeLessThan(spans[k]!.floor);
+        }
+      }
+    }
+  };
+
+  it('settles every targetBand the validator admits, layered column and all', () => {
+    for (let band = MIN_BAND; band <= MAX_BAND; band++) {
+      for (const dir of [1, -1] as const) {
+        const map = layeredWorld();
+        applySculpt(map, CX, CY, RADIUS, dir * DEFAULT_SCULPT_AMOUNT, { ...DRAG, targetBand: band });
+        expectValidColumns(map, `band ${band} dir ${dir}`);
+      }
+    }
+  });
+
+  it('cuts a column beside ground that reads below bedrock once, then stops', () => {
+    const map = createHeightmap(SIZE);
+    map.cells[cellIndex(map, CX + 1, CY)] = BEDROCK_FLOOR - BAND_HEIGHT;
+
+    const diff = applySculpt(map, CX, CY, MIN_BRUSH_RADIUS, -DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG,
+      targetBand: MIN_BAND,
+    });
+
+    expect(diff).toHaveLength(1);
+    expect(heightAt(map, CX, CY)).toBe(BEDROCK_REMNANT_CEILING);
+    expect(
+      applySculpt(map, CX, CY, MIN_BRUSH_RADIUS, -DEFAULT_SCULPT_AMOUNT, {
+        ...DRAG,
+        targetBand: MIN_BAND,
+      }),
+    ).toEqual([]);
   });
 });
