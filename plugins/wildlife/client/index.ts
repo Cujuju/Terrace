@@ -161,11 +161,6 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       );
       continue;
     }
-    view.lodGait = gait;
-    // The full path spends the whole hold interval at once: smoothers get the elapsed
-    // time and the stride integral the travel since the last full update.
-    const sinceFull = view.sinceFullSeconds;
-    view.sinceFullSeconds = 0;
     const sizeClass = sizeClassAt(entity.size);
     const kind = placementKindOf(entity.species);
     const swimProfile = SWIM_PROFILES[entity.species];
@@ -183,6 +178,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
               modelScaleFor(entity.species, sizeClass),
             );
     if (kind !== 'flyer' && terrainY === null) continue;
+    // Progress is recorded only past the last bail, so a frame that draws nothing
+    // neither consumes the hold interval nor claims a gait it never captured.
+    view.lodGait = gait;
+    // The full path spends the whole hold interval at once: smoothers get the elapsed
+    // time and the stride integral the travel since the last full update.
+    const sinceFull = view.sinceFullSeconds;
+    view.sinceFullSeconds = 0;
     const previousDrawnY = view.drawnY;
     const drawnY =
       entity.climbHeight === null
