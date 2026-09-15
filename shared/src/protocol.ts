@@ -194,6 +194,10 @@ export function validateSculptIntent(
     return null;
   }
 
+  // A drag names its lip with targetBand; its cursor cell is not the grasped
+  // cell, so a spanBand on one would be wrong where it mattered.
+  if (spanBand !== undefined && tool === 'drag') return null;
+
   const { fromX, fromY } = m;
   if (fromX !== undefined || fromY !== undefined) {
     if (tool !== 'drag') return null;
