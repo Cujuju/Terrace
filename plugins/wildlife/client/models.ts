@@ -187,10 +187,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   ): void {
     const herd = drawable.herd;
     const slot = herd.poseSlotOf(phase, moverGaitIndex(gait));
-    // Hold path: placement refreshes every frame but the pose stays on the last
-    // captured slot (same frozen phase + same gait addresses the same slot, whose
-    // palette layer persists across frames). Skips joint animation, bone matrix
-    // math and the palette layer upload for this entity.
+    // Hold: placement refreshes but the pose stays on the last captured slot, which
+    // the same phase and gait address, palette included. Skips animation, bone
+    // matrices and palette upload.
     if (!holdPose && herd.needsPose(slot)) {
       drawable.animate(seconds, herd.poseSlotPhase(slot), gait);
       herd.capturePose(slot);
