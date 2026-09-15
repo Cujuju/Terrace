@@ -656,7 +656,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null {
       if (mirror === null) return null;
-      return carveReachCell(mirror, origin, direction, band);
+      return carveReachCell(mirror, origin, direction, band, layerEdges);
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;

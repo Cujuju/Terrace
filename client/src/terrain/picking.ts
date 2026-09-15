@@ -696,17 +696,29 @@ export function pickTerrainCellByRay(
   return found;
 }
 
+/**
+ * Material still at `band`, from the cell the aim STRUCK inward. A ray flies
+ * over terrain it never touched, so the walk starts at the pick, taken here.
+ */
 export function carveReachCell(
   mirror: TerrainMirror,
   origin: Vec3,
   direction: Vec3,
   band: number,
+  risers: DrawnRisers | null = null,
 ): { x: number; y: number } | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
+  const aim = pickTerrainCellByRay(mirror, origin, direction, risers);
+  if (aim === null) return null;
 
+  let reached = false;
   let found: { x: number; y: number } | null = null;
   marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j) => {
+    if (!reached) {
+      if (i !== aim.x || j !== aim.y) return false;
+      reached = true;
+    }
     if (!cellRevealed(mirror, i, j)) return true;
     // F3: carve reach queries the drawn banding, matching the emitted caps.
     if (drawnSpanIndexCoveringBand(mirror.map, i, j, band) === null) return false;
