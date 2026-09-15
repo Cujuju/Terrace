@@ -36,13 +36,16 @@ export interface ManaQuote {
   readonly openedChunks: number;
 }
 
-/** A seq-less intent is unroutable, so its quote can never be matched back. */
-const UNQUOTABLE_SEQ = null;
+/**
+ * A seq-less intent carries no wire identity, so its quote is keyed on the
+ * verdict that made it: one exists only while that verdict's effect is pending.
+ */
+const SEQLESS_QUOTE = null;
 
 export function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote {
   const options = sculptOptionsOf(intent);
   return {
-    seq: intent.seq ?? UNQUOTABLE_SEQ,
+    seq: intent.seq ?? SEQLESS_QUOTE,
     x: intent.x,
     y: intent.y,
     radius: intent.radius,
@@ -54,7 +57,7 @@ export function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote 
 
 export function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): number | null {
   const { quote } = pool;
-  if (quote === null || quote.seq === UNQUOTABLE_SEQ || quote.seq !== intent.seq) return null;
+  if (quote === null || quote.seq !== (intent.seq ?? SEQLESS_QUOTE)) return null;
   const options = sculptOptionsOf(intent);
   const sameBrush =
     quote.x === intent.x &&

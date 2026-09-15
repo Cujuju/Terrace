@@ -63,7 +63,6 @@ export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): Intent
   pool.quote = null;
   noteSeq(pool, intent);
   const opened = openedChunksFor(world, ctx.player.token, intent);
-  pool.quote = quoteFor(intent, opened);
   const cost = manaCostFor(ctx.player.id, intent, opened);
 
   if (pool.balance < cost) {
@@ -75,6 +74,9 @@ export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): Intent
     return { kind: 'deny', reason: INSUFFICIENT_MANA_REASON };
   }
 
+  // Only a verdict that allowed leaves a quote, so nothing a refusal or a
+  // fault aborts can strand one for a later stroke to spend.
+  pool.quote = quoteFor(intent, opened);
   return { kind: 'allow' };
 }
 
