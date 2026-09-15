@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSiblingBridge } from '../src/plugins/kit/bridge.ts';
+import { createRegisteringBridge, createSiblingBridge } from '../src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../src/plugins/types.ts';
 
 interface DemoApi {
@@ -111,6 +111,16 @@ describe('createSiblingBridge', () => {
     warn.mockRestore();
   });
 
+  it('re-arms the warning once a load resolves, so each world says its own piece', () => {
+    const bridge = makeBridge();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.load(worldWith(null));
+    bridge.load(worldWith({ doThing: () => 1 }));
+    bridge.load(worldWith(null));
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it('reset() forgets both the sibling and the warning', () => {
     const bridge = makeBridge();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -120,5 +130,90 @@ describe('createSiblingBridge', () => {
     expect(warn).toHaveBeenCalledTimes(2);
     expect(bridge.api()).toBe(null);
     warn.mockRestore();
+  });
+});
+
+interface RegistryApi {
+  register(entry: string): () => void;
+}
+
+function registryDuckType(module: SiblingModule | null): RegistryApi | null {
+  if (module === null) return null;
+  if (typeof module.register !== 'function') return null;
+  return module as unknown as RegistryApi;
+}
+
+function fakeRegistry(): { module: SiblingModule; live: () => readonly string[] } {
+  const live: string[] = [];
+  const module = {
+    register(entry: string): () => void {
+      live.push(entry);
+      return () => {
+        const index = live.indexOf(entry);
+        if (index >= 0) live.splice(index, 1);
+      };
+    },
+  };
+  return { module: module as unknown as SiblingModule, live: () => live };
+}
+
+function makeRegistering(): ReturnType<typeof createRegisteringBridge<RegistryApi, string>> {
+  return createRegisteringBridge<RegistryApi, string>({
+    pluginName: 'demo',
+    duckType: registryDuckType,
+    unavailableWarning: WARNING,
+    register: (api, entry) => api.register(entry),
+  });
+}
+
+describe('createRegisteringBridge', () => {
+  it('registers at once when the sibling is already resolved', () => {
+    const bridge = makeRegistering();
+    const registry = fakeRegistry();
+    bridge.load(worldWith(registry.module));
+    bridge.registerWith('rain');
+    expect(registry.live()).toEqual(['rain']);
+  });
+
+  it('buffers the entry until a sibling resolves, then replays it', () => {
+    const bridge = makeRegistering();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.load(worldWith(null));
+    bridge.registerWith('rain');
+    const registry = fakeRegistry();
+    bridge.load(worldWith(registry.module));
+    expect(registry.live()).toEqual(['rain']);
+    warn.mockRestore();
+  });
+
+  it('never holds two registrations: a second create without a close replaces, not doubles', () => {
+    const bridge = makeRegistering();
+    const registry = fakeRegistry();
+    bridge.load(worldWith(registry.module));
+    bridge.registerWith('rain');
+    bridge.load(worldWith(registry.module));
+    bridge.registerWith('rain');
+    expect(registry.live()).toEqual(['rain']);
+  });
+
+  it('clear() releases the live registration and forgets the desire', () => {
+    const bridge = makeRegistering();
+    const registry = fakeRegistry();
+    bridge.load(worldWith(registry.module));
+    bridge.registerWith('rain');
+    bridge.clear();
+    expect(registry.live()).toEqual([]);
+    bridge.load(worldWith(registry.module));
+    expect(registry.live()).toEqual([]);
+  });
+
+  it('reset() drops the handle without calling it, for a sibling that is already gone', () => {
+    const bridge = makeRegistering();
+    const registry = fakeRegistry();
+    bridge.load(worldWith(registry.module));
+    bridge.registerWith('rain');
+    bridge.reset();
+    expect(registry.live()).toEqual(['rain']);
+    expect(bridge.api()).toBe(null);
   });
 });

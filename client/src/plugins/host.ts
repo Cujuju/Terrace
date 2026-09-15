@@ -98,6 +98,7 @@ export interface ClientPluginHost {
   routeMessage(type: string, payload: unknown): void;
   allowLocalIntent(intent: SculptIntent): boolean;
   syncLivePlugins(liveNames: readonly string[] | undefined): void;
+  resetWorld(worldGeneration?: number): void;
   frameDrawBudget(): number;
   dispose(): void;
 }
@@ -123,6 +124,8 @@ export function createClientPluginHost(
   }
 
   const mounted = new Map<string, MountedPlugin>();
+  const worldResetHandlers = new Map<() => void, string>();
+  let joinedGeneration: number | undefined;
 
   const mountGenerations = new Map<string, number>();
 
@@ -329,6 +332,12 @@ export function createClientPluginHost(
       },
       send(type, payload) {
         deps.connection().sendPlugin(`${plugin.name}:${type}`, payload);
+      },
+      onWorldReset(handler) {
+        worldResetHandlers.set(handler, plugin.name);
+        return track(() => {
+          worldResetHandlers.delete(handler);
+        });
       },
       onFrame(handler) {
         const deferred: DeferredFrameHandler = { handler, unregister: null, cancelled: false };
@@ -641,6 +650,20 @@ export function createClientPluginHost(
       }
     },
 
+    // A snapshot from a new plugin world generation restarts every id, so
+    // id-keyed client state must go; a re-snapshot of the same world keeps it.
+    resetWorld(worldGeneration?: number): void {
+      if (worldGeneration !== undefined && worldGeneration === joinedGeneration) return;
+      joinedGeneration = worldGeneration;
+      for (const [handler, name] of worldResetHandlers) {
+        try {
+          handler();
+        } catch (error) {
+          console.error(`[terrace] client plugin "${name}" threw in onWorldReset`, error);
+        }
+      }
+    },
+
     syncLivePlugins(liveNames: readonly string[] | undefined): void {
       if (liveNames === undefined) return;
       const live = new Set(liveNames);
@@ -664,6 +687,7 @@ export function createClientPluginHost(
         mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
       }
       pendingMounts.clear();
+      worldResetHandlers.clear();
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,
       });

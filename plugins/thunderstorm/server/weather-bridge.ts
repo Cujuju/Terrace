@@ -1,4 +1,5 @@
-import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
+import { polarVelocity } from '@terrace/shared';
+import { createRegisteringBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 export interface SkyCell {
@@ -34,17 +35,11 @@ function asWeatherHub(module: SiblingModule | null): WeatherHubApi | null {
   return module as unknown as WeatherHubApi;
 }
 
-let desired: SkyKindEntry | null = null;
-let unregister: (() => void) | null = null;
-
-const bridge = createSiblingBridge<WeatherHubApi>({
+const bridge = createRegisteringBridge<WeatherHubApi, SkyKindEntry>({
   pluginName: WEATHER_PLUGIN_NAME,
   duckType: asWeatherHub,
   unavailableWarning: WEATHER_UNAVAILABLE_WARNING,
-  onResolved: (api) => {
-    if (desired === null) return;
-    unregister = api.registerSkyKind(desired);
-  },
+  register: (api, entry) => api.registerSkyKind(entry),
 });
 
 export function loadWeatherBridge(world: WorldApi): void {
@@ -52,16 +47,10 @@ export function loadWeatherBridge(world: WorldApi): void {
 }
 
 export function registerWithHub(entry: SkyKindEntry): void {
-  desired = entry;
-  const api = bridge.api();
-  if (api === null) return;
-  unregister = api.registerSkyKind(entry);
+  bridge.registerWith(entry);
 }
 
 export function unregisterFromHub(): void {
-  unregister?.();
-  unregister = null;
-  desired = null;
   bridge.clear();
 }
 
@@ -75,14 +64,9 @@ export function currentWind(): { readonly heading: number; readonly speed: numbe
 
 export function windVelocity(): { vx: number; vy: number } {
   const wind = currentWind();
-  return {
-    vx: Math.cos(wind.heading) * wind.speed,
-    vy: Math.sin(wind.heading) * wind.speed,
-  };
+  return polarVelocity(wind.heading, wind.speed);
 }
 
 export function resetWeatherBridge(): void {
-  unregister = null;
-  desired = null;
   bridge.reset();
 }

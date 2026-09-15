@@ -7,6 +7,7 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import { devForceEnvName, readDevForce } from '../../../server/src/plugins/kit/devForce.ts';
 import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.ts';
+import { isRefusal, summonDisc } from '../../../server/src/plugins/kit/discSummon.ts';
 import {
   FOG_COVERAGE_FRACTION,
   FOG_PLUGIN_NAME,
@@ -22,8 +23,6 @@ import {
 } from './weather-bridge.ts';
 
 export const BROADCAST_TICK_INTERVAL = 10;
-
-export const BROADCAST_SYSTEM_CEILING = MAX_ACTIVE_SYSTEMS;
 
 export const FOG_DEV_FORCE_ENV = devForceEnvName(FOG_PLUGIN_NAME);
 
@@ -43,7 +42,7 @@ export function systemStates(): ReturnType<typeof systems.states> {
   return systems.states(windVelocity());
 }
 
-export function wetnessAt(): number {
+export function wetnessAt(_x: number, _y: number): number {
   return 0;
 }
 
@@ -93,16 +92,16 @@ export const plugin: TerracePlugin = {
 
   onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
     if (key !== FOG_PLUGIN_NAME) return { ok: false, detail: `no such action "${key}"` };
-    if (systems.isForced()) {
-      return {
-        ok: false,
-        detail: `${FOG_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
-      };
-    }
-    if (systems.systems().length >= MAX_ACTIVE_SYSTEMS) {
-      return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} fog systems are already in the sky` };
-    }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
+    const summoned = summonDisc({
+      systems,
+      worldSize: world.worldSize,
+      site,
+      forcedEnv: FOG_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_SYSTEMS,
+      noun: 'fog systems',
+    });
+    if (isRefusal(summoned)) return summoned;
+    const system = summoned;
     world.broadcast(FOG_SYSTEMS_MESSAGE, { systems: systemStates() });
     return { ok: true, detail: `fog system ${system.id} gathering at (${site.x}, ${site.y})` };
   },

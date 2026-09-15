@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  plugin as weatherPlugin,
   livingSystems,
   precipitationAt,
   registerSkyKind,
@@ -86,5 +87,53 @@ describe('the sky-kind registry', () => {
     expect(livingSystems()).toHaveLength(0);
     expect(precipitationAt(0, 0)).toBe(0);
     expect(spawnSkyKind('rain')).toBe(false);
+  });
+});
+
+describe('the hub as a fault boundary', () => {
+  it('drops a kind whose wetnessAt throws and still answers for the rest', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    registerSkyKind(entry('broken', 0, { wetnessAt: () => { throw new Error('boom'); } }));
+    registerSkyKind(entry('rain', 0.5));
+    expect(precipitationAt(0, 0)).toBe(0.5);
+    expect(livingSystems().map((system) => system.kind)).toEqual(['rain']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('drops a kind whose cells() throws, keeping the others in order', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    registerSkyKind(entry('rain', 0.5));
+    registerSkyKind(entry('broken', 0, { cells: () => { throw new Error('boom'); } }));
+    registerSkyKind(entry('fog', 0.2));
+    expect(livingSystems().map((system) => system.kind)).toEqual(['rain', 'fog']);
+    expect(livingSystems().map((system) => system.kind)).toEqual(['rain', 'fog']);
+    warn.mockRestore();
+  });
+
+  it('answers false for a spawnOne that throws, and drops that kind', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    registerSkyKind(entry('rain', 0.5, { spawnOne: () => { throw new Error('boom'); } }));
+    expect(spawnSkyKind('rain')).toBe(false);
+    expect(livingSystems()).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it('ignores cells that are not cells', () => {
+    registerSkyKind(
+      entry('rain', 0.5, {
+        cells: () => [null, { x: 1, y: 2, radius: Number.NaN, intensity: 1 }, { x: 3, y: 4, radius: 5, intensity: 0.5 }] as never,
+      }),
+    );
+    registerSkyKind(entry('fog', 0.1, { cells: () => 'nope' as never }));
+    expect(livingSystems()).toEqual([{ kind: 'rain', x: 3, y: 4, radius: 5, intensity: 0.5 }]);
+  });
+
+  it('keeps registered kinds across a world create, and clears them on close', () => {
+    registerSkyKind(entry('rain', 0.5));
+    weatherPlugin.onWorldCreate?.({} as never);
+    expect(livingSystems()).toHaveLength(1);
+    weatherPlugin.onWorldClose?.({} as never);
+    expect(livingSystems()).toHaveLength(0);
   });
 });

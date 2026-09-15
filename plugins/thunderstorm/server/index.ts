@@ -7,6 +7,7 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import { devForceEnvName, readDevForce } from '../../../server/src/plugins/kit/devForce.ts';
 import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.ts';
+import { isRefusal, summonDisc } from '../../../server/src/plugins/kit/discSummon.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
   THUNDERSTORM_COVERAGE_FRACTION,
@@ -26,8 +27,6 @@ import {
 
 export const BROADCAST_TICK_INTERVAL = 10;
 
-export const BROADCAST_SYSTEM_CEILING = MAX_ACTIVE_SYSTEMS;
-
 export const THUNDERSTORM_DEV_FORCE_ENV = devForceEnvName(THUNDERSTORM_PLUGIN_NAME);
 
 const systems = createDiscSystems({
@@ -38,10 +37,6 @@ const systems = createDiscSystems({
 
 let tickCount = 0;
 
-export function livingSystems(): ReturnType<typeof systems.systems> {
-  return systems.systems();
-}
-
 export function systemStates(): ReturnType<typeof systems.states> {
   return systems.states(windVelocity());
 }
@@ -51,8 +46,6 @@ export function wetnessAt(x: number, y: number): number {
 }
 
 export function spawnOne(): boolean {
-  if (systems.isForced()) return false;
-  if (systems.systems().length >= systems.capFor(currentWorldSize)) return false;
   return systems.spawnOne(currentWorldSize) !== null;
 }
 
@@ -121,16 +114,16 @@ export const plugin: TerracePlugin = {
 
   onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
     if (key !== THUNDERSTORM_PLUGIN_NAME) return { ok: false, detail: `no such action "${key}"` };
-    if (systems.isForced()) {
-      return {
-        ok: false,
-        detail: `${THUNDERSTORM_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
-      };
-    }
-    if (systems.systems().length >= MAX_ACTIVE_SYSTEMS) {
-      return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} thunderstorms are already in the sky` };
-    }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
+    const summoned = summonDisc({
+      systems,
+      worldSize: world.worldSize,
+      site,
+      forcedEnv: THUNDERSTORM_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_SYSTEMS,
+      noun: 'thunderstorms',
+    });
+    if (isRefusal(summoned)) return summoned;
+    const system = summoned;
     world.broadcast(THUNDERSTORM_SYSTEMS_MESSAGE, { systems: systemStates() });
     return {
       ok: true,

@@ -1,4 +1,9 @@
-import type { RotatingStorm } from '../../../server/src/plugins/kit/rotatingStorms.ts';
+import { devForceEnvName } from '../../../server/src/plugins/kit/devForce.ts';
+import {
+  createRotatingStormDev,
+  isRotatingStormRefusal,
+  summonRotatingStorm,
+} from '../../../server/src/plugins/kit/rotatingStormSummon.ts';
 import type {
   PersistenceSlice,
   Player,
@@ -10,6 +15,7 @@ import type {
 import {
   DEFAULT_TORNADO_FREQUENCY,
   FREQUENCY_INTERVAL_MULTIPLIERS,
+  MAX_ACTIVE_TORNADOES,
   TORNADO_ALL_MESSAGE,
   TORNADO_DAMAGE_EVENT,
   TORNADO_FREQUENCIES,
@@ -19,21 +25,33 @@ import {
   type TornadoFrequency,
   type TornadoState,
 } from '../protocol.ts';
-import { loadTornadoes, saveTornadoes, TORNADO_SLICE_VERSION } from './persistence.ts';
 import {
-  MAX_ACTIVE_TORNADOES,
-  meanSpawnIntervalSeconds,
-  tornadoes,
-  trySpawnTornado,
-} from './sim.ts';
-import { forceSpawnFromEnv, forceTornadoNear } from './dev.ts';
+  loadTornadoes,
+  saveTornadoes,
+  takeRestoredThisCreate,
+  TORNADO_SLICE_VERSION,
+} from './persistence.ts';
+import { isLand, meanSpawnIntervalSeconds, tornadoes, trySpawnTornado } from './sim.ts';
 import { loadWeatherBridge, resetWeatherBridge } from './weather-bridge.ts';
 
 export const BROADCAST_TICK_INTERVAL = 2;
 
 export { TORNADO_DAMAGE_EVENT };
 
-export { MAX_ACTIVE_TORNADOES };
+const TORNADO_DEV_FORCE_ENV = devForceEnvName(TORNADO_PLUGIN_NAME);
+
+const TORNADO_NOUN = 'tornadoes';
+
+const TORNADO_SITING_NOUN = 'land';
+
+const dev = createRotatingStormDev({
+  storms: tornadoes,
+  pluginName: TORNADO_PLUGIN_NAME,
+  accepts: isLand,
+  noun: TORNADO_NOUN,
+  sitingNoun: TORNADO_SITING_NOUN,
+  envName: TORNADO_DEV_FORCE_ENV,
+});
 
 let tickCount = 0;
 
@@ -43,9 +61,9 @@ let frequency: TornadoFrequency = DEFAULT_TORNADO_FREQUENCY;
 
 function resetSessionState(): void {
   tickCount = 0;
+  broadcastPending = false;
   frequency = DEFAULT_TORNADO_FREQUENCY;
   tornadoes.reset();
-  tornadoes.freeze(false);
   resetWeatherBridge();
 }
 
@@ -117,15 +135,18 @@ export const plugin: TerracePlugin = {
 
   onWorldCreate(world: WorldApi): void {
     tickCount = 0;
+    if (!takeRestoredThisCreate()) {
+      tornadoes.reset();
+      broadcastPending = false;
+    }
     tornadoes.freeze(false);
-    resetWeatherBridge();
 
     frequency = parseFrequency(world.setting(TORNADO_FREQUENCY_SETTING_KEY));
     loadWeatherBridge(world);
 
     if (frequency === 'off') return;
 
-    forceSpawnFromEnv(world, process.env);
+    dev.forceFromEnv(world, process.env);
 
     console.info(
       `[${TORNADO_PLUGIN_NAME}] frequency: ${frequency}, difficulty ` +
@@ -153,17 +174,21 @@ export const plugin: TerracePlugin = {
     if (frequency === 'off') {
       return { ok: false, detail: 'tornadoes are off for this world — set the frequency first' };
     }
-    if (tornadoes.count() >= MAX_ACTIVE_TORNADOES) {
-      return {
-        ok: false,
-        detail: `${MAX_ACTIVE_TORNADOES} tornadoes are already in the air`,
-      };
-    }
-    const { storm, detail } = forceTornadoNear(world, site);
-    if (storm === null) return { ok: false, detail };
+    const summoned = summonRotatingStorm({
+      storms: tornadoes,
+      world,
+      site,
+      accepts: isLand,
+      forcedEnv: TORNADO_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_TORNADOES,
+      noun: TORNADO_NOUN,
+      sitingNoun: TORNADO_SITING_NOUN,
+    });
+    if (isRotatingStormRefusal(summoned)) return summoned;
+
     broadcastPending = false;
     broadcastTornadoes(world);
-    return { ok: true, detail };
+    return { ok: true, detail: `a tornado touched down at (${summoned.x}, ${summoned.y})` };
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -178,11 +203,3 @@ export const plugin: TerracePlugin = {
 
   persistence,
 };
-
-export function resetTornadoState(): void {
-  resetSessionState();
-}
-
-export function livingTornadoes(): readonly RotatingStorm[] {
-  return tornadoes.storms();
-}

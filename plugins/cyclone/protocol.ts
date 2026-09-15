@@ -82,8 +82,6 @@ export function cycloneNameFor(index: number, x: number, y: number, worldSize: n
   return `${basin.charAt(0).toUpperCase()}${basin.slice(1)} ${givenNameFor(index)}`;
 }
 
-export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
-
 export const CYCLONE_RADIUS_CELLS = cellsAcross(30);
 
 export const CYCLONE_MAX_RADIUS_WORLD_FRACTION = 0.3;
@@ -94,12 +92,37 @@ export function cycloneRadiusFor(worldSize: number): number {
 
 export const CYCLONE_EYE_RADIUS_FRACTION = 0.125;
 
+// The roster ceiling both halves size to: the server profile's cap and the
+// client's spiral slots.
+export const MAX_ACTIVE_CYCLONES = 1;
+
+export interface CycloneDamagePayload {
+  readonly stormId: number;
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly eyeRadius: number;
+  readonly intensity: number;
+  readonly durationSeconds: number;
+  readonly cells: ReadonlyArray<{
+    readonly x: number;
+    readonly y: number;
+    readonly severity: number;
+  }>;
+}
+
+export interface CycloneLandfallPayload {
+  readonly stormId: number;
+  readonly x: number;
+  readonly y: number;
+  readonly intensity: number;
+  readonly name?: string;
+}
+
 export {
   BROADCAST_POSITION_DECIMALS,
   parseRotatingStormsPayload as parseAllPayload,
   roundBroadcastIntensity,
   roundBroadcastPosition,
   type RotatingStormState as CycloneState,
-  type RotatingStormsPayload as CycloneAllPayload,
 } from '@terrace/shared';
-export { BROADCAST_INTENSITY_DECIMALS as CYCLONE_INTENSITY_DECIMALS } from '@terrace/shared';

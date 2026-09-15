@@ -10,6 +10,7 @@ export interface WeatherCell {
   readonly x: number;
   readonly y: number;
   readonly radius: number;
+  readonly intensity: number;
 }
 
 interface WeatherSystemsApi {
@@ -45,8 +46,16 @@ export function stormCells(): readonly WeatherCell[] {
     if (system === null || typeof system !== 'object') continue;
     if (system.kind !== WEATHER_STORM_KIND) continue;
     if (!Number.isFinite(system.x) || !Number.isFinite(system.y)) continue;
+    // Defensive: the hub never emits a zero radius, but siting needs one.
     if (!Number.isFinite(system.radius) || system.radius <= 0) continue;
-    cells.push(system);
+    if (!Number.isFinite(system.intensity) || system.intensity <= 0) continue;
+    cells.push({
+      kind: system.kind,
+      x: system.x,
+      y: system.y,
+      radius: system.radius,
+      intensity: system.intensity,
+    });
   }
   return cells;
 }
