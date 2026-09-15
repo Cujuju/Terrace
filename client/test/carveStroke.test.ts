@@ -133,6 +133,27 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     expect(carveReachCell(mirror, AIM_ORIGIN, AIM_DIRECTION, band!)).toBeNull();
   });
 
+  it('reaches a cell the ray marched past — the pick may name a neighbour', () => {
+    // Chrome sweep (4 cameras, ~10k rays each): ~6% of carvable aims had a
+    // reach of null. The pick names the column that OWNS the struck band, and
+    // that column can be a neighbour of the cell the ray's own march entered.
+    const TOWER = bandLevelHeight(PLATEAU_BAND);
+    const mirror = worldOf(() => 0);
+    setColumn(mirror.map, 12, 12, [{ floor: BEDROCK_FLOOR, ceiling: TOWER }]);
+
+    const origin = { x: 11.4 * CELL_WORLD_SIZE, y: worldY(TOWER) + 5, z: 11.4 * CELL_WORLD_SIZE };
+    const down = { x: 0, y: -1, z: 0 };
+
+    const aim = pickTerrainCellByRay(mirror, origin, down);
+    expect(aim).not.toBeNull();
+    // The ray walks (11, 11); the pick names the diagonal owner.
+    expect({ x: aim!.x, y: aim!.y }).toEqual({ x: 12, y: 12 });
+
+    const band = carveBandOfPick(mirror.map, aim!, () => true);
+    expect(band).toBe(PLATEAU_BAND);
+    expect(carveReachCell(mirror, origin, down, band!)).toEqual({ x: 12, y: 12 });
+  });
+
   it('answers nothing for a degenerate aim instead of marching forever', () => {
     const mirror = worldOf(() => bandLevelHeight(PLATEAU_BAND));
     const nowhere = { x: 0, y: 0, z: 0 };
