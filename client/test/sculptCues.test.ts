@@ -907,6 +907,41 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
     }
   });
 
+  it('a chord pressed mid-stroke still previews once the stroke ends', () => {
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    const { fire, dispose } = driveInput(mirror);
+    try {
+      setSculptMode('raise');
+      fire('pointerdown', {});
+      fire('keydown', { shiftKey: true });
+      expect(sculptMode()).toBe('raise');
+
+      fire('pointerup', {});
+      fire('pointermove', { shiftKey: true });
+      expect(sculptMode()).toBe('lower');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a chord pressed while carve is selected previews after the tool changes', () => {
+    setBrushTool('carve');
+    const mirror = flatWorld();
+    const { fire, dispose } = driveInput(mirror);
+    try {
+      setSculptMode('raise');
+      fire('keydown', { shiftKey: true });
+      expect(sculptMode()).toBe('raise');
+
+      setBrushTool('stamp');
+      fire('pointermove', { shiftKey: true });
+      expect(sculptMode()).toBe('lower');
+    } finally {
+      dispose();
+    }
+  });
+
   it('a toggled direction reaches the intent a touch press sends', () => {
     vi.useFakeTimers();
     setBrushTool('stamp');

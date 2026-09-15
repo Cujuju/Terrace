@@ -121,15 +121,17 @@ export const syncMode = (s: StrokeState, state: ModifierState): void => {
     ctrlKey: state.ctrlKey,
     altKey: state.altKey,
   };
-  const modifier = modifierOf(s.mods);
   // Edge-triggered: only a CHANGE of chord previews a direction. Writing the
   // mode on every move re-asserted the unmodified binding, so the HUD toggle
   // lasted one frame.
+  if (s.strokeButton !== null) return;
+  if (TOOLS_WITHOUT_DIRECTION.includes(brushTool())) return;
+  // The edge is recorded only where it is acted on: one swallowed mid-stroke
+  // would leave the mode stale when the stroke ends with the chord still held.
+  const modifier = modifierOf(s.mods);
   const changed = modifier !== s.lastModifier;
   s.lastModifier = modifier;
   if (!changed || modifier === null) return;
-  if (s.strokeButton !== null) return;
-  if (TOOLS_WITHOUT_DIRECTION.includes(brushTool())) return;
   const bindings = controlBindings();
   if (bindings.raise.modifier === modifier) setSculptMode('raise');
   else if (bindings.lower.modifier === modifier) setSculptMode('lower');
