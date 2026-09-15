@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
+  BEDROCK_FLOOR,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   applySculpt,
   bandLevelHeight,
+  heightAt,
+  packColumnSpans,
+  setColumn,
+  spanAt,
+  spanCount,
   spanIndexCoveringBand,
   type ChunkPayload,
   type JoinSnapshotMessage,
@@ -27,6 +33,7 @@ import {
   type Vec3,
 } from '../src/terrain/picking.ts';
 import { carveBandOfPick } from '../src/terrain/pickBand.ts';
+import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
   brushRadius,
   brushTool,
@@ -393,5 +400,104 @@ describe('a held carve stroke', () => {
     } finally {
       dispose();
     }
+  });
+});
+
+const CARVE_WALL_X = 34;
+const CARVE_WALL_BAND = 20;
+
+function wallWorld(): TerrainMirror {
+  return worldOf((x) => (x >= CARVE_WALL_X ? bandLevelHeight(CARVE_WALL_BAND) : 0));
+}
+
+const carveIntent = (seq: number): SculptIntent => ({
+  type: 'sculpt',
+  x: CARVE_WALL_X,
+  y: ROW,
+  radius: 1,
+  dir: -1,
+  tool: 'carve',
+  spanBand: PLATEAU_BAND,
+  seq,
+});
+
+describe('predicting a carve', () => {
+  it('dirties the chunk for a cut that leaves the cap where it was', () => {
+    const mirror = wallWorld();
+    const store = createPredictionStore(mirror);
+    const capBefore = heightAt(mirror.map, CARVE_WALL_X, ROW);
+
+    const dirty = store.predict(carveIntent(1), 0);
+
+    expect(dirty.size).toBeGreaterThan(0);
+    expect(heightAt(mirror.map, CARVE_WALL_X, ROW)).toBe(capBefore);
+    expect(spanCount(mirror.map, CARVE_WALL_X, ROW)).toBe(2);
+    expect(store.pendingCount()).toBe(1);
+    expect(store.ghostSeqs()).toHaveLength(0);
+  });
+
+  it('holds the cut until the ack, and the authoritative spans land without a second cut', () => {
+    const mirror = wallWorld();
+    const store = createPredictionStore(mirror);
+    store.predict(carveIntent(1), 0);
+
+    const server = wallWorld();
+    const cells = applySculpt(server.map, CARVE_WALL_X, ROW, 1, -DEFAULT_SCULPT_AMOUNT, {
+      tool: 'carve',
+      spanBand: PLATEAU_BAND,
+    });
+    expect(cells).toHaveLength(1);
+    const authoritative = packColumnSpans(server.map, CARVE_WALL_X, ROW);
+
+    store.applyCellDiff({ type: 'terrainDiff', cells }, 1);
+    // A layered cut can never be confirmed by heights, so the ack is what releases it.
+    expect(store.pendingCount()).toBe(1);
+    expect(packColumnSpans(mirror.map, CARVE_WALL_X, ROW)).toEqual(authoritative);
+
+    store.resolveSeq(1);
+    expect(store.pendingCount()).toBe(0);
+    expect(packColumnSpans(mirror.map, CARVE_WALL_X, ROW)).toEqual(authoritative);
+    expect(heightAt(mirror.map, CARVE_WALL_X, ROW)).toBe(heightAt(server.map, CARVE_WALL_X, ROW));
+  });
+});
+
+const CAVE_MOUTH_X = 33;
+const CAVE_FLOOR_TOP = bandLevelHeight(6);
+const CAVE_ROOF_BASE = bandLevelHeight(10);
+const CAVE_ROOF_TOP = bandLevelHeight(20);
+
+describe('a carve aimed at a cave ceiling', () => {
+  it('opens the band the ceiling hangs at and leaves the floor below byte-untouched', () => {
+    const mirror = worldOf(() => 0);
+    for (let x = CAVE_MOUTH_X + 1; x <= CAVE_MOUTH_X + 4; x++) {
+      setColumn(mirror.map, x, ROW, [
+        { floor: BEDROCK_FLOOR, ceiling: CAVE_FLOOR_TOP },
+        { floor: CAVE_ROOF_BASE, ceiling: CAVE_ROOF_TOP },
+      ]);
+    }
+    const inside = CAVE_MOUTH_X + 1;
+    const underside: TerrainRayPick = {
+      x: inside,
+      y: ROW,
+      spanIndex: 1,
+      face: 'underside',
+      hitY: worldY(CAVE_ROOF_BASE),
+      surfaceY: worldY(CAVE_ROOF_TOP),
+      hitX: worldX(inside),
+      hitZ: worldX(ROW),
+    };
+
+    const band = carveBandOfPick(mirror.map, underside, () => false);
+    expect(band).toBe(PLATEAU_BAND);
+
+    const floorBefore = spanAt(mirror.map, inside, ROW, 0);
+    const diff = applySculpt(mirror.map, inside, ROW, 1, -DEFAULT_SCULPT_AMOUNT, {
+      tool: 'carve',
+      spanBand: band!,
+    });
+
+    expect(diff).toHaveLength(1);
+    expect(spanAt(mirror.map, inside, ROW, 0)).toEqual(floorBefore);
+    expect(spanAt(mirror.map, inside, ROW, 1).floor).toBeGreaterThan(CAVE_ROOF_BASE);
   });
 });
