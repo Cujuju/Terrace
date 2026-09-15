@@ -35,6 +35,7 @@ export {
   DENIAL_HINT_VISIBLE_MS,
   denialHint,
   showDenialHint,
+  disposeDenialHint,
   setWorldIdentity,
   setServerVersion,
   setFrameRate,

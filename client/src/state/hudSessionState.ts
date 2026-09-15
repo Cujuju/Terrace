@@ -3,6 +3,7 @@ import type { RendererBackendName } from '../render/rendererBackend.ts';
 import type { ConnectionStatus } from '../net/connection.ts';
 import type { FrameStatsSample } from '../render/frameStats.ts';
 import type { PickFace } from '../terrain/picking.ts';
+import { REFUSED_PULSE_MS } from '../input/sculpt/contract.ts';
 
 const [connectionStatus, setConnectionStatus] =
   createSignal<ConnectionStatus>('connecting');
@@ -104,23 +105,29 @@ export function setHoverPick(sample: HoverPickSample | null): void {
 /** Which line a sculpt denial shows the hand. Chosen by world.ts denialHintFor. */
 export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost' | 'refused';
 
-/** How long a denial line stays up before it clears itself. */
-export const DENIAL_HINT_VISIBLE_MS = 2600;
+/** The longest denial line is five words, read at a glancing ~150 wpm. */
+const DENIAL_HINT_READING_MS = 2000;
+
+/** The line outlasts the brush's red pulse, then holds long enough to read. */
+export const DENIAL_HINT_VISIBLE_MS = REFUSED_PULSE_MS + DENIAL_HINT_READING_MS;
 
 const [denialHint, setDenialHintSignal] = createSignal<DenialHint | null>(null);
 
 let denialHintTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Raise the denial line; it clears itself, so no reader has to time it. */
-export function showDenialHint(hint: DenialHint | null): void {
+/** Clears the line and its pending timer, so none outlives the caller. */
+export function disposeDenialHint(): void {
   if (denialHintTimer !== null) clearTimeout(denialHintTimer);
   denialHintTimer = null;
-  setDenialHintSignal(hint);
+  setDenialHintSignal(null);
+}
+
+/** Raise the denial line; it clears itself, so no reader has to time it. */
+export function showDenialHint(hint: DenialHint | null): void {
+  disposeDenialHint();
   if (hint === null) return;
-  denialHintTimer = setTimeout(() => {
-    denialHintTimer = null;
-    setDenialHintSignal(null);
-  }, DENIAL_HINT_VISIBLE_MS);
+  setDenialHintSignal(hint);
+  denialHintTimer = setTimeout(disposeDenialHint, DENIAL_HINT_VISIBLE_MS);
 }
 
 export { denialHint };
