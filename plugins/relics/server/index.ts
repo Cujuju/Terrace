@@ -3,6 +3,7 @@ import {
   MAX_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  type CellDiff,
   type SculptIntent,
 } from '@terrace/shared';
 import type {
@@ -437,7 +438,10 @@ export const plugin: TerracePlugin = {
     }
   },
 
-  onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
+  onIntentApplied(intent: SculptIntent, ctx: IntentCtx, diff: readonly CellDiff[]): void {
+    // The ward claims the ground a stroke worked. A stroke that moved nothing
+    // worked no ground, so it claims none.
+    if (diff.length === 0) return;
     const held = skillsBySession.get(ctx.player.id);
     if (held === undefined || !held.has('bedrock-ward')) return;
     stampWard(ctx.world.worldSize, ctx.player.id, intent.x, intent.y, intent.radius);
