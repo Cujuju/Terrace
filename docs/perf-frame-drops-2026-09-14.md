@@ -231,6 +231,11 @@ take the full path unconditionally. Far view cam 274, 5 stable polls, vs pre-LOD
 Taken over mid-flight: worker's 2-file diff reviewed (hold-validity invariants hold —
 first-sight/gait-change force full, cleared capture flags bypassed only under holdPose),
 `cameraPosition()` API verified, client typecheck green, probe-verified above, committed.
+Audio note (owner): the hold path touches no audio — wildlife emits none (only positional
+SFX in the tree is thunderstorm cracks, event-driven), and `drawnPoseOf` (fire's consumer)
+still refreshes every frame on hold. Standing rule for future work: any creature
+vocalization added later must be distance-gated independently of the 1/6 stagger, never
+wired to the held update.
 
 ## Evidence index (all untracked, all kept per instruction)
 
