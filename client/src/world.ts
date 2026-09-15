@@ -124,8 +124,18 @@ export interface LayerEdgeLight {
  * - `nest` — a monsters protection denial ('monster occupies the ground').
  * - `ward` — a relics bedrock-ward denial ('warded').
  * - `mana-with-cost` — a mana denial ('insufficient mana'); the hint carries the cost.
+ * - `refused` — a reason this build does not know (a server fault, say). The
+ *   ground is not locked, so the hand is told only that the stroke did not land.
  */
-export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost';
+export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost' | 'refused';
+
+/** The reasons that mean the ground itself said no; anything else is not a lock. */
+const LOCKED_DENIAL_REASONS: readonly SculptDeniedReason[] = [
+  'malformed',
+  'locked',
+  'plugin-denied',
+  'plugin-modified-invalid',
+];
 
 export function denialHintFor(
   reason: SculptDeniedReason | undefined,
@@ -137,7 +147,7 @@ export function denialHintFor(
   if (text.includes('monster') || text.includes('occupies') || text.includes('nest')) {
     return 'nest';
   }
-  void reason;
+  if (reason !== undefined && !LOCKED_DENIAL_REASONS.includes(reason)) return 'refused';
   return 'locked';
 }
 

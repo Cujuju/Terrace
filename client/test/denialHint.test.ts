@@ -30,4 +30,15 @@ describe('denialHintFor — every sculptDenied selects hint text', () => {
   it('a mana denial hints mana-with-cost', () => {
     expect(denialHintFor('plugin-denied', 'insufficient mana')).toBe('mana-with-cost');
   });
+
+  it('a reason this build does not know hints refused, never locked', () => {
+    const unknown = 'server-fault' as Parameters<typeof denialHintFor>[0];
+    expect(denialHintFor(unknown, undefined)).toBe('refused');
+    expect(denialHintFor(unknown, 'sculpt threw')).toBe('refused');
+  });
+
+  it('an unknown reason still reads its plugin detail', () => {
+    const unknown = 'server-fault' as Parameters<typeof denialHintFor>[0];
+    expect(denialHintFor(unknown, 'insufficient mana')).toBe('mana-with-cost');
+  });
 });
