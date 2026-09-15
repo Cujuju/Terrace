@@ -64,7 +64,8 @@ export {
   spendMana,
 } from './pool.ts';
 
-export { INSUFFICIENT_MANA_REASON, manaCostFor, territoryFeeFor } from './charging.ts';
+export { INSUFFICIENT_MANA_REASON, manaCostFor } from './charging.ts';
+export { CHUNK_UNLOCK_MANA, chunkUnlockFee } from '../pricing.ts';
 
 export const plugin: TerracePlugin = {
   name: 'mana',
