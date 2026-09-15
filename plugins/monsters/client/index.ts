@@ -54,9 +54,15 @@ const freeFlash: PointLight[] = [];
 
 function lendFlashLight(): PointLight {
   const pooled = freeFlash.pop();
-  if (pooled !== undefined) return pooled;
+  if (pooled !== undefined) {
+    // Unpark: the retire path hides the light so parked intensity-0 lights never
+    // enter the lit set (three keys lit programs off visible lights).
+    pooled.visible = true;
+    return pooled;
+  }
   const light = createDreadFlashLight();
   light.intensity = 0;
+  light.visible = true;
   container?.add(light);
   allFlash.push(light);
   return light;
@@ -166,6 +172,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     retiring.dread.dispose();
     if (retiring.flash !== null) {
       retiring.flash.intensity = 0;
+      retiring.flash.visible = false;
       container?.add(retiring.flash);
       freeFlash.push(retiring.flash);
     }
@@ -191,6 +198,7 @@ export const clientPlugin: TerraceClientPlugin = {
     for (let index = 0; index < MAX_LIVING_MONSTERS; index++) {
       const light = createDreadFlashLight();
       light.intensity = 0;
+      light.visible = false;
       container.add(light);
       allFlash.push(light);
       freeFlash.push(light);
