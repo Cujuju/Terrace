@@ -1,10 +1,12 @@
 import {
   BAND_HEIGHT,
   drawnBandOfSample,
+  drawnBandOfSpan,
   isSpanDrawn,
   spanAt,
   drawnSpanCapHeight,
   spanCount,
+  spanIndexBelowBand,
   drawnSpanIndexCoveringBand,
   spanUndersideHeight,
   type Heightmap,
@@ -72,4 +74,25 @@ export function carveBandOfPick(
   // F3: carve reach queries the drawn banding, matching the emitted caps.
   if (drawnSpanIndexCoveringBand(map, pick.x, pick.y, resolved.band) === null) return null;
   return resolved.band;
+}
+
+/** Spans a column needs before a stroke can grasp one layer of it. */
+const MIN_LAYERED_SPAN_COUNT = 2;
+
+export function graspSpanBandIn(
+  map: Heightmap,
+  pick: TerrainRayPick,
+  atX: number,
+  atY: number,
+): number | null {
+  if (spanCount(map, atX, atY) < MIN_LAYERED_SPAN_COUNT) return null;
+  const band = bandOfPick(map, pick);
+  if (band === null) return null;
+  if (atX === pick.x && atY === pick.y) return band;
+  if (drawnSpanIndexCoveringBand(map, atX, atY, band) !== null) return band;
+  const below = spanIndexBelowBand(map, atX, atY, band);
+  if (below === null) return null;
+  const span = spanAt(map, atX, atY, below);
+  // The anchor stands at the riser's foot: grasp the tread under it, never the roof over it.
+  return isSpanDrawn(span) ? drawnBandOfSpan(span) : null;
 }

@@ -2,9 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
   BAND_HEIGHT,
+  BEDROCK_FLOOR,
   CHUNK_SIZE,
+  DEFAULT_SCULPT_AMOUNT,
   MAX_DRAG_SWEEP_CELLS,
+  applySculpt,
   chebyshevDistance,
+  sculptOptionsOf,
+  setColumn,
+  spanAt,
   type ChunkPayload,
   type JoinSnapshotMessage,
   type SculptIntent,
@@ -19,6 +25,7 @@ import {
   type SendOutcome,
 } from '../src/input/sculptInput.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
+import { graspSpanBandIn } from '../src/terrain/pickBand.ts';
 import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
   CUE_BLINK_ON_MS,
@@ -905,6 +912,112 @@ describe('the host wiring turns every cue into something the brush can read', ()
       expect(cue.isRed()).toBe(false);
       predictions.resolveSeq(1);
       expect(cue.ghost()).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+const FOOT_COLUMN_X = 29;
+const WALL_COLUMN_X = 30;
+const LAYERED_ROW = 30;
+const FOOT_TREAD_CEILING = 48;
+const FOOT_TREAD_BAND = 3;
+const FOOT_TREAD_RAISED_CEILING = 64;
+const FOOT_ROOF_FLOOR = 160;
+const FOOT_ROOF_CEILING = 208;
+const WALL_TREAD_CEILING = 112;
+const WALL_ROOF_FLOOR = 300;
+const WALL_ROOF_CEILING = 340;
+const WALL_RISER_BAND = 5;
+
+const WALL_RISER_PICK: TerrainRayPick = {
+  x: WALL_COLUMN_X,
+  y: LAYERED_ROW,
+  surfaceY: bandY(WALL_RISER_BAND),
+  spanIndex: 0,
+  face: 'riser',
+  hitY: bandY(WALL_RISER_BAND),
+  hitX: (WALL_COLUMN_X - 0.5) * CELL_WORLD_SIZE,
+  hitZ: LAYERED_ROW * CELL_WORLD_SIZE,
+};
+
+function layeredFootWorld(): TerrainMirror {
+  const mirror = flatWorld();
+  setColumn(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, [
+    { floor: BEDROCK_FLOOR, ceiling: FOOT_TREAD_CEILING },
+    { floor: FOOT_ROOF_FLOOR, ceiling: FOOT_ROOF_CEILING },
+  ]);
+  setColumn(mirror.map, WALL_COLUMN_X, LAYERED_ROW, [
+    { floor: BEDROCK_FLOOR, ceiling: WALL_TREAD_CEILING },
+    { floor: WALL_ROOF_FLOOR, ceiling: WALL_ROOF_CEILING },
+  ]);
+  return mirror;
+}
+
+describe('a foot-anchored grasp on a layered column', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  it('grasps the tread the anchor stands on, and raising it leaves the roof alone', () => {
+    setBrushTool('stamp');
+    setBrushRadius(1);
+    const mirror = layeredFootWorld();
+    const { attempts, fire, dispose } = driveInput(mirror, {
+      origin: { x: cellW(20), y: bandY(20), z: cellW(LAYERED_ROW) },
+      lookAt: { x: cellW(WALL_COLUMN_X), y: 0, z: cellW(LAYERED_ROW) },
+      pickCell: () => WALL_RISER_PICK,
+      pickInColumn: () => WALL_RISER_PICK,
+      graspSpanBand: (pick, atX, atY) =>
+        pick === null ? null : graspSpanBandIn(mirror.map, pick, atX, atY),
+    });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(1);
+      const intent = attempts[0]!;
+      expect({ x: intent.x, y: intent.y }).toEqual({ x: FOOT_COLUMN_X, y: LAYERED_ROW });
+      expect(intent.spanBand).toBe(FOOT_TREAD_BAND);
+
+      applySculpt(
+        mirror.map,
+        intent.x,
+        intent.y,
+        intent.radius,
+        DEFAULT_SCULPT_AMOUNT * intent.dir,
+        sculptOptionsOf(intent),
+      );
+      expect(spanAt(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, 0).ceiling).toBe(
+        FOOT_TREAD_RAISED_CEILING,
+      );
+      expect(spanAt(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, 1).ceiling).toBe(FOOT_ROOF_CEILING);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('keeps the struck band when the anchor column covers it', () => {
+    setBrushTool('stamp');
+    const mirror = layeredFootWorld();
+    setColumn(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, [
+      { floor: BEDROCK_FLOOR, ceiling: FOOT_ROOF_FLOOR - BAND_HEIGHT },
+      { floor: FOOT_ROOF_FLOOR, ceiling: FOOT_ROOF_CEILING },
+    ]);
+    const { attempts, fire, dispose } = driveInput(mirror, {
+      origin: { x: cellW(20), y: bandY(20), z: cellW(LAYERED_ROW) },
+      lookAt: { x: cellW(WALL_COLUMN_X), y: 0, z: cellW(LAYERED_ROW) },
+      pickCell: () => WALL_RISER_PICK,
+      pickInColumn: () => WALL_RISER_PICK,
+      graspSpanBand: (pick, atX, atY) =>
+        pick === null ? null : graspSpanBandIn(mirror.map, pick, atX, atY),
+    });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.spanBand).toBe(WALL_RISER_BAND);
     } finally {
       dispose();
     }
