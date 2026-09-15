@@ -32,9 +32,17 @@ export interface PrecipitationProfile {
   readonly innerRadiusFraction: number;
 }
 
-export function seedRadius(u: number, innerRadiusFraction: number): number {
+export const FULL_DISC_CANOPY_FRACTION = 1;
+
+// Area-uniform seat on the annulus [inner, outer] of the disc radius.
+export function seedRadius(
+  u: number,
+  innerRadiusFraction: number,
+  outerRadiusFraction: number = FULL_DISC_CANOPY_FRACTION,
+): number {
   const innerArea = innerRadiusFraction * innerRadiusFraction;
-  return Math.sqrt(innerArea + u * (1 - innerArea));
+  const outerArea = outerRadiusFraction * outerRadiusFraction;
+  return Math.sqrt(innerArea + u * (outerArea - innerArea));
 }
 
 export function fallFraction(

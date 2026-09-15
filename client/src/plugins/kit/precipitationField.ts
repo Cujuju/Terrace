@@ -39,6 +39,7 @@ export interface PrecipitationFieldSpec {
   readonly maxMasses: number;
   readonly name: string;
   readonly renderOrder: number;
+  readonly canopyFraction: number;
   readonly applyRevealClip: (material: NodeMaterial, label: string) => void;
 }
 
@@ -78,7 +79,7 @@ export function createPrecipitationField(
   let write = 0;
   for (let particle = 0; particle < particles; particle++) {
     const slot = Math.floor(particle / profile.count);
-    const r = seedRadius(Math.random(), profile.innerRadiusFraction);
+    const r = seedRadius(Math.random(), profile.innerRadiusFraction, spec.canopyFraction);
     const angle = Math.random() * TWO_PI;
     const birth = Math.random();
     const phase = Math.random() * TWO_PI;

@@ -1,6 +1,9 @@
 import { Group } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
-import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
+import {
+  FULL_DISC_CANOPY_FRACTION,
+  type PrecipitationProfile,
+} from '../../../client/src/plugins/kit/precipitation.ts';
 import {
   createPrecipitationField,
   PRECIPITATION_FIELD_DRAW_OBJECTS,
@@ -64,6 +67,7 @@ export function createCycloneRainField(
     maxMasses: MAX_SPIRALS,
     name: `${CYCLONE_PLUGIN_NAME}:rain`,
     renderOrder: DISC_RENDER_ORDER,
+    canopyFraction: FULL_DISC_CANOPY_FRACTION,
     applyRevealClip,
   });
   root.add(field.object);
