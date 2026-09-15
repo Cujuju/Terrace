@@ -457,6 +457,43 @@ describe('descent gate', () => {
       dispose();
     }
   });
+
+  it('the stroke thaws as soon as the aim comes back down onto the held band', () => {
+    setBrushTool('drag');
+    const mirror = flatWorld();
+    const { input, attempts, fire, dispose } = driveInput(mirror, {
+      riserBand: () => 1,
+      origin: { x: cellW(10), y: bandY(2), z: cellW(10) },
+      lookAt: { x: cellW(50), y: bandY(2), z: cellW(50) },
+    });
+    try {
+      fire('pointerdown', {});
+      expect(input.dragDescentFrozen()).toBe(true);
+      expect(attempts).toHaveLength(0);
+
+      fire('pointermove', { clientY: VIEW_HEIGHT - 1 });
+      expect(input.dragDescentFrozen()).toBe(false);
+      expect(attempts).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a second finger lets go of the held band', () => {
+    vi.useFakeTimers();
+    setBrushTool('drag');
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror, { riserBand: () => 2 });
+    try {
+      fire('pointerdown', { pointerType: 'touch', pointerId: 7 });
+      vi.advanceTimersByTime(TOUCH_STROKE_GRACE_MS);
+      expect(input.heldBand()).toBe(2);
+      fire('pointerdown', { pointerType: 'touch', pointerId: 8 });
+      expect(input.heldBand()).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
 });
 
 describe('sweep truncation', () => {
