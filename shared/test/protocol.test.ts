@@ -258,6 +258,14 @@ describe('targetBand — the drag field on the wire', () => {
     expect(validateSculptIntent({ ...drag, targetBand: 0 }, WORLD)).not.toBeNull();
   });
 
+  it('rejects a spanBand on a drag — the cursor cell is not the grasped cell', () => {
+    expect(validateSculptIntent({ ...drag, targetBand: 2, spanBand: 2 }, WORLD)).toBeNull();
+    for (const tool of ['stamp', 'smooth'] as const) {
+      expect(validateSculptIntent({ ...base, tool, spanBand: 2 }, WORLD)).not.toBeNull();
+    }
+    expect(validateSculptIntent({ ...base, dir: -1, tool: 'carve', spanBand: 2 }, WORLD)).not.toBeNull();
+  });
+
   it('rejects a band carried by anything but a drag, the absent tool included', () => {
     expect(validateSculptIntent({ ...base, targetBand: 3 }, WORLD)).toBeNull();
     expect(validateSculptIntent({ ...base, tool: 'stamp', targetBand: 3 }, WORLD)).toBeNull();
