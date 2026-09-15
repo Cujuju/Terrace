@@ -33,7 +33,7 @@ export interface StrokeState {
 
   mods: ModifierState;
 
-  // The chord syncMode last observed. Seeded with the no-modifier resting state
+  // The chord syncMode last ACTED ON. Seeded with the no-modifier resting state
   // so the first unmodified move is not an edge.
   lastModifier: BindingModifier | null;
 
