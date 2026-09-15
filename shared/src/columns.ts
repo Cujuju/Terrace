@@ -143,6 +143,12 @@ export function spanCapHeight(span: Span): number {
   return bandLevelHeight(drawnBandOfSample(span.ceiling));
 }
 
+/** Lowest band whose write level is at or above `height`. */
+function lowestBandAtOrAbove(height: number): number {
+  const band = drawnBandOfSample(height);
+  return bandLevelHeight(band) >= height ? band : band + 1;
+}
+
 /**
  * Lowest write level at or above a span's floor: the ceiling of the level
  * grid the span reaches. A span is drawn exactly when this clears its cap,
@@ -150,12 +156,22 @@ export function spanCapHeight(span: Span): number {
  * spanIndexCoveringBand).
  */
 export function spanLowestBandHeight(span: Span): number {
-  const level = bandLevelHeight(drawnBandOfSample(span.floor));
-  return level >= span.floor ? level : bandLevelHeight(drawnBandOfSample(span.floor) + 1);
+  return bandLevelHeight(lowestBandAtOrAbove(span.floor));
 }
 
 export function spanUndersideHeight(span: Span): number {
   return spanLowestBandHeight(span) - BAND_HEIGHT;
+}
+
+/**
+ * Highest ceiling a span under `upper` may hold: below `upper`'s floor, and
+ * low enough that the gap still draws. `spanCapHeight` rounds a ceiling up to
+ * its band level, so the raw underside is not the limit.
+ */
+export function highestCeilingUnderSpan(upper: Span): number {
+  const drawn = bandFloorHeight(lowestBandAtOrAbove(spanUndersideHeight(upper))) - 1;
+  const physical = upper.floor - HEIGHT_UNIT;
+  return drawn < physical ? drawn : physical;
 }
 
 export function isSpanDrawn(span: Span): boolean {

@@ -7,6 +7,9 @@ import {
   BEDROCK_FLOOR,
   createHeightmap,
   heightAt,
+  highestCeilingUnderSpan,
+  isGapDrawn,
+  moveSpanCeiling,
   readSpans,
   seabedHeight,
   SEA_LEVEL,
@@ -71,6 +74,36 @@ describe('seabedHeight', () => {
     ]);
     expect(seabedHeight(map, 11, 12)).toBe(-50);
     expect(seabedHeight(map, 11, 12)).toBe(heightAt(map, 11, 12));
+  });
+});
+
+describe('highestCeilingUnderSpan', () => {
+  const UPPERS = [
+    { floor: 128, ceiling: 200 },
+    { floor: 96, ceiling: 200 },
+    { floor: 160, ceiling: 240 },
+    { floor: 0, ceiling: 64 },
+    { floor: -320, ceiling: -240 },
+  ];
+
+  const legalUnder = (upper: { floor: number; ceiling: number }, ceiling: number): boolean =>
+    ceiling < upper.floor && isGapDrawn({ floor: BEDROCK_FLOOR, ceiling }, upper);
+
+  it('is the highest ceiling that clears the floor above AND leaves the gap drawn', () => {
+    for (const upper of UPPERS) {
+      const cap = highestCeilingUnderSpan(upper);
+      expect(legalUnder(upper, cap)).toBe(true);
+      expect(legalUnder(upper, cap + 1)).toBe(false);
+    }
+  });
+
+  it('a ceiling written at the cap keeps the column two spans', () => {
+    for (const upper of UPPERS) {
+      const map = world();
+      setColumn(map, 8, 8, [{ floor: BEDROCK_FLOOR, ceiling: upper.floor - BAND_HEIGHT * 4 }, upper]);
+      moveSpanCeiling(map, 8, 8, 0, highestCeilingUnderSpan(upper));
+      expect(readSpans(map, 8, 8)).toHaveLength(2);
+    }
   });
 });
 
