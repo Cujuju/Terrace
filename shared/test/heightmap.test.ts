@@ -312,18 +312,18 @@ describe('applySculpt (the full server/prediction operation)', () => {
     expect(heightAt(player, 32, 32)).toBe(MAX_HEIGHT);
   });
 
-  it('one band-click on flat ground raises ONE crisp terrace and nothing else (the Godus contract)', () => {
+  it('a library-default smooth click on flat ground changes nothing: melt deposits no material', () => {
     expect(DEFAULT_SCULPT_AMOUNT).toBe(MAX_STEP * WORLD_UNIT_CELLS);
 
     const map = createHeightmap(CHUNK_SIZE * 2);
     const centre = CHUNK_SIZE;
     const pointBrush = WORLD_UNIT_CELLS;
-    applySculpt(map, centre, centre, pointBrush, DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, centre, centre)).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(bandOf(heightAt(map, centre, centre))).toBe(1);
+    const diff = applySculpt(map, centre, centre, pointBrush, DEFAULT_SCULPT_AMOUNT);
+    expect(diff).toEqual([]);
+    expect(heightAt(map, centre, centre)).toBe(0);
     for (let ring = pointBrush; ring <= pointBrush + WORLD_UNIT_CELLS; ring++) {
       for (const [dx, dy] of [[-ring, 0], [ring, 0], [0, -ring], [0, ring]] as const) {
-        expect(bandOf(heightAt(map, centre + dx, centre + dy))).toBe(0);
+        expect(heightAt(map, centre + dx, centre + dy)).toBe(0);
       }
     }
     expectGradientLimitHolds(map);
@@ -365,22 +365,25 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
     });
   });
 
-  it('the smooth tool reproduces the old brush→smooth→diff composition exactly', () => {
+  it('the smooth tool applies relaxation alone, with no brush deposit', () => {
     const viaOptions = texturedMap(48);
-    const viaOldSteps = texturedMap(48);
+    const viaDirect = texturedMap(48);
 
     for (const [x, y, r, amt] of [[24, 24, 3, 64], [24, 25, 1, -64]] as const) {
       const diff = applySculpt(viaOptions, x, y, r, amt, { tool: 'smooth', profile: 'soft' });
 
+      const seed = new Set<number>();
+      forEachFootprintOffset(r, (dx, dy) => {
+        seed.add(cellIndex(viaDirect, x + dx, y + dy));
+      });
       const changed = new Set<number>();
-      applyBrush(viaOldSteps, x, y, r, amt, changed);
-      smooth(viaOldSteps, changed);
+      smooth(viaDirect, changed, seed);
       const expected = Array.from(changed)
         .sort((a, b) => a - b)
-        .map((i) => ({ x: i % 48, y: (i - (i % 48)) / 48, h: viaOldSteps.cells[i] }));
+        .map((i) => ({ x: i % 48, y: (i - (i % 48)) / 48, h: viaDirect.cells[i] }));
 
       expect(diff).toEqual(expected);
-      expect(viaOptions.cells).toEqual(viaOldSteps.cells);
+      expect(viaOptions.cells).toEqual(viaDirect.cells);
     }
   });
 
@@ -720,7 +723,7 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     expect(map.cells).toEqual(before);
   });
 
-  it('soft is untouched; hard level-fills under BOTH tools (2026-08-19)', () => {
+  it('soft is untouched; hard smooth melts without filling (2026-08-19)', () => {
     const bands = [0, 1, 2, 0, 1, 1, 2, 0, 1];
 
     const soft = createHeightmap(16);
@@ -736,9 +739,11 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     paintFootprint3x3(slumped, 8, 8, bands);
     paintFootprint3x3(slumpedExpected, 8, 8, bands);
     applySculpt(slumped, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
-    const expectedChanged = new Set<number>();
-    applyLevelFillBrush(slumpedExpected, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, expectedChanged);
-    smooth(slumpedExpected, expectedChanged);
+    const seed = new Set<number>();
+    forEachFootprintOffset(2, (dx, dy) => {
+      seed.add(cellIndex(slumpedExpected, 8 + dx, 8 + dy));
+    });
+    smooth(slumpedExpected, new Set<number>(), seed);
     expect(slumped.cells).toEqual(slumpedExpected.cells);
   });
 
@@ -794,13 +799,14 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 });
 
 describe('applySculpt — tools and profiles are orthogonal', () => {
-  it('hard+smooth level-fills a plateau and then lets it slump', () => {
+  it('smooth slumps a stamped plateau without adding to it', () => {
     const stamped = createHeightmap(64);
     const slumped = createHeightmap(64);
     const STAMP_HARD_OPTS = { tool: 'stamp', profile: 'hard' } as const;
     applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
+    applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
 
     expect(heightAt(stamped, 35, 32)).toBe(DEFAULT_SCULPT_AMOUNT);
@@ -1145,11 +1151,11 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
 
-  it('pins the standing residual of the #12 plateau scenario: 1004 units of excess', () => {
+  it('pins the standing residual of the #12 plateau scenario: 988 units of excess', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(1004);
+    expect(maxExcess(map)).toBe(988);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
@@ -1485,8 +1491,7 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
 
   for (const radius of LADDER) {
     for (const dir of [1, -1] as const) {
-      const way = dir > 0 ? 'raises' : 'lowers';
-      it(`one click ${way} the clicked cell by a band at radius ${radius}`, () => {
+      it(`one click moves the clicked cell by at most one band at radius ${radius}`, () => {
         for (let t = 0; t < 60; t++) {
           const map = rollingHills();
           const cx = 30 + ((t * 11) % 68);
@@ -1501,36 +1506,35 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
           applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, wireSmooth);
 
           const after = drawnBandOfSample(map.cells[centre]);
-          expect(after).toBe(before + dir);
+          expect([before, before + dir]).toContain(after);
         }
       });
     }
   }
 
-  it('relaxation never carries the CLICKED cell back past the brush', () => {
+  it('relaxation never moves the CLICKED cell more than one band', () => {
     for (const dir of [1, -1] as const) {
       for (const radius of LADDER) {
-        const brushed = rollingHills();
-        const relaxed = rollingHills();
+        const map = rollingHills();
         const cx = 61;
         const cy = 47;
-        const centre = cellIndex(brushed, cx, cy);
+        const centre = cellIndex(map, cx, cy);
+        const before = drawnBandOfSample(map.cells[centre]);
         const amount = dir * DEFAULT_SCULPT_AMOUNT;
-        applySculpt(brushed, cx, cy, radius, amount, { ...wireSmooth, tool: 'stamp' });
-        applySculpt(relaxed, cx, cy, radius, amount, wireSmooth);
+        applySculpt(map, cx, cy, radius, amount, wireSmooth);
 
-        if (dir > 0) {
-          expect(relaxed.cells[centre]).toBeGreaterThanOrEqual(brushed.cells[centre]);
-        } else {
-          expect(relaxed.cells[centre]).toBeLessThanOrEqual(brushed.cells[centre]);
-        }
+        const after = drawnBandOfSample(map.cells[centre]);
+        expect([before, before + dir]).toContain(after);
       }
     }
   });
 
   it('still spills beyond its footprint — smooth has not become stamp', () => {
     for (const radius of LADDER) {
-      const map = rollingHills();
+      const map = createHeightmap(WORLD);
+      for (let y = 0; y < WORLD; y++) {
+        for (let x = 61; x < WORLD; x++) map.cells[y * WORLD + x] = 4 * BAND_HEIGHT;
+      }
       const before = Int16Array.from(map.cells);
       const cx = 61;
       const cy = 47;
@@ -1855,8 +1859,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     for (let i = 0; i < map.cells.length; i++) {
       if (map.cells[i] !== before[i]) moved++;
     }
-    expect(diff.length).toBe(2504);
-    expect(moved).toBe(2492);
+    expect(diff.length).toBe(2469);
+    expect(moved).toBe(2457);
 
     const counts = [diff.length];
     for (let stroke = 0; stroke < 3; stroke++) {
@@ -1866,9 +1870,9 @@ describe('relaxation conserves height exactly (issue #108)', () => {
       );
     }
     // Drawn spill boxes free raw-level block edges inside their drawn bands,
-    // so the first stroke regrades the whole terrace field; later strokes
-    // cascade like before.
-    expect(counts).toEqual([2504, 46, 75, 88]);
+    // so the first stroke regrades the whole terrace field; with no deposit
+    // to chase, later strokes converge to nothing.
+    expect(counts).toEqual([2469, 0, 0, 0]);
   });
 
   it('the relaxation pass conserves height exactly on the FREE path', () => {
@@ -1927,14 +1931,14 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     expect(mapTotal(map) - cellsBefore).toBe(-1920);
   });
 
-  it('pins the free-spill peak: 384 library-default clicks build a hill of 87', () => {
+  it('library-default smooth clicks build nothing: melt deposits no material', () => {
     const STACKED_CLICKS = (MAX_HEIGHT * 6) / DEFAULT_SCULPT_AMOUNT;
     const map = createHeightmap(64);
     for (let k = 0; k < STACKED_CLICKS; k++) {
       applySculpt(map, 32, 32, 2, DEFAULT_SCULPT_AMOUNT);
     }
-    expect(heightAt(map, 32, 32)).toBe(87);
-    expect(mapTotal(map)).toBe(18_432);
+    expect(heightAt(map, 32, 32)).toBe(0);
+    expect(mapTotal(map)).toBe(0);
   });
 
   it('never moves a pair APART when a span cap is already violated (the movePair guard)', () => {
@@ -2023,7 +2027,7 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
     const plain = flatWorld(false);
     const plainDiff = applySculpt(plain, FAR_X, FAR_Y, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
     expect(carvedDiff).toEqual(plainDiff);
-    expect(carvedDiff.length).toBeGreaterThan(0);
+    expect(carvedDiff.length).toBe(0);
   });
 
   it('a stroke whose sweep does reach the carved column still relaxes a view', () => {

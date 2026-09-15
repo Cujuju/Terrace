@@ -180,7 +180,14 @@ function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile):
     }
   }
   if (cells.length === 0) {
-    throw new RangeError(`brush radius ${radius} (${tool}, ${profile}) renders no change`);
+    // A pure-melt stroke edits nothing on flat ground, but the brush
+    // still reaches its footprint on rough terrain: outline that area.
+    forEachFootprintOffset(radius, (dx, dy) => {
+      const key = `${dx},${dy}`;
+      if (keys.has(key)) return;
+      keys.add(key);
+      cells.push([dx, dy]);
+    });
   }
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
