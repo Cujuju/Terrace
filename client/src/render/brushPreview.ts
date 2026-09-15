@@ -456,12 +456,14 @@ export function createBrushPreview(
   // The four cue states only: refused=red, offline=grey/hollow (never red),
   // ghost=unpredicted (hollow, dimmed), flat=posture flat-mark (crosshair only).
   // Hollow keeps the ring but hides the skirt fill and cell grid.
-  const show = (visible: boolean, crosshairOnly = false): void => {
+  // `markOnly`: the flat cue with no aim under the pointer. The mark stays, the
+  // footprint goes, and the system cursor is left alone.
+  const show = (visible: boolean, markOnly = false): void => {
     const isOffline = denial.offline();
     const isGhost = denial.ghost();
     const flatPosture = denial.flat();
     const hollow = isOffline || isGhost;
-    const flatMark = crosshairOnly || flatPosture;
+    const flatMark = markOnly || flatPosture;
     const footprint = visible && !flatMark;
     line.visible = footprint || (visible && hollow && !flatMark);
     skirt.visible = footprint && !hollow;
@@ -489,14 +491,22 @@ export function createBrushPreview(
         crosshairMaterial.opacity = CROSSHAIR_OPACITY;
       }
     }
-    if (visible === showing) return;
-    showing = visible;
-    canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, visible);
+    const ownsCursor = visible && !markOnly;
+    if (ownsCursor === showing) return;
+    showing = ownsCursor;
+    canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, ownsCursor);
   };
 
   return {
     update(hover, brush) {
       if (hover === null) {
+        // The flat cue IS the crosshair mark, so it survives an aim that left
+        // the terrain: a frozen drag keeps its mark instead of vanishing.
+        if (denial.flat()) {
+          paintFlatMark();
+          show(true, true);
+          return;
+        }
         show(false);
         return;
       }
