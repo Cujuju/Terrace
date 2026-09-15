@@ -148,6 +148,30 @@ export function setHoverPick(sample: HoverPickSample | null): void {
   setHoverPickSignal(sample);
 }
 
+/** Which line a sculpt denial shows the hand. Chosen by world.ts denialHintFor. */
+export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost' | 'refused';
+
+/** How long a denial line stays up before it clears itself. */
+export const DENIAL_HINT_VISIBLE_MS = 2600;
+
+const [denialHint, setDenialHintSignal] = createSignal<DenialHint | null>(null);
+
+let denialHintTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Raise the denial line; it clears itself, so no reader has to time it. */
+export function showDenialHint(hint: DenialHint | null): void {
+  if (denialHintTimer !== null) clearTimeout(denialHintTimer);
+  denialHintTimer = null;
+  setDenialHintSignal(hint);
+  if (hint === null) return;
+  denialHintTimer = setTimeout(() => {
+    denialHintTimer = null;
+    setDenialHintSignal(null);
+  }, DENIAL_HINT_VISIBLE_MS);
+}
+
+export { denialHint };
+
 export function setPerfOpen(open: boolean): void {
   setPerfOpenSignal(open);
 }

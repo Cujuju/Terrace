@@ -36,6 +36,7 @@ import {
   brushRadius,
   brushTool,
   connectionStatus,
+  denialHint,
   panelOpen,
   perfOpen,
   sculptMode,
@@ -47,6 +48,7 @@ import {
   setSculptMode,
   setShowControls,
   showControls,
+  type DenialHint,
   type SculptMode,
 } from '../state/hudState.ts';
 import {
@@ -93,6 +95,15 @@ const TOOL_TITLE: Record<SculptTool, string> = {
   smooth: 'Smooth: blend ground with its neighbours',
   drag: 'Drag: drag a terrace edge outward',
   carve: 'Carve: cut a tunnel, roof intact',
+};
+
+/** One short line per denial the server can send, shown under the brush. */
+const DENIAL_TEXT: Record<DenialHint, string> = {
+  locked: 'This ground is locked',
+  nest: 'A monster nests here',
+  ward: 'Bedrock is warded here',
+  'mana-with-cost': 'Not enough mana',
+  refused: 'The stroke did not land',
 };
 
 const PROFILE_TITLE: Record<SculptProfile, string> = {
@@ -357,6 +368,13 @@ export function Hud(props: {
                 {brushWidthLabel(BRUSH_RADII[BRUSH_RUNG_MAX])}
               </span>
             </div>
+            <Show when={denialHint()}>
+              {(hint) => (
+                <p class="hud-hint" role="status">
+                  {DENIAL_TEXT[hint()]}
+                </p>
+              )}
+            </Show>
           </div>
         </Show>
 
