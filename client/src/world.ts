@@ -1,16 +1,11 @@
 import {
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
-  bandFloorHeight,
-  bandOf,
   cellIndex,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
-  highestCeilingBelow,
   quantizeToBand,
-  spanAt,
-  spanIndexCoveringBand,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -93,6 +88,7 @@ import {
 } from './render/revealMask.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
+  bandAtCellIn,
   bandOfPick as bandOfPickIn,
   carveBandOfPick as carveBandOfPickIn,
   graspSpanBandIn,
@@ -647,13 +643,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     bandAtCell(x: number, y: number, spanBand: number | null): number | null {
       if (mirror === null) return null;
-      if (spanBand === null) return bandOf(sampleHeight(mirror, x, y));
-      const k = spanIndexCoveringBand(mirror.map, x, y, spanBand);
-      const ceiling =
-        k !== null
-          ? spanAt(mirror.map, x, y, k).ceiling
-          : highestCeilingBelow(mirror.map, x, y, bandFloorHeight(spanBand));
-      return ceiling === null ? null : bandOf(ceiling);
+      return bandAtCellIn(mirror, x, y, spanBand);
     },
     graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;

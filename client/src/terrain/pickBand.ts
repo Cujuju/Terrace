@@ -1,7 +1,9 @@
 import {
   BAND_HEIGHT,
+  bandFloorHeight,
   drawnBandOfSample,
   drawnBandOfSpan,
+  highestCeilingBelow,
   isSpanDrawn,
   spanAt,
   drawnSpanCapHeight,
@@ -12,6 +14,7 @@ import {
   type Heightmap,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE } from '../config.ts';
+import { sampleHeight, type TerrainMirror } from './mirror.ts';
 import type { PickFace, TerrainRayPick } from './picking.ts';
 
 export interface ResolvedPick {
@@ -95,4 +98,25 @@ export function graspSpanBandIn(
   const span = spanAt(map, atX, atY, below);
   // The anchor stands at the riser's foot: grasp the tread under it, never the roof over it.
   return isSpanDrawn(span) ? drawnBandOfSpan(span) : null;
+}
+
+/**
+ * Cap band of the layer holding `spanBand` (the column top when null); after a
+ * lower, the layer just beneath it. Reported in the DRAWN banding the pick, the
+ * grasp and the drag plane all speak.
+ */
+export function bandAtCellIn(
+  mirror: TerrainMirror,
+  x: number,
+  y: number,
+  spanBand: number | null,
+): number | null {
+  if (spanBand === null) return drawnBandOfSample(sampleHeight(mirror, x, y));
+  const map = mirror.map;
+  const k = drawnSpanIndexCoveringBand(map, x, y, spanBand);
+  const ceiling =
+    k !== null
+      ? spanAt(map, x, y, k).ceiling
+      : highestCeilingBelow(map, x, y, bandFloorHeight(spanBand));
+  return ceiling === null ? null : drawnBandOfSample(ceiling);
 }
