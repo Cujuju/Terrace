@@ -150,10 +150,8 @@ function lowestBandAtOrAbove(height: number): number {
 }
 
 /**
- * Lowest write level at or above a span's floor: the ceiling of the level
- * grid the span reaches. A span is drawn exactly when this clears its cap,
- * which holds exactly when the span covers some band (see
- * spanIndexCoveringBand).
+ * Lowest write level at or above a span's floor. A span is drawn exactly when
+ * this clears its cap, which holds exactly when the span covers some band.
  */
 export function spanLowestBandHeight(span: Span): number {
   return bandLevelHeight(lowestBandAtOrAbove(span.floor));
@@ -164,9 +162,9 @@ export function spanUndersideHeight(span: Span): number {
 }
 
 /**
- * Highest ceiling a span under `upper` may hold: below `upper`'s floor, and
- * low enough that the gap still draws. `spanCapHeight` rounds a ceiling up to
- * its band level, so the raw underside is not the limit.
+ * Highest ceiling a span under `upper` may hold: below its floor, and low
+ * enough that the gap still draws. `spanCapHeight` rounds up, so the underside
+ * is not the limit.
  */
 export function highestCeilingUnderSpan(upper: Span): number {
   const drawn = bandFloorHeight(lowestBandAtOrAbove(spanUndersideHeight(upper))) - 1;
@@ -220,6 +218,12 @@ export type BandFill =
   | { readonly kind: 'extend'; readonly spanIndex: number }
   | { readonly kind: 'overhang' };
 
+/** The slab a band's own overhang lays: one band deep, hung clear of the boundary below it. */
+export function overhangSlabAt(ceiling: number): Span | null {
+  const floor = Math.max(BEDROCK_FLOOR, ceiling - BAND_HEIGHT + HEIGHT_UNIT);
+  return floor >= ceiling ? null : { floor, ceiling };
+}
+
 export function bandFillAt(
   map: Heightmap,
   x: number,
@@ -227,10 +231,8 @@ export function bandFillAt(
   band: number,
 ): BandFill | null {
   // Drag-fill admission is material reach, not drawn coverage: skip only when
-  // solid material already meets/exceeds the write level. A ceiling that
-  // merely touches a drawn band floor still needs fill toward the target
-  // (lane/drag-fill restores the pre-lane predicate; drawn coverage in
-  // spanIndexCoveringBand stays render-sense for picking/carving).
+  // solid material already meets the write level. Drawn coverage stays
+  // render-sense, for picking and carving.
   const threshold = bandLevelHeight(band);
   const count = spanCount(map, x, y);
   for (let k = 0; k < count; k++) {
@@ -242,7 +244,14 @@ export function bandFillAt(
     if (spanAt(map, x, y, k).ceiling < threshold) below = k;
   }
   const firstAbove = below === null ? 0 : below + 1;
-  if (firstAbove < count) return { kind: 'overhang' };
+  if (firstAbove < count) {
+    // A slab that welds to the ground under it is a filled carve, not a roof:
+    // one carve opens a single drawn band, which has no room for either.
+    const slab = overhangSlabAt(threshold);
+    if (slab === null) return null;
+    if (below !== null && !isGapDrawn(spanAt(map, x, y, below), slab)) return null;
+    return { kind: 'overhang' };
+  }
   if (below === null) return null;
   return { kind: 'extend', spanIndex: below };
 }
@@ -258,8 +267,9 @@ export function applyBandFill(
     moveSpanCeiling(map, x, y, fill.spanIndex, ceiling);
     return;
   }
-  const floor = Math.max(BEDROCK_FLOOR, ceiling - BAND_HEIGHT + HEIGHT_UNIT);
-  if (floor >= ceiling) return;
+  const slab = overhangSlabAt(ceiling);
+  if (slab === null) return;
+  const { floor } = slab;
   const spans = readSpans(map, x, y);
   let at = spans.length;
   for (let k = 0; k < spans.length; k++) {
@@ -268,7 +278,7 @@ export function applyBandFill(
       break;
     }
   }
-  spans.splice(at, 0, { floor, ceiling });
+  spans.splice(at, 0, slab);
   setColumn(map, x, y, canonicaliseColumn(spans));
 }
 

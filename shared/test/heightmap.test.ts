@@ -2740,3 +2740,42 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
     expect(presses).toBeLessThan(CONVERGENCE_LIMIT);
   });
 });
+
+describe('a dragged band never fills the carve under it (issue #224)', () => {
+  const SIZE = 32;
+  const GROUND_BAND = 2;
+  const CLIFF_BAND = 10;
+  const FACE_X = 10;
+  const ROW = 16;
+  const LIP_BAND = GROUND_BAND + 1;
+  const CELLS_INWARD = 5;
+  const INSIDE_X = FACE_X + 2;
+  const DRAG_RAISE = { tool: 'drag', profile: 'hard', anchor: 'band' } as const;
+
+  const tunnelledCliff = (): Heightmap => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        map.cells[cellIndex(map, x, y)] = bandLevelHeight(x >= FACE_X ? CLIFF_BAND : GROUND_BAND);
+      }
+    }
+    for (let x = FACE_X; x < FACE_X + CELLS_INWARD; x++) {
+      applySculpt(map, x, ROW, 1, -DEFAULT_SCULPT_AMOUNT, { tool: 'carve', spanBand: LIP_BAND });
+    }
+    return map;
+  };
+
+  it('leaves the tunnel byte-untouched whichever band in it is dragged', () => {
+    for (const targetBand of [LIP_BAND - 1, LIP_BAND, LIP_BAND + 1]) {
+      const map = tunnelledCliff();
+      const before = readSpans(map, INSIDE_X, ROW);
+      expect(before).toHaveLength(2);
+      const diff = applySculpt(map, INSIDE_X, ROW, 1, DEFAULT_SCULPT_AMOUNT, {
+        ...DRAG_RAISE,
+        targetBand,
+      });
+      expect([targetBand, diff]).toEqual([targetBand, []]);
+      expect([targetBand, readSpans(map, INSIDE_X, ROW)]).toEqual([targetBand, before]);
+    }
+  });
+});
