@@ -28,6 +28,7 @@ export {
 } from './grid.ts';
 
 import {
+  bandCrossingStep,
   bandLevelHeight,
   drawnBandOfSample,
   stepTowardBand,
@@ -219,6 +220,15 @@ function forEachFootprintCell(
   });
 }
 
+/** A press displaces at least far enough to leave the drawn band it starts in. */
+function pressDelta(amount: number, from: number): number {
+  const raising = amount > 0;
+  const magnitude = amount < 0 ? -amount : amount;
+  const crossing = bandCrossingStep(from, raising);
+  const step = crossing > magnitude ? crossing : magnitude;
+  return raising ? step : -step;
+}
+
 function brushDelta(
   amount: number,
   radius: number,
@@ -311,12 +321,17 @@ export function applyBrush(
 
   forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
     if (spreadable !== null && !spreadable.has(i)) return;
-    const delta = brushDelta(amount, radius, dist, profile);
-    if (delta === 0) return;
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
     if (anchored && (raising ? before >= target : before <= target)) return;
+    const delta = brushDelta(
+      anchored ? pressDelta(amount, before) : amount,
+      radius,
+      dist,
+      profile,
+    );
+    if (delta === 0) return;
     let moved = before + delta;
     if (anchored) {
       moved = raising
@@ -438,7 +453,7 @@ function applySoftApron(
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
     if (raising ? before >= target : before <= target) return;
-    const moved = before + amount;
+    const moved = before + pressDelta(amount, before);
     const h = clampHeight(raising ? (moved > target ? target : moved) : (moved < target ? target : moved));
     if (h !== before) {
       writeGraspedCeiling(map, i, k, h);
@@ -465,7 +480,7 @@ function fillTowardTarget(
     if (k === null) return;
     const h = graspedCeiling(map, i, k);
     if (raising ? h >= targetHeight : h <= targetHeight) return;
-    const moved = h + amount;
+    const moved = h + pressDelta(amount, h);
     const next = raising
       ? moved > targetHeight ? targetHeight : moved
       : moved < targetHeight ? targetHeight : moved;
