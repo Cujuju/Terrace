@@ -98,7 +98,7 @@ export interface ClientPluginHost {
   routeMessage(type: string, payload: unknown): void;
   allowLocalIntent(intent: SculptIntent): boolean;
   syncLivePlugins(liveNames: readonly string[] | undefined): void;
-  resetWorld(): void;
+  resetWorld(worldGeneration?: number): void;
   frameDrawBudget(): number;
   dispose(): void;
 }
@@ -125,6 +125,7 @@ export function createClientPluginHost(
 
   const mounted = new Map<string, MountedPlugin>();
   const worldResetHandlers = new Map<() => void, string>();
+  let joinedGeneration: number | undefined;
 
   const mountGenerations = new Map<string, number>();
 
@@ -649,9 +650,11 @@ export function createClientPluginHost(
       }
     },
 
-    // Every join snapshot replaces the world: plugin ids restart, so id-keyed
-    // client state must not survive it.
-    resetWorld(): void {
+    // A snapshot from a new plugin world generation restarts every id, so
+    // id-keyed client state must go; a re-snapshot of the same world keeps it.
+    resetWorld(worldGeneration?: number): void {
+      if (worldGeneration !== undefined && worldGeneration === joinedGeneration) return;
+      joinedGeneration = worldGeneration;
       for (const [handler, name] of worldResetHandlers) {
         try {
           handler();

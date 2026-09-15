@@ -5,7 +5,6 @@ import {
   type DiscKindDeckSpec,
   type DiscKindRigs,
 } from '../../../client/src/plugins/kit/discKindRigs.ts';
-import { puffsForCoverage } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import {
@@ -26,14 +25,12 @@ export const RAIN_PROFILE: PrecipitationProfile = {
   spriteSize: 0,
   opacity: 0.42,
   color: 0xa8c4d8,
-  swayCells: 0,
+  swayWorldUnits: 0,
   swayHz: 0,
   innerRadiusFraction: 0,
 };
 
 export const RAIN_PUFF_SIZE_FRACTION = 0.12;
-
-export const RAIN_PUFFS_PER_MASS = puffsForCoverage(RAIN_PUFF_SIZE_FRACTION);
 
 export const RAIN_DECK_COLOR = 0xb6bcc4;
 

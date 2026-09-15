@@ -92,8 +92,8 @@ const connection = connect({
   },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
-  onLivePlugins: (names) => {
-    pluginHost.resetWorld();
+  onLivePlugins: (names, worldGeneration) => {
+    pluginHost.resetWorld(worldGeneration);
     pluginHost.syncLivePlugins(names);
   },
   onPerfLoggingState: applyServerPerfLogging,

@@ -1,13 +1,11 @@
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import rainLoopUrl from './assets/rain-loop.wav?url';
-import type {
-  ClientPluginCtx,
-  GroundShadeDisc,
-  TerraceClientPlugin,
-} from '../../../client/src/plugins/types.ts';
-import { createDiscSystemsView } from '../../../client/src/plugins/kit/discSystemsView.ts';
+import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
+import {
+  createDiscSystemsView,
+  deckShadeFrom,
+} from '../../../client/src/plugins/kit/discSystemsView.ts';
 import type { DiscRig } from '../../../client/src/plugins/kit/discRig.ts';
-import { deckShadeDisc } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { MAX_ACTIVE_SYSTEMS, RAIN_PLUGIN_NAME, RAIN_SYSTEMS_MESSAGE } from '../protocol.ts';
 import { createRainRigs, RAIN_KIND_DRAW_OBJECTS, RAIN_SHADE_DARKNESS, type RainRigs } from './rig.ts';
 
@@ -32,17 +30,6 @@ const view = createDiscSystemsView<DiscRig>({
     rigs = null;
   },
 });
-
-const shade: GroundShadeDisc[] = [];
-
-function shadeDiscs(): readonly GroundShadeDisc[] {
-  shade.length = 0;
-  for (const disc of view.poses().values()) {
-    if (disc.intensity <= 0) continue;
-    shade.push(deckShadeDisc(disc, RAIN_SHADE_DARKNESS));
-  }
-  return shade;
-}
 
 function rainWeightUnderCamera(ctx: ClientPluginCtx): number {
   const camera = ctx.cameraPosition();
@@ -71,7 +58,7 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
     ctx.audio.preload(rainLoopUrl);
-    ctx.publishGroundShade(shadeDiscs);
+    ctx.publishGroundShade(deckShadeFrom(view, RAIN_SHADE_DARKNESS));
     ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
     ctx.onFrame(() => {
       ctx.audio.ambience(rainLoopUrl, rainWeightUnderCamera(ctx));

@@ -7,6 +7,7 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import { devForceEnvName, readDevForce } from '../../../server/src/plugins/kit/devForce.ts';
 import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.ts';
+import { isRefusal, summonDisc } from '../../../server/src/plugins/kit/discSummon.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
   THUNDERSTORM_COVERAGE_FRACTION,
@@ -25,8 +26,6 @@ import {
 } from './weather-bridge.ts';
 
 export const BROADCAST_TICK_INTERVAL = 10;
-
-export const BROADCAST_SYSTEM_CEILING = MAX_ACTIVE_SYSTEMS;
 
 export const THUNDERSTORM_DEV_FORCE_ENV = devForceEnvName(THUNDERSTORM_PLUGIN_NAME);
 
@@ -121,16 +120,16 @@ export const plugin: TerracePlugin = {
 
   onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
     if (key !== THUNDERSTORM_PLUGIN_NAME) return { ok: false, detail: `no such action "${key}"` };
-    if (systems.isForced()) {
-      return {
-        ok: false,
-        detail: `${THUNDERSTORM_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
-      };
-    }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
-    if (system === null) {
-      return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} thunderstorms are already in the sky` };
-    }
+    const summoned = summonDisc({
+      systems,
+      worldSize: world.worldSize,
+      site,
+      forcedEnv: THUNDERSTORM_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_SYSTEMS,
+      noun: 'thunderstorms',
+    });
+    if (isRefusal(summoned)) return summoned;
+    const system = summoned;
     world.broadcast(THUNDERSTORM_SYSTEMS_MESSAGE, { systems: systemStates() });
     return {
       ok: true,

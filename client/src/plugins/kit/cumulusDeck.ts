@@ -2,7 +2,6 @@ import {
   DoubleSide,
   InstancedBufferAttribute,
   InstancedMesh,
-  Matrix4,
   PlaneGeometry,
   type Object3D,
 } from 'three';
@@ -234,10 +233,6 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   mesh.renderOrder = DECK_RENDER_ORDER_CAMERA_ABOVE_BASE;
   mesh.visible = false;
   mesh.frustumCulled = false;
-
-  const identity = new Matrix4();
-  for (let instance = 0; instance < capacity; instance++) mesh.setMatrixAt(instance, identity);
-  mesh.instanceMatrix.needsUpdate = true;
 
   const layout = buildDeckLayout(spec.maxMasses, puffsPerMass);
   geometry.setAttribute('aSlot', new InstancedBufferAttribute(layout.slots, 1));

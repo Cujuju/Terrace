@@ -7,6 +7,7 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import { devForceEnvName, readDevForce } from '../../../server/src/plugins/kit/devForce.ts';
 import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.ts';
+import { isRefusal, summonDisc } from '../../../server/src/plugins/kit/discSummon.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
   RAIN_COVERAGE_FRACTION,
@@ -106,16 +107,16 @@ export const plugin: TerracePlugin = {
 
   onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
     if (key !== RAIN_PLUGIN_NAME) return { ok: false, detail: `no such action "${key}"` };
-    if (systems.isForced()) {
-      return {
-        ok: false,
-        detail: `${RAIN_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
-      };
-    }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
-    if (system === null) {
-      return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} rain systems are already in the sky` };
-    }
+    const summoned = summonDisc({
+      systems,
+      worldSize: world.worldSize,
+      site,
+      forcedEnv: RAIN_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_SYSTEMS,
+      noun: 'rain systems',
+    });
+    if (isRefusal(summoned)) return summoned;
+    const system = summoned;
     world.broadcast(RAIN_SYSTEMS_MESSAGE, { systems: systemStates() });
     return { ok: true, detail: `rain system ${system.id} gathering at (${site.x}, ${site.y})` };
   },

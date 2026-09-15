@@ -31,10 +31,9 @@ export interface DiscKindRigs extends RigPool<DiscRig> {
   kindObjects(): readonly Object3D[];
 }
 
-export function discKindDrawObjects(spec: {
-  readonly deck: unknown | null;
-  readonly profile: unknown | null;
-}): number {
+export type DiscKindBudget = Pick<DiscKindRigsSpec, 'deck' | 'profile'>;
+
+export function discKindDrawObjects(spec: DiscKindBudget): number {
   return (
     HAZE_DECK_DRAW_OBJECTS +
     (spec.deck === null ? 0 : CUMULUS_DECK_DRAW_OBJECTS) +

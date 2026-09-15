@@ -1,15 +1,13 @@
-import { DoubleSide, InstancedBufferAttribute, InstancedMesh, Vector3 } from 'three';
+import { DoubleSide, InstancedBufferAttribute, InstancedMesh, Vector2, Vector3 } from 'three';
 import type { BufferGeometry, Object3D } from 'three';
 import { MeshBasicNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
   attribute,
   cos,
-  float,
   int,
   positionGeometry,
   select,
   sin,
-  uniform,
   uniformArray,
   varying,
   vec3,
@@ -52,11 +50,10 @@ export function createHazeDeck(spec: HazeDeckSpec): HazeDeck {
     HAZE_LAYERS.map((layer) => new Vector3(layer.height, layer.radiusScale, layer.opacity)),
     'vec3',
   );
-  const layerMotionNode = uniformArray<'vec3'>(
-    HAZE_LAYERS.map((layer) => new Vector3(layer.spinHz, layer.bobUnits, layer.bobHz)),
-    'vec3',
-  );
-  const elapsedNode = uniform(0);
+  // Spin angle and bob offset per layer, computed in float64 each frame:
+  // a float32 clock uniform would stall the trig after hours of page life.
+  const layerPhase = HAZE_LAYERS.map(() => new Vector2());
+  const layerPhaseNode = uniformArray<'vec2'>(layerPhase, 'vec2');
 
   const aSlot = attribute<'float'>('aSlot', 'float');
   const aLayer = attribute<'float'>('aLayer', 'float');
@@ -66,13 +63,13 @@ export function createHazeDeck(spec: HazeDeckSpec): HazeDeck {
   const centre = massXZNode.element(slot);
   const size = massSizeNode.element(slot);
   const shape = layerShapeNode.element(layer);
-  const motion = layerMotionNode.element(layer);
+  const phase = layerPhaseNode.element(layer);
 
-  const angle = elapsedNode.mul(motion.x.mul(TWO_PI));
+  const angle = phase.x;
   const scale = size.x.mul(shape.y);
   const spunX = positionGeometry.x.mul(cos(angle)).add(positionGeometry.z.mul(sin(angle)));
   const spunZ = positionGeometry.z.mul(cos(angle)).sub(positionGeometry.x.mul(sin(angle)));
-  const height = shape.x.add(sin(elapsedNode.mul(motion.z.mul(TWO_PI))).mul(motion.y));
+  const height = shape.x.add(phase.y);
   const lit = size.y.greaterThan(0);
   const sheetPosition = vec3(
     centre.x.add(spunX.mul(scale)),
@@ -121,7 +118,13 @@ export function createHazeDeck(spec: HazeDeckSpec): HazeDeck {
     },
 
     update(slot: number, disc: InterpolatedDisc, elapsed: number): void {
-      elapsedNode.value = elapsed;
+      for (let index = 0; index < layers; index++) {
+        const layer = HAZE_LAYERS[index]!;
+        layerPhase[index]!.set(
+          (elapsed * layer.spinHz * TWO_PI) % TWO_PI,
+          Math.sin(elapsed * layer.bobHz * TWO_PI) * layer.bobUnits,
+        );
+      }
       mesh.visible = slots.update(slot, disc);
     },
 

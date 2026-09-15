@@ -1,11 +1,9 @@
-import type {
-  ClientPluginCtx,
-  GroundShadeDisc,
-  TerraceClientPlugin,
-} from '../../../client/src/plugins/types.ts';
-import { createDiscSystemsView } from '../../../client/src/plugins/kit/discSystemsView.ts';
+import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
+import {
+  createDiscSystemsView,
+  deckShadeFrom,
+} from '../../../client/src/plugins/kit/discSystemsView.ts';
 import type { DiscRig } from '../../../client/src/plugins/kit/discRig.ts';
-import { deckShadeDisc } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { MAX_ACTIVE_SYSTEMS, SNOW_PLUGIN_NAME, SNOW_SYSTEMS_MESSAGE } from '../protocol.ts';
 import { createSnowRigs, SNOW_KIND_DRAW_OBJECTS, SNOW_SHADE_DARKNESS, type SnowRigs } from './rig.ts';
 
@@ -29,17 +27,6 @@ const view = createDiscSystemsView<DiscRig>({
   },
 });
 
-const shade: GroundShadeDisc[] = [];
-
-function shadeDiscs(): readonly GroundShadeDisc[] {
-  shade.length = 0;
-  for (const disc of view.poses().values()) {
-    if (disc.intensity <= 0) continue;
-    shade.push(deckShadeDisc(disc, SNOW_SHADE_DARKNESS));
-  }
-  return shade;
-}
-
 export const clientPlugin: TerraceClientPlugin = {
   name: SNOW_PLUGIN_NAME,
 
@@ -49,7 +36,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
-    ctx.publishGroundShade(shadeDiscs);
+    ctx.publishGroundShade(deckShadeFrom(view, SNOW_SHADE_DARKNESS));
   },
 
   dispose(): void {

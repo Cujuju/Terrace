@@ -105,7 +105,9 @@ export function createPrecipitationField(
   const massXZNode = uniformArray<'vec2'>(slots.massXZ, 'vec2');
   const massSizeNode = uniformArray<'vec2'>(slots.massSize, 'vec2');
   const massVelocityNode = uniformArray<'vec2'>(slots.massVelocity, 'vec2');
-  const elapsedNode = uniform(0);
+  // Fall and sway phases advance in float64 on the CPU; the shader only wraps.
+  const fallPhaseNode = uniform(0);
+  const swayPhaseNode = uniform(0);
 
   const slot = int(attribute<'float'>('aSlot', 'float').add(0.5));
   const centre = massXZNode.element(slot);
@@ -116,14 +118,12 @@ export function createPrecipitationField(
   const aPhase = attribute<'float'>('aPhase', 'float');
   const aEnd = attribute<'float'>('aEnd', 'float');
 
-  const fraction = fract(
-    aBirth.add(elapsedNode.mul(profile.fallSpeed / PRECIPITATION_COLUMN_WORLD_UNITS)),
-  );
-  const swayAngle = elapsedNode.mul(profile.swayHz * TWO_PI).add(aPhase);
+  const fraction = fract(aBirth.add(fallPhaseNode));
+  const swayAngle = swayPhaseNode.add(aPhase);
   const sway =
-    profile.swayCells === 0
+    profile.swayWorldUnits === 0
       ? vec2(0, 0)
-      : vec2(sin(swayAngle), cos(swayAngle)).mul(profile.swayCells);
+      : vec2(sin(swayAngle), cos(swayAngle)).mul(profile.swayWorldUnits);
   const streak =
     profile.form === 'streak'
       ? normalize(vec3(velocity.x, float(-profile.fallSpeed), velocity.y))
@@ -163,6 +163,11 @@ export function createPrecipitationField(
   object.visible = false;
   object.frustumCulled = false;
 
+  function advanceClock(elapsed: number): void {
+    fallPhaseNode.value = (elapsed * profile.fallSpeed) / PRECIPITATION_COLUMN_WORLD_UNITS % 1;
+    swayPhaseNode.value = (elapsed * profile.swayHz * TWO_PI) % TWO_PI;
+  }
+
   return {
     object,
 
@@ -171,12 +176,12 @@ export function createPrecipitationField(
     },
 
     update(slot: number, disc: InterpolatedDisc, elapsed: number): void {
-      elapsedNode.value = elapsed;
+      advanceClock(elapsed);
       object.visible = slots.update(slot, disc);
     },
 
     updateWorld(slot, x, z, radius, intensity, vx, vz, elapsed): void {
-      elapsedNode.value = elapsed;
+      advanceClock(elapsed);
       object.visible = slots.updateWorld(slot, x, z, radius, intensity, vx, vz);
     },
 

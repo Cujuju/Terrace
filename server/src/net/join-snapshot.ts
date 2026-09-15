@@ -30,6 +30,7 @@ function snapshotOf(
     serverVersion: SERVER_VERSION,
     buildIdentity: buildIdentity(),
     livePlugins: host.pluginNames,
+    worldGeneration: host.worldGeneration,
     chunks,
   };
 }

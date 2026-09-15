@@ -19,9 +19,9 @@ export function lerp(from: number, to: number, t: number): number {
 
 const TWO_PI = Math.PI * 2;
 
-// A message arriving this early in the learned window is an out-of-band
-// correction (an action broadcast), not a new cadence: the window holds.
-export const EARLY_MESSAGE_WINDOW_FRACTION = 0.5;
+// The window is the longest of the last few gaps: one early out-of-band
+// message (an action broadcast) cannot shrink it, a sustained cadence can.
+export const CADENCE_SAMPLE_COUNT = 3;
 
 export function lerpAngle(from: number, to: number, t: number): number {
   let delta = (to - from) % TWO_PI;
@@ -39,6 +39,7 @@ export class PoseInterpolator<S extends { readonly id: number }, F extends PoseS
   private window: number;
   private sinceLastMessage = 0;
   private hasReceived = false;
+  private readonly recentGaps: number[] = [];
 
   private readonly spec: PoseInterpolatorSpec<S, F, R>;
 
@@ -52,10 +53,12 @@ export class PoseInterpolator<S extends { readonly id: number }, F extends PoseS
 
     const rendered = this.sample();
 
-    if (this.hasReceived && this.sinceLastMessage >= this.window * EARLY_MESSAGE_WINDOW_FRACTION) {
+    if (this.hasReceived) {
+      this.recentGaps.push(this.sinceLastMessage);
+      if (this.recentGaps.length > CADENCE_SAMPLE_COUNT) this.recentGaps.shift();
       this.window = Math.min(
         spec.maxWindowSeconds,
-        Math.max(spec.minWindowSeconds, this.sinceLastMessage),
+        Math.max(spec.minWindowSeconds, Math.max(...this.recentGaps)),
       );
     }
     this.hasReceived = true;
@@ -122,5 +125,6 @@ export class PoseInterpolator<S extends { readonly id: number }, F extends PoseS
     this.sinceLastMessage = 0;
     this.window = this.spec.defaultWindowSeconds;
     this.hasReceived = false;
+    this.recentGaps.length = 0;
   }
 }

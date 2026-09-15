@@ -39,7 +39,20 @@ describe('createMassSlots', () => {
 describe('discKindDrawObjects', () => {
   it('counts one draw per deck a kind owns', () => {
     expect(discKindDrawObjects({ deck: null, profile: null })).toBe(HAZE_DECK_DRAW_OBJECTS);
-    expect(discKindDrawObjects({ deck: {}, profile: {} })).toBe(
+    const deck = { puffSizeFraction: 0.1, color: 0 };
+    const profile = {
+      form: 'streak' as const,
+      count: 1,
+      fallSpeed: 1,
+      streakLength: 1,
+      spriteSize: 0,
+      opacity: 1,
+      color: 0,
+      swayWorldUnits: 0,
+      swayHz: 0,
+      innerRadiusFraction: 0,
+    };
+    expect(discKindDrawObjects({ deck, profile })).toBe(
       HAZE_DECK_DRAW_OBJECTS + CUMULUS_DECK_DRAW_OBJECTS + PRECIPITATION_FIELD_DRAW_OBJECTS,
     );
   });
