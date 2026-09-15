@@ -40,6 +40,16 @@ free, and balance-pushed, across every tool × profile; partially-clamped
 strokes still pay in full. (The suite's own drain loops now alternate
 raise/lower — pumping one cell forever is exactly the free-stroke case now.)
 
+**Amended 2026-09-15 (owner): the price has two parts, and only the
+displacement part follows the diff.** A stroke pays displacement (the nominal
+brush volume, waived when the diff is empty) plus a flat unlock fee,
+`CHUNK_UNLOCK_MANA` per chunk of frontier the stroke's reveal reach opens,
+charged whether or not any cell moved. Opening the frontier without sculpting
+it is a legitimate act (and may become its own tool), so a zero-effect stroke
+on the frontier is applied, opens its reach, and pays the unlock fee alone.
+This replaces the 2026-09-06 top-up rule ("a chunk costs the same to open
+however you open it"), which collapsed to zero at `FULL_BRUSH_RADIUS`.
+
 **Terrain at the floor was never the bug** (verified and pinned): widening a
 pit at MIN_HEIGHT works — wall cells inside the footprint keep descending
 toward the floor; a footprint entirely AT the floor is a true no-op with an
