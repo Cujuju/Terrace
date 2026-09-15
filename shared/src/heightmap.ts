@@ -1,4 +1,4 @@
-import { MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL, SMOOTH_REACH_CELLS } from './constants.ts';
 
 export {
   bandOf,
@@ -45,6 +45,8 @@ export {
 } from './sculpt/stamp.ts';
 
 export { sculptDisplacementUnits } from './sculpt/price.ts';
+
+export { sculptReachCells } from './sculpt/reach.ts';
 
 export { smooth } from './sculpt/relax.ts';
 
@@ -187,6 +189,8 @@ export function applySculpt(
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
       spanBand,
+      // settle keeps the unbounded cascade its plugin cones were tuned against.
+      tool === 'smooth' ? SMOOTH_REACH_CELLS : null,
     );
   }
 

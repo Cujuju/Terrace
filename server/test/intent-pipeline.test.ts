@@ -2,7 +2,9 @@ import {
   CHUNK_SIZE,
   DRAWN_SHORE_HEIGHT,
   MAX_HEIGHT,
+  MIN_BRUSH_RADIUS,
   SEA_LEVEL,
+  SMOOTH_REACH_CELLS,
   bandLevelHeight,
   chunkHeightsAsCells,
   drawnBandOfSample,
@@ -23,6 +25,7 @@ import {
 import type { MessageSink } from '../src/net/message-sink.ts';
 import { PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
 import type { IntentVerdict, TerracePlugin } from '../src/plugins/types.ts';
+import { MESH_SEAM_HALO_CHUNKS } from '../src/world/sculpt-service.ts';
 import type { World } from '../src/world/world.ts';
 import {
   RecordingSink,
@@ -918,9 +921,14 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     ]);
   });
 
-  it('covers a faulted smooth\'s worst-case reach, which a stamp never needs', () => {
+  it('covers a faulted smooth\'s bounded reach, which a stamp never needs', () => {
+    // SMOOTH_REACH_CELLS past the brush, plus the seam halo, and no further.
+    const REACHED_CHUNK =
+      Math.floor((UNLOCKED_CELL.x + MIN_BRUSH_RADIUS + SMOOTH_REACH_CELLS) / CHUNK_SIZE) +
+      MESH_SEAM_HALO_CHUNKS;
     const world = worldWithUnlockedChunks(WORLD_SIZE, [
       [0, 0],
+      [REACHED_CHUNK, REACHED_CHUNK],
       [FAR_CHUNK, FAR_CHUNK],
     ]);
     const sink = new RecordingSink();
@@ -936,9 +944,10 @@ describe('a contained sculpt fault leaves no client diverged', () => {
 
     refuseFaultedSculpt(world, sculptMessage({ seq: SEQ, tool: 'smooth' }), () => {});
     const smoothed = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
+    expect(REACHED_CHUNK).toBeLessThan(FAR_CHUNK);
     expect(smoothed.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
       [0, 0],
-      [FAR_CHUNK, FAR_CHUNK],
+      [REACHED_CHUNK, REACHED_CHUNK],
     ]);
   });
 

@@ -8,11 +8,15 @@ import {
   DEFAULT_SCULPT_AMOUNT,
   forEachFootprintOffset,
   heightAt,
+  LIBRARY_SCULPT_TOOL,
+  MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   readSpans,
+  sculptReachCells,
   setColumn,
   smooth,
   SMOOTH_PASS_LIMIT,
+  SMOOTH_REACH_CELLS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   type Heightmap,
   type SculptOptions,
@@ -178,8 +182,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     for (let i = 0; i < map.cells.length; i++) {
       if (map.cells[i] !== before[i]) moved++;
     }
-    expect(diff.length).toBe(2469);
-    expect(moved).toBe(2457);
+    expect(diff.length).toBe(723);
+    expect(moved).toBe(720);
     expect(mapTotal(map)).toBe(total);
 
     const counts = [diff.length];
@@ -190,8 +194,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
       );
     }
     // Drawn spill boxes free raw-level block edges, so the first stroke regrades
-    // the whole terrace field; conserving exchange leaves nothing to repeat.
-    expect(counts).toEqual([2469, 0, 0, 0]);
+    // everything within SMOOTH_REACH_CELLS; there is nothing left to repeat.
+    expect(counts).toEqual([723, 0, 0, 0]);
 
     let tail = 0;
     while (tail < CASCADE_TAIL_LIMIT) {
@@ -204,6 +208,51 @@ describe('relaxation conserves height exactly (issue #108)', () => {
       tail++;
     }
     expect(tail).toBe(CASCADE_TAIL_PRESSES);
+  });
+
+  it('the player smooth never writes past its footprint plus SMOOTH_REACH_CELLS', () => {
+    for (const radius of [1, 4, MAX_BRUSH_RADIUS]) {
+      for (const dir of [1, -1] as const) {
+        const map = genesisTerraces(TERRACE_SIZE);
+        const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, radius);
+        let minX = TERRACE_SIZE, minY = TERRACE_SIZE, maxX = -1, maxY = -1;
+        for (const i of footprint) {
+          const x = i % TERRACE_SIZE;
+          const y = (i - x) / TERRACE_SIZE;
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        }
+        const diff = applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, radius, dir * DEFAULT_SCULPT_AMOUNT, {
+          ...WIRE_DEFAULT_SCULPT_OPTIONS,
+          tool: 'smooth',
+        });
+        expect(diff.length).toBeGreaterThan(0);
+        const escaped = diff.filter((cell) =>
+          cell.x < minX - SMOOTH_REACH_CELLS || cell.x > maxX + SMOOTH_REACH_CELLS ||
+          cell.y < minY - SMOOTH_REACH_CELLS || cell.y > maxY + SMOOTH_REACH_CELLS);
+        expect([radius, dir, escaped]).toEqual([radius, dir, []]);
+        // The server resyncs a faulted stroke over exactly this rectangle.
+        const bound = sculptReachCells(radius, 'hard', 'smooth', 'clicked');
+        for (const cell of diff) {
+          expect(Math.abs(cell.x - TERRACE_CENTRE)).toBeLessThanOrEqual(bound);
+          expect(Math.abs(cell.y - TERRACE_CENTRE)).toBeLessThanOrEqual(bound);
+        }
+      }
+    }
+  });
+
+  it('settle keeps the unbounded cascade its plugin terraforms were tuned against', () => {
+    const map = genesisTerraces(TERRACE_SIZE);
+    const radius = 4;
+    const diff = applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, radius, DEFAULT_SCULPT_AMOUNT, {
+      tool: LIBRARY_SCULPT_TOOL,
+      profile: 'soft',
+      spill: 'banded',
+    });
+    const beyond = diff.filter((cell) =>
+      Math.abs(cell.x - TERRACE_CENTRE) > radius + SMOOTH_REACH_CELLS ||
+      Math.abs(cell.y - TERRACE_CENTRE) > radius + SMOOTH_REACH_CELLS);
+    expect(beyond.length).toBeGreaterThan(0);
   });
 
   it('the relaxation pass conserves height exactly on the FREE path', () => {

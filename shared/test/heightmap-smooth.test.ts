@@ -13,6 +13,7 @@ import {
   sculptOptionsOf,
   smooth,
   SMOOTH_PASS_LIMIT,
+  SMOOTH_REACH_CELLS,
   WORLD_UNIT_CELLS,
   type Heightmap,
   type SculptOptions,
@@ -20,6 +21,7 @@ import {
 import {
   CEILING_BANDS,
   expectGradientLimitHolds,
+  expectGradientLimitHoldsWithin,
 } from './support/heightmapFixtures.ts';
 
 describe('smooth', () => {
@@ -89,7 +91,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
       applySculpt(map, C + 8, C, 4, -DEFAULT_SCULPT_AMOUNT, STAMP);
     }
     applySculpt(map, C + 4, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
-    expectGradientLimitHolds(map);
+    expectGradientLimitHoldsWithin(map, C + 4, C, SMOOTH_REACH_CELLS);
   });
 
   it('reports a convergence-proving pass count strictly below the cap', () => {
@@ -255,7 +257,7 @@ describe('an anchored smooth moves a wall, it never manufactures one', () => {
       expect(last).toBe(0);
 
       expect(mapTotal(map)).toBe(total);
-      expectGradientLimitHolds(map);
+      expectGradientLimitHoldsWithin(map, cx, ROW, SMOOTH_REACH_CELLS);
       expect(heightAt(map, WALL_X, ROW)).toBeGreaterThan(LOW);
       for (let x = 0; x < SIZE; x++) {
         expect(heightAt(map, x, ROW)).toBeGreaterThanOrEqual(LOW);
