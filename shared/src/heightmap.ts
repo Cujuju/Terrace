@@ -95,7 +95,7 @@ export type SculptProfile = 'soft' | 'hard';
 
 export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
 
-export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['drag', 'carve'];
+export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'drag', 'carve'];
 
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
 

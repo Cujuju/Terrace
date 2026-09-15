@@ -137,7 +137,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   it('honours whatever the intent DID name, and defaults only the rest', () => {
     expect(sculptOptionsOf({ ...base, tool: 'smooth' })).toEqual({
       tool: 'smooth',
-      profile: 'soft',
+      profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
