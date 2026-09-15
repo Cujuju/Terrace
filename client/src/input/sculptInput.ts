@@ -13,6 +13,7 @@ import {
   type Vec3,
 } from '../terrain/picking.ts';
 import { footOfFaceCell } from '../terrain/faceFoot.ts';
+import { CUE_BLINK_ON_MS, DENIED_BLINK_SETTLE_MS } from '../render/denialCue.ts';
 import {
   DEFAULT_BRUSH_TOOL,
   brushRadius,
@@ -75,8 +76,8 @@ export type SendOutcome = 'sent' | 'refused' | 'offline';
  */
 export const SILENT_REPEAT_BLINK_AFTER = 3;
 
-/** Red for this long when no button is left to hold it: a server nack lands after the click. */
-export const REFUSED_PULSE_MS = 400;
+/** Red for this long when no button holds it. Derived so the pulse outlasts the cue's own blinks. */
+export const REFUSED_PULSE_MS = DENIED_BLINK_SETTLE_MS + CUE_BLINK_ON_MS;
 
 export interface SculptInputOptions {
   canvas: HTMLCanvasElement;

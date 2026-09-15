@@ -29,6 +29,7 @@ import { graspSpanBandIn } from '../src/terrain/pickBand.ts';
 import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
   CUE_BLINK_ON_MS,
+  DENIED_BLINK_SETTLE_MS,
   createDenialCue,
   type DenialCue,
 } from '../src/render/denialCue.ts';
@@ -667,6 +668,25 @@ describe('refused pulse path', () => {
       expect(input.refusedHold()).toBe(true);
       fire('pointerup', {});
       expect(input.refusedHold()).toBe(false);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('the pulse outlasts the blinks the cue has to show', () => {
+    vi.useFakeTimers();
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror);
+    const cue = createDenialCue(input.refusedHold);
+    try {
+      fire('pointerdown', {});
+      fire('pointerup', {});
+      input.releaseStroke();
+      cue.isRed();
+      vi.advanceTimersByTime(DENIED_BLINK_SETTLE_MS);
+      expect(input.refusedHold()).toBe(true);
+      expect(cue.isRed()).toBe(true);
     } finally {
       dispose();
       vi.useRealTimers();
