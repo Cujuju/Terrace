@@ -621,4 +621,28 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     };
     expect(resolvePick(sea.map, seaHit)?.band).toBe(-1);
   });
+
+  it('F8 ceiling plateau: a flat cap at MAX_HEIGHT picks as tread, not as a riser', () => {
+    const mirror = world(() => MAX_HEIGHT);
+    const capY = MAX_HEIGHT * HEIGHT_WORLD_SCALE;
+    const topBand = drawnBandOfSample(MAX_HEIGHT);
+
+    const fromSky = pickTerrainCellByRay(mirror, above(20, 20), DOWN);
+    expect(fromSky).not.toBeNull();
+    expect(fromSky!.face).toBe('tread');
+    expect(fromSky!.hitY).toBe(capY);
+    expect(resolvePick(mirror.map, fromSky!)).toEqual({ face: 'tread', band: topBand });
+
+    const onPlane = pickTerrainCellByRay(
+      mirror,
+      { x: 20 * CELL_WORLD_SIZE, y: capY, z: 20 * CELL_WORLD_SIZE },
+      DOWN,
+    );
+    expect(onPlane).not.toBeNull();
+    expect(onPlane!.face).toBe('tread');
+    expect(onPlane!.hitY).toBe(capY);
+
+    const pinned = pickTerrainInColumn(mirror, 20, 20, above(20, 20), DOWN);
+    expect(pinned!.face).toBe('tread');
+  });
 });
