@@ -2369,10 +2369,26 @@ describe('applySculpt — raises out of the sea break the surface', () => {
     expect(at(map)).toBe(BAND_HEIGHT);
   });
 
-  it('a stamp lower from the waterline still drops one raw band', () => {
+  it('a stamp lower from the waterline leaves the sea band, not just one raw band', () => {
+    // -BAND_HEIGHT still draws as sea: the old raw-band step was invisible.
     const map = flat(0);
     applySculpt(map, CX, CY, 2, -DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
-    expect(at(map)).toBe(-BAND_HEIGHT);
+    expect(drawnBandOfSample(at(map))).toBe(-2);
+    expect(at(map)).toBe(bandFloorHeight(-1) - 1);
+  });
+
+  it('every height in the sea band moves exactly one DRAWN band per press', () => {
+    for (const profile of ['soft', 'hard'] as const) {
+      for (const dir of [1, -1] as const) {
+        for (let h = bandFloorHeight(-1); h <= SEA_LEVEL; h++) {
+          const map = flat(h);
+          applySculpt(map, CX, CY, 3, dir * DEFAULT_SCULPT_AMOUNT, { ...STAMP_RAISE, profile });
+          expect([profile, dir, h, drawnBandOfSample(at(map))]).toEqual([
+            profile, dir, h, drawnBandOfSample(h) + dir,
+          ]);
+        }
+      }
+    }
   });
 
   it('a drag-raise toward band 0 extends the beach to the shore height', () => {
