@@ -118,6 +118,10 @@ export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'dra
 
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
 
+/**
+ * Bands of material one stroke cuts. Its drawn opening is one band shallower —
+ * the remnant's cap rounds up — and that is the smallest gap isGapDrawn keeps.
+ */
 export const CARVE_BANDS_PER_STROKE = 2;
 
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
@@ -1110,6 +1114,8 @@ function applyCarve(
 ): void {
   const lowestOpenedBand = spanBand;
   const highestOpenedBand = spanBand + CARVE_BANDS_PER_STROKE - 2;
+  // Cut a band below the lowest band opened: a remnant capped inside that band
+  // still covers the one above it.
   const lo = bandFloorHeight(lowestOpenedBand - 1);
   const hi = bandFloorHeight(highestOpenedBand + 1);
 
