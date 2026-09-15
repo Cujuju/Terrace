@@ -1,4 +1,4 @@
-import { Group } from 'three';
+import { Group, type PointLight } from 'three';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 import {
   drawnGroundSampler,
@@ -24,7 +24,7 @@ import {
   type YetiVariant,
   MAX_LIVING_MONSTERS,
 } from '../protocol.ts';
-import { createDread, type Dread } from './atmosphere.ts';
+import { createDread, createDreadFlashLight, type Dread } from './atmosphere.ts';
 import { dreadSpecOf } from './dread.ts';
 import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
@@ -38,6 +38,7 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 interface MonsterView {
   readonly model: MonsterModel;
   readonly dread: Dread | null;
+  readonly flash: PointLight | null;
   readonly phase: number;
   readonly variant: YetiVariant | undefined;
   drawnY: number | null;
@@ -47,7 +48,19 @@ interface MonsterView {
 let models: MonsterModels | null = null;
 let container: Group | null = null;
 const views = new Map<number, MonsterView>();
-const retiringDread: Dread[] = [];
+const retiringDread: Array<{ dread: Dread; flash: PointLight | null }> = [];
+const allFlash: PointLight[] = [];
+const freeFlash: PointLight[] = [];
+
+function lendFlashLight(): PointLight {
+  const pooled = freeFlash.pop();
+  if (pooled !== undefined) return pooled;
+  const light = createDreadFlashLight();
+  light.intensity = 0;
+  container?.add(light);
+  allFlash.push(light);
+  return light;
+}
 const interpolator = new MonsterInterpolator();
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
@@ -64,11 +77,13 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       const model = bank.create(monster.kind, monster.variant);
       scene.add(model.root);
       const spec = dreadSpecOf(monster.kind);
-      const dread = spec !== null ? createDread(spec) : null;
+      const flash = spec !== null ? lendFlashLight() : null;
+      const dread = spec !== null && flash !== null ? createDread(spec, flash) : null;
       if (dread !== null) scene.add(dread.root);
       return {
         model,
         dread,
+        flash,
         phase: id * PHASE_RADIANS_PER_ID,
         variant: monster.variant,
         drawnY: null,
@@ -85,6 +100,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
         drawnY: existing.drawnY,
         model: rebuilt,
         dread: existing.dread,
+        flash: existing.flash,
         phase: existing.phase,
         variant: monster.variant,
         riserShift: existing.riserShift,
@@ -93,7 +109,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     release: (_id, view) => {
       scene.remove(view.model.root);
       view.model.dispose();
-      if (view.dread !== null) retiringDread.push(view.dread);
+      if (view.dread !== null) retiringDread.push({ dread: view.dread, flash: view.flash });
     },
   });
 }
@@ -143,11 +159,16 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   }
 
   for (let index = retiringDread.length - 1; index >= 0; index--) {
-    const dread = retiringDread[index]!;
-    dread.update(animationSeconds, step, false);
-    if (!dread.isFaded()) continue;
-    container?.remove(dread.root);
-    dread.dispose();
+    const retiring = retiringDread[index]!;
+    retiring.dread.update(animationSeconds, step, false);
+    if (!retiring.dread.isFaded()) continue;
+    container?.remove(retiring.dread.root);
+    retiring.dread.dispose();
+    if (retiring.flash !== null) {
+      retiring.flash.intensity = 0;
+      container?.add(retiring.flash);
+      freeFlash.push(retiring.flash);
+    }
     retiringDread.splice(index, 1);
   }
 }
@@ -167,6 +188,13 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'monsters:living';
     ctx.layer.add(container);
+    for (let index = 0; index < MAX_LIVING_MONSTERS; index++) {
+      const light = createDreadFlashLight();
+      light.intensity = 0;
+      container.add(light);
+      allFlash.push(light);
+      freeFlash.push(light);
+    }
 
     unsubscribeMessages = ctx.onMessage(MONSTERS_STATE_MESSAGE, (payload) => {
       const monsters = parseMonstersPayload(payload);
@@ -189,8 +217,11 @@ export const clientPlugin: TerraceClientPlugin = {
       view.dread?.dispose();
     }
     views.clear();
-    for (const dread of retiringDread) dread.dispose();
+    for (const retiring of retiringDread) retiring.dread.dispose();
     retiringDread.length = 0;
+    for (const light of allFlash) light.dispose();
+    allFlash.length = 0;
+    freeFlash.length = 0;
     interpolator.clear();
 
     container?.clear();

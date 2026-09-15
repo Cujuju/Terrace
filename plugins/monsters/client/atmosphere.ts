@@ -143,7 +143,11 @@ export interface Dread {
   dispose(): void;
 }
 
-export function createDread(spec: SwimmerDreadSpec): Dread {
+export function createDreadFlashLight(): PointLight {
+  return new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
+}
+
+export function createDread(spec: SwimmerDreadSpec, flashLight: PointLight): Dread {
   const root = new Group();
   root.name = 'monsters:dread';
 
@@ -200,7 +204,9 @@ export function createDread(spec: SwimmerDreadSpec): Dread {
   boltPivot.add(bolt);
   root.add(boltPivot);
 
-  const flashLight = new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
+  // Borrowed from the plugin's fixed bank (one per living monster, permanently parented
+  // to the scene): adding/removing scene lights rebuilds every lit pipeline, so dreads
+  // borrow and return them instead of allocating their own.
   flashLight.position.y = spec.flashLightHeightCells;
   root.add(flashLight);
 
