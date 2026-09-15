@@ -90,7 +90,11 @@ export interface SculptInputOptions {
   worldSize: () => number;
   riserBand: (pick: TerrainRayPick | null) => number | null;
   bandAtCell: (x: number, y: number, spanBand: number | null) => number | null;
-  graspSpanBand: (pick: TerrainRayPick | null) => number | null;
+  graspSpanBand: (
+    pick: TerrainRayPick | null,
+    atX: number,
+    atY: number,
+  ) => number | null;
   carveBand: (pick: TerrainRayPick | null) => number | null;
   carveReach: (
     origin: Vec3,
@@ -351,16 +355,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // No-target frame stays silent.
       if (cell === null) return 'absent-silent';
       if (isUndersideRaise(cell, action)) return noteFlatSilent(origin);
-      spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
-      if (strokeTool === 'carve') {
-        if (isCarveWithoutSpan(spanBand)) return noteFlatSilent(origin);
-        strokeCarveBand = spanBand;
-      }
       const foot =
         hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
           ? footOfFaceCell(cell, hoverRay.direction, worldSize())
           : null;
       anchor = foot ?? { x: cell.x, y: cell.y };
+      // The grasp is read at the anchor: a span the anchored column lacks names nothing there.
+      spanBand =
+        strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell, anchor.x, anchor.y);
+      if (strokeTool === 'carve') {
+        if (isCarveWithoutSpan(spanBand)) return noteFlatSilent(origin);
+        strokeCarveBand = spanBand;
+      }
     }
     // Every emit path honors the send() outcome like emitDragLeg does: 'offline'
     // is the connection-down cue (grey/hollow, never red), 'refused' is a local
@@ -580,7 +586,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
     if (hover === null || hover.face !== 'tread') return;
-    const spanBand = graspSpanBand(hover);
+    const spanBand = graspSpanBand(hover, hover.x, hover.y);
     const before = readSeedBand(hover.x, hover.y, spanBand);
     // A press-time seed failure latches offline and blinks once; a local veto
     // is already red and never blinks grey.

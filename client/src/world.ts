@@ -167,7 +167,7 @@ export interface World extends TerrainSink {
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
-  graspSpanBand(pick: TerrainRayPick | null): number | null;
+  graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   terrainHeightAt(x: number, y: number): number | null;
@@ -645,10 +645,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
           : highestCeilingBelow(mirror.map, x, y, bandFloorHeight(spanBand));
       return ceiling === null ? null : bandOf(ceiling);
     },
-    graspSpanBand(pick: TerrainRayPick | null): number | null {
+    graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;
-      if (spanCount(mirror.map, pick.x, pick.y) < 2) return null;
-      return bandOfPick(pick);
+      if (spanCount(mirror.map, atX, atY) < 2) return null;
+      const band = bandOfPick(pick);
+      if (band === null) return null;
+      // The pick proves its own column holds the span; another column must be asked.
+      if (atX === pick.x && atY === pick.y) return band;
+      return spanIndexCoveringBand(mirror.map, atX, atY, band) === null ? null : band;
     },
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;

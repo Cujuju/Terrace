@@ -71,7 +71,7 @@ interface DriveKnobs {
   pickInColumn?: (x: number, y: number, origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   riserBand?: (pick: TerrainRayPick | null) => number | null;
   bandAtCell?: (x: number, y: number, spanBand: number | null) => number | null;
-  graspSpanBand?: (pick: TerrainRayPick | null) => number | null;
+  graspSpanBand?: (pick: TerrainRayPick | null, atX: number, atY: number) => number | null;
   origin?: Vec3;
   lookAt?: Vec3;
 }
@@ -507,6 +507,73 @@ describe('dead directionless-raise guard', () => {
     try {
       fire('pointerdown', {});
       expect(input.deadGuardHits()).toBe(0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+const GRASPED_BAND = 6;
+
+const LAYERED_RISER_PICK: TerrainRayPick = {
+  x: 30,
+  y: 30,
+  surfaceY: GRASPED_BAND * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
+  spanIndex: 1,
+  face: 'riser',
+  hitY: GRASPED_BAND * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
+  hitX: (30 - 0.5) * CELL_WORLD_SIZE,
+  hitZ: 30 * CELL_WORLD_SIZE,
+};
+
+describe('foot-anchored grasp', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  it('asks for the grasp at the cell it anchors at, not the cell it struck', () => {
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    const asked: { x: number; y: number }[] = [];
+    const { attempts, fire, dispose } = driveInput(mirror, {
+      origin: { x: cellW(20), y: bandY(20), z: cellW(30) },
+      lookAt: { x: cellW(30), y: 0, z: cellW(30) },
+      pickCell: () => LAYERED_RISER_PICK,
+      pickInColumn: () => LAYERED_RISER_PICK,
+      graspSpanBand: (_pick, atX, atY) => {
+        asked.push({ x: atX, y: atY });
+        return GRASPED_BAND;
+      },
+    });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(1);
+      // Foot anchoring moved the stroke off the struck riser cell.
+      expect(attempts[0]!.x).not.toBe(LAYERED_RISER_PICK.x);
+      expect(asked[0]).toEqual({ x: attempts[0]!.x, y: attempts[0]!.y });
+    } finally {
+      dispose();
+    }
+  });
+
+  it('omits spanBand when the anchored column holds no such span', () => {
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    const { attempts, fire, dispose } = driveInput(mirror, {
+      origin: { x: cellW(20), y: bandY(20), z: cellW(30) },
+      lookAt: { x: cellW(30), y: 0, z: cellW(30) },
+      pickCell: () => LAYERED_RISER_PICK,
+      pickInColumn: () => LAYERED_RISER_PICK,
+      graspSpanBand: (pick, atX, atY) =>
+        pick !== null && atX === pick.x && atY === pick.y ? GRASPED_BAND : null,
+    });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.spanBand).toBeUndefined();
     } finally {
       dispose();
     }
