@@ -70,17 +70,26 @@ export interface RigPool<T> {
 export function createRigPool<T extends { dispose(): void }>(
   create: () => T,
   onRelease?: (rig: T) => void,
+  prefill = 0,
 ): RigPool<T> {
   const free: T[] = [];
   const all: T[] = [];
+
+  function build(): T {
+    const rig = create();
+    all.push(rig);
+    return rig;
+  }
+
+  // Unshift so prefilled rigs hand out in build order: slot assignment then
+  // matches an unprefilled pool's.
+  for (let i = 0; i < prefill; i++) free.unshift(build());
 
   return {
     acquire(): T {
       const reused = free.pop();
       if (reused !== undefined) return reused;
-      const rig = create();
-      all.push(rig);
-      return rig;
+      return build();
     },
     release(rig: T): void {
       onRelease?.(rig);
