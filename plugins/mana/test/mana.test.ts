@@ -3,6 +3,7 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
+  MIN_BAND,
   MIN_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
   MIN_HEIGHT,
@@ -1033,11 +1034,23 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
     return { world, host, sink };
   }
 
+  // The lowest band a lower-drag may name: MIN_BAND itself is refused outright.
+  const FLOOR_ADJACENT_BAND = MIN_BAND + 1;
+
   function lowerAt(harness: Harness, radius: number, tool: string, profile: string) {
     return handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: -1, tool, profile },
+      {
+        type: 'sculpt',
+        x: INTERIOR_CELL.x,
+        y: INTERIOR_CELL.y,
+        radius,
+        dir: -1,
+        tool,
+        profile,
+        ...(tool === 'drag' ? { targetBand: FLOOR_ADJACENT_BAND } : {}),
+      },
     );
   }
 
