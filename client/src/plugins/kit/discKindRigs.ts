@@ -1,9 +1,14 @@
 import type { Object3D } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
-import { createCumulusDeck, CUMULUS_DECK_DRAW_OBJECTS, type CumulusDeck } from './cumulusDeck.ts';
+import {
+  createCumulusDeck,
+  CUMULUS_DECK_DRAW_OBJECTS,
+  deckCanopyFraction,
+  type CumulusDeck,
+} from './cumulusDeck.ts';
 import { createDiscRig, createRigPool, DISC_RENDER_ORDER, type DiscRig, type RigPool } from './discRig.ts';
 import { createHazeDeck, HAZE_DECK_DRAW_OBJECTS, type HazeDeck } from './hazeDeck.ts';
-import type { PrecipitationProfile } from './precipitation.ts';
+import { FULL_DISC_CANOPY_FRACTION, type PrecipitationProfile } from './precipitation.ts';
 import {
   createPrecipitationField,
   PRECIPITATION_FIELD_DRAW_OBJECTS,
@@ -66,6 +71,10 @@ export function createDiscKindRigs(spec: DiscKindRigsSpec): DiscKindRigs {
           maxMasses: spec.maxMasses,
           name: spec.name,
           renderOrder: DISC_RENDER_ORDER,
+          canopyFraction:
+            spec.deck === null
+              ? FULL_DISC_CANOPY_FRACTION
+              : deckCanopyFraction(spec.deck.puffSizeFraction),
           applyRevealClip: spec.applyRevealClip,
         });
 

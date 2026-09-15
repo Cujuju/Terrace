@@ -67,6 +67,12 @@ export const DECK_TIER_JITTER_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS / DECK_TI
 
 export const DECK_RIM_FADE_START = 0.8;
 
+// Precipitation seats one puff radius inside the last fully opaque seat, so
+// the rim's own puffs overhang the rain from any angle: never rain from open sky.
+export function deckCanopyFraction(puffSizeFraction: number): number {
+  return DECK_RIM_FADE_START - puffSizeFraction;
+}
+
 // Crown for the cap: fraction of a tier's puff size added as height at the
 // top-centre of the stack, falling to zero at the base and at each tier's
 // rim. Without it the top tier is a flat disc of coplanar puffs whose union
