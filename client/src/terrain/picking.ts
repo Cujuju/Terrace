@@ -703,6 +703,16 @@ export function pickTerrainCellByRay(
   return found;
 }
 
+/** Where along the ray a world point sits. Read on the ray's longest axis. */
+function rayParameterAt(origin: Vec3, direction: Vec3, x: number, y: number, z: number): number {
+  const ax = Math.abs(direction.x);
+  const ay = Math.abs(direction.y);
+  const az = Math.abs(direction.z);
+  if (ax >= ay && ax >= az) return (x - origin.x) / direction.x;
+  if (ay >= az) return (y - origin.y) / direction.y;
+  return (z - origin.z) / direction.z;
+}
+
 /**
  * Material still at `band`, from the cell the aim STRUCK inward. A ray flies
  * over terrain it never touched, so the walk starts at the pick, taken here.
@@ -719,11 +729,22 @@ export function carveReachCell(
   const aim = pickTerrainCellByRay(mirror, origin, direction, risers);
   if (aim === null) return null;
 
+  // The aim's own column is the cut, and the band was read from it.
+  if (
+    cellRevealed(mirror, aim.x, aim.y) &&
+    drawnSpanIndexCoveringBand(mirror.map, aim.x, aim.y, band) !== null
+  ) {
+    return { x: aim.x, y: aim.y };
+  }
+
+  // Inward from the STRIKE POINT, not from a cell id: a pick can name a
+  // neighbour of the cell the ray marched through, which the walk never enters.
+  const strikeT = rayParameterAt(origin, direction, aim.hitX, aim.hitY, aim.hitZ);
   let reached = false;
   let found: { x: number; y: number } | null = null;
-  marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j) => {
+  marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j, _tEnter, tExit) => {
     if (!reached) {
-      if (i !== aim.x || j !== aim.y) return false;
+      if (tExit < strikeT) return false;
       reached = true;
     }
     if (!cellRevealed(mirror, i, j)) return true;
