@@ -66,6 +66,7 @@ import {
   resetManaState,
   resolveManaRegenPerSecond,
   setManaPerk,
+  territoryFeeFor,
 } from '../server/index.ts';
 
 const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true };
@@ -1424,4 +1425,94 @@ describe('the frontier price is quoted once, at verdict time', () => {
     ).toBe(true);
     expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(fresh);
   });
+});
+
+describe('a stroke that moves nothing still pays for the land it opened', () => {
+  // A carve with no spanBand cannot change a cell — applySculpt refuses the
+  // whole stroke — yet reveal opens its footprint all the same.
+  const NO_OP_CARVE: SculptIntent = {
+    type: 'sculpt',
+    x: CHUNK_SIZE * 2 - 1,
+    y: CHUNK_SIZE + 4,
+    radius: 2,
+    dir: -1,
+    tool: 'carve',
+    seq: 1,
+  };
+
+  function bootOnTheFrontier(): Harness {
+    resetManaState();
+    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    world.seedChunkForToken(PLAYER.token, ...HOME_CHUNK);
+    host.playerJoined(PLAYER);
+    return { world, host, sink };
+  }
+
+  function chunksOwned(world: World): number {
+    const edge = world.chunksPerEdge;
+    let owned = 0;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) {
+        if (world.isChunkUnlockedForToken(PLAYER.token, cx, cy)) owned++;
+      }
+    }
+    return owned;
+  }
+
+  it('charges the territory fee, and only that, for an empty diff on the frontier', () => {
+    const harness = bootOnTheFrontier();
+    const opened = openedChunkCount(
+      harness.world.size,
+      NO_OP_CARVE.x,
+      NO_OP_CARVE.y,
+      NO_OP_CARVE.radius,
+      (cx, cy) => harness.world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
+    );
+    expect(opened).toBeGreaterThan(0);
+
+    const fee = territoryFeeFor(PLAYER.id, NO_OP_CARVE, opened);
+    expect(fee).toBeGreaterThan(0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const ownedBefore = chunksOwned(harness.world);
+
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      NO_OP_CARVE,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff).toEqual([]);
+    expect(chunksOwned(harness.world)).toBeGreaterThan(ownedBefore);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(fee);
+  });
+
+  it('still charges nothing when the empty diff opened no land', () => {
+    const harness = bootOnTheFrontier();
+    const edge = harness.world.chunksPerEdge;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) harness.world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      NO_OP_CARVE,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff).toEqual([]);
+    expect(manaBalanceOf(PLAYER.id) ?? 0).toBe(before);
+  });
+
+  it.todo(
+    'a carve with no spanBand is refused as malformed — needs spanBand required on the wire, like the drag’s targetBand',
+  );
 });

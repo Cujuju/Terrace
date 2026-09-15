@@ -258,25 +258,39 @@ export function manaPerBandCellFor(playerId: string): number {
   return MANA_PER_BAND_CELL * manaPerkOf(playerId).costMultiplier;
 }
 
+/** The territory half of a price: what the chunks this stroke opened cost. */
+export function territoryFeeFor(
+  playerId: string,
+  intent: SculptIntent,
+  openedChunks: number,
+): number {
+  if (openedChunks === 0) return 0;
+  const options = sculptOptionsOf(intent);
+  return (
+    openedChunks *
+    chunkUnlockPenalty(
+      manaPerBandCellFor(playerId),
+      intent.radius,
+      options.profile,
+      options.tool,
+    )
+  );
+}
+
 export function manaCostFor(
   playerId: string,
   intent: SculptIntent,
   openedChunks: number = 0,
 ): number {
   const options = sculptOptionsOf(intent);
-  const rate = manaPerBandCellFor(playerId);
   const stroke = sculptManaCost(
-    rate,
+    manaPerBandCellFor(playerId),
     intent.radius,
     options.profile,
     options.tool,
     sculptSweepSteps(intent),
   );
-  if (openedChunks === 0) return stroke;
-  return (
-    stroke +
-    openedChunks * chunkUnlockPenalty(rate, intent.radius, options.profile, options.tool)
-  );
+  return stroke + territoryFeeFor(playerId, intent, openedChunks);
 }
 
 function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number {
@@ -356,15 +370,13 @@ function commitCharge(
   const opened = quoted ?? openedChunksFor(world, ctx.player.token, intent);
   pool.quote = null;
 
-  if (diff.length === 0) {
-    // Charge follows effect: a no-op sculpt changed nothing, so not even
-    // the unlock penalty is debited. Still push the balance so its asOfSeq
-    // tracks this intent.
-    sendBalance(world, ctx.player.id, pool);
-    return;
-  }
-
-  const cost = manaCostFor(ctx.player.id, intent, opened);
+  // Charge follows effect: a no-op waives the stroke price. Territory is a
+  // separate effect — reveal opens the footprint whatever the diff — so the
+  // territory fee still stands.
+  const cost =
+    diff.length === 0
+      ? territoryFeeFor(ctx.player.id, intent, opened)
+      : manaCostFor(ctx.player.id, intent, opened);
   pool.balance -= cost;
   sendBalance(world, ctx.player.id, pool);
 }
