@@ -26,6 +26,7 @@ import {
   controlBindings,
   modifierOf,
   resolvePress,
+  type BindingModifier,
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
@@ -151,6 +152,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let havePointer = false;
 
   let mods: ModifierState = { shiftKey: false, ctrlKey: false, altKey: false };
+
+  // The chord syncMode last observed. Seeded with the no-modifier resting state
+  // so the first unmodified move is not an edge.
+  let lastModifier: BindingModifier | null = modifierOf(mods);
 
   let strokeButton: number | null = null;
   let strokePointerId: number | null = null;
@@ -670,10 +675,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       ctrlKey: state.ctrlKey,
       altKey: state.altKey,
     };
+    const modifier = modifierOf(mods);
+    // Edge-triggered: only a CHANGE of chord previews a direction. Writing the
+    // mode on every move re-asserted the unmodified binding, so the HUD toggle
+    // (the only direction control on touch) lasted a single frame.
+    const changed = modifier !== lastModifier;
+    lastModifier = modifier;
+    if (!changed || modifier === null) return;
     if (strokeButton !== null) return;
     if (TOOLS_WITHOUT_DIRECTION.includes(brushTool())) return;
-    const modifier = modifierOf(mods);
-    if (modifier === null) return;
     const bindings = controlBindings();
     if (bindings.raise.modifier === modifier) setSculptMode('raise');
     else if (bindings.lower.modifier === modifier) setSculptMode('lower');
