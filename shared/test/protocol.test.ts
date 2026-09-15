@@ -330,9 +330,10 @@ describe('the tool set is the wire contract, not a local list', () => {
   });
 
   it('validates the two newest tools, not only the brushes', () => {
-    expect(validateSculptIntent({ ...base, tool: 'carve' }, WORLD)).toEqual({
+    expect(validateSculptIntent({ ...base, tool: 'carve', spanBand: 2 }, WORLD)).toEqual({
       ...base,
       tool: 'carve',
+      spanBand: 2,
     });
     expect(validateSculptIntent({ ...base, tool: 'drag', targetBand: 2 }, WORLD)).toEqual({
       ...base,
@@ -342,7 +343,7 @@ describe('the tool set is the wire contract, not a local list', () => {
   });
 
   it('rejects a raising carve WITH the whole intent, never flipping it', () => {
-    expect(validateSculptIntent({ ...base, dir: 1, tool: 'carve' }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, dir: 1, tool: 'carve', spanBand: 2 }, WORLD)).toBeNull();
     for (const tool of ['stamp', 'smooth'] as const) {
       expect(validateSculptIntent({ ...base, dir: 1, tool }, WORLD)).not.toBeNull();
     }
@@ -386,6 +387,19 @@ describe('spanBand — the grasp on the wire', () => {
     expect(validated).not.toBeNull();
     expect(Object.hasOwn(validated as object, 'spanBand')).toBe(false);
     expect(sculptOptionsOf({ ...base }).spanBand).toBeNull();
+  });
+
+  it('rejects a carve carrying no spanBand — it would open nothing and be acked', () => {
+    expect(validateSculptIntent({ ...base, tool: 'carve' }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'carve', spanBand: undefined }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'carve', spanBand: 2 }, WORLD)).not.toBeNull();
+  });
+
+  it('stays optional on the tools whose grasp defaults to the top span', () => {
+    for (const tool of ['stamp', 'smooth'] as const) {
+      expect(validateSculptIntent({ ...base, tool }, WORLD)).not.toBeNull();
+      expect(validateSculptIntent({ ...base, tool, spanBand: 3 }, WORLD)).not.toBeNull();
+    }
   });
 
   it('travels through the resolver untouched — the map resolves it, not this', () => {
