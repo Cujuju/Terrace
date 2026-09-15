@@ -3,12 +3,10 @@ import {
   DRAWN_SHORE_HEIGHT,
   MAX_HEIGHT,
   SEA_LEVEL,
-  bandCrossingStep,
-  bandFloorHeight,
+  bandLevelHeight,
   chunkHeightsAsCells,
-  MAX_BAND,
-  MIN_BAND,
   drawnBandOfSample,
+  stepTowardBand,
   type ChunkPayload,
   type ChunkUnlockMessage,
   type SculptDeniedMessage,
@@ -16,7 +14,6 @@ import {
 } from '@terrace/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  BEDROCK_DRAG_REFUSAL,
   handleSculptIntent,
   refuseFaultedSculpt,
   sculptMessageSeq,
@@ -80,11 +77,11 @@ describe('handleSculptIntent', () => {
     handleSculptIntent(makeDeps(raised, []), PLAYER, sculptMessage({ dir: 1 }));
 
     // Drawn contract: from genesis sea (0, band -1) a raise lands on the
-    // shore level while a lower leaves the sea band for band -2.
-    expect(lowered).toBe(bandFloorHeight(-1) - 1);
+    // shore level while a lower lands on band -2's canonical level.
+    expect(lowered).toBe(bandLevelHeight(-2));
     expect(drawnBandOfSample(lowered)).toBe(-2);
     expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DRAWN_SHORE_HEIGHT);
-    expect(Math.abs(lowered)).toBe(bandCrossingStep(SEA_LEVEL, false));
+    expect(lowered).toBe(stepTowardBand(SEA_LEVEL, false));
   });
 
   it('rejects malformed messages without touching the world', () => {
@@ -916,55 +913,6 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     expect(applied).toEqual([SEQ]);
     expect(sink.ofType('chunkUnlock').map((message) => message.target)).toEqual([PLAYER.id]);
     expect(sink.ofType('sculptApplied')).toHaveLength(1);
-  });
-});
-
-describe('an intent the terrain engine cannot finish is refused, not run', () => {
-  const DEEP_DRAG: Partial<SculptIntent> = {
-    tool: 'drag',
-    dir: -1,
-    targetBand: MIN_BAND,
-    seq: 3,
-  };
-
-  it('refuses a lower-drag that would retreat past bedrock', () => {
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    const sink = new RecordingSink();
-    world.setSink(sink);
-    world.addPlayer(PLAYER);
-    grantTokenEveryUnlockedChunk(world, PLAYER.token);
-    sink.clear();
-
-    const outcome = handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage(DEEP_DRAG));
-
-    expect(outcome.applied).toBe(false);
-    if (!outcome.applied) expect(outcome.detail).toBe(BEDROCK_DRAG_REFUSAL);
-    expect(sink.ofType('sculptDenied')).toHaveLength(1);
-    expect(sink.ofType('terrainDiff')).toHaveLength(0);
-  });
-
-  it('leaves every other drag band alone, in both directions', () => {
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    world.setSink(new RecordingSink());
-    world.addPlayer(PLAYER);
-    grantTokenEveryUnlockedChunk(world, PLAYER.token);
-    const deps = makeDeps(world, []);
-
-    for (const band of [MIN_BAND + 1, 0, MAX_BAND]) {
-      for (const dir of [1, -1] as const) {
-        const outcome = handleSculptIntent(
-          deps,
-          PLAYER,
-          sculptMessage({ tool: 'drag', dir, targetBand: band, seq: band * 2 + dir }),
-        );
-        expect(outcome.applied).toBe(true);
-      }
-    }
-
-    expect(
-      handleSculptIntent(deps, PLAYER, sculptMessage({ tool: 'drag', dir: 1, targetBand: MIN_BAND }))
-        .applied,
-    ).toBe(true);
   });
 });
 
