@@ -14,6 +14,9 @@ const DENIED_BLINK_GAP_MS = 100;
 const DENIED_BLINK_PERIOD_MS = DENIED_BLINK_RED_MS + DENIED_BLINK_GAP_MS;
 const DENIED_BLINK_REDS = 2;
 
+/** When the denied blinks stop and the red goes steady. A hold must outlast this to be seen. */
+export const DENIED_BLINK_SETTLE_MS = (DENIED_BLINK_REDS - 1) * DENIED_BLINK_PERIOD_MS;
+
 /**
  * The four brush-preview cue states (lane C vocabulary, lane E rendering).
  *
@@ -80,7 +83,7 @@ export function createDenialCue(
           return blinked || flatHold();
         };
   let sinceMs = Number.NEGATIVE_INFINITY;
-  const blinkMs = (DENIED_BLINK_REDS - 1) * DENIED_BLINK_PERIOD_MS;
+  const blinkMs = DENIED_BLINK_SETTLE_MS;
   return {
     refusedHold: refused,
     offline,
