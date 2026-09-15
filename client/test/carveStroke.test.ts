@@ -32,6 +32,7 @@ import {
   type TerrainRayPick,
   type Vec3,
 } from '../src/terrain/picking.ts';
+import { CELL_CENTRE_OFFSET } from '../src/terrain/pick/rayMarch.ts';
 import { carveBandOfPick } from '../src/terrain/pickBand.ts';
 import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
@@ -50,12 +51,16 @@ const ROW = 32;
 const worldX = (cell: number): number => cell * CELL_WORLD_SIZE;
 const worldY = (height: number): number => height * HEIGHT_WORLD_SCALE;
 
-function worldOf(heightOf: (x: number, y: number) => number): TerrainMirror {
+function worldOf(
+  heightOf: (x: number, y: number) => number,
+  revealed: (cx: number, cy: number) => boolean = () => true,
+): TerrainMirror {
   const mirror = createTerrainMirror(WORLD);
   const perEdge = WORLD / CHUNK_SIZE;
   const chunks: ChunkPayload[] = [];
   for (let cy = 0; cy < perEdge; cy++) {
     for (let cx = 0; cx < perEdge; cx++) {
+      if (!revealed(cx, cy)) continue;
       const heights = new Array<number>(CELLS_PER_CHUNK);
       for (let ly = 0; ly < CHUNK_SIZE; ly++) {
         for (let lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -83,6 +88,17 @@ const AIM_ORIGIN: Vec3 = {
   z: worldX(ROW),
 };
 const AIM_DIRECTION: Vec3 = { x: 1, y: AIM_SLOPE, z: 0 };
+
+/** The chunk column the snapshot withholds; the reveal frontier is its far edge. */
+const HIDDEN_CHUNK_X = 1;
+/** The aim starts over the hidden ground, so nothing before the frontier is struck. */
+const FRONTIER_AIM_CELL = 24;
+const FRONTIER_WALL_BAND = 12;
+const FRONTIER_WALL_CELLS = 2;
+const FRONTIER_INNER_BAND = FRONTIER_WALL_BAND + 4;
+const FRONTIER_LATCH_ABOVE_WALL = 2;
+/** Where up the frontier wall the aim enters: mid-face, so the strike is a riser. */
+const FRONTIER_ENTRY_OF_WALL = 0.5;
 
 describe('carveReachCell reaches from the cell the aim struck', () => {
   it('a ray that flies over a nearer ridge carves the lip it struck, not the ridge', () => {
@@ -134,9 +150,9 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
   });
 
   it('reaches a cell the ray marched past — the pick may name a neighbour', () => {
-    // Chrome sweep (4 cameras, ~10k rays each): ~6% of carvable aims had a
-    // reach of null. The pick names the column that OWNS the struck band, and
-    // that column can be a neighbour of the cell the ray's own march entered.
+    // Chrome sweep: ~6% of carvable aims reached null. The pick names the
+    // column that OWNS the struck band, which can be a neighbour of the cell
+    // the march entered.
     const TOWER = bandLevelHeight(PLATEAU_BAND);
     const mirror = worldOf(() => 0);
     setColumn(mirror.map, 12, 12, [{ floor: BEDROCK_FLOOR, ceiling: TOWER }]);
@@ -152,6 +168,49 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     const band = carveBandOfPick(mirror.map, aim!, () => true);
     expect(band).toBe(PLATEAU_BAND);
     expect(carveReachCell(mirror, origin, down, band!)).toEqual({ x: 12, y: 12 });
+  });
+
+  it('a steep aim at a reveal frontier keeps its reach instead of going silent', () => {
+    // The strike lands exactly on the cell the ray entered, so the walk must
+    // start there, not in the unrevealed cell it just left.
+    const frontierX = CHUNK_SIZE * (HIDDEN_CHUNK_X + 1);
+    const mirror = worldOf(
+      (x) => {
+        if (x < frontierX) return 0;
+        if (x < frontierX + FRONTIER_WALL_CELLS) return bandLevelHeight(FRONTIER_WALL_BAND);
+        return bandLevelHeight(FRONTIER_INNER_BAND);
+      },
+      (cx) => cx !== HIDDEN_CHUNK_X,
+    );
+
+    const origin: Vec3 = {
+      x: worldX(FRONTIER_AIM_CELL),
+      y: worldY(bandLevelHeight(AIM_ORIGIN_BAND)),
+      z: worldX(ROW),
+    };
+    const entryX = (frontierX - CELL_CENTRE_OFFSET) * CELL_WORLD_SIZE;
+    const entryY = worldY(bandLevelHeight(FRONTIER_WALL_BAND)) * FRONTIER_ENTRY_OF_WALL;
+    const slope = (entryY - origin.y) / (entryX - origin.x);
+    // Steep: the aim's longest axis is vertical, where the face height is
+    // furthest from the ray's own strike point.
+    expect(Math.abs(slope)).toBeGreaterThan(1);
+    const aimDown: Vec3 = { x: 1, y: slope, z: 0 };
+
+    const aim = pickTerrainCellByRay(mirror, origin, aimDown);
+    expect(aim).not.toBeNull();
+    expect({ x: aim!.x, y: aim!.y, face: aim!.face }).toEqual({
+      x: frontierX,
+      y: ROW,
+      face: 'riser',
+    });
+    // The latched band clears the struck wall, so the reach has to walk.
+    const latched = FRONTIER_WALL_BAND + FRONTIER_LATCH_ABOVE_WALL;
+    expect(spanIndexCoveringBand(mirror.map, frontierX, ROW, latched)).toBeNull();
+
+    expect(carveReachCell(mirror, origin, aimDown, latched)).toEqual({
+      x: frontierX + FRONTIER_WALL_CELLS,
+      y: ROW,
+    });
   });
 
   it('answers nothing for a degenerate aim instead of marching forever', () => {

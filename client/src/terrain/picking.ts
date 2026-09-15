@@ -6,7 +6,7 @@ import {
   cellRevealed,
   clipRayToBox,
   marchCells,
-  rayParameterAt,
+  rayParameterAtGroundPoint,
   scaleRayToCellSpace,
 } from './pick/rayMarch.ts';
 import type { TerrainMirror } from './mirror.ts';
@@ -29,6 +29,9 @@ export type {
 } from './pick/types.ts';
 
 const MAX_STANDING_WORLD_HEIGHT = 4;
+
+/** A strike parameter no cell can precede: the walk starts at the first cell. */
+const BEFORE_ANY_CELL_T = Number.NEGATIVE_INFINITY;
 
 export function pickTerrainCellByRay(
   mirror: TerrainMirror,
@@ -73,12 +76,15 @@ export function carveReachCell(
 
   // Inward from the STRIKE POINT, not from a cell id: a pick can name a
   // neighbour of the cell the ray marched through, which the walk never enters.
-  const strikeT = rayParameterAt(origin, direction, aim.hitX, aim.hitY, aim.hitZ);
+  const strikeT =
+    rayParameterAtGroundPoint(origin, direction, aim.hitX, aim.hitZ) ?? BEFORE_ANY_CELL_T;
   let reached = false;
   let found: { x: number; y: number } | null = null;
   marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j, _tEnter, tExit) => {
+    // A cell the ray has already left AT the strike is behind it, so the walk
+    // starts in the next one; a boundary strike must not reach backwards.
     if (!reached) {
-      if (tExit < strikeT) return false;
+      if (tExit <= strikeT) return false;
       reached = true;
     }
     if (!cellRevealed(mirror, i, j)) return true;
@@ -117,9 +123,9 @@ export function pickTerrainInColumn(
   });
   if (hit !== null) return hit;
 
-  // F5 (chosen): a pinned-column miss returns null. Falling back to the tread
-  // below the ray would name a cell the march never struck, so sculpt would
-  // cut a band the cursor is not on.
+  // F5 (chosen): a pinned-column miss returns null. A fallback to the tread
+  // below would name a cell the march never struck, so sculpt would cut an
+  // unaimed band.
   return null;
 }
 

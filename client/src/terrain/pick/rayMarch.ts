@@ -159,12 +159,18 @@ export function marchCells(
   }
 }
 
-/** Where along the ray a world point sits. Read on the ray's longest axis. */
-export function rayParameterAt(origin: Vec3, direction: Vec3, x: number, y: number, z: number): number {
+/**
+ * Where along the ray a strike sits, from its GROUND coordinates: a pick's
+ * hitY is a face height, not a ray sample. Null for a vertical ray.
+ */
+export function rayParameterAtGroundPoint(
+  origin: Vec3,
+  direction: Vec3,
+  x: number,
+  z: number,
+): number | null {
   const ax = Math.abs(direction.x);
-  const ay = Math.abs(direction.y);
   const az = Math.abs(direction.z);
-  if (ax >= ay && ax >= az) return (x - origin.x) / direction.x;
-  if (ay >= az) return (y - origin.y) / direction.y;
-  return (z - origin.z) / direction.z;
+  if (ax === 0 && az === 0) return null;
+  return ax >= az ? (x - origin.x) / direction.x : (z - origin.z) / direction.z;
 }
