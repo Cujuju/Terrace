@@ -31,9 +31,9 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   const capY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
   // F4: the underside cue snaps to the drawn ceiling, matching terrainHitInCell.
   const undersideY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-  // Underside hits report hitY at the drawn ceiling; tread/riser at or below it.
-  // Allow a riser entry exactly at the blocky underside through by clamping the
-  // lower bound to the drawn bottom only for the reject test.
+  // Underside hits report hitY at the drawn ceiling; tread/riser at or below.
+  // Its reject bound clamps to the drawn bottom, so a riser entry at the
+  // blocky underside passes.
   const drawnBottomY =
     drawnBandOfSample(spanUndersideHeight(span)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
   if (pick.hitY < drawnBottomY || pick.hitY > capY) return null;
@@ -45,12 +45,9 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   if (pick.face === 'riser') {
     const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
     if (struck < lowestDrawn) return { face: 'riser', band: lowestDrawn };
-    // Never name above the struck span's own cap. Raw ceil overshoots two
-    // ways at the shore: a skirt hit below a drawn-0 cap names 0-then-water
-    // (hitY <= 0 ceils to 0, and the old shore rule mapped that to -1), while
-    // the wall's only nearby lip is the drawn band-0 waterline loop. The lip
-    // overlay is keyed by drawn band, so the cap's drawn band is the grabbable
-    // one — otherwise lipNear misses and the grab silently fails.
+    // Never name above the struck span's own cap: raw ceil overshoots at the
+    // shore, and the lip overlay is keyed by drawn band, so the cap's band
+    // is grabbable.
     const capDrawn = drawnBandOfSample(span.ceiling);
     const band = capDrawn < struck ? capDrawn : struck;
     // Normalize -0 (ceil of a negative fraction): band ids are compared exactly.
@@ -101,9 +98,9 @@ export function graspSpanBandIn(
 }
 
 /**
- * Cap band of the layer holding `spanBand` (the column top when null); after a
- * lower, the layer just beneath it. Reported in the DRAWN banding the pick, the
- * grasp and the drag plane all speak.
+ * Cap band of the layer holding `spanBand` (the column top when null); after
+ * a lower, the layer beneath. In the DRAWN banding pick, grasp and drag
+ * plane share.
  */
 export function bandAtCellIn(
   mirror: TerrainMirror,

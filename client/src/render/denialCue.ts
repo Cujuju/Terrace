@@ -18,15 +18,9 @@ const DENIED_BLINK_REDS = 2;
 export const DENIED_BLINK_SETTLE_MS = (DENIED_BLINK_REDS - 1) * DENIED_BLINK_PERIOD_MS;
 
 /**
- * The four brush-preview cue states (lane C vocabulary, lane E rendering).
- *
- * - refused: the stroke was refused (red blink via isRed()).
- * - offline: no connection; the brush renders grey/hollow and never red.
- * - ghost: the stroke cannot be predicted; the brush renders hollow/dimmed.
- * - flat: posture flat-mark; the brush renders the crosshair mark only.
- *
- * Extra accessors default to false, so a host that cues only refusals keeps
- * compiling; main.tsx wires all four off the input and prediction stores.
+ * The four brush-preview cue states: refused (red blink), offline
+ * (grey/hollow, never red), ghost (hollow, unpredicted), flat (crosshair
+ * mark only). Extras default to false, so a refusal-only host compiles.
  */
 export interface DenialCue {
   isRed(): boolean;
@@ -46,9 +40,9 @@ export interface DenialCueOptions {
 }
 
 /**
- * Turns a blink COUNTER into the level a renderer can read: every increment
- * lights the cue for one blink. Late increments extend the lit window rather
- * than queueing, so a burst of refusals reads as one steady mark.
+ * Turns a blink COUNTER into a level a renderer can read: each increment
+ * lights the cue. Late increments extend the lit window, so a burst reads
+ * as one steady mark.
  */
 export function createBlinkFlash(count: () => number): () => boolean {
   let seen = count();
