@@ -39,7 +39,7 @@ export function handleSculptIntent(
     // Still nack when a seq can be extracted so the sender's prediction is
     // not stranded. A missing or non-integer seq is unroutable by
     // construction and stays silent.
-    const seq = extractMessageSeq(message);
+    const seq = sculptMessageSeq(message);
     if (seq !== undefined) {
       world.sendTo(player.id, { type: 'sculptDenied', seq, reason: 'malformed' });
     }
@@ -103,7 +103,11 @@ export function handleSculptIntent(
   return { applied: true, intent: effective, diff };
 }
 
-function extractMessageSeq(message: unknown): number | undefined {
+/**
+ * The seq a sculpt message carries, for nacking a sender whose intent never
+ * reached a verdict. A missing or non-integer seq is unroutable by construction.
+ */
+export function sculptMessageSeq(message: unknown): number | undefined {
   if (typeof message !== 'object' || message === null) return undefined;
   const { seq } = message as Record<string, unknown>;
   return typeof seq === 'number' && Number.isSafeInteger(seq) ? seq : undefined;
