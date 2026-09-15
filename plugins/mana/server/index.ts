@@ -148,11 +148,11 @@ interface ManaPool {
 }
 
 /**
- * The territory half of a price, measured once at verdict time. The stroke's own
- * terrain creep opens chunks before the effect phase runs, so re-measuring there
- * would bill fewer chunks than the affordability check reserved.
+ * The territory half of a price, measured at verdict time: the stroke's own
+ * creep opens chunks before the effect phase, so re-measuring bills too few.
  */
 interface ManaQuote {
+  readonly seq: number | null;
   readonly x: number;
   readonly y: number;
   readonly radius: number;
@@ -161,9 +161,13 @@ interface ManaQuote {
   readonly openedChunks: number;
 }
 
+/** A seq-less intent is unroutable, so its quote can never be matched back. */
+const UNQUOTABLE_SEQ = null;
+
 function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote {
   const options = sculptOptionsOf(intent);
   return {
+    seq: intent.seq ?? UNQUOTABLE_SEQ,
     x: intent.x,
     y: intent.y,
     radius: intent.radius,
@@ -175,7 +179,7 @@ function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote {
 
 function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): number | null {
   const { quote } = pool;
-  if (quote === null) return null;
+  if (quote === null || quote.seq === UNQUOTABLE_SEQ || quote.seq !== intent.seq) return null;
   const options = sculptOptionsOf(intent);
   const sameBrush =
     quote.x === intent.x &&
@@ -321,6 +325,7 @@ export function spendMana(world: WorldApi, playerId: string, amount: number): bo
 function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
+  pool.quote = null;
   noteSeq(pool, intent);
   const opened = openedChunksFor(world, ctx.player.token, intent);
   pool.quote = quoteFor(intent, opened);
