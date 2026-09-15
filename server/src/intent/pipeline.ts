@@ -3,12 +3,17 @@ import {
   sculptOptionsOf,
   validateSculptIntent,
   type CellDiff,
+  type SculptDeniedMessage,
   type SculptDeniedReason,
   type SculptIntent,
 } from '@terrace/shared';
 import type { Player } from '../player.ts';
 import type { IntentVerdict } from '../plugins/types.ts';
-import { applyServerSculpt, type TerrainChangeListener } from '../world/sculpt-service.ts';
+import {
+  applyServerSculpt,
+  resendIntentFootprint,
+  type TerrainChangeListener,
+} from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
 
 export type IntentRejection = SculptDeniedReason;
@@ -35,10 +40,9 @@ export function handleSculptIntent(
 
   const intent = validateSculptIntent(message, world.size);
   if (intent === null) {
-    // No valid intent exists, so there is nothing to notify plugins about.
-    // Still nack when a seq can be extracted so the sender's prediction is
-    // not stranded. A missing or non-integer seq is unroutable by
-    // construction and stays silent.
+    // No valid intent, so nothing to notify plugins about. Still nack an
+    // extractable seq so the sender's prediction is not stranded; an
+    // unroutable seq stays silent.
     const seq = sculptMessageSeq(message);
     if (seq !== undefined) {
       world.sendTo(player.id, { type: 'sculptDenied', seq, reason: 'malformed' });
@@ -101,6 +105,22 @@ export function handleSculptIntent(
   }
 
   return { applied: true, intent: effective, diff };
+}
+
+/**
+ * Answers a sculpt whose handling threw: nack the sender, then resend the
+ * authoritative chunks its footprint could have half-edited.
+ */
+export function refuseFaultedSculpt(
+  world: World,
+  message: unknown,
+  send: (denial: SculptDeniedMessage) => void,
+): void {
+  const seq = sculptMessageSeq(message);
+  if (seq !== undefined) send({ type: 'sculptDenied', seq, reason: 'server-fault' });
+
+  const intent = validateSculptIntent(message, world.size);
+  if (intent !== null) resendIntentFootprint(world, intent);
 }
 
 /**

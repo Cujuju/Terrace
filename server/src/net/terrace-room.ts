@@ -15,7 +15,6 @@ import {
   type JoinSnapshotMessage,
   type RestorePointListMessage,
   type RollbackResultMessage,
-  type SculptDeniedMessage,
   type ServerRestartNoticeMessage,
   type TerrainDiffMessage,
   type WorldAdminRequestMessage,
@@ -27,7 +26,7 @@ import {
 } from '@terrace/shared';
 import { logError, logInfo, logWarn } from '../log.ts';
 import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
-import { handleSculptIntent, sculptMessageSeq } from '../intent/pipeline.ts';
+import { handleSculptIntent, refuseFaultedSculpt } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { ServerRestartService } from '../restart.ts';
 import type { PerfLoggingSetting } from '../perf-logging-setting.ts';
@@ -39,6 +38,11 @@ import { buildJoinSnapshot, buildShowAllSnapshot } from './join-snapshot.ts';
 import { isPluginMessageType, routePluginMessage } from './plugin-message-routing.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
 import { SculptRateLimiter } from './sculpt-rate-limit.ts';
+import {
+  LogThrottle,
+  ROOM_FAILURE_LOG_INTERVAL_MS,
+  containRoomMessage,
+} from './contain-message.ts';
 
 export const ROOM_NAME = 'world';
 
@@ -72,18 +76,18 @@ const UNREGISTERED_MESSAGE_REASON_PREFIX = 'room onMessage for ';
 const HITCH_PREFIX = '[hitch]';
 const HITCH_MS_DECIMALS = 1;
 
-const INTENT_FAILURE_LOG_INTERVAL_MS = 10_000;
+const EMPTY_RESTORE_POINT_LIST: RestorePointListMessage = {
+  type: 'restorePointList',
+  points: [],
+  retention: 0,
+  intervalS: 0,
+};
 
-/** Keeps a failure that repeats at intent rate from drowning the log. */
-class LogThrottle {
-  private lastMs = Number.NEGATIVE_INFINITY;
-
-  due(nowMs: number): boolean {
-    if (nowMs - this.lastMs < INTENT_FAILURE_LOG_INTERVAL_MS) return false;
-    this.lastMs = nowMs;
-    return true;
-  }
-}
+const FAILED_ROLLBACK_RESULT: RollbackResultMessage = {
+  type: 'rollbackResult',
+  ok: false,
+  refused: 'failed',
+};
 
 export interface TerraceServerMessages {
   snapshot: JoinSnapshotMessage;
@@ -124,9 +128,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
 
   private readonly sculptRate = new SculptRateLimiter();
 
-  private readonly pluginRewriteLog = new LogThrottle();
-
-  private readonly sculptFaultLog = new LogThrottle();
+  private readonly pluginRewriteLog = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
 
   override onCreate(): void {
     if (processRoomContext === null) {
@@ -146,13 +148,14 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     });
     this.context.restart.attachRoom({ sink, clientCount: () => this.clients.length });
 
-    this.onMessage(SCULPT_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
-      if (!this.sculptRate.allow(client.sessionId)) return;
-      const player = client.userData?.player;
-      if (!player) return;
-      const session = this.context.manager.current;
-      if (session === null) return;
-      try {
+    this.containedMessage(
+      SCULPT_MESSAGE_TYPE,
+      (client: TerraceClient, message: unknown) => {
+        if (!this.sculptRate.allow(client.sessionId)) return;
+        const player = client.userData?.player;
+        if (!player) return;
+        const session = this.context.manager.current;
+        if (session === null) return;
         const outcome = handleSculptIntent(
           { world: session.world, interceptors: session.host },
           player,
@@ -161,37 +164,43 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         if (!outcome.applied && outcome.reason === 'plugin-modified-invalid') {
           this.notePluginRewriteFailure(outcome.detail);
         }
-      } catch (error) {
-        this.noteSculptFault(client, message, error);
-      }
-    });
-
-    this.onMessage(RESTORE_POINTS_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
-      const request = validateRestorePointsRequest(message);
-      if (request === null) return;
-      const session = this.context.manager.current;
-      if (session === null) {
-        client.send('restorePointList', {
-          type: 'restorePointList',
-          points: [],
-          retention: 0,
-          intervalS: 0,
+      },
+      (client: TerraceClient, message: unknown) => {
+        const session = this.context.manager.current;
+        if (session === null) return;
+        refuseFaultedSculpt(session.world, message, (denial) => {
+          client.send(denial.type, denial);
         });
-        return;
-      }
-      client.send(
-        'restorePointList',
-        session.rollback.listRestorePoints(client.sessionId, request.key),
-      );
-    });
+      },
+    );
 
-    this.onMessage(STACK_RESTART_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+    this.containedMessage(
+      RESTORE_POINTS_MESSAGE_TYPE,
+      (client: TerraceClient, message: unknown) => {
+        const request = validateRestorePointsRequest(message);
+        if (request === null) return;
+        const session = this.context.manager.current;
+        if (session === null) {
+          client.send('restorePointList', EMPTY_RESTORE_POINT_LIST);
+          return;
+        }
+        client.send(
+          'restorePointList',
+          session.rollback.listRestorePoints(client.sessionId, request.key),
+        );
+      },
+      (client: TerraceClient) => {
+        client.send('restorePointList', EMPTY_RESTORE_POINT_LIST);
+      },
+    );
+
+    this.containedMessage(STACK_RESTART_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
       if (validateStackRestartRequest(message) === null) return;
       logInfo(`stack restart requested by ${client.sessionId}`);
       this.context.restart.request('stack');
     });
 
-    this.onMessage(PERF_LOGGING_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+    this.containedMessage(PERF_LOGGING_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
       const request = validatePerfLoggingRequest(message);
       if (request === null) return;
       const { perfLogging } = this.context;
@@ -206,7 +215,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       this.broadcast(PERF_LOGGING_STATE_MESSAGE_TYPE, this.perfLoggingState());
     });
 
-    this.onMessage(PERF_HITCH_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+    this.containedMessage(PERF_HITCH_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
       if (!this.context.perfLogging.enabled) return;
       const hitch = validatePerfHitch(message);
       if (hitch === null) return;
@@ -218,28 +227,32 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       );
     });
 
-    this.onMessage(ROLLBACK_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
-      const request = validateRollbackRequest(message);
-      if (request === null) return;
-      const session = this.context.manager.current;
-      if (session === null) {
-        client.send('rollbackResult', {
-          type: 'rollbackResult',
-          ok: false,
-          refused: 'failed',
-        });
-        return;
-      }
-      const result = session.rollback.rollback(
-        client.sessionId,
-        request.key,
-        request.toId,
-      );
-      client.send('rollbackResult', result);
-    });
+    this.containedMessage(
+      ROLLBACK_MESSAGE_TYPE,
+      (client: TerraceClient, message: unknown) => {
+        const request = validateRollbackRequest(message);
+        if (request === null) return;
+        const session = this.context.manager.current;
+        if (session === null) {
+          client.send('rollbackResult', FAILED_ROLLBACK_RESULT);
+          return;
+        }
+        const result = session.rollback.rollback(
+          client.sessionId,
+          request.key,
+          request.toId,
+        );
+        client.send('rollbackResult', result);
+      },
+      (client: TerraceClient) => {
+        client.send('rollbackResult', FAILED_ROLLBACK_RESULT);
+      },
+    );
 
     for (const type of WORLD_ADMIN_MESSAGE_TYPES) {
-      this.onMessage(type, (client: TerraceClient, message: unknown) => {
+      // containWorldAdminMessage answers in each request's own refusal shape,
+      // including for the async paths this wrapper cannot see.
+      this.containedMessage(type, (client: TerraceClient, message: unknown) => {
         const request = validateWorldAdminRequest(message);
         if (request === null) return;
 
@@ -251,14 +264,17 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       });
     }
 
+    const anyMessageLog = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
     this.onMessage('*', (client: TerraceClient, type: string | number, payload: unknown) => {
-      if (!isPluginMessageType(type)) {
-        this.rejectUnregisteredMessage(client, type);
-        return;
-      }
-      const player = client.userData?.player;
-      if (!player) return;
-      routePluginMessage(() => this.context.manager.current?.host ?? null, player, type, payload);
+      containRoomMessage(String(type), anyMessageLog, () => {
+        if (!isPluginMessageType(type)) {
+          this.rejectUnregisteredMessage(client, type);
+          return;
+        }
+        const player = client.userData?.player;
+        if (!player) return;
+        routePluginMessage(() => this.context.manager.current?.host ?? null, player, type, payload);
+      });
     });
 
     const session = this.context.manager.current;
@@ -399,19 +415,21 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     );
   }
 
-  /**
-   * Colyseus has no handler of its own here, so an escaping throw would take the
-   * process down for everyone. Contain it, and nack the sender so their
-   * prediction rolls back now instead of waiting out its TTL.
-   */
-  private noteSculptFault(client: TerraceClient, message: unknown, error: unknown): void {
-    if (this.sculptFaultLog.due(Date.now())) {
-      logError('a sculpt intent threw on its way through the pipeline', error);
-    }
-    const seq = sculptMessageSeq(message);
-    if (seq === undefined) return;
-    const nack: SculptDeniedMessage = { type: 'sculptDenied', seq };
-    client.send(nack.type, nack);
+  /** Every room handler is registered here, so no throw of theirs can reach the process. */
+  private containedMessage(
+    type: string,
+    handle: (client: TerraceClient, message: unknown) => void,
+    refuse?: (client: TerraceClient, message: unknown) => void,
+  ): void {
+    const throttle = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
+    this.onMessage(type, (client: TerraceClient, message: unknown) => {
+      containRoomMessage(
+        type,
+        throttle,
+        () => handle(client, message),
+        refuse === undefined ? undefined : () => refuse(client, message),
+      );
+    });
   }
 
   override onLeave(client: TerraceClient): void {
