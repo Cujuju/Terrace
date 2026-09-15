@@ -506,6 +506,24 @@ function fillTowardTarget(
 
 const DRAG_TREAD_TOLERANCE_CELLS = 1;
 
+/**
+ * A drag settles each cell once; the repeat only lets a settled cell's
+ * neighbours cascade. One act per cell bounds the sweep however
+ * canonicalisation rewrites the column.
+ */
+function settleEachCellOnce(cells: readonly number[], act: (index: number) => boolean): void {
+  const settled = new Set<number>();
+  for (let quiet = false; !quiet; ) {
+    quiet = true;
+    for (const i of cells) {
+      if (settled.has(i)) continue;
+      if (!act(i)) continue;
+      settled.add(i);
+      quiet = false;
+    }
+  }
+}
+
 function pushLowerLayers(
   map: Heightmap,
   raisedAtBand: number[],
@@ -552,22 +570,17 @@ function pushLowerLayers(
   if (candidates.length === 0) return;
   candidates.sort((a, b) => a - b);
 
-  let filledThisPass = true;
-  while (filledThisPass) {
-    filledThisPass = false;
-    for (const i of candidates) {
-      const x = cellX(map.size, i);
-      const y = cellY(map.size, i);
-      const fill = bandFillAt(map, x, y, band);
-      if (fill === null || fill.kind !== 'extend') continue;
-      if (!canSpreadBandTo(map, x, y, band)) continue;
-      record(i);
-      applyBandFill(map, x, y, fill, level);
-      changed.add(i);
-      filledThisPass = true;
-    }
-  }
-
+  settleEachCellOnce(candidates, (i) => {
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    const fill = bandFillAt(map, x, y, band);
+    if (fill === null || fill.kind !== 'extend') return false;
+    if (!canSpreadBandTo(map, x, y, band)) return false;
+    record(i);
+    applyBandFill(map, x, y, fill, level);
+    changed.add(i);
+    return true;
+  });
 }
 
 const SOFT_DRAG_MIN_REACH = 0.45;
@@ -718,47 +731,42 @@ function applyDragRegion(
   if (refused.size > 0) admitRimEnclaves(map, targetBand, refused, inDisc, disc);
 
   if (!raising) {
-    let cutThisPass = true;
-    while (cutThisPass) {
-      cutThisPass = false;
-      for (const i of disc) {
-        const x = cellX(map.size, i);
-        const y = cellY(map.size, i);
-        const k = spanIndexCoveringBand(map, x, y, targetBand);
-        if (k === null) continue;
-        const span = spanAt(map, x, y, k);
-        if (span.ceiling < bandFloorHeight(targetBand)) continue;
-        const ground = retreatHeightAt(map, x, y, targetBand);
-        if (ground === null) continue;
-        const exposed = Math.max(ground, bandLevelHeight(targetBand - 1));
-        if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
-          continue;
-        }
-        moveSpanCeiling(map, x, y, k, exposed);
-        changed.add(i);
-        cutThisPass = true;
+    settleEachCellOnce(disc, (i) => {
+      const x = cellX(map.size, i);
+      const y = cellY(map.size, i);
+      const k = spanIndexCoveringBand(map, x, y, targetBand);
+      if (k === null) return false;
+      const span = spanAt(map, x, y, k);
+      if (span.ceiling < bandFloorHeight(targetBand)) return false;
+      const ground = retreatHeightAt(map, x, y, targetBand);
+      if (ground === null) return false;
+      // The retreat is a write like any other: it lands no lower than the
+      // bedrock remnant a column always keeps, and only ever cuts downward.
+      const exposed = clampHeight(Math.max(ground, bandLevelHeight(targetBand - 1)));
+      if (exposed >= span.ceiling) return false;
+      if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
+        return false;
       }
-    }
+      moveSpanCeiling(map, x, y, k, exposed);
+      changed.add(i);
+      return true;
+    });
     return;
   }
 
   const raised: number[] = [];
-  let filledThisPass = true;
-  while (filledThisPass) {
-    filledThisPass = false;
-    for (const i of disc) {
-      const x = cellX(map.size, i);
-      const y = cellY(map.size, i);
-      const fill = bandFillAt(map, x, y, targetBand);
-      if (fill === null) continue;
-      if (!canSpreadBandTo(map, x, y, targetBand)) continue;
-      record(i);
-      applyBandFill(map, x, y, fill, targetHeight);
-      changed.add(i);
-      if (fill.kind === 'extend') raised.push(i);
-      filledThisPass = true;
-    }
-  }
+  settleEachCellOnce(disc, (i) => {
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    const fill = bandFillAt(map, x, y, targetBand);
+    if (fill === null) return false;
+    if (!canSpreadBandTo(map, x, y, targetBand)) return false;
+    record(i);
+    applyBandFill(map, x, y, fill, targetHeight);
+    changed.add(i);
+    if (fill.kind === 'extend') raised.push(i);
+    return true;
+  });
 
   if (raised.length > 0) pushLowerLayers(map, raised, targetBand, hadCapAtBandBefore, record, changed);
 }
