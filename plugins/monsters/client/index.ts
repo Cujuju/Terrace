@@ -20,12 +20,19 @@ import type {
 import {
   MONSTERS_PLUGIN_NAME,
   MONSTERS_STATE_MESSAGE,
+  MONSTER_KINDS,
   parseMonstersPayload,
+  type MonsterKind,
   type YetiVariant,
   MAX_LIVING_MONSTERS,
+  MAX_LIVING_MONSTERS_PER_KIND,
 } from '../protocol.ts';
-import { createDread, createDreadFlashLight, type Dread } from './atmosphere.ts';
-import { dreadSpecOf } from './dread.ts';
+import { createDreadRigs, type Dread, type DreadRigs } from './atmosphere.ts';
+import { FLASH_COLOR, FLASH_LIGHT_RANGE_CELLS, dreadSpecOf } from './dread.ts';
+import {
+  createLightBank,
+  type LightBank,
+} from '../../../client/src/plugins/kit/lightBank.ts';
 import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
 import { createMonsterModels, type MonsterModel, type MonsterModels } from './models.ts';
@@ -35,8 +42,13 @@ const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
 
 const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
+const DREAD_RETIRE_FADE_RIGS = 1;
+
+const DREAD_RIGS_PER_KIND = MAX_LIVING_MONSTERS_PER_KIND + DREAD_RETIRE_FADE_RIGS;
+
 interface MonsterView {
   readonly model: MonsterModel;
+  readonly kind: MonsterKind;
   readonly dread: Dread | null;
   readonly flash: PointLight | null;
   readonly phase: number;
@@ -45,28 +57,65 @@ interface MonsterView {
   readonly riserShift: ClimbRiserShift;
 }
 
+interface RetiringDread {
+  readonly kind: MonsterKind;
+  readonly dread: Dread;
+  flash: PointLight | null;
+}
+
 let models: MonsterModels | null = null;
 let container: Group | null = null;
 const views = new Map<number, MonsterView>();
-const retiringDread: Array<{ dread: Dread; flash: PointLight | null }> = [];
-const allFlash: PointLight[] = [];
-const freeFlash: PointLight[] = [];
+const retiringDread: RetiringDread[] = [];
+const dreadRigs = new Map<MonsterKind, DreadRigs>();
+const freeDread = new Map<MonsterKind, Dread[]>();
+let flashBank: LightBank | null = null;
 
-function lendFlashLight(): PointLight {
-  const pooled = freeFlash.pop();
+function endRetirement(index: number): Dread {
+  const retiring = retiringDread[index]!;
+  retiringDread.splice(index, 1);
+  retiring.dread.setFlashLight(null);
+  if (retiring.flash !== null) flashBank?.give(retiring.flash);
+  return retiring.dread;
+}
+
+// Nothing is built after attach: a spawn that finds its kind's rigs all out takes the
+// oldest retiree's, the one furthest into its fade, rather than growing the pool.
+function lendDread(kind: MonsterKind): Dread | null {
+  const free = freeDread.get(kind);
+  if (free === undefined) return null;
+  const pooled = free.pop();
   if (pooled !== undefined) {
-    // Unpark: the retire path hides the light so parked intensity-0 lights never
-    // enter the lit set (three keys lit programs off visible lights).
-    pooled.visible = true;
+    pooled.reset();
     return pooled;
   }
-  const light = createDreadFlashLight();
-  light.intensity = 0;
-  light.visible = true;
-  container?.add(light);
-  allFlash.push(light);
-  return light;
+  for (let index = 0; index < retiringDread.length; index++) {
+    if (retiringDread[index]!.kind !== kind) continue;
+    const reclaimed = endRetirement(index);
+    reclaimed.reset();
+    return reclaimed;
+  }
+  return null;
 }
+
+// Same rule for the fixed light bank: a retiree's flash is already fading towards zero,
+// so it yields its light to a living dread instead of the bank growing.
+function lendFlashLight(): PointLight | null {
+  const bank = flashBank;
+  if (bank === null) return null;
+  const lent = bank.lend();
+  if (lent !== null) return lent;
+  for (const retiring of retiringDread) {
+    const light = retiring.flash;
+    if (light === null) continue;
+    retiring.flash = null;
+    retiring.dread.setFlashLight(null);
+    bank.give(light);
+    return bank.lend();
+  }
+  return null;
+}
+
 const interpolator = new MonsterInterpolator();
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
@@ -82,12 +131,12 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     acquire: (id, monster) => {
       const model = bank.create(monster.kind, monster.variant);
       scene.add(model.root);
-      const spec = dreadSpecOf(monster.kind);
-      const flash = spec !== null ? lendFlashLight() : null;
-      const dread = spec !== null && flash !== null ? createDread(spec, flash) : null;
-      if (dread !== null) scene.add(dread.root);
+      const dread = lendDread(monster.kind);
+      const flash = dread === null ? null : lendFlashLight();
+      dread?.setFlashLight(flash);
       return {
         model,
+        kind: monster.kind,
         dread,
         flash,
         phase: id * PHASE_RADIANS_PER_ID,
@@ -105,6 +154,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       return {
         drawnY: existing.drawnY,
         model: rebuilt,
+        kind: monster.kind,
         dread: existing.dread,
         flash: existing.flash,
         phase: existing.phase,
@@ -115,7 +165,9 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     release: (_id, view) => {
       scene.remove(view.model.root);
       view.model.dispose();
-      if (view.dread !== null) retiringDread.push({ dread: view.dread, flash: view.flash });
+      if (view.dread !== null) {
+        retiringDread.push({ kind: view.kind, dread: view.dread, flash: view.flash });
+      }
     },
   });
 }
@@ -168,15 +220,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const retiring = retiringDread[index]!;
     retiring.dread.update(animationSeconds, step, false);
     if (!retiring.dread.isFaded()) continue;
-    container?.remove(retiring.dread.root);
-    retiring.dread.dispose();
-    if (retiring.flash !== null) {
-      retiring.flash.intensity = 0;
-      retiring.flash.visible = false;
-      container?.add(retiring.flash);
-      freeFlash.push(retiring.flash);
-    }
-    retiringDread.splice(index, 1);
+    const kind = retiring.kind;
+    freeDread.get(kind)?.push(endRetirement(index));
   }
 }
 
@@ -195,13 +240,22 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'monsters:living';
     ctx.layer.add(container);
-    for (let index = 0; index < MAX_LIVING_MONSTERS; index++) {
-      const light = createDreadFlashLight();
-      light.intensity = 0;
-      light.visible = false;
-      container.add(light);
-      allFlash.push(light);
-      freeFlash.push(light);
+
+    flashBank = createLightBank({
+      size: MAX_LIVING_MONSTERS,
+      color: FLASH_COLOR,
+      range: FLASH_LIGHT_RANGE_CELLS,
+      name: `${MONSTERS_PLUGIN_NAME}:flash-light`,
+      parent: container,
+    });
+
+    for (const kind of MONSTER_KINDS) {
+      const spec = dreadSpecOf(kind);
+      if (spec === null) continue;
+      const rigs = createDreadRigs(spec, DREAD_RIGS_PER_KIND);
+      dreadRigs.set(kind, rigs);
+      freeDread.set(kind, [...rigs.rigs]);
+      for (const rig of rigs.rigs) container.add(rig.root);
     }
 
     unsubscribeMessages = ctx.onMessage(MONSTERS_STATE_MESSAGE, (payload) => {
@@ -222,14 +276,14 @@ export const clientPlugin: TerraceClientPlugin = {
     for (const view of views.values()) {
       view.model.dispose();
       view.model.root.clear();
-      view.dread?.dispose();
     }
     views.clear();
-    for (const retiring of retiringDread) retiring.dread.dispose();
     retiringDread.length = 0;
-    for (const light of allFlash) light.dispose();
-    allFlash.length = 0;
-    freeFlash.length = 0;
+    for (const rigs of dreadRigs.values()) rigs.dispose();
+    dreadRigs.clear();
+    freeDread.clear();
+    flashBank?.dispose();
+    flashBank = null;
     interpolator.clear();
 
     container?.clear();
