@@ -192,6 +192,9 @@ function createThunderstormRig(
       }
       if (flashLight !== null) {
         flashLight.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+        // Parked intensity-0 lights stay out of the lit set (three keys lit programs
+        // off visible lights); unhidden exactly when contributing.
+        flashLight.visible = flashing;
         flashLight.position.set(
           root.position.x + strikeOffsetX,
           BOLT_BOTTOM_WORLD_Y,
@@ -212,7 +215,10 @@ function createThunderstormRig(
     reset(): void {
       lightning.reset();
       body.park();
-      if (flashLight !== null) flashLight.intensity = 0;
+      if (flashLight !== null) {
+        flashLight.intensity = 0;
+        flashLight.visible = false;
+      }
     },
 
     dispose(): void {
@@ -257,6 +263,8 @@ export function createDryBoltRig(
 
   const light = new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
   light.position.y = BOLT_BOTTOM_WORLD_Y;
+  // Intensity-0 when idle: keep out of the lit set until flashing.
+  light.visible = false;
   root.add(light);
 
   const schedule = new LightningSchedule();
@@ -278,6 +286,7 @@ export function createDryBoltRig(
       bolt.visible = flashing;
       if (flashing) material.opacity = brightness;
       light.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+      light.visible = flashing;
     },
 
     dispose(): void {
@@ -318,6 +327,8 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
   for (let index = 0; index < STORM_FLASH_LIGHT_BANK_SIZE; index++) {
     const light = new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
     light.position.y = BOLT_BOTTOM_WORLD_Y;
+    // Unlent spares stay out of the lit set; update() unhides on first flash.
+    light.visible = false;
     lightBank.add(light);
     unlent.push(light);
   }

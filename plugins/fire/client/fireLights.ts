@@ -48,7 +48,9 @@ export function createFireLights(): FireLights {
   const slots: LightSlot[] = [];
   for (let index = 0; index < FIRE_LIGHT_POOL_SIZE; index++) {
     const light = new PointLight(FIRE_LIGHT_COLOR, 0, FIRE_LIGHT_RANGE_WORLD_UNITS);
-    light.visible = true;
+    // Parked intensity-0 lights stay out of the lit set (three keys lit programs
+    // off visible lights); update() unhides on assignment.
+    light.visible = false;
     root.add(light);
     slots.push({ light, heldKey: 0, pendingKey: 0, phase: 'steady', envelope: 0 });
   }
@@ -229,6 +231,7 @@ export function createFireLights(): FireLights {
         advance(state, slot, dt);
 
         const fire = heldFires[slot];
+        state.light.visible = fire !== null;
         if (fire === null) {
           state.light.intensity = 0;
           continue;
@@ -253,6 +256,7 @@ export function createFireLights(): FireLights {
         state.phase = 'steady';
         state.envelope = 0;
         state.light.intensity = 0;
+        state.light.visible = false;
       }
     },
   };
