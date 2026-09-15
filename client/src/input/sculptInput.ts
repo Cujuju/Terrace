@@ -219,7 +219,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     return worldPointToCell(worldX, worldZ, size);
   };
 
+  // Bumped whenever the aim re-marches, so a held stroke can tell "same pinned
+  // column, new surface" from "the pin moved".
+  let hoverPin = 0;
+
   const repick = (): TerrainRayPick | null => {
+    hoverPin++;
     const ray = pointerRay();
     hoverRay = ray;
     if (ray === null) {
@@ -268,6 +273,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let repeatStreakBlinked = false;
   let descentFrozen = false;
   let deadDirectionlessRaiseHits = 0;
+
+  // The anchor a held stroke keeps editing, latched to the aim pin that produced
+  // it. Re-deriving it every tick walked the stroke toward the camera: a raised
+  // cap flips the pinned column tread -> riser, and the foot step lands a cell back.
+  let strokeAnchorPin = -1;
+  let strokeAnchorCell: { x: number; y: number } | null = null;
 
   type EmitOrigin = 'press' | 'repeat' | 'move';
   type EmitOutcome = 'sent' | 'flat-silent' | 'absent-silent' | 'unsent';
@@ -355,11 +366,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // No-target frame stays silent.
       if (cell === null) return 'absent-silent';
       if (isUndersideRaise(cell, action)) return noteFlatSilent(origin);
-      const foot =
-        hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
-          ? footOfFaceCell(cell, hoverRay.direction, worldSize())
-          : null;
-      anchor = foot ?? { x: cell.x, y: cell.y };
+      if (strokeArmed && strokeAnchorCell !== null && strokeAnchorPin === hoverPin) {
+        anchor = strokeAnchorCell;
+      } else {
+        const foot =
+          hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
+            ? footOfFaceCell(cell, hoverRay.direction, worldSize())
+            : null;
+        anchor = foot ?? { x: cell.x, y: cell.y };
+        strokeAnchorPin = hoverPin;
+        strokeAnchorCell = anchor;
+      }
       // The grasp is read at the anchor: a span the anchored column lacks names nothing there.
       spanBand =
         strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell, anchor.x, anchor.y);
@@ -485,6 +502,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     hoverKey = '';
     hoverCell = null;
     hoverRay = null;
+    strokeAnchorPin = -1;
+    strokeAnchorCell = null;
     offlineLatched = false;
     silentRepeatTicks = 0;
     repeatStreakBlinked = false;

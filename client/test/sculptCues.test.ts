@@ -22,6 +22,7 @@ import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/t
 import {
   pickTerrainCellByRay,
   pickTerrainInColumn,
+  type PickFace,
   type TerrainRayPick,
   type Vec3,
 } from '../src/terrain/picking.ts';
@@ -671,6 +672,72 @@ describe('refused pulse path', () => {
     } finally {
       dispose();
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('a held foot-anchored stroke keeps the cell it pressed on', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  const eyeSide = {
+    origin: { x: cellW(20), y: bandY(20), z: cellW(30) },
+    lookAt: { x: cellW(30), y: 0, z: cellW(30) },
+  };
+
+  for (const held of ['stamp', 'smooth'] as const) {
+    it(`${held}: a cap that flips tread to riser does not walk the anchor`, () => {
+      vi.useFakeTimers();
+      setBrushTool(held);
+      const mirror = flatWorld();
+      let face: PickFace = 'tread';
+      const aimed = (): TerrainRayPick => ({ ...LAYERED_RISER_PICK, face });
+      const { attempts, fire, dispose } = driveInput(mirror, {
+        ...eyeSide,
+        pickCell: aimed,
+        pickInColumn: aimed,
+      });
+      try {
+        fire('pointerdown', {});
+        expect(attempts).toHaveLength(1);
+        const pressed = { x: attempts[0]!.x, y: attempts[0]!.y };
+        // The raise the press just made turns the pinned column's cap into a
+        // riser under the unchanged ray.
+        face = 'riser';
+        vi.advanceTimersByTime(repeatDelayMs(0));
+        expect(attempts).toHaveLength(2);
+        expect({ x: attempts[1]!.x, y: attempts[1]!.y }).toEqual(pressed);
+      } finally {
+        dispose();
+      }
+    });
+  }
+
+  it('a pointer move re-derives the anchor from the new aim', () => {
+    vi.useFakeTimers();
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    let face: PickFace = 'tread';
+    const aimed = (): TerrainRayPick => ({ ...LAYERED_RISER_PICK, face });
+    const { attempts, fire, dispose } = driveInput(mirror, {
+      ...eyeSide,
+      pickCell: aimed,
+      pickInColumn: aimed,
+    });
+    try {
+      fire('pointerdown', {});
+      const pressed = { x: attempts[0]!.x, y: attempts[0]!.y };
+      face = 'riser';
+      fire('pointermove', { clientX: CENTRE_X + 60, clientY: CENTRE_Y + 20 });
+      vi.advanceTimersByTime(repeatDelayMs(0));
+      expect(attempts).toHaveLength(2);
+      expect({ x: attempts[1]!.x, y: attempts[1]!.y }).not.toEqual(pressed);
+    } finally {
+      dispose();
     }
   });
 });
