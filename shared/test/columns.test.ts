@@ -109,9 +109,8 @@ describe('highestCeilingUnderSpan', () => {
 
 describe('bandFillAt — drag-fill material reach (lane/drag-fill)', () => {
   // Fill admission is material reach toward the write level, not drawn
-  // coverage: spanIndexCoveringBand rounds caps UP to the drawn level, so a
-  // ceiling that merely touches a drawn band floor must still fill toward
-  // the target. bandFillAt keeps its own raw-ceiling check for this reason.
+  // coverage: a ceiling that merely touches a drawn band floor must still
+  // fill toward the target.
   const BAND = 2;
   const LEVEL = BAND * BAND_HEIGHT;
 
@@ -147,32 +146,33 @@ describe('bandFillAt — drag-fill material reach (lane/drag-fill)', () => {
     expect(bandFillAt(map, 0, 0, BAND)).toBeNull();
   });
 
-  it('inserts an overhang across a true gap', () => {
+  it('inserts an overhang across a gap with room under the slab', () => {
     const map = world();
     setColumn(map, 0, 0, [
-      { floor: BEDROCK_FLOOR, ceiling: 16 },
-      { floor: 40, ceiling: 48 },
+      { floor: BEDROCK_FLOOR, ceiling: 4 },
+      { floor: 64, ceiling: 80 },
     ]);
     const fill = bandFillAt(map, 0, 0, BAND);
     expect(fill).toEqual({ kind: 'overhang' });
     applyBandFill(map, 0, 0, fill!, LEVEL);
-    // Inserted material reaches the write level.
-    const spans = readSpans(map, 0, 0);
-    expect(spans.some((s) => s.floor <= LEVEL && LEVEL <= s.ceiling)).toBe(true);
+    // The slab reaches the write level and the ground under it is untouched.
+    expect(readSpans(map, 0, 0)).toEqual([
+      { floor: BEDROCK_FLOOR, ceiling: 4 },
+      { floor: LEVEL - BAND_HEIGHT + 1, ceiling: LEVEL },
+      { floor: 64, ceiling: 80 },
+    ]);
   });
 
-  it('keeps a drawn gap layered after the overhang insert', () => {
-    const map = world();
-    setColumn(map, 0, 0, [
-      { floor: BEDROCK_FLOOR, ceiling: 16 },
-      { floor: 64, ceiling: 80 },
-    ]);
-    const fill = bandFillAt(map, 0, 0, BAND);
-    expect(fill).toEqual({ kind: 'overhang' });
-    applyBandFill(map, 0, 0, fill!, LEVEL);
-    expect(readSpans(map, 0, 0)).toEqual([
-      { floor: BEDROCK_FLOOR, ceiling: LEVEL },
-      { floor: 64, ceiling: 80 },
-    ]);
+  it('refuses a slab that would weld to the ground under it (overhangs.md 2026-08-27)', () => {
+    // One carve opens a single drawn band: too thin to hold a slab, and the
+    // fill that welded down was the reported carve-filling bug.
+    for (const groundCeiling of [16, 24, 31]) {
+      const map = world();
+      setColumn(map, 0, 0, [
+        { floor: BEDROCK_FLOOR, ceiling: groundCeiling },
+        { floor: 40, ceiling: 48 },
+      ]);
+      expect([groundCeiling, bandFillAt(map, 0, 0, BAND)]).toEqual([groundCeiling, null]);
+    }
   });
 });
