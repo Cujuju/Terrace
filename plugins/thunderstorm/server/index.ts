@@ -37,10 +37,6 @@ const systems = createDiscSystems({
 
 let tickCount = 0;
 
-export function livingSystems(): ReturnType<typeof systems.systems> {
-  return systems.systems();
-}
-
 export function systemStates(): ReturnType<typeof systems.states> {
   return systems.states(windVelocity());
 }
@@ -50,8 +46,6 @@ export function wetnessAt(x: number, y: number): number {
 }
 
 export function spawnOne(): boolean {
-  if (systems.isForced()) return false;
-  if (systems.systems().length >= systems.capFor(currentWorldSize)) return false;
   return systems.spawnOne(currentWorldSize) !== null;
 }
 

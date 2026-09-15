@@ -27,7 +27,6 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { createMassSlots } from './discSlots.ts';
 import {
   buildDeckLayout,
@@ -49,7 +48,6 @@ import { CLOUD_BASE_WORLD_Y, CLOUD_HEADROOM_WORLD_UNITS } from './precipitation.
 import { DISC_RENDER_ORDER } from './discRig.ts';
 import { compose, discard } from '../../render/materialSlots.ts';
 import { instanceMatrix } from '../../render/instanceMatrix.ts';
-import type { GroundShadeDisc } from '../types.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
 
 const TWO_PI = Math.PI * 2;
@@ -98,17 +96,6 @@ export function puffsForCoverage(sizeFraction: number): number {
 const SEED_HASH_TIER_JITTER = 7.31;
 const SEED_HASH_PUFF_SIZE = 5.7;
 const SEED_HASH_PUFF_ASPECT = 3.37;
-
-export function deckShadeDisc(disc: InterpolatedDisc, darkness: number): GroundShadeDisc {
-  return {
-    x: disc.x * CELL_WORLD_SIZE,
-    z: disc.y * CELL_WORLD_SIZE,
-    y: DECK_BASE_WORLD_Y,
-    radius: disc.radius * CELL_WORLD_SIZE,
-    darkness: darkness * disc.intensity,
-    inner: DECK_RIM_FADE_START,
-  };
-}
 
 export interface CumulusDeckSpec {
   readonly maxMasses: number;

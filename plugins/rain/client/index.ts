@@ -1,9 +1,9 @@
-import { CELL_WORLD_SIZE } from '@terrace/shared';
 import rainLoopUrl from './assets/rain-loop.wav?url';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
   createDiscSystemsView,
   deckShadeFrom,
+  discWeightUnderCamera,
 } from '../../../client/src/plugins/kit/discSystemsView.ts';
 import type { DiscRig } from '../../../client/src/plugins/kit/discRig.ts';
 import { MAX_ACTIVE_SYSTEMS, RAIN_PLUGIN_NAME, RAIN_SYSTEMS_MESSAGE } from '../protocol.ts';
@@ -31,23 +31,6 @@ const view = createDiscSystemsView<DiscRig>({
   },
 });
 
-function rainWeightUnderCamera(ctx: ClientPluginCtx): number {
-  const camera = ctx.cameraPosition();
-  const cameraCellX = camera.x / CELL_WORLD_SIZE;
-  const cameraCellY = camera.z / CELL_WORLD_SIZE;
-  let loudest = 0;
-  for (const disc of view.poses().values()) {
-    if (disc.intensity <= 0 || disc.radius <= 0) continue;
-    const dx = cameraCellX - disc.x;
-    const dy = cameraCellY - disc.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    if (distance >= disc.radius) continue;
-    const weight = disc.intensity * (1 - distance / disc.radius);
-    if (weight > loudest) loudest = weight;
-  }
-  return Math.min(1, Math.max(0, loudest));
-}
-
 export const clientPlugin: TerraceClientPlugin = {
   name: RAIN_PLUGIN_NAME,
 
@@ -59,9 +42,9 @@ export const clientPlugin: TerraceClientPlugin = {
     view.attach(ctx);
     ctx.audio.preload(rainLoopUrl);
     ctx.publishGroundShade(deckShadeFrom(view, RAIN_SHADE_DARKNESS));
-    ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
+    ctx.publishGauge(WEIGHT_GAUGE_KEY, () => discWeightUnderCamera(view, ctx));
     ctx.onFrame(() => {
-      ctx.audio.ambience(rainLoopUrl, rainWeightUnderCamera(ctx));
+      ctx.audio.ambience(rainLoopUrl, discWeightUnderCamera(view, ctx));
     });
   },
 
