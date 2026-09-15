@@ -1,0 +1,185 @@
+import { MAX_BRUSH_RADIUS, MAX_DRAG_SWEEP_CELLS, MIN_BRUSH_RADIUS } from '../constants.ts';
+import { chebyshevDistance } from '../grid.ts';
+import {
+  MAX_BAND,
+  MIN_BAND,
+  SCULPT_PROFILES,
+  SCULPT_TOOLS,
+  TOOLS_WITHOUT_EDGE_PROFILE,
+} from '../sculpt/options.ts';
+import type {
+  ResolvedSculptOptions,
+  SculptProfile,
+  SculptTool,
+} from '../sculpt/options.ts';
+import type { CellDiff } from '../sculpt/diff.ts';
+
+export interface SculptIntent {
+  type: 'sculpt';
+  x: number;
+  y: number;
+  radius: number;
+  dir: 1 | -1;
+  tool?: SculptTool;
+  profile?: SculptProfile;
+  targetBand?: number;
+  spanBand?: number;
+  fromX?: number;
+  fromY?: number;
+  seq?: number;
+}
+
+/** What an intent resolves to: only the wire-reachable tools, never a library one. */
+export interface ResolvedWireSculptOptions extends ResolvedSculptOptions {
+  readonly tool: SculptTool;
+}
+
+export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
+  tool: 'stamp',
+  profile: 'soft',
+  spill: 'banded',
+  targetBand: null,
+  spanBand: null,
+  anchor: 'clicked',
+  sweepFrom: null,
+};
+
+export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
+
+export function sculptProfileOf(tool: SculptTool, profile: SculptProfile): SculptProfile {
+  return TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? EDGELESS_SCULPT_PROFILE : profile;
+}
+
+export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions {
+  const tool = intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
+  const targetBand =
+    tool === 'drag' ? (intent.targetBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.targetBand;
+  return {
+    tool,
+    profile: sculptProfileOf(tool, intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
+    spill: WIRE_DEFAULT_SCULPT_OPTIONS.spill,
+    anchor: targetBand !== null ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
+    targetBand,
+    spanBand: intent.spanBand ?? null,
+    sweepFrom:
+      tool === 'drag' && intent.fromX !== undefined && intent.fromY !== undefined
+        ? { x: intent.fromX, y: intent.fromY }
+        : null,
+  };
+}
+
+export function sculptSweepSteps(intent: SculptIntent): number {
+  if (intent.fromX === undefined || intent.fromY === undefined) return 1;
+  return Math.max(1, chebyshevDistance(intent.fromX, intent.fromY, intent.x, intent.y));
+}
+
+export type SculptDeniedReason =
+  | 'malformed'
+  | 'locked'
+  | 'plugin-denied'
+  | 'plugin-modified-invalid'
+  | 'server-fault';
+
+export interface SculptDeniedMessage {
+  type: 'sculptDenied';
+  seq: number;
+  reason?: SculptDeniedReason;
+  detail?: string;
+}
+
+export interface SculptAppliedMessage {
+  type: 'sculptApplied';
+  seq: number;
+}
+
+export interface TerrainDiffMessage {
+  type: 'terrainDiff';
+  cells: CellDiff[];
+}
+
+export function validateSculptIntent(
+  msg: unknown,
+  worldSize: number,
+): SculptIntent | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (m.type !== 'sculpt') return null;
+
+  const { x, y, radius, dir } = m;
+  if (!Number.isInteger(x) || (x as number) < 0 || (x as number) >= worldSize) return null;
+  if (!Number.isInteger(y) || (y as number) < 0 || (y as number) >= worldSize) return null;
+  if (
+    !Number.isInteger(radius) ||
+    (radius as number) < MIN_BRUSH_RADIUS ||
+    (radius as number) > MAX_BRUSH_RADIUS
+  ) {
+    return null;
+  }
+  if (dir !== 1 && dir !== -1) return null;
+
+  const { seq } = m;
+  if (seq !== undefined && !Number.isSafeInteger(seq)) return null;
+
+  const { tool, profile } = m;
+  if (tool !== undefined && !SCULPT_TOOLS.includes(tool as SculptTool)) return null;
+  if (tool === 'carve' && dir === 1) return null;
+  if (profile !== undefined && !SCULPT_PROFILES.includes(profile as SculptProfile)) {
+    return null;
+  }
+
+  const { targetBand } = m;
+  if (
+    targetBand !== undefined &&
+    (!Number.isInteger(targetBand) ||
+      (targetBand as number) < MIN_BAND ||
+      (targetBand as number) > MAX_BAND)
+  ) {
+    return null;
+  }
+
+  // A band travels with a drag and only with a drag: a drag without one names
+  // no lip to move and would apply as a silent, acked no-op.
+  if ((targetBand !== undefined) !== (tool === 'drag')) return null;
+
+  const { spanBand } = m;
+  if (
+    spanBand !== undefined &&
+    (!Number.isInteger(spanBand) ||
+      (spanBand as number) < MIN_BAND ||
+      (spanBand as number) > MAX_BAND)
+  ) {
+    return null;
+  }
+
+  // A drag names its lip with targetBand; its cursor cell is not the grasped
+  // cell, so a spanBand on one would be wrong where it mattered.
+  if (spanBand !== undefined && tool === 'drag') return null;
+
+  // A carve cuts the band it grasps: without one it names nothing to open and
+  // would apply as a silent, acked no-op. Optional on a stamp or smooth.
+  if (spanBand === undefined && tool === 'carve') return null;
+
+  const { fromX, fromY } = m;
+  if (fromX !== undefined || fromY !== undefined) {
+    if (tool !== 'drag') return null;
+    if (!Number.isInteger(fromX) || (fromX as number) < 0 || (fromX as number) >= worldSize) return null;
+    if (!Number.isInteger(fromY) || (fromY as number) < 0 || (fromY as number) >= worldSize) return null;
+    if (chebyshevDistance(fromX as number, fromY as number, x as number, y as number) > MAX_DRAG_SWEEP_CELLS) {
+      return null;
+    }
+  }
+
+  return {
+    type: 'sculpt',
+    x: x as number,
+    y: y as number,
+    radius: radius as number,
+    dir,
+    ...(tool !== undefined ? { tool: tool as SculptTool } : {}),
+    ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
+    ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
+    ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
+    ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
+    ...(seq !== undefined ? { seq: seq as number } : {}),
+  };
+}
