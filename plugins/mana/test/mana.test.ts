@@ -1321,6 +1321,29 @@ describe('the frontier price is quoted once, at verdict time', () => {
     expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(quoted);
   });
 
+  it('quotes a seq-less stroke too, since no repeat can claim its quote', () => {
+    const harness = bootOnTheFrontier();
+    const seqless: SculptIntent = {
+      type: 'sculpt',
+      x: FRONTIER_INTENT.x,
+      y: FRONTIER_INTENT.y,
+      radius: FRONTIER_INTENT.radius,
+      dir: FRONTIER_INTENT.dir,
+      profile: 'hard',
+    };
+    const quoted = quotedCost(harness.world, seqless);
+    expect(quoted).toBeGreaterThan(
+      sculptManaCost(MANA_PER_BAND_CELL, seqless.radius, 'hard', 'stamp'),
+    );
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(
+      handleSculptIntent({ world: harness.world, interceptors: harness.host }, PLAYER, seqless)
+        .applied,
+    ).toBe(true);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(quoted);
+  });
+
   it('the client gate debits the same frontier fee the server charges', async () => {
     const { gateLocalSculpt, setManaPool, manaPool } = await import('../client/state.ts');
     const harness = bootOnTheFrontier();
