@@ -136,18 +136,35 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     }
   });
 
-  it('widening the world floor works: wall cells inside the footprint still descend', () => {
+  function pitWithWall(pitHeight: number): Heightmap {
     const map = createHeightmap(32);
     map.cells.fill(MIN_HEIGHT + 4 * BAND_HEIGHT);
-    const floorCells: number[] = [];
     forEachFootprintOffset(3, (dx, dy) => {
-      if (dx <= 0) {
-        const i = cellIndex(map, 16 + dx, 16 + dy);
-        map.cells[i] = MIN_HEIGHT;
-        floorCells.push(i);
-      }
+      if (dx <= 0) map.cells[cellIndex(map, 16 + dx, 16 + dy)] = pitHeight;
     });
+    return map;
+  }
+
+  function cellsTotal(map: Heightmap): number {
+    let total = 0;
+    for (let i = 0; i < map.cells.length; i++) total += map.cells[i]!;
+    return total;
+  }
+
+  it('a pit already at the world floor is frozen, so the wall has nowhere to go', () => {
+    // Bedrock keeps one unit, so MIN_HEIGHT is past the lowering target and
+    // freezes. Smooth moves height; with no receiver it moves none.
+    const map = pitWithWall(MIN_HEIGHT);
     const before = Int16Array.from(map.cells);
+
+    expect(applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT)).toEqual([]);
+    expect(Array.from(map.cells)).toEqual(Array.from(before));
+  });
+
+  it('widening a pit one band above the floor works: the wall descends into it', () => {
+    const map = pitWithWall(MIN_HEIGHT + BAND_HEIGHT);
+    const before = Int16Array.from(map.cells);
+    const total = cellsTotal(map);
 
     const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
@@ -155,9 +172,10 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     let wallMoved = 0;
     forEachFootprintOffset(3, (dx, dy) => {
       const i = cellIndex(map, 16 + dx, 16 + dy);
-      if (before[i] > MIN_HEIGHT && map.cells[i] < before[i]) wallMoved++;
+      if (before[i]! > MIN_HEIGHT + BAND_HEIGHT && map.cells[i]! < before[i]!) wallMoved++;
     });
     expect(wallMoved).toBeGreaterThan(0);
+    expect(cellsTotal(map)).toBe(total);
     for (let i = 0; i < map.cells.length; i++) {
       expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
     }

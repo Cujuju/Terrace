@@ -13,7 +13,6 @@ export {
   type Heightmap,
 } from './grid.ts';
 
-import { stepTowardBand } from './bands.ts';
 import { spanIndexCoveringBand } from './columns.ts';
 import { cellIndex, type Heightmap } from './grid.ts';
 import { diffOf, type CellDiff } from './sculpt/diff.ts';
@@ -161,20 +160,14 @@ export function applySculpt(
       footprint = cells;
     }
     let anchorBounds: Map<number, SpillBand> | undefined;
-    let meltRoom: Map<number, SpillBand> | undefined;
     if (anchoredSmooth) {
       const raising = amount > 0;
       const clickedIndex = cellIndex(map, cx, cy);
       anchorBounds = new Map<number, SpillBand>();
-      meltRoom = new Map<number, SpillBand>();
       for (const i of footprint as Set<number>) {
         const k = layerSpanIndex(map, i, spanBand);
         if (k === null) continue;
         const h = graspedCeiling(map, i, k);
-        // Melting out of nothing is capped at the cell's own next drawn band:
-        // one band-step per click, per cell, whatever the stroke targets.
-        const ownStep = stepTowardBand(h, raising);
-        meltRoom.set(i, raising ? { lo: h, hi: ownStep } : { lo: ownStep, hi: h });
         if (raising ? h > anchorTarget : h < anchorTarget) {
           anchorBounds.set(i, { lo: h, hi: h });
         } else {
@@ -194,7 +187,6 @@ export function applySculpt(
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
       spanBand,
-      meltRoom === undefined ? null : { toward: amount, room: meltRoom, spent: new Map() },
     );
   }
 
