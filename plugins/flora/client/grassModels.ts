@@ -50,6 +50,9 @@ const CLUSTER_SPAN_IN_CELLS = GRASS_TUFT_CLUSTER_CELL_SPAN;
 const BLADE_COLOR = 0x3f7a26;
 const TIP_COLOR = 0xc8e07a;
 
+// Blossoms are tinted per instance, so their baked color must be identity.
+const INSTANCE_TINT_IDENTITY_COLOR = 0xffffff;
+
 const BLADE_LENGTH_IN_CELLS = 0.5;
 
 const BLADE_BASE_WIDTH_IN_CELLS = 0.09;
@@ -250,7 +253,7 @@ export function createGrassModels(): GrassModels {
   const geometries: BufferGeometry[] = [built.blade, built.tip, blossom.geometry];
   bakeSolidColor(built.blade, BLADE_COLOR);
   bakeSolidColor(built.tip, TIP_COLOR);
-  bakeSolidColor(blossom.geometry, 0xffffff);
+  bakeSolidColor(blossom.geometry, INSTANCE_TINT_IDENTITY_COLOR);
   const sharedMaterial = lambert();
   const materials: Material[] = [sharedMaterial, sharedMaterial, sharedMaterial];
 

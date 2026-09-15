@@ -112,11 +112,9 @@ function materialSignature(material: Material): string {
   ].join('|');
 }
 
-// Parts whose diffuse color is the only thing distinguishing them share one
-// white vertexColors material with the color baked into the merged geometry.
-// Eligible: opaque flat FrontSide unmapped Lamberts. Anything animated stays
-// correct because emissive/emissiveIntensity/opacity remain in the key — only
-// the diffuse color leaves it. Output is identical: white × baked = color.
+// Parts distinguished only by diffuse color share one white vertexColors
+// material with the color baked in; emissive, opacity and maps stay in the
+// key, so output is unchanged.
 function colorBlindSignature(material: Material): string | null {
   if (!(material instanceof MeshLambertMaterial)) return null;
   if (material.transparent || material.opacity < 1) return null;
@@ -268,9 +266,8 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
         uvs: uvArraysFor(part.material),
       };
       groups.set(signature, group);
-    } else if (group.material !== part.material) {
-      spentMaterials.add(part.material);
     }
+    if (group.material !== part.material) spentMaterials.add(part.material);
     const diffuse =
       blind === null ? undefined : (part.material as MeshLambertMaterial).color;
     for (const local of part.localMatrices) bakeInto(group, part.geometry, local, diffuse);
