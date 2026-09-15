@@ -6,7 +6,7 @@ export interface SnowWorld {
   isCellUnlocked(x: number, y: number): boolean;
 }
 
-export const SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA = 2;
+export const SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA = 15;
 
 export const SNOW_MIN_TERRAIN_HEIGHT =
   SEA_LEVEL + SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA * BAND_HEIGHT;
