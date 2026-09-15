@@ -6,7 +6,8 @@ import {
 } from '../../../client/src/plugins/kit/hazeBank.ts';
 import { FOG_COVERAGE_FRACTION, FOG_PLUGIN_NAME, MAX_ACTIVE_SYSTEMS } from '../protocol.ts';
 import { plugin as fogPlugin, wetnessAt } from '../server/index.ts';
-import { FOG_HAZE_STRENGTH, FOG_RIG_DRAW_OBJECTS } from '../client/rig.ts';
+import { FOG_HAZE_STRENGTH, FOG_KIND_DRAW_OBJECTS } from '../client/rig.ts';
+import { HAZE_DECK_DRAW_OBJECTS } from '../../../client/src/plugins/kit/hazeDeck.ts';
 
 describe('the haze bank', () => {
   it('stays below the height a player can raise land clear of it', () => {
@@ -37,7 +38,7 @@ describe('the haze bank', () => {
   it('gives fog the whole bank, where a precipitating kind gets a third', () => {
     expect(FOG_HAZE_STRENGTH).toBe(1);
     expect(PRECIPITATION_HAZE_SCALE).toBeLessThan(FOG_HAZE_STRENGTH);
-    expect(FOG_RIG_DRAW_OBJECTS).toBe(HAZE_LAYERS.length);
+    expect(FOG_KIND_DRAW_OBJECTS).toBe(HAZE_DECK_DRAW_OBJECTS);
   });
 });
 

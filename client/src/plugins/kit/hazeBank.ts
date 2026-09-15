@@ -1,10 +1,4 @@
-import {
-  BufferGeometry,
-  DoubleSide,
-  Float32BufferAttribute,
-  Mesh,
-} from 'three';
-import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { BufferGeometry, Float32BufferAttribute } from 'three';
 
 const TWO_PI = Math.PI * 2;
 
@@ -88,53 +82,4 @@ export function buildHazeGeometry(): BufferGeometry {
   geometry.setAttribute('color', new Float32BufferAttribute(colors, 4));
   geometry.setIndex(indices);
   return geometry;
-}
-
-export interface HazeBank {
-  readonly sheets: readonly Mesh<BufferGeometry, MeshBasicNodeMaterial>[];
-  update(worldRadius: number, intensity: number, elapsed: number): void;
-  dispose(): void;
-}
-
-export function createHazeBank(
-  geometry: BufferGeometry,
-  strength: number,
-  renderOrder: number,
-): HazeBank {
-  const materials: MeshBasicNodeMaterial[] = [];
-  const sheets: Mesh<BufferGeometry, MeshBasicNodeMaterial>[] = [];
-
-  for (const _layer of HAZE_LAYERS) {
-    const material = new MeshBasicNodeMaterial({
-      color: HAZE_COLOR,
-      transparent: true,
-      opacity: 0,
-      vertexColors: true,
-      side: DoubleSide,
-      depthWrite: false,
-    });
-    const sheet = new Mesh(geometry, material);
-    sheet.renderOrder = renderOrder;
-    materials.push(material);
-    sheets.push(sheet);
-  }
-
-  return {
-    sheets,
-
-    update(worldRadius: number, intensity: number, elapsed: number): void {
-      for (let index = 0; index < sheets.length; index++) {
-        const layer = HAZE_LAYERS[index]!;
-        const sheet = sheets[index]!;
-        materials[index]!.opacity = layer.opacity * strength * intensity;
-        sheet.scale.setScalar(worldRadius * layer.radiusScale);
-        sheet.rotation.y = elapsed * layer.spinHz * TWO_PI;
-        sheet.position.y = layer.height + Math.sin(elapsed * layer.bobHz * TWO_PI) * layer.bobUnits;
-      }
-    },
-
-    dispose(): void {
-      for (const material of materials) material.dispose();
-    },
-  };
 }

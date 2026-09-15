@@ -99,10 +99,10 @@ export const plugin: TerracePlugin = {
         detail: `${FOG_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
       };
     }
-    if (systems.systems().length >= MAX_ACTIVE_SYSTEMS) {
+    const system = systems.spawnAt(world.worldSize, site.x, site.y);
+    if (system === null) {
       return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} fog systems are already in the sky` };
     }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
     world.broadcast(FOG_SYSTEMS_MESSAGE, { systems: systemStates() });
     return { ok: true, detail: `fog system ${system.id} gathering at (${site.x}, ${site.y})` };
   },

@@ -23,7 +23,7 @@ import {
   createThunderstormRigs,
   DRY_BOLT_DRAW_OBJECTS,
   LIGHT_BANK_DRAW_OBJECTS,
-  THUNDERSTORM_DECK_DRAW_OBJECTS,
+  THUNDERSTORM_KIND_DRAW_OBJECTS,
   THUNDERSTORM_RIG_DRAW_OBJECTS,
   THUNDERSTORM_SHADE_DARKNESS,
   type ThunderstormRig,
@@ -42,6 +42,7 @@ const WEIGHT_GAUGE_KEY = 'weightUnderCamera';
 const view = createDiscSystemsView<ThunderstormRig>({
   systemsMessage: THUNDERSTORM_SYSTEMS_MESSAGE,
   containerName: `${THUNDERSTORM_PLUGIN_NAME}:systems`,
+  maxSystems: MAX_ACTIVE_SYSTEMS,
   createPool: (ctx) => {
     rigs = createThunderstormRigs(ctx);
     return rigs;
@@ -50,12 +51,12 @@ const view = createDiscSystemsView<ThunderstormRig>({
     rig.update(disc, elapsed, dt, reduced);
   },
   deck: () => rigs?.deck ?? null,
+  kindObjects: () => rigs?.kindObjects() ?? [],
   attachExtras: (ctx: ClientPluginCtx) => {
     const pool = rigs;
     if (pool === null) return;
     ctx.layer.add(pool.dryBolt.root);
     ctx.layer.add(pool.lightBank);
-    ctx.layer.add(pool.deck.object);
   },
   frameExtras: (dt, reduced) => {
     governor.advance(dt);
@@ -152,7 +153,7 @@ export const clientPlugin: TerraceClientPlugin = {
     MAX_ACTIVE_SYSTEMS * THUNDERSTORM_RIG_DRAW_OBJECTS +
     DRY_BOLT_DRAW_OBJECTS +
     LIGHT_BANK_DRAW_OBJECTS +
-    THUNDERSTORM_DECK_DRAW_OBJECTS,
+    THUNDERSTORM_KIND_DRAW_OBJECTS,
 
   groundShadeBudget: MAX_ACTIVE_SYSTEMS,
 

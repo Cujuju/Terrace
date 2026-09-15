@@ -13,6 +13,7 @@ import {
   MAX_INTERPOLATION_SECONDS,
   MIN_INTERPOLATION_SECONDS,
 } from '../../../client/src/plugins/kit/discInterpolator.ts';
+import { EARLY_MESSAGE_WINDOW_FRACTION } from '../../../client/src/plugins/kit/interpolator.ts';
 import {
   CLOUD_BASE_WORLD_Y,
   MAX_GROUND_WORLD_Y,
@@ -31,6 +32,20 @@ describe('parseDiscSystemsPayload', () => {
   it('accepts a well-formed payload unchanged', () => {
     const payload = { systems: [system(1), system(2, { radius: 12 })] };
     expect(parseDiscSystemsPayload(payload)).toEqual(payload.systems);
+  });
+
+  it('requires a positive integer id, keeps the first of duplicate ids, and stops at the ceiling', () => {
+    const parsed = parseDiscSystemsPayload({
+      systems: [
+        system(1, { x: 1 }),
+        system(1, { x: 2 }),
+        { ...system(2), id: 1.5 },
+        { ...system(3), id: -1 },
+        system(4),
+        system(5),
+      ],
+    }, 2);
+    expect(parsed).toEqual([system(1, { x: 1 }), system(4)]);
   });
 
   it('reads an empty list as a clear sky, not as a failure', () => {
@@ -132,10 +147,32 @@ describe('DiscInterpolator', () => {
 
     const fast = new DiscInterpolator();
     fast.receive([system(1, { x: 0 })]);
-    fast.advance(1e-9);
-    fast.receive([system(1, { x: 10 })]);
+    let gap = DEFAULT_INTERPOLATION_SECONDS;
+    while (gap > MIN_INTERPOLATION_SECONDS) {
+      gap *= EARLY_MESSAGE_WINDOW_FRACTION;
+      fast.advance(gap);
+      fast.receive([system(1, { x: 10 })]);
+    }
     fast.advance(MIN_INTERPOLATION_SECONDS);
     expect(fast.progress()).toBe(1);
+  });
+
+  it('holds the learned window when a message arrives early (an action broadcast)', () => {
+    const interpolator = new DiscInterpolator();
+    interpolator.receive([system(1, { x: 0 })]);
+    interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
+    interpolator.receive([system(1, { x: 10 })]);
+    interpolator.advance(DEFAULT_INTERPOLATION_SECONDS * 0.2);
+    interpolator.receive([system(1, { x: 20 })]);
+    interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
+    expect(interpolator.progress()).toBeCloseTo(0.5, 9);
+  });
+
+  it('an empty sky drops every id', () => {
+    const interpolator = new DiscInterpolator();
+    interpolator.receive([system(1), system(2)]);
+    interpolator.receive([]);
+    expect(interpolator.sample().size).toBe(0);
   });
 
   it('starts the next segment from the RENDERED pose, not the last message', () => {
