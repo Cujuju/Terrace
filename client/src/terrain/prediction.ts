@@ -126,24 +126,34 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   const cellIsKnown = (x: number, y: number): boolean =>
     x < 0 || y < 0 || x >= size || y >= size || hasChunk(mirror, chunkOfCell(x, y));
 
+  const cellAndHaloAreKnown = (x: number, y: number): boolean =>
+    cellIsKnown(x, y) &&
+    cellIsKnown(x - PREDICTION_HALO_CELLS, y) &&
+    cellIsKnown(x + PREDICTION_HALO_CELLS, y) &&
+    cellIsKnown(x, y - PREDICTION_HALO_CELLS) &&
+    cellIsKnown(x, y + PREDICTION_HALO_CELLS);
+
   const discIsKnown = (cx: number, cy: number, radius: number): boolean => {
     let known = true;
     forEachFootprintOffset(radius, (dx, dy) => {
       if (!known) return;
-      const x = cx + dx;
-      const y = cy + dy;
-      if (
-        !cellIsKnown(x, y) ||
-        !cellIsKnown(x - PREDICTION_HALO_CELLS, y) ||
-        !cellIsKnown(x + PREDICTION_HALO_CELLS, y) ||
-        !cellIsKnown(x, y - PREDICTION_HALO_CELLS) ||
-        !cellIsKnown(x, y + PREDICTION_HALO_CELLS)
-      ) {
-        known = false;
-      }
+      if (!cellAndHaloAreKnown(cx + dx, cy + dy)) known = false;
     });
     return known;
   };
+
+  /**
+   * The reach a prediction actually had, checked against the same halo. A
+   * relaxing tool cascades as far as the terrain lets it, so the footprint
+   * cannot bound it: only the cells it moved can.
+   */
+  const reachIsKnown = (p: PendingPrediction): boolean => {
+    for (const i of p.indices) {
+      if (!cellAndHaloAreKnown(cellX(size, i), cellY(size, i))) return false;
+    }
+    return true;
+  };
+
   const canPredictFaithfully = (intent: SculptIntent): boolean => {
     const { x, y } = intent;
     const options = sculptOptionsOf(intent);
@@ -318,6 +328,14 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       // Settled ground: the intent left the client but changes nothing visible.
       if (prediction.indices.length === 0) {
         pending.pop();
+        markGhost(validated.seq, nowMs);
+      } else if (!reachIsKnown(prediction)) {
+        // The cascade ran into ground we were never sent, so what it produced is
+        // not what the server will send back: drop it and ghost instead of
+        // showing terrain that snaps back on the next diff.
+        restoreToBase();
+        pending.pop();
+        replayPending();
         markGhost(validated.seq, nowMs);
       }
 
