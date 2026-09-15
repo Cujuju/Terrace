@@ -28,7 +28,6 @@ export {
 } from './grid.ts';
 
 import {
-  bandCrossingStep,
   bandLevelHeight,
   drawnBandOfSample,
   stepTowardBand,
@@ -232,11 +231,17 @@ function forEachFootprintCell(
   });
 }
 
-/** A press displaces at least far enough to leave the drawn band it starts in. */
-function pressDelta(amount: number, from: number): number {
+/**
+ * One stroke's step for one cell: an anchored press lands on the canonical
+ * level of the drawn band it crosses into, never short of it; a free press
+ * moves `amount`.
+ */
+function pressDelta(amount: number, from: number, anchored: boolean): number {
+  if (!anchored) return amount;
   const raising = amount > 0;
   const magnitude = amount < 0 ? -amount : amount;
-  const crossing = bandCrossingStep(from, raising);
+  const level = stepTowardBand(from, raising);
+  const crossing = raising ? level - from : from - level;
   const step = crossing > magnitude ? crossing : magnitude;
   return raising ? step : -step;
 }
@@ -337,12 +342,7 @@ export function applyBrush(
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
     if (anchored && (raising ? before >= target : before <= target)) return;
-    const delta = brushDelta(
-      anchored ? pressDelta(amount, before) : amount,
-      radius,
-      dist,
-      profile,
-    );
+    const delta = brushDelta(pressDelta(amount, before, anchored), radius, dist, profile);
     if (delta === 0) return;
     let moved = before + delta;
     if (anchored) {
@@ -383,7 +383,7 @@ export function applyLevelFillBrush(
   if (anchor !== 'free') {
     const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
     fillTowardTarget(
-      map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand, spreadable,
+      map, cx, cy, radius, amount, changed, raising, targetHeight, true, spanBand, spreadable,
     );
     return;
   }
@@ -406,7 +406,7 @@ export function applyLevelFillBrush(
   }
 
   const targetHeight = clampHeight(bandLevelHeight(extremeBand + (raising ? 1 : -1)));
-  fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
+  fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, false, spanBand);
 }
 
 export function sculptSweepRadius(
@@ -430,6 +430,9 @@ export function softApronBandDrop(distPastCore: number): number {
   const band = Math.floor((distPastCore + SOFT_APRON_TREAD_CELLS - 1) / SOFT_APRON_TREAD_CELLS);
   return band < SOFT_APRON_MAX_BANDS ? band : SOFT_APRON_MAX_BANDS;
 }
+
+/** The apron only exists under a soft clicked stamp, which is an anchored stroke. */
+const APRON_IS_ANCHORED = true;
 
 function applySoftApron(
   map: Heightmap,
@@ -465,7 +468,7 @@ function applySoftApron(
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
     if (raising ? before >= target : before <= target) return;
-    const moved = before + pressDelta(amount, before);
+    const moved = before + pressDelta(amount, before, APRON_IS_ANCHORED);
     const h = clampHeight(raising ? (moved > target ? target : moved) : (moved < target ? target : moved));
     if (h !== before) {
       writeGraspedCeiling(map, i, k, h);
@@ -483,6 +486,7 @@ function fillTowardTarget(
   changed: Set<number>,
   raising: boolean,
   targetHeight: number,
+  anchored: boolean,
   spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
   spreadable: ReadonlySet<number> | null = null,
 ): void {
@@ -492,7 +496,7 @@ function fillTowardTarget(
     if (k === null) return;
     const h = graspedCeiling(map, i, k);
     if (raising ? h >= targetHeight : h <= targetHeight) return;
-    const moved = h + pressDelta(amount, h);
+    const moved = h + pressDelta(amount, h, anchored);
     const next = raising
       ? moved > targetHeight ? targetHeight : moved
       : moved < targetHeight ? targetHeight : moved;
@@ -813,13 +817,13 @@ interface SpillBand {
 type SpillBoundsOf = (index: number) => SpillBand | null;
 
 /**
- * An anchored stroke's melt: which cells the stroke bounds, and the direction
- * it melts them. A bounded pair that cannot exchange still moves its free side
- * this way.
+ * An anchored stroke's melt: the direction it melts, and how far out of
+ * nothing it may move each cell — one drawn band from where that cell
+ * started.
  */
 interface AnchoredMelt {
   readonly toward: number;
-  readonly bounds: ReadonlyMap<number, SpillBand>;
+  readonly room: ReadonlyMap<number, SpillBand>;
 }
 
 function movePair(
@@ -851,13 +855,21 @@ function movePair(
         // A held side stops the exchange; the free side still melts toward the
         // stroke's target, and only a cell the stroke itself bounds may do it.
         if (melt !== null) {
-          if (melt.toward > 0 && dropCap <= 0 && riseCap > 0 && melt.bounds.has(loIdx)) {
-            cells[lo] += riseCap;
-            return true;
+          if (melt.toward > 0 && dropCap <= 0 && riseCap > 0) {
+            const room = melt.room.get(loIdx);
+            const gain = room === undefined ? 0 : Math.min(riseCap, room.hi - cells[lo]);
+            if (gain > 0) {
+              cells[lo] += gain;
+              return true;
+            }
           }
-          if (melt.toward < 0 && riseCap <= 0 && dropCap > 0 && melt.bounds.has(hiIdx)) {
-            cells[hi] -= dropCap;
-            return true;
+          if (melt.toward < 0 && riseCap <= 0 && dropCap > 0) {
+            const room = melt.room.get(hiIdx);
+            const loss = room === undefined ? 0 : Math.min(dropCap, cells[hi] - room.lo);
+            if (loss > 0) {
+              cells[hi] -= loss;
+              return true;
+            }
           }
         }
         return false;
@@ -1208,14 +1220,20 @@ export function applySculpt(
       footprint = cells;
     }
     let anchorBounds: Map<number, SpillBand> | undefined;
+    let meltRoom: Map<number, SpillBand> | undefined;
     if (anchoredSmooth) {
       const raising = amount > 0;
       const clickedIndex = cellIndex(map, cx, cy);
       anchorBounds = new Map<number, SpillBand>();
+      meltRoom = new Map<number, SpillBand>();
       for (const i of footprint as Set<number>) {
         const k = layerSpanIndex(map, i, spanBand);
         if (k === null) continue;
         const h = graspedCeiling(map, i, k);
+        // Melting out of nothing is capped at the cell's own next drawn band:
+        // one band-step per click, per cell, whatever the stroke targets.
+        const ownStep = stepTowardBand(h, raising);
+        meltRoom.set(i, raising ? { lo: h, hi: ownStep } : { lo: ownStep, hi: h });
         if (raising ? h > anchorTarget : h < anchorTarget) {
           anchorBounds.set(i, { lo: h, hi: h });
         } else {
@@ -1235,7 +1253,7 @@ export function applySculpt(
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
       spanBand,
-      anchorBounds === undefined ? null : { toward: amount, bounds: anchorBounds },
+      meltRoom === undefined ? null : { toward: amount, room: meltRoom },
     );
   }
 
