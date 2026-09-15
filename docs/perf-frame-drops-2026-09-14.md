@@ -212,12 +212,33 @@ materials per mesh, no geometry groups, no second pass anywhere (picking is rayc
 reveal/ground-shade add no renders, flora never calls applyRevealClip).
 No fix committed; nothing to optimize here — flora's 15 draws are legitimate.
 
+## Phase B3 — wildlife distance LOD (plugins/wildlife/client/index.ts, models.ts)
+
+Beyond 120 world units a creature holds its pose: placement refreshes every frame but
+ground sampling, phase advance, joint animation and palette capture run at 1/6 frames
+(staggered by id), plus on gait change and first sight. `models.draw` gains optional
+`holdPose`; frozen phase + unchanged gait addresses the already-captured palette slot, so the
+hold is always visually valid (≤100 ms staleness, subpixel at distance). Nearby creatures
+take the full path unconditionally. Far view cam 274, 5 stable polls, vs pre-LOD rows:
+
+| | pre-LOD (E/G) | B3 after | delta |
+|---|---|---|---|
+| wildlife JS row | 0.93–0.98 | 0.23–0.29 | **~4×** |
+| upload | ~280 KB/f (post-B1) | 135–147 KB/f | **~−50%** (held entities skip palette capture) |
+| render p50 | 5.1–5.5 | 2.8–3.0 | −2+ (LOD + B1 combined vs G) |
+| draws | 211 | ~180–193 | placement still draws every frame, as designed |
+
+Taken over mid-flight: worker's 2-file diff reviewed (hold-validity invariants hold —
+first-sight/gait-change force full, cleared capture flags bypassed only under holdPose),
+`cameraPosition()` API verified, client typecheck green, probe-verified above, committed.
+
 ## Evidence index (all untracked, all kept per instruction)
 
 - `.census/census-perfprobe-G-farview-drawcalls.json` — far-view census + stats + profile (main exhibit)
 - `.census/census-perfprobe-E-hurting-drawcalls.json` — overview ditto
 - `.census/census-perfprobe-A-overview.json` — superseded (wrong counter; documents the bug)
 - `.census/census-core-sculpt.json` — core-only idle vs sculpted (upload rows included)
+- `.census/census-phaseB-b3.json` — B3 LOD verify (wildlife row + upload, 5 polls)
 - `.perf-probe/measureE.ps1`, `measureF.ps1`, `dolly.ps1`, `measureH.ps1` — working instruments
 - `.perf-probe/measureB/C/D.ps1`, `check*.ps1`, `spytrace.ps1` — iteration trail
 - `.perf-probe/perf.log` — probe server tick/stall log
