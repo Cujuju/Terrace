@@ -92,7 +92,10 @@ const connection = connect({
   },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
-  onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
+  onLivePlugins: (names) => {
+    pluginHost.resetWorld();
+    pluginHost.syncLivePlugins(names);
+  },
   onPerfLoggingState: applyServerPerfLogging,
 });
 bindPerfLoggingSender({

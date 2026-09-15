@@ -18,6 +18,10 @@ import { createAudioVoices, type AmbienceLayer, type AudioVoices } from './audio
 import type { MusicGenerator, MusicOutlet, PluginAudio, SfxOptions } from '../plugins/types.ts';
 import type { Viewport } from '../render/scene.ts';
 
+// A weight published every frame re-arms the fade ramp on every change;
+// steps below one 8-bit gain quantum are inaudible and skipped.
+export const AMBIENCE_WEIGHT_DEADBAND = 1 / 256;
+
 interface PluginAudioState {
   readonly name: string;
   readonly ambience: Map<string, AmbienceLayer>;
@@ -142,6 +146,9 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
           state.ambience.set(url, layer);
         } else {
           if (layer.weight === target) return;
+          if (target > SILENT_GAIN && Math.abs(layer.weight - target) < AMBIENCE_WEIGHT_DEADBAND) {
+            return;
+          }
           layer.weight = target;
           if (
             AUDIO_DEBUG &&

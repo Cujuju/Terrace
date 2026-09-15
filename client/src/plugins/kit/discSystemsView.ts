@@ -1,4 +1,4 @@
-import { Group } from 'three';
+import { Group, type Object3D } from 'three';
 import type { ClientPluginCtx } from '../types.ts';
 import { DiscInterpolator, type InterpolatedDisc } from './discInterpolator.ts';
 import type { RigPool } from './discRig.ts';
@@ -12,9 +12,11 @@ export const MAX_ANIMATION_STEP_SECONDS = 0.1;
 export interface DiscSystemsViewSpec<R extends { readonly root: Group }> {
   readonly systemsMessage: string;
   readonly containerName: string;
+  readonly maxSystems?: number;
   createPool(ctx: ClientPluginCtx): RigPool<R>;
   update(rig: R, disc: InterpolatedDisc, elapsed: number, dt: number, reduced: boolean): void;
   deck?(): CumulusDeck | null;
+  kindObjects?(): readonly Object3D[];
   attachExtras?(ctx: ClientPluginCtx): void;
   frameExtras?(dt: number, reduced: boolean): void;
   disposeExtras?(): void;
@@ -41,6 +43,8 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
   let context: ClientPluginCtx | null = null;
   let unsubscribeMessages: (() => void) | null = null;
   let unsubscribeFrames: (() => void) | null = null;
+  let unsubscribeReset: (() => void) | null = null;
+  const kindObjects: Object3D[] = [];
 
   function reconcileViews(sampled: ReadonlyMap<number, InterpolatedDisc>): void {
     const rigs = pool;
@@ -93,12 +97,22 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
       container.name = spec.containerName;
       ctx.layer.add(container);
 
+      const deck = spec.deck?.()?.object;
+      if (deck !== undefined) kindObjects.push(deck);
+      for (const object of spec.kindObjects?.() ?? []) kindObjects.push(object);
+      for (const object of kindObjects) ctx.layer.add(object);
+
       spec.attachExtras?.(ctx);
 
       unsubscribeMessages = ctx.onMessage(spec.systemsMessage, (payload) => {
-        const systems = parseDiscSystemsPayload(payload);
+        const systems = parseDiscSystemsPayload(payload, spec.maxSystems);
         if (systems === null) return;
         interpolator.receive(systems);
+      });
+
+      unsubscribeReset = ctx.onWorldReset(() => {
+        interpolator.clear();
+        reconcileViews(interpolator.sample());
       });
 
       unsubscribeFrames = ctx.onFrame((dt) => renderFrame(dt));
@@ -107,14 +121,19 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
     dispose(): void {
       unsubscribeMessages?.();
       unsubscribeFrames?.();
+      unsubscribeReset?.();
       unsubscribeMessages = null;
       unsubscribeFrames = null;
+      unsubscribeReset = null;
 
       views.clear();
       interpolator.clear();
 
       container?.clear();
       container = null;
+
+      for (const object of kindObjects) object.removeFromParent();
+      kindObjects.length = 0;
 
       spec.disposeExtras?.();
       pool?.dispose();

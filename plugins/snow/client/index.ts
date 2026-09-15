@@ -7,20 +7,14 @@ import { createDiscSystemsView } from '../../../client/src/plugins/kit/discSyste
 import type { DiscRig } from '../../../client/src/plugins/kit/discRig.ts';
 import { deckShadeDisc } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { MAX_ACTIVE_SYSTEMS, SNOW_PLUGIN_NAME, SNOW_SYSTEMS_MESSAGE } from '../protocol.ts';
-import {
-  createSnowRigs,
-  SNOW_DECK_DRAW_OBJECTS,
-  SNOW_RIG_DRAW_OBJECTS,
-  SNOW_SHADE_DARKNESS,
-  type SnowRigs,
-} from './rig.ts';
+import { createSnowRigs, SNOW_KIND_DRAW_OBJECTS, SNOW_SHADE_DARKNESS, type SnowRigs } from './rig.ts';
 
 let rigs: SnowRigs | null = null;
-let unpublishShade: (() => void) | null = null;
 
 const view = createDiscSystemsView<DiscRig>({
   systemsMessage: SNOW_SYSTEMS_MESSAGE,
   containerName: `${SNOW_PLUGIN_NAME}:systems`,
+  maxSystems: MAX_ACTIVE_SYSTEMS,
   createPool: (ctx) => {
     rigs = createSnowRigs(ctx);
     return rigs;
@@ -29,11 +23,7 @@ const view = createDiscSystemsView<DiscRig>({
     rig.update(disc, elapsed);
   },
   deck: () => rigs?.deck ?? null,
-  attachExtras: (ctx: ClientPluginCtx) => {
-    const pool = rigs;
-    if (pool === null) return;
-    ctx.layer.add(pool.deck.object);
-  },
+  kindObjects: () => rigs?.kindObjects() ?? [],
   disposeExtras: () => {
     rigs = null;
   },
@@ -53,18 +43,16 @@ function shadeDiscs(): readonly GroundShadeDisc[] {
 export const clientPlugin: TerraceClientPlugin = {
   name: SNOW_PLUGIN_NAME,
 
-  drawBudget: MAX_ACTIVE_SYSTEMS * SNOW_RIG_DRAW_OBJECTS + SNOW_DECK_DRAW_OBJECTS,
+  drawBudget: SNOW_KIND_DRAW_OBJECTS,
 
   groundShadeBudget: MAX_ACTIVE_SYSTEMS,
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
-    unpublishShade = ctx.publishGroundShade(shadeDiscs);
+    ctx.publishGroundShade(shadeDiscs);
   },
 
   dispose(): void {
-    unpublishShade?.();
-    unpublishShade = null;
     view.dispose();
   },
 };

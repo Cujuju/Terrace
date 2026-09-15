@@ -1,20 +1,11 @@
-import type { BufferGeometry } from 'three';
+import { PRECIPITATION_HAZE_SCALE } from '../../../client/src/plugins/kit/hazeBank.ts';
 import {
-  buildHazeGeometry,
-  PRECIPITATION_HAZE_SCALE,
-} from '../../../client/src/plugins/kit/hazeBank.ts';
-import {
-  createDiscRig,
-  createRigPool,
-  type DiscRig,
-  type RigPool,
-} from '../../../client/src/plugins/kit/discRig.ts';
-import {
-  createCumulusDeck,
-  CUMULUS_DECK_DRAW_OBJECTS,
-  puffsForCoverage,
-  type CumulusDeck,
-} from '../../../client/src/plugins/kit/cumulusDeck.ts';
+  createDiscKindRigs,
+  discKindDrawObjects,
+  type DiscKindDeckSpec,
+  type DiscKindRigs,
+} from '../../../client/src/plugins/kit/discKindRigs.ts';
+import { puffsForCoverage } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import {
@@ -40,55 +31,30 @@ export const SNOW_PROFILE: PrecipitationProfile = {
   innerRadiusFraction: 0,
 };
 
-export const SNOW_RIG_DRAW_OBJECTS = 5;
-
 export const SNOW_PUFF_SIZE_FRACTION = 0.13;
 
 export const SNOW_PUFFS_PER_MASS = puffsForCoverage(SNOW_PUFF_SIZE_FRACTION);
 
 export const SNOW_DECK_COLOR = 0xd6dce6;
 
+export const SNOW_DECK: DiscKindDeckSpec = {
+  puffSizeFraction: SNOW_PUFF_SIZE_FRACTION,
+  color: SNOW_DECK_COLOR,
+};
+
 export const SNOW_SHADE_DARKNESS = 0.2;
 
-export interface SnowRigs extends RigPool<DiscRig> {
-  readonly deck: CumulusDeck;
-  dispose(): void;
-}
+export const SNOW_KIND_DRAW_OBJECTS = discKindDrawObjects({ deck: SNOW_DECK, profile: SNOW_PROFILE });
+
+export type SnowRigs = DiscKindRigs;
 
 export function createSnowRigs(ctx: ClientPluginCtx): SnowRigs {
-  const hazeGeometry: BufferGeometry = buildHazeGeometry();
-
-  const deck = createCumulusDeck({
+  return createDiscKindRigs({
+    name: SNOW_PLUGIN_NAME,
     maxMasses: MAX_ACTIVE_SYSTEMS,
-    puffSizeFraction: SNOW_PUFF_SIZE_FRACTION,
-    color: SNOW_DECK_COLOR,
-    name: `${SNOW_PLUGIN_NAME}:deck`,
+    hazeStrength: PRECIPITATION_HAZE_SCALE,
+    deck: SNOW_DECK,
+    profile: SNOW_PROFILE,
     applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
   });
-
-  const pool = createRigPool<DiscRig>(
-    () =>
-      createDiscRig({
-        hazeGeometry,
-        hazeStrength: PRECIPITATION_HAZE_SCALE,
-        profile: SNOW_PROFILE,
-        name: `${SNOW_PLUGIN_NAME}:system`,
-        deck,
-        applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
-      }),
-    (rig) => rig.park(),
-  );
-
-  return {
-    deck,
-    acquire: pool.acquire,
-    release: pool.release,
-    dispose(): void {
-      pool.dispose();
-      deck.dispose();
-      hazeGeometry.dispose();
-    },
-  };
 }
-
-export const SNOW_DECK_DRAW_OBJECTS = CUMULUS_DECK_DRAW_OBJECTS;

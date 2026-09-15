@@ -50,8 +50,6 @@ export function wetnessAt(x: number, y: number): number {
 }
 
 export function spawnOne(): boolean {
-  if (systems.isForced()) return false;
-  if (systems.systems().length >= systems.capFor(currentWorldSize)) return false;
   return systems.spawnOne(currentWorldSize) !== null;
 }
 
@@ -114,10 +112,10 @@ export const plugin: TerracePlugin = {
         detail: `${RAIN_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
       };
     }
-    if (systems.systems().length >= MAX_ACTIVE_SYSTEMS) {
+    const system = systems.spawnAt(world.worldSize, site.x, site.y);
+    if (system === null) {
       return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} rain systems are already in the sky` };
     }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
     world.broadcast(RAIN_SYSTEMS_MESSAGE, { systems: systemStates() });
     return { ok: true, detail: `rain system ${system.id} gathering at (${site.x}, ${site.y})` };
   },

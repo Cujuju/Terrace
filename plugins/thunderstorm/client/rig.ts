@@ -6,6 +6,7 @@ import {
   Group,
   Mesh,
   PointLight,
+  type Object3D,
 } from 'three';
 import { MeshBasicNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
@@ -14,17 +15,17 @@ import {
   PRECIPITATION_HAZE_SCALE,
 } from '../../../client/src/plugins/kit/hazeBank.ts';
 import {
-  createDiscRig,
   createRigPool,
   DISC_RENDER_ORDER,
   type DiscRig,
 } from '../../../client/src/plugins/kit/discRig.ts';
 import {
-  createCumulusDeck,
-  CUMULUS_DECK_DRAW_OBJECTS,
-  puffsForCoverage,
-  type CumulusDeck,
-} from '../../../client/src/plugins/kit/cumulusDeck.ts';
+  createDiscKindRigs,
+  discKindDrawObjects,
+  type DiscKindDeckSpec,
+  type DiscKindRigs,
+} from '../../../client/src/plugins/kit/discKindRigs.ts';
+import { puffsForCoverage, type CumulusDeck } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { InterpolatedDisc } from '../../../client/src/plugins/kit/discInterpolator.ts';
@@ -64,6 +65,11 @@ export const THUNDERSTORM_PUFF_SIZE_FRACTION = 0.12;
 export const THUNDERSTORM_PUFFS_PER_MASS = puffsForCoverage(THUNDERSTORM_PUFF_SIZE_FRACTION);
 
 export const THUNDERSTORM_DECK_COLOR = 0x51565f;
+
+export const THUNDERSTORM_DECK: DiscKindDeckSpec = {
+  puffSizeFraction: THUNDERSTORM_PUFF_SIZE_FRACTION,
+  color: THUNDERSTORM_DECK_COLOR,
+};
 
 export const THUNDERSTORM_SHADE_DARKNESS = 0.45;
 
@@ -118,17 +124,9 @@ function createThunderstormRig(
   hazeGeometry: BufferGeometry,
   boltGeometry: BufferGeometry,
   lentLight: PointLight | null,
-  deck: CumulusDeck,
+  body: DiscRig,
   applyRevealClip: (material: NodeMaterial, label: string) => void,
 ): ThunderstormRig {
-  const body: DiscRig = createDiscRig({
-    hazeGeometry,
-    hazeStrength: PRECIPITATION_HAZE_SCALE,
-    profile: THUNDERSTORM_PROFILE,
-    name: `${THUNDERSTORM_PLUGIN_NAME}:system`,
-    deck,
-    applyRevealClip,
-  });
   const root = body.root;
 
   const lightning = new LightningSchedule();
@@ -298,8 +296,9 @@ export function createDryBoltRig(
 
 export interface ThunderstormRigs {
   readonly lightBank: Group;
-  readonly deck: CumulusDeck;
+  readonly deck: CumulusDeck | null;
   readonly dryBolt: DryBoltRig;
+  kindObjects(): readonly Object3D[];
   acquire(): ThunderstormRig;
   release(rig: ThunderstormRig): void;
   dispose(): void;
@@ -313,12 +312,13 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
   };
   const dryBolt = createDryBoltRig(boltGeometry, clip);
 
-  const deck = createCumulusDeck({
+  const kind: DiscKindRigs = createDiscKindRigs({
+    name: THUNDERSTORM_PLUGIN_NAME,
     maxMasses: MAX_ACTIVE_SYSTEMS,
-    puffSizeFraction: THUNDERSTORM_PUFF_SIZE_FRACTION,
-    color: THUNDERSTORM_DECK_COLOR,
-    name: `${THUNDERSTORM_PLUGIN_NAME}:deck`,
-    applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
+    hazeStrength: PRECIPITATION_HAZE_SCALE,
+    deck: THUNDERSTORM_DECK,
+    profile: THUNDERSTORM_PROFILE,
+    applyRevealClip: clip,
   });
 
   const lightBank = new Group();
@@ -335,31 +335,42 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
 
   const pool = createRigPool<ThunderstormRig>(
     () =>
-      createThunderstormRig(hazeGeometry, boltGeometry, unlent.pop() ?? null, deck, clip),
+      createThunderstormRig(
+        hazeGeometry,
+        boltGeometry,
+        unlent.pop() ?? null,
+        kind.acquire(),
+        clip,
+      ),
     (rig) => rig.reset(),
   );
 
   return {
     lightBank,
-    deck,
+    deck: kind.deck,
     dryBolt,
+    kindObjects: () => kind.kindObjects(),
     acquire: pool.acquire,
     release: pool.release,
     dispose(): void {
       pool.dispose();
       lightBank.clear();
       dryBolt.dispose();
-      deck.dispose();
+      kind.dispose();
       hazeGeometry.dispose();
       boltGeometry.dispose();
     },
   };
 }
 
-export const THUNDERSTORM_RIG_DRAW_OBJECTS = 7;
+// Glow sheet and bolt: the body's deck, haze and rain are per-kind draws.
+export const THUNDERSTORM_RIG_DRAW_OBJECTS = 2;
 
 export const DRY_BOLT_DRAW_OBJECTS = 1;
 
 export const LIGHT_BANK_DRAW_OBJECTS = 0;
 
-export const THUNDERSTORM_DECK_DRAW_OBJECTS = CUMULUS_DECK_DRAW_OBJECTS;
+export const THUNDERSTORM_KIND_DRAW_OBJECTS = discKindDrawObjects({
+  deck: THUNDERSTORM_DECK,
+  profile: THUNDERSTORM_PROFILE,
+});

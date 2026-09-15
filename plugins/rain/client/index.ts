@@ -9,24 +9,16 @@ import { createDiscSystemsView } from '../../../client/src/plugins/kit/discSyste
 import type { DiscRig } from '../../../client/src/plugins/kit/discRig.ts';
 import { deckShadeDisc } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { MAX_ACTIVE_SYSTEMS, RAIN_PLUGIN_NAME, RAIN_SYSTEMS_MESSAGE } from '../protocol.ts';
-import {
-  createRainRigs,
-  RAIN_DECK_DRAW_OBJECTS,
-  RAIN_RIG_DRAW_OBJECTS,
-  RAIN_SHADE_DARKNESS,
-  type RainRigs,
-} from './rig.ts';
+import { createRainRigs, RAIN_KIND_DRAW_OBJECTS, RAIN_SHADE_DARKNESS, type RainRigs } from './rig.ts';
 
 let rigs: RainRigs | null = null;
-let unpublishShade: (() => void) | null = null;
-let unsubscribeAmbience: (() => void) | null = null;
-let unpublishWeight: (() => void) | null = null;
 
 const WEIGHT_GAUGE_KEY = 'weightUnderCamera';
 
 const view = createDiscSystemsView<DiscRig>({
   systemsMessage: RAIN_SYSTEMS_MESSAGE,
   containerName: `${RAIN_PLUGIN_NAME}:systems`,
+  maxSystems: MAX_ACTIVE_SYSTEMS,
   createPool: (ctx) => {
     rigs = createRainRigs(ctx);
     return rigs;
@@ -35,11 +27,7 @@ const view = createDiscSystemsView<DiscRig>({
     rig.update(disc, elapsed);
   },
   deck: () => rigs?.deck ?? null,
-  attachExtras: (ctx: ClientPluginCtx) => {
-    const pool = rigs;
-    if (pool === null) return;
-    ctx.layer.add(pool.deck.object);
-  },
+  kindObjects: () => rigs?.kindObjects() ?? [],
   disposeExtras: () => {
     rigs = null;
   },
@@ -76,27 +64,21 @@ function rainWeightUnderCamera(ctx: ClientPluginCtx): number {
 export const clientPlugin: TerraceClientPlugin = {
   name: RAIN_PLUGIN_NAME,
 
-  drawBudget: MAX_ACTIVE_SYSTEMS * RAIN_RIG_DRAW_OBJECTS + RAIN_DECK_DRAW_OBJECTS,
+  drawBudget: RAIN_KIND_DRAW_OBJECTS,
 
   groundShadeBudget: MAX_ACTIVE_SYSTEMS,
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
     ctx.audio.preload(rainLoopUrl);
-    unpublishShade = ctx.publishGroundShade(shadeDiscs);
-    unpublishWeight = ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
-    unsubscribeAmbience = ctx.onFrame(() => {
+    ctx.publishGroundShade(shadeDiscs);
+    ctx.publishGauge(WEIGHT_GAUGE_KEY, () => rainWeightUnderCamera(ctx));
+    ctx.onFrame(() => {
       ctx.audio.ambience(rainLoopUrl, rainWeightUnderCamera(ctx));
     });
   },
 
   dispose(): void {
-    unsubscribeAmbience?.();
-    unsubscribeAmbience = null;
-    unpublishWeight?.();
-    unpublishWeight = null;
-    unpublishShade?.();
-    unpublishShade = null;
     view.dispose();
   },
 };

@@ -19,6 +19,10 @@ export function lerp(from: number, to: number, t: number): number {
 
 const TWO_PI = Math.PI * 2;
 
+// A message arriving this early in the learned window is an out-of-band
+// correction (an action broadcast), not a new cadence: the window holds.
+export const EARLY_MESSAGE_WINDOW_FRACTION = 0.5;
+
 export function lerpAngle(from: number, to: number, t: number): number {
   let delta = (to - from) % TWO_PI;
   if (delta > Math.PI) delta -= TWO_PI;
@@ -48,7 +52,7 @@ export class PoseInterpolator<S extends { readonly id: number }, F extends PoseS
 
     const rendered = this.sample();
 
-    if (this.hasReceived) {
+    if (this.hasReceived && this.sinceLastMessage >= this.window * EARLY_MESSAGE_WINDOW_FRACTION) {
       this.window = Math.min(
         spec.maxWindowSeconds,
         Math.max(spec.minWindowSeconds, this.sinceLastMessage),

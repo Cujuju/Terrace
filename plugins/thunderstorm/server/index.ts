@@ -127,10 +127,10 @@ export const plugin: TerracePlugin = {
         detail: `${THUNDERSTORM_DEV_FORCE_ENV} is set — the sky is parked; unset it and restart`,
       };
     }
-    if (systems.systems().length >= MAX_ACTIVE_SYSTEMS) {
+    const system = systems.spawnAt(world.worldSize, site.x, site.y);
+    if (system === null) {
       return { ok: false, detail: `${MAX_ACTIVE_SYSTEMS} thunderstorms are already in the sky` };
     }
-    const system = systems.spawnAt(world.worldSize, site.x, site.y);
     world.broadcast(THUNDERSTORM_SYSTEMS_MESSAGE, { systems: systemStates() });
     return {
       ok: true,
