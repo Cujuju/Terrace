@@ -19,6 +19,12 @@ import {
   type SendOutcome,
 } from '../src/input/sculptInput.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
+import { createPredictionStore } from '../src/terrain/prediction.ts';
+import {
+  CUE_BLINK_ON_MS,
+  createDenialCue,
+  type DenialCue,
+} from '../src/render/denialCue.ts';
 import {
   pickTerrainCellByRay,
   pickTerrainInColumn,
@@ -794,6 +800,111 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
       vi.advanceTimersByTime(TOUCH_STROKE_GRACE_MS);
       expect(attempts).toHaveLength(1);
       expect(attempts[0]!.dir).toBe(-1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe('the host wiring turns every cue into something the brush can read', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  // The same composition main.tsx builds: the input reports transitions, the
+  // prediction store reports ghosts, and the cue turns both into levels.
+  const cueOver = (input: SculptInput, ghostSeqs: () => readonly number[]): DenialCue =>
+    createDenialCue(() => input.refusedHold(), {
+      offline: () => input.offlineHold(),
+      ghost: () => ghostSeqs().length > 0,
+      flat: () => input.dragDescentFrozen(),
+      flatBlinks: () => input.flatBlinks(),
+    });
+
+  it('an offline press reads grey, never red, for the whole hold', () => {
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror, { send: () => 'offline' });
+    try {
+      const cue = cueOver(input, () => []);
+      expect(cue.offline()).toBe(false);
+      fire('pointerdown', {});
+      expect(cue.offline()).toBe(true);
+      // Offline outranks red for as long as the latch holds.
+      expect(cue.isRed()).toBe(false);
+      fire('pointerup', {});
+      expect(cue.offline()).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a posture refusal flashes the flat mark, then lets the footprint back', () => {
+    vi.useFakeTimers();
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror, {
+      pickCell: () => UNDERSIDE_PICK,
+      pickInColumn: () => UNDERSIDE_PICK,
+    });
+    try {
+      const cue = cueOver(input, () => []);
+      expect(cue.flat()).toBe(false);
+      fire('pointerdown', {});
+      expect(cue.flat()).toBe(true);
+      vi.advanceTimersByTime(CUE_BLINK_ON_MS);
+      expect(cue.flat()).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a frozen drag descent holds the flat mark for as long as it is frozen', () => {
+    vi.useFakeTimers();
+    setBrushTool('drag');
+    const mirror = flatWorld();
+    const { input, fire, dispose } = driveInput(mirror, {
+      riserBand: () => 3,
+      origin: { x: cellW(10), y: bandY(2), z: cellW(10) },
+      lookAt: { x: cellW(50), y: bandY(2), z: cellW(50) },
+    });
+    try {
+      const cue = cueOver(input, () => []);
+      fire('pointerdown', {});
+      expect(input.dragDescentFrozen()).toBe(true);
+      // The press blinked flat once; the freeze holds the mark past that flash.
+      vi.advanceTimersByTime(CUE_BLINK_ON_MS);
+      expect(cue.flat()).toBe(true);
+      fire('pointerup', {});
+      vi.advanceTimersByTime(CUE_BLINK_ON_MS);
+      expect(cue.flat()).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a settled smooth stroke ghosts: the intent left, the prediction shows nothing', () => {
+    const mirror = flatWorld();
+    const predictions = createPredictionStore(mirror);
+    const { input, fire, dispose } = driveInput(mirror, {
+      send: (intent) => {
+        predictions.predict(intent, 0);
+        return 'sent';
+      },
+    });
+    try {
+      setBrushTool('smooth');
+      const cue = cueOver(input, () => predictions.ghostSeqs());
+      expect(cue.ghost()).toBe(false);
+      fire('pointerdown', {});
+      // Smooth on already-flat ground relaxes nothing, so the seq holds a ghost
+      // until the server answers it.
+      expect(cue.ghost()).toBe(true);
+      expect(cue.offline()).toBe(false);
+      expect(cue.isRed()).toBe(false);
+      predictions.resolveSeq(1);
+      expect(cue.ghost()).toBe(false);
     } finally {
       dispose();
     }
