@@ -9,7 +9,7 @@ import {
   type JoinSnapshotMessage,
   type SculptIntent,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, TOUCH_STROKE_GRACE_MS } from '../src/config.ts';
 import {
   REFUSED_PULSE_MS,
   SILENT_REPEAT_BLINK_AFTER,
@@ -29,8 +29,10 @@ import {
 import {
   brushRadius,
   brushTool,
+  sculptMode,
   setBrushRadius,
   setBrushTool,
+  setSculptMode,
 } from '../src/state/hudState.ts';
 
 const WORLD = 64;
@@ -736,6 +738,62 @@ describe('a held foot-anchored stroke keeps the cell it pressed on', () => {
       vi.advanceTimersByTime(repeatDelayMs(0));
       expect(attempts).toHaveLength(2);
       expect({ x: attempts[1]!.x, y: attempts[1]!.y }).not.toEqual(pressed);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe('the HUD direction toggle holds against an unmodified mouse', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  const mode = sculptMode();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    setSculptMode(mode);
+    vi.useRealTimers();
+  });
+
+  it('survives plain pointer moves — no chord change, no mode write', () => {
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    const { fire, dispose } = driveInput(mirror);
+    try {
+      setSculptMode('lower');
+      fire('pointermove', { clientX: CENTRE_X + 10, clientY: CENTRE_Y + 10 });
+      fire('pointermove', { clientX: CENTRE_X + 20, clientY: CENTRE_Y + 20 });
+      expect(sculptMode()).toBe('lower');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('still previews the chord: shift down lowers, shift up returns to raise', () => {
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    const { fire, dispose } = driveInput(mirror);
+    try {
+      setSculptMode('raise');
+      fire('keydown', { shiftKey: true });
+      expect(sculptMode()).toBe('lower');
+      fire('keyup', { shiftKey: false });
+      expect(sculptMode()).toBe('raise');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a toggled direction reaches the intent a touch press sends', () => {
+    vi.useFakeTimers();
+    setBrushTool('stamp');
+    const mirror = flatWorld();
+    const { attempts, fire, dispose } = driveInput(mirror);
+    try {
+      setSculptMode('lower');
+      fire('pointerdown', { pointerType: 'touch', pointerId: 7 });
+      vi.advanceTimersByTime(TOUCH_STROKE_GRACE_MS);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.dir).toBe(-1);
     } finally {
       dispose();
     }
