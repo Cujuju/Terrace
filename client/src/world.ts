@@ -10,7 +10,6 @@ import {
   highestCeilingBelow,
   quantizeToBand,
   spanAt,
-  spanCount,
   spanIndexCoveringBand,
 } from '@terrace/shared';
 import type {
@@ -96,6 +95,7 @@ import type { ChartSource } from './terrain/chart.ts';
 import {
   bandOfPick as bandOfPickIn,
   carveBandOfPick as carveBandOfPickIn,
+  graspSpanBandIn,
 } from './terrain/pickBand.ts';
 import {
   carveReachCell,
@@ -647,12 +647,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;
-      if (spanCount(mirror.map, atX, atY) < 2) return null;
-      const band = bandOfPick(pick);
-      if (band === null) return null;
       // The pick proves its own column holds the span; another column must be asked.
-      if (atX === pick.x && atY === pick.y) return band;
-      return spanIndexCoveringBand(mirror.map, atX, atY, band) === null ? null : band;
+      return graspSpanBandIn(mirror.map, pick, atX, atY);
     },
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;
