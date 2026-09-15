@@ -4,6 +4,7 @@ import {
   MAX_BAND,
   MAX_BRUSH_RADIUS,
   MAX_ROLLBACK_KEY_LENGTH,
+  LIBRARY_SCULPT_TOOL,
   MIN_BAND,
   SCULPT_TOOLS,
   sculptOptionsOf,
@@ -306,6 +307,12 @@ describe('the tool set is the wire contract, not a local list', () => {
 
   it('is exactly the four tools, in wire/UI order', () => {
     expect(SCULPT_TOOLS).toEqual(['stamp', 'smooth', 'drag', 'carve']);
+  });
+
+  it('refuses the library-only tool from the wire, whole intent and all', () => {
+    expect(SCULPT_TOOLS).not.toContain(LIBRARY_SCULPT_TOOL);
+    expect(validateSculptIntent({ ...base, tool: LIBRARY_SCULPT_TOOL }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, dir: 1, tool: LIBRARY_SCULPT_TOOL }, WORLD)).toBeNull();
   });
 
   it('validates the two newest tools, not only the brushes', () => {

@@ -99,9 +99,21 @@ function clampHeight(h: number): number {
 
 export type SculptTool = 'stamp' | 'smooth' | 'drag' | 'carve';
 
+/**
+ * Library-only operation: lay the brush down, then relax what it left. Plugin
+ * terraforms are tuned against it. `SCULPT_TOOLS` omits it, so the wire can
+ * never name it.
+ */
+export type LibrarySculptTool = 'settle';
+
+/** Every operation `applySculpt` can perform, wire-reachable or not. */
+export type SculptOperation = SculptTool | LibrarySculptTool;
+
 export type SculptProfile = 'soft' | 'hard';
 
 export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
+
+export const LIBRARY_SCULPT_TOOL: LibrarySculptTool = 'settle';
 
 export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'drag', 'carve'];
 
@@ -150,7 +162,7 @@ function writeGraspedCeiling(map: Heightmap, i: number, k: number, ceiling: numb
 }
 
 export interface SculptOptions {
-  readonly tool?: SculptTool;
+  readonly tool?: SculptOperation;
   readonly profile?: SculptProfile;
   readonly spill?: SculptSpill;
   readonly anchor?: SculptAnchor;
@@ -165,7 +177,7 @@ export interface SweepOrigin {
 }
 
 export interface ResolvedSculptOptions {
-  readonly tool: SculptTool;
+  readonly tool: SculptOperation;
   readonly profile: SculptProfile;
   readonly spill: SculptSpill;
   readonly anchor: SculptAnchor;
@@ -175,7 +187,7 @@ export interface ResolvedSculptOptions {
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
-  tool: 'smooth',
+  tool: LIBRARY_SCULPT_TOOL,
   profile: 'soft',
   spill: 'free',
   anchor: 'free',
@@ -1150,7 +1162,10 @@ export function applySculpt(
       : amount;
 
   const changed = new Set<number>();
-  const anchoredSmooth = tool === 'smooth' && anchor !== 'free' && amount !== 0;
+  // 'smooth' relaxes only; 'settle' deposits first and then relaxes.
+  const relaxes = tool === 'smooth' || tool === LIBRARY_SCULPT_TOOL;
+  const deposits = tool !== 'smooth';
+  const anchoredSmooth = relaxes && anchor !== 'free' && amount !== 0;
   const anchorTarget = anchoredSmooth
     ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand, spanBand)
     : 0;
@@ -1159,7 +1174,7 @@ export function applySculpt(
     ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
     : 0;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
-  if (tool !== 'smooth') {
+  if (deposits) {
     // A soft clicked stamp keeps the anchor ceiling but moves each cell by
     // the linear falloff: the centre reaches the target, the edge moves
     // partway. Hard stays a flat fill.
@@ -1172,7 +1187,7 @@ export function applySculpt(
   if (softCore) {
     applySoftApron(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
   }
-  if (tool === 'smooth') {
+  if (relaxes) {
     let footprint: Set<number> | undefined;
     if (changed.size === 0 || spill === 'banded' || anchoredSmooth) {
       const cells = new Set<number>();

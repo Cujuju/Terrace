@@ -32,6 +32,7 @@ import {
   isValidHeight,
   isWater,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
+  LIBRARY_SCULPT_TOOL,
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
@@ -45,6 +46,7 @@ import {
   SEA_LEVEL,
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
+  SCULPT_TOOLS,
   sculptDisplacementUnits,
   setColumn,
   smooth,
@@ -313,13 +315,15 @@ describe('applySculpt (the full server/prediction operation)', () => {
     expect(heightAt(player, 32, 32)).toBe(MAX_HEIGHT);
   });
 
-  it('a library-default smooth click on flat ground changes nothing: melt deposits no material', () => {
+  it('a smooth click on flat ground changes nothing: melt deposits no material', () => {
     expect(DEFAULT_SCULPT_AMOUNT).toBe(MAX_STEP * WORLD_UNIT_CELLS);
 
     const map = createHeightmap(CHUNK_SIZE * 2);
     const centre = CHUNK_SIZE;
     const pointBrush = WORLD_UNIT_CELLS;
-    const diff = applySculpt(map, centre, centre, pointBrush, DEFAULT_SCULPT_AMOUNT);
+    const diff = applySculpt(map, centre, centre, pointBrush, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'smooth',
+    });
     expect(diff).toEqual([]);
     expect(heightAt(map, centre, centre)).toBe(0);
     for (let ring = pointBrush; ring <= pointBrush + WORLD_UNIT_CELLS; ring++) {
@@ -337,14 +341,14 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
     [32, 33, 4, 64], [20, 20, 4, -128], [32, 32, 1, 64],
   ];
 
-  it('an ABSENT options argument is byte-identical to explicit smooth+soft', () => {
+  it('an ABSENT options argument is byte-identical to explicit settle+soft', () => {
     const legacy = createHeightmap(64);
     const explicit = createHeightmap(64);
 
     for (const [x, y, r, amt] of OPS) {
       const legacyDiff = applySculpt(legacy, x, y, r, amt);
       const explicitDiff = applySculpt(explicit, x, y, r, amt, {
-        tool: 'smooth',
+        tool: LIBRARY_SCULPT_TOOL,
         profile: 'soft',
         spill: 'free',
         anchor: 'free',
@@ -354,9 +358,11 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
     }
   });
 
-  it('the library default is smooth+soft, NOT the wire default', () => {
+  it('the library default is settle+soft, NOT the wire default and NOT the player melt', () => {
+    expect(LIBRARY_SCULPT_TOOL).toBe('settle');
+    expect(SCULPT_TOOLS).not.toContain(LIBRARY_SCULPT_TOOL);
     expect(LIBRARY_DEFAULT_SCULPT_OPTIONS).toEqual({
-      tool: 'smooth',
+      tool: 'settle',
       profile: 'soft',
       spill: 'free',
       anchor: 'free',
@@ -364,6 +370,41 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       spanBand: null,
       sweepFrom: null,
     });
+  });
+
+  it('settle deposits the soft brush and then relaxes it; smooth does neither', () => {
+    const settled = createHeightmap(64);
+    const melted = createHeightmap(64);
+    const deposited = createHeightmap(64);
+
+    const RADIUS = 5;
+    const AMOUNT = DEFAULT_SCULPT_AMOUNT * 4;
+    const settleDiff = applySculpt(settled, 32, 32, RADIUS, AMOUNT, {
+      tool: LIBRARY_SCULPT_TOOL,
+      profile: 'soft',
+      spill: 'banded',
+    });
+    const meltDiff = applySculpt(melted, 32, 32, RADIUS, AMOUNT, {
+      tool: 'smooth',
+      profile: 'soft',
+      spill: 'banded',
+    });
+    applyBrush(deposited, 32, 32, RADIUS, AMOUNT, new Set(), 'soft');
+
+    expect(meltDiff).toEqual([]);
+    expect(settleDiff.length).toBeGreaterThan(0);
+    expect(heightAt(settled, 32, 32)).toBeGreaterThan(0);
+    expect(heightAt(deposited, 32, 32)).toBe(AMOUNT);
+    expect(heightAt(settled, 32, 32)).toBeLessThan(heightAt(deposited, 32, 32));
+    for (const i of footprintOf(64, 32, 32, RADIUS)) {
+      const x = i % 64;
+      const y = (i - x) / 64;
+      for (const [dx, dy] of [[1, 0], [0, 1]] as const) {
+        if (!footprintOf(64, 32, 32, RADIUS).has((y + dy) * 64 + x + dx)) continue;
+        expect(Math.abs(heightAt(settled, x + dx, y + dy) - heightAt(settled, x, y)))
+          .toBeLessThanOrEqual(MAX_STEP + RELAX_SLACK);
+      }
+    }
   });
 
   it('the smooth tool applies relaxation alone, with no brush deposit', () => {
@@ -1974,11 +2015,11 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     expect(mapTotal(map) - cellsBefore).toBe(-1920);
   });
 
-  it('library-default smooth clicks build nothing: melt deposits no material', () => {
+  it('smooth clicks build nothing: melt deposits no material', () => {
     const STACKED_CLICKS = (MAX_HEIGHT * 6) / DEFAULT_SCULPT_AMOUNT;
     const map = createHeightmap(64);
     for (let k = 0; k < STACKED_CLICKS; k++) {
-      applySculpt(map, 32, 32, 2, DEFAULT_SCULPT_AMOUNT);
+      applySculpt(map, 32, 32, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth' });
     }
     expect(heightAt(map, 32, 32)).toBe(0);
     expect(mapTotal(map)).toBe(0);
