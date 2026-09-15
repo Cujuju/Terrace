@@ -78,7 +78,8 @@ export type SculptDeniedReason =
   | 'malformed'
   | 'locked'
   | 'plugin-denied'
-  | 'plugin-modified-invalid';
+  | 'plugin-modified-invalid'
+  | 'server-fault';
 
 export interface SculptDeniedMessage {
   type: 'sculptDenied';

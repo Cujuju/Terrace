@@ -5,11 +5,21 @@ import {
   SEA_LEVEL,
   bandCrossingStep,
   bandFloorHeight,
+  chunkHeightsAsCells,
   drawnBandOfSample,
+  type ChunkPayload,
+  type ChunkUnlockMessage,
+  type SculptDeniedMessage,
   type SculptIntent,
 } from '@terrace/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleSculptIntent, sculptMessageSeq, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
+import {
+  handleSculptIntent,
+  refuseFaultedSculpt,
+  sculptMessageSeq,
+  type IntentPipelineDeps,
+} from '../src/intent/pipeline.ts';
+import type { MessageSink } from '../src/net/message-sink.ts';
 import { PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
 import type { IntentVerdict, TerracePlugin } from '../src/plugins/types.ts';
 import type { World } from '../src/world/world.ts';
@@ -743,5 +753,165 @@ describe('a pipeline fault is the caller\'s to contain', () => {
     expect(sculptMessageSeq({ seq: 1.5 })).toBeUndefined();
     expect(sculptMessageSeq(null)).toBeUndefined();
     expect(sculptMessageSeq('sculpt')).toBeUndefined();
+  });
+});
+
+describe('a contained sculpt fault leaves no client diverged', () => {
+  const HALF_APPLIED_HEIGHT = 77;
+  const FAULT = 'terrain engine fault';
+  const OTHER = { id: 'session-2', token: 'token-2', name: 'Watcher' };
+  const SEQ = 9;
+
+  function worldThatHalfApplies(world: World): World {
+    return new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'applySculpt') {
+          return (x: number, y: number): never => {
+            target.map.cells[y * target.size + x] = HALF_APPLIED_HEIGHT;
+            throw new Error(FAULT);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  }
+
+  function heightsOf(payload: ChunkPayload): ArrayLike<number> {
+    return chunkHeightsAsCells(payload.heights);
+  }
+
+  it('nacks the sender as a server fault, not as locked territory', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.setSink(new RecordingSink());
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+
+    const nacks: SculptDeniedMessage[] = [];
+    refuseFaultedSculpt(world, sculptMessage({ seq: SEQ }), (denial) => nacks.push(denial));
+
+    expect(nacks).toEqual([{ type: 'sculptDenied', seq: SEQ, reason: 'server-fault' }]);
+  });
+
+  it('stays silent when the faulted message carries no routable seq', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.setSink(new RecordingSink());
+
+    const nacks: SculptDeniedMessage[] = [];
+    refuseFaultedSculpt(world, sculptMessage(), (denial) => nacks.push(denial));
+    refuseFaultedSculpt(world, { type: 'sculpt', seq: 1.5 }, (denial) => nacks.push(denial));
+
+    expect(nacks).toHaveLength(0);
+  });
+
+  it('resends the authoritative chunk a half-applied edit left behind', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+
+    const message = sculptMessage({ seq: SEQ });
+    expect(() => handleSculptIntent(makeDeps(worldThatHalfApplies(world), []), PLAYER, message))
+      .toThrow(FAULT);
+    expect(sink.ofType('terrainDiff')).toHaveLength(0);
+    sink.clear();
+
+    refuseFaultedSculpt(world, message, () => {});
+
+    const resyncs = sink.ofType('chunkUnlock');
+    expect(resyncs).toHaveLength(1);
+    expect(resyncs[0]!.target).toBe(PLAYER.id);
+    const { chunks } = resyncs[0]!.payload as ChunkUnlockMessage;
+    expect(chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([[0, 0]]);
+    const cell = UNLOCKED_CELL.y * CHUNK_SIZE + UNLOCKED_CELL.x;
+    expect(heightsOf(chunks[0]!)[cell]).toBe(HALF_APPLIED_HEIGHT);
+  });
+
+  it('covers a drag sweep, not just the brush it ended on', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [
+      [0, 0],
+      [1, 0],
+      [2, 0],
+    ]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear();
+
+    refuseFaultedSculpt(
+      world,
+      sculptMessage({
+        seq: SEQ,
+        tool: 'drag',
+        targetBand: 1,
+        radius: 1,
+        fromX: 4,
+        fromY: 4,
+        x: CHUNK_SIZE + 4,
+        y: 4,
+      }),
+      () => {},
+    );
+
+    const { chunks } = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
+    expect(chunks.map((chunk) => chunk.cx).sort()).toEqual([0, 1, 2]);
+  });
+
+  it('sends the resync only to viewers who can see those chunks', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    world.addPlayer(OTHER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear();
+
+    refuseFaultedSculpt(world, sculptMessage({ seq: SEQ }), () => {});
+
+    expect(sink.ofType('chunkUnlock').map((message) => message.target)).toEqual([PLAYER.id]);
+  });
+
+  it('keeps one viewer\'s broken socket from stranding the others', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    const brokenSink: MessageSink = {
+      broadcast: (type, payload) => sink.broadcast(type, payload),
+      sendTo: (playerId, type, payload) => {
+        if (playerId === PLAYER.id && type === 'terrainDiff') {
+          throw new Error('socket already closed');
+        }
+        sink.sendTo(playerId, type, payload);
+      },
+    };
+    world.setSink(brokenSink);
+    world.addPlayer(PLAYER);
+    world.addPlayer(OTHER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    grantTokenEveryUnlockedChunk(world, OTHER.token);
+    sink.clear();
+
+    const applied: number[] = [];
+    const witness: TerracePlugin = {
+      name: 'witness',
+      onIntentApplied: (intent) => {
+        applied.push(intent.seq ?? -1);
+      },
+    };
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const outcome = handleSculptIntent(
+      makeDeps(world, [witness]),
+      PLAYER,
+      sculptMessage({ seq: SEQ }),
+    );
+    errors.mockRestore();
+
+    expect(outcome.applied).toBe(true);
+    expect(sink.ofType('terrainDiff').map((message) => message.target)).toEqual([OTHER.id]);
+    expect(applied).toEqual([SEQ]);
+    expect(sink.ofType('chunkUnlock').map((message) => message.target)).toEqual([PLAYER.id]);
+    expect(sink.ofType('sculptApplied')).toHaveLength(1);
   });
 });
