@@ -111,6 +111,16 @@ describe('createSiblingBridge', () => {
     warn.mockRestore();
   });
 
+  it('re-arms the warning once a load resolves, so each world says its own piece', () => {
+    const bridge = makeBridge();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.load(worldWith(null));
+    bridge.load(worldWith({ doThing: () => 1 }));
+    bridge.load(worldWith(null));
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it('reset() forgets both the sibling and the warning', () => {
     const bridge = makeBridge();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

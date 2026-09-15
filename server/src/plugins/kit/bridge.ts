@@ -75,6 +75,8 @@ export function createRegisteringBridge<TApi, TEntry>(
   };
 }
 
+// Warns once per run of failed loads: a load that resolves re-arms the warning,
+// so the next world that opens without the sibling says so again.
 export function createSiblingBridge<T>(spec: SiblingBridgeSpec<T>): SiblingBridge<T> {
   let resolved: T | null = null;
   let warned = false;
@@ -94,6 +96,7 @@ export function createSiblingBridge<T>(spec: SiblingBridgeSpec<T>): SiblingBridg
         return;
       }
       resolved = api;
+      warned = false;
       spec.onResolved?.(api);
     },
     api(): T | null {

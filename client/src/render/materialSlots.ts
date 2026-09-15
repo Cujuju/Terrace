@@ -7,8 +7,10 @@ import {
   not,
   output,
   positionLocal,
+  vec4,
 } from 'three/tsl';
 import type { Node, NodeMaterial } from 'three/webgpu';
+import { radianceForDisplay } from './displayRadiance.ts';
 
 export interface SlotNodeType {
   position: 'vec3';
@@ -92,4 +94,10 @@ export function discard(material: NodeMaterial, condition: Node<'bool'>): void {
     joinedKeeps.set(previous, joined);
   }
   material.maskNode = memo(joined, keep, () => and(previous, keep));
+}
+
+// The GLSL wrote display bytes straight to the framebuffer, bypassing tone
+// mapping. This puts a displayed colour back through it unchanged.
+export function composeDisplayedOutput(material: NodeMaterial): void {
+  compose(material, 'output', (previous) => vec4(radianceForDisplay(previous.rgb), previous.a));
 }
