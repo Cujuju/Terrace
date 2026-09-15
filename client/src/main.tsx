@@ -32,6 +32,7 @@ import {
   sculptMode,
   setConnectionStatus,
   setHoverPick,
+  showDenialHint,
 } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
 import {
@@ -210,6 +211,7 @@ const deniedAwareSink: TerrainSink = {
   onSculptDenied: (msg) => {
     world.onSculptDenied(msg);
     sculptInput.releaseStroke();
+    showDenialHint(world.denialHint());
   },
   onSculptApplied: (msg) => world.onSculptApplied(msg),
 };

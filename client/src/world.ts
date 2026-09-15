@@ -28,7 +28,11 @@ import {
   type TerrainMirror,
 } from './terrain/mirror.ts';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
-import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
+import {
+  setServerVersion,
+  setWorldIdentity,
+  type DenialHint,
+} from './state/hudState.ts';
 import { noteBuildIdentity } from './net/buildReload.ts';
 import {
   setPendingRestartSeconds,
@@ -123,7 +127,7 @@ export interface LayerEdgeLight {
  * - `refused` — a reason this build does not know (a server fault, say). The
  *   ground is not locked, so the hand is told only that the stroke did not land.
  */
-export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost' | 'refused';
+export type { DenialHint };
 
 /** The reasons that mean the ground itself said no; anything else is not a lock. */
 const LOCKED_DENIAL_REASONS: readonly SculptDeniedReason[] = [
