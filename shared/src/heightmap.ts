@@ -746,9 +746,9 @@ export function sculptDisplacementUnits(
 
   const perCell =
     DEFAULT_SCULPT_AMOUNT < 0 ? -DEFAULT_SCULPT_AMOUNT : DEFAULT_SCULPT_AMOUNT;
-  // A soft clicked stamp moves the linear falloff amount per cell, not the
-  // full fill, so its price is the graduated volume it actually moves.
-  if (tool === 'stamp' && profile === 'soft') {
+  // A soft clicked stamp moves the linear falloff, and smooth only melts
+  // partial steps, so both pay the graduated volume instead of the fill.
+  if ((tool === 'stamp' && profile === 'soft') || tool === 'smooth') {
     let total = 0;
     forEachFootprintOffset(radius, (_dx, _dy, dist) => {
       total += Math.trunc((perCell * (radius - dist)) / radius);
@@ -778,6 +778,7 @@ function movePair(
   e: number,
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
+  pinnedIndex: number | null = null,
 ): boolean {
   const hi = hiIdx - base;
   const lo = loIdx - base;
@@ -794,7 +795,26 @@ function movePair(
     if (loSpan !== undefined) riseCap = Math.min(riseCap, loSpan.hi - cells[lo]);
     if (dropCap < drop || riseCap < rise) {
       const t = Math.min(dropCap, riseCap);
-      if (t <= 0) return false;
+      if (t <= 0) {
+        // The cursor holds one side while the free side still moves toward it.
+        if (pinnedIndex === hiIdx || pinnedIndex === loIdx) {
+          if (dropCap <= 0 && riseCap > 0) {
+            const solo = riseCap < rise ? riseCap : rise;
+            if (solo > 0) {
+              cells[lo] += solo;
+              return true;
+            }
+          }
+          if (riseCap <= 0 && dropCap > 0) {
+            const solo = dropCap < drop ? dropCap : drop;
+            if (solo > 0) {
+              cells[hi] -= solo;
+              return true;
+            }
+          }
+        }
+        return false;
+      }
       drop = t;
       rise = t;
     }
@@ -813,19 +833,22 @@ function relaxPair(
   changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
+  pinnedIndex: number | null = null,
 ): boolean {
   if (layer !== null && (layer.excluded[i - base] === 1 || layer.excluded[j - base] === 1)) return false;
   const spanCaps = layer === null ? null : layer.spanCaps;
-  const d = cells[i - base] - cells[j - base];
+  const beforeI = cells[i - base];
+  const beforeJ = cells[j - base];
+  const d = beforeI - beforeJ;
   let moved = false;
   if (d > MAX_STEP + RELAX_SLACK) {
-    moved = movePair(cells, base, i, j, d - MAX_STEP, boundsOf, spanCaps);
+    moved = movePair(cells, base, i, j, d - MAX_STEP, boundsOf, spanCaps, pinnedIndex);
   } else if (d < -(MAX_STEP + RELAX_SLACK)) {
-    moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps);
+    moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps, pinnedIndex);
   }
   if (moved) {
-    changed.add(i);
-    changed.add(j);
+    if (cells[i - base] !== beforeI) changed.add(i);
+    if (cells[j - base] !== beforeJ) changed.add(j);
   }
   return moved;
 }
@@ -898,6 +921,7 @@ export function smooth(
   spillFree?: ReadonlySet<number>,
   anchorBounds?: ReadonlyMap<number, SpillBand>,
   spanBand: number | null = null,
+  pinnedIndex: number | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -992,8 +1016,8 @@ export function smooth(
       const row = y * size;
       for (let x = minX; x <= maxX; x++) {
         const i = row + x;
-        if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
-        if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
+        if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer, pinnedIndex)) changedThisPass = true;
+        if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer, pinnedIndex)) changedThisPass = true;
       }
     }
 
@@ -1112,13 +1136,16 @@ export function applySculpt(
   const skirtCoreTarget = softCore
     ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
     : 0;
-  // A soft clicked stamp keeps the anchor ceiling but moves each cell by
-  // the linear falloff: the centre reaches the target, the edge moves
-  // partway. Hard stays a flat fill.
-  if (profile === 'hard') {
-    applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
-  } else {
-    applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
+  // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
+  if (tool !== 'smooth') {
+    // A soft clicked stamp keeps the anchor ceiling but moves each cell by
+    // the linear falloff: the centre reaches the target, the edge moves
+    // partway. Hard stays a flat fill.
+    if (profile === 'hard') {
+      applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
+    } else {
+      applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
+    }
   }
   if (softCore) {
     applySoftApron(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
@@ -1158,6 +1185,7 @@ export function applySculpt(
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
       spanBand,
+      anchoredSmooth ? cellIndex(map, cx, cy) : null,
     );
   }
 

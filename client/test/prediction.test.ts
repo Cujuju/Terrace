@@ -238,13 +238,17 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1)).toBe(0);
   });
 
-  it('predicts the smooth tool as one crisp terrace, exactly like the server', () => {
+  it('predicts the smooth tool as a no-op on flat ground, exactly like the server', () => {
     const { mirror, store } = createClient();
 
     const pointBrush = WORLD_UNIT_CELLS;
-    store.predict({ ...raise(CENTRE.x, CENTRE.y, pointBrush), tool: 'smooth' }, 0);
+    const predicted = store.predict(
+      { ...raise(CENTRE.x, CENTRE.y, pointBrush), tool: 'smooth' },
+      0,
+    );
 
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(predicted.size).toBe(0);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(0);
     expect(bandOf(heightAt(mirror.map, CENTRE.x + pointBrush + 1, CENTRE.y))).toBe(0);
   });
 
@@ -471,14 +475,16 @@ describe('frontier sculpts (issue #21)', () => {
 
   it('still predicts a stroke that stays clear of the frontier by the halo', () => {
     const { mirror, store, server } = frontierFixture();
+    // A hard stamp deposits with the old melt's sweep (soft adds an apron
+    // past the halo): the frontier containment does not depend on tool.
     const intent: SculptIntent = {
       type: 'sculpt',
       x: FRONTIER_EDGE_X - 4,
       y: FRONTIER_Y,
       radius: 3,
       dir: 1,
-      tool: 'smooth',
-      profile: 'soft',
+      tool: 'stamp',
+      profile: 'hard',
       seq: 1,
     };
 

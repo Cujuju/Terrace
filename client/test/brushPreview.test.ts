@@ -210,6 +210,8 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of [1, 2, 4, 8]) {
+      const footprint = new Set<string>();
+      forEachFootprintOffset(radius, (dx, dy) => footprint.add(`${dx},${dy}`));
       for (const tool of ['stamp', 'smooth'] as const) {
         for (const profile of ['soft', 'hard'] as const) {
           for (const dir of [1, -1] as const) {
@@ -217,13 +219,17 @@ describe('createBrushPreview', () => {
             const points = outlinePoints(line);
 
             const rendered = renderedCells(radius, tool, profile);
+            // Melt outlines its footprint: on flat ground it renders
+            // nothing, but the stroke still reaches those cells on rough
+            // ground. Stamp keeps the exact rendered-cells contract.
+            const wanted = tool === 'smooth' ? footprint : rendered;
             const scan = footprintReach(radius) + 2;
             for (let dz = -scan; dz <= scan; dz++) {
               for (let dx = -scan; dx <= scan; dx++) {
                 expect({
                   radius, tool, profile, dir, dx, dz, enclosed: encloses(points, dx, dz),
                 }).toEqual({
-                  radius, tool, profile, dir, dx, dz, enclosed: rendered.has(`${dx},${dz}`),
+                  radius, tool, profile, dir, dx, dz, enclosed: wanted.has(`${dx},${dz}`),
                 });
               }
             }
