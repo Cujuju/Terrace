@@ -1,4 +1,13 @@
-import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, DRAWN_SHORE_HEIGHT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  DRAWN_SHORE_HEIGHT,
+  MAX_HEIGHT,
+  SEA_LEVEL,
+  bandCrossingStep,
+  bandFloorHeight,
+  drawnBandOfSample,
+  type SculptIntent,
+} from '@terrace/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleSculptIntent, sculptMessageSeq, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
 import { PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
@@ -58,10 +67,11 @@ describe('handleSculptIntent', () => {
     handleSculptIntent(makeDeps(raised, []), PLAYER, sculptMessage({ dir: 1 }));
 
     // Drawn contract: from genesis sea (0, band -1) a raise lands on the
-    // shore level while a lower lands on the band -1 level.
-    expect(lowered).toBe(-DEFAULT_SCULPT_AMOUNT);
+    // shore level while a lower leaves the sea band for band -2.
+    expect(lowered).toBe(bandFloorHeight(-1) - 1);
+    expect(drawnBandOfSample(lowered)).toBe(-2);
     expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DRAWN_SHORE_HEIGHT);
-    expect(Math.abs(lowered)).toBeLessThanOrEqual(DEFAULT_SCULPT_AMOUNT);
+    expect(Math.abs(lowered)).toBe(bandCrossingStep(SEA_LEVEL, false));
   });
 
   it('rejects malformed messages without touching the world', () => {
