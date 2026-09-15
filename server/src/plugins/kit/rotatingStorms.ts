@@ -1,222 +1,35 @@
 import {
-  SEA_LEVEL,
   createSeededRng,
   exponentialWaitSeconds,
-  isFiniteNumber,
-  parseRecordArray,
   randomInRange,
   rollEvent,
   roundBroadcastIntensity,
   roundBroadcastPosition,
   type RotatingStormState,
 } from '@terrace/shared';
+import { isWaterAt, waterFractionUnder } from './rotatingStormTerrain.ts';
+import {
+  ROTATING_STORM_DAMAGE_INTERVAL_SECONDS,
+  ROTATING_STORM_DAMAGE_SAMPLE_CELLS,
+  ROTATING_STORM_DESPAWN_MARGIN_RADII,
+  ROTATING_STORM_SITING_ATTEMPTS,
+  ROTATING_STORM_VEER_SQRT_REFERENCE_SECONDS,
+  type RotatingStorm,
+  type RotatingStormDamage,
+  type RotatingStormLandfall,
+  type RotatingStorms,
+  type RotatingStormsSnapshot,
+  type RotatingStormsSpec,
+  type RotatingStormTick,
+  type RotatingStormWorld,
+} from './rotatingStormTypes.ts';
 
-export interface RotatingStormWorld {
-  readonly worldSize: number;
-  heightAt(x: number, y: number): number;
-}
+export * from './rotatingStormTypes.ts';
+export * from './rotatingStormTerrain.ts';
+export * from './rotatingStormSnapshot.ts';
 
-export type HostileTerrain = 'land' | 'water';
-
-export interface RotatingStormProfile {
-  readonly speedCellsPerSecond: number;
-  readonly veerRadiansPerSecond: number;
-  readonly meanLifetimeSeconds: number;
-  readonly spinUpSeconds: number;
-  readonly fadeSeconds: number;
-  readonly hostileTerrainDecayPerSecond: number;
-  readonly minPeakIntensity: number;
-  readonly maxPeakIntensity: number;
-  readonly maxActive: number;
-  readonly hostileTerrain: HostileTerrain;
-  readonly eyeRadiusFraction: number;
-  windFalloff(r: number): number;
-}
-
-export interface RotatingStormsSpec {
-  readonly profile: RotatingStormProfile;
-  readonly seed: number;
-  radiusFor(worldSize: number): number;
-  nameFor?(index: number, x: number, y: number, worldSize: number): string;
-  readonly reportsLandfall?: boolean;
-}
-
-export const ROTATING_STORM_SITING_ATTEMPTS = 6;
-
-export const ROTATING_STORM_DISC_SAMPLE_OFFSETS: readonly (readonly [number, number])[] = (() => {
-  const offsets: Array<readonly [number, number]> = [[0, 0]];
-  const rings: readonly (readonly [number, number])[] = [
-    [0.55, 0],
-    [1, Math.PI / 6],
-  ];
-  const SPOKES_PER_RING = 6;
-  for (const [scale, phase] of rings) {
-    for (let i = 0; i < SPOKES_PER_RING; i++) {
-      const angle = phase + (i * 2 * Math.PI) / SPOKES_PER_RING;
-      offsets.push([Math.cos(angle) * scale, Math.sin(angle) * scale]);
-    }
-  }
-  return offsets;
-})();
-
-export const ROTATING_STORM_DESPAWN_MARGIN_RADII = 1.5;
-
-export const ROTATING_STORM_DAMAGE_INTERVAL_SECONDS = 1;
-
-export const ROTATING_STORM_DAMAGE_SAMPLE_CELLS = 12;
-
-export interface RotatingStorm {
-  readonly id: number;
-  x: number;
-  y: number;
-  readonly radius: number;
-  heading: number;
-  readonly peakIntensity: number;
-  envelope: number;
-  retiring: boolean;
-  lifeSeconds: number;
-  readonly name?: string;
-  landfallReported: boolean;
-  damageDebtSeconds: number;
-  ownerDebtSeconds: number;
-}
-
-export interface RotatingStormDamage {
-  readonly stormId: number;
-  readonly x: number;
-  readonly y: number;
-  readonly radius: number;
-  readonly eyeRadius: number;
-  readonly intensity: number;
-  readonly durationSeconds: number;
-  readonly cells: ReadonlyArray<{
-    readonly x: number;
-    readonly y: number;
-    readonly severity: number;
-  }>;
-}
-
-export interface RotatingStormLandfall {
-  readonly stormId: number;
-  readonly x: number;
-  readonly y: number;
-  readonly intensity: number;
-  readonly name?: string;
-}
-
-export interface RotatingStormTick {
-  readonly changed: boolean;
-  readonly damage: readonly RotatingStormDamage[];
-  readonly landfalls: readonly RotatingStormLandfall[];
-}
-
-export interface RotatingStormsSnapshot {
-  readonly nextStormId: number;
-  readonly namedCount: number;
-  readonly rngState: number;
-  readonly storms: readonly RotatingStorm[];
-}
-
-export interface RotatingStorms {
-  readonly sitingAttempts: number;
-  readonly maxActive: number;
-  random(): number;
-  rollSpawn(ratePerSecond: number, dt: number): boolean;
-  storms(): readonly RotatingStorm[];
-  count(): number;
-  trySpawn(
-    world: RotatingStormWorld,
-    drawSite: (random: () => number) => { readonly x: number; readonly y: number } | null,
-  ): RotatingStorm | null;
-  spawnAt(world: RotatingStormWorld, x: number, y: number): RotatingStorm;
-  advance(world: RotatingStormWorld, dt: number): RotatingStormTick;
-  states(): RotatingStormState[];
-  snapshot(): RotatingStormsSnapshot;
-  restore(snapshot: RotatingStormsSnapshot): void;
-  reset(): void;
-  clear(): void;
-  freeze(frozen: boolean): void;
-  isFrozen(): boolean;
-}
-
-function isWaterAt(world: RotatingStormWorld, x: number, y: number): boolean {
-  return world.heightAt(x, y) <= SEA_LEVEL;
-}
-
-export function waterFractionUnder(
-  world: RotatingStormWorld,
-  x: number,
-  y: number,
-  radius: number,
-): number {
-  let water = 0;
-  for (const [dx, dy] of ROTATING_STORM_DISC_SAMPLE_OFFSETS) {
-    const sx = Math.round(x + dx * radius);
-    const sy = Math.round(y + dy * radius);
-    const outside = sx < 0 || sy < 0 || sx >= world.worldSize || sy >= world.worldSize;
-    if (outside || isWaterAt(world, sx, sy)) water++;
-  }
-  return water / ROTATING_STORM_DISC_SAMPLE_OFFSETS.length;
-}
-
-function parseStorm(value: unknown): RotatingStorm | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const {
-    id,
-    x,
-    y,
-    radius,
-    heading,
-    peakIntensity,
-    envelope,
-    retiring,
-    lifeSeconds,
-    name,
-    landfallReported,
-    damageDebtSeconds,
-    ownerDebtSeconds,
-  } = value as Record<string, unknown>;
-
-  if (!Number.isInteger(id)) return null;
-  for (const number of [x, y, radius, heading, peakIntensity, envelope, lifeSeconds]) {
-    if (!isFiniteNumber(number)) return null;
-  }
-  if (!isFiniteNumber(damageDebtSeconds) || damageDebtSeconds < 0) return null;
-  const ownerDebt = ownerDebtSeconds === undefined ? 0 : ownerDebtSeconds;
-  if (!isFiniteNumber(ownerDebt) || ownerDebt < 0) return null;
-  if (typeof retiring !== 'boolean' || typeof landfallReported !== 'boolean') return null;
-  if (name !== undefined && typeof name !== 'string') return null;
-
-  return {
-    id: id as number,
-    x: x as number,
-    y: y as number,
-    radius: radius as number,
-    heading: heading as number,
-    peakIntensity: peakIntensity as number,
-    envelope: envelope as number,
-    retiring: retiring as boolean,
-    lifeSeconds: lifeSeconds as number,
-    ...(typeof name === 'string' ? { name } : {}),
-    landfallReported: landfallReported as boolean,
-    damageDebtSeconds: damageDebtSeconds as number,
-    ownerDebtSeconds: ownerDebt,
-  };
-}
-
-export function parseRotatingStormsSnapshot(data: unknown): RotatingStormsSnapshot | null {
-  if (typeof data !== 'object' || data === null) return null;
-  const { nextStormId, namedCount, rngState, storms } = data as Record<string, unknown>;
-  if (!Number.isInteger(nextStormId) || !Number.isInteger(namedCount)) return null;
-  if (!Number.isInteger(rngState)) return null;
-  const parsed = parseRecordArray(storms, parseStorm);
-  if (parsed === null) return null;
-  return {
-    nextStormId: nextStormId as number,
-    namedCount: namedCount as number,
-    rngState: rngState as number,
-    storms: parsed,
-  };
+function clampEnvelope(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
@@ -307,6 +120,7 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
     },
 
     rollSpawn(ratePerSecond: number, dt: number): boolean {
+      if (frozen) return false;
       return rollEvent(rng.next, ratePerSecond, dt);
     },
 
@@ -322,6 +136,7 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
       world: RotatingStormWorld,
       drawSite: (random: () => number) => { readonly x: number; readonly y: number } | null,
     ): RotatingStorm | null {
+      if (frozen) return null;
       for (let attempt = 0; attempt < ROTATING_STORM_SITING_ATTEMPTS; attempt++) {
         const site = drawSite(rng.next);
         if (site === null) continue;
@@ -345,7 +160,11 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
 
         let hostile = 0;
         if (!frozen) {
-          storm.heading += (rng.next() * 2 - 1) * profile.veerRadiansPerSecond * dt;
+          const veer =
+            profile.veerRadiansPerSecond *
+            ROTATING_STORM_VEER_SQRT_REFERENCE_SECONDS *
+            Math.sqrt(dt);
+          storm.heading += (rng.next() * 2 - 1) * veer;
           storm.x += Math.cos(storm.heading) * profile.speedCellsPerSecond * dt;
           storm.y += Math.sin(storm.heading) * profile.speedCellsPerSecond * dt;
 
@@ -356,12 +175,11 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
 
           hostile = hostileTerrainFraction(storm, world);
           const terrainDecay = hostile * profile.hostileTerrainDecayPerSecond * dt;
-          storm.envelope = storm.retiring
-            ? Math.max(0, storm.envelope - dt / profile.fadeSeconds - terrainDecay)
-            : Math.min(
-                1,
-                Math.max(0, storm.envelope + dt / profile.spinUpSeconds - terrainDecay),
-              );
+          storm.envelope = clampEnvelope(
+            storm.retiring
+              ? storm.envelope - dt / profile.fadeSeconds - terrainDecay
+              : storm.envelope + dt / profile.spinUpSeconds - terrainDecay,
+          );
         }
 
         const intensity = storm.peakIntensity * storm.envelope;
@@ -383,10 +201,7 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
         }
 
         storm.damageDebtSeconds += dt;
-        if (
-          storm.damageDebtSeconds >= ROTATING_STORM_DAMAGE_INTERVAL_SECONDS &&
-          intensity > 0
-        ) {
+        if (storm.damageDebtSeconds >= ROTATING_STORM_DAMAGE_INTERVAL_SECONDS && intensity > 0) {
           const durationSeconds = storm.damageDebtSeconds;
           storm.damageDebtSeconds = 0;
           damage.push({
@@ -432,10 +247,15 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
       };
     },
 
+    // A restored id must never be handed out again, whatever the counter said.
     restore(snapshot: RotatingStormsSnapshot): void {
       storms.length = 0;
-      for (const storm of snapshot.storms) storms.push({ ...storm });
-      nextStormId = snapshot.nextStormId;
+      let highestId = 0;
+      for (const storm of snapshot.storms) {
+        storms.push({ ...storm });
+        if (storm.id > highestId) highestId = storm.id;
+      }
+      nextStormId = Math.max(snapshot.nextStormId, highestId + 1);
       namedCount = snapshot.namedCount;
       rng = createSeededRng(snapshot.rngState);
     },
@@ -445,6 +265,7 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
       nextStormId = 1;
       namedCount = 0;
       rng = createSeededRng(spec.seed);
+      frozen = false;
     },
 
     clear(): void {

@@ -1,13 +1,14 @@
 import { Group } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
+import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import {
-  createPrecipitationColumn,
-  type PrecipitationColumn,
-  type PrecipitationProfile,
-} from '../../../client/src/plugins/kit/precipitation.ts';
+  createPrecipitationField,
+  PRECIPITATION_FIELD_DRAW_OBJECTS,
+  type PrecipitationField,
+} from '../../../client/src/plugins/kit/precipitationField.ts';
 import { DISC_RENDER_ORDER } from '../../../client/src/plugins/kit/discRig.ts';
 import { CYCLONE_EYE_RADIUS_FRACTION, CYCLONE_PLUGIN_NAME } from '../protocol.ts';
-import { CYCLONE_NOMINAL_RADIUS_WORLD_UNITS, MAX_SPIRALS } from './spiral.ts';
+import { CYCLONE_NOMINAL_RADIUS_WORLD_UNITS, MAX_SPIRALS } from './spiralLayout.ts';
 
 export const CYCLONE_RAIN_DROPS_PER_WORLD_AREA = 1;
 
@@ -29,12 +30,12 @@ export const CYCLONE_RAIN_PROFILE: PrecipitationProfile = {
   spriteSize: 0,
   opacity: 0.5,
   color: 0x8ea3b8,
-  swayCells: 0,
+  swayWorldUnits: 0,
   swayHz: 0,
   innerRadiusFraction: CYCLONE_EYE_RADIUS_FRACTION,
 };
 
-export const CYCLONE_RAIN_DRAW_OBJECTS = 1;
+export const CYCLONE_RAIN_DRAW_OBJECTS = PRECIPITATION_FIELD_DRAW_OBJECTS;
 
 export interface CycloneRainSource {
   readonly id: number;
@@ -49,12 +50,8 @@ export interface CycloneRainSource {
 export interface CycloneRainField {
   readonly root: Group;
   apply(live: readonly CycloneRainSource[], elapsed: number): void;
+  reset(): void;
   dispose(): void;
-}
-
-interface RainRig {
-  readonly root: Group;
-  readonly column: PrecipitationColumn;
 }
 
 export function createCycloneRainField(
@@ -63,59 +60,61 @@ export function createCycloneRainField(
   const root = new Group();
   root.name = `${CYCLONE_PLUGIN_NAME}:rain`;
 
-  const rigs = new Map<number, RainRig>();
-  const free: RainRig[] = [];
-  const built: RainRig[] = [];
+  const field: PrecipitationField = createPrecipitationField(CYCLONE_RAIN_PROFILE, {
+    maxMasses: MAX_SPIRALS,
+    name: `${CYCLONE_PLUGIN_NAME}:rain`,
+    renderOrder: DISC_RENDER_ORDER,
+    applyRevealClip,
+  });
+  root.add(field.object);
 
-  function acquire(): RainRig {
-    const reused = free.pop();
-    if (reused !== undefined) return reused;
-    const rig: RainRig = {
-      root: new Group(),
-      column: createPrecipitationColumn(CYCLONE_RAIN_PROFILE, DISC_RENDER_ORDER),
-    };
-    rig.root.name = `${CYCLONE_PLUGIN_NAME}:rain:column`;
-    rig.root.add(rig.column.object);
-    applyRevealClip(rig.column.material, `${CYCLONE_PLUGIN_NAME} rain`);
-    built.push(rig);
-    return rig;
-  }
+  const slotOf = new Map<number, number>();
+  const freeSlots: number[] = [];
 
   return {
     root,
 
     apply(live, elapsed): void {
-      for (const [id, rig] of rigs) {
+      for (const [id, slot] of slotOf) {
         if (live.some((storm) => storm.id === id)) continue;
-        root.remove(rig.root);
-        rigs.delete(id);
-        free.push(rig);
+        field.park(slot);
+        slotOf.delete(id);
+        freeSlots.push(slot);
       }
 
       for (const storm of live) {
-        const lit = storm.intensity > 0;
-        let rig = rigs.get(storm.id);
-        if (rig === undefined) {
-          if (!lit) continue;
-          if (rigs.size >= MAX_SPIRALS) continue;
-          rig = acquire();
-          rigs.set(storm.id, rig);
-          root.add(rig.root);
+        let slot = slotOf.get(storm.id);
+        if (slot === undefined) {
+          if (storm.intensity <= 0) continue;
+          slot = freeSlots.pop() ?? field.claimSlot();
+          if (slot < 0) continue;
+          slotOf.set(storm.id, slot);
         }
-        rig.root.visible = lit;
-        if (!lit) continue;
-
-        rig.root.position.set(storm.x, 0, storm.z);
-        rig.column.material.opacity = CYCLONE_RAIN_PROFILE.opacity * storm.intensity;
-        rig.column.advance(elapsed, storm.radiusWorldUnits, storm.vx, storm.vz);
+        field.updateWorld(
+          slot,
+          storm.x,
+          storm.z,
+          storm.radiusWorldUnits,
+          storm.intensity,
+          storm.vx,
+          storm.vz,
+          elapsed,
+        );
       }
     },
 
+    reset(): void {
+      for (const slot of slotOf.values()) {
+        field.park(slot);
+        freeSlots.push(slot);
+      }
+      slotOf.clear();
+    },
+
     dispose(): void {
-      for (const rig of built) rig.column.dispose();
-      built.length = 0;
-      free.length = 0;
-      rigs.clear();
+      field.dispose();
+      slotOf.clear();
+      freeSlots.length = 0;
       root.clear();
     },
   };

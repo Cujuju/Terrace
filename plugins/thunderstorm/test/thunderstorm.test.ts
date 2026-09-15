@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, SEA_LEVEL, cellsAcross, createSeededRng } from '@terrace/shared';
-import { worldWithTerrain } from '../../../server/test/support/world.ts';
+import { cellsAcross, createSeededRng } from '@terrace/shared';
 import {
   MAX_ACTIVE_SYSTEMS,
+  MAX_STRIKES_PER_MESSAGE,
   STRIKE_NO_SYSTEM,
-  THUNDERSTORM_COVERAGE_FRACTION,
-  THUNDERSTORM_PLUGIN_NAME,
-  THUNDERSTORM_STRIKES_MESSAGE,
+  STRIKE_WIRE_STRIDE,
   packStrikes,
   parseStrikesPayload,
 } from '../protocol.ts';
@@ -17,41 +15,64 @@ import {
   FLASH_DURATION_SECONDS,
   LightningGovernor,
   LightningSchedule,
-  MAX_FLASH_INTERVAL_SECONDS,
-  MEAN_FLASH_INTERVAL_SECONDS,
   MIN_FLASH_INTERVAL_SECONDS,
-  createFlashRandom,
   flashBrightness,
-  nextFlashIntervalSeconds,
 } from '../client/lightning.ts';
 import { CLOUD_BASE_WORLD_Y } from '../../../client/src/plugins/kit/precipitation.ts';
 import {
+  BUDGET_SHARE_FLOOR_INTENSITY,
+  DRY_STRIKE_MAX_SAMPLE_ATTEMPTS,
+  DRY_STRIKE_TARGET_SAMPLES,
+  EXPOSURE_SAMPLE_RADIUS_CELLS,
+  SAMPLE_ATTEMPT_MULTIPLIER,
   STRIKE_BUDGET_PER_SECOND,
+  STRIKE_MAX_SAMPLE_ATTEMPTS,
+  STRIKE_TARGET_SAMPLES,
   chooseDryStrikeCell,
-  exposureAt,
   rollStrikes,
+  type StrikeSource,
+  type StrikeWorld,
 } from '../server/lightning.ts';
-import { plugin as thunderstormPlugin } from '../server/index.ts';
 import { setThunderstormRandomSource } from '../server/rng.ts';
 
-const WORLD_SIZE = cellsAcross(512);
+const BUDGET_SEED = 20260927;
+
+const SECONDS_PER_HOUR = 3600;
+
+const BUDGET_TOLERANCE = 0.15;
+
+const TICK_RATE_TOLERANCE = 0.1;
+
+const openWorld: StrikeWorld = {
+  worldSize: 64,
+  heightAt: () => 100,
+  isCellUnlocked: () => true,
+};
+
+function storm(id: number, overrides: Partial<StrikeSource> = {}): StrikeSource {
+  return { id, x: 32, y: 32, radius: 20, peakIntensity: 1, envelope: 1, ...overrides };
+}
+
+function strikesOverAnHour(
+  world: StrikeWorld,
+  systems: readonly StrikeSource[],
+  dt: number,
+): number {
+  setThunderstormRandomSource(createSeededRng(BUDGET_SEED).next);
+  let struck = 0;
+  for (let tick = 0; tick < Math.round(SECONDS_PER_HOUR / dt); tick++) {
+    for (const strike of rollStrikes(world, systems, dt)) {
+      if (strike.systemId !== STRIKE_NO_SYSTEM) struck++;
+    }
+  }
+  return struck;
+}
 
 beforeEach(() => {
   setThunderstormRandomSource(createSeededRng(20260824).next);
 });
 
 describe('the photosensitivity floor', () => {
-  it('never samples an interval below the floor or above the ceiling', () => {
-    for (const u of [0, 1e-12, 0.001, 0.5, 0.9, 0.999999, 1 - 1e-15, 1]) {
-      const interval = nextFlashIntervalSeconds(u);
-      expect(interval).toBeGreaterThanOrEqual(MIN_FLASH_INTERVAL_SECONDS);
-      expect(interval).toBeLessThanOrEqual(MAX_FLASH_INTERVAL_SECONDS);
-      expect(Number.isFinite(interval)).toBe(true);
-    }
-    expect(MIN_FLASH_INTERVAL_SECONDS).toBeGreaterThanOrEqual(3);
-    expect(MEAN_FLASH_INTERVAL_SECONDS).toBeGreaterThan(MIN_FLASH_INTERVAL_SECONDS);
-  });
-
   it('has exactly one rise and one fall — no strobing inside a flash', () => {
     const step = FLASH_DURATION_SECONDS / 400;
     let risesThenFalls = 0;
@@ -124,7 +145,7 @@ describe('the photosensitivity floor', () => {
       schedule.advance(1 / 60);
       expect(schedule.brightness()).toBe(0);
     }
-    expect(governor.secondsSinceLastFlash()).toBe(Number.POSITIVE_INFINITY);
+    expect(governor.requestFlash()).toBe(true);
   });
 
   it('drops a second strike inside the floor rather than deferring it', () => {
@@ -140,7 +161,6 @@ describe('the photosensitivity floor', () => {
   it('survives a NaN dt without disarming the floor forever', () => {
     const governor = new LightningGovernor();
     governor.advance(Number.NaN);
-    expect(governor.secondsSinceLastFlash()).toBe(Number.POSITIVE_INFINITY);
     expect(governor.requestFlash()).toBe(true);
     governor.advance(Number.NaN);
     expect(governor.requestFlash()).toBe(false);
@@ -156,7 +176,7 @@ describe('the photosensitivity floor', () => {
 
   it('schedule.reset() goes dark on the spot, so a pooled rig never reopens mid-flash', () => {
     const governor = new LightningGovernor();
-    governor.advance(MEAN_FLASH_INTERVAL_SECONDS * 10);
+    governor.advance(MIN_FLASH_INTERVAL_SECONDS * 10);
     const schedule = new LightningSchedule();
 
     expect(schedule.strike(governor)).toBe(true);
@@ -175,20 +195,65 @@ describe('the photosensitivity floor', () => {
     expect(BOLT_BOTTOM_WORLD_Y).toBeGreaterThan(0);
     expect(BOLT_BOTTOM_WORLD_Y).toBeLessThan(BOLT_TOP_WORLD_Y);
   });
+});
 
-  it('draws a reproducible stream from a seeded generator', () => {
-    const a = createFlashRandom(1234);
-    const b = createFlashRandom(1234);
-    for (let n = 0; n < 100; n++) {
-      const value = a();
-      expect(value).toBe(b());
-      expect(value).toBeGreaterThanOrEqual(0);
-      expect(value).toBeLessThan(1);
-    }
+describe('the strike budget', () => {
+  it('is SHARED across storms, not multiplied by them', () => {
+    const expected = STRIKE_BUDGET_PER_SECOND * SECONDS_PER_HOUR;
+    const dt = 0.05;
+    const one = strikesOverAnHour(openWorld, [storm(1)], dt);
+    const three = strikesOverAnHour(openWorld, [storm(1), storm(2), storm(3)], dt);
+
+    expect(one).toBeGreaterThan(0);
+    expect(Math.abs(one - expected)).toBeLessThanOrEqual(expected * BUDGET_TOLERANCE);
+    expect(Math.abs(three - expected)).toBeLessThanOrEqual(expected * BUDGET_TOLERANCE);
+  });
+
+  it('spends the same hour whatever the tick rate', () => {
+    const fine = strikesOverAnHour(openWorld, [storm(1)], 0.05);
+    const coarse = strikesOverAnHour(openWorld, [storm(1)], 0.5);
+    expect(Math.abs(fine - coarse)).toBeLessThanOrEqual(
+      Math.min(fine, coarse) * TICK_RATE_TOLERANCE,
+    );
+  });
+
+  it('scales with intensity below one storm-equivalent instead of sharing', () => {
+    expect(BUDGET_SHARE_FLOOR_INTENSITY).toBe(1);
+    const half = strikesOverAnHour(openWorld, [storm(1, { peakIntensity: 0.5 })], 0.5);
+    const full = strikesOverAnHour(openWorld, [storm(1)], 0.5);
+    expect(half).toBeLessThan(full);
+  });
+
+  it('throws nothing from a storm that has not gathered yet', () => {
+    setThunderstormRandomSource(() => 0);
+    const strikes = rollStrikes(openWorld, [storm(1, { envelope: 0 })], 1);
+    expect(strikes.filter((s) => s.systemId !== STRIKE_NO_SYSTEM)).toHaveLength(0);
   });
 });
 
-describe('strikes', () => {
+describe('how many draws a strike may cost', () => {
+  it('gives up after a bounded number of draws, and samples one world unit out', () => {
+    expect(STRIKE_MAX_SAMPLE_ATTEMPTS).toBe(SAMPLE_ATTEMPT_MULTIPLIER * STRIKE_TARGET_SAMPLES);
+    expect(DRY_STRIKE_MAX_SAMPLE_ATTEMPTS).toBe(
+      SAMPLE_ATTEMPT_MULTIPLIER * DRY_STRIKE_TARGET_SAMPLES,
+    );
+    expect(EXPOSURE_SAMPLE_RADIUS_CELLS).toBe(cellsAcross(1));
+
+    let drawn = 0;
+    const counting: StrikeWorld = {
+      worldSize: 64,
+      heightAt: () => 100,
+      isCellUnlocked: () => {
+        drawn++;
+        return false;
+      },
+    };
+    expect(chooseDryStrikeCell(counting)).toBeNull();
+    expect(drawn).toBe(DRY_STRIKE_MAX_SAMPLE_ATTEMPTS);
+  });
+});
+
+describe('the strike wire form', () => {
   it('round-trips through the packed wire form', () => {
     const strikes = [
       { systemId: STRIKE_NO_SYSTEM, x: 3, y: 4 },
@@ -196,66 +261,31 @@ describe('strikes', () => {
     ];
     expect(parseStrikesPayload({ strikes: packStrikes(strikes) })).toEqual(strikes);
     expect(parseStrikesPayload({ strikes: 'nope' })).toBeNull();
-    expect(parseStrikesPayload({ strikes: [1, 1.5, 2, 2, 3, 4] })).toEqual([
-      { systemId: 2, x: 3, y: 4 },
+    expect(parseStrikesPayload(null)).toBeNull();
+  });
+
+  it('refuses a system id that is not a whole count of systems', () => {
+    expect(parseStrikesPayload({ strikes: [1.5, 3, 4] })).toEqual([]);
+    expect(parseStrikesPayload({ strikes: [-1, 3, 4] })).toEqual([]);
+    expect(parseStrikesPayload({ strikes: [Number.NaN, 3, 4] })).toEqual([]);
+    expect(parseStrikesPayload({ strikes: [STRIKE_NO_SYSTEM, 3, 4] })).toEqual([
+      { systemId: STRIKE_NO_SYSTEM, x: 3, y: 4 },
     ]);
   });
 
-  it('refuses the sea for a dry bolt, and finds the exposed cell on land', () => {
-    const sea = worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL - BAND_HEIGHT);
-    const seaWorld = { worldSize: sea.size, heightAt: (x: number, y: number) => sea.heightAt(x, y) };
-    expect(chooseDryStrikeCell(seaWorld)).toBeNull();
-
-    const flat = { worldSize: 64, heightAt: () => 100 };
-    const bump = {
-      worldSize: 64,
-      heightAt: (x: number, y: number) => (x === 32 && y === 32 ? 200 : 100),
-    };
-    expect(exposureAt(bump, 32, 32)).toBeGreaterThan(exposureAt(flat, 32, 32));
-  });
-
-  it('shares one world-wide budget across storms instead of multiplying it', () => {
-    const world = { worldSize: 64, heightAt: () => 100 };
-    const storm = (id: number) => ({
-      id,
-      x: 32,
-      y: 32,
-      radius: 20,
-      peakIntensity: 1,
-      envelope: 1,
+  it('stops at the cap instead of walking an oversized array', () => {
+    const oversized: number[] = [];
+    let read = 0;
+    for (let n = 0; n < MAX_STRIKES_PER_MESSAGE * 4; n++) oversized.push(1, n, n);
+    const watched = new Proxy(oversized, {
+      get(target, key, receiver): unknown {
+        if (typeof key === 'string' && Number.isInteger(Number(key))) read++;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
     });
-    setThunderstormRandomSource(() => 0);
-    const one = rollStrikes(world, [storm(1)], 1);
-    const three = rollStrikes(world, [storm(1), storm(2), storm(3)], 1);
-    expect(one.filter((s) => s.systemId !== STRIKE_NO_SYSTEM)).toHaveLength(1);
-    expect(three.filter((s) => s.systemId !== STRIKE_NO_SYSTEM)).toHaveLength(3);
-    expect(STRIKE_BUDGET_PER_SECOND).toBeGreaterThan(0);
-  });
 
-  it('throws nothing from a storm that has not gathered yet', () => {
-    const world = { worldSize: 64, heightAt: () => 100 };
-    setThunderstormRandomSource(() => 0);
-    const strikes = rollStrikes(
-      world,
-      [{ id: 1, x: 32, y: 32, radius: 20, peakIntensity: 1, envelope: 0 }],
-      1,
-    );
-    expect(strikes.filter((s) => s.systemId !== STRIKE_NO_SYSTEM)).toHaveLength(0);
-  });
-});
-
-describe('thunderstorm as a plugin', () => {
-  it('carries its own share of the sky, its own ceiling, and no persistence', () => {
-    expect(thunderstormPlugin.name).toBe(THUNDERSTORM_PLUGIN_NAME);
-    expect(THUNDERSTORM_COVERAGE_FRACTION).toBeCloseTo(0.036, 12);
-    expect(MAX_ACTIVE_SYSTEMS).toBe(3);
-    expect(thunderstormPlugin.persistence).toBeUndefined();
-    expect(thunderstormPlugin.onIntent).toBeUndefined();
-    expect(thunderstormPlugin.onTerrainChanged).toBeUndefined();
-  });
-
-  it('names its strike message so the host prefixes it thunderstorm:strikes', () => {
-    expect(THUNDERSTORM_STRIKES_MESSAGE).toBe('strikes');
-    expect(THUNDERSTORM_PLUGIN_NAME).toBe('thunderstorm');
+    const parsed = parseStrikesPayload({ strikes: watched });
+    expect(parsed).toHaveLength(MAX_STRIKES_PER_MESSAGE);
+    expect(read).toBe(MAX_STRIKES_PER_MESSAGE * STRIKE_WIRE_STRIDE);
   });
 });

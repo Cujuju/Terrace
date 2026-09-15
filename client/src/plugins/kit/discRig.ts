@@ -1,14 +1,8 @@
 import { Group } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import type { BufferGeometry } from 'three';
-import type { NodeMaterial } from 'three/webgpu';
-import { createHazeBank, type HazeBank } from './hazeBank.ts';
 import type { CumulusDeck } from './cumulusDeck.ts';
-import {
-  createPrecipitationColumn,
-  type PrecipitationColumn,
-  type PrecipitationProfile,
-} from './precipitation.ts';
+import type { HazeDeck } from './hazeDeck.ts';
+import type { PrecipitationField } from './precipitationField.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
 
 export const DISC_RENDER_ORDER = 1;
@@ -21,71 +15,48 @@ export interface DiscRig {
 }
 
 export interface DiscRigSpec {
-  readonly hazeGeometry: BufferGeometry;
-  readonly hazeStrength: number;
-  readonly profile: PrecipitationProfile | null;
   readonly name: string;
   readonly deck: CumulusDeck | null;
-  readonly applyRevealClip: ((material: NodeMaterial, label: string) => void) | null;
+  readonly haze: HazeDeck | null;
+  readonly field: PrecipitationField | null;
 }
 
 export function createDiscRig(spec: DiscRigSpec): DiscRig {
   const root = new Group();
   root.name = spec.name;
 
-  const column: PrecipitationColumn | null =
-    spec.profile === null ? null : createPrecipitationColumn(spec.profile, DISC_RENDER_ORDER);
-  if (column !== null) root.add(column.object);
-
-  const haze: HazeBank = createHazeBank(spec.hazeGeometry, spec.hazeStrength, DISC_RENDER_ORDER);
-  for (const sheet of haze.sheets) root.add(sheet);
-
-  if (spec.applyRevealClip !== null) {
-    if (column !== null) spec.applyRevealClip(column.material, `${spec.name} column`);
-    for (const sheet of haze.sheets) {
-      spec.applyRevealClip(sheet.material, `${spec.name} haze`);
-    }
-  }
-
   const deckSlot = spec.deck === null ? -1 : spec.deck.claimSlot();
+  const hazeSlot = spec.haze === null ? -1 : spec.haze.claimSlot();
+  const fieldSlot = spec.field === null ? -1 : spec.field.claimSlot();
+
+  function park(): void {
+    spec.deck?.park(deckSlot);
+    spec.haze?.park(hazeSlot);
+    spec.field?.park(fieldSlot);
+  }
 
   return {
     root,
 
     update(disc: InterpolatedDisc, elapsed: number): boolean {
-      const worldRadius = disc.radius * CELL_WORLD_SIZE;
       root.position.set(disc.x * CELL_WORLD_SIZE, 0, disc.y * CELL_WORLD_SIZE);
 
       const lit = disc.intensity > 0;
       root.visible = lit;
       if (!lit) {
-        spec.deck?.park(deckSlot);
+        park();
         return false;
       }
       spec.deck?.update(deckSlot, disc);
-
-      if (column !== null && spec.profile !== null) {
-        column.material.opacity = spec.profile.opacity * disc.intensity;
-        column.advance(
-          elapsed,
-          worldRadius,
-          disc.vx * CELL_WORLD_SIZE,
-          disc.vy * CELL_WORLD_SIZE,
-        );
-      }
-
-      haze.update(worldRadius, disc.intensity, elapsed);
+      spec.haze?.update(hazeSlot, disc, elapsed);
+      spec.field?.update(fieldSlot, disc, elapsed);
       return true;
     },
 
-    park(): void {
-      spec.deck?.park(deckSlot);
-    },
+    park,
 
     dispose(): void {
       root.clear();
-      column?.dispose();
-      haze.dispose();
     },
   };
 }

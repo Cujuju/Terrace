@@ -14,6 +14,10 @@ export function normalizeAngle(radians: number): number {
   return wrapped;
 }
 
+export function polarVelocity(heading: number, speed: number): { vx: number; vy: number } {
+  return { vx: Math.cos(heading) * speed, vy: Math.sin(heading) * speed };
+}
+
 export function limitTurn(turn: number, limit: number): number {
   return Math.max(-limit, Math.min(limit, turn));
 }

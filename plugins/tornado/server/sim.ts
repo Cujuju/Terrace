@@ -1,12 +1,13 @@
-import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { cellsAcross } from '@terrace/shared';
 import { interpolateByDifficulty } from '../../../server/src/plugins/kit/difficultyCurve.ts';
 import {
   createRotatingStorms,
+  isWaterAt,
   type RotatingStorm,
   type RotatingStormProfile,
   type RotatingStormWorld,
 } from '../../../server/src/plugins/kit/rotatingStorms.ts';
-import { TORNADO_RADIUS_CELLS } from '../protocol.ts';
+import { MAX_ACTIVE_TORNADOES, TORNADO_RADIUS_CELLS } from '../protocol.ts';
 import { stormCells } from './weather-bridge.ts';
 
 export const TORNADO_MEAN_INTERVAL_AT_EASIEST_SECONDS = 600;
@@ -29,13 +30,11 @@ const TORNADO_PROFILE: RotatingStormProfile = {
   hostileTerrainDecayPerSecond: 0.25,
   minPeakIntensity: 0.5,
   maxPeakIntensity: 1,
-  maxActive: 2,
+  maxActive: MAX_ACTIVE_TORNADOES,
   hostileTerrain: 'water',
   eyeRadiusFraction: 0,
   windFalloff: (r: number) => 1 - r * r,
 };
-
-export const MAX_ACTIVE_TORNADOES = TORNADO_PROFILE.maxActive;
 
 export const TORNADO_RNG_DEFAULT_SEED = 0x57_07_3d_51;
 
@@ -45,8 +44,8 @@ export const tornadoes = createRotatingStorms({
   radiusFor: () => TORNADO_RADIUS_CELLS,
 });
 
-export function isWaterAt(world: RotatingStormWorld, x: number, y: number): boolean {
-  return world.heightAt(x, y) <= SEA_LEVEL;
+export function isLand(world: RotatingStormWorld, x: number, y: number): boolean {
+  return !isWaterAt(world, x, y);
 }
 
 export function trySpawnTornado(world: RotatingStormWorld): RotatingStorm | null {
@@ -63,7 +62,7 @@ export function trySpawnTornado(world: RotatingStormWorld): RotatingStorm | null
     const cx = Math.round(x);
     const cy = Math.round(y);
     if (cx < 0 || cy < 0 || cx >= world.worldSize || cy >= world.worldSize) return null;
-    if (isWaterAt(world, cx, cy)) return null;
+    if (!isLand(world, cx, cy)) return null;
     return { x, y };
   });
 }

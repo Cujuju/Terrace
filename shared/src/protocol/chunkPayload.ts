@@ -26,4 +26,5 @@ export interface JoinSnapshotMessage {
   serverVersion?: string;
   buildIdentity?: string;
   livePlugins?: readonly string[];
+  worldGeneration?: number;
 }

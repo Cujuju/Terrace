@@ -21,13 +21,12 @@ export const SNOW_ELEVATION_SAMPLE_OFFSETS: readonly (readonly [number, number])
 
 export const SNOW_ELEVATION_SAMPLES = SNOW_ELEVATION_SAMPLE_OFFSETS.length;
 
-function clampCell(value: number, worldSize: number): number {
-  const cell = Math.floor(value);
-  if (cell < 0) return 0;
-  if (cell > worldSize - 1) return worldSize - 1;
-  return cell;
+function insideWorld(cell: number, worldSize: number): boolean {
+  return cell >= 0 && cell < worldSize;
 }
 
+// Samples that fall off the map are dropped, not clamped: a disc straddling
+// the edge is judged by the ground actually under it.
 export function meanUnlockedHeightUnder(
   world: SnowWorld,
   centreX: number,
@@ -37,8 +36,9 @@ export function meanUnlockedHeightUnder(
   let total = 0;
   let counted = 0;
   for (const [offsetX, offsetY] of SNOW_ELEVATION_SAMPLE_OFFSETS) {
-    const x = clampCell(centreX + offsetX * radius, world.worldSize);
-    const y = clampCell(centreY + offsetY * radius, world.worldSize);
+    const x = Math.floor(centreX + offsetX * radius);
+    const y = Math.floor(centreY + offsetY * radius);
+    if (!insideWorld(x, world.worldSize) || !insideWorld(y, world.worldSize)) continue;
     if (!world.isCellUnlocked(x, y)) continue;
     total += world.heightAt(x, y);
     counted++;
