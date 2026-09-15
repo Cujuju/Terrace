@@ -31,6 +31,20 @@ export interface IntentPipelineDeps {
   } & TerrainChangeListener;
 }
 
+/** One shape for every nack, so a refusal cannot drift from the wire contract. */
+function sculptDenial(
+  seq: number,
+  reason: SculptDeniedReason,
+  detail?: string,
+): SculptDeniedMessage {
+  return {
+    type: 'sculptDenied',
+    seq,
+    reason,
+    ...(detail !== undefined ? { detail } : {}),
+  };
+}
+
 export function handleSculptIntent(
   deps: IntentPipelineDeps,
   player: Player,
@@ -45,19 +59,14 @@ export function handleSculptIntent(
     // unroutable seq stays silent.
     const seq = sculptMessageSeq(message);
     if (seq !== undefined) {
-      world.sendTo(player.id, { type: 'sculptDenied', seq, reason: 'malformed' });
+      world.sendTo(player.id, sculptDenial(seq, 'malformed'));
     }
     return { applied: false, reason: 'malformed' };
   }
 
   const refuse = (reason: IntentRejection, detail?: string): IntentOutcome => {
     if (intent.seq !== undefined) {
-      world.sendTo(player.id, {
-        type: 'sculptDenied',
-        seq: intent.seq,
-        reason,
-        ...(detail !== undefined ? { detail } : {}),
-      });
+      world.sendTo(player.id, sculptDenial(intent.seq, reason, detail));
     }
     interceptors.notifyIntentDenied(intent, player);
     return detail === undefined
@@ -117,7 +126,7 @@ export function refuseFaultedSculpt(
   send: (denial: SculptDeniedMessage) => void,
 ): void {
   const seq = sculptMessageSeq(message);
-  if (seq !== undefined) send({ type: 'sculptDenied', seq, reason: 'server-fault' });
+  if (seq !== undefined) send(sculptDenial(seq, 'server-fault'));
 
   const intent = validateSculptIntent(message, world.size);
   if (intent !== null) resendIntentFootprint(world, intent);
