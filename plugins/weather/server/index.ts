@@ -7,6 +7,8 @@ export const WEATHER_PLUGIN_NAME = 'weather';
 export const plugin: TerracePlugin = {
   name: WEATHER_PLUGIN_NAME,
 
+  // Kinds register before this hook (the host runs plugins in name order), and
+  // rollback re-creates without a close: the registry is cleared only on close.
   onWorldCreate(): void {
     resetWind();
   },

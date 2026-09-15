@@ -15,6 +15,66 @@ export interface SiblingBridge<T> {
   reset(): void;
 }
 
+export interface RegisteringBridgeSpec<TApi, TEntry>
+  extends Omit<SiblingBridgeSpec<TApi>, 'onResolved'> {
+  register(api: TApi, entry: TEntry): () => void;
+}
+
+export interface RegisteringBridge<TApi, TEntry> extends SiblingBridge<TApi> {
+  registerWith(entry: TEntry): void;
+  unregister(): void;
+}
+
+// Buffers the desired entry so a sibling resolved later (or re-resolved on
+// reopen) receives it; never holds two live registrations at once.
+export function createRegisteringBridge<TApi, TEntry>(
+  spec: RegisteringBridgeSpec<TApi, TEntry>,
+): RegisteringBridge<TApi, TEntry> {
+  let desired: TEntry | null = null;
+  let release: (() => void) | null = null;
+
+  function registerNow(api: TApi, entry: TEntry): void {
+    release?.();
+    release = spec.register(api, entry);
+  }
+
+  const bridge = createSiblingBridge<TApi>({
+    pluginName: spec.pluginName,
+    duckType: spec.duckType,
+    unavailableWarning: spec.unavailableWarning,
+    onResolved: (api) => {
+      if (desired !== null) registerNow(api, desired);
+    },
+  });
+
+  function unregister(): void {
+    release?.();
+    release = null;
+    desired = null;
+  }
+
+  return {
+    load: bridge.load,
+    api: bridge.api,
+    warnUnavailable: bridge.warnUnavailable,
+    registerWith(entry: TEntry): void {
+      desired = entry;
+      const api = bridge.api();
+      if (api !== null) registerNow(api, entry);
+    },
+    unregister,
+    clear(): void {
+      unregister();
+      bridge.clear();
+    },
+    reset(): void {
+      release = null;
+      desired = null;
+      bridge.reset();
+    },
+  };
+}
+
 export function createSiblingBridge<T>(spec: SiblingBridgeSpec<T>): SiblingBridge<T> {
   let resolved: T | null = null;
   let warned = false;
