@@ -1050,6 +1050,7 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
         tool,
         profile,
         ...(tool === 'drag' ? { targetBand: FLOOR_ADJACENT_BAND } : {}),
+        ...(tool === 'carve' ? { spanBand: FLOOR_ADJACENT_BAND } : {}),
       },
     );
   }
@@ -1441,8 +1442,8 @@ describe('the frontier price is quoted once, at verdict time', () => {
 });
 
 describe('a stroke that moves nothing still pays for the land it opened', () => {
-  // A carve with no spanBand cannot change a cell — applySculpt refuses the
-  // whole stroke — yet reveal opens its footprint all the same.
+  // A carve at the band above bedrock cuts nothing on any terrain — applyCarve
+  // refuses it — yet reveal opens its footprint all the same.
   const NO_OP_CARVE: SculptIntent = {
     type: 'sculpt',
     x: CHUNK_SIZE * 2 - 1,
@@ -1450,6 +1451,7 @@ describe('a stroke that moves nothing still pays for the land it opened', () => 
     radius: 2,
     dir: -1,
     tool: 'carve',
+    spanBand: MIN_BAND + 1,
     seq: 1,
   };
 
