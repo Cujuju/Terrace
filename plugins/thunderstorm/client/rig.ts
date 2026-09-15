@@ -178,9 +178,12 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
     applyRevealClip: clip,
   });
 
+  // Every rig is built here: a storm arriving mid-play must never trigger a
+  // material and node-graph build, unlike every other weather kind.
   const pool = createRigPool<ThunderstormRig>(
     () => createThunderstormRig(hazeGeometry, boltGeometry, flashLight, kind.acquire(), clip),
     (rig) => rig.reset(),
+    MAX_ACTIVE_SYSTEMS,
   );
 
   return {
