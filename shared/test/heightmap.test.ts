@@ -29,6 +29,7 @@ import {
   DRAWN_SHORE_HEIGHT,
   forEachFootprintOffset,
   heightAt,
+  highestCeilingUnderSpan,
   isValidHeight,
   isWater,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
@@ -47,6 +48,7 @@ import {
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
   SCULPT_TOOLS,
+  sculptOptionsOf,
   sculptDisplacementUnits,
   setColumn,
   smooth,
@@ -2119,6 +2121,42 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
     const copies = countGridCopies(carved);
     applySculpt(carved, CARVED_X + STROKE_RADIUS, CARVED_Y + STROKE_RADIUS, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
     expect(copies()).toBe(1);
+  });
+});
+
+describe('a smooth grasping a lower layer never swallows the cave above it', () => {
+  const SIZE = 32;
+  const UPPER = { floor: 128, ceiling: 200 };
+  const LOW_CEILING = 60;
+  const HIGH_CEILING = 100;
+  const PRESSES = 25;
+
+  it('25 spanBand raise-smooths leave every column two spans', () => {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(300);
+    for (let y = 12; y < 20; y++) {
+      for (let x = 12; x < 20; x++) {
+        const ceiling = (x + y) % 2 === 0 ? HIGH_CEILING : LOW_CEILING;
+        setColumn(map, x, y, [{ floor: BEDROCK_FLOOR, ceiling }, UPPER]);
+      }
+    }
+    const spanBand = drawnBandOfSample(HIGH_CEILING);
+    const options = sculptOptionsOf({
+      type: 'sculpt', x: 16, y: 16, radius: 5, dir: 1, tool: 'smooth', spanBand,
+    });
+
+    for (let k = 0; k < PRESSES; k++) {
+      applySculpt(map, 16, 16, 5, DEFAULT_SCULPT_AMOUNT, options);
+    }
+
+    for (let y = 12; y < 20; y++) {
+      for (let x = 12; x < 20; x++) {
+        const spans = readSpans(map, x, y);
+        expect(spans).toHaveLength(2);
+        expect(spans[1]).toEqual(UPPER);
+        expect(spans[0].ceiling).toBeLessThanOrEqual(highestCeilingUnderSpan(UPPER));
+      }
+    }
   });
 });
 

@@ -45,6 +45,7 @@ import {
   carveRange,
   columnCoversBand,
   highestCeilingBelow,
+  highestCeilingUnderSpan,
   isHeightInBand,
   isSpanDrawn,
   moveSpanCeiling,
@@ -53,7 +54,6 @@ import {
   spanCount,
   spanIndexCoveringBand,
   spanLowestBandHeight,
-  spanUndersideHeight,
   spansHaveCapAtBand,
   type Span,
 } from './columns.ts';
@@ -924,7 +924,7 @@ function buildLayerView(
     const isTop = k === spanCount(map, x, y) - 1;
     spanCaps.set(i, {
       lo: spanLowestBandHeight(span),
-      hi: isTop ? MAX_HEIGHT : spanUndersideHeight(spanAt(map, x, y, k + 1)) - 1,
+      hi: isTop ? MAX_HEIGHT : highestCeilingUnderSpan(spanAt(map, x, y, k + 1)),
     });
   }
   if (previous !== null) heights.set(previous.heights, previous.base - base);
