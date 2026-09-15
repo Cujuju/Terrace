@@ -4,7 +4,7 @@ import {
   rollEvent,
   roundBroadcastIntensity,
   roundBroadcastPosition,
-} from '@terrace/shared';
+} from "@terrace/shared";
 import {
   DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
   DISC_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS,
@@ -15,9 +15,9 @@ import {
   discMaxRadiusFor,
   discMeanRadiusFor,
   discMinRadiusFor,
-} from './discGeometry.ts';
+} from "./discGeometry.ts";
 
-export * from './discGeometry.ts';
+export * from "./discGeometry.ts";
 
 export const DISC_MEAN_LIFETIME_SECONDS = 240;
 
@@ -69,9 +69,13 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
   let nextId = 1;
   let forced = false;
 
-  const footprintAreaScale = spec.footprintAreaScale ?? DISC_DEFAULT_FOOTPRINT_AREA_SCALE;
+  const footprintAreaScale =
+    spec.footprintAreaScale ?? DISC_DEFAULT_FOOTPRINT_AREA_SCALE;
 
-  function randomCentre(worldSize: number, radius: number): { x: number; y: number } {
+  function randomCentre(
+    worldSize: number,
+    radius: number,
+  ): { x: number; y: number } {
     const margin = radius * DISC_SPAWN_MARGIN_RADII;
     return {
       x: randomInRange(spec.random, -margin, worldSize + margin),
@@ -117,7 +121,12 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
   }
 
   function capFor(worldSize: number): number {
-    return discActiveCapFor(worldSize, spec.coverageFraction, spec.maxActiveSystems);
+    return discActiveCapFor(
+      worldSize,
+      spec.coverageFraction,
+      spec.maxActiveSystems,
+      footprintAreaScale,
+    );
   }
 
   // Two gates: natural and hub spawns stop at the coverage cap; a summoned
@@ -135,7 +144,11 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     let centre = randomCentre(worldSize, radius);
     if (spec.siting !== undefined) {
       let sited = spec.siting(centre.x, centre.y, radius);
-      for (let attempt = 1; !sited && attempt < DISC_SITING_ATTEMPTS; attempt++) {
+      for (
+        let attempt = 1;
+        !sited && attempt < DISC_SITING_ATTEMPTS;
+        attempt++
+      ) {
         centre = randomCentre(worldSize, radius);
         sited = spec.siting(centre.x, centre.y, radius);
       }
@@ -149,7 +162,11 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
       centre.x,
       centre.y,
       radius,
-      randomInRange(spec.random, DISC_MIN_PEAK_INTENSITY, DISC_MAX_PEAK_INTENSITY),
+      randomInRange(
+        spec.random,
+        DISC_MIN_PEAK_INTENSITY,
+        DISC_MAX_PEAK_INTENSITY,
+      ),
     );
   }
 
@@ -182,7 +199,12 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     spawnAt(worldSize: number, x: number, y: number): DiscSystem | null {
       if (forced) return null;
       if (systems.length >= spec.maxActiveSystems) return null;
-      return birth(x, y, discMeanRadiusFor(worldSize, footprintAreaScale), DISC_MAX_PEAK_INTENSITY);
+      return birth(
+        x,
+        y,
+        discMeanRadiusFor(worldSize, footprintAreaScale),
+        DISC_MAX_PEAK_INTENSITY,
+      );
     },
 
     force(next: boolean): void {
@@ -206,7 +228,8 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
       for (let index = systems.length - 1; index >= 0; index--) {
         const system = systems[index]!;
 
-        if (!system.retiring && rollEvent(spec.random, deathRate, dt)) system.retiring = true;
+        if (!system.retiring && rollEvent(spec.random, deathRate, dt))
+          system.retiring = true;
 
         system.envelope = system.retiring
           ? Math.max(0, system.envelope - envelopeStep)
@@ -223,7 +246,13 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
 
       const freeSlots = capFor(worldSize) - systems.length;
       if (freeSlots <= 0) return;
-      if (!rollEvent(spec.random, freeSlots / DISC_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS, dt)) {
+      if (
+        !rollEvent(
+          spec.random,
+          freeSlots / DISC_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS,
+          dt,
+        )
+      ) {
         return;
       }
       spawnOne(worldSize);
@@ -250,7 +279,9 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
         x: roundBroadcastPosition(system.x),
         y: roundBroadcastPosition(system.y),
         radius: roundBroadcastPosition(system.radius),
-        intensity: roundBroadcastIntensity(system.peakIntensity * system.envelope),
+        intensity: roundBroadcastIntensity(
+          system.peakIntensity * system.envelope,
+        ),
         vx,
         vy,
       }));

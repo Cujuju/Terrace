@@ -27,3 +27,16 @@ Owner calls on the two open-defaults issues from the storms/mudslides landing:
   bank (the debris-dam reason stands). `sea` remains in `MUDSLIDE_STOPS` so
   slices written before this parse. Residual, named: the client draws the front
   at lattice height, so under water it is not visible; the fan is.
+
+## Decision made 2026-09-15 (rain coverage cap follows the scaled footprint)
+
+Reverses the population half of `d73f7f62`. That commit tripled rain and snow
+front area but kept the active cap computed over the base disc, so the number
+of fronts stayed the same and the realised rain coverage was ~3 × 0.09 (~26%
+measured on the shipped world). Owner call: `coverageFraction` means what it
+says. `discActiveCapFor` and `discMeanFootprintCells` now take the population's
+`footprintAreaScale`, so a bigger front means fewer fronts, not more sky.
+Shipped 512-unit world: rain cap 7 → 3; 128-unit worlds stay at the floor of
+1; fog and thunderstorm (scale 1) are byte-identical. Rejected: renaming the
+constant to describe the tripled coverage (keeps a number that lies), and
+leaving it (the 26% sky was the complaint).
