@@ -474,3 +474,59 @@ describe('a held carve keeps the band it pressed on and tunnels inward (#349)', 
     }
   });
 });
+
+describe('a held stroke with a still pointer keeps its press-time cell (#WALK)', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  const HOLD_REPEATS = 8;
+  const EYE_DISTANCE_CELLS = 12;
+  const DEGREES_TO_RADIANS = Math.PI / 180;
+
+  const raiseHeld = (elevationDegrees: number): SculptIntent[] => {
+    const mirror = flatWorld(() => 0);
+    const eye = cellW(EYE_DISTANCE_CELLS);
+    const elevation = elevationDegrees * DEGREES_TO_RADIANS;
+    const { sent, fire, dispose } = driveInput(
+      mirror,
+      {
+        x: cellW(30) - eye * Math.cos(elevation),
+        y: eye * Math.sin(elevation),
+        z: cellW(30),
+      },
+      { x: cellW(30), y: 0, z: cellW(30) },
+    );
+    try {
+      fire('pointerdown', {});
+      for (let repeat = 0; repeat < HOLD_REPEATS; repeat++) {
+        const last = sent[sent.length - 1]!;
+        applySculpt(mirror.map, last.x, last.y, last.radius, BAND_HEIGHT, {
+          tool: last.tool ?? 'stamp',
+          profile: last.profile ?? 'soft',
+        });
+        vi.advanceTimersByTime(repeatDelayMs(repeat));
+      }
+      return [...sent];
+    } finally {
+      dispose();
+    }
+  };
+
+  for (const elevation of [90, 60, 45, 30]) {
+    it(`does not walk at ${elevation} degrees`, () => {
+      vi.useFakeTimers();
+      setBrushTool('stamp');
+      setBrushRadius(1);
+      const sent = raiseHeld(elevation);
+      expect(sent.length).toBeGreaterThan(HOLD_REPEATS);
+      const first = { x: sent[0]!.x, y: sent[0]!.y };
+      for (const intent of sent) {
+        expect({ x: intent.x, y: intent.y }).toEqual(first);
+      }
+    });
+  }
+});
