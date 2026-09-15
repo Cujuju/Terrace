@@ -112,6 +112,35 @@ function materialSignature(material: Material): string {
   ].join('|');
 }
 
+// Parts whose diffuse color is the only thing distinguishing them share one
+// white vertexColors material with the color baked into the merged geometry.
+// Eligible: opaque flat FrontSide unmapped Lamberts. Anything animated stays
+// correct because emissive/emissiveIntensity/opacity remain in the key — only
+// the diffuse color leaves it. Output is identical: white × baked = color.
+function colorBlindSignature(material: Material): string | null {
+  if (!(material instanceof MeshLambertMaterial)) return null;
+  if (material.transparent || material.opacity < 1) return null;
+  if (!material.flatShading) return null;
+  if (material.side !== FrontSide) return null;
+  if (uvChannelsUsed(material).size > 0) return null;
+  return [
+    material.type,
+    material.emissive.getHex(),
+    material.emissiveIntensity,
+    material.side,
+    mapIdentitySignature(material),
+  ].join('|');
+}
+
+function sharedWhiteMaterial(material: MeshLambertMaterial): MeshLambertMaterial {
+  return new MeshLambertMaterial({
+    vertexColors: true,
+    flatShading: true,
+    emissive: material.emissive.getHex(),
+    emissiveIntensity: material.emissiveIntensity,
+  });
+}
+
 const UV_COMPONENTS = 2;
 
 interface MergeGroupData {
@@ -225,20 +254,26 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
 
   const groups = new Map<string, MergeGroupData & { material: Material }>();
   for (const part of rest) {
-    const signature = materialSignature(part.material);
+    const blind = colorBlindSignature(part.material);
+    const signature = blind === null ? `exact|${materialSignature(part.material)}` : `blind|${blind}`;
     let group = groups.get(signature);
     if (group === undefined) {
+      const shared =
+        blind === null ? null : sharedWhiteMaterial(part.material as MeshLambertMaterial);
       group = {
-        material: part.material,
+        material: shared ?? part.material,
         positions: [],
         normals: [],
+        colors: shared === null ? undefined : [],
         uvs: uvArraysFor(part.material),
       };
       groups.set(signature, group);
     } else if (group.material !== part.material) {
       spentMaterials.add(part.material);
     }
-    for (const local of part.localMatrices) bakeInto(group, part.geometry, local);
+    const diffuse =
+      blind === null ? undefined : (part.material as MeshLambertMaterial).color;
+    for (const local of part.localMatrices) bakeInto(group, part.geometry, local, diffuse);
     spentGeometries.add(part.geometry);
   }
 

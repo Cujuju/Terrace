@@ -1,17 +1,11 @@
 import {
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
-  bandFloorHeight,
-  bandOf,
   cellIndex,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
-  highestCeilingBelow,
   quantizeToBand,
-  spanAt,
-  spanCount,
-  spanIndexCoveringBand,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -34,7 +28,11 @@ import {
   type TerrainMirror,
 } from './terrain/mirror.ts';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
-import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
+import {
+  setServerVersion,
+  setWorldIdentity,
+  type DenialHint,
+} from './state/hudState.ts';
 import { noteBuildIdentity } from './net/buildReload.ts';
 import {
   setPendingRestartSeconds,
@@ -94,8 +92,10 @@ import {
 } from './render/revealMask.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
+  bandAtCellIn,
   bandOfPick as bandOfPickIn,
   carveBandOfPick as carveBandOfPickIn,
+  graspSpanBandIn,
 } from './terrain/pickBand.ts';
 import {
   carveReachCell,
@@ -124,8 +124,18 @@ export interface LayerEdgeLight {
  * - `nest` — a monsters protection denial ('monster occupies the ground').
  * - `ward` — a relics bedrock-ward denial ('warded').
  * - `mana-with-cost` — a mana denial ('insufficient mana'); the hint carries the cost.
+ * - `refused` — a reason this build does not know (a server fault, say). The
+ *   ground is not locked, so the hand is told only that the stroke did not land.
  */
-export type DenialHint = 'locked' | 'nest' | 'ward' | 'mana-with-cost';
+export type { DenialHint };
+
+/** The reasons that mean the ground itself said no; anything else is not a lock. */
+const LOCKED_DENIAL_REASONS: readonly SculptDeniedReason[] = [
+  'malformed',
+  'locked',
+  'plugin-denied',
+  'plugin-modified-invalid',
+];
 
 export function denialHintFor(
   reason: SculptDeniedReason | undefined,
@@ -137,7 +147,7 @@ export function denialHintFor(
   if (text.includes('monster') || text.includes('occupies') || text.includes('nest')) {
     return 'nest';
   }
-  void reason;
+  if (reason !== undefined && !LOCKED_DENIAL_REASONS.includes(reason)) return 'refused';
   return 'locked';
 }
 
@@ -167,7 +177,7 @@ export interface World extends TerrainSink {
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
-  graspSpanBand(pick: TerrainRayPick | null): number | null;
+  graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   terrainHeightAt(x: number, y: number): number | null;
@@ -637,18 +647,12 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     bandAtCell(x: number, y: number, spanBand: number | null): number | null {
       if (mirror === null) return null;
-      if (spanBand === null) return bandOf(sampleHeight(mirror, x, y));
-      const k = spanIndexCoveringBand(mirror.map, x, y, spanBand);
-      const ceiling =
-        k !== null
-          ? spanAt(mirror.map, x, y, k).ceiling
-          : highestCeilingBelow(mirror.map, x, y, bandFloorHeight(spanBand));
-      return ceiling === null ? null : bandOf(ceiling);
+      return bandAtCellIn(mirror, x, y, spanBand);
     },
-    graspSpanBand(pick: TerrainRayPick | null): number | null {
+    graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;
-      if (spanCount(mirror.map, pick.x, pick.y) < 2) return null;
-      return bandOfPick(pick);
+      // The pick proves its own column holds the span; another column must be asked.
+      return graspSpanBandIn(mirror.map, pick, atX, atY);
     },
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;
@@ -656,7 +660,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null {
       if (mirror === null) return null;
-      return carveReachCell(mirror, origin, direction, band);
+      return carveReachCell(mirror, origin, direction, band, layerEdges);
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;

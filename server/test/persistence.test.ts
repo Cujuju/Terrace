@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CHUNK_SIZE } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  BEDROCK_FLOOR,
+  BEDROCK_REMNANT_CEILING,
+  CHUNK_SIZE,
+  bandLevelHeight,
+  readSpans,
+} from '@terrace/shared';
 import { decodeHeights, encodeHeights } from '../src/persistence/codec.ts';
 import {
   SNAPSHOT_RETENTION,
@@ -141,6 +148,108 @@ describe('SnapshotStore', () => {
     );
     expect(restored.isChunkUnlockedForToken('token-a', 2, 2)).toBe(true);
     reopened.close();
+  });
+
+  it('round-trips the layered columns a carve leaves, remnant included', () => {
+    const CLIFF_BAND = 4;
+    const GROUND_BAND = 1;
+    const CARVE_BAND = 2;
+    const CLIFF_EDGE = CHUNK_SIZE / 2;
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    for (let y = 0; y < world.size; y++) {
+      for (let x = 0; x < world.size; x++) {
+        world.map.cells[y * world.size + x] =
+          x >= CLIFF_EDGE ? bandLevelHeight(CLIFF_BAND) : bandLevelHeight(GROUND_BAND);
+      }
+    }
+    // A cut at the cliff's lowest lip opens a tunnel mouth: floor, gap, roof.
+    const diff = world.applySculpt(CLIFF_EDGE, 8, 2, -BAND_HEIGHT, {
+      tool: 'carve',
+      spanBand: CARVE_BAND,
+    });
+    expect(diff.length).toBeGreaterThan(0);
+    const spans = world.spansForPersistence();
+    expect(spans.size).toBeGreaterThan(0);
+    const carved = diff.find((cell) => cell.spans !== undefined);
+    expect(carved).toBeDefined();
+    const cut = readSpans(world.map, carved!.x, carved!.y);
+    expect(cut.length).toBe(2);
+    expect(cut[0]!.floor).toBe(BEDROCK_FLOOR);
+    expect(cut[0]!.ceiling).toBeLessThan(cut[1]!.floor);
+
+    const store = SnapshotStore.open(dbPath);
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+      columnSpans: spans,
+    });
+    store.close();
+
+    const reopened = SnapshotStore.open(dbPath);
+    const snapshot = reopened.loadLatest();
+    expect(snapshot).not.toBeNull();
+    if (snapshot === null) return;
+
+    const restored = World.restore(
+      snapshot.worldSize,
+      snapshot.cells,
+      snapshot.mask,
+      undefined,
+      snapshot.name,
+      snapshot.tokenMasks,
+      0,
+      null,
+      snapshot.columnSpans,
+    );
+
+    expect(Array.from(restored.map.cells)).toEqual(Array.from(world.map.cells));
+    expect(restored.spansForPersistence().size).toBe(spans.size);
+    for (const [cell, packed] of spans) {
+      expect(Array.from(restored.spansForPersistence().get(cell) ?? [])).toEqual(
+        Array.from(packed),
+      );
+    }
+    reopened.close();
+  });
+
+  it('a column cut down to the bedrock remnant alone rides back as a plain height', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.map.cells[8 * world.size + 8] = BEDROCK_REMNANT_CEILING;
+
+    const store = SnapshotStore.open(dbPath);
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+      columnSpans: world.spansForPersistence(),
+    });
+
+    const snapshot = store.loadLatest();
+    expect(snapshot).not.toBeNull();
+    if (snapshot === null) return;
+    expect(snapshot.columnSpans.size).toBe(0);
+
+    const restored = World.restore(
+      snapshot.worldSize,
+      snapshot.cells,
+      snapshot.mask,
+      undefined,
+      snapshot.name,
+      snapshot.tokenMasks,
+      0,
+      null,
+      snapshot.columnSpans,
+    );
+    expect(readSpans(restored.map, 8, 8)).toEqual([
+      { floor: BEDROCK_FLOOR, ceiling: BEDROCK_REMNANT_CEILING },
+    ]);
+    store.close();
   });
 
   it('a snapshot saved WITHOUT tokenMasks reads back with an empty map, not undefined', () => {

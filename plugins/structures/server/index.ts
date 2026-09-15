@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, bandOf, dayOfSimMillis, type CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, dayOfSimMillis, drawnBandOfSample, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   SliceLoadOutcome,
@@ -70,7 +70,7 @@ let live: Map<number, BoardCellRecord> = new Map();
 let supportBands = new Map<number, number>();
 
 function noteSupportBand(world: StructuresWorld, x: number, y: number): void {
-  supportBands.set(structureKey(x, y), bandOf(world.heightAt(x, y)));
+  supportBands.set(structureKey(x, y), drawnBandOfSample(world.heightAt(x, y)));
 }
 
 function syncSupportBands(world: StructuresWorld): void {
@@ -355,7 +355,7 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
     const key = structureKey(cell.x, cell.y);
     if (!live.has(key)) continue;
     const resting = supportBands.get(key);
-    if (resting !== undefined && bandOf(world.heightAt(cell.x, cell.y)) === resting) continue;
+    if (resting !== undefined && drawnBandOfSample(world.heightAt(cell.x, cell.y)) === resting) continue;
     if (!live.delete(key)) continue;
     survey.evict(key);
     supportBands.delete(key);

@@ -12,6 +12,7 @@ import {
   type Material,
 } from 'three';
 import { FLORA_TREE_CAP, FLORA_TREE_SCALE_MAX, type FloraTreeKind } from '../protocol.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
   clearPlacementExtent,
@@ -69,8 +70,8 @@ export interface FloraModels {
 
 const UP = new Vector3(0, 1, 0);
 
-function lambert(color: number): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color, flatShading: true });
+function lambert(): MeshLambertMaterial {
+  return new MeshLambertMaterial({ vertexColors: true, flatShading: true });
 }
 
 export function createFloraModels(): FloraModels {
@@ -104,12 +105,12 @@ export function createFloraModels(): FloraModels {
   broadleafGeometry.translate(0, BROADLEAF_CROWN_CENTRE_Y, 0);
 
   const geometries: BufferGeometry[] = [trunkGeometry, coniferGeometry, pineGeometry, broadleafGeometry];
-  const materials: Material[] = [
-    lambert(TRUNK_COLOR),
-    lambert(CONIFER_CROWN_COLOR),
-    lambert(PINE_CROWN_COLOR),
-    lambert(BROADLEAF_CROWN_COLOR),
-  ];
+  bakeSolidColor(trunkGeometry, TRUNK_COLOR);
+  bakeSolidColor(coniferGeometry, CONIFER_CROWN_COLOR);
+  bakeSolidColor(pineGeometry, PINE_CROWN_COLOR);
+  bakeSolidColor(broadleafGeometry, BROADLEAF_CROWN_COLOR);
+  const sharedMaterial = lambert();
+  const materials: Material[] = [sharedMaterial, sharedMaterial, sharedMaterial, sharedMaterial];
 
   const trunks = new InstancedMesh(trunkGeometry, materials[0], FLORA_TREE_CAP);
   const conifers = new InstancedMesh(coniferGeometry, materials[1], FLORA_TREE_CAP);

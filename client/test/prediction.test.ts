@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   DRAWN_SHORE_HEIGHT,
@@ -380,6 +381,71 @@ function rowInOwnChunk(cells: Int16Array | Heightmap['cells']): number[] {
   for (let x = 0; x <= FRONTIER_EDGE_X; x++) out.push(cells[FRONTIER_Y * WORLD + x]);
   return out;
 }
+
+// A terraced ramp: every riser is a whole band over one cell, which is exactly
+// the gradient relaxation cascades along. A smooth on it reaches far past its brush.
+const RAMP_TREAD_CELLS = WORLD_UNIT_CELLS;
+
+function rampChunk(cx: number, cy: number): ChunkPayload {
+  const heights: number[] = [];
+  for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+    for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+      heights.push(Math.floor((cx * CHUNK_SIZE + lx) / RAMP_TREAD_CELLS) * BAND_HEIGHT);
+    }
+  }
+  return { cx, cy, heights };
+}
+
+function rampWorld(): ChunkPayload[] {
+  const out: ChunkPayload[] = [];
+  for (let cy = 0; cy < WORLD / CHUNK_SIZE; cy++) {
+    for (let cx = 0; cx < WORLD / CHUNK_SIZE; cx++) out.push(rampChunk(cx, cy));
+  }
+  return out;
+}
+
+function smoothAt(x: number, y: number, seq: number): SculptIntent {
+  return { type: 'sculpt', x, y, radius: MIN_BRUSH_RADIUS, dir: 1, tool: 'smooth', seq };
+}
+
+describe('a relaxing tool is judged by the reach it had, not the brush it used', () => {
+  it('refuses a smooth whose cascade runs into ground it was never sent', () => {
+    const { mirror, store } = createClient([rampChunk(0, 0)]);
+    const before = Array.from(mirror.map.cells);
+
+    // Four cells clear of the frontier: the footprint and its halo are known,
+    // so the pre-flight test passes and only the real cascade can catch this.
+    const dirty = store.predict(smoothAt(FRONTIER_EDGE_X - 4, FRONTIER_Y, 1), 0);
+
+    expect(dirty.size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+    expect(store.ghostSeqs()).toEqual([1]);
+    expect(Array.from(mirror.map.cells)).toEqual(before);
+  });
+
+  it('still predicts the same smooth once the world around it is known', () => {
+    const { mirror, store } = createClient(rampWorld());
+    const before = Array.from(mirror.map.cells);
+
+    const dirty = store.predict(smoothAt(FRONTIER_EDGE_X - 4, FRONTIER_Y, 1), 0);
+
+    expect(dirty.size).toBeGreaterThan(0);
+    expect(store.pendingCount()).toBe(1);
+    expect(store.ghostSeqs()).toEqual([]);
+    expect(Array.from(mirror.map.cells)).not.toEqual(before);
+  });
+
+  it('rolls the refused cascade back so the next diff has nothing to undo', () => {
+    const { mirror, store } = createClient([rampChunk(0, 0)]);
+    store.predict(smoothAt(FRONTIER_EDGE_X - 8, FRONTIER_Y, 1), 0);
+    const afterGhost = Array.from(mirror.map.cells);
+
+    store.resolveSeq(1);
+
+    expect(store.ghostSeqs()).toEqual([]);
+    expect(Array.from(mirror.map.cells)).toEqual(afterGhost);
+  });
+});
 
 describe('frontier sculpts (issue #21)', () => {
   it('never renders below the authoritative heights after a frontier stroke', () => {

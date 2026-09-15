@@ -13,6 +13,7 @@ import {
   type Vec3,
 } from '../terrain/picking.ts';
 import { footOfFaceCell } from '../terrain/faceFoot.ts';
+import { CUE_BLINK_ON_MS, DENIED_BLINK_SETTLE_MS } from '../render/denialCue.ts';
 import {
   DEFAULT_BRUSH_TOOL,
   brushRadius,
@@ -26,6 +27,7 @@ import {
   controlBindings,
   modifierOf,
   resolvePress,
+  type BindingModifier,
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
@@ -74,6 +76,9 @@ export type SendOutcome = 'sent' | 'refused' | 'offline';
  */
 export const SILENT_REPEAT_BLINK_AFTER = 3;
 
+/** Red for this long when no button holds it. Derived so the pulse outlasts the cue's own blinks. */
+export const REFUSED_PULSE_MS = DENIED_BLINK_SETTLE_MS + CUE_BLINK_ON_MS;
+
 export interface SculptInputOptions {
   canvas: HTMLCanvasElement;
   camera: Camera;
@@ -87,7 +92,11 @@ export interface SculptInputOptions {
   worldSize: () => number;
   riserBand: (pick: TerrainRayPick | null) => number | null;
   bandAtCell: (x: number, y: number, spanBand: number | null) => number | null;
-  graspSpanBand: (pick: TerrainRayPick | null) => number | null;
+  graspSpanBand: (
+    pick: TerrainRayPick | null,
+    atX: number,
+    atY: number,
+  ) => number | null;
   carveBand: (pick: TerrainRayPick | null) => number | null;
   carveReach: (
     origin: Vec3,
@@ -144,6 +153,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let havePointer = false;
 
   let mods: ModifierState = { shiftKey: false, ctrlKey: false, altKey: false };
+
+  // The chord syncMode last observed. Seeded with the no-modifier resting state
+  // so the first unmodified move is not an edge.
+  let lastModifier: BindingModifier | null = modifierOf(mods);
 
   let strokeButton: number | null = null;
   let strokePointerId: number | null = null;
@@ -212,7 +225,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     return worldPointToCell(worldX, worldZ, size);
   };
 
+  // Bumped whenever the aim re-marches, so a held stroke can tell "same pinned
+  // column, new surface" from "the pin moved".
+  let hoverPin = 0;
+
   const repick = (): TerrainRayPick | null => {
+    hoverPin++;
     const ray = pointerRay();
     hoverRay = ray;
     if (ray === null) {
@@ -262,6 +280,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let descentFrozen = false;
   let deadDirectionlessRaiseHits = 0;
 
+  // The anchor a held stroke keeps editing, latched to the aim pin that produced
+  // it. Re-deriving it every tick walked the stroke toward the camera: a raised
+  // cap flips the pinned column tread -> riser, and the foot step lands a cell back.
+  let strokeAnchorPin = -1;
+  let strokeAnchorCell: { x: number; y: number } | null = null;
+
   type EmitOrigin = 'press' | 'repeat' | 'move';
   type EmitOutcome = 'sent' | 'flat-silent' | 'absent-silent' | 'unsent';
 
@@ -275,6 +299,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   const noteSent = (): void => {
     silentRepeatTicks = 0;
     repeatStreakBlinked = false;
+  };
+
+  /** One flat blink. A press that sends nothing must always cue. */
+  const blinkFlat = (): void => {
+    flatBlinkCount++;
   };
 
   /**
@@ -348,16 +377,24 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // No-target frame stays silent.
       if (cell === null) return 'absent-silent';
       if (isUndersideRaise(cell, action)) return noteFlatSilent(origin);
-      spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
+      if (strokeArmed && strokeAnchorCell !== null && strokeAnchorPin === hoverPin) {
+        anchor = strokeAnchorCell;
+      } else {
+        const foot =
+          hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
+            ? footOfFaceCell(cell, hoverRay.direction, worldSize())
+            : null;
+        anchor = foot ?? { x: cell.x, y: cell.y };
+        strokeAnchorPin = hoverPin;
+        strokeAnchorCell = anchor;
+      }
+      // The grasp is read at the anchor: a span the anchored column lacks names nothing there.
+      spanBand =
+        strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell, anchor.x, anchor.y);
       if (strokeTool === 'carve') {
         if (isCarveWithoutSpan(spanBand)) return noteFlatSilent(origin);
         strokeCarveBand = spanBand;
       }
-      const foot =
-        hoverRay !== null && TOOLS_WITH_FOOT_ANCHOR.includes(strokeTool)
-          ? footOfFaceCell(cell, hoverRay.direction, worldSize())
-          : null;
-      anchor = foot ?? { x: cell.x, y: cell.y };
     }
     // Every emit path honors the send() outcome like emitDragLeg does: 'offline'
     // is the connection-down cue (grey/hollow, never red), 'refused' is a local
@@ -476,6 +513,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     hoverKey = '';
     hoverCell = null;
     hoverRay = null;
+    strokeAnchorPin = -1;
+    strokeAnchorCell = null;
     offlineLatched = false;
     silentRepeatTicks = 0;
     repeatStreakBlinked = false;
@@ -493,11 +532,22 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   const strokeIsLive = (): boolean => strokePointerId !== null;
 
   let refusedPointerId: number | null = null;
+  let refusedUntilMs = Number.NEGATIVE_INFINITY;
+
+  const refusedIsShowing = (): boolean =>
+    refusedPointerId !== null || performance.now() < refusedUntilMs;
+
+  const clearRefused = (): void => {
+    refusedPointerId = null;
+    refusedUntilMs = Number.NEGATIVE_INFINITY;
+  };
 
   const releaseRefusedStroke = (): void => {
     const refused = strokePointerId;
     stopRepeat();
     refusedPointerId = refused;
+    // A nack that outlived its click has no button to hold the cue: pulse instead.
+    if (refused === null) refusedUntilMs = performance.now() + REFUSED_PULSE_MS;
   };
 
   const scheduleRepeat = (repeatIndex: number): void => {
@@ -565,8 +615,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const hover = hoverTarget();
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
-    if (hover === null || hover.face !== 'tread') return;
-    const spanBand = graspSpanBand(hover);
+    // The seed cues its own send failures below; every other refusal to take
+    // hold blinks here, so a press is never silent.
+    if (hover === null || hover.face !== 'tread') {
+      blinkFlat();
+      return;
+    }
+    const spanBand = graspSpanBand(hover, hover.x, hover.y);
     const before = readSeedBand(hover.x, hover.y, spanBand);
     // A press-time seed failure latches offline and blinks once; a local veto
     // is already red and never blinks grey.
@@ -577,18 +632,21 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
     if (seeded === 'refused') return;
     const after = readSeedBand(hover.x, hover.y, spanBand);
-    if (before === null || after === null) return;
+    if (before === null || after === null) {
+      blinkFlat();
+      return;
+    }
     if (action === 'raise') {
       // The seed raised nothing: blink the flat cue once.
       if (after.band <= before.band) {
-        flatBlinkCount++;
+        blinkFlat();
         return;
       }
       strokeGrab = after.band;
     } else {
       // Lowers grab the pre-seed band: the seed lowers it away, so the drag plane rides the starting band.
       if (after.band >= before.band) {
-        flatBlinkCount++;
+        blinkFlat();
         return;
       }
       strokeGrab = before.band;
@@ -597,7 +655,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   const startStroke = (event: PointerEvent, action: SculptAction): void => {
     stopRepeat();
-    refusedPointerId = null;
+    clearRefused();
 
     strokeButton = event.button;
     strokePointerId = event.pointerId;
@@ -631,10 +689,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       ctrlKey: state.ctrlKey,
       altKey: state.altKey,
     };
+    const modifier = modifierOf(mods);
+    // Edge-triggered: only a CHANGE of chord previews a direction. Writing the
+    // mode on every move re-asserted the unmodified binding, so the HUD toggle
+    // (the only direction control on touch) lasted a single frame.
+    const changed = modifier !== lastModifier;
+    lastModifier = modifier;
+    if (!changed || modifier === null) return;
     if (strokeButton !== null) return;
     if (TOOLS_WITHOUT_DIRECTION.includes(brushTool())) return;
-    const modifier = modifierOf(mods);
-    if (modifier === null) return;
     const bindings = controlBindings();
     if (bindings.raise.modifier === modifier) setSculptMode('raise');
     else if (bindings.lower.modifier === modifier) setSculptMode('lower');
@@ -658,13 +721,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   const onPointerMove = (event: PointerEvent): void => {
+    // Sync the chord BEFORE the leg: a modifier change must steer the leg it
+    // arrived on, not the next one.
+    if (event.pointerType !== 'touch') syncMode(event);
     if (strokePointerId === null || event.pointerId === strokePointerId) {
       pointerClientX = event.clientX;
       pointerClientY = event.clientY;
       havePointer = true;
       if (strokeArmed && strokeGrab !== null) emitIntent('move');
     }
-    if (event.pointerType !== 'touch') syncMode(event);
   };
 
   const onPointerUp = (event: PointerEvent): void => {
@@ -690,7 +755,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   const onWindowBlur = (): void => {
     activeTouchIds.clear();
-    refusedPointerId = null;
+    clearRefused();
     stopRepeat();
   };
 
@@ -708,14 +773,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     heldBand: (): number | null => strokeGrab,
     carveHeldBand: (): number | null => strokeCarveBand,
     releaseStroke: releaseRefusedStroke,
-    refusedHold: (): boolean => refusedPointerId !== null,
+    refusedHold: refusedIsShowing,
     offlineHold: (): boolean => offlineLatched,
     dragDescentFrozen: (): boolean => descentFrozen,
     offlineBlinks: (): number => offlineBlinkCount,
     flatBlinks: (): number => flatBlinkCount,
     deadGuardHits: (): number => deadDirectionlessRaiseHits,
     dispose(): void {
-      refusedPointerId = null;
+      clearRefused();
       stopRepeat();
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);

@@ -32,6 +32,7 @@ import {
   sculptMode,
   setConnectionStatus,
   setHoverPick,
+  showDenialHint,
 } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
 import {
@@ -187,7 +188,7 @@ const sculptInput = createSculptInput({
   riserBand: (pick) =>
     world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan(), tool: brushTool() }),
   bandAtCell: (x, y, spanBand) => world.bandAtCell(x, y, spanBand),
-  graspSpanBand: (pick) => world.graspSpanBand(pick),
+  graspSpanBand: (pick, atX, atY) => world.graspSpanBand(pick, atX, atY),
   carveBand: (pick) => world.carveBand(pick),
   carveReach: (origin, direction, band) => world.carveReach(origin, direction, band),
   send: (intent) => {
@@ -213,11 +214,19 @@ const deniedAwareSink: TerrainSink = {
   onSculptDenied: (msg) => {
     world.onSculptDenied(msg);
     sculptInput.releaseStroke();
+    showDenialHint(world.denialHint());
   },
   onSculptApplied: (msg) => world.onSculptApplied(msg),
 };
 
-const denialCue = createDenialCue(() => sculptInput.refusedHold());
+// The four brush cues: refused (red), offline (grey/hollow, never red), ghost
+// (the intent left but predicted nothing), flat (posture refusal, crosshair only).
+const denialCue = createDenialCue(() => sculptInput.refusedHold(), {
+  offline: () => sculptInput.offlineHold(),
+  ghost: () => world.ghostSeqs().length > 0,
+  flat: () => sculptInput.dragDescentFrozen(),
+  flatBlinks: () => sculptInput.flatBlinks(),
+});
 const brushPreview = createBrushPreview(
   viewport.scene,
   canvas,

@@ -92,6 +92,9 @@ export interface TerrainRayPick {
 const MAX_TERRAIN_WORLD_Y = MAX_HEIGHT * HEIGHT_WORLD_SCALE;
 const MIN_TERRAIN_WORLD_Y = MIN_HEIGHT * HEIGHT_WORLD_SCALE;
 
+/** Clears the top drawn cap, so a ray is never clipped to start ON a cap plane. */
+const MARCH_CEILING_WORLD_Y = MAX_TERRAIN_WORLD_Y + BAND_WORLD_HEIGHT;
+
 const CELL_CENTRE_OFFSET = 0.5;
 
 const marchStepLimit = (worldSize: number): number => 2 * worldSize + 2;
@@ -327,7 +330,7 @@ function refineRiserToDrawnFace(
     i + 1 + DRAWN_FACE_MARGIN_CELLS,
     j - DRAWN_FACE_MARGIN_CELLS,
     j + 1 + DRAWN_FACE_MARGIN_CELLS,
-    MAX_TERRAIN_WORLD_Y,
+    MARCH_CEILING_WORLD_Y,
   );
   const fromT = window === null ? tEnter : window.tEnter;
   const toT = window === null ? tExit : window.tExit;
@@ -622,13 +625,17 @@ function terrainHitInCell(
     const lowY = entryY < exitY ? entryY : exitY;
     const highY = entryY < exitY ? exitY : entryY;
     if (lowY > drawnY || highY < baseY) continue;
-    const insideOnEntry = entryY <= drawnY && entryY >= baseY;
     // F4: snap underside cues to the drawn ceiling. The mesh draws the gap
     // floor as a ceiling polygon at the drawn cap, so reporting the drawn cap
     // matches the polygon refinement without walking any polygons.
     const drawnCeilingY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-    const faceY = insideOnEntry ? entryY : entryY > drawnY ? capY : drawnCeilingY;
-    const metY = insideOnEntry ? entryY : entryY > drawnY ? drawnY : drawnCeilingY;
+    // F8: an entry exactly ON the column's own drawn cap is a level face. A
+    // flat cap picks as tread whatever its height.
+    const onOwnCap = entryY === drawnY && drawnY === drawnCeilingY;
+    const insideOnEntry = !onOwnCap && entryY <= drawnY && entryY >= baseY;
+    const onOrAboveCap = !insideOnEntry && entryY >= drawnY;
+    const faceY = insideOnEntry ? entryY : onOrAboveCap ? capY : drawnCeilingY;
+    const metY = insideOnEntry ? entryY : onOrAboveCap ? drawnY : drawnCeilingY;
     const planeT = insideOnEntry || dy === 0 ? tEnter : tEnter + (metY - entryY) / dy;
     const t = met !== null && insideOnEntry && planeT < met.t ? met.t : planeT;
     if (t >= hitT) continue;
@@ -638,7 +645,7 @@ function terrainHitInCell(
       y: j,
       surfaceY: capY,
       spanIndex: k,
-      face: insideOnEntry ? 'riser' : entryY > drawnY ? 'tread' : 'underside',
+      face: insideOnEntry ? 'riser' : onOrAboveCap ? 'tread' : 'underside',
       hitY: faceY,
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
@@ -689,24 +696,36 @@ export function pickTerrainCellByRay(
   if (size <= 0) return null;
 
   let found: TerrainRayPick | null = null;
-  marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, tEnter, tExit) => {
+  marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j, tEnter, tExit) => {
     found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
     return found !== null;
   });
   return found;
 }
 
+/**
+ * Material still at `band`, from the cell the aim STRUCK inward. A ray flies
+ * over terrain it never touched, so the walk starts at the pick, taken here.
+ */
 export function carveReachCell(
   mirror: TerrainMirror,
   origin: Vec3,
   direction: Vec3,
   band: number,
+  risers: DrawnRisers | null = null,
 ): { x: number; y: number } | null {
   const size = mirror.map.size;
   if (size <= 0) return null;
+  const aim = pickTerrainCellByRay(mirror, origin, direction, risers);
+  if (aim === null) return null;
 
+  let reached = false;
   let found: { x: number; y: number } | null = null;
-  marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j) => {
+  marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j) => {
+    if (!reached) {
+      if (i !== aim.x || j !== aim.y) return false;
+      reached = true;
+    }
     if (!cellRevealed(mirror, i, j)) return true;
     // F3: carve reach queries the drawn banding, matching the emitted caps.
     if (drawnSpanIndexCoveringBand(mirror.map, i, j, band) === null) return false;
@@ -731,11 +750,11 @@ export function pickTerrainInColumn(
 
   const ray = scaleRayToCellSpace(origin, direction);
   if (ray === null) return null;
-  const clip = clipRayToBox(ray, x, x + 1, y, y + 1, MAX_TERRAIN_WORLD_Y);
+  const clip = clipRayToBox(ray, x, x + 1, y, y + 1, MARCH_CEILING_WORLD_Y);
   if (clip === null) return null;
 
   let hit: TerrainRayPick | null = null;
-  marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, from, to) => {
+  marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j, from, to) => {
     const struck = terrainHitInCell(mirror, i, j, origin, direction, from, to, risers);
     if (struck === null || struck.x !== x || struck.y !== y) return false;
     hit = struck;

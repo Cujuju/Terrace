@@ -44,6 +44,18 @@ export function isHeightInBand(height: number, band: number): boolean {
 }
 
 /**
+ * Smallest displacement that leaves `height`'s own drawn band. Band widths
+ * vary: the shore band is 7 tall and the waterline band 25, so this is not
+ * always BAND_HEIGHT.
+ */
+export function bandCrossingStep(height: number, raising: boolean): number {
+  const band = drawnBandOfSample(height);
+  return raising
+    ? bandFloorHeight(band + 1) - height
+    : height - bandFloorHeight(band) + 1;
+}
+
+/**
  * One press crosses at least one drawn band: step from `height` to the
  * canonical level of the neighbouring drawn band. Callers clamp to
  * [MIN_HEIGHT, MAX_HEIGHT].

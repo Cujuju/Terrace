@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BRUSH_RADIUS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
@@ -387,5 +387,38 @@ describe('world identity', () => {
     const { hud, storage } = await freshHud();
     hud.setWorldIdentity({ name: 'Emberfall', difficulty: 50 });
     expect(storage.getItem(HUD_KEY) ?? '').not.toContain('Emberfall');
+  });
+});
+
+describe('the denial line clears itself', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows nothing until a denial arrives, then clears on its own', async () => {
+    vi.useFakeTimers();
+    const { hud } = await freshHud();
+    expect(hud.denialHint()).toBeNull();
+
+    hud.showDenialHint('nest');
+    expect(hud.denialHint()).toBe('nest');
+
+    vi.advanceTimersByTime(hud.DENIAL_HINT_VISIBLE_MS - 1);
+    expect(hud.denialHint()).toBe('nest');
+    vi.advanceTimersByTime(1);
+    expect(hud.denialHint()).toBeNull();
+  });
+
+  it('a second denial restarts the window instead of stacking timers', async () => {
+    vi.useFakeTimers();
+    const { hud } = await freshHud();
+    hud.showDenialHint('locked');
+    vi.advanceTimersByTime(hud.DENIAL_HINT_VISIBLE_MS - 1);
+
+    hud.showDenialHint('ward');
+    vi.advanceTimersByTime(hud.DENIAL_HINT_VISIBLE_MS - 1);
+    expect(hud.denialHint()).toBe('ward');
+    vi.advanceTimersByTime(1);
+    expect(hud.denialHint()).toBeNull();
   });
 });

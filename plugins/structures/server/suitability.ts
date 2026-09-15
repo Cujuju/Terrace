@@ -1,4 +1,4 @@
-import { bandOf, isWater } from '@terrace/shared';
+import { drawnBandOfSample, isWater } from '@terrace/shared';
 import { STRUCTURE_SURVEY_RADIUS_CELLS, structureKey } from '../protocol.ts';
 import { hasReservedStructureCells, isReservedStructureCell } from './reservations.ts';
 
@@ -18,12 +18,12 @@ export interface StructuresWorld {
 }
 
 export function isFlatEnough(world: StructuresWorld, x: number, y: number): boolean {
-  const band = bandOf(world.heightAt(x, y));
+  const band = drawnBandOfSample(world.heightAt(x, y));
   for (const [dx, dy] of FLATNESS_NEIGHBOR_OFFSETS) {
     const nx = x + dx;
     const ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
-    if (bandOf(world.heightAt(nx, ny)) !== band) return false;
+    if (drawnBandOfSample(world.heightAt(nx, ny)) !== band) return false;
   }
   return true;
 }
@@ -43,14 +43,14 @@ export const FOOTPRINT_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]
   })();
 
 export function hasClearFootprint(world: StructuresWorld, x: number, y: number): boolean {
-  const band = bandOf(world.heightAt(x, y));
+  const band = drawnBandOfSample(world.heightAt(x, y));
   for (const [dx, dy] of FOOTPRINT_NEIGHBOR_OFFSETS) {
     const nx = x + dx;
     const ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
     const neighborHeight = world.heightAt(nx, ny);
     if (isWater(neighborHeight)) return false;
-    if (bandOf(neighborHeight) !== band) return false;
+    if (drawnBandOfSample(neighborHeight) !== band) return false;
   }
   return true;
 }
