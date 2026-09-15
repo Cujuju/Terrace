@@ -237,6 +237,18 @@ still refreshes every frame on hold. Standing rule for future work: any creature
 vocalization added later must be distance-gated independently of the 1/6 stagger, never
 wired to the held update.
 
+## C1 follow-up — parked lights out of the lit set (takeover)
+
+C4 census + worker audit found pools kept intensity-0 lights `visible` (fire pool,
+monster dread bank, thunderstorm bank/dry-bolt); three keys lit programs off visible
+lights. Fix: `visible=false` whenever parked, unhidden exactly when contributing
+(fire: on assignment; dread: on lend; storm: on flash). Non-visual by construction.
+Measured far view: 12 point lights, 3 visible — all real fires (2 fire + 0 dread +
+0 storm at that instant; bank spares all HID). Typecheck green (all three plugin
+projects). Methodology note: the first re-verify silently measured STALE code — the
+long-lived probe Vite server (no file watcher) serves cached transforms keyed by URL
+even to fresh browsers. Rule now in plan: restart probe Vite after every client-side edit.
+
 ## Evidence index (all untracked, all kept per instruction)
 
 - `.census/census-perfprobe-G-farview-drawcalls.json` — far-view census + stats + profile (main exhibit)
@@ -244,6 +256,7 @@ wired to the held update.
 - `.census/census-perfprobe-A-overview.json` — superseded (wrong counter; documents the bug)
 - `.census/census-core-sculpt.json` — core-only idle vs sculpted (upload rows included)
 - `.census/census-phaseB-b3.json` — B3 LOD verify (wildlife row + upload, 5 polls)
+- `.census/census-lights-parked.json` — parked-light fix verify (light table + stats)
 - `.perf-probe/measureE.ps1`, `measureF.ps1`, `dolly.ps1`, `measureH.ps1` — working instruments
 - `.perf-probe/measureB/C/D.ps1`, `check*.ps1`, `spytrace.ps1` — iteration trail
 - `.perf-probe/perf.log` — probe server tick/stall log
