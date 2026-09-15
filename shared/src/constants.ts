@@ -76,6 +76,17 @@ export const MAX_DRAG_SWEEP_CELLS = CHUNK_SIZE;
 
 export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP);
 
+export const RAMP_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
+
+/** Measured: a stamp edge converges by MAX_BRUSH_RADIUS + 2 = 18 cells at every radius. */
+export const SMOOTH_REACH_BANDS = 5;
+
+/**
+ * How far past its footprint the player smooth's cascade may run. Genesis
+ * noise: 150k cells unbounded, 2.7k here. A played world loses under 2%.
+ */
+export const SMOOTH_REACH_CELLS = SMOOTH_REACH_BANDS * RAMP_CELLS_PER_BAND;
+
 export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
 
 export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;

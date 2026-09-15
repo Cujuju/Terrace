@@ -1,10 +1,8 @@
 import {
   CHUNK_SIZE,
-  LIBRARY_SCULPT_TOOL,
-  SMOOTH_SPREAD_CELLS,
   chunksPerEdge,
   sculptOptionsOf,
-  sculptSweepRadius,
+  sculptReachCells,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   type CellDiff,
   type ChunkPayload,
@@ -26,14 +24,7 @@ export interface TerrainChangeListener {
 }
 
 /** An edit on a chunk's rim moves its neighbour's mesh seam, so a resync overshoots by one chunk. */
-const MESH_SEAM_HALO_CHUNKS = 1;
-
-/**
- * A faulted sculpt leaves no diff to measure, so its resync must cover what
- * relaxation could have reached: a full-span height difference unwinds one
- * MAX_STEP per cell, which is exactly the ramp SMOOTH_SPREAD_CELLS counts.
- */
-const RELAXATION_WORST_CASE_REACH_CELLS = SMOOTH_SPREAD_CELLS;
+export const MESH_SEAM_HALO_CHUNKS = 1;
 
 const diffSendLog = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
 
@@ -96,8 +87,8 @@ function noteDiffSendFailure(error: unknown): void {
 
 /**
  * Re-sends the authoritative heights of every chunk the sculpt actually wrote.
- * The diff is the only honest account of reach: a smooth's relaxation cascade
- * runs far past the brush that started it.
+ * The diff is the only honest account of reach: a smooth's cascade outruns
+ * its brush.
  */
 function resendDiffChunks(
   world: World,
@@ -127,9 +118,8 @@ function resendDiffChunks(
 }
 
 /**
- * Re-sends the authoritative heights of every chunk a sculpt whose handling
- * threw could have edited. No diff exists for a fault, so the rectangle is the
- * stroke's worst case rather than its measured reach.
+ * Re-sends every chunk a sculpt whose handling threw could have edited. No
+ * diff exists for a fault, so the rectangle is the stroke's worst case.
  */
 function resendSculptFootprint(
   world: World,
@@ -159,17 +149,13 @@ function resendSculptFootprint(
 
 /**
  * How far past the brush a stroke could have written when nothing measured it.
- * Only smooth and settle relax, and relaxation is the one effect that is not
- * bounded by the footprint.
+ * Only smooth and settle relax; shared/ states both bounds.
  */
 function faultedSculptReachCells(radius: number, options?: SculptOptions): number {
   const tool = options?.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
-  if (tool === 'smooth' || tool === LIBRARY_SCULPT_TOOL) {
-    return radius + RELAXATION_WORST_CASE_REACH_CELLS;
-  }
   const profile = options?.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile;
   const anchor = options?.anchor ?? WIRE_DEFAULT_SCULPT_OPTIONS.anchor;
-  return sculptSweepRadius(radius, profile, tool, anchor);
+  return sculptReachCells(radius, profile, tool, anchor);
 }
 
 /** Sends each named chunk to every player in the audience who can see it. */

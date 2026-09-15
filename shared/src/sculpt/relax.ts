@@ -75,6 +75,7 @@ export function smooth(
   spillFree?: ReadonlySet<number>,
   anchorBounds?: ReadonlyMap<number, SpillBand>,
   spanBand: number | null = null,
+  reachCells: number | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -148,13 +149,20 @@ export function smooth(
 
   adoptLayerView(minX, minY, maxX - minX + 1, maxY - minY + 1);
 
+  // The cascade may leave the seed by at most reachCells. A pair straddling
+  // that edge stays as it is, the same accepted residual as the pass cap.
+  const reachMinX = reachCells === null ? 0 : Math.max(0, minX - reachCells);
+  const reachMinY = reachCells === null ? 0 : Math.max(0, minY - reachCells);
+  const reachMaxX = reachCells === null ? size - 1 : Math.min(size - 1, maxX + reachCells);
+  const reachMaxY = reachCells === null ? size - 1 : Math.min(size - 1, maxY + reachCells);
+
   let adjustingPasses = 0;
   for (let pass = 0; pass < SMOOTH_PASS_LIMIT; pass++) {
     const heldMinX = minX, heldMinY = minY, heldMaxX = maxX, heldMaxY = maxY;
-    if (minX > 0) minX--;
-    if (minY > 0) minY--;
-    if (maxX < size - 1) maxX++;
-    if (maxY < size - 1) maxY++;
+    if (minX > reachMinX) minX--;
+    if (minY > reachMinY) minY--;
+    if (maxX < reachMaxX) maxX++;
+    if (maxY < reachMaxY) maxY++;
 
     growLayerView();
 

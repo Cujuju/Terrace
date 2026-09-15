@@ -52,6 +52,28 @@ export function expectGradientLimitHolds(map: Heightmap): void {
   }
 }
 
+/** A capped cascade leaves its residual at the cap edge, so check inside it. */
+export function expectGradientLimitHoldsWithin(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  reach: number,
+): void {
+  const limit = MAX_STEP + RELAX_SLACK;
+  const { size, cells } = map;
+  const x0 = Math.max(0, cx - reach);
+  const x1 = Math.min(size - 1, cx + reach);
+  const y0 = Math.max(0, cy - reach);
+  const y1 = Math.min(size - 1, cy + reach);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const i = y * size + x;
+      if (x < x1) expect(Math.abs(cells[i] - cells[i + 1])).toBeLessThanOrEqual(limit);
+      if (y < y1) expect(Math.abs(cells[i] - cells[i + size])).toBeLessThanOrEqual(limit);
+    }
+  }
+}
+
 export const LEVEL_FILL = { tool: 'stamp', profile: 'hard' } as const;
 
 export function paintFootprint3x3(
