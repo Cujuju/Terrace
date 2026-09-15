@@ -40,3 +40,11 @@ Shipped 512-unit world: rain cap 7 → 3; 128-unit worlds stay at the floor of
 1; fog and thunderstorm (scale 1) are byte-identical. Rejected: renaming the
 constant to describe the tripled coverage (keeps a number that lies), and
 leaving it (the 26% sky was the complaint).
+
+## Decision made 2026-09-15 (snow seats from band 15 up)
+
+`SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA` 2 → 15 (mean ground under the disc at
+least 240 height units). Snow no longer falls on green fields; it seats over
+the upper grassland and everything above. Owner call, band chosen directly.
+Rejected: `MOUNTAIN_MIN_HEIGHT` (384, rock only) and `SNOW_LINE_HEIGHT`
+(576, snow-capped only) — both too rare on ordinary genesis worlds.
