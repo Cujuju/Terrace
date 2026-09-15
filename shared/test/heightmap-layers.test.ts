@@ -9,8 +9,6 @@ import {
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
-  DRAWN_GROUND_BAND_BIAS,
-  forEachFootprintOffset,
   highestCeilingUnderSpan,
   MAX_BRUSH_RADIUS,
   readSpans,
@@ -125,7 +123,7 @@ describe('a smooth grasping a lower layer never swallows the cave above it', () 
   });
 });
 
-describe('an anchored smooth manufactures at most one band per cell (2026-09-15)', () => {
+describe('an anchored smooth conserves height (2026-09-15)', () => {
   const SIZE = 96;
   const GROUND_BAND = 40;
   const TRENCH_X = 40;
@@ -136,11 +134,9 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
   const TOWER_RADIUS = 3;
   const TOWER_PRESSES = 6;
   const TRENCH_DEPTHS = [6, 20, 40];
-  // Measured against the ledgered melt; the limit below is only a hang guard.
-  const CONVERGED_PRESSES = 43;
-  const CONVERGENCE_LIMIT = 4 * CONVERGED_PRESSES;
-  // The furthest one melt can lift a cell: a band's floor to the next band's level.
-  const MELT_ROOM_PER_CELL = BAND_HEIGHT + DRAWN_GROUND_BAND_BIAS;
+  // Measured against the conserving relaxation; the limit below is a hang guard.
+  const CONVERGED_PRESSES = 1;
+  const CONVERGENCE_LIMIT = 40;
   const SMOOTH_RAISE = sculptOptionsOf({
     type: 'sculpt', x: CLICK_X, y: ROW, radius: MAX_BRUSH_RADIUS, dir: 1, tool: 'smooth',
   });
@@ -174,12 +170,6 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
   const totalOf = (map: Heightmap): number => map.cells.reduce((sum, h) => sum + h, 0);
   const press = (map: Heightmap): number =>
     applySculpt(map, CLICK_X, ROW, MAX_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, SMOOTH_RAISE).length;
-  const footprintCells = (radius: number): number => {
-    let cells = 0;
-    forEachFootprintOffset(radius, () => cells++);
-    return cells;
-  };
-
   const noiseMapOver = (rng: SeededRng, lowBand: number, highBand: number): Heightmap => {
     const map = createHeightmap(RANDOM_SIZE);
     const bands = highBand - lowBand;
@@ -206,21 +196,72 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
     return map;
   };
 
-  it('is bounded by the brush, not by how deep the pit under it is', () => {
-    const cap = footprintCells(MAX_BRUSH_RADIUS) * MELT_ROOM_PER_CELL;
+  it('moves height whatever the pit under it holds, and changes no total', () => {
     for (const digs of TRENCH_DEPTHS) {
       const map = trenchAndTower(digs);
       const before = totalOf(map);
       expect(press(map)).toBeGreaterThan(0);
-      expect([digs, totalOf(map) - before <= cap]).toEqual([digs, true]);
+      expect([digs, totalOf(map) - before]).toEqual([digs, 0]);
     }
+  });
+
+  it('every brush size and direction conserves the total, empty-handed or not', () => {
+    for (const radius of [1, MAX_BRUSH_RADIUS]) {
+      for (const dir of [1, -1] as const) {
+        for (const profile of ['soft', 'hard'] as const) {
+          const map = trenchAndTower(TRENCH_DEPTHS[1]!);
+          const before = totalOf(map);
+          const options = sculptOptionsOf({
+            type: 'sculpt', x: CLICK_X, y: ROW, radius, dir, tool: 'smooth', profile,
+          });
+          applySculpt(map, CLICK_X, ROW, radius, dir * DEFAULT_SCULPT_AMOUNT, options);
+          expect([radius, dir, profile, totalOf(map) - before]).toEqual([radius, dir, profile, 0]);
+        }
+      }
+    }
+  });
+
+  it('a spanBand press on a layered column conserves SOLID VOLUME', () => {
+    const ROOF_GAP_BANDS = 6;
+    const map = createHeightmap(RANDOM_SIZE);
+    map.cells.fill(bandLevelHeight(BUILT_GROUND_BAND));
+    for (let y = 20; y < 44; y++) {
+      for (let x = 20; x < 44; x++) {
+        const floorHeight = bandLevelHeight(BUILT_GROUND_BAND) + ((x + y) % 5) * BAND_HEIGHT;
+        setColumn(map, x, y, [
+          { floor: BEDROCK_FLOOR, ceiling: floorHeight },
+          {
+            floor: floorHeight + ROOF_GAP_BANDS * BAND_HEIGHT,
+            ceiling: floorHeight + (ROOF_GAP_BANDS + 2) * BAND_HEIGHT,
+          },
+        ]);
+      }
+    }
+    const volumeOf = (m: Heightmap): number => {
+      let volume = 0;
+      for (let y = 0; y < m.size; y++) {
+        for (let x = 0; x < m.size; x++) {
+          for (const span of readSpans(m, x, y)) volume += span.ceiling - span.floor;
+        }
+      }
+      return volume;
+    };
+    const before = volumeOf(map);
+    const spanBand = drawnBandOfSample(bandLevelHeight(BUILT_GROUND_BAND));
+    for (const dir of [1, -1] as const) {
+      const options = sculptOptionsOf({
+        type: 'sculpt', x: 32, y: 32, radius: BUILT_RADIUS, dir, tool: 'smooth', spanBand,
+      });
+      applySculpt(map, 32, 32, BUILT_RADIUS, dir * DEFAULT_SCULPT_AMOUNT, options);
+    }
+    expect(volumeOf(map)).toBe(before);
   });
 
   it.each([
     ['random', noiseMap],
     ['player-built', builtMap],
     ['waterline', shoreMap],
-  ])('no press on %s ground moves more than the brush may manufacture', (_kind, make) => {
+  ])('no press on %s ground invents or destroys a unit of height', (_kind, make) => {
     const rng = createSeededRng(RANDOM_SEED);
     const span = RANDOM_SIZE - 2 * RANDOM_MARGIN;
     let pressed = 0;
@@ -233,7 +274,6 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
         const cy = RANDOM_MARGIN + Math.floor(rng.next() * span);
         const radius = 1 + Math.floor(rng.next() * MAX_BRUSH_RADIUS);
         const dir = rng.next() < 0.5 ? 1 : -1;
-        const cap = footprintCells(radius) * MELT_ROOM_PER_CELL;
         const before = totalOf(map);
         const smoothPress = sculptOptionsOf({
           type: 'sculpt', x: cx, y: cy, radius, dir, tool: 'smooth',
@@ -242,7 +282,7 @@ describe('an anchored smooth manufactures at most one band per cell (2026-09-15)
         const flux = Math.abs(totalOf(map) - before);
         pressed++;
         if (diff.length > 0) moved++;
-        if (flux > cap) breaches.push({ m, cx, cy, radius, dir, flux, cap });
+        if (flux !== 0) breaches.push({ m, cx, cy, radius, dir, flux });
       }
     }
     expect(pressed).toBe(RANDOM_MAPS * RANDOM_PRESSES_PER_MAP);

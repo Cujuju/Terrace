@@ -196,7 +196,7 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
   });
 });
 
-describe('an anchored smooth melts a wall from wherever it is clicked', () => {
+describe('an anchored smooth moves a wall, it never manufactures one', () => {
   const SIZE = 64;
   const WALL_X = 32;
   const ROW = 32;
@@ -204,6 +204,8 @@ describe('an anchored smooth melts a wall from wherever it is clicked', () => {
   const RADIUS = 4;
   const PRESSES = 10;
   const REACHING_CLICKS = [WALL_X, WALL_X + 1, WALL_X + 2];
+  /** Taller than one drawn band: every wall cell under the brush is past the target. */
+  const PAST_TARGET_BANDS = [2, 3];
 
   function wall(bands: number): Heightmap {
     const map = createHeightmap(SIZE);
@@ -229,29 +231,61 @@ describe('an anchored smooth melts a wall from wherever it is clicked', () => {
     return cells;
   }
 
-  for (const bands of [1, 2, 3]) {
-    it(`a ${bands}-band step melts and converges from every click that reaches it`, () => {
+  function mapTotal(map: Heightmap): number {
+    let total = 0;
+    for (let i = 0; i < map.cells.length; i++) total += map.cells[i]!;
+    return total;
+  }
+
+  it('a one-band step melts to a ramp from every click that reaches it', () => {
+    const high = LOW + BAND_HEIGHT;
+    for (const cx of REACHING_CLICKS) {
+      const map = wall(1);
+      const total = mapTotal(map);
+      const before = Int16Array.from(map.cells);
+      const footprint = footprintOfPress(map, cx);
+
+      expect(press(map, cx)).toBeGreaterThan(0);
+      let movedUnderBrush = 0;
+      for (const i of footprint) if (map.cells[i] !== before[i]) movedUnderBrush++;
+      expect(movedUnderBrush).toBeGreaterThan(0);
+
+      let last = -1;
+      for (let k = 1; k < PRESSES; k++) last = press(map, cx);
+      expect(last).toBe(0);
+
+      expect(mapTotal(map)).toBe(total);
+      expectGradientLimitHolds(map);
+      expect(heightAt(map, WALL_X, ROW)).toBeGreaterThan(LOW);
+      for (let x = 0; x < SIZE; x++) {
+        expect(heightAt(map, x, ROW)).toBeGreaterThanOrEqual(LOW);
+        expect(heightAt(map, x, ROW)).toBeLessThanOrEqual(high);
+      }
+    }
+  });
+
+  for (const bands of PAST_TARGET_BANDS) {
+    it(`a ${bands}-band step is past the target: the brush freezes it and invents nothing`, () => {
       const high = LOW + bands * BAND_HEIGHT;
       for (const cx of REACHING_CLICKS) {
         const map = wall(bands);
+        const total = mapTotal(map);
         const before = Int16Array.from(map.cells);
         const footprint = footprintOfPress(map, cx);
 
-        expect(press(map, cx)).toBeGreaterThan(0);
-        let movedUnderBrush = 0;
-        for (const i of footprint) if (map.cells[i] !== before[i]) movedUnderBrush++;
-        expect(movedUnderBrush).toBeGreaterThan(0);
-
+        press(map, cx);
         let last = -1;
         for (let k = 1; k < PRESSES; k++) last = press(map, cx);
         expect(last).toBe(0);
 
-        expect(heightAt(map, WALL_X, ROW)).toBeGreaterThan(LOW);
-        // nothing outside every footprint is cut, and a raise never digs
-        expect(heightAt(map, WALL_X - RADIUS - 2, ROW)).toBe(high);
-        for (let x = 0; x < SIZE; x++) {
-          expect(heightAt(map, x, ROW)).toBeGreaterThanOrEqual(LOW);
-          expect(heightAt(map, x, ROW)).toBeLessThanOrEqual(high);
+        for (const i of footprint) {
+          if (before[i] === high) expect(map.cells[i]).toBe(high);
+        }
+        expect(heightAt(map, WALL_X - 1, ROW)).toBe(high);
+        expect(mapTotal(map)).toBe(total);
+        for (let i = 0; i < map.cells.length; i++) {
+          expect(map.cells[i]).toBeGreaterThanOrEqual(LOW);
+          expect(map.cells[i]).toBeLessThanOrEqual(high);
         }
       }
     });
