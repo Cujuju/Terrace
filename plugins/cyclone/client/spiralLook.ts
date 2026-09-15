@@ -30,8 +30,8 @@ import {
 } from 'three/tsl';
 import {
   PUFF_QUAD_FRAGMENT,
+  billboardPuffs,
   puffAlphaDiscard,
-  puffBillboard,
   puffMask,
 } from '../../../client/src/plugins/kit/puffDeck.ts';
 import {
@@ -152,7 +152,7 @@ export function createSpiralMesh(
     .mul(float(PUFF_SIZE_SEED_MIN).add(fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(PUFF_SIZE_SEED_SPAN)));
 
   const mesh = new InstancedMesh(geometry, material, SPIRAL_CAPACITY);
-  compose(material, 'position', () => puffBillboard(world, puffSize));
+  billboardPuffs(material, world, puffSize);
 
   // Solid at the eyewall, a smear at the rim, so the wall occludes rather than tints.
   const softEdge = mix(float(CYCLONE_RIM_SOFT_EDGE), CYCLONE_EYEWALL_SOFT_EDGE, wall);

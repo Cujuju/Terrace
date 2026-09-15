@@ -17,7 +17,6 @@ import {
   max,
   mix,
   normalize,
-  select,
   sin,
   smoothstep,
   sqrt,
@@ -39,8 +38,8 @@ import {
 export { DECK_RADIAL_EXPONENT, DECK_TIER_POPULATION_TAPER, DECK_TIERS, tierPopulations };
 import {
   PUFF_QUAD_FRAGMENT,
+  billboardPuffs,
   puffAlphaDiscard,
-  puffBillboard,
   puffLobeScale,
   puffMask,
 } from './puffDeck.ts';
@@ -209,10 +208,9 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const mesh = new InstancedMesh(geometry, material, capacity);
 
   const centre = instanceMatrix(mesh).mul(vec4(transformed, 1)).xyz;
-  // A parked or dark slot collapses its quad to one point: zero area, so no fragment is raised.
-  compose(material, 'position', () =>
-    select(puffFade.lessThanEqual(0), centre, puffBillboard(centre, puffExtent)),
-  );
+  // A parked or dark slot has no extent: its quad is one point, so no fragment is raised.
+  const lit = puffFade.greaterThan(0).toFloat();
+  billboardPuffs(material, centre, puffExtent.mul(lit));
   discard(material, mask.discarded);
   discard(material, puffAlphaDiscard(alpha));
   compose(material, 'opacity', (previous) => previous.mul(alpha));

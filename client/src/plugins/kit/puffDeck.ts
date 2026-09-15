@@ -1,18 +1,18 @@
 import {
   atan,
-  cameraWorldMatrix,
+  cameraProjectionMatrix,
   float,
   fract,
   length,
   modelViewMatrix,
-  modelWorldMatrixInverse,
   positionGeometry,
   sin,
   smoothstep,
   varying,
   vec4,
 } from 'three/tsl';
-import type { Node } from 'three/webgpu';
+import type { Node, NodeMaterial } from 'three/webgpu';
+import { compose } from '../../render/materialSlots.ts';
 
 // The quad is authored two units across, so this is the offset from its centre in half-widths.
 // Vertex stage only: puffBillboard reads the raw attribute.
@@ -26,12 +26,22 @@ export function puffInstanceBase(instanceMatrix: Node<'mat4'>): Node<'vec3'> {
   return instanceMatrix.mul(vec4(0, 0, 0, 1)).xyz;
 }
 
-// viewPosition = viewMatrix * world; viewPosition.xy += quad * size; returned in the position
-// slot's space (after the instance matrix), so three's own model-view-projection lands it there.
-export function puffBillboard(world: Node<'vec3'>, size: Node<'vec2'> | Node<'float'>): Node<'vec3'> {
-  const viewPosition = modelViewMatrix.mul(vec4(world, 1));
-  const billboarded = vec4(viewPosition.xy.add(PUFF_QUAD.mul(size)), viewPosition.zw);
-  return modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(billboarded)).xyz;
+// The quad's vertex in VIEW space: the anchor, spread by the quad across the view plane. Not a
+// position-slot value; `billboardPuffs` wires it.
+export function puffBillboard(anchor: Node<'vec3'>, size: Node<'vec2'> | Node<'float'>): Node<'vec3'> {
+  const viewPosition = modelViewMatrix.mul(vec4(anchor, 1));
+  return vec4(viewPosition.xy.add(PUFF_QUAD.mul(size)), viewPosition.zw).xyz;
+}
+
+// The anchor is the world position, so world-space effects (the reveal clip) keep or drop a
+// puff whole. The spread lands in the clip-space slot only.
+export function billboardPuffs(
+  material: NodeMaterial,
+  anchor: Node<'vec3'>,
+  size: Node<'vec2'> | Node<'float'>,
+): void {
+  compose(material, 'position', () => anchor);
+  compose(material, 'vertex', () => cameraProjectionMatrix.mul(vec4(puffBillboard(anchor, size), 1)));
 }
 
 export interface PuffMask {

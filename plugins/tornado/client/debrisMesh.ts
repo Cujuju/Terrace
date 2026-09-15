@@ -22,7 +22,7 @@ import {
   vec3,
 } from 'three/tsl';
 import { WORLD_UNITS_PER_BAND } from '@terrace/shared';
-import { puffBillboard, puffMask } from '../../../client/src/plugins/kit/puffDeck.ts';
+import { billboardPuffs, puffMask } from '../../../client/src/plugins/kit/puffDeck.ts';
 import {
   compose,
   composeDisplayedOutput,
@@ -125,7 +125,7 @@ export function createDebrisMesh(
   );
   // A parked slot's chips shrink to nothing, so they cost no fragments at all.
   const lit = strength.greaterThan(0);
-  compose(material, 'position', () => puffBillboard(world, select(lit, size, float(0))));
+  billboardPuffs(material, world, select(lit, size, float(0)));
 
   // Clipped like the cone: debris thrown across the frontier is over floor never sent.
   applyRevealClip(material, 'tornado debris');
