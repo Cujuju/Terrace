@@ -403,6 +403,43 @@ describe('flat cue (posture refusals)', () => {
     }
   });
 
+  it('a drag press that takes no hold blinks flat instead of going silent', () => {
+    setBrushTool('drag');
+    const mirror = flatWorld();
+    const ungrabbable: TerrainRayPick = { ...UNDERSIDE_PICK, face: 'riser' };
+    const { input, attempts, fire, dispose } = driveInput(mirror, {
+      pickCell: () => ungrabbable,
+      pickInColumn: () => ungrabbable,
+      riserBand: () => null,
+    });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(0);
+      expect(input.heldBand()).toBeNull();
+      expect(input.flatBlinks()).toBe(1);
+      expect(input.offlineBlinks()).toBe(0);
+      expect(input.refusedHold()).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('a seed whose band cannot be read blinks flat too', () => {
+    setBrushTool('drag');
+    const mirror = flatWorld();
+    const { input, attempts, fire, dispose } = driveInput(mirror, {
+      bandAtCell: () => null,
+    });
+    try {
+      fire('pointerdown', {});
+      expect(attempts).toHaveLength(1);
+      expect(input.heldBand()).toBeNull();
+      expect(input.flatBlinks()).toBe(1);
+    } finally {
+      dispose();
+    }
+  });
+
   it('lowers grab the pre-seed band', () => {
     setBrushTool('drag');
     const mirror = flatWorld();
@@ -1167,6 +1204,47 @@ describe('a drag seed on ground that is not at a canonical band level', () => {
       expect(input.heldBand()).toBe(WALL_STEP_DRAWN_BAND);
       const leg = attempts.find((intent) => intent.tool === 'drag');
       expect(leg?.targetBand).toBe(WALL_STEP_DRAWN_BAND);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe('a modifier change steers the leg it arrived on', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  const HELD_BAND = 5;
+
+  const dragWithHold = (): ReturnType<typeof driveInput> => {
+    setBrushTool('drag');
+    return driveInput(flatWorld(), { riserBand: () => HELD_BAND });
+  };
+
+  it('a shift that arrives with the move lowers that leg, not the next one', () => {
+    const { input, attempts, fire, dispose } = dragWithHold();
+    try {
+      fire('pointerdown', {});
+      expect(input.heldBand()).toBe(HELD_BAND);
+      expect(attempts.at(-1)!.dir).toBe(1);
+
+      fire('pointermove', { clientX: CENTRE_X + 40, shiftKey: true });
+      expect(attempts.at(-1)!.dir).toBe(-1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('an unmodified move keeps the direction the press armed', () => {
+    const { attempts, fire, dispose } = dragWithHold();
+    try {
+      fire('pointerdown', {});
+      fire('pointermove', { clientX: CENTRE_X + 40 });
+      expect(attempts.at(-1)!.dir).toBe(1);
     } finally {
       dispose();
     }
