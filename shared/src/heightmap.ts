@@ -38,6 +38,7 @@ import {
   bandFillAt,
   bandFloorHeight,
   BEDROCK_FLOOR,
+  BEDROCK_REMNANT_CEILING,
   canCarveBandAt,
   canSpreadBandToSpan,
   carveRange,
@@ -85,8 +86,14 @@ export const MAX_BAND = bandOf(MAX_HEIGHT);
 
 export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
 
+// A column always keeps one unit of bedrock, so BEDROCK_REMNANT_CEILING — not
+// MIN_HEIGHT — is the lowest height a write can land on.
 function clampHeight(h: number): number {
-  return h > MAX_HEIGHT ? MAX_HEIGHT : h < MIN_HEIGHT ? MIN_HEIGHT : h;
+  return h > MAX_HEIGHT
+    ? MAX_HEIGHT
+    : h < BEDROCK_REMNANT_CEILING
+      ? BEDROCK_REMNANT_CEILING
+      : h;
 }
 
 export type SculptTool = 'stamp' | 'smooth' | 'drag' | 'carve';

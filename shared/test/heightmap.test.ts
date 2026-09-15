@@ -8,6 +8,7 @@ import {
   bandOf,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
+  BEDROCK_REMNANT_CEILING,
   canSpreadBandTo,
   carveRange,
   cellIndex,
@@ -1444,6 +1445,48 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
         });
         expect(diff).toEqual([]);
       }
+    }
+  });
+
+  it('the floor a column can actually hold is a no-op too: empty diff, both profiles', () => {
+    // A column keeps one unit of bedrock, so MIN_HEIGHT + 1 is as low as a
+    // write lands; pressing there must not report a diff it did not make.
+    for (const profile of ['soft', 'hard'] as const) {
+      const map = createHeightmap(32);
+      map.cells.fill(BEDROCK_REMNANT_CEILING);
+      const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, {
+        tool: 'stamp',
+        profile,
+        spill: 'banded',
+        anchor: 'clicked',
+      });
+      expect([profile, diff]).toEqual([profile, []]);
+    }
+  });
+
+  it('lowering a grasped bedrock span leaves the remnant instead of unflooring the column', () => {
+    for (const profile of ['soft', 'hard'] as const) {
+      const map = createHeightmap(16);
+      const lowerCap = BEDROCK_FLOOR + 4;
+      const overhang = { floor: BEDROCK_FLOOR + 200, ceiling: BEDROCK_FLOOR + 260 };
+      for (let y = 6; y <= 10; y++) {
+        for (let x = 6; x <= 10; x++) {
+          setColumn(map, x, y, [{ floor: BEDROCK_FLOOR, ceiling: lowerCap }, overhang]);
+        }
+      }
+      const grasped = drawnBandOfSample(lowerCap);
+      expect(() =>
+        applySculpt(map, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, {
+          tool: 'stamp',
+          profile,
+          spill: 'banded',
+          anchor: 'clicked',
+          spanBand: grasped,
+        }),
+      ).not.toThrow();
+      const spans = readSpans(map, 8, 8);
+      expect(spans[0]).toEqual({ floor: BEDROCK_FLOOR, ceiling: BEDROCK_REMNANT_CEILING });
+      expect(spans[spans.length - 1]).toEqual(overhang);
     }
   });
 

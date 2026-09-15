@@ -16,9 +16,15 @@ export interface Span {
   readonly ceiling: number;
 }
 
-const BEDROCK_REMNANT: Span = { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + 1 };
-
 const HEIGHT_UNIT = 1;
+
+/**
+ * Lowest ceiling a column can hold: one unit of bedrock always remains, so a
+ * write that would cut to BEDROCK_FLOOR leaves this remnant instead.
+ */
+export const BEDROCK_REMNANT_CEILING = BEDROCK_FLOOR + HEIGHT_UNIT;
+
+const BEDROCK_REMNANT: Span = { floor: BEDROCK_FLOOR, ceiling: BEDROCK_REMNANT_CEILING };
 
 const SPAN_STRIDE = 2;
 
@@ -322,7 +328,15 @@ function canonicaliseColumn(spans: readonly Span[]): Span[] {
     }
     out.push(span);
   }
-  return out.length === 0 ? [BEDROCK_REMNANT] : out;
+  if (out.length === 0) return [BEDROCK_REMNANT];
+  // A column always floors at bedrock. Cutting the bottom span away leaves the
+  // remnant under whatever still stands, never a span floating on nothing.
+  const lowest = out[0]!;
+  if (lowest.floor !== BEDROCK_FLOOR) {
+    if (isGapDrawn(BEDROCK_REMNANT, lowest)) out.unshift(BEDROCK_REMNANT);
+    else out[0] = { floor: BEDROCK_FLOOR, ceiling: lowest.ceiling };
+  }
+  return out;
 }
 
 export function moveSpanCeiling(
