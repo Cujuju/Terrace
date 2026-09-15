@@ -6,8 +6,9 @@ describe('denialHintFor — every sculptDenied selects hint text', () => {
     expect(denialHintFor('locked', undefined)).toBe('locked');
   });
 
-  it('a malformed intent hints locked', () => {
-    expect(denialHintFor('malformed', undefined)).toBe('locked');
+  it('a malformed intent hints refused — the ground is not locked', () => {
+    expect(denialHintFor('malformed', undefined)).toBe('refused');
+    expect(denialHintFor('malformed', 'unknown tool')).toBe('refused');
   });
 
   it('a plugin rewrite core had to refuse hints locked', () => {

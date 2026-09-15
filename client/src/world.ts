@@ -115,23 +115,14 @@ export interface LayerEdgeLight {
 }
 
 /**
- * The hint text a sculpt denial selects. The frozen Day-0 reasons
- * (malformed|locked|plugin-denied|plugin-modified-invalid) say *why core refused;
- * the plugin detail says *what* to tell the hand:
- *
- * - `locked` — core-locked ground, a malformed intent, or a plugin rewrite core
- *   had to refuse (including 'centre is locked'). The default.
- * - `nest` — a monsters protection denial ('monster occupies the ground').
- * - `ward` — a relics bedrock-ward denial ('warded').
- * - `mana-with-cost` — a mana denial ('insufficient mana'); the hint carries the cost.
- * - `refused` — a reason this build does not know (a server fault, say). The
- *   ground is not locked, so the hand is told only that the stroke did not land.
+ * Which line a sculpt denial shows: `locked` core-locked ground, `nest` a
+ * monster, `ward` relic bedrock, `mana-with-cost` mana. A malformed intent
+ * or wire skew is `refused`, not a lock.
  */
 export type { DenialHint };
 
 /** The reasons that mean the ground itself said no; anything else is not a lock. */
 const LOCKED_DENIAL_REASONS: readonly SculptDeniedReason[] = [
-  'malformed',
   'locked',
   'plugin-denied',
   'plugin-modified-invalid',
@@ -264,10 +255,9 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let framedWorldSize = 0;
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // The last sculpt denial and how many have arrived. ANY denial (whatever its
-  // reason) pulses the red-brush refused hold — that pulse itself is fanned out by
-  // the main sink wrapper via sculptInput.releaseStroke(); this record only
-  // selects the hint text lane E shows alongside it.
+  // The last sculpt denial and how many arrived. ANY denial pulses the
+  // red-brush refused hold, fanned out by the main sink. This record only
+  // selects the hint text.
   let lastDenial: {
     readonly seq: number;
     readonly reason: SculptDeniedReason | undefined;
