@@ -180,7 +180,9 @@ export function validateSculptIntent(
     return null;
   }
 
-  if (targetBand !== undefined && tool !== 'drag') return null;
+  // A band travels with a drag and only with a drag: a drag without one names
+  // no lip to move and would apply as a silent, acked no-op.
+  if ((targetBand !== undefined) !== (tool === 'drag')) return null;
 
   const { spanBand } = m;
   if (

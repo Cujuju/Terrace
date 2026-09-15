@@ -252,6 +252,12 @@ describe('targetBand — the drag field on the wire', () => {
     }
   });
 
+  it('rejects a drag carrying no band — it would apply as a silent no-op', () => {
+    expect(validateSculptIntent({ ...drag }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...drag, fromX: 11, fromY: 21 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...drag, targetBand: 0 }, WORLD)).not.toBeNull();
+  });
+
   it('rejects a band carried by anything but a drag, the absent tool included', () => {
     expect(validateSculptIntent({ ...base, targetBand: 3 }, WORLD)).toBeNull();
     expect(validateSculptIntent({ ...base, tool: 'stamp', targetBand: 3 }, WORLD)).toBeNull();
@@ -320,17 +326,21 @@ describe('the tool set is the wire contract, not a local list', () => {
       ...base,
       tool: 'carve',
     });
-    expect(validateSculptIntent({ ...base, tool: 'drag' }, WORLD)).toEqual({
+    expect(validateSculptIntent({ ...base, tool: 'drag', targetBand: 2 }, WORLD)).toEqual({
       ...base,
       tool: 'drag',
+      targetBand: 2,
     });
   });
 
   it('rejects a raising carve WITH the whole intent, never flipping it', () => {
     expect(validateSculptIntent({ ...base, dir: 1, tool: 'carve' }, WORLD)).toBeNull();
-    for (const tool of ['stamp', 'smooth', 'drag'] as const) {
+    for (const tool of ['stamp', 'smooth'] as const) {
       expect(validateSculptIntent({ ...base, dir: 1, tool }, WORLD)).not.toBeNull();
     }
+    expect(
+      validateSculptIntent({ ...base, dir: 1, tool: 'drag', targetBand: 2 }, WORLD),
+    ).not.toBeNull();
   });
 
   it('resolves an edgeless tool to one profile whatever the intent carried', () => {
