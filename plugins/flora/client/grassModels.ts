@@ -14,6 +14,7 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { weldFlatShaded } from '../../../client/src/render/weld.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
   FLORA_GRASS_CAP,
   GRASS_BLADES_PER_TUFT,
@@ -237,8 +238,8 @@ function assertBladeFitsTuft(horizontalReachInCells: number): void {
   }
 }
 
-function lambert(color: number): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color, flatShading: true, side: DoubleSide });
+function lambert(): MeshLambertMaterial {
+  return new MeshLambertMaterial({ vertexColors: true, flatShading: true, side: DoubleSide });
 }
 
 export function createGrassModels(): GrassModels {
@@ -247,7 +248,11 @@ export function createGrassModels(): GrassModels {
   assertBladeFitsTuft(Math.max(built.horizontalReachInCells, blossom.horizontalReachInCells));
 
   const geometries: BufferGeometry[] = [built.blade, built.tip, blossom.geometry];
-  const materials: Material[] = [lambert(BLADE_COLOR), lambert(TIP_COLOR), lambert(0xffffff)];
+  bakeSolidColor(built.blade, BLADE_COLOR);
+  bakeSolidColor(built.tip, TIP_COLOR);
+  bakeSolidColor(blossom.geometry, 0xffffff);
+  const sharedMaterial = lambert();
+  const materials: Material[] = [sharedMaterial, sharedMaterial, sharedMaterial];
 
   const bladeCapacity = FLORA_GRASS_CAP * GRASS_BLADES_PER_TUFT;
   const blades = new InstancedMesh(built.blade, materials[0], bladeCapacity);

@@ -6,7 +6,7 @@ import {
   sculptOptionsOf,
   sculptSweepSteps,
 } from '@terrace/shared';
-import type { CellDiff, SculptIntent } from '@terrace/shared';
+import type { CellDiff, SculptIntent, SculptProfile, SculptTool } from '@terrace/shared';
 import { chunkUnlockPenalty, openedChunkCount, sculptManaCost } from '../pricing.ts';
 import {
   DEFAULT_WORLD_DIFFICULTY,
@@ -144,6 +144,56 @@ interface ManaPool {
   lastSentBalance: number;
   msSinceLastSend: number;
   lastSeenSeq: number | null;
+  quote: ManaQuote | null;
+}
+
+/**
+ * The territory half of a price, measured once at verdict time. The stroke's own
+ * terrain creep opens chunks before the effect phase runs, so re-measuring there
+ * would bill fewer chunks than the affordability check reserved.
+ */
+interface ManaQuote {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly tool: SculptTool;
+  readonly profile: SculptProfile;
+  readonly openedChunks: number;
+}
+
+function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote {
+  const options = sculptOptionsOf(intent);
+  return {
+    x: intent.x,
+    y: intent.y,
+    radius: intent.radius,
+    tool: options.tool,
+    profile: options.profile,
+    openedChunks,
+  };
+}
+
+function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): number | null {
+  const { quote } = pool;
+  if (quote === null) return null;
+  const options = sculptOptionsOf(intent);
+  const sameBrush =
+    quote.x === intent.x &&
+    quote.y === intent.y &&
+    quote.radius === intent.radius &&
+    quote.tool === options.tool &&
+    quote.profile === options.profile;
+  return sameBrush ? quote.openedChunks : null;
+}
+
+function newPool(): ManaPool {
+  return {
+    balance: MANA_CAPACITY,
+    lastSentBalance: NO_BALANCE_SENT,
+    msSinceLastSend: 0,
+    lastSeenSeq: null,
+    quote: null,
+  };
 }
 
 function noteSeq(pool: ManaPool, intent: SculptIntent): void {
@@ -252,12 +302,7 @@ function poolFor(playerId: string): ManaPool {
   const existing = poolsByPlayer.get(playerId);
   if (existing !== undefined) return existing;
 
-  const created: ManaPool = {
-    balance: MANA_CAPACITY,
-    lastSentBalance: NO_BALANCE_SENT,
-    msSinceLastSend: 0,
-    lastSeenSeq: null,
-  };
+  const created = newPool();
   poolsByPlayer.set(playerId, created);
   return created;
 }
@@ -277,11 +322,9 @@ function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
   noteSeq(pool, intent);
-  const cost = manaCostFor(
-    ctx.player.id,
-    intent,
-    openedChunksFor(world, ctx.player.token, intent),
-  );
+  const opened = openedChunksFor(world, ctx.player.token, intent);
+  pool.quote = quoteFor(intent, opened);
+  const cost = manaCostFor(ctx.player.id, intent, opened);
 
   if (pool.balance < cost) {
     world.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
@@ -304,7 +347,9 @@ function commitCharge(
   const pool = poolFor(ctx.player.id);
   noteSeq(pool, intent);
 
-  const opened = openedChunksFor(world, ctx.player.token, intent);
+  const quoted = quotedOpenedChunksFor(pool, intent);
+  const opened = quoted ?? openedChunksFor(world, ctx.player.token, intent);
+  pool.quote = null;
 
   if (diff.length === 0) {
     // Charge follows effect: a no-op sculpt changed nothing, so not even
@@ -362,12 +407,7 @@ export const plugin: TerracePlugin = {
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
-    const pool: ManaPool = {
-    balance: MANA_CAPACITY,
-    lastSentBalance: NO_BALANCE_SENT,
-    msSinceLastSend: 0,
-    lastSeenSeq: null,
-  };
+    const pool = newPool();
     poolsByPlayer.set(player.id, pool);
     sendBalance(world, player.id, pool);
   },
@@ -391,6 +431,7 @@ export const plugin: TerracePlugin = {
 
   onIntentDenied(intent: SculptIntent, ctx: IntentCtx): void {
     const pool = poolFor(ctx.player.id);
+    pool.quote = null;
     noteSeq(pool, intent);
     sendBalance(ctx.world, ctx.player.id, pool);
   },

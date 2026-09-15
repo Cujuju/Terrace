@@ -32,7 +32,7 @@ import {
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import { plugin as revealPlugin } from '../../reveal/server/index.ts';
-import { sculptManaCost } from '../pricing.ts';
+import { openedChunkCount, sculptManaCost } from '../pricing.ts';
 import {
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
   INSUFFICIENT_MANA_REASON,
@@ -1237,5 +1237,129 @@ describe('gate / server parity — the same intent, the same fee', () => {
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
     expect(gateLocalSculpt(plateau, ALL_REVEALED)).toBe(true);
+  });
+});
+
+describe('the frontier price is quoted once, at verdict time', () => {
+  // Chunk (1,1) is the only territory this token owns, so a stamp on its far
+  // edge spills into a locked neighbour and reaches several more.
+  const FRONTIER_INTENT: SculptIntent = {
+    type: 'sculpt',
+    x: CHUNK_SIZE * 2 - 1,
+    y: CHUNK_SIZE + 4,
+    radius: 2,
+    dir: 1,
+    profile: 'hard',
+    seq: 1,
+  };
+
+  function bootOnTheFrontier(): Harness {
+    resetManaState();
+    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    world.seedChunkForToken(PLAYER.token, ...HOME_CHUNK);
+    host.playerJoined(PLAYER);
+    return { world, host, sink };
+  }
+
+  function frontierTerritory(world: World) {
+    return {
+      worldSize: () => world.size,
+      revealedAt: (x: number, y: number) =>
+        world.isChunkUnlockedForToken(
+          PLAYER.token,
+          Math.floor(x / CHUNK_SIZE),
+          Math.floor(y / CHUNK_SIZE),
+        ),
+    };
+  }
+
+  function quotedCost(world: World, intent: SculptIntent): number {
+    return manaCostFor(
+      PLAYER.id,
+      intent,
+      openedChunkCount(world.size, intent.x, intent.y, intent.radius, (cx, cy) =>
+        world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
+      ),
+    );
+  }
+
+  it('charges what the affordability check reserved, creep or no creep', () => {
+    const harness = bootOnTheFrontier();
+    const quoted = quotedCost(harness.world, FRONTIER_INTENT);
+    const stroke = sculptManaCost(MANA_PER_BAND_CELL, FRONTIER_INTENT.radius, 'hard', 'stamp');
+    expect(quoted).toBeGreaterThan(stroke);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      FRONTIER_INTENT,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff.length).toBeGreaterThan(0);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(quoted);
+  });
+
+  it('the client gate debits the same frontier fee the server charges', async () => {
+    const { gateLocalSculpt, setManaPool, manaPool } = await import('../client/state.ts');
+    const harness = bootOnTheFrontier();
+
+    setManaPool({
+      balance: MANA_CAPACITY,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: manaPerBandCellFor(PLAYER.id),
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
+    });
+    expect(gateLocalSculpt(FRONTIER_INTENT, frontierTerritory(harness.world))).toBe(true);
+    const clientFee = MANA_CAPACITY - (manaPool()?.balance ?? 0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      FRONTIER_INTENT,
+    );
+    expect(clientFee).toBe(before - (manaBalanceOf(PLAYER.id) ?? 0));
+  });
+
+  it('a denial leaves no quote behind for a later stroke to spend', () => {
+    const harness = bootOnTheFrontier();
+    const denied = { ...FRONTIER_INTENT };
+
+    const veto = { on: true };
+    const denier: TerracePlugin = {
+      name: 'denier',
+      onIntent: () => (veto.on ? ({ kind: 'deny', reason: 'no' } as IntentVerdict) : ALLOW),
+    };
+    const host = new PluginHost(
+      harness.world,
+      [manaPlugin, denier, revealPlugin].map(asLoadedPlugin),
+    );
+
+    expect(
+      handleSculptIntent({ world: harness.world, interceptors: host }, PLAYER, denied).applied,
+    ).toBe(false);
+
+    // The territory the stale quote priced is now owned outright.
+    const edge = harness.world.chunksPerEdge;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) harness.world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+    veto.on = false;
+
+    const fresh = quotedCost(harness.world, denied);
+    expect(fresh).toBe(sculptManaCost(MANA_PER_BAND_CELL, denied.radius, 'hard', 'stamp'));
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(
+      handleSculptIntent({ world: harness.world, interceptors: host }, PLAYER, denied).applied,
+    ).toBe(true);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(fresh);
   });
 });

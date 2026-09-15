@@ -7,7 +7,6 @@ import {
   Group,
   Mesh,
   MeshLambertMaterial,
-  MeshPhongMaterial,
   SphereGeometry,
   TorusGeometry,
   type Bone,
@@ -218,11 +217,10 @@ export function createPilgrimModels(): PilgrimModels {
   }
 
   const bodyMaterial = new MeshLambertMaterial({ vertexColors: true });
-  const glossMaterial = new MeshPhongMaterial({
-    vertexColors: true,
-    shininess: 90,
-    specular: 0x777777,
-  });
+  // Matte gloss: eyes and noses are small dark painted parts whose specular
+  // highlight was subpixel past a few metres. Lambert keeps one program for
+  // the whole walker instead of a Phong variant per model set.
+  const glossMaterial = new MeshLambertMaterial({ vertexColors: true });
   materials.push(bodyMaterial, glossMaterial);
 
   const legGeometry = keep(new CapsuleGeometry(0.034, 0.052, 6, 16));
