@@ -44,9 +44,9 @@ export function isHeightInBand(height: number, band: number): boolean {
 }
 
 /**
- * Displacement that leaves `height`'s own drawn band. Every band is
- * BAND_HEIGHT tall except the waterline band, which runs from its floor up to
- * SEA_LEVEL, so a press there has further to travel than BAND_HEIGHT.
+ * Smallest displacement that leaves `height`'s own drawn band. Band widths
+ * vary: the shore band is 7 tall and the waterline band 25, so this is not
+ * always BAND_HEIGHT.
  */
 export function bandCrossingStep(height: number, raising: boolean): number {
   const band = drawnBandOfSample(height);

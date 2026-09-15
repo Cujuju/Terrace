@@ -26,6 +26,7 @@ import {
   DEEP_STRATA_DEPTH,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  DRAWN_GROUND_BAND_BIAS,
   DRAWN_SHORE_HEIGHT,
   forEachFootprintOffset,
   heightAt,
@@ -2509,12 +2510,23 @@ describe('applySculpt — raises out of the sea break the surface', () => {
     expect(at(map)).toBe(BAND_HEIGHT);
   });
 
-  it('a stamp lower from the waterline leaves the sea band, not just one raw band', () => {
+  it('a stamp lower from the waterline lands on band -2, at its canonical level', () => {
     // -BAND_HEIGHT still draws as sea: the old raw-band step was invisible.
     const map = flat(0);
     applySculpt(map, CX, CY, 2, -DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
     expect(drawnBandOfSample(at(map))).toBe(-2);
-    expect(at(map)).toBe(bandFloorHeight(-1) - 1);
+    expect(at(map)).toBe(bandLevelHeight(-2));
+  });
+
+  it('every anchored press lands ON a canonical band level, sea band included', () => {
+    for (const dir of [1, -1] as const) {
+      for (let h = bandFloorHeight(-2); h <= 2 * BAND_HEIGHT; h++) {
+        const map = flat(h);
+        applySculpt(map, CX, CY, 2, dir * DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
+        const landed = at(map);
+        expect([h, dir, landed]).toEqual([h, dir, bandLevelHeight(drawnBandOfSample(h) + dir)]);
+      }
+    }
   });
 
   it('every height in the sea band moves exactly one DRAWN band per press', () => {
@@ -2669,5 +2681,62 @@ describe('a drag finishes, at every band it can name and in both directions', ()
         targetBand: MIN_BAND,
       }),
     ).toEqual([]);
+  });
+});
+
+describe('an anchored smooth manufactures at most one band per cell (2026-09-15)', () => {
+  const SIZE = 96;
+  const GROUND_BAND = 40;
+  const TRENCH_X = 40;
+  const TOWER_X = 52;
+  const CLICK_X = 46;
+  const ROW = 48;
+  const TRENCH_RADIUS = 4;
+  const TOWER_RADIUS = 3;
+  const TOWER_PRESSES = 6;
+  const TRENCH_DEPTHS = [6, 20, 40];
+  const CONVERGENCE_LIMIT = 40;
+  // The furthest one melt can lift a cell: a band's floor to the next band's level.
+  const MELT_ROOM_PER_CELL = BAND_HEIGHT + DRAWN_GROUND_BAND_BIAS;
+  const SMOOTH_RAISE = sculptOptionsOf({
+    type: 'sculpt', x: CLICK_X, y: ROW, radius: MAX_BRUSH_RADIUS, dir: 1, tool: 'smooth',
+  });
+
+  const trenchAndTower = (digs: number): Heightmap => {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(bandLevelHeight(GROUND_BAND));
+    for (let k = 0; k < digs; k++) {
+      applySculpt(map, TRENCH_X, ROW, TRENCH_RADIUS, -DEFAULT_SCULPT_AMOUNT, WIRE_DEFAULT_SCULPT_OPTIONS);
+    }
+    for (let k = 0; k < TOWER_PRESSES; k++) {
+      applySculpt(map, TOWER_X, ROW, TOWER_RADIUS, DEFAULT_SCULPT_AMOUNT, WIRE_DEFAULT_SCULPT_OPTIONS);
+    }
+    return map;
+  };
+  const totalOf = (map: Heightmap): number => map.cells.reduce((sum, h) => sum + h, 0);
+  const press = (map: Heightmap): number =>
+    applySculpt(map, CLICK_X, ROW, MAX_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, SMOOTH_RAISE).length;
+  const footprintCells = (): number => {
+    let cells = 0;
+    forEachFootprintOffset(MAX_BRUSH_RADIUS, () => cells++);
+    return cells;
+  };
+
+  it('is bounded by the brush, not by how deep the pit under it is', () => {
+    const cap = footprintCells() * MELT_ROOM_PER_CELL;
+    for (const digs of TRENCH_DEPTHS) {
+      const map = trenchAndTower(digs);
+      const before = totalOf(map);
+      expect(press(map)).toBeGreaterThan(0);
+      expect([digs, totalOf(map) - before <= cap]).toEqual([digs, true]);
+    }
+  });
+
+  it('converges: repeats stop changing the ground and report an empty diff', () => {
+    const map = trenchAndTower(TRENCH_DEPTHS[1]!);
+    let presses = 0;
+    while (presses < CONVERGENCE_LIMIT && press(map) > 0) presses++;
+    expect(presses).toBeGreaterThan(0);
+    expect(presses).toBeLessThan(CONVERGENCE_LIMIT);
   });
 });
