@@ -1,4 +1,4 @@
-import { cellsAcross } from "@terrace/shared";
+import { cellsAcross } from '@terrace/shared';
 
 export const DISC_MIN_ACTIVE_SYSTEMS = 1;
 
@@ -48,10 +48,7 @@ export function discMaxRadiusFor(
   const fromWorld = worldSize * DISC_MAX_RADIUS_WORLD_FRACTION;
   return Math.max(
     discMinRadiusFor(footprintAreaScale),
-    Math.min(
-      DISC_SYSTEM_MAX_RADIUS_CELLS * discRadiusFactorFor(footprintAreaScale),
-      fromWorld,
-    ),
+    Math.min(DISC_SYSTEM_MAX_RADIUS_CELLS * discRadiusFactorFor(footprintAreaScale), fromWorld),
   );
 }
 
@@ -60,9 +57,7 @@ export function discMeanRadiusFor(
   footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
 ): number {
   return (
-    (discMinRadiusFor(footprintAreaScale) +
-      discMaxRadiusFor(worldSize, footprintAreaScale)) /
-    2
+    (discMinRadiusFor(footprintAreaScale) + discMaxRadiusFor(worldSize, footprintAreaScale)) / 2
   );
 }
 
@@ -84,23 +79,14 @@ export function discActiveCapFor(
   footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
 ): number {
   const spawnFieldEdge =
-    worldSize +
-    2 *
-      discMeanRadiusFor(worldSize, footprintAreaScale) *
-      DISC_SPAWN_MARGIN_RADII;
+    worldSize + 2 * discMeanRadiusFor(worldSize, footprintAreaScale) * DISC_SPAWN_MARGIN_RADII;
   const perSystemCoverage =
-    discMeanFootprintCells(worldSize, footprintAreaScale) /
-    (spawnFieldEdge * spawnFieldEdge);
-  const wanted = Math.round(
-    coverageFraction / perSystemCoverage / DISC_EQUILIBRIUM_OCCUPANCY,
-  );
+    discMeanFootprintCells(worldSize, footprintAreaScale) / (spawnFieldEdge * spawnFieldEdge);
+  const wanted = Math.round(coverageFraction / perSystemCoverage / DISC_EQUILIBRIUM_OCCUPANCY);
   return Math.max(DISC_MIN_ACTIVE_SYSTEMS, Math.min(ceiling, wanted));
 }
 
-export function discHasLeftWorld(
-  system: DiscSystem,
-  worldSize: number,
-): boolean {
+export function discHasLeftWorld(system: DiscSystem, worldSize: number): boolean {
   const margin = system.radius * DISC_DESPAWN_MARGIN_RADII;
   return (
     system.x < -margin ||
