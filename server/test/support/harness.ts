@@ -1,4 +1,4 @@
-import { createChunkMask, createHeightmap, chunkIndex, unlockChunk } from '@terrace/shared';
+import { createChunkMask, createHeightmap, chunkIndex, SPAN_STRIDE, unlockChunk } from '@terrace/shared';
 import type { MessageSink } from '../../src/net/message-sink.ts';
 import type {
   LoadedPlugin,
@@ -99,6 +99,8 @@ export interface RawFloorSpan {
 
 const V1_BYTES_PER_HEIGHT = 2;
 const V1_BYTES_PER_RECORD_HEADER = 4 + 2;
+/** Schema 1 stored a raw floor, schema 2 a band, but both write two values per span. */
+const V1_VALUES_PER_SPAN = SPAN_STRIDE;
 
 /**
  * Packs a span table the way schema 1 wrote it, so a test can plant a genuine
@@ -111,7 +113,8 @@ export function packRawFloorColumnSpans(
   let totalBytes = 0;
   for (const i of indices) {
     totalBytes +=
-      V1_BYTES_PER_RECORD_HEADER + columns.get(i)!.length * 2 * V1_BYTES_PER_HEIGHT;
+      V1_BYTES_PER_RECORD_HEADER +
+      columns.get(i)!.length * V1_VALUES_PER_SPAN * V1_BYTES_PER_HEIGHT;
   }
   const buffer = Buffer.allocUnsafe(totalBytes);
   let offset = 0;

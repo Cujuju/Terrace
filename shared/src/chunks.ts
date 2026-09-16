@@ -10,6 +10,7 @@ import {
   applyPackedSpans,
   assertSingleSpanChunk,
   resetColumns,
+  SPAN_STRIDE,
 } from './columns.ts';
 import type { ChunkLayeredSpans, ChunkPayload } from './protocol.ts';
 
@@ -133,7 +134,7 @@ export function extractChunkSpans(
       const packed = map.columnSpans.get(cellIndex(map, x0 + x, y0 + y));
       if (packed === undefined) continue;
       at.push(k);
-      runs.push(packed.length / 2);
+      runs.push(packed.length / SPAN_STRIDE);
       for (let n = 0; n < packed.length; n++) runs.push(packed[n]!);
     }
   }
@@ -203,12 +204,12 @@ export function writeChunkPayload(
       break;
     }
     const count = layered.runs[cursor]!;
-    if (!Number.isInteger(count) || count < 2 || cursor + 1 + count * 2 > layered.runs.length) {
+    if (!Number.isInteger(count) || count < 2 || cursor + 1 + count * SPAN_STRIDE > layered.runs.length) {
       rejected += layered.at.length - n;
       break;
     }
-    const flat = layered.runs.slice(cursor + 1, cursor + 1 + count * 2);
-    cursor += 1 + count * 2;
+    const flat = layered.runs.slice(cursor + 1, cursor + 1 + count * SPAN_STRIDE);
+    cursor += 1 + count * SPAN_STRIDE;
 
     if (!Number.isInteger(offset) || offset <= previousOffset || offset >= cellsPerChunk) {
       rejected++;
