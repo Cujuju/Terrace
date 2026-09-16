@@ -92,7 +92,7 @@ describe('one pointer move emits at most the leg cap', () => {
       HELD_BAND,
     );
 
-    let previous = START;
+    let previous: { x: number; y: number } = START;
     for (const leg of sent) {
       expect({ x: leg.fromX, y: leg.fromY }).toEqual({ x: previous.x, y: previous.y });
       previous = { x: leg.x, y: leg.y };
