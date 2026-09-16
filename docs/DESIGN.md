@@ -33,7 +33,7 @@ plugin-author guide are in the README.
 | Term | Meaning |
 |---|---|
 | **cell** | One grid position; a column of solid spans whose top ceiling is its height |
-| **span** | One solid run `[floor, ceiling)` within a column |
+| **span** | One solid run in a column, `{ floorBand, ceiling }`; it covers bands `floorBand` through `spanCapBand` |
 | **band** | One terrace level, `BAND_HEIGHT` tall |
 | **world unit** | `WORLD_UNIT_CELLS` cells on a side; the width of one terrace tread |
 | **chunk** | `CHUNK_SPAN` world units square; unit of unlock and streaming |
