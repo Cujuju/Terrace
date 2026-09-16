@@ -365,6 +365,43 @@ describe('SnapshotStore', () => {
     reopened.close();
   });
 
+  // SQLite's INTEGER affinity keeps un-coercible TEXT and fractions verbatim, so the
+  // gate has to test integrality, not just the two range bounds.
+  const UNREADABLE_SCHEMA_VERSIONS: readonly (string | number)[] = [
+    'abc',
+    1.5,
+    OLDEST_READABLE_SCHEMA_VERSION - 1,
+    SNAPSHOT_SCHEMA_VERSION + 1,
+  ];
+
+  for (const version of UNREADABLE_SCHEMA_VERSIONS) {
+    it(`refuses a snapshot whose stored schema version is ${JSON.stringify(version)}`, () => {
+      const store = SnapshotStore.open(dbPath);
+      const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+      store.saveSnapshot({
+        worldSize: world.size,
+        name: world.name,
+        cells: world.map.cells,
+        mask: world.mask,
+        pluginSlices: {},
+      });
+      store.close();
+
+      const raw = new DatabaseConstructor(dbPath);
+      raw.prepare('UPDATE snapshots SET schema_version = ?').run(version);
+      expect(
+        (raw.prepare('SELECT schema_version AS v FROM snapshots').get() as { v: unknown }).v,
+      ).toEqual(version);
+      raw.close();
+
+      const reopened = SnapshotStore.open(dbPath);
+      expect(() => reopened.loadLatest()).toThrow(
+        new RegExp(`schema version ${version}`.replace('.', '\\.')),
+      );
+      reopened.close();
+    });
+  }
+
   it('rejects restoring a snapshot into a differently sized world', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     expect(() => World.restore(WORLD_SIZE * 2, world.map.cells, world.mask)).toThrow(RangeError);
