@@ -53,6 +53,11 @@ export function isSpanDrawn(span: Span): boolean {
   return span.floorBand <= spanCapBand(span);
 }
 
+/** The raw range a ceiling may sit in. The writer, the parser and the repair all ask here. */
+export function isCeilingInRange(ceiling: number): boolean {
+  return ceiling >= BEDROCK_FLOOR && ceiling <= MAX_HEIGHT;
+}
+
 /**
  * The band a slab standing on `height` floors in: the lowest whose write level
  * clears it. This is how a raw floor from an old save is read.
@@ -84,10 +89,26 @@ export function spansHaveCapAtBand(spans: readonly Span[], band: number): boolea
   return false;
 }
 
+/**
+ * Repairs a column into one `setColumn` accepts. Refuses what repair cannot
+ * mean: an out-of-range ceiling, or spans that do not ascend.
+ */
 export function canonicaliseColumn(spans: readonly Span[]): Span[] {
   const out: Span[] = [];
   for (let k = 0; k < spans.length; k++) {
     const span = spans[k]!;
+    if (!isCeilingInRange(span.ceiling)) {
+      throw new RangeError(
+        `span ${k} caps at ${span.ceiling}, outside [${BEDROCK_FLOOR}, ${MAX_HEIGHT}]`,
+      );
+    }
+    const below = k === 0 ? undefined : spans[k - 1]!;
+    if (below !== undefined && span.floorBand <= below.floorBand) {
+      throw new RangeError(
+        `span ${k} floors in band ${span.floorBand}, not above span ${k - 1}'s band ` +
+          `${below.floorBand} — a column is repaired in place, never sorted`,
+      );
+    }
     if (!isSpanDrawn(span)) continue;
     const last = out.length === 0 ? undefined : out[out.length - 1]!;
     if (last !== undefined && !isGapDrawn(last, span)) {
@@ -120,7 +141,7 @@ export function parsePackedSpans(flat: readonly number[]): Span[] | null {
     const ceiling = flat[k * SPAN_STRIDE + 1]!;
     if (!Number.isInteger(floorBand) || !Number.isInteger(ceiling)) return null;
     if (floorBand < BEDROCK_BAND) return null;
-    if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) return null;
+    if (!isCeilingInRange(ceiling)) return null;
     const span: Span = { floorBand, ceiling };
     if (!isSpanDrawn(span)) return null;
     if (k > 0 && !isGapDrawn(spans[k - 1]!, span)) return null;
