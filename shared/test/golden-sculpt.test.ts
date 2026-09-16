@@ -64,10 +64,17 @@ describe.each(GOLDEN_WORLD_NAMES)('golden world %s', (world) => {
   });
 
   // A stroke that stopped biting still matches its golden, so the corpus would
-  // go on passing while covering nothing.
-  test('moves at least one cell on every stroke', () => {
-    const dead = replay(world).strokes.filter((stroke) => stroke.changed === 0);
-    expect(dead.map((stroke) => stroke.name)).toEqual([]);
+  // pass while covering nothing. A reported cell count is a claim; the hash is
+  // proof.
+  test('moves the map on every stroke', () => {
+    const golden = replay(world);
+    const dead: string[] = [];
+    let previous = golden.hashBefore;
+    for (const stroke of golden.strokes) {
+      if (stroke.hash === previous) dead.push(stroke.name);
+      previous = stroke.hash;
+    }
+    expect(dead).toEqual([]);
   });
 
   test('names each stroke once', () => {
