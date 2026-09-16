@@ -358,7 +358,7 @@ function runWireStroke(
   const reach = sculptReachCells(intent.radius, options.profile, options.tool, options.anchor);
   const watched = inspected(map, intent, reach);
   const before = snapshotColumns(map, watched);
-  const volumeBefore = solidVolume(map);
+  const volumeBefore = options.tool === 'smooth' ? solidVolume(map) : 0;
 
   const replay = index % FUZZ_DETERMINISM_EVERY === 0 ? cloneHeightmap(map) : null;
   const amount = DEFAULT_SCULPT_AMOUNT * intent.dir;

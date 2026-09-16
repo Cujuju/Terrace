@@ -23,7 +23,6 @@ import {
   RELAX_SLACK,
   readSpans,
   sculptDisplacementUnits,
-  spanCapHeight,
   spanCount,
   spanLowestBandHeight,
   topSpan,
@@ -36,7 +35,7 @@ import {
 
 // ---------------------------------------------------------------------------
 // Span shape. The ONLY place this suite knows how a Span is built or read;
-// re-point these six functions and every invariant below follows.
+// re-point the functions here and every invariant below follows.
 // ---------------------------------------------------------------------------
 
 export function makeSpan(floor: number, ceiling: number): Span {
@@ -49,11 +48,6 @@ export function spanFloorOf(span: Span): number {
 
 export function spanCeilingOf(span: Span): number {
   return span.ceiling;
-}
-
-/** Highest band level the span draws as covered. */
-export function spanCapOf(span: Span): number {
-  return spanCapHeight(span);
 }
 
 /** Lowest band level the span draws as covered. */
@@ -110,12 +104,6 @@ export function cellsWithin(map: Heightmap, cx: number, cy: number, reach: numbe
   const y1 = Math.min(map.size - 1, cy + reach);
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) out.push(y * map.size + x);
   return out;
-}
-
-export function heightSum(map: Heightmap): number {
-  let total = 0;
-  for (let i = 0; i < map.cells.length; i++) total += map.cells[i]!;
-  return total;
 }
 
 export function solidVolume(map: Heightmap): number {
@@ -292,13 +280,6 @@ export function expectGradientLimitOverSettled(
   }
   report(violations, context);
   return compared;
-}
-
-/** A smooth only moves height between neighbours: the whole-map sum is unchanged. */
-export function expectHeightSumConserved(before: number, map: Heightmap, context = ''): void {
-  const after = heightSum(map);
-  const violations = after === before ? [] : [`height sum moved by ${after - before}`];
-  report(violations, context);
 }
 
 /** A smooth never creates or destroys material: the whole-map solid volume is unchanged. */
