@@ -10,6 +10,7 @@ import {
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  EDGELESS_SCULPT_PROFILE,
   forEachFootprintOffset,
   forEachLineCell,
   heightAt,
@@ -23,34 +24,30 @@ import {
   sculptOptionsOf,
   sculptReachCells,
   SEA_LEVEL,
-  sculptDisplacementUnits,
   setColumn,
   validateSculptIntent,
-  type CellDiff,
   type Heightmap,
   type SculptIntent,
-  type SculptProfile,
-  type SculptTool,
 } from '../src/index.ts';
 import {
   allCells,
   carvedSlabRange,
   cellsWithin,
   cloneHeightmap,
+  diffBounds,
   expectCarveCutsOnlyNamedSlabs,
   expectColumnsCanonical,
-  expectDrawnCoverageContainsMaterial,
+  expectDrawnCoverageMatchesSpans,
   expectGapsSurvive,
-  expectGradientLimitOverDiff,
-  expectHeightSumConserved,
-  expectPriceIndependentOfTerrain,
+  expectGradientLimitOverPlainGround,
+  expectPriceMatchesBrushVolume,
   expectSculptDeterministic,
   expectSolidVolumeConserved,
   expectStrokeWithinReach,
-  heightSum,
   makeSpan,
   snapshotColumns,
   solidVolume,
+  type CellBox,
 } from './support/invariants.ts';
 
 const FUZZ_SEED = 0x7e44ace;
@@ -70,6 +67,7 @@ const INSPECTION_MARGIN_CELLS = 2;
 
 const SPAN_BAND_SHARE = 0.5;
 const SWEEP_SHARE = 0.3;
+
 
 type Random = () => number;
 
@@ -232,7 +230,7 @@ function makeIntent(map: Heightmap, random: Random): SculptIntent {
   return intent;
 }
 
-function sweptOrigins(map: Heightmap, intent: SculptIntent): (readonly [number, number])[] {
+function sweptOrigins(intent: SculptIntent): (readonly [number, number])[] {
   if (intent.fromX === undefined || intent.fromY === undefined) return [[intent.x, intent.y]];
   const cells: (readonly [number, number])[] = [];
   forEachLineCell(intent.fromX, intent.fromY, intent.x, intent.y, (x, y) => cells.push([x, y]));
@@ -251,10 +249,31 @@ function footprintCells(map: Heightmap, cx: number, cy: number, radius: number):
 
 function inspected(map: Heightmap, intent: SculptIntent, reach: number): number[] {
   const cells = new Set<number>();
-  for (const [ox, oy] of sweptOrigins(map, intent)) {
+  for (const [ox, oy] of sweptOrigins(intent)) {
     for (const i of cellsWithin(map, ox, oy, reach + INSPECTION_MARGIN_CELLS)) cells.add(i);
   }
   return Array.from(cells);
+}
+
+/** Cells holding exactly one span: the ground relaxation may move without a cap. */
+function plainCells(map: Heightmap, cells: Iterable<number>): Set<number> {
+  const plain = new Set<number>();
+  for (const i of cells) if (!map.columnSpans.has(i)) plain.add(i);
+  return plain;
+}
+
+function footprintBounds(map: Heightmap, cx: number, cy: number, radius: number): CellBox {
+  let x0 = map.size, y0 = map.size, x1 = -1, y1 = -1;
+  forEachFootprintOffset(radius, (dx, dy) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  });
+  return [x0, y0, x1, y1];
 }
 
 // ---------------------------------------------------------------------------
@@ -269,26 +288,18 @@ function strokeContext(world: string, index: number, label: string, detail: unkn
   );
 }
 
-function priceOf(intent: SculptIntent): number {
-  return sculptDisplacementUnits(
-    intent.radius,
-    intent.tool as SculptTool,
-    intent.profile as SculptProfile,
-  );
-}
-
 function runWireStroke(
   map: Heightmap,
   intent: SculptIntent,
   world: string,
   index: number,
-): void {
+): boolean {
   const context = strokeContext(world, index, 'wire', intent);
   const options = sculptOptionsOf(intent);
   const reach = sculptReachCells(intent.radius, options.profile, options.tool, options.anchor);
   const watched = inspected(map, intent, reach);
   const before = snapshotColumns(map, watched);
-  const priceBefore = priceOf(intent);
+  const volumeBefore = solidVolume(map);
 
   const replay = index % FUZZ_DETERMINISM_EVERY === 0 ? cloneHeightmap(map) : null;
   const amount = DEFAULT_SCULPT_AMOUNT * intent.dir;
@@ -300,35 +311,35 @@ function runWireStroke(
   }
 
   expectColumnsCanonical(map, watched, context);
-  expectDrawnCoverageContainsMaterial(map, watched, context);
-  expectStrokeWithinReach(map, diff, sweptOrigins(map, intent), reach, context);
-  expectPriceIndependentOfTerrain(
-    intent.radius,
-    intent.tool as SculptTool,
-    intent.profile as SculptProfile,
-    priceBefore,
-    context,
-  );
+  expectDrawnCoverageMatchesSpans(map, watched, context);
+  expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
+  expectPriceMatchesBrushVolume(intent.radius, options.tool, options.profile, context);
 
+  // The wire smooth is anchored, so it conserves but may leave a bound pair
+  // over-steep; only the free smooth carries the gradient promise.
+  if (options.tool === 'smooth') expectSolidVolumeConserved(volumeBefore, map, context);
   if (options.tool === 'carve' && options.spanBand !== null) {
     const [lo, hi] = carvedSlabRange(options.spanBand, CARVE_BANDS_PER_STROKE);
     const footprint = footprintCells(map, intent.x, intent.y, intent.radius);
     expectCarveCutsOnlyNamedSlabs(map, before, diff, footprint, lo, hi, context);
   }
   if (options.tool === 'drag') expectGapsSurvive(map, before, context);
+  return diff.length > 0;
 }
 
-function runFreeSmooth(map: Heightmap, random: Random, world: string, index: number): void {
+function runFreeSmooth(map: Heightmap, random: Random, world: string, index: number): boolean {
   const x = pickInt(random, 0, map.size - 1);
   const y = pickInt(random, 0, map.size - 1);
   const radius = pickInt(random, 1, FUZZ_MAX_RADIUS);
   const dir = random() < 0.5 ? 1 : -1;
   const stroke = { tool: 'smooth', anchor: 'free', spill: 'free', x, y, radius, dir } as const;
   const context = strokeContext(world, index, 'free smooth', stroke);
-  const layered = map.columnSpans.size > 0;
-  const sumBefore = heightSum(map);
+  const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir, tool: 'smooth' };
+  const reach = sculptReachCells(radius, EDGELESS_SCULPT_PROFILE, 'smooth', 'free');
+  const watched = inspected(map, intent, reach);
+  const plain = plainCells(map, watched);
+  const footprint = footprintBounds(map, x, y, radius);
   const volumeBefore = solidVolume(map);
-  const reach = sculptReachCells(radius, 'hard', 'smooth', 'free');
 
   const diff = applySculpt(map, x, y, radius, DEFAULT_SCULPT_AMOUNT * dir, {
     tool: 'smooth',
@@ -336,15 +347,15 @@ function runFreeSmooth(map: Heightmap, random: Random, world: string, index: num
     spill: 'free',
   });
 
-  if (layered || map.columnSpans.size > 0) {
-    expectSolidVolumeConserved(volumeBefore, map, context);
-  } else {
-    expectHeightSumConserved(sumBefore, map, context);
-    expectGradientLimitOverDiff(map, diff, context);
-  }
-  const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir, tool: 'smooth' };
-  expectStrokeWithinReach(map, diff, sweptOrigins(map, intent), reach, context);
-  expectColumnsCanonical(map, inspected(map, intent, reach), context);
+  expectSolidVolumeConserved(volumeBefore, map, context);
+  // The footprint box is scanned to quiescence even when nothing moved, so
+  // this fires on an empty diff too; the diff box adds the cascade's reach.
+  expectGradientLimitOverPlainGround(map, plain, footprint, context);
+  const settled = diffBounds(diff);
+  if (settled !== null) expectGradientLimitOverPlainGround(map, plain, settled, context);
+  expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
+  expectColumnsCanonical(map, watched, context);
+  return diff.length > 0;
 }
 
 describe('seeded sculpt fuzzer', () => {
@@ -371,6 +382,6 @@ describe('seeded sculpt fuzzer', () => {
 
     expect(applied).toBeGreaterThan(0);
     expectColumnsCanonical(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
-    expectDrawnCoverageContainsMaterial(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
+    expectDrawnCoverageMatchesSpans(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
   });
 });

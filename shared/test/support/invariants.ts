@@ -1,18 +1,24 @@
 import { expect } from 'vitest';
 import {
+  BAND_HEIGHT,
   bandFloorHeight,
   bandLevelHeight,
   BEDROCK_FLOOR,
+  CARVE_BANDS_PER_STROKE,
   cellX,
   cellY,
   chebyshevDistance,
   columnCoversBand,
   createHeightmap,
+  DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  forEachFootprintOffset,
   isGapDrawn,
   isSpanDrawn,
+  MAX_BAND,
   MAX_HEIGHT,
   MAX_STEP,
+  MIN_BAND,
   MIN_HEIGHT,
   RELAX_SLACK,
   readSpans,
@@ -51,6 +57,21 @@ export function spanCapOf(span: Span): number {
 /** Lowest band level the span draws as covered. */
 export function spanBaseOf(span: Span): number {
   return spanLowestBandHeight(span);
+}
+
+/**
+ * Lowest band the span holds material at a write level in, derived from its raw
+ * floor alone — the independent side of the coverage invariant.
+ */
+export function spanBaseBandOf(span: Span): number {
+  const floor = spanFloorOf(span);
+  const band = drawnBandOfSample(floor);
+  return bandLevelHeight(band) >= floor ? band : band + 1;
+}
+
+/** Highest band the span draws as covered, derived from its raw ceiling alone. */
+export function spanCapBandOf(span: Span): number {
+  return drawnBandOfSample(spanCeilingOf(span));
 }
 
 export function spanIsDrawn(span: Span): boolean {
@@ -98,6 +119,9 @@ export function heightSum(map: Heightmap): number {
 export function solidVolume(map: Heightmap): number {
   let total = 0;
   for (let i = 0; i < map.cells.length; i++) {
+    if (!map.columnSpans.has(i)) total += map.cells[i]! - BEDROCK_FLOOR;
+  }
+  for (const i of map.columnSpans.keys()) {
     for (const span of readSpans(map, cellX(map.size, i), cellY(map.size, i))) {
       total += spanCeilingOf(span) - spanFloorOf(span);
     }
@@ -173,7 +197,6 @@ export function expectColumnsCanonical(
 
 /** A stroke writes only inside sculptReachCells() of the cells it swept. */
 export function expectStrokeWithinReach(
-  map: Heightmap,
   diff: readonly CellDiff[],
   origins: readonly (readonly [number, number])[],
   reach: number,
@@ -193,32 +216,45 @@ export function expectStrokeWithinReach(
   report(violations, context);
 }
 
-/**
- * Wherever a smooth settled, no pair is steeper than the limit. Bounded to the
- * diff's own box: the cascade stops growing once a ring is quiet.
- */
-export function expectGradientLimitOverDiff(
-  map: Heightmap,
-  diff: readonly CellDiff[],
-  context = '',
-): void {
-  if (diff.length === 0) return;
-  let x0 = map.size, y0 = map.size, x1 = -1, y1 = -1;
+/** A rectangle of cells, inclusive on both corners. */
+export type CellBox = readonly [number, number, number, number];
+
+/** The box a diff wrote in, or null when nothing moved. */
+export function diffBounds(diff: readonly CellDiff[]): CellBox | null {
+  if (diff.length === 0) return null;
+  let x0 = Number.POSITIVE_INFINITY, y0 = Number.POSITIVE_INFINITY, x1 = -1, y1 = -1;
   for (const cell of diff) {
     if (cell.x < x0) x0 = cell.x;
     if (cell.x > x1) x1 = cell.x;
     if (cell.y < y0) y0 = cell.y;
     if (cell.y > y1) y1 = cell.y;
   }
+  return [x0, y0, x1, y1];
+}
+
+/**
+ * A free smooth leaves plain ground within the limit. Plain = one span before
+ * and after: a layered span stops at its own lowest drawn band.
+ */
+export function expectGradientLimitOverPlainGround(
+  map: Heightmap,
+  plain: ReadonlySet<number>,
+  box: CellBox,
+  context = '',
+): void {
+  const [x0, y0, x1, y1] = box;
   const limit = MAX_STEP + RELAX_SLACK;
   const violations: string[] = [];
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const i = y * map.size + x;
-      if (x < x1 && Math.abs(map.cells[i]! - map.cells[i + 1]!) > limit) {
+      if (!plain.has(i) || map.columnSpans.has(i)) continue;
+      if (x < x1 && plain.has(i + 1) && !map.columnSpans.has(i + 1)
+        && Math.abs(map.cells[i]! - map.cells[i + 1]!) > limit) {
         violations.push(`(${x}, ${y})-(${x + 1}, ${y}) drops ${map.cells[i]! - map.cells[i + 1]!}, limit ${limit}`);
       }
-      if (y < y1 && Math.abs(map.cells[i]! - map.cells[i + map.size]!) > limit) {
+      if (y < y1 && plain.has(i + map.size) && !map.columnSpans.has(i + map.size)
+        && Math.abs(map.cells[i]! - map.cells[i + map.size]!) > limit) {
         violations.push(`(${x}, ${y})-(${x}, ${y + 1}) drops ${map.cells[i]! - map.cells[i + map.size]!}, limit ${limit}`);
       }
     }
@@ -289,7 +325,19 @@ export function expectCarveCutsOnlyNamedSlabs(
   report(violations, context);
 }
 
-/** A drag never removes a gap that existed before it: no column loses a span. */
+/** Air still open somewhere inside [lo, hi) after the stroke. */
+function airRemainsBetween(spans: readonly Span[], lo: number, hi: number): boolean {
+  let cursor = lo;
+  for (const span of spans) {
+    if (spanCeilingOf(span) <= cursor) continue;
+    if (spanFloorOf(span) > cursor) return true;
+    cursor = spanCeilingOf(span);
+    if (cursor >= hi) return false;
+  }
+  return cursor < hi;
+}
+
+/** A drag never removes a gap that existed before it: air survives inside every one. */
 export function expectGapsSurvive(
   map: Heightmap,
   before: ColumnSnapshot,
@@ -297,19 +345,35 @@ export function expectGapsSurvive(
 ): void {
   const violations: string[] = [];
   for (const [i, was] of before) {
+    if (was.length < 2) continue;
     const now = readSpans(map, cellX(map.size, i), cellY(map.size, i));
-    if (now.length < was.length) {
+    for (let k = 1; k < was.length; k++) {
+      const lo = spanCeilingOf(was[k - 1]!);
+      const hi = spanFloorOf(was[k]!);
+      if (airRemainsBetween(now, lo, hi)) continue;
       violations.push(
-        `${at(map, i)}: ${was.length} span(s) ${describeColumn(was)} became ` +
-          `${now.length} — ${describeColumn(now)}`,
+        `${at(map, i)}: gap [${lo}, ${hi}) went solid — ${describeColumn(was)} became ${describeColumn(now)}`,
       );
     }
   }
   report(violations, context);
 }
 
-/** Every band a column holds material at is a band the column draws as covered. */
-export function expectDrawnCoverageContainsMaterial(
+/** Bands either side of a span's own edges that the coverage invariant probes. */
+const COVERAGE_PROBE_BANDS = 1;
+
+function spansCoverBand(spans: readonly Span[], band: number): boolean {
+  for (const span of spans) {
+    if (spanBaseBandOf(span) <= band && band <= spanCapBandOf(span)) return true;
+  }
+  return false;
+}
+
+/**
+ * Drawn coverage is exactly the union of the spans' own band ranges, probed at
+ * every span edge and one band either side of it.
+ */
+export function expectDrawnCoverageMatchesSpans(
   map: Heightmap,
   cells: Iterable<number>,
   context = '',
@@ -318,14 +382,16 @@ export function expectDrawnCoverageContainsMaterial(
   for (const i of cells) {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    for (const span of readSpans(map, x, y)) {
-      const first = drawnBandOfSample(spanFloorOf(span));
-      const last = drawnBandOfSample(spanCeilingOf(span));
-      for (let band = first; band <= last; band++) {
-        const level = bandLevelHeight(band);
-        if (level < spanFloorOf(span) || level > spanCeilingOf(span)) continue;
-        if (!columnCoversBand(map, x, y, band)) {
-          violations.push(`${at(map, i)}: material at band ${band} (${level}) is not drawn as covered`);
+    const spans = readSpans(map, x, y);
+    for (const span of spans) {
+      for (const edge of [spanBaseBandOf(span), spanCapBandOf(span)]) {
+        for (let band = edge - COVERAGE_PROBE_BANDS; band <= edge + COVERAGE_PROBE_BANDS; band++) {
+          if (band < MIN_BAND || band > MAX_BAND) continue;
+          const drawn = columnCoversBand(map, x, y, band);
+          if (drawn === spansCoverBand(spans, band)) continue;
+          violations.push(
+            `${at(map, i)} ${describeColumn(spans)}: band ${band} draws covered=${drawn}, spans say ${!drawn}`,
+          );
         }
       }
     }
@@ -333,16 +399,40 @@ export function expectDrawnCoverageContainsMaterial(
   report(violations, context);
 }
 
-/** Price is a pure function of (radius, tool, profile): terrain can never move it. */
-export function expectPriceIndependentOfTerrain(
+function footprintCellCount(radius: number): number {
+  let cells = 0;
+  forEachFootprintOffset(radius, () => {
+    cells++;
+  });
+  return cells;
+}
+
+/**
+ * Price is the brush's nominal volume: a fill pays its whole footprint, a carve
+ * pays the bands it cuts, a graduated brush pays less than the fill.
+ */
+export function expectPriceMatchesBrushVolume(
   radius: number,
   tool: SculptTool,
   profile: SculptProfile,
-  expected: number,
   context = '',
 ): void {
-  const now = sculptDisplacementUnits(radius, tool, profile);
-  const violations = now === expected ? [] : [`price is ${now}, was ${expected} for the same arguments`];
+  const cells = footprintCellCount(radius);
+  const fill = cells * DEFAULT_SCULPT_AMOUNT;
+  const price = sculptDisplacementUnits(radius, tool, profile);
+  const violations: string[] = [];
+  if (tool === 'carve') {
+    const cut = cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
+    if (price !== cut) violations.push(`carve over ${cells} cells prices ${price}, cuts ${cut}`);
+  } else if (tool === 'smooth' || profile === 'soft') {
+    // Graduated: the centre cell pays the full step, every other cell less.
+    const graduated = cells === 1 ? price === fill : price > 0 && price < fill;
+    if (!graduated) {
+      violations.push(`graduated ${tool} over ${cells} cells prices ${price}, fill is ${fill}`);
+    }
+  } else if (price !== fill) {
+    violations.push(`${tool} fill over ${cells} cells prices ${price}, not ${fill}`);
+  }
   report(violations, context);
 }
 
