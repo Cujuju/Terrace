@@ -8,7 +8,7 @@ import {
   quantiseFill,
 } from './gauge.ts';
 import {
-  currentBrushCost,
+  currentBrushQuote,
   currentUnlockFee,
   deniedCount,
   lastDeniedCost,
@@ -224,7 +224,7 @@ export function ManaGauge(): JSX.Element {
 
   const periodSeconds = () => {
     const pool = manaPool();
-    return pool === null ? 0 : pulsePeriodSeconds(currentBrushCost(), pool.regenPerSecond);
+    return pool === null ? 0 : pulsePeriodSeconds(currentBrushQuote().cost, pool.regenPerSecond);
   };
   const grainFall = () => Math.max(0, fillTopY() - GRAIN_START_Y);
   // Cost hint: the brush cost, the frontier it opens, plus the last denied cost
@@ -233,7 +233,8 @@ export function ManaGauge(): JSX.Element {
     const unlock = currentUnlockFee();
     const opening = unlock > 0 ? `, including ${unlock} to open the frontier` : '';
     const denied = lastDeniedCost();
-    const line = `Cost: one click of this brush${opening}`;
+    const measured = currentBrushQuote().estimated ? ' (estimated)' : '';
+    const line = `Cost: one click of this brush${opening}${measured}`;
     return denied === null ? line : `${line} — last denied cost ${formatSculptCost(denied)}`;
   };
 
@@ -244,7 +245,7 @@ export function ManaGauge(): JSX.Element {
       <div
         class="mana-gauge"
         role="img"
-        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${currentBrushCost()}`}
+        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${currentBrushQuote().cost}`}
         title={`Mana: ${Math.floor(displayed())} of ${manaPool()!.capacity}`}
       >
         <style>{GAUGE_CSS}</style>
@@ -452,7 +453,7 @@ export function ManaGauge(): JSX.Element {
             class="mana-gauge__cost"
             title={costHint()}
           >
-            {formatSculptCost(currentBrushCost())}
+            {formatSculptCost(currentBrushQuote().cost)}
           </span>
         </div>
       </div>

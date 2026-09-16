@@ -1,21 +1,31 @@
 import { createSignal } from 'solid-js';
 import {
   CARVE_DEFAULT_DEPTH_BANDS,
+  TOOLS_WITHOUT_EDGE_PROFILE,
   sculptProfileOf,
   strokeSweep,
   sweepAt,
   type StrokeSweep,
 } from '@terrace/shared';
-import type { SculptIntent } from '@terrace/shared';
+import type { SculptIntent, SculptTool } from '@terrace/shared';
 import {
   chunkOriginCell,
   chunkUnlockFee,
+  displacementManaCost,
   openedChunkCount,
   sculptIntentCost,
   sculptManaCost,
 } from '../pricing.ts';
+import { dryRunDisplacement } from './quote.ts';
 import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
-import { brushProfile, brushRadius, brushTool, hoverPick } from '../../../client/src/state/hudState.ts';
+import {
+  brushProfile,
+  brushRadius,
+  brushTool,
+  hoverPick,
+  sculptDirection,
+  sculptMode,
+} from '../../../client/src/state/hudState.ts';
 
 export interface ManaPool {
   readonly balance: number;
@@ -119,6 +129,7 @@ export function recordDenial(cost?: number): void {
 export interface LocalTerritory {
   worldSize(): number;
   revealedAt(x: number, y: number): boolean;
+  terrainHeightAt(x: number, y: number): number | null;
 }
 
 /**
@@ -151,19 +162,59 @@ export function currentUnlockFee(): number {
   return chunkUnlockFee(openedChunksAt(localTerritory, sweepAt(aim.x, aim.y, brushRadius())));
 }
 
-export function currentBrushCost(): number {
+/**
+ * A quote is measured when the client could run the stroke itself; otherwise it
+ * is the nominal worst case the server admits against, and says so.
+ */
+export interface BrushQuote {
+  readonly cost: number;
+  readonly estimated: boolean;
+}
+
+/** The tools a hover alone fully describes; a carve and a drag need a grasp. */
+const SELF_DESCRIBING_TOOLS: readonly SculptTool[] = ['stamp', 'smooth'];
+
+function aimedIntent(tool: SculptTool): SculptIntent | null {
+  const aim = hoverPick();
+  if (aim === null || !SELF_DESCRIBING_TOOLS.includes(tool)) return null;
+  const profile = sculptProfileOf(tool, brushProfile());
+  return {
+    type: 'sculpt',
+    x: aim.x,
+    y: aim.y,
+    radius: brushRadius(),
+    dir: sculptDirection(sculptMode()),
+    tool,
+    ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? {} : { profile }),
+  };
+}
+
+export function currentBrushQuote(): BrushQuote {
   const pool = manaPool();
-  if (pool === null) return 0;
+  if (pool === null) return { cost: 0, estimated: false };
+
   const tool = brushTool();
-  return (
-    sculptManaCost(
-      pool.manaPerBandCell,
-      brushRadius(),
-      sculptProfileOf(tool, brushProfile()),
-      tool,
-      CARVE_DEFAULT_DEPTH_BANDS,
-    ) + currentUnlockFee()
+  const unlock = currentUnlockFee();
+  const intent = aimedIntent(tool);
+  const moved = intent === null || localTerritory === null
+    ? null
+    : dryRunDisplacement(localTerritory, intent);
+  if (moved !== null) {
+    return { cost: displacementManaCost(moved, pool.manaPerBandCell) + unlock, estimated: false };
+  }
+
+  const nominal = sculptManaCost(
+    pool.manaPerBandCell,
+    brushRadius(),
+    sculptProfileOf(tool, brushProfile()),
+    tool,
+    CARVE_DEFAULT_DEPTH_BANDS,
   );
+  return { cost: nominal + unlock, estimated: true };
+}
+
+export function currentBrushCost(): number {
+  return currentBrushQuote().cost;
 }
 
 export function currentBalance(): number | null {
