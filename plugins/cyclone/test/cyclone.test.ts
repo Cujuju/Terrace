@@ -3,7 +3,7 @@ import { BAND_HEIGHT, SEA_LEVEL, createSeededRng } from '@terrace/shared';
 import { DEV_SEARCH_RADIUS_CELLS } from '../../../server/src/plugins/kit/devSite.ts';
 import type { RotatingStormWorld } from '../../../server/src/plugins/kit/rotatingStorms.ts';
 import type { PluginActionOutcome, WorldApi } from '../../../server/src/plugins/types.ts';
-import { CYCLONE_SURGE_SETTING_KEY, MAX_ACTIVE_CYCLONES } from '../protocol.ts';
+import { CYCLONE_DAMAGE_SETTING_KEY, MAX_ACTIVE_CYCLONES } from '../protocol.ts';
 import { plugin as cyclonePlugin } from '../server/index.ts';
 import { CYCLONE_SLICE_VERSION, loadCyclones, saveCyclones } from '../server/persistence.ts';
 import { cyclones, isCycloneSite, trySpawnCyclone } from '../server/sim.ts';
@@ -38,7 +38,7 @@ function seaWorld(
     heightAt,
     isCellUnlocked: () => chunksUnlocked,
     isChunkUnlocked: () => chunksUnlocked,
-    setting: (key: string) => (key === CYCLONE_SURGE_SETTING_KEY ? 'on' : 'rare'),
+    setting: (key: string) => (key === CYCLONE_DAMAGE_SETTING_KEY ? 'on' : 'rare'),
     sibling: () => null,
     broadcastVisible: () => {},
     broadcast: () => {},

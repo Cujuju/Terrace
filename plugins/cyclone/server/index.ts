@@ -19,17 +19,18 @@ import {
   CYCLONE_FREQUENCY_SETTING_KEY,
   CYCLONE_LANDFALL_EVENT,
   CYCLONE_PLUGIN_NAME,
-  CYCLONE_SURGE_MODES,
-  CYCLONE_SURGE_SETTING_KEY,
+  CYCLONE_DAMAGE_FORMER_SETTING_KEYS,
+  CYCLONE_DAMAGE_MODES,
+  CYCLONE_DAMAGE_SETTING_KEY,
   DEFAULT_CYCLONE_FREQUENCY,
-  DEFAULT_CYCLONE_SURGE_MODE,
+  DEFAULT_CYCLONE_DAMAGE_MODE,
   FREQUENCY_INTERVAL_MULTIPLIERS,
   MAX_ACTIVE_CYCLONES,
   parseFrequency,
-  parseSurgeMode,
+  parseDamageMode,
   type CycloneFrequency,
   type CycloneState,
-  type CycloneSurgeMode,
+  type CycloneDamageMode,
 } from '../protocol.ts';
 import {
   CYCLONE_SLICE_VERSION,
@@ -65,13 +66,13 @@ let tickCount = 0;
 let broadcastPending = false;
 
 let frequency: CycloneFrequency = DEFAULT_CYCLONE_FREQUENCY;
-let surgeMode: CycloneSurgeMode = DEFAULT_CYCLONE_SURGE_MODE;
+let damageMode: CycloneDamageMode = DEFAULT_CYCLONE_DAMAGE_MODE;
 
 function resetSessionState(): void {
   tickCount = 0;
   broadcastPending = false;
   frequency = DEFAULT_CYCLONE_FREQUENCY;
-  surgeMode = DEFAULT_CYCLONE_SURGE_MODE;
+  damageMode = DEFAULT_CYCLONE_DAMAGE_MODE;
   cyclones.reset();
 }
 
@@ -115,11 +116,8 @@ function simulate(world: WorldApi, dt: number): void {
   for (const event of tick.landfalls) world.emitEvent(CYCLONE_LANDFALL_EVENT, event);
   for (const event of tick.damage) world.emitEvent(CYCLONE_DAMAGE_EVENT, event);
 
-  if (surgeMode === 'on') {
+  if (damageMode === 'on') {
     for (const event of tick.damage) scourStruckGround(world, event);
-  }
-
-  if (surgeMode === 'on') {
     for (const storm of cyclones.storms()) {
       tickSurge(world, storm, storm.peakIntensity * storm.envelope, dt, cyclones.random);
     }
@@ -152,9 +150,10 @@ export const plugin: TerracePlugin = {
       defaultValue: DEFAULT_CYCLONE_FREQUENCY,
     },
     {
-      key: CYCLONE_SURGE_SETTING_KEY,
-      values: CYCLONE_SURGE_MODES,
-      defaultValue: DEFAULT_CYCLONE_SURGE_MODE,
+      key: CYCLONE_DAMAGE_SETTING_KEY,
+      values: CYCLONE_DAMAGE_MODES,
+      defaultValue: DEFAULT_CYCLONE_DAMAGE_MODE,
+      formerKeys: CYCLONE_DAMAGE_FORMER_SETTING_KEYS,
     },
   ],
 
@@ -167,14 +166,14 @@ export const plugin: TerracePlugin = {
     cyclones.freeze(false);
 
     frequency = parseFrequency(world.setting(CYCLONE_FREQUENCY_SETTING_KEY));
-    surgeMode = parseSurgeMode(world.setting(CYCLONE_SURGE_SETTING_KEY));
+    damageMode = parseDamageMode(world.setting(CYCLONE_DAMAGE_SETTING_KEY));
 
     if (frequency === 'off') return;
 
     dev.forceFromEnv(world, process.env);
 
     console.info(
-      `[${CYCLONE_PLUGIN_NAME}] frequency: ${frequency}, surge: ${surgeMode}, ` +
+      `[${CYCLONE_PLUGIN_NAME}] frequency: ${frequency}, damage: ${damageMode}, ` +
         `difficulty ${world.difficulty} → one every ~${Math.round(
           meanSpawnIntervalSeconds(world.difficulty) * intervalMultiplier(),
         )}s`,

@@ -5,6 +5,7 @@ import { buildThumbnail } from '../persistence/thumbnail.ts';
 import type { WorldRegistry } from '../persistence/world-registry.ts';
 import { PluginHost } from '../plugins/host.ts';
 import type { InstalledPlugins } from '../plugins/installed.ts';
+import { resolveDeclaredSettings } from '../plugins/settings.ts';
 import type { LoadedPlugin } from '../plugins/types.ts';
 import { archFixtureRequested, carveArchFixture } from './arch-fixture.ts';
 import { RollbackService } from './rollback.ts';
@@ -76,10 +77,18 @@ function enabledPluginNames(
   return new Set(installed.filter((name) => !disabled.has(name)));
 }
 
-function pluginSettingsByPlugin(store: SnapshotStore): Record<string, Record<string, string>> {
+function pluginSettingsByPlugin(
+  store: SnapshotStore,
+  plugins: readonly LoadedPlugin[],
+): Record<string, Record<string, string>> {
   const grouped: Record<string, Record<string, string>> = {};
   for (const row of store.pluginSettings()) {
     (grouped[row.plugin] ??= {})[row.key] = row.value;
+  }
+  for (const { plugin } of plugins) {
+    if (!Object.hasOwn(grouped, plugin.name)) continue;
+    const stored = grouped[plugin.name]!;
+    grouped[plugin.name] = resolveDeclaredSettings(plugin.settings ?? [], stored);
   }
   return grouped;
 }
@@ -127,7 +136,7 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
     world,
     plugins,
     enabledPluginNames(store, plugins, config.pluginsEnabled),
-    pluginSettingsByPlugin(store),
+    pluginSettingsByPlugin(store, plugins),
   );
   host.restorePersistence(pluginSlices);
   host.worldCreate();
