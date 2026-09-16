@@ -157,6 +157,9 @@ export interface ClientPluginCtx {
   loadRigAsset(url: string, lighting: RigLighting): Promise<RigAsset>;
 
   modulateSkyRig(modify: (state: SkyRigState) => SkyRigState): () => void;
+
+  /** Asks the host to re-run the settle shader warmup once it has run; coalesced. */
+  requestShaderWarmup(): void;
 }
 
 export interface TerraceClientPlugin {

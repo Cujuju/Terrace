@@ -500,6 +500,10 @@ export function createClientPluginHost(
           lighting === 'sky-environment' ? viewport.skyEnvironment.texture : null,
         );
       },
+      // Before the settle pass, whatever the plugin added is covered by that pass.
+      requestShaderWarmup(): void {
+        if (warmedOnce) runWarmup();
+      },
       modulateSkyRig(modify: (state: SkyRigState) => SkyRigState) {
         skyRigModifiers.push(modify);
         return track(() => {
