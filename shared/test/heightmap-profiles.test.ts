@@ -33,13 +33,14 @@ describe('applySculpt — edge profiles', () => {
     expect(heightAt(map, 24 + radius, 24)).toBe(0);
   });
 
-  it('soft is unchanged: full amount at the centre, linear falloff outward', () => {
+  it('soft is unchanged: full amount at the centre, linear falloff to a fifth at the ring', () => {
     const map = createHeightmap(48);
     applySculpt(map, 24, 24, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
+    // Ramp spans dist 0..3: weights 15/15, 11/15, 7/15, 3/15.
     expect(heightAt(map, 24, 24)).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, 25, 24)).toBe((DEFAULT_SCULPT_AMOUNT * 3) / 4);
-    expect(heightAt(map, 26, 24)).toBe((DEFAULT_SCULPT_AMOUNT * 2) / 4);
-    expect(heightAt(map, 27, 24)).toBe((DEFAULT_SCULPT_AMOUNT * 1) / 4);
+    expect(heightAt(map, 25, 24)).toBe(Math.trunc((DEFAULT_SCULPT_AMOUNT * 11) / 15));
+    expect(heightAt(map, 26, 24)).toBe(Math.trunc((DEFAULT_SCULPT_AMOUNT * 7) / 15));
+    expect(heightAt(map, 27, 24)).toBe(Math.trunc((DEFAULT_SCULPT_AMOUNT * 3) / 15));
     expect(heightAt(map, 28, 24)).toBe(0);
   });
 

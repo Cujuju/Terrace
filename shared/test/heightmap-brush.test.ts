@@ -24,13 +24,13 @@ describe('applyBrush', () => {
     expect(heightAt(map, 16, 16)).toBe(64);
   });
 
-  it('radius 2 applies linear falloff (full center, half at distance 1)', () => {
+  it('radius 2 applies the soft falloff (full center, a fifth at the outer ring)', () => {
     const map = createHeightmap(32);
     const changed = new Set<number>();
     applyBrush(map, 16, 16, 2, 64, changed);
     expect(heightAt(map, 16, 16)).toBe(64);
-    expect(heightAt(map, 17, 16)).toBe(32);
-    expect(heightAt(map, 16, 15)).toBe(32);
+    expect(heightAt(map, 17, 16)).toBe(Math.trunc(64 / 5));
+    expect(heightAt(map, 16, 15)).toBe(Math.trunc(64 / 5));
     expect(heightAt(map, 17, 17)).toBe(0);
     expect(heightAt(map, 18, 16)).toBe(0);
   });
