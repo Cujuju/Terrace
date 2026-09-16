@@ -1,4 +1,10 @@
-import { floorBandOfHeight, parsePackedSpans, SPAN_STRIDE, type Span } from '@terrace/shared';
+import {
+  canonicaliseColumn,
+  floorBandOfHeight,
+  parsePackedSpans,
+  SPAN_STRIDE,
+  type Span,
+} from '@terrace/shared';
 
 const BYTES_PER_HEIGHT = 2;
 
@@ -40,6 +46,33 @@ const BYTES_PER_PACKED_SPAN = VALUES_PER_SPAN * BYTES_PER_HEIGHT;
 
 /** Schema 1 packed a span's floor as a raw height; schema 2 packs it as a band. */
 export const RAW_FLOOR_SCHEMA_VERSION = 1;
+
+/** A record on disk holds a layered column; one span lives in the heightmap instead. */
+const MIN_SPANS_PER_RECORD = 2;
+
+/**
+ * Schema 1's gap rule admitted a slab floored one band over the ground's cap.
+ * The band rule draws that as one span, so repair reproduces what v1 drew.
+ */
+function repairRawFloorColumn(
+  packedBands: readonly number[],
+  context: string,
+  cellIndex: number,
+): Span[] {
+  const spans: Span[] = [];
+  for (let k = 0; k < packedBands.length; k += SPAN_STRIDE) {
+    spans.push({ floorBand: packedBands[k]!, ceiling: packedBands[k + 1]! });
+  }
+  try {
+    return canonicaliseColumn(spans);
+  } catch (cause) {
+    throw new RangeError(
+      `${context}: schema ${RAW_FLOOR_SCHEMA_VERSION} cell ${cellIndex} does not repair into a ` +
+        `column (${(cause as Error).message}); refusing to restore a corrupt world`,
+      { cause },
+    );
+  }
+}
 
 export function encodeColumnSpans(
   columnSpans: ReadonlyMap<number, Int16Array>,
@@ -104,7 +137,7 @@ export function decodeColumnSpans(
       );
     }
     previousCellIndex = cellIndex;
-    if (spanCount < 2) {
+    if (spanCount < MIN_SPANS_PER_RECORD) {
       throw new RangeError(
         `${context}: span table holds ${spanCount} span(s) for cell ${cellIndex}; a column on ` +
           `disk has at least two, or no record at all. Refusing to restore a corrupt world`,
@@ -125,7 +158,14 @@ export function decodeColumnSpans(
       offset += BYTES_PER_HEIGHT;
       flat.push(rawFloors ? floorBandOfHeight(floor) : floor, ceiling);
     }
-    const spans = parsePackedSpans(flat);
+    let packed: readonly number[] = flat;
+    if (rawFloors) {
+      const repaired = repairRawFloorColumn(flat, context, cellIndex);
+      // One span at bedrock is not layered; the heightmap already holds its ceiling.
+      if (repaired.length < MIN_SPANS_PER_RECORD) continue;
+      packed = repaired.flatMap((span) => [span.floorBand, span.ceiling]);
+    }
+    const spans = parsePackedSpans(packed);
     if (spans === null) {
       throw new RangeError(
         `${context}: span table holds a malformed ${spanCount}-span list for cell ` +
