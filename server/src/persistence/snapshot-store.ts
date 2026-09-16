@@ -32,6 +32,15 @@ export const SNAPSHOT_SCHEMA_VERSION = 2;
 /** The oldest schema this server still reads. `decodeColumnSpans` reinterprets its floors. */
 export const OLDEST_READABLE_SCHEMA_VERSION = 1;
 
+/** INTEGER affinity stores un-coercible TEXT as-is, so range alone lets 'abc' and 1.5 through. */
+function isReadableSchemaVersion(version: number): boolean {
+  return (
+    Number.isInteger(version) &&
+    version >= OLDEST_READABLE_SCHEMA_VERSION &&
+    version <= SNAPSHOT_SCHEMA_VERSION
+  );
+}
+
 export const SNAPSHOT_RETENTION = 10;
 
 export const IN_MEMORY_DB_PATH = ':memory:';
@@ -427,10 +436,7 @@ export class SnapshotStore {
   private hydrate(row: SnapshotRow | undefined): WorldSnapshot | null {
     if (row === undefined) return null;
 
-    if (
-      row.schema_version < OLDEST_READABLE_SCHEMA_VERSION ||
-      row.schema_version > SNAPSHOT_SCHEMA_VERSION
-    ) {
+    if (!isReadableSchemaVersion(row.schema_version)) {
       throw new Error(
         `snapshot #${row.id} has schema version ${row.schema_version}, this server reads ` +
           `versions ${OLDEST_READABLE_SCHEMA_VERSION} to ${SNAPSHOT_SCHEMA_VERSION}; ` +
