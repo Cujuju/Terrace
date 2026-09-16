@@ -5,6 +5,7 @@ import {
   MAX_STEP,
   MIN_HEIGHT,
   NEIGHBOURHOOD_CELLS,
+  RAMP_CELLS_PER_BAND,
   SEA_LEVEL,
   WORLD_UNIT_CELLS,
   cellsOverArea,
@@ -26,8 +27,6 @@ function heightAtBandsBelowSea(bands: number): number {
 export const FRESH_SEABED_HEIGHT = heightAtBandsBelowSea(FRESH_SEABED_BANDS_BELOW_SEA);
 
 export const FRESH_SHELF_HEIGHT = heightAtBandsBelowSea(FRESH_SHELF_BANDS_BELOW_SEA);
-
-const GENESIS_TERRACE_WALL_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
 
 function clampHeight(h: number): number {
   return h > MAX_HEIGHT ? MAX_HEIGHT : h < MIN_HEIGHT ? MIN_HEIGHT : h;
@@ -167,7 +166,7 @@ export const GENESIS_MIN_STARTER_LAND_CELLS =
 
 const GENESIS_ISLAND_PEAK_BANDS =
   Math.ceil(
-    Math.sqrt(GENESIS_MIN_ISLAND_CELLS / Math.PI) / GENESIS_TERRACE_WALL_CELLS_PER_BAND,
+    Math.sqrt(GENESIS_MIN_ISLAND_CELLS / Math.PI) / RAMP_CELLS_PER_BAND,
   ) + 1;
 
 const GENESIS_ISLAND_PLATEAU_RADIUS_CELLS = 2 * WORLD_UNIT_CELLS;
@@ -177,10 +176,10 @@ const GENESIS_ISLAND_MAX_LIFT_BANDS =
 
 const GENESIS_ISLAND_REACH_CELLS =
   GENESIS_ISLAND_PLATEAU_RADIUS_CELLS +
-  GENESIS_ISLAND_MAX_LIFT_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+  GENESIS_ISLAND_MAX_LIFT_BANDS * RAMP_CELLS_PER_BAND;
 
 export const GENESIS_ISLAND_MIN_LAND_CELLS =
-  3 * (GENESIS_ISLAND_PEAK_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND) ** 2;
+  3 * (GENESIS_ISLAND_PEAK_BANDS * RAMP_CELLS_PER_BAND) ** 2;
 
 const GENESIS_ISLAND_SLOTS_PER_AXIS = 3;
 
@@ -206,7 +205,7 @@ function islandLiftBandsAt(
     const beyondPlateau = radius - GENESIS_ISLAND_PLATEAU_RADIUS_CELLS;
     const bands =
       island.liftBands -
-      (beyondPlateau > 0 ? Math.floor(beyondPlateau / GENESIS_TERRACE_WALL_CELLS_PER_BAND) : 0);
+      (beyondPlateau > 0 ? Math.floor(beyondPlateau / RAMP_CELLS_PER_BAND) : 0);
     if (bands > lift) lift = bands;
   }
   return lift;
@@ -267,7 +266,7 @@ function surveyStarterLandmasses(
 function genesisIslandSites(terrain: FreshGenesisTerrain, seed: number): GenesisIsland[] {
   const span = terrain.unlockMaxCell - terrain.unlockMinCell + 1;
   const inset = Math.min(
-    GENESIS_ISLAND_PEAK_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND,
+    GENESIS_ISLAND_PEAK_BANDS * RAMP_CELLS_PER_BAND,
     Math.floor((span - 1) / 2),
   );
   const usable = span - 2 * inset;
@@ -359,7 +358,7 @@ const GENESIS_TRENCH_SEGMENT_CELLS =
 
 const GENESIS_TRENCH_REACH_CELLS =
   GENESIS_TRENCH_HALF_LENGTH_CELLS +
-  GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+  GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * RAMP_CELLS_PER_BAND;
 
 export const GENESIS_EXTRA_TRENCH_MIN = 1;
 export const GENESIS_EXTRA_TRENCH_MAX = 3;
@@ -662,7 +661,7 @@ function deepenedByTrenches(
 
     const bands =
       GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA -
-      Math.floor(distance / GENESIS_TERRACE_WALL_CELLS_PER_BAND);
+      Math.floor(distance / RAMP_CELLS_PER_BAND);
     if (bands <= 0) continue;
 
     const floor = clampHeight(heightAtBandsBelowSea(bands));
@@ -673,14 +672,14 @@ function deepenedByTrenches(
 
 const GENESIS_BASIN_RADIUS_CELLS =
   Math.ceil(Math.sqrt(GENESIS_TRENCH_MIN_BASIN_CELLS / Math.PI)) +
-  GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+  RAMP_CELLS_PER_BAND;
 const GENESIS_BASIN_DROP_BANDS =
-  Math.ceil(GENESIS_BASIN_RADIUS_CELLS / GENESIS_TERRACE_WALL_CELLS_PER_BAND) +
+  Math.ceil(GENESIS_BASIN_RADIUS_CELLS / RAMP_CELLS_PER_BAND) +
   FRESH_SEABED_BANDS_BELOW_SEA +
   GENESIS_NOISE_MAX_BAND_OFFSET;
 
 const GENESIS_BASIN_REACH_CELLS =
-  GENESIS_BASIN_DROP_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+  GENESIS_BASIN_DROP_BANDS * RAMP_CELLS_PER_BAND;
 
 export interface GenesisBasin {
   readonly anchorX: number;
@@ -701,7 +700,7 @@ function basinDropBandsAt(
 
     const radius = Math.floor(Math.sqrt(dx * dx + dy * dy));
     const bands =
-      GENESIS_BASIN_DROP_BANDS - Math.floor(radius / GENESIS_TERRACE_WALL_CELLS_PER_BAND);
+      GENESIS_BASIN_DROP_BANDS - Math.floor(radius / RAMP_CELLS_PER_BAND);
     if (bands > drop) drop = bands;
   }
   return drop;
