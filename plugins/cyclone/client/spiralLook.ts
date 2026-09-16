@@ -11,6 +11,7 @@ import { MeshLambertNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
   attribute,
   cameraViewMatrix,
+  clamp,
   cos,
   dot,
   float,
@@ -47,10 +48,13 @@ import { COLUMN_LANES } from './spiralGround.ts';
 import {
   ARM_WRAP_TURNS,
   CYCLONE_BAND_INNER_RADIUS_FRACTION,
+  CYCLONE_EYEWALL_FALLOFF_EXPONENT,
   CYCLONE_EYEWALL_PUFF_GROWTH,
-  CYCLONE_FUNNEL_PROFILE_EXPONENT,
+  CYCLONE_FLOOR_RADIUS_FRACTION,
   CYCLONE_RIM_BOTTOM_WORLD_Y,
+  CYCLONE_SKIRT_RADIUS_SPAN_FRACTION,
   CYCLONE_TOP_WORLD_Y,
+  CYCLONE_WALL_FLOOR_WORLD_Y,
   KEY_LANES,
   PUFF_SIZE_RADIUS_FRACTION,
   PUFF_SIZE_SEED_MIN,
@@ -153,11 +157,12 @@ export function createSpiralMesh(
   const aSeed = aSeat.z;
   const aTier = aSeat.w;
 
-  // The eyewall profile: 1 at the eyewall, 0 at the rim; depth, size, solidity and shade read off it.
-  const wall = varying(float(1).sub(pow(aAlong, CYCLONE_FUNNEL_PROFILE_EXPONENT)), 'vWall');
+  // The eyewall profile: 1 at the eyewall, 0 at the rim; size, solidity and shade read off it.
+  const wall = varying(float(1).sub(pow(aAlong, CYCLONE_EYEWALL_FALLOFF_EXPONENT)), 'vWall');
 
   // The logarithmic spiral: wrap positive, spin negative, so the arms trail an anticlockwise turn.
-  const radius = aRadius.mul(mix(float(CYCLONE_BAND_INNER_RADIUS_FRACTION), 1, aAlong));
+  const radiusFraction = mix(float(CYCLONE_BAND_INNER_RADIUS_FRACTION), 1, aAlong);
+  const radius = aRadius.mul(radiusFraction);
   const angle = float(TWO_PI).mul(aArm.add(aAlong.mul(ARM_WRAP_TURNS)).sub(spinTurns));
 
   // A scatter across the arm's width, narrow at the eyewall and wide at the rim.
@@ -172,9 +177,17 @@ export function createSpiralMesh(
     .mul(float(1).add(wall.mul(CYCLONE_EYEWALL_PUFF_GROWTH)))
     .mul(float(PUFF_SIZE_SEED_MIN).add(fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(PUFF_SIZE_SEED_SPAN)));
 
-  // Every column hangs from the flat top; its underside is the ground at the eyewall
-  // and rises to the rim bottom outward, never dipping below the ground beneath it.
-  const underside = mix(max(ground, float(CYCLONE_RIM_BOTTOM_WORLD_Y)), ground, wall);
+  // Every column hangs from the flat top. Its underside is the ground across the floor,
+  // then a straight skirt up to the rim bottom, never below the ground beneath it.
+  const skirt = clamp(
+    radiusFraction.sub(CYCLONE_FLOOR_RADIUS_FRACTION).div(CYCLONE_SKIRT_RADIUS_SPAN_FRACTION),
+    0,
+    1,
+  );
+  const underside = max(
+    ground,
+    mix(float(CYCLONE_WALL_FLOOR_WORLD_Y), float(CYCLONE_RIM_BOTTOM_WORLD_Y), skirt),
+  );
   const world = vec3(
     eye.x.add(cos(angle).mul(radius)).add(cos(scatterAngle).mul(scatter)),
     underside.add(aTier.mul(float(CYCLONE_TOP_WORLD_Y).sub(underside))),
