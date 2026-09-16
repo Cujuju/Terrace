@@ -1,0 +1,115 @@
+{
+  "world": "terrace",
+  "size": 64,
+  "layeredColumnsBefore": 168,
+  "hashBefore": "4bdea775",
+  "strokes": [
+    {
+      "name": "stamp-hard-raise-centre",
+      "changed": 37,
+      "hash": "9e7d5105"
+    },
+    {
+      "name": "stamp-soft-raise",
+      "changed": 594,
+      "hash": "89124cd2"
+    },
+    {
+      "name": "stamp-soft-lower",
+      "changed": 273,
+      "hash": "9b70940e"
+    },
+    {
+      "name": "stamp-hard-lower-free",
+      "changed": 3,
+      "hash": "b2333f1e"
+    },
+    {
+      "name": "stamp-band-anchored",
+      "changed": 5,
+      "hash": "cffd59ce"
+    },
+    {
+      "name": "smooth-banded-raise",
+      "changed": 581,
+      "hash": "e46a7062"
+    },
+    {
+      "name": "smooth-free-lower",
+      "changed": 278,
+      "hash": "0bb0be56"
+    },
+    {
+      "name": "drag-raise-one-band",
+      "changed": 17,
+      "hash": "5a02d864"
+    },
+    {
+      "name": "drag-lower-swept",
+      "changed": 29,
+      "hash": "47bf7f1b"
+    },
+    {
+      "name": "carve-click-band",
+      "changed": 3,
+      "hash": "713d6e7d"
+    },
+    {
+      "name": "carve-click-band-again",
+      "changed": 0,
+      "hash": "713d6e7d"
+    },
+    {
+      "name": "settle-library-tool",
+      "changed": 3990,
+      "hash": "e732756b"
+    },
+    {
+      "name": "edge-stamp-origin-corner",
+      "changed": 3,
+      "hash": "f4334204"
+    },
+    {
+      "name": "edge-stamp-far-column",
+      "changed": 19,
+      "hash": "17b56dd5"
+    },
+    {
+      "name": "edge-smooth-last-row",
+      "changed": 0,
+      "hash": "17b56dd5"
+    },
+    {
+      "name": "edge-drag-far-corner",
+      "changed": 0,
+      "hash": "17b56dd5"
+    },
+    {
+      "name": "min-floor-lower-noop",
+      "changed": 5,
+      "hash": "d458f396"
+    },
+    {
+      "name": "max-ceiling-raise-noop",
+      "changed": 5,
+      "hash": "2ec1e4a0"
+    },
+    {
+      "name": "max-ceiling-lower",
+      "changed": 13,
+      "hash": "c75bbed3"
+    },
+    {
+      "name": "slab-carve",
+      "changed": 3,
+      "hash": "002aff74"
+    },
+    {
+      "name": "min-floor-raise",
+      "changed": 18,
+      "hash": "85ce7005"
+    }
+  ],
+  "layeredColumnsAfter": 162,
+  "hashAfter": "85ce7005"
+}

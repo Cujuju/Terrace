@@ -1,0 +1,95 @@
+{
+  "world": "genesis-noise",
+  "size": 64,
+  "layeredColumnsBefore": 0,
+  "hashBefore": "5e860520",
+  "strokes": [
+    {
+      "name": "stamp-hard-raise-centre",
+      "changed": 23,
+      "hash": "08be3a4b"
+    },
+    {
+      "name": "stamp-soft-raise",
+      "changed": 271,
+      "hash": "93e10faa"
+    },
+    {
+      "name": "stamp-soft-lower",
+      "changed": 578,
+      "hash": "532eb0fb"
+    },
+    {
+      "name": "stamp-hard-lower-free",
+      "changed": 1,
+      "hash": "64bdbd2b"
+    },
+    {
+      "name": "stamp-band-anchored",
+      "changed": 6,
+      "hash": "8d6b132b"
+    },
+    {
+      "name": "smooth-banded-raise",
+      "changed": 679,
+      "hash": "0f164a6b"
+    },
+    {
+      "name": "smooth-free-lower",
+      "changed": 529,
+      "hash": "5639a40b"
+    },
+    {
+      "name": "drag-raise-one-band",
+      "changed": 27,
+      "hash": "69fddaed"
+    },
+    {
+      "name": "drag-lower-swept",
+      "changed": 25,
+      "hash": "6af72a5b"
+    },
+    {
+      "name": "carve-click-band",
+      "changed": 0,
+      "hash": "6af72a5b"
+    },
+    {
+      "name": "carve-click-band-again",
+      "changed": 0,
+      "hash": "6af72a5b"
+    },
+    {
+      "name": "settle-library-tool",
+      "changed": 4096,
+      "hash": "c661724c"
+    },
+    {
+      "name": "edge-stamp-origin-corner",
+      "changed": 8,
+      "hash": "73109460"
+    },
+    {
+      "name": "edge-stamp-far-column",
+      "changed": 70,
+      "hash": "5a82e022"
+    },
+    {
+      "name": "edge-smooth-last-row",
+      "changed": 0,
+      "hash": "5a82e022"
+    },
+    {
+      "name": "edge-drag-far-corner",
+      "changed": 3,
+      "hash": "8ed21ee6"
+    },
+    {
+      "name": "noise-basin-raise",
+      "changed": 248,
+      "hash": "44b2b301"
+    }
+  ],
+  "layeredColumnsAfter": 0,
+  "hashAfter": "44b2b301"
+}
