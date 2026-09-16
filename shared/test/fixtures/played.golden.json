@@ -1,0 +1,105 @@
+{
+  "world": "played",
+  "size": 64,
+  "layeredColumnsBefore": 1896,
+  "hashBefore": "0a90795d",
+  "strokes": [
+    {
+      "name": "stamp-hard-raise-centre",
+      "changed": 0,
+      "hash": "0a90795d"
+    },
+    {
+      "name": "stamp-soft-raise",
+      "changed": 452,
+      "hash": "4d1c68c9"
+    },
+    {
+      "name": "stamp-soft-lower",
+      "changed": 61,
+      "hash": "affdb939"
+    },
+    {
+      "name": "stamp-hard-lower-free",
+      "changed": 12,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "stamp-band-anchored",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "smooth-banded-raise",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "smooth-free-lower",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "drag-raise-one-band",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "drag-lower-swept",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "carve-click-band",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "carve-click-band-again",
+      "changed": 0,
+      "hash": "6dd58ba4"
+    },
+    {
+      "name": "settle-library-tool",
+      "changed": 3122,
+      "hash": "9b16d011"
+    },
+    {
+      "name": "edge-stamp-origin-corner",
+      "changed": 8,
+      "hash": "1a9813b5"
+    },
+    {
+      "name": "edge-stamp-far-column",
+      "changed": 75,
+      "hash": "bbcb1b3b"
+    },
+    {
+      "name": "edge-smooth-last-row",
+      "changed": 120,
+      "hash": "f3d7ee5f"
+    },
+    {
+      "name": "edge-drag-far-corner",
+      "changed": 0,
+      "hash": "f3d7ee5f"
+    },
+    {
+      "name": "played-carve-under-roof",
+      "changed": 2,
+      "hash": "b343474f"
+    },
+    {
+      "name": "played-drag-into-gap",
+      "changed": 2,
+      "hash": "aa264b5f"
+    },
+    {
+      "name": "played-roof-smooth",
+      "changed": 275,
+      "hash": "60c763ae"
+    }
+  ],
+  "layeredColumnsAfter": 1762,
+  "hashAfter": "60c763ae"
+}
