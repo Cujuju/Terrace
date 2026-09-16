@@ -344,13 +344,24 @@ the 3 s before it, 23 ms in the 5 s after).
 | event frame max | ~36 ms | 33.7 ms (no compile events) |
 
 Naming probe (`.perf-probe/pipenames.ps1`, `.census/pipenames-phaseC2-*.json`): on the final build the only
-post-settle compiles are the first monster spawn (5 per-surface `MeshLambertNodeMaterial`s, 9 programs,
-one ~20–35 ms frame per kind). Monster templates are built lazily on `requestIdleCallback` by design
-(eager specimens would add ~1.9 s of boot: yeti 527 ms, ram 486, ibex 375, fanged 421, cthulhu 76, kraken
-39) — owner decision: (a) eager build of the default templates, or (b) a host hook so a plugin can request
-a re-warm after each idle template build. Residuals: a hidden double-pass object made visible during the
-warmup await renders single-sided until that pass ends (load only); no re-arm across a world switch;
-`compileAsync` returns early on device loss (false done mark).
+post-settle compiles are monster kinds whose first real spawn precedes their idle template build (templates
+build lazily on `requestIdleCallback` by design; eager builds would add ~1.9 s of boot).
+
+**Signoff round 2 (2026-09-16, Fable BLOCKED → fixed in `77ce752b`).** (1) three fixes a render object's
+program to `material.side` at creation, so pass A's BackSide program was reused for the front pass of hidden
+lit double-sided materials (negated front-face normals on snow/cyclone decks); fix: `material.needsUpdate`
+between passes so the default render object rebuilds at FrontSide while the `'backSide'` one keeps its
+key. (2) Every pass drained VISIBLE double-sided objects (water) at DoubleSide, releasing their warm
+side pipelines; fix: double-pass drawables are hidden for the synchronous projection unless the pass
+flips their side, so no object is ever drained at a foreign side. Re-runs (`requestShaderWarmup()`,
+`1340c4b7`: monsters add a hidden specimen per idle-built template) never flip sides and never touch
+double-pass drawables. Final gate on `77ce752b` (`.census/census-phaseC2-final2.json`, 20 min, far
+view): programs 162→165, 1 program-count change, 2 pipelines / 3 programs created after settle (one
+monster spawn), frame max 44.9 ms; naming probe: zero recreations of warmed objects. Residuals: a
+double-pass object's drawable descendants are skipped with it; hidden double-pass drawables are not
+warmed by re-runs (first-show compile); two junk side-2 pipelines on one core `MeshStandardMaterial` mesh
+at the tail of the settle pass (identity not captured, load-time only); no re-arm across a world switch;
+`compileAsync` returns early on device loss.
 
 ## Evidence index (all untracked, all kept per instruction)
 
