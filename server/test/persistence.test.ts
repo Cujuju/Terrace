@@ -5,14 +5,17 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
-  BEDROCK_REMNANT_CEILING,
   CHUNK_SIZE,
   bandLevelHeight,
+  drawnBandOfSample,
   readSpans,
+  spanCapBand,
 } from '@terrace/shared';
 import { decodeHeights, encodeHeights } from '../src/persistence/codec.ts';
 import {
+  OLDEST_READABLE_SCHEMA_VERSION,
   SNAPSHOT_RETENTION,
   SNAPSHOT_SCHEMA_VERSION,
   SnapshotStore,
@@ -20,7 +23,12 @@ import {
 import { PluginHost } from '../src/plugins/host.ts';
 import type { TerracePlugin } from '../src/plugins/types.ts';
 import { World } from '../src/world/world.ts';
-import { asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
+import {
+  asLoadedPlugin,
+  packRawFloorColumnSpans,
+  worldWithUnlockedChunks,
+  type RawFloorSpan,
+} from './support/harness.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -175,8 +183,8 @@ describe('SnapshotStore', () => {
     expect(carved).toBeDefined();
     const cut = readSpans(world.map, carved!.x, carved!.y);
     expect(cut.length).toBe(2);
-    expect(cut[0]!.floor).toBe(BEDROCK_FLOOR);
-    expect(cut[0]!.ceiling).toBeLessThan(cut[1]!.floor);
+    expect(cut[0]!.floorBand).toBe(BEDROCK_BAND);
+    expect(cut[1]!.floorBand).toBeGreaterThan(spanCapBand(cut[0]!) + 1);
 
     const store = SnapshotStore.open(dbPath);
     store.saveSnapshot({
@@ -216,9 +224,9 @@ describe('SnapshotStore', () => {
     reopened.close();
   });
 
-  it('a column cut down to the bedrock remnant alone rides back as a plain height', () => {
+  it('a column cut down to the bedrock band alone rides back as a plain height', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    world.map.cells[8 * world.size + 8] = BEDROCK_REMNANT_CEILING;
+    world.map.cells[8 * world.size + 8] = BEDROCK_FLOOR;
 
     const store = SnapshotStore.open(dbPath);
     store.saveSnapshot({
@@ -247,7 +255,7 @@ describe('SnapshotStore', () => {
       snapshot.columnSpans,
     );
     expect(readSpans(restored.map, 8, 8)).toEqual([
-      { floor: BEDROCK_FLOOR, ceiling: BEDROCK_REMNANT_CEILING },
+      { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
     ]);
     store.close();
   });
@@ -410,6 +418,158 @@ describe('SnapshotStore', () => {
       pluginSlices: {},
     });
     expect(store.loadLatest()?.name).toBe('The Sundered Reach');
+    store.close();
+  });
+});
+
+describe('reading a schema 1 world under the band-floor rule', () => {
+  let dir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'terrace-v1-'));
+    dbPath = join(dir, 'world.db');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A roof whose raw floor sits exactly on a band level converts losslessly; one
+  // that sits inside a band rises to the band above, deepening the opening.
+  const FLOOR_CEILING_BAND = 1;
+  const ROOF_CEILING_BAND = 8;
+  const EXACT_FLOOR_BAND = 4;
+  const EXACT_CELL = 8 * WORLD_SIZE + 8;
+  const RAISED_CELL = 9 * WORLD_SIZE + 9;
+
+  const ROOF_CEILING = bandLevelHeight(ROOF_CEILING_BAND);
+  const FLOOR_CEILING = bandLevelHeight(FLOOR_CEILING_BAND);
+  const EXACT_RAW_FLOOR = bandLevelHeight(EXACT_FLOOR_BAND);
+  const RAISED_RAW_FLOOR = EXACT_RAW_FLOOR + 1;
+
+  function v1Column(rawFloor: number): readonly RawFloorSpan[] {
+    return [
+      { floor: BEDROCK_FLOOR, ceiling: FLOOR_CEILING },
+      { floor: rawFloor, ceiling: ROOF_CEILING },
+    ];
+  }
+
+  /** Plants a genuine schema 1 row: raw span floors, version 1 on the row. */
+  function plantV1Snapshot(): { cells: Int16Array; mask: Uint8Array } {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.map.cells[EXACT_CELL] = ROOF_CEILING;
+    world.map.cells[RAISED_CELL] = ROOF_CEILING;
+
+    const store = SnapshotStore.open(dbPath);
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+    });
+    store.close();
+
+    const raw = new DatabaseConstructor(dbPath);
+    raw
+      .prepare('UPDATE snapshots SET schema_version = ?, column_spans = ?')
+      .run(
+        OLDEST_READABLE_SCHEMA_VERSION,
+        packRawFloorColumnSpans(
+          new Map([
+            [EXACT_CELL, v1Column(EXACT_RAW_FLOOR)],
+            [RAISED_CELL, v1Column(RAISED_RAW_FLOOR)],
+          ]),
+        ),
+      );
+    raw.close();
+    return { cells: world.map.cells, mask: world.mask };
+  }
+
+  function schemaVersionsOnDisk(): number[] {
+    const raw = new DatabaseConstructor(dbPath, { readonly: true });
+    const rows = raw
+      .prepare('SELECT schema_version AS v FROM snapshots ORDER BY id')
+      .all() as { v: number }[];
+    raw.close();
+    return rows.map((row) => row.v);
+  }
+
+  it('floors each schema 1 span in the lowest band whose level clears its raw floor', () => {
+    plantV1Snapshot();
+
+    const store = SnapshotStore.open(dbPath);
+    const snapshot = store.loadLatest();
+    expect(snapshot).not.toBeNull();
+    if (snapshot === null) return;
+
+    expect(snapshot.columnSpans.get(EXACT_CELL)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: FLOOR_CEILING },
+      { floorBand: EXACT_FLOOR_BAND, ceiling: ROOF_CEILING },
+    ]);
+    // 65 sits inside band 4, so the slab starts at band 5 and band 4 is air:
+    // the opening this world saved is a whole band deeper under the new rule.
+    expect(snapshot.columnSpans.get(RAISED_CELL)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: FLOOR_CEILING },
+      { floorBand: EXACT_FLOOR_BAND + 1, ceiling: ROOF_CEILING },
+    ]);
+    expect(drawnBandOfSample(RAISED_RAW_FLOOR)).toBe(EXACT_FLOOR_BAND);
+    store.close();
+  });
+
+  it('rewrites a schema 1 world as schema 2, and reloads it identically', () => {
+    plantV1Snapshot();
+
+    const store = SnapshotStore.open(dbPath);
+    const loaded = store.loadLatest();
+    expect(loaded).not.toBeNull();
+    if (loaded === null) return;
+    expect(schemaVersionsOnDisk()).toEqual([OLDEST_READABLE_SCHEMA_VERSION]);
+
+    const restored = World.restore(
+      loaded.worldSize,
+      loaded.cells,
+      loaded.mask,
+      undefined,
+      loaded.name,
+      loaded.tokenMasks,
+      0,
+      null,
+      loaded.columnSpans,
+    );
+    store.saveSnapshot({
+      worldSize: restored.size,
+      name: restored.name,
+      cells: restored.map.cells,
+      mask: restored.mask,
+      pluginSlices: {},
+      columnSpans: restored.spansForPersistence(),
+    });
+    store.close();
+
+    expect(schemaVersionsOnDisk()).toEqual([
+      OLDEST_READABLE_SCHEMA_VERSION,
+      SNAPSHOT_SCHEMA_VERSION,
+    ]);
+
+    const reopened = SnapshotStore.open(dbPath);
+    const reloaded = reopened.loadLatest();
+    expect(reloaded?.columnSpans).toEqual(loaded.columnSpans);
+    expect(Array.from(reloaded?.cells ?? [])).toEqual(Array.from(loaded.cells));
+    reopened.close();
+  });
+
+  it('refuses a schema older than the oldest it can reinterpret', () => {
+    plantV1Snapshot();
+    const raw = new DatabaseConstructor(dbPath);
+    raw
+      .prepare('UPDATE snapshots SET schema_version = ?')
+      .run(OLDEST_READABLE_SCHEMA_VERSION - 1);
+    raw.close();
+
+    const store = SnapshotStore.open(dbPath);
+    expect(() => store.loadLatest()).toThrow(/schema version/);
     store.close();
   });
 });

@@ -26,7 +26,11 @@ import {
 } from './snapshot-writer.ts';
 import { timePhase } from '../tick-timing.ts';
 
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+/** Version 2 packs a span as [floorBand, ceiling]; version 1 packed a raw floor. */
+export const SNAPSHOT_SCHEMA_VERSION = 2;
+
+/** The oldest schema this server still reads. `decodeColumnSpans` reinterprets its floors. */
+export const OLDEST_READABLE_SCHEMA_VERSION = 1;
 
 export const SNAPSHOT_RETENTION = 10;
 
@@ -423,10 +427,14 @@ export class SnapshotStore {
   private hydrate(row: SnapshotRow | undefined): WorldSnapshot | null {
     if (row === undefined) return null;
 
-    if (row.schema_version !== SNAPSHOT_SCHEMA_VERSION) {
+    if (
+      row.schema_version < OLDEST_READABLE_SCHEMA_VERSION ||
+      row.schema_version > SNAPSHOT_SCHEMA_VERSION
+    ) {
       throw new Error(
         `snapshot #${row.id} has schema version ${row.schema_version}, this server reads ` +
-          `version ${SNAPSHOT_SCHEMA_VERSION}; refusing to start rather than overwrite the world`,
+          `versions ${OLDEST_READABLE_SCHEMA_VERSION} to ${SNAPSHOT_SCHEMA_VERSION}; ` +
+          `refusing to start rather than overwrite the world`,
       );
     }
 
@@ -462,6 +470,7 @@ export class SnapshotStore {
         row.column_spans,
         row.world_size * row.world_size,
         `snapshot #${row.id}`,
+        row.schema_version,
       );
       for (const [cellIndex, spans] of columnSpans) {
         const topCeiling = spans[spans.length - 1]!.ceiling;

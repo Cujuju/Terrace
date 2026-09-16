@@ -1,9 +1,14 @@
+import DatabaseConstructor from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MAX_HEIGHT } from '@terrace/shared';
+import { BEDROCK_BAND, BEDROCK_FLOOR, MAX_HEIGHT, bandLevelHeight, readSpans } from '@terrace/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
+import {
+  OLDEST_READABLE_SCHEMA_VERSION,
+  SNAPSHOT_SCHEMA_VERSION,
+  SnapshotStore,
+} from '../src/persistence/snapshot-store.ts';
 import { PluginHost } from '../src/plugins/host.ts';
 import type { TerracePlugin } from '../src/plugins/types.ts';
 import {
@@ -14,6 +19,7 @@ import {
 import type { World } from '../src/world/world.ts';
 import {
   asLoadedPlugin,
+  packRawFloorColumnSpans,
   RecordingSink,
   TEST_WORLD_NAME,
   worldWithUnlockedChunks,
@@ -241,6 +247,68 @@ describe('rolling the world back', () => {
     const latest = store.loadLatest();
     expect(latest?.cells[0]).toBe(0);
     expect(h.world.dirty).toBe(false);
+  });
+});
+
+describe('a restore point older than the current schema', () => {
+  const LAYERED_X = 8;
+  const LAYERED_Y = 8;
+  const LAYERED_CELL = LAYERED_Y * WORLD_SIZE + LAYERED_X;
+  const FLOOR_CEILING = bandLevelHeight(1);
+  const ROOF_CEILING = bandLevelHeight(8);
+  const ROOF_RAW_FLOOR = bandLevelHeight(4) + 1;
+  const ROOF_FLOOR_BAND = 5;
+
+  it('rolls back under the band-floor rule, and every row it writes is the current schema', () => {
+    const dbPath = join(dir, 'world.db');
+    const seed = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    seed.map.cells[LAYERED_CELL] = ROOF_CEILING;
+    const target = store.saveSnapshot({
+      worldSize: seed.size,
+      name: TEST_WORLD_NAME,
+      cells: seed.map.cells,
+      mask: seed.mask,
+      pluginSlices: {},
+    });
+    store.close();
+
+    const raw = new DatabaseConstructor(dbPath);
+    raw
+      .prepare('UPDATE snapshots SET schema_version = ?, column_spans = ? WHERE id = ?')
+      .run(
+        OLDEST_READABLE_SCHEMA_VERSION,
+        packRawFloorColumnSpans(
+          new Map([
+            [
+              LAYERED_CELL,
+              [
+                { floor: BEDROCK_FLOOR, ceiling: FLOOR_CEILING },
+                { floor: ROOF_RAW_FLOOR, ceiling: ROOF_CEILING },
+              ],
+            ],
+          ]),
+        ),
+        target,
+      );
+    raw.close();
+
+    store = SnapshotStore.open(dbPath);
+    const h = harness();
+    expect(h.service.rollback(CLIENT, KEY, target).ok).toBe(true);
+    expect(readSpans(h.world.map, LAYERED_X, LAYERED_Y)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: FLOOR_CEILING },
+      { floorBand: ROOF_FLOOR_BAND, ceiling: ROOF_CEILING },
+    ]);
+
+    const after = new DatabaseConstructor(dbPath, { readonly: true });
+    const written = (
+      after.prepare('SELECT schema_version AS v FROM snapshots WHERE id > ?').all(target) as {
+        v: number;
+      }[]
+    ).map((row) => row.v);
+    after.close();
+    expect(written.length).toBeGreaterThan(0);
+    expect(written.every((v) => v === SNAPSHOT_SCHEMA_VERSION)).toBe(true);
   });
 });
 
