@@ -78,8 +78,8 @@ const FUZZ_MIN_LIVE_CARVE_SHARE = 1 / 8;
 /** Every world must drive relaxation for real: a world that never settles proves nothing. */
 const FUZZ_MIN_LIVE_SMOOTH_SHARE = 1 / 8;
 
-/** Pairs each free smooth must leave the gradient invariant: a scoping that goes quiet is a defect. */
-const FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH = 64;
+/** Pairs per free smooth, averaged over the run, that the gradient invariant must hold to the limit. */
+const FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH_AVERAGE = 64;
 
 type Random = () => number;
 
@@ -472,8 +472,8 @@ describe('seeded sculpt fuzzer', () => {
     expect(applied).toBeGreaterThan(0);
     expectLiveShare(liveCarves, carves, FUZZ_MIN_LIVE_CARVE_SHARE, `world "${name}" carves`);
     expectLiveShare(liveSmooths, freeSmooths, FUZZ_MIN_LIVE_SMOOTH_SHARE, `world "${name}" free smooths`);
-    const pairFloor = freeSmooths * FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH;
-    expect(gradientPairs, `world "${name}": the gradient invariant compared ${gradientPairs} pairs, floor is ${pairFloor}`)
+    const pairFloor = freeSmooths * FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH_AVERAGE;
+    expect(gradientPairs, `world "${name}": the gradient invariant held ${gradientPairs} pairs to the limit, floor is ${pairFloor}`)
       .toBeGreaterThanOrEqual(pairFloor);
     expectColumnsCanonical(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
     expectDrawnCoverageMatchesSpans(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
