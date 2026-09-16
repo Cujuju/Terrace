@@ -307,7 +307,7 @@ Evidence: `.census/census-phaseC-fix-{baseline,after}.json` (+PNGs), `.census/ch
 instruments `.perf-probe/{stack-up,stack-down,gate,churn,eval}.ps1`, `client/.perf-ignite.mjs`, reviews in the
 session scratchpad (`review-AB/C/C2C3/fixbatch.md`, `signoff-phaseC.md`).
 
-M1/M2 visual gate — **PENDING-OWNER** (2026-09-16): before/after PNGs at matched poses plus deterministic
+M1/M2 visual gate — **ACCEPTED by owner** (2026-09-16, matte pilgrims are fine): before/after PNGs at matched poses plus deterministic
 studio renders, published at https://claude.ai/artifact/5GZxxrWRQgMqu3e7x9RPeK (files
 `.census/gate-m1m2-*.png`). Pilgrims: real change — eye catchlight and muzzle sheen gone (Phong→Lambert),
 802 of 1,649,520 studio pixels, all in the eye/nose row; body+gloss now one skinned surface per walker
