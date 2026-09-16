@@ -23,7 +23,9 @@ import {
   PILGRIMS_ENTITIES_MESSAGE,
   PILGRIMS_PLUGIN_NAME,
   parseEntitiesPayload,
+  SETTLER_RACES,
   WALKERS_WIRE_CAP,
+  WALKER_KINDS,
 } from '../protocol.ts';
 import { PilgrimInterpolator, type InterpolatedPilgrim } from './interpolation.ts';
 import {
@@ -46,6 +48,8 @@ interface PilgrimView {
 
 let models: PilgrimModels | null = null;
 let container: Group | null = null;
+let specimenGroup: Group | null = null;
+const specimens: PilgrimModel[] = [];
 const views = new Map<number, PilgrimView>();
 const interpolator = new PilgrimInterpolator();
 
@@ -82,6 +86,32 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
 function forgetViews(): void {
   reconcileViews(NO_SAMPLE);
   interpolator.clear();
+}
+
+// One never-drawn instance per race and kind: the settle warmup only compiles what the
+// scene already holds, and a kind's bone count keys its own skinned program.
+function buildSpecimens(bank: PilgrimModels, layer: Group): void {
+  const group = new Group();
+  group.name = 'pilgrims:warm-specimens';
+  // Hidden: no draws, no draw budget, and outside the pickable container.
+  group.visible = false;
+  for (const race of SETTLER_RACES) {
+    for (const kind of WALKER_KINDS) {
+      const model = bank.create(race, kind);
+      specimens.push(model);
+      group.add(model.root);
+    }
+  }
+  layer.add(group);
+  specimenGroup = group;
+}
+
+function disposeSpecimens(): void {
+  for (const model of specimens) model.dispose();
+  specimens.length = 0;
+  specimenGroup?.removeFromParent();
+  specimenGroup?.clear();
+  specimenGroup = null;
 }
 
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
@@ -149,6 +179,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unmarkPickable = ctx.markPickable(container);
     unpublishMovers = ctx.publishMovers(drawnPoseOf);
 
+    buildSpecimens(models, ctx.layer);
+
     unsubscribeMessages = ctx.onMessage(PILGRIMS_ENTITIES_MESSAGE, (payload) => {
       const pilgrims = parseEntitiesPayload(payload);
       if (pilgrims === null) return;
@@ -172,6 +204,7 @@ export const clientPlugin: TerraceClientPlugin = {
     unpublishMovers = null;
 
     forgetViews();
+    disposeSpecimens();
 
     container?.clear();
     container = null;
