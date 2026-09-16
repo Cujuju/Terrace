@@ -50,9 +50,7 @@ export interface PuffMask {
 }
 
 export function puffMask(innerEdge: Node<'float'> | number, lobing?: PuffLobing): PuffMask {
-  const radius = lobing
-    ? length(PUFF_QUAD_FRAGMENT).div(puffLobeScale(lobing))
-    : length(PUFF_QUAD_FRAGMENT);
+  const radius = lobing ? length(puffLobedQuad(lobing)) : length(PUFF_QUAD_FRAGMENT);
   const puff = float(1).sub(smoothstep(innerEdge, 1, radius));
   return { puff, discarded: puff.lessThanEqual(0) };
 }
@@ -60,6 +58,17 @@ export function puffMask(innerEdge: Node<'float'> | number, lobing?: PuffLobing)
 export interface PuffLobing {
   readonly amplitude: number;
   readonly seed: Node<'float'>;
+}
+
+// The longest lobe in unit-disc radii. A lobed puff's spread must be scaled by this, or the
+// quad's square edge clips the lobe with a hard, screen-aligned line.
+export function puffLobeReach(lobing: PuffLobing): number {
+  return 1 + lobing.amplitude;
+}
+
+// The fragment's offset in lobed-disc radii: 1 is the lobe's own edge.
+export function puffLobedQuad(lobing: PuffLobing): Node<'vec2'> {
+  return PUFF_QUAD_FRAGMENT.mul(puffLobeReach(lobing)).div(puffLobeScale(lobing));
 }
 
 const PUFF_LOBE_HARMONICS: ReadonlyArray<{ readonly k: number; readonly phaseHash: number }> = [

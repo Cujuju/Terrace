@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smooth lab (scratch — delete at end of task)</title>
+<style>
+  body { margin: 0; background: #14171c; color: #dfe4ea; font: 14px/1.45 system-ui, sans-serif; }
+  header, section { max-width: 1180px; margin: 0 auto; padding: 12px 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: end; background: #1b2027; border: 1px solid #2c333d; border-radius: 8px; padding: 12px 14px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9aa4b2; }
+  select, input[type="range"] { accent-color: #6cb2f5; }
+  select, button { background: #262d36; color: #dfe4ea; border: 1px solid #3a434e; border-radius: 6px; padding: 6px 10px; font-size: 14px; }
+  button { cursor: pointer; }
+  button:hover { background: #2f3843; }
+  #ms { font-size: 28px; font-weight: 650; color: #8fd694; }
+  #ms small { font-size: 13px; color: #9aa4b2; font-weight: 400; }
+  #stats { color: #c8d0da; }
+  .maps { display: flex; gap: 16px; flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; color: #9aa4b2; margin: 4px 0 8px; }
+  canvas { border: 1px solid #2c333d; border-radius: 6px; image-rendering: pixelated; background: #000; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid #2c333d; font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: #9aa4b2; font-weight: 600; }
+  tr.best td { color: #8fd694; }
+  .note { color: #9aa4b2; font-size: 12.5px; }
+  code { color: #f0c674; }
+</style>
+</head>
+<body>
+<header>
+  <h1 style="font-size:18px;margin:6px 0;">Smooth lab <span class="note">(scratch — float math for looks, not the integer pipeline)</span></h1>
+  <div class="controls">
+    <label>Fixture
+      <select id="fixture">
+        <option value="spike">A · mound + spire</option>
+        <option value="mound">B · tall mound</option>
+        <option value="pit">C · pit</option>
+        <option value="wall">D · step wall</option>
+        <option value="terraces" selected>E · terraced mound</option>
+      </select>
+    </label>
+    <label>Method
+      <select id="method">
+        <option value="laplacian">1 · Laplacian λ</option>
+        <option value="box">2 · Box 3×3</option>
+        <option value="gauss">3 · Gaussian 3×3</option>
+        <option value="talus1">4 · Talus, 1 pass</option>
+        <option value="taubin">5 · Taubin λ/μ</option>
+        <option value="median">6 · Median 3×3</option>
+        <option value="bilateral">7 · Bilateral</option>
+        <option value="talusFull">8 · Thermal to convergence</option>
+      </select>
+    </label>
+    <label>Passes <span id="passesVal">3</span>
+      <input id="passes" type="range" min="1" max="50" value="3" />
+    </label>
+    <label>λ (Laplacian) <span id="lambdaVal">0.50</span>
+      <input id="lambda" type="range" min="5" max="100" value="50" />
+    </label>
+    <label>Tolerance (bilateral) <span id="tolVal">16</span>
+      <input id="tol" type="range" min="2" max="64" value="16" />
+    </label>
+    <label>Grid
+      <select id="size">
+        <option value="64">64²</option>
+        <option value="96" selected>96²</option>
+        <option value="128">128²</option>
+        <option value="192">192²</option>
+      </select>
+    </label>
+    <button id="apply">Apply</button>
+    <button id="compare">Compare all</button>
+  </div>
+</header>
+<section>
+  <div id="ms">– <small>ms / run</small></div>
+  <div id="stats">–</div>
+  <div class="maps" style="margin-top:10px;">
+    <figure><figcaption>Before</figcaption><canvas id="before"></canvas></figure>
+    <figure><figcaption>After</figcaption><canvas id="after"></canvas></figure>
+  </div>
+  <figure style="margin-top:12px;"><figcaption>Middle cross-section — gray: before, green: after</figcaption><canvas id="section" style="width:100%;"></canvas></figure>
+  <div id="table"></div>
+  <p class="note">All kernels are single-threaded Jacobi passes over a copy (snapshot reads), matching how a pipeline
+  implementation would stay deterministic. ms = compute only (no rendering), median of repeated runs.
+  Contours every 16 height units mimic the game's terrace bands. Spike = 1-cell needle like the reported spire.</p>
+</section>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const BAND = 16, MAX_STEP = 4, SLACK = 1, LIM = MAX_STEP + SLACK;
+
+function gauss2(x, y, cx, cy, amp, s) {
+  const dx = x - cx, dy = y - cy;
+  return amp * Math.exp(-(dx * dx + dy * dy) / (2 * s * s));
+}
+function buildFixture(name, N) {
+  const C = (N - 1) / 2, d = new Float64Array(N * N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let h;
+    if (name === 'spike') h = 64 + gauss2(x, y, C, C, 140, N / 7) + (x === Math.round(C) && y === Math.round(C) ? 110 : 0);
+    else if (name === 'mound') h = 64 + gauss2(x, y, C, C, 190, N / 6.4);
+    else if (name === 'pit') h = 220 - gauss2(x, y, C, C, 150, N / 7);
+    else if (name === 'wall') h = x < C ? 200 : 60;
+    else h = 64 + Math.floor(gauss2(x, y, C, C, 190, N / 6.4) / BAND) * BAND; // terraced
+    d[y * N + x] = h;
+  }
+  return d;
+}
+
+// --- kernels: fn(src, N, o) -> dst (one Jacobi pass, border untouched) ---
+const N4 = [[1,0],[-1,0],[0,1],[0,-1]];
+const K = [[1,2,1],[2,4,2],[1,2,1]];
+function passBox(s, N) {
+  const o = Float64Array.from(s);
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+    let t = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) t += s[(y+j)*N + x+i];
+    o[y*N+x] = t / 9;
+  }
+  return o;
+}
+function passGauss(s, N) {
+  const o = Float64Array.from(s);
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+    let t = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) t += K[j+1][i+1] * s[(y+j)*N + x+i];
+    o[y*N+x] = t / 16;
+  }
+  return o;
+}
+function passLap(s, N, lambda) {
+  const o = Float64Array.from(s);
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+    let t = 0;
+    for (const [i, j] of N4) t += s[(y+j)*N + x+i];
+    o[y*N+x] = s[y*N+x] + lambda * (t / 4 - s[y*N+x]);
+  }
+  return o;
+}
+function passMedian(s, N) {
+  const o = Float64Array.from(s), w = new Array(9);
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+    let k = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) w[k++] = s[(y+j)*N + x+i];
+    w.sort((a, b) => a - b);
+    o[y*N+x] = w[4];
+  }
+  return o;
+}
+function passBilateral(s, N, tol) {
+  const o = Float64Array.from(s);
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+    const h = s[y*N+x];
+    let t = 0, w = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      const n = s[(y+j)*N + x+i];
+      if (Math.abs(n - h) > tol) continue;
+      const k = K[j+1][i+1];
+      t += k * n; w += k;
+    }
+    o[y*N+x] = w === 0 ? h : t / w;
+  }
+  return o;
+}
+function passTalus(s, N, cap) {
+  const o = Float64Array.from(s);
+  let moved = 0;
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+    const h = s[y*N+x];
+    let t = 0;
+    for (const [i, j] of N4) t += s[(y+j)*N + x+i];
+    const d = t / 4 - h;
+    if (Math.abs(d) <= LIM) continue;
+    const m = Math.max(-cap, Math.min(cap, d / 2));
+    if (m !== 0) { o[y*N+x] = h + m; moved++; }
+  }
+  return { data: o, moved };
+}
+const METHODS = {
+  laplacian: { label: '1 · Laplacian λ', run(d, N, o) { let t = d; for (let k = 0; k < o.passes; k++) t = passLap(t, N, o.lambda); return t; } },
+  box:       { label: '2 · Box 3×3', run(d, N, o) { let t = d; for (let k = 0; k < o.passes; k++) t = passBox(t, N); return t; } },
+  gauss:     { label: '3 · Gaussian 3×3', run(d, N, o) { let t = d; for (let k = 0; k < o.passes; k++) t = passGauss(t, N); return t; } },
+  talus1:    { label: '4 · Talus, 1 pass', run(d, N, o) { return passTalus(d, N, BAND).data; } },
+  taubin:    { label: '5 · Taubin λ/μ', run(d, N, o) { let t = d; for (let k = 0; k < o.passes; k++) { t = passLap(t, N, o.lambda); t = passLap(t, N, -0.45 * o.lambda / 0.5); } return t; } },
+  median:    { label: '6 · Median 3×3', run(d, N, o) { let t = d; for (let k = 0; k < o.passes; k++) t = passMedian(t, N); return t; } },
+  bilateral: { label: '7 · Bilateral', run(d, N, o) { let t = d; for (let k = 0; k < o.passes; k++) t = passBilateral(t, N, o.tol); return t; } },
+  talusFull: { label: '8 · Thermal to convergence', run(d, N, o) { let t = d; for (let k = 0; k < 500; k++) { const r = passTalus(t, N, 1e9); t = r.data; if (r.moved === 0) break; } return t; } },
+};
+
+function stats(orig, next) {
+  let peak = -1e18, opeak = -1e18, ch = 0, vol = 0;
+  for (let i = 0; i < orig.length; i++) {
+    if (orig[i] > opeak) opeak = orig[i];
+    if (next[i] > peak) peak = next[i];
+    vol += next[i] - orig[i];
+    if (next[i] !== orig[i]) ch++;
+  }
+  const N = Math.sqrt(orig.length) | 0;
+  let viol = 0;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    if (x + 1 < N && Math.abs(next[y*N+x] - next[y*N+x+1]) > LIM) viol++;
+    if (y + 1 < N && Math.abs(next[y*N+x] - next[(y+1)*N+x]) > LIM) viol++;
+  }
+  return { dPeak: peak - opeak, dVol: vol, viol, ch };
+}
+function timeIt(fn) {
+  const times = [];
+  for (let r = 0; r < 7; r++) { const t0 = performance.now(); fn(); times.push(performance.now() - t0); }
+  times.sort((a, b) => a - b);
+  return times[3];
+}
+
+// --- rendering ---
+const STOPS = [[43,108,176],[104,211,145],[246,224,94],[156,66,33],[245,245,245]];
+function colorFor(h, lo, hi) {
+  const t = Math.max(0, Math.min(1, (h - lo) / Math.max(1e-9, hi - lo))) * (STOPS.length - 1);
+  const i = Math.min(STOPS.length - 2, Math.floor(t)), f = t - i;
+  return STOPS[i].map((c, k) => Math.round(c + (STOPS[i+1][k] - c) * f));
+}
+function drawMap(cv, data, N, lo, hi, px) {
+  cv.width = N * px; cv.height = N * px;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(cv.width, cv.height);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const h = data[y*N+x];
+    let [r, g, b] = colorFor(h, lo, hi);
+    const band = Math.floor(h / BAND);
+    if (x + 1 < N && Math.floor(data[y*N+x+1] / BAND) !== band) { r *= 0.55; g *= 0.55; b *= 0.55; }
+    else if (y + 1 < N && Math.floor(data[(y+1)*N+x] / BAND) !== band) { r *= 0.55; g *= 0.55; b *= 0.55; }
+    for (let j = 0; j < px; j++) for (let i = 0; i < px; i++) {
+      const o = (((y*px+j) * cv.width) + x*px+i) * 4;
+      img.data[o] = r; img.data[o+1] = g; img.data[o+2] = b; img.data[o+3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function drawSection(cv, before, after, N) {
+  const Wpx = cv.parentElement.clientWidth || 1100, Hpx = 130;
+  cv.width = Wpx; cv.height = Hpx;
+  const ctx = cv.getContext('2d');
+  let lo = 1e18, hi = -1e18;
+  for (const v of before) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const mid = (N / 2) | 0;
+  const X = (x) => (x / (N - 1)) * Wpx, Y = (h) => Hpx - 8 - ((h - lo) / Math.max(1e-9, hi - lo)) * (Hpx - 16);
+  ctx.strokeStyle = '#3a434e'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, Hpx - 0.5); ctx.lineTo(Wpx, Hpx - 0.5); ctx.stroke();
+  const line = (data, style, width) => {
+    ctx.strokeStyle = style; ctx.lineWidth = width; ctx.beginPath();
+    for (let x = 0; x < N; x++) { const px = X(x), py = Y(data[mid*N+x]); x ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+    ctx.stroke();
+  };
+  line(before, '#8a93a0', 2);
+  line(after, '#58c472', 2);
+}
+
+function currentOpts() {
+  return {
+    passes: +$('passes').value,
+    lambda: +$('lambda').value / 100,
+    tol: +$('tol').value,
+  };
+}
+function refreshLabels() {
+  $('passesVal').textContent = $('passes').value;
+  $('lambdaVal').textContent = (+$('lambda').value / 100).toFixed(2);
+  $('tolVal').textContent = $('tol').value;
+}
+function apply() {
+  const N = +$('size').value, o = currentOpts();
+  const before = buildFixture($('fixture').value, N);
+  const m = METHODS[$('method').value];
+  const ms = timeIt(() => m.run(before, N, o));
+  const after = m.run(before, N, o);
+  let lo = 1e18, hi = -1e18;
+  for (const v of before) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const px = Math.max(2, Math.round(384 / N));
+  drawMap($('before'), before, N, lo, hi, px);
+  drawMap($('after'), after, N, lo, hi, px);
+  drawSection($('section'), before, after, N);
+  const st = stats(before, after);
+  $('ms').innerHTML = `${ms.toFixed(2)} <small>ms / run · ${m.label}</small>`;
+  const f = (v) => (v >= 0 ? '+' : '') + (Math.round(v * 10) / 10);
+  $('stats').textContent =
+    `peak ${f(st.dPeak)} · volume ${f(st.dVol)} · gradient violations ${st.viol} · cells touched ${st.ch} · grid ${N}²`;
+  $('table').innerHTML = '';
+}
+function compare() {
+  const N = +$('size').value, o = currentOpts();
+  const before = buildFixture($('fixture').value, N);
+  let lo = 1e18, hi = -1e18;
+  for (const v of before) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const rows = Object.entries(METHODS).map(([key, m]) => {
+    const ms = timeIt(() => m.run(before, N, o));
+    const after = m.run(before, N, o);
+    return { key, ...stRow(m.label, ms, stats(before, after)) };
+  });
+  rows.sort((a, b) => a.ms - b.ms);
+  $('table').innerHTML = '<h3 style="font-size:14px;">All methods, fastest first</h3><table><tr><th>Method</th><th>ms/run</th><th>Δpeak</th><th>Δvol</th><th>viol</th><th>touched</th></tr>' +
+    rows.map((r, i) => `<tr class="${i === 0 ? 'best' : ''}"><td>${r.label}</td><td>${r.ms.toFixed(2)}</td><td>${r.dPeak}</td><td>${r.dVol}</td><td>${r.viol}</td><td>${r.ch}</td></tr>`).join('') +
+    '</table>';
+  function stRow(label, ms, st) {
+    const r1 = (v) => (Math.round(v * 10) / 10);
+    return { label, ms, dPeak: r1(st.dPeak), dVol: r1(st.dVol), viol: st.viol, ch: st.ch };
+  }
+  apply();
+}
+for (const id of ['passes', 'lambda', 'tol']) $(id).addEventListener('input', refreshLabels);
+$('fixture').addEventListener('change', apply);
+$('method').addEventListener('change', apply);
+$('passes').addEventListener('change', apply);
+$('lambda').addEventListener('change', apply);
+$('tol').addEventListener('change', apply);
+$('size').addEventListener('change', () => { apply(); });
+$('apply').addEventListener('click', apply);
+$('compare').addEventListener('click', compare);
+refreshLabels();
+apply();
+</script>
+</body>
+</html>

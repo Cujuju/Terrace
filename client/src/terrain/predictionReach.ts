@@ -3,9 +3,11 @@ import {
   cellX,
   cellY,
   chunkIndex,
+  chunksPerEdge,
   forEachFootprintOffset,
   forEachLineCell,
   sculptOptionsOf,
+  sculptReachCells,
   sculptSweepRadius,
   type SculptIntent,
 } from '@terrace/shared';
@@ -21,6 +23,7 @@ export interface ReachChecks {
 
 export function createReachChecks(mirror: TerrainMirror): ReachChecks {
   const size = mirror.map.size;
+  const edge = chunksPerEdge(size);
 
   const chunkOfCell = (x: number, y: number): number =>
     chunkIndex(size, Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE));
@@ -44,6 +47,22 @@ export function createReachChecks(mirror: TerrainMirror): ReachChecks {
     return known;
   };
 
+  const clampChunk = (c: number): number => (c < 0 ? 0 : c > edge - 1 ? edge - 1 : c);
+
+  /** Ground outside the world is never unknown, so the span clamps to the edge. */
+  const boxIsKnown = (cx: number, cy: number, reach: number): boolean => {
+    const firstX = clampChunk(Math.floor((cx - reach) / CHUNK_SIZE));
+    const lastX = clampChunk(Math.floor((cx + reach) / CHUNK_SIZE));
+    const firstY = clampChunk(Math.floor((cy - reach) / CHUNK_SIZE));
+    const lastY = clampChunk(Math.floor((cy + reach) / CHUNK_SIZE));
+    for (let chunkY = firstY; chunkY <= lastY; chunkY++) {
+      for (let chunkX = firstX; chunkX <= lastX; chunkX++) {
+        if (!hasChunk(mirror, chunkIndex(size, chunkX, chunkY))) return false;
+      }
+    }
+    return true;
+  };
+
   return {
     chunkOfCell,
 
@@ -52,18 +71,29 @@ export function createReachChecks(mirror: TerrainMirror): ReachChecks {
     cellAndHaloAreKnown,
 
     canPredictFaithfully(intent: SculptIntent): boolean {
-      const { x, y } = intent;
       const options = sculptOptionsOf(intent);
-      const radius = sculptSweepRadius(
+      const sweep = sculptSweepRadius(
         intent.radius,
         options.profile,
         options.tool,
         options.anchor,
       );
-      if (intent.fromX === undefined || intent.fromY === undefined) return discIsKnown(x, y, radius);
+      // A relaxing tool reads and writes a square bbox past its brush, so its
+      // whole reach must be known; for the rest the reach IS the sweep.
+      const reach = sculptReachCells(
+        intent.radius,
+        options.profile,
+        options.tool,
+        options.anchor,
+      );
+      const stepIsKnown = (sx: number, sy: number): boolean =>
+        discIsKnown(sx, sy, sweep) && (reach <= sweep || boxIsKnown(sx, sy, reach));
+
+      const { x, y } = intent;
+      if (intent.fromX === undefined || intent.fromY === undefined) return stepIsKnown(x, y);
       let known = true;
       forEachLineCell(intent.fromX, intent.fromY, x, y, (sx, sy) => {
-        if (known && !discIsKnown(sx, sy, radius)) known = false;
+        if (known && !stepIsKnown(sx, sy)) known = false;
       });
       return known;
     },

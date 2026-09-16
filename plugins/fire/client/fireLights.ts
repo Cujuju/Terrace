@@ -1,5 +1,8 @@
 import { Group, type PointLight } from 'three';
-import { createLightBank } from '../../../client/src/plugins/kit/lightBank.ts';
+import {
+  createLightBank,
+  PARKED_LIGHT_INTENSITY,
+} from '../../../client/src/plugins/kit/lightBank.ts';
 import type { FireInstance } from './flames/types.ts';
 
 export const FIRE_LIGHT_POOL_SIZE = 4;
@@ -242,7 +245,7 @@ export function createFireLights(): FireLights {
 
         const fire = heldFires[slot];
         if (fire === null) {
-          state.light.intensity = 0;
+          state.light.intensity = PARKED_LIGHT_INTENSITY;
           continue;
         }
         state.light.position.set(
@@ -264,7 +267,7 @@ export function createFireLights(): FireLights {
         state.pendingKey = 0;
         state.phase = 'steady';
         state.envelope = 0;
-        state.light.intensity = 0;
+        state.light.intensity = PARKED_LIGHT_INTENSITY;
       }
     },
 

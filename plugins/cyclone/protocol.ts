@@ -20,12 +20,15 @@ export const FREQUENCY_INTERVAL_MULTIPLIERS: Readonly<Record<'rare' | 'common', 
   common: 0.5,
 };
 
-export const CYCLONE_SURGE_SETTING_KEY = 'cyclone-surge';
+// One switch for everything a cyclone does to the ground: surge and wind scour.
+export const CYCLONE_DAMAGE_SETTING_KEY = 'cyclone-damage';
 
-export const CYCLONE_SURGE_MODES = ['off', 'on'] as const;
-export type CycloneSurgeMode = (typeof CYCLONE_SURGE_MODES)[number];
+export const CYCLONE_DAMAGE_FORMER_SETTING_KEYS = ['cyclone-surge'] as const;
 
-export const DEFAULT_CYCLONE_SURGE_MODE: CycloneSurgeMode = 'on';
+export const CYCLONE_DAMAGE_MODES = ['off', 'on'] as const;
+export type CycloneDamageMode = (typeof CYCLONE_DAMAGE_MODES)[number];
+
+export const DEFAULT_CYCLONE_DAMAGE_MODE: CycloneDamageMode = 'on';
 
 export function parseFrequency(value: string | undefined): CycloneFrequency {
   return CYCLONE_FREQUENCIES.includes(value as CycloneFrequency)
@@ -33,10 +36,10 @@ export function parseFrequency(value: string | undefined): CycloneFrequency {
     : DEFAULT_CYCLONE_FREQUENCY;
 }
 
-export function parseSurgeMode(value: string | undefined): CycloneSurgeMode {
-  return CYCLONE_SURGE_MODES.includes(value as CycloneSurgeMode)
-    ? (value as CycloneSurgeMode)
-    : DEFAULT_CYCLONE_SURGE_MODE;
+export function parseDamageMode(value: string | undefined): CycloneDamageMode {
+  return CYCLONE_DAMAGE_MODES.includes(value as CycloneDamageMode)
+    ? (value as CycloneDamageMode)
+    : DEFAULT_CYCLONE_DAMAGE_MODE;
 }
 
 export const CYCLONE_BASIN_NAMES = ['hurricane', 'typhoon', 'cyclone'] as const;
