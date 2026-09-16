@@ -1,6 +1,9 @@
 import {
   DEFAULT_SCULPT_AMOUNT,
+  displacementOf,
   sculptOptionsOf,
+  snapshotSolidUnits,
+  strokeReachBox,
   validateSculptIntent,
   type CellDiff,
   type SculptDeniedMessage,
@@ -26,7 +29,12 @@ export interface IntentPipelineDeps {
   readonly world: World;
   readonly interceptors: {
     runIntent(intent: SculptIntent, player: Player): IntentVerdict;
-    notifyIntentApplied(intent: SculptIntent, player: Player, diff: readonly CellDiff[]): void;
+    notifyIntentApplied(
+      intent: SculptIntent,
+      player: Player,
+      diff: readonly CellDiff[],
+      displacementUnits: number,
+    ): void;
     notifyIntentDenied(intent: SculptIntent, player: Player): void;
   } & TerrainChangeListener;
 }
@@ -96,6 +104,10 @@ export function handleSculptIntent(
   }
 
   const amount = DEFAULT_SCULPT_AMOUNT * effective.dir;
+  // The charge is what the stroke moved, so the ground must be read before it
+  // moves. The reach box is the only bound the diff cannot outrun.
+  const reach = strokeReachBox(world.size, effective);
+  const before = snapshotSolidUnits(world.map, reach.minX, reach.minY, reach.maxX, reach.maxY);
   const diff = applyServerSculpt(
     world,
     interceptors,
@@ -107,7 +119,12 @@ export function handleSculptIntent(
     player.token,
   );
 
-  interceptors.notifyIntentApplied(effective, player, diff);
+  interceptors.notifyIntentApplied(
+    effective,
+    player,
+    diff,
+    displacementOf(before, world.map, diff),
+  );
 
   if (intent.seq !== undefined) {
     world.sendTo(player.id, { type: 'sculptApplied', seq: intent.seq });

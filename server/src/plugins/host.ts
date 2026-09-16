@@ -195,12 +195,17 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     return { kind: 'modify', intent: current };
   }
 
-  notifyIntentApplied(intent: SculptIntent, player: Player, diff: readonly CellDiff[]): void {
+  notifyIntentApplied(
+    intent: SculptIntent,
+    player: Player,
+    diff: readonly CellDiff[],
+    displacementUnits: number,
+  ): void {
     for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onIntentApplied) continue;
       this.safely(plugin, 'onIntentApplied', () =>
-        plugin.onIntentApplied?.(intent, { player, world: api }, diff),
+        plugin.onIntentApplied?.(intent, { player, world: api, displacementUnits }, diff),
       );
     }
   }

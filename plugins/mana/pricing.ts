@@ -76,7 +76,15 @@ export function chunkUnlockFee(openedChunks: number): number {
   return openedChunks * CHUNK_UNLOCK_MANA;
 }
 
-/** One price for one stroke: the client quote and the server charge both ask this. */
+/** What the material a stroke moved costs. The charge half of every price. */
+export function displacementManaCost(displacementUnits: number, manaPerBandCell: number): number {
+  return Math.ceil((manaPerBandCell * displacementUnits) / BAND_HEIGHT);
+}
+
+/**
+ * What a stroke could cost at worst, from the intent alone. Admission asks
+ * this, because the diff the charge measures does not exist yet.
+ */
 export function sculptIntentCost(
   manaPerBandCell: number,
   intent: SculptIntent,

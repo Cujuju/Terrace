@@ -183,6 +183,7 @@ const NO_FAULT = null;
 interface AppliedIntent {
   readonly intent: SculptIntent;
   readonly diff: CellDiff[];
+  readonly displacementUnits: number;
 }
 
 class WatchingPluginHost extends PluginHost {
@@ -192,9 +193,10 @@ class WatchingPluginHost extends PluginHost {
     intent: SculptIntent,
     player: Player,
     diff: readonly CellDiff[],
+    displacementUnits: number,
   ): void {
-    this.applied = { intent, diff: [...diff] };
-    super.notifyIntentApplied(intent, player, diff);
+    this.applied = { intent, diff: [...diff], displacementUnits };
+    super.notifyIntentApplied(intent, player, diff, displacementUnits);
   }
 
   forgetApplied(): void {
