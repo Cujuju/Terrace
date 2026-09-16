@@ -1,6 +1,8 @@
 import {
   BAND_HEIGHT,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
+  drawnBandOfSample,
   quantizeToBand,
   SEA_LEVEL,
   setColumn,
@@ -21,6 +23,9 @@ const MOUND_SHOULDER_EDGE_SQUARED = 0.8 * 0.8;
 const MOUND_BASE_BANDS_ABOVE_SEA = 1;
 
 const TUNNEL_OPENING_BANDS = 5;
+
+/** A roof one band up rests on the floor; seeing under it needs a band of air as well. */
+const MIN_TUNNEL_OPENING_BANDS = 2;
 
 const TUNNEL_HALF_WIDTH_CELLS = 6;
 
@@ -58,12 +63,13 @@ export function carveArchFixture(map: Heightmap): number {
   const centreZ = Math.floor(map.size / 2);
 
   const base = quantizeToBand(SEA_LEVEL + MOUND_BASE_BANDS_ABOVE_SEA * BAND_HEIGHT);
-  if (base <= BEDROCK_FLOOR || TUNNEL_OPENING_BANDS <= 0) {
+  if (base <= BEDROCK_FLOOR || TUNNEL_OPENING_BANDS < MIN_TUNNEL_OPENING_BANDS) {
     throw new Error(
       `arch fixture: a base of ${base} cannot carry an opening of ` +
         `${TUNNEL_OPENING_BANDS} band(s) above bedrock (${BEDROCK_FLOOR})`,
     );
   }
+  const baseBand = drawnBandOfSample(base);
   let layered = 0;
 
   for (let dz = -MOUND_RADIUS_Z_CELLS; dz <= MOUND_RADIUS_Z_CELLS; dz++) {
@@ -76,20 +82,17 @@ export function carveArchFixture(map: Heightmap): number {
       if (x < 0 || z < 0 || x >= map.size || z >= map.size) continue;
 
       const moundTop = base + bands * BAND_HEIGHT;
-      const roofFloor = base + TUNNEL_OPENING_BANDS * BAND_HEIGHT;
+      const roofFloorBand = baseBand + TUNNEL_OPENING_BANDS;
 
       let spans: readonly Span[];
-      if (
-        insideTunnel(dx, dz) &&
-        roofFloor < moundTop
-      ) {
+      if (insideTunnel(dx, dz) && TUNNEL_OPENING_BANDS < bands) {
         spans = [
-          { floor: BEDROCK_FLOOR, ceiling: base },
-          { floor: roofFloor, ceiling: moundTop },
+          { floorBand: BEDROCK_BAND, ceiling: base },
+          { floorBand: roofFloorBand, ceiling: moundTop },
         ];
         layered++;
       } else {
-        spans = [{ floor: BEDROCK_FLOOR, ceiling: moundTop }];
+        spans = [{ floorBand: BEDROCK_BAND, ceiling: moundTop }];
       }
 
       setColumn(map, x, z, spans);

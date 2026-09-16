@@ -90,3 +90,43 @@ export function grantTokenEveryUnlockedChunk(world: World, token: string): void 
     }
   }
 }
+
+/** A span as schema 1 stored it: floor and ceiling both raw heights. */
+export interface RawFloorSpan {
+  readonly floor: number;
+  readonly ceiling: number;
+}
+
+const V1_BYTES_PER_HEIGHT = 2;
+const V1_BYTES_PER_RECORD_HEADER = 4 + 2;
+
+/**
+ * Packs a span table the way schema 1 wrote it, so a test can plant a genuine
+ * v1 blob rather than trusting the current encoder to still emit one.
+ */
+export function packRawFloorColumnSpans(
+  columns: ReadonlyMap<number, readonly RawFloorSpan[]>,
+): Buffer {
+  const indices = Array.from(columns.keys()).sort((a, b) => a - b);
+  let totalBytes = 0;
+  for (const i of indices) {
+    totalBytes +=
+      V1_BYTES_PER_RECORD_HEADER + columns.get(i)!.length * 2 * V1_BYTES_PER_HEIGHT;
+  }
+  const buffer = Buffer.allocUnsafe(totalBytes);
+  let offset = 0;
+  for (const i of indices) {
+    const spans = columns.get(i)!;
+    buffer.writeInt32LE(i, offset);
+    offset += 4;
+    buffer.writeUInt16LE(spans.length, offset);
+    offset += 2;
+    for (const span of spans) {
+      buffer.writeInt16LE(span.floor, offset);
+      offset += V1_BYTES_PER_HEIGHT;
+      buffer.writeInt16LE(span.ceiling, offset);
+      offset += V1_BYTES_PER_HEIGHT;
+    }
+  }
+  return buffer;
+}
