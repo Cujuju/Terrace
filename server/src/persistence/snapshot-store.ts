@@ -32,6 +32,15 @@ export const SNAPSHOT_SCHEMA_VERSION = 2;
 /** The oldest schema this server still reads. `decodeColumnSpans` reinterprets its floors. */
 export const OLDEST_READABLE_SCHEMA_VERSION = 1;
 
+/** INTEGER affinity stores un-coercible TEXT as-is, so range alone lets 'abc' and 1.5 through. */
+function isReadableSchemaVersion(version: number): boolean {
+  return (
+    Number.isInteger(version) &&
+    version >= OLDEST_READABLE_SCHEMA_VERSION &&
+    version <= SNAPSHOT_SCHEMA_VERSION
+  );
+}
+
 export const SNAPSHOT_RETENTION = 10;
 
 export const IN_MEMORY_DB_PATH = ':memory:';
@@ -103,6 +112,23 @@ const SIM_MILLIS_COLUMN = 'sim_millis';
 const GENESIS_MILLIS_COLUMN = 'genesis_millis';
 
 const COLUMN_SPANS_COLUMN = 'column_spans';
+
+/**
+ * Every column `writeSnapshot` fills, in bind order. Anything that copies snapshot rows
+ * must carry all of them, so this list is the contract, not the INSERT text.
+ */
+export const SNAPSHOT_WRITTEN_COLUMNS: readonly string[] = [
+  'schema_version',
+  'created_at',
+  'world_size',
+  WORLD_NAME_COLUMN,
+  'heightmap',
+  'mask',
+  THUMBNAIL_COLUMN,
+  SIM_MILLIS_COLUMN,
+  GENESIS_MILLIS_COLUMN,
+  COLUMN_SPANS_COLUMN,
+];
 
 const TOKEN_MASKS_DDL = `
   CREATE TABLE IF NOT EXISTS token_masks (
@@ -198,11 +224,8 @@ export interface SnapshotWritePayload {
 export function prepareSnapshotWriteStatements(db: Database): SnapshotWriteStatements {
   return {
     insertSnapshot: db.prepare(
-      `INSERT INTO snapshots
-         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
-          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN},
-          ${COLUMN_SPANS_COLUMN})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO snapshots (${SNAPSHOT_WRITTEN_COLUMNS.join(', ')})
+       VALUES (${SNAPSHOT_WRITTEN_COLUMNS.map(() => '?').join(', ')})`,
     ),
     insertSlice: db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -427,10 +450,7 @@ export class SnapshotStore {
   private hydrate(row: SnapshotRow | undefined): WorldSnapshot | null {
     if (row === undefined) return null;
 
-    if (
-      row.schema_version < OLDEST_READABLE_SCHEMA_VERSION ||
-      row.schema_version > SNAPSHOT_SCHEMA_VERSION
-    ) {
+    if (!isReadableSchemaVersion(row.schema_version)) {
       throw new Error(
         `snapshot #${row.id} has schema version ${row.schema_version}, this server reads ` +
           `versions ${OLDEST_READABLE_SCHEMA_VERSION} to ${SNAPSHOT_SCHEMA_VERSION}; ` +
