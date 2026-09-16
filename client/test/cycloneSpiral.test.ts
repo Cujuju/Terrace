@@ -1,29 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Group } from 'three';
-import type { NodeMaterial } from 'three/webgpu';
 import { countDrawObjects } from '../src/plugins/host.ts';
 import type { ClientPluginCtx } from '../src/plugins/types.ts';
 import { clientPlugin } from '../../plugins/cyclone/client/index.ts';
-import {
-  createCycloneRainField,
-  type CycloneRainSource,
-} from '../../plugins/cyclone/client/rain.ts';
-import { MAX_SPIRALS } from '../../plugins/cyclone/client/spiralLayout.ts';
 import { CYCLONE_ALL_MESSAGE } from '../../plugins/cyclone/protocol.ts';
 
 const FRAME_SECONDS = 1 / 60;
 
 const SPIRAL_NAME = 'cyclone:spiral:puffs';
-const RAIN_NAME = 'cyclone:rain:precipitation';
 
-const CYCLONE_DRAW_BUDGET = 2;
+const CYCLONE_DRAW_BUDGET = 1;
 
 const FIRST_CELL = 20;
 const SECOND_CELL = 70;
 
 const STORM_RADIUS_CELLS = 30;
-
-const RAIN_WORLD_RADIUS = 60;
 
 interface Harness {
   readonly ctx: ClientPluginCtx;
@@ -91,12 +82,6 @@ function drawing(layer: Group, name: string): boolean {
   return object!.visible;
 }
 
-const noClip = (_material: NodeMaterial, _label: string): void => {};
-
-function rainDrop(id: number): CycloneRainSource {
-  return { id, x: 0, z: 0, radiusWorldUnits: RAIN_WORLD_RADIUS, intensity: 1, vx: 0, vz: 0 };
-}
-
 let attached = false;
 
 afterEach(() => {
@@ -106,7 +91,7 @@ afterEach(() => {
 });
 
 describe('a world reset clears the cyclone', () => {
-  it('stops drawing the deck and its rain, then draws the new world', () => {
+  it('stops drawing the spiral, then draws the new world', () => {
     const live = harness();
     clientPlugin.attach(live.ctx);
     attached = true;
@@ -114,54 +99,19 @@ describe('a world reset clears the cyclone', () => {
     live.send(CYCLONE_ALL_MESSAGE, storms(FIRST_CELL));
     live.frame(FRAME_SECONDS);
     expect(drawing(live.layer, SPIRAL_NAME)).toBe(true);
-    expect(drawing(live.layer, RAIN_NAME)).toBe(true);
 
     live.resetWorld();
     live.frame(FRAME_SECONDS);
     expect(drawing(live.layer, SPIRAL_NAME)).toBe(false);
-    expect(drawing(live.layer, RAIN_NAME)).toBe(false);
 
     live.send(CYCLONE_ALL_MESSAGE, storms(SECOND_CELL));
     live.frame(FRAME_SECONDS);
     expect(drawing(live.layer, SPIRAL_NAME)).toBe(true);
-    expect(drawing(live.layer, RAIN_NAME)).toBe(true);
-  });
-});
-
-describe('cyclone rain slots', () => {
-  it('come back when a storm dies, so a long sky never runs dry', () => {
-    const rain = createCycloneRainField(noClip);
-
-    for (let id = 1; id <= MAX_SPIRALS + 1; id++) {
-      rain.apply([rainDrop(id)], 0);
-      expect(drawing(rain.root, RAIN_NAME)).toBe(true);
-      rain.apply([], 0);
-      expect(drawing(rain.root, RAIN_NAME)).toBe(false);
-    }
-
-    rain.dispose();
-  });
-
-  it('come back on a world reset too', () => {
-    const rain = createCycloneRainField(noClip);
-    const living: CycloneRainSource[] = [];
-    for (let id = 1; id <= MAX_SPIRALS; id++) living.push(rainDrop(id));
-
-    rain.apply(living, 0);
-    expect(drawing(rain.root, RAIN_NAME)).toBe(true);
-
-    rain.reset();
-    expect(drawing(rain.root, RAIN_NAME)).toBe(false);
-
-    rain.apply(living, 0);
-    expect(drawing(rain.root, RAIN_NAME)).toBe(true);
-
-    rain.dispose();
   });
 });
 
 describe('the cyclone draw budget', () => {
-  it('is one deck and one rain field, however many cyclones are in the air', () => {
+  it('is one spiral, however many cyclones are in the air', () => {
     const live = harness();
     clientPlugin.attach(live.ctx);
     attached = true;
