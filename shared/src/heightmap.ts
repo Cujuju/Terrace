@@ -144,8 +144,11 @@ export function applySculpt(
   const relaxes = tool === 'smooth' || tool === LIBRARY_SCULPT_TOOL;
   const deposits = tool === 'stamp' || tool === LIBRARY_SCULPT_TOOL;
   const anchoredSmooth = relaxes && anchor !== 'free' && amount !== 0;
+  // Smooth names its net effect: Lower removes, Raise builds. Every other
+  // tool reads the stroke direction straight.
+  const meltRaising = tool === 'smooth' ? amount < 0 : amount > 0;
   const anchorTarget = anchoredSmooth
-    ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand, spanBand)
+    ? anchoredTargetHeight(map, cx, cy, meltRaising, targetBand, spanBand)
     : 0;
   const softCore = profile === 'soft' && anchor === 'clicked' && tool === 'stamp';
   const skirtCoreTarget = softCore
@@ -174,7 +177,7 @@ export function applySculpt(
     }
     let anchorBounds: Map<number, SpillBand> | undefined;
     if (anchoredSmooth) {
-      const raising = amount > 0;
+      const raising = meltRaising;
       const clickedIndex = cellIndex(map, cx, cy);
       // The click pin guards a deposit; pure smooth deposits nothing.
       const pinCenter = changed.size > 0;
@@ -186,13 +189,14 @@ export function applySculpt(
         if (raising ? h > anchorTarget : h < anchorTarget) {
           anchorBounds.set(i, { lo: h, hi: h });
         } else if (!pinCenter) {
-          // Symmetric window: an independent kernel with a one-sided cap
-          // deletes hillsides, so both sides end a band from the start.
+          // Symmetric window, both ends: an independent kernel with any
+          // unbounded side deletes hillsides, so each cell moves at most
+          // about a band per stroke while the target side still directs it.
           anchorBounds.set(
             i,
             raising
-              ? { lo: Math.max(MIN_HEIGHT, h - BAND_HEIGHT), hi: anchorTarget }
-              : { lo: anchorTarget, hi: Math.min(MAX_HEIGHT, h + BAND_HEIGHT) },
+              ? { lo: Math.max(MIN_HEIGHT, h - BAND_HEIGHT), hi: Math.min(anchorTarget, h + BAND_HEIGHT) }
+              : { lo: Math.max(anchorTarget, h - BAND_HEIGHT), hi: Math.min(MAX_HEIGHT, h + BAND_HEIGHT) },
           );
         } else {
           anchorBounds.set(

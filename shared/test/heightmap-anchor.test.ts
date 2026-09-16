@@ -105,12 +105,12 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     anchor: 'clicked',
   };
 
-  it('smooth+soft raising: the higher terrace under the brush survives the RELAXATION too', () => {
+  it('smooth+soft lowering: the higher terrace under the brush survives the RELAXATION too', () => {
     const { map, higher } = unevenLedge();
     const before = Int16Array.from(map.cells);
     const target = 7 * BAND_HEIGHT;
 
-    applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+    applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
     for (const i of higher) expect(map.cells[i]).toBe(before[i]);
     for (let i = 0; i < map.cells.length; i++) {
@@ -118,7 +118,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     }
   });
 
-  it('smooth+soft lowering mirrors: cells below the anchored floor are byte-untouched', () => {
+  it('smooth+soft raising mirrors: cells below the anchored floor are byte-untouched', () => {
     const { map, lower } = unevenLedge();
     const deepened: number[] = [];
     for (const i of lower) {
@@ -128,7 +128,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     const before = Int16Array.from(map.cells);
     const floor = 5 * BAND_HEIGHT;
 
-    applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+    applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
     for (const i of deepened) expect(map.cells[i]).toBe(before[i]);
     for (let i = 0; i < map.cells.length; i++) {
@@ -151,9 +151,9 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     return total;
   }
 
-  it('a pit at the world floor stays byte-untouched while the wall above slumps toward it', () => {
-    // Frozen cells still never move; Laplacian wall cells need no receiver,
-    // so unlike relaxation they descend toward the frozen pit down to target.
+  it('lowering beside a floor pit fills at most one band; bedrock and wall stand', () => {
+    // Melt-up targets above the click: floor cells rise toward it, the wall
+    // above target stays frozen, and nothing leaves bedrock range.
     const map = pitWithWall(MIN_HEIGHT);
     const before = Int16Array.from(map.cells);
 
@@ -162,14 +162,19 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     expect(diff.length).toBeGreaterThan(0);
     forEachFootprintOffset(3, (dx, dy) => {
       const i = cellIndex(map, 16 + dx, 16 + dy);
-      if (before[i] === MIN_HEIGHT) expect(map.cells[i]).toBe(MIN_HEIGHT);
+      if (before[i] === MIN_HEIGHT) {
+        expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
+        expect(map.cells[i]).toBeLessThanOrEqual(MIN_HEIGHT + BAND_HEIGHT);
+      } else {
+        expect(map.cells[i]).toBe(before[i]);
+      }
     });
     for (let i = 0; i < map.cells.length; i++) {
       expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
     }
   });
 
-  it('widening a pit one band above the floor works: the wall descends into it', () => {
+  it('filling a pit one band above the floor works: the pit rises into it', () => {
     const map = pitWithWall(MIN_HEIGHT + BAND_HEIGHT);
     const before = Int16Array.from(map.cells);
     const total = cellsTotal(map);
@@ -177,13 +182,18 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
     expect(diff.length).toBeGreaterThan(0);
-    let wallMoved = 0;
+    let pitRose = 0;
     forEachFootprintOffset(3, (dx, dy) => {
       const i = cellIndex(map, 16 + dx, 16 + dy);
-      if (before[i]! > MIN_HEIGHT + BAND_HEIGHT && map.cells[i]! < before[i]!) wallMoved++;
+      if (before[i]! > MIN_HEIGHT + BAND_HEIGHT) {
+        expect(map.cells[i]).toBe(before[i]);
+      } else if (map.cells[i]! > before[i]!) {
+        pitRose++;
+        expect(map.cells[i]).toBeLessThanOrEqual(before[i]! + BAND_HEIGHT);
+      }
     });
-    expect(wallMoved).toBeGreaterThan(0);
-    expect(Math.abs(cellsTotal(map) - total)).toBeLessThanOrEqual(diff.length * BAND_HEIGHT);
+    expect(pitRose).toBeGreaterThan(0);
+    expect(Math.abs(cellsTotal(map) - total)).toBeLessThanOrEqual(diff.length * 2 * BAND_HEIGHT);
     for (let i = 0; i < map.cells.length; i++) {
       expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
     }
