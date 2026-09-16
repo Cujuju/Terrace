@@ -52,7 +52,9 @@ export { sculptReachCells, smoothCascadeReachCells } from './sculpt/reach.ts';
 export { smooth } from './sculpt/relax.ts';
 
 export {
-  CARVE_BANDS_PER_STROKE,
+  CARVE_DEFAULT_DEPTH_BANDS,
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   FULL_HEIGHT_SPAN,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
   LIBRARY_SCULPT_TOOL,
@@ -62,6 +64,7 @@ export {
   SCULPT_TOOLS,
   TOOLS_WITHOUT_DIRECTION,
   TOOLS_WITHOUT_EDGE_PROFILE,
+  isValidCarveDepth,
 } from './sculpt/options.ts';
 
 export type {
@@ -98,6 +101,7 @@ export function applySculpt(
   const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
   const targetBand = options?.targetBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand;
   const spanBand = options?.spanBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand;
+  const depthBands = options?.depthBands ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.depthBands;
   const sweepFrom = options?.sweepFrom ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.sweepFrom;
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
@@ -107,7 +111,7 @@ export function applySculpt(
   if (tool === 'carve') {
     const carveChanged = new Set<number>();
     if (spanBand !== null && amount < 0) {
-      applyCarve(map, cx, cy, radius, spanBand, carveChanged);
+      applyCarve(map, cx, cy, radius, spanBand, depthBands, carveChanged);
     }
     return diffOf(map, carveChanged);
   }

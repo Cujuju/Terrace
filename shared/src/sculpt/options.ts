@@ -1,4 +1,4 @@
-import { MAX_HEIGHT, MIN_HEIGHT } from '../constants.ts';
+import { MAX_HEIGHT, MIN_HEIGHT, TERRACE_BAND_COUNT } from '../constants.ts';
 import { bandOf } from '../grid.ts';
 
 export const MIN_BAND = bandOf(MIN_HEIGHT);
@@ -28,11 +28,27 @@ export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'dra
 
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
 
+/** A stroke cuts whole slabs, and one slab is the shallowest cut there is. */
+export const CARVE_MIN_DEPTH_BANDS = 1;
+
+export const CARVE_DEFAULT_DEPTH_BANDS = CARVE_MIN_DEPTH_BANDS;
+
 /**
- * Bands of material one stroke cuts. Its drawn opening is one band shallower —
- * the remnant's cap rounds up — and that is the smallest gap isGapDrawn keeps.
+ * The deepest one stroke may cut. A quarter of the world's bands is the most a
+ * single act should be able to remove; beyond it a carve is world-editing.
  */
-export const CARVE_BANDS_PER_STROKE = 2;
+const CARVE_MAX_DEPTH_WORLD_FRACTION = 4;
+
+export const CARVE_MAX_DEPTH_BANDS = TERRACE_BAND_COUNT / CARVE_MAX_DEPTH_WORLD_FRACTION;
+
+/** The one depth predicate: the wire validator and applyCarve both ask it. */
+export function isValidCarveDepth(depthBands: number): boolean {
+  return (
+    Number.isInteger(depthBands) &&
+    depthBands >= CARVE_MIN_DEPTH_BANDS &&
+    depthBands <= CARVE_MAX_DEPTH_BANDS
+  );
+}
 
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
 
@@ -42,6 +58,7 @@ export type SculptAnchor = 'clicked' | 'free' | 'band';
 
 export interface SculptOptions {
   readonly tool?: SculptOperation;
+  readonly depthBands?: number;
   readonly profile?: SculptProfile;
   readonly spill?: SculptSpill;
   readonly anchor?: SculptAnchor;
@@ -57,6 +74,7 @@ export interface SweepOrigin {
 
 export interface ResolvedSculptOptions {
   readonly tool: SculptOperation;
+  readonly depthBands: number;
   readonly profile: SculptProfile;
   readonly spill: SculptSpill;
   readonly anchor: SculptAnchor;
@@ -67,6 +85,7 @@ export interface ResolvedSculptOptions {
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   tool: LIBRARY_SCULPT_TOOL,
+  depthBands: CARVE_DEFAULT_DEPTH_BANDS,
   profile: 'soft',
   spill: 'free',
   anchor: 'free',
