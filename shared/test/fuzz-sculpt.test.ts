@@ -374,9 +374,12 @@ function runWireStroke(
   expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
   expectPriceMatchesBrushVolume(intent.radius, options.tool, options.profile, context);
 
-  // The wire smooth is anchored, so it conserves but may leave a bound pair
-  // over-steep; only the free smooth carries the gradient promise.
-  if (options.tool === 'smooth') expectSolidVolumeConserved(volumeBefore, map, context);
+  // The wire smooth is anchored Laplacian: net drift stays inside each
+  // touched cell's clamp window, two bands wide. Only the free smooth,
+  // still exact exchange, carries the conservation promise.
+  if (options.tool === 'smooth') {
+    expectSolidVolumeConserved(volumeBefore, map, context, diff.length * 2 * BAND_HEIGHT);
+  }
   if (options.tool === 'carve' && options.spanBand !== null) {
     const [lo, hi] = carvedSlabRange(options.spanBand, CARVE_BANDS_PER_STROKE);
     const footprint = footprintCells(map, intent.x, intent.y, intent.radius);

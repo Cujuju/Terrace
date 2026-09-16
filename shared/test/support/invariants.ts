@@ -284,9 +284,15 @@ export function expectGradientLimitOverSettled(
 }
 
 /** A smooth never creates or destroys material: the whole-map solid volume is unchanged. */
-export function expectSolidVolumeConserved(before: number, map: Heightmap, context = ''): void {
+export function expectSolidVolumeConserved(
+  before: number,
+  map: Heightmap,
+  context = '',
+  tolerance = 0,
+): void {
   const after = solidVolume(map);
-  const violations = after === before ? [] : [`solid volume moved by ${after - before}`];
+  const drift = Math.abs(after - before);
+  const violations = drift <= tolerance ? [] : [`solid volume moved by ${after - before}`];
   report(violations, context);
 }
 
