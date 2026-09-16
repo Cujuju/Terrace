@@ -33,7 +33,7 @@ import {
   createLightBank,
   type LightBank,
 } from '../../../client/src/plugins/kit/lightBank.ts';
-import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
+import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
 import { createMonsterModels, type MonsterModel, type MonsterModels } from './models.ts';
 import { SEA_SURFACE_WORLD_Y, monsterOriginY, placementRuleOf } from './placement.ts';
@@ -120,6 +120,7 @@ const interpolator = new MonsterInterpolator();
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void {
   if (models === null || container === null) return;
@@ -170,6 +171,11 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       }
     },
   });
+}
+
+function forgetViews(): void {
+  reconcileViews(NO_SAMPLE);
+  interpolator.clear();
 }
 
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
@@ -265,26 +271,24 @@ export const clientPlugin: TerraceClientPlugin = {
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => renderFrame(ctx, dt));
+    unsubscribeReset = ctx.onWorldReset(forgetViews);
   },
 
   dispose(): void {
     unsubscribeMessages?.();
     unsubscribeFrames?.();
+    unsubscribeReset?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unsubscribeReset = null;
 
-    for (const view of views.values()) {
-      view.model.dispose();
-      view.model.root.clear();
-    }
-    views.clear();
+    forgetViews();
     retiringDread.length = 0;
     for (const rigs of dreadRigs.values()) rigs.dispose();
     dreadRigs.clear();
     freeDread.clear();
     flashBank?.dispose();
     flashBank = null;
-    interpolator.clear();
 
     container?.clear();
     container = null;

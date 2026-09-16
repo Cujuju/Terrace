@@ -1,4 +1,5 @@
 import { Group } from 'three';
+import { NO_SAMPLE } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 import {
   drawnGroundSampler,
@@ -53,6 +54,7 @@ let unpublishMovers: (() => void) | null = null;
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void {
   if (models === null || container === null) return;
@@ -75,6 +77,11 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
     view.model.dispose();
     views.delete(id);
   }
+}
+
+function forgetViews(): void {
+  reconcileViews(NO_SAMPLE);
+  interpolator.clear();
 }
 
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
@@ -149,24 +156,22 @@ export const clientPlugin: TerraceClientPlugin = {
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => renderFrame(ctx, dt));
+    unsubscribeReset = ctx.onWorldReset(forgetViews);
   },
 
   dispose(): void {
     unsubscribeMessages?.();
     unsubscribeFrames?.();
+    unsubscribeReset?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unsubscribeReset = null;
     unmarkPickable?.();
     unmarkPickable = null;
     unpublishMovers?.();
     unpublishMovers = null;
 
-    for (const view of views.values()) {
-      view.model.dispose();
-      view.model.root.clear();
-    }
-    views.clear();
-    interpolator.clear();
+    forgetViews();
 
     container?.clear();
     container = null;

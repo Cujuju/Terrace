@@ -16,7 +16,7 @@ import {
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
-import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
+import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { createWildlifeModels, type WildlifeModels } from './models.ts';
 import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
 import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
@@ -82,6 +82,7 @@ let animationSeconds = 0;
 let frameIndex = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void {
   reconcileById(sampled, views, {
@@ -101,6 +102,11 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
     }),
     release: () => {},
   });
+}
+
+function forgetViews(): void {
+  reconcileViews(NO_SAMPLE);
+  interpolator.clear();
 }
 
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
@@ -282,20 +288,22 @@ export const clientPlugin: TerraceClientPlugin = {
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => renderFrame(ctx, dt));
+    unsubscribeReset = ctx.onWorldReset(forgetViews);
   },
 
   dispose(): void {
     unsubscribeMessages?.();
     unsubscribeFrames?.();
+    unsubscribeReset?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unsubscribeReset = null;
     unmarkPickable?.();
     unmarkPickable = null;
     unpublishMovers?.();
     unpublishMovers = null;
 
-    views.clear();
-    interpolator.clear();
+    forgetViews();
 
     container?.clear();
     container = null;
