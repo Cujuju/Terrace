@@ -19,7 +19,11 @@ import {
   type SpiralRenderer,
   type SpiralSource,
 } from './spiral.ts';
-import { CYCLONE_DECK_BASE_WORLD_Y, MAX_SPIRALS } from './spiralLayout.ts';
+import {
+  CYCLONE_SHIELD_RADIUS_FRACTION,
+  CYCLONE_SHIELD_WORLD_Y,
+  MAX_SPIRALS,
+} from './spiralLayout.ts';
 import { CYCLONE_SHADE_CORE_FRACTION, CYCLONE_SHADE_DARKNESS } from './spiralLook.ts';
 import {
   createCycloneRainField,
@@ -131,8 +135,8 @@ function shadeDiscs(): readonly GroundShadeDisc[] {
     const filled = refill(shadePool, shade, blankShadeDisc);
     filled.x = centre.x * CELL_WORLD_SIZE;
     filled.z = centre.y * CELL_WORLD_SIZE;
-    filled.y = CYCLONE_DECK_BASE_WORLD_Y;
-    filled.radius = storm.radius * CELL_WORLD_SIZE;
+    filled.y = CYCLONE_SHIELD_WORLD_Y;
+    filled.radius = storm.radius * CELL_WORLD_SIZE * CYCLONE_SHIELD_RADIUS_FRACTION;
     filled.darkness = CYCLONE_SHADE_DARKNESS * storm.intensity;
     filled.inner = CYCLONE_SHADE_CORE_FRACTION;
     shade.push(filled);
@@ -163,7 +167,10 @@ export const clientPlugin: TerraceClientPlugin = {
     forgetStorms();
     reducedMotion = watchReducedMotion();
 
-    spiral = createSpiral((material, label) => ctx.applyRevealClip(material, label));
+    spiral = createSpiral(
+      (material, label) => ctx.applyRevealClip(material, label),
+      (cellX, cellY) => ctx.terrainHeightAt(cellX, cellY),
+    );
     ctx.layer.add(spiral.root);
 
     rain = createCycloneRainField((material, label) => ctx.applyRevealClip(material, label));
