@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   applySculpt,
@@ -155,7 +155,7 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     // the march entered.
     const TOWER = bandLevelHeight(PLATEAU_BAND);
     const mirror = worldOf(() => 0);
-    setColumn(mirror.map, 12, 12, [{ floor: BEDROCK_FLOOR, ceiling: TOWER }]);
+    setColumn(mirror.map, 12, 12, [{ floorBand: BEDROCK_BAND, ceiling: TOWER }]);
 
     const origin = { x: 11.4 * CELL_WORLD_SIZE, y: worldY(TOWER) + 5, z: 11.4 * CELL_WORLD_SIZE };
     const down = { x: 0, y: -1, z: 0 };
@@ -543,7 +543,8 @@ describe('predicting a carve', () => {
 
 const CAVE_MOUTH_X = 33;
 const CAVE_FLOOR_TOP = bandLevelHeight(6);
-const CAVE_ROOF_BASE = bandLevelHeight(10);
+const CAVE_ROOF_BAND = 10;
+const CAVE_ROOF_BASE = bandLevelHeight(CAVE_ROOF_BAND);
 const CAVE_ROOF_TOP = bandLevelHeight(20);
 
 describe('a carve aimed at a cave ceiling', () => {
@@ -551,8 +552,8 @@ describe('a carve aimed at a cave ceiling', () => {
     const mirror = worldOf(() => 0);
     for (let x = CAVE_MOUTH_X + 1; x <= CAVE_MOUTH_X + 4; x++) {
       setColumn(mirror.map, x, ROW, [
-        { floor: BEDROCK_FLOOR, ceiling: CAVE_FLOOR_TOP },
-        { floor: CAVE_ROOF_BASE, ceiling: CAVE_ROOF_TOP },
+        { floorBand: BEDROCK_BAND, ceiling: CAVE_FLOOR_TOP },
+        { floorBand: CAVE_ROOF_BAND, ceiling: CAVE_ROOF_TOP },
       ]);
     }
     const inside = CAVE_MOUTH_X + 1;
@@ -578,6 +579,6 @@ describe('a carve aimed at a cave ceiling', () => {
 
     expect(diff).toHaveLength(1);
     expect(spanAt(mirror.map, inside, ROW, 0)).toEqual(floorBefore);
-    expect(spanAt(mirror.map, inside, ROW, 1).floor).toBeGreaterThan(CAVE_ROOF_BASE);
+    expect(spanAt(mirror.map, inside, ROW, 1).floorBand).toBeGreaterThan(CAVE_ROOF_BAND);
   });
 });

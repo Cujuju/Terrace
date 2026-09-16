@@ -6,14 +6,15 @@ import {
   highestCeilingBelow,
   isSpanDrawn,
   spanAt,
+  spanCapBand,
   drawnSpanCapHeight,
   spanCount,
   spanIndexBelowBand,
   drawnSpanIndexCoveringBand,
-  spanUndersideHeight,
   type Heightmap,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE } from '../config.ts';
+import { drawnBandCapY } from './capEmission.ts';
 import { sampleHeight, type TerrainMirror } from './mirror.ts';
 import type { PickFace, TerrainRayPick } from './picking.ts';
 
@@ -34,13 +35,11 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   // Underside hits report hitY at the drawn ceiling; tread/riser at or below.
   // Its reject bound clamps to the drawn bottom, so a riser entry at the
   // blocky underside passes.
-  const drawnBottomY =
-    drawnBandOfSample(spanUndersideHeight(span)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+  const drawnBottomY = drawnBandCapY(span.floorBand - 1);
   if (pick.hitY < drawnBottomY || pick.hitY > capY) return null;
   void undersideY;
 
-  // F3: lowest drawn band from the drawn banding (bias + shore).
-  const lowestDrawn = drawnBandOfSample(spanUndersideHeight(span)) + 1;
+  const lowestDrawn = span.floorBand;
 
   if (pick.face === 'riser') {
     const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
@@ -48,14 +47,14 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
     // Never name above the struck span's own cap: raw ceil overshoots at the
     // shore, and the lip overlay is keyed by drawn band, so the cap's band
     // is grabbable.
-    const capDrawn = drawnBandOfSample(span.ceiling);
+    const capDrawn = spanCapBand(span);
     const band = capDrawn < struck ? capDrawn : struck;
     // Normalize -0 (ceil of a negative fraction): band ids are compared exactly.
     return { face: 'riser', band: band + 0 };
   }
   // F3: tread ceilings resolve in the drawn banding, so a bias-shifted cap
   // names the band the mesh emitted.
-  if (pick.face === 'tread') return { face: 'tread', band: drawnBandOfSample(span.ceiling) };
+  if (pick.face === 'tread') return { face: 'tread', band: spanCapBand(span) };
   return { face: 'underside', band: lowestDrawn };
 }
 

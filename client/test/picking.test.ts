@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   CHUNK_SIZE,
   MAX_HEIGHT,
   drawnBandOfSample,
@@ -381,7 +381,7 @@ describe('pickTerrainInColumn', () => {
     const before = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
     expect(before).not.toBeNull();
 
-    setColumn(mirror.map, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: LOW }]);
+    setColumn(mirror.map, CELL_X, CELL_Z, [{ floorBand: BEDROCK_BAND, ceiling: LOW }]);
     const after = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, direction);
     expect(after).not.toBeNull();
     expect(after!.x).toBe(CELL_X);
@@ -397,12 +397,13 @@ describe('pickTerrainInColumn', () => {
     const CELL_X = 30;
     const CELL_Z = 30;
     const FLOOR_TOP = BAND_HEIGHT * 3;
-    const ROOF_BASE = BAND_HEIGHT * 6;
+    const ROOF_BAND = 6;
+    const ROOF_BASE = BAND_HEIGHT * ROOF_BAND;
     const ROOF_TOP = BAND_HEIGHT * 9;
     const mirror = world(() => ROOF_TOP);
     setColumn(mirror.map, CELL_X, CELL_Z, [
-      { floor: BEDROCK_FLOOR, ceiling: FLOOR_TOP },
-      { floor: ROOF_BASE, ceiling: ROOF_TOP },
+      { floorBand: BEDROCK_BAND, ceiling: FLOOR_TOP },
+      { floorBand: ROOF_BAND, ceiling: ROOF_TOP },
     ]);
     // F5: a horizontal ray through the gap passes OVER the floor, so the
     // pinned column correctly misses (null). Descend through the gap onto the
@@ -508,7 +509,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     // search returned null here.
     const TOWER = BAND_HEIGHT * 10;
     const mirror = world(() => 0);
-    setColumn(mirror.map, 12, 12, [{ floor: BEDROCK_FLOOR, ceiling: TOWER }]);
+    setColumn(mirror.map, 12, 12, [{ floorBand: BEDROCK_BAND, ceiling: TOWER }]);
     const owner = columnOwningBand(
       mirror,
       11,
@@ -547,8 +548,8 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     const CELL_Z = 30;
     const mirror = world(() => BAND_HEIGHT * 9);
     setColumn(mirror.map, CELL_X, CELL_Z, [
-      { floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 3 },
-      { floor: BAND_HEIGHT * 6, ceiling: BAND_HEIGHT * 9 },
+      { floorBand: BEDROCK_BAND, ceiling: BAND_HEIGHT * 3 },
+      { floorBand: 6, ceiling: BAND_HEIGHT * 9 },
     ]);
     // Start inside the open gap and rise into the roof slab: the underside
     // cue snaps to the drawn ceiling (hitY == surfaceY).
@@ -584,7 +585,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     const CELL_Z = 30;
     const mirror = world(() => BAND_HEIGHT * 8);
     const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE, z: CELL_Z * CELL_WORLD_SIZE };
-    setColumn(mirror.map, CELL_X, CELL_Z, [{ floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 2 }]);
+    setColumn(mirror.map, CELL_X, CELL_Z, [{ floorBand: BEDROCK_BAND, ceiling: BAND_HEIGHT * 2 }]);
     const pick = pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, { x: 1, y: 0, z: 0 });
     expect(pick).toBeNull();
   });

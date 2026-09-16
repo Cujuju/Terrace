@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
   BAND_HEIGHT,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   CHUNK_SIZE,
   applySculpt,
   setColumn,
@@ -165,7 +165,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       const cell = { x: before!.x, y: before!.y };
 
       setColumn(mirror.map, cell.x, cell.y, [
-        { floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 3 },
+        { floorBand: BEDROCK_BAND, ceiling: BAND_HEIGHT * 3 },
       ]);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
@@ -188,7 +188,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       expect(before).not.toBeNull();
       const cell = { x: before!.x, y: before!.y };
 
-      setColumn(mirror.map, cell.x, cell.y, [{ floor: BEDROCK_FLOOR, ceiling: 0 }]);
+      setColumn(mirror.map, cell.x, cell.y, [{ floorBand: BEDROCK_BAND, ceiling: 0 }]);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
       // F5: the lowered column no longer fabricates a tread below the ray, so
@@ -285,7 +285,7 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
       const cell = { x: before!.x, y: before!.y };
       fire('pointerdown', {});
       setColumn(mirror.map, cell.x, cell.y, [
-        { floor: BEDROCK_FLOOR, ceiling: BAND_HEIGHT * 3 },
+        { floorBand: BEDROCK_BAND, ceiling: BAND_HEIGHT * 3 },
       ]);
       expect({ x: input.hoverTarget()!.x, y: input.hoverTarget()!.y }).toEqual(cell);
     } finally {

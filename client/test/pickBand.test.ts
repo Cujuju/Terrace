@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
   createHeightmap,
   setColumn,
   spanIndexCoveringBand,
   type Heightmap,
+  type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 import { bandOfPick, carveBandOfPick, resolvePick } from '../src/terrain/pickBand.ts';
@@ -15,7 +17,7 @@ const WORLD = 16;
 const CELL_X = 4;
 const CELL_Z = 4;
 
-function mapWith(spans: ReadonlyArray<{ floor: number; ceiling: number }>): Heightmap {
+function mapWith(spans: readonly Span[]): Heightmap {
   const map = createHeightmap(WORLD);
   setColumn(map, CELL_X, CELL_Z, spans);
   return map;
@@ -45,7 +47,7 @@ const LIP_NOWHERE = (): boolean => false;
 describe('resolvePick / bandOfPick', () => {
   const CAP_BAND = 10;
   const CAP = BAND_HEIGHT * CAP_BAND;
-  const oneSpan = (): Heightmap => mapWith([{ floor: BEDROCK_FLOOR, ceiling: CAP }]);
+  const oneSpan = (): Heightmap => mapWith([{ floorBand: BEDROCK_BAND, ceiling: CAP }]);
 
   it('names the band whose slab a riser hit landed in', () => {
     const map = oneSpan();
@@ -56,8 +58,8 @@ describe('resolvePick / bandOfPick', () => {
   it('gives a riser hit exactly on the underside boundary the LOWEST drawn band', () => {
     const FLOOR_BAND = 3;
     const map = mapWith([
-      { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT },
-      { floor: BAND_HEIGHT * FLOOR_BAND, ceiling: CAP },
+      { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR + BAND_HEIGHT },
+      { floorBand: FLOOR_BAND, ceiling: CAP },
     ]);
     const undersideHeight = BAND_HEIGHT * (FLOOR_BAND - 1);
     expect(resolvePick(map, pickAt(1, 'riser', undersideHeight, CAP))).toEqual({
@@ -77,8 +79,8 @@ describe('resolvePick / bandOfPick', () => {
   it('gives an underside hit the LOWEST drawn band, not the cap band', () => {
     const FLOOR_BAND = 3;
     const map = mapWith([
-      { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + BAND_HEIGHT },
-      { floor: BAND_HEIGHT * FLOOR_BAND, ceiling: CAP },
+      { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR + BAND_HEIGHT },
+      { floorBand: FLOOR_BAND, ceiling: CAP },
     ]);
     const underside = BAND_HEIGHT * (FLOOR_BAND - 1);
     expect(resolvePick(map, pickAt(1, 'underside', underside, CAP))).toEqual({
@@ -106,7 +108,7 @@ describe('resolvePick / bandOfPick', () => {
 describe('carveBandOfPick', () => {
   const CAP_BAND = 10;
   const CAP = BAND_HEIGHT * CAP_BAND;
-  const oneSpan = (): Heightmap => mapWith([{ floor: BEDROCK_FLOOR, ceiling: CAP }]);
+  const oneSpan = (): Heightmap => mapWith([{ floorBand: BEDROCK_BAND, ceiling: CAP }]);
 
   it('carves the band of the face on a riser hit — the SIDE FACE', () => {
     const map = oneSpan();
@@ -136,10 +138,10 @@ describe('carveBandOfPick', () => {
 
   it('never answers a band no span covers — the server-side belt', () => {
     const FLOOR_TOP = BAND_HEIGHT * 3;
-    const ROOF_BASE = BAND_HEIGHT * 6;
+    const ROOF_BAND = 6;
     const map = mapWith([
-      { floor: BEDROCK_FLOOR, ceiling: FLOOR_TOP },
-      { floor: ROOF_BASE, ceiling: CAP },
+      { floorBand: BEDROCK_BAND, ceiling: FLOOR_TOP },
+      { floorBand: ROOF_BAND, ceiling: CAP },
     ]);
     for (const spanIndex of [0, 1]) {
       for (let h = BEDROCK_FLOOR; h <= CAP; h += BAND_HEIGHT / 2) {

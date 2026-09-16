@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
+  BEDROCK_BAND,
   DRAWN_SHORE_HEIGHT,
-  MIN_HEIGHT,
   chunkIndex,
   drawnBandOfSample,
   drawnLevelThreshold,
@@ -84,11 +84,11 @@ describe('lane E: band-0 layered ceiling', () => {
     const mirror = createTerrainMirror(32);
     receiveAll(mirror);
     mirror.map.cells.fill(0);
-    // Upper span covers band 0 (floor 1) but not band -1: a band-0 overhang
-    // with a real gap below it, so the column stays layered.
+    // Upper span floors in band 0, not band -1: a band-0 overhang with a real
+    // gap below it, so the column stays layered.
     setColumn(mirror.map, 4, 4, [
-      { floor: MIN_HEIGHT, ceiling: -32 },
-      { floor: 1, ceiling: 16 },
+      { floorBand: BEDROCK_BAND, ceiling: -32 },
+      { floorBand: 0, ceiling: BAND_HEIGHT },
     ]);
     const plan = planChunkCaps(mirror, 0, 0, {
       top: TERRAIN_PALETTE,

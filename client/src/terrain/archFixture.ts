@@ -1,9 +1,11 @@
 import {
   BAND_HEIGHT,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
   CHUNK_SIZE,
   cellIndex,
   chunkIndex,
+  floorBandOfHeight,
   heightAt,
   quantizeToBand,
   setColumn,
@@ -121,11 +123,11 @@ export function carveArchFixture(mirror: TerrainMirror): Set<number> {
         roofFloor < moundTop
       ) {
         spans = [
-          { floor: BEDROCK_FLOOR, ceiling: ground },
-          { floor: roofFloor, ceiling: moundTop },
+          { floorBand: BEDROCK_BAND, ceiling: ground },
+          { floorBand: floorBandOfHeight(roofFloor), ceiling: moundTop },
         ];
       } else {
-        spans = [{ floor: BEDROCK_FLOOR, ceiling: moundTop }];
+        spans = [{ floorBand: BEDROCK_BAND, ceiling: moundTop }];
       }
 
       setColumn(mirror.map, x, z, spans);
