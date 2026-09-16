@@ -3,6 +3,7 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
+  MIN_BAND,
   MIN_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
   MIN_HEIGHT,
@@ -32,7 +33,8 @@ import {
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import { plugin as revealPlugin } from '../../reveal/server/index.ts';
-import { sculptManaCost } from '../pricing.ts';
+import { CHUNK_UNLOCK_MANA, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { MANA_PLUGIN_NAME } from '../protocol.ts';
 import {
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
   INSUFFICIENT_MANA_REASON,
@@ -66,6 +68,7 @@ import {
   resetManaState,
   resolveManaRegenPerSecond,
   setManaPerk,
+  spendMana,
 } from '../server/index.ts';
 
 const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true };
@@ -162,6 +165,20 @@ function sculptAt(
     PLAYER,
     { type: 'sculpt', x, y, radius, dir: helperDir(), ...(profile !== undefined ? { profile } : {}) },
   );
+}
+
+/** A world where the token owns HOME_CHUNK only, so any stroke there is a frontier stroke. */
+function bootOnTheFrontier(): Harness {
+  resetManaState();
+  const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+  const sink = new RecordingSink();
+  world.setSink(sink);
+  const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+  host.worldCreate();
+  world.addPlayer(PLAYER);
+  world.seedChunkForToken(PLAYER.token, ...HOME_CHUNK);
+  host.playerJoined(PLAYER);
+  return { world, host, sink };
 }
 
 describe('mana plugin', () => {
@@ -914,7 +931,7 @@ describe('the price of a sculpt', () => {
     expect(MANA_PER_BAND_CELL).toBe(
       MANA_PER_BAND_WORLD_UNIT_SQUARED / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS),
     );
-    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(14);
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(7);
 
     expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(281);
     expect(MANA_CAPACITY).toBe(5000);
@@ -922,11 +939,14 @@ describe('the price of a sculpt', () => {
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(
       Math.floor(MANA_CAPACITY / MANA_COST_PER_MAX_RADIUS_HARD_SCULPT),
     );
-    expect(POINT_STAMPS_PER_POOL).toBe(357);
+    expect(POINT_STAMPS_PER_POOL).toBe(714);
 
     const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp');
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
-    expect(softPlateau).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+    // Soft moves the graduated falloff volume, roughly 40% off hard: it no
+    // longer pays the flat-fill price.
+    expect(softPlateau).toBe(107);
+    expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
     expect(MIN_MANA_REGEN_PER_SECOND).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S);
     expect(MAX_MANA_REGEN_PER_SECOND).toBe(MANA_CAPACITY);
@@ -937,7 +957,7 @@ describe('the price of a sculpt', () => {
       for (const profile of SCULPT_PROFILES) {
         const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
         const expected = Math.ceil(
-          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, 'stamp')) / BAND_HEIGHT,
+          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, 'stamp', profile)) / BAND_HEIGHT,
         );
         expect(manaCostFor(PLAYER.id, intent)).toBe(expected);
       }
@@ -1029,11 +1049,24 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
     return { world, host, sink };
   }
 
+  // The lowest band a lower-drag may name: MIN_BAND itself is refused outright.
+  const FLOOR_ADJACENT_BAND = MIN_BAND + 1;
+
   function lowerAt(harness: Harness, radius: number, tool: string, profile: string) {
     return handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: -1, tool, profile },
+      {
+        type: 'sculpt',
+        x: INTERIOR_CELL.x,
+        y: INTERIOR_CELL.y,
+        radius,
+        dir: -1,
+        tool,
+        profile,
+        ...(tool === 'drag' ? { targetBand: FLOOR_ADJACENT_BAND } : {}),
+        ...(tool === 'carve' ? { spanBand: FLOOR_ADJACENT_BAND } : {}),
+      },
     );
   }
 
@@ -1234,5 +1267,427 @@ describe('gate / server parity — the same intent, the same fee', () => {
       regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
     expect(gateLocalSculpt(plateau, ALL_REVEALED)).toBe(true);
+  });
+});
+
+describe('the frontier price is quoted once, at verdict time', () => {
+  // Chunk (1,1) is the only territory this token owns, so a stamp on its far
+  // edge spills into a locked neighbour and reaches several more.
+  const FRONTIER_INTENT: SculptIntent = {
+    type: 'sculpt',
+    x: CHUNK_SIZE * 2 - 1,
+    y: CHUNK_SIZE + 4,
+    radius: 2,
+    dir: 1,
+    profile: 'hard',
+    seq: 1,
+  };
+
+  function frontierTerritory(world: World) {
+    return {
+      worldSize: () => world.size,
+      revealedAt: (x: number, y: number) =>
+        world.isChunkUnlockedForToken(
+          PLAYER.token,
+          Math.floor(x / CHUNK_SIZE),
+          Math.floor(y / CHUNK_SIZE),
+        ),
+    };
+  }
+
+  function quotedCost(world: World, intent: SculptIntent): number {
+    return manaCostFor(
+      PLAYER.id,
+      intent,
+      openedChunkCount(world.size, intent.x, intent.y, intent.radius, (cx, cy) =>
+        world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
+      ),
+    );
+  }
+
+  it('charges what the affordability check reserved, creep or no creep', () => {
+    const harness = bootOnTheFrontier();
+    const quoted = quotedCost(harness.world, FRONTIER_INTENT);
+    const stroke = sculptManaCost(MANA_PER_BAND_CELL, FRONTIER_INTENT.radius, 'hard', 'stamp');
+    expect(quoted).toBeGreaterThan(stroke);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      FRONTIER_INTENT,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff.length).toBeGreaterThan(0);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(quoted);
+  });
+
+  it('quotes a seq-less stroke too, since no repeat can claim its quote', () => {
+    const harness = bootOnTheFrontier();
+    const seqless: SculptIntent = {
+      type: 'sculpt',
+      x: FRONTIER_INTENT.x,
+      y: FRONTIER_INTENT.y,
+      radius: FRONTIER_INTENT.radius,
+      dir: FRONTIER_INTENT.dir,
+      profile: 'hard',
+    };
+    const quoted = quotedCost(harness.world, seqless);
+    expect(quoted).toBeGreaterThan(
+      sculptManaCost(MANA_PER_BAND_CELL, seqless.radius, 'hard', 'stamp'),
+    );
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(
+      handleSculptIntent({ world: harness.world, interceptors: harness.host }, PLAYER, seqless)
+        .applied,
+    ).toBe(true);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(quoted);
+  });
+
+  it('the client gate debits the same frontier fee the server charges', async () => {
+    const { gateLocalSculpt, setManaPool, manaPool } = await import('../client/state.ts');
+    const harness = bootOnTheFrontier();
+
+    setManaPool({
+      balance: MANA_CAPACITY,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: manaPerBandCellFor(PLAYER.id),
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
+    });
+    expect(gateLocalSculpt(FRONTIER_INTENT, frontierTerritory(harness.world))).toBe(true);
+    const clientFee = MANA_CAPACITY - (manaPool()?.balance ?? 0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      FRONTIER_INTENT,
+    );
+    expect(clientFee).toBe(before - (manaBalanceOf(PLAYER.id) ?? 0));
+  });
+
+  it('a faulted stroke leaves no quote behind for the next seq to spend', () => {
+    const SCULPT_FAULT = 'terrain engine fault';
+    const TERRITORY_FAULT = 'territory lookup fault';
+    const armed = { on: false };
+
+    resetManaState();
+    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+    world.setSink(new RecordingSink());
+    // Mana reads territory through this world; arming it makes that read throw
+    // once, which the host contains, so the verdict runs on a stale quote.
+    const flaky = new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'isChunkUnlockedForToken' && armed.on) {
+          return (): never => {
+            armed.on = false;
+            throw new Error(TERRITORY_FAULT);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const host = new PluginHost(flaky, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    world.seedChunkForToken(PLAYER.token, ...HOME_CHUNK);
+    host.playerJoined(PLAYER);
+
+    const faulting = new Proxy(world, {
+      get(target, property, receiver): unknown {
+        if (property === 'applySculpt') {
+          return (): never => {
+            throw new Error(SCULPT_FAULT);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      handleSculptIntent({ world: faulting, interceptors: host }, PLAYER, FRONTIER_INTENT),
+    ).toThrow(SCULPT_FAULT);
+
+    // The territory that quote priced is now owned outright.
+    const edge = world.chunksPerEdge;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+
+    const repeat = { ...FRONTIER_INTENT, seq: (FRONTIER_INTENT.seq ?? 0) + 1 };
+    armed.on = true;
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(handleSculptIntent({ world, interceptors: host }, PLAYER, repeat).applied).toBe(true);
+    errors.mockRestore();
+
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
+      sculptManaCost(MANA_PER_BAND_CELL, repeat.radius, 'hard', 'stamp'),
+    );
+  });
+
+  it('a denial leaves no quote behind for a later stroke to spend', () => {
+    const harness = bootOnTheFrontier();
+    const denied = { ...FRONTIER_INTENT };
+
+    const veto = { on: true };
+    const denier: TerracePlugin = {
+      name: 'denier',
+      onIntent: () => (veto.on ? ({ kind: 'deny', reason: 'no' } as IntentVerdict) : ALLOW),
+    };
+    const host = new PluginHost(
+      harness.world,
+      [manaPlugin, denier, revealPlugin].map(asLoadedPlugin),
+    );
+
+    expect(
+      handleSculptIntent({ world: harness.world, interceptors: host }, PLAYER, denied).applied,
+    ).toBe(false);
+
+    // The territory the stale quote priced is now owned outright.
+    const edge = harness.world.chunksPerEdge;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) harness.world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+    veto.on = false;
+
+    const fresh = quotedCost(harness.world, denied);
+    expect(fresh).toBe(sculptManaCost(MANA_PER_BAND_CELL, denied.radius, 'hard', 'stamp'));
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(
+      handleSculptIntent({ world: harness.world, interceptors: host }, PLAYER, denied).applied,
+    ).toBe(true);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(fresh);
+  });
+});
+
+describe('a stroke that moves nothing still pays for the land it opened', () => {
+  // A carve at the band above bedrock cuts nothing on any terrain — applyCarve
+  // refuses it — yet reveal opens its footprint all the same.
+  const NO_OP_CARVE: SculptIntent = {
+    type: 'sculpt',
+    x: CHUNK_SIZE * 2 - 1,
+    y: CHUNK_SIZE + 4,
+    radius: 2,
+    dir: -1,
+    tool: 'carve',
+    spanBand: MIN_BAND + 1,
+    seq: 1,
+  };
+
+  function chunksOwned(world: World): number {
+    const edge = world.chunksPerEdge;
+    let owned = 0;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) {
+        if (world.isChunkUnlockedForToken(PLAYER.token, cx, cy)) owned++;
+      }
+    }
+    return owned;
+  }
+
+  it('charges the territory fee, and only that, for an empty diff on the frontier', () => {
+    const harness = bootOnTheFrontier();
+    const opened = openedChunkCount(
+      harness.world.size,
+      NO_OP_CARVE.x,
+      NO_OP_CARVE.y,
+      NO_OP_CARVE.radius,
+      (cx, cy) => harness.world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
+    );
+    expect(opened).toBeGreaterThan(0);
+
+    const fee = chunkUnlockFee(opened);
+    expect(fee).toBeGreaterThan(0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const ownedBefore = chunksOwned(harness.world);
+
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      NO_OP_CARVE,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff).toEqual([]);
+    expect(chunksOwned(harness.world)).toBeGreaterThan(ownedBefore);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(fee);
+  });
+
+  it('still charges nothing when the empty diff opened no land', () => {
+    const harness = bootOnTheFrontier();
+    const edge = harness.world.chunksPerEdge;
+    for (let cy = 0; cy < edge; cy++) {
+      for (let cx = 0; cx < edge; cx++) harness.world.seedChunkForToken(PLAYER.token, cx, cy);
+    }
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      NO_OP_CARVE,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff).toEqual([]);
+    expect(manaBalanceOf(PLAYER.id) ?? 0).toBe(before);
+  });
+});
+
+describe('a chunk of frontier opens for a flat fee, whatever opens it', () => {
+  const FRONTIER_CELL = { x: CHUNK_SIZE * 2 - 1, y: CHUNK_SIZE + 4 } as const;
+
+  const FEE_PROBE_OPENED = 3;
+
+  const FEE_PROBE_RADII: readonly number[] = [MIN_BRUSH_RADIUS, 2, 4, 8, MAX_BRUSH_RADIUS];
+
+  const DRAIN_PLUGIN_NAME = 'test';
+
+  const NO_LISTENER = {
+    notifyTerrainChanged(): void {},
+    notifyChunkUnlockedForToken(): void {},
+    notifyWorldEvent(): void {},
+  };
+
+  function frontierStamp(radius: number): SculptIntent {
+    return {
+      type: 'sculpt',
+      x: FRONTIER_CELL.x,
+      y: FRONTIER_CELL.y,
+      radius,
+      dir: 1,
+      profile: 'hard',
+      seq: 1,
+    };
+  }
+
+  // A carve at the band above bedrock cuts nothing on any terrain, so the only
+  // thing such a stroke can be charged for is the land it opened.
+  function noOpCarve(radius: number): SculptIntent {
+    return {
+      type: 'sculpt',
+      x: FRONTIER_CELL.x,
+      y: FRONTIER_CELL.y,
+      radius,
+      dir: -1,
+      tool: 'carve',
+      spanBand: MIN_BAND + 1,
+      seq: 1,
+    };
+  }
+
+  function openedFor(world: World, intent: SculptIntent): number {
+    return openedChunkCount(world.size, intent.x, intent.y, intent.radius, (cx, cy) =>
+      world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
+    );
+  }
+
+  function spend(world: World, amount: number): boolean {
+    return spendMana(createWorldApi(world, NO_LISTENER, DRAIN_PLUGIN_NAME).api, PLAYER.id, amount);
+  }
+
+  it('costs the same per chunk for every tool, profile and radius', () => {
+    resetManaState();
+    for (const tool of SCULPT_TOOLS) {
+      for (const profile of SCULPT_PROFILES) {
+        for (const radius of FEE_PROBE_RADII) {
+          const intent: SculptIntent = { ...frontierStamp(radius), tool, profile };
+          expect(
+            manaCostFor(PLAYER.id, intent, FEE_PROBE_OPENED) - manaCostFor(PLAYER.id, intent, 0),
+          ).toBe(FEE_PROBE_OPENED * CHUNK_UNLOCK_MANA);
+        }
+      }
+    }
+  });
+
+  it.each([MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS])(
+    'charges a frontier no-op the unlock fee and nothing else (radius %i)',
+    (radius) => {
+      const harness = bootOnTheFrontier();
+      const intent = noOpCarve(radius);
+      const opened = openedFor(harness.world, intent);
+      expect(opened).toBeGreaterThan(0);
+
+      const before = manaBalanceOf(PLAYER.id) ?? 0;
+      const outcome = handleSculptIntent(
+        { world: harness.world, interceptors: harness.host },
+        PLAYER,
+        intent,
+      );
+
+      expect(outcome.applied).toBe(true);
+      if (outcome.applied) expect(outcome.diff).toEqual([]);
+      expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(opened * CHUNK_UNLOCK_MANA);
+    },
+  );
+
+  it('charges displacement plus the unlock fee when the stroke moves land', () => {
+    const harness = bootOnTheFrontier();
+    const intent = frontierStamp(2);
+    const opened = openedFor(harness.world, intent);
+    expect(opened).toBeGreaterThan(0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      intent,
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff.length).toBeGreaterThan(0);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
+      sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp') +
+        opened * CHUNK_UNLOCK_MANA,
+    );
+  });
+
+  it('adds nothing inside territory the sculptor already owns', () => {
+    const harness = boot();
+    const intent = { ...frontierStamp(POINT_BRUSH_RADIUS_CELLS), ...INTERIOR_CELL };
+    expect(openedFor(harness.world, intent)).toBe(0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      intent,
+    );
+
+    expect(outcome.applied).toBe(true);
+    expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
+      sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp'),
+    );
+  });
+
+  it('denies a frontier stroke the balance can only half pay for', () => {
+    const harness = bootOnTheFrontier();
+    const intent = frontierStamp(2);
+    const opened = openedFor(harness.world, intent);
+    expect(opened).toBeGreaterThan(0);
+
+    const displacement = sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp');
+    const balance = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(spend(harness.world, balance - displacement)).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe(displacement);
+
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      intent,
+    );
+
+    expect(outcome.applied).toBe(false);
+    expect(manaBalanceOf(PLAYER.id)).toBe(displacement);
+    const denials = harness.sink.ofType(`${MANA_PLUGIN_NAME}:${MANA_DENIED_MESSAGE}`);
+    expect(denials[denials.length - 1].payload).toMatchObject({
+      cost: displacement + opened * CHUNK_UNLOCK_MANA,
+    });
   });
 });

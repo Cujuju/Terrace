@@ -148,3 +148,98 @@ describe('discSystems dev override', () => {
     expect(parked[0]!.envelope).toBeLessThanOrEqual(1);
   });
 });
+
+describe('discSystems admission', () => {
+  const SMALL_WORLD = cellsAcross(128);
+  const CEILING = 7;
+  const COVERAGE_FRACTION = 0.09;
+
+  function engineOn(seed: number): ReturnType<typeof createDiscSystems> {
+    return createDiscSystems({
+      coverageFraction: COVERAGE_FRACTION,
+      maxActiveSystems: CEILING,
+      random: seeded(seed),
+    });
+  }
+
+  it('refuses a natural spawn once the coverage cap is full', () => {
+    const engine = engineOn(9);
+    const cap = engine.capFor(SMALL_WORLD);
+    expect(cap).toBeLessThan(CEILING);
+    for (let n = 0; n < cap; n++) expect(engine.spawnOne(SMALL_WORLD)).not.toBeNull();
+    expect(engine.spawnOne(SMALL_WORLD)).toBeNull();
+    expect(engine.systems()).toHaveLength(cap);
+  });
+
+  it('lets a summoned system pass the coverage cap, but never the draw ceiling', () => {
+    const engine = engineOn(10);
+    expect(engine.capFor(SMALL_WORLD)).toBeLessThan(CEILING);
+    for (let n = 0; n < CEILING; n++) {
+      expect(engine.spawnAt(SMALL_WORLD, n, n)).not.toBeNull();
+    }
+    expect(engine.spawnAt(SMALL_WORLD, 0, 0)).toBeNull();
+    expect(engine.systems()).toHaveLength(CEILING);
+  });
+
+  it('refuses both spawns while the sky is parked, and admits again after a reset', () => {
+    const engine = engineOn(11);
+    engine.force(true);
+    expect(engine.spawnOne(SMALL_WORLD)).toBeNull();
+    expect(engine.spawnAt(SMALL_WORLD, 0, 0)).toBeNull();
+
+    engine.reset();
+    expect(engine.isForced()).toBe(false);
+    expect(engine.spawnAt(SMALL_WORLD, 0, 0)).not.toBeNull();
+  });
+
+  it('refuses a centre that is not a number, and stays dry there', () => {
+    const engine = engineOn(12);
+    expect(engine.spawnAt(SMALL_WORLD, Number.NaN, 0)).toBeNull();
+    expect(engine.spawnAt(SMALL_WORLD, 0, Number.POSITIVE_INFINITY)).toBeNull();
+    expect(engine.systems()).toHaveLength(0);
+    expect(engine.intensityAt(0, 0)).toBe(0);
+    expect(engine.intensityAt(Number.NaN, Number.NaN)).toBe(0);
+  });
+});
+
+describe('discSystems determinism', () => {
+  const TRACE_TICKS = 2000;
+
+  it('replays the same sky from the same seed', () => {
+    const trace = (seed: number): string[] => {
+      const engine = createDiscSystems({
+        coverageFraction: 0.09,
+        footprintAreaScale: 3,
+        maxActiveSystems: 7,
+        random: seeded(seed),
+      });
+      const frames: string[] = [];
+      for (let tick = 0; tick < TRACE_TICKS; tick++) {
+        engine.advance(WORLD_SIZE, TICK_SECONDS, WIND);
+        frames.push(JSON.stringify(engine.states(WIND)));
+      }
+      return frames;
+    };
+    expect(trace(20260814)).toEqual(trace(20260814));
+  });
+});
+
+describe('discSystems intensity', () => {
+  const NUDGE_CELLS = 1;
+
+  it('is full just inside the rim and nothing just outside it', () => {
+    const engine = createDiscSystems({
+      coverageFraction: 0.09,
+      maxActiveSystems: 7,
+      random: seeded(13),
+    });
+    const centre = WORLD_SIZE / 2;
+    const system = engine.spawnAt(WORLD_SIZE, centre, centre)!;
+    system.envelope = 1;
+
+    expect(engine.intensityAt(centre + system.radius - NUDGE_CELLS, centre)).toBe(
+      system.peakIntensity,
+    );
+    expect(engine.intensityAt(centre + system.radius + NUDGE_CELLS, centre)).toBe(0);
+  });
+});

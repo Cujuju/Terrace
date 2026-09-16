@@ -1,12 +1,13 @@
 import {
+  MAX_DEBUG_SAILED_CELLS_PER_CHAIN,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
   OPEN_WATER_PROFILE,
   ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
+  buildWaypointChain,
   cellsAcross,
   createRouteBudget,
-  findRoute,
   findRouteWithStatus,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
@@ -15,6 +16,9 @@ import {
   nearestWithinReach,
   normalizeAngle,
   regionAt,
+  snapWaypointToWalkable,
+  waypointForMember,
+  withCachedClearance,
   withClearance,
   withoutSelf,
   type Occupant,
@@ -22,6 +26,9 @@ import {
   type RouteCell,
   type SeaRegions,
   type TerrainSampler,
+  type Waypoint,
+  type WaypointChainSnapshot,
+  type WaypointDebugFrame,
 } from '@terrace/shared';
 import {
   severityAt,
@@ -40,11 +47,16 @@ import {
   HOME_GUARD_BOATS_PER_VILLAGE,
   SQUADRON_LEG_LENGTH_CELLS,
   SQUADRON_LEG_MIN_LENGTH_CELLS,
+  SQUADRON_MUSTER_RADIUS_CELLS,
   SQUADRON_WAYPOINT_ATTEMPTS,
   advanceSquadrons,
+  formationStats,
   hashCell,
+  replanSquadronLeg,
+  squadronPhase,
   resetSquadrons,
   squadronCount,
+  squadronIds,
   squadronMembers,
   squadronOf,
   type SquadronBoat,
@@ -102,6 +114,129 @@ export interface KrakenTarget {
 }
 
 export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
+
+/** Cruiser legs split into hops of at most this span. Short hops fit one
+ * budgeted trial search AND keep the search box hugging the leg, so coastal
+ * detours stay inside the box instead of exhausting it. Short legs route
+ * cheap and arrive; arrival draws the next leg from where the fleet sits. */
+const FLEET_HOP_LENGTH_CELLS = 16;
+
+/** Cap for one leg-level route search when a fleet (re)builds its chain.
+ * One routed leg subdivides into walkable-by-construction hops, so this
+ * single search amortizes over the whole leg lifetime. One attempt per tick. */
+const LEG_ROUTE_NODE_CAP = 32768;
+
+/** Seconds a flagship goes without holding any route before its cruising
+ * leg is declared blocked and re-planned from where it sits. Some legs
+ * point across water that only connects via detours no boxed search can
+ * fit; facing another spoke beats retrying the same span forever. */
+const SQUADRON_LEG_STALE_SECONDS = 60;
+
+/** Lattice spacing between station slots around a fleet hop. Rank 0 is the
+ * flagship on the hop; the rest fan out instead of stacking. */
+const FLEET_FORMATION_SPACING_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
+
+/** Adoption radius for a shared fleet route: members farther than this from
+ * every shared cell fall back to their own search. */
+const FLEET_ROUTE_REJOIN_CELLS = 8;
+
+/** Snap radius for blind chain points and formation slots: hops and berths
+ * land on the nearest sailable cell within this many cells, so a leg drawn
+ * across a peninsula still aims at water. Anything farther out keeps the old
+ * direct-steer fallback rather than dragging the aim across the map. */
+const FLEET_SNAP_RADIUS_CELLS = 12;
+
+/** Cohesion margin around the flagship: members this far ahead slow down to
+ * let the fleet catch up, and the flagship slows when its worst straggler
+ * trails beyond it. Never a full hold (see the floor below): zero stride is
+ * a freeze no timeout clears — a member past twice the margin during muster
+ * would sit forever while the flagship waits on it. Sized to clear formation
+ * slots plus snap drift, so holding station never reads as straggling. */
+const FLEET_COHESION_MARGIN_CELLS = 24;
+
+/** Floor under the cohesion slowdown: a fleet slows together, never to zero. */
+const FLEET_COHESION_MIN_FACTOR = 0.25;
+
+function cohesionSlowdown(offsetCells: number): number {
+  if (offsetCells <= FLEET_COHESION_MARGIN_CELLS) return 1;
+  if (offsetCells >= FLEET_COHESION_MARGIN_CELLS * 2) return 0;
+  return 1 - (offsetCells - FLEET_COHESION_MARGIN_CELLS) / FLEET_COHESION_MARGIN_CELLS;
+}
+
+/** Speed factor keeping a fleet together. Members ahead of the flagship along
+ * the fleet bearing ease off; the flagship eases off for stragglers behind.
+ * No hard gate: one stuck boat slows its fleet, never freezes it. */
+function fleetCohesion(boat: Boat, squadronId: number, goalX: number, goalY: number): number {
+  const members = squadronMembers(squadronId);
+  if (members.length < 2) return 1;
+  const flagship = boatPosition(members[0]);
+  if (flagship === null) return 1;
+  let dx = goalX - flagship.x;
+  let dy = goalY - flagship.y;
+  let length = Math.hypot(dx, dy);
+  if (length <= 0) {
+    dx = boat.x - flagship.x;
+    dy = boat.y - flagship.y;
+    length = Math.hypot(dx, dy);
+    if (length <= 0) return 1;
+  }
+  dx /= length;
+  dy /= length;
+  if (boat.id === members[0]) {
+    let worstBehind = 0;
+    for (const id of members) {
+      if (id === boat.id) continue;
+      const pos = boatPosition(id);
+      if (pos === null) continue;
+      const behind = -((pos.x - flagship.x) * dx + (pos.y - flagship.y) * dy);
+      if (behind > worstBehind) worstBehind = behind;
+    }
+    return cohesionSlowdown(worstBehind);
+  }
+  const ahead = (boat.x - flagship.x) * dx + (boat.y - flagship.y) * dy;
+  return cohesionSlowdown(ahead);
+}
+
+interface FleetChain {
+  legX: number;
+  legY: number;
+  points: Waypoint[];
+  index: number;
+}
+
+const fleetChains = new Map<number, FleetChain>();
+
+/** Last successful hop search per squadron, shared fleet-wide across ticks.
+ * The flagship writes it when its search lands; every member adopts from it
+ * instead of searching. Keyed by squadron; entries die with their chain, so
+ * a hop change can never serve a previous hop's cells. */
+const fleetSharedRoutes = new Map<number, { hopX: number; hopY: number; cells: RouteCell[] }>();
+
+/** Last searched hop route per squadron, for the `?waypoints` overlay's sailed
+ * lines. Written at the end of every tick from that tick's shared searches;
+ * entries for dissolved squadrons are pruned alongside the chains. Debug
+ * only: steering reads voyage routes, never this map. */
+const lastSailedBySquadron = new Map<number, readonly RouteCell[] | null>();
+
+function nearestRouteIndex(
+  cells: readonly RouteCell[],
+  x: number,
+  y: number,
+  capCells: number,
+): number {
+  let best = 0;
+  let bestSquared = Infinity;
+  for (let i = 0; i < cells.length; i++) {
+    const dx = cells[i].x + 0.5 - x;
+    const dy = cells[i].y + 0.5 - y;
+    const d = dx * dx + dy * dy;
+    if (d < bestSquared) {
+      bestSquared = d;
+      best = i;
+    }
+  }
+  return bestSquared <= capCells * capCells ? best : 0;
+}
 
 const BOAT_LOOKAHEAD_SECONDS = 1;
 
@@ -224,11 +359,26 @@ interface Voyage {
   goalX: number;
   goalY: number;
   noProgressSeconds: number;
+  /** Seconds with no route AND no net motion. Per-tick movement lies:
+   * dithering boats take full strides that sum to zero, and resync
+   * reports progress without displacement. Only a multi-tick window of
+   * net displacement is honest, so this accrues in whole windows. */
+  nullSeconds: number;
+  poolTried: boolean;
   slot: number | null;
   slotList: BerthList | null;
   heldTicks: number;
   sailedFrom: { x: number; y: number } | null;
   restSeconds: number;
+  /** Goal-closure window: range to the goal and route progress at the
+   * window start, plus its age in ticks. A routed boat progresses by
+   * following its route (index advances); a routeless boat progresses by
+   * closing on the goal. Orbiting a slot advances neither: the index sits
+   * at zero while the boat circles off-route. Displacement alone lies
+   * (dithering takes full strides summing to zero). */
+  anchorRange: number;
+  anchorRouteIndex: number;
+  anchorTicks: number;
 }
 
 const HELD_DISPLACEMENT_FRACTION = STRIDE_MIN_FRACTION / 2;
@@ -236,6 +386,11 @@ const HELD_DISPLACEMENT_FRACTION = STRIDE_MIN_FRACTION / 2;
 const CROWD_REST_SECONDS = 5;
 
 const HELD_TICKS_BEFORE_KEDGE = 5;
+
+/** Starvation window: goal closure is judged over this many ticks, so
+ * orbiting a slot (full strides, zero closure) cannot pass as progress.
+ * Fighting boats are exempt: holding station is tactical. */
+const STARVATION_WINDOW_TICKS = 40;
 
 type BerthList = 'station' | 'home' | 'squadron';
 
@@ -312,6 +467,7 @@ export function resetFleet(): void {
   villages.clear();
   shipyards.clear();
   voyages.clear();
+  fleetChains.clear();
   boats = [];
   nextBoatId = 1;
   noteTerrainChanged();
@@ -452,7 +608,7 @@ function surveyedLaunch(
     shipyard.surveyedSeconds += dt;
     if (shipyard.surveyedSeconds < COASTAL_RESURVEY_SECONDS) return shipyard.launch;
   }
-  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
+  const eroded = withCachedClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
 
   let launch: KrakenTarget | null = null;
   let shoreCells = 0;
@@ -557,12 +713,36 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
   }
 }
 
-function targetFor(boat: Boat, kraken: KrakenTarget | null): KrakenTarget | null {
-  if (kraken === null) return null;
-  if (distance(boat.homeX, boat.homeY, kraken.x, kraken.y) > VILLAGE_PATROL_RANGE_CELLS) {
-    return null;
+/** A kraken within one patrol range of a village answers with the nearest
+ * fleet: that fleet returns to attack it. Boats the kraken is already on
+ * top of fight back in self-defence whether or not a village is near. */
+function krakenNearVillage(kraken: KrakenTarget): boolean {
+  for (const village of villages.values()) {
+    if (distance(village.x, village.y, kraken.x, kraken.y) <= VILLAGE_PATROL_RANGE_CELLS) {
+      return true;
+    }
   }
-  return kraken;
+  return false;
+}
+
+/** Nearest live squadron to a point, by flagship position (ties: lower id). */
+function nearestSquadronTo(x: number, y: number): number | null {
+  let best: number | null = null;
+  let bestSquared = Infinity;
+  for (const squadronId of squadronIds()) {
+    const members = squadronMembers(squadronId);
+    if (members.length === 0) continue;
+    const flagship = boats.find((boat) => boat.id === members[0]);
+    if (flagship === undefined) continue;
+    const dx = flagship.x - x;
+    const dy = flagship.y - y;
+    const squared = dx * dx + dy * dy;
+    if (squared < bestSquared) {
+      bestSquared = squared;
+      best = squadronId;
+    }
+  }
+  return best;
 }
 
 export interface FleetOutcome {
@@ -587,6 +767,28 @@ function assignStationGoals(
 ): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
   if (kraken === null) return goals;
+  // Boats answering the kraken: any boat it is already on top of, plus the
+  // whole of the nearest fleet when a village is threatened. No boat is
+  // recalled by home: fleets stay together and answer as fleets.
+  const answering = new Set<number>();
+  for (let index = 0; index < boats.length; index++) {
+    if (
+      distance(boats[index].x, boats[index].y, kraken.x, kraken.y) <=
+      BOAT_ENGAGEMENT_RANGE_CELLS
+    ) {
+      answering.add(index);
+    }
+  }
+  if (krakenNearVillage(kraken)) {
+    const responder = nearestSquadronTo(kraken.x, kraken.y);
+    if (responder !== null) {
+      const wanted = new Set(squadronMembers(responder));
+      for (let index = 0; index < boats.length; index++) {
+        if (wanted.has(boats[index].id)) answering.add(index);
+      }
+    }
+  }
+  if (answering.size === 0) return goals;
   const slots = slotCountFor(stationRadius);
   const taken = new Set<number>();
   const pointOf = (slot: number): { x: number; y: number } => {
@@ -603,7 +805,7 @@ function assignStationGoals(
   };
   for (let index = 0; index < boats.length; index++) {
     const boat = boats[index];
-    if (targetFor(boat, kraken) === null) continue;
+    if (!answering.has(index)) continue;
     const prev = stickySlotIn(boat.id, 'station');
     if (prev !== null && prev < slots && !taken.has(prev)) {
       const pose = poseOf(prev);
@@ -636,12 +838,10 @@ function assignStationGoals(
 
 function homeBerthFor(
   index: number,
-  kraken: KrakenTarget | null,
   atSea: ReadonlyMap<number, StationGoal>,
   taken: KrakenTarget[],
 ): StationGoal | null {
   const boat = boats[index];
-  if (targetFor(boat, kraken) !== null) return null;
   if (atSea.has(index)) return null;
   const key = villageKey(boat.homeX, boat.homeY);
   const moorings = shipyards.get(key)?.moorings ?? [];
@@ -681,13 +881,14 @@ function homeBerthFor(
 }
 
 function assignHomeBerths(
-  kraken: KrakenTarget | null,
-  atSea: ReadonlyMap<number, StationGoal>,
+  station: ReadonlyMap<number, StationGoal>,
+  cruising: ReadonlyMap<number, StationGoal>,
 ): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
   const taken: KrakenTarget[] = [];
+  const atSea = new Map<number, StationGoal>([...station, ...cruising]);
   for (let index = 0; index < boats.length; index++) {
-    const goal = homeBerthFor(index, kraken, atSea, taken);
+    const goal = homeBerthFor(index, atSea, taken);
     if (goal !== null) goals.set(index, goal);
   }
   return goals;
@@ -703,6 +904,13 @@ const TICK_ROUTE_SEARCH_CAP = 8;
  * far below this (probes show 3-15); maze searches that would eat the whole
  * pool exhaust the trial instead and defer, retrying as the boat moves. */
 const TRIAL_NODE_BUDGET = 1024;
+
+/** Rescue budget for stuck boats: a capped draw from the shared tick pool.
+ * Whole-journey spans (a boat 300 cells from home) can never fit a trial;
+ * one capped pool search per stuck episode either brings it home or proves
+ * the span needs subdivision. Capped (not the whole pool) so one rescue
+ * cannot eat the tick; once-per-episode so failures cannot burn it yearly. */
+const STUCK_POOL_NODES = 8192;
 
 /** Beyond this chebyshev distance A* boxes dwarf the node pool, so boats steer
  * direct (today's null-route behavior) until they close within range. Far
@@ -723,6 +931,19 @@ function noteTerrainChanged(): void {
 
 const unreachableCache = new Map<string, number>();
 
+/** Spans that exhausted the trial, keyed like unreachableCache. A span that
+ * fills the box once fills it every tick until the terrain or the endpoints
+ * move; re-spending trials on it starves routable searches. Same cap. */
+const exhaustedCache = new Map<string, number>();
+
+function rememberExhausted(key: string): void {
+  if (!exhaustedCache.has(key) && exhaustedCache.size >= UNREACHABLE_CACHE_CAP) {
+    const oldest = exhaustedCache.keys().next();
+    if (!oldest.done) exhaustedCache.delete(oldest.value);
+  }
+  exhaustedCache.set(key, terrainVersion);
+}
+
 function rememberUnreachable(key: string): void {
   if (!unreachableCache.has(key) && unreachableCache.size >= UNREACHABLE_CACHE_CAP) {
     const oldest = unreachableCache.keys().next();
@@ -742,7 +963,7 @@ function currentSeaRegions(): SeaRegions | null {
   return null;
 }
 
-function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
+function maybeRebuildSeaRegions(world: BoatWorld): void {
   if (seaRegions !== null && seaRegionsVersion === terrainVersion) return;
   if (!seaRegionsDemand) return;
   const nowMs = performance.now();
@@ -751,6 +972,10 @@ function maybeRebuildSeaRegions(eroded: TerrainSampler): void {
   }
   seaRegionsDemand = false;
   seaRegionsLastBuildMs = nowMs;
+  // Uncached wrapper: a full-map scan touches each cell once, so a memo
+  // cache would be all insert cost and no hits. The per-tick wrapper stays
+  // cached; both dilate identically.
+  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
   seaRegions = labelSeaRegions(eroded, HULL_PROFILE);
   seaRegionsVersion = terrainVersion;
 }
@@ -772,6 +997,7 @@ interface FleetRouteDebug {
   sailSearches: number;
   sailDeferred: number;
   cacheHits: number;
+  exhaustedHits: number;
   regionHits: number;
   farSkips: number;
   expensive: number;
@@ -792,6 +1018,26 @@ interface FleetRouteDebug {
   followReplans: number;
   legFromCalls: number;
   legFromNulls: number;
+  legRouted: number;
+  legStraight: number;
+  legReplans: number;
+  sailRescue: number;
+  fleetChains: number;
+  fleetShared: number;
+  fleetSearches: number;
+  fleetHold: number;
+  fleetCohesion: number;
+  /** TEMP-DEBUG (revert): sailBoat outcome histogram per tick. */
+  tmpRefloat: number;
+  tmpRest: number;
+  tmpSettle: number;
+  tmpProbe: number;
+  tmpRoute: number;
+  tmpDirect: number;
+  tmpNoMove: number;
+  tmpStrideZero: number;
+  tmpMaxMove: number;
+  tmpBigMove: number;
 }
 
 function createFleetRouteDebug(): FleetRouteDebug {
@@ -805,6 +1051,7 @@ function createFleetRouteDebug(): FleetRouteDebug {
     sailSearches: 0,
     sailDeferred: 0,
     cacheHits: 0,
+    exhaustedHits: 0,
     regionHits: 0,
     farSkips: 0,
     expensive: 0,
@@ -816,31 +1063,47 @@ function createFleetRouteDebug(): FleetRouteDebug {
     followReplans: 0,
     legFromCalls: 0,
     legFromNulls: 0,
+    legRouted: 0,
+    legStraight: 0,
+    legReplans: 0,
+    fleetChains: 0,
+    fleetShared: 0,
+    fleetSearches: 0,
+    fleetHold: 0,
+    fleetCohesion: 0,
+    tmpRefloat: 0,
+    tmpRest: 0,
+    tmpSettle: 0,
+    tmpProbe: 0,
+    tmpRoute: 0,
+    tmpDirect: 0,
+    tmpNoMove: 0,
+    tmpStrideZero: 0,
+    tmpMaxMove: 0,
+    tmpBigMove: 0,
+    sailRescue: 0,
   };
 }
 
 function squadronNavigator(
   world: BoatWorld,
   eroded: TerrainSampler,
-  legBudget: RouteBudget,
   debug: FleetRouteDebug,
 ): SquadronNavigator {
   return {
-    rendezvousFor(homeX: number, homeY: number): SquadronWaypoint | null {
-      const moorings = shipyards.get(villageKey(homeX, homeY))?.moorings ?? [];
-      return moorings.length === 0 ? null : moorings[0];
-    },
-
-    isInHarbour(homeX: number, homeY: number, x: number, y: number): boolean {
-      return distance(x, y, homeX, homeY) <= BERTH_SEARCH_RADIUS_CELLS;
-    },
-
     legFrom(
       fromX: number,
       fromY: number,
       seed: number,
       attempt: number,
     ): SquadronWaypoint | null {
+      // Pose-only draw: the fleet subdivides the leg into short hops and
+      // pathfinds once per hop, so no long A* runs here. Legs stay inside
+      // the departure sea region: a leg no boat can sail only builds chains
+      // whose hops sit on land.
+      const regions = currentSeaRegions();
+      const fromRegion =
+        regions === null ? 0 : regionAt(regions, world.worldSize, fromX, fromY);
       const spoke = (seed + attempt) % SQUADRON_WAYPOINT_ATTEMPTS;
       const bearing = (spoke * FULL_TURN_RADIANS) / SQUADRON_WAYPOINT_ATTEMPTS;
       const dx = Math.cos(bearing);
@@ -853,17 +1116,14 @@ function squadronNavigator(
         const x = fromX + dx * reach;
         const y = fromY + dy * reach;
         if (!isManoeuvrablePose(world, eroded, x, y, bearing)) continue;
+        if (regions !== null && fromRegion !== 0) {
+          const goalRegion = regionAt(regions, world.worldSize, x, y);
+          if (goalRegion !== 0 && goalRegion !== fromRegion) continue;
+        }
         debug.legFromCalls++;
-        const plan = findRoute(
-          eroded,
-          HULL_PROFILE,
-          { x: fromX, y: fromY },
-          { x, y },
-          legBudget,
-        );
-        if (plan === null) debug.legFromNulls++;
-        else return { x, y };
+        return { x, y };
       }
+      debug.legFromNulls++;
       return null;
     },
   };
@@ -881,13 +1141,76 @@ function villageRanks(): number[] {
   return ranks;
 }
 
+/** Route a fleet leg once and stride the route into hops. Returns null
+ * when the leg won't route (different sea regions, no pool left, search
+ * fails) so the caller falls back to straight subdivision. Hops sampled
+ * from route cells are walkable by construction. */
+function routeLegPoints(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  flagship: { x: number; y: number },
+  leg: SquadronWaypoint,
+  budget: RouteBudget,
+  debug: FleetRouteDebug,
+): Waypoint[] | null {
+  if (budget.remaining <= 0) return null;
+  const regions = currentSeaRegions();
+  const fromRegion =
+    regions === null ? 0 : regionAt(regions, world.worldSize, flagship.x, flagship.y);
+  const goalRegion =
+    regions === null ? 0 : regionAt(regions, world.worldSize, leg.x, leg.y);
+  if (regions !== null && fromRegion !== 0 && goalRegion !== 0 && fromRegion !== goalRegion) {
+    return null;
+  }
+  const allowance = Math.min(budget.remaining, LEG_ROUTE_NODE_CAP);
+  const legBudget = createRouteBudget(allowance);
+  const outcome = findRouteWithStatus(
+    eroded,
+    HULL_PROFILE,
+    { x: flagship.x, y: flagship.y },
+    { x: leg.x, y: leg.y },
+    legBudget,
+  );
+  budget.remaining -= allowance - legBudget.remaining;
+  if (outcome.plan === null) {
+    if (outcome.status === 'unreachable') {
+      rememberUnreachable(
+        `${Math.floor(flagship.x)},${Math.floor(flagship.y)}>` +
+          `${Math.floor(leg.x)},${Math.floor(leg.y)}`,
+      );
+    }
+    if (isPerfLoggingEnabled()) {
+      perfLogLine(
+        `[tick] boats legroute failed status=${outcome.status} ` +
+          `spent=${allowance - legBudget.remaining} regions=${fromRegion}>${goalRegion}`,
+      );
+    }
+    return null;
+  }
+  const points: Waypoint[] = [];
+  for (let i = 0; i < outcome.plan.cells.length; i += FLEET_HOP_LENGTH_CELLS) {
+    points.push({ x: outcome.plan.cells[i].x, y: outcome.plan.cells[i].y });
+  }
+  const last = outcome.plan.cells[outcome.plan.cells.length - 1];
+  const tail = points[points.length - 1];
+  if (tail === undefined || tail.x !== last.x || tail.y !== last.y) {
+    points.push({ x: last.x, y: last.y });
+  }
+  if (points.length === 0) return null;
+  if (isPerfLoggingEnabled()) {
+    perfLogLine(
+      `[tick] boats legroute ok cells=${outcome.plan.cells.length} hops=${points.length}`,
+    );
+  }
+  return points;
+}
+
 function assignSquadronGoals(
   world: BoatWorld,
   eroded: TerrainSampler,
-  kraken: KrakenTarget | null,
-  legBudget: RouteBudget,
   dt: number,
   debug: FleetRouteDebug,
+  budget: RouteBudget,
 ): Map<number, StationGoal> {
   const ranks = villageRanks();
   const candidates: SquadronBoat[] = [];
@@ -895,7 +1218,6 @@ function assignSquadronGoals(
   for (let index = 0; index < boats.length; index++) {
     const boat = boats[index];
     if (ranks[index] < HOME_GUARD_BOATS_PER_VILLAGE) continue;
-    if (targetFor(boat, kraken) !== null) continue;
     candidates.push({
       id: boat.id,
       x: boat.x,
@@ -905,16 +1227,97 @@ function assignSquadronGoals(
     });
     indexOfBoat.set(boat.id, index);
   }
-  const waypoints = advanceSquadrons(
-    candidates,
-    squadronNavigator(world, eroded, legBudget, debug),
-    dt,
-  );
+  const nav = squadronNavigator(world, eroded, debug);
+  const waypoints = advanceSquadrons(candidates, nav, dt);
+  const positionOf = new Map<number, SquadronBoat>();
+  for (const boat of candidates) positionOf.set(boat.id, boat);
+  const liveSquadrons = new Set<number>();
+  for (const boatId of waypoints.keys()) {
+    const squadronId = squadronOf(boatId);
+    if (squadronId !== null) liveSquadrons.add(squadronId);
+  }
+  for (const squadronId of [...fleetChains.keys()]) {
+    if (!liveSquadrons.has(squadronId)) fleetChains.delete(squadronId);
+  }
+  for (const squadronId of [...fleetSharedRoutes.keys()]) {
+    if (!fleetChains.has(squadronId)) fleetSharedRoutes.delete(squadronId);
+  }
+  // One shared chain per fleet: the squadron draws the coarse leg, the
+  // fleet routes it once around barriers, and the flagship cursor drives
+  // every member along the subdivided route. Hops sampled from route cells
+  // are walkable by construction; straight subdivision is only the fallback
+  // when the leg itself won't route.
+  const arrivalSquared = SQUADRON_MUSTER_RADIUS_CELLS * SQUADRON_MUSTER_RADIUS_CELLS;
+  const hops = new Map<number, SquadronWaypoint>();
+  let legRoutedThisTick = false;
+  for (const squadronId of [...liveSquadrons].sort((a, b) => a - b)) {
+    const members = squadronMembers(squadronId);
+    const flagship = positionOf.get(members[0]);
+    let leg = flagship === undefined ? undefined : waypoints.get(flagship.id);
+    if (flagship === undefined || leg === undefined) continue;
+    const flagshipVoyage = voyages.get(flagship.id);
+    if (
+      flagshipVoyage !== undefined &&
+      flagshipVoyage.nullSeconds > SQUADRON_LEG_STALE_SECONDS
+    ) {
+      const fresh = replanSquadronLeg(
+        squadronId,
+        { x: flagship.x, y: flagship.y },
+        flagship,
+        nav,
+      );
+      if (fresh !== null && (fresh.x !== leg.x || fresh.y !== leg.y)) {
+        leg = fresh;
+        debug.legReplans++;
+      }
+    }
+    let chain = fleetChains.get(squadronId);
+    if (chain === undefined || chain.legX !== leg.x || chain.legY !== leg.y) {
+      let points: Waypoint[] | null = null;
+      if (!legRoutedThisTick) {
+        legRoutedThisTick = true;
+        points = routeLegPoints(world, eroded, flagship, leg, budget, debug);
+      }
+      if (points === null) {
+        const built = buildWaypointChain(
+          { x: flagship.x, y: flagship.y },
+          [leg],
+          FLEET_HOP_LENGTH_CELLS,
+        );
+        const raw = built.length > 0 ? built : [{ x: leg.x, y: leg.y }];
+        points = raw.map((hop) =>
+          snapWaypointToWalkable(eroded, HULL_PROFILE, hop.x, hop.y, FLEET_SNAP_RADIUS_CELLS),
+        );
+        debug.legStraight++;
+      } else {
+        debug.legRouted++;
+      }
+      chain = {
+        legX: leg.x,
+        legY: leg.y,
+        points,
+        index: 0,
+      };
+      fleetChains.set(squadronId, chain);
+    }
+    while (chain.index < chain.points.length) {
+      const hop = chain.points[chain.index];
+      const dx = flagship.x - hop.x;
+      const dy = flagship.y - hop.y;
+      if (dx * dx + dy * dy > arrivalSquared) break;
+      chain.index++;
+    }
+    hops.set(squadronId, chain.points[Math.min(chain.index, chain.points.length - 1)]);
+  }
+  debug.fleetChains = fleetChains.size;
   const goals = new Map<number, StationGoal>();
-  for (const [boatId, waypoint] of waypoints) {
+  for (const boatId of waypoints.keys()) {
+    const squadronId = squadronOf(boatId);
+    const hop = squadronId === null ? undefined : hops.get(squadronId);
+    if (hop === undefined) continue;
     const index = indexOfBoat.get(boatId);
     if (index === undefined) continue;
-    goals.set(index, { x: waypoint.x, y: waypoint.y, standoff: 0, slot: null });
+    goals.set(index, { x: hop.x, y: hop.y, standoff: 0, slot: null });
   }
   return goals;
 }
@@ -967,6 +1370,11 @@ interface SailTick {
   budget: RouteBudget;
   debug: FleetRouteDebug;
   searchesLeft: number;
+  fleetRoutes: Map<number, { hopX: number; hopY: number; cells: RouteCell[] | null }>;
+  /** Squadrons with a shared route this tick: members hold once anyone
+   * has shared. Failed attempts do NOT mark, so a fleet whose flagship
+   * cannot bridge its span still sails when any member can. */
+  fleetSearched: Set<number>;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
   goals: Map<number, StationGoal>;
@@ -995,6 +1403,50 @@ function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: num
 
 const CELL_CENTRE_OFFSET = 0.5;
 
+/** One capped rescue search from the shared tick pool for a stuck boat. The
+ * caller gates this to once per stuck episode; the cap keeps one rescue from
+ * eating the tick. Deducts what it spends so later searches see the pool. */
+function rescueRoute(
+  tick: SailTick,
+  eroded: TerrainSampler,
+  boat: Boat,
+  goalX: number,
+  goalY: number,
+): { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null {
+  const allowance = Math.min(tick.budget.remaining, STUCK_POOL_NODES);
+  const rescue = createRouteBudget(allowance);
+  const outcome = findRouteWithStatus(
+    eroded,
+    HULL_PROFILE,
+    { x: boat.x, y: boat.y },
+    { x: goalX, y: goalY },
+    rescue,
+  );
+  tick.budget.remaining -= allowance - rescue.remaining;
+  if (outcome.status === 'unreachable') {
+    rememberUnreachable(
+      `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
+        `${Math.floor(goalX)},${Math.floor(goalY)}`,
+    );
+  }
+  return outcome.plan;
+}
+
+/** Rescue is due when a cruising boat is definitionally failing: physically
+ * stuck, or chronically routeless (creeping without a route never clears
+ * this). Station approaches never rescue: shuffling into engagement is
+ * tactical crowd behavior, and a pool route to a drifting station slot
+ * changes combat dynamics. */
+function rescueDue(tick: SailTick, voyage: Voyage, cruising: boolean): boolean {
+  return (
+    cruising &&
+    (voyage.noProgressSeconds > BOAT_STUCK_SECONDS ||
+      voyage.nullSeconds > BOAT_STUCK_SECONDS) &&
+    !voyage.poolTried &&
+    tick.budget.remaining > 0
+  );
+}
+
 function sailBoat(tick: SailTick, index: number): void {
   const {
     world,
@@ -1019,10 +1471,32 @@ function sailBoat(tick: SailTick, index: number): void {
     earlier.heldTicks = moved < step * HELD_DISPLACEMENT_FRACTION ? earlier.heldTicks + 1 : 0;
     earlier.sailedFrom = null;
   }
+  if (earlier !== undefined && !boat.fighting) {
+    earlier.anchorTicks++;
+    if (earlier.anchorTicks >= STARVATION_WINDOW_TICKS) {
+      const range = distance(boat.x, boat.y, earlier.goalX, earlier.goalY);
+      const closed = earlier.anchorRange - range;
+      const followed =
+        earlier.route !== null && earlier.routeIndex > earlier.anchorRouteIndex;
+      const progressed = earlier.route === null ? closed >= step : followed;
+      if (!progressed) {
+        earlier.noProgressSeconds += STARVATION_WINDOW_TICKS * dt;
+        if (earlier.route === null) earlier.nullSeconds += STARVATION_WINDOW_TICKS * dt;
+      } else {
+        earlier.noProgressSeconds = 0;
+        earlier.nullSeconds = 0;
+        earlier.poolTried = false;
+      }
+      earlier.anchorRange = range;
+      earlier.anchorRouteIndex = earlier.routeIndex;
+      earlier.anchorTicks = 0;
+    }
+  }
   const manoeuvrable = isManoeuvrablePose(world, eroded, boat.x, boat.y, boat.heading, step);
   if (!manoeuvrable) {
     boat.fighting = false;
     refloat(world, eroded, boat, step);
+    tick.debug.tmpRefloat++;
     if (earlier !== undefined) earlier.heldTicks = 0;
     return;
   }
@@ -1032,11 +1506,15 @@ function sailBoat(tick: SailTick, index: number): void {
   }
   if (earlier !== undefined && earlier.restSeconds > 0) {
     earlier.restSeconds -= dt;
-    boat.fighting = targetFor(boat, kraken) !== null &&
-      distance(boat.x, boat.y, kraken!.x, kraken!.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
+    tick.debug.tmpRest++;
+    boat.fighting =
+      kraken !== null &&
+      goals.has(index) &&
+      distance(boat.x, boat.y, kraken.x, kraken.y) <= BOAT_ENGAGEMENT_RANGE_CELLS;
     return;
   }
-  const target = targetFor(boat, kraken);
+  const station = goals.get(index);
+  const target = station !== undefined && kraken !== null ? kraken : null;
   let goalX: number;
   let goalY: number;
   let standoff: number;
@@ -1044,9 +1522,32 @@ function sailBoat(tick: SailTick, index: number): void {
   const squadron = target === null ? squadronGoals.get(index) : undefined;
   const slotList: BerthList =
     target !== null ? 'station' : squadron !== undefined ? 'squadron' : 'home';
+  const squadronId = squadron !== undefined ? squadronOf(boat.id) : null;
+  let squadronRank = 0;
+  if (squadron !== undefined && squadronId !== null) {
+    const rank = squadronMembers(squadronId).indexOf(boat.id);
+    squadronRank = rank < 0 ? 0 : rank;
+  }
   if (squadron !== undefined) {
-    goalX = squadron.x;
-    goalY = squadron.y;
+    // Fleet station: flagship takes the hop, members fan out on lattice
+    // slots. Member slots snap to sailable water: a lattice offset past a
+    // shoreline is an unreachable search goal, which is how boats park on
+    // beaches. The flagship takes the hop raw — chain points are walkable
+    // by construction, and re-snapping here can drift its goal outside the
+    // chain-arrival radius, freezing the cursor (and the fleet) forever.
+    const slot = waypointForMember(squadron, squadronRank, FLEET_FORMATION_SPACING_CELLS);
+    const berth =
+      slot.x === squadron.x && slot.y === squadron.y
+        ? slot
+        : snapWaypointToWalkable(
+            eroded,
+            HULL_PROFILE,
+            slot.x,
+            slot.y,
+            FLEET_SNAP_RADIUS_CELLS,
+          );
+    goalX = Math.min(Math.max(berth.x, 0.5), world.worldSize - 0.5);
+    goalY = Math.min(Math.max(berth.y, 0.5), world.worldSize - 0.5);
     standoff = squadron.standoff;
     slotIndex = squadron.slot;
   } else if (target === null) {
@@ -1070,10 +1571,21 @@ function sailBoat(tick: SailTick, index: number): void {
 
   let voyage = voyages.get(boat.id);
   const settle = (holdX: number, holdY: number): void => {
+    tick.debug.tmpSettle++;
+    if (voyage !== undefined) {
+      adoptGoal(holdX, holdY);
+      voyage.noProgressSeconds = 0;
+      voyage.nullSeconds = 0;
+      voyage.poolTried = false;
+      voyage.anchorRange = 0;
+      voyage.anchorRouteIndex = 0;
+      voyage.anchorTicks = 0;
+    }
+  };
+  const adoptGoal = (holdX: number, holdY: number): void => {
     if (voyage !== undefined) {
       voyage.goalX = holdX;
       voyage.goalY = holdY;
-      voyage.noProgressSeconds = 0;
       voyage.slot = slotIndex;
       voyage.slotList = slotList;
     }
@@ -1103,18 +1615,26 @@ function sailBoat(tick: SailTick, index: number): void {
       goalX,
       goalY,
       noProgressSeconds: 0,
+      nullSeconds: 0,
+      poolTried: false,
       slot: null,
       slotList: null,
       heldTicks: 0,
       sailedFrom: null,
       restSeconds: 0,
+      anchorRange: distance(boat.x, boat.y, goalX, goalY),
+      anchorRouteIndex: 0,
+      anchorTicks: 0,
     };
     voyages.set(boat.id, voyage);
   }
+  // The stuck gate is inclusive: windowed accrual lands on exactly
+  // BOAT_STUCK_SECONDS after two stagnant windows, matching the old
+  // per-tick cadence that kept approaches fresh.
   if (
     voyage.route === null ||
     distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS ||
-    voyage.noProgressSeconds > BOAT_STUCK_SECONDS
+    voyage.noProgressSeconds >= BOAT_STUCK_SECONDS
   ) {
     const debug = tick.debug;
     debug.sailPlans++;
@@ -1122,18 +1642,87 @@ function sailBoat(tick: SailTick, index: number): void {
     else if (voyage.noProgressSeconds > BOAT_STUCK_SECONDS) debug.sailStuck++;
     else debug.sailDrift++;
     let plan: { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null = null;
-    if (tick.searchesLeft <= 0) {
+    const shared =
+      squadron !== undefined && squadronId !== null
+        ? tick.fleetRoutes.get(squadronId)
+        : undefined;
+    const persisted =
+      shared !== undefined || squadron === undefined || squadronId === null
+        ? undefined
+        : fleetSharedRoutes.get(squadronId);
+    const live = shared ?? persisted;
+    const fresh =
+      live !== undefined &&
+      squadron !== undefined &&
+      live.hopX === squadron.x &&
+      live.hopY === squadron.y;
+    if (fresh) {
+      // Pathfound once per fleet: the flagship searched this hop (this tick
+      // or an earlier one) and everyone adopts its cells at their nearest
+      // index, steering to their own station slots from there.
+      debug.fleetShared++;
+      if (live.cells !== null) {
+        voyage.route = [...live.cells];
+        voyage.routeIndex = nearestRouteIndex(
+          live.cells,
+          boat.x,
+          boat.y,
+          FLEET_ROUTE_REJOIN_CELLS,
+        );
+      } else {
+        voyage.route = null;
+        voyage.routeIndex = 0;
+        debug.sailNulls++;
+        debug.sailNullBoats.add(boat.id);
+      }
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
+      if (live.cells !== null) {
+        voyage.noProgressSeconds = 0;
+        voyage.poolTried = false;
+      }
+    } else if (
+      squadron !== undefined &&
+      squadronId !== null &&
+      squadronRank !== 0 &&
+      (tick.fleetSearched.has(squadronId) || tick.searchesLeft <= 0)
+    ) {
+      // Fleet members never search: the flagship pathfinds once per hop and
+      // the fleet adopts. Hold formation on the current route; null it only
+      // when the hop moved on (goal drift), so a stale route never leads a
+      // member at the previous hop. A failed flagship search stays local
+      // instead of nulling the whole fleet for a tick.
+      debug.fleetHold++;
+      if (distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS) {
+        voyage.route = null;
+        voyage.routeIndex = 0;
+      }
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
+    } else if (tick.searchesLeft <= 0) {
       debug.sailDeferred++;
     } else if (
       Math.max(Math.abs(boat.x - goalX), Math.abs(boat.y - goalY)) > ROUTE_DIRECT_RANGE_CELLS
     ) {
-      debug.farSkips++;
+      // Whole-journey spans never fit a trial; a failing boat may spend one
+      // capped rescue from the pool instead of burning trials on them.
+      if (rescueDue(tick, voyage, target === null)) {
+        voyage.poolTried = true;
+        debug.sailRescue++;
+        plan = rescueRoute(tick, eroded, boat, goalX, goalY);
+      } else {
+        debug.farSkips++;
+      }
     } else {
       const key =
         `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
         `${Math.floor(goalX)},${Math.floor(goalY)}`;
       if (unreachableCache.get(key) === terrainVersion) {
         debug.cacheHits++;
+      } else if (exhaustedCache.get(key) === terrainVersion && !rescueDue(tick, voyage, target === null)) {
+        // Same span filled the box on this terrain version and no rescue is
+        // due: re-spending the trial would starve routable searches.
+        debug.exhaustedHits++;
       } else {
         const regions = currentSeaRegions();
         const fromRegion =
@@ -1154,7 +1743,10 @@ function sailBoat(tick: SailTick, index: number): void {
             { x: goalX, y: goalY },
             trial,
           );
-          if (outcome.status === 'exhausted') debug.expensive++;
+          if (outcome.status === 'exhausted') {
+            debug.expensive++;
+            rememberExhausted(key);
+          }
           if (debug.probe === null) {
             debug.probe = {
               sx: boat.x,
@@ -1169,18 +1761,43 @@ function sailBoat(tick: SailTick, index: number): void {
           }
           if (outcome.status === 'unreachable') rememberUnreachable(key);
           plan = outcome.plan;
+          if (plan === null && outcome.status === 'exhausted' && rescueDue(tick, voyage, target === null)) {
+            voyage.poolTried = true;
+            debug.sailRescue++;
+            plan = rescueRoute(tick, eroded, boat, goalX, goalY);
+          }
         }
       }
     }
-    if (plan === null) {
-      debug.sailNulls++;
-      debug.sailNullBoats.add(boat.id);
+    if (!fresh) {
+      if (plan === null) {
+        debug.sailNulls++;
+        debug.sailNullBoats.add(boat.id);
+      }
+      voyage.route = plan === null ? null : [...plan.cells];
+      voyage.routeIndex = 0;
+      voyage.goalX = goalX;
+      voyage.goalY = goalY;
+      if (plan !== null) {
+        voyage.noProgressSeconds = 0;
+        voyage.poolTried = false;
+      }
+      if (squadron !== undefined && squadronId !== null && voyage.route !== null) {
+        const cells = [...voyage.route];
+        tick.fleetSearched.add(squadronId);
+        tick.fleetRoutes.set(squadronId, {
+          hopX: squadron.x,
+          hopY: squadron.y,
+          cells,
+        });
+        fleetSharedRoutes.set(squadronId, {
+          hopX: squadron.x,
+          hopY: squadron.y,
+          cells,
+        });
+        debug.fleetSearches++;
+      }
     }
-    voyage.route = plan === null ? null : [...plan.cells];
-    voyage.routeIndex = 0;
-    voyage.goalX = goalX;
-    voyage.goalY = goalY;
-    voyage.noProgressSeconds = 0;
   }
   voyage.slot = slotIndex;
   voyage.slotList = slotList;
@@ -1202,13 +1819,31 @@ function sailBoat(tick: SailTick, index: number): void {
     aimBearing = Math.atan2(goalY - boat.y, goalX - boat.x);
   }
   const advance = strideFactorFor(Math.abs(normalizeAngle(aimBearing - boat.heading)));
-  const stride = Math.min(step, range - standoff) * advance;
+  let cohesion = 1;
+  if (squadron !== undefined && squadronId !== null) {
+    // Muster gathers at full speed: cohesion would only slow members down on
+    // their way to the rendezvous. Cruising holds formation but never to
+    // zero stride.
+    if (squadronPhase(squadronId) === 'cruising') {
+      cohesion = Math.max(
+        fleetCohesion(boat, squadronId, goalX, goalY),
+        FLEET_COHESION_MIN_FACTOR,
+      );
+    }
+    if (cohesion < 1) tick.debug.fleetCohesion++;
+  }
+  const stride = Math.min(step, range - standoff) * advance * cohesion;
   const turnThisTick = Math.min(maxTurnRadians, stride / BOAT_TIGHTEST_TURN_RADIUS_CELLS);
   if (voyage.route === null && range > 0) {
     const probeX = boat.x + ((goalX - boat.x) / range) * stride;
     const probeY = boat.y + ((goalY - boat.y) / range) * stride;
     if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
-      settle(goalX, goalY);
+      // Blocked, not arrived: adopt the goal (so drift tracking stays
+      // honest) but hold position WITHOUT settling. Starvation is judged
+      // by the net-motion window at the top of sailBoat, which already ran
+      // this tick, so a persistent block escalates to rescue / re-plan.
+      adoptGoal(goalX, goalY);
+      tick.debug.tmpProbe++;
       return;
     }
   }
@@ -1239,8 +1874,28 @@ function sailBoat(tick: SailTick, index: number): void {
   voyage.route = helm.route;
   voyage.routeIndex = helm.routeIndex;
   if (result.replanned) tick.debug.followReplans++;
-  if (result.replanned || result.progressed) voyage.noProgressSeconds = 0;
-  else voyage.noProgressSeconds += dt;
+  if (voyage.route !== null &&
+    voyage.sailedFrom !== null &&
+    distance(boat.x, boat.y, voyage.sailedFrom.x, voyage.sailedFrom.y) < 0.001) {
+    tick.debug.tmpNoMove++;
+  }
+  if (voyage.route !== null && voyage.sailedFrom !== null) {
+    const tmpMove = distance(boat.x, boat.y, voyage.sailedFrom.x, voyage.sailedFrom.y);
+    if (tmpMove > tick.debug.tmpMaxMove) tick.debug.tmpMaxMove = tmpMove;
+    if (tmpMove > 0.1) tick.debug.tmpBigMove++;
+  }
+  if (stride < 0.001) tick.debug.tmpStrideZero++;
+  if (voyage.route !== null) tick.debug.tmpRoute++;
+  else tick.debug.tmpDirect++;
+  // Only a genuine replan resets the stuck clock: resync "progress" without
+  // displacement is the lie that hid dithering fleets. Net motion is judged
+  // by the window at the top of sailBoat.
+  if (result.replanned) {
+    voyage.noProgressSeconds = 0;
+    voyage.poolTried = false;
+  }
+  // Routeless time accrues in the net-motion window above; per-tick
+  // accrual here would re-arm the dithering lie.
 }
 
 function resolveOverlaps(
@@ -1302,7 +1957,7 @@ export function advanceFleet(
 ): FleetOutcome {
   advanceShipyards(world, dt);
 
-  const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
+  const eroded = withCachedClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
 
   applyStormWind(world, eroded);
 
@@ -1313,21 +1968,21 @@ export function advanceFleet(
   const maxTurnRadians = BOAT_TURN_RADIANS_PER_SECOND * dt;
   const stationRadius = boatStationRadiusCells(dt);
   const budget: RouteBudget = createRouteBudget();
-  const legBudget: RouteBudget = createRouteBudget();
   const krakenOccupant: Occupant | null =
     kraken === null
       ? null
       : { x: kraken.x, y: kraken.y, radiusCells: KRAKEN_BODY_RADIUS_CELLS };
-  maybeRebuildSeaRegions(eroded);
+  maybeRebuildSeaRegions(world);
   const debug: FleetRouteDebug = createFleetRouteDebug();
   debug.bumps = terrainChangeBumps;
   terrainChangeBumps = 0;
   debug.tver = terrainVersion;
   debug.rver = seaRegions === null ? -1 : seaRegionsVersion;
   debug.rcount = seaRegions === null ? -1 : seaRegions.regionCount;
+  // Squadrons form first: the kraken answer needs live fleets to choose from.
+  const squadronGoals = assignSquadronGoals(world, eroded, dt, debug, budget);
   const goals = assignStationGoals(world, eroded, kraken, stationRadius);
-  const squadronGoals = assignSquadronGoals(world, eroded, kraken, legBudget, dt, debug);
-  const homeGoals = assignHomeBerths(kraken, squadronGoals);
+  const homeGoals = assignHomeBerths(goals, squadronGoals);
 
   const tick: SailTick = {
     world,
@@ -1346,6 +2001,8 @@ export function advanceFleet(
     homeGoals,
     debug,
     searchesLeft: TICK_ROUTE_SEARCH_CAP,
+    fleetRoutes: new Map(),
+    fleetSearched: new Set(),
   };
 
   let engaged = 0;
@@ -1357,6 +2014,13 @@ export function advanceFleet(
   }
   if (fleetSize > 0) sailCursor = (sailCursor + 1) % fleetSize;
 
+  for (const [squadronId, shared] of tick.fleetRoutes) {
+    lastSailedBySquadron.set(squadronId, shared.cells);
+  }
+  for (const squadronId of [...lastSailedBySquadron.keys()]) {
+    if (!fleetChains.has(squadronId)) lastSailedBySquadron.delete(squadronId);
+  }
+
   resolveOverlaps(world, eroded, kraken, step);
 
   routeLogCooldownMs -= dt * 1000;
@@ -1364,17 +2028,27 @@ export function advanceFleet(
     routeLogCooldownMs += ROUTE_LOG_INTERVAL_MS;
     perfLogLine(
       `[tick] boats routes budget=${budget.remaining}/${ROUTE_NODE_BUDGET} ` +
-        `leg=${legBudget.remaining}/${ROUTE_NODE_BUDGET} ` +
         `sailPlans=${debug.sailPlans} sailNulls=${debug.sailNulls} ` +
         `(repeat=${debug.sailRepeat} drift=${debug.sailDrift} stuck=${debug.sailStuck}) ` +
         `searches=${debug.sailSearches} deferred=${debug.sailDeferred} ` +
-        `cache=${debug.cacheHits} region=${debug.regionHits} ` +
+        `cache=${debug.cacheHits} xcache=${debug.exhaustedHits} region=${debug.regionHits} ` +
         `far=${debug.farSkips} ` +
         `expensive=${debug.expensive} ` +
+        `fleets=${debug.fleetChains} shared=${debug.fleetShared} fsearch=${debug.fleetSearches} ` +
+        `hold=${debug.fleetHold} cohere=${debug.fleetCohesion} ` +
+        `rescue=${debug.sailRescue} ` +
         `bumps=${debug.bumps} tv=${debug.tver} rv=${debug.rver} rc=${debug.rcount} ` +
         `nullBoats=${debug.sailNullBoats.size} followReplans=${debug.followReplans} ` +
         `legFrom=${debug.legFromCalls} legNulls=${debug.legFromNulls} ` +
-        `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()}`,
+        `legroute=${debug.legRouted}/${debug.legStraight} legreplan=${debug.legReplans} ` +
+        `TMP reflow=${debug.tmpRefloat} rest=${debug.tmpRest} settle=${debug.tmpSettle} ` +
+        `probe=${debug.tmpProbe} route=${debug.tmpRoute} direct=${debug.tmpDirect} ` +
+        `nomove=${debug.tmpNoMove} stride0=${debug.tmpStrideZero} ` +
+        `maxmove=${debug.tmpMaxMove.toFixed(3)} bigmove=${debug.tmpBigMove} ` +
+        `TMPM ${boats.map((b) => `${b.id}:${b.x.toFixed(1)},${b.y.toFixed(1)}`).join(' ')} ` +
+        `boats=${boats.length} villages=${villages.size} squadrons=${squadronCount()} ` +
+        `form=${formationStats().candidates}/crews=${formationStats().crews}/` +
+        `affiliated=${formationStats().affiliated}/stray=${formationStats().unaffiliated}`,
     );
     if (debug.probe !== null) {
       const p = debug.probe;
@@ -1382,6 +2056,28 @@ export function advanceFleet(
         `[tick] boats probe from=(${p.sx.toFixed(1)},${p.sy.toFixed(1)}) ` +
           `to=(${p.gx.toFixed(1)},${p.gy.toFixed(1)}) regions=${p.fr}>${p.gr} ` +
           `${p.status} spent=${p.spent}`,
+      );
+    }
+    for (const chain of fleetWaypointDebug().chains) {
+      const hop = chain.hops[Math.min(chain.cursor, chain.hops.length - 1)];
+      const members = squadronMembers(chain.id);
+      const flagId = members.length > 0 ? members[0] : -1;
+      const flagVoyage = voyages.get(flagId);
+      const flagPos = boatPosition(flagId);
+      const flagDist =
+        flagPos === null || hop === undefined
+          ? '?'
+          : Math.hypot(flagPos.x - hop.x, flagPos.y - hop.y).toFixed(0);
+      perfLogLine(
+        `[tick] boats squadron #${chain.id} cursor=${chain.cursor}/${chain.hops.length} ` +
+          `hop=(${hop === undefined ? '?,?' : `${hop.x.toFixed(0)},${hop.y.toFixed(0)}`}) ` +
+          `sailed=${chain.sailed.length} members=${chain.members} ` +
+          `crew=[${(chain.crew ?? []).join(',')}] ` +
+          `flag=${flagId} null=${flagVoyage?.nullSeconds.toFixed(1) ?? '?'} ` +
+          `stuck=${flagVoyage?.noProgressSeconds.toFixed(1) ?? '?'} ` +
+          `phase=${squadronPhase(chain.id) ?? '?'} ` +
+          `TMP fpos=${flagPos === null ? '?' : `${flagPos.x.toFixed(2)},${flagPos.y.toFixed(2)}`} ` +
+          `route=${flagVoyage?.route?.length ?? 0} dist=${flagDist}`,
       );
     }
   }
@@ -1447,6 +2143,30 @@ export function boatPosition(id: number): { x: number; y: number } | null {
   return boat === undefined ? null : { x: boat.x, y: boat.y };
 }
 
+/** TEMP-DEBUG (revert): voyage internals for engagement tracing. */
+export function tmpVoyageOf(id: number): {
+  route: number;
+  routeIndex: number;
+  noProgress: number;
+  nullSeconds: number;
+  poolTried: boolean;
+  goalX: number;
+  goalY: number;
+} | null {
+  const v = voyages.get(id);
+  return v === undefined
+    ? null
+    : {
+        route: v.route?.length ?? 0,
+        routeIndex: v.routeIndex,
+        noProgress: v.noProgressSeconds,
+        nullSeconds: v.nullSeconds,
+        poolTried: v.poolTried,
+        goalX: v.goalX,
+        goalY: v.goalY,
+      };
+}
+
 export function burnBoats(ids: readonly number[]): number {
   const doomed = new Set(ids);
   const before = boats.length;
@@ -1465,12 +2185,44 @@ export function boatStates(worldSize: number): BoatState[] {
   }));
 }
 
+/** Debug-only snapshot of every live fleet chain for the `?waypoints` overlay.
+ * Read-only over the chains `assignSquadronGoals` already maintains: the
+ * anchor is the flagship's current position (what the chain was built from),
+ * `hops` are the subdivided points ending at the leg goal, and `cursor` is
+ * the flagship's hop. Never read back; visualisation only. */
+export function fleetWaypointDebug(): WaypointDebugFrame {
+  const chains: WaypointChainSnapshot[] = [];
+  for (const [squadronId, chain] of fleetChains) {
+    const members = squadronMembers(squadronId);
+    const flagship = members.length > 0 ? boatPosition(members[0]) : null;
+    const firstHop = chain.points[0];
+    const anchor = flagship ?? firstHop ?? { x: chain.legX, y: chain.legY };
+    const sailed = lastSailedBySquadron.get(squadronId) ?? null;
+    chains.push({
+      id: squadronId,
+      label: `squadron ${squadronId}`,
+      anchor: { x: anchor.x, y: anchor.y },
+      hops: chain.points.map((hop) => ({ x: hop.x, y: hop.y })),
+      cursor: Math.max(0, Math.min(chain.index, chain.points.length)),
+      members: members.length,
+      spacing: FLEET_FORMATION_SPACING_CELLS,
+      crew: [...members],
+      sailed:
+        sailed === null
+          ? []
+          : sailed
+              .slice(0, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)
+              .map((cell) => ({ x: cell.x + 0.5, y: cell.y + 0.5 })),
+    });
+  }
+  return { chains };
+}
+
 export function fleetSnapshot(): {
   villages: Village[];
   boats: Boat[];
   nextBoatId: number;
-} {
-  return { villages: [...villages.values()], boats: [...boats], nextBoatId };
+} {  return { villages: [...villages.values()], boats: [...boats], nextBoatId };
 }
 
 export function restoreFleet(saved: {

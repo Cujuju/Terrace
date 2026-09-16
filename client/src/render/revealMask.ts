@@ -6,7 +6,8 @@ import {
   UnsignedByteType,
 } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
-import { any, positionWorld, texture, uniform, vec2 } from 'three/tsl';
+import { compose, discard } from './materialSlots.ts';
+import { float, positionWorld, smoothstep, texture, uniform } from 'three/tsl';
 import {
   CELL_WORLD_SIZE,
   CHUNK_SIZE,
@@ -14,7 +15,6 @@ import {
   chunkIndex,
 } from '@terrace/shared';
 import type { TerrainMirror } from '../terrain/mirror.ts';
-import { discard } from './materialSlots.ts';
 
 export function revealedAtCell(mirror: TerrainMirror, x: number, y: number): boolean {
   const size = mirror.map.size;
@@ -96,10 +96,16 @@ export function createRevealMask(worldSize: number): RevealMask {
     applyRevealClip(material: NodeMaterial, label: string): void {
       material.name = label;
       const revealUv = positionWorld.xz.div(spanNode);
-      discard(
-        material,
-        any(revealUv.lessThan(vec2(0))).or(any(revealUv.greaterThan(vec2(1)))),
+      // One chunk inside the world border, in reveal-UV units: the sky feathers out
+      // over the rim instead of slicing where a disc overhangs the map edge.
+      const feather = float(worldUnitsPerChunk).div(spanNode);
+      const edgeX = smoothstep(0, feather, revealUv.x).mul(
+        float(1).sub(smoothstep(float(1).sub(feather), 1, revealUv.x)),
       );
+      const edgeY = smoothstep(0, feather, revealUv.y).mul(
+        float(1).sub(smoothstep(float(1).sub(feather), 1, revealUv.y)),
+      );
+      compose(material, 'opacity', (previous) => previous.mul(edgeX.mul(edgeY)));
       discard(material, maskNode.sample(revealUv).r.lessThan(REVEAL_CLIP_THRESHOLD));
       material.needsUpdate = true;
     },

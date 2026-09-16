@@ -12,6 +12,7 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { weldFlatShaded } from '../../../client/src/render/weld.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
   FLORA_FRINGE_CAP,
   FRINGE_CLUSTER_CELL_SPAN,
@@ -201,8 +202,8 @@ function assertStemFitsPlant(species: FringeSpecies, horizontalReachInCells: num
   }
 }
 
-function lambert(color: number): MeshLambertMaterial {
-  return new MeshLambertMaterial({ color, flatShading: true, side: DoubleSide });
+function lambert(): MeshLambertMaterial {
+  return new MeshLambertMaterial({ vertexColors: true, flatShading: true, side: DoubleSide });
 }
 
 interface SpeciesMeshes {
@@ -235,8 +236,10 @@ export function createFringeModels(): FringeModels {
     const offsets = fringeStemOffsets(species);
     const capacity = FLORA_FRINGE_CAP * offsets.length;
 
-    const baseMaterial = lambert(shape.baseColor);
-    const tipMaterial = lambert(shape.tipColor);
+    bakeSolidColor(built.base, shape.baseColor);
+    bakeSolidColor(built.tip, shape.tipColor);
+    const baseMaterial = lambert();
+    const tipMaterial = baseMaterial;
     const base = new InstancedMesh(built.base, baseMaterial, capacity);
     const tip = new InstancedMesh(built.tip, tipMaterial, capacity);
     base.name = `flora:fringe-${species}-base`;

@@ -1,4 +1,5 @@
-import { Group, PointLight } from 'three';
+import { Group, type PointLight } from 'three';
+import { createLightBank } from '../../../client/src/plugins/kit/lightBank.ts';
 import type { FireInstance } from './flames/types.ts';
 
 export const FIRE_LIGHT_POOL_SIZE = 4;
@@ -25,10 +26,13 @@ export const FIRE_LIGHT_HANDOVER_SECONDS = 0.3;
 
 const HANDOVER_RAMP_SECONDS = FIRE_LIGHT_HANDOVER_SECONDS / 2;
 
+const FIRE_LIGHT_NAME = 'fire:light';
+
 export interface FireLights {
   readonly root: Group;
   update(fires: readonly FireInstance[], dt: number): void;
   darken(): void;
+  dispose(): void;
 }
 
 type SlotPhase = 'steady' | 'fadingOut' | 'fadingIn';
@@ -45,13 +49,21 @@ export function createFireLights(): FireLights {
   const root = new Group();
   root.name = 'fire:lights';
 
-  const slots: LightSlot[] = [];
-  for (let index = 0; index < FIRE_LIGHT_POOL_SIZE; index++) {
-    const light = new PointLight(FIRE_LIGHT_COLOR, 0, FIRE_LIGHT_RANGE_WORLD_UNITS);
-    light.visible = true;
-    root.add(light);
-    slots.push({ light, heldKey: 0, pendingKey: 0, phase: 'steady', envelope: 0 });
-  }
+  const bank = createLightBank({
+    size: FIRE_LIGHT_POOL_SIZE,
+    color: FIRE_LIGHT_COLOR,
+    range: FIRE_LIGHT_RANGE_WORLD_UNITS,
+    name: FIRE_LIGHT_NAME,
+    parent: root,
+  });
+
+  const slots: LightSlot[] = bank.lights.map((light) => ({
+    light,
+    heldKey: 0,
+    pendingKey: 0,
+    phase: 'steady',
+    envelope: 0,
+  }));
 
   let sinceReassignSeconds = FIRE_LIGHT_REASSIGN_SECONDS;
 
@@ -254,6 +266,10 @@ export function createFireLights(): FireLights {
         state.envelope = 0;
         state.light.intensity = 0;
       }
+    },
+
+    dispose(): void {
+      bank.dispose();
     },
   };
 }

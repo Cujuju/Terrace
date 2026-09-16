@@ -5,8 +5,8 @@ import {
   cellsOverArea,
   createSeededRng,
 } from '@terrace/shared';
-import { FLORA_TREE_CAP, treeCellOf, treeKey, type TreeCell } from '../protocol.ts';
-import { isGreenBand, isPlantableCell, type FloraWorld } from './bands.ts';
+import { FLORA_TREE_CAP, hasTreeClearance, treeCellOf, treeKey, type TreeCell } from '../protocol.ts';
+import { isTreeBand, isTreeCell, type FloraWorld } from './bands.ts';
 import type { StabilityMap } from './stability.ts';
 
 export const FLORA_SURVEY_INTERVAL_SECONDS = 5;
@@ -107,11 +107,21 @@ export class Forest {
     return false;
   }
 
+  private hasClearance(world: FloraWorld, x: number, y: number): boolean {
+    return hasTreeClearance((nx, ny) => world.heightAt(nx, ny), world.worldSize, x, y);
+  }
+
   private cull(world: FloraWorld, isOccupied: OccupancyPredicate): TreeCell[] {
     const felled: TreeCell[] = [];
     for (const key of this.standing) {
       const cell = treeCellOf(key);
-      if (isPlantableCell(world, cell.x, cell.y) && !isOccupied(cell.x, cell.y)) continue;
+      if (
+        isTreeCell(world, cell.x, cell.y) &&
+        !isOccupied(cell.x, cell.y) &&
+        this.hasClearance(world, cell.x, cell.y)
+      ) {
+        continue;
+      }
       felled.push(cell);
     }
     for (const cell of felled) this.standing.delete(treeKey(cell.x, cell.y));
@@ -143,7 +153,7 @@ export class Forest {
       const y = baseY + dy;
       for (let dx = 0; dx < CHUNK_SIZE; dx++) {
         const x = baseX + dx;
-        if (!isGreenBand(world.heightAt(x, y))) continue;
+        if (!isTreeBand(world.heightAt(x, y))) continue;
         if (!stability.isStable(x, y, nowSeconds)) continue;
         if (isOccupied(x, y)) continue;
 
@@ -178,9 +188,10 @@ export class Forest {
     for (const key of this.candidates) {
       if (quota <= 0) break;
       const cell = treeCellOf(key);
-      if (!isPlantableCell(world, cell.x, cell.y)) continue;
+      if (!isTreeCell(world, cell.x, cell.y)) continue;
       if (!stability.isStable(cell.x, cell.y, nowSeconds)) continue;
       if (isBarred(cell.x, cell.y)) continue;
+      if (!this.hasClearance(world, cell.x, cell.y)) continue;
       if (this.isCrowded(cell.x, cell.y)) continue;
       if (!this.plant(cell.x, cell.y)) continue;
       grown.push(cell);

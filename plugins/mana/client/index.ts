@@ -7,10 +7,14 @@ import {
   MANA_DENIED_MESSAGE,
   MANA_PLUGIN_NAME,
   parseManaBalancePayload,
-  parseManaDeniedPayload,
 } from '../protocol.ts';
 import { ManaGauge } from './ManaGauge.tsx';
-import { applyBalancePush, applyDenial, gateLocalSculpt, recordDenial } from './state.ts';
+import {
+  applyBalancePush,
+  gateLocalSculpt,
+  handleManaDenied,
+  setLocalTerritory,
+} from './state.ts';
 
 const MANA_DRAW_OBJECTS = 0;
 
@@ -20,15 +24,18 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: MANA_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
+    // The HUD quote prices the frontier under the aim, and has no intent to
+    // read the reveal mask from; the gate still gets it per intent.
+    setLocalTerritory(ctx);
+
     ctx.onMessage(MANA_BALANCE_MESSAGE, (payload) => {
       const pool = parseManaBalancePayload(payload);
       if (pool !== null) applyBalancePush(pool);
     });
     ctx.onMessage(MANA_DENIED_MESSAGE, (payload) => {
-      const denied = parseManaDeniedPayload(payload);
-      if (denied === null) return;
-      applyDenial(denied);
-      recordDenial();
+      // Brush-refused pulse + denied cost for the hint; the gauge flash reads
+      // deniedCount and the cost hint reads lastDeniedCost (see state.ts).
+      handleManaDenied(payload);
     });
     ctx.registerHudPanel(ManaGauge, { placement: 'bottom-right' });
 

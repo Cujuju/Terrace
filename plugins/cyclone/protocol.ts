@@ -20,12 +20,15 @@ export const FREQUENCY_INTERVAL_MULTIPLIERS: Readonly<Record<'rare' | 'common', 
   common: 0.5,
 };
 
-export const CYCLONE_SURGE_SETTING_KEY = 'cyclone-surge';
+// One switch for everything a cyclone does to the ground: surge and wind scour.
+export const CYCLONE_DAMAGE_SETTING_KEY = 'cyclone-damage';
 
-export const CYCLONE_SURGE_MODES = ['off', 'on'] as const;
-export type CycloneSurgeMode = (typeof CYCLONE_SURGE_MODES)[number];
+export const CYCLONE_DAMAGE_FORMER_SETTING_KEYS = ['cyclone-surge'] as const;
 
-export const DEFAULT_CYCLONE_SURGE_MODE: CycloneSurgeMode = 'on';
+export const CYCLONE_DAMAGE_MODES = ['off', 'on'] as const;
+export type CycloneDamageMode = (typeof CYCLONE_DAMAGE_MODES)[number];
+
+export const DEFAULT_CYCLONE_DAMAGE_MODE: CycloneDamageMode = 'on';
 
 export function parseFrequency(value: string | undefined): CycloneFrequency {
   return CYCLONE_FREQUENCIES.includes(value as CycloneFrequency)
@@ -33,10 +36,10 @@ export function parseFrequency(value: string | undefined): CycloneFrequency {
     : DEFAULT_CYCLONE_FREQUENCY;
 }
 
-export function parseSurgeMode(value: string | undefined): CycloneSurgeMode {
-  return CYCLONE_SURGE_MODES.includes(value as CycloneSurgeMode)
-    ? (value as CycloneSurgeMode)
-    : DEFAULT_CYCLONE_SURGE_MODE;
+export function parseDamageMode(value: string | undefined): CycloneDamageMode {
+  return CYCLONE_DAMAGE_MODES.includes(value as CycloneDamageMode)
+    ? (value as CycloneDamageMode)
+    : DEFAULT_CYCLONE_DAMAGE_MODE;
 }
 
 export const CYCLONE_BASIN_NAMES = ['hurricane', 'typhoon', 'cyclone'] as const;
@@ -82,8 +85,6 @@ export function cycloneNameFor(index: number, x: number, y: number, worldSize: n
   return `${basin.charAt(0).toUpperCase()}${basin.slice(1)} ${givenNameFor(index)}`;
 }
 
-export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
-
 export const CYCLONE_RADIUS_CELLS = cellsAcross(30);
 
 export const CYCLONE_MAX_RADIUS_WORLD_FRACTION = 0.3;
@@ -94,12 +95,37 @@ export function cycloneRadiusFor(worldSize: number): number {
 
 export const CYCLONE_EYE_RADIUS_FRACTION = 0.125;
 
+// The roster ceiling both halves size to: the server profile's cap and the
+// client's spiral slots.
+export const MAX_ACTIVE_CYCLONES = 1;
+
+export interface CycloneDamagePayload {
+  readonly stormId: number;
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly eyeRadius: number;
+  readonly intensity: number;
+  readonly durationSeconds: number;
+  readonly cells: ReadonlyArray<{
+    readonly x: number;
+    readonly y: number;
+    readonly severity: number;
+  }>;
+}
+
+export interface CycloneLandfallPayload {
+  readonly stormId: number;
+  readonly x: number;
+  readonly y: number;
+  readonly intensity: number;
+  readonly name?: string;
+}
+
 export {
   BROADCAST_POSITION_DECIMALS,
   parseRotatingStormsPayload as parseAllPayload,
   roundBroadcastIntensity,
   roundBroadcastPosition,
   type RotatingStormState as CycloneState,
-  type RotatingStormsPayload as CycloneAllPayload,
 } from '@terrace/shared';
-export { BROADCAST_INTENSITY_DECIMALS as CYCLONE_INTENSITY_DECIMALS } from '@terrace/shared';

@@ -1,6 +1,12 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHUNK_SIZE } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  DEFAULT_SCULPT_AMOUNT,
+  MAX_STEP,
+  RELAX_SLACK,
+  forEachFootprintOffset,
+} from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -9,7 +15,7 @@ import {
   MIN_WORLD_DIFFICULTY,
 } from '../src/config.ts';
 import { PluginLoadError, discoverPlugins } from '../src/plugins/discovery.ts';
-import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost } from '../src/plugins/host.ts';
+import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost, SECOND_LOOK_MODIFY_REASON } from '../src/plugins/host.ts';
 import { ALLOW } from '../src/plugins/types.ts';
 import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { namespacedMessageType } from '../src/plugins/world-api.ts';
@@ -179,6 +185,49 @@ describe('PluginHost', () => {
     const targeted = sink.ofType('terraformer:private');
     expect(targeted).toHaveLength(1);
     expect(targeted[0].target).toBe(PLAYER.id);
+  });
+
+  it('a plugin sculpt on flat ground moves dirt and its slopes are relaxed', () => {
+    let api: WorldApi | undefined;
+    const plugin: TerracePlugin = {
+      name: 'vent',
+      onWorldCreate(world): void {
+        api = world;
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0], [1, 0], [0, 1], [1, 1]]);
+    new PluginHost(world, [plugin].map(asLoadedPlugin)).worldCreate();
+    expect(api).toBeDefined();
+    if (!api) return;
+
+    const centre = CHUNK_SIZE;
+    const radius = 5;
+    const deposit = DEFAULT_SCULPT_AMOUNT * 4;
+    const cone = api.sculpt(centre, centre, radius, deposit);
+
+    expect(cone.length).toBeGreaterThan(0);
+    expect(world.heightAt(centre, centre)).toBeGreaterThan(0);
+    expect(cone.some((cell) => cell.x !== centre || cell.y !== centre)).toBe(true);
+    // A bare deposit would leave the apex at exactly `deposit`; relaxation sheds it.
+    expect(world.heightAt(centre, centre)).toBeLessThan(deposit);
+
+    const crater = api.sculpt(centre, CHUNK_SIZE * 3, radius, -deposit);
+    expect(crater.length).toBeGreaterThan(0);
+    expect(world.heightAt(centre, CHUNK_SIZE * 3)).toBeLessThan(0);
+
+    const footprint = new Set<string>();
+    forEachFootprintOffset(radius, (dx, dy) => {
+      footprint.add(`${centre + dx},${centre + dy}`);
+    });
+    for (const key of footprint) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      for (const [dx, dy] of [[1, 0], [0, 1]]) {
+        if (!footprint.has(`${x + dx},${y + dy}`)) continue;
+        const step = Math.abs(world.heightAt(x + dx, y + dy) - world.heightAt(x, y));
+        expect(step).toBeLessThanOrEqual(MAX_STEP + RELAX_SLACK);
+      }
+    }
   });
 
   it('exposes unlockChunkForToken and the per-player visibility reads on WorldApi', () => {
@@ -422,7 +471,7 @@ describe('PluginHost', () => {
     const verdict = host.runIntent(INTENT, PLAYER);
     errors.mockRestore();
 
-    expect(verdict.kind).toBe('deny');
+    expect(verdict).toEqual({ kind: 'deny', reason: SECOND_LOOK_MODIFY_REASON });
     expect(host.faultCount('a-flipflop')).toBe(1);
   });
 

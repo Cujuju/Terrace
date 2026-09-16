@@ -21,6 +21,7 @@ export function searchOutwardFromCentre(
     y: Math.floor(worldSize / 2),
   },
 ): { x: number; y: number } | null {
+  if (!Number.isFinite(centre.x) || !Number.isFinite(centre.y)) return null;
   for (let radius = 0; radius <= DEV_SEARCH_RADIUS_CELLS; radius += DEV_SEARCH_STEP_CELLS) {
     const spokes = radius === 0 ? 1 : DEV_SEARCH_SPOKES;
     for (let spoke = 0; spoke < spokes; spoke++) {

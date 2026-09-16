@@ -4,6 +4,7 @@ import {
   MAX_BAND,
   MAX_BRUSH_RADIUS,
   MAX_ROLLBACK_KEY_LENGTH,
+  LIBRARY_SCULPT_TOOL,
   MIN_BAND,
   SCULPT_TOOLS,
   sculptOptionsOf,
@@ -137,7 +138,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   it('honours whatever the intent DID name, and defaults only the rest', () => {
     expect(sculptOptionsOf({ ...base, tool: 'smooth' })).toEqual({
       tool: 'smooth',
-      profile: 'soft',
+      profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
@@ -173,9 +174,15 @@ describe('validateRestorePointsRequest', () => {
     });
   });
 
-  it('rejects a missing, empty, non-string or over-long key', () => {
+  it('accepts an empty key (an unkeyed server allows anything)', () => {
+    expect(validateRestorePointsRequest({ type: 'restorePoints', key: '' })).toEqual({
+      type: 'restorePoints',
+      key: '',
+    });
+  });
+
+  it('rejects a missing, non-string or over-long key', () => {
     expect(validateRestorePointsRequest({ type: 'restorePoints' })).toBeNull();
-    expect(validateRestorePointsRequest({ type: 'restorePoints', key: '' })).toBeNull();
     expect(validateRestorePointsRequest({ type: 'restorePoints', key: 42 })).toBeNull();
     expect(
       validateRestorePointsRequest({
@@ -213,8 +220,22 @@ describe('validateRollbackRequest', () => {
     }
   });
 
+  it('accepts an empty key (an unkeyed server allows anything)', () => {
+    expect(validateRollbackRequest({ type: 'rollback', key: '', toId: 7 })).toEqual({
+      type: 'rollback',
+      key: '',
+      toId: 7,
+    });
+  });
+
   it('rejects a bad key even when the id is fine', () => {
-    expect(validateRollbackRequest({ type: 'rollback', key: '', toId: 7 })).toBeNull();
+    expect(
+      validateRollbackRequest({
+        type: 'rollback',
+        key: 'x'.repeat(MAX_ROLLBACK_KEY_LENGTH + 1),
+        toId: 7,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -229,6 +250,20 @@ describe('targetBand — the drag field on the wire', () => {
         targetBand,
       });
     }
+  });
+
+  it('rejects a drag carrying no band — it would apply as a silent no-op', () => {
+    expect(validateSculptIntent({ ...drag }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...drag, fromX: 11, fromY: 21 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...drag, targetBand: 0 }, WORLD)).not.toBeNull();
+  });
+
+  it('rejects a spanBand on a drag — the cursor cell is not the grasped cell', () => {
+    expect(validateSculptIntent({ ...drag, targetBand: 2, spanBand: 2 }, WORLD)).toBeNull();
+    for (const tool of ['stamp', 'smooth'] as const) {
+      expect(validateSculptIntent({ ...base, tool, spanBand: 2 }, WORLD)).not.toBeNull();
+    }
+    expect(validateSculptIntent({ ...base, dir: -1, tool: 'carve', spanBand: 2 }, WORLD)).not.toBeNull();
   });
 
   it('rejects a band carried by anything but a drag, the absent tool included', () => {
@@ -288,22 +323,33 @@ describe('the tool set is the wire contract, not a local list', () => {
     expect(SCULPT_TOOLS).toEqual(['stamp', 'smooth', 'drag', 'carve']);
   });
 
+  it('refuses the library-only tool from the wire, whole intent and all', () => {
+    expect(SCULPT_TOOLS).not.toContain(LIBRARY_SCULPT_TOOL);
+    expect(validateSculptIntent({ ...base, tool: LIBRARY_SCULPT_TOOL }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, dir: 1, tool: LIBRARY_SCULPT_TOOL }, WORLD)).toBeNull();
+  });
+
   it('validates the two newest tools, not only the brushes', () => {
-    expect(validateSculptIntent({ ...base, tool: 'carve' }, WORLD)).toEqual({
+    expect(validateSculptIntent({ ...base, tool: 'carve', spanBand: 2 }, WORLD)).toEqual({
       ...base,
       tool: 'carve',
+      spanBand: 2,
     });
-    expect(validateSculptIntent({ ...base, tool: 'drag' }, WORLD)).toEqual({
+    expect(validateSculptIntent({ ...base, tool: 'drag', targetBand: 2 }, WORLD)).toEqual({
       ...base,
       tool: 'drag',
+      targetBand: 2,
     });
   });
 
   it('rejects a raising carve WITH the whole intent, never flipping it', () => {
-    expect(validateSculptIntent({ ...base, dir: 1, tool: 'carve' }, WORLD)).toBeNull();
-    for (const tool of ['stamp', 'smooth', 'drag'] as const) {
+    expect(validateSculptIntent({ ...base, dir: 1, tool: 'carve', spanBand: 2 }, WORLD)).toBeNull();
+    for (const tool of ['stamp', 'smooth'] as const) {
       expect(validateSculptIntent({ ...base, dir: 1, tool }, WORLD)).not.toBeNull();
     }
+    expect(
+      validateSculptIntent({ ...base, dir: 1, tool: 'drag', targetBand: 2 }, WORLD),
+    ).not.toBeNull();
   });
 
   it('resolves an edgeless tool to one profile whatever the intent carried', () => {
@@ -341,6 +387,19 @@ describe('spanBand — the grasp on the wire', () => {
     expect(validated).not.toBeNull();
     expect(Object.hasOwn(validated as object, 'spanBand')).toBe(false);
     expect(sculptOptionsOf({ ...base }).spanBand).toBeNull();
+  });
+
+  it('rejects a carve carrying no spanBand — it would open nothing and be acked', () => {
+    expect(validateSculptIntent({ ...base, tool: 'carve' }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'carve', spanBand: undefined }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'carve', spanBand: 2 }, WORLD)).not.toBeNull();
+  });
+
+  it('stays optional on the tools whose grasp defaults to the top span', () => {
+    for (const tool of ['stamp', 'smooth'] as const) {
+      expect(validateSculptIntent({ ...base, tool }, WORLD)).not.toBeNull();
+      expect(validateSculptIntent({ ...base, tool, spanBand: 3 }, WORLD)).not.toBeNull();
+    }
   });
 
   it('travels through the resolver untouched — the map resolves it, not this', () => {

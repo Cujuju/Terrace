@@ -86,6 +86,8 @@ export interface PluginSettingDeclaration {
   readonly key: string;
   readonly values: readonly string[];
   readonly defaultValue: string;
+  // Keys this setting was stored under before a rename; a saved world keeps its value.
+  readonly formerKeys?: readonly string[];
 }
 
 export interface PluginActionDeclaration {

@@ -219,7 +219,7 @@ function applyStumpChanges(left: readonly StumpCell[], rotted: readonly StumpCel
   for (const cell of left) stumps.set(stumpKey(cell.x, cell.y), cell);
 }
 
-const TREE_DRAW_OBJECTS = 3;
+const TREE_DRAW_OBJECTS = 4;
 const CROP_DRAW_OBJECTS = 2;
 const GRASS_DRAW_OBJECTS = 3;
 const STUMP_DRAW_OBJECTS = 2;

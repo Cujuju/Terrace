@@ -139,7 +139,17 @@ export function parseCropChangesPayload(
   return { sprouted, withered };
 }
 
-export const FLORA_TREE_KINDS = ['conifer', 'broadleaf'] as const;
+export const FLORA_TREE_KINDS = ['conifer', 'broadleaf', 'pine'] as const;
+
+/** Pines colonise the rock belt above the heather fringe, below the snow line. */
+export const FLORA_PINE_MIN_HEIGHT = GRASSLAND_MAX_HEIGHT + LAND_RAMP_ANCHOR_SPACING;
+
+export const FLORA_PINE_MAX_HEIGHT = SNOW_LINE_HEIGHT;
+
+export function isPineBand(height: number): boolean {
+  const bandFloor = Math.floor(height / BAND_HEIGHT) * BAND_HEIGHT;
+  return bandFloor >= FLORA_PINE_MIN_HEIGHT && bandFloor < FLORA_PINE_MAX_HEIGHT;
+}
 
 export type FloraTreeKind = (typeof FLORA_TREE_KINDS)[number];
 
@@ -178,6 +188,48 @@ export function treeVariation(x: number, y: number): FloraTreeVariation {
       FLORA_TREE_SCALE_MIN + (scaleRoll / 0xff) * (FLORA_TREE_SCALE_MAX - FLORA_TREE_SCALE_MIN),
     yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
   };
+}
+
+/** Height-aware kind: pines take the high belt, lower ground keeps the hash split. */
+export function treeKindAt(x: number, y: number, height: number): FloraTreeKind {
+  if (isPineBand(height)) return 'pine';
+  return treeVariation(x, y).kind;
+}
+
+/**
+ * Crown clearance, in cells. Covers the widest crown (broadleaf) at the
+ * largest scale roll, so every kind clears when this passes. Integer-only
+ * and deterministic on server and client.
+ */
+export const TREE_CLEARANCE_RADIUS_CELLS = 2;
+
+/**
+ * A neighbour may rise at most one band above the trunk base: the trunk is
+ * narrow enough to clear it, and the crown starts ~1.7 bands up. Anything
+ * higher would jut into the crown, so the cell has no room for a tree.
+ */
+export const TREE_CLEARANCE_MAX_RISE = BAND_HEIGHT;
+
+export function hasTreeClearance(
+  heightAt: (x: number, y: number) => number | null,
+  worldSize: number,
+  x: number,
+  y: number,
+): boolean {
+  const base = heightAt(x, y);
+  if (base === null) return false;
+  for (let dy = -TREE_CLEARANCE_RADIUS_CELLS; dy <= TREE_CLEARANCE_RADIUS_CELLS; dy++) {
+    for (let dx = -TREE_CLEARANCE_RADIUS_CELLS; dx <= TREE_CLEARANCE_RADIUS_CELLS; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= worldSize || ny >= worldSize) continue;
+      const neighbour = heightAt(nx, ny);
+      if (neighbour === null) continue;
+      if (neighbour - base > TREE_CLEARANCE_MAX_RISE) return false;
+    }
+  }
+  return true;
 }
 
 export const CROP_SCALE_MIN = 0.85;
@@ -247,7 +299,13 @@ export function cropStalkVariation(x: number, y: number, index: number): CropSta
   };
 }
 
-import { CONTOUR_CELL_CENTRE_GUARD } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CONTOUR_CELL_CENTRE_GUARD,
+  GRASSLAND_MAX_HEIGHT,
+  LAND_RAMP_ANCHOR_SPACING,
+  SNOW_LINE_HEIGHT,
+} from '@terrace/shared';
 
 const SQUARE_CIRCUMRADIUS_PER_EDGE = Math.SQRT2 / 2;
 

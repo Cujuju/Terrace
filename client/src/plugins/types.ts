@@ -92,6 +92,8 @@ export interface ClientPluginCtx {
 
   onFrame(handler: (dt: number) => void): () => void;
 
+  onWorldReset(handler: () => void): () => void;
+
   registerHudPanel(
     component: Component,
     options?: {

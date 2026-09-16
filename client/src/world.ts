@@ -1,19 +1,18 @@
 import {
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
-  bandOf,
   cellIndex,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
   quantizeToBand,
-  spanCount,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
   SculptAppliedMessage,
   SculptDeniedMessage,
+  SculptDeniedReason,
   SculptIntent,
   SculptTool,
   TerrainDiffMessage,
@@ -29,7 +28,11 @@ import {
   type TerrainMirror,
 } from './terrain/mirror.ts';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
-import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
+import {
+  setServerVersion,
+  setWorldIdentity,
+  type DenialHint,
+} from './state/hudState.ts';
 import { noteBuildIdentity } from './net/buildReload.ts';
 import {
   setPendingRestartSeconds,
@@ -89,8 +92,10 @@ import {
 } from './render/revealMask.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
+  bandAtCellIn,
   bandOfPick as bandOfPickIn,
   carveBandOfPick as carveBandOfPickIn,
+  graspSpanBandIn,
 } from './terrain/pickBand.ts';
 import {
   carveReachCell,
@@ -109,8 +114,42 @@ export interface LayerEdgeLight {
   readonly tool?: SculptTool;
 }
 
+/**
+ * Which line a sculpt denial shows: `locked` core-locked ground, `nest` a
+ * monster, `ward` relic bedrock, `mana-with-cost` mana. A malformed intent
+ * or wire skew is `refused`, not a lock.
+ */
+export type { DenialHint };
+
+/** The reasons that mean the ground itself said no; anything else is not a lock. */
+const LOCKED_DENIAL_REASONS: readonly SculptDeniedReason[] = [
+  'locked',
+  'plugin-denied',
+  'plugin-modified-invalid',
+];
+
+export function denialHintFor(
+  reason: SculptDeniedReason | undefined,
+  detail: string | undefined,
+): DenialHint {
+  const text = detail ?? '';
+  if (text.includes('ward')) return 'ward';
+  if (text.includes('mana')) return 'mana-with-cost';
+  if (text.includes('monster') || text.includes('occupies') || text.includes('nest')) {
+    return 'nest';
+  }
+  if (reason !== undefined && !LOCKED_DENIAL_REASONS.includes(reason)) return 'refused';
+  return 'locked';
+}
+
 export interface World extends TerrainSink {
   predictSculpt(intent: SculptIntent): void;
+  /** Hint text the last sculpt denial selected; null before the first denial. */
+  denialHint(): DenialHint | null;
+  /** How many sculpt denials have arrived; every one pulses the refused hold. */
+  deniedPulse(): number;
+  /** Seqs sent but predicting no-ops: lane E renders these as ghosts. */
+  ghostSeqs(): readonly number[];
   worldSize(): number;
   pickables(): Mesh[];
   revealedAt(x: number, y: number): boolean;
@@ -127,8 +166,9 @@ export interface World extends TerrainSink {
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
   setCreaseLook(look: CreaseLook): void;
   setBrushRefused(refused: boolean): void;
-  bandAtCell(x: number, y: number): number | null;
-  graspSpanBand(pick: TerrainRayPick | null): number | null;
+  /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
+  bandAtCell(x: number, y: number, spanBand: number | null): number | null;
+  graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   terrainHeightAt(x: number, y: number): number | null;
@@ -214,6 +254,17 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   let framedWorldSize = 0;
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // The last sculpt denial and how many arrived. ANY denial pulses the
+  // red-brush refused hold, fanned out by the main sink. This record only
+  // selects the hint text.
+  let lastDenial: {
+    readonly seq: number;
+    readonly reason: SculptDeniedReason | undefined;
+    readonly detail: string | undefined;
+    readonly hint: DenialHint;
+  } | null = null;
+  let deniedPulses = 0;
 
   const bandOfPick = (pick: TerrainRayPick): number | null =>
     mirror === null ? null : bandOfPickIn(mirror.map, pick);
@@ -499,10 +550,30 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       armExpiryTimer();
     },
 
+    denialHint(): DenialHint | null {
+      return lastDenial === null ? null : lastDenial.hint;
+    },
+
+    deniedPulse(): number {
+      return deniedPulses;
+    },
+
+    ghostSeqs(): readonly number[] {
+      return predictions?.ghostSeqs() ?? [];
+    },
+
     onSculptDenied(msg: SculptDeniedMessage): void {
-      if (meshes === null || predictions === null) return;
-      applyDirty(predictions.resolveSeq(msg.seq));
-      armExpiryTimer();
+      if (meshes !== null && predictions !== null) {
+        applyDirty(predictions.resolveSeq(msg.seq));
+        armExpiryTimer();
+      }
+      deniedPulses++;
+      lastDenial = {
+        seq: msg.seq,
+        reason: msg.reason,
+        detail: msg.detail,
+        hint: denialHintFor(msg.reason, msg.detail),
+      };
     },
 
     onSculptApplied(msg: SculptAppliedMessage): void {
@@ -545,10 +616,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
           ? null
           : carving
             ? carveBandOfPick(pick)
-            : pick.hitRiser
+            : pick.face === 'riser'
               ? bandOfPick(pick)
               : null);
-      const useHitPoint = carving || (pick !== null && pick.hitRiser);
+      const useHitPoint = carving || (pick !== null && pick.face === 'riser');
       const atX = pick === null ? 0 : useHitPoint ? pick.hitX : pick.x * CELL_WORLD_SIZE;
       const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
       return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;
@@ -564,14 +635,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setBrushRefused(refused: boolean): void {
       layerEdges?.setRefused(refused);
     },
-    bandAtCell(x: number, y: number): number | null {
+    bandAtCell(x: number, y: number, spanBand: number | null): number | null {
       if (mirror === null) return null;
-      return bandOf(sampleHeight(mirror, x, y));
+      return bandAtCellIn(mirror, x, y, spanBand);
     },
-    graspSpanBand(pick: TerrainRayPick | null): number | null {
+    graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;
-      if (spanCount(mirror.map, pick.x, pick.y) < 2) return null;
-      return bandOfPick(pick);
+      // The pick proves its own column holds the span; another column must be asked.
+      return graspSpanBandIn(mirror.map, pick, atX, atY);
     },
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;
@@ -579,7 +650,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
     carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null {
       if (mirror === null) return null;
-      return carveReachCell(mirror, origin, direction, band);
+      return carveReachCell(mirror, origin, direction, band, layerEdges);
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;

@@ -1,55 +1,32 @@
 import {
   type DiscSystemState,
-  cellsAcross,
   randomInRange,
   rollEvent,
   roundBroadcastIntensity,
   roundBroadcastPosition,
 } from '@terrace/shared';
+import {
+  DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
+  DISC_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS,
+  DISC_SPAWN_MARGIN_RADII,
+  type DiscSystem,
+  discActiveCapFor,
+  discHasLeftWorld,
+  discMaxRadiusFor,
+  discMeanRadiusFor,
+  discMinRadiusFor,
+} from './discGeometry.ts';
 
-export const DISC_MIN_ACTIVE_SYSTEMS = 1;
-
-export const DISC_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS = 20;
-
-export const DISC_EFFECTIVE_LIFETIME_SECONDS = 130;
-
-export const DISC_EQUILIBRIUM_OCCUPANCY =
-  DISC_EFFECTIVE_LIFETIME_SECONDS /
-  (DISC_EFFECTIVE_LIFETIME_SECONDS + DISC_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS);
+export * from './discGeometry.ts';
 
 export const DISC_MEAN_LIFETIME_SECONDS = 240;
 
 export const DISC_FADE_SECONDS = 30;
 
-export const DISC_SYSTEM_MIN_RADIUS_CELLS = cellsAcross(24);
-export const DISC_SYSTEM_MAX_RADIUS_CELLS = cellsAcross(56);
-
-export const DISC_DEFAULT_FOOTPRINT_AREA_SCALE = 1;
-
-export function discRadiusFactorFor(footprintAreaScale: number): number {
-  return Math.sqrt(footprintAreaScale);
-}
-
-export const DISC_MAX_RADIUS_WORLD_FRACTION = 0.35;
-
 export const DISC_MIN_PEAK_INTENSITY = 0.45;
 export const DISC_MAX_PEAK_INTENSITY = 1;
 
-export const DISC_SPAWN_MARGIN_RADII = 1;
-
-export const DISC_DESPAWN_MARGIN_RADII = 1.5;
-
 export const DISC_SITING_ATTEMPTS = 4;
-
-export interface DiscSystem {
-  readonly id: number;
-  x: number;
-  y: number;
-  readonly radius: number;
-  readonly peakIntensity: number;
-  envelope: number;
-  retiring: boolean;
-}
 
 export interface DiscCell {
   readonly x: number;
@@ -80,65 +57,11 @@ export interface DiscSystems {
   cells(): readonly DiscCell[];
   advance(worldSize: number, dt: number, velocity: DiscVelocity): void;
   spawnOne(worldSize: number): DiscSystem | null;
-  spawnAt(worldSize: number, x: number, y: number): DiscSystem;
+  spawnAt(worldSize: number, x: number, y: number): DiscSystem | null;
   force(forced: boolean): void;
   isForced(): boolean;
   intensityAt(x: number, y: number): number;
   states(velocity: DiscVelocity): DiscSystemState[];
-}
-
-export function discMinRadiusFor(
-  footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
-): number {
-  return DISC_SYSTEM_MIN_RADIUS_CELLS * discRadiusFactorFor(footprintAreaScale);
-}
-
-export function discMaxRadiusFor(
-  worldSize: number,
-  footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
-): number {
-  const fromWorld = worldSize * DISC_MAX_RADIUS_WORLD_FRACTION;
-  return Math.max(
-    discMinRadiusFor(footprintAreaScale),
-    Math.min(DISC_SYSTEM_MAX_RADIUS_CELLS * discRadiusFactorFor(footprintAreaScale), fromWorld),
-  );
-}
-
-export function discMeanRadiusFor(
-  worldSize: number,
-  footprintAreaScale: number = DISC_DEFAULT_FOOTPRINT_AREA_SCALE,
-): number {
-  return (
-    (discMinRadiusFor(footprintAreaScale) + discMaxRadiusFor(worldSize, footprintAreaScale)) / 2
-  );
-}
-
-export function discMeanFootprintCells(worldSize: number): number {
-  const a = DISC_SYSTEM_MIN_RADIUS_CELLS;
-  const b = discMaxRadiusFor(worldSize);
-  return (Math.PI * (a * a + a * b + b * b)) / 3;
-}
-
-export function discActiveCapFor(
-  worldSize: number,
-  coverageFraction: number,
-  ceiling: number,
-): number {
-  const spawnFieldEdge =
-    worldSize + 2 * discMeanRadiusFor(worldSize) * DISC_SPAWN_MARGIN_RADII;
-  const perSystemCoverage = discMeanFootprintCells(worldSize) / (spawnFieldEdge * spawnFieldEdge);
-  const wanted = Math.round(coverageFraction / perSystemCoverage / DISC_EQUILIBRIUM_OCCUPANCY);
-  return Math.max(DISC_MIN_ACTIVE_SYSTEMS, Math.min(ceiling, wanted));
-}
-
-export function discHasLeftWorld(system: DiscSystem, worldSize: number): boolean {
-  const margin = system.radius * DISC_DESPAWN_MARGIN_RADII;
-  return (
-    system.x < -margin ||
-    system.y < -margin ||
-    system.x > worldSize + margin ||
-    system.y > worldSize + margin
-  );
 }
 
 export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
@@ -156,7 +79,13 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     };
   }
 
-  function birth(x: number, y: number, radius: number, peakIntensity: number): DiscSystem {
+  function birth(
+    x: number,
+    y: number,
+    radius: number,
+    peakIntensity: number,
+  ): DiscSystem | null {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     const system: DiscSystem = {
       id: nextId++,
       x,
@@ -173,12 +102,13 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
   function advanceForced(worldSize: number, dt: number): void {
     const centre = worldSize / 2;
     if (systems.length === 0) {
-      birth(
+      const parked = birth(
         centre,
         centre,
         discMeanRadiusFor(worldSize, footprintAreaScale),
         DISC_MAX_PEAK_INTENSITY,
       );
+      if (parked === null) return;
     }
     const system = systems[0]!;
     system.x = centre;
@@ -187,10 +117,20 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
   }
 
   function capFor(worldSize: number): number {
-    return discActiveCapFor(worldSize, spec.coverageFraction, spec.maxActiveSystems);
+    return discActiveCapFor(
+      worldSize,
+      spec.coverageFraction,
+      spec.maxActiveSystems,
+      footprintAreaScale,
+    );
   }
 
+  // Two gates: natural and hub spawns stop at the coverage cap; a summoned
+  // system may pass it but never the client's draw ceiling.
   function spawnOne(worldSize: number): DiscSystem | null {
+    if (forced) return null;
+    if (systems.length >= capFor(worldSize)) return null;
+
     const radius = randomInRange(
       spec.random,
       discMinRadiusFor(footprintAreaScale),
@@ -224,6 +164,7 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
     reset(): void {
       systems.length = 0;
       nextId = 1;
+      forced = false;
     },
 
     capFor,
@@ -243,18 +184,15 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
 
     spawnOne,
 
-    spawnAt(worldSize: number, x: number, y: number): DiscSystem {
-      return birth(
-        x,
-        y,
-        discMeanRadiusFor(worldSize, footprintAreaScale),
-        DISC_MAX_PEAK_INTENSITY,
-      );
+    spawnAt(worldSize: number, x: number, y: number): DiscSystem | null {
+      if (forced) return null;
+      if (systems.length >= spec.maxActiveSystems) return null;
+      return birth(x, y, discMeanRadiusFor(worldSize, footprintAreaScale), DISC_MAX_PEAK_INTENSITY);
     },
 
     force(next: boolean): void {
+      if (next && !forced) systems.length = 0;
       forced = next;
-      systems.length = 0;
     },
 
     isForced(): boolean {
@@ -301,9 +239,10 @@ export function createDiscSystems(spec: DiscSystemsSpec): DiscSystems {
       for (const system of systems) {
         const dx = x - system.x;
         const dy = y - system.y;
-        if (dx * dx + dy * dy > system.radius * system.radius) continue;
-        const intensity = system.peakIntensity * system.envelope;
-        if (intensity > strongest) strongest = intensity;
+        if (dx * dx + dy * dy <= system.radius * system.radius) {
+          const intensity = system.peakIntensity * system.envelope;
+          if (intensity > strongest) strongest = intensity;
+        }
       }
       return Math.min(1, strongest);
     },

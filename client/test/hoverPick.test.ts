@@ -105,7 +105,7 @@ function driveInput(
     carveReach: (o, d, band) => carveReachCell(mirror, o, d, band),
     send: (intent) => {
       sent.push(intent);
-      return true;
+      return 'sent';
     },
   });
 
@@ -176,7 +176,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
     }
   });
 
-  it('keeps the aimed cell when the ground is LOWERED clear of the ray', () => {
+  it('re-marches past the aimed cell when the ground is LOWERED clear of the ray (F5)', () => {
     const mirror = flatWorld((x) => (x >= WALL_X ? BAND_HEIGHT * WALL_BAND : 0));
     const { input, dispose } = driveInput(
       mirror,
@@ -191,10 +191,10 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       setColumn(mirror.map, cell.x, cell.y, [{ floor: BEDROCK_FLOOR, ceiling: 0 }]);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
-      expect({ x: after!.x, y: after!.y }).toEqual(cell);
-      expect(after!.hitRiser).toBe(false);
-      expect(after!.hitY).toBe(after!.surfaceY);
-      expect(after!.surfaceY).toBe(bandY(-1));
+      // F5: the lowered column no longer fabricates a tread below the ray, so
+      // hover re-marches to the ray-true surface: the next wall riser.
+      expect({ x: after!.x, y: after!.y }).toEqual({ x: cell.x + 1, y: cell.y });
+      expect(after!.face).toBe('riser');
     } finally {
       dispose();
     }
@@ -214,7 +214,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       const struck = input.hoverTarget();
       expect(struck).not.toBeNull();
       expect(struck!.x).toBe(WALL_X);
-      expect(struck!.hitRiser).toBe(true);
+      expect(struck!.face).toBe('riser');
       const grabbed = resolvePick(mirror.map, struck!);
       const k = GROUND_BAND + 1;
       expect(grabbed).toEqual({ face: 'riser', band: k });
@@ -228,16 +228,15 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
 
       const next = input.hoverTarget();
       expect(next).not.toBeNull();
-      expect({ x: next!.x, y: next!.y }).toEqual({ x: struck!.x, y: struck!.y });
-      expect(next!.hitRiser).toBe(false);
-      expect(next!.hitY).toBe(next!.surfaceY);
-      expect(next!.spanIndex).toBe(0);
-
-      const noLipInReach = (): boolean => false;
-      expect(carveBandOfPick(mirror.map, next!, noLipInReach)).toBeNull();
-      const asTread = resolvePick(mirror.map, next!);
-      expect(asTread?.face).toBe('tread');
-      expect(asTread?.band).toBe(k - 1);
+      // F5: the carved-open column reads as open passage, so hover continues
+      // to the next ray-true surface instead of naming the tread below the
+      // cut. The #324 guarantee holds in the stronger form: the named band is
+      // the aimed band, never below it.
+      expect({ x: next!.x, y: next!.y }).toEqual({ x: struck!.x + 1, y: struck!.y });
+      expect(next!.face).toBe('riser');
+      const stillAimed = resolvePick(mirror.map, next!);
+      expect(stillAimed?.face).toBe('riser');
+      expect(stillAimed?.band).toBe(k);
     } finally {
       dispose();
     }
@@ -307,7 +306,7 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
     try {
       const struck = input.hoverTarget();
       expect(struck!.x).toBe(WALL_X);
-      expect(struck!.hitRiser).toBe(true);
+      expect(struck!.face).toBe('riser');
 
       fire('pointerdown', {});
       const CARVE_RADIUS_CELLS = 1;
@@ -315,7 +314,9 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
         tool: 'carve',
         spanBand: GROUND_BAND + 1,
       });
-      expect(input.hoverTarget()!.x).toBe(WALL_X);
+      // F5: the carved-open pinned column reads as open passage, so the preview
+      // re-marches past it. The stroke anchor was seeded at press and is unaffected.
+      expect(input.hoverTarget()!.x).toBe(WALL_X + 1);
 
       fire('pointerup', {});
       const after = input.hoverTarget();
@@ -437,4 +438,95 @@ describe('a held carve keeps the band it pressed on and tunnels inward (#349)', 
       dispose();
     }
   });
+
+  it('exposes the latched band to the preview while the stroke is armed', () => {
+    vi.useFakeTimers();
+    setBrushTool('carve');
+    setBrushRadius(1);
+    const mirror = flatWorld((x) =>
+      x >= WALL_X ? BAND_HEIGHT * WALL_BAND : BAND_HEIGHT * GROUND_BAND,
+    );
+    const rayY = bandY(GROUND_BAND + 0.5);
+    const { input, sent, fire, dispose } = driveInput(
+      mirror,
+      { x: cellW(WALL_X - 10), y: rayY, z: cellW(AIM_Z) },
+      { x: cellW(WALL_X), y: rayY, z: cellW(AIM_Z) },
+    );
+    try {
+      const k = GROUND_BAND + 1;
+      expect(input.carveHeldBand()).toBeNull();
+
+      fire('pointerdown', {});
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.spanBand).toBe(k);
+      expect(input.carveHeldBand()).toBe(k);
+      expect(input.heldBand()).toBeNull();
+
+      applyLast(mirror, sent);
+      vi.advanceTimersByTime(repeatDelayMs(0));
+      expect(sent.map((i) => i.spanBand)).toEqual([k, k]);
+      expect(input.carveHeldBand()).toBe(k);
+
+      fire('pointerup', {});
+      expect(input.carveHeldBand()).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe('a held stroke with a still pointer keeps its press-time cell (#WALK)', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  const HOLD_REPEATS = 8;
+  const EYE_DISTANCE_CELLS = 12;
+  const DEGREES_TO_RADIANS = Math.PI / 180;
+
+  const raiseHeld = (elevationDegrees: number): SculptIntent[] => {
+    const mirror = flatWorld(() => 0);
+    const eye = cellW(EYE_DISTANCE_CELLS);
+    const elevation = elevationDegrees * DEGREES_TO_RADIANS;
+    const { sent, fire, dispose } = driveInput(
+      mirror,
+      {
+        x: cellW(30) - eye * Math.cos(elevation),
+        y: eye * Math.sin(elevation),
+        z: cellW(30),
+      },
+      { x: cellW(30), y: 0, z: cellW(30) },
+    );
+    try {
+      fire('pointerdown', {});
+      for (let repeat = 0; repeat < HOLD_REPEATS; repeat++) {
+        const last = sent[sent.length - 1]!;
+        applySculpt(mirror.map, last.x, last.y, last.radius, BAND_HEIGHT, {
+          tool: last.tool ?? 'stamp',
+          profile: last.profile ?? 'soft',
+        });
+        vi.advanceTimersByTime(repeatDelayMs(repeat));
+      }
+      return [...sent];
+    } finally {
+      dispose();
+    }
+  };
+
+  for (const elevation of [90, 60, 45, 30]) {
+    it(`does not walk at ${elevation} degrees`, () => {
+      vi.useFakeTimers();
+      setBrushTool('stamp');
+      setBrushRadius(1);
+      const sent = raiseHeld(elevation);
+      expect(sent.length).toBeGreaterThan(HOLD_REPEATS);
+      const first = { x: sent[0]!.x, y: sent[0]!.y };
+      for (const intent of sent) {
+        expect({ x: intent.x, y: intent.y }).toEqual(first);
+      }
+    });
+  }
 });

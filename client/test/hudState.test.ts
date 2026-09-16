@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BRUSH_RADIUS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
 } from '@terrace/shared';
+import { REFUSED_PULSE_MS } from '../src/input/sculpt/contract.ts';
 
 const DEFAULT_RADIUS = WORLD_UNIT_CELLS;
 
@@ -387,5 +388,61 @@ describe('world identity', () => {
     const { hud, storage } = await freshHud();
     hud.setWorldIdentity({ name: 'Emberfall', difficulty: 50 });
     expect(storage.getItem(HUD_KEY) ?? '').not.toContain('Emberfall');
+  });
+});
+
+describe('the denial line clears itself', () => {
+  let raised: HudState | null = null;
+
+  afterEach(() => {
+    raised?.disposeDenialHint();
+    raised = null;
+    vi.useRealTimers();
+  });
+
+  it('shows nothing until a denial arrives, then clears on its own', async () => {
+    vi.useFakeTimers();
+    const { hud } = await freshHud();
+    raised = hud;
+    expect(hud.denialHint()).toBeNull();
+
+    hud.showDenialHint('nest');
+    expect(hud.denialHint()).toBe('nest');
+
+    vi.advanceTimersByTime(hud.DENIAL_HINT_VISIBLE_MS - 1);
+    expect(hud.denialHint()).toBe('nest');
+    vi.advanceTimersByTime(1);
+    expect(hud.denialHint()).toBeNull();
+  });
+
+  it('a second denial restarts the window instead of stacking timers', async () => {
+    vi.useFakeTimers();
+    const { hud } = await freshHud();
+    raised = hud;
+    hud.showDenialHint('locked');
+    vi.advanceTimersByTime(hud.DENIAL_HINT_VISIBLE_MS - 1);
+
+    hud.showDenialHint('ward');
+    vi.advanceTimersByTime(hud.DENIAL_HINT_VISIBLE_MS - 1);
+    expect(hud.denialHint()).toBe('ward');
+    vi.advanceTimersByTime(1);
+    expect(hud.denialHint()).toBeNull();
+  });
+
+  it('disposing drops the line and leaves no timer behind', async () => {
+    vi.useFakeTimers();
+    const { hud } = await freshHud();
+    raised = hud;
+    hud.showDenialHint('nest');
+    expect(vi.getTimerCount()).toBe(1);
+
+    hud.disposeDenialHint();
+    expect(hud.denialHint()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('outlasts the red pulse the same denial fires on the brush', async () => {
+    const { hud } = await freshHud();
+    expect(hud.DENIAL_HINT_VISIBLE_MS).toBeGreaterThan(REFUSED_PULSE_MS);
   });
 });

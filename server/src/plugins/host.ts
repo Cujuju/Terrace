@@ -84,6 +84,14 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     return this.entries.map((entry) => entry.loaded.plugin.name);
   }
 
+  // Counts onWorldCreate sweeps: plugin ids restart with each, so a client
+  // resets its id-keyed state when the generation it joined under changes.
+  private generation = 0;
+
+  get worldGeneration(): number {
+    return this.generation;
+  }
+
   get installedPluginNames(): readonly string[] {
     return this.installed.map((entry) => entry.loaded.plugin.name);
   }
@@ -111,6 +119,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   }
 
   worldCreate(): void {
+    this.generation++;
     for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onWorldCreate) continue;

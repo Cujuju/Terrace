@@ -27,8 +27,8 @@ import {
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { VENT_SUMMIT_WORLD_UNITS } from '../protocol.ts';
 import {
+  billboardPuffs,
   puffAlphaDiscard,
-  puffBillboard,
   puffInstanceBase,
   puffMask,
 } from '../../../client/src/plugins/kit/puffDeck.ts';
@@ -122,7 +122,7 @@ export function createPlume(): PlumeRenderer {
   const world = puffInstanceBase(instanceMatrix(mesh)).add(vec3(lean.x.add(wobble.x), rise, lean.y.add(wobble.y)));
 
   const size = mix(float(PLUME_START_SIZE), PLUME_END_SIZE, life);
-  compose(material, 'position', () => puffBillboard(world, size));
+  billboardPuffs(material, world, size);
 
   const mask = puffMask(0.15);
   discard(material, mask.discarded);

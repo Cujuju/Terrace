@@ -28,6 +28,10 @@ export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 export const TORNADO_RADIUS_CELLS = cellsAcross(1.5);
 
+// The roster ceiling both halves size to: the server profile's cap and the
+// client's funnel slots.
+export const MAX_ACTIVE_TORNADOES = 2;
+
 export const TORNADO_HEIGHT_WORLD_UNITS = 6;
 
 export {

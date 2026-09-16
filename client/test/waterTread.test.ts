@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  bandOf,
+  cellIndex,
+  cellX,
+  cellY,
+} from '@terrace/shared';
 import {
   appendRegionSurface,
   waterRegionOfCells,
@@ -207,5 +214,28 @@ describe('water region tread', () => {
 
     expect(loops.length).toBeGreaterThan(0);
     for (const loop of loops) expect(loop.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('band-0 regions emit no water', () => {
+  // Band 0 is the ocean's own level: the sea plane already draws every
+  // below-sea surface, so a region sheet here can only double-draw the sea
+  // (or float above it on cap+lift). Emission stops at the choke point;
+  // higher-band curtains still fall to the sea.
+  it('emits neither sheet nor loops for a below-shore region', () => {
+    const mirror = createTerrainMirror(WORLD_SIZE);
+    for (let y = 0; y < WORLD_SIZE; y++) {
+      for (let x = 0; x < WORLD_SIZE; x++) {
+        mirror.map.cells[cellIndex(layout, x, y)] = x < 32 ? 0 : 1;
+      }
+    }
+    const tilesPerEdge = WORLD_SIZE / CHUNK_SIZE;
+    const tiles = new Set<number>([1 * tilesPerEdge + 1, 1 * tilesPerEdge + 2]);
+    const wet = new Set<number>([cellIndex(layout, 20, 20)]);
+    const region = waterRegionOfCells(wet, 0, tiles);
+    const triangles: number[] = [];
+    const loops = appendRegionSurface(mirror, region, SURFACE_Y, triangles);
+    expect(triangles).toStrictEqual([]);
+    expect(loops).toStrictEqual([]);
   });
 });

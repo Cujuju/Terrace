@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SEA_LEVEL, BAND_HEIGHT, cellsAcross, createSeededRng } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
+import type { PluginActionOutcome } from '../../../server/src/plugins/types.ts';
 import { World } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
@@ -157,8 +158,9 @@ describe('spawn and decay', () => {
 describe('drift coherence', () => {
   it('moves every system by exactly the hub wind’s displacement each tick', () => {
     const { host } = bootOn(flatWorld());
-    for (let n = 0; n < MAX_ACTIVE_SYSTEMS; n++) rainSystems.spawnOne(WORLD_SIZE);
-    expect(livingSystems()).toHaveLength(MAX_ACTIVE_SYSTEMS);
+    const cap = rainSystems.capFor(WORLD_SIZE);
+    for (let n = 0; n < cap; n++) rainSystems.spawnOne(WORLD_SIZE);
+    expect(livingSystems()).toHaveLength(cap);
 
     const before = livingSystems().map((system) => ({ x: system.x, y: system.y }));
     host.tick(TICK_SECONDS);
@@ -267,14 +269,51 @@ describe('broadcast', () => {
 });
 
 describe('the hand-off rain offers other kinds (#285)', () => {
-  it('births one system on request, and refuses once it is at its own cap', () => {
-    const { host } = bootOn(flatWorld());
-    for (let n = 0; n < MAX_ACTIVE_SYSTEMS; n++) {
-      expect(fakeHub.spawnSkyKind(RAIN_PLUGIN_NAME)).toBe(true);
-    }
-    expect(livingSystems()).toHaveLength(MAX_ACTIVE_SYSTEMS);
+  const SMALL_WORLD = cellsAcross(128);
+
+  const HOUR_SECONDS = 3600;
+
+  function smallFlatWorld(): World {
+    return worldWithTerrain(SMALL_WORLD, () => SEA_LEVEL - BAND_HEIGHT);
+  }
+
+  function summon(host: PluginHost, at: number): PluginActionOutcome {
+    return host.invokeAction(RAIN_PLUGIN_NAME, RAIN_PLUGIN_NAME, {
+      x: at,
+      y: at,
+    }) as PluginActionOutcome;
+  }
+
+  it('stops the hub at the coverage cap, and a summons at the draw ceiling', () => {
+    const { host } = bootOn(smallFlatWorld());
+    const cap = rainSystems.capFor(SMALL_WORLD);
+    expect(cap).toBeLessThan(MAX_ACTIVE_SYSTEMS);
+
+    for (let n = 0; n < cap; n++) expect(fakeHub.spawnSkyKind(RAIN_PLUGIN_NAME)).toBe(true);
     expect(fakeHub.spawnSkyKind(RAIN_PLUGIN_NAME)).toBe(false);
     expect(fakeHub.spawnSkyKind('hail')).toBe(false);
-    host.tick(TICK_SECONDS);
+
+    for (let n = cap; n < MAX_ACTIVE_SYSTEMS; n++) expect(summon(host, n).ok).toBe(true);
+    expect(livingSystems()).toHaveLength(MAX_ACTIVE_SYSTEMS);
+    expect(summon(host, 0)).toEqual({
+      ok: false,
+      detail: `${MAX_ACTIVE_SYSTEMS} rain systems are already in the sky`,
+    });
+  });
+
+  it('never draws more than the ceiling over an hour after a full summons', () => {
+    const { host } = bootOn(smallFlatWorld());
+    for (let n = 0; n < MAX_ACTIVE_SYSTEMS; n++) expect(summon(host, n).ok).toBe(true);
+
+    let overCeiling = 0;
+    let mostDrawn = systemStates().length;
+    for (let tick = 0; tick < HOUR_SECONDS / TICK_SECONDS; tick++) {
+      host.tick(TICK_SECONDS);
+      const drawn = systemStates().length;
+      if (drawn > MAX_ACTIVE_SYSTEMS) overCeiling++;
+      if (drawn > mostDrawn) mostDrawn = drawn;
+    }
+    expect(overCeiling).toBe(0);
+    expect(mostDrawn).toBe(MAX_ACTIVE_SYSTEMS);
   });
 });

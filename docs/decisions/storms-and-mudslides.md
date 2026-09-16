@@ -27,3 +27,35 @@ Owner calls on the two open-defaults issues from the storms/mudslides landing:
   bank (the debris-dam reason stands). `sea` remains in `MUDSLIDE_STOPS` so
   slices written before this parse. Residual, named: the client draws the front
   at lattice height, so under water it is not visible; the fan is.
+
+## Decision made 2026-09-15 (rain coverage cap follows the scaled footprint)
+
+Reverses the population half of `d73f7f62`. That commit tripled rain and snow
+front area but kept the active cap computed over the base disc, so the number
+of fronts stayed the same and the realised rain coverage was ~3 × 0.09 (~26%
+measured on the shipped world). Owner call: `coverageFraction` means what it
+says. `discActiveCapFor` and `discMeanFootprintCells` now take the population's
+`footprintAreaScale`, so a bigger front means fewer fronts, not more sky.
+Shipped 512-unit world: rain cap 7 → 3; 128-unit worlds stay at the floor of
+1; fog and thunderstorm (scale 1) are byte-identical. Rejected: renaming the
+constant to describe the tripled coverage (keeps a number that lies), and
+leaving it (the 26% sky was the complaint).
+
+## Decision made 2026-09-15 (snow seats from band 15 up)
+
+`SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA` 2 → 15 (mean ground under the disc at
+least 240 height units). Snow no longer falls on green fields; it seats over
+the upper grassland and everything above. Owner call, band chosen directly.
+Rejected: `MOUNTAIN_MIN_HEIGHT` (384, rock only) and `SNOW_LINE_HEIGHT`
+(576, snow-capped only) — both too rare on ordinary genesis worlds.
+
+## Decision made 2026-09-15 (`cyclone-surge` renamed `cyclone-damage`)
+
+Wind scour had ridden the surge switch with no decision of its own. Owner
+call: a cyclone does damage or it does not, over water and land alike, so the
+one switch is named for that. `cyclone-damage` (`off`/`on`, default `on`)
+gates the shoreline surge and the inland wind scour together. Saved worlds
+keep their value: `PluginSettingDeclaration.formerKeys` lets a plugin name the
+keys a setting used to be stored under, and the session and admin readers
+resolve them (current key wins). Rejected: a second switch for wind scour
+(two knobs for one intent), and leaving the misnamed key.

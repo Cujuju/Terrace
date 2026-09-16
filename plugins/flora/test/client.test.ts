@@ -1,4 +1,5 @@
 import { worldUnitsAcross } from '@terrace/shared';
+import type { InstancedMesh } from 'three';
 import { describe, expect, it } from 'vitest';
 import {
   FLORA_CONIFER_SHARE_OF_256,
@@ -17,6 +18,7 @@ import {
   type TreeCell,
 } from '../protocol.ts';
 import { placementsFor } from '../client/placement.ts';
+import { createFloraModels, type TreePlacement } from '../client/models.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -136,5 +138,33 @@ describe('placement', () => {
     });
 
     expect(placements[1].groundY).toBe(-2);
+  });
+});
+
+describe('flora models contract', () => {
+  it('renders every protocol tree kind: one placement per kind assigns every mesh count and never throws', () => {
+    const models = createFloraModels();
+    try {
+      const placements: TreePlacement[] = FLORA_TREE_KINDS.map((kind, index) => ({
+        x: index,
+        z: 0,
+        groundY: 0,
+        kind,
+        scale: 1,
+        yaw: 0,
+      }));
+      expect(() => models.apply(placements)).not.toThrow();
+
+      const counts = new Map<string, number>();
+      for (const child of models.root.children) {
+        counts.set(child.name, (child as InstancedMesh).count);
+      }
+      expect(counts.get('flora:trunks')).toBe(FLORA_TREE_KINDS.length);
+      expect(counts.get('flora:conifers')).toBe(1);
+      expect(counts.get('flora:pines')).toBe(1);
+      expect(counts.get('flora:broadleaves')).toBe(1);
+    } finally {
+      models.dispose();
+    }
   });
 });

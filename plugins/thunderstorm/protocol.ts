@@ -44,12 +44,16 @@ export function parseStrikesPayload(payload: unknown): ThunderstormStrike[] | nu
   if (!Array.isArray(strikes)) return null;
 
   const parsed: ThunderstormStrike[] = [];
-  for (let i = 0; i + STRIKE_WIRE_STRIDE - 1 < strikes.length; i += STRIKE_WIRE_STRIDE) {
-    if (parsed.length >= MAX_STRIKES_PER_MESSAGE) break;
+  for (
+    let i = 0;
+    i + STRIKE_WIRE_STRIDE - 1 < strikes.length && parsed.length < MAX_STRIKES_PER_MESSAGE;
+    i += STRIKE_WIRE_STRIDE
+  ) {
     const systemId = strikes[i];
     const x = strikes[i + 1];
     const y = strikes[i + 2];
     if (!isFiniteNumber(systemId) || !isFiniteNumber(x) || !isFiniteNumber(y)) continue;
+    if (!Number.isInteger(systemId) || systemId < 0) continue;
     if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) continue;
     parsed.push({ systemId, x, y });
   }
