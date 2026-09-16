@@ -30,9 +30,16 @@ export function forEachFootprintOffset(
   }
 }
 
+/** Only the centre offset is inside a one-cell brush. */
+const SINGLE_CELL_RADIUS_SQUARED = 1;
+
+/** The one disc threshold: `dx² + dy²` below it is inside a brush of `radius`. */
+export function footprintRadiusSquared(radius: number): number {
+  return radius === MIN_BRUSH_RADIUS ? SINGLE_CELL_RADIUS_SQUARED : radius * (radius - 1);
+}
+
 export function isFootprintOffset(radius: number, dx: number, dy: number): boolean {
-  if (radius === 1) return dx === 0 && dy === 0;
-  return dx * dx + dy * dy < radius * (radius - 1);
+  return dx * dx + dy * dy < footprintRadiusSquared(radius);
 }
 
 export function forEachFootprintCell(

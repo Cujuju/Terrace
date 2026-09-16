@@ -4,6 +4,8 @@ export * from './calendar.ts';
 export * from './heightmap.ts';
 export * from './columns.ts';
 export * from './chunks.ts';
+export * from './sculpt/sweep.ts';
+export { SCULPT_PRESS_UNITS_PER_CELL, pressDisplacementUnits } from './sculpt/price.ts';
 export * from './protocol.ts';
 export * from './wire.ts';
 export * from './discWire.ts';
