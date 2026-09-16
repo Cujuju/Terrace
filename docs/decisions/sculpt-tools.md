@@ -44,3 +44,24 @@ raise/lower — pumping one cell forever is exactly the free-stroke case now.)
 pit at MIN_HEIGHT works — wall cells inside the footprint keep descending
 toward the floor; a footprint entirely AT the floor is a true no-op with an
 empty diff, under both tools and both profiles.
+
+## Decisions made 2026-09-15 (carve depth is a runtime variable, default one band)
+
+**How deep one carve cuts is a number on the intent, not a constant.** A carve
+intent carries `depthBands`, validated to `1 … CARVE_MAX_DEPTH_BANDS` like every
+other intent field, and the cut clears slabs `S … S + depthBands - 1` from the
+grasped band S (`docs/decisions/overhangs.md`, 2026-09-02). The default is
+`CARVE_DEFAULT_DEPTH_BANDS = 1`: one click opens one slab, and two clicks give
+an overhang the two slabs of air it needs.
+
+**No HUD control yet.** The wire and the shared math carry the depth; nothing in
+the HUD sets it, so every stroke a player can currently make sends the default.
+A control is a separate decision, made when there is a reason to cut deeper in
+one click rather than two.
+
+**The price scales linearly with depth.** A carve's displacement, which the mana
+price is built from, is footprint cells × `depthBands` × `BAND_HEIGHT`, so a
+two-band cut costs twice a one-band cut. This does not reopen the 2026-08-14
+rule: the price is still a pure, terrain-independent function of the intent's
+own fields — now (radius, profile, `depthBands`) — so the client gate and the
+server still agree on it without consulting the map.
