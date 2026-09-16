@@ -113,6 +113,8 @@ const HINT_MODIFIER: Record<string, string> = {
   alt: 'Alt+',
 };
 
+const SMOOTH_LAMBDA_DETENTS: readonly number[] = [25, 50, 75, 100];
+
 function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
   const opposite = mode === 'lower' ? bindings.raise : bindings.lower;
   const chord = `${HINT_MODIFIER[opposite.modifier]}${HINT_BUTTON[opposite.button]}`;
@@ -252,6 +254,18 @@ export function BrushModeler(): JSX.Element {
           >
             <span class="brush-slider__rail" />
             <span class="brush-slider__fill" />
+            <For each={SMOOTH_LAMBDA_DETENTS}>
+              {(detent, anchor) => (
+                <span
+                  class="brush-slider__detent"
+                  classList={{ on: smoothLambda() >= detent }}
+                  style={{
+                    '--brush-detent': String(detent - SMOOTH_LAMBDA_MIN),
+                    '--brush-anchor': String(anchor()),
+                  }}
+                />
+              )}
+            </For>
             <input
               type="range"
               class="brush-slider__input"
