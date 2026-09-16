@@ -26,13 +26,13 @@ const RACE_KINDS = RACES.flatMap((race: SettlerRace) =>
 );
 
 describe('pilgrim models (rigSkin)', () => {
-  it('draws each walker as exactly 2 skinned surfaces, every race × kind', () => {
+  it('draws each walker as exactly 1 skinned surface, every race × kind', () => {
     const models = createPilgrimModels();
     try {
       for (const { race, kind } of RACE_KINDS) {
         const walker = models.create(race, kind);
         const drawn = drawnObjects(walker.root);
-        expect(drawn.length).toBe(2);
+        expect(drawn.length).toBe(1);
       }
     } finally {
       models.dispose();
