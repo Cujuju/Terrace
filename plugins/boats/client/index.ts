@@ -1,4 +1,5 @@
 import { Group, Vector3 } from 'three';
+import { NO_SAMPLE } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
@@ -57,6 +58,7 @@ let unsubscribeWaypoints: (() => void) | null = null;
 let unsubscribeBoatMirror: (() => void) | null = null;
 let waypointsOverlay: WaypointsOverlay | null = null;
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 let animationSeconds = 0;
 
 function reconcileViews(sampled: ReadonlyMap<number, unknown>): void {
@@ -72,6 +74,11 @@ function reconcileViews(sampled: ReadonlyMap<number, unknown>): void {
     if (views.has(id)) continue;
     views.set(id, { model: models.create(), phase: (id * PHASE_PER_ID) % 1, drawnAt: new Vector3() });
   }
+}
+
+function forgetViews(): void {
+  reconcileViews(NO_SAMPLE);
+  interpolator.clear();
 }
 
 function renderFrame(dt: number): void {
@@ -166,13 +173,16 @@ export const clientPlugin: TerraceClientPlugin = {
     }
 
     unsubscribeFrames = ctx.onFrame(renderFrame);
+    unsubscribeReset = ctx.onWorldReset(forgetViews);
   },
 
   dispose(): void {
     unsubscribeMessages?.();
     unsubscribeFrames?.();
+    unsubscribeReset?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unsubscribeReset = null;
     unsubscribeWaypoints?.();
     unsubscribeWaypoints = null;
     unsubscribeBoatMirror?.();
@@ -184,9 +194,7 @@ export const clientPlugin: TerraceClientPlugin = {
     unpublishMovers?.();
     unpublishMovers = null;
 
-    for (const view of views.values()) view.model.dispose();
-    views.clear();
-    interpolator.clear();
+    forgetViews();
 
     container?.clear();
     container = null;

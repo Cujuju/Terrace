@@ -5,6 +5,9 @@ export interface ViewReconcileSpec<T, V> {
   replace?(id: number, item: T, view: V): V | null;
 }
 
+// Reconciling against this releases every view: the world-reset path.
+export const NO_SAMPLE: ReadonlyMap<number, never> = new Map<number, never>();
+
 export function reconcileById<T, V>(
   sampled: ReadonlyMap<number, T>,
   views: Map<number, V>,

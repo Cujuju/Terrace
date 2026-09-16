@@ -1,7 +1,7 @@
 import { Group, Vector3 } from 'three';
 import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
-import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
+import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 import {
   MAX_LASER_BOLTS,
@@ -98,6 +98,13 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSaucer>): void 
       view.model.dispose();
     },
   });
+}
+
+function forgetViews(): void {
+  reconcileViews(NO_SAMPLE);
+  interpolator.clear();
+  bolts = [];
+  crashes = [];
 }
 
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
@@ -250,6 +257,8 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
 
       ctx.onFrame((dt) => renderFrame(ctx, dt)),
+
+      ctx.onWorldReset(forgetViews),
     ];
   },
 
@@ -257,11 +266,7 @@ export const clientPlugin: TerraceClientPlugin = {
     for (const unsubscribe of unsubscribes) unsubscribe();
     unsubscribes = [];
 
-    for (const view of views.values()) view.model.dispose();
-    views.clear();
-    interpolator.clear();
-    bolts = [];
-    crashes = [];
+    forgetViews();
 
     lasers?.dispose();
     lasers = null;
