@@ -1,4 +1,6 @@
 import {
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   CHUNK_SIZE,
   DRAWN_SHORE_HEIGHT,
   MAX_HEIGHT,
@@ -8,6 +10,7 @@ import {
   bandLevelHeight,
   chunkHeightsAsCells,
   drawnBandOfSample,
+  readSpans,
   stepTowardBand,
   type CellDiff,
   type ChunkPayload,
@@ -1043,5 +1046,114 @@ describe('a carve names the span it grasps', () => {
     expect(outcome.applied).toBe(false);
     if (!outcome.applied) expect(outcome.reason).toBe('malformed');
     expect(sink.ofType('sculptApplied')).toHaveLength(0);
+  });
+});
+
+describe('a carve carries how deep it cuts', () => {
+  const GROUND_BAND = 1;
+  const CARVE_BAND = 2;
+  // Tall enough that even the deepest legal cut leaves a roof standing.
+  const CLIFF_BAND = CARVE_BAND + CARVE_MAX_DEPTH_BANDS + 2;
+  const CLIFF_EDGE = CHUNK_SIZE / 2;
+  const CARVE_Y = 8;
+  const CARVE_RADIUS = 2;
+  const DEEP_BANDS = 3;
+
+  function bootWithCliff(): { world: World; sink: RecordingSink } {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    for (let y = 0; y < world.size; y++) {
+      for (let x = 0; x < world.size; x++) {
+        world.map.cells[y * world.size + x] =
+          x >= CLIFF_EDGE ? bandLevelHeight(CLIFF_BAND) : bandLevelHeight(GROUND_BAND);
+      }
+    }
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear();
+    return { world, sink };
+  }
+
+  function carve(world: World, depthBands: number | undefined, seq: number): boolean {
+    const outcome = handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({
+        x: CLIFF_EDGE,
+        y: CARVE_Y,
+        radius: CARVE_RADIUS,
+        tool: 'carve',
+        dir: -1,
+        spanBand: CARVE_BAND,
+        seq,
+        ...(depthBands !== undefined ? { depthBands } : {}),
+      }),
+    );
+    return outcome.applied;
+  }
+
+  it('refuses a depth outside the validated range as malformed, and nacks the sender', () => {
+    for (const depthBands of [
+      CARVE_MIN_DEPTH_BANDS - 1,
+      CARVE_MAX_DEPTH_BANDS + 1,
+      CARVE_MIN_DEPTH_BANDS + 0.5,
+    ]) {
+      const { world, sink } = bootWithCliff();
+      const before = Array.from(world.map.cells);
+      const outcome = handleSculptIntent(
+        makeDeps(world, []),
+        PLAYER,
+        sculptMessage({
+          x: CLIFF_EDGE,
+          y: CARVE_Y,
+          radius: CARVE_RADIUS,
+          tool: 'carve',
+          dir: -1,
+          spanBand: CARVE_BAND,
+          depthBands,
+          seq: 60,
+        }),
+      );
+      expect(outcome.applied).toBe(false);
+      if (!outcome.applied) expect(outcome.reason).toBe('malformed');
+      expect(sink.ofType('sculptApplied')).toHaveLength(0);
+      expect(sink.ofType('sculptDenied').map((message) => message.payload)).toEqual([
+        { type: 'sculptDenied', seq: 60, reason: 'malformed' },
+      ]);
+      expect(Array.from(world.map.cells)).toEqual(before);
+    }
+  });
+
+  it('refuses a depth on any tool but carve, rather than acking a cut nothing reads', () => {
+    const { world } = bootWithCliff();
+    for (const tool of ['stamp', 'smooth', 'drag'] as const) {
+      const outcome = handleSculptIntent(
+        makeDeps(world, []),
+        PLAYER,
+        sculptMessage({
+          x: CLIFF_EDGE,
+          y: CARVE_Y,
+          radius: CARVE_RADIUS,
+          tool,
+          dir: -1,
+          depthBands: DEEP_BANDS,
+          ...(tool === 'drag' ? { targetBand: CARVE_BAND } : {}),
+          seq: 61,
+        }),
+      );
+      expect(outcome.applied).toBe(false);
+      if (!outcome.applied) expect(outcome.reason).toBe('malformed');
+    }
+  });
+
+  it('clears the slabs its depth names, one band when it names none', () => {
+    for (const depthBands of [undefined, DEEP_BANDS, CARVE_MAX_DEPTH_BANDS]) {
+      const { world } = bootWithCliff();
+      expect(carve(world, depthBands, 62)).toBe(true);
+      const spans = readSpans(world.map, CLIFF_EDGE, CARVE_Y);
+      expect(spans).toHaveLength(2);
+      expect(spans[1]!.floorBand).toBe(CARVE_BAND + (depthBands ?? CARVE_MIN_DEPTH_BANDS));
+    }
   });
 });
