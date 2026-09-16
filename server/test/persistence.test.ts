@@ -508,8 +508,8 @@ describe('reading a schema 1 world under the band-floor rule', () => {
       { floorBand: BEDROCK_BAND, ceiling: FLOOR_CEILING },
       { floorBand: EXACT_FLOOR_BAND, ceiling: ROOF_CEILING },
     ]);
-    // 65 sits inside band 4, so the slab starts at band 5 and band 4 is air:
-    // the opening this world saved is a whole band deeper under the new rule.
+    // A floor inside band 4 starts the slab at band 5, so band 4 becomes air:
+    // the saved opening is a band deeper under the new rule.
     expect(snapshot.columnSpans.get(RAISED_CELL)).toEqual([
       { floorBand: BEDROCK_BAND, ceiling: FLOOR_CEILING },
       { floorBand: EXACT_FLOOR_BAND + 1, ceiling: ROOF_CEILING },
