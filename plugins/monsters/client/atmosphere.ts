@@ -8,6 +8,7 @@ import {
   type PointLight,
   DoubleSide,
 } from 'three';
+import { PARKED_LIGHT_INTENSITY } from '../../../client/src/plugins/kit/lightBank.ts';
 import {
   BOLT_JAG_CELLS,
   BOLT_MAX_RADIUS_CELLS,
@@ -257,11 +258,11 @@ function createDread(
       bolt.visible = false;
       glowSheet.visible = false;
       for (const sheet of mistSheets) sheet.visible = false;
-      if (flashLight !== null) flashLight.intensity = 0;
+      if (flashLight !== null) flashLight.intensity = PARKED_LIGHT_INTENSITY;
     },
 
     setFlashLight(light: PointLight | null): void {
-      if (flashLight !== null && flashLight !== light) flashLight.intensity = 0;
+      if (flashLight !== null && flashLight !== light) flashLight.intensity = PARKED_LIGHT_INTENSITY;
       flashLight = light;
     },
 
