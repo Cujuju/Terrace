@@ -6,6 +6,9 @@ import {
   MIN_BRUSH_RADIUS,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  SMOOTH_LAMBDA_DEFAULT,
+  SMOOTH_LAMBDA_MAX,
+  SMOOTH_LAMBDA_MIN,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
   forEachFootprintOffset,
@@ -57,6 +60,8 @@ export const DEFAULT_BRUSH_PROFILE: SculptProfile = 'hard';
 
 export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
+export const DEFAULT_SMOOTH_LAMBDA = SMOOTH_LAMBDA_DEFAULT;
+
 export const DEFAULT_SHOW_CONTROLS = false;
 
 export const DEFAULT_PANEL_OPEN: boolean =
@@ -67,6 +72,7 @@ export interface PersistedHudState {
   readonly brushTool: SculptTool;
   readonly brushProfile: SculptProfile;
   readonly sculptMode: SculptMode;
+  readonly smoothLambda: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
 }
@@ -76,6 +82,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   brushTool: DEFAULT_BRUSH_TOOL,
   brushProfile: DEFAULT_BRUSH_PROFILE,
   sculptMode: DEFAULT_SCULPT_MODE,
+  smoothLambda: DEFAULT_SMOOTH_LAMBDA,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
 };
@@ -102,6 +109,15 @@ function readMode(value: unknown): SculptMode {
   return value === 'raise' || value === 'lower' ? value : DEFAULT_SCULPT_MODE;
 }
 
+function readSmoothLambda(value: unknown): number {
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= SMOOTH_LAMBDA_MIN &&
+    value <= SMOOTH_LAMBDA_MAX
+    ? value
+    : DEFAULT_SMOOTH_LAMBDA;
+}
+
 function readShowControls(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_SHOW_CONTROLS;
 }
@@ -125,6 +141,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     brushTool: readTool(record['brushTool']),
     brushProfile: readProfile(record['brushProfile']),
     sculptMode: readMode(record['sculptMode']),
+    smoothLambda: readSmoothLambda(record['smoothLambda']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
   };
@@ -154,6 +171,10 @@ const [sculptMode, setSculptModeSignal] = createSignal<SculptMode>(
   stored.sculptMode,
 );
 
+const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
+  stored.smoothLambda,
+);
+
 const [showControls, setShowControlsSignal] = createSignal<boolean>(
   stored.showControls,
 );
@@ -168,6 +189,7 @@ function persist(): void {
     brushTool: brushTool(),
     brushProfile: brushProfile(),
     sculptMode: sculptMode(),
+    smoothLambda: smoothLambda(),
     showControls: showControls(),
     panelOpen: panelOpen(),
   };
@@ -201,6 +223,16 @@ export function setSculptMode(mode: SculptMode): void {
   persist();
 }
 
+export function setSmoothLambda(lambda: number): void {
+  const clamped = Math.min(
+    SMOOTH_LAMBDA_MAX,
+    Math.max(SMOOTH_LAMBDA_MIN, Math.trunc(lambda)),
+  );
+  if (clamped === smoothLambda()) return;
+  setSmoothLambdaSignal(clamped);
+  persist();
+}
+
 export function setShowControls(show: boolean): void {
   if (show === showControls()) return;
   setShowControlsSignal(show);
@@ -218,6 +250,7 @@ export {
   brushTool,
   brushProfile,
   sculptMode,
+  smoothLambda,
   showControls,
   panelOpen,
 };

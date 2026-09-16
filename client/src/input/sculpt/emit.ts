@@ -5,6 +5,7 @@ import {
   brushRadius,
   sculptDirection,
   setSculptMode,
+  smoothLambda,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
 import { dragPlaneCell, hoverTarget } from './aim.ts';
@@ -99,6 +100,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
     ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(s.strokeTool)
       ? {}
       : { profile: brushProfile() }),
+    ...(s.strokeTool === 'smooth' ? { smoothLambda: smoothLambda() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),
     seq: s.nextSeq++,
   });

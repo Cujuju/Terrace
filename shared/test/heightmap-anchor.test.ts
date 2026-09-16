@@ -151,14 +151,22 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     return total;
   }
 
-  it('a pit already at the world floor is frozen, so the wall has nowhere to go', () => {
-    // Bedrock keeps one unit, so MIN_HEIGHT is past the lowering target and
-    // freezes. Smooth moves height; with no receiver it moves none.
+  it('a pit at the world floor stays byte-untouched while the wall above slumps toward it', () => {
+    // Frozen cells still never move; Laplacian wall cells need no receiver,
+    // so unlike relaxation they descend toward the frozen pit down to target.
     const map = pitWithWall(MIN_HEIGHT);
     const before = Int16Array.from(map.cells);
 
-    expect(applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT)).toEqual([]);
-    expect(Array.from(map.cells)).toEqual(Array.from(before));
+    const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+
+    expect(diff.length).toBeGreaterThan(0);
+    forEachFootprintOffset(3, (dx, dy) => {
+      const i = cellIndex(map, 16 + dx, 16 + dy);
+      if (before[i] === MIN_HEIGHT) expect(map.cells[i]).toBe(MIN_HEIGHT);
+    });
+    for (let i = 0; i < map.cells.length; i++) {
+      expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
+    }
   });
 
   it('widening a pit one band above the floor works: the wall descends into it', () => {
@@ -175,7 +183,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
       if (before[i]! > MIN_HEIGHT + BAND_HEIGHT && map.cells[i]! < before[i]!) wallMoved++;
     });
     expect(wallMoved).toBeGreaterThan(0);
-    expect(cellsTotal(map)).toBe(total);
+    expect(Math.abs(cellsTotal(map) - total)).toBeLessThanOrEqual(diff.length * BAND_HEIGHT);
     for (let i = 0; i < map.cells.length; i++) {
       expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
     }

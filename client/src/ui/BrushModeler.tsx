@@ -16,6 +16,8 @@ import {
   setBrushRadius,
   setBrushTool,
   setSculptMode,
+  setSmoothLambda,
+  smoothLambda,
   type DenialHint,
   type SculptMode,
 } from '../state/hudState.ts';
@@ -34,7 +36,12 @@ import {
   StampIcon,
 } from './BrushIcons.tsx';
 import { TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
-import type { SculptProfile, SculptTool } from '@terrace/shared';
+import {
+  SMOOTH_LAMBDA_MAX,
+  SMOOTH_LAMBDA_MIN,
+  type SculptProfile,
+  type SculptTool,
+} from '@terrace/shared';
 
 const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Stamp: raise or lower brushed ground',
@@ -233,6 +240,24 @@ export function BrushModeler(): JSX.Element {
           {brushWidthLabel(BRUSH_RADII[BRUSH_RUNG_MAX])}
         </span>
       </div>
+      <Show when={brushTool() === 'smooth'}>
+        <div class="hud-row">
+          <span class="hud-hint">Strength</span>
+          <input
+            type="range"
+            min={SMOOTH_LAMBDA_MIN}
+            max={SMOOTH_LAMBDA_MAX}
+            step="1"
+            value={smoothLambda()}
+            aria-label="Smooth strength"
+            title="Smooth strength: how far each cell moves toward its neighbours per stroke"
+            onInput={(event) =>
+              setSmoothLambda(event.currentTarget.valueAsNumber)
+            }
+          />
+          <span class="hud-hint">{smoothLambda()}%</span>
+        </div>
+      </Show>
       <Show when={denialHint()}>
         {(hint) => (
           <p class="hud-hint" role="status">

@@ -59,6 +59,10 @@ export const SOFT_APRON_TREAD_CELLS = WORLD_UNIT_CELLS;
 
 export const SOFT_APRON_MAX_BANDS = 4;
 
+/** Soft stamp strength at the footprint's outermost ring, as a fraction of the centre. */
+export const SOFT_EDGE_STRENGTH_NUMERATOR = 1;
+export const SOFT_EDGE_STRENGTH_DENOMINATOR = 5;
+
 export const RELAX_SLACK = 1;
 
 export const DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT;
@@ -84,6 +88,9 @@ export const SMOOTH_REACH_MARGIN_CELLS = 2;
 export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
 
 export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;
+
+/** Jacobi passes of Laplacian smoothing per smooth stroke. Bounds reach. */
+export const SMOOTH_LAPLACIAN_PASSES = 3;
 
 export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
 
