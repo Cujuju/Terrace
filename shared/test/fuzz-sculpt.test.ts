@@ -3,12 +3,14 @@ import {
   applySculpt,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
+  canCarveBandAt,
   CARVE_BANDS_PER_STROKE,
   cellIndex,
   columnCoversBand,
   createHeightmap,
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
+  DRAWN_GROUND_BAND_BIAS,
   drawnBandOfSample,
   EDGELESS_SCULPT_PROFILE,
   forEachFootprintOffset,
@@ -68,6 +70,11 @@ const INSPECTION_MARGIN_CELLS = 2;
 const SPAN_BAND_SHARE = 0.5;
 const SWEEP_SHARE = 0.3;
 
+/** Every world must drive the carve path for real, not just watch it refuse. */
+const FUZZ_MIN_LIVE_CARVE_SHARE = 1 / 8;
+
+/** Every world must drive relaxation for real: a world that never settles proves nothing. */
+const FUZZ_MIN_LIVE_SMOOTH_SHARE = 1 / 8;
 
 type Random = () => number;
 
@@ -177,6 +184,37 @@ function stackedTerraceWorld(size: number): Heightmap {
   return map;
 }
 
+const ROOF_STOREYS = 3;
+const ROOF_BANDS_PER_STOREY = 3;
+const ROOF_GROUND_BANDS = 2;
+const ROOF_TREADS = 3;
+const ROOF_TREAD_CELLS = 5;
+
+/** The thin slab an overhang lays: one band deep, hung clear of the boundary below. */
+const ROOF_THICKNESS = BAND_HEIGHT - 1;
+
+/** Roofs sit off the write levels, so a fill can land under one and weld to it. */
+const ROOF_CEILING_OFFSET = DRAWN_GROUND_BAND_BIAS;
+
+/** Thin roofs over shallow gaps: the shape a drag's overhang fill produces. */
+function roofedWorld(size: number): Heightmap {
+  const map = createHeightmap(size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const tread = Math.floor(x / ROOF_TREAD_CELLS) % ROOF_TREADS;
+      const ground = (ROOF_GROUND_BANDS + tread) * BAND_HEIGHT;
+      const spans = [makeSpan(BEDROCK_FLOOR, ground)];
+      for (let storey = 1; storey <= ROOF_STOREYS; storey++) {
+        const ceiling =
+          ground + storey * ROOF_BANDS_PER_STOREY * BAND_HEIGHT + ROOF_CEILING_OFFSET;
+        spans.push(makeSpan(ceiling - ROOF_THICKNESS, ceiling));
+      }
+      setColumn(map, x, y, spans);
+    }
+  }
+  return map;
+}
+
 const WORLDS: readonly (readonly [string, (size: number) => Heightmap])[] = [
   ['flat', flatWorld],
   ['noise', noiseWorld],
@@ -184,6 +222,7 @@ const WORLDS: readonly (readonly [string, (size: number) => Heightmap])[] = [
   ['shoreline', shorelineWorld],
   ['arch', archWorld],
   ['stacked', stackedTerraceWorld],
+  ['roofed', roofedWorld],
 ];
 
 // ---------------------------------------------------------------------------
@@ -197,6 +236,27 @@ function coveredBandAt(map: Heightmap, x: number, y: number, random: Random): nu
     if (band >= MIN_BAND && band <= MAX_BAND && columnCoversBand(map, x, y, band)) return band;
   }
   return Math.min(MAX_BAND, Math.max(MIN_BAND, here));
+}
+
+/** Bands below the cursor's own that a carve may grasp. */
+const CARVE_BAND_WINDOW = BAND_HEIGHT;
+
+/**
+ * A band the column holds and a neighbour lacks, so the carve is admitted
+ * rather than refused. One draw picks the offset; the sweep is exhaustive.
+ */
+function carvableBandAt(map: Heightmap, x: number, y: number, random: Random): number {
+  const here = drawnBandOfSample(heightAt(map, x, y));
+  const start = Math.floor(random() * CARVE_BAND_WINDOW);
+  let covered: number | null = null;
+  for (let step = 0; step < CARVE_BAND_WINDOW; step++) {
+    const band = here - ((start + step) % CARVE_BAND_WINDOW);
+    if (band < MIN_BAND || band > MAX_BAND) continue;
+    if (!columnCoversBand(map, x, y, band)) continue;
+    if (covered === null) covered = band;
+    if (canCarveBandAt(map, x, y, band)) return band;
+  }
+  return covered ?? Math.min(MAX_BAND, Math.max(MIN_BAND, here));
 }
 
 function makeIntent(map: Heightmap, random: Random): SculptIntent {
@@ -224,7 +284,8 @@ function makeIntent(map: Heightmap, random: Random): SculptIntent {
         : {}),
     };
   }
-  if (tool === 'carve' || random() < SPAN_BAND_SHARE) {
+  if (tool === 'carve') return { ...intent, spanBand: carvableBandAt(map, x, y, random) };
+  if (random() < SPAN_BAND_SHARE) {
     return { ...intent, spanBand: coveredBandAt(map, x, y, random) };
   }
   return intent;
@@ -358,6 +419,13 @@ function runFreeSmooth(map: Heightmap, random: Random, world: string, index: num
   return diff.length > 0;
 }
 
+/** A path the fuzzer must actually walk, or the invariants that guard it are vacuous. */
+function expectLiveShare(live: number, total: number, share: number, what: string): void {
+  const floor = Math.ceil(total * share);
+  expect(live, `${what}: only ${live} of ${total} moved ground, floor is ${floor}`)
+    .toBeGreaterThanOrEqual(floor);
+}
+
 describe('seeded sculpt fuzzer', () => {
   it.each(WORLDS.map(([name]) => name))('every invariant holds across %s', (name) => {
     const build = WORLDS.find(([world]) => world === name)![1];
@@ -367,20 +435,31 @@ describe('seeded sculpt fuzzer', () => {
 
     const random = createSeededRng(FUZZ_SEED).next;
     let applied = 0;
+    let carves = 0;
+    let liveCarves = 0;
+    let freeSmooths = 0;
+    let liveSmooths = 0;
     for (let index = 0; index < FUZZ_STROKES; index++) {
       if (index % FUZZ_FREE_SMOOTH_EVERY === 0) {
-        runFreeSmooth(map, random, name, index);
+        freeSmooths++;
+        if (runFreeSmooth(map, random, name, index)) liveSmooths++;
         continue;
       }
       const candidate = makeIntent(map, random);
       const intent = validateSculptIntent(candidate, map.size);
       expect(intent, `world "${name}" stroke ${index} built an invalid intent: ${JSON.stringify(candidate)}`)
         .not.toBeNull();
-      runWireStroke(map, intent!, name, index);
+      const moved = runWireStroke(map, intent!, name, index);
+      if (intent!.tool === 'carve') {
+        carves++;
+        if (moved) liveCarves++;
+      }
       applied++;
     }
 
     expect(applied).toBeGreaterThan(0);
+    expectLiveShare(liveCarves, carves, FUZZ_MIN_LIVE_CARVE_SHARE, `world "${name}" carves`);
+    expectLiveShare(liveSmooths, freeSmooths, FUZZ_MIN_LIVE_SMOOTH_SHARE, `world "${name}" free smooths`);
     expectColumnsCanonical(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
     expectDrawnCoverageMatchesSpans(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
   });
