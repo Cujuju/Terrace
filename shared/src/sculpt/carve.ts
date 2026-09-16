@@ -1,14 +1,14 @@
 import {
-  bandFloorHeight,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   canCarveBandAt,
-  carveRange,
+  carveBands,
   spanAt,
+  spanCapBand,
   spanCount,
 } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
 import { forEachFootprintCell } from './footprint.ts';
-import { CARVE_BANDS_PER_STROKE } from './options.ts';
+import { isValidCarveDepth } from './options.ts';
 
 export function applyCarve(
   map: Heightmap,
@@ -16,16 +16,14 @@ export function applyCarve(
   cy: number,
   radius: number,
   spanBand: number,
+  depthBands: number,
   changed: Set<number>,
 ): void {
+  if (!isValidCarveDepth(depthBands)) return;
   const lowestOpenedBand = spanBand;
-  const highestOpenedBand = spanBand + CARVE_BANDS_PER_STROKE - 2;
-  // Cut a band below the lowest band opened: a remnant capped inside that band
-  // still covers the one above it.
-  const lo = bandFloorHeight(lowestOpenedBand - 1);
-  const hi = bandFloorHeight(highestOpenedBand + 1);
-
-  if (lo <= BEDROCK_FLOOR) return;
+  const highestOpenedBand = spanBand + depthBands - 1;
+  // Bedrock is the column's floor, not material: a stroke reaching it opens nothing.
+  if (lowestOpenedBand <= BEDROCK_BAND) return;
 
   const admitted: number[] = [];
   forEachFootprintCell(map, cx, cy, radius, (i) => {
@@ -35,7 +33,7 @@ export function applyCarve(
     const count = spanCount(map, x, y);
     for (let k = 0; k < count; k++) {
       const span = spanAt(map, x, y, k);
-      if (span.floor < hi && lo < span.ceiling) {
+      if (span.floorBand <= highestOpenedBand && lowestOpenedBand <= spanCapBand(span)) {
         overlaps = true;
         break;
       }
@@ -48,7 +46,7 @@ export function applyCarve(
   });
 
   for (const i of admitted) {
-    carveRange(map, cellX(map.size, i), cellY(map.size, i), lo, hi);
+    carveBands(map, cellX(map.size, i), cellY(map.size, i), lowestOpenedBand, highestOpenedBand);
     changed.add(i);
   }
 }
