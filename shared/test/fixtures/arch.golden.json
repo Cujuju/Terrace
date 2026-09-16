@@ -1,0 +1,105 @@
+{
+  "world": "arch",
+  "size": 64,
+  "layeredColumnsBefore": 537,
+  "hashBefore": "8ea4c85d",
+  "strokes": [
+    {
+      "name": "arch-roof-carve",
+      "changed": 15,
+      "hash": "d103696d"
+    },
+    {
+      "name": "arch-rim-drag-up",
+      "changed": 6,
+      "hash": "dfcfe0cd"
+    },
+    {
+      "name": "arch-crest-smooth",
+      "changed": 401,
+      "hash": "e5da6d26"
+    },
+    {
+      "name": "carve-click-band",
+      "changed": 3,
+      "hash": "78b813f6"
+    },
+    {
+      "name": "carve-second-site",
+      "changed": 4,
+      "hash": "fbedc897"
+    },
+    {
+      "name": "drag-raise-one-band",
+      "changed": 14,
+      "hash": "4177e9d7"
+    },
+    {
+      "name": "drag-lower-swept",
+      "changed": 18,
+      "hash": "d469fbcd"
+    },
+    {
+      "name": "stamp-band-anchored",
+      "changed": 1,
+      "hash": "956ffdd9"
+    },
+    {
+      "name": "stamp-hard-raise-centre",
+      "changed": 37,
+      "hash": "60b2ace9"
+    },
+    {
+      "name": "stamp-soft-raise",
+      "changed": 84,
+      "hash": "afe9dc01"
+    },
+    {
+      "name": "stamp-soft-lower",
+      "changed": 185,
+      "hash": "e7c05172"
+    },
+    {
+      "name": "stamp-hard-lower-free",
+      "changed": 21,
+      "hash": "0f052f42"
+    },
+    {
+      "name": "smooth-banded-raise",
+      "changed": 148,
+      "hash": "fad289de"
+    },
+    {
+      "name": "smooth-free-lower",
+      "changed": 508,
+      "hash": "3ca656fd"
+    },
+    {
+      "name": "edge-stamp-origin-corner",
+      "changed": 8,
+      "hash": "b58071fd"
+    },
+    {
+      "name": "edge-stamp-far-column",
+      "changed": 158,
+      "hash": "7491c69d"
+    },
+    {
+      "name": "edge-smooth-left-edge",
+      "changed": 110,
+      "hash": "994083d7"
+    },
+    {
+      "name": "edge-drag-left-edge",
+      "changed": 4,
+      "hash": "e1b698d7"
+    },
+    {
+      "name": "settle-library-tool",
+      "changed": 3109,
+      "hash": "5d31a9bf"
+    }
+  ],
+  "layeredColumnsAfter": 430,
+  "hashAfter": "5d31a9bf"
+}

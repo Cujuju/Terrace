@@ -48,3 +48,14 @@ least 240 height units). Snow no longer falls on green fields; it seats over
 the upper grassland and everything above. Owner call, band chosen directly.
 Rejected: `MOUNTAIN_MIN_HEIGHT` (384, rock only) and `SNOW_LINE_HEIGHT`
 (576, snow-capped only) — both too rare on ordinary genesis worlds.
+
+## Decision made 2026-09-15 (`cyclone-surge` renamed `cyclone-damage`)
+
+Wind scour had ridden the surge switch with no decision of its own. Owner
+call: a cyclone does damage or it does not, over water and land alike, so the
+one switch is named for that. `cyclone-damage` (`off`/`on`, default `on`)
+gates the shoreline surge and the inland wind scour together. Saved worlds
+keep their value: `PluginSettingDeclaration.formerKeys` lets a plugin name the
+keys a setting used to be stored under, and the session and admin readers
+resolve them (current key wins). Rejected: a second switch for wind scour
+(two knobs for one intent), and leaving the misnamed key.
