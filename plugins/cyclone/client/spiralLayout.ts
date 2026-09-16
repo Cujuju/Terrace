@@ -1,11 +1,10 @@
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
 import {
   DECK_BASE_WORLD_Y,
   DECK_THICKNESS_WORLD_UNITS,
   PUFF_COVERAGE_OVERLAP,
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { MAX_GROUND_WORLD_Y } from '../../../client/src/plugins/kit/precipitation.ts';
-import { SEA_SURFACE_WORLD_Y } from '../../../client/src/config.ts';
 import {
   CYCLONE_EYE_RADIUS_FRACTION,
   CYCLONE_RADIUS_CELLS,
@@ -36,7 +35,8 @@ export const CYCLONE_RIM_HEADROOM_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS / 2;
 export const CYCLONE_RIM_TOP_WORLD_Y = MAX_GROUND_WORLD_Y + CYCLONE_RIM_HEADROOM_WORLD_UNITS;
 
 // The lowest surface a wall stands on is the sea; columns carry enough tiers to reach it.
-export const CYCLONE_WALL_FLOOR_WORLD_Y = SEA_SURFACE_WORLD_Y;
+// Sea level in world units, as the monster and wildlife rigs read it.
+export const CYCLONE_WALL_FLOOR_WORLD_Y: 0 = SEA_LEVEL;
 
 export const CYCLONE_TOWER_FALLOFF_EXPONENT = 0.5;
 
