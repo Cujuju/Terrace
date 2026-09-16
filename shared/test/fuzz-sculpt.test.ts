@@ -41,14 +41,16 @@ import {
   expectColumnsCanonical,
   expectDrawnCoverageMatchesSpans,
   expectGapsSurvive,
-  expectGradientLimitOverPlainGround,
+  expectGradientLimitOverSettled,
   expectPriceMatchesBrushVolume,
   expectSculptDeterministic,
   expectSolidVolumeConserved,
   expectStrokeWithinReach,
+  graspStableCells,
   makeSpan,
   snapshotColumns,
   solidVolume,
+  spanCountsOf,
   type CellBox,
 } from './support/invariants.ts';
 
@@ -75,6 +77,9 @@ const FUZZ_MIN_LIVE_CARVE_SHARE = 1 / 8;
 
 /** Every world must drive relaxation for real: a world that never settles proves nothing. */
 const FUZZ_MIN_LIVE_SMOOTH_SHARE = 1 / 8;
+
+/** Pairs each free smooth must leave the gradient invariant: a scoping that goes quiet is a defect. */
+const FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH = 64;
 
 type Random = () => number;
 
@@ -316,13 +321,6 @@ function inspected(map: Heightmap, intent: SculptIntent, reach: number): number[
   return Array.from(cells);
 }
 
-/** Cells holding exactly one span: the ground relaxation may move without a cap. */
-function plainCells(map: Heightmap, cells: Iterable<number>): Set<number> {
-  const plain = new Set<number>();
-  for (const i of cells) if (!map.columnSpans.has(i)) plain.add(i);
-  return plain;
-}
-
 function footprintBounds(map: Heightmap, cx: number, cy: number, radius: number): CellBox {
   let x0 = map.size, y0 = map.size, x1 = -1, y1 = -1;
   forEachFootprintOffset(radius, (dx, dy) => {
@@ -388,7 +386,17 @@ function runWireStroke(
   return diff.length > 0;
 }
 
-function runFreeSmooth(map: Heightmap, random: Random, world: string, index: number): boolean {
+interface SmoothOutcome {
+  readonly moved: boolean;
+  readonly pairs: number;
+}
+
+function runFreeSmooth(
+  map: Heightmap,
+  random: Random,
+  world: string,
+  index: number,
+): SmoothOutcome {
   const x = pickInt(random, 0, map.size - 1);
   const y = pickInt(random, 0, map.size - 1);
   const radius = pickInt(random, 1, FUZZ_MAX_RADIUS);
@@ -398,7 +406,7 @@ function runFreeSmooth(map: Heightmap, random: Random, world: string, index: num
   const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir, tool: 'smooth' };
   const reach = sculptReachCells(radius, EDGELESS_SCULPT_PROFILE, 'smooth', 'free');
   const watched = inspected(map, intent, reach);
-  const plain = plainCells(map, watched);
+  const grasped = spanCountsOf(map, watched);
   const footprint = footprintBounds(map, x, y, radius);
   const volumeBefore = solidVolume(map);
 
@@ -409,14 +417,15 @@ function runFreeSmooth(map: Heightmap, random: Random, world: string, index: num
   });
 
   expectSolidVolumeConserved(volumeBefore, map, context);
+  const stable = graspStableCells(map, grasped);
   // The footprint box is scanned to quiescence even when nothing moved, so
   // this fires on an empty diff too; the diff box adds the cascade's reach.
-  expectGradientLimitOverPlainGround(map, plain, footprint, context);
+  let pairs = expectGradientLimitOverSettled(map, stable, footprint, context);
   const settled = diffBounds(diff);
-  if (settled !== null) expectGradientLimitOverPlainGround(map, plain, settled, context);
+  if (settled !== null) pairs += expectGradientLimitOverSettled(map, stable, settled, context);
   expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
   expectColumnsCanonical(map, watched, context);
-  return diff.length > 0;
+  return { moved: diff.length > 0, pairs };
 }
 
 /** A path the fuzzer must actually walk, or the invariants that guard it are vacuous. */
@@ -439,10 +448,13 @@ describe('seeded sculpt fuzzer', () => {
     let liveCarves = 0;
     let freeSmooths = 0;
     let liveSmooths = 0;
+    let gradientPairs = 0;
     for (let index = 0; index < FUZZ_STROKES; index++) {
       if (index % FUZZ_FREE_SMOOTH_EVERY === 0) {
         freeSmooths++;
-        if (runFreeSmooth(map, random, name, index)) liveSmooths++;
+        const outcome = runFreeSmooth(map, random, name, index);
+        if (outcome.moved) liveSmooths++;
+        gradientPairs += outcome.pairs;
         continue;
       }
       const candidate = makeIntent(map, random);
@@ -460,6 +472,9 @@ describe('seeded sculpt fuzzer', () => {
     expect(applied).toBeGreaterThan(0);
     expectLiveShare(liveCarves, carves, FUZZ_MIN_LIVE_CARVE_SHARE, `world "${name}" carves`);
     expectLiveShare(liveSmooths, freeSmooths, FUZZ_MIN_LIVE_SMOOTH_SHARE, `world "${name}" free smooths`);
+    const pairFloor = freeSmooths * FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH;
+    expect(gradientPairs, `world "${name}": the gradient invariant compared ${gradientPairs} pairs, floor is ${pairFloor}`)
+      .toBeGreaterThanOrEqual(pairFloor);
     expectColumnsCanonical(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
     expectDrawnCoverageMatchesSpans(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
   });
