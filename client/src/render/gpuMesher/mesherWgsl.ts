@@ -128,6 +128,58 @@ function bandHeightShift(): number {
   return shift;
 }
 
+/**
+ * The kernel's band contract, exported so a test can read the shipped source
+ * instead of a transcription of it. `buildMesherWgsl` interpolates it verbatim.
+ */
+export const SPAN_BAND_WGSL = `fn drawnBandOfSample(h : i32) -> i32 {
+  let band = (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT;
+  return select(band, -1, band == 0 && h + BAND_BIAS < SHORE_THRESHOLD);
+}
+fn levelThreshold(level : i32) -> i32 {
+  return select(level * BAND_HEIGHT, SHORE_THRESHOLD, level == 0);
+}
+
+fn spanCountOf(local : i32) -> i32 {
+  let packedCount = i32(cellDesc[local] >> SPAN_COUNT_SHIFT);
+  return select(packedCount, 1, packedCount == 0);
+}
+fn spanPairAt(local : i32, k : i32) -> i32 {
+  return (entryPairBase + i32(cellDesc[local] & SPAN_OFFSET_MASK) + k) * SPAN_PAIR_WORDS;
+}
+fn spanFloorBand(local : i32, k : i32) -> i32 {
+  if (cellDesc[local] == 0u) { return BEDROCK_BAND; }
+  return spanPairWord(spanPairAt(local, k));
+}
+fn spanCeiling(local : i32, k : i32) -> i32 {
+  if (cellDesc[local] == 0u) { return cellHeight[local]; }
+  return spanPairWord(spanPairAt(local, k) + 1);
+}
+fn spanCapBand(local : i32, k : i32) -> i32 {
+  return drawnBandOfSample(spanCeiling(local, k));
+}
+fn spanCoversBand(local : i32, k : i32, band : i32) -> bool {
+  return spanFloorBand(local, k) <= band && band <= spanCapBand(local, k);
+}
+
+fn columnSampleAtBand(local : i32, band : i32) -> i32 {
+  let count = spanCountOf(local);
+  var below = OPEN_COLUMN_SAMPLE;
+  for (var k = 0; k < count; k++) {
+    if (spanCoversBand(local, k, band)) { return spanCeiling(local, k); }
+    if (spanCapBand(local, k) < band) { below = spanCeiling(local, k); }
+  }
+  return below;
+}
+
+fn columnCoversBand(local : i32, band : i32) -> bool {
+  let count = spanCountOf(local);
+  for (var k = 0; k < count; k++) {
+    if (spanCoversBand(local, k, band)) { return true; }
+  }
+  return false;
+}`;
+
 export function buildMesherWgsl(): string {
   const shift = bandHeightShift();
   // Every workgroup walks the same square count, so the split has to be exact.
@@ -294,53 +346,7 @@ fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
   return select(solved.x, solved.x + 1, solved.y != 0);
 }
 
-fn drawnBandOfSample(h : i32) -> i32 {
-  let band = (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT;
-  return select(band, -1, band == 0 && h + BAND_BIAS < SHORE_THRESHOLD);
-}
-fn levelThreshold(level : i32) -> i32 {
-  return select(level * BAND_HEIGHT, SHORE_THRESHOLD, level == 0);
-}
-
-fn spanCountOf(local : i32) -> i32 {
-  let packedCount = i32(cellDesc[local] >> SPAN_COUNT_SHIFT);
-  return select(packedCount, 1, packedCount == 0);
-}
-fn spanPairAt(local : i32, k : i32) -> i32 {
-  return (entryPairBase + i32(cellDesc[local] & SPAN_OFFSET_MASK) + k) * SPAN_PAIR_WORDS;
-}
-fn spanFloorBand(local : i32, k : i32) -> i32 {
-  if (cellDesc[local] == 0u) { return BEDROCK_BAND; }
-  return spanPairWord(spanPairAt(local, k));
-}
-fn spanCeiling(local : i32, k : i32) -> i32 {
-  if (cellDesc[local] == 0u) { return cellHeight[local]; }
-  return spanPairWord(spanPairAt(local, k) + 1);
-}
-fn spanCapBand(local : i32, k : i32) -> i32 {
-  return drawnBandOfSample(spanCeiling(local, k));
-}
-fn spanCoversBand(local : i32, k : i32, band : i32) -> bool {
-  return spanFloorBand(local, k) <= band && band <= spanCapBand(local, k);
-}
-
-fn columnSampleAtBand(local : i32, band : i32) -> i32 {
-  let count = spanCountOf(local);
-  var below = OPEN_COLUMN_SAMPLE;
-  for (var k = 0; k < count; k++) {
-    if (spanCoversBand(local, k, band)) { return spanCeiling(local, k); }
-    if (spanCapBand(local, k) < band) { below = spanCeiling(local, k); }
-  }
-  return below;
-}
-
-fn columnCoversBand(local : i32, band : i32) -> bool {
-  let count = spanCountOf(local);
-  for (var k = 0; k < count; k++) {
-    if (spanCoversBand(local, k, band)) { return true; }
-  }
-  return false;
-}
+${SPAN_BAND_WGSL}
 
 // The field a level marches on: the plain cell height, or the column's sample at
 // that band once the chunk holds a layered column.
