@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
   BEDROCK_BAND,
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   applySculpt,
@@ -490,7 +492,7 @@ function wallWorld(): TerrainMirror {
   return worldOf((x) => (x >= CARVE_WALL_X ? bandLevelHeight(CARVE_WALL_BAND) : 0));
 }
 
-const carveIntent = (seq: number): SculptIntent => ({
+const carveIntent = (seq: number, depthBands?: number): SculptIntent => ({
   type: 'sculpt',
   x: CARVE_WALL_X,
   y: ROW,
@@ -498,6 +500,7 @@ const carveIntent = (seq: number): SculptIntent => ({
   dir: -1,
   tool: 'carve',
   spanBand: PLATEAU_BAND,
+  ...(depthBands === undefined ? {} : { depthBands }),
   seq,
 });
 
@@ -538,6 +541,36 @@ describe('predicting a carve', () => {
     expect(store.pendingCount()).toBe(0);
     expect(packColumnSpans(mirror.map, CARVE_WALL_X, ROW)).toEqual(authoritative);
     expect(heightAt(mirror.map, CARVE_WALL_X, ROW)).toBe(heightAt(server.map, CARVE_WALL_X, ROW));
+  });
+
+  it('carries depthBands through the ledger, so a deep cut replays as a deep cut', () => {
+    for (const depthBands of [CARVE_MIN_DEPTH_BANDS, 3, CARVE_MAX_DEPTH_BANDS]) {
+      const mirror = wallWorld();
+      const store = createPredictionStore(mirror);
+      store.predict(carveIntent(1, depthBands), 0);
+      const predicted = packColumnSpans(mirror.map, CARVE_WALL_X, ROW);
+
+      const server = wallWorld();
+      applySculpt(server.map, CARVE_WALL_X, ROW, 1, -DEFAULT_SCULPT_AMOUNT, {
+        tool: 'carve',
+        spanBand: PLATEAU_BAND,
+        depthBands,
+      });
+      expect(predicted).toEqual(packColumnSpans(server.map, CARVE_WALL_X, ROW));
+
+      // Replay after an unrelated ack must still cut the same depth.
+      store.applyAuthoritative(() => new Set<number>(), 1);
+      expect(packColumnSpans(mirror.map, CARVE_WALL_X, ROW)).toEqual(predicted);
+    }
+  });
+
+  it('predicts nothing for a depth the validator refuses', () => {
+    const mirror = wallWorld();
+    const store = createPredictionStore(mirror);
+    const dirty = store.predict(carveIntent(1, CARVE_MAX_DEPTH_BANDS + 1), 0);
+    expect(dirty.size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+    expect(spanCount(mirror.map, CARVE_WALL_X, ROW)).toBe(1);
   });
 });
 
