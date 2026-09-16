@@ -83,11 +83,6 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
   };
 }
 
-export function sculptSweepSteps(intent: SculptIntent): number {
-  if (intent.fromX === undefined || intent.fromY === undefined) return 1;
-  return Math.max(1, chebyshevDistance(intent.fromX, intent.fromY, intent.x, intent.y));
-}
-
 export type SculptDeniedReason =
   | 'malformed'
   | 'locked'

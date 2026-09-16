@@ -1,4 +1,4 @@
-import { sculptOptionsOf } from '@terrace/shared';
+import { sculptOptionsOf, strokeSweep } from '@terrace/shared';
 import type { SculptIntent, SculptProfile, SculptTool } from '@terrace/shared';
 import { MANA_BALANCE_MESSAGE } from '../protocol.ts';
 import { DEFAULT_WORLD_DIFFICULTY } from '../../../server/src/config.ts';
@@ -30,6 +30,8 @@ export interface ManaQuote {
   readonly seq: number | null;
   readonly x: number;
   readonly y: number;
+  readonly fromX: number;
+  readonly fromY: number;
   readonly radius: number;
   readonly tool: SculptTool;
   readonly profile: SculptProfile;
@@ -44,10 +46,13 @@ const SEQLESS_QUOTE = null;
 
 export function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote {
   const options = sculptOptionsOf(intent);
+  const sweep = strokeSweep(intent);
   return {
     seq: intent.seq ?? SEQLESS_QUOTE,
     x: intent.x,
     y: intent.y,
+    fromX: sweep.fromX,
+    fromY: sweep.fromY,
     radius: intent.radius,
     tool: options.tool,
     profile: options.profile,
@@ -59,9 +64,12 @@ export function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): num
   const { quote } = pool;
   if (quote === null || quote.seq !== (intent.seq ?? SEQLESS_QUOTE)) return null;
   const options = sculptOptionsOf(intent);
+  const sweep = strokeSweep(intent);
   const sameBrush =
     quote.x === intent.x &&
     quote.y === intent.y &&
+    quote.fromX === sweep.fromX &&
+    quote.fromY === sweep.fromY &&
     quote.radius === intent.radius &&
     quote.tool === options.tool &&
     quote.profile === options.profile;

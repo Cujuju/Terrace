@@ -16,6 +16,7 @@ import {
   type SculptProfile,
   sculptDisplacementUnits,
   sculptOptionsOf,
+  strokeSweep,
   type SculptIntent,
 } from '@terrace/shared';
 import {
@@ -1328,7 +1329,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
     return manaCostFor(
       PLAYER.id,
       intent,
-      openedChunkCount(world.size, intent.x, intent.y, intent.radius, (cx, cy) =>
+      openedChunkCount(world.size, strokeSweep(intent), (cx, cy) =>
         world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
       ),
     );
@@ -1522,12 +1523,8 @@ describe('a stroke that moves nothing still pays for the land it opened', () => 
 
   it('charges the territory fee, and only that, for an empty diff on the frontier', () => {
     const harness = bootOnTheFrontier();
-    const opened = openedChunkCount(
-      harness.world.size,
-      NO_OP_CARVE.x,
-      NO_OP_CARVE.y,
-      NO_OP_CARVE.radius,
-      (cx, cy) => harness.world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
+    const opened = openedChunkCount(harness.world.size, strokeSweep(NO_OP_CARVE), (cx, cy) =>
+      harness.world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
     );
     expect(opened).toBeGreaterThan(0);
 
@@ -1612,7 +1609,7 @@ describe('a chunk of frontier opens for a flat fee, whatever opens it', () => {
   }
 
   function openedFor(world: World, intent: SculptIntent): number {
-    return openedChunkCount(world.size, intent.x, intent.y, intent.radius, (cx, cy) =>
+    return openedChunkCount(world.size, strokeSweep(intent), (cx, cy) =>
       world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
     );
   }

@@ -4,6 +4,7 @@ import {
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
+  sweepAt,
 } from '@terrace/shared';
 import { CHUNK_UNLOCK_MANA, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
 
@@ -119,8 +120,10 @@ describe('the HUD quote prices the frontier under the aim', () => {
     state.setLocalTerritory(HOME_ONLY);
     hud.setHoverPick(AIM);
 
-    const opened = openedChunkCount(WORLD_SIZE, AIM.x, AIM.y, MIN_BRUSH_RADIUS, (cx, cy) =>
-      HOME_ONLY.revealedAt(cx * CHUNK_SIZE, cy * CHUNK_SIZE),
+    const opened = openedChunkCount(
+      WORLD_SIZE,
+      sweepAt(AIM.x, AIM.y, MIN_BRUSH_RADIUS),
+      (cx, cy) => HOME_ONLY.revealedAt(cx * CHUNK_SIZE, cy * CHUNK_SIZE),
     );
     expect(opened).toBeGreaterThan(0);
     expect(state.currentUnlockFee()).toBe(opened * CHUNK_UNLOCK_MANA);
