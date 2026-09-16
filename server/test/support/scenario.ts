@@ -398,12 +398,15 @@ export class Scenario {
   private faultingWorld(): World {
     if (this.pendingFault === NO_FAULT) return this.world;
     const fault = this.pendingFault;
-    this.pendingFault = NO_FAULT;
+    const spend = (): void => {
+      this.pendingFault = NO_FAULT;
+    };
     const world = this.world;
     return new Proxy(world, {
       get(target, property, receiver): unknown {
         if (property === 'applySculpt') {
           return (x: number, y: number): never => {
+            spend();
             if (fault.halfAppliedHeight !== undefined) {
               target.map.cells[y * target.size + x] = fault.halfAppliedHeight;
             }

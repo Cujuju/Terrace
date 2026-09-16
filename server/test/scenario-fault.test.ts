@@ -19,6 +19,9 @@ const FAULT = 'terrain engine fault';
 const SEQ = 9;
 const HALF_APPLIED_HEIGHT = 77;
 
+/** A cell index the validator must refuse, so the send stops before the terrain. */
+const FRACTIONAL_X = 1.5;
+
 /** Well inside the world, so a resync footprint is not clipped by an edge. */
 const BRUSH = { x: 20, y: 32 } as const;
 
@@ -93,6 +96,24 @@ describe('a faulted sculpt is contained, nacked and resynced', () => {
     expect(step.faulted).toBe(true);
     expect(entriesOfKind(step.entries, 'nack')).toHaveLength(0);
     expect(entriesOfKind(step.entries, 'chunks').length).toBeGreaterThan(0);
+  });
+
+  it('stays armed through a refusal that never reaches the terrain', () => {
+    silenceErrors();
+    const scenario = openTerrace();
+    scenario.failNextSculpt({ message: FAULT });
+
+    const malformed = scenario.sendContained(
+      SCULPTOR,
+      sculptMessage({ ...BRUSH, x: FRACTIONAL_X, seq: SEQ }),
+    );
+    expect(malformed.faulted).toBe(false);
+    expect(malformed.outcome).toEqual({ applied: false, reason: 'malformed' });
+
+    const next = scenario.sendContained(SCULPTOR, sculptMessage({ ...BRUSH, seq: SEQ + 1 }));
+
+    expect(next.faulted).toBe(true);
+    expect(entriesOfKind(next.entries, 'nack')[0]?.reason).toBe('server-fault');
   });
 
   it('leaves the next stroke of the same session unharmed', () => {
