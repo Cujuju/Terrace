@@ -4,7 +4,6 @@ import {
   DECK_BASE_WORLD_Y,
   DECK_THICKNESS_WORLD_UNITS,
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
-import { MAX_GROUND_WORLD_Y } from '../../../client/src/plugins/kit/precipitation.ts';
 import {
   CYCLONE_EYE_RADIUS_FRACTION,
   CYCLONE_RADIUS_CELLS,
@@ -29,16 +28,23 @@ export const ARM_WRAP_TURNS = 0.85;
 // Every column tops out on one flat cap, where the ordinary cloud deck tops out.
 export const CYCLONE_TOP_WORLD_Y = DECK_BASE_WORLD_Y + DECK_THICKNESS_WORLD_UNITS;
 
-// The rim hangs from the cap; its underside clears the highest ground by half a deck.
-export const CYCLONE_RIM_HEADROOM_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS / 2;
-export const CYCLONE_RIM_BOTTOM_WORLD_Y = MAX_GROUND_WORLD_Y + CYCLONE_RIM_HEADROOM_WORLD_UNITS;
-
-// The eye wall's foot is the sea at lowest; columns carry enough tiers to reach it.
+// The lowest a column's foot can sit is the sea; columns carry enough tiers to reach it.
 export const CYCLONE_WALL_FLOOR_WORLD_Y = SEA_SURFACE_WORLD_Y;
 
-// The funnel: undersides drop from the rim bottom to the ground by this power of
-// the distance in from the rim; only the eye wall reaches all the way down.
-export const CYCLONE_FUNNEL_PROFILE_EXPONENT = 0.5;
+// The flat bottom: every column inside this radius stands on the water or the ground.
+export const CYCLONE_FLOOR_RADIUS_FRACTION = 0.5;
+
+// The skirt spans the rest of the radius, rising straight from the floor's edge to the rim.
+export const CYCLONE_SKIRT_RADIUS_SPAN_FRACTION = 1 - CYCLONE_FLOOR_RADIUS_FRACTION;
+
+// The rim's underside hangs this far up the storm's height, so its outer side stays tall.
+export const CYCLONE_RIM_BOTTOM_HEIGHT_FRACTION = 0.3;
+export const CYCLONE_RIM_BOTTOM_WORLD_Y =
+  CYCLONE_WALL_FLOOR_WORLD_Y +
+  (CYCLONE_TOP_WORLD_Y - CYCLONE_WALL_FLOOR_WORLD_Y) * CYCLONE_RIM_BOTTOM_HEIGHT_FRACTION;
+
+// Eyewall character (puff size, shade, solidity) fades by this power of the way out to the rim.
+export const CYCLONE_EYEWALL_FALLOFF_EXPONENT = 0.5;
 
 export const CYCLONE_EYEWALL_PUFF_GROWTH = 0.6;
 
@@ -66,14 +72,26 @@ const GOLDEN_RATIO_CONJUGATE = 0.6180339887;
 
 // The eyewall profile: 1 at the eyewall, 0 at the rim.
 export function wallAt(along: number): number {
-  return 1 - Math.pow(along, CYCLONE_FUNNEL_PROFILE_EXPONENT);
+  return 1 - Math.pow(along, CYCLONE_EYEWALL_FALLOFF_EXPONENT);
+}
+
+// The skirt profile: 0 across the flat bottom, 1 at the rim.
+export function skirtAt(radiusFraction: number): number {
+  return Math.min(
+    1,
+    Math.max(
+      0,
+      (radiusFraction - CYCLONE_FLOOR_RADIUS_FRACTION) / CYCLONE_SKIRT_RADIUS_SPAN_FRACTION,
+    ),
+  );
 }
 
 // A column's underside when it stands over the sea; the shader lifts it onto higher ground.
 export function undersideOverSeaAt(along: number): number {
   return (
-    CYCLONE_RIM_BOTTOM_WORLD_Y +
-    (CYCLONE_WALL_FLOOR_WORLD_Y - CYCLONE_RIM_BOTTOM_WORLD_Y) * wallAt(along)
+    CYCLONE_WALL_FLOOR_WORLD_Y +
+    (CYCLONE_RIM_BOTTOM_WORLD_Y - CYCLONE_WALL_FLOOR_WORLD_Y) *
+      skirtAt(columnRadiusFraction(along))
   );
 }
 
