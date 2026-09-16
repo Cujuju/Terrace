@@ -24,7 +24,9 @@ import {
   readSpans,
   sculptDisplacementUnits,
   spanCapHeight,
+  spanCount,
   spanLowestBandHeight,
+  topSpan,
   type CellDiff,
   type Heightmap,
   type SculptProfile,
@@ -232,34 +234,64 @@ export function diffBounds(diff: readonly CellDiff[]): CellBox | null {
   return [x0, y0, x1, y1];
 }
 
-/**
- * A free smooth leaves plain ground within the limit. Plain = one span before
- * and after: a layered span stops at its own lowest drawn band.
- */
-export function expectGradientLimitOverPlainGround(
+/** Span count per cell: a changed count means the grasped span did not survive. */
+export function spanCountsOf(map: Heightmap, cells: Iterable<number>): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const i of cells) counts.set(i, spanCount(map, cellX(map.size, i), cellY(map.size, i)));
+  return counts;
+}
+
+/** Cells whose grasped span survived, so `cells[]` still holds the value relaxation left. */
+export function graspStableCells(
   map: Heightmap,
-  plain: ReadonlySet<number>,
+  before: ReadonlyMap<number, number>,
+): Set<number> {
+  const stable = new Set<number>();
+  for (const [i, was] of before) {
+    if (was === spanCount(map, cellX(map.size, i), cellY(map.size, i))) stable.add(i);
+  }
+  return stable;
+}
+
+/** Relaxation stops dropping a span once its ceiling reaches its own lowest drawn band. */
+function dropBound(map: Heightmap, i: number): boolean {
+  if (!map.columnSpans.has(i)) return false;
+  return map.cells[i]! <= spanBaseOf(topSpan(map, cellX(map.size, i), cellY(map.size, i)));
+}
+
+/**
+ * A free smooth leaves the ground it scanned within the limit. Relaxation moves
+ * each cell's grasped ceiling, which `cells[]` holds. Returns pairs compared.
+ */
+export function expectGradientLimitOverSettled(
+  map: Heightmap,
+  stable: ReadonlySet<number>,
   box: CellBox,
   context = '',
-): void {
+): number {
   const [x0, y0, x1, y1] = box;
   const limit = MAX_STEP + RELAX_SLACK;
   const violations: string[] = [];
+  let compared = 0;
+  const pair = (i: number, j: number, label: string): void => {
+    if (!stable.has(j)) return;
+    compared++;
+    const drop = map.cells[i]! - map.cells[j]!;
+    if (drop <= limit && drop >= -limit) return;
+    // A bound that bites leaves the pair over-steep for the next stroke.
+    if (dropBound(map, drop > 0 ? i : j)) return;
+    violations.push(`${label} drops ${drop}, limit ${limit}`);
+  };
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const i = y * map.size + x;
-      if (!plain.has(i) || map.columnSpans.has(i)) continue;
-      if (x < x1 && plain.has(i + 1) && !map.columnSpans.has(i + 1)
-        && Math.abs(map.cells[i]! - map.cells[i + 1]!) > limit) {
-        violations.push(`(${x}, ${y})-(${x + 1}, ${y}) drops ${map.cells[i]! - map.cells[i + 1]!}, limit ${limit}`);
-      }
-      if (y < y1 && plain.has(i + map.size) && !map.columnSpans.has(i + map.size)
-        && Math.abs(map.cells[i]! - map.cells[i + map.size]!) > limit) {
-        violations.push(`(${x}, ${y})-(${x}, ${y + 1}) drops ${map.cells[i]! - map.cells[i + map.size]!}, limit ${limit}`);
-      }
+      if (!stable.has(i)) continue;
+      if (x < x1) pair(i, i + 1, `(${x}, ${y})-(${x + 1}, ${y})`);
+      if (y < y1) pair(i, i + map.size, `(${x}, ${y})-(${x}, ${y + 1})`);
     }
   }
   report(violations, context);
+  return compared;
 }
 
 /** A smooth only moves height between neighbours: the whole-map sum is unchanged. */
