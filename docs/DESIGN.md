@@ -38,11 +38,12 @@ in the README.
   (`client/src/plugins/kit/lightBank.ts`), created and parented at attach,
   permanently visible, parked by intensity 0 only. Nothing after attach adds,
   removes, hides or reparents a light.
-- Materials and geometries on spawn paths are built at attach, pooled and
-  reused. Nothing constructs a material or node graph after attach.
+- Spawn paths construct no materials or node graphs: rigs, lights, materials
+  and geometries are built at attach (or on idle, as monster templates are),
+  pooled and reused.
 - `client/src/render/settleWarmup.ts` compiles hidden drawables at terrain
-  settle. A drawable that only exists after settle needs a hidden specimen at
-  attach or a `requestShaderWarmup()` call once it appears.
+  settle. A material set that only exists after settle gets a hidden specimen
+  in the layer and a `requestShaderWarmup()` call once it is added.
 
 ## Glossary
 
