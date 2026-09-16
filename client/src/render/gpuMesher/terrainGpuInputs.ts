@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, cellIndex, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, cellIndex, chunksPerEdge, SPAN_STRIDE } from '@terrace/shared';
 import { buriedFloorBand, sampleBandRange } from '../../terrain/capEmission.ts';
 import { LATTICE_PER_CHUNK, SAMPLE_COUNT } from '../../terrain/contours.ts';
 import { renderSampleCell, type TerrainMirror } from '../../terrain/mirror.ts';
@@ -8,7 +8,7 @@ export const WINDOW_LATTICE_SAMPLES = SAMPLE_COUNT;
 /** Layered (floor, ceiling) pairs one chunk window may carry; past it the chunk is CPU work. */
 export const WINDOW_SPAN_PAIRS = 2048;
 
-export const SPAN_PAIR_WORDS = 2;
+export const SPAN_PAIR_WORDS = SPAN_STRIDE;
 
 /** latticeDesc packs spanCount in the high half and the entry-local pair offset in the low. */
 export const SPAN_COUNT_SHIFT = 16;

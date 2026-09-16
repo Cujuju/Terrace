@@ -23,6 +23,8 @@ export interface Span {
 /** Packed as [floorBand, ceiling] per span. */
 export const SPAN_STRIDE = 2;
 
+const MIN_PACKED_SPANS = 2;
+
 /** A column carved to nothing keeps its bedrock band and no more. */
 const BEDROCK_FLOOR_SPAN: Span = { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR };
 
@@ -51,6 +53,11 @@ export function highestCeilingUnderSpan(upper: Span): number {
 
 export function isSpanDrawn(span: Span): boolean {
   return span.floorBand <= spanCapBand(span);
+}
+
+/** The raw range a ceiling may sit in. The writer, the parser and the repair all ask here. */
+export function isCeilingInRange(ceiling: number): boolean {
+  return ceiling >= BEDROCK_FLOOR && ceiling <= MAX_HEIGHT;
 }
 
 /**
@@ -84,10 +91,26 @@ export function spansHaveCapAtBand(spans: readonly Span[], band: number): boolea
   return false;
 }
 
+/**
+ * Repairs a column into one `setColumn` accepts. Refuses what repair cannot
+ * mean: an out-of-range ceiling, or spans that do not ascend.
+ */
 export function canonicaliseColumn(spans: readonly Span[]): Span[] {
   const out: Span[] = [];
   for (let k = 0; k < spans.length; k++) {
     const span = spans[k]!;
+    if (!isCeilingInRange(span.ceiling)) {
+      throw new RangeError(
+        `span ${k} caps at ${span.ceiling}, outside [${BEDROCK_FLOOR}, ${MAX_HEIGHT}]`,
+      );
+    }
+    const below = k === 0 ? undefined : spans[k - 1]!;
+    if (below !== undefined && span.floorBand <= below.floorBand) {
+      throw new RangeError(
+        `span ${k} floors in band ${span.floorBand}, not above span ${k - 1}'s band ` +
+          `${below.floorBand} — a column is repaired in place, never sorted`,
+      );
+    }
     if (!isSpanDrawn(span)) continue;
     const last = out.length === 0 ? undefined : out[out.length - 1]!;
     if (last !== undefined && !isGapDrawn(last, span)) {
@@ -113,14 +136,15 @@ export function canonicaliseColumn(spans: readonly Span[]): Span[] {
 export function parsePackedSpans(flat: readonly number[]): Span[] | null {
   if (flat.length % SPAN_STRIDE !== 0) return null;
   const count = flat.length / SPAN_STRIDE;
-  if (count < 2) return null;
+  // A packed record only ever holds a layered column; a single span lives in map.cells.
+  if (count < MIN_PACKED_SPANS) return null;
   const spans: Span[] = [];
   for (let k = 0; k < count; k++) {
     const floorBand = flat[k * SPAN_STRIDE]!;
     const ceiling = flat[k * SPAN_STRIDE + 1]!;
     if (!Number.isInteger(floorBand) || !Number.isInteger(ceiling)) return null;
     if (floorBand < BEDROCK_BAND) return null;
-    if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) return null;
+    if (!isCeilingInRange(ceiling)) return null;
     const span: Span = { floorBand, ceiling };
     if (!isSpanDrawn(span)) return null;
     if (k > 0 && !isGapDrawn(spans[k - 1]!, span)) return null;

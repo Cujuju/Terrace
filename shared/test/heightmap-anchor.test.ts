@@ -8,6 +8,7 @@ import {
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  floorBandOfHeight,
   forEachFootprintOffset,
   heightAt,
   MIN_HEIGHT,
@@ -236,7 +237,10 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     for (const profile of ['soft', 'hard'] as const) {
       const map = createHeightmap(16);
       const lowerCap = BEDROCK_FLOOR + 4;
-      const overhang = { floorBand: -83, ceiling: BEDROCK_FLOOR + 260 };
+      const overhang = {
+        floorBand: floorBandOfHeight(BEDROCK_FLOOR + 200),
+        ceiling: BEDROCK_FLOOR + 260,
+      };
       for (let y = 6; y <= 10; y++) {
         for (let x = 6; x <= 10; x++) {
           setColumn(map, x, y, [{ floorBand: BEDROCK_BAND, ceiling: lowerCap }, overhang]);

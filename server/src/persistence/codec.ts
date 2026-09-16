@@ -1,4 +1,4 @@
-import { floorBandOfHeight, parsePackedSpans, type Span } from '@terrace/shared';
+import { floorBandOfHeight, parsePackedSpans, SPAN_STRIDE, type Span } from '@terrace/shared';
 
 const BYTES_PER_HEIGHT = 2;
 
@@ -32,11 +32,11 @@ export function decodeHeights(blob: Uint8Array, expectedCells: number): Int16Arr
   return new Int16Array(bytes.buffer, 0, expectedCells);
 }
 
-const VALUES_PER_SPAN = 2;
+const VALUES_PER_SPAN = SPAN_STRIDE;
 
 const BYTES_PER_SPAN_RECORD_HEADER = 4 + 2;
 
-const BYTES_PER_PACKED_SPAN = 2 * BYTES_PER_HEIGHT;
+const BYTES_PER_PACKED_SPAN = VALUES_PER_SPAN * BYTES_PER_HEIGHT;
 
 /** Schema 1 packed a span's floor as a raw height; schema 2 packs it as a band. */
 export const RAW_FLOOR_SCHEMA_VERSION = 1;

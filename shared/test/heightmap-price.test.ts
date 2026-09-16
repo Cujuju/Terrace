@@ -9,6 +9,7 @@ import {
   forEachFootprintOffset,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
+  CARVE_DEFAULT_DEPTH_BANDS,
   sculptDisplacementUnits,
   smooth,
 } from '../src/index.ts';
@@ -37,7 +38,7 @@ describe('sculptDisplacementUnits', () => {
   it('equals the volume applyBrush actually moves, for every radius × profile', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, 'stamp', profile)).toBe(
+        expect(sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS)).toBe(
           observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),
         );
       }
@@ -47,7 +48,7 @@ describe('sculptDisplacementUnits', () => {
   it('prices a lower exactly like the raise that undoes it', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, 'stamp', profile)).toBe(
+        expect(sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS)).toBe(
           observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT),
         );
       }
@@ -55,35 +56,35 @@ describe('sculptDisplacementUnits', () => {
   });
 
   it('matches the published table of displacement volumes', () => {
-    expect(sculptDisplacementUnits(1, 'stamp')).toBe(16);
-    expect(sculptDisplacementUnits(2, 'stamp')).toBe(80);
-    expect(sculptDisplacementUnits(3, 'stamp')).toBe(336);
-    expect(sculptDisplacementUnits(4, 'stamp')).toBe(592);
+    expect(sculptDisplacementUnits(1, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(16);
+    expect(sculptDisplacementUnits(2, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(80);
+    expect(sculptDisplacementUnits(3, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(336);
+    expect(sculptDisplacementUnits(4, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(592);
   });
 
   it('is one band-cell at the point brush', () => {
-    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'stamp')).toBe(BAND_HEIGHT);
+    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(BAND_HEIGHT);
   });
 
   it('grows with radius', () => {
     for (let radius = MIN_BRUSH_RADIUS; radius < MAX_BRUSH_RADIUS; radius++) {
-      expect(sculptDisplacementUnits(radius + 1, 'stamp')).toBeGreaterThan(
-        sculptDisplacementUnits(radius, 'stamp'),
+      expect(sculptDisplacementUnits(radius + 1, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBeGreaterThan(
+        sculptDisplacementUnits(radius, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS),
       );
     }
   });
 
   it('is a pure integer function of radius and tool', () => {
     for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-      const units = sculptDisplacementUnits(radius, 'stamp');
+      const units = sculptDisplacementUnits(radius, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS);
       expect(Number.isInteger(units)).toBe(true);
-      expect(sculptDisplacementUnits(radius, 'stamp')).toBe(units);
+      expect(sculptDisplacementUnits(radius, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(units);
     }
   });
 
   it('rejects a radius the brush itself would reject', () => {
     for (const bad of [0, MAX_BRUSH_RADIUS + 1, 1.5, Number.NaN]) {
-      expect(() => sculptDisplacementUnits(bad, 'stamp')).toThrow(RangeError);
+      expect(() => sculptDisplacementUnits(bad, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toThrow(RangeError);
     }
   });
 
@@ -104,7 +105,7 @@ describe('sculptDisplacementUnits', () => {
     });
 
     expect(slumpedDiff.length).toBeGreaterThan(stampedCells.size);
-    expect(sculptDisplacementUnits(4, 'stamp')).toBe(592);
+    expect(sculptDisplacementUnits(4, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(592);
   });
 
   it('prices a LEVEL FILL at the flat-delta volume, deliberately', () => {
@@ -118,6 +119,6 @@ describe('sculptDisplacementUnits', () => {
     });
 
     expect(diff).toHaveLength(1);
-    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'stamp')).toBe(749 * BAND_HEIGHT);
+    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS)).toBe(749 * BAND_HEIGHT);
   });
 });

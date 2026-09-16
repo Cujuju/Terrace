@@ -1,3 +1,4 @@
+import { BEDROCK_BAND } from '../columns.ts';
 import { MAX_HEIGHT, MIN_HEIGHT, TERRACE_BAND_COUNT } from '../constants.ts';
 import { bandOf } from '../grid.ts';
 
@@ -28,18 +29,21 @@ export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'dra
 
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
 
+/** Bedrock is a column's floor, not material, so the lowest slab a stroke can open sits above it. */
+export const LOWEST_CARVEABLE_BAND = BEDROCK_BAND + 1;
+
 /** A stroke cuts whole slabs, and one slab is the shallowest cut there is. */
 export const CARVE_MIN_DEPTH_BANDS = 1;
 
 export const CARVE_DEFAULT_DEPTH_BANDS = CARVE_MIN_DEPTH_BANDS;
 
 /**
- * The deepest one stroke may cut. A quarter of the world's bands is the most a
- * single act should be able to remove; beyond it a carve is world-editing.
+ * The deepest one stroke may cut: a quarter of the bands above the shore is the
+ * most a single act should remove; beyond it a carve is world-editing.
  */
-const CARVE_MAX_DEPTH_WORLD_FRACTION = 4;
+const CARVE_MAX_DEPTH_SHORE_BAND_FRACTION = 4;
 
-export const CARVE_MAX_DEPTH_BANDS = TERRACE_BAND_COUNT / CARVE_MAX_DEPTH_WORLD_FRACTION;
+export const CARVE_MAX_DEPTH_BANDS = TERRACE_BAND_COUNT / CARVE_MAX_DEPTH_SHORE_BAND_FRACTION;
 
 /** The one depth predicate: the wire validator and applyCarve both ask it. */
 export function isValidCarveDepth(depthBands: number): boolean {
