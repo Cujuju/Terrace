@@ -2,9 +2,9 @@ import {
   BAND_HEIGHT,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
-  SEA_LEVEL,
   cellsAcross,
 } from '@terrace/shared';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
   type WildlifeSizeClass,
@@ -35,7 +35,7 @@ function clearanceFor(halfExtentAtScaleOne: number): number {
   return halfExtentAtScaleOne * CLEARANCE_MODEL_SCALE + WATER_MARGIN_WORLD_UNITS;
 }
 
-export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
+export { SEA_SURFACE_WORLD_Y };
 
 export interface SwimProfile {
   readonly depthFraction: number;
