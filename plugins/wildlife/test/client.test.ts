@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { cellsAcross } from '@terrace/shared';
+import { SEA_SURFACE_WORLD_Y as DRAWN_SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   DEFAULT_SIZE_CLASS,
   DEFAULT_SIZE_CLASS_INDEX,
@@ -185,8 +186,7 @@ describe('vertical placement', () => {
   });
 
   it('keeps every swimmer inside the water column, stacked surface → mid → seabed', () => {
-    expect(SEA_SURFACE_WORLD_Y).toBe(SEA_LEVEL);
-    expect(SEA_SURFACE_WORLD_Y).toBe(0);
+    expect(SEA_SURFACE_WORLD_Y).toBe(DRAWN_SEA_SURFACE_WORLD_Y);
 
     for (const seabedY of [-20, -8, -3, -1.5, -0.9]) {
       for (const species of ['fish', 'whale', 'deepsea'] as const) {
@@ -219,7 +219,7 @@ describe('vertical placement', () => {
   });
 
   it('submerges a large creature deeper than a small one of the same species', () => {
-    const seabedY = -2;
+    const seabedY = -1.5;
     const [small, , large] = WILDLIFE_SIZE_CLASSES;
     expect(creatureWorldY('fish', seabedY, large)).toBeLessThan(
       creatureWorldY('fish', seabedY, small),
@@ -228,7 +228,8 @@ describe('vertical placement', () => {
 
   it('splits the difference when the water is too shallow for both clearances', () => {
     const seabedY = -1;
-    expect(creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS)).toBeCloseTo(-0.5, 6);
+    const midWater = (seabedY + SEA_SURFACE_WORLD_Y) / 2;
+    expect(creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS)).toBeCloseTo(midWater, 6);
   });
 });
 
