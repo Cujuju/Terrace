@@ -10,8 +10,9 @@ import {
   DRAWN_SHORE_HEIGHT,
   isHeightInBand,
   isSpanDrawn,
+  spanCapBand,
   spanCapHeight,
-  spanLowestBandHeight,
+  spanUndersideLevel,
   stepTowardBand,
 } from '../src/index.ts';
 
@@ -87,16 +88,18 @@ describe('drawn-band contract (lane A)', () => {
     expect(stepTowardBand(-7, true)).toBe(DRAWN_SHORE_HEIGHT);
   });
 
-  it('span caps and lowest heights read the drawn grid', () => {
-    expect(spanCapHeight({ floor: 8, ceiling: 15 })).toBe(BAND_HEIGHT);
-    expect(spanCapHeight({ floor: 1, ceiling: 7 })).toBe(DRAWN_SHORE_HEIGHT);
-    expect(spanLowestBandHeight({ floor: 9, ceiling: 32 })).toBe(BAND_HEIGHT);
-    expect(spanLowestBandHeight({ floor: 1, ceiling: 7 })).toBe(DRAWN_SHORE_HEIGHT);
+  it('span caps read the drawn grid; undersides are exact band levels', () => {
+    expect(spanCapHeight({ floorBand: 0, ceiling: 15 })).toBe(BAND_HEIGHT);
+    expect(spanCapHeight({ floorBand: 0, ceiling: 7 })).toBe(DRAWN_SHORE_HEIGHT);
+    expect(spanCapBand({ floorBand: 0, ceiling: 15 })).toBe(1);
+    expect(spanUndersideLevel({ floorBand: 1, ceiling: 32 })).toBe(DRAWN_SHORE_HEIGHT);
+    expect(spanUndersideLevel({ floorBand: 3, ceiling: 48 })).toBe(2 * BAND_HEIGHT);
   });
 
   it('a shore sliver is drawn, and covering agrees with drawing', () => {
-    expect(isSpanDrawn({ floor: 1, ceiling: 7 })).toBe(true);
-    expect(isSpanDrawn({ floor: 8, ceiling: 15 })).toBe(true);
+    expect(isSpanDrawn({ floorBand: 0, ceiling: 7 })).toBe(true);
+    expect(isSpanDrawn({ floorBand: 1, ceiling: 15 })).toBe(true);
+    expect(isSpanDrawn({ floorBand: 2, ceiling: 15 })).toBe(false);
     const map = createHeightmap(1);
     map.cells[0] = 15;
     expect(columnCoversBand(map, 0, 0, 1)).toBe(true);

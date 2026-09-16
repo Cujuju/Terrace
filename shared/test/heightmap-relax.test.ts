@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
+  bandFloorHeight,
   BAND_HEIGHT,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   cellIndex,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
+  drawnBandOfSample,
   forEachFootprintOffset,
   heightAt,
   LIBRARY_SCULPT_TOOL,
@@ -153,7 +155,9 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     let volume = 0;
     for (let y = 0; y < map.size; y++) {
       for (let x = 0; x < map.size; x++) {
-        for (const span of readSpans(map, x, y)) volume += span.ceiling - span.floor;
+        for (const span of readSpans(map, x, y)) {
+          volume += span.ceiling - bandFloorHeight(span.floorBand);
+        }
       }
     }
     return volume;
@@ -288,16 +292,16 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     expect(mapTotal(map)).toBe(before);
   });
 
-  it('the LAYERED path conserves SOLID VOLUME; its cells-sum is not a conserved quantity', () => {
+  it('the LAYERED path conserves SOLID VOLUME and loses no roof span', () => {
     const ROOF_GAP_BANDS = 8;
     const map = genesisTerraces(TERRACE_SIZE);
     for (let y = 40; y < 56; y++) {
       for (let x = 40; x < 56; x++) {
         const floorHeight = map.cells[cellIndex(map, x, y)]!;
         setColumn(map, x, y, [
-          { floor: BEDROCK_FLOOR, ceiling: floorHeight },
+          { floorBand: BEDROCK_BAND, ceiling: floorHeight },
           {
-            floor: floorHeight + ROOF_GAP_BANDS * BAND_HEIGHT,
+            floorBand: drawnBandOfSample(floorHeight) + ROOF_GAP_BANDS,
             ceiling: floorHeight + (ROOF_GAP_BANDS + 1) * BAND_HEIGHT,
           },
         ]);
@@ -305,11 +309,20 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     }
     const volumeBefore = mapVolume(map);
     const cellsBefore = mapTotal(map);
+    const before = Int16Array.from(map.cells);
     const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, 8);
     const passes = smooth(map, new Set(), footprint, footprint);
     expect(passes).toBeGreaterThan(0);
+    expect(Array.from(map.cells)).not.toEqual(Array.from(before));
     expect(mapVolume(map)).toBe(volumeBefore);
-    expect(mapTotal(map) - cellsBefore).toBe(-1920);
+    // A roof is floored in a band, and the layer view bounds it there, so a
+    // smooth can no longer cut one away: the cells-sum moves with the volume.
+    for (let y = 40; y < 56; y++) {
+      for (let x = 40; x < 56; x++) {
+        expect([x, y, readSpans(map, x, y).length]).toEqual([x, y, 2]);
+      }
+    }
+    expect(mapTotal(map) - cellsBefore).toBe(0);
   });
 
   it('smooth clicks build nothing: melt deposits no material', () => {
@@ -324,11 +337,13 @@ describe('relaxation conserves height exactly (issue #108)', () => {
 
   it('never moves a pair APART when a span cap is already violated (the movePair guard)', () => {
     const map = createHeightmap(16);
-    const UNDRAWN_FLOOR = 10;
-    const UNDRAWN_CEILING = 14;
+    const ROOF_BAND = 2;
+    // Drawn, but capped BELOW its own band level, so the layer view's `lo`
+    // already sits above the ceiling it bounds.
+    const ROOF_CEILING = bandFloorHeight(ROOF_BAND) + 1;
     setColumn(map, 8, 8, [
-      { floor: BEDROCK_FLOOR, ceiling: -100 },
-      { floor: UNDRAWN_FLOOR, ceiling: UNDRAWN_CEILING },
+      { floorBand: BEDROCK_BAND, ceiling: -100 },
+      { floorBand: ROOF_BAND, ceiling: ROOF_CEILING },
     ]);
     const layered = cellIndex(map, 8, 8);
     const neighbour = cellIndex(map, 9, 8);
@@ -337,7 +352,7 @@ describe('relaxation conserves height exactly (issue #108)', () => {
 
     smooth(map, new Set(), seed);
 
-    expect(map.cells[layered]).toBe(UNDRAWN_CEILING);
+    expect(map.cells[layered]).toBe(ROOF_CEILING);
     expect(Array.from(map.cells)).toEqual(Array.from(before));
   });
 

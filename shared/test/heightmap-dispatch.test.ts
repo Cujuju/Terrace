@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyBrush,
   applySculpt,
+  CARVE_DEFAULT_DEPTH_BANDS,
   cellIndex,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
@@ -126,6 +127,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
     expect(SCULPT_TOOLS).not.toContain(LIBRARY_SCULPT_TOOL);
     expect(LIBRARY_DEFAULT_SCULPT_OPTIONS).toEqual({
       tool: 'settle',
+      depthBands: CARVE_DEFAULT_DEPTH_BANDS,
       profile: 'soft',
       spill: 'free',
       anchor: 'free',

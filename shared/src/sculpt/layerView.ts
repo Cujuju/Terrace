@@ -1,10 +1,10 @@
 import { MAX_HEIGHT } from '../constants.ts';
+import { bandLevelHeight } from '../bands.ts';
 import {
   highestCeilingUnderSpan,
   moveSpanCeiling,
   spanAt,
   spanCount,
-  spanLowestBandHeight,
 } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
 import { layerSpanIndex } from './grasp.ts';
@@ -52,7 +52,7 @@ export function buildLayerView(
     heights[i - base] = span.ceiling;
     const isTop = k === spanCount(map, x, y) - 1;
     spanCaps.set(i, {
-      lo: spanLowestBandHeight(span),
+      lo: bandLevelHeight(span.floorBand),
       hi: isTop ? MAX_HEIGHT : highestCeilingUnderSpan(spanAt(map, x, y, k + 1)),
     });
   }

@@ -4,7 +4,6 @@ import {
   BAND_HEIGHT,
   BEDROCK_FLOOR,
   canCarveBandAt,
-  CARVE_BANDS_PER_STROKE,
   cellIndex,
   columnCoversBand,
   createHeightmap,
@@ -372,7 +371,13 @@ function runWireStroke(
   expectColumnsCanonical(map, watched, context);
   expectDrawnCoverageMatchesSpans(map, watched, context);
   expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
-  expectPriceMatchesBrushVolume(intent.radius, options.tool, options.profile, context);
+  expectPriceMatchesBrushVolume(
+    intent.radius,
+    options.tool,
+    options.profile,
+    options.depthBands,
+    context,
+  );
 
   // The wire smooth is anchored Laplacian: net drift stays inside each
   // touched cell's clamp window, two bands wide. Only the free smooth,
@@ -381,7 +386,7 @@ function runWireStroke(
     expectSolidVolumeConserved(volumeBefore, map, context, diff.length * 2 * BAND_HEIGHT);
   }
   if (options.tool === 'carve' && options.spanBand !== null) {
-    const [lo, hi] = carvedSlabRange(options.spanBand, CARVE_BANDS_PER_STROKE);
+    const [lo, hi] = carvedSlabRange(options.spanBand, options.depthBands);
     const footprint = footprintCells(map, intent.x, intent.y, intent.radius);
     expectCarveCutsOnlyNamedSlabs(map, before, diff, footprint, lo, hi, context);
   }

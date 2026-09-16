@@ -1206,8 +1206,8 @@ describe('deep strata sculpting (2026-08-19) — the digs that recalibrated the 
   }
 
   it('the deep fixtures provably bottom out on the world floor', () => {
-    expect(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT + 1);
-    expect(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT + 1);
+    expect(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
+    expect(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
     expect(quantizeToBand(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE))).toBe(MIN_HEIGHT);
     expect(quantizeToBand(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE))).toBe(MIN_HEIGHT);
   });
