@@ -7,7 +7,7 @@ import {
 } from '../../../client/src/plugins/kit/discSystemsView.ts';
 import type { DiscRig } from '../../../client/src/plugins/kit/discRig.ts';
 import { MAX_ACTIVE_SYSTEMS, RAIN_PLUGIN_NAME, RAIN_SYSTEMS_MESSAGE } from '../protocol.ts';
-import { createRainRigs, RAIN_KIND_DRAW_OBJECTS, RAIN_SHADE_DARKNESS, type RainRigs } from './rig.ts';
+import { createRainRigs, RAIN_KIND_DRAW_OBJECTS, RAIN_SHADE_DARKNESS, rainDensityFractionFor, type RainRigs } from './rig.ts';
 
 let rigs: RainRigs | null = null;
 
@@ -22,6 +22,7 @@ const view = createDiscSystemsView<DiscRig>({
     return rigs;
   },
   update: (rig, disc, elapsed) => {
+    rig.setPrecipitationDensity?.(rainDensityFractionFor(disc.id));
     rig.update(disc, elapsed);
   },
   deck: () => rigs?.deck ?? null,

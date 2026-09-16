@@ -10,6 +10,7 @@ export const DISC_RENDER_ORDER = 1;
 export interface DiscRig {
   readonly root: Group;
   update(disc: InterpolatedDisc, elapsed: number): boolean;
+  setPrecipitationDensity?(density: number): void;
   park(): void;
   dispose(): void;
 }
@@ -37,6 +38,10 @@ export function createDiscRig(spec: DiscRigSpec): DiscRig {
 
   return {
     root,
+
+    setPrecipitationDensity(density: number): void {
+      if (fieldSlot >= 0) spec.field?.setDensity(fieldSlot, density);
+    },
 
     update(disc: InterpolatedDisc, elapsed: number): boolean {
       root.position.set(disc.x * CELL_WORLD_SIZE, 0, disc.y * CELL_WORLD_SIZE);

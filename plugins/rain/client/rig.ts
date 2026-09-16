@@ -13,9 +13,35 @@ import {
   RAIN_PLUGIN_NAME,
 } from '../protocol.ts';
 
-const RAIN_DROP_COUNT_AT_BASE_FOOTPRINT = 450;
+export const RAIN_DROP_COUNT_MIN_AT_BASE_FOOTPRINT = 50;
+
+export const RAIN_DROP_COUNT_MAX_AT_BASE_FOOTPRINT = 400;
+
+export const RAIN_DROP_COUNT_STEP_AT_BASE_FOOTPRINT = 25;
+
+export const RAIN_DROP_COUNT_VARIANTS =
+  (RAIN_DROP_COUNT_MAX_AT_BASE_FOOTPRINT - RAIN_DROP_COUNT_MIN_AT_BASE_FOOTPRINT) /
+    RAIN_DROP_COUNT_STEP_AT_BASE_FOOTPRINT +
+  1;
+
+const RAIN_DROP_COUNT_AT_BASE_FOOTPRINT = RAIN_DROP_COUNT_MAX_AT_BASE_FOOTPRINT;
 
 export const RAIN_DROP_COUNT = RAIN_DROP_COUNT_AT_BASE_FOOTPRINT * RAIN_FOOTPRINT_AREA_SCALE;
+
+export function rainDropCountAtBaseFor(id: number): number {
+  let h = Math.imul(id, 0x9e3779b1) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97) >>> 0;
+  h = (h ^ (h >>> 15)) >>> 0;
+  return (
+    RAIN_DROP_COUNT_MIN_AT_BASE_FOOTPRINT +
+    RAIN_DROP_COUNT_STEP_AT_BASE_FOOTPRINT * (h % RAIN_DROP_COUNT_VARIANTS)
+  );
+}
+
+export function rainDensityFractionFor(id: number): number {
+  return rainDropCountAtBaseFor(id) / RAIN_DROP_COUNT_MAX_AT_BASE_FOOTPRINT;
+}
 
 export const RAIN_PROFILE: PrecipitationProfile = {
   form: 'streak',
