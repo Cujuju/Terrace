@@ -1,14 +1,11 @@
-import { BAND_HEIGHT } from '../constants.ts';
-import { bandFloorHeight, bandLevelHeight } from '../bands.ts';
+import { bandFloorHeight, bandLevelHeight, drawnBandOfSample } from '../bands.ts';
 import { type Heightmap } from '../grid.ts';
 import {
-  BEDROCK_FLOOR,
   canonicaliseColumn,
-  HEIGHT_UNIT,
   isGapDrawn,
-  isSpanDrawn,
   OPEN_COLUMN_SAMPLE,
-  spanCapHeight,
+  spanCapBand,
+  spanCoversBand,
   type Span,
 } from './span.ts';
 import { moveSpanCeiling, readSpans, setColumn, spanAt, spanCount } from './store.ts';
@@ -19,12 +16,9 @@ export function spanIndexCoveringBand(
   y: number,
   band: number,
 ): number | null {
-  const threshold = bandLevelHeight(band);
   const count = spanCount(map, x, y);
   for (let k = 0; k < count; k++) {
-    const span = spanAt(map, x, y, k);
-    if (!isSpanDrawn(span)) continue;
-    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return k;
+    if (spanCoversBand(spanAt(map, x, y, k), band)) return k;
   }
   return null;
 }
@@ -53,10 +47,9 @@ export type BandFill =
   | { readonly kind: 'extend'; readonly spanIndex: number }
   | { readonly kind: 'overhang' };
 
-/** The slab a band's own overhang lays: one band deep, hung clear of the boundary below it. */
-export function overhangSlabAt(ceiling: number): Span | null {
-  const floor = Math.max(BEDROCK_FLOOR, ceiling - BAND_HEIGHT + HEIGHT_UNIT);
-  return floor >= ceiling ? null : { floor, ceiling };
+/** The slab a band's own overhang lays: that one band, floored and capped in it. */
+export function overhangSlabAtBand(band: number): Span {
+  return { floorBand: band, ceiling: bandLevelHeight(band) };
 }
 
 export function bandFillAt(
@@ -65,25 +58,18 @@ export function bandFillAt(
   y: number,
   band: number,
 ): BandFill | null {
-  // Drag-fill admission is material reach, not drawn coverage: skip only when
-  // solid material already meets the write level. Drawn coverage stays
-  // render-sense, for picking and carving.
-  const threshold = bandLevelHeight(band);
   const count = spanCount(map, x, y);
-  for (let k = 0; k < count; k++) {
-    const span = spanAt(map, x, y, k);
-    if (span.floor <= threshold && threshold <= span.ceiling) return null;
-  }
   let below: number | null = null;
   for (let k = 0; k < count; k++) {
-    if (spanAt(map, x, y, k).ceiling < threshold) below = k;
+    const span = spanAt(map, x, y, k);
+    if (spanCoversBand(span, band)) return null;
+    if (spanCapBand(span) < band) below = k;
   }
   const firstAbove = below === null ? 0 : below + 1;
   if (firstAbove < count) {
     // A slab that welds to the ground under it is a filled carve, not a roof:
-    // one carve opens a single drawn band, which has no room for either.
-    const slab = overhangSlabAt(threshold);
-    if (slab === null) return null;
+    // an overhang needs its own slab plus one of air to be seen under.
+    const slab = overhangSlabAtBand(band);
     if (below !== null && !isGapDrawn(spanAt(map, x, y, below), slab)) return null;
     return { kind: 'overhang' };
   }
@@ -102,13 +88,11 @@ export function applyBandFill(
     moveSpanCeiling(map, x, y, fill.spanIndex, ceiling);
     return;
   }
-  const slab = overhangSlabAt(ceiling);
-  if (slab === null) return;
-  const { floor } = slab;
+  const slab = overhangSlabAtBand(drawnBandOfSample(ceiling));
   const spans = readSpans(map, x, y);
   let at = spans.length;
   for (let k = 0; k < spans.length; k++) {
-    if (spans[k]!.floor > floor) {
+    if (spans[k]!.floorBand > slab.floorBand) {
       at = k;
       break;
     }
@@ -133,14 +117,12 @@ export function highestCeilingBelow(
 }
 
 export function columnSampleAtBand(map: Heightmap, x: number, y: number, band: number): number {
-  const threshold = bandLevelHeight(band);
   const count = spanCount(map, x, y);
   let below = OPEN_COLUMN_SAMPLE;
   for (let k = 0; k < count; k++) {
     const span = spanAt(map, x, y, k);
-    if (!isSpanDrawn(span)) continue;
-    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return span.ceiling;
-    if (span.ceiling < threshold) below = span.ceiling;
+    if (spanCoversBand(span, band)) return span.ceiling;
+    if (spanCapBand(span) < band) below = span.ceiling;
   }
   return below;
 }

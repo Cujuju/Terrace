@@ -1,4 +1,4 @@
-import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT } from '../constants.ts';
+import { MAX_HEIGHT, MIN_HEIGHT } from '../constants.ts';
 import {
   bandFloorHeight,
   bandLevelHeight,
@@ -8,66 +8,67 @@ import {
 
 export const BEDROCK_FLOOR = MIN_HEIGHT;
 
+/** The band every column floors in: the drawn band of the lowest height the world holds. */
+export const BEDROCK_BAND = drawnBandOfSample(BEDROCK_FLOOR);
+
+/**
+ * A slab of solid material: floor in bands, so undersides are exact; ceiling
+ * raw, because that is the walkable surface the world samples.
+ */
 export interface Span {
-  readonly floor: number;
+  readonly floorBand: number;
   readonly ceiling: number;
 }
 
-export const HEIGHT_UNIT = 1;
-
-/**
- * Lowest ceiling a column can hold: one unit of bedrock always remains, so a
- * write that would cut to BEDROCK_FLOOR leaves this remnant instead.
- */
-export const BEDROCK_REMNANT_CEILING = BEDROCK_FLOOR + HEIGHT_UNIT;
-
-const BEDROCK_REMNANT: Span = { floor: BEDROCK_FLOOR, ceiling: BEDROCK_REMNANT_CEILING };
-
+/** Packed as [floorBand, ceiling] per span. */
 export const SPAN_STRIDE = 2;
 
-/** Canonical drawn cap of a span: the write level of its ceiling's drawn band. */
+/** A column carved to nothing keeps its bedrock band and no more. */
+const BEDROCK_FLOOR_SPAN: Span = { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR };
+
+/** Topmost band a span draws. The ground's own rounding rule, applied to the ceiling. */
+export function spanCapBand(span: Span): number {
+  return drawnBandOfSample(span.ceiling);
+}
+
+/** Canonical write level of a span's top drawn band. */
 export function spanCapHeight(span: Span): number {
-  return bandLevelHeight(drawnBandOfSample(span.ceiling));
+  return bandLevelHeight(spanCapBand(span));
 }
 
-/** Lowest band whose write level is at or above `height`. */
-function lowestBandAtOrAbove(height: number): number {
-  const band = drawnBandOfSample(height);
-  return bandLevelHeight(band) >= height ? band : band + 1;
-}
-
-/**
- * Lowest write level at or above a span's floor. A span is drawn exactly when
- * this clears its cap, which holds exactly when the span covers some band.
- */
-export function spanLowestBandHeight(span: Span): number {
-  return bandLevelHeight(lowestBandAtOrAbove(span.floor));
-}
-
-export function spanUndersideHeight(span: Span): number {
-  return spanLowestBandHeight(span) - BAND_HEIGHT;
+/** Exact underside of a span: the write level of the band below its floor. */
+export function spanUndersideLevel(span: Span): number {
+  return bandLevelHeight(span.floorBand - 1);
 }
 
 /**
- * Highest ceiling a span under `upper` may hold: below its floor, and low
- * enough that the gap still draws. `spanCapHeight` rounds up, so the underside
- * is not the limit.
+ * Highest ceiling a span under `upper` may hold. Band `floorBand - 1` carries
+ * `upper`'s underside, so a span below must cap beneath that band.
  */
 export function highestCeilingUnderSpan(upper: Span): number {
-  const drawn = bandFloorHeight(lowestBandAtOrAbove(spanUndersideHeight(upper))) - 1;
-  const physical = upper.floor - HEIGHT_UNIT;
-  return drawn < physical ? drawn : physical;
+  return bandFloorHeight(upper.floorBand - 1) - 1;
 }
 
 export function isSpanDrawn(span: Span): boolean {
-  return spanLowestBandHeight(span) <= spanCapHeight(span);
+  return span.floorBand <= spanCapBand(span);
 }
 
+export function spanCoversBand(span: Span, band: number): boolean {
+  return span.floorBand <= band && band <= spanCapBand(span);
+}
+
+/** `upper` rests straight on `lower`: no band of air between them, so no underside shows. */
+export function spansAdjacent(lower: Span, upper: Span): boolean {
+  return upper.floorBand === spanCapBand(lower) + 1;
+}
+
+/** At least one whole band of air separates them, which is what seeing under `upper` needs. */
 export function isGapDrawn(lower: Span, upper: Span): boolean {
-  return spanUndersideHeight(upper) > spanCapHeight(lower);
+  return upper.floorBand > spanCapBand(lower) + 1;
 }
 
-export const OPEN_COLUMN_SAMPLE = BEDROCK_FLOOR - BAND_HEIGHT;
+/** Sample for a column holding no material at a band: below every ceiling it can hold. */
+export const OPEN_COLUMN_SAMPLE = bandLevelHeight(BEDROCK_BAND - 1);
 
 export function spansHaveCapAtBand(spans: readonly Span[], band: number): boolean {
   for (const span of spans) if (isHeightInBand(span.ceiling, band)) return true;
@@ -81,18 +82,21 @@ export function canonicaliseColumn(spans: readonly Span[]): Span[] {
     if (!isSpanDrawn(span)) continue;
     const last = out.length === 0 ? undefined : out[out.length - 1]!;
     if (last !== undefined && !isGapDrawn(last, span)) {
-      out[out.length - 1] = { floor: last.floor, ceiling: span.ceiling };
+      out[out.length - 1] = {
+        floorBand: last.floorBand,
+        ceiling: last.ceiling > span.ceiling ? last.ceiling : span.ceiling,
+      };
       continue;
     }
     out.push(span);
   }
-  if (out.length === 0) return [BEDROCK_REMNANT];
+  if (out.length === 0) return [BEDROCK_FLOOR_SPAN];
   // A column always floors at bedrock. Cutting the bottom span away leaves the
-  // remnant under whatever still stands, never a span floating on nothing.
+  // bedrock band under whatever still stands, never a span floating on nothing.
   const lowest = out[0]!;
-  if (lowest.floor !== BEDROCK_FLOOR) {
-    if (isGapDrawn(BEDROCK_REMNANT, lowest)) out.unshift(BEDROCK_REMNANT);
-    else out[0] = { floor: BEDROCK_FLOOR, ceiling: lowest.ceiling };
+  if (lowest.floorBand !== BEDROCK_BAND) {
+    if (isGapDrawn(BEDROCK_FLOOR_SPAN, lowest)) out.unshift(BEDROCK_FLOOR_SPAN);
+    else out[0] = { floorBand: BEDROCK_BAND, ceiling: lowest.ceiling };
   }
   return out;
 }
@@ -103,14 +107,16 @@ export function parsePackedSpans(flat: readonly number[]): Span[] | null {
   if (count < 2) return null;
   const spans: Span[] = [];
   for (let k = 0; k < count; k++) {
-    const floor = flat[k * SPAN_STRIDE]!;
+    const floorBand = flat[k * SPAN_STRIDE]!;
     const ceiling = flat[k * SPAN_STRIDE + 1]!;
-    if (!Number.isInteger(floor) || !Number.isInteger(ceiling)) return null;
-    if (floor < MIN_HEIGHT || ceiling > MAX_HEIGHT) return null;
-    if (floor >= ceiling) return null;
-    if (k > 0 && spans[k - 1]!.ceiling >= floor) return null;
-    spans.push({ floor, ceiling });
+    if (!Number.isInteger(floorBand) || !Number.isInteger(ceiling)) return null;
+    if (floorBand < BEDROCK_BAND) return null;
+    if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) return null;
+    const span: Span = { floorBand, ceiling };
+    if (!isSpanDrawn(span)) return null;
+    if (k > 0 && !isGapDrawn(spans[k - 1]!, span)) return null;
+    spans.push(span);
   }
-  if (spans[0]!.floor !== BEDROCK_FLOOR) return null;
+  if (spans[0]!.floorBand !== BEDROCK_BAND) return null;
   return spans;
 }

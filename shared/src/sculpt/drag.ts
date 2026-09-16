@@ -198,9 +198,7 @@ export function applyDragRegion(
       // bedrock remnant a column always keeps, and only ever cuts downward.
       const exposed = clampHeight(Math.max(ground, bandLevelHeight(targetBand - 1)));
       if (exposed >= span.ceiling) return false;
-      if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
-        return false;
-      }
+      if (k > 0 && !isSpanDrawn({ floorBand: span.floorBand, ceiling: exposed })) return false;
       moveSpanCeiling(map, x, y, k, exposed);
       changed.add(i);
       return true;
