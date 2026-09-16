@@ -24,11 +24,18 @@ interface DrawableFlags {
 }
 
 interface Walk {
-  readonly hidden: Object3D[];
-  readonly culled: Object3D[];
-  readonly doublePass: Set<Material>;
+  readonly hiddenNodes: Object3D[];
+  readonly hiddenDrawables: Object3D[];
+  readonly shownDoublePass: Object3D[];
+  readonly candidates: Set<Material>;
   readonly shownMaterials: Set<Material>;
-  flipped: number;
+}
+
+// The flag edits a pass holds across its synchronous projection, and nothing else.
+interface Projection {
+  readonly show: readonly Object3D[];
+  readonly hide: readonly Object3D[];
+  readonly culled: readonly Object3D[];
 }
 
 function isDrawable(node: Object3D): boolean {
@@ -47,9 +54,9 @@ function materialsOf(node: Object3D): readonly Material[] {
   return Array.isArray(slot) ? slot : [slot];
 }
 
-// three draws a transparent DoubleSide material twice, BackSide then FrontSide;
-// compileAsync restores DoubleSide before draining its deferred pipeline work,
-// so the warmed key is never the frame's (Renderer.js:3620-3632).
+// three draws a transparent DoubleSide material twice, BackSide then FrontSide
+// (Renderer.js:3620-3632), so a drain at any other side keys pipelines the frame
+// never asks for.
 function needsDoublePass(material: Material): boolean {
   return (
     material.transparent === true &&
@@ -73,30 +80,70 @@ function collect(node: Object3D, ancestorHidden: boolean, walk: Walk): void {
   // so admitting a light here compiles keys the frame loop never asks for.
   if (!node.visible && subtreeHasLight(node)) return;
   const nodeHidden = ancestorHidden || !node.visible;
-  if (!node.visible) walk.hidden.push(node);
-  if (isDrawable(node)) {
+  const drawable = isDrawable(node);
+  if (!node.visible && !drawable) walk.hiddenNodes.push(node);
+  if (drawable) {
     if (nodeHidden) {
-      walk.flipped += 1;
-      if (node.frustumCulled) walk.culled.push(node);
+      walk.hiddenDrawables.push(node);
       for (const material of materialsOf(node)) {
-        if (needsDoublePass(material)) walk.doublePass.add(material);
+        if (needsDoublePass(material)) walk.candidates.add(material);
       }
     } else {
-      for (const material of materialsOf(node)) walk.shownMaterials.add(material);
+      let doublePass = false;
+      for (const material of materialsOf(node)) {
+        walk.shownMaterials.add(material);
+        if (needsDoublePass(material)) doublePass = true;
+      }
+      if (doublePass) walk.shownDoublePass.push(node);
     }
   }
   for (const child of node.children) collect(child, nodeHidden, walk);
 }
 
+// The one rule: a double-pass drawable joins a projection only when the pass
+// drains at a side this warmup set for every double-pass material it carries.
+function admits(node: Object3D, flipSet: ReadonlySet<Material>): boolean {
+  for (const material of materialsOf(node)) {
+    if (needsDoublePass(material) && !flipSet.has(material)) return false;
+  }
+  return true;
+}
+
+function planProjection(
+  walk: Walk,
+  flipSet: ReadonlySet<Material>,
+): { projection: Projection; flipped: number } {
+  const show: Object3D[] = [...walk.hiddenNodes];
+  const hide: Object3D[] = [];
+  const culled: Object3D[] = [];
+  let flipped = 0;
+  for (const node of walk.hiddenDrawables) {
+    if (!admits(node, flipSet)) {
+      if (node.visible) hide.push(node);
+      continue;
+    }
+    flipped += 1;
+    if (!node.visible) show.push(node);
+    if (node.frustumCulled) culled.push(node);
+  }
+  // Already compiled by the real render: hiding them for the projection only keeps
+  // them out of the compile list, and out of a drain at the wrong side.
+  for (const node of walk.shownDoublePass) {
+    if (!admits(node, flipSet)) hide.push(node);
+  }
+  return { projection: { show, hide, culled }, flipped };
+}
+
 async function compilePass(
   scope: WarmupScope,
-  walk: Walk,
+  projection: Projection,
   // Runs once projection has queued the deferred work items and before the drain
   // reads `material.side` to key their pipelines.
   beforeDrain: (() => void) | null = null,
 ): Promise<void> {
-  for (const node of walk.hidden) node.visible = true;
-  for (const node of walk.culled) node.frustumCulled = false;
+  for (const node of projection.show) node.visible = true;
+  for (const node of projection.hide) node.visible = false;
+  for (const node of projection.culled) node.frustumCulled = false;
 
   let done: Promise<void>;
   try {
@@ -106,8 +153,9 @@ async function compilePass(
   } finally {
     // three builds the render list synchronously inside compileAsync and only awaits
     // the per-object compiles afterwards, so restoring here cannot flash.
-    for (const node of walk.hidden) node.visible = false;
-    for (const node of walk.culled) node.frustumCulled = true;
+    for (const node of projection.show) node.visible = false;
+    for (const node of projection.hide) node.visible = true;
+    for (const node of projection.culled) node.frustumCulled = true;
     beforeDrain?.();
   }
   await done;
@@ -126,44 +174,53 @@ export async function warmHiddenDrawables(
   // the restore below ahead of projection: the flags would be back to hidden, warming nothing.
   if (!scope.renderer.initialized) return { flipped: 0 };
   const walk: Walk = {
-    hidden: [],
-    culled: [],
-    doublePass: new Set<Material>(),
+    hiddenNodes: [],
+    hiddenDrawables: [],
+    shownDoublePass: [],
+    candidates: new Set<Material>(),
     shownMaterials: new Set<Material>(),
-    flipped: 0,
   };
   collect(scope.scene, false, walk);
-  const flipped = walk.flipped;
-  if (flipped === 0) return { flipped };
 
-  // A material a visible drawable also uses is already compiled for both sides by the
-  // real render, and overriding it would show that object single-sided during the await.
-  for (const material of walk.shownMaterials) walk.doublePass.delete(material);
-
+  const flipSet = new Set<Material>();
   // A pass holds the flip for its whole length, seconds, so a drawable shown meanwhile
   // would draw one-sided: only the pass before play may flip.
-  if (sideFlip === 'forbidden') walk.doublePass.clear();
+  if (sideFlip === 'allowed') {
+    // A material a visible drawable also uses cannot be overridden: that object
+    // would draw single-sided for the await.
+    for (const material of walk.candidates) {
+      if (!walk.shownMaterials.has(material)) flipSet.add(material);
+    }
+  }
+
+  // Residual: on a re-run, a hidden double-pass drawable and its descendants are
+  // left out, so they compile at first show unless the settle pass warmed them.
+  const { projection, flipped } = planProjection(walk, flipSet);
+  if (flipped === 0) return { flipped };
 
   markBoot(BOOT_MARKS.settleWarmupStart);
-  if (walk.doublePass.size === 0) {
-    await compilePass(scope, walk);
+  if (flipSet.size === 0) {
+    await compilePass(scope, projection);
   } else {
     // Residual: a hidden double-pass object shown during a pass renders
     // single-sided until that pass ends (load-time only).
     try {
       // Projecting at DoubleSide queues the back-side render object as well as the
       // default one, and the drain keys both off the side set here.
-      await compilePass(scope, walk, () => {
-        for (const material of walk.doublePass) material.side = BackSide;
+      await compilePass(scope, projection, () => {
+        for (const material of flipSet) material.side = BackSide;
       });
-      // Everything not double-pass is already cached from the pass above: Pipelines
-      // keys `caches` by the render cache key string, and side is the only field moving.
-      for (const material of walk.doublePass) material.side = FrontSide;
+      // The default render object came out of the drain above built for BackSide, and
+      // only a material version change makes `RenderObjects.get` re-key it to FrontSide.
+      for (const material of flipSet) {
+        material.side = FrontSide;
+        material.needsUpdate = true;
+      }
       // FrontSide at projection queues the default render object alone, so the back-side
       // one still holds its pipeline and the cache keeps it instead of releasing it.
-      await compilePass(scope, walk);
+      await compilePass(scope, projection);
     } finally {
-      for (const material of walk.doublePass) material.side = DoubleSide;
+      for (const material of flipSet) material.side = DoubleSide;
     }
   }
   markBoot(BOOT_MARKS.settleWarmupDone);
