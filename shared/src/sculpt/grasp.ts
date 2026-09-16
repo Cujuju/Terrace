@@ -1,7 +1,7 @@
 import { MAX_HEIGHT } from '../constants.ts';
 import {
   bandFloorHeight,
-  BEDROCK_REMNANT_CEILING,
+  BEDROCK_FLOOR,
   canSpreadBandToSpan,
   moveSpanCeiling,
   spanAt,
@@ -10,14 +10,10 @@ import {
 } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
 
-// A column always keeps one unit of bedrock, so BEDROCK_REMNANT_CEILING — not
-// MIN_HEIGHT — is the lowest height a write can land on.
+// A column always keeps its bedrock band, whose ceiling is BEDROCK_FLOOR: the
+// lowest height a write can land on.
 export function clampHeight(h: number): number {
-  return h > MAX_HEIGHT
-    ? MAX_HEIGHT
-    : h < BEDROCK_REMNANT_CEILING
-      ? BEDROCK_REMNANT_CEILING
-      : h;
+  return h > MAX_HEIGHT ? MAX_HEIGHT : h < BEDROCK_FLOOR ? BEDROCK_FLOOR : h;
 }
 
 export function canSpreadBandTo(

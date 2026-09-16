@@ -1,5 +1,6 @@
 import type { ChunkHeights } from '../chunks.ts';
 
+/** `runs` holds, per listed cell, a span count then that many [floorBand, ceiling] pairs. */
 export interface ChunkLayeredSpans {
   at: number[];
   runs: number[];

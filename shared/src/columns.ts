@@ -1,17 +1,21 @@
 export { bandFloorHeight, isHeightInBand } from './bands.ts';
 
 export {
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
-  BEDROCK_REMNANT_CEILING,
+  canonicaliseColumn,
   highestCeilingUnderSpan,
   isGapDrawn,
   isSpanDrawn,
   OPEN_COLUMN_SAMPLE,
   parsePackedSpans,
+  spanCapBand,
   spanCapHeight,
-  spanLowestBandHeight,
+  spanCoversBand,
+  spansAdjacent,
   spansHaveCapAtBand,
-  spanUndersideHeight,
+  spanUndersideLevel,
+  SPAN_STRIDE,
   type Span,
 } from './columns/span.ts';
 
@@ -20,7 +24,7 @@ export {
   applyPackedSpans,
   assertSingleSpanChunk,
   assertSingleSpanWorld,
-  carveRange,
+  carveBands,
   clearColumns,
   moveSpanCeiling,
   packColumnSpans,
@@ -41,7 +45,7 @@ export {
   columnCoversBand,
   columnSampleAtBand,
   highestCeilingBelow,
-  overhangSlabAt,
+  overhangSlabAtBand,
   spanIndexBelowBand,
   spanIndexCoveringBand,
   type BandFill,

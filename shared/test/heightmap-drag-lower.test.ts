@@ -4,12 +4,14 @@ import {
   bandLevelHeight,
   bandOf,
   BAND_HEIGHT,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
-  BEDROCK_REMNANT_CEILING,
   cellIndex,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   heightAt,
+  isGapDrawn,
+  isSpanDrawn,
   MAX_HEIGHT,
   MAX_BAND,
   MIN_BAND,
@@ -120,8 +122,8 @@ describe('a drag finishes, at every band it can name and in both directions', ()
     for (let y = CY - 4; y <= CY + 4; y++) {
       for (let x = CX - 4; x <= CX + 4; x++) {
         setColumn(map, x, y, [
-          { floor: BEDROCK_FLOOR, ceiling: bandLevelHeight(GROUND_BAND) },
-          { floor: bandLevelHeight(ROOF_FLOOR_BAND), ceiling: bandLevelHeight(ROOF_CAP_BAND) },
+          { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(GROUND_BAND) },
+          { floorBand: ROOF_FLOOR_BAND, ceiling: bandLevelHeight(ROOF_CAP_BAND) },
         ]);
       }
     }
@@ -132,10 +134,10 @@ describe('a drag finishes, at every band it can name and in both directions', ()
     for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) {
         const spans = readSpans(map, x, y);
-        expect(spans[0]!.floor, where).toBe(BEDROCK_FLOOR);
+        expect(spans[0]!.floorBand, where).toBe(BEDROCK_BAND);
         for (let k = 0; k < spans.length; k++) {
-          expect(spans[k]!.floor, where).toBeLessThan(spans[k]!.ceiling);
-          if (k > 0) expect(spans[k - 1]!.ceiling, where).toBeLessThan(spans[k]!.floor);
+          expect([where, isSpanDrawn(spans[k]!)]).toEqual([where, true]);
+          if (k > 0) expect([where, isGapDrawn(spans[k - 1]!, spans[k]!)]).toEqual([where, true]);
         }
       }
     }
@@ -161,7 +163,7 @@ describe('a drag finishes, at every band it can name and in both directions', ()
     });
 
     expect(diff).toHaveLength(1);
-    expect(heightAt(map, CX, CY)).toBe(BEDROCK_REMNANT_CEILING);
+    expect(heightAt(map, CX, CY)).toBe(BEDROCK_FLOOR);
     expect(
       applySculpt(map, CX, CY, MIN_BRUSH_RADIUS, -DEFAULT_SCULPT_AMOUNT, {
         ...DRAG,
@@ -202,7 +204,7 @@ describe('a drag-lower retreats one drawn band and never reaches for bedrock', (
       });
       const landed = heightAt(map, CX + REACH, CY);
       expect([grab, landed]).toEqual([grab, bandLevelHeight(grab - 1)]);
-      expect([grab, landed > BEDROCK_REMNANT_CEILING]).toEqual([grab, true]);
+      expect([grab, landed > BEDROCK_FLOOR]).toEqual([grab, true]);
     }
   });
 
