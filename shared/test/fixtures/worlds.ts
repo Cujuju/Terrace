@@ -11,6 +11,7 @@ import {
   NEIGHBOURHOOD_CELLS,
   quantizeToBand,
   SEA_LEVEL,
+  SPAN_STRIDE,
   type Heightmap,
 } from '../../src/index.ts';
 import { packedSpanPair } from '../support/goldenCorpus.ts';
@@ -303,7 +304,12 @@ function buildPlayedWorld(): Heightmap {
     const index = Number(key);
     const x = index % PLAYED_WORLD_SIZE;
     const y = (index - x) / PLAYED_WORLD_SIZE;
-    if (!applyPackedSpans(map, x, y, flat)) {
+    // The excerpt is verbatim from disk, so its floors are raw heights.
+    const banded: number[] = [];
+    for (let k = 0; k < flat.length; k += SPAN_STRIDE) {
+      banded.push(...packedSpanPair(flat[k]!, flat[k + 1]!));
+    }
+    if (!applyPackedSpans(map, x, y, banded)) {
       throw new Error(`played-world excerpt cell ${index} does not parse as a column`);
     }
   }

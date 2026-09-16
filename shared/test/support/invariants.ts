@@ -2,13 +2,13 @@ import { expect } from 'vitest';
 import {
   bandFloorHeight,
   bandLevelHeight,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   cellX,
   cellY,
   chebyshevDistance,
   columnCoversBand,
   createHeightmap,
-  drawnBandOfSample,
+  floorBandOfHeight,
   isGapDrawn,
   isSpanDrawn,
   MAX_HEIGHT,
@@ -17,8 +17,8 @@ import {
   RELAX_SLACK,
   readSpans,
   sculptDisplacementUnits,
+  spanCapBand,
   spanCapHeight,
-  spanLowestBandHeight,
   type CellDiff,
   type Heightmap,
   type SculptProfile,
@@ -28,15 +28,21 @@ import {
 
 // ---------------------------------------------------------------------------
 // Span shape. The ONLY place this suite knows how a Span is built or read;
-// re-point these six functions and every invariant below follows.
+// re-point these functions and every invariant below follows.
 // ---------------------------------------------------------------------------
 
+/** `floor` is a raw height: the band it stands in is what the span records. */
 export function makeSpan(floor: number, ceiling: number): Span {
-  return { floor, ceiling };
+  return { floorBand: floorBandOfHeight(floor), ceiling };
 }
 
+/** Raw height the span's material starts at: the bottom of its floor band. */
 export function spanFloorOf(span: Span): number {
-  return span.floor;
+  return bandFloorHeight(span.floorBand);
+}
+
+export function spanFloorBandOf(span: Span): number {
+  return span.floorBand;
 }
 
 export function spanCeilingOf(span: Span): number {
@@ -50,7 +56,7 @@ export function spanCapOf(span: Span): number {
 
 /** Lowest band level the span draws as covered. */
 export function spanBaseOf(span: Span): number {
-  return spanLowestBandHeight(span);
+  return bandLevelHeight(span.floorBand);
 }
 
 export function spanIsDrawn(span: Span): boolean {
@@ -123,7 +129,7 @@ function at(map: Heightmap, i: number): string {
 }
 
 function describeColumn(spans: readonly Span[]): string {
-  return spans.map((s) => `[${spanFloorOf(s)}, ${spanCeilingOf(s)})`).join(' ');
+  return spans.map((s) => `[band ${spanFloorBandOf(s)}, ${spanCeilingOf(s)}]`).join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -144,20 +150,24 @@ export function expectColumnsCanonical(
       violations.push(`${where}: no span at all`);
       continue;
     }
-    if (spanFloorOf(spans[0]!) !== BEDROCK_FLOOR) {
-      violations.push(`${where}: bottom span floors at ${spanFloorOf(spans[0]!)}, not ${BEDROCK_FLOOR}`);
+    if (spanFloorBandOf(spans[0]!) !== BEDROCK_BAND) {
+      violations.push(
+        `${where}: bottom span floors in band ${spanFloorBandOf(spans[0]!)}, not ${BEDROCK_BAND}`,
+      );
     }
     for (let k = 0; k < spans.length; k++) {
       const span = spans[k]!;
-      const floor = spanFloorOf(span);
+      const floorBand = spanFloorBandOf(span);
       const ceiling = spanCeilingOf(span);
-      if (!Number.isInteger(floor) || !Number.isInteger(ceiling)) {
+      if (!Number.isInteger(floorBand) || !Number.isInteger(ceiling)) {
         violations.push(`${where}: span ${k} is not integral`);
       }
-      if (floor < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
-        violations.push(`${where}: span ${k} leaves [${MIN_HEIGHT}, ${MAX_HEIGHT}]`);
+      if (floorBand < BEDROCK_BAND) {
+        violations.push(`${where}: span ${k} floors below the bedrock band ${BEDROCK_BAND}`);
       }
-      if (floor >= ceiling) violations.push(`${where}: span ${k} is empty`);
+      if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
+        violations.push(`${where}: span ${k} caps outside [${MIN_HEIGHT}, ${MAX_HEIGHT}]`);
+      }
       if (!spanIsDrawn(span)) violations.push(`${where}: span ${k} is not drawn`);
       if (k > 0 && !gapIsDrawn(spans[k - 1]!, span)) {
         violations.push(`${where}: spans ${k - 1} and ${k} have no drawn gap — they should be one span`);
@@ -308,8 +318,11 @@ export function expectGapsSurvive(
   report(violations, context);
 }
 
-/** Every band a column holds material at is a band the column draws as covered. */
-export function expectDrawnCoverageContainsMaterial(
+/**
+ * A column draws as covered EXACTLY the bands its spans hold. One predicate
+ * decides both now, so containment alone no longer pins anything.
+ */
+export function expectDrawnCoverageMatchesMaterial(
   map: Heightmap,
   cells: Iterable<number>,
   context = '',
@@ -318,16 +331,20 @@ export function expectDrawnCoverageContainsMaterial(
   for (const i of cells) {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    for (const span of readSpans(map, x, y)) {
-      const first = drawnBandOfSample(spanFloorOf(span));
-      const last = drawnBandOfSample(spanCeilingOf(span));
-      for (let band = first; band <= last; band++) {
-        const level = bandLevelHeight(band);
-        if (level < spanFloorOf(span) || level > spanCeilingOf(span)) continue;
-        if (!columnCoversBand(map, x, y, band)) {
-          violations.push(`${at(map, i)}: material at band ${band} (${level}) is not drawn as covered`);
-        }
-      }
+    const spans = readSpans(map, x, y);
+    if (spans.length === 0) continue;
+    const held = new Set<number>();
+    for (const span of spans) {
+      for (let band = spanFloorBandOf(span); band <= spanCapBand(span); band++) held.add(band);
+    }
+    const lowest = spanFloorBandOf(spans[0]!) - 1;
+    const highest = spanCapBand(spans[spans.length - 1]!) + 1;
+    for (let band = lowest; band <= highest; band++) {
+      const drawn = columnCoversBand(map, x, y, band);
+      if (drawn === held.has(band)) continue;
+      violations.push(
+        `${at(map, i)} ${describeColumn(spans)}: band ${band} drawn=${drawn}, material=${held.has(band)}`,
+      );
     }
   }
   report(violations, context);
@@ -368,7 +385,7 @@ export function expectSculptDeterministic(
   report(violations, context);
 }
 
-/** The band range a carve grasped at `spanBand` is allowed to cut. */
-export function carvedSlabRange(spanBand: number, bandsPerStroke: number): [number, number] {
-  return [bandFloorHeight(spanBand - 1), bandFloorHeight(spanBand + bandsPerStroke - 1)];
+/** The raw range a carve grasped at `spanBand` may cut: its slabs, and nothing under them. */
+export function carvedSlabRange(spanBand: number, depthBands: number): [number, number] {
+  return [bandLevelHeight(spanBand - 1), bandFloorHeight(spanBand + depthBands)];
 }

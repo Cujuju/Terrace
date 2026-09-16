@@ -1,6 +1,7 @@
 import {
   applySculpt,
   drawnBandOfSample,
+  floorBandOfHeight,
   heightAt,
   type Heightmap,
   type SculptOptions,
@@ -27,11 +28,11 @@ export function fnv1aOfInt32s(values: Iterable<number>): string {
 }
 
 /**
- * The one place this corpus writes a span. A packed pair is `[floor, ceiling]`
- * in raw heights today; a `{ floorBand, ceiling }` span shape re-points here.
+ * The one place this corpus writes a span. A packed pair is
+ * `[floorBand, ceiling]`; callers still name the floor as a raw height.
  */
 export function packedSpanPair(floor: number, ceiling: number): [number, number] {
-  return [floor, ceiling];
+  return [floorBandOfHeight(floor), ceiling];
 }
 
 /**
