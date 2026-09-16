@@ -249,7 +249,7 @@ function dropBound(map: Heightmap, i: number): boolean {
 
 /**
  * A free smooth leaves the ground it scanned within the limit. Relaxation moves
- * each cell's grasped ceiling, which `cells[]` holds. Returns pairs compared.
+ * each cell's grasped ceiling, which `cells[]` holds. Returns pairs held to it.
  */
 export function expectGradientLimitOverSettled(
   map: Heightmap,
@@ -263,12 +263,13 @@ export function expectGradientLimitOverSettled(
   let compared = 0;
   const pair = (i: number, j: number, label: string): void => {
     if (!stable.has(j)) return;
-    compared++;
     const drop = map.cells[i]! - map.cells[j]!;
-    if (drop <= limit && drop >= -limit) return;
-    // A bound that bites leaves the pair over-steep for the next stroke.
-    if (dropBound(map, drop > 0 ? i : j)) return;
-    violations.push(`${label} drops ${drop}, limit ${limit}`);
+    if (drop > limit || drop < -limit) {
+      // A bound that bites leaves the pair over-steep for the next stroke.
+      if (dropBound(map, drop > 0 ? i : j)) return;
+      violations.push(`${label} drops ${drop}, limit ${limit}`);
+    }
+    compared++;
   };
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
