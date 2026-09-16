@@ -15,7 +15,7 @@ import {
   RELAX_SLACK,
   SCULPT_TOOLS,
   smooth,
-  SMOOTH_REACH_CELLS,
+  smoothCascadeReachCells,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
 } from '../src/index.ts';
@@ -182,7 +182,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
         seed.add(cellIndex(viaDirect, x + dx, y + dy));
       });
       const changed = new Set<number>();
-      smooth(viaDirect, changed, seed, undefined, undefined, null, SMOOTH_REACH_CELLS);
+      smooth(viaDirect, changed, seed, undefined, undefined, null, smoothCascadeReachCells(r));
       const expected = Array.from(changed)
         .sort((a, b) => a - b)
         .map((i) => ({ x: i % 48, y: (i - (i % 48)) / 48, h: viaDirect.cells[i] }));

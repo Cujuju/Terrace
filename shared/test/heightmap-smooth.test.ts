@@ -13,7 +13,7 @@ import {
   sculptOptionsOf,
   smooth,
   SMOOTH_PASS_LIMIT,
-  SMOOTH_REACH_CELLS,
+  smoothCascadeReachCells,
   WORLD_UNIT_CELLS,
   type Heightmap,
   type SculptOptions,
@@ -67,11 +67,11 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     }
   }
 
-  it('one smooth stroke fully relaxes a 15-band stamped plateau (the pass-cap repro)', () => {
+  it('one smooth stroke relaxes a 15-band stamped plateau inside its reach (the pass-cap repro)', () => {
     const map = createHeightmap(SIZE);
     stampPlateau(map, C, C, CEILING_BANDS - 1);
     applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
-    expectGradientLimitHolds(map);
+    expectGradientLimitHoldsWithin(map, C, C, smoothCascadeReachCells(4));
   });
 
   it('a fully clamped smooth stroke still relaxes the cliffs under the brush', () => {
@@ -81,7 +81,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     stampPlateau(map, C, C, CEILING_BANDS + 1);
     expect(heightAt(map, C, C)).toBe(MAX_HEIGHT);
     applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
-    expectGradientLimitHolds(map);
+    expectGradientLimitHoldsWithin(map, C, C, smoothCascadeReachCells(4));
   });
 
   it('converges across the full height range: MAX plateau beside a MIN moat', () => {
@@ -91,7 +91,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
       applySculpt(map, C + 8, C, 4, -DEFAULT_SCULPT_AMOUNT, STAMP);
     }
     applySculpt(map, C + 4, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
-    expectGradientLimitHoldsWithin(map, C + 4, C, SMOOTH_REACH_CELLS);
+    expectGradientLimitHoldsWithin(map, C + 4, C, smoothCascadeReachCells(4));
   });
 
   it('reports a convergence-proving pass count strictly below the cap', () => {
@@ -257,7 +257,7 @@ describe('an anchored smooth moves a wall, it never manufactures one', () => {
       expect(last).toBe(0);
 
       expect(mapTotal(map)).toBe(total);
-      expectGradientLimitHoldsWithin(map, cx, ROW, SMOOTH_REACH_CELLS);
+      expectGradientLimitHoldsWithin(map, cx, ROW, smoothCascadeReachCells(RADIUS));
       expect(heightAt(map, WALL_X, ROW)).toBeGreaterThan(LOW);
       for (let x = 0; x < SIZE; x++) {
         expect(heightAt(map, x, ROW)).toBeGreaterThanOrEqual(LOW);

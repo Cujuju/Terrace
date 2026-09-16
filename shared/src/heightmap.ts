@@ -1,4 +1,4 @@
-import { MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL, SMOOTH_REACH_CELLS } from './constants.ts';
+import { MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
 
 export {
   bandOf,
@@ -22,6 +22,7 @@ import { applyBrush, applyLevelFillBrush, applySoftApron } from './sculpt/stamp.
 import { applyDragRegion } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
+import { smoothCascadeReachCells } from './sculpt/reach.ts';
 import type { SpillBand } from './sculpt/layerView.ts';
 import {
   FULL_HEIGHT_SPAN,
@@ -46,7 +47,7 @@ export {
 
 export { sculptDisplacementUnits } from './sculpt/price.ts';
 
-export { sculptReachCells } from './sculpt/reach.ts';
+export { sculptReachCells, smoothCascadeReachCells } from './sculpt/reach.ts';
 
 export { smooth } from './sculpt/relax.ts';
 
@@ -190,7 +191,7 @@ export function applySculpt(
       anchorBounds,
       spanBand,
       // settle keeps the unbounded cascade its plugin cones were tuned against.
-      tool === 'smooth' ? SMOOTH_REACH_CELLS : null,
+      tool === 'smooth' ? smoothCascadeReachCells(radius) : null,
     );
   }
 

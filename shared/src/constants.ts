@@ -78,14 +78,8 @@ export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_ST
 
 export const RAMP_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
 
-/** Measured: a stamp edge converges by MAX_BRUSH_RADIUS + 2 = 18 cells at every radius. */
-export const SMOOTH_REACH_BANDS = 5;
-
-/**
- * How far past its footprint the player smooth's cascade may run. Genesis
- * noise: 150k cells unbounded, 2.7k here. A played world loses under 2%.
- */
-export const SMOOTH_REACH_CELLS = SMOOTH_REACH_BANDS * RAMP_CELLS_PER_BAND;
+/** A stamp edge converges at radius + 2 cells, every radius: r1 2, r2 3, r4 6, r8 10, r16 18. */
+export const SMOOTH_REACH_MARGIN_CELLS = 2;
 
 export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
 
