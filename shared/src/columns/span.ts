@@ -23,6 +23,8 @@ export interface Span {
 /** Packed as [floorBand, ceiling] per span. */
 export const SPAN_STRIDE = 2;
 
+const MIN_PACKED_SPANS = 2;
+
 /** A column carved to nothing keeps its bedrock band and no more. */
 const BEDROCK_FLOOR_SPAN: Span = { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR };
 
@@ -134,7 +136,8 @@ export function canonicaliseColumn(spans: readonly Span[]): Span[] {
 export function parsePackedSpans(flat: readonly number[]): Span[] | null {
   if (flat.length % SPAN_STRIDE !== 0) return null;
   const count = flat.length / SPAN_STRIDE;
-  if (count < 2) return null;
+  // A packed record only ever holds a layered column; a single span lives in map.cells.
+  if (count < MIN_PACKED_SPANS) return null;
   const spans: Span[] = [];
   for (let k = 0; k < count; k++) {
     const floorBand = flat[k * SPAN_STRIDE]!;
