@@ -8,7 +8,7 @@ import {
   type BufferGeometry,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { SEA_SURFACE_WORLD_Y } from '../../../client/src/config.ts';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   assertAssetFits,
   loadRigAsset,

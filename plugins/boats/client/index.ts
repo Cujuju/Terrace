@@ -6,6 +6,7 @@ import type {
   MoverPose,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   BOATS_PAYLOAD_CAP,
   BOATS_PLUGIN_NAME,
@@ -29,8 +30,6 @@ import {
   type BoatModel,
   type BoatModels,
 } from './models.ts';
-
-const SEA_SURFACE_WORLD_Y = 0;
 
 const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
