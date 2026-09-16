@@ -1,4 +1,5 @@
 import type { StrokeScriptStep } from '../support/goldenCorpus.ts';
+import type { GoldenWorldName } from './worlds.ts';
 
 // Carve and drag lead: both need an exposed face at the clicked band, which a
 // stamp or a smooth would have flattened away.
@@ -331,7 +332,9 @@ const PLAYED: readonly StrokeScriptStep[] = [
   },
 ];
 
-export const STROKE_SCRIPTS: Readonly<Record<string, readonly StrokeScriptStep[]>> = {
+export const STROKE_SCRIPTS: Readonly<
+  Record<GoldenWorldName | typeof COMMON_SCRIPT_KEY, readonly StrokeScriptStep[]>
+> = {
   [COMMON_SCRIPT_KEY]: COMMON,
   'genesis-noise': GENESIS_NOISE,
   arch: ARCH,
@@ -340,6 +343,6 @@ export const STROKE_SCRIPTS: Readonly<Record<string, readonly StrokeScriptStep[]
   played: PLAYED,
 };
 
-export function scriptFor(world: string): StrokeScriptStep[] {
-  return [...(STROKE_SCRIPTS[world] ?? []), ...COMMON];
+export function scriptFor(world: GoldenWorldName): StrokeScriptStep[] {
+  return [...STROKE_SCRIPTS[world], ...COMMON];
 }
