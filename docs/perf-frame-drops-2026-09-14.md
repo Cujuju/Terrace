@@ -293,9 +293,13 @@ the slot ledger), and the breaker was a behavioural no-op with a wrong draw form
 | ignited: program-count changes | **39** | **0** |
 | ignited: max frame / p99 | 6950 ms / 770–1019 ms | 73 ms / 12–17 ms |
 
-Caveat: the baseline Chrome was still rendering during the first 12 min of the fix idle run (gpu 13–14 ms
-vs 6–9 after teardown), so p50/p99 between the two idle runs are not comparable; churn counts and max-frame
-are. The remaining +7 programs / 2 events on the fix run are first-appearance compiles (candidates for a
+Caveats (signoff): the baseline Chrome was still rendering during the first 12 min of the fix idle run (gpu
+13–14 ms vs 6–9 after teardown), so p50/p99 between the two idle runs are not comparable; churn counts and
+max-frame are. The baseline camera also dropped 900→45 at ~885 s and stayed there, so the last 7 min of the
+baseline idle run (and 3 of its 14 program changes) are pose-contaminated; the 488 ms max is at 824 s, cam 900,
+inside a lit-set flip window, so the conclusion stands. The rAF sampler counts net per-frame movement of
+`info.memory.programs`; a same-frame dispose+recreate nets to zero, so the next probe should count
+pipeline/program creations directly. The remaining +7 programs / 2 events on the fix run are first-appearance compiles (candidates for a
 host-level `compileAsync` warmup — see plan C2′). Cost side: 8 point lights are now permanently in every lit
 program (4 fire + 3 dread + 1 storm); GPU p50 at this pose read 6–9 ms in both runs once contention ended.
 
