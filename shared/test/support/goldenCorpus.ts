@@ -2,6 +2,7 @@ import {
   applySculpt,
   drawnBandOfSample,
   heightAt,
+  type CellDiff,
   type Heightmap,
   type SculptOptions,
 } from '../../src/index.ts';
@@ -15,9 +16,17 @@ const BITS_PER_BYTE = 8;
 const BYTE_MASK = 0xff;
 const HASH_HEX_DIGITS = 8;
 
+// Out-of-domain values would narrow through ToUint32 and collide silently.
+const INT32_MAGNITUDE_BITS = BYTES_PER_INT32 * BITS_PER_BYTE - 1;
+const INT32_MIN = -(2 ** INT32_MAGNITUDE_BITS);
+const INT32_MAX = 2 ** INT32_MAGNITUDE_BITS - 1;
+
 export function fnv1aOfInt32s(values: Iterable<number>): string {
   let hash = FNV_OFFSET_BASIS;
   for (const value of values) {
+    if (!Number.isInteger(value) || value < INT32_MIN || value > INT32_MAX) {
+      throw new RangeError(`fnv1aOfInt32s takes int32 values, got ${value}`);
+    }
     for (let byte = 0; byte < BYTES_PER_INT32; byte++) {
       hash = (hash ^ ((value >>> (byte * BITS_PER_BYTE)) & BYTE_MASK)) >>> 0;
       hash = Math.imul(hash, FNV_PRIME) >>> 0;
@@ -56,6 +65,28 @@ export function hashHeightmap(map: Heightmap): string {
   return fnv1aOfInt32s(heightmapStream(map));
 }
 
+const NO_SPANS: readonly number[] = [];
+
+/**
+ * The payload clients consume: cell count, then x, y, h, span count and the
+ * spans of each cell, in the order applySculpt returned them.
+ */
+function* cellDiffStream(diff: readonly CellDiff[]): Generator<number> {
+  yield diff.length;
+  for (const cell of diff) {
+    yield cell.x;
+    yield cell.y;
+    yield cell.h;
+    const spans = cell.spans ?? NO_SPANS;
+    yield spans.length;
+    for (const value of spans) yield value;
+  }
+}
+
+export function hashCellDiff(diff: readonly CellDiff[]): string {
+  return fnv1aOfInt32s(cellDiffStream(diff));
+}
+
 /** A band named relative to the drawn band of the clicked cell's top ceiling. */
 export interface BandFromClick {
   readonly fromClick: number;
@@ -81,6 +112,7 @@ export interface StrokeScriptStep {
 export interface StrokeOutcome {
   readonly name: string;
   readonly changed: number;
+  readonly diffHash: string;
   readonly hash: string;
 }
 
@@ -105,7 +137,12 @@ export function runStrokeScript(
       spanBand: resolveBand(map, step, step.spanBand ?? null),
       sweepFrom: step.sweepFrom ?? null,
     });
-    outcomes.push({ name: step.name, changed: diff.length, hash: hashHeightmap(map) });
+    outcomes.push({
+      name: step.name,
+      changed: diff.length,
+      diffHash: hashCellDiff(diff),
+      hash: hashHeightmap(map),
+    });
   }
   return outcomes;
 }

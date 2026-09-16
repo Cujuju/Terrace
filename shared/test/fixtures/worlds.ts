@@ -37,9 +37,9 @@ function setSpans(map: Heightmap, x: number, y: number, pairs: readonly (readonl
 }
 
 // --- genesis-like noise -----------------------------------------------------
-// Ported from server/src/world/genesis.ts (read-only): the lattice octaves, the
-// fixed-point band offsets and the clamp, with the island and trench passes
-// dropped.
+// Ported from server/src/world/genesis.ts (read-only): lattice octaves,
+// fixed-point band offsets, clamp. Dropped: island, trench, land-lift and
+// basin-drop passes.
 
 const GENESIS_FIXTURE_SEED = 0x7e_44_ac_e1;
 
@@ -60,7 +60,10 @@ const GENESIS_NOISE_MIN_BAND_OFFSET = -(GENESIS_NOISE_MIN_DEPTH_BELOW_SEA / BAND
 const GENESIS_NOISE_MAX_BAND_OFFSET = GENESIS_NOISE_MAX_HEIGHT_ABOVE_SEA / BAND_HEIGHT;
 
 const GENESIS_ROUGHNESS_SKEW_EXPONENT = 1 / 2;
-const FRESH_SEABED_BANDS_BELOW_SEA = 192 / BAND_HEIGHT;
+
+// Mirrors FRESH_SEABED_DEPTH_BELOW_SEA in server/src/world/genesis.ts.
+const GENESIS_FIXTURE_SEABED_DEPTH_BELOW_SEA = 192;
+const FRESH_SEABED_BANDS_BELOW_SEA = GENESIS_FIXTURE_SEABED_DEPTH_BELOW_SEA / BAND_HEIGHT;
 const GENESIS_MIN_ROUGHNESS =
   FRESH_SEABED_BANDS_BELOW_SEA /
   ((GENESIS_NOISE_MAX_BAND_OFFSET - GENESIS_NOISE_MIN_BAND_OFFSET) / 2);
