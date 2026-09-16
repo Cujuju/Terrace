@@ -16,6 +16,7 @@ import {
   MIN_HEIGHT,
   RELAX_SLACK,
   readSpans,
+  CARVE_DEFAULT_DEPTH_BANDS,
   sculptDisplacementUnits,
   spanCapBand,
   spanCapHeight,
@@ -350,15 +351,16 @@ export function expectDrawnCoverageMatchesMaterial(
   report(violations, context);
 }
 
-/** Price is a pure function of (radius, tool, profile): terrain can never move it. */
+/** Price is a pure function of (radius, tool, profile, depth): terrain can never move it. */
 export function expectPriceIndependentOfTerrain(
   radius: number,
   tool: SculptTool,
   profile: SculptProfile,
   expected: number,
   context = '',
+  depthBands: number = CARVE_DEFAULT_DEPTH_BANDS,
 ): void {
-  const now = sculptDisplacementUnits(radius, tool, profile);
+  const now = sculptDisplacementUnits(radius, tool, profile, depthBands);
   const violations = now === expected ? [] : [`price is ${now}, was ${expected} for the same arguments`];
   report(violations, context);
 }

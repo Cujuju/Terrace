@@ -1,4 +1,4 @@
-import { MAX_HEIGHT } from '@terrace/shared';
+import { CARVE_DEFAULT_DEPTH_BANDS, MAX_HEIGHT } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 // The runner is plugin-agnostic; a price only exists with the mana plugin in
 // the chain, so this scenario loads the real one beside reveal.
@@ -35,6 +35,7 @@ const STAMP_DISPLACEMENT = sculptManaCost(
   STROKE_RADIUS,
   'hard',
   'stamp',
+  CARVE_DEFAULT_DEPTH_BANDS,
 );
 
 /** Inside HOME_CHUNK, so the reveal reach spills onto frontier chunks around it. */

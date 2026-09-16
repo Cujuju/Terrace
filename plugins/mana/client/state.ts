@@ -1,5 +1,11 @@
 import { createSignal } from 'solid-js';
-import { sculptOptionsOf, sculptProfileOf, sculptSweepSteps, type SculptIntent } from '@terrace/shared';
+import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  sculptOptionsOf,
+  sculptProfileOf,
+  sculptSweepSteps,
+  type SculptIntent,
+} from '@terrace/shared';
 import { chunkOriginCell, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
 import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
 import { brushProfile, brushRadius, brushTool, hoverPick } from '../../../client/src/state/hudState.ts';
@@ -155,6 +161,7 @@ export function currentBrushCost(): number {
       brushRadius(),
       sculptProfileOf(tool, brushProfile()),
       tool,
+      CARVE_DEFAULT_DEPTH_BANDS,
     ) + currentUnlockFee()
   );
 }
@@ -176,6 +183,7 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
       intent.radius,
       options.profile,
       options.tool,
+      options.depthBands,
       sculptSweepSteps(intent),
     ) + chunkUnlockFee(opened);
 

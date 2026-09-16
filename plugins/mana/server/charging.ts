@@ -27,6 +27,7 @@ export function manaCostFor(
     intent.radius,
     options.profile,
     options.tool,
+    options.depthBands,
     sculptSweepSteps(intent),
   );
   return stroke + chunkUnlockFee(openedChunks);

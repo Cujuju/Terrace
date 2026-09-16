@@ -273,6 +273,7 @@ function priceOf(intent: SculptIntent): number {
     intent.radius,
     intent.tool as SculptTool,
     intent.profile as SculptProfile,
+    sculptOptionsOf(intent).depthBands,
   );
 }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRoot } from 'solid-js';
-import { MAX_BRUSH_RADIUS, WORLD_UNIT_CELLS } from '@terrace/shared';
+import { CARVE_DEFAULT_DEPTH_BANDS, MAX_BRUSH_RADIUS, WORLD_UNIT_CELLS } from '@terrace/shared';
 
 const POINT_BRUSH_RADIUS = 1 * WORLD_UNIT_CELLS;
 import {
@@ -137,13 +137,13 @@ describe('current-brush cost', () => {
 
       setBrushRadius(MAX_BRUSH_RADIUS);
       expect(currentBrushCost()).toBe(
-        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp'),
+        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp', CARVE_DEFAULT_DEPTH_BANDS),
       );
 
       setBrushProfile('hard');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
       expect(currentBrushCost()).toBe(
-        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'hard', 'stamp'),
+        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS),
       );
 
       setBrushRadius(POINT_BRUSH_RADIUS);
