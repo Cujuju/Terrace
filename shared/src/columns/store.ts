@@ -5,6 +5,7 @@ import {
   BEDROCK_BAND,
   BEDROCK_FLOOR,
   canonicaliseColumn,
+  isCeilingInRange,
   isGapDrawn,
   isSpanDrawn,
   parsePackedSpans,
@@ -67,7 +68,7 @@ export function setColumn(map: Heightmap, x: number, y: number, spans: readonly 
         `cell (${x}, ${y}) span ${k} floors in band ${floorBand}, below bedrock band ${BEDROCK_BAND}`,
       );
     }
-    if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
+    if (!isCeilingInRange(ceiling)) {
       throw new RangeError(
         `cell (${x}, ${y}) span ${k} caps at ${ceiling}, outside [${MIN_HEIGHT}, ${MAX_HEIGHT}]`,
       );
