@@ -2,10 +2,52 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   chunksPerEdge,
-  revealChunkIndices,
+  chunksWithinSweep,
+  pressDisplacementUnits,
+  revealReachCells,
   sculptDisplacementUnits,
+  sculptOptionsOf,
+  strokeSweep,
+  sweepAt,
+  sweptCellCount,
 } from '@terrace/shared';
-import type { SculptProfile, SculptTool } from '@terrace/shared';
+import type {
+  SculptIntent,
+  SculptProfile,
+  SculptTool,
+  StrokeSweep,
+} from '@terrace/shared';
+
+/** A disc costs the same wherever it lands, so a quote with no cell uses this one. */
+const QUOTE_CELL = 0;
+
+/** A carve reshapes rock that is already there, so it pays a quarter. */
+const CARVE_PRICE_DIVISOR = 4;
+
+/** A drag presses every cell its capsule sweeps; every other tool its disc. */
+function sweptDisplacementUnits(
+  sweep: StrokeSweep,
+  profile: SculptProfile,
+  tool: SculptTool,
+  depthBands: number,
+): number {
+  return tool === 'drag'
+    ? pressDisplacementUnits(sweptCellCount(sweep))
+    : sculptDisplacementUnits(sweep.radius, tool, profile, depthBands);
+}
+
+export function sculptSweepManaCost(
+  manaPerBandCell: number,
+  sweep: StrokeSweep,
+  profile: SculptProfile,
+  tool: SculptTool,
+  depthBands: number,
+): number {
+  const base = Math.ceil(
+    (manaPerBandCell * sweptDisplacementUnits(sweep, profile, tool, depthBands)) / BAND_HEIGHT,
+  );
+  return tool === 'carve' ? Math.ceil(base / CARVE_PRICE_DIVISOR) : base;
+}
 
 export function sculptManaCost(
   manaPerBandCell: number,
@@ -13,13 +55,14 @@ export function sculptManaCost(
   profile: SculptProfile,
   tool: SculptTool,
   depthBands: number,
-  sweepSteps: number = 1,
 ): number {
-  const base = Math.ceil(
-    (manaPerBandCell * sculptDisplacementUnits(radius, tool, profile, depthBands) * sweepSteps) /
-      BAND_HEIGHT,
+  return sculptSweepManaCost(
+    manaPerBandCell,
+    sweepAt(QUOTE_CELL, QUOTE_CELL, radius),
+    profile,
+    tool,
+    depthBands,
   );
-  return tool === 'carve' ? Math.ceil(base / 4) : base;
 }
 
 /**
@@ -33,16 +76,31 @@ export function chunkUnlockFee(openedChunks: number): number {
   return openedChunks * CHUNK_UNLOCK_MANA;
 }
 
+/** One price for one stroke: the client quote and the server charge both ask this. */
+export function sculptIntentCost(
+  manaPerBandCell: number,
+  intent: SculptIntent,
+  openedChunks: number,
+): number {
+  const options = sculptOptionsOf(intent);
+  const stroke = sculptSweepManaCost(
+    manaPerBandCell,
+    strokeSweep(intent),
+    options.profile,
+    options.tool,
+    options.depthBands,
+  );
+  return stroke + chunkUnlockFee(openedChunks);
+}
+
 export function openedChunkCount(
   worldSize: number,
-  x: number,
-  y: number,
-  radius: number,
+  sweep: StrokeSweep,
   isOpen: (cx: number, cy: number) => boolean,
 ): number {
   const cols = chunksPerEdge(worldSize);
   let opened = 0;
-  for (const index of revealChunkIndices(worldSize, x, y, radius)) {
+  for (const index of chunksWithinSweep(worldSize, sweep, revealReachCells(sweep.radius))) {
     if (!isOpen(index % cols, Math.floor(index / cols))) opened++;
   }
   return opened;

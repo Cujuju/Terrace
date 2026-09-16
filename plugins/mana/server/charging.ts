@@ -1,6 +1,6 @@
-import { sculptOptionsOf, sculptSweepSteps } from '@terrace/shared';
+import { strokeSweep } from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
-import { chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { chunkUnlockFee, openedChunkCount, sculptIntentCost } from '../pricing.ts';
 import { MANA_DENIED_MESSAGE } from '../protocol.ts';
 import type { IntentCtx, IntentVerdict, WorldApi } from '../../../server/src/plugins/types.ts';
 import { manaPerBandCellFor } from './perks.ts';
@@ -21,20 +21,11 @@ export function manaCostFor(
   intent: SculptIntent,
   openedChunks: number = 0,
 ): number {
-  const options = sculptOptionsOf(intent);
-  const stroke = sculptManaCost(
-    manaPerBandCellFor(playerId),
-    intent.radius,
-    options.profile,
-    options.tool,
-    options.depthBands,
-    sculptSweepSteps(intent),
-  );
-  return stroke + chunkUnlockFee(openedChunks);
+  return sculptIntentCost(manaPerBandCellFor(playerId), intent, openedChunks);
 }
 
 function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number {
-  return openedChunkCount(world.worldSize, intent.x, intent.y, intent.radius, (cx, cy) =>
+  return openedChunkCount(world.worldSize, strokeSweep(intent), (cx, cy) =>
     world.isChunkUnlockedForToken(token, cx, cy),
   );
 }
@@ -75,9 +66,8 @@ export function commitCharge(
   const opened = quoted ?? openedChunksFor(world, ctx.player.token, intent);
   pool.quote = null;
 
-  // Charge follows effect: a no-op waives the displacement price. Opening the
-  // frontier is a separate effect — reveal opens the footprint whatever the
-  // diff — so the unlock fee still stands.
+  // Charge follows effect: a no-op waives displacement. Reveal opens the sweep
+  // whatever the diff, so the unlock fee still stands.
   const cost =
     diff.length === 0
       ? chunkUnlockFee(opened)

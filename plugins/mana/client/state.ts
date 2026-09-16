@@ -1,12 +1,19 @@
 import { createSignal } from 'solid-js';
 import {
   CARVE_DEFAULT_DEPTH_BANDS,
-  sculptOptionsOf,
   sculptProfileOf,
-  sculptSweepSteps,
-  type SculptIntent,
+  strokeSweep,
+  sweepAt,
+  type StrokeSweep,
 } from '@terrace/shared';
-import { chunkOriginCell, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import type { SculptIntent } from '@terrace/shared';
+import {
+  chunkOriginCell,
+  chunkUnlockFee,
+  openedChunkCount,
+  sculptIntentCost,
+  sculptManaCost,
+} from '../pricing.ts';
 import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
 import { brushProfile, brushRadius, brushTool, hoverPick } from '../../../client/src/state/hudState.ts';
 
@@ -101,10 +108,8 @@ const [lastDeniedCost, setLastDeniedCost] = createSignal<number | null>(null);
 export { manaPool, setManaPool, deniedCount, lastDeniedCost };
 
 /**
- * Brush-refused pulse shared with the gauge flash: every denial (local gate or
- * server `mana:denied`) bumps deniedCount and records the denied cost for the
- * hint. The brush preview's red blink itself is wired at merge time (lane C
- * accessors); this counter is the pulse it reads.
+ * Brush-refused pulse: every denial, local gate or server `mana:denied`, bumps
+ * deniedCount and records the cost the hint shows.
  */
 export function recordDenial(cost?: number): void {
   if (cost !== undefined) setLastDeniedCost(cost);
@@ -126,16 +131,11 @@ export function setLocalTerritory(territory: LocalTerritory | null): void {
   localTerritory = territory;
 }
 
-function openedChunksAt(
-  territory: LocalTerritory | null,
-  x: number,
-  y: number,
-  radius: number,
-): number {
+function openedChunksAt(territory: LocalTerritory | null, sweep: StrokeSweep): number {
   if (territory === null) return 0;
   const worldSize = territory.worldSize();
   if (worldSize <= 0) return 0;
-  return openedChunkCount(worldSize, x, y, radius, (cx, cy) => {
+  return openedChunkCount(worldSize, sweep, (cx, cy) => {
     const origin = chunkOriginCell(cx, cy);
     return territory.revealedAt(origin.x, origin.y);
   });
@@ -148,7 +148,7 @@ function openedChunksAt(
 export function currentUnlockFee(): number {
   const aim = hoverPick();
   if (aim === null) return 0;
-  return chunkUnlockFee(openedChunksAt(localTerritory, aim.x, aim.y, brushRadius()));
+  return chunkUnlockFee(openedChunksAt(localTerritory, sweepAt(aim.x, aim.y, brushRadius())));
 }
 
 export function currentBrushCost(): number {
@@ -175,17 +175,8 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
   const pool = manaPool();
   if (pool === null) return true;
 
-  const options = sculptOptionsOf(intent);
-  const opened = openedChunksAt(territory, intent.x, intent.y, intent.radius);
-  const cost =
-    sculptManaCost(
-      pool.manaPerBandCell,
-      intent.radius,
-      options.profile,
-      options.tool,
-      options.depthBands,
-      sculptSweepSteps(intent),
-    ) + chunkUnlockFee(opened);
+  const opened = openedChunksAt(territory, strokeSweep(intent));
+  const cost = sculptIntentCost(pool.manaPerBandCell, intent, opened);
 
   if (pool.balance < cost) {
     recordDenial(cost);
