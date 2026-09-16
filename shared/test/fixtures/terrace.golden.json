@@ -7,106 +7,127 @@
     {
       "name": "min-floor-rim-lower",
       "changed": 4,
+      "diffHash": "4a409a7e",
       "hash": "a94039e5"
     },
     {
       "name": "max-ceiling-rim-raise",
       "changed": 4,
+      "diffHash": "2ef3aa46",
       "hash": "08bbd0a5"
     },
     {
       "name": "max-ceiling-lower",
       "changed": 18,
+      "diffHash": "a28fb95b",
       "hash": "269b5385"
     },
     {
       "name": "slab-carve",
       "changed": 3,
+      "diffHash": "fe5d764c",
       "hash": "fc4760c0"
     },
     {
       "name": "min-floor-raise",
       "changed": 68,
+      "diffHash": "fcdf0e74",
       "hash": "c91357c5"
     },
     {
       "name": "carve-click-band",
       "changed": 4,
+      "diffHash": "9d8ef0d0",
       "hash": "effab2b5"
     },
     {
       "name": "carve-second-site",
       "changed": 3,
+      "diffHash": "72d2fd0a",
       "hash": "26707110"
     },
     {
       "name": "drag-raise-one-band",
       "changed": 17,
+      "diffHash": "68a614ae",
       "hash": "a824add0"
     },
     {
       "name": "drag-lower-swept",
       "changed": 18,
+      "diffHash": "f85b4b94",
       "hash": "501a6d90"
     },
     {
       "name": "stamp-band-anchored",
       "changed": 5,
+      "diffHash": "a6358159",
       "hash": "e051a540"
     },
     {
       "name": "stamp-hard-raise-centre",
       "changed": 29,
+      "diffHash": "51fc82c8",
       "hash": "eee31190"
     },
     {
       "name": "stamp-soft-raise",
       "changed": 349,
+      "diffHash": "5cfb84a4",
       "hash": "e9368696"
     },
     {
       "name": "stamp-soft-lower",
       "changed": 272,
+      "diffHash": "1431601a",
       "hash": "2983095f"
     },
     {
       "name": "stamp-hard-lower-free",
       "changed": 3,
+      "diffHash": "736aa3a1",
       "hash": "f49f784f"
     },
     {
       "name": "smooth-banded-raise",
       "changed": 483,
+      "diffHash": "ee3362d3",
       "hash": "becae3e5"
     },
     {
       "name": "smooth-free-lower",
       "changed": 529,
+      "diffHash": "f2ec238a",
       "hash": "c023028d"
     },
     {
       "name": "edge-stamp-origin-corner",
       "changed": 8,
+      "diffHash": "3f564bbd",
       "hash": "de3d22e1"
     },
     {
       "name": "edge-stamp-far-column",
       "changed": 22,
+      "diffHash": "8677893f",
       "hash": "4d775781"
     },
     {
       "name": "edge-smooth-left-edge",
       "changed": 241,
+      "diffHash": "32037936",
       "hash": "26a64b44"
     },
     {
       "name": "edge-drag-left-edge",
       "changed": 4,
+      "diffHash": "afdad45a",
       "hash": "1c5c9f28"
     },
     {
       "name": "settle-library-tool",
       "changed": 3981,
+      "diffHash": "bf4971cf",
       "hash": "c61136e7"
     }
   ],

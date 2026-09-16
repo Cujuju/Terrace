@@ -2,6 +2,7 @@ import {
   applySculpt,
   drawnBandOfSample,
   heightAt,
+  type CellDiff,
   type Heightmap,
   type SculptOptions,
 } from '../../src/index.ts';
@@ -56,6 +57,28 @@ export function hashHeightmap(map: Heightmap): string {
   return fnv1aOfInt32s(heightmapStream(map));
 }
 
+const NO_SPANS: readonly number[] = [];
+
+/**
+ * The payload clients consume: cell count, then x, y, h, span count and the
+ * spans of each cell, in the order applySculpt returned them.
+ */
+function* cellDiffStream(diff: readonly CellDiff[]): Generator<number> {
+  yield diff.length;
+  for (const cell of diff) {
+    yield cell.x;
+    yield cell.y;
+    yield cell.h;
+    const spans = cell.spans ?? NO_SPANS;
+    yield spans.length;
+    for (const value of spans) yield value;
+  }
+}
+
+export function hashCellDiff(diff: readonly CellDiff[]): string {
+  return fnv1aOfInt32s(cellDiffStream(diff));
+}
+
 /** A band named relative to the drawn band of the clicked cell's top ceiling. */
 export interface BandFromClick {
   readonly fromClick: number;
@@ -81,6 +104,7 @@ export interface StrokeScriptStep {
 export interface StrokeOutcome {
   readonly name: string;
   readonly changed: number;
+  readonly diffHash: string;
   readonly hash: string;
 }
 
@@ -105,7 +129,12 @@ export function runStrokeScript(
       spanBand: resolveBand(map, step, step.spanBand ?? null),
       sweepFrom: step.sweepFrom ?? null,
     });
-    outcomes.push({ name: step.name, changed: diff.length, hash: hashHeightmap(map) });
+    outcomes.push({
+      name: step.name,
+      changed: diff.length,
+      diffHash: hashCellDiff(diff),
+      hash: hashHeightmap(map),
+    });
   }
   return outcomes;
 }
