@@ -5,10 +5,12 @@ import {
   CHUNK_SIZE,
   cellIndex,
   chunkIndex,
-  floorBandOfHeight,
+  drawnBandOfSample,
   heightAt,
+  isGapDrawn,
   quantizeToBand,
   setColumn,
+  spanCapBand,
   type Span,
 } from '@terrace/shared';
 
@@ -27,6 +29,9 @@ const MOUND_CREST_EDGE_SQUARED = 0.5 * 0.5;
 const MOUND_SHOULDER_EDGE_SQUARED = 0.8 * 0.8;
 
 const TUNNEL_OPENING_BANDS = 5;
+
+/** A roof one band up rests on the floor; seeing under it needs a band of air as well. */
+const MIN_TUNNEL_OPENING_BANDS = 2;
 
 const TUNNEL_HALF_WIDTH_CELLS = 6;
 
@@ -90,6 +95,11 @@ function insideTunnel(dx: number, dz: number): boolean {
   return dz <= caveEnd;
 }
 
+/** The band the tunnel roof floors in. Same formula as `server/src/world/arch-fixture.ts`. */
+export function tunnelRoofFloorBand(base: number): number {
+  return drawnBandOfSample(base) + TUNNEL_OPENING_BANDS;
+}
+
 export function carveArchFixture(mirror: TerrainMirror): Set<number> {
   const dirty = new Set<number>();
   const size = mirror.map.size;
@@ -101,6 +111,13 @@ export function carveArchFixture(mirror: TerrainMirror): Set<number> {
   }
 
   const base = quantizeToBand(heightAt(mirror.map, centreX, centreZ));
+  if (base <= BEDROCK_FLOOR || TUNNEL_OPENING_BANDS < MIN_TUNNEL_OPENING_BANDS) {
+    throw new Error(
+      `arch fixture: a base of ${base} cannot carry an opening of ` +
+        `${TUNNEL_OPENING_BANDS} band(s) above bedrock (${BEDROCK_FLOOR})`,
+    );
+  }
+  const roofFloorBand = tunnelRoofFloorBand(base);
 
   for (let dz = -MOUND_RADIUS_Z_CELLS; dz <= MOUND_RADIUS_Z_CELLS; dz++) {
     for (let dx = -MOUND_RADIUS_X_CELLS; dx <= MOUND_RADIUS_X_CELLS; dx++) {
@@ -113,19 +130,21 @@ export function carveArchFixture(mirror: TerrainMirror): Set<number> {
 
       const moundTop = base + bands * BAND_HEIGHT;
       const ground = mirror.map.cells[cellIndex(mirror.map, x, z)]!;
-      const roofFloor = base + TUNNEL_OPENING_BANDS * BAND_HEIGHT;
 
       let spans: readonly Span[];
-      if (
-        insideTunnel(dx, dz) &&
-        ground > BEDROCK_FLOOR &&
-        ground < roofFloor &&
-        roofFloor < moundTop
-      ) {
-        spans = [
-          { floorBand: BEDROCK_BAND, ceiling: ground },
-          { floorBand: floorBandOfHeight(roofFloor), ceiling: moundTop },
-        ];
+      if (insideTunnel(dx, dz) && TUNNEL_OPENING_BANDS < bands) {
+        // Clearance is the store's own predicate, so a refusal reads as the
+        // fixture's, never as a throw from setColumn.
+        const floorSpan: Span = { floorBand: BEDROCK_BAND, ceiling: ground };
+        const roofSpan: Span = { floorBand: roofFloorBand, ceiling: moundTop };
+        if (!isGapDrawn(floorSpan, roofSpan)) {
+          throw new Error(
+            `arch fixture: cell (${x}, ${z}) stands at ${ground}, capping in band ` +
+              `${spanCapBand(floorSpan)} — a roof flooring in band ${roofFloorBand} ` +
+              'needs a band of air under it',
+          );
+        }
+        spans = [floorSpan, roofSpan];
       } else {
         spans = [{ floorBand: BEDROCK_BAND, ceiling: moundTop }];
       }
