@@ -6,6 +6,7 @@ import { buildIdentity, rebindBuildIdentity } from '../build-identity.ts';
 import { logError, logInfo, logWarn } from '../log.ts';
 import type { LoadedPlugin, PluginActionOutcome, PluginActionSite } from '../plugins/types.ts';
 import { reimportPlugin } from '../plugins/reload.ts';
+import { resolveDeclaredSettings } from '../plugins/settings.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlockForToken } from './initial-unlock.ts';
 import {
@@ -410,8 +411,16 @@ export class WorldManager {
       this.session?.id === worldId
         ? this.session.store.pluginSettings()
         : this.withStore(worldId, (store) => store.pluginSettings());
+    const grouped: Record<string, Record<string, string>> = {};
+    for (const row of rows) (grouped[row.plugin] ??= {})[row.key] = row.value;
     const flat: Record<string, string> = {};
-    for (const row of rows) flat[settingRowKey(row.plugin, row.key)] = row.value;
+    for (const { plugin } of this.deps.plugins.list) {
+      if (!Object.hasOwn(grouped, plugin.name)) continue;
+      const resolved = resolveDeclaredSettings(plugin.settings ?? [], grouped[plugin.name]!);
+      for (const [key, value] of Object.entries(resolved)) {
+        flat[settingRowKey(plugin.name, key)] = value;
+      }
+    }
     return flat;
   }
 
