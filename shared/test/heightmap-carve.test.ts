@@ -10,13 +10,20 @@ import {
   columnCoversBand,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
+  DRAWN_SHORE_HEIGHT,
   heightAt,
   isGapDrawn,
+  isValidHeight,
+  MAX_BAND,
+  MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MIN_BAND,
+  MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   readSpans,
   sculptDisplacementUnits,
+  sculptOptionsOf,
+  SEA_LEVEL,
   setColumn,
   type Heightmap,
 } from '../src/index.ts';
@@ -249,5 +256,82 @@ describe('a dragged band never fills the carve under it (issue #224)', () => {
       expect([targetBand, diff]).toEqual([targetBand, []]);
       expect([targetBand, readSpans(map, INSIDE_X, ROW)]).toEqual([targetBand, before]);
     }
+  });
+});
+
+describe('a wire-validated carve never throws, wherever the ground sits', () => {
+  const SIZE = 24;
+  const CX = 12;
+  const CY = 12;
+  const ROOF_GAP_BANDS = 3;
+  const ROOF_BANDS = 2;
+  // Every legal extreme a heightmap can hold: both limits and a band edge.
+  const GROUNDS = [
+    MAX_HEIGHT,
+    MAX_HEIGHT - 1,
+    MAX_HEIGHT - BAND_HEIGHT,
+    bandFloorHeight(MAX_BAND),
+    MIN_HEIGHT + 1,
+    MIN_HEIGHT + BAND_HEIGHT,
+    bandFloorHeight(MIN_BAND + 1),
+    SEA_LEVEL,
+    DRAWN_SHORE_HEIGHT,
+  ];
+
+  const plainWorld = (ground: number): Heightmap => {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(ground);
+    return map;
+  };
+
+  const roofedWorld = (top: number): Heightmap => {
+    const floorHeight = top - (ROOF_GAP_BANDS + ROOF_BANDS) * BAND_HEIGHT;
+    if (floorHeight <= BEDROCK_FLOOR) return plainWorld(top);
+    const map = plainWorld(floorHeight);
+    for (let y = CY - 4; y <= CY + 4; y++) {
+      for (let x = CX - 4; x <= CX + 4; x++) {
+        setColumn(map, x, y, [
+          { floor: BEDROCK_FLOOR, ceiling: floorHeight },
+          { floor: top - ROOF_BANDS * BAND_HEIGHT, ceiling: top },
+        ]);
+      }
+    }
+    return map;
+  };
+
+  const heightsAreLegal = (map: Heightmap): boolean => {
+    for (let i = 0; i < map.cells.length; i++) {
+      if (!isValidHeight(map.cells[i]!)) return false;
+    }
+    for (const packed of map.columnSpans.values()) {
+      for (let k = 0; k < packed.length; k += 2) {
+        if (packed[k]! < MIN_HEIGHT || packed[k + 1]! > MAX_HEIGHT) return false;
+      }
+    }
+    return true;
+  };
+
+  it.each([
+    ['plain', plainWorld],
+    ['roofed', roofedWorld],
+  ])('carves every band of a %s world without a RangeError', (_kind, build) => {
+    const faults: unknown[] = [];
+    for (const ground of GROUNDS) {
+      for (let band = MIN_BAND - 1; band <= MAX_BAND + 1; band++) {
+        for (const radius of [MIN_BRUSH_RADIUS, 4, MAX_BRUSH_RADIUS]) {
+          const map = build(ground);
+          const options = sculptOptionsOf({
+            type: 'sculpt', x: CX, y: CY, radius, dir: -1, tool: 'carve', spanBand: band,
+          });
+          try {
+            applySculpt(map, CX, CY, radius, -DEFAULT_SCULPT_AMOUNT, options);
+          } catch (error) {
+            faults.push({ ground, band, radius, error: String(error) });
+          }
+          if (!heightsAreLegal(map)) faults.push({ ground, band, radius, illegal: true });
+        }
+      }
+    }
+    expect(faults).toEqual([]);
   });
 });
