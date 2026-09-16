@@ -37,10 +37,10 @@ import {
 
 export { DECK_RADIAL_EXPONENT, DECK_TIER_POPULATION_TAPER, DECK_TIERS, tierPopulations };
 import {
-  PUFF_QUAD_FRAGMENT,
   billboardPuffs,
   puffAlphaDiscard,
-  puffLobeScale,
+  puffLobeReach,
+  puffLobedQuad,
   puffMask,
 } from './puffDeck.ts';
 import { CLOUD_BASE_WORLD_Y, CLOUD_HEADROOM_WORLD_UNITS } from './precipitation.ts';
@@ -193,7 +193,7 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const mask = puffMask(PUFF_SOFT_EDGE_FRACTION, lobing);
   const alpha = mask.puff.mul(puffFade);
 
-  const lobedQuad = PUFF_QUAD_FRAGMENT.div(puffLobeScale(lobing));
+  const lobedQuad = puffLobedQuad(lobing);
   const puffSphere = vec3(lobedQuad, sqrt(max(0, float(1).sub(dot(lobedQuad, lobedQuad)))));
   const puffUp = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz;
 
@@ -210,7 +210,7 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const centre = instanceMatrix(mesh).mul(vec4(transformed, 1)).xyz;
   // A parked or dark slot has no extent: its quad is one point, so no fragment is raised.
   const lit = puffFade.greaterThan(0).toFloat();
-  billboardPuffs(material, centre, puffExtent.mul(lit));
+  billboardPuffs(material, centre, puffExtent.mul(puffLobeReach(lobing)).mul(lit));
   discard(material, mask.discarded);
   discard(material, puffAlphaDiscard(alpha));
   compose(material, 'opacity', (previous) => previous.mul(alpha));
