@@ -61,6 +61,11 @@ export interface IntentCtx {
   readonly world: WorldApi;
 }
 
+/** What the stroke actually moved, measured from the diff it produced. */
+export interface AppliedIntentCtx extends IntentCtx {
+  readonly displacementUnits: number;
+}
+
 export type IntentVerdict =
   | { readonly kind: 'allow' }
   | { readonly kind: 'deny'; readonly reason?: string }
@@ -126,7 +131,7 @@ export interface TerracePlugin {
 
   onIntentApplied?(
     intent: SculptIntent,
-    ctx: IntentCtx,
+    ctx: AppliedIntentCtx,
     diff: readonly CellDiff[],
   ): void;
 

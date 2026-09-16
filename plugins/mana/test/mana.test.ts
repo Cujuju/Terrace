@@ -14,6 +14,7 @@ import {
   SCULPT_TOOLS,
   type SculptOptions,
   type SculptProfile,
+  bandLevelHeight,
   sculptDisplacementUnits,
   sculptOptionsOf,
   strokeSweep,
@@ -90,6 +91,12 @@ const EVERY_CHUNK: ReadonlyArray<readonly [number, number]> = (() => {
 
 const INTERIOR_CELL = { x: 24, y: 24 } as const;
 
+/**
+ * Dry land, well clear of the shore: a press there moves a whole band, so the
+ * charge a stroke draws is the nominal these cases were written against.
+ */
+const TEST_GROUND_HEIGHT = bandLevelHeight(8);
+
 const TICK_DT = 0.1;
 
 const MILLISECONDS_PER_SECOND = 1000;
@@ -136,7 +143,7 @@ function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   resetManaState();
   nextHelperDir = 1;
 
-  const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, difficulty);
+  const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, difficulty, TEST_GROUND_HEIGHT);
   const sink = new RecordingSink();
   world.setSink(sink);
 
@@ -174,7 +181,12 @@ function sculptAt(
 /** A world where the token owns HOME_CHUNK only, so any stroke there is a frontier stroke. */
 function bootOnTheFrontier(): Harness {
   resetManaState();
-  const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+  const world = worldWithUnlockedChunks(
+    WORLD_SIZE,
+    EVERY_CHUNK,
+    SUITE_DIFFICULTY,
+    TEST_GROUND_HEIGHT,
+  );
   const sink = new RecordingSink();
   world.setSink(sink);
   const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
@@ -1023,16 +1035,25 @@ describe('charging per intent, through the real pipeline', () => {
     );
   }
 
+  /** One raise on ground nothing else has touched, so the fee is that stroke's own. */
+  function feeOfFirstStroke(radius: number, profile: SculptProfile): number {
+    const fresh = boot();
+    const outcome = handleSculptIntent(
+      { world: fresh.world, interceptors: fresh.host },
+      PLAYER,
+      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: 1, profile },
+    );
+    expect(outcome.applied).toBe(true);
+    return MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0);
+  }
+
   it('charges the widest hard stamp far more than a point stamp', () => {
-    expect(sculptWith(POINT_BRUSH_RADIUS_CELLS, 'soft').applied).toBe(true);
-    const pointFee = MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0);
-
-    const before = manaBalanceOf(PLAYER.id) ?? 0;
-    expect(sculptWith(MAX_BRUSH_RADIUS, 'hard').applied).toBe(true);
-    const plateauFee = before - (manaBalanceOf(PLAYER.id) ?? 0);
-
-    expect(pointFee).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
-    expect(plateauFee).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+    expect(feeOfFirstStroke(POINT_BRUSH_RADIUS_CELLS, 'soft')).toBe(
+      MANA_COST_PER_MIN_RADIUS_SCULPT,
+    );
+    expect(feeOfFirstStroke(MAX_BRUSH_RADIUS, 'hard')).toBe(
+      MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+    );
   });
 
   it('denies at the threshold of THE INTENT’S cost, not a flat one', () => {
@@ -1150,7 +1171,12 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
 
   function bootWithLaterPlugin(laterPlugin: TerracePlugin): Harness {
     resetManaState();
-    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+    const world = worldWithUnlockedChunks(
+      WORLD_SIZE,
+      EVERY_CHUNK,
+      SUITE_DIFFICULTY,
+      TEST_GROUND_HEIGHT,
+    );
     const sink = new RecordingSink();
     world.setSink(sink);
 
@@ -1173,7 +1199,7 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
     expect(outcome.applied).toBe(false);
     if (!outcome.applied) expect(outcome.reason).toBe('plugin-denied');
     expect(manaBalanceOf(PLAYER.id)).toBe(before);
-    expect(harness.world.heightAt(INTERIOR_CELL.x, INTERIOR_CELL.y)).toBe(0);
+    expect(harness.world.heightAt(INTERIOR_CELL.x, INTERIOR_CELL.y)).toBe(TEST_GROUND_HEIGHT);
   });
 
   it('charges exactly the shared price when every interceptor — including a later one — allows', () => {
@@ -1404,7 +1430,12 @@ describe('the frontier price is quoted once, at verdict time', () => {
     const armed = { on: false };
 
     resetManaState();
-    const world = worldWithUnlockedChunks(WORLD_SIZE, EVERY_CHUNK, SUITE_DIFFICULTY);
+    const world = worldWithUnlockedChunks(
+      WORLD_SIZE,
+      EVERY_CHUNK,
+      SUITE_DIFFICULTY,
+      TEST_GROUND_HEIGHT,
+    );
     world.setSink(new RecordingSink());
     // Mana reads territory through this world; arming it makes that read throw
     // once, which the host contains, so the verdict runs on a stale quote.

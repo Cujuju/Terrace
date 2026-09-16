@@ -1,6 +1,7 @@
-import type { CellDiff, SculptIntent } from '@terrace/shared';
+import type { SculptIntent } from '@terrace/shared';
 import { MANA_BALANCE_MESSAGE, MANA_DENIED_MESSAGE } from '../protocol.ts';
 import type {
+  AppliedIntentCtx,
   IntentCtx,
   IntentVerdict,
   Player,
@@ -95,8 +96,8 @@ export const plugin: TerracePlugin = {
     return checkAffordability(intent, ctx);
   },
 
-  onIntentApplied(intent: SculptIntent, ctx: IntentCtx, diff: readonly CellDiff[]): void {
-    commitCharge(intent, ctx, diff);
+  onIntentApplied(intent: SculptIntent, ctx: AppliedIntentCtx): void {
+    commitCharge(intent, ctx);
   },
 
   onIntentDenied(intent: SculptIntent, ctx: IntentCtx): void {

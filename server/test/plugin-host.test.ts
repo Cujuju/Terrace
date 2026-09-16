@@ -29,6 +29,9 @@ import {
 } from './support/harness.ts';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+/** An arbitrary stand-in for what a stroke moved: the host only relays it. */
+const MOVED_UNITS = 96;
+
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
@@ -475,12 +478,22 @@ describe('PluginHost', () => {
     expect(host.faultCount('a-flipflop')).toBe(1);
   });
 
-  it('hands onIntentApplied a working WorldApi and the same player/intent/diff it was given', () => {
-    const seen: Array<{ intent: SculptIntent; playerId: string; diffLength: number }> = [];
+  it('hands onIntentApplied the player, intent, diff and the units the stroke moved', () => {
+    const seen: Array<{
+      intent: SculptIntent;
+      playerId: string;
+      diffLength: number;
+      displacementUnits: number;
+    }> = [];
     const fixture: TerracePlugin = {
       name: 'ledger',
       onIntentApplied(intent, ctx, diff): void {
-        seen.push({ intent, playerId: ctx.player.id, diffLength: diff.length });
+        seen.push({
+          intent,
+          playerId: ctx.player.id,
+          diffLength: diff.length,
+          displacementUnits: ctx.displacementUnits,
+        });
         ctx.world.broadcast('ping', {});
       },
     };
@@ -492,9 +505,11 @@ describe('PluginHost', () => {
 
     const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
     const diff: CellDiff[] = [{ x: 4, y: 4, h: 64 }];
-    host.notifyIntentApplied(intent, PLAYER, diff);
+    host.notifyIntentApplied(intent, PLAYER, diff, MOVED_UNITS);
 
-    expect(seen).toEqual([{ intent, playerId: PLAYER.id, diffLength: 1 }]);
+    expect(seen).toEqual([
+      { intent, playerId: PLAYER.id, diffLength: 1, displacementUnits: MOVED_UNITS },
+    ]);
     expect(sink.ofType('ledger:ping')).toHaveLength(1);
   });
 
@@ -514,7 +529,7 @@ describe('PluginHost', () => {
 
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
-    expect(() => host.notifyIntentApplied(intent, PLAYER, [])).not.toThrow();
+    expect(() => host.notifyIntentApplied(intent, PLAYER, [], 0)).not.toThrow();
     errors.mockRestore();
 
     expect(calls).toEqual(['a', 'b']);
