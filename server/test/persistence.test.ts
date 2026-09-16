@@ -10,6 +10,8 @@ import {
   CHUNK_SIZE,
   bandLevelHeight,
   drawnBandOfSample,
+  floorBandOfHeight,
+  isGapDrawn,
   readSpans,
   spanCapBand,
 } from '@terrace/shared';
@@ -492,11 +494,24 @@ describe('reading a schema 1 world under the band-floor rule', () => {
     ];
   }
 
+  /** Overwrites the stored span table with `columns`, packed the way schema 1 wrote it. */
+  function writeSpanTable(
+    columns: ReadonlyMap<number, readonly RawFloorSpan[]>,
+    schemaVersion: number,
+  ): void {
+    const raw = new DatabaseConstructor(dbPath);
+    raw
+      .prepare('UPDATE snapshots SET schema_version = ?, column_spans = ?')
+      .run(schemaVersion, packRawFloorColumnSpans(columns));
+    raw.close();
+  }
+
   /** Plants a genuine schema 1 row: raw span floors, version 1 on the row. */
-  function plantV1Snapshot(): { cells: Int16Array; mask: Uint8Array } {
+  function plantV1Columns(columns: ReadonlyMap<number, readonly RawFloorSpan[]>): void {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    world.map.cells[EXACT_CELL] = ROOF_CEILING;
-    world.map.cells[RAISED_CELL] = ROOF_CEILING;
+    for (const [cellIndex, spans] of columns) {
+      world.map.cells[cellIndex] = spans[spans.length - 1]!.ceiling;
+    }
 
     const store = SnapshotStore.open(dbPath);
     store.saveSnapshot({
@@ -508,20 +523,16 @@ describe('reading a schema 1 world under the band-floor rule', () => {
     });
     store.close();
 
-    const raw = new DatabaseConstructor(dbPath);
-    raw
-      .prepare('UPDATE snapshots SET schema_version = ?, column_spans = ?')
-      .run(
-        OLDEST_READABLE_SCHEMA_VERSION,
-        packRawFloorColumnSpans(
-          new Map([
-            [EXACT_CELL, v1Column(EXACT_RAW_FLOOR)],
-            [RAISED_CELL, v1Column(RAISED_RAW_FLOOR)],
-          ]),
-        ),
-      );
-    raw.close();
-    return { cells: world.map.cells, mask: world.mask };
+    writeSpanTable(columns, OLDEST_READABLE_SCHEMA_VERSION);
+  }
+
+  function plantV1Snapshot(): void {
+    plantV1Columns(
+      new Map([
+        [EXACT_CELL, v1Column(EXACT_RAW_FLOOR)],
+        [RAISED_CELL, v1Column(RAISED_RAW_FLOOR)],
+      ]),
+    );
   }
 
   function schemaVersionsOnDisk(): number[] {
@@ -608,6 +619,70 @@ describe('reading a schema 1 world under the band-floor rule', () => {
     const store = SnapshotStore.open(dbPath);
     expect(() => store.loadLatest()).toThrow(/schema version/);
     store.close();
+  });
+
+  // The v1 overhang slab was one band tall less a unit, so a fill at band 0
+  // over ground capping in band -1 left a pair with no drawn gap.
+  const V1_OVERHANG_SLAB_DEPTH = BAND_HEIGHT - 1;
+  const NO_GAP_SLAB_CEILING = bandLevelHeight(0);
+  const NO_GAP_GROUND_CEILING = bandLevelHeight(-1);
+  const NO_GAP_SLAB_RAW_FLOOR = NO_GAP_SLAB_CEILING - V1_OVERHANG_SLAB_DEPTH;
+  const MERGED_CELL = 4 * WORLD_SIZE + 4;
+
+  const NO_GAP_COLUMN: readonly RawFloorSpan[] = [
+    { floor: BEDROCK_FLOOR, ceiling: NO_GAP_GROUND_CEILING },
+    { floor: NO_GAP_SLAB_RAW_FLOOR, ceiling: NO_GAP_SLAB_CEILING },
+  ];
+
+  it('states the premise: the v1 pair converts to bands 0 over -1, which is no drawn gap', () => {
+    expect(floorBandOfHeight(NO_GAP_SLAB_RAW_FLOOR)).toBe(0);
+    expect(drawnBandOfSample(NO_GAP_GROUND_CEILING)).toBe(-1);
+    expect(
+      isGapDrawn(
+        { floorBand: BEDROCK_BAND, ceiling: NO_GAP_GROUND_CEILING },
+        { floorBand: 0, ceiling: NO_GAP_SLAB_CEILING },
+      ),
+    ).toBe(false);
+  });
+
+  it('merges a schema 1 pair with no drawn gap and drops the column that leaves', () => {
+    plantV1Columns(
+      new Map([
+        [MERGED_CELL, NO_GAP_COLUMN],
+        [EXACT_CELL, v1Column(EXACT_RAW_FLOOR)],
+      ]),
+    );
+
+    const store = SnapshotStore.open(dbPath);
+    const snapshot = store.loadLatest();
+    expect(snapshot).not.toBeNull();
+    if (snapshot === null) return;
+
+    expect(snapshot.columnSpans.has(MERGED_CELL)).toBe(false);
+    expect(snapshot.cells[MERGED_CELL]).toBe(NO_GAP_SLAB_CEILING);
+    // A column that still has a drawn gap is untouched by the repair.
+    expect(snapshot.columnSpans.get(EXACT_CELL)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: FLOOR_CEILING },
+      { floorBand: EXACT_FLOOR_BAND, ceiling: ROOF_CEILING },
+    ]);
+    store.close();
+  });
+
+  it('keeps schema 2 strict: the same column refuses in raw-floor and in band form', () => {
+    plantV1Columns(new Map([[MERGED_CELL, NO_GAP_COLUMN]]));
+
+    for (const bytes of [
+      NO_GAP_COLUMN,
+      [
+        { floor: BEDROCK_BAND, ceiling: NO_GAP_GROUND_CEILING },
+        { floor: 0, ceiling: NO_GAP_SLAB_CEILING },
+      ],
+    ]) {
+      writeSpanTable(new Map([[MERGED_CELL, bytes]]), SNAPSHOT_SCHEMA_VERSION);
+      const store = SnapshotStore.open(dbPath);
+      expect(() => store.loadLatest()).toThrow(/malformed 2-span list for cell/);
+      store.close();
+    }
   });
 });
 
