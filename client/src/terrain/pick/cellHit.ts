@@ -46,6 +46,9 @@ export function terrainHitInCell(
   for (let k = count - 1; k >= 0; k--) {
     const span = spanAt(mirror.map, i, j, k);
     if (!isSpanDrawn(span)) continue;
+    // The span's drawn foot, named once: the bottom of its floor band, which is
+    // where the mesher puts that band's wall base.
+    const baseY = drawnBandCapY(span.floorBand - 1);
     // F1: test the wall crossing BEFORE the drawnCapMet gate. A grazing ray
     // can enter through the side wall without dipping below the drawn cap.
     let met: DrawnCap | null = null;
@@ -55,15 +58,13 @@ export function terrainHitInCell(
         const drawnTopY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
         // Drawn wall foot, not the blocky underside: a carved gap must read
         // as open so the ray passes to the cell beyond.
-        const wallBaseY = drawnBandCapY(span.floorBand);
         const horizontal = ray.dx !== 0 || ray.dz !== 0;
-        const entersThroughWall = horizontal && entryY <= drawnTopY && entryY >= wallBaseY;
+        const entersThroughWall = horizontal && entryY <= drawnTopY && entryY >= baseY;
         if (!entersThroughWall) continue;
       }
     }
     const capY = met === null ? drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE : met.capY;
     const drawnY = met === null ? blockyCellCapY(span.ceiling) : met.drawnY;
-    const baseY = drawnBandCapY(span.floorBand - 1);
     const lowY = entryY < exitY ? entryY : exitY;
     const highY = entryY < exitY ? exitY : entryY;
     if (lowY > drawnY || highY < baseY) continue;
