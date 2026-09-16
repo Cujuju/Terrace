@@ -8,6 +8,8 @@ export const BOOT_MARKS = {
   firstFrame: `${BOOT_MARK_PREFIX}first-frame`,
   firstTerrainUpdate: `${BOOT_MARK_PREFIX}first-terrain-update`,
   terrainQueueEmpty: `${BOOT_MARK_PREFIX}terrain-queue-empty`,
+  settleWarmupStart: `${BOOT_MARK_PREFIX}settle-warmup-start`,
+  settleWarmupDone: `${BOOT_MARK_PREFIX}settle-warmup-done`,
 } as const;
 
 export type BootMark = (typeof BOOT_MARKS)[keyof typeof BOOT_MARKS];
@@ -15,6 +17,11 @@ export type BootMark = (typeof BOOT_MARKS)[keyof typeof BOOT_MARKS];
 // User-timing marks: they land in Chrome traces (blink.user_timing) and in the perf probe report.
 export function markBoot(name: BootMark): void {
   performance.mark(name);
+}
+
+/** Has this stage happened yet? The public signal for gating on boot progress. */
+export function bootMarked(name: BootMark): boolean {
+  return performance.getEntriesByName(name, 'mark').length > 0;
 }
 
 /** First occurrence of each boot mark, in ms since navigation. */

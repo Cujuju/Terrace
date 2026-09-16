@@ -2,6 +2,7 @@ import type { SculptIntent } from '@terrace/shared';
 import { Group, Raycaster, Vector2, type Intersection, type Object3D } from 'three';
 import type { Component } from 'solid-js';
 import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
+import { BOOT_MARKS, bootMarked } from '../bootMarks.ts';
 import { createAudioEngine } from '../audio/audioEngine.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
@@ -9,6 +10,7 @@ import { rendererBackendName } from '../render/rendererBackend.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
 import { frameStatsSample, recordPluginFrame } from '../render/frameStats.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
+import { warmHiddenDrawables } from '../render/settleWarmup.ts';
 import {
   clearGroundShade,
   configureGroundShade,
@@ -296,6 +298,28 @@ export function createClientPluginHost(
     cancelled: boolean;
   }
 
+  let warmedOnce = false;
+  let warmupInFlight = false;
+  let warmupQueued = false;
+
+  const runWarmup = (): void => {
+    if (warmupInFlight) {
+      warmupQueued = true;
+      return;
+    }
+    warmupInFlight = true;
+    void warmHiddenDrawables(viewport)
+      .catch((error: unknown) => {
+        console.error('[terrace] shader warmup threw', error);
+      })
+      .finally(() => {
+        warmupInFlight = false;
+        if (!warmupQueued) return;
+        warmupQueued = false;
+        runWarmup();
+      });
+  };
+
   const mountPlugin = (plugin: TerraceClientPlugin): void => {
     const undo: (() => void)[] = [];
     const track = (unregister: () => void): (() => void) => {
@@ -497,6 +521,9 @@ export function createClientPluginHost(
       }
 
       mounted.set(plugin.name, { plugin, layer, undo });
+      // A plugin mounting after the settle warmup ran gets its own pass; the
+      // already-compiled objects are cache hits.
+      if (warmedOnce) runWarmup();
     };
 
     const dropUnattached = (): void => {
@@ -574,6 +601,17 @@ export function createClientPluginHost(
   configureGroundShade(groundShadeMaxFor(plugins));
 
   for (const plugin of plugins) mountPlugin(plugin);
+
+  // Fires once at terrain settle, after boot has applied the AA setting; a later
+  // multisample toggle drops the canvas target and the next render recompiles.
+  const stopWarmupWatch = viewport.onFrame(() => {
+    if (!bootMarked(BOOT_MARKS.firstFrame)) return;
+    const trace = world.terrainLoadTrace();
+    if (trace === null || trace.queueEmptyAfterMs === null) return;
+    stopWarmupWatch();
+    warmedOnce = true;
+    runWarmup();
+  });
 
   const stopGroundShade = viewport.onFrame(gatherGroundShade);
 
@@ -682,6 +720,7 @@ export function createClientPluginHost(
     dispose(): void {
       stopSampling();
       stopGroundShade();
+      stopWarmupWatch();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
       for (const name of [...pendingMounts]) {
         mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
