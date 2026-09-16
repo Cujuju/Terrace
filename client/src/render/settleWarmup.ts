@@ -134,13 +134,28 @@ function planProjection(
   return { projection: { show, hide, culled }, flipped };
 }
 
+function walkScene(scene: Scene): Walk {
+  const walk: Walk = {
+    hiddenNodes: [],
+    hiddenDrawables: [],
+    shownDoublePass: [],
+    candidates: new Set<Material>(),
+    shownMaterials: new Set<Material>(),
+  };
+  collect(scene, false, walk);
+  return walk;
+}
+
 async function compilePass(
   scope: WarmupScope,
-  projection: Projection,
+  flipSet: ReadonlySet<Material>,
   // Runs once projection has queued the deferred work items and before the drain
   // reads `material.side` to key their pipelines.
   beforeDrain: (() => void) | null = null,
 ): Promise<void> {
+  // Planned in the same synchronous turn it is applied: a plan outlives an await
+  // only as a stale snapshot, whose restore would re-hide nodes shown meanwhile.
+  const { projection } = planProjection(walkScene(scope.scene), flipSet);
   for (const node of projection.show) node.visible = true;
   for (const node of projection.hide) node.visible = false;
   for (const node of projection.culled) node.frustumCulled = false;
@@ -173,14 +188,7 @@ export async function warmHiddenDrawables(
   // A cold renderer makes compileAsync await init() before it projects, which would put
   // the restore below ahead of projection: the flags would be back to hidden, warming nothing.
   if (!scope.renderer.initialized) return { flipped: 0 };
-  const walk: Walk = {
-    hiddenNodes: [],
-    hiddenDrawables: [],
-    shownDoublePass: [],
-    candidates: new Set<Material>(),
-    shownMaterials: new Set<Material>(),
-  };
-  collect(scope.scene, false, walk);
+  const walk = walkScene(scope.scene);
 
   const flipSet = new Set<Material>();
   // A pass holds the flip for its whole length, seconds, so a drawable shown meanwhile
@@ -195,19 +203,19 @@ export async function warmHiddenDrawables(
 
   // Residual: on a re-run, a hidden double-pass drawable and its descendants are
   // left out, so they compile at first show unless the settle pass warmed them.
-  const { projection, flipped } = planProjection(walk, flipSet);
+  const { flipped } = planProjection(walk, flipSet);
   if (flipped === 0) return { flipped };
 
   markBoot(BOOT_MARKS.settleWarmupStart);
   if (flipSet.size === 0) {
-    await compilePass(scope, projection);
+    await compilePass(scope, flipSet);
   } else {
     // Residual: a hidden double-pass object shown during a pass renders
     // single-sided until that pass ends (load-time only).
     try {
       // Projecting at DoubleSide queues the back-side render object as well as the
       // default one, and the drain keys both off the side set here.
-      await compilePass(scope, projection, () => {
+      await compilePass(scope, flipSet, () => {
         for (const material of flipSet) material.side = BackSide;
       });
       // The default render object came out of the drain above built for BackSide, and
@@ -218,7 +226,7 @@ export async function warmHiddenDrawables(
       }
       // FrontSide at projection queues the default render object alone, so the back-side
       // one still holds its pipeline and the cache keeps it instead of releasing it.
-      await compilePass(scope, projection);
+      await compilePass(scope, flipSet);
     } finally {
       for (const material of flipSet) material.side = DoubleSide;
     }
