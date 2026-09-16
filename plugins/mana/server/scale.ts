@@ -1,4 +1,9 @@
-import { MAX_BRUSH_RADIUS, WORLD_UNIT_CELLS, cellsAcross } from '@terrace/shared';
+import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  MAX_BRUSH_RADIUS,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
 import {
   DEFAULT_WORLD_DIFFICULTY,
@@ -16,6 +21,7 @@ export const MANA_COST_PER_MIN_RADIUS_SCULPT = sculptManaCost(
   POINT_BRUSH_RADIUS_CELLS,
   'soft',
   'stamp',
+  CARVE_DEFAULT_DEPTH_BANDS,
 );
 
 export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
@@ -23,6 +29,7 @@ export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
   MAX_BRUSH_RADIUS,
   'hard',
   'stamp',
+  CARVE_DEFAULT_DEPTH_BANDS,
 );
 
 export const MANA_CAPACITY = 5000;

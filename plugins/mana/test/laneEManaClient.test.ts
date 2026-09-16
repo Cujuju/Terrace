@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CHUNK_SIZE, MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from '@terrace/shared';
+import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  CHUNK_SIZE,
+  MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
+} from '@terrace/shared';
 import { CHUNK_UNLOCK_MANA, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
 
 type ManaClientState = typeof import('../client/state.ts');
@@ -108,7 +113,7 @@ describe('the HUD quote prices the frontier under the aim', () => {
   });
 
   const displacement = (): number =>
-    sculptManaCost(POOL_MANA_PER_BAND_CELL, MIN_BRUSH_RADIUS, 'hard', 'stamp');
+    sculptManaCost(POOL_MANA_PER_BAND_CELL, MIN_BRUSH_RADIUS, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS);
 
   it('adds the unlock fee for the chunks the aimed stroke would open', () => {
     state.setLocalTerritory(HOME_ONLY);
