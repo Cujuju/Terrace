@@ -29,6 +29,14 @@ function isDrawable(node: Object3D): boolean {
   );
 }
 
+function subtreeHasLight(node: Object3D): boolean {
+  if ((node as Object3D & { isLight?: boolean }).isLight === true) return true;
+  for (const child of node.children) {
+    if (subtreeHasLight(child)) return true;
+  }
+  return false;
+}
+
 // Hidden ancestors are flipped too: projection returns at the first invisible
 // node, so its descendants never reach pipeline creation either.
 function collect(
@@ -37,6 +45,9 @@ function collect(
   hidden: Object3D[],
   culled: Object3D[],
 ): number {
+  // Every lit pipeline is keyed on the visible-light set (see plugins/kit/lightBank.ts),
+  // so admitting a light here compiles keys the frame loop never asks for.
+  if (!node.visible && subtreeHasLight(node)) return 0;
   const nodeHidden = ancestorHidden || !node.visible;
   if (!node.visible) hidden.push(node);
   let flipped = 0;
@@ -54,6 +65,9 @@ function collect(
  * compile on a first visible frame mid-play.
  */
 export async function warmHiddenDrawables(scope: WarmupScope): Promise<WarmupResult> {
+  // A cold renderer makes compileAsync await init() before it projects, which would put
+  // the restore below ahead of projection: the flags would be back to hidden, warming nothing.
+  if (!scope.renderer.initialized) return { flipped: 0 };
   const hidden: Object3D[] = [];
   const culled: Object3D[] = [];
   const flipped = collect(scope.scene, false, hidden, culled);
