@@ -241,21 +241,34 @@ export function BrushModeler(): JSX.Element {
         </span>
       </div>
       <Show when={brushTool() === 'smooth'}>
-        <div class="hud-row">
-          <span class="hud-hint">Strength</span>
-          <input
-            type="range"
-            min={SMOOTH_LAMBDA_MIN}
-            max={SMOOTH_LAMBDA_MAX}
-            step="1"
-            value={smoothLambda()}
-            aria-label="Smooth strength"
-            title="Smooth strength: how far each cell moves toward its neighbours per stroke"
-            onInput={(event) =>
-              setSmoothLambda(event.currentTarget.valueAsNumber)
-            }
-          />
-          <span class="hud-hint">{smoothLambda()}%</span>
+        <div class="hud-row brush-slider">
+          <span class="brush-slider__end">{SMOOTH_LAMBDA_MIN}%</span>
+          <div
+            class="brush-slider__track"
+            style={{
+              '--brush-rung': String(smoothLambda() - SMOOTH_LAMBDA_MIN),
+              '--brush-slider-rungs': String(SMOOTH_LAMBDA_MAX - SMOOTH_LAMBDA_MIN),
+            }}
+          >
+            <span class="brush-slider__rail" />
+            <span class="brush-slider__fill" />
+            <input
+              type="range"
+              class="brush-slider__input"
+              min={SMOOTH_LAMBDA_MIN}
+              max={SMOOTH_LAMBDA_MAX}
+              step="1"
+              value={smoothLambda()}
+              aria-label="Smooth strength"
+              aria-valuetext={`${smoothLambda()} percent`}
+              title="Smooth strength: how far each cell moves toward its neighbours per stroke"
+              onInput={(event) =>
+                setSmoothLambda(event.currentTarget.valueAsNumber)
+              }
+            />
+            <span class="brush-slider__value">{smoothLambda()}%</span>
+          </div>
+          <span class="brush-slider__end">{SMOOTH_LAMBDA_MAX}%</span>
         </div>
       </Show>
       <Show when={denialHint()}>
