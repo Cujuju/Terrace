@@ -21,6 +21,12 @@ describe('fnv1aOfInt32s', () => {
   test('always returns eight hex digits', () => {
     for (let n = 0; n < 64; n++) expect(fnv1aOfInt32s([n])).toMatch(/^[0-9a-f]{8}$/);
   });
+
+  test('refuses values outside the int32 domain', () => {
+    expect(() => fnv1aOfInt32s([1.5])).toThrow(RangeError);
+    expect(() => fnv1aOfInt32s([2 ** 32 + 1])).toThrow(RangeError);
+    expect(() => fnv1aOfInt32s([Number.NaN])).toThrow(RangeError);
+  });
 });
 
 describe('hashHeightmap', () => {
