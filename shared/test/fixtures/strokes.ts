@@ -1,8 +1,10 @@
 import type { StrokeScriptStep } from '../support/goldenCorpus.ts';
 
 // Carve and drag lead: both need an exposed face at the clicked band, which a
-// stamp or a smooth would have flattened away. Settle trails: its cascade is
-// unbounded, so it would relax away every later stroke's context.
+// stamp or a smooth would have flattened away.
+
+// Settle trails: its cascade is unbounded, so it would relax away every later
+// stroke's context.
 
 export const COMMON_SCRIPT_KEY = 'common';
 
