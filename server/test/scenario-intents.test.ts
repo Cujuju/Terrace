@@ -43,66 +43,73 @@ function openTerrace(): Scenario {
 interface MalformedCase {
   readonly why: string;
   readonly message: unknown;
+  /** Set where the message cannot carry a routable seq, so no nack can come back. */
+  readonly silent?: true;
 }
 
 const AT = { x: FACE_CELL.x, y: FACE_CELL.y } as const;
 
+/** Every case that can carry a seq carries one, so its refusal lands on the wire. */
+function malformed(overrides: Record<string, unknown>): unknown {
+  return sculptMessage({ seq: SEQ, ...overrides });
+}
+
 const MALFORMED: readonly MalformedCase[] = [
-  { why: 'not an object at all', message: null },
-  { why: 'a bare string', message: 'sculpt' },
-  { why: 'another message type', message: { type: 'nuke', ...AT, radius: 1, dir: 1 } },
-  { why: 'a fractional x', message: sculptMessage({ ...AT, x: 1.5 }) },
-  { why: 'an x past the world edge', message: sculptMessage({ ...AT, x: SCENARIO_WORLD_SIZE }) },
-  { why: 'a negative y', message: sculptMessage({ ...AT, y: -1 }) },
-  { why: 'a radius under the minimum', message: sculptMessage({ ...AT, radius: MIN_BRUSH_RADIUS - 1 }) },
-  { why: 'a radius over the maximum', message: sculptMessage({ ...AT, radius: MAX_BRUSH_RADIUS + 1 }) },
-  { why: 'a direction that is neither 1 nor -1', message: sculptMessage({ ...AT, dir: 2 }) },
-  { why: 'a fractional seq', message: sculptMessage({ ...AT, seq: 1.5 }) },
-  { why: 'an unknown tool', message: sculptMessage({ ...AT, tool: 'chisel' }) },
-  { why: 'an unknown edge profile', message: sculptMessage({ ...AT, profile: 'medium' }) },
+  { why: 'not an object at all', message: null, silent: true },
+  { why: 'a bare string', message: 'sculpt', silent: true },
+  { why: 'another message type', message: { type: 'nuke', ...AT, radius: 1, dir: 1, seq: SEQ } },
+  { why: 'a fractional x', message: malformed({ ...AT, x: 1.5 }) },
+  { why: 'an x past the world edge', message: malformed({ ...AT, x: SCENARIO_WORLD_SIZE }) },
+  { why: 'a negative y', message: malformed({ ...AT, y: -1 }) },
+  { why: 'a radius under the minimum', message: malformed({ ...AT, radius: MIN_BRUSH_RADIUS - 1 }) },
+  { why: 'a radius over the maximum', message: malformed({ ...AT, radius: MAX_BRUSH_RADIUS + 1 }) },
+  { why: 'a direction that is neither 1 nor -1', message: malformed({ ...AT, dir: 2 }) },
+  { why: 'a fractional seq', message: malformed({ ...AT, seq: 1.5 }), silent: true },
+  { why: 'an unknown tool', message: malformed({ ...AT, tool: 'chisel' }) },
+  { why: 'an unknown edge profile', message: malformed({ ...AT, profile: 'medium' }) },
   {
     why: 'a carve asking to raise',
-    message: sculptMessage({ ...AT, tool: 'carve', dir: 1, spanBand: 2 }),
+    message: malformed({ ...AT, tool: 'carve', dir: 1, spanBand: 2 }),
   },
   {
     why: 'a targetBand below the lowest band',
-    message: sculptMessage({ ...AT, tool: 'drag', targetBand: MIN_BAND - 1 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: MIN_BAND - 1 }),
   },
   {
     why: 'a targetBand above the highest band',
-    message: sculptMessage({ ...AT, tool: 'drag', targetBand: MAX_BAND + 1 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: MAX_BAND + 1 }),
   },
   {
     why: 'a fractional targetBand',
-    message: sculptMessage({ ...AT, tool: 'drag', targetBand: 2.5 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2.5 }),
   },
-  { why: 'a targetBand on a stamp', message: sculptMessage({ ...AT, targetBand: 2 }) },
-  { why: 'a drag carrying no targetBand', message: sculptMessage({ ...AT, tool: 'drag' }) },
+  { why: 'a targetBand on a stamp', message: malformed({ ...AT, targetBand: 2 }) },
+  { why: 'a drag carrying no targetBand', message: malformed({ ...AT, tool: 'drag' }) },
   {
     why: 'a spanBand below the lowest band',
-    message: sculptMessage({ ...AT, tool: 'carve', dir: -1, spanBand: MIN_BAND - 1 }),
+    message: malformed({ ...AT, tool: 'carve', dir: -1, spanBand: MIN_BAND - 1 }),
   },
   {
     why: 'a spanBand above the highest band',
-    message: sculptMessage({ ...AT, tool: 'carve', dir: -1, spanBand: MAX_BAND + 1 }),
+    message: malformed({ ...AT, tool: 'carve', dir: -1, spanBand: MAX_BAND + 1 }),
   },
   {
     why: 'a spanBand on a drag',
-    message: sculptMessage({ ...AT, tool: 'drag', targetBand: 2, spanBand: 2 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2, spanBand: 2 }),
   },
-  { why: 'a carve carrying no spanBand', message: sculptMessage({ ...AT, tool: 'carve', dir: -1 }) },
-  { why: 'a sweep origin on a stamp', message: sculptMessage({ ...AT, fromX: 4, fromY: 4 }) },
+  { why: 'a carve carrying no spanBand', message: malformed({ ...AT, tool: 'carve', dir: -1 }) },
+  { why: 'a sweep origin on a stamp', message: malformed({ ...AT, fromX: 4, fromY: 4 }) },
   {
     why: 'a half-named sweep origin',
-    message: sculptMessage({ ...AT, tool: 'drag', targetBand: 2, fromX: 4 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2, fromX: 4 }),
   },
   {
     why: 'a fractional sweep origin',
-    message: sculptMessage({ ...AT, tool: 'drag', targetBand: 2, fromX: 1.5, fromY: 4 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2, fromX: 1.5, fromY: 4 }),
   },
   {
     why: 'a sweep origin past the world edge',
-    message: sculptMessage({
+    message: malformed({
       ...AT,
       tool: 'drag',
       targetBand: 2,
@@ -112,7 +119,7 @@ const MALFORMED: readonly MalformedCase[] = [
   },
   {
     why: 'a sweep longer than a chunk',
-    message: sculptMessage({
+    message: malformed({
       x: MAX_DRAG_SWEEP_CELLS + 1,
       y: FACE_CELL.y,
       tool: 'drag',
@@ -124,17 +131,28 @@ const MALFORMED: readonly MalformedCase[] = [
 ];
 
 describe('the validator refuses every malformed sculpt the wire can carry', () => {
-  it.each(MALFORMED)('refuses $why', ({ message }) => {
+  it.each(MALFORMED)('refuses $why', ({ message, silent }) => {
     const scenario = openTerrace();
     const before = scenario.world.heightAt(FACE_CELL.x, FACE_CELL.y);
 
     const step = scenario.send(SCULPTOR, message);
 
-    expect(step.outcome).toEqual({ applied: false, reason: 'malformed' });
+    expect(step.reached).toBe('pipeline');
     expect(scenario.world.dirty).toBe(false);
     expect(scenario.world.heightAt(FACE_CELL.x, FACE_CELL.y)).toBe(before);
     expect(entriesOfKind(step.entries, 'diff')).toHaveLength(0);
     expect(entriesOfKind(step.entries, 'ack')).toHaveLength(0);
+
+    if (silent === true) {
+      expect(step.entries).toEqual([]);
+      expect(step.outcome).toBeNull();
+      return;
+    }
+
+    expect(entriesOfKind(step.entries, 'nack')).toEqual([
+      { kind: 'nack', to: SCULPTOR.id, seq: SEQ, reason: 'malformed' },
+    ]);
+    expect(step.outcome).toEqual({ applied: false, reason: 'malformed' });
   });
 
   it('nacks a malformed intent that carried a routable seq, and stays silent otherwise', () => {
