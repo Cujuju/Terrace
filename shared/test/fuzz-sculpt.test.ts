@@ -3,13 +3,16 @@ import {
   applySculpt,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
+  canCarveBandAt,
   CARVE_BANDS_PER_STROKE,
   cellIndex,
   columnCoversBand,
   createHeightmap,
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
+  DRAWN_GROUND_BAND_BIAS,
   drawnBandOfSample,
+  EDGELESS_SCULPT_PROFILE,
   forEachFootprintOffset,
   forEachLineCell,
   heightAt,
@@ -23,34 +26,32 @@ import {
   sculptOptionsOf,
   sculptReachCells,
   SEA_LEVEL,
-  sculptDisplacementUnits,
   setColumn,
   validateSculptIntent,
-  type CellDiff,
   type Heightmap,
   type SculptIntent,
-  type SculptProfile,
-  type SculptTool,
 } from '../src/index.ts';
 import {
   allCells,
   carvedSlabRange,
   cellsWithin,
   cloneHeightmap,
+  diffBounds,
   expectCarveCutsOnlyNamedSlabs,
   expectColumnsCanonical,
-  expectDrawnCoverageContainsMaterial,
+  expectDrawnCoverageMatchesSpans,
   expectGapsSurvive,
-  expectGradientLimitOverDiff,
-  expectHeightSumConserved,
-  expectPriceIndependentOfTerrain,
+  expectGradientLimitOverSettled,
+  expectPriceMatchesBrushVolume,
   expectSculptDeterministic,
   expectSolidVolumeConserved,
   expectStrokeWithinReach,
-  heightSum,
+  graspStableCells,
   makeSpan,
   snapshotColumns,
   solidVolume,
+  spanCountsOf,
+  type CellBox,
 } from './support/invariants.ts';
 
 const FUZZ_SEED = 0x7e44ace;
@@ -70,6 +71,15 @@ const INSPECTION_MARGIN_CELLS = 2;
 
 const SPAN_BAND_SHARE = 0.5;
 const SWEEP_SHARE = 0.3;
+
+/** Every world must drive the carve path for real, not just watch it refuse. */
+const FUZZ_MIN_LIVE_CARVE_SHARE = 1 / 8;
+
+/** Every world must drive relaxation for real: a world that never settles proves nothing. */
+const FUZZ_MIN_LIVE_SMOOTH_SHARE = 1 / 8;
+
+/** Pairs per free smooth, averaged over the run, that the gradient invariant must hold to the limit. */
+const FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH_AVERAGE = 64;
 
 type Random = () => number;
 
@@ -179,6 +189,37 @@ function stackedTerraceWorld(size: number): Heightmap {
   return map;
 }
 
+const ROOF_STOREYS = 3;
+const ROOF_BANDS_PER_STOREY = 3;
+const ROOF_GROUND_BANDS = 2;
+const ROOF_TREADS = 3;
+const ROOF_TREAD_CELLS = 5;
+
+/** The thin slab an overhang lays: one band deep, hung clear of the boundary below. */
+const ROOF_THICKNESS = BAND_HEIGHT - 1;
+
+/** Roofs sit off the write levels, so a fill can land under one and weld to it. */
+const ROOF_CEILING_OFFSET = DRAWN_GROUND_BAND_BIAS;
+
+/** Thin roofs over shallow gaps: the shape a drag's overhang fill produces. */
+function roofedWorld(size: number): Heightmap {
+  const map = createHeightmap(size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const tread = Math.floor(x / ROOF_TREAD_CELLS) % ROOF_TREADS;
+      const ground = (ROOF_GROUND_BANDS + tread) * BAND_HEIGHT;
+      const spans = [makeSpan(BEDROCK_FLOOR, ground)];
+      for (let storey = 1; storey <= ROOF_STOREYS; storey++) {
+        const ceiling =
+          ground + storey * ROOF_BANDS_PER_STOREY * BAND_HEIGHT + ROOF_CEILING_OFFSET;
+        spans.push(makeSpan(ceiling - ROOF_THICKNESS, ceiling));
+      }
+      setColumn(map, x, y, spans);
+    }
+  }
+  return map;
+}
+
 const WORLDS: readonly (readonly [string, (size: number) => Heightmap])[] = [
   ['flat', flatWorld],
   ['noise', noiseWorld],
@@ -186,6 +227,7 @@ const WORLDS: readonly (readonly [string, (size: number) => Heightmap])[] = [
   ['shoreline', shorelineWorld],
   ['arch', archWorld],
   ['stacked', stackedTerraceWorld],
+  ['roofed', roofedWorld],
 ];
 
 // ---------------------------------------------------------------------------
@@ -199,6 +241,27 @@ function coveredBandAt(map: Heightmap, x: number, y: number, random: Random): nu
     if (band >= MIN_BAND && band <= MAX_BAND && columnCoversBand(map, x, y, band)) return band;
   }
   return Math.min(MAX_BAND, Math.max(MIN_BAND, here));
+}
+
+/** Bands below the cursor's own that a carve may grasp. */
+const CARVE_BAND_WINDOW = BAND_HEIGHT;
+
+/**
+ * A band the column holds and a neighbour lacks, so the carve is admitted
+ * rather than refused. One draw picks the offset; the sweep is exhaustive.
+ */
+function carvableBandAt(map: Heightmap, x: number, y: number, random: Random): number {
+  const here = drawnBandOfSample(heightAt(map, x, y));
+  const start = Math.floor(random() * CARVE_BAND_WINDOW);
+  let covered: number | null = null;
+  for (let step = 0; step < CARVE_BAND_WINDOW; step++) {
+    const band = here - ((start + step) % CARVE_BAND_WINDOW);
+    if (band < MIN_BAND || band > MAX_BAND) continue;
+    if (!columnCoversBand(map, x, y, band)) continue;
+    if (covered === null) covered = band;
+    if (canCarveBandAt(map, x, y, band)) return band;
+  }
+  return covered ?? Math.min(MAX_BAND, Math.max(MIN_BAND, here));
 }
 
 function makeIntent(map: Heightmap, random: Random): SculptIntent {
@@ -226,13 +289,14 @@ function makeIntent(map: Heightmap, random: Random): SculptIntent {
         : {}),
     };
   }
-  if (tool === 'carve' || random() < SPAN_BAND_SHARE) {
+  if (tool === 'carve') return { ...intent, spanBand: carvableBandAt(map, x, y, random) };
+  if (random() < SPAN_BAND_SHARE) {
     return { ...intent, spanBand: coveredBandAt(map, x, y, random) };
   }
   return intent;
 }
 
-function sweptOrigins(map: Heightmap, intent: SculptIntent): (readonly [number, number])[] {
+function sweptOrigins(intent: SculptIntent): (readonly [number, number])[] {
   if (intent.fromX === undefined || intent.fromY === undefined) return [[intent.x, intent.y]];
   const cells: (readonly [number, number])[] = [];
   forEachLineCell(intent.fromX, intent.fromY, intent.x, intent.y, (x, y) => cells.push([x, y]));
@@ -251,10 +315,24 @@ function footprintCells(map: Heightmap, cx: number, cy: number, radius: number):
 
 function inspected(map: Heightmap, intent: SculptIntent, reach: number): number[] {
   const cells = new Set<number>();
-  for (const [ox, oy] of sweptOrigins(map, intent)) {
+  for (const [ox, oy] of sweptOrigins(intent)) {
     for (const i of cellsWithin(map, ox, oy, reach + INSPECTION_MARGIN_CELLS)) cells.add(i);
   }
   return Array.from(cells);
+}
+
+function footprintBounds(map: Heightmap, cx: number, cy: number, radius: number): CellBox {
+  let x0 = map.size, y0 = map.size, x1 = -1, y1 = -1;
+  forEachFootprintOffset(radius, (dx, dy) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  });
+  return [x0, y0, x1, y1];
 }
 
 // ---------------------------------------------------------------------------
@@ -269,26 +347,18 @@ function strokeContext(world: string, index: number, label: string, detail: unkn
   );
 }
 
-function priceOf(intent: SculptIntent): number {
-  return sculptDisplacementUnits(
-    intent.radius,
-    intent.tool as SculptTool,
-    intent.profile as SculptProfile,
-  );
-}
-
 function runWireStroke(
   map: Heightmap,
   intent: SculptIntent,
   world: string,
   index: number,
-): void {
+): boolean {
   const context = strokeContext(world, index, 'wire', intent);
   const options = sculptOptionsOf(intent);
   const reach = sculptReachCells(intent.radius, options.profile, options.tool, options.anchor);
   const watched = inspected(map, intent, reach);
   const before = snapshotColumns(map, watched);
-  const priceBefore = priceOf(intent);
+  const volumeBefore = options.tool === 'smooth' ? solidVolume(map) : 0;
 
   const replay = index % FUZZ_DETERMINISM_EVERY === 0 ? cloneHeightmap(map) : null;
   const amount = DEFAULT_SCULPT_AMOUNT * intent.dir;
@@ -300,35 +370,45 @@ function runWireStroke(
   }
 
   expectColumnsCanonical(map, watched, context);
-  expectDrawnCoverageContainsMaterial(map, watched, context);
-  expectStrokeWithinReach(map, diff, sweptOrigins(map, intent), reach, context);
-  expectPriceIndependentOfTerrain(
-    intent.radius,
-    intent.tool as SculptTool,
-    intent.profile as SculptProfile,
-    priceBefore,
-    context,
-  );
+  expectDrawnCoverageMatchesSpans(map, watched, context);
+  expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
+  expectPriceMatchesBrushVolume(intent.radius, options.tool, options.profile, context);
 
+  // The wire smooth is anchored, so it conserves but may leave a bound pair
+  // over-steep; only the free smooth carries the gradient promise.
+  if (options.tool === 'smooth') expectSolidVolumeConserved(volumeBefore, map, context);
   if (options.tool === 'carve' && options.spanBand !== null) {
     const [lo, hi] = carvedSlabRange(options.spanBand, CARVE_BANDS_PER_STROKE);
     const footprint = footprintCells(map, intent.x, intent.y, intent.radius);
     expectCarveCutsOnlyNamedSlabs(map, before, diff, footprint, lo, hi, context);
   }
   if (options.tool === 'drag') expectGapsSurvive(map, before, context);
+  return diff.length > 0;
 }
 
-function runFreeSmooth(map: Heightmap, random: Random, world: string, index: number): void {
+interface SmoothOutcome {
+  readonly moved: boolean;
+  readonly pairs: number;
+}
+
+function runFreeSmooth(
+  map: Heightmap,
+  random: Random,
+  world: string,
+  index: number,
+): SmoothOutcome {
   const x = pickInt(random, 0, map.size - 1);
   const y = pickInt(random, 0, map.size - 1);
   const radius = pickInt(random, 1, FUZZ_MAX_RADIUS);
   const dir = random() < 0.5 ? 1 : -1;
   const stroke = { tool: 'smooth', anchor: 'free', spill: 'free', x, y, radius, dir } as const;
   const context = strokeContext(world, index, 'free smooth', stroke);
-  const layered = map.columnSpans.size > 0;
-  const sumBefore = heightSum(map);
+  const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir, tool: 'smooth' };
+  const reach = sculptReachCells(radius, EDGELESS_SCULPT_PROFILE, 'smooth', 'free');
+  const watched = inspected(map, intent, reach);
+  const grasped = spanCountsOf(map, watched);
+  const footprint = footprintBounds(map, x, y, radius);
   const volumeBefore = solidVolume(map);
-  const reach = sculptReachCells(radius, 'hard', 'smooth', 'free');
 
   const diff = applySculpt(map, x, y, radius, DEFAULT_SCULPT_AMOUNT * dir, {
     tool: 'smooth',
@@ -336,15 +416,23 @@ function runFreeSmooth(map: Heightmap, random: Random, world: string, index: num
     spill: 'free',
   });
 
-  if (layered || map.columnSpans.size > 0) {
-    expectSolidVolumeConserved(volumeBefore, map, context);
-  } else {
-    expectHeightSumConserved(sumBefore, map, context);
-    expectGradientLimitOverDiff(map, diff, context);
-  }
-  const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir, tool: 'smooth' };
-  expectStrokeWithinReach(map, diff, sweptOrigins(map, intent), reach, context);
-  expectColumnsCanonical(map, inspected(map, intent, reach), context);
+  expectSolidVolumeConserved(volumeBefore, map, context);
+  const stable = graspStableCells(map, grasped);
+  // The footprint box is scanned to quiescence even when nothing moved, so
+  // this fires on an empty diff too; the diff box adds the cascade's reach.
+  let pairs = expectGradientLimitOverSettled(map, stable, footprint, context);
+  const settled = diffBounds(diff);
+  if (settled !== null) pairs += expectGradientLimitOverSettled(map, stable, settled, context);
+  expectStrokeWithinReach(diff, sweptOrigins(intent), reach, context);
+  expectColumnsCanonical(map, watched, context);
+  return { moved: diff.length > 0, pairs };
+}
+
+/** A path the fuzzer must actually walk, or the invariants that guard it are vacuous. */
+function expectLiveShare(live: number, total: number, share: number, what: string): void {
+  const floor = Math.ceil(total * share);
+  expect(live, `${what}: only ${live} of ${total} moved ground, floor is ${floor}`)
+    .toBeGreaterThanOrEqual(floor);
 }
 
 describe('seeded sculpt fuzzer', () => {
@@ -356,21 +444,38 @@ describe('seeded sculpt fuzzer', () => {
 
     const random = createSeededRng(FUZZ_SEED).next;
     let applied = 0;
+    let carves = 0;
+    let liveCarves = 0;
+    let freeSmooths = 0;
+    let liveSmooths = 0;
+    let gradientPairs = 0;
     for (let index = 0; index < FUZZ_STROKES; index++) {
       if (index % FUZZ_FREE_SMOOTH_EVERY === 0) {
-        runFreeSmooth(map, random, name, index);
+        freeSmooths++;
+        const outcome = runFreeSmooth(map, random, name, index);
+        if (outcome.moved) liveSmooths++;
+        gradientPairs += outcome.pairs;
         continue;
       }
       const candidate = makeIntent(map, random);
       const intent = validateSculptIntent(candidate, map.size);
       expect(intent, `world "${name}" stroke ${index} built an invalid intent: ${JSON.stringify(candidate)}`)
         .not.toBeNull();
-      runWireStroke(map, intent!, name, index);
+      const moved = runWireStroke(map, intent!, name, index);
+      if (intent!.tool === 'carve') {
+        carves++;
+        if (moved) liveCarves++;
+      }
       applied++;
     }
 
     expect(applied).toBeGreaterThan(0);
+    expectLiveShare(liveCarves, carves, FUZZ_MIN_LIVE_CARVE_SHARE, `world "${name}" carves`);
+    expectLiveShare(liveSmooths, freeSmooths, FUZZ_MIN_LIVE_SMOOTH_SHARE, `world "${name}" free smooths`);
+    const pairFloor = freeSmooths * FUZZ_MIN_GRADIENT_PAIRS_PER_SMOOTH_AVERAGE;
+    expect(gradientPairs, `world "${name}": the gradient invariant held ${gradientPairs} pairs to the limit, floor is ${pairFloor}`)
+      .toBeGreaterThanOrEqual(pairFloor);
     expectColumnsCanonical(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
-    expectDrawnCoverageContainsMaterial(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
+    expectDrawnCoverageMatchesSpans(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
   });
 });
