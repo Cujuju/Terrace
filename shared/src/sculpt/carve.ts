@@ -1,5 +1,4 @@
 import {
-  BEDROCK_BAND,
   canCarveBandAt,
   carveBands,
   spanAt,
@@ -8,7 +7,7 @@ import {
 } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
 import { forEachFootprintCell } from './footprint.ts';
-import { isValidCarveDepth } from './options.ts';
+import { isValidCarveDepth, LOWEST_CARVEABLE_BAND } from './options.ts';
 
 export function applyCarve(
   map: Heightmap,
@@ -23,7 +22,7 @@ export function applyCarve(
   const lowestOpenedBand = spanBand;
   const highestOpenedBand = spanBand + depthBands - 1;
   // Bedrock is the column's floor, not material: a stroke reaching it opens nothing.
-  if (lowestOpenedBand <= BEDROCK_BAND) return;
+  if (lowestOpenedBand < LOWEST_CARVEABLE_BAND) return;
 
   const admitted: number[] = [];
   forEachFootprintCell(map, cx, cy, radius, (i) => {

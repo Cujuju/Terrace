@@ -14,6 +14,7 @@ import {
   highestCeilingUnderSpan,
   isGapDrawn,
   isSpanDrawn,
+  MAX_HEIGHT,
   moveSpanCeiling,
   packColumnSpans,
   parsePackedSpans,
@@ -163,6 +164,62 @@ describe('canonicaliseColumn', () => {
     expect(canonicaliseColumn([{ floorBand: 9, ceiling: 100 }])).toEqual([
       { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
     ]);
+  });
+
+  it('merges a cascade of adjacent spans in one pass', () => {
+    expect(
+      canonicaliseColumn([
+        { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+        { floorBand: 2, ceiling: bandLevelHeight(2) },
+        { floorBand: 3, ceiling: bandLevelHeight(3) },
+        { floorBand: 4, ceiling: bandLevelHeight(4) },
+      ]),
+    ).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+      { floorBand: 2, ceiling: bandLevelHeight(4) },
+    ]);
+  });
+
+  it('keeps the higher ceiling when a pair overlaps', () => {
+    expect(
+      canonicaliseColumn([
+        { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+        { floorBand: 2, ceiling: bandLevelHeight(20) },
+        { floorBand: 5, ceiling: bandLevelHeight(8) },
+      ]),
+    ).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+      { floorBand: 2, ceiling: bandLevelHeight(20) },
+    ]);
+  });
+
+  it('refuses a ceiling outside the world, so its output always suits setColumn', () => {
+    expect(() =>
+      canonicaliseColumn([
+        { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+        { floorBand: 64, ceiling: MAX_HEIGHT + 1 },
+      ]),
+    ).toThrow(RangeError);
+    expect(() => canonicaliseColumn([{ floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR - 1 }])).toThrow(
+      RangeError,
+    );
+  });
+
+  it('refuses spans that do not ascend instead of sorting them', () => {
+    expect(() =>
+      canonicaliseColumn([
+        { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+        { floorBand: 10, ceiling: bandLevelHeight(10) },
+        { floorBand: 2, ceiling: bandLevelHeight(2) },
+      ]),
+    ).toThrow(RangeError);
+    expect(() =>
+      canonicaliseColumn([
+        { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
+        { floorBand: 4, ceiling: bandLevelHeight(4) },
+        { floorBand: 4, ceiling: bandLevelHeight(6) },
+      ]),
+    ).toThrow(RangeError);
   });
 });
 

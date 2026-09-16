@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BAND_HEIGHT,
+  CARVE_DEFAULT_DEPTH_BANDS,
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   MIN_BAND,
@@ -348,7 +351,7 @@ describe('mana perks', () => {
       for (const profile of SCULPT_PROFILES) {
         const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
         expect(manaCostFor(PLAYER.id, intent)).toBe(
-          sculptManaCost(MANA_PER_BAND_CELL * 0.5, radius, profile, 'stamp'),
+          sculptManaCost(MANA_PER_BAND_CELL * 0.5, radius, profile, 'stamp', CARVE_DEFAULT_DEPTH_BANDS),
         );
         expect(manaCostFor(PLAYER.id, intent) * 2).toBeGreaterThanOrEqual(
           manaCostFor(OTHER_PLAYER.id, intent),
@@ -941,7 +944,7 @@ describe('the price of a sculpt', () => {
     );
     expect(POINT_STAMPS_PER_POOL).toBe(833);
 
-    const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp');
+    const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp', CARVE_DEFAULT_DEPTH_BANDS);
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
     // Soft moves the graduated falloff volume, roughly 40% off hard: it no
     // longer pays the flat-fill price.
@@ -957,7 +960,7 @@ describe('the price of a sculpt', () => {
       for (const profile of SCULPT_PROFILES) {
         const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
         const expected = Math.ceil(
-          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, 'stamp', profile)) / BAND_HEIGHT,
+          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS)) / BAND_HEIGHT,
         );
         expect(manaCostFor(PLAYER.id, intent)).toBe(expected);
       }
@@ -967,8 +970,34 @@ describe('the price of a sculpt', () => {
   it('resolves an intent’s ABSENT profile through the shared normalisation', () => {
     const bare: SculptIntent = { type: 'sculpt', x: 1, y: 1, radius: 3, dir: 1 };
     expect(manaCostFor(PLAYER.id, bare)).toBe(
-      sculptManaCost(MANA_PER_BAND_CELL, 3, sculptOptionsOf(bare).profile, sculptOptionsOf(bare).tool),
+      sculptManaCost(MANA_PER_BAND_CELL, 3, sculptOptionsOf(bare).profile, sculptOptionsOf(bare).tool, CARVE_DEFAULT_DEPTH_BANDS),
     );
+  });
+
+  it('charges a carve by the depth its intent carries', () => {
+    const carve = (depthBands: number): SculptIntent => ({
+      ...POINT_INTENT,
+      radius: 2,
+      dir: -1,
+      tool: 'carve',
+      spanBand: 2,
+      depthBands,
+    });
+    const deepest = carve(CARVE_MAX_DEPTH_BANDS);
+    const shallowest = carve(CARVE_MIN_DEPTH_BANDS);
+    expect(manaCostFor(PLAYER.id, deepest)).toBeGreaterThan(manaCostFor(PLAYER.id, shallowest));
+    for (const intent of [shallowest, deepest]) {
+      const options = sculptOptionsOf(intent);
+      expect(manaCostFor(PLAYER.id, intent)).toBe(
+        sculptManaCost(
+          MANA_PER_BAND_CELL,
+          intent.radius,
+          options.profile,
+          options.tool,
+          options.depthBands,
+        ),
+      );
+    }
   });
 
   it('charges direction-blind: lowering costs what raising costs', () => {
@@ -1308,7 +1337,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
   it('charges what the affordability check reserved, creep or no creep', () => {
     const harness = bootOnTheFrontier();
     const quoted = quotedCost(harness.world, FRONTIER_INTENT);
-    const stroke = sculptManaCost(MANA_PER_BAND_CELL, FRONTIER_INTENT.radius, 'hard', 'stamp');
+    const stroke = sculptManaCost(MANA_PER_BAND_CELL, FRONTIER_INTENT.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS);
     expect(quoted).toBeGreaterThan(stroke);
 
     const before = manaBalanceOf(PLAYER.id) ?? 0;
@@ -1335,7 +1364,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
     };
     const quoted = quotedCost(harness.world, seqless);
     expect(quoted).toBeGreaterThan(
-      sculptManaCost(MANA_PER_BAND_CELL, seqless.radius, 'hard', 'stamp'),
+      sculptManaCost(MANA_PER_BAND_CELL, seqless.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS),
     );
 
     const before = manaBalanceOf(PLAYER.id) ?? 0;
@@ -1426,7 +1455,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
     errors.mockRestore();
 
     expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
-      sculptManaCost(MANA_PER_BAND_CELL, repeat.radius, 'hard', 'stamp'),
+      sculptManaCost(MANA_PER_BAND_CELL, repeat.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS),
     );
   });
 
@@ -1456,7 +1485,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
     veto.on = false;
 
     const fresh = quotedCost(harness.world, denied);
-    expect(fresh).toBe(sculptManaCost(MANA_PER_BAND_CELL, denied.radius, 'hard', 'stamp'));
+    expect(fresh).toBe(sculptManaCost(MANA_PER_BAND_CELL, denied.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS));
 
     const before = manaBalanceOf(PLAYER.id) ?? 0;
     expect(
@@ -1643,7 +1672,7 @@ describe('a chunk of frontier opens for a flat fee, whatever opens it', () => {
     expect(outcome.applied).toBe(true);
     if (outcome.applied) expect(outcome.diff.length).toBeGreaterThan(0);
     expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
-      sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp') +
+      sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS) +
         opened * CHUNK_UNLOCK_MANA,
     );
   });
@@ -1662,7 +1691,7 @@ describe('a chunk of frontier opens for a flat fee, whatever opens it', () => {
 
     expect(outcome.applied).toBe(true);
     expect(before - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
-      sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp'),
+      sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS),
     );
   });
 
@@ -1672,7 +1701,7 @@ describe('a chunk of frontier opens for a flat fee, whatever opens it', () => {
     const opened = openedFor(harness.world, intent);
     expect(opened).toBeGreaterThan(0);
 
-    const displacement = sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp');
+    const displacement = sculptManaCost(MANA_PER_BAND_CELL, intent.radius, 'hard', 'stamp', CARVE_DEFAULT_DEPTH_BANDS);
     const balance = manaBalanceOf(PLAYER.id) ?? 0;
     expect(spend(harness.world, balance - displacement)).toBe(true);
     expect(manaBalanceOf(PLAYER.id)).toBe(displacement);

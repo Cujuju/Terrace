@@ -202,7 +202,7 @@ describe('applySculpt — the carve clears the slabs it names and is priced at t
   });
 
   it('prices a stroke at its footprint times its depth', () => {
-    const oneCell = sculptDisplacementUnits(1, 'carve');
+    const oneCell = sculptDisplacementUnits(1, 'carve', 'hard', CARVE_DEFAULT_DEPTH_BANDS);
     expect(oneCell).toBe(CARVE_DEFAULT_DEPTH_BANDS * BAND_HEIGHT);
     for (const depthBands of [CARVE_MIN_DEPTH_BANDS, 2, CARVE_MAX_DEPTH_BANDS]) {
       expect([depthBands, sculptDisplacementUnits(1, 'carve', 'hard', depthBands)]).toEqual([

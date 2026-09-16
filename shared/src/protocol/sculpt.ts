@@ -3,6 +3,7 @@ import { chebyshevDistance } from '../grid.ts';
 import {
   CARVE_DEFAULT_DEPTH_BANDS,
   isValidCarveDepth,
+  LOWEST_CARVEABLE_BAND,
   MAX_BAND,
   MIN_BAND,
   SCULPT_PROFILES,
@@ -155,11 +156,14 @@ export function validateSculptIntent(
   // no lip to move and would apply as a silent, acked no-op.
   if ((targetBand !== undefined) !== (tool === 'drag')) return null;
 
+  // A carve grasps a band it can open; bedrock is not one, and acking a stroke
+  // the applier always refuses would promise a cut that never happens.
   const { spanBand } = m;
+  const lowestGraspableBand = tool === 'carve' ? LOWEST_CARVEABLE_BAND : MIN_BAND;
   if (
     spanBand !== undefined &&
     (!Number.isInteger(spanBand) ||
-      (spanBand as number) < MIN_BAND ||
+      (spanBand as number) < lowestGraspableBand ||
       (spanBand as number) > MAX_BAND)
   ) {
     return null;

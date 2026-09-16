@@ -12,10 +12,12 @@ export function sculptManaCost(
   radius: number,
   profile: SculptProfile,
   tool: SculptTool,
+  depthBands: number,
   sweepSteps: number = 1,
 ): number {
   const base = Math.ceil(
-    (manaPerBandCell * sculptDisplacementUnits(radius, tool, profile) * sweepSteps) / BAND_HEIGHT,
+    (manaPerBandCell * sculptDisplacementUnits(radius, tool, profile, depthBands) * sweepSteps) /
+      BAND_HEIGHT,
   );
   return tool === 'carve' ? Math.ceil(base / 4) : base;
 }

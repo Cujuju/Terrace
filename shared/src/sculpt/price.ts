@@ -1,13 +1,12 @@
 import { BAND_HEIGHT, DEFAULT_SCULPT_AMOUNT } from '../constants.ts';
 import { assertBrushRadius, brushDelta, forEachFootprintOffset } from './footprint.ts';
-import { CARVE_DEFAULT_DEPTH_BANDS } from './options.ts';
 import type { SculptProfile, SculptTool } from './options.ts';
 
 export function sculptDisplacementUnits(
   radius: number,
   tool: SculptTool,
-  profile: SculptProfile = 'hard',
-  depthBands: number = CARVE_DEFAULT_DEPTH_BANDS,
+  profile: SculptProfile,
+  depthBands: number,
 ): number {
   assertBrushRadius(radius);
 
