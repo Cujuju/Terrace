@@ -307,11 +307,12 @@ Evidence: `.census/census-phaseC-fix-{baseline,after}.json` (+PNGs), `.census/ch
 instruments `.perf-probe/{stack-up,stack-down,gate,churn,eval}.ps1`, `client/.perf-ignite.mjs`, reviews in the
 session scratchpad (`review-AB/C/C2C3/fixbatch.md`, `signoff-phaseC.md`).
 
-Owner decisions still open: (1) M1/M2 landed inside `d7f702ba` (a mana fix) without the PNG gate — the only
-visual change is pilgrim eye/nose specular loss (Phong→Lambert), which also merges body+gloss into one skinned
-surface per walker (real −1 draw/walker); (2) `plugins/pilgrims/test/models.test.ts` "exactly 2 skinned
-surfaces" is stale for that reason and needs permission to update; (3) the light-bank rule belongs in
-`docs/DESIGN.md` (append needs permission).
+M1/M2 visual gate — **PENDING-OWNER** (2026-09-16): before/after PNGs at matched poses plus deterministic
+studio renders, published at https://claude.ai/artifact/5GZxxrWRQgMqu3e7x9RPeK (files
+`.census/gate-m1m2-*.png`). Pilgrims: real change — eye catchlight and muzzle sheen gone (Phong→Lambert),
+802 of 1,649,520 studio pixels, all in the eye/nose row; body+gloss now one skinned surface per walker
+(real −1 draw/walker). Flora/structures/temples: pixel-identity (`bakeSolidColor` is a no-op in pixels).
+Pilgrims test updated (`4e4114a5`) and the light-bank rule recorded in `docs/DESIGN.md` (`027d0a79`).
 
 ## Phase C2′ — settle shader warmup (2026-09-15/16)
 
