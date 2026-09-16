@@ -5,7 +5,10 @@ Screenshot: Frostwick Hollows, day 11264, 1230×1252, up 617 s — frame p50 11.
 render 7.90, outside 3.00, gpu 3.67, draws 308–368, triangles 11.13 M, programs 139.
 Top plugin rows: wildlife 1.74 ms (16%), pilgrims 0.41 (4%); boats and saucers 0.00.
 
-Status: investigation complete. **No repo files modified.** All evidence is new untracked files (index at bottom).
+Status: investigation complete; phases A–C landed (see §Phase sections below). Evidence files are untracked (index at bottom).
+**2026-09-15 fresh-eyes audit:** §B1, §"Cost shape" precipitation rows, recommendation 2 and §Instrument-bug "Not applied"
+are STALE — the weather-review merge rewrote precipitation GPU-side (`kit/precipitationField.ts`), and the census fix
+is applied. See §Phase C fix for what changed and why.
 
 ## Verdict
 
@@ -79,6 +82,10 @@ Also notable: server tick at 0.0% util with plugins off (vs 7.5% with them).
 2. **Precipitation**: real bounds + frustum culling per system (drop `frustumCulled = false`),
    consolidate toward one column per plugin, move falling to GPU (time-uniform over static seeds;
    upload once). Kills most upload churn and 10–30 draws.
+   **DONE by the weather-review merge** (`kit/precipitationField.ts`: static seeds, GPU fall, one draw per
+   kind, ~336 B/frame of uniform-array writes for rain). `frustumCulled = false` is now LOAD-BEARING there:
+   the `position` attribute is never written (TSL composes it), so three's bounding sphere would be
+   radius 0 — do not re-apply the culling half.
 3. **Flora double-draw**: 15 objects → 30 draws exactly 2×. Find the second pass before anything else.
 4. **Structures / relics**: merge statics, instance the rest (tier parts already instanced; audit
    signs/marquees/dancers materials, relic beams).
@@ -108,7 +115,8 @@ since boot**, not per-frame draws (three r185 `Renderer.js`; per-frame draws are
 the field `frameStats` uses). All prior "isolated calls" tables from it, including the September
 census behind "boats own ~150 draws," are render counts and must be discarded. (`drawables`
 composition counts are unaffected.) Fix: `render.calls` → `render.drawCalls` in both `frame()`
-helpers. Not applied — left as an owner decision.
+helpers. Applied in `a1ee5caa` (`scripts/draw-census.ps1:163`). `.census/HANDOFF.md:46,73` still describes
+the old counter and quotes a retracted "151 calls" reading — treat those lines as superseded.
 
 ## HUD accuracy proposal
 
@@ -174,7 +182,10 @@ Fixed-script verification (same stack, fresh tab, overview cam 80): isolated `dr
 full-frame 128 ≥ max isolated 76. Old field gave 302→497 rising and ~19900 cumulative on the
 same kind of run. Fix confirmed; prior tables stay discarded.
 
-## Phase B1 — precipitation 30 Hz + bounds (client/src/plugins/kit/precipitation.ts)
+## Phase B1 — precipitation 30 Hz + bounds (client/src/plugins/kit/precipitation.ts) — SUPERSEDED
+
+The B1 code (`2fed7511`) was deleted by the weather-review merge; the numbers below describe deleted
+code. HEAD's precipitation is GPU-side (see recommendation 2 note). Kept for the record.
 
 Gated `advance()` position rewrites to 30 Hz (opacity/haze/deck still per-frame),
 gave every column an explicit bounding sphere refreshed per call, deleted
@@ -248,6 +259,55 @@ Measured far view: 12 point lights, 3 visible — all real fires (2 fire + 0 dre
 projects). Methodology note: the first re-verify silently measured STALE code — the
 long-lived probe Vite server (no file watcher) serves cached transforms keyed by URL
 even to fresh browsers. Rule now in plan: restart probe Vite after every client-side edit.
+
+## Phase C fix — lit-set stability (2026-09-15, takeover after a 3-reviewer fresh-eyes audit)
+
+**Root cause (one sentence).** three keys every render object's pipeline on the set of *visible* lights
+(`Renderer._projectObject` drops hidden lights → `LightsNode.customCacheKey` hashes every visible light id →
+`RenderObject.getDynamicCacheKey` → `RenderObjects.get` disposes + recreates every render object →
+`Pipelines.delete` releases programs), so `8ab914d8` ("hide parked lights") turned every fire-light handover
+and dread lend/reclaim into a full-scene node rebuild + WGSL regeneration + pipeline recreation.
+`info.memory.programs` is therefore a **churn** counter, not a monotonic cache count — the "116→130→138 with
+zero input" signature was this.
+
+**Contract (now in `client/src/plugins/kit/lightBank.ts`).** A plugin's dynamic point lights are a fixed-size
+bank created and parented at attach, permanently visible, parked by intensity 0 only; nothing after attach
+adds, removes, reparents or hides a light. Same rule for materials/geometries on spawn paths (built at attach,
+reused). Thunderstorm already followed it (`flashLight.ts`); fire and monsters now do.
+
+Commits: `926b569e` (HUD: frozen `<Show>` consts → memos; meter installed lazily, WebGPU queue writes only),
+`217373f9` + `473c00d4` (wildlife hold path integrates skipped time/travel; fixes distant moonwalk),
+`f995568e` (storm rigs prebuilt at attach), `6b83fab9` + `204fc9c4` (one `bakeSolidColor`, merged-material
+leak, minimum-parts guard), `953185d7` (light banks + dread rigs pooled). The uncommitted C2 warmup and C3
+draws×tris breaker were DROPPED: rigs are empty Groups post-merge (warmup rendered nothing and could corrupt
+the slot ledger), and the breaker was a behavioural no-op with a wrong draw formula and a red test.
+
+**A/B (isolated stacks, far view cam 900, 1264×1305; baseline = worktree at `bc4b930e`, fix = `a6287f66`).**
+
+| | baseline (pre-fix) | fix |
+|---|---|---|
+| 20-min idle: programs start→end | 132 → 176 | 134 → 141 |
+| 20-min idle: per-frame program-count changes | 14 | 2 |
+| 20-min idle: frame max | 488 ms (also 70, 80) | 35.6 ms |
+| 8 cells ignited, 150 s: fires burning / lights lit | 27 / 4 | 17 / 4 |
+| ignited: program-count changes | **39** | **0** |
+| ignited: max frame / p99 | 6950 ms / 770–1019 ms | 73 ms / 12–17 ms |
+
+Caveat: the baseline Chrome was still rendering during the first 12 min of the fix idle run (gpu 13–14 ms
+vs 6–9 after teardown), so p50/p99 between the two idle runs are not comparable; churn counts and max-frame
+are. The remaining +7 programs / 2 events on the fix run are first-appearance compiles (candidates for a
+host-level `compileAsync` warmup — see plan C2′). Cost side: 8 point lights are now permanently in every lit
+program (4 fire + 3 dread + 1 storm); GPU p50 at this pose read 6–9 ms in both runs once contention ended.
+
+Evidence: `.census/census-phaseC-fix-{baseline,after}.json` (+PNGs), `.census/churn-phaseC-fix-{baseline,after}-ignite.json`,
+instruments `.perf-probe/{stack-up,stack-down,gate,churn,eval}.ps1`, `client/.perf-ignite.mjs`, reviews in the
+session scratchpad (`review-AB/C/C2C3/fixbatch.md`, `signoff-phaseC.md`).
+
+Owner decisions still open: (1) M1/M2 landed inside `d7f702ba` (a mana fix) without the PNG gate — the only
+visual change is pilgrim eye/nose specular loss (Phong→Lambert), which also merges body+gloss into one skinned
+surface per walker (real −1 draw/walker); (2) `plugins/pilgrims/test/models.test.ts` "exactly 2 skinned
+surfaces" is stale for that reason and needs permission to update; (3) the light-bank rule belongs in
+`docs/DESIGN.md` (append needs permission).
 
 ## Evidence index (all untracked, all kept per instruction)
 
