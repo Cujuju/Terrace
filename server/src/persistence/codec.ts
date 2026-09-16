@@ -1,4 +1,4 @@
-import { parsePackedSpans, type Span } from '@terrace/shared';
+import { floorBandOfHeight, parsePackedSpans, type Span } from '@terrace/shared';
 
 const BYTES_PER_HEIGHT = 2;
 
@@ -38,6 +38,9 @@ const BYTES_PER_SPAN_RECORD_HEADER = 4 + 2;
 
 const BYTES_PER_PACKED_SPAN = 2 * BYTES_PER_HEIGHT;
 
+/** Schema 1 packed a span's floor as a raw height; schema 2 packs it as a band. */
+export const RAW_FLOOR_SCHEMA_VERSION = 1;
+
 export function encodeColumnSpans(
   columnSpans: ReadonlyMap<number, Int16Array>,
 ): Buffer {
@@ -69,9 +72,11 @@ export function decodeColumnSpans(
   blob: Uint8Array,
   expectedCells: number,
   context: string,
+  schemaVersion: number,
 ): Map<number, Span[]> {
   const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
   const spansByCell = new Map<number, Span[]>();
+  const rawFloors = schemaVersion === RAW_FLOOR_SCHEMA_VERSION;
 
   let offset = 0;
   let previousCellIndex = -1;
@@ -113,9 +118,12 @@ export function decodeColumnSpans(
       );
     }
     const flat: number[] = [];
-    for (let k = 0; k < spanCount * VALUES_PER_SPAN; k++) {
-      flat.push(view.getInt16(offset, true));
+    for (let k = 0; k < spanCount; k++) {
+      const floor = view.getInt16(offset, true);
       offset += BYTES_PER_HEIGHT;
+      const ceiling = view.getInt16(offset, true);
+      offset += BYTES_PER_HEIGHT;
+      flat.push(rawFloors ? floorBandOfHeight(floor) : floor, ceiling);
     }
     const spans = parsePackedSpans(flat);
     if (spans === null) {
