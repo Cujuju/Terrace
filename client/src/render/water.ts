@@ -4,9 +4,11 @@ import {
   BufferGeometry,
   DataTexture,
   DoubleSide,
+  FloatType,
   Mesh,
   NearestFilter,
   RGBAFormat,
+  RedFormat,
   Sphere,
   UnsignedByteType,
   Vector3,
@@ -15,17 +17,25 @@ import {
 import { MeshPhysicalNodeMaterial, type UniformNode } from 'three/webgpu';
 import {
   diffuseColor,
+  float,
+  fwidth,
+  ivec2,
+  max,
   mix,
   positionWorld,
   select,
   texture,
+  textureLoad,
   uniform,
+  vec2,
   vec3,
 } from 'three/tsl';
 import {
   CHUNK_SIZE,
+  DRAWN_GROUND_BAND_BIAS,
   MAX_BRUSH_RADIUS,
   chunksPerEdge,
+  drawnLevelThreshold,
 } from '@terrace/shared';
 import {
   CELL_WORLD_SIZE,
@@ -39,7 +49,10 @@ import {
   WATER_TRENCH_TINT,
   WATER_DEEP_TINT,
   WATER_SHALLOW_TINT,
+  createShoreFieldBuffer,
   createWaterCurveBuffer,
+  shoreFieldChunkRect,
+  writeShoreFieldTexels,
   writeWaterCurveTexels,
 } from '../terrain/waterDepth.ts';
 import { compose } from './materialSlots.ts';
@@ -70,7 +83,40 @@ function createCurveTexture(worldSize: number): { texture: DataTexture; buffer: 
   return { texture, buffer };
 }
 
+function createShoreFieldTexture(worldSize: number): { texture: DataTexture; buffer: Float32Array } {
+  const buffer = createShoreFieldBuffer(worldSize);
+  const texture = new DataTexture(buffer, worldSize, worldSize, RedFormat, FloatType);
+  texture.generateMipmaps = false;
+  texture.minFilter = NearestFilter;
+  texture.magFilter = NearestFilter;
+  texture.needsUpdate = true;
+  return { texture, buffer };
+}
+
 const TEXEL_CENTRE_CELLS = 0.5;
+
+// Land at or above this raw height draws band 0: the shoreline the land caps march.
+const SHORE_FIELD_THRESHOLD = drawnLevelThreshold(0) - DRAWN_GROUND_BAND_BIAS;
+
+// Keeps a flat field's zero screen derivative from dividing by zero.
+const MIN_SHORE_EDGE_WIDTH = 1e-6;
+
+// The shared drawn field: corner samples blended bilinearly, as drawnCornerNumerator does.
+function shoreCoverage(
+  fieldTexture: DataTexture,
+  worldSizeCells: UniformNode<'float', number>,
+) {
+  const cell = positionWorld.xz.div(CELL_WORLD_SIZE);
+  const corner = cell.floor();
+  const t = cell.sub(corner);
+  const lastCell = worldSizeCells.sub(1);
+  const tap = (dx: number, dz: number) =>
+    textureLoad(fieldTexture, ivec2(corner.add(vec2(dx, dz)).clamp(0, lastCell))).r;
+  const field = mix(mix(tap(0, 0), tap(1, 0), t.x), mix(tap(0, 1), tap(1, 1), t.x), t.y);
+  // Wet below the threshold; one screen pixel of fade on the wet side keeps the exact shore dry.
+  const wetDepth = float(SHORE_FIELD_THRESHOLD).sub(field);
+  return wetDepth.div(max(fwidth(wetDepth), MIN_SHORE_EDGE_WIDTH)).clamp(0, 1);
+}
 
 function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
   const trenchSide = mix(
@@ -89,6 +135,7 @@ function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
 function makeDepthAware(
   material: MeshPhysicalNodeMaterial,
   curveTexture: DataTexture,
+  fieldTexture: DataTexture,
   worldSizeCells: UniformNode<'float', number>,
 ): void {
   const depthUv = positionWorld.xz
@@ -97,7 +144,8 @@ function makeDepthAware(
     .div(worldSizeCells);
   const curves = texture(curveTexture, depthUv);
   compose(material, 'color', (previous) => previous.mul(tintOf(curves.b)));
-  compose(material, 'opacity', (previous) => previous.mul(curves.r));
+  const coverage = shoreCoverage(fieldTexture, worldSizeCells);
+  compose(material, 'opacity', (previous) => previous.mul(curves.r).mul(coverage));
   compose(material, 'emissive', (previous) =>
     previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)),
   );
@@ -122,6 +170,9 @@ export function createWater(
   const { texture: curveTexture, buffer: initialCurveBuffer } =
     createCurveTexture(initialWorldSize);
   let curveBuffer = initialCurveBuffer;
+  const { texture: fieldTexture, buffer: initialFieldBuffer } =
+    createShoreFieldTexture(initialWorldSize);
+  let fieldBuffer = initialFieldBuffer;
   const worldSizeCells = uniform(initialWorldSize);
   const dirtyChunkScratch: number[] = [];
 
@@ -133,7 +184,7 @@ export function createWater(
     depthWrite: false,
     side: DoubleSide,
   });
-  makeDepthAware(material, curveTexture, worldSizeCells);
+  makeDepthAware(material, curveTexture, fieldTexture, worldSizeCells);
   applyGroundShade(material, 'water');
   makeBanded(material);
 
@@ -180,6 +231,10 @@ export function createWater(
     curveTexture.image = { data: curveBuffer, width: worldSize, height: worldSize };
     curveTexture.clearUpdateRanges();
     curveTexture.needsUpdate = true;
+    fieldBuffer = createShoreFieldBuffer(worldSize);
+    fieldTexture.image = { data: fieldBuffer, width: worldSize, height: worldSize };
+    fieldTexture.clearUpdateRanges();
+    fieldTexture.needsUpdate = true;
     worldSizeCells.value = worldSize;
   };
 
@@ -237,8 +292,10 @@ export function createWater(
       if (dirtyChunkScratch.length === 0) return;
       const worldSize = worldSizeCells.value;
       writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
+      writeShoreFieldTexels(fieldBuffer, worldSize, mirror, dirtyChunkScratch);
       if (dirtyChunkScratch.length > MAX_RANGED_REFRESH_CHUNKS) {
         curveTexture.clearUpdateRanges();
+        fieldTexture.clearUpdateRanges();
       } else {
         const chunkCols = chunksPerEdge(worldSize);
         for (const chunkIdx of dirtyChunkScratch) {
@@ -250,15 +307,21 @@ export function createWater(
               CHUNK_SIZE * WATER_CURVE_BYTES_PER_TEXEL,
             );
           }
+          const rect = shoreFieldChunkRect(worldSize, chunkIdx);
+          for (let y = rect.y0; y <= rect.y1; y++) {
+            fieldTexture.addUpdateRange(y * worldSize + rect.x0, rect.x1 - rect.x0 + 1);
+          }
         }
       }
       curveTexture.needsUpdate = true;
+      fieldTexture.needsUpdate = true;
     },
     dispose(): void {
       parent.remove(mesh);
       mesh.geometry.dispose();
       material.dispose();
       curveTexture.dispose();
+      fieldTexture.dispose();
     },
   };
 }
