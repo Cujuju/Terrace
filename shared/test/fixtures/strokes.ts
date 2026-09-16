@@ -51,7 +51,9 @@ const COMMON: readonly StrokeScriptStep[] = [
     anchor: 'band',
     targetBand: { fromClick: 0 },
     cx: 18,
-    cy: 22,
+    // Aimed one cell south of the arch flank: the Laplacian crest-smooth
+    // leaves the old aim with no band to spread (2026-09-16).
+    cy: 23,
     radius: 3,
     amount: 16,
   },

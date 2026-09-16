@@ -16,90 +16,90 @@
     },
     {
       "name": "arch-crest-smooth",
-      "changed": 401,
-      "hash": "e5da6d26"
+      "changed": 69,
+      "hash": "a60db861"
     },
     {
       "name": "carve-click-band",
       "changed": 3,
-      "hash": "78b813f6"
+      "hash": "2272e241"
     },
     {
       "name": "carve-second-site",
       "changed": 4,
-      "hash": "fbedc897"
+      "hash": "afe7b3b0"
     },
     {
       "name": "drag-raise-one-band",
       "changed": 14,
-      "hash": "4177e9d7"
+      "hash": "1b62e290"
     },
     {
       "name": "drag-lower-swept",
       "changed": 18,
-      "hash": "d469fbcd"
+      "hash": "80704410"
     },
     {
       "name": "stamp-band-anchored",
-      "changed": 1,
-      "hash": "956ffdd9"
+      "changed": 6,
+      "hash": "b071fb30"
     },
     {
       "name": "stamp-hard-raise-centre",
       "changed": 37,
-      "hash": "60b2ace9"
+      "hash": "776f3740"
     },
     {
       "name": "stamp-soft-raise",
       "changed": 84,
-      "hash": "afe9dc01"
+      "hash": "32b84398"
     },
     {
       "name": "stamp-soft-lower",
-      "changed": 185,
-      "hash": "e7c05172"
+      "changed": 174,
+      "hash": "299e49f4"
     },
     {
       "name": "stamp-hard-lower-free",
       "changed": 21,
-      "hash": "0f052f42"
+      "hash": "a3290884"
     },
     {
       "name": "smooth-banded-raise",
-      "changed": 148,
-      "hash": "fad289de"
+      "changed": 87,
+      "hash": "0bcd2e84"
     },
     {
       "name": "smooth-free-lower",
       "changed": 508,
-      "hash": "3ca656fd"
+      "hash": "a87365e8"
     },
     {
       "name": "edge-stamp-origin-corner",
       "changed": 8,
-      "hash": "b58071fd"
+      "hash": "214d80e8"
     },
     {
       "name": "edge-stamp-far-column",
       "changed": 158,
-      "hash": "7491c69d"
+      "hash": "527a5208"
     },
     {
       "name": "edge-smooth-left-edge",
-      "changed": 110,
-      "hash": "994083d7"
+      "changed": 45,
+      "hash": "a5ecd3aa"
     },
     {
       "name": "edge-drag-left-edge",
       "changed": 4,
-      "hash": "e1b698d7"
+      "hash": "ee62e8aa"
     },
     {
       "name": "settle-library-tool",
-      "changed": 3109,
-      "hash": "5d31a9bf"
+      "changed": 3114,
+      "hash": "c5381dc8"
     }
   ],
   "layeredColumnsAfter": 430,
-  "hashAfter": "5d31a9bf"
+  "hashAfter": "c5381dc8"
 }

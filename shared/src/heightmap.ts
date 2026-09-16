@@ -1,4 +1,4 @@
-import { MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
 
 export {
   bandOf,
@@ -28,6 +28,9 @@ import {
   FULL_HEIGHT_SPAN,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
   LIBRARY_SCULPT_TOOL,
+  SMOOTH_LAMBDA_DEFAULT,
+  SMOOTH_LAMBDA_MAX,
+  SMOOTH_LAMBDA_MIN,
 } from './sculpt/options.ts';
 import type { SculptOptions } from './sculpt/options.ts';
 
@@ -60,6 +63,9 @@ export {
   MIN_BAND,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  SMOOTH_LAMBDA_DEFAULT,
+  SMOOTH_LAMBDA_MAX,
+  SMOOTH_LAMBDA_MIN,
   TOOLS_WITHOUT_DIRECTION,
   TOOLS_WITHOUT_EDGE_PROFILE,
 } from './sculpt/options.ts';
@@ -99,6 +105,10 @@ export function applySculpt(
   const targetBand = options?.targetBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand;
   const spanBand = options?.spanBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand;
   const sweepFrom = options?.sweepFrom ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.sweepFrom;
+  const smoothLambda = Math.min(
+    SMOOTH_LAMBDA_MAX,
+    Math.max(SMOOTH_LAMBDA_MIN, options?.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT),
+  );
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
@@ -166,6 +176,8 @@ export function applySculpt(
     if (anchoredSmooth) {
       const raising = amount > 0;
       const clickedIndex = cellIndex(map, cx, cy);
+      // The click pin guards a deposit; pure smooth deposits nothing.
+      const pinCenter = changed.size > 0;
       anchorBounds = new Map<number, SpillBand>();
       for (const i of footprint as Set<number>) {
         const k = layerSpanIndex(map, i, spanBand);
@@ -173,6 +185,15 @@ export function applySculpt(
         const h = graspedCeiling(map, i, k);
         if (raising ? h > anchorTarget : h < anchorTarget) {
           anchorBounds.set(i, { lo: h, hi: h });
+        } else if (!pinCenter) {
+          // Symmetric window: an independent kernel with a one-sided cap
+          // deletes hillsides, so both sides end a band from the start.
+          anchorBounds.set(
+            i,
+            raising
+              ? { lo: Math.max(MIN_HEIGHT, h - BAND_HEIGHT), hi: anchorTarget }
+              : { lo: anchorTarget, hi: Math.min(MAX_HEIGHT, h + BAND_HEIGHT) },
+          );
         } else {
           anchorBounds.set(
             i,
@@ -192,6 +213,8 @@ export function applySculpt(
       spanBand,
       // settle keeps the unbounded cascade its plugin cones were tuned against.
       tool === 'smooth' ? smoothCascadeReachCells(radius) : null,
+      // Laplacian is the player melt only: free smooth keeps exact exchange.
+      anchoredSmooth ? smoothLambda : null,
     );
   }
 

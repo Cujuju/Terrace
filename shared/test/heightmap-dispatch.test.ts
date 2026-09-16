@@ -132,6 +132,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       targetBand: null,
       spanBand: null,
       sweepFrom: null,
+      smoothLambda: 50,
     });
   });
 

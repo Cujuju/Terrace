@@ -1,4 +1,4 @@
-import { MAX_STEP, RELAX_SLACK, SMOOTH_PASS_LIMIT } from '../constants.ts';
+import { MAX_STEP, RELAX_SLACK, SMOOTH_LAPLACIAN_PASSES, SMOOTH_PASS_LIMIT } from '../constants.ts';
 import { drawnBandOfSample } from '../bands.ts';
 import { anyColumnLayered, bandFloorHeight } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
@@ -68,6 +68,90 @@ function relaxPair(
   return moved;
 }
 
+function laplacianCell(
+  cells: Int16Array,
+  viewBase: number,
+  size: number,
+  x: number,
+  y: number,
+  pct: number,
+  changed: Set<number>,
+  boundsOf: SpillBoundsOf | null,
+  spanCaps: ReadonlyMap<number, SpillBand> | null,
+): boolean {
+  // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
+  // pass, then odd cells read the new evens. No snapshot copy is allocated.
+  const i = y * size + x;
+  const k = i - viewBase;
+  let sum = 0;
+  let count = 0;
+  if (x > 0) {
+    sum += cells[k - 1];
+    count++;
+  }
+  if (x < size - 1) {
+    sum += cells[k + 1];
+    count++;
+  }
+  if (y > 0) {
+    sum += cells[k - size];
+    count++;
+  }
+  if (y < size - 1) {
+    sum += cells[k + size];
+    count++;
+  }
+  if (count === 0) return false;
+  const avg = Math.trunc(sum / count);
+  if (avg === cells[k]) return false;
+  // Min-one-unit progress: truncation alone stalls above the gradient
+  // limit, leaving terracing the smoother was asked to remove.
+  let step = Math.trunc(((avg - cells[k]) * pct) / 100);
+  if (step === 0) step = avg > cells[k] ? 1 : -1;
+  let next = cells[k] + step;
+  const band = boundsOf === null ? null : boundsOf(i);
+  if (band !== null) {
+    if (next < band.lo) next = band.lo;
+    if (next > band.hi) next = band.hi;
+  }
+  const cap = spanCaps === null ? undefined : spanCaps.get(i);
+  if (cap !== undefined) {
+    if (next < cap.lo) next = cap.lo;
+    if (next > cap.hi) next = cap.hi;
+  }
+  if (next === cells[k]) return false;
+  cells[k] = next;
+  changed.add(i);
+  return true;
+}
+
+function laplacianPass(
+  cells: Int16Array,
+  viewBase: number,
+  size: number,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  pct: number,
+  changed: Set<number>,
+  boundsOf: SpillBoundsOf | null,
+  layer: LayerView | null,
+): boolean {
+  let moved = false;
+  for (let parity = 0; parity < 2; parity++) {
+    for (let y = minY; y <= maxY; y++) {
+      const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
+      for (let x = startX; x <= maxX; x += 2) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps)) {
+          moved = true;
+        }
+      }
+    }
+  }
+  return moved;
+}
+
 export function smooth(
   map: Heightmap,
   changed: Set<number>,
@@ -76,6 +160,7 @@ export function smooth(
   anchorBounds?: ReadonlyMap<number, SpillBand>,
   spanBand: number | null = null,
   reachCells: number | null = null,
+  laplacePct: number | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -157,7 +242,8 @@ export function smooth(
   const reachMaxY = reachCells === null ? size - 1 : Math.min(size - 1, maxY + reachCells);
 
   let adjustingPasses = 0;
-  for (let pass = 0; pass < SMOOTH_PASS_LIMIT; pass++) {
+  const passLimit = laplacePct === null ? SMOOTH_PASS_LIMIT : SMOOTH_LAPLACIAN_PASSES;
+  for (let pass = 0; pass < passLimit; pass++) {
     const heldMinX = minX, heldMinY = minY, heldMaxX = maxX, heldMaxY = maxY;
     if (minX > reachMinX) minX--;
     if (minY > reachMinY) minY--;
@@ -173,13 +259,29 @@ export function smooth(
 
     let changedThisPass = false;
 
-    for (let y = minY; y <= maxY; y++) {
-      const row = y * size;
-      for (let x = minX; x <= maxX; x++) {
-        const i = row + x;
-        if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
-        if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
+    if (laplacePct === null) {
+      for (let y = minY; y <= maxY; y++) {
+        const row = y * size;
+        for (let x = minX; x <= maxX; x++) {
+          const i = row + x;
+          if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
+          if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
+        }
       }
+    } else {
+      changedThisPass = laplacianPass(
+        cells,
+        viewBase,
+        size,
+        minX,
+        minY,
+        maxX,
+        maxY,
+        laplacePct,
+        changed,
+        boundsOf,
+        layer,
+      );
     }
 
     if (!changedThisPass) break;

@@ -34,6 +34,11 @@ export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
  */
 export const CARVE_BANDS_PER_STROKE = 2;
 
+/** Laplacian strength as integer percent, 1..100. Integer keeps math exact. */
+export const SMOOTH_LAMBDA_DEFAULT = 50;
+export const SMOOTH_LAMBDA_MIN = 1;
+export const SMOOTH_LAMBDA_MAX = 100;
+
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
 
 export type SculptSpill = 'banded' | 'free';
@@ -48,6 +53,7 @@ export interface SculptOptions {
   readonly targetBand?: number | null;
   readonly spanBand?: number | null;
   readonly sweepFrom?: SweepOrigin | null;
+  readonly smoothLambda?: number;
 }
 
 export interface SweepOrigin {
@@ -63,6 +69,7 @@ export interface ResolvedSculptOptions {
   readonly targetBand: number | null;
   readonly spanBand: number | null;
   readonly sweepFrom: SweepOrigin | null;
+  readonly smoothLambda: number;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -73,4 +80,5 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   targetBand: null,
   spanBand: null,
   sweepFrom: null,
+  smoothLambda: SMOOTH_LAMBDA_DEFAULT,
 };

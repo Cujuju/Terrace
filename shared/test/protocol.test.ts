@@ -131,8 +131,8 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null });
-    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null });
+    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 });
+    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 });
   });
 
   it('honours whatever the intent DID name, and defaults only the rest', () => {
@@ -144,7 +144,10 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       targetBand: null,
       spanBand: null,
       sweepFrom: null,
+      smoothLambda: 50,
     });
+    expect(sculptOptionsOf({ ...base, tool: 'smooth', smoothLambda: 80 }).smoothLambda).toBe(80);
+    expect(sculptOptionsOf({ ...base, tool: 'stamp', smoothLambda: 80 }).smoothLambda).toBe(50);
     expect(sculptOptionsOf({ ...base, profile: 'hard' })).toEqual({
       tool: 'stamp',
       profile: 'hard',
@@ -153,6 +156,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       targetBand: null,
       spanBand: null,
       sweepFrom: null,
+      smoothLambda: 50,
     });
     expect(sculptOptionsOf({ ...base, tool: 'smooth', profile: 'hard' })).toEqual({
       tool: 'smooth',
@@ -162,6 +166,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       targetBand: null,
       spanBand: null,
       sweepFrom: null,
+      smoothLambda: 50,
     });
   });
 });
@@ -313,6 +318,40 @@ describe('targetBand — the drag field on the wire', () => {
     const bare = sculptOptionsOf({ ...base, targetBand: 4 });
     expect(bare.anchor).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.anchor);
     expect(bare.targetBand).toBeNull();
+  });
+});
+
+describe('smoothLambda — the smooth strength on the wire', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 1, dir: 1 } as const;
+  const smooth = { ...base, tool: 'smooth' } as const;
+
+  it('is optional — a smooth without one melts at the default', () => {
+    expect(validateSculptIntent({ ...smooth }, WORLD)).toEqual({ ...smooth });
+    expect(sculptOptionsOf({ ...smooth }).smoothLambda).toBe(50);
+  });
+
+  it('carries an in-range strength through verbatim', () => {
+    for (const smoothLambda of [1, 5, 50, 100]) {
+      expect(validateSculptIntent({ ...smooth, smoothLambda }, WORLD)).toEqual({
+        ...smooth,
+        smoothLambda,
+      });
+      expect(sculptOptionsOf({ ...smooth, smoothLambda }).smoothLambda).toBe(smoothLambda);
+    }
+  });
+
+  it('rejects a strength outside 1..100 WITH THE WHOLE INTENT', () => {
+    for (const smoothLambda of [0, 101, 1.5, NaN, '50', null, {}]) {
+      expect(validateSculptIntent({ ...smooth, smoothLambda }, WORLD)).toBeNull();
+    }
+  });
+
+  it('rejects a strength carried by anything but smooth', () => {
+    expect(validateSculptIntent({ ...base, smoothLambda: 50 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'stamp', smoothLambda: 50 }, WORLD)).toBeNull();
+    expect(
+      validateSculptIntent({ ...base, dir: -1, tool: 'carve', spanBand: 2, smoothLambda: 50 }, WORLD),
+    ).toBeNull();
   });
 });
 

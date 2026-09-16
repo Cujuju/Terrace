@@ -5,6 +5,9 @@ import {
   MIN_BAND,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  SMOOTH_LAMBDA_DEFAULT,
+  SMOOTH_LAMBDA_MAX,
+  SMOOTH_LAMBDA_MIN,
   TOOLS_WITHOUT_EDGE_PROFILE,
 } from '../sculpt/options.ts';
 import type {
@@ -24,6 +27,7 @@ export interface SculptIntent {
   profile?: SculptProfile;
   targetBand?: number;
   spanBand?: number;
+  smoothLambda?: number;
   fromX?: number;
   fromY?: number;
   seq?: number;
@@ -42,6 +46,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   spanBand: null,
   anchor: 'clicked',
   sweepFrom: null,
+  smoothLambda: SMOOTH_LAMBDA_DEFAULT,
 };
 
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
@@ -65,6 +70,10 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'drag' && intent.fromX !== undefined && intent.fromY !== undefined
         ? { x: intent.fromX, y: intent.fromY }
         : null,
+    smoothLambda:
+      tool === 'smooth'
+        ? (intent.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT)
+        : SMOOTH_LAMBDA_DEFAULT,
   };
 }
 
@@ -155,6 +164,19 @@ export function validateSculptIntent(
   // cell, so a spanBand on one would be wrong where it mattered.
   if (spanBand !== undefined && tool === 'drag') return null;
 
+  // Lambda tunes the smooth blur and only the smooth blur.
+  const { smoothLambda } = m;
+  if (smoothLambda !== undefined) {
+    if (
+      !Number.isInteger(smoothLambda) ||
+      (smoothLambda as number) < SMOOTH_LAMBDA_MIN ||
+      (smoothLambda as number) > SMOOTH_LAMBDA_MAX
+    ) {
+      return null;
+    }
+    if (tool !== 'smooth') return null;
+  }
+
   // A carve cuts the band it grasps: without one it names nothing to open and
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
@@ -179,6 +201,7 @@ export function validateSculptIntent(
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
+    ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
