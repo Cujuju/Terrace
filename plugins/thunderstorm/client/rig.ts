@@ -37,7 +37,7 @@ export const FLASH_DRAW_OBJECTS = 2;
 export interface ThunderstormRig {
   readonly root: Group;
   update(disc: InterpolatedDisc, elapsed: number, dt: number, reduced: boolean): void;
-  strike(offsetX: number, offsetZ: number, governor: LightningGovernor): void;
+  strike(offsetX: number, offsetZ: number, governor: LightningGovernor): boolean;
   reset(): void;
   dispose(): void;
 }
@@ -125,13 +125,14 @@ function createThunderstormRig(
       );
     },
 
-    strike(offsetX: number, offsetZ: number, governor: LightningGovernor): void {
-      if (!lightning.strike(governor)) return;
+    strike(offsetX: number, offsetZ: number, governor: LightningGovernor): boolean {
+      if (!lightning.strike(governor)) return false;
 
       boltPivot.position.set(offsetX, 0, offsetZ);
       boltPivot.rotation.y = Math.atan2(offsetZ, offsetX);
       strikeOffsetX = offsetX;
       strikeOffsetZ = offsetZ;
+      return true;
     },
 
     reset(): void {

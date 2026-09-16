@@ -102,16 +102,22 @@ function playThunder(ctx: ClientPluginCtx, cellX: number, cellY: number): void {
   ctx.audio.playSfx(nextThunderSfxUrl(), { at, delaySeconds: thunderDelaySeconds(ctx, at) });
 }
 
-function applyStrike(systemId: number, cellX: number, cellY: number): void {
+// True when a bolt was drawn; the governor may refuse a strike that comes too soon.
+function applyStrike(systemId: number, cellX: number, cellY: number): boolean {
   const rig = systemId === STRIKE_NO_SYSTEM ? undefined : view.rigFor(systemId);
   const disc = rig === undefined ? undefined : view.poseFor(systemId);
 
   if (rig === undefined || disc === undefined) {
-    rigs?.dryBolt.strike(cellX * CELL_WORLD_SIZE, cellY * CELL_WORLD_SIZE, governor);
-    return;
+    const dryBolt = rigs?.dryBolt;
+    if (dryBolt === undefined) return false;
+    return dryBolt.strike(cellX * CELL_WORLD_SIZE, cellY * CELL_WORLD_SIZE, governor);
   }
 
-  rig.strike((cellX - disc.x) * CELL_WORLD_SIZE, (cellY - disc.y) * CELL_WORLD_SIZE, governor);
+  return rig.strike(
+    (cellX - disc.x) * CELL_WORLD_SIZE,
+    (cellY - disc.y) * CELL_WORLD_SIZE,
+    governor,
+  );
 }
 
 export const clientPlugin: TerraceClientPlugin = {
@@ -130,11 +136,11 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
       const strikes = parseStrikesPayload(payload);
       if (strikes === null) return;
-      // Thunder for every strike: a heard bolt need not be a seen one — the
-      // governor's floor is photosensitivity, not acoustics.
-      for (const strike of strikes) playThunder(ctx, strike.x, strike.y);
+      // No flash, no thunder: sound and light always agree.
       if (view.isReduced()) return;
-      for (const strike of strikes) applyStrike(strike.systemId, strike.x, strike.y);
+      for (const strike of strikes) {
+        if (applyStrike(strike.systemId, strike.x, strike.y)) playThunder(ctx, strike.x, strike.y);
+      }
     });
   },
 
