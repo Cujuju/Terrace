@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { createHeightmap } from '../src/index.ts';
-import { fnv1aOfInt32s, hashHeightmap } from './support/goldenCorpus.ts';
+import { createHeightmap, type CellDiff } from '../src/index.ts';
+import { fnv1aOfInt32s, hashCellDiff, hashHeightmap } from './support/goldenCorpus.ts';
 
 describe('fnv1aOfInt32s', () => {
   test('pins the empty and single-value digests', () => {
@@ -48,5 +48,30 @@ describe('hashHeightmap', () => {
     flat.cells[5] = 160;
     layered.columnSpans.set(5, Int16Array.from([-1536, 16, 96, 160]));
     expect(hashHeightmap(flat)).not.toBe(hashHeightmap(layered));
+  });
+});
+
+describe('hashCellDiff', () => {
+  const FLAT_CELL: CellDiff = { x: 1, y: 2, h: 16 };
+  const OTHER_CELL: CellDiff = { x: 3, y: 4, h: 32 };
+  const ROOFED_SPANS = [-1536, 16, 96, 160];
+  const ROOFED_SPANS_CEILING_RAISED = [-1536, 16, 96, 176];
+
+  test('separates two diffs that differ only in cell order', () => {
+    expect(hashCellDiff([FLAT_CELL, OTHER_CELL])).not.toBe(
+      hashCellDiff([OTHER_CELL, FLAT_CELL]),
+    );
+  });
+
+  test('separates two diffs that differ only in one span value', () => {
+    expect(hashCellDiff([{ ...FLAT_CELL, spans: ROOFED_SPANS }])).not.toBe(
+      hashCellDiff([{ ...FLAT_CELL, spans: ROOFED_SPANS_CEILING_RAISED }]),
+    );
+  });
+
+  test('separates a cell carrying spans from the same cell without', () => {
+    expect(hashCellDiff([{ ...FLAT_CELL, spans: ROOFED_SPANS }])).not.toBe(
+      hashCellDiff([FLAT_CELL]),
+    );
   });
 });
