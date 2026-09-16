@@ -313,6 +313,44 @@ surface per walker (real −1 draw/walker); (2) `plugins/pilgrims/test/models.te
 surfaces" is stale for that reason and needs permission to update; (3) the light-bank rule belongs in
 `docs/DESIGN.md` (append needs permission).
 
+## Phase C2′ — settle shader warmup (2026-09-15/16)
+
+**Root cause (one sentence).** Plugin drawables are constructed `visible = false` and three skips invisible
+(and frustum-culled) objects before pipeline creation in both `render` and `compileAsync`, so every plugin
+paid its shader compile on its first visible frame mid-play.
+
+**Contract (`client/src/render/settleWarmup.ts`, wired from the plugin host at terrain settle and on late
+mounts).** Once the terrain stream settles, flip every effectively-hidden drawable visible with
+`frustumCulled = false`, `renderer.compileAsync(viewport.scene, viewport.camera)` on the WHOLE scene (a
+sub-tree would key pipelines on the sub-tree's light set — silent no-op), restore the flags synchronously
+(no await precedes projection once the renderer is initialised), then await. Hidden lights are never
+flipped (they would change the lit set). Transparent `DoubleSide` materials need two passes because three
+draws them twice (BackSide render object, then FrontSide) and `compileAsync` defers pipeline creation past
+its own side restore: pass A projects at `DoubleSide` (both render objects queued) and switches to
+`BackSide` for the drain; pass B projects at `FrontSide`; `DoubleSide` restored in `finally`. Skinned
+kinds that never exist at settle get a hidden specimen per race×kind at attach (pilgrims: 6).
+
+Commits: `2b3f76e9`, `7cc0f712` (hidden lights excluded, initialised guard), `a085096c`, `81b80d2f`
+(double-pass), `a50fc6fc` (pilgrim specimens). Warmup runs once ~10 ms after `terrain-queue-empty` and takes
+1.6–5.5 s; its window sits inside the already-hitchy load phase (frame max 336 ms during warmup vs 575 ms in
+the 3 s before it, 23 ms in the 5 s after).
+
+| 20-min idle, far view, backend pipeline/program creations counted directly | pre (e4865899) | final (7af93e2c) |
+|---|---|---|
+| programs start→end | 134 → 145 (16 min, gate died) | 153 → 153 |
+| pipelines / programs created after settle | 9 / 11 in 3 events | 1 / 0 |
+| per-frame program-count changes | 3 | 0 |
+| event frame max | ~36 ms | 33.7 ms (no compile events) |
+
+Naming probe (`.perf-probe/pipenames.ps1`, `.census/pipenames-phaseC2-*.json`): on the final build the only
+post-settle compiles are the first monster spawn (5 per-surface `MeshLambertNodeMaterial`s, 9 programs,
+one ~20–35 ms frame per kind). Monster templates are built lazily on `requestIdleCallback` by design
+(eager specimens would add ~1.9 s of boot: yeti 527 ms, ram 486, ibex 375, fanged 421, cthulhu 76, kraken
+39) — owner decision: (a) eager build of the default templates, or (b) a host hook so a plugin can request
+a re-warm after each idle template build. Residuals: a hidden double-pass object made visible during the
+warmup await renders single-sided until that pass ends (load only); no re-arm across a world switch;
+`compileAsync` returns early on device loss (false done mark).
+
 ## Evidence index (all untracked, all kept per instruction)
 
 - `.census/census-perfprobe-G-farview-drawcalls.json` — far-view census + stats + profile (main exhibit)
