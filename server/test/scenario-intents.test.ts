@@ -245,6 +245,7 @@ describe('the room gates a sender before the pipeline sees the message', () => {
 
     const dropped = scenario.send(SCULPTOR, malformedAt(SCULPT_BURST_INTENTS));
 
+    expect(dropped.reached).toBe('dropped');
     expect(dropped.entries).toEqual([]);
     expect(dropped.outcome).toBeNull();
   });
@@ -271,5 +272,20 @@ describe('a locked centre is refused before any plugin sees it', () => {
     expect(step.entries).toEqual([
       { kind: 'nack', to: SCULPTOR.id, seq: SEQ, reason: 'locked' },
     ]);
+  });
+
+  it('reaches the pipeline even when an unroutable seq leaves no evidence', () => {
+    const scenario = new Scenario({
+      terrain: 'terrace',
+      unlocked: HOME,
+      owned: HOME,
+      players: [SCULPTOR],
+    });
+
+    const step = scenario.send(SCULPTOR, sculptMessage(LOCKED_CELL));
+
+    expect(step.reached).toBe('pipeline');
+    expect(step.outcome).toBeNull();
+    expect(step.entries).toEqual([]);
   });
 });

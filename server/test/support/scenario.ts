@@ -106,9 +106,19 @@ export type TranscriptEntry =
     }
   | { readonly kind: 'plugin'; readonly to: string; readonly type: string; readonly payload: unknown };
 
-/** What one message through the pipeline produced. `outcome` is null when the handler faulted. */
+/**
+ * How far one message got: refused by the room adapter, handed to the pipeline,
+ * or thrown out of the handler.
+ */
+export type ScenarioReach = 'dropped' | 'pipeline' | 'faulted';
+
+/**
+ * What one message produced. `outcome` is null whenever production left no
+ * evidence: a drop, a fault, or a refusal whose seq was unroutable.
+ */
 export interface ScenarioStep {
   readonly outcome: IntentOutcome | null;
+  readonly reached: ScenarioReach;
   readonly faulted: boolean;
   readonly entries: readonly TranscriptEntry[];
 }
@@ -322,7 +332,12 @@ export class Scenario {
     this.armSend();
     handleSculptMessage(this.sculptDeps, this.clientFor(player), message);
     const entries = this.collect();
-    return { outcome: this.outcomeOf(message, entries), faulted: false, entries };
+    return {
+      outcome: this.outcomeOf(message, entries),
+      reached: this.reach(false),
+      faulted: false,
+      entries,
+    };
   }
 
   /**
@@ -347,9 +362,15 @@ export class Scenario {
     const entries = this.collect();
     return {
       outcome: faulted ? null : this.outcomeOf(message, entries),
+      reached: this.reach(faulted),
       faulted,
       entries,
     };
+  }
+
+  private reach(faulted: boolean): ScenarioReach {
+    if (faulted) return 'faulted';
+    return this.pipelineEntered ? 'pipeline' : 'dropped';
   }
 
   private armSend(): void {
