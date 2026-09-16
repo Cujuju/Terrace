@@ -5,6 +5,22 @@ import { backgroundRadiance } from './skyEnvironment.ts';
 
 export type { SkyRigState };
 
+export function skyRigEquals(a: SkyRigState, b: SkyRigState): boolean {
+  return (
+    a.sunDirection.x === b.sunDirection.x &&
+    a.sunDirection.y === b.sunDirection.y &&
+    a.sunDirection.z === b.sunDirection.z &&
+    a.sunColor === b.sunColor &&
+    a.sunIntensity === b.sunIntensity &&
+    a.hemisphereSkyColor === b.hemisphereSkyColor &&
+    a.hemisphereGroundColor === b.hemisphereGroundColor &&
+    a.hemisphereIntensity === b.hemisphereIntensity &&
+    a.ambientColor === b.ambientColor &&
+    a.ambientIntensity === b.ambientIntensity &&
+    a.backgroundColor === b.backgroundColor
+  );
+}
+
 export function applySkyRig(viewport: Viewport, state: SkyRigState): void {
   const { sun, hemisphere, ambient } = viewport.lighting;
 
