@@ -7,6 +7,7 @@ import {
   MIN_BRUSH_RADIUS,
 } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
+import { SCULPT_BURST_INTENTS, SculptRateLimiter } from '../src/net/sculpt-rate-limit.ts';
 import type { Player } from '../src/player.ts';
 import {
   entriesOfKind,
@@ -221,6 +222,31 @@ describe('a carve names the span it grasps; a drag names the lip it holds', () =
 
     expect(step.outcome).toEqual({ applied: false, reason: 'malformed' });
     expect(scenario.world.dirty).toBe(false);
+  });
+});
+
+describe('the room gates a sender before the pipeline sees the message', () => {
+  /** A clock that never moves, so the bucket never refills mid-burst. */
+  const FROZEN_MS = 0;
+
+  function malformedAt(seq: number): unknown {
+    return sculptMessage({ ...AT, x: 1.5, seq });
+  }
+
+  it('drops the stroke past a sender burst, and says nothing back', () => {
+    const scenario = new Scenario({
+      ...OPEN_WORLD,
+      rate: new SculptRateLimiter({ now: () => FROZEN_MS }),
+    });
+
+    for (let sent = 0; sent < SCULPT_BURST_INTENTS; sent++) {
+      expect(scenario.send(SCULPTOR, malformedAt(sent)).entries).toHaveLength(1);
+    }
+
+    const dropped = scenario.send(SCULPTOR, malformedAt(SCULPT_BURST_INTENTS));
+
+    expect(dropped.entries).toEqual([]);
+    expect(dropped.outcome).toBeNull();
   });
 });
 
