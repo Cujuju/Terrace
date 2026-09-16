@@ -1,10 +1,11 @@
-import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { cellsAcross } from '@terrace/shared';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import type { MonsterKind } from '../protocol.ts';
 import { CTHULHU_LURK_DEPTH } from './anatomy.ts';
 import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
 import { YETI_FOOT_GROUND_HALF_EXTENT } from './yeti-anatomy.ts';
 
-export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
+export { SEA_SURFACE_WORLD_Y };
 
 export const UNKNOWN_TERRAIN_WORLD_Y = 0;
 
