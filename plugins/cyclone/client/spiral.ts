@@ -2,7 +2,9 @@ import { Group } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { createMassSlots } from '../../../client/src/plugins/kit/discSlots.ts';
+import type { GroundSampler } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { createSpiralMesh } from './spiralLook.ts';
+import { createColumnGround } from './spiralGround.ts';
 import { MAX_SPIRALS } from './spiralLayout.ts';
 
 export const SPIRAL_DRAW_OBJECTS = 1;
@@ -41,12 +43,14 @@ export interface SpiralRenderer {
 
 export function createSpiral(
   applyRevealClip: (material: NodeMaterial, label: string) => void,
+  groundAt: GroundSampler,
 ): SpiralRenderer {
   const root = new Group();
   root.name = 'cyclone:spiral';
 
   const slots = createMassSlots(MAX_SPIRALS);
-  const puffs = createSpiralMesh(slots.massXZ, slots.massSize, applyRevealClip);
+  const ground = createColumnGround();
+  const puffs = createSpiralMesh(slots.massXZ, slots.massSize, ground.lanes, applyRevealClip);
   root.add(puffs.mesh);
 
   const spirals = new Map<number, Spiral>();
@@ -88,7 +92,7 @@ export function createSpiral(
     },
 
     update(dt, elapsed): void {
-      puffs.advance(elapsed);
+      const spinTurns = puffs.advance(elapsed);
 
       let lit = false;
       for (const [id, spiral] of spirals) {
@@ -112,6 +116,7 @@ export function createSpiral(
           SPIRAL_DRIFT,
           SPIRAL_DRIFT,
         );
+        ground.stand(spiral.slot, spiral.x, spiral.z, spiral.radiusWorldUnits, spinTurns, groundAt);
       }
 
       puffs.mesh.visible = lit;
