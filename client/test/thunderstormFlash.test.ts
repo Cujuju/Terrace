@@ -218,7 +218,7 @@ describe('a strike with no storm the client knows about', () => {
     expect(light.position.z).toBeCloseTo(cell.y * CELL_WORLD_SIZE, 9);
   });
 
-  it('thunders for a strike the governor swallowed — heard is not seen', () => {
+  it('stays silent for a strike the governor swallowed — no flash, no thunder', () => {
     const live = attach();
     live.send(THUNDERSTORM_STRIKES_MESSAGE, {
       strikes: packStrikes([
@@ -228,7 +228,7 @@ describe('a strike with no storm the client knows about', () => {
     });
     live.frame(FRAME_SECONDS);
 
-    expect(live.sfx).toHaveLength(2);
+    expect(live.sfx).toHaveLength(1);
     const pivot = live.layer.getObjectByName(DRY_BOLT_NAME)!.children[0]!;
     expect(pivot.position.x).toBeCloseTo(10 * CELL_WORLD_SIZE, 9);
   });

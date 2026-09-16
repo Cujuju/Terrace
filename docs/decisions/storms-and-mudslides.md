@@ -59,3 +59,12 @@ keep their value: `PluginSettingDeclaration.formerKeys` lets a plugin name the
 keys a setting used to be stored under, and the session and admin readers
 resolve them (current key wins). Rejected: a second switch for wind scour
 (two knobs for one intent), and leaving the misnamed key.
+
+## Decision made 2026-09-15 (no flash, no thunder)
+
+The flash governor's floor is photosensitivity; strikes that come too soon
+used to thunder anyway, so about one strike in six was heard but never seen.
+Owner call: sound and light always agree. A strike thunders only when its
+bolt was drawn, which also means reduced-motion players, who see no bolts,
+hear no thunder. Rejected: keeping thunder for refused flashes (the review's
+"intended" reading).

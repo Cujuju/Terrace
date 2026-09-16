@@ -62,7 +62,7 @@ export function buildBoltGeometry(): BufferGeometry {
 
 export interface DryBoltRig {
   readonly root: Group;
-  strike(worldX: number, worldZ: number, governor: LightningGovernor): void;
+  strike(worldX: number, worldZ: number, governor: LightningGovernor): boolean;
   update(dt: number, reduced: boolean): void;
   dispose(): void;
 }
@@ -101,12 +101,13 @@ export function createDryBoltRig(
   return {
     root,
 
-    strike(worldX: number, worldZ: number, governor: LightningGovernor): void {
-      if (!schedule.strike(governor)) return;
+    strike(worldX: number, worldZ: number, governor: LightningGovernor): boolean {
+      if (!schedule.strike(governor)) return false;
       pivot.position.set(worldX, 0, worldZ);
       pivot.rotation.y = Math.atan2(worldZ, worldX);
       strikeX = worldX;
       strikeZ = worldZ;
+      return true;
     },
 
     update(dt: number, reduced: boolean): void {
