@@ -5,111 +5,111 @@
   "hashBefore": "4bdea775",
   "strokes": [
     {
-      "name": "stamp-hard-raise-centre",
-      "changed": 37,
-      "hash": "9e7d5105"
+      "name": "min-floor-rim-lower",
+      "changed": 4,
+      "hash": "a94039e5"
     },
     {
-      "name": "stamp-soft-raise",
-      "changed": 594,
-      "hash": "89124cd2"
-    },
-    {
-      "name": "stamp-soft-lower",
-      "changed": 273,
-      "hash": "9b70940e"
-    },
-    {
-      "name": "stamp-hard-lower-free",
-      "changed": 3,
-      "hash": "b2333f1e"
-    },
-    {
-      "name": "stamp-band-anchored",
-      "changed": 5,
-      "hash": "cffd59ce"
-    },
-    {
-      "name": "smooth-banded-raise",
-      "changed": 581,
-      "hash": "e46a7062"
-    },
-    {
-      "name": "smooth-free-lower",
-      "changed": 278,
-      "hash": "0bb0be56"
-    },
-    {
-      "name": "drag-raise-one-band",
-      "changed": 17,
-      "hash": "5a02d864"
-    },
-    {
-      "name": "drag-lower-swept",
-      "changed": 29,
-      "hash": "47bf7f1b"
-    },
-    {
-      "name": "carve-click-band",
-      "changed": 3,
-      "hash": "713d6e7d"
-    },
-    {
-      "name": "carve-click-band-again",
-      "changed": 0,
-      "hash": "713d6e7d"
-    },
-    {
-      "name": "settle-library-tool",
-      "changed": 3990,
-      "hash": "e732756b"
-    },
-    {
-      "name": "edge-stamp-origin-corner",
-      "changed": 3,
-      "hash": "f4334204"
-    },
-    {
-      "name": "edge-stamp-far-column",
-      "changed": 19,
-      "hash": "17b56dd5"
-    },
-    {
-      "name": "edge-smooth-last-row",
-      "changed": 0,
-      "hash": "17b56dd5"
-    },
-    {
-      "name": "edge-drag-far-corner",
-      "changed": 0,
-      "hash": "17b56dd5"
-    },
-    {
-      "name": "min-floor-lower-noop",
-      "changed": 5,
-      "hash": "d458f396"
-    },
-    {
-      "name": "max-ceiling-raise-noop",
-      "changed": 5,
-      "hash": "2ec1e4a0"
+      "name": "max-ceiling-rim-raise",
+      "changed": 4,
+      "hash": "08bbd0a5"
     },
     {
       "name": "max-ceiling-lower",
-      "changed": 13,
-      "hash": "c75bbed3"
+      "changed": 18,
+      "hash": "269b5385"
     },
     {
       "name": "slab-carve",
       "changed": 3,
-      "hash": "002aff74"
+      "hash": "fc4760c0"
     },
     {
       "name": "min-floor-raise",
+      "changed": 68,
+      "hash": "c91357c5"
+    },
+    {
+      "name": "carve-click-band",
+      "changed": 4,
+      "hash": "effab2b5"
+    },
+    {
+      "name": "carve-second-site",
+      "changed": 3,
+      "hash": "26707110"
+    },
+    {
+      "name": "drag-raise-one-band",
+      "changed": 17,
+      "hash": "a824add0"
+    },
+    {
+      "name": "drag-lower-swept",
       "changed": 18,
-      "hash": "85ce7005"
+      "hash": "501a6d90"
+    },
+    {
+      "name": "stamp-band-anchored",
+      "changed": 5,
+      "hash": "e051a540"
+    },
+    {
+      "name": "stamp-hard-raise-centre",
+      "changed": 29,
+      "hash": "eee31190"
+    },
+    {
+      "name": "stamp-soft-raise",
+      "changed": 349,
+      "hash": "e9368696"
+    },
+    {
+      "name": "stamp-soft-lower",
+      "changed": 272,
+      "hash": "2983095f"
+    },
+    {
+      "name": "stamp-hard-lower-free",
+      "changed": 3,
+      "hash": "f49f784f"
+    },
+    {
+      "name": "smooth-banded-raise",
+      "changed": 483,
+      "hash": "becae3e5"
+    },
+    {
+      "name": "smooth-free-lower",
+      "changed": 529,
+      "hash": "c023028d"
+    },
+    {
+      "name": "edge-stamp-origin-corner",
+      "changed": 8,
+      "hash": "de3d22e1"
+    },
+    {
+      "name": "edge-stamp-far-column",
+      "changed": 22,
+      "hash": "4d775781"
+    },
+    {
+      "name": "edge-smooth-left-edge",
+      "changed": 241,
+      "hash": "26a64b44"
+    },
+    {
+      "name": "edge-drag-left-edge",
+      "changed": 4,
+      "hash": "1c5c9f28"
+    },
+    {
+      "name": "settle-library-tool",
+      "changed": 3981,
+      "hash": "c61136e7"
     }
   ],
   "layeredColumnsAfter": 162,
-  "hashAfter": "85ce7005"
+  "hashAfter": "c61136e7"
 }
