@@ -9,7 +9,7 @@ import type { FramePhase, Viewport } from '../render/scene.ts';
 import { rendererBackendName } from '../render/rendererBackend.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
 import { frameStatsSample, recordPluginFrame } from '../render/frameStats.ts';
-import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
+import { applySkyRig, skyRigEquals, type SkyRigState } from '../render/skyRig.ts';
 import { warmHiddenDrawables } from '../render/settleWarmup.ts';
 import {
   clearGroundShade,
@@ -147,6 +147,26 @@ export function createClientPluginHost(
   const skyRigRefusals = new Set<string>();
 
   const skyRigModifiers: ((state: SkyRigState) => SkyRigState)[] = [];
+
+  let skyRigBase: SkyRigState | null = null;
+  let skyRigApplied: SkyRigState | null = null;
+
+  // Modifiers run over the last pushed sky every frame, so one that changes on its
+  // own (a storm's gloom) lands even when the claimant pushes once (reduced motion).
+  const refreshSkyRig = (): void => {
+    if (skyRigBase === null) return;
+    let modulated = skyRigBase;
+    for (const modify of skyRigModifiers) {
+      try {
+        modulated = modify(modulated);
+      } catch (error) {
+        console.error('[terrace] plugin sky-rig modifier threw', error);
+      }
+    }
+    if (skyRigApplied !== null && skyRigEquals(skyRigApplied, modulated)) return;
+    skyRigApplied = modulated;
+    applySkyRig(viewport, modulated);
+  };
 
   const onCanvasPointerDown = (event: PointerEvent): void => {
     audioEngine.unlock();
@@ -471,15 +491,8 @@ export function createClientPluginHost(
           }
           return;
         }
-        let modulated = state;
-        for (const modify of skyRigModifiers) {
-          try {
-            modulated = modify(modulated);
-          } catch (error) {
-            console.error('[terrace] plugin sky-rig modifier threw', error);
-          }
-        }
-        applySkyRig(viewport, modulated);
+        skyRigBase = state;
+        refreshSkyRig();
       },
       loadRigAsset(url, lighting) {
         return loadRigAsset(
@@ -614,6 +627,7 @@ export function createClientPluginHost(
   });
 
   const stopGroundShade = viewport.onFrame(gatherGroundShade);
+  const stopSkyRigRefresh = viewport.onFrame(refreshSkyRig);
 
   const frameDrawBudget = (): number => {
     let budget = deps.coreDrawBudget();
@@ -720,6 +734,7 @@ export function createClientPluginHost(
     dispose(): void {
       stopSampling();
       stopGroundShade();
+      stopSkyRigRefresh();
       stopWarmupWatch();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
       for (const name of [...pendingMounts]) {
