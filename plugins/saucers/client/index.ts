@@ -1,6 +1,7 @@
 import { Group, Vector3 } from 'three';
-import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 import {
@@ -61,7 +62,6 @@ let splashes: CrashSplashes | null = null;
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 const views = new Map<number, SaucerView>();
 const interpolator = new SaucerInterpolator();
-const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
 
 let bolts: readonly LaserBolt[] = [];
 let sinceBolts = 0;

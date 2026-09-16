@@ -17,9 +17,8 @@ import {
   chunksPerEdge,
   CHUNK_SIZE,
   quantizeToBand,
-  SEA_LEVEL,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../config.ts';
+import { CELL_WORLD_SIZE, SEA_SURFACE_WORLD_Y } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 import { type DrawnGround } from '../terrain/drawnGround.ts';
 import { WATER_COLOR } from './water.ts';
@@ -41,8 +40,6 @@ import { watchReducedMotion } from '../plugins/kit/reducedMotion.ts';
 const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 
 const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
-
-const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
 const WATER_DEPTH_BIAS_FACTOR = -1;
 const WATER_DEPTH_BIAS_UNITS = -1;
