@@ -1,3 +1,4 @@
+import { BEDROCK_BAND } from '../columns.ts';
 import { MAX_HEIGHT, MIN_HEIGHT, TERRACE_BAND_COUNT } from '../constants.ts';
 import { bandOf } from '../grid.ts';
 
@@ -27,6 +28,9 @@ export const LIBRARY_SCULPT_TOOL: LibrarySculptTool = 'settle';
 export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'drag', 'carve'];
 
 export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
+
+/** Bedrock is a column's floor, not material, so the lowest slab a stroke can open sits above it. */
+export const LOWEST_CARVEABLE_BAND = BEDROCK_BAND + 1;
 
 /** A stroke cuts whole slabs, and one slab is the shallowest cut there is. */
 export const CARVE_MIN_DEPTH_BANDS = 1;

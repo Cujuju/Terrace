@@ -7,6 +7,7 @@ import {
   MAX_BRUSH_RADIUS,
   MAX_ROLLBACK_KEY_LENGTH,
   LIBRARY_SCULPT_TOOL,
+  LOWEST_CARVEABLE_BAND,
   MIN_BAND,
   SCULPT_TOOLS,
   sculptOptionsOf,
@@ -372,14 +373,27 @@ describe('spanBand — the grasp on the wire', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: -1 } as const;
 
   it('accepts any band this world could hold, on any tool, verbatim', () => {
-    for (const spanBand of [MIN_BAND, -1, 0, 1, MAX_BAND]) {
+    for (const spanBand of [LOWEST_CARVEABLE_BAND, -1, 0, 1, MAX_BAND]) {
       expect(validateSculptIntent({ ...base, tool: 'carve', spanBand }, WORLD)).toEqual({
         ...base,
         tool: 'carve',
         spanBand,
       });
     }
+    expect(validateSculptIntent({ ...base, tool: 'stamp', spanBand: MIN_BAND }, WORLD)).not.toBeNull();
     expect(validateSculptIntent({ ...base, tool: 'stamp', spanBand: 3 }, WORLD)).not.toBeNull();
+  });
+
+  it('rejects a carve grasping bedrock — the applier always refuses it', () => {
+    expect(
+      validateSculptIntent({ ...base, tool: 'carve', spanBand: LOWEST_CARVEABLE_BAND - 1 }, WORLD),
+    ).toBeNull();
+    expect(
+      validateSculptIntent({ ...base, tool: 'carve', spanBand: LOWEST_CARVEABLE_BAND }, WORLD),
+    ).not.toBeNull();
+    expect(
+      validateSculptIntent({ ...base, tool: 'stamp', spanBand: LOWEST_CARVEABLE_BAND - 1 }, WORLD),
+    ).not.toBeNull();
   });
 
   it('rejects a band outside the range, or one that is not a band at all', () => {
