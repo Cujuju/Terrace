@@ -1,14 +1,14 @@
 # Terrace — Design
 
-Standing rules, settled with the project owner. Do not relitigate without new
-information, and do not append decisions here: dated decision records live in
-`docs/decisions/`, one file per arc. Setup, configuration, layout and the
-plugin-author guide are in the README.
+Standing rules, settled with the owner. Do not relitigate without new
+information. Dated decisions live in `docs/decisions/`, one file per arc; never
+append them here. Setup, configuration, layout and the plugin-author guide are
+in the README.
 
 ## Rules
 
 - `shared/` is the single source of truth for terrain math and protocol types.
-  Never duplicate its math. It uses only erasable TypeScript syntax.
+  Never duplicate its math. Erasable TypeScript syntax only.
 - Terrain math is deterministic: integer-only or exactly-specified IEEE ops in
   fixed iteration order, identical on server and client.
 - Clients send intents, never heights. The server is authoritative and
@@ -20,13 +20,29 @@ plugin-author guide are in the README.
 - Core has no simulation of its own beyond terrain; plugins simulate in
   `onTick`. Nothing "gamey" in core.
 - A cell is a column of solid spans, so overhangs and caves are representable.
-  Terraces are `BAND_HEIGHT` tall; a click moves one band and a tread is one
-  world unit wide. The default brush edits only its footprint; relaxation runs
-  only under the smooth tool. Sea and freshwater are derived from the terrain,
-  never simulated.
-- **≥ 140 fps on the owner's machine** (≈ 7 ms per frame). Anything that does
-  not fit is budgeted (`docs/decisions/mesh-budgets.md`) or moved off the
-  frame. Terrain edits patch vertex buffers in place, never rebuild geometry.
+- Terraces are `BAND_HEIGHT` tall; a click moves one band; a tread is one world
+  unit wide.
+- The default brush edits only its footprint. Relaxation runs only under the
+  smooth tool.
+- Sea and freshwater are derived from the terrain, never simulated.
+
+## Rendering and plugins
+
+- **≥ 140 fps on the owner's machine** (≈ 7 ms per frame). What does not fit is
+  budgeted (`docs/decisions/mesh-budgets.md`) or moved off the frame.
+- Terrain edits patch vertex buffers in place, never rebuild geometry.
+- three keys every render object's pipeline on the set of visible lights
+  (`LightsNode.customCacheKey` hashes every visible light id). A change disposes
+  and rebuilds every render object, program and pipeline in the scene.
+- A plugin's dynamic point lights are a fixed-size bank
+  (`client/src/plugins/kit/lightBank.ts`), created and parented at attach,
+  permanently visible, parked by intensity 0 only. Nothing after attach adds,
+  removes, hides or reparents a light.
+- Materials and geometries on spawn paths are built at attach, pooled and
+  reused. Nothing constructs a material or node graph after attach.
+- `client/src/render/settleWarmup.ts` compiles hidden drawables at terrain
+  settle. A drawable that only exists after settle needs a hidden specimen at
+  attach or a `requestShaderWarmup()` call once it appears.
 
 ## Glossary
 
