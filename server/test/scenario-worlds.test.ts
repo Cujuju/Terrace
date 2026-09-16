@@ -16,6 +16,15 @@ const SCULPTOR: Player = { id: 'session-1', token: 'token-1', name: 'Sculptor' }
 const RAISING = 1;
 const LOWERING = -1;
 
+/** Cells each world's wire-legal script writes; an ack without terrain fails here. */
+const CELLS_WRITTEN: Record<GoldenWorldName, number> = {
+  'genesis-noise': 2000,
+  arch: 1192,
+  terrace: 1572,
+  shoreline: 1341,
+  played: 665,
+};
+
 /** `anchor: 'free'` and `spill: 'free'` are library paths; no intent can ask for them. */
 function isWireLegal(step: StrokeScriptStep): boolean {
   if (!SCULPT_TOOLS.includes(step.tool as (typeof SCULPT_TOOLS)[number])) return false;
@@ -74,6 +83,7 @@ describe.each(GOLDEN_WORLD_NAMES)('the golden stroke script replays through the 
     const refused: string[] = [];
     const applied: string[] = [];
     let seq = 0;
+    let cells = 0;
 
     for (const step of scriptFor(world)) {
       if (!isWireLegal(step)) continue;
@@ -84,6 +94,7 @@ describe.each(GOLDEN_WORLD_NAMES)('the golden stroke script replays through the 
       expect(outcome.faulted).toBe(false);
       if (outcome.outcome?.applied === true) {
         applied.push(step.name);
+        cells += outcome.outcome.diff.length;
         expect(entriesOfKind(outcome.entries, 'ack')).toEqual([
           { kind: 'ack', to: SCULPTOR.id, seq },
         ]);
@@ -94,5 +105,7 @@ describe.each(GOLDEN_WORLD_NAMES)('the golden stroke script replays through the 
 
     expect(refused).toEqual([]);
     expect(applied.length).toBeGreaterThan(0);
+    expect(cells).toBe(CELLS_WRITTEN[world]);
+    expect(scenario.world.dirty).toBe(true);
   });
 });
