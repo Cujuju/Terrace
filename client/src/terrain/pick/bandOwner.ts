@@ -1,6 +1,6 @@
 import {
   ISOLINE_SAMPLES_PER_CELL,
-  drawnBandAt,
+  drawnLayerCapAt,
   drawnSpanCapHeight,
   isSpanDrawn,
   spanAt,
@@ -15,6 +15,13 @@ import type { BandOwner, DrawnCap, ScaledRay } from './types.ts';
 
 const DRAWN_CAP_SAMPLES_PER_CELL = 2 * ISOLINE_SAMPLES_PER_CELL;
 
+/** Band whose slab holds world height `y`: ((band - 1) cap, band cap]. */
+function bandHoldingY(y: number): number {
+  const band = Math.ceil(y / BAND_WORLD_HEIGHT);
+  // Division can round a y sitting exactly on a cap into the band above.
+  return (drawnBandCapY(band - 1) >= y ? band - 1 : band) + 0;
+}
+
 export function drawnCapMet(
   mirror: TerrainMirror,
   ray: ScaledRay,
@@ -22,14 +29,18 @@ export function drawnCapMet(
   tExit: number,
 ): DrawnCap | null {
   const reach = tExit - tEnter;
-  for (let s = 0; s <= DRAWN_CAP_SAMPLES_PER_CELL; s++) {
-    const t = tEnter + (reach * s) / DRAWN_CAP_SAMPLES_PER_CELL;
+  // Layers are banded, so a sample per band crossed keeps a thin slab from
+  // falling between samples.
+  const bandsCrossed = Math.ceil(Math.abs(reach * ray.dy) / BAND_WORLD_HEIGHT);
+  const samples = Math.max(DRAWN_CAP_SAMPLES_PER_CELL, bandsCrossed);
+  for (let s = 0; s <= samples; s++) {
+    const t = tEnter + (reach * s) / samples;
     const u = ray.ox + t * ray.dx;
     const v = ray.oz + t * ray.dz;
-    const band = drawnBandAt(mirror.map, u, v);
-    const drawnY = drawnBandCapY(band);
-    if (ray.oy + t * ray.dy <= drawnY) {
-      return { t, band, capY: band * BAND_WORLD_HEIGHT, drawnY, u, v };
+    // The layer at the ray's own height: a carved gap under a roof is open.
+    const band = drawnLayerCapAt(mirror.map, u, v, bandHoldingY(ray.oy + t * ray.dy));
+    if (band !== null) {
+      return { t, band, capY: band * BAND_WORLD_HEIGHT, drawnY: drawnBandCapY(band), u, v };
     }
   }
   return null;

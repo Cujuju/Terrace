@@ -83,6 +83,9 @@ export function terrainHitInCell(
     const planeT = insideOnEntry || dy === 0 ? tEnter : tEnter + (metY - entryY) / dy;
     const t = met !== null && insideOnEntry && planeT < met.t ? met.t : planeT;
     if (t >= hitT) continue;
+    // A riser strike delayed to the drawn met sits at the ray's height there,
+    // so the owner search tests the layer the ray actually met.
+    const strikeY = insideOnEntry ? oy + t * dy : faceY;
     hitT = t;
     hit = {
       x: i,
@@ -90,7 +93,7 @@ export function terrainHitInCell(
       surfaceY: capY,
       spanIndex: k,
       face: insideOnEntry ? 'riser' : onOrAboveCap ? 'tread' : 'underside',
-      hitY: faceY,
+      hitY: strikeY,
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
     };
