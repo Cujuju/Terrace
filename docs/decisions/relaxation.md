@@ -100,3 +100,30 @@ world (`.sim-108/plugins.mjs`), driven through the same
   plume and the settings preview). Retuning to 6 or 8 bands would overshoot to
   11.4 or 12.4 bands on flat ground and make genesis dearer. Recorded on the
   constant, and on `VENT_SUMMIT_WORLD_UNITS`, which is now labelled nominal.
+
+## Decisions made 2026-09-15 (the player smooth is closed again, and its cascade is bounded by the brush)
+
+**Smooth only moves height; it never invents it (owner).** The intent of the
+tool is to soften the edges stamping leaves, not to add or remove land. The
+anchored melt introduced on 2026-09-14 (`948e5e4c`, generalised in `648826f9`,
+budgeted in `b0c8a0f4`) let one side of a bounded pair move alone, which made
+a press manufacture height; it is removed (`bc4b930e`). Every move is an
+exact even exchange again, so the CLOSED property above holds for the player
+tool as well as the library `settle`. The anchor freeze from `fae5150a` stays:
+a footprint cell already past the stroke's target does not move, so a step
+taller than one drawn band does not melt from either side. Pinned by the
+whole-map sum in `heightmap-relax` and the 600-press flux test in
+`heightmap-layers`.
+
+**The player smooth's cascade stops at a reach derived from the brush.** The
+sweep used to grow one cell per pass with no spatial bound, so one press on
+over-steep genesis ground rewrote a quarter of a 512² world. The `smooth`
+tool now passes a reach to the sweep: the brush radius plus a named margin
+beyond the footprint, the smallest that converges a one-band stamp edge on
+flat ground at every radius (measured: 2 at r=1 … 18 at r=16, i.e. r+2).
+Pairs straddling the reach edge are left as they are — the same accepted
+residual as the pass cap, repaired by the next stroke that reaches them.
+`sculptReachCells` in `shared/src/sculpt/reach.ts` is the one statement of
+how far a stroke can write; the server's fault resync reads it. The library
+`settle` (plugin cones, craters, slides) keeps the unbounded sweep, so the
+constants re-derived above are untouched.
