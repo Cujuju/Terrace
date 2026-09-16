@@ -13,6 +13,9 @@ export interface WarmupResult {
   readonly flipped: number;
 }
 
+/** Flipping a shared `material.side` is safe only while nothing can turn visible mid-pass. */
+export type SideFlip = 'allowed' | 'forbidden';
+
 interface DrawableFlags {
   isMesh?: boolean;
   isPoints?: boolean;
@@ -115,7 +118,10 @@ async function compilePass(
  * `_projectObject` drops before pipeline creation, so nothing pays its WGSL
  * compile on a first visible frame mid-play.
  */
-export async function warmHiddenDrawables(scope: WarmupScope): Promise<WarmupResult> {
+export async function warmHiddenDrawables(
+  scope: WarmupScope,
+  sideFlip: SideFlip = 'forbidden',
+): Promise<WarmupResult> {
   // A cold renderer makes compileAsync await init() before it projects, which would put
   // the restore below ahead of projection: the flags would be back to hidden, warming nothing.
   if (!scope.renderer.initialized) return { flipped: 0 };
@@ -133,6 +139,10 @@ export async function warmHiddenDrawables(scope: WarmupScope): Promise<WarmupRes
   // A material a visible drawable also uses is already compiled for both sides by the
   // real render, and overriding it would show that object single-sided during the await.
   for (const material of walk.shownMaterials) walk.doublePass.delete(material);
+
+  // A pass holds the flip for its whole length, seconds, so a drawable shown meanwhile
+  // would draw one-sided: only the pass before play may flip.
+  if (sideFlip === 'forbidden') walk.doublePass.clear();
 
   markBoot(BOOT_MARKS.settleWarmupStart);
   if (walk.doublePass.size === 0) {

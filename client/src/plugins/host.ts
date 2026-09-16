@@ -10,7 +10,7 @@ import { rendererBackendName } from '../render/rendererBackend.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
 import { frameStatsSample, recordPluginFrame } from '../render/frameStats.ts';
 import { applySkyRig, skyRigEquals, type SkyRigState } from '../render/skyRig.ts';
-import { warmHiddenDrawables } from '../render/settleWarmup.ts';
+import { warmHiddenDrawables, type SideFlip } from '../render/settleWarmup.ts';
 import {
   clearGroundShade,
   configureGroundShade,
@@ -321,6 +321,7 @@ export function createClientPluginHost(
   let warmedOnce = false;
   let warmupInFlight = false;
   let warmupQueued = false;
+  let settlePassStarted = false;
 
   const runWarmup = (): void => {
     if (warmupInFlight) {
@@ -328,7 +329,10 @@ export function createClientPluginHost(
       return;
     }
     warmupInFlight = true;
-    void warmHiddenDrawables(viewport)
+    // Only the settle pass runs before play, so only it may flip a shared material side.
+    const sideFlip: SideFlip = settlePassStarted ? 'forbidden' : 'allowed';
+    settlePassStarted = true;
+    void warmHiddenDrawables(viewport, sideFlip)
       .catch((error: unknown) => {
         console.error('[terrace] shader warmup threw', error);
       })

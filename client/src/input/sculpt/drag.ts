@@ -6,6 +6,12 @@ import { blinkFlat, markUnsent, noteSent } from './cues.ts';
 import { hoverTarget } from './aim.ts';
 import type { EmitOutcome, StrokeState } from './strokeState.ts';
 
+/**
+ * Chrome, default zoom, 60 Hz: a 1900px flick in 150ms peaks near 330px a
+ * frame, about 102 cells — seven legs. One above that; the rest is dropped.
+ */
+export const MAX_DRAG_LEGS_PER_MOVE = 8;
+
 export const emitDragOutcome = (
   s: StrokeState,
   toX: number,
@@ -37,11 +43,14 @@ export const emitDragOutcome = (
   }
   const fromX = s.lastDragToX;
   const fromY = s.lastDragToY;
-  const legs = Math.ceil(chebyshevDistance(fromX, fromY, toX, toY) / MAX_DRAG_SWEEP_CELLS);
+  const span = Math.ceil(chebyshevDistance(fromX, fromY, toX, toY) / MAX_DRAG_SWEEP_CELLS);
+  // Past the cap the jump's tail is dropped, not compressed: each leg keeps its
+  // own length, and the hold carries on from the last one sent.
+  const legs = span > MAX_DRAG_LEGS_PER_MOVE ? MAX_DRAG_LEGS_PER_MOVE : span;
   let sentAny = false;
   for (let leg = 1; leg <= legs; leg++) {
-    const legX = fromX + Math.round(((toX - fromX) * leg) / legs);
-    const legY = fromY + Math.round(((toY - fromY) * leg) / legs);
+    const legX = fromX + Math.round(((toX - fromX) * leg) / span);
+    const legY = fromY + Math.round(((toY - fromY) * leg) / span);
     const legOutcome = emitDragLeg(s, legX, legY, dir, radius, band, {
       x: s.lastDragToX,
       y: s.lastDragToY,

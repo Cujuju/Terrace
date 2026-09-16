@@ -70,8 +70,10 @@ export function createMonsterModels(onTemplateWarmed?: TemplateWarmed): MonsterM
   };
 
   const cancelWarmUp = warmWhenIdle(TEMPLATE_KEYS, (key) => {
+    // A template a spawn already built is compiled: a specimen and its re-warm buy nothing.
+    const spawnBuilt = built.has(key);
     templateOf(key);
-    if (onTemplateWarmed === undefined) return;
+    if (spawnBuilt || onTemplateWarmed === undefined) return;
     const spec = templateSpec(key);
     onTemplateWarmed(spec.kind, spec.variant);
   });
