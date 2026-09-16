@@ -392,6 +392,7 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldClose(): void {
+    currentWorld = null;
     clearFuelRegistry();
     clearEntityFuelRegistry();
   },
