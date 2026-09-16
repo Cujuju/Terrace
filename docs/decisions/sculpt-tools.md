@@ -26,9 +26,10 @@ Facts about the player sculpt tools as they stand. Relaxation rules: `relaxation
 
 ## Price (mana plugin)
 
-- Price = displacement + unlock. Displacement is the nominal brush volume for (radius, profile, tool, sweep steps, carve depth), terrain-independent, so client gate and server agree without seeing the terrain.
+- Price = displacement + unlock. Admission denies on the nominal (`sculptIntentCost`: brush volume for radius, profile, tool, carve depth; a drag leg counts its swept capsule cells). The charge is the actual displacement, the sum of solid units changed over the diff, measured once by `displacementOf` in `shared/src/sculpt/price.ts`. A smooth pays both sides of every exchange. A player who can afford the actual but not the nominal is denied.
+- A drag leg is one capsule, `shared/src/sculpt/sweep.ts`: wards, monster ground, reveal, unlock and the nominal read the same swept shape. At most `MAX_DRAG_LEGS_PER_MOVE` legs per pointer move; the remainder is dropped without a cue.
 - Unlock = `CHUNK_UNLOCK_MANA` per chunk of frontier the stroke's reveal reach opens. Flat, not scaled by perks.
-- Charge follows effect: an applied stroke whose diff is empty pays unlock only; a stroke that moved one cell pays the full displacement. Both push the balance so the client's optimistic debit is erased.
+- The client quotes the actual price by dry-running the stroke on its mirror when the whole reach is received, otherwise the nominal labelled estimated; the gate reserves the nominal. The server's balance push erases the optimistic debit.
 - Zero-effect strokes are applied, not denied. Opening the frontier without sculpting is a legitimate act.
 
 ## Edges of the world
