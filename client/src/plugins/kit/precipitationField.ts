@@ -46,6 +46,7 @@ export interface PrecipitationFieldSpec {
 export interface PrecipitationField {
   readonly object: Object3D;
   claimSlot(): number;
+  setDensity(slot: number, fraction: number): void;
   update(slot: number, disc: InterpolatedDisc, elapsed: number): void;
   updateWorld(
     slot: number,
@@ -75,6 +76,7 @@ export function createPrecipitationField(
   const disc = new Float32Array(vertices * 2);
   const births = new Float32Array(vertices);
   const phases = new Float32Array(vertices);
+  const densities = new Float32Array(vertices);
   const ends = new Float32Array(vertices);
   let write = 0;
   for (let particle = 0; particle < particles; particle++) {
@@ -83,12 +85,14 @@ export function createPrecipitationField(
     const angle = Math.random() * TWO_PI;
     const birth = Math.random();
     const phase = Math.random() * TWO_PI;
+    const densitySeed = Math.random();
     for (let end = 0; end < verticesPerParticle; end++) {
       slotOf[write] = slot;
       disc[write * 2] = Math.cos(angle) * r;
       disc[write * 2 + 1] = Math.sin(angle) * r;
       births[write] = birth;
       phases[write] = phase;
+      densities[write] = densitySeed;
       ends[write] = end;
       write++;
     }
@@ -100,12 +104,15 @@ export function createPrecipitationField(
   geometry.setAttribute('aDisc', new Float32BufferAttribute(disc, 2));
   geometry.setAttribute('aBirth', new Float32BufferAttribute(births, 1));
   geometry.setAttribute('aPhase', new Float32BufferAttribute(phases, 1));
+  geometry.setAttribute('aDensity', new Float32BufferAttribute(densities, 1));
   geometry.setAttribute('aEnd', new Float32BufferAttribute(ends, 1));
 
   const slots = createMassSlots(spec.maxMasses);
+  const massDensity: number[] = Array.from({ length: spec.maxMasses }, () => 1);
   const massXZNode = uniformArray<'vec2'>(slots.massXZ, 'vec2');
   const massSizeNode = uniformArray<'vec2'>(slots.massSize, 'vec2');
   const massVelocityNode = uniformArray<'vec2'>(slots.massVelocity, 'vec2');
+  const massDensityNode = uniformArray<'float'>(massDensity, 'float');
   // Fall and sway phases advance in float64 on the CPU; the shader only wraps.
   const fallPhaseNode = uniform(0);
   const swayPhaseNode = uniform(0);
@@ -117,6 +124,7 @@ export function createPrecipitationField(
   const aDisc = attribute<'vec2'>('aDisc', 'vec2');
   const aBirth = attribute<'float'>('aBirth', 'float');
   const aPhase = attribute<'float'>('aPhase', 'float');
+  const aDensitySeed = attribute<'float'>('aDensity', 'float');
   const aEnd = attribute<'float'>('aEnd', 'float');
 
   const fraction = fract(aBirth.add(fallPhaseNode));
@@ -138,7 +146,9 @@ export function createPrecipitationField(
   );
   const lit = size.y.greaterThan(0);
   const parked = vec3(centre.x, float(CLOUD_BASE_WORLD_Y), centre.y);
-  const fade = varying(size.y.mul(profile.opacity), 'vPrecipitationFade');
+  const dense = aDensitySeed.lessThanEqual(massDensityNode.element(slot));
+  const densityGate = select(dense, float(1), float(0));
+  const fade = varying(size.y.mul(profile.opacity).mul(densityGate), 'vPrecipitationFade');
 
   const material =
     profile.form === 'streak'
@@ -176,6 +186,11 @@ export function createPrecipitationField(
       return slots.claim();
     },
 
+    setDensity(slot: number, fraction: number): void {
+      if (slot < 0 || slot >= massDensity.length) return;
+      massDensity[slot] = Math.min(1, Math.max(0, fraction));
+    },
+
     update(slot: number, disc: InterpolatedDisc, elapsed: number): void {
       advanceClock(elapsed);
       object.visible = slots.update(slot, disc);
@@ -187,6 +202,7 @@ export function createPrecipitationField(
     },
 
     park(slot: number): void {
+      if (slot >= 0 && slot < massDensity.length) massDensity[slot] = 1;
       object.visible = slots.park(slot);
     },
 
@@ -194,6 +210,7 @@ export function createPrecipitationField(
       geometry.dispose();
       material.dispose();
       slots.reset();
+      massDensity.fill(1);
     },
   };
 }
