@@ -2,7 +2,9 @@ import {
   CHUNK_SIZE,
   chunkIndex,
   chunksPerEdge,
-  revealChunkIndices,
+  chunksWithinSweep,
+  revealReachCells,
+  strokeSweep,
   type CellDiff,
   type SculptIntent,
 } from '@terrace/shared';
@@ -29,12 +31,8 @@ function creepForSculptor(
 
 function openReach(world: WorldApi, intent: SculptIntent, token: string): void {
   const cols = chunksPerEdge(world.worldSize);
-  for (const index of revealChunkIndices(
-    world.worldSize,
-    intent.x,
-    intent.y,
-    intent.radius,
-  )) {
+  const sweep = strokeSweep(intent);
+  for (const index of chunksWithinSweep(world.worldSize, sweep, revealReachCells(sweep.radius))) {
     world.unlockChunkForToken(token, index % cols, Math.floor(index / cols));
   }
 }
