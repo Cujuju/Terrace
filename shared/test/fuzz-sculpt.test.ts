@@ -3,7 +3,6 @@ import {
   applySculpt,
   BAND_HEIGHT,
   BEDROCK_FLOOR,
-  CARVE_BANDS_PER_STROKE,
   cellIndex,
   columnCoversBand,
   createHeightmap,
@@ -39,7 +38,7 @@ import {
   cloneHeightmap,
   expectCarveCutsOnlyNamedSlabs,
   expectColumnsCanonical,
-  expectDrawnCoverageContainsMaterial,
+  expectDrawnCoverageMatchesMaterial,
   expectGapsSurvive,
   expectGradientLimitOverDiff,
   expectHeightSumConserved,
@@ -300,7 +299,7 @@ function runWireStroke(
   }
 
   expectColumnsCanonical(map, watched, context);
-  expectDrawnCoverageContainsMaterial(map, watched, context);
+  expectDrawnCoverageMatchesMaterial(map, watched, context);
   expectStrokeWithinReach(map, diff, sweptOrigins(map, intent), reach, context);
   expectPriceIndependentOfTerrain(
     intent.radius,
@@ -311,7 +310,7 @@ function runWireStroke(
   );
 
   if (options.tool === 'carve' && options.spanBand !== null) {
-    const [lo, hi] = carvedSlabRange(options.spanBand, CARVE_BANDS_PER_STROKE);
+    const [lo, hi] = carvedSlabRange(options.spanBand, options.depthBands);
     const footprint = footprintCells(map, intent.x, intent.y, intent.radius);
     expectCarveCutsOnlyNamedSlabs(map, before, diff, footprint, lo, hi, context);
   }
@@ -371,6 +370,6 @@ describe('seeded sculpt fuzzer', () => {
 
     expect(applied).toBeGreaterThan(0);
     expectColumnsCanonical(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
-    expectDrawnCoverageContainsMaterial(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
+    expectDrawnCoverageMatchesMaterial(map, every, `world "${name}" after ${FUZZ_STROKES} strokes`);
   });
 });

@@ -53,6 +53,15 @@ export function isSpanDrawn(span: Span): boolean {
   return span.floorBand <= spanCapBand(span);
 }
 
+/**
+ * The band a slab standing on `height` floors in: the lowest whose write level
+ * clears it. This is how a raw floor from an old save is read.
+ */
+export function floorBandOfHeight(height: number): number {
+  const band = drawnBandOfSample(height);
+  return bandLevelHeight(band) >= height ? band : band + 1;
+}
+
 export function spanCoversBand(span: Span, band: number): boolean {
   return span.floorBand <= band && band <= spanCapBand(span);
 }

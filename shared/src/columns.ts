@@ -4,6 +4,7 @@ export {
   BEDROCK_BAND,
   BEDROCK_FLOOR,
   canonicaliseColumn,
+  floorBandOfHeight,
   highestCeilingUnderSpan,
   isGapDrawn,
   isSpanDrawn,
