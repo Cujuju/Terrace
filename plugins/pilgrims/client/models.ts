@@ -1,13 +1,10 @@
 import {
-  BufferAttribute,
   CapsuleGeometry,
-  Color,
   ConeGeometry,
   CylinderGeometry,
   Group,
   Mesh,
   MeshLambertMaterial,
-  MeshPhongMaterial,
   SphereGeometry,
   TorusGeometry,
   type Bone,
@@ -18,6 +15,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
 
 const PILGRIM_AUTHORED_HEIGHT = 0.62;
@@ -111,22 +109,9 @@ interface WalkerJoints {
   readonly staff: Bone | null;
 }
 
-function paint(geometry: BufferGeometry, hex: number): BufferGeometry {
-  const linear = new Color(hex);
-  const count = geometry.getAttribute('position').count;
-  const colors = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    colors[i * 3] = linear.r;
-    colors[i * 3 + 1] = linear.g;
-    colors[i * 3 + 2] = linear.b;
-  }
-  geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  return geometry;
-}
-
 function mergePainted(parts: [BufferGeometry, number][]): BufferGeometry {
   const merged = mergeGeometries(
-    parts.map(([geometry, color]) => paint(geometry, color)),
+    parts.map(([geometry, color]) => bakeSolidColor(geometry, color)),
     false,
   );
   if (merged === null) {
@@ -218,11 +203,9 @@ export function createPilgrimModels(): PilgrimModels {
   }
 
   const bodyMaterial = new MeshLambertMaterial({ vertexColors: true });
-  const glossMaterial = new MeshPhongMaterial({
-    vertexColors: true,
-    shininess: 90,
-    specular: 0x777777,
-  });
+  // Matte gloss: eye and nose highlights were subpixel past a few metres, so
+  // Lambert keeps one program per walker instead of a Phong variant.
+  const glossMaterial = new MeshLambertMaterial({ vertexColors: true });
   materials.push(bodyMaterial, glossMaterial);
 
   const legGeometry = keep(new CapsuleGeometry(0.034, 0.052, 6, 16));

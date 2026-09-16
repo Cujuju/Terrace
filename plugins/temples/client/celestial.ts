@@ -13,6 +13,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -122,7 +123,7 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
   stone.add(bloom);
 
   const ringMaterial = keepMaterial(
-    new MeshLambertMaterial({ color: RING_COLOR, flatShading: true }),
+    new MeshLambertMaterial({ vertexColors: true, flatShading: true }),
   );
 
   const outerTilt = new Group();
@@ -135,7 +136,9 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
   const outerRadius = span * OUTER_RING_RADIUS_FRACTION;
   const ringTube = span * RING_TUBE_FRACTION;
   const outerRing = new Mesh(
-    keepGeometry(new TorusGeometry(outerRadius, ringTube, 6, 40)),
+    keepGeometry(
+      bakeSolidColor(new TorusGeometry(outerRadius, ringTube, 6, 40), RING_COLOR),
+    ),
     ringMaterial,
   );
   outerRing.rotation.x = Math.PI / 2;
@@ -161,7 +164,10 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
 
   const innerRing = new Mesh(
     keepGeometry(
-      new TorusGeometry(span * INNER_RING_RADIUS_FRACTION, ringTube, 6, 36),
+      bakeSolidColor(
+        new TorusGeometry(span * INNER_RING_RADIUS_FRACTION, ringTube, 6, 36),
+        RING_COLOR,
+      ),
     ),
     ringMaterial,
   );

@@ -4,14 +4,18 @@ import {
   materialEmissive,
   materialNormal,
   materialOpacity,
+  modelViewProjection,
   not,
   output,
   positionLocal,
+  vec4,
 } from 'three/tsl';
 import type { Node, NodeMaterial } from 'three/webgpu';
+import { radianceForDisplay } from './displayRadiance.ts';
 
 export interface SlotNodeType {
   position: 'vec3';
+  vertex: 'vec4';
   normal: 'vec3';
   color: 'vec3';
   opacity: 'float';
@@ -23,6 +27,7 @@ export type MaterialSlot = keyof SlotNodeType;
 
 type SlotProperty =
   | 'positionNode'
+  | 'vertexNode'
   | 'normalNode'
   | 'colorNode'
   | 'opacityNode'
@@ -31,6 +36,7 @@ type SlotProperty =
 
 const SLOT_PROPERTY: Readonly<Record<MaterialSlot, SlotProperty>> = {
   position: 'positionNode',
+  vertex: 'vertexNode',
   normal: 'normalNode',
   color: 'colorNode',
   opacity: 'opacityNode',
@@ -39,9 +45,11 @@ const SLOT_PROPERTY: Readonly<Record<MaterialSlot, SlotProperty>> = {
 };
 
 // three's own default for each slot, so a material with no effect stays the
-// stock material. `output` is the post-lighting, pre-tone-mapping vec4.
+// stock material. `vertex` is clip space, apart from the world-space `position`;
+// `output` is post-lighting, pre-tone-mapping.
 const SLOT_DEFAULT: Readonly<Record<MaterialSlot, () => Node>> = {
   position: () => positionLocal,
+  vertex: () => modelViewProjection,
   normal: () => materialNormal,
   color: () => materialColor,
   opacity: () => materialOpacity,
@@ -50,7 +58,7 @@ const SLOT_DEFAULT: Readonly<Record<MaterialSlot, () => Node>> = {
 };
 
 // NodeMaterial types each slot property with its own node-type union; the
-// contract composes all six uniformly.
+// contract composes all seven uniformly.
 type SlotNodes = Record<SlotProperty, Node | null>;
 
 export function compose<S extends MaterialSlot>(
@@ -92,4 +100,10 @@ export function discard(material: NodeMaterial, condition: Node<'bool'>): void {
     joinedKeeps.set(previous, joined);
   }
   material.maskNode = memo(joined, keep, () => and(previous, keep));
+}
+
+// The GLSL wrote display bytes straight to the framebuffer, bypassing tone
+// mapping. This puts a displayed colour back through it unchanged.
+export function composeDisplayedOutput(material: NodeMaterial): void {
+  compose(material, 'output', (previous) => vec4(radianceForDisplay(previous.rgb), previous.a));
 }

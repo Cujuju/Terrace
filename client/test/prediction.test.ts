@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
+  DRAWN_SHORE_HEIGHT,
   MAX_HEIGHT,
   MIN_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
@@ -11,6 +13,7 @@ import {
   createHeightmap,
   heightAt,
   sculptOptionsOf,
+  sculptReachCells,
   type CellDiff,
   type ChunkPayload,
   type Heightmap,
@@ -29,6 +32,7 @@ import {
   createPredictionStore,
   type PredictionStore,
 } from '../src/terrain/prediction.ts';
+import { createReachChecks } from '../src/terrain/predictionReach.ts';
 
 const WORLD = CHUNK_SIZE * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
@@ -94,7 +98,7 @@ describe('predict', () => {
 
     expect(store.pendingCount()).toBe(1);
     expect(mirror.map.cells).toEqual(expected.cells);
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(store.authoritativeHeightAt(CENTRE.x, CENTRE.y)).toBe(0);
     expect(dirty.has(chunkIndex(WORLD, 1, 1))).toBe(true);
   });
@@ -232,18 +236,22 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
 
     store.predict({ ...raise(CENTRE.x, CENTRE.y, MIN_BRUSH_RADIUS), tool: 'stamp' }, 0);
 
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1)).toBe(0);
   });
 
-  it('predicts the smooth tool as one crisp terrace, exactly like the server', () => {
+  it('predicts the smooth tool as a no-op on flat ground, exactly like the server', () => {
     const { mirror, store } = createClient();
 
     const pointBrush = WORLD_UNIT_CELLS;
-    store.predict({ ...raise(CENTRE.x, CENTRE.y, pointBrush), tool: 'smooth' }, 0);
+    const predicted = store.predict(
+      { ...raise(CENTRE.x, CENTRE.y, pointBrush), tool: 'smooth' },
+      0,
+    );
 
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(predicted.size).toBe(0);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(0);
     expect(bandOf(heightAt(mirror.map, CENTRE.x + pointBrush + 1, CENTRE.y))).toBe(0);
   });
 
@@ -260,7 +268,7 @@ describe('expiry', () => {
     const { mirror, store } = createClient();
 
     store.predict(raise(), 0);
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DRAWN_SHORE_HEIGHT);
     expect(store.nextExpiryAtMs()).toBe(PREDICTION_TTL_MS);
 
     const dirty = store.expire(PREDICTION_TTL_MS);
@@ -281,7 +289,7 @@ describe('expiry', () => {
 
     expect(store.pendingCount()).toBe(1);
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(0);
-    expect(heightAt(mirror.map, 40, 40)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, 40, 40)).toBe(DRAWN_SHORE_HEIGHT);
   });
 
   it('drops a stale prediction on the next authoritative message too', () => {
@@ -375,6 +383,86 @@ function rowInOwnChunk(cells: Int16Array | Heightmap['cells']): number[] {
   for (let x = 0; x <= FRONTIER_EDGE_X; x++) out.push(cells[FRONTIER_Y * WORLD + x]);
   return out;
 }
+
+// A terraced ramp: every riser is a whole band over one cell, which is exactly
+// the gradient relaxation cascades along. A smooth on it reaches far past its brush.
+const RAMP_TREAD_CELLS = WORLD_UNIT_CELLS;
+
+function rampChunk(cx: number, cy: number): ChunkPayload {
+  const heights: number[] = [];
+  for (let ly = 0; ly < CHUNK_SIZE; ly++) {
+    for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+      heights.push(Math.floor((cx * CHUNK_SIZE + lx) / RAMP_TREAD_CELLS) * BAND_HEIGHT);
+    }
+  }
+  return { cx, cy, heights };
+}
+
+function rampWorld(): ChunkPayload[] {
+  const out: ChunkPayload[] = [];
+  for (let cy = 0; cy < WORLD / CHUNK_SIZE; cy++) {
+    for (let cx = 0; cx < WORLD / CHUNK_SIZE; cx++) out.push(rampChunk(cx, cy));
+  }
+  return out;
+}
+
+function smoothAt(x: number, y: number, seq: number): SculptIntent {
+  return { type: 'sculpt', x, y, radius: MIN_BRUSH_RADIUS, dir: 1, tool: 'smooth', seq };
+}
+
+describe('a relaxing tool is judged by the reach it had, not the brush it used', () => {
+  // Close enough that the cascade crosses the frontier even though the brush
+  // and its halo do not: the reach guard is the only thing that can catch it.
+  const OVER_THE_FRONTIER_X =
+    FRONTIER_EDGE_X + 1 - sculptReachCells(MIN_BRUSH_RADIUS, 'hard', 'smooth', 'clicked');
+
+  it('refuses a smooth whose cascade runs into ground it was never sent', () => {
+    const { mirror, store } = createClient([rampChunk(0, 0)]);
+    const before = Array.from(mirror.map.cells);
+    expect(OVER_THE_FRONTIER_X + MIN_BRUSH_RADIUS).toBeLessThanOrEqual(FRONTIER_EDGE_X);
+
+    const dirty = store.predict(smoothAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
+
+    expect(dirty.size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+    expect(store.ghostSeqs()).toEqual([1]);
+    expect(Array.from(mirror.map.cells)).toEqual(before);
+  });
+
+  it('predicts a smooth whose cascade stops short of the frontier', () => {
+    const { store } = createClient([rampChunk(0, 0)]);
+
+    const dirty = store.predict(smoothAt(OVER_THE_FRONTIER_X - 1, FRONTIER_Y, 1), 0);
+
+    expect(store.ghostSeqs()).toEqual([]);
+    expect(store.pendingCount()).toBe(1);
+    expect(dirty.size).toBeGreaterThan(0);
+  });
+
+  it('still predicts the same smooth once the world around it is known', () => {
+    const { mirror, store } = createClient(rampWorld());
+    const before = Array.from(mirror.map.cells);
+
+    const dirty = store.predict(smoothAt(FRONTIER_EDGE_X - 4, FRONTIER_Y, 1), 0);
+
+    expect(dirty.size).toBeGreaterThan(0);
+    expect(store.pendingCount()).toBe(1);
+    expect(store.ghostSeqs()).toEqual([]);
+    expect(Array.from(mirror.map.cells)).not.toEqual(before);
+  });
+
+  it('leaves the refused stroke with nothing for the next diff to undo', () => {
+    const { mirror, store } = createClient([rampChunk(0, 0)]);
+    const before = Array.from(mirror.map.cells);
+    store.predict(smoothAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
+    expect(Array.from(mirror.map.cells)).toEqual(before);
+
+    store.resolveSeq(1);
+
+    expect(store.ghostSeqs()).toEqual([]);
+    expect(Array.from(mirror.map.cells)).toEqual(before);
+  });
+});
 
 describe('frontier sculpts (issue #21)', () => {
   it('never renders below the authoritative heights after a frontier stroke', () => {
@@ -470,14 +558,16 @@ describe('frontier sculpts (issue #21)', () => {
 
   it('still predicts a stroke that stays clear of the frontier by the halo', () => {
     const { mirror, store, server } = frontierFixture();
+    // A hard stamp deposits with the old melt's sweep (soft adds an apron
+    // past the halo): the frontier containment does not depend on tool.
     const intent: SculptIntent = {
       type: 'sculpt',
       x: FRONTIER_EDGE_X - 4,
       y: FRONTIER_Y,
       radius: 3,
       dir: 1,
-      tool: 'smooth',
-      profile: 'soft',
+      tool: 'stamp',
+      profile: 'hard',
       seq: 1,
     };
 
@@ -601,5 +691,92 @@ describe('the dirty set reports what the SCREEN needs, and only that', () => {
     expect(dirty.has(chunkIndex(WORLD, 0, 1))).toBe(true);
     expect(dirty.has(chunkIndex(WORLD, 1, 0))).toBe(true);
     expect(dirty.has(chunkIndex(WORLD, 0, 0))).toBe(true);
+  });
+});
+
+describe('a prediction is guarded by the whole reach, not a one-cell halo', () => {
+  // Chunks 0 and 1 on both axes are received, so cells 0..31 are known and
+  // anything from 32 on is ground the client was never sent.
+  const KNOWN_CHUNKS = 2;
+  const LAST_KNOWN_CELL = KNOWN_CHUNKS * CHUNK_SIZE - 1;
+  const RADIUS = 4;
+  const STEP_FILL = 5 * BAND_HEIGHT;
+
+  const frontierMirror = (): ReturnType<typeof createTerrainMirror> => {
+    const mirror = createTerrainMirror(WORLD);
+    const chunks: ChunkPayload[] = [];
+    for (let cy = 0; cy < KNOWN_CHUNKS; cy++) {
+      for (let cx = 0; cx < KNOWN_CHUNKS; cx++) {
+        chunks.push(chunkPayload(cx, cy, cx === 1 && cy === 1 ? STEP_FILL : 0));
+      }
+    }
+    applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks });
+    return mirror;
+  };
+
+  const smoothAt = (x: number, y: number): SculptIntent =>
+    ({ type: 'sculpt', x, y, radius: RADIUS, dir: 1, tool: 'smooth' });
+
+  const hardStampAt = (x: number, y: number): SculptIntent =>
+    ({ type: 'sculpt', x, y, radius: RADIUS, dir: 1, tool: 'stamp', profile: 'hard' });
+
+  it('refuses a smooth whose cascade crosses ground the client was never sent', () => {
+    const reach = createReachChecks(frontierMirror());
+    // Its own brush is entirely inside known ground; its cascade is not.
+    const clicked = { x: LAST_KNOWN_CELL - RADIUS - 1, y: LAST_KNOWN_CELL - RADIUS - 1 };
+    const extent = sculptReachCells(RADIUS, 'hard', 'smooth', 'clicked');
+    expect(clicked.x + extent).toBeGreaterThan(LAST_KNOWN_CELL);
+    expect(clicked.x + RADIUS).toBeLessThanOrEqual(LAST_KNOWN_CELL);
+
+    expect(reach.canPredictFaithfully(smoothAt(clicked.x, clicked.y))).toBe(false);
+    // The brush alone is known, so a tool that does not cascade still predicts.
+    expect(reach.canPredictFaithfully(hardStampAt(clicked.x, clicked.y))).toBe(true);
+  });
+
+  it('admits a smooth whose whole reach is known', () => {
+    const reach = createReachChecks(frontierMirror());
+    const extent = sculptReachCells(RADIUS, 'hard', 'smooth', 'clicked');
+    const clicked = { x: LAST_KNOWN_CELL - extent, y: LAST_KNOWN_CELL - extent };
+
+    expect(reach.canPredictFaithfully(smoothAt(clicked.x, clicked.y))).toBe(true);
+    expect(reach.canPredictFaithfully(hardStampAt(clicked.x, clicked.y))).toBe(true);
+  });
+
+  it('holds at every radius: the guard follows 2 * radius + the margin', () => {
+    const reach = createReachChecks(frontierMirror());
+    for (const radius of [MIN_BRUSH_RADIUS, 2, RADIUS, 8]) {
+      const extent = sculptReachCells(radius, 'hard', 'smooth', 'clicked');
+      const inside = { type: 'sculpt', x: LAST_KNOWN_CELL - extent, y: 8, radius, dir: 1, tool: 'smooth' } as const;
+      const over = { ...inside, x: LAST_KNOWN_CELL - extent + CHUNK_SIZE };
+      expect([radius, reach.canPredictFaithfully(inside)]).toEqual([radius, true]);
+      expect([radius, reach.canPredictFaithfully(over)]).toEqual([radius, false]);
+    }
+  });
+
+  it('ghosts the refused stroke instead of predicting it, and keeps nothing pending', () => {
+    const mirror = frontierMirror();
+    const store = createPredictionStore(mirror);
+    const clicked = { x: LAST_KNOWN_CELL - RADIUS - 1, y: LAST_KNOWN_CELL - RADIUS - 1 };
+    const before = Int16Array.from(mirror.map.cells);
+
+    const dirty = store.predict({ ...smoothAt(clicked.x, clicked.y), seq: 7 }, 0);
+
+    expect(dirty.size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+    expect(store.ghostSeqs()).toEqual([7]);
+    expect(Array.from(mirror.map.cells)).toEqual(Array.from(before));
+  });
+
+  it('still predicts a smooth that sits well inside known ground', () => {
+    const mirror = frontierMirror();
+    const store = createPredictionStore(mirror);
+    // On the step between the flat chunk and the raised one, so it has work.
+    const clicked = { x: CHUNK_SIZE, y: CHUNK_SIZE };
+
+    const dirty = store.predict({ ...smoothAt(clicked.x, clicked.y), seq: 8 }, 0);
+
+    expect(store.ghostSeqs()).toEqual([]);
+    expect(store.pendingCount()).toBe(1);
+    expect(dirty.size).toBeGreaterThan(0);
   });
 });

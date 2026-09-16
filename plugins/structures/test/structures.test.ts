@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DAYS_PER_WEEK, isSettlingDay } from '@terrace/shared';
 import { shouldSeed } from '../server/life.ts';
-import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, SEA_LEVEL, bandOf } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  MAX_BRUSH_RADIUS,
+  SEA_LEVEL,
+  bandOf,
+  drawnBandOfSample,
+} from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -124,6 +131,22 @@ describe('suitability (terrain as walls)', () => {
     expect(isFlatEnough(world, PLATEAU_MIN, 79)).toBe(false);
     expect(isBuildableCell(world, PLATEAU_MIN, 79)).toBe(false);
     expect(isBuildableCell(world, PLATEAU_MIN + FOOTPRINT_CHECK_RADIUS_CELLS, 79)).toBe(true);
+  });
+
+  it('reads the terrace the player sees: a soft-stamp edge is a different band', () => {
+    // A soft stamp leaves its apron one short of the level. Raw banding floors
+    // that to the terrace below; the mesh draws it on the one above.
+    const CAP = PLATEAU_BAND * BAND_HEIGHT;
+    const SOFT_APRON = CAP + BAND_HEIGHT - 1;
+    expect(bandOf(SOFT_APRON)).toBe(bandOf(CAP));
+    expect(drawnBandOfSample(SOFT_APRON)).not.toBe(drawnBandOfSample(CAP));
+
+    const world = view(
+      worldWithTerrain(160, (x, y) =>
+        x === 79 && y === 79 ? CAP : plateauHeight(x, y) === CAP ? SOFT_APRON : plateauHeight(x, y),
+      ),
+    );
+    expect(isFlatEnough(world, 79, 79)).toBe(false);
   });
 
   it('refuses cells outside the world and inside locked chunks', () => {
@@ -1066,6 +1089,39 @@ describe('world events (structures:changes)', () => {
     expect(payload.cause).toBe('sculpt');
     expect(payload.died).toHaveLength(4);
     expect(payload.died).toContainEqual({ x: 40, y: 40 });
+  });
+
+  it('a diff that leaves the resting band untouched (carve tunnel below) leaves settlements standing', () => {
+    const { host, events } = bootWithRecorder([
+      [40, 40],
+      [41, 40],
+      [40, 41],
+      [41, 41],
+    ]);
+
+    // A carve tunnel below emits a diff for the column (spans change) while the
+    // surface height — and therefore the resting band — is untouched.
+    host.notifyTerrainChanged([
+      { x: 40, y: 40, h: OPEN_BAND * BAND_HEIGHT, spans: [0, OPEN_BAND * BAND_HEIGHT] },
+      { x: 41, y: 40, h: OPEN_BAND * BAND_HEIGHT, spans: [0, OPEN_BAND * BAND_HEIGHT] },
+    ]);
+
+    expect(standingStructures()).toHaveLength(4);
+    expect(events.filter((heard) => heard.event === 'structures:changes')).toHaveLength(0);
+  });
+
+  it('a diff on a neighbouring cell alone leaves the settlement standing', () => {
+    const { host, events } = bootWithRecorder([
+      [40, 40],
+      [41, 40],
+      [40, 41],
+      [41, 41],
+    ]);
+
+    host.notifyTerrainChanged([{ x: 10, y: 10, h: (OPEN_BAND + 1) * BAND_HEIGHT }]);
+
+    expect(standingStructures()).toHaveLength(4);
+    expect(events.filter((heard) => heard.event === 'structures:changes')).toHaveLength(0);
   });
 });
 

@@ -4,7 +4,7 @@ import type {
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
-import { BOATS_PLUGIN_NAME, BOATS_STATE_MESSAGE } from '../protocol.ts';
+import { BOATS_PLUGIN_NAME, BOATS_STATE_MESSAGE, BOATS_WAYPOINTS_MESSAGE } from '../protocol.ts';
 import {
   KRAKEN_KIND,
   parseMonsterSightings,
@@ -20,6 +20,7 @@ import {
   burnableBoatAt,
   flammableBoats,
   forgetVillage,
+  fleetWaypointDebug,
   noteStormWind,
   rememberVillage,
   resetFleet,
@@ -63,6 +64,12 @@ function simulate(world: WorldApi, dt: number): void {
     boatStates(world.worldSize),
     (boat) => ({ x: boat.x, y: boat.y }),
     (visible) => ({ boats: visible }),
+  );
+  world.broadcastVisible(
+    BOATS_WAYPOINTS_MESSAGE,
+    fleetWaypointDebug().chains,
+    (chain) => ({ x: chain.anchor.x, y: chain.anchor.y }),
+    (visible) => ({ chains: visible }),
   );
 }
 

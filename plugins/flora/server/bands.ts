@@ -8,6 +8,7 @@ import {
   quantizeToBand,
 } from '@terrace/shared';
 import type { FringeSpecies } from '../protocol.ts';
+import { isPineBand } from '../protocol.ts';
 
 export const FLORA_GREEN_MIN_HEIGHT = GRASSLAND_MIN_HEIGHT;
 
@@ -35,6 +36,19 @@ export function isPlantableCell(world: FloraWorld, x: number, y: number): boolea
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (!world.isCellUnlocked(x, y)) return false;
   return isGreenBand(world.heightAt(x, y));
+}
+
+/** Every band that can hold a tree: meadow greens plus the high pine belt. */
+export function isTreeBand(height: number): boolean {
+  return isGreenBand(height) || isPineBand(height);
+}
+
+/** Where the forest may stand: unlocked, in-bounds, and on a tree band. */
+export function isTreeCell(world: FloraWorld, x: number, y: number): boolean {
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return false;
+  if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
+  if (!world.isCellUnlocked(x, y)) return false;
+  return isTreeBand(world.heightAt(x, y));
 }
 
 export const FLORA_HEATHER_MAX_HEIGHT =

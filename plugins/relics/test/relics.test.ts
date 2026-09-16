@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BAND_HEIGHT, MAX_BRUSH_RADIUS } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_BRUSH_RADIUS, type SculptIntent } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -57,6 +57,7 @@ import {
   skillsOf,
 } from '../server/index.ts';
 import { QUAKE_CORE_DEPTH_BANDS } from '../server/terraform.ts';
+import { wardedCellCount } from '../server/ward.ts';
 
 const WORLD_SIZE = 64;
 
@@ -588,5 +589,41 @@ describe('world events (relics:collected)', () => {
 
     entry?.[1](PLAYER, { id: relic?.id });
     expect(events.filter((heard) => heard.event === 'relics:collected')).toHaveLength(1);
+  });
+});
+
+
+describe('the bedrock ward claims the ground a stroke worked', () => {
+  const WARD_RADIUS = 4;
+
+  function sculpt(harness: Harness, intent: Partial<SculptIntent>): void {
+    handleSculptIntent({ world: harness.world, interceptors: harness.host }, PLAYER, {
+      type: 'sculpt',
+      x: TARGET_CELL.x,
+      y: TARGET_CELL.y,
+      radius: WARD_RADIUS,
+      dir: 1,
+      ...intent,
+    });
+  }
+
+  it('stamps the footprint of a stroke that moved terrain', () => {
+    const harness = boot();
+    collectSkill(harness, 'bedrock-ward');
+    expect(wardedCellCount()).toBe(0);
+
+    sculpt(harness, {});
+
+    expect(wardedCellCount()).toBeGreaterThan(0);
+  });
+
+  it('stamps nothing for a stroke that moved no terrain', () => {
+    const harness = boot();
+    collectSkill(harness, 'bedrock-ward');
+
+    // A carve naming no span cannot cut: the stroke is acked with an empty diff.
+    sculpt(harness, { dir: -1, tool: 'carve' });
+
+    expect(wardedCellCount()).toBe(0);
   });
 });

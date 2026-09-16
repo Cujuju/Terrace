@@ -12,7 +12,7 @@ export function footOfFaceCell(
   direction: Vec3,
   worldSize: number,
 ): { x: number; y: number } | null {
-  if (!pick.hitRiser) return { x: pick.x, y: pick.y };
+  if (pick.face !== 'riser') return { x: pick.x, y: pick.y };
   const horizontal = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
   if (!(horizontal > MIN_HORIZONTAL_DIRECTION)) return { x: pick.x, y: pick.y };
   const toEntry = distanceBackToBoxEntry(pick, direction);

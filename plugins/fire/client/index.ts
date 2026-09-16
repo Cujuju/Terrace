@@ -374,6 +374,7 @@ export const clientPlugin: TerraceClientPlugin = {
     scar?.dispose();
     scar = null;
     scarGroundAt = null;
+    lights?.dispose();
     lights = null;
     marker?.dispose();
     marker = null;

@@ -260,6 +260,8 @@ const GLOW_GAIN = 0.35;
 const TWINKLE_FRACTION = 0.3;
 const TWINKLE_DEPTH = 0.35;
 const TWINKLE_RATE = 2.2;
+// Star colour falls off as depthFade to this power, thinning the far field; was 2.
+const STAR_DEPTH_FADE_POWER = 3.0;
 
 const FBM_OCTAVES = 5;
 // Fields read only on the broad scale keep the first octaves, so the look is unchanged.
@@ -685,8 +687,11 @@ function starProgram(
     float(1.0),
     select(starGrid.lessThan(STAR_GRID_ARM), cellFade.mul(FINE_GRID_WEIGHT), cellFade),
   );
-  // A star never shrinks below STAR_MIN_PX.
-  const rPx = max(starShape.x.mul(u.focal).mul(u.res.y).div(t), STAR_MIN_PX);
+  // A star never shrinks below STAR_MIN_PX; an enlarged one is dimmed by its area ratio so its light holds.
+  const trueRPx = starShape.x.mul(u.focal).mul(u.res.y).div(t);
+  const rPx = max(trueRPx, STAR_MIN_PX);
+  const radiusRatio = trueRPx.div(rPx);
+  const enlargedDim = radiusRatio.mul(radiusRatio);
   const glow = select(starShape.y.lessThan(GLOW_FRACTION), float(1.0), float(0.0));
   const size = min(
     rPx.mul(2.0).mul(mix(float(1.0), GLOW_RADIUS, glow)).add(POINT_SPRITE_MARGIN_PX),
@@ -733,8 +738,8 @@ function starProgram(
       .mul(twinkle)
       .mul(weight)
       .mul(outer)
-      .mul(depthFade)
-      .mul(depthFade),
+      .mul(enlargedDim)
+      .mul(pow(depthFade, STAR_DEPTH_FADE_POWER)),
     'v_col',
   );
   const vShape = varying(vec3(rPx, glow, size), 'v_shape');
@@ -755,7 +760,9 @@ function starProgram(
       core.addAssign(smoothstep(vShape.x.mul(GLOW_RADIUS), 0.0, d).mul(GLOW_GAIN));
     });
     // toneMapped: false is inert on WebGPU, so the displayed colour is inverted through ACES.
-    return vec4(radianceForDisplay(vCol.mul(core)), 0.0);
+    // Blended before tone mapping: black inverts above zero, so subtract it or every covered pixel glows.
+    const blackRadiance = radianceForDisplay(vec3(0.0));
+    return vec4(max(radianceForDisplay(vCol.mul(core)).sub(blackRadiance), vec3(0.0)), 0.0);
   })();
 
   return { positionNode, sizeNode, fragmentNode };

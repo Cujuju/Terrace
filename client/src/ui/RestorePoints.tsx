@@ -131,7 +131,7 @@ export function RestorePoints(props: { actions: RollbackActions }): JSX.Element 
             value={operatorKey()}
             onInput={(event) => setOperatorKey(event.currentTarget.value)}
           />
-          <button type="submit" class="chart-button" disabled={operatorKey() === ''}>
+          <button type="submit" class="chart-button">
             List
           </button>
         </form>

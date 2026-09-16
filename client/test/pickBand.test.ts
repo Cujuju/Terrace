@@ -9,7 +9,7 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 import { bandOfPick, carveBandOfPick, resolvePick } from '../src/terrain/pickBand.ts';
-import type { TerrainRayPick } from '../src/terrain/picking.ts';
+import type { PickFace, TerrainRayPick } from '../src/terrain/picking.ts';
 
 const WORLD = 16;
 const CELL_X = 4;
@@ -23,7 +23,7 @@ function mapWith(spans: ReadonlyArray<{ floor: number; ceiling: number }>): Heig
 
 function pickAt(
   spanIndex: number,
-  hitRiser: boolean,
+  face: PickFace,
   hitHeight: number,
   surfaceHeight: number,
 ): TerrainRayPick {
@@ -31,7 +31,7 @@ function pickAt(
     x: CELL_X,
     y: CELL_Z,
     spanIndex,
-    hitRiser,
+    face,
     hitY: hitHeight * HEIGHT_WORLD_SCALE,
     surfaceY: surfaceHeight * HEIGHT_WORLD_SCALE,
     hitX: CELL_X * CELL_WORLD_SIZE,
@@ -50,7 +50,7 @@ describe('resolvePick / bandOfPick', () => {
   it('names the band whose slab a riser hit landed in', () => {
     const map = oneSpan();
     const midFace = BAND_HEIGHT * 6 - BAND_HEIGHT / 2;
-    expect(resolvePick(map, pickAt(0, true, midFace, CAP))).toEqual({ face: 'riser', band: 6 });
+    expect(resolvePick(map, pickAt(0, 'riser', midFace, CAP))).toEqual({ face: 'riser', band: 6 });
   });
 
   it('gives a riser hit exactly on the underside boundary the LOWEST drawn band', () => {
@@ -60,7 +60,7 @@ describe('resolvePick / bandOfPick', () => {
       { floor: BAND_HEIGHT * FLOOR_BAND, ceiling: CAP },
     ]);
     const undersideHeight = BAND_HEIGHT * (FLOOR_BAND - 1);
-    expect(resolvePick(map, pickAt(1, true, undersideHeight, CAP))).toEqual({
+    expect(resolvePick(map, pickAt(1, 'riser', undersideHeight, CAP))).toEqual({
       face: 'riser',
       band: FLOOR_BAND,
     });
@@ -68,7 +68,7 @@ describe('resolvePick / bandOfPick', () => {
 
   it('gives a tread hit the cap band of the struck span', () => {
     const map = oneSpan();
-    expect(resolvePick(map, pickAt(0, false, CAP, CAP))).toEqual({
+    expect(resolvePick(map, pickAt(0, 'tread', CAP, CAP))).toEqual({
       face: 'tread',
       band: CAP_BAND,
     });
@@ -81,7 +81,7 @@ describe('resolvePick / bandOfPick', () => {
       { floor: BAND_HEIGHT * FLOOR_BAND, ceiling: CAP },
     ]);
     const underside = BAND_HEIGHT * (FLOOR_BAND - 1);
-    expect(resolvePick(map, pickAt(1, false, underside, CAP))).toEqual({
+    expect(resolvePick(map, pickAt(1, 'underside', underside, CAP))).toEqual({
       face: 'underside',
       band: FLOOR_BAND,
     });
@@ -91,15 +91,15 @@ describe('resolvePick / bandOfPick', () => {
     const map = oneSpan();
     const aboveCap = CAP + BAND_HEIGHT;
     const belowUnderside = BEDROCK_FLOOR - BAND_HEIGHT * 2;
-    expect(bandOfPick(map, pickAt(0, true, aboveCap, CAP))).toBeNull();
-    expect(bandOfPick(map, pickAt(0, true, belowUnderside, CAP))).toBeNull();
+    expect(bandOfPick(map, pickAt(0, 'riser', aboveCap, CAP))).toBeNull();
+    expect(bandOfPick(map, pickAt(0, 'riser', belowUnderside, CAP))).toBeNull();
   });
 
   it('is null when the span index no longer exists, or the cell is off the world', () => {
     const map = oneSpan();
-    expect(bandOfPick(map, pickAt(1, true, BAND_HEIGHT * 5, CAP))).toBeNull();
-    expect(bandOfPick(map, { ...pickAt(0, true, BAND_HEIGHT * 5, CAP), x: -1 })).toBeNull();
-    expect(bandOfPick(map, { ...pickAt(0, true, BAND_HEIGHT * 5, CAP), y: WORLD })).toBeNull();
+    expect(bandOfPick(map, pickAt(1, 'riser', BAND_HEIGHT * 5, CAP))).toBeNull();
+    expect(bandOfPick(map, { ...pickAt(0, 'riser', BAND_HEIGHT * 5, CAP), x: -1 })).toBeNull();
+    expect(bandOfPick(map, { ...pickAt(0, 'riser', BAND_HEIGHT * 5, CAP), y: WORLD })).toBeNull();
   });
 });
 
@@ -111,23 +111,23 @@ describe('carveBandOfPick', () => {
   it('carves the band of the face on a riser hit — the SIDE FACE', () => {
     const map = oneSpan();
     const midFace = BAND_HEIGHT * 6 - BAND_HEIGHT / 2;
-    expect(carveBandOfPick(map, pickAt(0, true, midFace, CAP), LIP_NOWHERE)).toBe(6);
+    expect(carveBandOfPick(map, pickAt(0, 'riser', midFace, CAP), LIP_NOWHERE)).toBe(6);
   });
 
   it('carves the cap band on a tread hit WITH a lip in reach — the CORNER EDGE', () => {
     const map = oneSpan();
-    expect(carveBandOfPick(map, pickAt(0, false, CAP, CAP), LIP_EVERYWHERE)).toBe(CAP_BAND);
+    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP), LIP_EVERYWHERE)).toBe(CAP_BAND);
   });
 
   it('carves NOTHING on a tread hit with no lip in reach', () => {
     const map = oneSpan();
-    expect(carveBandOfPick(map, pickAt(0, false, CAP, CAP), LIP_NOWHERE)).toBeNull();
+    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP), LIP_NOWHERE)).toBeNull();
   });
 
   it('asks the lip test about exactly the band it would carve', () => {
     const map = oneSpan();
     const asked: number[] = [];
-    carveBandOfPick(map, pickAt(0, false, CAP, CAP), (band) => {
+    carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP), (band) => {
       asked.push(band);
       return true;
     });
@@ -143,8 +143,8 @@ describe('carveBandOfPick', () => {
     ]);
     for (const spanIndex of [0, 1]) {
       for (let h = BEDROCK_FLOOR; h <= CAP; h += BAND_HEIGHT / 2) {
-        for (const riser of [true, false]) {
-          const band = carveBandOfPick(map, pickAt(spanIndex, riser, h, CAP), LIP_EVERYWHERE);
+        for (const face of ['riser', 'tread', 'underside'] as const) {
+          const band = carveBandOfPick(map, pickAt(spanIndex, face, h, CAP), LIP_EVERYWHERE);
           if (band === null) continue;
           expect(spanIndexCoveringBand(map, CELL_X, CELL_Z, band)).not.toBeNull();
         }

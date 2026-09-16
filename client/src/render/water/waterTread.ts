@@ -79,6 +79,11 @@ export function appendRegionTile(
   surfaceY: number,
   out: number[],
 ): ContourLoop[] {
+  // Surface band 0 is the ocean's own level: the sea plane already draws
+  // every below-sea surface, so a region sheet here can only double-draw
+  // the sea (or float above it on cap+lift) — never add water at band 0.
+  // Higher-band curtains still fall to the sea; only region emission stops.
+  if (region.surfaceBand === 0) return [];
   const threshold = region.surfaceBand * BAND_HEIGHT;
   const fieldAt = regionFieldAt(mirror, region, threshold);
 
@@ -90,6 +95,11 @@ export function appendRegionTile(
   const loops = assembleLoops(segmentCount, tileX, tileZ, domainInside(threshold, null))
     .map(simplifyLoop)
     .filter((loop) => loop.length >= 3);
+  emitSheet(loops, surfaceY, out);
+  return loops;
+}
+
+function emitSheet(loops: ContourLoop[], surfaceY: number, out: number[]): void {
   for (const polygon of groupLoops(loops)) {
     let merged = polygon.outer;
     for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
@@ -99,7 +109,6 @@ export function appendRegionTile(
       out.push(c.x * CELL_WORLD_SIZE, surfaceY, c.z * CELL_WORLD_SIZE);
     });
   }
-  return loops;
 }
 
 function regionFieldAt(

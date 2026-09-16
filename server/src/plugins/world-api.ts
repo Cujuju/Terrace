@@ -4,6 +4,7 @@ import type {
   RiverNetwork,
   SculptOptions,
 } from '@terrace/shared';
+import { LIBRARY_SCULPT_TOOL } from '@terrace/shared';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import { applyServerSculpt } from '../world/sculpt-service.ts';
@@ -11,7 +12,7 @@ import type { World } from '../world/world.ts';
 import type { SiblingModule, WorldApi } from './types.ts';
 
 export const PLUGIN_SCULPT_OPTIONS: SculptOptions = {
-  tool: 'smooth',
+  tool: LIBRARY_SCULPT_TOOL,
   profile: 'soft',
   spill: 'banded',
 };

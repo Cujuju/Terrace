@@ -1,7 +1,7 @@
 import { createEffect } from 'solid-js';
 import { render } from 'solid-js/web';
 import { Raycaster, Vector2 } from 'three';
-import { connect, type ConnectionStatus } from './net/connection.ts';
+import { connect, type ConnectionStatus, type TerrainSink } from './net/connection.ts';
 import { bindCameraControls } from './input/cameraBindings.ts';
 import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
@@ -32,6 +32,7 @@ import {
   sculptMode,
   setConnectionStatus,
   setHoverPick,
+  showDenialHint,
 } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
 import {
@@ -75,7 +76,9 @@ const gpuMesher = await createGpuChunkBuildSource(viewport.renderer, chunkBuildS
 // The join is issued right after the last await, so its round trip overlaps the rest of
 // boot; every callback below reaches its target lazily, and nothing runs before wiring.
 const connection = connect({
-  sink: () => world,
+  // ANY sculptDenied pulses the red-brush refused hold (the releaseStroke path);
+  // world.onSculptDenied resolves the prediction and selects the hint text.
+  sink: () => deniedAwareSink,
   operator: {
     onRestorePointList: (msg) => applyRestorePointList(msg),
     onRollbackResult: (msg) => applyRollbackResult(msg),
@@ -90,7 +93,10 @@ const connection = connect({
   },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
-  onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
+  onLivePlugins: (names, worldGeneration) => {
+    pluginHost.resetWorld(worldGeneration);
+    pluginHost.syncLivePlugins(names);
+  },
   onPerfLoggingState: applyServerPerfLogging,
 });
 bindPerfLoggingSender({
@@ -181,22 +187,46 @@ const sculptInput = createSculptInput({
   worldSize: () => world.worldSize(),
   riserBand: (pick) =>
     world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan(), tool: brushTool() }),
-  bandAtCell: (x, y) => world.bandAtCell(x, y),
-  graspSpanBand: (pick) => world.graspSpanBand(pick),
+  bandAtCell: (x, y, spanBand) => world.bandAtCell(x, y, spanBand),
+  graspSpanBand: (pick, atX, atY) => world.graspSpanBand(pick, atX, atY),
   carveBand: (pick) => world.carveBand(pick),
   carveReach: (origin, direction, band) => world.carveReach(origin, direction, band),
   send: (intent) => {
+    // A local veto pulses red via releaseStroke and reports 'refused' so the
+    // input does not also latch the grey offline cue for it.
     if (!pluginHost.allowLocalIntent(intent)) {
       sculptInput.releaseStroke();
-      return false;
+      return 'refused';
     }
-    if (!connection.sendSculpt(intent)) return false;
+    if (!connection.sendSculpt(intent)) return 'offline';
     world.predictSculpt(intent);
-    return true;
+    return 'sent';
   },
 });
 
-const denialCue = createDenialCue(() => sculptInput.refusedHold());
+// The connection's sink closure runs lazily (after this module finishes), so it can
+// fan server denials out to both the world (resolve + hint) and the input
+// (pulse the red-brush refused hold) even though both are built after connect().
+const deniedAwareSink: TerrainSink = {
+  onSnapshot: (msg) => world.onSnapshot(msg),
+  onChunkUnlock: (msg) => world.onChunkUnlock(msg),
+  onTerrainDiff: (msg) => world.onTerrainDiff(msg),
+  onSculptDenied: (msg) => {
+    world.onSculptDenied(msg);
+    sculptInput.releaseStroke();
+    showDenialHint(world.denialHint());
+  },
+  onSculptApplied: (msg) => world.onSculptApplied(msg),
+};
+
+// The four brush cues: refused (red), offline (grey/hollow, never red), ghost
+// (the intent left but predicted nothing), flat (posture refusal, crosshair only).
+const denialCue = createDenialCue(() => sculptInput.refusedHold(), {
+  offline: () => sculptInput.offlineHold(),
+  ghost: () => world.ghostSeqs().length > 0,
+  flat: () => sculptInput.dragDescentFrozen(),
+  flatBlinks: () => sculptInput.flatBlinks(),
+});
 const brushPreview = createBrushPreview(
   viewport.scene,
   canvas,
@@ -206,13 +236,25 @@ const brushPreview = createBrushPreview(
 const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUERY_FLAG)
   ? createPickDebugOverlay(viewport.scene, canvas)
   : null;
+let frozenCursorShown = false;
 viewport.onFrame(() => {
   const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   world.setBrushRefused(denialCue.isRed());
+  // Descent gate, cue-only half: while the held drag plane is off the ray the stroke
+  // is frozen, so the cursor goes flat-mark crosshair. Lane E greys the held
+  // highlight itself off sculptInput.dragDescentFrozen().
+  if (sculptInput.dragDescentFrozen()) {
+    frozenCursorShown = true;
+    canvas.style.cursor = 'crosshair';
+  } else if (frozenCursorShown) {
+    frozenCursorShown = false;
+    canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
+  }
+  const tool = brushTool();
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
-    heldBand: sculptInput.heldBand(),
-    tool: brushTool(),
+    heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
+    tool,
   });
   brushPreview.update(
     pick === null
@@ -231,7 +273,7 @@ viewport.onFrame(() => {
   );
   pickDebug?.update(pick, grabbedBand);
   setHoverPick(
-    pick === null ? null : { x: pick.x, y: pick.y, hitRiser: pick.hitRiser, band: grabbedBand },
+    pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
   );
 });
 

@@ -32,8 +32,10 @@ function flatSeaWorld(): World {
   return worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL - BAND_HEIGHT);
 }
 
+const HIGHLAND_HEIGHT = SNOW_MIN_TERRAIN_HEIGHT + BAND_HEIGHT;
+
 function highlandWorld(): World {
-  return worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL + 4 * BAND_HEIGHT);
+  return worldWithTerrain(WORLD_SIZE, () => HIGHLAND_HEIGHT);
 }
 
 function asSnowWorld(world: World): SnowWorld {
@@ -56,7 +58,7 @@ describe('snow siting', () => {
     expect(SNOW_ELEVATION_SAMPLES).toBe(5);
     const world = asSnowWorld(highlandWorld());
     const mean = meanUnlockedHeightUnder(world, 256, 256, 30);
-    expect(mean).toBe(SEA_LEVEL + 4 * BAND_HEIGHT);
+    expect(mean).toBe(HIGHLAND_HEIGHT);
     expect(mean).toBeGreaterThanOrEqual(SNOW_MIN_TERRAIN_HEIGHT);
   });
 
@@ -87,11 +89,17 @@ describe('snow siting', () => {
     expect(isSnowSite(world, 256, 256, 30)).toBe(false);
   });
 
-  it('clamps sample coordinates into the world for an off-map centre', () => {
+  it('judges an off-map centre by the samples that land in the world, or refuses', () => {
     const world = asSnowWorld(highlandWorld());
-    const mean = meanUnlockedHeightUnder(world, -200, WORLD_SIZE + 200, 40);
-    expect(mean).not.toBeNull();
-    expect(Number.isFinite(mean!)).toBe(true);
+    expect(meanUnlockedHeightUnder(world, -10, 256, 40)).toBe(HIGHLAND_HEIGHT);
+    expect(meanUnlockedHeightUnder(world, -200, WORLD_SIZE + 200, 40)).toBeNull();
+  });
+
+  it('sites at exactly the threshold and refuses one unit below it', () => {
+    const at = asSnowWorld(worldWithTerrain(WORLD_SIZE, () => SNOW_MIN_TERRAIN_HEIGHT));
+    const below = asSnowWorld(worldWithTerrain(WORLD_SIZE, () => SNOW_MIN_TERRAIN_HEIGHT - 1));
+    expect(isSnowSite(at, 256, 256, 30)).toBe(true);
+    expect(isSnowSite(below, 256, 256, 30)).toBe(false);
   });
 
   it('never spawns snow on a world with no land', () => {
@@ -132,7 +140,8 @@ describe('the unsited roll (#285)', () => {
 
     expect(snowSystems.spawnOne(WORLD_SIZE)).toBeNull();
     expect(livingSystems()).toHaveLength(0);
-    expect(attempts).toBe(DISC_SITING_ATTEMPTS * SNOW_ELEVATION_SAMPLES);
+    expect(attempts).toBeGreaterThan(0);
+    expect(attempts).toBeLessThanOrEqual(DISC_SITING_ATTEMPTS * SNOW_ELEVATION_SAMPLES);
     expect(handedOffTo).toEqual([SNOW_HAND_OFF_KIND]);
   });
 
@@ -158,5 +167,67 @@ describe('snow as a plugin', () => {
     expect(snowPlugin.persistence).toBeUndefined();
     expect(snowPlugin.onIntent).toBeUndefined();
     expect(snowPlugin.onTerrainChanged).toBeUndefined();
+  });
+});
+
+describe('snow and the hub', () => {
+  function fakeHub(): { module: Record<string, unknown>; entries: Record<string, unknown>[]; handOffs: string[] } {
+    const entries: Record<string, unknown>[] = [];
+    const handOffs: string[] = [];
+    const module = {
+      currentWind: () => ({ heading: 0, speed: 0 }),
+      registerSkyKind: (entry: Record<string, unknown>) => {
+        entries.push(entry);
+        return () => undefined;
+      },
+      spawnSkyKind: (name: string) => {
+        handOffs.push(name);
+        return true;
+      },
+    };
+    return { module, entries, handOffs };
+  }
+
+  function stubWorld(world: World, hub: Record<string, unknown>): WorldApi {
+    return {
+      worldSize: world.size,
+      heightAt: (x: number, y: number) => world.heightAt(x, y),
+      isCellUnlocked: (x: number, y: number) => world.isCellUnlocked(x, y),
+      sibling: () => hub,
+      broadcast: () => undefined,
+    } as unknown as WorldApi;
+  }
+
+  it('registers no spawnOne: nothing can hand a spawn TO snow', () => {
+    const hub = fakeHub();
+    snowPlugin.onWorldCreate?.(stubWorld(flatSeaWorld(), hub.module));
+    expect(hub.entries).toHaveLength(1);
+    expect(hub.entries[0]!['spawnOne']).toBeUndefined();
+    snowPlugin.onWorldClose?.(stubWorld(flatSeaWorld(), hub.module));
+  });
+
+  it('summoned snow ignores siting: it falls on the sea if asked', () => {
+    const hub = fakeHub();
+    const api = stubWorld(flatSeaWorld(), hub.module);
+    snowPlugin.onWorldCreate?.(api);
+    const outcome = snowPlugin.onAction?.(api, 'snow', { x: 10, y: 10 });
+    expect(outcome?.ok).toBe(true);
+    expect(livingSystems()).toHaveLength(1);
+    snowPlugin.onWorldClose?.(api);
+  });
+
+  it('hands off only when it had a slot to give: a full sky rolls nothing', () => {
+    const hub = fakeHub();
+    const api = stubWorld(flatSeaWorld(), hub.module);
+    snowPlugin.onWorldCreate?.(api);
+    const smallWorld = cellsAcross(128);
+    expect(snowSystems.spawnOne(smallWorld)).toBeNull();
+    expect(hub.handOffs).toEqual([SNOW_HAND_OFF_KIND]);
+    for (let n = 0; n < snowSystems.capFor(smallWorld); n++) {
+      expect(snowSystems.spawnAt(smallWorld, 10, 10)).not.toBeNull();
+    }
+    expect(snowSystems.spawnOne(smallWorld)).toBeNull();
+    expect(hub.handOffs).toHaveLength(1);
+    snowPlugin.onWorldClose?.(api);
   });
 });

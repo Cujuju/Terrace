@@ -26,6 +26,9 @@ export function worldUnitsAcross(cells: number): number {
 
 export const SEA_LEVEL = 0;
 
+/** The first dry height. Band 0 starts here: a sea sample never rounds up to the waterline. */
+export const DRAWN_SHORE_HEIGHT = SEA_LEVEL + 1;
+
 export const MAX_HEIGHT = 1024;
 
 export const TERRACE_BAND_COUNT = 64;
@@ -72,6 +75,11 @@ export const REVEAL_REACH_PER_BRUSH_CELL = CHUNK_SIZE / 8;
 export const MAX_DRAG_SWEEP_CELLS = CHUNK_SIZE;
 
 export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP);
+
+export const RAMP_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
+
+/** A stamp edge converges at radius + 2 cells, every radius: r1 2, r2 3, r4 6, r8 10, r16 18. */
+export const SMOOTH_REACH_MARGIN_CELLS = 2;
 
 export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
 

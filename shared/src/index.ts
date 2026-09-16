@@ -1,4 +1,5 @@
 export * from './constants.ts';
+export * from './bands.ts';
 export * from './calendar.ts';
 export * from './heightmap.ts';
 export * from './columns.ts';
@@ -19,3 +20,4 @@ export * from './farmland.ts';
 export * from './pathing.ts';
 export * from './steering.ts';
 export * from './targeting.ts';
+export * from './waypoints.ts';

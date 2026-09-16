@@ -121,7 +121,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
             value={worldAdminKey()}
             onInput={(event) => setWorldAdminKey(event.currentTarget.value)}
           />
-          <button type="submit" class="chart-button" disabled={worldAdminKey() === ''}>
+          <button type="submit" class="chart-button">
             List
           </button>
         </form>
@@ -176,7 +176,6 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                 type="button"
                 class="chart-button"
                 title="Restart: make new code live"
-                disabled={worldAdminKey() === ''}
                 onClick={() => setArmedRestart(true)}
               >
                 Restart server
@@ -523,7 +522,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
               value={newName()}
               onInput={(event) => setNewName(event.currentTarget.value)}
             />
-            <button type="submit" class="chart-button" disabled={worldAdminKey() === ''}>
+            <button type="submit" class="chart-button">
               Create
             </button>
           </form>

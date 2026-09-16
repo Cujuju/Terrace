@@ -66,7 +66,7 @@ export function createPickDebugOverlay(
           'PICK: none\n(pointer is off the world, over sky,\n or over an unreceived chunk)';
         return;
       }
-      const colour = pick.hitRiser ? MARKER_COLOR_RISER : MARKER_COLOR_CAP;
+      const colour = pick.face === 'riser' ? MARKER_COLOR_RISER : MARKER_COLOR_CAP;
       material.color.setHex(colour);
       marker.position.set(
         pick.x * CELL_WORLD_SIZE,
@@ -79,14 +79,14 @@ export function createPickDebugOverlay(
         `       surfaceY ${pick.surfaceY.toFixed(3)} wu`,
         `       hit ${pick.hitX.toFixed(3)}, ${pick.hitY.toFixed(3)}, ${pick.hitZ.toFixed(3)} wu`,
         `       ${
-          pick.hitRiser
+          pick.face === 'riser'
             ? 'RISER  (step side)  █ amber'
-            : pick.hitY === pick.surfaceY
+            : pick.face === 'tread'
               ? 'TREAD  (flat cap)   █ green'
               : 'UNDER  (cave roof)  █ green'
         }`,
         '',
-        pick.hitRiser
+        pick.face === 'riser'
           ? band === null
             ? 'BAND   named by the ray, REFUSED by the lip guard'
             : `BAND   ${band} — a press here acts on it`

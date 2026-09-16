@@ -146,7 +146,7 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
               value={worldAdminKey()}
               onInput={(event) => setWorldAdminKey(event.currentTarget.value)}
             />
-            <button type="submit" class="chart-button admin-unlock" disabled={worldAdminKey() === ''}>
+            <button type="submit" class="chart-button admin-unlock">
               Unlock
             </button>
           </form>

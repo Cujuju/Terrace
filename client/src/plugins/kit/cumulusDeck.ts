@@ -2,9 +2,7 @@ import {
   DoubleSide,
   InstancedBufferAttribute,
   InstancedMesh,
-  Matrix4,
   PlaneGeometry,
-  Vector2,
   type Object3D,
 } from 'three';
 import { MeshLambertNodeMaterial, type NodeMaterial } from 'three/webgpu';
@@ -19,7 +17,6 @@ import {
   max,
   mix,
   normalize,
-  select,
   sin,
   smoothstep,
   sqrt,
@@ -29,19 +26,27 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { createMassSlots } from './discSlots.ts';
 import {
-  PUFF_QUAD,
+  buildDeckLayout,
+  DECK_RADIAL_EXPONENT,
+  DECK_TIER_POPULATION_TAPER,
+  DECK_TIERS,
+  tierPopulations,
+} from './cumulusDeckLayout.ts';
+
+export { DECK_RADIAL_EXPONENT, DECK_TIER_POPULATION_TAPER, DECK_TIERS, tierPopulations };
+import {
+  billboardPuffs,
   puffAlphaDiscard,
-  puffBillboard,
-  puffLobeScale,
+  puffLobeReach,
+  puffLobedQuad,
   puffMask,
 } from './puffDeck.ts';
 import { CLOUD_BASE_WORLD_Y, CLOUD_HEADROOM_WORLD_UNITS } from './precipitation.ts';
 import { DISC_RENDER_ORDER } from './discRig.ts';
 import { compose, discard } from '../../render/materialSlots.ts';
 import { instanceMatrix } from '../../render/instanceMatrix.ts';
-import type { GroundShadeDisc } from '../types.ts';
 import type { InterpolatedDisc } from './discInterpolator.ts';
 
 const TWO_PI = Math.PI * 2;
@@ -55,19 +60,27 @@ export const DECK_RENDER_ORDER_CAMERA_BELOW_BASE = DISC_RENDER_ORDER - DECK_ORDE
 
 export const DECK_THICKNESS_WORLD_UNITS = CLOUD_HEADROOM_WORLD_UNITS / 2;
 
-export const DECK_TIERS: number = 5;
-
-export const DECK_TIER_POPULATION_TAPER = 0.7;
-
 export const DECK_TOP_RADIUS_FRACTION = 0.55;
 
 export const DECK_TIER_JITTER_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS / DECK_TIERS / 2;
 
-export const DECK_RADIAL_EXPONENT = 0.75;
-
 export const DECK_RIM_FADE_START = 0.8;
 
-export const PUFF_SIZE_TOP_GROWTH = 0.6;
+// Precipitation seats one puff radius inside the last fully opaque seat, so
+// the rim's own puffs overhang the rain from any angle: never rain from open sky.
+export function deckCanopyFraction(puffSizeFraction: number): number {
+  return DECK_RIM_FADE_START - puffSizeFraction;
+}
+
+// Crown for the cap: fraction of a tier's puff size added as height at the
+// top-centre of the stack, falling to zero at the base and at each tier's
+// rim. Without it the top tier is a flat disc of coplanar puffs whose union
+// ceiling is a plane, which reads as a cut-flat top when seen edge-on. The
+// fraction must clear a full top-tier puff radius (~1.0): the rim puffs keep
+// their radius above the plane, so anything less leaves the mesa.
+export const DECK_DOME_LIFT_FRACTION = 1.5;
+
+export const PUFF_SIZE_TOP_GROWTH = 0.9;
 
 export const PUFF_SIZE_SEED_VARIATION = 0.25;
 
@@ -85,45 +98,9 @@ export function puffsForCoverage(sizeFraction: number): number {
   return Math.ceil(PUFF_COVERAGE_OVERLAP / (sizeFraction * sizeFraction));
 }
 
-export function tierPopulations(total: number, tiers: number): number[] {
-  const weights: number[] = [];
-  let sum = 0;
-  for (let tier = 0; tier < tiers; tier++) {
-    const up = tiers === 1 ? 0 : tier / (tiers - 1);
-    const weight = 1 - DECK_TIER_POPULATION_TAPER * up;
-    weights.push(weight);
-    sum += weight;
-  }
-
-  const counts: number[] = [];
-  let dealt = 0;
-  for (let tier = 0; tier < tiers; tier++) {
-    const count = Math.floor((total * weights[tier]!) / sum);
-    counts.push(count);
-    dealt += count;
-  }
-  counts[0] = counts[0]! + (total - dealt);
-  return counts;
-}
-
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-
-const GOLDEN_RATIO_CONJUGATE = 0.6180339887;
-
 const SEED_HASH_TIER_JITTER = 7.31;
 const SEED_HASH_PUFF_SIZE = 5.7;
 const SEED_HASH_PUFF_ASPECT = 3.37;
-
-export function deckShadeDisc(disc: InterpolatedDisc, darkness: number): GroundShadeDisc {
-  return {
-    x: disc.x * CELL_WORLD_SIZE,
-    z: disc.y * CELL_WORLD_SIZE,
-    y: DECK_BASE_WORLD_Y,
-    radius: disc.radius * CELL_WORLD_SIZE,
-    darkness: darkness * disc.intensity,
-    inner: 0,
-  };
-}
 
 export interface CumulusDeckSpec {
   readonly maxMasses: number;
@@ -149,10 +126,9 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const puffsPerMass = puffsForCoverage(spec.puffSizeFraction);
   const capacity = spec.maxMasses * puffsPerMass;
 
-  const massXZ = Array.from({ length: spec.maxMasses }, () => new Vector2());
-  const massSize = Array.from({ length: spec.maxMasses }, () => new Vector2());
-  const massXZNode = uniformArray<'vec2'>(massXZ, 'vec2');
-  const massSizeNode = uniformArray<'vec2'>(massSize, 'vec2');
+  const slots = createMassSlots(spec.maxMasses);
+  const massXZNode = uniformArray<'vec2'>(slots.massXZ, 'vec2');
+  const massSizeNode = uniformArray<'vec2'>(slots.massSize, 'vec2');
 
   const aSlot = attribute<'float'>('aSlot', 'float');
   const aSeed = attribute<'float'>('aSeed', 'float');
@@ -179,12 +155,6 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
     .sub(1)
     .mul(DECK_TIER_JITTER_WORLD_UNITS);
 
-  const transformed = vec3(
-    massCentre.x.add(cos(aPolar.y).mul(outward)),
-    float(DECK_BASE_WORLD_Y).add(aTier.mul(DECK_THICKNESS_WORLD_UNITS)).add(tierJitter),
-    massCentre.y.add(sin(aPolar.y).mul(outward)),
-  );
-
   // Bigger toward the top, and never twice the same size in a row.
   const puffSize = massRadius
     .mul(spec.puffSizeFraction)
@@ -194,6 +164,24 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
         fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(2 * PUFF_SIZE_SEED_VARIATION),
       ),
     );
+
+  // Crown the cap toward the middle of each tier, most at the top of the
+  // stack: proportional to the puff's own size so the crown scales with the
+  // storm. The base tier is untouched, so the precipitation ceiling stays flat.
+  const domeLift = aTier
+    .mul(aTier)
+    .mul(float(1).sub(aPolar.x.mul(aPolar.x)))
+    .mul(puffSize)
+    .mul(DECK_DOME_LIFT_FRACTION);
+
+  const transformed = vec3(
+    massCentre.x.add(cos(aPolar.y).mul(outward)),
+    float(DECK_BASE_WORLD_Y)
+      .add(aTier.mul(DECK_THICKNESS_WORLD_UNITS))
+      .add(tierJitter)
+      .add(domeLift),
+    massCentre.y.add(sin(aPolar.y).mul(outward)),
+  );
 
   // Oblong per seed and area-neutral: stretched along x by the aspect, squashed along y by the same.
   const aspect = float(1 - PUFF_ASPECT_SEED_VARIATION).add(
@@ -205,7 +193,7 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const mask = puffMask(PUFF_SOFT_EDGE_FRACTION, lobing);
   const alpha = mask.puff.mul(puffFade);
 
-  const lobedQuad = PUFF_QUAD.div(puffLobeScale(lobing));
+  const lobedQuad = puffLobedQuad(lobing);
   const puffSphere = vec3(lobedQuad, sqrt(max(0, float(1).sub(dot(lobedQuad, lobedQuad)))));
   const puffUp = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz;
 
@@ -220,10 +208,9 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   const mesh = new InstancedMesh(geometry, material, capacity);
 
   const centre = instanceMatrix(mesh).mul(vec4(transformed, 1)).xyz;
-  // A parked or dark slot collapses its quad to one point: zero area, so no fragment is raised.
-  compose(material, 'position', () =>
-    select(puffFade.lessThanEqual(0), centre, puffBillboard(centre, puffExtent)),
-  );
+  // A parked or dark slot has no extent: its quad is one point, so no fragment is raised.
+  const lit = puffFade.greaterThan(0).toFloat();
+  billboardPuffs(material, centre, puffExtent.mul(puffLobeReach(lobing)).mul(lit));
   discard(material, mask.discarded);
   discard(material, puffAlphaDiscard(alpha));
   compose(material, 'opacity', (previous) => previous.mul(alpha));
@@ -238,66 +225,26 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
   mesh.visible = false;
   mesh.frustumCulled = false;
 
-  const identity = new Matrix4();
-  for (let instance = 0; instance < capacity; instance++) mesh.setMatrixAt(instance, identity);
-  mesh.instanceMatrix.needsUpdate = true;
-
-  const slots = new Float32Array(capacity);
-  const seeds = new Float32Array(capacity);
-  const tiers = new Float32Array(capacity);
-  const polars = new Float32Array(capacity * 2);
-
-  const perTier = tierPopulations(puffsPerMass, DECK_TIERS);
-  for (let slot = 0; slot < spec.maxMasses; slot++) {
-    let puff = 0;
-    for (let tier = 0; tier < DECK_TIERS; tier++) {
-      const inTier = perTier[tier]!;
-      const tierFraction = DECK_TIERS === 1 ? 0 : tier / (DECK_TIERS - 1);
-      for (let index = 0; index < inTier; index++) {
-        const instance = slot * puffsPerMass + puff;
-        slots[instance] = slot;
-        tiers[instance] = tierFraction;
-        seeds[instance] = (instance * GOLDEN_RATIO_CONJUGATE) % 1;
-        polars[instance * 2] = Math.pow((index + 0.5) / inTier, DECK_RADIAL_EXPONENT);
-        polars[instance * 2 + 1] = index * GOLDEN_ANGLE + tier * TWO_PI * GOLDEN_RATIO_CONJUGATE;
-        puff++;
-      }
-    }
-  }
-
-  geometry.setAttribute('aSlot', new InstancedBufferAttribute(slots, 1));
-  geometry.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 1));
-  geometry.setAttribute('aTier', new InstancedBufferAttribute(tiers, 1));
-  geometry.setAttribute('aPolar', new InstancedBufferAttribute(polars, 2));
-
-  let claimed = 0;
-  let live = 0;
+  const layout = buildDeckLayout(spec.maxMasses, puffsPerMass);
+  geometry.setAttribute('aSlot', new InstancedBufferAttribute(layout.slots, 1));
+  geometry.setAttribute('aSeed', new InstancedBufferAttribute(layout.seeds, 1));
+  geometry.setAttribute('aTier', new InstancedBufferAttribute(layout.tiers, 1));
+  geometry.setAttribute('aPolar', new InstancedBufferAttribute(layout.polars, 2));
 
   return {
     object: mesh,
     puffsPerMass,
 
     claimSlot(): number {
-      if (claimed >= spec.maxMasses) return -1;
-      return claimed++;
+      return slots.claim();
     },
 
     update(slot: number, disc: InterpolatedDisc): void {
-      if (slot < 0) return;
-      const intensity = Math.max(0, disc.intensity);
-      const wasDark = massSize[slot]!.y === 0;
-      massXZ[slot]!.set(disc.x * CELL_WORLD_SIZE, disc.y * CELL_WORLD_SIZE);
-      massSize[slot]!.set(disc.radius * CELL_WORLD_SIZE, intensity);
-      if (wasDark && intensity > 0) live++;
-      if (!wasDark && intensity === 0) live--;
-      mesh.visible = live > 0;
+      mesh.visible = slots.update(slot, disc);
     },
 
     park(slot: number): void {
-      if (slot < 0) return;
-      if (massSize[slot]!.y !== 0) live--;
-      massSize[slot]!.y = 0;
-      mesh.visible = live > 0;
+      mesh.visible = slots.park(slot);
     },
 
     orderAgainstCamera(cameraWorldY: number): void {
@@ -311,8 +258,7 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
       mesh.dispose();
       geometry.dispose();
       material.dispose();
-      claimed = 0;
-      live = 0;
+      slots.reset();
     },
   };
 }

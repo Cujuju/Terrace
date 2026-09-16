@@ -77,6 +77,7 @@ export interface WildlifeModels {
     y: number,
     z: number,
     yaw: number,
+    holdPose?: boolean,
   ): void;
   endFrame(): void;
   dispose(): void;
@@ -182,10 +183,14 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
     z: number,
     yaw: number,
     scale: number,
+    holdPose: boolean,
   ): void {
     const herd = drawable.herd;
     const slot = herd.poseSlotOf(phase, moverGaitIndex(gait));
-    if (herd.needsPose(slot)) {
+    // Hold: placement refreshes but the pose stays on the last captured slot, which
+    // the same phase and gait address, palette included. Skips animation, bone
+    // matrices and palette upload.
+    if (!holdPose && herd.needsPose(slot)) {
       drawable.animate(seconds, herd.poseSlotPhase(slot), gait);
       herd.capturePose(slot);
     }
@@ -303,7 +308,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
       animationSeconds = seconds;
       for (const herd of herds) herd.beginFrame();
     },
-    draw(species, sizeClass, variantSeed, phase, gait, x, y, z, yaw) {
+    draw(species, sizeClass, variantSeed, phase, gait, x, y, z, yaw, holdPose) {
       drawInto(
         drawableOf(species, variantSeed),
         animationSeconds,
@@ -314,6 +319,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         z,
         yaw,
         modelScaleFor(species, sizeClass),
+        holdPose ?? false,
       );
     },
     endFrame() {

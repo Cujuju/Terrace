@@ -1,7 +1,12 @@
 import { eyewallWindFalloff, isFiniteNumber } from '@terrace/shared';
-import { ROTATING_STORM_DAMAGE_SAMPLE_CELLS } from './rotatingStorms.ts';
+import { ROTATING_STORM_DAMAGE_SAMPLE_CELLS } from './rotatingStormTypes.ts';
 
-export const MAX_DAMAGE_SAMPLE_CELLS_PER_EVENT = ROTATING_STORM_DAMAGE_SAMPLE_CELLS * 100;
+// One event carries one storm's samples; the ceiling leaves generous slack
+// before a hostile payload is truncated.
+const MAX_STORMS_PER_DAMAGE_EVENT = 100;
+
+export const MAX_DAMAGE_SAMPLE_CELLS_PER_EVENT =
+  ROTATING_STORM_DAMAGE_SAMPLE_CELLS * MAX_STORMS_PER_DAMAGE_EVENT;
 
 export interface StruckCell {
   readonly x: number;
@@ -54,7 +59,7 @@ export function parseStormDamage(payload: unknown): ParsedStormDamage | null {
     cells?: unknown;
   };
 
-  if (!isFiniteNumber(stormId)) return null;
+  if (!isFiniteNumber(stormId) || !Number.isInteger(stormId) || stormId <= 0) return null;
   if (!isFiniteNumber(x) || !isFiniteNumber(y)) return null;
   if (!isExtent(radius) || radius <= 0) return null;
   if (!isExtent(eyeRadius) || eyeRadius >= radius) return null;

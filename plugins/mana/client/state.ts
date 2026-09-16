@@ -1,8 +1,8 @@
 import { createSignal } from 'solid-js';
 import { sculptOptionsOf, sculptProfileOf, sculptSweepSteps, type SculptIntent } from '@terrace/shared';
-import { chunkOriginCell, chunkUnlockPenalty, openedChunkCount, sculptManaCost } from '../pricing.ts';
-import type { ManaBalanceMessage, ManaDeniedMessage } from '../protocol.ts';
-import { brushProfile, brushRadius, brushTool } from '../../../client/src/state/hudState.ts';
+import { chunkOriginCell, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
+import { brushProfile, brushRadius, brushTool, hoverPick } from '../../../client/src/state/hudState.ts';
 
 export interface ManaPool {
   readonly balance: number;
@@ -71,27 +71,91 @@ export function applyDenial(denied: ManaDeniedMessage): void {
   );
 }
 
+/**
+ * Server `mana:denied` handler shared by index.ts and tests (kept in state.ts so
+ * tests can cover it without pulling in ManaGauge.tsx). Returns false for a
+ * malformed payload, recording nothing.
+ */
+export function handleManaDenied(payload: unknown): boolean {
+  const denied = parseManaDeniedPayload(payload);
+  if (denied === null) return false;
+  applyDenial(denied);
+  recordDenial(denied.cost);
+  return true;
+}
+
 export function clearInFlightDebits(): void {
   inFlight = [];
 }
 
 const [deniedCount, setDeniedCount] = createSignal(0);
 
-export { manaPool, setManaPool, deniedCount };
+const [lastDeniedCost, setLastDeniedCost] = createSignal<number | null>(null);
 
-export function recordDenial(): void {
+export { manaPool, setManaPool, deniedCount, lastDeniedCost };
+
+/**
+ * Brush-refused pulse shared with the gauge flash: every denial (local gate or
+ * server `mana:denied`) bumps deniedCount and records the denied cost for the
+ * hint. The brush preview's red blink itself is wired at merge time (lane C
+ * accessors); this counter is the pulse it reads.
+ */
+export function recordDenial(cost?: number): void {
+  if (cost !== undefined) setLastDeniedCost(cost);
   setDeniedCount((n) => n + 1);
+}
+
+export interface LocalTerritory {
+  worldSize(): number;
+  revealedAt(x: number, y: number): boolean;
+}
+
+/**
+ * What the client knows of its own reveal mask. The gate is handed one per
+ * intent; the HUD quote has no intent, so the plugin parks it here at attach.
+ */
+let localTerritory: LocalTerritory | null = null;
+
+export function setLocalTerritory(territory: LocalTerritory | null): void {
+  localTerritory = territory;
+}
+
+function openedChunksAt(
+  territory: LocalTerritory | null,
+  x: number,
+  y: number,
+  radius: number,
+): number {
+  if (territory === null) return 0;
+  const worldSize = territory.worldSize();
+  if (worldSize <= 0) return 0;
+  return openedChunkCount(worldSize, x, y, radius, (cx, cy) => {
+    const origin = chunkOriginCell(cx, cy);
+    return territory.revealedAt(origin.x, origin.y);
+  });
+}
+
+/**
+ * The unlock half of the quote: what the frontier under the aim would cost to
+ * open. Zero away from the frontier, and zero until a pointer pick exists.
+ */
+export function currentUnlockFee(): number {
+  const aim = hoverPick();
+  if (aim === null) return 0;
+  return chunkUnlockFee(openedChunksAt(localTerritory, aim.x, aim.y, brushRadius()));
 }
 
 export function currentBrushCost(): number {
   const pool = manaPool();
   if (pool === null) return 0;
   const tool = brushTool();
-  return sculptManaCost(
-    pool.manaPerBandCell,
-    brushRadius(),
-    sculptProfileOf(tool, brushProfile()),
-    tool,
+  return (
+    sculptManaCost(
+      pool.manaPerBandCell,
+      brushRadius(),
+      sculptProfileOf(tool, brushProfile()),
+      tool,
+    ) + currentUnlockFee()
   );
 }
 
@@ -100,24 +164,12 @@ export function currentBalance(): number | null {
   return pool === null ? null : liveBalance(pool);
 }
 
-export interface LocalTerritory {
-  worldSize(): number;
-  revealedAt(x: number, y: number): boolean;
-}
-
 export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory): boolean {
   const pool = manaPool();
   if (pool === null) return true;
 
   const options = sculptOptionsOf(intent);
-  const worldSize = territory.worldSize();
-  const opened =
-    worldSize <= 0
-      ? 0
-      : openedChunkCount(worldSize, intent.x, intent.y, intent.radius, (cx, cy) => {
-          const origin = chunkOriginCell(cx, cy);
-          return territory.revealedAt(origin.x, origin.y);
-        });
+  const opened = openedChunksAt(territory, intent.x, intent.y, intent.radius);
   const cost =
     sculptManaCost(
       pool.manaPerBandCell,
@@ -125,12 +177,10 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
       options.profile,
       options.tool,
       sculptSweepSteps(intent),
-    ) +
-    opened *
-      chunkUnlockPenalty(pool.manaPerBandCell, intent.radius, options.profile, options.tool);
+    ) + chunkUnlockFee(opened);
 
   if (pool.balance < cost) {
-    recordDenial();
+    recordDenial(cost);
     return false;
   }
   debitLocally(pool, cost);

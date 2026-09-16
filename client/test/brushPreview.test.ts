@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Scene, type BufferAttribute, Line, LineSegments, Mesh, type Object3D, type Material } from 'three';
 import {
+  BAND_HEIGHT,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   applySculpt,
-  bandOf,
   createHeightmap,
   forEachFootprintOffset,
   sculptOptionsOf,
@@ -76,25 +76,31 @@ function renderedCells(
   radius: number,
   tool: 'stamp' | 'smooth',
   profile: 'soft' | 'hard',
-  dir: 1 | -1,
 ): Set<string> {
+  // Mirrors the preview probe: dry band-aligned ground, union of both
+  // directions, so the outline never changes with sculpt mode.
+  const DRY_GROUND = 8 * BAND_HEIGHT;
   const span = 2 * (MAX_BRUSH_RADIUS + 2);
   const centre = span >> 1;
-  const map = createHeightmap(span);
-  const before = map.cells.map(bandOf);
-  applySculpt(
-    map,
-    centre,
-    centre,
-    radius,
-    DEFAULT_SCULPT_AMOUNT * dir,
-    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
-  );
   const changed = new Set<string>();
-  for (let j = 0; j < span; j++) {
-    for (let i = 0; i < span; i++) {
-      if (bandOf(map.cells[j * span + i]!) !== before[j * span + i]) {
-        changed.add(`${i - centre},${j - centre}`);
+  for (const dir of [1, -1] as const) {
+    const map = createHeightmap(span);
+    map.cells.fill(DRY_GROUND);
+    applySculpt(
+      map,
+      centre,
+      centre,
+      radius,
+      DEFAULT_SCULPT_AMOUNT * dir,
+      sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
+    );
+    for (let j = 0; j < span; j++) {
+      for (let i = 0; i < span; i++) {
+        // Edited cells are detected by height change, not band change: a
+        // soft edge can move heights within one drawn band.
+        if (map.cells[j * span + i]! !== DRY_GROUND) {
+          changed.add(`${i - centre},${j - centre}`);
+        }
       }
     }
   }
@@ -119,7 +125,7 @@ const TEST_WORLD_SIZE_CELLS = 64;
 const NEVER_DENIED = createDenialCue(() => false);
 
 describe('world-edge clipping', () => {
-  const hover = { x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false };
+  const hover = { x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false } as const;
   const stamp = { radius: BRUSH_RADII[0]!, tool: 'stamp', profile: 'hard', dir: 1 } as const;
 
   function footprintMaterials(scene: Scene): Material[] {
@@ -178,7 +184,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
       const points = outlinePoints(line);
       expect(points.length).toBeGreaterThanOrEqual(3);
 
@@ -204,20 +210,26 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of [1, 2, 4, 8]) {
+      const footprint = new Set<string>();
+      forEachFootprintOffset(radius, (dx, dy) => footprint.add(`${dx},${dy}`));
       for (const tool of ['stamp', 'smooth'] as const) {
         for (const profile of ['soft', 'hard'] as const) {
           for (const dir of [1, -1] as const) {
-            preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, { radius, tool, profile, dir });
+            preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, { radius, tool, profile, dir });
             const points = outlinePoints(line);
 
-            const rendered = renderedCells(radius, tool, profile, dir);
+            const rendered = renderedCells(radius, tool, profile);
+            // Melt outlines its footprint: on flat ground it renders
+            // nothing, but the stroke still reaches those cells on rough
+            // ground. Stamp keeps the exact rendered-cells contract.
+            const wanted = tool === 'smooth' ? footprint : rendered;
             const scan = footprintReach(radius) + 2;
             for (let dz = -scan; dz <= scan; dz++) {
               for (let dx = -scan; dx <= scan; dx++) {
                 expect({
                   radius, tool, profile, dir, dx, dz, enclosed: encloses(points, dx, dz),
                 }).toEqual({
-                  radius, tool, profile, dir, dx, dz, enclosed: rendered.has(`${dx},${dz}`),
+                  radius, tool, profile, dir, dx, dz, enclosed: wanted.has(`${dx},${dz}`),
                 });
               }
             }
@@ -235,7 +247,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
@@ -260,7 +272,7 @@ describe('createBrushPreview', () => {
     );
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
@@ -285,7 +297,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false }, brush(radius));
       const { minX, maxX, minZ, maxZ } = extent(line);
       expect(minX).toBeCloseTo(-maxX);
       expect(minZ).toBeCloseTo(-maxZ);
@@ -303,7 +315,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
     const line = outlineOf(scene);
 
-    preview.update({ x: 7, y: 11, surfaceY: 3, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 7, y: 11, surfaceY: 3, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(line.position.x).toBeCloseTo(7 * CELL_WORLD_SIZE);
     expect(line.position.z).toBeCloseTo(11 * CELL_WORLD_SIZE);
     expect(line.visible).toBe(true);
@@ -318,17 +330,17 @@ describe('createBrushPreview', () => {
 
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(true);
 
     preview.update(null, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MAX_BRUSH_RADIUS + 1));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MAX_BRUSH_RADIUS + 1));
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     preview.dispose();
     expect(canvas.on).toBe(false);
   });
@@ -339,7 +351,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
 
     for (let frame = 0; frame < 60; frame++) {
-      preview.update({ x: 2, y: 2, surfaceY: 0, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+      preview.update({ x: 2, y: 2, surfaceY: 0, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
     }
     expect(canvas.writes).toBe(1);
 

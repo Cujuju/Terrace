@@ -31,7 +31,7 @@ import {
   newClimbRiserShift,
   type ClimbRiserShift,
 } from '../../../client/src/plugins/kit/climbRiser.ts';
-import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
+import { moverGaitOf, type MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 import {
   BODY_COLUMNS,
@@ -45,16 +45,30 @@ import {
 
 const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
 
+/** Beyond this camera distance a creature holds its pose: ground sampling, gait
+ *  animation and palette capture run once every LOD_FULL_EVERY frames, staggered by
+ *  id. Placement still refreshes. */
+const LOD_DISTANCE_WORLD_UNITS = 120;
+const LOD_FULL_EVERY = 6;
+
 const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
 interface CreatureView {
   phase: number;
   drawnX: number;
   drawnZ: number;
+  /** Written by the full path only, so it doubles as the last-full Y. */
   drawnY: number | null;
   drawnBodyBottomY: number;
   drawnBodyHeight: number;
   readonly riserShift: ClimbRiserShift;
+  lodReady: boolean;
+  lodGait: MoverGait | null;
+  /** Wall time and X/Z since the last full update; the full path integrates against
+   *  them, so a hold costs no travel and no elapsed time. */
+  sinceFullSeconds: number;
+  lastFullX: number;
+  lastFullZ: number;
 }
 
 let models: WildlifeModels | null = null;
@@ -65,6 +79,7 @@ const interpolator = new WildlifeInterpolator();
 let unmarkPickable: (() => void) | null = null;
 let unpublishMovers: (() => void) | null = null;
 let animationSeconds = 0;
+let frameIndex = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
@@ -78,6 +93,11 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
       drawnBodyBottomY: 0,
       drawnBodyHeight: 0,
       riserShift: newClimbRiserShift(),
+      lodReady: false,
+      lodGait: null,
+      sinceFullSeconds: 0,
+      lastFullX: 0,
+      lastFullZ: 0,
     }),
     release: () => {},
   });
@@ -87,6 +107,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   if (models === null) return;
   const step = Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
   animationSeconds += step;
+  frameIndex += 1;
   interpolator.advance(dt);
 
   const sampled = interpolator.sample();
@@ -95,11 +116,51 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   models.beginFrame(animationSeconds);
 
   const sample = drawnGroundSampler(ctx);
+  const camera = ctx.cameraPosition();
 
   for (const [id, entity] of sampled) {
     const view = views.get(id);
     if (view === undefined) continue;
+    view.sinceFullSeconds += dt;
 
+    const gait = moverGaitOf(
+      entity.climbHeight,
+      entity.falling,
+      moverStanceFromWire(entity.stance),
+    );
+    // Hold path needs an already-placed pose to freeze (first sight always full).
+    const heldY = view.drawnY;
+    const dx = entity.x * CELL_WORLD_SIZE - camera.x;
+    const dz = entity.y * CELL_WORLD_SIZE - camera.z;
+    // Unplaced creature counts as level with the camera; it takes the full path anyway.
+    const dy = (heldY ?? camera.y) - camera.y;
+    // Hold: frozen phase and gait address the slot the last full update captured, whose
+    // palette layer persists, so the held draw stays valid.
+    const full =
+      !view.lodReady ||
+      view.lodGait !== gait ||
+      dx * dx + dy * dy + dz * dz <
+        LOD_DISTANCE_WORLD_UNITS * LOD_DISTANCE_WORLD_UNITS ||
+      (frameIndex + id) % LOD_FULL_EVERY === 0;
+    if (!full && heldY !== null) {
+      // Body column fields follow the frozen drawnY, so they match the held draw; a
+      // size-class change lands on the next full frame.
+      view.drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
+      view.drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
+      models.draw(
+        entity.species,
+        sizeClassAt(entity.size),
+        id,
+        view.phase,
+        gait,
+        view.drawnX,
+        heldY,
+        view.drawnZ,
+        -entity.heading,
+        true,
+      );
+      continue;
+    }
     const sizeClass = sizeClassAt(entity.size);
     const kind = placementKindOf(entity.species);
     const swimProfile = SWIM_PROFILES[entity.species];
@@ -117,23 +178,32 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
               modelScaleFor(entity.species, sizeClass),
             );
     if (kind !== 'flyer' && terrainY === null) continue;
+    // Progress is recorded only past the last bail, so a frame that draws nothing
+    // neither consumes the hold interval nor claims a gait it never captured.
+    view.lodGait = gait;
+    // The full path spends the whole hold interval at once: smoothers get the elapsed
+    // time and the stride integral the travel since the last full update.
+    const sinceFull = view.sinceFullSeconds;
+    view.sinceFullSeconds = 0;
     const previousDrawnY = view.drawnY;
     const drawnY =
       entity.climbHeight === null
-        ? creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, dt)
-        : followGroundY(previousDrawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, dt);
-    advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, dt);
+        ? creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, sinceFull)
+        : followGroundY(previousDrawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, sinceFull);
+    advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull);
     const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
     const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
     if (kind === 'walker' && previousDrawnY !== null) {
       view.phase += walkerStrideRadians(
         entity.species,
-        Math.hypot(drawnX - view.drawnX, drawnY - previousDrawnY, drawnZ - view.drawnZ),
+        Math.hypot(drawnX - view.lastFullX, drawnY - previousDrawnY, drawnZ - view.lastFullZ),
       );
     }
     view.drawnY = drawnY;
     view.drawnX = drawnX;
     view.drawnZ = drawnZ;
+    view.lastFullX = drawnX;
+    view.lastFullZ = drawnZ;
     const column = BODY_COLUMNS[entity.species];
     const modelScale = modelScaleFor(entity.species, sizeClass);
     view.drawnBodyBottomY = drawnY + column.bellyY * modelScale;
@@ -143,12 +213,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       sizeClass,
       id,
       view.phase,
-      moverGaitOf(entity.climbHeight, entity.falling, moverStanceFromWire(entity.stance)),
+      gait,
       view.drawnX,
       drawnY,
       view.drawnZ,
       -entity.heading,
     );
+    view.lodReady = true;
   }
 
   models.endFrame();
@@ -233,5 +304,6 @@ export const clientPlugin: TerraceClientPlugin = {
     models = null;
     disposeSpeciesAssets();
     animationSeconds = 0;
+    frameIndex = 0;
   },
 };
