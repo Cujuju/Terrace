@@ -48,14 +48,9 @@ import {
   ARM_WRAP_TURNS,
   CYCLONE_BAND_INNER_RADIUS_FRACTION,
   CYCLONE_EYEWALL_PUFF_GROWTH,
-  CYCLONE_EYEWALL_TOP_WORLD_Y,
-  CYCLONE_RIM_TOP_WORLD_Y,
-  CYCLONE_SHIELD_INNER_RADIUS_FRACTION,
-  CYCLONE_SHIELD_PUFF_SIZE_FRACTION,
-  CYCLONE_SHIELD_RADIUS_FRACTION,
-  CYCLONE_SHIELD_THICKNESS_PUFF_HALF_WIDTHS,
-  CYCLONE_SHIELD_WORLD_Y,
-  CYCLONE_TOWER_FALLOFF_EXPONENT,
+  CYCLONE_FUNNEL_PROFILE_EXPONENT,
+  CYCLONE_RIM_BOTTOM_WORLD_Y,
+  CYCLONE_TOP_WORLD_Y,
   KEY_LANES,
   PUFF_SIZE_RADIUS_FRACTION,
   PUFF_SIZE_SEED_MIN,
@@ -65,11 +60,8 @@ import {
   writeSpiralLayout,
 } from './spiralLayout.ts';
 
-// A full turn every seven seconds or so: the walls visibly race.
-export const SPIRAL_SPIN_TURNS_PER_SECOND = 0.15;
-
-// The outflow turns against the walls, at this fraction of their rate.
-export const CYCLONE_SHIELD_OUTFLOW_SPIN_FRACTION = 0.25;
+// A full turn every five seconds: the walls visibly race.
+export const SPIRAL_SPIN_TURNS_PER_SECOND = 0.2;
 
 export const CYCLONE_EYEWALL_SOFT_EDGE = PUFF_SOFT_EDGE_FRACTION;
 export const CYCLONE_RIM_SOFT_EDGE = 0;
@@ -80,14 +72,11 @@ export const CYCLONE_EYEWALL_SHADE = 0.28;
 
 export const CYCLONE_DECK_PEAK_OPACITY = 0.55;
 
-// Thin cirrus: the shield reaches this fraction of the walls' peak opacity.
-export const CYCLONE_SHIELD_OPACITY_FRACTION = 0.35;
-
 // Outer rain bands thin out: the rim reaches this fraction of the eyewall's opacity.
 // Lower and the outer bands vanish against a night sky.
 export const CYCLONE_RIM_OPACITY_FRACTION = 0.6;
 
-// Cloud bases are darker than tops; a wall puff on the ground carries this albedo.
+// Cloud undersides are darker than tops; a puff at a column's foot carries this albedo.
 export const CYCLONE_WALL_BASE_SHADE = 0.55;
 
 export const SPIRAL_RIM_FADE_START = 0.85;
@@ -109,8 +98,6 @@ const SEED_HASH_SCATTER_SPAN = 7.13;
 const SEED_HASH_SCATTER_SPAN_OFFSET = 0.17;
 const SEED_HASH_PUFF_SIZE = 5.7;
 
-const SHIELD_MID_THICKNESS = 0.5;
-
 export interface SpiralMesh {
   readonly mesh: InstancedMesh;
   // Returns the wrapped spin phase the shader is drawing this frame.
@@ -119,8 +106,8 @@ export interface SpiralMesh {
   dispose(): void;
 }
 
-// One draw for every wall and shield puff of every slot. Layout attributes are
-// written once; a frame moves the slot uniforms, the column grounds and the spin.
+// One draw for every puff of every slot. Layout attributes are written once; a
+// frame moves the slot uniforms, the column grounds and the spin.
 export function createSpiralMesh(
   centre: Vector2[],
   size: Vector2[],
@@ -143,7 +130,7 @@ export function createSpiralMesh(
   const sizeNode = uniformArray<'vec2'>(size, 'vec2');
   const groundNode = uniformArray<'vec4'>(columnGround, 'vec4');
   const aSeat = attribute<'vec4'>('aSeat', 'vec4');
-  const aKey = attribute<'vec3'>('aKey', 'vec3');
+  const aKey = attribute<'vec2'>('aKey', 'vec2');
 
   const slot = int(aKey.x.add(0.5));
   const eye = centreNode.element(slot);
@@ -165,56 +152,32 @@ export function createSpiralMesh(
   const aAlong = aSeat.y;
   const aSeed = aSeat.z;
   const aTier = aSeat.w;
-  const aShield = aKey.z;
-  const isWall = float(1).sub(aShield);
 
-  // The eyewall profile: 1 at the eyewall, 0 at the rim and across the shield.
-  const wall = varying(
-    float(1).sub(pow(aAlong, CYCLONE_TOWER_FALLOFF_EXPONENT)).mul(isWall),
-    'vWall',
-  );
+  // The eyewall profile: 1 at the eyewall, 0 at the rim; depth, size, solidity and shade read off it.
+  const wall = varying(float(1).sub(pow(aAlong, CYCLONE_FUNNEL_PROFILE_EXPONENT)), 'vWall');
 
   // The logarithmic spiral: wrap positive, spin negative, so the arms trail an anticlockwise turn.
-  const wallAngle = aArm.add(aAlong.mul(ARM_WRAP_TURNS)).sub(spinTurns);
-  const shieldAngle = aArm.add(spinTurns.mul(CYCLONE_SHIELD_OUTFLOW_SPIN_FRACTION));
-  const angle = float(TWO_PI).mul(mix(wallAngle, shieldAngle, aShield));
-
-  const wallRadius = mix(float(CYCLONE_BAND_INNER_RADIUS_FRACTION), 1, aAlong);
-  const shieldRadius = mix(
-    float(CYCLONE_SHIELD_INNER_RADIUS_FRACTION),
-    CYCLONE_SHIELD_RADIUS_FRACTION,
-    aAlong,
-  );
-  const radius = aRadius.mul(mix(wallRadius, shieldRadius, aShield));
+  const radius = aRadius.mul(mix(float(CYCLONE_BAND_INNER_RADIUS_FRACTION), 1, aAlong));
+  const angle = float(TWO_PI).mul(aArm.add(aAlong.mul(ARM_WRAP_TURNS)).sub(spinTurns));
 
   // A scatter across the arm's width, narrow at the eyewall and wide at the rim.
   const scatterAngle = fract(aSeed.mul(SEED_HASH_SCATTER_BEARING)).mul(TWO_PI);
   const scatter = aRadius
     .mul(mix(float(BAND_HALF_WIDTH_EYEWALL_FRACTION), BAND_HALF_WIDTH_RIM_FRACTION, aAlong))
-    .mul(fract(aSeed.mul(SEED_HASH_SCATTER_SPAN).add(SEED_HASH_SCATTER_SPAN_OFFSET)))
-    .mul(isWall);
+    .mul(fract(aSeed.mul(SEED_HASH_SCATTER_SPAN).add(SEED_HASH_SCATTER_SPAN_OFFSET)));
 
-  const seedSize = float(PUFF_SIZE_SEED_MIN).add(
-    fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(PUFF_SIZE_SEED_SPAN),
-  );
-
-  // Bigger at the eyewall; broad and flat across the shield; never a grid of clones.
-  const wallSize = aRadius
+  // Bigger at the eyewall, and varying with the seed so the deck is not a grid of clones.
+  const puffSize = aRadius
     .mul(PUFF_SIZE_RADIUS_FRACTION)
-    .mul(float(1).add(wall.mul(CYCLONE_EYEWALL_PUFF_GROWTH)));
-  const shieldSize = aRadius.mul(CYCLONE_SHIELD_PUFF_SIZE_FRACTION);
-  const puffSize = mix(wallSize, shieldSize, aShield).mul(seedSize);
+    .mul(float(1).add(wall.mul(CYCLONE_EYEWALL_PUFF_GROWTH)))
+    .mul(float(PUFF_SIZE_SEED_MIN).add(fract(aSeed.mul(SEED_HASH_PUFF_SIZE)).mul(PUFF_SIZE_SEED_SPAN)));
 
-  // A wall column spans its own ground to its top; the shield is one absolute layer.
-  const top = mix(float(CYCLONE_RIM_TOP_WORLD_Y), CYCLONE_EYEWALL_TOP_WORLD_Y, wall);
-  const wallY = ground.add(aTier.mul(top.sub(ground)));
-  const shieldY = float(CYCLONE_SHIELD_WORLD_Y).add(
-    aTier.sub(SHIELD_MID_THICKNESS).mul(puffSize).mul(CYCLONE_SHIELD_THICKNESS_PUFF_HALF_WIDTHS),
-  );
-
+  // Every column hangs from the flat top; its underside is the ground at the eyewall
+  // and rises to the rim bottom outward, never dipping below the ground beneath it.
+  const underside = mix(max(ground, float(CYCLONE_RIM_BOTTOM_WORLD_Y)), ground, wall);
   const world = vec3(
     eye.x.add(cos(angle).mul(radius)).add(cos(scatterAngle).mul(scatter)),
-    mix(wallY, shieldY, aShield),
+    underside.add(aTier.mul(float(CYCLONE_TOP_WORLD_Y).sub(underside))),
     eye.y.add(sin(angle).mul(radius)).add(sin(scatterAngle).mul(scatter)),
   );
 
@@ -223,21 +186,20 @@ export function createSpiralMesh(
   const lit = aStrength.greaterThan(0).toFloat();
   billboardPuffs(material, world, puffSize.mul(lit));
 
-  // Solid at the eyewall, a smear at the rim and shield, so the wall occludes rather than tints.
+  // Solid at the eyewall, a smear at the rim, so the wall occludes rather than tints.
   const softEdge = mix(float(CYCLONE_RIM_SOFT_EDGE), CYCLONE_EYEWALL_SOFT_EDGE, wall);
   const mask = puffMask(softEdge);
   discard(material, mask.discarded);
 
-  // Darkest at the eyewall and at a wall's base: multipliers on the albedo, so the deck is still lit.
-  const baseShade = mix(float(1), mix(float(CYCLONE_WALL_BASE_SHADE), 1, aTier), isWall);
+  // Darkest at the eyewall and at a column's foot: multipliers on the albedo, so the deck is still lit.
+  const footShade = mix(float(CYCLONE_WALL_BASE_SHADE), 1, aTier);
   compose(material, 'color', (previous) =>
-    previous.mul(mix(float(1), CYCLONE_EYEWALL_SHADE, wall)).mul(baseShade),
+    previous.mul(mix(float(1), CYCLONE_EYEWALL_SHADE, wall)).mul(footShade),
   );
 
-  // The outer tenth of the walls and of the shield fades out, so neither has an edge.
+  // The outer tenth fades out, so the deck has no edge.
   const edge = float(1).sub(smoothstep(SPIRAL_RIM_FADE_START, 1, aAlong));
-  const wallThinness = mix(float(CYCLONE_RIM_OPACITY_FRACTION), 1, wall);
-  const thinness = mix(wallThinness, float(CYCLONE_SHIELD_OPACITY_FRACTION), aShield);
+  const thinness = mix(float(CYCLONE_RIM_OPACITY_FRACTION), 1, wall);
   const alpha = mask.puff.mul(edge).mul(aStrength).mul(thinness);
   discard(material, puffAlphaDiscard(alpha));
   compose(material, 'opacity', (previous) => previous.mul(alpha));
@@ -277,7 +239,7 @@ export function createSpiralMesh(
 
     orderAgainstCamera(cameraWorldY: number): void {
       mesh.renderOrder =
-        cameraWorldY >= CYCLONE_SHIELD_WORLD_Y
+        cameraWorldY >= CYCLONE_TOP_WORLD_Y
           ? SPIRAL_RENDER_ORDER_CAMERA_ABOVE_BASE
           : SPIRAL_RENDER_ORDER_CAMERA_BELOW_BASE;
     },

@@ -1,8 +1,8 @@
-import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   DECK_BASE_WORLD_Y,
   DECK_THICKNESS_WORLD_UNITS,
-  PUFF_COVERAGE_OVERLAP,
 } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { MAX_GROUND_WORLD_Y } from '../../../client/src/plugins/kit/precipitation.ts';
 import {
@@ -20,25 +20,25 @@ export const MAX_SPIRALS = MAX_ACTIVE_CYCLONES + DISPERSING_HEADROOM;
 export const ARMS_PER_SPIRAL = 9;
 export const POSITIONS_PER_ARM = 90;
 
-// A column is one stack of puffs on one arm; every column stands on its own ground.
+// A column is one stack of puffs on one arm; every column knows its own ground.
 export const COLUMNS_PER_SPIRAL = ARMS_PER_SPIRAL * POSITIONS_PER_ARM;
 export const COLUMN_CAPACITY = MAX_SPIRALS * COLUMNS_PER_SPIRAL;
 
 export const ARM_WRAP_TURNS = 0.85;
 
-// The outflow shield rides where the ordinary cloud deck tops out; the eye wall climbs to meet it.
-export const CYCLONE_SHIELD_WORLD_Y = DECK_BASE_WORLD_Y + DECK_THICKNESS_WORLD_UNITS;
-export const CYCLONE_EYEWALL_TOP_WORLD_Y = CYCLONE_SHIELD_WORLD_Y;
+// Every column tops out on one flat cap, where the ordinary cloud deck tops out.
+export const CYCLONE_TOP_WORLD_Y = DECK_BASE_WORLD_Y + DECK_THICKNESS_WORLD_UNITS;
 
-// A rim band keeps half a deck of cloud over the highest ground, so no band sinks into a summit.
+// The rim hangs from the cap; its underside clears the highest ground by half a deck.
 export const CYCLONE_RIM_HEADROOM_WORLD_UNITS = DECK_THICKNESS_WORLD_UNITS / 2;
-export const CYCLONE_RIM_TOP_WORLD_Y = MAX_GROUND_WORLD_Y + CYCLONE_RIM_HEADROOM_WORLD_UNITS;
+export const CYCLONE_RIM_BOTTOM_WORLD_Y = MAX_GROUND_WORLD_Y + CYCLONE_RIM_HEADROOM_WORLD_UNITS;
 
-// The lowest surface a wall stands on is the sea; columns carry enough tiers to reach it.
-// Sea level in world units, as the monster and wildlife rigs read it.
-export const CYCLONE_WALL_FLOOR_WORLD_Y: 0 = SEA_LEVEL;
+// The eye wall's foot is the sea at lowest; columns carry enough tiers to reach it.
+export const CYCLONE_WALL_FLOOR_WORLD_Y = SEA_SURFACE_WORLD_Y;
 
-export const CYCLONE_TOWER_FALLOFF_EXPONENT = 0.5;
+// The funnel: undersides drop from the rim bottom to the ground by this power of
+// the distance in from the rim; only the eye wall reaches all the way down.
+export const CYCLONE_FUNNEL_PROFILE_EXPONENT = 0.5;
 
 export const CYCLONE_EYEWALL_PUFF_GROWTH = 0.6;
 
@@ -60,41 +60,20 @@ export const CYCLONE_TIER_RISE_PUFF_HALF_WIDTHS = 1;
 
 export const CYCLONE_TIER_JITTER_FRACTION = 0.5;
 
-// The shield overhangs the walls by this fraction of the storm radius.
-export const CYCLONE_SHIELD_OVERHANG_FRACTION = 0.3;
-export const CYCLONE_SHIELD_RADIUS_FRACTION = 1 + CYCLONE_SHIELD_OVERHANG_FRACTION;
-
-export const CYCLONE_SHIELD_PUFF_SIZE_FRACTION = 0.14;
-
-// The shield's largest puff still clears the eye, so the eye stays open through the top.
-export const CYCLONE_SHIELD_INNER_RADIUS_FRACTION =
-  CYCLONE_EYE_RADIUS_FRACTION +
-  CYCLONE_SHIELD_PUFF_SIZE_FRACTION * (PUFF_SIZE_SEED_MIN + PUFF_SIZE_SEED_SPAN);
-
-// One layer of puffs, each lifted or dropped by up to this much of its half-width.
-export const CYCLONE_SHIELD_THICKNESS_PUFF_HALF_WIDTHS = 0.5;
-
-export const SHIELD_PUFFS_PER_SPIRAL = Math.ceil(
-  (PUFF_COVERAGE_OVERLAP *
-    (CYCLONE_SHIELD_RADIUS_FRACTION * CYCLONE_SHIELD_RADIUS_FRACTION -
-      CYCLONE_SHIELD_INNER_RADIUS_FRACTION * CYCLONE_SHIELD_INNER_RADIUS_FRACTION)) /
-    (CYCLONE_SHIELD_PUFF_SIZE_FRACTION * CYCLONE_SHIELD_PUFF_SIZE_FRACTION),
-);
-
 const SEED_HASH_TIER_JITTER = 7.31;
 
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887;
-const GOLDEN_ANGLE_TURNS = GOLDEN_RATIO_CONJUGATE;
 
 // The eyewall profile: 1 at the eyewall, 0 at the rim.
 export function wallAt(along: number): number {
-  return 1 - Math.pow(along, CYCLONE_TOWER_FALLOFF_EXPONENT);
+  return 1 - Math.pow(along, CYCLONE_FUNNEL_PROFILE_EXPONENT);
 }
 
-export function towerTopAt(along: number): number {
+// A column's underside when it stands over the sea; the shader lifts it onto higher ground.
+export function undersideOverSeaAt(along: number): number {
   return (
-    CYCLONE_RIM_TOP_WORLD_Y +
-    (CYCLONE_EYEWALL_TOP_WORLD_Y - CYCLONE_RIM_TOP_WORLD_Y) * wallAt(along)
+    CYCLONE_RIM_BOTTOM_WORLD_Y +
+    (CYCLONE_WALL_FLOOR_WORLD_Y - CYCLONE_RIM_BOTTOM_WORLD_Y) * wallAt(along)
   );
 }
 
@@ -111,7 +90,7 @@ export function tierRiseAt(along: number): number {
 }
 
 export function tiersAt(along: number): number {
-  return Math.round((towerTopAt(along) - CYCLONE_WALL_FLOOR_WORLD_Y) / tierRiseAt(along)) + 1;
+  return Math.round((CYCLONE_TOP_WORLD_Y - undersideOverSeaAt(along)) / tierRiseAt(along)) + 1;
 }
 
 export function alongAt(index: number): number {
@@ -127,49 +106,33 @@ export function columnRadiusFraction(along: number): number {
   return CYCLONE_BAND_INNER_RADIUS_FRACTION + (1 - CYCLONE_BAND_INNER_RADIUS_FRACTION) * along;
 }
 
-export const WALL_PUFFS_PER_ARM: number = (() => {
+export const PUFFS_PER_ARM: number = (() => {
   let total = 0;
   for (let index = 0; index < POSITIONS_PER_ARM; index++) total += tiersAt(alongAt(index));
   return total;
 })();
-export const WALL_PUFFS_PER_SPIRAL = ARMS_PER_SPIRAL * WALL_PUFFS_PER_ARM;
-
-export const PUFFS_PER_SPIRAL = WALL_PUFFS_PER_SPIRAL + SHIELD_PUFFS_PER_SPIRAL;
+export const PUFFS_PER_SPIRAL = ARMS_PER_SPIRAL * PUFFS_PER_ARM;
 
 export const SPIRAL_CAPACITY = MAX_SPIRALS * PUFFS_PER_SPIRAL;
 
 // Two vector attributes, since WebGPU allows few vertex buffers per pipeline.
 export const SEAT_LANES = 4;
-export const KEY_LANES = 3;
+export const KEY_LANES = 2;
 
 export interface SpiralLayout {
   // Per puff: (arm bearing turns, along, seed, tier fraction).
   readonly seats: Float32Array;
-  // Per puff: (slot, column, shield flag).
+  // Per puff: (slot, column).
   readonly keys: Float32Array;
 }
 
 // Every slot is laid out identically and written once; centre, radius, strength
-// and column grounds are uniforms. A shield puff's bearing and radial seat ride the arm/along lanes.
+// and column grounds are uniforms.
 export function writeSpiralLayout(): SpiralLayout {
   const seats = new Float32Array(SPIRAL_CAPACITY * SEAT_LANES);
   const keys = new Float32Array(SPIRAL_CAPACITY * KEY_LANES);
 
   let written = 0;
-  function seat(
-    slot: number,
-    column: number,
-    bearing: number,
-    along: number,
-    seed: number,
-    tier: number,
-    shield: number,
-  ): void {
-    seats.set([bearing, along, seed, tier], written * SEAT_LANES);
-    keys.set([slot, column, shield], written * KEY_LANES);
-    written++;
-  }
-
   for (let slot = 0; slot < MAX_SPIRALS; slot++) {
     const firstColumn = slot * COLUMNS_PER_SPIRAL;
     for (let arm = 0; arm < ARMS_PER_SPIRAL; arm++) {
@@ -179,29 +142,11 @@ export function writeSpiralLayout(): SpiralLayout {
         for (let tier = 0; tier < stacked; tier++) {
           const seed = (written * GOLDEN_RATIO_CONJUGATE) % 1;
           const jitter = ((seed * SEED_HASH_TIER_JITTER) % 1) * CYCLONE_TIER_JITTER_FRACTION;
-          seat(
-            slot,
-            firstColumn + arm * POSITIONS_PER_ARM + index,
-            arm / ARMS_PER_SPIRAL,
-            along,
-            seed,
-            (tier + jitter) / stacked,
-            0,
-          );
+          seats.set([arm / ARMS_PER_SPIRAL, along, seed, (tier + jitter) / stacked], written * SEAT_LANES);
+          keys.set([slot, firstColumn + arm * POSITIONS_PER_ARM + index], written * KEY_LANES);
+          written++;
         }
       }
-    }
-    for (let index = 0; index < SHIELD_PUFFS_PER_SPIRAL; index++) {
-      const seed = (written * GOLDEN_RATIO_CONJUGATE) % 1;
-      seat(
-        slot,
-        firstColumn,
-        (index * GOLDEN_ANGLE_TURNS) % 1,
-        Math.sqrt((index + 0.5) / SHIELD_PUFFS_PER_SPIRAL),
-        seed,
-        (seed * SEED_HASH_TIER_JITTER) % 1,
-        1,
-      );
     }
   }
 
