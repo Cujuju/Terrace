@@ -2,9 +2,9 @@ import {
   CHUNK_SIZE,
   DRAWN_SHORE_HEIGHT,
   MAX_HEIGHT,
-  MIN_BRUSH_RADIUS,
+  MAX_BRUSH_RADIUS,
   SEA_LEVEL,
-  SMOOTH_REACH_CELLS,
+  smoothCascadeReachCells,
   bandLevelHeight,
   chunkHeightsAsCells,
   drawnBandOfSample,
@@ -922,14 +922,18 @@ describe('a contained sculpt fault leaves no client diverged', () => {
   });
 
   it('covers a faulted smooth\'s bounded reach, which a stamp never needs', () => {
-    // SMOOTH_REACH_CELLS past the brush, plus the seam halo, and no further.
-    const REACHED_CHUNK =
-      Math.floor((UNLOCKED_CELL.x + MIN_BRUSH_RADIUS + SMOOTH_REACH_CELLS) / CHUNK_SIZE) +
-      MESH_SEAM_HALO_CHUNKS;
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [
+    // Each tool's own reach, plus the seam halo, and no further.
+    const WIDE_WORLD_SIZE = CHUNK_SIZE * 8;
+    const OUT_OF_REACH_CHUNK = WIDE_WORLD_SIZE / CHUNK_SIZE - 1;
+    const RADIUS = MAX_BRUSH_RADIUS;
+    const chunkAt = (cell: number): number => Math.floor(cell / CHUNK_SIZE) + MESH_SEAM_HALO_CHUNKS;
+    const STAMPED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS);
+    const SMOOTHED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS + smoothCascadeReachCells(RADIUS));
+    const world = worldWithUnlockedChunks(WIDE_WORLD_SIZE, [
       [0, 0],
-      [REACHED_CHUNK, REACHED_CHUNK],
-      [FAR_CHUNK, FAR_CHUNK],
+      [STAMPED_CHUNK, STAMPED_CHUNK],
+      [SMOOTHED_CHUNK, SMOOTHED_CHUNK],
+      [OUT_OF_REACH_CHUNK, OUT_OF_REACH_CHUNK],
     ]);
     const sink = new RecordingSink();
     world.setSink(sink);
@@ -937,17 +941,23 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     grantTokenEveryUnlockedChunk(world, PLAYER.token);
     sink.clear();
 
-    refuseFaultedSculpt(world, sculptMessage({ seq: SEQ, tool: 'stamp' }), () => {});
+    const press = { seq: SEQ, radius: RADIUS, profile: 'hard' } as const;
+    refuseFaultedSculpt(world, sculptMessage({ ...press, tool: 'stamp' }), () => {});
     const stamped = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
-    expect(stamped.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([[0, 0]]);
+    expect(stamped.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
+      [0, 0],
+      [STAMPED_CHUNK, STAMPED_CHUNK],
+    ]);
     sink.clear();
 
-    refuseFaultedSculpt(world, sculptMessage({ seq: SEQ, tool: 'smooth' }), () => {});
+    refuseFaultedSculpt(world, sculptMessage({ ...press, tool: 'smooth' }), () => {});
     const smoothed = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
-    expect(REACHED_CHUNK).toBeLessThan(FAR_CHUNK);
+    expect(STAMPED_CHUNK).toBeLessThan(SMOOTHED_CHUNK);
+    expect(SMOOTHED_CHUNK).toBeLessThan(OUT_OF_REACH_CHUNK);
     expect(smoothed.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
       [0, 0],
-      [REACHED_CHUNK, REACHED_CHUNK],
+      [STAMPED_CHUNK, STAMPED_CHUNK],
+      [SMOOTHED_CHUNK, SMOOTHED_CHUNK],
     ]);
   });
 

@@ -16,7 +16,7 @@ import {
   setColumn,
   smooth,
   SMOOTH_PASS_LIMIT,
-  SMOOTH_REACH_CELLS,
+  smoothCascadeReachCells,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   type Heightmap,
   type SculptOptions,
@@ -182,8 +182,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     for (let i = 0; i < map.cells.length; i++) {
       if (map.cells[i] !== before[i]) moved++;
     }
-    expect(diff.length).toBe(723);
-    expect(moved).toBe(720);
+    expect(diff.length).toBe(50);
+    expect(moved).toBe(50);
     expect(mapTotal(map)).toBe(total);
 
     const counts = [diff.length];
@@ -194,8 +194,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
       );
     }
     // Drawn spill boxes free raw-level block edges, so the first stroke regrades
-    // everything within SMOOTH_REACH_CELLS; there is nothing left to repeat.
-    expect(counts).toEqual([723, 0, 0, 0]);
+    // everything the cascade reaches; there is nothing left to repeat.
+    expect(counts).toEqual([50, 0, 0, 0]);
 
     let tail = 0;
     while (tail < CASCADE_TAIL_LIMIT) {
@@ -210,9 +210,10 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     expect(tail).toBe(CASCADE_TAIL_PRESSES);
   });
 
-  it('the player smooth never writes past its footprint plus SMOOTH_REACH_CELLS', () => {
+  it('the player smooth never writes past its footprint plus its cascade reach', () => {
     for (const radius of [1, 4, MAX_BRUSH_RADIUS]) {
       for (const dir of [1, -1] as const) {
+        const reach = smoothCascadeReachCells(radius);
         const map = genesisTerraces(TERRACE_SIZE);
         const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, radius);
         let minX = TERRACE_SIZE, minY = TERRACE_SIZE, maxX = -1, maxY = -1;
@@ -228,8 +229,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
         });
         expect(diff.length).toBeGreaterThan(0);
         const escaped = diff.filter((cell) =>
-          cell.x < minX - SMOOTH_REACH_CELLS || cell.x > maxX + SMOOTH_REACH_CELLS ||
-          cell.y < minY - SMOOTH_REACH_CELLS || cell.y > maxY + SMOOTH_REACH_CELLS);
+          cell.x < minX - reach || cell.x > maxX + reach ||
+          cell.y < minY - reach || cell.y > maxY + reach);
         expect([radius, dir, escaped]).toEqual([radius, dir, []]);
         // The server resyncs a faulted stroke over exactly this rectangle.
         const bound = sculptReachCells(radius, 'hard', 'smooth', 'clicked');
@@ -250,8 +251,8 @@ describe('relaxation conserves height exactly (issue #108)', () => {
       spill: 'banded',
     });
     const beyond = diff.filter((cell) =>
-      Math.abs(cell.x - TERRACE_CENTRE) > radius + SMOOTH_REACH_CELLS ||
-      Math.abs(cell.y - TERRACE_CENTRE) > radius + SMOOTH_REACH_CELLS);
+      Math.abs(cell.x - TERRACE_CENTRE) > sculptReachCells(radius, 'hard', 'smooth', 'clicked') ||
+      Math.abs(cell.y - TERRACE_CENTRE) > sculptReachCells(radius, 'hard', 'smooth', 'clicked'));
     expect(beyond.length).toBeGreaterThan(0);
   });
 

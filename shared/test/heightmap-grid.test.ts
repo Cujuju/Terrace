@@ -27,8 +27,8 @@ import {
   sculptSweepRadius,
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
-  SMOOTH_REACH_BANDS,
-  SMOOTH_REACH_CELLS,
+  SMOOTH_REACH_MARGIN_CELLS,
+  smoothCascadeReachCells,
   SMOOTH_SPREAD_CELLS,
   WORLD_UNIT_CELLS,
 } from '../src/index.ts';
@@ -110,12 +110,14 @@ describe('deep strata constants', () => {
     expect(SMOOTH_SPREAD_CELLS).toBe(160 * WORLD_UNIT_CELLS);
   });
 
-  it('caps the player smooth cascade past the widest brush edge it must cross', () => {
+  it('caps the player smooth cascade at the brush that started it', () => {
     expect(RAMP_CELLS_PER_BAND).toBe(BAND_HEIGHT / MAX_STEP);
-    expect(SMOOTH_REACH_CELLS).toBe(SMOOTH_REACH_BANDS * RAMP_CELLS_PER_BAND);
-    // A stamp edge converges at MAX_BRUSH_RADIUS + 2 cells; the cap clears it.
-    expect(SMOOTH_REACH_CELLS).toBeGreaterThan(MAX_BRUSH_RADIUS + 2);
-    expect(SMOOTH_REACH_CELLS).toBeLessThan(SMOOTH_SPREAD_CELLS);
+    // A stamp edge converges at radius + 2 cells; the margin is exactly that.
+    for (const radius of [1, 2, 4, 8, MAX_BRUSH_RADIUS]) {
+      expect([radius, smoothCascadeReachCells(radius)])
+        .toEqual([radius, radius + SMOOTH_REACH_MARGIN_CELLS]);
+    }
+    expect(smoothCascadeReachCells(MAX_BRUSH_RADIUS)).toBeLessThan(SMOOTH_SPREAD_CELLS);
   });
 });
 
@@ -123,7 +125,10 @@ describe('sculptReachCells — one statement of how far a stroke can write', () 
   const RADIUS = 4;
 
   it('gives every relaxing tool its own cascade bound and the rest their sweep', () => {
-    expect(sculptReachCells(RADIUS, 'hard', 'smooth', 'clicked')).toBe(RADIUS + SMOOTH_REACH_CELLS);
+    for (const radius of [1, RADIUS, MAX_BRUSH_RADIUS]) {
+      expect([radius, sculptReachCells(radius, 'hard', 'smooth', 'clicked')])
+        .toEqual([radius, 2 * radius + SMOOTH_REACH_MARGIN_CELLS]);
+    }
     expect(sculptReachCells(RADIUS, 'soft', LIBRARY_SCULPT_TOOL, 'free'))
       .toBe(RADIUS + SMOOTH_SPREAD_CELLS);
     for (const tool of ['stamp', 'drag', 'carve'] as const) {
