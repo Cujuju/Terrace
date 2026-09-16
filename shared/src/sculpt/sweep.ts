@@ -3,6 +3,7 @@ import { chunksPerEdge } from '../chunks.ts';
 import { sculptOptionsOf } from '../protocol/sculpt.ts';
 import type { SculptIntent } from '../protocol/sculpt.ts';
 import { footprintRadiusSquared } from './footprint.ts';
+import { sculptReachCells } from './reach.ts';
 
 /**
  * What one stroke sweeps: the brush disc of `radius` dragged from
@@ -41,6 +42,37 @@ export function strokeSweep(intent: SculptIntent): StrokeSweep {
   return from === null
     ? sweepAt(intent.x, intent.y, intent.radius)
     : sweepBetween(from.x, from.y, intent.x, intent.y, intent.radius);
+}
+
+/** The rectangle of cells one stroke can write, clipped to the world. */
+export interface StrokeReachBox {
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+/**
+ * A drag's lower layers settle one cell past the tread it followed, which no
+ * tool's reach radius states.
+ */
+const SETTLE_MARGIN_CELLS = 1;
+
+/** Every cell one stroke can write: its sweep, grown by the tool's own reach. */
+export function strokeReachBox(worldSize: number, intent: SculptIntent): StrokeReachBox {
+  const sweep = strokeSweep(intent);
+  const options = sculptOptionsOf(intent);
+  const reach =
+    sculptReachCells(sweep.radius, options.profile, options.tool, options.anchor) +
+    SETTLE_MARGIN_CELLS;
+  const last = worldSize - 1;
+  const clamp = (n: number): number => (n < 0 ? 0 : n > last ? last : n);
+  return {
+    minX: clamp((sweep.fromX < sweep.toX ? sweep.fromX : sweep.toX) - reach),
+    minY: clamp((sweep.fromY < sweep.toY ? sweep.fromY : sweep.toY) - reach),
+    maxX: clamp((sweep.fromX > sweep.toX ? sweep.fromX : sweep.toX) + reach),
+    maxY: clamp((sweep.fromY > sweep.toY ? sweep.fromY : sweep.toY) + reach),
+  };
 }
 
 /**
