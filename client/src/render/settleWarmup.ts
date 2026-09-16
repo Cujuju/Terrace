@@ -85,7 +85,13 @@ function collect(node: Object3D, ancestorHidden: boolean, walk: Walk): void {
   for (const child of node.children) collect(child, nodeHidden, walk);
 }
 
-async function compilePass(scope: WarmupScope, walk: Walk): Promise<void> {
+async function compilePass(
+  scope: WarmupScope,
+  walk: Walk,
+  // Runs once projection has queued the deferred work items and before the drain
+  // reads `material.side` to key their pipelines.
+  beforeDrain: (() => void) | null = null,
+): Promise<void> {
   for (const node of walk.hidden) node.visible = true;
   for (const node of walk.culled) node.frustumCulled = false;
 
@@ -99,6 +105,7 @@ async function compilePass(scope: WarmupScope, walk: Walk): Promise<void> {
     // the per-object compiles afterwards, so restoring here cannot flash.
     for (const node of walk.hidden) node.visible = false;
     for (const node of walk.culled) node.frustumCulled = true;
+    beforeDrain?.();
   }
   await done;
 }
@@ -134,11 +141,16 @@ export async function warmHiddenDrawables(scope: WarmupScope): Promise<WarmupRes
     // Residual: a hidden double-pass object shown during a pass renders
     // single-sided until that pass ends (load-time only).
     try {
-      for (const material of walk.doublePass) material.side = BackSide;
-      await compilePass(scope, walk);
+      // Projecting at DoubleSide queues the back-side render object as well as the
+      // default one, and the drain keys both off the side set here.
+      await compilePass(scope, walk, () => {
+        for (const material of walk.doublePass) material.side = BackSide;
+      });
       // Everything not double-pass is already cached from the pass above: Pipelines
       // keys `caches` by the render cache key string, and side is the only field moving.
       for (const material of walk.doublePass) material.side = FrontSide;
+      // FrontSide at projection queues the default render object alone, so the back-side
+      // one still holds its pipeline and the cache keeps it instead of releasing it.
       await compilePass(scope, walk);
     } finally {
       for (const material of walk.doublePass) material.side = DoubleSide;
