@@ -7,86 +7,103 @@
     {
       "name": "noise-basin-raise",
       "changed": 3,
+      "diffHash": "69008046",
       "hash": "3fb176d0"
     },
     {
       "name": "carve-click-band",
       "changed": 3,
+      "diffHash": "e5156935",
       "hash": "c50b0171"
     },
     {
       "name": "carve-second-site",
       "changed": 2,
+      "diffHash": "ad05b8c6",
       "hash": "4fabd791"
     },
     {
       "name": "drag-raise-one-band",
       "changed": 17,
+      "diffHash": "c8fb863d",
       "hash": "28210cf1"
     },
     {
       "name": "drag-lower-swept",
       "changed": 27,
+      "diffHash": "be1373d6",
       "hash": "7fb6c042"
     },
     {
       "name": "stamp-band-anchored",
       "changed": 9,
+      "diffHash": "77d6a4f4",
       "hash": "b599dde2"
     },
     {
       "name": "stamp-hard-raise-centre",
       "changed": 14,
+      "diffHash": "d997dc84",
       "hash": "6e72e9a2"
     },
     {
       "name": "stamp-soft-raise",
       "changed": 759,
+      "diffHash": "a0ff55cf",
       "hash": "936e90f7"
     },
     {
       "name": "stamp-soft-lower",
       "changed": 328,
+      "diffHash": "d2ad0075",
       "hash": "6b1c5263"
     },
     {
       "name": "stamp-hard-lower-free",
       "changed": 2,
+      "diffHash": "749db306",
       "hash": "97ab59c3"
     },
     {
       "name": "smooth-banded-raise",
       "changed": 519,
+      "diffHash": "0b7f25e8",
       "hash": "f4c4373f"
     },
     {
       "name": "smooth-free-lower",
       "changed": 529,
+      "diffHash": "d000cf9c",
       "hash": "b7c636ca"
     },
     {
       "name": "edge-stamp-origin-corner",
       "changed": 4,
+      "diffHash": "09b902c1",
       "hash": "4acfd30a"
     },
     {
       "name": "edge-stamp-far-column",
       "changed": 47,
+      "diffHash": "2c5113aa",
       "hash": "1de28c02"
     },
     {
       "name": "edge-smooth-left-edge",
       "changed": 256,
+      "diffHash": "342472c1",
       "hash": "722d2988"
     },
     {
       "name": "edge-drag-left-edge",
       "changed": 1,
+      "diffHash": "e8330bbb",
       "hash": "60aa57b8"
     },
     {
       "name": "settle-library-tool",
       "changed": 4096,
+      "diffHash": "50dc1a2c",
       "hash": "2e1250e9"
     }
   ],
