@@ -1,6 +1,6 @@
 import {
   BAND_HEIGHT,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
   CELL_WORLD_SIZE,
   DRAWN_GROUND_BAND_BIAS,
   DRAWN_GROUND_CENTRE_CLEARANCE,
@@ -59,6 +59,7 @@ import {
   LIP_WORDS,
   SPAN_COUNT_SHIFT,
   SPAN_OFFSET_MASK,
+  SPAN_PAIR_WORDS,
   SQUARES_PER_CHUNK,
   STATS_CHUNK_AT,
   STATS_SQUARE_BASE_AT,
@@ -147,10 +148,11 @@ const BAND_HEIGHT : i32 = ${wgslI32(BAND_HEIGHT)};
 const BAND_HEIGHT_SHIFT : u32 = ${wgslI32(shift)}u;
 const BAND_BIAS : i32 = ${wgslI32(DRAWN_GROUND_BAND_BIAS)};
 const COORD_DENOM : i32 = ${wgslI32(DRAWN_GROUND_COORD_DENOM)};
-const BEDROCK_FLOOR : i32 = ${wgslI32(BEDROCK_FLOOR)};
+const BEDROCK_BAND : i32 = ${wgslI32(BEDROCK_BAND)};
 const OPEN_COLUMN_SAMPLE : i32 = ${wgslI32(OPEN_COLUMN_SAMPLE)};
 const SPAN_COUNT_SHIFT : u32 = ${wgslI32(SPAN_COUNT_SHIFT)}u;
 const SPAN_OFFSET_MASK : u32 = ${wgslI32(SPAN_OFFSET_MASK)}u;
+const SPAN_PAIR_WORDS : i32 = ${wgslI32(SPAN_PAIR_WORDS)};
 const WINDOW_SPAN_PAIRS : i32 = ${wgslI32(WINDOW_SPAN_PAIRS)};
 const CELL_WORLD_SIZE : f32 = ${wgslF32(CELL_WORLD_SIZE)};
 const BAND_WORLD_HEIGHT : f32 = ${wgslF32(BAND_WORLD_HEIGHT)};
@@ -292,7 +294,6 @@ fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
   return select(solved.x, solved.x + 1, solved.y != 0);
 }
 
-fn quantizeToBand(h : i32) -> i32 { return (h >> BAND_HEIGHT_SHIFT) << BAND_HEIGHT_SHIFT; }
 fn drawnBandOfSample(h : i32) -> i32 {
   let band = (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT;
   return select(band, -1, band == 0 && h + BAND_BIAS < SHORE_THRESHOLD);
@@ -305,47 +306,38 @@ fn spanCountOf(local : i32) -> i32 {
   let packedCount = i32(cellDesc[local] >> SPAN_COUNT_SHIFT);
   return select(packedCount, 1, packedCount == 0);
 }
-fn spanFloor(local : i32, k : i32) -> i32 {
-  let desc = cellDesc[local];
-  if (desc == 0u) { return BEDROCK_FLOOR; }
-  return spanPairWord((entryPairBase + i32(desc & SPAN_OFFSET_MASK) + k) * 2);
+fn spanPairAt(local : i32, k : i32) -> i32 {
+  return (entryPairBase + i32(cellDesc[local] & SPAN_OFFSET_MASK) + k) * SPAN_PAIR_WORDS;
+}
+fn spanFloorBand(local : i32, k : i32) -> i32 {
+  if (cellDesc[local] == 0u) { return BEDROCK_BAND; }
+  return spanPairWord(spanPairAt(local, k));
 }
 fn spanCeiling(local : i32, k : i32) -> i32 {
-  let desc = cellDesc[local];
-  if (desc == 0u) { return cellHeight[local]; }
-  return spanPairWord((entryPairBase + i32(desc & SPAN_OFFSET_MASK) + k) * 2 + 1);
+  if (cellDesc[local] == 0u) { return cellHeight[local]; }
+  return spanPairWord(spanPairAt(local, k) + 1);
 }
-fn spanLowestBandHeight(floorHeight : i32) -> i32 {
-  let q = quantizeToBand(floorHeight);
-  return select(q + BAND_HEIGHT, q, q == floorHeight);
+fn spanCapBand(local : i32, k : i32) -> i32 {
+  return drawnBandOfSample(spanCeiling(local, k));
 }
-fn isSpanDrawn(floorHeight : i32, ceiling : i32) -> bool {
-  return spanLowestBandHeight(floorHeight) <= quantizeToBand(ceiling);
+fn spanCoversBand(local : i32, k : i32, band : i32) -> bool {
+  return spanFloorBand(local, k) <= band && band <= spanCapBand(local, k);
 }
 
 fn columnSampleAtBand(local : i32, band : i32) -> i32 {
-  let threshold = band * BAND_HEIGHT;
   let count = spanCountOf(local);
   var below = OPEN_COLUMN_SAMPLE;
   for (var k = 0; k < count; k++) {
-    let floorHeight = spanFloor(local, k);
-    let ceiling = spanCeiling(local, k);
-    if (!isSpanDrawn(floorHeight, ceiling)) { continue; }
-    let capHeight = quantizeToBand(ceiling);
-    if (floorHeight <= threshold && threshold <= capHeight) { return ceiling; }
-    if (capHeight < threshold) { below = ceiling; }
+    if (spanCoversBand(local, k, band)) { return spanCeiling(local, k); }
+    if (spanCapBand(local, k) < band) { below = spanCeiling(local, k); }
   }
   return below;
 }
 
-// columnCoversBand: spanIndexCoveringBand's test, which skips the isSpanDrawn filter.
 fn columnCoversBand(local : i32, band : i32) -> bool {
-  let threshold = band * BAND_HEIGHT;
   let count = spanCountOf(local);
   for (var k = 0; k < count; k++) {
-    if (spanFloor(local, k) <= threshold && threshold <= quantizeToBand(spanCeiling(local, k))) {
-      return true;
-    }
+    if (spanCoversBand(local, k, band)) { return true; }
   }
   return false;
 }

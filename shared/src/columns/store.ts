@@ -1,9 +1,14 @@
 import { MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from '../constants.ts';
+import { bandFloorHeight, bandLevelHeight } from '../bands.ts';
 import { cellIndex, cellX, cellY, type Heightmap } from '../grid.ts';
 import {
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
   canonicaliseColumn,
+  isGapDrawn,
+  isSpanDrawn,
   parsePackedSpans,
+  spanCapBand,
   SPAN_STRIDE,
   type Span,
 } from './span.ts';
@@ -20,14 +25,14 @@ export function spanAt(map: Heightmap, x: number, y: number, k: number): Span {
     if (k !== 0) {
       throw new RangeError(`cell (${x}, ${y}) has 1 span, asked for span ${k}`);
     }
-    return { floor: BEDROCK_FLOOR, ceiling: map.cells[i]! };
+    return { floorBand: BEDROCK_BAND, ceiling: map.cells[i]! };
   }
   if (!Number.isInteger(k) || k < 0 || k >= packed.length / SPAN_STRIDE) {
     throw new RangeError(
       `cell (${x}, ${y}) has ${packed.length / SPAN_STRIDE} spans, asked for span ${k}`,
     );
   }
-  return { floor: packed[k * SPAN_STRIDE]!, ceiling: packed[k * SPAN_STRIDE + 1]! };
+  return { floorBand: packed[k * SPAN_STRIDE]!, ceiling: packed[k * SPAN_STRIDE + 1]! };
 }
 
 export function topSpan(map: Heightmap, x: number, y: number): Span {
@@ -39,7 +44,7 @@ export function seabedHeight(map: Heightmap, x: number, y: number): number {
   for (let k = 0; k < count; k++) {
     const span = spanAt(map, x, y, k);
     if (span.ceiling <= SEA_LEVEL) continue;
-    if (span.floor <= SEA_LEVEL) return span.ceiling;
+    if (bandFloorHeight(span.floorBand) <= SEA_LEVEL) return span.ceiling;
     return k === 0 ? BEDROCK_FLOOR : spanAt(map, x, y, k - 1).ceiling;
   }
   return map.cells[cellIndex(map, x, y)]!;
@@ -50,29 +55,41 @@ export function setColumn(map: Heightmap, x: number, y: number, spans: readonly 
     throw new RangeError(`cell (${x}, ${y}) needs at least one solid span`);
   }
   for (let k = 0; k < spans.length; k++) {
-    const { floor, ceiling } = spans[k]!;
-    if (!Number.isInteger(floor) || !Number.isInteger(ceiling)) {
-      throw new RangeError(`cell (${x}, ${y}) span ${k} [${floor}, ${ceiling}) is not integral`);
-    }
-    if (floor < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
+    const span = spans[k]!;
+    const { floorBand, ceiling } = span;
+    if (!Number.isInteger(floorBand) || !Number.isInteger(ceiling)) {
       throw new RangeError(
-        `cell (${x}, ${y}) span ${k} [${floor}, ${ceiling}) leaves [${MIN_HEIGHT}, ${MAX_HEIGHT}]`,
+        `cell (${x}, ${y}) span ${k} [band ${floorBand}, ${ceiling}] is not integral`,
       );
     }
-    if (floor >= ceiling) {
-      throw new RangeError(`cell (${x}, ${y}) span ${k} [${floor}, ${ceiling}) is empty`);
-    }
-    if (k > 0 && spans[k - 1]!.ceiling >= floor) {
+    if (floorBand < BEDROCK_BAND) {
       throw new RangeError(
-        `cell (${x}, ${y}) span ${k} starts at ${floor}, which does not clear span ${k - 1} ` +
-          `ending at ${spans[k - 1]!.ceiling} — spans must ascend with a gap between them`,
+        `cell (${x}, ${y}) span ${k} floors in band ${floorBand}, below bedrock band ${BEDROCK_BAND}`,
+      );
+    }
+    if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
+      throw new RangeError(
+        `cell (${x}, ${y}) span ${k} caps at ${ceiling}, outside [${MIN_HEIGHT}, ${MAX_HEIGHT}]`,
+      );
+    }
+    if (!isSpanDrawn(span)) {
+      throw new RangeError(
+        `cell (${x}, ${y}) span ${k} [band ${floorBand}, ${ceiling}] caps in band ` +
+          `${spanCapBand(span)}, below its own floor — it draws nothing`,
+      );
+    }
+    if (k > 0 && !isGapDrawn(spans[k - 1]!, span)) {
+      throw new RangeError(
+        `cell (${x}, ${y}) span ${k} floors in band ${floorBand}, which does not clear span ` +
+          `${k - 1} capping in band ${spanCapBand(spans[k - 1]!)} — spans must ascend with ` +
+          `a band of air between them`,
       );
     }
   }
-  if (spans[0]!.floor !== BEDROCK_FLOOR) {
+  if (spans[0]!.floorBand !== BEDROCK_BAND) {
     throw new RangeError(
-      `cell (${x}, ${y}) has its bottom span floored at ${spans[0]!.floor}; a column floors at ` +
-        `${BEDROCK_FLOOR} (a column standing on nothing needs the gap below it to be a span)`,
+      `cell (${x}, ${y}) has its bottom span floored in band ${spans[0]!.floorBand}; a column ` +
+        `floors in band ${BEDROCK_BAND} (a column standing on nothing needs the gap below it to be a span)`,
     );
   }
   const i = cellIndex(map, x, y);
@@ -83,7 +100,7 @@ export function setColumn(map: Heightmap, x: number, y: number, spans: readonly 
   }
   const packed = new Int16Array(spans.length * SPAN_STRIDE);
   for (let k = 0; k < spans.length; k++) {
-    packed[k * SPAN_STRIDE] = spans[k]!.floor;
+    packed[k * SPAN_STRIDE] = spans[k]!.floorBand;
     packed[k * SPAN_STRIDE + 1] = spans[k]!.ceiling;
   }
   map.columnSpans.set(i, packed);
@@ -152,27 +169,26 @@ export function moveSpanCeiling(
   if (!Number.isInteger(k) || k < 0 || k >= spans.length) {
     throw new RangeError(`cell (${x}, ${y}) has ${spans.length} span(s), asked to move span ${k}`);
   }
-  const target = spans[k]!;
-  if (newCeiling <= target.floor) {
-    spans.splice(k, 1);
-  } else {
-    spans[k] = { floor: target.floor, ceiling: newCeiling };
-  }
+  spans[k] = { floorBand: spans[k]!.floorBand, ceiling: newCeiling };
   setColumn(map, x, y, canonicaliseColumn(spans));
 }
 
-export function carveRange(map: Heightmap, x: number, y: number, lo: number, hi: number): void {
-  if (lo >= hi) return;
+/** Clear the slabs `loBand .. hiBand` from a column, keeping what lies outside them. */
+export function carveBands(map: Heightmap, x: number, y: number, loBand: number, hiBand: number): void {
+  if (loBand > hiBand) return;
   const spans = readSpans(map, x, y);
   const cut: Span[] = [];
   for (let k = 0; k < spans.length; k++) {
     const span = spans[k]!;
-    if (hi <= span.floor || lo >= span.ceiling) {
+    const capBand = spanCapBand(span);
+    if (hiBand < span.floorBand || loBand > capBand) {
       cut.push(span);
       continue;
     }
-    if (span.floor < lo) cut.push({ floor: span.floor, ceiling: lo });
-    if (hi < span.ceiling) cut.push({ floor: hi, ceiling: span.ceiling });
+    if (span.floorBand < loBand) {
+      cut.push({ floorBand: span.floorBand, ceiling: bandLevelHeight(loBand - 1) });
+    }
+    if (hiBand < capBand) cut.push({ floorBand: hiBand + 1, ceiling: span.ceiling });
   }
   setColumn(map, x, y, canonicaliseColumn(cut));
 }

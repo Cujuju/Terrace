@@ -1,6 +1,8 @@
 import { MAX_BRUSH_RADIUS, MAX_DRAG_SWEEP_CELLS, MIN_BRUSH_RADIUS } from '../constants.ts';
 import { chebyshevDistance } from '../grid.ts';
 import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  isValidCarveDepth,
   MAX_BAND,
   MIN_BAND,
   SCULPT_PROFILES,
@@ -28,6 +30,7 @@ export interface SculptIntent {
   targetBand?: number;
   spanBand?: number;
   smoothLambda?: number;
+  depthBands?: number;
   fromX?: number;
   fromY?: number;
   seq?: number;
@@ -40,6 +43,7 @@ export interface ResolvedWireSculptOptions extends ResolvedSculptOptions {
 
 export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   tool: 'stamp',
+  depthBands: CARVE_DEFAULT_DEPTH_BANDS,
   profile: 'soft',
   spill: 'banded',
   targetBand: null,
@@ -61,6 +65,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
     tool === 'drag' ? (intent.targetBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.targetBand;
   return {
     tool,
+    depthBands: intent.depthBands ?? WIRE_DEFAULT_SCULPT_OPTIONS.depthBands,
     profile: sculptProfileOf(tool, intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
     spill: WIRE_DEFAULT_SCULPT_OPTIONS.spill,
     anchor: targetBand !== null ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
@@ -181,6 +186,14 @@ export function validateSculptIntent(
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
 
+  // A depth travels with a carve and only with a carve: on any other tool
+  // nothing reads it, so acking it would promise a cut that never happens.
+  const { depthBands } = m;
+  if (depthBands !== undefined) {
+    if (tool !== 'carve') return null;
+    if (!isValidCarveDepth(depthBands as number)) return null;
+  }
+
   const { fromX, fromY } = m;
   if (fromX !== undefined || fromY !== undefined) {
     if (tool !== 'drag') return null;
@@ -202,6 +215,7 @@ export function validateSculptIntent(
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
+    ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };

@@ -6,8 +6,8 @@ import {
   drawnSpanCapHeight,
   isSpanDrawn,
   spanAt,
+  spanCapBand,
   spanCount,
-  spanUndersideHeight,
   type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
@@ -108,10 +108,10 @@ export function refineRiserToDrawnFace(
   const chunksPerEdge = Math.ceil(size / CHUNK_SIZE);
   const chunkX = Math.floor(i / CHUNK_SIZE);
   const chunkY = Math.floor(j / CHUNK_SIZE);
-  // F7: both riser-window bounds come from the drawn banding (bias + shore),
-  // not the blocky quantize, so the window matches the emitted skirts.
-  const lowestBand = drawnBandOfSample(spanUndersideHeight(span)) + 1;
-  const highestBand = drawnBandOfSample(span.ceiling);
+  // F7: the riser window is the span's own drawn band range, so it matches
+  // the emitted skirts exactly.
+  const lowestBand = span.floorBand;
+  const highestBand = spanCapBand(span);
 
   const ray = scaleRayToCellSpace(origin, direction);
   const window = ray === null ? null : clipRayToBox(
@@ -183,12 +183,9 @@ export function refineRiserToDrawnFace(
   }
 
   if (bestT < Infinity) {
-    // Owner rule: the nearer surface wins, period. A drawn wall crossing
-    // strictly before the cap strike means the cursor is on a sheer face, so
-    // it reports riser even over the cap strip (smoothing can inset drawn
-    // walls up to half a cell from the blocky wall). Only a level-face-first
-    // strike stays tread. (The old capPointIsOverStrip veto is gone: it kept
-    // wall-first hits tread and made sheer faces unselectable.)
+    // Owner rule: the nearer surface wins. A drawn wall crossing strictly
+    // before the cap strike reports riser even over the cap strip; only a
+    // level-face-first strike stays tread.
     if (hit.face !== 'riser') {
       const tHit = direction.y === 0
         ? tEnter

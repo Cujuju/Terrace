@@ -3,8 +3,9 @@ import {
   applySculpt,
   bandLevelHeight,
   BAND_HEIGHT,
-  BEDROCK_FLOOR,
-  carveRange,
+  bandFloorHeight,
+  BEDROCK_BAND,
+  carveBands,
   createHeightmap,
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
@@ -42,13 +43,7 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
     const map = createHeightmap(SIZE);
     map.cells.fill(GROUND_BAND * BAND_HEIGHT);
     if (carved) {
-      carveRange(
-        map,
-        CARVED_X,
-        CARVED_Y,
-        CARVE_FLOOR_BAND * BAND_HEIGHT,
-        CARVE_ROOF_BAND * BAND_HEIGHT,
-      );
+      carveBands(map, CARVED_X, CARVED_Y, CARVE_FLOOR_BAND, CARVE_ROOF_BAND - 1);
     }
     return map;
   }
@@ -89,7 +84,7 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
 
 describe('a smooth grasping a lower layer never swallows the cave above it', () => {
   const SIZE = 32;
-  const UPPER = { floor: 128, ceiling: 200 };
+  const UPPER = { floorBand: 8, ceiling: 200 };
   const LOW_CEILING = 60;
   const HIGH_CEILING = 100;
   const PRESSES = 25;
@@ -100,7 +95,7 @@ describe('a smooth grasping a lower layer never swallows the cave above it', () 
     for (let y = 12; y < 20; y++) {
       for (let x = 12; x < 20; x++) {
         const ceiling = (x + y) % 2 === 0 ? HIGH_CEILING : LOW_CEILING;
-        setColumn(map, x, y, [{ floor: BEDROCK_FLOOR, ceiling }, UPPER]);
+        setColumn(map, x, y, [{ floorBand: BEDROCK_BAND, ceiling }, UPPER]);
       }
     }
     const spanBand = drawnBandOfSample(HIGH_CEILING);
@@ -233,9 +228,9 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
       for (let x = 20; x < 44; x++) {
         const floorHeight = bandLevelHeight(BUILT_GROUND_BAND) + ((x + y) % 5) * BAND_HEIGHT;
         setColumn(map, x, y, [
-          { floor: BEDROCK_FLOOR, ceiling: floorHeight },
+          { floorBand: BEDROCK_BAND, ceiling: floorHeight },
           {
-            floor: floorHeight + ROOF_GAP_BANDS * BAND_HEIGHT,
+            floorBand: drawnBandOfSample(floorHeight) + ROOF_GAP_BANDS,
             ceiling: floorHeight + (ROOF_GAP_BANDS + 2) * BAND_HEIGHT,
           },
         ]);
@@ -245,7 +240,9 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
       let volume = 0;
       for (let y = 0; y < m.size; y++) {
         for (let x = 0; x < m.size; x++) {
-          for (const span of readSpans(m, x, y)) volume += span.ceiling - span.floor;
+          for (const span of readSpans(m, x, y)) {
+            volume += span.ceiling - bandFloorHeight(span.floorBand);
+          }
         }
       }
       return volume;

@@ -3,8 +3,8 @@ import {
   BAND_HEIGHT,
   bandFloorHeight,
   bandLevelHeight,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
-  CARVE_BANDS_PER_STROKE,
   cellX,
   cellY,
   chebyshevDistance,
@@ -12,6 +12,7 @@ import {
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  floorBandOfHeight,
   forEachFootprintOffset,
   isGapDrawn,
   isSpanDrawn,
@@ -24,7 +25,6 @@ import {
   readSpans,
   sculptDisplacementUnits,
   spanCount,
-  spanLowestBandHeight,
   topSpan,
   type CellDiff,
   type Heightmap,
@@ -38,12 +38,18 @@ import {
 // re-point the functions here and every invariant below follows.
 // ---------------------------------------------------------------------------
 
+/** `floor` is a raw height: the band it stands in is what the span records. */
 export function makeSpan(floor: number, ceiling: number): Span {
-  return { floor, ceiling };
+  return { floorBand: floorBandOfHeight(floor), ceiling };
 }
 
+/** Raw height the span's material starts at: the bottom of its floor band. */
 export function spanFloorOf(span: Span): number {
-  return span.floor;
+  return bandFloorHeight(span.floorBand);
+}
+
+export function spanFloorBandOf(span: Span): number {
+  return span.floorBand;
 }
 
 export function spanCeilingOf(span: Span): number {
@@ -52,7 +58,7 @@ export function spanCeilingOf(span: Span): number {
 
 /** Lowest band level the span draws as covered. */
 export function spanBaseOf(span: Span): number {
-  return spanLowestBandHeight(span);
+  return bandLevelHeight(span.floorBand);
 }
 
 /**
@@ -60,9 +66,7 @@ export function spanBaseOf(span: Span): number {
  * floor alone — the independent side of the coverage invariant.
  */
 export function spanBaseBandOf(span: Span): number {
-  const floor = spanFloorOf(span);
-  const band = drawnBandOfSample(floor);
-  return bandLevelHeight(band) >= floor ? band : band + 1;
+  return span.floorBand;
 }
 
 /** Highest band the span draws as covered, derived from its raw ceiling alone. */
@@ -137,7 +141,7 @@ function at(map: Heightmap, i: number): string {
 }
 
 function describeColumn(spans: readonly Span[]): string {
-  return spans.map((s) => `[${spanFloorOf(s)}, ${spanCeilingOf(s)})`).join(' ');
+  return spans.map((s) => `[band ${spanFloorBandOf(s)}, ${spanCeilingOf(s)}]`).join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -158,20 +162,24 @@ export function expectColumnsCanonical(
       violations.push(`${where}: no span at all`);
       continue;
     }
-    if (spanFloorOf(spans[0]!) !== BEDROCK_FLOOR) {
-      violations.push(`${where}: bottom span floors at ${spanFloorOf(spans[0]!)}, not ${BEDROCK_FLOOR}`);
+    if (spanFloorBandOf(spans[0]!) !== BEDROCK_BAND) {
+      violations.push(
+        `${where}: bottom span floors in band ${spanFloorBandOf(spans[0]!)}, not ${BEDROCK_BAND}`,
+      );
     }
     for (let k = 0; k < spans.length; k++) {
       const span = spans[k]!;
-      const floor = spanFloorOf(span);
+      const floorBand = spanFloorBandOf(span);
       const ceiling = spanCeilingOf(span);
-      if (!Number.isInteger(floor) || !Number.isInteger(ceiling)) {
+      if (!Number.isInteger(floorBand) || !Number.isInteger(ceiling)) {
         violations.push(`${where}: span ${k} is not integral`);
       }
-      if (floor < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
-        violations.push(`${where}: span ${k} leaves [${MIN_HEIGHT}, ${MAX_HEIGHT}]`);
+      if (floorBand < BEDROCK_BAND) {
+        violations.push(`${where}: span ${k} floors below the bedrock band ${BEDROCK_BAND}`);
       }
-      if (floor >= ceiling) violations.push(`${where}: span ${k} is empty`);
+      if (ceiling < MIN_HEIGHT || ceiling > MAX_HEIGHT) {
+        violations.push(`${where}: span ${k} caps outside [${MIN_HEIGHT}, ${MAX_HEIGHT}]`);
+      }
       if (!spanIsDrawn(span)) violations.push(`${where}: span ${k} is not drawn`);
       if (k > 0 && !gapIsDrawn(spans[k - 1]!, span)) {
         violations.push(`${where}: spans ${k - 1} and ${k} have no drawn gap — they should be one span`);
@@ -435,14 +443,15 @@ export function expectPriceMatchesBrushVolume(
   radius: number,
   tool: SculptTool,
   profile: SculptProfile,
+  depthBands: number,
   context = '',
 ): void {
   const cells = footprintCellCount(radius);
   const fill = cells * DEFAULT_SCULPT_AMOUNT;
-  const price = sculptDisplacementUnits(radius, tool, profile);
+  const price = sculptDisplacementUnits(radius, tool, profile, depthBands);
   const violations: string[] = [];
   if (tool === 'carve') {
-    const cut = cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
+    const cut = cells * depthBands * BAND_HEIGHT;
     if (price !== cut) violations.push(`carve over ${cells} cells prices ${price}, cuts ${cut}`);
   } else if (tool === 'smooth' || profile === 'soft') {
     // Graduated: the centre cell pays the full step, every other cell less.
@@ -478,7 +487,7 @@ export function expectSculptDeterministic(
   report(violations, context);
 }
 
-/** The band range a carve grasped at `spanBand` is allowed to cut. */
-export function carvedSlabRange(spanBand: number, bandsPerStroke: number): [number, number] {
-  return [bandFloorHeight(spanBand - 1), bandFloorHeight(spanBand + bandsPerStroke - 1)];
+/** The raw range a carve grasped at `spanBand` may cut: its slabs, and nothing under them. */
+export function carvedSlabRange(spanBand: number, depthBands: number): [number, number] {
+  return [bandLevelHeight(spanBand - 1), bandFloorHeight(spanBand + depthBands)];
 }

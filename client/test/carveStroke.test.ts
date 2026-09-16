@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   applySculpt,
@@ -155,7 +157,7 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     // the march entered.
     const TOWER = bandLevelHeight(PLATEAU_BAND);
     const mirror = worldOf(() => 0);
-    setColumn(mirror.map, 12, 12, [{ floor: BEDROCK_FLOOR, ceiling: TOWER }]);
+    setColumn(mirror.map, 12, 12, [{ floorBand: BEDROCK_BAND, ceiling: TOWER }]);
 
     const origin = { x: 11.4 * CELL_WORLD_SIZE, y: worldY(TOWER) + 5, z: 11.4 * CELL_WORLD_SIZE };
     const down = { x: 0, y: -1, z: 0 };
@@ -490,7 +492,7 @@ function wallWorld(): TerrainMirror {
   return worldOf((x) => (x >= CARVE_WALL_X ? bandLevelHeight(CARVE_WALL_BAND) : 0));
 }
 
-const carveIntent = (seq: number): SculptIntent => ({
+const carveIntent = (seq: number, depthBands?: number): SculptIntent => ({
   type: 'sculpt',
   x: CARVE_WALL_X,
   y: ROW,
@@ -498,6 +500,7 @@ const carveIntent = (seq: number): SculptIntent => ({
   dir: -1,
   tool: 'carve',
   spanBand: PLATEAU_BAND,
+  ...(depthBands === undefined ? {} : { depthBands }),
   seq,
 });
 
@@ -539,11 +542,42 @@ describe('predicting a carve', () => {
     expect(packColumnSpans(mirror.map, CARVE_WALL_X, ROW)).toEqual(authoritative);
     expect(heightAt(mirror.map, CARVE_WALL_X, ROW)).toBe(heightAt(server.map, CARVE_WALL_X, ROW));
   });
+
+  it('carries depthBands through the ledger, so a deep cut replays as a deep cut', () => {
+    for (const depthBands of [CARVE_MIN_DEPTH_BANDS, 3, CARVE_MAX_DEPTH_BANDS]) {
+      const mirror = wallWorld();
+      const store = createPredictionStore(mirror);
+      store.predict(carveIntent(1, depthBands), 0);
+      const predicted = packColumnSpans(mirror.map, CARVE_WALL_X, ROW);
+
+      const server = wallWorld();
+      applySculpt(server.map, CARVE_WALL_X, ROW, 1, -DEFAULT_SCULPT_AMOUNT, {
+        tool: 'carve',
+        spanBand: PLATEAU_BAND,
+        depthBands,
+      });
+      expect(predicted).toEqual(packColumnSpans(server.map, CARVE_WALL_X, ROW));
+
+      // Replay after an unrelated ack must still cut the same depth.
+      store.applyAuthoritative(() => new Set<number>(), 1);
+      expect(packColumnSpans(mirror.map, CARVE_WALL_X, ROW)).toEqual(predicted);
+    }
+  });
+
+  it('predicts nothing for a depth the validator refuses', () => {
+    const mirror = wallWorld();
+    const store = createPredictionStore(mirror);
+    const dirty = store.predict(carveIntent(1, CARVE_MAX_DEPTH_BANDS + 1), 0);
+    expect(dirty.size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+    expect(spanCount(mirror.map, CARVE_WALL_X, ROW)).toBe(1);
+  });
 });
 
 const CAVE_MOUTH_X = 33;
 const CAVE_FLOOR_TOP = bandLevelHeight(6);
-const CAVE_ROOF_BASE = bandLevelHeight(10);
+const CAVE_ROOF_BAND = 10;
+const CAVE_ROOF_BASE = bandLevelHeight(CAVE_ROOF_BAND);
 const CAVE_ROOF_TOP = bandLevelHeight(20);
 
 describe('a carve aimed at a cave ceiling', () => {
@@ -551,8 +585,8 @@ describe('a carve aimed at a cave ceiling', () => {
     const mirror = worldOf(() => 0);
     for (let x = CAVE_MOUTH_X + 1; x <= CAVE_MOUTH_X + 4; x++) {
       setColumn(mirror.map, x, ROW, [
-        { floor: BEDROCK_FLOOR, ceiling: CAVE_FLOOR_TOP },
-        { floor: CAVE_ROOF_BASE, ceiling: CAVE_ROOF_TOP },
+        { floorBand: BEDROCK_BAND, ceiling: CAVE_FLOOR_TOP },
+        { floorBand: CAVE_ROOF_BAND, ceiling: CAVE_ROOF_TOP },
       ]);
     }
     const inside = CAVE_MOUTH_X + 1;
@@ -578,6 +612,6 @@ describe('a carve aimed at a cave ceiling', () => {
 
     expect(diff).toHaveLength(1);
     expect(spanAt(mirror.map, inside, ROW, 0)).toEqual(floorBefore);
-    expect(spanAt(mirror.map, inside, ROW, 1).floor).toBeGreaterThan(CAVE_ROOF_BASE);
+    expect(spanAt(mirror.map, inside, ROW, 1).floorBand).toBeGreaterThan(CAVE_ROOF_BAND);
   });
 });

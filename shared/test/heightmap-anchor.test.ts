@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
   BAND_HEIGHT,
+  BEDROCK_BAND,
   BEDROCK_FLOOR,
-  BEDROCK_REMNANT_CEILING,
   cellIndex,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
@@ -156,6 +156,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     // above target stays frozen, and nothing leaves bedrock range.
     const map = pitWithWall(MIN_HEIGHT);
     const before = Int16Array.from(map.cells);
+    const total = cellsTotal(map);
 
     const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
@@ -216,11 +217,11 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
   });
 
   it('the floor a column can actually hold is a no-op too: empty diff, both profiles', () => {
-    // A column keeps one unit of bedrock, so MIN_HEIGHT + 1 is as low as a
-    // write lands; pressing there must not report a diff it did not make.
+    // A column keeps its bedrock band, so BEDROCK_FLOOR is as low as a write
+    // lands; pressing there must not report a diff it did not make.
     for (const profile of ['soft', 'hard'] as const) {
       const map = createHeightmap(32);
-      map.cells.fill(BEDROCK_REMNANT_CEILING);
+      map.cells.fill(BEDROCK_FLOOR);
       const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, {
         tool: 'stamp',
         profile,
@@ -231,14 +232,14 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     }
   });
 
-  it('lowering a grasped bedrock span leaves the remnant instead of unflooring the column', () => {
+  it('lowering a grasped bedrock span leaves the bedrock band, not an unfloored column', () => {
     for (const profile of ['soft', 'hard'] as const) {
       const map = createHeightmap(16);
       const lowerCap = BEDROCK_FLOOR + 4;
-      const overhang = { floor: BEDROCK_FLOOR + 200, ceiling: BEDROCK_FLOOR + 260 };
+      const overhang = { floorBand: -83, ceiling: BEDROCK_FLOOR + 260 };
       for (let y = 6; y <= 10; y++) {
         for (let x = 6; x <= 10; x++) {
-          setColumn(map, x, y, [{ floor: BEDROCK_FLOOR, ceiling: lowerCap }, overhang]);
+          setColumn(map, x, y, [{ floorBand: BEDROCK_BAND, ceiling: lowerCap }, overhang]);
         }
       }
       const grasped = drawnBandOfSample(lowerCap);
@@ -252,7 +253,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
         }),
       ).not.toThrow();
       const spans = readSpans(map, 8, 8);
-      expect(spans[0]).toEqual({ floor: BEDROCK_FLOOR, ceiling: BEDROCK_REMNANT_CEILING });
+      expect(spans[0]).toEqual({ floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR });
       expect(spans[spans.length - 1]).toEqual(overhang);
     }
   });

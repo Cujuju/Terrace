@@ -123,9 +123,9 @@ describe('applySculpt — the stamp tool', () => {
     expect(heightAt(high, 8, 8)).toBe(MAX_HEIGHT);
 
     const low = createHeightmap(16);
-    low.cells.fill(MIN_HEIGHT + 1);
+    low.cells.fill(MIN_HEIGHT);
     applySculpt(low, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
-    expect(heightAt(low, 8, 8)).toBe(MIN_HEIGHT + 1);
+    expect(heightAt(low, 8, 8)).toBe(MIN_HEIGHT);
     expect(quantizeToBand(heightAt(low, 8, 8))).toBe(MIN_HEIGHT);
   });
 });

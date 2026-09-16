@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  CARVE_MAX_DEPTH_BANDS,
   EDGELESS_SCULPT_PROFILE,
   MAX_BAND,
   MAX_BRUSH_RADIUS,
@@ -131,13 +133,15 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 });
-    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 });
+    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 };
+    expect(sculptOptionsOf(base)).toEqual(wireDefault);
+    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual(wireDefault);
   });
 
   it('honours whatever the intent DID name, and defaults only the rest', () => {
     expect(sculptOptionsOf({ ...base, tool: 'smooth' })).toEqual({
       tool: 'smooth',
+      depthBands: CARVE_DEFAULT_DEPTH_BANDS,
       profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',
@@ -150,6 +154,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
     expect(sculptOptionsOf({ ...base, tool: 'stamp', smoothLambda: 80 }).smoothLambda).toBe(50);
     expect(sculptOptionsOf({ ...base, profile: 'hard' })).toEqual({
       tool: 'stamp',
+      depthBands: CARVE_DEFAULT_DEPTH_BANDS,
       profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',
@@ -160,6 +165,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
     });
     expect(sculptOptionsOf({ ...base, tool: 'smooth', profile: 'hard' })).toEqual({
       tool: 'smooth',
+      depthBands: CARVE_DEFAULT_DEPTH_BANDS,
       profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',

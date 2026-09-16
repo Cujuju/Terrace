@@ -117,9 +117,9 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     expect(atTop.cells.every((h) => h === MAX_HEIGHT)).toBe(true);
 
     const nearFloor = createHeightmap(16);
-    nearFloor.cells.fill(MIN_HEIGHT + 1);
+    nearFloor.cells.fill(MIN_HEIGHT);
     applySculpt(nearFloor, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(nearFloor, 8, 8)).toBe(MIN_HEIGHT + 1);
+    expect(heightAt(nearFloor, 8, 8)).toBe(MIN_HEIGHT);
     expect(quantizeToBand(heightAt(nearFloor, 8, 8))).toBe(MIN_HEIGHT);
 
     const atFloor = createHeightmap(16);
