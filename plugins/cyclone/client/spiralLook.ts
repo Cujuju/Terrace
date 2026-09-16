@@ -84,7 +84,8 @@ export const CYCLONE_DECK_PEAK_OPACITY = 0.55;
 export const CYCLONE_SHIELD_OPACITY_FRACTION = 0.35;
 
 // Outer rain bands thin out: the rim reaches this fraction of the eyewall's opacity.
-export const CYCLONE_RIM_OPACITY_FRACTION = 0.35;
+// Lower and the outer bands vanish against a night sky.
+export const CYCLONE_RIM_OPACITY_FRACTION = 0.6;
 
 // Cloud bases are darker than tops; a wall puff on the ground carries this albedo.
 export const CYCLONE_WALL_BASE_SHADE = 0.55;
