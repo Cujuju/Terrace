@@ -65,6 +65,9 @@ interface RetiringDread {
 
 let models: MonsterModels | null = null;
 let container: Group | null = null;
+let specimenGroup: Group | null = null;
+const specimens: MonsterModel[] = [];
+let requestShaderWarmup: (() => void) | null = null;
 const views = new Map<number, MonsterView>();
 const retiringDread: RetiringDread[] = [];
 const dreadRigs = new Map<MonsterKind, DreadRigs>();
@@ -178,6 +181,26 @@ function forgetViews(): void {
   interpolator.clear();
 }
 
+// One never-drawn instance per template: each template builds its own materials, and the
+// settle warmup only compiles what the scene already holds.
+function keepSpecimen(kind: MonsterKind, variant: YetiVariant | undefined): void {
+  const bank = models;
+  const group = specimenGroup;
+  if (bank === null || group === null) return;
+  const model = bank.create(kind, variant);
+  specimens.push(model);
+  group.add(model.root);
+  requestShaderWarmup?.();
+}
+
+function disposeSpecimens(): void {
+  for (const model of specimens) model.dispose();
+  specimens.length = 0;
+  specimenGroup?.removeFromParent();
+  specimenGroup?.clear();
+  specimenGroup = null;
+}
+
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const step = Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
   animationSeconds += step;
@@ -241,7 +264,16 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: MAX_LIVING_MONSTERS * (MONSTER_MODEL_DRAW_OBJECTS + MONSTER_DREAD_DRAW_OBJECTS),
 
   attach(ctx: ClientPluginCtx): void {
-    models = createMonsterModels();
+    requestShaderWarmup = () => {
+      ctx.requestShaderWarmup();
+    };
+    specimenGroup = new Group();
+    specimenGroup.name = 'monsters:warm-specimens';
+    // Hidden: no draws, no draw budget, and outside the living container.
+    specimenGroup.visible = false;
+    ctx.layer.add(specimenGroup);
+
+    models = createMonsterModels(keepSpecimen);
 
     container = new Group();
     container.name = 'monsters:living';
@@ -283,6 +315,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeReset = null;
 
     forgetViews();
+    disposeSpecimens();
+    requestShaderWarmup = null;
     retiringDread.length = 0;
     for (const rigs of dreadRigs.values()) rigs.dispose();
     dreadRigs.clear();
