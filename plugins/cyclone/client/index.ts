@@ -19,24 +19,13 @@ import {
   type SpiralRenderer,
   type SpiralSource,
 } from './spiral.ts';
-import {
-  CYCLONE_SHIELD_RADIUS_FRACTION,
-  CYCLONE_SHIELD_WORLD_Y,
-  MAX_SPIRALS,
-} from './spiralLayout.ts';
+import { CYCLONE_TOP_WORLD_Y, MAX_SPIRALS } from './spiralLayout.ts';
 import { CYCLONE_SHADE_CORE_FRACTION, CYCLONE_SHADE_DARKNESS } from './spiralLook.ts';
-import {
-  createCycloneRainField,
-  CYCLONE_RAIN_DRAW_OBJECTS,
-  type CycloneRainField,
-  type CycloneRainSource,
-} from './rain.ts';
 import { GLOOM_RESPONSE_PER_SECOND, applyGloom, overheadFraction } from './gloom.ts';
 import { extrapolate } from '../../../client/src/plugins/kit/extrapolation.ts';
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 
 let spiral: SpiralRenderer | null = null;
-let rain: CycloneRainField | null = null;
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 let unsubscribes: Array<() => void> = [];
 
@@ -81,30 +70,6 @@ function refreshSpiralSources(): readonly SpiralSource[] {
   return spiralSources;
 }
 
-function blankRainSource(): Mutable<CycloneRainSource> {
-  return { id: 0, x: 0, z: 0, radiusWorldUnits: 0, intensity: 0, vx: 0, vz: 0 };
-}
-
-const rainPool: Mutable<CycloneRainSource>[] = [];
-const rainSources: CycloneRainSource[] = [];
-
-function refreshRainSources(): readonly CycloneRainSource[] {
-  rainSources.length = 0;
-  for (const storm of storms) {
-    const centre = at(storm);
-    const filled = refill(rainPool, rainSources, blankRainSource);
-    filled.id = storm.id;
-    filled.x = centre.x * CELL_WORLD_SIZE;
-    filled.z = centre.y * CELL_WORLD_SIZE;
-    filled.radiusWorldUnits = storm.radius * CELL_WORLD_SIZE;
-    filled.intensity = storm.intensity;
-    filled.vx = storm.vx * CELL_WORLD_SIZE;
-    filled.vz = storm.vy * CELL_WORLD_SIZE;
-    rainSources.push(filled);
-  }
-  return rainSources;
-}
-
 // The deck darkens what is under it, and the camera is what the player is under.
 function gloomTarget(camera: WorldPosition): number {
   const cameraCellX = camera.x / CELL_WORLD_SIZE;
@@ -135,8 +100,8 @@ function shadeDiscs(): readonly GroundShadeDisc[] {
     const filled = refill(shadePool, shade, blankShadeDisc);
     filled.x = centre.x * CELL_WORLD_SIZE;
     filled.z = centre.y * CELL_WORLD_SIZE;
-    filled.y = CYCLONE_SHIELD_WORLD_Y;
-    filled.radius = storm.radius * CELL_WORLD_SIZE * CYCLONE_SHIELD_RADIUS_FRACTION;
+    filled.y = CYCLONE_TOP_WORLD_Y;
+    filled.radius = storm.radius * CELL_WORLD_SIZE;
     filled.darkness = CYCLONE_SHADE_DARKNESS * storm.intensity;
     filled.inner = CYCLONE_SHADE_CORE_FRACTION;
     shade.push(filled);
@@ -144,7 +109,7 @@ function shadeDiscs(): readonly GroundShadeDisc[] {
   return shade;
 }
 
-const CYCLONE_DRAW_OBJECTS = SPIRAL_DRAW_OBJECTS + CYCLONE_RAIN_DRAW_OBJECTS;
+const CYCLONE_DRAW_OBJECTS = SPIRAL_DRAW_OBJECTS;
 
 function forgetStorms(): void {
   storms = [];
@@ -152,7 +117,6 @@ function forgetStorms(): void {
   elapsedSeconds = 0;
   gloomDepth = 0;
   spiralSources.length = 0;
-  rainSources.length = 0;
   shade.length = 0;
 }
 
@@ -173,9 +137,6 @@ export const clientPlugin: TerraceClientPlugin = {
     );
     ctx.layer.add(spiral.root);
 
-    rain = createCycloneRainField((material, label) => ctx.applyRevealClip(material, label));
-    ctx.layer.add(rain.root);
-
     unsubscribes = [
       ctx.onMessage(CYCLONE_ALL_MESSAGE, (payload) => {
         const all = parseAllPayload(payload, MAX_ACTIVE_CYCLONES);
@@ -191,7 +152,6 @@ export const clientPlugin: TerraceClientPlugin = {
       ctx.onWorldReset(() => {
         forgetStorms();
         spiral?.reset();
-        rain?.reset();
       }),
 
       ctx.onFrame((dt) => {
@@ -202,7 +162,6 @@ export const clientPlugin: TerraceClientPlugin = {
 
         spiral?.apply(refreshSpiralSources());
         spiral?.update(dt, elapsedSeconds);
-        rain?.apply(refreshRainSources(), elapsedSeconds);
 
         const target = gloomTarget(camera);
         const step = GLOOM_RESPONSE_PER_SECOND * dt;
@@ -222,9 +181,6 @@ export const clientPlugin: TerraceClientPlugin = {
 
     spiral?.dispose();
     spiral = null;
-
-    rain?.dispose();
-    rain = null;
 
     reducedMotion?.stop();
     reducedMotion = null;
