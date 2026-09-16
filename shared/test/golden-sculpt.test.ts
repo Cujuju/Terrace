@@ -14,13 +14,12 @@ import {
   GOLDEN_WORLD_SIZE,
   type GoldenWorldName,
 } from './fixtures/worlds.ts';
-import { STROKE_SCRIPTS } from './fixtures/strokes.ts';
+import { scriptFor } from './fixtures/strokes.ts';
 import {
   goldenText,
   hashHeightmap,
   runStrokeScript,
   type StrokeOutcome,
-  type StrokeScriptStep,
 } from './support/goldenCorpus.ts';
 
 interface Golden {
@@ -31,12 +30,6 @@ interface Golden {
   readonly strokes: readonly StrokeOutcome[];
   readonly layeredColumnsAfter: number;
   readonly hashAfter: string;
-}
-
-const COMMON_SCRIPT_KEY = 'common';
-
-function scriptFor(world: GoldenWorldName): StrokeScriptStep[] {
-  return [...STROKE_SCRIPTS[COMMON_SCRIPT_KEY]!, ...(STROKE_SCRIPTS[world] ?? [])];
 }
 
 function replay(world: GoldenWorldName): Golden {
@@ -69,13 +62,18 @@ describe.each(GOLDEN_WORLD_NAMES)('golden world %s', (world) => {
   test('replays identically twice in the same process', () => {
     expect(replay(world)).toEqual(replay(world));
   });
-});
 
-test('every stroke in the script is named once', () => {
-  for (const world of GOLDEN_WORLD_NAMES) {
+  // A stroke that stopped biting still matches its golden, so the corpus would
+  // go on passing while covering nothing.
+  test('moves at least one cell on every stroke', () => {
+    const dead = replay(world).strokes.filter((stroke) => stroke.changed === 0);
+    expect(dead.map((stroke) => stroke.name)).toEqual([]);
+  });
+
+  test('names each stroke once', () => {
     const names = scriptFor(world).map((step) => step.name);
     expect(new Set(names).size).toBe(names.length);
-  }
+  });
 });
 
 test('golden text is LF only, so a CRLF checkout cannot move a hash', () => {

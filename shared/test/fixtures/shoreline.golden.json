@@ -5,101 +5,101 @@
   "hashBefore": "458c9db1",
   "strokes": [
     {
-      "name": "stamp-hard-raise-centre",
-      "changed": 36,
-      "hash": "12d0fd1c"
-    },
-    {
-      "name": "stamp-soft-raise",
-      "changed": 255,
-      "hash": "fc23fb6c"
-    },
-    {
-      "name": "stamp-soft-lower",
-      "changed": 379,
-      "hash": "25f5d422"
-    },
-    {
-      "name": "stamp-hard-lower-free",
-      "changed": 10,
-      "hash": "dae1cfd5"
-    },
-    {
-      "name": "stamp-band-anchored",
-      "changed": 17,
-      "hash": "09368936"
-    },
-    {
-      "name": "smooth-banded-raise",
-      "changed": 638,
-      "hash": "f64ce809"
-    },
-    {
-      "name": "smooth-free-lower",
-      "changed": 390,
-      "hash": "a2c99e98"
-    },
-    {
-      "name": "drag-raise-one-band",
-      "changed": 24,
-      "hash": "7d5d86aa"
-    },
-    {
-      "name": "drag-lower-swept",
-      "changed": 36,
-      "hash": "c197874d"
-    },
-    {
-      "name": "carve-click-band",
-      "changed": 0,
-      "hash": "c197874d"
-    },
-    {
-      "name": "carve-click-band-again",
-      "changed": 0,
-      "hash": "c197874d"
-    },
-    {
-      "name": "settle-library-tool",
-      "changed": 3977,
-      "hash": "dee2cc30"
-    },
-    {
-      "name": "edge-stamp-origin-corner",
-      "changed": 6,
-      "hash": "c41eff39"
-    },
-    {
-      "name": "edge-stamp-far-column",
-      "changed": 17,
-      "hash": "3f6ce26c"
-    },
-    {
-      "name": "edge-smooth-last-row",
-      "changed": 0,
-      "hash": "3f6ce26c"
-    },
-    {
-      "name": "edge-drag-far-corner",
-      "changed": 0,
-      "hash": "3f6ce26c"
-    },
-    {
       "name": "waterline-stamp-raise",
-      "changed": 99,
-      "hash": "10daec56"
+      "changed": 33,
+      "hash": "69f90580"
     },
     {
       "name": "deep-water-lower",
-      "changed": 18,
-      "hash": "e81f0b8d"
+      "changed": 21,
+      "hash": "30a53f30"
     },
     {
       "name": "shore-drag-terrace",
-      "changed": 0,
-      "hash": "e81f0b8d"
+      "changed": 25,
+      "hash": "f2938267"
+    },
+    {
+      "name": "carve-click-band",
+      "changed": 5,
+      "hash": "83962b39"
+    },
+    {
+      "name": "carve-second-site",
+      "changed": 5,
+      "hash": "4d144659"
+    },
+    {
+      "name": "drag-raise-one-band",
+      "changed": 10,
+      "hash": "ec9793f9"
+    },
+    {
+      "name": "drag-lower-swept",
+      "changed": 31,
+      "hash": "ad663285"
+    },
+    {
+      "name": "stamp-band-anchored",
+      "changed": 6,
+      "hash": "6c64b82e"
+    },
+    {
+      "name": "stamp-hard-raise-centre",
+      "changed": 37,
+      "hash": "1bfcd336"
+    },
+    {
+      "name": "stamp-soft-raise",
+      "changed": 250,
+      "hash": "19402d9b"
+    },
+    {
+      "name": "stamp-soft-lower",
+      "changed": 227,
+      "hash": "e2d8752d"
+    },
+    {
+      "name": "stamp-hard-lower-free",
+      "changed": 8,
+      "hash": "ffcbfddb"
+    },
+    {
+      "name": "smooth-banded-raise",
+      "changed": 470,
+      "hash": "86ba82d1"
+    },
+    {
+      "name": "smooth-free-lower",
+      "changed": 527,
+      "hash": "b0790ab1"
+    },
+    {
+      "name": "edge-stamp-origin-corner",
+      "changed": 8,
+      "hash": "cf36f4f1"
+    },
+    {
+      "name": "edge-stamp-far-column",
+      "changed": 20,
+      "hash": "bdf2b45b"
+    },
+    {
+      "name": "edge-smooth-left-edge",
+      "changed": 198,
+      "hash": "3f04a3c9"
+    },
+    {
+      "name": "edge-drag-left-edge",
+      "changed": 4,
+      "hash": "46491909"
+    },
+    {
+      "name": "settle-library-tool",
+      "changed": 3531,
+      "hash": "af2983ca"
     }
   ],
-  "layeredColumnsAfter": 0,
-  "hashAfter": "e81f0b8d"
+  "layeredColumnsAfter": 1,
+  "hashAfter": "af2983ca"
 }
