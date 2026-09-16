@@ -230,6 +230,31 @@ export function drawnBandAt(map: Heightmap, x: number, z: number): number {
   return lowest;
 }
 
+/**
+ * Cap band of the drawn layer holding `band` at (x, z), or null when that band
+ * is open there. Unlike drawnBandAt, a gap under an overhang reads as open.
+ */
+export function drawnLayerCapAt(
+  map: Heightmap,
+  x: number,
+  z: number,
+  band: number,
+): number | null {
+  const qx = quantizeDrawnCoord(x);
+  const qz = quantizeDrawnCoord(z);
+  const top = bandOfNumerator(drawnFieldNumerator(map, qx, qz));
+  if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz)) {
+    return band <= top ? top : null;
+  }
+  const solidAt = (b: number): boolean =>
+    bandOfNumerator(drawnFieldNumerator(map, qx, qz, b)) >= b;
+  if (!solidAt(band)) return null;
+  // A band's field never exceeds the top field, so `top` bounds the climb.
+  let cap = band;
+  while (cap < top && solidAt(cap + 1)) cap++;
+  return cap;
+}
+
 export function drawnHeightAt(map: Heightmap, x: number, z: number): number {
   return drawnBandAt(map, x, z) * BAND_HEIGHT;
 }
