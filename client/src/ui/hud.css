@@ -443,8 +443,12 @@ body {
   padding-bottom: 18px;
 }
 
-/* The ladder's first and last width, in world units, captioning the ends. */
+/* The ladder's first and last width, in world units, captioning the ends.
+   Fixed box so stacked sliders' tracks start at the same x whatever the
+   captions read. */
 .brush-slider__end {
+  min-width: 4ch;
+  text-align: center;
   color: var(--hud-muted);
   font-size: 11px;
   font-weight: 500;
