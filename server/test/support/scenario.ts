@@ -4,6 +4,7 @@ import {
   createChunkMask,
   spanAt,
   spanCount,
+  validateSculptIntent,
   type CellDiff,
   type ChunkPayload,
   type ChunkUnlockMessage,
@@ -11,6 +12,7 @@ import {
   type SculptAppliedMessage,
   type SculptDeniedMessage,
   type SculptDeniedReason,
+  type SculptIntent,
   type Span,
   type TerrainDiffMessage,
 } from '@terrace/shared';
@@ -19,22 +21,26 @@ import {
   GOLDEN_WORLD_SIZE,
   type GoldenWorldName,
 } from '../../../shared/test/fixtures/worlds.ts';
-import {
-  handleSculptIntent,
-  refuseFaultedSculpt,
-  type IntentOutcome,
-  type IntentPipelineDeps,
-} from '../../src/intent/pipeline.ts';
+import type { IntentOutcome } from '../../src/intent/pipeline.ts';
 import {
   containRoomMessage,
   LogThrottle,
   ROOM_FAILURE_LOG_INTERVAL_MS,
 } from '../../src/net/contain-message.ts';
 import type { MessageSink } from '../../src/net/message-sink.ts';
+import type { TerraceClient } from '../../src/net/room-contract.ts';
+import {
+  handleSculptMessage,
+  refuseSculptMessage,
+  type SculptHandlerDeps,
+} from '../../src/net/room-sculpt-handler.ts';
+import { SculptRateLimiter } from '../../src/net/sculpt-rate-limit.ts';
 import { PluginHost } from '../../src/plugins/host.ts';
 import type { TerracePlugin } from '../../src/plugins/types.ts';
 import type { Player } from '../../src/player.ts';
+import type { WorldSession } from '../../src/world/session.ts';
 import { World } from '../../src/world/world.ts';
+import type { WorldManager } from '../../src/world/world-manager.ts';
 import { asLoadedPlugin, RecordingSink, TEST_WORLD_NAME } from './harness.ts';
 
 export type ChunkRef = readonly [number, number];
@@ -65,6 +71,21 @@ export interface ScenarioSpec {
   readonly players: readonly Player[];
   readonly plugins?: readonly TerracePlugin[];
   readonly difficulty?: number;
+  /** The room's own gate. Omit for one that never fires; pass one to assert it. */
+  readonly rate?: SculptRateLimiter;
+}
+
+/** One second between sends refills the room's token bucket, so the gate never fires. */
+const SCENARIO_SEND_SPACING_MS = 1000;
+
+function permissiveRateLimiter(): SculptRateLimiter {
+  let nowMs = 0;
+  return new SculptRateLimiter({
+    now: () => {
+      nowMs += SCENARIO_SEND_SPACING_MS;
+      return nowMs;
+    },
+  });
 }
 
 export type TranscriptEntry =
@@ -149,6 +170,69 @@ function entryOf(target: string, type: string, payload: unknown): TranscriptEntr
 
 const NO_FAULT = null;
 
+/** What the pipeline handed the plugin chain, so a step reports its outcome verbatim. */
+interface AppliedIntent {
+  readonly intent: SculptIntent;
+  readonly diff: CellDiff[];
+}
+
+class WatchingPluginHost extends PluginHost {
+  private applied: AppliedIntent | null = null;
+
+  override notifyIntentApplied(
+    intent: SculptIntent,
+    player: Player,
+    diff: readonly CellDiff[],
+  ): void {
+    this.applied = { intent, diff: [...diff] };
+    super.notifyIntentApplied(intent, player, diff);
+  }
+
+  forgetApplied(): void {
+    this.applied = null;
+  }
+
+  appliedIntent(): AppliedIntent | null {
+    return this.applied;
+  }
+}
+
+/** The room's sculpt adapter reads only `manager.current`; nothing else is reachable. */
+function scenarioManager(current: () => WorldSession): WorldManager {
+  return new Proxy({} as WorldManager, {
+    get(_target, property): unknown {
+      if (property === 'current') return current();
+      throw new Error(`this scenario manager answers only current, not ${String(property)}`);
+    },
+  });
+}
+
+function scenarioSession(world: () => World, host: PluginHost): WorldSession {
+  return new Proxy({} as WorldSession, {
+    get(_target, property): unknown {
+      if (property === 'world') return world();
+      if (property === 'host') return host;
+      throw new Error(`this scenario session answers only world and host, not ${String(property)}`);
+    },
+  });
+}
+
+function scenarioClient(
+  player: Player,
+  send: (type: string, payload: unknown) => void,
+): TerraceClient {
+  return new Proxy({} as TerraceClient, {
+    get(_target, property): unknown {
+      if (property === 'sessionId') return player.id;
+      if (property === 'userData') return { player };
+      if (property === 'send') return send;
+      throw new Error(
+        `this scenario client answers only sessionId, userData and send, not ${String(property)}`,
+      );
+    },
+  });
+}
+
 /**
  * One headless world, plugin chain and player set, driving real sculpt intents
  * through the real pipeline and recording what the wire carried.
@@ -163,11 +247,18 @@ export class Scenario {
   /** Every entry this scenario has produced, in send order. */
   readonly transcript: TranscriptEntry[] = [];
 
+  private readonly watchingHost: WatchingPluginHost;
+
+  private readonly sculptDeps: SculptHandlerDeps;
+
   private readonly faultThrottle = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
 
   private pendingFault: ScenarioFault | null = NO_FAULT;
 
   private readonly strandedDiffPlayers = new Set<string>();
+
+  /** Set when the adapter hands the pipeline a world, so a drop upstream is visible. */
+  private pipelineEntered = false;
 
   constructor(spec: ScenarioSpec) {
     const map = terrainOf(spec.terrain);
@@ -188,8 +279,19 @@ export class Scenario {
     this.world.setSink(this.wrapSink(this.sink));
     for (const [cx, cy] of spec.unlocked) this.world.unlockChunk(cx, cy);
 
-    this.host = new PluginHost(this.world, (spec.plugins ?? []).map(asLoadedPlugin));
+    this.watchingHost = new WatchingPluginHost(this.world, (spec.plugins ?? []).map(asLoadedPlugin));
+    this.host = this.watchingHost;
     this.host.worldCreate();
+
+    const session = scenarioSession(() => {
+      this.pipelineEntered = true;
+      return this.faultingWorld();
+    }, this.watchingHost);
+    this.sculptDeps = {
+      manager: scenarioManager(() => session),
+      rate: spec.rate ?? permissiveRateLimiter(),
+      rewriteLog: new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS),
+    };
 
     for (const player of spec.players) {
       this.world.addPlayer(player);
@@ -215,11 +317,12 @@ export class Scenario {
     this.host.tick(dt);
   }
 
-  /** Sends one sculpt message and returns what it produced. A fault escapes. */
+  /** Sends one sculpt message through the room's own adapter. A fault escapes. */
   send(player: Player, message: unknown): ScenarioStep {
-    this.sink.clear();
-    const outcome = handleSculptIntent(this.deps(), player, message);
-    return { outcome, faulted: false, entries: this.collect() };
+    this.armSend();
+    handleSculptMessage(this.sculptDeps, this.clientFor(player), message);
+    const entries = this.collect();
+    return { outcome: this.outcomeOf(message, entries), faulted: false, entries };
   }
 
   /**
@@ -227,23 +330,60 @@ export class Scenario {
    * a server-fault nack plus a footprint resync when the handler throws.
    */
   sendContained(player: Player, message: unknown): ScenarioStep {
-    this.sink.clear();
-    let outcome: IntentOutcome | null = null;
+    this.armSend();
+    const client = this.clientFor(player);
     let faulted = true;
     containRoomMessage(
       'sculpt',
       this.faultThrottle,
       () => {
-        outcome = handleSculptIntent(this.deps(), player, message);
+        handleSculptMessage(this.sculptDeps, client, message);
         faulted = false;
       },
       () => {
-        refuseFaultedSculpt(this.world, message, (denial) => {
-          this.world.sendTo(player.id, denial);
-        });
+        refuseSculptMessage(this.sculptDeps, client, message);
       },
     );
-    return { outcome, faulted, entries: this.collect() };
+    const entries = this.collect();
+    return {
+      outcome: faulted ? null : this.outcomeOf(message, entries),
+      faulted,
+      entries,
+    };
+  }
+
+  private armSend(): void {
+    this.sink.clear();
+    this.watchingHost.forgetApplied();
+    this.pipelineEntered = false;
+  }
+
+  private clientFor(player: Player): TerraceClient {
+    return scenarioClient(player, (type, payload) => {
+      this.sink.sendTo(player.id, type, payload);
+    });
+  }
+
+  /**
+   * The verdict, read back from what production exposed: the applied intent the
+   * plugin chain was handed, else the nack on the wire.
+   */
+  private outcomeOf(message: unknown, entries: readonly TranscriptEntry[]): IntentOutcome | null {
+    const applied = this.watchingHost.appliedIntent();
+    if (applied !== null) return { applied: true, intent: applied.intent, diff: applied.diff };
+
+    const nack = entriesOfKind(entries, 'nack').at(-1);
+    if (nack?.reason !== undefined) {
+      return nack.detail === undefined
+        ? { applied: false, reason: nack.reason }
+        : { applied: false, reason: nack.reason, detail: nack.detail };
+    }
+
+    // Silent refusal: only the validator's own answer says whether it was malformed.
+    if (!this.pipelineEntered) return null;
+    return validateSculptIntent(message, this.world.size) === null
+      ? { applied: false, reason: 'malformed' }
+      : null;
   }
 
   private collect(): TranscriptEntry[] {
@@ -253,10 +393,6 @@ export class Scenario {
     this.transcript.push(...entries);
     this.sink.clear();
     return entries;
-  }
-
-  private deps(): IntentPipelineDeps {
-    return { world: this.faultingWorld(), interceptors: this.host };
   }
 
   private faultingWorld(): World {
