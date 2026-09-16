@@ -1,16 +1,13 @@
 import {
-  BAND_HEIGHT,
-  drawnBandOfSample,
   drawnSpanCapHeight,
   drawnSpanIndexCoveringBand,
   isSpanDrawn,
   spanAt,
   spanCount,
-  spanUndersideHeight,
   type Span,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../../config.ts';
-import { blockyCellCapY } from '../capEmission.ts';
+import { blockyCellCapY, drawnBandCapY } from '../capEmission.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import { columnOwningBand, drawnCapMet } from './bandOwner.ts';
 import { refineRiserToDrawnFace } from './drawnFaceRefine.ts';
@@ -58,7 +55,7 @@ export function terrainHitInCell(
         const drawnTopY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
         // Drawn wall foot, not the blocky underside: a carved gap must read
         // as open so the ray passes to the cell beyond.
-        const wallBaseY = drawnBandOfSample(span.floor) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+        const wallBaseY = drawnBandCapY(span.floorBand);
         const horizontal = ray.dx !== 0 || ray.dz !== 0;
         const entersThroughWall = horizontal && entryY <= drawnTopY && entryY >= wallBaseY;
         if (!entersThroughWall) continue;
@@ -66,7 +63,7 @@ export function terrainHitInCell(
     }
     const capY = met === null ? drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE : met.capY;
     const drawnY = met === null ? blockyCellCapY(span.ceiling) : met.drawnY;
-    const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
+    const baseY = drawnBandCapY(span.floorBand - 1);
     const lowY = entryY < exitY ? entryY : exitY;
     const highY = entryY < exitY ? exitY : entryY;
     if (lowY > drawnY || highY < baseY) continue;

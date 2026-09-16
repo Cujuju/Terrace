@@ -1,13 +1,11 @@
 import {
-  DRAWN_GROUND_BAND_BIAS,
   ISOLINE_SAMPLES_PER_CELL,
   drawnBandAt,
-  drawnLevelThreshold,
   drawnSpanCapHeight,
   isSpanDrawn,
   spanAt,
+  spanCoversBand,
   spanCount,
-  spanUndersideHeight,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import { drawnBandCapY } from '../capEmission.ts';
@@ -57,17 +55,15 @@ function spanStruckAt(
   band: number,
   faceY: number,
 ): number | null {
-  // F3: drawn thresholds — the biased shoreline threshold in raw-height form,
-  // the drawn cap above. The cue floor stays the blocky underside so a wall
-  // whose foot was carved keeps owning its upper bands (agreement sweep).
-  const threshold = drawnLevelThreshold(band) - DRAWN_GROUND_BAND_BIAS;
+  // F3: coverage is the shared band predicate. The cue floor is the span's own
+  // drawn underside, so a wall whose foot was carved keeps its upper bands.
   const count = spanCount(mirror.map, x, y);
   for (let k = 0; k < count; k++) {
     const span = spanAt(mirror.map, x, y, k);
     if (!isSpanDrawn(span)) continue;
-    if (span.floor > threshold || threshold > drawnSpanCapHeight(span)) continue;
+    if (!spanCoversBand(span, band)) continue;
     const drawnCapWorld = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-    if (faceY < spanUndersideHeight(span) * HEIGHT_WORLD_SCALE) continue;
+    if (faceY < drawnBandCapY(span.floorBand - 1)) continue;
     if (faceY > drawnCapWorld) continue;
     return k;
   }

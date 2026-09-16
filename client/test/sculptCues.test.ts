@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerspectiveCamera } from 'three';
 import {
   BAND_HEIGHT,
-  BEDROCK_FLOOR,
+  BEDROCK_BAND,
+  bandLevelHeight,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   MAX_DRAG_SWEEP_CELLS,
@@ -1070,10 +1071,10 @@ const LAYERED_ROW = 30;
 const FOOT_TREAD_CEILING = 48;
 const FOOT_TREAD_BAND = 3;
 const FOOT_TREAD_RAISED_CEILING = 64;
-const FOOT_ROOF_FLOOR = 160;
+const FOOT_ROOF_BAND = 10;
 const FOOT_ROOF_CEILING = 208;
 const WALL_TREAD_CEILING = 112;
-const WALL_ROOF_FLOOR = 300;
+const WALL_ROOF_BAND = 19;
 const WALL_ROOF_CEILING = 340;
 const WALL_RISER_BAND = 5;
 
@@ -1091,12 +1092,12 @@ const WALL_RISER_PICK: TerrainRayPick = {
 function layeredFootWorld(): TerrainMirror {
   const mirror = flatWorld();
   setColumn(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, [
-    { floor: BEDROCK_FLOOR, ceiling: FOOT_TREAD_CEILING },
-    { floor: FOOT_ROOF_FLOOR, ceiling: FOOT_ROOF_CEILING },
+    { floorBand: BEDROCK_BAND, ceiling: FOOT_TREAD_CEILING },
+    { floorBand: FOOT_ROOF_BAND, ceiling: FOOT_ROOF_CEILING },
   ]);
   setColumn(mirror.map, WALL_COLUMN_X, LAYERED_ROW, [
-    { floor: BEDROCK_FLOOR, ceiling: WALL_TREAD_CEILING },
-    { floor: WALL_ROOF_FLOOR, ceiling: WALL_ROOF_CEILING },
+    { floorBand: BEDROCK_BAND, ceiling: WALL_TREAD_CEILING },
+    { floorBand: WALL_ROOF_BAND, ceiling: WALL_ROOF_CEILING },
   ]);
   return mirror;
 }
@@ -1149,8 +1150,8 @@ describe('a foot-anchored grasp on a layered column', () => {
     setBrushTool('stamp');
     const mirror = layeredFootWorld();
     setColumn(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, [
-      { floor: BEDROCK_FLOOR, ceiling: FOOT_ROOF_FLOOR - BAND_HEIGHT },
-      { floor: FOOT_ROOF_FLOOR, ceiling: FOOT_ROOF_CEILING },
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(FOOT_ROOF_BAND - 2) },
+      { floorBand: FOOT_ROOF_BAND, ceiling: FOOT_ROOF_CEILING },
     ]);
     const { attempts, fire, dispose } = driveInput(mirror, {
       origin: { x: cellW(20), y: bandY(20), z: cellW(LAYERED_ROW) },

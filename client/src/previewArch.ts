@@ -15,10 +15,12 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   SEA_LEVEL,
+  SPAN_STRIDE,
   cellIndex,
   chunkIndex,
   chunksPerEdge,
   spanAt,
+  type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
@@ -180,12 +182,15 @@ function animate(): void {
     (window as unknown as { __previewSpansAt?: unknown }).__previewSpansAt = (
       x: number,
       z: number,
-    ): { floor: number; ceiling: number }[] => {
+    ): Span[] => {
       const packed = mirror.map.columnSpans.get(cellIndex(mirror.map, x, z));
       if (packed === undefined) return [spanAt(mirror.map, x, z, 0)];
-      const out: { floor: number; ceiling: number }[] = [];
-      for (let k = 0; k < packed.length / 2; k++) {
-        out.push({ floor: packed[k * 2]!, ceiling: packed[k * 2 + 1]! });
+      const out: Span[] = [];
+      for (let k = 0; k < packed.length / SPAN_STRIDE; k++) {
+        out.push({
+          floorBand: packed[k * SPAN_STRIDE]!,
+          ceiling: packed[k * SPAN_STRIDE + 1]!,
+        });
       }
       return out;
     };
