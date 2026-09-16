@@ -38,12 +38,12 @@ export const CARVE_MIN_DEPTH_BANDS = 1;
 export const CARVE_DEFAULT_DEPTH_BANDS = CARVE_MIN_DEPTH_BANDS;
 
 /**
- * The deepest one stroke may cut. A quarter of the world's bands is the most a
- * single act should be able to remove; beyond it a carve is world-editing.
+ * The deepest one stroke may cut: a quarter of the bands above the shore is the
+ * most a single act should remove; beyond it a carve is world-editing.
  */
-const CARVE_MAX_DEPTH_WORLD_FRACTION = 4;
+const CARVE_MAX_DEPTH_SHORE_BAND_FRACTION = 4;
 
-export const CARVE_MAX_DEPTH_BANDS = TERRACE_BAND_COUNT / CARVE_MAX_DEPTH_WORLD_FRACTION;
+export const CARVE_MAX_DEPTH_BANDS = TERRACE_BAND_COUNT / CARVE_MAX_DEPTH_SHORE_BAND_FRACTION;
 
 /** The one depth predicate: the wire validator and applyCarve both ask it. */
 export function isValidCarveDepth(depthBands: number): boolean {
