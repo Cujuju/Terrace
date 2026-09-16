@@ -8,6 +8,7 @@ import {
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  floorBandOfHeight,
   forEachFootprintOffset,
   heightAt,
   MIN_HEIGHT,
@@ -161,10 +162,12 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     expect(applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT).length)
       .toBeGreaterThan(0);
     expect(cellsTotal(map)).toBe(total);
+    let receivedAtFloor = 0;
     for (let i = 0; i < map.cells.length; i++) {
       expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
-      if (before[i]! === MIN_HEIGHT) expect(map.cells[i]).toBeGreaterThanOrEqual(before[i]!);
+      if (before[i]! === MIN_HEIGHT && map.cells[i]! > before[i]!) receivedAtFloor++;
     }
+    expect(receivedAtFloor).toBeGreaterThan(0);
   });
 
   it('widening a pit one band above the floor works: the wall descends into it', () => {
@@ -223,7 +226,10 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     for (const profile of ['soft', 'hard'] as const) {
       const map = createHeightmap(16);
       const lowerCap = BEDROCK_FLOOR + 4;
-      const overhang = { floorBand: -83, ceiling: BEDROCK_FLOOR + 260 };
+      const overhang = {
+        floorBand: floorBandOfHeight(BEDROCK_FLOOR + 200),
+        ceiling: BEDROCK_FLOOR + 260,
+      };
       for (let y = 6; y <= 10; y++) {
         for (let x = 6; x <= 10; x++) {
           setColumn(map, x, y, [{ floorBand: BEDROCK_BAND, ceiling: lowerCap }, overhang]);
