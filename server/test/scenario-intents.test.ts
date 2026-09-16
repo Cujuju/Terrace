@@ -23,6 +23,9 @@ const SCULPTOR: Player = { id: 'session-1', token: 'token-1', name: 'Sculptor' }
 /** A cell on the fixture staircase, well inside the terrace world. */
 const FACE_CELL = { x: 20, y: 32 } as const;
 
+/** A cell with an exposed step face beside it, so a drag has a lip to grasp. */
+const LIP_CELL = { x: 20, y: 46 } as const;
+
 const OPEN_WORLD: ScenarioSpec = {
   terrain: 'terrace',
   unlocked: EVERY_CHUNK,
@@ -180,16 +183,20 @@ describe('a carve names the span it grasps; a drag names the lip it holds', () =
     ]);
   });
 
-  it('applies a drag that names its targetBand', () => {
+  it('applies a drag that names its targetBand, and acks after the diff', () => {
     const scenario = openTerrace();
-    const targetBand = bandAt(scenario, FACE_CELL.x, FACE_CELL.y) + 1;
+    const targetBand = bandAt(scenario, LIP_CELL.x, LIP_CELL.y) + 1;
 
     const step = scenario.send(
       SCULPTOR,
-      sculptMessage({ ...AT, tool: 'drag', dir: 1, radius: 2, targetBand, seq: SEQ }),
+      sculptMessage({ ...LIP_CELL, tool: 'drag', dir: 1, radius: 2, targetBand, seq: SEQ }),
     );
 
     expect(step.outcome?.applied).toBe(true);
+    expect(wireOrder(step.entries)).toEqual([
+      [SCULPTOR.id, 'diff'],
+      [SCULPTOR.id, 'ack'],
+    ]);
     expect(entriesOfKind(step.entries, 'ack')).toEqual([
       { kind: 'ack', to: SCULPTOR.id, seq: SEQ },
     ]);
