@@ -1,4 +1,9 @@
-import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from '../constants.ts';
+import {
+  MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
+  SOFT_EDGE_STRENGTH_DENOMINATOR,
+  SOFT_EDGE_STRENGTH_NUMERATOR,
+} from '../constants.ts';
 import { bandLevelHeight, stepTowardBand } from '../bands.ts';
 import { cellIndex, cellX, cellY, inBounds, type Heightmap } from '../grid.ts';
 import {
@@ -66,7 +71,15 @@ export function brushDelta(
   dist: number,
   profile: SculptProfile,
 ): number {
-  return profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
+  if (profile === 'hard') return amount;
+  // Linear ramp from the centre to the outermost ring (dist = radius - 1),
+  // which keeps the edge fraction instead of fading to nothing.
+  const span = radius - 1;
+  if (span === 0) return amount;
+  const weight =
+    SOFT_EDGE_STRENGTH_NUMERATOR * span +
+    (SOFT_EDGE_STRENGTH_DENOMINATOR - SOFT_EDGE_STRENGTH_NUMERATOR) * (span - dist);
+  return Math.trunc((amount * weight) / (SOFT_EDGE_STRENGTH_DENOMINATOR * span));
 }
 
 export function spreadableFootprintCells(

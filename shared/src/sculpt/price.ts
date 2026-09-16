@@ -1,5 +1,5 @@
 import { BAND_HEIGHT, DEFAULT_SCULPT_AMOUNT } from '../constants.ts';
-import { assertBrushRadius, forEachFootprintOffset } from './footprint.ts';
+import { assertBrushRadius, brushDelta, forEachFootprintOffset } from './footprint.ts';
 import { CARVE_BANDS_PER_STROKE } from './options.ts';
 import type { SculptProfile, SculptTool } from './options.ts';
 
@@ -25,7 +25,7 @@ export function sculptDisplacementUnits(
   if ((tool === 'stamp' && profile === 'soft') || tool === 'smooth') {
     let total = 0;
     forEachFootprintOffset(radius, (_dx, _dy, dist) => {
-      total += Math.trunc((perCell * (radius - dist)) / radius);
+      total += brushDelta(perCell, radius, dist, 'soft');
     });
     return total;
   }
