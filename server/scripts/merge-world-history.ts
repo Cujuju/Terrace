@@ -2,7 +2,10 @@ import DatabaseConstructor from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { logError, logInfo, logWarn } from '../src/log.ts';
-import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
+import {
+  SNAPSHOT_WRITTEN_COLUMNS,
+  SnapshotStore,
+} from '../src/persistence/snapshot-store.ts';
 
 function usage(): never {
   logError('usage: pnpm --dir server merge-world-history <from.db> <into.db> [--pin]');
@@ -91,6 +94,14 @@ const db = new DatabaseConstructor(into);
 db.pragma('foreign_keys = ON');
 db.exec(`ATTACH DATABASE '${from.replace(/'/g, "''")}' AS source`);
 
+/** Every refusal after the ATTACH lands here, so none of them leaves `into` half-touched. */
+function refuse(message: string): never {
+  db.exec('DETACH DATABASE source');
+  db.close();
+  logError(message);
+  process.exit(1);
+}
+
 const proof = sharedLineage(db);
 if (proof === null) {
   const overlap = (
@@ -98,9 +109,7 @@ if (proof === null) {
       .prepare('SELECT COUNT(*) AS n FROM main.snapshots WHERE id IN (SELECT id FROM source.snapshots)')
       .get() as { n: number }
   ).n;
-  db.exec('DETACH DATABASE source');
-  db.close();
-  logError(
+  refuse(
     overlap === 0
       ? 'refusing: these two files share no snapshot id at all, so there is nothing to ' +
           'prove they are the same world. Merging them would interleave two unrelated ' +
@@ -109,7 +118,6 @@ if (proof === null) {
           'so they are two different worlds that happen to look alike — not two copies of ' +
           'one world. Nothing was written.',
   );
-  process.exit(1);
 }
 logInfo(`same world confirmed: snapshot #${proof} is identical in both files`);
 
@@ -126,8 +134,10 @@ if (missing.length === 0) {
   process.exit(0);
 }
 
+const SNAPSHOT_ID_COLUMN = 'id';
+
 const REQUIRED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
-  snapshots: ['id', 'schema_version', 'created_at', 'world_size', 'heightmap', 'mask'],
+  snapshots: [SNAPSHOT_ID_COLUMN, ...SNAPSHOT_WRITTEN_COLUMNS],
   plugin_slices: ['snapshot_id', 'plugin', 'data'],
   token_masks: ['snapshot_id', 'token', 'mask'],
 };
@@ -135,16 +145,23 @@ const REQUIRED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
 function sharedColumns(table: string): string[] {
   const columnsOf = (schema: string): string[] =>
     (db.pragma(`${schema}.table_info(${table})`) as { name: string }[]).map((c) => c.name);
-  const target = new Set(columnsOf('main'));
-  const shared = columnsOf('source').filter((name) => target.has(name));
+  const target = columnsOf('main');
+  const source = new Set(columnsOf('source'));
+  const shared = target.filter((name) => source.has(name));
 
+  const dropped = target.filter((name) => !source.has(name));
+  if (dropped.length > 0) {
+    refuse(
+      `refusing: ${from} has no ${dropped.join(', ')} column(s) on ${table} that ${into} ` +
+        'has, so every merged row would lose them without a word. Nothing was written.',
+    );
+  }
   const missing = (REQUIRED_COLUMNS[table] ?? []).filter((name) => !shared.includes(name));
   if (missing.length > 0) {
-    logError(
+    refuse(
       `refusing: the two files do not share the column(s) ${missing.join(', ')} on ` +
         `${table}, so a merged row would be missing something essential.`,
     );
-    process.exit(1);
   }
   return shared;
 }

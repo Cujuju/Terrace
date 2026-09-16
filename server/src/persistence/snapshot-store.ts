@@ -113,6 +113,23 @@ const GENESIS_MILLIS_COLUMN = 'genesis_millis';
 
 const COLUMN_SPANS_COLUMN = 'column_spans';
 
+/**
+ * Every column `writeSnapshot` fills, in bind order. Anything that copies snapshot rows
+ * must carry all of them, so this list is the contract, not the INSERT text.
+ */
+export const SNAPSHOT_WRITTEN_COLUMNS: readonly string[] = [
+  'schema_version',
+  'created_at',
+  'world_size',
+  WORLD_NAME_COLUMN,
+  'heightmap',
+  'mask',
+  THUMBNAIL_COLUMN,
+  SIM_MILLIS_COLUMN,
+  GENESIS_MILLIS_COLUMN,
+  COLUMN_SPANS_COLUMN,
+];
+
 const TOKEN_MASKS_DDL = `
   CREATE TABLE IF NOT EXISTS token_masks (
     snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
@@ -207,11 +224,8 @@ export interface SnapshotWritePayload {
 export function prepareSnapshotWriteStatements(db: Database): SnapshotWriteStatements {
   return {
     insertSnapshot: db.prepare(
-      `INSERT INTO snapshots
-         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
-          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN},
-          ${COLUMN_SPANS_COLUMN})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO snapshots (${SNAPSHOT_WRITTEN_COLUMNS.join(', ')})
+       VALUES (${SNAPSHOT_WRITTEN_COLUMNS.map(() => '?').join(', ')})`,
     ),
     insertSlice: db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
