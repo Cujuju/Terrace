@@ -4,7 +4,6 @@ import {
   createChunkMask,
   spanAt,
   spanCount,
-  validateSculptIntent,
   type CellDiff,
   type ChunkPayload,
   type ChunkUnlockMessage,
@@ -333,7 +332,7 @@ export class Scenario {
     handleSculptMessage(this.sculptDeps, this.clientFor(player), message);
     const entries = this.collect();
     return {
-      outcome: this.outcomeOf(message, entries),
+      outcome: this.outcomeOf(entries),
       reached: this.reach(false),
       faulted: false,
       entries,
@@ -361,7 +360,7 @@ export class Scenario {
     );
     const entries = this.collect();
     return {
-      outcome: faulted ? null : this.outcomeOf(message, entries),
+      outcome: faulted ? null : this.outcomeOf(entries),
       reached: this.reach(faulted),
       faulted,
       entries,
@@ -389,22 +388,15 @@ export class Scenario {
    * The verdict, read back from what production exposed: the applied intent the
    * plugin chain was handed, else the nack on the wire.
    */
-  private outcomeOf(message: unknown, entries: readonly TranscriptEntry[]): IntentOutcome | null {
+  private outcomeOf(entries: readonly TranscriptEntry[]): IntentOutcome | null {
     const applied = this.watchingHost.appliedIntent();
     if (applied !== null) return { applied: true, intent: applied.intent, diff: applied.diff };
 
     const nack = entriesOfKind(entries, 'nack').at(-1);
-    if (nack?.reason !== undefined) {
-      return nack.detail === undefined
-        ? { applied: false, reason: nack.reason }
-        : { applied: false, reason: nack.reason, detail: nack.detail };
-    }
-
-    // Silent refusal: only the validator's own answer says whether it was malformed.
-    if (!this.pipelineEntered) return null;
-    return validateSculptIntent(message, this.world.size) === null
-      ? { applied: false, reason: 'malformed' }
-      : null;
+    if (nack?.reason === undefined) return null;
+    return nack.detail === undefined
+      ? { applied: false, reason: nack.reason }
+      : { applied: false, reason: nack.reason, detail: nack.detail };
   }
 
   private collect(): TranscriptEntry[] {
