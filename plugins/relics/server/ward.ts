@@ -1,4 +1,4 @@
-import { forEachFootprintOffset } from '@terrace/shared';
+import { forEachSweptCell, pointWithinSweep, type StrokeSweep } from '@terrace/shared';
 
 export const BEDROCK_WARD_SECONDS = 15;
 
@@ -13,38 +13,24 @@ const wards = new Map<number, Ward>();
 
 const noticeSilenceS = new Map<string, number>();
 
-export function stampWard(
-  size: number,
-  owner: string,
-  x: number,
-  y: number,
-  radius: number,
-): void {
-  forEachFootprintOffset(radius, (dx, dy) => {
-    const cx = x + dx;
-    const cy = y + dy;
+export function stampWard(size: number, owner: string, sweep: StrokeSweep): void {
+  forEachSweptCell(sweep, (cx, cy) => {
     if (cx < 0 || cy < 0 || cx >= size || cy >= size) return;
     wards.set(cy * size + cx, { owner, remainingS: BEDROCK_WARD_SECONDS });
   });
 }
 
+/** One closed-form test per standing ward, whatever shape the stroke swept. */
 export function wardHolderAgainst(
   size: number,
   actor: string,
-  x: number,
-  y: number,
-  radius: number,
+  sweep: StrokeSweep,
 ): string | null {
-  let holder: string | null = null;
-  forEachFootprintOffset(radius, (dx, dy) => {
-    if (holder !== null) return;
-    const cx = x + dx;
-    const cy = y + dy;
-    if (cx < 0 || cy < 0 || cx >= size || cy >= size) return;
-    const ward = wards.get(cy * size + cx);
-    if (ward !== undefined && ward.owner !== actor) holder = ward.owner;
-  });
-  return holder;
+  for (const [cell, ward] of wards) {
+    if (ward.owner === actor) continue;
+    if (pointWithinSweep(sweep, cell % size, Math.floor(cell / size))) return ward.owner;
+  }
+  return null;
 }
 
 export function sweepWards(dt: number): void {

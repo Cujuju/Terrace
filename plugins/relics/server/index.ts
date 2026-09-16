@@ -3,8 +3,11 @@ import {
   MAX_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  strokeSweep,
+  sweepAt,
   type CellDiff,
   type SculptIntent,
+  type StrokeSweep,
 } from '@terrace/shared';
 import type {
   IntentCtx,
@@ -145,14 +148,8 @@ function denyCast(world: WorldApi, sessionId: string, skill: string, reason: str
   world.sendTo(sessionId, CAST_DENIED_MESSAGE, { skill, reason });
 }
 
-function wardRefuses(
-  world: WorldApi,
-  sessionId: string,
-  x: number,
-  y: number,
-  radius: number,
-): boolean {
-  if (wardHolderAgainst(world.worldSize, sessionId, x, y, radius) === null) return false;
+function wardRefuses(world: WorldApi, sessionId: string, sweep: StrokeSweep): boolean {
+  if (wardHolderAgainst(world.worldSize, sessionId, sweep) === null) return false;
   if (claimWardNotice(sessionId)) {
     denyCast(world, sessionId, 'bedrock-ward', CAST_DENIED_WARDED);
   }
@@ -303,7 +300,7 @@ function handleCast(world: WorldApi, player: Player, payload: unknown): void {
   }
 
   for (const step of steps) {
-    if (wardRefuses(world, player.id, x + step.dx, y + step.dy, step.radius)) return;
+    if (wardRefuses(world, player.id, sweepAt(x + step.dx, y + step.dy, step.radius))) return;
   }
 
   applyTerraform(world, x, y, steps);
@@ -433,7 +430,7 @@ export const plugin: TerracePlugin = {
   },
 
   onIntent(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void {
-    if (wardRefuses(ctx.world, ctx.player.id, intent.x, intent.y, intent.radius)) {
+    if (wardRefuses(ctx.world, ctx.player.id, strokeSweep(intent))) {
       return { kind: 'deny', reason: CAST_DENIED_WARDED };
     }
   },
@@ -444,7 +441,7 @@ export const plugin: TerracePlugin = {
     if (diff.length === 0) return;
     const held = skillsBySession.get(ctx.player.id);
     if (held === undefined || !held.has('bedrock-ward')) return;
-    stampWard(ctx.world.worldSize, ctx.player.id, intent.x, intent.y, intent.radius);
+    stampWard(ctx.world.worldSize, ctx.player.id, strokeSweep(intent));
   },
 
   messages: {
