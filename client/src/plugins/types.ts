@@ -80,7 +80,8 @@ export interface ClientPluginCtx {
 
   worldSize(): number;
 
-  terrainHeightAt(x: number, y: number): number | null;
+  /** The server's raw height sample, for reproducing server rules. Anything drawn uses drawnGroundYAt. */
+  terrainSampleAt(x: number, y: number): number | null;
 
   terrainRevisionAt(x: number, y: number): number;
 

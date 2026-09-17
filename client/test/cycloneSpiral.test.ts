@@ -47,7 +47,8 @@ function harness(): Harness {
       resets.push(handler);
       return () => {};
     },
-    terrainHeightAt: (): null => null,
+    terrainSampleAt: (): null => null,
+    drawnGroundYAt: (): null => null,
     modulateSkyRig: (): (() => void) => () => {},
     publishGroundShade: (): (() => void) => () => {},
     applyRevealClip: (): void => {},

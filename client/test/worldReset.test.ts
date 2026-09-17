@@ -19,7 +19,7 @@ function stubViewport(): Viewport {
 
 const stubWorld = {
   worldSize: () => 0,
-  terrainHeightAt: () => null,
+  terrainSampleAt: () => null,
   drawnGroundYAt: () => null,
   pickCell: () => null,
 } as unknown as World;

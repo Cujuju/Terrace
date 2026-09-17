@@ -35,7 +35,7 @@ const HELD_BAND = 3;
 
 const NOTHING_OPEN_CHUNKS = 0;
 
-const EVERYWHERE = { worldSize: () => 0, revealedAt: () => true, terrainHeightAt: () => null };
+const EVERYWHERE = { worldSize: () => 0, revealedAt: () => true, terrainSampleAt: () => null };
 
 function dragLeg(from: { x: number; y: number } | null): SculptIntent {
   return {

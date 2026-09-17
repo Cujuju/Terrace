@@ -1,4 +1,4 @@
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, bandOf, isWater } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -60,13 +60,13 @@ function worldX(cell: number): number {
 
 function isGhostSite(ctx: ClientPluginCtx, cell: TempleCell): boolean {
   if (refusedCells.has(refusedKey(cell.x, cell.y))) return false;
-  const centre = ctx.terrainHeightAt(cell.x, cell.y);
+  const centre = ctx.terrainSampleAt(cell.x, cell.y);
   if (centre === null) return false;
+  const band = bandOf(centre);
   for (let dy = -TEMPLE_SURVEY_RADIUS_CELLS; dy <= TEMPLE_SURVEY_RADIUS_CELLS; dy++) {
     for (let dx = -TEMPLE_SURVEY_RADIUS_CELLS; dx <= TEMPLE_SURVEY_RADIUS_CELLS; dx++) {
-      const height = ctx.terrainHeightAt(cell.x + dx, cell.y + dy);
-      if (height === null || height !== centre) return false;
-      if (height <= -1) return false;
+      const height = ctx.terrainSampleAt(cell.x + dx, cell.y + dy);
+      if (height === null || isWater(height) || bandOf(height) !== band) return false;
     }
   }
   return true;
