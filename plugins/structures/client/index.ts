@@ -17,8 +17,12 @@ import {
   preloadStructureModels,
   type StructureModels,
 } from './models.ts';
-import { placementsFor } from './placement.ts';
-import { createSiteSurveyCache, type SiteSurveyCache } from './site.ts';
+import { placementsFor, type PlacementResult } from './placement.ts';
+import {
+  createSiteSurveyCache,
+  neighbourhoodRevision,
+  type SiteSurveyCache,
+} from './site.ts';
 import skiffUrl from './assets/skiff.glb?url';
 import {
   createSkiffModels,
@@ -27,7 +31,9 @@ import {
   type SkiffModels,
 } from './skiffModels.ts';
 
-export const STRUCTURES_GROUND_RETRY_SECONDS = 0.5;
+// Pending sites wait on terrain that may never arrive (fogged chunks); retry only once it changes,
+// and at most twice a second while terrain streams in.
+export const STRUCTURES_PENDING_CHECK_SECONDS = 0.5;
 
 let models: StructureModels | null = null;
 let skiffModels: SkiffModels | null = null;
@@ -37,9 +43,17 @@ let unsubscribeFrames: (() => void) | null = null;
 
 const buildings = new Map<number, StructureCell>();
 
-let pendingGround = 0;
-let pendingSite = 0;
-let sinceRetrySeconds = 0;
+let pendingCells: PlacementResult['pendingCells'] = [];
+let pendingRevision = 0;
+let sinceCheckSeconds = 0;
+
+function pendingRevisionOf(ctx: ClientPluginCtx): number {
+  let sum = 0;
+  for (const cell of pendingCells) {
+    sum += neighbourhoodRevision((x, y) => ctx.terrainRevisionAt(x, y), cell.x, cell.y);
+  }
+  return sum;
+}
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
@@ -51,9 +65,9 @@ function rebuild(ctx: ClientPluginCtx): void {
   );
   models.apply(result.placements);
   skiffModels?.apply(result.skiffs);
-  pendingGround = result.pendingGround;
-  pendingSite = result.pendingSite;
-  sinceRetrySeconds = 0;
+  pendingCells = result.pendingCells;
+  pendingRevision = pendingRevisionOf(ctx);
+  sinceCheckSeconds = 0;
 }
 
 function replaceAll(cells: readonly StructureCell[]): void {
@@ -89,9 +103,9 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     buildings.clear();
-    pendingGround = 0;
-    pendingSite = 0;
-    sinceRetrySeconds = 0;
+    pendingCells = [];
+    pendingRevision = 0;
+    sinceCheckSeconds = 0;
 
     siteSurveys = createSiteSurveyCache((x, y) => ctx.terrainRevisionAt(x, y));
     models = createStructureModels();
@@ -119,9 +133,11 @@ export const clientPlugin: TerraceClientPlugin = {
       models?.animate(dt);
       skiffModels?.animate(dt);
 
-      if (pendingGround === 0 && pendingSite === 0) return;
-      sinceRetrySeconds += dt;
-      if (sinceRetrySeconds < STRUCTURES_GROUND_RETRY_SECONDS) return;
+      if (pendingCells.length === 0) return;
+      sinceCheckSeconds += dt;
+      if (sinceCheckSeconds < STRUCTURES_PENDING_CHECK_SECONDS) return;
+      sinceCheckSeconds = 0;
+      if (pendingRevisionOf(ctx) === pendingRevision) return;
       rebuild(ctx);
     });
   },
@@ -133,9 +149,9 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = null;
 
     buildings.clear();
-    pendingGround = 0;
-    pendingSite = 0;
-    sinceRetrySeconds = 0;
+    pendingCells = [];
+    pendingRevision = 0;
+    sinceCheckSeconds = 0;
 
     siteSurveys?.clear();
     siteSurveys = null;
