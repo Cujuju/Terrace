@@ -222,9 +222,12 @@ export function ManaGauge(): JSX.Element {
   const sandSurface = () => (flashing() ? DENIED_LIGHT : SAND_SURFACE);
   const glassColor = () => (flashing() ? DENIED_MID : GLASS_STROKE);
 
+  // One dry-run sculpt per aim change, shared by every reader below.
+  const quote = createMemo(() => currentBrushQuote());
+
   const periodSeconds = () => {
     const pool = manaPool();
-    return pool === null ? 0 : pulsePeriodSeconds(currentBrushQuote().cost, pool.regenPerSecond);
+    return pool === null ? 0 : pulsePeriodSeconds(quote().cost, pool.regenPerSecond);
   };
   const grainFall = () => Math.max(0, fillTopY() - GRAIN_START_Y);
   // Cost hint: the brush cost, the frontier it opens, plus the last denied cost
@@ -233,7 +236,7 @@ export function ManaGauge(): JSX.Element {
     const unlock = currentUnlockFee();
     const opening = unlock > 0 ? `, including ${unlock} to open the frontier` : '';
     const denied = lastDeniedCost();
-    const measured = currentBrushQuote().estimated ? ' (estimated)' : '';
+    const measured = quote().estimated ? ' (estimated)' : '';
     const line = `Cost: one click of this brush${opening}${measured}`;
     return denied === null ? line : `${line} — last denied cost ${formatSculptCost(denied)}`;
   };
@@ -245,7 +248,7 @@ export function ManaGauge(): JSX.Element {
       <div
         class="mana-gauge"
         role="img"
-        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${currentBrushQuote().cost}`}
+        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${quote().cost}`}
         title={`Mana: ${Math.floor(displayed())} of ${manaPool()!.capacity}`}
       >
         <style>{GAUGE_CSS}</style>
@@ -453,7 +456,7 @@ export function ManaGauge(): JSX.Element {
             class="mana-gauge__cost"
             title={costHint()}
           >
-            {formatSculptCost(currentBrushQuote().cost)}
+            {formatSculptCost(quote().cost)}
           </span>
         </div>
       </div>
