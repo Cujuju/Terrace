@@ -95,7 +95,7 @@ function nextInstanceSlot(): MutableFireInstance {
 
 function adoptGround(ctx: ClientPluginCtx, fire: LocalFire): void {
   if (fire.groundY !== null) return;
-  const groundY = ctx.terrainHeightAt(fire.cell.x, fire.cell.y);
+  const groundY = ctx.drawnGroundYAt(fire.cell.x, fire.cell.y);
   if (groundY === null) {
     pendingGround++;
     return;
@@ -303,7 +303,7 @@ export const clientPlugin: TerraceClientPlugin = {
       }
 
       if (torchHeld && torchCell !== null && marker !== null) {
-        const groundY = ctx.terrainHeightAt(torchCell.x, torchCell.y);
+        const groundY = ctx.drawnGroundYAt(torchCell.x, torchCell.y);
         if (groundY === null) marker.hide();
         else {
           marker.showAt(torchCell.x * CELL_WORLD_SIZE, groundY, torchCell.y * CELL_WORLD_SIZE);

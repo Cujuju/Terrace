@@ -41,7 +41,8 @@ export function placementsFor(
   surveys?.beginPass();
   for (const cell of cells) {
     const groundY = groundAt(cell.x, cell.y);
-    if (groundY === null) {
+    const drawnY = drawnAt(cell.x, cell.y);
+    if (groundY === null || drawnY === null) {
       pendingGround++;
       pendingCells.push({ x: cell.x, y: cell.y });
       continue;
@@ -62,7 +63,7 @@ export function placementsFor(
       z: cell.y * CELL_WORLD_SIZE,
       cellX: cell.x,
       cellY: cell.y,
-      groundY,
+      groundY: drawnY,
       tier: cell.tier,
       scale: variation.scale,
       yaw: variation.yaw,

@@ -85,7 +85,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
   crownSeconds += dt;
 
-  const groundY = temple === null ? null : ctx.terrainHeightAt(temple.x, temple.y);
+  const groundY = temple === null ? null : ctx.drawnGroundYAt(temple.x, temple.y);
   if (temple === null || groundY === null) {
     models.standing.visible = false;
   } else {
@@ -110,7 +110,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     return;
   }
 
-  const hoverGroundY = ctx.terrainHeightAt(hoverCell.x, hoverCell.y);
+  const hoverGroundY = ctx.drawnGroundYAt(hoverCell.x, hoverCell.y);
   if (hoverGroundY === null) {
     models.ghost.visible = false;
     return;

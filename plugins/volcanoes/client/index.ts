@@ -29,7 +29,7 @@ function plumeSources(ctx: ClientPluginCtx): PlumeSource[] {
   const sources: PlumeSource[] = [];
   for (const vent of vents.values()) {
     if (!vent.erupting) continue;
-    const groundY = ctx.terrainHeightAt(vent.x, vent.y);
+    const groundY = ctx.drawnGroundYAt(vent.x, vent.y);
     if (groundY === null) continue;
     sources.push({ id: vent.id, x: vent.x, y: vent.y, groundY });
   }
