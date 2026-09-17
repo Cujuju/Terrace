@@ -1502,10 +1502,10 @@ function poseAtEdge(ctx: ProbeContext): void {
   let best: { x: number; y: number; dx: number; dy: number; drop: number } | null = null;
   for (let y = 0; y + stride < size; y += stride) {
     for (let x = 0; x + stride < size; x += stride) {
-      const here = ctx.world.terrainHeightAt(x, y);
+      const here = ctx.world.drawnGroundYAt(x, y);
       if (here === null) continue;
       for (const [dx, dy] of [[stride, 0], [0, stride]] as const) {
-        const there = ctx.world.terrainHeightAt(x + dx, y + dy);
+        const there = ctx.world.drawnGroundYAt(x + dx, y + dy);
         if (there === null) continue;
         const drop = here - there;
         if (best === null || Math.abs(drop) > best.drop) {
@@ -1518,7 +1518,7 @@ function poseAtEdge(ctx: ProbeContext): void {
   }
   if (best === null) return;
   const { camera, controls } = ctx.viewport;
-  const height = ctx.world.terrainHeightAt(best.x, best.y) ?? 0;
+  const height = ctx.world.drawnGroundYAt(best.x, best.y) ?? 0;
   const target = new Vector3(best.x * CELL_WORLD_SIZE, height, best.y * CELL_WORLD_SIZE);
   const bearing = new Vector3(best.dx, 0, best.dy).normalize();
   const polar = (CAMERA_MAX_POLAR_ANGLE_DEGREES * Math.PI) / 180;
@@ -2209,7 +2209,7 @@ export function installPerfProbe(deps: {
     connection,
     cyclones: () => storms,
     dollyTo: (x, y, distance): void => {
-      const height = world.terrainHeightAt(Math.round(x), Math.round(y)) ?? 0;
+      const height = world.drawnGroundYAt(x, y) ?? 0;
       const target = new Vector3(x * CELL_WORLD_SIZE, height, y * CELL_WORLD_SIZE);
       const bearing = camera.position.clone().sub(controls.target).normalize();
       controls.target.copy(target);

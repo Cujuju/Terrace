@@ -77,7 +77,7 @@ describe('lane E: mana denial pulse carries its cost', () => {
       tool: 'stamp',
       profile: 'hard',
     } as const;
-    expect(state.gateLocalSculpt(bigStamp, { worldSize: () => 0, revealedAt: () => true, terrainHeightAt: () => UNKNOWN_HEIGHT })).toBe(
+    expect(state.gateLocalSculpt(bigStamp, { worldSize: () => 0, revealedAt: () => true, terrainSampleAt: () => UNKNOWN_HEIGHT })).toBe(
       false,
     );
     expect(state.deniedCount()).toBe(before + 1);
@@ -99,10 +99,10 @@ describe('the HUD quote prices the frontier under the aim', () => {
     worldSize: () => WORLD_SIZE,
     revealedAt: (x: number, y: number) =>
       Math.floor(x / CHUNK_SIZE) === HOME_CHUNK_X && Math.floor(y / CHUNK_SIZE) === HOME_CHUNK_Y,
-    terrainHeightAt: () => UNKNOWN_HEIGHT,
+    terrainSampleAt: () => UNKNOWN_HEIGHT,
   };
 
-  const EVERYWHERE = { worldSize: () => WORLD_SIZE, revealedAt: () => true, terrainHeightAt: () => UNKNOWN_HEIGHT };
+  const EVERYWHERE = { worldSize: () => WORLD_SIZE, revealedAt: () => true, terrainSampleAt: () => UNKNOWN_HEIGHT };
 
   // Re-imported inside the reset registry, so it is the module state.ts reads.
   let hud: typeof import('../../../client/src/state/hudState.ts');

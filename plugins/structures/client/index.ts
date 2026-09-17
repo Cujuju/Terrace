@@ -59,7 +59,7 @@ function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
   const result = placementsFor(
     buildings.values(),
-    (x, y) => ctx.terrainHeightAt(x, y),
+    (x, y) => ctx.drawnGroundYAt(x, y),
     (x, y) => ctx.drawnGroundYAt(x, y),
     siteSurveys ?? undefined,
   );

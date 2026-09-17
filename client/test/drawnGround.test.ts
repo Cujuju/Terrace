@@ -7,7 +7,6 @@ import {
   drawnBandOfSample,
   drawnLevelThreshold,
 } from '@terrace/shared';
-import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 import {
   createDrawnGround,
   type DrawnGround,
@@ -131,11 +130,5 @@ describe('drawnGround', () => {
     expect(basinCentre).not.toBe(3);
 
     expect(ground.bandAt(12.5, 15.5)).toBe(3);
-  });
-
-  it('capYOfBand distinguishes band 0’s two levels from the drawn stack', () => {
-    const mirror = terracedMirror();
-    const ground = groundOf(mirror);
-    expect(ground.capYOfBand(1, 15.5, 15.5)).toBe(BAND_WORLD_HEIGHT);
   });
 });

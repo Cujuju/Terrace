@@ -47,7 +47,7 @@ function territoryOf(map: Heightmap) {
   return {
     worldSize: () => map.size,
     revealedAt: () => true,
-    terrainHeightAt: (x: number, y: number) =>
+    terrainSampleAt: (x: number, y: number) =>
       x < 0 || y < 0 || x >= map.size || y >= map.size
         ? null
         : map.cells[cellIndex(map, x, y)]!,
@@ -57,7 +57,7 @@ function territoryOf(map: Heightmap) {
 const UNKNOWN_GROUND = {
   worldSize: () => WORLD_SIZE,
   revealedAt: () => true,
-  terrainHeightAt: () => null,
+  terrainSampleAt: () => null,
 };
 
 /** What the server would charge: the same applier, run on the same ground. */

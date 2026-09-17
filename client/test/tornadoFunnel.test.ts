@@ -35,7 +35,8 @@ function harness(): Harness {
 
   const ctx = {
     layer,
-    terrainHeightAt: (): number => GROUND_Y,
+    terrainSampleAt: (): null => null,
+    drawnGroundYAt: (): number => GROUND_Y,
     onMessage: (type: string, handler: (payload: unknown) => void): (() => void) => {
       const list = handlers.get(type) ?? [];
       list.push(handler);

@@ -12,7 +12,7 @@ import {
 /** The ground the client knows, cell by cell. Null where no chunk has arrived. */
 export interface LocalHeights {
   worldSize(): number;
-  terrainHeightAt(x: number, y: number): number | null;
+  terrainSampleAt(x: number, y: number): number | null;
 }
 
 /** An applier reads one cell past everything it writes. */
@@ -43,7 +43,7 @@ export function dryRunDisplacement(
   const scratch = createHeightmap(side);
   for (let sy = 0; sy < side; sy++) {
     for (let sx = 0; sx < side; sx++) {
-      const height = terrain.terrainHeightAt(originX + sx, originY + sy);
+      const height = terrain.terrainSampleAt(originX + sx, originY + sy);
       if (height === null) return null;
       scratch.cells[sy * side + sx] = height;
     }

@@ -76,7 +76,7 @@ import {
   spendMana,
 } from '../server/index.ts';
 
-const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true, terrainHeightAt: () => UNKNOWN_HEIGHT };
+const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true, terrainSampleAt: () => UNKNOWN_HEIGHT };
 
 /** No chunk in hand: a quote on unknown ground falls back to the nominal. */
 const UNKNOWN_HEIGHT = null;
@@ -1351,7 +1351,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
           Math.floor(x / CHUNK_SIZE),
           Math.floor(y / CHUNK_SIZE),
         ),
-      terrainHeightAt: () => UNKNOWN_HEIGHT,
+      terrainSampleAt: () => UNKNOWN_HEIGHT,
     };
   }
 

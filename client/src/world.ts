@@ -5,7 +5,6 @@ import {
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
-  quantizeToBand,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -27,7 +26,7 @@ import {
   sampleHeight,
   type TerrainMirror,
 } from './terrain/mirror.ts';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
+import { CELL_WORLD_SIZE } from './config.ts';
 import {
   setServerVersion,
   setWorldIdentity,
@@ -171,7 +170,7 @@ export interface World extends TerrainSink {
   graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
-  terrainHeightAt(x: number, y: number): number | null;
+  terrainSampleAt(x: number, y: number): number | null;
   terrainRevisionAt(x: number, y: number): number;
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
   chartSource(): ChartSource | null;
@@ -596,10 +595,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       return mirror?.map.size ?? 0;
     },
 
-    terrainHeightAt(x: number, y: number): number | null {
+    terrainSampleAt(x: number, y: number): number | null {
       if (mirror === null) return null;
       if (!isCellReceived(mirror, x, y)) return null;
-      return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
+      return sampleHeight(mirror, x, y);
     },
 
     terrainRevisionAt(x: number, y: number): number {

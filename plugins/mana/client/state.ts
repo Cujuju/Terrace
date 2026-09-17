@@ -129,7 +129,7 @@ export function recordDenial(cost?: number): void {
 export interface LocalTerritory {
   worldSize(): number;
   revealedAt(x: number, y: number): boolean;
-  terrainHeightAt(x: number, y: number): number | null;
+  terrainSampleAt(x: number, y: number): number | null;
 }
 
 /**

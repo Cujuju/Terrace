@@ -1,10 +1,9 @@
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
   DRAWN_GROUND_CELL_CENTRE,
   drawnBandAt,
 } from '@terrace/shared';
-import { blockyCellCapY, drawnBandCapY } from './capEmission.ts';
+import { drawnBandCapY } from './capEmission.ts';
 import { type ContourLoop } from './contours.ts';
 import {
   polygonsOfLevel,
@@ -20,7 +19,6 @@ function chunkOf(cell: number): number {
 
 export interface DrawnGround {
   capYAt(cellX: number, cellZ: number): number;
-  capYOfBand(band: number, cellX: number, cellZ: number): number;
   bandAt(cellX: number, cellZ: number): number;
   nearestOnContour(
     threshold: number,
@@ -35,9 +33,6 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
   const chartAt = (cellX: number, cellZ: number): ChunkChart | null =>
     store.chartOf(chunkOf(cellX), chunkOf(cellZ));
 
-  const hasNoContours = (chart: ChunkChart | null): chart is null =>
-    chart === null || chart.plan.blocky;
-
   const drawnBandOf = (cellX: number, cellZ: number): number =>
     drawnBandAt(
       mirror.map,
@@ -48,17 +43,6 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
   return {
     capYAt(cellX: number, cellZ: number): number {
       return drawnBandCapY(drawnBandOf(cellX, cellZ));
-    },
-
-    capYOfBand(band: number, cellX: number, cellZ: number): number {
-      const chart = chartAt(cellX, cellZ);
-      if (!hasNoContours(chart)) {
-        const { levelSampleBand, levelCapY } = chart.plan;
-        for (let i = levelSampleBand.length - 1; i >= 0; i--) {
-          if (levelSampleBand[i] === band) return levelCapY[i]!;
-        }
-      }
-      return blockyCellCapY(band * BAND_HEIGHT);
     },
 
     bandAt(cellX: number, cellZ: number): number {
