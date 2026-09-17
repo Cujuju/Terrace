@@ -83,14 +83,14 @@ let pendingStumpGround = 0;
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
-  const result = placementsFor(trees.values(), (x, y) => ctx.terrainHeightAt(x, y));
+  const result = placementsFor(trees.values(), (x, y) => ctx.drawnGroundYAt(x, y));
   models.apply(result.placements);
   pendingGround = result.pendingGround;
   sinceRetrySeconds = 0;
 }
 
 function groundLookup(ctx: ClientPluginCtx): (x: number, y: number) => number | null {
-  return (x, y) => ctx.terrainHeightAt(x, y);
+  return (x, y) => ctx.drawnGroundYAt(x, y);
 }
 
 function rebuildGrass(ctx: ClientPluginCtx): void {
@@ -153,7 +153,7 @@ function applyFringeDelta(
 
 function rebuildStumps(ctx: ClientPluginCtx): void {
   if (stumpModels === null) return;
-  const result = stumpPlacementsFor(stumps.values(), (x, y) => ctx.terrainHeightAt(x, y));
+  const result = stumpPlacementsFor(stumps.values(), (x, y) => ctx.drawnGroundYAt(x, y));
   stumpModels.apply(result.placements);
   pendingStumpGround = result.pendingGround;
   sinceRetrySeconds = 0;
@@ -161,7 +161,7 @@ function rebuildStumps(ctx: ClientPluginCtx): void {
 
 function rebuildCrops(ctx: ClientPluginCtx): void {
   if (cropModels === null) return;
-  const result = cropPlacementsFor(crops.values(), (x, y) => ctx.terrainHeightAt(x, y));
+  const result = cropPlacementsFor(crops.values(), (x, y) => ctx.drawnGroundYAt(x, y));
   cropModels.apply(result.placements);
   pendingCropGround = result.pendingGround;
   sinceRetrySeconds = 0;

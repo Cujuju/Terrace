@@ -23,6 +23,7 @@ import { CYCLONE_TOP_WORLD_Y, MAX_SPIRALS } from './spiralLayout.ts';
 import { CYCLONE_SHADE_CORE_FRACTION, CYCLONE_SHADE_DARKNESS } from './spiralLook.ts';
 import { GLOOM_RESPONSE_PER_SECOND, applyGloom, overheadFraction } from './gloom.ts';
 import { extrapolate } from '../../../client/src/plugins/kit/extrapolation.ts';
+import { drawnGroundSampler } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 
 let spiral: SpiralRenderer | null = null;
@@ -133,7 +134,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
     spiral = createSpiral(
       (material, label) => ctx.applyRevealClip(material, label),
-      (cellX, cellY) => ctx.terrainHeightAt(cellX, cellY),
+      drawnGroundSampler(ctx),
     );
     ctx.layer.add(spiral.root);
 

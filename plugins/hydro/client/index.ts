@@ -216,7 +216,7 @@ export const clientPlugin: TerraceClientPlugin = {
       }
 
       if (bucketHeld && pourCell !== null && marker !== null) {
-        const groundY = ctx.terrainHeightAt(pourCell.x, pourCell.y);
+        const groundY = ctx.drawnGroundYAt(pourCell.x, pourCell.y);
         if (groundY === null) marker.hide();
         else {
           marker.showAt(pourCell.x * CELL_WORLD_SIZE, groundY, pourCell.y * CELL_WORLD_SIZE);

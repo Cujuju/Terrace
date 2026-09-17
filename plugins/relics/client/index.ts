@@ -104,7 +104,7 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
   elapsedS += dt;
 
   const sample = (cellX: number, cellY: number): number | null =>
-    ctx.terrainHeightAt(cellX, cellY);
+    ctx.drawnGroundYAt(cellX, cellY);
   for (const entry of gems.values()) {
     const ground = gemGroundY(sample, entry.relic.x, entry.relic.y);
     if (ground === null) {

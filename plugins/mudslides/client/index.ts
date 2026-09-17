@@ -1,4 +1,5 @@
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
+import { drawnGroundSampler } from '../../../client/src/plugins/kit/groundFollow.ts';
 import {
   MUDSLIDES_ACTIVE_MESSAGE,
   MUDSLIDES_DEBRIS_MESSAGE,
@@ -87,7 +88,7 @@ export const clientPlugin: TerraceClientPlugin = {
     settled = createDebrisField();
     ctx.layer.add(settled.mesh);
 
-    const groundAt = (x: number, y: number): number | null => ctx.terrainHeightAt(x, y);
+    const groundAt = drawnGroundSampler(ctx);
 
     unsubscribes = [
       ctx.onMessage(MUDSLIDES_ACTIVE_MESSAGE, (payload) => {

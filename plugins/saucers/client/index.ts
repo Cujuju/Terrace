@@ -194,7 +194,7 @@ function drawCrashes(ctx: ClientPluginCtx): void {
       splashRig.show(x, SEA_SURFACE_WORLD_Y, z, crash.age);
       continue;
     }
-    const groundY = ctx.terrainHeightAt(crash.x, crash.y);
+    const groundY = ctx.drawnGroundYAt(crash.x, crash.y);
     if (groundY === null) continue;
     rig.show(x, groundY, z, crash.age);
   }
