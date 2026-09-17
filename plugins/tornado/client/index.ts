@@ -9,7 +9,6 @@ import {
 } from '../protocol.ts';
 import { createFunnel, type FunnelRenderer, type FunnelSource } from './funnel.ts';
 import { extrapolate } from '../../../client/src/plugins/kit/extrapolation.ts';
-import { drawnGroundSampler } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 
 let funnel: FunnelRenderer | null = null;
@@ -33,10 +32,9 @@ const sources: FunnelSource[] = [];
 // Refilled in place over a pool: this runs every frame and must allocate nothing.
 function funnelSources(ctx: ClientPluginCtx): readonly FunnelSource[] {
   sources.length = 0;
-  const groundAt = drawnGroundSampler(ctx);
   for (const storm of storms) {
     const at = extrapolate(storm, elapsedSeconds - receivedAtSeconds);
-    const groundY = groundAt(at.x, at.y);
+    const groundY = ctx.drawnGroundYAt(at.x, at.y);
     if (groundY === null) continue;
     while (sourcePool.length <= sources.length) sourcePool.push(blankSource());
     const filled = sourcePool[sources.length]!;
