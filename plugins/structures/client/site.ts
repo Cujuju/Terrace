@@ -80,7 +80,6 @@ export interface SiteSurvey {
 }
 
 export function surveySite(
-  groundAt: GroundLookup,
   drawnAt: GroundLookup,
   x: number,
   y: number,
@@ -98,7 +97,7 @@ export function surveySite(
   for (let i = 0; i < offsetsX.length; i++) {
     const cellX = x + offsetsX[i];
     const cellY = y + offsetsY[i];
-    const sample = groundAt(cellX, cellY);
+    const sample = drawnAt(cellX, cellY);
     if (sample === null) {
       unknown++;
       continue;
@@ -170,12 +169,7 @@ interface CachedSurvey {
 
 export interface SiteSurveyCache {
   beginPass(): void;
-  surveyAt(
-    groundAt: GroundLookup,
-    drawnAt: GroundLookup,
-    x: number,
-    y: number,
-  ): SiteSurvey;
+  surveyAt(drawnAt: GroundLookup, x: number, y: number): SiteSurvey;
   endPass(): void;
   clear(): void;
   size(): number;
@@ -190,7 +184,7 @@ export function createSiteSurveyCache(revisionAt: TerrainRevisionLookup): SiteSu
       pass++;
     },
 
-    surveyAt(groundAt: GroundLookup, drawnAt: GroundLookup, x: number, y: number): SiteSurvey {
+    surveyAt(drawnAt: GroundLookup, x: number, y: number): SiteSurvey {
       const key = structureKey(x, y);
       const revision = neighbourhoodRevision(revisionAt, x, y);
       const cached = entries.get(key);
@@ -198,7 +192,7 @@ export function createSiteSurveyCache(revisionAt: TerrainRevisionLookup): SiteSu
         cached.pass = pass;
         return cached.survey;
       }
-      const survey = surveySite(groundAt, drawnAt, x, y);
+      const survey = surveySite(drawnAt, x, y);
       if (survey.pending) {
         if (cached !== undefined) {
           cached.revision = UNCACHEABLE_REVISION;

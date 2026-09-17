@@ -60,7 +60,6 @@ function rebuild(ctx: ClientPluginCtx): void {
   const result = placementsFor(
     buildings.values(),
     (x, y) => ctx.drawnGroundYAt(x, y),
-    (x, y) => ctx.drawnGroundYAt(x, y),
     siteSurveys ?? undefined,
   );
   models.apply(result.placements);

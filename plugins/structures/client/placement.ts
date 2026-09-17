@@ -23,7 +23,6 @@ export interface PlacementResult {
 
 export function placementsFor(
   cells: Iterable<StructureCell>,
-  groundAt: GroundLookup,
   drawnAt: GroundLookup,
   surveys?: SiteSurveyCache,
 ): PlacementResult {
@@ -40,9 +39,8 @@ export function placementsFor(
 
   surveys?.beginPass();
   for (const cell of cells) {
-    const groundY = groundAt(cell.x, cell.y);
-    const drawnY = drawnAt(cell.x, cell.y);
-    if (groundY === null || drawnY === null) {
+    const groundY = drawnAt(cell.x, cell.y);
+    if (groundY === null) {
       pendingGround++;
       pendingCells.push({ x: cell.x, y: cell.y });
       continue;
@@ -50,8 +48,8 @@ export function placementsFor(
 
     const survey =
       surveys === undefined
-        ? surveySite(groundAt, drawnAt, cell.x, cell.y)
-        : surveys.surveyAt(groundAt, drawnAt, cell.x, cell.y);
+        ? surveySite(drawnAt, cell.x, cell.y)
+        : surveys.surveyAt(drawnAt, cell.x, cell.y);
     if (survey.pending) {
       pendingSite++;
       pendingCells.push({ x: cell.x, y: cell.y });
@@ -63,7 +61,7 @@ export function placementsFor(
       z: cell.y * CELL_WORLD_SIZE,
       cellX: cell.x,
       cellY: cell.y,
-      groundY: drawnY,
+      groundY,
       tier: cell.tier,
       scale: variation.scale,
       yaw: variation.yaw,
