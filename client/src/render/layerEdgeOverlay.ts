@@ -344,14 +344,36 @@ export function createLayerEdgeOverlay(
     depthTest: true,
     depthWrite: false,
   });
-  let grabbed: LineSegments | null = null;
+  // One persistent mesh; a new one per hover costs a render object and GPU buffers.
+  // Starts one segment long so warmup never uploads a zero-sized buffer.
+  let grabbedPositions = new Float32Array(FLOATS_PER_SEGMENT);
+  let grabbedAttribute = new BufferAttribute(grabbedPositions, POSITION_FLOATS_PER_VERTEX);
+  const grabbedBounds = new Sphere();
+  const grabbed = new LineSegments(new BufferGeometry(), grabbedMaterial);
+  grabbed.geometry.setAttribute('position', grabbedAttribute);
+  grabbed.geometry.boundingSphere = grabbedBounds;
+  grabbed.renderOrder = GRABBED_RENDER_ORDER;
+  grabbed.visible = false;
+  group.add(grabbed);
   let grabbedRefused = false;
 
   const clearGrabbed = (): void => {
-    if (grabbed === null) return;
-    group.remove(grabbed);
+    grabbed.visible = false;
+  };
+
+  const ensureGrabbedCapacity = (floats: number): void => {
+    if (floats <= grabbedPositions.length) return;
+    let grown = Math.max(grabbedPositions.length, FLOATS_PER_SEGMENT);
+    while (grown < floats) grown *= TILE_CAPACITY_GROWTH_FACTOR;
+    const positions = new Float32Array(grown);
+    positions.set(grabbedPositions);
+    grabbedPositions = positions;
+    grabbedAttribute = new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', grabbedAttribute);
+    geometry.boundingSphere = grabbedBounds;
     grabbed.geometry.dispose();
-    grabbed = null;
+    grabbed.geometry = geometry;
   };
 
   const distanceSqToSegment = (
@@ -422,7 +444,11 @@ export function createLayerEdgeOverlay(
 
       const spanSq = litSpanWorldUnits * litSpanWorldUnits;
       const y = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
-      const positions: number[] = [];
+      let written = 0;
+      let minX = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxZ = -Infinity;
       for (const idx of nearbyChunks(cell.x, cell.y)) {
         const flat = segmentsByChunk.get(idx)?.get(band);
         if (flat === undefined) continue;
@@ -432,16 +458,30 @@ export function createLayerEdgeOverlay(
           const bx = flat[i + 2]!;
           const bz = flat[i + 3]!;
           if (distanceSqToSegment(atX, atZ, ax, az, bx, bz) > spanSq) continue;
-          positions.push(ax, y, az, bx, y, bz);
+          ensureGrabbedCapacity(written + FLOATS_PER_SEGMENT);
+          grabbedPositions[written++] = ax;
+          grabbedPositions[written++] = y;
+          grabbedPositions[written++] = az;
+          grabbedPositions[written++] = bx;
+          grabbedPositions[written++] = y;
+          grabbedPositions[written++] = bz;
+          minX = Math.min(minX, ax, bx);
+          minZ = Math.min(minZ, az, bz);
+          maxX = Math.max(maxX, ax, bx);
+          maxZ = Math.max(maxZ, az, bz);
         }
       }
-      if (positions.length < FLOATS_PER_SEGMENT) return true;
+      if (written < FLOATS_PER_SEGMENT) return true;
 
-      const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
-      grabbed = new LineSegments(geometry, grabbedMaterial);
-      grabbed.renderOrder = GRABBED_RENDER_ORDER;
-      group.add(grabbed);
+      grabbedAttribute.clearUpdateRanges();
+      grabbedAttribute.addUpdateRange(0, written);
+      grabbedAttribute.needsUpdate = true;
+      grabbed.geometry.setDrawRange(0, written / POSITION_FLOATS_PER_VERTEX);
+      const centreX = (minX + maxX) / 2;
+      const centreZ = (minZ + maxZ) / 2;
+      grabbedBounds.center.set(centreX, y, centreZ);
+      grabbedBounds.radius = Math.hypot(maxX - centreX, maxZ - centreZ);
+      grabbed.visible = true;
       return true;
     },
     setRefused(refused) {
@@ -474,10 +514,12 @@ export function createLayerEdgeOverlay(
       for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return (restingVisible() ? tiles.size : 0) + (grabbed === null ? 0 : 1);
+      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0);
     },
     dispose() {
       this.clear();
+      group.remove(grabbed);
+      grabbed.geometry.dispose();
       material.dispose();
       grabbedMaterial.dispose();
     },
