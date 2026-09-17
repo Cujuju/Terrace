@@ -32,8 +32,8 @@ import {
 } from './skiffModels.ts';
 
 // Pending sites wait on terrain that may never arrive (fogged chunks); retry only once it changes,
-// and at most twice a second while terrain streams in.
-export const STRUCTURES_PENDING_CHECK_SECONDS = 0.5;
+// and at most once a second while terrain streams in.
+export const STRUCTURES_PENDING_CHECK_SECONDS = 1;
 
 let models: StructureModels | null = null;
 let skiffModels: SkiffModels | null = null;
