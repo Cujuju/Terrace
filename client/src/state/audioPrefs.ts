@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 
-export const DEFAULT_MASTER_VOLUME = 0.8;
+export const DEFAULT_MASTER_VOLUME = 0.1;
 
 export const DEFAULT_MUTED = false;
 
