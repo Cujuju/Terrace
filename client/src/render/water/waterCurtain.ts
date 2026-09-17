@@ -69,7 +69,7 @@ export function appendCurtains(
   loops: readonly ContourLoop[],
   surfaceBand: number,
   surfaceY: number,
-  bandSurfaceY: (band: number, cellX: number, cellZ: number) => number,
+  bandSurfaceY: (band: number) => number,
   waterBandAt: (cellX: number, cellZ: number) => number | null,
   seaWorldY: number,
   out: number[],
@@ -88,9 +88,7 @@ export function appendCurtains(
       const foot = footBandOf(ground, waterBandAt, a, b, normal, surfaceBand);
       if (foot.band >= surfaceBand) continue;
 
-      const midCellX = (a.x + b.x) / 2;
-      const midCellZ = (a.z + b.z) / 2;
-      const footY = bandSurfaceY(foot.band, midCellX, midCellZ);
+      const footY = bandSurfaceY(foot.band);
       const bottomY = foot.inWater ? footY : Math.max(footY, seaWorldY);
       if (bottomY >= topY) continue;
 

@@ -20,6 +20,7 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, SEA_SURFACE_WORLD_Y } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { drawnBandCapY } from '../terrain/capEmission.ts';
 import { type DrawnGround } from '../terrain/drawnGround.ts';
 import { WATER_COLOR } from './water.ts';
 import { installWaterBandClock, makeBanded } from './water/waterBands.ts';
@@ -378,7 +379,7 @@ export function createRiverRig(
     ground: DrawnGround;
     sources: RiverSurface['sources'];
     waterBandAt: (cellX: number, cellZ: number) => number | null;
-    bandWorldY: (band: number, cellX: number, cellZ: number) => number;
+    bandWorldY: (band: number) => number;
   }
 
   const pendingTiles: PendingTile[] = [];
@@ -685,8 +686,8 @@ export function createRiverRig(
       return wetStamp[cell] === generation ? wetBand[cell]! : null;
     };
 
-    const bandWorldY = (band: number, cellXCoord: number, cellZCoord: number): number =>
-      ground.capYOfBand(band, cellXCoord, cellZCoord) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+    const bandWorldY = (band: number): number =>
+      drawnBandCapY(band) + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
     const carriedKeys = new Set<number>();
     for (let i = pendingCursor; i < pendingTiles.length; i++) {
@@ -697,9 +698,7 @@ export function createRiverRig(
     const tileCount = tileCols * tileCols;
     const currentKeys = new Set<number>();
     for (const region of regions.values()) {
-      const anchorX = region.anchorCell % worldSize;
-      const anchorZ = (region.anchorCell - anchorX) / worldSize;
-      const surfaceY = bandWorldY(region.surfaceBand, anchorX, anchorZ);
+      const surfaceY = bandWorldY(region.surfaceBand);
       for (const tile of region.tiles) {
         const key = runKeyOf(region.surfaceBand, tile, tileCount);
         currentKeys.add(key);
@@ -765,7 +764,7 @@ export function createRiverRig(
     if (job === null) return;
     rebuildSprings(job.mirror, job.sources, (x, y) => {
       const band = job.waterBandAt(x, y);
-      return band === null ? null : job.bandWorldY(band, x, y);
+      return band === null ? null : job.bandWorldY(band);
     });
     applySpringPose(elapsedSeconds);
   };
