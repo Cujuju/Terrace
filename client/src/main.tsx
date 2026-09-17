@@ -154,7 +154,7 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
   if (size === 0) return null;
   const cell = worldPointToCell(worldX, worldZ, size);
   if (cell === null) return null;
-  return world.terrainHeightAt(cell.x, cell.y);
+  return world.drawnGroundYAt(cell.x, cell.y);
 });
 bindCameraControls(canvas, viewport.controls);
 
@@ -204,9 +204,8 @@ const sculptInput = createSculptInput({
   },
 });
 
-// The connection's sink closure runs lazily (after this module finishes), so it can
-// fan server denials out to both the world (resolve + hint) and the input
-// (pulse the red-brush refused hold) even though both are built after connect().
+// The sink runs after this module loads, so it can route denials to the world
+// and the input, though both are built after connect().
 const deniedAwareSink: TerrainSink = {
   onSnapshot: (msg) => world.onSnapshot(msg),
   onChunkUnlock: (msg) => world.onChunkUnlock(msg),
@@ -240,9 +239,8 @@ let frozenCursorShown = false;
 viewport.onFrame(() => {
   const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   world.setBrushRefused(denialCue.isRed());
-  // Descent gate, cue-only half: while the held drag plane is off the ray the stroke
-  // is frozen, so the cursor goes flat-mark crosshair. Lane E greys the held
-  // highlight itself off sculptInput.dragDescentFrozen().
+  // While the drag plane is off the ray the stroke is frozen: show a crosshair.
+  // Lane E greys the held highlight via sculptInput.dragDescentFrozen().
   if (sculptInput.dragDescentFrozen()) {
     frozenCursorShown = true;
     canvas.style.cursor = 'crosshair';
