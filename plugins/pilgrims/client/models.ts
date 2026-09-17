@@ -10,13 +10,21 @@ import {
   type Bone,
   type BufferGeometry,
   type Material,
+  type Object3D,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
+import { MOVER_GAITS, moverGaitIndex, type MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
+import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
 import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
-import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
+import {
+  SETTLER_RACES,
+  WALKER_KINDS,
+  WALKERS_WIRE_CAP,
+  type SettlerRace,
+  type WalkerKind,
+} from '../protocol.ts';
 
 const PILGRIM_AUTHORED_HEIGHT = 0.62;
 
@@ -25,6 +33,10 @@ export const PILGRIM_MODEL_SCALE = 0.85;
 export const PILGRIM_HEIGHT = PILGRIM_AUTHORED_HEIGHT * PILGRIM_MODEL_SCALE;
 
 export const STRIDE_HZ = 1.6;
+
+const WALKER_HERD_CAPACITY = WALKERS_WIRE_CAP;
+
+const WALKER_POSE_SLOTS = 32;
 
 const TWO_PI = Math.PI * 2;
 
@@ -89,7 +101,20 @@ export interface PilgrimModel {
 }
 
 export interface PilgrimModels {
+  readonly objects: readonly Object3D[];
   create(race: SettlerRace, kind?: WalkerKind): PilgrimModel;
+  beginFrame(seconds: number): void;
+  draw(
+    race: SettlerRace,
+    kind: WalkerKind,
+    phase: number,
+    gait: MoverGait,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+  ): void;
+  endFrame(): void;
   dispose(): void;
 }
 
@@ -185,6 +210,33 @@ function poseFall(joints: WalkerJoints, seconds: number, phase: number): void {
   joints.leftLeg.rotation.z = FALL_LEG_SPREAD_RADIANS + flail;
   joints.rightLeg.rotation.z = -FALL_LEG_SPREAD_RADIANS + flail;
   joints.body.position.y = 0;
+}
+
+interface WalkerHerd {
+  readonly herd: RigHerd;
+  readonly joints: WalkerJoints;
+  readonly rudy: boolean;
+}
+
+function poseJoints(
+  joints: WalkerJoints,
+  rudy: boolean,
+  seconds: number,
+  phase: number,
+  gait: MoverGait,
+): void {
+  if (gait === 'walk') poseWalk(joints, seconds, phase);
+  else if (gait === 'stand') poseStand(joints, seconds, phase);
+  else if (gait === 'sit') poseSit(joints, seconds, phase);
+  else if (gait === 'climb') poseClimb(joints, seconds, phase);
+  else poseFall(joints, seconds, phase);
+  setStaffCarried(joints, gait !== 'climb' && gait !== 'fall');
+  applyMoverBodyTilt(joints.rigRoot, gait, seconds, phase);
+  if (rudy) {
+    joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
+  } else {
+    joints.tail.rotation.y = Math.sin(seconds * TWO_PI * (STRIDE_HZ / 3) + phase) * UNO_SWAY_RADIANS;
+  }
 }
 
 export function createPilgrimModels(): PilgrimModels {
@@ -397,18 +449,7 @@ export function createPilgrimModels(): PilgrimModels {
       root,
       joints,
       animate(seconds: number, phase: number, gait: MoverGait = 'walk'): void {
-        if (gait === 'walk') poseWalk(joints, seconds, phase);
-        else if (gait === 'stand') poseStand(joints, seconds, phase);
-        else if (gait === 'sit') poseSit(joints, seconds, phase);
-        else if (gait === 'climb') poseClimb(joints, seconds, phase);
-        else poseFall(joints, seconds, phase);
-        setStaffCarried(joints, gait !== 'climb' && gait !== 'fall');
-        applyMoverBodyTilt(joints.rigRoot, gait, seconds, phase);
-        if (rudy) {
-          joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
-        } else {
-          joints.tail.rotation.y = Math.sin(seconds * TWO_PI * (STRIDE_HZ / 3) + phase) * UNO_SWAY_RADIANS;
-        }
+        poseJoints(joints, rudy, seconds, phase, gait);
       },
       dispose(): void {
         instance.dispose();
@@ -416,9 +457,81 @@ export function createPilgrimModels(): PilgrimModels {
     };
   }
 
+  const walkerHerds = new Map<string, WalkerHerd>();
+  const herdList: RigHerd[] = [];
+  for (const herdRace of BLUEPRINT_RACES) {
+    for (const herdKind of BLUEPRINT_KINDS) {
+      const herdKey = `${herdRace}:${herdKind}`;
+      const herdRig = walkerRigs.get(herdKey);
+      if (herdRig === undefined) throw new Error(`pilgrims: no baked rig for ${herdKey}`);
+      const herd = createRigHerd(herdRig.blueprint, {
+        capacity: WALKER_HERD_CAPACITY,
+        poseSlots: WALKER_POSE_SLOTS,
+        poseVariants: MOVER_GAITS.length,
+      });
+      herdList.push(herd);
+      walkerHerds.set(herdKey, {
+        herd,
+        joints: {
+          rigRoot: herd.joints[herdRig.jointIndices.rigRoot]!,
+          body: herd.joints[herdRig.jointIndices.body]!,
+          leftLeg: herd.joints[herdRig.jointIndices.leftLeg]!,
+          rightLeg: herd.joints[herdRig.jointIndices.rightLeg]!,
+          leftArm: herd.joints[herdRig.jointIndices.leftArm]!,
+          rightArm: herd.joints[herdRig.jointIndices.rightArm]!,
+          tail: herd.joints[herdRig.jointIndices.tail]!,
+          staff:
+            herdRig.jointIndices.staff === undefined
+              ? null
+              : herd.joints[herdRig.jointIndices.staff]!,
+        },
+        rudy: herdRace === 'rudy',
+      });
+    }
+  }
+
+  const objects: Object3D[] = [];
+  for (const herd of herdList) objects.push(...herd.meshes);
+
+  let animationSeconds = 0;
+
+  function draw(
+    race: SettlerRace,
+    kind: WalkerKind,
+    phase: number,
+    gait: MoverGait,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+  ): void {
+    const record = walkerHerds.get(`${race}:${kind}`);
+    if (record === undefined) throw new Error(`pilgrims: no herd for ${race}:${kind}`);
+    const slot = record.herd.poseSlotOf(phase, moverGaitIndex(gait));
+    if (record.herd.needsPose(slot)) {
+      const slotPhase = record.herd.poseSlotPhase(slot);
+      poseJoints(record.joints, record.rudy, animationSeconds, slotPhase, gait);
+      record.herd.capturePose(slot);
+    }
+    record.herd.place(slot, x, y, z, yaw, PILGRIM_MODEL_SCALE);
+  }
+
   return {
+    objects,
     create,
+    beginFrame(seconds: number): void {
+      animationSeconds = seconds;
+      for (const herd of herdList) herd.beginFrame();
+    },
+    draw,
+    endFrame(): void {
+      for (const herd of herdList) herd.endFrame();
+    },
     dispose(): void {
+      for (const herd of herdList) herd.dispose();
+      herdList.length = 0;
+      walkerHerds.clear();
+      objects.length = 0;
       for (const rig of walkerRigs.values()) rig.blueprint.dispose();
       walkerRigs.clear();
       for (const geometry of geometries) geometry.dispose();
