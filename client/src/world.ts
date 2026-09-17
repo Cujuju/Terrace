@@ -209,6 +209,14 @@ export interface WorldOptions {
   readonly gpuMesher?: GpuChunkBuildSource | null;
 }
 
+function clampCell(v: number, max: number): number {
+  return v < 0 ? 0 : v > max ? max : v;
+}
+
+function cellDrawn(mirror: TerrainMirror, ground: DrawnGround, x: number, z: number): boolean {
+  return isCellReceived(mirror, x, z) && ground.isDrawnAt(x, z);
+}
+
 export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
@@ -604,8 +612,18 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
       if (drawnGround === null || mirror === null) return null;
-      if (!isCellReceived(mirror, cellX, cellZ)) return null;
-      if (!drawnGround.isDrawnAt(cellX, cellZ)) return null;
+      // The drawn field reads this cell and its east/south neighbours, clamped to the world.
+      const max = mirror.map.size - 1;
+      const x0 = clampCell(Math.floor(cellX), max);
+      const z0 = clampCell(Math.floor(cellZ), max);
+      const x1 = clampCell(x0 + 1, max);
+      const z1 = clampCell(z0 + 1, max);
+      const eastChunk = Math.floor(x1 / CHUNK_SIZE) !== Math.floor(x0 / CHUNK_SIZE);
+      const southChunk = Math.floor(z1 / CHUNK_SIZE) !== Math.floor(z0 / CHUNK_SIZE);
+      if (!cellDrawn(mirror, drawnGround, x0, z0)) return null;
+      if (eastChunk && !cellDrawn(mirror, drawnGround, x1, z0)) return null;
+      if (southChunk && !cellDrawn(mirror, drawnGround, x0, z1)) return null;
+      if (eastChunk && southChunk && !cellDrawn(mirror, drawnGround, x1, z1)) return null;
       return drawnGround.capYAt(cellX, cellZ);
     },
 
