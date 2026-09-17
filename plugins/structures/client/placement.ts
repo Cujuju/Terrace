@@ -17,6 +17,8 @@ export interface PlacementResult {
   readonly skiffs: SkiffPlacement[];
   readonly pendingGround: number;
   readonly pendingSite: number;
+  /** Cells whose ground or site survey awaits terrain the client does not hold yet. */
+  readonly pendingCells: ReadonlyArray<{ readonly x: number; readonly y: number }>;
 }
 
 export function placementsFor(
@@ -34,12 +36,14 @@ export function placementsFor(
   }> = [];
   let pendingGround = 0;
   let pendingSite = 0;
+  const pendingCells: Array<{ x: number; y: number }> = [];
 
   surveys?.beginPass();
   for (const cell of cells) {
     const groundY = groundAt(cell.x, cell.y);
     if (groundY === null) {
       pendingGround++;
+      pendingCells.push({ x: cell.x, y: cell.y });
       continue;
     }
 
@@ -47,7 +51,10 @@ export function placementsFor(
       surveys === undefined
         ? surveySite(groundAt, drawnAt, cell.x, cell.y)
         : surveys.surveyAt(groundAt, drawnAt, cell.x, cell.y);
-    if (survey.pending) pendingSite++;
+    if (survey.pending) {
+      pendingSite++;
+      pendingCells.push({ x: cell.x, y: cell.y });
+    }
 
     const variation = structureVariation(cell.x, cell.y);
     placements.push({
@@ -89,5 +96,5 @@ export function placementsFor(
     skiffs.push(...fleet);
   }
 
-  return { placements, skiffs, pendingGround, pendingSite };
+  return { placements, skiffs, pendingGround, pendingSite, pendingCells };
 }

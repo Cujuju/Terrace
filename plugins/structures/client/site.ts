@@ -149,9 +149,12 @@ function buildChunkProbeOffsets(radius: number): readonly number[] {
   return offsets;
 }
 
-const CHUNK_PROBE_OFFSETS = buildChunkProbeOffsets(COASTAL_SEARCH_RADIUS_CELLS);
+// A survey reads mooring clearance samples beyond the search radius.
+const SURVEY_REACH_CELLS = COASTAL_SEARCH_RADIUS_CELLS + SKIFF_MOORING_CLEARANCE_CELLS;
 
-function neighbourhoodRevision(revisionAt: TerrainRevisionLookup, x: number, y: number): number {
+const CHUNK_PROBE_OFFSETS = buildChunkProbeOffsets(SURVEY_REACH_CELLS);
+
+export function neighbourhoodRevision(revisionAt: TerrainRevisionLookup, x: number, y: number): number {
   let sum = 0;
   for (const dy of CHUNK_PROBE_OFFSETS) {
     for (const dx of CHUNK_PROBE_OFFSETS) sum += revisionAt(x + dx, y + dy);

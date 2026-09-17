@@ -408,6 +408,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       nextLayerEdges.refreshChunk(chunkIdx);
       drawnChunkScratch.clear();
       drawnChunkScratch.add(chunkIdx);
+      // Drawn ground is read by plugins through drawnGroundYAt; its arrival is a revision too.
+      noteTerrainRevisions(drawnChunkScratch);
       rivers.refresh(nextMirror, drawnChunkScratch, nextGround);
     });
     meshes = nextMeshes;
