@@ -199,7 +199,6 @@ describe('placement', () => {
   it('puts a building on the rendered surface at its own cell, carrying its tier', () => {
     const { placements, pendingGround } = placementsFor(
       cells([3, 4, 2]),
-      groundAt,
       drawnAsLattice(groundAt),
     );
     expect(pendingGround).toBe(0);
@@ -223,7 +222,6 @@ describe('placement', () => {
   it('omits a building whose ground this client has not been sent', () => {
     const { placements, pendingGround } = placementsFor(
       cells([3, 4, 0], [50, 50, 0], [60, 1, 0]),
-      groundAt,
       drawnAsLattice(groundAt),
     );
     expect(placements).toHaveLength(1);
@@ -235,7 +233,6 @@ describe('placement', () => {
 
     const { placements, skiffs, pendingSite } = placementsFor(
       cells([100, 100, 2]),
-      groundAt,
       drawnAsLattice(groundAt),
     );
     expect(pendingSite).toBe(0);
@@ -260,7 +257,7 @@ describe('site survey (card 33, coastal classification)', () => {
 
   it('classifies a shore site coastal: enough confirmed water nearby', () => {
     const groundAt = coastGroundAt(CENTER.x);
-    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
+    const survey = surveySite(drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
     expect(survey.moorings.length).toBe(COAST_FIXTURE_MOORINGS);
@@ -268,7 +265,7 @@ describe('site survey (card 33, coastal classification)', () => {
 
   it('classifies a fully dry, fully known neighbourhood inland — never pending', () => {
     const groundAt = worldWithWater([]);
-    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
+    const survey = surveySite(drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
     expect(survey.pending).toBe(false);
     expect(survey.moorings).toEqual([]);
@@ -276,21 +273,21 @@ describe('site survey (card 33, coastal classification)', () => {
 
   it('a single stray deep cell (a borrow pit, not a coastline) does not qualify', () => {
     const groundAt = worldWithWater([[CENTER.x + 1, CENTER.y]]);
-    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
+    const survey = surveySite(drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
     expect(survey.moorings).toEqual([]);
   });
 
   it('never counts a band-0 cell (world Y = 0) as water — the ambiguous case', () => {
     const groundAt: GroundLookup = () => 0;
-    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
+    const survey = surveySite(drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
     expect(survey.pending).toBe(false);
   });
 
   it('the "lake" edge case: one confirmed-water cell plus unresolved neighbours stays pending, not falsely inland or coastal', () => {
     const groundAt: GroundLookup = (x, y) => (x === CENTER.x + 1 && y === CENTER.y ? -1 : null);
-    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
+    const survey = surveySite(drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('inland');
     expect(survey.pending).toBe(true);
   });
@@ -303,7 +300,7 @@ describe('site survey (card 33, coastal classification)', () => {
       (dx) => isCoastMooring(dx),
     );
     const groundAt = coastGroundAt(CENTER.x);
-    const survey = surveySite(groundAt, drawnAsLattice(groundAt), CENTER.x, CENTER.y);
+    const survey = surveySite(drawnAsLattice(groundAt), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
 
     const distanceOf = (cell: { x: number; y: number }): number =>
@@ -320,8 +317,8 @@ describe('site survey (card 33, coastal classification)', () => {
   it('is a pure function of its ground lookup, so every client surveys the same cell identically', () => {
     const groundAt = worldWithWater([[CENTER.x + 1, CENTER.y], [CENTER.x + 1, CENTER.y + 1]]);
     const drawnAt = drawnAsLattice(groundAt);
-    expect(surveySite(groundAt, drawnAt, CENTER.x, CENTER.y)).toEqual(
-      surveySite(groundAt, drawnAt, CENTER.x, CENTER.y),
+    expect(surveySite(drawnAt, CENTER.x, CENTER.y)).toEqual(
+      surveySite(drawnAt, CENTER.x, CENTER.y),
     );
   });
 });
@@ -469,7 +466,7 @@ describe('settler races', () => {
     const other: readonly [number, number] = [SETTLER_DISTRICT_CELLS, SETTLER_DISTRICT_CELLS];
     expect(settlementRace(0, 0)).not.toBe(settlementRace(other[0], other[1]));
 
-    const result = placementsFor(cells([0, 0, 0], [other[0], other[1], 2]), () => 5, () => 5);
+    const result = placementsFor(cells([0, 0, 0], [other[0], other[1], 2]), () => 5);
     expect(result.placements.map((p) => p.race)).toEqual([
       settlementRace(0, 0),
       settlementRace(other[0], other[1]),
