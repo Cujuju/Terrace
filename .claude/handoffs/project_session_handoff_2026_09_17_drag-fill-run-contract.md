@@ -2,91 +2,89 @@
 
 ## Status
 
-SPEC SETTLED, NOT IMPLEMENTED. No code changed this session. Owner
-verified the rule across all ten bands of a specimen column and said
-"Prep that, we will clear, and then I will have you finish this."
+IMPLEMENTED. Code + tests written this session. Typecheck clean across the
+whole workspace. Tests not yet fully re-run; `overhangs.md` not yet rewritten.
 
-## Tip
+## The rule (unchanged from the spec)
 
-`3bbf3cfa` — fix(pick): report the aim band for every face in the debug
-readout. (Other agents' work; this session committed only this handoff.)
+From the dragged band, run down through like material to the first boundary.
+That slab is what the stroke writes into every swept cell. Solid runs to its
+span's floor; air runs to its void's floor. Welding is not a decision —
+`canonicaliseColumn` merges whatever the slab touches. The only refusal is
+"already solid through the whole run".
 
-## The rule — implement exactly this
+Spec artifact: https://claude.ai/artifact/HUr9vxiorBCBLJmY3HHymM
 
-**From the dragged band, run down through like material to the first
-boundary. That slab is what the stroke writes into every swept cell.**
+## What changed in code
 
-- Grab **solid** → run down through solid to that span's `floorBand`.
-  Band 7 of a 6–7 span carries 6+7; band 6 carries only 6; a ground band
-  carries the whole ground beneath it.
-- Grab **air** → run down through air to that void's floor. Band 5 of a
-  4–5 void carries 4+5; band 4 carries only 4; a one-band void carries
-  only itself.
-- **Welding is not a decision.** The slab lands; `canonicaliseColumn`
-  merges whatever it touches. Nothing inspects what is overhead.
-- **There is no refusal case.** Only "already solid" stops a fill.
-- Shielding falls out free: the run never starts below its own floor, so
-  it cannot reach a hollow under the material you grabbed.
+`shared/src/columns/bandQueries.ts`
+- DELETED `BandFill`, `overhangSlabAtBand`, `bandFillAt`, `applyBandFill`.
+- ADDED `runFloorBandAt(map,x,y,band)` — the run's floor. Read in the GRABBED
+  column only.
+- ADDED `columnHoldsRun(map,x,y,floorBand,band)` — the one refusal.
+- ADDED `fillBandRun(map,x,y,floorBand,band,ceiling)` — writes the slab,
+  returns whether the column changed.
+- ADDED private `weldSlab(spans, slab)` — absorbs every span the slab overlaps
+  or abuts, in one ordered pass, so the result ascends without sorting
+  (`canonicaliseColumn` throws on a non-ascending column).
 
-**Protocol consequence — the blocker.** The swept cell CANNOT derive the
-run's floor: in a neighbour, band 7 may sit in an air run reaching down
-to band 4, and computing it locally would destroy the hollow. The floor
-band must travel on the sculpt intent beside `targetBand`. It is a plain
-integer, not a span index, so both replicas apply it deterministically.
+`shared/src/sculpt/drag.ts`
+- DELETED `pushLowerLayers`, `DRAG_TREAD_TOLERANCE_CELLS`, the `priorSpans` /
+  `record` / `hadCapAtBandBefore` bookkeeping, and the `canSpreadBandTo` gate
+  on the raise path.
+- `applyDragRegion` gained a `runFloorBand` parameter (after `targetBand`).
+- The raise path is now one plain loop over the disc; nothing cascades off a
+  neighbour, so `settleEachCellOnce` is used by the LOWER path only.
 
-**Deletions this enables** — `BandFill`'s `extend`/`overhang` variants,
-the `null` refusal, both `isGapDrawn` calls in the write path, and
-`pushLowerLayers` (the run IS the descent, not a second pass).
+Wire — the run's floor travels on the intent as `floorBand`:
+- `shared/src/protocol/sculpt.ts`: `SculptIntent.floorBand?`, validated to ride
+  with a drag and only a drag, `MIN_BAND <= floorBand <= targetBand`; resolves
+  to `ResolvedSculptOptions.runFloorBand`.
+- `shared/src/sculpt/options.ts`: `runFloorBand` on `SculptOptions` (optional)
+  and `ResolvedSculptOptions` (nullable); library default `null`.
+- `shared/src/heightmap.ts`: passes it through; `null` falls back to
+  `targetBand` (the slab is the band alone — no grabbed column spoke).
+- `client`: `world.runFloorBandAt` → `SculptInputOptions.runFloorBandAt` →
+  `StrokeState.strokeGrabFloor`, read once in `takeHold` and sent on every leg.
 
-## What changed
+## Verified
 
-- Nothing in code. `shared/src/columns/bandQueries.ts` is at its
-  committed state.
-- Two bugs diagnosed and reproduced against `frostwick-hollows`: a drag
-  left 215 of 317 swept cells dead on a cliff, and 4,456 one-band voids
-  exist that the old predicate could never fill.
-- Owner ruling, verbatim: **"I don't care what overhangs.md says, that
-  file is probably garbage at this point."** Do NOT treat
-  `docs/decisions/overhangs.md` as binding for this area. #224's "the
-  drag never seals a carve" is superseded.
-- Spec artifact (10-band specimen, every band, both columns):
-  https://claude.ai/artifact/HUr9vxiorBCBLJmY3HHymM
+All ten bands of the spec specimen, grabbed column AND swept neighbour, match
+the artifact exactly — including the owner's rulings on bands 4, 5, 6, 7, 8.
+(Throwaway script, already deleted.)
 
-## Uncommitted
+Client tests before the test-block rewrite: 2 failed / 774 passed.
+Handoff baseline was 4 fail / 772 pass, so no regression.
 
-Untracked diagnostics in `server/`, safe to delete:
-`scratch-drag-dead6.ts` (minimal arch repro), `scratch-drag-hole.ts`,
-`scratch-void-origin.ts`, `scratch-void-mint.ts`,
-`scratch-cliff-split.ts`. Run with
-`node --experimental-strip-types server/<file>`.
+## Owner decisions this session
 
-A superseded patch sits in the session scratchpad — it implements an
-earlier seal-check rule. Ignore it; write the run contract fresh.
+- Stale `bandFillAt` test block: replace with run-contract cases. DONE —
+  `shared/test/columns.test.ts` now has `describe('runFloorBandAt …')` and
+  `describe('fillBandRun …')` in its place.
+- `docs/decisions/overhangs.md`: rewrite, "rip it down to its bare minimum,
+  facts only, terse, the smaller the better." NOT DONE YET.
+
+## Assumption to flag
+
+The raise path no longer consults `canSpreadBandTo`. The spec's codebox is
+"the whole of it, per swept cell" and names no adjacency gate, and keeping one
+would have broken the air-grab cases (a hollow's neighbour holds no material
+at the dragged band, so nothing could ever start). `canSpreadBandTo` is
+untouched for stamp and `anchor: 'band'`.
 
 ## Pending
 
-1. Implement the run contract in `shared/`.
-2. Add the floor band to the sculpt intent + wire types.
-3. Regenerate the two `golden-sculpt` file snapshots — they WILL move.
-4. Tests need the owner's explicit permission, re-granted per session.
-   The contract test is the ten-band specimen dragged at every band.
-5. Rewrite `docs/decisions/overhangs.md` against the new contract.
-
-## Resume path
-
-1. Open the artifact above — it is the spec, panel per band, with the
-   owner's own words quoted on bands 4, 5, 6, 7 and 8.
-2. Rewrite `bandFillAt` in `shared/src/columns/bandQueries.ts` as the
-   run lookup; delete the `BandFill` variants and both `isGapDrawn`
-   gates from the write path.
-3. Add the floor band to `shared/src/protocol/sculpt.ts` and have
-   `client/src/input/sculpt/drag.ts` send it from the grabbed column.
-4. Collapse `pushLowerLayers` in `shared/src/sculpt/drag.ts` into the run.
-5. `pnpm typecheck` and `pnpm test`. NOTE: `pnpm test` bails at the first
-   failing package — run `client` and `server` separately. Baseline before
-   you start: client 4 fail / 772 pass, server 29 fail / 441 pass, both
-   other agents' in-flight work.
-6. Ask before regenerating goldens or writing tests.
+1. Re-run `pnpm --filter shared test` and `pnpm --filter client test`.
+   NOTE: `pnpm test` bails at the first failing package — run separately.
+   Server baseline from the prior session: 29 fail / 441 pass (other agents').
+2. Regenerate the two `golden-sculpt` file snapshots — they WILL move.
+   ASK THE OWNER FIRST.
+3. Rewrite `docs/decisions/overhangs.md` (permission granted, see above).
+   Its "The drag lays a roof; it never fills the carve beneath one" section
+   and #224's no-span-field-on-the-wire ruling are both superseded.
+4. Untracked diagnostics in `server/` still reference the deleted `bandFillAt`
+   (`scratch-cliff-sim.ts`, `scratch-drag-hole.ts`, `scratch-void-mint.ts`,
+   `scratch-drag-dead6.ts`). Not typechecked, safe to delete.
 
 ## Cross-refs
 
