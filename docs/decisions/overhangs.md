@@ -1,42 +1,96 @@
 # Overhangs
 
-Facts about the span column: how a cell holds solid material, and what the drag and the carve do to it. Sculpt tools: `sculpt-tools.md`. Picking: `picking.md`. Relaxation: `relaxation.md`.
+The span column, and what the drag and the carve do to it.
+Tools: `sculpt-tools.md`. Picking: `picking.md`.
 
 ## The model
 
-- A cell is a column of solid spans rather than one height, so it can be empty below and solid above. An overhang is a span whose floor is above its neighbour's ceiling; an arch is a column with two spans; a cave is a connected region of gaps.
-- `heightAt` means the top of the topmost span — the walkable surface. Rivers, pathing, farmland, traversal, flora, boats, water and fog read it and were untouched by spans; changing its meaning reopens all of them. Water inside a cave is out of scope.
-- The mesher already asks "is this cell solid at band k?", so contouring, triangulation and skirts are unchanged by spans. The one addition is the ceiling cap: the same pass over spans ENDING at band k, wound in reverse and lit from below.
-- Decided 2026-08-24 (#129) over sparse voxels and SDF / dual contouring (both rebuild `shared/`'s 2D indexing and the determinism contract, and fight the terraced look), and over authored overhang props (still the fallback if the goal ever narrows to visual variety alone).
+A cell is a column of solid spans, not one height: empty below, solid above.
+Overhang = a span floored above its neighbour's ceiling. Arch = two spans.
+Cave = a connected region of gaps.
+
+`heightAt` is the top of the topmost span. Rivers, pathing, farmland,
+traversal, flora, boats, water and fog read it; changing its meaning reopens
+all of them.
+
+The mesher already asks "solid at band k?", so contouring, triangulation and
+skirts are unchanged. The one addition is the ceiling cap: the same pass over
+spans ENDING at band k, wound in reverse and lit from below.
+
+2026-08-24 (#129), over sparse voxels, SDF / dual contouring and authored
+overhang props.
 
 ## Span shape
 
-- `Span { floorBand, ceiling }` (`shared/src/columns/span.ts`): the floor is a band index, the ceiling a raw height. Packed as `[floorBand, ceiling]`, `SPAN_STRIDE = 2`.
-- One rounding rule in the whole model: `spanCapBand(span)` is `drawnBandOfSample(span.ceiling)`, the ground's own rule, and `spanCapHeight(span)` is that band's level height. Floors are bands already, so nothing rounds them.
-- Undersides are exact: `spanUndersideLevel(span)` is `bandLevelHeight(span.floorBand - 1)`. No clearance, no tolerance, no one-unit offset anywhere — a slab's underside is a band boundary by construction.
-- Drawn: `isSpanDrawn(span)` iff `floorBand <= spanCapBand(span)`. Coverage: a span covers band k iff `floorBand <= k <= spanCapBand(span)`.
-- Stacking: `spansAdjacent(lower, upper)` iff `upper.floorBand === spanCapBand(lower) + 1`; `isGapDrawn(lower, upper)` iff `upper.floorBand > spanCapBand(lower) + 1`. The highest ceiling that fits under a span is `bandFloorHeight(upper.floorBand) - 1`.
-- `BEDROCK_BAND` is `drawnBandOfSample(BEDROCK_FLOOR)`, and is the `floorBand` of every canonical column's bottom span.
-- `canonicaliseColumn(spans)`: drop undrawn spans, merge adjacent ones, floor the bottom span at `BEDROCK_BAND`.
-- An overhang needs two slabs of air: its own, plus one more to see under it. Two one-band carves give it. That is the model speaking, not a defect.
+`Span { floorBand, ceiling }` — `shared/src/columns/span.ts`. Floor is a band
+index, ceiling a raw height. Packed `[floorBand, ceiling]`, `SPAN_STRIDE = 2`.
+
+- `spanCapBand` = `drawnBandOfSample(ceiling)`, the ground's own rule and the
+  only rounding in the model. Floors are bands already.
+- `spanUndersideLevel` = `bandLevelHeight(floorBand - 1)`. Exact: no
+  clearance, no tolerance, no offset.
+- Drawn iff `floorBand <= spanCapBand`. Covers k iff
+  `floorBand <= k <= spanCapBand`.
+- `isGapDrawn(lower, upper)` iff `upper.floorBand > spanCapBand(lower) + 1`.
+- `BEDROCK_BAND` floors every canonical column's bottom span.
+- `canonicaliseColumn`: drop undrawn, merge what is not gap-separated, floor
+  at bedrock. Throws on a column that does not ascend — it repairs in place,
+  never sorts.
+- An overhang needs two slabs of air: its own, plus one to see under it.
 
 ## Storage
 
-- Nothing migrates. An old snapshot is interpreted under the current rule at load: `floorBand` is the lowest slab whose bottom level is at or above the raw stored floor. The next save writes the new format under a bumped `SNAPSHOT_SCHEMA_VERSION`, and no world is rewritten in place.
+Nothing migrates. An old snapshot is reinterpreted at load: `floorBand` is the
+lowest slab whose bottom level is at or above the raw stored floor. The next
+save bumps `SNAPSHOT_SCHEMA_VERSION`.
 
-## The drag lays a roof; it never fills the carve beneath one
+## The drag writes the run down from the band it grabbed
 
-- For a cell open at band k, `bandFillAt` (`shared/src/columns/bandQueries.ts`) answers `extend` when the column has open sky above the band — the ground below rises to it, the terrace step the drag has always built — and `overhang` when the column holds any span above it.
-- An `overhang` fill lays that band's own slab, `{ floorBand: k, ceiling: bandLevelHeight(k) }`, and leaves the span below byte-untouched. The floor span never rises into the opening.
-- Both the drag's own fill and `pushLowerLayers`' cascade (`shared/src/sculpt/drag.ts`) go through `bandFillAt`, so neither can seal a carve. The cascade additionally refuses `overhang`: it carries an existing staircase and must never author a new roof.
-- The cell's own column decides, never a survey of its neighbours. A neighbour only ADMITS the fill (`canSpreadBandToSpan`, the anti-cheat that keeps "intents, never heights" true of a message naming a band); disagreeing neighbours would need a tie-break, and two replicas can drift on one.
-- No span field on the wire. A drag carries `targetBand`, one column covers a band with at most one span, and both replicas resolve it against their own map. A grasped-span field could not be derived correctly anyway: a drag's `x`/`y` is the cursor cell, not the cell whose lip is in the player's hand.
-- Decided 2026-08-27 (#224), overturning D4's "fill the opening", which raised the floor span into a fresh carve and welded a sealed cave. Rejected then: refusing the drag under a roof (leaves no way to extend one); mirroring whichever neighbour holds the band as a roof (several can disagree, so scan order would decide); carrying the grasped span on the intent.
+From the dragged band, run down through like material to the first boundary.
+That slab is what the stroke writes into every swept cell.
+
+- Solid runs to its span's `floorBand`; a ground band carries the whole ground
+  beneath it. Air runs to its void's floor; a one-band void carries itself.
+- `runFloorBandAt` reads the run, `fillBandRun` writes the slab —
+  `shared/src/columns/bandQueries.ts`.
+- Welding is not a decision: the slab lands, `canonicaliseColumn` merges what
+  it touches, nothing inspects what is overhead.
+- The only refusal is a cell already solid through the whole run. No adjacency
+  gate on the raise path.
+- Shielding is free — the run never starts below its own floor, so it cannot
+  reach a hollow under the material grabbed. Fuzzed as
+  `expectGapsBelowRunSurvive`.
+- No depth limit: the run stops at the first boundary.
+
+The run's floor travels on the intent as `floorBand`. The swept cell cannot
+derive it — the same band may sit in an air run reaching far lower there — and
+computing it locally would destroy the hollow. A plain integer, not a span
+index, so both replicas apply it deterministically.
+
+2026-09-17, superseding #224's "the drag lays a roof; it never fills the carve
+beneath one", which left 215 of 317 swept cells dead on a cliff and could never
+fill a one-band void. #224 also rejected carrying the grasped span on the wire
+as underivable — true of a span index, not of a floor band. Still rejected:
+deriving the run in the swept cell (kills the hollow); refusing the drag under
+a roof (leaves no way to extend one); mirroring whichever neighbour holds the
+band (scan order would decide).
+
+Deleted by this rule: `BandFill`'s `extend`/`overhang` variants, its `null`
+refusal, both `isGapDrawn` gates in the write path, and `pushLowerLayers` —
+the run IS the descent.
 
 ## The carve opens the band it is grasped at
 
-- A carve grasped at band S clears slabs `S … S + depthBands - 1` and asks `canCarveBandAt` of each (`shared/src/sculpt/carve.ts`). Depth comes from the intent and defaults to one band (`sculpt-tools.md`).
-- The opening a cut leaves is exactly the band the next pick inside it names, so a tunnel walks inward one cell per intent without limit, and a cut grasped at a face's lowest lip floors level with the ground outside it.
-- `bandOfPick` is shared with the drag and does not change: a riser pick names the band whose drawn slab contains the struck height.
-- `applyCarve` refuses at the bottom of the world, including a grasp whose lower piece the storage could not encode.
-- Decided 2026-09-02 from "it will just stop … it only goes so far": the cut and the next pick were one band out of alignment, so every cut after the first was refused. Rejected then: naming the band below the struck slab (the carve would read a face differently from the drag); asking `canCarveBandAt` of the grasped band as well as the opened one (widens admission without moving the opening).
+- Grasped at band S, it clears `S … S + depthBands - 1`, asking
+  `canCarveBandAt` of each (`shared/src/sculpt/carve.ts`). Depth from the
+  intent, default one band.
+- The opening a cut leaves is exactly the band the next pick inside it names,
+  so a tunnel walks inward one cell per intent without limit.
+- `bandOfPick` is shared with the drag: a riser pick names the band whose
+  drawn slab contains the struck height.
+- `applyCarve` refuses at the bottom of the world.
+
+2026-09-02, from "it will just stop … it only goes so far": the cut and the
+next pick were one band out of alignment, so every cut after the first was
+refused. Rejected: naming the band below the struck slab; asking
+`canCarveBandAt` of the grasped band as well as the opened one.
