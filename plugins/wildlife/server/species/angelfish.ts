@@ -17,6 +17,7 @@ export const ANGELFISH_PROFILE: SpeciesProfile = {
   cruiseSpeedCellsPerSecond: cellsAcross(1.6),
   turnNoiseRadiansPerSecond: 1.0,
   bodyLengthCells: cellsAcross(0.6),
+  hullBeamCells: cellsAcross(0.17),
   habitatCellsPerIndividual: cellsOverArea(800),
   groupSize: 3,
   sizeWeights: FISH_SIZE_WEIGHTS,

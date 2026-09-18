@@ -223,6 +223,9 @@ export function swimmerSeabedY(
       Math.floor(y + forwardY * alongOffset + rightY * acrossOffset),
     );
     if (sampled === null) continue;
+    // Sample 0 is the hull centre. Overhanging ends are transient
+    // drawn-terrain lag, but a centre over land is invalid: skip the frame.
+    if (i === 0 && sampled > SEA_SURFACE_WORLD_Y) return null;
     if (sampled > SEA_SURFACE_WORLD_Y) continue;
     if (seabed === null || sampled > seabed) seabed = sampled;
   }

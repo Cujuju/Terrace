@@ -20,6 +20,7 @@ export const EEL_PROFILE: SpeciesProfile = {
   cruiseSpeedCellsPerSecond: cellsAcross(0.9),
   turnNoiseRadiansPerSecond: 0.5,
   bodyLengthCells: cellsAcross(1.2),
+  hullBeamCells: cellsAcross(0.15),
   habitatCellsPerIndividual: cellsOverArea(1500),
   groupSize: 1,
   sizeWeights: SINGLE_SIZE_WEIGHTS,
