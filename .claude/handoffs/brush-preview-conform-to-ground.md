@@ -1,7 +1,7 @@
 # Brush preview: conform the footprint to the drawn ground
 
-Status: wax-melt drape landed (2026-09-18) — verified headed with screenshots.
-Commit 2 (midpoint joins) is moot: the drape subsumes it. Ready for review.
+Status: layer + gesture lock landed (2026-09-18) — verified headed.
+Drag rides the universal aim-band clamp (owner 9d3a2b10); carve variety pending.
 Written 2026-09-17, updated 2026-09-18.
 
 ## 1. What we are changing and why
@@ -461,6 +461,9 @@ recheck the bound or grow the capacities before writing this commit.
 - 2026-09-18, superseded by owner direction: the hem is now also
   `depthTest: false`, so the whole footprint paints over the stroke and is
   never stopped by anything rendering above. Ring/grid rule above still holds.
+- 2026-09-18, owner direction: ring, hem and grid all render at order 999 —
+  the crosshair's layer — with identical depth flags. The world-edge clip
+  stays: bounds are not layering.
 - `HEM_OPACITY` may want raising now that the hem is small. Leave as is.
 - Whether to keep Commit 2's staircase or settle for Commit 1's slants.
 
@@ -469,3 +472,12 @@ recheck the bound or grow the capacities before writing this commit.
 While a chunk under the footprint is still undrawn, the points over it fall back
 to `hover.surfaceY` and read flat until that chunk arrives. The revision hash
 refreshes them the frame after it does.
+
+Camera lock (added 2026-09-18, owner direction): `main.tsx` skips
+`brushPreview.update` while a camera gesture is active (OrbitControls
+start/end; wheel counts complete after 150ms silence), freezing ring and
+mark together. The `syncTo` dirty check stays as second defense.
+
+Drag (owner spec 2026-09-18): the same melt, never above the current band —
+which the universal `band ?? aimBand` clamp (owner 9d3a2b10) already gives
+it, so no drag-only code was needed. Carve's third variety is still open.

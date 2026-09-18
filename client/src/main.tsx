@@ -3,6 +3,7 @@ import { render } from 'solid-js/web';
 import { Raycaster, Vector2 } from 'three';
 import { connect, type ConnectionStatus, type TerrainSink } from './net/connection.ts';
 import { bindCameraControls } from './input/cameraBindings.ts';
+import { createCameraGestureLock } from './input/cameraGestureLock.ts';
 import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
@@ -157,6 +158,7 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
   return world.drawnGroundYAt(cell.x, cell.y);
 });
 bindCameraControls(canvas, viewport.controls);
+const cameraGesture = createCameraGestureLock(canvas, viewport.controls);
 
 // `?plugins=off` boots a core-only client (terrain, water, sky) for engine debugging.
 const PLUGINS_QUERY_FLAG = 'plugins';
@@ -258,22 +260,26 @@ viewport.onFrame(() => {
     heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
     tool,
   });
-  brushPreview.update(
-    pick === null
-      ? null
-      : {
-          ...pick,
-          grabbable: grabbedBand !== null && brushTool() === 'drag',
-          band: grabbedBand,
-          aimBand: world.aimBand(pick),
-        },
-    {
-      radius: brushRadius(),
-      tool: brushTool(),
-      profile: brushProfile(),
-      dir: sculptDirection(effectiveSculptMode()),
-    },
-  );
+  // A camera gesture freezes the brush and its mark: the aim slides under a
+  // still pointer while panning, so redrawing would churn for nothing.
+  if (!cameraGesture.active()) {
+    brushPreview.update(
+      pick === null
+        ? null
+        : {
+            ...pick,
+            grabbable: grabbedBand !== null && brushTool() === 'drag',
+            band: grabbedBand,
+            aimBand: world.aimBand(pick),
+          },
+      {
+        radius: brushRadius(),
+        tool: brushTool(),
+        profile: brushProfile(),
+        dir: sculptDirection(effectiveSculptMode()),
+      },
+    );
+  }
   pickDebug?.update(pick, grabbedBand);
   setHoverPick(
     pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
