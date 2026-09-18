@@ -231,6 +231,10 @@ const brushPreview = createBrushPreview(
   canvas,
   () => world.worldSize(),
   denialCue,
+  {
+    yAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
+    revisionAt: (cellX, cellZ) => world.terrainRevisionAt(cellX, cellZ),
+  },
 );
 const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUERY_FLAG)
   ? createPickDebugOverlay(viewport.scene, canvas)

@@ -11,7 +11,6 @@ import {
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
-import { BAND_WORLD_HEIGHT } from '../../config.ts';
 import {
   MAX_LATTICE_SPAN,
   assembleLoops,
@@ -20,7 +19,6 @@ import {
   type ContourLoop,
 } from '../../terrain/contours.ts';
 import { simplifyLoop } from '../../terrain/contourSmoothing.ts';
-import { OUTLINE_LIFT_WORLD_UNITS } from './style.ts';
 
 export type SculptDir = SculptIntent['dir'];
 
@@ -30,6 +28,8 @@ const FOOTPRINT_INSIDE = 1;
 const SCULPT_DIRECTIONS: readonly SculptDir[] = [1, -1];
 
 const FOOTPRINT_EDGE_CROSSING = 0.5;
+
+const CELL_TOUCH_EPSILON = 1e-6;
 
 const FOOTPRINT_LATTICE_MARGIN_CELLS = 1;
 
@@ -162,23 +162,44 @@ export function markOutline(radius: number, mark: Mark): ContourLoop {
   return loops[0];
 }
 
-export function cellGridSegments(mark: Mark): number[] {
-  const segments: number[] = [];
+export function markCellsTouching(mark: Mark, x: number, z: number): [number, number][] {
+  const cells: [number, number][] = [];
+  const x0 = Math.ceil(x - 0.5 - CELL_TOUCH_EPSILON);
+  const x1 = Math.floor(x + 0.5 + CELL_TOUCH_EPSILON);
+  const z0 = Math.ceil(z - 0.5 - CELL_TOUCH_EPSILON);
+  const z1 = Math.floor(z + 0.5 + CELL_TOUCH_EPSILON);
+  for (let cz = z0; cz <= z1; cz++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      if (mark.has(cx, cz)) cells.push([cx, cz]);
+    }
+  }
+  // clampIntoMark guarantees a hit; the aim cell is the safe floor if it ever does not.
+  if (cells.length === 0) cells.push([0, 0]);
+  return cells;
+}
+
+export interface GridSegment {
+  readonly ax: number; readonly az: number;
+  readonly bx: number; readonly bz: number;
+  readonly cellAx: number; readonly cellAz: number;
+  readonly cellBx: number; readonly cellBz: number;
+}
+
+export function cellGridSegments(mark: Mark): GridSegment[] {
+  const segments: GridSegment[] = [];
   for (const [dx, dy] of mark.cells) {
     if (mark.has(dx + 1, dy)) {
-      segments.push(dx + 0.5, dy - 0.5, dx + 0.5, dy + 0.5);
+      segments.push({
+        ax: dx + 0.5, az: dy - 0.5, bx: dx + 0.5, bz: dy + 0.5,
+        cellAx: dx, cellAz: dy, cellBx: dx + 1, cellBz: dy,
+      });
     }
     if (mark.has(dx, dy + 1)) {
-      segments.push(dx - 0.5, dy + 0.5, dx + 0.5, dy + 0.5);
+      segments.push({
+        ax: dx - 0.5, az: dy + 0.5, bx: dx + 0.5, bz: dy + 0.5,
+        cellAx: dx, cellAz: dy, cellBx: dx, cellBz: dy + 1,
+      });
     }
   }
   return segments;
-}
-
-export function skirtDropWorldUnits(mark: Mark): number {
-  let manhattanReachCells = 0;
-  for (const [dx, dy] of mark.cells) {
-    manhattanReachCells = Math.max(manhattanReachCells, Math.abs(dx) + Math.abs(dy));
-  }
-  return (manhattanReachCells + 1) * BAND_WORLD_HEIGHT + OUTLINE_LIFT_WORLD_UNITS;
 }
