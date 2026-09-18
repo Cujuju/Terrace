@@ -22,9 +22,9 @@ import {
   brushProfile,
   brushRadius,
   brushTool,
+  effectiveSculptMode,
   hoverPick,
   sculptDirection,
-  sculptMode,
 } from '../../../client/src/state/hudState.ts';
 
 export interface ManaPool {
@@ -183,7 +183,7 @@ function aimedIntent(tool: SculptTool): SculptIntent | null {
     x: aim.x,
     y: aim.y,
     radius: brushRadius(),
-    dir: sculptDirection(sculptMode()),
+    dir: sculptDirection(effectiveSculptMode()),
     tool,
     ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? {} : { profile }),
   };
@@ -200,7 +200,10 @@ export function currentBrushQuote(): BrushQuote {
     ? null
     : dryRunDisplacement(localTerritory, intent);
   if (moved !== null) {
-    return { cost: displacementManaCost(moved, pool.manaPerBandCell) + unlock, estimated: false };
+    return {
+      cost: displacementManaCost(moved, pool.manaPerBandCell, tool) + unlock,
+      estimated: false,
+    };
   }
 
   const nominal = sculptManaCost(

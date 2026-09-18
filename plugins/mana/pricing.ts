@@ -24,6 +24,11 @@ const QUOTE_CELL = 0;
 /** A carve reshapes rock that is already there, so it pays a quarter. */
 const CARVE_PRICE_DIVISOR = 4;
 
+/** Every carve price, nominal or charge, takes the discount. */
+function carveDiscounted(cost: number, tool: SculptTool): number {
+  return tool === 'carve' ? Math.ceil(cost / CARVE_PRICE_DIVISOR) : cost;
+}
+
 /** A drag presses every cell its capsule sweeps; every other tool its disc. */
 function sweptDisplacementUnits(
   sweep: StrokeSweep,
@@ -46,7 +51,7 @@ export function sculptSweepManaCost(
   const base = Math.ceil(
     (manaPerBandCell * sweptDisplacementUnits(sweep, profile, tool, depthBands)) / BAND_HEIGHT,
   );
-  return tool === 'carve' ? Math.ceil(base / CARVE_PRICE_DIVISOR) : base;
+  return carveDiscounted(base, tool);
 }
 
 export function sculptManaCost(
@@ -77,8 +82,12 @@ export function chunkUnlockFee(openedChunks: number): number {
 }
 
 /** What the material a stroke moved costs. The charge half of every price. */
-export function displacementManaCost(displacementUnits: number, manaPerBandCell: number): number {
-  return Math.ceil((manaPerBandCell * displacementUnits) / BAND_HEIGHT);
+export function displacementManaCost(
+  displacementUnits: number,
+  manaPerBandCell: number,
+  tool: SculptTool,
+): number {
+  return carveDiscounted(Math.ceil((manaPerBandCell * displacementUnits) / BAND_HEIGHT), tool);
 }
 
 /**
