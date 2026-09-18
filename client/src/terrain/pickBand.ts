@@ -52,9 +52,11 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
     // Normalize -0 (ceil of a negative fraction): band ids are compared exactly.
     return { face: 'riser', band: band + 0 };
   }
-  // F3: tread ceilings resolve in the drawn banding, so a bias-shifted cap
-  // names the band the mesh emitted.
-  if (pick.face === 'tread') return { face: 'tread', band: spanCapBand(span) };
+  // Drawn band at the hit point: a tread's solid is below, so the cap the ray
+  // met; an underside's is above, so its floor.
+  if (pick.face === 'tread') {
+    return { face: 'tread', band: drawnBandOfSample(pick.hitY / HEIGHT_WORLD_SCALE) };
+  }
   return { face: 'underside', band: lowestDrawn };
 }
 
