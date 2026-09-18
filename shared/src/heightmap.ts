@@ -21,6 +21,7 @@ import { anchoredTargetHeight, forEachFootprintCell } from './sculpt/footprint.t
 import { applyBrush, applyLevelFillBrush, applySoftApron } from './sculpt/stamp.ts';
 import { applyDragRegion } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
+export { carveAdmittedCells } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
 import { smoothCascadeReachCells } from './sculpt/reach.ts';
 import type { SpillBand } from './sculpt/layerView.ts';

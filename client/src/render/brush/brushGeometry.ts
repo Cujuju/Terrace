@@ -1,5 +1,11 @@
 import type { SculptProfile, SculptTool } from '@terrace/shared';
-import { cellGridSegments, clampIntoMark, markOutline, oneClickMark } from './footprintMark.ts';
+import {
+  cellGridSegments,
+  clampIntoMark,
+  markOutline,
+  oneClickMark,
+  type Mark,
+} from './footprintMark.ts';
 
 export interface BrushFootprint {
   /** Draped outline in cell space, closed (first point repeated): x,z pairs. */
@@ -20,7 +26,10 @@ export function brushFootprint(
   tool: SculptTool,
   profile: SculptProfile,
 ): BrushFootprint {
-  const mark = oneClickMark(radius, tool, profile);
+  return footprintFromMark(radius, oneClickMark(radius, tool, profile));
+}
+
+export function footprintFromMark(radius: number, mark: Mark): BrushFootprint {
   const outline = markOutline(radius, mark);
 
   // Closed by repeating the first point: WebGPURenderer draws Line, not LineLoop.

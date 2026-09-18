@@ -9,22 +9,25 @@ import { cellX, cellY, type Heightmap } from '../grid.ts';
 import { forEachFootprintCell } from './footprint.ts';
 import { isValidCarveDepth, LOWEST_CARVEABLE_BAND } from './options.ts';
 
-export function applyCarve(
+/**
+ * Cells a carve would actually cut. The preview and the applier both read this,
+ * so the outline can never promise a cut the stroke will not make.
+ */
+export function carveAdmittedCells(
   map: Heightmap,
   cx: number,
   cy: number,
   radius: number,
   spanBand: number,
   depthBands: number,
-  changed: Set<number>,
-): void {
-  if (!isValidCarveDepth(depthBands)) return;
+): number[] {
+  const admitted: number[] = [];
+  if (!isValidCarveDepth(depthBands)) return admitted;
   const lowestOpenedBand = spanBand;
   const highestOpenedBand = spanBand + depthBands - 1;
   // Bedrock is the column's floor, not material: a stroke reaching it opens nothing.
-  if (lowestOpenedBand < LOWEST_CARVEABLE_BAND) return;
+  if (lowestOpenedBand < LOWEST_CARVEABLE_BAND) return admitted;
 
-  const admitted: number[] = [];
   forEachFootprintCell(map, cx, cy, radius, (i) => {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
@@ -43,9 +46,20 @@ export function applyCarve(
     }
     admitted.push(i);
   });
+  return admitted;
+}
 
-  for (const i of admitted) {
-    carveBands(map, cellX(map.size, i), cellY(map.size, i), lowestOpenedBand, highestOpenedBand);
+export function applyCarve(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  spanBand: number,
+  depthBands: number,
+  changed: Set<number>,
+): void {
+  for (const i of carveAdmittedCells(map, cx, cy, radius, spanBand, depthBands)) {
+    carveBands(map, cellX(map.size, i), cellY(map.size, i), spanBand, spanBand + depthBands - 1);
     changed.add(i);
   }
 }

@@ -155,7 +155,13 @@ export function createConformedGeometry(
       // Y is absolute world Y, not local: the objects carry XZ only
       // (position.y is 0; see brushPreview.ts). The runs arrive pre-draped,
       // so every vertex melts onto the ground beneath it.
-      for (let i = 0; i < footprint.ringCount; i++) {
+      // A live footprint is built per aim, so its counts are clamped to the
+      // capacity measured at construction rather than trusted.
+      const ringCount = footprint.ringCount > maxRingVerts ? maxRingVerts : footprint.ringCount;
+      const gridCount =
+        footprint.gridCount > maxGridSegments ? maxGridSegments : footprint.gridCount;
+
+      for (let i = 0; i < ringCount; i++) {
         const x = footprint.ringPoints[i * 2]!;
         const z = footprint.ringPoints[i * 2 + 1]!;
         ring.array[i * 3] = x * CELL_WORLD_SIZE;
@@ -164,9 +170,9 @@ export function createConformedGeometry(
         );
         ring.array[i * 3 + 2] = z * CELL_WORLD_SIZE;
       }
-      commit(ring, footprint.ringCount);
+      commit(ring, ringCount);
 
-      for (let s = 0; s < footprint.gridCount; s++) {
+      for (let s = 0; s < gridCount; s++) {
         // Each end rides the ground beneath it: one-cell runs hug one step.
         const ax = footprint.gridPoints[s * 4]!;
         const az = footprint.gridPoints[s * 4 + 1]!;
@@ -185,9 +191,9 @@ export function createConformedGeometry(
         grid.array[s * 6 + 4] = yb;
         grid.array[s * 6 + 5] = bz * CELL_WORLD_SIZE;
       }
-      commit(grid, footprint.gridCount * 2);
+      commit(grid, gridCount * 2);
 
-      for (let i = 0; i < footprint.ringCount - 1; i++) {
+      for (let i = 0; i < ringCount - 1; i++) {
         const ax = ring.array[i * 3]!;
         const ya = ring.array[i * 3 + 1]!;
         const az = ring.array[i * 3 + 2]!;

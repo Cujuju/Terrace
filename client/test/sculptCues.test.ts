@@ -144,6 +144,7 @@ function driveInput(mirror: TerrainMirror, knobs: DriveKnobs = {}): {
     pickInColumn: knobs.pickInColumn ?? ((x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d)),
     worldSize: () => mirror.map.size,
     riserBand: knobs.riserBand ?? (() => null),
+    aimBand: () => null,
     runFloorBandAt: knobs.runFloorBandAt ?? (() => null),
     graspSpanBand: knobs.graspSpanBand ?? (() => null),
     carveBand: () => null,

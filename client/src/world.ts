@@ -5,6 +5,9 @@ import {
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
+  carveAdmittedCells,
+  cellX as cellXIn,
+  cellY as cellYIn,
   runFloorBandAt as runFloorBandAtIn,
 } from '@terrace/shared';
 import type {
@@ -171,6 +174,14 @@ export interface World extends TerrainSink {
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
   /** Floor of the run down from `band` in this column — the slab a drag grabbed here writes. */
   runFloorBandAt(x: number, y: number, band: number): number | null;
+  /** Cells a carve at this aim would cut, as offsets from it. */
+  carveCellsAt(
+    x: number,
+    y: number,
+    band: number,
+    radius: number,
+    depthBands: number,
+  ): (readonly [number, number])[] | null;
   graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   /** Drawn band of the surface under the aim, for every face: what a stroke would edit there. */
@@ -660,6 +671,19 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     runFloorBandAt(x: number, y: number, band: number): number | null {
       if (mirror === null) return null;
       return runFloorBandAtIn(mirror.map, x, y, band);
+    },
+    carveCellsAt(
+      x: number,
+      y: number,
+      band: number,
+      radius: number,
+      depthBands: number,
+    ): (readonly [number, number])[] | null {
+      if (mirror === null) return null;
+      const map = mirror.map;
+      return carveAdmittedCells(map, x, y, radius, band, depthBands).map(
+        (i) => [cellXIn(map.size, i) - x, cellYIn(map.size, i) - y] as const,
+      );
     },
     graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;
