@@ -11,10 +11,11 @@ import {
   type MouseButtonName,
 } from '../state/controlPrefs.ts';
 import { bindWheelCamera } from './wheelCamera.ts';
-import { createCameraPointerLock, pointerLockedForCamera } from './cameraPointerLock.ts';
+import { createCameraPointerLock } from './cameraPointerLock.ts';
 
 export interface CameraBindings {
   dispose(): void;
+  pointerLocked(): boolean;
 }
 
 function cameraVerb(
@@ -175,6 +176,9 @@ export function bindCameraControls(
       });
       wheelGestures.dispose();
       pointerLock.dispose();
+    },
+    pointerLocked(): boolean {
+      return pointerLock.locked();
     },
   };
 }
