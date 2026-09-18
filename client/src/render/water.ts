@@ -16,6 +16,7 @@ import {
 } from 'three';
 import { MeshPhysicalNodeMaterial, type UniformNode } from 'three/webgpu';
 import {
+  cameraPosition,
   diffuseColor,
   float,
   fwidth,
@@ -40,6 +41,7 @@ import {
 import {
   CELL_WORLD_SIZE,
   SEA_SURFACE_WORLD_Y,
+  WATER_SURFACE_LIFT,
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
@@ -101,12 +103,26 @@ const SHORE_FIELD_THRESHOLD = drawnLevelThreshold(0) - DRAWN_GROUND_BAND_BIAS;
 // Keeps a flat field's zero screen derivative from dividing by zero.
 const MIN_SHORE_EDGE_WIDTH = 1e-6;
 
+// Band 0's cap, the height the shore field describes. The sea plane floats a lift above it.
+const SHORE_CAP_WORLD_Y = SEA_SURFACE_WORLD_Y - WATER_SURFACE_LIFT;
+
+// An eye at the surface sees the plane edge-on; below this the correction is meaningless.
+const MIN_EYE_LIFT_ABOVE_SEA = WATER_SURFACE_LIFT;
+
+// Where the view ray reaches band 0's cap. The sea plane sits above it, so a
+// grazing ray meets the plane cells seaward of the land it covers.
+function shoreCapXZ() {
+  const eyeLift = max(cameraPosition.y.sub(SEA_SURFACE_WORLD_Y), MIN_EYE_LIFT_ABOVE_SEA);
+  const toCap = float(SEA_SURFACE_WORLD_Y - SHORE_CAP_WORLD_Y).div(eyeLift);
+  return positionWorld.xz.add(positionWorld.xz.sub(cameraPosition.xz).mul(toCap));
+}
+
 // The shared drawn field: corner samples blended bilinearly, as drawnCornerNumerator does.
 function shoreCoverage(
   fieldTexture: DataTexture,
   worldSizeCells: UniformNode<'float', number>,
 ) {
-  const cell = positionWorld.xz.div(CELL_WORLD_SIZE);
+  const cell = shoreCapXZ().div(CELL_WORLD_SIZE);
   const corner = cell.floor();
   const t = cell.sub(corner);
   const lastCell = worldSizeCells.sub(1);
