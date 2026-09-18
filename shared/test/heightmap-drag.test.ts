@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BEDROCK_BAND,
   applySculpt,
   bandOf,
   BAND_HEIGHT,
@@ -201,7 +202,9 @@ describe('a pull carries the one level under it and no further', () => {
   const bandAtX = (x: number): number =>
     x < STAIR_X ? TOP_BAND : Math.max(0, TOP_BAND - (Math.floor((x - STAIR_X) / TREAD_CELLS) + 1));
 
-  it('pushes the step below the grabbed band, and leaves the one under that', () => {
+  // Grabbing ground runs to bedrock, so the slab carries everything beneath the
+  // grabbed band and the swept steps rise whole. There is no second descent pass.
+  it('raises every swept step to the grabbed band, and leaves the steps outside', () => {
     const map = createHeightmap(SIZE);
     for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = bandAtX(x) * BAND_HEIGHT;
@@ -211,12 +214,16 @@ describe('a pull carries the one level under it and no further', () => {
       tool: 'drag',
       profile: 'hard',
       targetBand: TOP_BAND,
+      runFloorBand: BEDROCK_BAND,
     });
 
-    expect(bandOf(heightAt(map, STAIR_X, CY))).toBe(TOP_BAND);
-    expect(bandOf(heightAt(map, STAIR_X + TREAD_CELLS, CY))).toBe(TOP_BAND - 1);
-    expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS - 1, CY))).toBe(TOP_BAND - 2);
-    expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS, CY))).toBe(TOP_BAND - 3);
+    // Both swept steps rise whole: the run carried the ground under the band.
+    for (const x of [STAIR_X, STAIR_X + 1]) {
+      expect([x, bandOf(heightAt(map, x, CY))]).toEqual([x, TOP_BAND]);
+    }
+    // The step past the footprint keeps its own band — nothing cascades outward.
+    const outside = STAIR_X + TREAD_CELLS;
+    expect(bandOf(heightAt(map, outside, CY))).toBe(bandAtX(outside));
   });
 });
 
@@ -228,7 +235,14 @@ describe('a drag sweeps its footprint along the cursor path — no gaps on a fli
   const LIP_X = 20;
   const RADIUS = 2;
   const FLICK_CELLS = 12;
-  const PULL = { tool: 'drag', profile: 'hard', anchor: 'band', targetBand: LIP_BAND } as const;
+  // The lip is solid ground, so its run reaches bedrock.
+  const PULL = {
+    tool: 'drag',
+    profile: 'hard',
+    anchor: 'band',
+    targetBand: LIP_BAND,
+    runFloorBand: BEDROCK_BAND,
+  } as const;
 
   const plateauWithLip = (): Heightmap => {
     const map = createHeightmap(SIZE);
@@ -241,10 +255,15 @@ describe('a drag sweeps its footprint along the cursor path — no gaps on a fli
   };
   const toX = LIP_X + FLICK_CELLS;
 
-  it('a point disc landing clear of the lip fills nothing — the gap the sweep exists to close', () => {
+  // The run has no adjacency gate: a point disc writes its own footprint
+  // wherever it lands, and the sweep is what joins that footprint to the lip.
+  it('a point disc landing clear of the lip fills only its own footprint', () => {
     const map = plateauWithLip();
-    const diff = applySculpt(map, toX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, PULL);
-    expect(diff).toHaveLength(0);
+    applySculpt(map, toX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, PULL);
+    expect(bandOf(heightAt(map, toX, CY))).toBe(LIP_BAND);
+    // The cells between the lip and the disc are untouched — that is the gap.
+    const between = Math.floor((LIP_X + toX - RADIUS) / 2);
+    expect(bandOf(heightAt(map, between, CY))).toBe(PLAIN_BAND);
   });
 
   it('the same cursor cell swept from the lip fills every cell of the path to the grabbed band', () => {
