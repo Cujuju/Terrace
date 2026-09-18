@@ -1,4 +1,10 @@
-import { drawnBandOfSample, MAX_BAND, MIN_BAND, SCULPT_TOOLS } from '@terrace/shared';
+import {
+  drawnBandOfSample,
+  MAX_BAND,
+  MIN_BAND,
+  runFloorBandAt,
+  SCULPT_TOOLS,
+} from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import { scriptFor } from '../../shared/test/fixtures/strokes.ts';
 import { GOLDEN_WORLD_NAMES, type GoldenWorldName } from '../../shared/test/fixtures/worlds.ts';
@@ -18,11 +24,11 @@ const LOWERING = -1;
 
 /** Cells each world's wire-legal script writes; an ack without terrain fails here. */
 const CELLS_WRITTEN: Record<GoldenWorldName, number> = {
-  'genesis-noise': 1500,
-  arch: 924,
-  terrace: 1105,
-  shoreline: 992,
-  played: 657,
+  'genesis-noise': 1444,
+  arch: 919,
+  terrace: 1000,
+  shoreline: 810,
+  played: 578,
 };
 
 /** `anchor: 'free'` and `spill: 'free'` are library paths; no intent can ask for them. */
@@ -61,7 +67,9 @@ function intentFor(
     tool: step.tool,
     seq,
     ...(step.profile !== undefined && step.tool === 'stamp' ? { profile: step.profile } : {}),
-    ...(targetBand !== null ? { targetBand } : {}),
+    ...(targetBand !== null
+      ? { targetBand, floorBand: runFloorBandAt(scenario.world.map, step.cx, step.cy, targetBand) }
+      : {}),
     ...(spanBand !== null ? { spanBand } : {}),
     ...(step.sweepFrom != null && step.tool === 'drag'
       ? { fromX: step.sweepFrom.x, fromY: step.sweepFrom.y }
