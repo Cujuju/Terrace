@@ -279,7 +279,6 @@ function driveCarve(
     pickInColumn: (x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d),
     worldSize: () => mirror.map.size,
     riserBand: () => null,
-    aimBand: () => null,
     runFloorBandAt: () => null,
     graspSpanBand: () => null,
     carveBand: knobs.carveBand ?? (() => PLATEAU_BAND),

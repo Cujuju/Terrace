@@ -36,7 +36,6 @@ export interface SculptInputOptions {
   ) => TerrainRayPick | null;
   worldSize: () => number;
   riserBand: (pick: TerrainRayPick | null) => number | null;
-  aimBand: (pick: TerrainRayPick | null) => number | null;
   runFloorBandAt: (x: number, y: number, band: number) => number | null;
   graspSpanBand: (
     pick: TerrainRayPick | null,

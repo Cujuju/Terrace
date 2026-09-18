@@ -190,7 +190,6 @@ const sculptInput = createSculptInput({
   pickInColumn: (x, y, origin, direction) => world.pickInColumn(x, y, origin, direction),
   worldSize: () => world.worldSize(),
   riserBand: (pick) => world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan() }),
-  aimBand: (pick) => world.aimBand(pick),
   runFloorBandAt: (x, y, band) => world.runFloorBandAt(x, y, band),
   graspSpanBand: (pick, atX, atY) => world.graspSpanBand(pick, atX, atY),
   carveBand: (pick) => world.carveBand(pick),

@@ -93,7 +93,6 @@ interface DriveKnobs {
   pickInColumn?: (x: number, y: number, origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   riserBand?: (pick: TerrainRayPick | null) => number | null;
   runFloorBandAt?: (x: number, y: number, band: number) => number | null;
-  aimBand?: (pick: TerrainRayPick | null) => number | null;
   graspSpanBand?: (pick: TerrainRayPick | null, atX: number, atY: number) => number | null;
   origin?: Vec3;
   lookAt?: Vec3;
@@ -146,7 +145,6 @@ function driveInput(mirror: TerrainMirror, knobs: DriveKnobs = {}): {
     pickInColumn: knobs.pickInColumn ?? ((x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d)),
     worldSize: () => mirror.map.size,
     riserBand: knobs.riserBand ?? (() => null),
-    aimBand: knobs.aimBand ?? (() => null),
     runFloorBandAt: knobs.runFloorBandAt ?? (() => null),
     graspSpanBand: knobs.graspSpanBand ?? (() => null),
     carveBand: () => null,
@@ -1182,12 +1180,11 @@ describe('a drag press on a tread grabs the band under the aim', () => {
   const TREAD_BAND = 5;
   const RUN_FLOOR = BEDROCK_BAND;
 
-  const dragOnTread = (aimBand: () => number | null): ReturnType<typeof driveInput> => {
+  // The aim names the band on every face, so a tread press holds like any other.
+  const dragOnTread = (band: () => number | null): ReturnType<typeof driveInput> => {
     setBrushTool('drag');
-    // riserBand answers only on a riser: a tread press has to stand on aimBand.
     return driveInput(flatWorld(), {
-      riserBand: () => null,
-      aimBand,
+      riserBand: band,
       runFloorBandAt: () => RUN_FLOOR,
     });
   };
