@@ -11,7 +11,7 @@ const MARKER_LIFT_WORLD_UNITS = 0.006;
 const MARKER_OPACITY = 0.55;
 
 export interface PickDebugOverlay {
-  update(pick: TerrainRayPick | null, band: number | null): void;
+  update(pick: TerrainRayPick | null, band: number | null, aimBand: number | null): void;
   dispose(): void;
 }
 
@@ -59,7 +59,7 @@ export function createPickDebugOverlay(
   const readout = createReadout(canvas);
 
   return {
-    update(pick, band) {
+    update(pick, band, aimBand) {
       if (pick === null) {
         marker.visible = false;
         readout.textContent =
@@ -86,11 +86,9 @@ export function createPickDebugOverlay(
               : 'UNDER  (cave roof)  █ green'
         }`,
         '',
-        pick.face === 'riser'
-          ? band === null
-            ? 'BAND   named by the ray, REFUSED by the lip guard'
-            : `BAND   ${band} — a press here acts on it`
-          : 'BAND   none (only a riser face names one)',
+        `AIM    ${aimBand === null ? 'none' : String(aimBand)} — band of the surface the ray hit`,
+        `LIT    ${band === null ? 'none (no grabbable lip here)' : String(band)} — highlight/grab band`,
+        `SPAN   index ${pick.spanIndex}`,
       ].join('\n');
     },
     dispose() {
