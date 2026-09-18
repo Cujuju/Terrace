@@ -36,6 +36,8 @@ export interface BrushHover {
   readonly band?: number | null;
   /** Band of the surface under the aim, whether or not a lip is grabbable there. */
   readonly aimBand?: number | null;
+  /** Band a carve would open here — the same read the stroke makes. */
+  readonly carveBand?: number | null;
 }
 
 export interface BrushSelection {
@@ -184,13 +186,18 @@ export function createBrushPreview(
         );
       };
 
-      if (carveAdmits !== null && brush.tool === 'carve' && hover.face !== 'riser') {
+      if (carveAdmits !== null && brush.tool === 'carve') {
         // The outline is the cut, not the reach. A carve that admits nothing
         // shows the refusal mark instead of a ring promising a bite.
-        const band = hover.band ?? hover.aimBand ?? null;
+        // A carve opens the band IT reads, not the band a lip highlight lit.
+        const band = hover.carveBand ?? hover.aimBand ?? null;
         const cells = band === null ? null : carveAdmits(hover.x, hover.y, band, brush.radius);
+        const paintAimMark = (): void => {
+          if (hover.face === 'riser') stage.paintRiserMark(band);
+          else paintFlatMark();
+        };
         if (cells !== null && cells.length === 0) {
-          paintFlatMark();
+          paintAimMark();
           crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
           show(true, true);
           return;
@@ -215,7 +222,7 @@ export function createBrushPreview(
             ground,
             band === null ? null : drawnBandCapY(band),
           );
-          paintFlatMark();
+          paintAimMark();
           crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
           show(true);
           return;
