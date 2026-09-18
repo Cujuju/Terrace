@@ -386,9 +386,20 @@ export function createLayerEdgeOverlay(
   group.add(riser);
   let lipHighlight = true;
 
+  // The aim the lit lip was last painted for: lightBand repaints only when the
+  // aim, its band, the span or the terrain beneath them changes.
+  let litValid = false;
+  let litCellX = 0;
+  let litCellY = 0;
+  let litBand = 0;
+  let litAtX = 0;
+  let litAtZ = 0;
+  let litSpan = 0;
+
   const clearGrabbed = (): void => {
     grabbed.visible = false;
     riser.visible = false;
+    litValid = false;
   };
 
   const ensureGrabbedCapacity = (floats: number): void => {
@@ -482,10 +493,40 @@ export function createLayerEdgeOverlay(
     },
 
     lightBand(cell, band, atX, atZ, litSpanWorldUnits) {
+      // Same aim as the painted state: the buffers already hold this lip.
+      if (
+        litValid
+        && cell !== null
+        && band !== null
+        && cell.x === litCellX
+        && cell.y === litCellY
+        && band === litBand
+        && atX === litAtX
+        && atZ === litAtZ
+        && litSpanWorldUnits === litSpan
+      ) {
+        return true;
+      }
       clearGrabbed();
       if (cell === null || band === null) return false;
 
-      if (!lipNear(cell, band, atX, atZ)) return false;
+      const aimCellX = cell.x;
+      const aimCellY = cell.y;
+      const aimBand = band;
+      const remember = (): void => {
+        litValid = true;
+        litCellX = aimCellX;
+        litCellY = aimCellY;
+        litBand = aimBand;
+        litAtX = atX;
+        litAtZ = atZ;
+        litSpan = litSpanWorldUnits;
+      };
+
+      if (!lipNear(cell, band, atX, atZ)) {
+        remember();
+        return false;
+      }
 
       const spanSq = litSpanWorldUnits * litSpanWorldUnits;
       const capY = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
@@ -529,7 +570,10 @@ export function createLayerEdgeOverlay(
           maxZ = Math.max(maxZ, az, bz);
         }
       }
-      if (written < FLOATS_PER_SEGMENT) return true;
+      if (written < FLOATS_PER_SEGMENT) {
+        remember();
+        return true;
+      }
 
       riserAttribute.clearUpdateRanges();
       riserAttribute.addUpdateRange(0, riserWritten);
@@ -546,6 +590,7 @@ export function createLayerEdgeOverlay(
       const centreZ = (minZ + maxZ) / 2;
       grabbedBounds.center.set(centreX, y, centreZ);
       grabbedBounds.radius = Math.hypot(maxX - centreX, maxZ - centreZ);
+      remember();
       return true;
     },
     setRefused(refused) {
@@ -556,6 +601,7 @@ export function createLayerEdgeOverlay(
     },
     setLipHighlight(visible) {
       lipHighlight = visible;
+      litValid = false;
       if (!visible) grabbed.visible = false;
     },
     setStyle(next) {
