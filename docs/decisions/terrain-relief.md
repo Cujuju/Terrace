@@ -213,3 +213,28 @@ leaves wet cells at their real depth. The crossing then tracks the seabed:
 A sheer drop puts the waterline hard against the cell edge, which is what a cliff
 looks like; a shelving bottom carries it out into the cell. The shape comes from the
 terrain rather than from rounding.
+
+## The shore's own polygon masks the sea (2026-09-18)
+
+Owner: "can't you use the shoreline as a mask against the water layer?"
+
+The sea plane sat `WATER_SURFACE_LIFT` **above** band 0's cap, so band-0 land — the
+first dry band — was drawn a thirty-second of a unit under water, and a shader mask
+had to carve it back out. That mask reconstructed its own xz from `positionWorld`,
+which is what let a grazing ray sample cells seaward of the land it covered.
+
+**Now** the plane sits the same clearance **below** the cap, so the land's own cap
+polygon occludes the sea through the depth buffer. The waterline is that polygon's
+edge exactly, with nothing to diverge from. Deleted with it: the R32F shore-field
+texture, `createShoreFieldBuffer`, `shoreFieldChunkRect`, `writeShoreFieldTexels`,
+`shoreCoverage`, the cap-plane parallax correction and its reach clamp, and the
+shore-outline toggle whose whole purpose was to catch a divergence that can no
+longer happen.
+
+`WATER_SURFACE_LIFT` is now `WATER_SURFACE_CLEARANCE`, since it drops rather than
+lifts. Everything that floats derives from `SEA_SURFACE_WORLD_Y`, so rigs, boats,
+skiffs, monsters and wildlife move with the surface and stay consistent; their
+suites pass unchanged.
+
+**Residual:** this does not change the shoreline's *shape*. Band 0's contour is
+still the blocky one, for the reason in the entry above.
