@@ -106,10 +106,9 @@ export function terrainHitInCell(
     // miss, so carved gaps stay open.
     const covering = drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band);
     if (covering !== null) {
-      // The span covering the met band, not the column top: a layered column
-      // meets a notch floor far below its own cap.
+      // The span covering the met band, not the column top; surfaceY is that
+      // column's cap, and the hit stays on the pointer ray.
       hitSpan = spanAt(mirror.map, i, j, covering);
-      // hitX/hitY/hitZ stay on the pointer ray: the crosshair rides them.
       hit = {
         ...hit,
         spanIndex: covering,
@@ -121,13 +120,17 @@ export function terrainHitInCell(
         y: j,
         spanIndex: count - 1,
       };
+      // Re-homed to a neighbour the ray never entered: a tread there sits on
+      // that column's cap, so the hit moves with it.
       hitSpan = spanAt(mirror.map, found.x, found.y, found.spanIndex);
+      const ownerY = drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE;
       hit = {
         ...hit,
         x: found.x,
         y: found.y,
         spanIndex: found.spanIndex,
-        surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
+        surfaceY: ownerY,
+        ...(hit.face === 'tread' ? { hitY: ownerY } : {}),
       };
     } else {
       return null;
