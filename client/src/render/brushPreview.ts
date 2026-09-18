@@ -12,6 +12,7 @@ import type { DenialCue } from './denialCue.ts';
 import { BRUSH_RADII } from '../state/hudState.ts';
 import { brushFootprint, type BrushFootprint } from './brush/brushGeometry.ts';
 import { createConformedGeometry, type BrushGround } from './brush/conform.ts';
+import { drawnBandCapY } from '../terrain/capEmission.ts';
 import { createBrushStage, type CursorSurface } from './brush/brushStage.ts';
 import type { SculptDir } from './brush/footprintMark.ts';
 import { OUTLINE_COLOR_CAP, OUTLINE_COLOR_RISER, OUTLINE_LIFT_WORLD_UNITS } from './brush/style.ts';
@@ -133,6 +134,9 @@ export function createBrushPreview(
         hem.position.copy(line.position);
         cellGrid.position.copy(line.position);
         const selected = footprints.get(shownKey)!;
+        // The lit band is the surface being edited: pin the footprint to its
+        // cap so the ring paints that surface, never the ground above it.
+        const capY = hover.band == null ? null : drawnBandCapY(hover.band);
         conformed.syncTo(
           selected.footprint,
           selected.id,
@@ -140,6 +144,7 @@ export function createBrushPreview(
           hover.y,
           hover.surfaceY,
           ground,
+          capY,
         );
       };
 

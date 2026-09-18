@@ -117,6 +117,8 @@ export function createBrushStage(
     transparent: true,
     opacity: HEM_OPACITY,
     side: DoubleSide,
+    // The footprint paints over the stroke, never under it.
+    depthTest: false,
     depthWrite: false,
     clippingPlanes: [...edgeClip.planes],
   });

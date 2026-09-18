@@ -1,6 +1,7 @@
 # Brush preview: conform the footprint to the drawn ground
 
-Status: Commit 1 landed — ready for the owner's visual check. Commit 2 not started.
+Status: Commit 1 landed plus a band-cap fix (2026-09-18) — ready for review.
+Commit 2 not started (see section 6: headroom math needs a second look).
 Written 2026-09-17, updated 2026-09-18.
 
 ## 1. What we are changing and why
@@ -70,6 +71,12 @@ Two consequences to keep in mind:
 Fallback: if every cell under a point returns `null` (chunk not drawn yet), use
 `hover.surfaceY`. With a sampler that always returns `null`, the whole thing
 degenerates to exactly today's flat ring — that is what the tests will use.
+
+Band cap (added 2026-09-18, owner direction): when the hover carries a
+selected band (`hover.band`, the lit/held band — e.g. mid-carve), every vertex
+Y is pinned at or below that band's cap (`drawnBandCapY`), fallback included.
+The footprint paints the surface being edited, never the ground above it.
+With no selected band the highest-cell rule above stands on its own.
 
 ## 4. Commit 1 — conform the ring, grid and hem
 
@@ -418,6 +425,11 @@ Verification: `pnpm typecheck && pnpm test` — the existing tests use
 means this commit is **not** covered by tests; say so plainly when you hand
 back, and flag it for the owner's visual check.
 
+Reviewer note (2026-09-18): the 2x ring headroom from section 4.3 does not
+cover the worst case — if every segment steps, the ring holds
+`3 * ringCount - 2` vertices and the hem `6 * (3 * ringCount - 3)`. Either
+recheck the bound or grow the capacities before writing this commit.
+
 ## 7. Rejected alternatives (do not "improve" the plan into these)
 
 - **Shader-side conform** — sample a drawn-ground texture in a vertex shader.
@@ -435,6 +447,9 @@ back, and flag it for the owner's visual check.
 - `depthTest: false` on the ring and grid (`brushStage.ts:88`) means the
   footprint still draws through a hill that occludes part of it. Arguably right
   for a cursor, but it slightly undercuts the on-surface illusion. Leave as is.
+- 2026-09-18, superseded by owner direction: the hem is now also
+  `depthTest: false`, so the whole footprint paints over the stroke and is
+  never stopped by anything rendering above. Ring/grid rule above still holds.
 - `HEM_OPACITY` may want raising now that the hem is small. Leave as is.
 - Whether to keep Commit 2's staircase or settle for Commit 1's slants.
 
