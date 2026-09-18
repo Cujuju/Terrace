@@ -55,9 +55,11 @@ import {
   creaseColorHex,
   creaseLook,
   layerEdgeStyle,
+  lipHighlight,
   setCreaseColor,
   setCreaseOpacity,
   setLayerEdgeStyle,
+  setLipHighlight,
   type LayerEdgeStyle,
 } from '../state/layerEdgePrefs.ts';
 import {
@@ -333,6 +335,18 @@ export function ControlsPanel(): JSX.Element {
             {(style) => <option value={style}>{LAYER_EDGE_STYLE_LABEL[style]}</option>}
           </For>
         </select>
+      </div>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Lip line</span>
+        <input
+          type="checkbox"
+          class="controls-check"
+          aria-label="Draw the lip line over the highlighted riser"
+          title="Lip line: a bright line along the top edge of the highlighted riser. The riser face itself always shows."
+          checked={lipHighlight()}
+          onChange={(e) => setLipHighlight(e.currentTarget.checked)}
+        />
       </div>
 
       <Show when={layerEdgeStyle() === 'crease'}>

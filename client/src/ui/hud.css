@@ -726,6 +726,13 @@ body {
   font-size: 11px;
 }
 
+.controls-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--hud-accent);
+}
+
 .controls-color {
   width: 44px;
   height: 22px;

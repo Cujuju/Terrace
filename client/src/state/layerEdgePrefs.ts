@@ -20,6 +20,22 @@ export { layerEdgeStyle };
 
 export const setLayerEdgeStyle = setLayerEdgeStyleSignal;
 
+const LIP_HIGHLIGHT_STORAGE_KEY = 'terrace.lipHighlight.v1';
+
+const LIP_HIGHLIGHT_CHOICES = ['on', 'off'] as const;
+
+const [lipHighlightChoice, setLipHighlightChoice] = persistedChoice<'on' | 'off'>(
+  LIP_HIGHLIGHT_STORAGE_KEY,
+  LIP_HIGHLIGHT_CHOICES,
+  'on',
+);
+
+export const lipHighlight = (): boolean => lipHighlightChoice() === 'on';
+
+export const setLipHighlight = (visible: boolean): void => {
+  setLipHighlightChoice(visible ? 'on' : 'off');
+};
+
 const CREASE_COLOR_STORAGE_KEY = 'terrace.creaseColor.v1';
 
 const CREASE_OPACITY_STORAGE_KEY = 'terrace.creaseOpacity.v1';
@@ -93,6 +109,8 @@ export function setCreaseOpacity(opacity: number): void {
 export function resetLayerEdgePrefs(): void {
   setLayerEdgeStyleSignal(DEFAULT_LAYER_EDGE_STYLE);
   clearPersistedChoice(LAYER_EDGE_STORAGE_KEY);
+  setLipHighlightChoice('on');
+  clearPersistedChoice(LIP_HIGHLIGHT_STORAGE_KEY);
   setCreaseLookSignal(DEFAULT_CREASE_LOOK);
   clearPersistedChoice(CREASE_COLOR_STORAGE_KEY);
   clearPersistedChoice(CREASE_OPACITY_STORAGE_KEY);
