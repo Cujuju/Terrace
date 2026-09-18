@@ -49,3 +49,66 @@ clicks, about 12 s on the hold-repeat ramp, against ~24 before). The per-chunk
 triangle ceiling quadrupled to 14.5 MB at the current 111 bytes per triangle,
 which promotes vertex-format compression from an optimisation to load-bearing
 work.
+
+## The shore isoline is degenerate because band 0 sits on its own threshold (2026-09-18)
+
+Investigated for #487. **Nothing changed** — recorded so it is not re-diagnosed.
+
+**Symptom.** The sea's wet/dry edge renders as a cell-aligned staircase while
+every other band in the same frame is a smooth contour.
+
+**Not the water.** The per-pixel shore mask (e6131752) is faithful: hiding the
+sea plane leaves the land cap's band-0 boundary pixel-identical, and over a
+continuous field the same shader draws a true curve.
+`client/test/shoreField.test.ts` pins the registration.
+
+**Cause.** The shore threshold is raw height 1, which is also
+`bandLevelHeight(0)`, `bandFloorHeight(0)`, and one unit off `SEA_LEVEL`. At a
+coast the threshold therefore coincides with a sample instead of falling between
+two, and marching squares puts every shore vertex on the cell lattice.
+`drawnCrossingFraction` at `drawnLevelThreshold(0)`:
+
+| coast edge | wet → dry | crossing |
+| --- | --- | --- |
+| sculpted shelf → shore | −16 → 1 | 0.9990 |
+| genesis sea → land | 0 → 16 | 0.0625 |
+| sea → shore | 0 → 1 | 0.9990 |
+| shelf → land | −16 → 16 | 0.5313 |
+
+Only the last is healthy. Every other band gets ~0.5 because its threshold
+`16k` is the midpoint of levels `16(k−1)` and `16k`. Band 0 cannot: it spans 7
+height units against band −1's 25, so centring the threshold would need level 18,
+outside the band.
+
+**Why raw 1.** `h = SEA_LEVEL` must never draw dry. With integer heights, 1 is
+the lowest threshold that holds that, and `DRAWN_SHORE_HEIGHT` is it.
+
+**The regular scheme, if it is ever taken.** Band `k` = `[16k+1, 16k+17)`,
+`bandLevelHeight(k) = 16k+9`, `drawnLevelThreshold(k) = 16k+9`. Every band 16
+tall, every level its band's midpoint, the shore threshold mid-gap like the
+rest. All four band-0 special cases (`bands.ts` ×4, `drawnGround.ts:182`,
+`mesherWgsl.ts:137`) disappear. Adjacent levels stay 16 apart, so `MAX_STEP`,
+traversal, ramps and mana costs are untouched; `level(−1) = −7` and
+`level(0) = 9` keep the `h <= SEA_LEVEL` wetness tests (`heightmap.ts:95`,
+`traversal.ts:28`, `rivers.ts:362`, cyclone, hydro, genesis) on the same side.
+
+**What it costs.**
+- Band membership moves for raw heights in `[16k+1, 16k+9)`: those drop one
+  band, so existing worlds re-terrace unless migrated by snapping each cell to
+  its old band's new level. That migration is lossy — sub-band relief left by
+  erosion is discarded.
+- Coastal contour vertices roughly quadruple. Measured on a 128² synthetic
+  coast, 33 loops, after `simplifyLoop`: sculpted coast 293 → 1091, which is
+  exactly an ordinary band's cost (band 2 = 1091). Today's shore is cheap only
+  because a 0.999 crossing lands vertices on lattice corners and long collinear
+  runs simplify away. Genesis coastline already pays 991 for a blocky look.
+- Scope: 173 of 1024 chunks (16.9%) are coastal in Frostwick Hollows; only their
+  band-0 level pays.
+
+**Rejected:** lifting `bandLevelHeight(0)` alone — band 0's best level, 8,
+reaches 0.708 against a −16 shelf but 0.125 against a sea-level cell, worse than
+today, and does nothing for generated coastline. Moving `bandLevelHeight(−1)`
+to −2 as well centres the shore but skews band −1's own contour to 0.267.
+Forcing the band-0 `crossingOverride` to 0.5 — the sea mask reads the raw
+bilinear field, not `drawnCrossingFraction`, so land and water would part by
+half a cell.
