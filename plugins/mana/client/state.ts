@@ -1,6 +1,5 @@
 import { createSignal } from 'solid-js';
 import {
-  CARVE_DEFAULT_DEPTH_BANDS,
   TOOLS_WITHOUT_EDGE_PROFILE,
   sculptProfileOf,
   strokeSweep,
@@ -22,6 +21,7 @@ import {
   brushProfile,
   brushRadius,
   brushTool,
+  carveDepthBands,
   effectiveSculptMode,
   hoverPick,
   sculptDirection,
@@ -211,7 +211,7 @@ export function currentBrushQuote(): BrushQuote {
     brushRadius(),
     sculptProfileOf(tool, brushProfile()),
     tool,
-    CARVE_DEFAULT_DEPTH_BANDS,
+    carveDepthBands(),
   );
   return { cost: nominal + unlock, estimated: true };
 }

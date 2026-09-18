@@ -10,12 +10,14 @@ import {
   brushProfile,
   brushRadius,
   brushTool,
+  carveDepthBands,
   denialHint,
   effectiveSculptMode,
   sculptMode,
   setBrushProfile,
   setBrushRadius,
   setBrushTool,
+  setCarveDepthBands,
   setSculptMode,
   setSmoothLambda,
   smoothLambda,
@@ -38,6 +40,8 @@ import {
 } from './BrushIcons.tsx';
 import { TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
 import {
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
   type SculptProfile,
@@ -115,6 +119,16 @@ const HINT_MODIFIER: Record<string, string> = {
 };
 
 const SMOOTH_LAMBDA_DETENTS: readonly number[] = [25, 50, 75, 100];
+
+/** One ring per slab the cut can open: the depths are counted, not blended. */
+const CARVE_DEPTH_DETENTS: readonly number[] = (() => {
+  const stops: number[] = [];
+  for (let d = CARVE_MIN_DEPTH_BANDS; d <= CARVE_MAX_DEPTH_BANDS; d++) stops.push(d);
+  return stops;
+})();
+
+/** Every ring marks one slab, so none of them outgrows its neighbours. */
+const CARVE_DEPTH_DETENT_ANCHOR = 0;
 
 /** The chord that overrides the mode — none, when no chord names the other way. */
 function overrideChord(mode: SculptMode, bindings: ControlBindings): string | null {
@@ -290,6 +304,49 @@ export function BrushModeler(): JSX.Element {
             <span class="brush-slider__value">{smoothLambda()}%</span>
           </div>
           <span class="brush-slider__end">{SMOOTH_LAMBDA_MAX}%</span>
+        </div>
+      </Show>
+      <Show when={brushTool() === 'carve'}>
+        <div class="hud-row brush-slider">
+          <span class="brush-slider__end">{CARVE_MIN_DEPTH_BANDS}</span>
+          <div
+            class="brush-slider__track"
+            style={{
+              '--brush-rung': String(carveDepthBands() - CARVE_MIN_DEPTH_BANDS),
+              '--brush-slider-rungs': String(CARVE_MAX_DEPTH_BANDS - CARVE_MIN_DEPTH_BANDS),
+            }}
+          >
+            <span class="brush-slider__rail" />
+            <span class="brush-slider__fill" />
+            <For each={CARVE_DEPTH_DETENTS}>
+              {(detent) => (
+                <span
+                  class="brush-slider__detent"
+                  classList={{ on: carveDepthBands() >= detent }}
+                  style={{
+                    '--brush-detent': String(detent - CARVE_MIN_DEPTH_BANDS),
+                    '--brush-anchor': String(CARVE_DEPTH_DETENT_ANCHOR),
+                  }}
+                />
+              )}
+            </For>
+            <input
+              type="range"
+              class="brush-slider__input"
+              min={CARVE_MIN_DEPTH_BANDS}
+              max={CARVE_MAX_DEPTH_BANDS}
+              step="1"
+              value={carveDepthBands()}
+              aria-label="Carve depth"
+              aria-valuetext={`${carveDepthBands()} bands`}
+              title="Carve depth: how many terraces one cut opens, upward from the grasped band"
+              onInput={(event) =>
+                setCarveDepthBands(event.currentTarget.valueAsNumber)
+              }
+            />
+            <span class="brush-slider__value">{carveDepthBands()}</span>
+          </div>
+          <span class="brush-slider__end">{CARVE_MAX_DEPTH_BANDS}</span>
         </div>
       </Show>
       <Show when={denialHint()}>

@@ -3,6 +3,7 @@ import type { SculptTool } from '@terrace/shared';
 import {
   brushProfile,
   brushRadius,
+  carveDepthBands,
   sculptDirection,
   smoothLambda,
 } from '../../state/hudState.ts';
@@ -99,6 +100,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       ? {}
       : { profile: brushProfile() }),
     ...(s.strokeTool === 'smooth' ? { smoothLambda: smoothLambda() } : {}),
+    ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),
     seq: s.nextSeq++,
   });
