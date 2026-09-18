@@ -191,3 +191,25 @@ inside the budget, but noisier terrain is the thing to watch.
 **Verified** at cell 223,359: the water edge spans 55 distinct screen rows across
 233 columns where it was one row at every column, and tracks the rendered land edge
 to within a pixel. shared 533 passed, client 789 passed.
+
+## The shore keeps the sea's depth, not a flag (2026-09-18)
+
+Owner, on the first cut: "Why does the shoreline look rounded now?"
+
+The first attempt gave band 0 a two-valued field. That removes the degeneracy but
+also removes every scrap of sub-cell information, so thresholding it at the midpoint
+yields the smooth blob isosurface: every corner rounded by half a cell, uniformly,
+and a coastline of inflated lobes.
+
+**Fix.** Only the dry side is flattened. `shoreContourSample` maps dry land to
+`SHORE_CONTOUR_DRY_HEIGHT` — as far above the shore threshold as the canonical shelf
+lies below it, so `bandLevelHeight(-1)` gives a crossing of exactly a half — and
+leaves wet cells at their real depth. The crossing then tracks the seabed:
+
+| wet neighbour | 0 | −8 | −16 | −24 | −40 | −67 | −160 | −457 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| crossing | 0.056 | 0.346 | 0.500 | 0.595 | 0.707 | 0.800 | 0.904 | 0.964 |
+
+A sheer drop puts the waterline hard against the cell edge, which is what a cliff
+looks like; a shelving bottom carries it out into the cell. The shape comes from the
+terrain rather than from rounding.
