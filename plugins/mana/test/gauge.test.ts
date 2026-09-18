@@ -189,7 +189,7 @@ describe('current-brush cost', () => {
 
 describe('brush price readout', () => {
   it('prints the price as a per-use debit', () => {
-    expect(formatSculptCost(MANA_COST_PER_MIN_RADIUS_SCULPT)).toBe('−6/use');
+    expect(formatSculptCost(MANA_COST_PER_MIN_RADIUS_SCULPT)).toBe('−14/use');
     expect(formatSculptCost(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT)).toBe('−281/use');
   });
 
@@ -208,7 +208,7 @@ describe('numeric rate readout', () => {
   });
 
   it('never rounds a world that IS refilling down to +0/s', () => {
-    expect(formatRegenRate(MIN_MANA_REGEN_PER_SECOND)).toBe('+0.1/s');
+    expect(formatRegenRate(MIN_MANA_REGEN_PER_SECOND)).toBe('+0.2/s');
     expect(formatRegenRate(0.05)).toBe('+0.1/s');
   });
 

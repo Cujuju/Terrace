@@ -1,4 +1,8 @@
-import { SOFT_APRON_MAX_BANDS, SOFT_APRON_TREAD_CELLS } from '../constants.ts';
+import {
+  SOFT_APRON_MAX_BANDS,
+  SOFT_APRON_MAX_REACH_CELLS,
+  SOFT_APRON_REACH_PER_RADIUS,
+} from '../constants.ts';
 import { bandLevelHeight, drawnBandOfSample } from '../bands.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
 import {
@@ -129,13 +133,17 @@ export function sculptSweepRadius(
 }
 
 export function softApronReachCells(radius: number): number {
-  const capped = SOFT_APRON_MAX_BANDS * SOFT_APRON_TREAD_CELLS;
-  const reach = 2 * radius;
-  return reach < capped ? reach : capped;
+  const reach = SOFT_APRON_REACH_PER_RADIUS * radius;
+  return reach < SOFT_APRON_MAX_REACH_CELLS ? reach : SOFT_APRON_MAX_REACH_CELLS;
 }
 
+/** Math.clz32 counts a 32-bit word's leading zeros, so this reads floor(log2 d) + 1. */
+const INT32_BITS = 32;
+
+/** The sheet drops a band per cell at the pinch, then doubles its tread: 1, 2, 4, 8 cells. */
 export function softApronBandDrop(distPastCore: number): number {
-  const band = Math.floor((distPastCore + SOFT_APRON_TREAD_CELLS - 1) / SOFT_APRON_TREAD_CELLS);
+  if (distPastCore < 1) return 0;
+  const band = INT32_BITS - Math.clz32(distPastCore);
   return band < SOFT_APRON_MAX_BANDS ? band : SOFT_APRON_MAX_BANDS;
 }
 

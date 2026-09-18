@@ -950,7 +950,7 @@ describe('the price of a sculpt', () => {
     expect(MANA_PER_BAND_CELL).toBe(
       MANA_PER_BAND_WORLD_UNIT_SQUARED / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS),
     );
-    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(6);
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(14);
 
     expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(281);
     expect(MANA_CAPACITY).toBe(5000);
@@ -958,14 +958,13 @@ describe('the price of a sculpt', () => {
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(
       Math.floor(MANA_CAPACITY / MANA_COST_PER_MAX_RADIUS_HARD_SCULPT),
     );
-    expect(POINT_STAMPS_PER_POOL).toBe(833);
+    expect(POINT_STAMPS_PER_POOL).toBe(357);
 
     const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp', CARVE_DEFAULT_DEPTH_BANDS);
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
-    // Soft moves the graduated falloff volume, roughly 40% off hard: it no
-    // longer pays the flat-fill price.
-    expect(softPlateau).toBe(124);
-    expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+    // Radius names the core under both profiles, so soft levels the same
+    // disc and pays the same fill. Its apron is thrown in.
+    expect(softPlateau).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
     expect(MIN_MANA_REGEN_PER_SECOND).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S);
     expect(MAX_MANA_REGEN_PER_SECOND).toBe(MANA_CAPACITY);
