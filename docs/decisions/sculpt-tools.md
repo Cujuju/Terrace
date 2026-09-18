@@ -15,7 +15,7 @@ Relaxation: `relaxation.md`. Spans and carve: `overhangs.md`. Picking:
 
 ## Selection
 
-- A stroke acts on the band under the aim, `bandOfPick`. Same rule for every
+- A stroke acts on the band the pick names (`picking.md`). Same rule for every
   tool. Lip proximity never vetoes it; it only gates the overlay highlight.
 - A drag press grabs the clicked band — no seed layer first.
 
