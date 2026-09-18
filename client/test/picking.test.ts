@@ -11,6 +11,7 @@ import {
   type JoinSnapshotMessage,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
+import { drawnBandAtY } from '../src/terrain/capEmission.ts';
 import {
   pickTerrainCellByRay,
   pickTerrainInColumn,
@@ -144,6 +145,7 @@ describe('pickTerrainCellByRay', () => {
       y: 11,
       surfaceY: -BAND_HEIGHT * HEIGHT_WORLD_SCALE,
       face: 'tread',
+      band: -1,
       hitY: -BAND_HEIGHT * HEIGHT_WORLD_SCALE,
       hitX: 7 * CELL_WORLD_SIZE,
       hitZ: 11 * CELL_WORLD_SIZE,
@@ -171,6 +173,8 @@ describe('pickTerrainCellByRay', () => {
           y,
           surfaceY: drawnBandOfSample(heightOf(x, y)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
           face: 'tread',
+          // The pick names the band the renderer drew.
+          band: drawnBandOfSample(heightOf(x, y)),
           hitY: drawnBandOfSample(heightOf(x, y)) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
           hitX: x * CELL_WORLD_SIZE,
           hitZ: y * CELL_WORLD_SIZE,
@@ -194,6 +198,7 @@ describe('pickTerrainCellByRay', () => {
       y: 20,
       surfaceY: TOP * HEIGHT_WORLD_SCALE,
       face: 'riser',
+      band: drawnBandAtY(rayY),
       hitY: rayY,
       hitX: (32 - 0.5) * CELL_WORLD_SIZE,
       hitZ: 20 * CELL_WORLD_SIZE,
@@ -405,9 +410,8 @@ describe('pickTerrainInColumn', () => {
       { floorBand: BEDROCK_BAND, ceiling: FLOOR_TOP },
       { floorBand: ROOF_BAND, ceiling: ROOF_TOP },
     ]);
-    // F5: a horizontal ray through the gap passes OVER the floor, so the
-    // pinned column correctly misses (null). Descend through the gap onto the
-    // floor to prove the floor piece is still pickable without the fallback.
+    // F5: a horizontal ray through the gap passes over the floor, so the pinned
+    // column misses. Descend through the gap to prove the floor is still pickable.
     const gapY = ((FLOOR_TOP + ROOF_BASE) / 2) * HEIGHT_WORLD_SCALE;
     const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE };
     const level = { x: 1, y: 0, z: 0 };
@@ -591,12 +595,8 @@ describe('lane D drawn-band probes (F1-F8)', () => {
   });
 
   it('B0 shore riser: skirt hits resolve to the drawn band of the span cap', () => {
-    // The drawn mesh flattens sub-band shore relief (a tread at 5 draws its
-    // cap at y=0), so the visible waterline step is the skirt below the cap
-    // and the march can only strike it at hitY <= 0. Raw ceil names 0 there
-    // and the old shore rule mapped that to water (-1) — but the span draws
-    // band 0 and the only nearby lip is the drawn band-0 waterline loop, so
-    // -1 starves lipNear and the drag grab silently fails.
+    // Shore relief draws flat, so the march strikes the skirt at hitY <= 0. The
+    // span draws band 0, so the pick names 0 there, not water.
     const mirror = world((x) => (x >= 32 ? 5 : 0));
     const skirtHit = {
       x: 32,
@@ -604,18 +604,19 @@ describe('lane D drawn-band probes (F1-F8)', () => {
       surfaceY: 0,
       spanIndex: 0,
       face: 'riser' as const,
+      band: drawnBandAtY(-5 * HEIGHT_WORLD_SCALE),
       hitY: -5 * HEIGHT_WORLD_SCALE,
       hitX: 32 * CELL_WORLD_SIZE,
       hitZ: 20 * CELL_WORLD_SIZE,
     };
     expect(resolvePick(mirror.map, skirtHit)?.band).toBe(0);
     // Control: a skirt hit on a span that itself draws water still maps to -1.
-    // (Flat -20 draws band -1 with its cap at -16; the hit sits inside its wall.)
     const sea = world(() => -20);
     const seaHit = {
       ...skirtHit,
       x: 4,
       y: 4,
+      band: drawnBandAtY(-18 * HEIGHT_WORLD_SCALE),
       hitY: -18 * HEIGHT_WORLD_SCALE,
       hitX: 4 * CELL_WORLD_SIZE,
       hitZ: 4 * CELL_WORLD_SIZE,

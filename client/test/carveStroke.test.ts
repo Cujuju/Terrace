@@ -36,6 +36,7 @@ import {
 } from '../src/terrain/picking.ts';
 import { CELL_CENTRE_OFFSET } from '../src/terrain/pick/rayMarch.ts';
 import { carveBandOfPick } from '../src/terrain/pickBand.ts';
+import { drawnBandAtY } from '../src/terrain/capEmission.ts';
 import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
   brushRadius,
@@ -167,8 +168,9 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     // The ray walks (11, 11); the pick names the diagonal owner.
     expect({ x: aim!.x, y: aim!.y }).toEqual({ x: 12, y: 12 });
 
+    // The band is the one at the hit point; the neighbour names the cell, not the band.
     const band = carveBandOfPick(mirror.map, aim!);
-    expect(band).toBe(PLATEAU_BAND);
+    expect(band).toBe(drawnBandAtY(aim!.hitY));
     expect(carveReachCell(mirror, origin, down, band!)).toEqual({ x: 12, y: 12 });
   });
 
@@ -596,6 +598,7 @@ describe('a carve aimed at a cave ceiling', () => {
       y: ROW,
       spanIndex: 1,
       face: 'underside',
+      band: CAVE_ROOF_BAND,
       hitY: worldY(CAVE_ROOF_BASE),
       surfaceY: worldY(CAVE_ROOF_TOP),
       hitX: worldX(inside),

@@ -32,6 +32,8 @@ export interface TerrainRayPick {
   readonly hitY: number;
   readonly hitX: number;
   readonly hitZ: number;
+  /** The drawn band this pick names, decided once where the hit is decided. */
+  readonly band: number;
 }
 
 export type CellVisitor = (i: number, j: number, tEnter: number, tExit: number) => boolean;

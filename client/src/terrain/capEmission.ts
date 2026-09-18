@@ -46,9 +46,8 @@ import { bridgeHole, earClip, groupLoops, type CapPolygon } from './triangulatio
 
 export const SKIRT_PICK_INSET = 1 / 1024;
 
-/** The height whose palette entry colours band k; band 0 is dry land from the shoreline up.
- * Canonical level (not the lowest-drawn floor): palette entries are authored per
- * raw level, so this intentionally uses bandLevelHeight. */
+/** The height whose palette entry colours band k. Canonical level, not the
+ * lowest-drawn floor: palette entries are authored per raw level. */
 export function levelPaletteHeight(band: number): number {
   return bandLevelHeight(band);
 }
@@ -328,6 +327,15 @@ export function drawnBandCapY(band: number): number {
   return band * BAND_WORLD_HEIGHT;
 }
 
+/**
+ * Inverse of drawnBandCapY: the band whose slab ((b-1) cap, b cap] holds this
+ * world Y. Drawn caps are evenly spaced, so no shore case applies here.
+ */
+export function drawnBandAtY(worldY: number): number {
+  // Normalize -0: band ids are compared exactly.
+  return Math.ceil(worldY / BAND_WORLD_HEIGHT) + 0;
+}
+
 export function blockyCellCapY(height: number): number {
   return drawnBandCapY(drawnBandOfSample(height));
 }
@@ -596,10 +604,8 @@ export function planChunkCaps(
       }
     }
     ceilingsPerLevel.push(
-      // The GPU emits a ceiling for every layered level (emitSquare); the old
-      // `threshold === sampleBand * BAND_HEIGHT` test is never true for band 0
-      // (its drawn threshold is the shore threshold), so band-0 ceilings
-      // silently vanished. Restore parity: layered chunks ceiling every level.
+      // The old threshold test never matched band 0, whose drawn threshold is the
+      // shore threshold, so its ceilings vanished. Layered chunks ceiling every level.
       layered
         ? marchCeiling(mirror, originX, originZ, level.sampleBand)
         : [],

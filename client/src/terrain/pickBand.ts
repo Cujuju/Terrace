@@ -39,25 +39,12 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   if (pick.hitY < drawnBottomY || pick.hitY > capY) return null;
   void undersideY;
 
+  // The pick named its band where the hit was decided; this only clamps it to
+  // the span it landed on, which the caller may not have checked.
   const lowestDrawn = span.floorBand;
-
-  if (pick.face === 'riser') {
-    const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
-    if (struck < lowestDrawn) return { face: 'riser', band: lowestDrawn };
-    // Never name above the struck span's own cap: raw ceil overshoots at the
-    // shore, and the lip overlay is keyed by drawn band, so the cap's band
-    // is grabbable.
-    const capDrawn = spanCapBand(span);
-    const band = capDrawn < struck ? capDrawn : struck;
-    // Normalize -0 (ceil of a negative fraction): band ids are compared exactly.
-    return { face: 'riser', band: band + 0 };
-  }
-  // Drawn band at the hit point: a tread's solid is below, so the cap the ray
-  // met; an underside's is above, so its floor.
-  if (pick.face === 'tread') {
-    return { face: 'tread', band: drawnBandOfSample(pick.hitY / HEIGHT_WORLD_SCALE) };
-  }
-  return { face: 'underside', band: lowestDrawn };
+  if (pick.band < lowestDrawn) return { face: pick.face, band: lowestDrawn };
+  const capDrawn = spanCapBand(span);
+  return { face: pick.face, band: capDrawn < pick.band ? capDrawn : pick.band };
 }
 
 export function bandOfPick(map: Heightmap, pick: TerrainRayPick): number | null {
