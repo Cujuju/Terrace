@@ -159,8 +159,10 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
   if (cell === null) return null;
   return world.drawnGroundYAt(cell.x, cell.y);
 });
-bindCameraControls(canvas, viewport.controls);
-const cameraGesture = createCameraGestureLock(canvas, viewport.controls);
+const cameraBindings = bindCameraControls(canvas, viewport.controls);
+const cameraGesture = createCameraGestureLock(canvas, viewport.controls, () =>
+  cameraBindings.pointerLocked(),
+);
 
 // `?plugins=off` boots a core-only client (terrain, water, sky) for engine debugging.
 const PLUGINS_QUERY_FLAG = 'plugins';

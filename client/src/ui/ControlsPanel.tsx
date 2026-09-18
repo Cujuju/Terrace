@@ -6,9 +6,11 @@ import {
   setBinding,
   setTwoFingerGesture,
   setWheelBehaviour,
+  setPointerLock,
   shadowedActions,
   twoFingerGesture,
   wheelBehaviour,
+  pointerLock,
   type BindingModifier,
   type CameraAction,
   type ControlAction,
@@ -267,6 +269,18 @@ export function ControlsPanel(): JSX.Element {
           <option value="pan">Pan</option>
           <option value="zoom">Zoom</option>
         </select>
+      </div>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Pointer lock</span>
+        <input
+          type="checkbox"
+          class="controls-check"
+          aria-label="Lock the pointer during camera drags"
+          title="Pointer lock: the cursor stays where a pan or rotate begins instead of travelling with the drag. Off by default."
+          checked={pointerLock()}
+          onChange={(e) => setPointerLock(e.currentTarget.checked)}
+        />
       </div>
 
       {

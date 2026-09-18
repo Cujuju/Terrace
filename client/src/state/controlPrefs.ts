@@ -123,6 +123,7 @@ export function resetBindings(): void {
   setControlBindingsSignal(DEFAULT_BINDINGS);
   setTwoFingerGestureSignal(DEFAULT_TWO_FINGER_GESTURE);
   setWheelBehaviourSignal(DEFAULT_WHEEL_BEHAVIOUR);
+  setPointerLockSignal(DEFAULT_POINTER_LOCK);
   resetVoidPrefs();
   resetFrontierMistPrefs();
   resetLayerEdgePrefs();
@@ -133,6 +134,7 @@ export function resetBindings(): void {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);
     localStorage.removeItem(WHEEL_STORAGE_KEY);
+    localStorage.removeItem(POINTER_LOCK_STORAGE_KEY);
   } catch {
   }
 }
@@ -196,6 +198,34 @@ export function setWheelBehaviour(behaviour: WheelBehaviour): void {
   setWheelBehaviourSignal(behaviour);
   try {
     localStorage.setItem(WHEEL_STORAGE_KEY, JSON.stringify({ wheel: behaviour }));
+  } catch {
+  }
+}
+
+export const DEFAULT_POINTER_LOCK = false;
+
+const POINTER_LOCK_STORAGE_KEY = 'terrace.pointerLock.v1';
+
+function loadPointerLock(): boolean {
+  try {
+    const raw = localStorage.getItem(POINTER_LOCK_STORAGE_KEY);
+    if (raw === null) return DEFAULT_POINTER_LOCK;
+    const parsed: unknown = JSON.parse(raw);
+    const v = (parsed as { pointerLock?: unknown } | null)?.pointerLock;
+    return v === true;
+  } catch {
+    return DEFAULT_POINTER_LOCK;
+  }
+}
+
+const [pointerLock, setPointerLockSignal] = createSignal<boolean>(loadPointerLock());
+
+export { pointerLock };
+
+export function setPointerLock(enabled: boolean): void {
+  setPointerLockSignal(enabled);
+  try {
+    localStorage.setItem(POINTER_LOCK_STORAGE_KEY, JSON.stringify({ pointerLock: enabled }));
   } catch {
   }
 }

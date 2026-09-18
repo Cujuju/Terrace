@@ -1,98 +1,133 @@
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { resolvePress, resolveSculptPress, type ModifierState } from '../state/controlPrefs.ts';
+import {
+  pointerLock as pointerLockEnabled,
+  resolvePress,
+  type ModifierState,
+} from '../state/controlPrefs.ts';
 
 /**
- * Pointer lock for camera gestures: the cursor stays put while movement
- * deltas drive the camera, so a pan never strands it off-window.
- * Every failure falls back to today's behavior.
+ * Pointer lock for camera gestures: the cursor stays put while deltas drive
+ * the camera. Off by default in Settings; every failure falls back to
+ * cursor travel.
  */
 export interface CameraPointerLock {
   dispose(): void;
+  locked(): boolean;
 }
 
-/** Camera verb for a press, or null when sculpt (or nothing) owns it. */
+/** Camera verb for a press, or null when it must not lock. */
 export function cameraPressVerb(button: number, mods: ModifierState): 'orbit' | 'pan' | null {
   const action = resolvePress(button, mods);
   if (action !== 'orbit' && action !== 'pan') return null;
-  if (resolveSculptPress(button, mods) !== null) return null;
   return action;
 }
-/** True while this module holds the pointer for a camera gesture. */
-let drivingPointerId: number | null = null;
 
-export function pointerLockedForCamera(): boolean {
-  return (
-    drivingPointerId !== null &&
-    typeof document !== 'undefined' &&
-    document.pointerLockElement instanceof HTMLCanvasElement
-  );
-}
-
-const tryLock = (canvas: HTMLCanvasElement): void => {
-  try {
-    const locked = canvas.requestPointerLock({
-      unadjustedMovement: true,
-    }) as unknown as Promise<void> | undefined;
-    if (locked && typeof locked.catch === 'function') {
-      locked.catch(() => {
-        try {
-          canvas.requestPointerLock();
-        } catch {
-          drivingPointerId = null;
-        }
-      });
-    }
-  } catch {
-    try {
-      canvas.requestPointerLock();
-    } catch {
-      drivingPointerId = null;
-    }
-  }
-};
-
-const release = (): void => {
-  if (drivingPointerId === null) return;
-  drivingPointerId = null;
-  if (document.pointerLockElement instanceof HTMLCanvasElement) {
-    document.exitPointerLock();
-  }
-};
+/** Quiet window after a lock exit (Esc throttle) before trying again. */
+const RELOCK_QUIET_MS = 1500;
 
 export function createCameraPointerLock(
   canvas: HTMLCanvasElement,
   controls: OrbitControls,
 ): CameraPointerLock {
-  const verbOf = (event: PointerEvent): 'orbit' | 'pan' | null => {
-    if (event.pointerType === 'touch') return null;
-    return cameraPressVerb(event.button, event);
+  let drivingPointerId: number | null = null;
+  let verb: 'orbit' | 'pan' | null = null;
+  let lastExitAt = 0;
+
+  const locked = (): boolean =>
+    drivingPointerId !== null && document.pointerLockElement === canvas;
+
+  const recordExit = (): void => {
+    lastExitAt = Date.now();
   };
 
-  // Mirror OrbitControls pointer math, fed by lock deltas instead of a
-  // travelling cursor. Speeds read live off controls, never constants.
-  const drive = (verb: 'orbit' | 'pan', dx: number, dy: number): void => {
+  const release = (): void => {
+    drivingPointerId = null;
+    verb = null;
+    try {
+      if (document.pointerLockElement === canvas) {
+        recordExit();
+        const done = document.exitPointerLock() as unknown as Promise<void> | undefined;
+        if (done && typeof done.catch === 'function') done.catch(() => {});
+      }
+    } catch {
+      // Already out; the change event (or its absence) settles state.
+    }
+  };
+
+  const requestLock = (): void => {
+    const settled = (grant: Promise<void> | undefined): void => {
+      if (!grant || typeof grant.catch !== 'function') return;
+      grant
+        .then(() => {
+          // A grant that arrives ownerless (blur beat it) must exit at once.
+          if (drivingPointerId === null && document.pointerLockElement === canvas) {
+            release();
+          }
+        })
+        .catch(() => {
+          // Async refusal: stay unlocked; OrbitControls still drives the drag.
+          drivingPointerId = null;
+          verb = null;
+        });
+    };
+    // One attempt per press, inside the gesture handler. No async retry: a
+    // rejected options call must not re-request outside user activation.
+    try {
+      settled(
+        canvas.requestPointerLock({ unadjustedMovement: true }) as unknown as
+          | Promise<void>
+          | undefined,
+      );
+    } catch {
+      try {
+        settled(canvas.requestPointerLock() as unknown as Promise<void> | undefined);
+      } catch {
+        drivingPointerId = null;
+        verb = null;
+      }
+    }
+  };
+
+  // Mirror OrbitControls pointer math, fed by lock deltas. Speeds read live
+  // off controls. Two updates per orbit event versus one upstream; the extra
+  // damping decay is negligible.
+  const drive = (kind: 'orbit' | 'pan', dx: number, dy: number): void => {
     if (!controls.enabled) return;
-    const height = canvas.clientHeight;
-    if (height === 0) return;
-    if (verb === 'orbit') {
+    const el = controls.domElement;
+    if (el === null) return;
+    const height = el.clientHeight;
+    const width = el.clientWidth;
+    if (height === 0 || width === 0) return;
+    if (kind === 'orbit') {
+      if (controls.enableRotate === false) return;
       const factor = (2 * Math.PI) / height;
       controls.rotateLeft(dx * factor * controls.rotateSpeed);
       controls.rotateUp(dy * factor * controls.rotateSpeed);
     } else {
+      if (controls.enablePan === false) return;
       controls.pan(dx * controls.panSpeed, dy * controls.panSpeed);
     }
+    controls.update();
   };
 
-  let verb: 'orbit' | 'pan' | null = null;
-
   const onPointerDown = (event: PointerEvent): void => {
-    if (drivingPointerId !== null) return;
-    const gesture = verbOf(event);
+    if (event.target !== canvas || drivingPointerId !== null) return;
+    if (!pointerLockEnabled()) return;
+    // No cursor to hold for touch or pen; meta would desync the verb below.
+    if (event.pointerType !== 'mouse' || event.metaKey) return;
+    const gesture = cameraPressVerb(event.button, event);
     if (gesture === null || !controls.enabled) return;
+    if (Date.now() - lastExitAt < RELOCK_QUIET_MS) return;
     verb = gesture;
     drivingPointerId = event.pointerId;
-    tryLock(canvas);
-    if (drivingPointerId === null) verb = null;
+    // Defer past dispatch: OrbitControls captures the pointer at the target
+    // phase, and a lock request in flight first makes that capture throw.
+    // Activation survives the hop.
+    const id = event.pointerId;
+    queueMicrotask(() => {
+      if (drivingPointerId !== id) return;
+      requestLock();
+    });
   };
 
   const onPointerMove = (event: PointerEvent): void => {
@@ -104,46 +139,59 @@ export function createCameraPointerLock(
     ) {
       return;
     }
-    drive(verb, event.movementX ?? 0, event.movementY ?? 0);
+    // Deltas missing (older Safari/Firefox): abort to the unlocked fallback.
+    if (event.movementX === undefined || event.movementY === undefined) {
+      release();
+      return;
+    }
+    drive(verb, event.movementX, event.movementY);
   };
 
   const onPointerEnd = (event: PointerEvent): void => {
     if (event.pointerId !== drivingPointerId) return;
-    verb = null;
     release();
   };
 
   const onLockChange = (): void => {
-    // Esc exits with no pointerup: stop driving; the held pointer keeps the
-    // OrbitControls gesture (and its brush freeze) alive unlocked instead.
     if (document.pointerLockElement !== canvas) {
-      verb = null;
+      recordExit();
+      // Esc exits with no pointerup: stop driving; the held pointer keeps
+      // the OrbitControls gesture (and its brush freeze) alive unlocked.
       drivingPointerId = null;
+      verb = null;
     }
   };
 
-  const onBlur = (): void => {
+  const onLockError = (): void => {
+    drivingPointerId = null;
     verb = null;
+  };
+
+  const onBlur = (): void => {
     release();
   };
 
-  canvas.addEventListener('pointerdown', onPointerDown, { capture: true });
+  // Window capture beats the canvas-target listeners, so the lock request
+  // precedes OrbitControls' pointer capture for the same press.
+  window.addEventListener('pointerdown', onPointerDown, { capture: true });
   window.addEventListener('pointermove', onPointerMove, { capture: true });
   window.addEventListener('pointerup', onPointerEnd, { capture: true });
   window.addEventListener('pointercancel', onPointerEnd, { capture: true });
   document.addEventListener('pointerlockchange', onLockChange);
+  document.addEventListener('pointerlockerror', onLockError);
   window.addEventListener('blur', onBlur);
 
   return {
     dispose(): void {
-      canvas.removeEventListener('pointerdown', onPointerDown, { capture: true });
+      window.removeEventListener('pointerdown', onPointerDown, { capture: true });
       window.removeEventListener('pointermove', onPointerMove, { capture: true });
       window.removeEventListener('pointerup', onPointerEnd, { capture: true });
       window.removeEventListener('pointercancel', onPointerEnd, { capture: true });
       document.removeEventListener('pointerlockchange', onLockChange);
+      document.removeEventListener('pointerlockerror', onLockError);
       window.removeEventListener('blur', onBlur);
-      verb = null;
       release();
     },
+    locked,
   };
 }
