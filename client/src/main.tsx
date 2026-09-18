@@ -12,7 +12,7 @@ import { createCelestialVoid } from './render/celestialVoid.ts';
 import { installHitchLog } from './render/hitchLog.ts';
 import { applyServerPerfLogging, bindPerfLoggingSender } from './state/perfLoggingPrefs.ts';
 import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
-import { creaseLook, layerEdgeStyle } from './state/layerEdgePrefs.ts';
+import { creaseLook, layerEdgeStyle, lipHighlight } from './state/layerEdgePrefs.ts';
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
@@ -118,6 +118,7 @@ createEffect(() => celestialVoid.setStyle(voidStyle()));
 createEffect(() => celestialVoid.setAnchor(voidAnchor()));
 
 createEffect(() => world.setLayerEdgeStyle(layerEdgeStyle()));
+createEffect(() => world.setLipHighlight(lipHighlight()));
 createEffect(() => world.setCreaseLook(creaseLook()));
 createEffect(() => viewport.setFrameRateTarget(frameRateTargetFps(frameRateTarget())));
 createEffect(() => viewport.setMultisampling(multisampleEnabled(multisampleSetting())));

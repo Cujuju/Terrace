@@ -1,8 +1,11 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  DoubleSide,
   LineBasicMaterial,
   LineSegments,
+  Mesh,
+  MeshBasicMaterial,
   Sphere,
   Vector3,
 } from 'three';
@@ -67,6 +70,11 @@ const GRABBED_OPACITY = 1;
 
 const GRAB_RADIUS_WORLD_UNITS = 1.5 * CELL_WORLD_SIZE;
 
+/** Two triangles per lit segment: the wall from the band below up to its cap. */
+const FLOATS_PER_RISER_QUAD = 6 * POSITION_FLOATS_PER_VERTEX;
+
+const RISER_OPACITY = 0.35;
+
 export interface LayerEdgeOverlay {
   refreshChunk(chunkIdx: number): void;
   lipNear(cell: { x: number; y: number } | null, band: number | null, atX: number, atZ: number): boolean;
@@ -81,6 +89,8 @@ export interface LayerEdgeOverlay {
   setStyle(style: LayerEdgeStyle): void;
   setCreaseLook(look: CreaseLook): void;
   setRefused(refused: boolean): void;
+  /** The lip line over the lit riser. The riser face itself always shows. */
+  setLipHighlight(visible: boolean): void;
   clear(): void;
   drawCallCount(): number;
   dispose(): void;
@@ -357,8 +367,28 @@ export function createLayerEdgeOverlay(
   group.add(grabbed);
   let grabbedRefused = false;
 
+  const riserMaterial = new MeshBasicMaterial({
+    color: GRABBED_COLOR,
+    transparent: true,
+    opacity: RISER_OPACITY,
+    depthTest: true,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  let riserPositions = new Float32Array(FLOATS_PER_RISER_QUAD);
+  let riserAttribute = new BufferAttribute(riserPositions, POSITION_FLOATS_PER_VERTEX);
+  const riser = new Mesh(new BufferGeometry(), riserMaterial);
+  riser.geometry.setAttribute('position', riserAttribute);
+  riser.geometry.boundingSphere = grabbedBounds;
+  riser.renderOrder = GRABBED_RENDER_ORDER;
+  riser.visible = false;
+  riser.frustumCulled = false;
+  group.add(riser);
+  let lipHighlight = true;
+
   const clearGrabbed = (): void => {
     grabbed.visible = false;
+    riser.visible = false;
   };
 
   const ensureGrabbedCapacity = (floats: number): void => {
@@ -374,6 +404,21 @@ export function createLayerEdgeOverlay(
     geometry.boundingSphere = grabbedBounds;
     grabbed.geometry.dispose();
     grabbed.geometry = geometry;
+  };
+
+  const ensureRiserCapacity = (floats: number): void => {
+    if (floats <= riserPositions.length) return;
+    let grown = Math.max(riserPositions.length, FLOATS_PER_RISER_QUAD);
+    while (grown < floats) grown *= TILE_CAPACITY_GROWTH_FACTOR;
+    const positions = new Float32Array(grown);
+    positions.set(riserPositions);
+    riserPositions = positions;
+    riserAttribute = new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', riserAttribute);
+    geometry.boundingSphere = grabbedBounds;
+    riser.geometry.dispose();
+    riser.geometry = geometry;
   };
 
   const distanceSqToSegment = (
@@ -443,8 +488,12 @@ export function createLayerEdgeOverlay(
       if (!lipNear(cell, band, atX, atZ)) return false;
 
       const spanSq = litSpanWorldUnits * litSpanWorldUnits;
-      const y = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
+      const capY = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+      const y = capY + LIP_LIFT_WORLD_UNITS;
+      // The riser is the wall under that cap: one band down, the face the aim names.
+      const footY = (band - 1) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
       let written = 0;
+      let riserWritten = 0;
       let minX = Infinity;
       let minZ = Infinity;
       let maxX = -Infinity;
@@ -465,6 +514,15 @@ export function createLayerEdgeOverlay(
           grabbedPositions[written++] = bx;
           grabbedPositions[written++] = y;
           grabbedPositions[written++] = bz;
+          ensureRiserCapacity(riserWritten + FLOATS_PER_RISER_QUAD);
+          for (const [vx, vy, vz] of [
+            [ax, capY, az], [bx, capY, bz], [bx, footY, bz],
+            [bx, footY, bz], [ax, footY, az], [ax, capY, az],
+          ] as const) {
+            riserPositions[riserWritten++] = vx;
+            riserPositions[riserWritten++] = vy;
+            riserPositions[riserWritten++] = vz;
+          }
           minX = Math.min(minX, ax, bx);
           minZ = Math.min(minZ, az, bz);
           maxX = Math.max(maxX, ax, bx);
@@ -473,21 +531,32 @@ export function createLayerEdgeOverlay(
       }
       if (written < FLOATS_PER_SEGMENT) return true;
 
+      riserAttribute.clearUpdateRanges();
+      riserAttribute.addUpdateRange(0, riserWritten);
+      riserAttribute.needsUpdate = true;
+      riser.geometry.setDrawRange(0, riserWritten / POSITION_FLOATS_PER_VERTEX);
+      riser.visible = true;
+
       grabbedAttribute.clearUpdateRanges();
       grabbedAttribute.addUpdateRange(0, written);
       grabbedAttribute.needsUpdate = true;
       grabbed.geometry.setDrawRange(0, written / POSITION_FLOATS_PER_VERTEX);
+      grabbed.visible = lipHighlight;
       const centreX = (minX + maxX) / 2;
       const centreZ = (minZ + maxZ) / 2;
       grabbedBounds.center.set(centreX, y, centreZ);
       grabbedBounds.radius = Math.hypot(maxX - centreX, maxZ - centreZ);
-      grabbed.visible = true;
       return true;
     },
     setRefused(refused) {
       if (refused === grabbedRefused) return;
       grabbedRefused = refused;
       grabbedMaterial.color.setHex(refused ? DENIED_COLOR : GRABBED_COLOR);
+      riserMaterial.color.setHex(refused ? DENIED_COLOR : GRABBED_COLOR);
+    },
+    setLipHighlight(visible) {
+      lipHighlight = visible;
+      if (!visible) grabbed.visible = false;
     },
     setStyle(next) {
       if (next === style) return;
@@ -514,11 +583,14 @@ export function createLayerEdgeOverlay(
       for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0);
+      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + (riser.visible ? 1 : 0);
     },
     dispose() {
       this.clear();
       group.remove(grabbed);
+      group.remove(riser);
+      riser.geometry.dispose();
+      riserMaterial.dispose();
       grabbed.geometry.dispose();
       material.dispose();
       grabbedMaterial.dispose();

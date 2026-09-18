@@ -163,6 +163,8 @@ export interface World extends TerrainSink {
   ): PointedCellPick | null;
   highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null;
   setLayerEdgeStyle(style: LayerEdgeStyle): void;
+  /** Draw the lip line over the lit riser; the riser face shows regardless. */
+  setLipHighlight(visible: boolean): void;
   setCreaseLook(look: CreaseLook): void;
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
@@ -251,6 +253,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let layerEdges: LayerEdgeOverlay | null = null;
   let layerEdgeStyle: LayerEdgeStyle = 'debug';
   let creaseLook: CreaseLook = DEFAULT_CREASE_LOOK;
+  let lipHighlight = true;
   let predictions: PredictionStore | null = null;
 
   let chunkRevisions: Int32Array | null = null;
@@ -409,6 +412,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     );
     nextLayerEdges.setCreaseLook(creaseLook);
     nextLayerEdges.setStyle(layerEdgeStyle);
+    nextLayerEdges.setLipHighlight(lipHighlight);
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
     nextMeshes.onChunkDrawn((chunkIdx) => {
       nextLayerEdges.refreshChunk(chunkIdx);
@@ -637,6 +641,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setLayerEdgeStyle(style: LayerEdgeStyle): void {
       layerEdgeStyle = style;
       layerEdges?.setStyle(style);
+    },
+    setLipHighlight(visible: boolean): void {
+      lipHighlight = visible;
+      layerEdges?.setLipHighlight(visible);
     },
     setCreaseLook(look: CreaseLook): void {
       creaseLook = look;
