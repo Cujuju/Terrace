@@ -4,30 +4,14 @@ import { CUE_BLINK_ON_MS, DENIED_BLINK_SETTLE_MS } from '../../render/denialCue.
 import type { SculptIntent } from '@terrace/shared';
 
 /**
- * The four sculpt-brush cue states the input path reports for lane E to render.
- * Lane C owns the transitions; lane E owns the pixels.
- *
- * - `refused` — the server (or a local plugin) refused the stroke. Red brush.
- *   Pulsed by releaseStroke(); read via refusedHold().
- * - `offline` — send() returned 'offline': the room is gone, so the intent never
- *   left. Grey/hollow brush, never red. Latched for the stroke; read via
- *   offlineHold().
- * - `ghost` — the stroke grabbed a band but the prediction was a no-op (held
- *   drag into unknown or already-settled ground). Tracked by the prediction
- *   store (ghostSeqs), not here: the intent WAS sent, so the brush must not
- *   read as unsent-held.
- * - `flat` — a posture refusal: the aim geometry cannot take this tool
- *   (underside raise, carve with no span, seed that moves nothing, the drag
- *   plane leaving the held band). Flat-mark; read via flatBlinks() and
- *   dragDescentFrozen().
+ * Brush cues lane E renders: `refused` red, `offline` grey and never red,
+ * `ghost` sent but predicted nothing, `flat` an aim the tool cannot take.
  */
 export type SculptCue = 'refused' | 'offline' | 'ghost' | 'flat';
 
 /**
- * What the host did with an intent. 'sent' reached the room (predict it);
- * 'refused' died to a local plugin veto whose red pulse the host already latched
- * via releaseStroke(), so the input must not blink grey for it; 'offline' never
- * left (grey/hollow cue here, never red).
+ * What the host did with an intent. `refused` already pulsed red via
+ * releaseStroke, so the input must not also blink grey for it.
  */
 export type SendOutcome = 'sent' | 'refused' | 'offline';
 
@@ -52,7 +36,6 @@ export interface SculptInputOptions {
   ) => TerrainRayPick | null;
   worldSize: () => number;
   riserBand: (pick: TerrainRayPick | null) => number | null;
-  bandAtCell: (x: number, y: number, spanBand: number | null) => number | null;
   runFloorBandAt: (x: number, y: number, band: number) => number | null;
   graspSpanBand: (
     pick: TerrainRayPick | null,
