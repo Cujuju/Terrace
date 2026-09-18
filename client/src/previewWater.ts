@@ -78,9 +78,24 @@ function buildOcean(mirror: TerrainMirror): void {
   }
 }
 
+// A continuous cone: heights vary cell to cell, so the band-0 isoline is a true curve.
+const CONE_PEAK_HEIGHT = 40;
+const CONE_FALL_PER_CELL = 3;
+
+function buildCone(mirror: TerrainMirror): void {
+  const centre = PREVIEW_WORLD_SIZE / 2;
+  for (let y = 0; y < PREVIEW_WORLD_SIZE; y++) {
+    for (let x = 0; x < PREVIEW_WORLD_SIZE; x++) {
+      const r = Math.hypot(x - centre, y - centre);
+      setCell(mirror, x, y, Math.round(CONE_PEAK_HEIGHT - r * CONE_FALL_PER_CELL));
+    }
+  }
+}
+
 const SCENE_BUILDERS: Record<string, (mirror: TerrainMirror) => void> = {
   staircase: buildStaircase,
   ocean: buildOcean,
+  cone: buildCone,
 };
 
 const CAMERA_VIEWS: Record<string, Vector3> = {
