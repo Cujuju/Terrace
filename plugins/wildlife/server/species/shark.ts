@@ -25,6 +25,7 @@ export const SHARK_PROFILE: SpeciesProfile = {
   cruiseSpeedCellsPerSecond: cellsAcross(1.8),
   turnNoiseRadiansPerSecond: 0.6,
   bodyLengthCells: cellsAcross(1.5),
+  hullBeamCells: cellsAcross(0.84),
   habitatCellsPerIndividual: cellsOverArea(2500),
   groupSize: 1,
   sizeWeights: SINGLE_SIZE_WEIGHTS,

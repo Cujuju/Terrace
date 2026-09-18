@@ -19,6 +19,7 @@ import {
 } from '@terrace/shared';
 import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
+import { erodedSamplerFor, isHullPoseValid } from './hull.ts';
 import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
 import { randomSigned, rollEvent } from './rng.ts';
 import {
@@ -195,11 +196,13 @@ export function steerToValidHeading(
   stepCells: number,
   occupants: readonly Occupant[] = [],
 ): number | null {
-  return steerAvoiding(world, walkerProfileOf(entity.species), entity, desired, lookahead, {
+  const eroded = erodedSamplerFor(world, entity.species, entity.size);
+  return steerAvoiding(eroded, walkerProfileOf(entity.species), entity, desired, lookahead, {
     stepCells,
     occupants,
     selfRadiusCells: personalSpaceCellsOf(entity),
-    permits: (x, y) => isValidCellFor(world, entity.species, x, y),
+    permits: (x, y, heading) =>
+      isHullPoseValid(world, eroded, entity.species, entity.size, x, y, heading),
   });
 }
 
@@ -211,8 +214,9 @@ function steerThisTick(
   stepCells: number,
   occupants: readonly Occupant[],
 ): number | null {
+  const eroded = erodedSamplerFor(world, entity.species, entity.size);
   return steerWithShorteningProbe(
-    world,
+    eroded,
     walkerProfileOf(entity.species),
     entity,
     desired,
@@ -221,7 +225,8 @@ function steerThisTick(
       stepCells,
       occupants,
       selfRadiusCells: personalSpaceCellsOf(entity),
-      permits: (x, y) => isValidCellFor(world, entity.species, x, y),
+      permits: (x, y, heading) =>
+        isHullPoseValid(world, eroded, entity.species, entity.size, x, y, heading),
     },
   );
 }
@@ -285,6 +290,7 @@ export function advanceEntity(
   const lookahead = lookaheadCellsFor(entity);
   const stepCells = speedOf(entity) * dt;
   const turnRate = maxTurnRadiansPerSecondOf(entity);
+  const eroded = erodedSamplerFor(world, entity.species, entity.size);
   const wanted = steerThisTick(world, entity, desired, lookahead, stepCells, occupants);
 
   if (wanted === null) {
@@ -297,7 +303,7 @@ export function advanceEntity(
   let nextY = entity.y + Math.sin(steered) * stepCells;
 
   if (
-    !isValidCellFor(world, entity.species, nextX, nextY) ||
+    !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, steered) ||
     !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
   ) {
     const retry = steerThisTick(world, entity, entity.heading, lookahead, stepCells, occupants);
@@ -310,7 +316,7 @@ export function advanceEntity(
     nextX = entity.x + Math.cos(steered) * stepCells;
     nextY = entity.y + Math.sin(steered) * stepCells;
     if (
-      !isValidCellFor(world, entity.species, nextX, nextY) ||
+      !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, steered) ||
       !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
     ) {
       entity.heading = steered;

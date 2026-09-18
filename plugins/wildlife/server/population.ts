@@ -1,6 +1,7 @@
 import { climbWireOf, newStillness, stanceWireOf } from '@terrace/shared';
 import type { ClimbState } from '@terrace/shared';
 import { CHUNK_SIZE, nearestWithinReach } from '@terrace/shared';
+import { erodedSamplerFor, isHullPoseValid } from './hull.ts';
 import {
   DEFAULT_SIZE_CLASS,
   WILDLIFE_HABITAT_SPECIES,
@@ -254,11 +255,18 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
     const x = n === 0 ? seed.x : seed.x + randomSigned(scatter);
     const y = n === 0 ? seed.y : seed.y + randomSigned(scatter);
     if (!canSettleAt(world, species, x, y)) continue;
+    const size = sizes[n]!;
+    // The whole capsule at the group's heading must fit, not just the centre.
+    if (
+      !isHullPoseValid(world, erodedSamplerFor(world, species, size), species, size, x, y, heading)
+    ) {
+      continue;
+    }
     entities.push({
       id: allocateEntityId(),
       species,
       schoolId: cohesive ? groupSchoolId : nextSchoolId++,
-      size: sizes[n]!,
+      size,
       x,
       y,
       heading,
@@ -344,7 +352,21 @@ export function despawnInvalidHabitat(world: HabitatWorld): number {
   let despawned = 0;
   for (let i = entities.length - 1; i >= 0; i--) {
     const entity = entities[i];
-    if (isValidCellFor(world, entity.species, entity.x, entity.y)) continue;
+    // Hull-aware: a wall sculpted into any end of the capsule evicts, even
+    // when the centre cell is still valid habitat.
+    if (
+      isHullPoseValid(
+        world,
+        erodedSamplerFor(world, entity.species, entity.size),
+        entity.species,
+        entity.size,
+        entity.x,
+        entity.y,
+        entity.heading,
+      )
+    ) {
+      continue;
+    }
     despawnWithCredit(i);
     despawned++;
   }

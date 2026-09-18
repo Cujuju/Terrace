@@ -89,6 +89,12 @@ export interface SpeciesProfile {
 
   readonly bodyLengthCells: number;
 
+  /**
+   * Full hull beam in cells at scale 1, from the client envelope. Absent
+   * means centre-cell checks (all land species).
+   */
+  readonly hullBeamCells?: number;
+
   readonly habitatCellsPerIndividual: number;
 
   readonly groupSize: number;

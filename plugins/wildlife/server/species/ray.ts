@@ -21,6 +21,7 @@ export const RAY_PROFILE: SpeciesProfile = {
   cruiseSpeedCellsPerSecond: cellsAcross(1.0),
   turnNoiseRadiansPerSecond: 0.3,
   bodyLengthCells: cellsAcross(1.0),
+  hullBeamCells: cellsAcross(1.18),
   habitatCellsPerIndividual: cellsOverArea(1200),
   groupSize: 1,
   sizeWeights: SINGLE_SIZE_WEIGHTS,
