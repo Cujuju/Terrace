@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { oppositeSculptMode, sculptMode } from './hudBrushState.ts';
 import { resetFrameRatePrefs } from './frameRatePrefs.ts';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
@@ -215,27 +216,27 @@ export function resolvePress(
 }
 
 /**
- * Which way a press sculpts. A chord names its direction outright; a press with
- * no modifier names none of its own and takes the direction the HUD holds.
+ * Which way a press sculpts: the toggle, inverted when the press is chorded. It
+ * reads the toggle rather than taking it, so no caller can pass an inverted one.
  */
 export function resolveSculptPress(
   eventButton: number,
   mods: ModifierState,
-  hudDirection: SculptAction,
 ): SculptAction | null {
   const action = resolvePress(eventButton, mods);
   if (action !== 'raise' && action !== 'lower') return null;
-  return controlBindings()[action].modifier === 'none' ? hudDirection : action;
+  const toggle = sculptMode();
+  return controlBindings()[action].modifier === 'none'
+    ? toggle
+    : oppositeSculptMode(toggle);
 }
 
-/** The direction the held modifiers name, or null when they name none. */
-export function chordDirection(mods: ModifierState): SculptAction | null {
+/** Whether the held modifiers are a sculpt chord, which inverts the toggle. */
+export function sculptChordHeld(mods: ModifierState): boolean {
   const modifier = modifierOf(mods);
-  if (modifier === null || modifier === 'none') return null;
+  if (modifier === null || modifier === 'none') return false;
   const bindings = controlBindings();
-  if (bindings.raise.modifier === modifier) return 'raise';
-  if (bindings.lower.modifier === modifier) return 'lower';
-  return null;
+  return bindings.raise.modifier === modifier || bindings.lower.modifier === modifier;
 }
 
 export function shadowedActions(bindings: ControlBindings): ControlAction[] {

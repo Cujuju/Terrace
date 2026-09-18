@@ -878,7 +878,7 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
   afterEach(() => {
     restoreHud(tool, radius);
     setSculptMode(mode);
-    setSculptChord(null);
+    setSculptChord(false);
     vi.useRealTimers();
   });
 

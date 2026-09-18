@@ -10,9 +10,12 @@ import {
   twoFingerGesture,
   wheelBehaviour,
   type BindingModifier,
+  type CameraAction,
   type ControlAction,
+  type ControlBinding,
   type ControlBindings,
   type MouseButtonName,
+  type SculptAction,
   type TwoFingerGesture,
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
@@ -109,35 +112,49 @@ const TERRAIN_MESHER_LABEL: Record<TerrainMesher, string> = {
   cpu: 'CPU workers',
 };
 
-const ACTION_LABEL: Record<ControlAction, string> = {
-  raise: 'Raise land',
-  lower: 'Lower land',
+const CAMERA_LABEL: Record<CameraAction, string> = {
   orbit: 'Orbit',
   pan: 'Pan',
 };
 
-const ACTION_EFFECT: Record<ControlAction, string> = {
-  raise: 'pile land up',
-  lower: 'dig land down',
+const CAMERA_EFFECT: Record<CameraAction, string> = {
   orbit: 'swing the camera around the world',
   pan: 'slide the view sideways',
 };
 
-const HINT_VERB: Record<ControlAction, string> = {
-  raise: 'raises',
-  lower: 'lowers',
+const HINT_VERB: Record<CameraAction, string> = {
   orbit: 'orbits',
   pan: 'pans',
 };
 
+const isSculpt = (action: ControlAction): action is SculptAction =>
+  action === 'raise' || action === 'lower';
+
+/** A sculpt press is named by its role, since no binding names a direction. */
+function actionLabel(action: ControlAction, binding: ControlBinding): string {
+  if (!isSculpt(action)) return CAMERA_LABEL[action];
+  return binding.modifier === 'none' ? 'Sculpt' : 'Sculpt, inverted';
+}
+
+function actionEffect(action: ControlAction, binding: ControlBinding): string {
+  if (!isSculpt(action)) return CAMERA_EFFECT[action];
+  return binding.modifier === 'none'
+    ? 'sculpt whichever way the HUD toggle points'
+    : 'sculpt the other way';
+}
+
+/** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. */
+function sculptHint(b: ControlBinding): string {
+  const press = `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag`;
+  return b.modifier === 'none'
+    ? `${press} sculpts the HUD direction`
+    : `${press} sculpts the other way`;
+}
+
 function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
   const parts = ACTION_PRECEDENCE.map((action) => {
     const b = bindings[action];
-    // An unmodified sculpt press names no direction of its own: it sculpts
-    // whichever way the HUD toggle points.
-    if ((action === 'raise' || action === 'lower') && b.modifier === 'none') {
-      return `${BUTTON_LABEL[b.button]}-drag sculpts the HUD direction`;
-    }
+    if (isSculpt(action)) return sculptHint(b);
     return `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag ${HINT_VERB[action]}`;
   });
   const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
@@ -176,11 +193,13 @@ export function ControlsPanel(): JSX.Element {
       <For each={ACTION_PRECEDENCE}>
         {(action) => (
           <div class="hud-row controls-row">
-            <span class="controls-label">{ACTION_LABEL[action]}</span>
+            <span class="controls-label">
+              {actionLabel(action, controlBindings()[action])}
+            </span>
             <select
               class="controls-select"
-              aria-label={`${ACTION_LABEL[action]}: modifier key`}
-              title={`${ACTION_LABEL[action]} key: hold it to ${ACTION_EFFECT[action]}`}
+              aria-label={`${actionLabel(action, controlBindings()[action])}: modifier key`}
+              title={`${actionLabel(action, controlBindings()[action])} key: hold it to ${actionEffect(action, controlBindings()[action])}`}
               value={controlBindings()[action].modifier}
               onChange={(e) =>
                 setBinding(action, {
@@ -195,8 +214,8 @@ export function ControlsPanel(): JSX.Element {
             </select>
             <select
               class="controls-select"
-              aria-label={`${ACTION_LABEL[action]}: mouse button`}
-              title={`${ACTION_LABEL[action]} button: drag it to ${ACTION_EFFECT[action]}`}
+              aria-label={`${actionLabel(action, controlBindings()[action])}: mouse button`}
+              title={`${actionLabel(action, controlBindings()[action])} button: drag it to ${actionEffect(action, controlBindings()[action])}`}
               value={controlBindings()[action].button}
               onChange={(e) =>
                 setBinding(action, {
@@ -418,7 +437,7 @@ export function ControlsPanel(): JSX.Element {
           {}
           Duplicate binding —{' '}
           {shadowedActions(controlBindings())
-            .map((a) => ACTION_LABEL[a])
+            .map((a) => actionLabel(a, controlBindings()[a]))
             .join(', ')}{' '}
           will never trigger.
         </p>

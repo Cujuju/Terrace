@@ -7,7 +7,7 @@ import {
 } from '../../config.ts';
 import { brushTool, setSculptChord } from '../../state/hudState.ts';
 import {
-  chordDirection,
+  sculptChordHeld,
   type ModifierState,
   type SculptAction,
 } from '../../state/controlPrefs.ts';
@@ -119,9 +119,9 @@ export const syncMode = (s: StrokeState, state: ModifierState): void => {
     ctrlKey: state.ctrlKey,
     altKey: state.altKey,
   };
-  // The chord overrides the mode rather than overwriting it, so re-asserting it
+  // The chord inverts the toggle rather than overwriting it, so re-asserting it
   // every move is idempotent. A directionless tool holds no chord.
   setSculptChord(
-    TOOLS_WITHOUT_DIRECTION.includes(brushTool()) ? null : chordDirection(s.mods),
+    !TOOLS_WITHOUT_DIRECTION.includes(brushTool()) && sculptChordHeld(s.mods),
   );
 };

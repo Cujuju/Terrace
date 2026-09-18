@@ -1,5 +1,5 @@
 import { Raycaster, Vector2 } from 'three';
-import { DEFAULT_BRUSH_TOOL, effectiveSculptMode } from '../../state/hudState.ts';
+import { DEFAULT_BRUSH_TOOL } from '../../state/hudState.ts';
 import {
   resolveSculptPress,
   type ModifierState,
@@ -144,7 +144,7 @@ export function createStrokeState(options: SculptInputOptions): StrokeState {
 
 export const currentStrokeAction = (s: StrokeState): SculptAction => {
   if (s.strokeButton !== null && !s.strokeIsTouch && !TOOLS_WITHOUT_DIRECTION.includes(s.strokeTool)) {
-    const resolved = resolveSculptPress(s.strokeButton, s.mods, effectiveSculptMode());
+    const resolved = resolveSculptPress(s.strokeButton, s.mods);
     if (resolved !== null) s.strokeAction = resolved;
   }
   return s.strokeAction;
