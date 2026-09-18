@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
+import { drawnBandAtY } from '../src/terrain/capEmission.ts';
 import { footOfFaceCell } from '../src/terrain/faceFoot.ts';
 import type { TerrainRayPick } from '../src/terrain/picking.ts';
 
@@ -16,6 +17,7 @@ describe('footOfFaceCell', () => {
       y: CELL_Z,
       spanIndex: 0,
       face: 'riser',
+      band: drawnBandAtY(STRUCK_HEIGHT * HEIGHT_WORLD_SCALE),
       hitY: STRUCK_HEIGHT * HEIGHT_WORLD_SCALE,
       surfaceY: STRUCK_HEIGHT * HEIGHT_WORLD_SCALE,
       hitX: FACE_X,

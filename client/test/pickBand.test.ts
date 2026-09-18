@@ -10,6 +10,7 @@ import {
   type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
+import { drawnBandAtY } from '../src/terrain/capEmission.ts';
 import { bandOfPick, carveBandOfPick, resolvePick } from '../src/terrain/pickBand.ts';
 import type { PickFace, TerrainRayPick } from '../src/terrain/picking.ts';
 
@@ -34,6 +35,9 @@ function pickAt(
     y: CELL_Z,
     spanIndex,
     face,
+    band: face === 'underside'
+      ? drawnBandAtY(hitHeight * HEIGHT_WORLD_SCALE) + 1
+      : drawnBandAtY(hitHeight * HEIGHT_WORLD_SCALE),
     hitY: hitHeight * HEIGHT_WORLD_SCALE,
     surfaceY: surfaceHeight * HEIGHT_WORLD_SCALE,
     hitX: CELL_X * CELL_WORLD_SIZE,

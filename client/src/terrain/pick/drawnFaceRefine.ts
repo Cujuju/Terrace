@@ -11,6 +11,7 @@ import {
   type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../../config.ts';
+import { drawnBandAtY } from '../capEmission.ts';
 import { crossRayWithWallPlan } from '../drawnFace.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import {
@@ -197,10 +198,14 @@ export function refineRiserToDrawnFace(
         ) ?? hit;
       }
     }
+    const riserY = bestLedgeBand === null
+      ? origin.y + bestT * direction.y
+      : bestLedgeBand * bandSlab;
     return {
       ...hit,
       face: 'riser',
-      hitY: bestLedgeBand === null ? origin.y + bestT * direction.y : bestLedgeBand * bandSlab,
+      band: drawnBandAtY(riserY),
+      hitY: riserY,
       hitX: origin.x + bestT * direction.x,
       hitZ: origin.z + bestT * direction.z,
     };
@@ -254,6 +259,7 @@ function treadOfEnteredNeighbour(
       surfaceY: capY,
       spanIndex: k,
       face: 'tread',
+      band: drawnBandAtY(capY),
       hitY: capY,
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,

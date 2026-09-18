@@ -7,7 +7,7 @@ import {
   type Span,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../../config.ts';
-import { blockyCellCapY, drawnBandCapY } from '../capEmission.ts';
+import { blockyCellCapY, drawnBandAtY, drawnBandCapY } from '../capEmission.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import { columnOwningBand, drawnCapMet } from './bandOwner.ts';
 import { refineRiserToDrawnFace } from './drawnFaceRefine.ts';
@@ -87,12 +87,15 @@ export function terrainHitInCell(
     // so the owner search tests the layer the ray actually met.
     const strikeY = insideOnEntry ? oy + t * dy : faceY;
     hitT = t;
+    const face = insideOnEntry ? 'riser' : onOrAboveCap ? 'tread' : 'underside';
     hit = {
       x: i,
       y: j,
       surfaceY: capY,
       spanIndex: k,
-      face: insideOnEntry ? 'riser' : onOrAboveCap ? 'tread' : 'underside',
+      face,
+      // Solid below or behind: the slab holding the strike. Solid above: the span's floor.
+      band: face === 'underside' ? span.floorBand : drawnBandAtY(strikeY),
       hitY: strikeY,
       hitX: origin.x + t * direction.x,
       hitZ: origin.z + t * direction.z,
@@ -120,8 +123,8 @@ export function terrainHitInCell(
         y: j,
         spanIndex: count - 1,
       };
-      // Re-homed to a neighbour the ray never entered: a tread there sits on
-      // that column's cap, so the hit moves with it.
+      // Re-homed to a neighbour the ray never entered: it names the cell and
+      // surface, never the band. The band stays the one at the hit point.
       hitSpan = spanAt(mirror.map, found.x, found.y, found.spanIndex);
       const ownerY = drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE;
       hit = {
@@ -130,7 +133,6 @@ export function terrainHitInCell(
         y: found.y,
         spanIndex: found.spanIndex,
         surfaceY: ownerY,
-        ...(hit.face === 'tread' ? { hitY: ownerY } : {}),
       };
     } else {
       return null;

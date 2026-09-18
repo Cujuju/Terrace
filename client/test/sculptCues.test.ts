@@ -67,6 +67,7 @@ const UNDERSIDE_PICK: TerrainRayPick = {
   surfaceY: 0,
   spanIndex: 0,
   face: 'underside',
+  band: 0,
   hitY: 0,
   hitX: 30 * CELL_WORLD_SIZE,
   hitZ: 30 * CELL_WORLD_SIZE,
@@ -92,6 +93,7 @@ interface DriveKnobs {
   pickInColumn?: (x: number, y: number, origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   riserBand?: (pick: TerrainRayPick | null) => number | null;
   runFloorBandAt?: (x: number, y: number, band: number) => number | null;
+  aimBand?: (pick: TerrainRayPick | null) => number | null;
   graspSpanBand?: (pick: TerrainRayPick | null, atX: number, atY: number) => number | null;
   origin?: Vec3;
   lookAt?: Vec3;
@@ -144,7 +146,7 @@ function driveInput(mirror: TerrainMirror, knobs: DriveKnobs = {}): {
     pickInColumn: knobs.pickInColumn ?? ((x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d)),
     worldSize: () => mirror.map.size,
     riserBand: knobs.riserBand ?? (() => null),
-    aimBand: () => null,
+    aimBand: knobs.aimBand ?? (() => null),
     runFloorBandAt: knobs.runFloorBandAt ?? (() => null),
     graspSpanBand: knobs.graspSpanBand ?? (() => null),
     carveBand: () => null,
@@ -580,6 +582,7 @@ const LAYERED_RISER_PICK: TerrainRayPick = {
   surfaceY: GRASPED_BAND * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
   spanIndex: 1,
   face: 'riser',
+  band: GRASPED_BAND,
   hitY: GRASPED_BAND * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
   hitX: (30 - 0.5) * CELL_WORLD_SIZE,
   hitZ: 30 * CELL_WORLD_SIZE,
@@ -1037,6 +1040,7 @@ const WALL_RISER_PICK: TerrainRayPick = {
   surfaceY: bandY(WALL_RISER_BAND),
   spanIndex: 0,
   face: 'riser',
+  band: WALL_RISER_BAND,
   hitY: bandY(WALL_RISER_BAND),
   hitX: (WALL_COLUMN_X - 0.5) * CELL_WORLD_SIZE,
   hitZ: LAYERED_ROW * CELL_WORLD_SIZE,
