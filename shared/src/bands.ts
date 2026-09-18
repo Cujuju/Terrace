@@ -1,18 +1,8 @@
 import { BAND_HEIGHT, DRAWN_SHORE_HEIGHT } from './constants.ts';
 
-// Drawn-band contract (lane A).
-//
-// The renderer draws a height sample `h` as band `drawnBandOfSample(h)`, which
-// reads the biased field `h + DRAWN_GROUND_BAND_BIAS`. Sculpt targets and
-// coverage predicates must agree with that field, or a press can move raw
-// heights without changing what is drawn (e.g. raising 8 to 16 used to stay
-// inside drawn band 1).
-//
-// Determinism: every function here is integer-only — Math.floor (an
-// exactly-specified IEEE-754 operation whose result is immediately used as an
-// integer), integer +/-1 steps, and comparisons — evaluated in a fixed order
-// with no iteration. Identical inputs give identical outputs on server and
-// client.
+// Drawn-band contract (lane A): sculpt targets and coverage predicates must agree
+// with the biased field. Integer-only throughout, so server and client match.
+// Full contract and its determinism argument: docs/decisions/terrain-relief.md.
 
 /** Half a band. The biased field `height + DRAWN_GROUND_BAND_BIAS` is what the isolines read. */
 export const DRAWN_GROUND_BAND_BIAS = BAND_HEIGHT / 2;
@@ -26,6 +16,19 @@ export function drawnLevelThreshold(band: number): number {
 export function drawnBandOfSample(height: number): number {
   const band = Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
   return band === 0 && height + DRAWN_GROUND_BAND_BIAS < drawnLevelThreshold(0) ? -1 : band;
+}
+
+// Band 0's threshold is also the shore's level, so a raw crossing is identically 1.
+// These two values put it mid-edge. See docs/decisions/terrain-relief.md.
+export const SHORE_CONTOUR_BAND = 0;
+export const SHORE_CONTOUR_OUTSIDE = 0;
+export const SHORE_CONTOUR_INSIDE = 2;
+
+/** Dry or wet, as the pair whose band-0 crossing is exactly a half. */
+export function shoreContourSample(height: number): number {
+  return height + DRAWN_GROUND_BAND_BIAS >= drawnLevelThreshold(SHORE_CONTOUR_BAND)
+    ? SHORE_CONTOUR_INSIDE
+    : SHORE_CONTOUR_OUTSIDE;
 }
 
 /** Lowest raw height that draws as band k. Band 0 starts at the shore; every other band spans 16 heights. */
