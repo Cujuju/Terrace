@@ -21,6 +21,15 @@ import type { DrawnCap, DrawnRisers, TerrainRayPick, Vec3 } from './types.ts';
  */
 const ON_CAP_WORLD_SLACK = BAND_WORLD_HEIGHT / 1_000_000;
 
+/** Re-homing a hit onto a span moves its surface; a tread's hit point IS that surface. */
+function onSpanSurface(
+  hit: TerrainRayPick,
+  span: Span,
+): { surfaceY: number; hitY?: number } {
+  const surfaceY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
+  return hit.face === 'tread' ? { surfaceY, hitY: surfaceY } : { surfaceY };
+}
+
 export function terrainHitInCell(
   mirror: TerrainMirror,
   i: number,
@@ -104,9 +113,12 @@ export function terrainHitInCell(
     // F2: never-null fallback for cap strikes from above. With no neighbour
     // owning the band the hit stays on the entered cell's top span; grazers
     // miss, so carved gaps stay open.
-    if (drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band) !== null) {
-      hitSpan = spanAt(mirror.map, i, j, hit.spanIndex);
-      hit = { ...hit, surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE };
+    const covering = drawnSpanIndexCoveringBand(mirror.map, i, j, hitMet.band);
+    if (covering !== null) {
+      // The span covering the met band, not the column top: a layered column
+      // meets a notch floor far below its own cap.
+      hitSpan = spanAt(mirror.map, i, j, covering);
+      hit = { ...hit, spanIndex: covering, ...onSpanSurface(hit, hitSpan) };
     } else if (direction.y < 0) {
       const found = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY) ?? {
         x: i,
@@ -119,7 +131,7 @@ export function terrainHitInCell(
         x: found.x,
         y: found.y,
         spanIndex: found.spanIndex,
-        surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
+        ...onSpanSurface(hit, hitSpan),
       };
     } else {
       return null;
