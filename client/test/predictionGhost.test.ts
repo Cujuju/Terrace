@@ -57,6 +57,9 @@ describe('ghost seqs — sent strokes that predict no-ops', () => {
       dir: 1,
       tool: 'drag',
       targetBand: 4,
+      // A drag carries the run's floor on the wire; without it the intent is
+      // malformed and never reaches the ghost.
+      floorBand: 4,
       seq: 7,
     };
     expect(store.predict(intent, 0).size).toBe(0);
